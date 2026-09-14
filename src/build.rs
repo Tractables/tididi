@@ -188,19 +188,23 @@ impl crate::engine::Engine {
     }
 
     /// The constant-true function over `vtree`, built in this engine's pools.
+    ///
+    /// Does not check resource limits; use an empty [`Engine::cube`] for checked construction.
     #[must_use]
     pub fn one(&self, vtree: &Arc<Vtree>) -> Tdd {
         crate::build::constant_one(self, vtree)
     }
 
     /// The constant-false function over `vtree`, built in this engine's pools.
+    ///
+    /// Does not check resource limits; use an empty [`Engine::clause`] for checked construction.
     #[must_use]
     pub fn zero(&self, vtree: &Arc<Vtree>) -> Tdd {
         crate::build::constant_zero(self, vtree)
     }
 
-    /// The conjunction of `literals` over `vtree`: one width-1 node per
-    /// internal vtree node, so the whole diagram is one path.
+    /// The conjunction of `literals` over `vtree`, with one node containing
+    /// one child pair at each internal vtree level.
     ///
     /// A variable no literal mentions is free — the cube says nothing about
     /// it, so both of its values satisfy the result. Each item is converted

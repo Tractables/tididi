@@ -116,37 +116,37 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
 
 // ── Public minimize variants ─────────────────────────────────────────────
 
-/// Minimize a diagram to its canonical form: afterwards every node is
-/// reachable from the output and no two nodes at one level compute the same
-/// function. The function and the model count are unchanged; marginal levels
-/// stay marginal and their invariants are restored with the rest. ⊥ is left
-/// as it is.
+/// Minimize a diagram under its current vtree, preserving its function and count.
 ///
-/// The vtree is fixed, following the minimization operation in
+/// For a structural TDD, the result is the canonical minimal form, up to local
+/// node numbering and pair order. Unreachable nodes are removed and nodes with
+/// identical parent contexts are contracted. Marginal levels stay marginal;
+/// their applicable value and pair cleanup passes also run.
+///
+/// This is fixed-vtree minimization, following
 /// [Section 5 of the TDD paper](https://arxiv.org/html/2604.05537v1#S5).
-/// Use [`Engine::rotation_search`](crate::Engine::rotation_search) to search
-/// different vtree shapes.
-///
-/// # Panics
-///
-/// Panics when an allocation is refused. A caller that must survive a refusal
-/// calls [`try_minimize`] and handles [`OperationError::OverBudget`]. Runs on a
-/// fresh engine with no limits armed, so no deadline can fire inside it.
+/// [`Engine::rotation_search`](crate::Engine::rotation_search) instead searches
+/// other vtree shapes. Use [`try_minimize`] to apply an engine's limits and
+/// handle a refusal.
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::Tdd;
+/// use tididi::{Engine, Vtree};
 /// use tididi::reduce::minimize;
-/// use tididi::vtree::Vtree;
 ///
-/// let vtree = Arc::new(Vtree::balanced(4));
-/// let mut f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
-/// let before = (f.pair_count(), f.model_count());
-///
+/// let engine = Engine::new();
+/// let tree = Arc::new(Vtree::balanced(3));
+/// let mut f = engine.and(engine.clause(&tree, [1, 2])?, engine.literal(&tree, 3)?)?;
+/// let before = engine.model_count(&f)?;
 /// minimize(&mut f);
-/// assert_eq!(f.model_count(), before.1);   // the function is unchanged
-/// assert!(f.pair_count() <= before.0);           // the representation is canonical
+/// assert_eq!(engine.model_count(&f)?, before);
+/// # tididi::test_helpers::assert_canonical(&f);
+/// # Ok::<(), tididi::OperationError>(())
 /// ```
+///
+/// # Panics
+///
+/// Panics on a resource refusal; [`try_minimize`] reports it as an error.
 pub fn minimize(f: &mut Tdd) {
     let eng = Engine::new();
     try_minimize(&eng, f)

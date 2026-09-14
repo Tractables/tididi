@@ -8,8 +8,8 @@
 //! Entry points: [`Tdd`] is the diagram, [`TddLevel`] one vtree node's storage
 //! in it, [`ChildPair`] one element of a node's decomposition, and [`ChildDecoder`]
 //! the decoding a pair side goes through when its child level is marginal.
-//! [`TddBuilder`] assembles a diagram level by level, and [`EvalAlgebra`] is
-//! the algebra a marginal level's values are drawn from.
+//! [`TddBuilder`] assembles a diagram level by level, and [`EvalAlgebra`] defines
+//! how a structural diagram is evaluated.
 //!
 //! The stored encoding is the traversal contract: a reader walks the levels
 //! and pairs directly, with no view layer in between. Everything a reader may
@@ -60,11 +60,36 @@
 //!   and its count is the sum over its pairs; a diagram built level by level
 //!   ([`TddBuilder`]) has that property only if its author kept it;
 //! - after [`minimize`](crate::reduce::minimize), distinct nodes at a
-//!   level denote distinct functions and every node is reachable from
-//!   `output`; a diagram built level by level has neither guarantee until
-//!   minimized.
+//!   structural level have no remaining context twins and every live node is
+//!   reachable from `output`; minimization does not repair a violation of the
+//!   builder's determinism precondition.
 //!
-//! A bottom-up model count written against this contract. The diagram has one
+//! # Inspect structural pairs
+//!
+//! To inspect the representation without decoding children, walk the vtree and
+//! ask each level for its live nodes:
+//!
+//! ```
+//! use std::sync::Arc;
+//! use tididi::{Engine, Vtree};
+//!
+//! let engine = Engine::new();
+//! let tree = Arc::new(Vtree::balanced(3));
+//! let f = engine.clause(&tree, [1, 2])?;
+//! let mut total = 0;
+//! for t in tree.bottomup() {
+//!     for (_node, pairs) in f.level(t).internal_inputs_iter() {
+//!         total += pairs.len();
+//!     }
+//! }
+//! assert_eq!(total, f.pair_count());
+//! # Ok::<(), tididi::OperationError>(())
+//! ```
+//!
+//! # Decode child values
+//!
+//! The following worked count handles structural and count-marginal levels;
+//! weight-marginal values require the diagram's attached store instead. It has one
 //! marginalized subtree, so the walk decodes all four kinds of pair side: a
 //! node of a leaf level, a node of a structural level, a value carried inline
 //! at the reference, and a value held in the child's slot table.

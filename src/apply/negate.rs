@@ -37,13 +37,32 @@ pub fn negate(f: Tdd) -> Tdd {
 }
 
 impl Engine {
-    /// Complement a structural diagram and reduce it under this engine's limits.
+    /// Return the Boolean complement of a structural diagram, in minimized form.
+    ///
+    /// The operand is consumed on success and on error. Its weight configuration
+    /// is retained. Complementation can grow the diagram; for an unweighted count
+    /// alone, subtracting the original count from `2^n` avoids building the complement,
+    /// where `n` is the number of variables under the output's vtree node.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    ///
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let either = engine.clause(&tree, [1, 2])?;
+    /// let neither = engine.negate(either)?;
+    /// let expected = engine.cube(&tree, [-1, -2])?;
+    /// assert!(engine.equivalent(&neither, &expected)?);
+    /// assert_eq!(engine.model_count(&neither)?, 1u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
     ///
     /// # Errors
     ///
-    /// Returns allocation and stop refusals from the fill, complement, or reduction.
-    ///
-    /// [`OperationError::MarginalLevel`] if a level has already been summed out.
+    /// [`OperationError::MarginalLevel`] if any level has discarded structure.
+    /// Allocation, output-cap, and stop refusals propagate from expansion,
+    /// complementation, and minimization.
     pub fn negate(&self, f: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().begin_operation();
         let mut result = negate_tdd_owned(self, f)?;

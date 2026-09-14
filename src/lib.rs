@@ -1,9 +1,13 @@
-//! Build and query Boolean functions with Tree Decision Diagrams (TDDs).
+//! Represent Boolean functions with Tree Decision Diagrams.
 //!
-//! A [`Tdd`] owns its diagram and shares a [`Vtree`] describing its variables.
-//! An [`Engine`] provides checked operations, reusable scratch and resource limits.
+//! A [`Vtree`] groups the variables; an [`Engine`] builds and transforms functions
+//! on that tree; a [`Tdd`] owns the resulting diagram. Reuse the diagram for
+//! model counting, Boolean queries, or evaluation under different literal weights.
 //!
-//! # Build a Boolean function
+//! # A first function
+//!
+//! For `(x ∧ y) ∨ z`, four assignments have `z` true and one more has both
+//! `x` and `y` true while `z` is false:
 //!
 //! ```
 //! use std::sync::Arc;
@@ -14,22 +18,26 @@
 //! let x = engine.literal(&tree, 1)?;
 //! let y = engine.literal(&tree, 2)?;
 //! let z = engine.literal(&tree, 3)?;
-//! let f = engine.ite(x, y, z)?; // if x then y, otherwise z
-//! assert_eq!(engine.model_count(&f)?, 4u32.into());
+//! let f = engine.or(engine.and(x, y)?, z)?;
+//! assert_eq!(engine.model_count(&f)?, 5u32.into());
 //! # Ok::<(), tididi::OperationError>(())
 //! ```
 //!
-//! # Choose your next task
+//! Integer literals are signed and one-based; [`Literal`] documents their typed,
+//! zero-based form. Reuse the same `Arc<Vtree>` for operands you will combine.
+//! Queries borrow diagrams; transformations taking `Tdd` consume them, so clone
+//! an operand first if it must be kept.
 //!
-//! The [task guide](guide::api) links examples for building functions, finding
-//! assignments, comparing functions, changing variables, evaluating probabilities,
-//! limiting resource use and saving diagrams.
+//! # Where to go next
 //!
-//! Keep a diagram for several operations: [`Tdd`].
-//! Minimize under its current vtree: [`minimize`](reduce::minimize).
-//! Understand vtrees and determinism: the [data model](guide::model).
-//! Extend the implementation: the [architecture reference](guide::architecture).
+//! Follow the [task guide](guide::api) for construction, queries, transformations,
+//! probabilities, limits, and persistence. The [`Engine`] introduction explains
+//! checked operations, [`Tdd`] explains ownership, and [`Vtree`] explains the
+//! variable universe.
 //!
+//! The [data model](guide::model) introduces levels, pairs, and determinism.
+//! For work on the implementation, use the [architecture reference](guide::architecture).
+
 // Guards the public-release doc surface: an undocumented public item warns.
 #![warn(missing_docs)]
 #![warn(missing_debug_implementations)]

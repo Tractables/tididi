@@ -4,79 +4,74 @@
 
 [![crates.io](https://img.shields.io/crates/v/tididi.svg)](https://crates.io/crates/tididi) [![docs.rs](https://img.shields.io/docsrs/tididi)](https://docs.rs/tididi)
 
-A Rust library for Tree Decision Diagrams (TDDs): represent Boolean functions,
-combine and transform them, count satisfying assignments, and evaluate weights.
-A vtree groups the variables; a right-linear vtree gives the OBDD special case.
-TDDs were introduced in
-[*A Canonical Generalization of OBDD*](https://arxiv.org/abs/2604.05537).
+A Rust library for Tree Decision Diagrams (TDDs). Build a Boolean function
+once, then combine it with other functions, count its satisfying assignments,
+or evaluate it under different literal weights.
 
-## Install
+A TDD decomposes a function along a **vtree**, a binary tree over its variables.
+This generalizes an ordered binary decision diagram: a right-linear vtree
+corresponds to a variable order. The representation and its minimization
+algorithm are described in [*A Canonical Generalization of OBDD*](https://arxiv.org/abs/2604.05537).
+
+## Start with a function
+
+Add the crate to a Rust project; Rust 1.88 or later is required:
 
 ```sh
 cargo add tididi
 ```
 
-Requires Rust 1.88 or later.
-
-## Build a function and ask for an answer
+This example builds `(x ∧ y) ∨ z` and counts its satisfying assignments:
 
 ```rust
 use std::sync::Arc;
 use tididi::{Engine, Vtree};
 
-let engine = Engine::new();
-let tree = Arc::new(Vtree::balanced(3));
-let x = engine.literal(&tree, 1)?;
-let y = engine.literal(&tree, 2)?;
-let z = engine.literal(&tree, 3)?;
+fn main() -> Result<(), tididi::OperationError> {
+    let engine = Engine::new();
+    let tree = Arc::new(Vtree::balanced(3));
+    let x = engine.literal(&tree, 1)?;
+    let y = engine.literal(&tree, 2)?;
+    let z = engine.literal(&tree, 3)?;
 
-// (x AND y) OR z
-let both = engine.and(x, y)?;
-let f = engine.or(both, z)?;
-assert_eq!(engine.model_count(&f)?, 5u32.into());
-
-let model = engine.satisfying_assignment(&f)?.unwrap();
-assert_eq!(model.len(), 3); // one literal for every variable
-# Ok::<(), tididi::OperationError>(())
+    let both = engine.and(x, y)?;
+    let f = engine.or(both, z)?;
+    assert_eq!(engine.model_count(&f)?, 5u32.into());
+    Ok(())
+}
 ```
 
-Integers name signed, 1-based literals: `1` means `x`, `-2` means `NOT y`.
-An `Engine` owns reusable scratch and resource limits; each diagram owns its
-structure and shares its vtree through `Arc`. See [`Tdd`] for retaining a
-function across multiple transformations and [`Engine`] for handling limits.
+There are four models with `z` true, and one more with `z` false and both
+`x` and `y` true. Counts range over every variable in the vtree, including
+variables the function leaves free.
 
-## Choose your next task
+Signed integers name literals: `1` means `x`, `-2` means `¬y`, and zero is
+invalid. The typed form, [`Literal`], uses zero-based variable identifiers.
+Use the same `Arc<Vtree>` for functions you intend to combine.
 
-The [task guide](docs/api-guide.md) links short examples for:
+The [`Engine`] holds reusable working memory and resource limits; a [`Tdd`]
+owns the resulting diagram and can outlive it. Transformations consume their
+operands, while queries borrow them; the `Tdd` example shows how to keep an
+original for several transformations.
 
-- [Building Boolean functions](docs/api-guide.md#build-a-boolean-function).
-- [Counting, finding assignments and comparing functions](docs/api-guide.md#ask-questions-about-a-function).
-- [Conditioning, quantifying and substituting variables](docs/api-guide.md#change-assignments-or-variables).
-- [Evaluating probabilities and repeated observations](docs/api-guide.md#evaluate-probabilities-or-repeated-observations).
-- [Controlling resources and minimizing diagrams](docs/api-guide.md#control-resources-and-diagram-size).
-- [Saving, drawing and traversing diagrams](docs/api-guide.md#save-or-inspect-a-diagram).
+## Continue with your task
 
-[`minimize`] finds the canonical minimal TDD under its current vtree;
-[`rotation_search`] searches different vtree shapes. You can construct a vtree
-with the library's constructors or load its `.vtree` format; the
-[`vitri`](https://github.com/Tractables/vitri) crate can derive one from CNF structure.
+The [task guide] walks through construction, queries, conditioning and
+quantification, probabilities, resource limits, and persistence, with links
+to the relevant API examples. For a complete program, run one of these from
+a source checkout:
 
-## Run complete examples
+| Example | What it shows |
+| --- | --- |
+| `cargo run --example build_minimize_count` | Add constraints, minimize, count, and take a cofactor. |
+| `cargo run --example probabilistic_query` | Reuse a query under changing probabilities and compute a conditional probability. |
+| `cargo run --example symbolic_reachability` | Compute reachable states to a fixed point and obtain a witness. |
+| `cargo run --example statistic` | Traverse the stored nodes and pairs. |
+| `cargo run --example dimacs_count -- examples/tiny.cnf 5 6 --check` | Supply a DIMACS reader, compile its clauses, and count a projection. |
 
-- `cargo run --example probabilistic_query`: reuse a compiled query and evidence
-  under changing probabilities, then normalize the result.
-- `cargo run --example symbolic_reachability`: compute a fixed point, check an
-  unreachable state and obtain a reachable-state witness.
-- `cargo run --example build_minimize_count`: construct, minimize and count.
-- `cargo run --example dimacs_count -- examples/tiny.cnf 5 6 --check`: a caller
-  that parses DIMACS, compiles clauses, projects and evaluates weights.
-- `cargo run --example statistic`: inspect the stored representation.
-
-## Reference
-
-[API documentation](https://docs.rs/tididi),
-[TDD data model](docs/tdd.md), and
-[implementation architecture](docs/architecture.md).
+For the concepts behind the API, read the [TDD data model]. The
+[API reference] documents each operation's input requirements, result, and
+errors; the [architecture reference] describes the implementation for contributors.
 
 ## Citing
 
@@ -98,7 +93,10 @@ the same reference in machine-readable form.
 
 Apache License, Version 2.0 ([LICENSE](./LICENSE)).
 
-[`minimize`]: https://docs.rs/tididi/latest/tididi/reduce/fn.minimize.html
+[`Literal`]: https://docs.rs/tididi/latest/tididi/diagram/struct.Literal.html
 [`Tdd`]: https://docs.rs/tididi/latest/tididi/diagram/struct.Tdd.html
 [`Engine`]: https://docs.rs/tididi/latest/tididi/engine/struct.Engine.html
-[`rotation_search`]: https://docs.rs/tididi/latest/tididi/engine/struct.Engine.html#method.rotation_search
+[task guide]: https://docs.rs/tididi/latest/tididi/guide/api/index.html
+[TDD data model]: https://docs.rs/tididi/latest/tididi/guide/model/index.html
+[API reference]: https://docs.rs/tididi
+[architecture reference]: https://docs.rs/tididi/latest/tididi/guide/architecture/index.html

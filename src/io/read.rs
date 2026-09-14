@@ -1,6 +1,4 @@
-//! Reading a diagram back from the `.tdd` text format.
-//!
-//! The records and the version rule are documented in `super::write`.
+//! Readers for the [public text format](crate::io#text-format).
 
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -47,23 +45,16 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 
 /// Read a diagram in `.tdd` format from any reader, over `vtree`.
 ///
-/// The vtree is an argument, not something the file carries. A `.tdd` file
-/// describes the vtree only where the diagram touches it: leaves get an `L`
-/// line each, but an internal vtree node is named only by the `I` lines of the
-/// diagram nodes living there, so a vtree node the diagram never uses — every
-/// ancestor of the output, and every node in a subtree the output does not
-/// reach — leaves no trace. Rather than guess at a shape and hand back a
-/// diagram over a vtree that merely resembles the original, the reader takes
-/// the vtree it is reading against and checks the file against it.
+/// Supply the tree saved alongside the diagram: the reader validates counts,
+/// leaf labels, and declared child indices against it, but the false diagram
+/// has no node records from which to check its shape.
+/// The result shares the supplied `Arc<Vtree>`, has no attached weights, and
+/// preserves the file's node order; reading does not minimize.
 ///
-/// The check the file supports is a partial one — the leaf count, the vtree
-/// node count and the kind of each named node — so a caller holding two vtrees
-/// of the same shape settles which one the file belongs to itself, with
-/// [`Vtree::same_tree`](crate::vtree::Vtree::same_tree).
-///
-/// Round trip: `read_tdd(write_tdd(f), f.vtree)` is `f` up to the unreachable
-/// nodes the writer drops and the local renumbering that compacts what is
-/// left — the function and the level-by-level structure are unchanged.
+/// The reader validates the encoding, not semantic determinism. Files must
+/// describe TDDs satisfying the [data-model rules](crate::guide::model), as the
+/// library's writer produces; arbitrary overlapping pair lists are not valid
+/// inputs for model counting.
 ///
 /// # Errors
 ///

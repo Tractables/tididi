@@ -24,10 +24,15 @@ pub struct LiteralWeights<T> {
 
 /// Exact weighted model counting over `num_rational::BigRational`.
 ///
-/// `w_pos[v]` / `w_neg[v]` are the literal weights of variable `v`. A free
-/// variable (`One` leaf) contributes `w_pos[v] + w_neg[v]`. Weights may be
-/// zero or negative, so a satisfiable diagram can evaluate to 0; a caller
-/// must not read that as unsatisfiable.
+/// Table entries are indexed by [`VarId`], not by leaf position. Supply
+/// an entry for every named variable, including placeholders for gaps in a sparse
+/// tree; `vtree.num_vars()` entries suffice. A missing entry can panic during evaluation.
+/// A free variable contributes the sum of its positive and negative weights.
+/// Unit weights reproduce the model count; nonnegative complementary weights
+/// give independent-variable probabilities, as in [`Engine::evaluate`](crate::Engine::evaluate).
+///
+/// Weights may also be zero or negative. A zero result therefore does not imply
+/// that the Boolean function is unsatisfiable, and no normalization is performed.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RationalWeights {
     /// Positive-literal weight of each variable, indexed by `VarId`.

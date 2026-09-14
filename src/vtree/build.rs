@@ -161,7 +161,7 @@ impl Vtree {
         Self::linear_from_order(&vars)
     }
 
-    /// The mirror of [`Vtree::linear`]: the same chain over `n-1, …, 0`, so
+    /// A right-linear vtree over `n-1, …, 0`, reversing [`Vtree::linear`]'s order:
     /// variable `n-1` is the root's left leaf and variable `0` sits deepest.
     ///
     /// # Panics

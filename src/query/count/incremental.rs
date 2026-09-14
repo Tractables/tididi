@@ -141,9 +141,13 @@ mod sealed {
 /// let tree = Arc::new(Vtree::balanced(4));
 /// let f = Tdd::clause(&tree, [1, -2]);
 /// let mut counter = ModelCounter::<KeepAllColumns>::try_new(&engine, &f, PinSemantics::Evidence)?;
-/// assert_eq!(counter.try_model_count(&engine)?, f.model_count());
+/// assert_eq!(counter.try_model_count(&engine)?, 12u32.into());
 /// counter.set_pin(VarId(0), Some(true))?;
-/// assert!(counter.try_model_count(&engine)? <= f.model_count());
+/// assert_eq!(counter.try_model_count(&engine)?, 8u32.into());
+/// counter.set_pin(VarId(0), Some(false))?;
+/// assert_eq!(counter.try_model_count(&engine)?, 4u32.into());
+/// counter.set_pin(VarId(0), None)?;
+/// assert_eq!(counter.try_model_count(&engine)?, 12u32.into());
 /// # tididi::test_helpers::assert_canonical(&f);
 /// # Ok::<(), tididi::OperationError>(())
 /// ```

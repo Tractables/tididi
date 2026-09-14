@@ -1,189 +1,101 @@
 # Tree Decision Diagrams
 
-A Tree Decision Diagram (TDD) is a canonical representation of a Boolean
-function decomposed along a vtree, a binary tree over the variables. TDDs are
-introduced and analyzed in Capelli, Choi, Mengel, Muñoz and Van den Broeck,
-*A Canonical Generalization of OBDD* (<https://arxiv.org/abs/2604.05537>).
-This document describes the data structure as the `tididi` crate stores it,
-in the vocabulary of the [`Tdd`], [`TddLevel`], and [`ChildPair`] types. The
-operations are in [`docs/api-guide.md`](https://docs.rs/tididi/latest/tididi/guide/api/index.html).
+A Tree Decision Diagram represents a Boolean function by decomposing it along
+a tree of variables. The same diagram can answer different questions: which
+assignments satisfy the function, how many there are, or what their combined
+weight is. This guide introduces the representation; the [task guide] connects
+it to operations in the library.
 
-## Vtree
+## Start with the variable tree
 
-A vtree is a rooted binary tree whose leaves are the Boolean variables. An
-internal node `t` with children `t_L` and `t_R` partitions the variables
-under `t` into `vars(t_L)` and `vars(t_R)`. A TDD node at `t` denotes a
-function over `vars(t)` as a disjunction of products `f_left(vars(t_L)) ∧
-f_right(vars(t_R))`.
+A **vtree** is a binary tree with one Boolean variable at each leaf. Each
+internal node splits its variables into a left group and a right group. For
+example, a balanced tree over four variables groups `{x1, x2}` on one side
+of the root and `{x3, x4}` on the other.
 
-A right-linear vtree, where every internal node's left child is a leaf, is a
-variable order, and a TDD over it is an OBDD. A general vtree can group
-related variables in one subtree and keep unrelated ones apart.
+[`Vtree`] determines both this decomposition and the universe of assignments:
+a variable is still part of that universe when a function does not depend on
+it. A right-linear vtree has one variable on the left of each internal node
+and corresponds to the variable order of an ordered binary decision diagram.
 
-A vtree keeps its nodes in an array, and [`Vtree::bottomup()`], not the array
-order, is the order to walk them in. A freshly built tree happens to number
-every child below its parent, but rotating a tree relinks its nodes without
-moving them, so a reader that iterates [`0..num_nodes()`] is wrong on any
-rotated vtree. A vtree may leave variable ids unused: [`num_vars()`] is the id
-space and [`num_leaves()`] the variables carried.
+## From variables to a function
 
-## Levels, nodes, and pairs
+A [`Tdd`] has one **level** per vtree node. A leaf level provides the functions
+`x`, `¬x`, and `true`; an internal level contains nodes made of **pairs**.
+Each pair refers to a function from the left child level and one from the
+right child level, and denotes their conjunction. A node denotes the
+disjunction of its pairs. The output node denotes the whole function.
 
-A [`Tdd`] stores one [`TddLevel`] per vtree node, read with [`Tdd::level(t)`] or
-[`Tdd::levels()`]. A level is in one of three states.
+For example, with `x` and `y` at the two leaves, a node with the pairs
+`(x, ¬y)` and `(¬x, y)` represents exclusive disjunction. Each pair describes
+one way to satisfy the node. At a larger level, either child can itself be a
+node containing several pairs.
 
-- A leaf level stores nothing. Its three nodes are implicit and referenced
-  by index from parent pairs: [`ONE_LEAF_IDX`] (the constant ⊤), [`POS_LEAF_IDX`]
-  (the literal `x`), and [`NEG_LEAF_IDX`] (the literal `¬x`); [`LeafLabel`]
-  names them. The constant-false atom is never stored.
-- A structural level stores nodes in slots ([`TddLevel::nodes`]). Each node is a
-  set of input pairs ([`ChildPair { left, right }`]), whose encoded references are
-  decoded through [`ChildDecoder`](crate::diagram::ChildDecoder). A pair
-  `(a, b)` denotes the rectangle `models(a) × models(b)`; a node denotes the
-  union of its pairs' rectangles. Read a node's pairs through
-  [`TddLevel::pairs_of`], which resolves both storage forms; the bit layout of a
-  node word is documented on [`EncodedNode`].
-- A marginal level has dropped its structure and keeps one model count per
-  node in [`TddLevel::marginal_counts`] (see [Marginal levels](#marginal-levels)).
+## Why the counts add up
 
-The `output` node ([`TddNodeId { vtree, local }`]) at the vtree root denotes
-the whole function. The constant-false function is the one exception: it is
-the [`ZERO`] sentinel in `output.local` alone ([`Tdd::is_zero`]), and no level
-stores a node that computes false. Every counting, satisfiability, and
-semiring path can therefore assume that every stored node is satisfiable.
+In a structural TDD, a given pair of child nodes belongs to at most one node
+at its parent level. Distinct pairs may share either child, but not both.
+At a leaf, a referenced `true` cannot coexist with referenced literals.
+Together these syntactic rules make the functions of distinct nodes at a
+level disjoint; the stored leaf slots are a vocabulary, not three simultaneously
+active nodes.
 
-This stored encoding is the public traversal contract, and it is read-only:
-the invariants above are what every operation assumes without checking, so a
-level cannot be edited from outside. The [`diagram`] module documentation
-states what a reader may rely on and carries the worked walk against it;
-`examples/statistic.rs` reads one statistic off the same encoding, and
-[`TddBuilder`] is the one way to assemble a diagram by hand, checking the same
-invariants as it goes.
+The factors in a pair use disjoint variable sets, and the pairs of a node
+describe disjoint assignments. Counting therefore multiplies the two child
+counts for each pair, then adds the results. A literal contributes one;
+a free leaf contributes two. The exclusive-disjunction example has count
+`1 × 1 + 1 × 1 = 2`.
 
-## Semantics
+## Minimization and equality
 
-Each node denotes a Boolean function over the variables of its vtree subtree.
-A leaf atom denotes `x`, `¬x`, or ⊤. An internal node with pairs `{(a_i,
-b_i)}` denotes `⋁_i (f_{a_i} ∧ f_{b_i})`. The left and right factors range
-over the disjoint sets `vars(t_L)` and `vars(t_R)`, so each product is
-decomposable.
+[`minimize`] removes unreachable nodes and merges twins: nodes used with
+exactly the same siblings in every parent context. Their functions need not
+be equal; their union can replace them because the rest of the diagram
+uses them identically. For example, leaf twins `x` and `¬x` merge into `true`.
 
-## Determinism
+The resulting structural TDD is minimal and canonical for the fixed vtree,
+up to node numbering and pair order. This is the minimization result of
+[the TDD paper, Section 5]. Changing the vtree can give a different size;
+[`Engine::rotation_search`] searches such changes, while
+[`Engine::equivalent`] compares functions without relying on node identifiers.
 
-At every vtree level the distinct nodes are pairwise mutually exclusive as
-functions of their subtree variables: for distinct nodes `i, j` at level `t`,
-`f_i ∧ f_j ≡ 0`. The nodes at `t` partition the assignment space of `vars(t)`
-by the function's cofactor outside `t`. Within one node's pair list the
-disjunction is therefore a disjoint union, and the model count of a node is
-the sum over its pairs of the product of the child counts.
+## When only a value is needed
 
-TDDs are not strongly deterministic: there is no exhaustiveness guarantee and
-no per-node sibling structure. The guarantee is the global one that distinct
-nodes at a level compute disjoint functions. Rewrites that merge two pairs
-with a shared side into one pair over a disjunction are not valid, because
-the union of two partition cells is not a partition cell.
+[`marginalize_levels`] replaces a subtree's structure with per-node counts,
+or with weighted values if the diagram has an attached [`WeightStore`].
+This preserves the chosen evaluation but discards the assignments behind it:
+a count alone cannot reconstruct those assignments or evaluate new literal
+weights. Marginality is permanent, so decide what later operations need before
+releasing the structure.
 
-## Canonical reduced form
+A marginal level's descendants are also marginalized or are leaves whose
+contributions have been absorbed. Equal stored values may share a slot, and
+pairs can carry multiplicity. The structural determinism and canonicity
+statements above must therefore not be read as statements about a marginal
+level's value slots.
 
-[`minimize`] reduces a diagram in two passes; on a diagram with marginal
-levels the pair-fusion and slot-prune passes of the [Marginal
-levels](#marginal-levels) section follow.
+## Reading the stored representation
 
-1. Prune removes nodes not reachable from `output`: a top-down mark, then a
-   bottom-up compaction with a monotone index remap.
-2. Twin contraction merges nodes at one level that compute the same function.
+[`Tdd::output`] identifies the output, with [`Tdd::is_zero`] recognizing the
+constant-false sentinel before any level is indexed.
+The [`diagram`] module documents the leaf, structural, and marginal encodings
+and gives traversal examples.
+Use [`Vtree::bottomup`] for child-before-parent order: rotations preserve node
+indices, so array order is not a traversal order.
+[`TddBuilder`] checks storage when assembling a diagram by hand; its author
+must also establish the determinism contract documented on that type.
 
-   | Rule | Before → After | Fires when | Sound because |
-   |---|---|---|---|
-   | Leaf twin contraction | `(Pos_x, S), (Neg_x, S)` → `(One_x, S)` | a parent pairs both polarities of `x` with the same partner `S` | `x ∨ ¬x = ⊤`, so the two pairs cover `S` regardless of `x` |
-   | Internal twin merge | two nodes with identical parent contexts → one node, pair lists unioned | two same-level nodes are referenced from identical `(parent, sibling)` contexts | identical contexts imply identical functions; determinism keeps the union disjoint |
-
-Contraction propagates sideways to a sibling and downward to descendants,
-never upward, so one parents-before-children sweep reaches the fixpoint.
-
-The result is the canonical reduced form: no false nodes, no unreachable
-nodes, no two nodes at a level computing the same function, and the leaf
-atoms in their fixed order. It is a smooth form: every vtree level is present,
-whether or not the function depends on it.
-
-## Canonicity
-
-For a fixed vtree the minimized TDD is canonical: two TDDs computing the same
-function over the same vtree reduce to the identical diagram, up to the
-order in which same-level nodes are listed. A conjunction's product never
-emits two nodes computing the same function, but it can leave nodes the
-output does not reach and twins, so its result is canonical only after
-[`minimize`].
-
-## Size guarantee
-
-A CNF of treewidth `k` admits a TDD of size linear in the formula and
-exponential only in `k`, under a vtree derived from a width-`k` tree
-decomposition. The bound is an upper bound on size: a low-treewidth formula
-is guaranteed a compact TDD, and the bound says nothing about other formulas.
-
-## Marginal levels
-
-`docs/marginal_example.svg` in the repository shows one small diagram before
-and after a level is summed out. When only a count is needed, a level whose
-structure can no longer change may be summed out: its nodes and pairs are
-discarded and replaced by one model count per node in
-[`TddLevel::marginal_counts`] (`u128`, with an overflow sentinel whose exact
-value lives in [`TddLevel::marginal_counts_big`]). With a [`WeightStore`]
-attached the level is weight-marginal instead
-([`TddLevel::is_weight_marginal`]) and its per-node semiring values live in
-the store. A marginal node keeps only its value, so two marginal nodes with
-equal values are interchangeable. A pair whose child level is marginal
-refers to the child either by table index or by the count itself held inline
-in the pair. Build the child's [`ChildDecoder`]
-([`TddLevel::child_decoder`]) once and decode every side of that level through it;
-it yields a [`ChildRef`], either a node of a structural child or a [`ValueRef`] —
-[`Slot`] or [`Inline`] — of a marginal one. [`ChildDecoder`] is the supported way
-to read such a side; the bit layout behind it is not public.
-
-The set of marginal levels is downward-closed in the vtree: below a marginal
-level every level is marginal or a leaf. A level is made marginal only after
-all its descendants are, which is what lets the storage below it be freed.
-Marginalization changes the representation, not the function denoted, and it
-is sound because the disjointness that justifies summing counts is
-established before any structure is discarded and never violated afterward.
-
-Both value domains — the integer counts stored in the level and the semiring
-values kept in an attached [`WeightStore`] — are summed out by one pass over
-the vtree, which differs between them only in what a node's value is and where
-the finished values are kept. A vtree leaf is summed out by lookup alone,
-since its value is fixed by its label.
-
-[`0..num_nodes()`]: crate::Vtree::num_nodes
-[`ChildRef`]: crate::diagram::ChildRef
-[`Inline`]: crate::diagram::ValueRef::Inline
-[`ChildPair`]: crate::diagram::ChildPair
-[`ChildPair { left, right }`]: crate::diagram::ChildPair
-[`LeafLabel`]: crate::diagram::LeafLabel
-[`NEG_LEAF_IDX`]: crate::diagram::NEG_LEAF_IDX
-[`ONE_LEAF_IDX`]: crate::diagram::ONE_LEAF_IDX
-[`POS_LEAF_IDX`]: crate::diagram::POS_LEAF_IDX
-[`ChildDecoder`]: crate::diagram::ChildDecoder
-[`Slot`]: crate::diagram::ValueRef::Slot
+[task guide]: https://docs.rs/tididi/latest/tididi/guide/api/index.html
+[the TDD paper, Section 5]: https://arxiv.org/html/2604.05537v1#S5
+[`Vtree`]: crate::Vtree
 [`Tdd`]: crate::Tdd
-[`Tdd::is_zero`]: crate::Tdd::is_zero
-[`Tdd::level(t)`]: crate::Tdd::level
-[`Tdd::levels()`]: crate::Tdd::levels
-[`TddBuilder`]: crate::diagram::TddBuilder
-[`TddLevel`]: crate::diagram::TddLevel
-[`TddLevel::is_weight_marginal`]: crate::diagram::TddLevel::is_weight_marginal
-[`TddLevel::marginal_counts`]: crate::diagram::TddLevel::marginal_counts
-[`TddLevel::marginal_counts_big`]: crate::diagram::TddLevel::marginal_counts_big
-[`TddLevel::nodes`]: crate::diagram::TddLevel::nodes
-[`TddLevel::pairs_of`]: crate::diagram::TddLevel::pairs_of
-[`TddLevel::child_decoder`]: crate::diagram::TddLevel::child_decoder
-[`EncodedNode`]: crate::diagram::EncodedNode
-[`TddNodeId { vtree, local }`]: crate::diagram::TddNodeId
-[`ValueRef`]: crate::diagram::ValueRef
-[`Vtree::bottomup()`]: crate::Vtree::bottomup
-[`WeightStore`]: crate::diagram::WeightStore
-[`ZERO`]: crate::diagram::ZERO
-[`diagram`]: crate::diagram
 [`minimize`]: crate::reduce::minimize
-[`num_leaves()`]: crate::Vtree::num_leaves
-[`num_vars()`]: crate::Vtree::num_vars
+[`Engine::rotation_search`]: crate::Engine::rotation_search
+[`Engine::equivalent`]: crate::Engine::equivalent
+[`marginalize_levels`]: crate::marginal::marginalize_levels
+[`WeightStore`]: crate::diagram::WeightStore
+[`Tdd::output`]: crate::Tdd::output
+[`Tdd::is_zero`]: crate::Tdd::is_zero
+[`diagram`]: crate::diagram
+[`Vtree::bottomup`]: crate::Vtree::bottomup
+[`TddBuilder`]: crate::diagram::TddBuilder

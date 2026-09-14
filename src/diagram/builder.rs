@@ -71,8 +71,15 @@ impl<'a> LevelView<'a> {
 /// result will be seated on, so a finished diagram can never be paired with a
 /// tree it was not built against.
 ///
-/// Levels come from the engine's recycling pool and go back to it on either
-/// exit, so a caller never handles the pool itself.
+/// Level buffers come from the engine's recycling pool. On success they belong
+/// to the returned diagram; [`abandon`](Self::abandon) returns them to the pool,
+/// while dropping the builder frees them.
+///
+/// [`finish`](Self::finish) checks references, storage, and marginal columns.
+/// It does not prove determinism: the caller must ensure that nodes at a
+/// structural level represent disjoint functions and that a child pair belongs
+/// to at most one node at that level. Counting relies on these conditions;
+/// minimization cannot turn an arbitrary overlapping circuit into a TDD.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -225,11 +232,11 @@ impl TddBuilder {
     /// Seat the diagram on `output` and hand it back.
     ///
     /// The result is well-formed but not necessarily canonical: it may hold
-    /// unreachable nodes and distinct nodes computing the same function.
-    /// [`minimize`](crate::reduce::minimize) makes it canonical.
+    /// unreachable nodes and uncontracted twins.
+    /// [`minimize`](crate::reduce::minimize) makes a valid TDD canonical.
     ///
-    /// The invariants the [module docs](super) list are checked here, in every
-    /// profile, in one walk of the diagram.
+    /// Storage validity is checked in every build profile. Semantic determinism
+    /// remains the caller's responsibility, as described on [`TddBuilder`].
     ///
     /// # Errors
     ///

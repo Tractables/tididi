@@ -2,11 +2,25 @@
 
 use crate::vtree::VarId;
 
-/// A literal: a variable with a polarity.
+/// A Boolean variable and its polarity.
 ///
-/// `Tdd::clause` and `apply_and_clause` accept `&[Literal]` slices; a signed
-/// DIMACS integer converts into one through [`From`], by value or by
-/// reference, so a `&[i32]` read off a file needs no conversion pass.
+/// Integer inputs use signed, one-based literals: `1` is positive `VarId(0)`,
+/// and `-2` is negative `VarId(1)`. Zero is invalid and its conversion panics.
+/// Use the typed constructors when your application already has zero-based ids:
+///
+/// ```
+/// use tididi::Literal;
+/// use tididi::vtree::VarId;
+///
+/// assert_eq!(Literal::from(1), Literal::pos(VarId(0)));
+/// assert_eq!(Literal::from(-2), Literal::neg(VarId(1)));
+/// assert_eq!(Literal::pos(VarId(0)).negated(), Literal::neg(VarId(0)));
+/// ```
+///
+/// Constructors such as [`Engine::clause`](crate::Engine::clause) accept iterators
+/// of integers or typed literals, by value or reference. Methods taking a
+/// `&[Literal]`, such as [`Engine::and_clause`](crate::Engine::and_clause), require
+/// a typed slice; convert integer data before that call.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct Literal {
     /// The variable this literal refers to.

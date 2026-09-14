@@ -110,36 +110,11 @@ struct Marking {
     root_live: bool,
 }
 
-/// Restrict `f` to the region `care` names, on a transient engine with no
-/// limits armed.
+/// Simplify `f` on the care set using a temporary engine with no installed limits.
 ///
-/// Both operands are taken by value, as [`Engine::restrict_to_care`] takes them: `f`
-/// rides back in whichever arm of the result it belongs to, so the
-/// [`RestrictionOutcome::Unchanged`] arm hands the operand over rather than copying it,
-/// and `care` is minimized before the walk. [`Engine::restrict_to_care`] is the same
-/// operation on a caller's engine — it keeps the per-level buffers warm
-/// between calls and reports a refusal rather than panicking on it — and
-/// states the contract.
-///
-/// ```
-/// use std::sync::Arc;
-/// use tididi::Tdd;
-/// use tididi::apply::{restrict_to_care, RestrictionOutcome};
-/// use tididi::vtree::Vtree;
-///
-/// let vtree = Arc::new(Vtree::balanced(3));
-/// let f = Tdd::clause(&vtree, [1, 2]);   // x1 ∨ x2
-/// let care = Tdd::clause(&vtree, [1]);   // only x1 matters
-///
-/// // Outside the care region the result may differ from `f`; inside it agrees.
-/// let g = restrict_to_care(f.clone(), care.clone()).into_tdd();
-/// assert_eq!((g.clone() & care.clone()).model_count(), (f & care).model_count());
-///
-/// // Care that no model satisfies collapses the result.
-/// let nothing = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [-1]);
-/// let out = restrict_to_care(g, nothing);
-/// assert!(matches!(out, RestrictionOutcome::Unsatisfiable(_)));
-/// ```
+/// [`Engine::restrict_to_care`] gives the contract, an example, and the fallible
+/// form. Both operands are consumed; [`RestrictionOutcome::into_tdd`] extracts
+/// the resulting diagram.
 ///
 /// # Panics
 ///
@@ -151,46 +126,43 @@ pub fn restrict_to_care(f: Tdd, care: Tdd) -> RestrictionOutcome {
 
 /// The restriction entry point on a caller's engine.
 impl crate::engine::Engine {
-    /// Restriction (generalized cofactor) by dead-marking: a diagram `g` no
-    /// larger than `f` with `g ∧ care == f ∧ care`. The module doc of
-    /// [`restrict_to_care()`](crate::apply::restrict_to_care()) gives the algorithm.
+    /// Simplify `f` where only assignments satisfying `care` matter.
     ///
-    /// Both operands must share the same vtree allocation; their output levels may differ. Takes
-    /// both by value. `f` rides back in whichever arm of the result it belongs
-    /// to, so a caller that only wants the diagram calls
-    /// [`RestrictionOutcome::into_tdd`] and one that wants to skip the epilogue matches
-    /// on [`RestrictionOutcome::Unchanged`] — neither copies `f`. `care` is minimized
-    /// before the walk on this engine, and dropped. A ⊥ `f` is [`RestrictionOutcome::Unchanged`]; a `care` with no
-    /// model is [`RestrictionOutcome::Unsatisfiable`]. A [`RestrictionOutcome::Shrunk`] result
-    /// counts correctly but is not canonical. Marginal levels are allowed in
-    /// both operands: one of `f` is carried through as it is, one of `care`
-    /// constrains nothing below it. Every outcome retains `f`'s weight configuration;
-    /// `care`'s weights do not change the result's arithmetic.
-    ///
-    /// # Errors
-    ///
-    /// [`OperationError::VtreeMismatch`] before any work if the vtree allocations differ.
-    /// [`OperationError::OverBudget`] when a care reduction, walk, rebuild, or prune
-    /// reservation is refused, [`OperationError::Stopped`] on the armed
-    /// deadline or a stop decision, and [`OperationError::OutputCap`] when the
-    /// rebuild exceeds the cap on emitted nodes; `f` is spent.
+    /// The result `g` is no larger than `f` and satisfies `g ∧ care == f ∧ care`;
+    /// outside the care set its value is unspecified. This is a generalized cofactor.
+    /// Both operands must share the same vtree allocation; their output levels may
+    /// differ. Both are consumed, including on error.
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::Tdd;
-    /// use tididi::vtree::Vtree;
-    /// use tididi::Engine;
+    /// use tididi::{Engine, Vtree};
     ///
-    /// let eng = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&vtree, [1, 2]); // x1 ∨ x2
-    /// let care = Tdd::clause(&vtree, [1]); // x1
-    /// let g = eng.restrict_to_care(f, care).unwrap().into_tdd();
-    /// // Contract: g agrees with f wherever care holds, i.e. g ∧ x1 == f ∧ x1.
-    /// let lhs = g & Tdd::clause(&vtree, [1]);
-    /// let rhs = Tdd::clause(&vtree, [1, 2]) & Tdd::clause(&vtree, [1]);
-    /// assert_eq!(lhs.model_count(), rhs.model_count());
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = engine.clause(&tree, [1, 2])?;
+    /// let care = engine.literal(&tree, 1)?;
+    /// let g = engine.restrict_to_care(f.clone(), care.clone())?.into_tdd();
+    /// let restricted = engine.and(g, care.clone())?;
+    /// let original = engine.and(f, care)?;
+    /// assert!(engine.equivalent(&restricted, &original)?);
+    /// # Ok::<(), tididi::OperationError>(())
     /// ```
+    ///
+    /// [`RestrictionOutcome`] distinguishes an unchanged operand, a shrunk diagram,
+    /// and a false result; [`RestrictionOutcome::into_tdd`] extracts the diagram.
+    /// A shrunk result may need minimization. A false `f` is returned unchanged;
+    /// otherwise, false `care` produces an unsatisfiable outcome.
+    ///
+    /// Marginal levels are allowed: those in `f` are retained, and those in `care`
+    /// place no constraint on their discarded subtrees. Every outcome retains `f`'s
+    /// weights and arithmetic; `care`'s weights do not change them.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::VtreeMismatch`] for different vtree allocations,
+    /// [`OperationError::OverBudget`] for a refused allocation,
+    /// [`OperationError::Stopped`] for a deadline or stop decision, and
+    /// [`OperationError::OutputCap`] when the rebuild exceeds the emitted-node cap.
     pub fn restrict_to_care(&self, f: Tdd, care: Tdd) -> Result<RestrictionOutcome, OperationError> {
         crate::apply::restrict_to_care::restrict_to_care_on(self, f, care)
     }

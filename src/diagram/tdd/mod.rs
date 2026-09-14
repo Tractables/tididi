@@ -90,8 +90,9 @@ impl std::ops::BitOr for Changed {
 /// ([`TddBuilder`](crate::diagram::TddBuilder)) is not until
 /// [`minimize`](crate::reduce::minimize) runs.
 ///
-/// Cloning copies the level storage and shares the vtree; use borrowed
-/// references for read-only queries. Canonicality is up to node order within
+/// Cloning copies the level storage and shares the vtree; it is not a cheap
+/// node-handle copy. Use borrowed references for read-only queries, and let
+/// Rust drop diagrams when they are no longer needed. Canonicality is up to node order within
 /// each level, so comparing output identifiers from different diagrams does
 /// not establish functional equality.
 ///
@@ -104,12 +105,13 @@ impl std::ops::BitOr for Changed {
 ///
 /// let engine = Engine::new();
 /// let tree = Arc::new(Vtree::balanced(3));
-/// let f = Tdd::clause(&tree, [1, 2]);
+/// let f = engine.clause(&tree, [1, 2])?;
 /// let with_first = engine.condition_var(f.clone(), VarId(0), true)?;
 /// let without_first = engine.condition_var(f.clone(), VarId(0), false)?;
 /// assert_eq!(with_first.model_count(), 8u32.into());
 /// assert_eq!(without_first.model_count(), 4u32.into());
 /// assert_eq!(f.model_count(), 6u32.into()); // the retained original
+/// // Conditioning substitutes x1 but keeps it free in the counting universe.
 /// # for diagram in [&f, &with_first, &without_first] { tididi::test_helpers::assert_canonical(diagram); }
 /// # Ok::<(), tididi::OperationError>(())
 /// ```

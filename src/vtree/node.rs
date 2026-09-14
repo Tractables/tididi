@@ -41,10 +41,36 @@ impl VtreeNode {
 
 /// A variable tree (vtree): a rooted binary tree whose leaves correspond to variables.
 ///
-/// Nodes are stored with all leaves first (`0..num_leaves`), then all internal
-/// nodes (`num_leaves..n`) in bottom-up level order — see the module docs for
-/// the `child.idx() < parent.idx()` ordering that gives, and for why a rotated
-/// tree is read through [`Vtree::bottomup`] instead.
+/// Use [`Vtree::balanced`] to group contiguous variables into subtrees, or
+/// [`Vtree::linear`] for a right-linear tree representing a variable order.
+/// The tree determines the full variable universe, including free variables
+/// that a particular function does not mention.
+///
+/// Wrap the tree in one `Arc` and share that allocation among operands:
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{Engine, Vtree};
+///
+/// let engine = Engine::new();
+/// let tree = Arc::new(Vtree::balanced(3));
+/// let f = engine.literal(&tree, 1)?;
+/// let g = engine.literal(f.vtree(), -2)?;
+/// assert!(Arc::ptr_eq(f.vtree(), g.vtree()));
+/// let both = engine.and(f, g)?;
+/// assert_eq!(engine.model_count(&both)?, 2u32.into());
+/// # Ok::<(), tididi::OperationError>(())
+/// ```
+///
+/// Two independently constructed trees are different allocations, even when
+/// their shapes and variable labels match; binary diagram operations reject
+/// that combination. Cloning the `Arc` preserves compatibility.
+///
+/// For sparse ids, [`Vtree::balanced_over`] and [`Vtree::linear_from_order`]
+/// take the variables explicitly. [`Vtree::num_leaves`] counts present
+/// variables; [`Vtree::num_vars`] is the variable-id space, large enough to
+/// index every named variable.
+/// Weight tables use the latter size, while model counts range over the former.
 ///
 /// # Representation
 ///
@@ -139,10 +165,11 @@ impl Vtree {
         }
     }
 
-    /// The variable space this vtree spans: `max(VarId) + 1`, which a formula
-    /// compiled against it has to fit inside.
+    /// Size of the variable-id space, at least the largest leaf's [`VarId`] plus one.
     ///
-    /// Equal to [`Vtree::num_leaves`] unless the leaves skip variable ids.
+    /// This is a sufficient size for a table indexed by variable id. It equals
+    /// [`Vtree::num_leaves`] when the leaves are exactly `0..num_vars`; sparse ids
+    /// or a larger space passed to [`Vtree::from_nodes`] make it larger.
     #[inline]
     pub fn num_vars(&self) -> u32 {
         self.var_to_leaf.len() as u32

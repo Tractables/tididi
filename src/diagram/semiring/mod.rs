@@ -19,15 +19,23 @@ pub(crate) use weight::{weight_key, WeightKey};
 use crate::diagram::LeafLabel;
 use crate::vtree::VarId;
 
-/// Commutative semiring over `Value`, with leaf values keyed by
-/// `(VarId, LeafLabel)` so weight-table semirings (weighted model counting,
-/// say) can look up per-variable weights.
+/// Arithmetic for evaluating a structural diagram with values at its leaves.
 ///
-/// The receiver is `&self` so an impl can hold a table it reads from (a weight
-/// table, say); a stateless semiring is a unit struct.
+/// The operations must form a commutative semiring: addition is associative and
+/// commutative with [`zero`](Self::zero) as identity; multiplication is
+/// associative and commutative, distributes over addition, and has zero as an
+/// absorbing element. The fold needs no explicit multiplicative-identity
+/// method because every product starts with its two child values.
 ///
-/// `LeafLabel::Zero` is never passed to `leaf` — `evaluate` short-circuits
-/// it to `zero()` directly.
+/// [`leaf`](Self::leaf) supplies each variable's positive, negative, and free
+/// values. Its `One` value must equal the sum of its `Pos` and `Neg` values:
+/// a free variable includes both assignments, so it is not generally the
+/// multiplicative identity. `LeafLabel::Zero` is handled by `zero()` and is
+/// never passed to `leaf`.
+///
+/// The library trusts these laws; violating them can make equivalent diagrams
+/// evaluate differently. A table-based implementation may store weights in
+/// `self`; a stateless algebra can be a unit struct.
 ///
 /// Count the fewest true variables in any satisfying assignment with a min-plus algebra:
 ///

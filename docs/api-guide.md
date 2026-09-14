@@ -1,58 +1,111 @@
-# Task guide
+# Using tididi
 
-Choose a task below; each linked API item contains its contract and short code examples.
+Start with a vtree and an engine, build a function, then borrow the resulting
+diagram to ask questions about it. The sections below follow that sequence;
+the linked API items provide the contracts and examples.
 
 ## Build a Boolean function
 
-- Choose a variable tree with [`Vtree::balanced`](crate::Vtree::balanced), [`Vtree::linear`](crate::Vtree::linear), or [`Vtree::join`](crate::Vtree::join).
-- Create literals with [`Engine::literal`](crate::Engine::literal), disjunctions of literals with [`Engine::clause`](crate::Engine::clause), and conjunctions of literals with [`Engine::cube`](crate::Engine::cube).
-- Combine functions with [`Engine::and`](crate::Engine::and), [`Engine::or`](crate::Engine::or), [`Engine::negate`](crate::Engine::negate), [`Engine::xor`](crate::Engine::xor), and [`Engine::ite`](crate::Engine::ite).
-- Add a clause to an existing function with [`Engine::and_clause`](crate::Engine::and_clause).
-- Keep a function for several transformations using the ownership example on [`Tdd`](crate::Tdd).
+Choose [`Vtree::balanced`](crate::Vtree::balanced) for a first experiment,
+[`Vtree::linear`](crate::Vtree::linear) for a variable order, or
+[`Vtree::join`](crate::Vtree::join) to assemble your own grouping.
+The [`Vtree`](crate::Vtree) introduction explains how variables are numbered
+and how operands share a tree.
+
+Build an atom with [`Engine::literal`](crate::Engine::literal), a disjunction
+of literals with [`Engine::clause`](crate::Engine::clause), or a conjunction
+of literals with [`Engine::cube`](crate::Engine::cube).
+Compose functions with [`Engine::and`](crate::Engine::and),
+[`Engine::or`](crate::Engine::or), [`Engine::negate`](crate::Engine::negate),
+[`Engine::xor`](crate::Engine::xor), or [`Engine::ite`](crate::Engine::ite).
+For a sequence of constraints, [`Engine::and_clause`](crate::Engine::and_clause)
+adds a clause to an existing diagram.
+The ownership example on [`Tdd`](crate::Tdd) shows how to retain an operand
+for more than one transformation.
 
 ## Ask questions about a function
 
-- Count satisfying assignments with [`Engine::model_count`](crate::Engine::model_count).
-- Obtain a satisfying assignment with [`Engine::satisfying_assignment`](crate::Engine::satisfying_assignment).
-- Compare functions with [`Engine::equivalent`](crate::Engine::equivalent) or test entailment with [`Engine::implies`](crate::Engine::implies).
-- Find the variables a function depends on with [`Engine::support`](crate::Engine::support).
-- Find literals true in every model with [`implied_literals`](crate::query::implied_literals).
-- Check satisfiability of a minimized diagram with [`is_sat_minimized`](crate::query::is_sat_minimized).
-- Choose reduction passes with [`try_reduce`](crate::reduce::try_reduce) and [`ReductionPlan`](crate::reduce::ReductionPlan).
+[`Engine::model_count`](crate::Engine::model_count) counts satisfying assignments,
+including choices for free variables.
+To obtain an assignment itself, use
+[`Engine::satisfying_assignment`](crate::Engine::satisfying_assignment).
+Test semantic equality with [`Engine::equivalent`](crate::Engine::equivalent),
+or whether one function entails another with [`Engine::implies`](crate::Engine::implies).
+
+For information about individual variables, [`Engine::support`](crate::Engine::support)
+finds those that can affect the answer, while
+[`implied_literals`](crate::query::implied_literals) finds literals true in every model.
+[`is_sat_minimized`](crate::query::is_sat_minimized) provides a satisfiability
+check for diagrams that have already been minimized.
 
 ## Change assignments or variables
 
-- Compute a cofactor for an assignment with [`Engine::condition`](crate::Engine::condition).
-- Existentially quantify variables with [`Engine::exists_vars`](crate::Engine::exists_vars).
-- Conjoin and existentially quantify with [`Engine::and_exists`](crate::Engine::and_exists).
-- Swap or rename variables with [`Engine::rename_vars`](crate::Engine::rename_vars).
-- Substitute Boolean functions for variables with [`Engine::substitute`](crate::Engine::substitute).
-- Simplify a function under a care set with [`Engine::restrict_to_care`](crate::Engine::restrict_to_care).
+[`Engine::condition`](crate::Engine::condition) substitutes a fixed assignment
+and explains how the resulting cofactor is counted.
+If you want repeated counts under observations without rewriting the diagram,
+use [`ModelCounter`](crate::query::ModelCounter) with
+[`PinSemantics::Evidence`](crate::query::PinSemantics::Evidence).
+
+Use [`Engine::exists_vars`](crate::Engine::exists_vars) when a variable's value
+may be chosen either way, or [`Engine::and_exists`](crate::Engine::and_exists)
+for the conjunction-and-quantification step of a relational image.
+[`Engine::rename_vars`](crate::Engine::rename_vars) then handles variable
+identification, swaps, and current/next-state renaming.
+For replacements that are whole functions, use
+[`Engine::substitute`](crate::Engine::substitute).
+[`Engine::restrict_to_care`](crate::Engine::restrict_to_care) simplifies a
+function where only assignments in a care set matter.
 
 ## Evaluate probabilities or repeated observations
 
-- Reuse a compiled diagram under changing evidence with [`ModelCounter::try_new`](crate::query::ModelCounter::try_new), [`ModelCounter::set_pin`](crate::query::ModelCounter::set_pin), and [`ModelCounter::try_model_count`](crate::query::ModelCounter::try_model_count), choosing the counting convention through [`PinSemantics`](crate::query::PinSemantics).
-- Evaluate weighted probabilities with [`Engine::evaluate`](crate::Engine::evaluate) and [`RationalWeights`](crate::diagram::RationalWeights).
-- Supply your own arithmetic by implementing [`EvalAlgebra`](crate::diagram::EvalAlgebra).
-- Read the value of a diagram carrying a weight store with [`Engine::weighted_value`](crate::Engine::weighted_value).
+[`Engine::evaluate`](crate::Engine::evaluate) evaluates a structural diagram
+with a caller-supplied algebra, and its probability example uses
+[`RationalWeights`](crate::diagram::RationalWeights).
+Implement [`EvalAlgebra`](crate::diagram::EvalAlgebra) to compute a different
+quantity, such as the fewest true variables in a model.
+
+For fixed weights that travel with a diagram, attach a
+[`WeightStore`](crate::diagram::WeightStore) through
+[`Tdd::set_weights`](crate::Tdd::set_weights) and read its result with
+[`Engine::weighted_value`](crate::Engine::weighted_value).
+The complete [probabilistic query example](https://github.com/Tractables/tididi/blob/main/examples/probabilistic_query.rs)
+shows repeated evaluation and conditional-probability normalization.
 
 ## Control resources and diagram size
 
-- Set deadlines and memory budgets through [`LimitConfig`](crate::limits::LimitConfig) and [`Engine::limits`](crate::Engine::limits).
-- Handle refused operations through [`OperationError`](crate::OperationError).
-- Measure operation work through [`Limits::work_since`](crate::limits::Limits::work_since).
-- Minimize under the current vtree with [`minimize`](crate::reduce::minimize) or its checked form [`try_minimize`](crate::reduce::try_minimize).
-- Search for a better vtree with [`Engine::rotation_search`](crate::Engine::rotation_search).
-- Release structure while preserving counts or fixed weights with [`marginalize_levels`](crate::marginal::marginalize_levels).
+Configure limits through [`LimitConfig`](crate::limits::LimitConfig), install
+them for a block with [`Limits::scope`](crate::limits::Limits::scope), and
+handle refusals as [`OperationError`](crate::OperationError).
+[`Limits::work_since`](crate::limits::Limits::work_since) measures the work
+performed by a group of operations.
+
+Use [`try_minimize`](crate::reduce::try_minimize) for canonical form under
+the current vtree, or [`minimize`](crate::reduce::minimize) for its convenience form.
+[`try_reduce`](crate::reduce::try_reduce) and [`ReductionPlan`](crate::reduce::ReductionPlan)
+let advanced callers select individual passes.
+[`Engine::rotation_search`](crate::Engine::rotation_search) searches different
+vtree shapes when the current representation is too large.
+When only counts or fixed weighted values are still needed,
+[`marginalize_levels`](crate::marginal::marginalize_levels) can release structure
+permanently.
 
 ## Save or inspect a diagram
 
-- Save and restore a diagram using [`write_tdd`](crate::io::write_tdd) and [`read_tdd`](crate::io::read_tdd), together with [`Vtree::to_text`](crate::Vtree::to_text) and [`Vtree::from_text`](crate::Vtree::from_text).
-- Draw a diagram with [`tdd_to_dot`](crate::io::tdd_to_dot) or its vtree with [`vtree_to_dot`](crate::io::vtree_to_dot).
-- Inspect nodes and pairs through the traversal examples in [`diagram`](crate::diagram).
-- Assemble a diagram from nodes using [`TddBuilder`](crate::diagram::TddBuilder).
-- Combine disjoint variable domains with [`Tdd::graft`](crate::Tdd::graft) or [`Tdd::graft_over`](crate::Tdd::graft_over).
+[`write_tdd`](crate::io::write_tdd) and [`read_tdd`](crate::io::read_tdd) save
+and restore a structural diagram, with its tree stored separately by
+[`Vtree::to_text`](crate::Vtree::to_text) and [`Vtree::from_text`](crate::Vtree::from_text).
+Render Graphviz text with [`tdd_to_dot`](crate::io::tdd_to_dot) or
+[`vtree_to_dot`](crate::io::vtree_to_dot).
 
-## Understand the representation
+The [`diagram`](crate::diagram) module introduces traversal before showing how
+to decode marginal values.
+Use [`TddBuilder`](crate::diagram::TddBuilder) to assemble nodes yourself,
+or [`Tdd::graft`](crate::Tdd::graft) and [`Tdd::graft_over`](crate::Tdd::graft_over)
+to combine diagrams with disjoint variable domains.
 
-Read the [TDD model](https://docs.rs/tididi/latest/tididi/guide/model/index.html) for vtrees and determinism, and the [architecture reference](https://docs.rs/tididi/latest/tididi/guide/architecture/index.html) when extending the implementation.
+## Read further
+
+The [data model](https://docs.rs/tididi/latest/tididi/guide/model/index.html)
+introduces levels, pairs, and determinism; the
+[architecture reference](https://docs.rs/tididi/latest/tididi/guide/architecture/index.html)
+explains the passes and invariants for contributors.

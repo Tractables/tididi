@@ -17,7 +17,8 @@
 //! The meter the budget is checked against is zeroed when an operation starts
 //! and by [`Limits::reset_meters`], so a budget bounds one operation at a
 //! time; an operation another one runs as a step keeps the outer meter. The
-//! output-node cap and the stop axis are exact.
+//! output-node cap bounds the emitted nodes the operation charges. Stops are
+//! cooperative and take effect when an operation reaches a poll point.
 
 pub(crate) mod pool;
 mod error;
@@ -84,14 +85,29 @@ impl std::fmt::Debug for StopCallback {
     }
 }
 
-/// The scalar limits and shared callback handles a caller arms together.
+/// Resource limits and callbacks to install together on an engine.
 ///
-/// Installing a set replaces every axis; there is no per-axis install, and no
-/// axis is left over from whatever ran before. A caller that wants to change
-/// one axis reads the current set, arms the axis it wants on the value it read,
-/// and installs the result — which is also how it restores what it found. The
-/// axes are read back one at a time, so a set can gain an axis without any
-/// caller having to name the ones it does not care about.
+/// Start with [`LimitConfig::none`], set the bounds needed by the application,
+/// then install them with [`Limits::scope`] for a block or [`Limits::install`]
+/// until explicitly replaced. Installing a configuration replaces every setting;
+/// [`Limits::edit`] changes selected settings while preserving the rest.
+///
+/// ```
+/// use tididi::Engine;
+/// use tididi::limits::LimitConfig;
+///
+/// let engine = Engine::new();
+/// let config = LimitConfig::none()
+///     .with_memory_budget_bytes(Some(64 * 1024 * 1024))
+///     .with_output_node_cap(Some(100_000));
+/// let _limits = engine.limits().scope(config);
+/// // Checked operations here use these limits; dropping _limits restores the prior set.
+/// ```
+///
+/// The byte budget covers charged allocation growth within one operation;
+/// it is not a process-memory cap. A deadline is cooperative: it is observed
+/// at operation poll points, not by preempting running code. The output-node
+/// cap applies only to the operations listed on [`Self::with_output_node_cap`].
 #[derive(Clone, Debug, Default)]
 pub struct LimitConfig {
     memory_budget_bytes: Option<u64>,

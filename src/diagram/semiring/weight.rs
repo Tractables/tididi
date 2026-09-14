@@ -8,13 +8,16 @@ use num_traits::{One, ToPrimitive, Zero};
 
 // ── Bounded-precision signed log-domain weight (weighted marginal path) ───────────
 
-/// Bounded-precision signed log-domain weight: sign ∈ {-1,0,+1}; `ln_abs` = ln|value|
-/// (`f64::NEG_INFINITY` when sign==0). The value type of a weighted
-/// marginalization under `Arithmetic::SignedLog`.
+/// A signed value represented by an `f64` log-magnitude and a separate sign.
 ///
-/// Every operation is O(1) `f64` work, at a relative error near the `f64`
-/// epsilon per operation. The sign is tracked separately so negative literal
-/// weights are supported.
+/// Used by [`Arithmetic::SignedLog`](crate::diagram::Arithmetic::SignedLog).
+/// Zero has sign `0` and log-magnitude `f64::NEG_INFINITY`; nonzero signs are
+/// `-1` and `1`. Keeping the logarithm permits magnitudes beyond the range of an
+/// ordinary `f64` weight, and the sign permits negative literal weights.
+///
+/// Arithmetic has bounded precision. In particular, cancellation of nearly
+/// equal values can cause large relative error; use exact rational arithmetic
+/// when the result must be exact.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SignedLog {
     /// Natural log of the magnitude (`f64::NEG_INFINITY` when `sign == 0`).

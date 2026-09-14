@@ -385,7 +385,7 @@ pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
 
 /// The conditioning entry points on a caller's engine.
 impl crate::engine::Engine {
-    /// Condition a mixed assignment with one propagation and reduction pass.
+    /// Substitute a mixed assignment, returning a minimized cofactor.
     ///
     /// Repeated equal literals are ignored; opposite literals for one variable
     /// produce the constant-false diagram. All variables are checked before a
@@ -399,6 +399,10 @@ impl crate::engine::Engine {
     ///
     /// [`OperationError::MarginalLevel`] when a consistent assignment needs
     /// a leaf or parent level whose structure was summed out.
+    ///
+    /// # Panics
+    ///
+    /// If a literal conversion panics, including integer zero.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -414,83 +418,69 @@ impl crate::engine::Engine {
         condition_on(self, f, assignment)
     }
 
-    /// Condition `x` to a constant `value` (cofactor). `x` stays a variable of
-    /// the vtree, now free, so the count keeps its factor of two for `x`.
-    /// Only `x`'s leaf-parent level is rewritten (the opposite-polarity pairs
-    /// are dropped, the kept side fixed to One) and nothing is disjoined, so
-    /// this is sound when other levels are marginal and never grows the
-    /// diagram. The result is reduced: canonical, and ⊥ (`is_zero()`) when no
-    /// model is left, except on a weighted diagram, where a result with no
-    /// model may keep its nodes and only its value says so. A ⊥ operand
-    /// comes back unchanged.
+    /// Substitute `value` for `x`, returning a minimized cofactor.
     ///
-    /// `f` is consumed on `Err` as well as on `Ok`, the rule
-    /// [`Engine::and`] states: the rewrite runs in `f`'s own level arenas.
-    /// Clone it first if you need to keep it.
+    /// The vtree is unchanged: `x` becomes free, so the result's model count includes
+    /// a factor of two for it. To count observations without this free-variable
+    /// factor, use [`ModelCounter`](crate::query::ModelCounter) with
+    /// [`PinSemantics::Evidence`](crate::query::PinSemantics::Evidence).
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    /// use tididi::vtree::VarId;
+    ///
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = engine.clause(&tree, [1, 2])?; // x1 or x2, with x3 free
+    /// let g = engine.condition_var(f, VarId(0), false)?; // x2, with x1 and x3 free
+    /// assert_eq!(engine.model_count(&g)?, 4u32.into());
+    /// # tididi::test_helpers::assert_canonical(&g);
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    ///
+    /// The operand is consumed on success or error. Only the target's leaf and
+    /// parent need their structure; other levels may be marginal. Conditioning
+    /// preserves attached weights and does not grow the diagram.
+    /// For structural and count-marginal inputs, a false result uses the
+    /// [`Tdd::is_zero`] sentinel. With weighted marginal values, zero evaluation
+    /// can instead reflect zero weights or cancellation; it does not prove Boolean
+    /// unsatisfiability.
     ///
     /// # Errors
     ///
-    /// [`OperationError::VariableNotInVtree`] when `x` is not a variable of `f`'s
-    /// vtree, reported before any work is done,
-    /// [`OperationError::OverBudget`] when the reduction's reservation is refused,
-    /// [`OperationError::Stopped`] on the armed deadline or a stop decision.
-    ///
-    /// [`OperationError::MarginalLevel`] if `x`'s leaf level or its parent
-    /// level was summed out.
-    ///
-    /// ```
-    /// # use std::sync::Arc;
-    /// # use tididi::{OperationError, Engine, Tdd};
-    /// # use tididi::limits::LimitConfig;
-    /// # use tididi::vtree::{VarId, Vtree};
-    /// # let vtree = Arc::new(Vtree::balanced(4));
-    /// let engine = Engine::new();
-    /// let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
-    /// let g = engine.condition_var(f, VarId(0), true).unwrap();
-    /// assert!(!g.is_zero());
-    ///
-    /// // A byte budget of zero refuses the rewrite's reservations.
-    /// let wide = Arc::new(Vtree::balanced(20_000));
-    /// let h = Tdd::clause(&wide, [1, -2]) & Tdd::clause(&wide, [2, 3]);
-    /// let _armed = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
-    /// match engine.condition_var(h, VarId(0), true) {
-    ///     Ok(_) => unreachable!("no reservation can be granted"),
-    ///     Err(e) => assert_eq!(e, OperationError::OverBudget),
-    /// }
-    /// ```
+    /// [`OperationError::VariableNotInVtree`] for an absent variable,
+    /// [`OperationError::MarginalLevel`] when a nonfalse input needs a target leaf
+    /// or parent already summed out, or an allocation or stop refusal.
+    /// The variable is validated even for a false input.
     pub fn condition_var(&self, f: Tdd, x: VarId, value: bool) -> Result<Tdd, OperationError> {
         crate::apply::condition::condition_var_on(self, f, x, value)
     }
 
-    /// Condition every variable in `vars` to the same constant `value`, with
-    /// one reduction at the end rather than one per variable as in
-    /// [`Engine::condition_var`]. As there, each conditioned variable stays in
-    /// the vtree as a free variable, so the count keeps a factor of two per
-    /// variable.
+    /// Substitute the same Boolean `value` for every variable in `vars`.
     ///
-    /// `f` is consumed on `Err` as well as on `Ok`, as in
-    /// [`Engine::condition_var`]. An empty `vars` returns `f` unchanged.
+    /// Uses one propagation and reduction pass for the whole assignment; repeated
+    /// variables are ignored. Each conditioned variable remains free in the vtree,
+    /// as described by [`Engine::condition_var`]. An empty list returns `f`
+    /// unchanged. Use [`Engine::condition`] for mixed polarities.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    /// use tididi::vtree::VarId;
+    ///
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = engine.clause(&tree, [1, 2, 3])?;
+    /// let g = engine.condition_vars(f, &[VarId(0), VarId(1)], false)?;
+    /// assert_eq!(engine.model_count(&g)?, 4u32.into()); // x3, with x1 and x2 free
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
     ///
     /// # Errors
     ///
-    /// As [`Engine::condition_var`]; every variable is checked against the
-    /// vtree before any work is done.
-    ///
-    /// ```
-    /// # use std::sync::Arc;
-    /// # use tididi::{OperationError, Engine, Tdd};
-    /// # use tididi::limits::LimitConfig;
-    /// # use tididi::vtree::{VarId, Vtree};
-    /// # let vtree = Arc::new(Vtree::balanced(4));
-    /// let engine = Engine::new();
-    /// // A byte budget of zero refuses the rewrite's first reservation.
-    /// let _armed = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
-    /// let h = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
-    /// match engine.condition_vars(h, &[VarId(0), VarId(1)], true) {
-    ///     Ok(_) => unreachable!("no reservation can be granted"),
-    ///     Err(e) => assert_eq!(e, OperationError::OverBudget),
-    /// }
-    /// ```
+    /// As [`Engine::condition_var`]; all variables are validated before rewriting.
+    /// The operand is consumed on error as well as success.
     pub fn condition_vars(&self, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, OperationError> {
         crate::apply::condition::condition_vars_on(self, f, vars, value)
     }

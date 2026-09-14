@@ -14,9 +14,8 @@ use crate::reduce::{try_reduce, ReductionPlan};
 /// Disjunction by De Morgan: `f v g = !(!f ^ !g)`.
 ///
 /// Consumes both operands, as [`apply_and`](crate::apply::apply_and) does. The
-/// two operand negations skip minimization, because the conjunction between
-/// them canonicalizes its output anyway; only the intermediate and the final
-/// negation are minimized. Each negation fills its operand out to full
+/// two operand negations skip minimization; the conjunction's result and the
+/// final complement are minimized. Each negation fills its operand out to full
 /// structure first, so this can grow the diagram — see the module doc.
 ///
 /// # Panics
@@ -60,45 +59,35 @@ pub(crate) fn disjoin_owned(eng: &Engine, mut f: Tdd, mut g: Tdd) -> Result<Tdd,
 
 /// The disjunction entry point on a caller's engine.
 impl crate::engine::Engine {
-    /// Disjoin two diagrams over the same vtree, by De Morgan over
-    /// [`Engine::and`].
+    /// Return the disjunction of two structural diagrams sharing a vtree allocation.
+    ///
+    /// Both operands are consumed on success and on error. The result is minimized,
+    /// except that a false operand returns the other operand without minimization.
     /// Weight compatibility and inheritance follow [`Engine::and`].
     ///
-    /// Both operands are consumed on `Err` as well as on `Ok`, as in
-    /// [`Engine::and`]. Neither may have a marginal level: the negations have
-    /// no structure to complement there. Each negation fills its operand out
-    /// to full structure first, so this can grow the diagram. The result is
-    /// canonical; a ⊥ operand returns the other operand with the agreed weights.
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    ///
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let first_two = engine.cube(&tree, [1, 2])?;
+    /// let third = engine.literal(&tree, 3)?;
+    /// let f = engine.or(first_two, third)?;
+    /// assert_eq!(engine.model_count(&f)?, 5u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    ///
+    /// Disjunction uses complementation and conjunction, so intermediate diagrams
+    /// can be larger than either operand.
     ///
     /// # Errors
     ///
-    /// [`OperationError::VtreeMismatch`] before any work if the vtree allocations
-    /// differ; allocation and stop errors propagate from the component operations.
-    /// [`OperationError::IncompatibleWeights`] if the weight interpretations differ.
-    ///
-    /// [`OperationError::MarginalLevel`] before shortcuts if either operand has
-    /// a level whose structure was summed out.
-    ///
-    /// ```
-    /// # use std::sync::Arc;
-    /// # use std::time::Instant;
-    /// # use tididi::{OperationError, Engine, Tdd};
-    /// # use tididi::limits::LimitConfig;
-    /// # use tididi::vtree::Vtree;
-    /// # let vtree = Arc::new(Vtree::balanced(4));
-    /// let engine = Engine::new();
-    /// let f = Tdd::clause(&vtree, [1]);
-    /// let g = Tdd::clause(&vtree, [2]);
-    /// let h = engine.or(f, g).expect("nothing is armed on a fresh engine");
-    /// assert_eq!(h.model_count(), 12u32.into()); // x1 ∨ x2 over four variables
-    ///
-    /// let _armed = engine.limits().scope(LimitConfig::none().with_deadline(Some(Instant::now())));
-    /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
-    /// match engine.or(f, g) {
-    ///     Ok(_) => unreachable!("the deadline has passed"),
-    ///     Err(e) => assert_eq!(e, OperationError::Stopped),
-    /// }
-    /// ```
+    /// [`OperationError::VtreeMismatch`] for different vtree allocations,
+    /// [`OperationError::IncompatibleWeights`] for different weight interpretations,
+    /// or [`OperationError::MarginalLevel`] if either operand has discarded structure,
+    /// even when the other operand is false. Allocation, output-cap, and stop
+    /// refusals propagate from the component operations.
     pub fn or(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         crate::apply::disjoin::disjoin_owned(self, f, g)
     }

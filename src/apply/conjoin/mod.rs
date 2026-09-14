@@ -139,100 +139,85 @@ pub(crate) fn conjoin_owned(
 
 /// The conjunction entry points on a caller's engine.
 impl crate::engine::Engine {
-    /// Conjoin two diagrams over the same vtree.
+    /// Return the conjunction of two diagrams sharing the same vtree allocation.
+    ///
+    /// Both operands are consumed on success and on error; clone an operand first
+    /// if it is needed afterward. The result is correct for counting but may retain
+    /// unreachable nodes and twins; [`try_minimize`](crate::reduce::try_minimize)
+    /// establishes canonical form when required.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    ///
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let either = engine.clause(&tree, [1, 2])?;
+    /// let not_third = engine.literal(&tree, -3)?;
+    /// let f = engine.and(either, not_third)?;
+    /// assert_eq!(engine.model_count(&f)?, 3u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    ///
+    /// # Weights and marginal levels
     ///
     /// Attached weight tables and arithmetic must agree. A structural operand
     /// without weights inherits the other operand's table; stored integer counts
-    /// cannot be reweighted.
-    ///
-    /// Both operands are consumed on `Err` as well as on `Ok`: the product
-    /// construction drains their level arenas as it walks bottom-up and
-    /// recycles the storage into the result. Clone one first if you need to
-    /// keep it, and never reuse an operand after a call.
-    ///
-    /// The result computes the conjunction and is count-correct, but may hold
-    /// unreachable nodes and twins: run [`minimize`](crate::reduce::minimize)
-    /// when the canonical form is needed. A ⊥ operand gives ⊥.
-    /// Marginal levels are allowed and stay marginal in the result, with the
-    /// operands' weight stores merged into the result's; a level marginal in
-    /// both operands is sound only where one of them is constant-true over
-    /// that subtree, which is checked in debug builds.
+    /// cannot be reweighted. Marginal levels remain marginal, and conjunction is
+    /// valid there only when the other operand imposes no further constraint on
+    /// the summed-out variables. When both operands are marginal at a level, the
+    /// caller must ensure one represents the constant-true function on that subtree;
+    /// this condition is checked in debug builds.
     ///
     /// # Errors
     ///
-    /// [`OperationError::OverBudget`] when a buffer reservation is refused (the
-    /// allocator or the armed soft budget), [`OperationError::OutputCap`] on the
-    /// output-node cap, [`OperationError::Stopped`] on the armed deadline or a
-    /// stop decision.
+    /// [`OperationError::VtreeMismatch`] for different vtree allocations,
+    /// [`OperationError::RootMismatch`] for different output levels,
+    /// [`OperationError::IncompatibleWeights`] for different weight interpretations,
+    /// or [`OperationError::MarginalLevel`] when a structural operand constrains
+    /// variables the other has summed out.
     ///
-    /// [`OperationError::VtreeMismatch`] if the operands do not share a vtree
-    /// allocation, or [`OperationError::RootMismatch`] if their output levels
-    /// differ; both are checked before any work.
-    /// [`OperationError::IncompatibleWeights`] if the weight interpretations differ.
-    /// [`OperationError::MarginalLevel`] if one operand constrains a level
-    /// whose structure the other operand has summed out.
-    ///
-    /// ```
-    /// # use std::sync::Arc;
-    /// # use std::time::Instant;
-    /// # use tididi::{OperationError, Engine, Tdd};
-    /// # use tididi::limits::LimitConfig;
-    /// # use tididi::vtree::Vtree;
-    /// # let vtree = Arc::new(Vtree::balanced(4));
-    /// let engine = Engine::new();
-    /// let f = Tdd::clause(&vtree, [1, -2]);
-    /// let g = Tdd::clause(&vtree, [2, 3]);
-    /// let h = engine.and(f, g).expect("nothing is armed on a fresh engine");
-    /// assert_eq!(h.model_count(), 8u32.into());
-    ///
-    /// // Arm a deadline that has already passed: the next conjunction is cut
-    /// // short, and the caller gets its operands' fate back as an error.
-    /// let _armed = engine.limits().scope(LimitConfig::none().with_deadline(Some(Instant::now())));
-    /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
-    /// match engine.and(f, g) {
-    ///     Ok(_) => unreachable!("the deadline has passed"),
-    ///     Err(e) => assert_eq!(e, OperationError::Stopped),
-    /// }
-    /// ```
+    /// Resource refusals are [`OperationError::OverBudget`],
+    /// [`OperationError::OutputCap`], or [`OperationError::Stopped`].
+    /// [`Limits::scope`](crate::limits::Limits::scope) shows how to install limits.
     pub fn and(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         crate::apply::conjoin::conjoin_owned(self, f, g, None)
     }
 
-    /// [`Engine::and`], emitting the named vtree levels as streaming-marginal
-    /// instead of explicit — the levels are summed out as the product is
-    /// built rather than in a pass after it.
+    /// Conjoin two diagrams, requesting marginal values at selected subtrees.
     ///
-    /// `targets` is a set of vtree nodes; its order does not matter. Every
-    /// level under a target that is still structural in the product is summed
-    /// out with it, so the marginal levels of the result are closed downward,
-    /// as [`marginalize_levels`](crate::marginal::marginalize_levels) leaves them. A leaf in
-    /// `targets` is summed out once the product is built, as `marginalize_levels`
-    /// would sum it out. The count is preserved.
+    /// `targets` names vtree nodes; order and duplicates do not matter. Internal
+    /// targets can be summed out during product construction; leaf targets are
+    /// handled afterward. The result preserves the conjunction's count, or its
+    /// fixed weighted value when weights are attached.
+    ///
+    /// Identity and self-conjunction shortcuts can retain structural levels at
+    /// internal targets. If releasing those subtrees is required, follow with
+    /// [`marginalize_levels`](crate::marginal::marginalize_levels), which also
+    /// explains which operations remain valid after structure is discarded.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    ///
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(4));
+    /// let (left, _) = tree.children(tree.root());
+    /// let f = engine.clause(&tree, [1, 2])?;
+    /// let g = engine.clause(&tree, [3, 4])?;
+    /// let mut counted = engine.and_marginalizing(f, g, &[left])?;
+    /// // Also release levels that the product's shortcuts retained.
+    /// tididi::marginal::marginalize_levels(&engine, &mut counted, &[left])?;
+    /// assert!(counted.level(left).is_marginal());
+    /// assert_eq!(engine.model_count(&counted)?, 9u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
     ///
     /// # Errors
     ///
-    /// As [`Engine::and`].
-    ///
-    /// [`OperationError::LevelNotInVtree`] if a target is outside the vtree,
-    /// checked before allocation or product construction.
-    ///
-    /// ```
-    /// # use std::sync::Arc;
-    /// # use std::time::Instant;
-    /// # use tididi::{OperationError, Engine, Tdd};
-    /// # use tididi::limits::LimitConfig;
-    /// # use tididi::vtree::Vtree;
-    /// # let vtree = Arc::new(Vtree::balanced(4));
-    /// let engine = Engine::new();
-    /// let (left, _right) = vtree.children(vtree.root());
-    ///
-    /// let _armed = engine.limits().scope(LimitConfig::none().with_deadline(Some(Instant::now())));
-    /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
-    /// match engine.and_marginalizing(f, g, &[left]) {
-    ///     Ok(_) => unreachable!("the deadline has passed"),
-    ///     Err(e) => assert_eq!(e, OperationError::Stopped),
-    /// }
-    /// ```
+    /// The operand and resource errors of [`Engine::and`], plus
+    /// [`OperationError::LevelNotInVtree`] for an invalid target, checked before
+    /// product construction. Both operands are consumed on every outcome.
     pub fn and_marginalizing(
         &self,
         mut f: Tdd,

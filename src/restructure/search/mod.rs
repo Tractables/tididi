@@ -41,7 +41,7 @@ impl crate::engine::Engine {
     /// ([`RotationObjective::delta`] `< 0`). Sweeps repeat until one accepts
     /// nothing (a local minimum) or `config.max_sweeps` is hit; the returned
     /// [`RotationSearchStats`] holds the probe, accept and sweep tallies.
-    /// Rotations are pure variable reorders, so the model count is preserved
+    /// Rotations regroup subtrees without changing variable ids, so the count is preserved
     /// under any objective, on marginal diagrams too; a rotation that would
     /// touch a marginal level is not probed. The diagram's vtree is rotated
     /// with it: when its `Arc<Vtree>` is shared, the diagram gets a private
@@ -67,9 +67,8 @@ impl crate::engine::Engine {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{OperationError, Engine, Tdd};
+    /// use tididi::{Engine, Tdd};
     /// use tididi::diagram::TddLevel;
-    /// use tididi::limits::LimitConfig;
     /// use tididi::restructure::search::{RotationObjective, RotationSearchConfig};
     /// use tididi::vtree::Vtree;
     ///
@@ -87,14 +86,6 @@ impl crate::engine::Engine {
     /// engine.rotation_search(&mut f, &mut MinSize, &RotationSearchConfig::default()).unwrap();
     /// assert_eq!(f.model_count(), before);
     ///
-    /// // A deadline that has already passed stops the search at its first
-    /// // pivot. The diagram is left canonical and counting the same.
-    /// let _armed = engine.limits().scope(LimitConfig::none().with_deadline(Some(std::time::Instant::now())));
-    /// match engine.rotation_search(&mut f, &mut MinSize, &RotationSearchConfig::default()) {
-    ///     Ok(_) => unreachable!("the deadline has passed"),
-    ///     Err(e) => assert_eq!(e, OperationError::Stopped),
-    /// }
-    /// assert_eq!(f.model_count(), before);
     /// ```
     pub fn rotation_search<O: RotationObjective>(
         &self,

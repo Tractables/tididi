@@ -24,7 +24,7 @@
 //! ## Variable ids
 //!
 //! A vtree may cover a sparse subset of variable ids. [`Vtree::num_vars`] is
-//! the id space (`max VarId + 1`); [`Vtree::num_leaves`] is the number of ids
+//! the id-space size (at least `max VarId + 1`); [`Vtree::num_leaves`] is the number of ids
 //! the tree actually carries; [`Vtree::leaf_of`] is defined only for covered
 //! ids. The two counts agree exactly when the leaves are `0..num_vars`.
 //!

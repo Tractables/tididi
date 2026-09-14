@@ -1,30 +1,25 @@
-//! Model counting, satisfiability, algebra evaluation.
+//! Read counts, assignments, and other properties of a diagram.
 //!
-//! Everything here reads a finished diagram and returns a number, a verdict or a
-//! set; nothing mutates. Building and transforming a diagram is [`crate::apply`],
-//! [`crate::marginal`] and [`crate::reduce`].
+//! Start with [`Engine::model_count`](crate::Engine::model_count) for an exact
+//! count or [`Engine::satisfying_assignment`](crate::Engine::satisfying_assignment)
+//! for a witness. Both borrow the diagram and accept nonminimal structural inputs.
+//! [`ModelCounter`] retains counting state for repeated evidence updates.
 //!
-//! Entry points:
+//! [`Engine::equivalent`](crate::Engine::equivalent) compares Boolean functions;
+//! [`Engine::implies`](crate::Engine::implies) tests entailment.
+//! [`Engine::support`](crate::Engine::support) returns variables that affect the
+//! function, while [`implied_literals`] finds literals true in every model.
+//! Each item states its structural or minimization requirements.
 //!
-//! - Counting: [`Tdd::model_count`](crate::Tdd::model_count), and
-//!   [`ModelCounter`] for a count under a partial assignment that
-//!   re-folds only the levels a pin change reaches. [`Engine::model_count`](crate::Engine::model_count) is the
-//!   same count under the caller's limits.
-//! - Satisfiability and implied literals: [`is_sat_minimized`], [`implied_literals`].
-//! - Algebra: [`Engine::evaluate`](crate::Engine::evaluate) folds any
-//!   [`EvalAlgebra`](crate::diagram::EvalAlgebra) bottom-up;
-//!   [`RationalWeights`](crate::diagram::RationalWeights) and
-//!   [`SignedLog`](crate::diagram::SignedLog) are the two supplied domains.
-//! - Weighted: [`weighted_value`] folds a diagram carrying a
-//!   [`WeightStore`](crate::diagram::WeightStore) down to its value.
+//! [`Engine::evaluate`](crate::Engine::evaluate) accepts an
+//! [`EvalAlgebra`](crate::diagram::EvalAlgebra), such as
+//! [`RationalWeights`](crate::diagram::RationalWeights), for a fresh evaluation.
+//! [`Engine::weighted_value`](crate::Engine::weighted_value) instead reads the
+//! weights attached to a diagram, including stored marginal values, using the
+//! [`Arithmetic`](crate::diagram::Arithmetic) chosen for its store.
 //!
-//! - Boolean queries: [`Engine::equivalent`](crate::Engine::equivalent),
-//!   [`Engine::implies`](crate::Engine::implies),
-//!   [`Engine::support`](crate::Engine::support) and
-//!   [`Engine::satisfying_assignment`](crate::Engine::satisfying_assignment).
-//!
-//! Engine methods provide checked queries; free functions describe their own
-//! resource behavior. The submodules are an implementation layout.
+//! Engine methods return resource errors to the caller; convenience functions
+//! use a temporary engine and document their panic behavior.
 
 pub(crate) mod count;
 pub(crate) mod fold;

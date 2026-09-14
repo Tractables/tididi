@@ -9,14 +9,17 @@
 
 use crate::limits::Limits;
 
-/// The limits and scratch one caller's operations run on.
+/// Checked operations, reusable working memory, and resource limits for diagrams.
 ///
-/// Build one per compile and thread it through: every conjunction, reduction,
-/// marginalization and restructuring takes `&Engine`, reuses the buffers it
-/// holds, and is cut by the limits armed on it. An engine is `Send` and may move
-/// between threads; it is not `Sync` and serves one thread at a time.
+/// Reuse an engine across a sequence of operations; it retains scratch buffers
+/// for the next call. Diagrams own their results and can outlive the engine.
+/// An engine is `Send` but not `Sync`: it can move between threads, and one
+/// thread uses it at a time.
 ///
-/// Propagate errors with `?` through a sequence of operations:
+/// # Build, then query
+///
+/// Choose a shared vtree for all operands. Here a clause expresses “at least one
+/// of the first two variables,” and a cube fixes the third to false:
 ///
 /// ```
 /// use std::sync::Arc;
@@ -27,12 +30,33 @@ use crate::limits::Limits;
 /// let either = engine.clause(&tree, [1, 2])?;
 /// let not_third = engine.cube(&tree, [-3])?;
 /// let f = engine.and(either, not_third)?;
-/// assert_eq!(engine.model_count(&f)?, 3u32.into()); // (x1 ∨ x2) ∧ ¬x3
-/// # let mut f = f;
-/// # tididi::reduce::try_minimize(&engine, &mut f)?;
-/// # tididi::test_helpers::assert_canonical(&f);
+/// assert_eq!(engine.model_count(&f)?, 3u32.into());
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
+///
+/// Transformations taking `Tdd` consume their operands, including on error;
+/// queries taking `&Tdd` leave them available. See [`Tdd`](crate::Tdd) for copying
+/// an operand when several transformations need it.
+///
+/// # Choose the operation you need
+///
+/// The [task guide](crate::guide::api) groups the methods by user task.
+/// [`and`](Self::and) can leave a nonminimal representation; use
+/// [`try_minimize`](crate::reduce::try_minimize) when canonical form is needed.
+/// Counting and ordinary Boolean queries state their own minimization requirements.
+///
+/// # Bound a computation
+///
+/// A new engine has no limits installed. Use [`Limits::scope`] to apply a
+/// [`LimitConfig`](crate::limits::LimitConfig) to a block and restore the prior
+/// configuration afterward. Checked methods return [`OperationError`](crate::OperationError)
+/// on refusal; the method's contract specifies what remains after an error.
+///
+/// The `Tdd` constructors and Boolean operators are convenience forms with a
+/// temporary engine and panic-on-error behavior. The infallible
+/// [`one`](Self::one) and [`zero`](Self::zero) methods also do not check resource
+/// limits; the empty [`cube`](Self::cube) or [`clause`](Self::clause) provides a
+/// checked constant when needed.
 pub struct Engine {
     limits: Limits,
     apply: crate::apply::conjoin::ApplyScratch,
@@ -61,7 +85,7 @@ impl Default for Engine {
 }
 
 impl Engine {
-    /// A fresh engine: nothing armed, no scratch warmed up.
+    /// Create an engine with no installed limits and no retained working buffers.
     ///
     /// A returned diagram owns its storage and can outlive the engine:
     ///
@@ -72,10 +96,10 @@ impl Engine {
     /// let tree = Arc::new(Vtree::balanced(2));
     /// let f = {
     ///     let engine = Engine::new();
-    ///     engine.clause(&tree, [1, 2]).unwrap()
+    ///     engine.clause(&tree, [1, 2])?
     /// };
     /// assert_eq!(f.model_count(), 3u32.into());
-    /// # tididi::test_helpers::assert_canonical(&f);
+    /// # Ok::<(), tididi::OperationError>(())
     /// ```
     #[must_use]
     pub fn new() -> Engine {
@@ -132,8 +156,10 @@ impl Engine {
         &self.levels
     }
 
-    /// The limits themselves, for reading the meters and for the operations
-    /// that charge against them.
+    /// Access the engine's limit configuration and work measurements.
+    ///
+    /// [`Limits::scope`] installs limits temporarily; [`Limits::edit`] changes
+    /// selected settings while preserving the others.
     #[must_use]
     pub fn limits(&self) -> &Limits {
         &self.limits

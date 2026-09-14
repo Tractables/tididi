@@ -41,9 +41,8 @@ pub(crate) fn model_count(f: &Tdd) -> BigUint {
 impl Tdd {
     /// Exact unweighted model count of this diagram, as an arbitrary-precision integer.
     ///
-    /// Sugar over [`Engine::model_count`](crate::Engine::model_count) on a
-    /// transient engine, which arms no stop, so the count cannot be cut; the
-    /// contract is stated there.
+    /// Uses [`Engine::model_count`](crate::Engine::model_count) with a temporary
+    /// engine and no installed limits; that method states the counting contract.
     ///
     /// # Panics
     ///
@@ -188,44 +187,36 @@ pub fn node_counts_u128(tdd: &Tdd) -> Vec<Vec<u128>> {
 
 /// The counting entry point on a caller's engine.
 impl crate::engine::Engine {
-    /// The number of satisfying assignments of `tdd`, under this engine's
-    /// limits.
+    /// Count satisfying assignments over every variable in the diagram's vtree.
     ///
-    /// [`Tdd::model_count`](crate::Tdd::model_count) is the same count with
-    /// nothing armed to interrupt it. The diagram need not be canonical; every
-    /// variable of the vtree is counted, a free one contributing a factor of
-    /// two. A count-marginal level is read from its stored counts; ⊥ counts
-    /// zero.
+    /// The result is an exact arbitrary-precision integer. Each free variable
+    /// contributes a factor of two; minimization is not required before counting.
+    /// Literal weights attached to a structural diagram are ignored. Count-marginal
+    /// levels use their stored counts, and the constant-false diagram counts zero.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    ///
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = engine.clause(&tree, [1, 2])?;
+    /// // Three assignments satisfy x1 or x2, each with two choices for x3.
+    /// assert_eq!(engine.model_count(&f)?, 6u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    ///
+    /// For repeated counts under evidence, use [`ModelCounter`].
+    /// [`Tdd::model_count`] is a convenience form using a temporary engine and
+    /// panicking on error.
     ///
     /// # Errors
     ///
     /// [`OperationError::OverBudget`] for a refused buffer reservation,
     /// [`OperationError::Stopped`] for an armed stop, or
     /// [`OperationError::IncompatibleWeights`] for weighted marginal values.
-    /// Buffer growth is charged to the best-effort byte budget; allocations
-    /// inside big-integer arithmetic are outside that budget.
-    ///
-    /// ```
-    /// # use std::sync::Arc;
-    /// # use std::time::Instant;
-    /// # use tididi::{OperationError, Engine, Tdd};
-    /// # use tididi::limits::LimitConfig;
-    /// # use tididi::vtree::Vtree;
-    /// # let vtree = Arc::new(Vtree::balanced(4));
-    /// let engine = Engine::new();
-    /// let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
-    /// assert_eq!(engine.model_count(&f).unwrap(), f.model_count());
-    ///
-    /// // The pass polls on a stride, so the stop is observed once the walk has
-    /// // covered enough levels to reach a poll point.
-    /// let wide = Arc::new(Vtree::balanced(20_000));
-    /// let g = Tdd::clause(&wide, [1, -2]);
-    /// let _armed = engine.limits().scope(LimitConfig::none().with_deadline(Some(Instant::now())));
-    /// match engine.model_count(&g) {
-    ///     Ok(_) => unreachable!("the deadline has passed"),
-    ///     Err(e) => assert_eq!(e, OperationError::Stopped),
-    /// }
-    /// ```
+    /// The diagram is unchanged. Buffer growth is charged to the best-effort byte
+    /// budget; allocations inside big-integer arithmetic are outside that budget.
     pub fn model_count(&self, tdd: &crate::Tdd) -> Result<num_bigint::BigUint, crate::limits::OperationError> {
         crate::query::count::try_model_count(self, tdd)
     }

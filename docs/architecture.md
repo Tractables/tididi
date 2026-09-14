@@ -1,24 +1,26 @@
 # Architecture
 
-This document is the maintainer's boundary reference: what each module owns,
-what it may not touch, and the numbered invariants every checker and comment
-cites. A reader who wants to use the library wants
-[`docs/api-guide.md`](https://docs.rs/tididi/latest/tididi/guide/api/index.html) instead.
+This reference describes the storage, passes, and invariants used by the
+implementation. For library use, start with the [task guide]; for the meaning
+of levels and pairs, read the [data model].
 
-## Model
+## Storage and operations
 
-A diagram ([`Tdd`]) is an `Arc<Vtree>`, one [`TddLevel`] per vtree node, and an
-output reference naming a node at the vtree root. A level is a leaf level
-(implicit: it stores nothing), a structural level (its nodes are lists of
-`(left, right)` pairs), or a marginal level (its structure has been summed out
-and it stores one value per node instead). Every operation reads and writes
-levels; nothing outside `diagram/` decodes a reference by hand.
+A diagram owns its level arenas and shares a vtree. Operations consume or
+borrow those diagrams according to their signatures and use an engine for
+scratch and limits. The diagram's dirty worklists record which levels need
+reduction after an edit; they do not contribute to its Boolean meaning.
+
+Structural levels hold pair lists. Marginal levels hold counts or fixed
+weighted values, and their references may carry an inline value instead of
+a node index. The `diagram` module owns that encoding; other modules read it
+through `ChildDecoder`.
 
 ## Glossary
 
 | Term | Meaning |
 |---|---|
-| **diagram** | A [`Tdd`] value. The word used in prose; [`Tdd`] appears only as a type. |
+| **diagram** | A [`Tdd`] value, owning level storage and an output reference. |
 | **level** | One vtree node's storage in a diagram ([`TddLevel`]). |
 | **node** | One function at a level, addressed by [`NodeIdx`]. |
 | **pair** | One `(left, right)` element of a node's decomposition, holding two [`EncodedChildRef`] words decoded through [`ChildDecoder`]. |
@@ -38,15 +40,17 @@ levels; nothing outside `diagram/` decodes a reference by hand.
 
 ## Invariants
 
-The numbered list. Every checker and every comment cites these numbers.
+The numbers below are used by the invariant checkers and source comments.
+Structural determinism assumes valid TDD input; storage validation in the
+builder and reader does not establish it for an arbitrary circuit.
 
 | # | Statement | Established by | Transiently broken by | Decided by |
 |---|---|---|---|---|
-| 1 | Determinism: distinct nodes at one level compute disjoint functions. | apply's emit | — | `test_helpers::check::check_determinism` |
+| 1 | Structural determinism: distinct nodes at one level compute disjoint functions; each child pair belongs to at most one node. | apply's emit | — | `test_helpers::check::check_determinism` |
 | 2 | No node computes ⊥; ⊥ is the output sentinel only. | apply's emit; conditioning's falsity sweep | conditioning's leaf rewrite, within one call | `test_helpers::check::check_no_false_nodes` |
-| 3 | Canonicity: no two nodes at one level are content-equal. | [`reduce::minimize`] | any apply or marginalization | `test_helpers::check::check_canonicity` |
-| 4 | Reachability: every stored node is reachable from the output. | [`reduce::minimize`] | conditioning, restriction | `test_helpers::check_minimize_soundness` |
-| 5 | Marginality is permanent and downward-closed: a marginal level never becomes structural, and every descendant of a marginal level is marginal. | [`marginal::marginalize_levels`] | — | [`reduce`]'s demarginalization guard |
+| 3 | Content uniqueness: no two stored nodes at one level have equal pair multisets. | [`reduce::minimize`] | any apply or marginalization | `test_helpers::check::check_canonicity` |
+| 4 | Reachability: every live stored node is reachable from the output. | [`reduce::minimize`] | conditioning, restriction | `test_helpers::check_minimize_soundness` |
+| 5 | Marginality is permanent and downward-closed: a marginal level never becomes structural, and its descendants are marginal or leaves whose contribution is absorbed. | [`marginal::marginalize_levels`] | — | [`reduce`]'s demarginalization guard |
 | 6 | Every reference into a marginal child decodes through [`ChildDecoder`]; no site outside `diagram/` reads the raw bits. | the marginal-reference encoding | — | review |
 | 7 | Inline discipline: no value slot referenced from a structural parent holds an inline-eligible value. | the reference tagger, then the slot prune | apply's emit, before tagging | `test_helpers::check::marginal::check_inline_discipline` |
 | 8 | Pair-fusion saturation: no eligible same-structural-child group remains (exact arithmetic; weighted leaf sums must fit the pinned column). | [`marginalize_levels`]'s fusion sweep | a later twin merge | `test_helpers::check::marginal::check_marginal_canonical_form` |
@@ -54,15 +58,18 @@ The numbered list. Every checker and every comment cites these numbers.
 | 10 | Value-slot uniqueness: at a marginal level all stored values are pairwise distinct. | mint-time dedup, then the slot prune | apply's emit | `test_helpers::check::marginal::check_slot_count_uniqueness` |
 | 11 | Weighted leaf column pin: a weight-marginal leaf's three slots are an immutable, label-ordered cache of `WeightStore::leaf_val`. No pass compacts, erases, reorders or appends to the column, and every reader re-derives it through `diagram::leaf_column_vals`. | `marginal::marginalize_leaf_weighted` | — | `test_helpers::check::marginal::check_leaf_columns_pinned` |
 
-Invariants 3, 4, 8, 9 and 10 are post-pass properties, not properties of every
-intermediate state; each row says which pass establishes it.
+Invariants 3, 4, 8, 9 and 10 are post-pass properties; each row identifies the
+pass that establishes it. Canonical structural form additionally requires
+that no context twins remain: these are nodes with identical uses by their
+parents, rather than identical pair lists. The distinction matters because
+twin contraction unions their functions, while content deduplication merges
+identical representations.
 
 ## Modules
 
-Four layers, one hub, and two seams that are not a layer. The tables below run
-in the order `lib.rs` declares the modules in, and a module uses only its own
-layer or a layer above it. **Uses** names the crate modules a module's own code
-reads, which is the layering rule as it can be checked.
+The tables group modules by responsibility. **Uses** summarizes their main
+dependencies; operations also use the engine for scratch and limits. These
+are ownership boundaries, not a claim that every module dependency is acyclic.
 
 **Ground** — what everything else reads.
 
@@ -77,25 +84,25 @@ reads, which is the layering rule as it can be checked.
 
 | Module | Owns | Uses | May not touch |
 |---|---|---|---|
-| [`build`] | Constants and cubes as diagrams. | `vtree`, `diagram`. | Reduction. |
+| [`build`] | Constants and cubes as diagrams. | `vtree`, `diagram`, `limits`. | Reduction. |
 | [`apply`] | Conjunction, disjunction, negation, conditioning, projection, restriction, a clause as a diagram, and the `&`, `\|`, `!` impls. | `vtree`, `diagram`, `limits`, `value`, `build`, `marginal`, `query`, `reduce`. | Reference decoding by hand; reduction policy. |
 | [`marginal`] | Marginal-column installation, reference remapping, child reclamation, and summing levels out. | `vtree`, `diagram`, `limits`, `value`, `reduce`, and `test_helpers::check` in a debug build. | The reduction passes' internals. |
 | [`reduce`] | Canonical form: pruning, twin contraction, pair fusion, slot pruning. | `vtree`, `diagram`, `limits`, `value`, and `test_helpers::check` in a debug build. | Apply; marginalization. |
 | [`restructure`] | Rotation search and graft over a compiled diagram. | `vtree`, `diagram`, `limits`, `marginal`, `reduce`, and `test_helpers::check` in a debug build. | The counting fold. |
-| [`query`] | Model counting, satisfiability, algebra evaluation, a weighted diagram's value. | `vtree`, `diagram`, `limits`, `value`. | Mutation of a diagram. |
+| [`query`] | Model counting, satisfiability, algebra evaluation, a weighted diagram's value. | `vtree`, `diagram`, `limits`, `value`, `apply`, `reduce`. | Mutation of a borrowed input diagram. |
 
 **Session** — the hub.
 
 | Module | Owns | Uses | May not touch |
 |---|---|---|---|
-| [`engine`] | The hub: the scratch every operation reuses and the limits armed on it. Every operation is a method on it. | `diagram`, `limits`, `apply`, `reduce`, `restructure`. | The diagram's contents. |
+| [`engine`] | The scratch and limits shared by checked operations; method implementations live with the operations. | `diagram`, `limits`, `apply`, `reduce`, `restructure`. | The operations' algorithms. |
 
 **Edges** — reading a finished diagram.
 
 | Module | Owns | Uses | May not touch |
 |---|---|---|---|
-| [`io`] | The `.tdd` text format, both directions, and Graphviz rendering. | `vtree`, `diagram`. | Anything but reading a finished diagram. |
-| [`guide`] | The prose guides of `docs/`, included as documentation so their examples and their identifiers are checked by the build. | Nothing; it holds no code. | Any behaviour. |
+| [`io`] | The `.tdd` text format, both directions, and Graphviz rendering. | `vtree`, `diagram`. | Apply or reduction policy. |
+| [`guide`] | The prose guides of `docs/`, included as documentation so examples are doctested and the rendered pages share their source. | Nothing; it holds no code. | Any behaviour. |
 
 **Seams** — the ways in from outside, which are not a layer.
 
@@ -104,22 +111,28 @@ reads, which is the layering rule as it can be checked.
 | `compiler_seam` | Every entry point a driver that builds a diagram clause by clause reaches the crate through: clause-spine marking, mid-compile clustering, a hand-built marginal level, and the two whole-diagram edits that splice a subtree or reseat a diagram on another tree. The driver-facing module, outside the compatibility promise. | `vtree`, `diagram`, `apply`, `restructure`. | The documented modules' jobs; it holds entry points, not operations. |
 | `test_helpers` | The generators every randomized sweep draws from, the oracles a test decides a diagram by (enumeration, canonicity, structural equality, the apply-free evaluator), and in `test_helpers::check` the invariant checkers, one per numbered invariant, compiled only under `cfg(test)` or `debug_assertions`. The test-facing module. | `vtree`, `diagram`, `limits`, `value`, `build`, `apply`, `reduce`, `query`. | Any behaviour the library ships; a test reads a diagram through it, and a checker reports and never repairs. |
 
-No **Uses** cell names [`engine`]: every operation, `diagram`, `value` and
-both seams use it, and it uses the scratch of `apply`, `reduce` and
-`restructure` in return, the crate's one two-way edge.
-
-`test_helpers::check` is compiled only under `cfg(test)` or
-`debug_assertions`, so `assert_canonical` is a no-op elsewhere and the
-differential suite in `tests/` is run in both configurations.
+`test_helpers::check` is compiled under `cfg(test)` or `debug_assertions`;
+`assert_canonical` is a no-op in other builds. Run the differential suite in
+both debug and release configurations to exercise the structural checks and
+the optimized algorithms.
 
 ## One conjunction
 
-[`Engine::and(f, g)`] plans the operation, walks the vtree bottom-up (children
-before parents), and at each level runs the product-grid kernel over the two
-operands' nodes, emitting the pairs that survive. The emit establishes
-invariants 1 and 2, so the result needs no dedup pass. Marginal sides are
-tagged after the walk, which is what invariant 7 is stated against. Reduction
-is a separate call.
+[`Engine::and(f, g)`] validates the shared vtree and weight interpretation,
+then walks levels bottom-up. At each structural level it combines operand
+nodes in a product grid and emits surviving child pairs. Consumed level
+arenas return to the engine's pools for reuse.
+
+The result has the correct function and count but may retain unreachable
+nodes and context twins. A full reduction first prunes, then contracts inner
+and leaf twins. For marginal diagrams it also runs eligible content-twin and
+value-slot cleanup. Edits register their effects through `Tdd::invalidate`;
+reduction drains the corresponding dirty worklists.
+
+Resource refusal is not an implicit rollback of a whole operation. Consuming
+operations return an error without their operands; in-place passes document
+which completed edits remain valid. Reserve-before-mutation boundaries must
+preserve those contracts.
 
 ## Extension points: public
 
@@ -141,9 +154,10 @@ extension point, and none is reachable from outside:
   leaf twins in `reduce/contract/contract_leaf.rs` — mark its dirty levels,
   and add a checker for the invariant it claims.
 - A new marginalizable value domain: `ValueDomain` for arithmetic and `marginal::transition::MarginalDomain` for storage transitions.
-- A new fold: implement `ValueDomain` and use the shared walk.
-- A new order for the contraction pass to visit dirty levels in: a walk
-  beside the ones in `reduce/contract/strategies.rs`.
+- A new query fold: implement `query::fold::LevelFold` and use its shared traversal.
+- A new stored-value domain: implement `ValueDomain` for the value walk.
+- A new contraction strategy: extend the dispatch and implementations in
+  `reduce/contract/strategies.rs`.
 - A new limit: a field on [`LimitConfig`] and the poll site that reads it.
 
 ## Oracles
@@ -191,3 +205,6 @@ process-wide state, no C or C++ code built.
 [`vtree`]: crate::vtree
 
 [`EncodedChildRef`]: crate::diagram::EncodedChildRef
+
+[task guide]: https://docs.rs/tididi/latest/tididi/guide/api/index.html
+[data model]: https://docs.rs/tididi/latest/tididi/guide/model/index.html

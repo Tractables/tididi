@@ -1,46 +1,42 @@
-//! Build a CNF one clause at a time, reduce it, count its models, condition a
-//! variable, and render the result.
-//!
-//! The end-to-end path through the crate: pick a vtree, conjoin the clauses
-//! into an accumulator, minimize once at the end, read the count off the
-//! canonical diagram, then take a cofactor and write it out as DOT. Run it with
-//! `cargo run --example build_minimize_count`.
+//! Add clauses to a function, minimize it, count models, and take a cofactor.
+//! Run with `cargo run --example build_minimize_count`.
 
 use std::sync::Arc;
 
-use num_bigint::BigUint;
-use tididi::Tdd;
-use tididi::apply::apply_and_clause;
-use tididi::reduce::minimize;
-use tididi::apply::condition_var;
+use tididi::{Engine, Literal, Vtree};
 use tididi::io::tdd_to_dot;
-use tididi::vtree::{VarId, Vtree};
+use tididi::reduce::try_minimize;
+use tididi::vtree::VarId;
 
-fn main() {
-    // (x1 v x2) ^ (!x2 v x3) ^ (x1 v !x3) over four variables; x4 is free.
-    let cnf = [[1, 2], [-2, 3], [1, -3]];
-
-    let vtree = Arc::new(Vtree::balanced(4));
-    let mut f = Tdd::one(&vtree);
-    for clause in &cnf {
-        let lits: Vec<_> = clause.iter().map(|&n| n.into()).collect();
-        f = apply_and_clause(f, &lits);
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // (x1 ∨ x2) ∧ (¬x2 ∨ x3) ∧ (x1 ∨ ¬x3), with x4 free.
+    let clauses = [[1, 2], [-2, 3], [1, -3]];
+    let engine = Engine::new();
+    let tree = Arc::new(Vtree::balanced(4));
+    let mut f = engine.one(&tree);
+    for clause in clauses {
+        let literals = clause.map(Literal::from);
+        f = engine.and_clause(f, &literals)?;
     }
-    minimize(&mut f);
 
-    let count = f.model_count();
+    // Counting accepts the current representation; minimization removes redundancy.
+    let count = engine.model_count(&f)?;
+    try_minimize(&engine, &mut f)?;
+    assert_eq!(engine.model_count(&f)?, count);
+    assert_eq!(count, 6u32.into());
     println!("size: {} pairs over {} nodes", f.pair_count(), f.node_count());
     println!("models: {count}");
-    assert_eq!(count, BigUint::from(6u32));
 
-    // Conditioning on x1 = true removes x1 from the diagram, so its models are
-    // counted over the remaining variables — and x1 itself becomes free, which
-    // is why the cofactor's count still carries a factor of two.
-    let cofactor = condition_var(&f, VarId(0), true);
-    println!("models with x1 = true: {}", cofactor.model_count() / 2u32);
+    // Keep the original for later queries; the transformation consumes its copy.
+    let cofactor = engine.condition_var(f.clone(), VarId(0), true)?;
+    // x1 remains free in the cofactor's vtree, so divide out its two choices.
+    let observed_count = engine.model_count(&cofactor)? / 2u32;
+    assert_eq!(observed_count, 6u32.into());
+    println!("models with x1 = true: {observed_count}");
 
-    // The DOT rendering is what to paste into Graphviz to look at the diagram.
-    let dot = tdd_to_dot(&cofactor).expect("an explicit diagram renders");
-    println!("--- cofactor as DOT ---");
+    // Graphviz can render this text; the diagram must still be structural.
+    let dot = tdd_to_dot(&cofactor)?;
+    println!("cofactor as Graphviz text:");
     print!("{dot}");
+    Ok(())
 }

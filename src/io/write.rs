@@ -1,59 +1,4 @@
-//! Writing a diagram out in the `.tdd` text format, and the format itself.
-//!
-//! A whitespace-separated line format, one record per line, reachable nodes
-//! only, in vtree bottom-up order:
-//!
-//! ```text
-//! c <comment>
-//! p tdd <version> <num_leaves> <num_vtree_nodes> <out_vtree> <out_local>
-//! L <vtree_idx> <var>
-//! I <vtree_idx> <left_vtree> <right_vtree> <l0> <r0> [<l1> <r1> ...]
-//! ```
-//!
-//! - **`p`** — the problem line. `<version>` is the format version, which the
-//!   writers here emit as 1. `<num_leaves>` and `<num_vtree_nodes>` are the
-//!   vtree's, and the reader refuses a vtree that disagrees with them. The
-//!   circuit's output node is `(<out_vtree>, <out_local>)`, `<out_vtree>`
-//!   always the vtree root; `<out_local>` is the literal token `ZERO` when the
-//!   function is unsatisfiable, and then no `L` or `I` lines follow.
-//! - **`L`** — a vtree leaf: vtree node `<vtree_idx>` tests DIMACS variable
-//!   `<var>` (1-indexed). Each leaf has three implicit diagram nodes, never
-//!   written, at local indices 0 = one (constant true), 1 = the positive
-//!   literal, 2 = the negative literal.
-//! - **`I`** — an internal diagram node at vtree node `<vtree_idx>`, a
-//!   deterministic disjunction of conjunction pairs: the node equals
-//!   `OR_k (l_k AND r_k)`. Each pair names its children by local index, `<lk>`
-//!   into the node list of `<left_vtree>` and `<rk>` into that of `<right_vtree>`.
-//!
-//! Local indices are per vtree node and 0-based, in the order nodes are
-//! emitted: the implicit 0/1/2 at a leaf, and for an internal vtree node the
-//! count of `I` lines at that index so far in file order. A tautology over a
-//! one-leaf vtree is `out_local = 0` at that leaf — the `one` node; over a
-//! larger vtree its output is an `I` node at the root like any other function's.
-//!
-//! The format carries neither the vtree's shape nor marginal levels. A
-//! `.tdd` file names a vtree node only where the diagram occupies it, so the
-//! ancestors of the output and every subtree the output does not reach leave no
-//! trace — which is why [`read_tdd`](super::read_tdd) takes the vtree as an argument rather than
-//! reconstructing one. A marginal level holds per-node values instead of
-//! nodes, so a pair into one carries a value where the format wants an index;
-//! the writers refuse a diagram with any marginal level, count- or
-//! weight-marginal alike. A diagram carrying a weight store and no marginal
-//! level is written; the file drops the store, so it reads back in integer
-//! mode and the caller attaches weights again with
-//! [`Tdd::set_weights`](crate::Tdd::set_weights).
-//!
-//! The version in the problem line is what makes the format interchange: a
-//! file written by version n loads in every reader whose own version is n or
-//! greater. A reader accepts any version up to its own, refuses a higher one
-//! naming both versions, and refuses a problem line with no version at all as a
-//! file written before the format was versioned. Comment lines it does not
-//! recognize are ignored, so a writer may annotate a file freely; a record
-//! letter it does not recognize is refused, so a format that needs a new record
-//! raises the version.
-//!
-//! Every file opens with a comment block spelling the above out, so a file is
-//! readable without this module.
+//! Writers for the [public text format](crate::io#text-format).
 
 use crate::diagram::ChildDecoder;
 
@@ -156,23 +101,25 @@ fn push_num<N: itoa::Integer>(buf: &mut Vec<u8>, n: N) {
 /// file drops the store, so it reads back in integer mode and the caller
 /// attaches weights again with [`Tdd::set_weights`](crate::Tdd::set_weights).
 ///
-/// A marginal diagram is rejected before any bytes are written:
+/// Save the tree and diagram together, then restore them into a shared domain:
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{Engine, Tdd, Vtree};
-/// use tididi::io::{write_tdd, IoError};
-/// use tididi::marginal::marginalize_levels;
+/// use tididi::{Engine, Vtree};
+/// use tididi::io::{read_tdd, write_tdd};
 ///
+/// let engine = Engine::new();
 /// let tree = Arc::new(Vtree::balanced(3));
-/// let mut f = Tdd::clause(&tree, [1, -2]);
-/// # tididi::test_helpers::assert_canonical(&f);
-/// marginalize_levels(&Engine::new(), &mut f, &[tree.root()])?;
+/// let f = engine.clause(&tree, [1, -2])?;
+/// let tree_text = tree.to_text();
 /// let mut bytes = Vec::new();
-/// assert!(matches!(write_tdd(&mut bytes, &f), Err(IoError::Format(_))));
-/// assert!(bytes.is_empty());
-/// # tididi::test_helpers::assert_canonical(&f);
-/// # Ok::<(), tididi::OperationError>(())
+/// write_tdd(&mut bytes, &f)?;
+///
+/// let loaded_tree = Arc::new(Vtree::from_text(&tree_text)?);
+/// let loaded = read_tdd(&mut bytes.as_slice(), &loaded_tree)?;
+/// let expected = engine.clause(&loaded_tree, [1, -2])?;
+/// assert!(engine.equivalent(&loaded, &expected)?);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
     super::reject_marginal_levels(tdd, "write_tdd")?;

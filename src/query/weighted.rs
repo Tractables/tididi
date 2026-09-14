@@ -25,7 +25,12 @@ pub fn weighted_value(tdd: &Tdd) -> Option<WeightValue> {
 }
 
 impl Engine {
-    /// Fold the attached weights under this engine's allocation and stop rules.
+    /// Evaluate a diagram using its attached weight store.
+    ///
+    /// Structural levels are folded from literal weights; weighted marginal
+    /// levels contribute their stored values. The returned [`WeightValue`]
+    /// uses the store's arithmetic. A zero value may come from zero or cancelling
+    /// weights and does not establish Boolean unsatisfiability.
     ///
     /// Returns `Ok(None)` without a weight store. Stop rules are checked at
     /// entry, at amortized node boundaries, and before returning the result.
