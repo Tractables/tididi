@@ -16,7 +16,8 @@ use crate::OperationError;
 /// leaf is referenced with, and an unreachable reference on an unminimized
 /// diagram would count as a label. The zero diagram and summed-out variables
 /// contribute nothing, and a variable no pair references is not implied. No
-/// engine and no limit are involved.
+/// engine and no limit are involved. [`Engine::implied_literals`](crate::Engine::implied_literals)
+/// accepts an unminimized structural diagram and honors engine limits.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -61,7 +62,7 @@ impl LeafLabels {
     pub(super) fn depends(self) -> bool { self.0 & 3 != 0 }
 
     /// The forced literal, if every reference uses the same non-free label.
-    fn implied(self, var: VarId) -> Option<Literal> {
+    pub(super) fn implied(self, var: VarId) -> Option<Literal> {
         match self.0 {
             1 => Some(Literal::pos(var)),
             2 => Some(Literal::neg(var)),

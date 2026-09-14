@@ -35,7 +35,7 @@ or whether one function entails another with [`Engine::implies`](crate::Engine::
 
 For information about individual variables, [`Engine::support`](crate::Engine::support)
 finds those that can affect the answer, while
-[`implied_literals`](crate::query::implied_literals) finds literals true in every model.
+[`Engine::implied_literals`](crate::Engine::implied_literals) finds literals true in every model.
 
 ## Change assignments or variables
 

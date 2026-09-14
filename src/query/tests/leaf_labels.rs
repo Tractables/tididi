@@ -20,6 +20,7 @@ fn support_and_backbone_match_sparse_id_truth_tables() {
                     f = eng.and(f, clause).unwrap();
                 }
             }
+            let checked_backbone = eng.implied_literals(&f).unwrap();
             minimize(&mut f);
             assert_canonical(&f);
             assert_eq!(f.model_count(), bits.count_ones().into());
@@ -42,6 +43,7 @@ fn support_and_backbone_match_sparse_id_truth_tables() {
             expected_backbone.sort_unstable_by_key(|literal| literal.var);
             assert_eq!(eng.support(&f).unwrap(), expected_support, "truth table {bits}");
             assert_eq!(implied_literals(&f), expected_backbone, "truth table {bits}");
+            assert_eq!(checked_backbone, expected_backbone, "truth table {bits}");
         }
     }
 }
@@ -59,6 +61,7 @@ fn leaf_outputs_have_only_their_forced_literal() {
     ] {
         assert_canonical(&f);
         assert_eq!(implied_literals(&f), expected);
+        assert_eq!(eng.implied_literals(&f).unwrap(), expected);
         assert_eq!(eng.support(&f).unwrap(), expected.iter().map(|literal| literal.var).collect::<Vec<_>>());
     }
 }
@@ -109,5 +112,29 @@ fn leaf_scan_stops_before_finishing_a_parent_and_can_retry() {
     }
     assert_eq!(eng.support(&f).unwrap(), vec![VarId(0), VarId(1)]);
     assert!(implied_literals(&f).is_empty());
+    assert_canonical(&f);
+}
+
+#[test]
+fn checked_backbone_preserves_inputs_across_resource_refusals() {
+    use crate::limits::{StopCallback, StopDecision};
+    let engine = Engine::new();
+    let tree = Arc::new(Vtree::balanced(3));
+    let f = engine.cube(&tree, [1, -2]).unwrap();
+    assert_canonical(&f);
+    {
+        let _scope = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
+        assert_eq!(engine.implied_literals(&f), Err(OperationError::OverBudget));
+    }
+    let zero = engine.zero(&tree);
+    assert_canonical(&zero);
+    {
+        let _scope = engine.limits().scope(LimitConfig::none().with_stop_callback(Some(
+            StopCallback::new(|_, _| StopDecision::Stop))));
+        assert_eq!(engine.implied_literals(&f), Err(OperationError::Stopped));
+        assert_eq!(engine.implied_literals(&zero), Err(OperationError::Stopped));
+    }
+    assert_eq!(engine.implied_literals(&f).unwrap(), vec![1.into(), (-2).into()]);
+    assert_eq!(engine.model_count(&f).unwrap(), 2u32.into());
     assert_canonical(&f);
 }

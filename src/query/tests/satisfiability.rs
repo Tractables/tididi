@@ -35,20 +35,23 @@ fn checked_satisfiability_agrees_with_every_three_variable_truth_table() {
 fn checked_satisfiability_ignores_weights_and_rejects_discarded_structure() {
     let engine = Engine::new();
     let tree = Arc::new(Vtree::balanced(3));
-    let mut f = engine.clause(&tree, [1, 2]).unwrap();
+    let mut f = engine.cube(&tree, [1, -2]).unwrap();
     assert_canonical(&f);
     let weights = RationalWeights::from_literals(&vec![
         LiteralWeights { negative: rat(0, 1), positive: rat(0, 1) }; 3
     ]);
     f.set_weights(WeightStore::new(weights, Arithmetic::ExactRational)).unwrap();
     assert_eq!(engine.is_sat(&f), Ok(true));
+    assert_eq!(engine.implied_literals(&f), Ok(vec![1.into(), (-2).into()]));
     assert_eq!(engine.weighted_value(&f).unwrap().unwrap().into_rational(), rat(0, 1));
     crate::marginal::marginalize_levels(&engine, &mut f, &[tree.root()]).unwrap();
     assert!(matches!(engine.is_sat(&f), Err(OperationError::MarginalLevel(_))));
+    assert!(matches!(engine.implied_literals(&f), Err(OperationError::MarginalLevel(_))));
     let mut counts = engine.one(&tree);
     assert_canonical(&counts);
     crate::marginal::marginalize_levels(&engine, &mut counts, &[tree.root()]).unwrap();
     assert!(matches!(engine.is_sat(&counts), Err(OperationError::MarginalLevel(_))));
+    assert!(matches!(engine.implied_literals(&counts), Err(OperationError::MarginalLevel(_))));
 }
 
 #[test]

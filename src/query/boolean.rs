@@ -99,7 +99,7 @@ impl Engine {
     ///
     /// Minimizes a checked copy, then reads its referenced leaf labels. Constants
     /// have empty support. Free variables carried by the vtree are excluded;
-    /// [`implied_literals`](crate::query::implied_literals) instead asks which
+    /// [`Engine::implied_literals`] instead asks which
     /// literals hold in every model. Weights do not affect support.
     ///
     /// # Errors
@@ -118,26 +118,56 @@ impl Engine {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn support(&self, f: &Tdd) -> Result<Vec<VarId>, OperationError> {
+        self.collect_leaf_labels(f, |var, labels| labels.depends().then_some(var), |var| *var)
+    }
+
+    /// Literals true in every satisfying assignment, sorted by variable ID.
+    ///
+    /// This is the function's backbone. Borrows a structural diagram, minimizes
+    /// a checked copy and scans its referenced leaf labels; attached weights are
+    /// ignored. Both constant functions return an empty list. The input need not
+    /// be minimized and remains unchanged on success or error.
+    ///
+    /// # Errors
+    ///
+    /// A marginal level or an allocation or cancellation refusal.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = engine.and(engine.clause(&tree, [1, 2])?, engine.clause(&tree, [1, -2])?)?;
+    /// assert_eq!(engine.implied_literals(&f)?, vec![1.into()]);
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn implied_literals(&self, f: &Tdd) -> Result<Vec<Literal>, OperationError> {
+        self.collect_leaf_labels(f, |var, labels| labels.implied(var), |literal| literal.var)
+    }
+
+    /// Collect one optional answer per structural leaf from a checked minimized copy.
+    fn collect_leaf_labels<T>(
+        &self,
+        f: &Tdd,
+        select: impl Fn(VarId, super::support::LeafLabels) -> Option<T>,
+        key: impl Fn(&T) -> VarId,
+    ) -> Result<Vec<T>, OperationError> {
         f.require_structure()?;
         let lim = self.limits();
         let _op = lim.begin_operation();
-        if lim.should_stop() {
-            return Err(OperationError::Stopped);
-        }
-        if f.is_zero() {
-            return Ok(Vec::new());
-        }
+        if lim.should_stop() { return Err(OperationError::Stopped); }
+        if f.is_zero() { return Ok(Vec::new()); }
         let mut f = f.try_clone_on(self)?;
         crate::reduce::try_minimize(self, &mut f)?;
         let mut result = Vec::new();
         let mut gate = PollGate::new(lim.reduce_poll_stride());
         super::support::visit_leaf_labels(&f, |work| lim.poll(&mut gate, work), |var, labels| {
-            if labels.depends() {
-                lim.try_push(&mut result, var)?;
+            if let Some(value) = select(var, labels) {
+                lim.try_push(&mut result, value)?;
             }
             Ok(())
         })?;
-        result.sort_unstable();
+        result.sort_unstable_by_key(key);
         lim.flush_poll(&mut gate)?;
         Ok(result)
     }
