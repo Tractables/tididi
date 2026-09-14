@@ -184,17 +184,17 @@ impl crate::engine::Engine {
         crate::apply::conjoin::conjoin_owned(self, f, g, None)
     }
 
-    /// Conjoin two diagrams, requesting marginal values at selected subtrees.
+    /// Conjoin two diagrams and replace selected subtrees with marginal values.
     ///
     /// `targets` names vtree nodes; order and duplicates do not matter. Internal
     /// targets can be summed out during product construction; leaf targets are
     /// handled afterward. The result preserves the conjunction's count, or its
     /// fixed weighted value when weights are attached.
     ///
-    /// Identity and self-conjunction shortcuts can retain structural levels at
-    /// internal targets. If releasing those subtrees is required, follow with
-    /// [`marginalize_levels`](crate::marginal::marginalize_levels), which also
-    /// explains which operations remain valid after structure is discarded.
+    /// Every target's remaining structure is discarded, including after identity
+    /// and self-conjunction shortcuts; the false diagram stays false. See
+    /// [`marginalize_levels`](crate::marginal::marginalize_levels) for the operations
+    /// that remain valid after structure is discarded.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -205,9 +205,7 @@ impl crate::engine::Engine {
     /// let (left, _) = tree.children(tree.root());
     /// let f = engine.clause(&tree, [1, 2])?;
     /// let g = engine.clause(&tree, [3, 4])?;
-    /// let mut counted = engine.and_marginalizing(f, g, &[left])?;
-    /// // Also release levels that the product's shortcuts retained.
-    /// tididi::marginal::marginalize_levels(&engine, &mut counted, &[left])?;
+    /// let counted = engine.and_marginalizing(f, g, &[left])?;
     /// assert!(counted.level(left).is_marginal());
     /// assert_eq!(engine.model_count(&counted)?, 9u32.into());
     /// # Ok::<(), tididi::OperationError>(())
@@ -234,19 +232,13 @@ impl crate::engine::Engine {
         let vtree = Arc::clone(f.vtree());
         let mut mask = Vec::new();
         self.limits().try_resize(&mut mask, vtree.num_nodes(), false)?;
-        let mut leaves: Vec<VtreeIdx> = Vec::new();
         for &t in targets {
-            if vtree.node(t).is_leaf() {
-                self.limits().try_push(&mut leaves, t)?;
-            } else {
-                mask[t.idx()] = true;
-            }
+            mask[t.idx()] = !vtree.node(t).is_leaf();
         }
         let mut out = crate::apply::conjoin::conjoin_owned(self, f, g, Some(&mask))?;
-        // The product only streams internal levels; a leaf target is summed
-        // out by the pass, which passes over one a target above it subsumed.
-        if !leaves.is_empty() {
-            crate::marginal::marginalize_levels(self, &mut out, &leaves)?;
+        // Streaming can finish every target; only retained structure needs the pass.
+        if !out.is_zero() && targets.iter().any(|&t| !out.level(t).is_marginal()) {
+            crate::marginal::marginalize_levels(self, &mut out, targets)?;
         }
         Ok(out)
     }
