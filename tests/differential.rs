@@ -491,7 +491,7 @@ fn text_round_trip(case: &Case) {
     let f = compile(case);
     let dir = std::env::temp_dir().join(format!("tididi-fuzz-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("a writable temporary directory");
-    let path = dir.join("case.tdd");
+    let path = dir.join(format!("case-{:?}.tdd", std::thread::current().id()));
     save_tdd(&f, &path).expect("the diagram is structural, so it is writable");
     let back = load_tdd(&path, &case.vtree).expect("what was just written reads back");
     assert_canonical(&back);
