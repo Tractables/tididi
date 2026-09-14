@@ -229,7 +229,7 @@ impl CountOverflow {
 
     /// Store `v` at `slot`, replacing any value already there. The one insert
     /// path; the fallible wrapper [`try_insert`](Self::try_insert) reserves
-    /// through a budget policy and then calls this.
+    /// through the engine and then calls this.
     #[inline]
     pub(crate) fn insert(&mut self, slot: usize, v: BigUint) {
         let slot = u32::try_from(slot).expect("marginal slot index must fit u32");
@@ -240,9 +240,8 @@ impl CountOverflow {
         }
     }
 
-    /// Budget-tracked [`insert`](Self::insert): charges the one-entry growth
-    /// against `R` before committing it, so an over-budget store push surfaces
-    /// as the policy's error instead of an infallible allocator abort.
+    /// Reserve room for one entry through the engine before calling
+    /// [`insert`](Self::insert), returning [`OperationError`] on refusal.
     #[inline]
     pub(crate) fn try_insert(
         &mut self,
@@ -256,7 +255,7 @@ impl CountOverflow {
     }
 
     /// Bulk twin of [`try_insert`](Self::try_insert): reserve room for
-    /// `additional` entries through the same policy, so a caller that must not
+    /// `additional` entries through the engine, so a caller that must not
     /// fail part-way can then [`insert`](Self::insert) infallibly.
     #[inline]
     pub(crate) fn try_reserve(

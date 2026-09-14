@@ -14,10 +14,8 @@ impl CountVec {
         self.big.is_some()
     }
 
-    /// Fallible clone: reserves both backing arrays exactly before copying,
-    /// so an over-budget duplicate raises the policy's error instead of an
-    /// infallible allocator abort. Test-only: it is the round-trip coverage
-    /// of the fast/big split.
+    /// Reserve both backing arrays through the engine before copying.
+    /// Test-only coverage of the fast/big split.
     pub(crate) fn try_clone(&self, eng: &Engine) -> Result<Self, crate::limits::OperationError> {
         let mut fast: Vec<u128> = Vec::new();
         eng.limits().reserve_exact(&mut fast, self.fast.len())?;
