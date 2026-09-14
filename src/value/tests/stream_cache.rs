@@ -1,4 +1,5 @@
 use super::*;
+use crate::diagram::WeightValue;
 use crate::limits::pool::{Pool, SCRATCH_RETAIN_BYTES};
 use crate::test_helpers::{CountVecExt, rat};
 
