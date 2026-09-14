@@ -91,11 +91,11 @@ fn leaf_scan_stops_before_finishing_a_parent_and_can_retry() {
     assert_canonical(&f);
     assert!(f.level(tree.root()).pair_count_at(0) > 1);
     let lim = eng.limits();
-    lim.reset_meters();
+    let before = lim.work_units();
     let mut visited = 0;
     {
         let _limit = lim.scope(LimitConfig::none().with_stop_rules(StopRules {
-            unconditional: Some(StopAt::WorkUnits(2)), after_pairs: None,
+            unconditional: Some(StopAt::WorkUnits(before + 2)), after_pairs: None,
         }));
         let _op = lim.begin_operation();
         let mut gate = PollGate::new(1);
@@ -104,7 +104,7 @@ fn leaf_scan_stops_before_finishing_a_parent_and_can_retry() {
             Ok(())
         });
         assert_eq!(result, Err(OperationError::Stopped));
-        assert_eq!(lim.meters().work_units, 2);
+        assert_eq!(lim.work_units() - before, 2);
         assert_eq!(visited, 0, "the stop must precede completion of the parent's summaries");
     }
     assert_eq!(eng.support(&f).unwrap(), vec![VarId(0), VarId(1)]);
