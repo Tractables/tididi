@@ -1,7 +1,7 @@
 //! The per-apply cache of already-computed child columns for streaming levels.
 
 use crate::diagram::WeightValue;
-use crate::limits::pool::Pool;
+use crate::limits::pool::{Pool, release_if_oversized};
 use super::CountVec;
 
 /// Lazily computed child columns for streaming-target levels whose children
@@ -20,7 +20,7 @@ pub(crate) enum StreamCache {
 }
 
 impl StreamCache {
-    /// Take the pooled cache and clear its first `num_nodes` slots, or return
+    /// Take an empty cache with `num_nodes` slots, or return
     /// [`StreamCache::None`] when this apply marginalizes nothing.
     ///
     /// `weighted` is `None` when nothing is being marginalized. A pooled cache
@@ -30,11 +30,11 @@ impl StreamCache {
         let Some(weighted) = weighted else { return StreamCache::None };
         match (pool.take(), weighted) {
             (StreamCache::Weighted(mut cols), true) => {
-                reset(&mut cols, num_nodes);
+                cols.resize_with(num_nodes, || None);
                 StreamCache::Weighted(cols)
             }
             (StreamCache::Int(mut cols), false) => {
-                reset(&mut cols, num_nodes);
+                cols.resize_with(num_nodes, || None);
                 StreamCache::Int(cols)
             }
             (_, true) => StreamCache::Weighted(vec_of_none(num_nodes)),
@@ -42,11 +42,14 @@ impl StreamCache {
         }
     }
 
-    /// Return the cache to the pool, so the next apply reuses its columns.
-    pub(crate) fn put(self, pool: &Pool<StreamCache>) {
-        if !matches!(self, StreamCache::None) {
-            pool.put(self);
+    /// Discard computed columns and return bounded table capacity to the pool.
+    pub(crate) fn put(mut self, pool: &Pool<StreamCache>) {
+        match &mut self {
+            StreamCache::None => return,
+            StreamCache::Int(cols) => retire(cols),
+            StreamCache::Weighted(cols) => retire(cols),
         }
+        pool.put(self);
     }
 
     /// The integer columns. Only ever asked for on the integer route.
@@ -82,17 +85,15 @@ impl StreamCache {
     }
 }
 
+/// Allocate an empty slot for each vtree node.
 fn vec_of_none<T>(num_nodes: usize) -> Vec<Option<T>> {
     let mut cols = Vec::new();
     cols.resize_with(num_nodes, || None);
     cols
 }
 
-fn reset<T>(cols: &mut Vec<Option<T>>, num_nodes: usize) {
-    if cols.len() < num_nodes {
-        cols.resize_with(num_nodes, || None);
-    }
-    for slot in cols[..num_nodes].iter_mut() {
-        *slot = None;
-    }
+/// Discard column values and retain the table allocation within the scratch cap.
+fn retire<T>(cols: &mut Vec<Option<T>>) {
+    cols.clear();
+    release_if_oversized(cols);
 }

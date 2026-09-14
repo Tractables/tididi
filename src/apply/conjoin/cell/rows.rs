@@ -6,7 +6,7 @@ use super::*;
 //
 // The four build routes — marginal-child emit (`run_level_rows_marginal`),
 // sparse-marginal emit (`run_level_rows_marginal_sparse`), streaming collapse
-// (`stream_collapse_rows`) and plain emit (`run_level_rows_plain`) — differ
+// (`run_level_rows_stream_count`) and plain emit (`run_level_rows_plain`) — differ
 // only in what they do per row and per cell. Everything around that (the
 // per-row `NO_PRODUCT` reset, the f pair decode, the empty/dead-row skips, the alive
 // masks, the right_width column sweep, the between-cell poll) is one loop body, living

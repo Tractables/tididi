@@ -5,7 +5,7 @@
 //! driver behind every build route (`run_level_rows`, generic over a
 //! [`CellAction`]) with its four route entry points (`run_level_rows_marginal`,
 //! `run_level_rows_marginal_sparse`, `run_level_rows_stream_count`,
-//! `run_level_rows_plain`), the streaming per-cell folds ([`StreamCellFold`](rows_stream::StreamCellFold)),
+//! `run_level_rows_plain`), the streaming per-cell fold on [`StreamState`],
 //! and the product-node emitter (`emit_product_node`).
 //!
 //! Also houses `CellCtx` (the per-level loop-invariant context struct) and

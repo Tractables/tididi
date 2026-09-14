@@ -4,33 +4,8 @@
 use super::rows::{CellAction, CellArgs, run_level_rows};
 use super::*;
 
-/// Per-cell scalar fold for the streaming collapse walker
-/// ([`stream_collapse_rows`]): resolves one alive cell's collected pairs to a
-/// single scalar and records it in the streaming state, remapping
-/// `node_idx[grid_pos]` from `NO_PRODUCT` to the new slot index. One impl, generic
-/// over the value kind, so the one row/cell loop serves both the integer count
-/// fold and the weighted (`BigRational`) fold.
-pub(crate) trait StreamCellFold {
-    fn fold_cell(
-        &mut self,
-        eng: &Engine,
-        pairs: &[ChildPair],
-        node_idx: &mut [u32],
-        grid_pos: usize,
-    ) -> Result<(), OperationError>;
-}
-
-/// The fold, column-push and `node_idx` remap step, shared by both value
-/// kinds.
-///
-/// Growth past the output column's initial `left_width.max(right_width)` reserve must stay
-/// fallible — the column can grow up to alive cells (≤ left_width*right_width), well past the
-/// upfront reserve. The push discipline is the value kind's: `CountVec::push`
-/// stores a `Count::Big` as the `COUNT_OVERFLOW` sentinel with the exact
-/// `BigUint` in the lazily-built, `None`-backfilled side table; the weighted
-/// column is an ordinary `Vec` whose per-pair transient is budget-charged by
-/// [`CollectSink`] instead.
-impl<F: ValueDomain> StreamCellFold for StreamState<'_, F> {
+impl<F: ValueDomain> StreamState<'_, F> {
+    /// Fold one cell into the output column and record its slot in the grid.
     #[inline(always)]
     fn fold_cell(
         &mut self,
@@ -61,7 +36,7 @@ impl<F: ValueDomain> StreamCellFold for StreamState<'_, F> {
 ///
 /// Picks the fold for the state's value kind, integer or weighted, binds that
 /// kind's two child column views ([`attach_children`], read in place in the
-/// child levels), and runs [`stream_collapse_rows`]. Which side is marginal is
+/// child levels), and runs the shared row loop. Which side is marginal is
 /// carried by the views (`StreamChild::is_marginal`).
 ///
 /// The views live only for this call: `stream_state` owns the output column and
@@ -85,14 +60,7 @@ pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
     }
 }
 
-/// One value kind's streaming level: bind the two child column views to the
-/// in-flight output column, then run the shared collapse loop.
-///
-/// The two hooks are where the domains differ — which half of the per-apply
-/// cache holds their columns, and what state they carry beside the diagram.
-/// Everything else is one body, monomorphized per `F` exactly as the two
-/// hand-written arms were. The `match` above stays: the value kind is a runtime
-/// choice.
+/// Bind the child columns and collapse this level into its value column.
 fn stream_level<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
     eng: &Engine,
     rows: RowLoop<'_>,
@@ -103,19 +71,21 @@ fn stream_level<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
     env: StreamEnv<'_>,
 ) -> Result<(), OperationError> {
     let mut st = attach_children::<F>(env, rows.children, counts);
-    stream_collapse_rows(eng, rows, scratch, left, right, &mut st)
+    let mut cell_pairs = eng.apply().cell_pairs.checkout();
+    let mut action = StreamCollapse { fold: &mut st, cell_pairs: &mut cell_pairs };
+    run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action)
 }
 
 /// Collapse-at-source action: enumerate each alive cell's surviving `(lc, rc)`
 /// refs into a reused scratch `Vec<ChildPair>` and feed them straight to the
 /// fold, never touching `level`.
-struct StreamCollapse<'a, F> {
-    fold: &'a mut F,
+struct StreamCollapse<'a, 'data, F: ValueDomain> {
+    fold: &'a mut StreamState<'data, F>,
     /// Reused across all cells — bounds the transient peak to one cell's pairs.
-    cell_pairs: Vec<ChildPair>,
+    cell_pairs: &'a mut Vec<ChildPair>,
 }
 
-impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R> for StreamCollapse<'_, F> {
+impl<L: ChildLookup, R: ChildLookup, F: ValueDomain> CellAction<L, R> for StreamCollapse<'_, '_, F> {
     /// Collapse walks may visit marginal-encoded operand nodes.
     const ASSERT_INTERNAL: bool = false;
 
@@ -145,7 +115,7 @@ impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R> for Str
             a.left,
             a.right,
             &mut CollectSink {
-                out: &mut self.cell_pairs,
+                out: self.cell_pairs,
             },
             a.gate,
         )?;
@@ -154,46 +124,8 @@ impl<L: ChildLookup, R: ChildLookup, F: StreamCellFold> CellAction<L, R> for Str
         // the kernel used, not a second derivation of it.
         if !self.cell_pairs.is_empty() {
             self.fold
-                .fold_cell(eng, &self.cell_pairs, a.node_idx, a.row_base + a.j)?;
+                .fold_cell(eng, self.cell_pairs, a.node_idx, a.row_base + a.j)?;
         }
         Ok(())
     }
-}
-
-/// The collapse route's entry into the shared row loop (see
-/// [`run_level_rows_stream_count`] for the route/shape documentation).
-///
-/// Count-identical to the materializing emit walk by construction — same
-/// per-cell pair multiset (the kernel is the emit walk itself, minus node
-/// materialization; its row/reach culls prune only provably-dead pairs, and
-/// the ≥64×64 grouped N×M path emits the same multiset in a different order
-/// under an order-independent fold).
-fn stream_collapse_rows<L: ChildLookup, R: ChildLookup, F: StreamCellFold>(
-    eng: &Engine,
-    rows: RowLoop<'_>,
-    scratch: RowScratch<'_>,
-    left: &L,
-    right: &R,
-    fold: &mut F,
-) -> Result<(), OperationError> {
-    // The per-cell scratch is pooled, not rebuilt from empty at every
-    // streaming level — `cell` clears it before each cell, so pooled capacity can
-    // carry nothing but capacity. Returned on the error path too, under the
-    // module's byte cap, so one huge level can't park its arena in the pool.
-    let mut action = StreamCollapse {
-        fold,
-        cell_pairs: eng.apply().cell_pairs.take(),
-    };
-    let result = run_level_rows::<false, _, _, _>(
-        eng,
-        rows,
-        scratch,
-        left,
-        right,
-        &mut action,
-    );
-    eng.apply()
-        .cell_pairs
-        .put_bounded(std::mem::take(&mut action.cell_pairs));
-    result
 }
