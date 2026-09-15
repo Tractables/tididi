@@ -21,7 +21,8 @@ use crate::Vtree;
 /// reference frees its parked scratch; diagrams continue to own their results.
 #[derive(Default)]
 pub struct Context {
-    idle: Mutex<Option<Engine>>,
+    /// Checkout moves only the pointer to the retained engine.
+    idle: Mutex<Option<Box<Engine>>>,
 }
 
 impl std::fmt::Debug for Context {
@@ -116,7 +117,7 @@ impl Context {
 /// Return a finished engine after dropping configuration outside the pool lock.
 struct Checkout<'a> {
     context: &'a Context,
-    engine: Option<Engine>,
+    engine: Option<Box<Engine>>,
 }
 
 impl Drop for Checkout<'_> {
