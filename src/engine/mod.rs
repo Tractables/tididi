@@ -20,8 +20,8 @@ pub use context::Context;
 /// outlive it.
 /// Operands may come from different engines; binary operations require a shared
 /// vtree allocation, as described on [`Tdd`](crate::Tdd).
-/// For ordinary Boolean composition, `Tdd` constructors and the `&`, `|` and `!`
-/// operators use the vtree's [`Context`] automatically.
+/// Ordinary [`and`](crate::and), [`or`](crate::or) and diagram queries use the
+/// vtree's [`Context`] automatically.
 /// An engine is `Send` but not `Sync`: it can move between threads, and one
 /// thread uses it at a time.
 ///
@@ -49,7 +49,7 @@ pub use context::Context;
 ///
 /// # Choose the operation you need
 ///
-/// The [task guide](crate::guide::api) groups the methods by user task.
+/// The [task guide](crate::guide::api) groups operations by user task.
 /// [`and`](Self::and) can leave a nonminimal representation; use
 /// [`try_minimize`](crate::reduce::try_minimize) when canonical form is needed.
 /// [`model_count`](Self::model_count), [`is_sat`](Self::is_sat), and
@@ -65,8 +65,7 @@ pub use context::Context;
 /// configuration afterward. Checked methods return [`OperationError`](crate::OperationError)
 /// on refusal; the method's contract specifies what remains after an error.
 ///
-/// The `Tdd` constructors and Boolean operators use their vtree's context
-/// with panic-on-error behavior. The infallible
+/// The Boolean operators use their vtree's context and panic on failure. The infallible
 /// [`one`](Self::one) and [`zero`](Self::zero) methods also do not check resource
 /// limits; the empty [`cube`](Self::cube) or [`clause`](Self::clause) provides a
 /// checked constant when needed.

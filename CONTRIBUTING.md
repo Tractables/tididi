@@ -112,8 +112,8 @@ signature is judged by hand as well.
   `docs/api-guide.md` is the doctested surface a change to the API keeps true.
 - Introductory examples compose diagrams with imported `and`, `or`, `xor`,
   `ite` and `and_exists` functions, and use diagram methods for queries and
-  unary transformations. They return `Result` so failures can propagate with
-  `?`. Show operators as optional shorthand and explicit batch engines when
+  unary transformations. Let example entry points return `Result` so checked
+  failures propagate with `?`. Show operators as optional shorthand and explicit batch engines when
   teaching resource control. Put each operation's full contract on its default
   entry point; the batch method links to it and explains its limit behavior.
 - When you change behaviour, change its documentation in the same commit.

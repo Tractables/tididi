@@ -2,7 +2,7 @@
 //!
 //! Each is a one-line forward to the operation beside it and holds no logic of
 //! its own. All three reuse the vtree's execution context and panic
-//! where the engine form would return an error. To run `&` or `|` under a
+//! where the checked operation would return an error. To run `&` or `|` under a
 //! limit, call [`Engine::and`](crate::Engine::and) or
 //! [`Engine::or`](crate::Engine::or), which report a cut instead of aborting;
 //! `!` uses [`Tdd::negate`].
@@ -16,8 +16,8 @@ use std::ops::{BitAnd, BitOr, Not};
 use crate::diagram::Tdd;
 use crate::apply::{apply_and, apply_or};
 
-/// `f & g` — conjunction, as [`Engine::and`](crate::Engine::and): consumes
-/// both operands, which must share a vtree, and panics where that method
+/// `f & g` — conjunction, as [`and`](crate::and): consumes
+/// both operands, which must share a vtree, and panics where that function
 /// would return an error.
 impl BitAnd for Tdd {
     type Output = Tdd;
@@ -26,9 +26,9 @@ impl BitAnd for Tdd {
     }
 }
 
-/// `f | g` — disjunction, as [`Engine::or`](crate::Engine::or): consumes both
+/// `f | g` — disjunction, as [`or`](crate::or): consumes both
 /// operands, which must share a vtree and have no marginal level, and panics
-/// where that method would return an error.
+/// where that function would return an error.
 impl BitOr for Tdd {
     type Output = Tdd;
     fn bitor(self, rhs: Tdd) -> Tdd {

@@ -71,11 +71,10 @@
 //!
 //! ```
 //! use std::sync::Arc;
-//! use tididi::{Engine, Vtree};
+//! use tididi::{Tdd, Vtree};
 //!
-//! let engine = Engine::new();
 //! let tree = Arc::new(Vtree::balanced(3));
-//! let f = engine.clause(&tree, [1, 2])?;
+//! let f = Tdd::try_clause(&tree, [1, 2])?;
 //! let mut total = 0;
 //! for t in tree.bottomup() {
 //!     for (_node, pairs) in f.level(t).internal_inputs_iter() {
@@ -97,9 +96,8 @@
 //! ```
 //! use std::sync::Arc;
 //! use num_bigint::BigUint;
-//! use tididi::{Engine, Tdd};
+//! use tididi::{or, Tdd};
 //! use tididi::diagram::{ChildRef, EncodedChildRef, ChildDecoder, ValueRef};
-//! use tididi::marginal::marginalize_levels;
 //! use tididi::vtree::{Vtree, VtreeIdx};
 //!
 //! /// Which kinds of pair side the walk decoded.
@@ -157,10 +155,8 @@
 //! // Sixty-four variables, so the left subtree carries thirty-two of them and
 //! // its node values straddle the width a reference can carry inline.
 //! let vtree = Arc::new(Vtree::balanced(64));
-//! let engine = Engine::new();
-//! let mut f = (Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]) & Tdd::clause(&vtree, [3]))
-//!     | (Tdd::clause(&vtree, [4]) & Tdd::clause(&vtree, [33]));
-//! tididi::reduce::minimize(&mut f);
+//! let mut f = or(Tdd::try_cube(&vtree, [1, 2, 3])?, Tdd::try_cube(&vtree, [4, 33])?)?;
+//! f.minimize()?;
 //! let expected = f.model_count();
 //!
 //! // Sum out the root's left subtree, bottom-up.
@@ -171,11 +167,12 @@
 //! };
 //! let levels: Vec<VtreeIdx> =
 //!     vtree.internal_bottomup_slice().iter().copied().filter(|&t| under(t)).collect();
-//! marginalize_levels(&engine, &mut f, &levels).unwrap();
+//! f.marginalize_levels(&levels)?;
 //!
 //! let mut seen = Seen::default();
 //! assert_eq!(count(&f, &mut seen), expected);
 //! assert!(seen.leaf && seen.node && seen.inline && seen.slot);
+//! # Ok::<(), tididi::OperationError>(())
 //! ```
 
 mod literal;
