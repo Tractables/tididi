@@ -45,7 +45,7 @@ fn concurrent_batches_can_run_on_the_same_context() {
             let (context, tree, ready) = (&context, &tree, &ready);
             threads.spawn(move || context.run(|engine| {
                 ready.wait();
-                let f = engine.literal(&tree, literal).unwrap();
+                let f = engine.literal(tree, literal).unwrap();
                 assert_canonical(&f);
                 assert_eq!(engine.model_count(&f).unwrap(), 4u32.into());
             }));
