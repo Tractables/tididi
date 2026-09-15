@@ -6,7 +6,7 @@ use super::*;
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
 use crate::marginal::marginalize_levels;
 use crate::query::count::{ModelCounter, KeepAllColumns, PinSemantics};
-use crate::test_helpers::rat;
+use crate::test_helpers::{assert_canonical, rat};
 
 /// `(x0 ∨ x2) ∧ (¬x1 ∨ x3)` over `balanced(4)`, minimized.
 fn two_clauses(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
@@ -61,4 +61,37 @@ fn the_incremental_count_of_bottom_is_zero() {
     assert!(f.is_zero());
     let mut counter = ModelCounter::<KeepAllColumns>::new(eng, &f, PinSemantics::Evidence);
     assert_eq!(counter.model_count(eng), BigUint::ZERO);
+}
+
+#[test]
+fn weighted_leaf_outputs_cannot_decide_structural_satisfiability() {
+    let eng = Engine::new();
+    let tree = Arc::new(Vtree::balanced(1));
+    for weight in [rat(0, 1), rat(1, 2)] {
+        for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+            let mut f = eng.literal(&tree, 1).unwrap();
+            assert_canonical(&f);
+            f.set_weights(WeightStore::new(RationalWeights::from_literals(&[
+                LiteralWeights { negative: weight.clone(), positive: weight.clone() }
+            ]), arithmetic)).unwrap();
+            marginalize_levels(&eng, &mut f, &[tree.root()]).unwrap();
+            assert!(f.level(tree.root()).is_weight_marginal());
+            assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| is_sat_minimized(&f))).is_err());
+            f.output.local = crate::diagram::ZERO;
+            assert!(!is_sat_minimized(&f));
+        }
+    }
+}
+
+#[test]
+fn structural_and_count_marginal_leaf_outputs_remain_satisfiable() {
+    let eng = Engine::new();
+    let tree = Arc::new(Vtree::balanced(1));
+    for mut f in [eng.one(&tree), eng.literal(&tree, 1).unwrap(), eng.literal(&tree, -1).unwrap()] {
+        assert_canonical(&f);
+        assert!(is_sat_minimized(&f));
+        marginalize_levels(&eng, &mut f, &[tree.root()]).unwrap();
+        assert!(f.level(tree.root()).marginal_counts().is_some());
+        assert!(is_sat_minimized(&f));
+    }
 }

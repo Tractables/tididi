@@ -52,8 +52,10 @@ impl Engine {
         let otherwise = self.negate(condition.try_clone_on(self)?)?;
         let yes = self.and(condition, then_branch)?;
         let no = self.and(otherwise, else_branch)?;
+        // Disjunction minimizes unless a false operand selects its identity shortcut.
+        let identity = yes.is_zero() || no.is_zero();
         let mut result = self.or(yes, no)?;
-        crate::reduce::try_minimize(self, &mut result)?;
+        if identity { crate::reduce::try_minimize(self, &mut result)?; }
         Ok(result)
     }
 
@@ -132,8 +134,11 @@ impl Engine {
             return Err(OperationError::Stopped);
         }
         let targets = super::project::quantification_targets(self, f.vtree(), vars)?;
-        let mut result = super::project::exists_targets_on(self, self.and(f, g)?, &targets, how)?;
-        crate::reduce::try_minimize(self, &mut result)?;
+        let product = self.and(f, g)?;
+        // A nonempty quantification minimizes a non-false product.
+        let identity = targets.is_empty() || product.is_zero();
+        let mut result = super::project::exists_targets_on(self, product, &targets, how)?;
+        if identity { crate::reduce::try_minimize(self, &mut result)?; }
         Ok(result)
     }
 }

@@ -65,7 +65,7 @@ impl Engine {
 ///
 /// # Panics
 ///
-/// Panics if the output level is weight-marginal: its per-node values are
+/// Panics if a non-false output level is weight-marginal: its per-node values are
 /// semiring weights, and a weight of zero does not mean the node has no model.
 ///
 /// # Examples
@@ -88,22 +88,22 @@ pub fn is_sat_minimized(f: &Tdd) -> bool {
         return false;
     }
     let out_vtree = f.output.vtree;
-    if f.vtree.node(out_vtree).is_leaf() {
-        // Implicit leaf: any index in {One=0, Pos=1, Neg=2} is satisfiable.
-        return true;
-    }
     let out_level = &f.levels[out_vtree.idx()];
-    let out_i = f.output.local.idx();
-    if let Some(counts) = out_level.marginal_counts() {
-        // A count of `u128::MAX` stands for a larger exact count, still > 0.
-        return counts[out_i] > 0;
-    }
     assert!(
         !out_level.is_weight_marginal(),
         "is_sat_minimized: the output level {:?} is weight-marginal; \
          its values are weights, which do not decide satisfiability",
         out_vtree
     );
+    if f.vtree.node(out_vtree).is_leaf() {
+        // Implicit leaf: any index in {One=0, Pos=1, Neg=2} is satisfiable.
+        return true;
+    }
+    let out_i = f.output.local.idx();
+    if let Some(counts) = out_level.marginal_counts() {
+        // A count of `u128::MAX` stands for a larger exact count, still > 0.
+        return counts[out_i] > 0;
+    }
     let out_node = &out_level.nodes[out_i];
     out_level.pairs_iter_of(out_node).next().is_some()
 }

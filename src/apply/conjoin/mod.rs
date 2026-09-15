@@ -128,6 +128,8 @@ pub(crate) fn conjoin_owned(
     // level — see `is_self_conjunction`, where the soundness of both choices
     // is stated.
     if is_self_conjunction(&f, &g) {
+        let _op = eng.limits().begin_operation();
+        if eng.limits().should_stop() { return Err(OperationError::Stopped); }
         diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels));
         return Ok(f);
     }

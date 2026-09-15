@@ -31,6 +31,8 @@ impl StopAt {
 /// once its threshold is reached and the conjunction has built at least the
 /// specified number of output pairs. A zero pair floor makes it unconditional.
 /// Both thresholds use [`StopAt`] and may be wall-clock times or work units.
+/// Boolean transformations check an armed stop even for constant operands or
+/// empty requests; an identity result does not bypass cancellation.
 ///
 /// The pair floor uses [`OperationMetrics::pairs_in_flight`](crate::limits::OperationMetrics::pairs_in_flight),
 /// which is reset at operation entry and records the current or last pairwise

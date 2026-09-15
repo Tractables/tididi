@@ -47,6 +47,7 @@ pub(crate) fn exists_var_on(eng: &Engine, f: Tdd, x: VarId, how: QuantificationS
 
 /// Quantify a validated leaf index on the operand's unchanged vtree.
 fn exists_leaf_on(eng: &Engine, f: Tdd, leaf_idx: VtreeIdx, how: QuantificationStrategy) -> Result<Tdd, OperationError> {
+    if eng.limits().should_stop() { return Err(OperationError::Stopped); }
     if f.is_zero() {
         return Ok(f);
     }
@@ -72,6 +73,7 @@ pub(crate) fn exists_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], how: Quantifi
 /// Validate the entire request and retain each leaf once in first-occurrence order.
 pub(super) fn quantification_targets(eng: &Engine, tree: &Vtree, vars: &[VarId]) -> Result<Vec<VtreeIdx>, OperationError> {
     let lim = eng.limits();
+    if lim.should_stop() { return Err(OperationError::Stopped); }
     let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
     let mut targets = Vec::new();
     for (position, &var) in vars.iter().enumerate() {

@@ -16,7 +16,8 @@ impl Engine {
     /// evaluation, not the substituted Boolean functions.
     ///
     /// Consumes `f`, including on error, and borrows replacements. A nonempty map
-    /// returns a minimized diagram; an empty map returns `f` unchanged.
+    /// returns a minimized diagram; an empty map returns `f` unchanged without
+    /// allocating scratch storage.
     /// Rebuilds bottom-up with conjunction/disjunction over the destination
     /// universe, retaining temporary diagrams for a frontier of source levels.
     /// Each source pair can require an apply and checked operand copies, so
@@ -100,7 +101,7 @@ impl Engine {
     /// Validate replacements into one leaf-indexed table and rebuild through the Boolean kernels.
     fn substitute_with<'a>(
         &self,
-        f: Tdd,
+        mut f: Tdd,
         replacements: impl ExactSizeIterator<Item = (VarId, Replacement<'a>)>,
     ) -> Result<Tdd, OperationError> {
         f.require_structure()?;
@@ -109,10 +110,10 @@ impl Engine {
         if lim.should_stop() {
             return Err(OperationError::Stopped);
         }
+        if replacements.len() == 0 { return Ok(f); }
         let mut gate = PollGate::new(lim.reduce_poll_stride());
         let mut by_leaf = Vec::new();
         lim.try_resize(&mut by_leaf, f.vtree().num_nodes(), None)?;
-        let empty = replacements.len() == 0;
         for (var, replacement) in replacements {
             lim.poll(&mut gate, 1)?;
             let leaf = f
@@ -135,7 +136,8 @@ impl Engine {
             }
         }
         lim.flush_poll(&mut gate)?;
-        if empty || f.is_zero() {
+        if f.is_zero() {
+            crate::reduce::try_minimize(self, &mut f)?;
             return Ok(f);
         }
         self.substitute_prepared(f, &by_leaf, gate)
@@ -200,7 +202,10 @@ impl Engine {
         let mut result = columns[f.output().vtree.idx()].swap_remove(f.output().local.idx());
         // The destination universe is unchanged; weights stay bound to its variables.
         result.weights = f.weights.take().map(|weights| weights.empty_like());
-        crate::reduce::try_minimize(self, &mut result)?;
+        // Internal columns are minimized when built; a leaf can return a cloned replacement.
+        if tree.node(f.output().vtree).is_leaf() {
+            crate::reduce::try_minimize(self, &mut result)?;
+        }
         Ok(result)
     }
 }

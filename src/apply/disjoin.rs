@@ -42,6 +42,7 @@ pub(crate) fn disjoin_owned(eng: &Engine, mut f: Tdd, mut g: Tdd) -> Result<Tdd,
     f.require_structure()?;
     g.require_structure()?;
     let _op = eng.limits().begin_operation();
+    if eng.limits().should_stop() { return Err(OperationError::Stopped); }
     if f.is_zero() { return Ok(g); }
     if g.is_zero() { return Ok(f); }
 
