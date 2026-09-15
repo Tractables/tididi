@@ -292,6 +292,16 @@ impl<R: Retention> BoundModelCounter<'_, '_, R> {
         self.counter.get_mut().set_pin(var, val)
     }
 
+    /// Apply a validated group of pin updates with [`ModelCounter::set_pins`] semantics.
+    pub fn set_pins(&mut self, pins: &[(VarId, Option<bool>)]) -> Result<(), OperationError> {
+        self.counter.get_mut().set_pins(pins)
+    }
+
+    /// Clear all observations with [`ModelCounter::clear_pins`] semantics.
+    pub fn clear_pins(&mut self) {
+        self.counter.get_mut().clear_pins();
+    }
+
     /// Count with [`ModelCounter::model_count`] semantics under the borrowed engine's limits.
     ///
     /// Every read checks the engine's current limits, including cached and
@@ -452,6 +462,75 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// # Ok::<(), OperationError>(())
     /// ```
     pub fn set_pin(&mut self, var: VarId, val: Option<bool>) -> Result<(), OperationError> {
+        let leaf = self.validate_pin(var)?;
+        self.set_leaf_pin(leaf, val);
+        Ok(())
+    }
+
+    /// Apply a group of pin changes after validating every variable.
+    ///
+    /// Only listed variables change; `Some(value)` pins a variable and `None`
+    /// clears it. If a variable appears more than once, its last value wins.
+    /// An empty slice has no effect. Updates allocate no storage and defer
+    /// affected counts until the next read, as in [`Self::set_pin`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::VariableNotInVtree`] for an absent variable,
+    /// or [`OperationError::MarginalLevel`] for a variable already summed out,
+    /// including entries that clear pins. An error leaves all pins, cached
+    /// counts and previously pending updates unchanged.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// use tididi::vtree::VarId;
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// let mut counter = f.counter()?;
+    /// counter.set_pins(&[(VarId(0), Some(false)), (VarId(2), Some(true))])?;
+    /// assert_eq!(counter.model_count()?, 1u32.into());
+    /// counter.set_pins(&[(VarId(0), None)])?;
+    /// assert_eq!(counter.model_count()?, 3u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn set_pins(&mut self, pins: &[(VarId, Option<bool>)]) -> Result<(), OperationError> {
+        for &(var, _) in pins { self.validate_pin(var)?; }
+        for &(var, val) in pins {
+            let leaf = self.tdd.vtree.leaf_of(var).expect("validated pin variable");
+            self.set_leaf_pin(leaf, val);
+        }
+        Ok(())
+    }
+
+    /// Clear every pin without allocating, deferring affected counts until the next read.
+    ///
+    /// The next successful count returns the unobserved diagram's model count.
+    /// Existing count storage is retained for reuse; an already unpinned
+    /// counter is unchanged.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// use tididi::vtree::VarId;
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// let mut counter = f.counter()?;
+    /// counter.set_pins(&[(VarId(0), Some(false)), (VarId(2), Some(true))])?;
+    /// counter.clear_pins();
+    /// assert_eq!(counter.model_count()?, 6u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn clear_pins(&mut self) {
+        for leaf in 0..self.pins.len() {
+            if self.pins[leaf].is_some() { self.set_leaf_pin(VtreeIdx(leaf as u32), None); }
+        }
+    }
+
+    /// Resolve a variable to its structural leaf without changing counter state.
+    fn validate_pin(&self, var: VarId) -> Result<VtreeIdx, OperationError> {
         let leaf = self.tdd.vtree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
         // An implicit integer leaf can remain below a marginal parent.
         for level in std::iter::once(leaf).chain(self.tdd.vtree.node(leaf).parent()) {
@@ -459,10 +538,14 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
                 return Err(OperationError::MarginalLevel(level));
             }
         }
-        if self.pins[leaf.idx()] == val { return Ok(()); }
+        Ok(leaf)
+    }
+
+    /// Update a validated leaf's pin and record its deferred refresh once.
+    fn set_leaf_pin(&mut self, leaf: VtreeIdx, val: Option<bool>) {
+        if self.pins[leaf.idx()] == val { return; }
         self.pins[leaf.idx()] = val;
         if !self.changed.contains(&leaf) { self.changed.push(leaf); }
-        Ok(())
     }
 
     /// Refresh the current pins and count under the diagram context's allocation and stop rules.
