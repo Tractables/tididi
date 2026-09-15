@@ -9,7 +9,7 @@ assignments. If levels have been marginalized, their original pair lists are
 no longer available to inspect.
 
 Run the complete program with `cargo run --example statistic`. Read the
-[data model](https://docs.rs/tididi/latest/tididi/guide/model/index.html) first
+[data model](crate::guide::model) first
 if the distinction between a vtree level, a TDD node, and a child pair is new.
 
 ```rust,ignore

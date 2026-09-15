@@ -43,6 +43,8 @@ jobs:
         cargo run --example probabilistic_query
         cargo run --example symbolic_reachability
         cargo run --example statistic
+        cargo run --example save_reload
+        cargo run --example vtree_grouping
     - name: Lints
       if: runner.os == 'Linux'
       run: cargo clippy --workspace --all-targets -- -D warnings

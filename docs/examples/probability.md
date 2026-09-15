@@ -131,10 +131,10 @@ The program checks three scenarios:
 | 3/5 | 1/10 | 16/25 | 15/16 |
 | 0 | 0 | 0 | undefined |
 
-Each [`Engine::evaluate`](https://docs.rs/tididi/latest/tididi/engine/struct.Engine.html#method.evaluate) call reads the new table
+Each [`Engine::evaluate`](crate::engine::Engine::evaluate) call reads the new table
 without changing the structural diagram. This lets an application update
 probabilities while keeping the compiled logical events.
 
 See the [complete program](https://github.com/Tractables/tididi/blob/main/examples/probabilistic_query.rs)
 for the scenario loop and its assertions, and the
-[task guide](https://docs.rs/tididi/latest/tididi/guide/api/index.html) for other weighted queries.
+[task guide](crate::guide::api) for other weighted queries.

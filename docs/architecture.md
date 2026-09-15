@@ -206,5 +206,5 @@ process-wide state, no C or C++ code built.
 
 [`EncodedChildRef`]: crate::diagram::EncodedChildRef
 
-[task guide]: https://docs.rs/tididi/latest/tididi/guide/api/index.html
-[data model]: https://docs.rs/tididi/latest/tididi/guide/model/index.html
+[task guide]: crate::guide::api
+[data model]: crate::guide::model

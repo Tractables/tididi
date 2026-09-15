@@ -11,6 +11,8 @@ fn walkthrough_code_comes_from_the_runnable_examples() {
         ("configurations", include_str!("../docs/examples/configurations.md"), include_str!("../examples/build_minimize_count.rs")),
         ("probability", include_str!("../docs/examples/probability.md"), include_str!("../examples/probabilistic_query.rs")),
         ("reachability", include_str!("../docs/examples/reachability.md"), include_str!("../examples/symbolic_reachability.rs")),
+        ("persistence", include_str!("../docs/examples/persistence.md"), include_str!("../examples/save_reload.rs")),
+        ("vtrees", include_str!("../docs/examples/vtrees.md"), include_str!("../examples/vtree_grouping.rs")),
         ("statistics", include_str!("../docs/examples/statistics.md"), include_str!("../examples/statistic.rs")),
     ];
     for (name, markdown, source) in examples {
@@ -38,5 +40,24 @@ fn walkthrough_code_comes_from_the_runnable_examples() {
             excerpts += 1;
         }
         assert!(excerpts > 0, "{name}: walkthrough has no checked excerpts");
+    }
+}
+
+/// Keep links within the documentation version rustdoc is rendering.
+#[test]
+fn crate_documentation_uses_intra_doc_links() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut directories = vec![root.join("docs"), root.join("src")];
+    while let Some(directory) = directories.pop() {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                directories.push(path);
+            } else if matches!(path.extension().and_then(|s| s.to_str()), Some("md" | "rs")) {
+                let source = std::fs::read_to_string(&path).unwrap();
+                assert!(!source.contains("https://docs.rs/tididi/"),
+                    "{}: use a crate:: link so rustdoc resolves the current version", path.display());
+            }
+        }
     }
 }

@@ -4,7 +4,7 @@ Start with a vtree, build a function, then borrow the resulting
 diagram to ask questions about it. The sections below follow that sequence;
 the linked API items provide the contracts and examples.
 For a first complete program, work through the
-[backup configuration walkthrough](https://docs.rs/tididi/latest/tididi/guide/examples/configurations/index.html).
+[backup configuration walkthrough](crate::guide::examples::configurations).
 
 ## Build a Boolean function
 
@@ -12,7 +12,9 @@ Choose [`Vtree::balanced`](crate::Vtree::balanced) for a first experiment,
 [`Vtree::linear`](crate::Vtree::linear) for a variable order, or
 [`Vtree::join`](crate::Vtree::join) to assemble your own grouping.
 The [`Vtree`](crate::Vtree) introduction explains grouping choices, variable
-numbering, and how operands share a tree.
+numbering, and how operands share a tree; the
+[grouping walkthrough](crate::guide::examples::vtrees) compares two decompositions
+of the same function.
 
 Build an atom with [`Tdd::literal`](crate::Tdd::literal), a disjunction
 of literals with [`Tdd::clause`](crate::Tdd::clause), or a conjunction
@@ -75,7 +77,7 @@ For fixed weights that travel with a diagram, attach a
 [`WeightStore`](crate::diagram::WeightStore) through
 [`Tdd::set_weights`](crate::Tdd::set_weights) and read its result with
 [`Engine::weighted_value`](crate::Engine::weighted_value).
-The [probability walkthrough](https://docs.rs/tididi/latest/tididi/guide/examples/probability/index.html)
+The [probability walkthrough](crate::guide::examples::probability)
 shows repeated evaluation and conditional-probability normalization.
 
 ## Control resources and diagram size
@@ -104,7 +106,9 @@ permanently.
 A saved function needs its variable tree to recover the same interpretation.
 [`write_tdd`](crate::io::write_tdd) and [`read_tdd`](crate::io::read_tdd) save
 and restore a structural diagram, with its tree stored separately by
-[`Vtree::to_text`](crate::Vtree::to_text) and [`Vtree::from_text`](crate::Vtree::from_text).
+[`Vtree::to_text`](crate::Vtree::to_text) and [`Vtree::from_text`](crate::Vtree::from_text);
+the [persistence walkthrough](crate::guide::examples::persistence) restores and
+combines two diagrams.
 Render Graphviz text with [`tdd_to_dot`](crate::io::tdd_to_dot) or
 [`vtree_to_dot`](crate::io::vtree_to_dot).
 
@@ -116,10 +120,10 @@ to combine diagrams with disjoint variable domains.
 
 ## Read further
 
-The [walkthroughs](https://docs.rs/tididi/latest/tididi/guide/examples/index.html)
-develop complete programs for configurations, probabilities, reachability and
-custom traversal.
-The [data model](https://docs.rs/tididi/latest/tididi/guide/model/index.html)
+The [walkthroughs](crate::guide::examples)
+develop complete programs for configurations, probabilities, reachability,
+persistence, variable grouping and custom traversal.
+The [data model](crate::guide::model)
 introduces levels, pairs, and determinism; the
-[architecture reference](https://docs.rs/tididi/latest/tididi/guide/architecture/index.html)
+[architecture reference](crate::guide::architecture)
 explains the passes and invariants for contributors.

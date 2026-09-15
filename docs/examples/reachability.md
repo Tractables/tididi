@@ -160,5 +160,5 @@ path requires retaining predecessor information during the search.
 The [complete program](https://github.com/Tractables/tididi/blob/main/examples/symbolic_reachability.rs)
 includes the loop and decodes the witness back to state 2. For the contracts
 of the image and renaming operations, see
-[`Engine::and_exists`](https://docs.rs/tididi/latest/tididi/engine/struct.Engine.html#method.and_exists) and
-[`Engine::rename_vars`](https://docs.rs/tididi/latest/tididi/engine/struct.Engine.html#method.rename_vars).
+[`Engine::and_exists`](crate::engine::Engine::and_exists) and
+[`Engine::rename_vars`](crate::engine::Engine::rename_vars).

@@ -3,7 +3,8 @@
 
 use std::sync::Arc;
 
-use tididi::{Engine, Tdd, Vtree};
+use tididi::{Engine, OperationError, Tdd, Vtree};
+use tididi::limits::LimitConfig;
 use tididi::reduce::try_minimize;
 
 /// Build the backup rules and query the configurations they permit.
@@ -33,6 +34,24 @@ fn main() -> Result<(), tididi::OperationError> {
 
     // Reuse one workspace for the following queries and minimization.
     let engine = Engine::new();
+    // A zero allocation budget makes the checked constructor report a refusal.
+    {
+        let _limit = engine.limits().scope(
+            LimitConfig::none().with_memory_budget_bytes(Some(0)),
+        );
+        let attempt = engine.clause(&tree, [1, 2]);
+        assert!(matches!(attempt, Err(OperationError::OverBudget)));
+        match attempt {
+            Ok(diagram) => println!("Destination choices: {}", diagram.model_count()),
+            Err(OperationError::OverBudget) => println!("Not enough budget to build the destination rule"),
+            Err(error) => return Err(error),
+        }
+    }
+    // Dropping the guard restores the engine's previous limits.
+    let destination = engine.clause(&tree, [1, 2])?;
+    assert_eq!(destination.model_count(), 12u32.into());
+    assert_eq!(configurations.model_count(), count);
+
     let witness = engine.satisfying_assignment(&configurations)?
         .expect("the backup rules have a solution");
     println!("One valid configuration:");

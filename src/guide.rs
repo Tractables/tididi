@@ -14,6 +14,12 @@ pub mod examples {
     #[doc = include_str!("../docs/examples/reachability.md")]
     pub mod reachability {}
 
+    #[doc = include_str!("../docs/examples/persistence.md")]
+    pub mod persistence {}
+
+    #[doc = include_str!("../docs/examples/vtrees.md")]
+    pub mod vtrees {}
+
     #[doc = include_str!("../docs/examples/statistics.md")]
     pub mod statistics {}
 }

@@ -17,6 +17,8 @@ of the root and `{x3, x4}` on the other.
 a variable is still part of that universe when a function does not depend on
 it. A right-linear vtree has one variable on the left of each internal node
 and corresponds to the variable order of an ordered binary decision diagram.
+The [grouping walkthrough](crate::guide::examples::vtrees) compares two trees
+for the same function and explains their different storage requirements.
 
 ## From variables to a function
 
@@ -91,7 +93,7 @@ indices, so array order is not a traversal order.
 [`TddBuilder`] checks storage when assembling a diagram by hand; its author
 must also establish the determinism contract documented on that type.
 
-[task guide]: https://docs.rs/tididi/latest/tididi/guide/api/index.html
+[task guide]: crate::guide::api
 [the TDD paper, Section 5]: https://arxiv.org/html/2604.05537v1#S5
 [`Vtree`]: crate::Vtree
 [`Tdd`]: crate::Tdd

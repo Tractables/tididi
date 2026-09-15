@@ -48,7 +48,8 @@ invalid. The typed form, [`Literal`], uses zero-based variable identifiers.
 Use the same `Arc<Vtree>` for functions you intend to combine.
 
 Each [`Tdd`] owns its diagram. Operators consume their operands; clone an
-operand first if you need to keep it. Queries such as `model_count` borrow it.
+operand first if you need to keep it. Cloning copies diagram storage and shares
+the vtree; queries such as `model_count` borrow the diagram.
 The constructors and operators above allocate temporary working memory and
 release it after each call; they panic if an operation fails.
 
@@ -71,6 +72,8 @@ and links to the full runnable source.
 | --- | --- |
 | [Conditional probability](docs/examples/probability.md) | Compute the probability of rain given wet grass, then change the priors. |
 | [Reachable states](docs/examples/reachability.md) | Find reachable states and check that a forbidden state cannot be reached. |
+| [Save and reload diagrams](docs/examples/persistence.md) | Restore two rules onto one shared tree, then combine them. |
+| [Variable grouping](docs/examples/vtrees.md) | Compare the same function under two vtrees. |
 | [A custom statistic](docs/examples/statistics.md) | Traverse the stored nodes and pairs. |
 
 For the concepts behind the API, read the [TDD data model]. The
