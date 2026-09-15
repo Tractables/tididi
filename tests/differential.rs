@@ -355,7 +355,7 @@ fn orders_agree(case: &Case) {
 
     let mut by_clause = Tdd::one(&case.vtree);
     for clause in &case.clauses {
-        by_clause = by_clause.and_clause(&lits(clause)).unwrap();
+        by_clause = by_clause.and_clause(lits(clause)).unwrap();
     }
     by_clause.minimize().unwrap();
     assert_canonical(&by_clause);

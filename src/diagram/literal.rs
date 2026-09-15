@@ -20,9 +20,9 @@ use crate::vtree::VarId;
 /// ```
 ///
 /// Constructors such as [`Engine::clause`](crate::Engine::clause) accept iterators
-/// of integers or typed literals, by value or reference. Methods taking a
-/// `&[Literal]`, such as [`Engine::and_clause`](crate::Engine::and_clause), require
-/// a typed slice; convert integer data before that call.
+/// of integers or typed literals, by value or reference.
+/// [`Tdd::and_clause`](crate::Tdd::and_clause) accepts arrays, slices and vectors
+/// of either type.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct Literal {
     /// The variable this literal refers to.

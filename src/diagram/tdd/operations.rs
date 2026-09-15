@@ -45,7 +45,11 @@ impl Tdd {
         context.run(|eng| eng.negate(self))
     }
 
-    /// Conjoin a disjunction of typed literals without building a separate diagram.
+    /// Conjoin a disjunction of literals without building a separate diagram.
+    ///
+    /// Accepts arrays, slices and vectors of signed, one-based integers or typed
+    /// [`Literal`] values. Collect an iterator into a vector before passing it.
+    /// Typed slices are borrowed directly; integer conversion uses temporary storage.
     ///
     /// Consumes the diagram on success and error; the result retains its vtree and
     /// weights. Repeated literals are ignored, opposite polarities make a tautology,
@@ -56,21 +60,20 @@ impl Tdd {
     ///
     /// # Errors
     ///
-    /// Returns [`OperationError::VariableNotInVtree`] for an absent variable,
+    /// Returns [`OperationError::InvalidLiteral`] for integer zero,
+    /// [`OperationError::VariableNotInVtree`] for an absent variable,
     /// [`OperationError::MarginalLevel`] if a required level has discarded its
     /// structure, or [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{Literal, Tdd, Vtree};
+    /// use tididi::{Tdd, Vtree};
     /// let tree = Arc::new(Vtree::balanced(3));
-    /// let remote = Literal::try_from(1)?;
-    /// let encrypted = Literal::try_from(2)?;
-    /// let f = Tdd::one(&tree).and_clause(&[remote.negated(), encrypted])?;
+    /// let f = Tdd::one(&tree).and_clause([-1, 2])?;
     /// assert_eq!(f.model_count()?, 6u32.into()); // remote implies encrypted
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn and_clause(self, clause: &[Literal]) -> Result<Tdd, OperationError> {
+    pub fn and_clause<L: crate::apply::ClauseLiteral>(self, clause: impl AsRef<[L]>) -> Result<Tdd, OperationError> {
         let context = Arc::clone(self.context());
         context.run(|eng| eng.and_clause(self, clause))
     }

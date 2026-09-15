@@ -214,7 +214,7 @@ fn a_clause_reads_its_literals_as_a_set() {
             assert_eq!(built.model_count().unwrap(), all, "{name}: {clause:?} is satisfied everywhere");
 
             let conjoined =
-                (Tdd::clause(&vtree, [3]).unwrap()).and_clause(&literals(&clause)).unwrap();
+                (Tdd::clause(&vtree, [3]).unwrap()).and_clause(literals(&clause)).unwrap();
             assert_eq!(
                 conjoined.model_count().unwrap(),
                 (Tdd::clause(&vtree, [3]).unwrap()).model_count().unwrap(),

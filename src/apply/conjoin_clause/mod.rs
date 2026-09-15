@@ -35,6 +35,53 @@ use pairs::*;
 mod rebuild;
 use rebuild::*;
 
+/// An element accepted by [`Tdd::and_clause`] and [`Engine::and_clause`].
+///
+/// Implemented for [`Literal`] and signed, one-based `i32` literals. Pass an
+/// array, slice or vector of either type. Typed literals are borrowed directly;
+/// integers are validated and converted under the operation's allocation limits.
+/// This trait is sealed.
+pub trait ClauseLiteral: input::Sealed {}
+
+impl ClauseLiteral for Literal {}
+impl ClauseLiteral for i32 {}
+
+mod input {
+    use super::*;
+
+    pub trait Sealed: Sized {
+        /// Convert the clause when necessary, then invoke the typed conjunction.
+        fn conjoin(eng: &Engine, f: Tdd, clause: &[Self]) -> Result<Tdd, OperationError>;
+    }
+
+    impl Sealed for Literal {
+        #[inline]
+        fn conjoin(eng: &Engine, f: Tdd, clause: &[Self]) -> Result<Tdd, OperationError> {
+            conjoin_clause_owned(eng, f, clause)
+        }
+    }
+
+    impl Sealed for i32 {
+        fn conjoin(eng: &Engine, f: Tdd, clause: &[Self]) -> Result<Tdd, OperationError> {
+            let lim = eng.limits();
+            let _op = lim.begin_operation();
+            if lim.should_stop() { return Err(OperationError::Stopped); }
+            let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
+            let mut literals = Vec::new();
+            for &value in clause {
+                lim.poll(&mut gate, 1)?;
+                let literal = Literal::try_from(value)?;
+                if f.vtree().leaf_of(literal.var).is_none() {
+                    return Err(OperationError::VariableNotInVtree(literal.var));
+                }
+                lim.try_push(&mut literals, literal)?;
+            }
+            lim.flush_poll(&mut gate)?;
+            conjoin_clause_owned(eng, f, &literals)
+        }
+    }
+}
+
 /// Every buffer one engine's clause conjunctions reuse between calls.
 ///
 /// The two flag arrays hold an all-false invariant between calls: only spine
@@ -311,8 +358,8 @@ impl crate::engine::Engine {
     ///
     /// Stop and output limits are checked once per rebuilt level; the output cap
     /// counts nodes in the levels rebuilt so far.
-    pub fn and_clause(&self, f: Tdd, clause: &[Literal]) -> Result<Tdd, OperationError> {
-        crate::apply::conjoin_clause::conjoin_clause_owned(self, f, clause)
+    pub fn and_clause<L: ClauseLiteral>(&self, f: Tdd, clause: impl AsRef<[L]>) -> Result<Tdd, OperationError> {
+        L::conjoin(self, f, clause.as_ref())
     }
 }
 

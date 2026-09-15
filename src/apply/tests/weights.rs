@@ -147,7 +147,7 @@ fn an_empty_clause_preserves_the_accumulators_weights() {
     let eng = Engine::new();
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
         let f = weighted(Tdd::one(&tree), 2, arithmetic);
-        let result = eng.and_clause(f, &[]).unwrap();
+        let result = eng.and_clause(f, &[] as &[crate::Literal]).unwrap();
         assert_canonical(&result);
         assert!(result.is_zero());
         let value = eng.weighted_value(&result).unwrap().expect("the false result retains weights");
