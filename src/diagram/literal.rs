@@ -93,8 +93,9 @@ impl TryFrom<i32> for Literal {
 ///
 /// let vtree = Arc::new(Vtree::balanced(3));
 /// let dimacs: Vec<i32> = vec![1, -2];
-/// let from_slice = Tdd::clause(&vtree, &dimacs);
-/// assert_eq!(from_slice.model_count(), Tdd::clause(&vtree, [1, -2]).model_count());
+/// let from_slice = Tdd::clause(&vtree, &dimacs)?;
+/// assert_eq!(from_slice.model_count()?, Tdd::clause(&vtree, [1, -2])?.model_count()?);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 impl TryFrom<&i32> for Literal {
     type Error = crate::OperationError;
@@ -113,8 +114,9 @@ impl TryFrom<&i32> for Literal {
 ///
 /// let vtree = Arc::new(Vtree::balanced(3));
 /// let lits: Vec<Literal> = vec![Literal::pos(VarId(0)), Literal::neg(VarId(1))];
-/// let from_slice = Tdd::clause(&vtree, &lits);
-/// assert_eq!(from_slice.model_count(), Tdd::clause(&vtree, [1, -2]).model_count());
+/// let from_slice = Tdd::clause(&vtree, &lits)?;
+/// assert_eq!(from_slice.model_count()?, Tdd::clause(&vtree, [1, -2])?.model_count()?);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 impl From<&Literal> for Literal {
     fn from(l: &Literal) -> Self {

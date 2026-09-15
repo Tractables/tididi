@@ -25,7 +25,7 @@ fn checked_satisfiability_agrees_with_every_three_variable_truth_table() {
             assert_canonical(&not_third);
             let mut constrained = engine.and(f, not_third).unwrap();
             assert_eq!(engine.is_sat(&constrained), Ok(truth & 0x0f != 0));
-            minimize(&mut constrained);
+            constrained.minimize().unwrap();
             assert_canonical(&constrained);
         }
     }
@@ -44,12 +44,12 @@ fn checked_satisfiability_ignores_weights_and_rejects_discarded_structure() {
     assert_eq!(engine.is_sat(&f), Ok(true));
     assert_eq!(engine.implied_literals(&f), Ok(vec![1.try_into().unwrap(), (-2).try_into().unwrap()]));
     assert_eq!(engine.weighted_value(&f).unwrap().unwrap().into_rational(), rat(0, 1));
-    crate::marginal::marginalize_levels(&engine, &mut f, &[tree.root()]).unwrap();
+    engine.marginalize_levels(&mut f, &[tree.root()]).unwrap();
     assert!(matches!(engine.is_sat(&f), Err(OperationError::MarginalLevel(_))));
     assert!(matches!(engine.implied_literals(&f), Err(OperationError::MarginalLevel(_))));
     let mut counts = engine.one(&tree);
     assert_canonical(&counts);
-    crate::marginal::marginalize_levels(&engine, &mut counts, &[tree.root()]).unwrap();
+    engine.marginalize_levels(&mut counts, &[tree.root()]).unwrap();
     assert!(matches!(engine.is_sat(&counts), Err(OperationError::MarginalLevel(_))));
     assert!(matches!(engine.implied_literals(&counts), Err(OperationError::MarginalLevel(_))));
 }

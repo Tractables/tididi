@@ -7,43 +7,18 @@ use crate::vtree::{VtreeIdx, VtreeNode};
 use crate::engine::Engine;
 
 impl Engine {
-    /// Evaluate a diagram using its attached weight store.
+    /// Run [`Tdd::weighted_value`](crate::Tdd::weighted_value) using this batch's scratch and resource limits.
     ///
-    /// Structural levels are folded from literal weights; weighted marginal
-    /// levels contribute their stored values. The returned [`WeightValue`]
-    /// uses the store's arithmetic. A zero value may come from zero or cancelling
-    /// weights and does not establish Boolean unsatisfiability.
-    ///
-    /// Returns `Ok(None)` without a weight store. Stop rules are checked at
-    /// entry, at amortized node boundaries, and before returning the result.
-    /// Numeric payload allocations remain outside the best-effort byte budget.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// [`OperationError::OverBudget`] for a refused scratch reservation and
-    /// [`OperationError::Stopped`] for a stop decision. The diagram is unchanged.
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`].
     ///
-    /// # Examples
-    ///
-    /// Independent fair Boolean variables give an exact probability:
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use num_rational::BigRational;
-    /// use tididi::{Engine, Tdd, Vtree};
-    /// use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
-    ///
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let mut f = Tdd::clause(&tree, [1, 2]);
-    /// let half = BigRational::new(1.into(), 2.into());
-    /// let weights = vec![LiteralWeights { negative: half.clone(), positive: half }; 2];
-    /// let algebra = RationalWeights::from_literals(&weights);
-    /// f.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational))?;
-    /// let probability = Engine::new().weighted_value(&f)?.unwrap().into_rational();
-    /// assert_eq!(probability, BigRational::new(3.into(), 4.into()));
-    /// # tididi::test_helpers::assert_canonical(&f);
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
+    /// Stops are checked at entry, at amortized node boundaries and before return.
+    /// Numeric payload allocations are outside the best-effort byte budget.
     pub fn weighted_value(&self, tdd: &Tdd) -> Result<Option<WeightValue>, OperationError> {
         let _op = self.limits().begin_operation();
         let Some(ws) = tdd.weights.as_ref() else { return Ok(None); };

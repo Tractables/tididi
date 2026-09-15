@@ -11,9 +11,8 @@ Run both parts with `cargo run --example build_minimize_count`.
 ## Handle errors directly
 
 The ordinary Boolean functions, such as [`and`](crate::and) and
-[`or`](crate::or), already return `Result`. Constructor and query conveniences
-have checked forms too: use `Tdd::try_clause(...)`, `f.try_model_count()` and
-`f.try_satisfying_assignment()` to handle their errors.
+[`or`](crate::or), already return `Result`. Constructors and queries also return `Result`: use `Tdd::clause(...)`, `f.model_count()` and
+`f.satisfying_assignment()` to handle their errors.
 The optional operators `&`, `|` and `!` panic on failure.
 
 An operation taking diagrams by value consumes them even on error. Keep a copy
@@ -47,7 +46,7 @@ refusal, then handles the result as an application would:
 ```rust,ignore
 assert!(matches!(attempt, Err(OperationError::OverBudget)));
 match attempt {
-    Ok(diagram) => println!("Destination choices: {}", diagram.model_count()),
+    Ok(diagram) => println!("Destination choices: {}", diagram.model_count()?),
     Err(OperationError::OverBudget) => println!("Not enough budget to build the destination rule"),
     Err(error) => return Err(error),
 }
@@ -57,9 +56,9 @@ The context retains reusable buffers after the batch, but clears its limits
 and callbacks. The next operation succeeds, and the original rules are intact:
 
 ```rust,ignore
-let destination = Tdd::try_clause(&tree, [1, 2])?;
-assert_eq!(destination.model_count(), 12u32.into());
-assert_eq!(configurations.model_count(), count);
+let destination = Tdd::clause(&tree, [1, 2])?;
+assert_eq!(destination.model_count()?, 12u32.into());
+assert_eq!(configurations.model_count()?, count);
 ```
 
 The complete program returns `Result<(), tididi::OperationError>` so `?` can
@@ -73,13 +72,25 @@ redundancy under the current vtree, minimize the diagram:
 
 ```rust,ignore
 configurations.minimize()?;
-assert_eq!(configurations.model_count(), count);
+assert_eq!(configurations.model_count()?, count);
 ```
 
 For a different variable grouping, continue with the
 [vtree walkthrough](crate::guide::examples::vtrees). For many counts under
-changing observations, [`ModelCounter`](crate::query::ModelCounter) retains
-counting state and updates evidence without rebuilding the diagram.
+changing observations, [`Tdd::counter`](crate::Tdd::counter) retains counting
+state and updates evidence without rebuilding the diagram:
+
+```rust,ignore
+let mut counter = configurations.counter()?;
+counter.set_pin(tididi::vtree::VarId(1), Some(true))?;
+assert_eq!(counter.model_count()?, 4u32.into());
+counter.set_pin(tididi::vtree::VarId(1), None)?;
+assert_eq!(counter.model_count()?, count);
+```
+
+Here variable 1 is the second option, remote backups. Clearing its pin restores
+the original count. [`ModelCounter`](crate::query::ModelCounter) also offers
+explicit storage policies and cofactor semantics.
 
 ## Release idle scratch
 

@@ -6,9 +6,8 @@
 //! [`IoError`](crate::io::IoError) to [`crate::io`], and
 //! [`TddBuildError`](crate::diagram::TddBuildError) to [`crate::diagram`].
 //!
-//! Entry point: [`OperationError`], returned by every fallible
-//! [`Engine`](crate::Engine) method and by [`crate::marginal::marginalize_levels`] and
-//! [`crate::reduce::try_reduce`].
+//! [`OperationError`] is returned by checked diagram operations and their
+//! [`Engine`](crate::Engine) batch methods.
 
 /// An invalid operation input or a resource refusal from a checked operation.
 ///
@@ -19,11 +18,11 @@
 /// buffer reservation fails.
 ///
 /// Recovery depends on how the operation takes its diagram. A consuming
-/// operation such as [`Engine::and`](crate::Engine::and) drops its operands on
+/// operation such as [`and`](crate::and) drops its operands on
 /// error; keep copies before the call if a retry needs them. A borrowed query
 /// leaves its input unchanged. An in-place operation such as
-/// [`try_minimize`](crate::reduce::try_minimize) or
-/// [`Engine::rotation_search`](crate::Engine::rotation_search) documents which
+/// [`Tdd::minimize`](crate::Tdd::minimize) or
+/// [`Tdd::rotation_search`](crate::Tdd::rotation_search) documents which
 /// completed edits remain after a refusal.
 ///
 /// The enum is exhaustive and callers may construct its variants; adding a
@@ -36,8 +35,7 @@ pub enum OperationError {
     /// by a growth this operation needs, or a level outgrew an internal 32-bit
     /// index. A single product-grid resize can ask for many GiB, so this is the
     /// variant a caller that wants to survive a too-large conjunction — by
-    /// splitting it, or by choosing another vtree — must handle. The infallible
-    /// wrappers panic on it. [`OperationMetrics::refused_reserve_bytes`](crate::limits::OperationMetrics::refused_reserve_bytes)
+    /// splitting it, or by choosing another vtree — must handle. [`OperationMetrics::refused_reserve_bytes`](crate::limits::OperationMetrics::refused_reserve_bytes)
     /// records allocator refusals since the last meter reset.
     OverBudget,
     /// The operands do not share the same vtree allocation.

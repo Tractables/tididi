@@ -24,7 +24,7 @@ use crate::query::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 use crate::query::PinSemantics;
 #[cfg(any(test, debug_assertions))]
 use crate::value::{ColumnRetention, CountRead};
-use crate::reduce::minimize;
+
 
 #[cfg(test)]
 use super::compile::and2;
@@ -232,7 +232,7 @@ pub fn check_minimize_soundness(tdd: &mut Tdd, rounds: u32) -> Result<(), String
         eval_all_signatures(tdd, &pos_val, &neg_val)[tdd.output.vtree.idx()][tdd.output.local.idx()]
     };
     let before: Vec<u64> = (0..rounds).map(|round| output_signature(tdd, round)).collect();
-    minimize(tdd);
+    tdd.minimize().unwrap();
     for (round, &was) in before.iter().enumerate() {
         let now = output_signature(tdd, round as u32);
         if was != now {
@@ -344,7 +344,7 @@ pub fn support_mask(t: &Tdd) -> Vec<bool> {
         return sup;
     }
     let mut mt = t.clone();
-    minimize(&mut mt);
+    mt.minimize().unwrap();
     if mt.is_zero() {
         return sup;
     }
@@ -491,15 +491,15 @@ pub(crate) fn reachable_pairs(t: &Tdd) -> usize {
 /// diagram is decided by the count.
 #[cfg(test)]
 pub fn count_is_zero(t: &Tdd) -> bool {
-    crate::query::model_count(t) == BigUint::from(0u32)
+    t.model_count().unwrap() == BigUint::from(0u32)
 }
 
 /// `a` and `b` are the same Boolean function over their shared vtree, by the
 /// two-way difference being empty.
 #[cfg(test)]
 pub fn equiv(a: &Tdd, b: &Tdd) -> bool {
-    let a_not_b = and2(a, &crate::apply::negate(b.clone()));
-    let not_a_b = and2(&crate::apply::negate(a.clone()), b);
+    let a_not_b = and2(a, &(b.clone()).negate().unwrap());
+    let not_a_b = and2(&(a.clone()).negate().unwrap(), b);
     count_is_zero(&a_not_b) && count_is_zero(&not_a_b)
 }
 
@@ -510,9 +510,9 @@ pub fn equiv(a: &Tdd, b: &Tdd) -> bool {
 /// complete form [`equiv`]'s negation needs — a restriction result, say.
 #[cfg(test)]
 pub fn equiv_nf(a: &Tdd, b: &Tdd) -> bool {
-    let ca = crate::query::model_count(a);
-    let cb = crate::query::model_count(b);
-    ca == cb && crate::query::model_count(&and2(a, b)) == ca
+    let ca = a.model_count().unwrap();
+    let cb = b.model_count().unwrap();
+    ca == cb && (and2(a, b)).model_count().unwrap() == ca
 }
 
 /// One label under one variable's value.
@@ -566,7 +566,7 @@ pub fn eval(t: &Tdd, asn: &[bool]) -> bool {
 /// carry non-canonical false nodes that minimizing removes. Soundness is
 /// therefore checked on the raw result and structure on the minimized one.
 pub fn assert_restrict_ok(f: &Tdd, c: &Tdd, nvars: u32) {
-    let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
+    let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
     for mask in 0..(1u32 << nvars) {
         let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
         let cv = eval(c, &asn);
@@ -577,7 +577,7 @@ pub fn assert_restrict_ok(f: &Tdd, c: &Tdd, nvars: u32) {
         );
     }
     let mut gm = g.clone();
-    minimize(&mut gm);
+    gm.minimize().unwrap();
     #[cfg(any(test, debug_assertions))]
     {
         crate::test_helpers::check::check_all_fast(&gm, "restrict_to_care-output");

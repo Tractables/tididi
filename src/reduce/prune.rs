@@ -51,7 +51,7 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Opera
         return Ok(());
     }
 
-    let pool = eng.reduce();
+    let pool = eng.reduce_scratch();
     let mut level_base = pool.prune_level_base.take();
     let mut remap = pool.prune_remap.take();
 

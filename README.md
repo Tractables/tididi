@@ -30,12 +30,12 @@ use tididi::{and, or, OperationError, Tdd, Vtree};
 
 fn main() -> Result<(), OperationError> {
     let tree = Arc::new(Vtree::balanced(3));
-    let x = Tdd::literal(&tree, 1);
-    let y = Tdd::literal(&tree, 2);
-    let z = Tdd::literal(&tree, 3);
+    let x = Tdd::literal(&tree, 1)?;
+    let y = Tdd::literal(&tree, 2)?;
+    let z = Tdd::literal(&tree, 3)?;
 
     let f = or(and(x, y)?, z)?;
-    assert_eq!(f.model_count(), 5u32.into());
+    assert_eq!(f.model_count()?, 5u32.into());
     Ok(())
 }
 ```
@@ -52,9 +52,8 @@ Each [`Tdd`] owns its diagram. Boolean operations consume their operands; clone 
 operand first if you need to keep it. Cloning copies diagram storage and shares
 the vtree; queries such as `model_count` borrow the diagram.
 The shared vtree retains reusable working buffers, used automatically by these
-operations. `and` and `or` return a `Result`; `?` propagates an operation error.
-The literal and counting conveniences panic on failure; use `Tdd::try_literal`
-and `f.try_model_count()` when those errors need handling too.
+operations. Constructors, transformations and queries return `Result`; `?`
+propagates an operation error. Constants and storage accessors return directly.
 
 The operators `&`, `|` and `!` are optional shorthand that panic on failure:
 `(x & y) | z` expresses the same formula as the checked calls above.

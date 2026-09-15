@@ -7,7 +7,7 @@
 //! whole diagram in an algebra of its own, and [`RationalWeights`] is the
 //! exact-rational instance of it.
 //!
-//! The walk that consumes them is [`query::evaluate`](crate::query::evaluate()).
+//! The walk that consumes them is [`Tdd::evaluate`](crate::Tdd::evaluate).
 
 mod rational;
 mod weight;
@@ -43,7 +43,7 @@ use crate::vtree::VarId;
 /// use std::sync::Arc;
 /// use tididi::{Tdd, Vtree};
 /// use tididi::diagram::{EvalAlgebra, LeafLabel};
-/// use tididi::query::evaluate;
+///
 /// use tididi::vtree::VarId;
 ///
 /// struct FewestTrue;
@@ -61,8 +61,9 @@ use crate::vtree::VarId;
 ///     fn mul(&self, a: &usize, b: &usize) -> usize { a.saturating_add(*b) }
 /// }
 /// let tree = Arc::new(Vtree::balanced(3));
-/// let f = Tdd::clause(&tree, [1, 2]) & Tdd::literal(&tree, 3);
-/// assert_eq!(evaluate(&f, &FewestTrue), 2);
+/// let f = Tdd::clause(&tree, [1, 2])? & Tdd::literal(&tree, 3)?;
+/// assert_eq!(f.evaluate(&FewestTrue)?, 2);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub trait EvalAlgebra {
     /// The semiring's carrier type.

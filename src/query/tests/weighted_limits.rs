@@ -6,7 +6,7 @@ use crate::OperationError;
 /// A structural weighted diagram with several internal levels to fold.
 fn weighted_fixture(arithmetic: Arithmetic) -> Tdd {
     let tree = Arc::new(Vtree::balanced(8));
-    let mut f = Tdd::clause(&tree, [1, 2, 3]);
+    let mut f = Tdd::clause(&tree, [1, 2, 3]).unwrap();
     f.set_weights(WeightStore::new(RationalWeights::unit(8), arithmetic)).unwrap();
     crate::test_helpers::assert_canonical(&f);
     f

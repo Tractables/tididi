@@ -90,21 +90,20 @@ impl std::ops::BitOr for Changed {
 /// use tididi::{and, Tdd, Vtree};
 ///
 /// let tree = Arc::new(Vtree::balanced(2));
-/// let x = Tdd::literal(&tree, 1);
-/// let y = Tdd::literal(&tree, 2);
+/// let x = Tdd::literal(&tree, 1)?;
+/// let y = Tdd::literal(&tree, 2)?;
 /// let f = and(x, y.negate()?)?;
-/// assert_eq!(f.model_count(), 1u32.into());
+/// assert_eq!(f.model_count()?, 1u32.into());
 /// # let mut f = f;
-/// # tididi::reduce::minimize(&mut f);
+/// # f.minimize()?;
 /// # tididi::test_helpers::assert_canonical(&f);
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 ///
 /// The shared vtree retains reusable execution scratch. Composition functions
 /// such as [`and`](crate::and) return errors and consume their operands.
-/// Queries borrow diagrams; [`try_model_count`](Self::try_model_count) returns
-/// errors while [`model_count`](Self::model_count) panics on failure. [`Context::with_limits`](crate::Context::with_limits) lends a
-/// batch engine for explicit execution limits. Binary operations require
+/// Queries borrow diagrams and return errors. [`Context::with_limits`](crate::Context::with_limits)
+/// lends a batch engine for explicit execution limits. Binary operations require
 /// operands to share the same `Arc<Vtree>` allocation, independently of which
 /// batch produced them.
 ///
@@ -114,7 +113,7 @@ impl std::ops::BitOr for Changed {
 /// [module docs](super) for how to walk it. A minimized diagram is canonical
 /// for its vtree; one built level by level
 /// ([`TddBuilder`](crate::diagram::TddBuilder)) is not until
-/// [`minimize`](crate::reduce::minimize) runs.
+/// [`minimize`](crate::Tdd::minimize) runs.
 ///
 /// Cloning copies the level storage and shares the vtree; it is not a cheap
 /// node-handle copy. Use borrowed references for read-only queries, and let
@@ -123,7 +122,7 @@ impl std::ops::BitOr for Changed {
 /// not establish functional equality.
 ///
 /// A structural diagram retains its Boolean choices and supports all Boolean
-/// operations. [`marginalize_levels`](crate::marginal::marginalize_levels) can
+/// operations. [`marginalize_levels`](crate::Tdd::marginalize_levels) can
 /// replace selected subtrees with counts or fixed weighted values; a diagram
 /// with those marginal levels supports only operations that can use the retained
 /// information. Each operation states its requirements.
@@ -136,12 +135,12 @@ impl std::ops::BitOr for Changed {
 /// use tididi::vtree::VarId;
 ///
 /// let tree = Arc::new(Vtree::balanced(3));
-/// let f = Tdd::try_clause(&tree, [1, 2])?;
+/// let f = Tdd::clause(&tree, [1, 2])?;
 /// let with_first = f.clone().condition_var(VarId(0), true)?;
 /// let without_first = f.clone().condition_var(VarId(0), false)?;
-/// assert_eq!(with_first.model_count(), 8u32.into());
-/// assert_eq!(without_first.model_count(), 4u32.into());
-/// assert_eq!(f.model_count(), 6u32.into()); // the retained original
+/// assert_eq!(with_first.model_count()?, 8u32.into());
+/// assert_eq!(without_first.model_count()?, 4u32.into());
+/// assert_eq!(f.model_count()?, 6u32.into()); // the retained original
 /// // Conditioning substitutes x1 but keeps it free in the counting universe.
 /// # for diagram in [&f, &with_first, &without_first] { tididi::test_helpers::assert_canonical(diagram); }
 /// # Ok::<(), tididi::OperationError>(())
@@ -208,11 +207,12 @@ impl Tdd {
     /// use tididi::{Tdd, Vtree};
     ///
     /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&tree, [1, 2]);
-    /// let g = Tdd::clause(f.vtree(), [-2, 3]);
+    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// let g = Tdd::clause(f.vtree(), [-2, 3])?;
     /// assert!(Arc::ptr_eq(f.vtree(), g.vtree()));
     /// # tididi::test_helpers::assert_canonical(&f);
     /// # tididi::test_helpers::assert_canonical(&g);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     #[inline]
     pub fn vtree(&self) -> &Arc<Vtree> {
@@ -281,7 +281,7 @@ impl Tdd {
     /// [`check_levels`](crate::diagram::builder::check_levels) checks; nothing
     /// here verifies them, and a violation surfaces later as a wrong answer or
     /// a panic. The result need not be canonical:
-    /// [`minimize`](crate::reduce::minimize) makes it so. Every
+    /// [`minimize`](crate::Tdd::minimize) makes it so. Every
     /// internal level is marked for twin contraction, so the first minimize
     /// visits all of them.
     ///
@@ -385,14 +385,14 @@ impl Tdd {
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};
     /// use tididi::diagram::{Arithmetic, RationalWeights, WeightStore};
-    /// use tididi::marginal::marginalize_levels;
+    ///
     ///
     /// let engine = Engine::new();
     /// let tree = Arc::new(Vtree::balanced(2));
     /// let mut f = engine.clause(&tree, [1, 2])?;
     /// f.set_weights(WeightStore::new(RationalWeights::unit(2), Arithmetic::ExactRational))?;
     /// let before = engine.weighted_value(&f)?.unwrap().into_rational();
-    /// marginalize_levels(&engine, &mut f, &[tree.root()])?;
+    /// engine.marginalize_levels(&mut f, &[tree.root()])?;
     /// assert!(f.has_marginal_level());
     /// assert_eq!(engine.weighted_value(&f)?.unwrap().into_rational(), before);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -537,15 +537,16 @@ impl Tdd {
     /// use tididi::vtree::Vtree;
     ///
     /// let vtree = Arc::new(Vtree::balanced(4));
-    /// let mut f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
-    /// tididi::reduce::minimize(&mut f);
+    /// let mut f = Tdd::clause(&vtree, [1, -2])? & Tdd::clause(&vtree, [2, 3])?;
+    /// f.minimize()?;
     /// assert!(f.pair_count() > 0);
     /// assert!(f.pair_count_at_most(f.pair_count()));
     /// assert!(!f.pair_count_at_most(f.pair_count() - 1));
     ///
     /// // Conditioning cannot grow the diagram.
-    /// let g = tididi::apply::condition_var(&f, tididi::vtree::VarId(0), true);
+    /// let g = (f).clone().condition_var(tididi::vtree::VarId(0), true)?;
     /// assert!(g.pair_count() <= f.pair_count());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn pair_count(&self) -> usize {
         self.levels.iter().map(TddLevel::live_pairs).sum()

@@ -116,6 +116,9 @@ signature is judged by hand as well.
   failures propagate with `?`. Show operators as optional shorthand and explicit batch engines when
   teaching resource control. Put each operation's full contract on its default
   entry point; the batch method links to it and explains its limit behavior.
+- Named diagram constructors, transformations and queries return `Result` when
+  they can reject input or work; do not add a panicking twin or a `try_` alias.
+  Constants and storage accessors keep direct return values.
 - When you change behaviour, change its documentation in the same commit.
 - Commit subjects are imperative and describe the behaviour changed, e.g.
   "Reject a conditioning literal outside the vtree".

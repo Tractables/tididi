@@ -20,8 +20,8 @@ use crate::engine::Engine;
 use crate::diagram::Literal;
 use crate::vtree::{VarId};
 use crate::test_helpers::clause_to_tdd;
-use crate::reduce::minimize;
-use crate::query::model_count;
+
+
 use crate::test_helpers::check::marginal::{check_slot_count_uniqueness, check_inline_discipline};
 use crate::apply::apply_and;
 use crate::test_helpers::deadline_probe;
@@ -49,14 +49,14 @@ fn two_target_tdd() -> (Tdd, Arc<Vtree>, [VtreeIdx; 2]) {
         acc = Some(match acc {
             Some(prev) => {
                 let mut r = apply_and(prev, clause);
-                minimize(&mut r);
+                r.minimize().unwrap();
                 r
             }
             None => clause,
         });
     }
     let mut tdd = acc.expect("four clauses build a diagram");
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
 
     let (left, right) = vtree.children(vtree.root());
     let mut targets = [left, right];
@@ -100,7 +100,7 @@ fn an_expired_wall_cuts_the_forget_batch() {
 #[test]
 fn a_cut_batch_leaves_a_readable_diagram() {
     let (mut tdd, vtree, targets) = two_target_tdd();
-    let before = model_count(&tdd);
+    let before = tdd.model_count().unwrap();
     // One past the first target's metered work (`width + 1`), so the first tick
     // does not poll and the second does.
     let stride = tdd.levels[targets[0].idx()].slot_count() as u64 + 2;
@@ -121,7 +121,7 @@ fn a_cut_batch_leaves_a_readable_diagram() {
     );
     assert_eq!(
         before,
-        model_count(&tdd),
+        tdd.model_count().unwrap(),
         "forgetting is count-preserving, so a partly-forgotten diagram must still count the formula",
     );
     check_slot_count_uniqueness(&tdd).expect("invariant 10 must hold on a cut batch's stores");
@@ -134,7 +134,7 @@ fn a_cut_batch_leaves_a_readable_diagram() {
 #[test]
 fn no_wall_installed_completes() {
     let (mut tdd, vtree, targets) = two_target_tdd();
-    let before = model_count(&tdd);
+    let before = tdd.model_count().unwrap();
 
     // Not `deadline_probe`: this is the one case whose engine must carry NO
     // wall, which is exactly what the probe installs.
@@ -149,7 +149,7 @@ fn no_wall_installed_completes() {
         targets.iter().all(|t| tdd.levels[t.idx()].is_marginal()),
         "the completed batch must forget every target",
     );
-    assert_eq!(before, model_count(&tdd), "forgetting is count-preserving");
+    assert_eq!(before, tdd.model_count().unwrap(), "forgetting is count-preserving");
 }
 
 /// The poll is amortized, not per-target: with a stride wider than the whole

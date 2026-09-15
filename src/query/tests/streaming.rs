@@ -2,7 +2,6 @@
 //!
 //! The fixtures these read are in `mod.rs`.
 
-use super::*;
 
 use crate::engine::Engine;
 use crate::apply::conjoin::apply_and;
@@ -56,12 +55,12 @@ fn streaming_fold_count_matches_materialized_randomized() {
             let oracle = {
                 let mut a_o = a.clone();
                 let mut b_o = b.clone();
-                model_count(&apply_and_fallible(&eng, &mut a_o, &mut b_o, MarginalTargets::None).unwrap())
+                (apply_and_fallible(&eng, &mut a_o, &mut b_o, MarginalTargets::None).unwrap()).model_count().unwrap()
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
-                model_count(&apply_and_fallible(&eng, &mut a_f, &mut b_f, MarginalTargets::At(&targets)).unwrap())
+                (apply_and_fallible(&eng, &mut a_f, &mut b_f, MarginalTargets::At(&targets)).unwrap()).model_count().unwrap()
             };
             assert_eq!(fold, oracle, "nvars={nvars}: streaming fold != materialized");
             checked += 1;
@@ -96,7 +95,7 @@ fn streaming_fold_count_matches_materialized_randomized() {
 #[test]
 fn streaming_fold_weighted_matches_materialized_randomized() {
     let eng = Engine::new();
-    use crate::query::weighted_value;
+
     use crate::diagram::WeightStore;
     use crate::apply::conjoin::apply_and_fallible;
     use crate::diagram::{LiteralWeights, RationalWeights};
@@ -150,14 +149,14 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
                 let mut b_o = b.clone();
                 a_o.set_weights(store()).unwrap();
                 let result = apply_and_fallible(&eng, &mut a_o, &mut b_o, MarginalTargets::None).unwrap();
-                exact_weight(&weighted_value(&result).expect("store follows the result"))
+                exact_weight(&result.weighted_value().unwrap().expect("store follows the result"))
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
                 a_f.set_weights(store()).unwrap();
                 let result = apply_and_fallible(&eng, &mut a_f, &mut b_f, MarginalTargets::At(&targets)).unwrap();
-                exact_weight(&weighted_value(&result).expect("store follows the result"))
+                exact_weight(&result.weighted_value().unwrap().expect("store follows the result"))
             };
             assert_eq!(
                 fold, oracle,

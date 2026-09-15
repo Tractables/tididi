@@ -5,7 +5,7 @@
 use super::*;
 
 use crate::engine::Engine;
-use crate::query::model_count;
+
 use crate::diagram::{
     ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
 };
@@ -148,11 +148,11 @@ fn test_minimize_contracts_marginal_twins() {
     );
 
     let phase1_size = tdd.pair_count();
-    let phase1_count = model_count(&tdd);
-    minimize(&mut tdd);
+    let phase1_count = tdd.model_count().unwrap();
+    tdd.minimize().unwrap();
     assert_eq!(tdd.pair_count(), phase1_size, "phase 1: T0 has no twins; minimize must be a no-op");
     assert_canonical(&tdd);
-    assert_eq!(model_count(&tdd), phase1_count);
+    assert_eq!(tdd.model_count().unwrap(), phase1_count);
     assert_eq!(tdd.levels[v_left.idx()].slot_count(), 2);
 
     // ── Phase 2: marginalize_levels v_left with DISTINCT counts ────────────────
@@ -166,16 +166,16 @@ fn test_minimize_contracts_marginal_twins() {
     // invariant holds (mirrors marginalize_batch / marginalize_subtree).
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
-    let phase2_count = model_count(&tdd);
+    let phase2_count = tdd.model_count().unwrap();
     assert_eq!(tdd.levels[v_left.idx()].slot_count(), 2, "phase 2: marginalization preserves width");
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
     // Distinct slot values → slot-prune does not merge them → width stays 2.
     assert_eq!(
         tdd.levels[v_left.idx()].slot_count(), 2,
         "phase 2: distinct-count slots must survive slot-prune; minimize must be a no-op at v_left",
     );
     assert_canonical(&tdd);
-    assert_eq!(model_count(&tdd), phase2_count);
+    assert_eq!(tdd.model_count().unwrap(), phase2_count);
 
     // ── Phase 3: restructure root to induce a pair fusion redex at v_left ──
     //
@@ -205,9 +205,9 @@ fn test_minimize_contracts_marginal_twins() {
     // end-of-apply tagger does this after apply rebuilds the root level).
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
-    let phase3_count = model_count(&tdd);
+    let phase3_count = tdd.model_count().unwrap();
 
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
     // The content-twin scan is not run by try_reduce's normal path, so
     // call the canonicalization machinery directly so the assertions hold.
     canonicalize_content_twins(&eng, &mut tdd).unwrap();
@@ -226,7 +226,7 @@ fn test_minimize_contracts_marginal_twins() {
     );
     // Sanity: model count is preserved across minimize. Defends against
     // an arithmetic mistake in the merge or remap.
-    assert_eq!(model_count(&tdd), phase3_count);
+    assert_eq!(tdd.model_count().unwrap(), phase3_count);
     assert_canonical(&tdd);
 }
 
@@ -268,7 +268,7 @@ fn test_contract_detects_twins_with_scrambled_signature_order_width3() {
         TddNodeId { vtree: root, local: root_node },
     );
     assert_eq!(tdd.levels[v_left.idx()].slot_count(), 3, "setup: A, B (twins) + C (distinct)");
-    let count_before = model_count(&tdd);
+    let count_before = tdd.model_count().unwrap();
 
     tdd.seed_contract_worklist([root.0]);
     contract_all_twins(&eng, &mut tdd).expect("contraction must not OOM");
@@ -278,7 +278,7 @@ fn test_contract_detects_twins_with_scrambled_signature_order_width3() {
         "the scrambled-order twins A,B must merge via the hash-bucket exact \
          comparison while the distinct node C survives → width 3 → 2",
     );
-    assert_eq!(model_count(&tdd), count_before, "merge must preserve model count");
+    assert_eq!(tdd.model_count().unwrap(), count_before, "merge must preserve model count");
     assert_canonical(&tdd);
 }
 
@@ -329,7 +329,7 @@ fn test_contract_detects_twins_with_reversed_multi_sibling_signature() {
         TddNodeId { vtree: root, local: root_node },
     );
     assert_eq!(tdd.levels[v_left.idx()].slot_count(), 4, "setup: A,B (twins) + C,D (distinct)");
-    let count_before = model_count(&tdd);
+    let count_before = tdd.model_count().unwrap();
 
     tdd.seed_contract_worklist([root.0]);
     contract_all_twins(&eng, &mut tdd).expect("contraction must not OOM");
@@ -340,6 +340,6 @@ fn test_contract_detects_twins_with_reversed_multi_sibling_signature() {
          → width 4 → 3. The pre-fix order-sensitive `==` compared [s0,s1,s2] to \
          [s2,s1,s0], missed the twin, and left all 4 nodes (under-contraction).",
     );
-    assert_eq!(model_count(&tdd), count_before, "merge must preserve model count");
+    assert_eq!(tdd.model_count().unwrap(), count_before, "merge must preserve model count");
     assert_canonical(&tdd);
 }

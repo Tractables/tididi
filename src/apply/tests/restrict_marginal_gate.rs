@@ -26,7 +26,7 @@ use crate::engine::Engine;
 /// `RestrictionOutcome::Shrunk` variant directly (not just a reachable-pair drop) plus
 /// deterministic contradiction cases, so it can never pass vacuously.
 ///
-/// Contract: `model_count(crate::apply::restrict_to_care(b,care) ∧ care) == model_count(b ∧ care)` —
+/// Contract: `(b.restrict_to_care(care)? ∧ care).model_count()? == (b ∧ care).model_count()?` —
 /// the exact invariant P4 relies on to restrict an accumulator to care in place.
 /// (`model_count` on a marginal diagram returns the summed count; that is precisely
 /// the semantics that must be preserved.)
@@ -104,15 +104,15 @@ fn restrict_ancestor_marginal_operand_gate() {
                 care.output.vtree, b.output.vtree,
                 "{label}: care/b must share the global root (no graft)"
             );
-            let before = model_count(&and2(b, care));
-            let out = crate::apply::restrict_to_care(b.clone(), care.clone());
+            let before = (and2(b, care)).model_count().unwrap();
+            let out = (b.clone()).restrict_to_care(care.clone()).unwrap();
             match out {
                 RestrictionOutcome::Shrunk(_) => shrunk += 1,
                 RestrictionOutcome::Unsatisfiable(_) => false_out += 1,
                 RestrictionOutcome::Unchanged(_) => {}
             }
             let g = out.into_tdd();
-            let after = model_count(&and2(&g, care));
+            let after = (and2(&g, care)).model_count().unwrap();
             if before != after {
                 *fail += 1;
                 if first_fail.is_none() {

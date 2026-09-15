@@ -7,7 +7,7 @@ use crate::vtree::{VarId, Vtree};
 #[test]
 fn regrouping_checks_its_allocations_before_reduction() {
     let tree = Arc::new(Vtree::balanced(4));
-    let original = Tdd::clause(&tree, [1, -2, 3]);
+    let original = Tdd::clause(&tree, [1, -2, 3]).unwrap();
     assert_canonical(&original);
     let leaf = tree.leaf_of(VarId(0)).unwrap();
     let parent = tree.node(leaf).parent().unwrap();
@@ -19,13 +19,13 @@ fn regrouping_checks_its_allocations_before_reduction() {
     }
     let result = exists_var_structural(&eng, original, leaf).unwrap();
     assert_canonical(&result);
-    assert_eq!(result.model_count(), 16u32.into());
+    assert_eq!(result.model_count().unwrap(), 16u32.into());
 }
 
 #[test]
 fn regrouping_polls_inside_a_level() {
     let tree = Arc::new(Vtree::balanced(4));
-    let mut f = Tdd::clause(&tree, [1, -2, 3]);
+    let mut f = Tdd::clause(&tree, [1, -2, 3]).unwrap();
     assert_canonical(&f);
     let leaf = tree.leaf_of(VarId(0)).unwrap();
     let parent = tree.node(leaf).parent().unwrap();
@@ -41,9 +41,9 @@ fn regrouping_polls_inside_a_level() {
 #[test]
 fn structural_projection_recovers_after_each_refused_reservation() {
     let tree = Arc::new(Vtree::balanced(5));
-    let f = Tdd::clause(&tree, [1, -2, 3]) & Tdd::clause(&tree, [-1, 4, 5]);
+    let f = Tdd::clause(&tree, [1, -2, 3]).unwrap() & Tdd::clause(&tree, [-1, 4, 5]).unwrap();
     let mut f = f;
-    crate::reduce::minimize(&mut f);
+    f.minimize().unwrap();
     assert_canonical(&f);
     let leaf = tree.leaf_of(VarId(0)).unwrap();
     let mut reached_success = false;
@@ -57,7 +57,7 @@ fn structural_projection_recovers_after_each_refused_reservation() {
         eng.limits().grant_every_reserve();
         let result = exists_var_structural(&eng, f.clone(), leaf).unwrap();
         assert_canonical(&result);
-        assert_eq!(result.model_count(), 30u32.into());
+        assert_eq!(result.model_count().unwrap(), 30u32.into());
     }
     assert!(reached_success, "the sweep must cover every reservation");
 }

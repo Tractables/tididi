@@ -15,8 +15,8 @@ use super::*;
 
 use crate::engine::Engine;
 use crate::test_helpers::clause_to_tdd;
-use crate::reduce::minimize;
-use crate::query::model_count;
+
+
 use crate::test_helpers::check::marginal::check_slot_count_uniqueness;
 use crate::apply::apply_and;
 use crate::marginal::marginalize_batch;
@@ -52,14 +52,14 @@ fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
         acc = Some(match acc {
             Some(prev) => {
                 let mut r = apply_and(prev, clause);
-                minimize(&mut r);
+                r.minimize().unwrap();
                 r
             }
             None => clause,
         });
     }
     let mut tdd = acc.expect("five clauses build a diagram");
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
 
     let root = vtree.root();
     let (a_idx, w_idx) = vtree.children(root);
@@ -82,7 +82,7 @@ fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
 #[test]
 fn an_expired_wall_cuts_the_clustering_pass() {
     let (mut tdd, root) = one_candidate_tdd();
-    let before = model_count(&tdd);
+    let before = tdd.model_count().unwrap();
     let mut tried = vec![0u8; tdd.vtree.num_nodes()];
 
     let r = deadline_probe(Some(1), |eng| {
@@ -95,7 +95,7 @@ fn an_expired_wall_cuts_the_clustering_pass() {
     );
     assert_eq!(
         before,
-        model_count(&tdd),
+        tdd.model_count().unwrap(),
         "a cut pass must leave a diagram that still counts the formula",
     );
     check_slot_count_uniqueness(&tdd).expect("slot-count uniqueness must hold on a cut pass's stores");
@@ -108,7 +108,7 @@ fn an_expired_wall_cuts_the_clustering_pass() {
 #[test]
 fn a_stride_wider_than_the_pass_never_polls() {
     let (mut tdd, root) = one_candidate_tdd();
-    let before = model_count(&tdd);
+    let before = tdd.model_count().unwrap();
     let mut tried = vec![0u8; tdd.vtree.num_nodes()];
 
     let r = deadline_probe(Some(u64::MAX), |eng| {
@@ -118,7 +118,7 @@ fn a_stride_wider_than_the_pass_never_polls() {
     r.expect("a stride the pass never reaches must not read the clock at all");
     assert_eq!(
         before,
-        model_count(&tdd),
+        tdd.model_count().unwrap(),
         "the pass is a size optimization — clustering never moves the count",
     );
 }

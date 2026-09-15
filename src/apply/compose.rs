@@ -20,8 +20,8 @@ use crate::{Engine, OperationError, Tdd};
 /// use std::sync::Arc;
 /// use tididi::{xor, Tdd, Vtree};
 /// let tree = Arc::new(Vtree::balanced(2));
-/// let parity = xor(Tdd::try_literal(&tree, 1)?, Tdd::try_literal(&tree, 2)?)?;
-/// assert_eq!(parity.model_count(), 2u32.into());
+/// let parity = xor(Tdd::literal(&tree, 1)?, Tdd::literal(&tree, 2)?)?;
+/// assert_eq!(parity.model_count()?, 2u32.into());
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 pub fn xor(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
@@ -51,11 +51,11 @@ pub fn xor(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
 /// use std::sync::Arc;
 /// use tididi::{ite, Tdd, Vtree};
 /// let tree = Arc::new(Vtree::balanced(3));
-/// let select = Tdd::try_literal(&tree, 1)?;
-/// let yes = Tdd::try_literal(&tree, 2)?;
-/// let no = Tdd::try_literal(&tree, 3)?;
+/// let select = Tdd::literal(&tree, 1)?;
+/// let yes = Tdd::literal(&tree, 2)?;
+/// let no = Tdd::literal(&tree, 3)?;
 /// let choice = ite(select, yes, no)?;
-/// assert_eq!(choice.model_count(), 4u32.into());
+/// assert_eq!(choice.model_count()?, 4u32.into());
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 pub fn ite(condition: Tdd, then_branch: Tdd, else_branch: Tdd) -> Result<Tdd, OperationError> {
@@ -86,11 +86,11 @@ pub fn ite(condition: Tdd, then_branch: Tdd, else_branch: Tdd) -> Result<Tdd, Op
 /// use tididi::{and_exists, xor, Tdd, Vtree};
 /// use tididi::vtree::VarId;
 /// let tree = Arc::new(Vtree::balanced(2));
-/// let current = Tdd::try_literal(&tree, -1)?; // current state x is false
-/// let transition = xor(Tdd::try_literal(&tree, 1)?, Tdd::try_literal(&tree, 2)?)?;
+/// let current = Tdd::literal(&tree, -1)?; // current state x is false
+/// let transition = xor(Tdd::literal(&tree, 1)?, Tdd::literal(&tree, 2)?)?;
 /// // The relation flips x to next-state y; forget the current-state variable.
 /// let next = and_exists(current, transition, &[VarId(0)])?;
-/// assert!(next.equivalent(&Tdd::try_literal(&tree, 2)?)?);
+/// assert!(next.equivalent(&Tdd::literal(&tree, 2)?)?);
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 pub fn and_exists(f: Tdd, g: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
@@ -145,7 +145,7 @@ impl Engine {
         // Disjunction minimizes unless a false operand selects its identity shortcut.
         let identity = yes.is_zero() || no.is_zero();
         let mut result = self.or(yes, no)?;
-        if identity { crate::reduce::try_minimize(self, &mut result)?; }
+        if identity { self.minimize(&mut result)?; }
         Ok(result)
     }
 
@@ -210,7 +210,7 @@ impl Engine {
         // A nonempty quantification minimizes a non-false product.
         let identity = targets.is_empty() || product.is_zero();
         let mut result = super::project::exists_targets_on(self, product, &targets, how)?;
-        if identity { crate::reduce::try_minimize(self, &mut result)?; }
+        if identity { self.minimize(&mut result)?; }
         Ok(result)
     }
 }

@@ -3,7 +3,7 @@ use crate::{Engine, Tdd};
 use crate::restructure::GraftError;
 use crate::diagram::TddBuildError;
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
-use crate::marginal::marginalize_levels;
+
 use crate::test_helpers::{assert_canonical, rat};
 use crate::vtree::{VarId, Vtree};
 
@@ -17,9 +17,9 @@ fn store(n: usize, weight: i64, arithmetic: Arithmetic) -> WeightStore {
 /// A weighted clause whose root stores its value.
 fn marginal_part() -> Tdd {
     let tree = Arc::new(Vtree::balanced(2));
-    let mut f = Tdd::clause(&tree, [1, 2]);
+    let mut f = Tdd::clause(&tree, [1, 2]).unwrap();
     f.set_weights(store(2, 2, Arithmetic::ExactRational)).unwrap();
-    marginalize_levels(&Engine::new(), &mut f, &[tree.root()]).unwrap();
+    (Engine::new()).marginalize_levels(&mut f, &[tree.root()]).unwrap();
     assert_canonical(&f);
     f
 }
@@ -40,8 +40,8 @@ fn graft_rejects_changed_weights_after_marginalization() {
 #[test]
 fn graft_rejects_integer_counts_in_a_weighted_destination() {
     let tree = Arc::new(Vtree::balanced(2));
-    let mut f = Tdd::clause(&tree, [1, 2]);
-    marginalize_levels(&Engine::new(), &mut f, &[tree.root()]).unwrap();
+    let mut f = Tdd::clause(&tree, [1, 2]).unwrap();
+    (Engine::new()).marginalize_levels(&mut f, &[tree.root()]).unwrap();
     assert_canonical(&f);
     assert!(matches!(Tdd::graft_over(&Engine::new(), vec![(f, vec![VarId(0), VarId(1)])], &[], 2, Some(store(2, 2, Arithmetic::ExactRational))), Err(GraftError::PartWeights { part: 0, source: TddBuildError::CountLevelWithWeights { .. } })));
 }
@@ -54,7 +54,7 @@ fn a_false_graft_keeps_the_destination_weights() {
     let (result, _) = Tdd::graft_over(&Engine::new(), vec![(f, vec![VarId(0), VarId(1)])], &[], 2, Some(store(2, 2, Arithmetic::ExactRational))).unwrap();
     assert_canonical(&result);
     assert!(result.is_zero());
-    assert_eq!(crate::query::weighted_value(&result).expect("the false result retains weights").as_rational().into_owned(), rat(0, 1));
+    assert_eq!(result.weighted_value().unwrap().expect("the false result retains weights").as_rational().into_owned(), rat(0, 1));
 }
 
 #[test]
@@ -86,28 +86,28 @@ fn graft_rejects_missing_destination_weights_before_false_shortcuts() {
 #[test]
 fn graft_keeps_a_marginal_root_canonical_under_a_new_parent() {
     let tree = Arc::new(Vtree::balanced(2));
-    let mut f = Tdd::clause(&tree, [1, 2]);
-    marginalize_levels(&Engine::new(), &mut f, &[tree.root()]).unwrap();
+    let mut f = Tdd::clause(&tree, [1, 2]).unwrap();
+    (Engine::new()).marginalize_levels(&mut f, &[tree.root()]).unwrap();
     assert_canonical(&f);
     let result = Tdd::graft(vec![f], &[VarId(2)]).unwrap();
-    assert_eq!(result.model_count(), 6u32.into());
+    assert_eq!(result.model_count().unwrap(), 6u32.into());
     assert_canonical(&result);
 }
 
 #[test]
 fn graft_reweights_a_structural_part_in_the_destination() {
     let tree = Arc::new(Vtree::balanced(2));
-    let mut f = Tdd::clause(&tree, [1]);
+    let mut f = Tdd::clause(&tree, [1]).unwrap();
     let previous = marginal_part();
     f.set_weights(previous.weights().unwrap().clone()).unwrap();
     assert_canonical(&f);
     let (mut result, _) = Tdd::graft_over(&Engine::new(), vec![(f, vec![VarId(0), VarId(1)])], &[], 2, Some(store(2, 3, Arithmetic::ExactRational))).unwrap();
     assert_canonical(&result);
-    assert_eq!(crate::query::weighted_value(&result).unwrap().as_rational().into_owned(), rat(18, 1));
+    assert_eq!(result.weighted_value().unwrap().unwrap().as_rational().into_owned(), rat(18, 1));
     let root = result.vtree().root();
-    marginalize_levels(&Engine::new(), &mut result, &[root]).unwrap();
+    (Engine::new()).marginalize_levels(&mut result, &[root]).unwrap();
     assert_canonical(&result);
-    assert_eq!(crate::query::weighted_value(&result).unwrap().as_rational().into_owned(), rat(18, 1));
+    assert_eq!(result.weighted_value().unwrap().unwrap().as_rational().into_owned(), rat(18, 1));
 }
 
 #[test]
@@ -119,17 +119,17 @@ fn graft_preserves_renamed_marginal_roots_in_both_arithmetics() {
             LiteralWeights { negative: rat(2, 1), positive: rat(3, 1) },
             LiteralWeights { negative: rat(5, 1), positive: rat(7, 1) },
         ];
-        let mut f = Tdd::clause(&local, [1, 2]);
+        let mut f = Tdd::clause(&local, [1, 2]).unwrap();
         f.set_weights(WeightStore::new(RationalWeights::from_literals(&weights), arithmetic)).unwrap();
-        marginalize_levels(&eng, &mut f, &[local.root()]).unwrap();
+        eng.marginalize_levels(&mut f, &[local.root()]).unwrap();
         assert_canonical(&f);
         let global = [weights[1].clone(), weights[0].clone(), LiteralWeights { negative: rat(11, 1), positive: rat(13, 1) }];
         let (mut result, _) = Tdd::graft_over(&eng, vec![(f, vec![VarId(1), VarId(0)])], &[VarId(2)], 3,
             Some(WeightStore::new(RationalWeights::from_literals(&global), arithmetic))).unwrap();
         assert_canonical(&result);
-        crate::reduce::minimize(&mut result);
+        result.minimize().unwrap();
         assert_canonical(&result);
-        let value = crate::query::weighted_value(&result).unwrap();
+        let value = result.weighted_value().unwrap().unwrap();
         // Clause weight: 5 * 12 - 2 * 5 = 50; the free variable contributes 24.
         if let Some(log) = value.as_log() { assert!((log.log10_abs() - 1200f64.log10()).abs() < 1e-12); }
         else { assert_eq!(value.as_rational().into_owned(), rat(1200, 1)); }
@@ -151,16 +151,16 @@ fn graft_canonicalizes_equal_weight_slots_of_a_marginal_leaf_root() {
     let eng = Engine::new();
     let tree = Arc::new(Vtree::leaf(VarId(0)));
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
-        let mut f = Tdd::clause(&tree, [-1]);
+        let mut f = Tdd::clause(&tree, [-1]).unwrap();
         f.set_weights(WeightStore::new(RationalWeights::unit(1), arithmetic)).unwrap();
-        marginalize_levels(&eng, &mut f, &[tree.root()]).unwrap();
+        eng.marginalize_levels(&mut f, &[tree.root()]).unwrap();
         assert_canonical(&f);
         let (mut result, _) = Tdd::graft_over(&eng, vec![(f, vec![VarId(0)])], &[VarId(1)], 2,
             Some(WeightStore::new(RationalWeights::unit(2), arithmetic))).unwrap();
         assert_canonical(&result);
-        crate::reduce::minimize(&mut result);
+        result.minimize().unwrap();
         assert_canonical(&result);
-        let value = crate::query::weighted_value(&result).unwrap();
+        let value = result.weighted_value().unwrap().unwrap();
         if let Some(log) = value.as_log() { assert!((log.log10_abs() - 2f64.log10()).abs() < 1e-12); }
         else { assert_eq!(value.as_rational().into_owned(), rat(2, 1)); }
     }

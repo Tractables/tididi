@@ -31,7 +31,7 @@ pub(super) fn right_gated(
     if tdd.has_marginal_level() {
         let node_count: u64 = tdd.levels.iter().map(|l| l.nodes.len() as u64).sum();
         let cap = C2_SCAN_MAX_NODES;
-        let run = tdd.weights.is_some() // weighted: scan every minimize (bypass cap)
+        let run = tdd.weights.is_some() // weighted: scan every (bypass cap).minimize().unwrap()
             || node_count <= cap
             || node_count >= probe.next_scan_at_nodes;
         if run {

@@ -8,7 +8,7 @@ use crate::apply::conjoin::{apply_and, apply_and_fallible};
 use crate::apply::conjoin::targets::MarginalTargets;
 use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;
-use crate::reduce::minimize;
+
 use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::diagram::Tdd;

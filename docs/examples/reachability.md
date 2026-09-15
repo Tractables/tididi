@@ -50,7 +50,7 @@ let tree = Arc::new(Vtree::balanced(4));
 // The first bit in each pair is least significant. Edges: 0 -> 1 -> 2 -> 1.
 let mut transition = Tdd::zero(&tree);
 for edge in [[-1, -2, 3, -4], [1, -2, -3, 4], [-1, 2, 3, -4]] {
-    transition = or(transition, Tdd::try_cube(&tree, edge)?)?;
+    transition = or(transition, Tdd::cube(&tree, edge)?)?;
 }
 ```
 
@@ -59,7 +59,7 @@ Integer literals start at 1, with a negative sign for false. The `VarId`
 values used to quantify and rename variables start at 0:
 
 ```rust,ignore
-let mut reached = Tdd::try_cube(&tree, [-1, -2])?; // start at state 0
+let mut reached = Tdd::cube(&tree, [-1, -2])?; // start at state 0
 let current = [VarId(0), VarId(1)];
 let next_to_current = [(VarId(2), VarId(0)), (VarId(3), VarId(1))];
 let mut iterations = 0;
@@ -97,7 +97,7 @@ four assignments per state. The program reports state counts by removing that
 factor:
 
 ```rust,ignore
-let state_count = enlarged.try_model_count()? / 4u32;
+let state_count = enlarged.model_count()? / 4u32;
 println!("Iteration {iterations}: {state_count} reachable states");
 ```
 
@@ -127,11 +127,11 @@ The progression is:
 State 3 is forbidden. Its complement should equal the reachable set:
 
 ```rust,ignore
-let forbidden = Tdd::try_cube(&tree, [1, 2])?;
+let forbidden = Tdd::cube(&tree, [1, 2])?;
 let safe = forbidden.negate()?;
 assert!(reached.equivalent(&safe)?);
 assert!(reached.implies(&safe)?);
-assert_eq!(reached.try_model_count()?, 12u32.into());
+assert_eq!(reached.model_count()?, 12u32.into());
 println!("State 3 is unreachable");
 ```
 
@@ -144,10 +144,10 @@ unreachable.
 To find an assignment for state 2, intersect the target with the reachable set:
 
 ```rust,ignore
-let target = Tdd::try_cube(&tree, [-1, 2])?; // state 2
+let target = Tdd::cube(&tree, [-1, 2])?; // state 2
 let reachable_target = and(reached, target)?;
 let witness = reachable_target
-    .try_satisfying_assignment()?
+    .satisfying_assignment()?
     .expect("state 2 is reachable");
 ```
 

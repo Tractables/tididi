@@ -152,7 +152,7 @@ fn refused_merge_reuses_buffers_without_replaying_stale_plans() {
     let mut tdd = Tdd::from_levels_unchecked(
         vtree, levels, TddNodeId { vtree: parent, local: output },
     );
-    let mut scratch = eng.reduce().contract.checkout();
+    let mut scratch = eng.reduce_scratch().contract.checkout();
     scratch.flat_groups = vec![0, 1];
     scratch.group_starts = vec![0];
     scratch.remap.merge_target = vec![0, 1];
@@ -169,17 +169,17 @@ fn refused_merge_reuses_buffers_without_replaying_stale_plans() {
     assert_eq!(scratch.merge.sel.as_ptr(), allocation);
     assert_eq!(scratch.merge.group_plans.len(), 1);
     assert_eq!(tdd.levels[child.idx()].slot_count(), 2);
-    assert_eq!(crate::query::model_count(&tdd), 4u32.into());
+    assert_eq!(tdd.model_count().unwrap(), 4u32.into());
 
     // Return through the engine pool before retrying the same contraction.
     drop(scratch);
-    let mut scratch = eng.reduce().contract.checkout();
+    let mut scratch = eng.reduce_scratch().contract.checkout();
     assert_eq!(scratch.merge.sel.as_ptr(), allocation);
     assert_eq!(contract_twins(&eng, &mut tdd, child, parent, ChildSide::Left, &mut scratch), Ok(1));
     assert_eq!(scratch.merge.sel.as_ptr(), allocation);
     assert_eq!(scratch.merge.group_plans.len(), 1);
-    assert_eq!(crate::query::model_count(&tdd), 4u32.into());
+    assert_eq!(tdd.model_count().unwrap(), 4u32.into());
     drop(scratch);
-    crate::reduce::minimize(&mut tdd);
+    tdd.minimize().unwrap();
     crate::test_helpers::assert_canonical(&tdd);
 }

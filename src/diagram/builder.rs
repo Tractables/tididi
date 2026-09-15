@@ -94,7 +94,8 @@ impl<'a> LevelView<'a> {
 /// let mut b = Tdd::builder(&eng, &vtree);
 /// let node = b.push(root, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]);
 /// let f = b.finish(TddNodeId { vtree: root, local: node }).unwrap();
-/// assert_eq!(f.model_count(), 1u32.into());
+/// assert_eq!(f.model_count()?, 1u32.into());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub struct TddBuilder {
     vtree: Arc<Vtree>,
@@ -233,7 +234,7 @@ impl TddBuilder {
     ///
     /// The result is well-formed but not necessarily canonical: it may hold
     /// unreachable nodes and uncontracted twins.
-    /// [`minimize`](crate::reduce::minimize) makes a valid TDD canonical.
+    /// [`minimize`](crate::Tdd::minimize) makes a valid TDD canonical.
     ///
     /// Storage validity is checked in every build profile. Semantic determinism
     /// remains the caller's responsibility, as described on [`TddBuilder`].

@@ -48,13 +48,13 @@ use num_bigint::BigUint;
 use num_rational::BigRational;
 use num_traits::Zero;
 
-use tididi::apply::{apply_and_clause, condition_var, negate, exists_var_with_strategy, QuantificationStrategy};
+use tididi::apply::{QuantificationStrategy};
 use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, SignedLog, WeightStore};
 use tididi::limits::LimitConfig;
 use tididi::io::{load_tdd, save_tdd};
-use tididi::marginal::marginalize_levels;
-use tididi::query::{evaluate, weighted_value};
-use tididi::reduce::minimize;
+
+
+
 use tididi::test_helpers::{
     assert_canonical, assert_marginal_canonical, assert_restrict_ok, assert_same_shape,
     brute_force_count, eval, rand_cnf, CnfShape, Lcg,
@@ -233,12 +233,12 @@ fn assert_truth(got: &[bool], want: &[bool], num_vars: u32, what: &str) {
 /// while its truth table is read off the result as it came out.
 fn assert_canonical_after_minimize(t: &Tdd) {
     if !t.has_marginal_level() {
-        let satisfiable = t.model_count() != BigUint::from(0u32);
+        let satisfiable = t.model_count().unwrap() != BigUint::from(0u32);
         assert_eq!(!t.is_zero(), satisfiable);
         assert_eq!(Engine::new().is_sat(t).unwrap(), satisfiable);
     }
     let mut m = t.clone();
-    minimize(&mut m);
+    m.minimize().unwrap();
     assert_finished_canonical(&m);
 }
 
@@ -258,7 +258,7 @@ fn lits(clause: &[i32]) -> Vec<Literal> {
 
 /// The clause as a canonical diagram.
 fn clause_tdd(vtree: &Arc<Vtree>, clause: &[i32]) -> Tdd {
-    Tdd::clause(vtree, lits(clause))
+    Tdd::clause(vtree, lits(clause)).unwrap()
 }
 
 // ── The battery ─────────────────────────────────────────────────────────────
@@ -304,7 +304,7 @@ fn compile(case: &Case) -> Tdd {
     let mut acc = Tdd::one(&case.vtree);
     for clause in &case.clauses {
         acc = eng.and(acc, clause_tdd(&case.vtree, clause)).expect("an unarmed engine refuses nothing");
-        minimize(&mut acc);
+        acc.minimize().unwrap();
     }
     acc
 }
@@ -313,7 +313,7 @@ fn count_matches_enumeration(case: &Case) {
     let f = compile(case);
     assert_canonical(&f);
     assert_eq!(
-        f.model_count(),
+        f.model_count().unwrap(),
         BigUint::from(brute_force_count(case.num_vars, &case.clauses)),
         "model count disagrees with enumeration"
     );
@@ -332,7 +332,7 @@ fn orders_agree(case: &Case) {
     let eng = Engine::new();
 
     let mut left = compile(case);
-    minimize(&mut left);
+    left.minimize().unwrap();
     assert_canonical(&left);
 
     let mut queue: Vec<Tdd> =
@@ -349,15 +349,15 @@ fn orders_agree(case: &Case) {
         queue = next;
     }
     let mut tree = queue.pop().unwrap_or_else(|| Tdd::one(&case.vtree));
-    minimize(&mut tree);
+    tree.minimize().unwrap();
     assert_canonical(&tree);
     assert_same_shape(&left, &tree, "clause fold against pairwise tree");
 
     let mut by_clause = Tdd::one(&case.vtree);
     for clause in &case.clauses {
-        by_clause = apply_and_clause(by_clause, &lits(clause));
+        by_clause = by_clause.and_clause(&lits(clause)).unwrap();
     }
-    minimize(&mut by_clause);
+    by_clause.minimize().unwrap();
     assert_canonical(&by_clause);
     assert_same_shape(&left, &by_clause, "clause fold against clause-at-a-time");
 }
@@ -391,7 +391,7 @@ fn operations_match_enumeration(case: &Case) {
     assert_truth(&diagram_truth(&disj, n), &want, n, "disjunction");
 
     step("negation");
-    let neg = negate(f.clone());
+    let neg = (f.clone()).negate().unwrap();
     assert_canonical_after_minimize(&neg);
     let want: Vec<bool> = tf.iter().map(|a| !*a).collect();
     assert_truth(&diagram_truth(&neg, n), &want, n, "negation");
@@ -401,7 +401,7 @@ fn operations_match_enumeration(case: &Case) {
     for x in 0..n {
         for value in [false, true] {
             step("conditioning");
-            let c = condition_var(&f, VarId(x), value);
+            let c = (f).clone().condition_var(VarId(x), value).unwrap();
             assert_canonical_after_minimize(&c);
             let want: Vec<bool> = (0..(1u32 << n))
                 .map(|mask| {
@@ -413,7 +413,7 @@ fn operations_match_enumeration(case: &Case) {
         }
         for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
             step("projection");
-            let p = exists_var_with_strategy(&f, VarId(x), how);
+            let p = (f).clone().exists_var_with_strategy(VarId(x), how).unwrap();
             assert_canonical_after_minimize(&p);
             let want: Vec<bool> = (0..(1u32 << n))
                 .map(|mask| tf[(mask | (1 << x)) as usize] || tf[(mask & !(1 << x)) as usize])
@@ -445,15 +445,15 @@ fn borrow(case: &Case) -> Case {
 /// bottom-up; the count the diagram answers is the same before and after.
 fn marginalizing_preserves_the_count(case: &Case) {
     let mut f = compile(case);
-    let before = f.model_count();
+    let before = f.model_count().unwrap();
     let targets = draw_marginal_targets(case);
     if targets.is_empty() {
         return;
     }
     let eng = Engine::new();
-    marginalize_levels(&eng, &mut f, &targets).expect("an unarmed engine refuses nothing");
+    eng.marginalize_levels(&mut f, &targets).expect("an unarmed engine refuses nothing");
     assert_canonical_after_minimize(&f);
-    assert_eq!(f.model_count(), before, "marginalizing changed the count");
+    assert_eq!(f.model_count().unwrap(), before, "marginalizing changed the count");
     // An unsatisfiable formula compiles to the sentinel, which has no levels
     // to sum out, so only a diagram with storage is expected to gain one.
     assert!(
@@ -501,7 +501,7 @@ fn text_round_trip(case: &Case) {
     let back = load_tdd(&path, &case.vtree).expect("what was just written reads back");
     assert_canonical(&back);
     assert_same_shape(&f, &back, "text round trip");
-    assert_eq!(f.model_count(), back.model_count(), "text round trip changed the count");
+    assert_eq!(f.model_count().unwrap(), back.model_count().unwrap(), "text round trip changed the count");
     let _ = std::fs::remove_file(&path);
 }
 
@@ -512,7 +512,7 @@ fn weighted_counts_match_enumeration(case: &Case) {
 
     let semiring = RationalWeights::from_literals(&w.weights);
     assert_eq!(
-        evaluate(&w.f, &semiring),
+        w.f.evaluate(&semiring).unwrap(),
         w.want,
         "exact weighted evaluation disagrees with enumeration"
     );
@@ -523,8 +523,8 @@ fn weighted_counts_match_enumeration(case: &Case) {
         RationalWeights::from_literals(&w.weights),
         Arithmetic::ExactRational,
     )).unwrap();
-    marginalize_levels(&eng, &mut exact, &w.targets).expect("an unarmed engine refuses nothing");
-    let got = weighted_value(&exact).expect("a store is attached");
+    eng.marginalize_levels(&mut exact, &w.targets).expect("an unarmed engine refuses nothing");
+    let got = exact.weighted_value().unwrap().expect("a store is attached");
     assert_eq!(
         got.as_rational().into_owned(),
         w.want,
@@ -545,8 +545,8 @@ fn log_weighted_count_matches_enumeration(case: &Case) {
         RationalWeights::from_literals(&w.weights),
         Arithmetic::SignedLog,
     )).unwrap();
-    marginalize_levels(&eng, &mut logged, &w.targets).expect("an unarmed engine refuses nothing");
-    let got = weighted_value(&logged).expect("a store is attached");
+    eng.marginalize_levels(&mut logged, &w.targets).expect("an unarmed engine refuses nothing");
+    let got = logged.weighted_value().unwrap().expect("a store is attached");
     let got = *got.as_log().expect("a log store answers in the log domain");
     let want_f = ratio_to_f64(&w.want);
     let got_f = f64::from(got.sign) * got.ln_abs.exp();
@@ -617,7 +617,7 @@ fn weighted_sum(truth: &[bool], weights: &[LiteralWeights<BigRational>]) -> (Big
 
 /// Compare both stored arithmetics against an enumerated sum on its term-magnitude scale.
 fn assert_weighted_sum(tdd: &Tdd, want: &BigRational, magnitude: &BigRational) {
-    let got = weighted_value(tdd).expect("composition retains its weight configuration");
+    let got = tdd.weighted_value().unwrap().expect("composition retains its weight configuration");
     if let Some(log) = got.as_log() {
         let got_f = f64::from(log.sign) * log.ln_abs.exp();
         let scale = ratio_to_f64(magnitude).max(f64::MIN_POSITIVE);
@@ -631,7 +631,7 @@ fn assert_weighted_sum(tdd: &Tdd, want: &BigRational, magnitude: &BigRational) {
 fn weighted_composition_matches_enumeration(case: &Case) {
     let w = weighted_case(case);
     let eng = Engine::new();
-    let care = Tdd::clause(&case.vtree, [if case.seed & 1 == 0 { 1 } else { -1 }]);
+    let care = Tdd::clause(&case.vtree, [if case.seed & 1 == 0 { 1 } else { -1 }]).unwrap();
     assert_canonical(&care);
     let original_truth = diagram_truth(&w.f, case.num_vars);
     let care_truth = diagram_truth(&care, case.num_vars);
@@ -641,7 +641,7 @@ fn weighted_composition_matches_enumeration(case: &Case) {
         source.set_weights(WeightStore::new(RationalWeights::from_literals(&w.weights), arithmetic)).unwrap();
         assert_canonical(&source);
         let mut restricted = eng.restrict_to_care(source.clone(), care.clone()).unwrap().into_tdd();
-        minimize(&mut restricted);
+        restricted.minimize().unwrap();
         assert_canonical(&restricted);
         let truth = diagram_truth(&restricted, case.num_vars);
         for ((&got, &original), &cared) in truth.iter().zip(&original_truth).zip(&care_truth) {
@@ -652,8 +652,8 @@ fn weighted_composition_matches_enumeration(case: &Case) {
 
         step("weighted graft against enumeration");
         let targets = if case.seed & 1 == 0 { vec![case.vtree.root()] } else { w.targets.clone() };
-        marginalize_levels(&eng, &mut source, &targets).unwrap();
-        minimize(&mut source);
+        eng.marginalize_levels(&mut source, &targets).unwrap();
+        source.minimize().unwrap();
         assert_finished_canonical(&source);
         let map: Vec<VarId> = (0..case.num_vars).rev().map(VarId).collect();
         let mut global: Vec<_> = w.weights.iter().rev().cloned().collect();
@@ -691,7 +691,7 @@ fn a_tight_budget_refuses_rather_than_panics(case: &Case) {
             let Ok(next) = eng.and(acc, cl) else { break };
             acc = next;
             let opts = tididi::reduce::ReductionPlan::default();
-            if tididi::reduce::try_reduce(&eng, &mut acc, opts).is_err() {
+            if eng.reduce(&mut acc, opts).is_err() {
                 break;
             }
             let folded = i + 1;
@@ -715,7 +715,7 @@ fn a_tight_budget_refuses_rather_than_panics(case: &Case) {
     let mut acc = Tdd::one(&case.vtree);
     for clause in &case.clauses {
         acc = eng.and(acc, clause_tdd(&case.vtree, clause)).expect("the budget is lifted");
-        minimize(&mut acc);
+        acc.minimize().unwrap();
     }
     assert_canonical(&acc);
     assert_eq!(
@@ -826,9 +826,9 @@ fn a_log_domain_weighted_count_is_a_number() {
 fn conditioning_leaves_no_node_computing_false() {
     let vtree = Arc::new(Vtree::balanced(3));
     let f = clause_tdd(&vtree, &[1, 2]);
-    let mut c = condition_var(&f, VarId(1), false);
-    minimize(&mut c);
-    assert_eq!(c.model_count(), BigUint::from(4u32), "the cofactor's count is unaffected");
+    let mut c = (f).clone().condition_var(VarId(1), false).unwrap();
+    c.minimize().unwrap();
+    assert_eq!(c.model_count().unwrap(), BigUint::from(4u32), "the cofactor's count is unaffected");
     assert_canonical(&c);
 }
 
@@ -844,7 +844,7 @@ fn conditioning_leaves_no_node_computing_false() {
 #[test]
 fn a_clause_naming_one_variable_twice_is_the_clause_it_spells() {
     let vtree = Arc::new(Vtree::balanced(3));
-    let count = |clause: &[i32]| clause_tdd(&vtree, clause).model_count();
+    let count = |clause: &[i32]| clause_tdd(&vtree, clause).model_count().unwrap();
     assert_eq!(count(&[1, -1]), BigUint::from(8u32), "x1 ∨ ¬x1 holds everywhere");
     assert_eq!(count(&[-1, 1]), BigUint::from(8u32), "¬x1 ∨ x1 holds everywhere");
     assert_eq!(count(&[1, -1, 2]), BigUint::from(8u32), "a tautology stays one");
@@ -872,9 +872,9 @@ fn streaming_marginalization_matches_enumeration(case: &Case) {
         targets.extend(case.vtree.leaf_bottomup().map(|(t, _)| t));
     }
     let mut integer = eng.and_marginalizing(left.clone(), right.clone(), &targets).unwrap();
-    minimize(&mut integer);
+    integer.minimize().unwrap();
     assert_finished_canonical(&integer);
-    assert_eq!(integer.model_count(), BigUint::from(brute_force_count(case.num_vars, &case.clauses)));
+    assert_eq!(integer.model_count().unwrap(), BigUint::from(brute_force_count(case.num_vars, &case.clauses)));
     let w = weighted_case(case);
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
         let store = WeightStore::new(RationalWeights::from_literals(&w.weights), arithmetic);
@@ -882,7 +882,7 @@ fn streaming_marginalization_matches_enumeration(case: &Case) {
         f.set_weights(store.clone()).unwrap();
         g.set_weights(store).unwrap();
         let mut result = eng.and_marginalizing(f, g, &targets).unwrap();
-        minimize(&mut result);
+        result.minimize().unwrap();
         assert_finished_canonical(&result);
         let got = eng.weighted_value(&result).unwrap().unwrap();
         match arithmetic {
@@ -901,7 +901,7 @@ fn streaming_marginalization_matches_enumeration(case: &Case) {
 #[test]
 fn streaming_and_standalone_marginalization_preserve_overflow_values() {
     let tree = Arc::new(Vtree::balanced(260));
-    let (f, g) = (Tdd::clause(&tree, [1]), Tdd::clause(&tree, [260]));
+    let (f, g) = (Tdd::clause(&tree, [1]).unwrap(), Tdd::clause(&tree, [260]).unwrap());
     assert_canonical(&f);
     assert_canonical(&g);
     let eng = Engine::new();
@@ -909,11 +909,11 @@ fn streaming_and_standalone_marginalization_preserve_overflow_values() {
     let want = BigUint::from(1u32) << 258usize;
     let mut streamed = eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap();
     let mut standalone = eng.and(f.clone(), g.clone()).unwrap();
-    marginalize_levels(&eng, &mut standalone, &targets).unwrap();
+    eng.marginalize_levels(&mut standalone, &targets).unwrap();
     for result in [&mut streamed, &mut standalone] {
-        minimize(result);
+        result.minimize().unwrap();
         assert_finished_canonical(result);
-        assert_eq!(result.model_count(), want);
+        assert_eq!(result.model_count().unwrap(), want);
     }
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
         let (mut f, mut g) = (f.clone(), g.clone());
@@ -921,7 +921,7 @@ fn streaming_and_standalone_marginalization_preserve_overflow_values() {
         f.set_weights(store.clone()).unwrap();
         g.set_weights(store).unwrap();
         let mut result = eng.and_marginalizing(f, g, &targets).unwrap();
-        minimize(&mut result);
+        result.minimize().unwrap();
         assert_finished_canonical(&result);
         let value = eng.weighted_value(&result).unwrap().unwrap();
         match arithmetic {

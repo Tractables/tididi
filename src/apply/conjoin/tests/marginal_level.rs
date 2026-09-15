@@ -6,8 +6,8 @@ use super::*;
 
 use super::sparse::is_self_conjunction;
 use crate::test_helpers::clause_to_tdd;
-use crate::reduce::minimize;
-use crate::query::model_count;
+
+
 use crate::diagram::{
     CountOverflow, MultiPairRange, TddLevel,
 };
@@ -133,8 +133,8 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
     let mut tdd = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
     tdd = apply_and(tdd, t2);
-    minimize(&mut tdd);
-    let expected_mc = model_count(&tdd);
+    tdd.minimize().unwrap();
+    let expected_mc = tdd.model_count().unwrap();
 
     // ── Branch 1: must take the shortcut ────────────────────────────────
     // Byte-identical, non-marginal clones satisfy `is_self_conjunction` by
@@ -146,9 +146,9 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
         "byte-identical clones must satisfy the shortcut predicate"
     );
     let mut shortcut_result = apply_and(shortcut_lhs, shortcut_rhs);
-    minimize(&mut shortcut_result);
+    shortcut_result.minimize().unwrap();
     assert_eq!(
-        model_count(&shortcut_result), expected_mc,
+        shortcut_result.model_count().unwrap(), expected_mc,
         "shortcut path (is_self_conjunction=true): f \u{2227} f must equal f"
     );
 
@@ -173,9 +173,9 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
         "operand with a differing (unreferenced) multi_pairs entry must NOT satisfy the shortcut predicate"
     );
     let mut general_result = apply_and(general_lhs, general_rhs);
-    minimize(&mut general_result);
+    general_result.minimize().unwrap();
     assert_eq!(
-        model_count(&general_result), expected_mc,
+        general_result.model_count().unwrap(), expected_mc,
         "general path (is_self_conjunction=false): f \u{2227} f must still equal f"
     );
 }

@@ -1,8 +1,8 @@
 use super::*;
 use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;
-use crate::reduce::minimize;
-use crate::query::model_count;
+
+
 use crate::vtree::Vtree;
 use num_bigint::BigUint;
 
@@ -25,9 +25,9 @@ fn expand_full_single_clause() {
     let eng = &crate::engine::Engine::new();
     let vtree = balanced_vtree(4);
     let mut tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, false)]));
-    let count_before = model_count(&tdd);
+    let count_before = tdd.model_count().unwrap();
     expand_full(&crate::Engine::new(), &mut tdd).unwrap();
-    assert_eq!(count_before, model_count(&tdd));
+    assert_eq!(count_before, tdd.model_count().unwrap());
 }
 
 #[test]
@@ -35,7 +35,7 @@ fn expand_full_preserves_determinism() {
     let eng = &crate::engine::Engine::new();
     let vtree = balanced_vtree(4);
     let mut tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (2, false)]));
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
     let widths_before: Vec<usize> = tdd.levels.iter().map(|l| l.slot_count()).collect();
     expand_full(&crate::Engine::new(), &mut tdd).unwrap();
 

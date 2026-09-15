@@ -135,24 +135,25 @@ pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
 /// # use std::sync::Arc;
 /// # use tididi::{Engine, Tdd};
 /// # use tididi::io::IoError;
-/// # use tididi::marginal::marginalize_levels;
+/// #
 /// # use tididi::vtree::Vtree;
 /// # let vtree = Arc::new(Vtree::balanced(4));
 /// # let engine = Engine::new();
 /// # let (left, _right) = vtree.children(vtree.root());
-/// # let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+/// # let f = Tdd::clause(&vtree, [1, -2])? & Tdd::clause(&vtree, [2, 3])?;
 /// use tididi::io::tdd_to_dot;
 ///
 /// assert!(tdd_to_dot(&f).unwrap().starts_with("graph tdd {"));
 ///
 /// let mut m = f.clone();
-/// marginalize_levels(&engine, &mut m, &[left]).unwrap();
+/// engine.marginalize_levels(&mut m, &[left]).unwrap();
 /// match tdd_to_dot(&m) {
 ///     Ok(_) => unreachable!("a marginal level has no edges to draw"),
 ///     Err(IoError::Format(msg)) => assert!(!msg.is_empty()),
 ///     Err(IoError::Io(e)) => unreachable!("{e}"),
 ///     Err(other) => unreachable!("{other}"),
 /// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn tdd_to_dot(f: &Tdd) -> Result<String, super::IoError> {
     super::reject_marginal_levels(f, "tdd_to_dot")?;

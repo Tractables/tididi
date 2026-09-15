@@ -116,7 +116,7 @@ impl RationalWeights {
     }
 
     /// All variables uniform with weight 1 on each polarity. Then
-    /// `evaluate(&tdd, &semiring)` equals the (integer) model count of `tdd`,
+    /// `tdd.evaluate(&semiring)?` equals the (integer) model count of `tdd`,
     /// as an exact `BigRational` with denominator 1.
     pub fn unit(num_vars: usize) -> Self {
         RationalWeights {

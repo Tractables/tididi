@@ -6,8 +6,8 @@ use super::*;
 
 use crate::apply::conjoin_clause::conjoin_clause_owned;
 use crate::test_helpers::clause_to_tdd;
-use crate::reduce::minimize;
-use crate::query::model_count;
+
+
 use crate::diagram::ZERO;
 use crate::test_helpers::{assert_canonical, literals, vtree_shapes};
 use crate::vtree::{Vtree, VtreeIdx};
@@ -54,15 +54,15 @@ fn test_clause_tdd_minimize_preserves_function() {
         let clause = literals(lits);
         for (shape_name, vtree) in vtree_shapes(*num_vars) {
             let tdd_before = clause_to_tdd(eng, &vtree, &clause);
-            let count_before = model_count(&tdd_before);
+            let count_before = tdd_before.model_count().unwrap();
 
             let mut tdd_after = tdd_before.clone();
-            minimize(&mut tdd_after);
-            let count_after = model_count(&tdd_after);
+            tdd_after.minimize().unwrap();
+            let count_after = tdd_after.model_count().unwrap();
 
             assert_eq!(
                 count_before, count_after,
-                "clause {:?} ({} vars, {}): model count changed by minimize ({} → {})",
+                "clause {:?} ({} vars, {}): model count changed by ({} → {}).minimize().unwrap()",
                 lits, num_vars, shape_name, count_before, count_after
             );
 
@@ -207,25 +207,25 @@ fn a_clause_builds_the_levels_its_conjunction_into_one_emits() {
 #[test]
 fn a_clause_reads_its_literals_as_a_set() {
     for (name, vtree) in vtree_shapes(3) {
-        let all = model_count(&constant_one(&Engine::new(), &vtree));
+        let all = (constant_one(&Engine::new(), &vtree)).model_count().unwrap();
         for clause in [vec![1, -1], vec![-1, 1], vec![1, -1, 2], vec![2, 1, -2]] {
-            let built = Tdd::clause(&vtree, literals(&clause));
+            let built = Tdd::clause(&vtree, literals(&clause)).unwrap();
             assert_canonical(&built);
-            assert_eq!(model_count(&built), all, "{name}: {clause:?} is satisfied everywhere");
+            assert_eq!(built.model_count().unwrap(), all, "{name}: {clause:?} is satisfied everywhere");
 
             let conjoined =
-                crate::apply::apply_and_clause(Tdd::clause(&vtree, [3]), &literals(&clause));
+                (Tdd::clause(&vtree, [3]).unwrap()).and_clause(&literals(&clause)).unwrap();
             assert_eq!(
-                model_count(&conjoined),
-                model_count(&Tdd::clause(&vtree, [3])),
+                conjoined.model_count().unwrap(),
+                (Tdd::clause(&vtree, [3]).unwrap()).model_count().unwrap(),
                 "{name}: conjoining {clause:?} is the identity"
             );
         }
-        let repeated = Tdd::clause(&vtree, literals(&[1, 2, 1]));
+        let repeated = Tdd::clause(&vtree, literals(&[1, 2, 1])).unwrap();
         assert_canonical(&repeated);
         assert_eq!(
-            model_count(&repeated),
-            model_count(&Tdd::clause(&vtree, literals(&[1, 2]))),
+            repeated.model_count().unwrap(),
+            (Tdd::clause(&vtree, literals(&[1, 2])).unwrap()).model_count().unwrap(),
             "{name}: a repeated literal says nothing new"
         );
     }

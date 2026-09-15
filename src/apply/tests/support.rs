@@ -19,7 +19,7 @@ fn support_mask_tracks_dependence() {
     // Cross-check against the project-equality oracle: f independent of x iff
     // projecting x out leaves f equivalent (over the care of the other vars).
     for x in 0..3u32 {
-        let projected = exists_var(&f, VarId(x));
+        let projected = (f).clone().exists_var(VarId(x)).unwrap();
         let unchanged = equiv(&f, &projected);
         assert_eq!(!unchanged, sup[x as usize], "support[{x}] mismatch vs oracle");
     }
@@ -68,8 +68,8 @@ fn condition_var_detects_unit_forced_apply() {
     let t = apply_and(t01, g);
     assert!(!count_is_zero(&t));
     // x0 forced true => x0=false is UNSAT (count 0), x0=true is SAT.
-    assert!(count_is_zero(&condition_var(&t, VarId(0), false)));
-    assert!(!count_is_zero(&condition_var(&t, VarId(0), true)));
+    assert!(count_is_zero(&(t).clone().condition_var(VarId(0), false).unwrap()));
+    assert!(!count_is_zero(&(t).clone().condition_var(VarId(0), true).unwrap()));
 }
 
 // A conditioned diagram with no models must be CANONICALLY false: conditioning
@@ -86,7 +86,7 @@ fn condition_var_canonicalizes_a_dead_result() {
     let g = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
     let t01 = apply_and(c0, f);
     let t = apply_and(t01, g);
-    let dead = condition_var(&t, VarId(0), false);
+    let dead = (t).clone().condition_var(VarId(0), false).unwrap();
     assert!(count_is_zero(&dead), "x0 is forced true, so x0=false has no models");
     assert!(dead.is_zero(), "a model-count-0 conditioning result must be canonically ZERO");
     // Re-conjoining the canonical ⊥ stays ⊥ (the property the canonicalization buys).
@@ -111,7 +111,7 @@ fn condition_var_on_marginalized_leaf_fails_fast() {
     let leaf = vtree.leaf_of(VarId(1)).expect("the vtree carries this variable");
     marginalize_leaf_inline(&mut t, leaf, &vtree);
     assert!(t.levels[leaf.idx()].is_marginal(), "test setup: leaf must be marginal");
-    crate::reduce::minimize(&mut t);
+    t.minimize().unwrap();
     assert_canonical(&t);
     assert_eq!(eng.condition_var(t, VarId(1), true).unwrap_err(), crate::OperationError::MarginalLevel(leaf));
 }
@@ -141,8 +141,8 @@ fn condition_var_through_marginal_parent_fails_fast() {
 fn implied_literals_matches_condition_oracle() {
     let eng = Engine::new();
     use crate::diagram::Literal;
-    use crate::query::implied_literals;
-    use crate::reduce::minimize;
+
+
     // Oracle: (v, val) is implied iff f is SAT but conditioning v := !val makes
     // it UNSAT — i.e. Every model pins v = val.
     let oracle = |f: &Tdd, nvars: u32| -> Vec<Literal> {
@@ -152,7 +152,7 @@ fn implied_literals_matches_condition_oracle() {
         }
         for v in 0..nvars {
             for val in [true, false] {
-                if count_is_zero(&condition_var(f, VarId(v), !val)) {
+                if count_is_zero(&(f).clone().condition_var(VarId(v), !val).unwrap()) {
                     out.push(Literal::new(VarId(v), val));
                 }
             }
@@ -167,21 +167,21 @@ fn implied_literals_matches_condition_oracle() {
 
     // f = x0 & (x1 | x2): only x0 is backbone (x1,x2 each stay free).
     let mut f = and2(&x0, &or12);
-    minimize(&mut f);
-    let bb = implied_literals(&f);
+    f.minimize().unwrap();
+    let bb = f.implied_literals().unwrap();
     assert_eq!(bb, oracle(&f, 3));
     assert!(bb == [Literal::pos(VarId(0))]);
 
     // g = ~x0 & x1: x0 forced false, x1 forced true, x2 a pure don't-care (only
     // ever the One leaf) — must not appear.
     let mut g = and2(&nx0, &x1);
-    minimize(&mut g);
-    let bbg = implied_literals(&g);
+    g.minimize().unwrap();
+    let bbg = g.implied_literals().unwrap();
     assert_eq!(bbg, oracle(&g, 3));
     assert!(bbg.iter().all(|lit| lit.var != VarId(2)));
 
     // UNSAT (x0 & ~x0): no models, no implied literals.
     let mut z = and2(&x0, &nx0);
-    minimize(&mut z);
-    assert!(implied_literals(&z).is_empty());
+    z.minimize().unwrap();
+    assert!(z.implied_literals().unwrap().is_empty());
 }

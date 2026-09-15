@@ -36,7 +36,7 @@ pub fn compile_clauses_on(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]
     for clause in clauses {
         let cl = clause_to_tdd(eng, vtree, &literals(clause));
         acc = eng.and(acc, cl).expect("compile_clauses_on: allocation refused");
-        crate::reduce::try_reduce(eng, &mut acc, crate::reduce::ReductionPlan::default())
+        eng.reduce(&mut acc, crate::reduce::ReductionPlan::default())
             .expect("compile_clauses_on: allocation refused");
     }
     acc
@@ -162,5 +162,5 @@ pub fn reroot_to_child(t: &Tdd, left_child: bool) -> Tdd {
 
 /// Build an unlimited clause fixture independently of the operation's armed engine.
 pub(crate) fn clause_to_tdd(_eng: &crate::Engine, vtree: &std::sync::Arc<crate::vtree::Vtree>, clause: &[crate::Literal]) -> crate::Tdd {
-    crate::Tdd::clause(vtree, clause)
+    crate::Tdd::clause(vtree, clause).unwrap()
 }

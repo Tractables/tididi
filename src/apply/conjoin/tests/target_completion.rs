@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use crate::{Engine, Tdd};
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
-use crate::marginal::marginalize_levels;
-use crate::reduce::minimize;
+
+
 use crate::test_helpers::{assert_canonical, rat};
 use crate::vtree::{VarId, Vtree};
 
@@ -30,7 +30,7 @@ fn requested_targets_are_completed_after_identity_and_self_conjunction() {
                 assert_canonical(&g);
                 for targets in [vec![left], vec![tree.root()], vec![leaf, left, left], vec![tree.root(), leaf, left]] {
                     let mut expected = eng.and(f.clone(), g.clone()).unwrap();
-                    marginalize_levels(&eng, &mut expected, &targets).unwrap();
+                    eng.marginalize_levels(&mut expected, &targets).unwrap();
                     let mut actual = eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap();
                     for &target in &targets {
                         assert!(actual.level(target).is_marginal(), "target {target:?}, arithmetic {arithmetic:?}");
@@ -44,9 +44,9 @@ fn requested_targets_are_completed_after_identity_and_self_conjunction() {
                             let b = b.as_log().unwrap();
                             assert!((f64::from(a.sign) * a.ln_abs.exp() - f64::from(b.sign) * b.ln_abs.exp()).abs() < 1e-12);
                         }
-                    } else { assert_eq!(actual.model_count(), expected.model_count()); }
-                    minimize(&mut actual);
-                    minimize(&mut expected);
+                    } else { assert_eq!(actual.model_count().unwrap(), expected.model_count().unwrap()); }
+                    actual.minimize().unwrap();
+                    expected.minimize().unwrap();
                     assert_canonical(&actual);
                     assert_canonical(&expected);
                 }

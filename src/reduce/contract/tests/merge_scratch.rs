@@ -157,14 +157,14 @@ fn content_twin_scratch_is_cleared_on_take() {
     fp_counts.insert(11, 2);
     let mut key_to_canonical: rustc_hash::FxHashMap<Vec<(u32, u32)>, u32> = Default::default();
     key_to_canonical.insert(vec![(1, 2)], 3);
-    eng.reduce().content_twin.put(ContentTwinScratch {
+    eng.reduce_scratch().content_twin.put(ContentTwinScratch {
         node_fp: vec![11, 11],
         fp_counts,
         key_to_canonical,
         remap: vec![0, 0],
     });
 
-    let s = eng.reduce().content_twin.checkout();
+    let s = eng.reduce_scratch().content_twin.checkout();
     assert!(s.node_fp.is_empty(), "node_fp must be cleared on take");
     assert!(s.fp_counts.is_empty(), "fp_counts must be cleared on take");
     assert!(s.key_to_canonical.is_empty(), "key_to_canonical must be cleared on take");
@@ -250,7 +250,7 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
     // which the twin-free warm-up cannot pre-size: grow them here, untracked and
     // generously, leaving the three merge buffers as the only cold scratch.
     {
-        let mut s = eng.reduce().contract.checkout();
+        let mut s = eng.reduce_scratch().contract.checkout();
         let big = 64 * width;
         s.flat_groups.resize_with(big, Default::default);
         s.group_starts.resize_with(big, Default::default);
@@ -285,11 +285,11 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
 fn contract_checkout_invalidates_the_previous_diagrams_marginal_map() {
     let eng = crate::Engine::new();
     {
-        let mut scratch = eng.reduce().contract.checkout();
+        let mut scratch = eng.reduce_scratch().contract.checkout();
         scratch.has_marginal_below = vec![true, false];
         scratch.has_marginal_below_valid = true;
     }
-    let scratch = eng.reduce().contract.checkout();
+    let scratch = eng.reduce_scratch().contract.checkout();
     assert!(!scratch.has_marginal_below_valid);
     assert_eq!(scratch.has_marginal_below.capacity(), 2);
 }

@@ -140,7 +140,7 @@ pub(crate) fn merge_content_equal_nodes(
     // Per-level scratch, hoisted out of the walk: the pass visits every
     // explicit level, so allocating these collections per level would dominate
     // it on a deep vtree. The pool keeps the capacity across passes too.
-    let mut scratch = eng.reduce().content_twin.checkout();
+    let mut scratch = eng.reduce_scratch().content_twin.checkout();
     let ContentTwinScratch { node_fp, fp_counts, key_to_canonical, remap } = &mut *scratch;
 
     for parent_v in order {

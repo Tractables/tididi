@@ -1,7 +1,7 @@
 use super::*;
 use std::sync::Arc;
 use crate::vtree::Vtree;
-use crate::query::model_count;
+
 use crate::test_helpers::{assert_canonical, compile_clauses, literals};
 
 /// The size-objective descent, spelled once for the tests below.
@@ -27,13 +27,13 @@ fn size_search_preserves_count_shrinks_and_is_idempotent() {
             vec![-4, 5], vec![5, -6], vec![1, -6],
         ],
     );
-    let mc_before = model_count(&tdd);
+    let mc_before = tdd.model_count().unwrap();
     let size_before = tdd.pair_count();
 
     let stats = size_descent(&mut tdd);
 
     assert_canonical(&tdd);
-    assert_eq!(mc_before, model_count(&tdd), "rotation search must preserve #F");
+    assert_eq!(mc_before, tdd.model_count().unwrap(), "rotation search must preserve #F");
     assert!(
         tdd.pair_count() <= size_before,
         "size search must not increase size ({} > {})",
@@ -59,7 +59,7 @@ fn size_search_preserves_count_shrinks_and_is_idempotent() {
 /// whole search.
 #[test]
 fn rotation_search_on_non_canonical_clause_build_preserves_count() {
-    use crate::apply::apply_and_clause;
+
 
     // Both reproducer CNFs from the onboarding bug report, over balanced(4).
     for cnf in [
@@ -70,16 +70,16 @@ fn rotation_search_on_non_canonical_clause_build_preserves_count() {
         let mut acc = Tdd::one(&vtree);
         for clause in &cnf {
             let lits = literals(clause);
-            acc = apply_and_clause(acc, &lits);
+            acc = acc.and_clause(&lits).unwrap();
         }
-        let count_before = model_count(&acc);
+        let count_before = acc.model_count().unwrap();
 
         // Must not panic.
         let _ = size_descent(&mut acc);
 
         assert_eq!(
             count_before,
-            model_count(&acc),
+            acc.model_count().unwrap(),
             "rotation search on a non-canonical clause-built TDD must preserve #F (cnf={cnf:?})",
         );
     }
@@ -105,7 +105,7 @@ fn reject_all_objective_leaves_tdd_untouched() {
             vec![-4, 5], vec![5, -6], vec![1, -6],
         ],
     );
-    let mc_before = model_count(&tdd);
+    let mc_before = tdd.model_count().unwrap();
     let snap = level_snapshot(&tdd);
 
     let stats = crate::engine::Engine::new()
@@ -115,7 +115,7 @@ fn reject_all_objective_leaves_tdd_untouched() {
     assert!(Arc::ptr_eq(tdd.vtree(), &vtree));
     assert_eq!(stats.accepts, 0, "reject-all objective must accept nothing");
     assert!(stats.probes > 0, "test must actually exercise probes");
-    assert_eq!(mc_before, model_count(&tdd), "count unchanged");
+    assert_eq!(mc_before, tdd.model_count().unwrap(), "count unchanged");
     assert_eq!(snap, level_snapshot(&tdd), "every probe must revert bit-identically");
     assert_canonical(&tdd);
 }
@@ -155,7 +155,7 @@ fn a_panicking_search_restores_shared_tree_identity() {
     let tree = Arc::new(Vtree::balanced(8));
     let mut f = Tdd::one(&tree);
     assert_canonical(&f);
-    crate::reduce::minimize(&mut f);
+    f.minimize().unwrap();
     let before = format!("{f:?}");
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         Engine::new().rotation_search(&mut f, &mut Panic, &RotationSearchConfig::default())

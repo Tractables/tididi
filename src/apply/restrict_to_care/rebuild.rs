@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::engine::Engine;
 use crate::limits::{OperationError, PollGate};
-use crate::reduce::{try_reduce, ReductionPlan};
+use crate::reduce::{ReductionPlan};
 use crate::diagram::{ChildDecoder, ChildPair, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, try_take_levels};
 use crate::diagram::sort_pairs;
 use crate::vtree::VtreeIdx;
@@ -50,7 +50,7 @@ impl Marking {
         let mut g = Tdd::try_from_levels_on(eng, Arc::clone(&f.vtree), out, TddNodeId { vtree: v0, local: root })?;
         g.weights = f.weights;
         // A child emitted before its pair partner collapses can become an orphan.
-        try_reduce(eng, &mut g, ReductionPlan::Prune)?;
+        eng.reduce(&mut g, ReductionPlan::Prune)?;
         Ok(g)
     }
 }

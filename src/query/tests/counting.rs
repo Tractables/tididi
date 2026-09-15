@@ -7,7 +7,7 @@ fn test_model_count_constant_one() {
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_one(eng, &vtree);
     // 3 variables → 2^3 = 8 models
-    assert_eq!(model_count(&tdd), BigUint::from(8u32));
+    assert_eq!(tdd.model_count().unwrap(), BigUint::from(8u32));
 }
 
 #[test]
@@ -17,7 +17,7 @@ fn test_model_count_single_positive_literal() {
     let clause = vec![Literal::pos(VarId(0))];
     let tdd = clause_to_tdd(eng, &vtree, &clause);
     // x0: satisfied when x0=1. 4 assignments for x1,x2 → 4 models
-    assert_eq!(model_count(&tdd), BigUint::from(4u32));
+    assert_eq!(tdd.model_count().unwrap(), BigUint::from(4u32));
 }
 
 #[test]
@@ -31,7 +31,7 @@ fn test_model_count_two_literal_clause() {
     ];
     let tdd = clause_to_tdd(eng, &vtree, &clause);
     // 8 - 2 = 6 models (2 assignments with x0=0,x1=1, times 2 for x2)
-    assert_eq!(model_count(&tdd), BigUint::from(6u32));
+    assert_eq!(tdd.model_count().unwrap(), BigUint::from(6u32));
 }
 
 #[test]
@@ -44,7 +44,7 @@ fn test_model_count_conjunction() {
     let t1 = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
     let result = apply_and(t1, t2);
-    assert_eq!(model_count(&result), BigUint::from(2u32));
+    assert_eq!(result.model_count().unwrap(), BigUint::from(2u32));
 }
 
 #[test]
@@ -57,8 +57,8 @@ fn test_model_count_unsat() {
     let t1 = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
     let result = apply_and(t1, t2);
-    assert_eq!(model_count(&result), BigUint::ZERO);
-    assert!(!is_sat_minimized(&result));
+    assert_eq!(result.model_count().unwrap(), BigUint::ZERO);
+    assert!(!result.is_sat_minimized().unwrap());
 }
 
 #[test]
@@ -66,7 +66,7 @@ fn test_model_count_single_var() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(1));
     let tdd = constant_one(eng, &vtree);
-    assert_eq!(model_count(&tdd), BigUint::from(2u32));
+    assert_eq!(tdd.model_count().unwrap(), BigUint::from(2u32));
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn test_model_count_clause_all_vars() {
         Literal::pos(VarId(3)),
     ];
     let tdd = clause_to_tdd(eng, &vtree, &clause);
-    assert_eq!(model_count(&tdd), BigUint::from(15u32));
+    assert_eq!(tdd.model_count().unwrap(), BigUint::from(15u32));
 }
 
 // --- node_counts ---
@@ -101,7 +101,7 @@ fn test_node_counts_basic() {
 // --- Overflow tests ---
 
 /// Differential invariant underpinning conditioning's false-output canonicalization:
-/// `is_sat_structural(t)` must agree with `model_count(t) != 0` for every diagram,
+/// `is_sat_structural(t)` must agree with `t.model_count()? != 0` for every diagram,
 /// including non-canonical ⊥ (structurally-false output node that still carries pairs).
 /// The canonicalization relies on this equivalence to collapse a dead diagram to ZERO
 /// without ever changing a live count. Covers SAT, plain UNSAT, and a multi-conjoin
@@ -111,7 +111,7 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
     let eng = &crate::engine::Engine::new();
     let check = |t: &Tdd, what: &str| {
         let sat = is_sat_structural(t);
-        let nonzero = model_count(t) != BigUint::ZERO;
+        let nonzero = t.model_count().unwrap() != BigUint::ZERO;
         assert_eq!(sat, nonzero, "is_sat_structural disagrees with model_count>0 for {what}");
     };
 
@@ -162,7 +162,7 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
         let t2 = clause_to_tdd(eng, &v, &[Literal::neg(VarId(1)), Literal::pos(VarId(3))]);
         let mut t = apply_and(t1, t2);
         crate::test_helpers::marginalize_subtree(&mut t, marginal_root);
-        minimize(&mut t);
+        t.minimize().unwrap();
         assert!(
             t.levels[marginal_root.idx()].is_marginal(),
             "fixture must carry a marginal level"
@@ -225,16 +225,16 @@ fn test_apply_fallible_consumes_operands() {
     );
 }
 
-/// `Engine::try_model_count` is the counted model count: with nothing armed it
+/// `Engine::model_count` is the counted model count: with nothing armed it
 /// agrees with `model_count`, and under an armed stop it cuts instead of
 /// running to the end.
 #[test]
-fn try_model_count_matches_model_count_and_honors_the_stop_axis() {
+fn batch_model_count_matches_ordinary_count_and_honors_the_stop_axis() {
     let vtree = Arc::new(Vtree::balanced(3));
-    let f = Tdd::clause(&vtree, [1, 2, 3]);
+    let f = Tdd::clause(&vtree, [1, 2, 3]).unwrap();
     assert_eq!(
         Engine::new().model_count(&f).expect("nothing armed"),
-        model_count(&f)
+        f.model_count().unwrap()
     );
     let stopped = stopping_engine();
     stopped.limits().pin_reduce_poll_stride(Some(1));

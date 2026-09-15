@@ -22,46 +22,6 @@ pub use crate::value::ColumnRetention;
 
 // ── Model counting ───────────────────────────────────────────────────────────
 
-/// Count the number of satisfying assignments (models) of a diagram.
-///
-/// Uses hybrid u128/BigUint arithmetic: u128 for most nodes (no heap
-/// allocation), `BigUint` only where overflow occurs.
-///
-/// The two spellings a caller has are
-/// [`Tdd::model_count`](crate::Tdd::model_count), which is this, and
-/// [`Engine::model_count`](crate::Engine::model_count), which is this under a
-/// caller's limits.
-pub(crate) fn model_count(f: &Tdd) -> BigUint {
-    f.try_model_count()
-        .expect("model_count: operation refused")
-}
-
-/// The counting entry point on a diagram.
-impl Tdd {
-    /// Exact unweighted model count of this diagram, as an arbitrary-precision integer.
-    ///
-    /// Uses [`Engine::model_count`](crate::Engine::model_count) with the shared
-    /// vtree context; that method states the counting contract.
-    ///
-    /// # Panics
-    ///
-    /// Panics if [`Engine::model_count`](crate::Engine::model_count) returns an error.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use num_bigint::BigUint;
-    /// use tididi::Tdd;
-    /// use tididi::vtree::Vtree;
-    ///
-    /// let vtree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&vtree, [1, 2, 3]); // x1 ∨ x2 ∨ x3
-    /// assert_eq!(f.model_count(), BigUint::from(7u32)); // 2^3 − 1
-    /// ```
-    pub fn model_count(&self) -> num_bigint::BigUint {
-        crate::query::model_count(self)
-    }
-}
-
 /// Whether pins count as evidence or as substitution over the unchanged vtree.
 ///
 /// Evidence counts assignments consistent with the pins. A cofactor counts
@@ -76,16 +36,17 @@ impl Tdd {
 ///
 /// let engine = Engine::new();
 /// let tree = Arc::new(Vtree::balanced(2));
-/// let f = Tdd::clause(&tree, [1]) & Tdd::clause(&tree, [2]);
+/// let f = Tdd::clause(&tree, [1])? & Tdd::clause(&tree, [2])?;
 /// # tididi::test_helpers::assert_canonical(&f);
 /// for (semantics, expected) in [(PinSemantics::Evidence, 1u32), (PinSemantics::Cofactor, 2)] {
-///     let mut counter = ModelCounter::<KeepAllColumns>::new(&f, semantics);
+///     let mut counter = ModelCounter::<KeepAllColumns>::new(&f, semantics)?;
 ///     counter.set_pin(VarId(0), Some(true)).unwrap();
-///     assert_eq!(counter.model_count(), expected.into());
+///     assert_eq!(counter.model_count()?, expected.into());
 /// }
 /// let cofactor = engine.condition_var(f, VarId(0), true).unwrap();
 /// # tididi::test_helpers::assert_canonical(&cofactor);
-/// assert_eq!(cofactor.model_count(), 2u32.into());
+/// assert_eq!(cofactor.model_count()?, 2u32.into());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 #[non_exhaustive]
@@ -150,73 +111,58 @@ pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: PinSema
 ///
 /// Propagates the armed stop, polled at every level boundary. Nothing has been
 /// read at the cut, so the partial columns are simply dropped.
-pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, OperationError> {
+pub(crate) fn model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, OperationError> {
     let _op = eng.limits().begin_operation();
     if tdd.is_zero() {
         if eng.limits().should_stop() { return Err(OperationError::Stopped); }
         return Ok(BigUint::ZERO);
     }
-    ModelCounter::<KeepFrontier>::allocate(eng, tdd, 0, PinSemantics::Cofactor)?.try_model_count_on(eng)
+    ModelCounter::<KeepFrontier>::allocate(eng, tdd, 0, PinSemantics::Cofactor)?.model_count_on(eng)
 }
 
-/// Per-node model counts in `u128` (`counts[vtree_idx][node_idx]`), saturating a
-/// slot too large for the width to `u128::MAX`; a zero count stays exact, so the
-/// array is authoritative for zero.
-///
-/// The same bottom-up pass as [`Engine::model_count`](crate::Engine::model_count),
-/// using the vtree context, keeping every column and dropping the `BigUint`
-/// side table, so every non-saturating slot equals the exact count. For a
-/// caller that needs ordering, a small-threshold compare or exact-zero
-/// detection and never an overflowed node's magnitude. A count-marginal
-/// level's column is its stored counts, one per slot; a leaf level's column
-/// has three entries, one per label; every internal column of ⊥ is empty.
-///
-/// # Panics
-///
-/// Panics if [`Engine::model_count`](crate::Engine::model_count) returns an error.
-#[must_use]
-pub fn node_counts_u128(tdd: &Tdd) -> Vec<Vec<u128>> {
-    tdd.context().run(|eng| {
-        // The returned array needs every column, including children already folded.
-        let ctr = ModelCounter::<KeepAllColumns>::allocate(eng, tdd, 0, PinSemantics::Cofactor)
-            .expect("node_counts_u128: operation refused");
-        ctr.into_fast_counts(eng)
-    })
+impl Tdd {
+    /// Return per-node counts, saturating values above `u128::MAX`.
+    ///
+    /// Indexed by vtree level and local node index. Zero and all values below
+    /// the saturation sentinel are exact. Leaf columns contain three labels;
+    /// count-marginal columns contain their stored values. Internal columns of
+    /// a false diagram are empty. Uses the diagram's context and retains all
+    /// columns during the fold.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::IncompatibleWeights`] for weighted marginal
+    /// levels, or [`OperationError::OverBudget`] if an allocation is refused.
+    pub fn node_counts_u128(&self) -> Result<Vec<Vec<u128>>, OperationError> {
+        self.context().run(|eng| eng.node_counts_u128(self))
+    }
+}
+
+impl Engine {
+    /// Run [`Tdd::node_counts_u128`] under this engine's allocation and stop limits.
+    ///
+    /// Returns the query's errors or [`OperationError::Stopped`] on cancellation.
+    pub fn node_counts_u128(&self, tdd: &Tdd) -> Result<Vec<Vec<u128>>, OperationError> {
+        ModelCounter::<KeepAllColumns>::allocate(self, tdd, 0, PinSemantics::Cofactor)?
+            .into_fast_counts(self)
+    }
 }
 
 /// The counting entry point on a caller's engine.
 impl crate::engine::Engine {
-    /// Count satisfying assignments over every variable in the diagram's vtree.
+    /// Run [`Tdd::model_count`](crate::Tdd::model_count) using this batch's scratch and resource limits.
     ///
-    /// The result is an exact arbitrary-precision integer. Each free variable
-    /// contributes a factor of two; minimization is not required before counting.
-    /// Literal weights attached to a structural diagram are ignored. Count-marginal
-    /// levels use their stored counts, and the constant-false diagram counts zero.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    ///
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = engine.clause(&tree, [1, 2])?;
-    /// // Three assignments satisfy x1 or x2, each with two choices for x3.
-    /// assert_eq!(engine.model_count(&f)?, 6u32.into());
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
-    ///
-    /// For repeated counts under evidence, use [`ModelCounter`].
-    /// [`Tdd::model_count`] is a convenience form using the vtree context and
-    /// panicking on error.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// [`OperationError::OverBudget`] for a refused buffer reservation,
-    /// [`OperationError::Stopped`] for an armed stop, or
-    /// [`OperationError::IncompatibleWeights`] for weighted marginal values.
-    /// The diagram is unchanged. Buffer growth is charged to the best-effort byte
-    /// budget; allocations inside big-integer arithmetic are outside that budget.
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`].
+    ///
+    /// Buffer growth is charged to the best-effort byte budget; allocations inside
+    /// big-integer arithmetic are outside that budget. The input is unchanged.
     pub fn model_count(&self, tdd: &crate::Tdd) -> Result<num_bigint::BigUint, crate::limits::OperationError> {
-        crate::query::count::try_model_count(self, tdd)
+        crate::query::count::model_count(self, tdd)
     }
 }

@@ -213,11 +213,11 @@ process-wide state, no C or C++ code built.
 [`io`]: crate::io
 [`limits`]: crate::limits
 [`marginal`]: crate::marginal
-[`marginal::marginalize_levels`]: crate::marginal::marginalize_levels
-[`marginalize_levels`]: crate::marginal::marginalize_levels
+[`marginal::marginalize_levels`]: crate::Tdd::marginalize_levels
+[`marginalize_levels`]: crate::Tdd::marginalize_levels
 [`query`]: crate::query
 [`reduce`]: crate::reduce
-[`reduce::minimize`]: crate::reduce::minimize
+[`reduce::minimize`]: crate::Tdd::minimize
 [`restructure`]: crate::restructure
 [`vtree`]: crate::vtree
 

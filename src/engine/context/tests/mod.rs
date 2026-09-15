@@ -170,8 +170,8 @@ fn grafts_preserve_only_a_context_agreed_by_every_source() {
 fn ordinary_conjunctions_use_the_parked_scratch_allocation() {
     let tree = Arc::new(Vtree::balanced(4));
     let context = tree.context();
-    let left = Tdd::clause(&tree, [1, 3]);
-    let right = Tdd::clause(&tree, [2, 4]);
+    let left = Tdd::clause(&tree, [1, 3]).unwrap();
+    let right = Tdd::clause(&tree, [2, 4]).unwrap();
     assert_canonical(&left);
     assert_canonical(&right);
     for operator in [false, true] {
@@ -195,7 +195,7 @@ fn ordinary_conjunctions_use_the_parked_scratch_allocation() {
         assert!(Arc::ptr_eq(result.context(), context));
         result.minimize().unwrap();
         assert_canonical(&result);
-        assert_eq!(result.model_count(), 9u32.into());
+        assert_eq!(result.model_count().unwrap(), 9u32.into());
     }
 }
 
@@ -209,17 +209,17 @@ fn ordinary_diagram_methods_can_reenter_from_a_stop_callback() {
         let tree = Arc::clone(&tree);
         let calls = Arc::clone(&calls);
         StopCallback::new(move |_, _| {
-            let x = Tdd::try_literal(&tree, 1).unwrap();
-            let y = Tdd::literal(&tree, 2);
-            let z = Tdd::literal(&tree, 3);
+            let x = Tdd::literal(&tree, 1).unwrap();
+            let y = Tdd::literal(&tree, 2).unwrap();
+            let z = Tdd::literal(&tree, 3).unwrap();
             assert_canonical(&x);
             assert_canonical(&y);
             assert_canonical(&z);
             let mut f = (x | y) & !z;
             f.minimize().unwrap();
             assert_canonical(&f);
-            assert_eq!(f.try_model_count().unwrap(), 3u32.into());
-            assert!(f.try_satisfying_assignment().unwrap().is_some());
+            assert_eq!(f.model_count().unwrap(), 3u32.into());
+            assert!(f.satisfying_assignment().unwrap().is_some());
             calls.fetch_add(1, Ordering::Relaxed);
             StopDecision::Continue
         })
@@ -230,7 +230,7 @@ fn ordinary_diagram_methods_can_reenter_from_a_stop_callback() {
     );
     assert_canonical(&f);
     assert!(calls.load(Ordering::Relaxed) > 0);
-    assert_eq!(f.model_count(), 6u32.into());
+    assert_eq!(f.model_count().unwrap(), 6u32.into());
 }
 
 #[test]
@@ -238,8 +238,8 @@ fn sharing_context_does_not_make_distinct_trees_compatible() {
     let context = Arc::new(Context::new());
     let first = context.bind(Vtree::balanced(3));
     let second = context.bind(Vtree::balanced(3));
-    let f = Tdd::clause(&first, [1, 2]);
-    let g = Tdd::clause(&second, [1, 2]);
+    let f = Tdd::clause(&first, [1, 2]).unwrap();
+    let g = Tdd::clause(&second, [1, 2]).unwrap();
     assert_canonical(&f);
     assert_canonical(&g);
     assert!(Arc::ptr_eq(f.context(), g.context()));
@@ -248,8 +248,8 @@ fn sharing_context_does_not_make_distinct_trees_compatible() {
     assert_eq!(crate::or(f.clone(), g.clone()).unwrap_err(), OperationError::VtreeMismatch);
     assert_eq!(f.equivalent(&g), Err(OperationError::VtreeMismatch));
     assert_eq!(f.implies(&g), Err(OperationError::VtreeMismatch));
-    assert_eq!(f.model_count(), 6u32.into());
-    assert_eq!(g.model_count(), 6u32.into());
+    assert_eq!(f.model_count().unwrap(), 6u32.into());
+    assert_eq!(g.model_count().unwrap(), 6u32.into());
 }
 
 #[test]
@@ -264,7 +264,7 @@ fn accepted_rotation_keeps_context_and_detaches_only_the_changed_tree() {
         }
     }
     let tree = Arc::new(Vtree::balanced(4));
-    let original = Tdd::clause(&tree, [1, 3]);
+    let original = Tdd::clause(&tree, [1, 3]).unwrap();
     assert_canonical(&original);
     let mut rotated = original.clone();
     let stats = rotated.rotation_search(&mut AcceptOnce(true), &RotationSearchConfig {
@@ -280,11 +280,11 @@ fn accepted_rotation_keeps_context_and_detaches_only_the_changed_tree() {
         let assignment = (0..4).map(|var| bits & (1 << var) != 0).collect::<Vec<_>>();
         assert_eq!(eval(&rotated, &assignment), eval(&original, &assignment));
     }
-    assert_eq!(rotated.model_count(), 12u32.into());
-    let companion = Tdd::literal(rotated.vtree(), 1);
+    assert_eq!(rotated.model_count().unwrap(), 12u32.into());
+    let companion = Tdd::literal(rotated.vtree(), 1).unwrap();
     assert_canonical(&companion);
     let mut combined = crate::and(rotated, companion).unwrap();
     combined.minimize().unwrap();
     assert_canonical(&combined);
-    assert_eq!(combined.model_count(), 8u32.into());
+    assert_eq!(combined.model_count().unwrap(), 8u32.into());
 }

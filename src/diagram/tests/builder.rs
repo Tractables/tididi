@@ -18,7 +18,7 @@ fn interning_indexes_prior_pushes_and_copy_replaces_the_entire_level() {
     assert_eq!(builder.intern(root, &other), second);
     assert_ne!(builder.push(root, &pair), first);
     assert_eq!(builder.intern(root, &pair), first);
-    let source = Tdd::clause(&tree, [1]);
+    let source = Tdd::clause(&tree, [1]).unwrap();
     assert_canonical(&source);
     builder.replace_level(root, source.level_view(root)).unwrap();
     builder.replace_level(root, source.level_view(root)).unwrap();
@@ -27,7 +27,7 @@ fn interning_indexes_prior_pushes_and_copy_replaces_the_entire_level() {
     assert_eq!(index, source.output().local);
     let result = builder.finish(TddNodeId { vtree: root, local: index }).unwrap();
     assert_canonical(&result);
-    assert_eq!(result.model_count(), 2u32.into());
+    assert_eq!(result.model_count().unwrap(), 2u32.into());
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn finish_allows_unused_deleted_slots() {
     builder.replace_level(root, LevelView::unweighted(&level).unwrap()).unwrap();
     let mut result = builder.finish(source.output()).unwrap();
     assert_eq!(Engine::new().is_sat(&result), Ok(true));
-    crate::reduce::minimize(&mut result);
+    result.minimize().unwrap();
     assert_canonical(&result);
-    assert_eq!(result.model_count(), 4u32.into());
+    assert_eq!(result.model_count().unwrap(), 4u32.into());
 }

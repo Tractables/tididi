@@ -1,20 +1,20 @@
 use super::*;
 use crate::limits::{LimitConfig, OperationError};
-use crate::marginal::marginalize_levels;
+
 use crate::vtree::VtreeIdx;
 
 #[test]
 fn invalid_targets_are_rejected_before_work_or_mutation() {
     let tree = Arc::new(Vtree::balanced(4));
     let eng = Engine::new();
-    let original = Tdd::clause(&tree, [1, 3]);
+    let original = Tdd::clause(&tree, [1, 3]).unwrap();
     assert_canonical(&original);
     let before = normalized_levels(&original);
     for bad in [VtreeIdx(tree.num_nodes() as u32), VtreeIdx(u32::MAX)] {
         let targets = [tree.children(tree.root()).0, bad];
         let _limit = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
         let mut f = original.clone();
-        assert_eq!(marginalize_levels(&eng, &mut f, &targets), Err(OperationError::LevelNotInVtree(bad)));
+        assert_eq!(eng.marginalize_levels(&mut f, &targets), Err(OperationError::LevelNotInVtree(bad)));
         assert_canonical(&f);
         assert_eq!(normalized_levels(&f), before);
         assert!(!f.has_marginal_level());
@@ -26,8 +26,8 @@ fn invalid_targets_are_rejected_before_work_or_mutation() {
 fn negation_and_disjunction_reject_summed_out_structure() {
     let tree = Arc::new(Vtree::balanced(4));
     let eng = Engine::new();
-    let mut f = Tdd::clause(&tree, [1, 3]);
-    marginalize_levels(&eng, &mut f, &[tree.children(tree.root()).0]).unwrap();
+    let mut f = Tdd::clause(&tree, [1, 3]).unwrap();
+    eng.marginalize_levels(&mut f, &[tree.children(tree.root()).0]).unwrap();
     assert_canonical(&f);
     let first = f.levels.iter().position(|level| level.is_marginal()).unwrap();
     let error = OperationError::MarginalLevel(VtreeIdx(first as u32));
@@ -54,9 +54,9 @@ fn a_clause_rejects_unknown_variables_even_on_false_input() {
 fn a_clause_rejects_marginal_leaf_labels() {
     let tree = Arc::new(Vtree::balanced(2));
     let eng = Engine::new();
-    let mut f = Tdd::clause(&tree, [1, 2]);
+    let mut f = Tdd::clause(&tree, [1, 2]).unwrap();
     let leaf = tree.leaf_of(VarId(0)).unwrap();
-    marginalize_levels(&eng, &mut f, &[leaf]).unwrap();
+    eng.marginalize_levels(&mut f, &[leaf]).unwrap();
     assert_canonical(&f);
     assert_eq!(eng.and_clause(f, &[1.try_into().unwrap()]).unwrap_err(), OperationError::MarginalLevel(leaf));
 }
@@ -65,9 +65,9 @@ fn a_clause_rejects_marginal_leaf_labels() {
 fn projection_rejects_a_marginal_ancestor() {
     let tree = Arc::new(Vtree::balanced(4));
     let eng = Engine::new();
-    let mut f = Tdd::clause(&tree, [1, 3]);
+    let mut f = Tdd::clause(&tree, [1, 3]).unwrap();
     let left = tree.children(tree.root()).0;
-    marginalize_levels(&eng, &mut f, &[left]).unwrap();
+    eng.marginalize_levels(&mut f, &[left]).unwrap();
     assert_canonical(&f);
     assert_eq!(eng.exists_var(f.clone(), VarId(0)).unwrap_err(), OperationError::MarginalLevel(left));
     for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
@@ -79,9 +79,9 @@ fn projection_rejects_a_marginal_ancestor() {
 fn projection_rejects_a_marginal_target_leaf() {
     let tree = Arc::new(Vtree::balanced(2));
     let eng = Engine::new();
-    let mut f = Tdd::clause(&tree, [1, 2]);
+    let mut f = Tdd::clause(&tree, [1, 2]).unwrap();
     let leaf = tree.leaf_of(VarId(0)).unwrap();
-    marginalize_levels(&eng, &mut f, &[leaf]).unwrap();
+    eng.marginalize_levels(&mut f, &[leaf]).unwrap();
     assert_canonical(&f);
     assert_eq!(eng.exists_var(f.clone(), VarId(0)).unwrap_err(), OperationError::MarginalLevel(leaf));
     for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
@@ -93,11 +93,11 @@ fn projection_rejects_a_marginal_target_leaf() {
 fn projection_rejects_a_rewritten_ancestors_marginal_grandchild() {
     let tree = Arc::new(Vtree::balanced(8));
     let eng = Engine::new();
-    let mut f = Tdd::clause(&tree, [1, 5]);
+    let mut f = Tdd::clause(&tree, [1, 5]).unwrap();
     let left = tree.children(tree.root()).0;
     let grandchild = tree.children(left).0;
-    marginalize_levels(&eng, &mut f, &[grandchild]).unwrap();
-    crate::reduce::minimize(&mut f);
+    eng.marginalize_levels(&mut f, &[grandchild]).unwrap();
+    f.minimize().unwrap();
     assert_canonical(&f);
     assert_eq!(eng.exists_var(f.clone(), VarId(4)).unwrap_err(), OperationError::MarginalLevel(grandchild));
     for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
@@ -109,9 +109,9 @@ fn projection_rejects_a_rewritten_ancestors_marginal_grandchild() {
 fn a_clause_rejects_a_marginal_spine() {
     let tree = Arc::new(Vtree::balanced(4));
     let eng = Engine::new();
-    let mut f = Tdd::clause(&tree, [1, 3]);
+    let mut f = Tdd::clause(&tree, [1, 3]).unwrap();
     let left = tree.children(tree.root()).0;
-    marginalize_levels(&eng, &mut f, &[left]).unwrap();
+    eng.marginalize_levels(&mut f, &[left]).unwrap();
     assert_canonical(&f);
     assert_eq!(eng.and_clause(f, &[1.try_into().unwrap()]).unwrap_err(), OperationError::MarginalLevel(left));
 }

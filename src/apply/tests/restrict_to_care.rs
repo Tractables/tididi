@@ -16,8 +16,8 @@ fn restrict_tautological_care_is_identity() {
                            &clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]))),
                      x2);
     let c = constant_one(&eng, &vtree);
-    let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
-    assert!(equiv_nf(&g, &f), "crate::apply::restrict_to_care(f, ⊤) must equal f");
+    let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+    assert!(equiv_nf(&g, &f), "f.restrict_to_care(⊤).unwrap() must equal f");
     assert_restrict_ok(&f, &c, 3);
 }
 
@@ -29,8 +29,8 @@ fn restrict_false_care_is_empty() {
     let f = apply_or(clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)])),
                      clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)])));
     let c = constant_zero(&eng, &vtree);
-    let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
-    assert!(count_is_zero(&g), "crate::apply::restrict_to_care(f, ⊥) must be ⊥ (f∧⊥ = ∅)");
+    let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+    assert!(count_is_zero(&g), "f.restrict_to_care(⊥).unwrap() must be ⊥ (f∧⊥ = ∅)");
     crate::test_helpers::check::check_all_fast(&g, "restrict_to_care-false-care");
 }
 
@@ -40,8 +40,8 @@ fn restrict_of_false_is_false() {
     let vtree = Arc::new(Vtree::balanced(3));
     let f = constant_zero(&eng, &vtree);
     let c = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
-    assert!(count_is_zero(&g), "crate::apply::restrict_to_care(⊥, c) must be ⊥");
+    let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+    assert!(count_is_zero(&g), "(⊥).restrict_to_care(c).unwrap() must be ⊥");
     crate::test_helpers::check::check_all_fast(&g, "restrict_to_care-of-false");
 }
 
@@ -71,7 +71,7 @@ fn restrict_cube_care_shrinks_or_holds() {
     let c = x0.clone();
     assert_restrict_ok(&f, &c, 3);
     // The restricted function must agree with x1 on the care set.
-    let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
+    let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
     assert!(equiv(&and2(&g, &c), &and2(&x1, &c)));
 }
 
@@ -102,7 +102,7 @@ fn restrict_drops_dead_pair_of_alive_node() {
     let f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
     let c = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, false)]));
     assert_restrict_ok(&f, &c, 2);
-    let g = match crate::apply::restrict_to_care(f.clone(), c.clone()) {
+    let g = match (f.clone()).restrict_to_care(c.clone()).unwrap() {
         crate::apply::RestrictionOutcome::Shrunk(g) => g,
         crate::apply::RestrictionOutcome::Unchanged(_) => {
             panic!("pair-granular restrict_to_care must shrink: pair 2 is dead under care")
@@ -195,7 +195,7 @@ fn restrict_differing_root_containment_difftest() {
     // Function-level soundness oracle: g∧c == f∧c over all 2^nvars assignments,
     // and g never larger than f. Apply-free (shares no machinery with restrict_to_care).
     let assert_sound = |f: &Tdd, c: &Tdd, nvars: u32| -> Tdd {
-        let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
+        let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
         for mask in 0..(1u32 << nvars) {
             let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
             let cv = eval(c, &asn);
@@ -270,7 +270,7 @@ fn restrict_brute_force_randomized_multi_vtree() {
             }
             // Track the shrink count to keep the "levers inert" guard meaningful.
             let fp = reachable_pairs(&f);
-            let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
+            let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
             // exhaustive truth-table soundness (apply-free)
             for mask in 0..(1u32 << nvars) {
                 let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
@@ -282,11 +282,11 @@ fn restrict_brute_force_randomized_multi_vtree() {
                 );
             }
             let mut gm = g.clone();
-            crate::reduce::minimize(&mut gm);
+            gm.minimize().unwrap();
             check_all_fast(&gm, "restrict_to_care-brute");
             check_determinism(&gm).expect("non-deterministic restrict_to_care output");
             // restrict_to_care returns a strict subgraph of the input f, so never larger
-            // than f (un-minimized) — the raw-engine contract, not vs minimize(f).
+            // than f (un-minimized) — the raw-engine contract, not vs f.minimize().unwrap().
             let gp = reachable_pairs(&g);
             assert!(gp <= fp, "grew beyond f: {gp} > {fp} (nvars={nvars})");
             if gp < fp {
@@ -323,9 +323,9 @@ fn restrict_output_is_orphan_free() {
             // Inputs come from the test's non-minimizing `and2`/`Tdd::clause`
             // builder and can carry their own orphans; minimize so we test
             // reduce's own compactness contract, not the builder's.
-            crate::reduce::minimize(&mut f);
-            crate::reduce::minimize(&mut c);
-            let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
+            f.minimize().unwrap();
+            c.minimize().unwrap();
+            let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
             // exhaustive truth-table soundness (apply-free)
             for mask in 0..(1u32 << nvars) {
                 let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
@@ -381,7 +381,7 @@ fn restrict_differing_root_randomized() {
     // `reroot_to_child` needs; skip the ones that collapsed to a constant.
     let rehome_left = |t: &Tdd| -> Option<Tdd> {
         let mut m = t.clone();
-        crate::reduce::minimize(&mut m);
+        m.minimize().unwrap();
         if m.is_zero() || m.levels[m.output.vtree.idx()].pairs_of_idx(m.output.local.idx()).len() != 1 {
             return None;
         }
@@ -389,7 +389,7 @@ fn restrict_differing_root_randomized() {
     };
     let all_vars: Vec<u32> = (0..nvars).collect();
     let check = |f: &Tdd, c: &Tdd| -> bool {
-        let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
+        let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
         for mask in 0..(1u32 << nvars) {
             let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
             let cv = eval(c, &asn);
@@ -448,7 +448,7 @@ fn restrict_raw_output_is_apply_safe() {
                 continue;
             }
             // (A) raw restrict_to_care output must be a valid diagram.
-            let g = crate::apply::restrict_to_care(f.clone(), c.clone()).into_tdd();
+            let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
             check_all_fast(&g, "restrict_to_care-raw");
             // (B) the lever's path: conjoin raw g with another member, minimize.
             if other.is_zero() || g.is_zero() {
@@ -459,7 +459,7 @@ fn restrict_raw_output_is_apply_safe() {
             ga.vtree = f.vtree.clone();
             ob.vtree = f.vtree.clone();
             let mut p = apply_and(ga, ob);
-            crate::reduce::minimize(&mut p);
+            p.minimize().unwrap();
             check_all_fast(&p, "apply(restrict_to_care-raw, other)+minimize");
             conjoined += 1;
         }

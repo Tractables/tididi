@@ -9,7 +9,7 @@ use crate::marginal::free_subsumed_marginal_children;
 use crate::test_helpers::compile_clauses;
 use crate::diagram::EncodedNode;
 use crate::reduce::contract::contract_all_twins;
-use crate::query::model_count;
+
 use crate::diagram::{
     ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
 };
@@ -103,18 +103,18 @@ fn test_inline_ref_twins_merged_by_minimize() {
         TddNodeId { vtree: root_idx, local: root_node },
     );
 
-    let count_before = model_count(&tdd);
+    let count_before = tdd.model_count().unwrap();
     assert!(count_before > 0u64.into(), "fixture must be satisfiable");
 
     // Mark root dirty; try_reduce runs prune + contract + unconditional scan.
     tdd.seed_contract_worklist([root_idx.0]);
-    try_reduce(&eng, &mut tdd, ReductionPlan::default()).expect("try_reduce must not OOM");
+    eng.reduce(&mut tdd, ReductionPlan::default()).expect("try_reduce must not OOM");
     // The content-twin scan is not run by try_reduce's normal path, so
     // call the canonicalization machinery directly so the assertions hold.
     canonicalize_content_twins(&eng, &mut tdd).unwrap();
 
     // (a) Model count must be unchanged — regression guard against count halving.
-    let count_after = model_count(&tdd);
+    let count_after = tdd.model_count().unwrap();
     assert_eq!(
         count_before, count_after,
         "try_reduce must not change model count: got before={count_before}, after={count_after}"
@@ -207,14 +207,14 @@ fn test_content_twins_merge_at_plain_levels() {
     free_subsumed_marginal_children(&mut tdd.levels, &vtree, v_right, None);
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
-    let count_before = model_count(&tdd);
+    let count_before = tdd.model_count().unwrap();
     let expected: u64 = 6;
     assert_eq!(count_before, expected.into(), "pre-minimize model count must be {expected}");
 
     super::canonicalize_content_twins(&eng, &mut tdd).expect("canonicalize_content_twins must not OOM");
 
     // (a) Model count must be unchanged — the merge is a pure canonicalization.
-    let count_after = model_count(&tdd);
+    let count_after = tdd.model_count().unwrap();
     assert_eq!(
         count_after, count_before,
         "content merge must not change model count: before={count_before} after={count_after}"
@@ -239,8 +239,8 @@ fn test_content_twins_merge_at_plain_levels() {
         let vtree = Arc::new(Vtree::balanced(5));
         let clauses = vec![vec![1, 2, -3], vec![-2, 3, 4], vec![3, -4, 5], vec![1, -5]];
         let mut dense = compile_clauses(&vtree, &clauses);
-        minimize(&mut dense);
-        let mc0 = model_count(&dense);
+        dense.minimize().unwrap();
+        let mc0 = dense.model_count().unwrap();
 
         // Appending keeps every existing slot index stable.
         let mut withtomb = dense.clone();
@@ -267,13 +267,13 @@ fn test_content_twins_merge_at_plain_levels() {
                 dense.seed_contract_worklist([t as u32]);
             }
         }
-        assert_eq!(model_count(&withtomb), mc0, "tombstones must not change the count");
+        assert_eq!(withtomb.model_count().unwrap(), mc0, "tombstones must not change the count");
 
         contract_all_twins(&eng, &mut dense).unwrap();
         contract_all_twins(&eng, &mut withtomb).unwrap();
 
-        assert_eq!(model_count(&withtomb), mc0);
-        assert_eq!(model_count(&dense), mc0);
+        assert_eq!(withtomb.model_count().unwrap(), mc0);
+        assert_eq!(dense.model_count().unwrap(), mc0);
         for t in 0..dense.vtree.num_nodes() {
             assert_eq!(
                 withtomb.levels[t].live_slot_count(),

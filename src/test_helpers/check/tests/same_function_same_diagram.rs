@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use crate::query::model_count;
+
 use crate::test_helpers::{
     assert_canonical, assert_same_shape, brute_force_count, compile_clauses, queens_clauses,
     test_cases, vtree_shapes,
@@ -93,7 +93,7 @@ fn logically_equivalent_encodings_reach_the_same_diagram() {
             let what = format!("{what}, {shape} vtree");
             let a = compile_clauses(&vtree, lean);
             let b = compile_clauses(&vtree, redundant);
-            assert_eq!(model_count(&a), model_count(&b), "{what}: model count differs");
+            assert_eq!(a.model_count().unwrap(), b.model_count().unwrap(), "{what}: model count differs");
             assert_same_shape(&a, &b, &what);
             assert_canonical(&a);
         }

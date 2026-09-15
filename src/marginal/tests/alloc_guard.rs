@@ -58,8 +58,8 @@ fn clone_guarded_copies_big_overflow_exactly() {
 fn marginal_refusals(weighted: bool, overflow: bool) {
     use std::sync::Arc;
     use crate::diagram::{Arithmetic, RationalWeights, Tdd, WeightStore};
-    use crate::marginal::marginalize_levels;
-    use crate::query::weighted_value;
+
+
     use crate::test_helpers::{assert_canonical, assert_marginal_canonical, compile_clauses};
     use crate::vtree::Vtree;
     use crate::OperationError;
@@ -82,18 +82,18 @@ fn marginal_refusals(weighted: bool, overflow: bool) {
         let (left, right) = vtree.children(vtree.root());
         vec![left, right]
     };
-    let expected_count = (!weighted).then(|| original.model_count());
-    let expected_weight = weighted.then(|| weighted_value(&original).unwrap().into_rational_opt().unwrap());
+    let expected_count = (!weighted).then(|| original.model_count().unwrap());
+    let expected_weight = weighted.then(|| original.weighted_value().unwrap().unwrap().into_rational_opt().unwrap());
     let check_value = |f: &Tdd| {
         if let Some(expected) = &expected_count { assert_eq!(&eng.model_count(f).unwrap(), expected); }
-        if let Some(expected) = &expected_weight { assert_eq!(&weighted_value(f).unwrap().into_rational_opt().unwrap(), expected); }
+        if let Some(expected) = &expected_weight { assert_eq!(&f.weighted_value().unwrap().unwrap().into_rational_opt().unwrap(), expected); }
     };
     let mut completed = false;
     let mut partial = false;
     for reserve in 0..2048 {
         let mut f = original.clone();
         eng.limits().refuse_nth_reserve(reserve);
-        let result = marginalize_levels(&eng, &mut f, &targets);
+        let result = eng.marginalize_levels(&mut f, &targets);
         eng.limits().grant_every_reserve();
         if reserve == 0 {
             assert_eq!(result, Err(OperationError::OverBudget));
@@ -106,7 +106,7 @@ fn marginal_refusals(weighted: bool, overflow: bool) {
         }
         partial |= f.levels[targets[0].idx()].is_marginal()
             && !f.levels[targets[targets.len() - 1].idx()].is_marginal();
-        marginalize_levels(&eng, &mut f, &targets).unwrap();
+        eng.marginalize_levels(&mut f, &targets).unwrap();
         check_value(&f);
         assert_marginal_canonical(&f);
     }

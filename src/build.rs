@@ -4,9 +4,7 @@
 //! combining them with [`crate::apply`] and reducing with [`crate::reduce`].
 //!
 //! Entry points: [`Tdd::one`] and [`Tdd::zero`] are the two constants;
-//! [`Tdd::cube`] builds a conjunction of literals. A single clause is
-//! [`Tdd::clause`], the clause conjoined into ⊤ by
-//! [`crate::apply::apply_and_clause`].
+//! [`Tdd::cube`] builds a conjunction of literals and [`Tdd::clause`] a disjunction.
 
 use std::sync::Arc;
 
@@ -112,57 +110,52 @@ fn cube_to_tdd(
 }
 
 impl Tdd {
-    /// A diagram for one literal, with every other vtree variable free.
+    /// Build a canonical diagram for one literal, leaving other variables free.
     ///
-    /// Uses the shared vtree context; [`Tdd::try_literal`] returns errors to the caller.
+    /// Integers are signed and one-based; typed [`Literal`] values use zero-based
+    /// variable identifiers. Uses the execution context attached to the vtree.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics on an invalid literal (including integer zero), an absent variable,
-    /// or allocation failure.
-    pub fn literal(vtree: &Arc<Vtree>, literal: impl TryInto<Literal, Error: Into<OperationError>>) -> Tdd {
-        Self::try_literal(vtree, literal).expect("literal: use Tdd::try_literal to handle errors")
+    /// Returns [`OperationError::InvalidLiteral`] for integer zero,
+    /// [`OperationError::VariableNotInVtree`] for an absent variable, or
+    /// [`OperationError::OverBudget`] if an allocation is refused.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{and, Tdd, Vtree};
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = and(Tdd::literal(&tree, 1)?, Tdd::literal(&tree, -2)?)?;
+    /// assert_eq!(f.model_count()?, 2u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn literal(vtree: &Arc<Vtree>, literal: impl TryInto<Literal, Error: Into<OperationError>>) -> Result<Tdd, OperationError> {
+        vtree.context().run(|eng| eng.literal(vtree, literal))
     }
 
-    /// A conjunction of literals, with every unmentioned vtree variable free.
+    /// Build a canonical conjunction of literals, leaving other variables free.
     ///
     /// Integers are signed and one-based; typed [`Literal`] values also work.
     /// Each variable must appear at most once, even with the same polarity.
-    /// An empty cube is true. Uses the shared vtree context and returns a canonical
-    /// diagram; [`Tdd::try_cube`] is the checked form.
+    /// An empty cube is true. Uses the execution context attached to the vtree.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::InvalidLiteral`] for integer zero,
+    /// [`OperationError::VariableNotInVtree`] for an absent variable,
+    /// [`OperationError::DuplicateVariable`] for a repeated variable, or
+    /// [`OperationError::OverBudget`] if an allocation is refused.
     ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    ///
     /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::cube(&tree, [1, -2]);
-    /// assert_eq!(f.model_count(), 2u32.into()); // x3 remains free
+    /// let f = Tdd::cube(&tree, [1, -2])?;
+    /// assert_eq!(f.model_count()?, 2u32.into());
     /// # tididi::test_helpers::assert_canonical(&f);
+    /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    ///
-    /// # Panics
-    ///
-    /// Panics on any error reported by [`Engine::cube`], including an invalid
-    /// literal, repeated or absent variable, or allocation failure.
-    pub fn cube(
-        vtree: &Arc<Vtree>,
-        literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>,
-    ) -> Tdd {
-        Self::try_cube(vtree, literals).expect("cube: use Tdd::try_cube to handle errors")
-    }
-
-    /// Checked literal construction using the vtree's shared context.
-    ///
-    /// See [`Engine::literal`] for the input requirements and errors.
-    pub fn try_literal(vtree: &Arc<Vtree>, literal: impl TryInto<Literal, Error: Into<OperationError>>) -> Result<Tdd, OperationError> {
-        vtree.context().run(|eng| eng.literal(vtree, literal))
-    }
-
-    /// Checked cube construction using the vtree's shared context.
-    ///
-    /// See [`Engine::cube`] for the input requirements and errors.
-    pub fn try_cube(vtree: &Arc<Vtree>, literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>) -> Result<Tdd, OperationError> {
+    pub fn cube(vtree: &Arc<Vtree>, literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>) -> Result<Tdd, OperationError> {
         vtree.context().run(|eng| eng.cube(vtree, literals))
     }
 
@@ -179,10 +172,11 @@ impl Tdd {
     /// let tree = Arc::new(Vtree::balanced(3));
     /// let all = Tdd::one(&tree);
     /// let none = Tdd::zero(&tree);
-    /// assert_eq!(all.model_count(), 8u32.into());
+    /// assert_eq!(all.model_count()?, 8u32.into());
     /// assert!(none.is_zero());
     /// # tididi::test_helpers::assert_canonical(&all);
     /// # tididi::test_helpers::assert_canonical(&none);
+    /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn one(vtree: &Arc<Vtree>) -> Tdd {
         vtree.context().run(|eng| eng.one(vtree))
@@ -200,29 +194,16 @@ impl Tdd {
 
 /// The construction entry points on a caller's engine.
 impl crate::engine::Engine {
-    /// A minimized diagram for one literal, with other vtree variables free.
+    /// Run [`Tdd::literal`](crate::Tdd::literal) using this batch's scratch and resource limits.
     ///
-    /// Integer literals use the signed, 1-based DIMACS convention; [`Literal`]
-    /// also accepts a typed, 0-based variable identifier. Delegates to [`Engine::cube`].
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// An absent variable or the allocation, cancellation and output-cap errors
-    /// of [`Engine::cube`].
-    ///
-    /// Integer zero returns [`OperationError::InvalidLiteral`].
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let x = engine.literal(&tree, 1)?;
-    /// let not_y = engine.literal(&tree, -2)?;
-    /// let f = engine.and(x, not_y)?;
-    /// assert_eq!(f.model_count(), 2u32.into()); // x AND NOT y, with z free
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
+    /// [`OperationError::OutputCap`].
     pub fn literal(&self, vtree: &Arc<Vtree>, literal: impl TryInto<Literal, Error: Into<OperationError>>) -> Result<Tdd, OperationError> {
         self.cube(vtree, [literal])
     }
@@ -243,45 +224,16 @@ impl crate::engine::Engine {
         crate::build::constant_zero(self, vtree)
     }
 
-    /// The conjunction of `literals` over `vtree`, with one node containing
-    /// one child pair at each internal vtree level.
+    /// Run [`Tdd::cube`](crate::Tdd::cube) using this batch's scratch and resource limits.
     ///
-    /// A variable no literal mentions is free — the cube says nothing about
-    /// it, so both of its values satisfy the result. Each item is converted
-    /// with [`TryInto<Literal>`], so plain integers use the 1-based DIMACS sign
-    /// convention. The result is canonical. Allocation, cancellation, and the
-    /// output-node cap are checked during construction.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// Returns [`OperationError::VariableNotInVtree`] for an absent variable,
-    /// [`OperationError::DuplicateVariable`] for a repeated variable, or the
-    /// resource error that stopped construction.
-    ///
-    /// Integer zero returns [`OperationError::InvalidLiteral`].
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::Engine;
-    /// use tididi::vtree::Vtree;
-    ///
-    /// let eng = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(3));
-    /// let f = eng.cube(&vtree, [1, -2]).unwrap(); // x1 ∧ ¬x2, with x3 free
-    /// assert_eq!(f.model_count(), 2u32.into());
-    /// ```
-    ///
-    /// Each cube variable must appear once, even when the repeated polarity agrees:
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, OperationError, Vtree};
-    /// use tididi::vtree::VarId;
-    ///
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let result = Engine::new().cube(&tree, [1, 1]);
-    /// assert_eq!(result.err(), Some(OperationError::DuplicateVariable(VarId(0))));
-    /// ```
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
+    /// [`OperationError::OutputCap`].
     pub fn cube(
         &self,
         vtree: &Arc<Vtree>,

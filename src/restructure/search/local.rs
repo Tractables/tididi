@@ -130,7 +130,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     // the child multiset without Boolean dedup, which is what preserves the
     // count, and a minimize here would collapse it.
     if !tdd.levels.iter().any(|l| l.is_marginal()) {
-        crate::reduce::try_reduce(eng, tdd, crate::reduce::ReductionPlan::default())?;
+        eng.reduce(tdd, crate::reduce::ReductionPlan::default())?;
     }
 
     let mut search = SearchTree::new(tdd);

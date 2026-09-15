@@ -4,7 +4,7 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 use crate::vtree::{VtreeIdx, VtreeNode};
 use crate::apply::apply_and;
-use crate::query::model_count;
+
 use crate::diagram::*;
 use super::signature::*;
 
@@ -101,7 +101,7 @@ pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
                 let tdd_j = tdd_with_output(tdd, &shared_vtree, t, j as u32);
 
                 let conjoined = apply_and(tdd_i, tdd_j);
-                let count = model_count(&conjoined);
+                let count = conjoined.model_count().unwrap();
 
                 if count != BigUint::ZERO {
                     return Err(format!(

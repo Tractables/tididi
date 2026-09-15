@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::build::constant_like;
 use crate::diagram::ChildSide;
 use crate::limits::OperationError;
-use crate::reduce::{try_reduce, ReductionPlan};
+use crate::reduce::{ReductionPlan};
 use crate::diagram::sort_pairs;
 use crate::diagram::{EncodedChildRef, ChildDecoder, ChildPair, Tdd, TddLevel, EncodedNode, ZERO};
 use crate::vtree::{VarId, VtreeIdx};
@@ -150,7 +150,7 @@ fn condition_targets(
 
     // Set the false sentinel before pruning, so its empty nodes are unreachable.
     canonicalize_false_output(&mut tdd);
-    try_reduce(eng, &mut tdd, ReductionPlan::default())?;
+    eng.reduce(&mut tdd, ReductionPlan::default())?;
     Ok(tdd)
 }
 
@@ -324,7 +324,7 @@ fn canonicalize_false_output(tdd: &mut crate::diagram::Tdd) {
     let sat = crate::query::sat::is_sat_structural(tdd);
     debug_assert_eq!(
         sat,
-        crate::query::model_count(tdd) != num_bigint::BigUint::ZERO,
+        tdd.model_count().unwrap() != num_bigint::BigUint::ZERO,
         "is_sat_structural disagrees with model_count > 0"
     );
     if !sat {
@@ -337,117 +337,41 @@ mod tests;
 
 /// The conditioning entry points on a caller's engine.
 impl crate::engine::Engine {
-    /// Substitute an assignment into a function and return its minimized cofactor.
+    /// Run [`Tdd::condition`](crate::Tdd::condition) using this batch's scratch and resource limits.
     ///
-    /// A positive literal sets its variable to true; a negative literal sets it to
-    /// false. The resulting function no longer depends on those variables, but the
-    /// vtree still includes them as free variables. For example, substituting
-    /// `x1 = false, x2 = false` into `x1 ∨ x2 ∨ x3` leaves `x3`:
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    ///
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = engine.clause(&tree, [1, 2, 3])?;
-    /// let cofactor = engine.condition(f.clone(), [-1, -2])?;
-    /// assert!(engine.equivalent(&cofactor, &engine.literal(&tree, 3)?)?);
-    /// assert_eq!(engine.model_count(&cofactor)?, 4u32.into());
-    ///
-    /// // Keep the observation as a constraint when counting original assignments.
-    /// let evidence = engine.cube(&tree, [-1, -2])?;
-    /// let observed = engine.and(f, evidence)?;
-    /// assert_eq!(engine.model_count(&observed)?, 1u32.into());
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
-    ///
-    /// For repeated counts under observations, [`ModelCounter`](crate::query::ModelCounter)
-    /// with [`PinSemantics::Evidence`](crate::query::PinSemantics::Evidence) avoids
-    /// building a new diagram for each observation. To allow either value instead
-    /// of choosing one, use [`Engine::exists_vars`].
-    ///
-    /// The operand is consumed, including on error. Repeated equal literals are
-    /// ignored; opposite literals for one variable produce false after all variable
-    /// ids have been checked. An empty assignment returns the operand unchanged.
-    /// Attached weights are retained; marginal-level restrictions follow
-    /// [`Engine::condition_var`].
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// [`OperationError::VariableNotInVtree`] for an absent variable,
-    /// [`OperationError::MarginalLevel`] when a consistent assignment needs a leaf
-    /// or parent whose structure was summed out, or a resource refusal from
-    /// conditioning and minimization.
-    ///
-    /// Integer zero returns [`OperationError::InvalidLiteral`].
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`].
     pub fn condition(&self, f: Tdd, assignment: impl IntoIterator<Item = impl TryInto<crate::diagram::Literal, Error: Into<OperationError>>>) -> Result<Tdd, OperationError> {
         condition_on(self, f, assignment)
     }
 
-    /// Substitute `value` for `x`, returning a minimized cofactor.
+    /// Run [`Tdd::condition_var`](crate::Tdd::condition_var) using this batch's scratch and resource limits.
     ///
-    /// The vtree is unchanged: `x` becomes free, so the result's model count includes
-    /// a factor of two for it. To count observations without this free-variable
-    /// factor, use [`ModelCounter`](crate::query::ModelCounter) with
-    /// [`PinSemantics::Evidence`](crate::query::PinSemantics::Evidence).
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// use tididi::vtree::VarId;
-    ///
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = engine.clause(&tree, [1, 2])?; // x1 or x2, with x3 free
-    /// let g = engine.condition_var(f, VarId(0), false)?; // x2, with x1 and x3 free
-    /// assert_eq!(engine.model_count(&g)?, 4u32.into());
-    /// # tididi::test_helpers::assert_canonical(&g);
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
-    ///
-    /// The operand is consumed on success or error. Only the target's leaf and
-    /// parent need their structure; other levels may be marginal. Conditioning
-    /// preserves attached weights and does not grow the diagram.
-    /// For structural and count-marginal inputs, a false result uses the
-    /// [`Tdd::is_zero`] sentinel. With weighted marginal values, zero evaluation
-    /// can instead reflect zero weights or cancellation; it does not prove Boolean
-    /// unsatisfiability.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// [`OperationError::VariableNotInVtree`] for an absent variable,
-    /// [`OperationError::MarginalLevel`] when a nonfalse input needs a target leaf
-    /// or parent already summed out, or an allocation or stop refusal.
-    /// The variable is validated even for a false input.
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`].
     pub fn condition_var(&self, f: Tdd, x: VarId, value: bool) -> Result<Tdd, OperationError> {
         crate::apply::condition::condition_var_on(self, f, x, value)
     }
 
-    /// Substitute the same Boolean `value` for every variable in `vars`.
+    /// Run [`Tdd::condition_vars`](crate::Tdd::condition_vars) using this batch's scratch and resource limits.
     ///
-    /// Uses one propagation and reduction pass for the whole assignment; repeated
-    /// variables are ignored. Each conditioned variable remains free in the vtree,
-    /// as described by [`Engine::condition_var`]. An empty list returns `f`
-    /// unchanged. Use [`Engine::condition`] for mixed polarities.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// use tididi::vtree::VarId;
-    ///
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = engine.clause(&tree, [1, 2, 3])?;
-    /// let g = engine.condition_vars(f, &[VarId(0), VarId(1)], false)?;
-    /// assert_eq!(engine.model_count(&g)?, 4u32.into()); // x3, with x1 and x2 free
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// As [`Engine::condition_var`]; all variables are validated before rewriting.
-    /// The operand is consumed on error as well as success.
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`].
     pub fn condition_vars(&self, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, OperationError> {
         crate::apply::condition::condition_vars_on(self, f, vars, value)
     }

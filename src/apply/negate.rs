@@ -17,36 +17,20 @@ use std::sync::Arc;
 use crate::diagram::*;
 
 impl Engine {
-    /// Return the Boolean complement of a structural diagram, in minimized form.
+    /// Run [`Tdd::negate`](crate::Tdd::negate) using this batch's scratch and resource limits.
     ///
-    /// The operand is consumed on success and on error. Its weight configuration
-    /// is retained. Complementation can grow the diagram; for an unweighted count
-    /// alone, subtracting the original count from `2^n` avoids building the complement,
-    /// where `n` is the number of variables under the output's vtree node.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    ///
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let either = engine.clause(&tree, [1, 2])?;
-    /// let neither = engine.negate(either)?;
-    /// let expected = engine.cube(&tree, [-1, -2])?;
-    /// assert!(engine.equivalent(&neither, &expected)?);
-    /// assert_eq!(engine.model_count(&neither)?, 1u32.into());
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// [`OperationError::MarginalLevel`] if any level has discarded structure.
-    /// Allocation, output-cap, and stop refusals propagate from expansion,
-    /// complementation, and minimization.
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
+    /// [`OperationError::OutputCap`].
     pub fn negate(&self, f: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().begin_operation();
         let mut result = negate_tdd_owned(self, f)?;
-        crate::reduce::try_reduce(self, &mut result, crate::reduce::ReductionPlan::default())?;
+        self.reduce(&mut result, crate::reduce::ReductionPlan::default())?;
         Ok(result)
     }
 }

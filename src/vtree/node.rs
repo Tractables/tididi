@@ -53,11 +53,11 @@ impl VtreeNode {
 /// use tididi::{and, Tdd, Vtree};
 ///
 /// let tree = Arc::new(Vtree::balanced(3));
-/// let f = Tdd::literal(&tree, 1);
-/// let g = Tdd::literal(f.vtree(), -2);
+/// let f = Tdd::literal(&tree, 1)?;
+/// let g = Tdd::literal(f.vtree(), -2)?;
 /// assert!(Arc::ptr_eq(f.vtree(), g.vtree()));
 /// let both = and(f, g)?;
-/// assert_eq!(both.model_count(), 2u32.into());
+/// assert_eq!(both.model_count()?, 2u32.into());
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 ///
@@ -85,7 +85,7 @@ impl VtreeNode {
 /// groupings, and use [`Context::with_limits`](crate::Context::with_limits) when
 /// exploring larger inputs.
 /// Once a diagram is built, [`Tdd::rotation_search`](crate::Tdd::rotation_search)
-/// can search nearby tree shapes. [`minimize`](crate::reduce::minimize) instead
+/// can search nearby tree shapes. [`minimize`](crate::Tdd::minimize) instead
 /// removes redundancy under the current tree and keeps its variable grouping.
 ///
 /// # Representation

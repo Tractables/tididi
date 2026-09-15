@@ -5,7 +5,7 @@ use std::sync::Arc;
 use num_rational::BigRational;
 use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
 use tididi::io::{read_tdd, write_tdd};
-use tididi::query::evaluate;
+
 use tididi::vtree::VarId;
 use tididi::{Engine, Vtree};
 
@@ -100,7 +100,7 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
             );
             diagram.set_weights(store.clone()).unwrap();
             let expected_mass = mass(expected, &weights);
-            assert_eq!(evaluate(&diagram, &algebra), expected_mass);
+            assert_eq!(diagram.evaluate(&algebra).unwrap(), expected_mass);
             assert_eq!(
                 engine
                     .weighted_value(&diagram)

@@ -49,8 +49,8 @@ tree, then minimizes before comparing storage. The helper returns a `Result`;
 
 ```rust,ignore
 fn equal_pairs(tree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
-    let first_equal = and(Tdd::clause(tree, [-1, 3]), Tdd::clause(tree, [1, -3]))?;
-    let second_equal = and(Tdd::clause(tree, [-2, 4]), Tdd::clause(tree, [2, -4]))?;
+    let first_equal = and(Tdd::clause(tree, [-1, 3])?, Tdd::clause(tree, [1, -3])?)?;
+    let second_equal = and(Tdd::clause(tree, [-2, 4])?, Tdd::clause(tree, [2, -4])?)?;
     let mut f = and(first_equal, second_equal)?;
     f.minimize()?;
     Ok(f)
@@ -60,8 +60,8 @@ fn equal_pairs(tree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
 ```rust,ignore
 let grouped = equal_pairs(&grouped_tree)?;
 let split = equal_pairs(&split_tree)?;
-assert_eq!(grouped.model_count(), 4u32.into());
-assert_eq!(split.model_count(), 4u32.into());
+assert_eq!(grouped.model_count()?, 4u32.into());
+assert_eq!(split.model_count()?, 4u32.into());
 assert_eq!(grouped.pair_count(), 5);
 assert_eq!(split.pair_count(), 12);
 ```

@@ -362,13 +362,13 @@ impl Limits {
     /// let engine = Engine::new();
     ///
     /// // Nothing is armed on a fresh engine, so the conjunction runs.
-    /// let f = Tdd::clause(&vtree, [1, -2]);
-    /// let g = Tdd::clause(&vtree, [2, 3]);
+    /// let f = Tdd::clause(&vtree, [1, -2])?;
+    /// let g = Tdd::clause(&vtree, [2, 3])?;
     /// assert!(engine.and(f, g).is_ok());
     ///
     /// // Arm a byte budget of zero; the next conjunction is refused.
     /// let prior = engine.limits().install(LimitConfig::none().with_memory_budget_bytes(Some(0)));
-    /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
+    /// let (f, g) = (Tdd::clause(&vtree, [1, -2])?, Tdd::clause(&vtree, [2, 3])?);
     /// match engine.and(f, g) {
     ///     Ok(_) => unreachable!("no reservation can be granted"),
     ///     Err(e) => assert_eq!(e, OperationError::OverBudget),
@@ -377,8 +377,9 @@ impl Limits {
     /// // Put back what was armed before and the engine runs freely again.
     /// let refused = engine.limits().install(prior);
     /// assert_eq!(refused.memory_budget_bytes(), Some(0));
-    /// let (f, g) = (Tdd::clause(&vtree, [1, -2]), Tdd::clause(&vtree, [2, 3]));
+    /// let (f, g) = (Tdd::clause(&vtree, [1, -2])?, Tdd::clause(&vtree, [2, 3])?);
     /// assert!(engine.and(f, g).is_ok());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     #[must_use = "install returns the prior set; bind it or use scope/edit"]
     pub fn install(&self, set: LimitConfig) -> LimitConfig {
@@ -413,8 +414,9 @@ impl Limits {
     ///     assert_eq!(engine.clause(&tree, [1, 2]).err(), Some(OperationError::OverBudget));
     /// }
     /// let f = engine.clause(&tree, [1, 2]).unwrap(); // the previous limits are restored
-    /// assert_eq!(f.model_count(), 6u32.into());
+    /// assert_eq!(f.model_count()?, 6u32.into());
     /// # tididi::test_helpers::assert_canonical(&f);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     #[must_use = "the scope restores the prior set when dropped; bind it to a name"]
     pub fn scope(&self, set: LimitConfig) -> LimitScope<'_> {

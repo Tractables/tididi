@@ -181,8 +181,8 @@ fn prune_marginal_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> Va
     let mut stats = ValueSlotPruneStats::default();
     // Both buffers are refilled per level, so a pooled pair differs from a
     // fresh one only in capacity.
-    let mut slots = eng.reduce().slot_prune_slots.checkout();
-    let mut remap = eng.reduce().slot_prune_remap.checkout();
+    let mut slots = eng.reduce_scratch().slot_prune_slots.checkout();
+    let mut remap = eng.reduce_scratch().slot_prune_remap.checkout();
     // The output level's store is the result; never touch it.
     let out_v = tdd.output.vtree;
 

@@ -6,44 +6,16 @@ use crate::vtree::{VarId, VtreeNode};
 use crate::{Engine, OperationError, Tdd};
 
 impl Engine {
-    /// Simultaneously replace variables with Boolean functions over the same vtree.
+    /// Run [`Tdd::substitute`](crate::Tdd::substitute) using this batch's scratch and resource limits.
     ///
-    /// In `replacements`, each source variable appears once; variables absent
-    /// from the map keep their meaning. Replacement functions are used as given:
-    /// substitutions are not recursively applied inside them. All diagrams must
-    /// be structural and share the same vtree allocation. The result keeps `f`'s
-    /// literal weights; replacement weights are ignored because they describe
-    /// evaluation, not the substituted Boolean functions.
-    ///
-    /// Consumes `f`, including on error, and borrows replacements. A nonempty map
-    /// returns a minimized diagram; an empty map returns `f` unchanged without
-    /// allocating scratch storage.
-    /// Rebuilds bottom-up with conjunction/disjunction over the destination
-    /// universe, retaining temporary diagrams for a frontier of source levels.
-    /// Each source pair can require an apply and checked operand copies, so
-    /// intermediate storage can greatly exceed the input and final result.
-    /// Validation also runs for an empty map.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// An absent or duplicate source variable, a replacement vtree/root mismatch,
-    /// or a marginal level is rejected before rebuilding. Allocation, stop and
-    /// output-cap errors propagate from construction and apply. Replacement
-    /// diagrams remain unchanged on every outcome.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// use tididi::vtree::VarId;
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = engine.cube(&tree, [1, -2])?; // x AND NOT y
-    /// let replacement = engine.clause(&tree, [2, 3])?; // y OR z
-    /// let g = engine.substitute(f, &[(VarId(0), &replacement)])?;
-    /// let expected = engine.cube(&tree, [-2, 3])?; // (y OR z) AND NOT y = z AND NOT y
-    /// assert!(engine.equivalent(&g, &expected)?);
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
+    /// [`OperationError::OutputCap`].
     pub fn substitute(
         &self,
         f: Tdd,
@@ -52,48 +24,16 @@ impl Engine {
         self.substitute_with(f, replacements.iter().map(|&(var, diagram)| (var, Replacement::Diagram(diagram))))
     }
 
-    /// Replace variable occurrences simultaneously within the existing vtree.
+    /// Run [`Tdd::rename_vars`](crate::Tdd::rename_vars) using this batch's scratch and resource limits.
     ///
-    /// Each `(source, target)` uses zero-based [`VarId`]s. Variables omitted as
-    /// sources keep their meaning, and a target must already be a variable of the
-    /// vtree. Swaps and cycles happen simultaneously: `(x, y), (y, x)` exchanges
-    /// both variables instead of applying two sequential renames.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// use tididi::vtree::VarId;
-    ///
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let f = engine.cube(&tree, [1, -2])?; // x AND NOT y
-    /// let swapped = engine.rename_vars(f.clone(), &[(VarId(0), VarId(1)), (VarId(1), VarId(0))])?;
-    /// assert!(engine.equivalent(&swapped, &engine.cube(&tree, [-1, 2])?)?);
-    ///
-    /// // Mapping x to y while leaving y unchanged identifies the two variables.
-    /// let identified = engine.rename_vars(f, &[(VarId(0), VarId(1))])?;
-    /// assert!(identified.is_zero()); // y AND NOT y
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
-    ///
-    /// The vtree's allocation, shape, variable ids, and literal weights stay fixed;
-    /// the function is rebuilt with different variable occurrences. Thus a rename
-    /// can change a weighted value even when it is a permutation. Distinct sources
-    /// may share a target, but a source may appear only once.
-    ///
-    /// The operand is consumed, including on error. A nonempty map produces a
-    /// minimized diagram; an empty map returns the operand unchanged after validation.
-    /// Uses [`Engine::substitute`]'s rebuilding algorithm and can require large
-    /// intermediate diagrams. The complete
-    /// [reachability walkthrough](crate::guide::examples::reachability)
-    /// uses renaming to turn next-state variables into current-state variables.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// [`OperationError::VariableNotInVtree`] for an unknown source or target,
-    /// [`OperationError::DuplicateVariable`] for a repeated source,
-    /// [`OperationError::MarginalLevel`] for discarded structure, or a resource
-    /// refusal. All map entries are validated before rebuilding.
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
+    /// [`OperationError::OutputCap`].
     pub fn rename_vars(&self, f: Tdd, renames: &[(VarId, VarId)]) -> Result<Tdd, OperationError> {
         self.substitute_with(f, renames.iter().map(|&(source, target)| (source, Replacement::Literal(Literal::pos(target)))))
     }
@@ -137,7 +77,7 @@ impl Engine {
         }
         lim.flush_poll(&mut gate)?;
         if f.is_zero() {
-            crate::reduce::try_minimize(self, &mut f)?;
+            self.minimize(&mut f)?;
             return Ok(f);
         }
         self.substitute_prepared(f, &by_leaf, gate)
@@ -151,7 +91,7 @@ impl Engine {
         mut gate: PollGate,
     ) -> Result<Tdd, OperationError> {
         let lim = self.limits();
-        crate::reduce::try_minimize(self, &mut f)?;
+        self.minimize(&mut f)?;
         let tree = f.vtree().clone();
         let mut columns = Vec::<Vec<Tdd>>::new();
         lim.try_resize(&mut columns, tree.num_nodes(), Vec::new())?;
@@ -190,7 +130,7 @@ impl Engine {
                             });
                         }
                         let mut result = sum.expect("structural node has a pair");
-                        crate::reduce::try_minimize(self, &mut result)?;
+                        self.minimize(&mut result)?;
                         columns[t.idx()].push(result);
                     }
                     columns[left.idx()] = Vec::new();
@@ -204,7 +144,7 @@ impl Engine {
         result.weights = f.weights.take().map(|weights| weights.empty_like());
         // Internal columns are minimized when built; a leaf can return a cloned replacement.
         if tree.node(f.output().vtree).is_leaf() {
-            crate::reduce::try_minimize(self, &mut result)?;
+            self.minimize(&mut result)?;
         }
         Ok(result)
     }

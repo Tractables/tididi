@@ -25,9 +25,9 @@ use super::{IoError, TDD_FORMAT_VERSION};
 /// use tididi::io::{load_tdd, save_tdd};
 ///
 /// let path = std::env::temp_dir().join("tididi-doc-load.tdd");
-/// let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+/// let f = Tdd::clause(&vtree, [1, -2])? & Tdd::clause(&vtree, [2, 3])?;
 /// save_tdd(&f, &path).unwrap();
-/// assert_eq!(load_tdd(&path, &vtree).unwrap().model_count(), f.model_count());
+/// assert_eq!(load_tdd(&path, &vtree).unwrap().model_count()?, f.model_count()?);
 /// std::fs::remove_file(&path).unwrap();
 ///
 /// // The file is gone now, so opening it fails on the underlying error.
@@ -37,6 +37,7 @@ use super::{IoError, TDD_FORMAT_VERSION};
 ///     Err(IoError::Format(msg)) => unreachable!("{msg}"),
 ///     Err(other) => unreachable!("{other}"),
 /// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
     let file = std::fs::File::open(path.as_ref())?;
@@ -79,14 +80,14 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// use tididi::io::{read_tdd, write_tdd};
 ///
 /// let tree = Arc::new(Vtree::balanced(3));
-/// let f = Tdd::clause(&tree, [1, -2]);
+/// let f = Tdd::clause(&tree, [1, -2])?;
 /// let mut bytes = Vec::new();
 /// write_tdd(&mut bytes, &f)?;
 /// let restored = read_tdd(&mut bytes.as_slice(), &tree)?;
-/// assert_eq!(restored.model_count(), f.model_count());
+/// assert_eq!(restored.model_count()?, f.model_count()?);
 /// # tididi::test_helpers::assert_canonical(&f);
 /// # tididi::test_helpers::assert_canonical(&restored);
-/// # Ok::<(), tididi::io::IoError>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 ///
 /// Malformed input reports a format error:

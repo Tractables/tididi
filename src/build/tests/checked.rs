@@ -35,8 +35,8 @@ fn checked_constructors_obey_limits_and_leave_the_engine_reusable() {
         let clause = eng.clause(&tree, [1, -2]).unwrap();
         assert_canonical(&cube);
         assert_canonical(&clause);
-        assert_eq!(cube.model_count(), 4u32.into());
-        assert_eq!(clause.model_count(), 12u32.into());
+        assert_eq!(cube.model_count().unwrap(), 4u32.into());
+        assert_eq!(clause.model_count().unwrap(), 12u32.into());
     }
 }
 
@@ -60,11 +60,11 @@ fn clause_constants_and_duplicate_literals_keep_their_semantics() {
     let tree = Arc::new(Vtree::balanced(3));
     for (literals, count) in [(vec![], 0u32), (vec![1, -1], 8), (vec![1, 1], 4)] {
         let result = Engine::new().clause(&tree, &literals).unwrap();
-        let convenience = Tdd::clause(&tree, &literals);
+        let convenience = Tdd::clause(&tree, &literals).unwrap();
         assert_canonical(&result);
         assert_canonical(&convenience);
-        assert_eq!(result.model_count(), count.into());
-        assert_eq!(result.model_count(), convenience.model_count());
+        assert_eq!(result.model_count().unwrap(), count.into());
+        assert_eq!(result.model_count().unwrap(), convenience.model_count().unwrap());
     }
 }
 
@@ -82,7 +82,7 @@ fn an_empty_cube_polls_during_node_construction() {
     }
     let result = eng.cube(&tree, std::iter::empty::<Literal>()).unwrap();
     assert_canonical(&result);
-    assert_eq!(result.model_count(), 256u32.into());
+    assert_eq!(result.model_count().unwrap(), 256u32.into());
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn zero_integer_literals_return_errors_at_checked_entry_points() {
     }
     let valid = engine.clause(&tree, [1, -2]).unwrap();
     assert_canonical(&valid);
-    assert_eq!(valid.model_count(), 6u32.into());
+    assert_eq!(valid.model_count().unwrap(), 6u32.into());
     assert_eq!(OperationError::InvalidLiteral(0).to_string(), "0 is not a literal; use a nonzero signed integer");
 }
 
@@ -120,6 +120,6 @@ fn literal_conversion_handles_signed_endpoints_and_borrowed_inputs() {
         engine.cube(&tree, typed), engine.cube(&tree, typed.iter())] {
         let f = result.unwrap();
         assert_canonical(&f);
-        assert_eq!(f.model_count(), 1u32.into());
+        assert_eq!(f.model_count().unwrap(), 1u32.into());
     }
 }

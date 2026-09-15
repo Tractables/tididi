@@ -202,11 +202,11 @@ fn sweep_scratch_is_cleared_on_take() {
     let eng = &crate::engine::Engine::new();
     let mut dirty = RefSlotScratch::default();
     dirty.referenced.push(7);
-    eng.reduce().slot_prune_slots.put(dirty);
-    eng.reduce().slot_prune_remap.put(vec![1, 2, 3]);
+    eng.reduce_scratch().slot_prune_slots.put(dirty);
+    eng.reduce_scratch().slot_prune_remap.put(vec![1, 2, 3]);
 
-    let slots = eng.reduce().slot_prune_slots.checkout();
-    let remap = eng.reduce().slot_prune_remap.checkout();
+    let slots = eng.reduce_scratch().slot_prune_slots.checkout();
+    let remap = eng.reduce_scratch().slot_prune_remap.checkout();
     assert!(slots.referenced.is_empty(), "referenced must be cleared on take");
     assert!(remap.is_empty(), "remap must be cleared on take");
 }

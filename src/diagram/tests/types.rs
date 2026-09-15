@@ -318,7 +318,7 @@ mod try_from_levels {
 
     use num_bigint::BigUint;
 
-    use crate::reduce::minimize;
+
     use crate::diagram::{
         CountOverflow, ChildPair, NodeIdx, ValueRef, Tdd, TddBuildError, TddLevel, EncodedNode,
         TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO,
@@ -366,10 +366,10 @@ mod try_from_levels {
         let (levels, out) = build(&vtree);
         let mut f = try_from_levels(vtree.clone(), levels, out).unwrap();
         // (x1∧x2)∨x3 has 10 models over 4 variables.
-        assert_eq!(f.model_count(), BigUint::from(10u32));
+        assert_eq!(f.model_count().unwrap(), BigUint::from(10u32));
         // `all` and `x3` overlap (x3 ⊂ all): not canonical, but minimize accepts it.
-        minimize(&mut f);
-        assert_eq!(f.model_count(), BigUint::from(10u32));
+        f.minimize().unwrap();
+        assert_eq!(f.model_count().unwrap(), BigUint::from(10u32));
     }
 
     #[test]
@@ -507,7 +507,7 @@ mod try_from_levels {
         let (vtree, levels, out, _) = marginal_case(true);
         let f = try_from_levels(vtree, levels, out).unwrap();
         let expected = (BigUint::from(1u32) << 130) * 3u32 + BigUint::from(10u32);
-        assert_eq!(f.model_count(), expected);
+        assert_eq!(f.model_count().unwrap(), expected);
     }
 
     #[test]

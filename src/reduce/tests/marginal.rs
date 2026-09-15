@@ -4,7 +4,7 @@
 
 use crate::engine::Engine;
 use crate::marginal::free_subsumed_marginal_children;
-use crate::query::model_count;
+
 use crate::diagram::{
     EncodedChildRef, ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
 };
@@ -133,7 +133,7 @@ fn test_marginal_sibling_fold_allowed_regression() {
     //   Q1's count at v_left = Pos_leaf0 × C_SLR = 1 × C_SLR.
     //   Q2 identical.
     //   root = C_SLR×C_VR + C_SLR×C_VR.
-    let count_before = model_count(&tdd);
+    let count_before = tdd.model_count().unwrap();
     let expected_count_u: u128 = 2 * C_SLR * C_VR;
     assert_eq!(
         count_before,
@@ -148,7 +148,7 @@ fn test_marginal_sibling_fold_allowed_regression() {
     super::canonicalize_content_twins(&eng, &mut tdd).expect("canonicalize_content_twins must not OOM");
 
     // (a) Model count must be unchanged.
-    let count_after = model_count(&tdd);
+    let count_after = tdd.model_count().unwrap();
     assert_eq!(
         count_after, count_before,
         "minimize must not change model count: before={count_before} after={count_after}"
@@ -246,9 +246,9 @@ fn test_content_merge_stands_down_without_a_marginal_level() {
 #[test]
 fn minimize_relocates_weight_store_rows_with_their_slots() {
     use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, ChildDecoder, WeightStore};
-    use crate::marginal::marginalize_levels;
-    use crate::query::weighted_value;
-    use crate::reduce::{try_reduce, ReductionPlan};
+
+
+    use crate::reduce::{ReductionPlan};
     use crate::test_helpers::{assert_canonical, compile_clauses, exact_weight, rat};
 
     let eng = Engine::new();
@@ -266,7 +266,7 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
         ]),
         Arithmetic::ExactRational,
     )).unwrap();
-    marginalize_levels(&eng, &mut tdd, &[left, right]).expect("no wall is installed in a test");
+    eng.marginalize_levels(&mut tdd, &[left, right]).expect("no wall is installed in a test");
     assert!(
         tdd.levels[left.idx()].is_weight_marginal() && tdd.levels[right.idx()].is_weight_marginal(),
         "setup: both root children must be weight-marginal"
@@ -290,10 +290,10 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
     let column = |t: &Tdd, v| t.weights().expect("weighted").level(v).expect("column").len();
     let left_before = column(&tdd, left.idx());
     let right_before = column(&tdd, right.idx());
-    let exact = |t: &Tdd| exact_weight(&weighted_value(t).expect("a weighted diagram has a value"));
+    let exact = |t: &Tdd| exact_weight(&t.weighted_value().unwrap().expect("a weighted diagram has a value"));
     let value_before = exact(&tdd);
 
-    try_reduce(&eng, &mut tdd, ReductionPlan::default()).expect("no budget is armed");
+    eng.reduce(&mut tdd, ReductionPlan::default()).expect("no budget is armed");
     assert_canonical(&tdd);
 
     assert_eq!(

@@ -9,7 +9,7 @@ use crate::engine::Engine;
 use crate::diagram::*;
 use crate::limits::OperationError;
 use crate::apply::negate::negate_tdd_owned;
-use crate::reduce::{try_reduce, ReductionPlan};
+use crate::reduce::{ReductionPlan};
 
 /// Disjunction by De Morgan: `f v g = !(!f ^ !g)`.
 ///
@@ -50,10 +50,10 @@ pub(crate) fn disjoin_owned(eng: &Engine, mut f: Tdd, mut g: Tdd) -> Result<Tdd,
     let not_g = negate_tdd_owned(eng, g)?;
 
     let mut and_result = conjoin_owned(eng, not_f, not_g, None)?;
-    try_reduce(eng, &mut and_result, ReductionPlan::default())?;
+    eng.reduce(&mut and_result, ReductionPlan::default())?;
 
     let mut result = negate_tdd_owned(eng, and_result)?;
-    try_reduce(eng, &mut result, ReductionPlan::default())?;
+    eng.reduce(&mut result, ReductionPlan::default())?;
     Ok(result)
 }
 
@@ -70,10 +70,10 @@ pub(crate) fn disjoin_owned(eng: &Engine, mut f: Tdd, mut g: Tdd) -> Result<Tdd,
 /// use tididi::{or, Tdd, Vtree};
 ///
 /// let tree = Arc::new(Vtree::balanced(3));
-/// let first_two = Tdd::try_cube(&tree, [1, 2])?;
-/// let third = Tdd::try_literal(&tree, 3)?;
+/// let first_two = Tdd::cube(&tree, [1, 2])?;
+/// let third = Tdd::literal(&tree, 3)?;
 /// let f = or(first_two, third)?;
-/// assert_eq!(f.try_model_count()?, 5u32.into());
+/// assert_eq!(f.model_count()?, 5u32.into());
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 ///

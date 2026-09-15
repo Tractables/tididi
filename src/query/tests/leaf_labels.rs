@@ -21,9 +21,9 @@ fn support_and_backbone_match_sparse_id_truth_tables() {
                 }
             }
             let checked_backbone = eng.implied_literals(&f).unwrap();
-            minimize(&mut f);
+            f.minimize().unwrap();
             assert_canonical(&f);
-            assert_eq!(f.model_count(), bits.count_ones().into());
+            assert_eq!(f.model_count().unwrap(), bits.count_ones().into());
             let mut expected_support = Vec::new();
             let mut expected_backbone = Vec::new();
             for (i, &var) in vars.iter().enumerate() {
@@ -42,7 +42,7 @@ fn support_and_backbone_match_sparse_id_truth_tables() {
             expected_support.sort_unstable();
             expected_backbone.sort_unstable_by_key(|literal| literal.var);
             assert_eq!(eng.support(&f).unwrap(), expected_support, "truth table {bits}");
-            assert_eq!(implied_literals(&f), expected_backbone, "truth table {bits}");
+            assert_eq!(f.implied_literals().unwrap(), expected_backbone, "truth table {bits}");
             assert_eq!(checked_backbone, expected_backbone, "truth table {bits}");
         }
     }
@@ -60,30 +60,39 @@ fn leaf_outputs_have_only_their_forced_literal() {
         (eng.literal(&tree, Literal::neg(var)).unwrap(), vec![Literal::neg(var)]),
     ] {
         assert_canonical(&f);
-        assert_eq!(implied_literals(&f), expected);
+        assert_eq!(f.implied_literals().unwrap(), expected);
         assert_eq!(eng.implied_literals(&f).unwrap(), expected);
         assert_eq!(eng.support(&f).unwrap(), expected.iter().map(|literal| literal.var).collect::<Vec<_>>());
     }
 }
 
 #[test]
-fn backbone_omits_marginal_leaves() {
+fn leaf_scan_omits_marginal_leaves_and_public_query_rejects_them() {
     let eng = Engine::new();
     let vars = [VarId(19), VarId(2), VarId(8)];
     let tree = Arc::new(Vtree::balanced_over(&vars));
     let mut f = eng.cube(&tree, [Literal::pos(vars[0]), Literal::neg(vars[1])]).unwrap();
     assert_canonical(&f);
     let leaf = tree.leaf_of(vars[0]).unwrap();
-    crate::marginal::marginalize_levels(&eng, &mut f, &[leaf]).unwrap();
-    minimize(&mut f);
+    eng.marginalize_levels(&mut f, &[leaf]).unwrap();
+    f.minimize().unwrap();
     assert_canonical(&f);
-    assert_eq!(implied_literals(&f), vec![Literal::neg(vars[1])]);
+    let mut literals = Vec::new();
+    visit_leaf_labels(&f, |_| Ok(()), |var, labels| {
+        literals.extend(labels.implied(var));
+        Ok(())
+    }).unwrap();
+    assert_eq!(literals, vec![Literal::neg(vars[1])]);
+    assert!(matches!(f.implied_literals(), Err(OperationError::MarginalLevel(_))));
 
     let tree = Arc::new(Vtree::leaf(vars[0]));
     let mut f = eng.literal(&tree, Literal::pos(vars[0])).unwrap();
-    crate::marginal::marginalize_levels(&eng, &mut f, &[tree.root()]).unwrap();
+    eng.marginalize_levels(&mut f, &[tree.root()]).unwrap();
     assert_canonical(&f);
-    assert!(implied_literals(&f).is_empty());
+    let mut visited = 0;
+    visit_leaf_labels(&f, |_| Ok(()), |_, _| { visited += 1; Ok(()) }).unwrap();
+    assert_eq!(visited, 0);
+    assert!(matches!(f.implied_literals(), Err(OperationError::MarginalLevel(_))));
 }
 
 #[test]
@@ -111,7 +120,7 @@ fn leaf_scan_stops_before_finishing_a_parent_and_can_retry() {
         assert_eq!(visited, 0, "the stop must precede completion of the parent's summaries");
     }
     assert_eq!(eng.support(&f).unwrap(), vec![VarId(0), VarId(1)]);
-    assert!(implied_literals(&f).is_empty());
+    assert!(f.implied_literals().unwrap().is_empty());
     assert_canonical(&f);
 }
 

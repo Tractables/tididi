@@ -6,7 +6,7 @@ use crate::test_helpers::assert_canonical;
 /// A nonconstant diagram serialized without optional comments.
 fn fixture() -> (Arc<Vtree>, Tdd, String) {
     let tree = Arc::new(Vtree::balanced(2));
-    let f = Tdd::clause(&tree, [1, 2]);
+    let f = Tdd::clause(&tree, [1, 2]).unwrap();
     assert_canonical(&f);
     let mut bytes = Vec::new();
     write_tdd(&mut bytes, &f).unwrap();
@@ -51,7 +51,7 @@ fn missing_records_and_truncated_fields_are_refused() {
         let prefix = &text[..end];
         if let Ok(f) = read_tdd(&mut prefix.as_bytes(), &tree) {
             assert_canonical(&f);
-            assert!(f.model_count() <= 4u32.into());
+            assert!(f.model_count().unwrap() <= 4u32.into());
         }
     }
 }

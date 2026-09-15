@@ -101,124 +101,62 @@ pub(super) fn exists_targets_on(eng: &Engine, mut f: Tdd, targets: &[VtreeIdx], 
 
 /// The projection entry points on a caller's engine.
 impl crate::engine::Engine {
-    /// Existentially quantify `x`: a minimized diagram for ∃x. f.
+    /// Run [`Tdd::exists_var`](crate::Tdd::exists_var) using this batch's scratch and resource limits.
     ///
-    /// Uses [`QuantificationStrategy::Automatic`];
-    /// [`Engine::exists_var_with_strategy`] selects a rewrite explicitly.
-    ///
-    /// The vtree is unchanged, so `x` remains a variable, now free, and
-    /// [`Tdd::model_count`] still ranges over it: each model of ∃x. f over the
-    /// remaining variables is counted twice. To count over the remaining
-    /// variables only, divide by 2 (by 2^k after projecting k distinct variables).
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// use tididi::vtree::VarId;
-    ///
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = engine.cube(&tree, [1, 2])?; // x1 ∧ x2
-    /// # tididi::test_helpers::assert_canonical(&f);
-    /// assert_eq!(f.model_count(), 2u32.into());
-    /// let g = engine.exists_var(f, VarId(1))?;
-    /// assert_eq!(g.model_count(), 4u32.into()); // x1, with x2 and x3 free
-    /// # tididi::test_helpers::assert_canonical(&g);
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
-    ///
-    /// `f` is consumed on `Err` as well as on `Ok`, the rule [`Engine::and`]
-    /// states: one cofactor is rewritten in `f`'s own level arenas. Clone it
-    /// first if you need to keep it. A ⊥ operand comes back unchanged, and a
-    /// diagram whose output sits at `x`'s own leaf gives ⊤.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// [`OperationError::VariableNotInVtree`] when `x` is not a variable of `f`'s
-    /// vtree, reported before any work is done,
-    /// [`OperationError::OverBudget`] when a reservation is refused, the second
-    /// cofactor's copy of the diagram included, [`OperationError::OutputCap`] on
-    /// the output-node cap, [`OperationError::Stopped`] on the armed deadline or a
-    /// stop decision.
-    ///
-    /// [`OperationError::MarginalLevel`] if the target leaf or a rewritten
-    /// ancestor is marginal, or an ancestor has a marginal grandchild.
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
+    /// [`OperationError::OutputCap`].
     pub fn exists_var(&self, f: Tdd, x: VarId) -> Result<Tdd, OperationError> {
         self.exists_var_with_strategy(f, x, QuantificationStrategy::Automatic)
     }
 
-    /// Existentially quantify `x` with an explicit rewrite strategy.
+    /// Run [`Tdd::exists_var_with_strategy`](crate::Tdd::exists_var_with_strategy) using this batch's scratch and resource limits.
     ///
-    /// Vtree, ownership and result semantics are those of [`Engine::exists_var`].
-    ///
-    /// The structural rewrite — every call with [`QuantificationStrategy::Structural`],
-    /// and an [`QuantificationStrategy::Automatic`] call on a diagram with a marginal
-    /// level — checks allocations and cancellation while regrouping nodes,
-    /// then reduces the result on this engine. Its output cap counts emitted
-    /// intermediate nodes, including the final root union.
-    /// Marginal levels off the path from `x`'s leaf to the root are carried
-    /// through unchanged.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// Returns the errors described by [`Engine::exists_var`].
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
+    /// [`OperationError::OutputCap`].
+    ///
+    /// The structural rewrite checks allocation and cancellation while regrouping
+    /// nodes. Its output cap counts emitted intermediate nodes, including the final
+    /// root union.
     pub fn exists_var_with_strategy(&self, f: Tdd, x: VarId, how: QuantificationStrategy) -> Result<Tdd, OperationError> {
         crate::apply::project::exists_var_on(self, f, x, how)
     }
 
-    /// Remove dependence on `vars` by allowing either value of each variable.
+    /// Run [`Tdd::exists_vars`](crate::Tdd::exists_vars) using this batch's scratch and resource limits.
     ///
-    /// Uses [`QuantificationStrategy::Automatic`];
-    /// [`Engine::exists_vars_with_strategy`] selects a rewrite explicitly.
-    ///
-    /// An assignment to the remaining variables satisfies the result when at least
-    /// one extension satisfies `f`. This is Boolean existential quantification:
-    /// multiple satisfying extensions count as one remaining assignment.
-    ///
-    /// The vtree stays fixed. Each distinct quantified variable becomes free, so a
-    /// model count over the remaining variables divides the result's full count by
-    /// `2^k`, where `k` is the number of distinct quantified variables. This differs
-    /// from [`Tdd::marginalize_levels`], which sums
-    /// the contributions of the extensions and preserves the original count.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// use tididi::vtree::VarId;
-    ///
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let f = engine.clause(&tree, [1, 2])?; // three satisfying assignments
-    /// let vars = [VarId(0)];
-    /// let projected = engine.exists_vars(f, &vars)?;
-    /// assert!(engine.equivalent(&projected, &engine.one(&tree))?);
-    /// let remaining_count = engine.model_count(&projected)? >> vars.len();
-    /// assert_eq!(remaining_count, 2u32.into()); // both values of x2 have an extension
-    /// # tididi::test_helpers::assert_canonical(&projected);
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
-    ///
-    /// Each distinct variable is processed once, in first-occurrence order;
-    /// an empty slice returns `f` unchanged. Nonempty
-    /// calls minimize the result as described by [`Engine::exists_var`]. The operand
-    /// is consumed on success and on error, and attached weights are retained.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// As [`Engine::exists_var`]. Every variable is validated before the first
-    /// quantification; preparing the request also honors allocation and stop limits.
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
+    /// [`OperationError::OutputCap`].
     pub fn exists_vars(&self, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
         self.exists_vars_with_strategy(f, vars, QuantificationStrategy::Automatic)
     }
 
-    /// Existentially quantify `vars` with an explicit rewrite strategy.
+    /// Run [`Tdd::exists_vars_with_strategy`](crate::Tdd::exists_vars_with_strategy) using this batch's scratch and resource limits.
     ///
-    /// Vtree, ownership and ordering semantics are those of [`Engine::exists_vars`].
-    /// The strategy applies to every distinct variable in the request.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// Returns the errors described by [`Engine::exists_vars`].
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
+    /// [`OperationError::OutputCap`].
     pub fn exists_vars_with_strategy(&self, f: Tdd, vars: &[VarId], how: QuantificationStrategy) -> Result<Tdd, OperationError> {
         crate::apply::project::exists_vars_on(self, f, vars, how)
     }

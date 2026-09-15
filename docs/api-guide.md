@@ -51,9 +51,9 @@ The [persistence walkthrough](crate::guide::examples::persistence) restores two 
 ### Handle errors
 
 Boolean functions return a `Result` with [`OperationError`](crate::OperationError).
-Constructors and convenience queries have checked forms too:
-[`Tdd::try_clause`](crate::Tdd::try_clause), [`Tdd::try_model_count`](crate::Tdd::try_model_count)
-and [`Tdd::try_satisfying_assignment`](crate::Tdd::try_satisfying_assignment).
+Constructors and queries also return `Result`:
+[`Tdd::clause`](crate::Tdd::clause), [`Tdd::model_count`](crate::Tdd::model_count)
+and [`Tdd::satisfying_assignment`](crate::Tdd::satisfying_assignment).
 
 ### Bound a batch
 
@@ -66,8 +66,7 @@ The [execution walkthrough](crate::guide::examples::execution) handles a refusal
 
 ### Repeat queries or construction
 
-[`ModelCounter`](crate::query::ModelCounter) keeps counting state across evidence updates,
-with [`PinSemantics::Evidence`](crate::query::PinSemantics::Evidence) selecting observation semantics.
+[`Tdd::counter`](crate::Tdd::counter) creates a counter that retains counting state across evidence updates.
 [`Tdd::and_clause`](crate::Tdd::and_clause) adds a clause to an existing diagram.
 [`and_exists`](crate::and_exists) combines conjunction and existential quantification into one operation.
 

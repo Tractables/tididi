@@ -68,7 +68,7 @@ Each alternative is one pair at the level containing those variables:
 ```rust,ignore
 let vtree = Arc::new(Vtree::balanced(4));
 // x1 ⊕ x2 needs two pairs at the level over {x1, x2}: (x1, ¬x2) and (¬x1, x2).
-let xor = and(Tdd::clause(&vtree, [1, 2]), Tdd::clause(&vtree, [-1, -2]))?;
+let xor = and(Tdd::clause(&vtree, [1, 2])?, Tdd::clause(&vtree, [-1, -2])?)?;
 let (level, pairs) = widest_node(&xor);
 let (left, _) = vtree.children(vtree.root());
 assert_eq!((level, pairs), (left, 2));
@@ -78,7 +78,7 @@ The other two variables are free. A single positive literal has only one pair
 at each stored node, which gives another small check:
 
 ```rust,ignore
-let unit = Tdd::literal(&vtree, 1);
+let unit = Tdd::literal(&vtree, 1)?;
 assert_eq!(widest_node(&unit).1, 1);
 ```
 

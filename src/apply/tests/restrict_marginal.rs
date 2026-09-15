@@ -12,7 +12,7 @@ use crate::engine::Engine;
 /// `marginal²` is unsupported. So keep the regions DISJOINT: `f` is marginal at region
 /// `R_f` and FREE over care's regions; `care` is marginal at two disjoint regions and
 /// FREE over `R_f`. Every conjoin is then `identity∧marginal` / `marginal∧identity`,
-/// never `marginal²`, so `model_count(f∧care)` is well-defined via the real apply.
+/// never `marginal²`, so `(f∧care).model_count()?` is well-defined via the real apply.
 /// Contract: the marginal `#(f∧care)` is invariant under the prune.
 ///
 /// The contract holds for DISJOINT multi-region marginal care. OVERLAPPING
@@ -109,7 +109,7 @@ fn restrict_true_marginal_care_multiregion_difftest() {
             continue;
         }
         marginalize_subtree(&mut fm, r_f);
-        crate::reduce::minimize(&mut fm);
+        fm.minimize().unwrap();
 
         let mut care = rand_conj_over(&vtree, &care_vars, 6, 3, false, &mut rng);
         if count_is_zero(&care) {
@@ -117,9 +117,9 @@ fn restrict_true_marginal_care_multiregion_difftest() {
         }
         marginalize_subtree(&mut care, r_c1);
         marginalize_subtree(&mut care, r_c2);
-        crate::reduce::minimize(&mut care);
+        care.minimize().unwrap();
 
-        // Need both of care's marginal regions to survive minimize (multi-region).
+        // Need both of care's marginal regions to survive (multi-region).minimize().unwrap().
         let n_marginal = (0..vtree.num_nodes())
             .filter(|&i| {
                 matches!(*vtree.node(VtreeIdx(i as u32)), VtreeNode::Internal { .. }) && care.levels[i].is_marginal()
@@ -134,9 +134,9 @@ fn restrict_true_marginal_care_multiregion_difftest() {
         }
 
         // TRUE marginal care on both sides (disjoint regions ⇒ supported conjoin).
-        let before = model_count(&and2(&fm, &care));
-        let g = crate::apply::restrict_to_care(fm.clone(), care.clone()).into_tdd();
-        let after = model_count(&and2(&g, &care));
+        let before = (and2(&fm, &care)).model_count().unwrap();
+        let g = (fm.clone()).restrict_to_care(care.clone()).unwrap().into_tdd();
+        let after = (and2(&g, &care)).model_count().unwrap();
         if before != after {
             violations += 1;
             if first_violation.is_none() {
@@ -188,8 +188,8 @@ fn restrict_true_marginal_care_multiregion_difftest() {
             // miscount. `validate_vtree_structure` cannot be used after
             // marginalizing — it treats a legitimate inline marginal ref as a
             // violation.
-            let cg = model_count(&prod_g);
-            let cf = model_count(&prod_f);
+            let cg = prod_g.model_count().unwrap();
+            let cf = prod_f.model_count().unwrap();
             if cg != cf {
                 fold_count_fail += 1;
                 if first_fold_fail.is_none() {
@@ -285,7 +285,7 @@ fn restrict_marginal_care_same_regions(
         for (r, _) in &regions {
             marginalize_subtree(t, *r);
         }
-        crate::reduce::minimize(t);
+        t.minimize().unwrap();
     };
     let n_marginal_internal = |t: &Tdd| {
         (0..vtree.num_nodes())
@@ -316,14 +316,14 @@ fn restrict_marginal_care_same_regions(
         if n_marginal_internal(&care) < want_regions {
             continue;
         }
-        let care_proj = exists_vars(&care0, &region_vars);
+        let care_proj = (care0).clone().exists_vars(&region_vars).unwrap();
 
-        let before = model_count(&and2(&fm, &care_proj));
-        let g = restrict_to_care(fm.clone(), care.clone()).into_tdd();
-        let after = model_count(&and2(&g, &care_proj));
+        let before = (and2(&fm, &care_proj)).model_count().unwrap();
+        let g = (fm.clone()).restrict_to_care(care.clone()).unwrap().into_tdd();
+        let after = (and2(&g, &care_proj)).model_count().unwrap();
         assert_eq!(before, after, "restrict_to_care changed #(f ∧ ∃R.care) at case {case}: {before} != {after}");
 
-        let g_proj = restrict_to_care(fm.clone(), care_proj.clone()).into_tdd();
+        let g_proj = (fm.clone()).restrict_to_care(care_proj.clone()).unwrap().into_tdd();
         assert_eq!(
             normalized_levels(&g),
             normalized_levels(&g_proj),
@@ -356,7 +356,7 @@ fn restrict_marginal_care_two_regions_difftest() {
 /// Restrict contract on a MARGINAL `f`, the production orientation the
 /// multi-region test above does not exercise (that one marginalizes `care`,
 /// leaving `f` free). The marginalized-pool restrict_to_care shrinks members
-/// that have themselves been marginalized — `crate::apply::restrict_to_care(f, care)`
+/// that have themselves been marginalized — `f.restrict_to_care(care)?`
 /// with `f` carrying summed-out (marginal) levels and `care` non-marginal —
 /// then conjoins the shrunk `g` with `care`. The contract `g ∧ care ==
 /// f ∧ care` must hold per-MODEL-COUNT for that marginal `f`.
@@ -418,13 +418,13 @@ fn restrict_marginal_f_difftest() {
             continue;
         }
         let prod_f = and2(&f, &care);
-        let g = crate::apply::restrict_to_care(f.clone(), care.clone()).into_tdd();
+        let g = (f.clone()).restrict_to_care(care.clone()).unwrap().into_tdd();
         if reachable_pairs(&g) < reachable_pairs(&f) {
             pruned += 1;
         }
         let prod_g = and2(&g, &care);
-        let cf = model_count(&prod_f);
-        let cg = model_count(&prod_g);
+        let cf = prod_f.model_count().unwrap();
+        let cg = prod_g.model_count().unwrap();
         if cf != cg {
             fail += 1;
             if first_fail.is_none() {
@@ -437,7 +437,7 @@ fn restrict_marginal_f_difftest() {
         checked += 1;
     }
     println!(
-        "marginal-f restrict_to_care (scattered): {checked} checked, {pruned} pruned, {fail} miscount; first={first_fail:?}"
+        "marginal-f scattered.restrict_to_care().unwrap(): {checked} checked, {pruned} pruned, {fail} miscount; first={first_fail:?}"
     );
     assert!(checked >= 30, "too few marginal-f cases exercised: {checked}");
     assert!(

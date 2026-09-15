@@ -60,10 +60,10 @@ fn rewrite_for_restrict_shrinks_pair_lists_in_place() {
 #[test]
 fn conditioning_leaves_no_node_computing_false() {
     let vtree = Arc::new(Vtree::balanced(3));
-    let f = Tdd::clause(&vtree, [1, 2]);
-    let mut c = crate::apply::condition_var(&f, crate::vtree::VarId(1), false);
-    crate::reduce::minimize(&mut c);
-    assert_eq!(c.model_count(), num_bigint::BigUint::from(4u32), "the cofactor's count is unaffected");
+    let f = Tdd::clause(&vtree, [1, 2]).unwrap();
+    let mut c = (f).clone().condition_var(crate::vtree::VarId(1), false).unwrap();
+    c.minimize().unwrap();
+    assert_eq!(c.model_count().unwrap(), num_bigint::BigUint::from(4u32), "the cofactor's count is unaffected");
     crate::test_helpers::check::check_no_false_nodes(&c).expect("no node computes false");
     crate::test_helpers::check_minimize_soundness(&mut c, 1).expect("every stored node is reachable and reduced");
 }
@@ -76,7 +76,7 @@ fn conditioning_a_variable_outside_the_vtree_is_an_error() {
     use crate::OperationError;
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let f = Tdd::clause(&vtree, [1, 2]);
+    let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     assert!(matches!(
         eng.condition_var(f.clone(), VarId(9), true),
         Err(OperationError::VariableNotInVtree(VarId(9))),
@@ -94,7 +94,7 @@ fn conditioning_a_variable_outside_the_vtree_is_an_error() {
 #[test]
 fn a_false_cofactor_leaves_no_empty_internal_node() {
     let tree = std::sync::Arc::new(crate::vtree::Vtree::balanced(2));
-    let f = crate::Tdd::clause(&tree, [1]);
+    let f = crate::Tdd::clause(&tree, [1]).unwrap();
     crate::test_helpers::assert_canonical(&f);
     let result = crate::Engine::new().condition_var(f, crate::vtree::VarId(0), false).unwrap();
     assert!(result.is_zero());

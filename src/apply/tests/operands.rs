@@ -21,10 +21,10 @@ fn operators_accept_diagrams_from_dropped_independent_engines() {
         (f.clone() | g.clone(), 8u32),
         (!(f & g), 4u32),
     ] {
-        assert_eq!(result.model_count(), expected.into());
-        crate::reduce::minimize(&mut result);
+        assert_eq!(result.model_count().unwrap(), expected.into());
+        result.minimize().unwrap();
         assert_canonical(&result);
-        assert_eq!(result.model_count(), expected.into());
+        assert_eq!(result.model_count().unwrap(), expected.into());
     }
 }
 

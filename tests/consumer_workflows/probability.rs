@@ -1,8 +1,6 @@
 use num_traits::Zero;
 use tididi::diagram::RationalWeights;
-use tididi::query::{
-    KeepAllColumns, KeepFrontier, ModelCounter, PinSemantics, Retention, evaluate,
-};
+use tididi::query::{KeepAllColumns, KeepFrontier, ModelCounter, PinSemantics, Retention};
 use tididi::vtree::VarId;
 use tididi::{Engine, Literal, Tdd};
 
@@ -91,8 +89,8 @@ fn changing_weights_and_evidence_match_exact_assignment_sums() {
                     .collect();
                 let expected_evidence = mass(&evidence_truth, &weights);
                 let expected_joint = mass(&joint_truth, &weights);
-                let got_evidence = evaluate(evidence_diagram, &algebra);
-                let got_joint = evaluate(observed_joint, &algebra);
+                let got_evidence = evidence_diagram.evaluate(&algebra).unwrap();
+                let got_joint = observed_joint.evaluate(&algebra).unwrap();
                 assert_eq!(got_evidence, expected_evidence, "{context}, evidence mass");
                 assert_eq!(got_joint, expected_joint, "{context}, joint mass");
                 assert_eq!(
@@ -112,12 +110,12 @@ fn changing_weights_and_evidence_match_exact_assignment_sums() {
                 }
                 let observed_algebra = RationalWeights::from_literals(&observed_weights);
                 assert_eq!(
-                    evaluate(&theory_diagram, &observed_algebra),
+                    theory_diagram.evaluate(&observed_algebra).unwrap(),
                     expected_evidence,
                     "{context}, weighted evidence"
                 );
                 assert_eq!(
-                    evaluate(&joint, &observed_algebra),
+                    joint.evaluate(&observed_algebra).unwrap(),
                     expected_joint,
                     "{context}, weighted query"
                 );
@@ -128,7 +126,7 @@ fn changing_weights_and_evidence_match_exact_assignment_sums() {
 
 /// Change pins on a retained counter and compare each read with direct enumeration.
 fn pin_sequence<R: Retention>(engine: &Engine, diagram: &Tdd, convention: PinSemantics) {
-    let mut counter = ModelCounter::<R>::try_new_on(engine, diagram, convention).unwrap();
+    let mut counter = ModelCounter::<R>::new_on(engine, diagram, convention).unwrap();
     let mut pins = [None; 4];
     for change in [
         None,
@@ -163,7 +161,7 @@ fn pin_sequence<R: Retention>(engine: &Engine, diagram: &Tdd, convention: PinSem
         };
         for _ in 0..2 {
             assert_eq!(
-                counter.try_model_count_on(engine).unwrap(),
+                counter.model_count_on(engine).unwrap(),
                 expected.into(),
                 "pins {pins:?}, {convention:?}"
             );

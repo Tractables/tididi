@@ -59,7 +59,7 @@
 //!   pairwise disjoint functions, so a node's pairs denote disjoint products
 //!   and its count is the sum over its pairs; a diagram built level by level
 //!   ([`TddBuilder`]) has that property only if its author kept it;
-//! - after [`minimize`](crate::reduce::minimize), distinct nodes at a
+//! - after [`minimize`](crate::Tdd::minimize), distinct nodes at a
 //!   structural level have no remaining context twins and every live node is
 //!   reachable from `output`; minimization does not repair a violation of the
 //!   builder's determinism precondition.
@@ -74,7 +74,7 @@
 //! use tididi::{Tdd, Vtree};
 //!
 //! let tree = Arc::new(Vtree::balanced(3));
-//! let f = Tdd::try_clause(&tree, [1, 2])?;
+//! let f = Tdd::clause(&tree, [1, 2])?;
 //! let mut total = 0;
 //! for t in tree.bottomup() {
 //!     for (_node, pairs) in f.level(t).internal_inputs_iter() {
@@ -155,9 +155,9 @@
 //! // Sixty-four variables, so the left subtree carries thirty-two of them and
 //! // its node values straddle the width a reference can carry inline.
 //! let vtree = Arc::new(Vtree::balanced(64));
-//! let mut f = or(Tdd::try_cube(&vtree, [1, 2, 3])?, Tdd::try_cube(&vtree, [4, 33])?)?;
+//! let mut f = or(Tdd::cube(&vtree, [1, 2, 3])?, Tdd::cube(&vtree, [4, 33])?)?;
 //! f.minimize()?;
-//! let expected = f.model_count();
+//! let expected = f.model_count()?;
 //!
 //! // Sum out the root's left subtree, bottom-up.
 //! let (left, _right) = vtree.children(vtree.root());

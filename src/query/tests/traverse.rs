@@ -13,7 +13,7 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 
 use crate::Tdd;
-use crate::marginal::marginalize_levels;
+
 use crate::diagram::{
     ChildDecoder, CountOverflow, ChildPair, ValueRef, NEG_LEAF_IDX, ONE_LEAF_IDX,
     POS_LEAF_IDX, TddLevel, TddNodeId,
@@ -89,17 +89,17 @@ fn a_hand_written_traversal_agrees_with_the_model_counter() {
     let eng = Engine::new();
     // 1. A structural diagram: (x1 ∨ x2) ∧ (x3 ∨ ¬x4) has 3 · 3 = 9 models.
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut f = Tdd::clause(&vtree, [1, 2]) & Tdd::clause(&vtree, [3, -4]);
+    let mut f = Tdd::clause(&vtree, [1, 2]).unwrap() & Tdd::clause(&vtree, [3, -4]).unwrap();
     assert_eq!(count(&f), BigUint::from(9u32));
-    assert_eq!(count(&f), f.model_count());
+    assert_eq!(count(&f), f.model_count().unwrap());
 
     // 2. The same function after the left subtree {x1, x2} is marginalized:
     //    the root's pairs now carry inline counts on their left side.
     let (left, _right) = vtree.children(vtree.root());
-    marginalize_levels(&eng, &mut f, &[left]).expect("no limits installed");
+    eng.marginalize_levels(&mut f, &[left]).expect("no limits installed");
     assert!(f.level(left).is_marginal());
     assert_eq!(count(&f), BigUint::from(9u32));
-    assert_eq!(count(&f), f.model_count());
+    assert_eq!(count(&f), f.model_count().unwrap());
 
     // 3. A hand-built diagram whose marginal child has an overflowed count.
     //    Left subtree: two marginal slots, counts 2^130 (overflow) and 5.
@@ -121,5 +121,5 @@ fn a_hand_written_traversal_agrees_with_the_model_counter() {
     let g = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: vtree.root(), local: root });
     let expected = (huge + BigUint::from(5u32)) * BigUint::from(2u32);
     assert_eq!(count(&g), expected);
-    assert_eq!(g.model_count(), expected);
+    assert_eq!(g.model_count().unwrap(), expected);
 }

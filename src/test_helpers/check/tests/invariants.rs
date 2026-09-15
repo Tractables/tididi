@@ -16,7 +16,7 @@ use super::*;
 use super::projective::check_canonicity_projective;
 use crate::test_helpers::check::structure::check_no_false_nodes_in_levels;
 use crate::test_helpers::check_minimize_soundness;
-use crate::reduce::minimize;
+
 use crate::test_helpers::{compile_clauses, test_cases, vtree_shapes};
 
 
@@ -115,7 +115,7 @@ fn test_determinism_after_apply() {
     // Product before minimize is not necessarily deterministic (it has width left_width*right_width),
     // but after minimize it should be.
     let mut minimized = apply_and(f, g);
-    minimize(&mut minimized);
+    minimized.minimize().unwrap();
     check_determinism(&minimized).unwrap_or_else(|e| panic!("after apply+minimize: {}", e));
 }
 
@@ -127,9 +127,9 @@ fn test_determinism_after_minimize() {
     let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-1, 3]));
     let c3 = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-2, -3, 4]));
     let mut tdd = apply_and(f, g);
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
     tdd = apply_and(tdd, c3);
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
     check_determinism(&tdd).unwrap_or_else(|e| panic!("after multi-apply+minimize: {}", e));
 }
 
@@ -147,9 +147,9 @@ fn test_projective_boolean_ray_equals_exact() {
     let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-1, 3]));
     let c3 = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-2, -3, 4]));
     let mut tdd = apply_and(f, g);
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
     tdd = apply_and(tdd, c3);
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
 
     check_canonicity(&tdd, CANONICITY_ROUNDS).expect("Boolean exact canonicity");
     check_canonicity_projective(&tdd, CANONICITY_ROUNDS)
@@ -481,7 +481,7 @@ fn every_compiled_diagram_satisfies_every_invariant() {
 /// the count does not depend on the vtree.
 #[test]
 fn a_scattered_variable_formula_counts_the_same_on_every_vtree() {
-    use crate::query::model_count;
+
 
     let clauses = vec![
         vec![1, 3],
@@ -493,10 +493,10 @@ fn a_scattered_variable_formula_counts_the_same_on_every_vtree() {
         vec![1, -9],
         vec![-3, -9, 11],
     ];
-    let reference = model_count(&compile_clauses(&Arc::new(Vtree::balanced(12)), &clauses));
+    let reference = (compile_clauses(&Arc::new(Vtree::balanced(12)), &clauses)).model_count().unwrap();
     for (shape, vtree) in vtree_shapes(12) {
         assert_eq!(
-            model_count(&compile_clauses(&vtree, &clauses)),
+            (compile_clauses(&vtree, &clauses)).model_count().unwrap(),
             reference,
             "{shape} vtree counts a different number than the balanced one",
         );
@@ -542,7 +542,7 @@ fn canonicity_rejects_a_duplicated_node() {
 /// pair back.
 #[test]
 fn dropping_an_input_pair_changes_the_model_count() {
-    use crate::query::model_count;
+
     use num_bigint::BigUint;
 
     let eng = &crate::engine::Engine::new();
@@ -556,7 +556,7 @@ fn dropping_an_input_pair_changes_the_model_count() {
     ];
     for (shape, vtree) in vtree_shapes(5) {
         let tdd = compile_clauses(&vtree, &clauses);
-        let original = model_count(&tdd);
+        let original = tdd.model_count().unwrap();
         assert_ne!(original, BigUint::ZERO, "{shape}: this formula is satisfiable");
 
         // A node with more than one pair: dropping one leaves it non-empty.
@@ -589,7 +589,7 @@ fn dropping_an_input_pair_changes_the_model_count() {
 
         assert_ne!(
             original,
-            model_count(&corrupted),
+            corrupted.model_count().unwrap(),
             "{shape}: dropping an input pair left the model count where it was",
         );
     }

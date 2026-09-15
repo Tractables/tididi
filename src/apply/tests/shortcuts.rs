@@ -31,7 +31,7 @@ fn shortcut(eng: &Engine, tree: &Arc<Vtree>, f: Tdd, case: usize) -> Result<Tdd,
 fn constant_and_empty_transforms_honor_entry_stops_and_recover() {
     for n in [1, 3] {
         let tree = Arc::new(Vtree::balanced(n));
-        let f = Tdd::literal(&tree, 1);
+        let f = Tdd::literal(&tree, 1).unwrap();
         assert_canonical(&f);
         for case in 0..18 {
             let eng = Engine::new();
@@ -76,7 +76,7 @@ fn with_unreachable_twin(mut f: Tdd) -> Tdd {
     let node = f.levels[root.idx()].nodes[f.output().local.idx()];
     f.levels[root.idx()].nodes.push(node);
     let mut checked = f.clone();
-    crate::reduce::minimize(&mut checked);
+    checked.minimize().unwrap();
     assert_canonical(&checked);
     assert!(checked.level(root).nodes.len() < f.level(root).nodes.len());
     f
@@ -106,7 +106,7 @@ fn empty_replacement_maps_still_reject_discarded_structure() {
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(2));
     let mut f = eng.literal(&tree, 1).unwrap();
-    crate::marginal::marginalize_levels(&eng, &mut f, &[tree.root()]).unwrap();
+    eng.marginalize_levels(&mut f, &[tree.root()]).unwrap();
     assert!(matches!(eng.substitute(f.clone(), &[]), Err(OperationError::MarginalLevel(_))));
     assert!(matches!(eng.rename_vars(f, &[]), Err(OperationError::MarginalLevel(_))));
 }

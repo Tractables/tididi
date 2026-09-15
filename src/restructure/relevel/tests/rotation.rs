@@ -3,8 +3,8 @@ use crate::engine::Engine;
 use crate::vtree::{RotationKind, Vtree};
 use crate::test_helpers::{rotate_left, rotate_right};
 use crate::restructure::relevel::restructure_inner_search;
-use crate::reduce::minimize;
-use crate::query::model_count;
+
+
 
 /// The size-objective descent of `Engine::rotation_search` under
 /// [`SizeDelta`](crate::restructure::search::local::SizeDelta).
@@ -22,16 +22,16 @@ use crate::test_helpers::{assert_canonical, compile_clauses};
 fn left_rotation_preserves_model_count() {
     let vtree = Arc::new(Vtree::balanced(4));
     let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![-3, 4]]);
-    let mc_before = model_count(&tdd);
+    let mc_before = tdd.model_count().unwrap();
 
     let mut vt = (*vtree).clone();
     let root = vt.root();
     let info = rotate_left(&mut vt, root).unwrap();
     tdd.reseat_vtree(&Arc::new(vt));
     restructure_inner_search(&mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
     assert_canonical(&tdd);
-    assert_eq!(mc_before, model_count(&tdd));
+    assert_eq!(mc_before, tdd.model_count().unwrap());
 }
 
 /// A left rotation and the right rotation that undoes it both hold the count,
@@ -43,38 +43,38 @@ fn right_rotation_preserves_model_count() {
     // so start from a linear vtree and make one.
     let vtree = Arc::new(Vtree::linear(4));
     let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![-3, 4]]);
-    let mc_before = model_count(&tdd);
+    let mc_before = tdd.model_count().unwrap();
 
     let mut vt = (*vtree).clone();
     let root = vt.root();
     let left_idx = rotate_left(&mut vt, root).unwrap();
     tdd.reseat_vtree(&Arc::new(vt.clone()));
     restructure_inner_search(&mut tdd, &left_idx, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
-    minimize(&mut tdd);
-    assert_eq!(mc_before, model_count(&tdd), "the left rotation moved the count");
+    tdd.minimize().unwrap();
+    assert_eq!(mc_before, tdd.model_count().unwrap(), "the left rotation moved the count");
 
     let right_idx = rotate_right(&mut vt, root).unwrap();
     tdd.reseat_vtree(&Arc::new(vt));
     restructure_inner_search(&mut tdd, &right_idx, RotationKind::Right, &mut RestructureScratch::default(), usize::MAX);
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
     assert_canonical(&tdd);
-    assert_eq!(mc_before, model_count(&tdd), "the round trip moved the count");
+    assert_eq!(mc_before, tdd.model_count().unwrap(), "the round trip moved the count");
 }
 
 #[test]
 fn left_rotation_unsat_stays_unsat() {
     let vtree = Arc::new(Vtree::balanced(2));
     let mut tdd = compile_clauses(&vtree, &[vec![1], vec![-1]]);
-    let mc_before = model_count(&tdd);
+    let mc_before = tdd.model_count().unwrap();
     assert_eq!(mc_before, num_bigint::BigUint::ZERO);
     let mut vt = (*vtree).clone();
     let root = vt.root();
     if let Some(info) = rotate_left(&mut vt, root) {
         tdd.reseat_vtree(&Arc::new(vt));
         restructure_inner_search(&mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
-        minimize(&mut tdd);
+        tdd.minimize().unwrap();
         assert_canonical(&tdd);
-        assert_eq!(model_count(&tdd), num_bigint::BigUint::ZERO);
+        assert_eq!(tdd.model_count().unwrap(), num_bigint::BigUint::ZERO);
     }
 }
 
@@ -103,13 +103,13 @@ fn parent_of_marginal_rotation_preserves_model_count() {
         &vtree,
         &[vec![1, 2], vec![-2, 3], vec![3, 4], vec![-4, 5], vec![1, -5]],
     );
-    let mc_bool = model_count(&tdd);
+    let mc_bool = tdd.model_count().unwrap();
 
     // marginalization-first: collapse A and B, then rotate the parent (gc=1).
     let mut targets = vec![a_idx, b_idx];
     targets.sort_by_key(|t| t.idx());
     marginalize_batch(&eng, &mut tdd, &targets, &vtree).expect("no wall is installed in a test");
-    let mc_marginal = model_count(&tdd);
+    let mc_marginal = tdd.model_count().unwrap();
     assert_eq!(mc_bool, mc_marginal, "marginalize_levels must preserve count");
 
     let mut vt = (*vtree).clone();
@@ -119,9 +119,9 @@ fn parent_of_marginal_rotation_preserves_model_count() {
     restructure_inner_search(&mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
     // Close clusters (the production path runs marginalize_closure after search).
     marginalize_closure(&eng, &mut tdd).expect("no wall is installed in a test");
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
     assert_canonical(&tdd);
-    let mc_after = model_count(&tdd);
+    let mc_after = tdd.model_count().unwrap();
     assert_eq!(
         mc_marginal, mc_after,
         "gc=1 (parent-of-marginal) rotation must preserve model_count"
@@ -155,7 +155,7 @@ fn cluster_rotation_frees_subsumed_child_stores() {
         &vtree,
         &[vec![1, 2], vec![-2, 3], vec![3, 4], vec![-4, 5], vec![1, -5]],
     );
-    let mc_bool = model_count(&tdd);
+    let mc_bool = tdd.model_count().unwrap();
 
     // Collapse A and B — each becomes the top of its own marginal region
     // (parent still structural) with a non-empty count store.
@@ -191,7 +191,7 @@ fn cluster_rotation_frees_subsumed_child_stores() {
     // #F is unchanged by the reclaim.
     assert_eq!(
         mc_bool,
-        model_count(&tdd),
+        tdd.model_count().unwrap(),
         "freeing subsumed interior stores must preserve model_count"
     );
 }
@@ -254,11 +254,11 @@ fn fuzz_search_preserves_marginal_count() {
         }
         let tgt = internals[(rng() as usize) % internals.len()];
         marginalize_batch(&eng, &mut tdd, &[tgt], &vtree).expect("no wall is installed in a test");
-        let mc_before = model_count(&tdd);
+        let mc_before = tdd.model_count().unwrap();
 
         size_descent(&mut tdd);
         marginalize_closure(&eng, &mut tdd).expect("no wall is installed in a test");
-        let mc_after = model_count(&tdd);
+        let mc_after = tdd.model_count().unwrap();
 
         if mc_before != mc_after {
             first_fail = Some(format!(
@@ -304,13 +304,13 @@ fn gc1_sweep_undercount_repro() {
     // the multiplicity (undercount) unless it keeps the multiset.
     // Preserving the count through the sweep and the closure below therefore
     // rests on the regrouping keeping the multiset rather than the content set.
-    let mc_marginal = model_count(&tdd);
+    let mc_marginal = tdd.model_count().unwrap();
 
     size_descent(&mut tdd);
-    let mc_search = model_count(&tdd);
+    let mc_search = tdd.model_count().unwrap();
 
     marginalize_closure(&eng, &mut tdd).expect("no wall is installed in a test");
-    let mc_closure = model_count(&tdd);
+    let mc_closure = tdd.model_count().unwrap();
 
     assert_eq!(
         mc_marginal, mc_search,

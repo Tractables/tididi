@@ -3,7 +3,7 @@ use std::sync::Arc;
 use num_rational::BigRational;
 use num_traits::{One, Zero};
 use tididi::diagram::{LiteralWeights, RationalWeights};
-use tididi::query::evaluate;
+
 use tididi::vtree::VarId;
 use tididi::{Engine, Literal, Tdd, Vtree};
 
@@ -97,7 +97,7 @@ pub(super) fn assert_truth(engine: &Engine, diagram: &Tdd, expected: &[bool], co
                 .collect::<Vec<_>>(),
         );
         assert_eq!(
-            evaluate(diagram, &RationalWeights::from_literals(&weights)),
+            diagram.evaluate(&RationalWeights::from_literals(&weights)).unwrap(),
             fraction(i64::from(yes), 1),
             "{context}, assignment {row}"
         );

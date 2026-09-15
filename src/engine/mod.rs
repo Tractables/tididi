@@ -25,50 +25,37 @@ pub use context::Context;
 /// An engine is `Send` but not `Sync`: it can move between threads, and one
 /// thread uses it at a time.
 ///
-/// # Build, then query
+/// # Bound a batch
 ///
-/// Choose a shared vtree for all operands. Here a clause expresses “at least one
-/// of the first two variables,” and a cube fixes the third to false:
+/// Use the supplied engine for every operation that must obey the batch limits.
+/// Ordinary free functions and diagram methods use separate unlimited checkouts.
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{Engine, Vtree};
-///
-/// let engine = Engine::new();
+/// use tididi::{Tdd, Vtree};
+/// use tididi::limits::LimitConfig;
 /// let tree = Arc::new(Vtree::balanced(3));
-/// let either = engine.clause(&tree, [1, 2])?;
-/// let not_third = engine.cube(&tree, [-3])?;
-/// let f = engine.and(either, not_third)?;
-/// assert_eq!(engine.model_count(&f)?, 3u32.into());
+/// let f = tree.context().with_limits(
+///     LimitConfig::none().with_memory_budget_bytes(Some(1_000_000)),
+///     |engine| {
+///         let either = engine.clause(&tree, [1, 2])?;
+///         let not_third = engine.cube(&tree, [-3])?;
+///         let mut f = engine.and(either, not_third)?;
+///         engine.minimize(&mut f)?;
+///         assert_eq!(engine.model_count(&f)?, 3u32.into());
+///         Ok::<Tdd, tididi::OperationError>(f)
+///     },
+/// )?;
+/// assert_eq!(f.model_count()?, 3u32.into());
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 ///
-/// Transformations taking `Tdd` consume their operands, including on error;
-/// queries taking `&Tdd` leave them available. See [`Tdd`](crate::Tdd) for copying
-/// an operand when several transformations need it.
-///
-/// # Choose the operation you need
-///
-/// The [task guide](crate::guide::api) groups operations by user task.
-/// [`and`](Self::and) can leave a nonminimal representation; use
-/// [`try_minimize`](crate::reduce::try_minimize) when canonical form is needed.
-/// [`model_count`](Self::model_count), [`is_sat`](Self::is_sat), and
-/// [`satisfying_assignment`](Self::satisfying_assignment) accept nonminimal
-/// structural diagrams, so a first build-and-query program needs no minimization
-/// step for correctness. Minimize to remove redundant storage or before an
-/// operation whose contract requires canonical form.
-///
-/// # Bound a computation
-///
-/// A new engine has no limits installed. Use [`Limits::scope`] to apply a
-/// [`LimitConfig`](crate::limits::LimitConfig) to a block and restore the prior
-/// configuration afterward. Checked methods return [`OperationError`](crate::OperationError)
-/// on refusal; the method's contract specifies what remains after an error.
-///
-/// The Boolean operators use their vtree's context and panic on failure. The infallible
-/// [`one`](Self::one) and [`zero`](Self::zero) methods also do not check resource
-/// limits; the empty [`cube`](Self::cube) or [`clause`](Self::clause) provides a
-/// checked constant when needed.
+/// A directly constructed engine starts without limits; [`Limits::scope`] applies
+/// a temporary configuration. Each method states what remains after a refusal.
+/// Transformations taking `Tdd` consume it on success and error; queries borrowing
+/// it leave it unchanged. The infallible [`one`](Self::one) and [`zero`](Self::zero)
+/// methods do not check limits; use an empty [`cube`](Self::cube) or
+/// [`clause`](Self::clause) for checked constant construction.
 pub struct Engine {
     context: std::sync::Weak<Context>,
     limits: Limits,
@@ -111,7 +98,7 @@ impl Engine {
     ///     let engine = Engine::new();
     ///     engine.clause(&tree, [1, 2])?
     /// };
-    /// assert_eq!(f.model_count(), 3u32.into());
+    /// assert_eq!(f.model_count()?, 3u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     #[must_use]
@@ -159,7 +146,7 @@ impl Engine {
     /// The reduction pools.
     #[must_use]
     #[inline]
-    pub(crate) fn reduce(&self) -> &crate::reduce::scratch::ReduceScratch {
+    pub(crate) fn reduce_scratch(&self) -> &crate::reduce::scratch::ReduceScratch {
         &self.reduce
     }
 

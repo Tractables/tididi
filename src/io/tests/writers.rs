@@ -21,7 +21,7 @@ use std::sync::Arc;
 use crate::test_helpers::clause_to_tdd;
 use crate::io::tdd_to_dot;
 use crate::io::{save_tdd, write_tdd};
-use crate::reduce::minimize;
+
 use crate::apply::apply_and;
 use crate::marginal::marginalize_batch;
 use crate::diagram::Tdd;
@@ -89,7 +89,7 @@ fn save_tdd_refuses_a_marginal_diagram_without_creating_the_file() {
 fn a_saved_diagram_reads_back_without_a_tail_of_padding() {
     let vtree = Arc::new(crate::vtree::Vtree::balanced(8));
     let mut tdd = compile_clauses_on(&Engine::new(), &vtree, &[vec![1, -2], vec![2, 3]]);
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
 
     let path = std::env::temp_dir().join("tididi_io_save_round_trip.tdd");
     save_tdd(&tdd, &path).expect("a structural diagram writes");
@@ -98,7 +98,7 @@ fn a_saved_diagram_reads_back_without_a_tail_of_padding() {
     std::fs::remove_file(&path).ok();
 
     assert!(!bytes.contains(&0), "the file must hold no padding bytes");
-    assert_eq!(back.model_count(), tdd.model_count());
+    assert_eq!(back.model_count().unwrap(), tdd.model_count().unwrap());
 }
 
 #[test]
@@ -115,7 +115,7 @@ fn tdd_to_dot_refuses_a_marginal_diagram() {
 #[test]
 fn the_writers_still_accept_an_explicit_diagram() {
     let vtree = Arc::new(Vtree::balanced(3));
-    let f = (Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2])) | Tdd::clause(&vtree, [3]);
+    let f = (Tdd::clause(&vtree, [1]).unwrap() & Tdd::clause(&vtree, [2]).unwrap()) | Tdd::clause(&vtree, [3]).unwrap();
     assert!(!f.has_marginal_level(), "setup: no level may be marginal");
     assert_canonical(&f);
 
@@ -141,7 +141,7 @@ fn the_writers_still_accept_an_explicit_diagram() {
 fn writing_a_diagram_and_reading_it_back_returns_the_same_diagram() {
     use crate::build::constant_one;
     use crate::io::{read_tdd, write_tdd};
-    use crate::query::model_count;
+
     use crate::test_helpers::normalized_levels;
 
     let eng = Engine::new();
@@ -160,11 +160,11 @@ fn writing_a_diagram_and_reading_it_back_returns_the_same_diagram() {
                 for clause in rand_cnf(&mut rng, nvars, CnfShape { clauses: 4, width: 3 }) {
                     f = apply_and(f, clause_to_tdd(&eng, &vtree, &literals(&clause)));
                 }
-                minimize(&mut f);
+                f.minimize().unwrap();
                 assert_canonical(&f);
                 let back = round_trip(&f);
                 assert_canonical(&back);
-                assert_eq!(model_count(&back), model_count(&f), "the round trip changed the function");
+                assert_eq!(back.model_count().unwrap(), f.model_count().unwrap(), "the round trip changed the function");
                 assert_eq!(
                     normalized_levels(&back),
                     normalized_levels(&f),
@@ -180,7 +180,7 @@ fn writing_a_diagram_and_reading_it_back_returns_the_same_diagram() {
     let one = constant_one(&eng, &vtree);
     let one_back = round_trip(&one);
     assert_canonical(&one_back);
-    assert_eq!(model_count(&one_back), model_count(&one), "the tautology must survive");
+    assert_eq!(one_back.model_count().unwrap(), one.model_count().unwrap(), "the tautology must survive");
 }
 
 /// The reader's refusals: a file that is not a diagram, and a file that is a
@@ -269,7 +269,7 @@ fn a_file_from_a_later_version_is_refused_naming_both_versions() {
 #[test]
 fn an_unknown_comment_is_ignored_and_an_unknown_record_is_refused() {
     use crate::io::{read_tdd, write_tdd, IoError};
-    use crate::query::model_count;
+
 
     let vtree = Arc::new(Vtree::balanced(3));
     let f = crate::test_helpers::compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3]]);
@@ -280,7 +280,7 @@ fn an_unknown_comment_is_ignored_and_an_unknown_record_is_refused() {
     let annotated = format!("c written by something else\nc\n{text}");
     let back = read_tdd(&mut annotated.as_bytes(), &vtree)
         .expect("a comment line a reader does not know is ignored");
-    assert_eq!(model_count(&back), model_count(&f), "a comment changed the function");
+    assert_eq!(back.model_count().unwrap(), f.model_count().unwrap(), "a comment changed the function");
 
     let with_record = format!("{text}X 4 0 1 0\n");
     let Err(IoError::Format(msg)) = read_tdd(&mut with_record.as_bytes(), &vtree) else {

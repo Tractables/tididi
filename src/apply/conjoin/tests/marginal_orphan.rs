@@ -29,7 +29,7 @@ fn a_zero_width_marginal_orphan_conjoins_to_the_same_count() {
     let g = || fixture(&[vec![2, 4], vec![-1, -3]]);
 
     let eng = Engine::new();
-    let want = crate::query::model_count(&apply_and(f(), g()));
+    let want = (apply_and(f(), g())).model_count().unwrap();
 
     let (mut f, mut g) = (f(), g());
     for t in [&mut f, &mut g] {
@@ -41,7 +41,7 @@ fn a_zero_width_marginal_orphan_conjoins_to_the_same_count() {
         .expect("a zero-width orphan must not fail the conjunction");
 
     assert_eq!(
-        crate::query::model_count(&out), want,
+        out.model_count().unwrap(), want,
         "emptying an orphan under a marginal ancestor must not move the count",
     );
 }

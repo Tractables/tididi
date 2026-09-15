@@ -14,11 +14,11 @@
 //! use tididi::{and, or, Tdd, Vtree};
 //!
 //! let tree = Arc::new(Vtree::balanced(3));
-//! let x = Tdd::literal(&tree, 1);
-//! let y = Tdd::literal(&tree, 2);
-//! let z = Tdd::literal(&tree, 3);
+//! let x = Tdd::literal(&tree, 1)?;
+//! let y = Tdd::literal(&tree, 2)?;
+//! let z = Tdd::literal(&tree, 3)?;
 //! let f = or(and(x, y)?, z)?;
-//! assert_eq!(f.model_count(), 5u32.into());
+//! assert_eq!(f.model_count()?, 5u32.into());
 //! # Ok::<(), tididi::OperationError>(())
 //! ```
 //!
@@ -26,10 +26,9 @@
 //! zero-based form. Reuse the same `Arc<Vtree>` for operands you will combine.
 //! Queries borrow diagrams; transformations taking `Tdd` consume them, so clone
 //! an operand first if it must be kept.
-//! Operations reuse the context attached to the shared vtree. [`and`] and [`or`]
-//! return errors; the `&` and `|` operators are shorthand that panics on failure.
-//! Constructors and convenience queries have checked forms, such as
-//! [`Tdd::try_literal`] and [`Tdd::try_model_count`].
+//! Operations reuse the context attached to the shared vtree. Named operations
+//! such as [`and`], [`Tdd::literal`] and [`Tdd::model_count`] return errors;
+//! the `&` and `|` operators are shorthand that panics on failure.
 //! [`Context::with_limits`] lends an engine for an explicitly bounded batch. Diagrams own their results independently of that temporary checkout.
 //!
 //! # Where to go next

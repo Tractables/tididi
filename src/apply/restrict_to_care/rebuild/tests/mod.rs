@@ -19,7 +19,7 @@ fn care_rebuild_handles_a_deep_linear_vtree() {
     assert_canonical(&f);
     let result = all_live(&f).rebuild(&Engine::new(), f).unwrap();
     assert_canonical(&result);
-    assert_eq!(result.model_count(), num_bigint::BigUint::from(1u32) << 8192);
+    assert_eq!(result.model_count().unwrap(), num_bigint::BigUint::from(1u32) << 8192);
 }
 
 #[test]
@@ -41,7 +41,7 @@ fn care_rebuild_polls_before_emitting_the_root() {
 #[test]
 fn care_rebuild_recovers_after_each_refused_reservation() {
     let tree = Arc::new(Vtree::balanced(4));
-    let f = Tdd::clause(&tree, [1, -2, 3]);
+    let f = Tdd::clause(&tree, [1, -2, 3]).unwrap();
     assert_canonical(&f);
     let mut reached_success = false;
     for nth in 0..256 {
@@ -54,7 +54,7 @@ fn care_rebuild_recovers_after_each_refused_reservation() {
         eng.limits().grant_every_reserve();
         let result = all_live(&f).rebuild(&eng, f.clone()).unwrap();
         assert_canonical(&result);
-        assert_eq!(result.model_count(), f.model_count());
+        assert_eq!(result.model_count().unwrap(), f.model_count().unwrap());
     }
     assert!(reached_success, "the sweep must cover every reservation");
 }

@@ -215,20 +215,20 @@ fn default_and_explicit_quantification_match_enumeration() {
             assert_canonical(&one);
             for vars in [vec![], vec![VarId(0)], vec![VarId(0), VarId(2), VarId(0)]] {
                 let mut results = vec![
-                    exists_vars(&f, &vars),
+                    (f).clone().exists_vars(&vars).unwrap(),
                     eng.exists_vars(f.clone(), &vars).unwrap(),
                     eng.and_exists(f.clone(), one.clone(), &vars).unwrap(),
                 ];
                 if vars.len() == 1 {
-                    results.push(exists_var(&f, vars[0]));
+                    results.push((f).clone().exists_var(vars[0]).unwrap());
                     results.push(eng.exists_var(f.clone(), vars[0]).unwrap());
                 }
                 for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
-                    results.push(exists_vars_with_strategy(&f, &vars, how));
+                    results.push((f).clone().exists_vars_with_strategy(&vars, how).unwrap());
                     results.push(eng.exists_vars_with_strategy(f.clone(), &vars, how).unwrap());
                     results.push(eng.and_exists_with_strategy(f.clone(), one.clone(), &vars, how).unwrap());
                     if vars.len() == 1 {
-                        results.push(exists_var_with_strategy(&f, vars[0], how));
+                        results.push((f).clone().exists_var_with_strategy(vars[0], how).unwrap());
                         results.push(eng.exists_var_with_strategy(f.clone(), vars[0], how).unwrap());
                     }
                 }
@@ -394,7 +394,7 @@ fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
     }
     let mut marginal = x.clone();
     let leaf = tree.leaf_of(VarId(0)).unwrap();
-    crate::marginal::marginalize_levels(&eng, &mut marginal, &[leaf]).unwrap();
+    eng.marginalize_levels(&mut marginal, &[leaf]).unwrap();
     let error = OperationError::MarginalLevel(leaf);
     assert_eq!(eng.equivalent(&marginal, &marginal).unwrap_err(), error);
     assert_eq!(eng.implies(&marginal, &x).unwrap_err(), error);
@@ -479,8 +479,8 @@ fn exercise(eng: &Engine, op: usize, f: &Tdd, g: &Tdd) -> Result<(), OperationEr
 #[test]
 fn every_new_operation_recovers_from_reservation_refusals_and_work_stops() {
     let tree = Arc::new(Vtree::balanced(2));
-    let f = Tdd::clause(&tree, [1, 2]);
-    let g = Tdd::literal(&tree, 2);
+    let f = Tdd::clause(&tree, [1, 2]).unwrap();
+    let g = Tdd::literal(&tree, 2).unwrap();
     for op in 0..10 {
         let eng = Engine::new();
         {
@@ -529,15 +529,15 @@ fn every_new_operation_recovers_from_reservation_refusals_and_work_stops() {
         }
         exercise(&eng, op, &f, &g).unwrap();
     }
-    assert_eq!(f.model_count(), 3u32.into());
-    assert_eq!(g.model_count(), 2u32.into());
+    assert_eq!(f.model_count().unwrap(), 3u32.into());
+    assert_eq!(g.model_count().unwrap(), 2u32.into());
 }
 
 #[test]
 fn composed_operations_propagate_output_caps() {
     let tree = Arc::new(Vtree::balanced(4));
-    let f = Tdd::clause(&tree, [1, 3]);
-    let g = Tdd::clause(&tree, [2, 4]);
+    let f = Tdd::clause(&tree, [1, 3]).unwrap();
+    let g = Tdd::clause(&tree, [2, 4]).unwrap();
     for op in [0, 5, 6, 7, 8, 9] {
         let eng = Engine::new();
         let _scope = eng

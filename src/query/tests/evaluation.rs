@@ -9,7 +9,7 @@ use crate::test_helpers::assert_canonical;
 
 /// A clause with a free variable, built before any resource limit is armed.
 fn fixture() -> Tdd {
-    let f = Tdd::clause(&Arc::new(Vtree::balanced(8)), [1, 3, -5]);
+    let f = Tdd::clause(&Arc::new(Vtree::balanced(8)), [1, 3, -5]).unwrap();
     assert_canonical(&f);
     f
 }

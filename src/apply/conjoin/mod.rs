@@ -151,10 +151,10 @@ pub(crate) fn conjoin_owned(
 /// use tididi::{and, Tdd, Vtree};
 ///
 /// let tree = Arc::new(Vtree::balanced(3));
-/// let either = Tdd::try_clause(&tree, [1, 2])?;
-/// let not_third = Tdd::try_literal(&tree, -3)?;
+/// let either = Tdd::clause(&tree, [1, 2])?;
+/// let not_third = Tdd::literal(&tree, -3)?;
 /// let f = and(either, not_third)?;
-/// assert_eq!(f.try_model_count()?, 3u32.into());
+/// assert_eq!(f.model_count()?, 3u32.into());
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 ///
@@ -252,7 +252,7 @@ impl crate::engine::Engine {
         let mut out = crate::apply::conjoin::conjoin_owned(self, f, g, Some(&mask))?;
         // Streaming can finish every target; only retained structure needs the pass.
         if !out.is_zero() && targets.iter().any(|&t| !out.level(t).is_marginal()) {
-            crate::marginal::marginalize_levels(self, &mut out, targets)?;
+            self.marginalize_levels(&mut out, targets)?;
         }
         Ok(out)
     }

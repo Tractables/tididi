@@ -58,7 +58,7 @@ impl Context {
     ///     let either = operations.clause(&tree, [1, 2])?;
     ///     operations.and(either, operations.literal(&tree, 3)?)
     /// })?;
-    /// assert_eq!(f.model_count(), 3u32.into());
+    /// assert_eq!(f.model_count()?, 3u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn run<R>(self: &Arc<Self>, run: impl FnOnce(&Engine) -> R) -> R {

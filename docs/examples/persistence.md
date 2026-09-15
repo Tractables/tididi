@@ -23,8 +23,8 @@ Require a destination, and require encryption whenever remote backups are on:
 
 ```rust,ignore
 let tree = Arc::new(Vtree::balanced(3));
-let destination = Tdd::clause(&tree, [1, 2]);
-let encryption_rule = Tdd::clause(&tree, [-2, 3]);
+let destination = Tdd::clause(&tree, [1, 2])?;
+let encryption_rule = Tdd::clause(&tree, [-2, 3])?;
 ```
 
 Both diagrams share the same tree. Save that tree once alongside the two
@@ -83,7 +83,7 @@ The loaded diagrams support the same operations as freshly built ones:
 
 ```rust,ignore
 let configurations = and(destination, encryption_rule)?;
-assert_eq!(configurations.model_count(), 4u32.into());
+assert_eq!(configurations.model_count()?, 4u32.into());
 ```
 
 There are four valid assignments: local-only backups with either encryption
@@ -96,8 +96,8 @@ a matching model count alone would not establish that the rules survived:
 
 ```rust,ignore
 let expected = and(
-    Tdd::clause(&restored_tree, [1, 2]),
-    Tdd::clause(&restored_tree, [-2, 3]),
+    Tdd::clause(&restored_tree, [1, 2])?,
+    Tdd::clause(&restored_tree, [-2, 3])?,
 )?;
 assert!(configurations.equivalent(&expected)?);
 ```

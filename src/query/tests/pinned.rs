@@ -8,7 +8,7 @@ use crate::engine::Engine;
 use crate::apply::conjoin::apply_and;
 use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;
-use crate::reduce::minimize;
+
 use crate::test_helpers::{literals, rand_cnf, CnfShape, Lcg};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::diagram::Tdd;
@@ -33,12 +33,12 @@ fn fresh_root<R: Retention>(
     convention: PinSemantics,
     pins: &[Option<bool>],
 ) -> BigUint {
-    let mut c = ModelCounter::<R>::new_on(eng, tdd, convention);
+    let mut c = ModelCounter::<R>::new_on(eng, tdd, convention).unwrap();
     for (v, &p) in pins.iter().enumerate() {
         if is_summed_out(tdd, VarId(v as u32)) { assert_eq!(p, None); continue; }
         c.set_pin(VarId(v as u32), p).unwrap();
     }
-    c.model_count_on(eng)
+    c.model_count_on(eng).unwrap()
 }
 
 /// Pins `ModelCounter` against its two `BigUint` oracles: `pinned_counts`
@@ -94,7 +94,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                     &eng,
                     &tdd,
                     convention,
-                );
+                ).unwrap();
                 for (v, &p) in pins.iter().enumerate() {
                     ctr.set_pin(VarId(v as u32), p).unwrap();
                 }
@@ -105,7 +105,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                     pinned_counts(&tdd, &pins, PinSemantics::Cofactor)
                 };
                 assert_eq!(
-                    ctr.model_count_on(&eng),
+                    ctr.model_count_on(&eng).unwrap(),
                     expected,
                     "nvars={nvars} convention={convention:?}: compute mismatch"
                 );
@@ -134,7 +134,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                         pinned_counts(&tdd, &pins, PinSemantics::Cofactor)
                     };
                     assert_eq!(
-                        ctr.model_count_on(&eng),
+                        ctr.model_count_on(&eng).unwrap(),
                         expected,
                         "nvars={nvars} convention={convention:?}: recompute mismatch after changing var {v}"
                     );
@@ -164,7 +164,7 @@ fn six_var_diagram(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
     for clause in &clauses {
         acc = apply_and(acc, clause_to_tdd(eng, vtree, &literals(clause)));
     }
-    minimize(&mut acc);
+    acc.minimize().unwrap();
     assert!(!acc.is_zero(), "the fixture must be satisfiable");
     acc
 }
@@ -179,9 +179,9 @@ fn recompute_after_two_pin_changes_matches_oracle() {
     let tdd = six_var_diagram(&eng, &vtree);
     for convention in [PinSemantics::Cofactor, PinSemantics::Evidence] {
         let mut pins: Vec<Option<bool>> = vec![None; 6];
-        let mut ctr = ModelCounter::<KeepAllColumns>::new_on(&eng, &tdd, convention)
+        let mut ctr = ModelCounter::<KeepAllColumns>::new_on(&eng, &tdd, convention).unwrap()
             ;
-        assert_eq!(ctr.model_count_on(&eng), pinned_counts(&tdd, &pins, convention));
+        assert_eq!(ctr.model_count_on(&eng).unwrap(), pinned_counts(&tdd, &pins, convention));
 
         // Two leaves in different halves of the tree, so the cones share only
         // the root.
@@ -191,7 +191,7 @@ fn recompute_after_two_pin_changes_matches_oracle() {
         ctr.set_pin(VarId(5), Some(true)).unwrap();
 
         assert_eq!(
-            ctr.model_count_on(&eng),
+            ctr.model_count_on(&eng).unwrap(),
             pinned_counts(&tdd, &pins, convention),
             "convention={convention:?}: two pins changed in different subtrees"
         );
@@ -205,12 +205,12 @@ fn recompute_after_two_pin_changes_matches_oracle() {
         ctr.set_pin(VarId(2), Some(true)).unwrap();
 
         assert_eq!(
-            ctr.model_count_on(&eng),
+            ctr.model_count_on(&eng).unwrap(),
             pinned_counts(&tdd, &pins, convention),
             "convention={convention:?}: two pins changed under one parent"
         );
         assert!(
-            ctr.model_count_on(&eng) != BigUint::ZERO,
+            ctr.model_count_on(&eng).unwrap() != BigUint::ZERO,
             "convention={convention:?}: the fixture must stay satisfiable under these pins"
         );
     }
@@ -227,26 +227,26 @@ fn pin_reset_to_same_value_records_nothing() {
     let vtree = Arc::new(Vtree::balanced(6));
     let tdd = six_var_diagram(&eng, &vtree);
     let pins: Vec<Option<bool>> = vec![Some(true), None, Some(false), None, None, None];
-    let mut ctr = ModelCounter::<KeepAllColumns>::new_on(&eng, &tdd, PinSemantics::Evidence);
+    let mut ctr = ModelCounter::<KeepAllColumns>::new_on(&eng, &tdd, PinSemantics::Evidence).unwrap();
     for (v, &p) in pins.iter().enumerate() {
         ctr.set_pin(VarId(v as u32), p).unwrap();
     }
 
     let expected = pinned_counts(&tdd, &pins, PinSemantics::Evidence);
-    assert_eq!(ctr.model_count_on(&eng), expected);
+    assert_eq!(ctr.model_count_on(&eng).unwrap(), expected);
     assert!(format!("{ctr:?}").contains("changed_since_pass: 0"), "compute clears the change set: {ctr:?}");
 
     ctr.set_pin(VarId(0), Some(true)).unwrap();
     ctr.set_pin(VarId(1), None).unwrap();
     assert!(format!("{ctr:?}").contains("changed_since_pass: 0"), "a same-value pin is no change: {ctr:?}");
 
-    assert_eq!(ctr.model_count_on(&eng), expected, "nothing changed, nothing moves");
+    assert_eq!(ctr.model_count_on(&eng).unwrap(), expected, "nothing changed, nothing moves");
 
     ctr.set_pin(VarId(0), Some(false)).unwrap();
     ctr.set_pin(VarId(0), Some(true)).unwrap();
     assert!(format!("{ctr:?}").contains("changed_since_pass: 1"), "a changed-and-restored pin is recorded: {ctr:?}");
 
-    assert_eq!(ctr.model_count_on(&eng), expected, "the original pins give the original count");
+    assert_eq!(ctr.model_count_on(&eng).unwrap(), expected, "the original pins give the original count");
     assert!(format!("{ctr:?}").contains("changed_since_pass: 0"), "recompute clears the change set: {ctr:?}");
 }
 
@@ -313,7 +313,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                 continue;
             }
             marginalize_subtree(&mut tdd, marginal_root);
-            minimize(&mut tdd);
+            tdd.minimize().unwrap();
             // `model_count` has an implicit `!is_zero` precondition (a structurally
             // zero diagram has no output count slot); every production wrapper
             // early-returns on it.
@@ -331,7 +331,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                     &eng,
                     &tdd,
                     convention,
-                )
+                ).unwrap()
                 ;
                 for _ in 0..4 {
                     let pins: Vec<Option<bool>> = (0..nvars)
@@ -356,7 +356,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                         }
                     }
                     assert_eq!(
-                        reused.model_count_on(&eng),
+                        reused.model_count_on(&eng).unwrap(),
                         expected,
                         "nvars={nvars} convention={convention:?}: reused Frontier counter disagrees with the \
                          BigUint oracle on a marginalized diagram"
@@ -403,16 +403,16 @@ fn interrupted_pin_refresh_recomputes_before_the_next_read() {
     use crate::limits::{LimitConfig, StopCallback, StopDecision};
     let eng = crate::Engine::new();
     let tree = std::sync::Arc::new(crate::vtree::Vtree::balanced(4));
-    let f = crate::Tdd::clause(&tree, [1, 2]);
+    let f = crate::Tdd::clause(&tree, [1, 2]).unwrap();
     crate::test_helpers::assert_canonical(&f);
-    let mut counter = ModelCounter::<KeepAllColumns>::new_on(&eng, &f, PinSemantics::Evidence);
-    assert_eq!(counter.model_count_on(&eng), 12u32.into());
+    let mut counter = ModelCounter::<KeepAllColumns>::new_on(&eng, &f, PinSemantics::Evidence).unwrap();
+    assert_eq!(counter.model_count_on(&eng).unwrap(), 12u32.into());
     counter.set_pin(crate::vtree::VarId(0), Some(false)).unwrap();
     {
         let _stop = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(StopCallback::new(|_, _| StopDecision::Stop))));
-        assert!(counter.try_model_count_on(&eng).is_err());
+        assert!(counter.model_count_on(&eng).is_err());
     }
-    assert_eq!(counter.model_count_on(&eng), 4u32.into());
+    assert_eq!(counter.model_count_on(&eng).unwrap(), 4u32.into());
     counter.set_pin(crate::vtree::VarId(0), None).unwrap();
-    assert_eq!(counter.model_count_on(&eng), 12u32.into());
+    assert_eq!(counter.model_count_on(&eng).unwrap(), 12u32.into());
 }

@@ -8,65 +8,15 @@ use crate::vtree::{VarId, VtreeIdx};
 
 use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 
-impl Tdd {
-    /// Whether this structural diagram has a satisfying assignment.
-    ///
-    /// Borrows the diagram, ignores literal weights, and needs no minimization.
-    /// Uses the shared vtree context; [`Engine::is_sat`] is the checked form.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Tdd, Vtree};
-    ///
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let f = Tdd::cube(&tree, [1, -2]);
-    /// assert!(f.is_sat());
-    /// assert!(!Tdd::zero(&tree).is_sat());
-    /// # tididi::test_helpers::assert_canonical(&f);
-    /// ```
-    ///
-    /// # Panics
-    ///
-    /// Panics if the diagram contains a marginal level, as described by
-    /// [`Engine::is_sat`].
-    pub fn is_sat(&self) -> bool {
-        self.try_is_sat().expect("is_sat: use Engine::is_sat to handle errors")
-    }
-}
-
 impl Engine {
-    /// Whether a structural diagram has at least one satisfying assignment.
+    /// Run [`Tdd::is_sat`](crate::Tdd::is_sat) using this batch's scratch and resource limits.
     ///
-    /// Borrows the diagram and accepts nonminimal input. Literal weights are
-    /// ignored, so a satisfiable function remains satisfiable even when its
-    /// weighted value is zero. For an assignment itself, use
-    /// [`Engine::satisfying_assignment`].
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    ///
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let either = engine.clause(&tree, [1, 2])?;
-    /// assert!(engine.is_sat(&either)?);
-    /// let neither = engine.cube(&tree, [-1, -2])?;
-    /// let impossible = engine.and(either, neither)?;
-    /// assert!(!engine.is_sat(&impossible)?);
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
-    ///
-    /// Checks that all levels are structural, then reads the false sentinel.
-    /// No scratch buffers or minimization are needed: every live structural node
-    /// has a nonempty pair list whose children are satisfiable on disjoint variables.
-    /// The structural check takes time proportional to the vtree's size.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// [`OperationError::MarginalLevel`](crate::OperationError::MarginalLevel) for
-    /// discarded structure, or
-    /// [`OperationError::Stopped`](crate::OperationError::Stopped) for an armed stop.
-    /// The borrowed diagram is unchanged.
+    /// Returns the operation's errors or [`OperationError::Stopped`](crate::OperationError::Stopped)
+    /// on cancellation.
     pub fn is_sat(&self, f: &Tdd) -> Result<bool, crate::OperationError> {
         let lim = self.limits();
         let _op = lim.begin_operation();
@@ -81,64 +31,49 @@ impl Engine {
     }
 }
 
-/// Check whether a diagram is satisfiable (has at least one model).
-///
-/// Structural diagrams answer from the false sentinel without minimization.
-/// For a diagram containing count-marginal levels, minimize first so zero-count
-/// contributions have been removed; a count-marginal root answers directly from
-/// its stored count. Literal weights do not affect structural satisfiability.
-/// Use [`Engine::is_sat`] for a checked query restricted to structural diagrams.
-///
-/// # Panics
-///
-/// Panics if a non-false output level is weight-marginal: its per-node values are
-/// semiring weights, and a weight of zero does not mean the node has no model.
-///
-/// # Examples
-///
-/// ```
-/// use std::sync::Arc;
-/// use tididi::{Tdd, Vtree};
-/// use tididi::query::is_sat_minimized;
-/// use tididi::reduce::minimize;
-///
-/// let tree = Arc::new(Vtree::balanced(2));
-/// let mut f = Tdd::clause(&tree, [1]) & Tdd::clause(&tree, [-1]);
-/// minimize(&mut f);
-/// assert!(!is_sat_minimized(&f));
-/// # tididi::test_helpers::assert_canonical(&f);
-/// ```
-pub fn is_sat_minimized(f: &Tdd) -> bool {
-    // `ZERO` sentinel means the diagram computes the constant-false function.
-    if f.is_zero() {
-        return false;
+impl Tdd {
+    /// Check satisfiability from the output of a minimized diagram.
+    ///
+    /// Structural diagrams need no minimization. Diagrams with count-marginal
+    /// levels must be minimized first so zero-count contributions are removed;
+    /// a count-marginal root answers from its stored count. Literal weights on
+    /// structural levels do not affect the answer. This query allocates no scratch.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::IncompatibleWeights`](crate::OperationError::IncompatibleWeights)
+    /// for a non-false weight-marginal output: a zero weight does not establish
+    /// unsatisfiability. False diagrams always return `Ok(false)`.
+    pub fn is_sat_minimized(&self) -> Result<bool, crate::OperationError> {
+        if self.is_zero() { return Ok(false); }
+        let out_vtree = self.output.vtree;
+        let out_level = &self.levels[out_vtree.idx()];
+        if out_level.is_weight_marginal() {
+            return Err(crate::OperationError::IncompatibleWeights);
+        }
+        if self.vtree.node(out_vtree).is_leaf() { return Ok(true); }
+        let out_i = self.output.local.idx();
+        if let Some(counts) = out_level.marginal_counts() { return Ok(counts[out_i] > 0); }
+        Ok(out_level.pairs_iter_of(&out_level.nodes[out_i]).next().is_some())
     }
-    let out_vtree = f.output.vtree;
-    let out_level = &f.levels[out_vtree.idx()];
-    assert!(
-        !out_level.is_weight_marginal(),
-        "is_sat_minimized: the output level {:?} is weight-marginal; \
-         its values are weights, which do not decide satisfiability",
-        out_vtree
-    );
-    if f.vtree.node(out_vtree).is_leaf() {
-        // Implicit leaf: any index in {One=0, Pos=1, Neg=2} is satisfiable.
-        return true;
+}
+
+impl Engine {
+    /// Run [`Tdd::is_sat_minimized`] after checking this batch's stop condition.
+    ///
+    /// Returns the query's errors or [`OperationError::Stopped`](crate::OperationError::Stopped).
+    pub fn is_sat_minimized(&self, f: &Tdd) -> Result<bool, crate::OperationError> {
+        let _op = self.limits().begin_operation();
+        if self.limits().should_stop() { return Err(crate::OperationError::Stopped); }
+        f.is_sat_minimized()
     }
-    let out_i = f.output.local.idx();
-    if let Some(counts) = out_level.marginal_counts() {
-        // A count of `u128::MAX` stands for a larger exact count, still > 0.
-        return counts[out_i] > 0;
-    }
-    let out_node = &out_level.nodes[out_i];
-    out_level.pairs_iter_of(out_node).next().is_some()
 }
 
 /// True iff the diagram's output node is satisfiable, computed by a full
 /// Boolean bottom-up pass: the model counter's traversal with every count
-/// collapsed to `> 0`, so it agrees with `model_count(f) > 0` on every input,
+/// collapsed to `> 0`, so it agrees with `f.model_count()? > 0` on every input,
 /// including a non-canonical diagram whose output node's pairs all bottom out
-/// in zero-count children. [`is_sat_minimized`] is the O(1) form for a
+/// in zero-count children. [`Tdd::is_sat_minimized`] is the O(1) form for a
 /// minimized diagram.
 pub(crate) fn is_sat_structural(f: &Tdd) -> bool {
     if f.is_zero() {

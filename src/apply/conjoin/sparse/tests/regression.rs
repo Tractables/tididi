@@ -13,8 +13,8 @@ use crate::apply::conjoin::conjoin_owned;
 use super::{ForcedThresholds, SparseThresholds};
 use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;
-use crate::reduce::{try_reduce, ReductionPlan};
-use crate::query::model_count;
+use crate::reduce::{ReductionPlan};
+
 use crate::test_helpers::{brute_force_count, literals, normalized_levels, test_cases};
 use crate::diagram::Tdd;
 use crate::test_helpers::check::check_all_fast;
@@ -63,7 +63,7 @@ impl Sparse {
         for clause in clauses {
             let cl = clause_to_tdd(&self.eng, vtree, &literals(clause));
             acc = self.and(acc, cl, None);
-            try_reduce(&self.eng, &mut acc, ReductionPlan::default())
+            self.eng.reduce(&mut acc, ReductionPlan::default())
                 .expect("an unarmed engine refuses nothing");
         }
         acc
@@ -76,7 +76,7 @@ fn two_operand_apply(sparse: &Sparse, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) 
     let f = sparse.compile(vtree, &clauses[..mid]);
     let g = sparse.compile(vtree, &clauses[mid..]);
     let mut result = sparse.and(f, g, None);
-    try_reduce(&sparse.eng, &mut result, ReductionPlan::default()).expect("minimize");
+    sparse.eng.reduce(&mut result, ReductionPlan::default()).expect("minimize");
     result
 }
 
@@ -113,7 +113,7 @@ fn leaf_alive_stick_vtree() {
     ];
     let vtree = Arc::new(Vtree::linear(5));
     let tdd = sparse.compile(&vtree, &clauses);
-    assert_eq!(model_count(&tdd), BigUint::from(brute_force_count(5, &clauses)));
+    assert_eq!(tdd.model_count().unwrap(), BigUint::from(brute_force_count(5, &clauses)));
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn leaf_alive_two_operand_apply_stick() {
     let sparse = Sparse::always();
     let vtree = Arc::new(Vtree::linear(8));
     let mut result = two_operand_apply(&sparse, &vtree, &stick());
-    assert_eq!(model_count(&result), BigUint::from(brute_force_count(8, &stick())));
+    assert_eq!(result.model_count().unwrap(), BigUint::from(brute_force_count(8, &stick())));
     check_minimize_soundness(&mut result, 3).expect("minimize soundness");
 }
 
@@ -138,7 +138,7 @@ fn dedup_balanced_vtree() {
     ];
     let vtree = Arc::new(Vtree::balanced(6));
     let mut tdd = sparse.compile(&vtree, &clauses);
-    assert_eq!(model_count(&tdd), BigUint::from(brute_force_count(6, &clauses)));
+    assert_eq!(tdd.model_count().unwrap(), BigUint::from(brute_force_count(6, &clauses)));
     check_all_fast(&tdd, "dedup_balanced_vtree");
     check_minimize_soundness(&mut tdd, 3).expect("minimize soundness");
 }
@@ -153,7 +153,7 @@ fn dedup_dense_formula() {
     ];
     let vtree = Arc::new(Vtree::balanced(4));
     let mut tdd = sparse.compile(&vtree, &clauses);
-    assert_eq!(model_count(&tdd), BigUint::from(brute_force_count(4, &clauses)));
+    assert_eq!(tdd.model_count().unwrap(), BigUint::from(brute_force_count(4, &clauses)));
     check_all_fast(&tdd, "dedup_dense_formula");
     check_minimize_soundness(&mut tdd, 3).expect("minimize soundness");
 }
@@ -166,7 +166,7 @@ fn all_test_cases_sparse() {
         for vtree in [Vtree::balanced(num_vars), Vtree::linear(num_vars)] {
             let vtree = Arc::new(vtree);
             assert_eq!(
-                model_count(&sparse.compile(&vtree, &clauses)),
+                (sparse.compile(&vtree, &clauses)).model_count().unwrap(),
                 expected,
                 "n={num_vars} clauses={clauses:?}"
             );
@@ -187,8 +187,8 @@ fn chunked_equivalence_all_cases() {
             let vtree = Arc::new(vtree);
             let chunked = chunking.compile(&vtree, &clauses);
             let unchunked = whole.compile(&vtree, &clauses);
-            assert_eq!(model_count(&chunked), expected, "chunked: n={num_vars} clauses={clauses:?}");
-            assert_eq!(model_count(&unchunked), expected, "unchunked: n={num_vars} clauses={clauses:?}");
+            assert_eq!(chunked.model_count().unwrap(), expected, "chunked: n={num_vars} clauses={clauses:?}");
+            assert_eq!(unchunked.model_count().unwrap(), expected, "unchunked: n={num_vars} clauses={clauses:?}");
         }
     }
 }
@@ -202,8 +202,8 @@ fn chunked_wide_formula() {
     let vtree = Arc::new(Vtree::balanced(14));
     let chunked = sparse.rechunked(256).compile(&vtree, &clauses);
     let unchunked = sparse.rechunked(usize::MAX).compile(&vtree, &clauses);
-    assert_eq!(model_count(&chunked), expected);
-    assert_eq!(model_count(&unchunked), expected);
+    assert_eq!(chunked.model_count().unwrap(), expected);
+    assert_eq!(unchunked.model_count().unwrap(), expected);
 }
 
 /// Alternating narrow and wide compiles on one thread reuse the sparse
@@ -218,12 +218,12 @@ fn workspace_has_no_stale_residue() {
     for (num_vars, clauses) in test_cases() {
         let vtree = Arc::new(Vtree::balanced(num_vars));
         assert_eq!(
-            model_count(&sparse.compile(&vtree, &clauses)),
+            (sparse.compile(&vtree, &clauses)).model_count().unwrap(),
             BigUint::from(brute_force_count(num_vars, &clauses)),
             "narrow: n={num_vars} clauses={clauses:?}"
         );
         assert_eq!(
-            model_count(&sparse.compile(&wide_vtree, &wide_clauses)),
+            (sparse.compile(&wide_vtree, &wide_clauses)).model_count().unwrap(),
             wide_expected,
             "wide formula after narrow compile: n={num_vars}"
         );
@@ -245,8 +245,8 @@ fn streaming_implicit_equivalence_all_cases() {
             let normal = dense.and(f.clone(), g.clone(), None);
             let targets = vec![true; vtree.num_nodes()];
             let streamed = dense.and(f, g, Some(&targets));
-            assert_eq!(model_count(&normal), expected, "dense: n={num_vars} clauses={clauses:?}");
-            assert_eq!(model_count(&streamed), expected, "streamed: n={num_vars} clauses={clauses:?}");
+            assert_eq!(normal.model_count().unwrap(), expected, "dense: n={num_vars} clauses={clauses:?}");
+            assert_eq!(streamed.model_count().unwrap(), expected, "streamed: n={num_vars} clauses={clauses:?}");
         }
     }
 }
@@ -260,12 +260,12 @@ fn mixed_sparse_dense_min_grid_sweep() {
     let expected = BigUint::from(brute_force_count(14, &clauses));
     let vtree = Arc::new(Vtree::balanced(14));
     let reference = Sparse::always().compile(&vtree, &clauses);
-    assert_eq!(model_count(&reference), expected);
+    assert_eq!(reference.model_count().unwrap(), expected);
     for min_grid in [2usize, 4, 8, 16] {
         let mut sparse = Sparse::always();
         sparse.thresholds.min_grid = min_grid;
         let tdd = sparse.compile(&vtree, &clauses);
-        assert_eq!(model_count(&tdd), expected, "min_grid={min_grid}");
+        assert_eq!(tdd.model_count().unwrap(), expected, "min_grid={min_grid}");
         assert_eq!(
             normalized_levels(&tdd),
             normalized_levels(&reference),

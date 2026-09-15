@@ -12,7 +12,7 @@ use crate::{OperationError, Engine, Tdd};
 fn a_stop_decision_cuts_the_rebuild() {
     let vtree = Arc::new(Vtree::balanced(4));
     let eng = stopping_engine();
-    let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+    let f = Tdd::clause(&vtree, [1, -2]).unwrap() & Tdd::clause(&vtree, [2, 3]).unwrap();
     assert_eq!(eng.and_clause(f, &[3.try_into().unwrap(), 4.try_into().unwrap()]).err(), Some(OperationError::Stopped));
 }
 
@@ -20,7 +20,7 @@ fn a_stop_decision_cuts_the_rebuild() {
 fn the_output_cap_counts_the_rebuilt_levels() {
     let vtree = Arc::new(Vtree::balanced(4));
     let eng = Engine::new();
-    let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+    let f = Tdd::clause(&vtree, [1, -2]).unwrap() & Tdd::clause(&vtree, [2, 3]).unwrap();
     let _armed = eng.limits().scope(LimitConfig::none().with_output_node_cap(Some(0)));
     assert_eq!(eng.and_clause(f, &[3.try_into().unwrap(), 4.try_into().unwrap()]).err(), Some(OperationError::OutputCap));
 }

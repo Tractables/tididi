@@ -2,22 +2,22 @@ use crate::engine::Engine;
 use crate::restructure::GraftError;
 use std::sync::Arc;
 
-use crate::reduce::minimize;
-use crate::query::model_count;
+
+
 use crate::diagram::Tdd;
 use crate::vtree::{VarId, Vtree, VtreeError};
 use crate::test_helpers::assert_canonical;
 
 fn count(t: &Tdd) -> u64 {
-    model_count(t).try_into().expect("small count")
+    t.model_count().unwrap().try_into().expect("small count")
 }
 
 #[test]
 fn graft_counts_the_product_times_two_per_spine_var() {
     let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]));
     let b = Arc::new(Vtree::linear_from_order(&[VarId(3), VarId(2)]));
-    let f = Tdd::clause(&a, [1, 2]); // 3 models over {x1, x2}
-    let g = Tdd::clause(&b, [3, -4]) & Tdd::clause(&b, [4]); // x3 ∧ x4: 1 model
+    let f = Tdd::clause(&a, [1, 2]).unwrap(); // 3 models over {x1, x2}
+    let g = Tdd::clause(&b, [3, -4]).unwrap() & Tdd::clause(&b, [4]).unwrap(); // x3 ∧ x4: 1 model
     assert_eq!((count(&f), count(&g)), (3, 1));
 
     let fg = Tdd::graft(vec![f.clone(), g.clone()], &[VarId(4), VarId(5)]).unwrap();
@@ -27,20 +27,20 @@ fn graft_counts_the_product_times_two_per_spine_var() {
 
     // Already canonical: minimize changes nothing.
     let mut m = fg.clone();
-    minimize(&mut m);
+    m.minimize().unwrap();
     assert_canonical(&m);
     assert_eq!(m.pair_count(), fg.pair_count());
 
     // The same conjunction on the same vtree, built through apply, agrees.
-    let f_on = Tdd::clause(&fg.vtree, [1, 2]);
-    let g_on = Tdd::clause(&fg.vtree, [3, -4]) & Tdd::clause(&fg.vtree, [4]);
+    let f_on = Tdd::clause(&fg.vtree, [1, 2]).unwrap();
+    let g_on = Tdd::clause(&fg.vtree, [3, -4]).unwrap() & Tdd::clause(&fg.vtree, [4]).unwrap();
     assert_eq!(count(&(f_on & g_on)), count(&fg));
 }
 
 #[test]
 fn graft_of_one_part_keeps_its_count_and_a_lone_spine_is_true() {
     let a = Arc::new(Vtree::balanced(3));
-    let f = Tdd::clause(&a, [1, -2, 3]);
+    let f = Tdd::clause(&a, [1, -2, 3]).unwrap();
     let same = Tdd::graft(vec![f.clone()], &[]).unwrap();
     assert!(same.vtree.same_tree(&a));
     assert_canonical(&same);
@@ -55,7 +55,7 @@ fn graft_of_one_part_keeps_its_count_and_a_lone_spine_is_true() {
 #[test]
 fn graft_rejects_overlap_and_nothing() {
     let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]));
-    let f = Tdd::clause(&a, [1]);
+    let f = Tdd::clause(&a, [1]).unwrap();
     assert_eq!(
         Tdd::graft(vec![f.clone(), f.clone()], &[]).err(),
         Some(GraftError::Vtree(VtreeError::OverlappingVariable(VarId(0))))
@@ -72,8 +72,8 @@ fn graft_with_layout_renames_local_parts_and_maps_their_levels() {
     let eng = Engine::new();
     // Two parts compiled in local spaces {0,1}, placed at globals {2,3} and {0,1}.
     let local = Arc::new(Vtree::balanced(2));
-    let f = Tdd::clause(&local, [1, 2]);
-    let g = Tdd::clause(&local, [-1]);
+    let f = Tdd::clause(&local, [1, 2]).unwrap();
+    let g = Tdd::clause(&local, [-1]).unwrap();
     let (t, layout) = Tdd::graft_over(
         &eng,
         vec![(f, vec![VarId(2), VarId(3)]), (g, vec![VarId(0), VarId(1)])],
@@ -98,9 +98,9 @@ fn graft_with_layout_renames_local_parts_and_maps_their_levels() {
 #[test]
 fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
     use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
-    use crate::marginal::marginalize_levels;
-    use crate::query::weighted_value;
-    use crate::query::evaluate;
+
+
+
     use crate::test_helpers::{compile_clauses, rat};
 
     let weight_of = |v: usize| LiteralWeights { negative: rat(v as i64 + 1, 7), positive: rat(2, v as i64 + 3) };
@@ -127,7 +127,7 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
         );
         let mut part = compile_clauses(&local, cs);
         part.set_weights(WeightStore::new(localized, Arithmetic::ExactRational)).unwrap();
-        marginalize_levels(&eng, &mut part, &[inner]).expect("no wall is installed in a test");
+        eng.marginalize_levels(&mut part, &[inner]).expect("no wall is installed in a test");
         assert!(part.levels[inner.idx()].is_weight_marginal(), "setup: a part must carry values");
         parts.push((part, l2g.clone()));
     }
@@ -154,19 +154,16 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
             compile_clauses(&vtree, &renamed)
         })
         .collect();
-    let want = evaluate(
-        &Tdd::graft(global_parts, &[VarId(6)]).expect("disjoint parts"),
-        &global,
-    );
+    let want = (Tdd::graft(global_parts, &[VarId(6)]).expect("disjoint parts")).evaluate(&global).unwrap();
 
     let got = |t: &Tdd| {
-        weighted_value(t)
+        t.weighted_value().unwrap()
             .expect("the merged diagram is weighted")
             .as_rational()
             .into_owned()
     };
     assert_eq!(got(&grafted), want, "the graft lost or misplaced a part's weights");
-    minimize(&mut grafted);
+    grafted.minimize().unwrap();
     assert_canonical(&grafted);
     assert_eq!(got(&grafted), want, "reduction after the graft moved the store off its levels");
 }
@@ -184,8 +181,8 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
 #[test]
 fn a_part_whose_levels_still_read_the_store_keeps_it() {
     use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, TddBuildError, WeightStore};
-    use crate::marginal::marginalize_levels;
-    use crate::query::weighted_value;
+
+
     use crate::test_helpers::{compile_clauses, rat};
 
     let eng = Engine::new();
@@ -197,7 +194,7 @@ fn a_part_whose_levels_still_read_the_store_keeps_it() {
     let store = || WeightStore::new(table.clone(), Arithmetic::ExactRational);
     let clauses = [vec![1, 2], vec![2, -3]];
     let value = |t: &Tdd| {
-        weighted_value(t).expect("a weighted diagram has a value").as_rational().into_owned()
+        t.weighted_value().unwrap().expect("a weighted diagram has a value").as_rational().into_owned()
     };
 
     // Held aside and given back, which is what the component graft does.
@@ -216,7 +213,7 @@ fn a_part_whose_levels_still_read_the_store_keeps_it() {
     // A marginalized level's values live in the store, so the detach is refused.
     let mut part = compile_clauses(&local, &clauses);
     part.set_weights(store()).unwrap();
-    marginalize_levels(&eng, &mut part, &[inner]).expect("no wall is installed in a test");
+    eng.marginalize_levels(&mut part, &[inner]).expect("no wall is installed in a test");
     assert!(part.levels[inner.idx()].is_weight_marginal(), "setup: the part must carry values");
     let want = value(&part);
     match part.take_weights() {
@@ -233,8 +230,8 @@ fn a_part_whose_levels_still_read_the_store_keeps_it() {
 fn a_false_part_makes_the_graft_false() {
     let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]));
     let b = Arc::new(Vtree::balanced_over(&[VarId(2), VarId(3)]));
-    let f = Tdd::clause(&a, [1, 2]);
-    let g = Tdd::clause(&b, [3]) & Tdd::clause(&b, [-3]);
+    let f = Tdd::clause(&a, [1, 2]).unwrap();
+    let g = Tdd::clause(&b, [3]).unwrap() & Tdd::clause(&b, [-3]).unwrap();
     assert!(g.is_zero());
 
     let fg = Tdd::graft(vec![f, g], &[VarId(4)]).unwrap();

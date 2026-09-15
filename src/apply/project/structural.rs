@@ -14,7 +14,7 @@
 use crate::diagram::Changed;
 use crate::engine::Engine;
 use crate::limits::{OperationError, PollGate};
-use crate::reduce::{try_reduce, ReductionPlan};
+use crate::reduce::{ReductionPlan};
 use crate::diagram::{EncodedChildRef, ChildDecoder, ChildPair, Tdd};
 use crate::diagram::sort_pairs;
 use crate::vtree::{VtreeIdx, VtreeNode};
@@ -74,7 +74,7 @@ pub(super) fn exists_var_structural(
     work.emitted += 1;
     lim.level_done(work.emitted)?;
     lim.flush_poll(&mut work.gate)?;
-    try_reduce(eng, &mut tdd, ReductionPlan::default())?;
+    eng.reduce(&mut tdd, ReductionPlan::default())?;
     Ok(tdd)
 }
 

@@ -9,7 +9,7 @@
 //! [`Tdd::equivalent`](crate::Tdd::equivalent) compares Boolean functions;
 //! [`Tdd::implies`](crate::Tdd::implies) tests entailment.
 //! [`Tdd::support`](crate::Tdd::support) returns variables that affect the
-//! function, while [`implied_literals`] finds literals true in every model.
+//! function, while [`Tdd::implied_literals`](crate::Tdd::implied_literals) finds literals true in every model.
 //! Each item states its structural or minimization requirements.
 //!
 //! [`Tdd::evaluate`](crate::Tdd::evaluate) accepts an
@@ -19,8 +19,7 @@
 //! weights attached to a diagram, including stored marginal values, using the
 //! [`Arithmetic`](crate::diagram::Arithmetic) chosen for its store.
 //!
-//! Checked diagram methods return errors; convenience functions
-//! use the vtree context and document their panic behavior.
+//! Diagram queries return errors and use their vtree context automatically.
 
 pub(crate) mod count;
 pub(crate) mod fold;
@@ -31,14 +30,9 @@ pub(crate) mod weighted;
 mod boolean;
 
 pub use count::{
-    node_counts_u128, KeepAllColumns, ColumnRetention,
+    KeepAllColumns, ColumnRetention,
     KeepFrontier, ModelCounter, Retention, PinSemantics,
 };
-pub(crate) use count::model_count;
-pub use sat::is_sat_minimized;
-pub use evaluate::evaluate;
-pub use support::implied_literals;
-pub use weighted::weighted_value;
 
 #[cfg(test)]
 mod tests;

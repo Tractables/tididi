@@ -61,7 +61,7 @@ pub fn model_count_snapshot(tdd: &Tdd) -> Option<BigUint> {
     if tdd.weights().is_some() {
         return None;
     }
-    Some(crate::query::model_count(tdd))
+    Some(tdd.model_count().unwrap())
 }
 
 /// Assert the model count is unchanged vs a prior [`model_count_snapshot`]. Panics with
@@ -79,7 +79,7 @@ pub fn assert_model_count_preserved(tdd: &Tdd, before: Option<BigUint>, op: &str
         return;
     }
     let Some(before) = before else { return };
-    let after = crate::query::model_count(tdd);
+    let after = tdd.model_count().unwrap();
     if after != before {
         // Surface the multiplicative factor (×2 for the m139 doubler) when it
         // divides cleanly, to make the signature unmistakable in the panic.

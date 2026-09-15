@@ -25,23 +25,23 @@ use super::{IoError, TDD_FORMAT_VERSION};
 /// # use std::sync::Arc;
 /// # use tididi::{Engine, Tdd};
 /// # use tididi::io::IoError;
-/// # use tididi::marginal::marginalize_levels;
+/// #
 /// # use tididi::vtree::Vtree;
 /// # let vtree = Arc::new(Vtree::balanced(4));
 /// # let engine = Engine::new();
 /// # let (left, _right) = vtree.children(vtree.root());
-/// # let f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
+/// # let f = Tdd::clause(&vtree, [1, -2])? & Tdd::clause(&vtree, [2, 3])?;
 /// use tididi::io::{load_tdd, save_tdd};
 ///
 /// let path = std::env::temp_dir().join("tididi-doc-save.tdd");
 /// save_tdd(&f, &path).unwrap();
 /// let g = load_tdd(&path, &vtree).unwrap();
-/// assert_eq!(g.model_count(), f.model_count());
+/// assert_eq!(g.model_count()?, f.model_count()?);
 /// std::fs::remove_file(&path).unwrap();
 ///
 /// // A diagram with a level summed out has no structural form to write.
 /// let mut m = f.clone();
-/// marginalize_levels(&engine, &mut m, &[left]).unwrap();
+/// engine.marginalize_levels(&mut m, &[left]).unwrap();
 /// match save_tdd(&m, &path) {
 ///     Ok(()) => unreachable!("a marginal level cannot be written"),
 ///     Err(IoError::Format(msg)) => assert!(!msg.is_empty()),
@@ -49,6 +49,7 @@ use super::{IoError, TDD_FORMAT_VERSION};
 ///     Err(other) => unreachable!("{other}"),
 /// }
 /// assert!(!path.exists());   // nothing was created
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn save_tdd(f: &Tdd, path: impl AsRef<Path>) -> Result<(), IoError> {
     // Checked before `File::create` so a rejected diagram leaves no stray file.

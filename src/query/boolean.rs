@@ -6,66 +6,16 @@ use crate::vtree::{VarId, VtreeNode};
 use crate::{Engine, Literal, OperationError, Tdd};
 use rustc_hash::FxHashMap;
 
-impl Tdd {
-    /// One assignment satisfying this structural diagram, or `None` if it is false.
-    ///
-    /// Assigns every vtree variable, including free variables; borrows the diagram
-    /// and needs no minimization. The selected model is unspecified. Uses a
-    /// shared vtree context; [`Engine::satisfying_assignment`] is the checked form.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Tdd, Vtree};
-    ///
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::cube(&tree, [1, -2]);
-    /// let assignment = f.satisfying_assignment().unwrap();
-    /// assert_eq!(assignment.len(), 3);
-    /// let selected = f.clone() & Tdd::cube(&tree, &assignment);
-    /// assert_eq!(selected.model_count(), 1u32.into());
-    /// assert!(Tdd::zero(&tree).satisfying_assignment().is_none());
-    /// # tididi::test_helpers::assert_canonical(&f);
-    /// # tididi::test_helpers::assert_canonical(&selected);
-    /// ```
-    ///
-    /// # Panics
-    ///
-    /// Panics on any error reported by [`Engine::satisfying_assignment`], including
-    /// discarded structure or allocation failure.
-    pub fn satisfying_assignment(&self) -> Option<Vec<Literal>> {
-        self.try_satisfying_assignment()
-            .expect("satisfying_assignment: use Engine::satisfying_assignment to handle errors")
-    }
-}
-
 impl Engine {
-    /// Whether two structural diagrams compute the same Boolean function.
+    /// Run [`Tdd::equivalent`](crate::Tdd::equivalent) using this batch's scratch and resource limits.
     ///
-    /// Borrows both operands, checks their shared vtree, then minimizes checked
-    /// copies and compares their structure independently of local node numbering
-    /// and pair order. Literal weights do not affect Boolean equality. This
-    /// avoids constructing a Boolean product; temporary storage is proportional
-    /// to the diagrams, with sorting of each node's pairs. Copies are minimized
-    /// even if the caller has already minimized the originals.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// A vtree/root mismatch, a marginal level, or an allocation or stop refusal.
-    /// Both inputs remain unchanged.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let x = engine.literal(&tree, 1)?;
-    /// let y = engine.literal(&tree, 2)?;
-    /// let xy = engine.and(x.clone(), y.clone())?;
-    /// let absorbed = engine.or(x.clone(), xy)?;
-    /// assert!(engine.equivalent(&x, &absorbed)?); // x OR (x AND y) = x
-    /// assert!(!engine.equivalent(&x, &y)?); // equal counts do not imply equality
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`].
     pub fn equivalent(&self, f: &Tdd, g: &Tdd) -> Result<bool, OperationError> {
         crate::apply::check_conjunction_operands(f, g)?;
         f.require_structure()?;
@@ -82,33 +32,21 @@ impl Engine {
         }
         let mut f = f.try_clone_on(self)?;
         let mut g = g.try_clone_on(self)?;
-        crate::reduce::try_minimize(self, &mut f)?;
-        crate::reduce::try_minimize(self, &mut g)?;
+        self.minimize(&mut f)?;
+        self.minimize(&mut g)?;
         same_minimized(self, &f, &g)
     }
 
-    /// Whether every model of `f` is a model of `g`.
+    /// Run [`Tdd::implies`](crate::Tdd::implies) using this batch's scratch and resource limits.
     ///
-    /// Borrows structural operands over the same vtree and ignores literal
-    /// weights. Checks whether `f AND NOT g` is false using checked copies;
-    /// its intermediate diagram can be larger than either operand.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// The compatibility, structure and resource errors of [`Engine::equivalent`],
-    /// plus the component operations' output-node cap. Inputs remain unchanged.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let both = engine.cube(&tree, [1, 2])?;
-    /// let x = engine.literal(&tree, 1)?;
-    /// assert!(engine.implies(&both, &x)?);
-    /// assert!(!engine.implies(&x, &both)?);
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
+    /// [`OperationError::OutputCap`].
     pub fn implies(&self, f: &Tdd, g: &Tdd) -> Result<bool, OperationError> {
         crate::apply::check_conjunction_operands(f, g)?;
         f.require_structure()?;
@@ -127,52 +65,28 @@ impl Engine {
         Ok(self.and(f, self.negate(g)?)?.is_zero())
     }
 
-    /// Variables whose values can change the Boolean function, sorted by ID.
+    /// Run [`Tdd::support`](crate::Tdd::support) using this batch's scratch and resource limits.
     ///
-    /// Minimizes a checked copy, then reads its referenced leaf labels. Constants
-    /// have empty support. Free variables carried by the vtree are excluded;
-    /// [`Engine::implied_literals`] instead asks which
-    /// literals hold in every model. Weights do not affect support.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// A marginal level or an allocation or cancellation refusal. The borrowed
-    /// input remains unchanged.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// use tididi::vtree::VarId;
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = engine.clause(&tree, [1, 2])?;
-    /// assert_eq!(engine.support(&f)?, vec![VarId(0), VarId(1)]); // z is free
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`].
     pub fn support(&self, f: &Tdd) -> Result<Vec<VarId>, OperationError> {
         self.collect_leaf_labels(f, |var, labels| labels.depends().then_some(var), |var| *var)
     }
 
-    /// Literals true in every satisfying assignment, sorted by variable ID.
+    /// Run [`Tdd::implied_literals`](crate::Tdd::implied_literals) using this batch's scratch and resource limits.
     ///
-    /// This is the function's backbone. Borrows a structural diagram, minimizes
-    /// a checked copy and scans its referenced leaf labels; attached weights are
-    /// ignored. Both constant functions return an empty list. The input need not
-    /// be minimized and remains unchanged on success or error.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// A marginal level or an allocation or cancellation refusal.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Literal, Vtree};
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = engine.and(engine.clause(&tree, [1, 2])?, engine.clause(&tree, [1, -2])?)?;
-    /// assert_eq!(engine.implied_literals(&f)?, vec![Literal::try_from(1)?]);
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`].
     pub fn implied_literals(&self, f: &Tdd) -> Result<Vec<Literal>, OperationError> {
         self.collect_leaf_labels(f, |var, labels| labels.implied(var), |literal| literal.var)
     }
@@ -190,7 +104,7 @@ impl Engine {
         if lim.should_stop() { return Err(OperationError::Stopped); }
         if f.is_zero() { return Ok(Vec::new()); }
         let mut f = f.try_clone_on(self)?;
-        crate::reduce::try_minimize(self, &mut f)?;
+        self.minimize(&mut f)?;
         let mut result = Vec::new();
         let mut gate = PollGate::new(lim.reduce_poll_stride());
         super::support::visit_leaf_labels(&f, |work| lim.poll(&mut gate, work), |var, labels| {
@@ -204,30 +118,15 @@ impl Engine {
         Ok(result)
     }
 
-    /// One total satisfying assignment, or `None` if the function is false.
+    /// Run [`Tdd::satisfying_assignment`](crate::Tdd::satisfying_assignment) using this batch's scratch and resource limits.
     ///
-    /// Returns one literal per vtree variable, sorted by ID, including free
-    /// variables. Traverses one pair at each visited internal node and assigns
-    /// false at free leaves; the chosen model can change after minimization or
-    /// restructuring. The structural input need not be minimized, and literal
-    /// weights are ignored. The walk and temporary space are linear in the vtree;
-    /// sorting the returned literals takes O(n log n) for n variables.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// A marginal level or an allocation or cancellation refusal; input is unchanged.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Literal, Vtree};
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = engine.cube(&tree, [1, -2])?;
-    /// let model = engine.satisfying_assignment(&f)?.unwrap();
-    /// assert_eq!(model, vec![Literal::try_from(1)?, Literal::try_from(-2)?, Literal::try_from(-3)?]);
-    /// assert!(engine.implies(&engine.cube(&tree, model)?, &f)?);
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`].
     pub fn satisfying_assignment(&self, f: &Tdd) -> Result<Option<Vec<Literal>>, OperationError> {
         f.require_structure()?;
         let lim = self.limits();

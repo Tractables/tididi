@@ -97,10 +97,10 @@ must also establish the determinism contract documented on that type.
 [the TDD paper, Section 5]: https://arxiv.org/html/2604.05537v1#S5
 [`Vtree`]: crate::Vtree
 [`Tdd`]: crate::Tdd
-[`minimize`]: crate::reduce::minimize
+[`minimize`]: crate::Tdd::minimize
 [`Tdd::rotation_search`]: crate::Tdd::rotation_search
 [`Tdd::equivalent`]: crate::Tdd::equivalent
-[`marginalize_levels`]: crate::marginal::marginalize_levels
+[`marginalize_levels`]: crate::Tdd::marginalize_levels
 [`WeightStore`]: crate::diagram::WeightStore
 [`Tdd::output`]: crate::Tdd::output
 [`Tdd::is_zero`]: crate::Tdd::is_zero

@@ -1,6 +1,6 @@
 use super::*;
 use crate::engine::Engine;
-use crate::reduce::minimize;
+
 use crate::test_helpers::{assert_canonical, brute_force_count};
 use crate::vtree::Vtree;
 use num_bigint::BigUint;
@@ -11,7 +11,7 @@ fn fold_cnf(_eng: &Engine, vtree: &Arc<Vtree>, cnf: &[Vec<i32>]) -> Tdd {
     let mut acc = Tdd::one(vtree);
     for clause in cnf {
         let literals: Vec<Literal> = clause.iter().map(|&l| l.try_into().unwrap()).collect();
-        acc = apply_and_clause(acc, &literals);
+        acc = acc.and_clause(&literals).unwrap();
     }
     acc
 }
@@ -19,7 +19,7 @@ fn fold_cnf(_eng: &Engine, vtree: &Arc<Vtree>, cnf: &[Vec<i32>]) -> Tdd {
 /// The canonical form of a fold result, which the rebuild leaves un-minimized.
 fn assert_fold_is_valid(acc: &Tdd) {
     let mut canonical = acc.clone();
-    minimize(&mut canonical);
+    canonical.minimize().unwrap();
     assert_canonical(&canonical);
 }
 
@@ -47,7 +47,7 @@ fn clause_rebuild_exact_when_output_far_below_worst_case() {
     let acc = fold_cnf(&eng, &Arc::new(Vtree::random(n, 7)), &cnf);
     let expected = BigUint::from(brute_force_count(n, &cnf));
     assert!(expected > BigUint::from(0u32), "fixture must stay satisfiable");
-    assert_eq!(acc.model_count(), expected);
+    assert_eq!(acc.model_count().unwrap(), expected);
     assert_fold_is_valid(&acc);
 }
 
@@ -70,7 +70,7 @@ fn both_relevant_rebuild_exact_under_demand_reserve() {
         vec![-3, 4, -5],
     ];
     let acc = fold_cnf(&eng, &Arc::new(Vtree::random(n, 3)), &cnf);
-    assert_eq!(acc.model_count(), BigUint::from(brute_force_count(n, &cnf)));
+    assert_eq!(acc.model_count().unwrap(), BigUint::from(brute_force_count(n, &cnf)));
     assert_fold_is_valid(&acc);
 }
 
@@ -82,7 +82,7 @@ fn a_clause_reuses_the_single_node_input_arena() {
     let nodes = input.level(tree.root()).nodes().as_ptr();
     let result = Engine::new().and_clause(input, &[1.try_into().unwrap()]).unwrap();
     assert_canonical(&result);
-    assert_eq!(result.model_count(), 128u32.into());
+    assert_eq!(result.model_count().unwrap(), 128u32.into());
     assert_eq!(result.level(tree.root()).nodes().as_ptr(), nodes);
 }
 
@@ -100,6 +100,6 @@ fn a_clause_reuses_empty_input_pair_capacity() {
     let pairs = level.pairs.as_ptr();
     let result = eng.and_clause(input, &[2.try_into().unwrap()]).unwrap();
     assert_canonical(&result);
-    assert_eq!(result.model_count(), 64u32.into());
+    assert_eq!(result.model_count().unwrap(), 64u32.into());
     assert_eq!(result.level(tree.root()).pairs.as_ptr(), pairs);
 }

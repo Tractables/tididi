@@ -13,7 +13,7 @@ fn test_minimize_constant_one() {
     let eng = &crate::engine::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let mut tdd = constant_one(eng, &vtree);
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
     assert_canonical(&tdd);
     // Internal levels each hold one node; leaf levels stay implicit.
     for (t, _left, _right) in vtree.internal_bottomup() {
@@ -27,10 +27,10 @@ fn test_minimize_single_clause() {
     let vtree = Arc::new(Vtree::balanced(3));
     let clause = vec![Literal::pos(VarId(0))];
     let mut tdd = clause_to_tdd(eng, &vtree, &clause);
-    let count_before = model_count(&tdd);
-    minimize(&mut tdd);
+    let count_before = tdd.model_count().unwrap();
+    tdd.minimize().unwrap();
     assert_canonical(&tdd);
-    let count_after = model_count(&tdd);
+    let count_after = tdd.model_count().unwrap();
     assert_eq!(count_before, count_after);
 }
 
@@ -47,10 +47,10 @@ fn test_minimize_reduces_width_after_apply() {
 
     let width_before = result.max_width();
 
-    let count_before = model_count(&result);
-    minimize(&mut result);
+    let count_before = result.model_count().unwrap();
+    result.minimize().unwrap();
     assert_canonical(&result);
-    let count_after = model_count(&result);
+    let count_after = result.model_count().unwrap();
 
     // Width should not increase after minimization
     assert!(
@@ -73,10 +73,10 @@ fn test_minimize_preserves_unsat() {
     let t1 = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
     let mut result = apply_and(t1, t2);
-    minimize(&mut result);
+    result.minimize().unwrap();
     assert_canonical(&result);
 
-    assert_eq!(model_count(&result), 0u64.into());
+    assert_eq!(result.model_count().unwrap(), 0u64.into());
 }
 
 #[test]
@@ -92,10 +92,10 @@ fn test_minimize_unsat_2vars_width() {
     let t2 = clause_to_tdd(eng, &vtree, &g);
     let mut result = apply_and(t1, t2);
 
-    minimize(&mut result);
+    result.minimize().unwrap();
     assert_canonical(&result);
 
-    assert_eq!(model_count(&result), 0u64.into());
+    assert_eq!(result.model_count().unwrap(), 0u64.into());
     assert_eq!(
         result.max_width(),
         0,
@@ -117,10 +117,10 @@ fn test_minimize_unsat_3vars_width() {
     let t2 = clause_to_tdd(eng, &vtree, &g);
     let mut result = apply_and(t1, t2);
 
-    minimize(&mut result);
+    result.minimize().unwrap();
     assert_canonical(&result);
 
-    assert_eq!(model_count(&result), 0u64.into());
+    assert_eq!(result.model_count().unwrap(), 0u64.into());
     assert_eq!(
         result.max_width(),
         0,
@@ -142,10 +142,10 @@ fn test_minimize_sat_2vars_reduces_width() {
     let t2 = clause_to_tdd(eng, &vtree, &g);
     let mut result = apply_and(t1, t2);
 
-    let count_before = model_count(&result);
-    minimize(&mut result);
+    let count_before = result.model_count().unwrap();
+    result.minimize().unwrap();
     assert_canonical(&result);
-    let count_after = model_count(&result);
+    let count_after = result.model_count().unwrap();
 
     assert_eq!(count_before, count_after);
     // With pruned clause diagrams, the product may already be minimal (width 1).
@@ -277,11 +277,11 @@ fn a_variable_the_function_ignores_leaves_no_literal_references_behind() {
 
     let vtree = Arc::new(Vtree::balanced(2));
     let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![1, -2]]);
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
     assert_canonical(&tdd);
 
     // `a` over two variables: `a` true, `b` free.
-    assert_eq!(model_count(&tdd), 2u64.into());
+    assert_eq!(tdd.model_count().unwrap(), 2u64.into());
 
     let b_leaf = vtree.leaf_of(VarId(1)).expect("the vtree carries this variable");
     for level_idx in 0..vtree.num_nodes() {
@@ -328,17 +328,17 @@ fn a_second_minimize_changes_nothing() {
     for (i, clauses) in formulas.iter().enumerate() {
         let clauses: Vec<Vec<i32>> = clauses.iter().map(|c| c.to_vec()).collect();
         let mut tdd = compile_clauses(&vtree, &clauses);
-        minimize(&mut tdd);
+        tdd.minimize().unwrap();
         assert_canonical(&tdd);
         let size = tdd.pair_count();
-        let count = model_count(&tdd);
+        let count = tdd.model_count().unwrap();
         check_determinism(&tdd)
             .unwrap_or_else(|e| panic!("formula {i}: determinism after the first minimize: {e}"));
 
-        minimize(&mut tdd);
+        tdd.minimize().unwrap();
         assert_canonical(&tdd);
         assert_eq!(tdd.pair_count(), size, "formula {i}: the second minimize shrank the diagram");
-        assert_eq!(model_count(&tdd), count, "formula {i}: the model count moved");
+        assert_eq!(tdd.model_count().unwrap(), count, "formula {i}: the model count moved");
         check_determinism(&tdd)
             .unwrap_or_else(|e| panic!("formula {i}: determinism after the second minimize: {e}"));
     }

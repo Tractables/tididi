@@ -3,9 +3,9 @@
 //! The fixtures these read are in `mod.rs`.
 
 use std::sync::Arc;
-use crate::reduce::minimize;
+
 use crate::reduce::prune::prune_unreachable;
-use crate::query::model_count;
+
 use crate::test_helpers::{assert_canonical, compile_clauses};
 use crate::diagram::EncodedNode;
 use crate::vtree::Vtree;
@@ -18,13 +18,13 @@ use crate::vtree::Vtree;
         let eng = &crate::engine::Engine::new();
         let vtree = Arc::new(Vtree::balanced(4));
         let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![3, -4]]);
-        minimize(&mut tdd);
+        tdd.minimize().unwrap();
         assert_canonical(&tdd);
 
         let size0 = tdd.pair_count();
         let total0 = tdd.node_count();
         let maxw0 = tdd.max_width();
-        let mc0 = model_count(&tdd);
+        let mc0 = tdd.model_count().unwrap();
         assert!(total0 > 0);
 
         let target = tdd
@@ -39,7 +39,7 @@ use crate::vtree::Vtree;
         assert_eq!(tdd.pair_count(), size0);
         assert_eq!(tdd.node_count(), total0);
         assert_eq!(tdd.max_width(), maxw0);
-        assert_eq!(model_count(&tdd), mc0);
+        assert_eq!(tdd.model_count().unwrap(), mc0);
         assert_eq!(tdd.levels[target].slot_count(), len_before + 1);
         assert_eq!(tdd.levels[target].live_slot_count(), len_before);
         assert!(tdd.levels[target].nodes.last().unwrap().is_tombstone());
@@ -51,7 +51,7 @@ use crate::vtree::Vtree;
         assert_eq!(tdd.pair_count(), size0);
         assert_eq!(tdd.node_count(), total0);
         assert_eq!(tdd.max_width(), maxw0);
-        assert_eq!(model_count(&tdd), mc0);
+        assert_eq!(tdd.model_count().unwrap(), mc0);
     }
 
 /// The prune's one diagram-proportional scratch buffer is reserved through the
@@ -66,19 +66,19 @@ fn the_prune_scratch_reservation_goes_through_the_engine() {
     // Refused: the diagram is left exactly as it was.
     let eng = &crate::engine::Engine::new();
     let mut tdd = compile_clauses(&vtree, &clauses);
-    minimize(&mut tdd);
-    let (size_before, mc_before) = (tdd.pair_count(), model_count(&tdd));
+    tdd.minimize().unwrap();
+    let (size_before, mc_before) = (tdd.pair_count(), tdd.model_count().unwrap());
     eng.limits().refuse_nth_reserve(0);
     let refused = prune_unreachable(eng, &mut tdd);
     eng.limits().grant_every_reserve();
     assert!(refused.is_err(), "the armed injection must refuse the scratch reservation");
     assert_eq!(tdd.pair_count(), size_before, "a refused prune must not touch the diagram");
-    assert_eq!(model_count(&tdd), mc_before, "a refused prune must not touch the count");
+    assert_eq!(tdd.model_count().unwrap(), mc_before, "a refused prune must not touch the count");
 
     // Granted: the bytes the scratch takes are charged.
     let eng = &crate::engine::Engine::new();
     let mut tdd = compile_clauses(&vtree, &clauses);
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
     eng.limits().reset_meters();
     prune_unreachable(eng, &mut tdd).expect("a tiny scratch reservation cannot fail");
     assert!(

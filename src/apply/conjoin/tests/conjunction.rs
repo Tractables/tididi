@@ -7,8 +7,8 @@ use super::sparse::is_self_conjunction;
 use crate::test_helpers::assert_canonical;
 use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;
-use crate::reduce::minimize;
-use crate::query::model_count;
+
+
 use crate::diagram::Tdd;
 use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree};
@@ -25,11 +25,11 @@ fn test_apply_and_with_constant_one() {
     // 1 ∧ clause = clause (after minimize)
     let mut expected = clause_tdd.clone();
     let mut result = apply_and(one, clause_tdd);
-    minimize(&mut result);
-    minimize(&mut expected);
+    result.minimize().unwrap();
+    expected.minimize().unwrap();
     assert_canonical(&result);
     // Both should have the same model count (2^2 = 4 models satisfying x0)
-    assert_eq!(model_count(&result), model_count(&expected));
+    assert_eq!(result.model_count().unwrap(), expected.model_count().unwrap());
 
     // Structural check (not just count-equality): a count-preserving bug that
     // returns a re-canonicalized-but-DIFFERENT diagram for `1 ∧ clause` would
@@ -58,10 +58,10 @@ fn test_apply_and_two_clauses() {
     let t1 = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
     let mut result = apply_and(t1, t2);
-    minimize(&mut result);
+    result.minimize().unwrap();
     assert_canonical(&result);
     // x0=1 AND x1=0: 2 models (x2 can be 0 or 1)
-    assert_eq!(model_count(&result), BigUint::from(2u32));
+    assert_eq!(result.model_count().unwrap(), BigUint::from(2u32));
 }
 
 #[test]
@@ -75,9 +75,9 @@ fn test_apply_and_contradictory() {
     let t1 = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
     let mut result = apply_and(t1, t2);
-    minimize(&mut result);
+    result.minimize().unwrap();
     assert_canonical(&result);
-    assert_eq!(model_count(&result), BigUint::ZERO);
+    assert_eq!(result.model_count().unwrap(), BigUint::ZERO);
 }
 
 
@@ -91,18 +91,18 @@ fn test_apply_and_self_conjunction() {
     let mut tdd = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
     tdd = apply_and(tdd, t2);
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
 
-    let expected_mc = model_count(&tdd);
+    let expected_mc = tdd.model_count().unwrap();
     let expected_size = tdd.pair_count();
 
     // Conjoin with a clone of itself.
     let copy = tdd.clone();
     let mut result = apply_and(tdd, copy);
-    minimize(&mut result);
+    result.minimize().unwrap();
 
     assert_canonical(&result);
-    assert_eq!(model_count(&result), expected_mc);
+    assert_eq!(result.model_count().unwrap(), expected_mc);
     assert_eq!(result.pair_count(), expected_size);
 }
 
@@ -116,15 +116,15 @@ fn test_apply_and_self_conjunction_owned() {
     let mut tdd = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
     tdd = apply_and(tdd, t2);
-    minimize(&mut tdd);
+    tdd.minimize().unwrap();
 
-    let expected_mc = model_count(&tdd);
+    let expected_mc = tdd.model_count().unwrap();
     let copy = tdd.clone();
     let mut result = apply_and(tdd, copy);
-    minimize(&mut result);
+    result.minimize().unwrap();
 
     assert_canonical(&result);
-    assert_eq!(model_count(&result), expected_mc);
+    assert_eq!(result.model_count().unwrap(), expected_mc);
 }
 
 #[test]
@@ -148,7 +148,7 @@ fn test_apply_and_stick_vtree_reachability() {
     for clause in &clauses1 {
         let cl = clause_to_tdd(eng, &vtree, clause);
         f = apply_and(f, cl);
-        minimize(&mut f);
+        f.minimize().unwrap();
     }
 
     let clauses2 = [
@@ -161,11 +161,11 @@ fn test_apply_and_stick_vtree_reachability() {
     for clause in &clauses2 {
         let cl = clause_to_tdd(eng, &vtree, clause);
         g = apply_and(g, cl);
-        minimize(&mut g);
+        g.minimize().unwrap();
     }
 
     let mut result = apply_and(f, g);
-    minimize(&mut result);
+    result.minimize().unwrap();
     assert_canonical(&result);
 
     // Brute-force: count assignments satisfying both formulas.
@@ -175,7 +175,7 @@ fn test_apply_and_stick_vtree_reachability() {
         && (!v(0) || v(1)) && (v(2) || v(4)) && (!v(3) || !v(5)) && (v(6) || !v(7))
     }).count();
 
-    assert_eq!(model_count(&result), BigUint::from(expected as u64));
+    assert_eq!(result.model_count().unwrap(), BigUint::from(expected as u64));
 }
 
 /// A canonical marginal operand cannot meet another that still constrains its discarded structure.
@@ -184,10 +184,10 @@ fn conjunction_rejects_a_constrained_marginal_level() {
     let eng = crate::Engine::new();
     let tree = Arc::new(Vtree::balanced(4));
     let left = tree.children(tree.root()).0;
-    let mut marginal = Tdd::clause(&tree, [1, 3]);
-    crate::marginal::marginalize_levels(&eng, &mut marginal, &[left]).unwrap();
+    let mut marginal = Tdd::clause(&tree, [1, 3]).unwrap();
+    eng.marginalize_levels(&mut marginal, &[left]).unwrap();
     crate::test_helpers::assert_canonical(&marginal);
-    let structural = Tdd::clause(&tree, [1, 2]);
+    let structural = Tdd::clause(&tree, [1, 2]).unwrap();
     crate::test_helpers::assert_canonical(&structural);
     for (f, g) in [(&marginal, &structural), (&structural, &marginal)] {
         assert_eq!(eng.and(f.clone(), g.clone()).unwrap_err(), OperationError::MarginalLevel(left));
@@ -263,8 +263,8 @@ fn conjunction_checks_the_final_root_on_the_preallocated_path() {
     use crate::{Engine, OperationError, Tdd};
     use crate::limits::LimitConfig;
     let tree = Arc::new(Vtree::balanced(2));
-    let f = Tdd::clause(&tree, [1, 2]);
-    let g = Tdd::clause(&tree, [1, -2]);
+    let f = Tdd::clause(&tree, [1, 2]).unwrap();
+    let g = Tdd::clause(&tree, [1, -2]).unwrap();
     let eng = Engine::new();
     {
         let _scope = eng

@@ -24,10 +24,10 @@ use crate::build::constant_one;
 use crate::diagram::{Literal, Tdd};
 use crate::engine::Engine;
 use crate::marginal::marginalize_closure;
-use crate::query::weighted_value;
+
 use crate::diagram::RationalWeights;
-use crate::query::model_count;
-use crate::reduce::minimize;
+
+
 use crate::restructure::relevel::restructure_inner_search;
 use crate::vtree::RotationKind;
 use crate::restructure::scratch::RestructureScratch;
@@ -41,7 +41,7 @@ fn build_by_folding(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<Literal>]) 
     for c in clauses {
         acc = apply_and(acc, clause_to_tdd(eng, vtree, c));
     }
-    minimize(&mut acc);
+    acc.minimize().unwrap();
     acc
 }
 
@@ -64,7 +64,7 @@ fn build_by_tournament(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<Literal>
         round = next;
     }
     let mut out = round.pop().expect("the tournament ends with one diagram");
-    minimize(&mut out);
+    out.minimize().unwrap();
     out
 }
 
@@ -80,7 +80,7 @@ fn build_by_rotation_round_trip(
     for c in clauses.iter().rev() {
         acc = apply_and(acc, clause_to_tdd(eng, vtree, c));
     }
-    minimize(&mut acc);
+    acc.minimize().unwrap();
 
     let mut vt = (**vtree).clone();
     let root = vt.root();
@@ -90,12 +90,12 @@ fn build_by_rotation_round_trip(
     acc.reseat_vtree(&Arc::new(vt.clone()));
     let mut scratch = RestructureScratch::default();
     restructure_inner_search(&mut acc, &left, RotationKind::Left, &mut scratch, usize::MAX)?;
-    minimize(&mut acc);
+    acc.minimize().unwrap();
 
     let right = rotate_right(&mut vt, root).expect("a left rotation leaves the root right-rotatable");
     acc.reseat_vtree(&Arc::new(vt));
     restructure_inner_search(&mut acc, &right, RotationKind::Right, &mut scratch, usize::MAX)?;
-    minimize(&mut acc);
+    acc.minimize().unwrap();
     let nodes = |v: &Vtree| -> Vec<crate::vtree::VtreeNode> {
         (0..v.num_nodes()).map(|i| v.node(crate::vtree::VtreeIdx(i as u32)).clone()).collect()
     };
@@ -119,7 +119,7 @@ fn weighted_unit_value(eng: &Engine, vtree: &Arc<Vtree>, f: &Tdd) -> BigRational
         Arithmetic::ExactRational,
     )).unwrap();
     marginalize_closure(eng, &mut w).expect("no wall is installed in a test");
-    exact_weight(&weighted_value(&w).expect("a fully marginalized weighted diagram has a value"))
+    exact_weight(&w.weighted_value().unwrap().expect("a fully marginalized weighted diagram has a value"))
 }
 
 /// Random 3-ish-CNFs over a small variable count, as clause literal lists.
@@ -180,7 +180,7 @@ fn every_route_to_one_function_minimizes_to_the_same_diagram() {
                     );
                     rotated += 1;
                 }
-                let mc = model_count(&folded);
+                let mc = folded.model_count().unwrap();
                 assert_eq!(
                     weighted_unit_value(&eng, &vtree, &folded),
                     BigRational::from(BigInt::from(mc)),

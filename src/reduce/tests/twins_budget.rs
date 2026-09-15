@@ -6,7 +6,7 @@ use super::*;
 
 use crate::engine::Engine;
 use crate::limits::OperationError;
-use crate::query::model_count;
+
 use crate::diagram::{
     ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId, take_levels,
 };
@@ -69,14 +69,14 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
     for nth in 0..RESERVES_PER_CONTRACTION {
         let eng = Engine::new();
         let (_vtree, mut tdd) = two_twin_groups();
-        let count_before = model_count(&tdd);
+        let count_before = tdd.model_count().unwrap();
         eng.limits().refuse_nth_reserve(nth);
         let res = contract_all_twins(&eng, &mut tdd);
         eng.limits().grant_every_reserve();
         if res.is_err() {
             refusals += 1;
             assert_eq!(
-                model_count(&tdd),
+                tdd.model_count().unwrap(),
                 count_before,
                 "OverBudget at reserve {nth} must leave the model count unchanged",
             );
@@ -297,9 +297,7 @@ fn test_contract_leaf_twins_overbudget_leaves_the_level_queued_and_unchanged() {
 #[test]
 fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     use crate::reduce::slot_prune::prune_value_slots;
-    use crate::test_helpers::check::marginal::{
-        check_no_orphan_slots, check_twin_canonicality, check_slot_count_uniqueness,
-    };
+    use crate::test_helpers::check::marginal::{check_no_orphan_slots, check_twin_canonicality, check_slot_count_uniqueness};
     use crate::diagram::ValueRef;
     use crate::vtree::VtreeNode;
 
@@ -420,7 +418,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     // values_merged > 0, the fix re-seeds and re-contracts, prune next pass
     // reports 0 -> loop exits.
     tdd.seed_contract_worklist([root_idx.0]);
-    try_reduce(&eng, &mut tdd, ReductionPlan::default()).expect("try_reduce must not OOM");
+    eng.reduce(&mut tdd, ReductionPlan::default()).expect("try_reduce must not OOM");
     // The content-twin scan is not run by try_reduce's normal path, so
     // call the canonicalization machinery directly so the assertions hold.
     canonicalize_content_twins(&eng, &mut tdd).unwrap();

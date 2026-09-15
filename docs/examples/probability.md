@@ -35,8 +35,8 @@ automatically when we combine or evaluate them.
 
 ```rust,ignore
 let tree = Arc::new(Vtree::balanced(3));
-let rain = Tdd::literal(&tree, 1);
-let sprinkler = Tdd::literal(&tree, 2);
+let rain = Tdd::literal(&tree, 1)?;
+let sprinkler = Tdd::literal(&tree, 2)?;
 // Wet grass is the observation: rain OR sprinkler. Variable 3 (wind) is free.
 let wet = or(rain.clone(), sprinkler)?;
 let rain_and_wet = and(rain.clone(), wet.clone())?;

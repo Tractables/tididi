@@ -20,65 +20,21 @@ use super::fold::{fold_bottom_up, LevelFold, PairAlgebra, Side};
 use crate::limits::{OperationError, PollGate};
 
 impl Engine {
-    /// Evaluate a structural diagram in a caller-supplied algebra.
+    /// Run [`Tdd::evaluate`](crate::Tdd::evaluate) using this batch's scratch and resource limits.
     ///
-    /// For literal weights, evaluation sums the weight of every satisfying
-    /// assignment; an assignment's weight is the product of its literal weights.
-    /// Nonnegative weights that sum to one for each variable define independent
-    /// Bernoulli probabilities. Other weight tables give an unnormalized weighted
-    /// sum, not necessarily a probability.
-    ///
-    /// The exact-weight example uses `BigRational` from the `num-rational` crate.
-    /// Add it as a direct dependency to use that type in your application:
-    ///
-    /// ```sh
-    /// cargo add num-rational@0.4
-    /// ```
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use num_rational::BigRational;
-    /// use tididi::{Engine, Vtree};
-    /// use tididi::diagram::{LiteralWeights, RationalWeights};
-    ///
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let f = engine.clause(&tree, [1, 2])?;
-    /// let half = BigRational::new(1.into(), 2.into());
-    /// let weights = RationalWeights::from_literals(&vec![
-    ///     LiteralWeights { negative: half.clone(), positive: half }; 2
-    /// ]);
-    /// assert_eq!(engine.evaluate(&f, &weights)?, BigRational::new(3.into(), 4.into()));
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
-    ///
-    /// The diagram is borrowed and need not be minimized. Every vtree variable is
-    /// folded, including free variables through its `One` value. All values come
-    /// from `algebra`, independently of an attached weight store; another call can
-    /// use another table without rebuilding the diagram. A [`RationalWeights`]
-    /// table must have an entry for every variable named by the tree.
-    ///
-    /// For a conditional probability, evaluate the conjunction of query and evidence
-    /// and divide by the evidence's value using the same weights; zero evidence
-    /// value leaves the conditional probability undefined. [`EvalAlgebra`] shows
-    /// how to supply other arithmetic. A zero value alone does not establish
-    /// unsatisfiability, since weights can be zero or cancel.
+    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
-    /// [`OperationError::MarginalLevel`] for a summed-out level,
-    /// [`OperationError::OverBudget`] for a refused buffer reservation, or
-    /// [`OperationError::Stopped`] for an armed stop. The diagram is unchanged.
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`].
     ///
-    /// Column buffers are charged to the best-effort byte budget and released once
-    /// the parent consumes them; allocations inside algebra values are not charged.
-    /// Stops are checked at entry, at amortized node boundaries, and before return;
-    /// an individual algebra callback or node fold cannot be interrupted.
-    ///
-    /// # Panics
-    ///
-    /// Panics from the caller's algebra propagate, including an out-of-range lookup
-    /// when a literal weight table does not cover a vtree variable.
+    /// Column buffers are charged to the byte budget and released after their
+    /// parent consumes them; allocations inside algebra values are not charged.
+    /// Stops are checked at entry, at amortized node boundaries and before return.
+    /// An individual algebra callback or node fold cannot be interrupted.
+    /// Caller algebra panics propagate as described on the diagram method.
     pub fn evaluate<S: EvalAlgebra>(&self, tdd: &Tdd, algebra: &S) -> Result<S::Value, OperationError> {
         let lim = self.limits();
         let _op = lim.begin_operation();
@@ -140,7 +96,7 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
     /// Unreachable under the precondition. A marginal level stores model counts,
     /// and an arbitrary algebra has no way to say what a count is worth: the
     /// algebra promises a value per leaf, not an embedding of ℕ. Weighted
-    /// evaluation of a marginal diagram is `query::weighted_value`, which
+    /// evaluation of a marginal diagram is `Tdd::weighted_value`, which
     /// reads the store the weighted marginalization wrote.
     fn marginal_column(&self, _eng: &Engine, _tdd: &Tdd, t: VtreeIdx, _col: &mut Vec<S::Value>) -> Result<(), OperationError> {
         unreachable!(
