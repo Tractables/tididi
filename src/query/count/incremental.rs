@@ -135,23 +135,24 @@ mod sealed {
 /// pin changes, only levels on its path to the root need recomputation.
 /// [`KeepFrontier`] uses less retained storage by freeing child counts after
 /// their parent is computed, and performs a fresh fold for each changed query.
-/// Updates are deferred until [`try_model_count`](Self::try_model_count).
+/// Updates are deferred until [`model_count`](Self::model_count).
+/// [`Tdd::counter`] selects retained columns and evidence semantics; use
+/// [`ModelCounter::new`] to choose another policy or convention.
 ///
 /// ```
 /// use std::sync::Arc;
 /// use tididi::Tdd;
-/// use tididi::query::{ModelCounter, KeepAllColumns, PinSemantics};
 /// use tididi::vtree::{VarId, Vtree};
 /// let tree = Arc::new(Vtree::balanced(4));
-/// let f = Tdd::clause(&tree, [1, -2]);
-/// let mut counter = ModelCounter::<KeepAllColumns>::try_new(&f, PinSemantics::Evidence)?;
-/// assert_eq!(counter.try_model_count()?, 12u32.into());
+/// let f = Tdd::clause(&tree, [1, -2])?;
+/// let mut counter = f.counter()?;
+/// assert_eq!(counter.model_count()?, 12u32.into());
 /// counter.set_pin(VarId(0), Some(true))?;
-/// assert_eq!(counter.try_model_count()?, 8u32.into());
+/// assert_eq!(counter.model_count()?, 8u32.into());
 /// counter.set_pin(VarId(0), Some(false))?;
-/// assert_eq!(counter.try_model_count()?, 4u32.into());
+/// assert_eq!(counter.model_count()?, 4u32.into());
 /// counter.set_pin(VarId(0), None)?;
-/// assert_eq!(counter.try_model_count()?, 12u32.into());
+/// assert_eq!(counter.model_count()?, 12u32.into());
 /// # tididi::test_helpers::assert_canonical(&f);
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
@@ -167,13 +168,12 @@ mod sealed {
 /// ```compile_fail
 /// use std::sync::Arc;
 /// use tididi::Tdd;
-/// use tididi::query::{ModelCounter, KeepAllColumns, PinSemantics};
 /// use tididi::vtree::Vtree;
 /// let tree = Arc::new(Vtree::balanced(2));
-/// let mut f = Tdd::clause(&tree, [1]);
-/// let mut counter = ModelCounter::<KeepAllColumns>::new(&f, PinSemantics::Evidence);
-/// tididi::reduce::minimize(&mut f);
-/// counter.model_count();
+/// let mut f = Tdd::clause(&tree, [1]).unwrap();
+/// let mut counter = f.counter().unwrap();
+/// f.minimize().unwrap();
+/// counter.model_count().unwrap();
 /// ```
 pub struct ModelCounter<'a, R: Retention> {
     tdd: &'a Tdd,
@@ -183,6 +183,41 @@ pub struct ModelCounter<'a, R: Retention> {
     convention: PinSemantics,
     evaluated: bool,
     _marker: PhantomData<R>,
+}
+
+impl Tdd {
+    /// Create an unpinned counter that retains columns for repeated counts under evidence.
+    ///
+    /// Pins restrict the assignments counted without changing this diagram.
+    /// After a pin changes, the next count refreshes only its ancestor levels.
+    /// The counter borrows this diagram and uses its shared execution context.
+    /// See [`ModelCounter`] for pin semantics, storage and examples.
+    /// Use [`ModelCounter::new`] to choose another retention policy or pin convention.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::IncompatibleWeights`] for weighted marginal levels
+    /// or [`OperationError::OverBudget`] if counter storage cannot be reserved.
+    pub fn counter(&self) -> Result<ModelCounter<'_, KeepAllColumns>, OperationError> {
+        ModelCounter::new(self, PinSemantics::Evidence)
+    }
+}
+
+impl Engine {
+    /// Create a counter with [`Tdd::counter`] semantics under this engine's limits.
+    ///
+    /// Construction uses this engine for allocation and stop checks. Use
+    /// [`ModelCounter::model_count_on`] for subsequent counts under this engine's
+    /// limits; [`ModelCounter::model_count`] uses the diagram's context instead.
+    /// Use [`ModelCounter::new_on`] to choose another retention policy or pin convention.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors from [`Tdd::counter`], or [`OperationError::Stopped`]
+    /// for an armed stop.
+    pub fn counter<'a>(&self, tdd: &'a Tdd) -> Result<ModelCounter<'a, KeepAllColumns>, OperationError> {
+        ModelCounter::new_on(self, tdd, PinSemantics::Evidence)
+    }
 }
 
 impl<R: Retention> std::fmt::Debug for ModelCounter<'_, R> {
@@ -197,24 +232,6 @@ impl<R: Retention> std::fmt::Debug for ModelCounter<'_, R> {
 }
 
 impl<'a, R: Retention> ModelCounter<'a, R> {
-    /// Allocate a counter, panicking on an error from [`Self::try_new`].
-    ///
-    /// # Panics
-    ///
-    /// Panics on a weighted marginal level, a reservation refusal or an armed stop.
-    pub fn new(tdd: &'a Tdd, convention: PinSemantics) -> Self {
-        Self::try_new(tdd, convention).expect("ModelCounter::new: operation refused")
-    }
-
-    /// Allocate a counter using an explicit workspace, panicking on an error from [`Self::try_new_on`].
-    ///
-    /// # Panics
-    ///
-    /// Panics on a weighted marginal level, a reservation refusal or an armed stop.
-    pub fn new_on(eng: &Engine, tdd: &'a Tdd, convention: PinSemantics) -> Self {
-        Self::try_new_on(eng, tdd, convention).expect("ModelCounter::new_on: operation refused")
-    }
-
     /// Create an initially unpinned counter using the diagram's shared execution context.
     ///
     /// Pin storage is proportional to the tree's size, including for sparse
@@ -233,24 +250,24 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// use tididi::query::{ModelCounter, KeepAllColumns, PinSemantics};
     /// use tididi::vtree::VarId;
     /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&tree, [1, 2]);
+    /// let f = Tdd::clause(&tree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
-    /// let mut counter = ModelCounter::<KeepAllColumns>::try_new(
+    /// let mut counter = ModelCounter::<KeepAllColumns>::new(
     ///     &f, PinSemantics::Evidence)?;
     /// counter.set_pin(VarId(0), Some(false))?;
-    /// assert_eq!(counter.try_model_count()?, 2u32.into());
+    /// assert_eq!(counter.model_count()?, 2u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn try_new(tdd: &'a Tdd, convention: PinSemantics) -> Result<Self, OperationError> {
-        tdd.vtree().context().run(|eng| Self::try_new_on(eng, tdd, convention))
+    pub fn new(tdd: &'a Tdd, convention: PinSemantics) -> Result<Self, OperationError> {
+        tdd.vtree().context().run(|eng| Self::new_on(eng, tdd, convention))
     }
 
     /// Create an initially unpinned counter under an explicit workspace's limits.
     ///
     /// # Errors
     ///
-    /// Returns the same errors as [`Self::try_new`], using `eng` for allocation and stop checks.
-    pub fn try_new_on(eng: &Engine, tdd: &'a Tdd, convention: PinSemantics) -> Result<Self, OperationError> {
+    /// Returns the same errors as [`Self::new`], using `eng` for allocation and stop checks.
+    pub fn new_on(eng: &Engine, tdd: &'a Tdd, convention: PinSemantics) -> Result<Self, OperationError> {
         Self::allocate(eng, tdd, tdd.vtree.num_leaves() as usize, convention)
     }
 
@@ -293,12 +310,12 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// let tree = Arc::new(Vtree::leaf(VarId(7)));
     /// let f = Tdd::one(&tree);
     /// # tididi::test_helpers::assert_canonical(&f);
-    /// let mut counter = ModelCounter::<KeepAllColumns>::try_new(&f, PinSemantics::Evidence)?;
+    /// let mut counter = ModelCounter::<KeepAllColumns>::new(&f, PinSemantics::Evidence)?;
     /// counter.set_pin(VarId(7), Some(true))?;
-    /// assert_eq!(counter.try_model_count()?, 1u32.into());
+    /// assert_eq!(counter.model_count()?, 1u32.into());
     /// assert_eq!(counter.set_pin(VarId(0), Some(true)), Err(OperationError::VariableNotInVtree(VarId(0))));
     /// counter.set_pin(VarId(7), None)?;
-    /// assert_eq!(counter.try_model_count()?, 2u32.into());
+    /// assert_eq!(counter.model_count()?, 2u32.into());
     /// # Ok::<(), OperationError>(())
     /// ```
     pub fn set_pin(&mut self, var: VarId, val: Option<bool>) -> Result<(), OperationError> {
@@ -315,29 +332,11 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
         Ok(())
     }
 
-    /// Count using the diagram's context, panicking on an error from [`Self::try_model_count`].
-    ///
-    /// # Panics
-    ///
-    /// Panics on a reservation refusal or an armed stop.
-    pub fn model_count(&mut self) -> BigUint {
-        self.try_model_count().expect("ModelCounter::model_count: operation refused")
-    }
-
-    /// Count using an explicit workspace, panicking on an error from [`Self::try_model_count_on`].
-    ///
-    /// # Panics
-    ///
-    /// Panics on a reservation refusal or an armed stop.
-    pub fn model_count_on(&mut self, eng: &Engine) -> BigUint {
-        self.try_model_count_on(eng).expect("ModelCounter::model_count_on: operation refused")
-    }
-
     /// Refresh the current pins and count under the diagram context's allocation and stop rules.
     ///
-    /// Stops are checked even for a cached or constant answer, at amortized node
-    /// boundaries during a refresh, and before return. A refusal invalidates the
-    /// cached result; a later call recomputes before reading it. Pins are retained.
+    /// Stops are checked even for a cached or constant answer, during a refresh,
+    /// and before return. A refusal invalidates the cached result; a later call
+    /// recomputes before reading it. Pins are retained.
     /// The best-effort byte budget covers buffer growth during this call, not
     /// retained columns or allocations inside big-integer arithmetic.
     ///
@@ -345,17 +344,17 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     ///
     /// [`OperationError::OverBudget`] for a refused scratch or overflow-table
     /// reservation, or [`OperationError::Stopped`] for an armed stop.
-    pub fn try_model_count(&mut self) -> Result<BigUint, OperationError> {
+    pub fn model_count(&mut self) -> Result<BigUint, OperationError> {
         let tdd = self.tdd;
-        tdd.vtree().context().run(|eng| self.try_model_count_on(eng))
+        tdd.vtree().context().run(|eng| self.model_count_on(eng))
     }
 
     /// Refresh the current pins and count under an explicit workspace's limits.
     ///
     /// # Errors
     ///
-    /// Returns the same errors as [`Self::try_model_count`], using `eng` for allocation and stop checks.
-    pub fn try_model_count_on(&mut self, eng: &Engine) -> Result<BigUint, OperationError> {
+    /// Returns the same errors as [`Self::model_count`], using `eng` for allocation and stop checks.
+    pub fn model_count_on(&mut self, eng: &Engine) -> Result<BigUint, OperationError> {
         let lim = eng.limits();
         let _op = lim.begin_operation();
         let result = (|| {
