@@ -422,10 +422,10 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
 
 impl ModelCounter<'_, KeepAllColumns> {
     /// Compute and return every fast count slot, preserving overflow sentinels.
-    pub(crate) fn into_fast_counts(mut self, eng: &Engine) -> Vec<Vec<u128>> {
+    pub(crate) fn into_fast_counts(mut self, eng: &Engine) -> Result<Vec<Vec<u128>>, OperationError> {
         let _op = eng.limits().begin_operation();
         let mut gate = PollGate::new(eng.limits().reduce_poll_stride());
-        self.refresh(eng, &mut gate).expect("node_counts_u128: operation refused");
-        self.cols.into_iter().map(|c| c.into_parts().0).collect()
+        self.refresh(eng, &mut gate)?;
+        Ok(self.cols.into_iter().map(|c| c.into_parts().0).collect())
     }
 }
