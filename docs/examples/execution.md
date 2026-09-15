@@ -84,13 +84,25 @@ state and updates evidence without rebuilding the diagram:
 let mut counter = configurations.counter()?;
 counter.set_pin(tididi::vtree::VarId(1), Some(true))?;
 assert_eq!(counter.model_count()?, 4u32.into());
-counter.set_pin(tididi::vtree::VarId(1), None)?;
+```
+
+Variable 1 is remote backups; add disabled notifications as a second observation
+with [`set_pins`](crate::query::ModelCounter::set_pins), which validates the whole
+update before changing any pins:
+
+```rust,ignore
+counter.set_pins(&[
+    (tididi::vtree::VarId(1), Some(true)),
+    (tididi::vtree::VarId(3), Some(false)),
+])?;
+assert_eq!(counter.model_count()?, 2u32.into());
+counter.clear_pins();
 assert_eq!(counter.model_count()?, count);
 ```
 
-Here variable 1 is the second option, remote backups. Clearing its pin restores
-the original count. [`ModelCounter`](crate::query::ModelCounter) also offers
-explicit storage policies and cofactor semantics.
+[`clear_pins`](crate::query::ModelCounter::clear_pins) removes all observations;
+[`Tdd::counter_with`](crate::Tdd::counter_with) selects another storage policy or
+cofactor semantics.
 
 To count under batch limits, temporarily bind the existing counter to the
 supplied engine:

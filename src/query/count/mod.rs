@@ -30,20 +30,19 @@ pub use crate::value::ColumnRetention;
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{Engine, Tdd};
-/// use tididi::query::{KeepAllColumns, ModelCounter, PinSemantics};
+/// use tididi::{and, Tdd};
+/// use tididi::query::{KeepAllColumns, PinSemantics};
 /// use tididi::vtree::{VarId, Vtree};
 ///
-/// let engine = Engine::new();
 /// let tree = Arc::new(Vtree::balanced(2));
-/// let f = Tdd::clause(&tree, [1])? & Tdd::clause(&tree, [2])?;
+/// let f = and(Tdd::literal(&tree, 1)?, Tdd::literal(&tree, 2)?)?;
 /// # tididi::test_helpers::assert_canonical(&f);
 /// for (semantics, expected) in [(PinSemantics::Evidence, 1u32), (PinSemantics::Cofactor, 2)] {
-///     let mut counter = ModelCounter::<KeepAllColumns>::new(&f, semantics)?;
-///     counter.set_pin(VarId(0), Some(true)).unwrap();
+///     let mut counter = f.counter_with::<KeepAllColumns>(semantics)?;
+///     counter.set_pin(VarId(0), Some(true))?;
 ///     assert_eq!(counter.model_count()?, expected.into());
 /// }
-/// let cofactor = engine.condition_var(f, VarId(0), true).unwrap();
+/// let cofactor = f.condition_var(VarId(0), true)?;
 /// # tididi::test_helpers::assert_canonical(&cofactor);
 /// assert_eq!(cofactor.model_count()?, 2u32.into());
 /// # Ok::<(), Box<dyn std::error::Error>>(())

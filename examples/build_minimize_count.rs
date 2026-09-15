@@ -66,7 +66,12 @@ fn main() -> Result<(), tididi::OperationError> {
     let mut counter = configurations.counter()?;
     counter.set_pin(tididi::vtree::VarId(1), Some(true))?;
     assert_eq!(counter.model_count()?, 4u32.into());
-    counter.set_pin(tididi::vtree::VarId(1), None)?;
+    counter.set_pins(&[
+        (tididi::vtree::VarId(1), Some(true)),
+        (tididi::vtree::VarId(3), Some(false)),
+    ])?;
+    assert_eq!(counter.model_count()?, 2u32.into());
+    counter.clear_pins();
     assert_eq!(counter.model_count()?, count);
 
     // Temporarily use batch limits while retaining the counter for later queries.
