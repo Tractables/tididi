@@ -2,18 +2,13 @@
 
 use crate::diagram::ChildDecoder;
 
-use std::io::{BufWriter, Seek, Write};
+use std::io::{Write, BufWriter};
 use std::path::Path;
 
 use crate::diagram::Tdd;
 use crate::vtree::VtreeIdx;
 
 use super::{IoError, TDD_FORMAT_VERSION};
-
-/// Estimate output size in bytes: ~12 bytes per pair entry + overhead.
-fn estimate_size(tdd: &Tdd) -> usize {
-    tdd.pair_count() * 12 + 4096
-}
 
 /// Write a diagram to a file in `.tdd` text format, creating or truncating
 /// the file.
@@ -60,24 +55,9 @@ pub fn save_tdd(f: &Tdd, path: impl AsRef<Path>) -> Result<(), IoError> {
     super::reject_marginal_levels(f, "save_tdd")?;
 
     let file = std::fs::File::create(path.as_ref())?;
-
-    // Pre-size the file so the writes below do not each extend it. This is
-    // best-effort: an error leaves an ordinary growing write, and the
-    // truncation after the flush trims whatever was over-allocated.
-    let _ = file.set_len(estimate_size(f) as u64);
-
-    let mut w = BufWriter::with_capacity(8 << 20, file); // 8MB buffer
-    write_tdd(&mut w, f)?;
-    w.flush()?;
-
-    // Trim what the pre-sizing over-allocated. The write cursor is the number
-    // of bytes actually written; the file's length is still the pre-sized one,
-    // so reading the length here would keep the padding and hand the reader a
-    // tail of zero bytes.
-    let mut actual = w.into_inner().map_err(|e| e.into_error())?;
-    let written = actual.stream_position()?;
-    actual.set_len(written)?;
-
+    let mut writer = BufWriter::with_capacity(8 << 20, file);
+    write_tdd(&mut writer, f)?;
+    writer.flush()?;
     Ok(())
 }
 

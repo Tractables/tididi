@@ -84,8 +84,7 @@ fn save_tdd_refuses_a_marginal_diagram_without_creating_the_file() {
     );
 }
 
-/// The pre-sizing over-allocates, so the saved file must be trimmed to what was
-/// written: a tail of padding bytes is not a record and the reader refuses it.
+/// Saved bytes contain exactly the records accepted by the reader.
 #[test]
 fn a_saved_diagram_reads_back_without_a_tail_of_padding() {
     let vtree = Arc::new(crate::vtree::Vtree::balanced(8));
@@ -328,4 +327,51 @@ fn the_text_format_names_the_zero_constant_and_emits_no_nodes() {
 
     assert!(text.contains("ZERO"), "the output names the zero constant");
     assert_eq!(text.lines().filter(|l| l.starts_with("I ")).count(), 0);
+}
+
+#[test]
+fn saving_a_shorter_diagram_replaces_all_previous_contents() {
+    let tree = Arc::new(Vtree::balanced(8));
+    let one = Tdd::one(&tree);
+    let zero = Tdd::zero(&tree);
+    assert_canonical(&one);
+    assert_canonical(&zero);
+    let path = std::env::temp_dir().join("tididi_io_save_overwrite.tdd");
+    save_tdd(&one, &path).unwrap();
+    let old_length = std::fs::metadata(&path).unwrap().len();
+    save_tdd(&zero, &path).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let mut expected = Vec::new();
+    write_tdd(&mut expected, &zero).unwrap();
+    assert!(old_length > bytes.len() as u64);
+    assert_eq!(bytes, expected);
+    let restored = crate::io::read_tdd(&mut bytes.as_slice(), &tree).unwrap();
+    assert_canonical(&restored);
+    assert!(restored.is_zero());
+}
+
+#[test]
+fn stream_writing_propagates_partial_write_failures() {
+    struct FailingWriter { remaining: usize }
+    impl std::io::Write for FailingWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.remaining == 0 { return Err(std::io::ErrorKind::BrokenPipe.into()); }
+            let written = bytes.len().min(self.remaining);
+            self.remaining -= written;
+            Ok(written)
+        }
+        fn flush(&mut self) -> std::io::Result<()> { panic!("write_tdd must not flush its caller's writer") }
+    }
+    let tree = Arc::new(Vtree::balanced(8));
+    let f = Tdd::one(&tree);
+    assert_canonical(&f);
+    let mut expected = Vec::new();
+    write_tdd(&mut expected, &f).unwrap();
+    for remaining in [0, 1, expected.len() / 2, expected.len() - 1] {
+        let mut writer = FailingWriter { remaining };
+        let err = write_tdd(&mut writer, &f).unwrap_err();
+        assert!(matches!(err, crate::io::IoError::Io(e) if e.kind() == std::io::ErrorKind::BrokenPipe));
+    }
+    write_tdd(&mut FailingWriter { remaining: expected.len() }, &f).unwrap();
 }
