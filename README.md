@@ -73,7 +73,6 @@ operations for your own application, or continue with another complete example:
 | [probabilistic_query](examples/probabilistic_query.rs)<br>`cargo run --example probabilistic_query` | Compute the probability of rain given wet grass, then change the priors. |
 | [symbolic_reachability](examples/symbolic_reachability.rs)<br>`cargo run --example symbolic_reachability` | Find reachable states and check that a forbidden state cannot be reached. |
 | [statistic](examples/statistic.rs)<br>`cargo run --example statistic` | Traverse the stored nodes and pairs. |
-| [dimacs_count](examples/dimacs_count.rs)<br>`cargo run --example dimacs_count -- examples/tiny.cnf 5 6 --check` | Supply a DIMACS reader, compile its clauses, and count a projection. |
 
 For the concepts behind the API, read the [TDD data model]. The
 [API reference] documents each operation's input requirements, result, and
