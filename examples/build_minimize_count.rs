@@ -69,6 +69,13 @@ fn main() -> Result<(), tididi::OperationError> {
     counter.set_pin(tididi::vtree::VarId(1), None)?;
     assert_eq!(counter.model_count()?, count);
 
+    // Temporarily use batch limits while retaining the counter for later queries.
+    let query_limit = LimitConfig::none().with_memory_budget_bytes(Some(1_000_000));
+    let bounded_count = context.with_limits(query_limit, |operations| {
+        counter.bind(operations).model_count()
+    })?;
+    assert_eq!(bounded_count, count);
+
     context.clear_scratch();
     Ok(())
 }

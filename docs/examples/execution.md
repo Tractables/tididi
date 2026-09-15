@@ -92,6 +92,21 @@ Here variable 1 is the second option, remote backups. Clearing its pin restores
 the original count. [`ModelCounter`](crate::query::ModelCounter) also offers
 explicit storage policies and cofactor semantics.
 
+To count under batch limits, temporarily bind the existing counter to the
+supplied engine:
+
+```rust,ignore
+let query_limit = LimitConfig::none().with_memory_budget_bytes(Some(1_000_000));
+let bounded_count = context.with_limits(query_limit, |operations| {
+    counter.bind(operations).model_count()
+})?;
+assert_eq!(bounded_count, count);
+```
+
+The binding borrows the counter and engine; after the batch, the counter keeps
+its pins and cached state. [`Engine::counter`](crate::Engine::counter) creates
+a counter bound to that engine from the start.
+
 ## Release idle scratch
 
 When a batch of work ends, keeping the diagrams also keeps their shared context
