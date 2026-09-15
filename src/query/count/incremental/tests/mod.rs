@@ -71,3 +71,31 @@ fn panicking_refresh_keeps_dirty_membership_reusable() {
     }
     assert!(completed);
 }
+
+#[test]
+fn frontier_evidence_invalidates_without_retaining_a_dirty_worklist() {
+    let tree = Arc::new(Vtree::balanced(16));
+    let diagram = Tdd::one(&tree);
+    assert_canonical(&diagram);
+    let engine = Engine::new();
+    let mut counter = diagram.counter_with::<KeepFrontier>(PinSemantics::Evidence).unwrap();
+    assert_eq!(counter.changed.capacity(), 0);
+    assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32) << 16);
+    let pins: Vec<_> = (0..16).map(|v| (VarId(v), Some(false))).collect();
+    counter.set_pins(&pins).unwrap();
+    assert!(!counter.evaluated);
+    assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32));
+    // Repeating observations leaves the root cached, even if allocations would be refused.
+    engine.limits().refuse_nth_reserve(0);
+    counter.set_pins(&pins).unwrap();
+    assert!(counter.evaluated);
+    assert_eq!(counter.bind(&engine).model_count().unwrap(), BigUint::from(1u32));
+    engine.limits().grant_every_reserve();
+    counter.clear_pins();
+    assert!(!counter.evaluated);
+    assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32) << 16);
+    counter.clear_pins();
+    assert!(counter.evaluated);
+    assert_eq!(counter.changed.capacity(), 0);
+    assert!(counter.pins.iter().all(|pin| !pin.dirty));
+}

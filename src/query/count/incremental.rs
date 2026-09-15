@@ -436,7 +436,9 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
         let mut pins = Vec::new();
         lim.try_resize(&mut pins, pin_slots, PinState::default())?;
         let mut changed = Vec::new();
-        if pin_slots != 0 { lim.reserve_exact(&mut changed, pin_slots)?; }
+        if pin_slots != 0 && R::RETAIN == ColumnRetention::All {
+            lim.reserve_exact(&mut changed, pin_slots)?;
+        }
         if lim.should_stop() { return Err(OperationError::Stopped); }
         Ok(Self { tdd, cols, pins, changed, convention, evaluated: false, _marker: PhantomData })
     }
@@ -550,6 +552,13 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
 
     /// Update a validated leaf's pin and record its deferred refresh once.
     fn set_leaf_pin(&mut self, leaf: VtreeIdx, val: Option<bool>) {
+        if R::RETAIN == ColumnRetention::Frontier {
+            if self.pins[leaf.idx()].value != val {
+                self.pins[leaf.idx()].value = val;
+                self.evaluated = false;
+            }
+            return;
+        }
         if !self.evaluated {
             self.clear_changed();
             self.pins[leaf.idx()].value = val;
