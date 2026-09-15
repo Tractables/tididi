@@ -9,6 +9,7 @@ fn normalized(source: &str) -> String {
 fn walkthrough_code_comes_from_the_runnable_examples() {
     let examples = [
         ("configurations", include_str!("../docs/examples/configurations.md"), include_str!("../examples/build_minimize_count.rs")),
+        ("execution", include_str!("../docs/examples/execution.md"), include_str!("../examples/build_minimize_count.rs")),
         ("probability", include_str!("../docs/examples/probability.md"), include_str!("../examples/probabilistic_query.rs")),
         ("reachability", include_str!("../docs/examples/reachability.md"), include_str!("../examples/symbolic_reachability.rs")),
         ("persistence", include_str!("../docs/examples/persistence.md"), include_str!("../examples/save_reload.rs")),

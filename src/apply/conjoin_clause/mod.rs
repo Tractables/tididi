@@ -215,7 +215,7 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
     Ok(out)
 }
 
-/// Conjoin `clause` into `f` on a transient engine with no limits armed — the
+/// Conjoin `clause` into `f` using the vtree context with no limits armed — the
 /// preferred way to compile a CNF one clause at a time, seeding the accumulator
 /// with [`Tdd::one`].
 ///
@@ -259,12 +259,11 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
 /// Panics if a literal names a variable the vtree has no leaf for, or if a
 /// level on the clause's spine is marginal (its variables were summed out
 /// before every clause over them was in). Panics if the rebuild is refused;
-/// nothing is armed on the transient engine, so the only refusal left is the
+/// no resource limits are armed, so the only refusal left is the
 /// allocator's.
 #[must_use]
 pub fn apply_and_clause(f: Tdd, clause: &[Literal]) -> Tdd {
-    let eng = Engine::new();
-    conjoin_clause_owned(&eng, f, clause)
+    f.and_clause(clause)
         .expect("apply_and_clause: refused with no limits armed")
 }
 
@@ -290,8 +289,8 @@ pub(crate) fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal])
 impl Tdd {
     /// Build a canonical diagram for a single clause from DIMACS-style literals.
     ///
-    /// Sugar over [`Engine::clause`](crate::engine::Engine::clause), built on a
-    /// transient engine. Each item is converted with [`TryInto<Literal>`], so plain
+    /// Sugar over [`Engine::clause`](crate::engine::Engine::clause), using the
+    /// vtree context. Each item is converted with [`TryInto<Literal>`], so plain
     /// integers use the 1-based DIMACS sign convention (`1` → `x1`, `-2` → `¬x2`;
     /// see [`Literal`]).
     ///
@@ -313,8 +312,16 @@ impl Tdd {
     /// # let _ = f;
     /// ```
     pub fn clause(vtree: &Arc<Vtree>, literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>) -> Tdd {
-        Engine::new().clause(vtree, literals).expect("clause construction failed")
+        Self::try_clause(vtree, literals).expect("clause construction failed")
     }
+
+    /// Checked clause construction using the vtree's shared context.
+    ///
+    /// See [`Engine::clause`] for the literal conversion and error contracts.
+    pub fn try_clause(vtree: &Arc<Vtree>, literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>) -> Result<Tdd, OperationError> {
+        vtree.context().run(|eng| eng.clause(vtree, literals))
+    }
+
 }
 
 /// The clause entry points on a caller's engine.

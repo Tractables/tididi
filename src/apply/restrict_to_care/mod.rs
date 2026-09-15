@@ -111,7 +111,7 @@ struct Marking {
     root_live: bool,
 }
 
-/// Simplify `f` on the care set using a temporary engine with no installed limits.
+/// Simplify `f` on the care set using the vtree context with no installed limits.
 ///
 /// [`Engine::restrict_to_care`] gives the contract, an example, and the fallible
 /// form. Both operands are consumed; [`RestrictionOutcome::into_tdd`] extracts
@@ -122,7 +122,7 @@ struct Marking {
 /// Panics on any error reported by [`Engine::restrict_to_care`].
 #[must_use]
 pub fn restrict_to_care(f: Tdd, care: Tdd) -> RestrictionOutcome {
-    restrict_to_care_on(&Engine::new(), f, care).expect("restrict_to_care: refused with no limits armed")
+    f.restrict_to_care(care).expect("restrict_to_care: refused with no limits armed")
 }
 
 /// The restriction entry point on a caller's engine.

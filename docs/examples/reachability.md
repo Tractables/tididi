@@ -22,9 +22,8 @@ needed as a dependency.
 ```rust,ignore
 use std::sync::Arc;
 
-use tididi::apply::QuantificationStrategy;
 use tididi::vtree::VarId;
-use tididi::{Engine, OperationError, Tdd, Vtree};
+use tididi::{OperationError, Tdd, Vtree};
 ```
 
 ## Encode current and next states
@@ -42,17 +41,16 @@ in each pair:
 
 An edge is a cube: the conjunction of the four literals specifying its
 source and destination. The relation is the union of the three edge cubes.
-An engine reuses working memory throughout construction and the fixed-point
-loop:
+The shared vtree supplies reusable working memory throughout construction and
+the fixed-point loop:
 
 ```rust,ignore
-let engine = Engine::new();
 let tree = Arc::new(Vtree::balanced(4));
 // Variables 1,2 encode the current state; 3,4 encode the next state.
 // The first bit in each pair is least significant. Edges: 0 -> 1 -> 2 -> 1.
 let mut transition = Tdd::zero(&tree);
 for edge in [[-1, -2, 3, -4], [1, -2, -3, 4], [-1, 2, 3, -4]] {
-    transition = engine.or(transition, engine.cube(&tree, edge)?)?;
+    transition = transition.or(Tdd::try_cube(&tree, edge)?)?;
 }
 ```
 
@@ -61,7 +59,7 @@ Integer literals start at 1, with a negative sign for false. The `VarId`
 values used to quantify and rename variables start at 0:
 
 ```rust,ignore
-let mut reached = engine.cube(&tree, [-1, -2])?; // start at state 0
+let mut reached = Tdd::try_cube(&tree, [-1, -2])?; // start at state 0
 let current = [VarId(0), VarId(1)];
 let next_to_current = [(VarId(2), VarId(0)), (VarId(3), VarId(1))];
 let mut iterations = 0;
@@ -78,14 +76,13 @@ The image of a state set `R` under transition relation `T` is
 exactly when some state in `R` can reach it. Inside the loop:
 
 ```rust,ignore
-let successors = engine.and_exists(
-    reached.clone(),
-    transition.clone(),
-    &current,
-    QuantificationStrategy::Automatic,
-)?;
-let successors = engine.rename_vars(successors, &next_to_current)?;
-let enlarged = engine.or(reached.clone(), successors)?;
+let possible_steps = reached.clone().and(transition.clone())?;
+let successors = possible_steps.exists_vars(&current)?;
+```
+
+```rust,ignore
+let successors = successors.rename_vars(&next_to_current)?;
+let enlarged = reached.clone().or(successors)?;
 iterations += 1;
 ```
 
@@ -100,14 +97,14 @@ four assignments per state. The program reports state counts by removing that
 factor:
 
 ```rust,ignore
-let state_count = engine.model_count(&enlarged)? / 4u32;
+let state_count = enlarged.try_model_count()? / 4u32;
 println!("Iteration {iterations}: {state_count} reachable states");
 ```
 
 The loop compares the represented functions, rather than their storage:
 
 ```rust,ignore
-if engine.equivalent(&enlarged, &reached)? {
+if enlarged.equivalent(&reached)? {
     break;
 }
 reached = enlarged;
@@ -130,11 +127,11 @@ The progression is:
 State 3 is forbidden. Its complement should equal the reachable set:
 
 ```rust,ignore
-let forbidden = engine.cube(&tree, [1, 2])?;
-let safe = engine.negate(forbidden)?;
-assert!(engine.equivalent(&reached, &safe)?);
-assert!(engine.implies(&reached, &safe)?);
-assert_eq!(engine.model_count(&reached)?, 12u32.into());
+let forbidden = Tdd::try_cube(&tree, [1, 2])?;
+let safe = forbidden.negate()?;
+assert!(reached.equivalent(&safe)?);
+assert!(reached.implies(&safe)?);
+assert_eq!(reached.try_model_count()?, 12u32.into());
 println!("State 3 is unreachable");
 ```
 
@@ -147,18 +144,37 @@ unreachable.
 To find an assignment for state 2, intersect the target with the reachable set:
 
 ```rust,ignore
-let target = engine.cube(&tree, [-1, 2])?; // state 2
-let reachable_target = engine.and(reached, target)?;
-let witness = engine
-    .satisfying_assignment(&reachable_target)?
+let target = Tdd::try_cube(&tree, [-1, 2])?; // state 2
+let reachable_target = reached.and(target)?;
+let witness = reachable_target
+    .try_satisfying_assignment()?
     .expect("state 2 is reachable");
 ```
 
 The witness is a state assignment, not a sequence of transitions. Recovering a
 path requires retaining predecessor information during the search.
 
+## Combine the image operations
+
+Once the separate steps are familiar, [`Tdd::and_exists`](crate::Tdd::and_exists)
+expresses conjunction and quantification in one call. The example checks the
+two forms for equality at each iteration, before renaming:
+
+```rust,ignore
+let combined = reached.clone().and_exists(transition.clone(), &current)?;
+assert!(successors.equivalent(&combined)?);
+```
+
+Ordinary quantification selects its strategy automatically. If a particular
+workload needs the structural rewrite, use
+[`Tdd::exists_vars_with_strategy`](crate::Tdd::exists_vars_with_strategy) or
+[`Tdd::and_exists_with_strategy`](crate::Tdd::and_exists_with_strategy)
+with [`QuantificationStrategy::Structural`](crate::apply::QuantificationStrategy::Structural);
+the operation contracts describe its requirements. The represented Boolean
+function is the same.
+
 The [complete program](https://github.com/Tractables/tididi/blob/main/examples/symbolic_reachability.rs)
 includes the loop and decodes the witness back to state 2. For the contracts
 of the image and renaming operations, see
-[`Engine::and_exists`](crate::engine::Engine::and_exists) and
-[`Engine::rename_vars`](crate::engine::Engine::rename_vars).
+[`Tdd::and_exists`](crate::Tdd::and_exists) and
+[`Tdd::rename_vars`](crate::Tdd::rename_vars).

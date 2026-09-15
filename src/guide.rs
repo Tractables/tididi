@@ -8,6 +8,9 @@ pub mod examples {
     #[doc = include_str!("../docs/examples/configurations.md")]
     pub mod configurations {}
 
+    #[doc = include_str!("../docs/examples/execution.md")]
+    pub mod execution {}
+
     #[doc = include_str!("../docs/examples/probability.md")]
     pub mod probability {}
 

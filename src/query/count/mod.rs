@@ -32,17 +32,16 @@ pub use crate::value::ColumnRetention;
 /// [`Engine::model_count`](crate::Engine::model_count), which is this under a
 /// caller's limits.
 pub(crate) fn model_count(f: &Tdd) -> BigUint {
-    Engine::new()
-        .model_count(f)
-        .expect("a fresh engine arms no stop axis")
+    f.try_model_count()
+        .expect("model_count: operation refused")
 }
 
 /// The counting entry point on a diagram.
 impl Tdd {
     /// Exact unweighted model count of this diagram, as an arbitrary-precision integer.
     ///
-    /// Uses [`Engine::model_count`](crate::Engine::model_count) with a temporary
-    /// engine and no installed limits; that method states the counting contract.
+    /// Uses [`Engine::model_count`](crate::Engine::model_count) with the shared
+    /// vtree context; that method states the counting contract.
     ///
     /// # Panics
     ///
@@ -165,7 +164,7 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, Operat
 /// array is authoritative for zero.
 ///
 /// The same bottom-up pass as [`Engine::model_count`](crate::Engine::model_count),
-/// on a transient engine, keeping every column and dropping the `BigUint`
+/// using the vtree context, keeping every column and dropping the `BigUint`
 /// side table, so every non-saturating slot equals the exact count. For a
 /// caller that needs ordering, a small-threshold compare or exact-zero
 /// detection and never an overflowed node's magnitude. A count-marginal
@@ -177,12 +176,12 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, Operat
 /// Panics if [`Engine::model_count`](crate::Engine::model_count) returns an error.
 #[must_use]
 pub fn node_counts_u128(tdd: &Tdd) -> Vec<Vec<u128>> {
-    let eng = Engine::new();
-    // `ColumnRetention::All`: what this caller returns is exactly the per-level
-    // column array, so no column may be released mid-pass.
-    let ctr = ModelCounter::<KeepAllColumns>::allocate(&eng, tdd, 0, PinSemantics::Cofactor)
-        .expect("node_counts_u128: operation refused");
-    ctr.into_fast_counts(&eng)
+    tdd.context().run(|eng| {
+        // The returned array needs every column, including children already folded.
+        let ctr = ModelCounter::<KeepAllColumns>::allocate(eng, tdd, 0, PinSemantics::Cofactor)
+            .expect("node_counts_u128: operation refused");
+        ctr.into_fast_counts(eng)
+    })
 }
 
 /// The counting entry point on a caller's engine.
@@ -207,7 +206,7 @@ impl crate::engine::Engine {
     /// ```
     ///
     /// For repeated counts under evidence, use [`ModelCounter`].
-    /// [`Tdd::model_count`] is a convenience form using a temporary engine and
+    /// [`Tdd::model_count`] is a convenience form using the vtree context and
     /// panicking on error.
     ///
     /// # Errors

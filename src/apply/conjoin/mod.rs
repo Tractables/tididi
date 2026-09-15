@@ -76,15 +76,13 @@ use streaming_marginal::{StreamEnv, StreamLevelState, build_stream_state, commit
 ///
 /// Panics on invalid operands or allocation refusal; [`Engine::and`] returns the error.
 ///
-/// Runs on a fresh engine with nothing armed, so a caller's deadline or stop
-/// is not polled; only the fallible entry honors limits.
+/// Reuses the vtree context; explicit batch operations honor their installed limits.
 ///
 /// # Panics
 ///
 /// Panics on operand incompatibility or allocation refusal.
 pub(crate) fn apply_and(f: Tdd, g: Tdd) -> Tdd {
-    Engine::new()
-        .and(f, g)
+    f.and(g)
         .expect("apply_and: operation refused; use Engine::and to handle errors")
 }
 

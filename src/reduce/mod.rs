@@ -153,8 +153,7 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
 ///
 /// Panics on a resource refusal; [`try_minimize`] reports it as an error.
 pub fn minimize(f: &mut Tdd) {
-    let eng = Engine::new();
-    try_minimize(&eng, f)
+    f.minimize()
         .expect("minimize: an allocation was refused; use try_minimize to handle it");
 }
 

@@ -6,6 +6,38 @@ use crate::vtree::{VarId, VtreeNode};
 use crate::{Engine, Literal, OperationError, Tdd};
 use rustc_hash::FxHashMap;
 
+impl Tdd {
+    /// One assignment satisfying this structural diagram, or `None` if it is false.
+    ///
+    /// Assigns every vtree variable, including free variables; borrows the diagram
+    /// and needs no minimization. The selected model is unspecified. Uses a
+    /// shared vtree context; [`Engine::satisfying_assignment`] is the checked form.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    ///
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::cube(&tree, [1, -2]);
+    /// let assignment = f.satisfying_assignment().unwrap();
+    /// assert_eq!(assignment.len(), 3);
+    /// let selected = f.clone() & Tdd::cube(&tree, &assignment);
+    /// assert_eq!(selected.model_count(), 1u32.into());
+    /// assert!(Tdd::zero(&tree).satisfying_assignment().is_none());
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// # tididi::test_helpers::assert_canonical(&selected);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics on any error reported by [`Engine::satisfying_assignment`], including
+    /// discarded structure or allocation failure.
+    pub fn satisfying_assignment(&self) -> Option<Vec<Literal>> {
+        self.try_satisfying_assignment()
+            .expect("satisfying_assignment: use Engine::satisfying_assignment to handle errors")
+    }
+}
+
 impl Engine {
     /// Whether two structural diagrams compute the same Boolean function.
     ///

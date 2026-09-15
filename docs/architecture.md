@@ -171,6 +171,23 @@ extension point, and none is reachable from outside:
 | Round trip | [`io`] | To confirm a diagram survives text. |
 | Differential fold | [`query`] | Fast and exact counts must agree. |
 
+## Shared execution state
+
+Each vtree carries an `Arc<Context>` separately from its shape and traversal
+tables. Diagram methods take a clone of that context handle, borrow an engine
+from its idle pool, and call the existing operation kernels. Kernels pass the
+borrowed engine through nested work so one operation retains its limits and
+metering. The pool moves a boxed engine and holds no mutex during computation.
+Nested or concurrent checkouts use separate engines; only one idle engine is
+retained. A completed checkout clears configuration and callback references,
+and an unwinding checkout discards its scratch.
+
+Tree clones and projections retain their context. Grafts retain a context
+shared by all source trees; otherwise they start fresh. Binary compatibility
+still compares vtree allocations. A rotation wrapper retains only the context
+handle so it does not force extra copy-on-write clones of the tree. Serialized
+trees contain shape alone and receive fresh execution state when loaded.
+
 ## Constraints
 
 No cargo features, no `build.rs`, no environment reads, no threads, no

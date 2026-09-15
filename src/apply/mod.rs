@@ -1,19 +1,19 @@
 //! Combine and transform Boolean functions.
 //!
 //! Combine [`Tdd`](crate::Tdd) values directly with `f & g`, `f | g` and `!f`.
-//! Each call allocates a temporary workspace and releases it afterward.
+//! Each call reuses scratch from the vtree's execution context.
 //!
-//! Use [`Engine::and`](crate::Engine::and), [`Engine::or`](crate::Engine::or),
-//! [`Engine::negate`](crate::Engine::negate), [`Engine::xor`](crate::Engine::xor)
-//! and [`Engine::ite`](crate::Engine::ite) to compose functions.
-//! [`Engine::condition`](crate::Engine::condition) fixes an assignment;
-//! [`Engine::exists_vars`](crate::Engine::exists_vars) quantifies variables;
-//! [`Engine::substitute`](crate::Engine::substitute) replaces them with functions.
-//! [`Engine::rename_vars`](crate::Engine::rename_vars) handles swaps and renames,
-//! and [`Engine::and_exists`](crate::Engine::and_exists) constructs an existential conjunction.
+//! Use [`Tdd::and`](crate::Tdd::and), [`Tdd::or`](crate::Tdd::or),
+//! [`Tdd::negate`](crate::Tdd::negate), [`Tdd::xor`](crate::Tdd::xor)
+//! and [`Tdd::ite`](crate::Tdd::ite) to compose functions.
+//! [`Tdd::condition`](crate::Tdd::condition) fixes an assignment;
+//! [`Tdd::exists_vars`](crate::Tdd::exists_vars) quantifies variables;
+//! [`Tdd::substitute`](crate::Tdd::substitute) replaces them with functions.
+//! [`Tdd::rename_vars`](crate::Tdd::rename_vars) handles swaps and renames,
+//! and [`Tdd::and_exists`](crate::Tdd::and_exists) constructs an existential conjunction.
 //!
-//! These methods use a caller's engine and return errors under its limits.
-//! The `&`, `|` and `!` operators use a temporary engine and panic on refusal.
+//! These methods return errors; the `&`, `|` and `!` operators panic on refusal.
+//! Use [`Context::with_limits`](crate::Context::with_limits) for a bounded batch.
 //! Find a task and its examples in the [task guide](crate::guide::api).
 
 pub(crate) mod conjoin;

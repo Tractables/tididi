@@ -25,10 +25,10 @@
 //! zero-based form. Reuse the same `Arc<Vtree>` for operands you will combine.
 //! Queries borrow diagrams; transformations taking `Tdd` consume them, so clone
 //! an operand first if it must be kept.
-//! Each operation above uses temporary working memory and panics on failure.
-//! Reuse an optional [`Engine`] when you want to retain working buffers between
-//! calls, handle errors, or set resource limits. Diagrams can outlive their
-//! engines and combine with diagrams created by other engines.
+//! Operations reuse the context attached to the shared vtree. The convenience
+//! forms above panic on failure; [`Tdd::and`] and [`Tdd::try_model_count`] return
+//! errors. [`Context::with_limits`] lends an engine for an explicitly bounded
+//! batch. Diagrams own their results independently of that temporary checkout.
 //!
 //! # Where to go next
 //!
@@ -38,8 +38,8 @@
 //! The [worked examples](guide::examples) also explain probability queries,
 //! reachable states and custom traversal in small steps.
 //! Follow the [task guide](guide::api) for construction, queries, transformations,
-//! probabilities, limits, and persistence. The [`Engine`] introduction explains
-//! checked operations, [`Tdd`] explains ownership, and [`Vtree`] explains the
+//! probabilities, limits, and persistence. [`Tdd`] explains ownership and
+//! checked operations; [`Context`] explains batches, and [`Vtree`] explains the
 //! variable universe.
 //!
 //! The [data model](guide::model) introduces levels, pairs, and determinism.
@@ -102,4 +102,4 @@ pub mod test_helpers;
 pub use diagram::{Literal, Tdd};
 pub use vtree::Vtree;
 pub use limits::OperationError;
-pub use engine::Engine;
+pub use engine::{Context, Engine};

@@ -33,7 +33,7 @@ use crate::diagram::*;
 /// Panics if `f` has a marginal level or an allocation is refused.
 #[must_use]
 pub fn negate(f: Tdd) -> Tdd {
-    Engine::new().negate(f).expect("negate: use Engine::negate to handle a refusal")
+    f.negate().expect("negate: use Engine::negate to handle a refusal")
 }
 
 impl Engine {

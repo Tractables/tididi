@@ -133,10 +133,10 @@ impl Vtree {
 
         Self::check_each_var_once(&nodes, num_vars)?;
         let (mut vtree, old_to_new) = Self::reindex_bottomup_with_map(root, nodes, vec![VtreeIdx(0); num_vars as usize]);
-        if let Some(first) = subtrees.first() {
-            if subtrees.iter().all(|sub| std::sync::Arc::ptr_eq(sub.context(), first.context())) {
-                vtree.context = std::sync::Arc::clone(first.context());
-            }
+        if let Some(first) = subtrees.first()
+            && subtrees.iter().all(|sub| std::sync::Arc::ptr_eq(sub.context(), first.context()))
+        {
+            vtree.context = std::sync::Arc::clone(first.context());
         }
         debug_assert_eq!(vtree.validate(), Ok(()));
 

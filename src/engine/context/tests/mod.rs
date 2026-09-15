@@ -165,3 +165,126 @@ fn grafts_preserve_only_a_context_agreed_by_every_source() {
     let standalone = Engine::new().bind_vtree(shared);
     assert!(!Arc::ptr_eq(standalone.context(), &context));
 }
+
+#[test]
+fn ordinary_conjunctions_use_the_parked_scratch_allocation() {
+    let tree = Arc::new(Vtree::balanced(4));
+    let context = tree.context();
+    let left = Tdd::clause(&tree, [1, 3]);
+    let right = Tdd::clause(&tree, [2, 4]);
+    assert_canonical(&left);
+    assert_canonical(&right);
+    for operator in [false, true] {
+        let allocation = context.run(|engine| {
+            let cells = Vec::with_capacity(4096);
+            let allocation = cells.as_ptr();
+            engine.apply().node_idx.put(cells);
+            allocation
+        });
+        let mut result = if operator {
+            left.clone() & right.clone()
+        } else {
+            left.clone().and(right.clone()).unwrap()
+        };
+        context.run(|engine| {
+            let cells = engine.apply().node_idx.take();
+            assert!(!cells.is_empty(), "the operation must populate the retained grid");
+            assert_eq!(cells.as_ptr(), allocation, "the operation must reuse its vtree's scratch");
+            engine.apply().node_idx.put(cells);
+        });
+        assert!(Arc::ptr_eq(result.context(), context));
+        result.minimize().unwrap();
+        assert_canonical(&result);
+        assert_eq!(result.model_count(), 9u32.into());
+    }
+}
+
+#[test]
+fn ordinary_diagram_methods_can_reenter_from_a_stop_callback() {
+    use crate::limits::{StopCallback, StopDecision};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let tree = Arc::new(Vtree::balanced(3));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let callback = {
+        let tree = Arc::clone(&tree);
+        let calls = Arc::clone(&calls);
+        StopCallback::new(move |_, _| {
+            let x = Tdd::try_literal(&tree, 1).unwrap();
+            let y = Tdd::literal(&tree, 2);
+            let z = Tdd::literal(&tree, 3);
+            assert_canonical(&x);
+            assert_canonical(&y);
+            assert_canonical(&z);
+            let mut f = (x | y) & !z;
+            f.minimize().unwrap();
+            assert_canonical(&f);
+            assert_eq!(f.try_model_count().unwrap(), 3u32.into());
+            assert!(f.try_satisfying_assignment().unwrap().is_some());
+            calls.fetch_add(1, Ordering::Relaxed);
+            StopDecision::Continue
+        })
+    };
+    let f = tree.context().with_limits(
+        LimitConfig::none().with_stop_callback(Some(callback)),
+        |engine| engine.clause(&tree, [1, 2]).unwrap(),
+    );
+    assert_canonical(&f);
+    assert!(calls.load(Ordering::Relaxed) > 0);
+    assert_eq!(f.model_count(), 6u32.into());
+}
+
+#[test]
+fn sharing_context_does_not_make_distinct_trees_compatible() {
+    let context = Arc::new(Context::new());
+    let first = context.bind(Vtree::balanced(3));
+    let second = context.bind(Vtree::balanced(3));
+    let f = Tdd::clause(&first, [1, 2]);
+    let g = Tdd::clause(&second, [1, 2]);
+    assert_canonical(&f);
+    assert_canonical(&g);
+    assert!(Arc::ptr_eq(f.context(), g.context()));
+    assert!(!Arc::ptr_eq(f.vtree(), g.vtree()));
+    assert_eq!(f.clone().and(g.clone()).unwrap_err(), OperationError::VtreeMismatch);
+    assert_eq!(f.clone().or(g.clone()).unwrap_err(), OperationError::VtreeMismatch);
+    assert_eq!(f.equivalent(&g), Err(OperationError::VtreeMismatch));
+    assert_eq!(f.implies(&g), Err(OperationError::VtreeMismatch));
+    assert_eq!(f.model_count(), 6u32.into());
+    assert_eq!(g.model_count(), 6u32.into());
+}
+
+#[test]
+fn accepted_rotation_keeps_context_and_detaches_only_the_changed_tree() {
+    use crate::diagram::TddLevel;
+    use crate::restructure::search::{RotationObjective, RotationSearchConfig};
+    use crate::test_helpers::eval;
+    struct AcceptOnce(bool);
+    impl RotationObjective for AcceptOnce {
+        fn delta(&mut self, _: (&TddLevel, &TddLevel), _: (&TddLevel, &TddLevel)) -> i64 {
+            if std::mem::replace(&mut self.0, false) { -1 } else { 0 }
+        }
+    }
+    let tree = Arc::new(Vtree::balanced(4));
+    let original = Tdd::clause(&tree, [1, 3]);
+    assert_canonical(&original);
+    let mut rotated = original.clone();
+    let stats = rotated.rotation_search(&mut AcceptOnce(true), &RotationSearchConfig {
+        max_sweeps: Some(1),
+        ..RotationSearchConfig::default()
+    }).unwrap();
+    assert_eq!(stats.accepts, 1);
+    assert_canonical(&rotated);
+    assert!(Arc::ptr_eq(original.vtree(), &tree));
+    assert!(!Arc::ptr_eq(rotated.vtree(), &tree));
+    assert!(Arc::ptr_eq(rotated.context(), tree.context()));
+    for bits in 0u32..16 {
+        let assignment = (0..4).map(|var| bits & (1 << var) != 0).collect::<Vec<_>>();
+        assert_eq!(eval(&rotated, &assignment), eval(&original, &assignment));
+    }
+    assert_eq!(rotated.model_count(), 12u32.into());
+    let companion = Tdd::literal(rotated.vtree(), 1);
+    assert_canonical(&companion);
+    let mut combined = rotated.and(companion).unwrap();
+    combined.minimize().unwrap();
+    assert_canonical(&combined);
+    assert_eq!(combined.model_count(), 8u32.into());
+}

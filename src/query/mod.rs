@@ -1,26 +1,26 @@
 //! Read counts, assignments, and other properties of a diagram.
 //!
-//! Start with [`Engine::is_sat`](crate::Engine::is_sat) to test for a solution,
-//! [`Engine::model_count`](crate::Engine::model_count) for an exact
-//! count or [`Engine::satisfying_assignment`](crate::Engine::satisfying_assignment)
+//! Start with [`Tdd::is_sat`](crate::Tdd::is_sat) to test for a solution,
+//! [`Tdd::model_count`](crate::Tdd::model_count) for an exact
+//! count or [`Tdd::satisfying_assignment`](crate::Tdd::satisfying_assignment)
 //! for a witness. These queries borrow the diagram and accept nonminimal structural inputs.
 //! [`ModelCounter`] retains counting state for repeated evidence updates.
 //!
-//! [`Engine::equivalent`](crate::Engine::equivalent) compares Boolean functions;
-//! [`Engine::implies`](crate::Engine::implies) tests entailment.
-//! [`Engine::support`](crate::Engine::support) returns variables that affect the
+//! [`Tdd::equivalent`](crate::Tdd::equivalent) compares Boolean functions;
+//! [`Tdd::implies`](crate::Tdd::implies) tests entailment.
+//! [`Tdd::support`](crate::Tdd::support) returns variables that affect the
 //! function, while [`implied_literals`] finds literals true in every model.
 //! Each item states its structural or minimization requirements.
 //!
-//! [`Engine::evaluate`](crate::Engine::evaluate) accepts an
+//! [`Tdd::evaluate`](crate::Tdd::evaluate) accepts an
 //! [`EvalAlgebra`](crate::diagram::EvalAlgebra), such as
 //! [`RationalWeights`](crate::diagram::RationalWeights), for a fresh evaluation.
-//! [`Engine::weighted_value`](crate::Engine::weighted_value) instead reads the
+//! [`Tdd::weighted_value`](crate::Tdd::weighted_value) instead reads the
 //! weights attached to a diagram, including stored marginal values, using the
 //! [`Arithmetic`](crate::diagram::Arithmetic) chosen for its store.
 //!
-//! Engine methods return resource errors to the caller; convenience functions
-//! use a temporary engine and document their panic behavior.
+//! Checked diagram methods return errors; convenience functions
+//! use the vtree context and document their panic behavior.
 
 pub(crate) mod count;
 pub(crate) mod fold;

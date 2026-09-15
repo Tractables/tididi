@@ -15,13 +15,13 @@ use crate::engine::Engine;
 /// marginal ones on demand from the store's values and leaf weights; when the
 /// output level is itself marginal it reads the stored value directly. The
 /// diagram is borrowed and unchanged. [`Engine::weighted_value`] uses a caller's
-/// limits; this convenience form uses a fresh, unarmed engine.
+/// limits; this convenience form uses the vtree context with no limits armed.
 ///
 /// # Panics
 ///
 /// Panics if the fold's allocation is refused.
 pub fn weighted_value(tdd: &Tdd) -> Option<WeightValue> {
-    Engine::new().weighted_value(tdd).expect("weighted_value: allocation refused")
+    tdd.weighted_value().expect("weighted_value: allocation refused")
 }
 
 impl Engine {

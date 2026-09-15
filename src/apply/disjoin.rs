@@ -21,8 +21,7 @@ use crate::reduce::{try_reduce, ReductionPlan};
 /// # Panics
 /// Panics on invalid operands or allocation refusal; [`Engine::or`] returns the error.
 pub(crate) fn apply_or(f: Tdd, g: Tdd) -> Tdd {
-    Engine::new()
-        .or(f, g)
+    f.or(g)
         .expect("apply_or: operation refused; use Engine::or to handle errors")
 }
 

@@ -99,7 +99,7 @@ pub(super) fn exists_targets_on(eng: &Engine, mut f: Tdd, targets: &[VtreeIdx], 
     Ok(f)
 }
 
-/// Existentially quantify `x` out of the diagram, on a transient engine with no limits armed.
+/// Existentially quantify `x` out of the diagram, using the vtree context with no limits armed.
 ///
 /// Uses [`QuantificationStrategy::Automatic`]; [`exists_var_with_strategy`] selects
 /// a rewrite explicitly. The operand is borrowed and cloned.
@@ -142,12 +142,12 @@ pub fn exists_var(f: &Tdd, x: VarId) -> Tdd {
 /// Panics on any error reported by [`Engine::exists_var_with_strategy`].
 #[must_use]
 pub fn exists_var_with_strategy(f: &Tdd, x: VarId, how: QuantificationStrategy) -> Tdd {
-    exists_var_on(&Engine::new(), f.clone(), x, how)
+    f.clone().exists_var_with_strategy(x, how)
         .expect("exists_var_with_strategy: use Engine::exists_var_with_strategy to handle a refusal or a variable outside the vtree")
 }
 
-/// Existentially quantify every variable in `vars`, one at a time, on a
-/// transient engine with no limits armed.
+/// Existentially quantify every variable in `vars`, one at a time, using the
+/// vtree context with no limits armed.
 ///
 /// Uses [`QuantificationStrategy::Automatic`]; [`exists_vars_with_strategy`] selects
 /// a rewrite explicitly. The operand is borrowed and cloned.
@@ -170,7 +170,7 @@ pub fn exists_vars(f: &Tdd, vars: &[VarId]) -> Tdd {
 /// Panics on any error reported by [`Engine::exists_vars_with_strategy`].
 #[must_use]
 pub fn exists_vars_with_strategy(f: &Tdd, vars: &[VarId], how: QuantificationStrategy) -> Tdd {
-    exists_vars_on(&Engine::new(), f.clone(), vars, how)
+    f.clone().exists_vars_with_strategy(vars, how)
         .expect("exists_vars_with_strategy: use Engine::exists_vars_with_strategy to handle a refusal or a variable outside the vtree")
 }
 

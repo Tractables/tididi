@@ -1,129 +1,101 @@
 # Using tididi
 
-Start with a vtree, build a function, then borrow the resulting
-diagram to ask questions about it. The sections below follow that sequence;
-the linked API items provide the contracts and examples.
-For a first complete program, work through the
-[backup configuration walkthrough](crate::guide::examples::configurations).
+Start with the [configuration walkthrough](crate::guide::examples::configurations):
+build rules, count valid assignments and find one solution. The ordinary API
+works on diagrams and reuses the context attached to their shared vtree.
+Use the later sections when execution or representation needs specialization.
 
-## Build a Boolean function
+## Build and use a diagram
 
-Choose [`Vtree::balanced`](crate::Vtree::balanced) for a first experiment,
-[`Vtree::linear`](crate::Vtree::linear) for a variable order, or
-[`Vtree::join`](crate::Vtree::join) to assemble your own grouping.
-The [`Vtree`](crate::Vtree) introduction explains grouping choices, variable
-numbering, and how operands share a tree; the
-[grouping walkthrough](crate::guide::examples::vtrees) compares two decompositions
-of the same function.
+### Construct a function
 
-Build an atom with [`Tdd::literal`](crate::Tdd::literal), a disjunction
-of literals with [`Tdd::clause`](crate::Tdd::clause), or a conjunction
-of literals with [`Engine::cube`](crate::Engine::cube).
-Compose diagrams with `&`, `|` and `!`; the [`Tdd`](crate::Tdd) introduction
-explains ownership and temporary working memory.
-For checked operations with reusable buffers, use [`Engine::and`](crate::Engine::and),
-[`Engine::or`](crate::Engine::or), [`Engine::negate`](crate::Engine::negate),
-[`Engine::xor`](crate::Engine::xor), or [`Engine::ite`](crate::Engine::ite).
-For a sequence of constraints, [`Engine::and_clause`](crate::Engine::and_clause)
-adds a clause to an existing diagram.
-The ownership example on [`Tdd`](crate::Tdd) shows how to retain an operand
-for more than one transformation.
+Start with [`Vtree::balanced`](crate::Vtree::balanced), sharing one `Arc<Vtree>`
+among functions you intend to combine.
+Build atoms with [`Tdd::literal`](crate::Tdd::literal), disjunctions of literals
+with [`Tdd::clause`](crate::Tdd::clause), and conjunctions with
+[`Tdd::cube`](crate::Tdd::cube).
+Compose diagrams with `&`, `|` and `!`; [`Tdd`](crate::Tdd) explains ownership
+and copying an operand when several transformations need it.
 
-## Ask questions about a function
+### Ask about valid assignments
 
-[`Engine::is_sat`](crate::Engine::is_sat) answers whether any assignment satisfies the function.
-[`Tdd::model_count`](crate::Tdd::model_count) counts satisfying assignments,
-including choices for free variables; [`Engine::model_count`](crate::Engine::model_count)
-provides its checked form with reusable buffers.
-To obtain an assignment itself, use
-[`Engine::satisfying_assignment`](crate::Engine::satisfying_assignment).
-Test semantic equality with [`Engine::equivalent`](crate::Engine::equivalent),
-or whether one function entails another with [`Engine::implies`](crate::Engine::implies).
+[`Tdd::is_sat`](crate::Tdd::is_sat) tests whether any assignment satisfies a structural diagram.
+[`Tdd::model_count`](crate::Tdd::model_count) counts assignments over all vtree variables, including free ones.
+[`Tdd::satisfying_assignment`](crate::Tdd::satisfying_assignment) returns one complete assignment, or `None`.
+[`Tdd::equivalent`](crate::Tdd::equivalent) compares represented functions, and
+[`Tdd::implies`](crate::Tdd::implies) tests entailment.
+[`Tdd::support`](crate::Tdd::support) finds relevant variables; [`Tdd::implied_literals`](crate::Tdd::implied_literals) finds literals true in every model.
 
-For information about individual variables, [`Engine::support`](crate::Engine::support)
-finds those that can affect the answer, while
-[`Engine::implied_literals`](crate::Engine::implied_literals) finds literals true in every model.
+### Change a function
 
-## Change assignments or variables
+Conjoining an observation retains the assignments consistent with it;
+[`Tdd::condition`](crate::Tdd::condition) instead substitutes values and explains
+how the resulting cofactor is counted.
+[`Tdd::xor`](crate::Tdd::xor) computes exclusive OR, and [`Tdd::ite`](crate::Tdd::ite)
+selects between two branches.
+[`Tdd::exists_vars`](crate::Tdd::exists_vars) keeps assignments that have a satisfying extension.
+[`Tdd::rename_vars`](crate::Tdd::rename_vars) handles simultaneous renaming and variable identification.
+The [reachability walkthrough](crate::guide::examples::reachability) combines these operations into a state-space search.
 
-An observation may be used to derive a new function or to answer another
-query about the original one.
-[`Engine::condition`](crate::Engine::condition) substitutes a fixed assignment
-and explains how the resulting cofactor is counted.
-If you want repeated counts under observations without rewriting the diagram,
-use [`ModelCounter`](crate::query::ModelCounter) with
-[`PinSemantics::Evidence`](crate::query::PinSemantics::Evidence).
+### Evaluate or save a model
 
-Use [`Engine::exists_vars`](crate::Engine::exists_vars) to retain assignments
-that have at least one satisfying extension, or
-[`Engine::and_exists`](crate::Engine::and_exists) to compute successor states
-from a transition relation.
-[`Engine::rename_vars`](crate::Engine::rename_vars) then handles variable
-identification, swaps, and current/next-state renaming.
-For replacements that are whole functions, use
-[`Engine::substitute`](crate::Engine::substitute).
-[`Engine::restrict_to_care`](crate::Engine::restrict_to_care) simplifies a
-function where only assignments in a care set matter.
+[`Tdd::evaluate`](crate::Tdd::evaluate) evaluates a structural diagram under literal weights; the
+[probability walkthrough](crate::guide::examples::probability) builds events and computes a conditional probability.
+[`write_tdd`](crate::io::write_tdd) and [`read_tdd`](crate::io::read_tdd) save and restore diagram structure,
+with the tree stored separately through [`Vtree::to_text`](crate::Vtree::to_text) and [`Vtree::from_text`](crate::Vtree::from_text).
+The [persistence walkthrough](crate::guide::examples::persistence) restores two diagrams onto one shared tree and combines them.
 
-## Evaluate probabilities or repeated observations
+## Control execution and repeated work
 
-[`Engine::evaluate`](crate::Engine::evaluate) shows the dependency setup and
-use of [`RationalWeights`](crate::diagram::RationalWeights) to evaluate a
-structural diagram under independent-variable probabilities.
-Implement [`EvalAlgebra`](crate::diagram::EvalAlgebra) to compute a different
-quantity, such as the fewest true variables in a model.
+### Handle errors
 
-For fixed weights that travel with a diagram, attach a
-[`WeightStore`](crate::diagram::WeightStore) through
-[`Tdd::set_weights`](crate::Tdd::set_weights) and read its result with
-[`Engine::weighted_value`](crate::Engine::weighted_value).
-The [probability walkthrough](crate::guide::examples::probability)
-shows repeated evaluation and conditional-probability normalization.
+Use [`Tdd::and`](crate::Tdd::and), [`Tdd::or`](crate::Tdd::or) and [`Tdd::negate`](crate::Tdd::negate)
+for checked operations, returning [`OperationError`](crate::OperationError).
+Constructors and convenience queries have checked forms too:
+[`Tdd::try_clause`](crate::Tdd::try_clause), [`Tdd::try_model_count`](crate::Tdd::try_model_count)
+and [`Tdd::try_satisfying_assignment`](crate::Tdd::try_satisfying_assignment).
 
-## Control resources and diagram size
+### Bound a batch
 
-An [`Engine`](crate::Engine) retains working buffers between calls and supplies
-checked versions of the constructors, operators and queries.
-Configure limits through [`LimitConfig`](crate::limits::LimitConfig), install
-them for a block with [`Limits::scope`](crate::limits::Limits::scope), and
-handle refusals as [`OperationError`](crate::OperationError).
-[`Limits::work_since`](crate::limits::Limits::work_since) measures the work
-performed by a group of operations.
+[`Context::with_limits`](crate::Context::with_limits) lends a batch engine with a
+[`LimitConfig`](crate::limits::LimitConfig) installed; use that engine throughout the bounded work.
+[`Context::run`](crate::Context::run) lends the same reusable workspace without initial limits.
+The [execution walkthrough](crate::guide::examples::execution) handles a refusal and explains batch boundaries.
+[`Context::bind`](crate::Context::bind) lets several vtrees share one workspace;
+[`Context::clear_scratch`](crate::Context::clear_scratch) releases idle buffers.
 
-Use [`try_minimize`](crate::reduce::try_minimize) for canonical form under
-the current vtree when needed, or [`minimize`](crate::reduce::minimize) for
-its convenience form; ordinary counting accepts a nonminimal diagram.
-[`try_reduce`](crate::reduce::try_reduce) and [`ReductionPlan`](crate::reduce::ReductionPlan)
-let advanced callers select individual passes.
-[`Engine::rotation_search`](crate::Engine::rotation_search) searches different
-vtree shapes when the current representation is too large.
-When only counts or fixed weighted values are still needed,
-[`marginalize_levels`](crate::marginal::marginalize_levels) can release structure
-permanently.
+### Repeat queries or construction
 
-## Save or inspect a diagram
+[`ModelCounter`](crate::query::ModelCounter) keeps counting state across evidence updates,
+with [`PinSemantics::Evidence`](crate::query::PinSemantics::Evidence) selecting observation semantics.
+[`Tdd::and_clause`](crate::Tdd::and_clause) adds a clause to an existing diagram.
+[`Tdd::and_exists`](crate::Tdd::and_exists) combines conjunction and existential quantification into one operation.
 
-A saved function needs its variable tree to recover the same interpretation.
-[`write_tdd`](crate::io::write_tdd) and [`read_tdd`](crate::io::read_tdd) save
-and restore a structural diagram, with its tree stored separately by
-[`Vtree::to_text`](crate::Vtree::to_text) and [`Vtree::from_text`](crate::Vtree::from_text);
-the [persistence walkthrough](crate::guide::examples::persistence) restores and
-combines two diagrams.
-Render Graphviz text with [`tdd_to_dot`](crate::io::tdd_to_dot) or
-[`vtree_to_dot`](crate::io::vtree_to_dot).
+## Specialize the representation
 
-The [`diagram`](crate::diagram) module introduces traversal before showing how
-to decode marginal values.
-Use [`TddBuilder`](crate::diagram::TddBuilder) to assemble nodes yourself,
-or [`Tdd::graft`](crate::Tdd::graft) and [`Tdd::graft_over`](crate::Tdd::graft_over)
-to combine diagrams with disjoint variable domains.
+### Choose decompositions and algorithms
 
-## Read further
+Use [`Vtree::linear`](crate::Vtree::linear) for a variable order or [`Vtree::join`](crate::Vtree::join)
+for explicit grouping; the [vtree walkthrough](crate::guide::examples::vtrees) compares two groupings of the same function.
+[`Tdd::minimize`](crate::Tdd::minimize) removes redundancy under the current tree;
+ordinary structural counting and witness queries need no explicit minimization.
+[`Tdd::rotation_search`](crate::Tdd::rotation_search) searches alternative tree shapes.
+[`Tdd::exists_vars_with_strategy`](crate::Tdd::exists_vars_with_strategy) selects a quantification rewrite explicitly.
+[`Tdd::reduce`](crate::Tdd::reduce) accepts a [`ReductionPlan`](crate::reduce::ReductionPlan) for selecting individual passes.
 
-The [walkthroughs](crate::guide::examples)
-develop complete programs for configurations, probabilities, reachability,
-persistence, variable grouping and custom traversal.
-The [data model](crate::guide::model)
-introduces levels, pairs, and determinism; the
-[architecture reference](crate::guide::architecture)
-explains the passes and invariants for contributors.
+### Customize transformations and values
+
+[`Tdd::substitute`](crate::Tdd::substitute) replaces variables with whole functions.
+[`Tdd::restrict_to_care`](crate::Tdd::restrict_to_care) simplifies a function within a care set.
+Implement [`EvalAlgebra`](crate::diagram::EvalAlgebra) to evaluate another quantity, such as the fewest true variables in a model.
+For fixed attached weights, use [`Tdd::set_weights`](crate::Tdd::set_weights) and [`Tdd::weighted_value`](crate::Tdd::weighted_value).
+[`Tdd::marginalize_levels`](crate::Tdd::marginalize_levels) permanently replaces structure with counts or fixed weighted values.
+
+### Inspect or assemble storage
+
+The [custom-statistic walkthrough](crate::guide::examples::statistics) introduces traversal of levels, nodes and pairs.
+[`tdd_to_dot`](crate::io::tdd_to_dot) and [`vtree_to_dot`](crate::io::vtree_to_dot) render Graphviz text.
+[`TddBuilder`](crate::diagram::TddBuilder) assembles storage directly; its contract includes determinism obligations.
+[`Tdd::graft`](crate::Tdd::graft) and [`Tdd::graft_over`](crate::Tdd::graft_over) combine disjoint variable domains.
+The [data model](crate::guide::model) explains the representation; the
+[architecture reference](crate::guide::architecture) describes implementation responsibilities.

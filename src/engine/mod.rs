@@ -1,4 +1,4 @@
-//! Run checked operations with reusable scratch and caller-controlled limits.
+//! Shared execution contexts and the engines lent to batches.
 //!
 //! [`Engine::new`] creates an engine; [`Engine::limits`] configures its limits.
 //! Diagrams own their results independently of the engine and can outlive it.
@@ -12,10 +12,12 @@ use crate::limits::Limits;
 mod context;
 pub use context::Context;
 
-/// An optional workspace for checked operations, buffer reuse, and resource limits.
+/// An execution workspace for checked operations and explicit resource limits.
 ///
-/// Reuse an engine across a sequence of operations; it retains scratch buffers
-/// for the next call. Diagrams own their results and can outlive the engine.
+/// [`Context::run`] and [`Context::with_limits`] lend an engine across a sequence
+/// of operations. An engine can also be created directly with [`new`](Self::new).
+/// It retains scratch buffers between calls; diagrams own their results and can
+/// outlive it.
 /// Operands may come from different engines; binary operations require a shared
 /// vtree allocation, as described on [`Tdd`](crate::Tdd).
 /// For ordinary Boolean composition, `Tdd` constructors and the `&`, `|` and `!`

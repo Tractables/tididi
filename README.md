@@ -50,13 +50,13 @@ Use the same `Arc<Vtree>` for functions you intend to combine.
 Each [`Tdd`] owns its diagram. Operators consume their operands; clone an
 operand first if you need to keep it. Cloning copies diagram storage and shares
 the vtree; queries such as `model_count` borrow the diagram.
-The constructors and operators above allocate temporary working memory and
-release it after each call; they panic if an operation fails.
+The shared vtree retains a reusable execution context. Constructors, operators
+and queries use it automatically; the convenience forms above panic on failure.
+Use diagram methods such as `a.and(b)?` and `f.try_model_count()?` to handle errors.
 
-For a sequence of operations, an optional [`Engine`] reuses working buffers
-and offers methods that return errors and accept resource limits. Diagrams
-can be combined regardless of which engine created them, even after those
-engines have been dropped.
+For bounded work, the context lends a batch engine through
+[`Context::with_limits`]. Diagrams own their results; the engine only supplies
+working buffers and execution controls.
 
 ## Continue with your task
 
@@ -65,7 +65,8 @@ It encodes rules for a backup application, counts its valid configurations,
 finds one solution, and counts the configurations that enable remote backups.
 
 Then use the [task guide] to find operations for your own application, or
-continue with another walkthrough. Each page explains the program in steps
+continue with another walkthrough. Execution controls and representation
+specialization follow the basic workflows. Each page explains the program in steps
 and links to the full runnable source.
 
 | Walkthrough | What it shows |
@@ -73,6 +74,7 @@ and links to the full runnable source.
 | [Conditional probability](docs/examples/probability.md) | Compute the probability of rain given wet grass, then change the priors. |
 | [Reachable states](docs/examples/reachability.md) | Find reachable states and check that a forbidden state cannot be reached. |
 | [Save and reload diagrams](docs/examples/persistence.md) | Restore two rules onto one shared tree, then combine them. |
+| [Execution controls](docs/examples/execution.md) | Bound a batch and release idle working buffers. |
 | [Variable grouping](docs/examples/vtrees.md) | Compare the same function under two vtrees. |
 | [A custom statistic](docs/examples/statistics.md) | Traverse the stored nodes and pairs. |
 
@@ -104,7 +106,7 @@ Apache License, Version 2.0 ([LICENSE](./LICENSE)).
 
 [`Literal`]: https://docs.rs/tididi/latest/tididi/diagram/struct.Literal.html
 [`Tdd`]: https://docs.rs/tididi/latest/tididi/diagram/struct.Tdd.html
-[`Engine`]: https://docs.rs/tididi/latest/tididi/engine/struct.Engine.html
+[`Context::with_limits`]: https://docs.rs/tididi/latest/tididi/engine/struct.Context.html#method.with_limits
 [task guide]: https://docs.rs/tididi/latest/tididi/guide/api/index.html
 [TDD data model]: https://docs.rs/tididi/latest/tididi/guide/model/index.html
 [API reference]: https://docs.rs/tididi

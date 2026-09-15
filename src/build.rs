@@ -4,7 +4,7 @@
 //! combining them with [`crate::apply`] and reducing with [`crate::reduce`].
 //!
 //! Entry points: [`Tdd::one`] and [`Tdd::zero`] are the two constants;
-//! [`Engine::cube`] builds a conjunction of literals. A single clause is
+//! [`Tdd::cube`] builds a conjunction of literals. A single clause is
 //! [`Tdd::clause`], the clause conjoined into ⊤ by
 //! [`crate::apply::apply_and_clause`].
 
@@ -114,14 +114,56 @@ fn cube_to_tdd(
 impl Tdd {
     /// A diagram for one literal, with every other vtree variable free.
     ///
-    /// Uses a temporary engine; see [`Engine::literal`] for a checked constructor.
+    /// Uses the shared vtree context; [`Tdd::try_literal`] returns errors to the caller.
     ///
     /// # Panics
     ///
     /// Panics on an invalid literal (including integer zero), an absent variable,
     /// or allocation failure.
     pub fn literal(vtree: &Arc<Vtree>, literal: impl TryInto<Literal, Error: Into<OperationError>>) -> Tdd {
-        Engine::new().literal(vtree, literal).expect("literal: use Engine::literal to handle errors")
+        Self::try_literal(vtree, literal).expect("literal: use Tdd::try_literal to handle errors")
+    }
+
+    /// A conjunction of literals, with every unmentioned vtree variable free.
+    ///
+    /// Integers are signed and one-based; typed [`Literal`] values also work.
+    /// Each variable must appear at most once, even with the same polarity.
+    /// An empty cube is true. Uses the shared vtree context and returns a canonical
+    /// diagram; [`Tdd::try_cube`] is the checked form.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    ///
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::cube(&tree, [1, -2]);
+    /// assert_eq!(f.model_count(), 2u32.into()); // x3 remains free
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics on any error reported by [`Engine::cube`], including an invalid
+    /// literal, repeated or absent variable, or allocation failure.
+    pub fn cube(
+        vtree: &Arc<Vtree>,
+        literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>,
+    ) -> Tdd {
+        Self::try_cube(vtree, literals).expect("cube: use Tdd::try_cube to handle errors")
+    }
+
+    /// Checked literal construction using the vtree's shared context.
+    ///
+    /// See [`Engine::literal`] for the input requirements and errors.
+    pub fn try_literal(vtree: &Arc<Vtree>, literal: impl TryInto<Literal, Error: Into<OperationError>>) -> Result<Tdd, OperationError> {
+        vtree.context().run(|eng| eng.literal(vtree, literal))
+    }
+
+    /// Checked cube construction using the vtree's shared context.
+    ///
+    /// See [`Engine::cube`] for the input requirements and errors.
+    pub fn try_cube(vtree: &Arc<Vtree>, literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>) -> Result<Tdd, OperationError> {
+        vtree.context().run(|eng| eng.cube(vtree, literals))
     }
 
     /// The constant-true function over `vtree`: every assignment satisfies it.
@@ -143,7 +185,7 @@ impl Tdd {
     /// # tididi::test_helpers::assert_canonical(&none);
     /// ```
     pub fn one(vtree: &Arc<Vtree>) -> Tdd {
-        Engine::new().one(vtree)
+        vtree.context().run(|eng| eng.one(vtree))
     }
 
     /// The constant-false function over `vtree`: no assignment satisfies it.
@@ -152,7 +194,7 @@ impl Tdd {
     /// [`Tdd::is_zero`] is true. [`Engine::zero`] is the same diagram built in
     /// a caller's engine.
     pub fn zero(vtree: &Arc<Vtree>) -> Tdd {
-        Engine::new().zero(vtree)
+        vtree.context().run(|eng| eng.zero(vtree))
     }
 }
 

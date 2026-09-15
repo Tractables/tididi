@@ -17,9 +17,7 @@ over four variables and share it between the option diagrams:
 ```rust,ignore
 use std::sync::Arc;
 
-use tididi::{Engine, OperationError, Tdd, Vtree};
-use tididi::limits::LimitConfig;
-use tididi::reduce::try_minimize;
+use tididi::{Tdd, Vtree};
 ```
 
 ```rust,ignore
@@ -49,8 +47,8 @@ let mut configurations = destination & encryption_rule;
 Each `Tdd` owns its circuit. Operators consume their operands, so we clone
 `remote` where we will need it again. Cloning copies the diagram storage and
 shares the vtree; borrow diagrams for queries that do not transform them.
-These operations allocate temporary
-working memory and release it on return; no persistent engine is needed.
+These operations reuse the working buffers attached to the shared vtree; no
+explicit engine is needed.
 The diagrams must share the same `Arc<Vtree>` allocation, as these do.
 
 ## Count configurations
@@ -86,62 +84,15 @@ println!("Configurations with remote backups: {remote_count}");
 
 Only the last two rows remain. The original `configurations` still represents
 all eight choices. This is evidence expressed as another constraint;
-[`Engine::condition`](crate::engine::Engine::condition) instead substitutes values
+[`Tdd::condition`](crate::Tdd::condition) instead substitutes values
 into a function, with different counting semantics.
-
-## Handle a resource refusal
-
-The operators above panic on failure. When an application needs to handle an
-error, use the corresponding checked operation on an [`Engine`](crate::Engine).
-An engine also keeps working buffers for reuse between calls.
-
-```rust,ignore
-let engine = Engine::new();
-```
-
-Here we deliberately give construction a zero-byte allocation budget, so the
-attempt to rebuild the destination rule returns `OverBudget`. In an application,
-choose a budget appropriate to the work and handle either outcome:
-
-```rust,ignore
-{
-    let _limit = engine.limits().scope(
-        LimitConfig::none().with_memory_budget_bytes(Some(0)),
-    );
-    let attempt = engine.clause(&tree, [1, 2]);
-    assert!(matches!(attempt, Err(OperationError::OverBudget)));
-    match attempt {
-        Ok(diagram) => println!("Destination choices: {}", diagram.model_count()),
-        Err(OperationError::OverBudget) => println!("Not enough budget to build the destination rule"),
-        Err(error) => return Err(error),
-    }
-}
-```
-
-The assertion checks this example's deliberate refusal. The `match` shows the
-application's choices: use the result, report a resource refusal, or propagate
-another error. This is a soft budget for charged allocation growth in each
-operation, not a bound on the application's total memory.
-
-The guard restores the previous limits when the block ends. Construction now
-succeeds, and our original configuration diagram still has eight models:
-
-```rust,ignore
-let destination = engine.clause(&tree, [1, 2])?;
-assert_eq!(destination.model_count(), 12u32.into());
-assert_eq!(configurations.model_count(), count);
-```
-
-An operation that takes diagrams by value consumes them even when it returns
-an error. Keep a copy before such a call if a retry needs the original; that
-copy is outside the engine's allocation budget.
 
 ## Ask for one concrete configuration
 
-Use the same engine to borrow the configuration diagram and find a witness:
+Borrow the configuration diagram to find one complete assignment:
 
 ```rust,ignore
-let witness = engine.satisfying_assignment(&configurations)?
+let witness = configurations.satisfying_assignment()
     .expect("the backup rules have a solution");
 println!("One valid configuration:");
 for literal in &witness {
@@ -153,24 +104,16 @@ The witness assigns every vtree variable. There can be many correct witnesses,
 so the program verifies that its returned assignment satisfies the rules:
 
 ```rust,ignore
-assert!(engine.implies(&engine.cube(&tree, &witness)?, &configurations)?);
+let selected = configurations.clone() & Tdd::cube(&tree, &witness);
+assert_eq!(selected.model_count(), 1u32.into());
 ```
 
-The complete program returns `Result<(), tididi::OperationError>` so the `?`
-operator propagates errors from these checked operations.
+The rules now support counting, additional constraints and finding a solution,
+without an explicit engine or a minimization step. Constructors and operators
+in this walkthrough panic on failure.
 
-## Minimize when the representation needs it
-
-All the preceding queries work without an explicit minimization step. If
-further edits leave redundant storage, minimization removes it without changing
-the represented configurations:
-
-```rust,ignore
-try_minimize(&engine, &mut configurations)?;
-assert_eq!(engine.model_count(&configurations)?, count);
-```
-
-The [complete program](https://github.com/Tractables/tididi/blob/main/examples/build_minimize_count.rs)
-contains these sections together. Continue with the
-[probability walkthrough](crate::guide::examples::probability) to assign different weights to
-configurations, or the [task guide](crate::guide::api) to find another operation.
+Continue with [execution controls](crate::guide::examples::execution) when you
+need checked errors or limits, or with [probability queries](crate::guide::examples::probability)
+to weight the valid assignments. The
+[complete program](https://github.com/Tractables/tididi/blob/main/examples/build_minimize_count.rs)
+continues with the execution-control example after these steps.

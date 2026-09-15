@@ -1,0 +1,97 @@
+# Control execution and release working memory
+
+The [configuration walkthrough](crate::guide::examples::configurations) builds
+and queries a diagram without an explicit engine. Those operations already
+reuse the workspace attached to the shared vtree. This page continues the same
+program when an application needs to bound work or release retained buffers.
+
+The variables `configurations`, `tree` and `count` come from the first part.
+Run both parts with `cargo run --example build_minimize_count`.
+
+## Handle errors directly
+
+The operators `&`, `|` and `!` panic on failure. The corresponding diagram
+methods return `Result`: use `a.and(b)?`, `a.or(b)?` or `a.negate()?` when an
+application needs to handle an error. Constructors and common queries have
+checked forms too, such as `Tdd::try_clause` and `f.try_model_count`.
+
+An operation taking diagrams by value consumes them even on error. Keep a copy
+before calling it if recovery needs the original. Queries borrow their inputs.
+
+## Bound a batch of operations
+
+The tree's [`Context`](crate::Context) lends a working engine for a batch.
+Here we deliberately allow zero bytes of charged allocation growth, so the
+attempt to rebuild the destination rule is refused:
+
+```rust,ignore
+use tididi::OperationError;
+use tididi::limits::LimitConfig;
+let context = Arc::clone(tree.context());
+let limit = LimitConfig::none().with_memory_budget_bytes(Some(0));
+let attempt = context.with_limits(limit, |operations| {
+    operations.clause(&tree, [1, 2])
+});
+```
+
+Call through `operations` throughout the bounded batch. Those calls share its limit configuration; each top-level call starts new
+work measurements. Ordinary diagram methods and nested context
+calls are independent operations and do not inherit a batch's limits.
+
+This is a soft budget for charged allocation growth in each operation, not a
+bound on the application's total memory. The example verifies its deliberate
+refusal, then handles the result as an application would:
+
+```rust,ignore
+assert!(matches!(attempt, Err(OperationError::OverBudget)));
+match attempt {
+    Ok(diagram) => println!("Destination choices: {}", diagram.model_count()),
+    Err(OperationError::OverBudget) => println!("Not enough budget to build the destination rule"),
+    Err(error) => return Err(error),
+}
+```
+
+The context retains reusable buffers after the batch, but clears its limits
+and callbacks. The next operation succeeds, and the original rules are intact:
+
+```rust,ignore
+let destination = Tdd::try_clause(&tree, [1, 2])?;
+assert_eq!(destination.model_count(), 12u32.into());
+assert_eq!(configurations.model_count(), count);
+```
+
+The complete program returns `Result<(), tididi::OperationError>` so `?` can
+propagate errors. Use [`Context::run`](crate::Context::run) for a batch with no
+initial limits; its example shows several checked operations in one checkout.
+
+## Specialize storage when needed
+
+The preceding queries work without an explicit minimization step. To remove
+redundancy under the current vtree, minimize the diagram:
+
+```rust,ignore
+configurations.minimize()?;
+assert_eq!(configurations.model_count(), count);
+```
+
+For a different variable grouping, continue with the
+[vtree walkthrough](crate::guide::examples::vtrees). For many counts under
+changing observations, [`ModelCounter`](crate::query::ModelCounter) retains
+counting state and updates evidence without rebuilding the diagram.
+
+## Release idle scratch
+
+When a batch of work ends, keeping the diagrams also keeps their shared context
+alive. Release its idle buffers when the application no longer needs that
+capacity:
+
+```rust,ignore
+context.clear_scratch();
+```
+
+The diagrams keep their results. An operation still running can return buffers
+after this call, so clear between batches when all scratch must be released.
+Dropping the last reference to a context also frees its idle buffers.
+
+The [complete program](https://github.com/Tractables/tididi/blob/main/examples/build_minimize_count.rs)
+contains the basic workflow and these execution controls.

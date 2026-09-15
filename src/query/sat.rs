@@ -8,6 +8,32 @@ use crate::vtree::{VarId, VtreeIdx};
 
 use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 
+impl Tdd {
+    /// Whether this structural diagram has a satisfying assignment.
+    ///
+    /// Borrows the diagram, ignores literal weights, and needs no minimization.
+    /// Uses the shared vtree context; [`Engine::is_sat`] is the checked form.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    ///
+    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let f = Tdd::cube(&tree, [1, -2]);
+    /// assert!(f.is_sat());
+    /// assert!(!Tdd::zero(&tree).is_sat());
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the diagram contains a marginal level, as described by
+    /// [`Engine::is_sat`].
+    pub fn is_sat(&self) -> bool {
+        self.try_is_sat().expect("is_sat: use Engine::is_sat to handle errors")
+    }
+}
+
 impl Engine {
     /// Whether a structural diagram has at least one satisfying assignment.
     ///

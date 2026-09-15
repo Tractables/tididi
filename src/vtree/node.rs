@@ -50,15 +50,14 @@ impl VtreeNode {
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{Engine, Vtree};
+/// use tididi::{Tdd, Vtree};
 ///
-/// let engine = Engine::new();
 /// let tree = Arc::new(Vtree::balanced(3));
-/// let f = engine.literal(&tree, 1)?;
-/// let g = engine.literal(f.vtree(), -2)?;
+/// let f = Tdd::literal(&tree, 1);
+/// let g = Tdd::literal(f.vtree(), -2);
 /// assert!(Arc::ptr_eq(f.vtree(), g.vtree()));
-/// let both = engine.and(f, g)?;
-/// assert_eq!(engine.model_count(&both)?, 2u32.into());
+/// let both = f.and(g)?;
+/// assert_eq!(both.model_count(), 2u32.into());
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 ///
@@ -83,8 +82,9 @@ impl VtreeNode {
 /// The tree can greatly affect diagram size and the cost of building it.
 /// A balanced shape alone does not guarantee a compact diagram. Compare
 /// [`Tdd::pair_count`](crate::Tdd::pair_count) for your functions under different
-/// groupings, and use an engine's resource limits when exploring larger inputs.
-/// Once a diagram is built, [`Engine::rotation_search`](crate::Engine::rotation_search)
+/// groupings, and use [`Context::with_limits`](crate::Context::with_limits) when
+/// exploring larger inputs.
+/// Once a diagram is built, [`Tdd::rotation_search`](crate::Tdd::rotation_search)
 /// can search nearby tree shapes. [`minimize`](crate::reduce::minimize) instead
 /// removes redundancy under the current tree and keeps its variable grouping.
 ///

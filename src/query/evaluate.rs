@@ -22,7 +22,7 @@ use crate::limits::{OperationError, PollGate};
 /// Bottom-up evaluate the diagram in `algebra`. Returns the value of the
 /// output node (or `algebra.zero()` for the constant-zero diagram).
 ///
-/// Uses [`Engine::evaluate`] on a fresh engine; see that method for the
+/// Uses [`Engine::evaluate`] using the vtree context; see that method for the
 /// algebra, counting-domain and memory contracts.
 ///
 /// # Panics
@@ -52,7 +52,7 @@ use crate::limits::{OperationError, PollGate};
 /// assert_eq!(evaluate(&f, &algebra), BigRational::new(1.into(), 4.into()).into());
 /// ```
 pub fn evaluate<S: EvalAlgebra>(tdd: &Tdd, algebra: &S) -> S::Value {
-    Engine::new().evaluate(tdd, algebra).expect("evaluate: operation refused")
+    tdd.evaluate(algebra).expect("evaluate: operation refused")
 }
 
 impl Engine {

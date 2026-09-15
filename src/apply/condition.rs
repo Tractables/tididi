@@ -335,7 +335,7 @@ fn canonicalize_false_output(tdd: &mut crate::diagram::Tdd) {
 #[cfg(test)]
 mod tests;
 
-/// Fix `x` to `value`, on a transient engine with no limits armed.
+/// Fix `x` to `value`, using the vtree context with no limits armed.
 ///
 /// `f` is borrowed and cloned; the result is what [`Engine::condition_var`]
 /// returns, so its contract — `x` stays a free variable of the vtree, the
@@ -367,11 +367,11 @@ mod tests;
 /// ```
 #[must_use]
 pub fn condition_var(f: &Tdd, x: VarId, value: bool) -> Tdd {
-    condition_var_on(&Engine::new(), f.clone(), x, value)
+    f.clone().condition_var(x, value)
         .expect("condition_var: use Engine::condition_var to handle a refusal or a variable outside the vtree")
 }
 
-/// Fix every variable in `vars` to `value`, on a transient engine with no
+/// Fix every variable in `vars` to `value`, using the vtree context with no
 /// limits armed.
 ///
 /// `f` is borrowed and cloned. [`Engine::condition_vars`] is this operation on
@@ -384,7 +384,7 @@ pub fn condition_var(f: &Tdd, x: VarId, value: bool) -> Tdd {
 /// allocation is refused.
 #[must_use]
 pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
-    condition_vars_on(&Engine::new(), f.clone(), vars, value)
+    f.clone().condition_vars(vars, value)
         .expect("condition_vars: use Engine::condition_vars to handle a refusal or a variable outside the vtree")
 }
 

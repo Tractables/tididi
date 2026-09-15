@@ -6,6 +6,7 @@
 //! an operation may push pairs in any order.
 
 mod reach;
+mod operations;
 mod worklists;
 
 #[cfg(test)]
@@ -98,12 +99,13 @@ impl std::ops::BitOr for Changed {
 /// # tididi::test_helpers::assert_canonical(&f);
 /// ```
 ///
-/// Constructors and operators use temporary working memory, freed after each
-/// call, and panic on failure. An optional [`Engine`](crate::Engine) reuses that
-/// working memory and returns operation errors under caller-supplied limits.
-/// A diagram has no owning engine: operands can come from different engines,
-/// including engines that have already been dropped. Binary operations require
-/// operands to share the same `Arc<Vtree>` allocation.
+/// The shared vtree retains reusable execution scratch. Constructors, operators
+/// and queries use it automatically; convenience forms panic on failure.
+/// Checked methods such as [`and`](Self::and) and [`try_model_count`](Self::try_model_count)
+/// return errors. [`Context::with_limits`](crate::Context::with_limits) lends a
+/// batch engine for explicit execution limits. Binary operations require
+/// operands to share the same `Arc<Vtree>` allocation, independently of which
+/// batch produced them.
 ///
 /// The diagram owns one [`TddLevel`] per vtree node and shares the vtree by
 /// `Arc`. The function it denotes is the node `output`; every other stored
@@ -129,14 +131,13 @@ impl std::ops::BitOr for Changed {
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{Engine, Tdd, Vtree};
+/// use tididi::{Tdd, Vtree};
 /// use tididi::vtree::VarId;
 ///
-/// let engine = Engine::new();
 /// let tree = Arc::new(Vtree::balanced(3));
-/// let f = engine.clause(&tree, [1, 2])?;
-/// let with_first = engine.condition_var(f.clone(), VarId(0), true)?;
-/// let without_first = engine.condition_var(f.clone(), VarId(0), false)?;
+/// let f = Tdd::try_clause(&tree, [1, 2])?;
+/// let with_first = f.clone().condition_var(VarId(0), true)?;
+/// let without_first = f.clone().condition_var(VarId(0), false)?;
 /// assert_eq!(with_first.model_count(), 8u32.into());
 /// assert_eq!(without_first.model_count(), 4u32.into());
 /// assert_eq!(f.model_count(), 6u32.into()); // the retained original

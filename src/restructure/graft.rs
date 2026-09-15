@@ -44,7 +44,8 @@ impl Tdd {
     /// integer marginal levels move with it. Structural parts may carry weights,
     /// which this unweighted entry discards. Parts with computed weight columns
     /// require [`Tdd::graft_over`] and a compatible destination store. Runs on a
-    /// transient engine with no limits armed.
+    /// the first part's context with no limits armed, or a fresh context when
+    /// there are no parts. The result follows [`Vtree::graft`]'s context policy.
     ///
     /// # Errors
     ///
@@ -85,7 +86,9 @@ impl Tdd {
             .chain(spine_vars.iter().map(|v| v.0 + 1))
             .max()
             .unwrap_or(0);
-        graft_impl(&Engine::new(), parts, |_, v| v, spine_vars, num_vars, None).map(|(tdd, _)| tdd)
+        let context = parts.first().map(|part| Arc::clone(part.context())).unwrap_or_default();
+        context.run(|eng| graft_impl(eng, parts, |_, v| v, spine_vars, num_vars, None))
+            .map(|(tdd, _)| tdd)
     }
 
     /// [`Tdd::graft`] for parts compiled in their own local variable spaces.
