@@ -1,6 +1,6 @@
 use num_traits::Zero;
 use tididi::diagram::RationalWeights;
-use tididi::query::{KeepAllColumns, KeepFrontier, ModelCounter, PinSemantics, Retention};
+use tididi::query::{KeepAllColumns, KeepFrontier, PinSemantics, Retention};
 use tididi::vtree::VarId;
 use tididi::{Engine, Literal, Tdd};
 
@@ -126,7 +126,7 @@ fn changing_weights_and_evidence_match_exact_assignment_sums() {
 
 /// Change pins on a retained counter and compare each read with direct enumeration.
 fn pin_sequence<R: Retention>(engine: &Engine, diagram: &Tdd, convention: PinSemantics) {
-    let mut counter = ModelCounter::<R>::new_on(engine, diagram, convention).unwrap();
+    let mut counter = engine.counter_with::<R>(diagram, convention).unwrap();
     let mut pins = [None; 4];
     for change in [
         None,
@@ -161,7 +161,7 @@ fn pin_sequence<R: Retention>(engine: &Engine, diagram: &Tdd, convention: PinSem
         };
         for _ in 0..2 {
             assert_eq!(
-                counter.model_count_on(engine).unwrap(),
+                counter.model_count().unwrap(),
                 expected.into(),
                 "pins {pins:?}, {convention:?}"
             );

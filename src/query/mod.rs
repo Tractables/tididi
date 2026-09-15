@@ -31,7 +31,7 @@ mod boolean;
 
 pub use count::{
     KeepAllColumns, ColumnRetention,
-    KeepFrontier, ModelCounter, Retention, PinSemantics,
+    KeepFrontier, ModelCounter, BoundModelCounter, Retention, PinSemantics,
 };
 
 #[cfg(test)]

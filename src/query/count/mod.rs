@@ -8,7 +8,7 @@ mod incremental;
 
 use crate::engine::Engine;
 use crate::limits::OperationError;
-pub use incremental::{KeepAllColumns, KeepFrontier, ModelCounter, Retention};
+pub use incremental::{KeepAllColumns, KeepFrontier, ModelCounter, BoundModelCounter, Retention};
 
 use num_bigint::BigUint;
 
@@ -117,7 +117,7 @@ pub(crate) fn model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, OperationE
         if eng.limits().should_stop() { return Err(OperationError::Stopped); }
         return Ok(BigUint::ZERO);
     }
-    ModelCounter::<KeepFrontier>::allocate(eng, tdd, 0, PinSemantics::Cofactor)?.model_count_on(eng)
+    ModelCounter::<KeepFrontier>::allocate(eng, tdd, 0, PinSemantics::Cofactor)?.count_with(eng)
 }
 
 impl Tdd {

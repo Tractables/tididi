@@ -5,7 +5,7 @@ use super::*;
 
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
 
-use crate::query::count::{ModelCounter, KeepAllColumns, PinSemantics};
+use crate::query::count::{KeepAllColumns, PinSemantics};
 use crate::test_helpers::{assert_canonical, rat};
 
 /// `(x0 ∨ x2) ∧ (¬x1 ∨ x3)` over `balanced(4)`, minimized.
@@ -58,8 +58,8 @@ fn the_incremental_count_of_bottom_is_zero() {
     let vtree = Arc::new(Vtree::balanced(3));
     let f = crate::build::constant_zero(eng, &vtree);
     assert!(f.is_zero());
-    let mut counter = ModelCounter::<KeepAllColumns>::new_on(eng, &f, PinSemantics::Evidence).unwrap();
-    assert_eq!(counter.model_count_on(eng).unwrap(), BigUint::ZERO);
+    let mut counter = eng.counter_with::<KeepAllColumns>(&f, PinSemantics::Evidence).unwrap();
+    assert_eq!(counter.model_count().unwrap(), BigUint::ZERO);
 }
 
 #[test]

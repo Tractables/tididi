@@ -175,7 +175,7 @@ mod sealed {
 /// f.minimize().unwrap();
 /// counter.model_count().unwrap();
 /// ```
-pub struct ModelCounter<'a, R: Retention> {
+pub struct ModelCounter<'a, R: Retention = KeepAllColumns> {
     tdd: &'a Tdd,
     cols: Vec<CountVec>,
     pins: Vec<Option<bool>>,
@@ -198,25 +198,138 @@ impl Tdd {
     ///
     /// Returns [`OperationError::IncompatibleWeights`] for weighted marginal levels
     /// or [`OperationError::OverBudget`] if counter storage cannot be reserved.
-    pub fn counter(&self) -> Result<ModelCounter<'_, KeepAllColumns>, OperationError> {
+    pub fn counter(&self) -> Result<ModelCounter<'_>, OperationError> {
         ModelCounter::new(self, PinSemantics::Evidence)
     }
 }
 
-impl Engine {
-    /// Create a counter with [`Tdd::counter`] semantics under this engine's limits.
+/// A counter whose reads use the borrowed engine's limits.
+///
+/// [`Engine::counter`] creates a counter for a batch; [`ModelCounter::bind`]
+/// lends an existing counter to one. Both retain pins and cached columns after
+/// a refused read, invalidating the cache so the next read recomputes it.
+/// Dropping a borrowed binding leaves the original counter available with its
+/// updated pins and columns. Dropping an owned counter releases that storage.
+///
+/// The engine must remain borrowed throughout the batch. A counter cannot
+/// escape the engine checkout that created it:
+///
+/// ```compile_fail
+/// use std::sync::Arc;
+/// use tididi::{Tdd, Vtree};
+/// let tree = Arc::new(Vtree::balanced(2));
+/// let f = Tdd::one(&tree);
+/// let mut counter = tree.context().run(|engine| engine.counter(&f)).unwrap();
+/// counter.model_count().unwrap();
+/// ```
+pub struct BoundModelCounter<'a, 'batch, R: Retention = KeepAllColumns> {
+    counter: CounterStorage<'a, 'batch, R>,
+    engine: &'batch Engine,
+}
+
+/// Store a batch's counter or borrow the state of a persistent counter.
+enum CounterStorage<'a, 'batch, R: Retention> {
+    Owned(ModelCounter<'a, R>),
+    Borrowed(&'batch mut ModelCounter<'a, R>),
+}
+
+impl<'a, R: Retention> CounterStorage<'a, '_, R> {
+    /// Borrow the counter state used by either kind of batch binding.
+    fn get_mut(&mut self) -> &mut ModelCounter<'a, R> {
+        match self {
+            Self::Owned(counter) => counter,
+            Self::Borrowed(counter) => counter,
+        }
+    }
+}
+
+impl<R: Retention> std::fmt::Debug for BoundModelCounter<'_, '_, R> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let counter = match &self.counter {
+            CounterStorage::Owned(counter) => counter,
+            CounterStorage::Borrowed(counter) => counter,
+        };
+        f.debug_struct("BoundModelCounter").field("counter", counter).finish_non_exhaustive()
+    }
+}
+
+impl<R: Retention> BoundModelCounter<'_, '_, R> {
+    /// Set or clear a pin with the validation and deferred refresh of [`ModelCounter::set_pin`].
+    pub fn set_pin(&mut self, var: VarId, val: Option<bool>) -> Result<(), OperationError> {
+        self.counter.get_mut().set_pin(var, val)
+    }
+
+    /// Count with [`ModelCounter::model_count`] semantics under the borrowed engine's limits.
     ///
-    /// Construction uses this engine for allocation and stop checks. Use
-    /// [`ModelCounter::model_count_on`] for subsequent counts under this engine's
-    /// limits; [`ModelCounter::model_count`] uses the diagram's context instead.
-    /// Use [`ModelCounter::new_on`] to choose another retention policy or pin convention.
+    /// Every read checks the engine's current limits, including cached and
+    /// constant answers. A refusal preserves pins and invalidates the cache;
+    /// reading again after the limit is relaxed recomputes the result.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::Stopped`] for an armed stop or
+    /// [`OperationError::OverBudget`] when a buffer reservation is refused.
+    pub fn model_count(&mut self) -> Result<BigUint, OperationError> {
+        self.counter.get_mut().count_with(self.engine)
+    }
+}
+
+impl Engine {
+    /// Create a counter with [`Tdd::counter`] semantics bound to this engine.
+    ///
+    /// Construction and every subsequent count use this engine's limits.
+    /// The counter borrows the engine and diagram for its lifetime.
+    /// Use [`Self::counter_with`] to choose a retention policy or pin convention.
     ///
     /// # Errors
     ///
     /// Returns the errors from [`Tdd::counter`], or [`OperationError::Stopped`]
     /// for an armed stop.
-    pub fn counter<'a>(&self, tdd: &'a Tdd) -> Result<ModelCounter<'a, KeepAllColumns>, OperationError> {
-        ModelCounter::new_on(self, tdd, PinSemantics::Evidence)
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// use tididi::limits::LimitConfig;
+    /// use tididi::vtree::VarId;
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// tree.context().with_limits(
+    ///     LimitConfig::none().with_memory_budget_bytes(Some(1_000_000)),
+    ///     |engine| {
+    ///         let mut counter = engine.counter(&f)?;
+    ///         counter.set_pin(VarId(0), Some(false))?;
+    ///         assert_eq!(counter.model_count()?, 2u32.into());
+    ///         Ok::<(), tididi::OperationError>(())
+    ///     },
+    /// )?;
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn counter<'a, 'batch>(&'batch self, tdd: &'a Tdd) -> Result<BoundModelCounter<'a, 'batch>, OperationError> {
+        self.counter_with(tdd, PinSemantics::Evidence)
+    }
+
+    /// Create a counter with [`ModelCounter::new`] semantics bound to this engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::counter`], using this engine for
+    /// allocation and stop checks during construction and every count.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Tdd, Vtree};
+    /// use tididi::query::{KeepFrontier, PinSemantics};
+    /// let engine = Engine::new();
+    /// let f = Tdd::one(&Arc::new(Vtree::balanced(3)));
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// let mut counter = engine.counter_with::<KeepFrontier>(&f, PinSemantics::Evidence)?;
+    /// assert_eq!(counter.model_count()?, 8u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn counter_with<'a, 'batch, R: Retention>(&'batch self, tdd: &'a Tdd, convention: PinSemantics) -> Result<BoundModelCounter<'a, 'batch, R>, OperationError> {
+        let counter = ModelCounter::allocate(self, tdd, tdd.vtree.num_leaves() as usize, convention)?;
+        Ok(BoundModelCounter { counter: CounterStorage::Owned(counter), engine: self })
     }
 }
 
@@ -259,16 +372,34 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn new(tdd: &'a Tdd, convention: PinSemantics) -> Result<Self, OperationError> {
-        tdd.vtree().context().run(|eng| Self::new_on(eng, tdd, convention))
+        tdd.vtree().context().run(|eng| Self::allocate(eng, tdd, tdd.vtree.num_leaves() as usize, convention))
     }
 
-    /// Create an initially unpinned counter under an explicit workspace's limits.
+    /// Borrow this counter for a batch whose reads use the supplied engine's limits.
     ///
-    /// # Errors
+    /// Binding does not allocate or evaluate. Pins and cached columns stay in
+    /// this counter, including updates made through the binding. Once the
+    /// binding ends, ordinary reads use the diagram's context again.
     ///
-    /// Returns the same errors as [`Self::new`], using `eng` for allocation and stop checks.
-    pub fn new_on(eng: &Engine, tdd: &'a Tdd, convention: PinSemantics) -> Result<Self, OperationError> {
-        Self::allocate(eng, tdd, tdd.vtree.num_leaves() as usize, convention)
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// use tididi::vtree::VarId;
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// let mut counter = f.counter()?;
+    /// tree.context().run(|engine| {
+    ///     let mut batch = counter.bind(engine);
+    ///     batch.set_pin(VarId(0), Some(false))?;
+    ///     assert_eq!(batch.model_count()?, 2u32.into());
+    ///     Ok::<(), tididi::OperationError>(())
+    /// })?;
+    /// assert_eq!(counter.model_count()?, 2u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn bind<'batch>(&'batch mut self, engine: &'batch Engine) -> BoundModelCounter<'a, 'batch, R> {
+        BoundModelCounter { counter: CounterStorage::Borrowed(self), engine }
     }
 
     /// Allocate leaf-indexed pin slots, or zero slots for an internal unpinned query.
@@ -346,15 +477,11 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// reservation, or [`OperationError::Stopped`] for an armed stop.
     pub fn model_count(&mut self) -> Result<BigUint, OperationError> {
         let tdd = self.tdd;
-        tdd.vtree().context().run(|eng| self.model_count_on(eng))
+        tdd.vtree().context().run(|eng| self.count_with(eng))
     }
 
-    /// Refresh the current pins and count under an explicit workspace's limits.
-    ///
-    /// # Errors
-    ///
-    /// Returns the same errors as [`Self::model_count`], using `eng` for allocation and stop checks.
-    pub fn model_count_on(&mut self, eng: &Engine) -> Result<BigUint, OperationError> {
+    /// Refresh pins and count under the supplied engine's limits for every entry point.
+    pub(super) fn count_with(&mut self, eng: &Engine) -> Result<BigUint, OperationError> {
         let lim = eng.limits();
         let _op = lim.begin_operation();
         let result = (|| {
