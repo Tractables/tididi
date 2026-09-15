@@ -75,7 +75,7 @@ impl Tdd {
     /// ```
     pub fn and_clause<L: crate::apply::ClauseLiteral>(self, clause: impl AsRef<[L]>) -> Result<Tdd, OperationError> {
         let context = Arc::clone(self.context());
-        context.run(|eng| eng.and_clause(self, clause))
+        context.run(|eng| eng.and_clause(self, clause.as_ref()))
     }
 
     /// Substitute an assignment into this function and return its minimized cofactor.

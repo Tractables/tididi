@@ -26,10 +26,10 @@ fn clause_conjunction_accepts_integer_and_typed_collections() {
     assert_clause(one.clone().and_clause(signed.as_slice()).unwrap(), &expected);
     assert_clause(one.clone().and_clause(&signed).unwrap(), &expected);
     assert_clause(one.clone().and_clause(signed).unwrap(), &expected);
-    assert_clause(engine.and_clause(one.clone(), [typed[0], typed[1]]).unwrap(), &expected);
+    assert_clause(engine.and_clause(one.clone(), &[typed[0], typed[1]]).unwrap(), &expected);
     assert_clause(engine.and_clause(one.clone(), typed.as_slice()).unwrap(), &expected);
     assert_clause(engine.and_clause(one.clone(), &typed).unwrap(), &expected);
-    assert_clause(engine.and_clause(one, typed).unwrap(), &expected);
+    assert_clause(engine.and_clause(one, &typed).unwrap(), &expected);
 }
 
 #[test]
@@ -66,9 +66,9 @@ fn integer_conversion_obeys_the_batch_allocation_budget() {
     let engine = Engine::new();
     {
         let _limits = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
-        assert_eq!(engine.and_clause(input.clone(), [1, -1]).unwrap_err(), OperationError::OverBudget);
+        assert_eq!(engine.and_clause(input.clone(), &[1, -1]).unwrap_err(), OperationError::OverBudget);
     }
     let expected = Tdd::literal(&tree, 1).unwrap();
     assert_canonical(&expected);
-    assert_clause(engine.and_clause(input, [1]).unwrap(), &expected);
+    assert_clause(engine.and_clause(input, &[1]).unwrap(), &expected);
 }

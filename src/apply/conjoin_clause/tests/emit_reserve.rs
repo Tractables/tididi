@@ -80,7 +80,7 @@ fn a_clause_reuses_the_single_node_input_arena() {
     let input = Tdd::one(&tree);
     assert_canonical(&input);
     let nodes = input.level(tree.root()).nodes().as_ptr();
-    let result = Engine::new().and_clause(input, [crate::Literal::try_from(1).unwrap()]).unwrap();
+    let result = Engine::new().and_clause(input, &[crate::Literal::try_from(1).unwrap()]).unwrap();
     assert_canonical(&result);
     assert_eq!(result.model_count().unwrap(), 128u32.into());
     assert_eq!(result.level(tree.root()).nodes().as_ptr(), nodes);
@@ -92,13 +92,13 @@ fn a_clause_reuses_empty_input_pair_capacity() {
     let eng = Engine::new();
     let one = Tdd::one(&tree);
     assert_canonical(&one);
-    let input = eng.and_clause(one, [crate::Literal::try_from(1).unwrap()]).unwrap();
+    let input = eng.and_clause(one, &[crate::Literal::try_from(1).unwrap()]).unwrap();
     assert_canonical(&input);
     let level = input.level(tree.root());
     assert!(level.pairs.is_empty());
     assert!(level.pairs.capacity() > 0);
     let pairs = level.pairs.as_ptr();
-    let result = eng.and_clause(input, [crate::Literal::try_from(2).unwrap()]).unwrap();
+    let result = eng.and_clause(input, &[crate::Literal::try_from(2).unwrap()]).unwrap();
     assert_canonical(&result);
     assert_eq!(result.model_count().unwrap(), 64u32.into());
     assert_eq!(result.level(tree.root()).pairs.as_ptr(), pairs);

@@ -25,6 +25,6 @@ fn a_tautological_clause_is_true() {
     let vtree = Arc::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, -1]).unwrap();
     assert_eq!(f.model_count().unwrap(), BigUint::from(8u32));
-    let g = Engine::new().and_clause(Tdd::clause(&vtree, [2, 3]).unwrap(), [crate::Literal::try_from(1).unwrap(), crate::Literal::try_from(-1).unwrap()]).expect("no limit is armed");
+    let g = Engine::new().and_clause(Tdd::clause(&vtree, [2, 3]).unwrap(), &[crate::Literal::try_from(1).unwrap(), crate::Literal::try_from(-1).unwrap()]).expect("no limit is armed");
     assert_eq!(g.model_count().unwrap(), BigUint::from(6u32));
 }

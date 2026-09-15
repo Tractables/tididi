@@ -356,10 +356,11 @@ impl crate::engine::Engine {
     /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
     /// [`OperationError::OutputCap`].
     ///
+    /// Borrow a slice of signed integers or typed literals.
     /// Stop and output limits are checked once per rebuilt level; the output cap
     /// counts nodes in the levels rebuilt so far.
-    pub fn and_clause<L: ClauseLiteral>(&self, f: Tdd, clause: impl AsRef<[L]>) -> Result<Tdd, OperationError> {
-        L::conjoin(self, f, clause.as_ref())
+    pub fn and_clause<L: ClauseLiteral>(&self, f: Tdd, clause: &[L]) -> Result<Tdd, OperationError> {
+        L::conjoin(self, f, clause)
     }
 }
 
