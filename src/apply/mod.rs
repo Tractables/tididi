@@ -1,5 +1,8 @@
 //! Combine and transform Boolean functions.
 //!
+//! Combine [`Tdd`](crate::Tdd) values directly with `f & g`, `f | g` and `!f`.
+//! Each call allocates a temporary workspace and releases it afterward.
+//!
 //! Use [`Engine::and`](crate::Engine::and), [`Engine::or`](crate::Engine::or),
 //! [`Engine::negate`](crate::Engine::negate), [`Engine::xor`](crate::Engine::xor)
 //! and [`Engine::ite`](crate::Engine::ite) to compose functions.

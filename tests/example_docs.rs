@@ -1,0 +1,42 @@
+//! Keep the walkthrough excerpts tied to the programs exercised by CI.
+
+/// Compare Rust excerpts without indentation introduced by their surrounding scope.
+fn normalized(source: &str) -> String {
+    source.lines().map(str::trim).collect::<Vec<_>>().join("\n")
+}
+
+#[test]
+fn walkthrough_code_comes_from_the_runnable_examples() {
+    let examples = [
+        ("configurations", include_str!("../docs/examples/configurations.md"), include_str!("../examples/build_minimize_count.rs")),
+        ("probability", include_str!("../docs/examples/probability.md"), include_str!("../examples/probabilistic_query.rs")),
+        ("reachability", include_str!("../docs/examples/reachability.md"), include_str!("../examples/symbolic_reachability.rs")),
+        ("statistics", include_str!("../docs/examples/statistics.md"), include_str!("../examples/statistic.rs")),
+    ];
+    for (name, markdown, source) in examples {
+        let source = normalized(source);
+        let mut excerpts = 0;
+        let mut lines = markdown.lines();
+        while let Some(line) = lines.next() {
+            if !line.starts_with("```rust") {
+                continue;
+            }
+            assert_eq!(line, "```rust,ignore", "{name}: excerpts are checked against the executable example");
+            let mut snippet = Vec::new();
+            let mut closed = false;
+            for line in lines.by_ref() {
+                if line == "```" {
+                    closed = true;
+                    break;
+                }
+                snippet.push(line);
+            }
+            assert!(closed, "{name}: unclosed Rust excerpt");
+            let snippet = normalized(&snippet.join("\n"));
+            assert!(!snippet.is_empty(), "{name}: empty Rust excerpt");
+            assert!(source.contains(&snippet), "{name}: excerpt does not occur in the runnable example:\n{snippet}");
+            excerpts += 1;
+        }
+        assert!(excerpts > 0, "{name}: walkthrough has no checked excerpts");
+    }
+}

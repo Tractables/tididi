@@ -26,19 +26,16 @@ This example builds `(x ∧ y) ∨ z` and counts its satisfying assignments:
 
 ```rust
 use std::sync::Arc;
-use tididi::{Engine, Vtree};
+use tididi::{Tdd, Vtree};
 
-fn main() -> Result<(), tididi::OperationError> {
-    let engine = Engine::new();
+fn main() {
     let tree = Arc::new(Vtree::balanced(3));
-    let x = engine.literal(&tree, 1)?;
-    let y = engine.literal(&tree, 2)?;
-    let z = engine.literal(&tree, 3)?;
+    let x = Tdd::literal(&tree, 1);
+    let y = Tdd::literal(&tree, 2);
+    let z = Tdd::literal(&tree, 3);
 
-    let both = engine.and(x, y)?;
-    let f = engine.or(both, z)?;
-    assert_eq!(engine.model_count(&f)?, 5u32.into());
-    Ok(())
+    let f = (x & y) | z;
+    assert_eq!(f.model_count(), 5u32.into());
 }
 ```
 
@@ -50,29 +47,31 @@ Signed integers name literals: `1` means `x`, `-2` means `¬y`, and zero is
 invalid. The typed form, [`Literal`], uses zero-based variable identifiers.
 Use the same `Arc<Vtree>` for functions you intend to combine.
 
-The [`Engine`] holds reusable working memory and resource limits; a [`Tdd`]
-owns the resulting diagram and can outlive it. Queries borrow their inputs.
-Transformations taking `Tdd` consume it; the `Tdd` example shows how to keep
-an original for several transformations.
+Each [`Tdd`] owns its diagram. Operators consume their operands; clone an
+operand first if you need to keep it. Queries such as `model_count` borrow it.
+The constructors and operators above allocate temporary working memory and
+release it after each call; they panic if an operation fails.
+
+For a sequence of operations, an optional [`Engine`] reuses working buffers
+and offers methods that return errors and accept resource limits. Diagrams
+can be combined regardless of which engine created them, even after those
+engines have been dropped.
 
 ## Continue with your task
 
-Start with [the configuration example](examples/build_minimize_count.rs).
+Start with [the configuration walkthrough](docs/examples/configurations.md).
 It encodes rules for a backup application, counts its valid configurations,
-finds one solution, and counts the configurations that enable remote backups:
+finds one solution, and counts the configurations that enable remote backups.
 
-```sh
-cargo run --example build_minimize_count
-```
+Then use the [task guide] to find operations for your own application, or
+continue with another walkthrough. Each page explains the program in steps
+and links to the full runnable source.
 
-Run this from a source checkout. Then use the [task guide] to find the
-operations for your own application, or continue with another complete example:
-
-| Example | What it shows |
+| Walkthrough | What it shows |
 | --- | --- |
-| [probabilistic_query](examples/probabilistic_query.rs)<br>`cargo run --example probabilistic_query` | Compute the probability of rain given wet grass, then change the priors. |
-| [symbolic_reachability](examples/symbolic_reachability.rs)<br>`cargo run --example symbolic_reachability` | Find reachable states and check that a forbidden state cannot be reached. |
-| [statistic](examples/statistic.rs)<br>`cargo run --example statistic` | Traverse the stored nodes and pairs. |
+| [Conditional probability](docs/examples/probability.md) | Compute the probability of rain given wet grass, then change the priors. |
+| [Reachable states](docs/examples/reachability.md) | Find reachable states and check that a forbidden state cannot be reached. |
+| [A custom statistic](docs/examples/statistics.md) | Traverse the stored nodes and pairs. |
 
 For the concepts behind the API, read the [TDD data model]. The
 [API reference] documents each operation's input requirements, result, and

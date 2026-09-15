@@ -1,7 +1,7 @@
 //! Represent Boolean functions with Tree Decision Diagrams.
 //!
-//! A [`Vtree`] groups the variables; an [`Engine`] builds and transforms functions
-//! on that tree; a [`Tdd`] owns the resulting diagram. Reuse the diagram for
+//! A [`Vtree`] groups the variables and a [`Tdd`] owns a function on that tree.
+//! Combine diagrams with `&`, `|` and `!`, then reuse the result for
 //! model counting, Boolean queries, or evaluation under different literal weights.
 //!
 //! # A first function
@@ -11,28 +11,32 @@
 //!
 //! ```
 //! use std::sync::Arc;
-//! use tididi::{Engine, Vtree};
+//! use tididi::{Tdd, Vtree};
 //!
-//! let engine = Engine::new();
 //! let tree = Arc::new(Vtree::balanced(3));
-//! let x = engine.literal(&tree, 1)?;
-//! let y = engine.literal(&tree, 2)?;
-//! let z = engine.literal(&tree, 3)?;
-//! let f = engine.or(engine.and(x, y)?, z)?;
-//! assert_eq!(engine.model_count(&f)?, 5u32.into());
-//! # Ok::<(), tididi::OperationError>(())
+//! let x = Tdd::literal(&tree, 1);
+//! let y = Tdd::literal(&tree, 2);
+//! let z = Tdd::literal(&tree, 3);
+//! let f = (x & y) | z;
+//! assert_eq!(f.model_count(), 5u32.into());
 //! ```
 //!
 //! Integer literals are signed and one-based; [`Literal`] documents their typed,
 //! zero-based form. Reuse the same `Arc<Vtree>` for operands you will combine.
 //! Queries borrow diagrams; transformations taking `Tdd` consume them, so clone
 //! an operand first if it must be kept.
+//! Each operation above uses temporary working memory and panics on failure.
+//! Reuse an optional [`Engine`] when you want to retain working buffers between
+//! calls, handle errors, or set resource limits. Diagrams can outlive their
+//! engines and combine with diagrams created by other engines.
 //!
 //! # Where to go next
 //!
-//! Start with the [configuration example](https://github.com/Tractables/tididi/blob/main/examples/build_minimize_count.rs):
+//! Start with the [configuration walkthrough](guide::examples::configurations):
 //! encode backup rules, count valid configurations, find one solution, and
 //! narrow the choices with an observation.
+//! The [worked examples](guide::examples) also explain probability queries,
+//! reachable states and custom traversal in small steps.
 //! Follow the [task guide](guide::api) for construction, queries, transformations,
 //! probabilities, limits, and persistence. The [`Engine`] introduction explains
 //! checked operations, [`Tdd`] explains ownership, and [`Vtree`] explains the

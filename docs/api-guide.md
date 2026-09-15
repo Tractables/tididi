@@ -1,10 +1,10 @@
 # Using tididi
 
-Start with a vtree and an engine, build a function, then borrow the resulting
+Start with a vtree, build a function, then borrow the resulting
 diagram to ask questions about it. The sections below follow that sequence;
 the linked API items provide the contracts and examples.
 For a first complete program, work through the
-[backup configuration example](https://github.com/Tractables/tididi/blob/main/examples/build_minimize_count.rs).
+[backup configuration walkthrough](https://docs.rs/tididi/latest/tididi/guide/examples/configurations/index.html).
 
 ## Build a Boolean function
 
@@ -14,10 +14,12 @@ Choose [`Vtree::balanced`](crate::Vtree::balanced) for a first experiment,
 The [`Vtree`](crate::Vtree) introduction explains grouping choices, variable
 numbering, and how operands share a tree.
 
-Build an atom with [`Engine::literal`](crate::Engine::literal), a disjunction
-of literals with [`Engine::clause`](crate::Engine::clause), or a conjunction
+Build an atom with [`Tdd::literal`](crate::Tdd::literal), a disjunction
+of literals with [`Tdd::clause`](crate::Tdd::clause), or a conjunction
 of literals with [`Engine::cube`](crate::Engine::cube).
-Compose functions with [`Engine::and`](crate::Engine::and),
+Compose diagrams with `&`, `|` and `!`; the [`Tdd`](crate::Tdd) introduction
+explains ownership and temporary working memory.
+For checked operations with reusable buffers, use [`Engine::and`](crate::Engine::and),
 [`Engine::or`](crate::Engine::or), [`Engine::negate`](crate::Engine::negate),
 [`Engine::xor`](crate::Engine::xor), or [`Engine::ite`](crate::Engine::ite).
 For a sequence of constraints, [`Engine::and_clause`](crate::Engine::and_clause)
@@ -28,8 +30,9 @@ for more than one transformation.
 ## Ask questions about a function
 
 [`Engine::is_sat`](crate::Engine::is_sat) answers whether any assignment satisfies the function.
-[`Engine::model_count`](crate::Engine::model_count) counts satisfying assignments,
-including choices for free variables.
+[`Tdd::model_count`](crate::Tdd::model_count) counts satisfying assignments,
+including choices for free variables; [`Engine::model_count`](crate::Engine::model_count)
+provides its checked form with reusable buffers.
 To obtain an assignment itself, use
 [`Engine::satisfying_assignment`](crate::Engine::satisfying_assignment).
 Test semantic equality with [`Engine::equivalent`](crate::Engine::equivalent),
@@ -72,11 +75,13 @@ For fixed weights that travel with a diagram, attach a
 [`WeightStore`](crate::diagram::WeightStore) through
 [`Tdd::set_weights`](crate::Tdd::set_weights) and read its result with
 [`Engine::weighted_value`](crate::Engine::weighted_value).
-The complete [probabilistic query example](https://github.com/Tractables/tididi/blob/main/examples/probabilistic_query.rs)
+The [probability walkthrough](https://docs.rs/tididi/latest/tididi/guide/examples/probability/index.html)
 shows repeated evaluation and conditional-probability normalization.
 
 ## Control resources and diagram size
 
+An [`Engine`](crate::Engine) retains working buffers between calls and supplies
+checked versions of the constructors, operators and queries.
 Configure limits through [`LimitConfig`](crate::limits::LimitConfig), install
 them for a block with [`Limits::scope`](crate::limits::Limits::scope), and
 handle refusals as [`OperationError`](crate::OperationError).
@@ -111,6 +116,9 @@ to combine diagrams with disjoint variable domains.
 
 ## Read further
 
+The [walkthroughs](https://docs.rs/tididi/latest/tididi/guide/examples/index.html)
+develop complete programs for configurations, probabilities, reachability and
+custom traversal.
 The [data model](https://docs.rs/tididi/latest/tididi/guide/model/index.html)
 introduces levels, pairs, and determinism; the
 [architecture reference](https://docs.rs/tididi/latest/tididi/guide/architecture/index.html)

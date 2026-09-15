@@ -44,11 +44,12 @@ fn main() -> Result<(), OperationError> {
     let wet = engine.or(rain.clone(), sprinkler)?;
     let rain_and_wet = engine.and(rain.clone(), wet.clone())?;
 
-    for (rain_probability, sprinkler_probability, expected) in [
+    let scenarios = [
         (fraction(1, 5), fraction(1, 10), Some(fraction(5, 7))),
         (fraction(3, 5), fraction(1, 10), Some(fraction(15, 16))),
         (fraction(0, 1), fraction(0, 1), None),
-    ] {
+    ];
+    for (rain_probability, sprinkler_probability, expected) in scenarios {
         // Rain, sprinkler and wind have independent priors.
         let weights = RationalWeights::from_literals(&[
             bernoulli(rain_probability.clone()),

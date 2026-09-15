@@ -1,6 +1,33 @@
 use super::*;
 use crate::OperationError;
 
+/// Boolean operators combine diagrams after their independent engines are dropped.
+#[test]
+fn operators_accept_diagrams_from_dropped_independent_engines() {
+    let tree = Arc::new(Vtree::balanced(3));
+    let f = {
+        let engine = Engine::new();
+        engine.clause(&tree, [1, 2]).unwrap()
+    };
+    let g = {
+        let engine = Engine::new();
+        engine.clause(&tree, [-1, 3]).unwrap()
+    };
+    assert_canonical(&f);
+    assert_canonical(&g);
+
+    for (mut result, expected) in [
+        (f.clone() & g.clone(), 4u32),
+        (f.clone() | g.clone(), 8u32),
+        (!(f & g), 4u32),
+    ] {
+        assert_eq!(result.model_count(), expected.into());
+        crate::reduce::minimize(&mut result);
+        assert_canonical(&result);
+        assert_eq!(result.model_count(), expected.into());
+    }
+}
+
 /// Separately allocated trees are rejected even when an operand would give an immediate answer.
 #[test]
 fn mismatched_vtrees_are_rejected_before_shortcuts_or_allocation() {

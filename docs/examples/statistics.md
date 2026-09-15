@@ -1,0 +1,98 @@
+# Inspect the stored circuit
+
+Sometimes a total size is not enough: we want to know where a circuit stores
+its largest decomposition. This example finds the node with the most child
+pairs and returns the vtree level where it lives.
+
+This is a statistic of the stored representation. It does not count satisfying
+assignments. If levels have been marginalized, their original pair lists are
+no longer available to inspect.
+
+Run the complete program with `cargo run --example statistic`. Read the
+[data model](https://docs.rs/tididi/latest/tididi/guide/model/index.html) first
+if the distinction between a vtree level, a TDD node, and a child pair is new.
+
+```rust,ignore
+use std::sync::Arc;
+
+use tididi::Tdd;
+use tididi::vtree::{Vtree, VtreeIdx};
+```
+
+## Walk levels, then nodes
+
+The traversal uses three nested views:
+
+```text
+vtree level
+  └─ stored TDD node
+       ├─ (left child, right child)
+       └─ (left child, right child)
+```
+
+At each level, `internal_inputs_iter()` yields each stored node's identifier
+and an iterator over its pairs. The iterator knows its length, so obtaining
+the pair count does not require decoding the children:
+
+```rust,ignore
+fn widest_node(t: &Tdd) -> (VtreeIdx, usize) {
+    let mut best = (t.vtree().root(), 0usize);
+    for v in t.vtree().bottomup() {
+        let lvl = t.level(v);
+        // Leaf levels store nothing and marginal levels have dropped their
+        // pairs; both yield no nodes here.
+        if lvl.is_marginal() {
+            continue;
+        }
+        for (_i, pairs) in lvl.internal_inputs_iter() {
+            let n = pairs.len(); // PairsIter is ExactSizeIterator
+            if n > best.1 {
+                best = (v, n);
+            }
+        }
+    }
+    best
+}
+```
+
+The initial answer is `(root, 0)` for a diagram with no stored nodes.
+On ties the function keeps the first maximum it encountered. Nothing here
+changes the diagram or requires an engine.
+
+## Check a decomposition we can predict
+
+Use a balanced vtree over four variables. The exclusive OR of its first two
+variables has two alternatives: `(x1, NOT x2)` and `(NOT x1, x2)`.
+Each alternative is one pair at the level containing those variables:
+
+```rust,ignore
+let vtree = Arc::new(Vtree::balanced(4));
+// x1 ⊕ x2 needs two pairs at the level over {x1, x2}: (x1, ¬x2) and (¬x1, x2).
+let xor = Tdd::clause(&vtree, [1, 2]) & Tdd::clause(&vtree, [-1, -2]);
+let (level, pairs) = widest_node(&xor);
+let (left, _) = vtree.children(vtree.root());
+assert_eq!((level, pairs), (left, 2));
+```
+
+The other two variables are free. A single positive literal has only one pair
+at each stored node, which gives another small check:
+
+```rust,ignore
+let unit = Tdd::clause(&vtree, [1]);
+assert_eq!(widest_node(&unit).1, 1);
+```
+
+## Compare with total storage
+
+The built-in `pair_count()` sums pairs over all stored nodes. Our largest
+individual node cannot exceed that total:
+
+```rust,ignore
+assert!(widest_node(&xor).1 <= xor.pair_count());
+println!("statistic: widest node has {pairs} pairs at vtree node {}", level.idx());
+```
+
+This traversal also works as the starting point for a histogram of node sizes
+or a per-level storage report. See the
+[complete program](https://github.com/Tractables/tididi/blob/main/examples/statistic.rs)
+for imports and the runnable entry point.

@@ -82,6 +82,29 @@ impl std::ops::BitOr for Changed {
 
 /// A Tree Decision Diagram: a Boolean function decomposed along a vtree.
 ///
+/// Build and combine diagrams without keeping an engine:
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{Tdd, Vtree};
+///
+/// let tree = Arc::new(Vtree::balanced(2));
+/// let x = Tdd::literal(&tree, 1);
+/// let y = Tdd::literal(&tree, 2);
+/// let f = x & !y;
+/// assert_eq!(f.model_count(), 1u32.into());
+/// # let mut f = f;
+/// # tididi::reduce::minimize(&mut f);
+/// # tididi::test_helpers::assert_canonical(&f);
+/// ```
+///
+/// Constructors and operators use temporary working memory, freed after each
+/// call, and panic on failure. An optional [`Engine`](crate::Engine) reuses that
+/// working memory and returns operation errors under caller-supplied limits.
+/// A diagram has no owning engine: operands can come from different engines,
+/// including engines that have already been dropped. Binary operations require
+/// operands to share the same `Arc<Vtree>` allocation.
+///
 /// The diagram owns one [`TddLevel`] per vtree node and shares the vtree by
 /// `Arc`. The function it denotes is the node `output`; every other stored
 /// node is a subfunction over its vtree node's variables. See the

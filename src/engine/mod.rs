@@ -9,10 +9,14 @@
 
 use crate::limits::Limits;
 
-/// Checked operations, reusable working memory, and resource limits for diagrams.
+/// An optional workspace for checked operations, buffer reuse, and resource limits.
 ///
 /// Reuse an engine across a sequence of operations; it retains scratch buffers
 /// for the next call. Diagrams own their results and can outlive the engine.
+/// Operands may come from different engines; binary operations require a shared
+/// vtree allocation, as described on [`Tdd`](crate::Tdd).
+/// For ordinary Boolean composition, `Tdd` constructors and the `&`, `|` and `!`
+/// operators allocate temporary workspaces and release them after each call.
 /// An engine is `Send` but not `Sync`: it can move between threads, and one
 /// thread uses it at a time.
 ///

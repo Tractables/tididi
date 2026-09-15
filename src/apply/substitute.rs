@@ -85,7 +85,7 @@ impl Engine {
     /// minimized diagram; an empty map returns the operand unchanged after validation.
     /// Uses [`Engine::substitute`]'s rebuilding algorithm and can require large
     /// intermediate diagrams. The complete
-    /// [symbolic reachability example](https://github.com/Tractables/tididi/blob/main/examples/symbolic_reachability.rs)
+    /// [reachability walkthrough](crate::guide::examples::reachability)
     /// uses renaming to turn next-state variables into current-state variables.
     ///
     /// # Errors
