@@ -222,6 +222,7 @@ impl Vtree {
     /// # Panics
     ///
     /// Panics if `idx` refers to a leaf node.
+    #[inline]
     pub fn children(&self, idx: VtreeIdx) -> (VtreeIdx, VtreeIdx) {
         match &self.nodes[idx.idx()] {
             VtreeNode::Internal { left, right, .. } => (*left, *right),
@@ -265,6 +266,7 @@ impl Vtree {
     /// # Panics
     ///
     /// Panics if `idx` refers to an internal node.
+    #[inline]
     pub fn leaf_var(&self, idx: VtreeIdx) -> VarId {
         match &self.nodes[idx.idx()] {
             VtreeNode::Leaf { var, .. } => *var,
