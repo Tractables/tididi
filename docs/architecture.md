@@ -84,9 +84,9 @@ are ownership boundaries, not a claim that every module dependency is acyclic.
 
 | Module | Owns | Uses | May not touch |
 |---|---|---|---|
-| [`build`] | Constants and cubes as diagrams. | `vtree`, `diagram`, `limits`. | Reduction. |
+| `build` | Constants and cubes as diagrams. | `vtree`, `diagram`, `limits`. | Reduction. |
 | [`apply`] | Conjunction, disjunction, negation, conditioning, projection, restriction, a clause as a diagram, and the `&`, `\|`, `!` impls. | `vtree`, `diagram`, `limits`, `value`, `build`, `marginal`, `query`, `reduce`. | Reference decoding by hand; reduction policy. |
-| [`marginal`] | Marginal-column installation, reference remapping, child reclamation, and summing levels out. | `vtree`, `diagram`, `limits`, `value`, `reduce`, and `test_helpers::check` in a debug build. | The reduction passes' internals. |
+| `marginal` | Marginal-column installation, reference remapping, child reclamation, and summing levels out. | `vtree`, `diagram`, `limits`, `value`, `reduce`, and `test_helpers::check` in a debug build. | The reduction passes' internals. |
 | [`reduce`] | Canonical form: pruning, twin contraction, pair fusion, slot pruning. | `vtree`, `diagram`, `limits`, `value`, and `test_helpers::check` in a debug build. | Apply; marginalization. |
 | [`restructure`] | Rotation search and graft over a compiled diagram. | `vtree`, `diagram`, `limits`, `marginal`, `reduce`, and `test_helpers::check` in a debug build. | The counting fold. |
 | [`query`] | Model counting, satisfiability, algebra evaluation, a weighted diagram's value. | `vtree`, `diagram`, `limits`, `value`, `apply`, `reduce`. | Mutation of a borrowed input diagram. |
@@ -206,13 +206,11 @@ process-wide state, no C or C++ code built.
 [`TddLevel`]: crate::diagram::TddLevel
 [`WeightStore`]: crate::diagram::WeightStore
 [`apply`]: crate::apply
-[`build`]: crate::build
 [`diagram`]: crate::diagram
 [`engine`]: crate::engine
 [`guide`]: crate::guide
 [`io`]: crate::io
 [`limits`]: crate::limits
-[`marginal`]: crate::marginal
 [`marginal::marginalize_levels`]: crate::Tdd::marginalize_levels
 [`marginalize_levels`]: crate::Tdd::marginalize_levels
 [`query`]: crate::query

@@ -2,7 +2,7 @@
 //! `cfg(test)` or `debug_assertions`.
 //!
 //! A checker reports and never repairs: restoring an invariant belongs to the
-//! pass that broke it, in [`crate::reduce`] or [`crate::marginal`]. Every
+//! pass that broke it, in [`crate::reduce`] or [`Tdd::marginalize_levels`](crate::Tdd::marginalize_levels). Every
 //! checker walks the whole diagram, which is why a release build does not carry
 //! them. A test suite built on the crate reaches them through `test_helpers`.
 //!

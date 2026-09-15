@@ -3,7 +3,7 @@
 //! A conjunction leaves a diagram that denotes the right function but is not
 //! the smallest representation of it; the passes here bring it back to the
 //! canonical one. Producing the diagram is [`crate::apply`]; summing levels out
-//! is [`crate::marginal`], whose epilogue calls the last two passes here.
+//! is [`Tdd::marginalize_levels`](crate::Tdd::marginalize_levels), whose epilogue calls the last two passes here.
 //!
 //! [`Tdd::minimize`] runs full minimization; [`Tdd::reduce`] runs
 //! the passes selected by [`ReductionPlan`].

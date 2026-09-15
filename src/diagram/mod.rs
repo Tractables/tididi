@@ -1,7 +1,7 @@
 //! Levels, nodes, pairs, the reference encodings, the level pool, weights.
 //!
 //! This is storage, not algorithm: the operations over these types live in
-//! [`crate::apply`], [`crate::marginal`], [`crate::reduce`] and
+//! [`crate::apply`], [`Tdd::marginalize_levels`], [`crate::reduce`] and
 //! [`crate::restructure`], and the tree the levels are seated on is
 //! [`crate::vtree`].
 //!

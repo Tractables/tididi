@@ -68,9 +68,9 @@ pub(crate) mod value;  // The value kernel: counts, the fold walk, the domains, 
 // ── operations ──────────────────────────────────────────────────────────────
 // Operations share the storage types and may compose one another; the
 // architecture reference records their responsibilities.
-pub mod build;      // Constants and cubes
+mod build;      // Constants and cubes
 pub mod apply;      // Conjunction (of diagrams and of clauses), disjunction, negation, conditioning, projection, restriction
-pub mod marginal;   // Summing vtree levels out into per-node counts or weights
+mod marginal;   // Summing vtree levels out into per-node counts or weights
 pub mod reduce;     // Reduction to canonical form
 pub mod restructure;// Rotation search and graft over a compiled diagram
 pub mod query;      // Model counting, satisfiability, algebra evaluation
