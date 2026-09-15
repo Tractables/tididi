@@ -35,6 +35,8 @@ impl Vtree {
     /// ```
     ///
     /// The id space is the largest any piece needs. `O(total nodes)`.
+    /// A context shared by all subtrees is retained; otherwise the result gets
+    /// a fresh context.
     ///
     /// # Errors
     ///
@@ -130,7 +132,12 @@ impl Vtree {
         }
 
         Self::check_each_var_once(&nodes, num_vars)?;
-        let (vtree, old_to_new) = Self::reindex_bottomup_with_map(root, nodes, vec![VtreeIdx(0); num_vars as usize]);
+        let (mut vtree, old_to_new) = Self::reindex_bottomup_with_map(root, nodes, vec![VtreeIdx(0); num_vars as usize]);
+        if let Some(first) = subtrees.first() {
+            if subtrees.iter().all(|sub| std::sync::Arc::ptr_eq(sub.context(), first.context())) {
+                vtree.context = std::sync::Arc::clone(first.context());
+            }
+        }
         debug_assert_eq!(vtree.validate(), Ok(()));
 
         let comp_to_full: Vec<Vec<VtreeIdx>> = comp_offsets

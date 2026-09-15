@@ -5,7 +5,7 @@
 use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
 
 impl Vtree {
-    /// Parse the `.vtree` text format.
+    /// Parse the `.vtree` text format with a fresh execution context.
     ///
     /// Format: `vtree N` header, then N lines of `L <id> <var_1indexed>` or
     /// `I <id> <left> <right>`. Node ids are `0..N`, in any order; variables

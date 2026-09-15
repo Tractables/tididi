@@ -2,12 +2,15 @@
 //!
 //! [`Engine::new`] creates an engine; [`Engine::limits`] configures its limits.
 //! Diagrams own their results independently of the engine and can outlive it.
-//! Each engine keeps its own scratch buffers and frees them when dropped.
+//! [`Context`] lends engines to batches and retains their scratch between calls.
 //!
 //! The [task guide](crate::guide::api) links construction, transformation and
 //! query examples; [`Limits`] documents configuration and work measurements.
 
 use crate::limits::Limits;
+
+mod context;
+pub use context::Context;
 
 /// An optional workspace for checked operations, buffer reuse, and resource limits.
 ///
@@ -16,7 +19,7 @@ use crate::limits::Limits;
 /// Operands may come from different engines; binary operations require a shared
 /// vtree allocation, as described on [`Tdd`](crate::Tdd).
 /// For ordinary Boolean composition, `Tdd` constructors and the `&`, `|` and `!`
-/// operators allocate temporary workspaces and release them after each call.
+/// operators use the vtree's [`Context`] automatically.
 /// An engine is `Send` but not `Sync`: it can move between threads, and one
 /// thread uses it at a time.
 ///
@@ -60,12 +63,13 @@ use crate::limits::Limits;
 /// configuration afterward. Checked methods return [`OperationError`](crate::OperationError)
 /// on refusal; the method's contract specifies what remains after an error.
 ///
-/// The `Tdd` constructors and Boolean operators are convenience forms with a
-/// temporary engine and panic-on-error behavior. The infallible
+/// The `Tdd` constructors and Boolean operators use their vtree's context
+/// with panic-on-error behavior. The infallible
 /// [`one`](Self::one) and [`zero`](Self::zero) methods also do not check resource
 /// limits; the empty [`cube`](Self::cube) or [`clause`](Self::clause) provides a
 /// checked constant when needed.
 pub struct Engine {
+    context: std::sync::Weak<Context>,
     limits: Limits,
     apply: crate::apply::conjoin::ApplyScratch,
     clause: crate::apply::conjoin_clause::ClauseScratch,
@@ -112,6 +116,7 @@ impl Engine {
     #[must_use]
     pub fn new() -> Engine {
         Engine {
+            context: std::sync::Weak::new(),
             limits: Limits::new(),
             apply: crate::apply::conjoin::ApplyScratch::default(),
             clause: crate::apply::conjoin_clause::ClauseScratch::default(),
@@ -119,6 +124,20 @@ impl Engine {
             restructure: crate::limits::pool::Pool::default(),
             sparse: std::cell::RefCell::new(crate::apply::conjoin::SparseWorkspace::default()),
             levels: crate::diagram::LevelPool::default(),
+        }
+    }
+
+    /// Share a vtree with this execution batch's context.
+    ///
+    /// An engine checked out by [`Context::run`] or [`Context::with_limits`]
+    /// associates the tree with that context. A standalone engine gives the
+    /// tree a fresh context. Sharing a context does not make separate vtree
+    /// allocations compatible operands.
+    #[must_use]
+    pub fn bind_vtree(&self, tree: crate::Vtree) -> std::sync::Arc<crate::Vtree> {
+        match self.context.upgrade() {
+            Some(context) => context.bind(tree),
+            None => std::sync::Arc::new(Context::new()).bind(tree),
         }
     }
 

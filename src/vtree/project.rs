@@ -11,7 +11,7 @@ impl Vtree {
     /// drop. Kept leaves survive verbatim; an internal node whose subtree keeps
     /// variables on only one side is spliced out (replaced by that side), and
     /// one that keeps nothing disappears, so the result keeps the original
-    /// vtree's variable grouping. O(nodes of `self`).
+    /// vtree's variable grouping and execution context. O(nodes of `self`).
     ///
     /// `num_local` is the result's id space (`num_vars()`). When the ids
     /// `local_of` yields are exactly `0..num_local`, the result has
@@ -58,6 +58,7 @@ impl Vtree {
         }
 
         let root = new_of[self.root.idx()]?;
-        Some(Self::from_nodes(nodes, root, num_local).expect("the surviving skeleton is one tree"))
+        Some(Self::from_nodes(nodes, root, num_local).expect("the surviving skeleton is one tree")
+            .with_context(std::sync::Arc::clone(&self.context)))
     }
 }

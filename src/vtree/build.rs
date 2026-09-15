@@ -283,6 +283,7 @@ impl Vtree {
         // bottom-up topological position, so the identity order is correct.
         let topo = crate::vtree::topo::TopoOrder::identity(&new_nodes);
         let vtree = Vtree {
+            context: std::sync::Arc::new(crate::engine::Context::new()),
             nodes: new_nodes,
             root: new_root,
             var_to_leaf,

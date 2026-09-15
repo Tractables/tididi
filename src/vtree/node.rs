@@ -111,6 +111,8 @@ impl VtreeNode {
 /// [`Vtree::validate`] checks all three.
 #[derive(Clone, Debug)]
 pub struct Vtree {
+    /// Reusable execution scratch shared by clones of this tree.
+    pub(crate) context: std::sync::Arc<crate::engine::Context>,
     /// All vtree nodes: at construction, leaves first (`0..num_leaves`) then
     /// internal nodes in bottom-up level order. A rotation relinks nodes
     /// without reordering this list, which is why `topo` and not the list
@@ -135,6 +137,25 @@ pub struct Vtree {
 }
 
 impl Vtree {
+    /// The reusable execution context associated with this tree.
+    ///
+    /// Cloning a vtree preserves its context. Context sharing does not change
+    /// the requirement that binary diagram operands share one vtree allocation.
+    #[must_use]
+    pub fn context(&self) -> &std::sync::Arc<crate::engine::Context> {
+        &self.context
+    }
+
+    /// Associate this tree with `context`, preserving its shape and variable ids.
+    ///
+    /// Set the context before sharing the tree with diagrams; [`Context::bind`](crate::engine::Context::bind)
+    /// also wraps it in an `Arc`.
+    #[must_use]
+    pub fn with_context(mut self, context: std::sync::Arc<crate::engine::Context>) -> Self {
+        self.context = context;
+        self
+    }
+
     /// Number of leaf nodes. Since nodes are stored leaves-first, indices
     /// `0..num_leaves()` are leaves and `num_leaves()..n` are internal nodes.
     #[inline]
