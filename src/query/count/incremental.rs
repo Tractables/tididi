@@ -14,11 +14,18 @@ use crate::diagram::*;
 use crate::vtree::{VarId, VtreeIdx};
 use std::marker::PhantomData;
 
+/// A leaf observation and its membership in the pending ancestor traversal.
+#[derive(Clone, Copy, Debug, Default)]
+struct PinState {
+    value: Option<bool>,
+    dirty: bool,
+}
+
 /// The u128-primary counting fold: native arithmetic for the vast majority of
 /// nodes, spilling a node to the exact `BigUint` side table only where it
 /// overflows.
 pub(super) struct OverflowingCounts<'a> {
-    pub(super) pins: &'a [Option<bool>],
+    pins: &'a [PinState],
     pub(super) convention: PinSemantics,
 }
 
@@ -43,7 +50,7 @@ impl LevelFold for OverflowingCounts<'_> {
     }
 
     fn leaf(&self, leaf: VtreeIdx, _var: VarId, label: LeafLabel) -> Count {
-        let pin = self.pins.get(leaf.idx()).copied().flatten();
+        let pin = self.pins.get(leaf.idx()).and_then(|pin| pin.value);
         Count::from_u128(leaf_seed(label, pin, self.convention))
     }
 
@@ -178,7 +185,7 @@ mod sealed {
 pub struct ModelCounter<'a, R: Retention = KeepAllColumns> {
     tdd: &'a Tdd,
     cols: Vec<CountVec>,
-    pins: Vec<Option<bool>>,
+    pins: Vec<PinState>,
     changed: Vec<VtreeIdx>,
     convention: PinSemantics,
     evaluated: bool,
@@ -427,7 +434,7 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
         lim.reserve_exact(&mut cols, tdd.vtree.num_nodes())?;
         cols.resize_with(tdd.vtree.num_nodes(), CountVec::default);
         let mut pins = Vec::new();
-        lim.try_resize(&mut pins, pin_slots, None)?;
+        lim.try_resize(&mut pins, pin_slots, PinState::default())?;
         let mut changed = Vec::new();
         if pin_slots != 0 { lim.reserve_exact(&mut changed, pin_slots)?; }
         if lim.should_stop() { return Err(OperationError::Stopped); }
@@ -525,7 +532,7 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// ```
     pub fn clear_pins(&mut self) {
         for leaf in 0..self.pins.len() {
-            if self.pins[leaf].is_some() { self.set_leaf_pin(VtreeIdx(leaf as u32), None); }
+            if self.pins[leaf].value.is_some() { self.set_leaf_pin(VtreeIdx(leaf as u32), None); }
         }
     }
 
@@ -543,9 +550,17 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
 
     /// Update a validated leaf's pin and record its deferred refresh once.
     fn set_leaf_pin(&mut self, leaf: VtreeIdx, val: Option<bool>) {
-        if self.pins[leaf.idx()] == val { return; }
-        self.pins[leaf.idx()] = val;
-        if !self.changed.contains(&leaf) { self.changed.push(leaf); }
+        if !self.evaluated {
+            self.clear_changed();
+            self.pins[leaf.idx()].value = val;
+            return;
+        }
+        if self.pins[leaf.idx()].value == val { return; }
+        self.pins[leaf.idx()].value = val;
+        if !self.pins[leaf.idx()].dirty {
+            self.changed.push(leaf);
+            self.pins[leaf.idx()].dirty = true;
+        }
     }
 
     /// Refresh the current pins and count under the diagram context's allocation and stop rules.
@@ -586,7 +601,10 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
             lim.flush_poll(&mut gate)?;
             Ok(count)
         })();
-        if result.is_err() { self.evaluated = false; }
+        if result.is_err() {
+            self.evaluated = false;
+            self.clear_changed();
+        }
         result
     }
 
@@ -596,27 +614,27 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
         let incremental = self.evaluated && R::RETAIN == ColumnRetention::All;
         self.evaluated = false;
         let tdd = self.tdd;
-        let fold = OverflowingCounts { pins: &self.pins, convention: self.convention };
         if incremental {
-            let mut in_cone = Vec::new();
-            eng.limits().try_resize(&mut in_cone, tdd.vtree.num_nodes(), false)?;
-            let mut cone = Vec::new();
-            for &leaf in &self.changed {
-                let mut t = leaf;
-                while !in_cone[t.idx()] {
-                    in_cone[t.idx()] = true;
-                    eng.limits().try_push(&mut cone, t)?;
+            eng.limits().try_resize(&mut self.pins, tdd.vtree.num_nodes(), PinState::default())?;
+            let leaves = self.changed.len();
+            for i in 0..leaves {
+                let mut current = self.changed[i];
+                while let Some(parent) = tdd.vtree.node(current).parent() {
+                    if self.pins[parent.idx()].dirty { break; }
+                    eng.limits().try_push(&mut self.changed, parent)?;
+                    self.pins[parent.idx()].dirty = true;
                     eng.limits().poll(gate, 1)?;
-                    match tdd.vtree.node(t).parent() {
-                        Some(parent) => t = parent,
-                        None => break,
-                    }
+                    current = parent;
                 }
+                eng.limits().poll(gate, 1)?;
             }
-            for &t in tdd.vtree.bottom_up_subset(cone).levels() {
-                fold_level(&fold, eng, tdd, &mut self.cols, t, Some(gate))?;
+            tdd.vtree.sort_bottom_up(&mut self.changed);
+            let fold = OverflowingCounts { pins: &self.pins, convention: self.convention };
+            for &level in &self.changed {
+                fold_level(&fold, eng, tdd, &mut self.cols, level, Some(gate))?;
             }
         } else {
+            let fold = OverflowingCounts { pins: &self.pins, convention: self.convention };
             if R::RETAIN == ColumnRetention::Frontier {
                 for col in &mut self.cols { *col = CountVec::default(); }
             }
@@ -626,9 +644,15 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
                 Ok(())
             })?;
         }
-        self.changed.clear();
+        self.clear_changed();
         self.evaluated = true;
         Ok(())
+    }
+
+    /// Clear pending traversal membership while retaining its allocated storage.
+    fn clear_changed(&mut self) {
+        for &level in &self.changed { self.pins[level.idx()].dirty = false; }
+        self.changed.clear();
     }
 }
 
@@ -641,3 +665,6 @@ impl ModelCounter<'_, KeepAllColumns> {
         Ok(self.cols.into_iter().map(|c| c.into_parts().0).collect())
     }
 }
+
+#[cfg(test)]
+mod tests;
