@@ -16,6 +16,7 @@ fn expected_count(pins: [Option<bool>; 3], semantics: PinSemantics) -> usize {
     match semantics {
         PinSemantics::Evidence => evidence,
         PinSemantics::Cofactor => evidence << pins.iter().filter(|p| p.is_some()).count(),
+        _ => unreachable!("the fixture selects a known pin convention"),
     }
 }
 
@@ -110,7 +111,7 @@ fn marginal_batches<R: Retention>() {
                 assert_eq!(counter.set_pins(&[(VarId(2), Some(true)), (VarId(0), pin)]),
                     Err(OperationError::MarginalLevel(summed)));
             }
-            let expected = match semantics { PinSemantics::Evidence => 4u32, PinSemantics::Cofactor => 8u32 };
+            let expected = if semantics == PinSemantics::Evidence { 4u32 } else { 8u32 };
             assert_eq!(counter.model_count().unwrap(), expected.into());
             counter.clear_pins();
             assert_eq!(counter.model_count().unwrap(), 12u32.into());
