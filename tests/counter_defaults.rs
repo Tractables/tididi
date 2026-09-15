@@ -13,7 +13,7 @@ fn default_counter_matches_evidence_after_pin_changes_and_failed_updates() {
     let f = Tdd::clause(&tree, [1, -2]).unwrap();
     assert_canonical(&f);
     let mut counter: ModelCounter<'_> = f.counter().unwrap();
-    let mut explicit = ModelCounter::<KeepAllColumns>::new(&f, PinSemantics::Evidence).unwrap();
+    let mut explicit = f.counter_with::<KeepAllColumns>(PinSemantics::Evidence).unwrap();
     let mut pins = [None; 3];
     for (var, pin) in [(0, None), (0, Some(true)), (1, Some(true)), (0, Some(false)),
         (1, None), (2, Some(false)), (0, None), (2, None)] {

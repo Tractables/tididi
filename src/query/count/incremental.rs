@@ -137,7 +137,7 @@ mod sealed {
 /// their parent is computed, and performs a fresh fold for each changed query.
 /// Updates are deferred until [`model_count`](Self::model_count).
 /// [`Tdd::counter`] selects retained columns and evidence semantics; use
-/// [`ModelCounter::new`] to choose another policy or convention.
+/// [`Tdd::counter_with`] to choose another policy or convention.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -192,14 +192,47 @@ impl Tdd {
     /// After a pin changes, the next count refreshes only its ancestor levels.
     /// The counter borrows this diagram and uses its shared execution context.
     /// See [`ModelCounter`] for pin semantics, storage and examples.
-    /// Use [`ModelCounter::new`] to choose another retention policy or pin convention.
+    /// Use [`Tdd::counter_with`] to choose another retention policy or pin convention.
     ///
     /// # Errors
     ///
     /// Returns [`OperationError::IncompatibleWeights`] for weighted marginal levels
     /// or [`OperationError::OverBudget`] if counter storage cannot be reserved.
     pub fn counter(&self) -> Result<ModelCounter<'_>, OperationError> {
-        ModelCounter::new(self, PinSemantics::Evidence)
+        self.counter_with(PinSemantics::Evidence)
+    }
+
+    /// Create an unpinned counter with the chosen retention policy and pin semantics.
+    ///
+    /// The counter borrows this diagram and uses its shared execution context.
+    /// [`KeepAllColumns`] retains counts for incremental updates;
+    /// [`KeepFrontier`] frees child columns after their parent is computed.
+    /// [`PinSemantics`] controls how observed variables contribute to counts.
+    /// Pin storage is proportional to the tree's size, including for sparse
+    /// variable IDs. Value columns are allocated on the first count, and
+    /// pin changes require no further allocation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::IncompatibleWeights`] for weighted marginal
+    /// levels, [`OperationError::OverBudget`] for a refused buffer reservation,
+    /// or [`OperationError::Stopped`] for an armed stop.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// use tididi::query::{KeepFrontier, PinSemantics};
+    /// use tididi::vtree::VarId;
+    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// let mut counter = f.counter_with::<KeepFrontier>(PinSemantics::Cofactor)?;
+    /// counter.set_pin(VarId(0), Some(false))?;
+    /// assert_eq!(counter.model_count()?, 4u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn counter_with<R: Retention>(&self, convention: PinSemantics) -> Result<ModelCounter<'_, R>, OperationError> {
+        self.vtree().context().run(|eng| ModelCounter::allocate(eng, self, self.vtree.num_leaves() as usize, convention))
     }
 }
 
@@ -309,7 +342,7 @@ impl Engine {
         self.counter_with(tdd, PinSemantics::Evidence)
     }
 
-    /// Create a counter with [`ModelCounter::new`] semantics bound to this engine.
+    /// Create a counter with [`Tdd::counter_with`] semantics bound to this engine.
     ///
     /// # Errors
     ///
@@ -345,36 +378,6 @@ impl<R: Retention> std::fmt::Debug for ModelCounter<'_, R> {
 }
 
 impl<'a, R: Retention> ModelCounter<'a, R> {
-    /// Create an initially unpinned counter using the diagram's shared execution context.
-    ///
-    /// Pin storage is proportional to the tree's size, including for sparse
-    /// variable IDs. Value columns are allocated on the first count, and
-    /// pin changes require no further allocation.
-    ///
-    /// # Errors
-    ///
-    /// [`OperationError::IncompatibleWeights`] for a weighted marginal level,
-    /// [`OperationError::OverBudget`] for a refused buffer reservation, or
-    /// [`OperationError::Stopped`] for an armed stop.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Tdd, Vtree};
-    /// use tididi::query::{ModelCounter, KeepAllColumns, PinSemantics};
-    /// use tididi::vtree::VarId;
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&tree, [1, 2])?;
-    /// # tididi::test_helpers::assert_canonical(&f);
-    /// let mut counter = ModelCounter::<KeepAllColumns>::new(
-    ///     &f, PinSemantics::Evidence)?;
-    /// counter.set_pin(VarId(0), Some(false))?;
-    /// assert_eq!(counter.model_count()?, 2u32.into());
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
-    pub fn new(tdd: &'a Tdd, convention: PinSemantics) -> Result<Self, OperationError> {
-        tdd.vtree().context().run(|eng| Self::allocate(eng, tdd, tdd.vtree.num_leaves() as usize, convention))
-    }
-
     /// Borrow this counter for a batch whose reads use the supplied engine's limits.
     ///
     /// Binding does not allocate or evaluate. Pins and cached columns stay in
@@ -436,12 +439,11 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{OperationError, Tdd, Vtree};
-    /// use tididi::query::{KeepAllColumns, ModelCounter, PinSemantics};
     /// use tididi::vtree::VarId;
     /// let tree = Arc::new(Vtree::leaf(VarId(7)));
     /// let f = Tdd::one(&tree);
     /// # tididi::test_helpers::assert_canonical(&f);
-    /// let mut counter = ModelCounter::<KeepAllColumns>::new(&f, PinSemantics::Evidence)?;
+    /// let mut counter = f.counter()?;
     /// counter.set_pin(VarId(7), Some(true))?;
     /// assert_eq!(counter.model_count()?, 1u32.into());
     /// assert_eq!(counter.set_pin(VarId(0), Some(true)), Err(OperationError::VariableNotInVtree(VarId(0))));

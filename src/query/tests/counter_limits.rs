@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use super::*;
 use crate::limits::{LimitConfig, StopCallback, StopDecision};
-use crate::query::{KeepAllColumns, KeepFrontier, ModelCounter, PinSemantics, Retention};
+use crate::query::{KeepAllColumns, KeepFrontier, PinSemantics, Retention};
 use crate::test_helpers::assert_canonical;
 use crate::OperationError;
 
@@ -146,8 +146,8 @@ fn counters_sharing_a_context_retain_independent_evidence() {
     let tree = Arc::new(Vtree::balanced(4));
     let f = Tdd::clause(&tree, [1, -2]).unwrap();
     assert_canonical(&f);
-    let mut first = ModelCounter::<KeepAllColumns>::new(&f, PinSemantics::Evidence).unwrap();
-    let mut second = ModelCounter::<KeepFrontier>::new(&f, PinSemantics::Evidence).unwrap();
+    let mut first = f.counter_with::<KeepAllColumns>(PinSemantics::Evidence).unwrap();
+    let mut second = f.counter_with::<KeepFrontier>(PinSemantics::Evidence).unwrap();
     assert_eq!(first.model_count().unwrap(), 12u32.into());
     second.set_pin(VarId(0), Some(false)).unwrap();
     assert_eq!(second.model_count().unwrap(), 4u32.into());
