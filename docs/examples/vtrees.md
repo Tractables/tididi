@@ -10,8 +10,7 @@ Run `cargo run --example vtree_grouping`; only `tididi` is needed as a dependenc
 ```rust,ignore
 use std::sync::Arc;
 
-use tididi::{Tdd, Vtree};
-use tididi::reduce::minimize;
+use tididi::{OperationError, Tdd, Vtree};
 use tididi::vtree::VarId;
 ```
 
@@ -45,21 +44,22 @@ let split_tree = Arc::new(Vtree::balanced(4));
 
 Equality is a pair of implications: `x1 ↔ x3` is
 `(¬x1 ∨ x3) ∧ (x1 ∨ ¬x3)`. The helper uses the same literal numbers for either
-tree, then minimizes before comparing storage:
+tree, then minimizes before comparing storage. The helper returns a `Result`;
+`?` passes any operation error back to `main`, which also returns a `Result`:
 
 ```rust,ignore
-fn equal_pairs(tree: &Arc<Vtree>) -> Tdd {
+fn equal_pairs(tree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
     let first_equal = Tdd::clause(tree, [-1, 3]) & Tdd::clause(tree, [1, -3]);
     let second_equal = Tdd::clause(tree, [-2, 4]) & Tdd::clause(tree, [2, -4]);
     let mut f = first_equal & second_equal;
-    minimize(&mut f);
-    f
+    f.minimize()?;
+    Ok(f)
 }
 ```
 
 ```rust,ignore
-let grouped = equal_pairs(&grouped_tree);
-let split = equal_pairs(&split_tree);
+let grouped = equal_pairs(&grouped_tree)?;
+let split = equal_pairs(&split_tree)?;
 assert_eq!(grouped.model_count(), 4u32.into());
 assert_eq!(split.model_count(), 4u32.into());
 assert_eq!(grouped.pair_count(), 5);
@@ -94,7 +94,7 @@ separate groups of constraints, try grouping their variables into subtrees and
 compare the resulting diagrams. This example favors keeping equality partners
 together; it does not establish a best order for other functions.
 
-[`Engine::rotation_search`](crate::Engine::rotation_search) can search vtree
+[`Tdd::rotation_search`](crate::Tdd::rotation_search) can search vtree
 changes on an existing diagram. The [data model](crate::guide::model) explains
 how those decompositions represent functions, and the
 [complete program](https://github.com/Tractables/tididi/blob/main/examples/vtree_grouping.rs)

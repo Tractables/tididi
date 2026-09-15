@@ -56,8 +56,8 @@ fn widest_node(t: &Tdd) -> (VtreeIdx, usize) {
 ```
 
 The initial answer is `(root, 0)` for a diagram with no stored nodes.
-On ties the function keeps the first maximum it encountered. Nothing here
-changes the diagram or requires an engine.
+On ties the function keeps the first maximum it encountered. The traversal
+only reads the diagram.
 
 ## Check a decomposition we can predict
 
@@ -78,7 +78,7 @@ The other two variables are free. A single positive literal has only one pair
 at each stored node, which gives another small check:
 
 ```rust,ignore
-let unit = Tdd::clause(&vtree, [1]);
+let unit = Tdd::literal(&vtree, 1);
 assert_eq!(widest_node(&unit).1, 1);
 ```
 

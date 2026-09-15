@@ -12,7 +12,7 @@ creating files.
 ```rust,ignore
 use std::sync::Arc;
 
-use tididi::{Engine, Tdd, Vtree};
+use tididi::{Tdd, Vtree};
 use tididi::io::{read_tdd, write_tdd};
 ```
 
@@ -74,7 +74,8 @@ assert!(Arc::ptr_eq(destination.vtree(), encryption_rule.vtree()));
 
 Reading the vtree twice would make two separate allocations. Even if their
 text is identical, diagrams on those separate trees cannot be conjoined
-directly. Sharing one restored tree establishes the common domain.
+directly. Sharing one restored tree establishes the common domain and gives both
+diagrams a shared workspace for subsequent operations.
 
 ## Combine and check the result
 
@@ -94,10 +95,9 @@ The program also checks functional equality against freshly constructed rules;
 a matching model count alone would not establish that the rules survived:
 
 ```rust,ignore
-let engine = Engine::new();
 let expected = Tdd::clause(&restored_tree, [1, 2])
     & Tdd::clause(&restored_tree, [-2, 3]);
-assert!(engine.equivalent(&configurations, &expected)?);
+assert!(configurations.equivalent(&expected)?);
 ```
 
 The complete program returns `Result<(), Box<dyn std::error::Error>>` so `?`

@@ -36,7 +36,7 @@ fn main() {
     assert_eq!((level, pairs), (left, 2));
 
     // A unit clause is a cube: one pair per node everywhere.
-    let unit = Tdd::clause(&vtree, [1]);
+    let unit = Tdd::literal(&vtree, 1);
     assert_eq!(widest_node(&unit).1, 1);
 
     // The diagram's own size metric is the sum of every node's pair count.

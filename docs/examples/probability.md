@@ -25,22 +25,21 @@ use std::sync::Arc;
 use num_rational::BigRational;
 use num_traits::{One, Zero};
 use tididi::diagram::{LiteralWeights, RationalWeights};
-use tididi::{Engine, OperationError, Tdd, Vtree};
+use tididi::{OperationError, Tdd, Vtree};
 ```
 
 ## Build the events once
 
-We reuse an engine across construction and repeated evaluations. Its workspace
-is separate from the diagrams holding the events.
+Build the events on one shared vtree. The diagrams reuse its workspace
+automatically when we combine or evaluate them.
 
 ```rust,ignore
-let engine = Engine::new();
 let tree = Arc::new(Vtree::balanced(3));
-let rain = engine.literal(&tree, 1)?;
-let sprinkler = engine.literal(&tree, 2)?;
+let rain = Tdd::literal(&tree, 1);
+let sprinkler = Tdd::literal(&tree, 2);
 // Wet grass is the observation: rain OR sprinkler. Variable 3 (wind) is free.
-let wet = engine.or(rain.clone(), sprinkler)?;
-let rain_and_wet = engine.and(rain.clone(), wet.clone())?;
+let wet = rain.clone() | sprinkler;
+let rain_and_wet = rain.clone() & wet.clone();
 ```
 
 For any query event `Q` and evidence `E`, conditional probability is
@@ -93,6 +92,19 @@ product of its literal weights; evaluation sums those products. Wind appears
 in neither event, and its two weights sum to one, so it does not change either
 probability. Independence is a modeling assumption of this weight table.
 
+## Evaluate an event
+
+Call [`evaluate`](crate::Tdd::evaluate) on an event to obtain its probability
+under the current weights:
+
+```rust,ignore
+let wet_probability = wet.evaluate(&weights)?;
+assert_eq!(rain.evaluate(&weights)?, rain_probability);
+```
+
+The result is an exact rational number. The `?` propagates an evaluation error
+from the enclosing function.
+
 ## Divide by the evidence mass
 
 Zero-probability evidence has no conditional probability. The helper returns
@@ -100,16 +112,15 @@ Zero-probability evidence has no conditional probability. The helper returns
 
 ```rust,ignore
 fn conditional_probability(
-    engine: &Engine,
     query_and_evidence: &Tdd,
     evidence: &Tdd,
     weights: &RationalWeights,
 ) -> Result<Option<BigRational>, OperationError> {
-    let evidence_mass = engine.evaluate(evidence, weights)?;
+    let evidence_mass = evidence.evaluate(weights)?;
     if evidence_mass.is_zero() {
         Ok(None)
     } else {
-        Ok(Some(engine.evaluate(query_and_evidence, weights)? / evidence_mass))
+        Ok(Some(query_and_evidence.evaluate(weights)? / evidence_mass))
     }
 }
 ```
@@ -117,7 +128,7 @@ fn conditional_probability(
 The caller supplies the same weights for the numerator and denominator:
 
 ```rust,ignore
-let conditional = conditional_probability(&engine, &rain_and_wet, &wet, &weights)?;
+let conditional = conditional_probability(&rain_and_wet, &wet, &weights)?;
 assert_eq!(conditional, expected);
 ```
 
@@ -131,7 +142,7 @@ The program checks three scenarios:
 | 3/5 | 1/10 | 16/25 | 15/16 |
 | 0 | 0 | 0 | undefined |
 
-Each [`Engine::evaluate`](crate::engine::Engine::evaluate) call reads the new table
+Each [`Tdd::evaluate`](crate::Tdd::evaluate) call reads the new table
 without changing the structural diagram. This lets an application update
 probabilities while keeping the compiled logical events.
 
