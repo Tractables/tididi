@@ -99,81 +99,6 @@ pub(super) fn exists_targets_on(eng: &Engine, mut f: Tdd, targets: &[VtreeIdx], 
     Ok(f)
 }
 
-/// Existentially quantify `x` out of the diagram, using the vtree context with no limits armed.
-///
-/// Uses [`QuantificationStrategy::Automatic`]; [`exists_var_with_strategy`] selects
-/// a rewrite explicitly. The operand is borrowed and cloned.
-/// [`Engine::exists_var`] takes ownership, reuses workspace and returns errors.
-///
-/// This is existential quantification over a variable, which is not what
-/// [`marginalize_levels`](crate::marginal::marginalize_levels) does: that sums a vtree
-/// *level* out into per-node counts and leaves the model count unchanged.
-///
-/// # Panics
-///
-/// Panics on any error reported by [`Engine::exists_var`].
-///
-/// ```
-/// use std::sync::Arc;
-/// use tididi::Tdd;
-/// use tididi::apply::exists_var;
-/// use tididi::vtree::{VarId, Vtree};
-///
-/// let vtree = Arc::new(Vtree::balanced(3));
-/// let f = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]);  // x1 ∧ x2
-/// assert_eq!(f.model_count(), 2u32.into());
-///
-/// // ∃x2. (x1 ∧ x2) is x1. The vtree still carries x2, now free, so the
-/// // count over the whole vtree doubles.
-/// let g = exists_var(&f, VarId(1));
-/// assert_eq!(g.model_count(), 4u32.into());
-/// ```
-#[must_use]
-pub fn exists_var(f: &Tdd, x: VarId) -> Tdd {
-    exists_var_with_strategy(f, x, QuantificationStrategy::Automatic)
-}
-
-/// Existentially quantify `x` with an explicit rewrite strategy.
-///
-/// Borrowing, vtree and result semantics are those of [`exists_var`].
-///
-/// # Panics
-///
-/// Panics on any error reported by [`Engine::exists_var_with_strategy`].
-#[must_use]
-pub fn exists_var_with_strategy(f: &Tdd, x: VarId, how: QuantificationStrategy) -> Tdd {
-    f.clone().exists_var_with_strategy(x, how)
-        .expect("exists_var_with_strategy: use Engine::exists_var_with_strategy to handle a refusal or a variable outside the vtree")
-}
-
-/// Existentially quantify every variable in `vars`, one at a time, using the
-/// vtree context with no limits armed.
-///
-/// Uses [`QuantificationStrategy::Automatic`]; [`exists_vars_with_strategy`] selects
-/// a rewrite explicitly. The operand is borrowed and cloned.
-/// [`Engine::exists_vars`] takes ownership, reuses workspace and returns errors.
-///
-/// # Panics
-///
-/// Panics on any error reported by [`Engine::exists_vars`].
-#[must_use]
-pub fn exists_vars(f: &Tdd, vars: &[VarId]) -> Tdd {
-    exists_vars_with_strategy(f, vars, QuantificationStrategy::Automatic)
-}
-
-/// Existentially quantify `vars` with an explicit rewrite strategy.
-///
-/// Borrowing, vtree and result semantics are those of [`exists_vars`].
-///
-/// # Panics
-///
-/// Panics on any error reported by [`Engine::exists_vars_with_strategy`].
-#[must_use]
-pub fn exists_vars_with_strategy(f: &Tdd, vars: &[VarId], how: QuantificationStrategy) -> Tdd {
-    f.clone().exists_vars_with_strategy(vars, how)
-        .expect("exists_vars_with_strategy: use Engine::exists_vars_with_strategy to handle a refusal or a variable outside the vtree")
-}
-
 /// The projection entry points on a caller's engine.
 impl crate::engine::Engine {
     /// Existentially quantify `x`: a minimized diagram for ∃x. f.
@@ -253,7 +178,7 @@ impl crate::engine::Engine {
     /// The vtree stays fixed. Each distinct quantified variable becomes free, so a
     /// model count over the remaining variables divides the result's full count by
     /// `2^k`, where `k` is the number of distinct quantified variables. This differs
-    /// from [`marginalize_levels`](crate::marginal::marginalize_levels), which sums
+    /// from [`Tdd::marginalize_levels`], which sums
     /// the contributions of the extensions and preserves the original count.
     ///
     /// ```

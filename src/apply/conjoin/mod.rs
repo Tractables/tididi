@@ -207,7 +207,7 @@ impl crate::engine::Engine {
     ///
     /// Every target's remaining structure is discarded, including after identity
     /// and self-conjunction shortcuts; the false diagram stays false. See
-    /// [`marginalize_levels`](crate::marginal::marginalize_levels) for the operations
+    /// [`Tdd::marginalize_levels`] for the operations
     /// that remain valid after structure is discarded.
     ///
     /// ```

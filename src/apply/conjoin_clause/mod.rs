@@ -215,61 +215,9 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
     Ok(out)
 }
 
-/// Conjoin `clause` into `f` using the vtree context with no limits armed — the
-/// preferred way to compile a CNF one clause at a time, seeding the accumulator
-/// with [`Tdd::one`].
-///
-/// The clause is never materialized as a diagram of its own: only the levels on
-/// its spine are rebuilt. `f` is consumed and its storage recycled into the
-/// result, exactly as [`Engine::and_clause`](crate::Engine::and_clause)
-/// consumes it; that method is this operation on a caller's engine, and the one
-/// that can report a refusal instead of panicking on it.
-///
-/// The result denotes `f ∧ clause` and counts correctly after every clause,
-/// but is not canonical: run [`minimize`](crate::reduce::minimize) when the
-/// canonical form is needed. A ⊥ accumulator stays ⊥. Marginal levels off
-/// the clause's spine pass through unchanged, and a weight store moves to the
-/// result.
-///
-/// ```
-/// use std::sync::Arc;
-/// use num_bigint::BigUint;
-/// use tididi::apply::apply_and_clause;
-/// use tididi::vtree::Vtree;
-/// use tididi::{Literal, Tdd};
-///
-/// let vtree = Arc::new(Vtree::balanced(3));
-/// let cnf = [[1, -2], [2, 3], [-1, 3]]; // DIMACS literals
-/// let mut acc = Tdd::one(&vtree);
-/// for clause in &cnf {
-///     let literals: Vec<_> = clause.iter().map(Literal::try_from).collect::<Result<_, _>>()?;
-///     acc = apply_and_clause(acc, &literals);
-/// }
-/// assert_eq!(acc.model_count(), BigUint::from(3u32));
-/// # Ok::<(), tididi::OperationError>(())
-/// ```
-///
-/// The literals are a set, as in [`Tdd::clause`](crate::Tdd::clause): a
-/// variable repeated in one polarity conjoins the clause the deduplicated
-/// literals spell, and a variable in both polarities conjoins ⊤, which is the
-/// identity.
-///
-/// # Panics
-///
-/// Panics if a literal names a variable the vtree has no leaf for, or if a
-/// level on the clause's spine is marginal (its variables were summed out
-/// before every clause over them was in). Panics if the rebuild is refused;
-/// no resource limits are armed, so the only refusal left is the
-/// allocator's.
-#[must_use]
-pub fn apply_and_clause(f: Tdd, clause: &[Literal]) -> Tdd {
-    f.and_clause(clause)
-        .expect("apply_and_clause: refused with no limits armed")
-}
-
 /// Conjoin `clause` into `f` under `eng`'s limits, recycling the accumulator's
 /// levels when it still owns any. The implementation behind
-/// [`Engine::and_clause`](crate::Engine::and_clause) and [`apply_and_clause`].
+/// [`Engine::and_clause`](crate::Engine::and_clause).
 ///
 /// # Errors
 ///
@@ -415,7 +363,7 @@ impl crate::engine::Engine {
     /// ```
     ///
     /// The operand is consumed on success and error. The result counts correctly
-    /// but may be nonminimal; [`minimize`](crate::reduce::minimize) establishes
+    /// but may be nonminimal; [`Tdd::minimize`] establishes
     /// canonical form. A false operand stays false, marginal levels outside the
     /// rebuilt path pass through, and the result keeps the operand's weights.
     /// Only levels on paths from clause variables to the root are rebuilt.

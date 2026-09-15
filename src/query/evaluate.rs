@@ -1,6 +1,6 @@
 //! Bottom-up evaluation of a whole diagram in a caller's algebra.
 //!
-//! `evaluate(&tdd, &algebra)` walks the diagram the way `node_counts` does
+//! [`Tdd::evaluate`] walks the diagram the way `node_counts` does
 //! and delegates every arithmetic step to an
 //! [`EvalAlgebra`] impl. The algebra and its
 //! exact-rational instance live beside the diagram they value; only the walk
@@ -18,42 +18,6 @@ use crate::vtree::{VarId, VtreeIdx};
 
 use super::fold::{fold_bottom_up, LevelFold, PairAlgebra, Side};
 use crate::limits::{OperationError, PollGate};
-
-/// Bottom-up evaluate the diagram in `algebra`. Returns the value of the
-/// output node (or `algebra.zero()` for the constant-zero diagram).
-///
-/// Uses [`Engine::evaluate`] using the vtree context; see that method for the
-/// algebra, counting-domain and memory contracts.
-///
-/// # Panics
-///
-/// Panics if a level is marginal or a scratch reservation is refused.
-/// Panics from the caller's algebra propagate unchanged.
-///
-/// ```
-/// use std::sync::Arc;
-/// use num_rational::BigRational;
-/// use tididi::Tdd;
-/// use tididi::diagram::{LiteralWeights, RationalWeights};
-/// use tididi::query::evaluate;
-/// use tididi::vtree::Vtree;
-///
-/// let vtree = Arc::new(Vtree::balanced(3));
-/// let f = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]);   // x1 ∧ x2
-///
-/// // Unit weights reproduce the model count.
-/// let unit = RationalWeights::unit(3);
-/// assert_eq!(evaluate(&f, &unit), BigRational::from_integer(2.into()).into());
-///
-/// // A half on every literal weights each of the eight assignments by 1/8.
-/// let half = BigRational::new(1.into(), 2.into());
-/// let weights: Vec<_> = (0..3).map(|_| LiteralWeights { negative: half.clone(), positive: half.clone() }).collect();
-/// let algebra = RationalWeights::from_literals(&weights);
-/// assert_eq!(evaluate(&f, &algebra), BigRational::new(1.into(), 4.into()).into());
-/// ```
-pub fn evaluate<S: EvalAlgebra>(tdd: &Tdd, algebra: &S) -> S::Value {
-    tdd.evaluate(algebra).expect("evaluate: operation refused")
-}
 
 impl Engine {
     /// Evaluate a structural diagram in a caller-supplied algebra.

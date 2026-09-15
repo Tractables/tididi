@@ -5,7 +5,7 @@
 //! canonical one. Producing the diagram is [`crate::apply`]; summing levels out
 //! is [`crate::marginal`], whose epilogue calls the last two passes here.
 //!
-//! [`minimize`] and [`try_minimize`] run full minimization; [`try_reduce`] runs
+//! [`Tdd::minimize`] runs full minimization; [`Tdd::reduce`] runs
 //! the passes selected by [`ReductionPlan`].
 //!
 //! The passes, in the order a full reduction runs them:
@@ -114,108 +114,28 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
     }
 }
 
-// ── Public minimize variants ─────────────────────────────────────────────
+impl Engine {
+    /// Minimize a diagram under this engine's resource limits.
+    ///
+    /// See [`Tdd::minimize`] for canonical form and preservation guarantees.
+    /// Uses the full default [`ReductionPlan`]; on refusal the diagram remains
+    /// well-formed and count-correct at the last completed pass boundary.
+    pub fn minimize(&self, f: &mut Tdd) -> Result<(), OperationError> {
+        self.reduce(f, ReductionPlan::default())
+    }
 
-/// Minimize a diagram under its current vtree, preserving its function and count.
-///
-/// For a structural TDD, the result is the canonical minimal form, up to local
-/// node numbering and pair order. Unreachable nodes are removed and nodes with
-/// identical parent contexts are contracted. Marginal levels stay marginal;
-/// their applicable value and pair cleanup passes also run.
-///
-/// This is fixed-vtree minimization, following
-/// [Section 5 of the TDD paper](https://arxiv.org/html/2604.05537v1#S5).
-/// [`Engine::rotation_search`](crate::Engine::rotation_search) instead searches
-/// other vtree shapes. Use [`try_minimize`] to apply an engine's limits and
-/// handle a refusal.
-///
-/// Counting, satisfiability and witness queries on an [`Engine`] accept
-/// nonminimal structural diagrams. Minimize when you need canonical form or
-/// want to remove redundant storage before further work; the pass itself also
-/// takes time and working memory.
-///
-/// ```
-/// use std::sync::Arc;
-/// use tididi::{Engine, Vtree};
-/// use tididi::reduce::minimize;
-///
-/// let engine = Engine::new();
-/// let tree = Arc::new(Vtree::balanced(3));
-/// let mut f = engine.and(engine.clause(&tree, [1, 2])?, engine.literal(&tree, 3)?)?;
-/// let before = engine.model_count(&f)?;
-/// minimize(&mut f);
-/// assert_eq!(engine.model_count(&f)?, before);
-/// # tididi::test_helpers::assert_canonical(&f);
-/// # Ok::<(), tididi::OperationError>(())
-/// ```
-///
-/// # Panics
-///
-/// Panics on a resource refusal; [`try_minimize`] reports it as an error.
-pub fn minimize(f: &mut Tdd) {
-    f.minimize()
-        .expect("minimize: an allocation was refused; use try_minimize to handle it");
+    /// Run the selected reduction passes under this engine's resource limits.
+    ///
+    /// See [`Tdd::reduce`] for plan semantics and preservation guarantees.
+    /// Allocation and stop refusals leave the diagram at the last completed pass
+    /// boundary, where its count is still readable and preserved.
+    pub fn reduce(&self, f: &mut Tdd, plan: ReductionPlan<'_>) -> Result<(), OperationError> {
+        try_reduce(self, f, plan)
+    }
 }
 
-/// Minimize to canonical form under the engine's limits using the full default plan.
-///
-/// # Errors
-///
-/// As [`try_reduce`]; on error the diagram remains well-formed and count-correct
-/// at the last completed pass boundary.
-///
-/// ```
-/// use std::sync::Arc;
-/// use tididi::{Engine, Tdd};
-/// use tididi::reduce::try_minimize;
-/// use tididi::vtree::Vtree;
-/// let engine = Engine::new();
-/// let tree = Arc::new(Vtree::balanced(3));
-/// let mut f = Tdd::clause(&tree, [1, -2, 3]);
-/// let count = f.model_count();
-/// try_minimize(&engine, &mut f).unwrap();
-/// # tididi::test_helpers::assert_canonical(&f);
-/// assert_eq!(f.model_count(), count);
-/// ```
-pub fn try_minimize(eng: &Engine, f: &mut Tdd) -> Result<(), OperationError> {
-    try_reduce(eng, f, ReductionPlan::default())
-}
-
-/// Run the reduction passes selected by `plan` under the engine's limits.
-///
-/// A partial plan does not establish canonical form; [`try_minimize`] runs the
-/// full default plan.
-///
-/// # Errors
-///
-/// Returns `Err(OperationError::OverBudget)` if a budget-gated reservation is
-/// refused, or `Err(OperationError::Stopped)` if an armed stop poll fires. Every
-/// pass reserves its growth before it mutates anything, so on either error
-/// the diagram is as it was at the last pass boundary: well-formed, and the
-/// caller may keep and count it.
-///
-/// ```
-/// use std::sync::Arc;
-/// use tididi::{OperationError, Engine, Tdd};
-/// use tididi::limits::LimitConfig;
-/// use tididi::reduce::{try_reduce, ReductionPlan};
-/// use tididi::vtree::Vtree;
-///
-/// let engine = Engine::new();
-/// let vtree = Arc::new(Vtree::balanced(20_000));
-/// let mut f = Tdd::clause(&vtree, [1, -2]) & Tdd::clause(&vtree, [2, 3]);
-/// let before = f.model_count();
-///
-/// // A byte budget of zero refuses the first budget-gated pass.
-/// let _armed = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
-/// match try_reduce(&engine, &mut f, ReductionPlan::default()) {
-///     Ok(()) => {}
-///     Err(e) => assert_eq!(e, OperationError::OverBudget),
-/// }
-/// // Either way the diagram is well-formed and still counts the same.
-/// assert_eq!(f.model_count(), before);
-/// ```
-pub fn try_reduce(eng: &Engine, f: &mut Tdd, plan: ReductionPlan<'_>) -> Result<(), OperationError> {
+/// Run the selected passes, leaving a well-formed diagram at each pass boundary.
+pub(crate) fn try_reduce(eng: &Engine, f: &mut Tdd, plan: ReductionPlan<'_>) -> Result<(), OperationError> {
     let _op = eng.limits().begin_operation();
     let content_twins = match plan {
         ReductionPlan::Contract => return contract_all_twins(eng, f),

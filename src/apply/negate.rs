@@ -16,26 +16,6 @@ use std::sync::Arc;
 
 use crate::diagram::*;
 
-/// Negate a diagram: make it full, then complement at the root, then minimize.
-///
-/// Consumes `f`; the result is canonical, ⊥ for ⊤ and ⊤ for ⊥. `f` must have
-/// no marginal level: a summed-out level has no structure to complement, and
-/// the result over one is not defined. [`Engine::negate`] runs this operation
-/// under the caller's limits.
-///
-/// Exact, but it can grow the diagram sharply — a diagram stores only the pair
-/// structure of its satisfying assignments, so the fill that has to precede the
-/// complement typically dominates. When only the count of `¬f` is wanted,
-/// `2^n - count(f)` avoids building it at all.
-///
-/// # Panics
-///
-/// Panics if `f` has a marginal level or an allocation is refused.
-#[must_use]
-pub fn negate(f: Tdd) -> Tdd {
-    f.negate().expect("negate: use Engine::negate to handle a refusal")
-}
-
 impl Engine {
     /// Return the Boolean complement of a structural diagram, in minimized form.
     ///
@@ -72,7 +52,7 @@ impl Engine {
 }
 
 /// Make `tdd` full and complement it at the root, consuming the operand;
-/// [`negate()`] is this plus `minimize`.
+/// [`Engine::negate`] also minimizes the result.
 pub(crate) fn negate_tdd_owned(eng: &Engine, mut tdd: Tdd) -> Result<Tdd, OperationError> {
     tdd.require_structure()?;
     if eng.limits().should_stop() { return Err(OperationError::Stopped); }

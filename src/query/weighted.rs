@@ -6,24 +6,6 @@ use crate::limits::{OperationError, PollGate};
 use crate::vtree::{VtreeIdx, VtreeNode};
 use crate::engine::Engine;
 
-/// The diagram's value under its attached
-/// [`WeightStore`](crate::diagram::WeightStore), or `None` when the diagram
-/// carries no store. ⊥ has the store's zero.
-///
-/// A weighted marginalization usually leaves the output level explicit and
-/// marginalizes only levels below it, so this folds the explicit levels above the
-/// marginal ones on demand from the store's values and leaf weights; when the
-/// output level is itself marginal it reads the stored value directly. The
-/// diagram is borrowed and unchanged. [`Engine::weighted_value`] uses a caller's
-/// limits; this convenience form uses the vtree context with no limits armed.
-///
-/// # Panics
-///
-/// Panics if the fold's allocation is refused.
-pub fn weighted_value(tdd: &Tdd) -> Option<WeightValue> {
-    tdd.weighted_value().expect("weighted_value: allocation refused")
-}
-
 impl Engine {
     /// Evaluate a diagram using its attached weight store.
     ///

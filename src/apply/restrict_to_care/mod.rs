@@ -36,7 +36,7 @@ use crate::limits::OperationError;
 
 use crate::diagram::Tdd;
 
-/// Outcome of [`restrict_to_care`], so a caller can tell a no-op from a shrink
+/// Outcome of [`Tdd::restrict_to_care`], so a caller can tell a no-op from a shrink
 /// without comparing diagrams.
 #[derive(Debug)]
 pub enum RestrictionOutcome {
@@ -109,20 +109,6 @@ struct Marking {
     pair_alive: Vec<Vec<u64>>,
     /// Is the root pair live, i.e. is `f ∧ care` structurally non-false?
     root_live: bool,
-}
-
-/// Simplify `f` on the care set using the vtree context with no installed limits.
-///
-/// [`Engine::restrict_to_care`] gives the contract, an example, and the fallible
-/// form. Both operands are consumed; [`RestrictionOutcome::into_tdd`] extracts
-/// the resulting diagram.
-///
-/// # Panics
-///
-/// Panics on any error reported by [`Engine::restrict_to_care`].
-#[must_use]
-pub fn restrict_to_care(f: Tdd, care: Tdd) -> RestrictionOutcome {
-    f.restrict_to_care(care).expect("restrict_to_care: refused with no limits armed")
 }
 
 /// The restriction entry point on a caller's engine.

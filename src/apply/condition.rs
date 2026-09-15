@@ -335,59 +335,6 @@ fn canonicalize_false_output(tdd: &mut crate::diagram::Tdd) {
 #[cfg(test)]
 mod tests;
 
-/// Fix `x` to `value`, using the vtree context with no limits armed.
-///
-/// `f` is borrowed and cloned; the result is what [`Engine::condition_var`]
-/// returns, so its contract — `x` stays a free variable of the vtree, the
-/// result is canonical — is stated there. That method is this operation on a
-/// caller's engine: it keeps the per-level buffers warm between calls, takes
-/// the operand by value, and hands a refused allocation or a variable outside
-/// the vtree back instead of panicking.
-///
-/// # Panics
-///
-/// Panics if `x` is not a variable of `f`'s vtree, if `x`'s leaf level or its
-/// parent level is marginal, and if an allocation is refused.
-///
-/// ```
-/// use std::sync::Arc;
-/// use tididi::Tdd;
-/// use tididi::apply::condition_var;
-/// use tididi::vtree::{VarId, Vtree};
-///
-/// let vtree = Arc::new(Vtree::balanced(3));
-/// let f = Tdd::clause(&vtree, [1]) & Tdd::clause(&vtree, [2]);  // x1 ∧ x2
-/// assert_eq!(f.model_count(), 2u32.into());
-///
-/// // x1 := true leaves x2, and x1 stays a variable of the vtree, now free.
-/// let g = condition_var(&f, VarId(0), true);
-/// assert_eq!(g.model_count(), 4u32.into());
-/// // x1 := false leaves the constant-false function.
-/// assert!(condition_var(&f, VarId(0), false).is_zero());
-/// ```
-#[must_use]
-pub fn condition_var(f: &Tdd, x: VarId, value: bool) -> Tdd {
-    f.clone().condition_var(x, value)
-        .expect("condition_var: use Engine::condition_var to handle a refusal or a variable outside the vtree")
-}
-
-/// Fix every variable in `vars` to `value`, using the vtree context with no
-/// limits armed.
-///
-/// `f` is borrowed and cloned. [`Engine::condition_vars`] is this operation on
-/// a caller's engine.
-///
-/// # Panics
-///
-/// Panics if any of `vars` is not a variable of `f`'s vtree, if a named
-/// variable's leaf level or its parent level is marginal, and if an
-/// allocation is refused.
-#[must_use]
-pub fn condition_vars(f: &Tdd, vars: &[VarId], value: bool) -> Tdd {
-    f.clone().condition_vars(vars, value)
-        .expect("condition_vars: use Engine::condition_vars to handle a refusal or a variable outside the vtree")
-}
-
 /// The conditioning entry points on a caller's engine.
 impl crate::engine::Engine {
     /// Substitute an assignment into a function and return its minimized cofactor.

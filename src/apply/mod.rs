@@ -30,14 +30,11 @@ mod substitute;
 
 pub(crate) use conjoin::apply_and;
 pub use conjoin::and;
-pub use conjoin_clause::apply_and_clause;
 pub(crate) use disjoin::apply_or;
 pub use disjoin::or;
 pub use compose::{xor, ite, and_exists, and_exists_with_strategy};
-pub use negate::negate;
-pub use condition::{condition_var, condition_vars};
-pub use project::{exists_var, exists_var_with_strategy, exists_vars, exists_vars_with_strategy, QuantificationStrategy};
-pub use restrict_to_care::{restrict_to_care, RestrictionOutcome};
+pub use project::QuantificationStrategy;
+pub use restrict_to_care::RestrictionOutcome;
 
 #[cfg(test)]
 mod tests;

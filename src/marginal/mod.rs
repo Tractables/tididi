@@ -7,9 +7,9 @@
 //! reduction passes the epilogue calls are [`crate::reduce`]; counting over a
 //! partly marginalized diagram is [`crate::query`].
 //!
-//! Entry points: [`marginalize_levels`] sums out a bottom-up group of levels and
+//! [`Tdd::marginalize_levels`] sums out a bottom-up group of levels and
 //! restores invariants 7, 8 and 10 before it returns. Folding a weighted
-//! diagram down to its value is [`crate::query::weighted_value`].
+//! diagram down to its value is [`Tdd::weighted_value`].
 
 mod column;
 pub(crate) use column::{install_int_column, install_weight_column};
@@ -78,52 +78,20 @@ pub(crate) fn marginalize_closure(eng: &Engine, tdd: &mut Tdd) -> Result<usize, 
     Ok(total)
 }
 
-/// Replace selected subtrees with per-node counts or fixed weighted values.
-///
-/// Use this when later work needs the value but no longer needs the assignments
-/// inside those subtrees. Targets are vtree node indices, not variable ids; an
-/// internal target also marginalizes its descendants. Already marginal levels
-/// are skipped, and the false diagram stays false.
-///
-/// ```
-/// use std::sync::Arc;
-/// use tididi::{Engine, Vtree};
-/// use tididi::marginal::marginalize_levels;
-///
-/// let engine = Engine::new();
-/// let tree = Arc::new(Vtree::balanced(4));
-/// let (left, _) = tree.children(tree.root());
-/// let mut f = engine.and(engine.clause(&tree, [1, 2])?, engine.clause(&tree, [3, 4])?)?;
-/// let before = engine.model_count(&f)?;
-/// marginalize_levels(&engine, &mut f, &[left])?;
-/// assert!(f.level(left).is_marginal());
-/// assert_eq!(engine.model_count(&f)?, before);
-/// # Ok::<(), tididi::OperationError>(())
-/// ```
-///
-/// Without a weight store, the retained values are exact model counts. With a
-/// [`WeightStore`] attached through [`Tdd::set_weights`], they are values in that
-/// store's arithmetic and are read by [`Engine::weighted_value`]. Attach weights
-/// before marginalizing: counts cannot later be converted to arbitrary weights.
-///
-/// This operation is permanent. Later operations cannot constrain discarded
-/// variables or recover their assignments, and structural serialization and
-/// Boolean queries may reject the result. Existential quantification is a
-/// different operation: [`Engine::exists_vars`] retains a Boolean function rather
-/// than replacing subtrees with numeric values.
-///
-/// # Result and errors
-///
-/// Completed levels retain their values and valid parent references. The pass
-/// also fuses eligible marginal pairs and removes unused or duplicate value slots;
-/// rounded log arithmetic skips fusion that would change its arithmetic order.
-///
-/// [`OperationError::LevelNotInVtree`] rejects an invalid target before mutation.
-/// [`OperationError::OverBudget`] or [`OperationError::Stopped`] may leave a
-/// completed prefix; its counts or weighted values remain readable and preserved.
-/// An unfinished column is discarded before installation. Retrying the pass
-/// finishes any remaining levels and cleanup.
-pub fn marginalize_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), OperationError> {
+impl Engine {
+    /// Sum out selected levels under this engine's resource limits.
+    ///
+    /// See [`Tdd::marginalize_levels`] for target, arithmetic and preservation
+    /// semantics. Invalid targets are rejected before mutation. Allocation or
+    /// stop refusals may leave a completed prefix; retrying finishes the remaining
+    /// levels and cleanup while preserving the diagram's value.
+    pub fn marginalize_levels(&self, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), OperationError> {
+        marginalize_levels(self, f, levels)
+    }
+}
+
+/// Sum out validated target subtrees and restore the marginal invariants.
+pub(crate) fn marginalize_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), OperationError> {
     f.check_level_indices(levels)?;
     let _op = eng.limits().begin_operation();
     let vtree = std::sync::Arc::clone(&f.vtree);

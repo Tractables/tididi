@@ -8,44 +8,6 @@ use crate::OperationError;
 
 
 
-/// Implied literals (the backbone) of `f`: every literal that holds in every
-/// model of `f`, sorted by variable. One O(size) pass over the pairs, no
-/// conditioning and no counting.
-///
-/// Requires `f` minimized: the pass reads which leaf labels each variable's
-/// leaf is referenced with, and an unreachable reference on an unminimized
-/// diagram would count as a label. The zero diagram and summed-out variables
-/// contribute nothing, and a variable no pair references is not implied. No
-/// engine and no limit are involved. [`Engine::implied_literals`](crate::Engine::implied_literals)
-/// accepts an unminimized structural diagram and honors engine limits.
-///
-/// ```
-/// use std::sync::Arc;
-/// use tididi::{Literal, Tdd, Vtree};
-/// use tididi::vtree::VarId;
-/// use tididi::query::implied_literals;
-/// use tididi::reduce::minimize;
-///
-/// let tree = Arc::new(Vtree::balanced(3));
-/// let mut f = Tdd::clause(&tree, [1, 2]) & Tdd::clause(&tree, [1, -2]);
-/// minimize(&mut f);
-/// assert_eq!(implied_literals(&f), vec![Literal::pos(VarId(0))]); // x1 is forced; x2 and x3 are free
-/// # tididi::test_helpers::assert_canonical(&f);
-/// ```
-#[must_use]
-pub fn implied_literals(f: &Tdd) -> Vec<Literal> {
-    let mut out = Vec::new();
-    visit_leaf_labels(f, |_| Ok(()), |var, labels| {
-        if let Some(literal) = labels.implied(var) {
-            out.push(literal);
-        }
-        Ok(())
-    }).expect("unlimited leaf-label scan");
-    out.sort_unstable_by_key(|lit| lit.var.0);
-    out
-}
-
-
 /// Referenced positive, negative and free labels of one non-marginal leaf.
 #[derive(Clone, Copy, Default)]
 pub(super) struct LeafLabels(u8);
