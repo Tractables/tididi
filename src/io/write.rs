@@ -2,7 +2,7 @@
 
 use crate::diagram::ChildDecoder;
 
-use std::io::{Write, BufWriter};
+use std::io::{BufWriter, Seek, Write};
 use std::path::Path;
 
 use crate::diagram::Tdd;
@@ -54,10 +54,20 @@ pub fn save_tdd(f: &Tdd, path: impl AsRef<Path>) -> Result<(), IoError> {
     // Checked before `File::create` so a rejected diagram leaves no stray file.
     super::reject_marginal_levels(f, "save_tdd")?;
 
+    const BUFFER_BYTES: usize = 8 << 20;
     let file = std::fs::File::create(path.as_ref())?;
-    let mut writer = BufWriter::with_capacity(8 << 20, file);
+    let estimated_bytes = f.pair_count() * 12 + 4096;
+    let presize = estimated_bytes > BUFFER_BYTES;
+    // Pre-size multi-buffer outputs so writes need not each extend the file.
+    if presize { let _ = file.set_len(estimated_bytes as u64); }
+    let mut writer = BufWriter::with_capacity(BUFFER_BYTES, file);
     write_tdd(&mut writer, f)?;
     writer.flush()?;
+    if presize {
+        let file = writer.get_mut();
+        let written = file.stream_position()?;
+        file.set_len(written)?;
+    }
     Ok(())
 }
 
