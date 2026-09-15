@@ -39,6 +39,7 @@ jobs:
       run: cargo test --workspace --doc
     - name: Run consumer examples
       run: |
+        cargo run --example build_minimize_count
         cargo run --example probabilistic_query
         cargo run --example symbolic_reachability
     - name: Lints
