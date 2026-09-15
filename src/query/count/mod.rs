@@ -80,9 +80,9 @@ impl Tdd {
 /// let f = Tdd::clause(&tree, [1]) & Tdd::clause(&tree, [2]);
 /// # tididi::test_helpers::assert_canonical(&f);
 /// for (semantics, expected) in [(PinSemantics::Evidence, 1u32), (PinSemantics::Cofactor, 2)] {
-///     let mut counter = ModelCounter::<KeepAllColumns>::new(&engine, &f, semantics);
+///     let mut counter = ModelCounter::<KeepAllColumns>::new(&f, semantics);
 ///     counter.set_pin(VarId(0), Some(true)).unwrap();
-///     assert_eq!(counter.model_count(&engine), expected.into());
+///     assert_eq!(counter.model_count(), expected.into());
 /// }
 /// let cofactor = engine.condition_var(f, VarId(0), true).unwrap();
 /// # tididi::test_helpers::assert_canonical(&cofactor);
@@ -157,7 +157,7 @@ pub(crate) fn try_model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, Operat
         if eng.limits().should_stop() { return Err(OperationError::Stopped); }
         return Ok(BigUint::ZERO);
     }
-    ModelCounter::<KeepFrontier>::allocate(eng, tdd, 0, PinSemantics::Cofactor)?.try_model_count(eng)
+    ModelCounter::<KeepFrontier>::allocate(eng, tdd, 0, PinSemantics::Cofactor)?.try_model_count_on(eng)
 }
 
 /// Per-node model counts in `u128` (`counts[vtree_idx][node_idx]`), saturating a

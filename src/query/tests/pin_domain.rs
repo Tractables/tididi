@@ -17,7 +17,7 @@ fn sparse_counts<R: Retention>() {
         for (f, kind) in [(Tdd::one(&tree), 0), (Tdd::zero(&tree), 1), (Tdd::clause(&tree, [3]), 2)] {
             assert_canonical(&f);
             for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
-                let mut counter = ModelCounter::<R>::try_new(&eng, &f, semantics).unwrap();
+                let mut counter = ModelCounter::<R>::try_new_on(&eng, &f, semantics).unwrap();
                 for code in (0..27).chain(std::iter::once(0)) {
                     let mut digits = code;
                     let pins = vars.map(|var| {
@@ -34,8 +34,8 @@ fn sparse_counts<R: Retention>() {
                         PinSemantics::Evidence => evidence,
                         PinSemantics::Cofactor => evidence << pins.iter().filter(|p| p.is_some()).count(),
                     };
-                    assert_eq!(counter.try_model_count(&eng).unwrap(), BigUint::from(expected));
-                    assert_eq!(counter.try_model_count(&eng).unwrap(), BigUint::from(expected));
+                    assert_eq!(counter.try_model_count_on(&eng).unwrap(), BigUint::from(expected));
+                    assert_eq!(counter.try_model_count_on(&eng).unwrap(), BigUint::from(expected));
                 }
             }
         }
@@ -54,8 +54,8 @@ fn invalid_pins<R: Retention>() {
     let tree = Arc::new(Vtree::balanced_over(&[VarId(9), VarId(2)]));
     let f = Tdd::one(&tree);
     assert_canonical(&f);
-    let mut counter = ModelCounter::<R>::try_new(&eng, &f, PinSemantics::Evidence).unwrap();
-    assert_eq!(counter.try_model_count(&eng).unwrap(), 4u32.into());
+    let mut counter = ModelCounter::<R>::try_new_on(&eng, &f, PinSemantics::Evidence).unwrap();
+    assert_eq!(counter.try_model_count_on(&eng).unwrap(), 4u32.into());
     for pending in [false, true] {
         if pending { counter.set_pin(VarId(9), Some(false)).unwrap(); }
         for var in [VarId(0), VarId(3), VarId(10), VarId(u32::MAX)] {
@@ -63,10 +63,10 @@ fn invalid_pins<R: Retention>() {
                 assert_eq!(counter.set_pin(var, value), Err(OperationError::VariableNotInVtree(var)));
             }
         }
-        assert_eq!(counter.try_model_count(&eng).unwrap(), if pending { 2u32.into() } else { 4u32.into() });
+        assert_eq!(counter.try_model_count_on(&eng).unwrap(), if pending { 2u32.into() } else { 4u32.into() });
     }
     counter.set_pin(VarId(9), None).unwrap();
-    assert_eq!(counter.try_model_count(&eng).unwrap(), 4u32.into());
+    assert_eq!(counter.try_model_count_on(&eng).unwrap(), 4u32.into());
 }
 
 #[test]
@@ -85,15 +85,15 @@ fn marginal_pins<R: Retention>() {
         crate::marginal::marginalize_levels(&eng, &mut f, &[summed]).unwrap();
         minimize(&mut f);
         assert_canonical(&f);
-        let mut counter = ModelCounter::<R>::try_new(&eng, &f, PinSemantics::Evidence).unwrap();
-        assert_eq!(counter.try_model_count(&eng).unwrap(), 12u32.into());
+        let mut counter = ModelCounter::<R>::try_new_on(&eng, &f, PinSemantics::Evidence).unwrap();
+        assert_eq!(counter.try_model_count_on(&eng).unwrap(), 12u32.into());
         counter.set_pin(VarId(2), Some(false)).unwrap();
         for pin in [None, Some(false), Some(true)] {
             assert_eq!(counter.set_pin(VarId(0), pin), Err(OperationError::MarginalLevel(summed)));
         }
-        assert_eq!(counter.try_model_count(&eng).unwrap(), 4u32.into());
+        assert_eq!(counter.try_model_count_on(&eng).unwrap(), 4u32.into());
         counter.set_pin(VarId(2), None).unwrap();
-        assert_eq!(counter.try_model_count(&eng).unwrap(), 12u32.into());
+        assert_eq!(counter.try_model_count_on(&eng).unwrap(), 12u32.into());
     }
 }
 
@@ -110,9 +110,9 @@ fn sparse_pin_storage_fits_a_budget_independent_of_variable_ids() {
     let f = Tdd::one(&tree);
     assert_canonical(&f);
     let _limit = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(1024)));
-    let mut counter = ModelCounter::<KeepAllColumns>::try_new(&eng, &f, PinSemantics::Evidence).unwrap();
+    let mut counter = ModelCounter::<KeepAllColumns>::try_new_on(&eng, &f, PinSemantics::Evidence).unwrap();
     counter.set_pin(VarId(100_000), Some(true)).unwrap();
-    assert_eq!(counter.try_model_count(&eng).unwrap(), 1u32.into());
+    assert_eq!(counter.try_model_count_on(&eng).unwrap(), 1u32.into());
     counter.set_pin(VarId(100_000), None).unwrap();
-    assert_eq!(counter.try_model_count(&eng).unwrap(), 2u32.into());
+    assert_eq!(counter.try_model_count_on(&eng).unwrap(), 2u32.into());
 }

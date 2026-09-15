@@ -59,8 +59,8 @@ fn the_incremental_count_of_bottom_is_zero() {
     let vtree = Arc::new(Vtree::balanced(3));
     let f = crate::build::constant_zero(eng, &vtree);
     assert!(f.is_zero());
-    let mut counter = ModelCounter::<KeepAllColumns>::new(eng, &f, PinSemantics::Evidence);
-    assert_eq!(counter.model_count(eng), BigUint::ZERO);
+    let mut counter = ModelCounter::<KeepAllColumns>::new_on(eng, &f, PinSemantics::Evidence);
+    assert_eq!(counter.model_count_on(eng), BigUint::ZERO);
 }
 
 #[test]

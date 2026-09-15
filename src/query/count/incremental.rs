@@ -139,20 +139,19 @@ mod sealed {
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{Engine, Tdd};
+/// use tididi::Tdd;
 /// use tididi::query::{ModelCounter, KeepAllColumns, PinSemantics};
 /// use tididi::vtree::{VarId, Vtree};
-/// let engine = Engine::new();
 /// let tree = Arc::new(Vtree::balanced(4));
 /// let f = Tdd::clause(&tree, [1, -2]);
-/// let mut counter = ModelCounter::<KeepAllColumns>::try_new(&engine, &f, PinSemantics::Evidence)?;
-/// assert_eq!(counter.try_model_count(&engine)?, 12u32.into());
+/// let mut counter = ModelCounter::<KeepAllColumns>::try_new(&f, PinSemantics::Evidence)?;
+/// assert_eq!(counter.try_model_count()?, 12u32.into());
 /// counter.set_pin(VarId(0), Some(true))?;
-/// assert_eq!(counter.try_model_count(&engine)?, 8u32.into());
+/// assert_eq!(counter.try_model_count()?, 8u32.into());
 /// counter.set_pin(VarId(0), Some(false))?;
-/// assert_eq!(counter.try_model_count(&engine)?, 4u32.into());
+/// assert_eq!(counter.try_model_count()?, 4u32.into());
 /// counter.set_pin(VarId(0), None)?;
-/// assert_eq!(counter.try_model_count(&engine)?, 12u32.into());
+/// assert_eq!(counter.try_model_count()?, 12u32.into());
 /// # tididi::test_helpers::assert_canonical(&f);
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
@@ -167,15 +166,14 @@ mod sealed {
 ///
 /// ```compile_fail
 /// use std::sync::Arc;
-/// use tididi::{Engine, Tdd};
+/// use tididi::Tdd;
 /// use tididi::query::{ModelCounter, KeepAllColumns, PinSemantics};
 /// use tididi::vtree::Vtree;
-/// let eng = Engine::new();
 /// let tree = Arc::new(Vtree::balanced(2));
 /// let mut f = Tdd::clause(&tree, [1]);
-/// let mut counter = ModelCounter::<KeepAllColumns>::new(&eng, &f, PinSemantics::Evidence);
+/// let mut counter = ModelCounter::<KeepAllColumns>::new(&f, PinSemantics::Evidence);
 /// tididi::reduce::minimize(&mut f);
-/// counter.model_count(&eng);
+/// counter.model_count();
 /// ```
 pub struct ModelCounter<'a, R: Retention> {
     tdd: &'a Tdd,
@@ -204,11 +202,20 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// # Panics
     ///
     /// Panics on a weighted marginal level, a reservation refusal or an armed stop.
-    pub fn new(eng: &Engine, tdd: &'a Tdd, convention: PinSemantics) -> Self {
-        Self::try_new(eng, tdd, convention).expect("ModelCounter::new: operation refused")
+    pub fn new(tdd: &'a Tdd, convention: PinSemantics) -> Self {
+        Self::try_new(tdd, convention).expect("ModelCounter::new: operation refused")
     }
 
-    /// Create an initially unpinned counter over the diagram's vtree under the engine's limits.
+    /// Allocate a counter using an explicit workspace, panicking on an error from [`Self::try_new_on`].
+    ///
+    /// # Panics
+    ///
+    /// Panics on a weighted marginal level, a reservation refusal or an armed stop.
+    pub fn new_on(eng: &Engine, tdd: &'a Tdd, convention: PinSemantics) -> Self {
+        Self::try_new_on(eng, tdd, convention).expect("ModelCounter::new_on: operation refused")
+    }
+
+    /// Create an initially unpinned counter using the diagram's shared execution context.
     ///
     /// Pin storage is proportional to the tree's size, including for sparse
     /// variable IDs. Value columns are allocated on the first count, and
@@ -222,20 +229,28 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{Engine, Tdd, Vtree};
+    /// use tididi::{Tdd, Vtree};
     /// use tididi::query::{ModelCounter, KeepAllColumns, PinSemantics};
     /// use tididi::vtree::VarId;
-    /// let engine = Engine::new();
     /// let tree = Arc::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&tree, [1, 2]);
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = ModelCounter::<KeepAllColumns>::try_new(
-    ///     &engine, &f, PinSemantics::Evidence)?;
+    ///     &f, PinSemantics::Evidence)?;
     /// counter.set_pin(VarId(0), Some(false))?;
-    /// assert_eq!(counter.try_model_count(&engine)?, 2u32.into());
+    /// assert_eq!(counter.try_model_count()?, 2u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn try_new(eng: &Engine, tdd: &'a Tdd, convention: PinSemantics) -> Result<Self, OperationError> {
+    pub fn try_new(tdd: &'a Tdd, convention: PinSemantics) -> Result<Self, OperationError> {
+        tdd.vtree().context().run(|eng| Self::try_new_on(eng, tdd, convention))
+    }
+
+    /// Create an initially unpinned counter under an explicit workspace's limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::try_new`], using `eng` for allocation and stop checks.
+    pub fn try_new_on(eng: &Engine, tdd: &'a Tdd, convention: PinSemantics) -> Result<Self, OperationError> {
         Self::allocate(eng, tdd, tdd.vtree.num_leaves() as usize, convention)
     }
 
@@ -272,19 +287,18 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{Engine, OperationError, Tdd, Vtree};
+    /// use tididi::{OperationError, Tdd, Vtree};
     /// use tididi::query::{KeepAllColumns, ModelCounter, PinSemantics};
     /// use tididi::vtree::VarId;
-    /// let engine = Engine::new();
     /// let tree = Arc::new(Vtree::leaf(VarId(7)));
     /// let f = Tdd::one(&tree);
     /// # tididi::test_helpers::assert_canonical(&f);
-    /// let mut counter = ModelCounter::<KeepAllColumns>::try_new(&engine, &f, PinSemantics::Evidence)?;
+    /// let mut counter = ModelCounter::<KeepAllColumns>::try_new(&f, PinSemantics::Evidence)?;
     /// counter.set_pin(VarId(7), Some(true))?;
-    /// assert_eq!(counter.try_model_count(&engine)?, 1u32.into());
+    /// assert_eq!(counter.try_model_count()?, 1u32.into());
     /// assert_eq!(counter.set_pin(VarId(0), Some(true)), Err(OperationError::VariableNotInVtree(VarId(0))));
     /// counter.set_pin(VarId(7), None)?;
-    /// assert_eq!(counter.try_model_count(&engine)?, 2u32.into());
+    /// assert_eq!(counter.try_model_count()?, 2u32.into());
     /// # Ok::<(), OperationError>(())
     /// ```
     pub fn set_pin(&mut self, var: VarId, val: Option<bool>) -> Result<(), OperationError> {
@@ -301,16 +315,25 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
         Ok(())
     }
 
-    /// Count under the engine's limits, panicking on an error from [`Self::try_model_count`].
+    /// Count using the diagram's context, panicking on an error from [`Self::try_model_count`].
     ///
     /// # Panics
     ///
     /// Panics on a reservation refusal or an armed stop.
-    pub fn model_count(&mut self, eng: &Engine) -> BigUint {
-        self.try_model_count(eng).expect("ModelCounter::model_count: operation refused")
+    pub fn model_count(&mut self) -> BigUint {
+        self.try_model_count().expect("ModelCounter::model_count: operation refused")
     }
 
-    /// Refresh the current pins and count under the engine's allocation and stop rules.
+    /// Count using an explicit workspace, panicking on an error from [`Self::try_model_count_on`].
+    ///
+    /// # Panics
+    ///
+    /// Panics on a reservation refusal or an armed stop.
+    pub fn model_count_on(&mut self, eng: &Engine) -> BigUint {
+        self.try_model_count_on(eng).expect("ModelCounter::model_count_on: operation refused")
+    }
+
+    /// Refresh the current pins and count under the diagram context's allocation and stop rules.
     ///
     /// Stops are checked even for a cached or constant answer, at amortized node
     /// boundaries during a refresh, and before return. A refusal invalidates the
@@ -322,7 +345,17 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     ///
     /// [`OperationError::OverBudget`] for a refused scratch or overflow-table
     /// reservation, or [`OperationError::Stopped`] for an armed stop.
-    pub fn try_model_count(&mut self, eng: &Engine) -> Result<BigUint, OperationError> {
+    pub fn try_model_count(&mut self) -> Result<BigUint, OperationError> {
+        let tdd = self.tdd;
+        tdd.vtree().context().run(|eng| self.try_model_count_on(eng))
+    }
+
+    /// Refresh the current pins and count under an explicit workspace's limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`Self::try_model_count`], using `eng` for allocation and stop checks.
+    pub fn try_model_count_on(&mut self, eng: &Engine) -> Result<BigUint, OperationError> {
         let lim = eng.limits();
         let _op = lim.begin_operation();
         let result = (|| {
