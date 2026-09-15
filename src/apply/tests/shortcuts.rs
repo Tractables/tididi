@@ -13,9 +13,9 @@ fn shortcut(eng: &Engine, tree: &Arc<Vtree>, f: Tdd, case: usize) -> Result<Tdd,
         5 => eng.condition(eng.zero(tree), [1]),
         6 => eng.condition_var(f, VarId(0), true),
         7 => eng.condition_vars(f, &[], true),
-        8 => eng.exists_var(eng.zero(tree), VarId(0), QuantificationStrategy::Automatic),
-        9 => eng.exists_vars(f, &[], QuantificationStrategy::Automatic),
-        10 => eng.exists_vars(f, &[], QuantificationStrategy::Structural),
+        8 => eng.exists_var(eng.zero(tree), VarId(0)),
+        9 => eng.exists_vars(f, &[]),
+        10 => eng.exists_vars_with_strategy(f, &[], QuantificationStrategy::Structural),
         11 => eng.restrict_to_care(eng.zero(tree), f).map(|r| r.into_tdd()),
         12 => eng.restrict_to_care(f, eng.zero(tree)).map(|r| r.into_tdd()),
         13 => eng.substitute(f, &[]),
@@ -121,9 +121,9 @@ fn composition_minimizes_nonminimal_operands_on_identity_paths() {
     for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
         for vars in [vec![], vec![VarId(0)]] {
             for input in [&f, &zero] {
-                let result = eng.and_exists(input.clone(), input.clone(), &vars, how).unwrap();
+                let result = eng.and_exists_with_strategy(input.clone(), input.clone(), &vars, how).unwrap();
                 assert_canonical(&result);
-                let expected = eng.exists_vars(input.clone(), &vars, how).unwrap();
+                let expected = eng.exists_vars_with_strategy(input.clone(), &vars, how).unwrap();
                 assert!(eng.equivalent(&result, &expected).unwrap());
             }
         }

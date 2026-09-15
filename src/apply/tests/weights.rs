@@ -131,14 +131,14 @@ fn projecting_a_leaf_output_preserves_weights() {
     let eng = Engine::new();
     let f = weighted(Tdd::clause(&tree, [1]), 2, Arithmetic::ExactRational);
     for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
-        let result = eng.exists_var(f.clone(), VarId(0), how).unwrap();
+        let result = eng.exists_var_with_strategy(f.clone(), VarId(0), how).unwrap();
         assert_canonical(&result);
         assert_eq!(exact_weight(&eng.weighted_value(&result).unwrap().unwrap()), rat(4, 1));
     }
     let mut marginal = f;
     marginalize_levels(&eng, &mut marginal, &[tree.root()]).unwrap();
     assert_canonical(&marginal);
-    assert_eq!(eng.exists_var(marginal, VarId(0), QuantificationStrategy::Automatic).unwrap_err(), OperationError::MarginalLevel(tree.root()));
+    assert_eq!(eng.exists_var(marginal, VarId(0)).unwrap_err(), OperationError::MarginalLevel(tree.root()));
 }
 
 #[test]

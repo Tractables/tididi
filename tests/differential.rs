@@ -48,7 +48,7 @@ use num_bigint::BigUint;
 use num_rational::BigRational;
 use num_traits::Zero;
 
-use tididi::apply::{apply_and_clause, condition_var, negate, exists_var, QuantificationStrategy};
+use tididi::apply::{apply_and_clause, condition_var, negate, exists_var_with_strategy, QuantificationStrategy};
 use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, SignedLog, WeightStore};
 use tididi::limits::LimitConfig;
 use tididi::io::{load_tdd, save_tdd};
@@ -413,7 +413,7 @@ fn operations_match_enumeration(case: &Case) {
         }
         for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
             step("projection");
-            let p = exists_var(&f, VarId(x), how);
+            let p = exists_var_with_strategy(&f, VarId(x), how);
             assert_canonical_after_minimize(&p);
             let want: Vec<bool> = (0..(1u32 << n))
                 .map(|mask| tf[(mask | (1 << x)) as usize] || tf[(mask & !(1 << x)) as usize])

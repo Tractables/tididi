@@ -1,5 +1,4 @@
 use tididi::Engine;
-use tididi::apply::QuantificationStrategy;
 use tididi::vtree::VarId;
 
 use super::support::*;
@@ -51,7 +50,6 @@ fn every_symbolic_image_matches_explicit_graph_search() {
                             reached.clone(),
                             transition.clone(),
                             &[VarId(0), VarId(1)],
-                            QuantificationStrategy::Automatic,
                         )
                         .unwrap();
                     let successors = engine

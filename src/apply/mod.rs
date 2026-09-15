@@ -35,7 +35,7 @@ pub use conjoin_clause::apply_and_clause;
 pub(crate) use disjoin::apply_or;
 pub use negate::negate;
 pub use condition::{condition_var, condition_vars};
-pub use project::{exists_var, exists_vars, QuantificationStrategy};
+pub use project::{exists_var, exists_var_with_strategy, exists_vars, exists_vars_with_strategy, QuantificationStrategy};
 pub use restrict_to_care::{restrict_to_care, RestrictionOutcome};
 
 #[cfg(test)]

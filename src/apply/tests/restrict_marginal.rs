@@ -316,7 +316,7 @@ fn restrict_marginal_care_same_regions(
         if n_marginal_internal(&care) < want_regions {
             continue;
         }
-        let care_proj = exists_vars(&care0, &region_vars, QuantificationStrategy::Automatic);
+        let care_proj = exists_vars(&care0, &region_vars);
 
         let before = model_count(&and2(&fm, &care_proj));
         let g = restrict_to_care(fm.clone(), care.clone()).into_tdd();

@@ -1,4 +1,3 @@
-use tididi::apply::QuantificationStrategy;
 use tididi::vtree::VarId;
 use tididi::{Engine, Tdd};
 
@@ -8,7 +7,7 @@ use super::support::*;
 fn forall(engine: &Engine, diagram: Tdd, var: VarId) -> Tdd {
     let negated = engine.negate(diagram).unwrap();
     let projected = engine
-        .exists_vars(negated, &[var], QuantificationStrategy::Automatic)
+        .exists_vars(negated, &[var])
         .unwrap();
     engine.negate(projected).unwrap()
 }
@@ -32,7 +31,6 @@ fn alternating_quantifiers_match_all_three_variable_games() {
                     .exists_vars(
                         relation.clone(),
                         &[VarId(2)],
-                        QuantificationStrategy::Automatic,
                     )
                     .unwrap(),
                 VarId(1),
@@ -41,7 +39,6 @@ fn alternating_quantifiers_match_all_three_variable_games() {
                 .exists_vars(
                     forall(&engine, relation, VarId(1)),
                     &[VarId(2)],
-                    QuantificationStrategy::Automatic,
                 )
                 .unwrap();
 

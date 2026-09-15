@@ -19,7 +19,7 @@ fn support_mask_tracks_dependence() {
     // Cross-check against the project-equality oracle: f independent of x iff
     // projecting x out leaves f equivalent (over the care of the other vars).
     for x in 0..3u32 {
-        let projected = exists_var(&f, VarId(x), crate::apply::QuantificationStrategy::Automatic);
+        let projected = exists_var(&f, VarId(x));
         let unchanged = equiv(&f, &projected);
         assert_eq!(!unchanged, sup[x as usize], "support[{x}] mismatch vs oracle");
     }

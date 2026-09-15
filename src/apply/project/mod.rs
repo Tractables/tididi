@@ -20,8 +20,8 @@ mod structural;
 
 /// How existential quantification is computed; the Boolean result is the same.
 ///
-/// Start with [`Automatic`](Self::Automatic). [`Structural`](Self::Structural)
-/// avoids building two cofactors and their disjunction, which can be useful when
+/// Ordinary quantification uses [`Automatic`](Self::Automatic).
+/// [`Structural`](Self::Structural) avoids building two cofactors and their disjunction, which can be useful when
 /// that intermediate representation is too large. Both choices honor the
 /// resource and marginal-level restrictions of [`Engine::exists_var`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,10 +101,9 @@ pub(super) fn exists_targets_on(eng: &Engine, mut f: Tdd, targets: &[VtreeIdx], 
 
 /// Existentially quantify `x` out of the diagram, on a transient engine with no limits armed.
 ///
-/// `f` is borrowed and cloned. [`Engine::exists_var`] is this operation on a
-/// caller's engine, and states the contract: it keeps the per-level buffers
-/// warm between calls, takes the operand by value, and hands a refused
-/// allocation or a variable outside the vtree back instead of panicking.
+/// Uses [`QuantificationStrategy::Automatic`]; [`exists_var_with_strategy`] selects
+/// a rewrite explicitly. The operand is borrowed and cloned.
+/// [`Engine::exists_var`] takes ownership, reuses workspace and returns errors.
 ///
 /// This is existential quantification over a variable, which is not what
 /// [`marginalize_levels`](crate::marginal::marginalize_levels) does: that sums a vtree
@@ -117,7 +116,7 @@ pub(super) fn exists_targets_on(eng: &Engine, mut f: Tdd, targets: &[VtreeIdx], 
 /// ```
 /// use std::sync::Arc;
 /// use tididi::Tdd;
-/// use tididi::apply::{exists_var, QuantificationStrategy};
+/// use tididi::apply::exists_var;
 /// use tididi::vtree::{VarId, Vtree};
 ///
 /// let vtree = Arc::new(Vtree::balanced(3));
@@ -126,34 +125,61 @@ pub(super) fn exists_targets_on(eng: &Engine, mut f: Tdd, targets: &[VtreeIdx], 
 ///
 /// // ∃x2. (x1 ∧ x2) is x1. The vtree still carries x2, now free, so the
 /// // count over the whole vtree doubles.
-/// let g = exists_var(&f, VarId(1), QuantificationStrategy::Automatic);
+/// let g = exists_var(&f, VarId(1));
 /// assert_eq!(g.model_count(), 4u32.into());
 /// ```
 #[must_use]
-pub fn exists_var(f: &Tdd, x: VarId, how: QuantificationStrategy) -> Tdd {
+pub fn exists_var(f: &Tdd, x: VarId) -> Tdd {
+    exists_var_with_strategy(f, x, QuantificationStrategy::Automatic)
+}
+
+/// Existentially quantify `x` with an explicit rewrite strategy.
+///
+/// Borrowing, vtree and result semantics are those of [`exists_var`].
+///
+/// # Panics
+///
+/// Panics on any error reported by [`Engine::exists_var_with_strategy`].
+#[must_use]
+pub fn exists_var_with_strategy(f: &Tdd, x: VarId, how: QuantificationStrategy) -> Tdd {
     exists_var_on(&Engine::new(), f.clone(), x, how)
-        .expect("exists_var: use Engine::exists_var to handle a refusal or a variable outside the vtree")
+        .expect("exists_var_with_strategy: use Engine::exists_var_with_strategy to handle a refusal or a variable outside the vtree")
 }
 
 /// Existentially quantify every variable in `vars`, one at a time, on a
 /// transient engine with no limits armed.
 ///
-/// `f` is borrowed and cloned. [`Engine::exists_vars`] is this operation on a
-/// caller's engine.
+/// Uses [`QuantificationStrategy::Automatic`]; [`exists_vars_with_strategy`] selects
+/// a rewrite explicitly. The operand is borrowed and cloned.
+/// [`Engine::exists_vars`] takes ownership, reuses workspace and returns errors.
 ///
 /// # Panics
 ///
 /// Panics on any error reported by [`Engine::exists_vars`].
 #[must_use]
-pub fn exists_vars(f: &Tdd, vars: &[VarId], how: QuantificationStrategy) -> Tdd {
+pub fn exists_vars(f: &Tdd, vars: &[VarId]) -> Tdd {
+    exists_vars_with_strategy(f, vars, QuantificationStrategy::Automatic)
+}
+
+/// Existentially quantify `vars` with an explicit rewrite strategy.
+///
+/// Borrowing, vtree and result semantics are those of [`exists_vars`].
+///
+/// # Panics
+///
+/// Panics on any error reported by [`Engine::exists_vars_with_strategy`].
+#[must_use]
+pub fn exists_vars_with_strategy(f: &Tdd, vars: &[VarId], how: QuantificationStrategy) -> Tdd {
     exists_vars_on(&Engine::new(), f.clone(), vars, how)
-        .expect("exists_vars: use Engine::exists_vars to handle a refusal or a variable outside the vtree")
+        .expect("exists_vars_with_strategy: use Engine::exists_vars_with_strategy to handle a refusal or a variable outside the vtree")
 }
 
 /// The projection entry points on a caller's engine.
 impl crate::engine::Engine {
-    /// Existentially quantify `x`: a minimized diagram for ∃x. f, using the
-    /// rewrite `how` selects.
+    /// Existentially quantify `x`: a minimized diagram for ∃x. f.
+    ///
+    /// Uses [`QuantificationStrategy::Automatic`];
+    /// [`Engine::exists_var_with_strategy`] selects a rewrite explicitly.
     ///
     /// The vtree is unchanged, so `x` remains a variable, now free, and
     /// [`Tdd::model_count`] still ranges over it: each model of ∃x. f over the
@@ -163,7 +189,6 @@ impl crate::engine::Engine {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};
-    /// use tididi::apply::QuantificationStrategy;
     /// use tididi::vtree::VarId;
     ///
     /// let engine = Engine::new();
@@ -171,7 +196,7 @@ impl crate::engine::Engine {
     /// let f = engine.cube(&tree, [1, 2])?; // x1 ∧ x2
     /// # tididi::test_helpers::assert_canonical(&f);
     /// assert_eq!(f.model_count(), 2u32.into());
-    /// let g = engine.exists_var(f, VarId(1), QuantificationStrategy::Automatic)?;
+    /// let g = engine.exists_var(f, VarId(1))?;
     /// assert_eq!(g.model_count(), 4u32.into()); // x1, with x2 and x3 free
     /// # tididi::test_helpers::assert_canonical(&g);
     /// # Ok::<(), tididi::OperationError>(())
@@ -181,14 +206,6 @@ impl crate::engine::Engine {
     /// states: one cofactor is rewritten in `f`'s own level arenas. Clone it
     /// first if you need to keep it. A ⊥ operand comes back unchanged, and a
     /// diagram whose output sits at `x`'s own leaf gives ⊤.
-    ///
-    /// The structural rewrite — every call with [`QuantificationStrategy::Structural`],
-    /// and an [`QuantificationStrategy::Automatic`] call on a diagram with a marginal
-    /// level — checks allocations and cancellation while regrouping nodes,
-    /// then reduces the result on this engine. Its output cap counts emitted
-    /// intermediate nodes, including the final root union.
-    /// Marginal levels off the path from `x`'s leaf to the root are carried
-    /// through unchanged.
     ///
     /// # Errors
     ///
@@ -201,11 +218,33 @@ impl crate::engine::Engine {
     ///
     /// [`OperationError::MarginalLevel`] if the target leaf or a rewritten
     /// ancestor is marginal, or an ancestor has a marginal grandchild.
-    pub fn exists_var(&self, f: Tdd, x: VarId, how: crate::apply::QuantificationStrategy) -> Result<Tdd, OperationError> {
+    pub fn exists_var(&self, f: Tdd, x: VarId) -> Result<Tdd, OperationError> {
+        self.exists_var_with_strategy(f, x, QuantificationStrategy::Automatic)
+    }
+
+    /// Existentially quantify `x` with an explicit rewrite strategy.
+    ///
+    /// Vtree, ownership and result semantics are those of [`Engine::exists_var`].
+    ///
+    /// The structural rewrite — every call with [`QuantificationStrategy::Structural`],
+    /// and an [`QuantificationStrategy::Automatic`] call on a diagram with a marginal
+    /// level — checks allocations and cancellation while regrouping nodes,
+    /// then reduces the result on this engine. Its output cap counts emitted
+    /// intermediate nodes, including the final root union.
+    /// Marginal levels off the path from `x`'s leaf to the root are carried
+    /// through unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors described by [`Engine::exists_var`].
+    pub fn exists_var_with_strategy(&self, f: Tdd, x: VarId, how: QuantificationStrategy) -> Result<Tdd, OperationError> {
         crate::apply::project::exists_var_on(self, f, x, how)
     }
 
     /// Remove dependence on `vars` by allowing either value of each variable.
+    ///
+    /// Uses [`QuantificationStrategy::Automatic`];
+    /// [`Engine::exists_vars_with_strategy`] selects a rewrite explicitly.
     ///
     /// An assignment to the remaining variables satisfies the result when at least
     /// one extension satisfies `f`. This is Boolean existential quantification:
@@ -220,14 +259,13 @@ impl crate::engine::Engine {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};
-    /// use tididi::apply::QuantificationStrategy;
     /// use tididi::vtree::VarId;
     ///
     /// let engine = Engine::new();
     /// let tree = Arc::new(Vtree::balanced(2));
     /// let f = engine.clause(&tree, [1, 2])?; // three satisfying assignments
     /// let vars = [VarId(0)];
-    /// let projected = engine.exists_vars(f, &vars, QuantificationStrategy::Automatic)?;
+    /// let projected = engine.exists_vars(f, &vars)?;
     /// assert!(engine.equivalent(&projected, &engine.one(&tree))?);
     /// let remaining_count = engine.model_count(&projected)? >> vars.len();
     /// assert_eq!(remaining_count, 2u32.into()); // both values of x2 have an extension
@@ -244,7 +282,19 @@ impl crate::engine::Engine {
     ///
     /// As [`Engine::exists_var`]. Every variable is validated before the first
     /// quantification; preparing the request also honors allocation and stop limits.
-    pub fn exists_vars(&self, f: Tdd, vars: &[VarId], how: crate::apply::QuantificationStrategy) -> Result<Tdd, OperationError> {
+    pub fn exists_vars(&self, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
+        self.exists_vars_with_strategy(f, vars, QuantificationStrategy::Automatic)
+    }
+
+    /// Existentially quantify `vars` with an explicit rewrite strategy.
+    ///
+    /// Vtree, ownership and ordering semantics are those of [`Engine::exists_vars`].
+    /// The strategy applies to every distinct variable in the request.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors described by [`Engine::exists_vars`].
+    pub fn exists_vars_with_strategy(&self, f: Tdd, vars: &[VarId], how: QuantificationStrategy) -> Result<Tdd, OperationError> {
         crate::apply::project::exists_vars_on(self, f, vars, how)
     }
 }

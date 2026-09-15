@@ -93,6 +93,9 @@ impl Engine {
 
     /// Existential conjunction: `exists vars. (f AND g)`.
     ///
+    /// Uses [`QuantificationStrategy::Automatic`];
+    /// [`Engine::and_exists_with_strategy`] selects a rewrite explicitly.
+    ///
     /// Both operands are structural and consumed; the result is minimized and
     /// keeps their shared vtree and agreed weights. Quantified variables remain
     /// free in that universe, as in [`Engine::exists_vars`]. This composes
@@ -107,18 +110,29 @@ impl Engine {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};
-    /// use tididi::apply::QuantificationStrategy;
     /// use tididi::vtree::VarId;
     /// let engine = Engine::new();
     /// let tree = Arc::new(Vtree::balanced(2));
     /// let current = engine.literal(&tree, -1)?; // current state x is false
     /// let transition = engine.xor(engine.literal(&tree, 1)?, engine.literal(&tree, 2)?)?;
     /// // The relation flips x to next-state y; forget the current-state variable.
-    /// let next = engine.and_exists(current, transition, &[VarId(0)], QuantificationStrategy::Automatic)?;
+    /// let next = engine.and_exists(current, transition, &[VarId(0)])?;
     /// assert!(engine.equivalent(&next, &engine.literal(&tree, 2)?)?);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn and_exists(
+    pub fn and_exists(&self, f: Tdd, g: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
+        self.and_exists_with_strategy(f, g, vars, QuantificationStrategy::Automatic)
+    }
+
+    /// Conjoin two diagrams and quantify `vars` with an explicit rewrite strategy.
+    ///
+    /// Operand requirements, ownership and result semantics are those of
+    /// [`Engine::and_exists`]. The strategy applies to every quantified variable.
+    ///
+    /// # Errors
+    ///
+    /// Returns the errors described by [`Engine::and_exists`].
+    pub fn and_exists_with_strategy(
         &self,
         mut f: Tdd,
         mut g: Tdd,

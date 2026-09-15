@@ -188,7 +188,7 @@ fn ite_and_existential_conjunction_match_enumeration() {
                 vec![VarId(0), VarId(2)],
                 vec![VarId(0), VarId(0)],
             ] {
-                let result = eng.and_exists(f.clone(), g.clone(), &vars, how).unwrap();
+                let result = eng.and_exists_with_strategy(f.clone(), g.clone(), &vars, how).unwrap();
                 assert_canonical(&result);
                 for row in 0..8 {
                     let expected = (0..8).any(|witness| {
@@ -197,6 +197,52 @@ fn ite_and_existential_conjunction_match_enumeration() {
                         }) && (a & b) & (1 << witness) != 0
                     });
                     assert_eq!(eval(&result, &assignment(row, 3)), expected);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn default_and_explicit_quantification_match_enumeration() {
+    let eng = Engine::new();
+    for tree in [Vtree::balanced(3), Vtree::linear(3), Vtree::reverse_linear(3)] {
+        let tree = Arc::new(tree);
+        for bits in [0u16, 255, 42, 150] {
+            let f = function(&tree, bits, false);
+            let one = Tdd::one(&tree);
+            assert_canonical(&f);
+            assert_canonical(&one);
+            for vars in [vec![], vec![VarId(0)], vec![VarId(0), VarId(2), VarId(0)]] {
+                let mut results = vec![
+                    exists_vars(&f, &vars),
+                    eng.exists_vars(f.clone(), &vars).unwrap(),
+                    eng.and_exists(f.clone(), one.clone(), &vars).unwrap(),
+                ];
+                if vars.len() == 1 {
+                    results.push(exists_var(&f, vars[0]));
+                    results.push(eng.exists_var(f.clone(), vars[0]).unwrap());
+                }
+                for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
+                    results.push(exists_vars_with_strategy(&f, &vars, how));
+                    results.push(eng.exists_vars_with_strategy(f.clone(), &vars, how).unwrap());
+                    results.push(eng.and_exists_with_strategy(f.clone(), one.clone(), &vars, how).unwrap());
+                    if vars.len() == 1 {
+                        results.push(exists_var_with_strategy(&f, vars[0], how));
+                        results.push(eng.exists_var_with_strategy(f.clone(), vars[0], how).unwrap());
+                    }
+                }
+                for result in results {
+                    assert_canonical(&result);
+                    assert!(Arc::ptr_eq(result.vtree(), &tree));
+                    for row in 0..8 {
+                        let expected = (0..8).any(|witness| {
+                            (0..3).all(|v| {
+                                vars.contains(&VarId(v)) || row & (1 << v) == witness & (1 << v)
+                            }) && bits & (1 << witness) != 0
+                        });
+                        assert_eq!(eval(&result, &assignment(row, 3)), expected);
+                    }
                 }
             }
         }
@@ -221,7 +267,6 @@ fn symbolic_reachability_uses_image_rename_and_semantic_convergence() {
                 reached.clone(),
                 relation.clone(),
                 &[VarId(0), VarId(1)],
-                QuantificationStrategy::Automatic,
             )
             .unwrap();
         let image = eng
@@ -342,7 +387,7 @@ fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
             OperationError::DuplicateVariable(VarId(0))
         );
         assert_eq!(
-            eng.and_exists(f, x.clone(), &[VarId(9)], QuantificationStrategy::Automatic)
+            eng.and_exists(f, x.clone(), &[VarId(9)])
                 .unwrap_err(),
             OperationError::VariableNotInVtree(VarId(9))
         );
@@ -375,7 +420,6 @@ fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
             Tdd::zero(&tree),
             marginal,
             &[],
-            QuantificationStrategy::Automatic
         )
         .unwrap_err(),
         error
@@ -419,7 +463,6 @@ fn exercise(eng: &Engine, op: usize, f: &Tdd, g: &Tdd) -> Result<(), OperationEr
                 f.clone(),
                 g.clone(),
                 &[VarId(0)],
-                QuantificationStrategy::Automatic,
             )?;
         }
         8 => {
