@@ -710,7 +710,7 @@ fn a_tight_budget_refuses_rather_than_panics(case: &Case) {
         }
     }
 
-    eng.reset();
+    eng.clear_scratch();
     let want = BigUint::from(brute_force_count(n, &case.clauses));
     let mut acc = Tdd::one(&case.vtree);
     for clause in &case.clauses {

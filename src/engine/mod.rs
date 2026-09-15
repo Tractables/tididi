@@ -181,20 +181,18 @@ impl Engine {
     }
 
 
-    /// Release everything this engine retains — every scratch allocation and
-    /// every pooled buffer. The armed limits and meters stay as they are.
+    /// Release retained scratch buffers and pooled storage, preserving limits and meters.
     ///
-    /// Called between a failed operation and whatever a caller does to recover
-    /// from it, so the recovery starts on a clean allocator slate rather than
-    /// inheriting the peak the failure left behind. An operation cut by an
-    /// unwind leaves its buffers parked at full capacity; this is the reclaim.
+    /// Call between operations to release capacity retained by completed or
+    /// refused work. Diagram results remain intact.
+    /// [`Context::clear_scratch`] releases the idle workspace in a shared context.
     ///
     /// # Panics
     ///
     /// If a conjunction on this engine is in flight — reachable only from a
     /// schedule hook or a memory probe — since it holds the sparse workspace
     /// borrowed.
-    pub fn reset(&self) {
+    pub fn clear_scratch(&self) {
         self.apply.drain();
         self.clause.drain();
         self.reduce.drain();
