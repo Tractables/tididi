@@ -26,16 +26,17 @@ This example builds `(x ∧ y) ∨ z` and counts its satisfying assignments:
 
 ```rust
 use std::sync::Arc;
-use tididi::{Tdd, Vtree};
+use tididi::{and, or, OperationError, Tdd, Vtree};
 
-fn main() {
+fn main() -> Result<(), OperationError> {
     let tree = Arc::new(Vtree::balanced(3));
     let x = Tdd::literal(&tree, 1);
     let y = Tdd::literal(&tree, 2);
     let z = Tdd::literal(&tree, 3);
 
-    let f = (x & y) | z;
+    let f = or(and(x, y)?, z)?;
     assert_eq!(f.model_count(), 5u32.into());
+    Ok(())
 }
 ```
 
@@ -47,12 +48,16 @@ Signed integers name literals: `1` means `x`, `-2` means `¬y`, and zero is
 invalid. The typed form, [`Literal`], uses zero-based variable identifiers.
 Use the same `Arc<Vtree>` for functions you intend to combine.
 
-Each [`Tdd`] owns its diagram. Operators consume their operands; clone an
+Each [`Tdd`] owns its diagram. Boolean operations consume their operands; clone an
 operand first if you need to keep it. Cloning copies diagram storage and shares
 the vtree; queries such as `model_count` borrow the diagram.
-The shared vtree retains a reusable execution context. Constructors, operators
-and queries use it automatically; the convenience forms above panic on failure.
-Use diagram methods such as `a.and(b)?` and `f.try_model_count()?` to handle errors.
+The shared vtree retains reusable working buffers, used automatically by these
+operations. `and` and `or` return a `Result`; `?` propagates an operation error.
+The literal and counting conveniences panic on failure; use `Tdd::try_literal`
+and `f.try_model_count()` when those errors need handling too.
+
+The operators `&`, `|` and `!` are optional shorthand that panic on failure:
+`(x & y) | z` expresses the same formula as the checked calls above.
 
 For bounded work, the context lends a batch engine through
 [`Context::with_limits`]. Diagrams own their results; the engine only supplies

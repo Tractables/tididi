@@ -25,7 +25,7 @@ use std::sync::Arc;
 use num_rational::BigRational;
 use num_traits::{One, Zero};
 use tididi::diagram::{LiteralWeights, RationalWeights};
-use tididi::{OperationError, Tdd, Vtree};
+use tididi::{and, or, OperationError, Tdd, Vtree};
 ```
 
 ## Build the events once
@@ -38,8 +38,8 @@ let tree = Arc::new(Vtree::balanced(3));
 let rain = Tdd::literal(&tree, 1);
 let sprinkler = Tdd::literal(&tree, 2);
 // Wet grass is the observation: rain OR sprinkler. Variable 3 (wind) is free.
-let wet = rain.clone() | sprinkler;
-let rain_and_wet = rain.clone() & wet.clone();
+let wet = or(rain.clone(), sprinkler)?;
+let rain_and_wet = and(rain.clone(), wet.clone())?;
 ```
 
 For any query event `Q` and evidence `E`, conditional probability is

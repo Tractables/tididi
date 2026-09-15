@@ -15,7 +15,7 @@ if the distinction between a vtree level, a TDD node, and a child pair is new.
 ```rust,ignore
 use std::sync::Arc;
 
-use tididi::Tdd;
+use tididi::{and, OperationError, Tdd};
 use tididi::vtree::{Vtree, VtreeIdx};
 ```
 
@@ -68,7 +68,7 @@ Each alternative is one pair at the level containing those variables:
 ```rust,ignore
 let vtree = Arc::new(Vtree::balanced(4));
 // x1 ⊕ x2 needs two pairs at the level over {x1, x2}: (x1, ¬x2) and (¬x1, x2).
-let xor = Tdd::clause(&vtree, [1, 2]) & Tdd::clause(&vtree, [-1, -2]);
+let xor = and(Tdd::clause(&vtree, [1, 2]), Tdd::clause(&vtree, [-1, -2]))?;
 let (level, pairs) = widest_node(&xor);
 let (left, _) = vtree.children(vtree.root());
 assert_eq!((level, pairs), (left, 2));

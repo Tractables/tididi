@@ -1,18 +1,16 @@
 //! Combine and transform Boolean functions.
 //!
-//! Combine [`Tdd`](crate::Tdd) values directly with `f & g`, `f | g` and `!f`.
+//! Combine [`Tdd`](crate::Tdd) values with [`and`], [`or`], [`xor`] and [`ite`].
 //! Each call reuses scratch from the vtree's execution context.
 //!
-//! Use [`Tdd::and`](crate::Tdd::and), [`Tdd::or`](crate::Tdd::or),
-//! [`Tdd::negate`](crate::Tdd::negate), [`Tdd::xor`](crate::Tdd::xor)
-//! and [`Tdd::ite`](crate::Tdd::ite) to compose functions.
+//! [`Tdd::negate`](crate::Tdd::negate) complements a function.
 //! [`Tdd::condition`](crate::Tdd::condition) fixes an assignment;
 //! [`Tdd::exists_vars`](crate::Tdd::exists_vars) quantifies variables;
 //! [`Tdd::substitute`](crate::Tdd::substitute) replaces them with functions.
 //! [`Tdd::rename_vars`](crate::Tdd::rename_vars) handles swaps and renames,
-//! and [`Tdd::and_exists`](crate::Tdd::and_exists) constructs an existential conjunction.
+//! and [`and_exists`] constructs an existential conjunction.
 //!
-//! These methods return errors; the `&`, `|` and `!` operators panic on refusal.
+//! These operations return errors; the `&`, `|` and `!` operators panic on refusal.
 //! Use [`Context::with_limits`](crate::Context::with_limits) for a bounded batch.
 //! Find a task and its examples in the [task guide](crate::guide::api).
 
@@ -31,8 +29,11 @@ mod compose;
 mod substitute;
 
 pub(crate) use conjoin::apply_and;
+pub use conjoin::and;
 pub use conjoin_clause::apply_and_clause;
 pub(crate) use disjoin::apply_or;
+pub use disjoin::or;
+pub use compose::{xor, ite, and_exists, and_exists_with_strategy};
 pub use negate::negate;
 pub use condition::{condition_var, condition_vars};
 pub use project::{exists_var, exists_var_with_strategy, exists_vars, exists_vars_with_strategy, QuantificationStrategy};

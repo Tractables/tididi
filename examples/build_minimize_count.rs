@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use tididi::{Tdd, Vtree};
+use tididi::{and, or, Tdd, Vtree};
 
 /// Build the backup rules and query the configurations they permit.
 fn main() -> Result<(), tididi::OperationError> {
@@ -15,9 +15,9 @@ fn main() -> Result<(), tididi::OperationError> {
     let encrypted = Tdd::literal(&tree, 3);
 
     // Require at least one destination; remote backups require encryption.
-    let destination = local | remote.clone();
-    let encryption_rule = !remote.clone() | encrypted;
-    let mut configurations = destination & encryption_rule;
+    let destination = or(local, remote.clone())?;
+    let encryption_rule = or(remote.clone().negate()?, encrypted)?;
+    let mut configurations = and(destination, encryption_rule)?;
 
     // There are four choices for the first three options and two for notifications.
     let count = configurations.model_count();
@@ -25,7 +25,7 @@ fn main() -> Result<(), tididi::OperationError> {
     println!("Valid configurations: {count}");
 
     // Keep the original and require remote backups in a second diagram.
-    let with_remote = configurations.clone() & remote;
+    let with_remote = and(configurations.clone(), remote)?;
     let remote_count = with_remote.model_count();
     assert_eq!(remote_count, 4u32.into());
     println!("Configurations with remote backups: {remote_count}");
@@ -36,7 +36,7 @@ fn main() -> Result<(), tididi::OperationError> {
     for literal in &witness {
         println!("  {}: {}", names[literal.var.idx()], literal.positive);
     }
-    let selected = configurations.clone() & Tdd::cube(&tree, &witness);
+    let selected = and(configurations.clone(), Tdd::cube(&tree, &witness))?;
     assert_eq!(selected.model_count(), 1u32.into());
 
     // Reuse the attached context for a bounded batch.

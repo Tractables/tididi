@@ -10,7 +10,7 @@ Run `cargo run --example vtree_grouping`; only `tididi` is needed as a dependenc
 ```rust,ignore
 use std::sync::Arc;
 
-use tididi::{OperationError, Tdd, Vtree};
+use tididi::{and, OperationError, Tdd, Vtree};
 use tididi::vtree::VarId;
 ```
 
@@ -49,9 +49,9 @@ tree, then minimizes before comparing storage. The helper returns a `Result`;
 
 ```rust,ignore
 fn equal_pairs(tree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
-    let first_equal = Tdd::clause(tree, [-1, 3]) & Tdd::clause(tree, [1, -3]);
-    let second_equal = Tdd::clause(tree, [-2, 4]) & Tdd::clause(tree, [2, -4]);
-    let mut f = first_equal & second_equal;
+    let first_equal = and(Tdd::clause(tree, [-1, 3]), Tdd::clause(tree, [1, -3]))?;
+    let second_equal = and(Tdd::clause(tree, [-2, 4]), Tdd::clause(tree, [2, -4]))?;
+    let mut f = and(first_equal, second_equal)?;
     f.minimize()?;
     Ok(f)
 }

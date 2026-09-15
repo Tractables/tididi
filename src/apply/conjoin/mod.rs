@@ -82,8 +82,8 @@ use streaming_marginal::{StreamEnv, StreamLevelState, build_stream_state, commit
 ///
 /// Panics on operand incompatibility or allocation refusal.
 pub(crate) fn apply_and(f: Tdd, g: Tdd) -> Tdd {
-    f.and(g)
-        .expect("apply_and: operation refused; use Engine::and to handle errors")
+    and(f, g)
+        .expect("apply_and: operation refused; use tididi::and to handle errors")
 }
 
 /// Conjoin two diagrams that share the same vtree, reporting a refusal instead of
@@ -137,49 +137,63 @@ pub(crate) fn conjoin_owned(
     result
 }
 
+/// Return the conjunction of two diagrams sharing the same vtree allocation.
+///
+/// Uses the shared vtree's execution context automatically.
+///
+/// Both operands are consumed on success and on error; clone an operand first
+/// if it is needed afterward. The result is correct for counting but may retain
+/// unreachable nodes and twins; [`Tdd::minimize`]
+/// establishes canonical form when required.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{and, Tdd, Vtree};
+///
+/// let tree = Arc::new(Vtree::balanced(3));
+/// let either = Tdd::try_clause(&tree, [1, 2])?;
+/// let not_third = Tdd::try_literal(&tree, -3)?;
+/// let f = and(either, not_third)?;
+/// assert_eq!(f.try_model_count()?, 3u32.into());
+/// # Ok::<(), tididi::OperationError>(())
+/// ```
+///
+/// # Weights and marginal levels
+///
+/// Attached weight tables and arithmetic must agree. A structural operand
+/// without weights inherits the other operand's table; stored integer counts
+/// cannot be reweighted. Marginal levels remain marginal, and conjunction is
+/// valid there only when the other operand imposes no further constraint on
+/// the summed-out variables. When both operands are marginal at a level, the
+/// caller must ensure one represents the constant-true function on that subtree;
+/// this condition is checked in debug builds.
+///
+/// # Errors
+///
+/// [`OperationError::VtreeMismatch`] for different vtree allocations,
+/// [`OperationError::RootMismatch`] for different output levels,
+/// [`OperationError::IncompatibleWeights`] for different weight interpretations,
+/// or [`OperationError::MarginalLevel`] when a structural operand constrains
+/// variables the other has summed out.
+///
+/// Allocation refusal is reported as [`OperationError::OverBudget`].
+/// For explicit resource limits, use [`Context::with_limits`](crate::Context::with_limits)
+/// and the supplied engine's operations.
+pub fn and(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
+    let context = std::sync::Arc::clone(f.context());
+    context.run(|eng| eng.and(f, g))
+}
+
 /// The conjunction entry points on a caller's engine.
 impl crate::engine::Engine {
-    /// Return the conjunction of two diagrams sharing the same vtree allocation.
+    /// Run [`and`] using this batch's scratch and resource limits.
     ///
-    /// Both operands are consumed on success and on error; clone an operand first
-    /// if it is needed afterward. The result is correct for counting but may retain
-    /// unreachable nodes and twins; [`try_minimize`](crate::reduce::try_minimize)
-    /// establishes canonical form when required.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    ///
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let either = engine.clause(&tree, [1, 2])?;
-    /// let not_third = engine.literal(&tree, -3)?;
-    /// let f = engine.and(either, not_third)?;
-    /// assert_eq!(engine.model_count(&f)?, 3u32.into());
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
-    ///
-    /// # Weights and marginal levels
-    ///
-    /// Attached weight tables and arithmetic must agree. A structural operand
-    /// without weights inherits the other operand's table; stored integer counts
-    /// cannot be reweighted. Marginal levels remain marginal, and conjunction is
-    /// valid there only when the other operand imposes no further constraint on
-    /// the summed-out variables. When both operands are marginal at a level, the
-    /// caller must ensure one represents the constant-true function on that subtree;
-    /// this condition is checked in debug builds.
+    /// Operand requirements, ownership and result semantics follow that function.
     ///
     /// # Errors
     ///
-    /// [`OperationError::VtreeMismatch`] for different vtree allocations,
-    /// [`OperationError::RootMismatch`] for different output levels,
-    /// [`OperationError::IncompatibleWeights`] for different weight interpretations,
-    /// or [`OperationError::MarginalLevel`] when a structural operand constrains
-    /// variables the other has summed out.
-    ///
-    /// Resource refusals are [`OperationError::OverBudget`],
-    /// [`OperationError::OutputCap`], or [`OperationError::Stopped`].
-    /// [`Limits::scope`](crate::limits::Limits::scope) shows how to install limits.
+    /// Returns the operation's errors, plus [`OperationError::Stopped`] or
+    /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn and(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         crate::apply::conjoin::conjoin_owned(self, f, g, None)
     }

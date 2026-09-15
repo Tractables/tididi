@@ -17,7 +17,7 @@ over four variables and share it between the option diagrams:
 ```rust,ignore
 use std::sync::Arc;
 
-use tididi::{Tdd, Vtree};
+use tididi::{and, or, Tdd, Vtree};
 ```
 
 ```rust,ignore
@@ -35,16 +35,21 @@ variable in the tree.
 
 ## Write the rules as Boolean expressions
 
-Use `|` for OR, `&` for AND, and `!` for NOT. The implication “remote requires
-encryption” is `!remote | encrypted`.
+Use [`or`](crate::or) for alternatives, [`and`](crate::and) for simultaneous
+requirements, and [`negate`](crate::Tdd::negate) to complement a diagram.
+“Remote requires encryption” means either remote backups are off or encryption
+is on:
 
 ```rust,ignore
-let destination = local | remote.clone();
-let encryption_rule = !remote.clone() | encrypted;
-let mut configurations = destination & encryption_rule;
+let destination = or(local, remote.clone())?;
+let encryption_rule = or(remote.clone().negate()?, encrypted)?;
+let mut configurations = and(destination, encryption_rule)?;
 ```
 
-Each `Tdd` owns its circuit. Operators consume their operands, so we clone
+These operations return `Result`; `?` propagates an error from `main`, whose
+return type is `Result<(), tididi::OperationError>`.
+
+Each `Tdd` owns its circuit. Boolean operations consume their operands, so we clone
 `remote` where we will need it again. Cloning copies the diagram storage and
 shares the vtree; borrow diagrams for queries that do not transform them.
 These operations reuse the working buffers attached to the shared vtree; no
@@ -76,7 +81,7 @@ the full vtree. Counting returns an arbitrary-precision integer.
 If a user selects remote backups, conjoin that option with a copy of the rules:
 
 ```rust,ignore
-let with_remote = configurations.clone() & remote;
+let with_remote = and(configurations.clone(), remote)?;
 let remote_count = with_remote.model_count();
 assert_eq!(remote_count, 4u32.into());
 println!("Configurations with remote backups: {remote_count}");
@@ -104,16 +109,17 @@ The witness assigns every vtree variable. There can be many correct witnesses,
 so the program verifies that its returned assignment satisfies the rules:
 
 ```rust,ignore
-let selected = configurations.clone() & Tdd::cube(&tree, &witness);
+let selected = and(configurations.clone(), Tdd::cube(&tree, &witness))?;
 assert_eq!(selected.model_count(), 1u32.into());
 ```
 
-The rules now support counting, additional constraints and finding a solution,
-without an explicit engine or a minimization step. Constructors and operators
-in this walkthrough panic on failure.
+The rules now support counting, additional constraints and finding a solution.
+The constructor and query conveniences shown here panic on failure; their
+`try_` forms return errors. Boolean operators `&`, `|` and `!` are also
+available as shorthand that panics on failure.
 
 Continue with [execution controls](crate::guide::examples::execution) when you
-need checked errors or limits, or with [probability queries](crate::guide::examples::probability)
+need resource limits, or with [probability queries](crate::guide::examples::probability)
 to weight the valid assignments. The
 [complete program](https://github.com/Tractables/tididi/blob/main/examples/build_minimize_count.rs)
 continues with the execution-control example after these steps.

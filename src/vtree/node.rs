@@ -50,13 +50,13 @@ impl VtreeNode {
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{Tdd, Vtree};
+/// use tididi::{and, Tdd, Vtree};
 ///
 /// let tree = Arc::new(Vtree::balanced(3));
 /// let f = Tdd::literal(&tree, 1);
 /// let g = Tdd::literal(f.vtree(), -2);
 /// assert!(Arc::ptr_eq(f.vtree(), g.vtree()));
-/// let both = f.and(g)?;
+/// let both = and(f, g)?;
 /// assert_eq!(both.model_count(), 2u32.into());
 /// # Ok::<(), tididi::OperationError>(())
 /// ```

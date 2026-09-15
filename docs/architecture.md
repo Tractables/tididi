@@ -118,7 +118,7 @@ the optimized algorithms.
 
 ## One conjunction
 
-[`Engine::and(f, g)`] validates the shared vtree and weight interpretation,
+[`and(f, g)`] checks out the shared context, then validates the shared vtree and weight interpretation,
 then walks levels bottom-up. At each structural level it combines operand
 nodes in a product grid and emits surviving child pairs. Consumed level
 arenas return to the engine's pools for reuse.
@@ -174,8 +174,8 @@ extension point, and none is reachable from outside:
 ## Shared execution state
 
 Each vtree carries an `Arc<Context>` separately from its shape and traversal
-tables. Diagram methods take a clone of that context handle, borrow an engine
-from its idle pool, and call the existing operation kernels. Kernels pass the
+tables. Public Boolean functions and diagram methods clone that context
+handle, borrow an engine from its idle pool, and call the operation kernels. Kernels pass the
 borrowed engine through nested work so one operation retains its limits and
 metering. The pool moves a boxed engine and holds no mutex during computation.
 Nested or concurrent checkouts use separate engines; only one idle engine is
@@ -193,7 +193,7 @@ trees contain shape alone and receive fresh execution state when loaded.
 No cargo features, no `build.rs`, no environment reads, no threads, no
 process-wide state, no C or C++ code built.
 
-[`Engine::and(f, g)`]: crate::Engine::and
+[`and(f, g)`]: crate::and
 [`Arithmetic`]: crate::diagram::Arithmetic
 [`EvalAlgebra`]: crate::diagram::EvalAlgebra
 [`OperationError`]: crate::OperationError

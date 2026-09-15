@@ -12,7 +12,7 @@ creating files.
 ```rust,ignore
 use std::sync::Arc;
 
-use tididi::{Tdd, Vtree};
+use tididi::{and, Tdd, Vtree};
 use tididi::io::{read_tdd, write_tdd};
 ```
 
@@ -82,7 +82,7 @@ diagrams a shared workspace for subsequent operations.
 The loaded diagrams support the same operations as freshly built ones:
 
 ```rust,ignore
-let configurations = destination & encryption_rule;
+let configurations = and(destination, encryption_rule)?;
 assert_eq!(configurations.model_count(), 4u32.into());
 ```
 
@@ -95,8 +95,10 @@ The program also checks functional equality against freshly constructed rules;
 a matching model count alone would not establish that the rules survived:
 
 ```rust,ignore
-let expected = Tdd::clause(&restored_tree, [1, 2])
-    & Tdd::clause(&restored_tree, [-2, 3]);
+let expected = and(
+    Tdd::clause(&restored_tree, [1, 2]),
+    Tdd::clause(&restored_tree, [-2, 3]),
+)?;
 assert!(configurations.equivalent(&expected)?);
 ```
 

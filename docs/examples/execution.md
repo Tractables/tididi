@@ -10,10 +10,11 @@ Run both parts with `cargo run --example build_minimize_count`.
 
 ## Handle errors directly
 
-The operators `&`, `|` and `!` panic on failure. The corresponding diagram
-methods return `Result`: use `a.and(b)?`, `a.or(b)?` or `a.negate()?` when an
-application needs to handle an error. Constructors and common queries have
-checked forms too, such as `Tdd::try_clause` and `f.try_model_count`.
+The ordinary Boolean functions, such as [`and`](crate::and) and
+[`or`](crate::or), already return `Result`. Constructor and query conveniences
+have checked forms too: use `Tdd::try_clause(...)`, `f.try_model_count()` and
+`f.try_satisfying_assignment()` to handle their errors.
+The optional operators `&`, `|` and `!` panic on failure.
 
 An operation taking diagrams by value consumes them even on error. Keep a copy
 before calling it if recovery needs the original. Queries borrow their inputs.
@@ -34,9 +35,10 @@ let attempt = context.with_limits(limit, |operations| {
 });
 ```
 
-Call through `operations` throughout the bounded batch. Those calls share its limit configuration; each top-level call starts new
-work measurements. Ordinary diagram methods and nested context
-calls are independent operations and do not inherit a batch's limits.
+Call through `operations` throughout the bounded batch. Those calls share its
+limit configuration; each top-level call starts new work measurements.
+Free functions, ordinary diagram methods and nested context calls are
+independent operations and do not inherit a batch's limits.
 
 This is a soft budget for charged allocation growth in each operation, not a
 bound on the application's total memory. The example verifies its deliberate

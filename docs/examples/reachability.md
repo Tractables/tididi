@@ -23,7 +23,7 @@ needed as a dependency.
 use std::sync::Arc;
 
 use tididi::vtree::VarId;
-use tididi::{OperationError, Tdd, Vtree};
+use tididi::{and, and_exists, or, OperationError, Tdd, Vtree};
 ```
 
 ## Encode current and next states
@@ -50,7 +50,7 @@ let tree = Arc::new(Vtree::balanced(4));
 // The first bit in each pair is least significant. Edges: 0 -> 1 -> 2 -> 1.
 let mut transition = Tdd::zero(&tree);
 for edge in [[-1, -2, 3, -4], [1, -2, -3, 4], [-1, 2, 3, -4]] {
-    transition = transition.or(Tdd::try_cube(&tree, edge)?)?;
+    transition = or(transition, Tdd::try_cube(&tree, edge)?)?;
 }
 ```
 
@@ -76,13 +76,13 @@ The image of a state set `R` under transition relation `T` is
 exactly when some state in `R` can reach it. Inside the loop:
 
 ```rust,ignore
-let possible_steps = reached.clone().and(transition.clone())?;
+let possible_steps = and(reached.clone(), transition.clone())?;
 let successors = possible_steps.exists_vars(&current)?;
 ```
 
 ```rust,ignore
 let successors = successors.rename_vars(&next_to_current)?;
-let enlarged = reached.clone().or(successors)?;
+let enlarged = or(reached.clone(), successors)?;
 iterations += 1;
 ```
 
@@ -145,7 +145,7 @@ To find an assignment for state 2, intersect the target with the reachable set:
 
 ```rust,ignore
 let target = Tdd::try_cube(&tree, [-1, 2])?; // state 2
-let reachable_target = reached.and(target)?;
+let reachable_target = and(reached, target)?;
 let witness = reachable_target
     .try_satisfying_assignment()?
     .expect("state 2 is reachable");
@@ -156,19 +156,19 @@ path requires retaining predecessor information during the search.
 
 ## Combine the image operations
 
-Once the separate steps are familiar, [`Tdd::and_exists`](crate::Tdd::and_exists)
+Once the separate steps are familiar, [`and_exists`](crate::and_exists)
 expresses conjunction and quantification in one call. The example checks the
 two forms for equality at each iteration, before renaming:
 
 ```rust,ignore
-let combined = reached.clone().and_exists(transition.clone(), &current)?;
+let combined = and_exists(reached.clone(), transition.clone(), &current)?;
 assert!(successors.equivalent(&combined)?);
 ```
 
 Ordinary quantification selects its strategy automatically. If a particular
 workload needs the structural rewrite, use
 [`Tdd::exists_vars_with_strategy`](crate::Tdd::exists_vars_with_strategy) or
-[`Tdd::and_exists_with_strategy`](crate::Tdd::and_exists_with_strategy)
+[`and_exists_with_strategy`](crate::and_exists_with_strategy)
 with [`QuantificationStrategy::Structural`](crate::apply::QuantificationStrategy::Structural);
 the operation contracts describe its requirements. The represented Boolean
 function is the same.
@@ -176,5 +176,5 @@ function is the same.
 The [complete program](https://github.com/Tractables/tididi/blob/main/examples/symbolic_reachability.rs)
 includes the loop and decodes the witness back to state 2. For the contracts
 of the image and renaming operations, see
-[`Tdd::and_exists`](crate::Tdd::and_exists) and
+[`and_exists`](crate::and_exists) and
 [`Tdd::rename_vars`](crate::Tdd::rename_vars).

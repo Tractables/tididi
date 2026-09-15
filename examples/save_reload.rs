@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use tididi::{Tdd, Vtree};
+use tididi::{and, Tdd, Vtree};
 use tididi::io::{read_tdd, write_tdd};
 
 /// Round-trip two rules and check their conjunction over the restored tree.
@@ -24,10 +24,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let encryption_rule = read_tdd(&mut encryption_bytes.as_slice(), &restored_tree)?;
     assert!(Arc::ptr_eq(destination.vtree(), encryption_rule.vtree()));
 
-    let configurations = destination & encryption_rule;
+    let configurations = and(destination, encryption_rule)?;
     assert_eq!(configurations.model_count(), 4u32.into());
-    let expected = Tdd::clause(&restored_tree, [1, 2])
-        & Tdd::clause(&restored_tree, [-2, 3]);
+    let expected = and(
+        Tdd::clause(&restored_tree, [1, 2]),
+        Tdd::clause(&restored_tree, [-2, 3]),
+    )?;
     assert!(configurations.equivalent(&expected)?);
     println!("Restored rules allow {} configurations", configurations.model_count());
     Ok(())

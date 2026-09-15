@@ -6,7 +6,7 @@ use std::sync::Arc;
 use num_rational::BigRational;
 use num_traits::{One, Zero};
 use tididi::diagram::{LiteralWeights, RationalWeights};
-use tididi::{OperationError, Tdd, Vtree};
+use tididi::{and, or, OperationError, Tdd, Vtree};
 
 fn fraction(numerator: i64, denominator: i64) -> BigRational {
     BigRational::new(numerator.into(), denominator.into())
@@ -39,8 +39,8 @@ fn main() -> Result<(), OperationError> {
     let rain = Tdd::literal(&tree, 1);
     let sprinkler = Tdd::literal(&tree, 2);
     // Wet grass is the observation: rain OR sprinkler. Variable 3 (wind) is free.
-    let wet = rain.clone() | sprinkler;
-    let rain_and_wet = rain.clone() & wet.clone();
+    let wet = or(rain.clone(), sprinkler)?;
+    let rain_and_wet = and(rain.clone(), wet.clone())?;
 
     let scenarios = [
         (fraction(1, 5), fraction(1, 10), Some(fraction(5, 7))),

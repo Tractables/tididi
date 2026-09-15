@@ -4,35 +4,125 @@ use super::QuantificationStrategy;
 use crate::vtree::VarId;
 use crate::{Engine, OperationError, Tdd};
 
+/// Exclusive disjunction: exactly one operand holds.
+///
+/// Uses the shared vtree's execution context automatically.
+///
+/// Both operands are consumed, must be structural, and must share a vtree
+/// allocation. The result is minimized; weight handling and intermediate
+/// storage follow [`ite`](crate::ite).
+///
+/// # Errors
+///
+/// The structural-input, compatibility and resource errors of [`ite`](crate::ite).
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{xor, Tdd, Vtree};
+/// let tree = Arc::new(Vtree::balanced(2));
+/// let parity = xor(Tdd::try_literal(&tree, 1)?, Tdd::try_literal(&tree, 2)?)?;
+/// assert_eq!(parity.model_count(), 2u32.into());
+/// # Ok::<(), tididi::OperationError>(())
+/// ```
+pub fn xor(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
+    let context = std::sync::Arc::clone(f.context());
+    context.run(|eng| eng.xor(f, g))
+}
+
+/// If `condition` holds, use `then_branch`; otherwise use `else_branch`.
+///
+/// Uses the shared vtree's execution context automatically.
+///
+/// The condition is itself a Boolean function, evaluated on each assignment:
+/// `(condition ∧ then_branch) ∨ (¬condition ∧ else_branch)`. All three operands
+/// must be structural and share a vtree allocation and compatible weights;
+/// an unweighted operand inherits the agreed weights. The result is minimized.
+///
+/// Operands are consumed on success or error. Composition copies the condition
+/// and builds intermediate diagrams using the shared vtree context; temporary
+/// storage can exceed the result's size.
+///
+/// # Errors
+///
+/// Returns a vtree, root, weight or marginal-level error before composition,
+/// or a resource error from a component operation.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{ite, Tdd, Vtree};
+/// let tree = Arc::new(Vtree::balanced(3));
+/// let select = Tdd::try_literal(&tree, 1)?;
+/// let yes = Tdd::try_literal(&tree, 2)?;
+/// let no = Tdd::try_literal(&tree, 3)?;
+/// let choice = ite(select, yes, no)?;
+/// assert_eq!(choice.model_count(), 4u32.into());
+/// # Ok::<(), tididi::OperationError>(())
+/// ```
+pub fn ite(condition: Tdd, then_branch: Tdd, else_branch: Tdd) -> Result<Tdd, OperationError> {
+    let context = std::sync::Arc::clone(condition.context());
+    context.run(|eng| eng.ite(condition, then_branch, else_branch))
+}
+
+/// Existential conjunction: `exists vars. (f AND g)`.
+///
+/// Uses the shared vtree's execution context automatically.
+///
+/// Uses [`QuantificationStrategy::Automatic`];
+/// [`and_exists_with_strategy`](crate::and_exists_with_strategy) selects a rewrite explicitly.
+///
+/// Both operands are structural and consumed; the result is minimized and
+/// keeps their shared vtree and agreed weights. Quantified variables remain
+/// free in that universe, as in [`Tdd::exists_vars`]. This composes
+/// conjunction and quantification: it materializes the intermediate product.
+/// Summing counts with [`Engine::and_marginalizing`] is a different operation.
+///
+/// # Errors
+///
+/// Validates operand compatibility, structure and every variable before
+/// applying; component resource errors propagate.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{and_exists, xor, Tdd, Vtree};
+/// use tididi::vtree::VarId;
+/// let tree = Arc::new(Vtree::balanced(2));
+/// let current = Tdd::try_literal(&tree, -1)?; // current state x is false
+/// let transition = xor(Tdd::try_literal(&tree, 1)?, Tdd::try_literal(&tree, 2)?)?;
+/// // The relation flips x to next-state y; forget the current-state variable.
+/// let next = and_exists(current, transition, &[VarId(0)])?;
+/// assert!(next.equivalent(&Tdd::try_literal(&tree, 2)?)?);
+/// # Ok::<(), tididi::OperationError>(())
+/// ```
+pub fn and_exists(f: Tdd, g: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
+    let context = std::sync::Arc::clone(f.context());
+    context.run(|eng| eng.and_exists(f, g, vars))
+}
+
+/// Conjoin two diagrams and quantify `vars` with an explicit rewrite strategy.
+///
+/// Operand requirements, ownership and result semantics are those of
+/// [`and_exists`](crate::and_exists). The strategy applies to every quantified variable.
+///
+/// Reuses the execution context shared by the operands' vtree. Both inputs are
+/// consumed, including on error.
+///
+/// # Errors
+///
+/// Returns the errors described by [`and_exists`](crate::and_exists).
+pub fn and_exists_with_strategy(f: Tdd, g: Tdd, vars: &[VarId], strategy: QuantificationStrategy) -> Result<Tdd, OperationError> {
+    let context = std::sync::Arc::clone(f.context());
+    context.run(|eng| eng.and_exists_with_strategy(f, g, vars, strategy))
+}
+
 impl Engine {
-    /// If `condition` holds, use `then_branch`; otherwise use `else_branch`.
+    /// Run [`ite`] using this batch's scratch and resource limits.
     ///
-    /// The condition is itself a Boolean function, evaluated on each assignment:
-    /// `(condition ∧ then_branch) ∨ (¬condition ∧ else_branch)`. All three operands
-    /// must be structural and share a vtree allocation and compatible weights;
-    /// an unweighted operand inherits the agreed weights. The result is minimized.
-    ///
-    /// Operands are consumed on success or error. Composition copies the condition
-    /// and builds intermediate diagrams under this engine's limits; temporary
-    /// storage can exceed the result's size.
+    /// Operand requirements, ownership and result semantics follow that function.
     ///
     /// # Errors
     ///
-    /// Returns a vtree, root, weight or marginal-level error before composition,
-    /// or a resource error from a component operation.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let select = engine.literal(&tree, 1)?;
-    /// let yes = engine.literal(&tree, 2)?;
-    /// let no = engine.literal(&tree, 3)?;
-    /// let choice = engine.ite(select, yes, no)?;
-    /// assert_eq!(choice.model_count(), 4u32.into());
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
+    /// Returns the operation's errors, plus [`OperationError::Stopped`] or
+    /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn ite(
         &self,
         mut condition: Tdd,
@@ -59,25 +149,14 @@ impl Engine {
         Ok(result)
     }
 
-    /// Exclusive disjunction: exactly one operand holds.
+    /// Run [`xor`] using this batch's scratch and resource limits.
     ///
-    /// Both operands are consumed, must be structural, and must share a vtree
-    /// allocation. The result is minimized; weight handling and intermediate
-    /// storage follow [`Engine::ite`].
+    /// Operand requirements, ownership and result semantics follow that function.
     ///
     /// # Errors
     ///
-    /// The structural-input, compatibility and resource errors of [`Engine::ite`].
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let parity = engine.xor(engine.literal(&tree, 1)?, engine.literal(&tree, 2)?)?;
-    /// assert_eq!(parity.model_count(), 2u32.into());
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
+    /// Returns the operation's errors, plus [`OperationError::Stopped`] or
+    /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn xor(&self, mut f: Tdd, mut g: Tdd) -> Result<Tdd, OperationError> {
         super::check_conjunction_operands(&f, &g)?;
         f.require_structure()?;
@@ -91,47 +170,26 @@ impl Engine {
         self.ite(f, not_g, g)
     }
 
-    /// Existential conjunction: `exists vars. (f AND g)`.
+    /// Run [`and_exists`] using this batch's scratch and resource limits.
     ///
-    /// Uses [`QuantificationStrategy::Automatic`];
-    /// [`Engine::and_exists_with_strategy`] selects a rewrite explicitly.
-    ///
-    /// Both operands are structural and consumed; the result is minimized and
-    /// keeps their shared vtree and agreed weights. Quantified variables remain
-    /// free in that universe, as in [`Engine::exists_vars`]. This composes
-    /// conjunction and quantification: it materializes the intermediate product.
-    /// Summing counts with [`Engine::and_marginalizing`] is a different operation.
+    /// Operand requirements, ownership and result semantics follow that function.
     ///
     /// # Errors
     ///
-    /// Validates operand compatibility, structure and every variable before
-    /// applying; component resource errors propagate.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// use tididi::vtree::VarId;
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let current = engine.literal(&tree, -1)?; // current state x is false
-    /// let transition = engine.xor(engine.literal(&tree, 1)?, engine.literal(&tree, 2)?)?;
-    /// // The relation flips x to next-state y; forget the current-state variable.
-    /// let next = engine.and_exists(current, transition, &[VarId(0)])?;
-    /// assert!(engine.equivalent(&next, &engine.literal(&tree, 2)?)?);
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
+    /// Returns the operation's errors, plus [`OperationError::Stopped`] or
+    /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn and_exists(&self, f: Tdd, g: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
         self.and_exists_with_strategy(f, g, vars, QuantificationStrategy::Automatic)
     }
 
-    /// Conjoin two diagrams and quantify `vars` with an explicit rewrite strategy.
+    /// Run [`and_exists_with_strategy`] using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics are those of
-    /// [`Engine::and_exists`]. The strategy applies to every quantified variable.
+    /// Operand requirements, ownership and result semantics follow that function.
     ///
     /// # Errors
     ///
-    /// Returns the errors described by [`Engine::and_exists`].
+    /// Returns the operation's errors, plus [`OperationError::Stopped`] or
+    /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn and_exists_with_strategy(
         &self,
         mut f: Tdd,

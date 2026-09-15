@@ -17,26 +17,6 @@ impl Tdd {
         self.vtree().context()
     }
 
-    /// Conjoin two diagrams sharing the same vtree allocation.
-    ///
-    /// Both operands are consumed, including on error. The result need not be minimal.
-    /// See [`Engine::and`](crate::Engine::and)
-    /// for input requirements and error behavior.
-    pub fn and(self, other: Tdd) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.and(self, other))
-    }
-
-    /// Disjoin two structural diagrams sharing the same vtree allocation.
-    ///
-    /// Both operands are consumed, including on error; the result is minimized.
-    /// See [`Engine::or`](crate::Engine::or)
-    /// for input requirements and error behavior.
-    pub fn or(self, other: Tdd) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.or(self, other))
-    }
-
     /// Complement a structural diagram, returning minimized form.
     ///
     /// The operand is consumed on success and on error.
@@ -45,26 +25,6 @@ impl Tdd {
     pub fn negate(self) -> Result<Tdd, OperationError> {
         let context = Arc::clone(self.context());
         context.run(|eng| eng.negate(self))
-    }
-
-    /// Exclusive OR of two structural diagrams on the same vtree.
-    ///
-    /// Both operands are consumed, including on error.
-    /// See [`Engine::xor`](crate::Engine::xor)
-    /// for input requirements and error behavior.
-    pub fn xor(self, other: Tdd) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.xor(self, other))
-    }
-
-    /// Choose between two branches according to this Boolean condition.
-    ///
-    /// All three structural operands must share a vtree and are consumed.
-    /// See [`Engine::ite`](crate::Engine::ite)
-    /// for input requirements and error behavior.
-    pub fn ite(self, then_branch: Tdd, else_branch: Tdd) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.ite(self, then_branch, else_branch))
     }
 
     /// Conjoin a disjunction of literals with this diagram.
@@ -145,26 +105,6 @@ impl Tdd {
     pub fn exists_vars_with_strategy(self, vars: &[VarId], strategy: QuantificationStrategy) -> Result<Tdd, OperationError> {
         let context = Arc::clone(self.context());
         context.run(|eng| eng.exists_vars_with_strategy(self, vars, strategy))
-    }
-
-    /// Conjoin two diagrams and existentially quantify variables from the result.
-    ///
-    /// Both operands are consumed; strategy selection is automatic.
-    /// See [`Engine::and_exists`](crate::Engine::and_exists)
-    /// for input requirements and error behavior.
-    pub fn and_exists(self, other: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.and_exists(self, other, vars))
-    }
-
-    /// Conjoin and quantify with an explicit quantification strategy.
-    ///
-    /// Use `and_exists` for automatic selection.
-    /// See [`Engine::and_exists_with_strategy`](crate::Engine::and_exists_with_strategy)
-    /// for input requirements and error behavior.
-    pub fn and_exists_with_strategy(self, other: Tdd, vars: &[VarId], strategy: QuantificationStrategy) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.and_exists_with_strategy(self, other, vars, strategy))
     }
 
     /// Rename variables simultaneously within the existing vtree.

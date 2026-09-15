@@ -21,8 +21,8 @@ use crate::reduce::{try_reduce, ReductionPlan};
 /// # Panics
 /// Panics on invalid operands or allocation refusal; [`Engine::or`] returns the error.
 pub(crate) fn apply_or(f: Tdd, g: Tdd) -> Tdd {
-    f.or(g)
-        .expect("apply_or: operation refused; use Engine::or to handle errors")
+    or(f, g)
+        .expect("apply_or: operation refused; use tididi::or to handle errors")
 }
 
 /// Fallible [`apply_or`]: the same disjunction, with the memory refusal handed
@@ -57,37 +57,51 @@ pub(crate) fn disjoin_owned(eng: &Engine, mut f: Tdd, mut g: Tdd) -> Result<Tdd,
     Ok(result)
 }
 
+/// Return the disjunction of two structural diagrams sharing a vtree allocation.
+///
+/// Uses the shared vtree's execution context automatically.
+///
+/// Both operands are consumed on success and on error. The result is minimized,
+/// except that a false operand returns the other operand without minimization.
+/// Weight compatibility and inheritance follow [`and`](crate::and).
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{or, Tdd, Vtree};
+///
+/// let tree = Arc::new(Vtree::balanced(3));
+/// let first_two = Tdd::try_cube(&tree, [1, 2])?;
+/// let third = Tdd::try_literal(&tree, 3)?;
+/// let f = or(first_two, third)?;
+/// assert_eq!(f.try_model_count()?, 5u32.into());
+/// # Ok::<(), tididi::OperationError>(())
+/// ```
+///
+/// Disjunction uses complementation and conjunction, so intermediate diagrams
+/// can be larger than either operand.
+///
+/// # Errors
+///
+/// [`OperationError::VtreeMismatch`] for different vtree allocations,
+/// [`OperationError::IncompatibleWeights`] for different weight interpretations,
+/// or [`OperationError::MarginalLevel`] if either operand has discarded structure,
+/// even when the other operand is false. Allocation refusals propagate from
+/// the component operations.
+pub fn or(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
+    let context = std::sync::Arc::clone(f.context());
+    context.run(|eng| eng.or(f, g))
+}
+
 /// The disjunction entry point on a caller's engine.
 impl crate::engine::Engine {
-    /// Return the disjunction of two structural diagrams sharing a vtree allocation.
+    /// Run [`or`] using this batch's scratch and resource limits.
     ///
-    /// Both operands are consumed on success and on error. The result is minimized,
-    /// except that a false operand returns the other operand without minimization.
-    /// Weight compatibility and inheritance follow [`Engine::and`].
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    ///
-    /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let first_two = engine.cube(&tree, [1, 2])?;
-    /// let third = engine.literal(&tree, 3)?;
-    /// let f = engine.or(first_two, third)?;
-    /// assert_eq!(engine.model_count(&f)?, 5u32.into());
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
-    ///
-    /// Disjunction uses complementation and conjunction, so intermediate diagrams
-    /// can be larger than either operand.
+    /// Operand requirements, ownership and result semantics follow that function.
     ///
     /// # Errors
     ///
-    /// [`OperationError::VtreeMismatch`] for different vtree allocations,
-    /// [`OperationError::IncompatibleWeights`] for different weight interpretations,
-    /// or [`OperationError::MarginalLevel`] if either operand has discarded structure,
-    /// even when the other operand is false. Allocation, output-cap, and stop
-    /// refusals propagate from the component operations.
+    /// Returns the operation's errors, plus [`OperationError::Stopped`] or
+    /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn or(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         crate::apply::disjoin::disjoin_owned(self, f, g)
     }

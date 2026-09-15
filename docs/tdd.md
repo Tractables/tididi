@@ -64,8 +64,8 @@ uses them identically. For example, leaf twins `x` and `¬x` merge into `true`.
 The resulting structural TDD is minimal and canonical for the fixed vtree,
 up to node numbering and pair order. This is the minimization result of
 [the TDD paper, Section 5]. Changing the vtree can give a different size;
-[`Engine::rotation_search`] searches such changes, while
-[`Engine::equivalent`] compares functions without relying on node identifiers.
+[`Tdd::rotation_search`] searches such changes, while
+[`Tdd::equivalent`] compares functions without relying on node identifiers.
 
 ## When only a value is needed
 
@@ -98,8 +98,8 @@ must also establish the determinism contract documented on that type.
 [`Vtree`]: crate::Vtree
 [`Tdd`]: crate::Tdd
 [`minimize`]: crate::reduce::minimize
-[`Engine::rotation_search`]: crate::Engine::rotation_search
-[`Engine::equivalent`]: crate::Engine::equivalent
+[`Tdd::rotation_search`]: crate::Tdd::rotation_search
+[`Tdd::equivalent`]: crate::Tdd::equivalent
 [`marginalize_levels`]: crate::marginal::marginalize_levels
 [`WeightStore`]: crate::diagram::WeightStore
 [`Tdd::output`]: crate::Tdd::output

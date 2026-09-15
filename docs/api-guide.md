@@ -14,8 +14,9 @@ among functions you intend to combine.
 Build atoms with [`Tdd::literal`](crate::Tdd::literal), disjunctions of literals
 with [`Tdd::clause`](crate::Tdd::clause), and conjunctions with
 [`Tdd::cube`](crate::Tdd::cube).
-Compose diagrams with `&`, `|` and `!`; [`Tdd`](crate::Tdd) explains ownership
-and copying an operand when several transformations need it.
+Compose diagrams with [`and`](crate::and), [`or`](crate::or) and
+[`Tdd::negate`](crate::Tdd::negate); [`Tdd`](crate::Tdd) explains ownership and copying operands.
+The operators `&`, `|` and `!` are optional shorthand that panics on failure.
 
 ### Ask about valid assignments
 
@@ -31,7 +32,7 @@ and copying an operand when several transformations need it.
 Conjoining an observation retains the assignments consistent with it;
 [`Tdd::condition`](crate::Tdd::condition) instead substitutes values and explains
 how the resulting cofactor is counted.
-[`Tdd::xor`](crate::Tdd::xor) computes exclusive OR, and [`Tdd::ite`](crate::Tdd::ite)
+[`xor`](crate::xor) computes exclusive OR, and [`ite`](crate::ite)
 selects between two branches.
 [`Tdd::exists_vars`](crate::Tdd::exists_vars) keeps assignments that have a satisfying extension.
 [`Tdd::rename_vars`](crate::Tdd::rename_vars) handles simultaneous renaming and variable identification.
@@ -49,8 +50,7 @@ The [persistence walkthrough](crate::guide::examples::persistence) restores two 
 
 ### Handle errors
 
-Use [`Tdd::and`](crate::Tdd::and), [`Tdd::or`](crate::Tdd::or) and [`Tdd::negate`](crate::Tdd::negate)
-for checked operations, returning [`OperationError`](crate::OperationError).
+Boolean functions return a `Result` with [`OperationError`](crate::OperationError).
 Constructors and convenience queries have checked forms too:
 [`Tdd::try_clause`](crate::Tdd::try_clause), [`Tdd::try_model_count`](crate::Tdd::try_model_count)
 and [`Tdd::try_satisfying_assignment`](crate::Tdd::try_satisfying_assignment).
@@ -69,7 +69,7 @@ The [execution walkthrough](crate::guide::examples::execution) handles a refusal
 [`ModelCounter`](crate::query::ModelCounter) keeps counting state across evidence updates,
 with [`PinSemantics::Evidence`](crate::query::PinSemantics::Evidence) selecting observation semantics.
 [`Tdd::and_clause`](crate::Tdd::and_clause) adds a clause to an existing diagram.
-[`Tdd::and_exists`](crate::Tdd::and_exists) combines conjunction and existential quantification into one operation.
+[`and_exists`](crate::and_exists) combines conjunction and existential quantification into one operation.
 
 ## Specialize the representation
 

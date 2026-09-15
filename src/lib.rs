@@ -1,7 +1,7 @@
 //! Represent Boolean functions with Tree Decision Diagrams.
 //!
 //! A [`Vtree`] groups the variables and a [`Tdd`] owns a function on that tree.
-//! Combine diagrams with `&`, `|` and `!`, then reuse the result for
+//! Combine diagrams with [`and`] and [`or`], then reuse the result for
 //! model counting, Boolean queries, or evaluation under different literal weights.
 //!
 //! # A first function
@@ -11,24 +11,26 @@
 //!
 //! ```
 //! use std::sync::Arc;
-//! use tididi::{Tdd, Vtree};
+//! use tididi::{and, or, Tdd, Vtree};
 //!
 //! let tree = Arc::new(Vtree::balanced(3));
 //! let x = Tdd::literal(&tree, 1);
 //! let y = Tdd::literal(&tree, 2);
 //! let z = Tdd::literal(&tree, 3);
-//! let f = (x & y) | z;
+//! let f = or(and(x, y)?, z)?;
 //! assert_eq!(f.model_count(), 5u32.into());
+//! # Ok::<(), tididi::OperationError>(())
 //! ```
 //!
 //! Integer literals are signed and one-based; [`Literal`] documents their typed,
 //! zero-based form. Reuse the same `Arc<Vtree>` for operands you will combine.
 //! Queries borrow diagrams; transformations taking `Tdd` consume them, so clone
 //! an operand first if it must be kept.
-//! Operations reuse the context attached to the shared vtree. The convenience
-//! forms above panic on failure; [`Tdd::and`] and [`Tdd::try_model_count`] return
-//! errors. [`Context::with_limits`] lends an engine for an explicitly bounded
-//! batch. Diagrams own their results independently of that temporary checkout.
+//! Operations reuse the context attached to the shared vtree. [`and`] and [`or`]
+//! return errors; the `&` and `|` operators are shorthand that panics on failure.
+//! Constructors and convenience queries have checked forms, such as
+//! [`Tdd::try_literal`] and [`Tdd::try_model_count`].
+//! [`Context::with_limits`] lends an engine for an explicitly bounded batch. Diagrams own their results independently of that temporary checkout.
 //!
 //! # Where to go next
 //!
@@ -103,3 +105,5 @@ pub use diagram::{Literal, Tdd};
 pub use vtree::Vtree;
 pub use limits::OperationError;
 pub use engine::{Context, Engine};
+
+pub use apply::{and, or, xor, ite, and_exists, and_exists_with_strategy};

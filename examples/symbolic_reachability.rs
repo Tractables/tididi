@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use tididi::vtree::VarId;
-use tididi::{OperationError, Tdd, Vtree};
+use tididi::{and, and_exists, or, OperationError, Tdd, Vtree};
 
 fn main() -> Result<(), OperationError> {
     let tree = Arc::new(Vtree::balanced(4));
@@ -12,7 +12,7 @@ fn main() -> Result<(), OperationError> {
     // The first bit in each pair is least significant. Edges: 0 -> 1 -> 2 -> 1.
     let mut transition = Tdd::zero(&tree);
     for edge in [[-1, -2, 3, -4], [1, -2, -3, 4], [-1, 2, 3, -4]] {
-        transition = transition.or(Tdd::try_cube(&tree, edge)?)?;
+        transition = or(transition, Tdd::try_cube(&tree, edge)?)?;
     }
     let mut reached = Tdd::try_cube(&tree, [-1, -2])?; // start at state 0
     let current = [VarId(0), VarId(1)];
@@ -20,14 +20,14 @@ fn main() -> Result<(), OperationError> {
     let mut iterations = 0;
 
     loop {
-        let possible_steps = reached.clone().and(transition.clone())?;
+        let possible_steps = and(reached.clone(), transition.clone())?;
         let successors = possible_steps.exists_vars(&current)?;
 
         // The combined operation expresses the same image in one call.
-        let combined = reached.clone().and_exists(transition.clone(), &current)?;
+        let combined = and_exists(reached.clone(), transition.clone(), &current)?;
         assert!(successors.equivalent(&combined)?);
         let successors = successors.rename_vars(&next_to_current)?;
-        let enlarged = reached.clone().or(successors)?;
+        let enlarged = or(reached.clone(), successors)?;
         iterations += 1;
 
         // Each state has four assignments to the two free next-state variables.
@@ -53,7 +53,7 @@ fn main() -> Result<(), OperationError> {
     println!("State 3 is unreachable");
 
     let target = Tdd::try_cube(&tree, [-1, 2])?; // state 2
-    let reachable_target = reached.and(target)?;
+    let reachable_target = and(reached, target)?;
     let witness = reachable_target
         .try_satisfying_assignment()?
         .expect("state 2 is reachable");

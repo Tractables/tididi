@@ -184,7 +184,7 @@ fn ordinary_conjunctions_use_the_parked_scratch_allocation() {
         let mut result = if operator {
             left.clone() & right.clone()
         } else {
-            left.clone().and(right.clone()).unwrap()
+            crate::and(left.clone(), right.clone()).unwrap()
         };
         context.run(|engine| {
             let cells = engine.apply().node_idx.take();
@@ -244,8 +244,8 @@ fn sharing_context_does_not_make_distinct_trees_compatible() {
     assert_canonical(&g);
     assert!(Arc::ptr_eq(f.context(), g.context()));
     assert!(!Arc::ptr_eq(f.vtree(), g.vtree()));
-    assert_eq!(f.clone().and(g.clone()).unwrap_err(), OperationError::VtreeMismatch);
-    assert_eq!(f.clone().or(g.clone()).unwrap_err(), OperationError::VtreeMismatch);
+    assert_eq!(crate::and(f.clone(), g.clone()).unwrap_err(), OperationError::VtreeMismatch);
+    assert_eq!(crate::or(f.clone(), g.clone()).unwrap_err(), OperationError::VtreeMismatch);
     assert_eq!(f.equivalent(&g), Err(OperationError::VtreeMismatch));
     assert_eq!(f.implies(&g), Err(OperationError::VtreeMismatch));
     assert_eq!(f.model_count(), 6u32.into());
@@ -283,7 +283,7 @@ fn accepted_rotation_keeps_context_and_detaches_only_the_changed_tree() {
     assert_eq!(rotated.model_count(), 12u32.into());
     let companion = Tdd::literal(rotated.vtree(), 1);
     assert_canonical(&companion);
-    let mut combined = rotated.and(companion).unwrap();
+    let mut combined = crate::and(rotated, companion).unwrap();
     combined.minimize().unwrap();
     assert_canonical(&combined);
     assert_eq!(combined.model_count(), 8u32.into());

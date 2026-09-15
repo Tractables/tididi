@@ -87,22 +87,23 @@ impl std::ops::BitOr for Changed {
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{Tdd, Vtree};
+/// use tididi::{and, Tdd, Vtree};
 ///
 /// let tree = Arc::new(Vtree::balanced(2));
 /// let x = Tdd::literal(&tree, 1);
 /// let y = Tdd::literal(&tree, 2);
-/// let f = x & !y;
+/// let f = and(x, y.negate()?)?;
 /// assert_eq!(f.model_count(), 1u32.into());
 /// # let mut f = f;
 /// # tididi::reduce::minimize(&mut f);
 /// # tididi::test_helpers::assert_canonical(&f);
+/// # Ok::<(), tididi::OperationError>(())
 /// ```
 ///
-/// The shared vtree retains reusable execution scratch. Constructors, operators
-/// and queries use it automatically; convenience forms panic on failure.
-/// Checked methods such as [`and`](Self::and) and [`try_model_count`](Self::try_model_count)
-/// return errors. [`Context::with_limits`](crate::Context::with_limits) lends a
+/// The shared vtree retains reusable execution scratch. Composition functions
+/// such as [`and`](crate::and) return errors and consume their operands.
+/// Queries borrow diagrams; [`try_model_count`](Self::try_model_count) returns
+/// errors while [`model_count`](Self::model_count) panics on failure. [`Context::with_limits`](crate::Context::with_limits) lends a
 /// batch engine for explicit execution limits. Binary operations require
 /// operands to share the same `Arc<Vtree>` allocation, independently of which
 /// batch produced them.
