@@ -10,7 +10,7 @@ use num_bigint::BigUint;
 fn fold_cnf(_eng: &Engine, vtree: &Arc<Vtree>, cnf: &[Vec<i32>]) -> Tdd {
     let mut acc = Tdd::one(vtree);
     for clause in cnf {
-        let literals: Vec<Literal> = clause.iter().map(|&l| l.into()).collect();
+        let literals: Vec<Literal> = clause.iter().map(|&l| l.try_into().unwrap()).collect();
         acc = apply_and_clause(acc, &literals);
     }
     acc
@@ -80,7 +80,7 @@ fn a_clause_reuses_the_single_node_input_arena() {
     let input = Tdd::one(&tree);
     assert_canonical(&input);
     let nodes = input.level(tree.root()).nodes().as_ptr();
-    let result = Engine::new().and_clause(input, &[1.into()]).unwrap();
+    let result = Engine::new().and_clause(input, &[1.try_into().unwrap()]).unwrap();
     assert_canonical(&result);
     assert_eq!(result.model_count(), 128u32.into());
     assert_eq!(result.level(tree.root()).nodes().as_ptr(), nodes);
@@ -92,13 +92,13 @@ fn a_clause_reuses_empty_input_pair_capacity() {
     let eng = Engine::new();
     let one = Tdd::one(&tree);
     assert_canonical(&one);
-    let input = eng.and_clause(one, &[1.into()]).unwrap();
+    let input = eng.and_clause(one, &[1.try_into().unwrap()]).unwrap();
     assert_canonical(&input);
     let level = input.level(tree.root());
     assert!(level.pairs.is_empty());
     assert!(level.pairs.capacity() > 0);
     let pairs = level.pairs.as_ptr();
-    let result = eng.and_clause(input, &[2.into()]).unwrap();
+    let result = eng.and_clause(input, &[2.try_into().unwrap()]).unwrap();
     assert_canonical(&result);
     assert_eq!(result.model_count(), 64u32.into());
     assert_eq!(result.level(tree.root()).pairs.as_ptr(), pairs);

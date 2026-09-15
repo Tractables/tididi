@@ -39,11 +39,11 @@ pub(crate) fn condition_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], value: boo
 }
 
 /// Validate a mixed assignment and condition all its leaves in one reduction.
-pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<Item = impl Into<crate::diagram::Literal>>) -> Result<Tdd, OperationError> {
+pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<Item = impl TryInto<crate::diagram::Literal, Error: Into<OperationError>>>) -> Result<Tdd, OperationError> {
     let _op = eng.limits().begin_operation();
     let mut targets = Vec::new();
     for literal in assignment {
-        let literal = literal.into();
+        let literal = literal.try_into().map_err(Into::into)?;
         let leaf = f.vtree.leaf_of(literal.var).ok_or(OperationError::VariableNotInVtree(literal.var))?;
         let pol = if literal.positive { Polarity::Positive } else { Polarity::Negative };
         eng.limits().try_push(&mut targets, (leaf, pol))?;
@@ -428,10 +428,8 @@ impl crate::engine::Engine {
     /// or parent whose structure was summed out, or a resource refusal from
     /// conditioning and minimization.
     ///
-    /// # Panics
-    ///
-    /// If a literal conversion panics, including integer zero.
-    pub fn condition(&self, f: Tdd, assignment: impl IntoIterator<Item = impl Into<crate::diagram::Literal>>) -> Result<Tdd, OperationError> {
+    /// Integer zero returns [`OperationError::InvalidLiteral`].
+    pub fn condition(&self, f: Tdd, assignment: impl IntoIterator<Item = impl TryInto<crate::diagram::Literal, Error: Into<OperationError>>>) -> Result<Tdd, OperationError> {
         condition_on(self, f, assignment)
     }
 

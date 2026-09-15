@@ -134,7 +134,7 @@ fn checked_backbone_preserves_inputs_across_resource_refusals() {
         assert_eq!(engine.implied_literals(&f), Err(OperationError::Stopped));
         assert_eq!(engine.implied_literals(&zero), Err(OperationError::Stopped));
     }
-    assert_eq!(engine.implied_literals(&f).unwrap(), vec![1.into(), (-2).into()]);
+    assert_eq!(engine.implied_literals(&f).unwrap(), vec![1.try_into().unwrap(), (-2).try_into().unwrap()]);
     assert_eq!(engine.model_count(&f).unwrap(), 2u32.into());
     assert_canonical(&f);
 }

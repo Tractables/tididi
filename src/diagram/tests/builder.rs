@@ -29,3 +29,58 @@ fn interning_indexes_prior_pushes_and_copy_replaces_the_entire_level() {
     assert_canonical(&result);
     assert_eq!(result.model_count(), 2u32.into());
 }
+
+#[test]
+fn finish_rejects_a_deleted_output() {
+    use crate::diagram::{EncodedNode, LevelView, TddBuildError};
+    let tree = Arc::new(Vtree::balanced(2));
+    let source = Tdd::one(&tree);
+    assert_canonical(&source);
+    let root = tree.root();
+    let mut level = source.level(root).clone();
+    level.nodes[0] = EncodedNode::tombstone();
+    level.n_tombstones = 1;
+    let mut builder = Tdd::builder(&Engine::new(), &tree);
+    builder.replace_level(root, LevelView::unweighted(&level).unwrap()).unwrap();
+    assert_eq!(builder.finish(source.output()).unwrap_err(), TddBuildError::BadOutput(source.output()));
+}
+
+#[test]
+fn finish_rejects_a_reference_to_a_deleted_child() {
+    use crate::diagram::{EncodedNode, LevelView, NodeIdx, TddBuildError};
+    let tree = Arc::new(Vtree::balanced(4));
+    let source = Tdd::one(&tree);
+    assert_canonical(&source);
+    let root = tree.root();
+    let (left, right) = tree.children(root);
+    for child in [left, right] {
+        let mut builder = Tdd::builder(&Engine::new(), &tree);
+        for t in tree.bottomup() { builder.replace_level(t, source.level_view(t)).unwrap(); }
+        let mut level = source.level(child).clone();
+        level.nodes[0] = EncodedNode::tombstone();
+        level.n_tombstones = 1;
+        builder.replace_level(child, LevelView::unweighted(&level).unwrap()).unwrap();
+        assert_eq!(builder.finish(source.output()).unwrap_err(), TddBuildError::DeadChild {
+            level: root, node: NodeIdx(0), child: TddNodeId { vtree: child, local: NodeIdx(0) },
+        });
+    }
+}
+
+#[test]
+fn finish_allows_unused_deleted_slots() {
+    use crate::diagram::{EncodedNode, LevelView};
+    let tree = Arc::new(Vtree::balanced(2));
+    let source = Tdd::one(&tree);
+    assert_canonical(&source);
+    let root = tree.root();
+    let mut level = source.level(root).clone();
+    level.nodes.push(EncodedNode::tombstone());
+    level.n_tombstones = 1;
+    let mut builder = Tdd::builder(&Engine::new(), &tree);
+    builder.replace_level(root, LevelView::unweighted(&level).unwrap()).unwrap();
+    let mut result = builder.finish(source.output()).unwrap();
+    assert_eq!(Engine::new().is_sat(&result), Ok(true));
+    crate::reduce::minimize(&mut result);
+    assert_canonical(&result);
+    assert_eq!(result.model_count(), 4u32.into());
+}

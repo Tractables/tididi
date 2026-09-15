@@ -232,6 +232,11 @@ fn assert_truth(got: &[bool], want: &[bool], num_vars: u32, what: &str) {
 /// is what establishes the rest. So a result is checked for them after a pass,
 /// while its truth table is read off the result as it came out.
 fn assert_canonical_after_minimize(t: &Tdd) {
+    if !t.has_marginal_level() {
+        let satisfiable = t.model_count() != BigUint::from(0u32);
+        assert_eq!(!t.is_zero(), satisfiable);
+        assert_eq!(Engine::new().is_sat(t).unwrap(), satisfiable);
+    }
     let mut m = t.clone();
     minimize(&mut m);
     assert_finished_canonical(&m);
@@ -248,7 +253,7 @@ fn assert_finished_canonical(t: &Tdd) {
 
 /// DIMACS literals as the library's own.
 fn lits(clause: &[i32]) -> Vec<Literal> {
-    clause.iter().map(|&l| Literal::from(l)).collect()
+    clause.iter().map(|&l| Literal::try_from(l).unwrap()).collect()
 }
 
 /// The clause as a canonical diagram.

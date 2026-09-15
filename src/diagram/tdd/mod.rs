@@ -436,9 +436,11 @@ impl Tdd {
             .expect("a weighted operation on a diagram with no weight store")
     }
 
-    /// True if this diagram denotes the constant-false function: `output.local`
-    /// is the [`ZERO`] sentinel, the only representation of ⊥ (no stored node
-    /// computes false).
+    /// Whether the output is the [`ZERO`] sentinel for the constant-false function.
+    ///
+    /// For a structural diagram this decides unsatisfiability without minimization.
+    /// A zero marginal value need not have been collapsed to the sentinel; use
+    /// [`Engine::is_sat`](crate::Engine::is_sat) to require structural input.
     pub fn is_zero(&self) -> bool {
         self.output.local == ZERO
     }

@@ -30,33 +30,38 @@ impl Engine {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     ///
-    /// Evaluates the diagram with Boolean sums and products, without computing
-    /// a model count or minimizing a copy. [`is_sat_minimized`] is the constant-time
-    /// alternative when its minimization precondition is already established.
+    /// Checks that all levels are structural, then reads the false sentinel.
+    /// No scratch buffers or minimization are needed: every live structural node
+    /// has a nonempty pair list whose children are satisfiable on disjoint variables.
+    /// The structural check takes time proportional to the vtree's size.
     ///
     /// # Errors
     ///
     /// [`OperationError::MarginalLevel`](crate::OperationError::MarginalLevel) for
-    /// discarded structure, [`OperationError::OverBudget`](crate::OperationError::OverBudget)
-    /// for a refused buffer reservation, or
+    /// discarded structure, or
     /// [`OperationError::Stopped`](crate::OperationError::Stopped) for an armed stop.
     /// The borrowed diagram is unchanged.
     pub fn is_sat(&self, f: &Tdd) -> Result<bool, crate::OperationError> {
-        self.evaluate(f, &SatBits)
+        let lim = self.limits();
+        let _op = lim.begin_operation();
+        if lim.should_stop() { return Err(crate::OperationError::Stopped); }
+        let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
+        for t in f.vtree().bottomup() {
+            lim.poll(&mut gate, 1)?;
+            f.require_structure_at(t)?;
+        }
+        lim.flush_poll(&mut gate)?;
+        Ok(!f.is_zero())
     }
 }
 
 /// Check whether a diagram is satisfiable (has at least one model).
 ///
-/// Requires a minimized diagram. After minimization, dead input pairs (pairs where
-/// a child computes zero) have been removed, so an internal node with a
-/// non-empty input set is guaranteed to have at least one satisfying assignment.
-/// Checking the output node structurally is therefore O(1) and avoids the
-/// O(size × `BigUint`) cost of `model_count`. On an unminimized diagram the
-/// answer can be true for a function with no model. ⊥ is unsatisfiable. A
-/// count-marginal output level answers from its output node's count, which is
-/// exact on any diagram. Use [`Engine::is_sat`] for a checked structural query
-/// without the minimization precondition.
+/// Structural diagrams answer from the false sentinel without minimization.
+/// For a diagram containing count-marginal levels, minimize first so zero-count
+/// contributions have been removed; a count-marginal root answers directly from
+/// its stored count. Literal weights do not affect structural satisfiability.
+/// Use [`Engine::is_sat`] for a checked query restricted to structural diagrams.
 ///
 /// # Panics
 ///
@@ -143,8 +148,8 @@ impl LevelFold for SatBits {
 
     /// The counter's leaf seeds, thresholded: only `Zero` has no model (and
     /// `Zero` is never stored at an implicit leaf level).
-    fn leaf(&self, _leaf: VtreeIdx, var: VarId, label: LeafLabel) -> bool {
-        EvalAlgebra::leaf(self, var, label)
+    fn leaf(&self, _leaf: VtreeIdx, _var: VarId, label: LeafLabel) -> bool {
+        !matches!(label, LeafLabel::Zero)
     }
 
     /// A marginal slot has a model iff its summed count is nonzero. The overflow
@@ -189,13 +194,4 @@ impl PairAlgebra for SatBits {
     fn short_circuit(&self, acc: &bool) -> bool {
         *acc
     }
-}
-
-/// The Boolean domain used by checked structural evaluation.
-impl EvalAlgebra for SatBits {
-    type Value = bool;
-    fn zero(&self) -> bool { PairAlgebra::zero(self) }
-    fn leaf(&self, _var: VarId, label: LeafLabel) -> bool { !matches!(label, LeafLabel::Zero) }
-    fn add_assign(&self, acc: &mut bool, v: &bool) { PairAlgebra::add_assign(self, acc, v); }
-    fn mul(&self, a: &bool, b: &bool) -> bool { PairAlgebra::mul(self, a, b) }
 }

@@ -236,16 +236,17 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
 /// use num_bigint::BigUint;
 /// use tididi::apply::apply_and_clause;
 /// use tididi::vtree::Vtree;
-/// use tididi::Tdd;
+/// use tididi::{Literal, Tdd};
 ///
 /// let vtree = Arc::new(Vtree::balanced(3));
 /// let cnf = [[1, -2], [2, 3], [-1, 3]]; // DIMACS literals
 /// let mut acc = Tdd::one(&vtree);
 /// for clause in &cnf {
-///     let literals: Vec<_> = clause.iter().map(|&n| n.into()).collect();
+///     let literals: Vec<_> = clause.iter().map(Literal::try_from).collect::<Result<_, _>>()?;
 ///     acc = apply_and_clause(acc, &literals);
 /// }
 /// assert_eq!(acc.model_count(), BigUint::from(3u32));
+/// # Ok::<(), tididi::OperationError>(())
 /// ```
 ///
 /// The literals are a set, as in [`Tdd::clause`](crate::Tdd::clause): a
@@ -290,7 +291,7 @@ impl Tdd {
     /// Build a canonical diagram for a single clause from DIMACS-style literals.
     ///
     /// Sugar over [`Engine::clause`](crate::engine::Engine::clause), built on a
-    /// transient engine. Each item is converted with [`Into<Literal>`], so plain
+    /// transient engine. Each item is converted with [`TryInto<Literal>`], so plain
     /// integers use the 1-based DIMACS sign convention (`1` → `x1`, `-2` → `¬x2`;
     /// see [`Literal`]).
     ///
@@ -300,18 +301,18 @@ impl Tdd {
     ///
     /// # Panics
     ///
-    /// Panics if a literal names a variable `vtree` has no leaf for.
+    /// Panics on integer zero, an absent variable, or allocation failure.
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::Tdd;
+    /// use tididi::{Literal, Tdd};
     /// use tididi::vtree::Vtree;
     ///
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, -2]); // x1 ∨ ¬x2
     /// # let _ = f;
     /// ```
-    pub fn clause(vtree: &Arc<Vtree>, literals: impl IntoIterator<Item = impl Into<Literal>>) -> Tdd {
+    pub fn clause(vtree: &Arc<Vtree>, literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>) -> Tdd {
         Engine::new().clause(vtree, literals).expect("clause construction failed")
     }
 }
@@ -331,9 +332,7 @@ impl crate::engine::Engine {
     /// Returns [`OperationError::VariableNotInVtree`] for an absent variable,
     /// or the resource error that stopped construction.
     ///
-    /// # Panics
-    ///
-    /// Panics if an item's conversion to [`Literal`] panics, including a zero integer.
+    /// Integer zero returns [`OperationError::InvalidLiteral`].
     ///
     /// # Examples
     ///
@@ -366,7 +365,7 @@ impl crate::engine::Engine {
     pub fn clause(
         &self,
         vtree: &Arc<Vtree>,
-        literals: impl IntoIterator<Item = impl Into<Literal>>,
+        literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>,
     ) -> Result<Tdd, OperationError> {
         let lim = self.limits();
         let _op = lim.begin_operation();
@@ -375,7 +374,7 @@ impl crate::engine::Engine {
         let mut clause = Vec::new();
         for lit in literals {
             lim.poll(&mut gate, 1)?;
-            let lit: Literal = lit.into();
+            let lit: Literal = lit.try_into().map_err(Into::into)?;
             if vtree.leaf_of(lit.var).is_none() { return Err(OperationError::VariableNotInVtree(lit.var)); }
             lim.try_push(&mut clause, lit)?;
         }
@@ -413,7 +412,7 @@ impl crate::engine::Engine {
     /// # let vtree = Arc::new(Vtree::balanced(4));
     /// # use tididi::Literal;
     /// let engine = Engine::new();
-    /// let clause = [Literal::from(1), Literal::from(-2)];
+    /// let clause = [Literal::pos(VarId(0)), Literal::neg(VarId(1))];
     /// let f = engine.and_clause(Tdd::clause(&vtree, [2, 3]), &clause).unwrap();
     /// assert_eq!(f.model_count(), 8u32.into());
     ///

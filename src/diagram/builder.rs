@@ -241,8 +241,8 @@ impl TddBuilder {
     /// # Errors
     ///
     /// The first invariant violated — [`TddBuildError::BadOutput`] when
-    /// `output` is not a node of the root level, or another [`TddBuildError`]
-    /// for invalid references, marginal columns or leaf storage.
+    /// `output` is neither a live root node nor the false sentinel; other variants
+    /// identify invalid references, deleted children, marginal columns or leaf storage.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -338,7 +338,7 @@ fn debug_assert_pairs(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, pairs: &[
 
 /// Check the invariants the [module docs](super) list: one level per vtree
 /// node, empty leaf levels, no stored leaf-label or empty node, every pair
-/// side in range for its child level (decoded through `ChildDecoder::child`
+/// side naming a live slot in its child level (decoded through `ChildDecoder::child`
 /// when the child is marginal, and never with bit 31 set), every overflowed
 /// marginal count backed by an exact value, marginality downward-closed, a
 /// store behind every weight-marginal level, and `output` a node of the root
@@ -443,12 +443,23 @@ pub(crate) fn check_levels(
                             child,
                         });
                     }
+                    if !vtree.node(child).is_leaf() && !levels[child.idx()].is_marginal() {
+                        let local = NodeIdx(view.child(side).index().unwrap() as u32);
+                        if levels[child.idx()].nodes[local.idx()].is_tombstone() {
+                            return Err(TddBuildError::DeadChild {
+                                level: t, node: node_idx, child: TddNodeId { vtree: child, local },
+                            });
+                        }
+                    }
                 }
             }
         }
     }
     let root = vtree.root();
-    if output.vtree != root || (output.local != ZERO && output.local.idx() >= bound(vtree, levels, root)) {
+    let dead_output = output.local != ZERO && !vtree.node(root).is_leaf()
+        && !levels[root.idx()].is_marginal()
+        && levels[root.idx()].nodes.get(output.local.idx()).is_some_and(|node| node.is_tombstone());
+    if output.vtree != root || dead_output || (output.local != ZERO && output.local.idx() >= bound(vtree, levels, root)) {
         return Err(TddBuildError::BadOutput(output));
     }
     Ok(())

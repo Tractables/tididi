@@ -5,16 +5,18 @@ use crate::vtree::VarId;
 /// A Boolean variable and its polarity.
 ///
 /// Integer inputs use signed, one-based literals: `1` is positive `VarId(0)`,
-/// and `-2` is negative `VarId(1)`. Zero is invalid and its conversion panics.
+/// and `-2` is negative `VarId(1)`. Zero is invalid and conversion returns an error.
 /// Use the typed constructors when your application already has zero-based ids:
 ///
 /// ```
-/// use tididi::Literal;
+/// use tididi::{Literal, OperationError};
 /// use tididi::vtree::VarId;
 ///
-/// assert_eq!(Literal::from(1), Literal::pos(VarId(0)));
-/// assert_eq!(Literal::from(-2), Literal::neg(VarId(1)));
+/// assert_eq!(Literal::try_from(1)?, Literal::pos(VarId(0)));
+/// assert_eq!(Literal::try_from(-2)?, Literal::neg(VarId(1)));
 /// assert_eq!(Literal::pos(VarId(0)).negated(), Literal::neg(VarId(0)));
+/// assert_eq!(Literal::try_from(0), Err(OperationError::InvalidLiteral(0)));
+/// # Ok::<(), OperationError>(())
 /// ```
 ///
 /// Constructors such as [`Engine::clause`](crate::Engine::clause) accept iterators
@@ -61,40 +63,28 @@ impl Literal {
 /// second, and so on; a negative value denotes a negated literal. The magnitude
 /// is decremented to the 0-based [`VarId`] used internally.
 ///
-/// # Panics
-/// Panics on `0`, which is not a valid DIMACS literal (in the DIMACS format `0`
-/// terminates a clause rather than naming a variable).
-///
-/// ```
-/// use tididi::diagram::Literal;
-/// use tididi::vtree::VarId;
-/// assert_eq!(Literal::from(1), Literal::pos(VarId(0)));
-/// assert_eq!(Literal::from(-2), Literal::neg(VarId(1)));
-/// ```
-impl From<i32> for Literal {
-    fn from(n: i32) -> Self {
-        assert!(
-            n != 0,
-            "0 is not a DIMACS literal (it terminates a clause, not a variable)"
-        );
+/// # Errors
+/// Returns [`OperationError::InvalidLiteral`](crate::OperationError::InvalidLiteral)
+/// for zero, which does not name a variable.
+/// Every nonzero `i32` is accepted; the operation using the literal checks
+/// whether its variable belongs to the vtree.
+impl TryFrom<i32> for Literal {
+    type Error = crate::OperationError;
+
+    fn try_from(n: i32) -> Result<Self, Self::Error> {
+        if n == 0 { return Err(crate::OperationError::InvalidLiteral(n)); }
         let var = VarId(n.unsigned_abs() - 1);
-        if n > 0 {
-            Literal::pos(var)
-        } else {
-            Literal::neg(var)
-        }
+        Ok(Literal::new(var, n > 0))
     }
 }
 
-/// Build a `Literal` from a borrowed DIMACS integer, as `From<i32>` does from
-/// an owned one.
+/// Convert a borrowed signed integer with the same checks as [`Literal::try_from`].
 ///
 /// A slice iterates as references, so this is what lets a `&[i32]` or a
-/// `&Vec<i32>` of DIMACS literals go straight into a builder that takes
-/// `impl IntoIterator<Item = impl Into<Literal>>`.
+/// `&Vec<i32>` of DIMACS literals go straight into [`crate::Engine::clause`].
 ///
-/// # Panics
-/// Panics on `0`, as `From<i32>` does.
+/// # Errors
+/// Returns [`OperationError::InvalidLiteral`](crate::OperationError::InvalidLiteral) for zero.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -106,22 +96,23 @@ impl From<i32> for Literal {
 /// let from_slice = Tdd::clause(&vtree, &dimacs);
 /// assert_eq!(from_slice.model_count(), Tdd::clause(&vtree, [1, -2]).model_count());
 /// ```
-impl From<&i32> for Literal {
-    fn from(n: &i32) -> Self {
-        Literal::from(*n)
+impl TryFrom<&i32> for Literal {
+    type Error = crate::OperationError;
+
+    fn try_from(n: &i32) -> Result<Self, Self::Error> {
+        Literal::try_from(*n)
     }
 }
 
-/// Copy a borrowed literal, so a `&[Literal]` feeds a builder that takes
-/// `impl IntoIterator<Item = impl Into<Literal>>` without a collect.
+/// Copy a borrowed literal, so [`crate::Engine::clause`] accepts a `&[Literal]`.
 ///
 /// ```
 /// use std::sync::Arc;
 /// use tididi::{Literal, Tdd};
-/// use tididi::vtree::Vtree;
+/// use tididi::vtree::{VarId, Vtree};
 ///
 /// let vtree = Arc::new(Vtree::balanced(3));
-/// let lits: Vec<Literal> = vec![Literal::from(1), Literal::from(-2)];
+/// let lits: Vec<Literal> = vec![Literal::pos(VarId(0)), Literal::neg(VarId(1))];
 /// let from_slice = Tdd::clause(&vtree, &lits);
 /// assert_eq!(from_slice.model_count(), Tdd::clause(&vtree, [1, -2]).model_count());
 /// ```

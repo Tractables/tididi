@@ -46,7 +46,7 @@ fn a_clause_rejects_unknown_variables_even_on_false_input() {
     let eng = Engine::new();
     for f in [Tdd::zero(&tree), Tdd::one(&tree)] {
         assert_canonical(&f);
-        assert_eq!(eng.and_clause(f, &[3.into()]).unwrap_err(), OperationError::VariableNotInVtree(VarId(2)));
+        assert_eq!(eng.and_clause(f, &[3.try_into().unwrap()]).unwrap_err(), OperationError::VariableNotInVtree(VarId(2)));
     }
 }
 
@@ -58,7 +58,7 @@ fn a_clause_rejects_marginal_leaf_labels() {
     let leaf = tree.leaf_of(VarId(0)).unwrap();
     marginalize_levels(&eng, &mut f, &[leaf]).unwrap();
     assert_canonical(&f);
-    assert_eq!(eng.and_clause(f, &[1.into()]).unwrap_err(), OperationError::MarginalLevel(leaf));
+    assert_eq!(eng.and_clause(f, &[1.try_into().unwrap()]).unwrap_err(), OperationError::MarginalLevel(leaf));
 }
 
 #[test]
@@ -110,5 +110,5 @@ fn a_clause_rejects_a_marginal_spine() {
     let left = tree.children(tree.root()).0;
     marginalize_levels(&eng, &mut f, &[left]).unwrap();
     assert_canonical(&f);
-    assert_eq!(eng.and_clause(f, &[1.into()]).unwrap_err(), OperationError::MarginalLevel(left));
+    assert_eq!(eng.and_clause(f, &[1.try_into().unwrap()]).unwrap_err(), OperationError::MarginalLevel(left));
 }

@@ -10,7 +10,7 @@ fn checked_constructors_report_invalid_variables() {
     let eng = Engine::new();
     let missing = Literal::pos(VarId(u32::MAX));
     assert_eq!(eng.cube(&tree, [missing]).err(), Some(OperationError::VariableNotInVtree(missing.var)));
-    assert_eq!(eng.clause(&tree, [Literal::from(1), Literal::from(-1), missing]).err(), Some(OperationError::VariableNotInVtree(missing.var)));
+    assert_eq!(eng.clause(&tree, [Literal::try_from(1).unwrap(), Literal::try_from(-1).unwrap(), missing]).err(), Some(OperationError::VariableNotInVtree(missing.var)));
     for literals in [[1, 1], [1, -1]] {
         assert_eq!(eng.cube(&tree, literals).err(), Some(OperationError::DuplicateVariable(VarId(0))));
     }
@@ -83,4 +83,43 @@ fn an_empty_cube_polls_during_node_construction() {
     let result = eng.cube(&tree, std::iter::empty::<Literal>()).unwrap();
     assert_canonical(&result);
     assert_eq!(result.model_count(), 256u32.into());
+}
+
+#[test]
+fn zero_integer_literals_return_errors_at_checked_entry_points() {
+    let engine = Engine::new();
+    let tree = Arc::new(Vtree::balanced(3));
+    assert_eq!(Literal::try_from(0), Err(OperationError::InvalidLiteral(0)));
+    assert_eq!(Literal::try_from(&0), Err(OperationError::InvalidLiteral(0)));
+    assert_eq!(engine.literal(&tree, 0).err(), Some(OperationError::InvalidLiteral(0)));
+    assert_eq!(engine.cube(&tree, [1, 0]).err(), Some(OperationError::InvalidLiteral(0)));
+    for literals in [vec![0], vec![1, -1, 0]] {
+        assert_eq!(engine.clause(&tree, &literals).err(), Some(OperationError::InvalidLiteral(0)));
+    }
+    for literals in [vec![0], vec![1, -1, 0]] {
+        for f in [engine.one(&tree), engine.zero(&tree)] {
+            assert_canonical(&f);
+            assert_eq!(engine.condition(f, &literals).err(), Some(OperationError::InvalidLiteral(0)));
+        }
+    }
+    let valid = engine.clause(&tree, [1, -2]).unwrap();
+    assert_canonical(&valid);
+    assert_eq!(valid.model_count(), 6u32.into());
+    assert_eq!(OperationError::InvalidLiteral(0).to_string(), "0 is not a literal; use a nonzero signed integer");
+}
+
+#[test]
+fn literal_conversion_handles_signed_endpoints_and_borrowed_inputs() {
+    assert_eq!(Literal::try_from(i32::MIN), Ok(Literal::neg(VarId(2147483647))));
+    assert_eq!(Literal::try_from(i32::MAX), Ok(Literal::pos(VarId(2147483646))));
+    let tree = Arc::new(Vtree::balanced(2));
+    let engine = Engine::new();
+    let integers = [1, -2];
+    let typed = [Literal::pos(VarId(0)), Literal::neg(VarId(1))];
+    for result in [engine.cube(&tree, integers), engine.cube(&tree, integers.iter()),
+        engine.cube(&tree, typed), engine.cube(&tree, typed.iter())] {
+        let f = result.unwrap();
+        assert_canonical(&f);
+        assert_eq!(f.model_count(), 1u32.into());
+    }
 }

@@ -21,14 +21,15 @@ use crate::OperationError;
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{Tdd, Vtree};
+/// use tididi::{Literal, Tdd, Vtree};
+/// use tididi::vtree::VarId;
 /// use tididi::query::implied_literals;
 /// use tididi::reduce::minimize;
 ///
 /// let tree = Arc::new(Vtree::balanced(3));
 /// let mut f = Tdd::clause(&tree, [1, 2]) & Tdd::clause(&tree, [1, -2]);
 /// minimize(&mut f);
-/// assert_eq!(implied_literals(&f), vec![1.into()]); // x1 is forced; x2 and x3 are free
+/// assert_eq!(implied_literals(&f), vec![Literal::pos(VarId(0))]); // x1 is forced; x2 and x3 are free
 /// # tididi::test_helpers::assert_canonical(&f);
 /// ```
 #[must_use]

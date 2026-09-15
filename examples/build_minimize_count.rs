@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tree = Arc::new(Vtree::balanced(4));
     let mut f = engine.one(&tree);
     for clause in clauses {
-        let literals = clause.map(Literal::from);
+        let literals = clause.into_iter().map(Literal::try_from).collect::<Result<Vec<_>, _>>()?;
         f = engine.and_clause(f, &literals)?;
     }
 

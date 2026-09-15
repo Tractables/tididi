@@ -14,7 +14,7 @@
 ///
 /// Resource failures are [`OverBudget`](Self::OverBudget),
 /// [`OutputCap`](Self::OutputCap), and [`Stopped`](Self::Stopped). The other
-/// variants identify incompatible operands or invalid variables and levels.
+/// variants identify incompatible operands or invalid literals, variables and levels.
 /// Even an engine with no limits installed can report `OverBudget` when a
 /// buffer reservation fails.
 ///
@@ -30,6 +30,8 @@
 /// variant requires a breaking release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperationError {
+    /// A signed integer does not denote a literal; zero is invalid.
+    InvalidLiteral(i32),
     /// The allocator refused, or the installed byte budget would be exceeded
     /// by a growth this operation needs, or a level outgrew an internal 32-bit
     /// index. A single product-grid resize can ask for many GiB, so this is the
@@ -67,6 +69,7 @@ pub enum OperationError {
 impl std::fmt::Display for OperationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            OperationError::InvalidLiteral(literal) => write!(f, "{literal} is not a literal; use a nonzero signed integer"),
             OperationError::VtreeMismatch => f.write_str("operands must share the same vtree allocation"),
             OperationError::RootMismatch => f.write_str("conjunction operands must have the same output vtree node"),
             OperationError::IncompatibleWeights => f.write_str("operands require compatible literal weights and arithmetic; stored integer counts cannot be reweighted"),
@@ -84,3 +87,8 @@ impl std::fmt::Display for OperationError {
 }
 
 impl std::error::Error for OperationError {}
+
+/// Typed literals convert infallibly at the same boundary as checked integer inputs.
+impl From<std::convert::Infallible> for OperationError {
+    fn from(never: std::convert::Infallible) -> Self { match never {} }
+}

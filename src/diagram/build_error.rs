@@ -51,6 +51,15 @@ pub enum TddBuildError {
         /// The child vtree node whose level was indexed (says which side).
         child: VtreeIdx,
     },
+    /// A structural pair refers to a tombstone instead of a live child node.
+    DeadChild {
+        /// The level holding the parent node.
+        level: VtreeIdx,
+        /// The parent node.
+        node: NodeIdx,
+        /// The dead child node.
+        child: TddNodeId,
+    },
     /// A marginal count slot holds the overflow sentinel but the side table
     /// has no value for it.
     OverflowWithoutValue {
@@ -143,6 +152,9 @@ impl std::fmt::Display for TddBuildError {
                 pair.right.0,
                 child.idx()
             ),
+            Self::DeadChild { level, node, child } => write!(f,
+                "level {} node {} refers to dead child ({}, {})",
+                level.idx(), node.idx(), child.vtree.idx(), child.local.idx()),
             Self::OverflowWithoutValue { level, slot } => write!(
                 f,
                 "marginal level {} slot {slot} is marked overflowed but has no exact value",

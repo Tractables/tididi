@@ -78,7 +78,7 @@ pub(crate) fn constant_like(eng: &Engine, source: &Tdd, value: bool) -> Tdd {
 fn cube_to_tdd(
     eng: &Engine,
     vtree: &Arc<Vtree>,
-    literals: impl IntoIterator<Item = impl Into<Literal>>,
+    literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>,
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let _op = lim.begin_operation();
@@ -87,7 +87,7 @@ fn cube_to_tdd(
     let mut label = Vec::new();
     for lit in literals {
         lim.poll(&mut gate, 1)?;
-        let lit: Literal = lit.into();
+        let lit: Literal = lit.try_into().map_err(Into::into)?;
         let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
         if label.is_empty() { lim.try_resize(&mut label, vtree.num_nodes(), ONE_LEAF_IDX)?; }
         if label[leaf.idx()] != ONE_LEAF_IDX {
@@ -118,9 +118,9 @@ impl Tdd {
     ///
     /// # Panics
     ///
-    /// Panics on an absent variable, allocation failure or a conversion to
-    /// [`Literal`] that panics (including integer zero).
-    pub fn literal(vtree: &Arc<Vtree>, literal: impl Into<Literal>) -> Tdd {
+    /// Panics on an invalid literal (including integer zero), an absent variable,
+    /// or allocation failure.
+    pub fn literal(vtree: &Arc<Vtree>, literal: impl TryInto<Literal, Error: Into<OperationError>>) -> Tdd {
         Engine::new().literal(vtree, literal).expect("literal: use Engine::literal to handle errors")
     }
 
@@ -168,9 +168,7 @@ impl crate::engine::Engine {
     /// An absent variable or the allocation, cancellation and output-cap errors
     /// of [`Engine::cube`].
     ///
-    /// # Panics
-    ///
-    /// If conversion to [`Literal`] panics, including integer zero.
+    /// Integer zero returns [`OperationError::InvalidLiteral`].
     ///
     /// ```
     /// use std::sync::Arc;
@@ -183,8 +181,8 @@ impl crate::engine::Engine {
     /// assert_eq!(f.model_count(), 2u32.into()); // x AND NOT y, with z free
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn literal(&self, vtree: &Arc<Vtree>, literal: impl Into<Literal>) -> Result<Tdd, OperationError> {
-        self.cube(vtree, [literal.into()])
+    pub fn literal(&self, vtree: &Arc<Vtree>, literal: impl TryInto<Literal, Error: Into<OperationError>>) -> Result<Tdd, OperationError> {
+        self.cube(vtree, [literal])
     }
 
     /// The constant-true function over `vtree`, built in this engine's pools.
@@ -208,7 +206,7 @@ impl crate::engine::Engine {
     ///
     /// A variable no literal mentions is free — the cube says nothing about
     /// it, so both of its values satisfy the result. Each item is converted
-    /// with [`Into<Literal>`], so plain integers use the 1-based DIMACS sign
+    /// with [`TryInto<Literal>`], so plain integers use the 1-based DIMACS sign
     /// convention. The result is canonical. Allocation, cancellation, and the
     /// output-node cap are checked during construction.
     ///
@@ -218,9 +216,7 @@ impl crate::engine::Engine {
     /// [`OperationError::DuplicateVariable`] for a repeated variable, or the
     /// resource error that stopped construction.
     ///
-    /// # Panics
-    ///
-    /// If an item's conversion to [`Literal`] panics, including a zero integer.
+    /// Integer zero returns [`OperationError::InvalidLiteral`].
     ///
     /// ```
     /// use std::sync::Arc;
@@ -247,7 +243,7 @@ impl crate::engine::Engine {
     pub fn cube(
         &self,
         vtree: &Arc<Vtree>,
-        literals: impl IntoIterator<Item = impl Into<Literal>>,
+        literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>,
     ) -> Result<Tdd, OperationError> {
         crate::build::cube_to_tdd(self, vtree, literals)
     }

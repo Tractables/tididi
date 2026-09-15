@@ -42,7 +42,7 @@ fn checked_satisfiability_ignores_weights_and_rejects_discarded_structure() {
     ]);
     f.set_weights(WeightStore::new(weights, Arithmetic::ExactRational)).unwrap();
     assert_eq!(engine.is_sat(&f), Ok(true));
-    assert_eq!(engine.implied_literals(&f), Ok(vec![1.into(), (-2).into()]));
+    assert_eq!(engine.implied_literals(&f), Ok(vec![1.try_into().unwrap(), (-2).try_into().unwrap()]));
     assert_eq!(engine.weighted_value(&f).unwrap().unwrap().into_rational(), rat(0, 1));
     crate::marginal::marginalize_levels(&engine, &mut f, &[tree.root()]).unwrap();
     assert!(matches!(engine.is_sat(&f), Err(OperationError::MarginalLevel(_))));
@@ -62,7 +62,7 @@ fn checked_satisfiability_returns_refusals_without_changing_the_input() {
     assert_canonical(&f);
     {
         let _scope = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
-        assert_eq!(engine.is_sat(&f), Err(OperationError::OverBudget));
+        assert_eq!(engine.is_sat(&f), Ok(true));
     }
     let zero = engine.zero(&tree);
     assert_canonical(&zero);
@@ -74,5 +74,21 @@ fn checked_satisfiability_returns_refusals_without_changing_the_input() {
     }
     assert_eq!(engine.is_sat(&f), Ok(true));
     assert_eq!(engine.model_count(&f).unwrap(), 6u32.into());
+    assert_canonical(&f);
+}
+
+#[test]
+fn checked_satisfiability_polls_during_the_structural_scan() {
+    use crate::limits::{StopAt, StopRules};
+    let engine = Engine::new();
+    let tree = Arc::new(Vtree::balanced(8));
+    let f = engine.one(&tree);
+    assert_canonical(&f);
+    engine.limits().pin_reduce_poll_stride(Some(1));
+    let _scope = engine.limits().scope(LimitConfig::none().with_stop_rules(StopRules {
+        unconditional: Some(StopAt::WorkUnits(2)), ..StopRules::default()
+    }));
+    assert_eq!(engine.is_sat(&f), Err(OperationError::Stopped));
+    assert_eq!(engine.limits().work_units(), 2);
     assert_canonical(&f);
 }

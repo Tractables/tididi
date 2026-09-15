@@ -85,7 +85,7 @@ fn compile(cnf: &Cnf, vtree: &Arc<Vtree>) -> Tdd {
     let mut lits: Vec<Literal> = Vec::new();
     for clause in &cnf.clauses {
         lits.clear();
-        lits.extend(clause.iter().map(Literal::from));
+        lits.extend(clause.iter().map(|literal| Literal::try_from(literal).unwrap()));
         f = apply_and_clause(f, &lits);
     }
     minimize(&mut f);

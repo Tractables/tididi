@@ -134,11 +134,11 @@ impl Engine {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
+    /// use tididi::{Engine, Literal, Vtree};
     /// let engine = Engine::new();
     /// let tree = Arc::new(Vtree::balanced(3));
     /// let f = engine.and(engine.clause(&tree, [1, 2])?, engine.clause(&tree, [1, -2])?)?;
-    /// assert_eq!(engine.implied_literals(&f)?, vec![1.into()]);
+    /// assert_eq!(engine.implied_literals(&f)?, vec![Literal::try_from(1)?]);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn implied_literals(&self, f: &Tdd) -> Result<Vec<Literal>, OperationError> {
@@ -187,12 +187,12 @@ impl Engine {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
+    /// use tididi::{Engine, Literal, Vtree};
     /// let engine = Engine::new();
     /// let tree = Arc::new(Vtree::balanced(3));
     /// let f = engine.cube(&tree, [1, -2])?;
     /// let model = engine.satisfying_assignment(&f)?.unwrap();
-    /// assert_eq!(model, vec![1.into(), (-2).into(), (-3).into()]);
+    /// assert_eq!(model, vec![Literal::try_from(1)?, Literal::try_from(-2)?, Literal::try_from(-3)?]);
     /// assert!(engine.implies(&engine.cube(&tree, model)?, &f)?);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```

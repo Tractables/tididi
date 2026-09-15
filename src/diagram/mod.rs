@@ -52,7 +52,7 @@
 //! - every child index is in range for the child level's `reference_slot_count`
 //!   (after [`ChildDecoder::child`] on a marginal side, a slot index is in range
 //!   for the child's values);
-//! - [`ZERO`] never appears in a pair — every stored node is satisfiable;
+//! - [`ZERO`] never appears in a pair — every live node in a structural diagram is satisfiable;
 //! - marginality is downward-closed: every level below a marginal level is
 //!   marginal or a leaf;
 //! - in a diagram an operation produced, distinct nodes at a level denote
