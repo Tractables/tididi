@@ -4,9 +4,10 @@
 
 [![crates.io](https://img.shields.io/crates/v/tididi.svg)](https://crates.io/crates/tididi) [![docs.rs](https://img.shields.io/docsrs/tididi)](https://docs.rs/tididi)
 
-A Rust library for Tree Decision Diagrams (TDDs). Build a Boolean function
-once, then combine it with other functions, count its satisfying assignments,
-or evaluate it under different literal weights.
+A Rust library for Tree Decision Diagrams (TDDs): representations of Boolean
+functions that you can build once and query repeatedly. Encode constraints to
+count valid configurations or find a solution, evaluate probabilities under
+changing assumptions, or compute reachable states in a transition system.
 
 A TDD decomposes a function along a **vtree**, a binary tree over its variables.
 This generalizes an ordered binary decision diagram: a right-linear vtree
@@ -56,16 +57,21 @@ an original for several transformations.
 
 ## Continue with your task
 
-The [task guide] walks through construction, queries, conditioning and
-quantification, probabilities, resource limits, and persistence, with links
-to the relevant API examples. For a complete program, run one of these from
-a source checkout:
+Start with [the configuration example](examples/build_minimize_count.rs).
+It encodes rules for a backup application, counts its valid configurations,
+finds one solution, and counts the configurations that enable remote backups:
+
+```sh
+cargo run --example build_minimize_count
+```
+
+Run this from a source checkout. Then use the [task guide] to find the
+operations for your own application, or continue with another complete example:
 
 | Example | What it shows |
 | --- | --- |
-| [build_minimize_count](examples/build_minimize_count.rs)<br>`cargo run --example build_minimize_count` | Add constraints, minimize, count, and take a cofactor. |
-| [probabilistic_query](examples/probabilistic_query.rs)<br>`cargo run --example probabilistic_query` | Reuse a query under changing probabilities and compute a conditional probability. |
-| [symbolic_reachability](examples/symbolic_reachability.rs)<br>`cargo run --example symbolic_reachability` | Compute reachable states to a fixed point and obtain a witness. |
+| [probabilistic_query](examples/probabilistic_query.rs)<br>`cargo run --example probabilistic_query` | Compute the probability of rain given wet grass, then change the priors. |
+| [symbolic_reachability](examples/symbolic_reachability.rs)<br>`cargo run --example symbolic_reachability` | Find reachable states and check that a forbidden state cannot be reached. |
 | [statistic](examples/statistic.rs)<br>`cargo run --example statistic` | Traverse the stored nodes and pairs. |
 | [dimacs_count](examples/dimacs_count.rs)<br>`cargo run --example dimacs_count -- examples/tiny.cnf 5 6 --check` | Supply a DIMACS reader, compile its clauses, and count a projection. |
 

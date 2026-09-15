@@ -1,42 +1,51 @@
-//! Add clauses to a function, minimize it, count models, and take a cofactor.
+//! Count backup configurations, find a solution, and apply an observation.
 //! Run with `cargo run --example build_minimize_count`.
 
 use std::sync::Arc;
 
 use tididi::{Engine, Literal, Vtree};
-use tididi::io::tdd_to_dot;
 use tididi::reduce::try_minimize;
 use tididi::vtree::VarId;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // (x1 ∨ x2) ∧ (¬x2 ∨ x3) ∧ (x1 ∨ ¬x3), with x4 free.
-    let clauses = [[1, 2], [-2, 3], [1, -3]];
+/// Build the backup rules and query the configurations they permit.
+fn main() -> Result<(), tididi::OperationError> {
     let engine = Engine::new();
+    // Each variable is one on/off option. Notifications are independent of the rules.
     let tree = Arc::new(Vtree::balanced(4));
-    let mut f = engine.one(&tree);
-    for clause in clauses {
-        let literals = clause.into_iter().map(Literal::try_from).collect::<Result<Vec<_>, _>>()?;
-        f = engine.and_clause(f, &literals)?;
+    let names = ["local backups", "remote backups", "encryption", "notifications"];
+    let local = Literal::pos(VarId(0));
+    let remote = Literal::pos(VarId(1));
+    let encrypted = Literal::pos(VarId(2));
+
+    // Require at least one destination; remote backups require encryption.
+    let mut configurations = engine.one(&tree);
+    for clause in [[local, remote], [remote.negated(), encrypted]] {
+        configurations = engine.and_clause(configurations, &clause)?;
     }
 
-    // Counting accepts the current representation; minimization removes redundancy.
-    let count = engine.model_count(&f)?;
-    try_minimize(&engine, &mut f)?;
-    assert_eq!(engine.model_count(&f)?, count);
-    assert_eq!(count, 6u32.into());
-    println!("size: {} pairs over {} nodes", f.pair_count(), f.node_count());
-    println!("models: {count}");
+    // There are four choices for the first three options and two for notifications.
+    let count = engine.model_count(&configurations)?;
+    assert_eq!(count, 8u32.into());
+    println!("Valid configurations: {count}");
 
-    // Keep the original for later queries; the transformation consumes its copy.
-    let cofactor = engine.condition_var(f.clone(), VarId(0), true)?;
-    // x1 remains free in the cofactor's vtree, so divide out its two choices.
-    let observed_count = engine.model_count(&cofactor)? / 2u32;
-    assert_eq!(observed_count, 6u32.into());
-    println!("models with x1 = true: {observed_count}");
+    let witness = engine.satisfying_assignment(&configurations)?
+        .expect("the backup rules have a solution");
+    println!("One valid configuration:");
+    for literal in &witness {
+        println!("  {}: {}", names[literal.var.idx()], literal.positive);
+    }
+    assert!(engine.implies(&engine.cube(&tree, &witness)?, &configurations)?);
 
-    // Graphviz can render this text; the diagram must still be structural.
-    let dot = tdd_to_dot(&cofactor)?;
-    println!("cofactor as Graphviz text:");
-    print!("{dot}");
+    // Keep the original; conditioning consumes its copy and substitutes remote = true.
+    let with_remote = engine.condition(configurations.clone(), [remote])?;
+    // The tree still contains remote, now free, so remove its two choices from the count.
+    let remote_count = engine.model_count(&with_remote)? / 2u32;
+    assert_eq!(remote_count, 4u32.into());
+    println!("Configurations with remote backups: {remote_count}");
+
+    // Minimization removes redundancy; all the queries above work before this step.
+    try_minimize(&engine, &mut configurations)?;
+    assert_eq!(engine.model_count(&configurations)?, count);
+    println!("Minimized representation: {} pairs", configurations.pair_count());
     Ok(())
 }

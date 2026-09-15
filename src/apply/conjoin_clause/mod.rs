@@ -383,46 +383,62 @@ impl crate::engine::Engine {
         conjoin_clause_owned(self, one, &clause)
     }
 
-    /// Conjoin one clause into a diagram without building the clause as a
-    /// diagram of its own: only the levels on the clause's spine are rebuilt.
+    /// Add a clause to a diagram without constructing a separate clause diagram.
     ///
-    /// The operand is consumed on `Err` as well as on `Ok`, as in
-    /// [`Engine::and`]. The result counts correctly after every clause but is
-    /// not canonical until [`minimize`](crate::reduce::minimize) runs; a ⊥
-    /// operand stays ⊥, marginal levels off the spine pass through, and a
-    /// weight store moves to the result. The deadline and the output cap are
-    /// checked once per rebuilt level, the cap against the nodes of the levels
-    /// rebuilt so far.
+    /// Pass a borrowed slice of typed literals; each call can reuse that slice.
+    /// Named literals make rules such as "remote backups require encryption"
+    /// explicit:
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Literal, Vtree};
+    /// use tididi::vtree::VarId;
+    ///
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let remote = Literal::pos(VarId(0));
+    /// let encrypted = Literal::pos(VarId(1));
+    /// let configurations = engine.one(&tree);
+    /// let configurations = engine.and_clause(configurations, &[remote.negated(), encrypted])?;
+    /// assert_eq!(engine.model_count(&configurations)?, 3u32.into());
+    /// # let mut canonical = configurations;
+    /// # tididi::reduce::minimize(&mut canonical);
+    /// # tididi::test_helpers::assert_canonical(&canonical);
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    ///
+    /// The operand is consumed on success and error. The result counts correctly
+    /// but may be nonminimal; [`minimize`](crate::reduce::minimize) establishes
+    /// canonical form. A false operand stays false, marginal levels outside the
+    /// rebuilt path pass through, and the result keeps the operand's weights.
+    /// Only levels on paths from clause variables to the root are rebuilt.
+    /// The stop and output limits are checked once per rebuilt level; the output
+    /// cap counts nodes in the levels rebuilt so far.
     ///
     /// # Errors
     ///
-    /// [`OperationError::OverBudget`] when a reservation is refused by the
-    /// allocator or the armed byte budget, [`OperationError::Stopped`] on the
-    /// armed deadline or a stop decision, [`OperationError::OutputCap`] on the
-    /// output-node cap.
+    /// [`OperationError::VariableNotInVtree`] for an absent variable,
+    /// [`OperationError::MarginalLevel`] when a required level has discarded its
+    /// structure, or [`OperationError::OverBudget`], [`OperationError::Stopped`]
+    /// or [`OperationError::OutputCap`] when an engine limit refuses the work.
     ///
-    /// [`OperationError::VariableNotInVtree`] if a literal has no leaf in the
-    /// vtree, or [`OperationError::MarginalLevel`] if the clause needs a summed-out level.
+    /// Install limits after preparing inputs to bound the conjunction itself:
     ///
     /// ```
-    /// # use std::sync::Arc;
-    /// # use tididi::{OperationError, Engine, Tdd};
-    /// # use tididi::limits::LimitConfig;
-    /// # use tididi::vtree::{VarId, Vtree};
-    /// # let vtree = Arc::new(Vtree::balanced(4));
-    /// # use tididi::Literal;
-    /// let engine = Engine::new();
-    /// let clause = [Literal::pos(VarId(0)), Literal::neg(VarId(1))];
-    /// let f = engine.and_clause(Tdd::clause(&vtree, [2, 3]), &clause).unwrap();
-    /// assert_eq!(f.model_count(), 8u32.into());
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Literal, OperationError, Vtree};
+    /// use tididi::limits::LimitConfig;
+    /// use tididi::vtree::VarId;
     ///
-    /// // A byte budget of zero refuses the rebuild's first reservation.
-    /// let _armed = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
-    /// let g = Tdd::clause(&vtree, [2, 3]);
-    /// match engine.and_clause(g, &clause) {
-    ///     Ok(_) => unreachable!("no reservation can be granted"),
-    ///     Err(e) => assert_eq!(e, OperationError::OverBudget),
-    /// }
+    /// let engine = Engine::new();
+    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let f = engine.one(&tree);
+    /// let clause = [Literal::pos(VarId(0)), Literal::neg(VarId(1))];
+    /// let _scope = engine.limits().scope(
+    ///     LimitConfig::none().with_memory_budget_bytes(Some(0)),
+    /// );
+    /// assert_eq!(engine.and_clause(f, &clause).err(), Some(OperationError::OverBudget));
+    /// # Ok::<(), OperationError>(())
     /// ```
     pub fn and_clause(&self, f: Tdd, clause: &[Literal]) -> Result<Tdd, OperationError> {
         crate::apply::conjoin_clause::conjoin_clause_owned(self, f, clause)

@@ -72,6 +72,22 @@ impl VtreeNode {
 /// index every named variable.
 /// Weight tables use the latter size, while model counts range over the former.
 ///
+/// # Choosing a tree
+///
+/// Start with [`Vtree::balanced`] for a small experiment. Its grouping follows
+/// the variable ids; it does not inspect your constraints. When a variable order
+/// is already known, [`Vtree::linear_from_order`] represents that order.
+/// [`Vtree::balanced_over`] lets you keep related variables together while
+/// retaining a balanced shape; [`Vtree::join`] makes the groups explicit.
+///
+/// The tree can greatly affect diagram size and the cost of building it.
+/// A balanced shape alone does not guarantee a compact diagram. Compare
+/// [`Tdd::pair_count`](crate::Tdd::pair_count) for your functions under different
+/// groupings, and use an engine's resource limits when exploring larger inputs.
+/// Once a diagram is built, [`Engine::rotation_search`](crate::Engine::rotation_search)
+/// can search nearby tree shapes. [`minimize`](crate::reduce::minimize) instead
+/// removes redundancy under the current tree and keeps its variable grouping.
+///
 /// # Representation
 ///
 /// The node list, the root and the variable-to-leaf inversion are the tree

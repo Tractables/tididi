@@ -30,6 +30,9 @@
 //!
 //! # Where to go next
 //!
+//! Start with the [configuration example](https://github.com/Tractables/tididi/blob/main/examples/build_minimize_count.rs):
+//! encode backup rules, count valid configurations, find one solution, and
+//! narrow the choices with an observation.
 //! Follow the [task guide](guide::api) for construction, queries, transformations,
 //! probabilities, limits, and persistence. The [`Engine`] introduction explains
 //! checked operations, [`Tdd`] explains ownership, and [`Vtree`] explains the

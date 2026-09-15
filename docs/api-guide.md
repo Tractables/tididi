@@ -3,14 +3,16 @@
 Start with a vtree and an engine, build a function, then borrow the resulting
 diagram to ask questions about it. The sections below follow that sequence;
 the linked API items provide the contracts and examples.
+For a first complete program, work through the
+[backup configuration example](https://github.com/Tractables/tididi/blob/main/examples/build_minimize_count.rs).
 
 ## Build a Boolean function
 
 Choose [`Vtree::balanced`](crate::Vtree::balanced) for a first experiment,
 [`Vtree::linear`](crate::Vtree::linear) for a variable order, or
 [`Vtree::join`](crate::Vtree::join) to assemble your own grouping.
-The [`Vtree`](crate::Vtree) introduction explains how variables are numbered
-and how operands share a tree.
+The [`Vtree`](crate::Vtree) introduction explains grouping choices, variable
+numbering, and how operands share a tree.
 
 Build an atom with [`Engine::literal`](crate::Engine::literal), a disjunction
 of literals with [`Engine::clause`](crate::Engine::clause), or a conjunction
@@ -82,7 +84,8 @@ handle refusals as [`OperationError`](crate::OperationError).
 performed by a group of operations.
 
 Use [`try_minimize`](crate::reduce::try_minimize) for canonical form under
-the current vtree, or [`minimize`](crate::reduce::minimize) for its convenience form.
+the current vtree when needed, or [`minimize`](crate::reduce::minimize) for
+its convenience form; ordinary counting accepts a nonminimal diagram.
 [`try_reduce`](crate::reduce::try_reduce) and [`ReductionPlan`](crate::reduce::ReductionPlan)
 let advanced callers select individual passes.
 [`Engine::rotation_search`](crate::Engine::rotation_search) searches different

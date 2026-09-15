@@ -129,6 +129,11 @@ fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
 /// other vtree shapes. Use [`try_minimize`] to apply an engine's limits and
 /// handle a refusal.
 ///
+/// Counting, satisfiability and witness queries on an [`Engine`] accept
+/// nonminimal structural diagrams. Minimize when you need canonical form or
+/// want to remove redundant storage before further work; the pass itself also
+/// takes time and working memory.
+///
 /// ```
 /// use std::sync::Arc;
 /// use tididi::{Engine, Vtree};

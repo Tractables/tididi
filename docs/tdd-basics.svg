@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="360" viewBox="0 0 820 360" role="img" aria-labelledby="title description">
+  <title id="title">A variable tree and the TDD for exclusive disjunction</title>
+  <desc id="description">The vtree splits x on the left from y on the right. The TDD output f is the disjunction of two pairs: x with not y, and not x with y. Each pair takes one child from each variable's leaf level.</desc>
+  <rect width="820" height="360" rx="12" fill="#fff"/>
+  <g font-family="sans-serif" text-anchor="middle" fill="#183b56">
+    <text x="120" y="32" font-size="18" font-weight="600">Variable tree</text>
+    <text x="540" y="32" font-size="18" font-weight="600">TDD: f = x XOR y</text>
+    <path d="M240 20V332" stroke="#dce4eb"/>
+    <rect x="275" y="247" width="255" height="63" rx="8" fill="#eef5fa"/>
+    <rect x="565" y="247" width="225" height="63" rx="8" fill="#eef5fa"/>
+    <g stroke="#2774ae" stroke-width="2" fill="none">
+      <path d="M120 93L65 264M120 93L175 264"/>
+      <path d="M540 110L450 166M540 110L650 166"/>
+      <path d="M446 182L360 264M454 182L740 264M646 182L470 264M654 182L630 264"/>
+    </g>
+    <circle cx="120" cy="85" r="8" fill="#2774ae"/>
+    <text x="120" y="65" font-size="14">{x, y}</text>
+    <g fill="#fff" stroke="#2774ae" stroke-width="2">
+      <rect x="42" y="264" width="46" height="32" rx="16"/>
+      <rect x="152" y="264" width="46" height="32" rx="16"/>
+      <rect x="337" y="264" width="46" height="32" rx="16"/>
+      <rect x="447" y="264" width="46" height="32" rx="16"/>
+      <rect x="607" y="264" width="46" height="32" rx="16"/>
+      <rect x="717" y="264" width="46" height="32" rx="16"/>
+    </g>
+    <g font-size="18">
+      <text x="65" y="286">x</text><text x="175" y="286">y</text>
+      <text x="360" y="286">x</text><text x="470" y="286">¬x</text>
+      <text x="630" y="286">y</text><text x="740" y="286">¬y</text>
+    </g>
+    <circle cx="540" cy="90" r="20" fill="#2774ae"/>
+    <text x="540" y="97" fill="#fff" font-size="21" font-style="italic">f</text>
+    <text x="585" y="94" font-size="14">OR</text>
+    <g fill="#ffd100" stroke="#997c00" stroke-width="1.5">
+      <circle cx="450" cy="174" r="8"/>
+      <circle cx="650" cy="174" r="8"/>
+    </g>
+    <text x="450" y="149" font-size="15">(x, ¬y)</text>
+    <text x="650" y="149" font-size="15">(¬x, y)</text>
+    <text x="540" y="353" font-size="13">Yellow dots: pairs (AND)</text>
+    <g font-size="13">
+      <text x="65" y="329">left</text><text x="175" y="329">right</text>
+      <text x="402" y="329">x leaf level</text>
+      <text x="677" y="329">y leaf level</text>
+    </g>
+  </g>
+</svg>

@@ -43,7 +43,11 @@ use crate::limits::Limits;
 /// The [task guide](crate::guide::api) groups the methods by user task.
 /// [`and`](Self::and) can leave a nonminimal representation; use
 /// [`try_minimize`](crate::reduce::try_minimize) when canonical form is needed.
-/// Counting and ordinary Boolean queries state their own minimization requirements.
+/// [`model_count`](Self::model_count), [`is_sat`](Self::is_sat), and
+/// [`satisfying_assignment`](Self::satisfying_assignment) accept nonminimal
+/// structural diagrams, so a first build-and-query program needs no minimization
+/// step for correctness. Minimize to remove redundant storage or before an
+/// operation whose contract requires canonical form.
 ///
 /// # Bound a computation
 ///
