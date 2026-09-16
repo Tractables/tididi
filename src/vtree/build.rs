@@ -136,9 +136,13 @@ impl Vtree {
 
     /// Recursively build a balanced vtree over `vars`, appending nodes into
     /// `nodes` and returning the index of the constructed subtree's root.
-    /// Parents are left unset; [`Vtree::from_nodes`] derives them. `vars`
-    /// must not be empty.
+    /// Parents are left unset; [`Vtree::from_nodes`] derives them.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `vars` is empty.
     pub fn build_balanced_recursive(vars: &[VarId], nodes: &mut Vec<VtreeNode>) -> VtreeIdx {
+        assert!(!vars.is_empty(), "a balanced subtree needs at least one variable");
         if vars.len() == 1 {
             return push_leaf(nodes, vars[0]);
         }

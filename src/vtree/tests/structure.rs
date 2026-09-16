@@ -598,3 +598,9 @@ fn same_tree_ignores_numbering() {
     .unwrap();
     assert!(!a.same_tree(&left_deep));
 }
+
+#[test]
+#[should_panic(expected = "a balanced subtree needs at least one variable")]
+fn balanced_subtree_rejects_an_empty_variable_list() {
+    Vtree::build_balanced_recursive(&[], &mut Vec::new());
+}
