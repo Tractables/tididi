@@ -40,18 +40,14 @@
 
 
 mod build;
-mod error;
 pub(crate) mod graft;
-mod ids;
 mod node;
 mod project;
 pub(crate) mod rng;
 mod topo;
 mod validate;
 
-pub use error::VtreeError;
 pub use graft::GraftLayout;
-pub use ids::{VarId, VtreeIdx};
 pub use node::{Vtree, VtreeNode};
 pub(crate) use topo::RotationKind;
 
@@ -61,6 +57,67 @@ mod text;
 
 pub(crate) mod rotate; // In-place vtree left/right rotations + topo fixup
 
+
+/// A zero-based variable identifier, independent of its position in the vtree.
+///
+/// `VarId(0)` is the variable named by integer literals `1` and `-1`.
+/// Resolve its leaf with [`Vtree::leaf_of`](Vtree::leaf_of); a variable id
+/// and a [`VtreeIdx`] are different index spaces.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
+pub struct VarId(pub u32);
+
+/// An index identifying a node in one vtree's node array.
+///
+/// It may name a leaf or an internal node and is not a variable identifier.
+/// Use [`Vtree::bottomup`](Vtree::bottomup) for traversal order, which can
+/// differ from index order after a rotation.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
+pub struct VtreeIdx(pub u32);
+
+impl VtreeIdx {
+    /// The index as a `usize`.
+    #[inline(always)]
+    pub fn idx(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl VarId {
+    /// The variable number as a `usize`.
+    #[inline(always)]
+    pub fn idx(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// Why a vtree could not be built, parsed, or checked.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum VtreeError {
+    /// `.vtree` text that does not describe a single tree.
+    Text(String),
+    /// Two of the trees being combined both carry this variable.
+    OverlappingVariable(VarId),
+    /// A structural invariant that does not hold (see [`Vtree::validate`](crate::vtree::Vtree::validate)),
+    /// or a construction handed nothing to build from.
+    Invalid(String),
+}
+
+impl std::fmt::Display for VtreeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VtreeError::Text(msg) => write!(f, "malformed vtree text: {msg}"),
+            VtreeError::OverlappingVariable(var) => write!(
+                f,
+                "variable {} is carried by more than one of the trees being combined",
+                var.0 + 1
+            ),
+            VtreeError::Invalid(msg) => write!(f, "invalid vtree: {msg}"),
+        }
+    }
+}
+
+impl std::error::Error for VtreeError {}
 
 #[cfg(test)]
 mod tests;

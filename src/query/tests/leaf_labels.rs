@@ -1,6 +1,6 @@
 use super::*;
 use crate::limits::{LimitConfig, PollGate, StopAt, StopRules};
-use crate::query::support::visit_leaf_labels;
+use crate::query::boolean::visit_leaf_labels;
 use crate::test_helpers::assert_canonical;
 use crate::OperationError;
 

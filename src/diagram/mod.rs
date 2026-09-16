@@ -177,7 +177,6 @@
 
 mod literal;
 mod primitives;
-mod packed;
 pub(crate) mod marginal_ref;
 mod build_error;
 mod leaf_column;
@@ -192,12 +191,10 @@ mod weights;
 pub use literal::Literal;
 pub(crate) use literal::is_tautological;
 pub use primitives::{
-    ChildPair, EncodedChildRef, LeafLabel, NodeIdx, EncodedNode, TddNodeId,
+    ChildPair, PairsIter, EncodedChildRef, LeafLabel, NodeIdx, EncodedNode, TddNodeId,
     LEAF_WIDTH, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX, ZERO,
 };
 pub(crate) use primitives::{MultiPairRange, CHILD_PAIR_BYTES};
-
-pub use packed::PairsIter;
 
 // marginal
 pub use marginal_ref::{CountOverflow, ChildRef, ChildDecoder, ValueRef, ValueRefError};

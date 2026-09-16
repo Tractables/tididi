@@ -363,3 +363,76 @@ impl std::fmt::Debug for EncodedNode {
         }
     }
 }
+
+/// The input pairs of one node, as yielded by [`TddLevel::pairs_iter_of`]
+/// and [`TddLevel::internal_inputs_iter`].
+///
+/// Yields owned [`ChildPair`]s in storage order, which carries no meaning
+/// (a node is the set of its pairs). Implements [`ExactSizeIterator`], so
+/// `len()` is the node's pair count.
+///
+/// [`TddLevel::pairs_iter_of`]: super::TddLevel::pairs_iter_of
+/// [`TddLevel::internal_inputs_iter`]: super::TddLevel::internal_inputs_iter
+#[derive(Clone)]
+pub struct PairsIter<'a>(PairStorage<'a>);
+
+#[derive(Clone)]
+enum PairStorage<'a> {
+    Empty,
+    Inline(Option<ChildPair>),
+    Slice(std::slice::Iter<'a, ChildPair>),
+}
+
+impl<'a> PairsIter<'a> {
+    #[inline]
+    pub(super) fn empty() -> Self {
+        PairsIter(PairStorage::Empty)
+    }
+
+    #[inline]
+    pub(super) fn inline(pair: ChildPair) -> Self {
+        PairsIter(PairStorage::Inline(Some(pair)))
+    }
+
+    #[inline]
+    pub(super) fn slice(pairs: &'a [ChildPair]) -> Self {
+        PairsIter(PairStorage::Slice(pairs.iter()))
+    }
+}
+
+impl std::fmt::Debug for PairsIter<'_> {
+    /// How many pairs are still to come, which is all an iterator's state is.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let remaining = match &self.0 {
+            PairStorage::Empty => 0,
+            PairStorage::Inline(opt) => usize::from(opt.is_some()),
+            PairStorage::Slice(iter) => iter.len(),
+        };
+        f.debug_struct("PairsIter").field("remaining", &remaining).finish()
+    }
+}
+
+impl<'a> Iterator for PairsIter<'a> {
+    type Item = ChildPair;
+    #[inline]
+    fn next(&mut self) -> Option<ChildPair> {
+        match &mut self.0 {
+            PairStorage::Empty => None,
+            PairStorage::Inline(opt) => opt.take(),
+            PairStorage::Slice(iter) => iter.next().copied(),
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = match &self.0 {
+            PairStorage::Empty => 0,
+            PairStorage::Inline(Some(_)) => 1,
+            PairStorage::Inline(None) => 0,
+            PairStorage::Slice(iter) => iter.len(),
+        };
+        (n, Some(n))
+    }
+}
+
+impl<'a> ExactSizeIterator for PairsIter<'a> {}

@@ -25,8 +25,6 @@ pub(crate) mod count;
 pub(crate) mod fold;
 pub(crate) mod sat;
 pub(crate) mod evaluate;
-pub(crate) mod support;
-pub(crate) mod weighted;
 mod boolean;
 
 pub use count::{

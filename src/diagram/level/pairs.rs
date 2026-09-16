@@ -4,7 +4,7 @@
 use crate::diagram::EncodedChildRef;
 
 use crate::diagram::marginal_ref::ChildDecoder;
-use crate::diagram::packed::PairsIter;
+use crate::diagram::PairsIter;
 use crate::diagram::primitives::{
     ChildPair, EncodedNode,
     MULTI_BIT, RANGE_SENTINEL,

@@ -1,8 +1,8 @@
 //! Boolean queries over structural diagrams.
 
-use crate::diagram::{ChildPair, NodeIdx, POS_LEAF_IDX, TddNodeId};
+use crate::diagram::{ChildPair, EncodedChildRef, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX, TddNodeId};
 use crate::limits::PollGate;
-use crate::vtree::{VarId, VtreeNode};
+use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 use crate::{Engine, Literal, OperationError, Tdd};
 use rustc_hash::FxHashMap;
 
@@ -95,7 +95,7 @@ impl Engine {
     fn collect_leaf_labels<T>(
         &self,
         f: &Tdd,
-        select: impl Fn(VarId, super::support::LeafLabels) -> Option<T>,
+        select: impl Fn(VarId, LeafLabels) -> Option<T>,
         key: impl Fn(&T) -> VarId,
     ) -> Result<Vec<T>, OperationError> {
         f.require_structure()?;
@@ -107,7 +107,7 @@ impl Engine {
         self.minimize(&mut f)?;
         let mut result = Vec::new();
         let mut gate = PollGate::new(lim.reduce_poll_stride());
-        super::support::visit_leaf_labels(&f, |work| lim.poll(&mut gate, work), |var, labels| {
+        visit_leaf_labels(&f, |work| lim.poll(&mut gate, work), |var, labels| {
             if let Some(value) = select(var, labels) {
                 lim.try_push(&mut result, value)?;
             }
@@ -228,4 +228,75 @@ fn same_minimized(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<bool, OperationError
     lim.flush_poll(&mut gate)?;
     Ok(keys[0][f.output().vtree.idx()][f.output().local.idx()]
         == keys[1][g.output().vtree.idx()][g.output().local.idx()])
+}
+
+/// Referenced positive, negative and free labels of one non-marginal leaf.
+#[derive(Clone, Copy, Default)]
+pub(super) struct LeafLabels(u8);
+
+impl LeafLabels {
+    /// Include a referenced label; zero sentinels contribute nothing.
+    fn insert(&mut self, child: EncodedChildRef) {
+        self.0 |= if child == POS_LEAF_IDX.into() { 1 }
+            else if child == NEG_LEAF_IDX.into() { 2 }
+            else if child == ONE_LEAF_IDX.into() { 4 }
+            else { 0 };
+    }
+
+    /// Whether a positive or negative label makes this variable part of the support.
+    pub(super) fn depends(self) -> bool { self.0 & 3 != 0 }
+
+    /// The forced literal, if every reference uses the same non-free label.
+    pub(super) fn implied(self, var: VarId) -> Option<Literal> {
+        match self.0 {
+            1 => Some(Literal::pos(var)),
+            2 => Some(Literal::neg(var)),
+            _ => None,
+        }
+    }
+}
+
+/// Visit each referenced structural leaf's label summary on a minimized diagram.
+///
+/// Each leaf has one parent, so scanning that parent's pairs finishes its summary.
+/// `poll` receives one work unit per leaf reference, within the pair loop.
+pub(super) fn visit_leaf_labels(
+    f: &Tdd,
+    mut poll: impl FnMut(u64) -> Result<(), OperationError>,
+    mut visit: impl FnMut(VarId, LeafLabels) -> Result<(), OperationError>,
+) -> Result<(), OperationError> {
+    if f.is_zero() { return Ok(()); }
+    if let VtreeNode::Leaf { var, .. } = *f.vtree.node(f.output.vtree) {
+        if !f.levels[f.output.vtree.idx()].is_marginal() {
+            poll(1)?;
+            let mut labels = LeafLabels::default();
+            labels.insert(f.output.local.into());
+            visit(var, labels)?;
+        }
+        return Ok(());
+    }
+    let leaf_var = |child: VtreeIdx| match *f.vtree.node(child) {
+        VtreeNode::Leaf { var, .. } if !f.levels[child.idx()].is_marginal() => Some(var),
+        _ => None,
+    };
+    for (t, left, right) in f.vtree.internal_bottomup() {
+        let vars = [leaf_var(left), leaf_var(right)];
+        let work = vars.iter().filter(|var| var.is_some()).count() as u64;
+        if work == 0 { continue; }
+        let mut labels = [LeafLabels::default(); 2];
+        let level = &f.levels[t.idx()];
+        for node in level.nodes.iter().filter(|node| !node.is_leaf()) {
+            for pair in level.pairs_of(node) {
+                poll(work)?;
+                if vars[0].is_some() { labels[0].insert(pair.left); }
+                if vars[1].is_some() { labels[1].insert(pair.right); }
+            }
+        }
+        for (var, labels) in vars.into_iter().zip(labels) {
+            if let Some(var) = var && labels.0 != 0 {
+                visit(var, labels)?;
+            }
+        }
+    }
+    Ok(())
 }
