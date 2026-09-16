@@ -128,6 +128,7 @@ impl CountVec {
     /// An empty column with `cap` slots reserved exactly up front (the
     /// streaming output column pre-reserves `left_width.max(right_width)` and then grows
     /// fallibly via [`Self::push`]).
+    #[inline(always)]
     pub(crate) fn try_with_capacity(eng: &Engine, cap: usize) -> Result<Self, OperationError> {
         let mut fast: Vec<u128> = Vec::new();
         eng.limits().reserve_exact(&mut fast, cap)?;
