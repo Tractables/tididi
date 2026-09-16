@@ -9,7 +9,7 @@ Run the complete program with `cargo run --example save_reload`; only `tididi`
 is needed as a dependency. It uses byte buffers so you can run it without
 creating files.
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 use std::sync::Arc;
 
 use tididi::{and, Tdd, Vtree};
@@ -21,7 +21,7 @@ use tididi::io::{read_tdd, write_tdd};
 Variables 1, 2, and 3 mean local backups, remote backups, and encryption.
 Require a destination, and require encryption whenever remote backups are on:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let vtree = Arc::new(Vtree::balanced(3));
 let destination = Tdd::clause(&vtree, [1, 2])?;
 let encryption_rule = Tdd::clause(&vtree, [-2, 3])?;
@@ -42,7 +42,7 @@ saved session
 [`write_tdd`](crate::io::write_tdd) writes to any Rust `Write` stream; a byte
 vector is one such stream. The vtree has its own text representation:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let vtree_text = vtree.to_text();
 let mut destination_bytes = Vec::new();
 let mut encryption_bytes = Vec::new();
@@ -65,7 +65,7 @@ cannot be reconstructed from its count or weighted value.
 Read the saved vtree into one `Arc`, then pass that same allocation to both
 readers:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let restored_vtree = Arc::new(Vtree::from_text(&vtree_text)?);
 let destination = read_tdd(&mut destination_bytes.as_slice(), &restored_vtree)?;
 let encryption_rule = read_tdd(&mut encryption_bytes.as_slice(), &restored_vtree)?;
@@ -80,7 +80,7 @@ directly. Use the same restored vtree for diagrams you intend to combine.
 
 The loaded diagrams support the same operations as freshly built ones:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let configurations = and(destination, encryption_rule)?;
 assert_eq!(configurations.model_count()?, 4u32.into());
 ```
@@ -93,7 +93,7 @@ is no additional factor of two.
 The program also checks functional equality against freshly constructed rules;
 a matching model count alone would not establish that the rules survived:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let expected = and(
     Tdd::clause(&restored_vtree, [1, 2])?,
     Tdd::clause(&restored_vtree, [-2, 3])?,

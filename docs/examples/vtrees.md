@@ -7,7 +7,7 @@ representations.
 
 Run `cargo run --example vtree_grouping`; only `tididi` is needed as a dependency.
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 use std::sync::Arc;
 
 use tididi::{and, OperationError, Tdd, Vtree};
@@ -33,7 +33,7 @@ Equalities grouped                  Equalities split
 variable identifiers in left-to-right leaf order. Changing their positions
 does not rename them: `VarId(2)` still means `x3`.
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let grouped_vtree = Arc::new(Vtree::balanced_over(&[
     VarId(0), VarId(2), VarId(1), VarId(3),
 ]));
@@ -46,7 +46,7 @@ Equality is a pair of implications: `x1 ↔ x3` is
 `(¬x1 ∨ x3) ∧ (x1 ∨ ¬x3)`. The helper uses the same literal numbers for either
 vtree, then minimizes before comparing storage:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 fn equal_pairs(vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
     let first_equal = and(Tdd::clause(vtree, [-1, 3])?, Tdd::clause(vtree, [1, -3])?)?;
     let second_equal = and(Tdd::clause(vtree, [-2, 4])?, Tdd::clause(vtree, [2, -4])?)?;
@@ -56,7 +56,7 @@ fn equal_pairs(vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
 }
 ```
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let grouped = equal_pairs(&grouped_vtree)?;
 let split = equal_pairs(&split_vtree)?;
 assert_eq!(grouped.model_count()?, 4u32.into());

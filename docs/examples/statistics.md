@@ -12,7 +12,7 @@ Run the complete program with `cargo run --example statistic`. Read the
 [data model](crate::guide::model) first
 if the distinction between a vtree level, a TDD node, and a child pair is new.
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 use std::sync::Arc;
 
 use tididi::{and, literal, OperationError, Tdd};
@@ -34,7 +34,7 @@ At each level, `internal_inputs_iter()` yields each stored node's identifier
 and an iterator over its pairs. The iterator knows its length, so obtaining
 the pair count does not require decoding the children:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 fn widest_node(t: &Tdd) -> (VtreeIdx, usize) {
     let mut best = (t.vtree().root(), 0usize);
     for v in t.vtree().bottomup() {
@@ -65,7 +65,7 @@ Use a balanced vtree over four variables. The exclusive OR of its first two
 variables has two alternatives: `(x1, NOT x2)` and `(NOT x1, x2)`.
 Each alternative is one pair at the level containing those variables:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let vtree = Arc::new(Vtree::balanced(4));
 // x1 ⊕ x2 needs two pairs at the level over {x1, x2}: (x1, ¬x2) and (¬x1, x2).
 let xor = and(Tdd::clause(&vtree, [1, 2])?, Tdd::clause(&vtree, [-1, -2])?)?;
@@ -77,7 +77,7 @@ assert_eq!((level, pairs), (left, 2));
 The other two variables are free. A single positive literal has only one pair
 at each stored node, which gives another small check:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let unit = literal(&vtree, 1)?;
 assert_eq!(widest_node(&unit).1, 1);
 ```
@@ -87,7 +87,7 @@ assert_eq!(widest_node(&unit).1, 1);
 The built-in `pair_count()` sums pairs over all stored nodes. Our largest
 individual node cannot exceed that total:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 assert!(widest_node(&xor).1 <= xor.pair_count());
 println!("statistic: widest node has {pairs} pairs at vtree node {}", level.idx());
 ```

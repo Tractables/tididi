@@ -5,26 +5,23 @@
 
 /// Worked examples, from Boolean constraints to custom diagram traversal.
 pub mod examples {
-    #[doc = include_str!("../docs/examples/configurations.md")]
-    pub mod configurations {}
+    // These excerpts are checked against runnable programs by tests/example_docs.rs.
+    // Suppress the ignored-doctest badge only on blocks covered by that check.
+    macro_rules! walkthrough {
+        ($name:ident, $path:literal) => {
+            #[doc = "<style>.example-wrap.ignore:has(> pre.tested-example) > .tooltip { display: none; }</style>"]
+            #[doc = include_str!($path)]
+            pub mod $name {}
+        };
+    }
 
-    #[doc = include_str!("../docs/examples/execution.md")]
-    pub mod execution {}
-
-    #[doc = include_str!("../docs/examples/probability.md")]
-    pub mod probability {}
-
-    #[doc = include_str!("../docs/examples/reachability.md")]
-    pub mod reachability {}
-
-    #[doc = include_str!("../docs/examples/persistence.md")]
-    pub mod persistence {}
-
-    #[doc = include_str!("../docs/examples/vtrees.md")]
-    pub mod vtrees {}
-
-    #[doc = include_str!("../docs/examples/statistics.md")]
-    pub mod statistics {}
+    walkthrough!(configurations, "../docs/examples/configurations.md");
+    walkthrough!(execution, "../docs/examples/execution.md");
+    walkthrough!(probability, "../docs/examples/probability.md");
+    walkthrough!(reachability, "../docs/examples/reachability.md");
+    walkthrough!(persistence, "../docs/examples/persistence.md");
+    walkthrough!(vtrees, "../docs/examples/vtrees.md");
+    walkthrough!(statistics, "../docs/examples/statistics.md");
 }
 
 #[doc = include_str!("../docs/api-guide.md")]

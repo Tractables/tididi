@@ -14,7 +14,7 @@ The vtree's [`Context`](crate::Context) lends a working engine for a batch.
 Here we deliberately allow zero bytes of charged allocation growth, so the
 attempt to rebuild the destination rule is refused:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 use tididi::OperationError;
 use tididi::limits::LimitConfig;
 let context = Arc::clone(vtree.context());
@@ -33,7 +33,7 @@ This is a soft budget for charged allocation growth in each operation, not a
 bound on the application's total memory. The example verifies its deliberate
 refusal, then handles the result as an application would:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 assert!(matches!(attempt, Err(OperationError::OverBudget)));
 match attempt {
     Ok(diagram) => println!("Destination choices: {}", diagram.model_count()?),
@@ -45,7 +45,7 @@ match attempt {
 The context retains reusable buffers after the batch, but clears its limits
 and callbacks. The next operation succeeds, and the original rules are intact:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let destination = Tdd::clause(&vtree, [1, 2])?;
 assert_eq!(destination.model_count()?, 12u32.into());
 assert_eq!(configurations.model_count()?, count);
@@ -59,7 +59,7 @@ initial limits; its example shows several checked operations in one checkout.
 The preceding queries work without an explicit minimization step. To remove
 redundancy under the current vtree, minimize the diagram:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 configurations.minimize()?;
 assert_eq!(configurations.model_count()?, count);
 ```
@@ -69,7 +69,7 @@ For a different variable grouping, continue with the
 changing observations, [`Tdd::counter`](crate::Tdd::counter) retains counting
 state and updates evidence without rebuilding the diagram:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let mut counter = configurations.counter()?;
 counter.set_pin(tididi::vtree::VarId(1), Some(true))?;
 assert_eq!(counter.model_count()?, 4u32.into());
@@ -79,7 +79,7 @@ Variable 1 is remote backups; add disabled notifications as a second observation
 with [`set_pins`](crate::query::ModelCounter::set_pins), which validates the whole
 update before changing any pins:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 counter.set_pins(&[
     (tididi::vtree::VarId(1), Some(true)),
     (tididi::vtree::VarId(3), Some(false)),
@@ -96,7 +96,7 @@ cofactor semantics.
 To count under batch limits, temporarily bind the existing counter to the
 supplied engine:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let query_limit = LimitConfig::none().with_memory_budget_bytes(Some(1_000_000));
 let bounded_count = context.with_limits(query_limit, |operations| {
     counter.bind(operations).model_count()
@@ -114,7 +114,7 @@ When a batch of work ends, keeping the diagrams also keeps their shared context
 alive. Release its idle buffers when the application no longer needs that
 capacity:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 context.clear_scratch();
 ```
 

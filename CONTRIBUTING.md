@@ -10,7 +10,8 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 ```
 
 The README and `docs/` are compiled into rustdoc. Keep walkthrough excerpts
-in sync with their runnable programs in `examples/`.
+in sync with their runnable programs in `examples/`. The `tested-example` code
+block class is reserved for excerpts verified by `tests/example_docs.rs`.
 
 Changes to diagram operations also need the randomized differential suite,
 with and without debug assertions:

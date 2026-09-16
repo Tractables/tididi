@@ -21,10 +21,10 @@ fn walkthrough_code_comes_from_the_runnable_examples() {
         let mut excerpts = 0;
         let mut lines = markdown.lines();
         while let Some(line) = lines.next() {
-            if !line.starts_with("```rust") {
+            if !line.starts_with("```rust") && !(line.starts_with("```") && line.contains("tested-example")) {
                 continue;
             }
-            assert_eq!(line, "```rust,ignore", "{name}: excerpts are checked against the executable example");
+            assert_eq!(line, "```rust,ignore,{class=tested-example}", "{name}: excerpts are checked against the executable example");
             let mut snippet = Vec::new();
             let mut closed = false;
             for line in lines.by_ref() {

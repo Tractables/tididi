@@ -19,7 +19,7 @@ Run the complete program with `cargo run --example probabilistic_query`.
 In a separate application, add `num-rational = "0.4"` and `num-traits = "0.2"`
 alongside `tididi` to use the exact arithmetic shown here.
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 use std::sync::Arc;
 
 use num_rational::BigRational;
@@ -32,7 +32,7 @@ use tididi::{and, literal, or, OperationError, Tdd, Vtree};
 
 Build the events on one shared vtree.
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let vtree = Arc::new(Vtree::balanced(3));
 let rain = literal(&vtree, 1)?;
 let sprinkler = literal(&vtree, 2)?;
@@ -51,7 +51,7 @@ that do not imply the evidence.
 Each independent Boolean input has two weights: its probability of being true
 and its probability of being false. These helpers keep the values exact:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 fn fraction(numerator: i64, denominator: i64) -> BigRational {
     BigRational::new(numerator.into(), denominator.into())
 }
@@ -67,7 +67,7 @@ fn bernoulli(positive: BigRational) -> LiteralWeights<BigRational> {
 The program loops over three choices of input probabilities and an expected
 answer. The final scenario makes the evidence impossible:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let scenarios = [
     (fraction(1, 5), fraction(1, 10), Some(fraction(5, 7))),
     (fraction(3, 5), fraction(1, 10), Some(fraction(15, 16))),
@@ -78,7 +78,7 @@ let scenarios = [
 For each `(rain_probability, sprinkler_probability, expected)` in `scenarios`,
 build a table from the current probabilities:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let weights = RationalWeights::from_literals(&[
     bernoulli(rain_probability.clone()),
     bernoulli(sprinkler_probability.clone()),
@@ -96,7 +96,7 @@ probability. Independence is a modeling assumption of this weight table.
 Call [`evaluate`](crate::Tdd::evaluate) on an event to obtain its probability
 under the current weights:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let wet_probability = wet.evaluate(&weights)?;
 assert_eq!(rain.evaluate(&weights)?, rain_probability);
 ```
@@ -109,7 +109,7 @@ from the enclosing function.
 Zero-probability evidence has no conditional probability. The helper returns
 `None` for that case instead of dividing by zero:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 fn conditional_probability(
     query_and_evidence: &Tdd,
     evidence: &Tdd,
@@ -126,7 +126,7 @@ fn conditional_probability(
 
 The caller supplies the same weights for the numerator and denominator:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let conditional = conditional_probability(&rain_and_wet, &wet, &weights)?;
 assert_eq!(conditional, expected);
 ```

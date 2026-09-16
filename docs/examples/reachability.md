@@ -19,7 +19,7 @@ prove that state 3 is unreachable, and obtain an assignment for state 2.
 Run it with `cargo run --example symbolic_reachability`; only `tididi` is
 needed as a dependency.
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 use std::sync::Arc;
 
 use tididi::vtree::VarId;
@@ -44,7 +44,7 @@ source and destination. The relation is the union of the three edge cubes.
 The shared vtree supplies reusable working memory throughout construction and
 the fixed-point loop:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let vtree = Arc::new(Vtree::balanced(4));
 // Variables 1,2 encode the current state; 3,4 encode the next state.
 // The first bit in each pair is least significant. Edges: 0 -> 1 -> 2 -> 1.
@@ -58,7 +58,7 @@ For example, `[-1, -2, 3, -4]` means current state 0 and next state 1.
 Integer literals start at 1, with a negative sign for false. The `VarId`
 values used to quantify and rename variables start at 0:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let mut reached = Tdd::cube(&vtree, [-1, -2])?; // start at state 0
 let current = [VarId(0), VarId(1)];
 let next_to_current = [(VarId(2), VarId(0)), (VarId(3), VarId(1))];
@@ -75,12 +75,12 @@ The image of a state set `R` under transition relation `T` is
 `∃current. (R(current) AND T(current, next))`. This retains a next state
 exactly when some state in `R` can reach it. Inside the loop:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let possible_steps = and(reached.clone(), transition.clone())?;
 let successors = possible_steps.exists_vars(&current)?;
 ```
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let successors = successors.rename_vars(&next_to_current)?;
 let enlarged = or(reached.clone(), successors)?;
 iterations += 1;
@@ -96,14 +96,14 @@ The two next-state variables remain free, so a full-vtree model count includes
 four assignments per state. The program reports state counts by removing that
 factor:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let state_count = enlarged.model_count()? / 4u32;
 println!("Iteration {iterations}: {state_count} reachable states");
 ```
 
 The loop compares the represented functions, rather than their storage:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 if enlarged.equivalent(&reached)? {
     break;
 }
@@ -126,7 +126,7 @@ The progression is:
 
 State 3 is forbidden. Its complement should equal the reachable set:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let forbidden = Tdd::cube(&vtree, [1, 2])?;
 let safe = forbidden.negate()?;
 assert!(reached.equivalent(&safe)?);
@@ -143,7 +143,7 @@ unreachable.
 
 To find an assignment for state 2, intersect the target with the reachable set:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let target = Tdd::cube(&vtree, [-1, 2])?; // state 2
 let reachable_target = and(reached, target)?;
 let witness = reachable_target
@@ -160,7 +160,7 @@ Once the separate steps are familiar, [`and_exists`](crate::and_exists)
 expresses conjunction and quantification in one call. The example checks the
 two forms for equality at each iteration, before renaming:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let combined = and_exists(reached.clone(), transition.clone(), &current)?;
 assert!(successors.equivalent(&combined)?);
 ```

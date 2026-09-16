@@ -14,13 +14,13 @@ order of the complete program, which you can run from the repository with
 A vtree arranges the variables used by our diagrams. Start with a balanced vtree
 over four variables and share it between the option diagrams:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 use std::sync::Arc;
 
 use tididi::{and, literal, or, Tdd, Vtree};
 ```
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let vtree = Arc::new(Vtree::balanced(4));
 let names = ["local backups", "remote backups", "encryption", "notifications"];
 let local = literal(&vtree, 1)?;
@@ -39,7 +39,7 @@ requirements, and [`negate`](crate::Tdd::negate) to complement a diagram.
 "Remote requires encryption" means either remote backups are off or encryption
 is on:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let destination = or(local, remote.clone())?;
 let encryption_rule = or(remote.clone().negate()?, encrypted)?;
 let mut configurations = and(destination, encryption_rule)?;
@@ -55,7 +55,7 @@ The diagrams must share the same `Arc<Vtree>` allocation, as these do.
 
 ## Count configurations
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let count = configurations.model_count()?;
 assert_eq!(count, 8u32.into());
 println!("Valid configurations: {count}");
@@ -77,7 +77,7 @@ the full vtree. Counting returns an arbitrary-precision integer.
 
 If a user selects remote backups, conjoin that option with a copy of the rules:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let with_remote = and(configurations.clone(), remote)?;
 let remote_count = with_remote.model_count()?;
 assert_eq!(remote_count, 4u32.into());
@@ -93,7 +93,7 @@ into a function, with different counting semantics.
 
 Borrow the configuration diagram to find one complete assignment:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let witness = configurations.satisfying_assignment()?
     .expect("the backup rules have a solution");
 println!("One valid configuration:");
@@ -106,7 +106,7 @@ The returned variable identifiers start at zero, matching the positions in
 `names`. The witness assigns every vtree variable. There can be many correct witnesses,
 so the program verifies that its returned assignment satisfies the rules:
 
-```rust,ignore
+```rust,ignore,{class=tested-example}
 let selected = and(configurations.clone(), Tdd::cube(&vtree, &witness)?)?;
 assert_eq!(selected.model_count()?, 1u32.into());
 ```
