@@ -20,7 +20,7 @@ impl TddLevel {
         // otherwise it stays a bare slot, which is already a correct reference.
         // Counts need not be unique on the child level: a marginal node has no
         // identity beyond its count, and duplicate pairs are summed, not
-        // deduped (see `conjoin_clause/emit.rs`), so two same-count refs
+        // deduped (see `conjoin_clause/rebuild.rs`), so two same-count refs
         // collapsing to one inline value preserves the total.
         //   bit-31 set → `ZERO` sentinel, pass through.
         //   bit-30 set → already inline, pass through.

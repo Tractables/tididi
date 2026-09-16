@@ -29,9 +29,8 @@ let encrypted = literal(&vtree, 3)?;
 ```
 
 Integer literals start at 1; a negative integer means the option is off.
-The `VarId` values returned by queries start at 0, matching positions in
-`names`. Notifications need no literal here: they remain an unconstrained
-variable in the vtree.
+Notifications need no literal here: they remain an unconstrained variable
+in the vtree.
 
 ## Write the rules as Boolean expressions
 
@@ -103,7 +102,8 @@ for literal in &witness {
 }
 ```
 
-The witness assigns every vtree variable. There can be many correct witnesses,
+The returned variable identifiers start at zero, matching the positions in
+`names`. The witness assigns every vtree variable. There can be many correct witnesses,
 so the program verifies that its returned assignment satisfies the rules:
 
 ```rust,ignore
