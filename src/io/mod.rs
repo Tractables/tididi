@@ -120,17 +120,7 @@ use crate::diagram::Tdd;
 /// The `.tdd` format version emitted by the writer and accepted by the reader.
 const TDD_FORMAT_VERSION: u32 = 1;
 
-/// Reject a diagram carrying any marginal level, for the writers that cannot
-/// represent one.
-///
-/// Both output formats are *structural*: a pair names its children by local
-/// node index. A marginal level stores per-node model counts instead of nodes,
-/// so a pair pointing into one carries an inline count rather than an index and
-/// there is nothing faithful to emit for it. The writers refuse such a diagram
-/// here instead of failing on the inline ref deep inside the emit loop.
-///
-/// Single detection point for `save_tdd`/`write_tdd` and `tdd_to_dot`; `what`
-/// names the calling operation in the message.
+/// Reject marginal values that structural serialization and rendering cannot represent.
 pub(crate) fn reject_marginal_levels(tdd: &Tdd, what: &str) -> Result<(), IoError> {
     if tdd.has_marginal_level() {
         return Err(IoError::Format(format!(

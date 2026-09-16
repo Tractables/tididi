@@ -43,10 +43,10 @@ impl VtreeNode {
 ///
 /// Use [`Vtree::balanced`] to group contiguous variables into subtrees, or
 /// [`Vtree::linear`] for a right-linear tree representing a variable order.
-/// The tree determines the full variable universe, including free variables
+/// The vtree determines the full variable universe, including free variables
 /// that a particular function does not mention.
 ///
-/// Wrap the tree in one `Arc` and share that allocation among operands:
+/// Wrap the vtree in one `Arc` and share that allocation among operands:
 ///
 /// ```
 /// use std::sync::Arc;
@@ -71,7 +71,7 @@ impl VtreeNode {
 /// index every named variable.
 /// Weight tables use the latter size, while model counts range over the former.
 ///
-/// # Choosing a tree
+/// # Choosing a vtree
 ///
 /// Start with [`Vtree::balanced`] for a small experiment. Its grouping follows
 /// the variable ids; it does not inspect your constraints. When a variable order
@@ -79,36 +79,24 @@ impl VtreeNode {
 /// [`Vtree::balanced_over`] lets you keep related variables together while
 /// retaining a balanced shape; [`Vtree::join`] makes the groups explicit.
 ///
-/// The tree can greatly affect diagram size and the cost of building it.
+/// The vtree can greatly affect diagram size and the cost of building it.
 /// A balanced shape alone does not guarantee a compact diagram. Compare
 /// [`Tdd::pair_count`](crate::Tdd::pair_count) for your functions under different
 /// groupings, and use [`Context::with_limits`](crate::Context::with_limits) when
 /// exploring larger inputs.
 /// Once a diagram is built, [`Tdd::rotation_search`](crate::Tdd::rotation_search)
-/// can search nearby tree shapes. [`minimize`](crate::Tdd::minimize) instead
-/// removes redundancy under the current tree and keeps its variable grouping.
+/// can search nearby vtree shapes. [`minimize`](crate::Tdd::minimize) instead
+/// removes redundancy under the current vtree and keeps its variable grouping.
 ///
 /// # Representation
 ///
-/// The node list, the root and the variable-to-leaf inversion are the tree
-/// itself; the traversal orders beside them are derived from it, and every
-/// mutating operation re-derives them, which is why none of them is reachable
-/// from outside. Read the tree through [`Vtree::node`], [`Vtree::root`],
-/// [`Vtree::children`], [`Vtree::leaf_of`], [`Vtree::leaf_var`],
-/// [`Vtree::bottomup`] and [`Vtree::lca`]. Three things hold for as long as
-/// the `Vtree` lives:
-///
-/// - **A node's index is its identity.** The node list is never reordered or
-///   resized after construction, so a [`VtreeIdx`] a caller holds keeps
-///   pointing at the same node — across rotations included. (What a rotation
-///   *does* change is the shape: which nodes those indices are linked to.)
-/// - **Links run both ways and stay consistent.** Every node names its parent
-///   (`None` at the root alone), every internal node names its two children,
-///   and a parent's children contain the child that named it.
-/// - **Leaves invert.** [`leaf_var(leaf_of(v)) == v`](Vtree::leaf_of) for every
-///   variable the vtree covers.
-///
-/// [`Vtree::validate`] checks all three.
+/// Read nodes and edges through [`Vtree::node`], [`Vtree::root`] and
+/// [`Vtree::children`], and traverse children before parents with
+/// [`Vtree::bottomup`]. A [`VtreeIdx`] keeps identifying the same node across
+/// rotations, although that node's parent and children can change.
+/// Parent and child links agree, and [`Vtree::leaf_of`] and [`Vtree::leaf_var`]
+/// map between each present variable and its leaf. [`Vtree::validate`] checks
+/// these structural invariants.
 #[derive(Clone, Debug)]
 pub struct Vtree {
     /// Reusable execution scratch shared by clones of this tree.
@@ -230,16 +218,12 @@ impl Vtree {
         }
     }
 
-    /// Whether `other` is the same tree: the same shape, carrying the same
-    /// variable at every corresponding leaf — corresponding meaning reached by
-    /// the same sequence of left/right steps from the root.
+    /// Whether both vtrees have the same shape and variable at each corresponding leaf.
     ///
-    /// This is what "the same vtree" means. Node indices, positions in
-    /// [`Vtree::bottomup`] and the ids in [`Vtree::to_text`] are
-    /// numbering, not identity, and two constructions that arrive at one tree
-    /// are free to number it differently — a rotated tree in particular keeps
-    /// its old numbering, so it serializes differently from the same shape
-    /// built from scratch while being equal here.
+    /// Corresponding nodes are reached by the same left/right steps from the
+    /// root; their indices and traversal positions may differ. This comparison
+    /// ignores execution contexts and allocation identity. Binary diagram
+    /// operations still require a shared `Arc<Vtree>`.
     pub fn same_tree(&self, other: &Vtree) -> bool {
         let mut pairs = vec![(self.root(), other.root())];
         while let Some((a, b)) = pairs.pop() {

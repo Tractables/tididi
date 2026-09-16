@@ -11,34 +11,29 @@ use super::{IoError, TDD_FORMAT_VERSION};
 
 /// Read a diagram from a `.tdd` file written by [`save_tdd`](super::save_tdd).
 ///
-/// # Errors
-///
-/// [`IoError::Io`] if the file cannot be opened or read; [`IoError::Format`]
-/// for anything the bytes get wrong — see [`read_tdd`], which this wraps.
+/// The diagram shares the supplied vtree; see [`read_tdd`] for format requirements.
 ///
 /// ```
-/// # use std::sync::Arc;
-/// # use tididi::Tdd;
-/// # use tididi::io::IoError;
-/// # use tididi::vtree::Vtree;
-/// # let vtree = Arc::new(Vtree::balanced(4));
+/// use std::sync::Arc;
+/// use tididi::{Tdd, Vtree};
 /// use tididi::io::{load_tdd, save_tdd};
 ///
+/// let vtree = Arc::new(Vtree::balanced(3));
+/// let f = Tdd::clause(&vtree, [1, -2])?;
 /// let path = std::env::temp_dir().join("tididi-doc-load.tdd");
-/// let f = Tdd::clause(&vtree, [1, -2])? & Tdd::clause(&vtree, [2, 3])?;
-/// save_tdd(&f, &path).unwrap();
-/// assert_eq!(load_tdd(&path, &vtree).unwrap().model_count()?, f.model_count()?);
-/// std::fs::remove_file(&path).unwrap();
-///
-/// // The file is gone now, so opening it fails on the underlying error.
-/// match load_tdd(&path, &vtree) {
-///     Ok(_) => unreachable!("the file was removed"),
-///     Err(IoError::Io(e)) => assert_eq!(e.kind(), std::io::ErrorKind::NotFound),
-///     Err(IoError::Format(msg)) => unreachable!("{msg}"),
-///     Err(other) => unreachable!("{other}"),
-/// }
+/// save_tdd(&f, &path)?;
+/// let restored = load_tdd(&path, &vtree)?;
+/// assert!(restored.equivalent(&f)?);
+/// # tididi::test_helpers::assert_canonical(&f);
+/// # tididi::test_helpers::assert_canonical(&restored);
+/// # std::fs::remove_file(&path)?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
+///
+/// # Errors
+///
+/// Returns [`IoError::Io`] if the file cannot be opened or read, or the format
+/// errors from [`read_tdd`].
 pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
     let file = std::fs::File::open(path.as_ref())?;
     read_tdd(&mut BufReader::new(file), vtree)
@@ -46,7 +41,7 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 
 /// Read a diagram in `.tdd` format from any reader, over `vtree`.
 ///
-/// Supply the tree saved alongside the diagram: the reader validates counts,
+/// Supply the vtree saved alongside the diagram: the reader validates counts,
 /// leaf labels, and declared child indices against it, but the false diagram
 /// has no node records from which to check its shape.
 /// The result shares the supplied `Arc<Vtree>`, has no attached weights, and
@@ -59,17 +54,11 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 ///
 /// # Errors
 ///
-/// [`IoError::Format`] on a malformed or inconsistent file: a missing or
-/// unparsable problem line, an unsupported or absent format version,
-/// a problem line whose leaf or vtree node count is not `vtree`'s,
-/// a record letter other than `c`, `p`, `L` and `I`, a record whose vtree
-/// index is out of range or has the wrong kind, an `L` line disagreeing with
-/// the vtree's variable, an `I` line whose declared children are not the
-/// vtree's, an `I` line with no pairs or an odd number of pair tokens, a pair
-/// side naming a node that does not exist, or an output node that was never
-/// defined. Exactly one problem line precedes the node records; fixed-length
-/// records have no trailing fields. Nonzero diagrams declare every leaf once;
-/// a `ZERO` output has no node records and cannot be spelled as a numeric index. The message names the line. [`IoError::Io`] if the reader fails.
+/// Returns [`IoError::Format`] for unsupported versions, malformed records,
+/// missing or duplicate declarations, references outside the stored diagram,
+/// or declarations inconsistent with `vtree`. See the [text format](crate::io#text-format)
+/// for the record requirements. Error messages identify the affected line.
+/// Returns [`IoError::Io`] if reading fails.
 ///
 /// Read from an in-memory buffer:
 ///

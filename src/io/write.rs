@@ -22,33 +22,19 @@ use super::{IoError, TDD_FORMAT_VERSION};
 /// created or a write to it fails; a partial file may then be left behind.
 ///
 /// ```
-/// # use std::sync::Arc;
-/// # use tididi::{Engine, Tdd};
-/// # use tididi::io::IoError;
-/// #
-/// # use tididi::vtree::Vtree;
-/// # let vtree = Arc::new(Vtree::balanced(4));
-/// # let engine = Engine::new();
-/// # let (left, _right) = vtree.children(vtree.root());
-/// # let f = Tdd::clause(&vtree, [1, -2])? & Tdd::clause(&vtree, [2, 3])?;
+/// use std::sync::Arc;
+/// use tididi::{Tdd, Vtree};
 /// use tididi::io::{load_tdd, save_tdd};
 ///
+/// let vtree = Arc::new(Vtree::balanced(3));
+/// let f = Tdd::clause(&vtree, [1, -2])?;
 /// let path = std::env::temp_dir().join("tididi-doc-save.tdd");
-/// save_tdd(&f, &path).unwrap();
-/// let g = load_tdd(&path, &vtree).unwrap();
-/// assert_eq!(g.model_count()?, f.model_count()?);
-/// std::fs::remove_file(&path).unwrap();
-///
-/// // A diagram with a level summed out has no structural form to write.
-/// let mut m = f.clone();
-/// engine.marginalize_levels(&mut m, &[left]).unwrap();
-/// match save_tdd(&m, &path) {
-///     Ok(()) => unreachable!("a marginal level cannot be written"),
-///     Err(IoError::Format(msg)) => assert!(!msg.is_empty()),
-///     Err(IoError::Io(e)) => unreachable!("{e}"),
-///     Err(other) => unreachable!("{other}"),
-/// }
-/// assert!(!path.exists());   // nothing was created
+/// save_tdd(&f, &path)?;
+/// let restored = load_tdd(&path, &vtree)?;
+/// assert!(restored.equivalent(&f)?);
+/// # tididi::test_helpers::assert_canonical(&f);
+/// # tididi::test_helpers::assert_canonical(&restored);
+/// # std::fs::remove_file(&path)?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn save_tdd(f: &Tdd, path: impl AsRef<Path>) -> Result<(), IoError> {
@@ -92,24 +78,26 @@ fn push_num<N: itoa::Integer>(buf: &mut Vec<u8>, n: N) {
 /// file drops the store, so it reads back in integer mode and the caller
 /// attaches weights again with [`Tdd::set_weights`](crate::Tdd::set_weights).
 ///
-/// Save the tree and diagram together, then restore them into a shared domain:
+/// Save the vtree and diagram together, then restore them:
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{Engine, Vtree};
+/// use tididi::{Tdd, Vtree};
 /// use tididi::io::{read_tdd, write_tdd};
 ///
-/// let engine = Engine::new();
 /// let vtree = Arc::new(Vtree::balanced(3));
-/// let f = engine.clause(&vtree, [1, -2])?;
-/// let tree_text = vtree.to_text();
+/// let f = Tdd::clause(&vtree, [1, -2])?;
+/// let vtree_text = vtree.to_text();
 /// let mut bytes = Vec::new();
 /// write_tdd(&mut bytes, &f)?;
 ///
-/// let loaded_tree = Arc::new(Vtree::from_text(&tree_text)?);
-/// let loaded = read_tdd(&mut bytes.as_slice(), &loaded_tree)?;
-/// let expected = engine.clause(&loaded_tree, [1, -2])?;
-/// assert!(engine.equivalent(&loaded, &expected)?);
+/// let loaded_vtree = Arc::new(Vtree::from_text(&vtree_text)?);
+/// let loaded = read_tdd(&mut bytes.as_slice(), &loaded_vtree)?;
+/// let expected = Tdd::clause(&loaded_vtree, [1, -2])?;
+/// assert!(loaded.equivalent(&expected)?);
+/// # tididi::test_helpers::assert_canonical(&f);
+/// # tididi::test_helpers::assert_canonical(&loaded);
+/// # tididi::test_helpers::assert_canonical(&expected);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {

@@ -52,18 +52,11 @@ pub enum PinSemantics {
 
 // ── The leaf seed ────────────────────────────────────────────────────────────
 
-/// The count a leaf `label` seeds with, for a variable pinned to `pin`.
+/// Count a leaf label under an optional pin and its chosen semantics.
 ///
-/// Three values, always: a leaf is a constant, a literal, or dropped. `One`
-/// counts both assignments of its variable, a literal counts one, and `Zero`
-/// counts none.
-///
-/// A pin reproduces exactly what conditioning does to a leaf, but by overriding
-/// the seed instead of rewriting pairs and re-minimizing: the branch that
-/// disagrees with the pin is dropped. What the agreeing branch is worth is the
-/// [`PinSemantics`] — `Evidence` counts the pinned variable as determined (×1),
-/// which is exact even when a copy is coupled; `Cofactor` counts it as still free
-/// (×2), leaving the caller to divide by `2^(#pinned)`.
+/// An unpinned free variable contributes two assignments; a literal contributes
+/// one. A disagreeing pin contributes zero, and an agreeing pin contributes one
+/// for evidence or two for cofactoring over the unchanged variable universe.
 pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: PinSemantics) -> u128 {
     let agreeing = match convention {
         PinSemantics::Cofactor => 2,
@@ -87,21 +80,10 @@ pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: PinSema
     }
 }
 
-/// The model count of `tdd` under `eng`'s stop axis.
+/// Count with exact integer arithmetic, releasing child columns after use.
 ///
-/// Hybrid arithmetic: u128 per node, `BigUint` only where one overflows, which
-/// keeps most of the arithmetic off the heap. It is an [`ModelCounter`]
-/// with zero pins under the freed convention (`One`→2, `Pos`/`Neg`→1,
-/// `Zero`→0).
-///
-/// Only the root value is read, so the pass runs under
-/// [`KeepFrontier`]: each child column is freed as its parent's
-/// completes.
-///
-/// # Errors
-///
-/// Propagates the armed stop, polled at every level boundary. Nothing has been
-/// read at the cut, so the partial columns are simply dropped.
+/// Uses the shared counter fold without allocating pin storage. Allocation
+/// refusals and cancellation propagate through the engine's limits.
 pub(crate) fn model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, OperationError> {
     let _op = eng.limits().begin_operation();
     if tdd.is_zero() {
@@ -142,8 +124,6 @@ impl Engine {
 /// The counting entry point on a caller's engine.
 impl crate::Engine {
     /// Run [`Tdd::model_count`](crate::Tdd::model_count) using this batch's scratch and resource limits.
-    ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///

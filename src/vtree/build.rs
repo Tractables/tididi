@@ -56,8 +56,8 @@ impl Vtree {
     ///
     /// ```
     /// use tididi::vtree::{VarId, Vtree};
-    /// let v = Vtree::leaf(VarId(4));
-    /// assert_eq!((v.num_leaves(), v.num_vars(), v.num_nodes()), (1, 5, 1));
+    /// let vtree = Vtree::leaf(VarId(4));
+    /// assert_eq!((vtree.num_leaves(), vtree.num_vars(), vtree.num_nodes()), (1, 5, 1));
     /// ```
     pub fn leaf(var: VarId) -> Self {
         let mut nodes = Vec::with_capacity(1);
@@ -76,11 +76,12 @@ impl Vtree {
     ///
     /// ```
     /// use tididi::vtree::{VarId, Vtree, VtreeError};
-    /// let v = Vtree::join(&Vtree::leaf(VarId(0)), &Vtree::balanced_over(&[VarId(2), VarId(1)])).unwrap();
-    /// assert_eq!((v.num_leaves(), v.num_vars()), (3, 3));
-    /// // Var 1 is already in `v`, so the join is refused and names the clash.
-    /// let clash = Vtree::join(&v, &Vtree::leaf(VarId(1)));
+    /// let vtree = Vtree::join(&Vtree::leaf(VarId(0)), &Vtree::balanced_over(&[VarId(2), VarId(1)]))?;
+    /// assert_eq!((vtree.num_leaves(), vtree.num_vars()), (3, 3));
+    /// // Var 1 is already in `vtree`, so the join is refused and names the clash.
+    /// let clash = Vtree::join(&vtree, &Vtree::leaf(VarId(1)));
     /// assert!(matches!(clash, Err(VtreeError::OverlappingVariable(VarId(1)))));
+    /// # Ok::<(), tididi::vtree::VtreeError>(())
     /// ```
     pub fn join(left: &Vtree, right: &Vtree) -> Result<Self, VtreeError> {
         let num_vars = left.num_vars().max(right.num_vars());
@@ -325,8 +326,8 @@ impl Vtree {
     ///     VtreeNode::Leaf { var: VarId(1), parent: None },
     ///     VtreeNode::Internal { left: VtreeIdx(0), right: VtreeIdx(1), parent: None },
     /// ];
-    /// let v = Vtree::from_nodes(nodes, VtreeIdx(2), 2).unwrap();
-    /// assert_eq!((v.num_leaves(), v.num_vars()), (2, 2));
+    /// let vtree = Vtree::from_nodes(nodes, VtreeIdx(2), 2)?;
+    /// assert_eq!((vtree.num_leaves(), vtree.num_vars()), (2, 2));
     ///
     /// // A lone leaf the root cannot reach makes the list something other
     /// // than one tree.
@@ -338,6 +339,7 @@ impl Vtree {
     ///     Vtree::from_nodes(stray, VtreeIdx(0), 2),
     ///     Err(VtreeError::Invalid(_)),
     /// ));
+    /// # Ok::<(), tididi::vtree::VtreeError>(())
     /// ```
     pub fn from_nodes(
         nodes: Vec<VtreeNode>,

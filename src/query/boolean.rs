@@ -9,8 +9,6 @@ use rustc_hash::FxHashMap;
 impl Engine {
     /// Run [`Tdd::equivalent`](crate::Tdd::equivalent) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
     /// Returns the operation's errors or [`OperationError::Stopped`]
@@ -39,8 +37,6 @@ impl Engine {
 
     /// Run [`Tdd::implies`](crate::Tdd::implies) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
     /// Returns the operation's errors or [`OperationError::Stopped`]
@@ -67,8 +63,6 @@ impl Engine {
 
     /// Run [`Tdd::support`](crate::Tdd::support) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
     /// Returns the operation's errors or [`OperationError::Stopped`]
@@ -79,8 +73,6 @@ impl Engine {
     }
 
     /// Run [`Tdd::implied_literals`](crate::Tdd::implied_literals) using this batch's scratch and resource limits.
-    ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///
@@ -119,8 +111,6 @@ impl Engine {
     }
 
     /// Run [`Tdd::satisfying_assignment`](crate::Tdd::satisfying_assignment) using this batch's scratch and resource limits.
-    ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///

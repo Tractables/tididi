@@ -11,8 +11,6 @@ use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
 impl Engine {
     /// Run [`Tdd::is_sat`](crate::Tdd::is_sat) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
     /// Returns the operation's errors or [`OperationError::Stopped`](crate::OperationError::Stopped)

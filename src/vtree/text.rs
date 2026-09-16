@@ -24,7 +24,7 @@ impl Vtree {
     /// use tididi::vtree::{Vtree, VtreeError};
     ///
     /// let text = "vtree 3\nL 0 1\nL 1 2\nI 2 0 1\n";
-    /// let vtree = Vtree::from_text(text).unwrap();
+    /// let vtree = Vtree::from_text(text)?;
     /// assert_eq!(vtree.num_leaves(), 2);
     /// assert_eq!(vtree.to_text(), text);
     ///
@@ -34,6 +34,7 @@ impl Vtree {
     ///     Err(VtreeError::Text(msg)) => assert!(!msg.is_empty()),
     ///     Err(other) => unreachable!("{other}"),
     /// }
+    /// # Ok::<(), tididi::vtree::VtreeError>(())
     /// ```
     pub fn from_text(s: &str) -> Result<Self, VtreeError> {
         let vtree = Self::parse_vtree_text(s).map_err(VtreeError::Text)?;

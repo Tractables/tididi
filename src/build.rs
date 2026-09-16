@@ -1,10 +1,4 @@
-//! Constants and cubes as diagrams.
-//!
-//! These are the leaves of every compilation: everything else is built by
-//! combining them with [`crate::apply`] and reducing with [`crate::reduce`].
-//!
-//! Entry points: [`Tdd::one`] and [`Tdd::zero`] are the two constants;
-//! [`Tdd::cube`] builds a conjunction of literals and [`Tdd::clause`] a disjunction.
+//! Constant, literal and cube construction over a shared vtree.
 
 use std::sync::Arc;
 
@@ -203,8 +197,6 @@ impl Tdd {
 impl crate::Engine {
     /// Run [`crate::literal`] using this batch's scratch and resource limits.
     ///
-    /// Inputs and result semantics follow the free function.
-    ///
     /// # Errors
     ///
     /// Returns the operation's errors or [`OperationError::Stopped`]
@@ -232,8 +224,6 @@ impl crate::Engine {
     }
 
     /// Run [`Tdd::cube`](crate::Tdd::cube) using this batch's scratch and resource limits.
-    ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///

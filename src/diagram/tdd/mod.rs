@@ -380,33 +380,27 @@ impl Tdd {
     /// a level summed out without one holds counts, and nothing converts them.
     /// A structural diagram may replace its table; after marginalization, stored
     /// values and their weight interpretation must remain consistent.
-    /// Conjunction (`&`, [`Engine::and`](crate::Engine::and),
-    /// [`Engine::and_clause`](crate::Engine::and_clause)), projection,
+    /// Conjunction ([`and`](crate::and), [`Tdd::and_clause`]), projection,
     /// conditioning, negation, disjunction and care restriction preserve weights.
     /// [`Tdd::graft_over`] accepts a destination store for renamed parts.
     /// A weight-marginal level exists only in a diagram carrying a store.
-    ///
-    /// # Errors
-    ///
-    /// Refuses count-marginal levels, missing or inconsistent columns, and a
-    /// different weight configuration after marginalization; leaves the diagram unchanged.
     ///
     /// Keep a weighted value while releasing structure:
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
+    /// use tididi::{Tdd, Vtree};
     /// use tididi::diagram::{Arithmetic, RationalWeights, WeightStore};
     ///
-    ///
-    /// let engine = Engine::new();
     /// let vtree = Arc::new(Vtree::balanced(2));
-    /// let mut f = engine.clause(&vtree, [1, 2])?;
+    /// let mut f = Tdd::clause(&vtree, [1, 2])?;
     /// f.set_weights(WeightStore::new(RationalWeights::unit(2), Arithmetic::ExactRational))?;
-    /// let before = engine.weighted_value(&f)?.unwrap().into_rational();
-    /// engine.marginalize_levels(&mut f, &[vtree.root()])?;
+    /// let before = f.weighted_value()?.expect("weights are attached").into_rational();
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// f.marginalize_levels(&[vtree.root()])?;
     /// assert!(f.has_marginal_level());
-    /// assert_eq!(engine.weighted_value(&f)?.unwrap().into_rational(), before);
+    /// assert_eq!(f.weighted_value()?.expect("weights are attached").into_rational(), before);
+    /// # tididi::test_helpers::assert_canonical(&f);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///

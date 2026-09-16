@@ -46,12 +46,13 @@ impl Vtree {
     /// ```
     /// use tididi::vtree::{VarId, Vtree, VtreeError};
     /// let parts = [Vtree::balanced_over(&[VarId(0), VarId(1)]), Vtree::leaf(VarId(3))];
-    /// let v = Vtree::graft(&parts, &[VarId(2)]).unwrap();
-    /// assert_eq!((v.num_leaves(), v.num_vars()), (4, 4));
+    /// let vtree = Vtree::graft(&parts, &[VarId(2)])?;
+    /// assert_eq!((vtree.num_leaves(), vtree.num_vars()), (4, 4));
     ///
     /// // A spine variable one of the pieces already carries is refused.
     /// let clash = Vtree::graft(&parts, &[VarId(1)]);
     /// assert!(matches!(clash, Err(VtreeError::OverlappingVariable(VarId(1)))));
+    /// # Ok::<(), tididi::vtree::VtreeError>(())
     /// ```
     pub fn graft(subtrees: &[Vtree], spine_vars: &[VarId]) -> Result<Self, VtreeError> {
         let num_vars = subtrees
@@ -87,8 +88,8 @@ impl Vtree {
     /// let b = Vtree::balanced_over(&[VarId(0), VarId(1)]);
     /// // Each piece is compiled in its own id space, so piece 1 is shifted up.
     /// let shift = |k: usize, v: VarId| VarId(v.0 + 2 * k as u32);
-    /// let (v, layout) = Vtree::graft_over(&[&a, &b], shift, &[VarId(4)], 5).unwrap();
-    /// assert_eq!(v.num_leaves(), 5);
+    /// let (vtree, layout) = Vtree::graft_over(&[&a, &b], shift, &[VarId(4)], 5)?;
+    /// assert_eq!(vtree.num_leaves(), 5);
     /// assert_eq!(layout.comp_to_full.len(), 2);
     ///
     /// // The same call without the rename lands both pieces on the same ids.
@@ -97,6 +98,7 @@ impl Vtree {
     ///     Err(VtreeError::OverlappingVariable(_)) => {}
     ///     Err(other) => unreachable!("{other}"),
     /// }
+    /// # Ok::<(), tididi::vtree::VtreeError>(())
     /// ```
     pub fn graft_over(
         subtrees: &[&Vtree],

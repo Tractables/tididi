@@ -19,7 +19,7 @@ use crate::vtree::VarId;
 /// # Ok::<(), OperationError>(())
 /// ```
 ///
-/// Constructors such as [`Engine::clause`](crate::Engine::clause) accept iterators
+/// Constructors such as [`Tdd::clause`](crate::Tdd::clause) accept iterators
 /// of integers or typed literals, by value or reference.
 /// [`Tdd::and_clause`](crate::Tdd::and_clause) accepts arrays, slices and vectors
 /// of either type.
@@ -81,7 +81,7 @@ impl TryFrom<i32> for Literal {
 /// Convert a borrowed signed integer with the same checks as [`Literal::try_from`].
 ///
 /// A slice iterates as references, so this is what lets a `&[i32]` or a
-/// `&Vec<i32>` of DIMACS literals go straight into [`crate::Engine::clause`].
+/// `&Vec<i32>` of DIMACS literals go straight into [`crate::Tdd::clause`].
 ///
 /// # Errors
 /// Returns [`OperationError::InvalidLiteral`](crate::OperationError::InvalidLiteral) for zero.
@@ -105,7 +105,7 @@ impl TryFrom<&i32> for Literal {
     }
 }
 
-/// Copy a borrowed literal, so [`crate::Engine::clause`] accepts a `&[Literal]`.
+/// Copy a borrowed literal, so [`crate::Tdd::clause`] accepts a `&[Literal]`.
 ///
 /// ```
 /// use std::sync::Arc;

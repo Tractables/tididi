@@ -1,19 +1,10 @@
-//! Levels, nodes, pairs, the reference encodings, the level pool, weights.
+//! Diagram storage and traversal.
 //!
-//! This is storage, not algorithm: the operations over these types live in
-//! [`crate::apply`], [`Tdd::marginalize_levels`], [`crate::reduce`] and
-//! [`crate::restructure`], and the tree the levels are seated on is
-//! [`crate::vtree`].
-//!
-//! Entry points: [`Tdd`] is the diagram, [`TddLevel`] one vtree node's storage
-//! in it, [`ChildPair`] one element of a node's decomposition, and [`ChildDecoder`]
-//! the decoding a pair side goes through when its child level is marginal.
-//! [`TddBuilder`] assembles a diagram level by level, and [`EvalAlgebra`] defines
-//! how a structural diagram is evaluated.
-//!
-//! The stored encoding is the traversal contract: a reader walks the levels
-//! and pairs directly, with no view layer in between. Everything a reader may
-//! rely on is stated on the types themselves; this section is the map.
+//! [`Tdd`] holds one [`TddLevel`] per vtree node. Each structural node is a
+//! disjunction of [`ChildPair`] products; [`ChildDecoder`] interprets pair
+//! references when a child level stores marginalized values.
+//! [`TddBuilder`] assembles a diagram level by level, and [`EvalAlgebra`]
+//! defines arithmetic for evaluating a structural diagram.
 //!
 //! # Traversing a diagram
 //!

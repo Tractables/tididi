@@ -108,9 +108,8 @@ pub trait Retention: sealed::Sealed {}
 #[derive(Debug, Clone, Copy)]
 pub struct KeepAllColumns;
 
-/// Keep only the walk frontier: each child column is freed as its parent's
-/// completes. Peak is the frontier rather than the whole diagram, and the root
-/// count is the only read.
+/// Keep only columns still needed by the bottom-up walk, freeing each child
+/// column after its parent is computed. A changed query repeats the full fold.
 #[derive(Debug, Clone, Copy)]
 pub struct KeepFrontier;
 
@@ -214,7 +213,7 @@ impl Tdd {
     /// [`KeepAllColumns`] retains counts for incremental updates;
     /// [`KeepFrontier`] frees child columns after their parent is computed.
     /// [`PinSemantics`] controls how observed variables contribute to counts.
-    /// Pin storage is proportional to the tree's size, including for sparse
+    /// Pin storage is proportional to the vtree's size, including for sparse
     /// variable IDs. Value columns are allocated on the first count, and
     /// pin changes require no further allocation.
     ///

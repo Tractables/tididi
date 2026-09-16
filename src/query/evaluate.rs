@@ -13,8 +13,6 @@ use crate::limits::{OperationError, PollGate};
 impl Engine {
     /// Run [`Tdd::evaluate`](crate::Tdd::evaluate) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
     /// Returns the operation's errors or [`OperationError::Stopped`]
@@ -126,8 +124,6 @@ impl<S: EvalAlgebra> PairAlgebra for Evaluate<'_, S> {
 
 impl Engine {
     /// Run [`Tdd::weighted_value`](crate::Tdd::weighted_value) using this batch's scratch and resource limits.
-    ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
     ///
     /// # Errors
     ///

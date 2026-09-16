@@ -1,4 +1,4 @@
-//! [`TddBuilder`], the one way to assemble a [`Tdd`] level by level.
+//! Assemble a diagram level by level with [`TddBuilder`].
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -66,10 +66,8 @@ impl<'a> LevelView<'a> {
 
 /// A diagram under construction: one level per vtree node, filled bottom-up.
 ///
-/// Obtained from [`Tdd::builder`], finished with [`finish`](Self::finish) or
-/// dropped with [`abandon`](Self::abandon). The builder holds the vtree the
-/// result will be seated on, so a finished diagram can never be paired with a
-/// tree it was not built against.
+/// Start with [`Tdd::builder`], add nodes, then call [`finish`](Self::finish)
+/// with the output node. The result shares the vtree supplied to the builder.
 ///
 /// Level buffers come from the engine's recycling pool. On success they belong
 /// to the returned diagram; [`abandon`](Self::abandon) returns them to the pool,
@@ -91,9 +89,10 @@ impl<'a> LevelView<'a> {
 /// let eng = Engine::new();
 /// let vtree = Arc::new(Vtree::balanced(2));
 /// let root = vtree.root();
-/// let mut b = Tdd::builder(&eng, &vtree);
-/// let node = b.push(root, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]);
-/// let f = b.finish(TddNodeId { vtree: root, local: node }).unwrap();
+/// let mut builder = Tdd::builder(&eng, &vtree);
+/// let node = builder.push(root, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]);
+/// let f = builder.finish(TddNodeId { vtree: root, local: node })?;
+/// # tididi::test_helpers::assert_canonical(&f);
 /// assert_eq!(f.model_count()?, 1u32.into());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
