@@ -1,7 +1,7 @@
 # Architecture
 
 This reference describes the storage, passes, and invariants used by the
-implementation. For library use, start with the [task guide]; for the meaning
+implementation. For library use, start with the [API overview]; for the meaning
 of levels and pairs, read the [data model].
 
 ## Storage and operations
@@ -185,5 +185,5 @@ process-wide state, no C or C++ code built.
 
 [`EncodedChildRef`]: crate::diagram::EncodedChildRef
 
-[task guide]: crate::guide::api
+[API overview]: crate::guide::api
 [data model]: crate::guide::model

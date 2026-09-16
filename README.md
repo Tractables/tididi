@@ -4,16 +4,36 @@
 
 [![Rust](https://github.com/Tractables/tididi/actions/workflows/rust.yml/badge.svg)](https://github.com/Tractables/tididi/actions/workflows/rust.yml)
 
-A Rust library for Tree Decision Diagrams (TDDs): representations of Boolean
-functions that you can build once and query repeatedly. Encode constraints to
-count valid configurations or find a solution, evaluate probabilities under
-changing assumptions, or compute reachable states in a transition system.
+tididi is a Rust library for **Tree Decision Diagrams (TDDs)**. A TDD represents
+a Boolean function as a circuit, so you can work with its satisfying assignments
+without listing them. Circuits can be combined, transformed, and reused for
+many different queries.
 
-A TDD decomposes a function along a **vtree**, a binary tree over its variables.
 TDDs can be strictly more succinct than ordered binary decision diagrams (OBDDs).
-The representation and its minimization algorithm are described in [*A Canonical Generalization of OBDD*](https://arxiv.org/abs/2604.05537).
+Their representation and minimization algorithm are described in
+[*A Canonical Generalization of OBDD*](https://arxiv.org/abs/2604.05537).
 
-## Start with a function
+## Working with circuits
+
+**Build and transform Boolean functions.** Combine smaller circuits with Boolean
+operations, fix variables to chosen values, or eliminate variables with
+quantification. These operations also work on sets and relations encoded as
+Boolean functions: the [reachability example] uses conjunction, quantification,
+and variable renaming to explore a transition system.
+
+**Find solutions and count possibilities.** Check whether constraints can be
+satisfied, obtain a satisfying assignment, or count all solutions exactly. You
+can also compare functions for equivalence or implication. The
+[configuration example] builds rules for a backup application, counts the valid
+configurations, and narrows the choices after an observation.
+
+**Evaluate weighted models.** Assign weights to literals to compute weighted
+sums, including probabilities, and change those weights without rebuilding the
+circuit. The [probability example] combines events and evaluates their weights
+to answer a conditional-probability query. Custom evaluation algebras let the
+same circuit compute other quantities.
+
+## Getting started
 
 Add the crate to your project:
 
@@ -45,34 +65,29 @@ There are four models with `z` true, and one more with `z` false and both
 variables the function leaves free. The conversion to `u64` returns an error
 if the exact count does not fit.
 
-Signed integers name literals: `1` means `x`, `-2` means `¬y`, and zero is
-invalid. Use the same `Arc<Vtree>` for functions you intend to combine.
+A **vtree** is a binary tree that groups the circuit's variables. Use the same
+`Arc<Vtree>` for circuits you intend to combine. Signed integers name literals:
+`1` means `x`, `-2` means `¬y`, and zero is invalid.
 
-Each [`Tdd`] owns its diagram. Boolean operations consume their operands; clone an
-operand first if you need to keep it. Cloning copies diagram storage and shares
-the vtree; queries such as `model_count` borrow the diagram.
+Each [`Tdd`] owns its circuit. Boolean operations consume their operands; clone
+an operand first if you need to keep it. Cloning copies diagram storage and shares
+the vtree; queries such as `model_count` borrow the circuit.
 
-## Continue with your task
+## Representation and integration
 
-Start with [the configuration walkthrough](https://tractables.github.io/tididi/tididi/guide/examples/configurations/index.html).
-It encodes rules for a backup application, counts its valid configurations,
-finds one solution, and counts the configurations that enable remote backups.
+Minimization removes redundancy, and the choice of vtree affects circuit size.
+The [variable-grouping example] compares the same function under two vtrees;
+the [TDD data model] explains the representation.
 
-Use the [task guide] to find an operation, or continue with another walkthrough:
+For applications that keep circuits between runs, the [persistence example]
+shows how to save and reload them. The [execution example] adds resource limits
+to a batch of operations. You can also inspect the stored nodes and pairs, as
+shown in the [custom-statistic example].
 
-| Walkthrough | What it shows |
-| --- | --- |
-| [Conditional probability](https://tractables.github.io/tididi/tididi/guide/examples/probability/index.html) | Compute the probability of rain given wet grass, then change the priors. |
-| [Reachable states](https://tractables.github.io/tididi/tididi/guide/examples/reachability/index.html) | Find reachable states and check that a forbidden state cannot be reached. |
-| [Save and reload diagrams](https://tractables.github.io/tididi/tididi/guide/examples/persistence/index.html) | Restore two rules onto one shared vtree, then combine them. |
-| [Execution controls](https://tractables.github.io/tididi/tididi/guide/examples/execution/index.html) | Bound a batch and release idle working buffers. |
-| [Variable grouping](https://tractables.github.io/tididi/tididi/guide/examples/vtrees/index.html) | Compare the same function under two vtrees. |
-| [A custom statistic](https://tractables.github.io/tididi/tididi/guide/examples/statistics/index.html) | Traverse the stored nodes and pairs. |
-
-For the concepts behind the API, read the [TDD data model]. The
-[API reference] documents each operation's input requirements, result, and
-errors; the [architecture reference] describes the implementation for contributors.
-For local documentation, run `cargo doc --no-deps` and open
+The [API overview] groups the available operations by what they do and links
+to their specifications. The [API reference] documents individual items, and
+the [architecture reference] describes the implementation for contributors.
+To browse the documentation locally, run `cargo doc --no-deps` and open
 `target/doc/tididi/index.html`.
 
 ## Citing
@@ -95,7 +110,14 @@ TDDs were introduced in the following paper:
 Apache License, Version 2.0 ([LICENSE](./LICENSE)).
 
 [`Tdd`]: https://tractables.github.io/tididi/tididi/diagram/struct.Tdd.html
-[task guide]: https://tractables.github.io/tididi/tididi/guide/api/index.html
+[configuration example]: https://tractables.github.io/tididi/tididi/guide/examples/configurations/index.html
+[reachability example]: https://tractables.github.io/tididi/tididi/guide/examples/reachability/index.html
+[probability example]: https://tractables.github.io/tididi/tididi/guide/examples/probability/index.html
+[variable-grouping example]: https://tractables.github.io/tididi/tididi/guide/examples/vtrees/index.html
+[persistence example]: https://tractables.github.io/tididi/tididi/guide/examples/persistence/index.html
+[execution example]: https://tractables.github.io/tididi/tididi/guide/examples/execution/index.html
+[custom-statistic example]: https://tractables.github.io/tididi/tididi/guide/examples/statistics/index.html
+[API overview]: https://tractables.github.io/tididi/tididi/guide/api/index.html
 [TDD data model]: https://tractables.github.io/tididi/tididi/guide/model/index.html
 [API reference]: https://tractables.github.io/tididi/tididi/
 [architecture reference]: https://tractables.github.io/tididi/tididi/guide/architecture/index.html

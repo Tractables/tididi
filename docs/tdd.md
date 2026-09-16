@@ -3,7 +3,7 @@
 A Tree Decision Diagram represents a Boolean function by decomposing it along
 a tree of variables. The same diagram can answer different questions: which
 assignments satisfy the function, how many there are, or what their combined
-weight is. This guide introduces the representation; the [task guide] connects
+weight is. This guide introduces the representation; the [API overview] connects
 it to operations in the library.
 
 ## Start with the vtree
@@ -92,7 +92,7 @@ indices, so array order is not a traversal order.
 [`TddBuilder`] checks storage when assembling a diagram by hand; its author
 must also establish the determinism contract documented on that type.
 
-[task guide]: crate::guide::api
+[API overview]: crate::guide::api
 [the TDD paper, Section 5]: https://arxiv.org/html/2604.05537v1#S5
 [`Vtree`]: crate::Vtree
 [`Tdd`]: crate::Tdd

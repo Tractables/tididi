@@ -106,5 +106,5 @@ can propagate vtree, I/O, and operation errors. See
 [`read_tdd`](crate::io::read_tdd) for the format checks made during loading.
 
 The [complete program](https://github.com/Tractables/tididi/blob/main/examples/save_reload.rs)
-puts these steps together; the [task guide](crate::guide::api) lists the other
+puts these steps together; the [API overview](crate::guide::api) lists the other
 operations available on restored diagrams.

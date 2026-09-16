@@ -1,7 +1,7 @@
-//! Start with the [configuration walkthrough](examples::configurations), then
-//! use the [task guide](api) to find an operation.
-//! Read the [data model](model) for TDD semantics or the
-//! [architecture reference](architecture) when extending the implementation.
+//! The [API overview](api) groups circuit operations and links to their specifications.
+//! The [worked examples](examples) combine these operations in applications.
+//! Read the [data model](model) for the representation or the
+//! [architecture reference](architecture) for the implementation.
 
 /// Worked examples, from Boolean constraints to custom diagram traversal.
 pub mod examples {

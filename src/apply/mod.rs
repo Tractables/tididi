@@ -12,7 +12,7 @@
 //!
 //! These operations return errors; the `&`, `|` and `!` operators panic on refusal.
 //! Use [`Context::with_limits`](crate::Context::with_limits) for a bounded batch.
-//! Find a task and its examples in the [task guide](crate::guide::api).
+//! The [API overview](crate::guide::api) connects circuit operations with worked examples.
 
 pub(crate) mod conjoin;
 pub(crate) mod conjoin_clause;

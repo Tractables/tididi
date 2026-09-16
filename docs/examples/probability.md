@@ -147,4 +147,4 @@ probabilities while keeping the compiled logical events.
 
 See the [complete program](https://github.com/Tractables/tididi/blob/main/examples/probabilistic_query.rs)
 for the scenario loop and its assertions, and the
-[task guide](crate::guide::api) for other weighted queries.
+[API overview](crate::guide::api) for other weighted queries.

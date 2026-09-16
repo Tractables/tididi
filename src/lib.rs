@@ -28,20 +28,20 @@
 //! Queries borrow diagrams; transformations taking `Tdd` consume them, so clone
 //! an operand first if it must be kept.
 //!
-//! # Where to go next
+//! # Applications
 //!
-//! Start with the [configuration walkthrough](guide::examples::configurations):
-//! encode backup rules, count valid configurations, find one solution, and
-//! narrow the choices with an observation.
-//! The [worked examples](guide::examples) also explain probability queries,
-//! reachable states and custom traversal in small steps.
-//! Follow the [task guide](guide::api) for construction, queries, transformations,
-//! probabilities, limits, and persistence. [`Tdd`] explains ownership and
-//! checked operations; [`Context`] explains batches, and [`Vtree`] explains the
-//! variable universe.
+//! The [configuration example](guide::examples::configurations) builds constraints,
+//! counts solutions, and narrows the choices after an observation.
+//! The [reachability example](guide::examples::reachability) combines Boolean
+//! operations, quantification, and renaming to explore a transition system.
+//! The [probability example](guide::examples::probability) evaluates events under
+//! changing weights to answer conditional-probability queries.
 //!
-//! The [data model](guide::model) introduces levels, pairs, and determinism.
-//! For work on the implementation, use the [architecture reference](guide::architecture).
+//! The [API overview](guide::api) groups circuit operations and links to their
+//! specifications. Further [worked examples](guide::examples) cover persistence,
+//! execution limits, variable grouping, and custom traversal.
+//! The [data model](guide::model) explains the representation, and the
+//! [architecture reference](guide::architecture) describes the implementation.
 
 // Guards the public-release doc surface: an undocumented public item warns.
 #![warn(missing_docs)]
