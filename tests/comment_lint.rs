@@ -63,7 +63,17 @@ fn crate_dir() -> PathBuf {
 
 /// A file whose contents are themselves tests, and so outside these rules.
 fn is_test_file(rel: &str) -> bool {
-    rel.contains("/tests/") || rel.starts_with("test_helpers/")
+    rel.starts_with("tests/") || rel.contains("/tests/") || rel.starts_with("test_helpers/")
+}
+
+#[test]
+fn test_files_are_recognized_at_the_crate_root_and_within_modules() {
+    for rel in ["tests/build/checked.rs", "apply/tests/condition/mod.rs", "test_helpers/mod.rs"] {
+        assert!(is_test_file(rel), "{rel}");
+    }
+    for rel in ["build.rs", "apply/condition.rs", "query/count/incremental.rs"] {
+        assert!(!is_test_file(rel), "{rel}");
+    }
 }
 
 /// Every `.rs` file under `src/`, as a path relative to `src/`, sorted.

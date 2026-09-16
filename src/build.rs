@@ -251,4 +251,5 @@ impl crate::engine::Engine {
 }
 
 #[cfg(test)]
+#[path = "tests/build/mod.rs"]
 mod tests;

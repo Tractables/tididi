@@ -676,4 +676,5 @@ impl ModelCounter<'_, KeepAllColumns> {
 }
 
 #[cfg(test)]
+#[path = "tests/incremental.rs"]
 mod tests;

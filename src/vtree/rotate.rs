@@ -226,4 +226,5 @@ fn unrotate_pointers(vtree: &mut Vtree, info: &RotationInfo, kind: RotationKind)
 }
 
 #[cfg(test)]
+#[path = "tests/rotate/mod.rs"]
 mod tests;

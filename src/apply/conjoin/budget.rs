@@ -172,4 +172,5 @@ fn grow_pairs_for_emit(
 }
 
 #[cfg(test)]
+#[path = "tests/budget/mod.rs"]
 mod tests;

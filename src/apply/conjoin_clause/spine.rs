@@ -166,4 +166,5 @@ pub(super) fn fill_leaf_maps(
 
 
 #[cfg(test)]
+#[path = "tests/spine.rs"]
 mod tests;

@@ -96,4 +96,5 @@ pub fn assert_model_count_preserved(tdd: &Tdd, before: Option<BigUint>, op: &str
 }
 
 #[cfg(test)]
+#[path = "tests/marginal_counts/mod.rs"]
 mod tests;

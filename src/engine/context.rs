@@ -133,4 +133,5 @@ impl Drop for Checkout<'_> {
 }
 
 #[cfg(test)]
+#[path = "tests/context.rs"]
 mod tests;

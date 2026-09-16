@@ -277,4 +277,5 @@ pub fn rotate_marginal_cluster(
 }
 
 #[cfg(test)]
+#[path = "tests/cluster/mod.rs"]
 mod tests;

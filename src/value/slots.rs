@@ -503,4 +503,5 @@ pub(crate) fn referenced_marginal_slots<'a>(
 }
 
 #[cfg(test)]
+#[path = "tests/slots/mod.rs"]
 mod tests;

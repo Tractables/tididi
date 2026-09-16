@@ -482,4 +482,5 @@ fn cells_eq(
 }
 
 #[cfg(test)]
+#[path = "tests/relevel/mod.rs"]
 mod tests;

@@ -497,4 +497,5 @@ pub use super::marginal_counts::{assert_model_count_preserved, model_count_snaps
 pub use super::marginal_counts::subsumed_marginal_data_violations;
 
 #[cfg(test)]
+#[path = "tests/marginal/mod.rs"]
 mod tests;

@@ -231,4 +231,5 @@ impl<O: RotationObjective> ProbeRule for Counted<'_, O> {
 }
 
 #[cfg(test)]
+#[path = "tests/local/mod.rs"]
 mod tests;

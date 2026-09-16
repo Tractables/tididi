@@ -339,4 +339,5 @@ pub(crate) fn sort_pairs(pairs: &mut [ChildPair]) {
 }
 
 #[cfg(test)]
+#[path = "tests/pairs/mod.rs"]
 mod tests;

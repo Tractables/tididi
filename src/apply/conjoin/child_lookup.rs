@@ -116,4 +116,5 @@ impl ChildLookup for MarginalLookup {
 }
 
 #[cfg(test)]
+#[path = "tests/child_lookup/mod.rs"]
 mod tests;

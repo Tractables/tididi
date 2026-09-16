@@ -464,4 +464,5 @@ pub(crate) fn weight_key(v: &WeightValue) -> WeightKey {
 
 
 #[cfg(test)]
+#[path = "tests/weight/mod.rs"]
 mod tests;

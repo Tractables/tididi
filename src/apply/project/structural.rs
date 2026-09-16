@@ -396,4 +396,5 @@ impl Rewrite<'_> {
 }
 
 #[cfg(test)]
+#[path = "tests/structural.rs"]
 mod tests;

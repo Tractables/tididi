@@ -80,4 +80,5 @@ const PER_V_PAIRS_RETAIN: usize = 1024;
 pub(super) const SCRATCH_RETAIN_ENTRIES: usize = 1 << 16;
 
 #[cfg(test)]
+#[path = "tests/scratch.rs"]
 mod tests;

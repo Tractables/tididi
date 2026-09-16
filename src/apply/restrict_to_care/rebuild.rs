@@ -164,4 +164,5 @@ impl DeadRebuilder<'_> {
 }
 
 #[cfg(test)]
+#[path = "tests/rebuild.rs"]
 mod tests;

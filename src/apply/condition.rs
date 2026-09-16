@@ -333,6 +333,7 @@ fn canonicalize_false_output(tdd: &mut crate::diagram::Tdd) {
 }
 
 #[cfg(test)]
+#[path = "tests/condition/mod.rs"]
 mod tests;
 
 /// The conditioning entry points on a caller's engine.

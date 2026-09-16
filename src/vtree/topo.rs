@@ -208,4 +208,5 @@ impl Vtree {
 }
 
 #[cfg(test)]
+#[path = "tests/topo/mod.rs"]
 mod tests;

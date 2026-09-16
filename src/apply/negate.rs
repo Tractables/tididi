@@ -361,4 +361,5 @@ fn missing_cells(
 }
 
 #[cfg(test)]
+#[path = "tests/negate/mod.rs"]
 mod tests;

@@ -301,4 +301,5 @@ fn joint_contract_fixpoint(
 }
 
 #[cfg(test)]
+#[path = "tests/strategies/mod.rs"]
 mod tests;

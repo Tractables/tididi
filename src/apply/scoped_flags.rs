@@ -67,4 +67,5 @@ impl Drop for ScopedFlags<'_> {
 }
 
 #[cfg(test)]
+#[path = "tests/scoped_flags.rs"]
 mod tests;

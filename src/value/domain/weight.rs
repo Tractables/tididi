@@ -121,4 +121,5 @@ impl ValueDomain for WeightFold {
 
 
 #[cfg(test)]
+#[path = "tests/weight/mod.rs"]
 mod tests;

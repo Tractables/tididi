@@ -376,4 +376,5 @@ fn rewrite_swapped_refs(
 /// diverge (different slot order / absent counts / different lengths), which
 /// these tests construct directly.
 #[cfg(test)]
+#[path = "tests/swap/mod.rs"]
 mod tests;
