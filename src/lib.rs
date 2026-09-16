@@ -1,6 +1,6 @@
 //! Represent Boolean functions with Tree Decision Diagrams.
 //!
-//! A [`Vtree`] groups the variables and a [`Tdd`] owns a function on that tree.
+//! A [`Vtree`] groups the variables and a [`Tdd`] owns a function on that vtree.
 //! Combine diagrams with [`and`] and [`or`], then reuse the result for
 //! model counting, Boolean queries, or evaluation under different literal weights.
 //!

@@ -2,7 +2,7 @@
 
 The same Boolean function can need different amounts of storage under different
 vtrees. Consider `(x1 ↔ x3) ∧ (x2 ↔ x4)`: two independent pairs of variables
-must agree. We will build it under two balanced trees and compare the minimized
+must agree. We will build it under two balanced vtrees and compare the minimized
 representations.
 
 Run `cargo run --example vtree_grouping`; only `tididi` is needed as a dependency.
@@ -16,7 +16,7 @@ use tididi::vtree::VarId;
 
 ## Keep each equality together, or split both
 
-The trees have the same shape and variables. Only the leaf order changes:
+The vtrees have the same shape and variables. Only the leaf order changes:
 
 ```text
 Equalities grouped                  Equalities split
@@ -34,18 +34,17 @@ variable identifiers in left-to-right leaf order. Changing their positions
 does not rename them: `VarId(2)` still means `x3`.
 
 ```rust,ignore
-let grouped_tree = Arc::new(Vtree::balanced_over(&[
+let grouped_vtree = Arc::new(Vtree::balanced_over(&[
     VarId(0), VarId(2), VarId(1), VarId(3),
 ]));
-let split_tree = Arc::new(Vtree::balanced(4));
+let split_vtree = Arc::new(Vtree::balanced(4));
 ```
 
-## Build the same formula on each tree
+## Build the same formula on each vtree
 
 Equality is a pair of implications: `x1 ↔ x3` is
 `(¬x1 ∨ x3) ∧ (x1 ∨ ¬x3)`. The helper uses the same literal numbers for either
-tree, then minimizes before comparing storage. The helper returns a `Result`;
-`?` passes any operation error back to `main`, which also returns a `Result`:
+vtree, then minimizes before comparing storage:
 
 ```rust,ignore
 fn equal_pairs(vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
@@ -58,8 +57,8 @@ fn equal_pairs(vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
 ```
 
 ```rust,ignore
-let grouped = equal_pairs(&grouped_tree)?;
-let split = equal_pairs(&split_tree)?;
+let grouped = equal_pairs(&grouped_vtree)?;
+let split = equal_pairs(&split_vtree)?;
 assert_eq!(grouped.model_count()?, 4u32.into());
 assert_eq!(split.model_count()?, 4u32.into());
 assert_eq!(grouped.pair_count(), 5);
@@ -69,14 +68,14 @@ assert_eq!(split.pair_count(), 12);
 Each equality allows both variables to be false or both to be true, giving
 four models in total. We know the functions agree because the helper constructs
 the same formula; equal counts by themselves would not prove equivalence.
-The diagrams have different trees, so the binary operations requiring a shared
+The diagrams have different vtrees, so the binary operations requiring a shared
 vtree cannot compare or combine them directly.
 
 ## Account for the stored pairs
 
-In the grouped tree, each child of the root represents a complete equality.
+In the grouped vtree, each child of the root represents a complete equality.
 Each equality needs two pairs, and the root conjoins them with one pair.
-In the split tree, the root must match each of four left assignments with its
+In the split vtree, the root must match each of four left assignments with its
 corresponding right assignment:
 
 | Grouping | Pairs at left level | Pairs at right level | Pairs at root | Total |
@@ -89,7 +88,7 @@ representations still describe the same four models.
 
 ## Apply the example to your own model
 
-A balanced tree in natural order is a useful starting point. If the model has
+A balanced vtree in natural order is a useful starting point. If the model has
 separate groups of constraints, try grouping their variables into subtrees and
 compare the resulting diagrams. This example favors keeping equality partners
 together; it does not establish a best order for other functions.

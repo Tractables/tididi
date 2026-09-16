@@ -27,7 +27,7 @@ let destination = Tdd::clause(&vtree, [1, 2])?;
 let encryption_rule = Tdd::clause(&vtree, [-2, 3])?;
 ```
 
-Both diagrams share the same tree. Save that tree once alongside the two
+Both diagrams share the same vtree. Save that vtree once alongside the two
 serialized diagrams:
 
 ```text
@@ -43,7 +43,7 @@ saved session
 vector is one such stream. The vtree has its own text representation:
 
 ```rust,ignore
-let tree_text = vtree.to_text();
+let vtree_text = vtree.to_text();
 let mut destination_bytes = Vec::new();
 let mut encryption_bytes = Vec::new();
 write_tdd(&mut destination_bytes, &destination)?;
@@ -60,22 +60,21 @@ Serialization preserves Boolean structure. It does not save attached weights;
 restore those separately. Save before marginalizing, since discarded structure
 cannot be reconstructed from its count or weighted value.
 
-## Restore the tree once
+## Restore the vtree once
 
 Read the saved vtree into one `Arc`, then pass that same allocation to both
 readers:
 
 ```rust,ignore
-let restored_tree = Arc::new(Vtree::from_text(&tree_text)?);
-let destination = read_tdd(&mut destination_bytes.as_slice(), &restored_tree)?;
-let encryption_rule = read_tdd(&mut encryption_bytes.as_slice(), &restored_tree)?;
+let restored_vtree = Arc::new(Vtree::from_text(&vtree_text)?);
+let destination = read_tdd(&mut destination_bytes.as_slice(), &restored_vtree)?;
+let encryption_rule = read_tdd(&mut encryption_bytes.as_slice(), &restored_vtree)?;
 assert!(Arc::ptr_eq(destination.vtree(), encryption_rule.vtree()));
 ```
 
 Reading the vtree twice would make two separate allocations. Even if their
-text is identical, diagrams on those separate trees cannot be conjoined
-directly. Sharing one restored tree establishes the common domain and gives both
-diagrams a shared workspace for subsequent operations.
+text is identical, diagrams on those separate vtrees cannot be conjoined
+directly. Use the same restored vtree for diagrams you intend to combine.
 
 ## Combine and check the result
 
@@ -88,7 +87,7 @@ assert_eq!(configurations.model_count()?, 4u32.into());
 
 There are four valid assignments: local-only backups with either encryption
 setting, remote-only encrypted backups, and both destinations with encryption.
-Unlike the first walkthrough, this tree has no notification variable, so there
+Unlike the first walkthrough, this vtree has no notification variable, so there
 is no additional factor of two.
 
 The program also checks functional equality against freshly constructed rules;
@@ -96,8 +95,8 @@ a matching model count alone would not establish that the rules survived:
 
 ```rust,ignore
 let expected = and(
-    Tdd::clause(&restored_tree, [1, 2])?,
-    Tdd::clause(&restored_tree, [-2, 3])?,
+    Tdd::clause(&restored_vtree, [1, 2])?,
+    Tdd::clause(&restored_vtree, [-2, 3])?,
 )?;
 assert!(configurations.equivalent(&expected)?);
 ```

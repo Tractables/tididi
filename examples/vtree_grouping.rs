@@ -17,12 +17,12 @@ fn equal_pairs(vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
 
 /// Check equal model counts and compare storage after minimization.
 fn main() -> Result<(), OperationError> {
-    let grouped_tree = Arc::new(Vtree::balanced_over(&[
+    let grouped_vtree = Arc::new(Vtree::balanced_over(&[
         VarId(0), VarId(2), VarId(1), VarId(3),
     ]));
-    let split_tree = Arc::new(Vtree::balanced(4));
-    let grouped = equal_pairs(&grouped_tree)?;
-    let split = equal_pairs(&split_tree)?;
+    let split_vtree = Arc::new(Vtree::balanced(4));
+    let grouped = equal_pairs(&grouped_vtree)?;
+    let split = equal_pairs(&split_vtree)?;
     assert_eq!(grouped.model_count()?, 4u32.into());
     assert_eq!(split.model_count()?, 4u32.into());
     assert_eq!(grouped.pair_count(), 5);

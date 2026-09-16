@@ -11,7 +11,7 @@ order of the complete program, which you can run from the repository with
 
 ## Give each option a variable
 
-A vtree arranges the variables used by our diagrams. Start with a balanced tree
+A vtree arranges the variables used by our diagrams. Start with a balanced vtree
 over four variables and share it between the option diagrams:
 
 ```rust,ignore
@@ -31,13 +31,13 @@ let encrypted = literal(&vtree, 3)?;
 Integer literals start at 1; a negative integer means the option is off.
 The `VarId` values returned by queries start at 0, matching positions in
 `names`. Notifications need no literal here: they remain an unconstrained
-variable in the tree.
+variable in the vtree.
 
 ## Write the rules as Boolean expressions
 
 Use [`or`](crate::or) for alternatives, [`and`](crate::and) for simultaneous
 requirements, and [`negate`](crate::Tdd::negate) to complement a diagram.
-“Remote requires encryption” means either remote backups are off or encryption
+"Remote requires encryption" means either remote backups are off or encryption
 is on:
 
 ```rust,ignore
@@ -52,8 +52,6 @@ return type is `Result<(), tididi::OperationError>`.
 Each `Tdd` owns its circuit. Boolean operations consume their operands, so we clone
 `remote` where we will need it again. Cloning copies the diagram storage and
 shares the vtree; borrow diagrams for queries that do not transform them.
-These operations reuse the working buffers attached to the shared vtree; no
-explicit engine is needed.
 The diagrams must share the same `Arc<Vtree>` allocation, as these do.
 
 ## Count configurations
@@ -112,10 +110,6 @@ so the program verifies that its returned assignment satisfies the rules:
 let selected = and(configurations.clone(), Tdd::cube(&vtree, &witness)?)?;
 assert_eq!(selected.model_count()?, 1u32.into());
 ```
-
-The rules now support counting, additional constraints and finding a solution.
-Boolean operators `&`, `|` and `!` are also available as shorthand that panics
-on failure.
 
 Continue with [execution controls](crate::guide::examples::execution) when you
 need resource limits, or with [probability queries](crate::guide::examples::probability)

@@ -86,21 +86,21 @@ impl Engine {
     ) -> Result<Tdd, OperationError> {
         let lim = self.limits();
         self.minimize(&mut f)?;
-        let tree = f.vtree().clone();
+        let vtree = f.vtree().clone();
         let mut columns = Vec::<Vec<Tdd>>::new();
-        lim.try_resize(&mut columns, tree.num_nodes(), Vec::new())?;
-        for t in tree.bottomup() {
+        lim.try_resize(&mut columns, vtree.num_nodes(), Vec::new())?;
+        for t in vtree.bottomup() {
             lim.poll(&mut gate, 1)?;
-            match *tree.node(t) {
+            match *vtree.node(t) {
                 VtreeNode::Leaf { var, .. } => {
                     let replacement = by_leaf[t.idx()].unwrap_or(Replacement::Literal(Literal::pos(var)));
                     let mut positive = match replacement {
                         Replacement::Diagram(diagram) => diagram.try_clone_on(self)?,
-                        Replacement::Literal(literal) => self.literal(&tree, literal)?,
+                        Replacement::Literal(literal) => self.literal(&vtree, literal)?,
                     };
                     positive.weights = None;
                     let negative = self.negate(positive.try_clone_on(self)?)?;
-                    let one = self.cube(&tree, std::iter::empty::<Literal>())?;
+                    let one = self.cube(&vtree, std::iter::empty::<Literal>())?;
                     lim.reserve_exact(&mut columns[t.idx()], 3)?;
                     // LeafLabel's stable slot order is One, Pos, Neg.
                     debug_assert_eq!(LeafLabel::Pos as usize, 1);
@@ -137,7 +137,7 @@ impl Engine {
         // The destination universe is unchanged; weights stay bound to its variables.
         result.weights = f.weights.take().map(|weights| weights.empty_like());
         // Internal columns are minimized when built; a leaf can return a cloned replacement.
-        if tree.node(f.output().vtree).is_leaf() {
+        if vtree.node(f.output().vtree).is_leaf() {
             self.minimize(&mut result)?;
         }
         Ok(result)

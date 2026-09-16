@@ -30,8 +30,7 @@ use tididi::{and, literal, or, OperationError, Tdd, Vtree};
 
 ## Build the events once
 
-Build the events on one shared vtree. The diagrams reuse its workspace
-automatically when we combine or evaluate them.
+Build the events on one shared vtree.
 
 ```rust,ignore
 let vtree = Arc::new(Vtree::balanced(3));
