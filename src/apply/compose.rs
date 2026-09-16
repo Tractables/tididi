@@ -117,8 +117,6 @@ pub fn and_exists_with_strategy(f: Tdd, g: Tdd, vars: &[VarId], strategy: Quanti
 impl Engine {
     /// Run [`ite`] using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow that function.
-    ///
     /// # Errors
     ///
     /// Returns the operation's errors, plus [`OperationError::Stopped`] or
@@ -151,8 +149,6 @@ impl Engine {
 
     /// Run [`xor`] using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow that function.
-    ///
     /// # Errors
     ///
     /// Returns the operation's errors, plus [`OperationError::Stopped`] or
@@ -172,8 +168,6 @@ impl Engine {
 
     /// Run [`and_exists`] using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow that function.
-    ///
     /// # Errors
     ///
     /// Returns the operation's errors, plus [`OperationError::Stopped`] or
@@ -183,8 +177,6 @@ impl Engine {
     }
 
     /// Run [`and_exists_with_strategy`] using this batch's scratch and resource limits.
-    ///
-    /// Operand requirements, ownership and result semantics follow that function.
     ///
     /// # Errors
     ///

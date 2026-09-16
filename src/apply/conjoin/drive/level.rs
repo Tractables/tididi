@@ -86,18 +86,10 @@ fn materialize_children_and_grid(
         }
     }
 
-    // Claim this level's own space, marking it `Dense` up front so a consumer
-    // that peeks before the emit loop finishes (a debug-assert path, say) still
-    // reads a consistent base.
-    //
-    // Sparse-marginal path: claim only a single reused one-row scratch of g's
-    // width instead of the dense f-by-g slab. `run_level_rows_marginal_sparse`
-    // processes one structural row at a time into this scratch, records the
-    // surviving cells into the output product_list, then frees the scratch —
-    // the dense slab is never materialized. The level is tagged ungridded here;
-    // the grandparent densifies it lazily. That route only exists when the
-    // arena bumps, so a pre-planned layout always takes the dense branch and
-    // its `alloc` is the lookup of a base decided at setup.
+    // Dense output owns an f-by-g slab. Sparse marginal output reuses one
+    // g-width row, records live products separately, and remains ungridded
+    // until its parent needs a dense view. Only a bump arena uses that route;
+    // a preplanned arena already owns the full slab.
     let cells = if use_sparse_marginal { gw.here } else { fw.here * gw.here };
     let base = run.arena.alloc(eng, ti, cells)?;
     if use_sparse_marginal {

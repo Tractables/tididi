@@ -11,28 +11,15 @@ use crate::limits::OperationError;
 use crate::apply::negate::negate_tdd_owned;
 use crate::reduce::{ReductionPlan};
 
-/// Disjunction by De Morgan: `f v g = !(!f ^ !g)`.
-///
-/// Consumes both operands, as [`apply_and`](crate::apply::apply_and) does. The
-/// two operand negations skip minimization; the conjunction's result and the
-/// final complement are minimized. Each negation fills its operand out to full
-/// structure first, so this can grow the diagram — see the module doc.
-///
-/// # Panics
-/// Panics on invalid operands or allocation refusal; [`Engine::or`] returns the error.
+/// Panicking disjunction used by `BitOr` and test fixtures.
+/// The checked entry point is [`or`].
 pub(crate) fn apply_or(f: Tdd, g: Tdd) -> Tdd {
     or(f, g)
         .expect("apply_or: operation refused; use tididi::or to handle errors")
 }
 
-/// Fallible [`apply_or`]: the same disjunction, with the memory refusal handed
-/// back instead of panicked on.
-///
-/// # Errors
-///
-/// Returns the conjunction's or a minimization's [`OperationError`] — a refused
-/// buffer reservation (allocator failure or the configured soft budget), the
-/// output-node cap, or the scoped apply deadline.
+/// Disjoin owned operands by De Morgan, minimizing the product and final complement.
+/// Operand and resource errors follow [`or`] and the engine's installed limits.
 pub(crate) fn disjoin_owned(eng: &Engine, mut f: Tdd, mut g: Tdd) -> Result<Tdd, OperationError> {
     use crate::apply::conjoin::conjoin_owned;
 
@@ -92,11 +79,8 @@ pub fn or(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
     context.run(|eng| eng.or(f, g))
 }
 
-/// The disjunction entry point on a caller's engine.
 impl crate::Engine {
     /// Run [`or`] using this batch's scratch and resource limits.
-    ///
-    /// Operand requirements, ownership and result semantics follow that function.
     ///
     /// # Errors
     ///

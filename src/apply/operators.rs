@@ -1,15 +1,7 @@
-//! The `&`, `|` and `!` impls for [`Tdd`].
+//! Consuming Boolean operators for [`Tdd`].
 //!
-//! Each is a one-line forward to the operation beside it and holds no logic of
-//! its own. All three reuse the vtree's execution context and panic
-//! where the checked operation would return an error. To run `&` or `|` under a
-//! limit, call [`Engine::and`](crate::Engine::and) or
-//! [`Engine::or`](crate::Engine::or), which report a cut instead of aborting;
-//! `!` uses [`Tdd::negate`].
-//!
-//! Entry points: the [`std::ops::BitAnd`], [`std::ops::BitOr`] and
-//! [`std::ops::Not`] impls on [`Tdd`]. All are by-value for symmetry: `&` and
-//! `|` consume both operands, `!` consumes its operand.
+//! Operators use the vtree's execution context and panic on operation errors.
+//! Use [`crate::and`], [`crate::or`] or [`Tdd::negate`] to handle those errors.
 
 use std::ops::{BitAnd, BitOr, Not};
 

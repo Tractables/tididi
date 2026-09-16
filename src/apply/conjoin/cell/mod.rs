@@ -1,18 +1,9 @@
-//! Dense cell/row engine for the apply product construction.
+//! Shared cell kernels and row traversal for dense conjunction routes.
 //!
-//! Contains the merged per-cell product-walk kernel (`process_cell`, generic
-//! over a [`ChildLookup`] per side and a [`PairSink`] action), the one row-loop
-//! driver behind every build route (`run_level_rows`, generic over a
-//! [`CellAction`]) with its four route entry points (`run_level_rows_marginal`,
-//! `run_level_rows_marginal_sparse`, `run_level_rows_stream_count`,
-//! `run_level_rows_plain`), the streaming per-cell fold on [`StreamState`],
-//! and the product-node emitter (`emit_product_node`).
-//!
-//! Also houses `CellCtx` (the per-level loop-invariant context struct) and
-//! the row-mask fold (`row_alive_masks`). One [`PollGate`](crate::limits::PollGate) serves the whole
-//! level: every cell charges the pairs it walks and the row loop adds a unit
-//! per cell, so the work clock counts pairs and the stop axis is asked mid-cell
-//! on a cell wide enough to need it.
+//! [`ChildLookup`] reads each child representation; [`PairSink`] consumes the
+//! resulting products. [`CellAction`] selects the row's emit or count behavior.
+//! One [`PollGate`](crate::limits::PollGate) spans a level, charging visited
+//! input pairs and output cells so wide cells remain cancellable.
 
 use crate::diagram::{ChildPair, TddLevel, EncodedNode, MultiPairRange};
 use crate::value::{IntFold, WeightFold};

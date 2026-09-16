@@ -99,32 +99,25 @@ pub(super) fn exists_targets_on(eng: &Engine, mut f: Tdd, targets: &[VtreeIdx], 
     Ok(f)
 }
 
-/// The projection entry points on a caller's engine.
 impl crate::Engine {
     /// Run [`Tdd::exists_var`](crate::Tdd::exists_var) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
-    /// Returns the operation's errors or [`OperationError::Stopped`]
-    /// on cancellation. Allocation refusals return
-    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
-    /// [`OperationError::OutputCap`].
+    /// Returns the linked operation's errors; cancellation, allocation refusal and
+    /// the output-node cap return [`OperationError::Stopped`],
+    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn exists_var(&self, f: Tdd, x: VarId) -> Result<Tdd, OperationError> {
         self.exists_var_with_strategy(f, x, QuantificationStrategy::Automatic)
     }
 
     /// Run [`Tdd::exists_var_with_strategy`](crate::Tdd::exists_var_with_strategy) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
-    /// Returns the operation's errors or [`OperationError::Stopped`]
-    /// on cancellation. Allocation refusals return
-    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
-    /// [`OperationError::OutputCap`].
+    /// Returns the linked operation's errors; cancellation, allocation refusal and
+    /// the output-node cap return [`OperationError::Stopped`],
+    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     ///
     /// The structural rewrite checks allocation and cancellation while regrouping
     /// nodes. Its output cap counts emitted intermediate nodes, including the final
@@ -135,28 +128,22 @@ impl crate::Engine {
 
     /// Run [`Tdd::exists_vars`](crate::Tdd::exists_vars) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
-    /// Returns the operation's errors or [`OperationError::Stopped`]
-    /// on cancellation. Allocation refusals return
-    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
-    /// [`OperationError::OutputCap`].
+    /// Returns the linked operation's errors; cancellation, allocation refusal and
+    /// the output-node cap return [`OperationError::Stopped`],
+    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn exists_vars(&self, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
         self.exists_vars_with_strategy(f, vars, QuantificationStrategy::Automatic)
     }
 
     /// Run [`Tdd::exists_vars_with_strategy`](crate::Tdd::exists_vars_with_strategy) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
-    /// Returns the operation's errors or [`OperationError::Stopped`]
-    /// on cancellation. Allocation refusals return
-    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
-    /// [`OperationError::OutputCap`].
+    /// Returns the linked operation's errors; cancellation, allocation refusal and
+    /// the output-node cap return [`OperationError::Stopped`],
+    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn exists_vars_with_strategy(&self, f: Tdd, vars: &[VarId], how: QuantificationStrategy) -> Result<Tdd, OperationError> {
         crate::apply::project::exists_vars_on(self, f, vars, how)
     }

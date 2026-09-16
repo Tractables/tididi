@@ -19,14 +19,11 @@ use crate::diagram::*;
 impl Engine {
     /// Run [`Tdd::negate`](crate::Tdd::negate) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
-    /// Returns the operation's errors or [`OperationError::Stopped`]
-    /// on cancellation. Allocation refusals return
-    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
-    /// [`OperationError::OutputCap`].
+    /// Returns the linked operation's errors; cancellation, allocation refusal and
+    /// the output-node cap return [`OperationError::Stopped`],
+    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn negate(&self, f: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().begin_operation();
         let mut result = negate_tdd_owned(self, f)?;

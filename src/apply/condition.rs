@@ -336,43 +336,33 @@ fn canonicalize_false_output(tdd: &mut crate::diagram::Tdd) {
 #[path = "tests/condition/mod.rs"]
 mod tests;
 
-/// The conditioning entry points on a caller's engine.
 impl crate::Engine {
     /// Run [`Tdd::condition`](crate::Tdd::condition) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
-    /// Returns the operation's errors or [`OperationError::Stopped`]
-    /// on cancellation. Allocation refusals return
-    /// [`OperationError::OverBudget`].
+    /// Returns the linked operation's errors, [`OperationError::Stopped`] on
+    /// cancellation, or [`OperationError::OverBudget`] on allocation refusal.
     pub fn condition(&self, f: Tdd, assignment: impl IntoIterator<Item = impl TryInto<crate::diagram::Literal, Error: Into<OperationError>>>) -> Result<Tdd, OperationError> {
         condition_on(self, f, assignment)
     }
 
     /// Run [`Tdd::condition_var`](crate::Tdd::condition_var) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
-    /// Returns the operation's errors or [`OperationError::Stopped`]
-    /// on cancellation. Allocation refusals return
-    /// [`OperationError::OverBudget`].
+    /// Returns the linked operation's errors, [`OperationError::Stopped`] on
+    /// cancellation, or [`OperationError::OverBudget`] on allocation refusal.
     pub fn condition_var(&self, f: Tdd, x: VarId, value: bool) -> Result<Tdd, OperationError> {
         crate::apply::condition::condition_var_on(self, f, x, value)
     }
 
     /// Run [`Tdd::condition_vars`](crate::Tdd::condition_vars) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
-    /// Returns the operation's errors or [`OperationError::Stopped`]
-    /// on cancellation. Allocation refusals return
-    /// [`OperationError::OverBudget`].
+    /// Returns the linked operation's errors, [`OperationError::Stopped`] on
+    /// cancellation, or [`OperationError::OverBudget`] on allocation refusal.
     pub fn condition_vars(&self, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, OperationError> {
         crate::apply::condition::condition_vars_on(self, f, vars, value)
     }

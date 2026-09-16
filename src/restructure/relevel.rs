@@ -1,53 +1,21 @@
-//! Diagram level restructuring after a vtree rotation.
+//! Rebuild the two diagram levels affected by a vtree rotation.
 //!
-//! When the vtree is rotated at node `v` (sharing the same indices `(v_idx, w_idx)`
-//! before and after), only the levels at `v_idx` and `w_idx` need to be rebuilt;
-//! every other level is unchanged because:
+//! The outer level retains its node count and ordering, so references from
+//! higher levels remain valid. Other levels keep their original pairs.
+//! Rebuilding expands each outer pair into triples and regroups them:
 //!
-//! - All other levels' pair contents reference children unaffected by the rotation.
-//! - The level at `v_idx` keeps its node count and ordering, so any higher
-//!   level that references `v_idx`-nodes by local index remains valid.
-//!
-//! Rotation Locality is the semantic argument: variable partitions outside `w`
-//! are rotation-invariant, and diagram
-//! canonicity then forces every level except `v_idx` (pair-list rewrite) and
-//! `w_idx` (rebuild) to be bit-for-bit identical pre- and post-rotation.
-//!
-//! The two affected levels are derived by **expanding triples** of node ids and
-//! regrouping them along a different axis. Both directions share the same
-//! shape; only the "which axis is preserved" varies. See
-//! `restructure_inner_search` for the unified implementation.
-//!
-//! ## Left rotation (v=(A, w), w=(B, C) → `v_new=(A`, B) at `w_idx`, `w_new=(v_new`, C) at `v_idx`)
-//!
-//! Each old v-pair `(a, w_local)` expands to triples `(a, b, c)` for each
-//! `(b, c)` in `w_level[w_local]`. Triples are sorted by `(c, a, b)`. Within
-//! each `c`-group the unique sorted `(a, b)`-set defines a `v_new` node (deduped
-//! globally across all v-nodes via a `HashMap`); the c-group emits a single
-//! `(v_new_idx, c)` pair to the corresponding `w_new` node.
-//!
-//! ## Right rotation (v=(w, C), w=(A, B) → v=(A, `w_new`), `w_new=(B`, C) at `w_idx`)
-//!
-//! Mirror image. Each old v-pair `(w_local, c)` expands to triples `(a, b, c)`
-//! for each `(a, b)` in `w_level[w_local]`. Triples are sorted by `(a, b, c)`.
-//! Within each `a`-group the unique sorted `(b, c)`-set defines a `w_new` node;
-//! the a-group emits `(a, w_new_idx)` to the new v-pair.
-//!
-//! Output handling: `w_new` (or new outer) nodes are produced 1-to-1 with the
-//! old v-nodes in the same order, so the output's local index at `v_idx`
-//! stays valid without remapping.
+//! - Left: `(A, (B, C))` becomes `((A, B), C)`. Group triples by `C` and
+//!   intern the resulting sets of `(A, B)` pairs at the new inner level.
+//! - Right: `((A, B), C)` becomes `(A, (B, C))`. Group by `A` and intern
+//!   the sets of `(B, C)` pairs instead.
 //!
 //! ## Marginal context
 //!
-//! The Boolean restructure shares an inner node across distinct inner pairs
-//! with the same cell fingerprint and dedups duplicate outer pairs; both are
-//! sound only when the primes at a level are mutually exclusive. A marginalized
-//! level stores a collapsed count, so two regrouped branches can become
-//! content-identical twins whose counts must add. Whenever the diagram has any
-//! marginal level (`marginal_ctx`), the rotation therefore expands fully: one
-//! inner node per distinct inner pair, keeping the cell multiset and the outer
-//! multiset. The sum over the kept triples is the pre-rotation count exactly,
-//! because the rotation only regroups the same products.
+//! Without marginal levels, equal cells share an inner node and duplicate
+//! outer pairs can be removed. With marginal levels, identical products may
+//! represent different assignment families whose values must add. The rewrite
+//! then retains one inner node per distinct inner pair and preserves both
+//! cell and outer-pair multiplicities. Regrouping preserves their value sum.
 
 use crate::diagram::ChildDecoder;
 

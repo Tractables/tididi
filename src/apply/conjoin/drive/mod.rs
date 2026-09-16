@@ -29,27 +29,12 @@ pub(super) struct Sweep<'a> {
     pub(super) ws: Option<&'a mut crate::diagram::WeightStore>,
 }
 
-/// Conjunction of two diagrams over the same vtree, with optional marginalization.
+/// Build a conjunction, emitting selected levels as marginal values.
 ///
-/// `marginalize_targets` set at index `t` requests that the output's level `t`
-/// be emitted as a marginal level (Boolean structure replaced by per-node model
-/// counts); `None` requests no marginalization.
-///
-/// Both operands are spent, on `Ok` and on `Err` alike: the sweep moves or
-/// drops each level of `f` and `g` as it passes it, so after an `Err` an
-/// unknown prefix of both is gone. A caller that may retry keeps a clone taken
-/// before the call.
-///
-/// On return every marginal-side ref in the result carries its slot tag; the
-/// tagging is idempotent.
-///
-/// # Errors
-///
-/// `OperationError::OverBudget` when a growth step would push scratch plus output
-/// past the armed byte budget, or the allocator refuses; `OperationError::OutputCap`
-/// on the output-node cap; `OperationError::Stopped` on the armed deadline or a
-/// stop decision. The infallible wrapper [`apply_and`] arms nothing and panics
-/// on `OverBudget`.
+/// The sweep consumes operand levels as it proceeds. An error leaves both
+/// operands partially drained; retrying requires copies taken before the call.
+/// The result's marginal references are tagged before return.
+/// Allocation, cancellation and output-cap failures return [`OperationError`].
 pub(crate) fn apply_and_fallible(
     eng: &Engine,
     f: &mut Tdd,

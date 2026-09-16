@@ -1,7 +1,4 @@
-//! Same-left pair fusion — production implementation.
-//!
-//! Entry points: `fuse_pairs_at_parents` (filtered to a parent set) and
-//! `fuse_pairs` (unfiltered, test-only).
+//! Fuse pairs that share a structural child by summing their marginal values.
 
 mod plan;
 mod rewrite;
@@ -32,18 +29,8 @@ pub(crate) struct PairFusionStats {
     pub(crate) fusion_groups: usize,
 }
 
-/// Filtered sweep: only consider boundary-marginal parents whose vtree-parent
-/// index is in `parent_vtree_idxs`. Parents not in the filter are skipped
-/// entirely. Useful after `marginalize_batch` to restrict the sweep to only
-/// the parents of the just-marginalized levels, where new fusion-eligible groups
-/// may have been created.
-///
-/// Pass an empty slice to skip all levels (no-op). Use `fuse_pairs` for
-/// the full unfiltered sweep.
-///
-/// # Errors
-///
-/// Returns `Err(OperationError::OverBudget)` if a budget-gated rewrite step fails.
+/// Fuse pairs only at the named boundary parents; an empty slice does no work.
+/// Allocation refusals return [`OperationError::OverBudget`].
 pub(crate) fn fuse_pairs_at_parents(
     eng: &Engine,
     tdd: &mut Tdd,

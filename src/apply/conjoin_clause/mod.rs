@@ -26,8 +26,6 @@ use crate::apply::conjoin::budget::{reserve_pairs_for_emit, NO_PRODUCT};
 
 mod spine;
 use spine::*;
-mod emit;
-use emit::*;
 mod pairs;
 use pairs::*;
 mod rebuild;
@@ -308,18 +306,14 @@ impl Tdd {
     }
 }
 
-/// The clause entry points on a caller's engine.
 impl crate::Engine {
     /// Run [`Tdd::clause`](crate::Tdd::clause) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
-    /// Returns the operation's errors or [`OperationError::Stopped`]
-    /// on cancellation. Allocation refusals return
-    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
-    /// [`OperationError::OutputCap`].
+    /// Returns the linked operation's errors; cancellation, allocation refusal and
+    /// the output-node cap return [`OperationError::Stopped`],
+    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     ///
     /// The output cap applies to the initial true diagram and rebuilt spine nodes.
     pub fn clause(
@@ -345,14 +339,11 @@ impl crate::Engine {
 
     /// Run [`Tdd::and_clause`](crate::Tdd::and_clause) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
-    /// Returns the operation's errors or [`OperationError::Stopped`]
-    /// on cancellation. Allocation refusals return
-    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
-    /// [`OperationError::OutputCap`].
+    /// Returns the linked operation's errors; cancellation, allocation refusal and
+    /// the output-node cap return [`OperationError::Stopped`],
+    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     ///
     /// Borrow a slice of signed integers or typed literals.
     /// Stop and output limits are checked once per rebuilt level; the output cap

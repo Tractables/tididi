@@ -59,7 +59,7 @@ fn scale_leaf_marginal_label(raw: u32, k: u32) -> Option<Result<u32, OperationEr
 ///
 /// This is the weighted counterpart of `scale_leaf_marginal_label`'s inline
 /// absorb. The integer arm can encode any scaled count in the ref itself; a
-/// weighted `ValueRef::Inline(gidx)` indexes the store's process-wide intern
+/// weighted `ValueRef::Inline(gidx)` indexes the store's intern
 /// table, so the only representable results here are the column's existing
 /// values. After `marginal::canonicalize_leaf_refs_at_parent` the duplicate
 /// runs that reach this path have equal values, and for `w⁺ = w⁻` the product

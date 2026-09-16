@@ -25,9 +25,6 @@ unsafe impl Send for ColumnSlice {}
 /// Per-level g column table: column `j`'s pair slice resolved once per level
 /// instead of once per (row, column) cell.
 ///
-/// Resolving a column depends only on `j` and the level, never on the row, so
-/// it is done once per level rather than once per cell.
-///
 /// With identity masks (no marginal child) the descriptors borrow g's own
 /// `nodes`/`pairs` and `flat` stays empty. With marginal masks g's pairs are
 /// decoded once into `flat`, whose reservation is budget-charged and released

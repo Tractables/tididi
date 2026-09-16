@@ -8,14 +8,11 @@ use crate::{Engine, OperationError, Tdd};
 impl Engine {
     /// Run [`Tdd::substitute`](crate::Tdd::substitute) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
-    /// Returns the operation's errors or [`OperationError::Stopped`]
-    /// on cancellation. Allocation refusals return
-    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
-    /// [`OperationError::OutputCap`].
+    /// Returns the linked operation's errors; cancellation, allocation refusal and
+    /// the output-node cap return [`OperationError::Stopped`],
+    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn substitute(
         &self,
         f: Tdd,
@@ -26,14 +23,11 @@ impl Engine {
 
     /// Run [`Tdd::rename_vars`](crate::Tdd::rename_vars) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
-    /// Returns the operation's errors or [`OperationError::Stopped`]
-    /// on cancellation. Allocation refusals return
-    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
-    /// [`OperationError::OutputCap`].
+    /// Returns the linked operation's errors; cancellation, allocation refusal and
+    /// the output-node cap return [`OperationError::Stopped`],
+    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn rename_vars(&self, f: Tdd, renames: &[(VarId, VarId)]) -> Result<Tdd, OperationError> {
         self.substitute_with(f, renames.iter().map(|&(source, target)| (source, Replacement::Literal(Literal::pos(target)))))
     }

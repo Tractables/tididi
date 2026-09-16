@@ -95,35 +95,13 @@ pub(super) fn context_hash(parent_i: u32, sibling_j: u32) -> u64 {
 #[cfg(test)]
 mod tests;
 
-/// Find groups of twin nodes at child level t1.
+/// Find nodes with identical parent-context multisets at the explicit child level.
 ///
-/// Two nodes at the same vtree level are **twins** if they appear in exactly
-/// the same set of parent contexts — i.e., the same set of (parent_node_index,
-/// sibling_node_index) pairs. This multiset of pairs is the node's "signature".
-///
-/// `t1` must be an explicit level: every parent ref into it is then a node
-/// index that scatters one signature entry. A marginal child is declined by
-/// `contract_child` before this is reached; pair fusion owns its redexes.
-///
-/// ## Algorithm
-///
-/// 1. **Count** how many signature entries each child node has (= number of
-///    parent pairs referencing it). Early exit if all counts are unique: twins
-///    must have equal-length signatures, so unique counts ⇒ no twins.
-///
-/// 2. **Fill** a flat signature buffer using a prefix-sum offset table. Each
-///    entry packs (parent_idx, sibling_idx) into a single u64.
-///
-/// 3. **Group** nodes by signature:
-///    - Width 2: direct slice comparison (O(n))
-///    - Width 3+: open-addressing hash table keyed by the context fingerprints,
-///      verify signature equality within each bucket (O(n) expected)
-///
-/// ## Output
-///
-/// Twin groups are written into `scratch.flat_groups` (concatenated group members)
-/// and `scratch.group_starts` (start index of each group). Returns true if any
-/// twin groups with ≥2 members were found.
+/// First compute additive fingerprints and discard nodes with unique fingerprints.
+/// Only collision candidates receive full sorted signatures; equal signatures
+/// form a twin group. Marginal children are handled by pair fusion instead.
+/// Groups are stored in `scratch.flat_groups`, indexed by `scratch.group_starts`.
+/// Returns whether any group contains at least two nodes.
 pub(super) fn find_twin_groups(
     eng: &Engine,
     tdd: &Tdd,

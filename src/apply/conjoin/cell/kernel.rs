@@ -417,16 +417,11 @@ where
 /// borrows from a separate `Tdd` operand, and `pairs_view_decoded` borrows
 /// `inputs2_scratch` as the decode buffer — neither aliases the output slab.
 ///
-/// Returns `Err(OperationError)`: `OverBudget` on sink allocation failure, and
-/// `Deadline` from the intra-cell poll in any arm — so even a
-/// count-only sink is not infallible (it can bail mid-cell on a wide cell).
+/// Sink allocation can return [`OperationError::OverBudget`]; every arm polls
+/// for [`OperationError::Stopped`], including count-only sinks.
 ///
-/// The parameters stay positional. Bundling them behind a reference was
-/// measured: a slice loaded out of a struct carries none of the aliasing
-/// facts a reference parameter does, so the inner pair loops re-read the f
-/// row's fields and a lookup's geometry on every pair, and the kernel's
-/// instruction count rose by about a sixth on dense instances. The two
-/// arms below are inlined into it and keep the same parameter list.
+/// Keep input slices and lookup geometry as direct parameters so the optimizer
+/// retains their aliasing information within the pair loops.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn process_cell<L, R, S>(
     eng: &Engine,

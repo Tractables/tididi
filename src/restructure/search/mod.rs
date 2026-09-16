@@ -23,17 +23,13 @@ pub(crate) use local::rotation_search_on;
 use crate::diagram::Tdd;
 use crate::limits::OperationError;
 
-/// The rotation-search entry point on a caller's engine.
 impl crate::Engine {
     /// Run [`Tdd::rotation_search`](crate::Tdd::rotation_search) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
-    /// Returns the operation's errors or [`OperationError::Stopped`]
-    /// on cancellation. Allocation refusals return
-    /// [`OperationError::OverBudget`].
+    /// Returns the linked operation's errors, [`OperationError::Stopped`] on
+    /// cancellation, or [`OperationError::OverBudget`] on allocation refusal.
     ///
     /// Trial storage is outside the byte budget and output cap. Stops are polled
     /// once per pivot; cancellation retains accepted rotations and leaves the

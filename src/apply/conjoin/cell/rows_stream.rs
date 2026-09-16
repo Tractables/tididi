@@ -22,25 +22,10 @@ impl<F: ValueDomain> StreamState<'_, F> {
     }
 }
 
-/// Streaming collapse-at-source entry — the one driver for streaming-
-/// marginalize_levels levels, generic over the child lookups:
-///
-/// - Marginal-child shapes (Route A): at least one child marginal
-///   (`MarginalLookup` sides — a `MarginalLookup` degrades to the plain dense grid
-///   read on a non-pass-through side, so both-marginal, and
-///   one-marginal × leaf all route here with the same lookups). The level is
-///   a marginalization target whose every alive cell collapses to a scalar
-///   `Σ left × right` — there is no downstream structure to keep.
-/// - Plain shape (Route B): a streaming target with no marginal child
-///   (leaf children at the lowest levels), served by `DenseLookup` sides.
-///
-/// Picks the fold for the state's value kind, integer or weighted, binds that
-/// kind's two child column views ([`attach_children`], read in place in the
-/// child levels), and runs the shared row loop. Which side is marginal is
-/// carried by the views (`StreamChild::is_marginal`).
-///
-/// The views live only for this call: `stream_state` owns the output column and
-/// outlives them, so the caller can retake `&mut levels` to commit it.
+/// Fold a streaming target's cells directly into an integer or weighted column.
+/// The child lookups handle both structural and marginal children. Child views
+/// borrow their levels only during this call; `stream_state` owns the output
+/// column so the caller can borrow the levels mutably again to commit it.
 pub(crate) fn run_level_rows_stream_count<L: ChildLookup, R: ChildLookup>(
     eng: &Engine,
     rows: RowLoop<'_>,

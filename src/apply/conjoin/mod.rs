@@ -67,42 +67,17 @@ pub(crate) mod streaming_marginal;
 use crate::value::StreamCache;
 use streaming_marginal::{StreamEnv, StreamLevelState, build_stream_state, commit_stream_state};
 
-/// Conjoin two diagrams that share the same vtree.
-///
-/// Both operands are consumed: the algorithm drains their level arenas as it
-/// walks bottom-up and recycles the storage into the result. Clone one first if
-/// you need to keep it.
-///
-/// Panics on invalid operands or allocation refusal; [`Engine::and`] returns the error.
-///
-/// Reuses the vtree context; explicit batch operations honor their installed limits.
-///
-/// # Panics
-///
-/// Panics on operand incompatibility or allocation refusal.
+/// Panicking conjunction used by `BitAnd` and test fixtures.
+/// The checked entry point is [`and`].
 pub(crate) fn apply_and(f: Tdd, g: Tdd) -> Tdd {
     and(f, g)
         .expect("apply_and: operation refused; use tididi::and to handle errors")
 }
 
-/// Conjoin two diagrams that share the same vtree, reporting a refusal instead of
-/// panicking on it. The production conjunction entry.
-///
-/// Both operands are consumed — the algorithm drains their level arenas as it
-/// goes and recycles the storage into the result — on `Err` as well as on `Ok`.
-/// Clone one first if you need to keep it, and never reuse an operand after a
-/// call.
-///
-/// `marginalize_targets`, when given, names the vtree nodes whose levels the
-/// bottom-up loop should emit as streaming-marginal instead of explicit.
-///
-/// # Errors
-///
-/// Returns `Err(OperationError::OverBudget)` if a buffer reservation is refused
-/// (allocator failure or the configured soft budget would be exceeded),
-/// `Err(OperationError::OutputCap)` on the output-node cap, or
-/// `Err(OperationError::Stopped)` on the scoped deadline or an armed decision
-/// callback that concluded the compile should stop.
+/// Conjoin owned operands, recycling their levels as the bottom-up walk proceeds.
+/// `marginalize_targets` selects levels emitted as values instead of structure.
+/// Operand validation and allocation, cancellation and output-cap errors follow
+/// [`Engine::and`]. Both inputs are consumed on every outcome.
 pub(crate) fn conjoin_owned(
     eng: &Engine,
     mut f: Tdd,
@@ -183,11 +158,8 @@ pub fn and(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
     context.run(|eng| eng.and(f, g))
 }
 
-/// The conjunction entry points on a caller's engine.
 impl crate::Engine {
     /// Run [`and`] using this batch's scratch and resource limits.
-    ///
-    /// Operand requirements, ownership and result semantics follow that function.
     ///
     /// # Errors
     ///

@@ -1,12 +1,7 @@
-//! Per-level marginal classification plan (`MarginalPlan` + `plan_marginal_level`) and the
-//! dead-pair liveness masks (`build_side_masks`) for the apply product
-//! construction.
+//! Classify marginal children and prepare their decoders and liveness masks.
 //!
-//! A level has exactly two child sides, and everything the product walk needs
-//! to know about a side has the same shape on both. [`Sides<T>`] is that pair,
-//! and every per-side quantity below is stored in one — so the left and right
-//! halves of a computation are written once and applied twice, rather than
-//! mirrored by hand. The liveness bitmask kernels live in `super::liveness`.
+//! [`Sides<T>`] holds the symmetric plans for the two children. Liveness masks
+//! are populated only after the selected route materializes its child grids.
 
 use crate::diagram::ChildDecoder;
 use crate::diagram::*;
@@ -209,29 +204,9 @@ pub(super) fn plan_marginal_level(
 ) -> MarginalPlan {
     let (t, t_idx, left_idx, right_idx) = (shape.t, shape.t.idx(), shape.left.idx(), shape.right.idx());
     let levels = &run.levels[..];
-    // ── Marg-side structural decode masks (per-child-side) ──
-    // A child level that is marginal stores its parent's refs to it as
-    // bit-30-tagged slot indices (the end-of-apply tagger). Every place that
-    // consumes such a ref as a *structural* coordinate (grid stride/column,
-    // reach/liveness array index) must strip the tag first. The masks are
-    // loop-invariant per level: `MARGINAL_VALUE_MASK` strips the tag for a marginal
-    // child, `u32::MAX` is an identity no-op otherwise.
-    //
-    // A tagged ref appears whenever the child level it points into is
-    // marginal. That marginal status can live in three places, and we must
-    // strip if any holds:
-    //   1. the output child level (`levels[..]`) — when a marginal child was
-    //      processed earlier this apply, the identity fast-path swapped it
-    //      out of the operand and into `levels[child_idx]`;
-    //   2/3. an operand child level (`f/g.levels[..]`) — when a genuinely
-    //      marginal operand level is consumed directly (no identity swap),
-    //      e.g. a streaming accumulator that a prior step already
-    //      marginalized + tagged, while the output level is not marked
-    //      marginal until the post-step `marginalize_batch`. The end-of-apply
-    //      tagger keys on exactly this operand-child marginal status
-    //      (`tag_all_marginal_side_slots`), so the decode mask must mirror it.
-    // One mask per side serves both operands: masking a bare ref is a no-op,
-    // since real node indices never set bit 30 and the zero sentinel is bit 31.
+    // An identity shortcut can move a marginal child from an operand to the
+    // output. Check all three locations when selecting the decoder; the
+    // remaining parent references still use that child's marginal encoding.
     let left_marginal = levels[left_idx].is_marginal()
         || f.levels[left_idx].is_marginal()
         || g.levels[left_idx].is_marginal();
@@ -245,9 +220,8 @@ pub(super) fn plan_marginal_level(
         Sides { left: carriers.left.is_some(), right: carriers.right.is_some() },
     );
 
-    // A pass-through side reads structurally even when its child is marginal:
-    // the carrier field's tag bit (inline count vs big-count slot) must survive
-    // verbatim, and stripping it would corrupt a big slot into a misread count.
+    // Pass-through copies the encoded value verbatim. Stripping its inline
+    // marker would turn an inline count into a slot reference.
     let child_decoder = |carrier: Option<Carrier>, marginal: bool| {
         if carrier.is_none() && marginal { ChildDecoder::marginal() } else { ChildDecoder::structural() }
     };

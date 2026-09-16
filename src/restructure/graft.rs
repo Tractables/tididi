@@ -1,24 +1,11 @@
-//! Graft: the diagram of a conjunction of diagrams over pairwise-disjoint variable
-//! sets, built structurally — no `apply_and` — on the vtree
-//! [`Vtree::graft`] joins their vtrees under.
+//! Assemble a conjunction over disjoint variable sets on a grafted vtree.
 //!
-//! Each part arrives on its own `Arc<Vtree>`. The grafted vtree hangs the
-//! parts and the spine variables down one right-linear chain; the diagram mirrors
-//! that chain by
-//!
-//!   1. moving each part's levels whole into their grafted positions (pair
-//!      contents are `NodeIdx` into the child level, which survives
-//!      whole-level relocation), and
-//!   2. building one width-1 level per chain join whose single pair points at
-//!      the running chain root on the left and the newly hung piece's root
-//!      reference on the right (`output.local` for a part, `ONE_LEAF_IDX` for
-//!      a spine variable).
-//!
-//! Joining canonical parts introduces no structural twins. Marginal roots
-//! acquire parent references, which are tagged and pruned to retain canonical form.
+//! Move each part's levels to their grafted indices, then join part roots and
+//! free-variable leaves with one pair per new level. Whole-level moves preserve
+//! local node indices. Canonical parts introduce no structural twins; marginal
+//! roots are tagged and pruned after acquiring their new parent references.
 
-mod error;
-pub use error::GraftError;
+use super::GraftError;
 
 use crate::Engine;
 use std::sync::Arc;
@@ -295,17 +282,9 @@ impl Tdd {
     /// Replace the subtree under `t`'s right child with `other`'s, and pair the
     /// two roots at `t`.
     ///
-    /// The neighbour of [`graft`](Self::graft) for the one case that needs no
-    /// new vtree: `self` and `other` are already decomposed along the same
-    /// vtree, each carries one node at `t`, and the variables they actually
-    /// constrain lie in opposite subtrees of `t` — `self` on the left, `other`
-    /// on the right. Their conjunction is then the single pair naming both
-    /// roots, and every level below moves across untouched, because a pair side
-    /// names a node of its own child level and a whole-level move does not
-    /// renumber those.
-    ///
-    /// `other`'s weight store is absorbed into `self`'s, and its levels go back
-    /// to the engine's pool.
+    /// Both diagrams use the same vtree. Move `other`'s right-subtree levels
+    /// into `self`, then join their constrained roots with one pair at `t`.
+    /// Weight stores are combined; unused levels return to the engine's pool.
     ///
     /// # Safety
     ///
@@ -381,4 +360,5 @@ fn swap_subtree_levels(
 }
 
 #[cfg(test)]
+#[path = "tests/graft/mod.rs"]
 mod tests;

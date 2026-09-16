@@ -111,18 +111,14 @@ struct Marking {
     root_live: bool,
 }
 
-/// The restriction entry point on a caller's engine.
 impl crate::Engine {
     /// Run [`Tdd::restrict_to_care`](crate::Tdd::restrict_to_care) using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
-    ///
     /// # Errors
     ///
-    /// Returns the operation's errors or [`OperationError::Stopped`]
-    /// on cancellation. Allocation refusals return
-    /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
-    /// [`OperationError::OutputCap`].
+    /// Returns the linked operation's errors; cancellation, allocation refusal and
+    /// the output-node cap return [`OperationError::Stopped`],
+    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn restrict_to_care(&self, f: Tdd, care: Tdd) -> Result<RestrictionOutcome, OperationError> {
         crate::apply::restrict_to_care::restrict_to_care_on(self, f, care)
     }

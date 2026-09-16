@@ -108,24 +108,7 @@ pub(crate) fn estimate_scatter_direction(
 /// Used by `plan_e_f_chunks` to size chunks under the byte budget.
 pub(crate) const BYTES_PER_PAR_ENTRY: usize = 32;
 
-// ── Sparse product construction ──────────────────────────────────────────────
-//
-// For levels where left_width * right_width exceeds `min_grid`, the dense grid iteration is
-// replaced by a scatter-filter-dedup pipeline inspired by the upward branch.
-// Instead of iterating all (i, j) cells, we:
-//   1. Build reverse indices: child_idx → [(parent_idx, sibling_idx)]
-//   2. Scatter from live child products upward to candidate parents
-//   3. Filter candidates by sibling liveness (lazy-cleared flat lookup)
-//   4. Dedup parent products (lazy-cleared flat p2_map)
-//   5. Emit output pairs and nodes
-//
-// This is O(n * degree²) where n = live products, vs O(left_width * right_width) for dense.
-
-// Test support.
-//
-// A test sends small grids down the sparse route by installing other
-// thresholds through `tests::ForcedThresholds`; `sparse_thresholds` reads
-// that override first. Outside the test build there is none.
+// Tests override the routing thresholds; production always uses the defaults.
 #[cfg(test)]
 use super::tests::forced_thresholds as forced;
 
