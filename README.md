@@ -25,7 +25,7 @@ and variable renaming to explore a transition system.
 satisfied, obtain a satisfying assignment, or count all solutions exactly. You
 can also compare functions for equivalence or implication. The
 [configuration example] builds rules for a backup application, counts the valid
-configurations, and narrows the choices after an observation.
+configurations, and reuses the circuit as a user changes their choices.
 
 **Evaluate weighted models.** Assign weights to literals to compute weighted
 sums, including probabilities, and change those weights without rebuilding the

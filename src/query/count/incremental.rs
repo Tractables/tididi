@@ -302,6 +302,11 @@ impl<R: Retention> BoundModelCounter<'_, '_, R> {
         self.counter.get_mut().set_pins(pins)
     }
 
+    /// Apply signed-literal observations with [`ModelCounter::observe`] semantics.
+    pub fn observe(&mut self, literals: impl AsRef<[i32]>) -> Result<(), OperationError> {
+        self.counter.get_mut().observe(literals)
+    }
+
     /// Clear all observations with [`ModelCounter::clear_pins`] semantics.
     pub fn clear_pins(&mut self) {
         self.counter.get_mut().clear_pins();
@@ -472,6 +477,47 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     pub fn set_pin(&mut self, var: VarId, val: Option<bool>) -> Result<(), OperationError> {
         let leaf = self.validate_pin(var)?;
         self.set_leaf_pin(leaf, val);
+        Ok(())
+    }
+
+    /// Set observations using signed, one-based literals, as in [`crate::literal`].
+    ///
+    /// `2` observes the second variable as true; `-2` observes it as false.
+    /// Only listed variables change, and the last occurrence of a variable wins.
+    /// An empty input has no effect. Updates allocate no storage and defer
+    /// counting until the next read. Use [`Self::clear_pins`] to remove all
+    /// observations, or [`Self::set_pin`] to clear one or use a typed variable id.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::InvalidLiteral`] for zero, or the variable
+    /// errors of [`Self::set_pin`]. Every input is validated before applying
+    /// any update; an error preserves all pins, cached counts and pending changes.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// let mut counter = f.counter()?;
+    /// counter.observe([1, -3])?;
+    /// assert_eq!(counter.model_count()?, 2u32.into());
+    /// counter.observe([-1])?;
+    /// assert_eq!(counter.model_count()?, 1u32.into());
+    /// counter.clear_pins();
+    /// assert_eq!(counter.model_count()?, 6u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn observe(&mut self, literals: impl AsRef<[i32]>) -> Result<(), OperationError> {
+        let literals = literals.as_ref();
+        for &input in literals {
+            self.validate_pin(Literal::try_from(input)?.var)?;
+        }
+        for &input in literals {
+            let literal = Literal::try_from(input)?;
+            self.set_pin(literal.var, Some(literal.positive))?;
+        }
         Ok(())
     }
 

@@ -91,6 +91,7 @@ fn marginal_pins<R: Retention>() {
         for pin in [None, Some(false), Some(true)] {
             assert_eq!(counter.set_pin(VarId(0), pin), Err(OperationError::MarginalLevel(summed)));
         }
+        assert_eq!(counter.observe([3, 1]), Err(OperationError::MarginalLevel(summed)));
         assert_eq!(counter.model_count().unwrap(), 4u32.into());
         counter.set_pin(VarId(2), None).unwrap();
         assert_eq!(counter.model_count().unwrap(), 12u32.into());
@@ -115,4 +116,53 @@ fn sparse_pin_storage_fits_a_budget_independent_of_variable_ids() {
     assert_eq!(counter.model_count().unwrap(), 1u32.into());
     counter.set_pin(VarId(100_000), None).unwrap();
     assert_eq!(counter.model_count().unwrap(), 2u32.into());
+}
+
+/// Check signed observations against enumeration, including atomic rejection.
+fn observed_counts<R: Retention>() {
+    let vtree = Arc::new(Vtree::balanced_over(&[VarId(9), VarId(2), VarId(71)]));
+    let f = Tdd::clause(&vtree, [3, 10]).unwrap();
+    assert_canonical(&f);
+    for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
+        let mut counter = f.counter_with::<R>(semantics).unwrap();
+        for code in 0..8 {
+            let pins = [10, 3, 72].map(|literal| {
+                let bit = match literal { 10 => 0, 3 => 1, _ => 2 };
+                if code & (1 << bit) != 0 { literal } else { -literal }
+            });
+            counter.observe(pins).unwrap();
+            let satisfying = code & 3 != 0;
+            let expected = if satisfying {
+                if semantics == PinSemantics::Evidence { 1u32 } else { 8 }
+            } else { 0 };
+            assert_eq!(counter.model_count().unwrap(), expected.into());
+        }
+        counter.clear_pins();
+        counter.observe([3, -3, 10]).unwrap();
+        let expected: BigUint = if semantics == PinSemantics::Evidence { 2u32 } else { 8 }.into();
+        assert_eq!(counter.model_count().unwrap(), expected);
+        counter.observe([]).unwrap();
+        assert_eq!(counter.model_count().unwrap(), expected);
+        for pending in [false, true] {
+            if pending { counter.observe([-72]).unwrap(); }
+            for (input, error) in [
+                (0, OperationError::InvalidLiteral(0)),
+                (1, OperationError::VariableNotInVtree(VarId(0))),
+                (i32::MIN, OperationError::VariableNotInVtree(VarId(i32::MAX as u32))),
+            ] {
+                assert_eq!(counter.observe([-10, input]), Err(error));
+            }
+            let expected: BigUint = if semantics == PinSemantics::Cofactor { 8u32 } else if pending { 1 } else { 2 }.into();
+            assert_eq!(counter.model_count().unwrap(), expected);
+        }
+        let eng = Engine::new();
+        let _limit = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
+        counter.bind(&eng).observe([10]).unwrap();
+    }
+}
+
+#[test]
+fn signed_observations_count_and_reject_invalid_batches_atomically() {
+    observed_counts::<KeepAllColumns>();
+    observed_counts::<KeepFrontier>();
 }

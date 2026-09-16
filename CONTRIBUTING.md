@@ -7,6 +7,8 @@ cargo test --all-targets
 cargo test --doc
 cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+python3 tests/rendered_docs.py --self-test
+python3 tests/rendered_docs.py target/doc
 ```
 
 The README and `docs/` are compiled into rustdoc. Keep walkthrough excerpts

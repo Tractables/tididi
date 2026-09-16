@@ -64,39 +64,21 @@ configurations.minimize()?;
 assert_eq!(configurations.model_count()?, count);
 ```
 
-For a different variable grouping, continue with the
-[vtree walkthrough](crate::guide::examples::vtrees). For many counts under
-changing observations, [`Tdd::counter`](crate::Tdd::counter) retains counting
-state and updates evidence without rebuilding the diagram:
+For a different variable grouping, see the
+[vtree walkthrough](crate::guide::examples::vtrees).
 
-```rust,ignore,{class=tested-example}
-let mut counter = configurations.counter()?;
-counter.set_pin(tididi::vtree::VarId(1), Some(true))?;
-assert_eq!(counter.model_count()?, 4u32.into());
-```
+## Bound repeated queries
 
-Variable 1 is remote backups; add disabled notifications as a second observation
-with [`set_pins`](crate::query::ModelCounter::set_pins), which validates the whole
-update before changing any pins:
-
-```rust,ignore,{class=tested-example}
-counter.set_pins(&[
-    (tididi::vtree::VarId(1), Some(true)),
-    (tididi::vtree::VarId(3), Some(false)),
-])?;
-assert_eq!(counter.model_count()?, 2u32.into());
-counter.clear_pins();
-assert_eq!(counter.model_count()?, count);
-```
-
-[`clear_pins`](crate::query::ModelCounter::clear_pins) removes all observations;
-[`Tdd::counter_with`](crate::Tdd::counter_with) selects another storage policy or
-cofactor semantics.
+The configuration walkthrough introduced observations and repeated counting.
+A counter can also use explicit resource limits without losing its cached state.
+[`Tdd::counter_with`](crate::Tdd::counter_with) selects another storage policy
+or cofactor semantics when needed.
 
 To count under batch limits, temporarily bind the existing counter to the
 supplied engine:
 
 ```rust,ignore,{class=tested-example}
+let mut counter = configurations.counter()?;
 let query_limit = LimitConfig::none().with_memory_budget_bytes(Some(1_000_000));
 let bounded_count = context.with_limits(query_limit, |operations| {
     counter.bind(operations).model_count()

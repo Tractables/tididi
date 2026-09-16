@@ -39,6 +39,18 @@ fn main() -> Result<(), tididi::OperationError> {
     let selected = and(configurations.clone(), Tdd::cube(&vtree, &witness)?)?;
     assert_eq!(selected.model_count()?, 1u32.into());
 
+    // Reuse the circuit while a user adds and changes choices.
+    let mut counter = configurations.counter()?;
+    counter.observe([2])?;
+    assert_eq!(counter.model_count()?, 4u32.into());
+    counter.observe([-4])?;
+    assert_eq!(counter.model_count()?, 2u32.into());
+    counter.observe([-2, -3])?;
+    assert_eq!(counter.model_count()?, 1u32.into());
+    counter.clear_pins();
+    assert_eq!(counter.model_count()?, count);
+    drop(counter);
+
     // Reuse the attached context for a bounded batch.
     use tididi::OperationError;
     use tididi::limits::LimitConfig;
@@ -62,19 +74,8 @@ fn main() -> Result<(), tididi::OperationError> {
     configurations.minimize()?;
     assert_eq!(configurations.model_count()?, count);
     println!("Minimized representation: {} pairs", configurations.pair_count());
-    // Reuse per-node counts while observations change.
-    let mut counter = configurations.counter()?;
-    counter.set_pin(tididi::vtree::VarId(1), Some(true))?;
-    assert_eq!(counter.model_count()?, 4u32.into());
-    counter.set_pins(&[
-        (tididi::vtree::VarId(1), Some(true)),
-        (tididi::vtree::VarId(3), Some(false)),
-    ])?;
-    assert_eq!(counter.model_count()?, 2u32.into());
-    counter.clear_pins();
-    assert_eq!(counter.model_count()?, count);
-
     // Temporarily use batch limits while retaining the counter for later queries.
+    let mut counter = configurations.counter()?;
     let query_limit = LimitConfig::none().with_memory_budget_bytes(Some(1_000_000));
     let bounded_count = context.with_limits(query_limit, |operations| {
         counter.bind(operations).model_count()

@@ -52,6 +52,11 @@ jobs:
       env:
         RUSTDOCFLAGS: -D warnings
       run: cargo doc --no-deps
+    - name: Check rendered documentation
+      if: runner.os == 'Linux'
+      run: |
+        python3 tests/rendered_docs.py --self-test
+        python3 tests/rendered_docs.py target/doc
     - name: Prepare documentation site
       if: runner.os == 'Linux' && github.event_name == 'push'
       run: |

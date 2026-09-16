@@ -111,8 +111,50 @@ let selected = and(configurations.clone(), Tdd::cube(&vtree, &witness)?)?;
 assert_eq!(selected.model_count()?, 1u32.into());
 ```
 
-Continue with [execution controls](crate::guide::examples::execution) when you
-need resource limits, or with [probability queries](crate::guide::examples::probability)
-to weight the valid assignments. The
-[complete program](https://github.com/Tractables/tididi/blob/main/examples/build_minimize_count.rs)
-continues with the execution-control example after these steps.
+## Reuse the circuit as choices change
+
+An interactive configurator asks many questions about the same rules. Create a
+[`counter`](crate::Tdd::counter) to retain counting state while observations
+change. First the user selects remote backups:
+
+```rust,ignore,{class=tested-example}
+let mut counter = configurations.counter()?;
+counter.observe([2])?;
+assert_eq!(counter.model_count()?, 4u32.into());
+```
+
+Observations use the same signed literal numbers as circuit construction.
+Turning notifications off adds a second choice while keeping remote backups on:
+
+```rust,ignore,{class=tested-example}
+counter.observe([-4])?;
+assert_eq!(counter.model_count()?, 2u32.into());
+```
+
+Now the user switches remote backups off and disables encryption. Notifications
+remain off, and local backups must be on: only one configuration remains.
+
+```rust,ignore,{class=tested-example}
+counter.observe([-2, -3])?;
+assert_eq!(counter.model_count()?, 1u32.into());
+```
+
+[`observe`](crate::query::ModelCounter::observe) changes only the listed
+variables, validating the whole update before applying it. The next count
+refreshes the affected parts of the circuit. Clear the observations to recover
+all eight configurations:
+
+```rust,ignore,{class=tested-example}
+counter.clear_pins();
+assert_eq!(counter.model_count()?, count);
+```
+
+The counter borrows `configurations`; observations change the query, leaving
+the circuit intact. Use [`set_pin`](crate::query::ModelCounter::set_pin) to
+clear an individual observation or work with typed variable identifiers.
+
+The [probability example](crate::guide::examples::probability) assigns weights
+to the valid assignments. The [execution example](crate::guide::examples::execution)
+continues this program with resource limits and working-memory control.
+The [complete program](https://github.com/Tractables/tididi/blob/main/examples/build_minimize_count.rs)
+contains both the configuration queries and those execution controls.

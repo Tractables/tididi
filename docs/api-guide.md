@@ -40,7 +40,8 @@ The [reachability walkthrough](crate::guide::examples::reachability) combines th
 
 The [configuration walkthrough](crate::guide::examples::configurations) combines
 construction, counting, and evidence queries in a small constraint model.
-[`Tdd::counter`](crate::Tdd::counter) retains counting state across evidence updates.
+[`Tdd::counter`](crate::Tdd::counter) retains counting state across evidence updates;
+[`ModelCounter::observe`](crate::query::ModelCounter::observe) accepts signed-literal observations.
 
 ## Evaluate weighted models
 
