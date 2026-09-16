@@ -160,3 +160,77 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
         );
     }
 }
+
+/// Accept one selected probe so both rotation directions are exercised even if
+/// neither improves the size of the small fixture.
+struct AcceptProbe(usize);
+
+impl tididi::restructure::search::RotationObjective for AcceptProbe {
+    fn delta(
+        &mut self,
+        _: (&tididi::diagram::TddLevel, &tididi::diagram::TddLevel),
+        _: (&tididi::diagram::TddLevel, &tididi::diagram::TddLevel),
+    ) -> i64 {
+        if self.0 == 0 { return 0; }
+        self.0 -= 1;
+        if self.0 == 0 { -1 } else { 0 }
+    }
+}
+
+#[test]
+fn rotated_vtrees_and_diagrams_round_trip_together() {
+    use tididi::restructure::search::RotationSearchConfig;
+    use tididi::{Tdd, test_helpers::assert_canonical};
+    let engine = Engine::new();
+    let mut config = RotationSearchConfig::default();
+    config.max_sweeps = Some(1);
+    for (vtree, clause) in [
+        (Vtree::balanced(4), [1, -3]),
+        (Vtree::linear(4), [1, -3]),
+        (Vtree::random(4, 812), [1, -3]),
+        (Vtree::balanced_over(&[VarId(5), VarId(0), VarId(2), VarId(3)]), [1, -3]),
+    ] {
+        for probe in [1, 2] {
+            let vtree = Arc::new(vtree.clone());
+            let mut f = Tdd::clause(&vtree, clause).unwrap();
+            for _ in 0..3 {
+                let stats = f.rotation_search(&mut AcceptProbe(probe), &config).unwrap();
+                assert_eq!(stats.accepts, 1);
+                assert_canonical(&f);
+                let restored_vtree = Arc::new(Vtree::from_text(&f.vtree().to_text()).unwrap());
+                assert!(f.vtree().same_tree(&restored_vtree));
+                let assignments = 1 << f.vtree().num_vars();
+                let truth: Vec<_> = (0..assignments).map(|row| bit(row, 0) || !bit(row, 2)).collect();
+                for (diagram, expected) in [
+                    (f.clone(), truth.clone()),
+                    (Tdd::one(f.vtree()), vec![true; assignments]),
+                    (Tdd::zero(f.vtree()), vec![false; assignments]),
+                    (Tdd::clause(f.vtree(), [-1, 4]).unwrap(),
+                     (0..assignments).map(|row| !bit(row, 0) || bit(row, 3)).collect()),
+                ] {
+                    assert_canonical(&diagram);
+                    let mut bytes = Vec::new();
+                    write_tdd(&mut bytes, &diagram).unwrap();
+                    let saved_vtree = f.vtree().to_text();
+                    let declarations: BTreeMap<_, _> = saved_vtree.lines().skip(1).map(|line| {
+                        let fields: Vec<_> = line.split_whitespace().collect();
+                        (fields[1], fields)
+                    }).collect();
+                    for line in std::str::from_utf8(&bytes).unwrap().lines() {
+                        let fields: Vec<_> = line.split_whitespace().collect();
+                        if fields[0] == "L" || fields[0] == "I" {
+                            let shape = &declarations[fields[1]];
+                            assert_eq!(&fields[..shape.len()], shape);
+                        }
+                    }
+                    for target in [f.vtree(), &restored_vtree] {
+                        let loaded = read_tdd(&mut bytes.as_slice(), target).unwrap();
+                        assert_canonical(&loaded);
+                        assert!(Arc::ptr_eq(loaded.vtree(), target));
+                        assert_truth(&engine, &loaded, &expected, "rotated round trip");
+                    }
+                }
+            }
+        }
+    }
+}

@@ -19,7 +19,7 @@ fn repeated_node_ids_and_inconsistent_record_counts_are_refused() {
 #[test]
 fn malformed_tree_graphs_and_records_are_refused() {
     for text in [
-        "", "vtree 0\n", "vtree 3\n", "vtree 1 extra\nL 0 1\n",
+        "", "\n c comments only\n", "comment\nvtree 1\nL 0 1\n", "vtree 0\n", "vtree 3\n", "vtree 1 extra\nL 0 1\n",
         "vtree 1\nL 0 0\n", "vtree 1\nL 0 1 extra\n",
         "vtree 3\nL 0 1\nL 1 1\nI 2 0 1\n",
         "vtree 3\nL 0 1\nL 1 2\nI 2 0 0\n",
@@ -47,7 +47,8 @@ fn deterministic_token_mutations_are_refused_and_valid_text_round_trips() {
         for end in 0..text.trim_end().len() {
             if let Ok(parsed) = Vtree::from_text(&text[..end]) { assert_eq!(parsed.validate(), Ok(())); }
         }
-        for variant in [text.clone(), text.replace('\n', "\r\n"), text.trim_end().to_owned(), text.replace('\n', "\n\n")] {
+        for variant in [text.clone(), text.replace('\n', "\r\n"), text.trim_end().to_owned(), text.replace('\n', "\n\n"),
+            format!("\n  c vtree with comments\n\n{}c end\n", text.replace('\n', "\n c between records\n"))] {
             let restored = Vtree::from_text(&variant).unwrap();
             assert_eq!(restored.validate(), Ok(()));
             assert!(restored.same_tree(&tree));

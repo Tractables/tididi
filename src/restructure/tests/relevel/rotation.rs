@@ -7,12 +7,12 @@ use crate::restructure::relevel::restructure_inner_search;
 
 
 /// The size-objective descent of `Engine::rotation_search` under
-/// [`SizeDelta`](crate::restructure::search::local::SizeDelta).
+/// [`MinimizePairs`](crate::restructure::search::local::MinimizePairs).
 fn size_descent(tdd: &mut Tdd) {
-    use crate::restructure::search::local::SizeDelta;
+    use crate::restructure::search::local::MinimizePairs;
     use crate::restructure::search::RotationSearchConfig;
     Engine::new()
-        .rotation_search(tdd, &mut SizeDelta, &RotationSearchConfig::default())
+        .rotation_search(tdd, &mut MinimizePairs, &RotationSearchConfig::default())
         .expect("an unarmed engine stops nothing");
 }
 use std::sync::Arc;

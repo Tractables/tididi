@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::diagram::{EncodedChildRef, ChildPair, NodeIdx, Tdd, TddLevel, TddNodeId};
-use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
+use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 
 use super::{IoError, TDD_FORMAT_VERSION};
 
@@ -42,7 +42,8 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// Read a diagram in `.tdd` format from any reader, over `vtree`.
 ///
 /// Supply the vtree saved alongside the diagram: the reader validates counts,
-/// leaf labels, and declared child indices against it, but the false diagram
+/// leaf labels, and child relationships against it. File-local vtree IDs need not
+/// equal the supplied vtree's in-memory indices. The false diagram
 /// has no node records from which to check its shape.
 /// The result shares the supplied `Arc<Vtree>`, has no attached weights, and
 /// preserves the file's node order; reading does not minimize.
@@ -90,12 +91,11 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// assert!(matches!(result, Err(IoError::Format(_))));
 /// ```
 pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
-    let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
+    let mut levels = vec![FileLevel::default(); vtree.num_nodes()];
     let mut header: Option<ProblemLine> = None;
-    let mut leaves = vec![false; vtree.num_leaves() as usize];
     // Pairs name their children by the local index the writer assigned, which
     // for an internal level counts `I` lines at that vtree node in file order —
-    // exactly the order `push_internal_node` assigns, so nothing needs mapping.
+    // exactly the order `push_internal_node` assigns. Only vtree IDs need mapping.
     for (n, line) in r.lines().enumerate() {
         let line = line?;
         let mut tok = line.split_ascii_whitespace();
@@ -111,9 +111,7 @@ pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoErro
                 let h = header.as_ref().ok_or_else(|| malformed(n, "node record before the problem line"))?;
                 if h.out_local.is_none() { return Err(malformed(n, "node record after a ZERO output")); }
                 if kind == "L" {
-                    let leaf = read_leaf_line(&mut tok, vtree, n)?;
-                    if leaves[leaf.idx()] { return Err(malformed(n, format!("duplicate leaf {}", leaf.idx()))); }
-                    leaves[leaf.idx()] = true;
+                    read_leaf_line(&mut tok, vtree, &mut levels, n)?;
                 } else {
                     read_internal_line(&mut tok, vtree, &mut levels, n)?;
                 }
@@ -124,10 +122,29 @@ pub fn read_tdd<R: BufRead>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoErro
         }
     }
     let header = header.ok_or_else(|| IoError::Format("tdd: no `p tdd` problem line".into()))?;
-    if header.out_local.is_some() && let Some(missing) = leaves.iter().position(|&seen| !seen) {
-        return Err(malformed(header.line, format!("missing leaf record for vtree node {missing}")));
-    }
     build_diagram(header, levels, vtree)
+}
+
+/// One file-local vtree declaration and the diagram nodes stored at it.
+#[derive(Clone, Default)]
+struct FileLevel {
+    node: Option<VtreeNode>,
+    line: usize,
+    diagram: TddLevel,
+}
+
+impl FileLevel {
+    fn declare(&mut self, node: VtreeNode, line: usize) -> Result<(), IoError> {
+        if let Some(previous) = &self.node {
+            if node.is_leaf() || *previous != node {
+                return Err(malformed(line, "duplicate or conflicting vtree declaration"));
+            }
+        } else {
+            self.node = Some(node);
+            self.line = line;
+        }
+        Ok(())
+    }
 }
 
 /// The `p tdd` line's fields. `out_local` is `None` for the `ZERO` token.
@@ -267,24 +284,18 @@ fn check_problem_line(h: &ProblemLine, vtree: &Vtree, line: usize) -> Result<(),
     Ok(())
 }
 
-/// `L <vtree_idx> <var>`: nothing to store — the vtree already says which
-/// variable a leaf tests. Read to check the file and the vtree agree.
+/// Record the variable at a file-local leaf, independent of in-memory indices.
 fn read_leaf_line<'a>(
     tok: &mut impl Iterator<Item = &'a str>,
     vtree: &Vtree,
+    levels: &mut [FileLevel],
     line: usize,
-) -> Result<VtreeIdx, IoError> {
+) -> Result<(), IoError> {
     let t = next_vtree_idx(tok, "leaf vtree node", vtree, line)?;
     let var = next_u32(tok, "variable", line)?;
     end_of_record(tok, line)?;
-    match vtree.node(t) {
-        VtreeNode::Leaf { var: v, .. } if v.0 + 1 == var => Ok(t),
-        VtreeNode::Leaf { var: v, .. } => Err(malformed(
-            line,
-            format!("leaf {t:?} tests variable {} in the vtree, {var} in the file", v.0 + 1),
-        )),
-        _ => Err(malformed(line, format!("{t:?} is an internal vtree node, not a leaf"))),
-    }
+    let var = var.checked_sub(1).ok_or_else(|| malformed(line, "variables are one-based"))?;
+    levels[t.idx()].declare(VtreeNode::Leaf { var: VarId(var), parent: None }, line)
 }
 
 /// `I <vtree_idx> <left_vtree> <right_vtree> <l0> <r0> ...`: one internal node,
@@ -292,21 +303,13 @@ fn read_leaf_line<'a>(
 fn read_internal_line<'a>(
     tok: &mut impl Iterator<Item = &'a str>,
     vtree: &Vtree,
-    levels: &mut [TddLevel],
+    levels: &mut [FileLevel],
     line: usize,
 ) -> Result<(), IoError> {
     let t = next_vtree_idx(tok, "node vtree index", vtree, line)?;
     let left = next_vtree_idx(tok, "left child vtree index", vtree, line)?;
     let right = next_vtree_idx(tok, "right child vtree index", vtree, line)?;
-    let VtreeNode::Internal { left: vl, right: vr, .. } = *vtree.node(t) else {
-        return Err(malformed(line, format!("{t:?} is a vtree leaf; an `I` record needs an internal node")));
-    };
-    if (vl, vr) != (left, right) {
-        return Err(malformed(
-            line,
-            format!("node at {t:?} declares children ({left:?}, {right:?}); the vtree has ({vl:?}, {vr:?})"),
-        ));
-    }
+    levels[t.idx()].declare(VtreeNode::Internal { left, right, parent: None }, line)?;
     let mut pairs: Vec<ChildPair> = Vec::new();
     while let Some(l) = tok.next() {
         let l: u32 = l.parse().map_err(|_| malformed(line, format!("left pair index: {l:?}")))?;
@@ -316,7 +319,7 @@ fn read_internal_line<'a>(
     if pairs.is_empty() {
         return Err(malformed(line, format!("node at {t:?} has no pairs")));
     }
-    levels[t.idx()].push_internal_node(&pairs);
+    levels[t.idx()].diagram.push_internal_node(&pairs);
     Ok(())
 }
 
@@ -325,12 +328,44 @@ fn read_internal_line<'a>(
 /// side in range, marginality, and an output that exists.
 fn build_diagram(
     h: ProblemLine,
-    levels: Vec<TddLevel>,
+    mut stored: Vec<FileLevel>,
     vtree: &Arc<Vtree>,
 ) -> Result<Tdd, IoError> {
-    let output = match h.out_local {
-        None => TddNodeId { vtree: h.out_vtree, local: crate::diagram::ZERO },
-        Some(local) => TddNodeId { vtree: h.out_vtree, local: NodeIdx(local) },
+    let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
+    if h.out_vtree.idx() >= stored.len() {
+        return Err(malformed(h.line, "output vtree node is outside the declared range"));
+    }
+    if h.out_local.is_some() {
+        let mut seen = vec![false; stored.len()];
+        let mut pending = vec![(h.out_vtree, vtree.root())];
+        while let Some((file, target)) = pending.pop() {
+            if std::mem::replace(&mut seen[file.idx()], true) {
+                return Err(malformed(stored[file.idx()].line, "vtree node reached more than once"));
+            }
+            let entry = &mut stored[file.idx()];
+            let node = entry.node.as_ref().ok_or_else(|| {
+                malformed(h.line, format!("missing vtree declaration for node {}", file.0))
+            })?;
+            match (node, vtree.node(target)) {
+                (VtreeNode::Leaf { var: a, .. }, VtreeNode::Leaf { var: b, .. }) if a == b => {}
+                (VtreeNode::Internal { left, right, .. }, VtreeNode::Internal { left: l, right: r, .. }) => {
+                    pending.push((*right, *r));
+                    pending.push((*left, *l));
+                }
+                _ => return Err(malformed(entry.line, format!("vtree node {} disagrees with the supplied vtree", file.0))),
+            }
+            levels[target.idx()] = std::mem::take(&mut entry.diagram);
+        }
+        if seen.iter().any(|seen| !seen) {
+            return Err(malformed(h.line, "vtree declarations do not form one complete vtree"));
+        }
+    } else if h.out_vtree != vtree.root()
+        && h.out_vtree.0 != vtree.topo_pos(vtree.root()) {
+        return Err(malformed(h.line, "ZERO output must name the vtree root"));
+    }
+    let output = TddNodeId {
+        vtree: vtree.root(),
+        local: h.out_local.map_or(crate::diagram::ZERO, NodeIdx),
     };
     crate::diagram::builder::check_levels(vtree, &levels, output, None)
         .map_err(|e| malformed(h.line, format!("the records do not form a diagram: {e}")))?;

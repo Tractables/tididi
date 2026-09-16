@@ -86,7 +86,7 @@ pub(super) fn mass(truth: &[bool], weights: &[LiteralWeights<BigRational>]) -> B
         .sum()
 }
 
-/// Check each assignment, the full-universe count and a total witness via public queries.
+/// Check each assignment, the count over covered variables and a complete witness.
 pub(super) fn assert_truth(engine: &Engine, diagram: &Tdd, expected: &[bool], context: &str) {
     let n = diagram.vtree().num_vars();
     assert_eq!(expected.len(), 1 << n);
@@ -104,7 +104,7 @@ pub(super) fn assert_truth(engine: &Engine, diagram: &Tdd, expected: &[bool], co
     }
     assert_eq!(
         engine.model_count(diagram).unwrap(),
-        expected.iter().filter(|&&yes| yes).count().into(),
+        (expected.iter().filter(|&&yes| yes).count() >> (n - diagram.vtree().num_leaves())).into(),
         "{context}, count"
     );
     match engine.satisfying_assignment(diagram).unwrap() {
@@ -113,16 +113,18 @@ pub(super) fn assert_truth(engine: &Engine, diagram: &Tdd, expected: &[bool], co
             "{context}, missing witness"
         ),
         Some(witness) => {
-            assert_eq!(witness.len(), n as usize, "{context}, total witness");
+            let mut covered: Vec<_> = diagram.vtree().leaf_bottomup().map(|(_, var)| var).collect();
+            covered.sort_unstable();
+            assert_eq!(witness.len(), covered.len(), "{context}, complete witness");
             let mut row = 0;
-            for (var, literal) in witness.iter().enumerate() {
+            for (var, literal) in covered.iter().zip(&witness) {
                 assert_eq!(
                     literal.var,
-                    VarId(var as u32),
+                    *var,
                     "{context}, witness variable"
                 );
                 if literal.positive {
-                    row |= 1 << var;
+                    row |= 1 << var.0;
                 }
             }
             assert!(expected[row], "{context}, invalid witness {row}");

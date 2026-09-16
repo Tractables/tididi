@@ -2,7 +2,7 @@
 //!
 //! [`Tdd::rotation_search`] tries local tree
 //! rotations and keeps improvements according to a caller-supplied
-//! [`RotationObjective`]. [`RotationSearchConfig`] bounds the number of sweeps,
+//! [`RotationObjective`], such as [`MinimizePairs`]. [`RotationSearchConfig`] bounds the number of sweeps,
 //! and [`RotationSearchStats`] reports the work performed.
 //!
 //! A changed vtree belongs to the resulting diagram. Build subsequent operands
@@ -16,7 +16,7 @@ pub(crate) mod local;
 #[cfg(test)]
 mod tests;
 
-pub use local::{RotationObjective, RotationSearchConfig, RotationSearchStats};
+pub use local::{MinimizePairs, RotationObjective, RotationSearchConfig, RotationSearchStats};
 
 pub(crate) use local::rotation_search_on;
 

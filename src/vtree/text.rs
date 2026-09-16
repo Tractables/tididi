@@ -9,8 +9,8 @@ impl Vtree {
     ///
     /// Format: `vtree N` header, then N lines of `L <id> <var_1indexed>` or
     /// `I <id> <left> <right>`. Node ids are `0..N`, in any order; variables
-    /// are 1-based. The last node listed is the root. Blank lines are skipped;
-    /// comment lines are not accepted.
+    /// are 1-based. The last node listed is the root. Blank lines and lines
+    /// whose first token is `c` are ignored, including before the header.
     ///
     /// # Errors
     ///
@@ -44,10 +44,12 @@ impl Vtree {
 
     /// The parse itself, reporting a plain sentence.
     fn parse_vtree_text(s: &str) -> Result<Self, String> {
-        let mut lines = s.lines();
+        let mut lines = s.lines().map(str::trim).filter(|line| {
+            !matches!(line.split_whitespace().next(), None | Some("c"))
+        });
         let n = parse_header(lines.next().ok_or("empty vtree file")?)?;
 
-        let records = lines.clone().filter(|line| !line.trim().is_empty()).count();
+        let records = lines.clone().count();
         if records != n {
             return Err(format!("header declares {n} nodes but the file contains {records} node records"));
         }
@@ -61,10 +63,6 @@ impl Vtree {
             std::collections::HashMap::new();
 
         for line in lines {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
             let parts: Vec<&str> = line.split_whitespace().collect();
             let (id, node) = match parts[0] {
                 "L" => parse_leaf_line(&parts, line, n, &mut num_vars, &mut leaf_of_var)?,

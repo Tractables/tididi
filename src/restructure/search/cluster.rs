@@ -14,7 +14,7 @@ use crate::diagram::{Tdd, TddLevel};
 use crate::limits::PollGate;
 use crate::limits::OperationError;
 
-use super::local::{RotationObjective, SizeDelta};
+use super::local::{RotationObjective, MinimizePairs};
 
 use super::probe::*;
 
@@ -138,7 +138,7 @@ impl RotationObjective for ClusterRule {
         before: (&TddLevel, &TddLevel),
         after: (&TddLevel, &TddLevel),
     ) -> i64 {
-        SizeDelta.delta(before, after)
+        MinimizePairs.delta(before, after)
     }
 }
 

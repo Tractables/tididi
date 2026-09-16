@@ -797,18 +797,10 @@ impl Tdd {
     /// use std::sync::Arc;
     /// use tididi::{and, literal, Tdd, Vtree};
     /// let vtree = Arc::new(Vtree::balanced(4));
-    /// use tididi::diagram::TddLevel;
-    /// use tididi::restructure::search::{RotationObjective, RotationSearchConfig};
-    /// struct MinSize;
-    /// impl RotationObjective for MinSize {
-    ///     fn delta(&mut self, b: (&TddLevel, &TddLevel), a: (&TddLevel, &TddLevel)) -> i64 {
-    ///         (a.0.slot_count() + a.1.slot_count()) as i64
-    ///             - (b.0.slot_count() + b.1.slot_count()) as i64
-    ///     }
-    /// }
+    /// use tididi::restructure::search::{MinimizePairs, RotationSearchConfig};
     /// let mut f = and(Tdd::clause(&vtree, [1, 2])?, Tdd::clause(&vtree, [3, 4])?)?;
     /// let before = f.model_count()?;
-    /// f.rotation_search(&mut MinSize, &RotationSearchConfig::default())?;
+    /// f.rotation_search(&mut MinimizePairs, &RotationSearchConfig::default())?;
     /// assert_eq!(f.model_count()?, before);
     /// let extra = literal(f.vtree(), 1)?;
     /// let constrained = and(f, extra)?;

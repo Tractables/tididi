@@ -126,7 +126,7 @@ pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
     // implicit diagram nodes — one(0), pos(1), neg(2) — which are not written.
     for (t, var) in vtree.leaf_bottomup() {
         buf.extend_from_slice(b"L ");
-        push_num(&mut buf, t.0);
+        push_num(&mut buf, vtree.topo_pos(t));
         buf.push(b' ');
         push_num(&mut buf, var.0 + 1); // one-based variable number
         buf.push(b'\n');
@@ -153,6 +153,7 @@ fn push_format_header(buf: &mut Vec<u8>) {
           c Readers accept only explicitly supported format versions.\n\
           c Output is node (out_vtree, out_local); out_vtree is the vtree root.\n\
           c For false, out_local is ZERO and no L or I records follow.\n\
+          c Vtree IDs match Vtree::to_text(); readers match structure, not memory indices.\n\
           c Otherwise every leaf has one L record; var is one-based.\n\
           c Each I record is OR_k(left_k AND right_k), with deterministic pairs.\n\
           c Pair indices are zero-based within their respective child levels.\n\
@@ -173,7 +174,7 @@ fn push_problem_line(buf: &mut Vec<u8>, tdd: &Tdd, out_local: Option<u32>) {
     buf.push(b' ');
     push_num(buf, tdd.vtree.num_nodes());
     buf.push(b' ');
-    push_num(buf, tdd.output.vtree.0);
+    push_num(buf, tdd.vtree.topo_pos(tdd.output.vtree));
     match out_local {
         Some(local) => {
             buf.push(b' ');
@@ -230,11 +231,11 @@ fn write_internal_lines<W: Write>(
                 continue;
             }
             buf.extend_from_slice(b"I ");
-            push_num(buf, t.0);
+            push_num(buf, tdd.vtree.topo_pos(t));
             buf.push(b' ');
-            push_num(buf, left_vtree.0);
+            push_num(buf, tdd.vtree.topo_pos(left_vtree));
             buf.push(b' ');
-            push_num(buf, right_vtree.0);
+            push_num(buf, tdd.vtree.topo_pos(right_vtree));
             // Marginal levels are refused at entry, so both sides are plain
             // node indices — no value ref can appear here.
             for pair in pairs {

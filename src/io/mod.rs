@@ -26,7 +26,10 @@
 //! `out_vtree` is the vtree root and `out_local` is its output node's local index.
 //! For the false diagram, `out_local` is the token `ZERO` and no node records
 //! follow. A nonfalse diagram declares every vtree leaf once with an `L` line,
-//! where `var` is a one-based variable number.
+//! where `var` is a one-based variable number. Vtree IDs are file-local labels
+//! in `0..num_vtree_nodes`. The writer uses the same labels as [`Vtree::to_text`](crate::Vtree::to_text);
+//! the reader matches leaf variables and child relationships to the supplied
+//! vtree, regardless of its in-memory numbering.
 //!
 //! Each `I` record defines a node as a disjunction of pairs. The pair sides are
 //! zero-based local indices into the declared left and right child levels.

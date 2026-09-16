@@ -129,3 +129,42 @@ fn undefined_format_versions_are_refused_even_below_the_current_version() {
         }
     }
 }
+
+#[test]
+fn file_local_ids_and_record_order_do_not_change_the_function() {
+    let vtree = Arc::new(Vtree::balanced(2));
+    // The root is file node 0; its children and leaf declarations arrive later.
+    let text = "p tdd 1 2 3 0 0\nI 0 2 1 1 2\nL 1 2\nL 2 1\n";
+    let loaded = read_tdd(&mut text.as_bytes(), &vtree).unwrap();
+    let expected = Tdd::cube(&vtree, [1, -2]).unwrap();
+    assert_canonical(&loaded);
+    assert_canonical(&expected);
+    assert!(loaded.equivalent(&expected).unwrap());
+    for bad in [
+        text.replace("I 0 2 1", "I 0 2 2"), // one leaf reached twice
+        text.replace("I 0 2 1", "I 0 0 1"), // cycle
+        text.replace("L 1 2", "L 1 1"),     // duplicate variable
+        text.replace("L 1 2", "L 1 0"),     // zero variable
+        text.replace("L 1 2", "L 1 3"),     // wrong variable
+        text.replace("L 1 2", "L 0 2"),     // leaf/internal collision
+        format!("{text}I 0 1 2 1 2\n"),    // inconsistent child declaration
+        text.replace("p tdd 1 2 3 0", "p tdd 1 2 3 1"), // wrong root
+    ] { refused(&bad, &vtree); }
+}
+
+#[test]
+fn rotated_version_one_file_with_original_indices_still_loads() {
+    // Older writers used in-memory IDs, which differ from the separately saved vtree.
+    let vtree = Arc::new(Vtree::from_text(
+        "vtree 7\nL 0 1\nL 1 2\nL 2 3\nL 3 4\nI 4 2 3\nI 5 1 4\nI 6 0 5\n"
+    ).unwrap());
+    let text = "p tdd 1 4 7 6 0\nL 0 1\nL 1 2\nL 2 3\nL 3 4\n\
+                I 5 2 3 2 0\nI 5 2 3 1 0\nI 4 1 5 0 1\nI 4 1 5 0 0\n\
+                I 6 0 4 1 0 1 1 2 1\n";
+    let loaded = read_tdd(&mut text.as_bytes(), &vtree).unwrap();
+    let expected = Tdd::clause(&vtree, [1, -3]).unwrap();
+    assert_canonical(&loaded);
+    assert_canonical(&expected);
+    assert!(loaded.equivalent(&expected).unwrap());
+    refused(text, &Arc::new(Vtree::balanced(4)));
+}

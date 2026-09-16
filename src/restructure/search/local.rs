@@ -30,10 +30,14 @@ pub trait RotationObjective {
     ) -> i64;
 }
 
-/// Minimize the summed pair count of the two affected levels.
-pub(crate) struct SizeDelta;
+/// Accept rotations that reduce the total number of live pairs.
+///
+/// Only the two changed levels need to be scored. Use with
+/// [`Tdd::rotation_search`]; implement [`RotationObjective`] for another cost.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct MinimizePairs;
 
-impl RotationObjective for SizeDelta {
+impl RotationObjective for MinimizePairs {
     fn delta(
         &mut self,
         before: (&TddLevel, &TddLevel),

@@ -7,7 +7,7 @@ use crate::test_helpers::{assert_canonical, compile_clauses, literals};
 /// The size-objective descent, spelled once for the tests below.
 fn size_descent(tdd: &mut Tdd) -> RotationSearchStats {
     crate::Engine::new()
-        .rotation_search(tdd, &mut SizeDelta, &RotationSearchConfig::default())
+        .rotation_search(tdd, &mut MinimizePairs, &RotationSearchConfig::default())
         .expect("an unarmed engine stops nothing")
 }
 
