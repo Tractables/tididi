@@ -7,7 +7,7 @@ use crate::diagram::Tdd;
 use super::{contract_twins_and_leaves, prune_unreachable, ContentTwinSchedule};
 
 // Node count below which the content-twin scan runs on every minimize; above
-// it the scan runs only when the galloping probe in `right_gated` says so.
+// it the scan runs only when the galloping probe in `scan_if_due` says so.
 // The scan is O(nodes) with a hashing constant, so on a small diagram it is
 // cheap next to the passes around it and on a large one it is not.
 pub(super) const C2_SCAN_MAX_NODES: u64 = 131_072;
@@ -21,7 +21,7 @@ pub(super) const C2_SCAN_MAX_NODES: u64 = 131_072;
 /// probe. Weighted mode always scans: weighted marginal-side refs are per-node
 /// slots, so twins holding equal values stay distinct until the content-twin
 /// merge collapses them.
-pub(super) fn right_gated(
+pub(super) fn scan_if_due(
     eng: &Engine,
     tdd: &mut Tdd,
     probe: Option<&mut ContentTwinSchedule>,
@@ -31,7 +31,7 @@ pub(super) fn right_gated(
     if tdd.has_marginal_level() {
         let node_count: u64 = tdd.levels.iter().map(|l| l.nodes.len() as u64).sum();
         let cap = C2_SCAN_MAX_NODES;
-        let run = tdd.weights.is_some() // weighted: scan every (bypass cap).minimize().unwrap()
+        let run = tdd.weights.is_some()
             || node_count <= cap
             || node_count >= probe.next_scan_at_nodes;
         if run {
@@ -45,7 +45,7 @@ pub(super) fn right_gated(
             } else {
                 0
             };
-        } // end if run (galloping-probe gate)
+        }
     }
     Ok(())
 }

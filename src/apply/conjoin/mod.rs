@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use crate::vtree::VtreeIdx;
-use super::grid::LevelGrid;
+use grid_arena::LevelGrid;
 use super::leaf::CONJOIN_GRID;
 use crate::diagram::{self, *};
 
@@ -50,8 +50,7 @@ mod leaf_seed;
 
 mod scratch;
 pub(crate) use scratch::ApplyScratch;
-pub(crate) mod targets;
-use targets::MarginalTargets;
+pub(crate) use setup::MarginalTargets;
 mod route;
 use route::*;
 mod grid_arena;

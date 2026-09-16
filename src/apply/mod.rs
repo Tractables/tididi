@@ -15,10 +15,8 @@
 //! Find a task and its examples in the [task guide](crate::guide::api).
 
 pub(crate) mod conjoin;
-pub(crate) mod scoped_flags;
 pub(crate) mod conjoin_clause;
 pub(crate) mod leaf;
-mod grid;
 pub(crate) mod disjoin;
 pub(crate) mod negate;
 pub(crate) mod condition;

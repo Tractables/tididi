@@ -5,7 +5,7 @@
 
 use crate::engine::Engine;
 use crate::apply::conjoin::apply_and;
-use crate::apply::conjoin::targets::MarginalTargets;
+use crate::apply::conjoin::MarginalTargets;
 use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;
 use crate::test_helpers::{literals, rand_cnf, CnfShape, Lcg};

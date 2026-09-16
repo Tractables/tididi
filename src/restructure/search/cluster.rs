@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashSet;
 
-use crate::vtree::{RotationKind, Vtree, VtreeIdx};
+use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 use crate::vtree::rotate::RotationInfo;
 use crate::diagram::{Tdd, TddLevel};
 use crate::limits::PollGate;
@@ -18,13 +18,24 @@ use super::local::{RotationObjective, SizeDelta};
 
 use super::probe::*;
 
-// ─── Marginal-clustering rotation pass (mid-compile) ───────────────────────
-//
-// After step `t` marginalizes some levels in subtree(t), two already-marginal
-// levels can sit under different parents. A single rotation can re-group them
-// as the two children of one node, which `marginalize_closure` then collapses
-// into a marginal count level, removing a structural level from the in-flight
-// diagram. `subtree_allow_mask` confines the pass to subtree(t).
+/// Build an allow-mask for `subtree(root)`: every internal node in
+/// `subtree(root)` (root included) is marked true. Used by the mid-compile
+/// rotation pass to confine the search to the post-order frontier's
+/// fully-compiled region. Including root is safe: the parent level has no
+/// compiled data yet, and rotation at root preserves 1-to-1 node
+/// correspondence at v_idx (rotation locality).
+fn subtree_allow_mask(vtree: &Vtree, root: VtreeIdx) -> Vec<bool> {
+    let mut mask = vec![false; vtree.num_nodes()];
+    let mut stack: Vec<VtreeIdx> = vec![root];
+    while let Some(n) = stack.pop() {
+        if let VtreeNode::Internal { left, right, .. } = *vtree.node(n) {
+            mask[n.idx()] = true;
+            stack.push(left);
+            stack.push(right);
+        }
+    }
+    mask
+}
 
 /// Local per-level cost cap for a clustering rotation: skip it when the two
 /// affected levels together exceed this many input pairs. A clustering rotation

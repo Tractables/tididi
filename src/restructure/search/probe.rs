@@ -1,14 +1,8 @@
-//! Rotation-kind dispatch and the per-rotation helpers the mid-compile
-//! marginal-clustering pass ([`cluster`](super::cluster)) builds on.
-//!
-//! The rotate/unrotate/restructure kind wrappers, the per-level pair-count
-//! helper, the marginal-level guard, the subtree allow-mask, and the one
-//! rotation probe both passes run — they differ in the four decisions
-//! [`ProbeRule`] names, not in the protocol.
+//! Shared rotation trial: rebuild two levels, score, then commit or restore.
 
 use std::sync::Arc;
 
-use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
+use crate::vtree::{RotationKind, Vtree, VtreeIdx};
 use crate::vtree::rotate::{rotate_pointers, PendingTopo, RotationInfo};
 use crate::diagram::{Dirty, Tdd, TddLevel, TddNodeId};
 use crate::engine::Engine;
@@ -17,58 +11,10 @@ use crate::restructure::relevel::{restructure_inner_search, RestructureScratch};
 
 use super::local::RotationObjective;
 
-// ─── Shared utilities ─────────────────────────────────────────────────────
-
-/// Build an allow-mask for `subtree(root)`: every internal node in
-/// `subtree(root)` (root included) is marked true. Used by the mid-compile
-/// rotation pass to confine the search to the post-order frontier's
-/// fully-compiled region. Including root is safe: the parent level has no
-/// compiled data yet, and rotation at root preserves 1-to-1 node
-/// correspondence at v_idx (rotation locality).
-pub(super) fn subtree_allow_mask(vtree: &Vtree, root: VtreeIdx) -> Vec<bool> {
-    let mut mask = vec![false; vtree.num_nodes()];
-    let mut stack: Vec<VtreeIdx> = vec![root];
-    while let Some(n) = stack.pop() {
-        if let VtreeNode::Internal { left, right, .. } = *vtree.node(n) {
-            mask[n.idx()] = true;
-            stack.push(left);
-            stack.push(right);
-        }
-    }
-    mask
-}
-
-/// Returns true if a rotation level is marginal in a way that blocks the rotation.
-///
-/// `v`/`w` have their pairs iterated and rebuilt during restructure, and once a node
-/// is marginalized its children no longer exist as levels (collapsed to counts) —
-/// so the rotation that would split it is ill-defined; a `v`/`w`-marginal rotation
-/// is genuinely unhandled and always blocks.
-///
-/// `a`,`b`,`c` (grandchildren) are referenced only as bare node indices, so a
-/// rotation whose only marginal levels are those is always allowed; the
-/// marginal-context expansion in `restructure::relevel` keeps the count exact.
-pub(super) fn any_rotation_level_marginal(tdd: &Tdd, info: &RotationInfo) -> bool {
-    // `v`/`w` marginal: pairs would be iterated and the marginalized node would
-    // have to be decomposed into children that no longer exist. Always blocks.
-    if tdd.levels[info.v_idx.idx()].is_marginal()
-        || tdd.levels[info.w_idx.idx()].is_marginal()
-    {
-        return true;
-    }
-    // a/b/c (grandchild) marginal is the parent-of-marginal case: count-safe via
-    // the marginal-context full expansion, so the rotation always proceeds.
-    false
-}
-
-// ─── The rotation probe ───────────────────────────────────────────────────
-
 /// What a caller of [`probe`] adds to the shared protocol.
 ///
-/// The protocol is fixed — rotate, guard, restructure under a bound,
-/// re-minimize, score, keep or restore — and a pass varies it only at these
-/// four points. Every method has a default, so an objective that just wants the
-/// protocol implements nothing.
+/// The search supplies admission, size bounds, acceptance credit and an
+/// accepted-rotation callback. Defaults use the objective alone.
 pub(super) trait ProbeRule: RotationObjective {
     /// A last gate before the expensive restructure, read on the rotated vtree
     /// with the levels still untouched. `false` reverts the pointers and
@@ -106,9 +52,7 @@ pub(super) trait ProbeRule: RotationObjective {
 /// improvement. Returns whether the rotation was kept; on a decline the diagram
 /// is restored bit-for-bit, vtree included.
 ///
-/// The two affected levels are the only ones the restructure and the following
-/// re-minimize touch (Rotation Locality), which is what makes both the score and
-/// the restore two levels wide.
+/// Rotation locality restricts rebuilding, scoring and rollback to two levels.
 pub(super) fn probe<R: ProbeRule>(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -120,7 +64,12 @@ pub(super) fn probe<R: ProbeRule>(
 ) -> Result<bool, OperationError> {
     let Some(mut trial) = RotationTrial::new(tdd, v, kind) else { return Ok(false) };
     let info = trial.pending.as_ref().unwrap().info();
-    if any_rotation_level_marginal(trial.tdd, &info) || !rule.admits(trial.tdd, &info) {
+    // The two rebuilt levels need explicit pairs; marginal grandchildren are
+    // allowed because the restructure preserves their contribution multiset.
+    if trial.tdd.levels[info.v_idx.idx()].is_marginal()
+        || trial.tdd.levels[info.w_idx.idx()].is_marginal()
+        || !rule.admits(trial.tdd, &info)
+    {
         return Ok(false);
     }
     let bound = rule.bound(trial.tdd, &info, default_bound);

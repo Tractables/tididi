@@ -1,27 +1,63 @@
 //! The clause spine: which vtree levels a clause touches, and their map layout.
 
 use super::*;
-use crate::apply::scoped_flags::ScopedFlags;
 
-/// Mark the clause's ancestor paths, polling before each visited level.
-fn mark_clause_levels_with(
-    vtree: &Vtree,
-    clause: &[Literal],
-    mut mark: impl FnMut(VtreeIdx) -> bool,
-    mut poll: impl FnMut() -> Result<(), OperationError>,
-) -> Result<(), OperationError> {
-    for lit in clause {
-        let mut cur = vtree.leaf_of(lit.var).expect("the vtree carries this variable");
-        loop {
-            poll()?;
-            if !mark(cur) { break; }
-            match vtree.node(cur).parent() {
-                Some(p) => cur = p,
-                None => break,
-            }
-        }
+/// Clause-spine marks, cleared and returned to their pool on every exit.
+/// Reset visits only marked levels, including during error unwinding.
+pub(super) struct SpineMarks<'a> {
+    flags: Vec<bool>,
+    set: Vec<VtreeIdx>,
+    pool: &'a Pool<MarkBuffer>,
+}
+
+/// The flags and their rollback log reuse capacity together.
+#[derive(Default)]
+pub(super) struct MarkBuffer {
+    flags: Vec<bool>,
+    set: Vec<VtreeIdx>,
+}
+
+impl<'a> SpineMarks<'a> {
+    /// Take the pooled array, grown to cover `num_nodes` levels.
+    pub(super) fn take(lim: &crate::limits::Limits, pool: &'a Pool<MarkBuffer>, num_nodes: usize) -> Result<Self, crate::limits::OperationError> {
+        let MarkBuffer { mut flags, mut set } = pool.take();
+        lim.try_resize(&mut flags, num_nodes, false)?;
+        lim.reserve_exact(&mut set, num_nodes)?;
+        Ok(SpineMarks { flags, set, pool })
     }
-    Ok(())
+
+    /// Mark level `t` and report whether it was newly marked.
+    #[inline]
+    pub(super) fn set(&mut self, t: VtreeIdx) -> bool {
+        if self.flags[t.idx()] { return false; }
+        self.flags[t.idx()] = true;
+        self.set.push(t);
+        true
+    }
+}
+
+impl std::ops::Deref for SpineMarks<'_> {
+    type Target = [bool];
+    #[inline]
+    fn deref(&self) -> &[bool] {
+        &self.flags
+    }
+}
+
+impl Drop for SpineMarks<'_> {
+    fn drop(&mut self) {
+        for &t in &self.set {
+            self.flags[t.idx()] = false;
+        }
+        debug_assert!(
+            self.flags.iter().all(|&b| !b),
+            "clause-spine marks were not cleared",
+        );
+        self.set.clear();
+        crate::limits::pool::release_if_oversized(&mut self.set);
+        crate::limits::pool::release_if_oversized(&mut self.flags);
+        self.pool.put(MarkBuffer { flags: std::mem::take(&mut self.flags), set: std::mem::take(&mut self.set) });
+    }
 }
 
 /// Build the clause spine: mark every ancestor (inclusive) of each clause
@@ -31,12 +67,22 @@ pub(super) fn build_clause_spine(
     lim: &crate::limits::Limits,
     vtree: &crate::vtree::Vtree,
     clause: &[Literal],
-    on_spine: &mut ScopedFlags<'_>,
+    on_spine: &mut SpineMarks<'_>,
     spine_internal: &mut Vec<VtreeIdx>,
     dfs_stack: &mut Vec<(VtreeIdx, bool)>,
 ) -> Result<(), OperationError> {
     let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
-    mark_clause_levels_with(vtree, clause, |t| on_spine.set(t), || lim.poll(&mut gate, 1))?;
+    for lit in clause {
+        let mut cur = vtree.leaf_of(lit.var).expect("the vtree carries this variable");
+        loop {
+            lim.poll(&mut gate, 1)?;
+            if !on_spine.set(cur) { break; }
+            match vtree.node(cur).parent() {
+                Some(p) => cur = p,
+                None => break,
+            }
+        }
+    }
 
     // The marked set is ancestor-closed, so it is a connected subtree
     // containing the root; the DFS descends only into marked children.
@@ -69,7 +115,7 @@ pub(super) fn propagate_need_dt(
     vtree: &crate::vtree::Vtree,
     spine_internal: &[VtreeIdx],
     on_spine: &[bool],
-    need_dt: &mut ScopedFlags<'_>,
+    need_dt: &mut SpineMarks<'_>,
 ) {
     for &t in spine_internal.iter().rev() {
         let (l, r) = vtree.children(t);

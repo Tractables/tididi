@@ -1,31 +1,9 @@
-//! Objective-generic greedy vtree-rotation search over a single compiled diagram.
+//! Greedy vtree-rotation search under a caller-supplied objective.
 //!
-//! This is the small, principled, public form of vtree search: given a compiled
-//! [`Tdd`], repeatedly rotate its vtree to descend some caller-chosen objective
-//! until no single rotation improves it.
-//!
-//! The entry point minimizes a marginal-free input once up front, so a
-//! non-canonical diagram is accepted directly; see `rotation_search_on`.
-//!
-//! # Probe / accept / revert mechanics
-//!
-//! Each sweep visits every internal vtree node bottom-up and probes both a left
-//! and a right rotation at it through the shared `probe`: rotate, guard,
-//! rebuild the two affected levels under a bound, then score the move with
-//! [`RotationObjective::delta`] over the old vs. new two-level contents and
-//! **accept iff the delta is strictly negative**. A rotation keeps a canonical
-//! diagram canonical, so no reduction pass follows it. A declined probe
-//! leaves the diagram bit-for-bit as it was. The search terminates when a full
-//! sweep accepts nothing, or when `max_sweeps` is reached.
-//!
-//! # Locality
-//!
-//! The restructure touches only the levels at `v_idx` and `w_idx`
-//! (rotation locality, argued in the `restructure::relevel` module doc), so an
-//! objective scores a move from those two levels' before/after contents and a
-//! revert restores only them. A rotation regroups the same products, so the
-//! search preserves the model count for any objective, marginal diagrams
-//! included.
+//! Each bottom-up sweep probes left and right rotations, retaining strict
+//! improvements. Only the two affected levels are rebuilt and scored; a
+//! rejected probe restores them. Sweeps stop at a local minimum or the
+//! configured limit. Marginal-free inputs are minimized before the first sweep.
 
 use crate::limits::OperationError;
 use crate::engine::Engine;
@@ -35,7 +13,7 @@ use crate::diagram::{Tdd, TddLevel};
 
 use super::probe::*;
 
-/// Scores a candidate rotation for [`Engine::rotation_search`].
+/// Scores a candidate rotation for [`Tdd::rotation_search`].
 ///
 /// By Rotation Locality a rotation changes exactly
 /// the two affected levels, so the objective is handed precisely their old and
@@ -52,11 +30,7 @@ pub trait RotationObjective {
     ) -> i64;
 }
 
-/// The default objective: minimize total diagram size, measured as the summed
-/// input-pair count of the two affected levels (`live_pairs`, the
-/// per-level component of [`Tdd::pair_count`]). Marginal levels contribute zero pairs,
-/// so the metric falls back sensibly on marginal diagrams. By locality a negative
-/// two-level delta is exactly a strict decrease in whole-diagram size.
+/// Minimize the summed pair count of the two affected levels.
 pub(crate) struct SizeDelta;
 
 impl RotationObjective for SizeDelta {
@@ -71,7 +45,7 @@ impl RotationObjective for SizeDelta {
     }
 }
 
-/// Tunables for [`Engine::rotation_search`].
+/// Limits on the work performed by [`Tdd::rotation_search`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RotationSearchConfig {
@@ -90,7 +64,7 @@ impl Default for RotationSearchConfig {
     }
 }
 
-/// Outcome counters for an [`Engine::rotation_search`] run.
+/// Work performed by [`Tdd::rotation_search`].
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RotationSearchStats {

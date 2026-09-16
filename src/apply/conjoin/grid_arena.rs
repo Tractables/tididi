@@ -30,10 +30,42 @@
 //! [`GridArena::materialized`] returns and what every consumer goes through.
 
 use crate::engine::Engine;
-use super::{OperationError, LevelGrid, NO_PRODUCT};
+use super::{OperationError, NO_PRODUCT};
 use super::budget::try_resize_dead;
 use super::setup::ApplyRun;
 use super::sparse::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx, fill_identity_product_list};
+
+/// Per-level descriptor for the product grid's slice of the flat arena.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum LevelGrid {
+    /// No grid allocated; consumers must go through `product_lists[t]`.
+    Sparse,
+    /// Grid allocated at `base` and filled — by the leaf `CONJOIN_GRID` lookup
+    /// or by one of the internal-level producers (the scatter from a product
+    /// list, the sequential dense emit, an identity shortcut).
+    Materialized { base: usize },
+}
+
+impl LevelGrid {
+    /// Base offset into the flat `node_idx` arena, or `None` if unallocated.
+    #[inline]
+    pub(crate) fn base(&self) -> Option<usize> {
+        match self {
+            LevelGrid::Sparse => None,
+            LevelGrid::Materialized { base } => Some(*base),
+        }
+    }
+
+    /// Base offset; panics if the grid is not allocated.
+    #[inline]
+    pub(crate) fn base_unchecked(&self) -> usize {
+        self.base().expect("expected allocated grid, found Sparse")
+    }
+
+    /// Whether no grid is allocated for this level.
+    #[inline]
+    pub(crate) fn is_sparse(&self) -> bool { matches!(self, LevelGrid::Sparse) }
+}
 
 /// Offset of a level's grid within the arena's flat slab.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

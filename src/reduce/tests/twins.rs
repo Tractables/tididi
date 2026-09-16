@@ -208,7 +208,7 @@ fn test_minimize_contracts_marginal_twins() {
     let phase3_count = tdd.model_count().unwrap();
 
     tdd.minimize().unwrap();
-    // The content-twin scan is not run by try_reduce's normal path, so
+    // The content-twin scan is not run by Engine::reduce's normal path, so
     // call the canonicalization machinery directly so the assertions hold.
     canonicalize_content_twins(&eng, &mut tdd).unwrap();
     // After pair fusion + slot-prune: v_left should have exactly 1 surviving slot.

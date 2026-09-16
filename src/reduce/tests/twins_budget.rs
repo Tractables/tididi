@@ -285,7 +285,7 @@ fn test_contract_leaf_twins_overbudget_leaves_the_level_queued_and_unchanged() {
 
 /// Regression: prune value-merge can mint twins after contract ran.
 /// Pre-fix: the broken one-shot sequence leaves unmerged twins.
-/// Post-fix: `try_reduce`'s iterate-to-fixpoint loop eliminates them.
+/// Post-fix: `Engine::reduce`'s iterate-to-fixpoint loop eliminates them.
 ///
 /// Fixture: boundary store at v_marginal holds 3 slots [C, C, D] (slots 0,1 equal;
 /// slot 2 distinct). Parent-level nodes p and q each hold two pairs with the
@@ -412,26 +412,26 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
         );
     }
 
-    // ── Post-fix: try_reduce iterates to the true joint fixpoint ────────────
+    // ── Post-fix: Engine::reduce iterates to the true joint fixpoint ────────────
     //
     // Seed dirty list so the initial contract pass runs; prune reports
     // values_merged > 0, the fix re-seeds and re-contracts, prune next pass
     // reports 0 -> loop exits.
     tdd.seed_contract_worklist([root_idx.0]);
-    eng.reduce(&mut tdd, ReductionPlan::default()).expect("try_reduce must not OOM");
-    // The content-twin scan is not run by try_reduce's normal path, so
+    eng.reduce(&mut tdd, ReductionPlan::default()).expect("Engine::reduce must not OOM");
+    // The content-twin scan is not run by Engine::reduce's normal path, so
     // call the canonicalization machinery directly so the assertions hold.
     canonicalize_content_twins(&eng, &mut tdd).unwrap();
 
     // (a) Primary: no unmerged twins after the fix's iterate-to-fixpoint loop.
     check_twin_canonicality(&tdd)
-        .expect("post-fix: check_twin_canonicality must pass after try_reduce");
+        .expect("post-fix: check_twin_canonicality must pass after Engine::reduce");
 
     // (b) No duplicate slot values remain.
     check_slot_count_uniqueness(&tdd)
-        .expect("no duplicate slot values after try_reduce");
+        .expect("no duplicate slot values after Engine::reduce");
 
     // (c) No orphan slots remain.
     check_no_orphan_slots(&tdd)
-        .expect("post-fix: check_no_orphan_slots must pass after try_reduce");
+        .expect("post-fix: check_no_orphan_slots must pass after Engine::reduce");
 }

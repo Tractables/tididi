@@ -61,7 +61,7 @@ pub struct Engine {
     limits: Limits,
     apply: crate::apply::conjoin::ApplyScratch,
     clause: crate::apply::conjoin_clause::ClauseScratch,
-    reduce: crate::reduce::scratch::ReduceScratch,
+    reduce: crate::reduce::ReduceScratch,
     restructure: crate::limits::pool::Pool<crate::restructure::scratch::RestructureScratch>,
     sparse: std::cell::RefCell<crate::apply::conjoin::SparseWorkspace>,
     levels: crate::diagram::LevelPool,
@@ -108,7 +108,7 @@ impl Engine {
             limits: Limits::new(),
             apply: crate::apply::conjoin::ApplyScratch::default(),
             clause: crate::apply::conjoin_clause::ClauseScratch::default(),
-            reduce: crate::reduce::scratch::ReduceScratch::default(),
+            reduce: crate::reduce::ReduceScratch::default(),
             restructure: crate::limits::pool::Pool::default(),
             sparse: std::cell::RefCell::new(crate::apply::conjoin::SparseWorkspace::default()),
             levels: crate::diagram::LevelPool::default(),
@@ -146,7 +146,7 @@ impl Engine {
     /// The reduction pools.
     #[must_use]
     #[inline]
-    pub(crate) fn reduce_scratch(&self) -> &crate::reduce::scratch::ReduceScratch {
+    pub(crate) fn reduce_scratch(&self) -> &crate::reduce::ReduceScratch {
         &self.reduce
     }
 

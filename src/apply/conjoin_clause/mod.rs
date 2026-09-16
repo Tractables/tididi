@@ -14,7 +14,6 @@
 
 use crate::engine::Engine;
 use crate::limits::pool::Pool;
-use crate::apply::scoped_flags::{ScopedFlags, FlagBuffer};
 use std::sync::Arc;
 
 use crate::diagram::Literal;
@@ -95,9 +94,9 @@ pub(crate) struct ClauseScratch {
     /// Cumulative offsets into `cd_map`, one per vtree level.
     level_base: Pool<Vec<usize>>,
     /// Per-level flags: `on_spine[t]` = clause has variables in subtree t.
-    on_spine: Pool<FlagBuffer>,
+    on_spine: Pool<MarkBuffer>,
     /// Per-level flags: `need_dt[t]` = must compute complement conjunction at t.
-    need_dt: Pool<FlagBuffer>,
+    need_dt: Pool<MarkBuffer>,
     /// Spine internal nodes in bottom-up (post-order) order.
     spine_internal: Pool<Vec<VtreeIdx>>,
     /// Work stack for the post-order spine walk (node, processed?).
@@ -169,11 +168,11 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
 
     // The clause spine — the Steiner tree of its variables' leaves — and the
     // `need_dt` flag propagated top-down over it.
-    let mut on_spine = ScopedFlags::take(lim, &pool.on_spine, num_nodes)?;
+    let mut on_spine = SpineMarks::take(lim, &pool.on_spine, num_nodes)?;
     let mut spine_internal = pool.spine_internal.take();
     let mut dfs_stack = pool.dfs_stack.take();
     build_clause_spine(lim, vtree, clause, &mut on_spine, &mut spine_internal, &mut dfs_stack)?;
-    let mut need_dt = ScopedFlags::take(lim, &pool.need_dt, num_nodes)?;
+    let mut need_dt = SpineMarks::take(lim, &pool.need_dt, num_nodes)?;
     propagate_need_dt(vtree, &spine_internal, &on_spine, &mut need_dt);
 
     // Take ownership of f's levels: off-spine levels pass through as the

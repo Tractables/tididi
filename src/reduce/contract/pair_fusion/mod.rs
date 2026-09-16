@@ -5,7 +5,6 @@
 
 mod plan;
 mod rewrite;
-mod slots;
 
 
 use crate::engine::Engine;
@@ -19,9 +18,8 @@ use crate::value::{IntFold, WeightFold};
 
 use super::scratch::ContractScratch;
 
-use plan::collect_fusion_plans;
+use plan::{collect_fusion_plans, allocate_fusion_slots};
 use rewrite::rebuild_parent_level;
-use slots::allocate_fusion_slots;
 
 /// Stats returned by the pair-fusion sweeps.
 #[derive(Debug, Clone, Default)]

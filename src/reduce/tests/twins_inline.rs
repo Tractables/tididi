@@ -20,7 +20,7 @@ use std::sync::Arc;
 /// referenced by a root node with DIFFERENT siblings — the SHARABLE shape.
 /// Context-based T does not merge them (different grandparent contexts).
 /// Slot-prune does not touch them (no slots involved).
-/// try_reduce must merge them via the unconditional content-twin scan, and
+/// Engine::reduce must merge them via the unconditional content-twin scan, and
 /// the model count must be preserved.
 ///
 /// Fixture (balanced(4) vtree — 7 nodes, leaves 0-3, internals 4-6):
@@ -106,10 +106,10 @@ fn test_inline_ref_twins_merged_by_minimize() {
     let count_before = tdd.model_count().unwrap();
     assert!(count_before > 0u64.into(), "fixture must be satisfiable");
 
-    // Mark root dirty; try_reduce runs prune + contract + unconditional scan.
+    // Mark root dirty; Engine::reduce runs prune + contract + unconditional scan.
     tdd.seed_contract_worklist([root_idx.0]);
-    eng.reduce(&mut tdd, ReductionPlan::default()).expect("try_reduce must not OOM");
-    // The content-twin scan is not run by try_reduce's normal path, so
+    eng.reduce(&mut tdd, ReductionPlan::default()).expect("Engine::reduce must not OOM");
+    // The content-twin scan is not run by Engine::reduce's normal path, so
     // call the canonicalization machinery directly so the assertions hold.
     canonicalize_content_twins(&eng, &mut tdd).unwrap();
 
@@ -117,7 +117,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
     let count_after = tdd.model_count().unwrap();
     assert_eq!(
         count_before, count_after,
-        "try_reduce must not change model count: got before={count_before}, after={count_after}"
+        "Engine::reduce must not change model count: got before={count_before}, after={count_after}"
     );
 
     // (b) No unmerged sharable twins at v_parent4 after minimize.
