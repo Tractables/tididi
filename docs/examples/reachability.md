@@ -41,8 +41,7 @@ in each pair:
 
 An edge is a cube: the conjunction of the four literals specifying its
 source and destination. The relation is the union of the three edge cubes.
-The shared vtree supplies reusable working memory throughout construction and
-the fixed-point loop:
+Build the relation on one shared vtree:
 
 ```rust,ignore,{class=tested-example}
 let vtree = Arc::new(Vtree::balanced(4));
@@ -66,8 +65,7 @@ let mut iterations = 0;
 ```
 
 Only current-state variables constrain `reached`; its next-state variables
-are free. The complete program returns `Result<(), OperationError>` to
-propagate errors from the checked operations with `?`.
+are free.
 
 ## Take one step
 
@@ -80,24 +78,27 @@ let possible_steps = and(reached.clone(), transition.clone())?;
 let successors = possible_steps.exists_vars(&current)?;
 ```
 
+The successors are expressed using next-state variables. Rename them to
+current-state variables so they can be used in the next iteration:
+
 ```rust,ignore,{class=tested-example}
 let successors = successors.rename_vars(&next_to_current)?;
+```
+
+Add them to the states already reached:
+
+```rust,ignore,{class=tested-example}
 let enlarged = or(reached.clone(), successors)?;
 iterations += 1;
 ```
 
-Quantification removes the dependence on the current variables. Renaming then
-expresses the successor set using current-state variables again, so it can be
-combined with `reached` and used in the next iteration.
-
 ## Stop when the state set no longer grows
 
-The two next-state variables remain free, so a full-vtree model count includes
-four assignments per state. The program reports state counts by removing that
-factor:
+Count distinct assignments to the current-state variables with
+[`projected_model_count`](crate::Tdd::projected_model_count):
 
 ```rust,ignore,{class=tested-example}
-let state_count = enlarged.model_count()? / 4u32;
+let state_count = enlarged.projected_model_count(&current)?;
 println!("Iteration {iterations}: {state_count} reachable states");
 ```
 
@@ -131,7 +132,7 @@ let forbidden = Tdd::cube(&vtree, [1, 2])?;
 let safe = forbidden.negate()?;
 assert!(reached.equivalent(&safe)?);
 assert!(reached.implies(&safe)?);
-assert_eq!(reached.model_count()?, 12u32.into());
+assert_eq!(reached.projected_model_count(&current)?, 3u32.into());
 println!("State 3 is unreachable");
 ```
 
@@ -157,13 +158,23 @@ path requires retaining predecessor information during the search.
 ## Combine the image operations
 
 Once the separate steps are familiar, [`and_exists`](crate::and_exists)
-expresses conjunction and quantification in one call. The example checks the
-two forms for equality at each iteration, before renaming:
+expresses conjunction and quantification in one call. This helper takes a state
+set and a transition relation, then returns the successors in current-state
+coordinates:
 
 ```rust,ignore,{class=tested-example}
-let combined = and_exists(reached.clone(), transition.clone(), &current)?;
-assert!(successors.equivalent(&combined)?);
+fn image(
+    states: Tdd,
+    transition: Tdd,
+    current: &[VarId],
+    next_to_current: &[(VarId, VarId)],
+) -> Result<Tdd, OperationError> {
+    and_exists(states, transition, current)?.rename_vars(next_to_current)
+}
 ```
+
+The complete program checks this helper against the separate steps at each
+iteration. It can replace those steps once the image computation is familiar.
 
 Ordinary quantification selects its strategy automatically. If a particular
 workload needs the structural rewrite, use

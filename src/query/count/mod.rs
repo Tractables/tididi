@@ -13,6 +13,8 @@ pub use incremental::{KeepAllColumns, KeepFrontier, ModelCounter, BoundModelCoun
 use num_bigint::BigUint;
 
 use crate::diagram::*;
+use crate::limits::PollGate;
+use crate::vtree::{VarId, VtreeNode};
 
 /// Whether pins count as evidence or as substitution over the unchanged vtree.
 ///
@@ -94,6 +96,42 @@ pub(crate) fn model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, OperationE
 }
 
 impl Tdd {
+    /// Count distinct assignments to `vars` that have a satisfying extension.
+    ///
+    /// Each assignment is counted once, even when several assignments to the
+    /// other variables satisfy the function. Selected variables that the function
+    /// leaves free still contribute a factor of two. Order and duplicates do not
+    /// matter; an empty selection counts one for a satisfiable function and zero
+    /// for an unsatisfiable one. Every selected variable must belong to the vtree.
+    ///
+    /// Borrows a structural diagram, ignores attached weights, and returns an
+    /// exact integer. The query quantifies unselected variables on a copy before
+    /// counting, so it can require more work and memory than [`model_count`](Self::model_count).
+    /// Selecting every vtree variable uses ordinary counting without copying.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::VariableNotInVtree`] for an absent variable,
+    /// [`OperationError::MarginalLevel`] for discarded structure, or
+    /// [`OperationError::OverBudget`] if an allocation is refused.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// use tididi::vtree::VarId;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// assert_eq!(f.model_count()?, 6u32.into());
+    /// // Either value of x1 can be extended to a satisfying assignment.
+    /// assert_eq!(f.projected_model_count(&[VarId(0)])?, 2u32.into());
+    /// assert_eq!(f.projected_model_count(&[VarId(0), VarId(1)])?, 3u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn projected_model_count(&self, vars: &[VarId]) -> Result<BigUint, OperationError> {
+        self.context().run(|eng| eng.projected_model_count(self, vars))
+    }
+
     /// Return per-node counts, saturating values above `u128::MAX`.
     ///
     /// Indexed by vtree level and local node index. Zero and all values below
@@ -112,6 +150,50 @@ impl Tdd {
 }
 
 impl Engine {
+    /// Run [`Tdd::projected_model_count`] under this batch's resource limits.
+    ///
+    /// Returns the query's errors, [`OperationError::Stopped`] on cancellation,
+    /// or [`OperationError::OutputCap`] if quantification exceeds the node cap.
+    /// Copying, quantification and counting share one operation scope; the input
+    /// remains unchanged on success and error. Big-integer arithmetic allocations
+    /// are outside the best-effort byte budget, as with [`Tdd::model_count`].
+    pub fn projected_model_count(&self, tdd: &Tdd, vars: &[VarId]) -> Result<BigUint, OperationError> {
+        let lim = self.limits();
+        let _op = lim.begin_operation();
+        if lim.should_stop() { return Err(OperationError::Stopped); }
+        let vtree = tdd.vtree();
+        let mut gate = PollGate::new(lim.reduce_poll_stride());
+        for &var in vars {
+            lim.poll(&mut gate, 1)?;
+            vtree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
+        }
+        lim.flush_poll(&mut gate)?;
+        let satisfiable = self.is_sat(tdd)?;
+        if vars.is_empty() || !satisfiable {
+            return Ok(u32::from(satisfiable).into());
+        }
+
+        let mut selected = Vec::new();
+        lim.try_resize(&mut selected, vtree.num_nodes(), false)?;
+        for &var in vars {
+            lim.poll(&mut gate, 1)?;
+            selected[vtree.leaf_of(var).expect("validated variable").idx()] = true;
+        }
+        let mut eliminated = Vec::new();
+        for level in vtree.bottomup() {
+            lim.poll(&mut gate, 1)?;
+            if let VtreeNode::Leaf { var, .. } = *vtree.node(level) && !selected[level.idx()] {
+                lim.try_push(&mut eliminated, var)?;
+            }
+        }
+        lim.flush_poll(&mut gate)?;
+        if eliminated.is_empty() { return self.model_count(tdd); }
+        let mut copy = tdd.try_clone_on(self)?;
+        copy.weights = None;
+        let projected = self.exists_vars(copy, &eliminated)?;
+        Ok(self.model_count(&projected)? >> eliminated.len())
+    }
+
     /// Run [`Tdd::node_counts_u128`] under this engine's allocation and stop limits.
     ///
     /// Returns the query's errors or [`OperationError::Stopped`] on cancellation.

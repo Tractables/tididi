@@ -23,15 +23,14 @@ fn main() -> Result<(), OperationError> {
         let possible_steps = and(reached.clone(), transition.clone())?;
         let successors = possible_steps.exists_vars(&current)?;
 
-        // The combined operation expresses the same image in one call.
-        let combined = and_exists(reached.clone(), transition.clone(), &current)?;
-        assert!(successors.equivalent(&combined)?);
         let successors = successors.rename_vars(&next_to_current)?;
+        let combined = image(reached.clone(), transition.clone(), &current, &next_to_current)?;
+        assert!(successors.equivalent(&combined)?);
         let enlarged = or(reached.clone(), successors)?;
         iterations += 1;
 
-        // Each state has four assignments to the two free next-state variables.
-        let state_count = enlarged.model_count()? / 4u32;
+        // Count distinct current states, regardless of next-state assignments.
+        let state_count = enlarged.projected_model_count(&current)?;
         println!("Iteration {iterations}: {state_count} reachable states");
         if enlarged.equivalent(&reached)? {
             break;
@@ -49,7 +48,7 @@ fn main() -> Result<(), OperationError> {
     let safe = forbidden.negate()?;
     assert!(reached.equivalent(&safe)?);
     assert!(reached.implies(&safe)?);
-    assert_eq!(reached.model_count()?, 12u32.into());
+    assert_eq!(reached.projected_model_count(&current)?, 3u32.into());
     println!("State 3 is unreachable");
 
     let target = Tdd::cube(&vtree, [-1, 2])?; // state 2
@@ -66,4 +65,14 @@ fn main() -> Result<(), OperationError> {
     // This is a state assignment; reconstructing a path needs predecessor tracking.
     println!("Reachable target witness: state {state}");
     Ok(())
+}
+
+/// Compute successors and express them in current-state coordinates.
+fn image(
+    states: Tdd,
+    transition: Tdd,
+    current: &[VarId],
+    next_to_current: &[(VarId, VarId)],
+) -> Result<Tdd, OperationError> {
+    and_exists(states, transition, current)?.rename_vars(next_to_current)
 }

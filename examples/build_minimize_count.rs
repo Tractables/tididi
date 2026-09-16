@@ -30,6 +30,15 @@ fn main() -> Result<(), tididi::OperationError> {
     assert_eq!(remote_count, 4u32.into());
     println!("Configurations with remote backups: {remote_count}");
 
+    // Remote backups force encryption; disabling it leaves no valid configuration.
+    let forced = with_remote.implied_literals()?;
+    assert!(forced.contains(&3.try_into()?));
+    for literal in &forced {
+        println!("Required choice: {} = {}", names[literal.var.idx()], literal.positive);
+    }
+    let conflicting = and(with_remote, literal(&vtree, -3)?)?;
+    assert!(!conflicting.is_sat()?);
+
     let witness = configurations.satisfying_assignment()?
         .expect("the backup rules have a solution");
     println!("One valid configuration:");

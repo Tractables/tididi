@@ -33,6 +33,7 @@ The [reachability walkthrough](crate::guide::examples::reachability) combines th
 
 [`Tdd::is_sat`](crate::Tdd::is_sat) tests whether any assignment satisfies a structural diagram.
 [`Tdd::model_count`](crate::Tdd::model_count) counts assignments over all vtree variables, including free ones.
+[`Tdd::projected_model_count`](crate::Tdd::projected_model_count) counts distinct assignments to selected variables that have a satisfying extension.
 [`Tdd::satisfying_assignment`](crate::Tdd::satisfying_assignment) returns one complete assignment, or `None`.
 [`Tdd::equivalent`](crate::Tdd::equivalent) compares represented functions, and
 [`Tdd::implies`](crate::Tdd::implies) tests entailment.

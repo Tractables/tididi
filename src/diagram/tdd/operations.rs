@@ -224,7 +224,9 @@ impl Tdd {
     ///
     /// The quantified variables remain free in the unchanged vtree. Divide the
     /// result's full model count by `2^k` to count over the remaining variables,
-    /// where `k` is the number of distinct quantified variables. In contrast,
+    /// where `k` is the number of distinct quantified variables; or query the
+    /// original function with [`projected_model_count`](Self::projected_model_count).
+    /// In contrast,
     /// [`marginalize_levels`](Self::marginalize_levels) sums extension counts and
     /// preserves the original total.
     ///
@@ -496,7 +498,8 @@ impl Tdd {
     /// a factor of two; the diagram need not be minimized. Literal weights on
     /// structural levels are ignored, count-marginal levels use their stored counts,
     /// and the false diagram counts zero. The diagram is borrowed and unchanged.
-    /// For repeated counts under observations, use [`counter`](Self::counter).
+    /// For repeated counts under observations, use [`counter`](Self::counter);
+    /// to count over selected variables, use [`projected_model_count`](Self::projected_model_count).
     ///
     /// # Errors
     ///

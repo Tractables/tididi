@@ -101,8 +101,7 @@ let wet_probability = wet.evaluate(&weights)?;
 assert_eq!(rain.evaluate(&weights)?, rain_probability);
 ```
 
-The result is an exact rational number. The `?` propagates an evaluation error
-from the enclosing function.
+The result is an exact rational number.
 
 ## Divide by the evidence mass
 

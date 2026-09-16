@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 mod boundary;
 mod counting;
+mod projected;
 mod pinned;
 mod streaming;
 mod traverse;

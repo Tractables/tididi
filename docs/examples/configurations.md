@@ -89,6 +89,34 @@ all eight choices. This is evidence expressed as another constraint;
 [`Tdd::condition`](crate::Tdd::condition) instead substitutes values
 into a function, with different counting semantics.
 
+## Find forced choices and conflicts
+
+With remote backups selected, encryption is mandatory. Use
+[`implied_literals`](crate::Tdd::implied_literals) to find the choices shared
+by every remaining configuration:
+
+```rust,ignore,{class=tested-example}
+let forced = with_remote.implied_literals()?;
+assert!(forced.contains(&3.try_into()?));
+for literal in &forced {
+    println!("Required choice: {} = {}", names[literal.var.idx()], literal.positive);
+}
+```
+
+The result includes both remote backups, which we selected, and encryption,
+which follows from the rules. Local backups and notifications remain optional.
+If the user also disables encryption, no configuration satisfies the choices:
+
+```rust,ignore,{class=tested-example}
+let conflicting = and(with_remote, literal(&vtree, -3)?)?;
+assert!(!conflicting.is_sat()?);
+```
+
+Check satisfiability before displaying forced choices for arbitrary user input;
+an empty list of implied literals does not distinguish a conflict from a model
+with no forced choices. The original `configurations` still holds all eight
+valid configurations.
+
 ## Ask for one concrete configuration
 
 Borrow the configuration diagram to find one complete assignment:
