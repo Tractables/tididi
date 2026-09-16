@@ -271,7 +271,7 @@ impl WeightFold {
 /// that re-reads a non-root column after the pass needs [`Self::All`].
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[non_exhaustive]
-pub enum ColumnRetention {
+pub(crate) enum ColumnRetention {
     /// Keep every level's column for the caller.
     All,
     /// Free each child column as soon as its parent's column is complete.

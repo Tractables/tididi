@@ -18,7 +18,6 @@ use crate::diagram::*;
 // definition for "when does a bottom-up pass's column die". Re-exported so
 // external callers of the `pub` counter constructors can name it (`counts` is
 // a crate-private module).
-pub use crate::value::ColumnRetention;
 
 // ── Model counting ───────────────────────────────────────────────────────────
 
@@ -103,7 +102,7 @@ pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: PinSema
 /// `Zero`→0).
 ///
 /// Only the root value is read, so the pass runs under
-/// [`ColumnRetention::Frontier`]: each child column is freed as its parent's
+/// [`KeepFrontier`]: each child column is freed as its parent's
 /// completes.
 ///
 /// # Errors

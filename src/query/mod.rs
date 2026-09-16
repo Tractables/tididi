@@ -28,7 +28,7 @@ pub(crate) mod evaluate;
 mod boolean;
 
 pub use count::{
-    KeepAllColumns, ColumnRetention,
+    KeepAllColumns,
     KeepFrontier, ModelCounter, BoundModelCounter, Retention, PinSemantics,
 };
 

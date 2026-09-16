@@ -102,10 +102,7 @@ fn read_side<'a>(side: Side<'a, CountVec>, k: EncodedChildRef) -> CountRead<'a> 
 }
 
 /// The column retention used by a counter: [`KeepAllColumns`] or [`KeepFrontier`].
-pub trait Retention: sealed::Sealed {
-    /// The runtime policy the shared walk takes.
-    const RETAIN: ColumnRetention;
-}
+pub trait Retention: sealed::Sealed {}
 
 /// Keep every column so reads after pin changes need only their ancestor cone.
 #[derive(Debug, Clone, Copy)]
@@ -117,18 +114,20 @@ pub struct KeepAllColumns;
 #[derive(Debug, Clone, Copy)]
 pub struct KeepFrontier;
 
-impl Retention for KeepAllColumns {
-    const RETAIN: ColumnRetention = ColumnRetention::All;
-}
-
-impl Retention for KeepFrontier {
-    const RETAIN: ColumnRetention = ColumnRetention::Frontier;
-}
+impl Retention for KeepAllColumns {}
+impl Retention for KeepFrontier {}
 
 mod sealed {
-    pub trait Sealed {}
-    impl Sealed for super::KeepAllColumns {}
-    impl Sealed for super::KeepFrontier {}
+    pub trait Sealed {
+        /// Whether counts survive a completed pass for incremental updates.
+        const KEEP_ALL_COLUMNS: bool;
+    }
+    impl Sealed for super::KeepAllColumns {
+        const KEEP_ALL_COLUMNS: bool = true;
+    }
+    impl Sealed for super::KeepFrontier {
+        const KEEP_ALL_COLUMNS: bool = false;
+    }
 }
 
 /// Count repeatedly under changing observations without modifying the diagram.
@@ -385,8 +384,9 @@ impl Engine {
 
 impl<R: Retention> std::fmt::Debug for ModelCounter<'_, R> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let retention = if R::KEEP_ALL_COLUMNS { ColumnRetention::All } else { ColumnRetention::Frontier };
         f.debug_struct("ModelCounter")
-            .field("retention", &R::RETAIN)
+            .field("retention", &retention)
             .field("evaluated", &self.evaluated)
             .field("pins", &self.pins)
             .field("changed_since_pass", &self.changed.len())
@@ -436,7 +436,7 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
         let mut pins = Vec::new();
         lim.try_resize(&mut pins, pin_slots, PinState::default())?;
         let mut changed = Vec::new();
-        if pin_slots != 0 && R::RETAIN == ColumnRetention::All {
+        if pin_slots != 0 && R::KEEP_ALL_COLUMNS {
             lim.reserve_exact(&mut changed, pin_slots)?;
         }
         if lim.should_stop() { return Err(OperationError::Stopped); }
@@ -552,7 +552,7 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
 
     /// Update a validated leaf's pin and record its deferred refresh once.
     fn set_leaf_pin(&mut self, leaf: VtreeIdx, val: Option<bool>) {
-        if R::RETAIN == ColumnRetention::Frontier {
+        if !R::KEEP_ALL_COLUMNS {
             if self.pins[leaf.idx()].value != val {
                 self.pins[leaf.idx()].value = val;
                 self.evaluated = false;
@@ -620,7 +620,7 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// Refresh all columns or the dirty ancestor cone, leaving a failed pass invalidated.
     fn refresh(&mut self, eng: &Engine, gate: &mut PollGate) -> Result<(), OperationError> {
         if self.evaluated && self.changed.is_empty() { return Ok(()); }
-        let incremental = self.evaluated && R::RETAIN == ColumnRetention::All;
+        let incremental = self.evaluated && R::KEEP_ALL_COLUMNS;
         self.evaluated = false;
         let tdd = self.tdd;
         if incremental {
@@ -644,10 +644,11 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
             }
         } else {
             let fold = OverflowingCounts { pins: &self.pins, convention: self.convention };
-            if R::RETAIN == ColumnRetention::Frontier {
+            if !R::KEEP_ALL_COLUMNS {
                 for col in &mut self.cols { *col = CountVec::default(); }
             }
-            fold_bottom_up(&fold, eng, tdd, &mut self.cols, R::RETAIN, Some(gate), |cols, ti| {
+            let retention = if R::KEEP_ALL_COLUMNS { ColumnRetention::All } else { ColumnRetention::Frontier };
+            fold_bottom_up(&fold, eng, tdd, &mut self.cols, retention, Some(gate), |cols, ti| {
                 let width = tdd.reference_slot_count(VtreeIdx(ti as u32));
                 if cols[ti].len() != width { cols[ti] = fold.alloc(eng, width)?; }
                 Ok(())
