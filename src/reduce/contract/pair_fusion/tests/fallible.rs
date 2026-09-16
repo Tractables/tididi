@@ -1,6 +1,6 @@
 use super::*;
 use crate::diagram::{ValueRef, NodeIdx};
-use crate::engine::Engine;
+use crate::Engine;
 use crate::diagram::*;
 use crate::diagram::{MarginalSide, TddLevel, TddNodeId};
 use crate::vtree::{Vtree, VtreeNode};

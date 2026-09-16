@@ -1,7 +1,7 @@
 //! Marginal-side ref encoding, marginal consts, and associated helpers.
 
 use crate::limits::OperationError;
-use crate::engine::Engine;
+use crate::Engine;
 use num_bigint::BigUint;
 
 use super::level::TddLevel;

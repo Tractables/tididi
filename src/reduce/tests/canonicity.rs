@@ -22,7 +22,7 @@ use crate::apply::apply_and;
 use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;
 use crate::diagram::{Literal, Tdd};
-use crate::engine::Engine;
+use crate::Engine;
 use crate::marginal::marginalize_closure;
 
 use crate::diagram::RationalWeights;

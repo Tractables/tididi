@@ -13,7 +13,7 @@
 
 use super::*;
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::test_helpers::clause_to_tdd;
 
 

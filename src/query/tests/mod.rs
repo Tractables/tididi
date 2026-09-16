@@ -3,7 +3,7 @@
 use super::*;
 use crate::test_helpers::{node_counts, pinned_counts};
 use super::sat::is_sat_structural;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::apply::conjoin::{apply_and, apply_and_fallible};
 use crate::apply::conjoin::MarginalTargets;
 use crate::test_helpers::clause_to_tdd;

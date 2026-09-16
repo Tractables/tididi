@@ -1,7 +1,7 @@
 //! Twin-group contraction: merging nodes that share a parent context.
 
 use crate::diagram::Changed;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 

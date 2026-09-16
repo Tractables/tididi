@@ -9,7 +9,7 @@ use crate::Vtree;
 /// Reuse execution scratch across diagrams without storing their nodes.
 ///
 /// Every vtree starts with a context. Ordinary diagram operations use that
-/// context automatically. Bind several trees to one context when their
+/// context automatically. Bind several vtrees to one context when their
 /// operations should reuse the same scratch capacity.
 ///
 /// [`run`](Self::run) lends an engine for a batch of checked operations;
@@ -50,7 +50,7 @@ impl Context {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::engine::Context;
+    /// use tididi::Context;
     /// use tididi::Vtree;
     /// let context = Arc::new(Context::new());
     /// let vtree = context.bind(Vtree::balanced(3));
@@ -78,7 +78,7 @@ impl Context {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::engine::Context;
+    /// use tididi::Context;
     /// use tididi::limits::LimitConfig;
     /// use tididi::{OperationError, Vtree};
     /// let context = Arc::new(Context::new());
@@ -95,13 +95,13 @@ impl Context {
         })
     }
 
-    /// Associate `tree` with this context and share it for diagram construction.
+    /// Associate `vtree` with this context and share it for diagram construction.
     ///
-    /// The tree's shape and variable ids are unchanged. Two separately bound
-    /// trees still have distinct allocations and cannot be binary operands.
+    /// The vtree's shape and variable ids are unchanged. Two separately bound
+    /// vtrees still have distinct allocations and cannot be binary operands.
     #[must_use]
-    pub fn bind(self: &Arc<Self>, tree: Vtree) -> Arc<Vtree> {
-        Arc::new(tree.with_context(Arc::clone(self)))
+    pub fn bind(self: &Arc<Self>, vtree: Vtree) -> Arc<Vtree> {
+        Arc::new(vtree.with_context(Arc::clone(self)))
     }
 
     /// Release parked scratch without affecting operations already running.

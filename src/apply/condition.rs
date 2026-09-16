@@ -7,7 +7,7 @@
 //! checks that.
 
 use crate::diagram::Changed;
-use crate::engine::Engine;
+use crate::Engine;
 use std::sync::Arc;
 
 use crate::build::constant_like;
@@ -337,7 +337,7 @@ fn canonicalize_false_output(tdd: &mut crate::diagram::Tdd) {
 mod tests;
 
 /// The conditioning entry points on a caller's engine.
-impl crate::engine::Engine {
+impl crate::Engine {
     /// Run [`Tdd::condition`](crate::Tdd::condition) using this batch's scratch and resource limits.
     ///
     /// Operand requirements, ownership and result semantics follow the diagram method.

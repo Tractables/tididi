@@ -67,48 +67,27 @@ identical representations.
 
 ## Modules
 
-The tables group modules by responsibility. **Uses** summarizes their main
-dependencies; operations also use the engine for scratch and limits. These
-are ownership boundaries, not a claim that every module dependency is acyclic.
+| Module | Responsibility |
+|---|---|
+| [`vtree`] | Variable grouping, traversal orders, construction and vtree edits. |
+| [`diagram`] | Diagram storage, child references, weights and level pools. |
+| [`limits`] | Resource limits, cancellation, memory hooks, measurements and scratch pools. |
+| `value` | Count arithmetic, value domains, column storage and the shared value traversal. |
+| `build` | Constants, literals and cubes. |
+| [`apply`] | Boolean composition, conditioning, projection and restriction. |
+| `marginal` | Summing levels into values and restoring marginal invariants. |
+| [`reduce`] | Reachability pruning, twin contraction, pair fusion and value-slot pruning. |
+| [`restructure`] | Vtree search and grafting with the corresponding diagram edits. |
+| [`query`] | Counting, satisfiability, evaluation and traversal of borrowed diagrams. |
+| [`execution`] | Shared context checkouts and each batch's scratch and limits. |
+| [`io`] | Diagram persistence and Graphviz output. |
+| [`guide`] | Markdown guides included in rustdoc and doctests. |
+| `test_helpers` | Formula generators, independent oracles and invariant checkers. |
 
-**Ground** — what everything else reads.
-
-| Module | Owns | Uses | May not touch |
-|---|---|---|---|
-| [`vtree`] | The variable tree, its orders, its text format, rotation and graft of the tree itself. | Nothing. | Diagram storage. |
-| [`diagram`] | Levels, nodes, pairs, the reference encodings, the level pool, weights. | `vtree`, `limits`. | Any operation's algorithm. |
-| [`limits`] | What an operation runs under and what it parks between calls: the budget, the output cap, the stop axis, the memory hooks, the meters, the scratch pools, and [`OperationError`], returned when a limit trips. | `vtree`, `diagram`. | The diagram's contents; any operation's algorithm. |
-| `value` | The working form of a value: the count representation and its overflow sentinel, the one bottom-up fold walk, the two domains folded over it, the streaming fold's cache, and the vocabulary a stored column is described by — slot key, minting, interning, the referenced set. Internal to the crate. | `vtree`, `diagram`, `limits`. | Which levels to fold; where a finished column is stored. |
-
-**Operations** — the verbs.
-
-| Module | Owns | Uses | May not touch |
-|---|---|---|---|
-| `build` | Constants and cubes as diagrams. | `vtree`, `diagram`, `limits`. | Reduction. |
-| [`apply`] | Conjunction, disjunction, negation, conditioning, projection, restriction, a clause as a diagram, and the `&`, `\|`, `!` impls. | `vtree`, `diagram`, `limits`, `value`, `build`, `marginal`, `query`, `reduce`. | Reference decoding by hand; reduction policy. |
-| `marginal` | Marginal-column installation, reference remapping, child reclamation, and summing levels out. | `vtree`, `diagram`, `limits`, `value`, `reduce`, and `test_helpers::check` in a debug build. | The reduction passes' internals. |
-| [`reduce`] | Canonical form: pruning, twin contraction, pair fusion, slot pruning. | `vtree`, `diagram`, `limits`, `value`, and `test_helpers::check` in a debug build. | Apply; marginalization. |
-| [`restructure`] | Rotation search and graft over a compiled diagram. | `vtree`, `diagram`, `limits`, `marginal`, `reduce`, and `test_helpers::check` in a debug build. | The counting fold. |
-| [`query`] | Model counting, satisfiability, algebra evaluation, a weighted diagram's value. | `vtree`, `diagram`, `limits`, `value`, `apply`, `reduce`. | Mutation of a borrowed input diagram. |
-
-**Session** — the hub.
-
-| Module | Owns | Uses | May not touch |
-|---|---|---|---|
-| [`engine`] | The scratch and limits shared by checked operations; method implementations live with the operations. | `diagram`, `limits`, `apply`, `reduce`, `restructure`. | The operations' algorithms. |
-
-**Edges** — reading a finished diagram.
-
-| Module | Owns | Uses | May not touch |
-|---|---|---|---|
-| [`io`] | The `.tdd` text format, both directions, and Graphviz rendering. | `vtree`, `diagram`. | Apply or reduction policy. |
-| [`guide`] | The prose guides of `docs/`, included as documentation so examples are doctested and the rendered pages share their source. | Nothing; it holds no code. | Any behaviour. |
-
-**Testing** — generators and structural checks.
-
-| Module | Owns | Uses | May not touch |
-|---|---|---|---|
-| `test_helpers` | The generators every randomized sweep draws from, the oracles a test decides a diagram by (enumeration, canonicity, structural equality, the apply-free evaluator), and in `test_helpers::check` the invariant checkers, one per numbered invariant, compiled only under `cfg(test)` or `debug_assertions`. The test-facing module. | `vtree`, `diagram`, `limits`, `value`, `build`, `apply`, `reduce`, `query`. | Any behaviour the library ships; a test reads a diagram through it, and a checker reports and never repairs. |
+Operation implementations live with their algorithms, including methods on
+`Engine`. Storage modules expose the representation; operations use those
+accessors rather than decoding references themselves. Queries leave borrowed
+diagrams unchanged.
 
 `test_helpers::check` is compiled under `cfg(test)` or `debug_assertions`;
 `assert_canonical` is a no-op in other builds. Run the differential suite in
@@ -133,31 +112,17 @@ operations return an error without their operands; in-place passes document
 which completed edits remain valid. Reserve-before-mutation boundaries must
 preserve those contracts.
 
-## Extension points: public
+## Extending the implementation
 
-Implementable from outside the crate, against the published API:
+Callers can supply an [`EvalAlgebra`], a [`RotationObjective`], or a stopping
+callback through [`LimitConfig`].
 
-- A new read-only value domain: implement [`EvalAlgebra`].
-- A new rotation objective: implement [`RotationObjective`].
-- A new stopping rule the caller decides: the schedule hook on [`LimitConfig`],
-  answered at every poll the running operation reaches.
-
-## Internal seams
-
-For a contributor working inside the crate. None of these is a published
-extension point, and none is reachable from outside:
-
-- A new reduction rule: add it beside the rule it resembles — twin
-  contraction in `reduce/contract/`, content twins in
-  `reduce/content_twins.rs`, pair fusion in `reduce/contract/pair_fusion/`,
-  leaf twins in `reduce/contract/contract_leaf.rs` — mark its dirty levels,
-  and add a checker for the invariant it claims.
-- A new marginalizable value domain: `ValueDomain` for arithmetic and `marginal::transition::MarginalDomain` for storage transitions.
-- A new query fold: implement `query::fold::LevelFold` and use its shared traversal.
-- A new stored-value domain: implement `ValueDomain` for the value walk.
-- A new contraction strategy: extend the dispatch and implementations in
-  `reduce/contract/strategies.rs`.
-- A new limit: a field on [`LimitConfig`] and the poll site that reads it.
+Inside the crate, add reduction rules beside the related pass, mark affected
+levels dirty, and extend the invariant checkers. Query folds implement
+`query::fold::LevelFold`; value arithmetic implements `ValueDomain`, with
+`marginal::transition::MarginalDomain` handling storage transitions. A new
+resource limit needs a setting in `LimitConfig` and a check at the appropriate
+poll or allocation boundary.
 
 ## Oracles
 
@@ -181,11 +146,11 @@ Nested or concurrent checkouts use separate engines; only one idle engine is
 retained. A completed checkout clears configuration and callback references,
 and an unwinding checkout discards its scratch.
 
-Tree clones and projections retain their context. Grafts retain a context
-shared by all source trees; otherwise they start fresh. Binary compatibility
+Vtree clones and projections retain their context. Grafts retain a context
+shared by all source vtrees; otherwise they start fresh. Binary compatibility
 still compares vtree allocations. A rotation wrapper retains only the context
 handle so it does not force extra copy-on-write clones of the tree. Serialized
-trees contain shape alone and receive fresh execution state when loaded.
+vtrees contain shape alone and receive fresh execution state when loaded.
 
 ## Constraints
 
@@ -206,7 +171,7 @@ process-wide state, no C or C++ code built.
 [`WeightStore`]: crate::diagram::WeightStore
 [`apply`]: crate::apply
 [`diagram`]: crate::diagram
-[`engine`]: crate::engine
+[`execution`]: crate::execution
 [`guide`]: crate::guide
 [`io`]: crate::io
 [`limits`]: crate::limits

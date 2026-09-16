@@ -89,7 +89,7 @@ pub struct ContentTwinSchedule {
     pub(crate) next_scan_at_nodes: u64,
 }
 
-use crate::engine::Engine;
+use crate::Engine;
 use self::contract::contract_leaf::contract_leaf_twins;
 use self::contract::contract_all_twins;
 use self::prune::prune_unreachable;

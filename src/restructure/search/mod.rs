@@ -24,7 +24,7 @@ use crate::diagram::Tdd;
 use crate::limits::OperationError;
 
 /// The rotation-search entry point on a caller's engine.
-impl crate::engine::Engine {
+impl crate::Engine {
     /// Run [`Tdd::rotation_search`](crate::Tdd::rotation_search) using this batch's scratch and resource limits.
     ///
     /// Operand requirements, ownership and result semantics follow the diagram method.

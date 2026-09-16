@@ -14,7 +14,7 @@ use crate::diagram::{self, *};
 
 pub(crate) mod budget;
 mod child_lookup; // Representation-specialized child lookups (sparse-conjunction kernels)
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::OperationError;
 use budget::*;
 
@@ -184,7 +184,7 @@ pub fn and(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
 }
 
 /// The conjunction entry points on a caller's engine.
-impl crate::engine::Engine {
+impl crate::Engine {
     /// Run [`and`] using this batch's scratch and resource limits.
     ///
     /// Operand requirements, ownership and result semantics follow that function.

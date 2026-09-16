@@ -10,7 +10,7 @@ use crate::diagram::ChildDecoder;
 use crate::diagram::EncodedChildRef;
 
 use std::collections::HashMap;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::{OperationError, PollGate};
 use std::sync::Arc;
 

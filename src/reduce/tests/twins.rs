@@ -4,7 +4,7 @@
 
 use super::*;
 
-use crate::engine::Engine;
+use crate::Engine;
 
 use crate::diagram::{
     ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,

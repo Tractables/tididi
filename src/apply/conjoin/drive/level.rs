@@ -6,7 +6,7 @@
 
 use crate::apply::conjoin::*;
 use crate::apply::conjoin::sparse::ProductLists;
-use crate::engine::Engine;
+use crate::Engine;
 use super::Sweep;
 
 /// One level's build decision: its shape, the route chosen for it, and the

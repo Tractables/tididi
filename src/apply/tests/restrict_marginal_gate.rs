@@ -4,7 +4,7 @@
 
 use super::*;
 
-use crate::engine::Engine;
+use crate::Engine;
 
 /// P4 soundness gate. The ancestor-down-restriction prototype restricts a completed
 /// bottom-up accumulator under cares built from pending ancestor clauses. That

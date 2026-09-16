@@ -18,7 +18,7 @@
 
 use crate::diagram::WeightValue;
 use crate::diagram::WeightStore;
-use crate::engine::Engine;
+use crate::Engine;
 use super::{OperationError, TddLevel, Sides};
 
 use crate::value::{

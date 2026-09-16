@@ -1,5 +1,5 @@
 use super::*;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::diagram::{ChildPair, LeafLabel, NodeIdx, Tdd, TddLevel, TddNodeId};
 use crate::vtree::Vtree;
 use std::sync::Arc;

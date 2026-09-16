@@ -1,5 +1,5 @@
 use super::*;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::growth::DENSE_GROWTH_DECISION_THRESHOLD;
 use crate::diagram::{ChildPair, NodeIdx};
 

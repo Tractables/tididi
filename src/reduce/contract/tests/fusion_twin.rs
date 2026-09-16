@@ -4,7 +4,7 @@
 use crate::diagram::MarginalSide;
 use crate::diagram::*;
 use crate::diagram::{NodeIdx, ValueRef};
-use crate::engine::Engine;
+use crate::Engine;
 use crate::vtree::Vtree;
 use crate::vtree::VtreeIdx;
 use std::sync::Arc;

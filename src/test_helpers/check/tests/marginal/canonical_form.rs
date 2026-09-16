@@ -1,6 +1,6 @@
 use crate::test_helpers::{toy, BIG};
 use super::*;
-use crate::engine::Engine;
+use crate::Engine;
 
 /// Invariant 8 negative: two pairs sharing left x=0 with distinct marginal slots is a
 /// fusable group — saturation must reject it (and so must the full check).
@@ -61,7 +61,7 @@ fn c3_detects_duplicate_counts() {
 /// `prune_value_slots` is the fix (collects the orphan, after which invariant 10 holds).
 #[test]
 fn c3_rejects_stale_duplicate_until_slot_prune() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let mut tdd = toy(vec![BIG, BIG], &[&[(0, 0)]]);
     let err = check_slot_count_uniqueness(&tdd).unwrap_err();
     assert!(err.contains("invariant 10"), "wrong violation: {err}");
@@ -111,7 +111,7 @@ fn c4_orphan_slot_detects_unreferenced_boundary_slot() {
 /// `check_no_orphan_slots` passes. invariant 10 must also hold.
 #[test]
 fn c4_orphan_slot_cleared_after_prune() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let mut tdd = toy(vec![BIG + 10, BIG + 20], &[&[(0, 0)]]);
     // Pre-condition: invariant 4 violated.
     assert!(

@@ -4,7 +4,7 @@
 
 use super::*;
 
-use crate::engine::Engine;
+use crate::Engine;
 
 #[test]
 fn restrict_tautological_care_is_identity() {
@@ -189,7 +189,7 @@ fn restrict_runs_on_assorted_small_circuits() {
 // at f's own low node L, outside that structural convention, hence eval-only).
 #[test]
 fn restrict_differing_root_containment_difftest() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(8));
     let lit = |v: u32, p: bool| clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(v, p)]));
     // Function-level soundness oracle: g∧c == f∧c over all 2^nvars assignments,

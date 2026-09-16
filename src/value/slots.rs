@@ -13,7 +13,7 @@ use crate::diagram::semiring::{weight_key, WeightKey};
 use crate::diagram::{
     EncodedChildRef, CountOverflow, ChildPair, MarginalSide, Tdd, TddLevel, ValueRef, WeightStore, WeightValue,
 };
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::OperationError;
 use crate::vtree::VtreeIdx;
 

@@ -2,7 +2,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
 use crate::diagram::{Tdd, TddLevel};
-use crate::engine::Engine;
+use crate::Engine;
 use crate::restructure::relevel::RestructureScratch;
 use crate::restructure::search::probe::{probe, ProbeRule};
 use crate::restructure::search::RotationObjective;

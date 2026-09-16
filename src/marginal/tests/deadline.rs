@@ -16,7 +16,7 @@
 
 use super::*;
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::diagram::Literal;
 use crate::vtree::{VarId};
 use crate::test_helpers::clause_to_tdd;
@@ -34,7 +34,7 @@ use std::sync::Arc;
 /// work — which is what lets a stride cut between them rather than only before
 /// the first.
 fn two_target_tdd() -> (Tdd, Arc<Vtree>, [VtreeIdx; 2]) {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let lit = |v: u32, sign: bool| Literal::new(VarId(v), sign);
     let clauses = [

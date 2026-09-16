@@ -15,7 +15,7 @@
 //! the formula first reaches these diagrams by other routes, and that variety
 //! belongs to the driver's own tests.
 
-use crate::engine::Engine;
+use crate::Engine;
 use std::sync::Arc;
 
 use crate::test_helpers::clause_to_tdd;

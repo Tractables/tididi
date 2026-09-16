@@ -23,7 +23,7 @@ pub(super) fn exact_vals(values: &[crate::diagram::WeightValue]) -> Vec<num_rati
 /// branch early-returns default stats and leaves the store full-width.
 #[test]
 fn weighted_prune_merges_equal_value_slots() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     use crate::diagram::Arithmetic;
     use crate::diagram::{LiteralWeights, RationalWeights};
     use num_bigint::BigInt;
@@ -61,7 +61,7 @@ fn weighted_prune_merges_equal_value_slots() {
 /// ref remaps, and two slots are freed. Fails on `main` (full-width store).
 #[test]
 fn weighted_prune_compacts_orphans() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     use crate::diagram::Arithmetic;
     use crate::diagram::{LiteralWeights, RationalWeights};
     use num_bigint::BigInt;
@@ -93,7 +93,7 @@ fn weighted_prune_compacts_orphans() {
 /// remapped onto the compacted index.
 #[test]
 fn prune_compacts_boundary_store_and_remaps() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     // Slot 1 referenced; slots 0 and 2 orphaned.
     let mut tdd = toy(vec![BIG + 7, BIG + 1, BIG + 7], &[&[(0, 1)]]);
     let v = boundary_marginal_levels(&tdd)[0].0;
@@ -114,7 +114,7 @@ fn prune_compacts_boundary_store_and_remaps() {
 /// `retired_marginal_slots()` for the minimize-gate threshold-offset logic.
 #[test]
 fn prune_shrinks_total_nodes_and_tallies_retired() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let mut tdd = toy(vec![BIG + 7, BIG + 1, BIG + 7], &[&[(0, 1)]]);
     let nodes_before = tdd.node_count();
     prune_value_slots(eng, &mut tdd);
@@ -143,7 +143,7 @@ fn prune_shrinks_total_nodes_and_tallies_retired() {
 /// A fully-referenced store is untouched.
 #[test]
 fn prune_keeps_dense_store() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let mut tdd = toy(vec![BIG + 1, BIG + 2], &[&[(0, 0), (1, 1)]]);
     let v = boundary_marginal_levels(&tdd)[0].0;
     let before = tdd.levels[v.idx()].marginal_counts().unwrap().to_vec();
@@ -159,7 +159,7 @@ fn prune_keeps_dense_store() {
 /// (the emit site is forbidden from deduping — see conjoin/mod.rs comment).
 #[test]
 fn prune_merges_equal_value_referenced_slots() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     // Two nodes, each referencing one slot; both slots have equal value BIG+42.
     // Node 0: right-ref = 0 (slot 0 → BIG+42)
     // Node 1: right-ref = 1 (slot 1 → BIG+42)
@@ -199,7 +199,7 @@ fn prune_merges_equal_value_referenced_slots() {
 /// rather than rebuilt. Pins the take-side clear.
 #[test]
 fn sweep_scratch_is_cleared_on_take() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let mut dirty = RefSlotScratch::default();
     dirty.referenced.push(7);
     eng.reduce_scratch().slot_prune_slots.put(dirty);

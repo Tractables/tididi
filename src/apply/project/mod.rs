@@ -8,7 +8,7 @@
 //! - **Structural** — a leaf-to-root in-place regroup that never calls apply or
 //!   negate, so it is sound where the cofactor rewrite is not.
 
-use crate::engine::Engine;
+use crate::Engine;
 
 use crate::apply::condition::{condition_leaf, Polarity};
 use crate::apply::disjoin::disjoin_owned;
@@ -100,7 +100,7 @@ pub(super) fn exists_targets_on(eng: &Engine, mut f: Tdd, targets: &[VtreeIdx], 
 }
 
 /// The projection entry points on a caller's engine.
-impl crate::engine::Engine {
+impl crate::Engine {
     /// Run [`Tdd::exists_var`](crate::Tdd::exists_var) using this batch's scratch and resource limits.
     ///
     /// Operand requirements, ownership and result semantics follow the diagram method.

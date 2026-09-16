@@ -8,7 +8,7 @@
 use crate::diagram::EncodedChildRef;
 
 use crate::diagram::Changed;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::diagram::NodeIdx;
 
 use crate::vtree::VtreeIdx;

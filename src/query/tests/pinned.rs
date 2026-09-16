@@ -4,7 +4,7 @@
 
 use super::*;
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::apply::conjoin::apply_and;
 use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;

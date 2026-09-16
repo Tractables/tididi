@@ -7,7 +7,7 @@
 //! through the engine, returning allocation refusals as operation errors.
 
 use crate::diagram::{ChildPair, Tdd, TddLevel, WeightStore};
-use crate::engine::Engine;
+use crate::Engine;
 
 use crate::limits::OperationError;
 use crate::vtree::{Vtree, VtreeIdx};

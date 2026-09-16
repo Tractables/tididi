@@ -28,7 +28,7 @@ fn batch_projection_accumulates_charges_across_variables() {
 
 #[test]
 fn exists_var_of_constant_one_is_one() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_one(eng, &vtree);
     let result = (tdd).clone().exists_var(VarId(0)).unwrap();
@@ -38,7 +38,7 @@ fn exists_var_of_constant_one_is_one() {
 
 #[test]
 fn exists_var_of_constant_zero_is_zero() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_zero(eng, &vtree);
     let result = (tdd).clone().exists_var(VarId(0)).unwrap();
@@ -47,7 +47,7 @@ fn exists_var_of_constant_zero_is_zero() {
 
 #[test]
 fn exists_var_of_literal_is_one() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(1));
     let tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
     assert_eq!(tdd.model_count().unwrap(), BigUint::from(1u32));
@@ -59,7 +59,7 @@ fn exists_var_of_literal_is_one() {
 
 #[test]
 fn exists_var_of_x_and_y_drops_x() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(2));
     let tdd_x = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
     let tdd_y = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
@@ -74,7 +74,7 @@ fn exists_var_of_x_and_y_drops_x() {
 
 #[test]
 fn exists_var_soundness_brute_force() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     // F = (x ∨ y) ∧ (¬y ∨ z), vars 0=x 1=y 2=z. Project out y.
     let vtree = Arc::new(Vtree::balanced(3));
 
@@ -153,7 +153,7 @@ fn exists_var_soundness_brute_force() {
 /// through empty and the conjunction's count is unchanged.
 #[test]
 fn apply_and_zero_width_marginal_levels() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     use crate::vtree::VtreeIdx;
 
     let vtree = Arc::new(Vtree::balanced(8));
@@ -216,7 +216,7 @@ fn apply_and_zero_width_marginal_levels() {
 /// partner references — so this never arises; the test deliberately constructs it.)
 #[test]
 fn apply_and_rejects_marginalize_schedule_violation() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     use crate::test_helpers::marginalize_subtree;
     use crate::vtree::VtreeIdx;
     let nvars = 6u32;
@@ -305,7 +305,7 @@ fn apply_and_rejects_marginalize_schedule_violation() {
 
 #[test]
 fn scoped_constant_one_is_one() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_one(eng, &vtree);
     let r = (tdd).clone().exists_var_with_strategy(VarId(0), QuantificationStrategy::Structural).unwrap();
@@ -315,7 +315,7 @@ fn scoped_constant_one_is_one() {
 
 #[test]
 fn scoped_constant_zero_is_zero() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_zero(eng, &vtree);
     let r = (tdd).clone().exists_var_with_strategy(VarId(0), QuantificationStrategy::Structural).unwrap();
@@ -324,7 +324,7 @@ fn scoped_constant_zero_is_zero() {
 
 #[test]
 fn scoped_single_literal_is_one() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(1));
     let tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
     let r = (tdd).clone().exists_var_with_strategy(VarId(0), QuantificationStrategy::Structural).unwrap();
@@ -334,7 +334,7 @@ fn scoped_single_literal_is_one() {
 
 #[test]
 fn scoped_x_and_y_drops_x() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(2));
     let tx = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
     let ty = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
@@ -356,7 +356,7 @@ fn scoped_x_and_y_drops_x() {
 /// marginalized diagram must equal `exists_var` on the non-marginal diagram.
 #[test]
 fn scoped_marginal_sibling_succeeds() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     use crate::vtree::{VtreeIdx, VtreeNode};
 
     let vtree = Arc::new(Vtree::balanced(4));
@@ -415,7 +415,7 @@ fn scoped_marginal_sibling_succeeds() {
 /// PMC onto {v1,v2,v3} = 6.
 #[test]
 fn scoped_path_side_one_ref_at_root() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let t1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (3, true)])); // v0∨v3
     let t2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, true)])); // v2∨v3
@@ -524,7 +524,7 @@ fn a_projection_refuses_a_cofactor_copy_it_cannot_afford() {
 #[test]
 fn projecting_a_variable_outside_the_vtree_is_an_error() {
     use crate::OperationError;
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, -2]).unwrap();
     assert!(matches!(
@@ -543,7 +543,7 @@ fn projecting_a_variable_outside_the_vtree_is_an_error() {
 #[test]
 fn projecting_a_variable_outside_the_vtree_is_an_error_on_every_route() {
     use crate::OperationError;
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     assert!(matches!(
         eng.exists_var_with_strategy(Tdd::clause(&vtree, [1, -2]).unwrap(), VarId(3), QuantificationStrategy::Structural),

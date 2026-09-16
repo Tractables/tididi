@@ -1,6 +1,6 @@
 //! Group pairs into fusion plans and assign their resulting value references.
 
-use crate::engine::Engine;
+use crate::Engine;
 use smallvec::SmallVec;
 use rustc_hash::FxHashMap;
 

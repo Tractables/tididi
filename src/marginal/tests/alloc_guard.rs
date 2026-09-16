@@ -1,6 +1,6 @@
 //! Column allocation failures return errors without unwinding.
 use crate::test_helpers::CountVecExt;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::value::{Count, CountVec};
 
 use num_bigint::BigUint;

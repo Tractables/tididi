@@ -2,7 +2,7 @@
 //! pre-scan, and the grid and product-list allocation, bundled into `ApplyRun`
 //! by `apply_and_setup` for the driver to sweep with.
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
 use super::{liveness, OperationError, LevelGrid, APPLY_BYTES_PER_CELL};

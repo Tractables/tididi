@@ -6,7 +6,7 @@
 //! configured limit. Marginal-free inputs are minimized before the first sweep.
 
 use crate::limits::OperationError;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::vtree::RotationKind;
 use crate::vtree::rotate::RotationInfo;
 use crate::diagram::{Tdd, TddLevel};

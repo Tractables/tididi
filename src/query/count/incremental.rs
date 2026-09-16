@@ -1,6 +1,6 @@
 //! The hybrid u128/`BigUint` counting engine and the incremental pinned counter.
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::diagram::{EncodedChildRef, ChildRef, ValueRef, NodeIdx};
 use num_bigint::BigUint;
 

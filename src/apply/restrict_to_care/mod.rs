@@ -31,7 +31,7 @@
 mod mark;
 mod rebuild;
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::OperationError;
 
 use crate::diagram::Tdd;
@@ -112,7 +112,7 @@ struct Marking {
 }
 
 /// The restriction entry point on a caller's engine.
-impl crate::engine::Engine {
+impl crate::Engine {
     /// Run [`Tdd::restrict_to_care`](crate::Tdd::restrict_to_care) using this batch's scratch and resource limits.
     ///
     /// Operand requirements, ownership and result semantics follow the diagram method.

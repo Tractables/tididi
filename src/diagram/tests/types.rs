@@ -1,5 +1,5 @@
     use super::*;
-    use crate::engine::Engine;
+    use crate::Engine;
 
     #[test]
     fn level_pairs_iter_of_unpacked_matches_slice() {

@@ -9,7 +9,7 @@
 //! own the overflow encoding and promotion rule.
 
 use crate::limits::OperationError;
-use crate::engine::Engine;
+use crate::Engine;
 
 use num_bigint::BigUint;
 

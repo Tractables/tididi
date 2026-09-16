@@ -121,7 +121,7 @@ fn test_level_marginal_is_constant_true_large_subvars_disqualified() {
 
 #[test]
 fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     // `apply_and` (via `conjoin_owned`) gates the `f ∧ f = f` structural
     // shortcut on `is_self_conjunction` (`conjoin/sparse/mod.rs`). Calling it directly
     // on the exact operands then fed to `apply_and` is a genuine

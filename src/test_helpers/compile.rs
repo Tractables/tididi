@@ -7,7 +7,7 @@ use num_rational::BigRational;
 
 use crate::build::constant_one;
 use crate::diagram::{ChildPair, Literal, NodeIdx, Tdd, TddNodeId, WeightValue};
-use crate::engine::Engine;
+use crate::Engine;
 
 use super::r#gen::Lcg;
 use crate::vtree::{VarId, Vtree, VtreeNode};
@@ -26,7 +26,7 @@ pub fn clause(literals: &[(u32, bool)]) -> Vec<Literal> {
 /// Conjoin DIMACS-style clauses one at a time, minimizing after each, on a
 /// fresh engine.
 pub fn compile_clauses(vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
-    compile_clauses_on(&crate::engine::Engine::new(), vtree, clauses)
+    compile_clauses_on(&crate::Engine::new(), vtree, clauses)
 }
 
 /// [`compile_clauses`] on a caller's engine, so a test that installed its own

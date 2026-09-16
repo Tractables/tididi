@@ -1,6 +1,6 @@
 //! The content-twin canonicalization fixpoint and its size gate.
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::OperationError;
 use crate::diagram::Tdd;
 

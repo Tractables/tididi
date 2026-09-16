@@ -1,6 +1,6 @@
 //! Deciding what each twin group does, and reserving its arena growth up front.
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::vtree::VtreeIdx;
 
 use crate::limits::OperationError;

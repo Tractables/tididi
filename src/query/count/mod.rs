@@ -6,7 +6,7 @@
 
 mod incremental;
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::OperationError;
 pub use incremental::{KeepAllColumns, KeepFrontier, ModelCounter, BoundModelCounter, Retention};
 
@@ -147,7 +147,7 @@ impl Engine {
 }
 
 /// The counting entry point on a caller's engine.
-impl crate::engine::Engine {
+impl crate::Engine {
     /// Run [`Tdd::model_count`](crate::Tdd::model_count) using this batch's scratch and resource limits.
     ///
     /// Operand requirements, ownership and result semantics follow the diagram method.

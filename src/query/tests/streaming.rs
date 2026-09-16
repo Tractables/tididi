@@ -3,7 +3,7 @@
 //! The fixtures these read are in `mod.rs`.
 
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::apply::conjoin::apply_and;
 use crate::apply::conjoin::MarginalTargets;
 use crate::test_helpers::clause_to_tdd;

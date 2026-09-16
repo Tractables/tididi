@@ -29,7 +29,7 @@
 //! level whose [`LevelGrid`] says the grid was materialized — which is what
 //! [`GridArena::materialized`] returns and what every consumer goes through.
 
-use crate::engine::Engine;
+use crate::Engine;
 use super::{OperationError, NO_PRODUCT};
 use super::budget::try_resize_dead;
 use super::setup::ApplyRun;

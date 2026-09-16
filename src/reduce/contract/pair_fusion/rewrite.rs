@@ -1,6 +1,6 @@
 //! Phase 3: rewriting the parent level's pair lists in place.
 
-use crate::engine::Engine;
+use crate::Engine;
 use rustc_hash::FxHashMap;
 
 use crate::limits::OperationError;

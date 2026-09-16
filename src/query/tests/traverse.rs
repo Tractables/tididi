@@ -6,7 +6,7 @@
 //! because it is also the traversal contract's executable statement: a change
 //! to the encoding that this walk cannot follow is a breaking change.
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::diagram::ChildRef;
 use std::sync::Arc;
 

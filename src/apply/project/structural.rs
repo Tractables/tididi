@@ -12,7 +12,7 @@
 //! level up; sibling refs are copied verbatim and never dereferenced.
 
 use crate::diagram::Changed;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::{OperationError, PollGate};
 use crate::reduce::{ReductionPlan};
 use crate::diagram::{EncodedChildRef, ChildDecoder, ChildPair, Tdd};

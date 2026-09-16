@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::vtree::{RotationKind, Vtree, VtreeIdx};
 use crate::vtree::rotate::{rotate_pointers, PendingTopo, RotationInfo};
 use crate::diagram::{Dirty, Tdd, TddLevel, TddNodeId};
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::OperationError;
 use crate::restructure::relevel::{restructure_inner_search, RestructureScratch};
 

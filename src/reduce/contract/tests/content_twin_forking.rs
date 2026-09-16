@@ -2,7 +2,7 @@
 //!
 //! Sibling of `inline_denorm.rs`.
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::diagram::{ValueRef, NodeIdx};
 use crate::diagram::MarginalSide;
 use crate::diagram::*;

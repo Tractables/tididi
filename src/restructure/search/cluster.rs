@@ -3,7 +3,7 @@
 //! structural level out of a diagram that is still being built. The module's
 //! one entry point is `rotate_marginal_cluster`.
 
-use crate::engine::Engine;
+use crate::Engine;
 use std::sync::Arc;
 
 use rustc_hash::FxHashSet;

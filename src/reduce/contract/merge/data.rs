@@ -1,6 +1,6 @@
 //! Unioning twin pair lists into the survivor and compacting the level after.
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::vtree::VtreeIdx;
 
 use crate::limits::OperationError;

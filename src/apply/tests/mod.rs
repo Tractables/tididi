@@ -18,7 +18,7 @@ use crate::apply::{apply_and, apply_or};
 use crate::test_helpers::clause_to_tdd;
 use crate::build::{constant_one, constant_zero};
 use crate::diagram::Tdd;
-use crate::engine::Engine;
+use crate::Engine;
 
 use crate::vtree::{VarId, Vtree};
 

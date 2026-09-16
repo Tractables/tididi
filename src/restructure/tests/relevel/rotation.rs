@@ -1,5 +1,5 @@
 use super::*;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::vtree::{RotationKind, Vtree};
 use crate::test_helpers::{rotate_left, rotate_right};
 use crate::restructure::relevel::restructure_inner_search;

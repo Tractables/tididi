@@ -3,7 +3,7 @@
 //! the normal apply exit. The engine-owned workspace survives an unwinding
 //! panic at full size, so recovery relies on this reset to release it.
 use super::reset_sparse_ws;
-use crate::engine::Engine;
+use crate::Engine;
 
 #[test]
 fn reset_drops_all_capacity() {

@@ -7,7 +7,7 @@ mod plan;
 mod rewrite;
 
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::OperationError;
 use crate::diagram::{Tdd, ValueRef};
 use crate::vtree::VtreeIdx;

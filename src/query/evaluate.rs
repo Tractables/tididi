@@ -4,7 +4,7 @@ use crate::value::{ColumnRetention, FoldInput, ValueDomain, WeightFold};
 use crate::diagram::EvalAlgebra;
 use crate::diagram::*;
 use crate::diagram::PairsIter;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
 use super::fold::{fold_bottom_up, LevelFold, PairAlgebra, Side};

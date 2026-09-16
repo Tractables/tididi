@@ -2,7 +2,7 @@
 //!
 //! The fixtures these read are in `mod.rs`.
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::marginal::free_subsumed_marginal_children;
 
 use crate::diagram::{
@@ -192,7 +192,7 @@ fn test_marginal_sibling_fold_allowed_regression() {
 /// leaking into Boolean compiles.
 #[test]
 fn test_content_merge_stands_down_without_a_marginal_level() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
 
     let vtree = Arc::new(Vtree::balanced(4));
     let root_idx = vtree.root();

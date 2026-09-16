@@ -10,7 +10,7 @@
 use super::*;
 use crate::diagram::{ValueRef, NodeIdx};
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::vtree::Vtree;
 use crate::test_helpers::deadline_probe;
 use std::sync::Arc;

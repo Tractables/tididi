@@ -14,7 +14,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 
 #[test]
 fn test_constant_one() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_one(eng, &vtree);
 
@@ -36,7 +36,7 @@ fn test_constant_one() {
 
 #[test]
 fn test_clause_tdd_minimize_preserves_function() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     // Minimize changes clause diagram structure (prune removes the unreachable d_root
     // at the root, and for sparse clauses cascades further), but must preserve
     // the Boolean function. Verify via model count.
@@ -128,7 +128,7 @@ fn validate_all_nodes_reachable(tdd: &Tdd) -> Result<(), String> {
 
 #[test]
 fn test_clause_to_tdd_is_minimal() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     // clause_to_tdd should return a minimal, canonical diagram with no
     // unreachable nodes.
     let cases: Vec<(u32, Vec<i32>)> = vec![

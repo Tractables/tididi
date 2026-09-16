@@ -2,7 +2,7 @@
 //! has nothing to do.
 
 use crate::diagram::Tdd;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::reduce::contract::contract_all_twins;
 use crate::reduce::contract::contract_leaf::contract_leaf_twins;
 use crate::vtree::VtreeIdx;

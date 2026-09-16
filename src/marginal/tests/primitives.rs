@@ -2,7 +2,7 @@
 //! the weighted cluster closure, the reclaim of subsumed marginal data, and
 //! single-leaf inlining.
 
-use crate::engine::Engine;
+use crate::Engine;
 use std::sync::Arc;
 
 use num_bigint::BigInt;

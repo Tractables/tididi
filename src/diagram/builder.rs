@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::build_error::TddBuildError;

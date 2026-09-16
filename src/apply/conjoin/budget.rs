@@ -1,7 +1,7 @@
 //! The pair arena's growth policy: the emit choke points, their bounded
 //! increments, and the poll strides the cell loops run at.
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::PAIR_ELEM_BYTES;
 use crate::limits::OperationError;
 

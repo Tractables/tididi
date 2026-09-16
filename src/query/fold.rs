@@ -9,7 +9,7 @@
 
 use crate::value::{walk_bottom_up, ColumnRetention};
 use crate::diagram::{EncodedChildRef, ChildRef, LeafLabel, PairsIter, ChildDecoder, Tdd, ValueRef, LEAF_WIDTH};
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::PollGate;
 use crate::limits::OperationError;
 use crate::vtree::{VarId, VtreeIdx};

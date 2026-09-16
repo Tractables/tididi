@@ -1,6 +1,6 @@
 //! Multiplying a duplicate pair's marginal side by its run length.
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::diagram::{EncodedChildRef, ValueRef};
 use crate::diagram::MarginalSide;
 

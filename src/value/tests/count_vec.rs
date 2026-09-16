@@ -1,7 +1,7 @@
 
 use crate::diagram::ChildDecoder;
 use super::*;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::diagram::WeightValue;
 use crate::test_helpers::{pair, rat, CountVecExt};
 

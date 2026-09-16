@@ -242,7 +242,7 @@ impl Tdd {
     /// The weight store, when there is one, is copied by its own `Clone`.
     pub(crate) fn try_clone_on(
         &self,
-        eng: &crate::engine::Engine,
+        eng: &crate::Engine,
     ) -> Result<Tdd, crate::limits::OperationError> {
         let lim = eng.limits();
         let mut levels = Vec::new();
@@ -262,7 +262,7 @@ impl Tdd {
     /// Replace the vtree allocation without rebuilding any diagram level.
     ///
     /// This can reunite diagrams whose independent subtrees share a vtree that
-    /// another operation rotated. It does not transform the represented function.
+    /// another operation rotated. It does not rewrite stored nodes or remap child references.
     ///
     /// # Safety
     ///

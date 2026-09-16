@@ -1,5 +1,5 @@
 use super::*;
-use crate::engine::Engine;
+use crate::Engine;
 
 use crate::test_helpers::{assert_canonical, brute_force_count};
 use crate::vtree::Vtree;

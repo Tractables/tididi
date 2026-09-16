@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use crate::vtree::Vtree;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::{OperationError, PollGate};
 
 use crate::diagram::{self, *};
@@ -200,7 +200,7 @@ impl Tdd {
 }
 
 /// The construction entry points on a caller's engine.
-impl crate::engine::Engine {
+impl crate::Engine {
     /// Run [`crate::literal`] using this batch's scratch and resource limits.
     ///
     /// Inputs and result semantics follow the free function.

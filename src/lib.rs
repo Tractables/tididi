@@ -27,9 +27,6 @@
 //! operands you will combine.
 //! Queries borrow diagrams; transformations taking `Tdd` consume them, so clone
 //! an operand first if it must be kept.
-//! Operations reuse the context attached to the shared vtree. Named operations
-//! such as [`and`], [`literal`] and [`Tdd::model_count`] return errors.
-//! [`Context::with_limits`] lends an engine for an explicitly bounded batch. Diagrams own their results independently of that temporary checkout.
 //!
 //! # Where to go next
 //!
@@ -57,33 +54,20 @@ macro_rules! cheap_assert {
     ($($arg:tt)*) => { ::std::assert!($($arg)*) };
 }
 
-// ── ground ──────────────────────────────────────────────────────────────────
-// What everything else reads. A ground module names no operation; the one
-// exception is the session type, which every layer may name.
-pub mod vtree;      // The variable tree that shapes every diagram
-pub mod diagram;    // The diagram's storage types and the traversal contract
-pub mod limits;     // What an operation runs under and what it parks between calls
-pub(crate) mod value;  // The value kernel: counts, the fold walk, the domains, the slot vocabulary
+pub mod vtree;
+pub mod diagram;
+pub mod limits;
+pub(crate) mod value;
 
-// ── operations ──────────────────────────────────────────────────────────────
-// Operations share the storage types and may compose one another; the
-// architecture reference records their responsibilities.
-mod build;      // Constants and cubes
-pub mod apply;      // Conjunction (of diagrams and of clauses), disjunction, negation, conditioning, projection, restriction
-mod marginal;   // Summing vtree levels out into per-node counts or weights
-pub mod reduce;     // Reduction to canonical form
-pub mod restructure;// Rotation search and graft over a compiled diagram
-pub mod query;      // Model counting, satisfiability, algebra evaluation
-
-// ── session ─────────────────────────────────────────────────────────────────
-// The hub. It holds the scratch of every operation, and every operation is a
-// method on it, so it is the one module the layers point at in both directions.
-pub mod engine;     // The session hub: the scratch every operation reuses
-
-// ── edges ───────────────────────────────────────────────────────────────────
-// Readers and writers of finished diagrams, and the compiled prose guides.
-pub mod io;         // The `.tdd` text format, both directions, and Graphviz rendering
-pub mod guide;      // The prose guides of `docs/`, compiled with the crate
+mod build;
+pub mod apply;
+mod marginal;
+pub mod reduce;
+pub mod restructure;
+pub mod query;
+pub mod execution;
+pub mod io;
+pub mod guide;
 
 #[doc = include_str!("../README.md")]
 #[doc(hidden)]
@@ -97,7 +81,7 @@ pub mod test_helpers;
 pub use diagram::{Literal, Tdd};
 pub use vtree::Vtree;
 pub use limits::OperationError;
-pub use engine::{Context, Engine};
+pub use execution::{Context, Engine};
 
 pub use apply::{and, or, xor, ite, and_exists, and_exists_with_strategy};
 

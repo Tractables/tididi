@@ -11,7 +11,7 @@
 use crate::diagram::ChildDecoder;
 use crate::diagram::*;
 use super::OperationError;
-use crate::engine::Engine;
+use crate::Engine;
 use super::liveness::{bucket_shift, build_live_cols_bitmask, build_reach_masks, PrefilterSideMasks};
 use super::setup::{ApplyRun, LevelShape};
 

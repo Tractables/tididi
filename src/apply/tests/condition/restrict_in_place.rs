@@ -16,7 +16,7 @@ use crate::vtree::Vtree;
 /// the shrink leaves the abandoned slot behind and reports it dead.
 #[test]
 fn rewrite_for_restrict_shrinks_pair_lists_in_place() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(2));
     let root = vtree.root();
     let mut tdd = crate::build::constant_one(eng, &vtree);
@@ -74,7 +74,7 @@ fn conditioning_leaves_no_node_computing_false() {
 fn conditioning_a_variable_outside_the_vtree_is_an_error() {
     use crate::vtree::VarId;
     use crate::OperationError;
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     assert!(matches!(

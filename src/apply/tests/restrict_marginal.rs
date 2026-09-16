@@ -4,7 +4,7 @@
 
 use super::*;
 
-use crate::engine::Engine;
+use crate::Engine;
 
 /// Restrict contract checked against the TRUE marginal `care`.
 ///

@@ -13,7 +13,7 @@ fn balanced_vtree(n: u32) -> Arc<Vtree> {
 
 #[test]
 fn test_apply_or_basic() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = balanced_vtree(4);
     let mut f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
     let mut g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, true)]));
@@ -26,7 +26,7 @@ fn test_apply_or_basic() {
 
 #[test]
 fn test_apply_or_with_zero() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = balanced_vtree(4);
     let mut f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
     f.minimize().unwrap();
@@ -38,7 +38,7 @@ fn test_apply_or_with_zero() {
 
 #[test]
 fn test_apply_or_canonical() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     use crate::test_helpers::check::check_all_fast;
 
     let vtree = balanced_vtree(4);
@@ -53,7 +53,7 @@ fn test_apply_or_canonical() {
 
 #[test]
 fn test_apply_or_compiled_formulas() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = balanced_vtree(4);
 
     let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
@@ -95,7 +95,7 @@ const RESERVES_PER_DISJUNCTION: u32 = 96;
 fn a_refused_reserve_inside_the_disjunction_returns_over_budget() {
     use crate::apply::conjoin::conjoin_owned;
     use crate::apply::negate::negate_tdd_owned;
-    use crate::engine::Engine;
+    use crate::Engine;
     use crate::limits::OperationError;
 
     let eng = &Engine::new();

@@ -4,7 +4,7 @@
 
 use super::*;
 
-use crate::engine::Engine;
+use crate::Engine;
 
 #[test]
 fn support_mask_tracks_dependence() {
@@ -27,7 +27,7 @@ fn support_mask_tracks_dependence() {
 
 #[test]
 fn support_bits_covers_support_mask_and_detects_disjoint() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let x0 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
     let x2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
@@ -100,7 +100,7 @@ fn condition_var_canonicalizes_a_dead_result() {
 // unconditioned (miscount, no panic).
 #[test]
 fn condition_var_on_marginalized_leaf_fails_fast() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     use crate::marginal::marginalize_leaf_inline;
     let vtree = Arc::new(Vtree::balanced(2));
     // x0 XOR x1 — depends on both vars, so the output sits at the root.

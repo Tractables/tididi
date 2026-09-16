@@ -14,7 +14,7 @@
 //! its `(Neg, S)` partner in the same list, and vice versa).
 
 use crate::diagram::Changed;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::diagram::ChildSide;
 use crate::diagram::{EncodedChildRef, ChildPair, Tdd, TddLevel, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 use crate::limits::OperationError;

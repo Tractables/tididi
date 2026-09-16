@@ -41,7 +41,7 @@ fn check_all_deep(tdd: &mut Tdd, label: &str) {
 
 #[test]
 fn every_checker_accepts_constant_one() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     for num_vars in 2..=4 {
         for (name, vtree) in vtree_shapes(num_vars) {
             let what = format!("constant_one({num_vars} vars, {name})");
@@ -54,7 +54,7 @@ fn every_checker_accepts_constant_one() {
 
 #[test]
 fn every_checker_accepts_a_clause_diagram() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let clauses: Vec<(u32, Vec<i32>)> = vec![
         (3, vec![1, 2]),
         (3, vec![-1, 3]),
@@ -76,7 +76,7 @@ fn every_checker_accepts_a_clause_diagram() {
 /// the all-negative clause the other checkers take is not one of its cases.
 #[test]
 fn test_determinism_clause_tdd() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let clauses: Vec<(u32, Vec<i32>)> = vec![
         (3, vec![1, 2]),
         (3, vec![-1, 3]),
@@ -98,7 +98,7 @@ fn test_determinism_clause_tdd() {
 
 #[test]
 fn test_structure_after_apply() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
     let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-3, 4]));
@@ -108,7 +108,7 @@ fn test_structure_after_apply() {
 
 #[test]
 fn test_determinism_after_apply() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
     let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-3, 4]));
@@ -121,7 +121,7 @@ fn test_determinism_after_apply() {
 
 #[test]
 fn test_determinism_after_minimize() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
     let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-1, 3]));
@@ -141,7 +141,7 @@ fn test_determinism_after_minimize() {
 /// to `check_canonicity`, and both pass.
 #[test]
 fn test_projective_boolean_ray_equals_exact() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
     let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-1, 3]));
@@ -164,7 +164,7 @@ fn test_projective_boolean_ray_equals_exact() {
 /// marginalized boundary level.
 #[test]
 fn test_projective_marginal_ray_below_exact() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(2));
     let root = vtree.root();
     let mut levels = take_levels(eng, vtree.num_nodes());
@@ -191,7 +191,7 @@ fn test_projective_marginal_ray_below_exact() {
 /// canonical despite holding two identical nodes.
 #[test]
 fn test_ray_classification_excludes_unreachable_node() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     // balanced(3): leaves 0/1/2; level 3 = parent of leaves 0,1; level 4 = root (3,2).
     let vtree = Arc::new(Vtree::balanced(3));
     let pos = NodeIdx(LeafLabel::Pos as u32);
@@ -219,7 +219,7 @@ fn test_ray_classification_excludes_unreachable_node() {
 
 #[test]
 fn test_minimize_soundness_single_clause() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     // Clause diagrams are inherently deterministic (width 2, exclusive c/d nodes)
     for num_vars in 2..=5 {
         for (name, vtree) in vtree_shapes(num_vars) {
@@ -235,7 +235,7 @@ fn test_minimize_soundness_single_clause() {
 
 #[test]
 fn test_minimize_soundness_raw_product() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     // Product of deterministic diagrams is deterministic, so semiring eval is sound
     let formulas: Vec<(u32, Vec<Vec<i32>>)> = vec![
         (3, vec![vec![1, 2], vec![-2, 3], vec![-1, -3]]),
@@ -267,7 +267,7 @@ fn test_minimize_soundness_raw_product() {
 
 #[test]
 fn test_no_false_nodes_after_apply_before_minimize() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     // The invariant holds for apply_and output even before minimize:
     // apply_and's compacting construction never creates false nodes in levels.
     let vtree = Arc::new(Vtree::balanced(4));
@@ -290,7 +290,7 @@ fn test_no_false_nodes_after_apply_before_minimize() {
 
 #[test]
 fn test_no_false_nodes_multi_apply_before_minimize() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     // Chain of apply_and calls without intermediate minimize.
     let vtree = Arc::new(Vtree::balanced(5));
     let clauses: Vec<Vec<i32>> = vec![
@@ -510,7 +510,7 @@ fn a_scattered_variable_formula_counts_the_same_on_every_vtree() {
 fn canonicity_rejects_a_duplicated_node() {
     use crate::diagram::ChildPair;
 
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::random(4, 42));
     let tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![-3, 4]]);
 
@@ -545,7 +545,7 @@ fn dropping_an_input_pair_changes_the_model_count() {
 
     use num_bigint::BigUint;
 
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let clauses = vec![
         vec![1, 2],
         vec![-2, 3],

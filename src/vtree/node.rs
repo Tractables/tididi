@@ -112,7 +112,7 @@ impl VtreeNode {
 #[derive(Clone, Debug)]
 pub struct Vtree {
     /// Reusable execution scratch shared by clones of this tree.
-    pub(crate) context: std::sync::Arc<crate::engine::Context>,
+    pub(crate) context: std::sync::Arc<crate::Context>,
     /// All vtree nodes: at construction, leaves first (`0..num_leaves`) then
     /// internal nodes in bottom-up level order. A rotation relinks nodes
     /// without reordering this list, which is why `topo` and not the list
@@ -142,16 +142,16 @@ impl Vtree {
     /// Cloning a vtree preserves its context. Context sharing does not change
     /// the requirement that binary diagram operands share one vtree allocation.
     #[must_use]
-    pub fn context(&self) -> &std::sync::Arc<crate::engine::Context> {
+    pub fn context(&self) -> &std::sync::Arc<crate::Context> {
         &self.context
     }
 
     /// Associate this tree with `context`, preserving its shape and variable ids.
     ///
-    /// Set the context before sharing the tree with diagrams; [`Context::bind`](crate::engine::Context::bind)
+    /// Set the context before sharing the tree with diagrams; [`Context::bind`](crate::Context::bind)
     /// also wraps it in an `Arc`.
     #[must_use]
-    pub fn with_context(mut self, context: std::sync::Arc<crate::engine::Context>) -> Self {
+    pub fn with_context(mut self, context: std::sync::Arc<crate::Context>) -> Self {
         self.context = context;
         self
     }

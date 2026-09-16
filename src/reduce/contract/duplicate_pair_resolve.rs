@@ -23,7 +23,7 @@
 use crate::diagram::EncodedChildRef;
 
 
-use crate::engine::Engine;
+use crate::Engine;
 use super::scratch::DuplicateScratch;
 use crate::diagram::ChildSide;
 use crate::limits::OperationError;

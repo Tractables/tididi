@@ -13,7 +13,7 @@ use std::sync::Arc;
 /// Build a small 4-leaf diagram (two width-2 internal children under the root).
 /// Both operands built this way are byte-identical.
 fn build_operand(vtree: &Arc<Vtree>) -> Tdd {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
     let one = NodeIdx(LeafLabel::One as u32);

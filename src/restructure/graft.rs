@@ -20,7 +20,7 @@
 mod error;
 pub use error::GraftError;
 
-use crate::engine::Engine;
+use crate::Engine;
 use std::sync::Arc;
 
 use crate::vtree::{GraftLayout, VarId, Vtree, VtreeIdx};

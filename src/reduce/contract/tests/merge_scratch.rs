@@ -2,7 +2,7 @@
 //!
 //! Sibling of `content_twin_forking.rs`.
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::diagram::{ValueRef, NodeIdx};
 use crate::diagram::*;
 use crate::vtree::Vtree;
@@ -150,7 +150,7 @@ fn merge_buffers_clear_retains_allocations() {
 
 #[test]
 fn content_twin_scratch_is_cleared_on_take() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     use super::content_twin::ContentTwinScratch;
 
     let mut fp_counts: rustc_hash::FxHashMap<u64, u32> = Default::default();

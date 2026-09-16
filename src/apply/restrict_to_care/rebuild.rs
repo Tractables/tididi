@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::{OperationError, PollGate};
 use crate::reduce::{ReductionPlan};
 use crate::diagram::{ChildDecoder, ChildPair, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, try_take_levels};

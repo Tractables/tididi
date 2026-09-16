@@ -1,6 +1,6 @@
 //! Recycling pool for `Vec<TddLevel>` allocations, owned by the engine.
 
-use crate::engine::Engine;
+use crate::Engine;
 use std::cell::Cell;
 
 use super::level::TddLevel;

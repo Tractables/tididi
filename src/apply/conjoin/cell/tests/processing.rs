@@ -1,6 +1,6 @@
 use super::*;
 use crate::diagram::ChildDecoder;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::test_helpers::pair;
 
 /// `CollectSink` pushes must charge the apply soft budget (`try_push`), like

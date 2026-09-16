@@ -16,7 +16,7 @@
 //! when a parent is activated dynamically by an ancestor firing.
 
 use crate::diagram::Changed;
-use crate::engine::Engine;
+use crate::Engine;
 use std::collections::BinaryHeap;
 
 use crate::diagram::ChildSide;

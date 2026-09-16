@@ -19,7 +19,7 @@ use level::{build_level_dense, run_sparse_level, LevelBuild};
 
 use super::*;
 
-use crate::engine::Engine;
+use crate::Engine;
 
 /// What one sweep carries beside its [`ApplyRun`]: the vtree, the
 /// marginalization schedule, and the weight store the marginal levels write to.

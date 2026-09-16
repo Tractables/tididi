@@ -13,7 +13,7 @@
 //! always proves every covered (row, col) cell is `NO_PRODUCT`, so skips stay sound;
 //! the exact per-cell `NO_PRODUCT` check in the scatter loops catches the rest.
 
-use crate::engine::Engine;
+use crate::Engine;
 use super::{OperationError, NO_PRODUCT, TddLevel, ChildPair};
 use crate::diagram::Sides;
 

@@ -6,7 +6,7 @@ use super::*;
 use crate::apply::conjoin::setup::LevelShape;
 use crate::diagram::Sides;
 
-use crate::engine::Engine;
+use crate::Engine;
 
 /// The leaf arm of the scatter: one side of the join is a vtree leaf, so the
 /// leaf-side product comes straight from the conjunction table and the walk

@@ -1,6 +1,6 @@
 //! The pair arena: node encoding, in-place resizing, compaction, and node pushes.
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::diagram::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode, MULTI_BIT};
 use crate::limits::{OperationError};
 use super::TddLevel;

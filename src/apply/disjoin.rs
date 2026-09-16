@@ -5,7 +5,7 @@
 //! it, and a disjunction runs three such fills, so `|` can grow a diagram
 //! where `&` would not.
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::diagram::*;
 use crate::limits::OperationError;
 use crate::apply::negate::negate_tdd_owned;
@@ -93,7 +93,7 @@ pub fn or(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
 }
 
 /// The disjunction entry point on a caller's engine.
-impl crate::engine::Engine {
+impl crate::Engine {
     /// Run [`or`] using this batch's scratch and resource limits.
     ///
     /// Operand requirements, ownership and result semantics follow that function.

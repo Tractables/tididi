@@ -1,5 +1,5 @@
 use super::*;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::LimitConfig;
 // Named explicitly, not through the glob above, so it resolves however
 // `conjoin` routes its own import of it.
@@ -16,7 +16,7 @@ use num_bigint::BigUint;
 
 #[test]
 fn test_apply_and_with_constant_one() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let one = constant_one(eng, &vtree);
     let clause = vec![Literal::pos(VarId(0))];
@@ -50,7 +50,7 @@ fn test_apply_and_with_constant_one() {
 
 #[test]
 fn test_apply_and_two_clauses() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let f = vec![Literal::pos(VarId(0))];
     let g = vec![Literal::neg(VarId(1))];
@@ -66,7 +66,7 @@ fn test_apply_and_two_clauses() {
 
 #[test]
 fn test_apply_and_contradictory() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     // x0 ∧ ¬x0 should have no models
     let vtree = Arc::new(Vtree::balanced(1));
     let f = vec![Literal::pos(VarId(0))];
@@ -83,7 +83,7 @@ fn test_apply_and_contradictory() {
 
 #[test]
 fn test_apply_and_self_conjunction() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     // f ∧ f = f for a non-trivial diagram.
     let vtree = Arc::new(Vtree::balanced(4));
     let f = vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))];
@@ -108,7 +108,7 @@ fn test_apply_and_self_conjunction() {
 
 #[test]
 fn test_apply_and_self_conjunction_owned() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     // f ∧ f = f via the owned variant (avoids clone).
     let vtree = Arc::new(Vtree::balanced(4));
     let f = vec![Literal::pos(VarId(0)), Literal::neg(VarId(2))];
@@ -129,7 +129,7 @@ fn test_apply_and_self_conjunction_owned() {
 
 #[test]
 fn test_apply_and_stick_vtree_reachability() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     // Exercise the top-down reachability path on a stick (right-linear) vtree.
     // On sticks, every internal level has a leaf left child (3×3 grid),
     // triggering reachability gating at every level.
@@ -207,7 +207,7 @@ fn test_apply_output_node_cap_bails_cleanly() {
     // same `vtree` Arc (clause_to_tdd / constant_one clone it), so the final
     // conjoin's pointer-identical-vtree precondition holds.
     fn build(vtree: &Arc<Vtree>, clauses: &[&[i32]]) -> Tdd {
-        let eng = &crate::engine::Engine::new();
+        let eng = &crate::Engine::new();
         let mut acc = constant_one(eng, vtree);
         for literals in clauses {
             let clause: Vec<Literal> = literals.iter()

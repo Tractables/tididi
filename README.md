@@ -51,13 +51,6 @@ invalid. Use the same `Arc<Vtree>` for functions you intend to combine.
 Each [`Tdd`] owns its diagram. Boolean operations consume their operands; clone an
 operand first if you need to keep it. Cloning copies diagram storage and shares
 the vtree; queries such as `model_count` borrow the diagram.
-The shared vtree retains reusable working buffers, used automatically by these
-operations. Constructors, transformations and queries return `Result`; `?`
-propagates an operation error. Constants and storage accessors return directly.
-
-For bounded work, the context lends a batch engine through
-[`Context::with_limits`]. Diagrams own their results; the engine only supplies
-working buffers and execution controls.
 
 ## Continue with your task
 
@@ -74,7 +67,7 @@ and links to the full runnable source.
 | --- | --- |
 | [Conditional probability](docs/examples/probability.md) | Compute the probability of rain given wet grass, then change the priors. |
 | [Reachable states](docs/examples/reachability.md) | Find reachable states and check that a forbidden state cannot be reached. |
-| [Save and reload diagrams](docs/examples/persistence.md) | Restore two rules onto one shared tree, then combine them. |
+| [Save and reload diagrams](docs/examples/persistence.md) | Restore two rules onto one shared vtree, then combine them. |
 | [Execution controls](docs/examples/execution.md) | Bound a batch and release idle working buffers. |
 | [Variable grouping](docs/examples/vtrees.md) | Compare the same function under two vtrees. |
 | [A custom statistic](docs/examples/statistics.md) | Traverse the stored nodes and pairs. |
@@ -104,9 +97,7 @@ TDDs were introduced in the following paper:
 
 Apache License, Version 2.0 ([LICENSE](./LICENSE)).
 
-[`Literal`]: https://docs.rs/tididi/latest/tididi/diagram/struct.Literal.html
 [`Tdd`]: https://docs.rs/tididi/latest/tididi/diagram/struct.Tdd.html
-[`Context::with_limits`]: https://docs.rs/tididi/latest/tididi/engine/struct.Context.html#method.with_limits
 [task guide]: https://docs.rs/tididi/latest/tididi/guide/api/index.html
 [TDD data model]: https://docs.rs/tididi/latest/tididi/guide/model/index.html
 [API reference]: https://docs.rs/tididi

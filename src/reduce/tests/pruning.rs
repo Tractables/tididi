@@ -15,7 +15,7 @@ use crate::vtree::Vtree;
     /// it.
     #[test]
     fn readers_skip_tombstones_and_prune_reclaims() {
-        let eng = &crate::engine::Engine::new();
+        let eng = &crate::Engine::new();
         let vtree = Arc::new(Vtree::balanced(4));
         let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![3, -4]]);
         tdd.minimize().unwrap();
@@ -64,7 +64,7 @@ fn the_prune_scratch_reservation_goes_through_the_engine() {
     let clauses = [vec![1, 2], vec![-2, 3], vec![3, -4]];
 
     // Refused: the diagram is left exactly as it was.
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let mut tdd = compile_clauses(&vtree, &clauses);
     tdd.minimize().unwrap();
     let (size_before, mc_before) = (tdd.pair_count(), tdd.model_count().unwrap());
@@ -76,7 +76,7 @@ fn the_prune_scratch_reservation_goes_through_the_engine() {
     assert_eq!(tdd.model_count().unwrap(), mc_before, "a refused prune must not touch the count");
 
     // Granted: the bytes the scratch takes are charged.
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let mut tdd = compile_clauses(&vtree, &clauses);
     tdd.minimize().unwrap();
     eng.limits().reset_meters();

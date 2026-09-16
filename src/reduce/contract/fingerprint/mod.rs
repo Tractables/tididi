@@ -1,6 +1,6 @@
 
 use crate::diagram::EncodedChildRef;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 

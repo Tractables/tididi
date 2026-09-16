@@ -6,7 +6,7 @@ use crate::test_helpers::{assert_canonical, compile_clauses, literals};
 
 /// The size-objective descent, spelled once for the tests below.
 fn size_descent(tdd: &mut Tdd) -> RotationSearchStats {
-    crate::engine::Engine::new()
+    crate::Engine::new()
         .rotation_search(tdd, &mut SizeDelta, &RotationSearchConfig::default())
         .expect("an unarmed engine stops nothing")
 }
@@ -108,7 +108,7 @@ fn reject_all_objective_leaves_tdd_untouched() {
     let mc_before = tdd.model_count().unwrap();
     let snap = level_snapshot(&tdd);
 
-    let stats = crate::engine::Engine::new()
+    let stats = crate::Engine::new()
         .rotation_search(&mut tdd, &mut RejectAll, &RotationSearchConfig::default())
         .expect("an unarmed engine stops nothing");
 

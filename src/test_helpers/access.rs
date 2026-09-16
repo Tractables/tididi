@@ -4,7 +4,7 @@
 
 use num_bigint::BigUint;
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::{LimitConfig, StopDecision};
 use crate::value::{Count, CountVec};
 use crate::vtree::rotate::rotate_pointers;

@@ -3,7 +3,7 @@
 //! only large grids reach: the leaf-alive table's label order, duplicate
 //! output pairs from the scatter phase, chunked emission, workspace residue
 //! across compiles, and the sparse/dense seam within one apply.
-use crate::engine::Engine;
+use crate::Engine;
 use std::sync::Arc;
 
 use num_bigint::BigUint;

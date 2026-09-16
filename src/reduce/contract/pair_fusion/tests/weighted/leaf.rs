@@ -4,7 +4,7 @@
 
 use super::*;
 
-use crate::engine::Engine;
+use crate::Engine;
 use num_rational::BigRational;
 use crate::diagram::LeafLabel;
 use crate::vtree::VtreeNode;

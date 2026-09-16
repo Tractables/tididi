@@ -1,7 +1,7 @@
 //! Re-resolving a swapped-in parent level's marginal refs into the output
 //! child's store space.
 
-use crate::engine::Engine;
+use crate::Engine;
 use num_bigint::BigUint;
 use rustc_hash::FxHashMap;
 

@@ -11,7 +11,7 @@
 //! `reduce::canonicalize_content_twins`.
 
 use crate::diagram::Changed;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::pool::PooledScratch;
 
 use rustc_hash::FxHashMap;

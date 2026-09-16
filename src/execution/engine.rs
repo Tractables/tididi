@@ -1,16 +1,7 @@
-//! Shared execution contexts and the engines lent to batches.
-//!
-//! [`Engine::new`] creates an engine; [`Engine::limits`] configures its limits.
-//! Diagrams own their results independently of the engine and can outlive it.
-//! [`Context`] lends engines to batches and retains their scratch between calls.
-//!
-//! The [task guide](crate::guide::api) links construction, transformation and
-//! query examples; [`Limits`] documents configuration and work measurements.
+//! Per-batch scratch storage and execution limits.
 
 use crate::limits::Limits;
-
-mod context;
-pub use context::Context;
+use super::Context;
 
 /// An execution workspace for checked operations and explicit resource limits.
 ///
@@ -57,8 +48,8 @@ pub use context::Context;
 /// methods do not check limits; use an empty [`cube`](Self::cube) or
 /// [`clause`](Self::clause) for checked constant construction.
 pub struct Engine {
-    context: std::sync::Weak<Context>,
-    limits: Limits,
+    pub(super) context: std::sync::Weak<Context>,
+    pub(super) limits: Limits,
     apply: crate::apply::conjoin::ApplyScratch,
     clause: crate::apply::conjoin_clause::ClauseScratch,
     reduce: crate::reduce::ReduceScratch,
@@ -118,14 +109,14 @@ impl Engine {
     /// Share a vtree with this execution batch's context.
     ///
     /// An engine checked out by [`Context::run`] or [`Context::with_limits`]
-    /// associates the tree with that context. A standalone engine gives the
-    /// tree a fresh context. Sharing a context does not make separate vtree
+    /// associates the vtree with that context. A standalone engine gives the
+    /// vtree a fresh context. Sharing a context does not make separate vtree
     /// allocations compatible operands.
     #[must_use]
-    pub fn bind_vtree(&self, tree: crate::Vtree) -> std::sync::Arc<crate::Vtree> {
+    pub fn bind_vtree(&self, vtree: crate::Vtree) -> std::sync::Arc<crate::Vtree> {
         match self.context.upgrade() {
-            Some(context) => context.bind(tree),
-            None => std::sync::Arc::new(Context::new()).bind(tree),
+            Some(context) => context.bind(vtree),
+            None => std::sync::Arc::new(Context::new()).bind(vtree),
         }
     }
 

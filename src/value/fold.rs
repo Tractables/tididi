@@ -3,7 +3,7 @@
 use crate::limits::OperationError;
 use crate::diagram::EncodedChildRef;
 
-use crate::engine::Engine;
+use crate::Engine;
 
 use num_bigint::BigUint;
 

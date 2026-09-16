@@ -13,7 +13,7 @@ use crate::diagram::ChildSide;
 use crate::diagram::{LeafLabel, PairsIter};
 use crate::diagram::{ChildDecoder, NodeIdx, Tdd, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO};
 #[cfg(any(test, debug_assertions))]
-use crate::engine::Engine;
+use crate::Engine;
 #[cfg(test)]
 use super::access::stopping_engine;
 #[cfg(any(test, debug_assertions))]

@@ -4,7 +4,7 @@
 
 use super::*;
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::marginal::free_subsumed_marginal_children;
 use crate::test_helpers::compile_clauses;
 use crate::diagram::EncodedNode;

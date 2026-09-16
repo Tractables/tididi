@@ -3,7 +3,7 @@
 use crate::value::ColumnRetention;
 use crate::diagram::*;
 use crate::diagram::PairsIter;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::vtree::{VarId, VtreeIdx};
 
 use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};

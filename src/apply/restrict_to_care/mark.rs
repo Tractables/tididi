@@ -1,7 +1,7 @@
 //! The liveness walk over `f × care`.
 
 use std::collections::HashMap;
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::{OperationError, PollGate};
 
 use crate::diagram::{ChildPair, NodeIdx, Tdd, ZERO};

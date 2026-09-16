@@ -5,7 +5,7 @@
 //! (`apply_identity_fast_path`), the per-level fast-path entry
 //! (`take_level_fast_path`, `FastPathResult`).
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::diagram::{self, *};
 use super::OperationError;
 use super::setup::{ApplyRun, LevelShape};

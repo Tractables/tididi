@@ -21,7 +21,7 @@
 //! Integer and weighted levels share the one skeleton
 //! `prune_marginal_slots_generic`, generic over the `SlotStore` trait.
 
-use crate::engine::Engine;
+use crate::Engine;
 
 
 use crate::diagram::Tdd;

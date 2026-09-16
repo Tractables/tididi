@@ -38,7 +38,7 @@ pub use meters::{OperationMetrics, ConjunctionProgress};
 pub use stop::{StopDecision, StopRules, StopAt};
 
 pub(crate) use growth::PAIR_ELEM_BYTES;
-pub(crate) use meters::ByteCharge;
+pub(crate) use growth::ByteCharge;
 
 pub(crate) use poll::PollGate;
 

@@ -3,7 +3,7 @@ use crate::test_helpers::stopping_engine;
 
 #[test]
 fn test_model_count_constant_one() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_one(eng, &vtree);
     // 3 variables → 2^3 = 8 models
@@ -12,7 +12,7 @@ fn test_model_count_constant_one() {
 
 #[test]
 fn test_model_count_single_positive_literal() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let clause = vec![Literal::pos(VarId(0))];
     let tdd = clause_to_tdd(eng, &vtree, &clause);
@@ -22,7 +22,7 @@ fn test_model_count_single_positive_literal() {
 
 #[test]
 fn test_model_count_two_literal_clause() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     // x0 ∨ ¬x1: satisfied unless x0=0 and x1=1
     let clause = vec![
@@ -36,7 +36,7 @@ fn test_model_count_two_literal_clause() {
 
 #[test]
 fn test_model_count_conjunction() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     // (x0) ∧ (x1): both must be true, x2 free → 2 models
     let f = vec![Literal::pos(VarId(0))];
@@ -49,7 +49,7 @@ fn test_model_count_conjunction() {
 
 #[test]
 fn test_model_count_unsat() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(1));
     // (x0) ∧ (¬x0) = UNSAT
     let f = vec![Literal::pos(VarId(0))];
@@ -63,7 +63,7 @@ fn test_model_count_unsat() {
 
 #[test]
 fn test_model_count_single_var() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(1));
     let tdd = constant_one(eng, &vtree);
     assert_eq!(tdd.model_count().unwrap(), BigUint::from(2u32));
@@ -71,7 +71,7 @@ fn test_model_count_single_var() {
 
 #[test]
 fn test_model_count_clause_all_vars() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     // 4 variables, clause x0 ∨ x1 ∨ x2 ∨ x3
     // Unsatisfied only when all are 0: 2^4 - 1 = 15 models
     let vtree = Arc::new(Vtree::balanced(4));
@@ -89,7 +89,7 @@ fn test_model_count_clause_all_vars() {
 
 #[test]
 fn test_node_counts_basic() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_one(eng, &vtree);
     let counts = node_counts(&tdd);
@@ -108,7 +108,7 @@ fn test_node_counts_basic() {
 /// UNSAT that produces an in-range (non-root-stale) false output.
 #[test]
 fn test_output_is_satisfiable_agrees_with_model_count() {
-    let eng = &crate::engine::Engine::new();
+    let eng = &crate::Engine::new();
     let check = |t: &Tdd, what: &str| {
         let sat = is_sat_structural(t);
         let nonzero = t.model_count().unwrap() != BigUint::ZERO;

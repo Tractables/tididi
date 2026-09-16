@@ -12,7 +12,7 @@
 //! for an accumulator node is its conjunction with `c_t` and with `d_t`, kept
 //! side by side in `cd_map`. The whole file is written in terms of this pair.
 
-use crate::engine::Engine;
+use crate::Engine;
 use crate::limits::pool::Pool;
 use std::sync::Arc;
 
@@ -309,7 +309,7 @@ impl Tdd {
 }
 
 /// The clause entry points on a caller's engine.
-impl crate::engine::Engine {
+impl crate::Engine {
     /// Run [`Tdd::clause`](crate::Tdd::clause) using this batch's scratch and resource limits.
     ///
     /// Operand requirements, ownership and result semantics follow the diagram method.

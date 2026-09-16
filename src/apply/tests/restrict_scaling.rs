@@ -8,7 +8,7 @@
 
 use super::*;
 
-use crate::engine::Engine;
+use crate::Engine;
 
 #[test]
 #[ignore = "heavy: a ladder of very wide root nodes"]
