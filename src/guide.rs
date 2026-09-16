@@ -5,7 +5,7 @@
 
 /// Worked examples, from Boolean constraints to custom diagram traversal.
 pub mod examples {
-    // These excerpts are checked against runnable programs by tests/example_docs.rs.
+    // The documentation integration test checks these excerpts against runnable programs.
     // Suppress the ignored-doctest badge only on blocks covered by that check.
     macro_rules! walkthrough {
         ($name:ident, $path:literal) => {

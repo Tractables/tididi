@@ -21,7 +21,8 @@ fn walkthrough_code_comes_from_the_runnable_examples() {
         let mut excerpts = 0;
         let mut lines = markdown.lines();
         while let Some(line) = lines.next() {
-            if !line.starts_with("```rust") && !(line.starts_with("```") && line.contains("tested-example")) {
+            let Some(attributes) = line.strip_prefix("```") else { continue };
+            if !attributes.starts_with("rust") && !attributes.contains("tested-example") {
                 continue;
             }
             assert_eq!(line, "```rust,ignore,{class=tested-example}", "{name}: excerpts are checked against the executable example");
