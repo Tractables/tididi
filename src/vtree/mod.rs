@@ -61,7 +61,7 @@ pub(crate) mod rotate; // In-place vtree left/right rotations + topo fixup
 /// A zero-based variable identifier, independent of its position in the vtree.
 ///
 /// `VarId(0)` is the variable named by integer literals `1` and `-1`.
-/// Resolve its leaf with [`Vtree::leaf_of`](Vtree::leaf_of); a variable id
+/// Resolve its leaf with [`Vtree::leaf_of`]; a variable id
 /// and a [`VtreeIdx`] are different index spaces.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct VarId(pub u32);
@@ -69,7 +69,7 @@ pub struct VarId(pub u32);
 /// An index identifying a node in one vtree's node array.
 ///
 /// It may name a leaf or an internal node and is not a variable identifier.
-/// Use [`Vtree::bottomup`](Vtree::bottomup) for traversal order, which can
+/// Use [`Vtree::bottomup`] for traversal order, which can
 /// differ from index order after a rotation.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct VtreeIdx(pub u32);
