@@ -31,7 +31,7 @@ configurations, and reuses the circuit as a user changes their choices.
 sums, including probabilities, and change those weights without rebuilding the
 circuit. The [probability example] combines events and evaluates their weights
 to answer a conditional-probability query. Custom evaluation algebras let the
-same circuit compute other quantities.
+same circuit compute other quantities, such as the [minimum configuration cost].
 
 ## Getting started
 
@@ -121,3 +121,5 @@ Apache License, Version 2.0 ([LICENSE](./LICENSE)).
 [TDD data model]: https://tractables.github.io/tididi/tididi/guide/model/index.html
 [API reference]: https://tractables.github.io/tididi/tididi/
 [architecture reference]: https://tractables.github.io/tididi/tididi/guide/architecture/index.html
+
+[minimum configuration cost]: https://tractables.github.io/tididi/tididi/guide/examples/optimization/index.html

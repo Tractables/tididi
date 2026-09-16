@@ -41,6 +41,7 @@ jobs:
         cargo run --example statistic
         cargo run --example save_reload
         cargo run --example vtree_grouping
+        cargo run --example minimum_cost
     - name: Lints
       if: runner.os == 'Linux'
       run: cargo clippy --all-targets -- -D warnings

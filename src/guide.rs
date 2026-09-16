@@ -21,6 +21,7 @@ pub mod examples {
     walkthrough!(reachability, "../docs/examples/reachability.md");
     walkthrough!(persistence, "../docs/examples/persistence.md");
     walkthrough!(vtrees, "../docs/examples/vtrees.md");
+    walkthrough!(optimization, "../docs/examples/optimization.md");
     walkthrough!(statistics, "../docs/examples/statistics.md");
 }
 

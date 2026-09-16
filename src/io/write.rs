@@ -128,7 +128,7 @@ pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
         buf.extend_from_slice(b"L ");
         push_num(&mut buf, t.0);
         buf.push(b' ');
-        push_num(&mut buf, var.0 + 1); // 1-indexed DIMACS variable
+        push_num(&mut buf, var.0 + 1); // one-based variable number
         buf.push(b'\n');
     }
     w.write_all(&buf)?;
@@ -137,47 +137,29 @@ pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
     write_internal_lines(w, tdd, &reachable, &remap, &mut buf)
 }
 
-/// The comment block that documents the format inside every file it writes.
-/// Keep it in sync with what the writers below emit.
+/// A compact record reference travels with the data; the full specification is in rustdoc.
 fn push_format_header(buf: &mut Vec<u8>) {
-    buf.extend_from_slice(b"c TiDiDi TDD circuit\n");
     buf.extend_from_slice(
-        b"c\n\
-          c Format: a Tree Decision Diagram (TDD) over a vtree. Whitespace-separated\n\
-          c tokens, one record per line. Reachable nodes only, in vtree bottom-up order.\n\
-          c\n\
+        b"c tididi: Tree Decision Diagram over a separately stored vtree.\n\
+          c Records (whitespace-separated; blank lines and c comments are ignored):\n\
           c   p tdd <version> <num_leaves> <num_vtree_nodes> <out_vtree> <out_local>\n\
-          c       Problem line. The circuit's output node is (<out_vtree>, <out_local>).\n\
-          c       <out_local> is the literal token ZERO when the function is UNSAT\n\
-          c       (no further L/I lines follow in that case).\n\
-          c       <version> is the format version, and this file is version ",
+          c   L <vtree_idx> <var>\n\
+          c   I <vtree_idx> <left_vtree> <right_vtree> <l0> <r0> [<l1> <r1> ...]\n\
+          c The p record comes first. This writer uses format version ",
     );
     push_num(buf, TDD_FORMAT_VERSION);
     buf.extend_from_slice(
         b".\n\
-          c       A file written by version n loads in every reader whose own version\n\
-          c       is n or greater: a reader accepts any version up to its own and\n\
-          c       refuses a higher one. A comment line a reader does not recognize is\n\
-          c       ignored; a record letter it does not recognize is refused, so a\n\
-          c       format needing a new record raises the version.\n\
-          c\n\
-          c   L <vtree_idx> <var>\n\
-          c       A vtree leaf: vtree node <vtree_idx> tests DIMACS variable <var>\n\
-          c       (1-indexed). Each leaf has 3 implicit TDD nodes, not written, with\n\
-          c       local indices: 0 = one (constant true), 1 = positive literal\n\
-          c       (var=true), 2 = negative literal (var=false).\n\
-          c\n\
-          c   I <vtree_idx> <left_vtree> <right_vtree> <l0> <r0> [<l1> <r1> ...]\n\
-          c       An internal TDD node at vtree node <vtree_idx>, decomposing into a\n\
-          c       deterministic OR of AND-pairs: the node equals OR_k (left_k AND right_k).\n\
-          c       Each pair (<lk> <rk>) references a child by local index: <lk> into the\n\
-          c       node list of <left_vtree>, <rk> into that of <right_vtree>.\n\
-          c\n\
-          c   Local indices are per vtree node, 0-based, in the order nodes are emitted\n\
-          c   (leaf locals are the implicit 0/1/2 above; internal locals count I lines at\n\
-          c   that vtree_idx, in file order). The output (out_vtree, out_local) uses the\n\
-          c   same scheme, and <out_vtree> is always the root of the vtree.\n\
-          c\n",
+          c Readers accept only explicitly supported format versions.\n\
+          c Output is node (out_vtree, out_local); out_vtree is the vtree root.\n\
+          c For false, out_local is ZERO and no L or I records follow.\n\
+          c Otherwise every leaf has one L record; var is one-based.\n\
+          c Each I record is OR_k(left_k AND right_k), with deterministic pairs.\n\
+          c Pair indices are zero-based within their respective child levels.\n\
+          c Leaf indices: 0 = true, 1 = positive literal, 2 = negative literal.\n\
+          c Internal indices follow I-record order within each vtree level.\n\
+          c Writers emit reachable nodes only, children before parents.\n\
+          c Weights and marginal values are not stored.\n",
     );
 }
 

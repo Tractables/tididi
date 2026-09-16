@@ -49,7 +49,7 @@ construction, counting, and evidence queries in a small constraint model.
 [`Tdd::evaluate`](crate::Tdd::evaluate) evaluates a structural diagram under literal weights;
 the [probability walkthrough](crate::guide::examples::probability) combines Boolean events
 and weighted evaluation to compute conditional probabilities.
-Implement [`EvalAlgebra`](crate::diagram::EvalAlgebra) to evaluate another quantity, such as the fewest true variables in a model.
+Implement [`EvalAlgebra`](crate::diagram::EvalAlgebra) to evaluate another quantity, such as the [minimum cost of a configuration](crate::guide::examples::optimization).
 For fixed attached weights, use [`Tdd::set_weights`](crate::Tdd::set_weights) and [`Tdd::weighted_value`](crate::Tdd::weighted_value).
 
 ## Save and restore circuits
@@ -88,7 +88,7 @@ ordinary structural counting and witness queries need no explicit minimization.
 ### Inspect or assemble storage
 
 The [custom-statistic walkthrough](crate::guide::examples::statistics) introduces traversal of levels, nodes and pairs.
-[`tdd_to_dot`](crate::io::tdd_to_dot) and [`vtree_to_dot`](crate::io::vtree_to_dot) render Graphviz text.
+[`tdd_to_dot`](crate::io::tdd_to_dot) and [`vtree_to_dot`](crate::io::vtree_to_dot) render Graphviz text; [`Tdd::vtree_to_dot`](crate::Tdd::vtree_to_dot) adds circuit-size annotations to its own vtree.
 [`TddBuilder`](crate::diagram::TddBuilder) assembles storage directly; its contract includes determinism obligations.
 [`Tdd::graft`](crate::Tdd::graft) and [`Tdd::graft_over`](crate::Tdd::graft_over) combine disjoint variable domains.
 The [data model](crate::guide::model) explains the representation; the

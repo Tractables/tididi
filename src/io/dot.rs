@@ -48,28 +48,43 @@ fn lerp_rgb(lo: (u8, u8, u8), hi: (u8, u8, u8), t: f64) -> (u8, u8, u8) {
 /// The DOT text of a vtree: an undirected `graph`, leaves as boxes labelled
 /// with their variable, internal nodes as circles labelled with their index.
 ///
-/// With `tdd`, which must be a diagram over `vtree`, each internal vtree node
-/// is filled with a heatmap color (light yellow to dark red) proportional to
-/// its live pair count and annotated `w=<nodes> s=<live pairs>`, `w` being
-/// [`Tdd::reference_slot_count`]. Leaves carry no annotation.
-///
-/// # Panics
-///
-/// If `tdd` is over a vtree with fewer nodes than `vtree`.
-///
-/// # Examples
-///
-/// Render the variable tree without a diagram overlay:
-///
 /// ```
 /// use tididi::Vtree;
 /// use tididi::io::vtree_to_dot;
 ///
 /// let vtree = Vtree::balanced(3);
-/// let dot = vtree_to_dot(&vtree, None);
+/// let dot = vtree_to_dot(&vtree);
 /// assert!(dot.starts_with("graph vtree"));
 /// ```
-pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
+pub fn vtree_to_dot(vtree: &Vtree) -> String {
+    render_vtree(vtree, None)
+}
+
+impl Tdd {
+    /// Render this diagram's vtree as DOT, annotated with its stored node and pair counts.
+    ///
+    /// Internal vtree nodes carry `w=<reference slots> s=<live pairs>` and a
+    /// light-yellow to dark-red heatmap scaled by live pair count. Leaves have
+    /// variable labels only. Marginal levels have no live pairs to display.
+    /// For an unannotated vtree, use [`vtree_to_dot`].
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, -2])?;
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// let dot = f.vtree_to_dot();
+    /// assert!(dot.contains("fillcolor="));
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn vtree_to_dot(&self) -> String {
+        render_vtree(self.vtree(), Some(self))
+    }
+}
+
+/// Both public entry points supply the vtree belonging to their optional overlay.
+fn render_vtree(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
     // Pre-compute per-node pairs and max for normalization
     let mut pairs_per_node = vec![0usize; vtree.num_nodes()];
     if let Some(tdd) = tdd {

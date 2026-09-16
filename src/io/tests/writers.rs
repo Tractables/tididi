@@ -221,14 +221,7 @@ fn the_reader_refuses_what_is_not_this_diagram() {
 
 // ── The format version ───────────────────────────────────────────────────────
 
-/// The version in the problem line is what lets a file outlive the build that
-/// wrote it: a reader loads a file up to its own version and says so when it
-/// will not.
-///
-/// A problem line with no version is a file from before the format carried one.
-/// Its first field is the leaf count, so reading it as a version would accept
-/// the file and rebuild a different diagram from it — the refusal has to name
-/// the cause rather than fail later on a field that no longer lines up.
+/// A missing version must be diagnosed before interpreting the remaining fields.
 #[test]
 fn a_problem_line_without_a_version_is_refused_as_predating_the_version() {
     use crate::io::{read_tdd, IoError};

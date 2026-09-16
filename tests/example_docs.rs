@@ -14,6 +14,7 @@ fn walkthrough_code_comes_from_the_runnable_examples() {
         ("reachability", include_str!("../docs/examples/reachability.md"), include_str!("../examples/symbolic_reachability.rs")),
         ("persistence", include_str!("../docs/examples/persistence.md"), include_str!("../examples/save_reload.rs")),
         ("vtrees", include_str!("../docs/examples/vtrees.md"), include_str!("../examples/vtree_grouping.rs")),
+        ("optimization", include_str!("../docs/examples/optimization.md"), include_str!("../examples/minimum_cost.rs")),
         ("statistics", include_str!("../docs/examples/statistics.md"), include_str!("../examples/statistic.rs")),
     ];
     for (name, markdown, source) in examples {

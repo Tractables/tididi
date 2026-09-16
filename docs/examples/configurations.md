@@ -181,7 +181,8 @@ The counter borrows `configurations`; observations change the query, leaving
 the circuit intact. Use [`set_pin`](crate::query::ModelCounter::set_pin) to
 clear an individual observation or work with typed variable identifiers.
 
-The [probability example](crate::guide::examples::probability) assigns weights
+The [optimization example](crate::guide::examples::optimization) finds the minimum
+cost of a valid configuration. The [probability example](crate::guide::examples::probability) assigns weights
 to the valid assignments. The [execution example](crate::guide::examples::execution)
 continues this program with resource limits and working-memory control.
 The [complete program](https://github.com/Tractables/tididi/blob/main/examples/build_minimize_count.rs)

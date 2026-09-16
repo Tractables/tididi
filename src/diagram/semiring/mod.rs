@@ -37,6 +37,8 @@ use crate::vtree::VarId;
 /// evaluate differently. A table-based implementation may store weights in
 /// `self`; a stateless algebra can be a unit struct.
 ///
+/// The [optimization walkthrough](crate::guide::examples::optimization) applies a cost table to backup configurations.
+///
 /// Count the fewest true variables in any satisfying assignment with a min-plus algebra:
 ///
 /// ```
