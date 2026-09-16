@@ -209,9 +209,9 @@ fn ordinary_diagram_methods_can_reenter_from_a_stop_callback() {
         let tree = Arc::clone(&tree);
         let calls = Arc::clone(&calls);
         StopCallback::new(move |_, _| {
-            let x = Tdd::literal(&tree, 1).unwrap();
-            let y = Tdd::literal(&tree, 2).unwrap();
-            let z = Tdd::literal(&tree, 3).unwrap();
+            let x = crate::literal(&tree, 1).unwrap();
+            let y = crate::literal(&tree, 2).unwrap();
+            let z = crate::literal(&tree, 3).unwrap();
             assert_canonical(&x);
             assert_canonical(&y);
             assert_canonical(&z);
@@ -281,7 +281,7 @@ fn accepted_rotation_keeps_context_and_detaches_only_the_changed_tree() {
         assert_eq!(eval(&rotated, &assignment), eval(&original, &assignment));
     }
     assert_eq!(rotated.model_count().unwrap(), 12u32.into());
-    let companion = Tdd::literal(rotated.vtree(), 1).unwrap();
+    let companion = crate::literal(rotated.vtree(), 1).unwrap();
     assert_canonical(&companion);
     let mut combined = crate::and(rotated, companion).unwrap();
     combined.minimize().unwrap();

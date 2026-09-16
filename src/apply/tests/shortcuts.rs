@@ -31,7 +31,7 @@ fn shortcut(eng: &Engine, tree: &Arc<Vtree>, f: Tdd, case: usize) -> Result<Tdd,
 fn constant_and_empty_transforms_honor_entry_stops_and_recover() {
     for n in [1, 3] {
         let tree = Arc::new(Vtree::balanced(n));
-        let f = Tdd::literal(&tree, 1).unwrap();
+        let f = crate::literal(&tree, 1).unwrap();
         assert_canonical(&f);
         for case in 0..18 {
             let eng = Engine::new();

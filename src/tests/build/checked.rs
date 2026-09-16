@@ -126,7 +126,7 @@ fn literal_conversion_handles_signed_endpoints_and_borrowed_inputs() {
         assert_eq!(f.model_count().unwrap(), 1u32.into());
     }
     for result in [literal(&vtree, -8), literal(&vtree, integers.last().unwrap()), literal(&vtree, typed[1]),
-        literal(&vtree, typed.last().unwrap()), Tdd::literal(&vtree, -8)] {
+        literal(&vtree, typed.last().unwrap())] {
         let f = result.unwrap();
         assert_canonical(&f);
         assert_eq!(f.model_count().unwrap(), 2u32.into());

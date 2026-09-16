@@ -480,7 +480,7 @@ fn exercise(eng: &Engine, op: usize, f: &Tdd, g: &Tdd) -> Result<(), OperationEr
 fn every_new_operation_recovers_from_reservation_refusals_and_work_stops() {
     let tree = Arc::new(Vtree::balanced(2));
     let f = Tdd::clause(&tree, [1, 2]).unwrap();
-    let g = Tdd::literal(&tree, 2).unwrap();
+    let g = crate::literal(&tree, 2).unwrap();
     for op in 0..10 {
         let eng = Engine::new();
         {

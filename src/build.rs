@@ -129,11 +129,6 @@ pub fn literal(vtree: &Arc<Vtree>, literal: impl TryInto<Literal, Error: Into<Op
 }
 
 impl Tdd {
-    /// Build a literal diagram; see [`crate::literal`] for inputs and errors.
-    pub fn literal(vtree: &Arc<Vtree>, input: impl TryInto<Literal, Error: Into<OperationError>>) -> Result<Tdd, OperationError> {
-        literal(vtree, input)
-    }
-
     /// Build a canonical conjunction of literals, leaving other variables free.
     ///
     /// Integers are signed and one-based; typed [`Literal`] values also work.

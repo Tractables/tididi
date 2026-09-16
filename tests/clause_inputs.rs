@@ -35,7 +35,7 @@ fn clause_conjunction_accepts_integer_and_typed_collections() {
 #[test]
 fn integer_clause_boundaries_preserve_boolean_meaning() {
     let tree = Arc::new(Vtree::balanced(3));
-    let input = Tdd::literal(&tree, 3).unwrap();
+    let input = tididi::literal(&tree, 3).unwrap();
     let zero = Tdd::zero(&tree);
     let expected = Tdd::cube(&tree, [1, 3]).unwrap();
     assert_canonical(&input);
@@ -68,7 +68,7 @@ fn integer_conversion_obeys_the_batch_allocation_budget() {
         let _limits = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
         assert_eq!(engine.and_clause(input.clone(), &[1, -1]).unwrap_err(), OperationError::OverBudget);
     }
-    let expected = Tdd::literal(&tree, 1).unwrap();
+    let expected = tididi::literal(&tree, 1).unwrap();
     assert_canonical(&expected);
     assert_clause(engine.and_clause(input, &[1]).unwrap(), &expected);
 }
