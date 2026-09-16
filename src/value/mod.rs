@@ -301,7 +301,7 @@ mod fold;
 pub(crate) mod slots;
 mod stream_cache;
 
-pub use fold::*;
+pub(crate) use fold::*;
 pub(crate) use domain::{Column, FoldInput, FoldScope, SlotStore, StreamChild, ValueDomain};
 pub(crate) use stream_cache::StreamCache;
 
