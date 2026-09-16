@@ -60,9 +60,8 @@ pub fn load_tdd(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd, IoErr
 /// # Errors
 ///
 /// [`IoError::Format`] on a malformed or inconsistent file: a missing or
-/// unparsable problem line, a problem line whose format version is higher than
-/// this reader's or absent altogether (a file written before the format was
-/// versioned), a problem line whose leaf or vtree node count is not `vtree`'s,
+/// unparsable problem line, an unsupported or absent format version,
+/// a problem line whose leaf or vtree node count is not `vtree`'s,
 /// a record letter other than `c`, `p`, `L` and `I`, a record whose vtree
 /// index is out of range or has the wrong kind, an `L` line disagreeing with
 /// the vtree's variable, an `I` line whose declared children are not the
@@ -204,12 +203,12 @@ fn check_version(fields: &[&str], line: usize) -> Result<(), IoError> {
     let version: u32 = raw
         .parse()
         .map_err(|_| malformed(line, format!("format version is not a number: {raw:?}")))?;
-    if version > TDD_FORMAT_VERSION {
+    if version != TDD_FORMAT_VERSION {
         return Err(malformed(
             line,
             format!(
                 "the file is format version {version}; this reader understands version \
-                 {TDD_FORMAT_VERSION}, and a reader loads a file only up to its own version"
+                 {TDD_FORMAT_VERSION}"
             ),
         ));
     }

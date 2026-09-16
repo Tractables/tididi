@@ -117,13 +117,7 @@ mod tests;
 
 use crate::diagram::Tdd;
 
-/// The `.tdd` format version the writers here emit and the highest one the
-/// reader here accepts.
-///
-/// A file written by version n loads in every reader whose version is n or
-/// greater, so this number rises only when the records change in a way an older
-/// reader would misread. Adding a comment line is not such a change; adding a
-/// record letter is.
+/// The `.tdd` format version emitted by the writer and accepted by the reader.
 const TDD_FORMAT_VERSION: u32 = 1;
 
 /// Reject a diagram carrying any marginal level, for the writers that cannot

@@ -114,3 +114,18 @@ fn read_errors_and_invalid_utf8_propagate_as_io_errors() {
     invalid.push(255);
     assert!(matches!(read_tdd(&mut invalid.as_slice(), &tree), Err(IoError::Io(_))));
 }
+
+#[test]
+fn undefined_format_versions_are_refused_even_below_the_current_version() {
+    let (tree, _, text) = fixture();
+    for version in [0, 2, u32::MAX] {
+        let invalid = text.replacen("p tdd 1 ", &format!("p tdd {version} "), 1);
+        match read_tdd(&mut invalid.as_bytes(), &tree) {
+            Err(IoError::Format(message)) => {
+                assert!(message.contains(&format!("version {version}")));
+                assert!(message.contains("version 1"));
+            }
+            other => panic!("expected an unsupported-version error, got {other:?}"),
+        }
+    }
+}
