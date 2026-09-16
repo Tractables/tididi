@@ -14,13 +14,6 @@ use num_bigint::BigUint;
 
 use crate::diagram::*;
 
-// The column-lifetime policy is shared with `value::walk_bottom_up` — one
-// definition for "when does a bottom-up pass's column die". Re-exported so
-// external callers of the `pub` counter constructors can name it (`counts` is
-// a crate-private module).
-
-// ── Model counting ───────────────────────────────────────────────────────────
-
 /// Whether pins count as evidence or as substitution over the unchanged vtree.
 ///
 /// Evidence counts assignments consistent with the pins. A cofactor counts
