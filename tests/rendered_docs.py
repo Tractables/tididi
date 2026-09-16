@@ -75,7 +75,7 @@ def check(root, source):
             fragment = unquote(url.fragment)
             ids = pages[target].ids
             line_range = re.fullmatch(r"\d+-\d+", fragment)
-            if fragment not in ids and not (line_range and all(part in ids for part in fragment.split("-"))):
+            if url.fragment not in ids and fragment not in ids and not (line_range and all(part in ids for part in fragment.split("-"))):
                 errors.append(f"{origin.relative_to(root)}: missing anchor {href}")
 
     for path, page in pages.items():
@@ -114,9 +114,12 @@ def test_checker():
         (source / "docs/examples").mkdir(parents=True)
         (source / "docs/examples/demo.md").write_text("```rust,ignore,{class=tested-example}\nlet x = 1;\n```\n")
         index = root / "tididi/index.html"
-        index.write_text('<a href="guide/examples/demo/index.html#example">Example</a>')
+        index.write_text('<a href="guide/examples/demo/index.html#example">Example</a>'
+                         '<a href="guide/examples/demo/index.html#impl%3CT%3E">Encoded ID</a>'
+                         '<a href="guide/examples/demo/index.html#method%3CT%3E">Decoded ID</a>')
         page = root / "tididi/guide/examples/demo/index.html"
         html = ('<style>.example-wrap.ignore:has(> pre.tested-example) > .tooltip { display: none; }</style>'
+                '<i id="impl%3CT%3E"></i><i id="method&lt;T&gt;"></i>'
                 '<h2 id="example">Example</h2><pre class="tested-example"><span class="kw">let</span> x = 1;</pre>')
         page.write_text(html)
         assert not check(root, source)
