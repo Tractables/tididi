@@ -2,7 +2,7 @@
 
 use crate::diagram::{EncodedChildRef, ChildDecoder, LeafLabel, MarginalSide, TddLevel, ValueRef, WeightStore, WeightValue, leaf_count};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
-use super::{CountRead, CountVec, COUNT_OVERFLOW};
+use super::{CountRead, CountVec};
 
 /// The weighted columns one diagram may read from a shared store.
 pub(crate) struct LevelColumns<'a> {
@@ -72,22 +72,7 @@ pub(crate) fn read_count<'a>(
             ValueRef::Slot(s) if vtree.node(VtreeIdx(level_idx as u32)).is_leaf() => {
                 CountRead::Fast(leaf_count(LeafLabel::from_idx(s as usize)))
             }
-            ValueRef::Slot(s) => {
-                let v = ic[s as usize];
-                if v != COUNT_OVERFLOW {
-                    return CountRead::Fast(v);
-                }
-                if let Some(bv) = levels[level_idx]
-                    .marginal_counts_big()
-                    .and_then(|ib| ib.get(s as usize))
-                {
-                    return CountRead::Big(bv);
-                }
-                unreachable!(
-                    "big count not available for level {} node {}",
-                    level_idx, side.raw()
-                );
-            }
+            ValueRef::Slot(s) => CountRead::from_slot(ic, levels[level_idx].marginal_counts_big(), s as usize),
         };
     }
     // Check pre-computed buffer (non-marginal level: plain index).

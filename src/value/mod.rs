@@ -1,26 +1,12 @@
-//! Folding a level's values, in either domain the crate counts in.
+//! Integer and weighted value folds and their column storage.
 //!
-//! Both domains share one shape — `Σ over pairs (left × right)`, walked
-//! bottom-up — and both are folded from two places: the marginal cascade after
-//! a compile, and the streaming column inside an apply. [`IntFold`] and
-//! [`WeightFold`] are the two arithmetics, [`MarginalFold`] the column contract
-//! they share, and [`walk_bottom_up`] the walk that drives either one.
+//! [`IntFold`] and [`WeightFold`] share the sum-of-products traversal through
+//! [`MarginalFold`] and [`walk_bottom_up`]. Marginalization and streaming apply
+//! use the same folds; finished columns belong to `TddLevel` or `WeightStore`.
 //!
-//! The integer domain also needs a representation, which the weighted one does
-//! not: a model count outgrows `u128`, and paying `BigUint` for every node
-//! would be far more expensive than the rare overflow. So a count is a fast
-//! `u128` with a sentinel value meaning "the real value is in the side table",
-//! and the side table ([`CountOverflow`], which lives beside the marginal-ref
-//! encoding it shares a slot space with) is sparse and built on the first
-//! overflow. [`Count`] is one fold result, [`CountRead`] a borrowed read of a
-//! stored slot, and [`CountVec`] the column — so the sentinel and its promotion
-//! rule are written once.
-//!
-//! What is here is the scratch a fold works in, and the vocabulary a stored
-//! column is described by — a hashable key for a slot, minting, interning, the
-//! referenced set. The storage itself is elsewhere:
-//! `TddLevel::marginal_counts` and the `WeightStore` are where a finished
-//! column lands.
+//! Integer columns keep `u128` values in a dense array and exact larger values
+//! in a sparse [`CountOverflow`] table. [`Count`], [`CountRead`] and [`CountVec`]
+//! own the overflow encoding and promotion rule.
 
 use crate::limits::OperationError;
 use crate::engine::Engine;
@@ -134,14 +120,9 @@ impl CountVec {
     /// A fresh `width`-element column, all zeroed (0 fits `u64`, so
     /// `all_u64` starts `true`). Reserves exactly `width` before filling.
     pub(crate) fn try_with_width(eng: &Engine, width: usize) -> Result<Self, OperationError> {
-        let mut fast: Vec<u128> = Vec::new();
-        eng.limits().reserve_exact(&mut fast, width)?;
-        fast.resize(width, 0u128);
-        Ok(CountVec {
-            fast,
-            big: None,
-            all_u64: true,
-        })
+        let mut column = Self::try_with_capacity(eng, width)?;
+        column.fast.resize(width, 0u128);
+        Ok(column)
     }
 
     /// An empty column with `cap` slots reserved exactly up front (the
