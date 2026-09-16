@@ -25,6 +25,10 @@ cargo test --release --test differential -- --ignored
 
 Set `TIDIDI_FUZZ_SEED` to replay a run and `TIDIDI_FUZZ_SECONDS` to set its duration.
 
+Changes to packaging or example dependencies also need `cargo package` followed
+by `python3 tests/package_examples.py`, which runs each example as a standalone
+consumer of the crate archive.
+
 ## Repository conventions
 
 - Do not run rustfmt over the crate; it is not rustfmt-formatted.

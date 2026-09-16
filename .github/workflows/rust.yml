@@ -78,9 +78,11 @@ jobs:
         TIDIDI_FUZZ_SECONDS: 20
         RUST_BACKTRACE: full
       run: cargo test --test differential -- --ignored
-    - name: Package
+    - name: Package and run standalone examples
       if: runner.os == 'Linux'
-      run: cargo package
+      run: |
+        cargo package
+        python3 tests/package_examples.py
 
   semver:
     runs-on: ubuntu-latest

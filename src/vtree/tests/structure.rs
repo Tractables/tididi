@@ -604,3 +604,13 @@ fn same_tree_ignores_numbering() {
 fn balanced_subtree_rejects_an_empty_variable_list() {
     Vtree::build_balanced_recursive(&[], &mut Vec::new());
 }
+
+#[test]
+fn overlapping_variable_error_formats_the_full_id_range() {
+    for (variable, number) in [(0, "1"), (u32::MAX, "4294967296")] {
+        assert_eq!(
+            VtreeError::OverlappingVariable(VarId(variable)).to_string(),
+            format!("variable {number} is carried by more than one of the trees being combined"),
+        );
+    }
+}

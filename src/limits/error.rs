@@ -16,6 +16,7 @@
 /// [`Tdd::rotation_search`](crate::Tdd::rotation_search) documents which
 /// completed edits remain after a refusal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum OperationError {
     /// A signed integer does not denote a literal; zero is invalid.
     InvalidLiteral(i32),
@@ -58,7 +59,7 @@ impl std::fmt::Display for OperationError {
             OperationError::IncompatibleWeights => f.write_str("operands require compatible literal weights and arithmetic; stored integer counts cannot be reweighted"),
             OperationError::LevelNotInVtree(level) => write!(f, "level {} is outside the vtree", level.idx()),
             OperationError::MarginalLevel(level) => write!(f, "operation requires structural data at marginal level {}", level.idx()),
-            OperationError::OverBudget => f.write_str("memory budget exceeded"),
+            OperationError::OverBudget => f.write_str("memory allocation refused: budget, allocator, or capacity limit"),
             OperationError::Stopped => f.write_str("operation stopped"),
             OperationError::OutputCap => f.write_str("output node cap exceeded"),
             OperationError::DuplicateVariable(var) => write!(f, "input names variable x{} twice", u64::from(var.0) + 1),

@@ -125,8 +125,7 @@ impl Vtree {
     ///
     /// # Panics
     ///
-    /// Panics if `order` is empty. `order` must not repeat a variable (checked
-    /// in debug builds).
+    /// Panics if `order` is empty or repeats a variable.
     pub fn balanced_over(order: &[VarId]) -> Self {
         require_nonempty(order.len() as u32);
         let num_vars = order.iter().map(|v| v.0).max().unwrap() + 1;
@@ -197,8 +196,7 @@ impl Vtree {
     ///
     /// # Panics
     ///
-    /// Panics if `vars` is empty. `vars` must not repeat a variable (checked
-    /// in debug builds).
+    /// Panics if `vars` is empty or repeats a variable.
     pub fn linear_from_order(vars: &[VarId]) -> Self {
         require_nonempty(vars.len() as u32);
         let num_vars = vars.iter().map(|v| v.0).max().unwrap() + 1;

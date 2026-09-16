@@ -110,7 +110,7 @@ impl std::fmt::Display for VtreeError {
             VtreeError::OverlappingVariable(var) => write!(
                 f,
                 "variable {} is carried by more than one of the trees being combined",
-                var.0 + 1
+                u64::from(var.0) + 1
             ),
             VtreeError::Invalid(msg) => write!(f, "invalid vtree: {msg}"),
         }
