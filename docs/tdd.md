@@ -6,18 +6,17 @@ assignments satisfy the function, how many there are, or what their combined
 weight is. This guide introduces the representation; the [task guide] connects
 it to operations in the library.
 
-## Start with the variable tree
+## Start with the vtree
 
 A **vtree** is a binary tree with one Boolean variable at each leaf. Each
 internal node splits its variables into a left group and a right group. For
-example, a balanced tree over four variables groups `{x1, x2}` on one side
+example, a balanced vtree over four variables groups `{x1, x2}` on one side
 of the root and `{x3, x4}` on the other.
 
 [`Vtree`] determines both this decomposition and the universe of assignments:
 a variable is still part of that universe when a function does not depend on
-it. A right-linear vtree has one variable on the left of each internal node
-and corresponds to the variable order of an ordered binary decision diagram.
-The [grouping walkthrough](crate::guide::examples::vtrees) compares two trees
+it.
+The [grouping walkthrough](crate::guide::examples::vtrees) compares two vtrees
 for the same function and explains their different storage requirements.
 
 ## From variables to a function

@@ -5,22 +5,12 @@ and queries a diagram without an explicit engine. Those operations already
 reuse the workspace attached to the shared vtree. This page continues the same
 program when an application needs to bound work or release retained buffers.
 
-The variables `configurations`, `tree` and `count` come from the first part.
+The variables `configurations`, `vtree` and `count` come from the first part.
 Run both parts with `cargo run --example build_minimize_count`.
-
-## Handle errors directly
-
-The ordinary Boolean functions, such as [`and`](crate::and) and
-[`or`](crate::or), already return `Result`. Constructors and queries also return `Result`: use `Tdd::clause(...)`, `f.model_count()` and
-`f.satisfying_assignment()` to handle their errors.
-The optional operators `&`, `|` and `!` panic on failure.
-
-An operation taking diagrams by value consumes them even on error. Keep a copy
-before calling it if recovery needs the original. Queries borrow their inputs.
 
 ## Bound a batch of operations
 
-The tree's [`Context`](crate::Context) lends a working engine for a batch.
+The vtree's [`Context`](crate::Context) lends a working engine for a batch.
 Here we deliberately allow zero bytes of charged allocation growth, so the
 attempt to rebuild the destination rule is refused:
 
@@ -61,8 +51,7 @@ assert_eq!(destination.model_count()?, 12u32.into());
 assert_eq!(configurations.model_count()?, count);
 ```
 
-The complete program returns `Result<(), tididi::OperationError>` so `?` can
-propagate errors. Use [`Context::run`](crate::Context::run) for a batch with no
+Use [`Context::run`](crate::Context::run) for a batch with no
 initial limits; its example shows several checked operations in one checkout.
 
 ## Specialize storage when needed

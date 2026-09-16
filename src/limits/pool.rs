@@ -1,25 +1,14 @@
-//! One parked scratch buffer, and the rule for how much of it to keep.
+//! Reusable scratch values owned by an engine.
 //!
-//! Every operation in the crate reuses buffers across calls, and they all park
-//! them the same way: a [`Cell`] the operation empties on entry and refills on
-//! exit. Taking rather than borrowing is what lets a pooled buffer be held
-//! across a recursive call into the same pool's owner — the borrow checker
-//! would refuse the second borrow, and a `RefCell` would panic on it.
-//!
-//! The pools themselves hang off the [`Engine`](crate::Engine), so two
-//! engines never share a buffer and dropping one frees everything it warmed up.
+//! A checkout takes ownership, allowing nested operations to obtain fresh
+//! scratch from the same pool. Completed checkouts return their buffers;
+//! unwinding discards them.
 
 use std::cell::Cell;
 
-/// How much capacity a parked scratch buffer may keep between operations.
-///
-/// Above it the allocation goes back to the allocator, so a rare huge level
-/// cannot park its high-water mark in RSS for the life of the process; below it
-/// the buffer stays warm and the next call reuses it. Scratch is not part of any
-/// diagram's retained-capacity accounting, so it cannot trip a caller's step
-/// budget while it inflates real memory — which is why it needs a cap of its
-/// own rather than riding the byte budget. `diagram::MAX_LEVEL_ARENA_BYTES` is
-/// the separate cap for a level arena.
+/// Maximum retained scratch capacity between operations. Larger buffers are
+/// released so an unusually large operation does not permanently retain them.
+/// Level arenas have a separate limit, `diagram::MAX_LEVEL_ARENA_BYTES`.
 pub(crate) const SCRATCH_RETAIN_BYTES: usize = 32 * 1024 * 1024;
 
 /// A scratch value parked between operations, absent while checked out.
@@ -56,7 +45,7 @@ impl<T> Pool<T> {
 }
 
 impl<T> Pool<Vec<T>> {
-    /// Park `v`, dropping its allocation first if it is oversized — see
+    /// Park `v`, dropping its allocation first if it is oversized; see
     /// [`release_if_oversized`].
     #[inline]
     pub(crate) fn put_bounded(&self, mut v: Vec<T>) {

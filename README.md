@@ -2,7 +2,7 @@
   <img src="docs/logo.svg" alt="tididi" width="400">
 </p>
 
-[![crates.io](https://img.shields.io/crates/v/tididi.svg)](https://crates.io/crates/tididi) [![docs.rs](https://img.shields.io/docsrs/tididi)](https://docs.rs/tididi)
+[![Rust](https://github.com/Tractables/tididi/actions/workflows/rust.yml/badge.svg)](https://github.com/Tractables/tididi/actions/workflows/rust.yml)
 
 A Rust library for Tree Decision Diagrams (TDDs): representations of Boolean
 functions that you can build once and query repeatedly. Encode constraints to
@@ -18,7 +18,7 @@ The representation and its minimization algorithm are described in [*A Canonical
 Add the crate to your project:
 
 ```sh
-cargo add tididi
+cargo add tididi --git https://github.com/Tractables/tididi
 ```
 
 This example builds `(x ∧ y) ∨ z` and counts its satisfying assignments:
@@ -54,23 +54,20 @@ the vtree; queries such as `model_count` borrow the diagram.
 
 ## Continue with your task
 
-Start with [the configuration walkthrough](docs/examples/configurations.md).
+Start with [the configuration walkthrough](https://tractables.github.io/tididi/tididi/guide/examples/configurations/index.html).
 It encodes rules for a backup application, counts its valid configurations,
 finds one solution, and counts the configurations that enable remote backups.
 
-Then use the [task guide] to find operations for your own application, or
-continue with another walkthrough. Execution controls and representation
-specialization follow the basic workflows. Each page explains the program in steps
-and links to the full runnable source.
+Use the [task guide] to find an operation, or continue with another walkthrough:
 
 | Walkthrough | What it shows |
 | --- | --- |
-| [Conditional probability](docs/examples/probability.md) | Compute the probability of rain given wet grass, then change the priors. |
-| [Reachable states](docs/examples/reachability.md) | Find reachable states and check that a forbidden state cannot be reached. |
-| [Save and reload diagrams](docs/examples/persistence.md) | Restore two rules onto one shared vtree, then combine them. |
-| [Execution controls](docs/examples/execution.md) | Bound a batch and release idle working buffers. |
-| [Variable grouping](docs/examples/vtrees.md) | Compare the same function under two vtrees. |
-| [A custom statistic](docs/examples/statistics.md) | Traverse the stored nodes and pairs. |
+| [Conditional probability](https://tractables.github.io/tididi/tididi/guide/examples/probability/index.html) | Compute the probability of rain given wet grass, then change the priors. |
+| [Reachable states](https://tractables.github.io/tididi/tididi/guide/examples/reachability/index.html) | Find reachable states and check that a forbidden state cannot be reached. |
+| [Save and reload diagrams](https://tractables.github.io/tididi/tididi/guide/examples/persistence/index.html) | Restore two rules onto one shared vtree, then combine them. |
+| [Execution controls](https://tractables.github.io/tididi/tididi/guide/examples/execution/index.html) | Bound a batch and release idle working buffers. |
+| [Variable grouping](https://tractables.github.io/tididi/tididi/guide/examples/vtrees/index.html) | Compare the same function under two vtrees. |
+| [A custom statistic](https://tractables.github.io/tididi/tididi/guide/examples/statistics/index.html) | Traverse the stored nodes and pairs. |
 
 For the concepts behind the API, read the [TDD data model]. The
 [API reference] documents each operation's input requirements, result, and
@@ -97,8 +94,8 @@ TDDs were introduced in the following paper:
 
 Apache License, Version 2.0 ([LICENSE](./LICENSE)).
 
-[`Tdd`]: https://docs.rs/tididi/latest/tididi/diagram/struct.Tdd.html
-[task guide]: https://docs.rs/tididi/latest/tididi/guide/api/index.html
-[TDD data model]: https://docs.rs/tididi/latest/tididi/guide/model/index.html
-[API reference]: https://docs.rs/tididi
-[architecture reference]: https://docs.rs/tididi/latest/tididi/guide/architecture/index.html
+[`Tdd`]: https://tractables.github.io/tididi/tididi/diagram/struct.Tdd.html
+[task guide]: https://tractables.github.io/tididi/tididi/guide/api/index.html
+[TDD data model]: https://tractables.github.io/tididi/tididi/guide/model/index.html
+[API reference]: https://tractables.github.io/tididi/tididi/
+[architecture reference]: https://tractables.github.io/tididi/tididi/guide/architecture/index.html

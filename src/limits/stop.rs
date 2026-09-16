@@ -1,4 +1,4 @@
-//! The one stop axis: when an operation in flight must give up.
+//! Cancellation thresholds and callback decisions.
 
 /// An absolute threshold on wall-clock time or the engine's work clock.
 ///
@@ -79,14 +79,11 @@ impl StopRules {
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 #[non_exhaustive]
 pub enum StopDecision {
-    /// Carry on. The operation is never interrupted and never re-pays anything
-    /// — the decision cost it one poll it was making anyway.
+    /// Continue under the current stop rules.
     Continue,
-    /// Stop here. Surfaces to the caller as [`OperationError::Stopped`](crate::OperationError::Stopped), which is
-    /// the unwind path a mid-operation cut already has.
+    /// Return [`OperationError::Stopped`](crate::OperationError::Stopped).
     Stop,
-    /// Carry on, under this stop from here on — a commitment, which replaces
-    /// whatever stop the operation was running under.
+    /// Replace the stop rules before checking their thresholds.
     ReplaceRules(StopRules),
 }
 

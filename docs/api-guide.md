@@ -1,9 +1,8 @@
 # Using tididi
 
 Start with the [configuration walkthrough](crate::guide::examples::configurations):
-build rules, count valid assignments and find one solution. The ordinary API
-works on diagrams and reuses the context attached to their shared vtree.
-Use the later sections when execution or representation needs specialization.
+build rules, count valid assignments and find one solution. The later sections cover
+execution limits and changes to the representation.
 
 ## Build and use a diagram
 
@@ -16,7 +15,6 @@ with [`Tdd::clause`](crate::Tdd::clause), and conjunctions with
 [`Tdd::cube`](crate::Tdd::cube).
 Compose diagrams with [`and`](crate::and), [`or`](crate::or) and
 [`Tdd::negate`](crate::Tdd::negate); [`Tdd`](crate::Tdd) explains ownership and copying operands.
-The operators `&`, `|` and `!` are optional shorthand that panics on failure.
 
 ### Ask about valid assignments
 
@@ -43,17 +41,10 @@ The [reachability walkthrough](crate::guide::examples::reachability) combines th
 [`Tdd::evaluate`](crate::Tdd::evaluate) evaluates a structural diagram under literal weights; the
 [probability walkthrough](crate::guide::examples::probability) builds events and computes a conditional probability.
 [`write_tdd`](crate::io::write_tdd) and [`read_tdd`](crate::io::read_tdd) save and restore diagram structure,
-with the tree stored separately through [`Vtree::to_text`](crate::Vtree::to_text) and [`Vtree::from_text`](crate::Vtree::from_text).
-The [persistence walkthrough](crate::guide::examples::persistence) restores two diagrams onto one shared tree and combines them.
+with the vtree stored separately through [`Vtree::to_text`](crate::Vtree::to_text) and [`Vtree::from_text`](crate::Vtree::from_text).
+The [persistence walkthrough](crate::guide::examples::persistence) restores two diagrams onto one shared vtree and combines them.
 
 ## Control execution and repeated work
-
-### Handle errors
-
-Boolean functions return a `Result` with [`OperationError`](crate::OperationError).
-Constructors and queries also return `Result`:
-[`Tdd::clause`](crate::Tdd::clause), [`Tdd::model_count`](crate::Tdd::model_count)
-and [`Tdd::satisfying_assignment`](crate::Tdd::satisfying_assignment).
 
 ### Bound a batch
 
@@ -76,9 +67,9 @@ The [execution walkthrough](crate::guide::examples::execution) handles a refusal
 
 Use [`Vtree::linear`](crate::Vtree::linear) for a variable order or [`Vtree::join`](crate::Vtree::join)
 for explicit grouping; the [vtree walkthrough](crate::guide::examples::vtrees) compares two groupings of the same function.
-[`Tdd::minimize`](crate::Tdd::minimize) removes redundancy under the current tree;
+[`Tdd::minimize`](crate::Tdd::minimize) removes redundancy under the current vtree;
 ordinary structural counting and witness queries need no explicit minimization.
-[`Tdd::rotation_search`](crate::Tdd::rotation_search) searches alternative tree shapes.
+[`Tdd::rotation_search`](crate::Tdd::rotation_search) searches alternative vtree shapes.
 [`Tdd::exists_vars_with_strategy`](crate::Tdd::exists_vars_with_strategy) selects a quantification rewrite explicitly.
 [`Tdd::reduce`](crate::Tdd::reduce) accepts a [`ReductionPlan`](crate::reduce::ReductionPlan) for selecting individual passes.
 

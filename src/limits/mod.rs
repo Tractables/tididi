@@ -1,24 +1,14 @@
-//! What an operation runs under and what it parks between calls: the byte
-//! budget, the output-node cap, the stop axis, the host's memory hooks, the
-//! meters they are checked against, and the pool a scratch buffer waits in
-//! between operations.
+//! Resource limits, cancellation and work measurements.
 //!
-//! Everything here hangs off one [`Limits`] value owned by the
-//! [`Engine`](crate::Engine). A caller describes the axes it wants with a
-//! [`LimitConfig`], arms them with [`Limits::install`], [`Limits::scope`] or
-//! [`Limits::edit`], and reads what the operations spent as [`OperationMetrics`].
-//! An operation charges the reservations it routes through the engine against
-//! the budget and polls the stop axis as it runs.
+//! Configure a batch with [`Context::with_limits`](crate::Context::with_limits),
+//! or use [`Limits::scope`] to install a [`LimitConfig`] on an existing engine.
+//! [`Limits::meters`] reports the work charged to that engine.
 //!
-//! The byte budget is best effort. Only the reservations routed through the
-//! engine are charged, so an operation can run past the budget by whatever it
-//! allocates elsewhere, and an allocation outside the charged path that the
-//! operating system refuses aborts the process as any Rust allocation does.
-//! The meter the budget is checked against is zeroed when an operation starts
-//! and by [`Limits::reset_meters`], so a budget bounds one operation at a
-//! time; an operation another one runs as a step keeps the outer meter. The
-//! output-node cap bounds the emitted nodes the operation charges. Stops are
-//! cooperative and take effect when an operation reaches a poll point.
+//! The memory budget covers tracked reservations within one operation. It is
+//! not a process-memory limit: untracked allocations can exceed it and may abort
+//! on allocator failure. Nested operations share their parent's charges.
+//! Output-node limits apply to the operations listed on
+//! [`LimitConfig::with_output_node_cap`]. Cancellation takes effect at poll points.
 
 pub(crate) mod pool;
 mod error;
@@ -43,12 +33,12 @@ pub(crate) use growth::ByteCharge;
 pub(crate) use poll::PollGate;
 
 
-/// The decision callback a stop poll asks, handed the meters and the instant
-/// the poll read; see [`LimitConfig::stop_callback`].
+/// A cancellation callback receiving the current measurements and poll time.
+/// See [`LimitConfig::stop_callback`] for invocation order.
 #[derive(Clone)]
-pub struct StopCallback(Arc<ScheduleFn>);
+pub struct StopCallback(Arc<StopCallbackFn>);
 
-type ScheduleFn = dyn Fn(&OperationMetrics, Instant) -> StopDecision + Send + Sync;
+type StopCallbackFn = dyn Fn(&OperationMetrics, Instant) -> StopDecision + Send + Sync;
 
 impl StopCallback {
     /// Own a callback and its captured state, which must support transfer between threads.
@@ -113,13 +103,13 @@ pub struct LimitConfig {
     memory_budget_bytes: Option<u64>,
     output_node_cap: Option<u64>,
     stop: StopRules,
-    schedule: Option<StopCallback>,
-    mem_pressure: MemoryHooks,
-    watch: bool,
+    stop_callback: Option<StopCallback>,
+    memory_hooks: MemoryHooks,
+    conjunction_progress: bool,
 }
 
 impl LimitConfig {
-    /// Nothing armed.
+    /// No limits or callbacks.
     #[must_use]
     pub fn none() -> LimitConfig {
         LimitConfig::default()
@@ -145,16 +135,15 @@ impl LimitConfig {
         self
     }
 
-    /// Set the stop axis. `StopRules::default()` arms none.
+    /// Set cancellation thresholds; `StopRules::default()` disables them.
     #[must_use]
     pub fn with_stop_rules(mut self, stop: StopRules) -> LimitConfig {
         self.stop = stop;
         self
     }
 
-    /// Stop unconditionally at `deadline`, leaving the size-conditional bound
-    /// and the schedule alone. [`LimitConfig::without_stop_rules`] is the verb that clears the
-    /// whole axis.
+    /// Set a deadline independently of output size, preserving the other stop rules
+    /// and callback. [`Self::without_stop_rules`] clears all cancellation settings.
     #[must_use]
     pub fn with_deadline(mut self, deadline: Option<Instant>) -> LimitConfig {
         self.stop.unconditional = deadline.map(StopAt::Time);
@@ -165,35 +154,33 @@ impl LimitConfig {
     #[must_use]
     pub fn without_stop_rules(mut self) -> LimitConfig {
         self.stop = StopRules::NONE;
-        self.schedule = None;
+        self.stop_callback = None;
         self
     }
 
-    /// Arm the decision callback the stop polls ask; see
-    /// [`LimitConfig::stop_callback`]. `None` arms none.
+    /// Set the cancellation callback; `None` removes it.
+    /// See [`Self::stop_callback`] for invocation order.
     #[must_use]
     pub fn with_stop_callback(mut self, s: Option<StopCallback>) -> LimitConfig {
-        self.schedule = s;
+        self.stop_callback = s;
         self
     }
 
-    /// Install the host's memory hooks. [`MemoryHooks::NONE`], the default,
-    /// is every probe a no-op.
+    /// Set the host's memory hooks; [`MemoryHooks::NONE`] disables them.
     #[must_use]
     pub fn with_memory_hooks(mut self, m: MemoryHooks) -> LimitConfig {
-        self.mem_pressure = m;
+        self.memory_hooks = m;
         self
     }
 
-    /// Publish where each pairwise conjunction stands, as
-    /// [`OperationMetrics::conjunction`]. Off, `conjunction` is never written.
+    /// Enable progress reporting through [`OperationMetrics::conjunction`].
+    /// Disabling it leaves the last recorded progress unchanged.
     #[must_use]
     pub fn with_conjunction_progress(mut self, on: bool) -> LimitConfig {
-        self.watch = on;
+        self.conjunction_progress = on;
         self
     }
 
-    // ── reading an axis back ───────────────────────────────────────────────
 
     /// The soft budget, in bytes, that one operation may grow its storage by
     /// before it fails with [`OperationError::OverBudget`]. `None` disables the
@@ -222,38 +209,35 @@ impl LimitConfig {
         self.stop
     }
 
-    /// The decision callback the in-operation polls ask, handed the meters and
-    /// the clock reading the poll has already taken. It is asked before the
-    /// stop bounds on every poll, whether or not a bound is armed, so a caller
-    /// with decision points of its own tests them itself and answers
-    /// [`StopDecision::Continue`] until one arrives. A [`StopDecision::ReplaceRules`] answer
-    /// rewrites the armed stop axis, which [`Limits::armed`] then reads back.
+    /// The callback invoked before cancellation thresholds are checked at each poll.
+    ///
+    /// It receives the current measurements and poll time, even when no threshold
+    /// is configured. Returning [`StopDecision::ReplaceRules`] changes the active
+    /// thresholds, which [`Limits::armed`] reports.
     #[must_use]
     #[inline]
     pub fn stop_callback(&self) -> Option<StopCallback> {
-        self.schedule.clone()
+        self.stop_callback.clone()
     }
 
     /// The host's memory hooks.
     #[must_use]
     #[inline]
     pub fn memory_hooks(&self) -> MemoryHooks {
-        self.mem_pressure.clone()
+        self.memory_hooks.clone()
     }
 
-    /// Whether a conjunction in flight publishes where it stands, for
-    /// [`Limits::meters`] to read as [`OperationMetrics::conjunction`]. An unwatched
-    /// operation pays one `Cell` load and nothing else.
+    /// Whether conjunctions update [`OperationMetrics::conjunction`].
     #[must_use]
     #[inline]
     pub fn conjunction_progress_enabled(&self) -> bool {
-        self.watch
+        self.conjunction_progress
     }
 }
 
-/// The armed limits and meters, with scalar charging in `Cell`s and owned callbacks.
+/// Active resource limits and work measurements for one engine.
 ///
-/// Callback handles are cloned before invocation, so a callback holds no borrow of the settings.
+/// Callbacks may inspect or change settings without holding an internal borrow.
 pub struct Limits {
     budget_remaining: Cell<Option<u64>>,
     in_flight_bytes: Cell<u64>,
@@ -261,12 +245,12 @@ pub struct Limits {
     pairs_level_charge: Cell<u64>,
     work_clock: Cell<u64>,
     stop: Cell<StopRules>,
-    schedule: RefCell<Option<StopCallback>>,
+    stop_callback: RefCell<Option<StopCallback>>,
     output_node_cap: Cell<Option<u64>>,
     bounded_growth: Cell<bool>,
-    watched: Cell<bool>,
+    conjunction_progress: Cell<bool>,
     conjunction: Cell<Option<ConjunctionProgress>>,
-    mem: RefCell<MemoryHooks>,
+    memory_hooks: RefCell<MemoryHooks>,
     /// The address-space ceiling, answered once per install: it is stable for
     /// the life of the probes, and the growth machinery asks per huge level.
     vas_limit: Cell<Option<Option<u64>>>,
@@ -283,11 +267,7 @@ pub struct Limits {
     refused_bytes: Cell<Option<u64>>,
 }
 
-/// A reading of a [`Limits`] work clock, for measuring an interval of work
-/// against.
-///
-/// Opaque: the only thing a caller does with a mark is hand it back to
-/// [`Limits::work_since`].
+/// A work-clock reading to compare with [`Limits::work_since`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WorkMark(u64);
 
@@ -298,8 +278,6 @@ impl Default for Limits {
 }
 
 impl std::fmt::Debug for Limits {
-    /// What is armed and what the armed axes are being checked against — the
-    /// two reads the public surface already offers, side by side.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Limits")
             .field("armed", &self.armed())
@@ -309,7 +287,7 @@ impl std::fmt::Debug for Limits {
 }
 
 impl Limits {
-    /// Nothing armed, every meter at zero.
+    /// No configured limits and zeroed measurements.
     #[must_use]
     pub(crate) const fn new() -> Limits {
         Limits {
@@ -319,12 +297,12 @@ impl Limits {
             pairs_level_charge: Cell::new(0),
             work_clock: Cell::new(0),
             stop: Cell::new(StopRules::NONE),
-            schedule: RefCell::new(None),
+            stop_callback: RefCell::new(None),
             output_node_cap: Cell::new(None),
             bounded_growth: Cell::new(false),
-            watched: Cell::new(false),
+            conjunction_progress: Cell::new(false),
             conjunction: Cell::new(None),
-            mem: RefCell::new(MemoryHooks::NONE),
+            memory_hooks: RefCell::new(MemoryHooks::NONE),
             vas_limit: Cell::new(None),
             #[cfg(test)]
             poll_stride_pin: Cell::new(None),
@@ -335,22 +313,21 @@ impl Limits {
         }
     }
 
-    // ── what is armed ──────────────────────────────────────────────────────
 
-    /// The armed set.
+    /// Snapshot the active configuration.
     #[must_use]
     pub fn armed(&self) -> LimitConfig {
         LimitConfig {
             memory_budget_bytes: self.budget_remaining.get(),
             output_node_cap: self.output_node_cap.get(),
             stop: self.stop.get(),
-            schedule: self.schedule.borrow().clone(),
-            mem_pressure: self.mem.borrow().clone(),
-            watch: self.watched.get(),
+            stop_callback: self.stop_callback.borrow().clone(),
+            memory_hooks: self.memory_hooks.borrow().clone(),
+            conjunction_progress: self.conjunction_progress.get(),
         }
     }
 
-    /// Arm `set`, returning what was armed before. The meters are untouched.
+    /// Replace the configuration and return the previous settings without resetting measurements.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -387,20 +364,15 @@ impl Limits {
         self.budget_remaining.set(set.memory_budget_bytes);
         self.output_node_cap.set(set.output_node_cap);
         self.stop.set(set.stop);
-        self.schedule.replace(set.schedule);
-        self.watched.set(set.watch);
-        self.mem.replace(set.mem_pressure);
+        self.stop_callback.replace(set.stop_callback);
+        self.conjunction_progress.set(set.conjunction_progress);
+        self.memory_hooks.replace(set.memory_hooks);
         self.vas_limit.set(None);
         prior
     }
 
-    /// Arm `set` for a lexical scope, restoring what was armed before when the
-    /// returned guard drops.
-    ///
-    /// The restore happens on every exit path, an unwind included, which is
-    /// what a caller that catches a panic and carries on needs: installing a
-    /// set replaces every axis, so a limit armed for the work that panicked
-    /// would otherwise still be armed for whatever runs next.
+    /// Install `set` until the returned guard drops, then restore the previous
+    /// configuration, including during panic unwinding.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -423,10 +395,8 @@ impl Limits {
         LimitScope { lim: self, prior: self.install(set) }
     }
 
-    /// Arm the armed set with `edit` applied to it, for a lexical scope.
-    ///
-    /// The form for changing one axis and leaving the rest of the set where it
-    /// is: `edit(|s| s.with_deadline(Some(t)))`.
+    /// Temporarily change selected settings, preserving the rest.
+    /// Dropping the guard restores the previous configuration.
     ///
     /// ```
     /// use tididi::Engine;
@@ -459,7 +429,6 @@ impl Limits {
         self.budget_remaining.set(remaining_bytes);
     }
 
-    // ── the meters ─────────────────────────────────────────────────────────
 
     /// Snapshot the meters. What is armed reads back through
     /// [`Limits::armed`].
@@ -516,12 +485,8 @@ impl Limits {
         self.work_clock.get()
     }
 
-    /// Mark the work clock here.
-    ///
-    /// The clock is monotone and never reset, so a mark stays valid across any
-    /// operation boundary and scoping the clock to a caller's own unit of work
-    /// — one attempt, one step — is [`Limits::work_since`] against a mark taken
-    /// at its door.
+    /// Record the work clock for a later call to [`Self::work_since`].
+    /// The clock is never reset, so a mark remains valid across operations.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -555,7 +520,6 @@ impl Limits {
             .set(self.work_clock.get().saturating_add(units));
     }
 
-    // ── the four verbs ─────────────────────────────────────────────────────
 
     /// Charge `bytes` of newly reserved storage against the soft budget.
     #[inline(always)]
@@ -599,10 +563,8 @@ impl Drop for OperationScope<'_> {
     }
 }
 
-/// Restores the [`LimitConfig`] that was armed when it was made.
-///
-/// Made by [`Limits::scope`] and [`Limits::edit`]; see those for what the
-/// restore is for.
+/// Restores the previous configuration when dropped.
+/// Created by [`Limits::scope`] or [`Limits::edit`].
 #[must_use = "the scope restores the prior set when dropped; bind it to a name"]
 pub struct LimitScope<'a> {
     lim: &'a Limits,
@@ -623,10 +585,7 @@ impl Drop for LimitScope<'_> {
 }
 
 impl Limits {
-    /// Charge the in-flight meter as an aborted operation would have, without
-    /// allocating the bytes: the seam the ownership rule on
-    /// [`Limits::reset_meters`] is tested through, here and in a test suite
-    /// built on the crate.
+    /// Add a synthetic byte charge for tests without allocating memory.
     #[cfg(any(test, debug_assertions))]
     #[doc(hidden)]
     pub fn charge_in_flight(&self, bytes: u64) {

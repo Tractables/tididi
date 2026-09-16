@@ -1,13 +1,4 @@
-//! The error types.
-//!
-//! One flat enum, [`OperationError`], for every operation that runs under a limit.
-//! The domain errors belong to the modules that raise them:
-//! [`VtreeError`](crate::vtree::VtreeError) to [`crate::vtree`],
-//! [`IoError`](crate::io::IoError) to [`crate::io`], and
-//! [`TddBuildError`](crate::diagram::TddBuildError) to [`crate::diagram`].
-//!
-//! [`OperationError`] is returned by checked diagram operations and their
-//! [`Engine`](crate::Engine) batch methods.
+//! Errors from checked diagram operations.
 
 /// An invalid operation input or a resource refusal from a checked operation.
 ///
@@ -24,19 +15,13 @@
 /// [`Tdd::minimize`](crate::Tdd::minimize) or
 /// [`Tdd::rotation_search`](crate::Tdd::rotation_search) documents which
 /// completed edits remain after a refusal.
-///
-/// The enum is exhaustive and callers may construct its variants; adding a
-/// variant requires a breaking release.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperationError {
     /// A signed integer does not denote a literal; zero is invalid.
     InvalidLiteral(i32),
-    /// The allocator refused, or the installed byte budget would be exceeded
-    /// by a growth this operation needs, or a level outgrew an internal 32-bit
-    /// index. A single product-grid resize can ask for many GiB, so this is the
-    /// variant a caller that wants to survive a too-large conjunction — by
-    /// splitting it, or by choosing another vtree — must handle. [`OperationMetrics::refused_reserve_bytes`](crate::limits::OperationMetrics::refused_reserve_bytes)
-    /// records allocator refusals since the last meter reset.
+    /// A reservation failed, exceeded the byte budget, or needed more than a
+    /// 32-bit index can address. [`OperationMetrics::refused_reserve_bytes`](crate::limits::OperationMetrics::refused_reserve_bytes)
+    /// distinguishes recorded allocator refusals from budget refusals.
     OverBudget,
     /// The operands do not share the same vtree allocation.
     VtreeMismatch,
@@ -58,7 +43,7 @@ pub enum OperationError {
     OutputCap,
     /// The operation names a variable the operand's vtree does not carry.
     /// Validation timing is stated on the operation; a consumed operand is
-    /// not returned on error. Display uses the 1-based DIMACS variable number.
+    /// not returned on error. Display uses the one-based variable number.
     VariableNotInVtree(crate::vtree::VarId),
     /// An input cube or substitution map names the same source variable more than once.
     DuplicateVariable(crate::vtree::VarId),

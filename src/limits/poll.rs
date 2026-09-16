@@ -1,9 +1,9 @@
-//! The in-operation poll: the gate a loop accumulates work in, the stride
-//! the post-conjunction walks poll at, and the cut itself.
+//! Cooperative cancellation and amortized work accounting.
 
-use super::{OperationError, Limits};
+use super::{OperationError, Limits, StopDecision, StopAt};
+use std::time::Instant;
 
-/// Amortization stride for the post-conjunction walks' [`PollGate`] — one poll
+/// Amortization stride for the post-conjunction walks' [`PollGate`]: one poll
 /// per ~16384 units, where a unit is one node of the level the walk is standing
 /// on (a contracted parent's level, a forget batch's target level, a clustering
 /// pivot's pair count).
@@ -13,7 +13,7 @@ use super::{OperationError, Limits};
 pub(super) const REDUCE_POLL_STRIDE: u64 = 1 << 14;
 
 /// The accumulator an in-operation loop polls through: one poll per `stride`
-/// units of work, so the check amortizes to nothing. The stop axis is the only
+/// units of work, amortizing the check. The stop axis is the only
 /// mid-level cut.
 pub(crate) struct PollGate {
     work: u64,
@@ -29,7 +29,7 @@ impl PollGate {
 
 impl Limits {
     /// Add `work` units to `gate` and, once it comes due, charge the work clock
-    /// and test the stop axis.
+    /// and test cancellation.
     ///
     /// The one amortized cut every in-operation loop makes: the dense level
     /// walk, the sparse scatter and collapse collectors, and the walks that run
@@ -44,7 +44,7 @@ impl Limits {
         self.poll_now(done)
     }
 
-    /// Charge whatever `gate` still holds and test the stop axis.
+    /// Charge whatever `gate` still holds and test cancellation.
     ///
     /// A gate that spans a whole level ends it holding less than one stride,
     /// and that remainder is real work: without this the clock loses up to one
@@ -71,5 +71,47 @@ impl Limits {
             return Err(OperationError::Stopped);
         }
         Ok(())
+    }
+}
+
+impl Limits {
+    /// Ask the callback before checking thresholds, allowing it to replace an
+    /// expired rule and let the operation continue.
+    #[inline]
+    pub(crate) fn should_stop(&self) -> bool {
+        let stop = self.stop.get();
+        let callback = self.stop_callback.borrow().clone();
+        if !stop.armed() && callback.is_none() {
+            return false;
+        }
+        let now = Instant::now();
+        let stop = match callback {
+            Some(decide) => match decide.decide(&self.meters(), now) {
+                StopDecision::Stop => return true,
+                StopDecision::Continue => stop,
+                StopDecision::ReplaceRules(next) => {
+                    self.stop.set(next);
+                    next
+                }
+            },
+            None => stop,
+        };
+        // The size-conditional bound first: it is the cheaper half (the clock is
+        // already read) and before it falls the pair meter does not matter.
+        if let Some((floor_pairs, at)) = stop.after_pairs
+            && self.reached(at, now)
+            && self.pairs_in_flight.get() >= floor_pairs
+        {
+            return true;
+        }
+        stop.unconditional.is_some_and(|at| self.reached(at, now))
+    }
+
+    #[inline]
+    fn reached(&self, at: StopAt, now: Instant) -> bool {
+        match at {
+            StopAt::Time(t) => now >= t,
+            StopAt::WorkUnits(units) => self.work_clock.get() >= units,
+        }
     }
 }

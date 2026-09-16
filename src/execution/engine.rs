@@ -59,8 +59,6 @@ pub struct Engine {
 }
 
 impl std::fmt::Debug for Engine {
-    /// What is armed on the engine and how much recycled level capacity it is
-    /// sitting on — the scratch buffers themselves are working memory.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Engine")
             .field("armed", &self.limits.armed())
@@ -180,9 +178,8 @@ impl Engine {
     ///
     /// # Panics
     ///
-    /// If a conjunction on this engine is in flight — reachable only from a
-    /// schedule hook or a memory probe — since it holds the sparse workspace
-    /// borrowed.
+    /// If called from a callback during a conjunction that holds this engine's
+    /// sparse workspace borrowed.
     pub fn clear_scratch(&self) {
         self.apply.drain();
         self.clause.drain();

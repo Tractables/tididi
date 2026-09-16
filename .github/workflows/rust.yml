@@ -21,22 +21,18 @@ jobs:
         shell: bash
     steps:
     - uses: actions/checkout@v4
-    # The toolchain (channel + components) is pinned by rust-toolchain.toml,
-    # which rustup honors automatically on the first cargo invocation. The crate
-    # is pure Rust with no C/C++ dependencies and no special linker, so nothing
-    # else needs installing.
     - name: Build
       if: runner.os == 'Linux'
-      run: cargo build --workspace --verbose
+      run: cargo build --verbose
     - name: Check release profile
       if: runner.os == 'Linux'
-      run: cargo check --release --workspace
+      run: cargo check --release
     - name: Test
       env:
         RUST_BACKTRACE: full
-      run: cargo test --workspace --all-targets --verbose
+      run: cargo test --all-targets --verbose
     - name: Documentation tests
-      run: cargo test --workspace --doc
+      run: cargo test --doc
     - name: Run consumer examples
       run: |
         cargo run --example build_minimize_count
@@ -47,22 +43,24 @@ jobs:
         cargo run --example vtree_grouping
     - name: Lints
       if: runner.os == 'Linux'
-      run: cargo clippy --workspace --all-targets -- -D warnings
-    # Code the release profile leaves out, and code it leaves in that a debug
-    # build leaves out, are both invisible to the lint run above.
+      run: cargo clippy --all-targets -- -D warnings
     - name: Lints, release profile
       if: runner.os == 'Linux'
-      run: cargo clippy --release --workspace --all-targets -- -D warnings
+      run: cargo clippy --release --all-targets -- -D warnings
     - name: Documentation
       if: runner.os == 'Linux'
       env:
         RUSTDOCFLAGS: -D warnings
-      run: cargo doc --workspace --no-deps
-    # The randomized differential suite draws until its time is up and is
-    # ignored by default, so the runs above never reach it. Twenty seconds in
-    # each profile: the release run for the answers, the debug run for the
-    # invariant checkers, which only that profile compiles. The seed comes from
-    # the clock and is printed with the first case.
+      run: cargo doc --no-deps
+    - name: Prepare documentation site
+      if: runner.os == 'Linux' && github.event_name == 'push'
+      run: |
+        echo '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=tididi/"><title>tididi documentation</title><a href="tididi/">Open the documentation</a>' > target/doc/index.html
+    - name: Upload documentation
+      if: runner.os == 'Linux' && github.event_name == 'push'
+      uses: actions/upload-pages-artifact@v4
+      with:
+        path: target/doc
     - name: Differential sweep, release profile
       if: runner.os == 'Linux'
       env:
@@ -74,17 +72,10 @@ jobs:
         TIDIDI_FUZZ_SECONDS: 20
         RUST_BACKTRACE: full
       run: cargo test --test differential -- --ignored
-    # Builds the crate from the tarball a publish would upload, so a file the
-    # package leaves out or a path the manifest gets wrong fails here.
     - name: Package
       if: runner.os == 'Linux'
       run: cargo package
 
-  # Compares the public API against the last released version and reports the
-  # version bump the change needs. The baseline is the previous tag, so the job
-  # is inert until the first tag exists: with no tag the lookup finds nothing,
-  # the step reports that and succeeds, and the job starts checking on its own
-  # the first time a release is tagged.
   semver:
     runs-on: ubuntu-latest
     steps:
@@ -104,12 +95,6 @@ jobs:
       if: steps.previous.outputs.tag == ''
       run: echo "No tag in the repository yet, so there is no released version to compare against."
 
-  # The oldest toolchain the crate supports, declared as `rust-version` in
-  # Cargo.toml. rust-toolchain.toml would otherwise pull every cargo call in
-  # this directory back onto the pinned channel, so each command names the
-  # toolchain explicitly. Clippy and the doc build stay on the pinned
-  # toolchain above; this job checks that the crate and its tests compile and
-  # pass on the floor.
   msrv:
     runs-on: ubuntu-latest
     steps:
@@ -125,3 +110,21 @@ jobs:
       run: cargo +1.88 test --all-targets --verbose
     - name: Documentation tests
       run: cargo +1.88 test --doc
+
+  documentation:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [build, msrv]
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: documentation
+      cancel-in-progress: true
+    steps:
+    - name: Publish documentation
+      id: deployment
+      uses: actions/deploy-pages@v4

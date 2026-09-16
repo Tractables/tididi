@@ -10,18 +10,11 @@ documentation = "https://docs.rs/tididi"
 readme = "README.md"
 keywords = ["decision-diagram", "model-counting", "knowledge-compilation", "bdd", "wmc"]
 categories = ["science", "algorithms", "data-structures"]
-# The package ships the sources and their test modules, the integration tests,
-# the guides, the examples, README and LICENSE; repository housekeeping stays
-# out of it. The test tree ships because every `mod tests;` in a source file
-# names a file beside it, so a tarball without them does not compile under
-# `cargo test`.
 exclude = [".github/", ".gitignore", "CLAUDE.md", "AGENTS.md", "rust-toolchain.toml"]
 
 [lib]
 name = "tididi"
 
-# No cargo features, no build.rs, no environment reads, no allocator
-# dependency: runtime configuration arrives as installed data (`limits::LimitConfig`).
 [dependencies]
 num-bigint = "0.4"
 num-rational = "0.4"
