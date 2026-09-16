@@ -18,7 +18,7 @@ use std::sync::Arc;
 
 use crate::diagram::Literal;
 use crate::vtree::{Vtree, VtreeIdx};
-use crate::apply::leaf::CONJOIN_GRID;
+use super::CONJOIN_GRID;
 use crate::diagram::{self, *};
 
 use crate::limits::OperationError;

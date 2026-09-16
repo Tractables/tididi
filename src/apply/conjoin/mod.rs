@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use crate::vtree::VtreeIdx;
 use grid_arena::LevelGrid;
-use super::leaf::CONJOIN_GRID;
+use super::CONJOIN_GRID;
 use crate::diagram::{self, *};
 
 pub(crate) mod budget;

@@ -16,7 +16,6 @@
 
 pub(crate) mod conjoin;
 pub(crate) mod conjoin_clause;
-pub(crate) mod leaf;
 pub(crate) mod disjoin;
 pub(crate) mod negate;
 pub(crate) mod condition;
@@ -73,3 +72,20 @@ pub(crate) fn prepare_weights<const N: usize>(mut operands: [&mut crate::Tdd; N]
     }
     Ok(())
 }
+
+/// Static 3×3 conjunction grid for implicit leaf product.
+///
+/// `CONJOIN_GRID[i][j]` = output label index when conjoining leaf label `i`
+/// with leaf label `j`, or `u32::MAX` (`u32::MAX`) if the conjunction is Zero.
+///
+/// ```text
+///        j=One(0)  j=Pos(1)  j=Neg(2)
+/// i=One:    0         1        2
+/// i=Pos:    1         1       Zero
+/// i=Neg:    2        Zero     2
+/// ```
+pub(crate) const CONJOIN_GRID: [[u32; 3]; 3] = [
+    [0,    1,    2   ],  // One ∧ {One, Pos, Neg}
+    [1,    1,    conjoin::budget::NO_PRODUCT],  // Pos ∧ {One, Pos, Neg}
+    [2,    conjoin::budget::NO_PRODUCT, 2   ],  // Neg ∧ {One, Pos, Neg}
+];
