@@ -131,6 +131,28 @@ mod sealed {
 
 /// Count repeatedly under changing observations without modifying the diagram.
 ///
+/// Create one with [`Tdd::counter`], set observations with [`Self::observe`],
+/// and read the count with [`Self::model_count`]. The default counter counts
+/// assignments consistent with the observations and reuses cached counts;
+/// changing an observation refreshes only the affected ancestor levels.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{Tdd, Vtree};
+/// let vtree = Arc::new(Vtree::balanced(4));
+/// let f = Tdd::clause(&vtree, [1, -2])?;
+/// let mut counter = f.counter()?;
+/// assert_eq!(counter.model_count()?, 12u32.into());
+/// counter.observe([1])?;
+/// assert_eq!(counter.model_count()?, 8u32.into());
+/// counter.observe([-1])?;
+/// assert_eq!(counter.model_count()?, 4u32.into());
+/// counter.clear_pins();
+/// assert_eq!(counter.model_count()?, 12u32.into());
+/// # tididi::test_helpers::assert_canonical(&f);
+/// # Ok::<(), tididi::OperationError>(())
+/// ```
+///
 /// A pin assigns a variable true or false; clearing it makes the variable
 /// unobserved again. [`PinSemantics::Evidence`] counts original assignments
 /// consistent with the pins. [`PinSemantics::Cofactor`] instead counts the
@@ -143,24 +165,6 @@ mod sealed {
 /// Updates are deferred until [`model_count`](Self::model_count).
 /// [`Tdd::counter`] selects retained columns and evidence semantics; use
 /// [`Tdd::counter_with`] to choose another policy or convention.
-///
-/// ```
-/// use std::sync::Arc;
-/// use tididi::Tdd;
-/// use tididi::vtree::{VarId, Vtree};
-/// let vtree = Arc::new(Vtree::balanced(4));
-/// let f = Tdd::clause(&vtree, [1, -2])?;
-/// let mut counter = f.counter()?;
-/// assert_eq!(counter.model_count()?, 12u32.into());
-/// counter.set_pin(VarId(0), Some(true))?;
-/// assert_eq!(counter.model_count()?, 8u32.into());
-/// counter.set_pin(VarId(0), Some(false))?;
-/// assert_eq!(counter.model_count()?, 4u32.into());
-/// counter.set_pin(VarId(0), None)?;
-/// assert_eq!(counter.model_count()?, 12u32.into());
-/// # tididi::test_helpers::assert_canonical(&f);
-/// # Ok::<(), tididi::OperationError>(())
-/// ```
 ///
 /// The diagram need not be minimized. Attached literal weights are ignored on
 /// structural levels; weighted marginal levels are rejected. Count-marginal
