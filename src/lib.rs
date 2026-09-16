@@ -89,12 +89,6 @@ pub mod guide;      // The prose guides of `docs/`, compiled with the crate
 #[doc(hidden)]
 pub mod readme {}
 
-// ── seams ───────────────────────────────────────────────────────────────────
-// Not a layer: the two ways into the crate from outside it. Both are hidden
-// from the documented API and outside the compatibility promise.
-#[doc(hidden)]
-pub mod compiler_seam;  // The entry points a clause-by-clause driver uses
-
 // Oracles, generators and invariant checkers; the checkers exist only under
 // `cfg(test)` or `debug_assertions`, and `assert_canonical` is a no-op elsewhere.
 #[doc(hidden)]

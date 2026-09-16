@@ -150,7 +150,7 @@ pub struct Tdd {
     /// The vtree the diagram is decomposed along. Operands of a binary
     /// operation must share it (`Arc::ptr_eq`). Read it with
     /// [`vtree`](Self::vtree); the only way to change it is
-    /// [`reseat_vtree`](Self::reseat_vtree).
+    /// [`reseat_vtree_unchecked`](Self::reseat_vtree_unchecked).
     pub(crate) vtree: Arc<Vtree>,
     /// One level per vtree node: `levels[t.idx()]` is the level of `t`
     /// ([`level`](Self::level)).
@@ -259,18 +259,30 @@ impl Tdd {
         })
     }
 
-    /// Seat the diagram on `vtree`, a numbering of the same node set the
-    /// diagram's levels are indexed by, so that diagrams over a rebuilt or
-    /// rotated tree share one `Arc` again (operands of an operation must be
-    /// `Arc::ptr_eq`).
+    /// Replace the vtree allocation without rebuilding any diagram level.
     ///
-    /// The two trees need not have the same shape ([`Vtree::same_tree`]); a
-    /// rotation leaves the nodes each in-flight diagram describes untouched.
-    /// Only the node count is checked. The caller owes the rest.
-    pub(crate) fn reseat_vtree(&mut self, vtree: &Arc<Vtree>) {
+    /// This can reunite diagrams whose independent subtrees share a vtree that
+    /// another operation rotated. It does not transform the represented function.
+    ///
+    /// # Safety
+    ///
+    /// The replacement must have the same node count and root index. Every
+    /// stored level must remain valid at its current index: its references must
+    /// name live nodes or marginal values in the replacement's child levels,
+    /// and weighted columns must retain their interpretation. Leaf variables
+    /// must retain their meaning wherever the diagram depends on them. The
+    /// resulting diagram must satisfy all [`TddBuilder`](crate::diagram::TddBuilder)
+    /// invariants, including determinism. A topology change is permitted only
+    /// where the diagram's stored structure remains valid under it.
+    /// Invalid references can cause out-of-bounds reads in later operations.
+    ///
+    /// # Panics
+    ///
+    /// Debug builds check that the node count is unchanged.
+    pub unsafe fn reseat_vtree_unchecked(&mut self, vtree: &Arc<Vtree>) {
         debug_assert_eq!(
             self.vtree.num_nodes(), vtree.num_nodes(),
-            "reseat_vtree onto a tree of a different size leaves levels unaddressable",
+            "reseat_vtree_unchecked onto a tree of a different size leaves levels unaddressable",
         );
         self.vtree = Arc::clone(vtree);
     }

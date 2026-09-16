@@ -87,13 +87,13 @@ fn build_by_rotation_round_trip(
     // A left rotation needs a right child that is internal; a linear-enough
     // vtree at the root has none, and there is nothing to round-trip.
     let left = rotate_left(&mut vt, root)?;
-    acc.reseat_vtree(&Arc::new(vt.clone()));
+    acc.vtree = Arc::new(vt.clone());
     let mut scratch = RestructureScratch::default();
     restructure_inner_search(&mut acc, &left, RotationKind::Left, &mut scratch, usize::MAX)?;
     acc.minimize().unwrap();
 
     let right = rotate_right(&mut vt, root).expect("a left rotation leaves the root right-rotatable");
-    acc.reseat_vtree(&Arc::new(vt));
+    acc.vtree = Arc::new(vt);
     restructure_inner_search(&mut acc, &right, RotationKind::Right, &mut scratch, usize::MAX)?;
     acc.minimize().unwrap();
     let nodes = |v: &Vtree| -> Vec<crate::vtree::VtreeNode> {
@@ -104,7 +104,7 @@ fn build_by_rotation_round_trip(
         nodes(vtree),
         "the round trip must land back on the vtree it started from"
     );
-    acc.reseat_vtree(vtree);
+    acc.vtree = Arc::clone(vtree);
     Some(acc)
 }
 

@@ -3,31 +3,6 @@
 use super::*;
 use crate::apply::scoped_flags::ScopedFlags;
 
-/// Mark in `visited` every vtree level on the clause's spine: the union of
-/// the root paths of its variables' leaves, which is the set of levels whose
-/// subtree contains a clause variable.
-///
-/// Each walk stops at the first level already marked, so the cost is the sum
-/// of the newly marked path lengths. `visited` must cover every vtree node
-/// index. `newly_marked`, when supplied, receives the levels this call flipped
-/// from false to true, which lets a caller accumulate the union of several
-/// clauses' spines across calls.
-#[inline(always)]
-pub fn mark_clause_levels(
-    vtree: &crate::vtree::Vtree,
-    clause: &[Literal],
-    visited: &mut [bool],
-    mut newly_marked: Option<&mut Vec<VtreeIdx>>,
-) {
-    mark_clause_levels_with(vtree, clause, |t| {
-        if visited[t.idx()] { return false; }
-        visited[t.idx()] = true;
-        if let Some(out) = newly_marked.as_deref_mut() { out.push(t); }
-        true
-    }, || Ok(()))
-        .expect("an unmetered marking walk cannot be stopped");
-}
-
 /// Mark the clause's ancestor paths, polling before each visited level.
 fn mark_clause_levels_with(
     vtree: &Vtree,

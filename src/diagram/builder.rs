@@ -272,10 +272,25 @@ impl TddBuilder {
         Ok(self.seat(output))
     }
 
-    /// [`finish`](Self::finish) without the invariant walk (debug-asserted
-    /// instead). The caller guarantees every invariant the [module docs](super)
-    /// list; a violation surfaces later as a wrong answer or a panic.
-    pub(crate) fn finish_unchecked(mut self, output: TddNodeId) -> Tdd {
+    /// Finish without the storage validation performed by [`finish`](Self::finish).
+    ///
+    /// Use this only when construction has already established every invariant
+    /// checked by `finish`. The result need not be canonical; it may contain
+    /// unreachable nodes and uncontracted twins.
+    ///
+    /// # Safety
+    ///
+    /// Every level and child reference must satisfy the storage invariants of
+    /// [`TddBuilder`]: references name live nodes or valid marginal values in
+    /// the appropriate child levels, marginal regions are downward-closed,
+    /// weighted columns match their store, and `output` names a live root node
+    /// or the false sentinel. The diagram must also be deterministic.
+    /// Invalid references can cause out-of-bounds reads in later operations.
+    ///
+    /// # Panics
+    ///
+    /// Debug builds check storage validity and panic if it fails.
+    pub unsafe fn finish_unchecked(mut self, output: TddNodeId) -> Tdd {
         debug_assert!(
             check_levels(&self.vtree, &self.levels, output, self.weights.as_ref()).is_ok(),
             "an unchecked seat was handed a diagram the checked one would refuse",

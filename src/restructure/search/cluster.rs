@@ -188,92 +188,115 @@ fn pivot_pairs(tdd: &Tdd, info: &RotationInfo) -> usize {
         + tdd.levels[info.w_idx.idx()].live_pairs()
 }
 
-/// Mid-compile marginal-clustering rotation pass over subtree(`root`). Returns
-/// the number of rotations accepted. Count-preserving; a no-op (and no vtree
-/// clone) when subtree(root) has no two-marginal cluster reachable by one
-/// rotation. The caller must afterward reseat sibling diagrams onto the (possibly
-/// rotated) vtree Arc so they re-share it.
-///
-/// # Errors
-///
-/// Returns `Err(OperationError::Stopped)` if the caller's wall passed while the pass
-/// was running and the post-apply poll is armed. The rotations accepted before
-/// the cut stay accepted and stay count-preserving; the pass is a size
-/// optimization, so what a cut costs is diagram size and never the answer.
-pub fn rotate_marginal_cluster(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    root: VtreeIdx,
-    bound_mult: usize,
-    tried: &mut [u8],
-) -> Result<usize, OperationError> {
-    let lim = eng.limits();
-    let allow = subtree_allow_mask(&tdd.vtree, root);
-    // Read-only bail: no candidate ⇒ no vtree clone, no work.
-    let mut cands = collect_cluster_candidates(tdd, &allow);
-    if cands.is_empty() {
-        return Ok(0);
-    }
-    // Detach to a uniquely-owned vtree so the per-rotation `Arc::make_mut`s are
-    // no-ops (the refcount-1 probe precondition). Sibling diagrams keep the old
-    // shared Arc until the caller reseats them — sound
-    // because rotations only change indices inside subtree(root).
-    let _ = Arc::make_mut(&mut tdd.vtree);
-
-    let mut scratch = eng.restructure().checkout();
-    let mut rule = ClusterRule { bound_mult };
-    let mut accepted = 0usize;
-    // The pass's one preemption point, amortized. A sweep re-scans and re-attempts
-    // for as long as it makes progress, and one attempt restructures the pivot's
-    // two levels as a multiset — tens of calls per leaf compile, none of
-    // which returned to the caller's wall. Metered in pairs of the pivot level,
-    // the size `rotate_cluster`'s churn is bounded by (`bound_mult ×
-    // old_pairs`). With no stop axis installed it is an add and three cell loads
-    // per candidate.
-    let mut poll = PollGate::new(lim.reduce_poll_stride());
-    // Each accept strictly shrinks size, so the fixpoint terminates. Re-scan
-    // after each sweep: a closed cluster can expose a fresh one a level up.
-    loop {
-        let mut progress = false;
-        for (v, kind) in cands {
-            // The cut lands between attempts: an attempt either commits its rotation and
-            // closes the cluster or reverts everything it touched, so the pass is
-            // only ever interrupted at a point where the diagram is one some
-            // completed attempt left behind. `tried` keeps whatever it recorded —
-            // a pivot marked before the cut is one this compile will not
-            // reconsider, which is the flag's own best-effort contract.
-            lim.poll(&mut poll, tdd.levels[v.idx()].live_pairs() as u64 + 1)?;
-            // Attempt-once per (pivot, kind). Marginality is monotonic within a
-            // compile, so a rejected cluster stays a candidate and — without this
-            // guard — would be re-considered (full O(size) restructure + revert)
-            // on every later ancestor step that re-enters this subtree, for the
-            // same guaranteed reject. One shot per pivot makes total attempts
-            // linear in vtree nodes. Best-effort: a rotation relabels indices, so
-            // a stale flag can occasionally mis-skip or re-clear a pivot; that
-            // only narrows the optimization, never the counts (still exact).
-            let bit = if matches!(kind, RotationKind::Left) { 0b01u8 } else { 0b10u8 };
-            if tried[v.idx()] & bit != 0 {
-                continue;
-            }
-            // A prior accept this sweep may have collapsed this pivot already.
-            if tdd.levels[v.idx()].is_marginal() {
-                continue;
-            }
-            tried[v.idx()] |= bit;
-            if probe(eng, tdd, v, kind, &mut rule, &mut scratch, usize::MAX)? {
-                accepted += 1;
-                progress = true;
-            }
+impl Engine {
+    /// Rotate within `root` to bring already-marginal levels under a common
+    /// parent, then sum out that parent when doing so reduces pair count.
+    ///
+    /// Returns the number of accepted rotations. Each preserves the count.
+    /// `bound_mult` limits a
+    /// trial's intermediate pairs to that multiple of the two original
+    /// levels' pair count, with a minimum allowance of 64 pairs.
+    ///
+    /// `tried` records attempted directions by vtree index: bit 0 is left and
+    /// bit 1 is right. Start with an empty or zero-filled vector; this method
+    /// grows it as needed. Reuse it across calls on the same evolving diagram
+    /// to avoid retrying rejected candidates; clear it for a different diagram.
+    /// Retained entries may skip opportunities after a rotation, without
+    /// changing the count.
+    ///
+    /// The diagram may acquire a new vtree allocation. Subsequent operands must
+    /// use [`Tdd::vtree`]. A diagram over the old allocation is not transformed
+    /// by this call. With no candidate, the original allocation is retained.
+    ///
+    /// # Errors
+    ///
+    /// An invalid `root` returns [`OperationError::LevelNotInVtree`] before
+    /// mutation. Allocation refusal or cancellation returns the corresponding
+    /// [`OperationError`]; accepted rotations and attempt flags remain in place,
+    /// and the diagram remains count-correct. Trial storage is outside the
+    /// byte budget and output cap, as in [`Engine::rotation_search`].
+    pub fn rotate_marginal_cluster(
+        &self,
+        tdd: &mut Tdd,
+        root: VtreeIdx,
+        bound_mult: usize,
+        tried: &mut Vec<u8>,
+    ) -> Result<usize, OperationError> {
+        tdd.check_level_indices(&[root])?;
+        let eng = self;
+        let lim = eng.limits();
+        let additional = tdd.vtree.num_nodes().saturating_sub(tried.len());
+        if additional != 0 {
+            lim.reserve(tried, additional)?;
+            tried.resize(tdd.vtree.num_nodes(), 0);
         }
-        if !progress {
-            break;
-        }
-        cands = collect_cluster_candidates(tdd, &allow);
+        let allow = subtree_allow_mask(&tdd.vtree, root);
+        // Read-only bail: no candidate ⇒ no vtree clone, no work.
+        let mut cands = collect_cluster_candidates(tdd, &allow);
         if cands.is_empty() {
-            break;
+            return Ok(0);
         }
+        // Detach to a uniquely-owned vtree so the per-rotation `Arc::make_mut`s are
+        // no-ops (the refcount-1 probe precondition). Sibling diagrams keep the old
+        // shared Arc until the caller reseats them — sound
+        // because rotations only change indices inside subtree(root).
+        let _ = Arc::make_mut(&mut tdd.vtree);
+
+        let mut scratch = eng.restructure().checkout();
+        let mut rule = ClusterRule { bound_mult };
+        let mut accepted = 0usize;
+        // The pass's one preemption point, amortized. A sweep re-scans and re-attempts
+        // for as long as it makes progress, and one attempt restructures the pivot's
+        // two levels as a multiset — tens of calls per leaf compile, none of
+        // which returned to the caller's wall. Metered in pairs of the pivot level,
+        // the size `rotate_cluster`'s churn is bounded by (`bound_mult ×
+        // old_pairs`). With no stop axis installed it is an add and three cell loads
+        // per candidate.
+        let mut poll = PollGate::new(lim.reduce_poll_stride());
+        // Each accept strictly shrinks size, so the fixpoint terminates. Re-scan
+        // after each sweep: a closed cluster can expose a fresh one a level up.
+        loop {
+            let mut progress = false;
+            for (v, kind) in cands {
+                // The cut lands between attempts: an attempt either commits its rotation and
+                // closes the cluster or reverts everything it touched, so the pass is
+                // only ever interrupted at a point where the diagram is one some
+                // completed attempt left behind. `tried` keeps whatever it recorded —
+                // a pivot marked before the cut is one this compile will not
+                // reconsider, which is the flag's own best-effort contract.
+                lim.poll(&mut poll, tdd.levels[v.idx()].live_pairs() as u64 + 1)?;
+                // Attempt-once per (pivot, kind). Marginality is monotonic within a
+                // compile, so a rejected cluster stays a candidate and — without this
+                // guard — would be re-considered (full O(size) restructure + revert)
+                // on every later ancestor step that re-enters this subtree, for the
+                // same guaranteed reject. One shot per pivot makes total attempts
+                // linear in vtree nodes. Best-effort: a rotation relabels indices, so
+                // a stale flag can occasionally mis-skip or re-clear a pivot; that
+                // only narrows the optimization, never the counts (still exact).
+                let bit = if matches!(kind, RotationKind::Left) { 0b01u8 } else { 0b10u8 };
+                if tried[v.idx()] & bit != 0 {
+                    continue;
+                }
+                // A prior accept this sweep may have collapsed this pivot already.
+                if tdd.levels[v.idx()].is_marginal() {
+                    continue;
+                }
+                tried[v.idx()] |= bit;
+                if probe(eng, tdd, v, kind, &mut rule, &mut scratch, usize::MAX)? {
+                    accepted += 1;
+                    progress = true;
+                }
+            }
+            if !progress {
+                break;
+            }
+            cands = collect_cluster_candidates(tdd, &allow);
+            if cands.is_empty() {
+                break;
+            }
+        }
+        Ok(accepted)
     }
-    Ok(accepted)
 }
 
 #[cfg(test)]

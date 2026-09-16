@@ -307,10 +307,22 @@ impl Tdd {
     /// `other`'s weight store is absorbed into `self`'s, and its levels go back
     /// to the engine's pool.
     ///
+    /// # Safety
+    ///
+    /// Both operands must share the same vtree allocation and compatible weight
+    /// configuration. The merge level `t` must be internal, with exactly one
+    /// structural, single-pair node in each operand. The left operand must be
+    /// independent of `t`'s right subtree and the right operand independent of
+    /// its left subtree; their wrapper pairs must represent those free sides
+    /// as true. Any levels above `t` retained from `self` must still reference
+    /// the merged node correctly. The result must satisfy the storage and
+    /// determinism invariants of [`TddBuilder`](crate::diagram::TddBuilder).
+    /// Invalid references can cause out-of-bounds reads in later operations.
+    ///
     /// # Panics
     ///
     /// If either diagram's level at `t` does not hold exactly one stored node.
-    pub(crate) fn splice_subtree(&mut self, eng: &Engine, mut other: Tdd, t: VtreeIdx) {
+    pub unsafe fn splice_subtree_unchecked(&mut self, eng: &Engine, mut other: Tdd, t: VtreeIdx) {
         assert_eq!(
             self.levels[t.idx()].slot_count(), 1,
             "splice_subtree: the left diagram has width {} at the merge point",

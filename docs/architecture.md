@@ -104,11 +104,10 @@ are ownership boundaries, not a claim that every module dependency is acyclic.
 | [`io`] | The `.tdd` text format, both directions, and Graphviz rendering. | `vtree`, `diagram`. | Apply or reduction policy. |
 | [`guide`] | The prose guides of `docs/`, included as documentation so examples are doctested and the rendered pages share their source. | Nothing; it holds no code. | Any behaviour. |
 
-**Seams** — the ways in from outside, which are not a layer.
+**Testing** — generators and structural checks.
 
 | Module | Owns | Uses | May not touch |
 |---|---|---|---|
-| `compiler_seam` | Every entry point a driver that builds a diagram clause by clause reaches the crate through: clause-spine marking, mid-compile clustering, a hand-built marginal level, and the two whole-diagram edits that splice a subtree or reseat a diagram on another tree. The driver-facing module, outside the compatibility promise. | `vtree`, `diagram`, `apply`, `restructure`. | The documented modules' jobs; it holds entry points, not operations. |
 | `test_helpers` | The generators every randomized sweep draws from, the oracles a test decides a diagram by (enumeration, canonicity, structural equality, the apply-free evaluator), and in `test_helpers::check` the invariant checkers, one per numbered invariant, compiled only under `cfg(test)` or `debug_assertions`. The test-facing module. | `vtree`, `diagram`, `limits`, `value`, `build`, `apply`, `reduce`, `query`. | Any behaviour the library ships; a test reads a diagram through it, and a checker reports and never repairs. |
 
 `test_helpers::check` is compiled under `cfg(test)` or `debug_assertions`;

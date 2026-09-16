@@ -86,7 +86,7 @@ fn an_expired_wall_cuts_the_clustering_pass() {
     let mut tried = vec![0u8; tdd.vtree.num_nodes()];
 
     let r = deadline_probe(Some(1), |eng| {
-        rotate_marginal_cluster(eng, &mut tdd, root, 8, &mut tried)
+        eng.rotate_marginal_cluster(&mut tdd, root, 8, &mut tried)
     });
 
     assert!(
@@ -112,7 +112,7 @@ fn a_stride_wider_than_the_pass_never_polls() {
     let mut tried = vec![0u8; tdd.vtree.num_nodes()];
 
     let r = deadline_probe(Some(u64::MAX), |eng| {
-        rotate_marginal_cluster(eng, &mut tdd, root, 8, &mut tried)
+        eng.rotate_marginal_cluster(&mut tdd, root, 8, &mut tried)
     });
 
     r.expect("a stride the pass never reaches must not read the clock at all");

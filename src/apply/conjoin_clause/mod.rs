@@ -27,7 +27,6 @@ use crate::apply::conjoin::budget::{reserve_pairs_for_emit, NO_PRODUCT};
 
 mod spine;
 use spine::*;
-pub use spine::mark_clause_levels;
 mod emit;
 use emit::*;
 mod pairs;
