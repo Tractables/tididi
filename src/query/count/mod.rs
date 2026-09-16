@@ -30,12 +30,12 @@ pub use crate::value::ColumnRetention;
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{and, Tdd};
+/// use tididi::{literal, and};
 /// use tididi::query::{KeepAllColumns, PinSemantics};
 /// use tididi::vtree::{VarId, Vtree};
 ///
-/// let tree = Arc::new(Vtree::balanced(2));
-/// let f = and(Tdd::literal(&tree, 1)?, Tdd::literal(&tree, 2)?)?;
+/// let vtree = Arc::new(Vtree::balanced(2));
+/// let f = and(literal(&vtree, 1)?, literal(&vtree, 2)?)?;
 /// # tididi::test_helpers::assert_canonical(&f);
 /// for (semantics, expected) in [(PinSemantics::Evidence, 1u32), (PinSemantics::Cofactor, 2)] {
 ///     let mut counter = f.counter_with::<KeepAllColumns>(semantics)?;

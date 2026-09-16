@@ -27,10 +27,10 @@ attempt to rebuild the destination rule is refused:
 ```rust,ignore
 use tididi::OperationError;
 use tididi::limits::LimitConfig;
-let context = Arc::clone(tree.context());
+let context = Arc::clone(vtree.context());
 let limit = LimitConfig::none().with_memory_budget_bytes(Some(0));
 let attempt = context.with_limits(limit, |operations| {
-    operations.clause(&tree, [1, 2])
+    operations.clause(&vtree, [1, 2])
 });
 ```
 
@@ -56,7 +56,7 @@ The context retains reusable buffers after the batch, but clears its limits
 and callbacks. The next operation succeeds, and the original rules are intact:
 
 ```rust,ignore
-let destination = Tdd::clause(&tree, [1, 2])?;
+let destination = Tdd::clause(&vtree, [1, 2])?;
 assert_eq!(destination.model_count()?, 12u32.into());
 assert_eq!(configurations.model_count()?, count);
 ```

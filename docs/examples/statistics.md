@@ -15,7 +15,7 @@ if the distinction between a vtree level, a TDD node, and a child pair is new.
 ```rust,ignore
 use std::sync::Arc;
 
-use tididi::{and, OperationError, Tdd};
+use tididi::{and, literal, OperationError, Tdd};
 use tididi::vtree::{Vtree, VtreeIdx};
 ```
 
@@ -78,7 +78,7 @@ The other two variables are free. A single positive literal has only one pair
 at each stored node, which gives another small check:
 
 ```rust,ignore
-let unit = Tdd::literal(&vtree, 1)?;
+let unit = literal(&vtree, 1)?;
 assert_eq!(widest_node(&unit).1, 1);
 ```
 

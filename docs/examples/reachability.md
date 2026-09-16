@@ -45,12 +45,12 @@ The shared vtree supplies reusable working memory throughout construction and
 the fixed-point loop:
 
 ```rust,ignore
-let tree = Arc::new(Vtree::balanced(4));
+let vtree = Arc::new(Vtree::balanced(4));
 // Variables 1,2 encode the current state; 3,4 encode the next state.
 // The first bit in each pair is least significant. Edges: 0 -> 1 -> 2 -> 1.
-let mut transition = Tdd::zero(&tree);
+let mut transition = Tdd::zero(&vtree);
 for edge in [[-1, -2, 3, -4], [1, -2, -3, 4], [-1, 2, 3, -4]] {
-    transition = or(transition, Tdd::cube(&tree, edge)?)?;
+    transition = or(transition, Tdd::cube(&vtree, edge)?)?;
 }
 ```
 
@@ -59,7 +59,7 @@ Integer literals start at 1, with a negative sign for false. The `VarId`
 values used to quantify and rename variables start at 0:
 
 ```rust,ignore
-let mut reached = Tdd::cube(&tree, [-1, -2])?; // start at state 0
+let mut reached = Tdd::cube(&vtree, [-1, -2])?; // start at state 0
 let current = [VarId(0), VarId(1)];
 let next_to_current = [(VarId(2), VarId(0)), (VarId(3), VarId(1))];
 let mut iterations = 0;
@@ -127,7 +127,7 @@ The progression is:
 State 3 is forbidden. Its complement should equal the reachable set:
 
 ```rust,ignore
-let forbidden = Tdd::cube(&tree, [1, 2])?;
+let forbidden = Tdd::cube(&vtree, [1, 2])?;
 let safe = forbidden.negate()?;
 assert!(reached.equivalent(&safe)?);
 assert!(reached.implies(&safe)?);
@@ -144,7 +144,7 @@ unreachable.
 To find an assignment for state 2, intersect the target with the reachable set:
 
 ```rust,ignore
-let target = Tdd::cube(&tree, [-1, 2])?; // state 2
+let target = Tdd::cube(&vtree, [-1, 2])?; // state 2
 let reachable_target = and(reached, target)?;
 let witness = reachable_target
     .satisfying_assignment()?

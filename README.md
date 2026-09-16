@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="tididi" width="480">
+  <img src="docs/logo.svg" alt="tididi" width="400">
 </p>
 
 [![crates.io](https://img.shields.io/crates/v/tididi.svg)](https://crates.io/crates/tididi) [![docs.rs](https://img.shields.io/docsrs/tididi)](https://docs.rs/tididi)
@@ -10,13 +10,12 @@ count valid configurations or find a solution, evaluate probabilities under
 changing assumptions, or compute reachable states in a transition system.
 
 A TDD decomposes a function along a **vtree**, a binary tree over its variables.
-This generalizes an ordered binary decision diagram: a right-linear vtree
-corresponds to a variable order. The representation and its minimization
-algorithm are described in [*A Canonical Generalization of OBDD*](https://arxiv.org/abs/2604.05537).
+TDDs can be strictly more succinct than ordered binary decision diagrams (OBDDs).
+The representation and its minimization algorithm are described in [*A Canonical Generalization of OBDD*](https://arxiv.org/abs/2604.05537).
 
 ## Start with a function
 
-Add the crate to a Rust project; Rust 1.88 or later is required:
+Add the crate to your project:
 
 ```sh
 cargo add tididi
@@ -26,27 +25,28 @@ This example builds `(x ∧ y) ∨ z` and counts its satisfying assignments:
 
 ```rust
 use std::sync::Arc;
-use tididi::{and, or, OperationError, Tdd, Vtree};
+use tididi::{and, literal, or, Vtree};
 
-fn main() -> Result<(), OperationError> {
-    let tree = Arc::new(Vtree::balanced(3));
-    let x = Tdd::literal(&tree, 1)?;
-    let y = Tdd::literal(&tree, 2)?;
-    let z = Tdd::literal(&tree, 3)?;
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let vtree = Arc::new(Vtree::balanced(3));
+    let x = literal(&vtree, 1)?;
+    let y = literal(&vtree, 2)?;
+    let z = literal(&vtree, 3)?;
 
     let f = or(and(x, y)?, z)?;
-    assert_eq!(f.model_count()?, 5u32.into());
+    let count = u64::try_from(f.model_count()?)?;
+    assert_eq!(count, 5);
     Ok(())
 }
 ```
 
 There are four models with `z` true, and one more with `z` false and both
 `x` and `y` true. Counts range over every variable in the vtree, including
-variables the function leaves free.
+variables the function leaves free. The conversion to `u64` returns an error
+if the exact count does not fit.
 
 Signed integers name literals: `1` means `x`, `-2` means `¬y`, and zero is
-invalid. The typed form, [`Literal`], uses zero-based variable identifiers.
-Use the same `Arc<Vtree>` for functions you intend to combine.
+invalid. Use the same `Arc<Vtree>` for functions you intend to combine.
 
 Each [`Tdd`] owns its diagram. Boolean operations consume their operands; clone an
 operand first if you need to keep it. Cloning copies diagram storage and shares
@@ -54,9 +54,6 @@ the vtree; queries such as `model_count` borrow the diagram.
 The shared vtree retains reusable working buffers, used automatically by these
 operations. Constructors, transformations and queries return `Result`; `?`
 propagates an operation error. Constants and storage accessors return directly.
-
-The operators `&`, `|` and `!` are optional shorthand that panic on failure:
-`(x & y) | z` expresses the same formula as the checked calls above.
 
 For bounded work, the context lends a batch engine through
 [`Context::with_limits`]. Diagrams own their results; the engine only supplies
@@ -90,8 +87,7 @@ For local documentation, run `cargo doc --no-deps` and open
 
 ## Citing
 
-TDDs were introduced in the paper below; [`CITATION.cff`](CITATION.cff) carries
-the same reference in machine-readable form.
+TDDs were introduced in the following paper:
 
 ```bibtex
 @article{capelli2026canonical,

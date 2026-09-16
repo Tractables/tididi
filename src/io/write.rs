@@ -100,9 +100,9 @@ fn push_num<N: itoa::Integer>(buf: &mut Vec<u8>, n: N) {
 /// use tididi::io::{read_tdd, write_tdd};
 ///
 /// let engine = Engine::new();
-/// let tree = Arc::new(Vtree::balanced(3));
-/// let f = engine.clause(&tree, [1, -2])?;
-/// let tree_text = tree.to_text();
+/// let vtree = Arc::new(Vtree::balanced(3));
+/// let f = engine.clause(&vtree, [1, -2])?;
+/// let tree_text = vtree.to_text();
 /// let mut bytes = Vec::new();
 /// write_tdd(&mut bytes, &f)?;
 ///

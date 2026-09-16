@@ -34,9 +34,9 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let neither = Tdd::clause(&tree, [1, 2])?.negate()?;
-    /// assert!(neither.equivalent(&Tdd::cube(&tree, [-1, -2])?)?);
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let neither = Tdd::clause(&vtree, [1, 2])?.negate()?;
+    /// assert!(neither.equivalent(&Tdd::cube(&vtree, [-1, -2])?)?);
     /// assert_eq!(neither.model_count()?, 2u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -68,8 +68,8 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::one(&tree).and_clause([-1, 2])?;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::one(&vtree).and_clause([-1, 2])?;
     /// assert_eq!(f.model_count()?, 6u32.into()); // remote implies encrypted
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -104,13 +104,13 @@ impl Tdd {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{and, Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&tree, [1, 2, 3])?;
+    /// use tididi::{and, literal, Tdd, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2, 3])?;
     /// let cofactor = f.clone().condition([-1, -2])?;
-    /// assert!(cofactor.equivalent(&Tdd::literal(&tree, 3)?)?);
+    /// assert!(cofactor.equivalent(&literal(&vtree, 3)?)?);
     /// assert_eq!(cofactor.model_count()?, 4u32.into());
-    /// let observed = and(f, Tdd::cube(&tree, [-1, -2])?)?;
+    /// let observed = and(f, Tdd::cube(&vtree, [-1, -2])?)?;
     /// assert_eq!(observed.model_count()?, 1u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -138,8 +138,8 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// let g = f.condition_var(tididi::vtree::VarId(0), false)?;
     /// assert_eq!(g.model_count()?, 4u32.into()); // x2, with x1 and x3 free
     /// # Ok::<(), tididi::OperationError>(())
@@ -169,9 +169,9 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Arc::new(Vtree::balanced(3));
     /// use tididi::vtree::VarId;
-    /// let f = Tdd::clause(&tree, [1, 2, 3])?;
+    /// let f = Tdd::clause(&vtree, [1, 2, 3])?;
     /// let g = f.condition_vars(&[VarId(0), VarId(1)], false)?;
     /// assert_eq!(g.model_count()?, 4u32.into()); // x3, with x1 and x2 free
     /// # Ok::<(), tididi::OperationError>(())
@@ -199,8 +199,8 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::cube(&tree, [1, 2])?;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::cube(&vtree, [1, 2])?;
     /// let g = f.exists_var(tididi::vtree::VarId(1))?;
     /// assert_eq!(g.model_count()?, 4u32.into()); // x1, with x2 and x3 free
     /// # Ok::<(), tididi::OperationError>(())
@@ -239,11 +239,11 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Arc::new(Vtree::balanced(2));
     /// use tididi::vtree::VarId;
-    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// let projected = f.exists_vars(&[VarId(0)])?;
-    /// assert!(projected.equivalent(&Tdd::one(&tree))?);
+    /// assert!(projected.equivalent(&Tdd::one(&vtree))?);
     /// let remaining_count = projected.model_count()? >> 1usize;
     /// assert_eq!(remaining_count, 2u32.into());
     /// # Ok::<(), tididi::OperationError>(())
@@ -301,11 +301,11 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Arc::new(Vtree::balanced(2));
     /// use tididi::vtree::VarId;
-    /// let f = Tdd::cube(&tree, [1, -2])?;
+    /// let f = Tdd::cube(&vtree, [1, -2])?;
     /// let swapped = f.rename_vars(&[(VarId(0), VarId(1)), (VarId(1), VarId(0))])?;
-    /// assert!(swapped.equivalent(&Tdd::cube(&tree, [-1, 2])?)?);
+    /// assert!(swapped.equivalent(&Tdd::cube(&vtree, [-1, 2])?)?);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn rename_vars(self, renames: &[(VarId, VarId)]) -> Result<Tdd, OperationError> {
@@ -335,11 +335,11 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::cube(&tree, [1, -2])?;
-    /// let replacement = Tdd::clause(&tree, [2, 3])?;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::cube(&vtree, [1, -2])?;
+    /// let replacement = Tdd::clause(&vtree, [2, 3])?;
     /// let g = f.substitute(&[(tididi::vtree::VarId(0), &replacement)])?;
-    /// assert!(g.equivalent(&Tdd::cube(&tree, [-2, 3])?)?);
+    /// assert!(g.equivalent(&Tdd::cube(&vtree, [-2, 3])?)?);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn substitute(self, replacements: &[(VarId, &Tdd)]) -> Result<Tdd, OperationError> {
@@ -370,10 +370,10 @@ impl Tdd {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{and, Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&tree, [1, 2])?;
-    /// let care = Tdd::literal(&tree, 1)?;
+    /// use tididi::{and, literal, Tdd, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
+    /// let care = literal(&vtree, 1)?;
     /// let g = f.clone().restrict_to_care(care.clone())?.into_tdd();
     /// assert!(and(g, care.clone())?.equivalent(&and(f, care)?)?);
     /// # Ok::<(), tididi::OperationError>(())
@@ -398,10 +398,10 @@ impl Tdd {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{and, or, Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let x = Tdd::literal(&tree, 1)?;
-    /// let y = Tdd::literal(&tree, 2)?;
+    /// use tididi::{and, literal, or, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let x = literal(&vtree, 1)?;
+    /// let y = literal(&vtree, 2)?;
     /// let absorbed = or(x.clone(), and(x.clone(), y.clone())?)?;
     /// assert!(x.equivalent(&absorbed)?); // x OR (x AND y) = x
     /// assert!(!x.equivalent(&y)?); // equal counts do not imply equivalence
@@ -426,10 +426,10 @@ impl Tdd {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let both = Tdd::cube(&tree, [1, 2])?;
-    /// let x = Tdd::literal(&tree, 1)?;
+    /// use tididi::{literal, Tdd, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let both = Tdd::cube(&vtree, [1, 2])?;
+    /// let x = literal(&vtree, 1)?;
     /// assert!(both.implies(&x)?);
     /// assert!(!x.implies(&both)?);
     /// # Ok::<(), tididi::OperationError>(())
@@ -455,8 +455,8 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// assert_eq!(f.support()?, vec![tididi::vtree::VarId(0), tididi::vtree::VarId(1)]);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -480,8 +480,8 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{and, Literal, Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = and(Tdd::clause(&tree, [1, 2])?, Tdd::clause(&tree, [1, -2])?)?;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = and(Tdd::clause(&vtree, [1, 2])?, Tdd::clause(&vtree, [1, -2])?)?;
     /// assert_eq!(f.implied_literals()?, vec![Literal::try_from(1)?]);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -506,8 +506,8 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// assert_eq!(f.model_count()?, 6u32.into()); // three choices for x1,x2; two for x3
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -531,10 +531,10 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{and, Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let either = Tdd::clause(&tree, [1, 2])?;
+    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let either = Tdd::clause(&vtree, [1, 2])?;
     /// assert!(either.is_sat()?);
-    /// let impossible = and(either, Tdd::cube(&tree, [-1, -2])?)?;
+    /// let impossible = and(either, Tdd::cube(&vtree, [-1, -2])?)?;
     /// assert!(!impossible.is_sat()?);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -562,11 +562,11 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::cube(&tree, [1, -2])?;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::cube(&vtree, [1, -2])?;
     /// let model = f.satisfying_assignment()?.unwrap();
     /// assert_eq!(model.len(), 3);
-    /// assert!(Tdd::cube(&tree, model)?.implies(&f)?);
+    /// assert!(Tdd::cube(&vtree, model)?.implies(&f)?);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn satisfying_assignment(&self) -> Result<Option<Vec<Literal>>, OperationError> {
@@ -608,10 +608,10 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Arc::new(Vtree::balanced(2));
     /// use num_rational::BigRational;
     /// use tididi::diagram::{LiteralWeights, RationalWeights};
-    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// let half = BigRational::new(1.into(), 2.into());
     /// let weights = RationalWeights::from_literals(&vec![
     ///     LiteralWeights { negative: half.clone(), positive: half }; 2
@@ -639,10 +639,10 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Arc::new(Vtree::balanced(2));
     /// use num_rational::BigRational;
     /// use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
-    /// let mut f = Tdd::clause(&tree, [1, 2])?;
+    /// let mut f = Tdd::clause(&vtree, [1, 2])?;
     /// let half = BigRational::new(1.into(), 2.into());
     /// let weights = RationalWeights::from_literals(&vec![
     ///     LiteralWeights { negative: half.clone(), positive: half }; 2
@@ -678,9 +678,9 @@ impl Tdd {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{and, Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let mut f = and(Tdd::clause(&tree, [1, 2])?, Tdd::literal(&tree, 3)?)?;
+    /// use tididi::{and, literal, Tdd, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let mut f = and(Tdd::clause(&vtree, [1, 2])?, literal(&vtree, 3)?)?;
     /// let before = f.model_count()?;
     /// f.minimize()?;
     /// assert_eq!(f.model_count()?, before);
@@ -707,10 +707,10 @@ impl Tdd {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{and, Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(3));
+    /// use tididi::{and, literal, Tdd, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(3));
     /// use tididi::reduce::ReductionPlan;
-    /// let mut f = and(Tdd::clause(&tree, [1, 2])?, Tdd::literal(&tree, 3)?)?;
+    /// let mut f = and(Tdd::clause(&vtree, [1, 2])?, literal(&vtree, 3)?)?;
     /// let before = f.model_count()?;
     /// f.reduce(ReductionPlan::Prune)?;
     /// assert_eq!(f.model_count()?, before);
@@ -752,9 +752,9 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{and, Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(4));
-    /// let (left, _) = tree.children(tree.root());
-    /// let mut f = and(Tdd::clause(&tree, [1, 2])?, Tdd::clause(&tree, [3, 4])?)?;
+    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let (left, _) = vtree.children(vtree.root());
+    /// let mut f = and(Tdd::clause(&vtree, [1, 2])?, Tdd::clause(&vtree, [3, 4])?)?;
     /// let before = f.model_count()?;
     /// f.marginalize_levels(&[left])?;
     /// assert!(f.level(left).is_marginal());
@@ -792,8 +792,8 @@ impl Tdd {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{and, Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(4));
+    /// use tididi::{and, literal, Tdd, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(4));
     /// use tididi::diagram::TddLevel;
     /// use tididi::restructure::search::{RotationObjective, RotationSearchConfig};
     /// struct MinSize;
@@ -803,11 +803,11 @@ impl Tdd {
     ///             - (b.0.slot_count() + b.1.slot_count()) as i64
     ///     }
     /// }
-    /// let mut f = and(Tdd::clause(&tree, [1, 2])?, Tdd::clause(&tree, [3, 4])?)?;
+    /// let mut f = and(Tdd::clause(&vtree, [1, 2])?, Tdd::clause(&vtree, [3, 4])?)?;
     /// let before = f.model_count()?;
     /// f.rotation_search(&mut MinSize, &RotationSearchConfig::default())?;
     /// assert_eq!(f.model_count()?, before);
-    /// let extra = Tdd::literal(f.vtree(), 1)?;
+    /// let extra = literal(f.vtree(), 1)?;
     /// let constrained = and(f, extra)?;
     /// assert!(constrained.is_sat()?);
     /// # Ok::<(), tididi::OperationError>(())

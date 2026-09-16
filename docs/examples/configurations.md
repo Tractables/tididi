@@ -17,15 +17,15 @@ over four variables and share it between the option diagrams:
 ```rust,ignore
 use std::sync::Arc;
 
-use tididi::{and, or, Tdd, Vtree};
+use tididi::{and, literal, or, Tdd, Vtree};
 ```
 
 ```rust,ignore
-let tree = Arc::new(Vtree::balanced(4));
+let vtree = Arc::new(Vtree::balanced(4));
 let names = ["local backups", "remote backups", "encryption", "notifications"];
-let local = Tdd::literal(&tree, 1)?;
-let remote = Tdd::literal(&tree, 2)?;
-let encrypted = Tdd::literal(&tree, 3)?;
+let local = literal(&vtree, 1)?;
+let remote = literal(&vtree, 2)?;
+let encrypted = literal(&vtree, 3)?;
 ```
 
 Integer literals start at 1; a negative integer means the option is off.
@@ -109,7 +109,7 @@ The witness assigns every vtree variable. There can be many correct witnesses,
 so the program verifies that its returned assignment satisfies the rules:
 
 ```rust,ignore
-let selected = and(configurations.clone(), Tdd::cube(&tree, &witness)?)?;
+let selected = and(configurations.clone(), Tdd::cube(&vtree, &witness)?)?;
 assert_eq!(selected.model_count()?, 1u32.into());
 ```
 

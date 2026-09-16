@@ -7,14 +7,14 @@ use tididi::vtree::VarId;
 use tididi::{and, and_exists, or, OperationError, Tdd, Vtree};
 
 fn main() -> Result<(), OperationError> {
-    let tree = Arc::new(Vtree::balanced(4));
+    let vtree = Arc::new(Vtree::balanced(4));
     // Variables 1,2 encode the current state; 3,4 encode the next state.
     // The first bit in each pair is least significant. Edges: 0 -> 1 -> 2 -> 1.
-    let mut transition = Tdd::zero(&tree);
+    let mut transition = Tdd::zero(&vtree);
     for edge in [[-1, -2, 3, -4], [1, -2, -3, 4], [-1, 2, 3, -4]] {
-        transition = or(transition, Tdd::cube(&tree, edge)?)?;
+        transition = or(transition, Tdd::cube(&vtree, edge)?)?;
     }
-    let mut reached = Tdd::cube(&tree, [-1, -2])?; // start at state 0
+    let mut reached = Tdd::cube(&vtree, [-1, -2])?; // start at state 0
     let current = [VarId(0), VarId(1)];
     let next_to_current = [(VarId(2), VarId(0)), (VarId(3), VarId(1))];
     let mut iterations = 0;
@@ -45,19 +45,19 @@ fn main() -> Result<(), OperationError> {
     assert_eq!(iterations, 3);
 
     // States 0,1,2 are reachable; state 3 (both current bits true) is not.
-    let forbidden = Tdd::cube(&tree, [1, 2])?;
+    let forbidden = Tdd::cube(&vtree, [1, 2])?;
     let safe = forbidden.negate()?;
     assert!(reached.equivalent(&safe)?);
     assert!(reached.implies(&safe)?);
     assert_eq!(reached.model_count()?, 12u32.into());
     println!("State 3 is unreachable");
 
-    let target = Tdd::cube(&tree, [-1, 2])?; // state 2
+    let target = Tdd::cube(&vtree, [-1, 2])?; // state 2
     let reachable_target = and(reached, target)?;
     let witness = reachable_target
         .satisfying_assignment()?
         .expect("state 2 is reachable");
-    assert!(Tdd::cube(&tree, &witness)?.implies(&reachable_target)?);
+    assert!(Tdd::cube(&vtree, &witness)?.implies(&reachable_target)?);
     let state = witness
         .iter()
         .filter(|literal| literal.var.0 < 2 && literal.positive)

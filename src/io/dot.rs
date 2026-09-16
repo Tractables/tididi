@@ -65,8 +65,8 @@ fn lerp_rgb(lo: (u8, u8, u8), hi: (u8, u8, u8), t: f64) -> (u8, u8, u8) {
 /// use tididi::Vtree;
 /// use tididi::io::vtree_to_dot;
 ///
-/// let tree = Vtree::balanced(3);
-/// let dot = vtree_to_dot(&tree, None);
+/// let vtree = Vtree::balanced(3);
+/// let dot = vtree_to_dot(&vtree, None);
 /// assert!(dot.starts_with("graph vtree"));
 /// ```
 pub fn vtree_to_dot(vtree: &Vtree, tdd: Option<&Tdd>) -> String {

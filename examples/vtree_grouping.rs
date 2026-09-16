@@ -6,10 +6,10 @@ use std::sync::Arc;
 use tididi::{and, OperationError, Tdd, Vtree};
 use tididi::vtree::VarId;
 
-/// Build two independent equalities and minimize under the supplied tree.
-fn equal_pairs(tree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
-    let first_equal = and(Tdd::clause(tree, [-1, 3])?, Tdd::clause(tree, [1, -3])?)?;
-    let second_equal = and(Tdd::clause(tree, [-2, 4])?, Tdd::clause(tree, [2, -4])?)?;
+/// Build two independent equalities and minimize under the supplied vtree.
+fn equal_pairs(vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
+    let first_equal = and(Tdd::clause(vtree, [-1, 3])?, Tdd::clause(vtree, [1, -3])?)?;
+    let second_equal = and(Tdd::clause(vtree, [-2, 4])?, Tdd::clause(vtree, [2, -4])?)?;
     let mut f = and(first_equal, second_equal)?;
     f.minimize()?;
     Ok(f)

@@ -22,9 +22,9 @@ Variables 1, 2, and 3 mean local backups, remote backups, and encryption.
 Require a destination, and require encryption whenever remote backups are on:
 
 ```rust,ignore
-let tree = Arc::new(Vtree::balanced(3));
-let destination = Tdd::clause(&tree, [1, 2])?;
-let encryption_rule = Tdd::clause(&tree, [-2, 3])?;
+let vtree = Arc::new(Vtree::balanced(3));
+let destination = Tdd::clause(&vtree, [1, 2])?;
+let encryption_rule = Tdd::clause(&vtree, [-2, 3])?;
 ```
 
 Both diagrams share the same tree. Save that tree once alongside the two
@@ -43,12 +43,12 @@ saved session
 vector is one such stream. The vtree has its own text representation:
 
 ```rust,ignore
-let tree_text = tree.to_text();
+let tree_text = vtree.to_text();
 let mut destination_bytes = Vec::new();
 let mut encryption_bytes = Vec::new();
 write_tdd(&mut destination_bytes, &destination)?;
 write_tdd(&mut encryption_bytes, &encryption_rule)?;
-drop((destination, encryption_rule, tree));
+drop((destination, encryption_rule, vtree));
 ```
 
 The serialized data is now all that remains. For files, use

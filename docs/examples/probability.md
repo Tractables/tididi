@@ -25,7 +25,7 @@ use std::sync::Arc;
 use num_rational::BigRational;
 use num_traits::{One, Zero};
 use tididi::diagram::{LiteralWeights, RationalWeights};
-use tididi::{and, or, OperationError, Tdd, Vtree};
+use tididi::{and, literal, or, OperationError, Tdd, Vtree};
 ```
 
 ## Build the events once
@@ -34,9 +34,9 @@ Build the events on one shared vtree. The diagrams reuse its workspace
 automatically when we combine or evaluate them.
 
 ```rust,ignore
-let tree = Arc::new(Vtree::balanced(3));
-let rain = Tdd::literal(&tree, 1)?;
-let sprinkler = Tdd::literal(&tree, 2)?;
+let vtree = Arc::new(Vtree::balanced(3));
+let rain = literal(&vtree, 1)?;
+let sprinkler = literal(&vtree, 2)?;
 // Wet grass is the observation: rain OR sprinkler. Variable 3 (wind) is free.
 let wet = or(rain.clone(), sprinkler)?;
 let rain_and_wet = and(rain.clone(), wet.clone())?;

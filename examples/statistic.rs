@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use tididi::{and, OperationError, Tdd};
+use tididi::{and, literal, OperationError, Tdd};
 use tididi::vtree::{Vtree, VtreeIdx};
 
 /// `(vtree node, pair count)` of the widest node; `(root, 0)` for a diagram
@@ -36,7 +36,7 @@ fn main() -> Result<(), OperationError> {
     assert_eq!((level, pairs), (left, 2));
 
     // A unit clause is a cube: one pair per node everywhere.
-    let unit = Tdd::literal(&vtree, 1)?;
+    let unit = literal(&vtree, 1)?;
     assert_eq!(widest_node(&unit).1, 1);
 
     // The diagram's own size metric is the sum of every node's pair count.

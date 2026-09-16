@@ -56,9 +56,9 @@ impl TddLevel {
     /// ```compile_fail,E0597
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let diagram = Tdd::one(&tree);
-    /// let level = diagram.level(tree.root());
+    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let diagram = Tdd::one(&vtree);
+    /// let level = diagram.level(vtree.root());
     /// let pairs;
     /// {
     ///     let node = level.nodes()[0];

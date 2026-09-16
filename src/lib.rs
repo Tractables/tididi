@@ -11,24 +11,24 @@
 //!
 //! ```
 //! use std::sync::Arc;
-//! use tididi::{and, or, Tdd, Vtree};
+//! use tididi::{and, literal, or, Vtree};
 //!
-//! let tree = Arc::new(Vtree::balanced(3));
-//! let x = Tdd::literal(&tree, 1)?;
-//! let y = Tdd::literal(&tree, 2)?;
-//! let z = Tdd::literal(&tree, 3)?;
+//! let vtree = Arc::new(Vtree::balanced(3));
+//! let x = literal(&vtree, 1)?;
+//! let y = literal(&vtree, 2)?;
+//! let z = literal(&vtree, 3)?;
 //! let f = or(and(x, y)?, z)?;
-//! assert_eq!(f.model_count()?, 5u32.into());
-//! # Ok::<(), tididi::OperationError>(())
+//! let count = u64::try_from(f.model_count()?)?;
+//! assert_eq!(count, 5);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! Integer literals are signed and one-based; [`Literal`] documents their typed,
-//! zero-based form. Reuse the same `Arc<Vtree>` for operands you will combine.
+//! Integer literals are signed and one-based. Reuse the same `Arc<Vtree>` for
+//! operands you will combine.
 //! Queries borrow diagrams; transformations taking `Tdd` consume them, so clone
 //! an operand first if it must be kept.
 //! Operations reuse the context attached to the shared vtree. Named operations
-//! such as [`and`], [`Tdd::literal`] and [`Tdd::model_count`] return errors;
-//! the `&` and `|` operators are shorthand that panics on failure.
+//! such as [`and`], [`literal`] and [`Tdd::model_count`] return errors.
 //! [`Context::with_limits`] lends an engine for an explicitly bounded batch. Diagrams own their results independently of that temporary checkout.
 //!
 //! # Where to go next
@@ -106,3 +106,5 @@ pub use limits::OperationError;
 pub use engine::{Context, Engine};
 
 pub use apply::{and, or, xor, ite, and_exists, and_exists_with_strategy};
+
+pub use build::literal;

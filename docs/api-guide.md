@@ -11,7 +11,7 @@ Use the later sections when execution or representation needs specialization.
 
 Start with [`Vtree::balanced`](crate::Vtree::balanced), sharing one `Arc<Vtree>`
 among functions you intend to combine.
-Build atoms with [`Tdd::literal`](crate::Tdd::literal), disjunctions of literals
+Build atoms with [`literal`](crate::literal), disjunctions of literals
 with [`Tdd::clause`](crate::Tdd::clause), and conjunctions with
 [`Tdd::cube`](crate::Tdd::cube).
 Compose diagrams with [`and`](crate::and), [`or`](crate::or) and

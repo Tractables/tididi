@@ -34,12 +34,12 @@ pub use context::Context;
 /// use std::sync::Arc;
 /// use tididi::{Tdd, Vtree};
 /// use tididi::limits::LimitConfig;
-/// let tree = Arc::new(Vtree::balanced(3));
-/// let f = tree.context().with_limits(
+/// let vtree = Arc::new(Vtree::balanced(3));
+/// let f = vtree.context().with_limits(
 ///     LimitConfig::none().with_memory_budget_bytes(Some(1_000_000)),
 ///     |engine| {
-///         let either = engine.clause(&tree, [1, 2])?;
-///         let not_third = engine.cube(&tree, [-3])?;
+///         let either = engine.clause(&vtree, [1, 2])?;
+///         let not_third = engine.cube(&vtree, [-3])?;
 ///         let mut f = engine.and(either, not_third)?;
 ///         engine.minimize(&mut f)?;
 ///         assert_eq!(engine.model_count(&f)?, 3u32.into());
@@ -93,10 +93,10 @@ impl Engine {
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};
     ///
-    /// let tree = Arc::new(Vtree::balanced(2));
+    /// let vtree = Arc::new(Vtree::balanced(2));
     /// let f = {
     ///     let engine = Engine::new();
-    ///     engine.clause(&tree, [1, 2])?
+    ///     engine.clause(&vtree, [1, 2])?
     /// };
     /// assert_eq!(f.model_count()?, 3u32.into());
     /// # Ok::<(), tididi::OperationError>(())

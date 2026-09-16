@@ -18,9 +18,9 @@ use crate::{Engine, OperationError, Tdd};
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{xor, Tdd, Vtree};
-/// let tree = Arc::new(Vtree::balanced(2));
-/// let parity = xor(Tdd::literal(&tree, 1)?, Tdd::literal(&tree, 2)?)?;
+/// use tididi::{literal, xor, Vtree};
+/// let vtree = Arc::new(Vtree::balanced(2));
+/// let parity = xor(literal(&vtree, 1)?, literal(&vtree, 2)?)?;
 /// assert_eq!(parity.model_count()?, 2u32.into());
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
@@ -49,11 +49,11 @@ pub fn xor(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{ite, Tdd, Vtree};
-/// let tree = Arc::new(Vtree::balanced(3));
-/// let select = Tdd::literal(&tree, 1)?;
-/// let yes = Tdd::literal(&tree, 2)?;
-/// let no = Tdd::literal(&tree, 3)?;
+/// use tididi::{literal, ite, Vtree};
+/// let vtree = Arc::new(Vtree::balanced(3));
+/// let select = literal(&vtree, 1)?;
+/// let yes = literal(&vtree, 2)?;
+/// let no = literal(&vtree, 3)?;
 /// let choice = ite(select, yes, no)?;
 /// assert_eq!(choice.model_count()?, 4u32.into());
 /// # Ok::<(), tididi::OperationError>(())
@@ -83,14 +83,14 @@ pub fn ite(condition: Tdd, then_branch: Tdd, else_branch: Tdd) -> Result<Tdd, Op
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{and_exists, xor, Tdd, Vtree};
+/// use tididi::{literal, and_exists, xor, Vtree};
 /// use tididi::vtree::VarId;
-/// let tree = Arc::new(Vtree::balanced(2));
-/// let current = Tdd::literal(&tree, -1)?; // current state x is false
-/// let transition = xor(Tdd::literal(&tree, 1)?, Tdd::literal(&tree, 2)?)?;
+/// let vtree = Arc::new(Vtree::balanced(2));
+/// let current = literal(&vtree, -1)?; // current state x is false
+/// let transition = xor(literal(&vtree, 1)?, literal(&vtree, 2)?)?;
 /// // The relation flips x to next-state y; forget the current-state variable.
 /// let next = and_exists(current, transition, &[VarId(0)])?;
-/// assert!(next.equivalent(&Tdd::literal(&tree, 2)?)?);
+/// assert!(next.equivalent(&literal(&vtree, 2)?)?);
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 pub fn and_exists(f: Tdd, g: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {

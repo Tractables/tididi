@@ -148,11 +148,11 @@ pub(crate) fn conjoin_owned(
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{and, Tdd, Vtree};
+/// use tididi::{and, literal, Tdd, Vtree};
 ///
-/// let tree = Arc::new(Vtree::balanced(3));
-/// let either = Tdd::clause(&tree, [1, 2])?;
-/// let not_third = Tdd::literal(&tree, -3)?;
+/// let vtree = Arc::new(Vtree::balanced(3));
+/// let either = Tdd::clause(&vtree, [1, 2])?;
+/// let not_third = literal(&vtree, -3)?;
 /// let f = and(either, not_third)?;
 /// assert_eq!(f.model_count()?, 3u32.into());
 /// # Ok::<(), tididi::OperationError>(())
@@ -215,10 +215,10 @@ impl crate::engine::Engine {
     /// use tididi::{Engine, Vtree};
     ///
     /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(4));
-    /// let (left, _) = tree.children(tree.root());
-    /// let f = engine.clause(&tree, [1, 2])?;
-    /// let g = engine.clause(&tree, [3, 4])?;
+    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let (left, _) = vtree.children(vtree.root());
+    /// let f = engine.clause(&vtree, [1, 2])?;
+    /// let g = engine.clause(&vtree, [3, 4])?;
     /// let counted = engine.and_marginalizing(f, g, &[left])?;
     /// assert!(counted.level(left).is_marginal());
     /// assert_eq!(engine.model_count(&counted)?, 9u32.into());

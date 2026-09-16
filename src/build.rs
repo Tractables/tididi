@@ -109,28 +109,35 @@ fn cube_to_tdd(
     Tdd::try_from_levels_on(eng, Arc::clone(vtree), levels, TddNodeId { vtree: root, local: label_at(root) })
 }
 
+/// Build a canonical diagram for one literal, leaving other variables free.
+///
+/// Integers are signed and one-based; typed [`Literal`] values use zero-based
+/// variable identifiers. Uses the execution context attached to the vtree.
+/// Use [`Engine::literal`] inside a batch with resource limits.
+///
+/// # Errors
+///
+/// Returns [`OperationError::InvalidLiteral`] for integer zero,
+/// [`OperationError::VariableNotInVtree`] for an absent variable, or
+/// [`OperationError::OverBudget`] if an allocation is refused.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{and, literal, Vtree};
+/// let vtree = Arc::new(Vtree::balanced(3));
+/// let f = and(literal(&vtree, 1)?, literal(&vtree, -2)?)?;
+/// assert_eq!(u64::try_from(f.model_count()?)?, 2);
+/// # tididi::test_helpers::assert_canonical(&f);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn literal(vtree: &Arc<Vtree>, literal: impl TryInto<Literal, Error: Into<OperationError>>) -> Result<Tdd, OperationError> {
+    vtree.context().run(|eng| eng.literal(vtree, literal))
+}
+
 impl Tdd {
-    /// Build a canonical diagram for one literal, leaving other variables free.
-    ///
-    /// Integers are signed and one-based; typed [`Literal`] values use zero-based
-    /// variable identifiers. Uses the execution context attached to the vtree.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`OperationError::InvalidLiteral`] for integer zero,
-    /// [`OperationError::VariableNotInVtree`] for an absent variable, or
-    /// [`OperationError::OverBudget`] if an allocation is refused.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{and, Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = and(Tdd::literal(&tree, 1)?, Tdd::literal(&tree, -2)?)?;
-    /// assert_eq!(f.model_count()?, 2u32.into());
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
-    pub fn literal(vtree: &Arc<Vtree>, literal: impl TryInto<Literal, Error: Into<OperationError>>) -> Result<Tdd, OperationError> {
-        vtree.context().run(|eng| eng.literal(vtree, literal))
+    /// Build a literal diagram; see [`crate::literal`] for inputs and errors.
+    pub fn literal(vtree: &Arc<Vtree>, input: impl TryInto<Literal, Error: Into<OperationError>>) -> Result<Tdd, OperationError> {
+        literal(vtree, input)
     }
 
     /// Build a canonical conjunction of literals, leaving other variables free.
@@ -149,8 +156,8 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::cube(&tree, [1, -2])?;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::cube(&vtree, [1, -2])?;
     /// assert_eq!(f.model_count()?, 2u32.into());
     /// # tididi::test_helpers::assert_canonical(&f);
     /// # Ok::<(), tididi::OperationError>(())
@@ -169,9 +176,9 @@ impl Tdd {
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
     ///
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let all = Tdd::one(&tree);
-    /// let none = Tdd::zero(&tree);
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let all = Tdd::one(&vtree);
+    /// let none = Tdd::zero(&vtree);
     /// assert_eq!(all.model_count()?, 8u32.into());
     /// assert!(none.is_zero());
     /// # tididi::test_helpers::assert_canonical(&all);
@@ -194,9 +201,9 @@ impl Tdd {
 
 /// The construction entry points on a caller's engine.
 impl crate::engine::Engine {
-    /// Run [`Tdd::literal`](crate::Tdd::literal) using this batch's scratch and resource limits.
+    /// Run [`crate::literal`] using this batch's scratch and resource limits.
     ///
-    /// Operand requirements, ownership and result semantics follow the diagram method.
+    /// Inputs and result semantics follow the free function.
     ///
     /// # Errors
     ///

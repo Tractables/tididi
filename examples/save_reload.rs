@@ -6,18 +6,18 @@ use std::sync::Arc;
 use tididi::{and, Tdd, Vtree};
 use tididi::io::{read_tdd, write_tdd};
 
-/// Round-trip two rules and check their conjunction over the restored tree.
+/// Round-trip two rules and check their conjunction over the restored vtree.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let tree = Arc::new(Vtree::balanced(3));
-    let destination = Tdd::clause(&tree, [1, 2])?;
-    let encryption_rule = Tdd::clause(&tree, [-2, 3])?;
+    let vtree = Arc::new(Vtree::balanced(3));
+    let destination = Tdd::clause(&vtree, [1, 2])?;
+    let encryption_rule = Tdd::clause(&vtree, [-2, 3])?;
 
-    let tree_text = tree.to_text();
+    let tree_text = vtree.to_text();
     let mut destination_bytes = Vec::new();
     let mut encryption_bytes = Vec::new();
     write_tdd(&mut destination_bytes, &destination)?;
     write_tdd(&mut encryption_bytes, &encryption_rule)?;
-    drop((destination, encryption_rule, tree));
+    drop((destination, encryption_rule, vtree));
 
     let restored_tree = Arc::new(Vtree::from_text(&tree_text)?);
     let destination = read_tdd(&mut destination_bytes.as_slice(), &restored_tree)?;

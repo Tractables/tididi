@@ -87,11 +87,11 @@ impl std::ops::BitOr for Changed {
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{and, Tdd, Vtree};
+/// use tididi::{and, literal, Vtree};
 ///
-/// let tree = Arc::new(Vtree::balanced(2));
-/// let x = Tdd::literal(&tree, 1)?;
-/// let y = Tdd::literal(&tree, 2)?;
+/// let vtree = Arc::new(Vtree::balanced(2));
+/// let x = literal(&vtree, 1)?;
+/// let y = literal(&vtree, 2)?;
 /// let f = and(x, y.negate()?)?;
 /// assert_eq!(f.model_count()?, 1u32.into());
 /// # let mut f = f;
@@ -134,8 +134,8 @@ impl std::ops::BitOr for Changed {
 /// use tididi::{Tdd, Vtree};
 /// use tididi::vtree::VarId;
 ///
-/// let tree = Arc::new(Vtree::balanced(3));
-/// let f = Tdd::clause(&tree, [1, 2])?;
+/// let vtree = Arc::new(Vtree::balanced(3));
+/// let f = Tdd::clause(&vtree, [1, 2])?;
 /// let with_first = f.clone().condition_var(VarId(0), true)?;
 /// let without_first = f.clone().condition_var(VarId(0), false)?;
 /// assert_eq!(with_first.model_count()?, 8u32.into());
@@ -206,8 +206,8 @@ impl Tdd {
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
     ///
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// let g = Tdd::clause(f.vtree(), [-2, 3])?;
     /// assert!(Arc::ptr_eq(f.vtree(), g.vtree()));
     /// # tididi::test_helpers::assert_canonical(&f);
@@ -388,11 +388,11 @@ impl Tdd {
     ///
     ///
     /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(2));
-    /// let mut f = engine.clause(&tree, [1, 2])?;
+    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let mut f = engine.clause(&vtree, [1, 2])?;
     /// f.set_weights(WeightStore::new(RationalWeights::unit(2), Arithmetic::ExactRational))?;
     /// let before = engine.weighted_value(&f)?.unwrap().into_rational();
-    /// engine.marginalize_levels(&mut f, &[tree.root()])?;
+    /// engine.marginalize_levels(&mut f, &[vtree.root()])?;
     /// assert!(f.has_marginal_level());
     /// assert_eq!(engine.weighted_value(&f)?.unwrap().into_rational(), before);
     /// # Ok::<(), Box<dyn std::error::Error>>(())

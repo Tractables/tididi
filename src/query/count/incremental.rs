@@ -150,8 +150,8 @@ mod sealed {
 /// use std::sync::Arc;
 /// use tididi::Tdd;
 /// use tididi::vtree::{VarId, Vtree};
-/// let tree = Arc::new(Vtree::balanced(4));
-/// let f = Tdd::clause(&tree, [1, -2])?;
+/// let vtree = Arc::new(Vtree::balanced(4));
+/// let f = Tdd::clause(&vtree, [1, -2])?;
 /// let mut counter = f.counter()?;
 /// assert_eq!(counter.model_count()?, 12u32.into());
 /// counter.set_pin(VarId(0), Some(true))?;
@@ -176,8 +176,8 @@ mod sealed {
 /// use std::sync::Arc;
 /// use tididi::Tdd;
 /// use tididi::vtree::Vtree;
-/// let tree = Arc::new(Vtree::balanced(2));
-/// let mut f = Tdd::clause(&tree, [1]).unwrap();
+/// let vtree = Arc::new(Vtree::balanced(2));
+/// let mut f = Tdd::clause(&vtree, [1]).unwrap();
 /// let mut counter = f.counter().unwrap();
 /// f.minimize().unwrap();
 /// counter.model_count().unwrap();
@@ -230,8 +230,8 @@ impl Tdd {
     /// use tididi::{Tdd, Vtree};
     /// use tididi::query::{KeepFrontier, PinSemantics};
     /// use tididi::vtree::VarId;
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter_with::<KeepFrontier>(PinSemantics::Cofactor)?;
     /// counter.set_pin(VarId(0), Some(false))?;
@@ -257,9 +257,9 @@ impl Tdd {
 /// ```compile_fail
 /// use std::sync::Arc;
 /// use tididi::{Tdd, Vtree};
-/// let tree = Arc::new(Vtree::balanced(2));
-/// let f = Tdd::one(&tree);
-/// let mut counter = tree.context().run(|engine| engine.counter(&f)).unwrap();
+/// let vtree = Arc::new(Vtree::balanced(2));
+/// let f = Tdd::one(&vtree);
+/// let mut counter = vtree.context().run(|engine| engine.counter(&f)).unwrap();
 /// counter.model_count().unwrap();
 /// ```
 pub struct BoundModelCounter<'a, 'batch, R: Retention = KeepAllColumns> {
@@ -341,10 +341,10 @@ impl Engine {
     /// use tididi::{Tdd, Vtree};
     /// use tididi::limits::LimitConfig;
     /// use tididi::vtree::VarId;
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
-    /// tree.context().with_limits(
+    /// vtree.context().with_limits(
     ///     LimitConfig::none().with_memory_budget_bytes(Some(1_000_000)),
     ///     |engine| {
     ///         let mut counter = engine.counter(&f)?;
@@ -405,11 +405,11 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::vtree::VarId;
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter()?;
-    /// tree.context().run(|engine| {
+    /// vtree.context().run(|engine| {
     ///     let mut batch = counter.bind(engine);
     ///     batch.set_pin(VarId(0), Some(false))?;
     ///     assert_eq!(batch.model_count()?, 2u32.into());
@@ -459,8 +459,8 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// use std::sync::Arc;
     /// use tididi::{OperationError, Tdd, Vtree};
     /// use tididi::vtree::VarId;
-    /// let tree = Arc::new(Vtree::leaf(VarId(7)));
-    /// let f = Tdd::one(&tree);
+    /// let vtree = Arc::new(Vtree::leaf(VarId(7)));
+    /// let f = Tdd::one(&vtree);
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter()?;
     /// counter.set_pin(VarId(7), Some(true))?;
@@ -494,8 +494,8 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::vtree::VarId;
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter()?;
     /// counter.set_pins(&[(VarId(0), Some(false)), (VarId(2), Some(true))])?;
@@ -523,8 +523,8 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::vtree::VarId;
-    /// let tree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&tree, [1, 2])?;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter()?;
     /// counter.set_pins(&[(VarId(0), Some(false)), (VarId(2), Some(true))])?;

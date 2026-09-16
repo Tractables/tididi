@@ -1,4 +1,4 @@
-//! The comment rules in `CONTRIBUTING.md`, enforced on the crate's source.
+//! Source comment, test placement, and module documentation checks.
 //!
 //! Four checks over the files under `src/`; rules 1, 3 and 4 read the files
 //! that are not themselves test modules, and rule 2 reads every one, since a

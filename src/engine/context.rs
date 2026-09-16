@@ -53,10 +53,10 @@ impl Context {
     /// use tididi::engine::Context;
     /// use tididi::Vtree;
     /// let context = Arc::new(Context::new());
-    /// let tree = context.bind(Vtree::balanced(3));
+    /// let vtree = context.bind(Vtree::balanced(3));
     /// let f = context.run(|operations| {
-    ///     let either = operations.clause(&tree, [1, 2])?;
-    ///     operations.and(either, operations.literal(&tree, 3)?)
+    ///     let either = operations.clause(&vtree, [1, 2])?;
+    ///     operations.and(either, operations.literal(&vtree, 3)?)
     /// })?;
     /// assert_eq!(f.model_count()?, 3u32.into());
     /// # Ok::<(), tididi::OperationError>(())
@@ -82,11 +82,11 @@ impl Context {
     /// use tididi::limits::LimitConfig;
     /// use tididi::{OperationError, Vtree};
     /// let context = Arc::new(Context::new());
-    /// let tree = context.bind(Vtree::balanced(3));
+    /// let vtree = context.bind(Vtree::balanced(3));
     /// let limit = LimitConfig::none().with_memory_budget_bytes(Some(0));
-    /// let result = context.with_limits(limit, |operations| operations.clause(&tree, [1, 2]));
+    /// let result = context.with_limits(limit, |operations| operations.clause(&vtree, [1, 2]));
     /// assert_eq!(result.unwrap_err(), OperationError::OverBudget);
-    /// assert!(context.run(|operations| operations.clause(&tree, [1, 2])).is_ok());
+    /// assert!(context.run(|operations| operations.clause(&vtree, [1, 2])).is_ok());
     /// ```
     pub fn with_limits<R>(self: &Arc<Self>, config: LimitConfig, run: impl FnOnce(&Engine) -> R) -> R {
         self.run(|engine| {

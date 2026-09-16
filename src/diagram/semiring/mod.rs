@@ -41,7 +41,7 @@ use crate::vtree::VarId;
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{Tdd, Vtree};
+/// use tididi::{literal, Tdd, Vtree};
 /// use tididi::diagram::{EvalAlgebra, LeafLabel};
 ///
 /// use tididi::vtree::VarId;
@@ -60,8 +60,8 @@ use crate::vtree::VarId;
 ///     fn add_assign(&self, a: &mut usize, b: &usize) { *a = (*a).min(*b); }
 ///     fn mul(&self, a: &usize, b: &usize) -> usize { a.saturating_add(*b) }
 /// }
-/// let tree = Arc::new(Vtree::balanced(3));
-/// let f = Tdd::clause(&tree, [1, 2])? & Tdd::literal(&tree, 3)?;
+/// let vtree = Arc::new(Vtree::balanced(3));
+/// let f = Tdd::clause(&vtree, [1, 2])? & literal(&vtree, 3)?;
 /// assert_eq!(f.evaluate(&FewestTrue)?, 2);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```

@@ -67,11 +67,11 @@ pub(crate) fn disjoin_owned(eng: &Engine, mut f: Tdd, mut g: Tdd) -> Result<Tdd,
 ///
 /// ```
 /// use std::sync::Arc;
-/// use tididi::{or, Tdd, Vtree};
+/// use tididi::{literal, or, Tdd, Vtree};
 ///
-/// let tree = Arc::new(Vtree::balanced(3));
-/// let first_two = Tdd::cube(&tree, [1, 2])?;
-/// let third = Tdd::literal(&tree, 3)?;
+/// let vtree = Arc::new(Vtree::balanced(3));
+/// let first_two = Tdd::cube(&vtree, [1, 2])?;
+/// let third = literal(&vtree, 3)?;
 /// let f = or(first_two, third)?;
 /// assert_eq!(f.model_count()?, 5u32.into());
 /// # Ok::<(), tididi::OperationError>(())

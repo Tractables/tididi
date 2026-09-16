@@ -408,12 +408,12 @@ impl Limits {
     /// use tididi::limits::LimitConfig;
     ///
     /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Arc::new(Vtree::balanced(3));
     /// {
     ///     let _limit = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
-    ///     assert_eq!(engine.clause(&tree, [1, 2]).err(), Some(OperationError::OverBudget));
+    ///     assert_eq!(engine.clause(&vtree, [1, 2]).err(), Some(OperationError::OverBudget));
     /// }
-    /// let f = engine.clause(&tree, [1, 2]).unwrap(); // the previous limits are restored
+    /// let f = engine.clause(&vtree, [1, 2]).unwrap(); // the previous limits are restored
     /// assert_eq!(f.model_count()?, 6u32.into());
     /// # tididi::test_helpers::assert_canonical(&f);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -528,9 +528,9 @@ impl Limits {
     /// use tididi::{Engine, Vtree};
     ///
     /// let engine = Engine::new();
-    /// let tree = Arc::new(Vtree::balanced(3));
+    /// let vtree = Arc::new(Vtree::balanced(3));
     /// let start = engine.limits().mark();
-    /// let f = engine.clause(&tree, [1, 2, 3]).unwrap();
+    /// let f = engine.clause(&vtree, [1, 2, 3]).unwrap();
     /// let work = engine.limits().work_since(start);
     /// assert!(work > 0);
     /// # tididi::test_helpers::assert_canonical(&f);
