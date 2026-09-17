@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="174" viewBox="0 0 560 174" role="img" aria-labelledby="title description">
+  <title id="title">Reachability from A</title>
+  <desc id="description">Start at A. The directed edges are A to B, B to C, and C to B. D is isolated.</desc>
+  <rect width="560" height="174" rx="12" fill="#fff"/>
+  <g fill="none" stroke="#2774AE" stroke-width="2.5" stroke-linecap="round">
+    <path d="M 80 34 V 57"/>
+    <path d="M 110 88 H 204"/>
+    <path d="M 257 69 Q 310 24 361 68"/>
+    <path d="M 363 107 Q 310 152 259 108"/>
+  </g>
+  <g fill="#2774AE">
+    <path d="M 80 57 L 75 47 L 85 47 Z"/>
+    <path d="M 204 88 L 194 83 L 194 93 Z"/>
+    <path d="M 361 68 L 350 65 L 357 58 Z"/>
+    <path d="M 259 108 L 270 111 L 263 118 Z"/>
+  </g>
+  <g stroke="#2774AE" stroke-width="2.5">
+    <circle cx="80" cy="88" r="30" fill="#FFD100"/>
+    <circle cx="235" cy="88" r="30" fill="#eef5fa"/>
+    <circle cx="385" cy="88" r="30" fill="#eef5fa"/>
+    <circle cx="500" cy="88" r="30" fill="#f5f6f8" stroke="#8996a4"/>
+  </g>
+  <g font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" text-anchor="middle">
+    <g font-size="24" font-weight="600" fill="#173c58">
+      <text x="80" y="96">A</text>
+      <text x="235" y="96">B</text>
+      <text x="385" y="96">C</text>
+      <text x="500" y="96" fill="#526170">D</text>
+    </g>
+    <g font-size="15" fill="#526170">
+      <text x="80" y="23">start</text>
+      <text x="500" y="144">isolated</text>
+    </g>
+  </g>
+</svg>

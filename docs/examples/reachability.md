@@ -2,13 +2,7 @@
 
 Starting at A, which nodes can we reach by following these arrows?
 
-```text
-start
-  │
-  ▼
-  A ───▶ B ◀───▶ C       D
-                       isolated
-```
+![Start at A. Arrows lead from A to B, B to C, and C to B. D is isolated.](https://raw.githubusercontent.com/Tractables/tididi/main/docs/reachability.svg)
 
 We will describe the graph as a Boolean formula, then repeatedly compute
 successors until no new states appear. The result should be {A, B, C}; we
@@ -22,33 +16,23 @@ Give each node an indicator: `a` means “we are at A”, `b` means “we are at
 and so on. Exactly one is true in a state. Write the four state formulas as:
 
 ```text
-A(x) =  a ∧ ¬b ∧ ¬c ∧ ¬d
-B(x) = ¬a ∧  b ∧ ¬c ∧ ¬d
-C(x) = ¬a ∧ ¬b ∧  c ∧ ¬d
-D(x) = ¬a ∧ ¬b ∧ ¬c ∧  d
+A(a, b, c, d) =  a ∧ ¬b ∧ ¬c ∧ ¬d
+B(a, b, c, d) = ¬a ∧  b ∧ ¬c ∧ ¬d
+C(a, b, c, d) = ¬a ∧ ¬b ∧  c ∧ ¬d
+D(a, b, c, d) = ¬a ∧ ¬b ∧ ¬c ∧  d
 ```
-
-Here `x` stands for the four indicators `(a, b, c, d)`. Each formula fixes
-all four, so it excludes assignments that name several nodes or no node.
-
-A **set of states** is a disjunction of these formulas. For example,
-`A(x) ∨ B(x)` has two satisfying assignments, one for A and one for B.
-It does not set both `a` and `b` to true. The indicators describe one possible
-current state; the circuit collects all the states reachable so far.
 
 ## Write the transition relation
 
-Use a second set of indicators `x′ = (a′, b′, c′, d′)` for the next state.
-The graph has three edges, so its transition relation is:
+Write `x = (a, b, c, d)` for the current indicators and
+`x′ = (a′, b′, c′, d′)` for the next ones. The three edges give:
 
 ```text
-T(x, x′) = (A(x) ∧ B(x′))
-         ∨ (B(x) ∧ C(x′))
-         ∨ (C(x) ∧ B(x′))
+T(x, x′) = (A(x) ∧ B(x′)) ∨ (B(x) ∧ C(x′)) ∨ (C(x) ∧ B(x′))
 ```
 
-For example, `A(x) ∧ B(x′)` says “we are at A now and at B next”. The relation
-is true exactly for the three allowed moves. No term enters or leaves D.
+The first term says “we are at A now and at B next”. The relation is true
+exactly for the three allowed moves. No term enters or leaves D.
 
 ## Build those formulas
 
@@ -92,8 +76,9 @@ let c_to_b = and(at_c.clone(), next_b)?;
 let transition = or(a_to_b, or(b_to_c, c_to_b)?)?;
 ```
 
-Initially only A has been reached: `R₀(x) = A(x)`. We also name the current
-variables and the mapping from next to current indicators for the search.
+Initially only A has been reached: `R₀(x) = A(x)`.
+We also name the current variables and the mapping from next to current
+indicators for the search.
 A `VarId` carries the same number as the integer literal, without a sign.
 
 ```rust,ignore,{class=tested-example}
@@ -148,7 +133,8 @@ fn image(
 
 ## Repeat until the set stops growing
 
-Add each image to the states already reached. Stop when
+Add each image to the states already reached. The first update gives
+`A(x) ∨ B(x)`, allowing either state. Stop when
 [`equivalent`](crate::Tdd::equivalent) says the set has not changed:
 
 ```rust,ignore,{class=tested-example}
@@ -191,7 +177,7 @@ next-state indicators.
 
 ## Check a safety property
 
-The final circuit represents `A(x) ∨ B(x) ∨ C(x)`. To check that D is
+The final circuit represents the union of A, B and C. To check that D is
 unreachable, ask whether every reached state satisfies `¬D(x)`:
 
 ```rust,ignore,{class=tested-example}
@@ -235,5 +221,5 @@ Recovering a path to C would also require retaining predecessor information
 during the search.
 
 The [complete program](https://github.com/Tractables/tididi/blob/main/examples/symbolic_reachability.rs)
-also checks the complete reachable set against `A(x) ∨ B(x) ∨ C(x)` and verifies
-the witness indicators.
+also checks that the reachable set is exactly {A, B, C} and verifies the
+witness indicators.
