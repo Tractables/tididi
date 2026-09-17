@@ -615,22 +615,20 @@ fn overlapping_variable_error_formats_the_full_id_range() {
     }
 }
 
+/// Parent links are derived from the child links: a construction may leave
+/// them unset or stale, as a splice that rewires a child pointer does.
 #[test]
-fn from_nodes_accepts_omitted_parents_and_rejects_contradicted_ones() {
+fn from_nodes_derives_parents_from_the_child_links() {
     let links = |parent: Option<VtreeIdx>| vec![
         VtreeNode::Leaf { var: VarId(0), parent },
         VtreeNode::Leaf { var: VarId(1), parent: None },
         VtreeNode::Internal { left: VtreeIdx(0), right: VtreeIdx(1), parent: None },
     ];
-    assert!(Vtree::from_nodes(links(None), VtreeIdx(2), 2).is_ok());
-    assert!(Vtree::from_nodes(links(Some(VtreeIdx(2))), VtreeIdx(2), 2).is_ok());
-    assert!(matches!(
-        Vtree::from_nodes(links(Some(VtreeIdx(1))), VtreeIdx(2), 2),
-        Err(VtreeError::Invalid(_))
-    ));
-    let mut nodes = links(None);
-    nodes[2] = VtreeNode::Internal { left: VtreeIdx(0), right: VtreeIdx(1), parent: Some(VtreeIdx(0)) };
-    assert!(matches!(Vtree::from_nodes(nodes, VtreeIdx(2), 2), Err(VtreeError::Invalid(_))));
+    for declared in [None, Some(VtreeIdx(2)), Some(VtreeIdx(1))] {
+        let vtree = Vtree::from_nodes(links(declared), VtreeIdx(2), 2).unwrap();
+        let leaf = vtree.leaf_of(VarId(0)).unwrap();
+        assert_eq!(vtree.node(leaf).parent(), Some(vtree.root()));
+    }
 }
 
 #[test]
