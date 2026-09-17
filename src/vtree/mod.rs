@@ -92,6 +92,17 @@ pub enum VtreeError {
     /// A structural invariant that does not hold (see [`Vtree::validate`](crate::vtree::Vtree::validate)),
     /// or a construction handed nothing to build from.
     Invalid(String),
+    /// The variable-id space is larger than the table mapping ids to leaves may
+    /// occupy. That table is indexed by variable id, so a single very large id
+    /// sizes it however few leaves the tree has: two lines of `.vtree` text
+    /// naming variable 4_000_000_000 would otherwise ask for 16 GB. Sparse ids
+    /// stay legal, but the space they span is bounded.
+    VariableSpaceTooLarge {
+        /// The id space asked for, one past the largest variable id.
+        num_vars: u32,
+        /// The largest id space that fits the table's byte cap.
+        max_num_vars: u32,
+    },
 }
 
 impl std::fmt::Display for VtreeError {
@@ -104,6 +115,10 @@ impl std::fmt::Display for VtreeError {
                 var.0
             ),
             VtreeError::Invalid(msg) => write!(f, "invalid vtree: {msg}"),
+            VtreeError::VariableSpaceTooLarge { num_vars, max_num_vars } => write!(
+                f,
+                "variable-id space of {num_vars} exceeds the {max_num_vars} an id-indexed table allows",
+            ),
         }
     }
 }

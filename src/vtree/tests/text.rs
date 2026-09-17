@@ -55,3 +55,25 @@ fn deterministic_token_mutations_are_refused_and_valid_text_round_trips() {
         }
     }
 }
+
+#[test]
+fn a_tiny_file_naming_a_huge_variable_is_refused_rather_than_sized_from_it() {
+    // The id-indexed tables are sized by the largest id, not by the number of
+    // leaves, so these two lines used to ask for gigabytes.
+    refused("vtree 1\nL 0 4000000000\n");
+    // Through the node list the refusal keeps its variant; the text reader
+    // flattens every build error into `Text`, as its `# Errors` section says.
+    let nodes = vec![VtreeNode::Leaf { var: VarId(1), parent: None }];
+    assert!(matches!(
+        Vtree::from_nodes(nodes, VtreeIdx(0), u32::MAX),
+        Err(VtreeError::VariableSpaceTooLarge { .. }),
+    ));
+}
+
+#[test]
+fn a_sparse_id_space_under_the_cap_still_round_trips() {
+    let tree = Vtree::from_text("vtree 1\nL 0 1000000\n").expect("sparse ids stay legal");
+    assert_eq!(tree.num_vars(), 1_000_000);
+    assert_eq!(tree.num_leaves(), 1);
+    assert!(Vtree::from_text(&tree.to_text()).unwrap().same_tree(&tree));
+}

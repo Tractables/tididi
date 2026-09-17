@@ -18,7 +18,10 @@ impl Vtree {
     /// invalid header, a malformed node line, an unparseable id, a node or
     /// variable id outside the range the header declares, a variable carried by
     /// two leaves, a duplicate node id, a node-record count different from the
-    /// header, or node lines that do not describe a single tree.
+    /// header, node lines that do not describe a single tree, or a largest
+    /// variable id too wide to index a table by. Variable ids may be sparse —
+    /// [`to_text`](Vtree::to_text) writes them back unchanged — but the span
+    /// they cover is what sizes that table, so it is bounded.
     ///
     /// ```
     /// use tididi::vtree::{Vtree, VtreeError};

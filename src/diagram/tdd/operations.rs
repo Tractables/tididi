@@ -395,8 +395,10 @@ impl Tdd {
     ///
     /// # Errors
     ///
-    /// Returns a vtree or root mismatch, [`OperationError::MarginalLevel`] for
-    /// discarded structure, or [`OperationError::OverBudget`] for refused allocation.
+    /// [`OperationError::VtreeMismatch`] if the operands do not share one vtree
+    /// allocation, [`OperationError::MarginalLevel`] if either has discarded the
+    /// structure at a level, or [`OperationError::OverBudget`] for a refused
+    /// allocation.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -423,8 +425,11 @@ impl Tdd {
     ///
     /// # Errors
     ///
-    /// Returns a vtree or root mismatch, [`OperationError::MarginalLevel`] for
-    /// discarded structure, or [`OperationError::OverBudget`] for refused allocation.
+    /// [`OperationError::VtreeMismatch`] if the operands do not share one vtree
+    /// allocation, [`OperationError::MarginalLevel`] if either has discarded the
+    /// structure at a level, [`OperationError::OverBudget`] for a refused
+    /// allocation, or [`OperationError::OutputCap`] if the conjunction it builds
+    /// exceeds the output-node cap.
     ///
     /// ```
     /// use std::sync::Arc;
