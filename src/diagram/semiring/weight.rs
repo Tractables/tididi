@@ -325,7 +325,7 @@ impl WeightValue {
         match self {
             WeightValue::ExactSmall(n) => *n == 0,
             WeightValue::Exact(r) => r.numer().is_zero(),
-            WeightValue::Log(s) => s.sign == 0,
+            WeightValue::Log(s) => s.is_zero(),
         }
     }
 

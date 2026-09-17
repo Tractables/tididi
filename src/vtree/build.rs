@@ -299,11 +299,11 @@ impl Vtree {
     /// Construct a vtree from a raw node list and root index, reindexing
     /// bottom-up.
     ///
-    /// The derived tables come from the child links alone: parent links are
-    /// wired here (whatever `nodes` says about them is ignored), and the
-    /// variable-to-leaf table is filled for every leaf the root reaches, so a
-    /// construction hands over child links and nothing else. `num_vars` sizes
-    /// the id space — wider than the leaf set is what makes
+    /// The derived tables come from the child links: parent links are wired
+    /// here, so a construction may leave them `None`, and a declared parent
+    /// that disagrees with the links is an error. The variable-to-leaf table
+    /// is filled for every leaf the root reaches. `num_vars` sizes the id
+    /// space — wider than the leaf set is what makes
     /// [`num_leaves`](Vtree::num_leaves) differ from [`num_vars`](Vtree::num_vars).
     ///
     /// The list is checked before it is read, so no caller can build a vtree
@@ -390,6 +390,12 @@ fn check_node_list(nodes: &[VtreeNode], root: VtreeIdx, num_vars: u32) -> Result
             }
         }
     }
+    if let Some(parent) = nodes[root.idx()].parent() {
+        return Err(VtreeError::Invalid(format!(
+            "root {} declares parent {}",
+            root.0, parent.0
+        )));
+    }
     let mut seen = vec![false; n];
     seen[root.idx()] = true;
     let mut reached = 1usize;
@@ -401,6 +407,15 @@ fn check_node_list(nodes: &[VtreeNode], root: VtreeIdx, num_vars: u32) -> Result
                     return Err(VtreeError::Invalid(format!(
                         "node {} is reached twice, so the links are not a tree",
                         child.idx()
+                    )));
+                }
+                // A declared parent may be omitted, but not contradicted.
+                if let Some(declared) = nodes[child.idx()].parent()
+                    && declared != idx
+                {
+                    return Err(VtreeError::Invalid(format!(
+                        "node {} declares parent {} but is a child of {}",
+                        child.0, declared.0, idx.0
                     )));
                 }
                 reached += 1;

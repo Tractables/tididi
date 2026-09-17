@@ -90,6 +90,9 @@ pub(crate) fn restructure_inner_search(
     let v_idx = info.v_idx.idx();
     let w_idx = info.w_idx.idx();
     let marginal_ctx = tdd.has_marginal_level();
+    // The group table indexes `triples` with `u32` offsets; `collect_triples`
+    // gives up once the count reaches `max_pairs`.
+    let max_pairs = max_pairs.min(u32::MAX as usize);
     // Read in place: nothing leaves the diagram until both new levels exist, so
     // an early exit has nothing to undo.
     let (old_v, old_w) = (&tdd.levels[v_idx], &tdd.levels[w_idx]);
@@ -119,7 +122,7 @@ pub(crate) fn restructure_inner_search(
     // silently change the count. `write <= read <= n`, so this single check
     // covers every cast in the scan.
     let n = scratch.packed.len();
-    assert!(
+    debug_assert!(
         u32::try_from(n).is_ok(),
         "rotation restructure: {n} triples exceeds the u32 group offsets into `triples`",
     );

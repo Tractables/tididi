@@ -71,7 +71,8 @@ pub enum ContentTwinPolicy<'a> {
     /// Run eligible scans without retaining a schedule between calls.
     #[default]
     Fresh,
-    /// Carry the scan schedule across successive diagrams.
+    /// Carry the scan schedule across successive diagrams. A weighted diagram
+    /// is scanned on every call and leaves the schedule unchanged.
     Adaptive(&'a mut ContentTwinSchedule),
 }
 

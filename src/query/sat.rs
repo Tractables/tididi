@@ -6,7 +6,7 @@ use crate::diagram::PairsIter;
 use crate::Engine;
 use crate::vtree::{VarId, VtreeIdx};
 
-use super::fold::{fold_bottom_up_unpolled, LevelFold, PairAlgebra, Side};
+use super::fold::{fold_bottom_up, LevelFold, PairAlgebra, Side};
 
 impl Engine {
     /// Run [`Tdd::is_sat`](crate::Tdd::is_sat) using this batch's scratch and resource limits.
@@ -68,23 +68,25 @@ impl Engine {
 }
 
 /// True iff the diagram's output node is satisfiable, computed by a full
-/// Boolean bottom-up pass: the model counter's traversal with every count
-/// collapsed to `> 0`, so it agrees with `f.model_count()? > 0` on every input,
-/// including a non-canonical diagram whose output node's pairs all bottom out
-/// in zero-count children. [`Tdd::is_sat_minimized`] is the O(1) form for a
-/// minimized diagram.
-pub(crate) fn is_sat_structural(f: &Tdd) -> bool {
+/// Boolean bottom-up pass under the caller's limits: the model counter's
+/// traversal with every count collapsed to `> 0`, so it agrees with
+/// `f.model_count()? > 0` on every input, including a non-canonical diagram
+/// whose output node's pairs all bottom out in zero-count children.
+/// [`Tdd::is_sat_minimized`] is the O(1) form for a minimized diagram.
+pub(crate) fn is_sat_structural(eng: &Engine, f: &Tdd) -> Result<bool, crate::OperationError> {
     if f.is_zero() {
-        return false;
+        return Ok(false);
     }
-    let eng = Engine::new();
     let fold = SatBits;
-    let mut cols: Vec<Vec<bool>> = (0..f.vtree.num_nodes())
-        .map(|i| fold.alloc(&eng, f.reference_slot_count(VtreeIdx(i as u32))).expect("query column allocation"))
-        .collect();
-    fold_bottom_up_unpolled(&fold, &eng, f, &mut cols, ColumnRetention::Frontier, |_, _| {});
+    let mut cols: Vec<Vec<bool>> = Vec::new();
+    eng.limits().reserve(&mut cols, f.vtree.num_nodes())?;
+    for i in 0..f.vtree.num_nodes() {
+        cols.push(fold.alloc(eng, f.reference_slot_count(VtreeIdx(i as u32)))?);
+    }
+    let mut poll = crate::limits::PollGate::new(eng.limits().reduce_poll_stride());
+    fold_bottom_up(&fold, eng, f, &mut cols, ColumnRetention::Frontier, Some(&mut poll), |_, _| Ok(()))?;
     let (out_t, out_i) = (f.output.vtree.idx(), f.output.local.idx());
-    cols[out_t][out_i]
+    Ok(cols[out_t][out_i])
 }
 
 /// The counting fold with every count collapsed to a bit: `+` is disjunction,

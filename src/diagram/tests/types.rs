@@ -407,6 +407,21 @@ mod try_from_levels {
     }
 
     #[test]
+    fn marginal_leaf_level_with_a_foreign_column() {
+        let vtree = Arc::new(Vtree::balanced(4));
+        let (mut levels, out) = build(&vtree);
+        let (l, _) = vtree.children(vtree.root());
+        let (leaf, _) = vtree.children(l);
+        levels[leaf.idx()].become_marginal(vec![2, 1, 1], None);
+        assert!(try_from_levels(vtree.clone(), levels.clone(), out).is_ok());
+        levels[leaf.idx()].become_marginal(vec![2, 1, 1, 5], None);
+        assert_eq!(
+            try_from_levels(vtree, levels, out).err(),
+            Some(TddBuildError::NonEmptyLeafLevel(leaf))
+        );
+    }
+
+    #[test]
     fn leaf_label_stored_in_internal_level() {
         let vtree = Arc::new(Vtree::balanced(4));
         let (mut levels, out) = build(&vtree);

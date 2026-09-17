@@ -149,7 +149,7 @@ fn condition_targets(
     if emptied { propagate_false_nodes(&mut tdd); }
 
     // Set the false sentinel before pruning, so its empty nodes are unreachable.
-    canonicalize_false_output(&mut tdd);
+    canonicalize_false_output(eng, &mut tdd)?;
     eng.reduce(&mut tdd, ReductionPlan::default())?;
     Ok(tdd)
 }
@@ -314,14 +314,14 @@ fn rewrite_level_pairs(
 ///
 /// Declines on a weighted diagram: a weight-marginal level keeps its values in
 /// the `WeightStore`, which the satisfiability pass cannot evaluate.
-fn canonicalize_false_output(tdd: &mut crate::diagram::Tdd) {
+fn canonicalize_false_output(eng: &Engine, tdd: &mut crate::diagram::Tdd) -> Result<(), OperationError> {
     if tdd.is_zero() {
-        return;
+        return Ok(());
     }
     if tdd.levels.iter().any(|l| l.is_weight_marginal()) {
-        return;
+        return Ok(());
     }
-    let sat = crate::query::sat::is_sat_structural(tdd);
+    let sat = crate::query::sat::is_sat_structural(eng, tdd)?;
     debug_assert_eq!(
         sat,
         tdd.model_count().unwrap() != num_bigint::BigUint::ZERO,
@@ -330,6 +330,7 @@ fn canonicalize_false_output(tdd: &mut crate::diagram::Tdd) {
     if !sat {
         tdd.output.local = crate::diagram::ZERO;
     }
+    Ok(())
 }
 
 #[cfg(test)]

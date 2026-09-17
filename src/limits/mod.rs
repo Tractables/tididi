@@ -128,7 +128,9 @@ impl LimitConfig {
     /// structural projection, and care rebuilding; `None` arms none.
     ///
     /// Each operation states which intermediate nodes it counts; exceeding
-    /// the cap returns [`OperationError::OutputCap`].
+    /// the cap returns [`OperationError::OutputCap`]. Complementation and the
+    /// operations built on it (`or`, `xor`, `ite`, `implies`) are bounded by
+    /// the byte budget and the stop rules, not by this cap.
     #[must_use]
     pub fn with_output_node_cap(mut self, cap: Option<u64>) -> LimitConfig {
         self.output_node_cap = cap;
@@ -586,7 +588,6 @@ impl Drop for LimitScope<'_> {
 
 impl Limits {
     /// Add a synthetic byte charge for tests without allocating memory.
-    #[cfg(any(test, debug_assertions))]
     #[doc(hidden)]
     pub fn charge_in_flight(&self, bytes: u64) {
         self.in_flight_bytes

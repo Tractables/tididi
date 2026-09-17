@@ -373,12 +373,12 @@ impl ApplyRun {
         right_width_c: usize,
     ) -> Result<(), OperationError> {
         if !self.has_pl[idx] {
-            fill_identity_product_list(
+            let filled = fill_identity_product_list(
                 eng, left_width_c, right_width_c,
                 self.right_identity[idx], self.left_identity[idx],
                 &mut self.product_lists[idx], &mut self.has_pl[idx],
             )?;
-            self.has_pl[idx] = true;
+            cheap_assert!(filled, "an ungridded child on the dense path has an identity operand");
         }
         self.arena.ensure_grid(eng, idx, left_width_c, right_width_c, &self.product_lists[idx])
     }

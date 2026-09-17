@@ -110,7 +110,7 @@ fn test_node_counts_basic() {
 fn test_output_is_satisfiable_agrees_with_model_count() {
     let eng = &crate::Engine::new();
     let check = |t: &Tdd, what: &str| {
-        let sat = is_sat_structural(t);
+        let sat = is_sat_structural(eng, t).unwrap();
         let nonzero = t.model_count().unwrap() != BigUint::ZERO;
         assert_eq!(sat, nonzero, "is_sat_structural disagrees with model_count>0 for {what}");
     };

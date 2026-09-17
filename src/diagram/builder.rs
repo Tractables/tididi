@@ -382,12 +382,19 @@ pub(crate) fn check_levels(
     } else if let Some(t) = vtree.bottomup().find(|t| levels[t.idx()].is_weight_marginal()) {
         return Err(TddBuildError::WeightedLevelWithoutStore { level: t });
     }
-    // A structural leaf level stores nothing; a marginalized one carries one
-    // value per implicit node, which is what its width counts.
+    // A structural leaf level stores nothing. A count-marginal one carries the
+    // pinned label column `[2, 1, 1]` or nothing at all (its parents then hold
+    // the counts inline); a weight-marginal column is checked by the store.
     for (leaf, _var) in vtree.leaf_bottomup() {
         let lvl = &levels[leaf.idx()];
         let stores_structure = !lvl.nodes.is_empty() || !lvl.pairs.is_empty();
         if stores_structure || (!lvl.is_marginal() && lvl.slot_count() != 0) {
+            return Err(TddBuildError::NonEmptyLeafLevel(leaf));
+        }
+        if let Some(counts) = lvl.marginal_counts()
+            && !counts.is_empty()
+            && counts != super::leaf_column::LEAF_COUNTS
+        {
             return Err(TddBuildError::NonEmptyLeafLevel(leaf));
         }
     }
