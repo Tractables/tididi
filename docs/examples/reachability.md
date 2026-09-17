@@ -1,22 +1,69 @@
 # Explore reachable states
 
-A transition relation is a Boolean function of a current state and a next
-state. We can represent a whole set of states with another diagram, then use
-Boolean operations and quantification to compute its successors.
-
-This example starts at state 0 in the following system:
+Starting at A, which nodes can we reach by following these arrows?
 
 ```text
 start
   │
   ▼
-  0 ───▶ 1 ◀───▶ 2       3
+  A ───▶ B ◀───▶ C       D
                        isolated
 ```
 
-The edges are `0 → 1`, `1 → 2`, and `2 → 1`. We will find all reachable states,
-prove that state 3 is unreachable, and obtain an assignment for state 2.
+We will describe the graph as a Boolean formula, then repeatedly compute
+successors until no new states appear. The result should be {A, B, C}; we
+will also check that D is unreachable.
+
 Run it with `cargo run --example symbolic_reachability`.
+
+## Describe a state with Boolean indicators
+
+Give each node an indicator: `a` means “we are at A”, `b` means “we are at B”,
+and so on. Exactly one is true in a state. Write the four state formulas as:
+
+```text
+A(x) =  a ∧ ¬b ∧ ¬c ∧ ¬d
+B(x) = ¬a ∧  b ∧ ¬c ∧ ¬d
+C(x) = ¬a ∧ ¬b ∧  c ∧ ¬d
+D(x) = ¬a ∧ ¬b ∧ ¬c ∧  d
+```
+
+Here `x` stands for the four indicators `(a, b, c, d)`. Each formula fixes
+all four, so it excludes assignments that name several nodes or no node.
+
+A **set of states** is a disjunction of these formulas. For example,
+`A(x) ∨ B(x)` has two satisfying assignments, one for A and one for B.
+It does not set both `a` and `b` to true. The indicators describe one possible
+current state; the circuit collects all the states reachable so far.
+
+## Write the transition relation
+
+Use a second set of indicators `x′ = (a′, b′, c′, d′)` for the next state.
+The graph has three edges, so its transition relation is:
+
+```text
+T(x, x′) = (A(x) ∧ B(x′))
+         ∨ (B(x) ∧ C(x′))
+         ∨ (C(x) ∧ B(x′))
+```
+
+For example, `A(x) ∧ B(x′)` says “we are at A now and at B next”. The relation
+is true exactly for the three allowed moves. No term enters or leaves D.
+
+## Build those formulas
+
+Use integer literals 1 through 4 for the current indicators and 5 through 8
+for the next ones:
+
+| Indicator | Current literal | Next literal |
+|---|---|---|
+| a | 1 | 5 |
+| b | 2 | 6 |
+| c | 3 | 7 |
+| d | 4 | 8 |
+
+A negative literal means negation. [`Tdd::cube`](crate::Tdd::cube) conjoins
+its literals, so `[1, -2, -3, -4]` is precisely `A(x)` above.
 
 ```rust,ignore,{class=tested-example}
 use std::sync::Arc;
@@ -25,52 +72,53 @@ use tididi::vtree::VarId;
 use tididi::{and, and_exists, or, OperationError, Tdd, Vtree};
 ```
 
-## Encode current and next states
-
-Two bits describe four states. We give the current state variables 1 and 2,
-and the next state variables 3 and 4, with the first bit least significant
-in each pair:
-
-| State | First bit | Second bit |
-|---|---|---|
-| 0 | false | false |
-| 1 | true | false |
-| 2 | false | true |
-| 3 | true | true |
-
-An edge is a cube: the conjunction of the four literals specifying its
-source and destination. The relation is the union of the three edge cubes.
-Build the relation on one shared vtree:
-
 ```rust,ignore,{class=tested-example}
-let vtree = Arc::new(Vtree::balanced(4));
-// Variables 1,2 encode the current state; 3,4 encode the next state.
-// The first bit in each pair is least significant. Edges: 0 -> 1 -> 2 -> 1.
-let mut transition = Tdd::zero(&vtree);
-for edge in [[-1, -2, 3, -4], [1, -2, -3, 4], [-1, 2, 3, -4]] {
-    transition = or(transition, Tdd::cube(&vtree, edge)?)?;
-}
+let vtree = Arc::new(Vtree::balanced(8));
+// Indicators a,b,c,d use literals 1..4; next-state indicators use 5..8.
+let at_a = Tdd::cube(&vtree, [1, -2, -3, -4])?;
+let at_b = Tdd::cube(&vtree, [-1, 2, -3, -4])?;
+let at_c = Tdd::cube(&vtree, [-1, -2, 3, -4])?;
+let at_d = Tdd::cube(&vtree, [-1, -2, -3, 4])?;
+let next_b = Tdd::cube(&vtree, [-5, 6, -7, -8])?;
+let next_c = Tdd::cube(&vtree, [-5, -6, 7, -8])?;
 ```
 
-For example, `[-1, -2, 3, -4]` means current state 0 and next state 1.
-Integer literals start at 1, with a negative sign for false. The `VarId`
-values used to quantify and rename variables start at 0:
+Translate the three terms of `T` directly:
 
 ```rust,ignore,{class=tested-example}
-let mut reached = Tdd::cube(&vtree, [-1, -2])?; // start at state 0
-let current = [VarId(0), VarId(1)];
-let next_to_current = [(VarId(2), VarId(0)), (VarId(3), VarId(1))];
+let a_to_b = and(at_a.clone(), next_b.clone())?;
+let b_to_c = and(at_b.clone(), next_c)?;
+let c_to_b = and(at_c.clone(), next_b)?;
+let transition = or(a_to_b, or(b_to_c, c_to_b)?)?;
+```
+
+Initially only A has been reached: `R₀(x) = A(x)`. We also name the current
+variables and the mapping from next to current indicators for the search.
+Unlike integer literals, `VarId` uses zero-based indices.
+
+```rust,ignore,{class=tested-example}
+let mut reached = at_a.clone();
+let current = [VarId(0), VarId(1), VarId(2), VarId(3)];
+let next_to_current = [
+    (VarId(4), VarId(0)), (VarId(5), VarId(1)),
+    (VarId(6), VarId(2)), (VarId(7), VarId(3)),
+];
 let mut iterations = 0;
 ```
 
-Only current-state variables constrain `reached`; its next-state variables
-are free.
-
 ## Compute successor states
 
-For a state set `R` and transition relation `T`, the successors are
-`∃current. (R(current) AND T(current, next))`. Conjoin the current set with
-the relation, then eliminate the current-state variables:
+A next state is a successor if **some** reached state has an edge to it:
+
+```text
+S(x′) = ∃a,b,c,d. (R(x) ∧ T(x, x′))
+```
+
+The existential quantifier removes the source indicators, keeping the
+possible destinations. Starting with `R = A`, only the first edge is possible,
+so this formula gives `S(x′) = B(x′)`.
+
+Conjoin the reached set with the relation, then quantify the current variables:
 
 ```rust,ignore,{class=tested-example}
 let possible_steps = and(reached.clone(), transition.clone())?;
@@ -78,7 +126,7 @@ let successors = possible_steps.exists_vars(&current)?;
 ```
 
 The result uses next-state variables. Rename them so it can serve as a
-current-state set in another step:
+current-state set in another step: `B(x′)` becomes `B(x)`.
 
 ```rust,ignore,{class=tested-example}
 let successors = successors.rename_vars(&next_to_current)?;
@@ -125,46 +173,40 @@ loop {
 
 [`projected_model_count`](crate::Tdd::projected_model_count) counts only the
 current-state assignments. Ordinary counting would also count the free
-next-state bits.
+next-state indicators.
 
 | Image step | Successors | Accumulated states |
 |---|---|---|
-| 1 | {1} | {0, 1} |
-| 2 | {1, 2} | {0, 1, 2} |
-| 3 | {1, 2} | {0, 1, 2}: fixed point |
+| 1 | {B} | {A, B} |
+| 2 | {B, C} | {A, B, C} |
+| 3 | {B, C} | {A, B, C}: fixed point |
 
 ## Check a safety property
 
-State 3 is forbidden. Its complement should equal the reachable set:
+The final circuit represents `A(x) ∨ B(x) ∨ C(x)`. To check that D is
+unreachable, ask whether every reached state satisfies `¬D(x)`:
 
 ```rust,ignore,{class=tested-example}
-let forbidden = Tdd::cube(&vtree, [1, 2])?;
-let safe = forbidden.negate()?;
-assert!(reached.equivalent(&safe)?);
+let safe = at_d.negate()?;
 assert!(reached.implies(&safe)?);
-assert_eq!(reached.projected_model_count(&current)?, 3u32.into());
-println!("State 3 is unreachable");
+println!("D is unreachable");
 ```
-
-Equivalence checks the complete expected set in this example; implication is
-enough to prove a general safety property, even when some safe states are
-unreachable.
 
 ## Find a reachable target
 
-To find an assignment for state 2, intersect the target with the reachable set:
+Intersect the reached set with `C(x)` to find a reachable assignment at C:
 
 ```rust,ignore,{class=tested-example}
-let target = Tdd::cube(&vtree, [-1, 2])?; // state 2
-let reachable_target = and(reached, target)?;
+let reachable_target = and(reached, at_c)?;
 let witness = reachable_target
     .satisfying_assignment()?
-    .expect("state 2 is reachable");
+    .expect("C is reachable");
 ```
 
-The witness is a state assignment, not a sequence of transitions. Recovering a
-path requires retaining predecessor information during the search.
+The current-state part of the witness is `a=false, b=false, c=true, d=false`.
+It identifies C. Recovering a path to C would also require retaining
+predecessor information during the search.
 
 The [complete program](https://github.com/Tractables/tididi/blob/main/examples/symbolic_reachability.rs)
-also checks the image helper against the individual operations and decodes
-the witness as state 2.
+also checks the complete reachable set against `A(x) ∨ B(x) ∨ C(x)` and verifies
+the witness indicators.

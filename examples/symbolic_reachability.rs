@@ -7,16 +7,26 @@ use tididi::vtree::VarId;
 use tididi::{and, and_exists, or, OperationError, Tdd, Vtree};
 
 fn main() -> Result<(), OperationError> {
-    let vtree = Arc::new(Vtree::balanced(4));
-    // Variables 1,2 encode the current state; 3,4 encode the next state.
-    // The first bit in each pair is least significant. Edges: 0 -> 1 -> 2 -> 1.
-    let mut transition = Tdd::zero(&vtree);
-    for edge in [[-1, -2, 3, -4], [1, -2, -3, 4], [-1, 2, 3, -4]] {
-        transition = or(transition, Tdd::cube(&vtree, edge)?)?;
-    }
-    let mut reached = Tdd::cube(&vtree, [-1, -2])?; // start at state 0
-    let current = [VarId(0), VarId(1)];
-    let next_to_current = [(VarId(2), VarId(0)), (VarId(3), VarId(1))];
+    let vtree = Arc::new(Vtree::balanced(8));
+    // Indicators a,b,c,d use literals 1..4; next-state indicators use 5..8.
+    let at_a = Tdd::cube(&vtree, [1, -2, -3, -4])?;
+    let at_b = Tdd::cube(&vtree, [-1, 2, -3, -4])?;
+    let at_c = Tdd::cube(&vtree, [-1, -2, 3, -4])?;
+    let at_d = Tdd::cube(&vtree, [-1, -2, -3, 4])?;
+    let next_b = Tdd::cube(&vtree, [-5, 6, -7, -8])?;
+    let next_c = Tdd::cube(&vtree, [-5, -6, 7, -8])?;
+
+    let a_to_b = and(at_a.clone(), next_b.clone())?;
+    let b_to_c = and(at_b.clone(), next_c)?;
+    let c_to_b = and(at_c.clone(), next_b)?;
+    let transition = or(a_to_b, or(b_to_c, c_to_b)?)?;
+
+    let mut reached = at_a.clone();
+    let current = [VarId(0), VarId(1), VarId(2), VarId(3)];
+    let next_to_current = [
+        (VarId(4), VarId(0)), (VarId(5), VarId(1)),
+        (VarId(6), VarId(2)), (VarId(7), VarId(3)),
+    ];
     let mut iterations = 0;
 
     // Check the first image using the individual operations.
@@ -25,6 +35,7 @@ fn main() -> Result<(), OperationError> {
     let successors = successors.rename_vars(&next_to_current)?;
     let combined = image(reached.clone(), transition.clone(), &current, &next_to_current)?;
     assert!(successors.equivalent(&combined)?);
+    assert!(successors.equivalent(&at_b)?);
 
     loop {
         let successors = image(reached.clone(), transition.clone(), &current, &next_to_current)?;
@@ -45,27 +56,28 @@ fn main() -> Result<(), OperationError> {
     }
     assert_eq!(iterations, 3);
 
-    // States 0,1,2 are reachable; state 3 (both current bits true) is not.
-    let forbidden = Tdd::cube(&vtree, [1, 2])?;
-    let safe = forbidden.negate()?;
-    assert!(reached.equivalent(&safe)?);
-    assert!(reached.implies(&safe)?);
+    // Check the whole reachable set, including exclusion of invalid encodings.
+    let expected = or(at_a, or(at_b, at_c.clone())?)?;
+    assert!(reached.equivalent(&expected)?);
     assert_eq!(reached.projected_model_count(&current)?, 3u32.into());
-    println!("State 3 is unreachable");
 
-    let target = Tdd::cube(&vtree, [-1, 2])?; // state 2
-    let reachable_target = and(reached, target)?;
+    let safe = at_d.negate()?;
+    assert!(reached.implies(&safe)?);
+    println!("D is unreachable");
+
+    let reachable_target = and(reached, at_c)?;
     let witness = reachable_target
         .satisfying_assignment()?
-        .expect("state 2 is reachable");
+        .expect("C is reachable");
     assert!(Tdd::cube(&vtree, &witness)?.implies(&reachable_target)?);
-    let state = witness
+    let active = witness
         .iter()
-        .filter(|literal| literal.var.0 < 2 && literal.positive)
-        .fold(0u32, |bits, literal| bits | (1 << literal.var.0));
-    assert_eq!(state, 2);
+        .filter(|literal| literal.var.0 < 4 && literal.positive)
+        .map(|literal| literal.var)
+        .collect::<Vec<_>>();
+    assert_eq!(active, [VarId(2)]);
     // This is a state assignment; reconstructing a path needs predecessor tracking.
-    println!("Reachable target witness: state {state}");
+    println!("Reachable target witness: a=false, b=false, c=true, d=false");
     Ok(())
 }
 
