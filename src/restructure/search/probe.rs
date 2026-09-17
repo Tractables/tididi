@@ -116,7 +116,13 @@ impl<'a> RotationTrial<'a> {
     /// Repair topology and release the preimage before any accepted-rotation callback.
     fn commit(mut self) {
         self.pending.take().unwrap().commit(Arc::make_mut(&mut self.tdd.vtree));
-        self.tdd.clear_worklists();
+        // Both exits end with the pre-probe obligations still present: `Drop`
+        // restores them wholesale on reject, and the accept path puts them back
+        // underneath what the rotation itself recorded. Clearing here instead
+        // dropped both, which left a later `minimize` skipping levels it still
+        // owed work on.
+        let carried = self.old_dirty.take().expect("a trial takes the worklists when it is created");
+        self.tdd.merge_carried_dirty(carried);
     }
 }
 

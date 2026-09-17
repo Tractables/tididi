@@ -225,14 +225,19 @@ fn mark_candidates(
     ht[..table_size].fill(EMPTY_SLOT);
     let mut found = false;
     const PF_DIST: usize = 8;
-    let ht_ptr = ht.as_ptr();
     for i in 0..width {
         // Prefetch the twin-table slot that iteration `i + PF_DIST` will first probe.
         // `fingerprints[]` is sequential so the slot address is known ahead of time;
         // the ht probe is a random access into a table that typically misses L2.
+        //
+        // The pointer is re-derived from `ht` each iteration rather than taken
+        // once before the loop: the probe below writes through `ht`, which
+        // invalidates any raw pointer derived from it earlier, so a hoisted
+        // one would be used after it went stale. `as_ptr` is a field read, and
+        // the prefetch is a hint, so nothing here is a real load.
         if i + PF_DIST < width {
             let a = i + PF_DIST;
-            prefetch_slot(ht_ptr, (scratch.fingerprints[a] as usize) & mask);
+            prefetch_slot(ht.as_ptr(), (scratch.fingerprints[a] as usize) & mask);
         }
         let fp = scratch.fingerprints[i];
         let mut slot = (fp as usize) & mask;

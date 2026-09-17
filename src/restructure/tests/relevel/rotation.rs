@@ -330,7 +330,7 @@ fn gc1_sweep_undercount_repro() {
 // ─── Rotation Locality ─────────────────────────────────────────────────
 //
 // Under canonicity, `restructure_inner_search` followed by the
-// locality check and `clear_worklists` mutates only `levels[v_idx]` and
+// locality check and taking the worklists mutates only `levels[v_idx]` and
 // `levels[w_idx]`. Every other level is bit-for-bit identical pre and
 // post. These tests assert that property directly on snapshotted level
 // contents.
@@ -379,7 +379,7 @@ fn rotate_left_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::vt
     tdd.vtree = Arc::new(vt);
     let _ = restructure_inner_search(eng.limits(), tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
     crate::test_helpers::check::debug_assert_rotation_locality(eng, tdd, info.w_idx);
-    tdd.clear_worklists();
+    let _ = tdd.take_worklists();
     assert_locality(tdd, &snap, v_idx, w_idx);
     assert_canonical(tdd);
     Some((v_idx, w_idx))
@@ -394,7 +394,7 @@ fn rotate_right_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::v
     tdd.vtree = Arc::new(vt);
     let _ = restructure_inner_search(eng.limits(), tdd, &info, RotationKind::Right, &mut RestructureScratch::default(), usize::MAX);
     crate::test_helpers::check::debug_assert_rotation_locality(eng, tdd, info.w_idx);
-    tdd.clear_worklists();
+    let _ = tdd.take_worklists();
     assert_locality(tdd, &snap, v_idx, w_idx);
     assert_canonical(tdd);
     Some((v_idx, w_idx))

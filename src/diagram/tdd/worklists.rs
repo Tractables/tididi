@@ -111,8 +111,6 @@ impl Tdd {
         self.dirty.right_rescan.extend(levels);
     }
 
-    /// Empty the twin-contraction worklists. For a pass that has just proved
-    /// every level canonical by other means.
     /// True when no reduction pass has work left: nothing was edited since the
     /// last [`minimize`](Tdd::minimize), or every edit since has been reduced.
     #[inline]
@@ -120,10 +118,20 @@ impl Tdd {
         self.dirty.contract.is_empty() && self.dirty.leaf_contract.is_empty() && self.dirty.right_rescan.is_empty()
     }
 
+    /// Put `carried` — the worklists a probe took before it ran — back
+    /// underneath whatever the probe itself recorded, keeping both.
+    ///
+    /// The accept path of a rotation trial needs this rather than a clear. The
+    /// worklists are maintained incrementally and never rebuilt, so a level
+    /// dropped here keeps its stale contexts until something re-dirties it,
+    /// and the invariant that a level absent from every worklist is at its
+    /// contraction fixpoint stops holding.
     #[inline]
-    pub(crate) fn clear_worklists(&mut self) {
-        self.dirty.contract.clear();
-        self.dirty.leaf_contract.clear();
-        self.dirty.right_rescan.clear();
+    pub(crate) fn merge_carried_dirty(&mut self, mut carried: Dirty) {
+        carried.contract.append(&mut self.dirty.contract);
+        carried.leaf_contract.append(&mut self.dirty.leaf_contract);
+        carried.right_rescan.append(&mut self.dirty.right_rescan);
+        self.dirty = carried;
     }
+
 }
