@@ -49,7 +49,7 @@ pub(crate) mod rotate; // In-place vtree left/right rotations + topo fixup
 
 /// A variable identifier, independent of its position in the vtree.
 ///
-/// Variables are numbered from 1, like integer literals: `VarId(2)` is the
+/// Variables are numbered from 1, like integer literals: `VarId(1)` is the
 /// variable named by `1` and `-1`. Zero is not a variable. Resolve a
 /// variable's leaf with [`Vtree::leaf_of`]; a variable id and a [`VtreeIdx`]
 /// are different index spaces.

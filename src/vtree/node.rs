@@ -187,7 +187,7 @@ impl Vtree {
     /// Size of the variable-id space, at least the largest leaf's [`VarId`] plus one.
     ///
     /// This is a sufficient size for a table indexed by variable id. It equals
-    /// [`Vtree::num_leaves`] when the leaves are exactly `0..num_vars`; sparse ids
+    /// [`Vtree::num_leaves`] when the leaves are exactly `1..=num_vars`; sparse ids
     /// or a larger space passed to [`Vtree::from_nodes`] make it larger.
     #[inline]
     pub fn num_vars(&self) -> u32 {

@@ -100,8 +100,9 @@ impl Vtree {
         Self::from_nodes(nodes, root, num_vars)
     }
 
-    /// Build a balanced binary vtree over `num_vars` variables (`0..num_vars`)
-    /// in natural order — [`Vtree::balanced_over`] on `0, 1, …, n-1`.
+    /// Build a balanced binary vtree over `num_vars` variables
+    /// (`1..=num_vars`) in natural order — [`Vtree::balanced_over`] on
+    /// `1, 2, …, n`.
     ///
     /// # Panics
     ///
@@ -114,7 +115,7 @@ impl Vtree {
     /// assert_eq!(vtree.num_vars(), 4);
     /// assert_eq!(vtree.num_nodes(), 7);          // four leaves, three internal nodes
     /// assert_eq!(vtree.node(vtree.root()).is_leaf(), false);
-    /// // Natural order: the leaves carry 0, 1, 2, 3 left to right.
+    /// // Natural order: the leaves carry 1, 2, 3, 4 left to right.
     /// assert!(vtree.leaf_of(VarId(4)).is_some());
     /// ```
     pub fn balanced(num_vars: u32) -> Self {
@@ -160,9 +161,9 @@ impl Vtree {
         push_internal(nodes, left, right)
     }
 
-    /// A right-linear vtree over `0..num_vars` in ascending order:
-    /// [`Vtree::linear_from_order`] on `0, …, n-1`, so variable `0` is the
-    /// root's left leaf and variable `n-1` sits deepest.
+    /// A right-linear vtree over `1..=num_vars` in ascending order:
+    /// [`Vtree::linear_from_order`] on `1, …, n`, so variable `1` is the
+    /// root's left leaf and variable `n` sits deepest.
     ///
     /// # Panics
     ///
@@ -218,7 +219,7 @@ impl Vtree {
         Self::from_nodes(nodes, right, num_vars)
     }
 
-    /// Build a random vtree over `num_vars` variables (`0..num_vars`).
+    /// Build a random vtree over `num_vars` variables (`1..=num_vars`).
     /// Repeatedly picks two random trees from a forest and joins them, until
     /// one tree remains. The same `seed` gives the same tree, on every
     /// platform and in every release.
