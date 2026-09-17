@@ -1,42 +1,31 @@
-//! The variable tree, its orders, its text format, and graft and projection of
-//! the tree itself.
+//! Group variables and choose a diagram's decomposition.
 //!
-//! A vtree is a rooted binary tree whose leaves carry Boolean variables. Each
-//! internal node partitions the variables of its subtree, and that partition is
-//! what a diagram decomposes over: the nodes at level `t` denote sub-functions
-//! `f(vars(t_L), vars(t_R))` as disjunctions of pairs. Diagram storage is
-//! [`crate::diagram`]; rotating a compiled diagram to follow a rotated tree is
-//! [`crate::restructure`].
+//! A vtree is a binary tree with one Boolean variable at each leaf. An internal
+//! node splits those variables into the two groups a diagram combines at that
+//! level. The [grouping example](crate::guide::examples::vtrees) shows how the
+//! choice affects storage.
 //!
-//! Entry points:
+//! Start with [`Vtree::balanced`], or supply a leaf order to
+//! [`Vtree::balanced_over`]. [`Vtree::join`] combines explicit groups;
+//! [`Vtree::linear_from_order`] follows a variable order. See [`Vtree`] for
+//! construction and traversal, and [`crate::restructure`] for changing a
+//! compiled diagram's vtree.
 //!
-//! - Constructors: [`Vtree::leaf`], [`Vtree::join`], [`Vtree::balanced`],
-//!   [`Vtree::balanced_over`], [`Vtree::linear`], [`Vtree::linear_from_order`],
-//!   [`Vtree::random`], [`Vtree::graft`], [`Vtree::project_to_vars`].
-//! - Text: [`Vtree::from_text`] and [`Vtree::to_text`], the `.vtree`
-//!   interchange format — a vtree written by another tool loads here unchanged.
-//! - Reading the tree: [`Vtree::root`], [`Vtree::node`], [`Vtree::children`],
-//!   [`Vtree::leaf_of`], [`Vtree::lca`], [`Vtree::sibling`].
-//! - Traversal orders: [`Vtree::bottomup`], [`Vtree::leaf_bottomup`],
-//!   [`Vtree::internal_bottomup`].
-//! - Checking a hand-built tree: [`Vtree::validate`].
+//! # Variable identifiers
 //!
-//! ## Variable ids
+//! [`VarId`] identifies a variable independently of its position in the vtree.
+//! A vtree can cover a sparse subset of ids: [`Vtree::num_leaves`] counts its
+//! variables, while [`Vtree::num_vars`] gives the identifier-space size needed for a
+//! weight table. [`Vtree::leaf_of`] returns `None` for an absent variable.
 //!
-//! A vtree may cover a sparse subset of variable ids. [`Vtree::num_vars`] is
-//! the id-space size (at least `max VarId + 1`); [`Vtree::num_leaves`] is the number of ids
-//! the tree actually carries; [`Vtree::leaf_of`] is defined only for covered
-//! ids. The two counts agree exactly when the leaves are `0..num_vars`.
+//! # Traversal and storage
 //!
-//! ## Node layout
+//! [`VtreeIdx`] identifies a vtree node. Leaves occupy `0..num_leaves` and
+//! internal nodes follow them. Rotations preserve indices but change edges,
+//! so use [`Vtree::bottomup`] for child-before-parent order.
 //!
-//! Nodes are stored in bottom-up level order: all leaves first (`0..num_leaves`),
-//! then internal nodes (`num_leaves..n`). At construction that makes
-//! `child.idx() < parent.idx()` hold for every edge — but it is a fact about a
-//! freshly built tree, not an invariant: a rotation relinks nodes without
-//! moving them, so on a rotated tree an edge may run the other way and the
-//! array order is no longer topological. [`Vtree::bottomup`] is the authority:
-//! Every traversal reads that order rather than `0..n`.
+//! [`Vtree::to_text`] and [`Vtree::from_text`] use the `.vtree` interchange
+//! format; serialization preserves shape and variable labels, not node indices.
 
 
 mod build;

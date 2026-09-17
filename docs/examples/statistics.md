@@ -1,12 +1,9 @@
 # Inspect the stored circuit
 
-Sometimes a total size is not enough: we want to know where a circuit stores
-its largest decomposition. This example finds the node with the most child
-pairs and returns the vtree level where it lives.
+Find the circuit node with the most child pairs and the vtree level where
+it lives. This helps locate the largest decomposition in a stored diagram.
 
-This is a statistic of the stored representation. It does not count satisfying
-assignments. If levels have been marginalized, their original pair lists are
-no longer available to inspect.
+Marginalized levels have discarded their pairs, so this traversal skips them.
 
 Run the complete program with `cargo run --example statistic`. Read the
 [data model](crate::guide::model) first
@@ -55,11 +52,10 @@ fn widest_node(t: &Tdd) -> (VtreeIdx, usize) {
 }
 ```
 
-The initial answer is `(root, 0)` for a diagram with no stored nodes.
-On ties the function keeps the first maximum it encountered. The traversal
-only reads the diagram.
+The helper returns `(root, 0)` if there are no stored nodes and keeps the
+first maximum on ties.
 
-## Check a decomposition we can predict
+## Inspect an exclusive disjunction
 
 Use a balanced vtree over four variables. The exclusive OR of its first two
 variables has two alternatives: `(x1, NOT x2)` and `(NOT x1, x2)`.
@@ -74,8 +70,8 @@ let (left, _) = vtree.children(vtree.root());
 assert_eq!((level, pairs), (left, 2));
 ```
 
-The other two variables are free. A single positive literal has only one pair
-at each stored node, which gives another small check:
+The other two variables are free. For comparison, a single positive literal
+needs just one pair per stored node:
 
 ```rust,ignore,{class=tested-example}
 let unit = literal(&vtree, 1)?;
@@ -92,7 +88,6 @@ assert!(widest_node(&xor).1 <= xor.pair_count());
 println!("statistic: widest node has {pairs} pairs at vtree node {}", level.idx());
 ```
 
-This traversal also works as the starting point for a histogram of node sizes
-or a per-level storage report. See the
-[complete program](https://github.com/Tractables/tididi/blob/main/examples/statistic.rs)
-for imports and the runnable entry point.
+Adapt the same traversal for a histogram of node sizes or a per-level report.
+The [complete program](https://github.com/Tractables/tididi/blob/main/examples/statistic.rs)
+includes the runnable entry point.

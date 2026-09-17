@@ -3,7 +3,19 @@
 //! Read the [data model](model) for the representation or the
 //! [architecture reference](architecture) for the implementation.
 
-/// Worked examples, from Boolean constraints to custom diagram traversal.
+/// Worked examples of building and using circuits.
+///
+/// Start with [backup configurations](examples::configurations): build rules, count
+/// solutions, and update a user's choices. Continue with [probabilities](examples::probability)
+/// to evaluate weighted events or [reachability](examples::reachability) to explore states
+/// and transitions.
+///
+/// [Save and reload](examples::persistence) circuits between sessions.
+/// [Variable grouping](examples::vtrees) shows why vtree choices affect storage, and
+/// [execution limits](examples::execution) shows how to bound operations and release scratch.
+///
+/// For custom calculations, [minimum costs](examples::optimization) defines an evaluation
+/// algebra; [circuit statistics](examples::statistics) walks the stored nodes and pairs.
 pub mod examples {
     // The documentation integration test checks these excerpts against runnable programs.
     // Suppress the ignored-doctest badge only on blocks covered by that check.

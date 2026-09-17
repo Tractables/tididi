@@ -5,9 +5,7 @@ backups, encryption, and notifications. A configuration must choose at least
 one backup destination, and remote backups require encryption. We want to count
 valid configurations and find one we can offer to a user.
 
-This example needs only `tididi` as a dependency. Its code sections follow the
-order of the complete program, which you can run from the repository with
-`cargo run --example build_minimize_count`.
+Run this example with `cargo run --example build_minimize_count`.
 
 ## Give each option a variable
 
@@ -34,10 +32,9 @@ in the vtree.
 
 ## Write the rules as Boolean expressions
 
-Use [`or`](crate::or) for alternatives, [`and`](crate::and) for simultaneous
-requirements, and [`negate`](crate::Tdd::negate) to complement a diagram.
-"Remote requires encryption" means either remote backups are off or encryption
-is on:
+Combine alternatives with [`or`](crate::or) and requirements with
+[`and`](crate::and). "Remote requires encryption" means either remote backups
+are off or encryption is on:
 
 ```rust,ignore,{class=tested-example}
 let destination = or(local, remote.clone())?;
@@ -45,13 +42,10 @@ let encryption_rule = or(remote.clone().negate()?, encrypted)?;
 let mut configurations = and(destination, encryption_rule)?;
 ```
 
-These operations return `Result`; `?` propagates an error from `main`, whose
-return type is `Result<(), tididi::OperationError>`.
-
-Each `Tdd` owns its circuit. Boolean operations consume their operands, so we clone
-`remote` where we will need it again. Cloning copies the diagram storage and
-shares the vtree; borrow diagrams for queries that do not transform them.
-The diagrams must share the same `Arc<Vtree>` allocation, as these do.
+Boolean operations consume their operands, so `remote.clone()` keeps a copy
+for later use. Queries borrow the circuit. All these diagrams share one vtree.
+The `?` operator propagates errors from `main`, which returns
+`Result<(), tididi::OperationError>`.
 
 ## Count configurations
 
@@ -84,10 +78,10 @@ assert_eq!(remote_count, 4u32.into());
 println!("Configurations with remote backups: {remote_count}");
 ```
 
-Only the last two rows remain. The original `configurations` still represents
-all eight choices. This is evidence expressed as another constraint;
-[`Tdd::condition`](crate::Tdd::condition) instead substitutes values
-into a function, with different counting semantics.
+Only the last two rows remain; the original still represents all eight
+choices. Conjunction keeps the selected option in the count.
+[`Tdd::condition`](crate::Tdd::condition) substitutes its value, which is a
+different query.
 
 ## Find forced choices and conflicts
 
@@ -113,9 +107,7 @@ assert!(!conflicting.is_sat()?);
 ```
 
 Check satisfiability before displaying forced choices for arbitrary user input;
-an empty list of implied literals does not distinguish a conflict from a model
-with no forced choices. The original `configurations` still holds all eight
-valid configurations.
+an empty list can mean either a conflict or that no choice is forced.
 
 ## Ask for one concrete configuration
 
@@ -130,9 +122,9 @@ for literal in &witness {
 }
 ```
 
-The returned variable identifiers start at zero, matching the positions in
-`names`. The witness assigns every vtree variable. There can be many correct witnesses,
-so the program verifies that its returned assignment satisfies the rules:
+The witness assigns every vtree variable. Its variable identifiers index
+`names` starting at zero. Check that this particular configuration satisfies
+the rules:
 
 ```rust,ignore,{class=tested-example}
 let selected = and(configurations.clone(), Tdd::cube(&vtree, &witness)?)?;
@@ -167,23 +159,19 @@ counter.observe([-2, -3])?;
 assert_eq!(counter.model_count()?, 1u32.into());
 ```
 
-[`observe`](crate::query::ModelCounter::observe) changes only the listed
-variables, validating the whole update before applying it. The next count
-refreshes the affected parts of the circuit. Clear the observations to recover
-all eight configurations:
+Each [`observe`](crate::query::ModelCounter::observe) call changes only the
+listed choices. Clear them all to recover the original count:
 
 ```rust,ignore,{class=tested-example}
 counter.clear_pins();
 assert_eq!(counter.model_count()?, count);
 ```
 
-The counter borrows `configurations`; observations change the query, leaving
-the circuit intact. Use [`set_pin`](crate::query::ModelCounter::set_pin) to
-clear an individual observation or work with typed variable identifiers.
+The circuit stays unchanged. Use [`set_pin`](crate::query::ModelCounter::set_pin)
+to clear one observation.
 
-The [optimization example](crate::guide::examples::optimization) finds the minimum
-cost of a valid configuration. The [probability example](crate::guide::examples::probability) assigns weights
-to the valid assignments. The [execution example](crate::guide::examples::execution)
-continues this program with resource limits and working-memory control.
+Continue with [minimum costs](crate::guide::examples::optimization),
+[probabilities](crate::guide::examples::probability), or
+[execution limits](crate::guide::examples::execution).
 The [complete program](https://github.com/Tractables/tididi/blob/main/examples/build_minimize_count.rs)
-contains both the configuration queries and those execution controls.
+includes the queries above and the execution example.

@@ -1,13 +1,11 @@
-//! The semiring a diagram's values are drawn from.
+//! Arithmetic for evaluating diagrams and storing weighted values.
 //!
-//! A marginal level stores one value per node, and that value is a model
-//! count, an exact rational weight, or a bounded-precision log-domain weight.
-//! [`WeightValue`] is the weighted value type and [`SignedLog`] its log-domain
-//! representation; [`EvalAlgebra`] is the trait a caller implements to fold a
-//! whole diagram in an algebra of its own, and [`RationalWeights`] is the
-//! exact-rational instance of it.
+//! [`RationalWeights`] evaluates exact weighted sums. Implement [`EvalAlgebra`]
+//! for another calculation, such as a minimum cost, and pass it to
+//! [`Tdd::evaluate`](crate::Tdd::evaluate).
 //!
-//! The walk that consumes them is [`Tdd::evaluate`](crate::Tdd::evaluate).
+//! Marginalized diagrams store weighted results as [`WeightValue`], using
+//! exact rationals or the bounded-precision [`SignedLog`] representation.
 
 mod rational;
 mod weight;
@@ -19,7 +17,13 @@ pub(crate) use weight::{weight_key, WeightKey};
 use crate::diagram::LeafLabel;
 use crate::vtree::VarId;
 
-/// Arithmetic for evaluating a structural diagram with values at its leaves.
+/// Define a value at each leaf and how to combine values at conjunctions and alternatives.
+///
+/// Pass an implementation to [`Tdd::evaluate`](crate::Tdd::evaluate).
+/// [`RationalWeights`] computes weighted sums; the
+/// [cost example](crate::guide::examples::optimization) uses minimum and addition.
+///
+/// # Algebraic requirements
 ///
 /// The operations must form a commutative semiring: addition is associative and
 /// commutative with [`zero`](Self::zero) as identity; multiplication is
@@ -36,8 +40,6 @@ use crate::vtree::VarId;
 /// The library trusts these laws; violating them can make equivalent diagrams
 /// evaluate differently. A table-based implementation may store weights in
 /// `self`; a stateless algebra can be a unit struct.
-///
-/// The [optimization walkthrough](crate::guide::examples::optimization) applies a cost table to backup configurations.
 ///
 /// Count the fewest true variables in any satisfying assignment with a min-plus algebra:
 ///
@@ -68,12 +70,12 @@ use crate::vtree::VarId;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub trait EvalAlgebra {
-    /// The semiring's carrier type.
+    /// The value computed for a node.
     type Value: Clone;
     /// The additive identity.
     fn zero(&self) -> Self::Value;
     /// Value of leaf `label` for variable `var`. `LeafLabel::Zero` is never
-    /// passed here — `evaluate` short-circuits it to `zero()`.
+    /// passed here; `evaluate` returns `zero()` for it.
     fn leaf(&self, var: VarId, label: LeafLabel) -> Self::Value;
     /// Accumulate `other` into `acc` (the semiring `+`).
     fn add_assign(&self, acc: &mut Self::Value, other: &Self::Value);

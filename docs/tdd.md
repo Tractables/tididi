@@ -1,10 +1,9 @@
 # Tree Decision Diagrams
 
 A Tree Decision Diagram represents a Boolean function by decomposing it along
-a tree of variables. The same diagram can answer different questions: which
-assignments satisfy the function, how many there are, or what their combined
-weight is. This guide introduces the representation; the [API overview] connects
-it to operations in the library.
+a vtree. Its nodes describe sets of satisfying assignments, which can be
+counted or evaluated under weights. The [API overview] connects this
+representation to library operations.
 
 ## Start with the vtree
 
@@ -71,15 +70,11 @@ up to node numbering and pair order. This is the minimization result of
 [`marginalize_levels`] replaces a subtree's structure with per-node counts,
 or with weighted values if the diagram has an attached [`WeightStore`].
 This preserves the chosen evaluation but discards the assignments behind it:
-a count alone cannot reconstruct those assignments or evaluate new literal
-weights. Marginality is permanent, so decide what later operations need before
-releasing the structure.
+keep the structure if you will need to recover assignments or change weights
+later.
 
-A marginal level's descendants are also marginalized or are leaves whose
-contributions have been absorbed. Equal stored values may share a slot, and
-pairs can carry multiplicity. The structural determinism and canonicity
-statements above must therefore not be read as statements about a marginal
-level's value slots.
+Marginal levels can share equal values and carry pair multiplicities. Their
+storage follows the separate rules in the [`diagram`] reference.
 
 ## Reading the stored representation
 

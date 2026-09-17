@@ -4,7 +4,7 @@ Suppose rain and a sprinkler independently make the grass wet. After observing
 wet grass, how likely is rain? We will build the Boolean events once, then
 evaluate them under several choices of the input probabilities.
 
-The model is deliberately small:
+The model is:
 
 ```text
 rain ───────┐
@@ -28,9 +28,7 @@ use tididi::diagram::{LiteralWeights, RationalWeights};
 use tididi::{and, literal, or, OperationError, Tdd, Vtree};
 ```
 
-## Build the events once
-
-Build the events on one shared vtree.
+## Build the events
 
 ```rust,ignore,{class=tested-example}
 let vtree = Arc::new(Vtree::balanced(3));
@@ -64,46 +62,7 @@ fn bernoulli(positive: BigRational) -> LiteralWeights<BigRational> {
 }
 ```
 
-The program loops over three choices of input probabilities and an expected
-answer. The final scenario makes the evidence impossible:
-
-```rust,ignore,{class=tested-example}
-let scenarios = [
-    (fraction(1, 5), fraction(1, 10), Some(fraction(5, 7))),
-    (fraction(3, 5), fraction(1, 10), Some(fraction(15, 16))),
-    (fraction(0, 1), fraction(0, 1), None),
-];
-```
-
-For each `(rain_probability, sprinkler_probability, expected)` in `scenarios`,
-build a table from the current probabilities:
-
-```rust,ignore,{class=tested-example}
-let weights = RationalWeights::from_literals(&[
-    bernoulli(rain_probability.clone()),
-    bernoulli(sprinkler_probability.clone()),
-    bernoulli(fraction(2, 5)), // free wind contributes 2/5 + 3/5 = 1
-]);
-```
-
-Entries follow variable order. Every satisfying assignment contributes the
-product of its literal weights; evaluation sums those products. Wind appears
-in neither event, and its two weights sum to one, so it does not change either
-probability. Independence is a modeling assumption of this weight table.
-
-## Evaluate an event
-
-Call [`evaluate`](crate::Tdd::evaluate) on an event to obtain its probability
-under the current weights:
-
-```rust,ignore,{class=tested-example}
-let wet_probability = wet.evaluate(&weights)?;
-assert_eq!(rain.evaluate(&weights)?, rain_probability);
-```
-
-The result is an exact rational number.
-
-## Divide by the evidence mass
+## Compute a conditional probability
 
 Zero-probability evidence has no conditional probability. The helper returns
 `None` for that case instead of dividing by zero:
@@ -123,16 +82,55 @@ fn conditional_probability(
 }
 ```
 
-The caller supplies the same weights for the numerator and denominator:
+The caller supplies the same weight table for both events. Evaluation
+multiplies the literal weights in each satisfying assignment, then sums over
+assignments.
+
+## Try different probabilities
+
+Here are three scenarios, with the expected conditional probability in the
+last column. In the third case, wet grass has probability zero:
 
 ```rust,ignore,{class=tested-example}
-let conditional = conditional_probability(&rain_and_wet, &wet, &weights)?;
-assert_eq!(conditional, expected);
+let scenarios = [
+    (fraction(1, 5), fraction(1, 10), Some(fraction(5, 7))),
+    (fraction(3, 5), fraction(1, 10), Some(fraction(15, 16))),
+    (fraction(0, 1), fraction(0, 1), None),
+];
 ```
 
-## Change probabilities, keep the diagrams
+Build a weight table for each scenario, in variable order: rain, sprinkler,
+then wind. The wind weights sum to one, so this unused variable leaves the
+probabilities unchanged. The table assumes independent inputs.
 
-The program checks three scenarios:
+```rust,ignore,{class=tested-example}
+for (rain_probability, sprinkler_probability, expected) in scenarios {
+    // Rain, sprinkler and wind have independent priors.
+    let weights = RationalWeights::from_literals(&[
+        bernoulli(rain_probability.clone()),
+        bernoulli(sprinkler_probability.clone()),
+        bernoulli(fraction(2, 5)), // free wind contributes 2/5 + 3/5 = 1
+    ]);
+
+    // The diagrams stay structural and unchanged; each call performs a fresh fold.
+    let wet_probability = wet.evaluate(&weights)?;
+    assert_eq!(rain.evaluate(&weights)?, rain_probability);
+    assert_eq!(
+        wet_probability,
+        &rain_probability + &sprinkler_probability - &rain_probability * &sprinkler_probability
+    );
+    let conditional = conditional_probability(&rain_and_wet, &wet, &weights)?;
+    assert_eq!(conditional, expected);
+
+    println!("P(rain) = {rain_probability}, P(wet) = {wet_probability}");
+    match conditional {
+        Some(value) => println!("P(rain | wet) = {value}"),
+        None => println!("P(rain | wet) is undefined: the observation has probability zero"),
+    }
+}
+```
+
+The same diagrams give all three results:
 
 | P(rain) | P(sprinkler) | P(wet) | P(rain given wet) |
 |---|---|---|---|
@@ -140,10 +138,6 @@ The program checks three scenarios:
 | 3/5 | 1/10 | 16/25 | 15/16 |
 | 0 | 0 | 0 | undefined |
 
-Each [`Tdd::evaluate`](crate::Tdd::evaluate) call reads the new table
-without changing the structural diagram. This lets an application update
-probabilities while keeping the compiled logical events.
-
-See the [complete program](https://github.com/Tractables/tididi/blob/main/examples/probabilistic_query.rs)
-for the scenario loop and its assertions, and the
-[API overview](crate::guide::api) for other weighted queries.
+[`evaluate`](crate::Tdd::evaluate) reads each new weight table without changing
+the diagrams. The [complete program](https://github.com/Tractables/tididi/blob/main/examples/probabilistic_query.rs)
+puts the helpers and scenario loop together.

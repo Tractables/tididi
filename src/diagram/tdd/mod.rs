@@ -81,9 +81,10 @@ impl std::ops::BitOr for Changed {
     }
 }
 
-/// A Tree Decision Diagram: a Boolean function decomposed along a vtree.
+/// A Boolean function represented by a Tree Decision Diagram.
 ///
-/// Build and combine diagrams without keeping an engine:
+/// Build smaller functions and combine them with [`and`](crate::and) and
+/// [`or`](crate::or):
 ///
 /// ```
 /// use std::sync::Arc;
@@ -100,34 +101,16 @@ impl std::ops::BitOr for Changed {
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 ///
-/// The shared vtree retains reusable execution scratch. Composition functions
-/// such as [`and`](crate::and) return errors and consume their operands.
-/// Queries borrow diagrams and return errors. [`Context::with_limits`](crate::Context::with_limits)
-/// lends a batch engine for explicit execution limits. Binary operations require
-/// operands to share the same `Arc<Vtree>` allocation, independently of which
-/// batch produced them.
+/// Each diagram owns its nodes and shares a vtree through `Arc`. Operands must
+/// share the same `Arc<Vtree>` allocation, even if different batches built them.
+/// Operations reuse scratch from the vtree's context automatically; use
+/// [`Context::with_limits`](crate::Context::with_limits) for a bounded batch.
 ///
-/// The diagram owns one [`TddLevel`] per vtree node and shares the vtree by
-/// `Arc`. The function it denotes is the node `output`; every other stored
-/// node is a subfunction over its vtree node's variables. See the
-/// [module docs](super) for how to walk it. A minimized diagram is canonical
-/// for its vtree; one built level by level
-/// ([`TddBuilder`](crate::diagram::TddBuilder)) is not until
-/// [`minimize`](crate::Tdd::minimize) runs.
+/// # Keep a circuit for later queries
 ///
-/// Cloning copies the level storage and shares the vtree; it is not a cheap
-/// node-handle copy. Use borrowed references for read-only queries, and let
-/// Rust drop diagrams when they are no longer needed. Canonicality is up to node order within
-/// each level, so comparing output identifiers from different diagrams does
-/// not establish functional equality.
-///
-/// A structural diagram retains its Boolean choices and supports all Boolean
-/// operations. [`marginalize_levels`](crate::Tdd::marginalize_levels) can
-/// replace selected subtrees with counts or fixed weighted values; a diagram
-/// with those marginal levels supports only operations that can use the retained
-/// information. Each operation states its requirements.
-///
-/// Clone an operand when two transformations need to start from it:
+/// Queries borrow diagrams. Transformations taking `Tdd` consume it; clone a
+/// diagram when several transformations need the original. Cloning copies its
+/// storage, so prefer borrowing for queries.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -145,6 +128,22 @@ impl std::ops::BitOr for Changed {
 /// # for diagram in [&f, &with_first, &without_first] { tididi::test_helpers::assert_canonical(diagram); }
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
+///
+/// # Storage and minimization
+///
+/// A diagram has one [`TddLevel`] per vtree node. Its output denotes the whole
+/// function; other nodes represent subfunctions. The [module reference](super)
+/// explains traversal and child references.
+///
+/// [`minimize`](Self::minimize) makes a structural diagram canonical for its
+/// vtree, up to node numbering and pair order. Compare functions with
+/// [`equivalent`](Self::equivalent), rather than comparing output identifiers.
+/// Diagrams assembled with [`TddBuilder`](crate::diagram::TddBuilder) need an
+/// explicit minimization step to become canonical.
+///
+/// [`marginalize_levels`](Self::marginalize_levels) replaces selected subtrees
+/// with counts or fixed weighted values. This discards Boolean choices; each
+/// operation states whether it accepts such marginal levels.
 #[derive(Clone, Debug)]
 pub struct Tdd {
     /// The vtree the diagram is decomposed along. Operands of a binary
