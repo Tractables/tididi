@@ -46,18 +46,3 @@ fn mismatched_vtrees_are_rejected_before_shortcuts_or_allocation() {
         assert_eq!(engine.and_marginalizing(f, g, &[a.root()]).unwrap_err(), OperationError::VtreeMismatch);
     }
 }
-
-/// Invalid output roots are rejected before the conjunction can consume either diagram.
-#[test]
-fn mismatched_output_roots_are_rejected() {
-    let engine = Engine::new();
-    let tree = Arc::new(Vtree::balanced(2));
-    let f = Tdd::one(&tree);
-    let mut g = Tdd::zero(&tree);
-    assert_canonical(&f);
-    assert_canonical(&g);
-    // Deliberately violate the output convention after checking the fixture.
-    g.output.vtree = tree.leaf_of(VarId(0)).unwrap();
-    assert_eq!(engine.and(f.clone(), g.clone()).unwrap_err(), OperationError::RootMismatch);
-    assert_eq!(engine.and_marginalizing(f, g, &[]).unwrap_err(), OperationError::RootMismatch);
-}

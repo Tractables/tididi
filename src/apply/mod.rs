@@ -45,15 +45,6 @@ pub(crate) fn check_vtree(f: &crate::Tdd, g: &crate::Tdd) -> Result<(), crate::O
     Ok(())
 }
 
-/// Require a shared vtree and output level for a pairwise conjunction.
-pub(crate) fn check_conjunction_operands(f: &crate::Tdd, g: &crate::Tdd) -> Result<(), crate::OperationError> {
-    check_vtree(f, g)?;
-    if f.output().vtree != g.output().vtree {
-        return Err(crate::OperationError::RootMismatch);
-    }
-    Ok(())
-}
-
 /// Validate one weight interpretation for all operands, then install it where absent.
 pub(crate) fn prepare_weights<const N: usize>(mut operands: [&mut crate::Tdd; N]) -> Result<(), crate::OperationError> {
     let Some(source) = operands.iter().position(|f| f.weights.is_some()) else { return Ok(()) };

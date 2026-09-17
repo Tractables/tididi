@@ -7,5 +7,6 @@ mod operation_scope;
 mod stop_bound;
 
 mod captured;
+mod conversion;
 
 mod pool;

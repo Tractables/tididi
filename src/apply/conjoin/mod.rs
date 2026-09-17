@@ -86,7 +86,7 @@ pub(crate) fn conjoin_owned(
 ) -> Result<Tdd, OperationError> {
     // Checked before the swap and the self-conjunction shortcut, both of which
     // can return without ever reaching `apply_and_fallible_inner`.
-    crate::apply::check_conjunction_operands(&f, &g)?;
+    crate::apply::check_vtree(&f, &g)?;
     crate::apply::prepare_weights([&mut f, &mut g])?;
     conjoin_checked(eng, f, g, marginalize_targets)
 }
@@ -156,7 +156,6 @@ pub(crate) fn conjoin_checked(
 /// # Errors
 ///
 /// [`OperationError::VtreeMismatch`] for different vtree allocations,
-/// [`OperationError::RootMismatch`] for different output levels,
 /// [`OperationError::IncompatibleWeights`] for different weight interpretations,
 /// or [`OperationError::MarginalLevel`] when a structural operand constrains
 /// variables the other has summed out.
@@ -218,7 +217,7 @@ impl crate::Engine {
         mut g: Tdd,
         targets: &[VtreeIdx],
     ) -> Result<Tdd, OperationError> {
-        crate::apply::check_conjunction_operands(&f, &g)?;
+        crate::apply::check_vtree(&f, &g)?;
         f.check_level_indices(targets)?;
         crate::apply::prepare_weights([&mut f, &mut g])?;
         let _op = self.limits().begin_operation();

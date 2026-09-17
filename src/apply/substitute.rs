@@ -59,7 +59,7 @@ impl Engine {
             }
             match replacement {
                 Replacement::Diagram(diagram) => {
-                    super::check_conjunction_operands(&f, diagram)?;
+                    super::check_vtree(&f, diagram)?;
                     diagram.require_structure()?;
                 }
                 Replacement::Literal(literal) => {

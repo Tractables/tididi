@@ -127,8 +127,8 @@ impl Engine {
         mut then_branch: Tdd,
         mut else_branch: Tdd,
     ) -> Result<Tdd, OperationError> {
-        super::check_conjunction_operands(&condition, &then_branch)?;
-        super::check_conjunction_operands(&condition, &else_branch)?;
+        super::check_vtree(&condition, &then_branch)?;
+        super::check_vtree(&condition, &else_branch)?;
         for f in [&condition, &then_branch, &else_branch] {
             f.require_structure()?;
         }
@@ -154,7 +154,7 @@ impl Engine {
     /// Returns the operation's errors, plus [`OperationError::Stopped`] or
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn xor(&self, mut f: Tdd, mut g: Tdd) -> Result<Tdd, OperationError> {
-        super::check_conjunction_operands(&f, &g)?;
+        super::check_vtree(&f, &g)?;
         f.require_structure()?;
         g.require_structure()?;
         super::prepare_weights([&mut f, &mut g])?;
@@ -189,7 +189,7 @@ impl Engine {
         vars: &[VarId],
         how: QuantificationStrategy,
     ) -> Result<Tdd, OperationError> {
-        super::check_conjunction_operands(&f, &g)?;
+        super::check_vtree(&f, &g)?;
         f.require_structure()?;
         g.require_structure()?;
         super::prepare_weights([&mut f, &mut g])?;

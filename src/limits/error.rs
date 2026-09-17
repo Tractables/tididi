@@ -26,8 +26,6 @@ pub enum OperationError {
     OverBudget,
     /// The operands do not share the same vtree allocation.
     VtreeMismatch,
-    /// Conjunction operands have outputs at different vtree nodes.
-    RootMismatch,
     /// The operands use different literal weights or arithmetic, or mix weights with stored integer counts.
     IncompatibleWeights,
     /// A target level index is outside the operand's vtree.
@@ -48,6 +46,12 @@ pub enum OperationError {
     VariableNotInVtree(crate::vtree::VarId),
     /// An input cube or substitution map names the same source variable more than once.
     DuplicateVariable(crate::vtree::VarId),
+    /// A diagram assembled or reweighted for the operation failed the storage
+    /// checks of [`TddBuilder::finish`](crate::diagram::TddBuilder::finish).
+    /// `?` on a [`TddBuildError`](crate::diagram::TddBuildError) produces it,
+    /// except that its `IncompatibleWeights` becomes
+    /// [`IncompatibleWeights`](Self::IncompatibleWeights).
+    InvalidDiagram(crate::diagram::TddBuildError),
 }
 
 impl std::fmt::Display for OperationError {
@@ -55,7 +59,6 @@ impl std::fmt::Display for OperationError {
         match self {
             OperationError::InvalidLiteral(literal) => write!(f, "{literal} is not a literal; use a nonzero signed integer"),
             OperationError::VtreeMismatch => f.write_str("operands must share the same vtree allocation"),
-            OperationError::RootMismatch => f.write_str("conjunction operands must have the same output vtree node"),
             OperationError::IncompatibleWeights => f.write_str("operands require compatible literal weights and arithmetic; stored integer counts cannot be reweighted"),
             OperationError::LevelNotInVtree(level) => write!(f, "level {} is outside the vtree", level.idx()),
             OperationError::MarginalLevel(level) => write!(f, "operation requires structural data at marginal level {}", level.idx()),
@@ -63,6 +66,7 @@ impl std::fmt::Display for OperationError {
             OperationError::Stopped => f.write_str("operation stopped"),
             OperationError::OutputCap => f.write_str("output node cap exceeded"),
             OperationError::DuplicateVariable(var) => write!(f, "input names variable x{} twice", u64::from(var.0) + 1),
+            OperationError::InvalidDiagram(source) => write!(f, "invalid diagram: {source}"),
             OperationError::VariableNotInVtree(var) => {
                 write!(f, "variable x{} is not in the vtree", u64::from(var.0) + 1)
             }
@@ -75,4 +79,14 @@ impl std::error::Error for OperationError {}
 /// Typed literals convert infallibly at the same boundary as checked integer inputs.
 impl From<std::convert::Infallible> for OperationError {
     fn from(never: std::convert::Infallible) -> Self { match never {} }
+}
+
+/// Storage checks fail at the same boundary as invalid operation inputs.
+impl From<crate::diagram::TddBuildError> for OperationError {
+    fn from(source: crate::diagram::TddBuildError) -> Self {
+        match source {
+            crate::diagram::TddBuildError::IncompatibleWeights => OperationError::IncompatibleWeights,
+            other => OperationError::InvalidDiagram(other),
+        }
+    }
 }

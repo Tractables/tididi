@@ -15,7 +15,7 @@ impl Engine {
     /// on cancellation. Allocation refusals return
     /// [`OperationError::OverBudget`].
     pub fn equivalent(&self, f: &Tdd, g: &Tdd) -> Result<bool, OperationError> {
-        crate::apply::check_conjunction_operands(f, g)?;
+        crate::apply::check_vtree(f, g)?;
         f.require_structure()?;
         g.require_structure()?;
         let _op = self.limits().begin_operation();
@@ -44,7 +44,7 @@ impl Engine {
     /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
     /// [`OperationError::OutputCap`].
     pub fn implies(&self, f: &Tdd, g: &Tdd) -> Result<bool, OperationError> {
-        crate::apply::check_conjunction_operands(f, g)?;
+        crate::apply::check_vtree(f, g)?;
         f.require_structure()?;
         g.require_structure()?;
         let _op = self.limits().begin_operation();
