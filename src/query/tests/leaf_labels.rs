@@ -1,5 +1,5 @@
 use super::*;
-use crate::limits::{LimitConfig, PollGate, StopAt, StopRules};
+use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::query::boolean::visit_leaf_labels;
 use crate::test_helpers::assert_canonical;
 use crate::OperationError;
@@ -110,8 +110,8 @@ fn leaf_scan_stops_before_finishing_a_parent_and_can_retry() {
             unconditional: Some(StopAt::WorkUnits(before + 2)), after_pairs: None,
         }));
         let _op = lim.begin_operation();
-        let mut gate = PollGate::new(1);
-        let result = visit_leaf_labels(&f, |work| lim.poll(&mut gate, work), |_, _| {
+        let mut gate = eng.limits().gate_with(1);
+        let result = visit_leaf_labels(&f, |work| gate.poll(work), |_, _| {
             visited += 1;
             Ok(())
         });

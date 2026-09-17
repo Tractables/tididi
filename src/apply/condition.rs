@@ -38,17 +38,17 @@ pub(crate) fn condition_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], value: boo
 pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<Item = impl TryInto<crate::diagram::Literal, Error: Into<OperationError>>>) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let _op = lim.begin_operation();
-    if lim.should_stop() { return Err(OperationError::Stopped); }
-    let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
+    lim.check_stop()?;
+    let mut gate = lim.gate();
     let mut targets = Vec::new();
     for literal in assignment {
         let literal = literal.try_into().map_err(Into::into)?;
         let leaf = f.vtree.leaf_of(literal.var).ok_or(OperationError::VariableNotInVtree(literal.var))?;
         let pol = if literal.positive { Polarity::Positive } else { Polarity::Negative };
         lim.try_push(&mut targets, (leaf, pol))?;
-        lim.poll(&mut gate, 1)?;
+        gate.poll(1)?;
     }
-    lim.flush_poll(&mut gate)?;
+    gate.flush()?;
     targets.sort_unstable_by_key(|&(leaf, _)| leaf);
     let contradictory = targets.windows(2).any(|pair| pair[0].0 == pair[1].0 && pair[0].1 != pair[1].1);
     if contradictory {

@@ -70,6 +70,12 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
     let mut next_filter: Option<rustc_hash::FxHashSet<u32>> = None;
 
     loop {
+        // Termination is argued from the node count below, not bounded by a
+        // count, so this is where an installed deadline or stop callback cuts
+        // in. A round is a scan of at least one level, so one test per round
+        // costs nothing next to it.
+        eng.limits().check_stop()?;
+
         // An empty worklist means no level was touched last round, so no new
         // content twin can exist.
         if let Some(ref set) = next_filter

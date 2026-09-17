@@ -261,7 +261,6 @@ where
     R: ChildLookup,
     S: PairSink,
 {
-    let lim = eng.limits();
     let both_multi_pair = ctx.both_multi_pair;
     if both_multi_pair && !left.passthrough() && left_alive_mask & ctx.sides.left.reach[j] == 0 {
         return Ok(());
@@ -270,7 +269,7 @@ where
         return Ok(());
     }
     let n = if ITER_C1 { inputs1.len() } else { inputs2.len() };
-    lim.poll(gate, n as u64)?;
+    gate.poll(n as u64)?;
     let cell_start = sink.begin();
     for k in 0..n {
         let (p1, p2) = if ITER_C1 {
@@ -312,7 +311,6 @@ where
     R: ChildLookup,
     S: PairSink,
 {
-    let lim = eng.limits();
     // ── N×M (implies both_multi_pair: both levels multi-pair ⟹ masks built) ──────
     let left_dead = !left.passthrough()
         && left_alive_mask & ctx.sides.left.reach[j] == 0;
@@ -351,7 +349,7 @@ where
             p1_idx += 1;
             while p1_idx < n1 && inputs1[p1_idx].left == p1_left { p1_idx += 1; }
             let g1 = &inputs1[g1_start..p1_idx];
-            lim.poll(gate, (g1.len() * n2) as u64)?;
+            gate.poll((g1.len() * n2) as u64)?;
 
             if ctx.sides.left.live_cols[p1_left.raw() as usize] & ctx.sides.left.reach[j] == 0 { continue; }
 
@@ -376,7 +374,7 @@ where
     } else {
         // ── General N×M ───────────────────────────────────────────────
         for p1 in inputs1 {
-            lim.poll(gate, inputs2.len() as u64)?;
+            gate.poll(inputs2.len() as u64)?;
             if !left.passthrough()
                 && ctx.sides.left.live_cols[p1.left.raw() as usize] & ctx.sides.left.reach[j] == 0 {
                 continue;
@@ -444,7 +442,6 @@ where
     R: ChildLookup,
     S: PairSink,
 {
-    let lim = eng.limits();
     if S::ASSERT_INTERNAL {
         debug_assert!(
             right_level.nodes[j].is_internal() || right_level.nodes[j].b == u32::MAX,
@@ -471,7 +468,7 @@ where
 
     if inputs1.len() == 1 && inputs2.len() == 1 {
         // ── 1×1 ──────────────────────────────────────────────────────────
-        lim.poll(gate, 1)?;
+        gate.poll(1)?;
         let p1 = &inputs1[0];
         let p2 = &inputs2[0];
         let lc = left.get(node_idx, p1.left.0, p2.left.0);

@@ -307,11 +307,11 @@ impl Tdd {
     /// Assemble trusted levels, charging initial reduction worklists to the engine.
     pub(crate) fn try_from_levels_on(eng: &crate::Engine, vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Result<Self, crate::OperationError> {
         let lim = eng.limits();
-        let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
+        let mut gate = lim.gate();
         let result = Self::assemble(Arc::clone(&vtree), levels, output, Dirty::default(),
             vtree.internal_bottomup().map(|(t, _, _)| t),
-            |list, n| lim.reserve(list, n), || lim.poll(&mut gate, 1))?;
-        lim.flush_poll(&mut gate)?;
+            |list, n| lim.reserve(list, n), || gate.poll(1))?;
+        gate.flush()?;
         Ok(result)
     }
 
@@ -333,10 +333,10 @@ impl Tdd {
         carried: Dirty, rebuilt: &[VtreeIdx],
     ) -> Result<Self, crate::OperationError> {
         let lim = eng.limits();
-        let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
+        let mut gate = lim.gate();
         let result = Self::assemble(vtree, levels, output, carried, rebuilt.iter().copied(),
-            |list, n| lim.reserve(list, n), || lim.poll(&mut gate, 1))?;
-        lim.flush_poll(&mut gate)?;
+            |list, n| lim.reserve(list, n), || gate.poll(1))?;
+        gate.flush()?;
         Ok(result)
     }
 

@@ -183,7 +183,7 @@ fn apply_and_fallible_inner(
     let vtree = Arc::clone(&f.vtree);
     let num_nodes = vtree.num_nodes();
     if f.is_zero() || g.is_zero() {
-        if lim.should_stop() { return Err(OperationError::Stopped); }
+        lim.check_stop()?;
         let levels = diagram::take_levels(eng, num_nodes);
         let mut out = Tdd::from_levels_unchecked(
             vtree,

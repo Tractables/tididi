@@ -405,7 +405,7 @@ impl<'a> ModelCounter<'a> {
         if tdd.levels.iter().any(|level| level.is_weight_marginal()) {
             return Err(OperationError::IncompatibleWeights);
         }
-        if lim.should_stop() { return Err(OperationError::Stopped); }
+        lim.check_stop()?;
         let mut cols = Vec::new();
         lim.reserve_exact(&mut cols, tdd.vtree.num_nodes())?;
         cols.resize_with(tdd.vtree.num_nodes(), CountVec::default);
@@ -415,7 +415,7 @@ impl<'a> ModelCounter<'a> {
         if pin_slots != 0 && retention == Retention::All {
             lim.reserve_exact(&mut changed, pin_slots)?;
         }
-        if lim.should_stop() { return Err(OperationError::Stopped); }
+        lim.check_stop()?;
         Ok(Self { tdd, cols, pins, changed, retention, convention, evaluated: false })
     }
 
@@ -611,8 +611,8 @@ impl<'a> ModelCounter<'a> {
         let lim = eng.limits();
         let _op = lim.begin_operation();
         let result = (|| {
-            if lim.should_stop() { return Err(OperationError::Stopped); }
-            let mut gate = PollGate::new(lim.reduce_poll_stride());
+            lim.check_stop()?;
+            let mut gate = lim.gate();
             let count = if self.tdd.is_zero() {
                 BigUint::ZERO
             } else {
@@ -623,8 +623,8 @@ impl<'a> ModelCounter<'a> {
                     CountRead::Big(value) => value.clone(),
                 }
             };
-            lim.poll(&mut gate, 1)?;
-            lim.flush_poll(&mut gate)?;
+            gate.poll(1)?;
+            gate.flush()?;
             Ok(count)
         })();
         if result.is_err() {
@@ -649,10 +649,10 @@ impl<'a> ModelCounter<'a> {
                     if self.pins[parent.idx()].dirty { break; }
                     eng.limits().try_push(&mut self.changed, parent)?;
                     self.pins[parent.idx()].dirty = true;
-                    eng.limits().poll(gate, 1)?;
+                    gate.poll(1)?;
                     current = parent;
                 }
-                eng.limits().poll(gate, 1)?;
+                gate.poll(1)?;
             }
             tdd.vtree.sort_bottom_up(&mut self.changed);
             let fold = OverflowingCounts { pins: &self.pins, convention: self.convention };
@@ -689,7 +689,7 @@ impl ModelCounter<'_> {
     pub(crate) fn into_fast_counts(mut self, eng: &Engine) -> Result<Vec<Vec<u128>>, OperationError> {
         debug_assert_eq!(self.retention, Retention::All, "a frontier counter frees the columns this reads");
         let _op = eng.limits().begin_operation();
-        let mut gate = PollGate::new(eng.limits().reduce_poll_stride());
+        let mut gate = eng.limits().gate();
         self.refresh(eng, &mut gate)?;
         Ok(self.cols.into_iter().map(|c| c.into_parts().0).collect())
     }

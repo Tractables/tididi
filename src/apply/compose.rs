@@ -134,9 +134,7 @@ impl Engine {
         }
         super::prepare_weights([&mut condition, &mut then_branch, &mut else_branch])?;
         let _op = self.limits().begin_operation();
-        if self.limits().should_stop() {
-            return Err(OperationError::Stopped);
-        }
+        self.limits().check_stop()?;
         let otherwise = self.negate(condition.try_clone_on(self)?)?;
         let yes = self.and(condition, then_branch)?;
         let no = self.and(otherwise, else_branch)?;
@@ -159,9 +157,7 @@ impl Engine {
         g.require_structure()?;
         super::prepare_weights([&mut f, &mut g])?;
         let _op = self.limits().begin_operation();
-        if self.limits().should_stop() {
-            return Err(OperationError::Stopped);
-        }
+        self.limits().check_stop()?;
         let not_g = self.negate(g.try_clone_on(self)?)?;
         self.ite(f, not_g, g)
     }
@@ -194,9 +190,7 @@ impl Engine {
         g.require_structure()?;
         super::prepare_weights([&mut f, &mut g])?;
         let _op = self.limits().begin_operation();
-        if self.limits().should_stop() {
-            return Err(OperationError::Stopped);
-        }
+        self.limits().check_stop()?;
         let targets = super::project::quantification_targets(self, f.vtree(), vars)?;
         let product = self.and(f, g)?;
         // A nonempty quantification minimizes a non-false product.

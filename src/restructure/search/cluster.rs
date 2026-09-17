@@ -10,7 +10,6 @@ use rustc_hash::FxHashSet;
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 use crate::vtree::rotate::RotationInfo;
 use crate::diagram::{Tdd, TddLevel};
-use crate::limits::PollGate;
 use crate::limits::OperationError;
 
 use super::local::{RotationObjective, MinimizePairs};
@@ -263,7 +262,7 @@ impl Engine {
         // the size `rotate_cluster`'s churn is bounded by (`bound_mult ×
         // old_pairs`). With no stop axis installed it is an add and three cell loads
         // per candidate.
-        let mut poll = PollGate::new(lim.reduce_poll_stride());
+        let mut poll = lim.gate();
         // Each accept strictly shrinks size, so the fixpoint terminates. Re-scan
         // after each sweep: a closed cluster can expose a fresh one a level up.
         loop {
@@ -275,7 +274,7 @@ impl Engine {
                 // completed attempt left behind. `tried` keeps whatever it recorded —
                 // a pivot marked before the cut is one this compile will not
                 // reconsider, which is the flag's own best-effort contract.
-                lim.poll(&mut poll, tdd.levels[v.idx()].live_pairs() as u64 + 1)?;
+                poll.poll(tdd.levels[v.idx()].live_pairs() as u64 + 1)?;
                 // Attempt-once per (pivot, kind). Marginality is monotonic within a
                 // compile, so a rejected cluster stays a candidate and — without this
                 // guard — would be re-considered (full O(size) restructure + revert)

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::vtree::Vtree;
 use crate::Engine;
-use crate::limits::{OperationError, PollGate};
+use crate::limits::{OperationError};
 
 use crate::diagram::{self, *};
 
@@ -74,11 +74,11 @@ fn cube_to_tdd(
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let _op = lim.begin_operation();
-    if lim.should_stop() { return Err(OperationError::Stopped); }
-    let mut gate = PollGate::new(lim.reduce_poll_stride());
+    lim.check_stop()?;
+    let mut gate = lim.gate();
     let mut label = Vec::new();
     for lit in literals {
-        lim.poll(&mut gate, 1)?;
+        gate.poll(1)?;
         let lit: Literal = lit.try_into().map_err(Into::into)?;
         let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
         if label.is_empty() { lim.try_resize(&mut label, vtree.num_nodes(), ONE_LEAF_IDX)?; }
@@ -92,13 +92,13 @@ fn cube_to_tdd(
     };
     let mut levels = diagram::try_take_levels(eng, vtree.num_nodes())?;
     for (emitted, (t, left, right)) in vtree.internal_bottomup().enumerate() {
-        lim.poll(&mut gate, 1)?;
+        gate.poll(1)?;
         let index = levels[t.idx()].push_node_on(eng, &[ChildPair::new(label_at(left), label_at(right))])?;
         // A cleared internal level receives exactly one node, at the free label's index.
         debug_assert_eq!(index, ONE_LEAF_IDX);
         lim.check_output_cap(emitted as u64 + 1)?;
     }
-    lim.flush_poll(&mut gate)?;
+    gate.flush()?;
     let root = vtree.root();
     Tdd::try_from_levels_on(eng, Arc::clone(vtree), levels, TddNodeId { vtree: root, local: label_at(root) })
 }

@@ -47,7 +47,7 @@ pub(crate) fn exists_var_on(eng: &Engine, f: Tdd, x: VarId, how: QuantificationS
 
 /// Quantify a validated leaf index on the operand's unchanged vtree.
 fn exists_leaf_on(eng: &Engine, f: Tdd, leaf_idx: VtreeIdx, how: QuantificationStrategy) -> Result<Tdd, OperationError> {
-    if eng.limits().should_stop() { return Err(OperationError::Stopped); }
+    eng.limits().check_stop()?;
     if f.is_zero() {
         return Ok(f);
     }
@@ -73,18 +73,18 @@ pub(crate) fn exists_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], how: Quantifi
 /// Validate the entire request and retain each leaf once in first-occurrence order.
 pub(super) fn quantification_targets(eng: &Engine, tree: &Vtree, vars: &[VarId]) -> Result<Vec<VtreeIdx>, OperationError> {
     let lim = eng.limits();
-    if lim.should_stop() { return Err(OperationError::Stopped); }
-    let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
+    lim.check_stop()?;
+    let mut gate = lim.gate();
     let mut targets = Vec::new();
     for (position, &var) in vars.iter().enumerate() {
         let leaf = tree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
         lim.try_push(&mut targets, (leaf, position))?;
-        lim.poll(&mut gate, 1)?;
+        gate.poll(1)?;
     }
     targets.sort_unstable_by_key(|&(leaf, position)| (leaf, position));
     targets.dedup_by_key(|(leaf, _)| *leaf);
     targets.sort_unstable_by_key(|&(_, position)| position);
-    lim.flush_poll(&mut gate)?;
+    gate.flush()?;
     let mut leaves = Vec::new();
     lim.reserve_exact(&mut leaves, targets.len())?;
     leaves.extend(targets.into_iter().map(|(leaf, _)| leaf));

@@ -112,7 +112,7 @@ pub(crate) fn conjoin_checked(
     // is stated.
     if is_self_conjunction(&f, &g) {
         let _op = eng.limits().begin_operation();
-        if eng.limits().should_stop() { return Err(OperationError::Stopped); }
+        eng.limits().check_stop()?;
         diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels));
         return Ok(f);
     }

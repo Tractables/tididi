@@ -134,7 +134,7 @@ pub(crate) fn fold_level<F: LevelFold>(
 ) -> Result<(), OperationError> {
     let ti = t.idx();
     if let Some(gate) = poll.as_deref_mut() {
-        eng.limits().poll(gate, 1)?;
+        gate.poll(1)?;
     }
     if tdd.vtree.node(t).is_leaf() {
         let var = tdd.vtree.leaf_var(t);
@@ -156,11 +156,11 @@ pub(crate) fn fold_level<F: LevelFold>(
     for start in (0..level.nodes.len()).step_by(batch) {
         let end = start.saturating_add(batch).min(level.nodes.len());
         if F::NODE_WORK && let Some(gate) = poll.as_deref_mut() {
-            eng.limits().poll(gate, (end - start) as u64)?;
+            gate.poll((end - start) as u64)?;
         }
         for (i, pairs) in level.internal_inputs_range(start..end) {
             if !F::NODE_WORK && let Some(gate) = poll.as_deref_mut() {
-                eng.limits().poll(gate, pairs.len() as u64 + 1)?;
+                gate.poll(pairs.len() as u64 + 1)?;
             }
             let v = f.fold_node(
                 pairs,

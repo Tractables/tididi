@@ -94,6 +94,13 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Opera
         remap[level_base[tdd.output.vtree.idx()] + tdd.output.local.idx()],
     );
 
+    // Both passes cross every reference slot, and neither can stop partway:
+    // `compact_levels` rewrites levels in place, so a diagram abandoned mid-pass
+    // has some levels compacted and others still naming their old indices.
+    // Charge the walk so a work budget sees it; the cancellation test belongs to
+    // the callers, between prunes.
+    eng.limits().charge_work(2 * total as u64);
+
     pool.prune_level_base.put(level_base);
     pool.prune_remap.put_bounded(eng.limits(), remap);
 

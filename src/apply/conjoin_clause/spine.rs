@@ -74,11 +74,11 @@ pub(super) fn build_clause_spine(
     spine_internal: &mut Vec<VtreeIdx>,
     dfs_stack: &mut Vec<(VtreeIdx, bool)>,
 ) -> Result<(), OperationError> {
-    let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
+    let mut gate = lim.gate();
     for lit in clause {
         let mut cur = vtree.leaf_of(lit.var).expect("the vtree carries this variable");
         loop {
-            lim.poll(&mut gate, 1)?;
+            gate.poll(1)?;
             if !on_spine.set(cur) { break; }
             match vtree.node(cur).parent() {
                 Some(p) => cur = p,
@@ -96,7 +96,7 @@ pub(super) fn build_clause_spine(
         lim.try_push(dfs_stack, (root, false))?;
     }
     while let Some((t, processed)) = dfs_stack.pop() {
-        lim.poll(&mut gate, 1)?;
+        gate.poll(1)?;
         if processed {
             lim.try_push(spine_internal, t)?;
         } else {
@@ -106,7 +106,7 @@ pub(super) fn build_clause_spine(
             if on_spine[r.idx()] && !vtree.node(r).is_leaf() { lim.try_push(dfs_stack, (r, false))?; }
         }
     }
-    lim.flush_poll(&mut gate)
+    gate.flush()
 }
 
 /// Propagate `need_dt` top-down over the spine: a level needs the complement

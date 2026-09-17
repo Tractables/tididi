@@ -14,7 +14,6 @@ pub use crate::value::Retention;
 use num_bigint::BigUint;
 
 use crate::diagram::*;
-use crate::limits::PollGate;
 use crate::vtree::{VarId, VtreeNode};
 
 /// Whether pins count as evidence or as substitution over the unchanged vtree.
@@ -90,7 +89,7 @@ pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: PinSema
 pub(crate) fn model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, OperationError> {
     let _op = eng.limits().begin_operation();
     if tdd.is_zero() {
-        if eng.limits().should_stop() { return Err(OperationError::Stopped); }
+        eng.limits().check_stop()?;
         return Ok(BigUint::ZERO);
     }
     ModelCounter::allocate(eng, tdd, 0, Retention::Frontier, PinSemantics::Cofactor)?.count_with(eng)
@@ -162,14 +161,14 @@ impl Engine {
     pub fn projected_model_count(&self, tdd: &Tdd, vars: &[VarId]) -> Result<BigUint, OperationError> {
         let lim = self.limits();
         let _op = lim.begin_operation();
-        if lim.should_stop() { return Err(OperationError::Stopped); }
+        lim.check_stop()?;
         let vtree = tdd.vtree();
-        let mut gate = PollGate::new(lim.reduce_poll_stride());
+        let mut gate = lim.gate();
         for &var in vars {
-            lim.poll(&mut gate, 1)?;
+            gate.poll(1)?;
             vtree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
         }
-        lim.flush_poll(&mut gate)?;
+        gate.flush()?;
         tdd.require_structure()?;
         let satisfiable = self.is_sat(tdd)?;
         if vars.is_empty() || !satisfiable {
@@ -179,17 +178,17 @@ impl Engine {
         let mut selected = Vec::new();
         lim.try_resize(&mut selected, vtree.num_nodes(), false)?;
         for &var in vars {
-            lim.poll(&mut gate, 1)?;
+            gate.poll(1)?;
             selected[vtree.leaf_of(var).expect("validated variable").idx()] = true;
         }
         let mut eliminated = Vec::new();
         for level in vtree.bottomup() {
-            lim.poll(&mut gate, 1)?;
+            gate.poll(1)?;
             if let VtreeNode::Leaf { var, .. } = *vtree.node(level) && !selected[level.idx()] {
                 lim.try_push(&mut eliminated, var)?;
             }
         }
-        lim.flush_poll(&mut gate)?;
+        gate.flush()?;
         if eliminated.is_empty() { return self.model_count(tdd); }
         let mut copy = tdd.try_clone_on(self)?;
         copy.weights = None;

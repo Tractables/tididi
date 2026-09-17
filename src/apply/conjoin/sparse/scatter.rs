@@ -25,7 +25,7 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
     //
     // Amortized cancellation/deadline poll — same rationale/soundness
     // as the general arm below; bail lands where `try_push` recovers.
-    let mut ticker = crate::limits::PollGate::new(super::super::budget::APPLY_POLL_STRIDE);
+    let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     let pl_outer = if !SWAPPED { pl.right } else { pl.left };
     for &ProductEntry { left_idx: LeftNodeIdx(outer1), right_idx: RightNodeIdx(outer2), prod_idx: ProductNodeIdx(outer_prod) } in pl_outer {
         let off_c1 = ws.rev_offsets_c1[outer1 as usize] as usize;
@@ -49,7 +49,7 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
                     })?;
                 }
             }
-            lim.poll(&mut ticker, (end_c1 - off_c1) as u64)?;
+            ticker.poll((end_c1 - off_c1) as u64)?;
         }
     }
     Ok(())
@@ -283,7 +283,7 @@ impl ScatterSides<'_> {
                     };
                     lim.try_push(bucket, ParEntry { p2, a_prod, sib_idx })?;
                 }
-                lim.poll(ticker, fb.len() as u64)?;
+                ticker.poll(fb.len() as u64)?;
             }
         }
         Ok(())
@@ -307,7 +307,7 @@ fn scatter_general_arm<const SWAPPED: bool>(
     // mid-level break, so a wide level could otherwise wait out an expired
     // deadline; the bail lands at a loop level `try_push`'s recovery already
     // covers, so the workspace stays reusable.
-    let mut ticker = crate::limits::PollGate::new(super::super::budget::APPLY_POLL_STRIDE);
+    let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     for outer in 0..s.outer_k {
         if s.outer_buckets[outer].is_empty() { continue; }
         s.build_filtered_for_outer(lim, outer)?;

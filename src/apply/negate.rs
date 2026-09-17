@@ -11,7 +11,7 @@ use crate::diagram::EncodedChildRef;
 
 use std::collections::HashMap;
 use crate::Engine;
-use crate::limits::{OperationError, PollGate};
+use crate::limits::{OperationError};
 use std::sync::Arc;
 
 use crate::diagram::*;
@@ -36,7 +36,7 @@ impl Engine {
 /// [`Engine::negate`] also minimizes the result.
 pub(crate) fn negate_tdd_owned(eng: &Engine, mut tdd: Tdd) -> Result<Tdd, OperationError> {
     tdd.require_structure()?;
-    if eng.limits().should_stop() { return Err(OperationError::Stopped); }
+    eng.limits().check_stop()?;
     let weights = tdd.weights.take();
     let mut result = if tdd.is_zero() {
         crate::build::constant_one(eng, &tdd.vtree)
@@ -144,7 +144,7 @@ pub(crate) fn expand_full(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationEr
         let lefts = ChildBasis::of(&vtree, &tdd.levels, left);
         let rights = ChildBasis::of(&vtree, &tdd.levels, right);
         expand_internal_explicit(eng, &mut tdd.levels[t.idx()], lefts, rights)?;
-        if eng.limits().should_stop() { return Err(OperationError::Stopped); }
+        eng.limits().check_stop()?;
     }
     Ok(())
 }
@@ -202,7 +202,7 @@ fn expand_ones_at_leaf_parents(eng: &Engine, tdd: &mut Tdd) -> Result<(), Operat
 fn expand_ones_in_level(eng: &Engine, level: &mut TddLevel, left_leaf: bool, right_leaf: bool) -> Result<(), OperationError> {
     let mut rebuilt = TddLevel::new();
     let mut pairs = Vec::new();
-    let mut poll = PollGate::new(eng.limits().reduce_poll_stride());
+    let mut poll = eng.limits().gate();
     for node in &level.nodes {
         if !node.is_internal() {
             eng.limits().try_push(&mut rebuilt.nodes, *node)?;
@@ -215,7 +215,7 @@ fn expand_ones_in_level(eng: &Engine, level: &mut TddLevel, left_leaf: bool, rig
             for &left in lefts {
                 for &right in rights { eng.limits().try_push(&mut pairs, ChildPair { left, right })?; }
             }
-            eng.limits().poll(&mut poll, 1)?;
+            poll.poll(1)?;
         }
         pairs.sort_unstable();
         pairs.dedup();
@@ -223,7 +223,7 @@ fn expand_ones_in_level(eng: &Engine, level: &mut TddLevel, left_leaf: bool, rig
     }
     rebuilt.n_tombstones = level.n_tombstones;
     *level = rebuilt;
-    eng.limits().flush_poll(&mut poll)
+    poll.flush()
 }
 
 // The leaf basis is a contiguous range only because Pos and Neg are adjacent.
@@ -294,29 +294,29 @@ fn expand_internal_explicit(
     let cap = basis.min(level.pair_count() + level.nodes.len());
     let mut used = HashMap::new();
     eng.limits().reserve_map(&mut used, cap)?;
-    let mut poll = PollGate::new(eng.limits().reduce_poll_stride());
+    let mut poll = eng.limits().gate();
     for node in &level.nodes {
         if node.is_internal() {
             for pair in level.pairs_of(node) {
                 if lefts.contains(pair.left.0) && rights.contains(pair.right.0) {
                     used.insert((pair.left.0, pair.right.0), ());
-                    eng.limits().poll(&mut poll, 1)?;
+                    poll.poll(1)?;
                 }
             }
         }
     }
     // Covered every basis cell ⇒ already full; skip the O(|L|·|R|) enumeration.
     if used.len() == basis {
-        return eng.limits().flush_poll(&mut poll);
+        return poll.flush();
     }
 
     let fill_pairs = missing_cells(eng, &used, lefts, rights)?;
     if fill_pairs.is_empty() {
-        return eng.limits().flush_poll(&mut poll);
+        return poll.flush();
     }
 
     level.push_node_on(eng, &fill_pairs)?;
-    eng.limits().flush_poll(&mut poll)
+    poll.flush()
 }
 
 /// The cells of `lefts × rights` that are not pairs of `exclude_node`.
@@ -344,16 +344,16 @@ fn missing_cells(
     rights: ChildBasis,
 ) -> Result<Vec<ChildPair>, OperationError> {
     let mut out = Vec::new();
-    let mut poll = PollGate::new(eng.limits().reduce_poll_stride());
+    let mut poll = eng.limits().gate();
     for l in lefts.iter() {
         for r in rights.iter() {
             if !used.contains_key(&(l, r)) {
                 eng.limits().try_push(&mut out, ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)))?;
             }
-            eng.limits().poll(&mut poll, 1)?;
+            poll.poll(1)?;
         }
     }
-    eng.limits().flush_poll(&mut poll)?;
+    poll.flush()?;
     Ok(out)
 }
 

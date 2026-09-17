@@ -1,7 +1,6 @@
 //! Boolean queries over structural diagrams.
 
 use crate::diagram::{ChildPair, EncodedChildRef, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX, TddNodeId};
-use crate::limits::PollGate;
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 use crate::{Engine, Literal, OperationError, Tdd};
 use rustc_hash::FxHashMap;
@@ -19,9 +18,7 @@ impl Engine {
         f.require_structure()?;
         g.require_structure()?;
         let _op = self.limits().begin_operation();
-        if self.limits().should_stop() {
-            return Err(OperationError::Stopped);
-        }
+        self.limits().check_stop()?;
         if f.is_zero() || g.is_zero() {
             return Ok(f.is_zero() == g.is_zero());
         }
@@ -48,9 +45,7 @@ impl Engine {
         f.require_structure()?;
         g.require_structure()?;
         let _op = self.limits().begin_operation();
-        if self.limits().should_stop() {
-            return Err(OperationError::Stopped);
-        }
+        self.limits().check_stop()?;
         if f.is_zero() || std::ptr::eq(f, g) {
             return Ok(true);
         }
@@ -93,20 +88,20 @@ impl Engine {
         f.require_structure()?;
         let lim = self.limits();
         let _op = lim.begin_operation();
-        if lim.should_stop() { return Err(OperationError::Stopped); }
+        lim.check_stop()?;
         if f.is_zero() { return Ok(Vec::new()); }
         let mut f = f.try_clone_on(self)?;
         self.minimize(&mut f)?;
         let mut result = Vec::new();
-        let mut gate = PollGate::new(lim.reduce_poll_stride());
-        visit_leaf_labels(&f, |work| lim.poll(&mut gate, work), |var, labels| {
+        let mut gate = lim.gate();
+        visit_leaf_labels(&f, |work| gate.poll(work), |var, labels| {
             if let Some(value) = select(var, labels) {
                 lim.try_push(&mut result, value)?;
             }
             Ok(())
         })?;
         result.sort_unstable_by_key(key);
-        lim.flush_poll(&mut gate)?;
+        gate.flush()?;
         Ok(result)
     }
 
@@ -121,18 +116,16 @@ impl Engine {
         f.require_structure()?;
         let lim = self.limits();
         let _op = lim.begin_operation();
-        if lim.should_stop() {
-            return Err(OperationError::Stopped);
-        }
+        lim.check_stop()?;
         if f.is_zero() {
             return Ok(None);
         }
         let mut pending = Vec::new();
         let mut result = Vec::new();
         lim.try_push(&mut pending, f.output())?;
-        let mut gate = PollGate::new(lim.reduce_poll_stride());
+        let mut gate = lim.gate();
         while let Some(id) = pending.pop() {
-            lim.poll(&mut gate, 1)?;
+            gate.poll(1)?;
             match *f.vtree().node(id.vtree) {
                 VtreeNode::Leaf { var, .. } => {
                     lim.try_push(&mut result, Literal::new(var, id.local == POS_LEAF_IDX))?
@@ -161,7 +154,7 @@ impl Engine {
             }
         }
         result.sort_unstable_by_key(|lit| lit.var);
-        lim.flush_poll(&mut gate)?;
+        gate.flush()?;
         Ok(Some(result))
     }
 }
@@ -169,14 +162,14 @@ impl Engine {
 /// Exact interning of bottom-up signatures; hash collisions still compare full keys.
 fn same_minimized(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<bool, OperationError> {
     let lim = eng.limits();
-    let mut gate = PollGate::new(lim.reduce_poll_stride());
+    let mut gate = lim.gate();
     let n = f.vtree().num_nodes();
     let mut keys = [Vec::<Vec<u32>>::new(), Vec::<Vec<u32>>::new()];
     for side in &mut keys {
         lim.try_resize(side, n, Vec::new())?;
     }
     for t in f.vtree().bottomup() {
-        lim.poll(&mut gate, 1)?;
+        gate.poll(1)?;
         match *f.vtree().node(t) {
             VtreeNode::Leaf { .. } => {
                 for side in &mut keys {
@@ -192,7 +185,7 @@ fn same_minimized(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<bool, OperationError
                     for node in &level.nodes {
                         let mut signature = Vec::new();
                         for pair in level.pairs_of(node) {
-                            lim.poll(&mut gate, 1)?;
+                            gate.poll(1)?;
                             let a = side[left.idx()][pair.left.raw() as usize];
                             let b = side[right.idx()][pair.right.raw() as usize];
                             lim.try_push(&mut signature, ChildPair::new(NodeIdx(a), NodeIdx(b)))?;
@@ -215,7 +208,7 @@ fn same_minimized(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<bool, OperationError
             }
         }
     }
-    lim.flush_poll(&mut gate)?;
+    gate.flush()?;
     Ok(keys[0][f.output().vtree.idx()][f.output().local.idx()]
         == keys[1][g.output().vtree.idx()][g.output().local.idx()])
 }

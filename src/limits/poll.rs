@@ -15,50 +15,79 @@ pub(super) const REDUCE_POLL_STRIDE: u64 = 1 << 14;
 /// The accumulator an in-operation loop polls through: one poll per `stride`
 /// units of work, amortizing the check. The stop axis is the only
 /// mid-level cut.
-pub(crate) struct PollGate {
+///
+/// A gate holds the limits it reports to, so going out of scope charges
+/// whatever it still carries. See [`PollGate::flush`] for why the residue
+/// matters.
+pub(crate) struct PollGate<'a> {
+    lim: &'a Limits,
     work: u64,
     stride: u64,
 }
 
-impl PollGate {
+impl Limits {
+    /// A gate striding at [`Limits::reduce_poll_stride`], which is what every
+    /// walk between two conjunctions uses.
     #[inline]
-    pub(crate) fn new(stride: u64) -> PollGate {
-        PollGate { work: 0, stride }
+    pub(crate) fn gate(&self) -> PollGate<'_> {
+        self.gate_with(self.reduce_poll_stride())
+    }
+
+    /// A gate striding at `stride`, for the walks whose unit is finer than a
+    /// level: the sparse scatter and the dense cell kernel.
+    #[inline]
+    pub(crate) fn gate_with(&self, stride: u64) -> PollGate<'_> {
+        PollGate { lim: self, work: 0, stride }
     }
 }
 
-impl Limits {
-    /// Add `work` units to `gate` and, once it comes due, charge the work clock
-    /// and test cancellation.
+impl PollGate<'_> {
+    /// Add `work` units and, once the gate comes due, charge the work clock and
+    /// test cancellation.
     ///
     /// The one amortized cut every in-operation loop makes: the dense level
     /// walk, the sparse scatter and collapse collectors, and the walks that run
     /// between two conjunctions of one step.
     #[inline(always)]
-    pub(crate) fn poll(&self, gate: &mut PollGate, work: u64) -> Result<(), OperationError> {
-        gate.work += work;
-        if gate.work < gate.stride {
+    pub(crate) fn poll(&mut self, work: u64) -> Result<(), OperationError> {
+        self.work += work;
+        if self.work < self.stride {
             return Ok(());
         }
-        let done = std::mem::replace(&mut gate.work, 0);
-        self.poll_now(done)
+        let done = std::mem::replace(&mut self.work, 0);
+        self.lim.poll_now(done)
     }
 
-    /// Charge whatever `gate` still holds and test cancellation.
+    /// Charge whatever the gate still holds and test cancellation now.
     ///
     /// A gate that spans a whole level ends it holding less than one stride,
-    /// and that remainder is real work: without this the clock loses up to one
+    /// and that remainder is real work: without it the clock loses up to one
     /// stride per level, which on a diagram of many small levels is most of the
-    /// work there was. Called once, where the gate goes out of scope.
-    pub(crate) fn flush_poll(&self, gate: &mut PollGate) -> Result<(), OperationError> {
-        let done = std::mem::replace(&mut gate.work, 0);
+    /// work there was. Dropping the gate charges the same residue, so calling
+    /// this buys one thing only — the cancellation test, which a `Drop` cannot
+    /// make because it cannot return an error.
+    pub(crate) fn flush(&mut self) -> Result<(), OperationError> {
+        let done = std::mem::replace(&mut self.work, 0);
         if done == 0 {
             return Ok(());
         }
-        self.poll_now(done)
+        self.lim.poll_now(done)
     }
+}
 
-    /// The cold half of [`Limits::poll`].
+impl Drop for PollGate<'_> {
+    /// The clock half of [`PollGate::flush`], for the gates that end a level
+    /// without one. Work already counted here is never counted twice: both
+    /// paths take the residue out of the gate.
+    fn drop(&mut self) {
+        if self.work > 0 {
+            self.lim.charge_work(self.work);
+        }
+    }
+}
+
+impl Limits {
+    /// The cold half of [`PollGate::poll`].
     ///
     /// `done` is what the gate actually held, not the stride it crossed: a
     /// single poll can carry a whole dense row, which may be many strides wide
@@ -67,14 +96,26 @@ impl Limits {
     #[cold]
     fn poll_now(&self, done: u64) -> Result<(), OperationError> {
         self.charge_work(done);
+        self.check_stop()
+    }
+}
+
+impl Limits {
+    /// Test cancellation now and report it as an error.
+    ///
+    /// For the checks a walk makes on its own account rather than through a
+    /// [`PollGate`]: once at the top of an operation, and once per round of a
+    /// loop whose rounds are each large enough that one test apiece costs
+    /// nothing. It charges no work, because the walk inside the round charges
+    /// its own.
+    #[inline]
+    pub(crate) fn check_stop(&self) -> Result<(), OperationError> {
         if self.should_stop() {
             return Err(OperationError::Stopped);
         }
         Ok(())
     }
-}
 
-impl Limits {
     /// Ask the callback before checking thresholds, allowing it to replace an
     /// expired rule and let the operation continue.
     #[inline]

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use crate::Engine;
-use crate::limits::{OperationError, PollGate};
+use crate::limits::{OperationError};
 
 use crate::diagram::{ChildPair, NodeIdx, Tdd, ZERO};
 use crate::vtree::VtreeIdx;
@@ -36,7 +36,7 @@ impl Marking {
     /// operand) and mark every live f-node and f-pair. Two phases: discover the
     /// pairs top-down with a work stack, then evaluate their liveness bottom-up.
     pub(super) fn walk(eng: &Engine, f: &Tdd, care: &Tdd, r: VtreeIdx) -> Result<Marking, OperationError> {
-        let mut poll = PollGate::new(eng.limits().reduce_poll_stride());
+        let mut poll = eng.limits().gate();
         let vtree = &f.vtree;
         let nlev = vtree.num_nodes();
         let ctx = WalkCtx { f, care };
@@ -62,7 +62,7 @@ impl Marking {
             let (lc, rc) = vtree.children(v);
             for (fl, fr) in refs(f, v, fo) {
                 for (cl, cr) in refs(care, v, co) {
-                    eng.limits().poll(&mut poll, 1)?;
+                    poll.poll(1)?;
                     for (cv, a, b) in [(lc, fl, cl), (rc, fr, cr)] {
                         if let Child::Pair(k) = ctx.child(cv, a, b)
                             && levels[cv.idx()].push(eng, k)? {
@@ -83,7 +83,7 @@ impl Marking {
                 for (k, (fl, fr)) in refs(f, v, fo).enumerate() {
                     let mut live = false;
                     for (cl, cr) in refs(care, v, co) {
-                        eng.limits().poll(&mut poll, 1)?;
+                        poll.poll(1)?;
                         if ctx.live_of(&levels, lc, fl, cl) && ctx.live_of(&levels, rc, fr, cr) {
                             live = true;
                             break;
@@ -108,7 +108,7 @@ impl Marking {
             }
         }
         let root_live = levels[r.idx()].live[0];
-        eng.limits().flush_poll(&mut poll)?;
+        poll.flush()?;
         Ok(Marking { alive, pair_alive, root_live })
     }
 
@@ -126,7 +126,7 @@ impl Marking {
     /// rebuild would reproduce `f` pair-for-pair, so `g == f` and the caller can
     /// reuse `f` verbatim. Stack-driven traversal of `f`'s reachable subgraph.
     pub(super) fn nothing_reachable_died(&self, eng: &Engine, f: &Tdd) -> Result<bool, OperationError> {
-        let mut poll = PollGate::new(eng.limits().reduce_poll_stride());
+        let mut poll = eng.limits().gate();
         let vtree = &f.vtree;
         let mut seen = mark_rows(eng, f, false)?;
         let mut stack = Vec::new();
@@ -154,10 +154,10 @@ impl Marking {
                         eng.limits().try_push(&mut stack, (child, decoder.node(side)))?;
                     }
                 }
-                eng.limits().poll(&mut poll, 1)?;
+                poll.poll(1)?;
             }
         }
-        eng.limits().flush_poll(&mut poll)?;
+        poll.flush()?;
         Ok(true)
     }
 }

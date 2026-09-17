@@ -66,7 +66,7 @@ impl RestrictionOutcome {
 fn restrict_to_care_on(eng: &Engine, f: Tdd, mut care: Tdd) -> Result<RestrictionOutcome, OperationError> {
     crate::apply::check_vtree(&f, &care)?;
     let _op = eng.limits().begin_operation();
-    if eng.limits().should_stop() { return Err(OperationError::Stopped); }
+    eng.limits().check_stop()?;
     if f.is_zero() {
         return Ok(RestrictionOutcome::Unchanged(f));
     }

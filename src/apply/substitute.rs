@@ -41,15 +41,13 @@ impl Engine {
         f.require_structure()?;
         let lim = self.limits();
         let _op = lim.begin_operation();
-        if lim.should_stop() {
-            return Err(OperationError::Stopped);
-        }
+        lim.check_stop()?;
         if replacements.len() == 0 { return Ok(f); }
-        let mut gate = PollGate::new(lim.reduce_poll_stride());
+        let mut gate = lim.gate();
         let mut by_leaf = Vec::new();
         lim.try_resize(&mut by_leaf, f.vtree().num_nodes(), None)?;
         for (var, replacement) in replacements {
-            lim.poll(&mut gate, 1)?;
+            gate.poll(1)?;
             let leaf = f
                 .vtree()
                 .leaf_of(var)
@@ -69,7 +67,7 @@ impl Engine {
                 }
             }
         }
-        lim.flush_poll(&mut gate)?;
+        gate.flush()?;
         if f.is_zero() {
             self.minimize(&mut f)?;
             return Ok(f);
@@ -90,7 +88,7 @@ impl Engine {
         let mut columns = Vec::<Vec<Tdd>>::new();
         lim.try_resize(&mut columns, vtree.num_nodes(), Vec::new())?;
         for t in vtree.bottomup() {
-            lim.poll(&mut gate, 1)?;
+            gate.poll(1)?;
             match *vtree.node(t) {
                 VtreeNode::Leaf { var, .. } => {
                     let replacement = by_leaf[t.idx()].unwrap_or(Replacement::Literal(Literal::pos(var)));
@@ -112,7 +110,7 @@ impl Engine {
                     for node in &level.nodes {
                         let mut sum = None;
                         for pair in level.pairs_of(node) {
-                            lim.poll(&mut gate, 1)?;
+                            gate.poll(1)?;
                             let a =
                                 columns[left.idx()][pair.left.raw() as usize].try_clone_on(self)?;
                             let b = columns[right.idx()][pair.right.raw() as usize]
@@ -132,7 +130,7 @@ impl Engine {
                 }
             }
         }
-        lim.flush_poll(&mut gate)?;
+        gate.flush()?;
         let mut result = columns[f.output().vtree.idx()].swap_remove(f.output().local.idx());
         // The destination universe is unchanged; weights stay bound to its variables.
         result.weights = f.weights.take().map(|weights| weights.empty_like());

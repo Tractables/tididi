@@ -15,14 +15,14 @@ impl Marking {
     /// Re-emit the live subgraph under the engine's limits, carrying marginal levels and weights into the pruned result.
     pub(super) fn rebuild(self, eng: &Engine, mut f: Tdd) -> Result<Tdd, OperationError> {
         let lim = eng.limits();
-        if lim.should_stop() { return Err(OperationError::Stopped); }
-        let mut gate = PollGate::new(lim.reduce_poll_stride());
+        lim.check_stop()?;
+        let mut gate = lim.gate();
         let nlev = f.vtree.num_nodes();
         let v0 = f.output.vtree;
         let mut memo = Vec::new();
         lim.try_resize(&mut memo, nlev, Vec::new())?;
         for (row, level) in memo.iter_mut().zip(&f.levels) {
-            lim.poll(&mut gate, 1)?;
+            gate.poll(1)?;
             if !level.is_marginal() {
                 lim.try_resize(row, level.nodes.len(), DeadRebuilder::UNVISITED)?;
             }
@@ -38,7 +38,7 @@ impl Marking {
         let mut out = std::mem::take(&mut rb.out);
         drop(rb);
         for (vi, level) in out.iter_mut().enumerate() {
-            lim.poll(&mut gate, 1)?;
+            gate.poll(1)?;
             if f.levels[vi].is_marginal() {
                 *level = std::mem::take(&mut f.levels[vi]);
             } else {
@@ -46,7 +46,7 @@ impl Marking {
                 level.set_marginal_inlined_right(f.levels[vi].marginal_inlined_right());
             }
         }
-        lim.flush_poll(&mut gate)?;
+        gate.flush()?;
         let mut g = Tdd::try_from_levels_on(eng, Arc::clone(&f.vtree), out, TddNodeId { vtree: v0, local: root })?;
         g.weights = f.weights;
         // A child emitted before its pair partner collapses can become an orphan.
@@ -104,7 +104,7 @@ impl DeadRebuilder<'_> {
         lim.try_push(&mut stack, Frame::new(v, local))?;
         let mut emitted = 0u64;
         while let Some(frame) = stack.last() {
-            lim.poll(gate, 1)?;
+            gate.poll(1)?;
             let (v, local, k) = (frame.v, frame.local, frame.next_pair);
             let source = self.f.levels[v.idx()].pairs_of_idx(local.idx());
             if k == source.len() {

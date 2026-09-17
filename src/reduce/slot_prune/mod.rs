@@ -189,6 +189,10 @@ fn prune_marginal_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> Va
 
     compact_boundary_stores::<S>(tdd, out_v, &mut stats, &mut slots, &mut remap);
 
+    // It rewrites stores in place and so cannot stop partway, for the reason
+    // `prune_unreachable` gives; charging keeps the walk on the work clock.
+    eng.limits().charge_work(tdd.vtree.num_nodes() as u64);
+
     stats
 }
 

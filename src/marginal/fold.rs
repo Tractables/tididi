@@ -3,7 +3,6 @@
 use crate::value::{Retention};
 use crate::diagram::Tdd;
 use crate::Engine;
-use crate::limits::PollGate;
 use crate::limits::OperationError;
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -60,11 +59,11 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
     // One column per vtree level, built on demand. (`CountVec` is not `Clone`,
     // so the buffer cannot use `vec![None; n]`.)
     let mut computed: Vec<Option<Column<K>>> = (0..vtree.num_nodes()).map(|_| None).collect();
-    let mut poll = PollGate::new(lim.reduce_poll_stride());
+    let mut poll = lim.gate();
 
     let mut cut = None;
     for &d in targets {
-        if let Err(e) = lim.poll(&mut poll, tdd.levels[d.idx()].slot_count() as u64 + 1) {
+        if let Err(e) = poll.poll(tdd.levels[d.idx()].slot_count() as u64 + 1) {
             cut = Some(e);
             break;
         }

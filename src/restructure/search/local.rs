@@ -131,9 +131,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
             // Once per pivot, not once per probe: the two probes below share
             // the pivot's setup, and a stop between them would leave the
             // sweep's accept count describing half a pivot.
-            if eng.limits().should_stop() {
-                return Err(OperationError::Stopped);
-            }
+            eng.limits().check_stop()?;
             for &kind in &[RotationKind::Left, RotationKind::Right] {
                 let kept = probe(
                     eng, search.tdd, v, kind, &mut rule, &mut scratch, config.max_inner_pairs,

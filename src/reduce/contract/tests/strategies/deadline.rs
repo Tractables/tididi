@@ -3,9 +3,10 @@
 //! `contract_all_twins` is the most expensive phase of a minimize and it
 //! runs BETWEEN two applies of one bottom-up step, so before the poll a caller's
 //! wall was observed only where the step ended. These tests pin the three
-//! properties the poll is worth having for: it fires when the wall has passed,
-//! it stays out of the way when no wall is installed, and it amortizes — the
-//! meter comes due on a stride, not on every popped parent.
+//! properties the cut is worth having for: it fires when the wall has passed,
+//! it stays out of the way when no wall is installed, and it does not depend
+//! on the gate coming due, because `joint_contract_fixpoint` tests
+//! cancellation at every round.
 
 use super::*;
 use crate::diagram::{ValueRef, NodeIdx};
@@ -90,17 +91,20 @@ fn no_wall_installed_completes() {
     );
 }
 
-/// The poll is amortized, not per-iteration: with a stride wider than the whole
-/// walk's work, an expired wall goes unnoticed and the walk completes. Paired
-/// with `armed_expired_wall_cuts_the_contract_walk` (same fixture, same expired
-/// wall, stride 1) this pins that the stride — not the arming — is what decides
-/// when the clock is read, which is the property the production cadence rests on.
-/// The production stride is untouched; the cadence is pinned per-test.
+/// The amortized poll is not the only cut. `joint_contract_fixpoint` argues its
+/// termination from a decreasing measure rather than bounding it by a count, so
+/// it tests cancellation once per round; without that, a stride wider than the
+/// whole walk's work would leave an expired wall unnoticed and a minimize
+/// uninterruptible. Paired with `an_expired_wall_cuts_the_contract_walk` (same
+/// fixture, same expired wall, stride 1) this pins that both cuts reach the
+/// caller. The production stride is untouched; the cadence is pinned per-test.
 #[test]
-fn a_stride_wider_than_the_walk_never_polls() {
-    let (mut tdd, v_left) = dirty_tdd();
+fn the_fixpoint_round_cuts_even_when_the_gate_never_comes_due() {
+    let (mut tdd, _) = dirty_tdd();
 
     let r = deadline_probe(Some(u64::MAX), |eng| contract_all_twins(eng, &mut tdd));
-    r.expect("a stride the walk never reaches must not read the clock at all");
-    assert_eq!(tdd.levels[v_left.idx()].slot_count(), 1, "the unpolled walk must still contract");
+    assert!(
+        matches!(r, Err(OperationError::Stopped)),
+        "a round boundary must cut whatever stride the gate carries; got {r:?}",
+    );
 }

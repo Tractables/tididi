@@ -18,7 +18,7 @@ impl Engine {
     pub fn is_sat(&self, f: &Tdd) -> Result<bool, crate::OperationError> {
         let lim = self.limits();
         let _op = lim.begin_operation();
-        if lim.should_stop() { return Err(crate::OperationError::Stopped); }
+        lim.check_stop()?;
         if f.is_zero() { return Ok(false); }
         let out_vtree = f.output.vtree;
         let out_level = &f.levels[out_vtree.idx()];
@@ -56,7 +56,7 @@ pub(crate) fn is_sat_structural(eng: &Engine, f: &Tdd) -> Result<bool, crate::Op
     for i in 0..f.vtree.num_nodes() {
         cols.push(fold.alloc(eng, f.reference_slot_count(VtreeIdx(i as u32)))?);
     }
-    let mut poll = crate::limits::PollGate::new(eng.limits().reduce_poll_stride());
+    let mut poll = eng.limits().gate();
     fold_bottom_up(&fold, eng, f, &mut cols, Retention::Frontier, Some(&mut poll), |_, _| Ok(()))?;
     let (out_t, out_i) = (f.output.vtree.idx(), f.output.local.idx());
     Ok(cols[out_t][out_i])

@@ -61,18 +61,18 @@ mod input {
         fn conjoin(eng: &Engine, f: Tdd, clause: &[Self]) -> Result<Tdd, OperationError> {
             let lim = eng.limits();
             let _op = lim.begin_operation();
-            if lim.should_stop() { return Err(OperationError::Stopped); }
-            let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
+            lim.check_stop()?;
+            let mut gate = lim.gate();
             let mut literals = Vec::new();
             for &value in clause {
-                lim.poll(&mut gate, 1)?;
+                gate.poll(1)?;
                 let literal = Literal::try_from(value)?;
                 if f.vtree().leaf_of(literal.var).is_none() {
                     return Err(OperationError::VariableNotInVtree(literal.var));
                 }
                 lim.try_push(&mut literals, literal)?;
             }
-            lim.flush_poll(&mut gate)?;
+            gate.flush()?;
             conjoin_clause_owned(eng, f, &literals)
         }
     }
@@ -121,18 +121,18 @@ impl ClauseScratch {
 pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let _op = lim.begin_operation();
-    if lim.should_stop() { return Err(OperationError::Stopped); }
-    let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
+    lim.check_stop()?;
+    let mut gate = lim.gate();
     let pool = eng.clause_pool();
     let vtree = &f.vtree;
     let num_nodes = vtree.num_nodes();
     for lit in clause {
-        lim.poll(&mut gate, 1)?;
+        gate.poll(1)?;
         let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
         f.require_structure_at(leaf)?;
     }
 
-    lim.flush_poll(&mut gate)?;
+    gate.flush()?;
     if f.is_zero() {
         let levels = diagram::try_take_levels(eng, num_nodes)?;
         let mut out = Tdd::try_from_levels_on(eng,
@@ -323,16 +323,16 @@ impl crate::Engine {
     ) -> Result<Tdd, OperationError> {
         let lim = self.limits();
         let _op = lim.begin_operation();
-        if lim.should_stop() { return Err(OperationError::Stopped); }
-        let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
+        lim.check_stop()?;
+        let mut gate = lim.gate();
         let mut clause = Vec::new();
         for lit in literals {
-            lim.poll(&mut gate, 1)?;
+            gate.poll(1)?;
             let lit: Literal = lit.try_into().map_err(Into::into)?;
             if vtree.leaf_of(lit.var).is_none() { return Err(OperationError::VariableNotInVtree(lit.var)); }
             lim.try_push(&mut clause, lit)?;
         }
-        lim.flush_poll(&mut gate)?;
+        gate.flush()?;
         let one = self.cube(vtree, std::iter::empty::<Literal>())?;
         conjoin_clause_owned(self, one, &clause)
     }

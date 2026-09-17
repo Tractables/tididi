@@ -85,9 +85,7 @@ impl Limits {
     /// `out_nodes` counts the nodes emitted by all completed levels.
     #[inline]
     pub(crate) fn level_done(&self, out_nodes: u64) -> Result<(), OperationError> {
-        if self.should_stop() {
-            return Err(OperationError::Stopped);
-        }
+        self.check_stop()?;
         self.check_output_cap(out_nodes)
     }
 

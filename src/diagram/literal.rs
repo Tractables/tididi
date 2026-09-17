@@ -130,20 +130,20 @@ impl From<&Literal> for Literal {
 /// clause as a single literal, so each calls this first and answers ⊤. A
 /// short clause is scanned pairwise, a long one through a set.
 pub(crate) fn is_tautological(lim: &crate::limits::Limits, clause: &[Literal]) -> Result<bool, crate::limits::OperationError> {
-    let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
+    let mut gate = lim.gate();
     /// Above this many literals the pairwise scan is no longer the cheaper one.
     const PAIRWISE_MAX: usize = 32;
     let mut seen = rustc_hash::FxHashMap::default();
     for (i, lit) in clause.iter().enumerate() {
-        lim.poll(&mut gate, 1)?;
+        gate.poll(1)?;
         let conflict = if clause.len() <= PAIRWISE_MAX {
             clause[..i].iter().any(|e| e.var == lit.var && e.positive != lit.positive)
         } else {
             if !seen.contains_key(&lit.var) { lim.reserve_map(&mut seen, 1)?; }
             matches!(seen.insert(lit.var, lit.positive), Some(p) if p != lit.positive)
         };
-        if conflict { lim.flush_poll(&mut gate)?; return Ok(true); }
+        if conflict { gate.flush()?; return Ok(true); }
     }
-    lim.flush_poll(&mut gate)?;
+    gate.flush()?;
     Ok(false)
 }

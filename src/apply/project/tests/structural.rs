@@ -14,7 +14,7 @@ fn regrouping_checks_its_allocations_before_reduction() {
     let eng = Engine::new();
     {
         let _scope = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
-        let mut work = Rewrite { eng: &eng, gate: PollGate::new(1), emitted: 0 };
+        let mut work = Rewrite { eng: &eng, gate: eng.limits().gate_with(1), emitted: 0 };
         assert_eq!(regroup_leaf_parent(&mut work, &mut original.clone(), parent, tree.children(parent).0 == leaf).err(), Some(OperationError::OverBudget));
     }
     let result = exists_var_structural(&eng, original, leaf).unwrap();
@@ -33,7 +33,7 @@ fn regrouping_polls_inside_a_level() {
     let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(StopRules {
         unconditional: Some(StopAt::WorkUnits(2)), ..StopRules::default()
     }));
-    let mut work = Rewrite { eng: &eng, gate: PollGate::new(1), emitted: 0 };
+    let mut work = Rewrite { eng: &eng, gate: eng.limits().gate_with(1), emitted: 0 };
     assert_eq!(regroup_leaf_parent(&mut work, &mut f, parent, tree.children(parent).0 == leaf).err(), Some(OperationError::Stopped));
     assert_eq!(work.emitted, 0);
 }

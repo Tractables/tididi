@@ -21,7 +21,6 @@ use std::collections::BinaryHeap;
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::limits::PollGate;
 
 use crate::limits::OperationError;
 use crate::diagram::*;
@@ -182,7 +181,7 @@ pub(crate) fn contract_all_twins(
     // The walk's one preemption point, amortized. With no stop axis installed the
     // poll short-circuits before any clock read, so the meter below costs an add
     // and a predicted-not-taken branch per popped parent.
-    let mut poll = PollGate::new(lim.reduce_poll_stride());
+    let mut poll = lim.gate();
 
     // Each parent is popped at most once: any node that could reopen its twins
     // is a strict ancestor (larger `topo_pos`), hence already popped and
@@ -193,7 +192,7 @@ pub(crate) fn contract_all_twins(
         // Preemption point, metered in nodes of the parent's level, the unit
         // `contract_child`'s work scales with. On `Err` the popped parent and
         // the rest of the heap go back to the worklist.
-        if let Err(e) = lim.poll(&mut poll, tdd.levels[p_idx].slot_count() as u64 + 1) {
+        if let Err(e) = poll.poll(tdd.levels[p_idx].slot_count() as u64 + 1) {
             restore_pending_dirty(tdd, &mut scratch, Some(p_raw), &heap);
             return Err(e);
         }
@@ -260,6 +259,9 @@ fn joint_contract_fixpoint(
     let mut left_fired = false;
     let mut right_fired = false;
     loop {
+        // As in `canonicalize_content_twins`: termination is argued, not
+        // bounded, so the round boundary is where cancellation cuts in.
+        eng.limits().check_stop()?;
         let mut changed = false;
         if contract_child(eng, tdd, parent, left, scratch)? {
             changed = true;

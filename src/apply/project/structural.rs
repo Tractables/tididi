@@ -45,8 +45,8 @@ pub(super) fn exists_var_structural(
     leaf_idx: VtreeIdx,
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
-    if lim.should_stop() { return Err(OperationError::Stopped); }
-    let mut work = Rewrite { eng, gate: PollGate::new(lim.reduce_poll_stride()), emitted: 0 };
+    lim.check_stop()?;
+    let mut work = Rewrite { eng, gate: lim.gate(), emitted: 0 };
     if tdd.is_zero() {
         return Ok(tdd);
     }
@@ -73,7 +73,7 @@ pub(super) fn exists_var_structural(
 
     work.emitted += 1;
     lim.level_done(work.emitted)?;
-    lim.flush_poll(&mut work.gate)?;
+    work.gate.flush()?;
     eng.reduce(&mut tdd, ReductionPlan::default())?;
     Ok(tdd)
 }
@@ -384,14 +384,14 @@ fn write_level(work: &mut Rewrite<'_>, tdd: &mut Tdd, parent: VtreeIdx, new_node
 /// The rewrite's cancellation clock and number of emitted intermediate nodes.
 struct Rewrite<'a> {
     eng: &'a Engine,
-    gate: PollGate,
+    gate: PollGate<'a>,
     emitted: u64,
 }
 
 impl Rewrite<'_> {
     /// Account for one visited node, pair, or owner association.
     fn poll(&mut self) -> Result<(), OperationError> {
-        self.eng.limits().poll(&mut self.gate, 1)
+        self.gate.poll(1)
     }
 }
 

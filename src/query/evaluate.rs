@@ -28,8 +28,8 @@ impl Engine {
         let lim = self.limits();
         let _op = lim.begin_operation();
         tdd.require_structure()?;
-        if lim.should_stop() { return Err(OperationError::Stopped); }
-        let mut gate = PollGate::new(lim.reduce_poll_stride());
+        lim.check_stop()?;
+        let mut gate = lim.gate();
         let result = if tdd.is_zero() {
             algebra.zero()
         } else {
@@ -44,8 +44,8 @@ impl Engine {
                 })?;
             cols[tdd.output.vtree.idx()].swap_remove(tdd.output.local.idx())
         };
-        lim.poll(&mut gate, 1)?;
-        lim.flush_poll(&mut gate)?;
+        gate.poll(1)?;
+        gate.flush()?;
         Ok(result)
     }
 }
@@ -136,11 +136,11 @@ impl Engine {
     pub fn weighted_value(&self, tdd: &Tdd) -> Result<Option<WeightValue>, OperationError> {
         let _op = self.limits().begin_operation();
         let Some(ws) = tdd.weights.as_ref() else { return Ok(None); };
-        if self.limits().should_stop() { return Err(OperationError::Stopped); }
-        let mut gate = PollGate::new(self.limits().reduce_poll_stride());
+        self.limits().check_stop()?;
+        let mut gate = self.limits().gate();
         let value = weighted_output_value(self, tdd, ws, &mut gate)?;
-        self.limits().poll(&mut gate, 1)?;
-        self.limits().flush_poll(&mut gate)?;
+        gate.poll(1)?;
+        gate.flush()?;
         Ok(Some(value))
     }
 }
@@ -180,7 +180,7 @@ fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore, gate: &mut P
         &mut computed,
         &marginal,
         Retention::Frontier,
-        |work| eng.limits().poll(gate, work),
+        |work| gate.poll(work),
     )?;
     Ok(computed[out_t]
         .as_ref()
