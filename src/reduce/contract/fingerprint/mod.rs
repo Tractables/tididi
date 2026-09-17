@@ -11,17 +11,18 @@ use super::scratch::{ContractScratch, EMPTY_SLOT, TwinSlot};
 /// Prefetch the twin-table slot a future iteration will probe first. The
 /// probe target is a random index into a table that typically misses L2;
 /// `fingerprints[]` is read sequentially, so the slot for iteration i+D is
-/// known D iterations ahead. No-op on non-x86_64.
+/// known D iterations ahead. No-op on non-x86_64, and under Miri, which does
+/// not implement the intrinsic.
 #[inline(always)]
 fn prefetch_slot(p: *const TwinSlot, slot: usize) {
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
     unsafe {
         core::arch::x86_64::_mm_prefetch(
             p.add(slot) as *const i8,
             core::arch::x86_64::_MM_HINT_T0,
         );
     }
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
     let _ = (p, slot);
 }
 
