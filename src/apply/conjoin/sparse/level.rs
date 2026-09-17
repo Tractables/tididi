@@ -332,7 +332,7 @@ pub(crate) fn apply_leaf_levels(
                 if val != NO_PRODUCT { count += 1; }
             }
         }
-        if arena.is_bump() { live_counts.bump(t_idx, count); }
+        if arena.is_bump() { live_counts.set(t_idx, count); }
     }
     Ok(())
 }

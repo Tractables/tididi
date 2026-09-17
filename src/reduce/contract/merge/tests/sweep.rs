@@ -29,7 +29,8 @@ fn merge_adjacent_round(level: &mut TddLevel, first: usize) {
     let mut merge_target: Vec<u32> = (0..n as u32).collect();
     let mut keep = first;
     while keep + 1 < n {
-        merge_two_internal_twins(level, keep, keep + 1, /*allow_dups=*/ false);
+        let total = level.pair_count_at(keep) + level.pair_count_at(keep + 1);
+        concat_twin_pairs(level, keep, &[keep as u32, keep as u32 + 1], total, /*allow_dups=*/ false);
         merge_target[keep + 1] = keep as u32;
         keep += 2;
     }

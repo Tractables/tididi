@@ -1,4 +1,3 @@
-
 use crate::diagram::EncodedChildRef;
 use crate::Engine;
 use crate::diagram::ChildSide;
@@ -91,6 +90,8 @@ pub(super) fn context_hash(parent_i: u32, sibling_j: u32) -> u64 {
     // Prelude: pack two 32-bit values; no increment.
     mix64((parent_i as u64) << 32 | sibling_j as u64)
 }
+
+mod groups;
 
 #[cfg(test)]
 mod tests;
@@ -279,6 +280,5 @@ pub(super) fn neutralize_tombstone_fingerprints(level: &TddLevel, width: usize, 
     }
 }
 
-mod groups;
 
 use groups::build_twin_groups_after_collision;

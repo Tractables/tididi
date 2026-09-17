@@ -50,11 +50,6 @@ pub(super) fn contract_twins(
     scratch: &mut ContractScratch,
 ) -> Result<usize, OperationError> {
     let lim = eng.limits();
-    // Pair lists at parent (remap+dedup below) and t1 (twin merge in
-    // merge_twin_data) are about to be mutated.
-    tdd.invalidate(parent, Changed::PAIRS);
-    tdd.invalidate(t1, Changed::PAIRS);
-
     // t1 is never a marginal level here: `contract_child` returns early on one
     // (marginal-side redexes go to pair fusion), so only explicit-side refs are
     // rewritten below.
@@ -88,6 +83,10 @@ pub(super) fn contract_twins(
         // needed. Returning 0 lets contract_child report no-progress.
         return Ok(0);
     }
+    // The parent's pair lists are remapped and deduplicated below; t1's nodes
+    // were merged, so its pair lists and the identity of its nodes changed.
+    tdd.invalidate(parent, Changed::PAIRS);
+    tdd.invalidate(t1, Changed::PAIRS | Changed::NODES);
 
     build_final_remap(remap, width);
     rewrite_parent(tdd, parent, t1_side, remap);

@@ -37,7 +37,7 @@ impl Limits {
     /// many bytes is guaranteed not to trip the soft trigger.
     #[inline]
     pub(crate) fn budget_headroom(&self) -> Option<u64> {
-        self.budget_remaining
+        self.budget
             .get()
             .map(|rem| rem.saturating_sub(self.in_flight_bytes.get()))
     }

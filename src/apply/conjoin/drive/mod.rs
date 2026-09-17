@@ -75,8 +75,7 @@ fn take_fast_path(
     // Identity fast paths: FP1 (f carrier / g identity), FP2 (symmetric),
     // and the 0-width orphan-marginal case. See `take_level_fast_path` for
     // the full guard logic.
-    let taken = take_level_fast_path(eng, run, f, g, shape)?;
-    Ok(matches!(taken, FastPathResult::Taken))
+    take_level_fast_path(eng, run, f, g, shape)
 }
 
 
@@ -102,10 +101,10 @@ fn sweep_levels(
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let vtree = sweep.vtree;
-    // Where this apply has got to, for a caller conjunction_progress_enabled one long merge from
-    // outside it (`budget::merge_position`). The level count is the only thing
-    // that costs a walk, so it is taken inside the gate; past that it is one
-    // store per level and no clock at all.
+    // Where this apply has got to, for a caller watching one long conjunction
+    // from outside it. The level count is the only thing that costs a walk, so
+    // it is taken inside the gate; past that it is one store per level and no
+    // clock at all.
     let watched = lim.watched();
     if watched {
         lim.merge_began(vtree.internal_bottomup().count() as u32);

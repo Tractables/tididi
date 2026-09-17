@@ -111,7 +111,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
         eng.reduce(tdd, crate::reduce::ReductionPlan::default())?;
     }
 
-    let mut search = SearchTree::new(tdd);
+    let mut search = super::SearchTree::new(tdd);
     loop {
         if let Some(cap) = config.max_sweeps
             && stats.sweeps >= cap {
@@ -151,29 +151,6 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     stats.probes = rule.probes;
     stats.accepts = rule.accepts;
     Ok(stats)
-}
-
-/// Keep one private vtree across probes, restoring shared identity if none was accepted.
-struct SearchTree<'a> {
-    tdd: &'a mut Tdd,
-    original: Option<std::sync::Arc<crate::Vtree>>,
-}
-
-impl<'a> SearchTree<'a> {
-    /// Detach a shared tree once before probing any pivots.
-    fn new(tdd: &'a mut Tdd) -> Self {
-        use std::sync::Arc;
-        let original = (Arc::strong_count(&tdd.vtree) > 1 || Arc::weak_count(&tdd.vtree) > 0)
-            .then(|| Arc::clone(&tdd.vtree));
-        Arc::make_mut(&mut tdd.vtree);
-        Self { tdd, original }
-    }
-}
-
-impl Drop for SearchTree<'_> {
-    fn drop(&mut self) {
-        if let Some(original) = self.original.take() { self.tdd.vtree = original; }
-    }
 }
 
 /// The search's own [`ProbeRule`]: the caller's objective plus the tallies

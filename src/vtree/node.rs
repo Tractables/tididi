@@ -112,10 +112,9 @@ pub struct Vtree {
     /// that carry no leaf are meaningless, which is why [`Vtree::leaf_of`] is
     /// documented for covered variables only.
     pub(super) var_to_leaf: Vec<VtreeIdx>,
-    /// Actual number of leaf nodes. When None, equals `var_to_leaf.len()`.
-    /// Set explicitly when `VarIds` are sparse (not all entries in `var_to_leaf`
-    /// correspond to actual leaves).
-    pub(super) leaf_count: Option<u32>,
+    /// Number of leaf nodes; smaller than `var_to_leaf.len()` when the variable
+    /// numbering has gaps.
+    pub(super) leaf_count: u32,
     /// Bottom-up topological order over `nodes`, with its inverse and the two
     /// filtered views. Decoupled from node identity: a node's index in `nodes`
     /// never changes after construction, but its position in the order may
@@ -148,7 +147,7 @@ impl Vtree {
     /// `0..num_leaves()` are leaves and `num_leaves()..n` are internal nodes.
     #[inline]
     pub fn num_leaves(&self) -> u32 {
-        self.leaf_count.unwrap_or(self.var_to_leaf.len() as u32)
+        self.leaf_count
     }
 
     /// Takes `nodes` by mutable slice rather than `&mut self` so it can be

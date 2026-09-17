@@ -180,13 +180,7 @@ impl TddBuilder {
     ///
     /// Refuses a store inconsistent with the levels already copied in.
     pub fn set_weights(&mut self, ws: WeightStore) -> Result<(), TddBuildError> {
-        ws.check_levels(&self.vtree, &self.levels)?;
-        if self.levels.iter().any(TddLevel::is_weight_marginal)
-            && self.weights.as_ref().is_some_and(|old| !old.compatible(&ws)) {
-            return Err(TddBuildError::IncompatibleWeights);
-        }
-        self.weights = Some(ws);
-        Ok(())
+        ws.install(&self.vtree, &self.levels, &mut self.weights)
     }
 
     /// Replace level `t` and its weighted column together, discarding its intern table.

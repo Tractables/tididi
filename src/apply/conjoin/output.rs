@@ -52,7 +52,7 @@ impl LiveCounts {
 
     /// Record that level `t_idx` now holds `v` output nodes.
     #[inline(always)]
-    pub(super) fn bump(&mut self, t_idx: usize, v: usize) {
+    pub(super) fn set(&mut self, t_idx: usize, v: usize) {
         self.per_level[t_idx] = v;
     }
 
@@ -72,7 +72,7 @@ pub(super) fn finish_sparse_output(
     level: &mut TddLevel,
     t_idx: usize,
 ) {
-    live_counts.bump(t_idx, level.nodes.len());
+    live_counts.set(t_idx, level.nodes.len());
     has_pl[t_idx] = true;
     level.shrink_arrays();
 }
@@ -116,14 +116,14 @@ pub(super) fn finalize_level(
     // Commit streaming-marginal emit: convert the level to `marginal_counts`,
     // before the `levels[t_idx]` reborrows below.
     if let Some(st) = stream_state.take() {
-        commit_stream_state(st, t, t_idx, sweep.vtree, levels, sweep.ws.as_deref_mut());
+        commit_stream_state(st, t, sweep.vtree, levels, sweep.ws.as_deref_mut());
     }
 
     // Record live count for parent density checks (only when sparse mode possible).
     // Use `slot_count()` so streaming-marginal levels (nodes.len() == 0 after
     // become_marginal) report their actual alive-cell count.
     if arena.is_bump() {
-        live_counts.bump(t_idx, levels[t_idx].slot_count());
+        live_counts.set(t_idx, levels[t_idx].slot_count());
     }
     // Dense emit wrote `node_idx` in row-major order keyed by `nodes.len()` at
     // each emission, so live cells are strictly monotone.

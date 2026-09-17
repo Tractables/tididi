@@ -30,8 +30,8 @@ use crate::limits::OperationError;
 use crate::diagram::*;
 
 #[path = "duplicate_pair_scale.rs"]
-mod scale;
-use scale::{has_o1_absorber, scale_pair_one_side};
+mod duplicate_pair_scale;
+use duplicate_pair_scale::{has_o1_absorber, scale_pair_one_side};
 use crate::vtree::VtreeIdx;
 
 /// `has_marginal_below[v]` — v's vtree subtree (including v itself) contains a

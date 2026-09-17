@@ -241,7 +241,7 @@ impl LimitConfig {
 ///
 /// Callbacks may inspect or change settings without holding an internal borrow.
 pub struct Limits {
-    budget_remaining: Cell<Option<u64>>,
+    budget: Cell<Option<u64>>,
     in_flight_bytes: Cell<u64>,
     pairs_in_flight: Cell<u64>,
     pairs_level_charge: Cell<u64>,
@@ -293,7 +293,7 @@ impl Limits {
     #[must_use]
     pub(crate) const fn new() -> Limits {
         Limits {
-            budget_remaining: Cell::new(None),
+            budget: Cell::new(None),
             in_flight_bytes: Cell::new(0),
             pairs_in_flight: Cell::new(0),
             pairs_level_charge: Cell::new(0),
@@ -320,7 +320,7 @@ impl Limits {
     #[must_use]
     pub fn armed(&self) -> LimitConfig {
         LimitConfig {
-            memory_budget_bytes: self.budget_remaining.get(),
+            memory_budget_bytes: self.budget.get(),
             output_node_cap: self.output_node_cap.get(),
             stop: self.stop.get(),
             stop_callback: self.stop_callback.borrow().clone(),
@@ -363,7 +363,7 @@ impl Limits {
     #[must_use = "install returns the prior set; bind it or use scope/edit"]
     pub fn install(&self, set: LimitConfig) -> LimitConfig {
         let prior = self.armed();
-        self.budget_remaining.set(set.memory_budget_bytes);
+        self.budget.set(set.memory_budget_bytes);
         self.output_node_cap.set(set.output_node_cap);
         self.stop.set(set.stop);
         self.stop_callback.replace(set.stop_callback);
@@ -422,13 +422,13 @@ impl Limits {
     #[must_use]
     #[inline]
     pub(crate) fn budget(&self) -> Option<u64> {
-        self.budget_remaining.get()
+        self.budget.get()
     }
 
     /// Set or clear the soft budget alone, for a caller that re-derives it as it
     /// goes (a compile loop refreshing `budget − live` after every step).
     pub fn set_budget(&self, remaining_bytes: Option<u64>) {
-        self.budget_remaining.set(remaining_bytes);
+        self.budget.set(remaining_bytes);
     }
 
 
@@ -531,7 +531,7 @@ impl Limits {
         }
         let total = self.in_flight_bytes.get().saturating_add(bytes);
         self.in_flight_bytes.set(total);
-        match self.budget_remaining.get() {
+        match self.budget.get() {
             Some(rem) if total > rem => Err(OperationError::OverBudget),
             _ => Ok(()),
         }

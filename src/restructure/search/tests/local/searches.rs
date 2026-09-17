@@ -133,7 +133,7 @@ fn a_search_keeps_its_private_tree_between_rejected_probes() {
     let mut f = Tdd::one(&tree);
     assert_canonical(&f);
     {
-        let search = SearchTree::new(&mut f);
+        let search = crate::restructure::search::SearchTree::new(&mut f);
         let private = Arc::as_ptr(search.tdd.vtree());
         assert_ne!(private, Arc::as_ptr(&tree));
         let mut scratch = RestructureScratch::default();

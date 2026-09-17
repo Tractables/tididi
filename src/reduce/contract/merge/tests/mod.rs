@@ -1,4 +1,4 @@
 use super::*;
-use super::data::{compact_explicit_level, merge_two_internal_twins};
+use super::data::{compact_explicit_level, concat_twin_pairs};
 
 mod sweep;

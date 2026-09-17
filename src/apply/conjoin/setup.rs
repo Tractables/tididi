@@ -205,14 +205,14 @@ impl ApplyRun {
     }
 }
 
-#[inline(always)]
-#[allow(clippy::type_complexity)]
 /// Snapshot both operands' per-level widths, note whether either carries a
 /// marginal level at entry, and sum the dense-route cell count
 /// `preflight_dense_budget` reads; all three in one pass over the levels.
 ///
 /// Must run before the sweep's identity swaps steal levels, which zeroes
 /// `reference_slot_count` and clears `is_marginal`.
+#[inline(always)]
+#[allow(clippy::type_complexity)]
 fn snapshot_widths(
     f: &Tdd,
     g: &Tdd,

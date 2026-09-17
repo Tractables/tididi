@@ -259,11 +259,9 @@ impl Vtree {
     /// returning the tree and the `old_to_new` permutation a caller translates
     /// pre-reindex `VtreeIdx` values through.
     ///
-    /// This ordering guarantees `parent.idx()` > `child.idx()`, which enables:
-    /// - O(1) bottom-up traversal via `0..n`
-    /// - O(depth) LCA via "advance the lower index" (see `lca()`)
-    ///
-    /// Within each tree level, nodes appear left-to-right.
+    /// Leaves take the indices `0..num_leaves`, then the internal nodes in
+    /// bottom-up level order, left to right within a level, so the identity
+    /// order is a valid initial [`TopoOrder`](crate::vtree::topo::TopoOrder).
     pub(super) fn reindex_bottomup_with_map(
         root: VtreeIdx,
         old_nodes: Vec<VtreeNode>,
@@ -274,14 +272,6 @@ impl Vtree {
             relabel_leaves_then_internals(&levels, &old_nodes, &mut var_to_leaf);
 
         let new_root = old_to_new[root.idx()];
-        // Set leaf_count explicitly when var_to_leaf is larger than the actual
-        // number of leaves (sparse `VarId`s, left by a caller whose variable
-        // numbering has gaps).
-        let leaf_count = if actual_leaf_count != var_to_leaf.len() as u32 {
-            Some(actual_leaf_count)
-        } else {
-            None
-        };
         // After the reindex, the node array is laid out so that idx ==
         // bottom-up topological position, so the identity order is correct.
         let topo = crate::vtree::topo::TopoOrder::identity(&new_nodes);
@@ -290,7 +280,7 @@ impl Vtree {
             nodes: new_nodes,
             root: new_root,
             var_to_leaf,
-            leaf_count,
+            leaf_count: actual_leaf_count,
             topo,
         };
         (vtree, old_to_new)

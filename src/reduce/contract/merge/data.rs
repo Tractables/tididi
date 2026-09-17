@@ -52,13 +52,16 @@ pub(super) fn compact_and_fork_down(
     Ok(())
 }
 
-/// Merge a group of twin nodes' data into the first node (the "kept" node).
+/// Merge a group of twin nodes' data into the first node (the "kept" node):
+/// concatenate the members' pair lists at the arena tail and point the kept
+/// node at the result. Pair lists are unordered sets and `find_twin_groups`
+/// canonicalizes each signature slice before comparing, so concatenation is
+/// the union with no sort. A repeated `(L, R)` entry across or within the
+/// inputs is a legitimate multiset entry at a marginal-child level and is
+/// preserved; at a fully non-marginal level determinism (invariant 1) makes
+/// the supports disjoint, which `concat_twin_pairs` checks in debug builds.
 ///
 /// Only called on internal nodes (leaf levels are marginal and never contracted).
-/// Unions input pair sets of twin nodes. Paths by group/pair count:
-///   - 2 twins with 1 pair each: inline, no allocation
-///   - otherwise: arena-internal concatenation (`concat_twin_pairs`) —
-///     pair lists are unordered sets, so concatenation already is the union
 pub(super) fn merge_twin_data(
     tdd: &mut Tdd,
     t1: VtreeIdx,
@@ -82,69 +85,9 @@ pub(super) fn merge_twin_data(
         "merge_twin_data called on leaf node — leaf levels should be skipped"
     );
 
-    // Internal twins: union input pair sets.
-    if group.len() == 2 {
-        merge_two_internal_twins(level, keep, group[1] as usize, allow_dups);
-    } else {
-        // Three or more members, rare in practice. Same concatenation-is-union
-        // argument as `merge_two_internal_twins`.
-        let total: usize = group.iter().map(|&idx| level.pair_count_at(idx as usize)).sum();
-        concat_twin_pairs(level, keep, group, total, allow_dups);
-    }
+    let total: usize = group.iter().map(|&idx| level.pair_count_at(idx as usize)).sum();
+    concat_twin_pairs(level, keep, group, total, allow_dups);
 }
-
-/// Merge two internal twin nodes, the most common case: concatenate both pair
-/// lists at the arena tail with `extend_from_within` (no temp buffer) and point
-/// `keep` at the result. Pair lists are unordered and `find_twin_groups`
-/// canonicalizes each signature slice before comparing, so the union needs no
-/// sort. Duplicate `(L, R)` entries across or within the inputs are legitimate
-/// multiset entries at marginal-child levels and are preserved; at fully
-/// non-marginal levels determinism (invariant 1) makes the supports disjoint
-/// (checked debug-only in `concat_twin_pairs`).
-pub(super) fn merge_two_internal_twins(
-    level: &mut TddLevel,
-    keep: usize,
-    other: usize,
-    allow_dups: bool,
-) {
-    // 1+1 fast path: merge two single-pair nodes without allocation.
-    // After the inline encoding, single-pair nodes are inline (pair in the node itself).
-    let keep_len = level.pair_count_at(keep);
-    let other_len = level.pair_count_at(other);
-    if keep_len == 1 && other_len == 1 {
-        let pa = level.pairs_of_idx(keep)[0];
-        let pb = level.pairs_of_idx(other)[0];
-        // pa == pb is permitted and both copies must survive — see this
-        // function's doc for why duplicates are legitimate multiset entries.
-        // The grand reserve charged these two pairs (keep_len + other_len), so
-        // the pushes cannot reallocate — plain push.
-        let new_start = level.pairs.len();
-        debug_assert!(
-            level.pairs.capacity() - level.pairs.len() >= 2,
-            "merge_two_internal_twins: hoisted grand reserve under-sized pairs capacity"
-        );
-        // A 1-pair node is normally inline (owning no arena slot), but the
-        // extended encoding also carries len-1 nodes; if `keep` was one, the
-        // re-encode below abandons its slot. `other`'s is accounted when
-        // compaction drops its node.
-        let abandoned = level.arena_pairs_at(keep);
-        level.pairs.push(pa);
-        level.pairs.push(pb);
-        let data = level.encode_multi(new_start, 2);
-        level.nodes[keep] = data;
-        level.note_dead_pairs(abandoned);
-        return;
-    }
-
-    concat_twin_pairs(
-        level,
-        keep,
-        &[keep as u32, other as u32],
-        keep_len + other_len,
-        allow_dups,
-    );
-}
-
 
 /// Concatenate the pair lists of `group`'s nodes at the arena tail and point
 /// `keep` at the result. `total` must be the exact summed pair count.
@@ -157,7 +100,7 @@ pub(super) fn merge_two_internal_twins(
 /// Every source range is left behind as dead arena and counted into
 /// `TddLevel::dead_pairs`: here for the survivor, in `compact_explicit_level`
 /// for the absorbed members.
-fn concat_twin_pairs(
+pub(super) fn concat_twin_pairs(
     level: &mut TddLevel,
     keep: usize,
     group: &[u32],

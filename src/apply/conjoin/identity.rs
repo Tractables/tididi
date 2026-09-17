@@ -3,7 +3,7 @@
 //!
 //! The leaf-identity precompute (`init_leaf_identity`), the identity-swap body
 //! (`apply_identity_fast_path`), the per-level fast-path entry
-//! (`take_level_fast_path`, `FastPathResult`).
+//! (`take_level_fast_path`).
 
 use crate::Engine;
 use crate::diagram::{self, *};
@@ -232,7 +232,7 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
     }
 
     if run.arena.is_bump() {
-        run.live_counts.bump(t_idx, k_carrier);
+        run.live_counts.set(t_idx, k_carrier);
     } else {
         let output_grid_base = run.arena.materialized(t_idx).expect("a pre-planned layout grids every level");
         let slab = run.arena.slab_mut();
@@ -244,17 +244,6 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
     Ok(())
 }
 
-
-/// Return type for [`take_level_fast_path`].
-///
-/// `Taken` means a fast path fired and the call site should reclaim the
-/// consumed child grids (`reclaim_child_grids!`) then `continue` the outer loop.
-/// `NotTaken` means no fast path fired; fall through to the dense/sparse path.
-#[derive(PartialEq, Eq)]
-pub(super) enum FastPathResult {
-    Taken,
-    NotTaken,
-}
 
 /// The fast path for a level both operands made marginal with zero width.
 ///
@@ -269,20 +258,14 @@ fn try_zero_width_marginal(
     g: &Tdd,
     shape: LevelShape,
     run: &mut ApplyRun,
-) -> FastPathResult {
+) -> bool {
     let LevelShape { t, f: fw, g: gw, .. } = shape;
     let t_idx = t.idx();
-    // 0-width marginal fast-path: both operands carry a 0-width marginal level
-    // at t. This happens when the marginalization cascade / `ensure_counts` processes a
-    // sub-level structurally unreachable from the diagram output (0 nodes in the
-    // disjoint sub-vtree). ensure_counts lacks the width==0 guard that
-    // marginalize_batch has at line 701, so it emits Some(vec![]) and
-    // the cascade calls become_marginal(vec![], None). The cross-product
-    // 0×0=0; the output level is also a 0-width orphan. Neither identity
-    // fast-path fires (both require k==1). Without this guard, the dense path
-    // reaches pairs_of_idx(0) on an empty nodes Vec and panics.
-    // True upstream fix: add width()==0 guard to ensure_counts
-    // in the marginalization pass, but that restructuring is a separate task.
+    // Both operands carry a zero-width marginal level at t: marginalizing a
+    // level no node of the diagram reaches leaves an empty column. The product
+    // is 0×0 = 0, so the output level is an orphan too, and neither identity
+    // fast path fires (both need width 1). Without this guard the dense path
+    // would read pairs out of the empty level.
     if fw.here == 0 && gw.here == 0 && f.level(t).is_marginal() && g.level(t).is_marginal() {
         // A 0-width marginal is an orphan: consistent inputs cannot hold a
         // pair reference into an empty level, so no ancestor constrains or
@@ -294,23 +277,23 @@ fn try_zero_width_marginal(
         run.left_identity[t_idx] = true;
         run.right_identity[t_idx] = true;
         if run.arena.is_bump() {
-            run.live_counts.bump(t_idx, 0);
+            run.live_counts.set(t_idx, 0);
         } else {
             let output_grid_base = run.arena.materialized(t_idx).expect("a pre-planned layout grids every level");
             run.arena.set_dense(t_idx, output_grid_base);
         }
-        return FastPathResult::Taken;
+        return true;
     }
-    FastPathResult::NotTaken
+    false
 }
 
 /// Identity fast-path region for one vtree level.
 ///
 /// Covers FP1 (`f` is carrier / `g` identity), FP2 (symmetric), the
 /// zero-width orphan-marginal case, and the both-marginal-width-1 guard.
-/// Any of these ends in a logical `continue` for the outer loop; this
-/// function signals that by returning `FastPathResult::Taken`.
-/// When no fast path matches, returns `FastPathResult::NotTaken`.
+/// Any of these ends in a logical `continue` for the outer loop, which this
+/// function signals by returning `true`; `false` means no fast path matched
+/// and the level takes the dense or sparse route.
 ///
 /// The arena is only written on the zero-width orphan path (and only when the
 /// layout is pre-planned); on FP1/FP2 that write flows through
@@ -321,7 +304,7 @@ pub(super) fn take_level_fast_path(
     f: &mut Tdd,
     g: &mut Tdd,
     shape: LevelShape,
-) -> Result<FastPathResult, OperationError> {
+) -> Result<bool, OperationError> {
     let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
     let (left_width, right_width) = (shape.f.here, shape.g.here);
     let ApplyRun { levels, left_identity, right_identity, .. } = run;
@@ -370,7 +353,7 @@ pub(super) fn take_level_fast_path(
         apply_identity_fast_path::<true>(eng, shape, &mut f.levels, run)?;
         // No drop here: the start-of-iteration drop already released the
         // children.
-        return Ok(FastPathResult::Taken);
+        return Ok(true);
     }
 
     // Symmetric identity: f is constant-true at this subtree, copy g's nodes.
@@ -386,12 +369,8 @@ pub(super) fn take_level_fast_path(
         apply_identity_fast_path::<false>(eng, shape, &mut g.levels, run)?;
         // No drop here: the start-of-iteration drop already released the
         // children.
-        return Ok(FastPathResult::Taken);
+        return Ok(true);
     }
 
-    if try_zero_width_marginal(f, g, shape, run) == FastPathResult::Taken {
-        return Ok(FastPathResult::Taken);
-    }
-
-    Ok(FastPathResult::NotTaken)
+    Ok(try_zero_width_marginal(f, g, shape, run))
 }

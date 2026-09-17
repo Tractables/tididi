@@ -28,10 +28,6 @@ pub(crate) enum Polarity {
     Negative,
 }
 
-/// The implementation behind [`Engine::condition_var`](crate::Engine::condition_var).
-pub(crate) fn condition_var_on(eng: &Engine, f: Tdd, x: VarId, value: bool) -> Result<Tdd, OperationError> {
-    condition_vars_on(eng, f, &[x], value)
-}
 
 /// The implementation behind [`Engine::condition_vars`](crate::Engine::condition_vars).
 pub(crate) fn condition_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, OperationError> {
@@ -355,7 +351,7 @@ impl crate::Engine {
     /// Returns the linked operation's errors, [`OperationError::Stopped`] on
     /// cancellation, or [`OperationError::OverBudget`] on allocation refusal.
     pub fn condition_var(&self, f: Tdd, x: VarId, value: bool) -> Result<Tdd, OperationError> {
-        crate::apply::condition::condition_var_on(self, f, x, value)
+        crate::apply::condition::condition_vars_on(self, f, &[x], value)
     }
 
     /// Run [`Tdd::condition_vars`](crate::Tdd::condition_vars) using this batch's scratch and resource limits.

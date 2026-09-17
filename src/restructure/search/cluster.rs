@@ -4,7 +4,6 @@
 //! one entry point is `rotate_marginal_cluster`.
 
 use crate::Engine;
-use std::sync::Arc;
 
 use rustc_hash::FxHashSet;
 
@@ -251,7 +250,8 @@ impl Engine {
         // no-ops (the refcount-1 probe precondition). Sibling diagrams keep the old
         // shared Arc until the caller reseats them — sound
         // because rotations only change indices inside subtree(root).
-        let _ = Arc::make_mut(&mut tdd.vtree);
+        let mut search = super::SearchTree::new(tdd);
+        let tdd = &mut *search.tdd;
 
         let mut scratch = eng.restructure().checkout();
         let mut rule = ClusterRule { bound_mult };
@@ -294,6 +294,7 @@ impl Engine {
                 }
                 tried[v.idx()] |= bit;
                 if probe(eng, tdd, v, kind, &mut rule, &mut scratch, usize::MAX)? {
+                    search.original = None;
                     accepted += 1;
                     progress = true;
                 }

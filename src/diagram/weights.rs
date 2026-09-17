@@ -93,6 +93,25 @@ impl WeightStore {
     }
 
     /// Check that the table covers the vtree and every marginal level has its values.
+    /// Validate `self` against `levels` and install it in `slot`. Once a level
+    /// holds weight-marginal values, a store that interprets the weights
+    /// differently from the one they were computed under is refused.
+    pub(crate) fn install(
+        self,
+        vtree: &crate::vtree::Vtree,
+        levels: &[crate::diagram::TddLevel],
+        slot: &mut Option<WeightStore>,
+    ) -> Result<(), crate::diagram::TddBuildError> {
+        self.check_levels(vtree, levels)?;
+        if levels.iter().any(crate::diagram::TddLevel::is_weight_marginal)
+            && slot.as_ref().is_some_and(|old| !old.compatible(&self))
+        {
+            return Err(crate::diagram::TddBuildError::IncompatibleWeights);
+        }
+        *slot = Some(self);
+        Ok(())
+    }
+
     pub(crate) fn check_levels(&self, vtree: &crate::vtree::Vtree, levels: &[crate::diagram::TddLevel]) -> Result<(), crate::diagram::TddBuildError> {
         use crate::diagram::{TddBuildError, LEAF_WIDTH};
         self.check_variables(vtree.leaf_bottomup().map(|(_, var)| var))?;

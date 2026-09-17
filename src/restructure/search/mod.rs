@@ -44,3 +44,27 @@ impl crate::Engine {
         crate::restructure::search::rotation_search_on(self, tdd, objective, config)
     }
 }
+
+/// Keep one private vtree across probes, restoring shared identity if none was accepted.
+pub(super) struct SearchTree<'a> {
+    pub(super) tdd: &'a mut Tdd,
+    pub(super) original: Option<std::sync::Arc<crate::Vtree>>,
+}
+
+impl<'a> SearchTree<'a> {
+    /// Detach a shared tree once before probing any pivots.
+    pub(super) fn new(tdd: &'a mut Tdd) -> Self {
+        use std::sync::Arc;
+        let original = (Arc::strong_count(&tdd.vtree) > 1 || Arc::weak_count(&tdd.vtree) > 0)
+            .then(|| Arc::clone(&tdd.vtree));
+        Arc::make_mut(&mut tdd.vtree);
+        Self { tdd, original }
+    }
+}
+
+impl Drop for SearchTree<'_> {
+    fn drop(&mut self) {
+        if let Some(original) = self.original.take() { self.tdd.vtree = original; }
+    }
+}
+

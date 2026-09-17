@@ -16,6 +16,8 @@ use std::marker::PhantomData;
 
 /// A leaf observation and its membership in the pending ancestor traversal.
 #[derive(Clone, Copy, Debug, Default)]
+/// Per-node state of an incremental counter: the pin, meaningful on a leaf,
+/// and whether the node's cached column awaits recomputation.
 struct PinState {
     value: Option<bool>,
     dirty: bool,

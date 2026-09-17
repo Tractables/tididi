@@ -15,7 +15,6 @@
 //! invariant holds even after a rotation has scrambled raw node indices, and even
 //! when a parent is activated dynamically by an ancestor firing.
 
-use crate::diagram::Changed;
 use crate::Engine;
 use std::collections::BinaryHeap;
 
@@ -30,8 +29,6 @@ use crate::diagram::*;
 use super::scratch::ContractScratch;
 use super::fingerprint::find_twin_groups;
 use super::merge::contract_twins;
-
-// Why one top-down sweep suffices: the module doc.
 
 /// Contract one child level `t1` (with parent `parent`) if it has twins.
 /// Returns `Ok(true)` iff a productive contraction fired.
@@ -229,13 +226,9 @@ pub(crate) fn contract_all_twins(
         // invariant holds.
         if left_fired {
             push_parent(tdd, &mut scratch, &mut heap, num_nodes, left.idx());
-            // The child's pair list changed, and its nodes merged — so the
-            // parent's refs into it changed identity too.
-            tdd.invalidate(left, Changed::PAIRS | Changed::NODES);
         }
         if right_fired {
             push_parent(tdd, &mut scratch, &mut heap, num_nodes, right.idx());
-            tdd.invalidate(right, Changed::PAIRS | Changed::NODES);
         }
     }
 
@@ -268,29 +261,23 @@ fn joint_contract_fixpoint(
     let mut right_fired = false;
     loop {
         let mut changed = false;
-        match contract_child(eng, tdd, parent, left, scratch) {
-            Ok(true) => { changed = true; left_fired = true; }
-            Ok(false) => {}
-            Err(e) => return Err(e),
+        if contract_child(eng, tdd, parent, left, scratch)? {
+            changed = true;
+            left_fired = true;
         }
-        match contract_child(eng, tdd, parent, right, scratch) {
-            Ok(true) => { changed = true; right_fired = true; }
-            Ok(false) => {}
-            Err(e) => return Err(e),
+        if contract_child(eng, tdd, parent, right, scratch)? {
+            changed = true;
+            right_fired = true;
         }
         if is_marginal_boundary {
             // The inner form, so fusion reuses this run's already-taken
             // `scratch` instead of re-borrowing the pool.
-            let fus_res = crate::reduce::contract::pair_fusion::fuse_pairs_inner(
+            let stats = crate::reduce::contract::pair_fusion::fuse_pairs_inner(
                 eng,
                 tdd, Some(&[parent]), scratch,
-            );
-            match fus_res {
-                Ok(stats) if stats.fusion_groups > 0 => {
-                    changed = true;
-                }
-                Ok(_) => {}
-                Err(e) => return Err(e),
+            )?;
+            if stats.fusion_groups > 0 {
+                changed = true;
             }
         }
         if !changed {

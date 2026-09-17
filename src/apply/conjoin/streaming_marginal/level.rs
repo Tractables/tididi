@@ -115,12 +115,10 @@ pub(crate) fn attach_children<'a, F: ValueDomain>(
 pub(crate) fn commit_stream_state(
     st: StreamLevelState,
     t: VtreeIdx,
-    t_idx: usize,
     vtree: &crate::vtree::Vtree,
     levels: &mut [TddLevel],
     ws: Option<&mut WeightStore>,
 ) {
-    debug_assert_eq!(t.idx(), t_idx);
     match st {
         StreamLevelState::Int(counts) => {
             install_streamed::<IntFold>(levels, vtree, t, counts, &mut ());

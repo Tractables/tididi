@@ -34,7 +34,7 @@ use sparse::{
 
 // Identity/constant-true detection and the per-level identity fast paths.
 mod identity;
-use identity::{init_leaf_identity, take_level_fast_path, FastPathResult};
+use identity::{init_leaf_identity, take_level_fast_path};
 
 // Apply setup → `ApplyRun`.
 mod setup;
@@ -88,6 +88,17 @@ pub(crate) fn conjoin_owned(
     // can return without ever reaching `apply_and_fallible_inner`.
     crate::apply::check_conjunction_operands(&f, &g)?;
     crate::apply::prepare_weights([&mut f, &mut g])?;
+    conjoin_checked(eng, f, g, marginalize_targets)
+}
+
+/// [`conjoin_owned`] after its operand checks: for a caller that has already
+/// validated and weight-aligned the operands.
+pub(crate) fn conjoin_checked(
+    eng: &Engine,
+    mut f: Tdd,
+    mut g: Tdd,
+    marginalize_targets: Option<&[bool]>,
+) -> Result<Tdd, OperationError> {
     // Make `g` the narrower operand: the identity fast path tests
     // `right_width == 1` first, so the narrower side on the right takes it at
     // more levels, and grid rows (width `right_width`) get shorter. Only this
@@ -220,7 +231,7 @@ impl crate::Engine {
         for &t in targets {
             mask[t.idx()] = !vtree.node(t).is_leaf();
         }
-        let mut out = crate::apply::conjoin::conjoin_owned(self, f, g, Some(&mask))?;
+        let mut out = crate::apply::conjoin::conjoin_checked(self, f, g, Some(&mask))?;
         // Streaming can finish every target; only retained structure needs the pass.
         if !out.is_zero() && targets.iter().any(|&t| !out.level(t).is_marginal()) {
             self.marginalize_levels(&mut out, targets)?;
