@@ -12,8 +12,9 @@ python3 tests/rendered_docs.py target/doc
 python3 tests/package_examples.py --self-test
 ```
 
-The README and `docs/` are compiled into rustdoc. Keep walkthrough excerpts
-in sync with their runnable programs in `examples/`. The `tested-example` code
+The README snippet matches the tested crate example; `docs/` is compiled into
+rustdoc. Keep walkthrough excerpts in sync with their runnable programs in
+`examples/`. The `tested-example` code
 block class is reserved for excerpts verified by `tests/example_docs.rs`.
 Follow printing excerpts with `Output:` and a `text` block;
 `tests/package_examples.py` checks those blocks against the programs’ output.

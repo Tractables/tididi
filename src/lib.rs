@@ -71,10 +71,6 @@ pub mod execution;
 pub mod io;
 pub mod guide;
 
-#[doc = include_str!("../README.md")]
-#[doc(hidden)]
-pub mod readme {}
-
 // Oracles, generators and invariant checkers; the checkers exist only under
 // `cfg(test)` or `debug_assertions`, and `assert_canonical` is a no-op elsewhere.
 #[doc(hidden)]

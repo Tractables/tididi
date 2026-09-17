@@ -10,18 +10,18 @@ a Boolean function as a circuit, so you can work with its satisfying assignments
 without listing them. Build a circuit once, then combine it with other circuits
 or query it as your inputs change.
 
-TDDs can be strictly more succinct than ordered binary decision diagrams (OBDDs).
-For a fixed vtree, a minimized TDD is canonical: equivalent functions have the
-same diagram. Their representation and minimization algorithm are described in
+TDDs can be much smaller in practice than widely used binary decision diagrams.
+They can be made canonical, so equivalent functions have the same diagram.
+They can also be combined efficiently using Boolean operations. Their
+representation and minimization algorithm are described in
 [*A Canonical Generalization of OBDD*](https://arxiv.org/abs/2604.05537).
 
 ## Working with circuits
 
 **Build and transform Boolean functions.** Combine smaller circuits with Boolean
 operations, fix variables to chosen values, or eliminate variables with
-quantification. These operations also work on sets and relations encoded as
-Boolean functions: the [reachability example] uses conjunction, quantification,
-and variable renaming to explore a transition system.
+quantification. The [reachability example] shows how to use conjunction,
+quantification, and variable renaming to explore a transition system.
 
 **Find solutions and count possibilities.** Check whether constraints can be
 satisfied, find a solution, or count all solutions exactly. Compare functions
@@ -37,35 +37,25 @@ same circuit compute other quantities, such as the [minimum configuration cost].
 
 ## Getting started
 
-Add the crate to your project:
-
-```sh
-cargo add tididi --git https://github.com/Tractables/tididi
-```
-
-This example builds `(x ∧ y) ∨ z` and counts its satisfying assignments:
+With `tididi = "0.1"` in your dependencies, this example builds `(x ∧ y) ∨ z`
+and counts its satisfying assignments:
 
 ```rust
 use std::sync::Arc;
 use tididi::{and, literal, or, Vtree};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let vtree = Arc::new(Vtree::balanced(3));
-    let x = literal(&vtree, 1)?;
-    let y = literal(&vtree, 2)?;
-    let z = literal(&vtree, 3)?;
-
-    let f = or(and(x, y)?, z)?;
-    let count = u64::try_from(f.model_count()?)?;
-    assert_eq!(count, 5);
-    Ok(())
-}
+let vtree = Arc::new(Vtree::balanced(3));
+let x = literal(&vtree, 1)?;
+let y = literal(&vtree, 2)?;
+let z = literal(&vtree, 3)?;
+let f = or(and(x, y)?, z)?;
+let count = u64::try_from(f.model_count()?)?;
+assert_eq!(count, 5);
 ```
 
 There are four models with `z` true, and one more with `z` false and both
 `x` and `y` true. Counts range over every variable in the vtree, including
-variables the function leaves free. The conversion to `u64` returns an error
-if the exact count does not fit.
+variables the function leaves free.
 
 A **vtree** is a binary tree that groups the circuit's variables. Use the same
 `Arc<Vtree>` for circuits you intend to combine. Signed integers name literals:
