@@ -58,7 +58,7 @@ fn test_model_count_unsat() {
     let t2 = clause_to_tdd(eng, &vtree, &g);
     let result = apply_and(t1, t2);
     assert_eq!(result.model_count().unwrap(), BigUint::ZERO);
-    assert!(!result.is_sat_minimized().unwrap());
+    assert!(!result.is_sat().unwrap());
 }
 
 #[test]

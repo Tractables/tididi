@@ -32,7 +32,7 @@ fn checked_satisfiability_agrees_with_every_three_variable_truth_table() {
 }
 
 #[test]
-fn checked_satisfiability_ignores_weights_and_rejects_discarded_structure() {
+fn checked_satisfiability_ignores_weights_and_reads_marginal_counts() {
     let engine = Engine::new();
     let tree = Arc::new(Vtree::balanced(3));
     let mut f = engine.cube(&tree, [1, -2]).unwrap();
@@ -45,12 +45,12 @@ fn checked_satisfiability_ignores_weights_and_rejects_discarded_structure() {
     assert_eq!(engine.implied_literals(&f), Ok(vec![1.try_into().unwrap(), (-2).try_into().unwrap()]));
     assert_eq!(engine.weighted_value(&f).unwrap().unwrap().into_rational(), rat(0, 1));
     engine.marginalize_levels(&mut f, &[tree.root()]).unwrap();
-    assert!(matches!(engine.is_sat(&f), Err(OperationError::MarginalLevel(_))));
+    assert_eq!(engine.is_sat(&f), Err(OperationError::IncompatibleWeights));
     assert!(matches!(engine.implied_literals(&f), Err(OperationError::MarginalLevel(_))));
     let mut counts = engine.one(&tree);
     assert_canonical(&counts);
     engine.marginalize_levels(&mut counts, &[tree.root()]).unwrap();
-    assert!(matches!(engine.is_sat(&counts), Err(OperationError::MarginalLevel(_))));
+    assert_eq!(engine.is_sat(&counts), Ok(true));
     assert!(matches!(engine.implied_literals(&counts), Err(OperationError::MarginalLevel(_))));
 }
 
@@ -77,18 +77,37 @@ fn checked_satisfiability_returns_refusals_without_changing_the_input() {
     assert_canonical(&f);
 }
 
+/// A structural output above count-marginal levels answers in constant time
+/// once the diagram is reduced; an edited one is walked, and the walk polls.
 #[test]
-fn checked_satisfiability_polls_during_the_structural_scan() {
+fn checked_satisfiability_walks_an_edited_marginal_diagram_under_limits() {
     use crate::limits::{StopAt, StopRules};
     let engine = Engine::new();
     let tree = Arc::new(Vtree::balanced(8));
-    let f = engine.one(&tree);
-    assert_canonical(&f);
+    let mut g = engine.clause(&tree, [1, 5]).unwrap();
+    assert_canonical(&g);
+    let mut under_left = vec![false; tree.num_nodes()];
+    let mut stack = vec![tree.children(tree.root()).0];
+    while let Some(t) = stack.pop() {
+        under_left[t.idx()] = true;
+        if !tree.node(t).is_leaf() { let (l, r) = tree.children(t); stack.extend([l, r]); }
+    }
+    let summed: Vec<VtreeIdx> = tree.internal_bottomup_slice().iter().copied()
+        .filter(|&t| under_left[t.idx()]).collect();
+    engine.marginalize_levels(&mut g, &summed).unwrap();
+    let mut f = engine.and(g, engine.literal(&tree, 8).unwrap()).unwrap();
+    assert!(f.has_marginal_level() && !f.worklists_empty());
     engine.limits().pin_reduce_poll_stride(Some(1));
-    let _scope = engine.limits().scope(LimitConfig::none().with_stop_rules(StopRules {
-        unconditional: Some(StopAt::WorkUnits(2)), ..StopRules::default()
-    }));
-    assert_eq!(engine.is_sat(&f), Err(OperationError::Stopped));
-    assert_eq!(engine.limits().work_units(), 2);
-    assert_canonical(&f);
+    {
+        let _scope = engine.limits().scope(LimitConfig::none().with_stop_rules(StopRules {
+            unconditional: Some(StopAt::WorkUnits(2)), ..StopRules::default()
+        }));
+        assert_eq!(engine.is_sat(&f), Err(OperationError::Stopped));
+    }
+    assert_eq!(engine.is_sat(&f), Ok(true));
+    f.minimize().unwrap();
+    assert!(f.worklists_empty());
+    let before = engine.limits().work_units();
+    assert_eq!(engine.is_sat(&f), Ok(true));
+    assert_eq!(engine.limits().work_units(), before);
 }

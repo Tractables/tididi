@@ -169,6 +169,7 @@ impl Engine {
             vtree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
         }
         lim.flush_poll(&mut gate)?;
+        tdd.require_structure()?;
         let satisfiable = self.is_sat(tdd)?;
         if vars.is_empty() || !satisfiable {
             return Ok(u32::from(satisfiable).into());

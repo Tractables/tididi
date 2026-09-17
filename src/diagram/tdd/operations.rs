@@ -519,16 +519,23 @@ impl Tdd {
         context.run(|eng| eng.model_count(self))
     }
 
-    /// Whether this structural function has at least one satisfying assignment.
+    /// Whether the function has at least one satisfying assignment.
     ///
     /// Borrows the diagram without changing it and accepts nonminimal input.
     /// Literal weights are ignored, so a satisfiable function remains satisfiable
     /// when its weighted value is zero.
     /// Use [`satisfying_assignment`](Self::satisfying_assignment) to obtain a model.
     ///
+    /// A structural diagram, or one [minimized](Self::minimize) since its last
+    /// edit, answers from its output level in constant time; a diagram with
+    /// count-marginal levels that has been edited since is walked bottom-up.
+    ///
     /// # Errors
     ///
-    /// Returns [`OperationError::MarginalLevel`] for discarded structure.
+    /// Returns [`OperationError::IncompatibleWeights`] when the output level
+    /// holds weighted values: a zero weight does not establish
+    /// unsatisfiability. A walk can report [`OperationError::OverBudget`] or
+    /// [`OperationError::Stopped`].
     ///
     /// ```
     /// use std::sync::Arc;

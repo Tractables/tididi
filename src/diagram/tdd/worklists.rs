@@ -113,6 +113,13 @@ impl Tdd {
 
     /// Empty the twin-contraction worklists. For a pass that has just proved
     /// every level canonical by other means.
+    /// True when no reduction pass has work left: nothing was edited since the
+    /// last [`minimize`](Tdd::minimize), or every edit since has been reduced.
+    #[inline]
+    pub(crate) fn worklists_empty(&self) -> bool {
+        self.dirty.contract.is_empty() && self.dirty.leaf_contract.is_empty() && self.dirty.right_rescan.is_empty()
+    }
+
     #[inline]
     pub(crate) fn clear_worklists(&mut self) {
         self.dirty.contract.clear();

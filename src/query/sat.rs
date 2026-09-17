@@ -19,51 +19,23 @@ impl Engine {
         let lim = self.limits();
         let _op = lim.begin_operation();
         if lim.should_stop() { return Err(crate::OperationError::Stopped); }
-        let mut gate = crate::limits::PollGate::new(lim.reduce_poll_stride());
-        for t in f.vtree().bottomup() {
-            lim.poll(&mut gate, 1)?;
-            f.require_structure_at(t)?;
-        }
-        lim.flush_poll(&mut gate)?;
-        Ok(!f.is_zero())
-    }
-}
-
-impl Tdd {
-    /// Check satisfiability from the output of a minimized diagram.
-    ///
-    /// Structural diagrams need no minimization. Diagrams with count-marginal
-    /// levels must be minimized first so zero-count contributions are removed;
-    /// a count-marginal root answers from its stored count. Literal weights on
-    /// structural levels do not affect the answer. This query allocates no scratch.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`OperationError::IncompatibleWeights`](crate::OperationError::IncompatibleWeights)
-    /// for a non-false weight-marginal output: a zero weight does not establish
-    /// unsatisfiability. False diagrams always return `Ok(false)`.
-    pub fn is_sat_minimized(&self) -> Result<bool, crate::OperationError> {
-        if self.is_zero() { return Ok(false); }
-        let out_vtree = self.output.vtree;
-        let out_level = &self.levels[out_vtree.idx()];
+        if f.is_zero() { return Ok(false); }
+        let out_vtree = f.output.vtree;
+        let out_level = &f.levels[out_vtree.idx()];
         if out_level.is_weight_marginal() {
             return Err(crate::OperationError::IncompatibleWeights);
         }
-        if self.vtree.node(out_vtree).is_leaf() { return Ok(true); }
-        let out_i = self.output.local.idx();
+        if f.vtree.node(out_vtree).is_leaf() { return Ok(true); }
+        let out_i = f.output.local.idx();
         if let Some(counts) = out_level.marginal_counts() { return Ok(counts[out_i] > 0); }
-        Ok(out_level.pairs_iter_of(&out_level.nodes[out_i]).next().is_some())
-    }
-}
-
-impl Engine {
-    /// Run [`Tdd::is_sat_minimized`] after checking this batch's stop condition.
-    ///
-    /// Returns the query's errors or [`OperationError::Stopped`](crate::OperationError::Stopped).
-    pub fn is_sat_minimized(&self, f: &Tdd) -> Result<bool, crate::OperationError> {
-        let _op = self.limits().begin_operation();
-        if self.limits().should_stop() { return Err(crate::OperationError::Stopped); }
-        f.is_sat_minimized()
+        // A structural diagram stores no unsatisfiable node, and neither does
+        // a marginal one whose reduction worklists are drained: the output
+        // node then decides. An edited marginal diagram may still hold
+        // structural nodes over zero-count values, so it is walked.
+        if f.worklists_empty() || !f.has_marginal_level() {
+            return Ok(out_level.pairs_iter_of(&out_level.nodes[out_i]).next().is_some());
+        }
+        is_sat_structural(self, f)
     }
 }
 
@@ -72,7 +44,6 @@ impl Engine {
 /// traversal with every count collapsed to `> 0`, so it agrees with
 /// `f.model_count()? > 0` on every input, including a non-canonical diagram
 /// whose output node's pairs all bottom out in zero-count children.
-/// [`Tdd::is_sat_minimized`] is the O(1) form for a minimized diagram.
 pub(crate) fn is_sat_structural(eng: &Engine, f: &Tdd) -> Result<bool, crate::OperationError> {
     if f.is_zero() {
         return Ok(false);

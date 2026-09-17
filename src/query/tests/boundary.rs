@@ -37,7 +37,7 @@ fn a_count_marginal_output_answers_from_its_count() {
     eng.marginalize_levels(&mut f, &internal_levels_bottom_up(&vtree)).unwrap();
     assert!(f.levels[f.output.vtree.idx()].marginal_counts().is_some(), "output level is count-marginal");
     assert_eq!(f.model_count().unwrap(), before);
-    assert!(f.is_sat_minimized().unwrap());
+    assert!(f.is_sat().unwrap());
 }
 
 #[test]
@@ -49,7 +49,7 @@ fn a_weight_marginal_output_is_refused_by_name() {
     f.set_weights(WeightStore::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational)).unwrap();
     eng.marginalize_levels(&mut f, &internal_levels_bottom_up(&vtree)).unwrap();
     assert!(f.levels[f.output.vtree.idx()].is_weight_marginal(), "output level is weight-marginal");
-    assert_eq!(f.is_sat_minimized(), Err(crate::OperationError::IncompatibleWeights));
+    assert_eq!(f.is_sat(), Err(crate::OperationError::IncompatibleWeights));
 }
 
 #[test]
@@ -75,9 +75,9 @@ fn weighted_leaf_outputs_cannot_decide_structural_satisfiability() {
             ]), arithmetic)).unwrap();
             eng.marginalize_levels(&mut f, &[tree.root()]).unwrap();
             assert!(f.level(tree.root()).is_weight_marginal());
-            assert_eq!(f.is_sat_minimized(), Err(crate::OperationError::IncompatibleWeights));
+            assert_eq!(f.is_sat(), Err(crate::OperationError::IncompatibleWeights));
             f.output.local = crate::diagram::ZERO;
-            assert!(!f.is_sat_minimized().unwrap());
+            assert!(!f.is_sat().unwrap());
         }
     }
 }
@@ -88,9 +88,9 @@ fn structural_and_count_marginal_leaf_outputs_remain_satisfiable() {
     let tree = Arc::new(Vtree::balanced(1));
     for mut f in [eng.one(&tree), eng.literal(&tree, 1).unwrap(), eng.literal(&tree, -1).unwrap()] {
         assert_canonical(&f);
-        assert!(f.is_sat_minimized().unwrap());
+        assert!(f.is_sat().unwrap());
         eng.marginalize_levels(&mut f, &[tree.root()]).unwrap();
         assert!(f.level(tree.root()).marginal_counts().is_some());
-        assert!(f.is_sat_minimized().unwrap());
+        assert!(f.is_sat().unwrap());
     }
 }
