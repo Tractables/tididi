@@ -31,9 +31,9 @@ pub(crate) struct PrefilterSideMasks {
 }
 
 impl PrefilterSideMasks {
-    fn release_oversized(&mut self) {
-        crate::limits::pool::release_if_oversized(&mut self.live_cols);
-        crate::limits::pool::release_if_oversized(&mut self.reach);
+    fn release_oversized(&mut self, lim: &crate::limits::Limits) {
+        crate::limits::pool::release_if_oversized(lim, &mut self.live_cols);
+        crate::limits::pool::release_if_oversized(lim, &mut self.reach);
     }
 }
 
@@ -47,9 +47,9 @@ pub(crate) type PrefilterMaskScratch = Sides<PrefilterSideMasks>;
 impl PrefilterMaskScratch {
     /// The module's scratch-retention rule, applied buffer by buffer (a
     /// struct-held pool can't round-trip each one through `Pool::put_bounded`).
-    pub(super) fn release_oversized(&mut self) {
-        self.left.release_oversized();
-        self.right.release_oversized();
+    pub(super) fn release_oversized(&mut self, lim: &crate::limits::Limits) {
+        self.left.release_oversized(lim);
+        self.right.release_oversized(lim);
     }
 }
 

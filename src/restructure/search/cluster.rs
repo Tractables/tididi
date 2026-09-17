@@ -253,7 +253,7 @@ impl Engine {
         let mut search = super::SearchTree::new(tdd);
         let tdd = &mut *search.tdd;
 
-        let mut scratch = eng.restructure().checkout();
+        let mut scratch = eng.restructure().checkout(lim);
         let mut rule = ClusterRule { bound_mult };
         let mut accepted = 0usize;
         // The pass's one preemption point, amortized. A sweep re-scans and re-attempts

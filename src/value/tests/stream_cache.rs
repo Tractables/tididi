@@ -36,11 +36,12 @@ fn assert_empty(cache: &StreamCache, n: usize, weighted: bool) {
 
 #[test]
 fn returning_cache_drops_columns_and_retains_table_allocation() {
+    let lim = crate::limits::Limits::new();
     for weighted in [false, true] {
         let pool = Pool::default();
         let cache = populated(weighted, 7);
         let (_, capacity, allocation) = table(&cache);
-        cache.put(&pool);
+        cache.put(&lim, &pool);
         let parked = pool.take();
         assert_eq!(table(&parked), (0, capacity, allocation));
     }
@@ -48,37 +49,40 @@ fn returning_cache_drops_columns_and_retains_table_allocation() {
 
 #[test]
 fn reused_cache_matches_current_tree_size() {
+    let lim = crate::limits::Limits::new();
     for weighted in [false, true] {
         let pool = Pool::default();
-        populated(weighted, 7).put(&pool);
+        populated(weighted, 7).put(&lim, &pool);
         for n in [3, 15, 1, 0, 7] {
             let cache = StreamCache::take(&pool, n, Some(weighted));
             assert_empty(&cache, n, weighted);
-            cache.put(&pool);
+            cache.put(&lim, &pool);
         }
     }
 }
 
 #[test]
 fn arithmetic_switch_replaces_the_column_kind() {
+    let lim = crate::limits::Limits::new();
     let pool = Pool::default();
     for weighted in [false, true, false] {
         let cache = StreamCache::take(&pool, 3, Some(weighted));
         assert_empty(&cache, 3, weighted);
-        cache.put(&pool);
+        cache.put(&lim, &pool);
     }
 }
 
 #[test]
 fn nonstreaming_apply_preserves_parked_table() {
+    let lim = crate::limits::Limits::new();
     for weighted in [false, true] {
         let pool = Pool::default();
         let cache = populated(weighted, 7);
         let (_, capacity, allocation) = table(&cache);
-        cache.put(&pool);
+        cache.put(&lim, &pool);
         let disabled = StreamCache::take(&pool, 3, None);
         assert!(matches!(disabled, StreamCache::None));
-        disabled.put(&pool);
+        disabled.put(&lim, &pool);
         let reused = StreamCache::take(&pool, 3, Some(weighted));
         assert_eq!(table(&reused), (3, capacity, allocation));
         assert_empty(&reused, 3, weighted);
@@ -87,16 +91,17 @@ fn nonstreaming_apply_preserves_parked_table() {
 
 #[test]
 fn nested_streaming_caches_keep_independent_tables() {
+    let lim = crate::limits::Limits::new();
     for weighted in [false, true] {
         let pool = Pool::default();
-        populated(weighted, 7).put(&pool);
+        populated(weighted, 7).put(&lim, &pool);
         let outer = StreamCache::take(&pool, 3, Some(weighted));
         let inner = StreamCache::take(&pool, 7, Some(weighted));
         assert_ne!(table(&outer).2, table(&inner).2);
         assert_empty(&outer, 3, weighted);
-        inner.put(&pool);
+        inner.put(&lim, &pool);
         let outer_allocation = table(&outer).2;
-        outer.put(&pool);
+        outer.put(&lim, &pool);
         let reused = StreamCache::take(&pool, 3, Some(weighted));
         assert_eq!(table(&reused).2, outer_allocation);
         assert_empty(&reused, 3, weighted);
@@ -105,6 +110,7 @@ fn nested_streaming_caches_keep_independent_tables() {
 
 #[test]
 fn returning_cache_releases_oversized_table_capacity() {
+    let lim = crate::limits::Limits::new();
     let pool = Pool::default();
     let int_slots = SCRATCH_RETAIN_BYTES / std::mem::size_of::<Option<CountVec>>() + 1;
     let weighted_slots = SCRATCH_RETAIN_BYTES / std::mem::size_of::<Option<Vec<WeightValue>>>() + 1;
@@ -112,7 +118,7 @@ fn returning_cache_releases_oversized_table_capacity() {
         StreamCache::Int(Vec::with_capacity(int_slots)),
         StreamCache::Weighted(Vec::with_capacity(weighted_slots)),
     ] {
-        cache.put(&pool);
+        cache.put(&lim, &pool);
         assert_eq!(table(&pool.take()).1, 0);
     }
 }

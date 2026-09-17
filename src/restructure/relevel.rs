@@ -81,6 +81,7 @@ fn tri_axis(p: u128) -> EncodedChildRef { EncodedChildRef::from_raw(p as u32) }
 /// rotation) or its left child (a right rotation), which fixes the geometry
 /// of the triple expansion.
 pub(crate) fn restructure_inner_search(
+    lim: &crate::limits::Limits,
     tdd: &mut Tdd,
     info: &RotationInfo,
     dir: RotationKind,
@@ -100,6 +101,7 @@ pub(crate) fn restructure_inner_search(
     scratch.packed.clear();
     scratch.distinct_inner.clear();
     let n_w_pairs = collect_triples(
+        lim,
         old_v,
         old_w,
         dir,
@@ -146,9 +148,10 @@ pub(crate) fn restructure_inner_search(
 
     // Last read of `group_info` (both branches consumed it building the inner
     // level); release it before the outer level's per-v pair lists and arena.
-    release_or_clear(&mut scratch.group_info, SCRATCH_RETAIN_ENTRIES);
+    release_or_clear(lim, &mut scratch.group_info, SCRATCH_RETAIN_ENTRIES);
 
     let outer_level = build_outer_level(
+        lim,
         old_v,
         &mut scratch.packed,
         &scratch.inner_pair_to_idx,
@@ -170,6 +173,7 @@ pub(crate) fn restructure_inner_search(
 /// count, or `None` if the rotation would exceed `max_pairs`. `distinct_inner`
 /// is released before returning — only its count survives.
 fn collect_triples(
+    lim: &crate::limits::Limits,
     old_v_level: &TddLevel,
     old_w_level: &TddLevel,
     dir: RotationKind,
@@ -215,7 +219,7 @@ fn collect_triples(
     // Last read of `distinct_inner`: only its count survives (bail check 2).
     // Release it here — it is one slot per distinct inner pair and would
     // otherwise stay resident across the sort and both level builds.
-    release_or_clear(distinct_inner, SCRATCH_RETAIN_ENTRIES);
+    release_or_clear(lim, distinct_inner, SCRATCH_RETAIN_ENTRIES);
     Some(n_w_pairs)
 }
 
@@ -384,6 +388,7 @@ fn cluster_by_cell_list(
 /// Phase 5: build the outer level from the deduped (packed) triples, one node
 /// per old v-node. `triples` is released once its pairs have been distributed.
 fn build_outer_level(
+    lim: &crate::limits::Limits,
     old_v_level: &TddLevel,
     triples: &mut Vec<u128>,
     inner_pair_to_idx: &FxHashMap<ChildPair, NodeIdx>,
@@ -410,7 +415,7 @@ fn build_outer_level(
     }
     // Last read of `triples`: `per_v_pairs` now holds every outer pair. Release
     // the 16 B/triple buffer before the arena that copies those pairs is built.
-    release_or_clear(triples, SCRATCH_RETAIN_ENTRIES);
+    release_or_clear(lim, triples, SCRATCH_RETAIN_ENTRIES);
     // Indexes `old_v_level.nodes` and `per_v_pairs` at the same position.
     #[allow(clippy::needless_range_loop)]
     for i in 0..n_v {

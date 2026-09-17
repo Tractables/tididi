@@ -8,6 +8,9 @@ pub(super) struct SpineMarks<'a> {
     flags: Vec<bool>,
     set: Vec<VtreeIdx>,
     pool: &'a Pool<MarkBuffer>,
+    /// Held for `Drop`, which is where the retain cap frees the buffers and so
+    /// where their bytes go back to the meter.
+    lim: &'a crate::limits::Limits,
 }
 
 /// The flags and their rollback log reuse capacity together.
@@ -19,11 +22,11 @@ pub(super) struct MarkBuffer {
 
 impl<'a> SpineMarks<'a> {
     /// Take the pooled array, grown to cover `num_nodes` levels.
-    pub(super) fn take(lim: &crate::limits::Limits, pool: &'a Pool<MarkBuffer>, num_nodes: usize) -> Result<Self, crate::limits::OperationError> {
+    pub(super) fn take(lim: &'a crate::limits::Limits, pool: &'a Pool<MarkBuffer>, num_nodes: usize) -> Result<Self, crate::limits::OperationError> {
         let MarkBuffer { mut flags, mut set } = pool.take();
         lim.try_resize(&mut flags, num_nodes, false)?;
         lim.reserve_exact(&mut set, num_nodes)?;
-        Ok(SpineMarks { flags, set, pool })
+        Ok(SpineMarks { flags, set, pool, lim })
     }
 
     /// Mark level `t` and report whether it was newly marked.
@@ -54,8 +57,8 @@ impl Drop for SpineMarks<'_> {
             "clause-spine marks were not cleared",
         );
         self.set.clear();
-        crate::limits::pool::release_if_oversized(&mut self.set);
-        crate::limits::pool::release_if_oversized(&mut self.flags);
+        crate::limits::pool::release_if_oversized(self.lim, &mut self.set);
+        crate::limits::pool::release_if_oversized(self.lim, &mut self.flags);
         self.pool.put(MarkBuffer { flags: std::mem::take(&mut self.flags), set: std::mem::take(&mut self.set) });
     }
 }

@@ -47,11 +47,11 @@ impl PooledScratch for ContentTwinScratch {
         self.remap.clear();
     }
 
-    fn retain(&mut self) {
-        crate::limits::pool::release_if_oversized(&mut self.node_fp);
-        crate::limits::pool::release_if_oversized(&mut self.remap);
-        crate::limits::pool::release_if_oversized(&mut self.fp_counts);
-        crate::limits::pool::release_if_oversized(&mut self.key_to_canonical);
+    fn retain(&mut self, lim: &crate::limits::Limits) {
+        crate::limits::pool::release_if_oversized(lim, &mut self.node_fp);
+        crate::limits::pool::release_if_oversized(lim, &mut self.remap);
+        crate::limits::pool::release_if_oversized(lim, &mut self.fp_counts);
+        crate::limits::pool::release_if_oversized(lim, &mut self.key_to_canonical);
     }
 }
 
@@ -140,7 +140,7 @@ pub(crate) fn merge_content_equal_nodes(
     // Per-level scratch, hoisted out of the walk: the pass visits every
     // explicit level, so allocating these collections per level would dominate
     // it on a deep vtree. The pool keeps the capacity across passes too.
-    let mut scratch = eng.reduce_scratch().content_twin.checkout();
+    let mut scratch = eng.reduce_scratch().content_twin.checkout(lim);
     let ContentTwinScratch { node_fp, fp_counts, key_to_canonical, remap } = &mut *scratch;
 
     for parent_v in order {

@@ -100,7 +100,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective>(
     let _op = eng.limits().begin_operation();
     let mut stats = RotationSearchStats { probes: 0, accepts: 0, sweeps: 0 };
     let mut rule = Counted { objective, probes: 0, accepts: 0 };
-    let mut scratch = eng.restructure().checkout();
+    let mut scratch = eng.restructure().checkout(eng.limits());
 
     // Rotation-locality precondition: the locality assertion and the v/w-only
     // probe revert need a canonical input, so establish it once here.

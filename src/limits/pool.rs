@@ -6,6 +6,8 @@
 
 use std::cell::Cell;
 
+use super::Limits;
+
 /// Maximum retained scratch capacity between operations. Larger buffers are
 /// released so an unusually large operation does not permanently retain them.
 /// Level arenas have a separate limit, `diagram::MAX_LEVEL_ARENA_BYTES`.
@@ -48,8 +50,8 @@ impl<T> Pool<Vec<T>> {
     /// Park `v`, dropping its allocation first if it is oversized; see
     /// [`release_if_oversized`].
     #[inline]
-    pub(crate) fn put_bounded(&self, mut v: Vec<T>) {
-        release_if_oversized(&mut v);
+    pub(crate) fn put_bounded(&self, lim: &Limits, mut v: Vec<T>) {
+        release_if_oversized(lim, &mut v);
         self.put(v);
     }
 }
@@ -58,24 +60,28 @@ impl<T> Pool<Vec<T>> {
 pub(crate) trait PooledScratch: Default {
     /// Invalidate previous results before the working set is used again.
     fn prepare(&mut self);
-    /// Release allocations that exceed this working set's retention policy.
-    fn retain(&mut self);
+    /// Release allocations that exceed this working set's retention policy,
+    /// giving the freed bytes back to `lim`.
+    fn retain(&mut self, lim: &Limits);
 }
 
 impl<T> PooledScratch for Vec<T> {
     #[inline]
     fn prepare(&mut self) { self.clear(); }
     #[inline]
-    fn retain(&mut self) { release_if_oversized(self); }
+    fn retain(&mut self, lim: &Limits) { release_if_oversized(lim, self); }
 }
 
 impl<T: PooledScratch> Pool<T> {
     /// Check out scratch, returning it automatically on an ordinary exit.
+    ///
+    /// `lim` is held for the return: the retention policy runs when the guard
+    /// drops, and whatever it frees is given back to the byte meter there.
     #[inline]
-    pub(crate) fn checkout(&self) -> PoolGuard<'_, T> {
+    pub(crate) fn checkout<'a>(&'a self, lim: &'a Limits) -> PoolGuard<'a, T> {
         let mut value = self.take();
         value.prepare();
-        PoolGuard { pool: self, value }
+        PoolGuard { pool: self, lim, value }
     }
 }
 
@@ -85,6 +91,7 @@ impl<T: PooledScratch> Pool<T> {
 /// retention policy and park it for the next checkout, including nested uses.
 pub(crate) struct PoolGuard<'a, T: PooledScratch> {
     pool: &'a Pool<T>,
+    lim: &'a Limits,
     value: T,
 }
 
@@ -102,7 +109,7 @@ impl<T: PooledScratch> std::ops::DerefMut for PoolGuard<'_, T> {
 impl<T: PooledScratch> Drop for PoolGuard<'_, T> {
     fn drop(&mut self) {
         if !std::thread::panicking() {
-            self.value.retain();
+            self.value.retain(self.lim);
             self.pool.put(std::mem::take(&mut self.value));
         }
     }
@@ -191,9 +198,11 @@ impl<K, V, S: Default> Scratch for std::collections::HashMap<K, V, S> {
 /// fields, which cannot round-trip through a pool per buffer, applies it field
 /// by field.
 #[inline]
-pub(crate) fn release_if_oversized<B: Scratch + ?Sized>(buf: &mut B) {
-    if buf.retained_bytes() > SCRATCH_RETAIN_BYTES {
+pub(crate) fn release_if_oversized<B: Scratch + ?Sized>(lim: &Limits, buf: &mut B) {
+    let bytes = buf.retained_bytes();
+    if bytes > SCRATCH_RETAIN_BYTES {
         buf.release();
+        lim.release_bytes(bytes as u64);
     }
 }
 
@@ -207,9 +216,11 @@ pub(crate) fn release_if_oversized<B: Scratch + ?Sized>(buf: &mut B) {
 /// or the next call sees the last one's contents. Clearing a buffer that was
 /// just released is a no-op, which is why both cases are one call.
 #[inline]
-pub(crate) fn release_or_clear<B: Scratch + ?Sized>(buf: &mut B, max_entries: usize) {
+pub(crate) fn release_or_clear<B: Scratch + ?Sized>(lim: &Limits, buf: &mut B, max_entries: usize) {
     if buf.entries() > max_entries {
+        let bytes = buf.retained_bytes();
         buf.release();
+        lim.release_bytes(bytes as u64);
     } else {
         buf.clear();
     }

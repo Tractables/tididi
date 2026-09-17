@@ -461,9 +461,9 @@ impl RefSlotScratch {
 
     /// Drop the allocation of either buffer whose retained capacity exceeds
     /// the scratch-retention cap; each buffer is judged on its own capacity.
-    pub(crate) fn release_oversized(&mut self) {
-        crate::limits::pool::release_if_oversized(&mut self.referenced);
-        crate::limits::pool::release_if_oversized(&mut self.seen);
+    pub(crate) fn release_oversized(&mut self, lim: &crate::limits::Limits) {
+        crate::limits::pool::release_if_oversized(lim, &mut self.referenced);
+        crate::limits::pool::release_if_oversized(lim, &mut self.seen);
     }
 }
 

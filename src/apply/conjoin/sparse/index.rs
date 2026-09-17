@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::limits::pool::SCRATCH_RETAIN_BYTES;
+use crate::limits::Limits;
 
 /// Candidate that survived the sibling liveness filter, grouped by f-parent.
 #[derive(Clone, Copy)]
@@ -109,13 +110,13 @@ impl SparseWorkspace {
     /// Release inner Vec memory from bucket arrays whose retained capacity grew
     /// past [`SCRATCH_RETAIN_BYTES`]. Called after a large sparse level to avoid
     /// retaining peak allocations. Covers every `Vec<Vec<_>>` bucket array.
-    fn release_if_large(&mut self) {
-        drop_if_large(&mut self.prod_by_a1);
-        drop_if_large(&mut self.prod_by_s1);
-        drop_if_large(&mut self.right_buckets);
-        drop_if_large(&mut self.left_buckets);
-        drop_if_large(&mut self.par_buckets);
-        drop_if_large(&mut self.filtered);
+    fn release_if_large(&mut self, lim: &Limits) {
+        drop_if_large(lim, &mut self.prod_by_a1);
+        drop_if_large(lim, &mut self.prod_by_s1);
+        drop_if_large(lim, &mut self.right_buckets);
+        drop_if_large(lim, &mut self.left_buckets);
+        drop_if_large(lim, &mut self.par_buckets);
+        drop_if_large(lim, &mut self.filtered);
     }
 }
 
@@ -125,11 +126,14 @@ impl SparseWorkspace {
 /// [`release_if_oversized`](crate::limits::pool::release_if_oversized) applies to the flat buffers. Frees both the inner elements and the outer
 /// allocation. Early-exits the summation as soon as the threshold is crossed, so
 /// the common under-cap case pays at most one pass and the over-cap case stops
-/// early. `size_of::<E>()` is a compile-time constant.
+/// early. `size_of::<E>()` is a compile-time constant. The over-cap branch then
+/// finishes the summation, because the amount handed back to `lim` has to be
+/// what is actually freed and not just the threshold that tripped.
 #[inline]
-pub(crate) fn drop_if_large<E>(v: &mut Vec<Vec<E>>) {
+pub(crate) fn drop_if_large<E>(lim: &Limits, v: &mut Vec<Vec<E>>) {
     let elem = std::mem::size_of::<E>();
-    let mut bytes = v.capacity().saturating_mul(std::mem::size_of::<Vec<E>>());
+    let spine = v.capacity().saturating_mul(std::mem::size_of::<Vec<E>>());
+    let mut bytes = spine;
     let mut over = bytes > SCRATCH_RETAIN_BYTES;
     if !over {
         for inner in v.iter() {
@@ -141,7 +145,11 @@ pub(crate) fn drop_if_large<E>(v: &mut Vec<Vec<E>>) {
         }
     }
     if over {
+        let freed = v.iter().fold(spine, |acc, inner| {
+            acc.saturating_add(inner.capacity().saturating_mul(elem))
+        });
         *v = Vec::new();
+        lim.release_bytes(freed as u64);
     }
 }
 
@@ -244,7 +252,7 @@ pub(crate) fn ensure_buckets_cleared<T>(eng: &Engine, buckets: &mut Vec<Vec<T>>,
 ///
 /// Called from `apply_and_fallible` after each sparse level to cap retained peak.
 pub(crate) fn release_sparse_ws_if_large(eng: &Engine) {
-    eng.sparse().borrow_mut().release_if_large();
+    eng.sparse().borrow_mut().release_if_large(eng.limits());
 }
 
 /// Replace the engine's sparse workspace with `SparseWorkspace::default()`,

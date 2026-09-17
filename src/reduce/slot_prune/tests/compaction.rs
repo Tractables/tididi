@@ -205,8 +205,8 @@ fn sweep_scratch_is_cleared_on_take() {
     eng.reduce_scratch().slot_prune_slots.put(dirty);
     eng.reduce_scratch().slot_prune_remap.put(vec![1, 2, 3]);
 
-    let slots = eng.reduce_scratch().slot_prune_slots.checkout();
-    let remap = eng.reduce_scratch().slot_prune_remap.checkout();
+    let slots = eng.reduce_scratch().slot_prune_slots.checkout(eng.limits());
+    let remap = eng.reduce_scratch().slot_prune_remap.checkout(eng.limits());
     assert!(slots.referenced.is_empty(), "referenced must be cleared on take");
     assert!(remap.is_empty(), "remap must be cleared on take");
 }

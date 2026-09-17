@@ -43,11 +43,11 @@ impl StreamCache {
     }
 
     /// Discard computed columns and return bounded table capacity to the pool.
-    pub(crate) fn put(mut self, pool: &Pool<StreamCache>) {
+    pub(crate) fn put(mut self, lim: &crate::limits::Limits, pool: &Pool<StreamCache>) {
         match &mut self {
             StreamCache::None => return,
-            StreamCache::Int(cols) => retire(cols),
-            StreamCache::Weighted(cols) => retire(cols),
+            StreamCache::Int(cols) => retire(lim, cols),
+            StreamCache::Weighted(cols) => retire(lim, cols),
         }
         pool.put(self);
     }
@@ -93,7 +93,7 @@ fn vec_of_none<T>(num_nodes: usize) -> Vec<Option<T>> {
 }
 
 /// Discard column values and retain the table allocation within the scratch cap.
-fn retire<T>(cols: &mut Vec<Option<T>>) {
+fn retire<T>(lim: &crate::limits::Limits, cols: &mut Vec<Option<T>>) {
     cols.clear();
-    release_if_oversized(cols);
+    release_if_oversized(lim, cols);
 }

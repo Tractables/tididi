@@ -20,6 +20,7 @@ use crate::test_helpers::{assert_canonical, compile_clauses};
 
 #[test]
 fn left_rotation_preserves_model_count() {
+    let eng_lim = crate::limits::Limits::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![-3, 4]]);
     let mc_before = tdd.model_count().unwrap();
@@ -28,7 +29,7 @@ fn left_rotation_preserves_model_count() {
     let root = vt.root();
     let info = rotate_left(&mut vt, root).unwrap();
     tdd.vtree = Arc::new(vt);
-    restructure_inner_search(&mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
+    restructure_inner_search(&eng_lim, &mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
     tdd.minimize().unwrap();
     assert_canonical(&tdd);
     assert_eq!(mc_before, tdd.model_count().unwrap());
@@ -39,6 +40,7 @@ fn left_rotation_preserves_model_count() {
 /// count reached midway.
 #[test]
 fn right_rotation_preserves_model_count() {
+    let eng_lim = crate::limits::Limits::new();
     // Right rotation is applicable only after a left rotation has been made,
     // so start from a linear vtree and make one.
     let vtree = Arc::new(Vtree::linear(4));
@@ -49,13 +51,13 @@ fn right_rotation_preserves_model_count() {
     let root = vt.root();
     let left_idx = rotate_left(&mut vt, root).unwrap();
     tdd.vtree = Arc::new(vt.clone());
-    restructure_inner_search(&mut tdd, &left_idx, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
+    restructure_inner_search(&eng_lim, &mut tdd, &left_idx, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
     tdd.minimize().unwrap();
     assert_eq!(mc_before, tdd.model_count().unwrap(), "the left rotation moved the count");
 
     let right_idx = rotate_right(&mut vt, root).unwrap();
     tdd.vtree = Arc::new(vt);
-    restructure_inner_search(&mut tdd, &right_idx, RotationKind::Right, &mut RestructureScratch::default(), usize::MAX);
+    restructure_inner_search(&eng_lim, &mut tdd, &right_idx, RotationKind::Right, &mut RestructureScratch::default(), usize::MAX);
     tdd.minimize().unwrap();
     assert_canonical(&tdd);
     assert_eq!(mc_before, tdd.model_count().unwrap(), "the round trip moved the count");
@@ -63,6 +65,7 @@ fn right_rotation_preserves_model_count() {
 
 #[test]
 fn left_rotation_unsat_stays_unsat() {
+    let eng_lim = crate::limits::Limits::new();
     let vtree = Arc::new(Vtree::balanced(2));
     let mut tdd = compile_clauses(&vtree, &[vec![1], vec![-1]]);
     let mc_before = tdd.model_count().unwrap();
@@ -71,7 +74,7 @@ fn left_rotation_unsat_stays_unsat() {
     let root = vt.root();
     if let Some(info) = rotate_left(&mut vt, root) {
         tdd.vtree = Arc::new(vt);
-        restructure_inner_search(&mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
+        restructure_inner_search(&eng_lim, &mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
         tdd.minimize().unwrap();
         assert_canonical(&tdd);
         assert_eq!(tdd.model_count().unwrap(), num_bigint::BigUint::ZERO);
@@ -86,6 +89,7 @@ fn left_rotation_unsat_stays_unsat() {
 /// marginalization-first count (which equals the Boolean count).
 #[test]
 fn parent_of_marginal_rotation_preserves_model_count() {
+    let eng_lim = crate::limits::Limits::new();
     let eng = Engine::new();
     use crate::marginal::{marginalize_batch, marginalize_closure};
 
@@ -116,7 +120,7 @@ fn parent_of_marginal_rotation_preserves_model_count() {
     let info = rotate_left(&mut vt, root).unwrap();
     let new_vtree = Arc::new(vt);
     tdd.vtree = Arc::clone(&new_vtree);
-    restructure_inner_search(&mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
+    restructure_inner_search(&eng_lim, &mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
     // Close clusters (the production path runs marginalize_closure after search).
     marginalize_closure(&eng, &mut tdd).expect("no wall is installed in a test");
     tdd.minimize().unwrap();
@@ -137,6 +141,7 @@ fn parent_of_marginal_rotation_preserves_model_count() {
 /// #F exactly. Fails without that free (children keep their stores resident).
 #[test]
 fn cluster_rotation_frees_subsumed_child_stores() {
+    let eng_lim = crate::limits::Limits::new();
     let eng = Engine::new();
     use crate::marginal::{marginalize_batch, marginalize_closure};
 
@@ -172,7 +177,7 @@ fn cluster_rotation_frees_subsumed_child_stores() {
     let info = rotate_left(&mut vt, root).unwrap();
     let new_vtree = Arc::new(vt);
     tdd.vtree = Arc::clone(&new_vtree);
-    restructure_inner_search(&mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
+    restructure_inner_search(&eng_lim, &mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
     marginalize_closure(&eng, &mut tdd).expect("no wall is installed in a test");
 
     assert!(
@@ -372,7 +377,7 @@ fn rotate_left_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::vt
     let w_idx = info.w_idx.idx();
     let snap = snapshot_levels(tdd);
     tdd.vtree = Arc::new(vt);
-    let _ = restructure_inner_search(tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
+    let _ = restructure_inner_search(eng.limits(), tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
     crate::test_helpers::check::debug_assert_rotation_locality(eng, tdd, info.w_idx);
     tdd.clear_worklists();
     assert_locality(tdd, &snap, v_idx, w_idx);
@@ -387,7 +392,7 @@ fn rotate_right_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::v
     let w_idx = info.w_idx.idx();
     let snap = snapshot_levels(tdd);
     tdd.vtree = Arc::new(vt);
-    let _ = restructure_inner_search(tdd, &info, RotationKind::Right, &mut RestructureScratch::default(), usize::MAX);
+    let _ = restructure_inner_search(eng.limits(), tdd, &info, RotationKind::Right, &mut RestructureScratch::default(), usize::MAX);
     crate::test_helpers::check::debug_assert_rotation_locality(eng, tdd, info.w_idx);
     tdd.clear_worklists();
     assert_locality(tdd, &snap, v_idx, w_idx);

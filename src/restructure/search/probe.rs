@@ -73,7 +73,7 @@ pub(super) fn probe<R: ProbeRule>(
         return Ok(false);
     }
     let bound = rule.bound(trial.tdd, &info, default_bound);
-    trial.old_levels = restructure_inner_search(trial.tdd, &info, kind, scratch, bound);
+    trial.old_levels = restructure_inner_search(eng.limits(), trial.tdd, &info, kind, scratch, bound);
     let Some((old_v, old_w)) = trial.old_levels.as_ref() else { return Ok(false) };
     #[cfg(debug_assertions)]
     crate::test_helpers::check::debug_assert_rotation_locality(eng, trial.tdd, info.w_idx);

@@ -107,15 +107,15 @@ impl MergeBuffers {
 
     /// Drop the allocation of any buffer whose retained capacity exceeds the
     /// scratch-retention cap, the same policy as `PooledScratch::retain`.
-    fn release_oversized(&mut self) {
-        crate::limits::pool::release_if_oversized(&mut self.resolve_keeps);
-        crate::limits::pool::release_if_oversized(&mut self.filtered);
-        crate::limits::pool::release_if_oversized(&mut self.duplicate_members);
-        crate::limits::pool::release_if_oversized(&mut self.keep_pairs_sorted);
-        crate::limits::pool::release_if_oversized(&mut self.member_pairs);
-        crate::limits::pool::release_if_oversized(&mut self.sel);
-        crate::limits::pool::release_if_oversized(&mut self.group_plans);
-        crate::limits::pool::release_if_oversized(&mut self.seen_pairs);
+    fn release_oversized(&mut self, lim: &crate::limits::Limits) {
+        crate::limits::pool::release_if_oversized(lim, &mut self.resolve_keeps);
+        crate::limits::pool::release_if_oversized(lim, &mut self.filtered);
+        crate::limits::pool::release_if_oversized(lim, &mut self.duplicate_members);
+        crate::limits::pool::release_if_oversized(lim, &mut self.keep_pairs_sorted);
+        crate::limits::pool::release_if_oversized(lim, &mut self.member_pairs);
+        crate::limits::pool::release_if_oversized(lim, &mut self.sel);
+        crate::limits::pool::release_if_oversized(lim, &mut self.group_plans);
+        crate::limits::pool::release_if_oversized(lim, &mut self.seen_pairs);
     }
 }
 
@@ -145,10 +145,10 @@ impl DuplicateScratch {
     }
 
     /// Per-buffer capacity release, same policy as [`MergeBuffers`].
-    fn release_oversized(&mut self) {
-        crate::limits::pool::release_if_oversized(&mut self.pairs);
-        crate::limits::pool::release_if_oversized(&mut self.out);
-        crate::limits::pool::release_if_oversized(&mut self.counts);
+    fn release_oversized(&mut self, lim: &crate::limits::Limits) {
+        crate::limits::pool::release_if_oversized(lim, &mut self.pairs);
+        crate::limits::pool::release_if_oversized(lim, &mut self.out);
+        crate::limits::pool::release_if_oversized(lim, &mut self.counts);
     }
 }
 
@@ -253,7 +253,7 @@ impl PooledScratch for ContractScratch {
         self.has_marginal_below_valid = false;
     }
 
-    fn retain(&mut self) {
+    fn retain(&mut self, lim: &crate::limits::Limits) {
         // Bound each buffer against its own capacity, not against one buffer
         // standing in for the set: `entries` is empty on a twin-free level, so
         // gating on it would let the width-sized buffers grow unchecked over a run
@@ -261,29 +261,29 @@ impl PooledScratch for ContractScratch {
         // buffer is filled or resized over the range it is read on, so a dropped
         // one costs the next call a reallocation; `pair_fusion.cells` regrows
         // zeroed, which its generation stamp (always ≥ 1) reads as never stamped.
-        crate::limits::pool::release_if_oversized(&mut self.counts);
-        crate::limits::pool::release_if_oversized(&mut self.entries);
-        crate::limits::pool::release_if_oversized(&mut self.cursors);
-        crate::limits::pool::release_if_oversized(&mut self.twin_hash_table);
-        crate::limits::pool::release_if_oversized(&mut self.fingerprints);
-        crate::limits::pool::release_if_oversized(&mut self.flat_groups);
-        crate::limits::pool::release_if_oversized(&mut self.group_starts);
-        crate::limits::pool::release_if_oversized(&mut self.is_candidate);
-        crate::limits::pool::release_if_oversized(&mut self.slice_unsorted);
-        crate::limits::pool::release_if_oversized(&mut self.remap.merge_target);
-        crate::limits::pool::release_if_oversized(&mut self.remap.final_remap);
-        crate::limits::pool::release_if_oversized(&mut self.remap.duplicate_redirect);
-        crate::limits::pool::release_if_oversized(&mut self.has_marginal_below);
-        crate::limits::pool::release_if_oversized(&mut self.needs_check);
+        crate::limits::pool::release_if_oversized(lim, &mut self.counts);
+        crate::limits::pool::release_if_oversized(lim, &mut self.entries);
+        crate::limits::pool::release_if_oversized(lim, &mut self.cursors);
+        crate::limits::pool::release_if_oversized(lim, &mut self.twin_hash_table);
+        crate::limits::pool::release_if_oversized(lim, &mut self.fingerprints);
+        crate::limits::pool::release_if_oversized(lim, &mut self.flat_groups);
+        crate::limits::pool::release_if_oversized(lim, &mut self.group_starts);
+        crate::limits::pool::release_if_oversized(lim, &mut self.is_candidate);
+        crate::limits::pool::release_if_oversized(lim, &mut self.slice_unsorted);
+        crate::limits::pool::release_if_oversized(lim, &mut self.remap.merge_target);
+        crate::limits::pool::release_if_oversized(lim, &mut self.remap.final_remap);
+        crate::limits::pool::release_if_oversized(lim, &mut self.remap.duplicate_redirect);
+        crate::limits::pool::release_if_oversized(lim, &mut self.has_marginal_below);
+        crate::limits::pool::release_if_oversized(lim, &mut self.needs_check);
         // The grouping table, `touched` and `groups` are sized by one node's pair
         // count, not by the level width, so the spine bound is the operative one —
         // the `groups` SmallVec inners only spill past 4 refs for a single
         // (node, x) group.
-        crate::limits::pool::release_if_oversized(&mut self.pair_fusion.cells);
-        crate::limits::pool::release_if_oversized(&mut self.pair_fusion.touched);
-        crate::limits::pool::release_if_oversized(&mut self.pair_fusion.groups);
+        crate::limits::pool::release_if_oversized(lim, &mut self.pair_fusion.cells);
+        crate::limits::pool::release_if_oversized(lim, &mut self.pair_fusion.touched);
+        crate::limits::pool::release_if_oversized(lim, &mut self.pair_fusion.groups);
         // Same treatment for the parked `contract_twins` merge buffers.
-        self.merge.release_oversized();
-        self.duplicate.release_oversized();
+        self.merge.release_oversized(lim);
+        self.duplicate.release_oversized(lim);
     }
 }

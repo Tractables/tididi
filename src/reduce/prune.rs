@@ -72,7 +72,7 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Opera
     let need_remap = total.saturating_sub(remap.len());
     if eng.limits().reserve_exact(&mut remap, need_remap).is_err() {
         pool.prune_level_base.put(level_base);
-        pool.prune_remap.put_bounded(remap);
+        pool.prune_remap.put_bounded(eng.limits(), remap);
         return Err(OperationError::OverBudget);
     }
 
@@ -95,7 +95,7 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Opera
     );
 
     pool.prune_level_base.put(level_base);
-    pool.prune_remap.put_bounded(remap);
+    pool.prune_remap.put_bounded(eng.limits(), remap);
 
     Ok(())
 }

@@ -183,24 +183,24 @@ impl ApplyRun {
     pub(super) fn finish(mut self, eng: &Engine) -> Vec<TddLevel> {
         let pool = eng.apply();
         let (slab, grids) = self.arena.into_parts();
-        pool.node_idx.put_bounded(slab);
+        pool.node_idx.put_bounded(eng.limits(), slab);
         pool.grids.put(grids);
         pool.right_identity.put(self.right_identity);
         pool.left_identity.put(self.left_identity);
         for pl in &mut self.product_lists {
-            crate::limits::pool::release_if_oversized(pl);
+            crate::limits::pool::release_if_oversized(eng.limits(), pl);
         }
         pool.product_lists.put(self.product_lists);
         self.live_counts.into_pool(&pool.live_counts);
         pool.has_pl.put(self.has_pl);
         pool.left_widths.put(self.left_widths);
         pool.right_widths.put(self.right_widths);
-        pool.inputs1.put_bounded(self.inputs1_scratch);
-        pool.inputs2.put_bounded(self.inputs2_scratch);
+        pool.inputs1.put_bounded(eng.limits(), self.inputs1_scratch);
+        pool.inputs2.put_bounded(eng.limits(), self.inputs2_scratch);
         // Same retention rule, applied to the bundle's four fields.
-        self.prefilter_masks.release_oversized();
+        self.prefilter_masks.release_oversized(eng.limits());
         pool.prefilter_masks.put(self.prefilter_masks);
-        self.stream_cache.put(&pool.stream_cache);
+        self.stream_cache.put(eng.limits(), &pool.stream_cache);
         self.levels
     }
 }

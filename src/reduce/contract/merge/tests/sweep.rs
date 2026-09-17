@@ -153,7 +153,7 @@ fn refused_merge_reuses_buffers_without_replaying_stale_plans() {
     let mut tdd = Tdd::from_levels_unchecked(
         vtree, levels, TddNodeId { vtree: parent, local: output },
     );
-    let mut scratch = eng.reduce_scratch().contract.checkout();
+    let mut scratch = eng.reduce_scratch().contract.checkout(eng.limits());
     scratch.flat_groups = vec![0, 1];
     scratch.group_starts = vec![0];
     scratch.remap.merge_target = vec![0, 1];
@@ -174,7 +174,7 @@ fn refused_merge_reuses_buffers_without_replaying_stale_plans() {
 
     // Return through the engine pool before retrying the same contraction.
     drop(scratch);
-    let mut scratch = eng.reduce_scratch().contract.checkout();
+    let mut scratch = eng.reduce_scratch().contract.checkout(eng.limits());
     assert_eq!(scratch.merge.sel.as_ptr(), allocation);
     assert_eq!(contract_twins(&eng, &mut tdd, child, parent, ChildSide::Left, &mut scratch), Ok(1));
     assert_eq!(scratch.merge.sel.as_ptr(), allocation);

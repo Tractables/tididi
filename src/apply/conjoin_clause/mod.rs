@@ -250,7 +250,7 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
 
     // `level_base` needs no reset — every spine entry is rewritten each call
     // and irrelevant entries are never read.
-    pool.cd_map.put_bounded(cd_map);
+    pool.cd_map.put_bounded(lim, cd_map);
     pool.level_base.put(level_base);
     pool.spine_internal.put(spine_internal);
     pool.dfs_stack.put(dfs_stack);

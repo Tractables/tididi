@@ -34,7 +34,7 @@ use crate::value::slots::{compact_slots, count_key_at, rekey_big, truncate_with_
 
 impl crate::limits::pool::PooledScratch for RefSlotScratch {
     fn prepare(&mut self) { self.clear(); }
-    fn retain(&mut self) { self.release_oversized(); }
+    fn retain(&mut self, lim: &crate::limits::Limits) { self.release_oversized(lim); }
 }
 
 /// What a `prune_value_slots` sweep reclaimed.
@@ -181,8 +181,8 @@ fn prune_marginal_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> Va
     let mut stats = ValueSlotPruneStats::default();
     // Both buffers are refilled per level, so a pooled pair differs from a
     // fresh one only in capacity.
-    let mut slots = eng.reduce_scratch().slot_prune_slots.checkout();
-    let mut remap = eng.reduce_scratch().slot_prune_remap.checkout();
+    let mut slots = eng.reduce_scratch().slot_prune_slots.checkout(eng.limits());
+    let mut remap = eng.reduce_scratch().slot_prune_remap.checkout(eng.limits());
     // The output level's store is the result; never touch it.
     let out_v = tdd.output.vtree;
 
