@@ -111,7 +111,7 @@ fn validate_all_nodes_reachable(tdd: &Tdd) -> Result<(), String> {
 
     // Verify all stored nodes are reachable (skip leaf levels — marginal nodes are always "reachable")
     // Indexes the vtree, `tdd.levels` and `reachable` at the same position.
-    #[allow(clippy::needless_range_loop)]
+    #[expect(clippy::needless_range_loop)]
     for t_idx in 0..num_nodes {
         if vtree.node(VtreeIdx(t_idx as u32)).is_leaf() { continue; }
         for i in 0..tdd.levels[t_idx].slot_count() {

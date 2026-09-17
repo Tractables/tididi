@@ -206,7 +206,7 @@ pub(super) fn compact_explicit_level(level: &mut TddLevel, merge_target: &[u32])
     // (`compact_pairs_if_stale`) runs later, so per-drop adds bought nothing.
     let mut dead_acc = 0usize;
     // In-place compaction: the read index advances independently of the write cursor.
-    #[allow(clippy::needless_range_loop)]
+    #[expect(clippy::needless_range_loop)]
     for read in 0..n {
         if merge_target[read] == read as u32 {
             if write < read {

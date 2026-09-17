@@ -180,7 +180,7 @@ fn graft_impl(
         let comp_to_full_k = &layout.comp_to_full[k];
         let mut part_ws = merged.as_ref().and_then(|_| tdd.detach_weights());
         // Indexes `comp_to_full_k` and the component vtree at the same position.
-        #[allow(clippy::needless_range_loop)]
+        #[expect(clippy::needless_range_loop)]
         for c_idx in 0..tdd.vtree.num_nodes() {
             let f_idx = comp_to_full_k[c_idx];
             if tdd.levels[c_idx].is_weight_marginal()

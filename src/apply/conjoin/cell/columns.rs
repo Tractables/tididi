@@ -37,13 +37,13 @@ pub(crate) struct RightColumns<'a> {
     /// `build` and never touched again, so the heap block the descriptors
     /// point into stays put for the table's life; the field's job is to own
     /// that block, and it is never read through.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     flat: Vec<ChildPair>,
     /// One descriptor per column `j ∈ 0..right_width`.
     cols: Vec<ColumnSlice>,
     /// The byte-budget charge for `flat`, held for the table's life and
     /// released on drop, including the level's early exits.
-    #[allow(dead_code)]
+    #[expect(dead_code)]
     charge: ByteCharge<'a>,
     /// The engine whose pool the descriptor buffer goes back to.
     eng: &'a Engine,

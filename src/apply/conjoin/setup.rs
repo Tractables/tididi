@@ -212,7 +212,6 @@ impl ApplyRun {
 /// Must run before the sweep's identity swaps steal levels, which zeroes
 /// `reference_slot_count` and clears `is_marginal`.
 #[inline(always)]
-#[allow(clippy::type_complexity)]
 fn snapshot_widths(
     f: &Tdd,
     g: &Tdd,

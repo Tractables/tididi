@@ -211,7 +211,7 @@ fn emit_leaf_nodes(dot: &mut String, f: &Tdd, reachable: &[Vec<bool>], t: VtreeI
     // +1: emit 1-indexed DIMACS variable, matching the .tdd / .vtree formats.
     let sub = subscript(f.vtree.leaf_var(t).0);
     // The index is a leaf-label ordinal, not a position in one array.
-    #[allow(clippy::needless_range_loop)]
+    #[expect(clippy::needless_range_loop)]
     for i in 0..LEAF_WIDTH {
         if !reachable[t.idx()][i] {
             continue;

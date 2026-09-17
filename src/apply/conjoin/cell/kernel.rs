@@ -240,7 +240,7 @@ impl PairSink for CollectSink<'_> {
 /// The pair count is known before the sweep, so the whole cell is charged to
 /// the work clock in one go: one branch per cell rather than one per pair.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn cell_one_sided<const ITER_C1: bool, L, R, S>(
     eng: &Engine,
     j: usize,
@@ -290,7 +290,7 @@ where
 /// The general product walk: every f pair against every g pair, with the
 /// dead-pair pre-filter culling rows and columns that cannot contribute.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn cell_prefilter<L, R, S>(
     eng: &Engine,
     j: usize,
@@ -420,7 +420,7 @@ where
 ///
 /// Keep input slices and lookup geometry as direct parameters so the optimizer
 /// retains their aliasing information within the pair loops.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn process_cell<L, R, S>(
     eng: &Engine,
     j: usize,

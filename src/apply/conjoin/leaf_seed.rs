@@ -13,7 +13,7 @@ use crate::diagram::Sides;
 /// through.
 // The debug assertion enumerates the three legal marginal-leaf shapes; a
 // factored form hides which case is which.
-#[allow(clippy::nonminimal_bool)]
+#[expect(clippy::nonminimal_bool)]
 pub(crate) fn seed_output_leaves(
     f: &Tdd,
     g: &Tdd,

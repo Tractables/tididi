@@ -1,16 +1,19 @@
 //! The generators and oracles the crate's tests share.
 //!
+//! Compiled under the `testing` feature, and in a debug build regardless,
+//! because the library's own `debug_assert` sites call the checkers in `check`.
+//! A consumer that wants these in its own tests turns the feature on there.
+//!
 //! What every build carries is what the randomized differential suite in
 //! `tests/` draws on: the seeded [`Lcg`] / [`rand_cnf`] pair under a
 //! [`CnfShape`], enumeration by [`brute_force_count`], the apply-free
 //! evaluator [`eval`], canonicity by [`assert_canonical`] and
 //! [`assert_marginal_canonical`], structural equality by
 //! [`assert_same_shape`], and [`assert_restrict_ok`]. The invariant checkers
-//! in `check`, one per numbered invariant of `docs/architecture.md`, are
-//! compiled under `cfg(test)` or `debug_assertions`, since each walks the
-//! whole diagram; the library's own debug assertions and any test suite built
-//! on the crate call them. The rest is compiled only under `cfg(test)`, by
-//! what a test needs it for:
+//! in `check`, one per numbered invariant of `docs/architecture.md`, run only
+//! under `cfg(test)` or `debug_assertions`, since each walks the whole
+//! diagram. The rest is compiled only under `cfg(test)`, by what a test needs
+//! it for:
 //!
 //! - `gen` — the fixed `test_cases` corpus, the `vtree_shapes` a formula is
 //!   compiled against, and `queens_clauses`.

@@ -154,8 +154,10 @@ vtrees contain shape alone and receive fresh execution state when loaded.
 
 ## Constraints
 
-The crate is pure Rust, with no build script or optional features. It reads no
-environment variables and owns no threads or process-wide state.
+The crate is pure Rust, with no build script. It reads no environment variables
+and owns no threads or process-wide state. Its one optional feature, `testing`,
+adds the `test_helpers` module — oracles, generators and the invariant checkers
+listed below — which a release build otherwise does not compile.
 
 [`and(f, g)`]: crate::and
 [`Arithmetic`]: crate::diagram::Arithmetic

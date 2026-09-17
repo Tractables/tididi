@@ -71,8 +71,11 @@ pub mod execution;
 pub mod io;
 pub mod guide;
 
-// Oracles, generators and invariant checkers; the checkers exist only under
-// `cfg(test)` or `debug_assertions`, and `assert_canonical` is a no-op elsewhere.
+// Oracles, generators and invariant checkers. Compiled when the `testing`
+// feature is on, and in a debug build regardless, because the `debug_assert`
+// sites in `reduce`, `marginal` and `restructure` call the checkers. A
+// consumer's release build has none of it.
+#[cfg(any(test, debug_assertions, feature = "testing"))]
 #[doc(hidden)]
 pub mod test_helpers;
 

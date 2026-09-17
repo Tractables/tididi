@@ -75,7 +75,7 @@ pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
     let neg_mask: u8 = 1u8 << (LeafLabel::Neg as u32);
     let one_mask: u8 = 1u8 << (LeafLabel::One as u32);
     // Indexes the vtree and `used_at_leaf` at the same position.
-    #[allow(clippy::needless_range_loop)]
+    #[expect(clippy::needless_range_loop)]
     for vi in 0..n {
         if !vtree.node(VtreeIdx(vi as u32)).is_leaf() { continue; }
         let u = used_at_leaf[vi];

@@ -153,7 +153,7 @@ fn carrier(
 /// The check is a debug assertion and is compiled out of a release build.
 // The assertions are written as the negation of the forbidden shape so the
 // condition reads as the invariant it guards; De Morgan's form does not.
-#[allow(clippy::nonminimal_bool)]
+#[expect(clippy::nonminimal_bool)]
 fn debug_assert_no_marginal_products(
     f: &Tdd,
     g: &Tdd,

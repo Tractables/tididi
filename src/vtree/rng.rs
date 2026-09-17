@@ -30,11 +30,17 @@ impl Lcg {
 
     /// A 62-bit draw, two steps of the stream, for a range [`below`](Self::below)
     /// is too narrow for.
+    ///
+    /// Only the generators and sweeps draw this wide, so it follows
+    /// `test_helpers` out of a release build.
+    #[cfg(any(test, debug_assertions, feature = "testing"))]
     pub fn wide(&mut self) -> u64 {
         (self.next_u64() << 31) | self.next_u64()
     }
 
-    /// A fair coin.
+    /// A fair coin. Drawn only by the generators and sweeps, as
+    /// [`wide`](Self::wide) is.
+    #[cfg(any(test, debug_assertions, feature = "testing"))]
     pub fn coin(&mut self) -> bool {
         self.next_u64().is_multiple_of(2)
     }

@@ -12,6 +12,12 @@ keywords = ["decision-diagram", "model-counting", "knowledge-compilation", "bdd"
 categories = ["science", "algorithms", "data-structures"]
 exclude = [".github/", ".gitignore", "CLAUDE.md", "AGENTS.md", "rust-toolchain.toml"]
 
+[features]
+# The oracles, generators and invariant checkers under `test_helpers`. On for
+# this crate's own tests through the dev-dependency below; off for a consumer,
+# whose release build then does not compile them at all.
+testing = []
+
 [dependencies]
 num-bigint = "0.4"
 num-rational = "0.4"
@@ -19,3 +25,8 @@ num-traits = "0.2"
 rustc-hash = "2"
 itoa = "1"
 smallvec = { version = "1", features = ["union"] }
+
+[dev-dependencies]
+# The crate's own tests, examples and doctests build against it as a consumer
+# would, so this is how they reach `test_helpers`.
+tididi = { path = ".", features = ["testing"] }

@@ -74,7 +74,7 @@ pub(crate) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
         let v = var.idx();
         // Leaf levels are marginal: iterate 0..`LEAF_WIDTH` using `LeafLabel::from_idx`.
         // The index is a leaf-label ordinal, not a position in one array.
-        #[allow(clippy::needless_range_loop)]
+        #[expect(clippy::needless_range_loop)]
         for i in 0..LEAF_WIDTH {
             let label = LeafLabel::from_idx(i);
             signatures[t.idx()][i] = match label {

@@ -469,7 +469,7 @@ pub(crate) fn reachable_pairs(t: &Tdd) -> usize {
     let reach = t.reachable_nodes();
     let mut n = 0;
     // Indexes the vtree, `t.levels` and `reach` at the same position.
-    #[allow(clippy::needless_range_loop)]
+    #[expect(clippy::needless_range_loop)]
     for vi in 0..t.vtree.num_nodes() {
         if t.vtree.node(VtreeIdx(vi as u32)).is_leaf() {
             continue;
