@@ -6,6 +6,7 @@ mod support;
 mod operation_scope;
 mod stop_bound;
 mod poll;
+mod error;
 
 mod captured;
 mod conversion;

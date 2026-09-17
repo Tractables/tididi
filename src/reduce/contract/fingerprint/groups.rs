@@ -122,11 +122,11 @@ fn count_candidate_entries(
     //
     // A level's parent-pair fan-out has no structural u32 cap
     // (`MultiPairRange::start` and `len` are u64), so refuse the level through
-    // `OverBudget` rather than truncate an offset. Checked before the prefix
+    // `IndexOverflow` rather than truncate an offset. Checked before the prefix
     // sum, so no offset is stored; the counts may have wrapped, but nothing
     // reads them after the bail (the next call re-fills from zero).
     if candidate_mass >= u32::MAX as usize {
-        return Err(OperationError::OverBudget);
+        return Err(OperationError::IndexOverflow);
     }
 
     // ── Build offset table (prefix sum of counts) ─────────────────────────────

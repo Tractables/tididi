@@ -3,8 +3,10 @@
 /// An invalid operation input or a resource refusal from a checked operation.
 ///
 /// Resource failures are [`OverBudget`](Self::OverBudget),
-/// [`OutputCap`](Self::OutputCap), and [`Stopped`](Self::Stopped). The other
-/// variants identify incompatible operands or invalid literals, variables and levels.
+/// [`OutputCap`](Self::OutputCap), and [`Stopped`](Self::Stopped);
+/// [`IndexOverflow`](Self::IndexOverflow) looks like one and is not, since no
+/// budget makes it succeed. The other variants identify incompatible operands
+/// or invalid literals, variables and levels.
 /// Even an engine with no limits installed can report `OverBudget` when a
 /// buffer reservation fails.
 ///
@@ -20,10 +22,18 @@
 pub enum OperationError {
     /// A signed integer does not denote a literal; zero is invalid.
     InvalidLiteral(i32),
-    /// A reservation failed, exceeded the byte budget, or needed more than a
-    /// 32-bit index can address. [`OperationMetrics::refused_reserve_bytes`](crate::limits::OperationMetrics::refused_reserve_bytes)
-    /// distinguishes recorded allocator refusals from budget refusals.
+    /// A reservation failed or exceeded the byte budget.
+    /// [`OperationMetrics::refused_reserve_bytes`](crate::limits::OperationMetrics::refused_reserve_bytes)
+    /// distinguishes recorded allocator refusals from budget refusals. Raising
+    /// the budget or splitting the work is what answers either; a structure too
+    /// large to index is [`IndexOverflow`](Self::IndexOverflow) instead.
     OverBudget,
+    /// An intermediate structure grew past what a 32-bit index can address.
+    ///
+    /// Not a resource condition: no budget makes it succeed, and retrying is
+    /// pointless. Splitting the operation, or ordering the vtree so the level
+    /// it happened at stays narrower, is what answers it.
+    IndexOverflow,
     /// The operands do not share the same vtree allocation.
     VtreeMismatch,
     /// The operands use different literal weights or arithmetic, or mix weights with stored integer counts.
@@ -62,7 +72,8 @@ impl std::fmt::Display for OperationError {
             OperationError::IncompatibleWeights => f.write_str("operands require compatible literal weights and arithmetic; stored integer counts cannot be reweighted"),
             OperationError::LevelNotInVtree(level) => write!(f, "level {} is outside the vtree", level.idx()),
             OperationError::MarginalLevel(level) => write!(f, "operation requires structural data at marginal level {}", level.idx()),
-            OperationError::OverBudget => f.write_str("memory allocation refused: budget, allocator, or capacity limit"),
+            OperationError::OverBudget => f.write_str("memory allocation refused by the byte budget or the allocator"),
+            OperationError::IndexOverflow => f.write_str("an intermediate structure outgrew the 32-bit index that addresses it"),
             OperationError::Stopped => f.write_str("operation stopped"),
             OperationError::OutputCap => f.write_str("output node cap exceeded"),
             OperationError::DuplicateVariable(var) => write!(f, "input names variable x{} twice", var.0),
@@ -74,7 +85,16 @@ impl std::fmt::Display for OperationError {
     }
 }
 
-impl std::error::Error for OperationError {}
+impl std::error::Error for OperationError {
+    /// The storage check that [`InvalidDiagram`](OperationError::InvalidDiagram)
+    /// wraps. The other variants carry no inner error.
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            OperationError::InvalidDiagram(source) => Some(source),
+            _ => None,
+        }
+    }
+}
 
 /// Typed literals convert infallibly at the same boundary as checked integer inputs.
 impl From<std::convert::Infallible> for OperationError {
