@@ -15,7 +15,7 @@ use crate::diagram::*;
 // enumerating all 2^n assignments, we evaluate both in a finite-field semiring
 // (Z_p, +, ×) with random variable weights. By the Schwartz–Zippel lemma,
 // two distinct multilinear polynomials agree on a random point with probability
-// ≤ degree/p. With p = 2^61 − 1 and degree ≤ num_vars, false negatives are
+// ≤ degree/p. With p = 2^61 − 1 and degree ≤ `num_vars`, false negatives are
 // astronomically unlikely (~10^{-18} per round).
 
 /// Mersenne prime 2^61 − 1, used for probabilistic polynomial identity testing.

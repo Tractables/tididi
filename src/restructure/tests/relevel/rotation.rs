@@ -121,7 +121,7 @@ fn parent_of_marginal_rotation_preserves_model_count() {
     let new_vtree = Arc::new(vt);
     tdd.vtree = Arc::clone(&new_vtree);
     restructure_inner_search(&eng_lim, &mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
-    // Close clusters (the production path runs marginalize_closure after search).
+    // Close clusters (the production path runs `marginalize_closure` after search).
     marginalize_closure(&eng, &mut tdd).expect("no wall is installed in a test");
     tdd.minimize().unwrap();
     assert_canonical(&tdd);
@@ -135,7 +135,7 @@ fn parent_of_marginal_rotation_preserves_model_count() {
 /// MEMORY-RECLAIM regression. When a cluster-rotation marginalizes a new
 /// parent over two already-marginal children, those children become interior
 /// to a marginal region: their count stores are subsumed by the parent's
-/// aggregate and unreachable from the root. The reclaim-on-marginalize_levels
+/// aggregate and unreachable from the root. The reclaim-on-marginalization
 /// (`free_subsumed_marginal_children`, fired when the new parent marginalizes
 /// inside `marginalize_closure`) must FREE them (width → 0) while preserving
 /// #F exactly. Fails without that free (children keep their stores resident).
@@ -204,7 +204,7 @@ fn cluster_rotation_frees_subsumed_child_stores() {
 /// A sweep of parent-of-marginal rotations preserves the count, not just a
 /// single one (the test above). Generate small random CNFs, marginalize a
 /// random subtree, run the public greedy rotation search + closure, assert
-/// model_count is preserved. Parent-of-marginal rotations commit
+/// `model_count` is preserved. Parent-of-marginal rotations commit
 /// unconditionally, so the sweep exercises that path under a plain
 /// `cargo test`. Driven by the library's
 /// [`Engine::rotation_search`](crate::Engine::rotation_search) under the
@@ -303,7 +303,7 @@ fn gc1_sweep_undercount_repro() {
     let vtree = Arc::new(Vtree::balanced(8));
     let mut tdd = compile_clauses(&vtree, &clauses);
     marginalize_batch(&eng, &mut tdd, &[VtreeIdx(9)], &vtree).expect("no wall is installed in a test");
-    // marginalize_batch collapses distinct equal-count children to the same
+    // `marginalize_batch` collapses distinct equal-count children to the same
     // inline ref, manufacturing twin nodes (n0≡n2) that are count-correct but
     // non-canonical. A rotation that regroups them by content would collapse
     // the multiplicity (undercount) unless it keeps the multiset.

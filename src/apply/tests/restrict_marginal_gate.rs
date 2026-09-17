@@ -17,12 +17,12 @@ use crate::Engine;
 /// and `care` is a NON-marginal diagram built purely from clauses over V1, whose
 /// support is DISJOINT from the forgotten V2 (a pending ancestor clause can
 /// never mention a var already forgotten below). Both share the global root and
-/// the same vtree `Arc` — no graft, so restrict_to_care takes its same-root fast path
+/// the same vtree `Arc` — no graft, so `restrict_to_care` takes its same-root fast path
 /// (never the marginal-lift fallback).
 ///
 /// Complements `restrict_marginal_f_difftest` (which forgets a SCATTERED subset,
 /// interleaving marginal/non-marginal levels): this one pins the contiguous
-/// descendant-forget shape P4 actually feeds restrict_to_care, and it counts the
+/// descendant-forget shape P4 actually feeds `restrict_to_care`, and it counts the
 /// `RestrictionOutcome::Shrunk` variant directly (not just a reachable-pair drop) plus
 /// deterministic contradiction cases, so it can never pass vacuously.
 ///
@@ -129,7 +129,7 @@ fn restrict_ancestor_marginal_operand_gate() {
         };
 
     // ── Deterministic cases: care contradicts part of b's V1 structure so
-    // restrict_to_care provably shrinks (guards against an all-Unchanged vacuous pass).
+    // `restrict_to_care` provably shrinks (guards against an all-Unchanged vacuous pass).
     // b must ENTANGLE V1 and V2 (clauses mixing both) — else the forgotten V2
     // factors out as a scalar and minimize strips the marginal level, which is
     // not the production shape. p,q ∈ V1; z,z2 ∈ V2 keep the marginal level live. ──

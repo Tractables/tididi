@@ -116,7 +116,7 @@ fn all_u64_odd_remainder_no_overflow() {
 
 #[test]
 fn all_u64_certificate_excludes_overflow_sentinel() {
-    // Sanity: a COUNT_OVERFLOW slot must not be certified all_u64 (it is
+    // Sanity: a `COUNT_OVERFLOW` slot must not be certified `all_u64` (it is
     // u128::MAX > u64::MAX), so such a column routes to the general path
     // where the sentinel is honored — never silently truncated by the
     // fast-path `as u64`.

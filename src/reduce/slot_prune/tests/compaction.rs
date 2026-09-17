@@ -30,7 +30,7 @@ fn weighted_prune_merges_equal_value_slots() {
     use num_rational::BigRational;
     let r = |a: i64, b: i64| BigRational::new(BigInt::from(a), BigInt::from(b));
 
-    // toy_weighted → balanced(3), marginal side INTERNAL. Two parent nodes:
+    // `toy_weighted` → balanced(3), marginal side INTERNAL. Two parent nodes:
     // node0 right-refs slot0,
     // node1 right-refs slot1; both slots hold 3/7.
     let ws = crate::diagram::WeightStore::new(

@@ -73,7 +73,7 @@ fn complement_full_at_root(eng: &Engine, full_tdd: Tdd, orig_vtree: &Arc<crate::
             TddNodeId { vtree: root, local: neg_local },
         ))
     } else {
-        // After expand_full (which expands One → Pos+Neg), child widths:
+        // After `expand_full` (which expands One → Pos+Neg), child widths:
         // - Leaf children: 2 (the disjoint set {Pos, Neg})
         // - Internal children: stored width (includes any fill nodes)
         let (left, right) = vtree.children(root);
@@ -125,7 +125,7 @@ fn complement_full_at_root(eng: &Engine, full_tdd: Tdd, orig_vtree: &Arc<crate::
     }
 }
 
-// ── expand_full: explicit fill-node materialization ────────────────────────────
+// ── `expand_full`: explicit fill-node materialization ────────────────────────────
 
 /// Make a diagram full by materializing fill nodes explicitly at every
 /// structural level; marginal levels are skipped.

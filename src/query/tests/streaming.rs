@@ -51,7 +51,7 @@ fn streaming_fold_count_matches_materialized_randomized() {
         for _ in 0..200 {
             let a = rand_fn(&mut rng);
             let b = rand_fn(&mut rng);
-            // apply_and_fallible mutates (drops) its operands — clone per call.
+            // `apply_and_fallible` mutates (drops) its operands — clone per call.
             let oracle = {
                 let mut a_o = a.clone();
                 let mut b_o = b.clone();
@@ -124,7 +124,7 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
             acc
         };
         // Random small strictly-positive rational literal weights: a weighted
-        // value of 0 can then only mean model_count == 0 (no zero-cancellation
+        // value of 0 can then only mean `model_count` == 0 (no zero-cancellation
         // from a negative/zero weight muddying the fold-vs-oracle comparison).
         let rand_weight = |rng: &mut Lcg| -> BigRational {
             rat(1 + rng.below(9) as i64, 1 + rng.below(9) as i64)

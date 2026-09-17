@@ -177,7 +177,7 @@ fn group_by_scatter<D: SlotValues>(
         // Fallible push for SmallVec: while the current buffer, inline
         // or heap, has spare capacity, push cannot fail. At capacity —
         // both the inline-to-heap spill and every subsequent heap regrow — use
-        // try_reserve so allocation failure becomes OverBudget rather
+        // `try_reserve` so allocation failure becomes OverBudget rather
         // than a process abort. Guarding on `capacity()` keeps every
         // growth fallible for the rare large x-group.
         let g = &mut sc.groups[slot];

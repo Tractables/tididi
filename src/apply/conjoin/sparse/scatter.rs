@@ -430,7 +430,7 @@ fn flush_chunk_phase_e(
             };
             let local = global_idx - chunk_parent_start;
             // Marginal children never reach the sparse path (guarded at
-            // apply_sparse_level entry), so child refs are plain structural
+            // `apply_sparse_level` entry), so child refs are plain structural
             // indices — no bit-30 slot tagging here.
             let left_raw = entry.a_prod;
             let right_raw = entry.sib_idx;
@@ -451,7 +451,7 @@ fn flush_chunk_phase_e(
     // emit_pairs / sorted_pairs grow — chunking bounds that growth.
     //
     // Single-chunk mode: leave buckets alone. The next apply's
-    // ensure_buckets_cleared will `.clear()` (length=0, retain capacity),
+    // `ensure_buckets_cleared` will `.clear()` (length=0, retain capacity),
     // so the buckets keep their capacity across applies and the next apply's
     // scatter pushes do not have to grow them again.
     if drop_consumed {
@@ -507,7 +507,7 @@ fn flush_chunk_phase_f(
     }
     // After the fill pass each pc[i] points one-past-end of its bucket;
     // shift right so pc[i] is back at start-of-bucket (same pass-4 restore
-    // as build_reverse_index) for the node-creation loop below.
+    // as `build_reverse_index`) for the node-creation loop below.
     shift_offsets_right_by_one(&mut pc[..=num_new_parents]);
 
     lim.reserve(&mut level.nodes, num_new_parents)?;

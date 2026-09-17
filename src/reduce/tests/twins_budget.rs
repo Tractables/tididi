@@ -143,7 +143,7 @@ fn test_contract_twins_overbudget_parent_ext_bails() {
         }
     }
     assert!(refusals > 0, "the sweep must actually refuse something");
-    // NB: deliberately DON'T call model_count — this fixture carries a bit-31
+    // NB: deliberately DON'T call `model_count` — this fixture carries a bit-31
     // sibling, which is not a real node ref.
 }
 
@@ -301,7 +301,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     use crate::diagram::ValueRef;
     use crate::vtree::VtreeNode;
 
-    // BIG ensures counts cannot inline (MARGINAL_INLINE_MAX = 2^30 - 1 < 2^40).
+    // BIG ensures counts cannot inline (`MARGINAL_INLINE_MAX` = 2^30 - 1 < 2^40).
     // Slot-prune is where slot-count uniqueness is established; equal-valued slots
     // only collapse there (the emit site is forbidden from deduping).
     const BIG: u128 = 1u128 << 40;
@@ -340,7 +340,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     levels[v_marginal.idx()].set_counts_state(vec![C, C, D], None);
 
     // v_parent4: two 2-pair nodes p and q.
-    //   Marg-side (right) refs are bare indices (ValueRef::Slot(i).to_raw().0 = i,
+    //   Marg-side (right) refs are bare indices (`ValueRef::Slot(i).to_raw().0 == i`,
     //   bit-30 clear). BIG values cannot inline; slot-prune leaves them as slots.
     //   p: [(Pos, slot_0), (Neg, slot_2)]
     //   q: [(Pos, slot_1), (Neg, slot_2)]
@@ -388,7 +388,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     // ── Pre-fix verification: the broken one-shot sequence leaves twins ────────
     //
     // Manually reproduce the PRE-FIX order: contract (no merge since p!=q), then
-    // prune_value_slots once (merges equal slots, mints twins). Assert check_twin_canonicality
+    // `prune_value_slots` once (merges equal slots, mints twins). Assert `check_twin_canonicality`
     // fails — confirming the test pins the fixed behaviour.
     {
         let mut tdd2 = tdd.clone();
@@ -404,7 +404,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
             "pre-fix verification: prune must report values_merged > 0 \
              (equal-valued slots 0 and 1 must collapse)"
         );
-        // Step 3: check_twin_canonicality must FAIL (twins minted, no re-contract ran).
+        // Step 3: `check_twin_canonicality` must FAIL (twins minted, no re-contract ran).
         assert!(
             check_twin_canonicality(&tdd2).is_err(),
             "pre-fix verification: check_twin_canonicality must FAIL after the broken \

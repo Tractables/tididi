@@ -332,6 +332,132 @@ fn prose_carries_emphasis_by_structure_not_by_capitals() {
     assert!(new_hits.is_empty(), "all-caps words in prose:\n{}", new_hits.join("\n"));
 }
 
+/// Every item the crate declares whose name carries an underscore.
+///
+/// Those are the names a global identifier rename rewrites and that no English
+/// sentence contains by accident, which is the pair of properties the rule
+/// below needs. Single-word names are left out: `new`, `take`, `left`, `root`
+/// and `apply` are all items here and all ordinary words.
+fn underscored_item_names() -> HashSet<String> {
+    const DECLARES: &[&str] = &["fn", "struct", "enum", "trait", "const", "static", "type", "mod", "union"];
+    let mut names = HashSet::new();
+    for (_, path) in source_files() {
+        let text = fs::read_to_string(&path).expect("a readable source file");
+        for line in text.lines() {
+            let mut words = line.split_whitespace().peekable();
+            while let Some(word) = words.next() {
+                if !DECLARES.contains(&word) {
+                    continue;
+                }
+                let Some(next) = words.peek() else { continue };
+                let name: String = next
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+                    .collect();
+                if name.contains('_') {
+                    names.insert(name);
+                }
+            }
+        }
+    }
+    names
+}
+
+/// `prose` with every Markdown link target blanked out, keeping the offsets.
+///
+/// A link target is a path, not prose, and it is spelled without backticks
+/// because that is what rustdoc resolves. Blanked: the `(..)` of an inline
+/// link, the `[..]` of a shortcut link, and the target of a reference
+/// definition.
+fn without_link_targets(prose: &str) -> String {
+    let mut out: Vec<char> = prose.chars().collect();
+    let blank = |from: usize, to: usize, out: &mut Vec<char>| {
+        for c in &mut out[from..to] {
+            *c = ' ';
+        }
+    };
+    let n = out.len();
+    let mut i = 0;
+    while i < n {
+        match out[i] {
+            '[' => {
+                let end = (i..n).find(|&j| out[j] == ']').unwrap_or(n - 1);
+                blank(i, end.min(n), &mut out);
+                // `[label]: target` — the rest of the line is the target.
+                if out.get(end + 1) == Some(&':') {
+                    blank(end, n, &mut out);
+                    break;
+                }
+                i = end;
+            }
+            '(' if i > 0 && out[i - 1] == ']' => {
+                let end = (i..n).find(|&j| out[j] == ')').map_or(n, |j| j + 1);
+                blank(i, end, &mut out);
+                i = end;
+            }
+            _ => i += 1,
+        }
+    }
+    out.into_iter().collect()
+}
+
+/// Each `[A-Za-z0-9_]+` run in `prose`, with its byte offset.
+fn words_with_offsets(prose: &str) -> Vec<(&str, usize)> {
+    let mut out = Vec::new();
+    let mut start = None;
+    for (i, c) in prose.char_indices() {
+        let part = c.is_ascii_alphanumeric() || c == '_';
+        match (part, start) {
+            (true, None) => start = Some(i),
+            (false, Some(s)) => {
+                out.push((&prose[s..i], s));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    if let Some(s) = start {
+        out.push((&prose[s..], s));
+    }
+    out
+}
+
+/// A crate item named in a comment belongs in backticks.
+///
+/// A global rename of `marginalize` to `marginalize_levels` once reached
+/// English prose and left eight sentences with a function name where a verb
+/// belonged, because a bare name in a comment is indistinguishable from a word.
+/// Backticks make the two distinguishable, so the same rename cannot do it
+/// again; they are also how rustdoc renders a name. Test files are in scope —
+/// that is where most of the damage landed.
+#[test]
+fn a_comment_backticks_the_crate_items_it_names() {
+    let items = underscored_item_names();
+    let mut hits: Vec<String> = Vec::new();
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    for (rel, path) in source_files() {
+        let text = fs::read_to_string(&path).expect("a readable source file");
+        for (n, prose) in prose_lines(&text, Code::Strip) {
+            let prose = without_link_targets(&prose);
+            for (word, at) in words_with_offsets(&prose) {
+                // A path component is not a name the reader mistakes for a
+                // word: `apply/restrict_to_care/mod.rs` is a citation, and the
+                // citation rule reads it whole.
+                let bytes = prose.as_bytes();
+                let before = at.checked_sub(1).map(|i| bytes[i]);
+                let after = bytes.get(at + word.len()).copied();
+                if before == Some(b'/') || after == Some(b'/') {
+                    continue;
+                }
+                if items.contains(word) && seen.insert((rel.clone(), word.to_string())) {
+                    hits.push(format!("{rel}:{n}: {word}"));
+                }
+            }
+        }
+    }
+    assert!(hits.is_empty(), "crate items named in prose without backticks:\n{}", hits.join("\n"));
+}
+
 #[test]
 fn a_comment_cites_only_a_file_that_exists() {
     // Every source path relative to `src/`, plus the `dir.rs` spelling of a

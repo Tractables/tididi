@@ -4,7 +4,7 @@
     #[test]
     fn level_pairs_iter_of_unpacked_matches_slice() {
         // PairsIter::Slice and PairsIter::Inline branches: yield the same
-        // pairs as pairs_of_idx on an unpacked level.
+        // pairs as `pairs_of_idx` on an unpacked level.
         let mut lvl = TddLevel::new();
         // Push some multi-pair nodes and an inline pair.
         let multi_pairs = vec![
@@ -27,7 +27,7 @@
 
     #[test]
     fn level_pairs_iter_of_idx_size_hint() {
-        // ExactSizeIterator: size_hint correctly reports the count for all
+        // ExactSizeIterator: `size_hint` correctly reports the count for all
         // four variants.
         let mut lvl = TddLevel::new();
         lvl.try_push_internal_node(&[
@@ -260,8 +260,8 @@
     #[test]
     fn test_encode_multi_promotes_to_extended_on_huge_len() {
         // A pair_len at 2^31 triggers the extended encoding. We don't actually
-        // allocate that much arena memory — encode_multi only stores the count
-        // and multi_pairs_idx; the arena is the caller's concern.
+        // allocate that much arena memory — `encode_multi` only stores the count
+        // and `multi_pairs_idx`; the arena is the caller's concern.
         let mut level = TddLevel::new();
         let huge_len = 1usize << 31;
         let data = level.encode_multi(0, huge_len);

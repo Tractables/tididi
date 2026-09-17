@@ -100,7 +100,7 @@ impl TopoOrder {
             debug_assert!(m_end > w_pos, "misplaced_root and w cannot share a position");
 
             // The slice [w_pos ..= m_end] starts with w and ends with the
-            // misplaced subtree's root. After rotate_left(1), w sits at m_end
+            // misplaced subtree's root. After `rotate_left(1)`, w sits at m_end
             // (one past every element of that subtree lying in the slice) and
             // everything in (w_pos..=m_end] shifts one position left — a single
             // contiguous memmove.

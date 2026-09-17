@@ -17,21 +17,21 @@ use super::strategies::contract_all_twins;
 ///
 /// Constructs a level where closing pair fusion redexes CREATES structural twins:
 /// One root node holds four pairs referencing two explicit nodes A and B.
-/// A's group uses slots 0 and 1 (COUNT_A + COUNT_B = COUNT_SUM); B's group
-/// uses slots 2 and 3 (COUNT_C + COUNT_D = COUNT_SUM). Before fusion, A and B
+/// A's group uses slots 0 and 1 (`COUNT_A` + `COUNT_B` = `COUNT_SUM`); B's group
+/// uses slots 2 and 3 (`COUNT_C` + `COUNT_D` = `COUNT_SUM`). Before fusion, A and B
 /// have DIFFERENT parent contexts, so they are not twins. After fusion, both
-/// groups yield the same summed count COUNT_SUM, and slot-count uniqueness maps them to the same
+/// groups yield the same summed count `COUNT_SUM`, and slot-count uniqueness maps them to the same
 /// surviving slot — giving A and B identical contexts. Since A and B also have
 /// identical child pairs, the joint fixpoint loop must detect and merge them.
 /// The merge is a content-equal duplicate redirect: the root keeps both pairs
 /// remapped onto the survivor and pair fusion folds them, leaving one root node
-/// with one pair whose count is 2·COUNT_SUM — the denoted value is
-/// MC(A)·(c_A+c_B) + MC(B)·(c_C+c_D) = MC(A)·2·COUNT_SUM, so multiplicity is
-/// SUMMED into the count; set-dedup to COUNT_SUM would halve the model count.
+/// with one pair whose count is 2·`COUNT_SUM` — the denoted value is
+/// MC(A)·(c_A+c_B) + MC(B)·(c_C+c_D) = MC(A)·2·`COUNT_SUM`, so multiplicity is
+/// SUMMED into the count; set-dedup to `COUNT_SUM` would halve the model count.
 ///
 /// Fixture (balanced(4)):
-///   v_right = marginal; four slots: COUNT_A, COUNT_B, COUNT_C, COUNT_D
-///             (all distinct; COUNT_A+COUNT_B = COUNT_C+COUNT_D = COUNT_SUM)
+///   v_right = marginal; four slots: `COUNT_A`, `COUNT_B`, `COUNT_C`, `COUNT_D`
+///             (all distinct; `COUNT_A`+`COUNT_B` = `COUNT_C`+`COUNT_D` = `COUNT_SUM`)
 ///   v_left  = explicit internal; two nodes A and B with identical child pairs
 ///   root    = one multi-pair node:
 ///               (A, slot_0), (A, slot_1), (B, slot_2), (B, slot_3)
@@ -41,7 +41,7 @@ use super::strategies::contract_all_twins;
 /// Post-fusion: (A, slot_sum), (B, slot_sum) → A and B both context {(root0,slot_sum)}
 ///              → structural twins → duplicate redirect merge at v_left →
 ///              root: {(merged, slot_sum), (merged, slot_sum)} → pair fusion →
-///              root: {(merged, slot_2sum)} with 2·COUNT_SUM
+///              root: {(merged, slot_2sum)} with 2·`COUNT_SUM`
 #[test]
 fn fusion_creates_twin_both_closed_in_one_call() {
     let eng = Engine::new();
@@ -93,7 +93,7 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     // root: one node with four pairs.
     //   A's group: (A, slot_0), (A, slot_1) → pair fusion redex → fuses to (A, slot_sum)
     //   B's group: (B, slot_2), (B, slot_3) → pair fusion redex → fuses to (B, slot_sum)
-    //                                         (same count COUNT_SUM → same slot)
+    //                                         (same count `COUNT_SUM` → same slot)
     // A's pre-fusion context  = {(root0, slot_0), (root0, slot_1)} ← different from B's
     // B's pre-fusion context  = {(root0, slot_2), (root0, slot_3)} → not twins yet
     // Post-fusion both become = {(root0, slot_sum)}                 → NOW twins
@@ -138,10 +138,10 @@ fn fusion_creates_twin_both_closed_in_one_call() {
         "v_left must have 1 node after twin-merge of A and B; got {vl_width}",
     );
 
-    // Postcondition D: root has one pair with count = 2·COUNT_SUM. The fixture
-    // denotes MC(A)·(c_A+c_B) + MC(B)·(c_C+c_D) = MC(A)·2·COUNT_SUM, so the
+    // Postcondition D: root has one pair with count = 2·`COUNT_SUM`. The fixture
+    // denotes MC(A)·(c_A+c_B) + MC(B)·(c_C+c_D) = MC(A)·2·`COUNT_SUM`, so the
     // twin merge must SUM the multiplicity into the count (duplicate redirect +
-    // pair fusion fold) — a set-dedup ending at COUNT_SUM would halve the count.
+    // pair fusion fold) — a set-dedup ending at `COUNT_SUM` would halve the count.
     let root_pairs = tdd.levels[root.idx()].pairs_of_idx(0);
     assert_eq!(
         root_pairs.len(),

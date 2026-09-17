@@ -121,7 +121,7 @@ pub(super) fn finalize_level(
 
     // Record live count for parent density checks (only when sparse mode possible).
     // Use `slot_count()` so streaming-marginal levels (nodes.len() == 0 after
-    // become_marginal) report their actual alive-cell count.
+    // `become_marginal`) report their actual alive-cell count.
     if arena.is_bump() {
         live_counts.set(t_idx, levels[t_idx].slot_count());
     }

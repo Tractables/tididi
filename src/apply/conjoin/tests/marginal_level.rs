@@ -156,7 +156,7 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
     // same represented function, but one clone carries one extra,
     // completely UNREFERENCED `multi_pairs` side-table entry at the root level —
     // mirrors `conjoin::sparse::tests::self_conjunction::
-    // differing_ext_blocks_shortcut`, which pins that `is_self_conjunction`
+    // `differing_ext_blocks_shortcut``, which pins that ``is_self_conjunction``
     // treats a differing `multi_pairs` table as a structural difference even when
     // `nodes`/`pairs` agree. No node encodes a reference to the new entry
     // (append-only, past the end of the existing table), so the represented

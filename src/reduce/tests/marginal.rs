@@ -15,26 +15,26 @@ use std::sync::Arc;
 /// Regression: marginal-sibling fold-allowed — fix in `merge_content_equal_nodes`.
 ///
 /// Layout (balanced(6)):
-///   sub_left_r = internal(leaf1, leaf2) — right child of v_left; made marginal (count C_SLR=5)
+///   sub_left_r = internal(leaf1, leaf2) — right child of v_left; made marginal (count `C_SLR`=5)
 ///   sub_right_r = internal(leaf4, leaf5) — right child of v_right; made marginal (needed for v_right)
 ///   v_left = internal(leaf0, sub_left_r) — boundary parent; Q1 and Q2 are content twins
 ///              (both have pair (LeafLabel::Pos, slot0_of_sub_left_r))
 ///   v_right = internal(leaf3, sub_right_r) — made marginal; the sibling side at root
 ///   root = grandparent: one node R with pairs [(Q1, slot0_vright), (Q2, slot0_vright)]
 ///
-/// Pre-minimize model_count = Q1_count*C_VR + Q2_count*C_VR = 5*3 + 5*3 = 30.
+/// Pre-minimize `model_count` = Q1_count*`C_VR` + Q2_count*`C_VR` = 5*3 + 5*3 = 30.
 ///
 /// Both v_left and root are pre-marked contracted=true so the initial
 /// `contract_all_twins` in Engine::reduce is a no-op. This forces the content-twin scan to be the only
 /// mechanism that handles the Q1/Q2 twin merge. The scan must then:
 ///   1. Perform the redirect Q2→Q1 (creating duplicate (Q1,slot0),(Q1,slot0) pairs at root).
-///   2. Direct contract's pair fusion to fold the duplicate into one (Q1, slot1=2*C_VR) pair.
-///   3. Let prune_value_slots compact v_right's store to a single slot with count 2*C_VR.
+///   2. Direct contract's pair fusion to fold the duplicate into one (Q1, slot1=2*`C_VR`) pair.
+///   3. Let `prune_value_slots` compact v_right's store to a single slot with count 2*`C_VR`.
 ///
 /// Duplicate pairs in a marginalized diagram are legal multiset entries, so
 /// the redirect happens even though it produces one at the grandparent;
-/// cancelling it instead would leave v_right's slot count at C_VR. The
-/// discriminating assertion is (d): v_right's surviving count = 2*C_VR.
+/// cancelling it instead would leave v_right's slot count at `C_VR`. The
+/// discriminating assertion is (d): v_right's surviving count = 2*`C_VR`.
 #[test]
 fn test_marginal_sibling_fold_allowed_regression() {
     use crate::vtree::VtreeNode;
@@ -68,8 +68,8 @@ fn test_marginal_sibling_fold_allowed_regression() {
     let n = vtree.num_nodes();
     let mut levels = take_levels(&eng, n);
 
-    // --- sub_left_r: make marginal (count C_SLR). This makes v_left a boundary parent. ---
-    // sub_left_r's children are leaves (ok per assert_can_make_marginal).
+    // --- sub_left_r: make marginal (count `C_SLR`). This makes v_left a boundary parent. ---
+    // sub_left_r's children are leaves (ok per `assert_can_make_marginal`).
     assert_can_make_marginal(&levels, &vtree, sub_left_r);
     const C_SLR: u128 = (1u128 << 40) + 5; // model count stored at sub_left_r's slot 0
     levels[sub_left_r.idx()].become_marginal(vec![C_SLR], None);
@@ -80,9 +80,9 @@ fn test_marginal_sibling_fold_allowed_regression() {
     let _ = C_SRR;
     levels[sub_right_r.idx()].become_marginal(vec![C_SRR], None);
 
-    // --- v_right: make marginal (count C_VR). This is the SIBLING of v_left at root. ---
+    // --- v_right: make marginal (count `C_VR`). This is the SIBLING of v_left at root. ---
     // When the redirect Q2→Q1 creates duplicate (Q1,slot0),(Q1,slot0) at root,
-    // the fold_allowed check sees v_right.is_marginal()==true and allows the redirect.
+    // the fold_allowed check sees `v_right.is_marginal() == true` and allows the redirect.
     assert_can_make_marginal(&levels, &vtree, v_right);
     const C_VR: u128 = (1u128 << 40) + 3; // model count stored at v_right's slot 0
     levels[v_right.idx()].become_marginal(vec![C_VR], None);
@@ -102,7 +102,7 @@ fn test_marginal_sibling_fold_allowed_regression() {
     //
     // Both Q1 and Q2 are referenced with the same marginal sibling (slot0 of v_right).
     // After the fix the redirect Q2→Q1 is allowed (fold_allowed=true); root gets
-    // (Q1,slot0),(Q1,slot0); pair fusion folds to (Q1, slot1=2*C_VR); prune compacts.
+    // (Q1,slot0),(Q1,slot0); pair fusion folds to (Q1, slot1=2*`C_VR`); prune compacts.
     let vr_slot0 = NodeIdx(0); // slot index 0 of v_right (marginal)
     let root_node = levels[root_idx.idx()].push_internal_node(&[
         ChildPair::new(q1, vr_slot0),
@@ -110,7 +110,7 @@ fn test_marginal_sibling_fold_allowed_regression() {
     ]);
 
     // Pre-mark v_left and root as contracted (harmless when calling
-    // canonicalize_content_twins directly, kept for documentation: the scan
+    // `canonicalize_content_twins` directly, kept for documentation: the scan
     // must be the sole merge mechanism exercised here — not contract's fork-down
     // concat path — so the fold_allowed discriminator assertion (d) is clean).
 
@@ -123,16 +123,16 @@ fn test_marginal_sibling_fold_allowed_regression() {
     // marginalization step frees as `v_right` becomes marginal.
     free_subsumed_marginal_children(&mut tdd.levels, &vtree, v_right, None);
 
-    // Tag marginal-side slots so the marginal_inlined_right markers are set on v_left
+    // Tag marginal-side slots so the `marginal_inlined_right` markers are set on v_left
     // (right child sub_left_r is marginal) and root (right child v_right is marginal).
     // No count here fits a ref, so nothing inlines; the markers enable decode in
-    // model_count.
+    // `model_count`.
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
     // Pre-minimize model count:
-    //   Q1's count at v_left = Pos_leaf0 × C_SLR = 1 × C_SLR.
+    //   Q1's count at v_left = Pos_leaf0 × `C_SLR` = 1 × `C_SLR`.
     //   Q2 identical.
-    //   root = C_SLR×C_VR + C_SLR×C_VR.
+    //   root = `C_SLR`×`C_VR` + `C_SLR`×`C_VR`.
     let count_before = tdd.model_count().unwrap();
     let expected_count_u: u128 = 2 * C_SLR * C_VR;
     assert_eq!(
@@ -142,7 +142,7 @@ fn test_marginal_sibling_fold_allowed_regression() {
     );
     assert_eq!(tdd.levels[v_left.idx()].slot_count(), 2, "setup: Q1 and Q2 are two distinct nodes");
 
-    // Call canonicalize_content_twins directly: Engine::reduce's normal path does
+    // Call `canonicalize_content_twins` directly: Engine::reduce's normal path does
     // not run the content-twin scan, so tests exercise it via the extracted pub(crate)
     // function.
     super::canonicalize_content_twins(&eng, &mut tdd).expect("canonicalize_content_twins must not OOM");
@@ -168,14 +168,14 @@ fn test_marginal_sibling_fold_allowed_regression() {
         "v_right must compact to 1 slot after pair fusion folds (Q1,c),(Q1,c) → (Q1,2c)"
     );
 
-    // (d) THE DISCRIMINATING ASSERTION: the surviving count at v_right must be 2*C_VR.
+    // (d) THE DISCRIMINATING ASSERTION: the surviving count at v_right must be 2*`C_VR`.
     //
     // On UNFIXED code: fold_allowed is absent; the redirect is cancelled; contract uses
     // the fork-down concat path which scales sub_left_r's count instead of v_right's.
-    // v_right's slot stays at C_VR=3. This assertion fails: left=3, right=6.
+    // v_right's slot stays at `C_VR`=3. This assertion fails: left=3, right=6.
     //
     // On FIXED code: fold_allowed fires; root gets duplicate (Q1,slot0),(Q1,slot0) pairs;
-    // pair fusion folds them into (Q1, new_slot=2*C_VR=6); prune_value_slots compacts v_right
+    // pair fusion folds them into (Q1, new_slot=2*`C_VR`=6); `prune_value_slots` compacts v_right
     // from [C_VR, 2*C_VR] down to [2*C_VR]. This assertion passes.
     assert_eq!(
         tdd.levels[v_right.idx()].marginal_counts().unwrap()[0],

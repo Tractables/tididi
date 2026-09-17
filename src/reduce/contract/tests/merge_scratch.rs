@@ -31,7 +31,7 @@ use super::strategies::contract_all_twins;
 /// remains at t1. After concat A has `{(pos,one),(one,pos)}`, B has
 /// `{(pos,one)}` — no longer content-equal → B stays unmerged.
 ///
-/// Final: t1.slot_count = 2 (A_merged and B); parent has 2 pairs (A_merged, slot0)
+/// Final: `t1.slot_count()` = 2 (A_merged and B); parent has 2 pairs (A_merged, slot0)
 /// and (B, slot0).
 #[test]
 fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
@@ -80,7 +80,7 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
             ChildPair::new(b, sib_slot0),    // B with sib slot0
             ChildPair::new(c, sib_slot0),    // C with sib slot0
         ]);
-        // Mark parent as marginal-flagged so parent_marginal=true in contract_twins.
+        // Mark parent as marginal-flagged so parent_marginal=true in `contract_twins`.
         // This is what enables the duplicate_members collection (content-equal twins
         // under a marginal-flagged parent).
         levels[root.idx()].inlined_sides = TddLevel::MARGINAL_INLINED_LEFT;

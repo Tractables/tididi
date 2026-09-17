@@ -101,7 +101,7 @@ fn exists_var_soundness_brute_force() {
     let result = (tdd_f).clone().exists_var(VarId(2)).unwrap();
 
     // The projected diagram still lives in the 3-var vtree. y's leaf becomes
-    // "all One", so model_count counts over all 3 bits — each surviving
+    // "all One", so `model_count` counts over all 3 bits — each surviving
     // (x,z) pair appears twice (once for y=T, once for y=F).
     let result_count = result.model_count().unwrap();
     assert_eq!(
@@ -191,7 +191,7 @@ fn apply_and_zero_width_marginal_levels() {
     assert!(f.levels[a.idx()].is_marginal() && f.levels[a.idx()].slot_count() == 0);
     assert!(g.levels[a.idx()].is_marginal() && g.levels[a.idx()].slot_count() == 0);
 
-    // Unfixed: panics inside apply_and_fallible at the 0-width marginal level.
+    // Unfixed: panics inside `apply_and_fallible` at the 0-width marginal level.
     let result = apply_and(f, g);
     assert_eq!(
         result.model_count().unwrap(),
@@ -411,7 +411,7 @@ fn scoped_marginal_sibling_succeeds() {
 /// F = (v0∨v3) ∧ (v2∨v3) = (v0∧v2) ∨ v3 over balanced(4) [L=(v0,v1), R=(v2,v3)].
 /// When v3=1, F=1 regardless of the left half (v0,v1) → the root has a branch
 /// where the left (path) subtree is free = a path-side One ref. Project v0:
-/// ∃v0.F = v2∨v3; with v1 free and v0's leaf→One, model_count = 6·2 = 12, and
+/// ∃v0.F = v2∨v3; with v1 free and v0's leaf→One, `model_count` = 6·2 = 12, and
 /// PMC onto {v1,v2,v3} = 6.
 #[test]
 fn scoped_path_side_one_ref_at_root() {

@@ -99,7 +99,7 @@ fn restrict_true_marginal_care_multiregion_difftest() {
     let mut pruned = 0;
     let mut violations = 0;
     let mut first_violation: Option<(usize, String, String)> = None;
-    // Fold-step (downstream conjoin+marginalize_levels) repro counters.
+    // Fold-step (downstream conjoin + marginalization) repro counters.
     let only_pruned_fold = true;
     let mut fold_count_fail = 0;
     let mut first_fold_fail: Option<String> = None;
@@ -128,7 +128,7 @@ fn restrict_true_marginal_care_multiregion_difftest() {
         if n_marginal < 2 {
             continue;
         }
-        // restrict_to_care only engages on a shared function root.
+        // `restrict_to_care` only engages on a shared function root.
         if care.output.vtree != fm.output.vtree {
             continue;
         }
@@ -150,15 +150,15 @@ fn restrict_true_marginal_care_multiregion_difftest() {
         }
 
         // ── FOLD STEP ─────────────────────────────────────────────────────
-        // The restrict_to_care contract (#(f∧care)) holds above, yet production panics
-        // when the SHRUNK operand feeds the fold's apply_and THEN marginalize_levels.
+        // The `restrict_to_care` contract (#(f∧care)) holds above, yet production panics
+        // when the SHRUNK operand feeds the fold's `apply_and` and then marginalizes.
         // Mimic `merge_one_pair`: conjoin g with the care operand, then sum out
         // the now-private `live` vars via the PRODUCTION batch marginalizer, and
         // VALIDATE STRUCTURE (not just the count) at each stage — the dangling
-        // marginal-side ref the contract checks miss. care∧g == care∧fm (restrict_to_care
-        // contract), so the post-marginalize_levels counts must match; a structural
+        // marginal-side ref the contract checks miss. care∧g == care∧fm (`restrict_to_care`
+        // contract), so the post-marginalization counts must match; a structural
         // failure / OOB / mismatch on the g-path (while the fm-path stays clean)
-        // localizes the defect to restrict_to_care's marginal-f output feeding the fold.
+        // localizes the defect to `restrict_to_care`'s marginal-f output feeding the fold.
         if only_pruned_fold {
             if gp == fp {
                 checked += 1;
@@ -355,7 +355,7 @@ fn restrict_marginal_care_two_regions_difftest() {
 
 /// Restrict contract on a MARGINAL `f`, the production orientation the
 /// multi-region test above does not exercise (that one marginalizes `care`,
-/// leaving `f` free). The marginalized-pool restrict_to_care shrinks members
+/// leaving `f` free). The marginalized-pool `restrict_to_care` shrinks members
 /// that have themselves been marginalized — `f.restrict_to_care(care)?`
 /// with `f` carrying summed-out (marginal) levels and `care` non-marginal —
 /// then conjoins the shrunk `g` with `care`. The contract `g ∧ care ==
@@ -369,7 +369,7 @@ fn restrict_marginal_care_two_regions_difftest() {
 ///
 /// This GUARD asserts no such miscount across synthesized marginal-`f`
 /// configs (random `f` over all vars, a random SCATTERED subset summed out,
-/// `care` over the complement). It passes — restrict_to_care is sound for every
+/// `care` over the complement). It passes — `restrict_to_care` is sound for every
 /// marginal-`f` shape reachable by this synthesis. The production miscount
 /// (proven on the blow-up instances) needs operand structure this synthesis
 /// does not reach (a large complex `care` against a tiny marginal `f` under
@@ -390,7 +390,7 @@ fn restrict_marginal_f_difftest() {
     let mut first_fail: Option<String> = None;
     for _trial in 0..600 {
         // f constrains all vars; then sum out a RANDOM SCATTERED subset — the
-        // production private-var marginalize_levels interleaves marginal and non-marginal
+        // production private-var marginalization interleaves marginal and non-marginal
         // levels (unlike a contiguous subtree, where all marginal levels sit at the
         // bottom). That interleaving is what exercises a non-marginal node sitting
         // BELOW a marginal one.

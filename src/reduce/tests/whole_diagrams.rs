@@ -207,7 +207,7 @@ fn test_minimize_sat_2vars_reduces_width() {
 // pairs dedup, and `|AB| = |A| + |B|` makes the deduped term equal to the sum
 // of the two originals — so the count is invariant. We assert it as a guard.
 
-// ── OverBudget safety in contract_twins ───────────────────────────────────
+// ── OverBudget safety in `contract_twins` ───────────────────────────────────
 //
 // An `OperationError::OverBudget` raised part-way through `contract_twins`' group-
 // merge loop must never corrupt the model count. Every reserve the pass needs

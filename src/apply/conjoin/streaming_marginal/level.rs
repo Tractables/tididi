@@ -46,7 +46,7 @@ pub(in crate::apply::conjoin) fn build_stream_state(
 }
 
 /// The value-kind-generic streaming setup: compute both children's columns,
-/// cascade-marginalize_levels any still-explicit non-leaf descendant, and open the
+/// cascade-marginalize any still-explicit non-leaf descendant, and open the
 /// output column.
 ///
 /// The cascade makes every descendant marginal or a leaf, which streaming
@@ -73,7 +73,7 @@ pub(in crate::apply::conjoin) fn open_stream_output<F: MarginalDomain>(
     let input = FoldInput { vtree, levels, store };
     F::ensure(eng, shape.left, input, computed, &marginal, Retention::All, |_| Ok(()))?;
     F::ensure(eng, shape.right, input, computed, &marginal, Retention::All, |_| Ok(()))?;
-    // 2. Cascade-marginalize_levels any still-explicit non-leaf descendant.
+    // 2. Cascade-marginalize any still-explicit non-leaf descendant.
     cascade_marginalize_in_apply::<F>(left_idx, vtree, levels, computed, store);
     cascade_marginalize_in_apply::<F>(right_idx, vtree, levels, computed, store);
     F::try_with_capacity(eng, shape.f.here.max(shape.g.here))

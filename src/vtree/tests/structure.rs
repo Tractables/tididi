@@ -154,7 +154,7 @@ fn test_single_var_all_shapes() {
     assert_eq!(r.num_nodes(), 1);
 }
 
-// --- to_text / from_text tests ---
+// --- `to_text` / `from_text` tests ---
 
 /// Parse the vtree format string into (node_count_from_header, Vec<line_tokens>).
 fn parse_vtree_format(s: &str) -> (usize, Vec<Vec<String>>) {
@@ -171,7 +171,7 @@ fn parse_vtree_format(s: &str) -> (usize, Vec<Vec<String>>) {
 
 #[test]
 fn vtree_text_header_node_count() {
-    // Header says "vtree N" where N = 2*num_vars - 1.
+    // Header says "vtree N" where N = 2*`num_vars` - 1.
     for num_vars in [1u32, 2, 3, 4, 5, 8, 16] {
         let vtree = Vtree::balanced(num_vars);
         let fmt = vtree.to_text();
@@ -315,7 +315,7 @@ fn test_vtree_format_roundtrip_random() {
 }
 
 
-// ── project_to_vars ───────────────────────────────────────────────────────────
+// ── `project_to_vars` ───────────────────────────────────────────────────────────
 
 /// Structural invariants of a projected vtree: exactly the kept variables
 /// appear as leaves (under their local ids), `num_leaves()` matches the local
@@ -432,7 +432,7 @@ fn test_project_to_vars_edge_cases() {
     }
 }
 
-// ── leaf / join / balanced_over / graft / validate ───────────────────────────
+// ── leaf / join / `balanced_over` / graft / validate ───────────────────────────
 
 fn sorted_vars(v: &Vtree) -> Vec<u32> {
     let mut vars: Vec<u32> = v.leaf_bottomup().map(|(_, var)| var.0).collect();

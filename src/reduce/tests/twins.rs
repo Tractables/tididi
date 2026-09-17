@@ -92,12 +92,12 @@ fn test_leaf_contract_skips_when_one_parent_unmatched() {
 /// `apply_and` could produce when conjoining a clause that reshapes the
 /// parent's pair list. Run `minimize`: the twins must contract into one
 /// node, with `marginal_counts[merged] = marginal_counts[A] +
-/// marginal_counts[B]`.
+/// `marginal_counts`[B]`.
 #[test]
 fn test_minimize_contracts_marginal_twins() {
     let eng = Engine::new();
     // Marginal-twin / pair fusion path: two marginal nodes at v_left with
-    // DISTINCT counts (C_A ≠ C_B) both appearing paired with multiple
+    // DISTINCT counts (`C_A` ≠ `C_B`) both appearing paired with multiple
     // right-side siblings at the root → pair fusion closes the redex by
     // summing their counts, leaving one merged slot.
     //
@@ -155,15 +155,15 @@ fn test_minimize_contracts_marginal_twins() {
     assert_eq!(tdd.model_count().unwrap(), phase1_count);
     assert_eq!(tdd.levels[v_left.idx()].slot_count(), 2);
 
-    // ── Phase 2: marginalize_levels v_left with DISTINCT counts ────────────────
+    // ── Phase 2: marginalize `v_left` with DISTINCT counts ────────────────
     //
-    // A has count C_A=2, B has count C_B=3 (distinct → slot-prune keeps
+    // A has count `C_A`=2, B has count `C_B`=3 (distinct → slot-prune keeps
     // both, and no structural change occurs within this phase's minimize).
     assert_can_make_marginal(&tdd.levels, &vtree, v_left);
     tdd.levels[v_left.idx()].become_marginal(vec![C_A, C_B], None);
-    // Hand-rolled become_marginal bypasses production marginalization; tag the
+    // Hand-rolled `become_marginal` bypasses production marginalization; tag the
     // now-marginal level's persisted parent refs so the 0=inline decode
-    // invariant holds (mirrors marginalize_batch / marginalize_subtree).
+    // invariant holds (mirrors `marginalize_batch` / `marginalize_subtree`).
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
 
     let phase2_count = tdd.model_count().unwrap();
@@ -181,11 +181,11 @@ fn test_minimize_contracts_marginal_twins() {
     //
     // Replace root's pair list with [(A, r0), (A, r1), (B, r0), (B, r1)].
     // Both A and B now appear paired with both r0 and r1. Pair fusion groups
-    // by same-explicit-side: (A, r0) + (B, r0) → (C_SUM, r0), and
-    // (A, r1) + (B, r1) → (C_SUM, r1). After the first round the root
+    // by same-explicit-side: (A, r0) + (B, r0) → (`C_SUM`, r0), and
+    // (A, r1) + (B, r1) → (`C_SUM`, r1). After the first round the root
     // has [(C_SUM, r0), (C_SUM, r1)] — same marginal ref again, so a
-    // second slot-prune pass merges the two C_SUM slots into one.
-    // The final result: width=1 and the surviving count = C_SUM.
+    // second slot-prune pass merges the two `C_SUM` slots into one.
+    // The final result: width=1 and the surviving count = `C_SUM`.
     //
     // The diagram is no longer deterministic — fine for this test, which is
     // about contraction structure, not Boolean semantics.
@@ -218,7 +218,7 @@ fn test_minimize_contracts_marginal_twins() {
          one surviving slot (the sum C_A+C_B={C_SUM}). Parent pair list \
          must dedup from 4 entries down to 1 or 2.",
     );
-    // The surviving slot's count must equal C_A + C_B = C_SUM.
+    // The surviving slot's count must equal `C_A` + `C_B` = `C_SUM`.
     assert_eq!(
         tdd.levels[v_left.idx()].marginal_counts().unwrap()[0],
         C_SUM,

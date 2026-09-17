@@ -129,7 +129,7 @@ fn validate_all_nodes_reachable(tdd: &Tdd) -> Result<(), String> {
 #[test]
 fn test_clause_to_tdd_is_minimal() {
     let eng = &crate::Engine::new();
-    // clause_to_tdd should return a minimal, canonical diagram with no
+    // `clause_to_tdd` should return a minimal, canonical diagram with no
     // unreachable nodes.
     let cases: Vec<(u32, Vec<i32>)> = vec![
         (2, vec![1]),

@@ -79,7 +79,7 @@ pub(super) fn merge_twin_data(
     let allow_dups = allow_dups || (cfg!(debug_assertions) && tdd.has_marginal_level());
     let level = &mut tdd.levels[t1.idx()];
 
-    // Leaf levels are marginal — contract_all_twins never calls this for leaves.
+    // Leaf levels are marginal — `contract_all_twins` never calls this for leaves.
     debug_assert!(
         level.nodes[keep].is_internal(),
         "merge_twin_data called on leaf node — leaf levels should be skipped"

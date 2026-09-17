@@ -80,7 +80,7 @@ pub(super) fn contract_twins(
     let merged_members = commit_group_actions(tdd, t1, &policy, remap, bufs);
     if merged_members == 0 {
         // Nothing merged: level untouched, no compaction or parent rewrite
-        // needed. Returning 0 lets contract_child report no-progress.
+        // needed. Returning 0 lets `contract_child` report no-progress.
         return Ok(0);
     }
     // The parent's pair lists are remapped and deduplicated below; t1's nodes

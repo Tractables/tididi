@@ -52,7 +52,7 @@ pub(super) fn exists_var_structural(
     }
     tdd.require_structure_at(leaf_idx)?;
 
-    // Single-var vtree / output at the leaf: ∃x.F = constant_one.
+    // Single-var vtree / output at the leaf: ∃x.F = `constant_one`.
     if tdd.output.vtree == leaf_idx {
         let mut result = eng.cube(&tdd.vtree, std::iter::empty::<crate::Literal>())?;
         result.weights = tdd.weights.as_ref().map(crate::diagram::WeightStore::empty_like);

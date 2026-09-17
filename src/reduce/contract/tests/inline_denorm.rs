@@ -61,7 +61,7 @@ fn twins_with_marginal_sibling_are_contracted() {
     // a ref, so the sibling side stays a bare slot index — the scenario this
     // test is about.
     levels[v_right.idx()].become_marginal(vec![BIG], None);
-    // Tag the marginal side so slot 0's raw ref is slot_raw(0).
+    // Tag the marginal side so slot 0's raw ref is `slot_raw(0)`.
     let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
 
     // Root: one multi-pair node with two pairs — both A and B use the same
@@ -79,7 +79,7 @@ fn twins_with_marginal_sibling_are_contracted() {
 
     // Tag marginal-side refs so the boundary decode is consistent.
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
-    // Declare root dirty so contract_all_twins picks it up.
+    // Declare root dirty so `contract_all_twins` picks it up.
     tdd.seed_contract_worklist([root.0]);
 
     // Run the full contraction pipeline.
@@ -384,7 +384,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
     }
 }
 
-// ── Test: pair fusion redex resolved within contract_all_twins ──────
+// ── Test: pair fusion redex resolved within `contract_all_twins` ──────
 
 /// A fixture where a parent node already holds two pairs with the same
 /// explicit element but DIFFERENT marginal-side count refs — a pair fusion
@@ -396,7 +396,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
 /// pipeline closes the redex without a separate `fuse_pairs` call.
 ///
 /// Fixture (balanced(4)):
-///   v_right = marginal; two slots: COUNT_A and COUNT_B (different, large)
+///   v_right = marginal; two slots: `COUNT_A` and `COUNT_B` (different, large)
 ///   v_left  = explicit internal; one node `n`
 ///   root    = one multi-pair node: pairs (n, slot_a), (n, slot_b)
 ///
@@ -465,7 +465,7 @@ fn p_fusion_redex_closed_within_contract_all_twins() {
 
     // Tag marginal-side refs so the boundary decode is consistent.
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
-    // Mark root dirty so contract_all_twins picks it up.
+    // Mark root dirty so `contract_all_twins` picks it up.
     tdd.seed_contract_worklist([root.0]);
 
     // Run the full pipeline — must close the redex in one call.
@@ -480,7 +480,7 @@ fn p_fusion_redex_closed_within_contract_all_twins() {
         root_pairs.len(),
     );
 
-    // The surviving marginal-side ref must decode to the summed count COUNT_SUM.
+    // The surviving marginal-side ref must decode to the summed count `COUNT_SUM`.
     let surviving_raw = root_pairs[0].right.0;
     let marginal_counts = tdd.levels[v_right.idx()].marginal_counts().unwrap();
     let fused_count = match ValueRef::from_raw(MarginalSide(surviving_raw)) {

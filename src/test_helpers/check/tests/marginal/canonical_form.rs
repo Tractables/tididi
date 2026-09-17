@@ -86,7 +86,7 @@ fn c4_ignores_stale_inline_eligible_slot() {
     check_inline_discipline(&tdd).unwrap();
 }
 
-// ── Invariant 4 garbage-freedom (check_no_orphan_slots) ───────────────────────────
+// ── Invariant 4 garbage-freedom (`check_no_orphan_slots`) ───────────────────────────
 
 /// Negative: a boundary store with an extra unreferenced slot (slot 1 is
 /// orphaned — only slot 0 is referenced). `check_no_orphan_slots` must
@@ -125,7 +125,7 @@ fn c4_orphan_slot_cleared_after_prune() {
     check_slot_count_uniqueness(&tdd).unwrap();
 }
 
-// ── No value store under a marginal parent (check_subsumed_stores_empty) ──
+// ── No value store under a marginal parent (`check_subsumed_stores_empty`) ──
 
 /// A marginal level under a marginal parent still holding counts and an
 /// overflow entry fails the check and the full canonical form; the freeing

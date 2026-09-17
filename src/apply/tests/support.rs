@@ -32,7 +32,7 @@ fn support_bits_covers_support_mask_and_detects_disjoint() {
     let x0 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
     let x2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(3, true)]));
     let f = and2(&x0, &x2); // depends on {x0, x2}
-    // support_bits OVER-approximates support_mask (never drops a real dependency);
+    // `support_bits` OVER-approximates `support_mask` (never drops a real dependency);
     // on a minimized diagram like this it is exact.
     let mask = support_mask(&f);
     let bits = support_bits(&f);

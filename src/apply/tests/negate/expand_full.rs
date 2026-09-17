@@ -10,7 +10,7 @@ fn balanced_vtree(n: u32) -> Arc<Vtree> {
     Arc::new(Vtree::balanced(n))
 }
 
-// ── Explicit expand_full tests ─────────────────────────────────────────
+// ── Explicit `expand_full` tests ─────────────────────────────────────────
 
 #[test]
 fn expand_full_constant_one() {

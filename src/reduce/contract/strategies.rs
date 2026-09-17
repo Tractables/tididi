@@ -199,7 +199,7 @@ pub(crate) fn contract_all_twins(
         scratch.needs_check[p_idx] = false;
 
         // Guard against stale state (a prior contraction may have flipped
-        // has_multi_pair or the node is a leaf after a structural change).
+        // `has_multi_pair` or the node is a leaf after a structural change).
         if tdd.vtree.node(VtreeIdx(p_idx as u32)).is_leaf() || !tdd.levels[p_idx].has_multi_pair() {
             continue;
         }

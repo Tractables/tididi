@@ -152,7 +152,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
 ///   root        = internal(v_left, v_right) — one node R with pairs
 ///                 (X1, slot0_vright), (X2, slot0_vright)
 ///
-/// Model count = (c(X1) + c(X2)) · C_VR = (1 + 1) · 3 = 6, before and after.
+/// Model count = (c(X1) + c(X2)) · `C_VR` = (1 + 1) · 3 = 6, before and after.
 #[test]
 fn test_content_twins_merge_at_plain_levels() {
     use crate::test_helpers::check::marginal::check_twin_canonicality;

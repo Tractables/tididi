@@ -239,7 +239,7 @@ fn test_minimize_soundness_raw_product() {
     // Product of deterministic diagrams is deterministic, so semiring eval is sound
     let formulas: Vec<(u32, Vec<Vec<i32>>)> = vec![
         (3, vec![vec![1, 2], vec![-2, 3], vec![-1, -3]]),
-        // Parity — caught a mod_mul bug (PRIME-1 mask cleared bit 0)
+        // Parity — caught a `mod_mul` bug (PRIME-1 mask cleared bit 0)
         (3, vec![vec![1, 2, 3], vec![-1, -2, 3], vec![-1, 2, -3], vec![1, -2, -3]]),
         (4, vec![vec![1, 2], vec![3, 4], vec![-1, -3], vec![-2, -4]]),
         (2, vec![vec![1], vec![-1]]),
@@ -268,8 +268,8 @@ fn test_minimize_soundness_raw_product() {
 #[test]
 fn test_no_false_nodes_after_apply_before_minimize() {
     let eng = &crate::Engine::new();
-    // The invariant holds for apply_and output even before minimize:
-    // apply_and's compacting construction never creates false nodes in levels.
+    // The invariant holds for `apply_and` output even before minimize:
+    // `apply_and`'s compacting construction never creates false nodes in levels.
     let vtree = Arc::new(Vtree::balanced(4));
     let cases: Vec<(Vec<i32>, Vec<i32>)> = vec![
         (vec![1, 2], vec![-3, 4]),
@@ -291,7 +291,7 @@ fn test_no_false_nodes_after_apply_before_minimize() {
 #[test]
 fn test_no_false_nodes_multi_apply_before_minimize() {
     let eng = &crate::Engine::new();
-    // Chain of apply_and calls without intermediate minimize.
+    // Chain of `apply_and` calls without intermediate minimize.
     let vtree = Arc::new(Vtree::balanced(5));
     let clauses: Vec<Vec<i32>> = vec![
         vec![-1, 2], vec![-2, 3], vec![-3, 4], vec![-4, 5],

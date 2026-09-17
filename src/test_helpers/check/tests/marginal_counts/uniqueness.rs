@@ -3,7 +3,7 @@ use crate::test_helpers::check::marginal::check_store_counts;
 use crate::marginal::dedup_fresh_store;
 use crate::diagram::{CountOverflow, MarginalSide, ValueRef};
 
-// ── dedup_fresh_store for marginalization-time stores ────────────────
+// ── `dedup_fresh_store` for marginalization-time stores ────────────────
 
 /// Two nodes with equal small counts → dedup merges them to one slot.
 /// Parent refs 0 and 1 both remap to the single surviving slot 0.
@@ -66,16 +66,16 @@ fn dedup_fresh_store_ref_remap_is_correct() {
     let old_ref: u32 = 1; // bare slot index (pre-tagger)
     let new_ref: u32 = remap[old_ref as usize];
     assert_eq!(new_ref, 0, "remapped ref must point to the canonical slot");
-    // After tagging (ValueRef::slot_raw), the consumer would decode correctly.
+    // After tagging (`ValueRef::slot_raw`), the consumer would decode correctly.
     let tagged = ValueRef::slot_raw(new_ref);
     assert_eq!(ValueRef::from_raw(MarginalSide(tagged)), ValueRef::Slot(0));
 }
 
-// ── dedup_fresh_store duplicate-merge, independent of any call site. The apply
+// ── `dedup_fresh_store` duplicate-merge, independent of any call site. The apply
 // streaming emit does not call it: invariant 10 for those stores is established
-// at the post-tagger slot prune, by prune_value_slots.
+// at the post-tagger slot prune, by `prune_value_slots`.
 
-/// Two nodes with equal small counts → dedup_fresh_store merges to one slot.
+/// Two nodes with equal small counts → `dedup_fresh_store` merges to one slot.
 /// Both node_idx grid entries remap to the single surviving slot 0.
 #[test]
 fn streaming_emit_dedup_equal_counts() {

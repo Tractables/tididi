@@ -4,8 +4,8 @@ use super::*;
 /// bottom-up linearization (children-before-parents) AND satisfies the
 /// root-last property used by `Vtree::fixup_topo_after_rotate`.
 fn assert_invariants(vtree: &Vtree) {
-    // topo / topo_pos / internal_topo / leaf_topo completeness:
-    // Every node appears exactly once across topo, topo_pos is its inverse,
+    // topo / `topo_pos` / internal_topo / leaf_topo completeness:
+    // Every node appears exactly once across topo, `topo_pos` is its inverse,
     // and internal_topo ∪ leaf_topo partitions the node set.
     let n = vtree.num_nodes();
     assert_eq!(vtree.bottomup_slice().len(), n, "topo length mismatch");

@@ -199,7 +199,7 @@ fn graft_impl(
                 // child's marginal flag, and prune / model-count misread the inline
                 // count as a node index, reading out of bounds. Relocate marginal
                 // leaves so the invariant "parent inlined leaf ⟺ leaf level
-                // is_marginal" survives.
+                // `is_marginal`" survives.
                 if tdd.levels[c_idx].is_marginal() {
                     levels[f_idx.idx()] =
                         std::mem::take(&mut tdd.levels[c_idx]);

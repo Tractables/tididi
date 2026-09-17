@@ -267,7 +267,7 @@ impl ValueDomain for IntFold {
         // Raw-storage sources (`marginal_counts`/`marginal_counts_big` on the level)
         // are viewed through `CountRef::from_parts_scanned` (u64-fit certificate
         // scanned over the stored slots; `COUNT_OVERFLOW` = `u128::MAX` fails the scan,
-        // so all_u64 ⇒ no overflow sentinel present). A `computed` source is already
+        // so `all_u64` ⇒ no overflow sentinel present). A `computed` source is already
         // a `CountVec` and lends its own incrementally maintained certificate. The
         // sources are mutually exclusive: the ensure walk only fills `computed`
         // for non-marginal levels, and the in-apply cascade moves an entry

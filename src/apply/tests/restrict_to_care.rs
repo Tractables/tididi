@@ -24,7 +24,7 @@ fn restrict_tautological_care_is_identity() {
 #[test]
 fn restrict_false_care_is_empty() {
     let eng = Engine::new();
-    // c = ⊥: f∧c = ∅ for any g; restrict_to_care returns ⊥, the smallest sound answer.
+    // c = ⊥: f∧c = ∅ for any g; `restrict_to_care` returns ⊥, the smallest sound answer.
     let vtree = Arc::new(Vtree::balanced(3));
     let f = apply_or(clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)])),
                      clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, true)])));
@@ -161,15 +161,15 @@ fn restrict_runs_on_assorted_small_circuits() {
     }
 }
 
-// restrict_to_care where `f` and `care` root at DIFFERENT vtree nodes (one contained
+// `restrict_to_care` where `f` and `care` root at DIFFERENT vtree nodes (one contained
 // in the other, or disjoint). The un-generalized guard bailed `f.clone()` on
 // any root mismatch, so the productive containment cases below silently
 // returned f unchanged. `assert_restrict_ok` alone can't catch that (g == f is
 // always sound), so each productive case also asserts a STRICT prune — those
-// assertions FAIL on the un-generalized restrict_to_care and pass once it lifts the
+// assertions FAIL on the un-generalized `restrict_to_care` and pass once it lifts the
 // lower operand to the common root.
 //
-// restrict_to_care drops dead NODES (then the pairs that point at them), so a real
+// `restrict_to_care` drops dead NODES (then the pairs that point at them), so a real
 // prune needs an INTERNAL node of `f` to become unreachable under `care` — not
 // merely fewer satisfying assignments. That needs vtree depth ≥3, so we use
 // balanced(8): a "selector" `sel = (x0∧(x2∨x3)) ∨ (¬x0∧(x2∧x3))` has two
@@ -181,11 +181,11 @@ fn restrict_runs_on_assorted_small_circuits() {
 // table (the real `g∧c == f∧c` contract) plus the never-larger gate — not
 // `assert_restrict_ok`, whose `check_all_fast` enforces the global-root
 // *structural* convention (`validate_vtree_structure`: output.vtree == root).
-// That convention is what makes differing-root restrict_to_care a non-event in
+// That convention is what makes differing-root `restrict_to_care` a non-event in
 // production — every validated diagram (including marginalized ones, which mark
 // upper levels marginal rather than re-homing the root) is global-rooted. A
 // re-homed low-rooted operand is the not-yet-built "tightly-rooted segment"
-// shape; restrict_to_care computes the correct *function* for it (Case B's g is rooted
+// shape; `restrict_to_care` computes the correct *function* for it (Case B's g is rooted
 // at f's own low node L, outside that structural convention, hence eval-only).
 #[test]
 fn restrict_differing_root_containment_difftest() {
@@ -193,7 +193,7 @@ fn restrict_differing_root_containment_difftest() {
     let vtree = Arc::new(Vtree::balanced(8));
     let lit = |v: u32, p: bool| clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(v + 1, p)]));
     // Function-level soundness oracle: g∧c == f∧c over all 2^nvars assignments,
-    // and g never larger than f. Apply-free (shares no machinery with restrict_to_care).
+    // and g never larger than f. Apply-free (shares no machinery with `restrict_to_care`).
     let assert_sound = |f: &Tdd, c: &Tdd, nvars: u32| -> Tdd {
         let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
         for mask in 0..(1u32 << nvars) {
@@ -285,7 +285,7 @@ fn restrict_brute_force_randomized_multi_vtree() {
             gm.minimize().unwrap();
             check_all_fast(&gm, "restrict_to_care-brute");
             check_determinism(&gm).expect("non-deterministic restrict_to_care output");
-            // restrict_to_care returns a strict subgraph of the input f, so never larger
+            // `restrict_to_care` returns a strict subgraph of the input f, so never larger
             // than f (un-minimized) — the raw-engine contract, not vs f.minimize().unwrap().
             let gp = reachable_pairs(&g);
             assert!(gp <= fp, "grew beyond f: {gp} > {fp} (nvars={nvars})");
@@ -303,7 +303,7 @@ fn restrict_brute_force_randomized_multi_vtree() {
 fn restrict_output_is_orphan_free() {
     // `reduce`/`restrict_to_care` must return an ARENA-COMPACT diagram: the rebuild is
     // demand-driven and emits a child before discovering its pair partner
-    // collapsed to ZERO, which strands that child (an orphan: reachable_pairs
+    // collapsed to ZERO, which strands that child (an orphan: `reachable_pairs`
     // unchanged, but it lingers in the arena). The self-contained reduce prunes
     // its own output, so `size(g) == reachable_pairs(g)` for any caller. Bigger
     // vtrees (mixed liveness) are what surface the orphan; this fails on the
@@ -447,7 +447,7 @@ fn restrict_raw_output_is_apply_safe() {
             if count_is_zero(&c) || f.is_zero() {
                 continue;
             }
-            // (A) raw restrict_to_care output must be a valid diagram.
+            // (A) raw `restrict_to_care` output must be a valid diagram.
             let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
             check_all_fast(&g, "restrict_to_care-raw");
             // (B) the lever's path: conjoin raw g with another member, minimize.

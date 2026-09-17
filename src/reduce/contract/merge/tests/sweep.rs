@@ -48,7 +48,7 @@ fn contraction_garbage_is_swept_leaving_content_identical() {
     // node, order (these keep the LOWEST starts while the merged survivors
     // sit at the tail). First an extended (side-table) len-1 node, whose
     // start lives in `multi_pairs` rather than the node word: a left ref with
-    // MULTI_BIT set cannot be inlined, which is what routes
+    // `MULTI_BIT` set cannot be inlined, which is what routes
     // `push_internal_node` to the extended encoding. Then an inline node,
     // which owns no arena slot at all.
     level.push_internal_node(&[pair(1 << 31, 7)]);

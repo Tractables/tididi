@@ -262,7 +262,7 @@ fn group_content_equal(
     {
         for n in 0..width {
             if level.nodes[n].is_leaf() {
-                // is_leaf() is true for real leaves as well as tombstones; skip both.
+                // `is_leaf()` is true for real leaves as well as tombstones; skip both.
                 continue;
             }
             // Fast-path: unique fingerprint → no twin possible, skip alloc+sort.

@@ -12,7 +12,7 @@ use crate::vtree::VtreeIdx;
 use super::strategies::contract_all_twins;
 
 /// Directed fixture for duplicate-pair resolution by fork-down scaling
-/// (duplicate_pair_resolve): content-equal context-twins at a PLAIN level whose merge
+/// (`duplicate_pair_resolve`): content-equal context-twins at a PLAIN level whose merge
 /// mints a duplicate pair, resolved by scaling the marginal-carrying child.
 ///
 /// Fixture (`boundary_internal_marginal_vtree`), left spine root → gp → bp:
@@ -202,7 +202,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let output = crate::diagram::TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
-    // Attach the store after building the diagram (mirrors toy_weighted's
+    // Attach the store after building the diagram (mirrors `toy_weighted`'s
     // contract) and write the slot's value into it, so the content-twin fold takes
     // the weighted scaling path.
     let mut ws = crate::diagram::WeightStore::new(
@@ -374,8 +374,8 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
         "shared pair must keep multiplicity 2; disjoint pairs unchanged"
     );
     // Count soundness, unchanged in strength: the multiset still totals
-    // 2·COUNT_P + COUNT_Q + COUNT_R — exactly what the collapsed form
-    // {(P₂ = 2·COUNT_P, s), (Q,t), (R,u)} carried.
+    // 2·`COUNT_P` + `COUNT_Q` + `COUNT_R` — exactly what the collapsed form
+    // {(P₂ = 2·`COUNT_P`, s), (Q,t), (R,u)} carried.
     assert_eq!(
         counts.iter().sum::<u128>(),
         2 * COUNT_P + COUNT_Q + COUNT_R,
@@ -424,7 +424,7 @@ fn b4_leaf_hazard_fixture(marginal_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeI
     levels[m_v.idx()].become_marginal(vec![], None);
 
     levels[x_v.idx()].nodes = vec![EncodedNode::leaf(LeafLabel::Pos)];
-    // bp: one PLAIN node holding the duplicate pair (Pos, marginal_ref) twice. The
+    // bp: one PLAIN node holding the duplicate pair (Pos, `marginal_ref`) twice. The
     // marginal side is the leaf `m_v`, so this is exactly the run fork-down folds.
     let p = levels[bp.idx()].push_internal_node(&[
         ChildPair::new(pos, NodeIdx(marginal_ref)),

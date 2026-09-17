@@ -33,7 +33,7 @@ fn test_apply_and_with_constant_one() {
 
     // Structural check (not just count-equality): a count-preserving bug that
     // returns a re-canonicalized-but-DIFFERENT diagram for `1 ∧ clause` would
-    // still pass the model_count assertion above. `is_self_conjunction`
+    // still pass the `model_count` assertion above. `is_self_conjunction`
     // (the same predicate `apply_and` itself consults for its structural
     // shortcut, `conjoin/sparse/mod.rs`) is a genuine canonical-equality
     // check: after `minimize`, two operands representing the same function
@@ -203,8 +203,8 @@ fn conjunction_rejects_a_constrained_marginal_level() {
 /// run would also complete — the cap is what makes it bail.
 #[test]
 fn test_apply_output_node_cap_bails_cleanly() {
-    // Build a diagram by folding clauses with apply_and — every operand shares the
-    // same `vtree` Arc (clause_to_tdd / constant_one clone it), so the final
+    // Build a diagram by folding clauses with `apply_and` — every operand shares the
+    // same `vtree` Arc (`clause_to_tdd` / `constant_one` clone it), so the final
     // conjoin's pointer-identical-vtree precondition holds.
     fn build(vtree: &Arc<Vtree>, clauses: &[&[i32]]) -> Tdd {
         let eng = &crate::Engine::new();

@@ -444,7 +444,7 @@ impl TddLevel {
         } else if input_pairs.len() == 1 {
             // Single pair that can't be inlined (right has `LEAF_BIT` or left has `MULTI_BIT`).
             // Use extended encoding — the only form that supports pair_len=1 without
-            // aliasing either the leaf or multi_ranged encoding.
+            // aliasing either the leaf or `multi_ranged` encoding.
             let pair_start = self.pairs.len();
             G::reserve(&mut self.pairs, 1)?;
             self.pairs.push(input_pairs[0]);

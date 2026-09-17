@@ -21,7 +21,7 @@ const CANDIDATE_MASS: usize = (2 * N_TWIN_GROUPS) as usize;
 /// total parent-pair fan-out.
 ///
 /// Fixture — child level = the root's left child, `N_UNIQUE + 2 *
-/// N_TWIN_GROUPS` nodes:
+/// `N_TWIN_GROUPS`` nodes:
 ///   * nodes `0..N_UNIQUE` get one parent each, holding `UNIQUE_FAN_OUT` pairs
 ///     with distinct siblings ⇒ each fingerprint is unique to its node, so
 ///     none of them is a twin candidate, and between them they own all but
@@ -54,7 +54,7 @@ fn signature_arena_holds_candidate_rows_only() {
         levels[v_right.idx()].push_internal_node(&[filler]);
     }
 
-    // One parent per unique node: UNIQUE_FAN_OUT distinct sibling contexts.
+    // One parent per unique node: `UNIQUE_FAN_OUT` distinct sibling contexts.
     let mut pairs: Vec<ChildPair> = Vec::new();
     for target in 0..N_UNIQUE {
         pairs.clear();

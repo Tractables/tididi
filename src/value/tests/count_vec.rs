@@ -188,7 +188,7 @@ fn int_fold_overflow_repass_is_exact_and_mixed_magnitude() {
 fn int_fold_exact_max_total_promotes_to_big() {
     let eng = Engine::new();
     // (2^64+1)·(2^64−1) = 2^128−1 = u128::MAX exactly: pass 1 completes
-    // without overflowing, but the total lands exactly on the sentinel — from_u128 must
+    // without overflowing, but the total lands exactly on the sentinel — `from_u128` must
     // promote so the stored value stays unambiguous.
     let left = col(&eng, vec![Count::Fast((1u128 << 64) + 1)]);
     let right = col(&eng, vec![Count::Fast((1u128 << 64) - 1)]);

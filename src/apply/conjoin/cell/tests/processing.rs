@@ -170,7 +170,7 @@ fn collect_sink_respects_soft_budget() {
     use super::{process_cell, CellCtx, CollectSink, OperationError};
     use crate::apply::conjoin::child_lookup::ChildLookup;
 
-    // Always resolves children to a live (non-NO_PRODUCT) node, so every
+    // Always resolves children to a live (non-`NO_PRODUCT`) node, so every
     // (p1, p2) combination emits one pair.
     struct AliveLookup;
     impl ChildLookup for AliveLookup {

@@ -56,7 +56,7 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Opera
     let mut remap = pool.prune_remap.take();
 
     // Flat offset table: level t occupies remap[level_base[t]..level_base[t+1]].
-    // Use reference_slot_count() so leaf levels get `LEAF_WIDTH` slots for marginal nodes.
+    // Use `reference_slot_count()` so leaf levels get `LEAF_WIDTH` slots for marginal nodes.
     if level_base.len() < num_nodes + 1 {
         level_base.resize(num_nodes + 1, 0usize);
     }

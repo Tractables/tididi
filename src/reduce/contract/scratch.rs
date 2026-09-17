@@ -168,13 +168,13 @@ pub(super) struct MergeRemap {
     pub(super) duplicate_redirect: Vec<bool>,
 }
 
-/// Scratch buffers reused across contract_all_twins calls.
+/// Scratch buffers reused across `contract_all_twins` calls.
 ///
 /// Each checkout reuses bounded capacity from the previous call and
 /// invalidates the cached marginal map before scanning another diagram.
 #[derive(Default)]
 pub(crate) struct ContractScratch {
-    // ── find_twin_groups buffers ──
+    // ── `find_twin_groups` buffers ──
     // Node indices and per-node counts are u32-wide throughout: every ref into
     // a level is a `NodeIdx(u32)`, and the candidate mass that bounds `counts`
     // and `cursors` is checked against `u32::MAX` by `count_candidate_entries`
@@ -208,7 +208,7 @@ pub(crate) struct ContractScratch {
     /// the flagged minority.
     pub(super) slice_unsorted: Vec<bool>,
 
-    // ── contract_twins buffers ──
+    // ── `contract_twins` buffers ──
     /// Twin survivor selection and compacted node indices.
     pub(super) remap: MergeRemap,
     /// `has_marginal_below[v]` for every vtree node — computed at most once per
@@ -221,7 +221,7 @@ pub(crate) struct ContractScratch {
     /// rather than up front, since a sweep that finds no twins never reads it.
     pub(super) has_marginal_below_valid: bool,
 
-    // ── contract_all_twins top-down heap ──
+    // ── `contract_all_twins` top-down heap ──
     /// Per-parent dedup flag: true if this parent is currently queued in the
     /// top-down heap (`contract_all_twins`). Reset when the parent is
     /// popped so the all-false invariant holds on entry/exit.
@@ -237,7 +237,7 @@ pub(crate) struct ContractScratch {
     /// this list is being iterated by index.
     pub(super) boundaries: Vec<(crate::vtree::VtreeIdx, crate::vtree::VtreeIdx, crate::diagram::ChildSide)>,
 
-    // ── contract_twins per-call buffers ──
+    // ── `contract_twins` per-call buffers ──
     /// Working buffers cleared before planning each level's merges.
     pub(super) merge: MergeBuffers,
     /// Fork-down duplicate resolution's per-node buffers; see [`DuplicateScratch`].

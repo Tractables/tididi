@@ -122,7 +122,7 @@ pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
     w.write_all(&buf)?;
     buf.clear();
 
-    // "L <vtree_idx> <var>": the vtree leaf → variable mapping. Each leaf has 3
+    // "L <`vtree_idx`> <var>": the vtree leaf → variable mapping. Each leaf has 3
     // implicit diagram nodes — one(0), pos(1), neg(2) — which are not written.
     for (t, var) in vtree.leaf_bottomup() {
         buf.extend_from_slice(b"L ");

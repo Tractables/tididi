@@ -35,7 +35,7 @@ pub(crate) fn row_alive_masks(ctx: &CellCtx<'_>, inputs1: &[ChildPair]) -> Optio
 
 /// Emit a product node from pairs accumulated in `level.pairs[pair_start..]`.
 /// Handles inline (1 pair) vs multi-pair encoding and updates `node_idx`.
-/// For huge cells (pair_start or pair_count ≥ 2^31), uses the extended
+/// For huge cells (pair_start or `pair_count` ≥ 2^31), uses the extended
 /// side-table encoding via `level.try_push_multi_by_range`.
 #[inline(always)]
 pub(crate) fn emit_product_node(

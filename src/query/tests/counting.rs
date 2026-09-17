@@ -85,7 +85,7 @@ fn test_model_count_clause_all_vars() {
     assert_eq!(tdd.model_count().unwrap(), BigUint::from(15u32));
 }
 
-// --- node_counts ---
+// --- `node_counts` ---
 
 #[test]
 fn test_node_counts_basic() {

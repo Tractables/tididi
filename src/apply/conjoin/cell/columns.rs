@@ -108,7 +108,7 @@ impl<'a> RightColumns<'a> {
             if total > u32::MAX as usize {
                 return None;
             }
-            // A reserve can fail after charging (try_reserve succeeds, the
+            // A reserve can fail after charging (`try_reserve` succeeds, the
             // soft-budget check trips), so the charge covers whatever capacity
             // the vec actually holds either way.
             let failed = lim.reserve_exact(&mut flat, total).is_err();
