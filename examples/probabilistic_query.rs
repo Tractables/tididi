@@ -38,7 +38,7 @@ fn main() -> Result<(), OperationError> {
     let vtree = Arc::new(Vtree::balanced(3));
     let rain = literal(&vtree, 1)?;
     let sprinkler = literal(&vtree, 2)?;
-    // Wet grass is the observation: rain OR sprinkler. Variable 3 (wind) is free.
+    // Wet grass is the evidence: rain OR sprinkler. Variable 3 (wind) is free.
     let wet = or(rain.clone(), sprinkler)?;
     let rain_and_wet = and(rain.clone(), wet.clone())?;
 
@@ -68,7 +68,7 @@ fn main() -> Result<(), OperationError> {
         println!("P(rain) = {rain_probability}, P(wet) = {wet_probability}");
         match conditional {
             Some(value) => println!("P(rain | wet) = {value}"),
-            None => println!("P(rain | wet) is undefined: the observation has probability zero"),
+            None => println!("P(rain | wet) is undefined: the evidence has probability zero"),
         }
     }
     Ok(())

@@ -10,7 +10,8 @@ without listing them. Build a circuit once, then combine it with other circuits
 or query it as your inputs change.
 
 TDDs can be strictly more succinct than ordered binary decision diagrams (OBDDs).
-Their representation and minimization algorithm are described in
+For a fixed vtree, a minimized TDD is canonical: equivalent functions have the
+same diagram. Their representation and minimization algorithm are described in
 [*A Canonical Generalization of OBDD*](https://arxiv.org/abs/2604.05537).
 
 ## Working with circuits

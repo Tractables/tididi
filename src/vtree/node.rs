@@ -59,8 +59,9 @@ impl VtreeNode {
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 ///
-/// Clone the `Arc` to share a vtree. Constructing an identical vtree separately
-/// creates an incompatible allocation.
+/// Clone the `Arc` to share a vtree. Operands are matched by allocation, not by
+/// comparing shapes, so constructing an identical vtree separately creates an
+/// incompatible one.
 ///
 /// # Choosing a vtree
 ///

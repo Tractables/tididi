@@ -10,7 +10,10 @@ has its own examples and contract.
 Create a [`Vtree`](crate::Vtree) and share one `Arc<Vtree>` among circuits you
 intend to combine. [`literal`](crate::literal) builds an atom;
 [`Tdd::clause`](crate::Tdd::clause) joins literals with OR, and
-[`Tdd::cube`](crate::Tdd::cube) joins them with AND.
+[`Tdd::cube`](crate::Tdd::cube) joins them with AND;
+[`Tdd::one`](crate::Tdd::one) and [`Tdd::zero`](crate::Tdd::zero) are the
+constants. Integer literals are signed and start at 1; a
+[`VarId`](crate::vtree::VarId), used to quantify and rename, starts at 0.
 
 Combine circuits with [`and`](crate::and), [`or`](crate::or),
 [`xor`](crate::xor) and [`Tdd::negate`](crate::Tdd::negate), or use
@@ -76,7 +79,9 @@ For direct traversal, follow the [custom-statistic example](crate::guide::exampl
 The [vtree example](crate::guide::examples::vtrees) compares storage for two
 variable groupings. Use [`Vtree::join`](crate::Vtree::join) to specify groups
 or [`Vtree::linear`](crate::Vtree::linear) for a variable order.
-[`Tdd::minimize`](crate::Tdd::minimize) removes redundancy under the current vtree;
+[`Tdd::minimize`](crate::Tdd::minimize) removes redundancy under the current vtree
+and says which operations already return minimized results;
+[`Tdd::pair_count`](crate::Tdd::pair_count) measures the storage, and
 [`Tdd::rotation_search`](crate::Tdd::rotation_search) explores other shapes.
 
 For more specialized control:

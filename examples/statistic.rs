@@ -11,13 +11,9 @@ use tididi::vtree::{Vtree, VtreeIdx};
 fn widest_node(t: &Tdd) -> (VtreeIdx, usize) {
     let mut best = (t.vtree().root(), 0usize);
     for v in t.vtree().bottomup() {
-        let lvl = t.level(v);
         // Leaf levels store nothing and marginal levels have dropped their
-        // pairs; both yield no nodes here.
-        if lvl.is_marginal() {
-            continue;
-        }
-        for (_i, pairs) in lvl.internal_inputs_iter() {
+        // pairs; neither yields a node here.
+        for (_i, pairs) in t.level(v).internal_inputs_iter() {
             let n = pairs.len(); // PairsIter is ExactSizeIterator
             if n > best.1 {
                 best = (v, n);

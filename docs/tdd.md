@@ -41,10 +41,10 @@ the disjunction of those two conjunctions.
 
 In a structural TDD, a given pair of child nodes belongs to at most one node
 at its parent level. Distinct pairs may share either child, but not both.
-At a leaf, a referenced `true` cannot coexist with referenced literals.
+A leaf level always offers `x`, `¬x` and `true`; the rule at a leaf is that
+one parent node refers either to `true` or to the literals, never both.
 Together these syntactic rules make the functions of distinct nodes at a
-level disjoint; the stored leaf slots are a vocabulary, not three simultaneously
-active nodes.
+level disjoint.
 
 The factors in a pair use disjoint variable sets, and the pairs of a node
 describe disjoint assignments. Counting therefore multiplies the two child

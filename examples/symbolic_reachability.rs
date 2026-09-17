@@ -58,6 +58,7 @@ fn main() -> Result<(), OperationError> {
     let witness = reachable_target
         .satisfying_assignment()?
         .expect("state 2 is reachable");
+    // The witness, read back as a cube, is one of the target's models.
     assert!(Tdd::cube(&vtree, &witness)?.implies(&reachable_target)?);
     let state = witness
         .iter()

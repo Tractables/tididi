@@ -523,8 +523,7 @@ impl Tdd {
     ///
     /// Borrows the diagram without changing it and accepts nonminimal input.
     /// Literal weights are ignored, so a satisfiable function remains satisfiable
-    /// when its weighted value is zero. Checks all levels for discarded structure,
-    /// then reads the false sentinel; no minimization or scratch buffers are needed.
+    /// when its weighted value is zero.
     /// Use [`satisfying_assignment`](Self::satisfying_assignment) to obtain a model.
     ///
     /// # Errors
@@ -588,7 +587,9 @@ impl Tdd {
     /// variable contributes, including free variables through its `One` value.
     /// All values come from `algebra`, independently of attached weights, so later
     /// calls can use new tables without rebuilding. Each table must cover every
-    /// variable named by the tree. [`EvalAlgebra`] describes other arithmetic.
+    /// variable named by the tree. [`EvalAlgebra`] describes other arithmetic;
+    /// [`weighted_value`](Self::weighted_value) evaluates under weights attached
+    /// to the diagram instead.
     ///
     /// For conditional probabilities, evaluate query conjoined with evidence and
     /// divide by the evidence value under the same weights. A zero evidence value
@@ -633,7 +634,8 @@ impl Tdd {
     /// contribute their stored values. The returned [`WeightValue`] uses the store's
     /// arithmetic. Returns `Ok(None)` without a weight store. The borrowed diagram
     /// is unchanged. A zero value may come from zero or cancelling weights and does
-    /// not establish Boolean unsatisfiability.
+    /// not establish Boolean unsatisfiability. [`evaluate`](Self::evaluate) takes
+    /// the weights as an argument instead, so they can change between calls.
     ///
     /// # Errors
     ///
@@ -672,6 +674,11 @@ impl Tdd {
     /// [`rotation_search`](Self::rotation_search) searches other tree shapes.
     /// Counting, satisfiability and witness queries accept nonminimal diagrams;
     /// minimize when canonical form or removal of redundant storage is needed.
+    /// [`and`](crate::and) and [`and_clause`](Self::and_clause) leave their
+    /// result unminimized; [`or`](crate::or), [`xor`](crate::xor),
+    /// [`ite`](crate::ite), [`negate`](Self::negate), [`condition`](Self::condition),
+    /// [`exists_vars`](Self::exists_vars) and [`rename_vars`](Self::rename_vars)
+    /// return minimized results.
     ///
     /// # Errors
     ///
@@ -742,7 +749,7 @@ impl Tdd {
     ///
     /// Completed levels retain their values and valid parent references. The pass
     /// also fuses eligible marginal pairs and removes unused or duplicate value
-    /// slots. Rounded log arithmetic skips fusion that changes arithmetic order.
+    /// slots.
     ///
     /// # Errors
     ///

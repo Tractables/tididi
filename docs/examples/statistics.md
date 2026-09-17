@@ -3,7 +3,6 @@
 Find the circuit node with the most child pairs and the vtree level where
 it lives. This helps locate the largest decomposition in a stored diagram.
 
-Marginalized levels have discarded their pairs, so this traversal skips them.
 
 Run the complete program with `cargo run --example statistic`. Read the
 [data model](crate::guide::model) first
@@ -28,20 +27,17 @@ vtree level
 ```
 
 At each level, `internal_inputs_iter()` yields each stored node's identifier
-and an iterator over its pairs. The iterator knows its length, so obtaining
-the pair count does not require decoding the children:
+and an iterator over its pairs; a leaf level or a marginalized level yields
+none. The iterator knows its length, so obtaining the pair count does not
+require decoding the children:
 
 ```rust,ignore,{class=tested-example}
 fn widest_node(t: &Tdd) -> (VtreeIdx, usize) {
     let mut best = (t.vtree().root(), 0usize);
     for v in t.vtree().bottomup() {
-        let lvl = t.level(v);
         // Leaf levels store nothing and marginal levels have dropped their
-        // pairs; both yield no nodes here.
-        if lvl.is_marginal() {
-            continue;
-        }
-        for (_i, pairs) in lvl.internal_inputs_iter() {
+        // pairs; neither yields a node here.
+        for (_i, pairs) in t.level(v).internal_inputs_iter() {
             let n = pairs.len(); // PairsIter is ExactSizeIterator
             if n > best.1 {
                 best = (v, n);

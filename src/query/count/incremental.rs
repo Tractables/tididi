@@ -160,13 +160,9 @@ mod sealed {
 /// consistent with the pins. [`PinSemantics::Cofactor`] instead counts the
 /// substituted function with the pinned variables free in the vtree.
 ///
-/// Use [`KeepAllColumns`] to retain per-node counts between queries: after a
-/// pin changes, only levels on its path to the root need recomputation.
-/// [`KeepFrontier`] uses less retained storage by freeing child counts after
-/// their parent is computed, and performs a fresh fold for each changed query.
+/// [`Tdd::counter`] selects [`KeepAllColumns`] and evidence semantics; use
+/// [`Tdd::counter_with`] to choose [`KeepFrontier`] or [`PinSemantics::Cofactor`].
 /// Updates are deferred until [`model_count`](Self::model_count).
-/// [`Tdd::counter`] selects retained columns and evidence semantics; use
-/// [`Tdd::counter_with`] to choose another policy or convention.
 ///
 /// The diagram need not be minimized. Attached literal weights are ignored on
 /// structural levels; weighted marginal levels are rejected. Count-marginal

@@ -58,6 +58,7 @@ fn main() -> Result<(), tididi::OperationError> {
     assert_eq!(counter.model_count()?, 1u32.into());
     counter.clear_pins();
     assert_eq!(counter.model_count()?, count);
+    // The counter borrows the rules; release it before they are minimized below.
     drop(counter);
 
     // Reuse the attached context for a bounded batch.

@@ -14,6 +14,8 @@ use crate::Vtree;
 ///
 /// [`run`](Self::run) lends an engine for a batch of checked operations;
 /// [`with_limits`](Self::with_limits) also installs limits for that batch.
+/// Every operation runs on the calling thread; the library starts none, so
+/// parallelism is the caller's, one engine per thread.
 /// Nested and concurrent calls use separate engines while a checkout is active.
 /// No lock is held while an operation or user callback runs.
 ///
