@@ -14,7 +14,7 @@ fn checked_satisfiability_agrees_with_every_three_variable_truth_table() {
             for assignment in 0..8 {
                 if truth & (1 << assignment) == 0 { continue; }
                 let cube = engine.cube(&tree, (0..3).map(|var| {
-                    Literal::new(VarId(var), assignment & (1 << var) != 0)
+                    Literal::new(VarId(var + 1), assignment & (1 << var) != 0)
                 })).unwrap();
                 assert_canonical(&cube);
                 f = engine.or(f, cube).unwrap();

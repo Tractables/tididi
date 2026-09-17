@@ -22,10 +22,10 @@ fn main() -> Result<(), OperationError> {
     let transition = or(a_to_b, or(b_to_c, c_to_b)?)?;
 
     let mut reached = at_a.clone();
-    let current = [VarId(0), VarId(1), VarId(2), VarId(3)];
+    let current = [VarId(1), VarId(2), VarId(3), VarId(4)];
     let next_to_current = [
-        (VarId(4), VarId(0)), (VarId(5), VarId(1)),
-        (VarId(6), VarId(2)), (VarId(7), VarId(3)),
+        (VarId(5), VarId(1)), (VarId(6), VarId(2)),
+        (VarId(7), VarId(3)), (VarId(8), VarId(4)),
     ];
     let mut iterations = 0;
 
@@ -75,7 +75,7 @@ fn main() -> Result<(), OperationError> {
         .filter(|literal| literal.var.0 < 4 && literal.positive)
         .map(|literal| literal.var)
         .collect::<Vec<_>>();
-    assert_eq!(active, [VarId(2)]);
+    assert_eq!(active, [VarId(3)]);
     // This is a state assignment; reconstructing a path needs predecessor tracking.
     println!("Reachable target witness: a=false, b=false, c=true, d=false");
     Ok(())

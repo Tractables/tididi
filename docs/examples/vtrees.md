@@ -29,13 +29,13 @@ Equalities grouped                  Equalities split
     x1  x3   x2  x4                      x1  x2   x3  x4
 ```
 
-[`Vtree::balanced_over`](crate::Vtree::balanced_over) takes the zero-based
+[`Vtree::balanced_over`](crate::Vtree::balanced_over) takes the
 variable identifiers in left-to-right leaf order. Changing their positions
-does not rename them: `VarId(2)` still means `x3`.
+does not rename them: `VarId(3)` still means `x3`.
 
 ```rust,ignore,{class=tested-example}
 let grouped_vtree = Arc::new(Vtree::balanced_over(&[
-    VarId(0), VarId(2), VarId(1), VarId(3),
+    VarId(1), VarId(3), VarId(2), VarId(4),
 ])?);
 let split_vtree = Arc::new(Vtree::balanced(4));
 ```

@@ -89,7 +89,7 @@ pub fn ite(condition: Tdd, then_branch: Tdd, else_branch: Tdd) -> Result<Tdd, Op
 /// let current = literal(&vtree, -1)?; // current state x is false
 /// let transition = xor(literal(&vtree, 1)?, literal(&vtree, 2)?)?;
 /// // The relation flips x to next-state y; forget the current-state variable.
-/// let next = and_exists(current, transition, &[VarId(0)])?;
+/// let next = and_exists(current, transition, &[VarId(1)])?;
 /// assert!(next.equivalent(&literal(&vtree, 2)?)?);
 /// # Ok::<(), tididi::OperationError>(())
 /// ```

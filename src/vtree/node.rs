@@ -177,7 +177,7 @@ impl Vtree {
     /// variable ids leaves uncarried.
     #[inline]
     pub fn leaf_of(&self, var: VarId) -> Option<VtreeIdx> {
-        let leaf = *self.var_to_leaf.get(var.idx())?;
+        let leaf = *self.var_to_leaf.get(var.0.checked_sub(1)? as usize)?;
         match self.nodes.get(leaf.idx()) {
             Some(VtreeNode::Leaf { var: on_leaf, .. }) if *on_leaf == var => Some(leaf),
             _ => None,

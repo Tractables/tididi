@@ -195,7 +195,7 @@ fn the_reader_refuses_what_is_not_this_diagram() {
     let vtree = Arc::new(Vtree::balanced(3));
     let f = apply_and(
         constant_one(&eng, &vtree),
-        clause_to_tdd(&eng, &vtree, &[Literal::pos(VarId(0)), Literal::neg(VarId(1))]),
+        clause_to_tdd(&eng, &vtree, &[Literal::pos(VarId(1)), Literal::neg(VarId(2))]),
     );
     let mut bytes: Vec<u8> = Vec::new();
     write_tdd(&mut bytes, &f).expect("an explicit diagram writes");

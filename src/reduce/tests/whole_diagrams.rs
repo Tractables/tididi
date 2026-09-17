@@ -25,7 +25,7 @@ fn test_minimize_constant_one() {
 fn test_minimize_single_clause() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let clause = vec![Literal::pos(VarId(0))];
+    let clause = vec![Literal::pos(VarId(1))];
     let mut tdd = clause_to_tdd(eng, &vtree, &clause);
     let count_before = tdd.model_count().unwrap();
     tdd.minimize().unwrap();
@@ -38,8 +38,8 @@ fn test_minimize_single_clause() {
 fn test_minimize_reduces_width_after_apply() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let f = vec![Literal::pos(VarId(0))];
-    let g = vec![Literal::neg(VarId(1))];
+    let f = vec![Literal::pos(VarId(1))];
+    let g = vec![Literal::neg(VarId(2))];
 
     let t1 = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
@@ -67,8 +67,8 @@ fn test_minimize_preserves_unsat() {
     let eng = &crate::Engine::new();
     // Single variable: x ∧ ¬x = UNSAT
     let vtree = Arc::new(Vtree::balanced(1));
-    let f = vec![Literal::pos(VarId(0))];
-    let g = vec![Literal::neg(VarId(0))];
+    let f = vec![Literal::pos(VarId(1))];
+    let g = vec![Literal::neg(VarId(1))];
 
     let t1 = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
@@ -85,8 +85,8 @@ fn test_minimize_unsat_2vars_width() {
     // 2 variables: (x0) AND (not-x0) = UNSAT
     // The canonical diagram for false should have width 0 (ZERO sentinel, empty levels)
     let vtree = Arc::new(Vtree::balanced(2));
-    let f = vec![Literal::pos(VarId(0))];
-    let g = vec![Literal::neg(VarId(0))];
+    let f = vec![Literal::pos(VarId(1))];
+    let g = vec![Literal::neg(VarId(1))];
 
     let t1 = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
@@ -110,8 +110,8 @@ fn test_minimize_unsat_3vars_width() {
     // 3 variables: (x0) AND (not-x0) = UNSAT
     // The canonical diagram for false should have width 0 (ZERO sentinel, empty levels)
     let vtree = Arc::new(Vtree::balanced(3));
-    let f = vec![Literal::pos(VarId(0))];
-    let g = vec![Literal::neg(VarId(0))];
+    let f = vec![Literal::pos(VarId(1))];
+    let g = vec![Literal::neg(VarId(1))];
 
     let t1 = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
@@ -135,8 +135,8 @@ fn test_minimize_sat_2vars_reduces_width() {
     // (x0) ∧ (x1) over 2 vars → 1 model (x0=1, x1=1)
     // after apply: width 4. After minimize: should have width < 4.
     let vtree = Arc::new(Vtree::balanced(2));
-    let f = vec![Literal::pos(VarId(0))];
-    let g = vec![Literal::pos(VarId(1))];
+    let f = vec![Literal::pos(VarId(1))];
+    let g = vec![Literal::pos(VarId(2))];
 
     let t1 = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
@@ -283,7 +283,7 @@ fn a_variable_the_function_ignores_leaves_no_literal_references_behind() {
     // `a` over two variables: `a` true, `b` free.
     assert_eq!(tdd.model_count().unwrap(), 2u64.into());
 
-    let b_leaf = vtree.leaf_of(VarId(1)).expect("the vtree carries this variable");
+    let b_leaf = vtree.leaf_of(VarId(2)).expect("the vtree carries this variable");
     for level_idx in 0..vtree.num_nodes() {
         let (left, right) = match *vtree.node(VtreeIdx(level_idx as u32)) {
             VtreeNode::Internal { left, right, .. } => (left, right),

@@ -22,7 +22,7 @@ fn expected_count(pins: [Option<bool>; 3], semantics: PinSemantics) -> usize {
 
 /// Exercise sparse variables, partial updates and duplicates against enumeration.
 fn bulk_counts<R: Retention>() {
-    let vars = [VarId(9), VarId(2), VarId(71)];
+    let vars = [VarId(10), VarId(3), VarId(72)];
     let tree = Arc::new(Vtree::balanced_over(&vars).unwrap());
     let f = Tdd::clause(&tree, [10, -3]).unwrap();
     assert_canonical(&f);
@@ -64,20 +64,20 @@ fn bulk_evidence_matches_enumeration_with_both_policies_and_semantics() {
 
 /// Reject a bad middle entry without applying neighboring updates or losing pending ones.
 fn invalid_batches<R: Retention>() {
-    let tree = Arc::new(Vtree::balanced_over(&[VarId(9), VarId(2), VarId(71)]).unwrap());
+    let tree = Arc::new(Vtree::balanced_over(&[VarId(10), VarId(3), VarId(72)]).unwrap());
     let f = Tdd::clause(&tree, [10, -3]).unwrap();
     assert_canonical(&f);
     for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
         for pending in [false, true] {
-            for invalid in [VarId(0), VarId(3), VarId(72), VarId(u32::MAX)] {
+            for invalid in [VarId(1), VarId(4), VarId(73), VarId(u32::MAX)] {
                 for invalid_pin in [None, Some(false), Some(true)] {
                     let mut counter = f.counter_with::<R>(semantics).unwrap();
-                    counter.set_pin(VarId(9), Some(false)).unwrap();
+                    counter.set_pin(VarId(10), Some(false)).unwrap();
                     assert_eq!(counter.model_count().unwrap(), expected_count([Some(false), None, None], semantics).into());
                     let pin = if pending { Some(true) } else { Some(false) };
-                    if pending { counter.set_pin(VarId(9), pin).unwrap(); }
+                    if pending { counter.set_pin(VarId(10), pin).unwrap(); }
                     assert_eq!(counter.set_pins(&[
-                        (VarId(9), pin.map(|v| !v)), (invalid, invalid_pin), (VarId(71), Some(false)),
+                        (VarId(10), pin.map(|v| !v)), (invalid, invalid_pin), (VarId(72), Some(false)),
                     ]), Err(OperationError::VariableNotInVtree(invalid)));
                     assert_eq!(counter.model_count().unwrap(), expected_count([pin, None, None], semantics).into());
                     counter.clear_pins();
@@ -97,7 +97,7 @@ fn invalid_bulk_updates_preserve_cached_and_pending_evidence() {
 /// Reject summed-out variables in a batch while retaining live structural evidence.
 fn marginal_batches<R: Retention>() {
     let tree = Arc::new(Vtree::balanced(4));
-    for summed in [tree.children(tree.root()).0, tree.leaf_of(VarId(0)).unwrap()] {
+    for summed in [tree.children(tree.root()).0, tree.leaf_of(VarId(1)).unwrap()] {
         let mut f = Tdd::clause(&tree, [1, 3]).unwrap();
         assert_canonical(&f);
         f.marginalize_levels(&[summed]).unwrap();
@@ -106,9 +106,9 @@ fn marginal_batches<R: Retention>() {
         for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
             let mut counter = f.counter_with::<R>(semantics).unwrap();
             assert_eq!(counter.model_count().unwrap(), 12u32.into());
-            counter.set_pin(VarId(2), Some(false)).unwrap();
+            counter.set_pin(VarId(3), Some(false)).unwrap();
             for pin in [None, Some(false), Some(true)] {
-                assert_eq!(counter.set_pins(&[(VarId(2), Some(true)), (VarId(0), pin)]),
+                assert_eq!(counter.set_pins(&[(VarId(3), Some(true)), (VarId(1), pin)]),
                     Err(OperationError::MarginalLevel(summed)));
             }
             let expected = if semantics == PinSemantics::Evidence { 4u32 } else { 8u32 };
@@ -145,12 +145,12 @@ fn bound_batches<R: Retention>() {
             } else {
                 persistent.bind(&engine)
             };
-            counter.set_pins(&[(VarId(0), Some(false)), (VarId(2), Some(true))]).unwrap();
+            counter.set_pins(&[(VarId(1), Some(false)), (VarId(3), Some(true))]).unwrap();
             assert_eq!(counter.model_count().unwrap(), expected_count([Some(false), None, Some(true)], semantics).into());
             stop.store(true, Ordering::Relaxed);
-            counter.set_pins(&[(VarId(1), Some(true))]).unwrap();
-            assert_eq!(counter.set_pins(&[(VarId(0), Some(true)), (VarId(3), None)]),
-                Err(OperationError::VariableNotInVtree(VarId(3))));
+            counter.set_pins(&[(VarId(2), Some(true))]).unwrap();
+            assert_eq!(counter.set_pins(&[(VarId(1), Some(true)), (VarId(4), None)]),
+                Err(OperationError::VariableNotInVtree(VarId(4))));
             assert_eq!(counter.model_count(), Err(OperationError::Stopped));
             stop.store(false, Ordering::Relaxed);
             assert_eq!(counter.model_count().unwrap(), 0u32.into());
@@ -159,7 +159,7 @@ fn bound_batches<R: Retention>() {
             assert_eq!(counter.model_count(), Err(OperationError::Stopped));
             stop.store(false, Ordering::Relaxed);
             assert_eq!(counter.model_count().unwrap(), 6u32.into());
-            counter.set_pins(&[(VarId(0), Some(true))]).unwrap();
+            counter.set_pins(&[(VarId(1), Some(true))]).unwrap();
             drop(counter);
             if !owned {
                 assert_eq!(persistent.model_count().unwrap(), expected_count([Some(true), None, None], semantics).into());

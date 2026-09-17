@@ -16,7 +16,7 @@ fn assert_clause(mut result: Tdd, expected: &Tdd) {
 fn clause_conjunction_accepts_integer_and_typed_collections() {
     let tree = Arc::new(Vtree::balanced(3));
     let signed = vec![1, -2];
-    let typed = vec![Literal::pos(VarId(0)), Literal::neg(VarId(1))];
+    let typed = vec![Literal::pos(VarId(1)), Literal::neg(VarId(2))];
     let expected = Tdd::clause(&tree, &signed).unwrap();
     let one = Tdd::one(&tree);
     assert_canonical(&expected);
@@ -53,8 +53,8 @@ fn integer_clauses_validate_even_after_tautology_or_on_false() {
     for input in [Tdd::one(&tree), Tdd::zero(&tree)] {
         assert_canonical(&input);
         assert_eq!(input.clone().and_clause([1, -1, 0]).unwrap_err(), OperationError::InvalidLiteral(0));
-        assert_eq!(input.clone().and_clause([1, -1, 4]).unwrap_err(), OperationError::VariableNotInVtree(VarId(3)));
-        assert_eq!(input.and_clause([i32::MIN]).unwrap_err(), OperationError::VariableNotInVtree(VarId(i32::MAX as u32)));
+        assert_eq!(input.clone().and_clause([1, -1, 4]).unwrap_err(), OperationError::VariableNotInVtree(VarId(4)));
+        assert_eq!(input.and_clause([i32::MIN]).unwrap_err(), OperationError::VariableNotInVtree(VarId(1 << 31)));
     }
 }
 

@@ -119,8 +119,8 @@ impl std::ops::BitOr for Changed {
 ///
 /// let vtree = Arc::new(Vtree::balanced(3));
 /// let f = Tdd::clause(&vtree, [1, 2])?;
-/// let with_first = f.clone().condition_var(VarId(0), true)?;
-/// let without_first = f.clone().condition_var(VarId(0), false)?;
+/// let with_first = f.clone().condition_var(VarId(1), true)?;
+/// let without_first = f.clone().condition_var(VarId(1), false)?;
 /// assert_eq!(with_first.model_count()?, 8u32.into());
 /// assert_eq!(without_first.model_count()?, 4u32.into());
 /// assert_eq!(f.model_count()?, 6u32.into()); // the retained original
@@ -542,7 +542,7 @@ impl Tdd {
     /// assert!(!f.pair_count_at_most(f.pair_count() - 1));
     ///
     /// // Conditioning cannot grow the diagram.
-    /// let g = (f).clone().condition_var(tididi::vtree::VarId(0), true)?;
+    /// let g = (f).clone().condition_var(tididi::vtree::VarId(1), true)?;
     /// assert!(g.pair_count() <= f.pair_count());
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```

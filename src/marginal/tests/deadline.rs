@@ -36,7 +36,7 @@ use std::sync::Arc;
 fn two_target_tdd() -> (Tdd, Arc<Vtree>, [VtreeIdx; 2]) {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let lit = |v: u32, sign: bool| Literal::new(VarId(v), sign);
+    let lit = |v: u32, sign: bool| Literal::new(VarId(v + 1), sign);
     let clauses = [
         vec![lit(0, true), lit(1, true)],
         vec![lit(1, false), lit(2, true)],

@@ -33,13 +33,13 @@ impl Vtree {
     /// // Hand-built child links, with the same variable on both leaves: the
     /// // constructor refuses them, so no vtree carries them.
     /// let nodes = vec![
-    ///     VtreeNode::Leaf { var: VarId(0), parent: None },
-    ///     VtreeNode::Leaf { var: VarId(0), parent: None },
+    ///     VtreeNode::Leaf { var: VarId(1), parent: None },
+    ///     VtreeNode::Leaf { var: VarId(1), parent: None },
     ///     VtreeNode::Internal { left: VtreeIdx(0), right: VtreeIdx(1), parent: None },
     /// ];
     /// match Vtree::from_nodes(nodes, VtreeIdx(2), 1) {
     ///     Ok(_) => unreachable!("the duplicate variable should be caught"),
-    ///     Err(VtreeError::OverlappingVariable(VarId(0))) => {}
+    ///     Err(VtreeError::OverlappingVariable(VarId(1))) => {}
     ///     Err(other) => unreachable!("{other}"),
     /// }
     /// ```

@@ -234,7 +234,7 @@ impl Tdd {
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter_with::<KeepFrontier>(PinSemantics::Cofactor)?;
-    /// counter.set_pin(VarId(0), Some(false))?;
+    /// counter.set_pin(VarId(1), Some(false))?;
     /// assert_eq!(counter.model_count()?, 4u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -353,7 +353,7 @@ impl Engine {
     ///     LimitConfig::none().with_memory_budget_bytes(Some(1_000_000)),
     ///     |engine| {
     ///         let mut counter = engine.counter(&f)?;
-    ///         counter.set_pin(VarId(0), Some(false))?;
+    ///         counter.set_pin(VarId(1), Some(false))?;
     ///         assert_eq!(counter.model_count()?, 2u32.into());
     ///         Ok::<(), tididi::OperationError>(())
     ///     },
@@ -417,7 +417,7 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// let mut counter = f.counter()?;
     /// vtree.context().run(|engine| {
     ///     let mut batch = counter.bind(engine);
-    ///     batch.set_pin(VarId(0), Some(false))?;
+    ///     batch.set_pin(VarId(1), Some(false))?;
     ///     assert_eq!(batch.model_count()?, 2u32.into());
     ///     Ok::<(), tididi::OperationError>(())
     /// })?;
@@ -465,14 +465,14 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// use std::sync::Arc;
     /// use tididi::{OperationError, Tdd, Vtree};
     /// use tididi::vtree::VarId;
-    /// let vtree = Arc::new(Vtree::leaf(VarId(7)));
+    /// let vtree = Arc::new(Vtree::leaf(VarId(8)));
     /// let f = Tdd::one(&vtree);
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter()?;
-    /// counter.set_pin(VarId(7), Some(true))?;
+    /// counter.set_pin(VarId(8), Some(true))?;
     /// assert_eq!(counter.model_count()?, 1u32.into());
-    /// assert_eq!(counter.set_pin(VarId(0), Some(true)), Err(OperationError::VariableNotInVtree(VarId(0))));
-    /// counter.set_pin(VarId(7), None)?;
+    /// assert_eq!(counter.set_pin(VarId(1), Some(true)), Err(OperationError::VariableNotInVtree(VarId(1))));
+    /// counter.set_pin(VarId(8), None)?;
     /// assert_eq!(counter.model_count()?, 2u32.into());
     /// # Ok::<(), OperationError>(())
     /// ```
@@ -545,9 +545,9 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter()?;
-    /// counter.set_pins(&[(VarId(0), Some(false)), (VarId(2), Some(true))])?;
+    /// counter.set_pins(&[(VarId(1), Some(false)), (VarId(3), Some(true))])?;
     /// assert_eq!(counter.model_count()?, 1u32.into());
-    /// counter.set_pins(&[(VarId(0), None)])?;
+    /// counter.set_pins(&[(VarId(1), None)])?;
     /// assert_eq!(counter.model_count()?, 3u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -574,7 +574,7 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter()?;
-    /// counter.set_pins(&[(VarId(0), Some(false)), (VarId(2), Some(true))])?;
+    /// counter.set_pins(&[(VarId(1), Some(false)), (VarId(3), Some(true))])?;
     /// counter.clear_pins();
     /// assert_eq!(counter.model_count()?, 6u32.into());
     /// # Ok::<(), tididi::OperationError>(())

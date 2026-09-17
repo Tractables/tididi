@@ -12,10 +12,10 @@ pub(super) fn require_nonempty(num_vars: u32) {
     assert!(num_vars > 0, "a vtree needs at least one variable");
 }
 
-/// The id space of a leaf order, `max + 1`, refusing an empty order.
+/// The id space of a leaf order, its largest number, refusing an empty order.
 fn id_space(vars: &[VarId]) -> Result<u32, VtreeError> {
     vars.iter()
-        .map(|v| v.0 + 1)
+        .map(|v| v.0)
         .max()
         .ok_or_else(|| VtreeError::Invalid("a vtree needs at least one variable".to_string()))
 }
@@ -59,18 +59,18 @@ pub(super) fn append_subtree(nodes: &mut Vec<VtreeNode>, sub: &Vtree, var: impl 
 }
 
 impl Vtree {
-    /// A vtree of one leaf carrying `var`. Its id space is `var.0 + 1`, so a
-    /// leaf over `VarId(4)` has `num_vars() == 5` and `num_leaves() == 1`.
+    /// A vtree of one leaf carrying `var`. Its id space is `var.0`, so a
+    /// leaf over `VarId(5)` has `num_vars() == 5` and `num_leaves() == 1`.
     ///
     /// ```
     /// use tididi::vtree::{VarId, Vtree};
-    /// let vtree = Vtree::leaf(VarId(4));
+    /// let vtree = Vtree::leaf(VarId(5));
     /// assert_eq!((vtree.num_leaves(), vtree.num_vars(), vtree.num_nodes()), (1, 5, 1));
     /// ```
     pub fn leaf(var: VarId) -> Self {
         let mut nodes = Vec::with_capacity(1);
         let root = push_leaf(&mut nodes, var);
-        Self::from_nodes(nodes, root, var.0 + 1).expect("one leaf is a tree")
+        Self::from_nodes(nodes, root, var.0).expect("one leaf is a tree")
     }
 
     /// A new root with `left` and `right` as its subtrees — the composition
@@ -84,11 +84,11 @@ impl Vtree {
     ///
     /// ```
     /// use tididi::vtree::{VarId, Vtree, VtreeError};
-    /// let vtree = Vtree::join(&Vtree::leaf(VarId(0)), &Vtree::balanced_over(&[VarId(2), VarId(1)])?)?;
+    /// let vtree = Vtree::join(&Vtree::leaf(VarId(1)), &Vtree::balanced_over(&[VarId(3), VarId(2)])?)?;
     /// assert_eq!((vtree.num_leaves(), vtree.num_vars()), (3, 3));
     /// // Var 1 is already in `vtree`, so the join is refused and names the clash.
-    /// let clash = Vtree::join(&vtree, &Vtree::leaf(VarId(1)));
-    /// assert!(matches!(clash, Err(VtreeError::OverlappingVariable(VarId(1)))));
+    /// let clash = Vtree::join(&vtree, &Vtree::leaf(VarId(2)));
+    /// assert!(matches!(clash, Err(VtreeError::OverlappingVariable(VarId(2)))));
     /// # Ok::<(), tididi::vtree::VtreeError>(())
     /// ```
     pub fn join(left: &Vtree, right: &Vtree) -> Result<Self, VtreeError> {
@@ -115,11 +115,11 @@ impl Vtree {
     /// assert_eq!(vtree.num_nodes(), 7);          // four leaves, three internal nodes
     /// assert_eq!(vtree.node(vtree.root()).is_leaf(), false);
     /// // Natural order: the leaves carry 0, 1, 2, 3 left to right.
-    /// assert!(vtree.leaf_of(VarId(3)).is_some());
+    /// assert!(vtree.leaf_of(VarId(4)).is_some());
     /// ```
     pub fn balanced(num_vars: u32) -> Self {
         require_nonempty(num_vars);
-        let vars: Vec<VarId> = (0..num_vars).map(VarId).collect();
+        let vars: Vec<VarId> = (1..=num_vars).map(VarId).collect();
         Self::balanced_over(&vars).expect("the ids are distinct")
     }
 
@@ -129,7 +129,7 @@ impl Vtree {
     /// power-of-two length the tree is perfectly symmetric; otherwise the
     /// right half of an odd split carries one more variable.
     ///
-    /// The id space is `max(order) + 1`; ids skipped by `order` are uncovered.
+    /// The id space is `max(order)`; ids skipped by `order` are uncovered.
     ///
     /// # Errors
     ///
@@ -169,7 +169,7 @@ impl Vtree {
     /// Panics if `num_vars` is zero.
     pub fn linear(num_vars: u32) -> Self {
         require_nonempty(num_vars);
-        let vars: Vec<VarId> = (0..num_vars).map(VarId).collect();
+        let vars: Vec<VarId> = (1..=num_vars).map(VarId).collect();
         Self::linear_from_order(&vars).expect("the ids are distinct")
     }
 
@@ -181,7 +181,7 @@ impl Vtree {
     /// Panics if `num_vars` is zero.
     pub fn reverse_linear(num_vars: u32) -> Self {
         require_nonempty(num_vars);
-        let vars: Vec<VarId> = (0..num_vars).rev().map(VarId).collect();
+        let vars: Vec<VarId> = (1..=num_vars).rev().map(VarId).collect();
         Self::linear_from_order(&vars).expect("the ids are distinct")
     }
 
@@ -200,7 +200,7 @@ impl Vtree {
     ///                             c   d
     /// ```
     ///
-    /// The id space is `max(vars) + 1`; ids skipped by `vars` are uncovered.
+    /// The id space is `max(vars)`; ids skipped by `vars` are uncovered.
     ///
     /// # Errors
     ///
@@ -231,7 +231,7 @@ impl Vtree {
         let rng = &mut Lcg::new(seed);
 
         let mut nodes = Vec::with_capacity(2 * num_vars as usize - 1);
-        let mut var_ids: Vec<u32> = (0..num_vars).collect();
+        let mut var_ids: Vec<u32> = (1..=num_vars).collect();
         for i in (1..var_ids.len()).rev() {
             var_ids.swap(i, rng.below(i as u64 + 1) as usize);
         }
@@ -319,8 +319,8 @@ impl Vtree {
     /// use tididi::vtree::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
     ///
     /// let nodes = vec![
-    ///     VtreeNode::Leaf { var: VarId(0), parent: None },
     ///     VtreeNode::Leaf { var: VarId(1), parent: None },
+    ///     VtreeNode::Leaf { var: VarId(2), parent: None },
     ///     VtreeNode::Internal { left: VtreeIdx(0), right: VtreeIdx(1), parent: None },
     /// ];
     /// let vtree = Vtree::from_nodes(nodes, VtreeIdx(2), 2)?;
@@ -329,8 +329,8 @@ impl Vtree {
     /// // A lone leaf the root cannot reach makes the list something other
     /// // than one tree.
     /// let stray = vec![
-    ///     VtreeNode::Leaf { var: VarId(0), parent: None },
     ///     VtreeNode::Leaf { var: VarId(1), parent: None },
+    ///     VtreeNode::Leaf { var: VarId(2), parent: None },
     /// ];
     /// assert!(matches!(
     ///     Vtree::from_nodes(stray, VtreeIdx(0), 2),
@@ -370,9 +370,9 @@ fn check_node_list(nodes: &[VtreeNode], root: VtreeIdx, num_vars: u32) -> Result
     for node in nodes {
         match *node {
             VtreeNode::Leaf { var, .. } => {
-                if var.0 >= num_vars {
+                if var.0 == 0 || var.0 > num_vars {
                     return Err(VtreeError::Invalid(format!(
-                        "leaf variable {} is outside an id space of {num_vars}",
+                        "leaf variable {} is outside the variables 1 to {num_vars}",
                         var.0
                     )));
                 }

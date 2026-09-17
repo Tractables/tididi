@@ -162,11 +162,11 @@ fn draw(seed: u64) -> Case {
     Case { seed, num_vars, clauses, vtree, vtree_kind: kind }
 }
 
-/// A vtree over `0..num_vars`, drawn from the shapes whose differences the
+/// A vtree over `1..=num_vars`, drawn from the shapes whose differences the
 /// diagram can see: the two regular shapes, the two regular shapes over a
 /// shuffled variable order, and an unbalanced random tree.
 fn draw_vtree(rng: &mut Lcg, num_vars: u32) -> (Arc<Vtree>, String) {
-    let mut order: Vec<VarId> = (0..num_vars).map(VarId).collect();
+    let mut order: Vec<VarId> = (1..=num_vars).map(VarId).collect();
     for i in (1..order.len()).rev() {
         order.swap(i, rng.below((i + 1) as u64) as usize);
     }
@@ -401,7 +401,7 @@ fn operations_match_enumeration(case: &Case) {
     for x in 0..n {
         for value in [false, true] {
             step("conditioning");
-            let c = (f).clone().condition_var(VarId(x), value).unwrap();
+            let c = (f).clone().condition_var(VarId(x + 1), value).unwrap();
             assert_canonical_after_minimize(&c);
             let want: Vec<bool> = (0..(1u32 << n))
                 .map(|mask| {
@@ -413,7 +413,7 @@ fn operations_match_enumeration(case: &Case) {
         }
         for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
             step("projection");
-            let p = (f).clone().exists_var_with_strategy(VarId(x), how).unwrap();
+            let p = (f).clone().exists_var_with_strategy(VarId(x + 1), how).unwrap();
             assert_canonical_after_minimize(&p);
             let want: Vec<bool> = (0..(1u32 << n))
                 .map(|mask| tf[(mask | (1 << x)) as usize] || tf[(mask & !(1 << x)) as usize])
@@ -655,10 +655,10 @@ fn weighted_composition_matches_enumeration(case: &Case) {
         eng.marginalize_levels(&mut source, &targets).unwrap();
         source.minimize().unwrap();
         assert_finished_canonical(&source);
-        let map: Vec<VarId> = (0..case.num_vars).rev().map(VarId).collect();
+        let map: Vec<VarId> = (1..=case.num_vars).rev().map(VarId).collect();
         let mut global: Vec<_> = w.weights.iter().rev().cloned().collect();
         global.push(LiteralWeights { negative: BigRational::from_integer(2.into()), positive: BigRational::from_integer(3.into()) });
-        let (grafted, _) = Tdd::graft_over(&eng, vec![(source, map)], &[VarId(case.num_vars)], case.num_vars + 1,
+        let (grafted, _) = Tdd::graft_over(&eng, vec![(source, map)], &[VarId(case.num_vars + 1)], case.num_vars + 1,
             Some(WeightStore::new(RationalWeights::from_literals(&global), arithmetic))).unwrap();
         assert_finished_canonical(&grafted);
         assert_weighted_sum(&grafted, &(&w.want * BigRational::from_integer(5.into())), &(&w.magnitude * BigRational::from_integer(5.into())));
@@ -826,7 +826,7 @@ fn a_log_domain_weighted_count_is_a_number() {
 fn conditioning_leaves_no_node_computing_false() {
     let vtree = Arc::new(Vtree::balanced(3));
     let f = clause_tdd(&vtree, &[1, 2]);
-    let mut c = (f).clone().condition_var(VarId(1), false).unwrap();
+    let mut c = (f).clone().condition_var(VarId(2), false).unwrap();
     c.minimize().unwrap();
     assert_eq!(c.model_count().unwrap(), BigUint::from(4u32), "the cofactor's count is unaffected");
     assert_canonical(&c);

@@ -13,7 +13,7 @@ fn function(tree: &Arc<Vtree>, bits: u16, reverse: bool) -> Tdd {
             let cube = eng
                 .cube(
                     tree,
-                    (0..n).map(|v| Literal::new(VarId(v as u32), row & (1 << v) != 0)),
+                    (0..n).map(|v| Literal::new(VarId(v as u32 + 1), row & (1 << v) != 0)),
                 )
                 .unwrap();
             result = eng.or(result, cube).unwrap();
@@ -35,7 +35,7 @@ fn comparisons_support_and_witnesses_match_all_two_variable_truth_tables() {
         assert!(eng.equivalent(f, &other).unwrap());
         let support: Vec<_> = (0..2)
             .filter(|v| (0..4).any(|r| ((bits >> r) & 1) != ((bits >> (r ^ (1 << v))) & 1)))
-            .map(VarId)
+            .map(|v| VarId(v + 1))
             .collect();
         assert_eq!(eng.support(f).unwrap(), support);
         match eng.satisfying_assignment(f).unwrap() {
@@ -44,11 +44,11 @@ fn comparisons_support_and_witnesses_match_all_two_variable_truth_tables() {
                 assert_eq!(model.len(), 2);
                 assert_eq!(
                     model.iter().map(|l| l.var).collect::<Vec<_>>(),
-                    vec![VarId(0), VarId(1)]
+                    vec![VarId(1), VarId(2)]
                 );
                 let row = model
                     .iter()
-                    .fold(0usize, |a, l| a | ((l.positive as usize) << l.var.0));
+                    .fold(0usize, |a, l| a | ((l.positive as usize) << l.var.idx()));
                 assert_ne!(bits & (1 << row), 0);
             }
         }
@@ -84,7 +84,7 @@ fn equivalence_handles_different_construction_and_unminimized_operands() {
                     let clause = eng
                         .clause(
                             &tree,
-                            (0..3).map(|v| Literal::new(VarId(v), row & (1 << v) == 0)),
+                            (0..3).map(|v| Literal::new(VarId(v + 1), row & (1 << v) == 0)),
                         )
                         .unwrap();
                     cnf = eng.and(cnf, clause).unwrap();
@@ -108,13 +108,13 @@ fn substitution_is_simultaneous_for_cycles_identification_and_functions() {
         for bits in [0, 1, 42, 85, 150, 254, 255] {
             let f = function(&tree, bits, false);
             for renames in [
-                vec![(VarId(0), VarId(1)), (VarId(1), VarId(0))],
+                vec![(VarId(1), VarId(2)), (VarId(2), VarId(1))],
                 vec![
-                    (VarId(0), VarId(1)),
                     (VarId(1), VarId(2)),
-                    (VarId(2), VarId(0)),
+                    (VarId(2), VarId(3)),
+                    (VarId(3), VarId(1)),
                 ],
-                vec![(VarId(0), VarId(1)), (VarId(2), VarId(1))],
+                vec![(VarId(1), VarId(2)), (VarId(3), VarId(2))],
             ] {
                 let g = eng.rename_vars(f.clone(), &renames).unwrap();
                 assert_canonical(&g);
@@ -130,7 +130,7 @@ fn substitution_is_simultaneous_for_cycles_identification_and_functions() {
             let g = eng
                 .substitute(
                     f.clone(),
-                    &[(VarId(0), &replacements[0]), (VarId(1), &replacements[1])],
+                    &[(VarId(1), &replacements[0]), (VarId(2), &replacements[1])],
                 )
                 .unwrap();
             assert_canonical(&g);
@@ -142,7 +142,7 @@ fn substitution_is_simultaneous_for_cycles_identification_and_functions() {
                 );
             }
             for constant in [Tdd::one(&tree), Tdd::zero(&tree)] {
-                let g = eng.substitute(f.clone(), &[(VarId(0), &constant)]).unwrap();
+                let g = eng.substitute(f.clone(), &[(VarId(1), &constant)]).unwrap();
                 for row in 0..8 {
                     let dest = assignment(row, 3);
                     assert_eq!(
@@ -184,16 +184,16 @@ fn ite_and_existential_conjunction_match_enumeration() {
         ] {
             for vars in [
                 vec![],
-                vec![VarId(0)],
-                vec![VarId(0), VarId(2)],
-                vec![VarId(0), VarId(0)],
+                vec![VarId(1)],
+                vec![VarId(1), VarId(3)],
+                vec![VarId(1), VarId(1)],
             ] {
                 let result = eng.and_exists_with_strategy(f.clone(), g.clone(), &vars, how).unwrap();
                 assert_canonical(&result);
                 for row in 0..8 {
                     let expected = (0..8).any(|witness| {
                         (0..3).all(|v| {
-                            vars.contains(&VarId(v)) || row & (1 << v) == witness & (1 << v)
+                            vars.contains(&VarId(v + 1)) || row & (1 << v) == witness & (1 << v)
                         }) && (a & b) & (1 << witness) != 0
                     });
                     assert_eq!(eval(&result, &assignment(row, 3)), expected);
@@ -213,7 +213,7 @@ fn default_and_explicit_quantification_match_enumeration() {
             let one = Tdd::one(&tree);
             assert_canonical(&f);
             assert_canonical(&one);
-            for vars in [vec![], vec![VarId(0)], vec![VarId(0), VarId(2), VarId(0)]] {
+            for vars in [vec![], vec![VarId(1)], vec![VarId(1), VarId(3), VarId(1)]] {
                 let mut results = vec![
                     (f).clone().exists_vars(&vars).unwrap(),
                     eng.exists_vars(f.clone(), &vars).unwrap(),
@@ -238,7 +238,7 @@ fn default_and_explicit_quantification_match_enumeration() {
                     for row in 0..8 {
                         let expected = (0..8).any(|witness| {
                             (0..3).all(|v| {
-                                vars.contains(&VarId(v)) || row & (1 << v) == witness & (1 << v)
+                                vars.contains(&VarId(v + 1)) || row & (1 << v) == witness & (1 << v)
                             }) && bits & (1 << witness) != 0
                         });
                         assert_eq!(eval(&result, &assignment(row, 3)), expected);
@@ -266,11 +266,11 @@ fn symbolic_reachability_uses_image_rename_and_semantic_convergence() {
             .and_exists(
                 reached.clone(),
                 relation.clone(),
-                &[VarId(0), VarId(1)],
+                &[VarId(1), VarId(2)],
             )
             .unwrap();
         let image = eng
-            .rename_vars(image, &[(VarId(2), VarId(0)), (VarId(3), VarId(1))])
+            .rename_vars(image, &[(VarId(3), VarId(1)), (VarId(4), VarId(2))])
             .unwrap();
         let next = eng.or(reached.clone(), image).unwrap();
         steps += 1;
@@ -295,22 +295,22 @@ fn symbolic_reachability_uses_image_rename_and_semantic_convergence() {
 fn sparse_ids_and_single_leaf_diagrams_work() {
     let eng = Engine::new();
     for tree in [
-        Vtree::leaf(VarId(19)),
-        Vtree::balanced_over(&[VarId(19), VarId(2)]).unwrap(),
+        Vtree::leaf(VarId(20)),
+        Vtree::balanced_over(&[VarId(20), VarId(3)]).unwrap(),
     ] {
         let tree = Arc::new(tree);
-        let x = eng.literal(&tree, Literal::pos(VarId(19))).unwrap();
-        assert_eq!(eng.support(&x).unwrap(), vec![VarId(19)]);
+        let x = eng.literal(&tree, Literal::pos(VarId(20))).unwrap();
+        assert_eq!(eng.support(&x).unwrap(), vec![VarId(20)]);
         assert!(
             eng.equivalent(&x, &eng.literal(&tree, 20).unwrap())
                 .unwrap()
         );
         let neg = eng.literal(&tree, -20).unwrap();
-        let g = eng.substitute(x.clone(), &[(VarId(19), &neg)]).unwrap();
+        let g = eng.substitute(x.clone(), &[(VarId(20), &neg)]).unwrap();
         assert!(eng.equivalent(&g, &neg).unwrap());
         let model = eng.satisfying_assignment(&x).unwrap().unwrap();
         assert_eq!(model.len(), tree.num_leaves() as usize);
-        assert!(model.contains(&Literal::pos(VarId(19))));
+        assert!(model.contains(&Literal::pos(VarId(20))));
     }
 }
 
@@ -332,12 +332,12 @@ fn boolean_queries_ignore_weights_and_substitution_keeps_destination_weights() {
     .unwrap();
     assert!(eng.equivalent(&x, &same).unwrap());
     assert!(eng.implies(&x, &same).unwrap());
-    assert_eq!(eng.support(&x).unwrap(), vec![VarId(0)]);
+    assert_eq!(eng.support(&x).unwrap(), vec![VarId(1)]);
     assert_eq!(
         eng.satisfying_assignment(&x).unwrap(),
         eng.satisfying_assignment(&same).unwrap()
     );
-    let result = eng.substitute(x.clone(), &[(VarId(0), &same)]).unwrap();
+    let result = eng.substitute(x.clone(), &[(VarId(1), &same)]).unwrap();
     assert_eq!(
         result.weights().unwrap().arithmetic(),
         Arithmetic::ExactRational
@@ -358,7 +358,7 @@ fn boolean_queries_ignore_weights_and_substitution_keeps_destination_weights() {
         ite.weights().unwrap().arithmetic(),
         Arithmetic::ExactRational
     );
-    let renamed = eng.rename_vars(x, &[(VarId(0), VarId(1))]).unwrap();
+    let renamed = eng.rename_vars(x, &[(VarId(1), VarId(2))]).unwrap();
     assert_eq!(
         renamed.weights().unwrap().arithmetic(),
         Arithmetic::ExactRational
@@ -372,28 +372,28 @@ fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
     let x = eng.literal(&tree, 1).unwrap();
     for f in [Tdd::zero(&tree), Tdd::one(&tree)] {
         assert_eq!(
-            eng.rename_vars(f.clone(), &[(VarId(0), VarId(4))])
+            eng.rename_vars(f.clone(), &[(VarId(1), VarId(5))])
                 .unwrap_err(),
-            OperationError::VariableNotInVtree(VarId(4))
+            OperationError::VariableNotInVtree(VarId(5))
         );
         assert_eq!(
-            eng.rename_vars(f.clone(), &[(VarId(0), VarId(1)), (VarId(0), VarId(2))])
+            eng.rename_vars(f.clone(), &[(VarId(1), VarId(2)), (VarId(1), VarId(3))])
                 .unwrap_err(),
-            OperationError::DuplicateVariable(VarId(0))
+            OperationError::DuplicateVariable(VarId(1))
         );
         assert_eq!(
-            eng.substitute(f.clone(), &[(VarId(0), &x), (VarId(0), &x)])
+            eng.substitute(f.clone(), &[(VarId(1), &x), (VarId(1), &x)])
                 .unwrap_err(),
-            OperationError::DuplicateVariable(VarId(0))
+            OperationError::DuplicateVariable(VarId(1))
         );
         assert_eq!(
-            eng.and_exists(f, x.clone(), &[VarId(9)])
+            eng.and_exists(f, x.clone(), &[VarId(10)])
                 .unwrap_err(),
-            OperationError::VariableNotInVtree(VarId(9))
+            OperationError::VariableNotInVtree(VarId(10))
         );
     }
     let mut marginal = x.clone();
-    let leaf = tree.leaf_of(VarId(0)).unwrap();
+    let leaf = tree.leaf_of(VarId(1)).unwrap();
     eng.marginalize_levels(&mut marginal, &[leaf]).unwrap();
     let error = OperationError::MarginalLevel(leaf);
     assert_eq!(eng.equivalent(&marginal, &marginal).unwrap_err(), error);
@@ -402,7 +402,7 @@ fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
     assert_eq!(eng.satisfying_assignment(&marginal).unwrap_err(), error);
     assert_eq!(eng.rename_vars(marginal.clone(), &[]).unwrap_err(), error);
     assert_eq!(
-        eng.substitute(x.clone(), &[(VarId(0), &marginal)])
+        eng.substitute(x.clone(), &[(VarId(1), &marginal)])
             .unwrap_err(),
         error
     );
@@ -430,7 +430,7 @@ fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
         OperationError::VtreeMismatch
     );
     assert_eq!(
-        eng.substitute(x, &[(VarId(0), &other)]).unwrap_err(),
+        eng.substitute(x, &[(VarId(1), &other)]).unwrap_err(),
         OperationError::VtreeMismatch
     );
 }
@@ -462,14 +462,14 @@ fn exercise(eng: &Engine, op: usize, f: &Tdd, g: &Tdd) -> Result<(), OperationEr
             eng.and_exists(
                 f.clone(),
                 g.clone(),
-                &[VarId(0)],
+                &[VarId(1)],
             )?;
         }
         8 => {
-            eng.substitute(f.clone(), &[(VarId(0), g)])?;
+            eng.substitute(f.clone(), &[(VarId(1), g)])?;
         }
         9 => {
-            eng.rename_vars(f.clone(), &[(VarId(0), VarId(1))])?;
+            eng.rename_vars(f.clone(), &[(VarId(1), VarId(2))])?;
         }
         _ => unreachable!(),
     }
@@ -559,7 +559,7 @@ fn witness_walk_handles_deep_vtrees_without_recursion() {
     let model = eng.satisfying_assignment(&f).unwrap().unwrap();
     assert_eq!(model.len(), 8192);
     assert!(model[..8191].iter().all(|lit| !lit.positive));
-    assert_eq!(model[8191], Literal::pos(VarId(8191)));
+    assert_eq!(model[8191], Literal::pos(VarId(8192)));
 }
 
 #[test]
@@ -584,7 +584,7 @@ fn renaming_changes_the_function_without_renaming_its_weight_table() {
         eng.weighted_value(&f).unwrap().unwrap().into_rational(),
         rat(1, 4)
     );
-    let renamed = eng.rename_vars(f, &[(VarId(0), VarId(1))]).unwrap();
+    let renamed = eng.rename_vars(f, &[(VarId(1), VarId(2))]).unwrap();
     assert_eq!(
         eng.weighted_value(&renamed)
             .unwrap()
@@ -604,8 +604,8 @@ fn renaming_and_literal_substitution_agree_for_all_three_variable_maps() {
     for literal in &literals { assert_canonical(literal); }
     for code in 0..27 {
         let targets = [code % 3, code / 3 % 3, code / 9];
-        let renames = std::array::from_fn::<_, 3, _>(|i| (VarId(i as u32), VarId(targets[i] as u32)));
-        let replacements = std::array::from_fn::<_, 3, _>(|i| (VarId(i as u32), &literals[targets[i]]));
+        let renames = std::array::from_fn::<_, 3, _>(|i| (VarId(i as u32 + 1), VarId(targets[i] as u32 + 1)));
+        let replacements = std::array::from_fn::<_, 3, _>(|i| (VarId(i as u32 + 1), &literals[targets[i]]));
         let renamed = eng.rename_vars(f.clone(), &renames).unwrap();
         let substituted = eng.substitute(f.clone(), &replacements).unwrap();
         assert_canonical(&renamed);
@@ -625,9 +625,9 @@ fn rename_validates_each_entry_before_shortcuts_or_literal_construction() {
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(2));
     let maps = [
-        (vec![(VarId(0), VarId(0)), (VarId(0), VarId(9))], OperationError::DuplicateVariable(VarId(0))),
-        (vec![(VarId(0), VarId(9)), (VarId(0), VarId(0))], OperationError::VariableNotInVtree(VarId(9))),
-        (vec![(VarId(8), VarId(9))], OperationError::VariableNotInVtree(VarId(8))),
+        (vec![(VarId(1), VarId(1)), (VarId(1), VarId(10))], OperationError::DuplicateVariable(VarId(1))),
+        (vec![(VarId(1), VarId(10)), (VarId(1), VarId(1))], OperationError::VariableNotInVtree(VarId(10))),
+        (vec![(VarId(9), VarId(10))], OperationError::VariableNotInVtree(VarId(9))),
     ];
     for f in [eng.one(&tree), eng.zero(&tree)] {
         assert_canonical(&f);

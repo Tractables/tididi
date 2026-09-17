@@ -102,9 +102,9 @@ fn derived_shapes_retain_context_without_retaining_tree_identity() {
     let clone = Arc::new((*tree).clone());
     assert!(!Arc::ptr_eq(&tree, &clone));
     assert!(Arc::ptr_eq(tree.context(), clone.context()));
-    let projected = tree.project_to_vars(|var| (var.0 < 2).then_some(var), 2).unwrap();
+    let projected = tree.project_to_vars(|var| (var.0 <= 2).then_some(var), 2).unwrap();
     assert!(Arc::ptr_eq(projected.context(), &context));
-    let grafted = Vtree::graft(&[projected], &[VarId(2)]).unwrap();
+    let grafted = Vtree::graft(&[projected], &[VarId(3)]).unwrap();
     assert!(Arc::ptr_eq(grafted.context(), &context));
     assert_eq!(grafted.validate(), Ok(()));
     assert_eq!(grafted.num_leaves(), tree.num_leaves());
@@ -154,12 +154,12 @@ fn stop_callback_can_reenter_the_same_context() {
 #[test]
 fn grafts_preserve_only_a_context_agreed_by_every_source() {
     let context = Arc::new(Context::new());
-    let left = Vtree::leaf(VarId(0)).with_context(Arc::clone(&context));
-    let right = Vtree::leaf(VarId(1)).with_context(Arc::clone(&context));
+    let left = Vtree::leaf(VarId(1)).with_context(Arc::clone(&context));
+    let right = Vtree::leaf(VarId(2)).with_context(Arc::clone(&context));
     let shared = Vtree::graft(&[left.clone(), right], &[]).unwrap();
     assert_eq!(shared.validate(), Ok(()));
     assert!(Arc::ptr_eq(shared.context(), &context));
-    let mixed = Vtree::graft(&[left, Vtree::leaf(VarId(1))], &[]).unwrap();
+    let mixed = Vtree::graft(&[left, Vtree::leaf(VarId(2))], &[]).unwrap();
     assert_eq!(mixed.validate(), Ok(()));
     assert!(!Arc::ptr_eq(mixed.context(), &context));
     let standalone = Engine::new().bind_vtree(shared);

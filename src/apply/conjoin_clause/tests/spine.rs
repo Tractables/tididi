@@ -9,7 +9,7 @@ fn interrupted_ancestor_walk_returns_clean_flags_for_retry() {
     let mut internal = Vec::new();
     let mut stack = Vec::new();
     eng.limits().pin_reduce_poll_stride(Some(1));
-    let clause = [Literal::pos(crate::vtree::VarId(0)), Literal::pos(crate::vtree::VarId(3))];
+    let clause = [Literal::pos(crate::vtree::VarId(1)), Literal::pos(crate::vtree::VarId(4))];
     {
         let mut flags = SpineMarks::take(eng.limits(), &pool, vtree.num_nodes()).unwrap();
         let _scope = eng.limits().scope(crate::limits::LimitConfig::none().with_stop_rules(crate::limits::StopRules {

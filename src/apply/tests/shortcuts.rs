@@ -11,9 +11,9 @@ fn shortcut(eng: &Engine, tree: &Arc<Vtree>, f: Tdd, case: usize) -> Result<Tdd,
         3 => eng.condition(f, [] as [i32; 0]),
         4 => eng.condition(f, [1, -1]),
         5 => eng.condition(eng.zero(tree), [1]),
-        6 => eng.condition_var(f, VarId(0), true),
+        6 => eng.condition_var(f, VarId(1), true),
         7 => eng.condition_vars(f, &[], true),
-        8 => eng.exists_var(eng.zero(tree), VarId(0)),
+        8 => eng.exists_var(eng.zero(tree), VarId(1)),
         9 => eng.exists_vars(f, &[]),
         10 => eng.exists_vars_with_strategy(f, &[], QuantificationStrategy::Structural),
         11 => eng.restrict_to_care(eng.zero(tree), f).map(|r| r.into_tdd()),
@@ -63,7 +63,7 @@ fn conditioning_polls_while_reading_an_assignment() {
             unconditional: Some(StopAt::WorkUnits(3)),
             after_pairs: None,
         }));
-        let assignment = (0..100).map(|_| { read.set(read.get() + 1); Literal::pos(VarId(0)) });
+        let assignment = (0..100).map(|_| { read.set(read.get() + 1); Literal::pos(VarId(1)) });
         assert_eq!(eng.condition(f.clone(), assignment).err(), Some(OperationError::Stopped));
         assert!(read.get() < 100);
     }
@@ -119,7 +119,7 @@ fn composition_minimizes_nonminimal_operands_on_identity_paths() {
     let mut zero = f.clone();
     zero.output.local = crate::diagram::ZERO;
     for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
-        for vars in [vec![], vec![VarId(0)]] {
+        for vars in [vec![], vec![VarId(1)]] {
             for input in [&f, &zero] {
                 let result = eng.and_exists_with_strategy(input.clone(), input.clone(), &vars, how).unwrap();
                 assert_canonical(&result);
@@ -148,8 +148,8 @@ fn nonempty_substitution_minimizes_false_inputs_with_unreachable_storage() {
     f.output.local = crate::diagram::ZERO;
     let replacement = eng.literal(&tree, 2).unwrap();
     for result in [
-        eng.substitute(f.clone(), &[(VarId(0), &replacement)]).unwrap(),
-        eng.rename_vars(f, &[(VarId(0), VarId(1))]).unwrap(),
+        eng.substitute(f.clone(), &[(VarId(1), &replacement)]).unwrap(),
+        eng.rename_vars(f, &[(VarId(1), VarId(2))]).unwrap(),
     ] {
         assert!(result.is_zero());
         assert_canonical(&result);

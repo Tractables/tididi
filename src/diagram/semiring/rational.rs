@@ -68,8 +68,8 @@ impl RationalWeights {
     ///         positive: num_rational::BigRational::from_integer(3.into()),
     ///     },
     /// ]);
-    /// assert_eq!(weights.neg_weight(VarId(0)).to_integer(), (-2).into());
-    /// assert_eq!(weights.pos_weight(VarId(0)).to_integer(), 3.into());
+    /// assert_eq!(weights.neg_weight(VarId(1)).to_integer(), (-2).into());
+    /// assert_eq!(weights.pos_weight(VarId(1)).to_integer(), 3.into());
     /// ```
     pub fn from_literals(weights: &[LiteralWeights<BigRational>]) -> Self {
         let mut w_neg = Vec::with_capacity(weights.len());

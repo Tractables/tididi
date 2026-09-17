@@ -7,7 +7,7 @@ use crate::OperationError;
 #[test]
 fn support_and_backbone_match_sparse_id_truth_tables() {
     let eng = Engine::new();
-    let vars = [VarId(19), VarId(2), VarId(8)];
+    let vars = [VarId(20), VarId(3), VarId(9)];
     for tree in [Vtree::balanced_over(&vars).unwrap(), Vtree::linear_from_order(&vars).unwrap()] {
         let tree = Arc::new(tree);
         for bits in 0..256u16 {
@@ -51,7 +51,7 @@ fn support_and_backbone_match_sparse_id_truth_tables() {
 #[test]
 fn leaf_outputs_have_only_their_forced_literal() {
     let eng = Engine::new();
-    let var = VarId(19);
+    let var = VarId(20);
     let tree = Arc::new(Vtree::leaf(var));
     for (f, expected) in [
         (Tdd::zero(&tree), vec![]),
@@ -69,7 +69,7 @@ fn leaf_outputs_have_only_their_forced_literal() {
 #[test]
 fn leaf_scan_omits_marginal_leaves_and_public_query_rejects_them() {
     let eng = Engine::new();
-    let vars = [VarId(19), VarId(2), VarId(8)];
+    let vars = [VarId(20), VarId(3), VarId(9)];
     let tree = Arc::new(Vtree::balanced_over(&vars).unwrap());
     let mut f = eng.cube(&tree, [Literal::pos(vars[0]), Literal::neg(vars[1])]).unwrap();
     assert_canonical(&f);
@@ -119,7 +119,7 @@ fn leaf_scan_stops_before_finishing_a_parent_and_can_retry() {
         assert_eq!(lim.work_units() - before, 2);
         assert_eq!(visited, 0, "the stop must precede completion of the parent's summaries");
     }
-    assert_eq!(eng.support(&f).unwrap(), vec![VarId(0), VarId(1)]);
+    assert_eq!(eng.support(&f).unwrap(), vec![VarId(1), VarId(2)]);
     assert!(f.implied_literals().unwrap().is_empty());
     assert_canonical(&f);
 }

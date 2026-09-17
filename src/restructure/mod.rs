@@ -51,7 +51,7 @@ impl std::fmt::Display for GraftError {
         match self {
             Self::Vtree(error) => write!(f, "grafted vtree: {error}"),
             Self::MissingVariableMapping { part, variable } => write!(f, "part {part} has no mapping for variable {}", variable.idx()),
-            Self::VariableOutOfRange { variable, num_vars } => write!(f, "grafted variable {} is outside the id space 0..{num_vars}", variable.idx()),
+            Self::VariableOutOfRange { variable, num_vars } => write!(f, "grafted variable {} is outside the variables 1 to {num_vars}", variable.0),
             Self::PartWeights { part, source } => write!(f, "part {part}: {source}"),
             Self::DestinationWeights(error) => write!(f, "graft destination: {error}"),
             Self::Operation(error) => write!(f, "graft cleanup: {error}"),

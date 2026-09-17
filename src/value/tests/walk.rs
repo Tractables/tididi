@@ -25,7 +25,7 @@ fn parent_link_walk_preserves_subtree_order_caches_and_releases() {
     for tree in [Vtree::balanced(4), Vtree::linear(4)] {
         for root in tree.bottomup() {
             for held in 0..1 << tree.num_nodes() {
-                for keep in [None, Some(root), Some(tree.leaf_of(crate::vtree::VarId(0)).unwrap())] {
+                for keep in [None, Some(root), Some(tree.leaf_of(crate::vtree::VarId(1)).unwrap())] {
                     let mut expected = Vec::new();
                     reference(&tree, root, held, keep, &mut expected);
                     let events = std::cell::RefCell::new(Vec::new());

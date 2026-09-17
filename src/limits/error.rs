@@ -42,7 +42,7 @@ pub enum OperationError {
     OutputCap,
     /// The operation names a variable the operand's vtree does not carry.
     /// Validation timing is stated on the operation; a consumed operand is
-    /// not returned on error. Display uses the one-based variable number.
+    /// not returned on error.
     VariableNotInVtree(crate::vtree::VarId),
     /// An input cube or substitution map names the same source variable more than once.
     DuplicateVariable(crate::vtree::VarId),
@@ -65,10 +65,10 @@ impl std::fmt::Display for OperationError {
             OperationError::OverBudget => f.write_str("memory allocation refused: budget, allocator, or capacity limit"),
             OperationError::Stopped => f.write_str("operation stopped"),
             OperationError::OutputCap => f.write_str("output node cap exceeded"),
-            OperationError::DuplicateVariable(var) => write!(f, "input names variable x{} twice", u64::from(var.0) + 1),
+            OperationError::DuplicateVariable(var) => write!(f, "input names variable x{} twice", var.0),
             OperationError::InvalidDiagram(source) => write!(f, "invalid diagram: {source}"),
             OperationError::VariableNotInVtree(var) => {
-                write!(f, "variable x{} is not in the vtree", u64::from(var.0) + 1)
+                write!(f, "variable x{} is not in the vtree", var.0)
             }
         }
     }

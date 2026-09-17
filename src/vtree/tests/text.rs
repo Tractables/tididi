@@ -32,7 +32,7 @@ fn malformed_tree_graphs_and_records_are_refused() {
 
 #[test]
 fn deterministic_token_mutations_are_refused_and_valid_text_round_trips() {
-    for tree in [Vtree::leaf(VarId(7)), Vtree::balanced(4), Vtree::linear(4), Vtree::random(5, 97)] {
+    for tree in [Vtree::leaf(VarId(8)), Vtree::balanced(4), Vtree::linear(4), Vtree::random(5, 97)] {
         let text = tree.to_text();
         let lines: Vec<Vec<&str>> = text.lines().map(|line| line.split_whitespace().collect()).collect();
         for (line_index, tokens) in lines.iter().enumerate() {

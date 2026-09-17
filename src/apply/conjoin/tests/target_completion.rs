@@ -12,7 +12,7 @@ fn requested_targets_are_completed_after_identity_and_self_conjunction() {
     for tree in [Vtree::balanced(4), Vtree::linear(4)] {
         let tree = Arc::new(tree);
         let (left, _) = tree.children(tree.root());
-        let leaf = tree.leaf_of(VarId(0)).unwrap();
+        let leaf = tree.leaf_of(VarId(1)).unwrap();
         for arithmetic in [None, Some(Arithmetic::ExactRational), Some(Arithmetic::SignedLog)] {
             let mut f = eng.clause(&tree, [1, 2]).unwrap();
             let mut disjoint = eng.clause(&tree, [3, 4]).unwrap();

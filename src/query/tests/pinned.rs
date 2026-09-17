@@ -35,8 +35,8 @@ fn fresh_root<R: Retention>(
 ) -> BigUint {
     let mut c = eng.counter_with::<R>(tdd, convention).unwrap();
     for (v, &p) in pins.iter().enumerate() {
-        if is_summed_out(tdd, VarId(v as u32)) { assert_eq!(p, None); continue; }
-        c.set_pin(VarId(v as u32), p).unwrap();
+        if is_summed_out(tdd, VarId(v as u32 + 1)) { assert_eq!(p, None); continue; }
+        c.set_pin(VarId(v as u32 + 1), p).unwrap();
     }
     c.model_count().unwrap()
 }
@@ -94,7 +94,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                     convention,
                 ).unwrap();
                 for (v, &p) in pins.iter().enumerate() {
-                    ctr.set_pin(VarId(v as u32), p).unwrap();
+                    ctr.set_pin(VarId(v as u32 + 1), p).unwrap();
                 }
 
                 let expected = if convention == PinSemantics::Evidence {
@@ -123,7 +123,7 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                         _ => Some(false),
                     };
                     pins[v as usize] = new_pin;
-                    ctr.set_pin(VarId(v), new_pin).unwrap();
+                    ctr.set_pin(VarId(v + 1), new_pin).unwrap();
 
 
                     let expected = if convention == PinSemantics::Evidence {
@@ -185,8 +185,8 @@ fn recompute_after_two_pin_changes_matches_oracle() {
         // the root.
         pins[0] = Some(false);
         pins[5] = Some(true);
-        ctr.set_pin(VarId(0), Some(false)).unwrap();
-        ctr.set_pin(VarId(5), Some(true)).unwrap();
+        ctr.set_pin(VarId(1), Some(false)).unwrap();
+        ctr.set_pin(VarId(6), Some(true)).unwrap();
 
         assert_eq!(
             ctr.model_count().unwrap(),
@@ -198,9 +198,9 @@ fn recompute_after_two_pin_changes_matches_oracle() {
         // cone is folded once from the pins in force at the recompute.
         pins[1] = Some(false);
         pins[2] = Some(true);
-        ctr.set_pin(VarId(1), Some(true)).unwrap();
-        ctr.set_pin(VarId(1), Some(false)).unwrap();
         ctr.set_pin(VarId(2), Some(true)).unwrap();
+        ctr.set_pin(VarId(2), Some(false)).unwrap();
+        ctr.set_pin(VarId(3), Some(true)).unwrap();
 
         assert_eq!(
             ctr.model_count().unwrap(),
@@ -227,21 +227,21 @@ fn pin_reset_to_same_value_records_nothing() {
     let pins: Vec<Option<bool>> = vec![Some(true), None, Some(false), None, None, None];
     let mut ctr = eng.counter_with::<KeepAllColumns>(&tdd, PinSemantics::Evidence).unwrap();
     for (v, &p) in pins.iter().enumerate() {
-        ctr.set_pin(VarId(v as u32), p).unwrap();
+        ctr.set_pin(VarId(v as u32 + 1), p).unwrap();
     }
 
     let expected = pinned_counts(&tdd, &pins, PinSemantics::Evidence);
     assert_eq!(ctr.model_count().unwrap(), expected);
     assert!(format!("{ctr:?}").contains("changed_since_pass: 0"), "compute clears the change set: {ctr:?}");
 
-    ctr.set_pin(VarId(0), Some(true)).unwrap();
-    ctr.set_pin(VarId(1), None).unwrap();
+    ctr.set_pin(VarId(1), Some(true)).unwrap();
+    ctr.set_pin(VarId(2), None).unwrap();
     assert!(format!("{ctr:?}").contains("changed_since_pass: 0"), "a same-value pin is no change: {ctr:?}");
 
     assert_eq!(ctr.model_count().unwrap(), expected, "nothing changed, nothing moves");
 
-    ctr.set_pin(VarId(0), Some(false)).unwrap();
-    ctr.set_pin(VarId(0), Some(true)).unwrap();
+    ctr.set_pin(VarId(1), Some(false)).unwrap();
+    ctr.set_pin(VarId(1), Some(true)).unwrap();
     assert!(format!("{ctr:?}").contains("changed_since_pass: 1"), "a changed-and-restored pin is recorded: {ctr:?}");
 
     assert_eq!(ctr.model_count().unwrap(), expected, "the original pins give the original count");
@@ -332,7 +332,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                 for _ in 0..4 {
                     let pins: Vec<Option<bool>> = (0..nvars)
                         .map(|v| {
-                            if is_summed_out(&tdd, VarId(v)) { return None; }
+                            if is_summed_out(&tdd, VarId(v + 1)) { return None; }
                             match rng.below(3) {
                                 0 => None,
                                 1 => Some(true),
@@ -347,8 +347,8 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                     };
 
                     for (v, &p) in pins.iter().enumerate() {
-                        if !is_summed_out(&tdd, VarId(v as u32)) {
-                            reused.set_pin(VarId(v as u32), p).unwrap();
+                        if !is_summed_out(&tdd, VarId(v as u32 + 1)) {
+                            reused.set_pin(VarId(v as u32 + 1), p).unwrap();
                         }
                     }
                     assert_eq!(
@@ -403,12 +403,12 @@ fn interrupted_pin_refresh_recomputes_before_the_next_read() {
     crate::test_helpers::assert_canonical(&f);
     let mut counter = eng.counter_with::<KeepAllColumns>(&f, PinSemantics::Evidence).unwrap();
     assert_eq!(counter.model_count().unwrap(), 12u32.into());
-    counter.set_pin(crate::vtree::VarId(0), Some(false)).unwrap();
+    counter.set_pin(crate::vtree::VarId(1), Some(false)).unwrap();
     {
         let _stop = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(StopCallback::new(|_, _| StopDecision::Stop))));
         assert!(counter.model_count().is_err());
     }
     assert_eq!(counter.model_count().unwrap(), 4u32.into());
-    counter.set_pin(crate::vtree::VarId(0), None).unwrap();
+    counter.set_pin(crate::vtree::VarId(1), None).unwrap();
     assert_eq!(counter.model_count().unwrap(), 12u32.into());
 }

@@ -6,8 +6,8 @@ use crate::vtree::VarId;
 
 #[test]
 fn plain_and_annotated_views_use_their_own_vtree() {
-    for vtree in [Vtree::balanced_over(&[VarId(9), VarId(2), VarId(7)]).unwrap(),
-                  Vtree::linear_from_order(&[VarId(7), VarId(9), VarId(2)]).unwrap()] {
+    for vtree in [Vtree::balanced_over(&[VarId(10), VarId(3), VarId(8)]).unwrap(),
+                  Vtree::linear_from_order(&[VarId(8), VarId(10), VarId(3)]).unwrap()] {
         let vtree = Arc::new(vtree);
         let f = Tdd::clause(&vtree, [10, -3]).unwrap();
         assert_canonical(&f);
@@ -29,7 +29,7 @@ fn plain_and_annotated_views_use_their_own_vtree() {
 
 #[test]
 fn vtree_overlays_handle_constants_leaves_and_marginal_levels() {
-    for vtree in [Vtree::leaf(VarId(0)), Vtree::balanced(3)] {
+    for vtree in [Vtree::leaf(VarId(1)), Vtree::balanced(3)] {
         let vtree = Arc::new(vtree);
         for mut f in [Tdd::zero(&vtree), Tdd::one(&vtree)] {
             assert_canonical(&f);

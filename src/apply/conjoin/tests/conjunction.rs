@@ -19,7 +19,7 @@ fn test_apply_and_with_constant_one() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let one = constant_one(eng, &vtree);
-    let clause = vec![Literal::pos(VarId(0))];
+    let clause = vec![Literal::pos(VarId(1))];
     let clause_tdd = clause_to_tdd(eng, &vtree, &clause);
 
     // 1 ∧ clause = clause (after minimize)
@@ -52,8 +52,8 @@ fn test_apply_and_with_constant_one() {
 fn test_apply_and_two_clauses() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let f = vec![Literal::pos(VarId(0))];
-    let g = vec![Literal::neg(VarId(1))];
+    let f = vec![Literal::pos(VarId(1))];
+    let g = vec![Literal::neg(VarId(2))];
 
     let t1 = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
@@ -69,8 +69,8 @@ fn test_apply_and_contradictory() {
     let eng = &crate::Engine::new();
     // x0 ∧ ¬x0 should have no models
     let vtree = Arc::new(Vtree::balanced(1));
-    let f = vec![Literal::pos(VarId(0))];
-    let g = vec![Literal::neg(VarId(0))];
+    let f = vec![Literal::pos(VarId(1))];
+    let g = vec![Literal::neg(VarId(1))];
 
     let t1 = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
@@ -86,8 +86,8 @@ fn test_apply_and_self_conjunction() {
     let eng = &crate::Engine::new();
     // f ∧ f = f for a non-trivial diagram.
     let vtree = Arc::new(Vtree::balanced(4));
-    let f = vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))];
-    let g = vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))];
+    let f = vec![Literal::pos(VarId(1)), Literal::pos(VarId(3))];
+    let g = vec![Literal::neg(VarId(2)), Literal::pos(VarId(4))];
     let mut tdd = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
     tdd = apply_and(tdd, t2);
@@ -111,8 +111,8 @@ fn test_apply_and_self_conjunction_owned() {
     let eng = &crate::Engine::new();
     // f ∧ f = f via the owned variant (avoids clone).
     let vtree = Arc::new(Vtree::balanced(4));
-    let f = vec![Literal::pos(VarId(0)), Literal::neg(VarId(2))];
-    let g = vec![Literal::pos(VarId(1)), Literal::pos(VarId(3))];
+    let f = vec![Literal::pos(VarId(1)), Literal::neg(VarId(3))];
+    let g = vec![Literal::pos(VarId(2)), Literal::pos(VarId(4))];
     let mut tdd = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
     tdd = apply_and(tdd, t2);
@@ -139,10 +139,10 @@ fn test_apply_and_stick_vtree_reachability() {
     let vtree = Arc::new(Vtree::linear(8));
 
     let clauses1 = [
-        vec![Literal::pos(VarId(0)), Literal::neg(VarId(2))],
-        vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))],
-        vec![Literal::pos(VarId(4)), Literal::neg(VarId(5))],
-        vec![Literal::neg(VarId(6)), Literal::pos(VarId(7))],
+        vec![Literal::pos(VarId(1)), Literal::neg(VarId(3))],
+        vec![Literal::neg(VarId(2)), Literal::pos(VarId(4))],
+        vec![Literal::pos(VarId(5)), Literal::neg(VarId(6))],
+        vec![Literal::neg(VarId(7)), Literal::pos(VarId(8))],
     ];
     let mut f = constant_one(eng, &vtree);
     for clause in &clauses1 {
@@ -152,10 +152,10 @@ fn test_apply_and_stick_vtree_reachability() {
     }
 
     let clauses2 = [
-        vec![Literal::neg(VarId(0)), Literal::pos(VarId(1))],
-        vec![Literal::pos(VarId(2)), Literal::pos(VarId(4))],
-        vec![Literal::neg(VarId(3)), Literal::neg(VarId(5))],
-        vec![Literal::pos(VarId(6)), Literal::neg(VarId(7))],
+        vec![Literal::neg(VarId(1)), Literal::pos(VarId(2))],
+        vec![Literal::pos(VarId(3)), Literal::pos(VarId(5))],
+        vec![Literal::neg(VarId(4)), Literal::neg(VarId(6))],
+        vec![Literal::pos(VarId(7)), Literal::neg(VarId(8))],
     ];
     let mut g = constant_one(eng, &vtree);
     for clause in &clauses2 {
@@ -211,7 +211,7 @@ fn test_apply_output_node_cap_bails_cleanly() {
         let mut acc = constant_one(eng, vtree);
         for literals in clauses {
             let clause: Vec<Literal> = literals.iter()
-                .map(|&l| Literal::new(VarId(l.unsigned_abs() - 1), l > 0))
+                .map(|&l| Literal::new(VarId(l.unsigned_abs()), l > 0))
                 .collect();
             let c = clause_to_tdd(eng, vtree, &clause);
             acc = apply_and(acc, c);

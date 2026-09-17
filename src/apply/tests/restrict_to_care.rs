@@ -11,9 +11,9 @@ fn restrict_tautological_care_is_identity() {
     let eng = Engine::new();
     // c = ⊤ pins g everywhere → g must equal f (no don't-cares).
     let vtree = Arc::new(Vtree::balanced(3));
-    let x2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
-    let f = apply_or(and2(&clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)])),
-                           &clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]))),
+    let x2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(3, true)]));
+    let f = apply_or(and2(&clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)])),
+                           &clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true)]))),
                      x2);
     let c = constant_one(&eng, &vtree);
     let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
@@ -26,8 +26,8 @@ fn restrict_false_care_is_empty() {
     let eng = Engine::new();
     // c = ⊥: f∧c = ∅ for any g; restrict_to_care returns ⊥, the smallest sound answer.
     let vtree = Arc::new(Vtree::balanced(3));
-    let f = apply_or(clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)])),
-                     clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)])));
+    let f = apply_or(clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)])),
+                     clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, true)])));
     let c = constant_zero(&eng, &vtree);
     let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
     assert!(count_is_zero(&g), "f.restrict_to_care(⊥).unwrap() must be ⊥ (f∧⊥ = ∅)");
@@ -39,7 +39,7 @@ fn restrict_of_false_is_false() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let f = constant_zero(&eng, &vtree);
-    let c = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
+    let c = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
     let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
     assert!(count_is_zero(&g), "(⊥).restrict_to_care(c).unwrap() must be ⊥");
     crate::test_helpers::check::check_all_fast(&g, "restrict_to_care-of-false");
@@ -51,8 +51,8 @@ fn restrict_of_true_is_sound_and_valid() {
     // f = ⊤: g∧c must = c. g = ⊤ is the smallest sound answer.
     let vtree = Arc::new(Vtree::balanced(3));
     let f = constant_one(&eng, &vtree);
-    let c = apply_or(clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)])),
-                     clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true)])));
+    let c = apply_or(clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)])),
+                     clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(3, true)])));
     assert_restrict_ok(&f, &c, 3);
 }
 
@@ -63,10 +63,10 @@ fn restrict_cube_care_shrinks_or_holds() {
     // the x2 branch is don't-care — the classic shrink. We assert the contract
     // (sound, never-larger, valid) and brute-force soundness directly.
     let vtree = Arc::new(Vtree::balanced(3));
-    let x0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let nx0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, false)]));
-    let x1 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
-    let x2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
+    let x0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let nx0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, false)]));
+    let x1 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
+    let x2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(3, true)]));
     let f = apply_or(and2(&x0, &x1), and2(&nx0, &x2));
     let c = x0.clone();
     assert_restrict_ok(&f, &c, 3);
@@ -81,10 +81,10 @@ fn restrict_drop_lever_sound_and_valid() {
     // f = (x0 ∧ x2) ∨ (x1 ∧ ¬x2); care c = x0. Wherever x0 = 0 the second term is
     // don't-care, so the DROP lever can prune it. Contract + brute force.
     let vtree = Arc::new(Vtree::balanced(3));
-    let x0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let x1 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
-    let x2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
-    let nx2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, false)]));
+    let x0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let x1 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
+    let x2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(3, true)]));
+    let nx2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(3, false)]));
     let f = apply_or(and2(&x0, &x2), and2(&x1, &nx2));
     let c = x0;
     assert_restrict_ok(&f, &c, 3);
@@ -99,8 +99,8 @@ fn restrict_drops_dead_pair_of_alive_node() {
     // Node-granular liveness alone would see an all-alive diagram; the
     // pair-granular probe must drop the dead pair: g ≡ x0, strictly smaller, sound.
     let vtree = Arc::new(Vtree::balanced(2));
-    let f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
-    let c = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, false)]));
+    let f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
+    let c = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, false)]));
     assert_restrict_ok(&f, &c, 2);
     let g = match (f.clone()).restrict_to_care(c.clone()).unwrap() {
         crate::apply::RestrictionOutcome::Shrunk(g) => g,
@@ -113,7 +113,7 @@ fn restrict_drops_dead_pair_of_alive_node() {
         crate::test_helpers::reachable_pairs(&g) < crate::test_helpers::reachable_pairs(&f),
         "dropping the dead pair must strictly shrink"
     );
-    let x0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
+    let x0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
     assert!(equiv(&g, &x0), "g must be exactly x0 after the dead pair drops");
 }
 
@@ -123,9 +123,9 @@ fn restrict_self_care_is_sound() {
     // c = f: g∧f must = f. g is free off f (the bulk of the cube) — a strong
     // don't-care stress, must stay sound and valid.
     let vtree = Arc::new(Vtree::balanced(4));
-    let f = apply_or(and2(&clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)])),
-                           &clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, false)]))),
-                     clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, true)])));
+    let f = apply_or(and2(&clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)])),
+                           &clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, false)]))),
+                     clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(3, true), (4, true)])));
     let c = f.clone();
     assert_restrict_ok(&f, &c, 4);
 }
@@ -136,7 +136,7 @@ fn restrict_runs_on_assorted_small_circuits() {
     // "It runs" + stays valid on a spread of structured functions (xors, chains,
     // wide clauses), each against a couple of cube and non-cube cares.
     let vtree = Arc::new(Vtree::balanced(4));
-    let lit = |v: u32, p: bool| clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(v, p)]));
+    let lit = |v: u32, p: bool| clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(v + 1, p)]));
     let xor = |a: u32, b: u32| {
         apply_or(and2(&lit(a, true), &lit(b, false)), and2(&lit(a, false), &lit(b, true)))
     };
@@ -144,7 +144,7 @@ fn restrict_runs_on_assorted_small_circuits() {
         xor(0, 1),
         and2(&xor(0, 1), &xor(2, 3)),
         apply_or(lit(0, true), and2(&lit(1, true), &lit(2, false))),
-        clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, false), (2, true), (3, true)])),
+        clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, false), (3, true), (4, true)])),
     ];
     let cares = vec![
         lit(0, true),
@@ -191,7 +191,7 @@ fn restrict_runs_on_assorted_small_circuits() {
 fn restrict_differing_root_containment_difftest() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(8));
-    let lit = |v: u32, p: bool| clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(v, p)]));
+    let lit = |v: u32, p: bool| clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(v + 1, p)]));
     // Function-level soundness oracle: g∧c == f∧c over all 2^nvars assignments,
     // and g never larger than f. Apply-free (shares no machinery with restrict_to_care).
     let assert_sound = |f: &Tdd, c: &Tdd, nvars: u32| -> Tdd {
@@ -365,13 +365,13 @@ fn restrict_output_is_orphan_free() {
 fn restrict_differing_root_randomized() {
     let nvars = 6u32;
     let vtree = Arc::new(Vtree::balanced(nvars));
-    // The left block of the global root: balanced(6) puts {0,1,2} under it.
+    // The left block of the global root: balanced(6) puts {1,2,3} under it.
     let left_vars: Vec<u32> = {
         let (lc, _) = match *vtree.node(vtree.root()) {
             crate::vtree::VtreeNode::Internal { left, right, .. } => (left, right),
             _ => unreachable!(),
         };
-        (0..nvars)
+        (1..=nvars)
             .filter(|&v| vtree.lca(vtree.leaf_of(VarId(v)).expect("the vtree carries this variable"), lc) == lc)
             .collect()
     };
@@ -387,7 +387,7 @@ fn restrict_differing_root_randomized() {
         }
         Some(reroot_to_child(&m, true))
     };
-    let all_vars: Vec<u32> = (0..nvars).collect();
+    let all_vars: Vec<u32> = (1..=nvars).collect();
     let check = |f: &Tdd, c: &Tdd| -> bool {
         let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
         for mask in 0..(1u32 << nvars) {
@@ -477,10 +477,10 @@ fn restrict_raw_output_is_apply_safe() {
 fn a_refused_prune_inside_a_restriction_is_an_error() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let x0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let nx0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, false)]));
-    let x1 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
-    let x2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
+    let x0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let nx0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, false)]));
+    let x1 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
+    let x2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(3, true)]));
     let f = apply_or(and2(&x0, &x1), and2(&nx0, &x2));
 
     // With nothing armed the care set shrinks `f`, so the rebuild runs.

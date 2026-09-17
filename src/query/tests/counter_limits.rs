@@ -42,15 +42,15 @@ fn overflow_refusals<R: Retention>() {
     let mut completed = false;
     for reserve in 0..1024 {
         let mut counter = eng.counter_with::<R>(&f, PinSemantics::Evidence).unwrap();
-        for var in 0..132 { counter.set_pin(VarId(var), Some(false)).unwrap(); }
+        for var in 1..=132 { counter.set_pin(VarId(var), Some(false)).unwrap(); }
         assert_eq!(counter.model_count().unwrap(), 1u32.into());
-        for var in 0..132 { counter.set_pin(VarId(var), None).unwrap(); }
+        for var in 1..=132 { counter.set_pin(VarId(var), None).unwrap(); }
         eng.limits().refuse_nth_reserve(reserve);
         let result = counter.model_count();
         eng.limits().grant_every_reserve();
         assert_eq!(counter.model_count().unwrap(), expected, "reserve {reserve}");
         // A subsequent pin must use the updated cache and keep its overflow values consistent.
-        counter.set_pin(VarId(0), Some(false)).unwrap();
+        counter.set_pin(VarId(1), Some(false)).unwrap();
         assert_eq!(counter.model_count().unwrap(), &expected >> 1usize);
         match result {
             Ok(value) => { assert_eq!(value, expected); completed = true; break; }
@@ -76,7 +76,7 @@ fn stopped_refreshes<R: Retention>() {
     for cut in 0..128 {
         let mut counter = eng.counter_with::<R>(&f, PinSemantics::Evidence).unwrap();
         assert_eq!(counter.model_count().unwrap(), 256u32.into());
-        counter.set_pin(VarId(0), Some(false)).unwrap();
+        counter.set_pin(VarId(1), Some(false)).unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
         let result = {
             let _limit = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(
@@ -87,7 +87,7 @@ fn stopped_refreshes<R: Retention>() {
             counter.model_count()
         };
         assert_eq!(counter.model_count().unwrap(), 128u32.into(), "cut {cut}");
-        counter.set_pin(VarId(0), None).unwrap();
+        counter.set_pin(VarId(1), None).unwrap();
         assert_eq!(counter.model_count().unwrap(), 256u32.into());
         match result {
             Ok(_) => { assert!(cut > 2); completed = true; break; }
@@ -106,10 +106,10 @@ fn both_counter_policies_recover_from_every_refresh_stop() {
 #[test]
 fn cached_and_constant_counts_observe_stops_without_losing_pins() {
     let eng = Engine::new();
-    for f in [Tdd::zero(&Arc::new(Vtree::balanced(3))), Tdd::one(&Arc::new(Vtree::leaf(VarId(0))))] {
+    for f in [Tdd::zero(&Arc::new(Vtree::balanced(3))), Tdd::one(&Arc::new(Vtree::leaf(VarId(1))))] {
         assert_canonical(&f);
         let mut counter = eng.counter_with::<KeepAllColumns>(&f, PinSemantics::Evidence).unwrap();
-        counter.set_pin(VarId(0), Some(true)).unwrap();
+        counter.set_pin(VarId(1), Some(true)).unwrap();
         let expected = if f.is_zero() { BigUint::ZERO } else { 1u32.into() };
         assert_eq!(counter.model_count().unwrap(), expected);
         {
@@ -149,13 +149,13 @@ fn counters_sharing_a_context_retain_independent_evidence() {
     let mut first = f.counter_with::<KeepAllColumns>(PinSemantics::Evidence).unwrap();
     let mut second = f.counter_with::<KeepFrontier>(PinSemantics::Evidence).unwrap();
     assert_eq!(first.model_count().unwrap(), 12u32.into());
-    second.set_pin(VarId(0), Some(false)).unwrap();
+    second.set_pin(VarId(1), Some(false)).unwrap();
     assert_eq!(second.model_count().unwrap(), 4u32.into());
     assert_eq!(first.model_count().unwrap(), 12u32.into());
-    first.set_pin(VarId(0), Some(true)).unwrap();
+    first.set_pin(VarId(1), Some(true)).unwrap();
     assert_eq!(first.model_count().unwrap(), 8u32.into());
     assert_eq!(second.model_count().unwrap(), 4u32.into());
-    first.set_pin(VarId(0), None).unwrap();
+    first.set_pin(VarId(1), None).unwrap();
     assert_eq!(first.model_count().unwrap(), 12u32.into());
     assert_eq!(second.model_count().unwrap(), 4u32.into());
 }

@@ -22,7 +22,7 @@ fn alternating_quantifiers_match_all_three_variable_games() {
             let accepts = |state: usize, action: usize, response: usize| {
                 table & (1usize << (state | (action << 1) | (response << 2))) != 0
             };
-            let relation = compile(&engine, tree, &[VarId(0), VarId(1), VarId(2)], |row| {
+            let relation = compile(&engine, tree, &[VarId(1), VarId(2), VarId(3)], |row| {
                 table & (1 << row) != 0
             });
             let responsive = forall(
@@ -30,15 +30,15 @@ fn alternating_quantifiers_match_all_three_variable_games() {
                 engine
                     .exists_vars(
                         relation.clone(),
-                        &[VarId(2)],
+                        &[VarId(3)],
                     )
                     .unwrap(),
-                VarId(1),
+                VarId(2),
             );
             let committed = engine
                 .exists_vars(
-                    forall(&engine, relation, VarId(1)),
-                    &[VarId(2)],
+                    forall(&engine, relation, VarId(2)),
+                    &[VarId(3)],
                 )
                 .unwrap();
 

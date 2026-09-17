@@ -128,8 +128,8 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
     // observability hook — not a guess — for which of the two branches
     // (shortcut vs. general product construction) a given call takes.
     let vtree = Arc::new(Vtree::balanced(4));
-    let f = vec![Literal::pos(VarId(0)), Literal::pos(VarId(2))];
-    let g = vec![Literal::neg(VarId(1)), Literal::pos(VarId(3))];
+    let f = vec![Literal::pos(VarId(1)), Literal::pos(VarId(3))];
+    let g = vec![Literal::neg(VarId(2)), Literal::pos(VarId(4))];
     let mut tdd = clause_to_tdd(eng, &vtree, &f);
     let t2 = clause_to_tdd(eng, &vtree, &g);
     tdd = apply_and(tdd, t2);

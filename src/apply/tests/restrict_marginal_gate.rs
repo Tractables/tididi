@@ -72,7 +72,7 @@ fn restrict_ancestor_marginal_operand_gate() {
         })
         .expect("balanced(8) has a small non-root internal subtree");
     let v2: Vec<u32> = support_of(marginal_root);
-    let v1: Vec<u32> = (0..nvars).filter(|v| !v2.contains(v)).collect();
+    let v1: Vec<u32> = (1..=nvars).filter(|v| !v2.contains(v)).collect();
     let mut v2_targets: Vec<VtreeIdx> =
         v2.iter().map(|&v| vtree.leaf_of(VarId(v)).expect("the vtree carries this variable")).collect();
     v2_targets.sort_by_key(|vi| vtree.topo_pos(*vi));
@@ -162,7 +162,7 @@ fn restrict_ancestor_marginal_operand_gate() {
     }
 
     // ── Randomized cases (≥50 checked across seeds) ──────────────────────────
-    let all_vars: Vec<u32> = (0..nvars).collect();
+    let all_vars: Vec<u32> = (1..=nvars).collect();
     for _ in 0..500 {
         let mut b = rand_conj_over(&vtree, &all_vars, 6, 3, false, &mut rng);
         if b.is_zero() {

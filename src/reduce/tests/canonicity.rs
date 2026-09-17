@@ -136,10 +136,10 @@ fn random_clauses(rng: &mut Lcg, nvars: u32) -> Vec<Vec<Literal>> {
                 continue;
             }
             seen[v as usize] = true;
-            literals.push(if rng.coin() { Literal::pos(VarId(v)) } else { Literal::neg(VarId(v)) });
+            literals.push(if rng.coin() { Literal::pos(VarId(v + 1)) } else { Literal::neg(VarId(v + 1)) });
         }
         if literals.is_empty() {
-            literals.push(Literal::pos(VarId(0)));
+            literals.push(Literal::pos(VarId(1)));
         }
         out.push(literals);
     }

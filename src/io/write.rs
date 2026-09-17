@@ -128,7 +128,7 @@ pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
         buf.extend_from_slice(b"L ");
         push_num(&mut buf, vtree.topo_pos(t));
         buf.push(b' ');
-        push_num(&mut buf, var.0 + 1); // one-based variable number
+        push_num(&mut buf, var.0);
         buf.push(b'\n');
     }
     w.write_all(&buf)?;

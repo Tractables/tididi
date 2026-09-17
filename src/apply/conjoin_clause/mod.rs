@@ -296,7 +296,7 @@ impl Tdd {
     /// use tididi::{Literal, Tdd, Vtree};
     /// use tididi::vtree::VarId;
     /// let vtree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&vtree, [Literal::pos(VarId(0)), Literal::neg(VarId(1))])?;
+    /// let f = Tdd::clause(&vtree, [Literal::pos(VarId(1)), Literal::neg(VarId(2))])?;
     /// assert_eq!(f.model_count()?, 6u32.into());
     /// # tididi::test_helpers::assert_canonical(&f);
     /// # Ok::<(), tididi::OperationError>(())

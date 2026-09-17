@@ -16,12 +16,12 @@ fn every_symbolic_image_matches_explicit_graph_search() {
             let transition = compile(
                 &engine,
                 tree,
-                &[VarId(0), VarId(1), VarId(2), VarId(3)],
+                &[VarId(1), VarId(2), VarId(3), VarId(4)],
                 |row| edges & (1 << (4 * (row & 3) + ((row >> 2) & 3))) != 0,
             );
             for initial in [0u8, 1, 2, 5, 15] {
                 let mut explicit = initial;
-                let mut reached = compile(&engine, tree, &[VarId(0), VarId(1)], |s| {
+                let mut reached = compile(&engine, tree, &[VarId(1), VarId(2)], |s| {
                     initial & (1 << s) != 0
                 });
                 let mut retained = Vec::new();
@@ -49,11 +49,11 @@ fn every_symbolic_image_matches_explicit_graph_search() {
                         .and_exists(
                             reached.clone(),
                             transition.clone(),
-                            &[VarId(0), VarId(1)],
+                            &[VarId(1), VarId(2)],
                         )
                         .unwrap();
                     let successors = engine
-                        .rename_vars(successors, &[(VarId(2), VarId(0)), (VarId(3), VarId(1))])
+                        .rename_vars(successors, &[(VarId(3), VarId(1)), (VarId(4), VarId(2))])
                         .unwrap();
                     let image_truth: Vec<_> =
                         (0..32).map(|row| image & (1 << (row & 3)) != 0).collect();

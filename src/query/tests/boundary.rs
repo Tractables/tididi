@@ -10,8 +10,8 @@ use crate::test_helpers::{assert_canonical, rat};
 
 /// `(x0 ∨ x2) ∧ (¬x1 ∨ x3)` over `balanced(4)`, minimized.
 fn two_clauses(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
-    let t1 = clause_to_tdd(eng, vtree, &[Literal::pos(VarId(0)), Literal::pos(VarId(2))]);
-    let t2 = clause_to_tdd(eng, vtree, &[Literal::neg(VarId(1)), Literal::pos(VarId(3))]);
+    let t1 = clause_to_tdd(eng, vtree, &[Literal::pos(VarId(1)), Literal::pos(VarId(3))]);
+    let t2 = clause_to_tdd(eng, vtree, &[Literal::neg(VarId(2)), Literal::pos(VarId(4))]);
     let mut t = apply_and(t1, t2);
     t.minimize().unwrap();
     t

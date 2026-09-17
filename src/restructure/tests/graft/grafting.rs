@@ -14,13 +14,13 @@ fn count(t: &Tdd) -> u64 {
 
 #[test]
 fn graft_counts_the_product_times_two_per_spine_var() {
-    let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]).unwrap());
-    let b = Arc::new(Vtree::linear_from_order(&[VarId(3), VarId(2)]).unwrap());
+    let a = Arc::new(Vtree::balanced_over(&[VarId(1), VarId(2)]).unwrap());
+    let b = Arc::new(Vtree::linear_from_order(&[VarId(4), VarId(3)]).unwrap());
     let f = Tdd::clause(&a, [1, 2]).unwrap(); // 3 models over {x1, x2}
     let g = Tdd::clause(&b, [3, -4]).unwrap() & Tdd::clause(&b, [4]).unwrap(); // x3 ∧ x4: 1 model
     assert_eq!((count(&f), count(&g)), (3, 1));
 
-    let fg = Tdd::graft(vec![f.clone(), g.clone()], &[VarId(4), VarId(5)]).unwrap();
+    let fg = Tdd::graft(vec![f.clone(), g.clone()], &[VarId(5), VarId(6)]).unwrap();
     assert_eq!(fg.vtree.num_vars(), 6);
     assert_canonical(&fg);
     assert_eq!(count(&fg), 3 * 4);
@@ -46,7 +46,7 @@ fn graft_of_one_part_keeps_its_count_and_a_lone_spine_is_true() {
     assert_canonical(&same);
     assert_eq!(count(&same), count(&f));
 
-    let free = Tdd::graft(vec![], &[VarId(2)]).unwrap();
+    let free = Tdd::graft(vec![], &[VarId(3)]).unwrap();
     assert_canonical(&free);
     assert_eq!(free.vtree.num_leaves(), 1);
     assert_eq!(count(&free), 2); // unconstrained in x3
@@ -54,15 +54,15 @@ fn graft_of_one_part_keeps_its_count_and_a_lone_spine_is_true() {
 
 #[test]
 fn graft_rejects_overlap_and_nothing() {
-    let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]).unwrap());
+    let a = Arc::new(Vtree::balanced_over(&[VarId(1), VarId(2)]).unwrap());
     let f = Tdd::clause(&a, [1]).unwrap();
     assert_eq!(
         Tdd::graft(vec![f.clone(), f.clone()], &[]).err(),
-        Some(GraftError::Vtree(VtreeError::OverlappingVariable(VarId(0))))
+        Some(GraftError::Vtree(VtreeError::OverlappingVariable(VarId(1))))
     );
     assert_eq!(
-        Tdd::graft(vec![f], &[VarId(1)]).err(),
-        Some(GraftError::Vtree(VtreeError::OverlappingVariable(VarId(1))))
+        Tdd::graft(vec![f], &[VarId(2)]).err(),
+        Some(GraftError::Vtree(VtreeError::OverlappingVariable(VarId(2))))
     );
     assert!(matches!(Tdd::graft(vec![], &[]), Err(GraftError::Vtree(VtreeError::Invalid(_)))));
 }
@@ -76,8 +76,8 @@ fn graft_with_layout_renames_local_parts_and_maps_their_levels() {
     let g = Tdd::clause(&local, [-1]).unwrap();
     let (t, layout) = Tdd::graft_over(
         &eng,
-        vec![(f, vec![VarId(2), VarId(3)]), (g, vec![VarId(0), VarId(1)])],
-        &[VarId(4)],
+        vec![(f, vec![VarId(3), VarId(4)]), (g, vec![VarId(1), VarId(2)])],
+        &[VarId(5)],
         5,
         None,
     )
@@ -114,8 +114,8 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
     let (_, inner) = local.children(local.root());
     let clauses = [vec![vec![1, 2], vec![2, -3]], vec![vec![-1, 3]]];
     let placements = [
-        vec![VarId(0), VarId(1), VarId(2)],
-        vec![VarId(3), VarId(4), VarId(5)],
+        vec![VarId(1), VarId(2), VarId(3)],
+        vec![VarId(4), VarId(5), VarId(6)],
     ];
 
     let mut parts = Vec::new();
@@ -135,7 +135,7 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
     let (mut grafted, _) = Tdd::graft_over(
         &eng,
         parts,
-        &[VarId(6)],
+        &[VarId(7)],
         7,
         Some(WeightStore::new(global.clone(), Arithmetic::ExactRational)),
     )
@@ -149,12 +149,12 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
             let vtree = Arc::new(Vtree::balanced_over(l2g).unwrap());
             let renamed: Vec<Vec<i32>> = cs
                 .iter()
-                .map(|c| c.iter().map(|l| l.signum() * (l2g[l.unsigned_abs() as usize - 1].0 as i32 + 1)).collect())
+                .map(|c| c.iter().map(|l| l.signum() * (l2g[l.unsigned_abs() as usize - 1].0 as i32)).collect())
                 .collect();
             compile_clauses(&vtree, &renamed)
         })
         .collect();
-    let want = (Tdd::graft(global_parts, &[VarId(6)]).expect("disjoint parts")).evaluate(&global).unwrap();
+    let want = (Tdd::graft(global_parts, &[VarId(7)]).expect("disjoint parts")).evaluate(&global).unwrap();
 
     let got = |t: &Tdd| {
         t.weighted_value().unwrap()
@@ -206,7 +206,7 @@ fn a_part_whose_levels_still_read_the_store_keeps_it() {
     assert!(part.weights().is_none(), "a granted detach leaves the diagram in integer mode");
     part.set_weights(held.expect("the detach handed the store over")).unwrap();
     let (grafted, _) =
-        Tdd::graft_over(&eng, vec![(part, vec![VarId(0), VarId(1), VarId(2)])], &[], 3, Some(store()))
+        Tdd::graft_over(&eng, vec![(part, vec![VarId(1), VarId(2), VarId(3)])], &[], 3, Some(store()))
             .expect("one part covers every variable exactly once");
     assert_eq!(value(&grafted), want, "the store did not survive the round trip through the graft");
 
@@ -228,13 +228,13 @@ fn a_part_whose_levels_still_read_the_store_keeps_it() {
 
 #[test]
 fn a_false_part_makes_the_graft_false() {
-    let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]).unwrap());
-    let b = Arc::new(Vtree::balanced_over(&[VarId(2), VarId(3)]).unwrap());
+    let a = Arc::new(Vtree::balanced_over(&[VarId(1), VarId(2)]).unwrap());
+    let b = Arc::new(Vtree::balanced_over(&[VarId(3), VarId(4)]).unwrap());
     let f = Tdd::clause(&a, [1, 2]).unwrap();
     let g = Tdd::clause(&b, [3]).unwrap() & Tdd::clause(&b, [-3]).unwrap();
     assert!(g.is_zero());
 
-    let fg = Tdd::graft(vec![f, g], &[VarId(4)]).unwrap();
+    let fg = Tdd::graft(vec![f, g], &[VarId(5)]).unwrap();
     assert!(fg.is_zero());
     assert_eq!(count(&fg), 0);
     assert_eq!(fg.vtree.num_vars(), 5);

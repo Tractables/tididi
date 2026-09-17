@@ -6,7 +6,7 @@ fn test_single_variable_vtree() {
     let vtree = Vtree::balanced(1);
     assert_eq!(vtree.num_nodes(), 1);
     assert!(vtree.node(vtree.root).is_leaf());
-    assert_eq!(vtree.leaf_var(vtree.root), VarId(0));
+    assert_eq!(vtree.leaf_var(vtree.root), VarId(1));
     assert_eq!(vtree.bottomup().count(), 1);
 }
 
@@ -16,8 +16,8 @@ fn test_two_variable_vtree() {
     assert_eq!(vtree.num_nodes(), 3); // root + 2 leaves
     assert!(!vtree.node(vtree.root).is_leaf());
     let (l, r) = vtree.children(vtree.root);
-    assert_eq!(vtree.leaf_var(l), VarId(0));
-    assert_eq!(vtree.leaf_var(r), VarId(1));
+    assert_eq!(vtree.leaf_var(l), VarId(1));
+    assert_eq!(vtree.leaf_var(r), VarId(2));
     // Level-order bottom-up: leaves first, then root
     let bo: Vec<VtreeIdx> = vtree.bottomup().collect();
     assert_eq!(bo, vec![l, r, vtree.root]);
@@ -34,8 +34,8 @@ fn test_four_variable_vtree() {
     assert_eq!(vtree.root, VtreeIdx(6));
 
     // All leaves should be indices 0..4 (first layer)
-    for var in 0..4u32 {
-        let leaf_idx = vtree.var_to_leaf[var as usize];
+    for var in 1..=4u32 {
+        let leaf_idx = vtree.var_to_leaf[var as usize - 1];
         assert!(vtree.node(leaf_idx).is_leaf());
         assert_eq!(vtree.leaf_var(leaf_idx), VarId(var));
         assert!(leaf_idx.0 < 4, "leaves should come first");
@@ -83,8 +83,8 @@ fn test_level_order_balanced() {
 #[test]
 fn test_var_to_leaf_mapping() {
     let vtree = Vtree::balanced(5);
-    for var in 0..5u32 {
-        let leaf = vtree.var_to_leaf[var as usize];
+    for var in 1..=5u32 {
+        let leaf = vtree.var_to_leaf[var as usize - 1];
         assert_eq!(vtree.leaf_var(leaf), VarId(var));
     }
 }
@@ -106,14 +106,14 @@ fn test_linear_structure() {
     // The root's left child is the leaf of variable 0, the first in the order.
     let (l, r) = vtree.children(vtree.root);
     assert!(vtree.node(l).is_leaf());
-    assert_eq!(vtree.leaf_var(l), VarId(0));
+    assert_eq!(vtree.leaf_var(l), VarId(1));
     assert!(!vtree.node(r).is_leaf());
-    assert!(vtree.same_tree(&Vtree::linear_from_order(&[VarId(0), VarId(1), VarId(2), VarId(3)]).unwrap()));
-    assert!(Vtree::reverse_linear(4).same_tree(&Vtree::linear_from_order(&[VarId(3), VarId(2), VarId(1), VarId(0)]).unwrap()));
+    assert!(vtree.same_tree(&Vtree::linear_from_order(&[VarId(1), VarId(2), VarId(3), VarId(4)]).unwrap()));
+    assert!(Vtree::reverse_linear(4).same_tree(&Vtree::linear_from_order(&[VarId(4), VarId(3), VarId(2), VarId(1)]).unwrap()));
 
     // All vars mapped correctly
-    for var in 0..4u32 {
-        let leaf = vtree.var_to_leaf[var as usize];
+    for var in 1..=4u32 {
+        let leaf = vtree.var_to_leaf[var as usize - 1];
         assert_eq!(vtree.leaf_var(leaf), VarId(var));
     }
 }
@@ -129,8 +129,8 @@ fn test_random_structure() {
     assert_eq!(vtree.root, VtreeIdx(8));
 
     // All vars mapped correctly
-    for var in 0..5u32 {
-        let leaf = vtree.var_to_leaf[var as usize];
+    for var in 1..=5u32 {
+        let leaf = vtree.var_to_leaf[var as usize - 1];
         assert_eq!(vtree.leaf_var(leaf), VarId(var));
     }
 }
@@ -328,7 +328,7 @@ fn assert_projection_wellformed(proj: &Vtree, num_local: u32) {
         v.sort();
         v
     };
-    assert_eq!(leaves, (0..num_local).map(VarId).collect::<Vec<_>>());
+    assert_eq!(leaves, (1..=num_local).map(VarId).collect::<Vec<_>>());
 
     // A binary tree over K leaves has exactly K-1 internal nodes: proof that
     // no unary (spliced) node survived.
@@ -346,33 +346,33 @@ fn assert_projection_wellformed(proj: &Vtree, num_local: u32) {
         }
     }
     for v in 0..num_local {
-        assert_eq!(proj.leaf_var(proj.var_to_leaf[v as usize]), VarId(v));
+        assert_eq!(proj.leaf_var(proj.var_to_leaf[v as usize]), VarId(v + 1));
     }
 }
 
 #[test]
 fn test_project_to_vars_balanced_subset() {
-    // balanced(8): ((0 1)(2 3)) ((4 5)(6 7)). Keep {1, 2, 4, 7} → local 0..3.
+    // balanced(8): ((1 2)(3 4)) ((5 6)(7 8)). Keep {2, 3, 5, 8} → local 1..4.
     let vtree = Vtree::balanced(8);
-    let keep = [VarId(1), VarId(2), VarId(4), VarId(7)];
+    let keep = [VarId(2), VarId(3), VarId(5), VarId(8)];
     let proj = vtree
         .project_to_vars(
-            |v| keep.iter().position(|&k| k == v).map(|i| VarId(i as u32)),
+            |v| keep.iter().position(|&k| k == v).map(|i| VarId(i as u32 + 1)),
             keep.len() as u32,
         )
         .expect("non-empty projection");
     assert_projection_wellformed(&proj, keep.len() as u32);
 
-    // Grouping is inherited: 1 and 2 stayed under the old left half, 4 and 7
-    // under the old right half, so the projected root separates {0,1} from {2,3}.
+    // Grouping is inherited: 2 and 3 stayed under the old left half, 5 and 8
+    // under the old right half, so the projected root separates {1,2} from {3,4}.
     let (l, r) = proj.children(proj.root);
     let mut left_vars: Vec<u32> = collect_subtree_vars(&proj, l);
     let mut right_vars: Vec<u32> = collect_subtree_vars(&proj, r);
     left_vars.sort();
     right_vars.sort();
     assert!(
-        (left_vars == vec![0, 1] && right_vars == vec![2, 3])
-            || (left_vars == vec![2, 3] && right_vars == vec![0, 1]),
+        (left_vars == vec![1, 2] && right_vars == vec![3, 4])
+            || (left_vars == vec![3, 4] && right_vars == vec![1, 2]),
         "projected root split {left_vars:?} | {right_vars:?}"
     );
 }
@@ -404,7 +404,7 @@ fn test_project_to_vars_edge_cases() {
 
     // Keeping a single variable yields a bare leaf (no internal nodes).
     let one = vtree
-        .project_to_vars(|v| (v == VarId(4)).then_some(VarId(0)), 1)
+        .project_to_vars(|v| (v == VarId(5)).then_some(VarId(1)), 1)
         .expect("single-var projection");
     assert_eq!(one.num_leaves(), 1);
     assert_eq!(one.num_nodes(), 1);
@@ -415,13 +415,13 @@ fn test_project_to_vars_edge_cases() {
 
     // Every 2-subset projects to a well-formed 3-node vtree, whichever way the
     // splice-outs fall.
-    for a in 0..9u32 {
-        for b in (a + 1)..9u32 {
+    for a in 1..=9u32 {
+        for b in (a + 1)..=9u32 {
             let proj = vtree
                 .project_to_vars(
                     |v| match v.0 {
-                        x if x == a => Some(VarId(0)),
-                        x if x == b => Some(VarId(1)),
+                        x if x == a => Some(VarId(1)),
+                        x if x == b => Some(VarId(2)),
                         _ => None,
                     },
                     2,
@@ -442,108 +442,108 @@ fn sorted_vars(v: &Vtree) -> Vec<u32> {
 
 #[test]
 fn leaf_is_a_one_node_tree_over_a_sparse_id_space() {
-    let v = Vtree::leaf(VarId(4));
+    let v = Vtree::leaf(VarId(5));
     assert_eq!(v.num_nodes(), 1);
     assert_eq!(v.num_leaves(), 1);
     assert_eq!(v.num_vars(), 5);
-    assert_eq!(v.leaf_var(v.root()), VarId(4));
-    assert_eq!(v.leaf_of(VarId(4)).expect("the vtree carries this variable"), v.root());
+    assert_eq!(v.leaf_var(v.root()), VarId(5));
+    assert_eq!(v.leaf_of(VarId(5)).expect("the vtree carries this variable"), v.root());
     assert_eq!(v.validate(), Ok(()));
 }
 
 #[test]
 fn join_composes_and_takes_the_wider_id_space() {
-    let left = Vtree::leaf(VarId(0));
-    let right = Vtree::balanced_over(&[VarId(5), VarId(2)]).unwrap();
+    let left = Vtree::leaf(VarId(1));
+    let right = Vtree::balanced_over(&[VarId(6), VarId(3)]).unwrap();
     let v = Vtree::join(&left, &right).unwrap();
     assert_eq!(v.validate(), Ok(()));
     assert_eq!(v.num_vars(), 6);
     assert_eq!(v.num_leaves(), 3);
-    assert_eq!(sorted_vars(&v), vec![0, 2, 5]);
+    assert_eq!(sorted_vars(&v), vec![1, 3, 6]);
     let (l, r) = v.children(v.root());
-    assert_eq!(v.leaf_var(l), VarId(0));
+    assert_eq!(v.leaf_var(l), VarId(1));
     let (rl, rr) = v.children(r);
-    assert_eq!((v.leaf_var(rl), v.leaf_var(rr)), (VarId(5), VarId(2)));
+    assert_eq!((v.leaf_var(rl), v.leaf_var(rr)), (VarId(6), VarId(3)));
 }
 
 #[test]
 fn join_rejects_a_shared_variable() {
-    let a = Vtree::balanced_over(&[VarId(0), VarId(1)]).unwrap();
-    let b = Vtree::leaf(VarId(1));
-    assert_eq!(Vtree::join(&a, &b).err(), Some(VtreeError::OverlappingVariable(VarId(1))));
+    let a = Vtree::balanced_over(&[VarId(1), VarId(2)]).unwrap();
+    let b = Vtree::leaf(VarId(2));
+    assert_eq!(Vtree::join(&a, &b).err(), Some(VtreeError::OverlappingVariable(VarId(2))));
 }
 
 #[test]
 fn join_of_leaves_is_linear_from_order() {
     let joined = Vtree::join(
-        &Vtree::leaf(VarId(2)),
-        &Vtree::join(&Vtree::leaf(VarId(0)), &Vtree::leaf(VarId(1))).unwrap(),
+        &Vtree::leaf(VarId(3)),
+        &Vtree::join(&Vtree::leaf(VarId(1)), &Vtree::leaf(VarId(2))).unwrap(),
     )
     .unwrap();
-    assert!(joined.same_tree(&Vtree::linear_from_order(&[VarId(2), VarId(0), VarId(1)]).unwrap()));
+    assert!(joined.same_tree(&Vtree::linear_from_order(&[VarId(3), VarId(1), VarId(2)]).unwrap()));
 }
 
 #[test]
 fn balanced_over_natural_order_is_balanced() {
     for n in 1..9 {
-        let order: Vec<VarId> = (0..n).map(VarId).collect();
+        let order: Vec<VarId> = (1..=n).map(VarId).collect();
         assert!(Vtree::balanced_over(&order).unwrap().same_tree(&Vtree::balanced(n)));
     }
 }
 
 #[test]
 fn balanced_over_follows_the_order_and_allows_gaps() {
-    let v = Vtree::balanced_over(&[VarId(7), VarId(1), VarId(3)]).unwrap();
+    let v = Vtree::balanced_over(&[VarId(8), VarId(2), VarId(4)]).unwrap();
     assert_eq!(v.validate(), Ok(()));
     assert_eq!(v.num_vars(), 8);
     assert_eq!(v.num_leaves(), 3);
     let (l, r) = v.children(v.root());
-    assert_eq!(v.leaf_var(l), VarId(7));
+    assert_eq!(v.leaf_var(l), VarId(8));
     let (rl, rr) = v.children(r);
-    assert_eq!((v.leaf_var(rl), v.leaf_var(rr)), (VarId(1), VarId(3)));
+    assert_eq!((v.leaf_var(rl), v.leaf_var(rr)), (VarId(2), VarId(4)));
 }
 
 #[test]
 fn graft_hangs_pieces_down_a_right_spine() {
     let parts = [
-        Vtree::balanced_over(&[VarId(0), VarId(1)]).unwrap(),
-        Vtree::balanced_over(&[VarId(4), VarId(5)]).unwrap(),
+        Vtree::balanced_over(&[VarId(1), VarId(2)]).unwrap(),
+        Vtree::balanced_over(&[VarId(5), VarId(6)]).unwrap(),
     ];
-    let v = Vtree::graft(&parts, &[VarId(2), VarId(3)]).unwrap();
+    let v = Vtree::graft(&parts, &[VarId(3), VarId(4)]).unwrap();
     assert_eq!(v.validate(), Ok(()));
-    assert_eq!(sorted_vars(&v), vec![0, 1, 2, 3, 4, 5]);
+    assert_eq!(sorted_vars(&v), vec![1, 2, 3, 4, 5, 6]);
     assert_eq!(v.num_vars(), 6);
     // root = (((S0, S1), x2), x3)
     let (t, x3) = v.children(v.root());
-    assert_eq!(v.leaf_var(x3), VarId(3));
+    assert_eq!(v.leaf_var(x3), VarId(4));
     let (t, x2) = v.children(t);
-    assert_eq!(v.leaf_var(x2), VarId(2));
+    assert_eq!(v.leaf_var(x2), VarId(3));
     let (s0, s1) = v.children(t);
-    assert_eq!((v.leaf_var(v.children(s0).0), v.leaf_var(v.children(s1).1)), (VarId(0), VarId(5)));
+    assert_eq!((v.leaf_var(v.children(s0).0), v.leaf_var(v.children(s1).1)), (VarId(1), VarId(6)));
 }
 
 #[test]
 fn graft_rejects_overlap_and_emptiness() {
-    let a = Vtree::balanced_over(&[VarId(0), VarId(1)]).unwrap();
+    let a = Vtree::balanced_over(&[VarId(1), VarId(2)]).unwrap();
     assert_eq!(
-        Vtree::graft(&[a.clone(), Vtree::leaf(VarId(1))], &[]).err(),
+        Vtree::graft(&[a.clone(), Vtree::leaf(VarId(2))], &[]).err(),
+        Some(VtreeError::OverlappingVariable(VarId(2)))
+    );
+    assert_eq!(
+        Vtree::graft(std::slice::from_ref(&a), &[VarId(1)]).err(),
         Some(VtreeError::OverlappingVariable(VarId(1)))
     );
-    assert_eq!(
-        Vtree::graft(std::slice::from_ref(&a), &[VarId(0)]).err(),
-        Some(VtreeError::OverlappingVariable(VarId(0)))
-    );
     assert!(matches!(Vtree::graft(&[], &[]), Err(VtreeError::Invalid(_))));
-    assert!(Vtree::graft(&[], &[VarId(3)]).unwrap().same_tree(&Vtree::leaf(VarId(3))));
+    assert!(Vtree::graft(&[], &[VarId(4)]).unwrap().same_tree(&Vtree::leaf(VarId(4))));
 }
 
 #[test]
 fn constructions_round_trip_through_vtree_text() {
     let trees = [
-        Vtree::leaf(VarId(3)),
-        Vtree::balanced_over(&[VarId(6), VarId(0), VarId(2)]).unwrap(),
-        Vtree::join(&Vtree::leaf(VarId(9)), &Vtree::linear_from_order(&[VarId(1), VarId(4)]).unwrap()).unwrap(),
-        Vtree::graft(&[Vtree::balanced(3), Vtree::leaf(VarId(7))], &[VarId(5)]).unwrap(),
+        Vtree::leaf(VarId(4)),
+        Vtree::balanced_over(&[VarId(7), VarId(1), VarId(3)]).unwrap(),
+        Vtree::join(&Vtree::leaf(VarId(10)), &Vtree::linear_from_order(&[VarId(2), VarId(5)]).unwrap()).unwrap(),
+        Vtree::graft(&[Vtree::balanced(3), Vtree::leaf(VarId(8))], &[VarId(6)]).unwrap(),
     ];
     for v in &trees {
         let back = Vtree::from_text(&v.to_text()).unwrap();
@@ -571,7 +571,7 @@ fn validate_reports_a_bad_text_tree_before_it_is_built() {
 fn validate_passes_every_builder_and_survives_rotation() {
     let mut trees = vec![Vtree::balanced(7), Vtree::linear(5), Vtree::random(9, 3)];
     let proj = trees[0]
-        .project_to_vars(|v| (v.0 % 2 == 0).then_some(VarId(v.0 / 2)), 4)
+        .project_to_vars(|v| (v.0 % 2 == 1).then_some(VarId(v.0 / 2 + 1)), 4)
         .unwrap();
     trees.push(proj);
     for v in &mut trees {
@@ -587,13 +587,13 @@ fn validate_passes_every_builder_and_survives_rotation() {
 
 #[test]
 fn same_tree_ignores_numbering() {
-    let a = Vtree::linear_from_order(&[VarId(0), VarId(1), VarId(2)]).unwrap();
+    let a = Vtree::linear_from_order(&[VarId(1), VarId(2), VarId(3)]).unwrap();
     let b = Vtree::from_text("vtree 5\nL 0 3\nL 1 2\nI 2 1 0\nL 3 1\nI 4 3 2\n").unwrap();
     assert!(a.same_tree(&b));
-    assert!(!a.same_tree(&Vtree::linear_from_order(&[VarId(1), VarId(0), VarId(2)]).unwrap()));
+    assert!(!a.same_tree(&Vtree::linear_from_order(&[VarId(2), VarId(1), VarId(3)]).unwrap()));
     let left_deep = Vtree::join(
-        &Vtree::join(&Vtree::leaf(VarId(0)), &Vtree::leaf(VarId(1))).unwrap(),
-        &Vtree::leaf(VarId(2)),
+        &Vtree::join(&Vtree::leaf(VarId(1)), &Vtree::leaf(VarId(2))).unwrap(),
+        &Vtree::leaf(VarId(3)),
     )
     .unwrap();
     assert!(!a.same_tree(&left_deep));
@@ -607,7 +607,7 @@ fn balanced_subtree_rejects_an_empty_variable_list() {
 
 #[test]
 fn overlapping_variable_error_formats_the_full_id_range() {
-    for (variable, number) in [(0, "1"), (u32::MAX, "4294967296")] {
+    for (variable, number) in [(1, "1"), (u32::MAX, "4294967295")] {
         assert_eq!(
             VtreeError::OverlappingVariable(VarId(variable)).to_string(),
             format!("variable {number} is carried by more than one of the trees being combined"),
@@ -620,13 +620,13 @@ fn overlapping_variable_error_formats_the_full_id_range() {
 #[test]
 fn from_nodes_derives_parents_from_the_child_links() {
     let links = |parent: Option<VtreeIdx>| vec![
-        VtreeNode::Leaf { var: VarId(0), parent },
-        VtreeNode::Leaf { var: VarId(1), parent: None },
+        VtreeNode::Leaf { var: VarId(1), parent },
+        VtreeNode::Leaf { var: VarId(2), parent: None },
         VtreeNode::Internal { left: VtreeIdx(0), right: VtreeIdx(1), parent: None },
     ];
     for declared in [None, Some(VtreeIdx(2)), Some(VtreeIdx(1))] {
         let vtree = Vtree::from_nodes(links(declared), VtreeIdx(2), 2).unwrap();
-        let leaf = vtree.leaf_of(VarId(0)).unwrap();
+        let leaf = vtree.leaf_of(VarId(1)).unwrap();
         assert_eq!(vtree.node(leaf).parent(), Some(vtree.root()));
     }
 }
@@ -636,9 +636,9 @@ fn leaf_order_constructors_refuse_empty_and_repeated_orders() {
     for build in [Vtree::balanced_over, Vtree::linear_from_order] {
         assert!(matches!(build(&[]), Err(VtreeError::Invalid(_))));
         assert_eq!(
-            build(&[VarId(2), VarId(0), VarId(2)]).unwrap_err(),
-            VtreeError::OverlappingVariable(VarId(2))
+            build(&[VarId(3), VarId(1), VarId(3)]).unwrap_err(),
+            VtreeError::OverlappingVariable(VarId(3))
         );
-        assert_eq!(build(&[VarId(3)]).unwrap().num_vars(), 4);
+        assert_eq!(build(&[VarId(4)]).unwrap().num_vars(), 4);
     }
 }

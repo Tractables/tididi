@@ -294,7 +294,7 @@ fn read_leaf_line<'a>(
     let t = next_vtree_idx(tok, "leaf vtree node", vtree, line)?;
     let var = next_u32(tok, "variable", line)?;
     end_of_record(tok, line)?;
-    let var = var.checked_sub(1).ok_or_else(|| malformed(line, "variables are one-based"))?;
+    if var == 0 { return Err(malformed(line, "variables are numbered from 1")); }
     levels[t.idx()].declare(VtreeNode::Leaf { var: VarId(var), parent: None }, line)
 }
 

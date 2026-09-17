@@ -18,7 +18,7 @@ fn builder_errors_convert_at_the_operation_boundary() {
     let store = WeightStore::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational);
     assert_eq!(
         weigh(Tdd::one(&vtree), store).unwrap_err(),
-        OperationError::InvalidDiagram(TddBuildError::MissingVariableWeight(VarId(1)))
+        OperationError::InvalidDiagram(TddBuildError::MissingVariableWeight(VarId(2)))
     );
     assert_eq!(OperationError::from(TddBuildError::IncompatibleWeights), OperationError::IncompatibleWeights);
 }

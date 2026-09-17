@@ -47,11 +47,12 @@ mod text;
 pub(crate) mod rotate; // In-place vtree left/right rotations + topo fixup
 
 
-/// A zero-based variable identifier, independent of its position in the vtree.
+/// A variable identifier, independent of its position in the vtree.
 ///
-/// `VarId(0)` is the variable named by integer literals `1` and `-1`.
-/// Resolve its leaf with [`Vtree::leaf_of`]; a variable id
-/// and a [`VtreeIdx`] are different index spaces.
+/// Variables are numbered from 1, like integer literals: `VarId(2)` is the
+/// variable named by `1` and `-1`. Zero is not a variable. Resolve a
+/// variable's leaf with [`Vtree::leaf_of`]; a variable id and a [`VtreeIdx`]
+/// are different index spaces.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct VarId(pub u32);
 
@@ -72,10 +73,11 @@ impl VtreeIdx {
 }
 
 impl VarId {
-    /// The variable number as a `usize`.
+    /// The zero-based array index of this variable: its number minus one.
     #[inline(always)]
     pub fn idx(self) -> usize {
-        self.0 as usize
+        debug_assert!(self.0 >= 1, "variable numbers start at 1");
+        (self.0 - 1) as usize
     }
 }
 
@@ -99,7 +101,7 @@ impl std::fmt::Display for VtreeError {
             VtreeError::OverlappingVariable(var) => write!(
                 f,
                 "variable {} is carried by more than one of the trees being combined",
-                u64::from(var.0) + 1
+                var.0
             ),
             VtreeError::Invalid(msg) => write!(f, "invalid vtree: {msg}"),
         }

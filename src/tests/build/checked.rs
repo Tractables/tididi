@@ -13,9 +13,9 @@ fn checked_constructors_report_invalid_variables() {
     assert_eq!(eng.cube(&vtree, [missing]).err(), Some(OperationError::VariableNotInVtree(missing.var)));
     assert_eq!(eng.clause(&vtree, [Literal::try_from(1).unwrap(), Literal::try_from(-1).unwrap(), missing]).err(), Some(OperationError::VariableNotInVtree(missing.var)));
     for literals in [[1, 1], [1, -1]] {
-        assert_eq!(eng.cube(&vtree, literals).err(), Some(OperationError::DuplicateVariable(VarId(0))));
+        assert_eq!(eng.cube(&vtree, literals).err(), Some(OperationError::DuplicateVariable(VarId(1))));
     }
-    assert_eq!(OperationError::VariableNotInVtree(missing.var).to_string(), "variable x4294967296 is not in the vtree");
+    assert_eq!(OperationError::VariableNotInVtree(missing.var).to_string(), "variable x4294967295 is not in the vtree");
 }
 
 #[test]
@@ -113,12 +113,12 @@ fn zero_integer_literals_return_errors_at_checked_entry_points() {
 
 #[test]
 fn literal_conversion_handles_signed_endpoints_and_borrowed_inputs() {
-    assert_eq!(Literal::try_from(i32::MIN), Ok(Literal::neg(VarId(2147483647))));
-    assert_eq!(Literal::try_from(i32::MAX), Ok(Literal::pos(VarId(2147483646))));
-    let vtree = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(7)]).unwrap());
+    assert_eq!(Literal::try_from(i32::MIN), Ok(Literal::neg(VarId(2147483648))));
+    assert_eq!(Literal::try_from(i32::MAX), Ok(Literal::pos(VarId(2147483647))));
+    let vtree = Arc::new(Vtree::balanced_over(&[VarId(1), VarId(8)]).unwrap());
     let engine = Engine::new();
     let integers = [1, -8];
-    let typed = [Literal::pos(VarId(0)), Literal::neg(VarId(7))];
+    let typed = [Literal::pos(VarId(1)), Literal::neg(VarId(8))];
     for result in [engine.cube(&vtree, integers), engine.cube(&vtree, integers.iter()),
         engine.cube(&vtree, typed), engine.cube(&vtree, typed.iter())] {
         let f = result.unwrap();
@@ -130,9 +130,9 @@ fn literal_conversion_handles_signed_endpoints_and_borrowed_inputs() {
         let f = result.unwrap();
         assert_canonical(&f);
         assert_eq!(f.model_count().unwrap(), 2u32.into());
-        let contradicted = f.condition_var(VarId(7), true).unwrap();
+        let contradicted = f.condition_var(VarId(8), true).unwrap();
         assert_canonical(&contradicted);
         assert!(contradicted.is_zero());
     }
-    assert_eq!(literal(&vtree, 2).err(), Some(OperationError::VariableNotInVtree(VarId(1))));
+    assert_eq!(literal(&vtree, 2).err(), Some(OperationError::VariableNotInVtree(VarId(2))));
 }

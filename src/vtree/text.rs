@@ -105,7 +105,7 @@ impl Vtree {
             let id = self.topo_pos(idx);
             match self.node(idx) {
                 VtreeNode::Leaf { var, .. } => {
-                    out.push_str(&format!("L {} {}\n", id, var.0 + 1));
+                    out.push_str(&format!("L {} {}\n", id, var.0));
                 }
                 VtreeNode::Internal { left, right, .. } => {
                     out.push_str(&format!(
@@ -177,7 +177,7 @@ fn parse_leaf_line(
              each variable on exactly one leaf"
         ));
     }
-    let var = VarId(var_1 - 1); // `.vtree` ids are 1-indexed
+    let var = VarId(var_1);
     *num_vars = (*num_vars).max(var_1);
     Ok((id, VtreeNode::Leaf { var, parent: None }))
 }

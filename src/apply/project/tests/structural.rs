@@ -9,7 +9,7 @@ fn regrouping_checks_its_allocations_before_reduction() {
     let tree = Arc::new(Vtree::balanced(4));
     let original = Tdd::clause(&tree, [1, -2, 3]).unwrap();
     assert_canonical(&original);
-    let leaf = tree.leaf_of(VarId(0)).unwrap();
+    let leaf = tree.leaf_of(VarId(1)).unwrap();
     let parent = tree.node(leaf).parent().unwrap();
     let eng = Engine::new();
     {
@@ -27,7 +27,7 @@ fn regrouping_polls_inside_a_level() {
     let tree = Arc::new(Vtree::balanced(4));
     let mut f = Tdd::clause(&tree, [1, -2, 3]).unwrap();
     assert_canonical(&f);
-    let leaf = tree.leaf_of(VarId(0)).unwrap();
+    let leaf = tree.leaf_of(VarId(1)).unwrap();
     let parent = tree.node(leaf).parent().unwrap();
     let eng = Engine::new();
     let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(StopRules {
@@ -45,7 +45,7 @@ fn structural_projection_recovers_after_each_refused_reservation() {
     let mut f = f;
     f.minimize().unwrap();
     assert_canonical(&f);
-    let leaf = tree.leaf_of(VarId(0)).unwrap();
+    let leaf = tree.leaf_of(VarId(1)).unwrap();
     let mut reached_success = false;
     for nth in 0..512 {
         let eng = Engine::new();

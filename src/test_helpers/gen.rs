@@ -120,8 +120,8 @@ pub fn vtree_shapes(num_vars: u32) -> Vec<(&'static str, Arc<Vtree>)> {
         shapes.push(("linear reversed", Arc::new(Vtree::reverse_linear(num_vars))));
     }
     if num_vars >= 4 {
-        let mut interleaved: Vec<VarId> = (1..num_vars).step_by(2).map(VarId).collect();
-        interleaved.extend((0..num_vars).step_by(2).map(VarId));
+        let mut interleaved: Vec<VarId> = (2..=num_vars).step_by(2).map(VarId).collect();
+        interleaved.extend((1..=num_vars).step_by(2).map(VarId));
         shapes.push(("linear interleaved", Arc::new(Vtree::linear_from_order(&interleaved).expect("the ids are distinct"))));
     }
     shapes

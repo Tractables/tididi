@@ -46,32 +46,32 @@ impl Tdd {
     /// use tididi::Tdd;
     /// use tididi::vtree::{VarId, Vtree, VtreeError};
     /// use tididi::restructure::GraftError;
-    /// let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]).unwrap());
-    /// let b = Arc::new(Vtree::balanced_over(&[VarId(2), VarId(3)]).unwrap());
+    /// let a = Arc::new(Vtree::balanced_over(&[VarId(1), VarId(2)]).unwrap());
+    /// let b = Arc::new(Vtree::balanced_over(&[VarId(3), VarId(4)]).unwrap());
     /// let f = Tdd::clause(&a, [1, 2])?;   // x1 ∨ x2: 3 models
     /// let g = Tdd::clause(&b, [3, -4])?;  // x3 ∨ ¬x4: 3 models
-    /// let fg = Tdd::graft(vec![f, g], &[VarId(4)]).unwrap();
+    /// let fg = Tdd::graft(vec![f, g], &[VarId(5)]).unwrap();
     /// assert_eq!(fg.model_count()?, 18u32.into()); // 3 · 3 · 2 (x5 is free)
     ///
     /// // A spine variable one of the parts already carries is refused.
     /// let h = Tdd::clause(&a, [1, 2])?;
     /// let k = Tdd::clause(&b, [3, -4])?;
-    /// match Tdd::graft(vec![h, k], &[VarId(0)]) {
+    /// match Tdd::graft(vec![h, k], &[VarId(1)]) {
     ///     Ok(_) => unreachable!("var 0 is already in the first part"),
-    ///     Err(e) => assert!(matches!(e, GraftError::Vtree(VtreeError::OverlappingVariable(VarId(0))))),
+    ///     Err(e) => assert!(matches!(e, GraftError::Vtree(VtreeError::OverlappingVariable(VarId(1))))),
     /// }
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn graft(parts: Vec<Tdd>, spine_vars: &[VarId]) -> Result<Tdd, GraftError> {
         for &variable in spine_vars {
-            if variable.0 == u32::MAX {
-                return Err(GraftError::VariableOutOfRange { variable, num_vars: u32::MAX });
+            if variable.0 == 0 {
+                return Err(GraftError::VariableOutOfRange { variable, num_vars: 0 });
             }
         }
         let num_vars = parts
             .iter()
             .map(|t| t.vtree.num_vars())
-            .chain(spine_vars.iter().map(|v| v.0 + 1))
+            .chain(spine_vars.iter().map(|v| v.0))
             .max()
             .unwrap_or(0);
         let context = parts.first().map(|part| Arc::clone(part.context())).unwrap_or_default();
@@ -142,7 +142,7 @@ fn graft_impl(
         .flat_map(|(k, part)| part.vtree.leaf_bottomup().map(move |(_, local)| rename(k, local)))
         .chain(spine_vars.iter().copied())
     {
-        if variable.0 >= num_vars {
+        if variable.0 == 0 || variable.0 > num_vars {
             return Err(GraftError::VariableOutOfRange { variable, num_vars });
         }
     }

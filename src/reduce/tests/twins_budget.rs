@@ -219,8 +219,8 @@ fn test_contract_dirty_worklist_restored_on_err() {
 fn leaf_twin_with_range_growth() -> (Arc<Vtree>, Tdd, VtreeIdx) {
     use crate::vtree::VarId;
 
-    let x = Vtree::leaf(VarId(0));
-    let yz = Vtree::balanced_over(&[VarId(1), VarId(2)]).unwrap();
+    let x = Vtree::leaf(VarId(1));
+    let yz = Vtree::balanced_over(&[VarId(2), VarId(3)]).unwrap();
     let vtree = Arc::new(Vtree::join(&x, &yz).expect("disjoint variable sets"));
     let root = vtree.root();
     let (v_leaf, v_right) = vtree.children(root);

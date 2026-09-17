@@ -11,15 +11,15 @@ fn support_mask_tracks_dependence() {
     let eng = Engine::new();
     // f = (x0 & x2): depends on x0, x2 but not x1.
     let vtree = Arc::new(Vtree::balanced(3));
-    let x0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let x2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
+    let x0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let x2 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(3, true)]));
     let f = and2(&x0, &x2);
     let sup = support_mask(&f);
     assert_eq!(sup, vec![true, false, true], "support should be {{x0,x2}}");
     // Cross-check against the project-equality oracle: f independent of x iff
     // projecting x out leaves f equivalent (over the care of the other vars).
     for x in 0..3u32 {
-        let projected = (f).clone().exists_var(VarId(x)).unwrap();
+        let projected = (f).clone().exists_var(VarId(x + 1)).unwrap();
         let unchanged = equiv(&f, &projected);
         assert_eq!(!unchanged, sup[x as usize], "support[{x}] mismatch vs oracle");
     }
@@ -29,8 +29,8 @@ fn support_mask_tracks_dependence() {
 fn support_bits_covers_support_mask_and_detects_disjoint() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let x0 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let x2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
+    let x0 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let x2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(3, true)]));
     let f = and2(&x0, &x2); // depends on {x0, x2}
     // support_bits OVER-approximates support_mask (never drops a real dependency);
     // on a minimized diagram like this it is exact.
@@ -42,7 +42,7 @@ fn support_bits_covers_support_mask_and_detects_disjoint() {
         assert_eq!(b, m, "support_bits exact on minimized f at var {x}");
     }
     // Disjoint detection: g depends only on x1, sharing no variable with f.
-    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
     let bg = support_bits(&g);
     assert!(
         bits.iter().zip(bg.iter()).all(|(a, b)| a & b == 0),
@@ -61,15 +61,15 @@ fn condition_var_detects_unit_forced_apply() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     // (x0) AND (x0 v x1) AND (x1 v x2) -- x0 forced TRUE by the unit.
-    let c0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
-    let g = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
+    let c0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
+    let g = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, true)]));
     let t01 = apply_and(c0, f);
     let t = apply_and(t01, g);
     assert!(!count_is_zero(&t));
     // x0 forced true => x0=false is UNSAT (count 0), x0=true is SAT.
-    assert!(count_is_zero(&(t).clone().condition_var(VarId(0), false).unwrap()));
-    assert!(!count_is_zero(&(t).clone().condition_var(VarId(0), true).unwrap()));
+    assert!(count_is_zero(&(t).clone().condition_var(VarId(1), false).unwrap()));
+    assert!(!count_is_zero(&(t).clone().condition_var(VarId(1), true).unwrap()));
 }
 
 // A conditioned diagram with no models must be CANONICALLY false: conditioning
@@ -81,12 +81,12 @@ fn condition_var_detects_unit_forced_apply() {
 fn condition_var_canonicalizes_a_dead_result() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
-    let c0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
-    let g = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
+    let c0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
+    let g = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, true)]));
     let t01 = apply_and(c0, f);
     let t = apply_and(t01, g);
-    let dead = (t).clone().condition_var(VarId(0), false).unwrap();
+    let dead = (t).clone().condition_var(VarId(1), false).unwrap();
     assert!(count_is_zero(&dead), "x0 is forced true, so x0=false has no models");
     assert!(dead.is_zero(), "a model-count-0 conditioning result must be canonically ZERO");
     // Re-conjoining the canonical ⊥ stays ⊥ (the property the canonicalization buys).
@@ -105,15 +105,15 @@ fn condition_var_on_marginalized_leaf_fails_fast() {
     let vtree = Arc::new(Vtree::balanced(2));
     // x0 XOR x1 — depends on both vars, so the output sits at the root.
     let mut t = and2(
-        &clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)])),
-        &clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, false), (1, false)])),
+        &clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)])),
+        &clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, false), (2, false)])),
     );
-    let leaf = vtree.leaf_of(VarId(1)).expect("the vtree carries this variable");
+    let leaf = vtree.leaf_of(VarId(2)).expect("the vtree carries this variable");
     marginalize_leaf_inline(&mut t, leaf, &vtree);
     assert!(t.levels[leaf.idx()].is_marginal(), "test setup: leaf must be marginal");
     t.minimize().unwrap();
     assert_canonical(&t);
-    assert_eq!(eng.condition_var(t, VarId(1), true).unwrap_err(), crate::OperationError::MarginalLevel(leaf));
+    assert_eq!(eng.condition_var(t, VarId(2), true).unwrap_err(), crate::OperationError::MarginalLevel(leaf));
 }
 
 // Same contract for the leaf's PARENT: a marginal parent holds marginal-slot refs
@@ -126,15 +126,15 @@ fn condition_var_through_marginal_parent_fails_fast() {
     let vtree = Arc::new(Vtree::balanced(2));
     // x0 XOR x1 — depends on both vars, so the output sits at the root.
     let mut t = and2(
-        &clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)])),
-        &clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, false), (1, false)])),
+        &clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)])),
+        &clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, false), (2, false)])),
     );
-    let leaf = vtree.leaf_of(VarId(0)).expect("the vtree carries this variable");
+    let leaf = vtree.leaf_of(VarId(1)).expect("the vtree carries this variable");
     let parent = vtree.node(leaf).parent().expect("leaf has a parent");
     marginalize_batch(&eng, &mut t, &[parent], &vtree).expect("no wall is installed in a test");
     assert!(!t.levels[leaf.idx()].is_marginal(), "test setup: only the parent is marginal");
     assert_canonical(&t);
-    assert_eq!(eng.condition_var(t, VarId(0), true).unwrap_err(), crate::OperationError::MarginalLevel(parent));
+    assert_eq!(eng.condition_var(t, VarId(1), true).unwrap_err(), crate::OperationError::MarginalLevel(parent));
 }
 
 #[test]
@@ -152,25 +152,25 @@ fn implied_literals_matches_condition_oracle() {
         }
         for v in 0..nvars {
             for val in [true, false] {
-                if count_is_zero(&(f).clone().condition_var(VarId(v), !val).unwrap()) {
-                    out.push(Literal::new(VarId(v), val));
+                if count_is_zero(&(f).clone().condition_var(VarId(v + 1), !val).unwrap()) {
+                    out.push(Literal::new(VarId(v + 1), val));
                 }
             }
         }
         out
     };
     let vtree = Arc::new(Vtree::balanced(3));
-    let x0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let nx0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, false)]));
-    let x1 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
-    let or12 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
+    let x0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let nx0 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, false)]));
+    let x1 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
+    let or12 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, true)]));
 
     // f = x0 & (x1 | x2): only x0 is backbone (x1,x2 each stay free).
     let mut f = and2(&x0, &or12);
     f.minimize().unwrap();
     let bb = f.implied_literals().unwrap();
     assert_eq!(bb, oracle(&f, 3));
-    assert!(bb == [Literal::pos(VarId(0))]);
+    assert!(bb == [Literal::pos(VarId(1))]);
 
     // g = ~x0 & x1: x0 forced false, x1 forced true, x2 a pure don't-care (only
     // ever the One leaf) — must not appear.
@@ -178,7 +178,7 @@ fn implied_literals_matches_condition_oracle() {
     g.minimize().unwrap();
     let bbg = g.implied_literals().unwrap();
     assert_eq!(bbg, oracle(&g, 3));
-    assert!(bbg.iter().all(|lit| lit.var != VarId(2)));
+    assert!(bbg.iter().all(|lit| lit.var != VarId(3)));
 
     // UNSAT (x0 & ~x0): no models, no implied literals.
     let mut z = and2(&x0, &nx0);

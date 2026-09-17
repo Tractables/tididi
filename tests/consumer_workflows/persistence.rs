@@ -18,16 +18,16 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
         // The caller stores names and weights separately, in an order different
         // from variable IDs and from the vtree's leaf order.
         let variables = [
-            (VarId(2), "rain", fraction(1, 5)),
-            (VarId(0), "sprinkler", fraction(1, 3)),
-            (VarId(3), "sensor", fraction(3, 4)),
-            (VarId(1), "wind", fraction(2, 5)),
+            (VarId(3), "rain", fraction(1, 5)),
+            (VarId(1), "sprinkler", fraction(1, 3)),
+            (VarId(4), "sensor", fraction(3, 4)),
+            (VarId(2), "wind", fraction(2, 5)),
         ];
         let mut weights = bernoulli(&vec![fraction(0, 1); 4]);
         let mut metadata = String::new();
         for (var, name, probability) in &variables {
-            weights[var.0 as usize] = bernoulli(std::slice::from_ref(probability)).remove(0);
-            let weight = &weights[var.0 as usize];
+            weights[var.idx()] = bernoulli(std::slice::from_ref(probability)).remove(0);
+            let weight = &weights[var.idx()];
             metadata.push_str(&format!(
                 "{}\t{name}\t{}\t{}\n",
                 var.0, weight.negative, weight.positive
@@ -52,7 +52,7 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
             let mut diagram = compile(
                 &engine,
                 tree,
-                &[VarId(0), VarId(1), VarId(2), VarId(3)],
+                &[VarId(1), VarId(2), VarId(3), VarId(4)],
                 |row| truth[row],
             );
             diagram
@@ -74,7 +74,7 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
             let fields: Vec<_> = line.split('\t').collect();
             let var = VarId(fields[0].parse().unwrap());
             assert!(names.insert(fields[1].to_owned(), var).is_none());
-            restored_weights[var.0 as usize] = Some(LiteralWeights {
+            restored_weights[var.idx()] = Some(LiteralWeights {
                 negative: fields[2].parse::<BigRational>().unwrap(),
                 positive: fields[3].parse::<BigRational>().unwrap(),
             });
@@ -112,7 +112,7 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
             );
             let expected_support: Vec<_> = (0..4)
                 .filter(|&var| (0..16).any(|row| expected[row] != expected[row ^ (1 << var)]))
-                .map(VarId)
+                .map(|var| VarId(var + 1))
                 .collect();
             assert_eq!(engine.support(&diagram).unwrap(), expected_support);
             restored_roots.insert(*name, diagram);
@@ -188,7 +188,7 @@ fn rotated_vtrees_and_diagrams_round_trip_together() {
         (Vtree::balanced(4), [1, -3]),
         (Vtree::linear(4), [1, -3]),
         (Vtree::random(4, 812), [1, -3]),
-        (Vtree::balanced_over(&[VarId(5), VarId(0), VarId(2), VarId(3)]).unwrap(), [1, -3]),
+        (Vtree::balanced_over(&[VarId(6), VarId(1), VarId(3), VarId(4)]).unwrap(), [1, -3]),
     ] {
         for probe in [1, 2] {
             let vtree = Arc::new(vtree.clone());

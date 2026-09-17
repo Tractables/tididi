@@ -66,7 +66,7 @@ fn algebra_evaluation_stops_at_entry_during_work_and_before_return() {
     assert!(completed);
     // A short walk must flush its final work even below the default stride.
     eng.limits().pin_reduce_poll_stride(None);
-    for f in [Tdd::one(&Arc::new(Vtree::leaf(VarId(0)))), Tdd::zero(&Arc::new(Vtree::balanced(3)))] {
+    for f in [Tdd::one(&Arc::new(Vtree::leaf(VarId(1)))), Tdd::zero(&Arc::new(Vtree::balanced(3)))] {
         assert_canonical(&f);
         let calls = Arc::new(AtomicUsize::new(0));
         let _limit = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(

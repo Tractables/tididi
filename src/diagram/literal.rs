@@ -4,17 +4,17 @@ use crate::vtree::VarId;
 
 /// A Boolean variable and its polarity.
 ///
-/// Integer inputs use signed, one-based literals: `1` is positive `VarId(0)`,
-/// and `-2` is negative `VarId(1)`. Zero is invalid and conversion returns an error.
-/// Use the typed constructors when your application already has zero-based ids:
+/// Integer inputs use signed literals: `1` is positive `VarId(2)`,
+/// and `-2` is negative `VarId(2)`. Zero is invalid and conversion returns an error.
+/// Use the typed constructors when your application already holds variable ids:
 ///
 /// ```
 /// use tididi::{Literal, OperationError};
 /// use tididi::vtree::VarId;
 ///
-/// assert_eq!(Literal::try_from(1)?, Literal::pos(VarId(0)));
-/// assert_eq!(Literal::try_from(-2)?, Literal::neg(VarId(1)));
-/// assert_eq!(Literal::pos(VarId(0)).negated(), Literal::neg(VarId(0)));
+/// assert_eq!(Literal::try_from(1)?, Literal::pos(VarId(1)));
+/// assert_eq!(Literal::try_from(-2)?, Literal::neg(VarId(2)));
+/// assert_eq!(Literal::pos(VarId(1)).negated(), Literal::neg(VarId(1)));
 /// assert_eq!(Literal::try_from(0), Err(OperationError::InvalidLiteral(0)));
 /// # Ok::<(), OperationError>(())
 /// ```
@@ -59,9 +59,8 @@ impl Literal {
 
 /// Build a `Literal` from a signed **DIMACS** integer.
 ///
-/// DIMACS variables are 1-based: `1` is the first variable (`VarId(0)`), `2` the
-/// second, and so on; a negative value denotes a negated literal. The magnitude
-/// is decremented to the 0-based [`VarId`] used internally.
+/// The magnitude is the variable number (`1` is `VarId(2)`) and a negative
+/// value denotes a negated literal.
 ///
 /// # Errors
 /// Returns [`OperationError::InvalidLiteral`](crate::OperationError::InvalidLiteral)
@@ -73,7 +72,7 @@ impl TryFrom<i32> for Literal {
 
     fn try_from(n: i32) -> Result<Self, Self::Error> {
         if n == 0 { return Err(crate::OperationError::InvalidLiteral(n)); }
-        let var = VarId(n.unsigned_abs() - 1);
+        let var = VarId(n.unsigned_abs());
         Ok(Literal::new(var, n > 0))
     }
 }
@@ -113,7 +112,7 @@ impl TryFrom<&i32> for Literal {
 /// use tididi::vtree::{VarId, Vtree};
 ///
 /// let vtree = Arc::new(Vtree::balanced(3));
-/// let lits: Vec<Literal> = vec![Literal::pos(VarId(0)), Literal::neg(VarId(1))];
+/// let lits: Vec<Literal> = vec![Literal::pos(VarId(1)), Literal::neg(VarId(2))];
 /// let from_slice = Tdd::clause(&vtree, &lits)?;
 /// assert_eq!(from_slice.model_count()?, Tdd::clause(&vtree, [1, -2])?.model_count()?);
 /// # Ok::<(), Box<dyn std::error::Error>>(())

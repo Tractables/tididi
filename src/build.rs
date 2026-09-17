@@ -105,8 +105,8 @@ fn cube_to_tdd(
 
 /// Build a canonical diagram for one literal, leaving other variables free.
 ///
-/// Integers are signed and one-based; typed [`Literal`] values use zero-based
-/// variable identifiers. Uses the execution context attached to the vtree.
+/// Integers are signed and one-based; typed [`Literal`] values also work.
+/// Uses the execution context attached to the vtree.
 /// Use [`Engine::literal`] inside a batch with resource limits.
 ///
 /// # Errors

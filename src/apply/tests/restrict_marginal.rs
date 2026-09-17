@@ -79,7 +79,7 @@ fn restrict_true_marginal_care_multiregion_difftest() {
     union.extend(s_f.iter().cloned());
     union.extend(s_c1.iter().cloned());
     union.extend(s_c2.iter().cloned());
-    let live: Vec<u32> = (0..nvars).filter(|v| !union.contains(v)).collect();
+    let live: Vec<u32> = (1..=nvars).filter(|v| !union.contains(v)).collect();
     assert!(!live.is_empty(), "need a shared/live variable");
 
     // f constrains (s_f ∪ live), FREE over care's regions; care constrains
@@ -172,7 +172,7 @@ fn restrict_true_marginal_care_multiregion_difftest() {
             let supp = support_mask(&prod_g);
             let mut targets: Vec<VtreeIdx> = live
                 .iter()
-                .filter(|&&v| supp.get(v as usize).copied().unwrap_or(false))
+                .filter(|&&v| supp.get(VarId(v).idx()).copied().unwrap_or(false))
                 .map(|&v| vtree.leaf_of(VarId(v)).expect("the vtree carries this variable"))
                 .collect();
             targets.sort_by_key(|vi| vtree.topo_pos(*vi));
@@ -394,16 +394,16 @@ fn restrict_marginal_f_difftest() {
         // levels (unlike a contiguous subtree, where all marginal levels sit at the
         // bottom). That interleaving is what exercises a non-marginal node sitting
         // BELOW a marginal one.
-        let all_vars: Vec<u32> = (0..nvars).collect();
+        let all_vars: Vec<u32> = (1..=nvars).collect();
         let mut f = rand_conj_over(&vtree, &all_vars, 6, 3, false, &mut rng);
         if f.is_zero() {
             continue;
         }
-        let marginal_vars: Vec<u32> = (0..nvars).filter(|_| rng.coin()).collect();
+        let marginal_vars: Vec<u32> = (1..=nvars).filter(|_| rng.coin()).collect();
         if marginal_vars.is_empty() || marginal_vars.len() == nvars as usize {
             continue;
         }
-        let care_vars: Vec<u32> = (0..nvars).filter(|v| !marginal_vars.contains(v)).collect();
+        let care_vars: Vec<u32> = (1..=nvars).filter(|v| !marginal_vars.contains(v)).collect();
         if care_vars.is_empty() {
             continue;
         }

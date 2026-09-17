@@ -11,15 +11,15 @@ fn batch_projection_accumulates_charges_across_variables() {
         & Tdd::clause(&vtree, [4, 5]).unwrap() & Tdd::clause(&vtree, [-4, 6]).unwrap();
     crate::test_helpers::assert_canonical(&f);
     let eng = crate::Engine::new();
-    let first = eng.exists_var(f.clone(), VarId(0)).unwrap();
+    let first = eng.exists_var(f.clone(), VarId(1)).unwrap();
     crate::test_helpers::assert_canonical(&first);
     let first_charge = eng.limits().meters().in_flight_bytes;
-    let second = eng.exists_var(first, VarId(3)).unwrap();
+    let second = eng.exists_var(first, VarId(4)).unwrap();
     crate::test_helpers::assert_canonical(&second);
     let second_charge = eng.limits().meters().in_flight_bytes;
     let bounded = crate::Engine::new();
     let _prior = bounded.limits().install(crate::limits::LimitConfig::none().with_memory_budget_bytes(Some(first_charge.max(second_charge))));
-    assert!(matches!(bounded.exists_vars(f, &[VarId(0), VarId(3)]), Err(crate::OperationError::OverBudget)));
+    assert!(matches!(bounded.exists_vars(f, &[VarId(1), VarId(4)]), Err(crate::OperationError::OverBudget)));
     let empty_batch = bounded.exists_vars(second, &[]).unwrap();
     assert_eq!(bounded.limits().meters().in_flight_bytes, 0);
     crate::test_helpers::assert_canonical(&empty_batch);
@@ -31,7 +31,7 @@ fn exists_var_of_constant_one_is_one() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_one(eng, &vtree);
-    let result = (tdd).clone().exists_var(VarId(0)).unwrap();
+    let result = (tdd).clone().exists_var(VarId(1)).unwrap();
     assert!(!result.is_zero());
     assert_eq!(result.model_count().unwrap(), BigUint::from(8u32));
 }
@@ -41,7 +41,7 @@ fn exists_var_of_constant_zero_is_zero() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_zero(eng, &vtree);
-    let result = (tdd).clone().exists_var(VarId(0)).unwrap();
+    let result = (tdd).clone().exists_var(VarId(1)).unwrap();
     assert!(result.is_zero());
 }
 
@@ -49,10 +49,10 @@ fn exists_var_of_constant_zero_is_zero() {
 fn exists_var_of_literal_is_one() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(1));
-    let tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
+    let tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
     assert_eq!(tdd.model_count().unwrap(), BigUint::from(1u32));
 
-    let result = (tdd).clone().exists_var(VarId(0)).unwrap();
+    let result = (tdd).clone().exists_var(VarId(1)).unwrap();
     assert!(!result.is_zero());
     assert_eq!(result.model_count().unwrap(), BigUint::from(2u32));
 }
@@ -61,13 +61,13 @@ fn exists_var_of_literal_is_one() {
 fn exists_var_of_x_and_y_drops_x() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(2));
-    let tdd_x = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let tdd_y = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let tdd_x = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let tdd_y = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
 
     let tdd_xy = apply_and(tdd_x, tdd_y);
     assert_eq!(tdd_xy.model_count().unwrap(), BigUint::from(1u32));
 
-    let result = (tdd_xy).clone().exists_var(VarId(0)).unwrap();
+    let result = (tdd_xy).clone().exists_var(VarId(1)).unwrap();
     assert!(!result.is_zero());
     assert_eq!(result.model_count().unwrap(), BigUint::from(2u32));
 }
@@ -78,8 +78,8 @@ fn exists_var_soundness_brute_force() {
     // F = (x ∨ y) ∧ (¬y ∨ z), vars 0=x 1=y 2=z. Project out y.
     let vtree = Arc::new(Vtree::balanced(3));
 
-    let tdd1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)]));
-    let tdd2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, false), (2, true)]));
+    let tdd1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
+    let tdd2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, false), (3, true)]));
 
     let tdd_f = apply_and(tdd1, tdd2);
 
@@ -98,7 +98,7 @@ fn exists_var_soundness_brute_force() {
         seen.len() as u64
     };
 
-    let result = (tdd_f).clone().exists_var(VarId(1)).unwrap();
+    let result = (tdd_f).clone().exists_var(VarId(2)).unwrap();
 
     // The projected diagram still lives in the 3-var vtree. y's leaf becomes
     // "all One", so model_count counts over all 3 bits — each surviving
@@ -158,8 +158,8 @@ fn apply_and_zero_width_marginal_levels() {
 
     let vtree = Arc::new(Vtree::balanced(8));
     // Baseline: var4 ∧ var5 over 8 vars = 2^6 models.
-    let b1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(4, true)]));
-    let b2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(5, true)]));
+    let b1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(5, true)]));
+    let b2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(6, true)]));
     let baseline = (apply_and(b1, b2)).model_count().unwrap();
     assert_eq!(baseline, BigUint::from(64u32));
 
@@ -176,13 +176,13 @@ fn apply_and_zero_width_marginal_levels() {
             })
             .expect("balanced(8) must have this Internal(leaf,leaf) node")
     };
-    let a = leaf_parent(0, 1);
-    let b = leaf_parent(2, 3);
+    let a = leaf_parent(1, 2);
+    let b = leaf_parent(3, 4);
     let c = vtree.node(a).parent().expect("A has a parent");
     assert_eq!(vtree.node(b).parent(), Some(c), "C must be Internal(A,B)");
 
-    let mut f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(4, true)]));
-    let mut g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(5, true)]));
+    let mut f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(5, true)]));
+    let mut g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(6, true)]));
     for t in [&mut f, &mut g] {
         t.levels[a.idx()].become_marginal(vec![], None); // 0-width orphan
         t.levels[b.idx()].become_marginal(vec![4], None);
@@ -234,15 +234,15 @@ fn apply_and_rejects_marginalize_schedule_violation() {
     };
     let ra = VtreeIdx(7);
     let f_raw = build(&[
-        &[(0, false), (3, false), (5, true)],
-        &[(0, true), (3, true)],
-        &[(1, true), (4, false)],
+        &[(1, false), (4, false), (6, true)],
+        &[(1, true), (4, true)],
+        &[(2, true), (5, false)],
     ]);
     let partner = build(&[
-        &[(1, true), (5, true)],
-        &[(0, true), (5, false)],
-        &[(0, true), (2, true), (3, false)],
-        &[(3, false)],
+        &[(2, true), (6, true)],
+        &[(1, true), (6, false)],
+        &[(1, true), (3, true), (4, false)],
+        &[(4, false)],
     ]);
 
     let mut fm = f_raw.clone();
@@ -273,7 +273,7 @@ fn apply_and_rejects_marginalize_schedule_violation() {
     }
     marginal_vars.sort_unstable();
     let partner_support: std::collections::BTreeSet<u32> =
-        [0u32, 1, 2, 3, 5].into_iter().collect();
+        [1u32, 2, 3, 4, 6].into_iter().collect();
     let overlap: Vec<u32> = marginal_vars
         .iter()
         .copied()
@@ -308,7 +308,7 @@ fn scoped_constant_one_is_one() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_one(eng, &vtree);
-    let r = (tdd).clone().exists_var_with_strategy(VarId(0), QuantificationStrategy::Structural).unwrap();
+    let r = (tdd).clone().exists_var_with_strategy(VarId(1), QuantificationStrategy::Structural).unwrap();
     assert!(!r.is_zero());
     assert_eq!(r.model_count().unwrap(), BigUint::from(8u32));
 }
@@ -318,7 +318,7 @@ fn scoped_constant_zero_is_zero() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let tdd = constant_zero(eng, &vtree);
-    let r = (tdd).clone().exists_var_with_strategy(VarId(0), QuantificationStrategy::Structural).unwrap();
+    let r = (tdd).clone().exists_var_with_strategy(VarId(1), QuantificationStrategy::Structural).unwrap();
     assert!(r.is_zero());
 }
 
@@ -326,8 +326,8 @@ fn scoped_constant_zero_is_zero() {
 fn scoped_single_literal_is_one() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(1));
-    let tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let r = (tdd).clone().exists_var_with_strategy(VarId(0), QuantificationStrategy::Structural).unwrap();
+    let tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let r = (tdd).clone().exists_var_with_strategy(VarId(1), QuantificationStrategy::Structural).unwrap();
     assert!(!r.is_zero());
     assert_eq!(r.model_count().unwrap(), BigUint::from(2u32));
 }
@@ -336,10 +336,10 @@ fn scoped_single_literal_is_one() {
 fn scoped_x_and_y_drops_x() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(2));
-    let tx = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true)]));
-    let ty = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let tx = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let ty = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
     let txy = apply_and(tx, ty);
-    let r = (txy).clone().exists_var_with_strategy(VarId(0), QuantificationStrategy::Structural).unwrap();
+    let r = (txy).clone().exists_var_with_strategy(VarId(1), QuantificationStrategy::Structural).unwrap();
     assert_eq!(r.model_count().unwrap(), BigUint::from(2u32));
 }
 
@@ -360,13 +360,13 @@ fn scoped_marginal_sibling_succeeds() {
     use crate::vtree::{VtreeIdx, VtreeNode};
 
     let vtree = Arc::new(Vtree::balanced(4));
-    let t1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, true)])); // a∨b
-    let t2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, true)])); // x∨w
+    let t1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)])); // a∨b
+    let t2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(3, true), (4, true)])); // x∨w
     let f = apply_and(t1, t2);
     assert_eq!(f.model_count().unwrap(), BigUint::from(9u32));
 
     // Reference: project x on the non-marginal diagram.
-    let ref_count = ((f).clone().exists_var(VarId(2)).unwrap()).model_count().unwrap();
+    let ref_count = ((f).clone().exists_var(VarId(3)).unwrap()).model_count().unwrap();
 
     // Find Internal(a,b) — the root's left child, disjoint from x's path.
     let ab = (0..vtree.num_nodes() as u32)
@@ -374,8 +374,8 @@ fn scoped_marginal_sibling_succeeds() {
         .find(|&i| {
             !vtree.node(i).is_leaf() && {
                 let (l, r) = vtree.children(i);
-                matches!(*vtree.node(l), VtreeNode::Leaf { var, .. } if var == VarId(0))
-                    && matches!(*vtree.node(r), VtreeNode::Leaf { var, .. } if var == VarId(1))
+                matches!(*vtree.node(l), VtreeNode::Leaf { var, .. } if var == VarId(1))
+                    && matches!(*vtree.node(r), VtreeNode::Leaf { var, .. } if var == VarId(2))
             }
         })
         .expect("balanced(4) has Internal(a,b)");
@@ -392,7 +392,7 @@ fn scoped_marginal_sibling_succeeds() {
     assert_eq!(fm.model_count().unwrap(), BigUint::from(9u32));
 
     // Must not panic crossing the marginal sibling, and must match the count.
-    let g = (fm).clone().exists_var_with_strategy(VarId(2), QuantificationStrategy::Structural).unwrap();
+    let g = (fm).clone().exists_var_with_strategy(VarId(3), QuantificationStrategy::Structural).unwrap();
     assert_eq!(
         g.model_count().unwrap(),
         ref_count,
@@ -417,12 +417,12 @@ fn scoped_marginal_sibling_succeeds() {
 fn scoped_path_side_one_ref_at_root() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let t1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(0, true), (3, true)])); // v0∨v3
-    let t2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true), (3, true)])); // v2∨v3
+    let t1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (4, true)])); // v0∨v3
+    let t2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(3, true), (4, true)])); // v2∨v3
     let f = apply_and(t1, t2);
 
-    let g_scoped = (f).clone().exists_var_with_strategy(VarId(0), QuantificationStrategy::Structural).unwrap();
-    let g_ref = (f).clone().exists_var(VarId(0)).unwrap();
+    let g_scoped = (f).clone().exists_var_with_strategy(VarId(1), QuantificationStrategy::Structural).unwrap();
+    let g_ref = (f).clone().exists_var(VarId(1)).unwrap();
     assert_eq!(
         g_scoped.model_count().unwrap(),
         g_ref.model_count().unwrap(),
@@ -433,7 +433,7 @@ fn scoped_path_side_one_ref_at_root() {
 
     // PMC onto show={v1,v2,v3}: project v0, >>1, vs brute force.
     let clauses = vec![vec![1, 4], vec![3, 4]]; // DIMACS 1-indexed: (v0∨v3)∧(v2∨v3)
-    let pmc = ((f).clone().exists_vars_with_strategy(&[VarId(0)], QuantificationStrategy::Structural).unwrap()).model_count().unwrap() >> 1usize;
+    let pmc = ((f).clone().exists_vars_with_strategy(&[VarId(1)], QuantificationStrategy::Structural).unwrap()).model_count().unwrap() >> 1usize;
     assert_eq!(pmc, brute_force_pmc(&clauses, 4, &[1, 2, 3]));
 }
 
@@ -461,7 +461,7 @@ fn projecting_a_weighted_diagram_keeps_its_weight_store() {
     // structural one that clones the whole diagram.
     assert!(tdd.levels.iter().all(|l| !l.is_marginal()));
 
-    let projected = (tdd).clone().exists_var(VarId(0)).unwrap();
+    let projected = (tdd).clone().exists_var(VarId(1)).unwrap();
     assert!(
         projected.weights().is_some(),
         "the projection dropped the weight store",
@@ -480,8 +480,8 @@ fn a_projection_refuses_a_cofactor_copy_it_cannot_afford() {
 
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::balanced(8));
-    let mut f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(0, true), (1, false)]));
-    for v in 1..7u32 {
+    let mut f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, false)]));
+    for v in 2..8u32 {
         let c = clause_to_tdd(
             &eng,
             &vtree,
@@ -490,7 +490,7 @@ fn a_projection_refuses_a_cofactor_copy_it_cannot_afford() {
         f = apply_and(f, c);
     }
     assert!(!f.is_zero());
-    let expected = ((f).clone().exists_var(VarId(0)).unwrap()).model_count().unwrap();
+    let expected = ((f).clone().exists_var(VarId(1)).unwrap()).model_count().unwrap();
 
     let one_copy = std::mem::size_of_val(f.levels()) as u64;
     let budget = 64u64;
@@ -499,7 +499,7 @@ fn a_projection_refuses_a_cofactor_copy_it_cannot_afford() {
     eng.limits().reset_meters();
     let refused = {
         let _armed = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(budget)));
-        eng.exists_var(f.clone(), VarId(0))
+        eng.exists_var(f.clone(), VarId(1))
     };
     assert!(
         matches!(refused, Err(OperationError::OverBudget)),
@@ -514,7 +514,7 @@ fn a_projection_refuses_a_cofactor_copy_it_cannot_afford() {
     );
 
     let out = eng
-        .exists_var(f, VarId(0))
+        .exists_var(f, VarId(1))
         .expect("the engine takes the next projection after a refusal");
     assert_eq!(out.model_count().unwrap(), expected);
 }
@@ -528,12 +528,12 @@ fn projecting_a_variable_outside_the_vtree_is_an_error() {
     let vtree = Arc::new(Vtree::balanced(3));
     let f = Tdd::clause(&vtree, [1, -2]).unwrap();
     assert!(matches!(
-        eng.exists_var(f.clone(), VarId(7)),
-        Err(OperationError::VariableNotInVtree(VarId(7))),
+        eng.exists_var(f.clone(), VarId(8)),
+        Err(OperationError::VariableNotInVtree(VarId(8))),
     ));
     assert!(matches!(
-        eng.exists_vars(f, &[VarId(0), VarId(7)]),
-        Err(OperationError::VariableNotInVtree(VarId(7))),
+        eng.exists_vars(f, &[VarId(1), VarId(8)]),
+        Err(OperationError::VariableNotInVtree(VarId(8))),
     ));
 }
 
@@ -546,12 +546,12 @@ fn projecting_a_variable_outside_the_vtree_is_an_error_on_every_route() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     assert!(matches!(
-        eng.exists_var_with_strategy(Tdd::clause(&vtree, [1, -2]).unwrap(), VarId(3), QuantificationStrategy::Structural),
-        Err(OperationError::VariableNotInVtree(VarId(3))),
+        eng.exists_var_with_strategy(Tdd::clause(&vtree, [1, -2]).unwrap(), VarId(4), QuantificationStrategy::Structural),
+        Err(OperationError::VariableNotInVtree(VarId(4))),
     ));
     assert!(matches!(
-        eng.exists_var(Tdd::zero(&vtree), VarId(3)),
-        Err(OperationError::VariableNotInVtree(VarId(3))),
+        eng.exists_var(Tdd::zero(&vtree), VarId(4)),
+        Err(OperationError::VariableNotInVtree(VarId(4))),
     ));
 }
 
@@ -563,7 +563,7 @@ fn a_structural_projection_is_refused_by_the_engines_budget() {
     let eng = Engine::new();
     let f = Tdd::clause(&vtree, [1, -2]).unwrap() & Tdd::clause(&vtree, [2, 3]).unwrap() & Tdd::clause(&vtree, [-3, 4]).unwrap();
     let _armed = eng.limits().scope(crate::limits::LimitConfig::none().with_memory_budget_bytes(Some(0)));
-    assert_eq!(eng.exists_var_with_strategy(f, VarId(1), QuantificationStrategy::Structural).err(), Some(crate::OperationError::OverBudget));
+    assert_eq!(eng.exists_var_with_strategy(f, VarId(2), QuantificationStrategy::Structural).err(), Some(crate::OperationError::OverBudget));
 }
 
 #[test]
@@ -574,20 +574,20 @@ fn bulk_quantification_validates_late_variables_before_rewriting() {
     let tree = Arc::new(Vtree::balanced(3));
     let f = eng.clause(&tree, [1, 2, 3]).unwrap();
     crate::test_helpers::assert_canonical(&f);
-    let vars = [VarId(0), VarId(99)];
+    let vars = [VarId(1), VarId(100)];
     let _scope = eng.limits().scope(LimitConfig::none().with_output_node_cap(Some(0)));
-    assert_eq!(eng.exists_vars(f.clone(), &vars).unwrap_err(), OperationError::VariableNotInVtree(VarId(99)));
-    assert_eq!(eng.and_exists(f.clone(), f.clone(), &vars).unwrap_err(), OperationError::VariableNotInVtree(VarId(99)));
+    assert_eq!(eng.exists_vars(f.clone(), &vars).unwrap_err(), OperationError::VariableNotInVtree(VarId(100)));
+    assert_eq!(eng.and_exists(f.clone(), f.clone(), &vars).unwrap_err(), OperationError::VariableNotInVtree(VarId(100)));
     for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
-        assert_eq!(eng.exists_vars_with_strategy(f.clone(), &vars, how).unwrap_err(), OperationError::VariableNotInVtree(VarId(99)));
-        assert_eq!(eng.and_exists_with_strategy(f.clone(), f.clone(), &vars, how).unwrap_err(), OperationError::VariableNotInVtree(VarId(99)));
+        assert_eq!(eng.exists_vars_with_strategy(f.clone(), &vars, how).unwrap_err(), OperationError::VariableNotInVtree(VarId(100)));
+        assert_eq!(eng.and_exists_with_strategy(f.clone(), f.clone(), &vars, how).unwrap_err(), OperationError::VariableNotInVtree(VarId(100)));
     }
 }
 
 #[test]
 fn bulk_quantification_preserves_first_occurrence_order_and_skips_repeated_rewrites() {
     use crate::Engine;
-    let vars = [VarId(19), VarId(2), VarId(8)];
+    let vars = [VarId(20), VarId(3), VarId(9)];
     let tree = Arc::new(Vtree::balanced_over(&vars).unwrap());
     let f = Engine::new().clause(&tree, vars.map(crate::Literal::pos)).unwrap();
     crate::test_helpers::assert_canonical(&f);

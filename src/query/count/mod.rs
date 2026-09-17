@@ -33,10 +33,10 @@ use crate::vtree::{VarId, VtreeNode};
 /// # tididi::test_helpers::assert_canonical(&f);
 /// for (semantics, expected) in [(PinSemantics::Evidence, 1u32), (PinSemantics::Cofactor, 2)] {
 ///     let mut counter = f.counter_with::<KeepAllColumns>(semantics)?;
-///     counter.set_pin(VarId(0), Some(true))?;
+///     counter.set_pin(VarId(1), Some(true))?;
 ///     assert_eq!(counter.model_count()?, expected.into());
 /// }
-/// let cofactor = f.condition_var(VarId(0), true)?;
+/// let cofactor = f.condition_var(VarId(1), true)?;
 /// # tididi::test_helpers::assert_canonical(&cofactor);
 /// assert_eq!(cofactor.model_count()?, 2u32.into());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -124,8 +124,8 @@ impl Tdd {
     /// # tididi::test_helpers::assert_canonical(&f);
     /// assert_eq!(f.model_count()?, 6u32.into());
     /// // Either value of x1 can be extended to a satisfying assignment.
-    /// assert_eq!(f.projected_model_count(&[VarId(0)])?, 2u32.into());
-    /// assert_eq!(f.projected_model_count(&[VarId(0), VarId(1)])?, 3u32.into());
+    /// assert_eq!(f.projected_model_count(&[VarId(1)])?, 2u32.into());
+    /// assert_eq!(f.projected_model_count(&[VarId(1), VarId(2)])?, 3u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn projected_model_count(&self, vars: &[VarId]) -> Result<BigUint, OperationError> {

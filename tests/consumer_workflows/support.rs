@@ -13,7 +13,7 @@ pub(super) fn trees(n: u32) -> [Arc<Vtree>; 3] {
         Arc::new(Vtree::balanced(n)),
         Arc::new(Vtree::linear(n)),
         Arc::new(Vtree::linear_from_order(
-            &(0..n).rev().map(VarId).collect::<Vec<_>>(),
+            &(1..=n).rev().map(VarId).collect::<Vec<_>>(),
         ).unwrap()),
     ]
 }
@@ -124,7 +124,7 @@ pub(super) fn assert_truth(engine: &Engine, diagram: &Tdd, expected: &[bool], co
                     "{context}, witness variable"
                 );
                 if literal.positive {
-                    row |= 1 << var.0;
+                    row |= 1 << var.idx();
                 }
             }
             assert!(expected[row], "{context}, invalid witness {row}");

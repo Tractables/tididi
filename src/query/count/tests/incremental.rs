@@ -13,13 +13,13 @@ fn interrupted_ancestor_growth_leaves_room_for_further_pin_updates() {
     for reserve in 0..16 {
         let mut counter = diagram.counter().unwrap();
         assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32) << 16);
-        counter.set_pin(VarId(0), Some(false)).unwrap();
+        counter.set_pin(VarId(1), Some(false)).unwrap();
         engine.limits().refuse_nth_reserve(reserve);
         let result = counter.bind(&engine).model_count();
         engine.limits().grant_every_reserve();
         let capacity = counter.changed.capacity();
         counter.clear_pins();
-        let pins: Vec<_> = (0..16).map(|v| (VarId(v), Some(v % 2 == 0))).collect();
+        let pins: Vec<_> = (1..=16).map(|v| (VarId(v), Some(v % 2 == 0))).collect();
         counter.set_pins(&pins).unwrap();
         assert_eq!(counter.changed.capacity(), capacity, "pin updates must reuse reserved storage");
         assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32));
@@ -47,7 +47,7 @@ fn panicking_refresh_keeps_dirty_membership_reusable() {
     for cut in 0..128 {
         let mut counter = diagram.counter().unwrap();
         assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32) << 16);
-        counter.set_pin(VarId(0), Some(false)).unwrap();
+        counter.set_pin(VarId(1), Some(false)).unwrap();
         let calls = AtomicUsize::new(0);
         let result = {
             let _limits = engine.limits().scope(LimitConfig::none().with_stop_callback(Some(
@@ -59,11 +59,11 @@ fn panicking_refresh_keeps_dirty_membership_reusable() {
         };
         let capacity = counter.changed.capacity();
         counter.clear_pins();
-        let pins: Vec<_> = (0..16).map(|v| (VarId(v), Some(false))).collect();
+        let pins: Vec<_> = (1..=16).map(|v| (VarId(v), Some(false))).collect();
         counter.set_pins(&pins).unwrap();
         assert_eq!(counter.changed.capacity(), capacity);
         assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32));
-        counter.set_pin(VarId(0), None).unwrap();
+        counter.set_pin(VarId(1), None).unwrap();
         assert_eq!(counter.model_count().unwrap(), BigUint::from(2u32));
         counter.clear_pins();
         assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32) << 16);
@@ -81,7 +81,7 @@ fn frontier_evidence_invalidates_without_retaining_a_dirty_worklist() {
     let mut counter = diagram.counter_with::<KeepFrontier>(PinSemantics::Evidence).unwrap();
     assert_eq!(counter.changed.capacity(), 0);
     assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32) << 16);
-    let pins: Vec<_> = (0..16).map(|v| (VarId(v), Some(false))).collect();
+    let pins: Vec<_> = (1..=16).map(|v| (VarId(v), Some(false))).collect();
     counter.set_pins(&pins).unwrap();
     assert!(!counter.evaluated);
     assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32));

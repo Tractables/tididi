@@ -12,13 +12,13 @@ use crate::Engine;
 use super::r#gen::Lcg;
 use crate::vtree::{VarId, Vtree, VtreeNode};
 
-/// DIMACS-style literals (`±(var+1)`) to `Literal`s.
+/// DIMACS-style literals (`±var`) to `Literal`s.
 pub fn literals(clause: &[i32]) -> Vec<Literal> {
-    clause.iter().map(|&l| Literal::new(VarId(l.unsigned_abs() - 1), l > 0)).collect()
+    clause.iter().map(|&l| Literal::new(VarId(l.unsigned_abs()), l > 0)).collect()
 }
 
-/// `(var, polarity)` pairs to `Literal`s, for tests that name variables by
-/// their 0-based index rather than in DIMACS.
+/// `(var, polarity)` pairs to `Literal`s, for tests that carry the polarity
+/// separately.
 pub fn clause(literals: &[(u32, bool)]) -> Vec<Literal> {
     literals.iter().map(|&(v, positive)| Literal::new(VarId(v), positive)).collect()
 }
@@ -132,7 +132,7 @@ pub fn rand_conj(
     span: bool,
     rng: &mut Lcg,
 ) -> Tdd {
-    let vars: Vec<u32> = (0..nvars).collect();
+    let vars: Vec<u32> = (1..=nvars).collect();
     rand_conj_over(vtree, &vars, nclauses_max, width_max, span, rng)
 }
 

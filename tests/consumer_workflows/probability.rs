@@ -52,7 +52,7 @@ fn changing_weights_and_evidence_match_exact_assignment_sums() {
                         .and(
                             evidence,
                             engine
-                                .literal(tree, Literal::new(VarId(var as u32), value))
+                                .literal(tree, Literal::new(VarId(var as u32 + 1), value))
                                 .unwrap(),
                         )
                         .unwrap();
@@ -141,7 +141,7 @@ fn pin_sequence<R: Retention>(engine: &Engine, diagram: &Tdd, convention: PinSem
     ] {
         if let Some((var, value)) = change {
             pins[var] = value;
-            counter.set_pin(VarId(var as u32), value).unwrap();
+            counter.set_pin(VarId(var as u32 + 1), value).unwrap();
         }
         let evidence_count = (0..16)
             .filter(|&row| {
@@ -173,7 +173,7 @@ fn pin_sequence<R: Retention>(engine: &Engine, diagram: &Tdd, convention: PinSem
 fn incremental_observations_match_enumeration_after_changes_and_resets() {
     let engine = Engine::new();
     for tree in trees(4) {
-        let diagram = compile(&engine, &tree, &[VarId(0), VarId(1), VarId(2)], theory);
+        let diagram = compile(&engine, &tree, &[VarId(1), VarId(2), VarId(3)], theory);
         for convention in [PinSemantics::Evidence, PinSemantics::Cofactor] {
             pin_sequence::<KeepAllColumns>(&engine, &diagram, convention);
             pin_sequence::<KeepFrontier>(&engine, &diagram, convention);

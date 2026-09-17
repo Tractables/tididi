@@ -94,14 +94,14 @@ let transition = or(a_to_b, or(b_to_c, c_to_b)?)?;
 
 Initially only A has been reached: `R₀(x) = A(x)`. We also name the current
 variables and the mapping from next to current indicators for the search.
-Unlike integer literals, `VarId` uses zero-based indices.
+A `VarId` carries the same number as the integer literal, without a sign.
 
 ```rust,ignore,{class=tested-example}
 let mut reached = at_a.clone();
-let current = [VarId(0), VarId(1), VarId(2), VarId(3)];
+let current = [VarId(1), VarId(2), VarId(3), VarId(4)];
 let next_to_current = [
-    (VarId(4), VarId(0)), (VarId(5), VarId(1)),
-    (VarId(6), VarId(2)), (VarId(7), VarId(3)),
+    (VarId(5), VarId(1)), (VarId(6), VarId(2)),
+    (VarId(7), VarId(3)), (VarId(8), VarId(4)),
 ];
 let mut iterations = 0;
 ```

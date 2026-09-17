@@ -140,7 +140,7 @@ impl Tdd {
     /// use tididi::{Tdd, Vtree};
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
-    /// let g = f.condition_var(tididi::vtree::VarId(0), false)?;
+    /// let g = f.condition_var(tididi::vtree::VarId(1), false)?;
     /// assert_eq!(g.model_count()?, 4u32.into()); // x2, with x1 and x3 free
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -172,7 +172,7 @@ impl Tdd {
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// use tididi::vtree::VarId;
     /// let f = Tdd::clause(&vtree, [1, 2, 3])?;
-    /// let g = f.condition_vars(&[VarId(0), VarId(1)], false)?;
+    /// let g = f.condition_vars(&[VarId(1), VarId(2)], false)?;
     /// assert_eq!(g.model_count()?, 4u32.into()); // x3, with x1 and x2 free
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -201,7 +201,7 @@ impl Tdd {
     /// use tididi::{Tdd, Vtree};
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// let f = Tdd::cube(&vtree, [1, 2])?;
-    /// let g = f.exists_var(tididi::vtree::VarId(1))?;
+    /// let g = f.exists_var(tididi::vtree::VarId(2))?;
     /// assert_eq!(g.model_count()?, 4u32.into()); // x1, with x2 and x3 free
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -244,7 +244,7 @@ impl Tdd {
     /// let vtree = Arc::new(Vtree::balanced(2));
     /// use tididi::vtree::VarId;
     /// let f = Tdd::clause(&vtree, [1, 2])?;
-    /// let projected = f.exists_vars(&[VarId(0)])?;
+    /// let projected = f.exists_vars(&[VarId(1)])?;
     /// assert!(projected.equivalent(&Tdd::one(&vtree))?);
     /// let remaining_count = projected.model_count()? >> 1usize;
     /// assert_eq!(remaining_count, 2u32.into());
@@ -281,7 +281,7 @@ impl Tdd {
 
     /// Rename variable occurrences simultaneously within the existing vtree.
     ///
-    /// Each `(source, target)` uses zero-based [`VarId`]s. Omitted sources keep their
+    /// Each `(source, target)` names a pair of [`VarId`]s. Omitted sources keep their
     /// meaning. Swaps and cycles happen simultaneously; distinct sources may share
     /// a target, but each source may appear only once. Every source and target must
     /// occur in the vtree.
@@ -306,7 +306,7 @@ impl Tdd {
     /// let vtree = Arc::new(Vtree::balanced(2));
     /// use tididi::vtree::VarId;
     /// let f = Tdd::cube(&vtree, [1, -2])?;
-    /// let swapped = f.rename_vars(&[(VarId(0), VarId(1)), (VarId(1), VarId(0))])?;
+    /// let swapped = f.rename_vars(&[(VarId(1), VarId(2)), (VarId(2), VarId(1))])?;
     /// assert!(swapped.equivalent(&Tdd::cube(&vtree, [-1, 2])?)?);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -340,7 +340,7 @@ impl Tdd {
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// let f = Tdd::cube(&vtree, [1, -2])?;
     /// let replacement = Tdd::clause(&vtree, [2, 3])?;
-    /// let g = f.substitute(&[(tididi::vtree::VarId(0), &replacement)])?;
+    /// let g = f.substitute(&[(tididi::vtree::VarId(1), &replacement)])?;
     /// assert!(g.equivalent(&Tdd::cube(&vtree, [-2, 3])?)?);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -459,7 +459,7 @@ impl Tdd {
     /// use tididi::{Tdd, Vtree};
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
-    /// assert_eq!(f.support()?, vec![tididi::vtree::VarId(0), tididi::vtree::VarId(1)]);
+    /// assert_eq!(f.support()?, vec![tididi::vtree::VarId(1), tididi::vtree::VarId(2)]);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn support(&self) -> Result<Vec<VarId>, OperationError> {

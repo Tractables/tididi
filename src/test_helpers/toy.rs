@@ -101,7 +101,7 @@ pub fn toy_weighted(
     if ws.algebra().num_vars() < 3 {
         let weights: Vec<_> = (0..3).map(|i| {
             if i < ws.algebra().num_vars() {
-                let var = crate::vtree::VarId(i as u32);
+                let var = crate::vtree::VarId(i as u32 + 1);
                 crate::diagram::LiteralWeights { negative: ws.algebra().neg_weight(var).clone(), positive: ws.algebra().pos_weight(var).clone() }
             } else { crate::diagram::LiteralWeights { negative: super::rat(1, 1), positive: super::rat(1, 1) } }
         }).collect();

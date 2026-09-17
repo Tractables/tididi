@@ -351,7 +351,7 @@ pub fn support_mask(t: &Tdd) -> Vec<bool> {
     }
     let vtree = Arc::clone(&mt.vtree);
     for (x, sup_x) in sup.iter_mut().enumerate() {
-        let leaf = vtree.leaf_of(VarId(x as u32)).expect("the vtree carries this variable");
+        let leaf = vtree.leaf_of(VarId(x as u32 + 1)).expect("the vtree carries this variable");
         // Output sits at the leaf itself: depends on x iff the label is Pos/Neg.
         if mt.output.vtree == leaf {
             *sup_x = mt.output.local == POS_LEAF_IDX || mt.output.local == NEG_LEAF_IDX;
@@ -591,8 +591,8 @@ pub fn assert_restrict_ok(f: &Tdd, c: &Tdd, nvars: u32) {
 /// Brute-force projected model count: how many distinct projections onto
 /// `show` the satisfying assignments of `clauses` have.
 ///
-/// `clauses` are DIMACS-style over `n` variables and `show` lists them
-/// 0-based. Every one of the `2^n` assignments is enumerated and each
+/// `clauses` are DIMACS-style over `n` variables and `show` lists them as
+/// zero-based bit positions. Every one of the `2^n` assignments is enumerated and each
 /// satisfying one contributes its restriction to `show`; the answer is the
 /// number of distinct restrictions. Distinct from [`brute_force_count`],
 /// which counts satisfying assignments themselves.

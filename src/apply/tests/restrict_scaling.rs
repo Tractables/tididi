@@ -25,7 +25,7 @@ fn restrict_scaling_wide_node() {
         // f = AND_i (x_i <-> x_{k+i}); each equivalence is two clauses.
         let mut f: Option<Tdd> = None;
         for i in 0..k {
-            let (a, b) = (i, k + i);
+            let (a, b) = (i + 1, k + i + 1);
             let e1 = clause_to_tdd(&eng, &vtree, &clause(&[(a, true), (b, false)]));
             let e2 = clause_to_tdd(&eng, &vtree, &clause(&[(a, false), (b, true)]));
             let eq = and2(&e1, &e2);
@@ -36,7 +36,7 @@ fn restrict_scaling_wide_node() {
         }
         let f = f.unwrap();
         // care = one clause spanning both halves (roots at the root node).
-        let c = clause_to_tdd(&eng, &vtree, &clause(&[(0, true), (k, true)]));
+        let c = clause_to_tdd(&eng, &vtree, &clause(&[(1, true), (k, true)]));
         let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
         // Soundness is exhaustively covered by `restrict_heavy_correctness`; the
         // equivalence check here conjoins at full root width, so it is affordable
@@ -73,7 +73,7 @@ fn restrict_scaling_real_dnf() {
     let mut mk_cube = |w: usize, rng: &mut Lcg| -> Tdd {
         let mut literals: Vec<(u32, bool)> = Vec::new();
         while literals.len() < w {
-            let v = rng.below(u64::from(n)) as u32;
+            let v = rng.below(u64::from(n)) as u32 + 1;
             if literals.iter().any(|(u, _)| *u == v) {
                 continue;
             }
@@ -121,10 +121,10 @@ fn restrict_effectiveness_conj_grows() {
     // `[lo, hi)` plus the `anchor` extreme literal, so the function roots at the
     // vtree root — restriction's same-root precondition, without which it no-ops.
     let mk = |lo: u32, hi: u32, w: usize, anchor: u32, rng: &mut Lcg| -> Tdd {
-        let mut literals: Vec<(u32, bool)> = vec![(anchor, true)];
+        let mut literals: Vec<(u32, bool)> = vec![(anchor + 1, true)];
         while literals.len() < w + 1 {
-            let v = lo + rng.below(u64::from(hi - lo)) as u32;
-            if v == anchor || literals.iter().any(|(u, _)| *u == v) {
+            let v = lo + rng.below(u64::from(hi - lo)) as u32 + 1;
+            if v == anchor + 1 || literals.iter().any(|(u, _)| *u == v) {
                 continue;
             }
             literals.push((v, rng.coin()));
@@ -234,10 +234,10 @@ fn restrict_vs_conjunction_overview() {
                 let c = match care {
                     Care::Cube => {
                         // A cube over about half the variables, spanning the extremes.
-                        let mut literals: Vec<(u32, bool)> = vec![(0, true), (nvars - 1, false)];
+                        let mut literals: Vec<(u32, bool)> = vec![(1, true), (nvars, false)];
                         let half = (nvars / 2).max(2);
                         for k in 1..half {
-                            literals.push((k, rng.coin()));
+                            literals.push((k + 1, rng.coin()));
                         }
                         literals.sort_by_key(|&(v, _)| v);
                         literals.dedup_by_key(|&mut (v, _)| v);
@@ -246,7 +246,7 @@ fn restrict_vs_conjunction_overview() {
                     Care::Clause => clause_to_tdd(
                         &eng,
                         &vtree,
-                        &clause(&[(0, true), (nvars / 2, false), (nvars - 1, true)]),
+                        &clause(&[(1, true), (nvars / 2, false), (nvars - 1, true)]),
                     ),
                     Care::Random => {
                         rand_conj(&vtree, nvars, 4, (nvars / 2).max(2) as u64, true, &mut rng)

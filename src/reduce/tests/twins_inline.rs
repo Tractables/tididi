@@ -306,8 +306,8 @@ fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
 
     let eng = Engine::new();
 
-    let x = Vtree::leaf(VarId(0));
-    let yz = Vtree::balanced_over(&[VarId(1), VarId(2)]).unwrap();
+    let x = Vtree::leaf(VarId(1));
+    let yz = Vtree::balanced_over(&[VarId(2), VarId(3)]).unwrap();
     let vtree = Arc::new(Vtree::join(&x, &yz).expect("disjoint variable sets"));
     let root_idx = vtree.root();
     let (v_leaf_x, v_marginal) = vtree.children(root_idx);

@@ -18,8 +18,8 @@ fn default_counter_matches_evidence_after_pin_changes_and_failed_updates() {
     for (var, pin) in [(0, None), (0, Some(true)), (1, Some(true)), (0, Some(false)),
         (1, None), (2, Some(false)), (0, None), (2, None)] {
         pins[var] = pin;
-        counter.set_pin(VarId(var as u32), pin).unwrap();
-        explicit.set_pin(VarId(var as u32), pin).unwrap();
+        counter.set_pin(VarId(var as u32 + 1), pin).unwrap();
+        explicit.set_pin(VarId(var as u32 + 1), pin).unwrap();
         let expected = (0u32..8).filter(|bits| {
             let assignment: [bool; 3] = std::array::from_fn(|i| bits & (1 << i) != 0);
             (assignment[0] || !assignment[1]) && pins.iter().zip(assignment)
@@ -27,7 +27,7 @@ fn default_counter_matches_evidence_after_pin_changes_and_failed_updates() {
         }).count();
         assert_eq!(counter.model_count().unwrap(), expected.into());
         assert_eq!(explicit.model_count().unwrap(), expected.into());
-        assert_eq!(counter.set_pin(VarId(7), None), Err(OperationError::VariableNotInVtree(VarId(7))));
+        assert_eq!(counter.set_pin(VarId(8), None), Err(OperationError::VariableNotInVtree(VarId(8))));
         assert_eq!(counter.model_count().unwrap(), expected.into());
     }
 }
@@ -51,7 +51,7 @@ fn batch_counter_observes_limits_on_construction_and_cached_reads() {
     })));
     context.with_limits(limits, |engine| {
         let mut counter = engine.counter(&f).unwrap();
-        counter.set_pin(VarId(0), Some(false)).unwrap();
+        counter.set_pin(VarId(1), Some(false)).unwrap();
         assert_eq!(counter.model_count().unwrap(), 2u32.into());
         stop.store(true, Ordering::Relaxed);
         assert_eq!(engine.counter(&f).unwrap_err(), OperationError::Stopped);
@@ -59,7 +59,7 @@ fn batch_counter_observes_limits_on_construction_and_cached_reads() {
         assert_eq!(f.counter().unwrap().model_count().unwrap(), 6u32.into());
         stop.store(false, Ordering::Relaxed);
         assert_eq!(counter.model_count().unwrap(), 2u32.into());
-        counter.set_pin(VarId(0), None).unwrap();
+        counter.set_pin(VarId(1), None).unwrap();
         assert_eq!(counter.model_count().unwrap(), 6u32.into());
     });
 }
@@ -73,23 +73,23 @@ fn persistent_counter_preserves_pins_and_recovers_after_a_refused_binding() {
     let context = f.context();
     context.run(|engine| {
         let mut batch = counter.bind(engine);
-        batch.set_pin(VarId(0), Some(false)).unwrap();
+        batch.set_pin(VarId(1), Some(false)).unwrap();
         assert_eq!(batch.model_count().unwrap(), 2u32.into());
     });
     let stopped = LimitConfig::none().with_stop_callback(Some(
         StopCallback::new(|_, _| StopDecision::Stop)));
     context.with_limits(stopped, |engine| {
         let mut batch = counter.bind(engine);
-        batch.set_pin(VarId(1), Some(true)).unwrap();
+        batch.set_pin(VarId(2), Some(true)).unwrap();
         assert_eq!(batch.model_count(), Err(OperationError::Stopped));
     });
     assert_eq!(counter.model_count().unwrap(), 0u32.into());
     context.run(|engine| {
         let mut batch = counter.bind(engine);
-        batch.set_pin(VarId(1), None).unwrap();
+        batch.set_pin(VarId(2), None).unwrap();
         assert_eq!(batch.model_count().unwrap(), 2u32.into());
     });
-    counter.set_pin(VarId(0), None).unwrap();
+    counter.set_pin(VarId(1), None).unwrap();
     assert_eq!(counter.model_count().unwrap(), 6u32.into());
 }
 

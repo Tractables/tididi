@@ -8,7 +8,7 @@ fn marginal_child_view_borrows_the_stored_column() {
     let root = tree.root().idx();
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
         let mut store = WeightStore::new(RationalWeights::unit(2), arithmetic);
-        let values = vec![store.leaf_val(VarId(0), LeafLabel::One); 64];
+        let values = vec![store.leaf_val(VarId(1), LeafLabel::One); 64];
         store.set_level(root, values);
         let mut level = TddLevel::new();
         level.become_marginal_weighted(64);
@@ -28,7 +28,7 @@ fn structural_child_view_borrows_scratch_even_when_the_store_has_a_column() {
         store.set_level(root, vec![store.wzero()]);
         let level = TddLevel::new();
         let mut computed = vec![None; tree.num_nodes()];
-        computed[root] = Some(vec![store.leaf_val(VarId(0), LeafLabel::One)]);
+        computed[root] = Some(vec![store.leaf_val(VarId(1), LeafLabel::One)]);
         let view = WeightFold::child_view(root, &tree, &level, &computed, &store);
         assert!(!view.is_marginal);
         assert!(std::ptr::eq(view.col.as_ref(), computed[root].as_ref().unwrap().as_slice()));
