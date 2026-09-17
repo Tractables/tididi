@@ -20,13 +20,7 @@
 //!    `docs/architecture.md`.
 //!
 //! A fenced block inside a doc comment is source the reader compiles, so both
-//! checks skip from one fence line to the next.
-//!
-//! Each check carries an allowlist of what is outstanding, so the rule holds
-//! from here on while the existing prose is rewritten. An allowlist entry
-//! names one file and one token, so a new violation cannot hide behind an old
-//! one, and the lists only shrink. The prose lists are empty; what remains is
-//! the test-only items production files still carry.
+//! prose checks skip from one fence line to the next.
 
 use std::collections::HashSet;
 use std::fs;
@@ -36,22 +30,6 @@ use std::path::PathBuf;
 const ACRONYMS: &[&str] = &[
     "API", "BDD", "CNF", "DFS", "DIMACS", "DOT", "LCA", "OOM", "RSS", "SAT", "SDD", "TDD", "UNSAT",
 ];
-
-/// All-caps prose still to be rewritten, as `(file, word)`.
-// generated:ALL_CAPS:begin
-const ALL_CAPS_ALLOW: &[(&str, &str)] = &[];
-// generated:ALL_CAPS:end
-
-/// Citations of a file that is not under `src/` still to be repaired, as
-/// `(file, cited)`.
-// generated:CITED_PATH:begin
-const CITED_PATH_ALLOW: &[(&str, &str)] = &[];
-// generated:CITED_PATH:end
-
-/// Outstanding test-only items in production files, as `(file, item)`.
-// generated:CFG_TEST:begin
-const CFG_TEST_ALLOW: &[(&str, &str)] = &[];
-// generated:CFG_TEST:end
 
 /// The one public module with no row in the boundary table: a doc-hidden shim
 /// that carries the README into the reference and holds nothing else.
@@ -335,7 +313,6 @@ fn file_prose(text: &str, code: Code) -> Vec<(usize, String)> {
 
 #[test]
 fn prose_carries_emphasis_by_structure_not_by_capitals() {
-    let allowed: HashSet<(&str, &str)> = ALL_CAPS_ALLOW.iter().copied().collect();
     let acronyms: HashSet<&str> = ACRONYMS.iter().copied().collect();
     let mut new_hits: Vec<String> = Vec::new();
     let mut seen: HashSet<(String, String)> = HashSet::new();
@@ -343,9 +320,7 @@ fn prose_carries_emphasis_by_structure_not_by_capitals() {
         let text = fs::read_to_string(&path).expect("a readable source file");
         for (n, prose) in file_prose(&text, Code::Strip) {
             for word in all_caps_words(&prose) {
-                if acronyms.contains(word.as_str())
-                    || allowed.contains(&(rel.as_str(), word.as_str()))
-                {
+                if acronyms.contains(word.as_str()) {
                     continue;
                 }
                 if seen.insert((rel.clone(), word.clone())) {
@@ -359,7 +334,6 @@ fn prose_carries_emphasis_by_structure_not_by_capitals() {
 
 #[test]
 fn a_comment_cites_only_a_file_that_exists() {
-    let allowed: HashSet<(&str, &str)> = CITED_PATH_ALLOW.iter().copied().collect();
     // Every source path relative to `src/`, plus the `dir.rs` spelling of a
     // `dir/mod.rs`, which is how a module is named in prose.
     let mut known: Vec<String> = Vec::new();
@@ -378,7 +352,7 @@ fn a_comment_cites_only_a_file_that_exists() {
         let text = fs::read_to_string(&path).expect("a readable source file");
         for (n, prose) in file_prose(&text, Code::Keep) {
             for cited in cited_paths(&prose) {
-                if resolves(&cited) || allowed.contains(&(rel.as_str(), cited.as_str())) {
+                if resolves(&cited) {
                     continue;
                 }
                 new_hits.push(format!("{rel}:{n}: cites {cited}, which is not under src/"));
@@ -445,7 +419,6 @@ fn cfg_scan_distinguishes_hook_fields_and_calls_from_test_items() {
 
 #[test]
 fn a_production_file_holds_no_test_only_item() {
-    let allowed: HashSet<(&str, &str)> = CFG_TEST_ALLOW.iter().copied().collect();
     let mut new_hits: Vec<String> = Vec::new();
     for (rel, path) in non_test_sources() {
         let text = fs::read_to_string(&path).expect("a readable source file");
@@ -455,9 +428,6 @@ fn a_production_file_holds_no_test_only_item() {
                 continue;
             }
             let Some(item) = guarded_item(&lines, n) else { continue };
-            if allowed.contains(&(rel.as_str(), item.as_str())) {
-                continue;
-            }
             new_hits.push(format!("{rel}:{}: test-only item {item}", n + 1));
         }
     }

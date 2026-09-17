@@ -5,7 +5,7 @@ title: "tididi: Tree Decision Diagrams"
 abstract: "A Rust library for Tree Decision Diagrams: canonical vtree-shaped decision diagrams for Boolean functions, with model counting and semiring evaluation."
 license: Apache-2.0
 repository-code: "https://github.com/Tractables/tididi"
-url: "https://docs.rs/tididi"
+url: "https://tractables.github.io/tididi/tididi/"
 version: 0.1.0
 authors:
   - family-names: "Capelli"

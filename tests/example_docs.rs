@@ -5,20 +5,28 @@ fn normalized(source: &str) -> String {
     source.lines().map(str::trim).collect::<Vec<_>>().join("\n")
 }
 
+/// Every walkthrough with the example program its "complete program" link names.
+fn walkthroughs() -> Vec<(String, String, String)> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(root.join("docs/examples")).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_stem().unwrap().to_str().unwrap().to_string();
+        let markdown = std::fs::read_to_string(&path).unwrap();
+        let (_, rest) = markdown.split_once("complete program](").unwrap_or_else(|| panic!("{name}: no complete-program link"));
+        let (link, _) = rest.split_once(')').unwrap();
+        let example = link.rsplit_once("/examples/").map(|(_, file)| file).unwrap_or_else(|| panic!("{name}: the link {link} names no example"));
+        let source = std::fs::read_to_string(root.join("examples").join(example)).unwrap_or_else(|e| panic!("{name}: {example}: {e}"));
+        out.push((name, markdown, source));
+    }
+    assert!(!out.is_empty(), "no walkthroughs found");
+    out
+}
+
 #[test]
 fn walkthrough_code_comes_from_the_runnable_examples() {
-    let examples = [
-        ("configurations", include_str!("../docs/examples/configurations.md"), include_str!("../examples/build_minimize_count.rs")),
-        ("execution", include_str!("../docs/examples/execution.md"), include_str!("../examples/build_minimize_count.rs")),
-        ("probability", include_str!("../docs/examples/probability.md"), include_str!("../examples/probabilistic_query.rs")),
-        ("reachability", include_str!("../docs/examples/reachability.md"), include_str!("../examples/symbolic_reachability.rs")),
-        ("persistence", include_str!("../docs/examples/persistence.md"), include_str!("../examples/save_reload.rs")),
-        ("vtrees", include_str!("../docs/examples/vtrees.md"), include_str!("../examples/vtree_grouping.rs")),
-        ("optimization", include_str!("../docs/examples/optimization.md"), include_str!("../examples/minimum_cost.rs")),
-        ("statistics", include_str!("../docs/examples/statistics.md"), include_str!("../examples/statistic.rs")),
-    ];
-    for (name, markdown, source) in examples {
-        let source = normalized(source);
+    for (name, markdown, source) in walkthroughs() {
+        let source = format!("\n{}\n", normalized(&source));
         let mut excerpts = 0;
         let mut lines = markdown.lines();
         while let Some(line) = lines.next() {
@@ -39,7 +47,8 @@ fn walkthrough_code_comes_from_the_runnable_examples() {
             assert!(closed, "{name}: unclosed Rust excerpt");
             let snippet = normalized(&snippet.join("\n"));
             assert!(!snippet.is_empty(), "{name}: empty Rust excerpt");
-            assert!(source.contains(&snippet), "{name}: excerpt does not occur in the runnable example:\n{snippet}");
+            // Whole lines only: an excerpt starts and ends at line boundaries of the program.
+            assert!(source.contains(&format!("\n{snippet}\n")), "{name}: excerpt does not occur in the runnable example:\n{snippet}");
             excerpts += 1;
         }
         assert!(excerpts > 0, "{name}: walkthrough has no checked excerpts");

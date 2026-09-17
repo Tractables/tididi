@@ -21,27 +21,17 @@ jobs:
         shell: bash
     steps:
     - uses: actions/checkout@v4
-    - name: Build
-      if: runner.os == 'Linux'
-      run: cargo build --verbose
-    - name: Check release profile
-      if: runner.os == 'Linux'
-      run: cargo check --release
     - name: Test
       env:
         RUST_BACKTRACE: full
-      run: cargo test --all-targets --verbose
+      run: cargo test --locked --all-targets --verbose
     - name: Documentation tests
-      run: cargo test --doc
+      run: cargo test --locked --doc
     - name: Run consumer examples
       run: |
-        cargo run --example build_minimize_count
-        cargo run --example probabilistic_query
-        cargo run --example symbolic_reachability
-        cargo run --example statistic
-        cargo run --example save_reload
-        cargo run --example vtree_grouping
-        cargo run --example minimum_cost
+        for example in examples/*.rs; do
+          cargo run --locked --example "$(basename "$example" .rs)"
+        done
     - name: Lints
       if: runner.os == 'Linux'
       run: cargo clippy --all-targets -- -D warnings

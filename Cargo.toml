@@ -12,9 +12,6 @@ keywords = ["decision-diagram", "model-counting", "knowledge-compilation", "bdd"
 categories = ["science", "algorithms", "data-structures"]
 exclude = [".github/", ".gitignore", "CLAUDE.md", "AGENTS.md", "rust-toolchain.toml"]
 
-[lib]
-name = "tididi"
-
 [dependencies]
 num-bigint = "0.4"
 num-rational = "0.4"
