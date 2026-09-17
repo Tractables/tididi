@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use super::*;
 use crate::limits::{LimitConfig, StopCallback, StopDecision};
-use crate::query::{KeepAllColumns, KeepFrontier, PinSemantics, Retention};
+use crate::query::{PinSemantics, Retention};
 use crate::test_helpers::assert_canonical;
 use crate::OperationError;
 
@@ -12,13 +12,13 @@ fn counter_construction_and_ordinary_counts_report_buffer_refusals() {
     assert_canonical(&f);
     {
         let _limit = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
-        assert_eq!(eng.counter_with::<KeepAllColumns>(&f, PinSemantics::Evidence).unwrap_err(), OperationError::OverBudget);
+        assert_eq!(eng.counter_with(&f, Retention::All, PinSemantics::Evidence).unwrap_err(), OperationError::OverBudget);
         assert_eq!(eng.model_count(&f), Err(OperationError::OverBudget));
     }
     let mut completed = false;
     for reserve in 0..128 {
         eng.limits().refuse_nth_reserve(reserve);
-        let result = eng.counter_with::<KeepAllColumns>(&f, PinSemantics::Evidence);
+        let result = eng.counter_with(&f, Retention::All, PinSemantics::Evidence);
         eng.limits().grant_every_reserve();
         match result {
             Ok(mut counter) => {
@@ -34,14 +34,14 @@ fn counter_construction_and_ordinary_counts_report_buffer_refusals() {
 }
 
 /// Exercise interrupted writes that promote small values into the overflow table.
-fn overflow_refusals<R: Retention>() {
+fn overflow_refusals(retention: Retention) {
     let eng = Engine::new();
     let f = Tdd::one(&Arc::new(Vtree::balanced(132)));
     assert_canonical(&f);
     let expected = BigUint::from(1u32) << 132usize;
     let mut completed = false;
     for reserve in 0..1024 {
-        let mut counter = eng.counter_with::<R>(&f, PinSemantics::Evidence).unwrap();
+        let mut counter = eng.counter_with(&f, retention, PinSemantics::Evidence).unwrap();
         for var in 1..=132 { counter.set_pin(VarId(var), Some(false)).unwrap(); }
         assert_eq!(counter.model_count().unwrap(), 1u32.into());
         for var in 1..=132 { counter.set_pin(VarId(var), None).unwrap(); }
@@ -62,19 +62,19 @@ fn overflow_refusals<R: Retention>() {
 
 #[test]
 fn both_counter_policies_recover_from_every_refresh_reservation_failure() {
-    overflow_refusals::<KeepAllColumns>();
-    overflow_refusals::<KeepFrontier>();
+    overflow_refusals(Retention::All);
+    overflow_refusals(Retention::Frontier);
 }
 
 /// Stop at each poll in a dirty refresh, then check the retained pins and fresh result.
-fn stopped_refreshes<R: Retention>() {
+fn stopped_refreshes(retention: Retention) {
     let eng = Engine::new();
     eng.limits().pin_reduce_poll_stride(Some(1));
     let f = Tdd::one(&Arc::new(Vtree::balanced(8)));
     assert_canonical(&f);
     let mut completed = false;
     for cut in 0..128 {
-        let mut counter = eng.counter_with::<R>(&f, PinSemantics::Evidence).unwrap();
+        let mut counter = eng.counter_with(&f, retention, PinSemantics::Evidence).unwrap();
         assert_eq!(counter.model_count().unwrap(), 256u32.into());
         counter.set_pin(VarId(1), Some(false)).unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
@@ -99,8 +99,8 @@ fn stopped_refreshes<R: Retention>() {
 
 #[test]
 fn both_counter_policies_recover_from_every_refresh_stop() {
-    stopped_refreshes::<KeepAllColumns>();
-    stopped_refreshes::<KeepFrontier>();
+    stopped_refreshes(Retention::All);
+    stopped_refreshes(Retention::Frontier);
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn cached_and_constant_counts_observe_stops_without_losing_pins() {
     let eng = Engine::new();
     for f in [Tdd::zero(&Arc::new(Vtree::balanced(3))), Tdd::one(&Arc::new(Vtree::leaf(VarId(1))))] {
         assert_canonical(&f);
-        let mut counter = eng.counter_with::<KeepAllColumns>(&f, PinSemantics::Evidence).unwrap();
+        let mut counter = eng.counter_with(&f, Retention::All, PinSemantics::Evidence).unwrap();
         counter.set_pin(VarId(1), Some(true)).unwrap();
         let expected = if f.is_zero() { BigUint::ZERO } else { 1u32.into() };
         assert_eq!(counter.model_count().unwrap(), expected);
@@ -117,7 +117,7 @@ fn cached_and_constant_counts_observe_stops_without_losing_pins() {
                 StopCallback::new(|_, _| StopDecision::Stop))));
             assert_eq!(counter.model_count(), Err(OperationError::Stopped));
             assert_eq!(eng.model_count(&f), Err(OperationError::Stopped));
-            assert_eq!(eng.counter_with::<KeepAllColumns>(&f, PinSemantics::Evidence).unwrap_err(), OperationError::Stopped);
+            assert_eq!(eng.counter_with(&f, Retention::All, PinSemantics::Evidence).unwrap_err(), OperationError::Stopped);
         }
         assert_eq!(counter.model_count().unwrap(), expected);
     }
@@ -138,7 +138,7 @@ fn checked_queries_refuse_incompatible_marginal_values() {
     assert!(matches!(eng.evaluate(&integer, &RationalWeights::unit(4)), Err(OperationError::MarginalLevel(_))));
     assert_eq!(eng.model_count(&integer).unwrap(), 12u32.into());
     assert_eq!(eng.model_count(&weighted), Err(OperationError::IncompatibleWeights));
-    assert_eq!(eng.counter_with::<KeepAllColumns>(&weighted, PinSemantics::Evidence).unwrap_err(), OperationError::IncompatibleWeights);
+    assert_eq!(eng.counter_with(&weighted, Retention::All, PinSemantics::Evidence).unwrap_err(), OperationError::IncompatibleWeights);
 }
 
 #[test]
@@ -146,8 +146,8 @@ fn counters_sharing_a_context_retain_independent_evidence() {
     let tree = Arc::new(Vtree::balanced(4));
     let f = Tdd::clause(&tree, [1, -2]).unwrap();
     assert_canonical(&f);
-    let mut first = f.counter_with::<KeepAllColumns>(PinSemantics::Evidence).unwrap();
-    let mut second = f.counter_with::<KeepFrontier>(PinSemantics::Evidence).unwrap();
+    let mut first = f.counter_with(Retention::All, PinSemantics::Evidence).unwrap();
+    let mut second = f.counter_with(Retention::Frontier, PinSemantics::Evidence).unwrap();
     assert_eq!(first.model_count().unwrap(), 12u32.into());
     second.set_pin(VarId(1), Some(false)).unwrap();
     assert_eq!(second.model_count().unwrap(), 4u32.into());

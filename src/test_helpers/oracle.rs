@@ -23,7 +23,7 @@ use crate::query::fold::{fold_bottom_up, LevelFold, PairAlgebra, Side};
 #[cfg(any(test, debug_assertions))]
 use crate::query::PinSemantics;
 #[cfg(any(test, debug_assertions))]
-use crate::value::{ColumnRetention, CountRead};
+use crate::value::{Retention, CountRead};
 
 
 #[cfg(test)]
@@ -136,7 +136,7 @@ fn count_big(tdd: &Tdd, pins: &[Option<bool>], convention: PinSemantics) -> Vec<
     let mut cols: Vec<Vec<BigUint>> = (0..tdd.vtree.num_nodes())
         .map(|i| fold.alloc(&eng, tdd.reference_slot_count(VtreeIdx(i as u32))).expect("query column allocation"))
         .collect();
-    fold_bottom_up(&fold, &eng, tdd, &mut cols, ColumnRetention::All, None, |_, _| Ok(()))
+    fold_bottom_up(&fold, &eng, tdd, &mut cols, Retention::All, None, |_, _| Ok(()))
         .expect("query fold: allocation refused");
     cols
 }

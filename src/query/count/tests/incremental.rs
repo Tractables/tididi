@@ -78,7 +78,7 @@ fn frontier_evidence_invalidates_without_retaining_a_dirty_worklist() {
     let diagram = Tdd::one(&tree);
     assert_canonical(&diagram);
     let engine = Engine::new();
-    let mut counter = diagram.counter_with::<KeepFrontier>(PinSemantics::Evidence).unwrap();
+    let mut counter = diagram.counter_with(Retention::Frontier, PinSemantics::Evidence).unwrap();
     assert_eq!(counter.changed.capacity(), 0);
     assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32) << 16);
     let pins: Vec<_> = (1..=16).map(|v| (VarId(v), Some(false))).collect();

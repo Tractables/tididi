@@ -12,7 +12,7 @@ use crate::Engine;
 use crate::limits::OperationError;
 use crate::vtree::{Vtree, VtreeIdx};
 
-use super::{walk_bottom_up, ColumnRetention, MarginalFold, StreamCache};
+use super::{walk_bottom_up, Retention, MarginalFold, StreamCache};
 
 /// The scratch column of one level of the marginalization cascade.
 pub(crate) type Column<D> = <D as MarginalFold>::Col;
@@ -139,7 +139,7 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
         input: FoldInput<'_, Self>,
         computed: &mut [Option<Self::Col>],
         already_marginal: &dyn Fn(usize) -> bool,
-        retain: ColumnRetention,
+        retain: Retention,
         mut before_node: impl FnMut(u64) -> Result<(), OperationError>,
     ) -> Result<(), OperationError> {
         let FoldInput { vtree, levels, store } = input;

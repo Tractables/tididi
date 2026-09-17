@@ -8,7 +8,8 @@ mod incremental;
 
 use crate::Engine;
 use crate::limits::OperationError;
-pub use incremental::{KeepAllColumns, KeepFrontier, ModelCounter, BoundModelCounter, Retention};
+pub use incremental::{ModelCounter, BoundModelCounter};
+pub use crate::value::Retention;
 
 use num_bigint::BigUint;
 
@@ -25,14 +26,14 @@ use crate::vtree::{VarId, VtreeNode};
 /// ```
 /// use std::sync::Arc;
 /// use tididi::{literal, and};
-/// use tididi::query::{KeepAllColumns, PinSemantics};
+/// use tididi::query::{PinSemantics, Retention};
 /// use tididi::vtree::{VarId, Vtree};
 ///
 /// let vtree = Arc::new(Vtree::balanced(2));
 /// let f = and(literal(&vtree, 1)?, literal(&vtree, 2)?)?;
 /// # tididi::test_helpers::assert_canonical(&f);
 /// for (semantics, expected) in [(PinSemantics::Evidence, 1u32), (PinSemantics::Cofactor, 2)] {
-///     let mut counter = f.counter_with::<KeepAllColumns>(semantics)?;
+///     let mut counter = f.counter_with(Retention::All, semantics)?;
 ///     counter.set_pin(VarId(1), Some(true))?;
 ///     assert_eq!(counter.model_count()?, expected.into());
 /// }
@@ -92,7 +93,7 @@ pub(crate) fn model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, OperationE
         if eng.limits().should_stop() { return Err(OperationError::Stopped); }
         return Ok(BigUint::ZERO);
     }
-    ModelCounter::<KeepFrontier>::allocate(eng, tdd, 0, PinSemantics::Cofactor)?.count_with(eng)
+    ModelCounter::allocate(eng, tdd, 0, Retention::Frontier, PinSemantics::Cofactor)?.count_with(eng)
 }
 
 impl Tdd {
@@ -200,7 +201,7 @@ impl Engine {
     ///
     /// Returns the query's errors or [`OperationError::Stopped`] on cancellation.
     pub fn node_counts_u128(&self, tdd: &Tdd) -> Result<Vec<Vec<u128>>, OperationError> {
-        ModelCounter::<KeepAllColumns>::allocate(self, tdd, 0, PinSemantics::Cofactor)?
+        ModelCounter::allocate(self, tdd, 0, Retention::All, PinSemantics::Cofactor)?
             .into_fast_counts(self)
     }
 }

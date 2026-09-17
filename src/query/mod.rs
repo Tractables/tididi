@@ -27,10 +27,7 @@ pub(crate) mod sat;
 pub(crate) mod evaluate;
 mod boolean;
 
-pub use count::{
-    KeepAllColumns,
-    KeepFrontier, ModelCounter, BoundModelCounter, Retention, PinSemantics,
-};
+pub use count::{ModelCounter, BoundModelCounter, Retention, PinSemantics};
 
 #[cfg(test)]
 mod tests;

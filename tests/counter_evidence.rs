@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tididi::{Engine, OperationError, Tdd, Vtree};
 use tididi::vtree::VarId;
 use tididi::limits::{LimitConfig, StopCallback, StopDecision};
-use tididi::query::{KeepAllColumns, KeepFrontier, PinSemantics, Retention};
+use tididi::query::{PinSemantics, Retention};
 use tididi::test_helpers::assert_canonical;
 
 /// Count a three-variable clause independently for each observation convention.
@@ -21,13 +21,13 @@ fn expected_count(pins: [Option<bool>; 3], semantics: PinSemantics) -> usize {
 }
 
 /// Exercise sparse variables, partial updates and duplicates against enumeration.
-fn bulk_counts<R: Retention>() {
+fn bulk_counts(retention: Retention) {
     let vars = [VarId(10), VarId(3), VarId(72)];
     let tree = Arc::new(Vtree::balanced_over(&vars).unwrap());
     let f = Tdd::clause(&tree, [10, -3]).unwrap();
     assert_canonical(&f);
     for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
-        let mut counter = f.counter_with::<R>(semantics).unwrap();
+        let mut counter = f.counter_with(retention, semantics).unwrap();
         assert_eq!(counter.model_count().unwrap(), 6u32.into());
         for code in 0..27 {
             let mut digits = code;
@@ -58,12 +58,12 @@ fn bulk_counts<R: Retention>() {
 
 #[test]
 fn bulk_evidence_matches_enumeration_with_both_policies_and_semantics() {
-    bulk_counts::<KeepAllColumns>();
-    bulk_counts::<KeepFrontier>();
+    bulk_counts(Retention::All);
+    bulk_counts(Retention::Frontier);
 }
 
 /// Reject a bad middle entry without applying neighboring updates or losing pending ones.
-fn invalid_batches<R: Retention>() {
+fn invalid_batches(retention: Retention) {
     let tree = Arc::new(Vtree::balanced_over(&[VarId(10), VarId(3), VarId(72)]).unwrap());
     let f = Tdd::clause(&tree, [10, -3]).unwrap();
     assert_canonical(&f);
@@ -71,7 +71,7 @@ fn invalid_batches<R: Retention>() {
         for pending in [false, true] {
             for invalid in [VarId(1), VarId(4), VarId(73), VarId(u32::MAX)] {
                 for invalid_pin in [None, Some(false), Some(true)] {
-                    let mut counter = f.counter_with::<R>(semantics).unwrap();
+                    let mut counter = f.counter_with(retention, semantics).unwrap();
                     counter.set_pin(VarId(10), Some(false)).unwrap();
                     assert_eq!(counter.model_count().unwrap(), expected_count([Some(false), None, None], semantics).into());
                     let pin = if pending { Some(true) } else { Some(false) };
@@ -90,12 +90,12 @@ fn invalid_batches<R: Retention>() {
 
 #[test]
 fn invalid_bulk_updates_preserve_cached_and_pending_evidence() {
-    invalid_batches::<KeepAllColumns>();
-    invalid_batches::<KeepFrontier>();
+    invalid_batches(Retention::All);
+    invalid_batches(Retention::Frontier);
 }
 
 /// Reject summed-out variables in a batch while retaining live structural evidence.
-fn marginal_batches<R: Retention>() {
+fn marginal_batches(retention: Retention) {
     let tree = Arc::new(Vtree::balanced(4));
     for summed in [tree.children(tree.root()).0, tree.leaf_of(VarId(1)).unwrap()] {
         let mut f = Tdd::clause(&tree, [1, 3]).unwrap();
@@ -104,7 +104,7 @@ fn marginal_batches<R: Retention>() {
         f.minimize().unwrap();
         assert_canonical(&f);
         for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
-            let mut counter = f.counter_with::<R>(semantics).unwrap();
+            let mut counter = f.counter_with(retention, semantics).unwrap();
             assert_eq!(counter.model_count().unwrap(), 12u32.into());
             counter.set_pin(VarId(3), Some(false)).unwrap();
             for pin in [None, Some(false), Some(true)] {
@@ -121,12 +121,12 @@ fn marginal_batches<R: Retention>() {
 
 #[test]
 fn summed_out_bulk_updates_are_atomic_and_remaining_pins_can_be_cleared() {
-    marginal_batches::<KeepAllColumns>();
-    marginal_batches::<KeepFrontier>();
+    marginal_batches(Retention::All);
+    marginal_batches(Retention::Frontier);
 }
 
 /// Check both owned and borrowed bindings while their engine refuses reads.
-fn bound_batches<R: Retention>() {
+fn bound_batches(retention: Retention) {
     let tree = Arc::new(Vtree::balanced(3));
     let f = Tdd::clause(&tree, [1, -2]).unwrap();
     assert_canonical(&f);
@@ -139,9 +139,9 @@ fn bound_batches<R: Retention>() {
     let _limits = engine.limits().scope(config);
     for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
         for owned in [false, true] {
-            let mut persistent = f.counter_with::<R>(semantics).unwrap();
+            let mut persistent = f.counter_with(retention, semantics).unwrap();
             let mut counter = if owned {
-                engine.counter_with::<R>(&f, semantics).unwrap()
+                engine.counter_with(&f, retention, semantics).unwrap()
             } else {
                 persistent.bind(&engine)
             };
@@ -170,6 +170,6 @@ fn bound_batches<R: Retention>() {
 
 #[test]
 fn bulk_updates_preserve_bound_limits_and_survive_temporary_bindings() {
-    bound_batches::<KeepAllColumns>();
-    bound_batches::<KeepFrontier>();
+    bound_batches(Retention::All);
+    bound_batches(Retention::Frontier);
 }

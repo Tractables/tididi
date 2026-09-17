@@ -1,6 +1,6 @@
 //! The bottom-up fold that marginalizes scheduled levels, in either value domain.
 
-use crate::value::{ColumnRetention};
+use crate::value::{Retention};
 use crate::diagram::Tdd;
 use crate::Engine;
 use crate::limits::PollGate;
@@ -106,7 +106,7 @@ fn marginalize_level<K: MarginalDomain>(
     }
 
     let (left, right) = vtree.children(d);
-    // `ColumnRetention::All` is not a choice here: the cascade takes every
+    // `Retention::All` is not a choice here: the cascade takes every
     // walked level's column to install it as that level's store.
     ensure_below::<K>(eng, tdd, left, vtree, store, computed)?;
     ensure_below::<K>(eng, tdd, right, vtree, store, computed)?;
@@ -194,7 +194,7 @@ fn ensure_below<K: MarginalDomain>(
         FoldInput { vtree, levels: &tdd.levels, store },
         computed,
         &marginal,
-        ColumnRetention::All,
+        Retention::All,
         |_| Ok(()),
     )
 }

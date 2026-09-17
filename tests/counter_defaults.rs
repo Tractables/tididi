@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tididi::{Engine, OperationError, Tdd, Vtree};
 use tididi::diagram::{Arithmetic, RationalWeights, WeightStore};
 use tididi::limits::{LimitConfig, StopCallback, StopDecision};
-use tididi::query::{KeepAllColumns, ModelCounter, PinSemantics};
+use tididi::query::{ModelCounter, PinSemantics, Retention};
 use tididi::test_helpers::assert_canonical;
 use tididi::vtree::VarId;
 
@@ -13,7 +13,7 @@ fn default_counter_matches_evidence_after_pin_changes_and_failed_updates() {
     let f = Tdd::clause(&tree, [1, -2]).unwrap();
     assert_canonical(&f);
     let mut counter: ModelCounter<'_> = f.counter().unwrap();
-    let mut explicit = f.counter_with::<KeepAllColumns>(PinSemantics::Evidence).unwrap();
+    let mut explicit = f.counter_with(Retention::All, PinSemantics::Evidence).unwrap();
     let mut pins = [None; 3];
     for (var, pin) in [(0, None), (0, Some(true)), (1, Some(true)), (0, Some(false)),
         (1, None), (2, Some(false)), (0, None), (2, None)] {
@@ -97,7 +97,7 @@ fn persistent_counter_preserves_pins_and_recovers_after_a_refused_binding() {
 fn persistent_counter_remains_send() {
     fn assert_send<T: Send>() {}
     assert_send::<ModelCounter<'static>>();
-    assert_send::<ModelCounter<'static, tididi::query::KeepFrontier>>();
+    assert_send::<ModelCounter<'static>>();
 }
 
 #[test]

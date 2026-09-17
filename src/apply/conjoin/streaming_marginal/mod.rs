@@ -11,7 +11,7 @@ use crate::Engine;
 use super::{OperationError, TddLevel, Sides};
 
 use crate::value::{
-    ColumnRetention, CountVec, FoldInput, IntFold, StreamChild,
+    Retention, CountVec, FoldInput, IntFold, StreamChild,
     ValueDomain, WeightFold,
 };
 use crate::vtree::VtreeIdx;

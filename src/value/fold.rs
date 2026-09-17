@@ -269,23 +269,28 @@ impl WeightFold {
 /// complete. A pass that reads only the root value can therefore hold the
 /// frontier instead of the whole diagram ([`Self::Frontier`]); any consumer
 /// that re-reads a non-root column after the pass needs [`Self::All`].
+///
+/// For a [`ModelCounter`](crate::query::ModelCounter), [`Self::All`] keeps
+/// the counts so a pin change refreshes only the levels above it, at a column
+/// per level of the diagram; [`Self::Frontier`] holds only the columns the
+/// walk still needs and repeats the whole fold after a change.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[non_exhaustive]
-pub(crate) enum ColumnRetention {
+pub enum Retention {
     /// Keep every level's column for the caller.
     All,
     /// Free each child column as soon as its parent's column is complete.
     Frontier,
 }
 
-impl ColumnRetention {
+impl Retention {
     /// The frontier [`walk_bottom_up`] releases: `Some(keep)` under
     /// [`Frontier`](Self::Frontier), with `keep` the one level exempt from
     /// release; `None` under [`All`](Self::All).
     pub(crate) fn frontier(self, keep: VtreeIdx) -> Option<VtreeIdx> {
         match self {
-            ColumnRetention::All => None,
-            ColumnRetention::Frontier => Some(keep),
+            Retention::All => None,
+            Retention::Frontier => Some(keep),
         }
     }
 }
@@ -298,7 +303,7 @@ impl ColumnRetention {
 /// `compute(cols, t)` fills level `t`'s column; when it runs, both children's
 /// columns are complete or held. `release(cols, i)` frees level `i`'s column.
 ///
-/// With `frontier` set (see [`ColumnRetention::frontier`]) a level's two
+/// With `frontier` set (see [`Retention::frontier`]) a level's two
 /// children are released as soon as its column is complete — the vtree is a
 /// tree, so that level was their only consumer — and the live set is the walk
 /// frontier rather than one column per level. The level named in `frontier`

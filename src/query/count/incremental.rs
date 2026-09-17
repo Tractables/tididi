@@ -9,10 +9,9 @@ use super::super::fold::{fold_bottom_up, fold_level, LevelFold, Side};
 use crate::limits::PollGate;
 use crate::limits::OperationError;
 use crate::diagram::PairsIter;
-use crate::value::{ColumnRetention, Count, CountRead, CountVec, IntFold};
+use crate::value::{Retention, Count, CountRead, CountVec, IntFold};
 use crate::diagram::*;
 use crate::vtree::{VarId, VtreeIdx};
-use std::marker::PhantomData;
 
 /// A leaf observation and its membership in the pending ancestor traversal.
 #[derive(Clone, Copy, Debug, Default)]
@@ -103,34 +102,6 @@ fn read_side<'a>(side: Side<'a, CountVec>, k: EncodedChildRef) -> CountRead<'a> 
     side.col.get(idx)
 }
 
-/// The column retention used by a counter: [`KeepAllColumns`] or [`KeepFrontier`].
-pub trait Retention: sealed::Sealed {}
-
-/// Keep every column so reads after pin changes need only their ancestor cone.
-#[derive(Debug, Clone, Copy)]
-pub struct KeepAllColumns;
-
-/// Keep only columns still needed by the bottom-up walk, freeing each child
-/// column after its parent is computed. A changed query repeats the full fold.
-#[derive(Debug, Clone, Copy)]
-pub struct KeepFrontier;
-
-impl Retention for KeepAllColumns {}
-impl Retention for KeepFrontier {}
-
-mod sealed {
-    pub trait Sealed {
-        /// Whether counts survive a completed pass for incremental updates.
-        const KEEP_ALL_COLUMNS: bool;
-    }
-    impl Sealed for super::KeepAllColumns {
-        const KEEP_ALL_COLUMNS: bool = true;
-    }
-    impl Sealed for super::KeepFrontier {
-        const KEEP_ALL_COLUMNS: bool = false;
-    }
-}
-
 /// Count repeatedly under changing observations without modifying the diagram.
 ///
 /// Create one with [`Tdd::counter`], set observations with [`Self::observe`],
@@ -160,8 +131,8 @@ mod sealed {
 /// consistent with the pins. [`PinSemantics::Cofactor`] instead counts the
 /// substituted function with the pinned variables free in the vtree.
 ///
-/// [`Tdd::counter`] selects [`KeepAllColumns`] and evidence semantics; use
-/// [`Tdd::counter_with`] to choose [`KeepFrontier`] or [`PinSemantics::Cofactor`].
+/// [`Tdd::counter`] selects [`Retention::All`] and evidence semantics; use
+/// [`Tdd::counter_with`] to choose [`Retention::Frontier`] or [`PinSemantics::Cofactor`].
 /// Updates are deferred until [`model_count`](Self::model_count).
 ///
 /// The diagram need not be minimized. Attached literal weights are ignored on
@@ -182,14 +153,14 @@ mod sealed {
 /// f.minimize().unwrap();
 /// counter.model_count().unwrap();
 /// ```
-pub struct ModelCounter<'a, R: Retention = KeepAllColumns> {
+pub struct ModelCounter<'a> {
     tdd: &'a Tdd,
     cols: Vec<CountVec>,
     pins: Vec<PinState>,
     changed: Vec<VtreeIdx>,
+    retention: Retention,
     convention: PinSemantics,
     evaluated: bool,
-    _marker: PhantomData<R>,
 }
 
 impl Tdd {
@@ -206,14 +177,14 @@ impl Tdd {
     /// Returns [`OperationError::IncompatibleWeights`] for weighted marginal levels
     /// or [`OperationError::OverBudget`] if counter storage cannot be reserved.
     pub fn counter(&self) -> Result<ModelCounter<'_>, OperationError> {
-        self.counter_with(PinSemantics::Evidence)
+        self.counter_with(Retention::All, PinSemantics::Evidence)
     }
 
     /// Create an unpinned counter with the chosen retention policy and pin semantics.
     ///
     /// The counter borrows this diagram and uses its shared execution context.
-    /// [`KeepAllColumns`] retains counts for incremental updates;
-    /// [`KeepFrontier`] frees child columns after their parent is computed.
+    /// [`Retention::All`] retains counts for incremental updates;
+    /// [`Retention::Frontier`] frees child columns after their parent is computed.
     /// [`PinSemantics`] controls how observed variables contribute to counts.
     /// Pin storage is proportional to the vtree's size, including for sparse
     /// variable IDs. Value columns are allocated on the first count, and
@@ -228,18 +199,18 @@ impl Tdd {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
-    /// use tididi::query::{KeepFrontier, PinSemantics};
+    /// use tididi::query::{PinSemantics, Retention};
     /// use tididi::vtree::VarId;
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
-    /// let mut counter = f.counter_with::<KeepFrontier>(PinSemantics::Cofactor)?;
+    /// let mut counter = f.counter_with(Retention::Frontier, PinSemantics::Cofactor)?;
     /// counter.set_pin(VarId(1), Some(false))?;
     /// assert_eq!(counter.model_count()?, 4u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn counter_with<R: Retention>(&self, convention: PinSemantics) -> Result<ModelCounter<'_, R>, OperationError> {
-        self.vtree().context().run(|eng| ModelCounter::allocate(eng, self, self.vtree.num_leaves() as usize, convention))
+    pub fn counter_with(&self, retention: Retention, convention: PinSemantics) -> Result<ModelCounter<'_>, OperationError> {
+        self.vtree().context().run(|eng| ModelCounter::allocate(eng, self, self.vtree.num_leaves() as usize, retention, convention))
     }
 }
 
@@ -262,20 +233,20 @@ impl Tdd {
 /// let mut counter = vtree.context().run(|engine| engine.counter(&f)).unwrap();
 /// counter.model_count().unwrap();
 /// ```
-pub struct BoundModelCounter<'a, 'batch, R: Retention = KeepAllColumns> {
-    counter: CounterStorage<'a, 'batch, R>,
+pub struct BoundModelCounter<'a, 'batch> {
+    counter: CounterStorage<'a, 'batch>,
     engine: &'batch Engine,
 }
 
 /// Store a batch's counter or borrow the state of a persistent counter.
-enum CounterStorage<'a, 'batch, R: Retention> {
-    Owned(ModelCounter<'a, R>),
-    Borrowed(&'batch mut ModelCounter<'a, R>),
+enum CounterStorage<'a, 'batch> {
+    Owned(ModelCounter<'a>),
+    Borrowed(&'batch mut ModelCounter<'a>),
 }
 
-impl<'a, R: Retention> CounterStorage<'a, '_, R> {
+impl<'a> CounterStorage<'a, '_> {
     /// Borrow the counter state used by either kind of batch binding.
-    fn get_mut(&mut self) -> &mut ModelCounter<'a, R> {
+    fn get_mut(&mut self) -> &mut ModelCounter<'a> {
         match self {
             Self::Owned(counter) => counter,
             Self::Borrowed(counter) => counter,
@@ -283,7 +254,7 @@ impl<'a, R: Retention> CounterStorage<'a, '_, R> {
     }
 }
 
-impl<R: Retention> std::fmt::Debug for BoundModelCounter<'_, '_, R> {
+impl std::fmt::Debug for BoundModelCounter<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let counter = match &self.counter {
             CounterStorage::Owned(counter) => counter,
@@ -293,7 +264,7 @@ impl<R: Retention> std::fmt::Debug for BoundModelCounter<'_, '_, R> {
     }
 }
 
-impl<R: Retention> BoundModelCounter<'_, '_, R> {
+impl BoundModelCounter<'_, '_> {
     /// Set or clear a pin with the validation and deferred refresh of [`ModelCounter::set_pin`].
     pub fn set_pin(&mut self, var: VarId, val: Option<bool>) -> Result<(), OperationError> {
         self.counter.get_mut().set_pin(var, val)
@@ -361,7 +332,7 @@ impl Engine {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn counter<'a, 'batch>(&'batch self, tdd: &'a Tdd) -> Result<BoundModelCounter<'a, 'batch>, OperationError> {
-        self.counter_with(tdd, PinSemantics::Evidence)
+        self.counter_with(tdd, Retention::All, PinSemantics::Evidence)
     }
 
     /// Create a counter with [`Tdd::counter_with`] semantics bound to this engine.
@@ -374,25 +345,24 @@ impl Engine {
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Tdd, Vtree};
-    /// use tididi::query::{KeepFrontier, PinSemantics};
+    /// use tididi::query::{PinSemantics, Retention};
     /// let engine = Engine::new();
     /// let f = Tdd::one(&Arc::new(Vtree::balanced(3)));
     /// # tididi::test_helpers::assert_canonical(&f);
-    /// let mut counter = engine.counter_with::<KeepFrontier>(&f, PinSemantics::Evidence)?;
+    /// let mut counter = engine.counter_with(&f, Retention::Frontier, PinSemantics::Evidence)?;
     /// assert_eq!(counter.model_count()?, 8u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn counter_with<'a, 'batch, R: Retention>(&'batch self, tdd: &'a Tdd, convention: PinSemantics) -> Result<BoundModelCounter<'a, 'batch, R>, OperationError> {
-        let counter = ModelCounter::allocate(self, tdd, tdd.vtree.num_leaves() as usize, convention)?;
+    pub fn counter_with<'a, 'batch>(&'batch self, tdd: &'a Tdd, retention: Retention, convention: PinSemantics) -> Result<BoundModelCounter<'a, 'batch>, OperationError> {
+        let counter = ModelCounter::allocate(self, tdd, tdd.vtree.num_leaves() as usize, retention, convention)?;
         Ok(BoundModelCounter { counter: CounterStorage::Owned(counter), engine: self })
     }
 }
 
-impl<R: Retention> std::fmt::Debug for ModelCounter<'_, R> {
+impl std::fmt::Debug for ModelCounter<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let retention = if R::KEEP_ALL_COLUMNS { ColumnRetention::All } else { ColumnRetention::Frontier };
         f.debug_struct("ModelCounter")
-            .field("retention", &retention)
+            .field("retention", &self.retention)
             .field("evaluated", &self.evaluated)
             .field("pins", &self.pins)
             .field("changed_since_pass", &self.changed.len())
@@ -400,7 +370,7 @@ impl<R: Retention> std::fmt::Debug for ModelCounter<'_, R> {
     }
 }
 
-impl<'a, R: Retention> ModelCounter<'a, R> {
+impl<'a> ModelCounter<'a> {
     /// Borrow this counter for a batch whose reads use the supplied engine's limits.
     ///
     /// Binding does not allocate or evaluate. Pins and cached columns stay in
@@ -424,12 +394,12 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// assert_eq!(counter.model_count()?, 2u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn bind<'batch>(&'batch mut self, engine: &'batch Engine) -> BoundModelCounter<'a, 'batch, R> {
+    pub fn bind<'batch>(&'batch mut self, engine: &'batch Engine) -> BoundModelCounter<'a, 'batch> {
         BoundModelCounter { counter: CounterStorage::Borrowed(self), engine }
     }
 
     /// Allocate leaf-indexed pin slots, or zero slots for an internal unpinned query.
-    pub(super) fn allocate(eng: &Engine, tdd: &'a Tdd, pin_slots: usize, convention: PinSemantics) -> Result<Self, OperationError> {
+    pub(super) fn allocate(eng: &Engine, tdd: &'a Tdd, pin_slots: usize, retention: Retention, convention: PinSemantics) -> Result<Self, OperationError> {
         let lim = eng.limits();
         let _op = lim.begin_operation();
         if tdd.levels.iter().any(|level| level.is_weight_marginal()) {
@@ -442,11 +412,11 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
         let mut pins = Vec::new();
         lim.try_resize(&mut pins, pin_slots, PinState::default())?;
         let mut changed = Vec::new();
-        if pin_slots != 0 && R::KEEP_ALL_COLUMNS {
+        if pin_slots != 0 && retention == Retention::All {
             lim.reserve_exact(&mut changed, pin_slots)?;
         }
         if lim.should_stop() { return Err(OperationError::Stopped); }
-        Ok(Self { tdd, cols, pins, changed, convention, evaluated: false, _marker: PhantomData })
+        Ok(Self { tdd, cols, pins, changed, retention, convention, evaluated: false })
     }
 
     /// Set or clear a vtree variable's pin, deferring affected counts until the next read.
@@ -599,7 +569,7 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
 
     /// Update a validated leaf's pin and record its deferred refresh once.
     fn set_leaf_pin(&mut self, leaf: VtreeIdx, val: Option<bool>) {
-        if !R::KEEP_ALL_COLUMNS {
+        if self.retention == Retention::Frontier {
             if self.pins[leaf.idx()].value != val {
                 self.pins[leaf.idx()].value = val;
                 self.evaluated = false;
@@ -667,7 +637,7 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     /// Refresh all columns or the dirty ancestor cone, leaving a failed pass invalidated.
     fn refresh(&mut self, eng: &Engine, gate: &mut PollGate) -> Result<(), OperationError> {
         if self.evaluated && self.changed.is_empty() { return Ok(()); }
-        let incremental = self.evaluated && R::KEEP_ALL_COLUMNS;
+        let incremental = self.evaluated && self.retention == Retention::All;
         self.evaluated = false;
         let tdd = self.tdd;
         if incremental {
@@ -691,11 +661,10 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
             }
         } else {
             let fold = OverflowingCounts { pins: &self.pins, convention: self.convention };
-            if !R::KEEP_ALL_COLUMNS {
+            if self.retention == Retention::Frontier {
                 for col in &mut self.cols { *col = CountVec::default(); }
             }
-            let retention = if R::KEEP_ALL_COLUMNS { ColumnRetention::All } else { ColumnRetention::Frontier };
-            fold_bottom_up(&fold, eng, tdd, &mut self.cols, retention, Some(gate), |cols, ti| {
+            fold_bottom_up(&fold, eng, tdd, &mut self.cols, self.retention, Some(gate), |cols, ti| {
                 let width = tdd.reference_slot_count(VtreeIdx(ti as u32));
                 if cols[ti].len() != width { cols[ti] = fold.alloc(eng, width)?; }
                 Ok(())
@@ -713,9 +682,12 @@ impl<'a, R: Retention> ModelCounter<'a, R> {
     }
 }
 
-impl ModelCounter<'_, KeepAllColumns> {
+impl ModelCounter<'_> {
     /// Compute and return every fast count slot, preserving overflow sentinels.
+    ///
+    /// Only a [`Retention::All`] counter holds every slot after the pass.
     pub(crate) fn into_fast_counts(mut self, eng: &Engine) -> Result<Vec<Vec<u128>>, OperationError> {
+        debug_assert_eq!(self.retention, Retention::All, "a frontier counter frees the columns this reads");
         let _op = eng.limits().begin_operation();
         let mut gate = PollGate::new(eng.limits().reduce_poll_stride());
         self.refresh(eng, &mut gate)?;

@@ -27,13 +27,13 @@ fn is_summed_out(tdd: &Tdd, var: VarId) -> bool {
 }
 
 /// One fresh counter under retention policy `R`: pin, pass, read the root.
-fn fresh_root<R: Retention>(
+fn fresh_root(retention: Retention, 
     eng: &Engine,
     tdd: &Tdd,
     convention: PinSemantics,
     pins: &[Option<bool>],
 ) -> BigUint {
-    let mut c = eng.counter_with::<R>(tdd, convention).unwrap();
+    let mut c = eng.counter_with(tdd, retention, convention).unwrap();
     for (v, &p) in pins.iter().enumerate() {
         if is_summed_out(tdd, VarId(v as u32 + 1)) { assert_eq!(p, None); continue; }
         c.set_pin(VarId(v as u32 + 1), p).unwrap();
@@ -88,10 +88,9 @@ fn incremental_pinned_counter_matches_pinned_bigint_randomized() {
                         _ => Some(false),
                     })
                     .collect();
-                // `KeepAllColumns`: the incremental dirty-cone half of this test
+                // `Retention::All`: the incremental dirty-cone half of this test
                 // re-reads cached child columns.
-                let mut ctr = eng.counter_with::<KeepAllColumns>(&tdd,
-                    convention,
+                let mut ctr = eng.counter_with(&tdd, Retention::All, convention,
                 ).unwrap();
                 for (v, &p) in pins.iter().enumerate() {
                     ctr.set_pin(VarId(v as u32 + 1), p).unwrap();
@@ -177,7 +176,7 @@ fn recompute_after_two_pin_changes_matches_oracle() {
     let tdd = six_var_diagram(&eng, &vtree);
     for convention in [PinSemantics::Cofactor, PinSemantics::Evidence] {
         let mut pins: Vec<Option<bool>> = vec![None; 6];
-        let mut ctr = eng.counter_with::<KeepAllColumns>(&tdd, convention).unwrap()
+        let mut ctr = eng.counter_with(&tdd, Retention::All, convention).unwrap()
             ;
         assert_eq!(ctr.model_count().unwrap(), pinned_counts(&tdd, &pins, convention));
 
@@ -225,7 +224,7 @@ fn pin_reset_to_same_value_records_nothing() {
     let vtree = Arc::new(Vtree::balanced(6));
     let tdd = six_var_diagram(&eng, &vtree);
     let pins: Vec<Option<bool>> = vec![Some(true), None, Some(false), None, None, None];
-    let mut ctr = eng.counter_with::<KeepAllColumns>(&tdd, PinSemantics::Evidence).unwrap();
+    let mut ctr = eng.counter_with(&tdd, Retention::All, PinSemantics::Evidence).unwrap();
     for (v, &p) in pins.iter().enumerate() {
         ctr.set_pin(VarId(v as u32 + 1), p).unwrap();
     }
@@ -259,8 +258,8 @@ fn pin_reset_to_same_value_records_nothing() {
 /// (`fix=true` = clean-fix ×1, `fix=false` = freed ×2).
 ///
 /// Also pins the two things that routing relies on beyond value equality:
-/// - `KeepFrontier` (children freed as parents complete) yields the
-///   same root count as `KeepAllColumns`, on diagrams whose levels include a
+/// - `Retention::Frontier` (children freed as parents complete) yields the
+///   same root count as `Retention::All`, on diagrams whose levels include a
 ///   marginal one (whose column comes from its summed store and whose own parent
 ///   reads it as a marginal child);
 /// - one `Frontier` counter REUSED across successive pin assignments — the readout's
@@ -325,8 +324,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
             for convention in [PinSemantics::Cofactor, PinSemantics::Evidence] {
                 // One reused Frontier counter for the whole pin sweep — the
                 // structured-count readout's exact shape.
-                let mut reused = eng.counter_with::<KeepFrontier>(&tdd,
-                    convention,
+                let mut reused = eng.counter_with(&tdd, Retention::Frontier, convention,
                 ).unwrap()
                 ;
                 for _ in 0..4 {
@@ -362,13 +360,13 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                     // be value-neutral, and a fresh frontier pass must match the
                     // reused one (no state carried between assignments).
                     assert_eq!(
-                        fresh_root::<KeepAllColumns>(&eng, &tdd, convention, &pins),
+                        fresh_root(Retention::All, &eng, &tdd, convention, &pins),
                         expected,
                         "nvars={nvars} convention={convention:?}: a fresh whole-array counter disagrees \
                          with the BigUint oracle on a marginalized diagram"
                     );
                     assert_eq!(
-                        fresh_root::<KeepFrontier>(&eng, &tdd, convention, &pins),
+                        fresh_root(Retention::Frontier, &eng, &tdd, convention, &pins),
                         expected,
                         "nvars={nvars} convention={convention:?}: a fresh frontier counter disagrees \
                          with the BigUint oracle on a marginalized diagram"
@@ -395,13 +393,13 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
 
 #[test]
 fn interrupted_pin_refresh_recomputes_before_the_next_read() {
-    use crate::query::{KeepAllColumns, PinSemantics};
+    use crate::query::{PinSemantics, Retention};
     use crate::limits::{LimitConfig, StopCallback, StopDecision};
     let eng = crate::Engine::new();
     let tree = std::sync::Arc::new(crate::vtree::Vtree::balanced(4));
     let f = crate::Tdd::clause(&tree, [1, 2]).unwrap();
     crate::test_helpers::assert_canonical(&f);
-    let mut counter = eng.counter_with::<KeepAllColumns>(&f, PinSemantics::Evidence).unwrap();
+    let mut counter = eng.counter_with(&f, Retention::All, PinSemantics::Evidence).unwrap();
     assert_eq!(counter.model_count().unwrap(), 12u32.into());
     counter.set_pin(crate::vtree::VarId(1), Some(false)).unwrap();
     {

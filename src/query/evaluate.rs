@@ -1,6 +1,6 @@
 //! Numeric evaluation with a supplied algebra or the diagram's attached weights.
 
-use crate::value::{ColumnRetention, FoldInput, ValueDomain, WeightFold};
+use crate::value::{Retention, FoldInput, ValueDomain, WeightFold};
 use crate::diagram::EvalAlgebra;
 use crate::diagram::*;
 use crate::diagram::PairsIter;
@@ -37,7 +37,7 @@ impl Engine {
             let mut cols = Vec::new();
             lim.reserve_exact(&mut cols, tdd.vtree.num_nodes())?;
             cols.resize_with(tdd.vtree.num_nodes(), Vec::new);
-            fold_bottom_up(&fold, self, tdd, &mut cols, ColumnRetention::Frontier,
+            fold_bottom_up(&fold, self, tdd, &mut cols, Retention::Frontier,
                 Some(&mut gate), |cols, ti| {
                     cols[ti] = fold.alloc(self, tdd.reference_slot_count(VtreeIdx(ti as u32)))?;
                     Ok(())
@@ -168,7 +168,7 @@ fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore, gate: &mut P
     let mut computed: Vec<Option<Vec<WeightValue>>> = Vec::new();
     eng.limits().try_resize(&mut computed, vtree.num_nodes(), None)?;
     // Only the root value is read, so child columns are released as their
-    // parent completes (`ColumnRetention::Frontier`). The "already stored" test
+    // parent completes (`Retention::Frontier`). The "already stored" test
     // is this diagram's own marginality rather than `WeightStore::is_set`: the
     // store is shared, so a column at this index may belong to another live
     // `Tdd` while this diagram's level is still structural.
@@ -179,7 +179,7 @@ fn weighted_output_value(eng: &Engine, tdd: &Tdd, ws: &WeightStore, gate: &mut P
         FoldInput { vtree, levels: &tdd.levels, store: ws },
         &mut computed,
         &marginal,
-        ColumnRetention::Frontier,
+        Retention::Frontier,
         |work| eng.limits().poll(gate, work),
     )?;
     Ok(computed[out_t]

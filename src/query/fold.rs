@@ -7,7 +7,7 @@
 //! arithmetic differs, so the per-level fold is written once here, driven by
 //! [`walk_bottom_up`], and each query supplies its own [`LevelFold`].
 
-use crate::value::{walk_bottom_up, ColumnRetention};
+use crate::value::{walk_bottom_up, Retention};
 use crate::diagram::{EncodedChildRef, ChildRef, LeafLabel, PairsIter, ChildDecoder, Tdd, ValueRef, LEAF_WIDTH};
 use crate::Engine;
 use crate::limits::PollGate;
@@ -175,7 +175,7 @@ pub(crate) fn fold_level<F: LevelFold>(
 
 /// The whole walk: every level of the diagram, children before parents.
 ///
-/// Under [`ColumnRetention::Frontier`] a child's column is released as soon as
+/// Under [`Retention::Frontier`] a child's column is released as soon as
 /// its parent's is complete; the output level is exempt, being the one column
 /// read afterwards. See [`walk_bottom_up`] for the order and the frontier.
 ///
@@ -192,7 +192,7 @@ pub(crate) fn fold_bottom_up<F: LevelFold>(
     eng: &Engine,
     tdd: &Tdd,
     cols: &mut [F::Col],
-    retain: ColumnRetention,
+    retain: Retention,
     mut poll: Option<&mut PollGate>,
     mut ensure_col: impl FnMut(&mut [F::Col], usize) -> Result<(), OperationError>,
 ) -> Result<(), OperationError> {

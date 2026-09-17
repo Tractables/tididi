@@ -1,11 +1,11 @@
 use super::*;
 use crate::limits::LimitConfig;
-use crate::query::{KeepAllColumns, KeepFrontier, PinSemantics, Retention};
+use crate::query::{PinSemantics, Retention};
 use crate::test_helpers::assert_canonical;
 use crate::OperationError;
 
 /// Compare every sparse-domain pin assignment with explicit Boolean enumeration.
-fn sparse_counts<R: Retention>() {
+fn sparse_counts(retention: Retention) {
     let eng = Engine::new();
     let vars = [VarId(20), VarId(3), VarId(72)];
     let mut rotated = Vtree::balanced_over(&vars).unwrap();
@@ -17,7 +17,7 @@ fn sparse_counts<R: Retention>() {
         for (f, kind) in [(Tdd::one(&tree), 0), (Tdd::zero(&tree), 1), (Tdd::clause(&tree, [3]).unwrap(), 2)] {
             assert_canonical(&f);
             for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
-                let mut counter = eng.counter_with::<R>(&f, semantics).unwrap();
+                let mut counter = eng.counter_with(&f, retention, semantics).unwrap();
                 for code in (0..27).chain(std::iter::once(0)) {
                     let mut digits = code;
                     let pins = vars.map(|var| {
@@ -44,17 +44,17 @@ fn sparse_counts<R: Retention>() {
 
 #[test]
 fn sparse_and_reordered_variables_count_under_both_pin_conventions() {
-    sparse_counts::<KeepAllColumns>();
-    sparse_counts::<KeepFrontier>();
+    sparse_counts(Retention::All);
+    sparse_counts(Retention::Frontier);
 }
 
 /// Reject holes and out-of-range IDs without disturbing cached or pending evidence.
-fn invalid_pins<R: Retention>() {
+fn invalid_pins(retention: Retention) {
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced_over(&[VarId(10), VarId(3)]).unwrap());
     let f = Tdd::one(&tree);
     assert_canonical(&f);
-    let mut counter = eng.counter_with::<R>(&f, PinSemantics::Evidence).unwrap();
+    let mut counter = eng.counter_with(&f, retention, PinSemantics::Evidence).unwrap();
     assert_eq!(counter.model_count().unwrap(), 4u32.into());
     for pending in [false, true] {
         if pending { counter.set_pin(VarId(10), Some(false)).unwrap(); }
@@ -71,12 +71,12 @@ fn invalid_pins<R: Retention>() {
 
 #[test]
 fn absent_pin_variables_leave_cached_and_pending_counts_unchanged() {
-    invalid_pins::<KeepAllColumns>();
-    invalid_pins::<KeepFrontier>();
+    invalid_pins(Retention::All);
+    invalid_pins(Retention::Frontier);
 }
 
 /// Refuse summed-out variables while continuing to count pins on structural leaves.
-fn marginal_pins<R: Retention>() {
+fn marginal_pins(retention: Retention) {
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(4));
     for summed in [tree.children(tree.root()).0, tree.leaf_of(VarId(1)).unwrap()] {
@@ -85,7 +85,7 @@ fn marginal_pins<R: Retention>() {
         eng.marginalize_levels(&mut f, &[summed]).unwrap();
         f.minimize().unwrap();
         assert_canonical(&f);
-        let mut counter = eng.counter_with::<R>(&f, PinSemantics::Evidence).unwrap();
+        let mut counter = eng.counter_with(&f, retention, PinSemantics::Evidence).unwrap();
         assert_eq!(counter.model_count().unwrap(), 12u32.into());
         counter.set_pin(VarId(3), Some(false)).unwrap();
         for pin in [None, Some(false), Some(true)] {
@@ -100,8 +100,8 @@ fn marginal_pins<R: Retention>() {
 
 #[test]
 fn summed_out_pin_variables_are_refused_without_losing_pending_pins() {
-    marginal_pins::<KeepAllColumns>();
-    marginal_pins::<KeepFrontier>();
+    marginal_pins(Retention::All);
+    marginal_pins(Retention::Frontier);
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn sparse_pin_storage_fits_a_budget_independent_of_variable_ids() {
     let f = Tdd::one(&tree);
     assert_canonical(&f);
     let _limit = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(1024)));
-    let mut counter = eng.counter_with::<KeepAllColumns>(&f, PinSemantics::Evidence).unwrap();
+    let mut counter = eng.counter_with(&f, Retention::All, PinSemantics::Evidence).unwrap();
     counter.set_pin(VarId(100_000), Some(true)).unwrap();
     assert_eq!(counter.model_count().unwrap(), 1u32.into());
     counter.set_pin(VarId(100_000), None).unwrap();
@@ -119,12 +119,12 @@ fn sparse_pin_storage_fits_a_budget_independent_of_variable_ids() {
 }
 
 /// Check signed observations against enumeration, including atomic rejection.
-fn observed_counts<R: Retention>() {
+fn observed_counts(retention: Retention) {
     let vtree = Arc::new(Vtree::balanced_over(&[VarId(10), VarId(3), VarId(72)]).unwrap());
     let f = Tdd::clause(&vtree, [3, 10]).unwrap();
     assert_canonical(&f);
     for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
-        let mut counter = f.counter_with::<R>(semantics).unwrap();
+        let mut counter = f.counter_with(retention, semantics).unwrap();
         for code in 0..8 {
             let pins = [10, 3, 72].map(|literal| {
                 let bit = match literal { 10 => 0, 3 => 1, _ => 2 };
@@ -163,6 +163,6 @@ fn observed_counts<R: Retention>() {
 
 #[test]
 fn signed_observations_count_and_reject_invalid_batches_atomically() {
-    observed_counts::<KeepAllColumns>();
-    observed_counts::<KeepFrontier>();
+    observed_counts(Retention::All);
+    observed_counts(Retention::Frontier);
 }

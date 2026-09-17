@@ -1,6 +1,6 @@
 //! Structural satisfiability queries on compiled diagrams.
 
-use crate::value::ColumnRetention;
+use crate::value::Retention;
 use crate::diagram::*;
 use crate::diagram::PairsIter;
 use crate::Engine;
@@ -57,7 +57,7 @@ pub(crate) fn is_sat_structural(eng: &Engine, f: &Tdd) -> Result<bool, crate::Op
         cols.push(fold.alloc(eng, f.reference_slot_count(VtreeIdx(i as u32)))?);
     }
     let mut poll = crate::limits::PollGate::new(eng.limits().reduce_poll_stride());
-    fold_bottom_up(&fold, eng, f, &mut cols, ColumnRetention::Frontier, Some(&mut poll), |_, _| Ok(()))?;
+    fold_bottom_up(&fold, eng, f, &mut cols, Retention::Frontier, Some(&mut poll), |_, _| Ok(()))?;
     let (out_t, out_i) = (f.output.vtree.idx(), f.output.local.idx());
     Ok(cols[out_t][out_i])
 }
