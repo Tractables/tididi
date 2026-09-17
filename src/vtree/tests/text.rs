@@ -71,6 +71,14 @@ fn a_tiny_file_naming_a_huge_variable_is_refused_rather_than_sized_from_it() {
 }
 
 #[test]
+fn a_tree_that_really_carries_the_variables_is_not_refused() {
+    // The bound tracks the node list, so the named shapes over a wide id space
+    // build: the table they size is proportional to the tree, not to one id.
+    let tree = Vtree::balanced(20_000_000);
+    assert_eq!(tree.num_vars(), 20_000_000);
+}
+
+#[test]
 fn a_sparse_id_space_under_the_cap_still_round_trips() {
     let tree = Vtree::from_text("vtree 1\nL 0 1000000\n").expect("sparse ids stay legal");
     assert_eq!(tree.num_vars(), 1_000_000);

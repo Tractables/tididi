@@ -12,27 +12,44 @@ pub(super) fn require_nonempty(num_vars: u32) {
     assert!(num_vars > 0, "a vtree needs at least one variable");
 }
 
-/// The largest id-indexed table a vtree will build, in bytes. Three of them are
-/// sized by the id space rather than by the number of leaves — the seen-set in
-/// `check_each_var_once` and the `var_to_leaf` maps here and in `graft` — so one
-/// large id in a two-line file sizes all three: `L 0 4000000000` would ask for
-/// 16 GB of `var_to_leaf` alone. Sparse ids stay legal, because `to_text` writes
-/// them back verbatim and they have to round-trip; it is the span they cover
-/// that is bounded.
-const MAX_VAR_TABLE_BYTES: usize = 64 * 1024 * 1024;
+/// The id space a vtree may cover when the node list gives no better bound: a
+/// single leaf carrying `VarId(4_000_000_000)` is a legal one-line file, and
+/// the tables below would be 16 GB for it. Sparse ids stay legal — `to_text`
+/// writes them back verbatim, so they have to round-trip — it is the span they
+/// cover that is bounded, and this is the floor under that bound.
+const MIN_VAR_SPACE_BYTES: usize = 64 * 1024 * 1024;
 
-/// The id space those tables can cover, the widest `num_vars` whose largest
-/// entry still fits [`MAX_VAR_TABLE_BYTES`].
-pub(super) const MAX_NUM_VARS: u32 = {
-    let entries = MAX_VAR_TABLE_BYTES / size_of::<VtreeIdx>();
+/// The floor on the id space, the widest `num_vars` whose `var_to_leaf` entry
+/// still fits [`MIN_VAR_SPACE_BYTES`].
+const MIN_NUM_VARS: u32 = {
+    let entries = MIN_VAR_SPACE_BYTES / size_of::<VtreeIdx>();
     if entries > u32::MAX as usize { u32::MAX } else { entries as u32 }
 };
 
-/// Refuse an id space too wide to index a table by, before anything sizes one.
-/// Every construction that allocates by id runs this first.
-pub(super) fn check_var_space(num_vars: u32) -> Result<(), VtreeError> {
-    if num_vars > MAX_NUM_VARS {
-        return Err(VtreeError::VariableSpaceTooLarge { num_vars, max_num_vars: MAX_NUM_VARS });
+/// The widest id space a list of `num_nodes` nodes may declare. Three tables
+/// are sized by the id space rather than by the number of leaves — the seen-set
+/// in [`Vtree::check_each_var_once`] and the `var_to_leaf` maps in
+/// [`Vtree::from_nodes`] and the graft — so without a bound one large id sizes
+/// all three however few leaves the list holds.
+///
+/// The bound is the node list's own footprint: the widest table is one
+/// `VtreeIdx` per id, and it may not outweigh the nodes it indexes. A dense
+/// vtree is far inside that, since `2n - 1` nodes carry `n` variables, and it
+/// leaves room for the sparse ids a consumer's own numbering produces.
+/// [`MIN_NUM_VARS`] is the floor, so a small list is not held to a small space.
+fn max_num_vars(num_nodes: usize) -> u32 {
+    let bytes = num_nodes.saturating_mul(size_of::<VtreeNode>());
+    let entries = (bytes / size_of::<VtreeIdx>()).min(u32::MAX as usize) as u32;
+    entries.max(MIN_NUM_VARS)
+}
+
+/// Refuse an id space too wide for the node list to index. Every construction
+/// reaches this through [`Vtree::check_each_var_once`], which runs it before
+/// the first table sized by an id.
+pub(super) fn check_var_space(num_vars: u32, num_nodes: usize) -> Result<(), VtreeError> {
+    let max_num_vars = max_num_vars(num_nodes);
+    if num_vars > max_num_vars {
+        return Err(VtreeError::VariableSpaceTooLarge { num_vars, max_num_vars });
     }
     Ok(())
 }
@@ -280,7 +297,7 @@ impl Vtree {
     /// The overlap check [`Vtree::from_nodes`] and the graft share: every leaf
     /// in `nodes` carries a distinct variable below `num_vars`.
     pub(super) fn check_each_var_once(nodes: &[VtreeNode], num_vars: u32) -> Result<(), VtreeError> {
-        check_var_space(num_vars)?;
+        check_var_space(num_vars, nodes.len())?;
         let mut seen = vec![false; num_vars as usize];
         for node in nodes {
             if let VtreeNode::Leaf { var, .. } = node
@@ -341,8 +358,8 @@ impl Vtree {
     /// if a leaf carries a variable at or past `num_vars`, or if the links do
     /// not reach every node exactly once from `root`;
     /// [`VtreeError::OverlappingVariable`] if two leaves carry one variable;
-    /// [`VtreeError::VariableSpaceTooLarge`] if `num_vars` is wider than a table
-    /// indexed by variable id may be, however few leaves the list holds.
+    /// [`VtreeError::VariableSpaceTooLarge`] if `num_vars` is wider than the
+    /// node list can justify a table indexed by variable id being.
     ///
     /// ```
     /// use tididi::vtree::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
@@ -372,7 +389,6 @@ impl Vtree {
         root: VtreeIdx,
         num_vars: u32,
     ) -> Result<Self, VtreeError> {
-        check_var_space(num_vars)?;
         check_node_list(&nodes, root, num_vars)?;
         let var_to_leaf = vec![VtreeIdx(0); num_vars as usize];
         let (vtree, _) = Self::reindex_bottomup_with_map(root, nodes, var_to_leaf);
