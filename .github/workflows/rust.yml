@@ -94,6 +94,22 @@ jobs:
       if: steps.previous.outputs.tag == ''
       run: echo "No tag in the repository yet, so there is no released version to compare against."
 
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: miri
+    # The tests that reach the crate's unsafe code: the fast count and weight
+    # reads through `get_unchecked`, the twin-table walks, and the pair views
+    # that reinterpret a node as a pair. Miri interprets rather than executes,
+    # so the set is chosen for what it covers per second: these twelve take
+    # about thirteen seconds, where adding the exhaustive sorting-network
+    # permutation test alone takes twelve minutes.
+    - name: Interpret the tests over unsafe code
+      run: cargo miri test --lib -- reduce::contract::fingerprint value::domain
+
   msrv:
     runs-on: ubuntu-latest
     steps:
