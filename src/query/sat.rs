@@ -30,9 +30,11 @@ impl Engine {
         if let Some(counts) = out_level.marginal_counts() { return Ok(counts[out_i] > 0); }
         // A structural diagram stores no unsatisfiable node, and neither does
         // a marginal one whose reduction worklists are drained: the output
-        // node then decides. An edited marginal diagram may still hold
-        // structural nodes over zero-count values, so it is walked.
-        if f.worklists_empty() || !f.has_marginal_level() {
+        // node then decides. Weighted values never stand for an unsatisfiable
+        // function either (a weight store rules out count-marginal levels).
+        // An edited count-marginal diagram may still hold structural nodes
+        // over zero-count values, so it is walked.
+        if f.worklists_empty() || f.weights.is_some() || !f.has_marginal_level() {
             return Ok(out_level.pairs_iter_of(&out_level.nodes[out_i]).next().is_some());
         }
         is_sat_structural(self, f)
@@ -84,15 +86,14 @@ impl LevelFold for SatBits {
         !matches!(label, LeafLabel::Zero)
     }
 
-    /// A marginal slot has a model iff its summed count is nonzero. The overflow
+    /// A count slot has a model iff its summed count is nonzero. The overflow
     /// sentinel is `u128::MAX`, itself nonzero, so an overflowed — hence huge —
-    /// count reads as satisfiable without consulting the side table.
+    /// count reads as satisfiable without consulting the side table. A weighted
+    /// slot always has one: a zero weight does not establish unsatisfiability.
     fn marginal_column(&self, _eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Vec<bool>) -> Result<(), crate::OperationError> {
-        let counts = tdd.levels[t.idx()]
-            .marginal_counts()
-            .expect("a marginal level carries counts");
-        for (i, &c) in counts.iter().enumerate() {
-            col[i] = c != 0;
+        match tdd.levels[t.idx()].marginal_counts() {
+            Some(counts) => for (i, &c) in counts.iter().enumerate() { col[i] = c != 0; },
+            None => col.fill(true),
         }
         Ok(())
     }

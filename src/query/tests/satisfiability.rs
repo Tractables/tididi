@@ -111,3 +111,24 @@ fn checked_satisfiability_walks_an_edited_marginal_diagram_under_limits() {
     assert_eq!(engine.is_sat(&f), Ok(true));
     assert_eq!(engine.limits().work_units(), before);
 }
+
+/// Weighted values never stand for an unsatisfiable function, so a structural
+/// output above weight-marginal levels answers without a walk, edited or not.
+#[test]
+fn checked_satisfiability_reads_the_output_above_weighted_levels() {
+    let engine = Engine::new();
+    let tree = Arc::new(Vtree::balanced(4));
+    let mut g = engine.clause(&tree, [1, 3]).unwrap();
+    assert_canonical(&g);
+    let weights = RationalWeights::from_literals(&vec![
+        LiteralWeights { negative: rat(0, 1), positive: rat(1, 2) }; 4
+    ]);
+    g.set_weights(WeightStore::new(weights, Arithmetic::ExactRational)).unwrap();
+    let (left, _) = tree.children(tree.root());
+    engine.marginalize_levels(&mut g, &[left]).unwrap();
+    let f = engine.and(g, engine.literal(&tree, 4).unwrap()).unwrap();
+    assert!(f.has_marginal_level() && !f.worklists_empty());
+    let before = engine.limits().work_units();
+    assert_eq!(engine.is_sat(&f), Ok(true));
+    assert_eq!(engine.limits().work_units(), before);
+}
