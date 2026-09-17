@@ -3,6 +3,7 @@
 </p>
 
 [![Rust](https://github.com/Tractables/tididi/actions/workflows/rust.yml/badge.svg)](https://github.com/Tractables/tididi/actions/workflows/rust.yml)
+[![Documentation](https://img.shields.io/badge/docs-main-blue)](https://tractables.github.io/tididi/tididi/)
 
 tididi is a Rust library for **Tree Decision Diagrams (TDDs)**. A TDD represents
 a Boolean function as a circuit, so you can work with its satisfying assignments
