@@ -103,6 +103,26 @@ fn fuse_node_pairs<V>(
     let start = level.multi_start_at(n);
     let old_len = level.multi_len_at(n);
 
+    // Fused away iff the x-side index carries a plan (see `fused_x` above).
+    let is_fused = |p: ChildPair| {
+        let x_idx = match side {
+            ChildSide::Right => p.left.0,
+            ChildSide::Left => p.right.0,
+        };
+        fused_x.contains_key(&x_idx)
+    };
+
+    // Reserve before the first write. The re-encode below can need one fresh
+    // `multi_pairs` entry, and taking that allocation after the range has been
+    // rewritten would let an `OverBudget` return a level whose pairs have moved
+    // but whose node word still describes the old range — a wrong count, from a
+    // refusal the public docs on `Tdd::minimize` and `Tdd::reduce` promise is
+    // recoverable. So compute the post-shrink length first; the rewrite below
+    // reproduces it exactly, which the assertion after it checks.
+    let new_len = (start..start + old_len).filter(|&r| !is_fused(level.pairs[r])).count()
+        + fused_x.len();
+    level.reserve_shrunk_multi(eng, n, new_len)?;
+
     // Keep the un-fused pairs, compacting them onto the front of the node's
     // own range: `write` never overtakes `read` (it advances at most once
     // per read, from the same origin), so a kept pair only ever moves down
@@ -110,12 +130,7 @@ fn fuse_node_pairs<V>(
     let mut write = start;
     for read in start..start + old_len {
         let p = level.pairs[read];
-        let x_idx = match side {
-            ChildSide::Right => p.left.0,
-            ChildSide::Left => p.right.0,
-        };
-        // Fused away iff the x-side index carries a plan (see `fused_x` above).
-        if !fused_x.contains_key(&x_idx) {
+        if !is_fused(p) {
             level.pairs[write] = p;
             write += 1;
         }
@@ -138,12 +153,11 @@ fn fuse_node_pairs<V>(
         write += 1;
     }
 
-    let new_len = write - start;
-    // Re-encode via the shared epilogue (`TddLevel::reencode_shrunk_multi`,
-    // also used by `contract_leaf::rewrite_level`): shrink in place, inline
-    // the sole survivor, or fall back to a length-1 extended multi aliasing
-    // the node's own first slot — reusing its existing `multi_pairs` entry when the
-    // node is already extended, so nothing here abandons an old `multi_pairs` slot
-    // as garbage.
-    level.reencode_shrunk_multi(eng, n, start, old_len, new_len)
+    debug_assert_eq!(write - start, new_len, "the reserve pre-pass and the rewrite must agree");
+    // Re-encode via the shared epilogue, the infallible half of the pair
+    // reserved above: shrink in place, inline the sole survivor, or fall back
+    // to a length-1 extended multi aliasing the node's own first slot —
+    // reusing its existing `multi_pairs` entry when the node is already
+    // extended, so nothing here abandons an old `multi_pairs` slot as garbage.
+    Ok(level.reencode_shrunk_multi_reserved(n, start, old_len, new_len))
 }

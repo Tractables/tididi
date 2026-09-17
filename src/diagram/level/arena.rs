@@ -135,34 +135,45 @@ impl TddLevel {
     ///
     /// Precondition (debug-asserted): `1 <= new_len < old_len`.
     ///
-    /// Returns the number of pair-arena slots this abandons, the caller's
-    /// `dead_pairs` contribution.
+    /// Reserve the one `multi_pairs` entry a shrink to `new_len` can need, so
+    /// the caller can rewrite its pair range and then finish with the
+    /// infallible [`reencode_shrunk_multi_reserved`](Self::reencode_shrunk_multi_reserved).
     ///
-    /// A node already `is_multi_ranged()` reuses its own `multi_pairs` entry;
-    /// `multi_pairs` is never compacted, so a fresh push would leak the old one.
+    /// Call this *before* the rewrite. It therefore cannot read the surviving
+    /// pair, which does not exist yet, so it reserves whenever the allocating
+    /// arm is reachable and lets the entry go unused when the survivor turns
+    /// out to be inlinable. Over-reserving costs one `MultiPairRange` of
+    /// capacity and never a length, so the only effect is refusing marginally
+    /// earlier.
+    ///
+    /// A node already `is_multi_ranged()` reuses its own `multi_pairs` entry
+    /// and needs nothing; `multi_pairs` is never compacted, so a fresh push
+    /// would leak the old one.
     ///
     /// # Errors
     ///
-    /// `Err(OperationError::OverBudget)` if the fresh `multi_pairs` entry (the one
-    /// allocating arm) cannot be reserved.
+    /// `Err(OperationError::OverBudget)` if that entry cannot be reserved.
     #[inline]
-    pub(crate) fn reencode_shrunk_multi(
-        &mut self, eng: &Engine, node_idx: usize,
-        start: usize,
-        old_len: usize,
-        new_len: usize,
-    ) -> Result<usize, OperationError> {
-        if matches!(self.shrunk_encoding(node_idx, start, new_len), ShrunkEncoding::NewRangeEntry) {
+    pub(crate) fn reserve_shrunk_multi(
+        &mut self, eng: &Engine, node_idx: usize, new_len: usize,
+    ) -> Result<(), OperationError> {
+        // The pair-independent half of `shrunk_encoding`'s arm choice. The two
+        // must move together: this is the only thing that decides whether the
+        // reserve happens, and `shrunk_encoding` is the only thing that decides
+        // whether the push happens.
+        if new_len < 2 && !self.nodes[node_idx].is_multi_ranged() {
             eng.limits().reserve(&mut self.multi_pairs, 1)?;
         }
-        Ok(self.reencode_shrunk_multi_reserved(node_idx, start, old_len, new_len))
+        Ok(())
     }
 
-    /// [`reencode_shrunk_multi`](Self::reencode_shrunk_multi) for a caller that
-    /// has already reserved the one `multi_pairs` entry the allocating arm can
-    /// need, so the re-encode is infallible.
+    /// Re-encode a node whose pair range has just shrunk to `new_len`, for a
+    /// caller that has already reserved through
+    /// [`reserve_shrunk_multi`](Self::reserve_shrunk_multi), so the re-encode
+    /// is infallible.
     ///
-    /// Same preconditions and return value.
+    /// Returns the number of pair-arena slots this abandons, the caller's
+    /// `dead_pairs` contribution.
     #[inline]
     pub(crate) fn reencode_shrunk_multi_reserved(
         &mut self, node_idx: usize,
@@ -197,8 +208,9 @@ impl TddLevel {
     }
 
     /// Which encoding a shrink to `new_len` lands the node on. The one place
-    /// the arms are decided, so the fallible entry point can tell whether it
-    /// has to reserve without restating the tests.
+    /// the arms are decided; `reserve_shrunk_multi` is its conservative
+    /// pre-rewrite shadow, deciding only whether the allocating arm is
+    /// reachable.
     #[inline]
     fn shrunk_encoding(&self, node_idx: usize, start: usize, new_len: usize) -> ShrunkEncoding {
         if new_len >= 2 {
