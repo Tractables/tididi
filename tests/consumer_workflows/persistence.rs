@@ -188,7 +188,7 @@ fn rotated_vtrees_and_diagrams_round_trip_together() {
         (Vtree::balanced(4), [1, -3]),
         (Vtree::linear(4), [1, -3]),
         (Vtree::random(4, 812), [1, -3]),
-        (Vtree::balanced_over(&[VarId(5), VarId(0), VarId(2), VarId(3)]), [1, -3]),
+        (Vtree::balanced_over(&[VarId(5), VarId(0), VarId(2), VarId(3)]).unwrap(), [1, -3]),
     ] {
         for probe in [1, 2] {
             let vtree = Arc::new(vtree.clone());

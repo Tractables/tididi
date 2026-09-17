@@ -5,7 +5,7 @@ use crate::test_helpers::{assert_canonical, stopping_engine};
 #[test]
 fn projected_counts_match_all_three_variable_truth_tables() {
     let vars = [VarId(19), VarId(2), VarId(8)];
-    for vtree in [Vtree::balanced_over(&vars), Vtree::linear_from_order(&vars)] {
+    for vtree in [Vtree::balanced_over(&vars).unwrap(), Vtree::linear_from_order(&vars).unwrap()] {
         let vtree = Arc::new(vtree);
         for bits in 0..256u16 {
             let mut f = Tdd::zero(&vtree);

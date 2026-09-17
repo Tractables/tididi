@@ -588,7 +588,7 @@ fn bulk_quantification_validates_late_variables_before_rewriting() {
 fn bulk_quantification_preserves_first_occurrence_order_and_skips_repeated_rewrites() {
     use crate::Engine;
     let vars = [VarId(19), VarId(2), VarId(8)];
-    let tree = Arc::new(Vtree::balanced_over(&vars));
+    let tree = Arc::new(Vtree::balanced_over(&vars).unwrap());
     let f = Engine::new().clause(&tree, vars.map(crate::Literal::pos)).unwrap();
     crate::test_helpers::assert_canonical(&f);
     let order = [vars[2], vars[0], vars[1]];

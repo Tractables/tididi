@@ -36,7 +36,7 @@ does not rename them: `VarId(2)` still means `x3`.
 ```rust,ignore,{class=tested-example}
 let grouped_vtree = Arc::new(Vtree::balanced_over(&[
     VarId(0), VarId(2), VarId(1), VarId(3),
-]));
+])?);
 let split_vtree = Arc::new(Vtree::balanced(4));
 ```
 

@@ -45,7 +45,7 @@ impl Vtree {
     ///
     /// ```
     /// use tididi::vtree::{VarId, Vtree, VtreeError};
-    /// let parts = [Vtree::balanced_over(&[VarId(0), VarId(1)]), Vtree::leaf(VarId(3))];
+    /// let parts = [Vtree::balanced_over(&[VarId(0), VarId(1)])?, Vtree::leaf(VarId(3))];
     /// let vtree = Vtree::graft(&parts, &[VarId(2)])?;
     /// assert_eq!((vtree.num_leaves(), vtree.num_vars()), (4, 4));
     ///
@@ -84,8 +84,8 @@ impl Vtree {
     /// ```
     /// use tididi::vtree::{VarId, Vtree, VtreeError};
     ///
-    /// let a = Vtree::balanced_over(&[VarId(0), VarId(1)]);
-    /// let b = Vtree::balanced_over(&[VarId(0), VarId(1)]);
+    /// let a = Vtree::balanced_over(&[VarId(0), VarId(1)])?;
+    /// let b = Vtree::balanced_over(&[VarId(0), VarId(1)])?;
     /// // Each piece is compiled in its own id space, so piece 1 is shifted up.
     /// let shift = |k: usize, v: VarId| VarId(v.0 + 2 * k as u32);
     /// let (vtree, layout) = Vtree::graft_over(&[&a, &b], shift, &[VarId(4)], 5)?;

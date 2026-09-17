@@ -84,10 +84,10 @@ fn sparse_assignments_on_rotated_trees_match_enumeration() {
     use crate::diagram::Literal;
     use crate::vtree::{rotate::rotate_pointers, RotationKind};
     let vars = [VarId(19), VarId(2), VarId(71), VarId(8)];
-    let mut rotated = Vtree::balanced_over(&vars);
+    let mut rotated = Vtree::balanced_over(&vars).unwrap();
     let root = rotated.root();
     rotate_pointers(&mut rotated, root, RotationKind::Left).unwrap().commit(&mut rotated);
-    for tree in [Vtree::balanced_over(&vars), Vtree::linear_from_order(&vars), rotated] {
+    for tree in [Vtree::balanced_over(&vars).unwrap(), Vtree::linear_from_order(&vars).unwrap(), rotated] {
         let tree = Arc::new(tree);
         let eng = Engine::new();
         let mut f = eng.clause(&tree, [Literal::pos(vars[0]), Literal::neg(vars[1])]).unwrap();

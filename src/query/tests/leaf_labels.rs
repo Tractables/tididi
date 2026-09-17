@@ -8,7 +8,7 @@ use crate::OperationError;
 fn support_and_backbone_match_sparse_id_truth_tables() {
     let eng = Engine::new();
     let vars = [VarId(19), VarId(2), VarId(8)];
-    for tree in [Vtree::balanced_over(&vars), Vtree::linear_from_order(&vars)] {
+    for tree in [Vtree::balanced_over(&vars).unwrap(), Vtree::linear_from_order(&vars).unwrap()] {
         let tree = Arc::new(tree);
         for bits in 0..256u16 {
             let mut f = Tdd::one(&tree);
@@ -70,7 +70,7 @@ fn leaf_outputs_have_only_their_forced_literal() {
 fn leaf_scan_omits_marginal_leaves_and_public_query_rejects_them() {
     let eng = Engine::new();
     let vars = [VarId(19), VarId(2), VarId(8)];
-    let tree = Arc::new(Vtree::balanced_over(&vars));
+    let tree = Arc::new(Vtree::balanced_over(&vars).unwrap());
     let mut f = eng.cube(&tree, [Literal::pos(vars[0]), Literal::neg(vars[1])]).unwrap();
     assert_canonical(&f);
     let leaf = tree.leaf_of(vars[0]).unwrap();

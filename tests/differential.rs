@@ -174,8 +174,8 @@ fn draw_vtree(rng: &mut Lcg, num_vars: u32) -> (Arc<Vtree>, String) {
     match rng.below(5) {
         0 => (Arc::new(Vtree::balanced(num_vars)), "balanced".to_string()),
         1 => (Arc::new(Vtree::linear(num_vars)), "linear".to_string()),
-        2 => (Arc::new(Vtree::balanced_over(&order)), format!("balanced_over({order:?})")),
-        3 => (Arc::new(Vtree::linear_from_order(&order)), format!("linear_from_order({order:?})")),
+        2 => (Arc::new(Vtree::balanced_over(&order).unwrap()), format!("balanced_over({order:?})")),
+        3 => (Arc::new(Vtree::linear_from_order(&order).unwrap()), format!("linear_from_order({order:?})")),
         _ => (Arc::new(Vtree::random(num_vars, seed)), format!("random({seed})")),
     }
 }

@@ -115,7 +115,7 @@ fn zero_integer_literals_return_errors_at_checked_entry_points() {
 fn literal_conversion_handles_signed_endpoints_and_borrowed_inputs() {
     assert_eq!(Literal::try_from(i32::MIN), Ok(Literal::neg(VarId(2147483647))));
     assert_eq!(Literal::try_from(i32::MAX), Ok(Literal::pos(VarId(2147483646))));
-    let vtree = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(7)]));
+    let vtree = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(7)]).unwrap());
     let engine = Engine::new();
     let integers = [1, -8];
     let typed = [Literal::pos(VarId(0)), Literal::neg(VarId(7))];

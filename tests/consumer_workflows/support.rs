@@ -14,7 +14,7 @@ pub(super) fn trees(n: u32) -> [Arc<Vtree>; 3] {
         Arc::new(Vtree::linear(n)),
         Arc::new(Vtree::linear_from_order(
             &(0..n).rev().map(VarId).collect::<Vec<_>>(),
-        )),
+        ).unwrap()),
     ]
 }
 

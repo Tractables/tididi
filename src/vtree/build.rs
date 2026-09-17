@@ -12,6 +12,14 @@ pub(super) fn require_nonempty(num_vars: u32) {
     assert!(num_vars > 0, "a vtree needs at least one variable");
 }
 
+/// The id space of a leaf order, `max + 1`, refusing an empty order.
+fn id_space(vars: &[VarId]) -> Result<u32, VtreeError> {
+    vars.iter()
+        .map(|v| v.0 + 1)
+        .max()
+        .ok_or_else(|| VtreeError::Invalid("a vtree needs at least one variable".to_string()))
+}
+
 /// Append a leaf carrying `var` to a node list under construction.
 pub(super) fn push_leaf(nodes: &mut Vec<VtreeNode>, var: VarId) -> VtreeIdx {
     let idx = VtreeIdx(nodes.len() as u32);
@@ -76,7 +84,7 @@ impl Vtree {
     ///
     /// ```
     /// use tididi::vtree::{VarId, Vtree, VtreeError};
-    /// let vtree = Vtree::join(&Vtree::leaf(VarId(0)), &Vtree::balanced_over(&[VarId(2), VarId(1)]))?;
+    /// let vtree = Vtree::join(&Vtree::leaf(VarId(0)), &Vtree::balanced_over(&[VarId(2), VarId(1)])?)?;
     /// assert_eq!((vtree.num_leaves(), vtree.num_vars()), (3, 3));
     /// // Var 1 is already in `vtree`, so the join is refused and names the clash.
     /// let clash = Vtree::join(&vtree, &Vtree::leaf(VarId(1)));
@@ -112,7 +120,7 @@ impl Vtree {
     pub fn balanced(num_vars: u32) -> Self {
         require_nonempty(num_vars);
         let vars: Vec<VarId> = (0..num_vars).map(VarId).collect();
-        Self::balanced_over(&vars)
+        Self::balanced_over(&vars).expect("the ids are distinct")
     }
 
     /// A balanced binary vtree whose leaves read `order` left to right: the
@@ -123,15 +131,15 @@ impl Vtree {
     ///
     /// The id space is `max(order) + 1`; ids skipped by `order` are uncovered.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `order` is empty or repeats a variable.
-    pub fn balanced_over(order: &[VarId]) -> Self {
-        require_nonempty(order.len() as u32);
-        let num_vars = order.iter().map(|v| v.0).max().unwrap() + 1;
+    /// [`VtreeError::Invalid`] if `order` is empty;
+    /// [`VtreeError::OverlappingVariable`] if it repeats a variable.
+    pub fn balanced_over(order: &[VarId]) -> Result<Self, VtreeError> {
+        let num_vars = id_space(order)?;
         let mut nodes = Vec::with_capacity(2 * order.len() - 1);
         let root = Self::build_balanced_recursive(order, &mut nodes);
-        Self::from_nodes(nodes, root, num_vars).expect("the recursion appends one tree")
+        Self::from_nodes(nodes, root, num_vars)
     }
 
     /// Recursively build a balanced vtree over `vars`, appending nodes into
@@ -162,7 +170,7 @@ impl Vtree {
     pub fn linear(num_vars: u32) -> Self {
         require_nonempty(num_vars);
         let vars: Vec<VarId> = (0..num_vars).map(VarId).collect();
-        Self::linear_from_order(&vars)
+        Self::linear_from_order(&vars).expect("the ids are distinct")
     }
 
     /// A right-linear vtree over `n-1, …, 0`, reversing [`Vtree::linear`]'s order:
@@ -174,7 +182,7 @@ impl Vtree {
     pub fn reverse_linear(num_vars: u32) -> Self {
         require_nonempty(num_vars);
         let vars: Vec<VarId> = (0..num_vars).rev().map(VarId).collect();
-        Self::linear_from_order(&vars)
+        Self::linear_from_order(&vars).expect("the ids are distinct")
     }
 
     /// A right-linear vtree whose leaves read `vars` left to right: each
@@ -194,19 +202,20 @@ impl Vtree {
     ///
     /// The id space is `max(vars) + 1`; ids skipped by `vars` are uncovered.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if `vars` is empty or repeats a variable.
-    pub fn linear_from_order(vars: &[VarId]) -> Self {
-        require_nonempty(vars.len() as u32);
-        let num_vars = vars.iter().map(|v| v.0).max().unwrap() + 1;
+    /// [`VtreeError::Invalid`] if `vars` is empty;
+    /// [`VtreeError::OverlappingVariable`] if it repeats a variable.
+    pub fn linear_from_order(vars: &[VarId]) -> Result<Self, VtreeError> {
+        let num_vars = id_space(vars)?;
         let mut nodes = Vec::with_capacity(2 * vars.len() - 1);
-        let mut right = push_leaf(&mut nodes, *vars.last().unwrap());
-        for &var in vars[..vars.len() - 1].iter().rev() {
+        let (&last, rest) = vars.split_last().expect("checked nonempty");
+        let mut right = push_leaf(&mut nodes, last);
+        for &var in rest.iter().rev() {
             let left = push_leaf(&mut nodes, var);
             right = push_internal(&mut nodes, left, right);
         }
-        Self::from_nodes(nodes, right, num_vars).expect("the chain is one tree")
+        Self::from_nodes(nodes, right, num_vars)
     }
 
     /// Build a random vtree over `num_vars` variables (`0..num_vars`).

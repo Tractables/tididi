@@ -296,7 +296,7 @@ fn sparse_ids_and_single_leaf_diagrams_work() {
     let eng = Engine::new();
     for tree in [
         Vtree::leaf(VarId(19)),
-        Vtree::balanced_over(&[VarId(19), VarId(2)]),
+        Vtree::balanced_over(&[VarId(19), VarId(2)]).unwrap(),
     ] {
         let tree = Arc::new(tree);
         let x = eng.literal(&tree, Literal::pos(VarId(19))).unwrap();

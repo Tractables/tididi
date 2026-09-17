@@ -46,8 +46,8 @@ impl Tdd {
     /// use tididi::Tdd;
     /// use tididi::vtree::{VarId, Vtree, VtreeError};
     /// use tididi::restructure::GraftError;
-    /// let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]));
-    /// let b = Arc::new(Vtree::balanced_over(&[VarId(2), VarId(3)]));
+    /// let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]).unwrap());
+    /// let b = Arc::new(Vtree::balanced_over(&[VarId(2), VarId(3)]).unwrap());
     /// let f = Tdd::clause(&a, [1, 2])?;   // x1 ∨ x2: 3 models
     /// let g = Tdd::clause(&b, [3, -4])?;  // x3 ∨ ¬x4: 3 models
     /// let fg = Tdd::graft(vec![f, g], &[VarId(4)]).unwrap();

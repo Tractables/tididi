@@ -14,8 +14,8 @@ fn count(t: &Tdd) -> u64 {
 
 #[test]
 fn graft_counts_the_product_times_two_per_spine_var() {
-    let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]));
-    let b = Arc::new(Vtree::linear_from_order(&[VarId(3), VarId(2)]));
+    let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]).unwrap());
+    let b = Arc::new(Vtree::linear_from_order(&[VarId(3), VarId(2)]).unwrap());
     let f = Tdd::clause(&a, [1, 2]).unwrap(); // 3 models over {x1, x2}
     let g = Tdd::clause(&b, [3, -4]).unwrap() & Tdd::clause(&b, [4]).unwrap(); // x3 ∧ x4: 1 model
     assert_eq!((count(&f), count(&g)), (3, 1));
@@ -54,7 +54,7 @@ fn graft_of_one_part_keeps_its_count_and_a_lone_spine_is_true() {
 
 #[test]
 fn graft_rejects_overlap_and_nothing() {
-    let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]));
+    let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]).unwrap());
     let f = Tdd::clause(&a, [1]).unwrap();
     assert_eq!(
         Tdd::graft(vec![f.clone(), f.clone()], &[]).err(),
@@ -146,7 +146,7 @@ fn graft_over_carries_each_part_weight_store_into_the_merged_diagram() {
         .iter()
         .zip(placements.iter())
         .map(|(cs, l2g)| {
-            let vtree = Arc::new(Vtree::balanced_over(l2g));
+            let vtree = Arc::new(Vtree::balanced_over(l2g).unwrap());
             let renamed: Vec<Vec<i32>> = cs
                 .iter()
                 .map(|c| c.iter().map(|l| l.signum() * (l2g[l.unsigned_abs() as usize - 1].0 as i32 + 1)).collect())
@@ -228,8 +228,8 @@ fn a_part_whose_levels_still_read_the_store_keeps_it() {
 
 #[test]
 fn a_false_part_makes_the_graft_false() {
-    let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]));
-    let b = Arc::new(Vtree::balanced_over(&[VarId(2), VarId(3)]));
+    let a = Arc::new(Vtree::balanced_over(&[VarId(0), VarId(1)]).unwrap());
+    let b = Arc::new(Vtree::balanced_over(&[VarId(2), VarId(3)]).unwrap());
     let f = Tdd::clause(&a, [1, 2]).unwrap();
     let g = Tdd::clause(&b, [3]).unwrap() & Tdd::clause(&b, [-3]).unwrap();
     assert!(g.is_zero());

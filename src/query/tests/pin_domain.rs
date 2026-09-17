@@ -8,11 +8,11 @@ use crate::OperationError;
 fn sparse_counts<R: Retention>() {
     let eng = Engine::new();
     let vars = [VarId(19), VarId(2), VarId(71)];
-    let mut rotated = Vtree::balanced_over(&vars);
+    let mut rotated = Vtree::balanced_over(&vars).unwrap();
     let root = rotated.root();
     crate::vtree::rotate::rotate_pointers(&mut rotated, root, crate::vtree::RotationKind::Left)
         .unwrap().commit(&mut rotated);
-    for tree in [Vtree::balanced_over(&vars), Vtree::linear_from_order(&vars), rotated] {
+    for tree in [Vtree::balanced_over(&vars).unwrap(), Vtree::linear_from_order(&vars).unwrap(), rotated] {
         let tree = Arc::new(tree);
         for (f, kind) in [(Tdd::one(&tree), 0), (Tdd::zero(&tree), 1), (Tdd::clause(&tree, [3]).unwrap(), 2)] {
             assert_canonical(&f);
@@ -51,7 +51,7 @@ fn sparse_and_reordered_variables_count_under_both_pin_conventions() {
 /// Reject holes and out-of-range IDs without disturbing cached or pending evidence.
 fn invalid_pins<R: Retention>() {
     let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced_over(&[VarId(9), VarId(2)]));
+    let tree = Arc::new(Vtree::balanced_over(&[VarId(9), VarId(2)]).unwrap());
     let f = Tdd::one(&tree);
     assert_canonical(&f);
     let mut counter = eng.counter_with::<R>(&f, PinSemantics::Evidence).unwrap();
@@ -120,7 +120,7 @@ fn sparse_pin_storage_fits_a_budget_independent_of_variable_ids() {
 
 /// Check signed observations against enumeration, including atomic rejection.
 fn observed_counts<R: Retention>() {
-    let vtree = Arc::new(Vtree::balanced_over(&[VarId(9), VarId(2), VarId(71)]));
+    let vtree = Arc::new(Vtree::balanced_over(&[VarId(9), VarId(2), VarId(71)]).unwrap());
     let f = Tdd::clause(&vtree, [3, 10]).unwrap();
     assert_canonical(&f);
     for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {

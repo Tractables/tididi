@@ -23,7 +23,7 @@ fn expected_count(pins: [Option<bool>; 3], semantics: PinSemantics) -> usize {
 /// Exercise sparse variables, partial updates and duplicates against enumeration.
 fn bulk_counts<R: Retention>() {
     let vars = [VarId(9), VarId(2), VarId(71)];
-    let tree = Arc::new(Vtree::balanced_over(&vars));
+    let tree = Arc::new(Vtree::balanced_over(&vars).unwrap());
     let f = Tdd::clause(&tree, [10, -3]).unwrap();
     assert_canonical(&f);
     for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
@@ -64,7 +64,7 @@ fn bulk_evidence_matches_enumeration_with_both_policies_and_semantics() {
 
 /// Reject a bad middle entry without applying neighboring updates or losing pending ones.
 fn invalid_batches<R: Retention>() {
-    let tree = Arc::new(Vtree::balanced_over(&[VarId(9), VarId(2), VarId(71)]));
+    let tree = Arc::new(Vtree::balanced_over(&[VarId(9), VarId(2), VarId(71)]).unwrap());
     let f = Tdd::clause(&tree, [10, -3]).unwrap();
     assert_canonical(&f);
     for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
