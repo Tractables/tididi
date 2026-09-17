@@ -209,17 +209,3 @@ pub(crate) fn fold_bottom_up<F: LevelFold>(
         retain.frontier(tdd.output.vtree),
     )
 }
-
-/// The convenience walk without a stop gate, panicking on a reservation refusal.
-pub(crate) fn fold_bottom_up_unpolled<F: LevelFold>(
-    f: &F,
-    eng: &Engine,
-    tdd: &Tdd,
-    cols: &mut [F::Col],
-    retain: ColumnRetention,
-    ensure_col: impl FnMut(&mut [F::Col], usize),
-) {
-    let mut ensure_col = ensure_col;
-    fold_bottom_up(f, eng, tdd, cols, retain, None, |cols, ti| { ensure_col(cols, ti); Ok(()) })
-        .expect("query fold: allocation refused");
-}
