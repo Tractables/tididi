@@ -2,11 +2,10 @@
 
 The [configuration walkthrough](crate::guide::examples::configurations) counts
 valid backup configurations. Suppose each enabled option also has a cost.
-We can use the same circuit to find the minimum total cost by changing how we
-evaluate its leaves, conjunctions and alternatives.
+Compute the minimum total cost by evaluating the same circuit with costs.
 
 This advanced example implements [`EvalAlgebra`](crate::diagram::EvalAlgebra).
-Run it with `cargo run --example minimum_cost`; only `tididi` is needed.
+Run it with `cargo run --example minimum_cost`.
 
 ```rust,ignore,{class=tested-example}
 use std::sync::Arc;
@@ -37,7 +36,7 @@ that case distinct from a valid configuration with zero cost.
 struct Costs([u32; 4]);
 ```
 
-## Evaluate alternatives with minimum and conjunctions with addition
+## Define the cost calculation
 
 For an OR, choose the cheaper feasible alternative. For an AND, add the costs
 of its children. TDD conjunctions combine disjoint variable sets, so each
@@ -82,9 +81,7 @@ impl EvalAlgebra for Costs {
 }
 ```
 
-The four `u32` entries have a total that fits in `u64`. This table is specific
-to the four-variable model above; a larger application can provide its own
-cost storage and numeric type while using the same evaluation rules.
+The result uses `u64` so the sum of the four `u32` costs fits.
 
 ## Query the minimum
 
@@ -97,9 +94,8 @@ assert_eq!(configurations.evaluate(&costs)?, Some(3));
 println!("Minimum configuration cost: 3");
 ```
 
-This query returns the cost. An ordinary satisfying assignment is not
-necessarily a cheapest assignment; recovering one requires also tracking
-which alternatives attain the minimum.
+To recover a cheapest assignment as well as its cost, an evaluator would
+also need to track which alternatives attain the minimum.
 
 ## Change prices or add a requirement
 

@@ -5,9 +5,8 @@ Here we save two rules separately, discard their original diagrams, then
 restore and combine them. The saved vtree tells the reader how both diagrams
 interpret their variables.
 
-Run the complete program with `cargo run --example save_reload`; only `tididi`
-is needed as a dependency. It uses byte buffers so you can run it without
-creating files.
+Run `cargo run --example save_reload`. This example saves to byte buffers;
+it does not create files.
 
 ```rust,ignore,{class=tested-example}
 use std::sync::Arc;
@@ -51,14 +50,12 @@ write_tdd(&mut encryption_bytes, &encryption_rule)?;
 drop((destination, encryption_rule, vtree));
 ```
 
-The serialized data is now all that remains. For files, use
-[`save_tdd`](crate::io::save_tdd) and [`load_tdd`](crate::io::load_tdd), and
-write the vtree text alongside them. Store application variable names with
-that data too: the diagram format identifies variables by number.
+For files, use [`save_tdd`](crate::io::save_tdd) and
+[`load_tdd`](crate::io::load_tdd). Save application variable names alongside
+them if you need those names later.
 
-Serialization preserves Boolean structure. It does not save attached weights;
-restore those separately. Save before marginalizing, since discarded structure
-cannot be reconstructed from its count or weighted value.
+Save before marginalizing, and store any weights separately;
+[`write_tdd`](crate::io::write_tdd) preserves the Boolean structure.
 
 ## Restore the vtree once
 
@@ -72,9 +69,8 @@ let encryption_rule = read_tdd(&mut encryption_bytes.as_slice(), &restored_vtree
 assert!(Arc::ptr_eq(destination.vtree(), encryption_rule.vtree()));
 ```
 
-Reading the vtree twice would make two separate allocations. Even if their
-text is identical, diagrams on those separate vtrees cannot be conjoined
-directly. Use the same restored vtree for diagrams you intend to combine.
+Both readers receive the same `Arc<Vtree>`, so their results can be combined.
+Reading the vtree separately for each diagram would create incompatible allocations.
 
 ## Combine and check the result
 
@@ -85,13 +81,10 @@ let configurations = and(destination, encryption_rule)?;
 assert_eq!(configurations.model_count()?, 4u32.into());
 ```
 
-There are four valid assignments: local-only backups with either encryption
-setting, remote-only encrypted backups, and both destinations with encryption.
-Unlike the first walkthrough, this vtree has no notification variable, so there
-is no additional factor of two.
+The four choices are local-only backups with encryption off or on,
+remote-only encrypted backups, and both destinations with encryption.
 
-The program also checks functional equality against freshly constructed rules;
-a matching model count alone would not establish that the rules survived:
+Rebuild the rules to check that loading preserved the whole function:
 
 ```rust,ignore,{class=tested-example}
 let expected = and(
@@ -101,8 +94,6 @@ let expected = and(
 assert!(configurations.equivalent(&expected)?);
 ```
 
-See [`read_tdd`](crate::io::read_tdd) for the format checks made during loading.
-
-The [complete program](https://github.com/Tractables/tididi/blob/main/examples/save_reload.rs)
-puts these steps together; the [API overview](crate::guide::api) lists the other
-operations available on restored diagrams.
+See [`read_tdd`](crate::io::read_tdd) for format requirements and the
+[complete program](https://github.com/Tractables/tididi/blob/main/examples/save_reload.rs)
+for the runnable example.

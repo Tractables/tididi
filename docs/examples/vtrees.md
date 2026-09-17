@@ -5,7 +5,7 @@ vtrees. Consider `(x1 ↔ x3) ∧ (x2 ↔ x4)`: two independent pairs of variabl
 must agree. We will build it under two balanced vtrees and compare the minimized
 representations.
 
-Run `cargo run --example vtree_grouping`; only `tididi` is needed as a dependency.
+Run `cargo run --example vtree_grouping`.
 
 ```rust,ignore,{class=tested-example}
 use std::sync::Arc;
@@ -66,10 +66,7 @@ assert_eq!(split.pair_count(), 12);
 ```
 
 Each equality allows both variables to be false or both to be true, giving
-four models in total. We know the functions agree because the helper constructs
-the same formula; equal counts by themselves would not prove equivalence.
-The diagrams have different vtrees, so the binary operations requiring a shared
-vtree cannot compare or combine them directly.
+four models in either case. The grouped representation stores fewer pairs.
 
 ## Account for the stored pairs
 
@@ -83,15 +80,13 @@ corresponding right assignment:
 | Equalities grouped | 2 | 2 | 1 | 5 |
 | Equalities split | 4 | 4 | 4 | 12 |
 
-These are stored child pairs, not satisfying assignments or byte counts. Both
-representations still describe the same four models.
+Both representations describe the same four models; the table measures
+the pairs needed to store them.
 
-## Apply the example to your own model
+## Try other groupings
 
-A balanced vtree in natural order is a useful starting point. If the model has
-separate groups of constraints, try grouping their variables into subtrees and
-compare the resulting diagrams. This example favors keeping equality partners
-together; it does not establish a best order for other functions.
+Start with a balanced vtree, then try keeping related variables in the same
+subtree. Compare the resulting sizes for your own constraints.
 
 [`Tdd::rotation_search`](crate::Tdd::rotation_search) can search vtree
 changes on an existing diagram. The [data model](crate::guide::model) explains

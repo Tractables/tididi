@@ -39,12 +39,10 @@ impl VtreeNode {
     }
 }
 
-/// A variable tree (vtree): a rooted binary tree whose leaves correspond to variables.
+/// A binary tree grouping the Boolean variables of a diagram.
 ///
-/// Use [`Vtree::balanced`] to group contiguous variables into subtrees, or
-/// [`Vtree::linear`] for a right-linear tree representing a variable order.
-/// The vtree determines the full variable universe, including free variables
-/// that a particular function does not mention.
+/// Its leaves determine the variables counted by a diagram, including those
+/// the function leaves free.
 ///
 /// Wrap the vtree in one `Arc` and share that allocation among operands:
 ///
@@ -61,15 +59,8 @@ impl VtreeNode {
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 ///
-/// Two independently constructed trees are different allocations, even when
-/// their shapes and variable labels match; binary diagram operations reject
-/// that combination. Cloning the `Arc` preserves compatibility.
-///
-/// For sparse ids, [`Vtree::balanced_over`] and [`Vtree::linear_from_order`]
-/// take the variables explicitly. [`Vtree::num_leaves`] counts present
-/// variables; [`Vtree::num_vars`] is the variable-id space, large enough to
-/// index every named variable.
-/// Weight tables use the latter size, while model counts range over the former.
+/// Clone the `Arc` to share a vtree. Constructing an identical vtree separately
+/// creates an incompatible allocation.
 ///
 /// # Choosing a vtree
 ///
@@ -79,16 +70,19 @@ impl VtreeNode {
 /// [`Vtree::balanced_over`] lets you keep related variables together while
 /// retaining a balanced shape; [`Vtree::join`] makes the groups explicit.
 ///
-/// The vtree can greatly affect diagram size and the cost of building it.
-/// A balanced shape alone does not guarantee a compact diagram. Compare
-/// [`Tdd::pair_count`](crate::Tdd::pair_count) for your functions under different
-/// groupings, and use [`Context::with_limits`](crate::Context::with_limits) when
-/// exploring larger inputs.
+/// Compare [`Tdd::pair_count`](crate::Tdd::pair_count) under different groupings,
+/// as in the [vtree example](crate::guide::examples::vtrees). Use
+/// [`Context::with_limits`](crate::Context::with_limits) to bound larger experiments.
 /// Once a diagram is built, [`Tdd::rotation_search`](crate::Tdd::rotation_search)
 /// can search nearby vtree shapes. [`minimize`](crate::Tdd::minimize) instead
 /// removes redundancy under the current vtree and keeps its variable grouping.
 ///
-/// # Representation
+/// # Variable identifiers and traversal
+///
+/// [`Vtree::balanced_over`] and [`Vtree::linear_from_order`] accept sparse
+/// variable ids. [`Vtree::num_leaves`] counts the variables present;
+/// [`Vtree::num_vars`] gives the identifier space needed by weight tables.
+/// Model counts range over the present variables.
 ///
 /// Read nodes and edges through [`Vtree::node`], [`Vtree::root`] and
 /// [`Vtree::children`], and traverse children before parents with

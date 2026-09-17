@@ -31,7 +31,7 @@ through `ChildDecoder`.
 | **value slot** | An index into a marginal level's value store; nodes may share one. |
 | **algebra** | The domain a fold computes in: the zero, the leaf values, the sum and the product an [`EvalAlgebra`] supplies. |
 | **arithmetic** | Which numeric representation a store's values use ([`Arithmetic`]): exact rationals, or the signed log domain. |
-| **cell** | A position in the apply product grid. That use only. |
+| **cell** | A position in the apply product grid. |
 | **column** | A per-node value array for one level during a bottom-up fold. |
 | **fold** | One bottom-up pass computing a value per node. |
 | **frontier** | The levels a fold currently holds columns for. |
@@ -96,8 +96,8 @@ the optimized algorithms.
 
 ## One conjunction
 
-[`and(f, g)`] checks out the shared context, then validates the shared vtree and weight interpretation,
-then walks levels bottom-up. At each structural level it combines operand
+[`and(f, g)`] borrows an engine from the shared context, validates operand
+compatibility, and walks levels bottom-up. At each structural level it combines operand
 nodes in a product grid and emits surviving child pairs. Consumed level
 arenas return to the engine's pools for reuse.
 
@@ -149,13 +149,13 @@ and an unwinding checkout discards its scratch.
 Vtree clones and projections retain their context. Grafts retain a context
 shared by all source vtrees; otherwise they start fresh. Binary compatibility
 still compares vtree allocations. A rotation wrapper retains only the context
-handle so it does not force extra copy-on-write clones of the tree. Serialized
+handle so it does not force extra copy-on-write clones of the vtree. Serialized
 vtrees contain shape alone and receive fresh execution state when loaded.
 
 ## Constraints
 
-No cargo features, no `build.rs`, no environment reads, no threads, no
-process-wide state, no C or C++ code built.
+The crate is pure Rust, with no build script or optional features. It reads no
+environment variables and owns no threads or process-wide state.
 
 [`and(f, g)`]: crate::and
 [`Arithmetic`]: crate::diagram::Arithmetic

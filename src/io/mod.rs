@@ -67,21 +67,17 @@ pub use dot::{tdd_to_dot, vtree_to_dot};
 pub use read::{load_tdd, read_tdd};
 pub use write::{save_tdd, write_tdd};
 
-/// What can go wrong moving a diagram between memory and bytes.
+/// An I/O failure or invalid diagram data.
 ///
-/// Two kinds, and the split is where the fault lies. [`IoError::Io`] is the
-/// stream's: a file that would not open, a disk that filled, a reader that
-/// ended early. [`IoError::Format`] is the data's: a diagram the format cannot
-/// carry on the way out, or bytes that do not describe one on the way in.
-///
-/// [`IoError::Format`] carries its detail as a message string; a caller that
-/// wants to branch on a malformed file matches the variant, not the message.
+/// Match [`IoError::Io`] for stream failures and [`IoError::Format`] for
+/// unsupported or malformed data. Format messages provide context for the
+/// user; use the variant, rather than the message text, to handle an error.
 #[derive(Debug)]
 #[non_exhaustive]
 pub enum IoError {
     /// The underlying file or stream failed.
     Io(std::io::Error),
-    /// The diagram and the format do not agree.
+    /// The data cannot be represented or read in the requested format.
     ///
     /// Writing: the diagram has a marginal level, which stores per-node
     /// values rather than nodes and has no structural form to emit. Reading: a

@@ -6,8 +6,8 @@
 
 tididi is a Rust library for **Tree Decision Diagrams (TDDs)**. A TDD represents
 a Boolean function as a circuit, so you can work with its satisfying assignments
-without listing them. Circuits can be combined, transformed, and reused for
-many different queries.
+without listing them. Build a circuit once, then combine it with other circuits
+or query it as your inputs change.
 
 TDDs can be strictly more succinct than ordered binary decision diagrams (OBDDs).
 Their representation and minimization algorithm are described in
@@ -22,8 +22,8 @@ Boolean functions: the [reachability example] uses conjunction, quantification,
 and variable renaming to explore a transition system.
 
 **Find solutions and count possibilities.** Check whether constraints can be
-satisfied, obtain a satisfying assignment, or count all solutions exactly. You
-can also compare functions for equivalence or implication. The
+satisfied, find a solution, or count all solutions exactly. Compare functions
+for equivalence or implication. The
 [configuration example] builds rules for a backup application, counts the valid
 configurations, and reuses the circuit as a user changes their choices.
 
@@ -84,9 +84,8 @@ shows how to save and reload them. The [execution example] adds resource limits
 to a batch of operations. You can also inspect the stored nodes and pairs, as
 shown in the [custom-statistic example].
 
-The [API overview] groups the available operations by what they do and links
-to their specifications. The [API reference] documents individual items, and
-the [architecture reference] describes the implementation for contributors.
+Use the [API overview] to find an operation and the [API reference] for its
+contract. Contributors can start with the [architecture reference].
 To browse the documentation locally, run `cargo doc --no-deps` and open
 `target/doc/tididi/index.html`.
 

@@ -19,13 +19,15 @@ fn main() -> Result<(), OperationError> {
     let next_to_current = [(VarId(2), VarId(0)), (VarId(3), VarId(1))];
     let mut iterations = 0;
 
-    loop {
-        let possible_steps = and(reached.clone(), transition.clone())?;
-        let successors = possible_steps.exists_vars(&current)?;
+    // Check the first image using the individual operations.
+    let possible_steps = and(reached.clone(), transition.clone())?;
+    let successors = possible_steps.exists_vars(&current)?;
+    let successors = successors.rename_vars(&next_to_current)?;
+    let combined = image(reached.clone(), transition.clone(), &current, &next_to_current)?;
+    assert!(successors.equivalent(&combined)?);
 
-        let successors = successors.rename_vars(&next_to_current)?;
-        let combined = image(reached.clone(), transition.clone(), &current, &next_to_current)?;
-        assert!(successors.equivalent(&combined)?);
+    loop {
+        let successors = image(reached.clone(), transition.clone(), &current, &next_to_current)?;
         let enlarged = or(reached.clone(), successors)?;
         iterations += 1;
 

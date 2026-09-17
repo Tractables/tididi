@@ -1,18 +1,17 @@
 # Control execution and release working memory
 
-The [configuration walkthrough](crate::guide::examples::configurations) builds
-and queries a diagram without an explicit engine. Those operations already
-reuse the workspace attached to the shared vtree. This page continues the same
-program when an application needs to bound work or release retained buffers.
+Ordinary operations reuse scratch buffers attached to the vtree. Use an
+explicit batch when you need resource limits; release idle scratch when you
+no longer need the retained memory.
 
-The variables `configurations`, `vtree` and `count` come from the first part.
-Run both parts with `cargo run --example build_minimize_count`.
+This continues the [configuration walkthrough](crate::guide::examples::configurations),
+using its `configurations`, `vtree` and `count`. Run both parts with
+`cargo run --example build_minimize_count`.
 
 ## Bound a batch of operations
 
-The vtree's [`Context`](crate::Context) lends a working engine for a batch.
-Here we deliberately allow zero bytes of charged allocation growth, so the
-attempt to rebuild the destination rule is refused:
+Use the vtree's [`Context`](crate::Context) to set a memory budget. A zero-byte
+budget lets us demonstrate a refused allocation:
 
 ```rust,ignore,{class=tested-example}
 use tididi::OperationError;
@@ -24,14 +23,10 @@ let attempt = context.with_limits(limit, |operations| {
 });
 ```
 
-Call through `operations` throughout the bounded batch. Those calls share its
-limit configuration; each top-level call starts new work measurements.
-Free functions, ordinary diagram methods and nested context calls are
-independent operations and do not inherit a batch's limits.
-
-This is a soft budget for charged allocation growth in each operation, not a
-bound on the application's total memory. The example verifies its deliberate
-refusal, then handles the result as an application would:
+Call through `operations` inside the batch: ordinary diagram methods and free
+functions do not inherit its limits. The budget covers charged allocation
+growth per operation; [`LimitConfig`](crate::limits::LimitConfig) describes
+what it measures. Handle a refusal like any other error:
 
 ```rust,ignore,{class=tested-example}
 assert!(matches!(attempt, Err(OperationError::OverBudget)));
@@ -42,8 +37,8 @@ match attempt {
 }
 ```
 
-The context retains reusable buffers after the batch, but clears its limits
-and callbacks. The next operation succeeds, and the original rules are intact:
+The budget ends with the batch. A later operation succeeds, and the original
+rules remain available:
 
 ```rust,ignore,{class=tested-example}
 let destination = Tdd::clause(&vtree, [1, 2])?;
@@ -54,10 +49,10 @@ assert_eq!(configurations.model_count()?, count);
 Use [`Context::run`](crate::Context::run) for a batch with no
 initial limits; its example shows several checked operations in one checkout.
 
-## Specialize storage when needed
+## Remove redundant storage
 
-The preceding queries work without an explicit minimization step. To remove
-redundancy under the current vtree, minimize the diagram:
+Use [`minimize`](crate::Tdd::minimize) to remove redundant storage without
+changing the function or vtree:
 
 ```rust,ignore,{class=tested-example}
 configurations.minimize()?;
@@ -69,13 +64,8 @@ For a different variable grouping, see the
 
 ## Bound repeated queries
 
-The configuration walkthrough introduced observations and repeated counting.
-A counter can also use explicit resource limits without losing its cached state.
-[`Tdd::counter_with`](crate::Tdd::counter_with) selects another storage policy
-or cofactor semantics when needed.
-
-To count under batch limits, temporarily bind the existing counter to the
-supplied engine:
+A counter can use batch limits while keeping its cached counts between
+queries. Bind it to the supplied engine for the duration of the query:
 
 ```rust,ignore,{class=tested-example}
 let mut counter = configurations.counter()?;
@@ -86,22 +76,19 @@ let bounded_count = context.with_limits(query_limit, |operations| {
 assert_eq!(bounded_count, count);
 ```
 
-The binding borrows the counter and engine; after the batch, the counter keeps
-its pins and cached state. [`Engine::counter`](crate::Engine::counter) creates
-a counter bound to that engine from the start.
+After the batch, the counter keeps its observations and cached counts.
+[`Engine::counter`](crate::Engine::counter) creates one bound to an engine
+from the start.
 
 ## Release idle scratch
 
-When a batch of work ends, keeping the diagrams also keeps their shared context
-alive. Release its idle buffers when the application no longer needs that
-capacity:
+Call [`clear_scratch`](crate::Context::clear_scratch) between batches to
+release idle buffers while keeping the diagrams:
 
 ```rust,ignore,{class=tested-example}
 context.clear_scratch();
 ```
 
-The diagrams keep their results. An operation still running can return buffers
-after this call, so clear between batches when all scratch must be released.
 Dropping the last reference to a context also frees its idle buffers.
 
 The [complete program](https://github.com/Tractables/tididi/blob/main/examples/build_minimize_count.rs)

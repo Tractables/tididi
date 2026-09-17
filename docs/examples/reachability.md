@@ -16,8 +16,7 @@ start
 
 The edges are `0 → 1`, `1 → 2`, and `2 → 1`. We will find all reachable states,
 prove that state 3 is unreachable, and obtain an assignment for state 2.
-Run it with `cargo run --example symbolic_reachability`; only `tididi` is
-needed as a dependency.
+Run it with `cargo run --example symbolic_reachability`.
 
 ```rust,ignore,{class=tested-example}
 use std::sync::Arc;
@@ -67,55 +66,66 @@ let mut iterations = 0;
 Only current-state variables constrain `reached`; its next-state variables
 are free.
 
-## Take one step
+## Compute successor states
 
-The image of a state set `R` under transition relation `T` is
-`∃current. (R(current) AND T(current, next))`. This retains a next state
-exactly when some state in `R` can reach it. Inside the loop:
+For a state set `R` and transition relation `T`, the successors are
+`∃current. (R(current) AND T(current, next))`. Conjoin the current set with
+the relation, then eliminate the current-state variables:
 
 ```rust,ignore,{class=tested-example}
 let possible_steps = and(reached.clone(), transition.clone())?;
 let successors = possible_steps.exists_vars(&current)?;
 ```
 
-The successors are expressed using next-state variables. Rename them to
-current-state variables so they can be used in the next iteration:
+The result uses next-state variables. Rename them so it can serve as a
+current-state set in another step:
 
 ```rust,ignore,{class=tested-example}
 let successors = successors.rename_vars(&next_to_current)?;
 ```
 
-Add them to the states already reached:
+[`and_exists`](crate::and_exists) combines the first two operations. Use it
+to write an image helper for the search:
 
 ```rust,ignore,{class=tested-example}
-let enlarged = or(reached.clone(), successors)?;
-iterations += 1;
-```
-
-## Stop when the state set no longer grows
-
-Count distinct assignments to the current-state variables with
-[`projected_model_count`](crate::Tdd::projected_model_count):
-
-```rust,ignore,{class=tested-example}
-let state_count = enlarged.projected_model_count(&current)?;
-println!("Iteration {iterations}: {state_count} reachable states");
-```
-
-The loop compares the represented functions, rather than their storage:
-
-```rust,ignore,{class=tested-example}
-if enlarged.equivalent(&reached)? {
-    break;
+fn image(
+    states: Tdd,
+    transition: Tdd,
+    current: &[VarId],
+    next_to_current: &[(VarId, VarId)],
+) -> Result<Tdd, OperationError> {
+    and_exists(states, transition, current)?.rename_vars(next_to_current)
 }
-reached = enlarged;
-assert!(
-    iterations < 4,
-    "a four-state system must converge within four images"
-);
 ```
 
-The progression is:
+## Repeat until the set stops growing
+
+Add each image to the states already reached. Stop when
+[`equivalent`](crate::Tdd::equivalent) says the set has not changed:
+
+```rust,ignore,{class=tested-example}
+loop {
+    let successors = image(reached.clone(), transition.clone(), &current, &next_to_current)?;
+    let enlarged = or(reached.clone(), successors)?;
+    iterations += 1;
+
+    // Count distinct current states, regardless of next-state assignments.
+    let state_count = enlarged.projected_model_count(&current)?;
+    println!("Iteration {iterations}: {state_count} reachable states");
+    if enlarged.equivalent(&reached)? {
+        break;
+    }
+    reached = enlarged;
+    assert!(
+        iterations < 4,
+        "a four-state system must converge within four images"
+    );
+}
+```
+
+[`projected_model_count`](crate::Tdd::projected_model_count) counts only the
+current-state assignments. Ordinary counting would also count the free
+next-state bits.
 
 | Image step | Successors | Accumulated states |
 |---|---|---|
@@ -155,37 +165,6 @@ let witness = reachable_target
 The witness is a state assignment, not a sequence of transitions. Recovering a
 path requires retaining predecessor information during the search.
 
-## Combine the image operations
-
-Once the separate steps are familiar, [`and_exists`](crate::and_exists)
-expresses conjunction and quantification in one call. This helper takes a state
-set and a transition relation, then returns the successors in current-state
-coordinates:
-
-```rust,ignore,{class=tested-example}
-fn image(
-    states: Tdd,
-    transition: Tdd,
-    current: &[VarId],
-    next_to_current: &[(VarId, VarId)],
-) -> Result<Tdd, OperationError> {
-    and_exists(states, transition, current)?.rename_vars(next_to_current)
-}
-```
-
-The complete program checks this helper against the separate steps at each
-iteration. It can replace those steps once the image computation is familiar.
-
-Ordinary quantification selects its strategy automatically. If a particular
-workload needs the structural rewrite, use
-[`Tdd::exists_vars_with_strategy`](crate::Tdd::exists_vars_with_strategy) or
-[`and_exists_with_strategy`](crate::and_exists_with_strategy)
-with [`QuantificationStrategy::Structural`](crate::apply::QuantificationStrategy::Structural);
-the operation contracts describe its requirements. The represented Boolean
-function is the same.
-
 The [complete program](https://github.com/Tractables/tididi/blob/main/examples/symbolic_reachability.rs)
-includes the loop and decodes the witness back to state 2. For the contracts
-of the image and renaming operations, see
-[`and_exists`](crate::and_exists) and
-[`Tdd::rename_vars`](crate::Tdd::rename_vars).
+also checks the image helper against the individual operations and decodes
+the witness as state 2.
