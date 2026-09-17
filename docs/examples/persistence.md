@@ -79,6 +79,13 @@ The loaded diagrams support the same operations as freshly built ones:
 ```rust,ignore,{class=tested-example}
 let configurations = and(destination, encryption_rule)?;
 assert_eq!(configurations.model_count()?, 4u32.into());
+println!("Restored rules allow {} configurations", configurations.model_count()?);
+```
+
+Output:
+
+```text
+Restored rules allow 4 configurations
 ```
 
 The four choices are local-only backups with encryption off or on,

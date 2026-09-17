@@ -42,8 +42,9 @@ fn main() -> Result<(), tididi::OperationError> {
         Tdd::clause(&vtree, [-2, 3])?,
     )?;
     let costs = Costs([5, 2, 1, 0]);
-    assert_eq!(configurations.evaluate(&costs)?, Some(3));
-    println!("Minimum configuration cost: 3");
+    let minimum = configurations.evaluate(&costs)?.expect("the rules have a solution");
+    assert_eq!(minimum, 3);
+    println!("Minimum configuration cost: {minimum}");
 
     let local_discount = Costs([1, 2, 1, 0]);
     assert_eq!(configurations.evaluate(&local_discount)?, Some(1));

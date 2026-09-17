@@ -37,6 +37,12 @@ match attempt {
 }
 ```
 
+Output:
+
+```text
+Not enough budget to build the destination rule
+```
+
 The budget ends with the batch. A later operation succeeds, and the original
 rules remain available:
 
@@ -57,6 +63,13 @@ changing the function or vtree:
 ```rust,ignore,{class=tested-example}
 configurations.minimize()?;
 assert_eq!(configurations.model_count()?, count);
+println!("Minimized representation: {} pairs", configurations.pair_count());
+```
+
+Output:
+
+```text
+Minimized representation: 8 pairs
 ```
 
 For a different variable grouping, see the

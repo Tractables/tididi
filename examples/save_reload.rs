@@ -26,11 +26,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let configurations = and(destination, encryption_rule)?;
     assert_eq!(configurations.model_count()?, 4u32.into());
+    println!("Restored rules allow {} configurations", configurations.model_count()?);
     let expected = and(
         Tdd::clause(&restored_vtree, [1, 2])?,
         Tdd::clause(&restored_vtree, [-2, 3])?,
     )?;
     assert!(configurations.equivalent(&expected)?);
-    println!("Restored rules allow {} configurations", configurations.model_count()?);
     Ok(())
 }

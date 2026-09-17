@@ -55,6 +55,12 @@ assert_eq!(count, 8u32.into());
 println!("Valid configurations: {count}");
 ```
 
+Output:
+
+```text
+Valid configurations: 8
+```
+
 The four valid choices for the constrained options are:
 
 | Local | Remote | Encryption | Notification choices |
@@ -78,6 +84,12 @@ assert_eq!(remote_count, 4u32.into());
 println!("Configurations with remote backups: {remote_count}");
 ```
 
+Output:
+
+```text
+Configurations with remote backups: 4
+```
+
 Only the last two rows remain; the original still represents all eight
 choices. Conjunction keeps the selected option in the count.
 [`Tdd::condition`](crate::Tdd::condition) substitutes its value, which is a
@@ -97,8 +109,14 @@ for literal in &forced {
 }
 ```
 
-The result includes both remote backups, which we selected, and encryption,
-which follows from the rules. Local backups and notifications remain optional.
+Output:
+
+```text
+Required choice: remote backups = true
+Required choice: encryption = true
+```
+
+Local backups and notifications remain optional.
 If the user also disables encryption, no configuration satisfies the choices:
 
 ```rust,ignore,{class=tested-example}
@@ -122,8 +140,17 @@ for literal in &witness {
 }
 ```
 
-The witness assigns every vtree variable. Its variable identifiers index
-`names` starting at zero. Check that this particular configuration satisfies
+Output:
+
+```text
+One valid configuration:
+  local backups: true
+  remote backups: true
+  encryption: true
+  notifications: false
+```
+
+The witness assigns every option. Check that this configuration satisfies
 the rules:
 
 ```rust,ignore,{class=tested-example}

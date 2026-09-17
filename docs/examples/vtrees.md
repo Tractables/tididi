@@ -63,6 +63,14 @@ assert_eq!(grouped.model_count()?, 4u32.into());
 assert_eq!(split.model_count()?, 4u32.into());
 assert_eq!(grouped.pair_count(), 5);
 assert_eq!(split.pair_count(), 12);
+println!("Grouped equalities: {} pairs; split equalities: {} pairs",
+    grouped.pair_count(), split.pair_count());
+```
+
+Output:
+
+```text
+Grouped equalities: 5 pairs; split equalities: 12 pairs
 ```
 
 Each equality allows both variables to be false or both to be true, giving

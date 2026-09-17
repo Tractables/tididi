@@ -9,11 +9,14 @@ cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 python3 tests/rendered_docs.py --self-test
 python3 tests/rendered_docs.py target/doc
+python3 tests/package_examples.py --self-test
 ```
 
 The README and `docs/` are compiled into rustdoc. Keep walkthrough excerpts
 in sync with their runnable programs in `examples/`. The `tested-example` code
 block class is reserved for excerpts verified by `tests/example_docs.rs`.
+Follow printing excerpts with `Output:` and a `text` block;
+`tests/package_examples.py` checks those blocks against the programs’ output.
 
 Changes to diagram operations also need the randomized differential suite,
 with and without debug assertions:
@@ -25,9 +28,9 @@ cargo test --release --test differential -- --ignored
 
 Set `TIDIDI_FUZZ_SEED` to replay a run and `TIDIDI_FUZZ_SECONDS` to set its duration.
 
-Changes to packaging or example dependencies also need `cargo package` followed
-by `python3 tests/package_examples.py`, which runs each example as a standalone
-consumer of the crate archive.
+Changes to packaging, examples or their displayed output also need `cargo package`
+followed by `python3 tests/package_examples.py`, which runs each example as a
+standalone consumer of the crate archive.
 
 ## Repository conventions
 

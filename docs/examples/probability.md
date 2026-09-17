@@ -130,13 +130,16 @@ for (rain_probability, sprinkler_probability, expected) in scenarios {
 }
 ```
 
-The same diagrams give all three results:
+Output:
 
-| P(rain) | P(sprinkler) | P(wet) | P(rain given wet) |
-|---|---|---|---|
-| 1/5 | 1/10 | 7/25 | 5/7 |
-| 3/5 | 1/10 | 16/25 | 15/16 |
-| 0 | 0 | 0 | undefined |
+```text
+P(rain) = 1/5, P(wet) = 7/25
+P(rain | wet) = 5/7
+P(rain) = 3/5, P(wet) = 16/25
+P(rain | wet) = 15/16
+P(rain) = 0, P(wet) = 0
+P(rain | wet) is undefined: the evidence has probability zero
+```
 
 [`evaluate`](crate::Tdd::evaluate) reads each new weight table without changing
 the diagrams. The [complete program](https://github.com/Tractables/tididi/blob/main/examples/probabilistic_query.rs)

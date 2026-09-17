@@ -84,6 +84,12 @@ assert!(widest_node(&xor).1 <= xor.pair_count());
 println!("statistic: widest node has {pairs} pairs at vtree node {}", level.idx());
 ```
 
+Output:
+
+```text
+statistic: widest node has 2 pairs at vtree node 4
+```
+
 Adapt the same traversal for a histogram of node sizes or a per-level report.
 The [complete program](https://github.com/Tractables/tididi/blob/main/examples/statistic.rs)
 includes the runnable entry point.

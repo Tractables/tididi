@@ -72,6 +72,7 @@ jobs:
       if: runner.os == 'Linux'
       run: |
         cargo package
+        python3 tests/package_examples.py --self-test
         python3 tests/package_examples.py
 
   semver:

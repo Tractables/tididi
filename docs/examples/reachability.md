@@ -171,6 +171,14 @@ loop {
 }
 ```
 
+Output:
+
+```text
+Iteration 1: 2 reachable states
+Iteration 2: 3 reachable states
+Iteration 3: 3 reachable states
+```
+
 [`projected_model_count`](crate::Tdd::projected_model_count) counts only the
 current-state assignments. Ordinary counting would also count the free
 next-state indicators.
@@ -192,6 +200,12 @@ assert!(reached.implies(&safe)?);
 println!("D is unreachable");
 ```
 
+Output:
+
+```text
+D is unreachable
+```
+
 ## Find a reachable target
 
 Intersect the reached set with `C(x)` to find a reachable assignment at C:
@@ -201,11 +215,24 @@ let reachable_target = and(reached, at_c)?;
 let witness = reachable_target
     .satisfying_assignment()?
     .expect("C is reachable");
+println!("Reachable target witness:");
+for literal in witness.iter().filter(|literal| current.contains(&literal.var)) {
+    println!("  {}: {}", ["a", "b", "c", "d"][literal.var.idx()], literal.positive);
+}
 ```
 
-The current-state part of the witness is `a=false, b=false, c=true, d=false`.
-It identifies C. Recovering a path to C would also require retaining
-predecessor information during the search.
+Output:
+
+```text
+Reachable target witness:
+  a: false
+  b: false
+  c: true
+  d: false
+```
+
+Recovering a path to C would also require retaining predecessor information
+during the search.
 
 The [complete program](https://github.com/Tractables/tididi/blob/main/examples/symbolic_reachability.rs)
 also checks the complete reachable set against `A(x) ∨ B(x) ∨ C(x)` and verifies

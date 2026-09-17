@@ -69,15 +69,17 @@ fn main() -> Result<(), OperationError> {
     let witness = reachable_target
         .satisfying_assignment()?
         .expect("C is reachable");
+    println!("Reachable target witness:");
+    for literal in witness.iter().filter(|literal| current.contains(&literal.var)) {
+        println!("  {}: {}", ["a", "b", "c", "d"][literal.var.idx()], literal.positive);
+    }
     assert!(Tdd::cube(&vtree, &witness)?.implies(&reachable_target)?);
     let active = witness
         .iter()
-        .filter(|literal| literal.var.0 < 4 && literal.positive)
+        .filter(|literal| current.contains(&literal.var) && literal.positive)
         .map(|literal| literal.var)
         .collect::<Vec<_>>();
     assert_eq!(active, [VarId(3)]);
-    // This is a state assignment; reconstructing a path needs predecessor tracking.
-    println!("Reachable target witness: a=false, b=false, c=true, d=false");
     Ok(())
 }
 

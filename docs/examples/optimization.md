@@ -90,8 +90,15 @@ the cheapest valid configuration enables remote backups and encryption:
 
 ```rust,ignore,{class=tested-example}
 let costs = Costs([5, 2, 1, 0]);
-assert_eq!(configurations.evaluate(&costs)?, Some(3));
-println!("Minimum configuration cost: 3");
+let minimum = configurations.evaluate(&costs)?.expect("the rules have a solution");
+assert_eq!(minimum, 3);
+println!("Minimum configuration cost: {minimum}");
+```
+
+Output:
+
+```text
+Minimum configuration cost: 3
 ```
 
 To recover a cheapest assignment as well as its cost, an evaluator would
