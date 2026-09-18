@@ -20,7 +20,7 @@ use crate::vtree::{VtreeIdx, VtreeNode};
 
 use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 /// Per-level fan-out map: `remap[old_node_idx]` lists every new node index that
 /// the old node contributes to after the ∃x regroup. Multi-valued because
@@ -199,7 +199,7 @@ fn regroup_leaf_parent(work: &mut Rewrite<'_>, tdd: &mut Tdd, parent: VtreeIdx, 
     };
 
     // Per-sibling-ref owner pair, in first-seen order.
-    let mut owners: HashMap<u32, OwnerKey> = HashMap::new();
+    let mut owners: FxHashMap<u32, OwnerKey> = FxHashMap::default();
     let mut order: Vec<u32> = Vec::new();
 
     for i in 0..n_nodes {
@@ -226,7 +226,7 @@ fn regroup_leaf_parent(work: &mut Rewrite<'_>, tdd: &mut Tdd, parent: VtreeIdx, 
     // Group sibling refs by their unordered owner key, one new cell each. The
     // fan-out is recorded at cell creation; cells are created in increasing
     // index order, so each old node's fan-out list comes out ascending.
-    let mut key_to_new: HashMap<(u32, u32), usize> = HashMap::new();
+    let mut key_to_new: FxHashMap<(u32, u32), usize> = FxHashMap::default();
     let mut new_nodes: Vec<Vec<ChildPair>> = Vec::new();
     let mut remap = Vec::new();
     lim.try_resize(&mut remap, n_nodes, Vec::new())?;
@@ -295,66 +295,107 @@ fn regroup_internal(
         if path_is_left { (p.left, p.right) } else { (p.right, p.left) }
     };
 
-    // For each expanded atom (Pc, sib), accumulate its owner set (the old
-    // nodes contributing it), in first-seen order. The outer loop pushes `i`
-    // in non-decreasing order and the `last()` guard drops repeats, so the
-    // owner Vec is sorted and unique.
-    let mut atom_owners: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
-    let mut atom_order: Vec<(u32, u32)> = Vec::new();
+    // Each expanded atom (Pc, sib) gets an index, and its owner set — the old
+    // nodes contributing it — is accumulated as a run of (atom, owner) entries.
+    // The outer loop visits `i` in increasing order and `last_owner` drops
+    // repeats, so each atom's owners come out sorted and unique.
+    let mut atom_index: FxHashMap<(u32, u32), u32> = FxHashMap::default();
+    let mut atoms: Vec<(u32, u32)> = Vec::new();
+    let mut owner_count: Vec<u32> = Vec::new();
+    let mut last_owner: Vec<u32> = Vec::new();
+    let mut entries: Vec<(u32, u32)> = Vec::new();
 
     for i in 0..n_nodes {
         work.poll()?;
+        let owner = u32::try_from(i).map_err(|_| OperationError::OverBudget)?;
         for p in level.pairs_of_idx(i) {
             work.poll()?;
             let (path_child, sib) = read_pair(p);
             for &cell in &child_remap[ChildDecoder::structural().node(path_child).idx()] {
                 work.poll()?;
                 let key = (cell, sib.0);
-                if !atom_owners.contains_key(&key) {
-                    lim.reserve_map(&mut atom_owners, 1)?;
-                    lim.try_push(&mut atom_order, key)?;
+                let atom = match atom_index.get(&key) {
+                    Some(&atom) => atom,
+                    None => {
+                        let atom = u32::try_from(atoms.len()).map_err(|_| OperationError::OverBudget)?;
+                        lim.reserve_map(&mut atom_index, 1)?;
+                        atom_index.insert(key, atom);
+                        lim.try_push(&mut atoms, key)?;
+                        lim.try_push(&mut owner_count, 0)?;
+                        lim.try_push(&mut last_owner, u32::MAX)?;
+                        atom
+                    }
+                };
+                if last_owner[atom as usize] != owner {
+                    last_owner[atom as usize] = owner;
+                    owner_count[atom as usize] += 1;
+                    lim.try_push(&mut entries, (atom, owner))?;
                 }
-                let owners = atom_owners.entry(key).or_default();
-                if owners.last() != Some(&(i as u32)) { lim.try_push(owners, i as u32)?; }
             }
         }
     }
 
-    // Group atoms by owner set → one new cell per distinct owner set. The owner
-    // Vec is already sorted+unique, so it is the canonical hashmap key directly.
-    let mut key_to_new: HashMap<Vec<u32>, usize> = HashMap::new();
+    // Owner sets, packed one run per atom: the entries were produced in
+    // increasing owner order, so scattering them by atom keeps each run sorted.
+    let mut starts = Vec::new();
+    lim.reserve_exact(&mut starts, atoms.len() + 1)?;
+    let mut total = 0u32;
+    for &count in &owner_count {
+        starts.push(total);
+        total += count;
+    }
+    starts.push(total);
+    let mut cursor = Vec::new();
+    lim.reserve_exact(&mut cursor, atoms.len())?;
+    cursor.extend_from_slice(&starts[..atoms.len()]);
+    let mut owners = Vec::new();
+    lim.try_resize(&mut owners, entries.len(), 0u32)?;
+    for &(atom, owner) in &entries {
+        work.poll()?;
+        let slot = &mut cursor[atom as usize];
+        owners[*slot as usize] = owner;
+        *slot += 1;
+    }
+
+    // Group atoms by owner set → one new cell per distinct owner set, found by
+    // hashing the run and comparing it against the cells that hash alike.
+    let mut by_hash: FxHashMap<u64, Vec<u32>> = FxHashMap::default();
+    let mut cell_atom: Vec<u32> = Vec::new();
     let mut new_nodes: Vec<Vec<ChildPair>> = Vec::new();
     let mut remap = Vec::new();
     lim.try_resize(&mut remap, n_nodes, Vec::new())?;
 
-    for atom in &atom_order {
+    for (atom, &(cell, sib)) in atoms.iter().enumerate() {
         work.poll()?;
-        let owners = &atom_owners[atom];
-        let idx = if let Some(&idx) = key_to_new.get(owners.as_slice()) {
-            idx
-        } else {
-            let idx = new_nodes.len();
-            let cell = u32::try_from(idx).map_err(|_| OperationError::OverBudget)?;
-            if cell == u32::MAX { return Err(OperationError::OverBudget); }
-            let mut key = Vec::new();
-            lim.reserve_exact(&mut key, owners.len())?;
-            for &owner in owners {
-                work.poll()?;
-                key.push(owner);
-                lim.try_push(&mut remap[owner as usize], cell)?;
+        let run = |atom: usize| starts[atom] as usize..starts[atom + 1] as usize;
+        let mine = run(atom);
+        let digest = owner_set_hash(&owners[mine.clone()]);
+        lim.reserve_map(&mut by_hash, 1)?;
+        let candidates = by_hash.entry(digest).or_default();
+        let found = candidates.iter().copied()
+            .find(|&idx| owners[run(cell_atom[idx as usize] as usize)] == owners[mine.clone()]);
+        let idx = match found {
+            Some(idx) => idx as usize,
+            None => {
+                let idx = new_nodes.len();
+                let new_cell = u32::try_from(idx).map_err(|_| OperationError::OverBudget)?;
+                if new_cell == u32::MAX { return Err(OperationError::OverBudget); }
+                lim.try_push(candidates, new_cell)?;
+                lim.try_push(&mut cell_atom, u32::try_from(atom).map_err(|_| OperationError::OverBudget)?)?;
+                lim.try_push(&mut new_nodes, Vec::new())?;
+                for &owner in &owners[mine] {
+                    work.poll()?;
+                    lim.try_push(&mut remap[owner as usize], new_cell)?;
+                }
+                idx
             }
-            lim.try_push(&mut new_nodes, Vec::new())?;
-            lim.reserve_map(&mut key_to_new, 1)?;
-            key_to_new.insert(key, idx);
-            idx
         };
-        let (cell, sib) = *atom;
         let pair = if path_is_left {
             ChildPair::new(EncodedChildRef::from_raw(cell), EncodedChildRef::from_raw(sib))
         } else {
             ChildPair::new(EncodedChildRef::from_raw(sib), EncodedChildRef::from_raw(cell))
         };
-        // `atom_order` holds distinct atoms and the pair is injective in the
+        // `atoms` holds distinct atoms and the pair is injective in the
         // atom, so every pushed pair within a cell is already distinct.
         lim.try_push(&mut new_nodes[idx], pair)?;
     }
@@ -378,6 +419,15 @@ fn write_level(work: &mut Rewrite<'_>, tdd: &mut Tdd, parent: VtreeIdx, new_node
     }
     tdd.try_invalidate(work.eng, parent)?;
     Ok(())
+}
+
+/// Hash one atom's owner run, so runs are compared only against those that
+/// agree on it.
+fn owner_set_hash(owners: &[u32]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = rustc_hash::FxHasher::default();
+    owners.hash(&mut hasher);
+    hasher.finish()
 }
 
 /// The rewrite's cancellation clock and number of emitted intermediate nodes.
