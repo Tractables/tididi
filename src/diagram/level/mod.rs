@@ -5,7 +5,7 @@ mod marginal;
 mod pairs;
 pub(crate) use pairs::sort_pairs;
 
-use super::marginal_ref::{CountOverflow, ChildDecoder};
+use super::marginal_ref::{ChildDecoder, ChildSide, CountOverflow};
 use super::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode};
 
 /// The diagram storage associated with one vtree node.
@@ -111,33 +111,24 @@ impl Default for TddLevel {
 }
 
 impl TddLevel {
-    /// Bit positions in `inlined_sides`. See the field doc.
-    pub(crate) const MARGINAL_INLINED_LEFT: u8 = 1 << 0;
-    /// Right marginal-child of a boundary parent is inline-encoded in the pair field
-    /// (companion of [`Self::MARGINAL_INLINED_LEFT`]).
-    pub(crate) const MARGINAL_INLINED_RIGHT: u8 = 1 << 1;
+    /// `side`'s bit in `inlined_sides`. See the field doc.
+    #[inline(always)]
+    const fn inlined_bit(side: ChildSide) -> u8 {
+        1 << side as u8
+    }
 
-    /// True if the left marginal-child inline-encoding flag is set.
+    /// True if this level's refs toward its marginal `side` child are
+    /// inline-encoded in the pair field.
     #[inline(always)]
-    pub(crate) fn marginal_inlined_left(&self) -> bool {
-        self.inlined_sides & Self::MARGINAL_INLINED_LEFT != 0
+    pub(crate) fn marginal_inlined(&self, side: ChildSide) -> bool {
+        self.inlined_sides & Self::inlined_bit(side) != 0
     }
-    /// True if the right marginal-child inline-encoding flag is set.
+    /// Set or clear the marker [`marginal_inlined`](Self::marginal_inlined)
+    /// reads.
     #[inline(always)]
-    pub(crate) fn marginal_inlined_right(&self) -> bool {
-        self.inlined_sides & Self::MARGINAL_INLINED_RIGHT != 0
-    }
-    /// Set or clear the left marginal-child inline-encoding flag.
-    #[inline(always)]
-    pub(crate) fn set_marginal_inlined_left(&mut self, v: bool) {
-        if v { self.inlined_sides |= Self::MARGINAL_INLINED_LEFT }
-        else { self.inlined_sides &= !Self::MARGINAL_INLINED_LEFT }
-    }
-    /// Set or clear the right marginal-child inline-encoding flag.
-    #[inline(always)]
-    pub(crate) fn set_marginal_inlined_right(&mut self, v: bool) {
-        if v { self.inlined_sides |= Self::MARGINAL_INLINED_RIGHT }
-        else { self.inlined_sides &= !Self::MARGINAL_INLINED_RIGHT }
+    pub(crate) fn set_marginal_inlined(&mut self, side: ChildSide, v: bool) {
+        if v { self.inlined_sides |= Self::inlined_bit(side) }
+        else { self.inlined_sides &= !Self::inlined_bit(side) }
     }
     /// True if either side carries the inline-encoding marker. A level with
     /// neither is "plain": every pair side toward a marginal child is a bare

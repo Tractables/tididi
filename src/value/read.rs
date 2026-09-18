@@ -47,7 +47,7 @@ pub(crate) fn column_of<'a>(
 /// inline count (at most 2^30−1, so never an overflow sentinel); bit 30 clear
 /// is a bare slot index into the store (a pre-tag mid-batch ref is a bare node
 /// index, and that is its slot index). The decode keys off the ref rather than
-/// the level's `marginal_inlined_*` flag because a parent level rebuilt from
+/// the level's `marginal_inlined` marker because a parent level rebuilt from
 /// scratch can lose the flag while its pairs still carry inline refs.
 #[inline]
 pub(crate) fn read_count<'a>(

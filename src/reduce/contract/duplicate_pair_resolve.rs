@@ -79,7 +79,7 @@ pub(super) fn resolve_duplicate_pairs_in_node(
     // `pv` is a plain (non-marginal) level — marginal levels are pair fusion's
     // domain. Its inline markers are not asserted clear: scaling a marginal child
     // ref can mint an inline marginal ref into `pv`'s pairs, which raises `pv`'s
-    // `MARGINAL_INLINED_*` marker (below). The caller resolves several survivors per
+    // `marginal_inlined` marker (below). The caller resolves several survivors per
     // pass, so the second and later calls legitimately see the marker already up.
     debug_assert!(
         !tdd.levels[pv.idx()].is_marginal(),
@@ -181,10 +181,10 @@ fn write_back_resolved_pairs(
     // side's marker or the apply reader decodes the tagged count as a grid
     // coordinate.
     if inlined.left {
-        level.set_marginal_inlined_left(true);
+        level.set_marginal_inlined(ChildSide::Left, true);
     }
     if inlined.right {
-        level.set_marginal_inlined_right(true);
+        level.set_marginal_inlined(ChildSide::Right, true);
     }
     if level.nodes[idx].is_inline() {
         unreachable!("inline single-pair node cannot hold duplicates");

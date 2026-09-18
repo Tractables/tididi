@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::Engine;
 use crate::limits::{OperationError, PollGate};
 use crate::reduce::{ReductionPlan};
-use crate::diagram::{ChildDecoder, ChildPair, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, try_take_levels};
+use crate::diagram::{ChildDecoder, ChildPair, ChildSide, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, try_take_levels};
 use crate::diagram::sort_pairs;
 use crate::vtree::VtreeIdx;
 
@@ -42,8 +42,9 @@ impl Marking {
             if f.levels[vi].is_marginal() {
                 *level = std::mem::take(&mut f.levels[vi]);
             } else {
-                level.set_marginal_inlined_left(f.levels[vi].marginal_inlined_left());
-                level.set_marginal_inlined_right(f.levels[vi].marginal_inlined_right());
+                for side in [ChildSide::Left, ChildSide::Right] {
+                    level.set_marginal_inlined(side, f.levels[vi].marginal_inlined(side));
+                }
             }
         }
         gate.flush()?;

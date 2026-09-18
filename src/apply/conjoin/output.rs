@@ -92,8 +92,8 @@ pub(super) fn finish_sparse_output(
 #[inline(always)]
 pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, passthrough: Sides<bool>) {
     if (passthrough.left || passthrough.right) && !level.is_marginal() {
-        if passthrough.left { level.set_marginal_inlined_left(true); }
-        if passthrough.right { level.set_marginal_inlined_right(true); }
+        if passthrough.left { level.set_marginal_inlined(ChildSide::Left, true); }
+        if passthrough.right { level.set_marginal_inlined(ChildSide::Right, true); }
     }
 }
 

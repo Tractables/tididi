@@ -83,7 +83,7 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
         // Mark parent as marginal-flagged so parent_marginal=true in `contract_twins`.
         // This is what enables the duplicate_members collection (content-equal twins
         // under a marginal-flagged parent).
-        levels[root.idx()].inlined_sides = TddLevel::MARGINAL_INLINED_LEFT;
+        levels[root.idx()].set_marginal_inlined(ChildSide::Left, true);
 
         let output = crate::diagram::TddNodeId {
             vtree: root,

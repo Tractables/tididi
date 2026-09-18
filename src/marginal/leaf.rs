@@ -33,15 +33,10 @@ pub(crate) fn marginalize_leaf_inline(
         let pi = parent_vi.idx();
         if !tdd.levels[pi].is_marginal() {
             let (pl, _) = vtree.children(parent_vi);
-            let leaf_is_left = pl == leaf;
-            let side = if leaf_is_left { ChildSide::Left } else { ChildSide::Right };
+            let side = if pl == leaf { ChildSide::Left } else { ChildSide::Right };
             inline_leaf_refs_at_parent(tdd, parent_vi, side);
             tdd.invalidate(parent_vi);
-            if leaf_is_left {
-                tdd.levels[pi].set_marginal_inlined_left(true);
-            } else {
-                tdd.levels[pi].set_marginal_inlined_right(true);
-            }
+            tdd.levels[pi].set_marginal_inlined(side, true);
         }
     }
     // Flip the reader/apply signal; the store stays empty (all counts are inline

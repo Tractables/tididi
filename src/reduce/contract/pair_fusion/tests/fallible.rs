@@ -168,7 +168,7 @@ fn fusion_groups_by_inline_explicit_refs() {
         ChildPair::new(NodeIdx(inline_3), NodeIdx(ValueRef::slot_raw(1))),
         ChildPair::new(NodeIdx(inline_4), NodeIdx(ValueRef::slot_raw(2))),
     ]);
-    levels[root.idx()].set_marginal_inlined_left(true);
+    levels[root.idx()].set_marginal_inlined(ChildSide::Left, true);
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
 

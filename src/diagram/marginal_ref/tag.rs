@@ -2,6 +2,7 @@
 //! self-describing.
 
 use crate::diagram::level::TddLevel;
+use super::refs::ChildSide;
 use crate::diagram::tdd::Tdd;
 
 /// Set the slot tag on every persisted marginal-side reference in the diagram
@@ -15,7 +16,7 @@ pub(crate) fn tag_all_marginal_side_slots(
     // at the enclosing `marginalize_batch` entry, and only sides whose child
     // became marginal in this batch are emitted (an already inline ref
     // re-read as a slot index would index out of bounds). `None` falls back to
-    // the level's `marginal_inlined_left/right` markers.
+    // the level's `marginal_inlined` markers.
     was_marginal: Option<&[bool]>,
 ) {
     // Disjoint-field borrow: vtree (shape) immutable, levels (data) mutable.
@@ -51,12 +52,12 @@ fn tag_marginal_side_slots_at_level(
         let do_left = tag_left
             && match was_marginal {
                 Some(wm) => !wm[left_idx],
-                None => !levels[ti].marginal_inlined_left(),
+                None => !levels[ti].marginal_inlined(ChildSide::Left),
             };
         let do_right = tag_right
             && match was_marginal {
                 Some(wm) => !wm[right_idx],
-                None => !levels[ti].marginal_inlined_right(),
+                None => !levels[ti].marginal_inlined(ChildSide::Right),
             };
         match (do_left, do_right) {
             (true, true) => {
@@ -77,10 +78,10 @@ fn tag_marginal_side_slots_at_level(
         // (the marginal-child predicate), not do_*: an already-inline side stays
         // marked so a later re-tag still skips it.
         if tag_left {
-            levels[ti].set_marginal_inlined_left(true);
+            levels[ti].set_marginal_inlined(ChildSide::Left, true);
         }
         if tag_right {
-            levels[ti].set_marginal_inlined_right(true);
+            levels[ti].set_marginal_inlined(ChildSide::Right, true);
         }
     }
 }
