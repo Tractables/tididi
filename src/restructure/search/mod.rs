@@ -31,10 +31,14 @@ impl crate::Engine {
     /// Returns the linked operation's errors, [`OperationError::Stopped`] on
     /// cancellation, or [`OperationError::OverBudget`] on allocation refusal.
     ///
-    /// Trial storage is outside the byte budget and output cap. Stops are polled
-    /// once per pivot; cancellation retains accepted rotations and leaves the
-    /// diagram canonical and count-correct. An opening reduction failure leaves
-    /// the valid partial result described by [`crate::Engine::minimize`].
+    /// A trial builds two levels before it can score them; that storage is
+    /// charged to the byte budget while it is live and given back when the
+    /// trial commits or reverts, so a rotation too wide for the budget is
+    /// refused rather than taken. The output cap does not apply. Stops are
+    /// polled once per pivot; cancellation retains accepted rotations and
+    /// leaves the diagram canonical and count-correct. An opening reduction
+    /// failure leaves the valid partial result described by
+    /// [`crate::Engine::minimize`].
     pub fn rotation_search<O: RotationObjective>(
         &self,
         tdd: &mut Tdd,

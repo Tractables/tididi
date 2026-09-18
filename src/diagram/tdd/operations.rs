@@ -806,6 +806,8 @@ impl Tdd {
     ///
     /// The initial minimization can return [`OperationError::OverBudget`]; its
     /// partial-result contract is described by [`minimize`](Self::minimize).
+    /// A probe whose two rebuilt levels do not fit the armed byte budget
+    /// returns the same error with that probe's rotation not taken.
     ///
     /// # Panics
     ///

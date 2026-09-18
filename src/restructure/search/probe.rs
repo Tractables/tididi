@@ -6,7 +6,7 @@ use crate::vtree::{RotationKind, Vtree, VtreeIdx};
 use crate::vtree::rotate::{rotate_pointers, PendingTopo, RotationInfo};
 use crate::diagram::{Dirty, Tdd, TddLevel, TddNodeId};
 use crate::Engine;
-use crate::limits::OperationError;
+use crate::limits::{Limits, OperationError};
 use crate::restructure::relevel::{restructure_inner_search, RestructureScratch};
 
 use super::local::RotationObjective;
@@ -62,7 +62,7 @@ pub(super) fn probe<R: ProbeRule>(
     scratch: &mut RestructureScratch,
     default_bound: usize,
 ) -> Result<bool, OperationError> {
-    let Some(mut trial) = RotationTrial::new(tdd, v, kind) else { return Ok(false) };
+    let Some(mut trial) = RotationTrial::new(tdd, eng.limits(), v, kind) else { return Ok(false) };
     let info = trial.pending.as_ref().unwrap().info();
     // The two rebuilt levels need explicit pairs; marginal grandchildren are
     // allowed because the restructure preserves their contribution multiset.
@@ -73,7 +73,7 @@ pub(super) fn probe<R: ProbeRule>(
         return Ok(false);
     }
     let bound = rule.bound(trial.tdd, &info, default_bound);
-    trial.old_levels = restructure_inner_search(eng.limits(), trial.tdd, &info, kind, scratch, bound);
+    trial.old_levels = restructure_inner_search(eng.limits(), trial.tdd, &info, kind, scratch, bound)?;
     let Some((old_v, old_w)) = trial.old_levels.as_ref() else { return Ok(false) };
     #[cfg(debug_assertions)]
     crate::test_helpers::check::debug_assert_rotation_locality(eng, trial.tdd, info.w_idx);
@@ -91,6 +91,8 @@ pub(super) fn probe<R: ProbeRule>(
 /// Own a candidate's preimage until its topology and levels are committed together.
 struct RotationTrial<'a> {
     tdd: &'a mut Tdd,
+    /// Where the levels the trial builds and drops give their bytes back.
+    lim: &'a Limits,
     pending: Option<PendingTopo>,
     old_levels: Option<(TddLevel, TddLevel)>,
     old_output: TddNodeId,
@@ -100,7 +102,7 @@ struct RotationTrial<'a> {
 
 impl<'a> RotationTrial<'a> {
     /// Rotate the pointers while retaining the state needed for a non-allocating rollback.
-    fn new(tdd: &'a mut Tdd, v: VtreeIdx, kind: RotationKind) -> Option<Self> {
+    fn new(tdd: &'a mut Tdd, lim: &'a Limits, v: VtreeIdx, kind: RotationKind) -> Option<Self> {
         let old_output = tdd.output;
         let shared_tree = (Arc::strong_count(&tdd.vtree) > 1 || Arc::weak_count(&tdd.vtree) > 0)
             .then(|| Arc::clone(&tdd.vtree));
@@ -110,11 +112,17 @@ impl<'a> RotationTrial<'a> {
             return None;
         }
         let old_dirty = Some(std::mem::take(&mut tdd.dirty));
-        Some(Self { tdd, pending, old_levels: None, old_output, shared_tree, old_dirty })
+        Some(Self { tdd, lim, pending, old_levels: None, old_output, shared_tree, old_dirty })
     }
 
     /// Repair topology and release the preimage before any accepted-rotation callback.
     fn commit(mut self) {
+        // The preimage is about to be dropped, and the rebuild charged the
+        // levels that replaced it, so the operation's in-flight total should end
+        // up carrying the difference rather than both.
+        if let Some((old_v, old_w)) = self.old_levels.take() {
+            self.lim.release_bytes(old_v.arena_capacity_bytes() + old_w.arena_capacity_bytes());
+        }
         self.pending.take().unwrap().commit(Arc::make_mut(&mut self.tdd.vtree));
         // Both exits end with the pre-probe obligations still present: `Drop`
         // restores them wholesale on reject, and the accept path puts them back
@@ -132,6 +140,12 @@ impl Drop for RotationTrial<'_> {
         let info = pending.info();
         pending.revert(Arc::make_mut(&mut self.tdd.vtree));
         if let Some((v, w)) = self.old_levels.take() {
+            // The rebuilt levels are the ones being dropped here, so their
+            // charge is what the trial hands back.
+            self.lim.release_bytes(
+                self.tdd.levels[info.v_idx.idx()].arena_capacity_bytes()
+                    + self.tdd.levels[info.w_idx.idx()].arena_capacity_bytes(),
+            );
             self.tdd.levels[info.v_idx.idx()] = v;
             self.tdd.levels[info.w_idx.idx()] = w;
         }

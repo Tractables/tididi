@@ -375,7 +375,12 @@ impl TddLevel {
 
     /// Append a node through the fallible encoder and charge its arena growth to the engine.
     pub(crate) fn push_node_on(&mut self, eng: &Engine, pairs: &[ChildPair]) -> Result<NodeIdx, OperationError> {
-        let lim = eng.limits();
+        self.push_node_within(eng.limits(), pairs)
+    }
+
+    /// [`push_node_on`](Self::push_node_on) for a caller holding the limits
+    /// rather than the engine, such as the rotation rebuild.
+    pub(crate) fn push_node_within(&mut self, lim: &crate::limits::Limits, pairs: &[ChildPair]) -> Result<NodeIdx, OperationError> {
         #[cfg(test)]
         if lim.refuses_reserve() { return Err(OperationError::OverBudget); }
         if pairs.len() == 1 && pairs[0].can_inline() && self.nodes.len() < self.nodes.capacity() {
@@ -389,7 +394,7 @@ impl TddLevel {
     }
 
     /// The allocated bytes of the three structural arenas.
-    fn arena_capacity_bytes(&self) -> u64 {
+    pub(crate) fn arena_capacity_bytes(&self) -> u64 {
         (self.nodes.capacity() * std::mem::size_of::<EncodedNode>()
             + self.pairs.capacity() * std::mem::size_of::<ChildPair>()
             + self.multi_pairs.capacity() * std::mem::size_of::<MultiPairRange>()) as u64
