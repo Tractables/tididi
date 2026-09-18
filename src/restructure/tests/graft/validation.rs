@@ -165,3 +165,13 @@ fn graft_canonicalizes_equal_weight_slots_of_a_marginal_leaf_root() {
         else { assert_eq!(value.as_rational().into_owned(), rat(2, 1)); }
     }
 }
+
+#[test]
+fn an_unmapped_variable_is_named_the_way_the_input_names_it() {
+    let tree = Arc::new(Vtree::leaf(VarId(1)));
+    let f = Tdd::clause(&tree, [1]).unwrap();
+    assert_eq!(
+        Tdd::graft_over(&Engine::new(), vec![(f, vec![])], &[], 1, None).unwrap_err().to_string(),
+        "part 0 has no mapping for variable 1",
+    );
+}

@@ -77,7 +77,7 @@ identical representations.
 | [`apply`] | Boolean composition, conditioning, projection and restriction. |
 | `marginal` | Summing levels into values and restoring marginal invariants. |
 | [`reduce`] | Reachability pruning, twin contraction, pair fusion and value-slot pruning. |
-| [`restructure`] | Vtree search and grafting with the corresponding diagram edits. |
+| [`restructure`] | Vtree search, grafting and embedding with the corresponding diagram edits. |
 | [`query`] | Counting, satisfiability, evaluation and traversal of borrowed diagrams. |
 | [`execution`] | Shared context checkouts and each batch's scratch and limits. |
 | [`io`] | Diagram persistence and Graphviz output. |
