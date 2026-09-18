@@ -102,10 +102,12 @@ fn bits_past_the_last_variable_and_repeated_rows_are_ignored() {
 }
 
 #[test]
-#[should_panic(expected = "whole number")]
 fn a_ragged_row_buffer_is_refused() {
     let vtree = Arc::new(Vtree::balanced(70));
-    let _ = Tdd::from_models(&vtree, &vars(70), &[0, 0, 0]);
+    assert!(matches!(
+        Tdd::from_models(&vtree, &vars(70), &[0, 0, 0]),
+        Err(OperationError::RaggedRows { words: 3, per_row: 2 })
+    ));
 }
 
 #[test]

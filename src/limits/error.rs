@@ -56,6 +56,13 @@ pub enum OperationError {
     VariableNotInVtree(crate::vtree::VarId),
     /// An input cube or substitution map names the same source variable more than once.
     DuplicateVariable(crate::vtree::VarId),
+    /// A packed row buffer is not a whole number of rows.
+    RaggedRows {
+        /// The words the buffer holds.
+        words: usize,
+        /// The words one row occupies.
+        per_row: usize,
+    },
     /// An option was left without the bound the operation needs, so the work
     /// it would do has no size limit.
     ///
@@ -88,6 +95,9 @@ impl std::fmt::Display for OperationError {
             OperationError::Stopped => f.write_str("operation stopped"),
             OperationError::OutputCap => f.write_str("output node cap exceeded"),
             OperationError::DuplicateVariable(var) => write!(f, "input names variable x{} twice", var.0),
+            OperationError::RaggedRows { words, per_row } => {
+                write!(f, "{words} words is not a whole number of {per_row}-word rows")
+            }
             OperationError::UnboundedSearch { option, needed_by } => {
                 write!(f, "{option} has no bound, which {needed_by} requires")
             }

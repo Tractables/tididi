@@ -69,14 +69,11 @@ impl Tdd {
     ///
     /// [`OperationError::VariableNotInVtree`] for a variable of `vars` that is
     /// not a leaf of `vtree`, [`OperationError::DuplicateVariable`] for a
-    /// repeated one, [`OperationError::OverBudget`] for a refused allocation,
-    /// [`OperationError::IndexOverflow`] when a level would outgrow the index
-    /// that addresses it, and [`OperationError::Stopped`] when an armed stop
-    /// fires.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `rows.len()` is not a multiple of the words per row.
+    /// repeated one, [`OperationError::RaggedRows`] when `rows.len()` is not a
+    /// multiple of the words per row, [`OperationError::OverBudget`] for a
+    /// refused allocation, [`OperationError::IndexOverflow`] when a level would
+    /// outgrow the index that addresses it, and [`OperationError::Stopped`]
+    /// when an armed stop fires.
     pub fn from_models(
         vtree: &Arc<Vtree>,
         vars: &[VarId],
@@ -90,10 +87,6 @@ impl Engine {
     /// Run [`Tdd::from_models`] using this batch's scratch and resource limits.
     ///
     /// # Errors
-    ///
-    /// As [`Tdd::from_models`].
-    ///
-    /// # Panics
     ///
     /// As [`Tdd::from_models`].
     pub fn from_models(
@@ -236,11 +229,9 @@ fn from_models(
     rows: &[u64],
 ) -> Result<Tdd, OperationError> {
     let w = words_per_row(vars.len());
-    assert!(
-        rows.len().is_multiple_of(w),
-        "from_models: {} words is not a whole number of {w}-word rows",
-        rows.len(),
-    );
+    if !rows.len().is_multiple_of(w) {
+        return Err(OperationError::RaggedRows { words: rows.len(), per_row: w });
+    }
     let lim = eng.limits();
     let _op = lim.begin_operation();
     lim.check_stop()?;
