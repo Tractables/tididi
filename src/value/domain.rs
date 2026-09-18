@@ -190,10 +190,20 @@ pub(crate) trait SlotStore {
     /// counts referenced slots that landed on an earlier equal-valued slot.
     fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize);
 
-    /// Fold a completed compaction of level `v` into the retirement tally.
-    /// **The two impls are inverted and must stay that way** (increment vs
-    /// assign) — see each impl's comment.
-    fn update_width(tdd: &mut Tdd, v: VtreeIdx, freed: usize, new_len: usize);
+    /// Record that a compaction of level `v` dropped `freed` slots.
+    ///
+    /// Only a domain that cannot recover the number from its store keeps a
+    /// tally; for one whose live width *is* the store's length, the drop is
+    /// already accounted for by [`commit_width`](Self::commit_width).
+    fn retire_slots(tdd: &mut Tdd, v: VtreeIdx, freed: usize);
+
+    /// Make `new_len` level `v`'s live slot count, which is what
+    /// [`TddLevel::slot_count`](crate::diagram::TddLevel::slot_count) answers
+    /// and what the apply and streaming buffers are sized from.
+    ///
+    /// A domain whose store is the level's own column has already committed it
+    /// by compacting that column, and only checks here.
+    fn commit_width(tdd: &mut Tdd, v: VtreeIdx, new_len: usize);
 }
 
 mod count;

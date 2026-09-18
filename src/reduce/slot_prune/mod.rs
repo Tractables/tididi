@@ -90,9 +90,7 @@ impl SlotStore for IntFold {
         (new_len, values_merged)
     }
 
-    /// Integer: add `freed` to the level's retirement tally. The live width is
-    /// `marginal_counts.len()`, already committed by the caller's compaction.
-    fn update_width(tdd: &mut Tdd, v: VtreeIdx, freed: usize, new_len: usize) {
+    fn retire_slots(tdd: &mut Tdd, v: VtreeIdx, freed: usize) {
         let level = &mut tdd.levels[v.idx()];
         let before = level.retired_marginal_slots();
         level.retire_marginal_slots(freed as u32);
@@ -100,10 +98,16 @@ impl SlotStore for IntFold {
             level.retired_marginal_slots() >= before,
             "the retirement tally only grows — it is never a live width"
         );
+    }
+
+    /// The integer live width is `marginal_counts.len()`, which
+    /// [`compact_store`](Self::compact_store) truncated; there is nothing left
+    /// to set.
+    fn commit_width(tdd: &mut Tdd, v: VtreeIdx, new_len: usize) {
         debug_assert_eq!(
-            level.slot_count(),
+            tdd.levels[v.idx()].slot_count(),
             new_len,
-            "integer live width is marginal_counts.len(), committed before update_width"
+            "integer live width is marginal_counts.len(), committed by compact_store"
         );
     }
 }
@@ -154,13 +158,12 @@ impl SlotStore for WeightFold {
         (new_len, values_merged)
     }
 
-    /// Weighted semantics: `weight_width` is itself the live slot count —
-    /// `TddLevel::slot_count()` returns it for a weight-marginal level (set by
-    /// `become_marginal_weighted`), and the apply/streaming buffers are
-    /// sized from that. This assigns `new_len`; `freed` is stats-only here and must
-    /// not be added, or the width drifts up and re-opens the oversized-buffer
-    /// blowup described on the impl above.
-    fn update_width(tdd: &mut Tdd, v: VtreeIdx, _freed: usize, new_len: usize) {
+    /// The weighted live width is the `WeightStore` level's length, which
+    /// [`commit_width`](Self::commit_width) writes; a dropped slot needs no
+    /// tally of its own.
+    fn retire_slots(_tdd: &mut Tdd, _v: VtreeIdx, _freed: usize) {}
+
+    fn commit_width(tdd: &mut Tdd, v: VtreeIdx, new_len: usize) {
         tdd.levels[v.idx()].set_weight_width(new_len as u32);
         debug_assert_eq!(
             tdd.weights.as_ref().and_then(|ws| ws.level(v.idx())).map_or(0, |s| s.len()),
@@ -221,11 +224,11 @@ fn compact_boundary_stores<S: SlotStore>(
         // Empty-store fast path: an empty store has nothing to compact and
         // names no slot a parent ref could hold, so skipping the two parent
         // walks below loses nothing. Common, because the tagger inlines every
-        // count that fits a ref. `update_width` still runs: a no-op for the
-        // integer tally, the live-width reset for weighted.
+        // count that fits a ref. The width is still committed: a check for
+        // the integer domain, the live-width reset for weighted.
         let store_len = S::store_len(tdd, v);
         if store_len == 0 {
-            S::update_width(tdd, v, 0, 0);
+            S::commit_width(tdd, v, 0);
             continue;
         }
 
@@ -246,7 +249,8 @@ fn compact_boundary_stores<S: SlotStore>(
         if values_merged > 0 {
             stats.value_merged_levels.push(v.0);
         }
-        S::update_width(tdd, v, store_len - new_len, new_len);
+        S::retire_slots(tdd, v, store_len - new_len);
+        S::commit_width(tdd, v, new_len);
 
         // `referenced` is exactly the set of `ValueRef::Slot` refs the parent
         // holds on this side; when it is empty every ref there is an inline
