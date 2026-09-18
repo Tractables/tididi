@@ -3,10 +3,15 @@
 //! Two rewrites compute the same function and the choice between them is
 //! [`QuantificationStrategy`]:
 //!
-//! - **Cofactor-OR** — `∃x.T = T[x←⊤] ∨ T[x←⊥]`, with the cofactors computed by
-//!   rewriting parent-level pair lists that reference x's leaf.
 //! - **Structural** — a leaf-to-root in-place regroup that never calls apply or
-//!   negate, so it is sound where the cofactor rewrite is not.
+//!   negate, so it is sound where the cofactor rewrite is not. This is what
+//!   quantification does unless the caller asks otherwise.
+//! - **Cofactor-OR** — `∃x.T = T[x←⊤] ∨ T[x←⊥]`, with the cofactors computed by
+//!   rewriting parent-level pair lists that reference x's leaf. The disjunction
+//!   is De Morgan, and a negation fills its operand out to full structure, so
+//!   the intermediate product is the grid of two dense diagrams: a level whose
+//!   children have widths `a` and `b` costs `a * b` cells. It stays close to
+//!   the operand's size only when every internal vtree node has a leaf child.
 
 use crate::Engine;
 
@@ -20,20 +25,23 @@ mod structural;
 
 /// How existential quantification is computed; the Boolean result is the same.
 ///
-/// Ordinary quantification uses [`Automatic`](Self::Automatic).
-/// [`Structural`](Self::Structural) avoids building two cofactors and their disjunction, which can be useful when
-/// that intermediate representation is too large. Both choices honor the
-/// resource and marginal-level restrictions of [`Engine::exists_var`].
+/// Ordinary quantification uses [`Automatic`](Self::Automatic). Every choice
+/// honors the resource restrictions of [`Engine::exists_var`];
+/// [`CofactorOr`](Self::CofactorOr) additionally requires structural input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum QuantificationStrategy {
-    /// Cofactor-OR on a diagram with no marginal level, the structural
-    /// rewrite otherwise: the disjunction negates, which is unsound across a
-    /// marginal level.
+    /// The rewrite the library picks, today [`Structural`](Self::Structural):
+    /// it is sound on a marginal level, and its cost is one pass over the
+    /// variable's leaf-to-root path rather than a product of two full diagrams.
     Automatic,
     /// Regroup nodes along the variable's leaf-to-root path, without constructing
     /// a pair of cofactors or their disjunction.
     Structural,
+    /// Disjoin the two cofactors of the variable. Materializes both of them and
+    /// their disjunction, which negation fills out to full structure, so the
+    /// intermediate diagrams can be much larger than the operand and the result.
+    CofactorOr,
 }
 
 /// The implementation behind [`Engine::exists_var`](crate::Engine::exists_var).
@@ -51,9 +59,11 @@ fn exists_leaf_on(eng: &Engine, f: Tdd, leaf_idx: VtreeIdx, how: QuantificationS
     if f.is_zero() {
         return Ok(f);
     }
-    if how == QuantificationStrategy::Structural || f.levels.iter().any(|l| l.is_marginal()) {
+    if how != QuantificationStrategy::CofactorOr {
         return structural::exists_var_structural(eng, f, leaf_idx);
     }
+    // The disjunction negates, which is unsound across a marginal level.
+    f.require_structure()?;
     // One cofactor is rewritten in `f`'s own arenas and the other in a copy
     // reserved through the engine, so a diagram too large to duplicate is
     // refused here.

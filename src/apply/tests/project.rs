@@ -499,7 +499,7 @@ fn a_projection_refuses_a_cofactor_copy_it_cannot_afford() {
     eng.limits().reset_meters();
     let refused = {
         let _armed = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(budget)));
-        eng.exists_var(f.clone(), VarId(1))
+        eng.exists_var_with_strategy(f.clone(), VarId(1), QuantificationStrategy::CofactorOr)
     };
     assert!(
         matches!(refused, Err(OperationError::OverBudget)),
@@ -514,7 +514,7 @@ fn a_projection_refuses_a_cofactor_copy_it_cannot_afford() {
     );
 
     let out = eng
-        .exists_var(f, VarId(1))
+        .exists_var_with_strategy(f, VarId(1), QuantificationStrategy::CofactorOr)
         .expect("the engine takes the next projection after a refusal");
     assert_eq!(out.model_count().unwrap(), expected);
 }
@@ -604,4 +604,80 @@ fn bulk_quantification_preserves_first_occurrence_order_and_skips_repeated_rewri
         crate::test_helpers::assert_canonical(&actual);
         crate::test_helpers::assert_canonical(&expected);
     }
+}
+
+/// The three rewrites of one quantification, over structural input.
+const REWRITES: [QuantificationStrategy; 3] = [
+    QuantificationStrategy::Automatic,
+    QuantificationStrategy::Structural,
+    QuantificationStrategy::CofactorOr,
+];
+
+#[test]
+fn every_rewrite_projects_the_brute_force_answer_on_every_vtree_shape() {
+    for (num_vars, clauses) in test_cases() {
+        if num_vars > 8 {
+            continue;
+        }
+        // Forget the odd variables and keep the even ones.
+        let forgotten: Vec<VarId> = (1..=num_vars).step_by(2).map(VarId).collect();
+        let kept: Vec<usize> = (2..=num_vars).step_by(2).map(|v| v as usize - 1).collect();
+        let expected = brute_force_pmc(&clauses, num_vars as usize, &kept);
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            let f = compile_clauses(&vtree, &clauses);
+            assert_canonical(&f);
+            let mut results = Vec::new();
+            for how in REWRITES {
+                let projected = f.clone().exists_vars_with_strategy(&forgotten, how).unwrap();
+                assert_canonical(&projected);
+                let count = projected.model_count().unwrap() >> forgotten.len();
+                assert_eq!(count, expected, "{shape}: {how:?} projected {clauses:?} wrongly");
+                results.push(projected);
+            }
+            // One function on one vtree, so canonicity makes the diagrams equal.
+            for other in &results[1..] {
+                assert_same_shape(&results[0], other, shape);
+            }
+        }
+    }
+}
+
+#[test]
+fn the_rewrites_agree_on_random_conjunctions() {
+    let mut rng = Lcg::new(20260918);
+    for round in 0..20 {
+        let num_vars = 6 + round % 5;
+        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 8, width: 3 });
+        let forgotten: Vec<VarId> = (1..=num_vars).filter(|v| v % 3 == 0).map(VarId).collect();
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            let f = compile_clauses(&vtree, &clauses);
+            let mut results = Vec::new();
+            for how in REWRITES {
+                let projected = f.clone().exists_vars_with_strategy(&forgotten, how).unwrap();
+                assert_canonical(&projected);
+                results.push(projected);
+            }
+            for other in &results[1..] {
+                assert_same_shape(&results[0], other, shape);
+            }
+        }
+    }
+}
+
+#[test]
+fn cofactor_rewriting_refuses_a_marginalized_operand() {
+    // The marginal leaf sits far enough from variable 1 for the structural
+    // rewrite's path preconditions to hold.
+    let vtree = Arc::new(Vtree::balanced(8));
+    let mut f = Tdd::clause(&vtree, [1, 2]).unwrap() & Tdd::clause(&vtree, [-1, 3]).unwrap();
+    f.minimize().unwrap();
+    let leaf = vtree.leaf_of(VarId(8)).unwrap();
+    f.marginalize_levels(&[leaf]).unwrap();
+    assert!(matches!(
+        f.clone().exists_var_with_strategy(VarId(1), QuantificationStrategy::CofactorOr),
+        Err(crate::OperationError::MarginalLevel(_)),
+    ));
+    // The automatic choice regroups instead, which the marginal level allows.
+    let projected = f.exists_var_with_strategy(VarId(1), QuantificationStrategy::Automatic).unwrap();
+    assert!(!projected.is_zero());
 }

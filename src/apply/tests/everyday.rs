@@ -181,6 +181,7 @@ fn ite_and_existential_conjunction_match_enumeration() {
         for how in [
             QuantificationStrategy::Automatic,
             QuantificationStrategy::Structural,
+            QuantificationStrategy::CofactorOr,
         ] {
             for vars in [
                 vec![],
@@ -223,7 +224,7 @@ fn default_and_explicit_quantification_match_enumeration() {
                     results.push((f).clone().exists_var(vars[0]).unwrap());
                     results.push(eng.exists_var(f.clone(), vars[0]).unwrap());
                 }
-                for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
+                for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural, QuantificationStrategy::CofactorOr] {
                     results.push((f).clone().exists_vars_with_strategy(&vars, how).unwrap());
                     results.push(eng.exists_vars_with_strategy(f.clone(), &vars, how).unwrap());
                     results.push(eng.and_exists_with_strategy(f.clone(), one.clone(), &vars, how).unwrap());
