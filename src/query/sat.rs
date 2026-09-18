@@ -1,8 +1,7 @@
 //! Structural satisfiability queries on compiled diagrams.
 
 use crate::value::Retention;
-use crate::diagram::*;
-use crate::diagram::PairsIter;
+use crate::diagram::{LeafLabel, PairsIter, Tdd};
 use crate::Engine;
 use crate::vtree::{VarId, VtreeIdx};
 

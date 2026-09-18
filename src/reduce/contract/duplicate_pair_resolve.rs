@@ -20,14 +20,11 @@
 //! fresh slots; slot-prune value-merge later shares them with equal-valued
 //! slots.
 
-use crate::diagram::EncodedChildRef;
-
+use crate::diagram::{ChildPair, ChildSide, EncodedChildRef, EncodedNode, MultiPairRange, Sides, Tdd};
 
 use crate::Engine;
 use super::scratch::DuplicateScratch;
-use crate::diagram::ChildSide;
 use crate::limits::OperationError;
-use crate::diagram::*;
 
 #[path = "duplicate_pair_scale.rs"]
 mod duplicate_pair_scale;

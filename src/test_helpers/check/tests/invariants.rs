@@ -8,17 +8,14 @@
 use std::sync::Arc;
 
 use crate::vtree::{Vtree, VtreeIdx};
+use crate::diagram::{ChildPair, LeafLabel, NodeIdx, take_levels, TddNodeId};
 
 use crate::apply::apply_and;
-use crate::test_helpers::clause_to_tdd;
+use crate::test_helpers::{check_minimize_soundness, clause_to_tdd, compile_clauses, test_cases, vtree_shapes};
 use crate::build::constant_one;
 use super::*;
 use super::projective::check_canonicity_projective;
 use crate::test_helpers::check::structure::check_no_false_nodes_in_levels;
-use crate::test_helpers::check_minimize_soundness;
-
-use crate::test_helpers::{compile_clauses, test_cases, vtree_shapes};
-
 
 // ── Local test helpers ───────────────────────────────────────────────────────
 

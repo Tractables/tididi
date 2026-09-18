@@ -1,13 +1,11 @@
 //! Probabilistic equivalence testing: random weights in Z_p and the
 //! bottom-up signature evaluation the canonicity checks compare.
 use std::sync::Arc;
-use crate::diagram::{ChildRef, ValueRef};
+use crate::diagram::{ChildRef, LEAF_WIDTH, LeafLabel, NodeIdx, Tdd, TddNodeId, ValueRef, WeightValue};
 
 use num_bigint::BigUint;
 use crate::test_helpers::Lcg;
 use crate::vtree::VtreeIdx;
-use crate::diagram::*;
-
 
 // ── EvalAlgebra helpers (probabilistic equivalence testing) ─────────────────────
 //

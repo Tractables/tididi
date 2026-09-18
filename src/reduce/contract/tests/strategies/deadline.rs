@@ -9,7 +9,7 @@
 //! cancellation at every round.
 
 use super::*;
-use crate::diagram::{ValueRef, NodeIdx};
+use crate::diagram::{ChildPair, EncodedNode, LeafLabel, NodeIdx, tag_all_marginal_side_slots, TddLevel, TddNodeId, ValueRef};
 
 use crate::Engine;
 use crate::vtree::Vtree;

@@ -15,16 +15,13 @@
 //! invariant holds even after a rotation has scrambled raw node indices, and even
 //! when a parent is activated dynamically by an ancestor firing.
 
-use crate::diagram::Pass;
+use crate::diagram::{ChildSide, Pass, Tdd};
 use crate::Engine;
 use std::collections::BinaryHeap;
 
-use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
-
 use crate::limits::OperationError;
-use crate::diagram::*;
 
 use super::scratch::ContractScratch;
 use super::fingerprint::find_twin_groups;

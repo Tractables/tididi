@@ -1,14 +1,11 @@
 //! Multiplying a duplicate pair's marginal side by its run length.
 
 use crate::Engine;
-use crate::diagram::{EncodedChildRef, ValueRef};
-use crate::diagram::MarginalSide;
+use crate::diagram::{ChildPair, ChildSide, EncodedChildRef, LeafLabel, MarginalSide, Tdd, ValueRef};
 
 use crate::limits::OperationError;
-use crate::diagram::ChildSide;
 use crate::value::slots::{mint_ref, scaled_weight, SlotValues};
 use crate::value::{IntFold, WeightFold};
-use crate::diagram::*;
 use crate::vtree::VtreeIdx;
 
 /// Scale the marginal-side ref `raw` (into the internal marginal level `mv`) by

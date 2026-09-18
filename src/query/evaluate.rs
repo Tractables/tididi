@@ -1,9 +1,7 @@
 //! Numeric evaluation with a supplied algebra or the diagram's attached weights.
 
 use crate::value::{Retention, FoldInput, ValueDomain, WeightFold};
-use crate::diagram::EvalAlgebra;
-use crate::diagram::*;
-use crate::diagram::PairsIter;
+use crate::diagram::{EvalAlgebra, LeafLabel, PairsIter, Tdd, WeightStore, WeightValue};
 use crate::Engine;
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 

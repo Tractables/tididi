@@ -1,16 +1,13 @@
 //! The hybrid u128/`BigUint` counting engine and the incremental pinned counter.
 
 use crate::Engine;
-use crate::diagram::{EncodedChildRef, ChildRef, ValueRef, NodeIdx};
+use crate::diagram::{ChildRef, EncodedChildRef, LeafLabel, Literal, NodeIdx, PairsIter, Tdd, ValueRef};
 use num_bigint::BigUint;
 
 use super::{leaf_seed, PinSemantics};
 use super::super::fold::{fold_bottom_up, fold_level, LevelFold, Side};
-use crate::limits::PollGate;
-use crate::limits::OperationError;
-use crate::diagram::PairsIter;
+use crate::limits::{OperationError, PollGate};
 use crate::value::{Retention, Count, CountRead, CountVec, IntFold};
-use crate::diagram::*;
 use crate::vtree::{VarId, VtreeIdx};
 
 /// A leaf observation and its membership in the pending ancestor traversal.

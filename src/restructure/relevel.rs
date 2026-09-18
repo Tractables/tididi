@@ -17,16 +17,12 @@
 //! then retains one inner node per distinct inner pair and preserves both
 //! cell and outer-pair multiplicities. Regrouping preserves their value sum.
 
-use crate::diagram::ChildDecoder;
-
-use crate::diagram::EncodedChildRef;
+use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, NodeIdx, Tdd, TddLevel};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::vtree::rotate::RotationInfo;
 use crate::vtree::RotationKind;
-use crate::diagram::*;
-
 
 // The `marginal_ctx` branches below expand fully instead of sharing and
 // deduping; the argument is the module doc's "Marginal context" section.

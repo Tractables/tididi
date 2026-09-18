@@ -2,8 +2,8 @@
 
 use std::collections::HashSet;
 use crate::test_helpers::Lcg;
-use crate::diagram::*;
-use super::signature::*;
+use crate::diagram::Tdd;
+use super::signature::{eval_all_signatures, random_var_assignments};
 
 /// Check canonicity via probabilistic equivalence testing (Schwartz–Zippel).
 ///

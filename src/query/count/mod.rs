@@ -13,7 +13,7 @@ pub use crate::value::Retention;
 
 use num_bigint::BigUint;
 
-use crate::diagram::*;
+use crate::diagram::{LeafLabel, Tdd};
 use crate::vtree::{VarId, VtreeNode};
 
 /// Whether pins count as evidence or as substitution over the unchanged vtree.

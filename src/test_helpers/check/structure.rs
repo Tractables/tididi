@@ -1,6 +1,6 @@
 //! Structural checkers: vtree agreement and the absence of false nodes.
 
-use crate::diagram::*;
+use crate::diagram::{Tdd, ZERO};
 
 // ── Public checker functions ─────────────────────────────────────────────────
 

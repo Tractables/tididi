@@ -31,7 +31,7 @@ pub use rotation::debug_assert_rotation_locality;
 pub use soundness::check_determinism;
 pub use structure::{check_no_false_nodes, validate_vtree_structure};
 
-use crate::diagram::*;
+use crate::diagram::Tdd;
 
 /// Panic naming the checker and the caller's label, or carry on.
 fn require(label: &str, checker: &str, r: Result<(), String>) {

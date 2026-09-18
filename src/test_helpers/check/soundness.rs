@@ -5,8 +5,8 @@ use num_bigint::BigUint;
 use crate::vtree::{VtreeIdx, VtreeNode};
 use crate::apply::apply_and;
 
-use crate::diagram::*;
-use super::signature::*;
+use crate::diagram::{LEAF_WIDTH, LeafLabel, Tdd, ZERO};
+use super::signature::tdd_with_output;
 
 /// Check the determinism property: at each vtree level, all *live* nodes
 /// compute mutually exclusive Boolean functions.

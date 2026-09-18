@@ -5,16 +5,12 @@
 //! `expand_full` materializes the fill nodes explicitly; `negate` complements
 //! the full diagram at its root.
 
-use crate::diagram::ChildDecoder;
-
-use crate::diagram::EncodedChildRef;
+use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd, TddLevel, TddNodeId};
 
 use std::collections::HashMap;
 use crate::Engine;
-use crate::limits::{OperationError};
+use crate::limits::OperationError;
 use std::sync::Arc;
-
-use crate::diagram::*;
 
 impl Engine {
     /// Run [`Tdd::negate`](crate::Tdd::negate) using this batch's scratch and resource limits.

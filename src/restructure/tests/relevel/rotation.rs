@@ -1,10 +1,9 @@
 use super::*;
 use crate::Engine;
 use crate::vtree::{RotationKind, Vtree};
-use crate::test_helpers::{rotate_left, rotate_right};
+use crate::diagram::{EncodedNode, MultiPairRange};
+use crate::test_helpers::{assert_canonical, compile_clauses, rotate_left, rotate_right};
 use crate::restructure::relevel::restructure_inner_search;
-
-
 
 /// The size-objective descent of `Engine::rotation_search` under
 /// [`MinimizePairs`](crate::restructure::search::local::MinimizePairs).
@@ -16,7 +15,6 @@ fn size_descent(tdd: &mut Tdd) {
         .expect("an unarmed engine stops nothing");
 }
 use std::sync::Arc;
-use crate::test_helpers::{assert_canonical, compile_clauses};
 
 #[test]
 fn left_rotation_preserves_model_count() {

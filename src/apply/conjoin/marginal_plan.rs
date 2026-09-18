@@ -3,8 +3,7 @@
 //! [`Sides<T>`] holds the symmetric plans for the two children. Liveness masks
 //! are populated only after the selected route materializes its child grids.
 
-use crate::diagram::ChildDecoder;
-use crate::diagram::*;
+use crate::diagram::{ChildDecoder, ChildSide, Sides, Tdd, TddLevel};
 use super::OperationError;
 use crate::Engine;
 use super::liveness::{bucket_shift, build_live_cols_bitmask, build_reach_masks, PrefilterSideMasks};

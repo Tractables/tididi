@@ -4,7 +4,7 @@ use crate::Engine;
 use crate::vtree::VtreeIdx;
 
 use crate::limits::OperationError;
-use crate::diagram::*;
+use crate::diagram::{ChildPair, EncodedNode, MultiPairRange, Tdd, TddLevel};
 
 use super::super::scratch::{DuplicateScratch, MergeRemap};
 

@@ -5,14 +5,12 @@
 //! order), so sorted pair lists remain sorted after remapping. Levels that lost
 //! a node go onto the contract worklists; `reduce` runs the contraction.
 
-use crate::diagram::EncodedChildRef;
+use crate::diagram::{EncodedChildRef, NodeIdx, Tdd};
 
 use crate::Engine;
-use crate::diagram::NodeIdx;
 
 use crate::vtree::VtreeIdx;
 use crate::limits::OperationError;
-use crate::diagram::*;
 
 /// `remap` entry for a slot the pass-1 walk never reached — the whole
 /// reachability bitmap, folded into the remap array (they are indexed

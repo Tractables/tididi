@@ -1,10 +1,8 @@
-use crate::diagram::EncodedChildRef;
+use crate::diagram::{ChildDecoder, ChildSide, EncodedChildRef, Tdd, TddLevel};
 use crate::Engine;
-use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
 use crate::limits::OperationError;
-use crate::diagram::*;
 
 use super::scratch::{ContractScratch, EMPTY_SLOT, TwinSlot};
 

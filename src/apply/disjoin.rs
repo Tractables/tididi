@@ -6,10 +6,10 @@
 //! where `&` would not.
 
 use crate::Engine;
-use crate::diagram::*;
+use crate::diagram::Tdd;
 use crate::limits::OperationError;
 use crate::apply::negate::negate_tdd_owned;
-use crate::reduce::{ReductionPlan};
+use crate::reduce::ReductionPlan;
 
 /// Panicking disjunction used by `BitOr` and test fixtures.
 /// The checked entry point is [`or`].

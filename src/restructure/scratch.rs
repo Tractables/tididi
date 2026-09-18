@@ -4,7 +4,7 @@ use crate::limits::pool::PooledScratch;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::diagram::*;
+use crate::diagram::{ChildPair, NodeIdx};
 
 /// Reusable scratch for `restructure_inner_search`. Threaded by
 /// the rotation-search loops so the per-probe allocator churn is paid once per
