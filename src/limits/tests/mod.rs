@@ -8,6 +8,7 @@ mod stop_bound;
 mod poll;
 mod error;
 
+mod config_roundtrip;
 mod captured;
 mod conversion;
 
