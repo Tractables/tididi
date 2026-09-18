@@ -9,7 +9,9 @@
 //! the decision rule as well: [`Greedy`] is what the plain search uses, while
 //! [`Tabu`] and [`Annealing`] keep a worsening move so the search can leave a
 //! local minimum. [`RotationSearchConfig::neighborhood`] widens a sweep from
-//! one rotation to two or three at a time.
+//! one rotation to two or three at a time, and
+//! [`Engine::rotation_multistart`](crate::Engine::rotation_multistart) runs
+//! several searches from perturbed copies and keeps the smallest result.
 //! [`Tdd::try_rotations`] is the primitive underneath all of them: apply
 //! rotations, look at what they did, and keep or undo them.
 //!
@@ -19,6 +21,7 @@
 
 pub(crate) mod cluster;
 pub(crate) mod local;
+mod multistart;
 mod policy;
 mod probe;
 
@@ -28,6 +31,7 @@ mod tests;
 pub use local::{
     MinimizePairs, Neighborhood, RotationObjective, RotationSearchConfig, RotationSearchStats,
 };
+pub use multistart::{MultistartConfig, MultistartStats};
 pub use policy::{AcceptancePolicy, Annealing, Greedy, Tabu};
 pub use probe::{RotationMove, RotationProbe};
 

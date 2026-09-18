@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::Engine;
 use crate::limits::OperationError;
 use crate::restructure::search::{
-    Annealing, Greedy, MinimizePairs, Neighborhood, RotationSearchConfig, Tabu,
+    Annealing, Greedy, MinimizePairs, MultistartConfig, Neighborhood, RotationSearchConfig, Tabu,
 };
 use crate::test_helpers::{assert_canonical, compile_clauses};
 use crate::vtree::Vtree;
@@ -184,6 +184,40 @@ fn a_policy_that_keeps_worsening_moves_needs_a_bound() {
     // The descent is fine without one: it never keeps a sequence that grows.
     let mut tdd = plateau();
     assert!(eng.rotation_search_with(&mut tdd, &mut MinimizePairs, &mut Greedy, &unbounded).is_ok());
+}
+
+#[test]
+fn multistart_never_returns_a_larger_diagram_than_the_one_it_searched() {
+    let eng = Engine::new();
+    for start in [plateau(), triple_plateau()] {
+        let mut tdd = start.clone();
+        let count = tdd.model_count().unwrap();
+        let config = MultistartConfig { restarts: 3, kick: 4, seed: 5, search: bounded() };
+        let stats = eng.rotation_multistart(&mut tdd, &mut MinimizePairs, &config).unwrap();
+        assert_eq!(stats.rounds, 4);
+        assert!(stats.best_round < stats.rounds);
+        assert_canonical(&tdd);
+        assert_eq!(tdd.model_count().unwrap(), count);
+        assert!(
+            tdd.pair_count() <= start.pair_count(),
+            "multistart grew the diagram: {} > {}",
+            tdd.pair_count(),
+            start.pair_count(),
+        );
+    }
+}
+
+#[test]
+fn multistart_with_no_restarts_is_one_search() {
+    let eng = Engine::new();
+    let mut tdd = plateau();
+    let mut plain = tdd.clone();
+    let config = MultistartConfig { restarts: 0, kick: 4, seed: 5, search: bounded() };
+    let stats = eng.rotation_multistart(&mut tdd, &mut MinimizePairs, &config).unwrap();
+    eng.rotation_search(&mut plain, &mut MinimizePairs, &bounded()).unwrap();
+    assert_eq!((stats.rounds, stats.best_round), (1, 0));
+    assert!(tdd.vtree().same_tree(plain.vtree()));
+    assert_eq!(tdd.pair_count(), plain.pair_count());
 }
 
 #[test]
