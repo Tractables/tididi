@@ -13,7 +13,7 @@ use smallvec::SmallVec;
 
 use crate::Engine;
 use crate::diagram::{Dirty, Tdd, TddLevel, TddNodeId};
-use crate::limits::{Limits, OperationError};
+use crate::limits::{Limits, OperationError, Transient};
 use crate::restructure::relevel::{RestructureScratch, restructure_inner_search};
 use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
 use crate::vtree::{RotationKind, Vtree, VtreeIdx};
@@ -60,7 +60,7 @@ pub struct RotationProbe<'a> {
     tdd: &'a Tdd,
     moves: &'a [RotationMove],
     changed: &'a [VtreeIdx],
-    preimages: &'a [TddLevel],
+    preimages: &'a [Transient<'a, TddLevel>],
 }
 
 impl std::fmt::Debug for RotationProbe<'_> {
@@ -97,7 +97,7 @@ impl RotationProbe<'_> {
     /// the sequence did not rebuild.
     #[inline]
     pub fn before(&self, level: VtreeIdx) -> Option<&TddLevel> {
-        self.position(level).map(|i| &self.preimages[i])
+        self.position(level).map(|i| &*self.preimages[i])
     }
 
     /// A changed level as it is now, or `None` for a level the sequence did
@@ -325,7 +325,7 @@ struct RotationTrial<'a> {
     /// The levels the sequence rebuilt, each recorded the first time a move
     /// reached it, parallel to `preimages`.
     changed: SmallVec<[VtreeIdx; 2]>,
-    preimages: SmallVec<[TddLevel; 2]>,
+    preimages: SmallVec<[Transient<'a, TddLevel>; 2]>,
     old_output: TddNodeId,
     shared_tree: Option<Arc<Vtree>>,
     old_dirty: Option<Dirty>,
@@ -368,10 +368,10 @@ impl<'a> RotationTrial<'a> {
     fn record(&mut self, info: &RotationInfo, old: (TddLevel, TddLevel)) {
         for (level, preimage) in [(info.v_idx, old.0), (info.w_idx, old.1)] {
             if self.changed.contains(&level) {
-                self.lim.release_bytes(preimage.arena_capacity_bytes());
+                self.lim.discard(preimage);
             } else {
                 self.changed.push(level);
-                self.preimages.push(preimage);
+                self.preimages.push(Transient::new(self.lim, preimage));
             }
         }
     }
@@ -384,12 +384,10 @@ impl<'a> RotationTrial<'a> {
     /// Repair topology and release the preimage before any accepted-rotation callback.
     fn commit(mut self) {
         self.committed = true;
-        // The preimages are about to be dropped, and the rebuild charged the
-        // levels that replaced them, so the operation's in-flight total ends up
-        // carrying the difference rather than both.
-        for preimage in self.preimages.drain(..) {
-            self.lim.release_bytes(preimage.arena_capacity_bytes());
-        }
+        // Dropping the preimages hands their charge back, and the rebuild
+        // charged the levels that replaced them, so the operation's in-flight
+        // total ends up carrying the difference rather than both.
+        self.preimages.clear();
         self.changed.clear();
         for pending in self.pending.drain(..) {
             pending.commit(Arc::make_mut(&mut self.tdd.vtree));
@@ -415,8 +413,8 @@ impl Drop for RotationTrial<'_> {
         for (level, preimage) in self.changed.drain(..).zip(self.preimages.drain(..)) {
             // The rebuilt level is the one being dropped here, so its charge is
             // what the trial hands back.
-            self.lim.release_bytes(self.tdd.levels[level.idx()].arena_capacity_bytes());
-            self.tdd.levels[level.idx()] = preimage;
+            let rebuilt = std::mem::replace(&mut self.tdd.levels[level.idx()], preimage.keep());
+            self.lim.discard(rebuilt);
         }
         self.tdd.output = self.old_output;
         if let Some(dirty) = self.old_dirty.take() {

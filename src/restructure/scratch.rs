@@ -48,14 +48,11 @@ impl PooledScratch for RestructureScratch {
         if self.packed.capacity() > RESTRUCTURE_PACKED_CAP_LIMIT {
             // Only the two size-proportional Vecs were charged through the
             // byte meter; the maps grow through their own allocator.
-            let freed = self.packed.capacity() * std::mem::size_of::<u128>()
-                + self.group_info.capacity() * std::mem::size_of::<super::relevel::PairGroup>();
-            self.packed = Vec::new();
-            self.group_info = Vec::new();
+            lim.discard(std::mem::take(&mut self.packed));
+            lim.discard(std::mem::take(&mut self.group_info));
             self.per_v_pairs = Vec::new();
             self.inner_pair_to_idx = FxHashMap::default();
             self.distinct_inner = FxHashSet::default();
-            lim.release_bytes(freed as u64);
         }
     }
 }

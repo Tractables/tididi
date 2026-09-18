@@ -259,27 +259,66 @@ impl Limits {
     }
 }
 
-/// Releases a transient buffer's byte charge on every exit.
-pub(crate) struct ByteCharge<'a> {
+/// A buffer whose capacity was charged to a [`Limits`] as it grew.
+pub(crate) trait Charged {
+    /// The bytes the meter holds for this buffer: its capacity, not its length.
+    fn charged_bytes(&self) -> u64;
+}
+
+impl<T> Charged for Vec<T> {
+    #[inline]
+    fn charged_bytes(&self) -> u64 {
+        (self.capacity() as u64).saturating_mul(std::mem::size_of::<T>() as u64)
+    }
+}
+
+impl Limits {
+    /// Drop a charged buffer and hand its charge back.
+    #[inline]
+    pub(crate) fn discard<B: Charged>(&self, buf: B) {
+        self.release_bytes(buf.charged_bytes());
+        drop(buf);
+    }
+}
+
+/// A charged buffer that is [discarded](Limits::discard) when dropped, unless
+/// it is [kept](Transient::keep). Wrap a buffer that is built and then either
+/// installed or thrown away, so every early exit hands its charge back.
+pub(crate) struct Transient<'a, B: Charged> {
     lim: &'a Limits,
-    bytes: u64,
+    buf: Option<B>,
 }
 
-impl<'a> ByteCharge<'a> {
-    /// Charge nothing yet. The transient may end up empty.
-    pub(crate) fn none(lim: &'a Limits) -> Self {
-        ByteCharge { lim, bytes: 0 }
+impl<'a, B: Charged> Transient<'a, B> {
+    pub(crate) fn new(lim: &'a Limits, buf: B) -> Self {
+        Transient { lim, buf: Some(buf) }
     }
 
-    /// Record that `bytes` of the charge already made are this transient's to
-    /// release.
-    pub(crate) fn owe(&mut self, bytes: u64) {
-        self.bytes = bytes;
+    /// Take the buffer out; its charge stays with the caller.
+    pub(crate) fn keep(mut self) -> B {
+        self.buf.take().expect("a transient holds its buffer until it is kept")
     }
 }
 
-impl Drop for ByteCharge<'_> {
+impl<B: Charged> std::ops::Deref for Transient<'_, B> {
+    type Target = B;
+    #[inline]
+    fn deref(&self) -> &B {
+        self.buf.as_ref().expect("a transient holds its buffer until it is kept")
+    }
+}
+
+impl<B: Charged> std::ops::DerefMut for Transient<'_, B> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut B {
+        self.buf.as_mut().expect("a transient holds its buffer until it is kept")
+    }
+}
+
+impl<B: Charged> Drop for Transient<'_, B> {
     fn drop(&mut self) {
-        self.lim.release_bytes(self.bytes);
+        if let Some(buf) = self.buf.take() {
+            self.lim.discard(buf);
+        }
     }
 }

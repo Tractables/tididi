@@ -2,7 +2,7 @@
 
 use crate::Engine;
 use crate::diagram::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode, NodeKind, MULTI_BIT};
-use crate::limits::{OperationError};
+use crate::limits::{Charged, OperationError};
 use super::TddLevel;
 
 /// The encoding a node lands on when its pair list shrinks — see
@@ -401,9 +401,7 @@ impl TddLevel {
 
     /// The allocated bytes of the three structural arenas.
     pub(crate) fn arena_capacity_bytes(&self) -> u64 {
-        (self.nodes.capacity() * std::mem::size_of::<EncodedNode>()
-            + self.pairs.capacity() * std::mem::size_of::<ChildPair>()
-            + self.multi_pairs.capacity() * std::mem::size_of::<MultiPairRange>()) as u64
+        self.nodes.charged_bytes() + self.pairs.charged_bytes() + self.multi_pairs.charged_bytes()
     }
 
     /// [`push_internal_node`](Self::push_internal_node) for the apply
@@ -503,5 +501,14 @@ impl TddLevel {
         reserve(&mut self.nodes, 1)?;
         self.nodes.push(data);
         Ok(())
+    }
+}
+
+impl Charged for TddLevel {
+    /// The structural arenas: the meter charged their growth, so their
+    /// capacity is what a dropped level hands back.
+    #[inline]
+    fn charged_bytes(&self) -> u64 {
+        self.arena_capacity_bytes()
     }
 }

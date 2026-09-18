@@ -63,9 +63,7 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
     }
 
     fn release(&self, eng: &Engine, col: &mut Self::Col) {
-        let bytes = (col.capacity() * std::mem::size_of::<S::Value>()) as u64;
-        *col = Vec::new();
-        eng.limits().release_bytes(bytes);
+        eng.limits().discard(std::mem::take(col));
     }
 
     fn set(&self, _eng: &Engine, col: &mut Vec<S::Value>, i: usize, v: S::Value) -> Result<(), OperationError> {

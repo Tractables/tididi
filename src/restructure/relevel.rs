@@ -30,7 +30,7 @@ use crate::vtree::RotationKind;
 pub(crate) use super::scratch::RestructureScratch;
 use super::scratch::SCRATCH_RETAIN_ENTRIES;
 use crate::limits::pool::release_or_clear;
-use crate::limits::{Limits, OperationError};
+use crate::limits::{Limits, OperationError, Transient};
 
 /// Pack a search triple `(inner, src, axis)` into one `u128` whose numeric order
 /// is exactly the tuple's derived lexicographic order `(inner.left,
@@ -160,7 +160,10 @@ pub(crate) fn restructure_inner_search(
     // level); release it before the outer level's per-v pair lists and arena.
     release_or_clear(lim, &mut scratch.group_info, SCRATCH_RETAIN_ENTRIES);
 
-    let outer_level = match build_outer_level(
+    // Neither level is installed until both are built; a refusal in between
+    // drops the inner one and hands its charge back.
+    let inner_level = Transient::new(lim, inner_level);
+    let outer_level = build_outer_level(
         lim,
         old_v,
         &mut scratch.packed,
@@ -168,20 +171,12 @@ pub(crate) fn restructure_inner_search(
         &mut scratch.per_v_pairs,
         dir,
         marginal_ctx,
-    ) {
-        Ok(level) => level,
-        Err(e) => {
-            // The inner level was built but never installed; its arena is about
-            // to be dropped, so hand its charge back.
-            lim.release_bytes(inner_level.arena_capacity_bytes());
-            return Err(e);
-        }
-    };
+    )?;
 
     // Rotation locality: only w_idx can have fresh twins, and contraction reaches
     // a level through its parent, so the outer level is what changed here.
     tdd.invalidate(crate::vtree::VtreeIdx(v_idx as u32));
-    let old_w_level = std::mem::replace(&mut tdd.levels[w_idx], inner_level);
+    let old_w_level = std::mem::replace(&mut tdd.levels[w_idx], inner_level.keep());
     let old_v_level = std::mem::replace(&mut tdd.levels[v_idx], outer_level);
     Ok(Some((old_v_level, old_w_level)))
 }
@@ -308,13 +303,13 @@ fn build_inner_level(
     n_w_pairs: usize,
     max_pairs: usize,
 ) -> Result<Option<TddLevel>, OperationError> {
-    let mut level = TddLevel::new();
-    let filled = if marginal_ctx {
+    let mut level = Transient::new(lim, TddLevel::new());
+    if marginal_ctx {
         // Bail check 2 (full-expand): one inner node per distinct inner pair.
         if group_info.len() + n_w_pairs >= max_pairs {
             return Ok(None);
         }
-        expand_every_pair(lim, &mut level, group_info, inner_pair_to_idx)
+        expand_every_pair(lim, &mut level, group_info, inner_pair_to_idx)?;
     } else {
         // Phase 3: sort groups by fingerprint hash, so entries that can share a
         // node land in one bucket, then count the distinct cell lists that survive.
@@ -322,15 +317,9 @@ fn build_inner_level(
         if count_distinct_cell_lists(triples, group_info) + n_w_pairs >= max_pairs {
             return Ok(None);
         }
-        cluster_by_cell_list(lim, &mut level, triples, group_info, inner_pair_to_idx)
-    };
-    match filled {
-        Ok(()) => Ok(Some(level)),
-        Err(e) => {
-            lim.release_bytes(level.arena_capacity_bytes());
-            Err(e)
-        }
+        cluster_by_cell_list(lim, &mut level, triples, group_info, inner_pair_to_idx)?;
     }
+    Ok(Some(level.keep()))
 }
 
 /// The maximal runs of equal fingerprint hash in a hash-sorted `group_info`.
@@ -459,14 +448,9 @@ fn build_outer_level(
     release_or_clear(lim, triples, SCRATCH_RETAIN_ENTRIES);
     distributed?;
 
-    let mut outer_level = TddLevel::new();
-    match fill_outer_level(lim, &mut outer_level, old_v_level, per_v_pairs, n_v, marginal_ctx) {
-        Ok(()) => Ok(outer_level),
-        Err(e) => {
-            lim.release_bytes(outer_level.arena_capacity_bytes());
-            Err(e)
-        }
-    }
+    let mut outer_level = Transient::new(lim, TddLevel::new());
+    fill_outer_level(lim, &mut outer_level, old_v_level, per_v_pairs, n_v, marginal_ctx)?;
+    Ok(outer_level.keep())
 }
 
 /// Turn each triple into its outer pair and file it under the old v-node it

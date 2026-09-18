@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::diagram::ChildDecoder;
-use crate::limits::ByteCharge;
+use crate::limits::Transient;
 
 /// One g column's resolved pair slice, held as raw parts.
 ///
@@ -36,15 +36,11 @@ pub(crate) struct RightColumns<'a> {
     /// Decode arena, non-empty only on marginal-mask levels. Filled once in
     /// `build` and never touched again, so the heap block the descriptors
     /// point into stays put for the table's life; the field's job is to own
-    /// that block, and it is never read through.
+    /// that block and its byte charge, and it is never read through.
     #[expect(dead_code)]
-    flat: Vec<ChildPair>,
+    flat: Transient<'a, Vec<ChildPair>>,
     /// One descriptor per column `j ∈ 0..right_width`.
     cols: Vec<ColumnSlice>,
-    /// The byte-budget charge for `flat`, held for the table's life and
-    /// released on drop, including the level's early exits.
-    #[expect(dead_code)]
-    charge: ByteCharge<'a>,
     /// The engine whose pool the descriptor buffer goes back to.
     eng: &'a Engine,
 }
@@ -96,8 +92,7 @@ impl<'a> RightColumns<'a> {
         // Identity masks borrow g's storage directly (the per-cell view was
         // already a zero-copy borrow — never materialize what was borrowed),
         // so the arena and its budget charge exist only for marginal masks.
-        let mut flat: Vec<ChildPair> = Vec::new();
-        let mut charge = ByteCharge::none(lim);
+        let mut flat = Transient::new(lim, Vec::<ChildPair>::new());
         if !identity {
             let mut total: usize = 0;
             for j in 0..right_width {
@@ -109,13 +104,9 @@ impl<'a> RightColumns<'a> {
                 return None;
             }
             // A reserve can fail after charging (`try_reserve` succeeds, the
-            // soft-budget check trips), so the charge covers whatever capacity
-            // the vec actually holds either way.
-            let failed = lim.reserve_exact(&mut flat, total).is_err();
-            charge.owe(Self::cap_bytes(&flat));
-            if failed {
-                return None;
-            }
+            // soft-budget check trips); dropping the transient hands back
+            // whatever capacity the vec holds either way.
+            lim.reserve_exact(&mut flat, total).ok()?;
         }
 
         let mut cols: Vec<ColumnSlice> = eng.apply().right_cols.take();
@@ -155,11 +146,7 @@ impl<'a> RightColumns<'a> {
             }
         }
 
-        Some(RightColumns { flat, cols, charge, eng })
-    }
-
-    fn cap_bytes(flat: &Vec<ChildPair>) -> u64 {
-        (flat.capacity() as u64) * (std::mem::size_of::<ChildPair>() as u64)
+        Some(RightColumns { flat, cols, eng })
     }
 }
 

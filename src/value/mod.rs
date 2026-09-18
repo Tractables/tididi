@@ -8,7 +8,7 @@
 //! in a sparse [`CountOverflow`] table. [`Count`], [`CountRead`] and [`CountVec`]
 //! own the overflow encoding and promotion rule.
 
-use crate::limits::OperationError;
+use crate::limits::{Charged, OperationError};
 use crate::Engine;
 
 use num_bigint::BigUint;
@@ -109,13 +109,14 @@ impl Default for CountVec {
     }
 }
 
-impl CountVec {
+impl Charged for CountVec {
     /// Reserved buffer bytes, excluding the numeric payloads owned by big integers.
-    pub(crate) fn buffer_bytes(&self) -> u64 {
-        (self.fast.capacity() * std::mem::size_of::<u128>()) as u64
-            + self.big.as_ref().map_or(0, CountOverflow::buffer_bytes)
+    fn charged_bytes(&self) -> u64 {
+        self.fast.charged_bytes() + self.big.as_ref().map_or(0, CountOverflow::buffer_bytes)
     }
+}
 
+impl CountVec {
     /// A fresh `width`-element column, all zeroed (0 fits `u64`, so
     /// `all_u64` starts `true`). Reserves exactly `width` before filling.
     pub(crate) fn try_with_width(eng: &Engine, width: usize) -> Result<Self, OperationError> {

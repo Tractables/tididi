@@ -37,9 +37,7 @@ impl LevelFold for OverflowingCounts<'_> {
     }
 
     fn release(&self, eng: &Engine, col: &mut Self::Col) {
-        let bytes = col.buffer_bytes();
-        *col = CountVec::default();
-        eng.limits().release_bytes(bytes);
+        eng.limits().discard(std::mem::take(col));
     }
 
     fn set(&self, eng: &Engine, col: &mut CountVec, i: usize, v: Count) -> Result<(), OperationError> {

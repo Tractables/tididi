@@ -16,7 +16,7 @@ use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::diagram::{ChildPair, NodeIdx, Tdd, TddBuilder, TddNodeId};
 use crate::diagram::{NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
-use crate::limits::{Limits, OperationError};
+use crate::limits::{Charged, Limits, OperationError};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::Engine;
 
@@ -182,13 +182,15 @@ impl Finished {
             AtomOfRow::PerRow(of_row) => of_row[row] as usize,
         }
     }
+}
 
-    /// The bytes the row index occupies, to hand back when it is dropped.
-    fn index_bytes(&self) -> u64 {
-        match &self.atoms {
+impl Charged for Finished {
+    fn charged_bytes(&self) -> u64 {
+        let index = match &self.atoms {
             AtomOfRow::Uniform => 0,
-            AtomOfRow::PerRow(of_row) => (of_row.capacity() * size_of::<u32>()) as u64,
-        }
+            AtomOfRow::PerRow(of_row) => of_row.charged_bytes(),
+        };
+        index + self.locals.charged_bytes()
     }
 }
 
@@ -304,8 +306,8 @@ fn distinct_rows(
         }
     }
     gate.flush()?;
-    let freed = packed.capacity() * size_of::<u64>() + order.capacity() * size_of::<u32>();
-    lim.release_bytes(freed as u64);
+    lim.discard(packed);
+    lim.discard(order);
     Ok(out)
 }
 
@@ -416,7 +418,7 @@ fn fill(
             let (left, right) = vtree.children(t);
             for child in [left, right] {
                 if let Some(done) = state[child.idx()].take() {
-                    lim.release_bytes(done.index_bytes());
+                    lim.discard(done);
                 }
             }
         }
@@ -462,7 +464,10 @@ fn free_subtree(
         let pair = ChildPair::new(true_node(state, left), true_node(state, right));
         builder.push(eng, t, &[pair])?
     };
-    Ok(Finished { atoms: AtomOfRow::Uniform, locals: vec![local] })
+    let mut locals = Vec::new();
+    eng.limits().reserve_exact(&mut locals, 1)?;
+    locals.push(local);
+    Ok(Finished { atoms: AtomOfRow::Uniform, locals })
 }
 
 /// The node a finished free subtree stored its one atom at.
