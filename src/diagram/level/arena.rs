@@ -1,7 +1,7 @@
 //! The pair arena: node encoding, in-place resizing, compaction, and node pushes.
 
 use crate::Engine;
-use crate::diagram::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode, MULTI_BIT};
+use crate::diagram::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode, NodeKind, MULTI_BIT};
 use crate::limits::{OperationError};
 use super::TddLevel;
 
@@ -92,14 +92,12 @@ impl TddLevel {
     #[inline]
     pub(crate) fn set_pair_len(&mut self, node_idx: usize, new_len: u32) {
         assert!(new_len >= 2, "set_pair_len: new_len=1 aliases multi_ranged; convert to inline or extended");
-        let node = &mut self.nodes[node_idx];
-        if node.is_multi_ranged() {
-            let multi_pairs_idx = (node.a & !MULTI_BIT) as usize;
+        if let NodeKind::MultiRanged(idx) = self.nodes[node_idx].kind() {
             // Shrinking stays extended even if new_len now fits in u31 — the
             // multi_pairs slot is already allocated, and callers don't rely on form.
-            self.multi_pairs[multi_pairs_idx].len = new_len as u64;
+            self.multi_pairs[idx as usize].len = new_len as u64;
         } else {
-            node.set_pair_len(new_len);
+            self.nodes[node_idx].set_pair_len(new_len);
         }
     }
 
@@ -138,7 +136,7 @@ impl TddLevel {
         // must move together: this is the only thing that decides whether the
         // reserve happens, and `shrunk_encoding` is the only thing that decides
         // whether the push happens.
-        if new_len < 2 && !self.nodes[node_idx].is_multi_ranged() {
+        if new_len < 2 && !matches!(self.nodes[node_idx].kind(), NodeKind::MultiRanged(_)) {
             eng.limits().reserve(&mut self.multi_pairs, 1)?;
         }
         Ok(())
@@ -197,11 +195,9 @@ impl TddLevel {
         if surviving.can_inline() {
             return ShrunkEncoding::Inline(surviving);
         }
-        let node = &self.nodes[node_idx];
-        if node.is_multi_ranged() {
-            ShrunkEncoding::ReuseRangeEntry(node.multi_pairs_idx() as usize)
-        } else {
-            ShrunkEncoding::NewRangeEntry
+        match self.nodes[node_idx].kind() {
+            NodeKind::MultiRanged(idx) => ShrunkEncoding::ReuseRangeEntry(idx as usize),
+            _ => ShrunkEncoding::NewRangeEntry,
         }
     }
 
@@ -214,14 +210,13 @@ impl TddLevel {
     /// node stays extended (its `multi_pairs` slot is already allocated).
     #[inline]
     fn set_multi_start(&mut self, node_idx: usize, new_start: usize) {
-        let node = &mut self.nodes[node_idx];
-        debug_assert!(node.is_multi());
-        if node.is_multi_ranged() {
-            let multi_pairs_idx = (node.a & !MULTI_BIT) as usize;
-            self.multi_pairs[multi_pairs_idx].start = new_start as u64;
-        } else {
-            debug_assert!(new_start < (1usize << 31), "set_multi_start: start overflows the packed encoding");
-            node.a = (new_start as u32) | MULTI_BIT;
+        match self.nodes[node_idx].kind() {
+            NodeKind::MultiRanged(idx) => self.multi_pairs[idx as usize].start = new_start as u64,
+            NodeKind::Multi { .. } => {
+                debug_assert!(new_start < (1usize << 31), "set_multi_start: start overflows the packed encoding");
+                self.nodes[node_idx].a = (new_start as u32) | MULTI_BIT;
+            }
+            other => panic!("set_multi_start on {other:?}"),
         }
     }
 
@@ -241,7 +236,7 @@ impl TddLevel {
     /// the inline/leaf/tombstone encodings (they own no arena slot).
     #[inline]
     pub(crate) fn arena_pairs_at(&self, idx: usize) -> usize {
-        if self.nodes[idx].is_multi() { self.multi_len_at(idx) } else { 0 }
+        if self.nodes[idx].kind().pairs_in_arena() { self.multi_len_at(idx) } else { 0 }
     }
 
     /// Pairs-arena compaction trigger. A sweep runs only when the dead-slot
@@ -303,10 +298,10 @@ impl TddLevel {
             "index_live_ranges: node index must fit the packed key's low half"
         );
         for i in 0..self.nodes.len() {
-            // Leaves and tombstones (`is_multi() == false` for both) and inline
-            // nodes own no arena slot.
+            // Only a multi-pair node owns an arena slot; leaves, tombstones
+            // and inline nodes own none.
             let node = self.nodes[i];
-            if !node.is_multi() {
+            if !node.kind().pairs_in_arena() {
                 continue;
             }
             let range = self.multi_range(&node);

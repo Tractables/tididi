@@ -319,7 +319,7 @@ impl TddLevel {
     #[inline]
     pub(crate) fn has_multi_pair(&self) -> bool {
         (0..self.nodes.len()).any(|i| {
-            self.nodes[i].is_multi() && self.multi_len_at(i) >= 2
+            self.nodes[i].kind().pairs_in_arena() && self.multi_len_at(i) >= 2
         })
     }
 

@@ -4,7 +4,7 @@ use crate::Engine;
 use crate::vtree::VtreeIdx;
 
 use crate::limits::OperationError;
-use crate::diagram::{ChildPair, EncodedNode, MultiPairRange, Tdd, TddLevel};
+use crate::diagram::{ChildPair, EncodedNode, MultiPairRange, NodeKind, Tdd, TddLevel};
 
 use super::super::scratch::{DuplicateScratch, MergeRemap};
 
@@ -114,8 +114,8 @@ pub(super) fn concat_twin_pairs(
     );
     for &idx in group {
         let d = level.nodes[idx as usize];
-        if d.is_inline() {
-            level.pairs.push(d.inline_pair());
+        if let NodeKind::Inline(pair) = d.kind() {
+            level.pairs.push(pair);
         } else {
             // `pair_range_at` handles both normal and extended multi encodings;
             // the range is owned, so the immutable borrow ends before the extend.

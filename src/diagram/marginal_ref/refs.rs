@@ -50,7 +50,7 @@ pub(crate) fn for_each_side_ref_mut(
         if level.nodes[ni].is_leaf() {
             continue;
         }
-        if level.nodes[ni].is_multi() {
+        if level.nodes[ni].kind().pairs_in_arena() {
             for p in level.pairs_mut(ni) {
                 f(match side {
                     ChildSide::Left => &mut p.left.0,

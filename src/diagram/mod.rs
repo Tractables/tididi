@@ -185,7 +185,7 @@ pub use primitives::{
     ChildPair, PairsIter, EncodedChildRef, LeafLabel, NodeIdx, EncodedNode, TddNodeId,
     LEAF_WIDTH, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX, ZERO,
 };
-pub(crate) use primitives::{MultiPairRange, CHILD_PAIR_BYTES};
+pub(crate) use primitives::{MultiPairRange, NodeKind, CHILD_PAIR_BYTES};
 
 // marginal
 pub use marginal_ref::{CountOverflow, ChildRef, ChildDecoder, ValueRef, ValueRefError};

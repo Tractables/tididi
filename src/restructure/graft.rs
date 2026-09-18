@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::vtree::{GraftLayout, VarId, Vtree, VtreeIdx};
 
 use crate::diagram::{
-    return_levels, take_levels, ChildPair, NodeIdx, PoolSlot, Tdd, TddLevel, TddNodeId,
+    return_levels, take_levels, ChildPair, NodeIdx, NodeKind, PoolSlot, Tdd, TddLevel, TddNodeId,
     TddBuildError, WeightStore, ONE_LEAF_IDX,
 };
 
@@ -312,8 +312,12 @@ impl Tdd {
             "splice_subtree: the right diagram has width {} at the merge point",
             other.levels[t.idx()].slot_count(),
         );
-        let left_ptr = self.levels[t.idx()].nodes()[0].inline_pair().left;
-        let right_ptr = other.levels[t.idx()].nodes()[0].inline_pair().right;
+        let sole_pair = |level: &TddLevel| match level.nodes()[0].kind() {
+            NodeKind::Inline(pair) => pair,
+            other => panic!("splice_subtree: the merge point holds {other:?}"),
+        };
+        let left_ptr = sole_pair(&self.levels[t.idx()]).left;
+        let right_ptr = sole_pair(&other.levels[t.idx()]).right;
 
         let right_child = self.vtree.children(t).1;
         swap_subtree_levels(
