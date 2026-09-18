@@ -40,7 +40,6 @@ pub(super) fn try_resize_dead(
 /// increments instead of `Vec`'s doubling. The bare `len < capacity` store is
 /// here and everything else in [`push_pair_grow`], so the hot path inlines
 /// without the growth code.
-#[inline(always)]
 pub(super) fn try_push_pair_into(
     eng: &Engine,
     level: &mut crate::diagram::TddLevel,
@@ -140,7 +139,6 @@ fn grow_pairs_bounded(
 /// per-operation meter reset, so charging its pair arena would accumulate across
 /// clauses and trip the soft budget spuriously. The allocator preflight and the
 /// `OverBudget` refusal channel are the same.
-#[inline(always)]
 pub(crate) fn reserve_pairs_for_emit(
     eng: &Engine,
     level: &mut crate::diagram::TddLevel,

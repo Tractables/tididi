@@ -66,7 +66,6 @@ pub struct VtreeIdx(pub u32);
 
 impl VtreeIdx {
     /// The index as a `usize`.
-    #[inline(always)]
     pub fn idx(self) -> usize {
         self.0 as usize
     }
@@ -74,7 +73,6 @@ impl VtreeIdx {
 
 impl VarId {
     /// The zero-based array index of this variable: its number minus one.
-    #[inline(always)]
     pub fn idx(self) -> usize {
         debug_assert!(self.0 >= 1, "variable numbers start at 1");
         (self.0 - 1) as usize

@@ -31,7 +31,6 @@ impl SparseThresholds {
 
 /// The thresholds in force: [`SparseThresholds::PRODUCTION`], unless a test
 /// has installed others on this thread.
-#[inline(always)]
 pub(crate) fn sparse_thresholds() -> SparseThresholds {
     forced().unwrap_or(SparseThresholds::PRODUCTION)
 }
@@ -113,7 +112,6 @@ pub(crate) const BYTES_PER_PAR_ENTRY: usize = 32;
 use super::tests::forced_thresholds as forced;
 
 #[cfg(not(test))]
-#[inline(always)]
 fn forced() -> Option<SparseThresholds> {
     None
 }

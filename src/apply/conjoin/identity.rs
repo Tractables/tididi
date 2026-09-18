@@ -187,7 +187,6 @@ pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) ->
 ///
 /// `C1_IS_CARRIER = true`: `g` is the identity operand, `f` the carrier;
 /// `false`: the reverse. `carrier_levels` is the carrier's `levels`.
-#[inline(always)]
 fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
     eng: &Engine,
     shape: LevelShape,
@@ -252,7 +251,6 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
 /// vacuously the identity for the ancestors' own fast paths. Flagging it keeps
 /// an already-marginal ancestor from falling through to the dense route, which
 /// would read pairs out of an empty level.
-#[inline(always)]
 fn try_zero_width_marginal(
     f: &Tdd,
     g: &Tdd,

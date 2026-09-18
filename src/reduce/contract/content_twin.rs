@@ -196,7 +196,6 @@ fn fingerprint_level_nodes(
     // is the wrapping sum over its pairs, xor the mixed pair count, so it is
     // order-independent. The golden-ratio increment keeps this distribution
     // distinct from `context_hash`'s.
-    #[inline(always)]
     fn pair_fingerprint(l: u32, r: u32) -> u64 {
         let x = ((l as u64) << 32) | (r as u64);
         super::fingerprint::mix64(x.wrapping_add(0x9E3779B97F4A7C15))

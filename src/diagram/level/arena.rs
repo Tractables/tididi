@@ -23,7 +23,6 @@ enum ShrunkEncoding {
 /// Reserve room for `additional` more elements, refusing rather than
 /// aborting. The allocator's own error carries nothing the caller can use —
 /// the request size is known at the site that reports it — so it is dropped.
-#[inline(always)]
 fn reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(), ()> {
     v.try_reserve(additional).map_err(|_| ())
 }
@@ -450,7 +449,6 @@ impl TddLevel {
     /// `pair_len == 1` aliases the `multi_ranged` encoding. The cold arm
     /// `assert!`s it; the fast path only `debug_assert!`s, so a violating
     /// caller corrupts silently in release.
-    #[inline(always)]
     pub(crate) fn try_push_multi_by_range(
         &mut self,
         pair_start: usize,

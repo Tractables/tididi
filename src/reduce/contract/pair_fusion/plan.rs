@@ -22,7 +22,6 @@ use super::PlanEntry;
 ///
 /// The value domain `D` sums each group; the grouping walk is shared by both
 /// instantiations, and the domain can never vary per node or per pair.
-#[inline(always)]
 pub(super) fn collect_fusion_plans<D: SlotValues>(
     eng: &Engine,
     tdd: &Tdd,
@@ -209,7 +208,6 @@ fn group_by_scatter<D: SlotValues>(
 /// each shared-slot pair occurrence carries one plan's contribution.
 ///
 /// Never a pinned leaf: the caller resolves that boundary by lookup instead.
-#[inline(always)]
 pub(super) fn allocate_fusion_slots<D: SlotValues>(
     eng: &Engine,
     tdd: &mut Tdd,

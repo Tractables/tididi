@@ -24,7 +24,6 @@ use super::PlanEntry;
 /// then the `k` fused pairs are appended at the cursor, still inside the old
 /// range since `kept + k ≤ old_len − k`. The abandoned tail is charged to
 /// `dead_pairs` and reclaimed by the level's arena sweep at the end.
-#[inline(always)]
 pub(super) fn rebuild_parent_level<V>(
     eng: &Engine,
     tdd: &mut Tdd,

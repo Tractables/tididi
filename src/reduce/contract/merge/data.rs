@@ -14,7 +14,6 @@ use super::super::scratch::{DuplicateScratch, MergeRemap};
 /// folds a run of k equal pairs into one pair with its marginal side scaled by
 /// k only where t1 has a marginal child, and otherwise leaves the run (see the
 /// module doc of `duplicate_pair_resolve`).
-#[inline(always)]
 pub(super) fn compact_and_fork_down(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -198,7 +197,6 @@ fn finalize_merged_node(
 /// Also the accounting point for absorbed twins' pair ranges: dropping the node
 /// is what makes its range unreferenced (whether the merge copied the content to
 /// the survivor's tail range, or a duplicate redirect left the pair list untouched).
-#[inline(always)]
 pub(super) fn compact_explicit_level(level: &mut TddLevel, merge_target: &[u32]) {
     let n = level.nodes.len();
     let mut write = 0usize;

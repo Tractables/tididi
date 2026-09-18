@@ -10,7 +10,6 @@ use super::*;
 /// `d_t` pairs into the tables' `dt_pairs`. The caller records
 /// `level.pairs.len()` and clears `t3_buf` and `dt_pairs` before the call,
 /// and emits the node afterwards.
-#[inline(always)]
 pub(super) fn build_both_rel_pairs<const DT: bool>(
     eng: &Engine,
     inputs: &[ChildPair],
@@ -60,7 +59,6 @@ pub(super) fn build_both_rel_pairs<const DT: bool>(
 /// `ctx` says which child is the relevant one and where the children's
 /// `cd_map` blocks start. The irrelevant side's map is not filled, so its raw
 /// pair index is used directly.
-#[inline(always)]
 pub(super) fn build_single_rel_pairs<const LEFT: bool, const DT: bool>(
     eng: &Engine,
     inputs: &[ChildPair],

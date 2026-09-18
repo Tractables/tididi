@@ -27,7 +27,6 @@ impl TddLevel {
 
     /// A multi-pair node's pair-arena start and pair count, decoded from
     /// either the packed or the extended (side-table) encoding.
-    #[inline(always)]
     fn multi_span(&self, node: &EncodedNode) -> (usize, usize) {
         match node.kind() {
             NodeKind::Multi { start, len } => (start as usize, len as usize),
@@ -40,7 +39,6 @@ impl TddLevel {
     }
 
     /// A multi-pair node's pair-arena range.
-    #[inline(always)]
     pub(crate) fn multi_range(&self, node: &EncodedNode) -> std::ops::Range<usize> {
         let (start, len) = self.multi_span(node);
         start..start + len
@@ -64,7 +62,6 @@ impl TddLevel {
     /// }
     /// assert!(!pairs.is_empty()); // the copied node no longer exists
     /// ```
-    #[inline(always)]
     pub fn pairs_of<'a>(&'a self, node: &'a EncodedNode) -> &'a [ChildPair] {
         match node.kind() {
             NodeKind::Leaf(_) | NodeKind::Tombstone => &[],
@@ -85,7 +82,6 @@ impl TddLevel {
     ///
     /// Panics if `idx` is not below `nodes().len()`, which on a marginal level
     /// is every `idx`.
-    #[inline(always)]
     pub fn pairs_of_idx(&self, idx: usize) -> &[ChildPair] {
         // A debug_assert! rather than a check: this is a hot path, and callers
         // route around marginal levels.
@@ -101,7 +97,6 @@ impl TddLevel {
 
     /// [`pairs_iter_of`](Self::pairs_iter_of) by node index; not valid on a
     /// marginal level.
-    #[inline(always)]
     pub(crate) fn pairs_iter_of_idx(&self, idx: usize) -> PairsIter<'_> {
         debug_assert!(
             !self.is_marginal(),
@@ -116,7 +111,6 @@ impl TddLevel {
     ///
     /// With neither child marginal this is the zero-copy `pairs_of_idx`;
     /// otherwise it materializes a decoded copy into `scratch`.
-    #[inline(always)]
     pub(crate) fn pairs_view_decoded<'a>(
         &'a self,
         idx: usize,

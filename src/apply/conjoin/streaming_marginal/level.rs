@@ -23,7 +23,6 @@ pub(crate) struct StreamEnv<'a> {
 /// Needs the whole `levels` slice, since the cascade re-marginalizes any
 /// descendant, and returns nothing that borrows it; the child columns are
 /// attached per row loop by [`attach_children`].
-#[inline(always)]
 pub(in crate::apply::conjoin) fn build_stream_state(
     eng: &Engine,
     shape: LevelShape,
@@ -111,7 +110,6 @@ pub(crate) fn attach_children<'a, F: ValueDomain>(
 /// bottom-up sweep guarantees for a scheduled target. Values are not deduped
 /// here (see [`MarginalDomain::commit_in_flight`]); the slot prune establishes
 /// slot uniqueness (`test_helpers::check::check_slot_count_uniqueness`).
-#[inline(always)]
 pub(crate) fn commit_stream_state(
     st: StreamLevelState,
     t: VtreeIdx,

@@ -1,4 +1,10 @@
 //! One cell of the product: the pair walk and the sinks it writes through.
+//!
+//! The `#[inline(always)]` in this directory and in `child_lookup` are not
+//! decoration: dropping them costs about a tenth of a percent of the
+//! instructions a mid-size exact count retires, and the loss shows up as work
+//! moving out of `process_cell` into the `CellAction` impls. Anything added
+//! here that the walk calls per pair belongs in the same regime.
 
 use crate::diagram::EncodedChildRef;
 

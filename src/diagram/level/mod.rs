@@ -112,20 +112,17 @@ impl Default for TddLevel {
 
 impl TddLevel {
     /// `side`'s bit in `inlined_sides`. See the field doc.
-    #[inline(always)]
     const fn inlined_bit(side: ChildSide) -> u8 {
         1 << side as u8
     }
 
     /// True if this level's refs toward its marginal `side` child are
     /// inline-encoded in the pair field.
-    #[inline(always)]
     pub(crate) fn marginal_inlined(&self, side: ChildSide) -> bool {
         self.inlined_sides & Self::inlined_bit(side) != 0
     }
     /// Set or clear the marker [`marginal_inlined`](Self::marginal_inlined)
     /// reads.
-    #[inline(always)]
     pub(crate) fn set_marginal_inlined(&mut self, side: ChildSide, v: bool) {
         if v { self.inlined_sides |= Self::inlined_bit(side) }
         else { self.inlined_sides &= !Self::inlined_bit(side) }
@@ -133,7 +130,6 @@ impl TddLevel {
     /// True if either side carries the inline-encoding marker. A level with
     /// neither is "plain": every pair side toward a marginal child is a bare
     /// slot, so duplicate pairs cannot be count-carrying multiset entries.
-    #[inline(always)]
     pub(crate) fn any_inlined_side(&self) -> bool {
         self.inlined_sides != 0
     }
@@ -334,7 +330,6 @@ impl TddLevel {
 
     /// True if this level has dropped its structure for per-node values,
     /// under either arithmetic.
-    #[inline(always)]
     pub fn is_marginal(&self) -> bool {
         !matches!(self.state, LevelState::Structural)
     }
@@ -343,7 +338,6 @@ impl TddLevel {
     /// external [`WeightStore`](crate::diagram::WeightStore) rather
     /// than in `marginal_counts` (which stays `None`). Such a level's values
     /// cannot be read from the diagram alone.
-    #[inline(always)]
     pub fn is_weight_marginal(&self) -> bool {
         matches!(self.state, LevelState::Weights { .. })
     }

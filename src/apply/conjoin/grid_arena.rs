@@ -73,7 +73,6 @@ pub(super) struct GridBase(usize);
 
 impl GridBase {
     /// The offset as an index into the slab.
-    #[inline(always)]
     pub(super) fn idx(self) -> usize { self.0 }
 }
 
@@ -126,13 +125,11 @@ impl GridArena {
     /// True when levels claim space as they are reached — the one behavioural
     /// difference the sweep still has to ask about, because a level's live
     /// count is only maintained (and only read) in that shape.
-    #[inline(always)]
     pub(super) fn is_bump(&self) -> bool {
         matches!(self, GridArena::Bump { .. })
     }
 
     /// The flat slab every grid is a slice of.
-    #[inline(always)]
     pub(super) fn slab(&self) -> &[u32] {
         match self {
             GridArena::Preplanned { cells, .. } | GridArena::Bump { cells, .. } => cells,
@@ -140,7 +137,6 @@ impl GridArena {
     }
 
     /// The flat slab, for a producer writing its level's cells.
-    #[inline(always)]
     pub(super) fn slab_mut(&mut self) -> &mut [u32] {
         match self {
             GridArena::Preplanned { cells, .. } | GridArena::Bump { cells, .. } => cells,
@@ -155,14 +151,12 @@ impl GridArena {
         }
     }
 
-    #[inline(always)]
     fn grids(&self) -> &[LevelGrid] {
         match self {
             GridArena::Preplanned { grids, .. } | GridArena::Bump { grids, .. } => grids,
         }
     }
 
-    #[inline(always)]
     fn grids_mut(&mut self) -> &mut [LevelGrid] {
         match self {
             GridArena::Preplanned { grids, .. } | GridArena::Bump { grids, .. } => grids,
@@ -171,26 +165,22 @@ impl GridArena {
 
     /// Level `t`'s grid base, or `None` if it has none — the one way to learn
     /// whether a level's cells may be read.
-    #[inline(always)]
     pub(super) fn materialized(&self, t: usize) -> Option<GridBase> {
         self.grids()[t].base().map(GridBase)
     }
 
     /// True when level `t` has no grid, so consumers must go through its
     /// product list.
-    #[inline(always)]
     pub(super) fn is_sparse(&self, t: usize) -> bool {
         self.grids()[t].is_sparse()
     }
 
     /// Record that level `t`'s grid has been materialized by a producer.
-    #[inline(always)]
     pub(super) fn set_dense(&mut self, t: usize, base: GridBase) {
         self.grids_mut()[t] = LevelGrid::Materialized { base: base.0 };
     }
 
     /// Record that level `t` has no grid.
-    #[inline(always)]
     pub(super) fn set_sparse(&mut self, t: usize) {
         self.grids_mut()[t] = LevelGrid::Sparse;
     }
@@ -329,7 +319,6 @@ impl ApplyRun {
     /// Reclaim the two consumed child grids — dead once this level is built
     /// (each node has exactly one parent). Invoked at every level-finishing
     /// exit.
-    #[inline(always)]
     pub(super) fn reclaim_child_grids(&mut self, left_idx: usize, right_idx: usize) {
         for v in [left_idx, right_idx] {
             self.arena.free_child(v, self.left_widths[v] * self.right_widths[v]);

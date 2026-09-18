@@ -102,7 +102,6 @@ pub(super) fn push_parent(
 }
 
 /// Seed the contraction max-heap with every eligible parent in `dirty_parents`.
-#[inline(always)]
 fn seed_contract_heap(
     tdd: &Tdd,
     dirty_parents: &[u32],

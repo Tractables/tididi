@@ -113,7 +113,6 @@ pub(super) fn build_clause_spine(
 /// conjunction (acc × `d_t`) iff its parent does or both its children are on
 /// the spine (the both-relevant `c_t` contains `(d_L, c_R)` and `(c_L, d_R)`).
 /// Only spine levels are written.
-#[inline(always)]
 pub(super) fn propagate_need_dt(
     vtree: &crate::vtree::Vtree,
     spine_internal: &[VtreeIdx],

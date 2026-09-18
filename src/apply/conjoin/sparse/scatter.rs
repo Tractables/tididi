@@ -11,7 +11,6 @@ use crate::Engine;
 /// The leaf arm of the scatter: one side of the join is a vtree leaf, so the
 /// leaf-side product comes straight from the conjunction table and the walk
 /// stays selective by iterating the non-leaf product list.
-#[inline(always)]
 fn scatter_leaf_arm<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
@@ -387,7 +386,6 @@ pub(crate) fn flush_chunk(
 /// into `ws.emit_pairs`, and optionally drop consumed `par_buckets` rows.
 ///
 /// Called exclusively from `flush_chunk`.
-#[inline(always)]
 fn flush_chunk_phase_e(
     eng: &Engine,
     ws: &mut SparseWorkspace,
@@ -467,7 +465,6 @@ fn flush_chunk_phase_e(
 ///
 /// Called exclusively from `flush_chunk`. No-ops when `ws.emit_pairs` produced
 /// zero new parents for this chunk.
-#[inline(always)]
 fn flush_chunk_phase_f(
     eng: &Engine,
     ws: &mut SparseWorkspace,
