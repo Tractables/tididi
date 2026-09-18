@@ -38,7 +38,7 @@ mod validate;
 
 pub use graft::GraftLayout;
 pub use node::{Vtree, VtreeNode};
-pub(crate) use topo::RotationKind;
+pub use topo::RotationKind;
 
 
 /// The `.vtree` text codec, in both directions.

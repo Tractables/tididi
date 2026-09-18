@@ -83,7 +83,9 @@ or [`Vtree::linear`](crate::Vtree::linear) for a variable order.
 [`Tdd::minimize`](crate::Tdd::minimize) removes redundancy under the current vtree
 and says which operations already return minimized results;
 [`Tdd::pair_count`](crate::Tdd::pair_count) measures the storage, and
-[`Tdd::rotation_search`](crate::Tdd::rotation_search) explores other shapes.
+[`Tdd::rotation_search`](crate::Tdd::rotation_search) explores other shapes and
+[`Engine::rotation_search_with`](crate::Engine::rotation_search_with) runs the
+same search under another acceptance policy.
 
 For more specialized control:
 

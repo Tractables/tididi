@@ -3,14 +3,28 @@
 use super::rotate;
 use super::{VarId, Vtree, VtreeIdx, VtreeNode};
 
-/// Which rotation direction a fixup call corresponds to — selects which
-/// grandchild subtree may violate children-before-parents after the rotation.
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub(crate) enum RotationKind {
-    /// A left rotation.
+/// Which way a rotation turns its pivot.
+///
+/// A left rotation at an internal node promotes its right child; a right
+/// rotation promotes its left child. The two are each other's inverse at the
+/// same pivot.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum RotationKind {
+    /// Promote the pivot's right child.
     Left,
-    /// A right rotation.
+    /// Promote the pivot's left child.
     Right,
+}
+
+impl RotationKind {
+    /// The direction that turns the pivot back.
+    #[inline]
+    pub fn inverse(self) -> RotationKind {
+        match self {
+            RotationKind::Left => RotationKind::Right,
+            RotationKind::Right => RotationKind::Left,
+        }
+    }
 }
 
 /// The maintained bottom-up order of a vtree's nodes, with its inverse and the
