@@ -1,7 +1,7 @@
 //! The integer arm of the streaming fold.
 
 use super::*;
-use crate::diagram::{EncodedChildRef, ChildPair, ChildDecoder, ValueRef, TddLevel, WeightStore};
+use crate::diagram::{EncodedChildRef, ChildPair, ChildDecoder, MarginalSide, ValueRef, TddLevel, WeightStore};
 use crate::value::{Count, CountRef, CountVec, IntFold, COUNT_OVERFLOW};
 use crate::diagram::LEAF_COUNTS;
 
@@ -26,7 +26,7 @@ pub(crate) type StreamChildCounts<'a> = StreamChild<'a, IntFold>;
 #[inline(always)]
 unsafe fn read_fast<const MARGINAL: bool>(raw: u32, c: &StreamChildCounts<'_>) -> u128 {
     if MARGINAL {
-        if let Some(c) = ValueRef::inline_count(raw) {
+        if let ValueRef::Inline(c) = ValueRef::from_raw(MarginalSide(raw)) {
             c as u128
         } else {
             let idx = ChildDecoder::marginal().coord(EncodedChildRef::from_raw(raw)) as usize;
@@ -103,7 +103,7 @@ pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
 #[inline(always)]
 fn read_marginal_count(raw: u32, c: &StreamChildCounts<'_>, view: ChildDecoder) -> (u128, usize) {
     if view.is_marginal()
-        && let Some(c) = ValueRef::inline_count(raw)
+        && let ValueRef::Inline(c) = ValueRef::from_raw(MarginalSide(raw))
     {
         (c as u128, usize::MAX)
     } else {

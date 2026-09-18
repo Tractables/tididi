@@ -60,7 +60,7 @@ fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, side: ChildSide
         // this guard a re-entry (parent revisited while its leaf-side refs are
         // already inline) would feed a bit-30 value into `LeafLabel::from_idx`,
         // whose `_ => unreachable!` panics (the leaf labels are only 0/1/2).
-        if ValueRef::is_inline_raw(raw) {
+        if matches!(ValueRef::from_raw(MarginalSide(raw)), ValueRef::Inline(_)) {
             return raw;
         }
         let count: u128 = match raw {

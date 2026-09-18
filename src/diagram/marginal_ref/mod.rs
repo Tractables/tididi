@@ -128,25 +128,6 @@ impl ValueRef {
         MarginalSide(self.side().expect("internal marginal reference must fit in 30 bits").raw())
     }
 
-    /// The count a marginal-side word carries inline, or `None` when it is a slot
-    /// reference. The two-instruction decode the counting fold wants, without
-    /// building a `ValueRef` it would immediately match on.
-    #[inline(always)]
-    pub(crate) fn inline_count(raw: u32) -> Option<u32> {
-        if raw & MARGINAL_OVERFLOW_TAG != 0 {
-            Some(raw & MARGINAL_VALUE_MASK)
-        } else {
-            None
-        }
-    }
-
-    /// Whether a marginal-side word carries its count inline — the predicate the
-    /// invariant checks want, with no payload.
-    #[inline(always)]
-    pub(crate) fn is_inline_raw(raw: u32) -> bool {
-        raw & MARGINAL_OVERFLOW_TAG != 0
-    }
-
     /// Whether `slot_idx` fits the payload a pair side can hold. A store that
     /// outgrows it cannot be referenced at all, so the caller that minted the
     /// slot must fail rather than truncate.
