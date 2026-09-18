@@ -26,11 +26,6 @@ rustc-hash = "2"
 itoa = "1"
 smallvec = { version = "1", features = ["union"] }
 
-[[bench]]
-name = "exists_block"
-harness = false
-test = false
-
 [dev-dependencies]
 # The crate's own tests, examples and doctests build against it as a consumer
 # would, so this is how they reach `test_helpers`.
