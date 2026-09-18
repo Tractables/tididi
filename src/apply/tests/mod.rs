@@ -12,7 +12,6 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 
 
-use crate::apply::project::{QuantificationStrategy};
 
 use crate::apply::{apply_and, apply_or};
 use crate::test_helpers::clause_to_tdd;

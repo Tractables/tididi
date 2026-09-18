@@ -178,34 +178,28 @@ fn ite_and_existential_conjunction_match_enumeration() {
                 }
             );
         }
-        for how in [
-            QuantificationStrategy::Automatic,
-            QuantificationStrategy::Structural,
-            QuantificationStrategy::CofactorOr,
+        for vars in [
+            vec![],
+            vec![VarId(1)],
+            vec![VarId(1), VarId(3)],
+            vec![VarId(1), VarId(1)],
         ] {
-            for vars in [
-                vec![],
-                vec![VarId(1)],
-                vec![VarId(1), VarId(3)],
-                vec![VarId(1), VarId(1)],
-            ] {
-                let result = eng.and_exists_with_strategy(f.clone(), g.clone(), &vars, how).unwrap();
-                assert_canonical(&result);
-                for row in 0..8 {
-                    let expected = (0..8).any(|witness| {
-                        (0..3).all(|v| {
-                            vars.contains(&VarId(v + 1)) || row & (1 << v) == witness & (1 << v)
-                        }) && (a & b) & (1 << witness) != 0
-                    });
-                    assert_eq!(eval(&result, &assignment(row, 3)), expected);
-                }
+            let result = eng.and_exists(f.clone(), g.clone(), &vars).unwrap();
+            assert_canonical(&result);
+            for row in 0..8 {
+                let expected = (0..8).any(|witness| {
+                    (0..3).all(|v| {
+                        vars.contains(&VarId(v + 1)) || row & (1 << v) == witness & (1 << v)
+                    }) && (a & b) & (1 << witness) != 0
+                });
+                assert_eq!(eval(&result, &assignment(row, 3)), expected);
             }
         }
     }
 }
 
 #[test]
-fn default_and_explicit_quantification_match_enumeration() {
+fn every_quantification_entry_point_matches_enumeration() {
     let eng = Engine::new();
     for tree in [Vtree::balanced(3), Vtree::linear(3), Vtree::reverse_linear(3)] {
         let tree = Arc::new(tree);
@@ -223,15 +217,6 @@ fn default_and_explicit_quantification_match_enumeration() {
                 if vars.len() == 1 {
                     results.push((f).clone().exists_var(vars[0]).unwrap());
                     results.push(eng.exists_var(f.clone(), vars[0]).unwrap());
-                }
-                for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural, QuantificationStrategy::CofactorOr] {
-                    results.push((f).clone().exists_vars_with_strategy(&vars, how).unwrap());
-                    results.push(eng.exists_vars_with_strategy(f.clone(), &vars, how).unwrap());
-                    results.push(eng.and_exists_with_strategy(f.clone(), one.clone(), &vars, how).unwrap());
-                    if vars.len() == 1 {
-                        results.push((f).clone().exists_var_with_strategy(vars[0], how).unwrap());
-                        results.push(eng.exists_var_with_strategy(f.clone(), vars[0], how).unwrap());
-                    }
                 }
                 for result in results {
                     assert_canonical(&result);

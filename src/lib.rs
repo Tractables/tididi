@@ -84,6 +84,6 @@ pub use vtree::Vtree;
 pub use limits::OperationError;
 pub use execution::{Context, Engine};
 
-pub use apply::{and, or, xor, ite, and_exists, and_exists_with_strategy};
+pub use apply::{and, or, xor, ite, and_exists};
 
 pub use build::literal;

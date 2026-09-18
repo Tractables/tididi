@@ -48,7 +48,6 @@ use num_bigint::BigUint;
 use num_rational::BigRational;
 use num_traits::Zero;
 
-use tididi::apply::{QuantificationStrategy};
 use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, SignedLog, WeightStore};
 use tididi::limits::LimitConfig;
 use tididi::io::{load_tdd, save_tdd};
@@ -411,15 +410,13 @@ fn operations_match_enumeration(case: &Case) {
                 .collect();
             assert_truth(&diagram_truth(&c, n), &want, n, "condition");
         }
-        for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
-            step("projection");
-            let p = (f).clone().exists_var_with_strategy(VarId(x + 1), how).unwrap();
-            assert_canonical_after_minimize(&p);
-            let want: Vec<bool> = (0..(1u32 << n))
-                .map(|mask| tf[(mask | (1 << x)) as usize] || tf[(mask & !(1 << x)) as usize])
-                .collect();
-            assert_truth(&diagram_truth(&p, n), &want, n, "projection");
-        }
+        step("projection");
+        let p = (f).clone().exists_var(VarId(x + 1)).unwrap();
+        assert_canonical_after_minimize(&p);
+        let want: Vec<bool> = (0..(1u32 << n))
+            .map(|mask| tf[(mask | (1 << x)) as usize] || tf[(mask & !(1 << x)) as usize])
+            .collect();
+        assert_truth(&diagram_truth(&p, n), &want, n, "projection");
     }
 
     step("restriction");

@@ -96,7 +96,6 @@ For more specialized control:
 | Purpose | API |
 |---|---|
 | Select reduction passes | [`Tdd::reduce`](crate::Tdd::reduce), [`ReductionPlan`](crate::reduce::ReductionPlan) |
-| Select a quantification rewrite | [`Tdd::exists_vars_with_strategy`](crate::Tdd::exists_vars_with_strategy) |
 | Simplify within a care set | [`Tdd::restrict_to_care`](crate::Tdd::restrict_to_care) |
 | Replace structure with counts or fixed weighted values | [`Tdd::marginalize_levels`](crate::Tdd::marginalize_levels) |
 | Combine disjoint variable domains | [`Tdd::graft`](crate::Tdd::graft), [`Tdd::graft_over`](crate::Tdd::graft_over) |

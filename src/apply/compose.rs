@@ -1,6 +1,5 @@
 //! Boolean combinations built from the shared apply and quantification kernels.
 
-use super::QuantificationStrategy;
 use crate::vtree::VarId;
 use crate::{Engine, OperationError, Tdd};
 
@@ -67,9 +66,6 @@ pub fn ite(condition: Tdd, then_branch: Tdd, else_branch: Tdd) -> Result<Tdd, Op
 ///
 /// Uses the shared vtree's execution context automatically.
 ///
-/// Uses [`QuantificationStrategy::Automatic`];
-/// [`and_exists_with_strategy`](crate::and_exists_with_strategy) selects a rewrite explicitly.
-///
 /// Both operands are structural and consumed; the result is minimized and
 /// keeps their shared vtree and agreed weights. Quantified variables remain
 /// free in that universe, as in [`Tdd::exists_vars`]. This composes
@@ -96,22 +92,6 @@ pub fn ite(condition: Tdd, then_branch: Tdd, else_branch: Tdd) -> Result<Tdd, Op
 pub fn and_exists(f: Tdd, g: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
     let context = std::sync::Arc::clone(f.context());
     context.run(|eng| eng.and_exists(f, g, vars))
-}
-
-/// Conjoin two diagrams and quantify `vars` with an explicit rewrite strategy.
-///
-/// Operand requirements, ownership and result semantics are those of
-/// [`and_exists`](crate::and_exists). The strategy applies to every quantified variable.
-///
-/// Reuses the execution context shared by the operands' vtree. Both inputs are
-/// consumed, including on error.
-///
-/// # Errors
-///
-/// Returns the errors described by [`and_exists`](crate::and_exists).
-pub fn and_exists_with_strategy(f: Tdd, g: Tdd, vars: &[VarId], strategy: QuantificationStrategy) -> Result<Tdd, OperationError> {
-    let context = std::sync::Arc::clone(f.context());
-    context.run(|eng| eng.and_exists_with_strategy(f, g, vars, strategy))
 }
 
 impl Engine {
@@ -168,23 +148,7 @@ impl Engine {
     ///
     /// Returns the operation's errors, plus [`OperationError::Stopped`] or
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
-    pub fn and_exists(&self, f: Tdd, g: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
-        self.and_exists_with_strategy(f, g, vars, QuantificationStrategy::Automatic)
-    }
-
-    /// Run [`and_exists_with_strategy`] using this batch's scratch and resource limits.
-    ///
-    /// # Errors
-    ///
-    /// Returns the operation's errors, plus [`OperationError::Stopped`] or
-    /// [`OperationError::OutputCap`] when an installed limit refuses the work.
-    pub fn and_exists_with_strategy(
-        &self,
-        mut f: Tdd,
-        mut g: Tdd,
-        vars: &[VarId],
-        how: QuantificationStrategy,
-    ) -> Result<Tdd, OperationError> {
+    pub fn and_exists(&self, mut f: Tdd, mut g: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
         super::check_vtree(&f, &g)?;
         f.require_structure()?;
         g.require_structure()?;
@@ -195,7 +159,7 @@ impl Engine {
         let product = self.and(f, g)?;
         // A nonempty quantification minimizes a non-false product.
         let identity = targets.is_empty() || product.is_zero();
-        let mut result = super::project::exists_targets_on(self, product, &targets, how)?;
+        let mut result = super::project::exists_targets_on(self, product, &targets)?;
         if identity { self.minimize(&mut result)?; }
         Ok(result)
     }

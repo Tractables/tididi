@@ -29,8 +29,7 @@ pub(crate) use conjoin::apply_and;
 pub use conjoin::and;
 pub(crate) use disjoin::apply_or;
 pub use disjoin::or;
-pub use compose::{xor, ite, and_exists, and_exists_with_strategy};
-pub use project::QuantificationStrategy;
+pub use compose::{xor, ite, and_exists};
 pub use restrict_to_care::RestrictionOutcome;
 
 #[cfg(test)]

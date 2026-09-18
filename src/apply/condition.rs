@@ -113,11 +113,6 @@ fn empty_node(level: &TddLevel, i: usize) -> bool {
     level.nodes[i].is_internal() && level.pair_count_at(i) == 0
 }
 
-/// Condition one already-resolved leaf for the cofactor-OR quantifier.
-pub(crate) fn condition_leaf(eng: &Engine, t: Tdd, leaf: VtreeIdx, polarity: Polarity) -> Result<Tdd, OperationError> {
-    condition_targets(eng, t, &mut [(leaf, polarity)])
-}
-
 /// Validate distinct target leaves, rewrite their parents, propagate falsity, and reduce once.
 fn condition_targets(
     eng: &Engine,

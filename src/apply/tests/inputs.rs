@@ -69,10 +69,7 @@ fn projection_rejects_a_marginal_ancestor() {
     let left = tree.children(tree.root()).0;
     eng.marginalize_levels(&mut f, &[left]).unwrap();
     assert_canonical(&f);
-    assert_eq!(eng.exists_var(f.clone(), VarId(1)).unwrap_err(), OperationError::MarginalLevel(left));
-    for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
-        assert_eq!(eng.exists_var_with_strategy(f.clone(), VarId(1), how).unwrap_err(), OperationError::MarginalLevel(left));
-    }
+    assert_eq!(eng.exists_var(f, VarId(1)).unwrap_err(), OperationError::MarginalLevel(left));
 }
 
 #[test]
@@ -83,10 +80,7 @@ fn projection_rejects_a_marginal_target_leaf() {
     let leaf = tree.leaf_of(VarId(1)).unwrap();
     eng.marginalize_levels(&mut f, &[leaf]).unwrap();
     assert_canonical(&f);
-    assert_eq!(eng.exists_var(f.clone(), VarId(1)).unwrap_err(), OperationError::MarginalLevel(leaf));
-    for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
-        assert_eq!(eng.exists_var_with_strategy(f.clone(), VarId(1), how).unwrap_err(), OperationError::MarginalLevel(leaf));
-    }
+    assert_eq!(eng.exists_var(f, VarId(1)).unwrap_err(), OperationError::MarginalLevel(leaf));
 }
 
 #[test]
@@ -99,10 +93,7 @@ fn projection_rejects_a_rewritten_ancestors_marginal_grandchild() {
     eng.marginalize_levels(&mut f, &[grandchild]).unwrap();
     f.minimize().unwrap();
     assert_canonical(&f);
-    assert_eq!(eng.exists_var(f.clone(), VarId(5)).unwrap_err(), OperationError::MarginalLevel(grandchild));
-    for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
-        assert_eq!(eng.exists_var_with_strategy(f.clone(), VarId(5), how).unwrap_err(), OperationError::MarginalLevel(grandchild));
-    }
+    assert_eq!(eng.exists_var(f, VarId(5)).unwrap_err(), OperationError::MarginalLevel(grandchild));
 }
 
 #[test]

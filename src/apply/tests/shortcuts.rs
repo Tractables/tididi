@@ -15,14 +15,13 @@ fn shortcut(eng: &Engine, tree: &Arc<Vtree>, f: Tdd, case: usize) -> Result<Tdd,
         7 => eng.condition_vars(f, &[], true),
         8 => eng.exists_var(eng.zero(tree), VarId(1)),
         9 => eng.exists_vars(f, &[]),
-        10 => eng.exists_vars_with_strategy(f, &[], QuantificationStrategy::Structural),
-        11 => eng.restrict_to_care(eng.zero(tree), f).map(|r| r.into_tdd()),
-        12 => eng.restrict_to_care(f, eng.zero(tree)).map(|r| r.into_tdd()),
-        13 => eng.substitute(f, &[]),
-        14 => eng.rename_vars(f, &[]),
-        15 => eng.and(f, eng.zero(tree)),
-        16 => eng.and(eng.zero(tree), f),
-        17 => eng.and(eng.zero(tree), eng.zero(tree)),
+        10 => eng.restrict_to_care(eng.zero(tree), f).map(|r| r.into_tdd()),
+        11 => eng.restrict_to_care(f, eng.zero(tree)).map(|r| r.into_tdd()),
+        12 => eng.substitute(f, &[]),
+        13 => eng.rename_vars(f, &[]),
+        14 => eng.and(f, eng.zero(tree)),
+        15 => eng.and(eng.zero(tree), f),
+        16 => eng.and(eng.zero(tree), eng.zero(tree)),
         _ => unreachable!(),
     }
 }
@@ -33,7 +32,7 @@ fn constant_and_empty_transforms_honor_entry_stops_and_recover() {
         let tree = Arc::new(Vtree::balanced(n));
         let f = crate::literal(&tree, 1).unwrap();
         assert_canonical(&f);
-        for case in 0..18 {
+        for case in 0..17 {
             let eng = Engine::new();
             let expected = shortcut(&eng, &tree, f.clone(), case).unwrap();
             {
@@ -118,14 +117,12 @@ fn composition_minimizes_nonminimal_operands_on_identity_paths() {
     let f = with_unreachable_twin(eng.clause(&tree, [1, 3]).unwrap());
     let mut zero = f.clone();
     zero.output.local = crate::diagram::ZERO;
-    for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
-        for vars in [vec![], vec![VarId(1)]] {
-            for input in [&f, &zero] {
-                let result = eng.and_exists_with_strategy(input.clone(), input.clone(), &vars, how).unwrap();
-                assert_canonical(&result);
-                let expected = eng.exists_vars_with_strategy(input.clone(), &vars, how).unwrap();
-                assert!(eng.equivalent(&result, &expected).unwrap());
-            }
+    for vars in [vec![], vec![VarId(1)]] {
+        for input in [&f, &zero] {
+            let result = eng.and_exists(input.clone(), input.clone(), &vars).unwrap();
+            assert_canonical(&result);
+            let expected = eng.exists_vars(input.clone(), &vars).unwrap();
+            assert!(eng.equivalent(&result, &expected).unwrap());
         }
     }
     for condition in [eng.zero(&tree), eng.one(&tree), f.clone()] {

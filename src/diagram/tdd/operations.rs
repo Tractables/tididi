@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::{Context, Literal, OperationError, Tdd};
-use crate::apply::{QuantificationStrategy, RestrictionOutcome};
+use crate::apply::RestrictionOutcome;
 use crate::diagram::{EvalAlgebra, WeightValue};
 use crate::vtree::{VarId, VtreeIdx};
 
@@ -181,7 +181,7 @@ impl Tdd {
         context.run(|eng| eng.condition_vars(self, vars, value))
     }
 
-    /// Existentially quantify one variable using the automatic rewrite strategy.
+    /// Existentially quantify one variable.
     ///
     /// The result holds whenever either value of `var` satisfies this function.
     /// Consumes the diagram, retaining its weights and vtree, and minimizes a
@@ -214,8 +214,7 @@ impl Tdd {
     ///
     /// An assignment to the remaining variables satisfies the result when at least
     /// one extension satisfies this function. Multiple satisfying extensions count
-    /// as one remaining assignment. Uses [`QuantificationStrategy::Automatic`];
-    /// [`exists_vars_with_strategy`](Self::exists_vars_with_strategy) selects a rewrite.
+    /// as one remaining assignment.
     ///
     /// Consumes the diagram on success and error, retaining its vtree and weights.
     /// Each distinct variable is processed once, in first-occurrence order. An
@@ -253,30 +252,6 @@ impl Tdd {
     pub fn exists_vars(self, vars: &[VarId]) -> Result<Tdd, OperationError> {
         let context = Arc::clone(self.context());
         context.run(|eng| eng.exists_vars(self, vars))
-    }
-
-    /// Existentially quantify one variable with an explicit rewrite strategy.
-    ///
-    /// Ownership, counting semantics and errors follow [`exists_var`](Self::exists_var).
-    /// The strategy applies to each distinct variable. The structural rewrite
-    /// retains marginal levels off the rewritten paths unchanged; cofactor
-    /// rewriting requires fully structural input. Use the automatic form unless
-    /// a workload needs a specific algorithm.
-    pub fn exists_var_with_strategy(self, var: VarId, strategy: QuantificationStrategy) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.exists_var_with_strategy(self, var, strategy))
-    }
-
-    /// Existentially quantify variables with an explicit rewrite strategy.
-    ///
-    /// Ownership, counting semantics and errors follow [`exists_vars`](Self::exists_vars).
-    /// The strategy applies to each distinct variable. The structural rewrite
-    /// retains marginal levels off the rewritten paths unchanged; cofactor
-    /// rewriting requires fully structural input. Use the automatic form unless
-    /// a workload needs a specific algorithm.
-    pub fn exists_vars_with_strategy(self, vars: &[VarId], strategy: QuantificationStrategy) -> Result<Tdd, OperationError> {
-        let context = Arc::clone(self.context());
-        context.run(|eng| eng.exists_vars_with_strategy(self, vars, strategy))
     }
 
     /// Rename variable occurrences simultaneously within the existing vtree.

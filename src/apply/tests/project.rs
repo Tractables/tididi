@@ -1,4 +1,4 @@
-//! Existential projection, in both the plain and the scoped form.
+//! Existential projection.
 //!
 //! Fixtures come from `crate::test_helpers`, re-exported by the parent.
 
@@ -116,10 +116,9 @@ fn exists_var_soundness_brute_force() {
 /// `ensure_counts` needs the same `slot_count() == 0` guard `marginalize_batch`
 /// has. When an internal vtree level
 /// has 0 pair nodes, `ensure_counts` computes empty counts → the cascade
-/// calls `become_marginal(vec![], None)` → 0-width marginal. Later, `exists_var`
-/// calls `apply_or(pos_cofactor, neg_cofactor)` where both cofactors inherit this
-/// 0-width marginal (the level is disjoint from the projected variable's leaf).
-/// `apply_and` then encounters left_width=right_width=0 with both levels marginal, which neither
+/// calls `become_marginal(vec![], None)` → 0-width marginal. A conjunction
+/// whose operands both inherit that level then reaches `apply_and` with
+/// left_width=right_width=0 and both levels marginal, which neither
 /// identity fast-path (both require k==1) handles — dense path panics at
 /// `pairs_of_idx(0)` on an empty nodes Vec.
 ///
@@ -303,48 +302,8 @@ fn apply_and_rejects_marginalize_schedule_violation() {
     assert!(matches!(eng.and(partner, fm), Err(crate::OperationError::MarginalLevel(_))));
 }
 
-#[test]
-fn scoped_constant_one_is_one() {
-    let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
-    let tdd = constant_one(eng, &vtree);
-    let r = (tdd).clone().exists_var_with_strategy(VarId(1), QuantificationStrategy::Structural).unwrap();
-    assert!(!r.is_zero());
-    assert_eq!(r.model_count().unwrap(), BigUint::from(8u32));
-}
-
-#[test]
-fn scoped_constant_zero_is_zero() {
-    let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
-    let tdd = constant_zero(eng, &vtree);
-    let r = (tdd).clone().exists_var_with_strategy(VarId(1), QuantificationStrategy::Structural).unwrap();
-    assert!(r.is_zero());
-}
-
-#[test]
-fn scoped_single_literal_is_one() {
-    let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(1));
-    let tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
-    let r = (tdd).clone().exists_var_with_strategy(VarId(1), QuantificationStrategy::Structural).unwrap();
-    assert!(!r.is_zero());
-    assert_eq!(r.model_count().unwrap(), BigUint::from(2u32));
-}
-
-#[test]
-fn scoped_x_and_y_drops_x() {
-    let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
-    let tx = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
-    let ty = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
-    let txy = apply_and(tx, ty);
-    let r = (txy).clone().exists_var_with_strategy(VarId(1), QuantificationStrategy::Structural).unwrap();
-    assert_eq!(r.model_count().unwrap(), BigUint::from(2u32));
-}
-
-/// Marginal-sibling case: `exists_var` panics here; `exists_var_scoped`
-/// must succeed and give the correct count.
+/// A marginal level off the projected variable's path must not disturb the
+/// projection or its count.
 ///
 /// Build F over balanced(4) with two FULLY DISJOINT halves:
 ///   left half (a,b): {a∨b}      (3 models over {a,b})
@@ -352,10 +311,10 @@ fn scoped_x_and_y_drops_x() {
 /// so F = (a∨b) ∧ (x∨w), 9 models. Marginalize the LEFT half (a,b) — disjoint
 /// from x's leaf-to-root path — into a real width>1 marginal carrying the
 /// left subtree's per-node counts. Correctly marginalizing a disjoint
-/// subtree preserves the model count, so `exists_var_scoped` on the
-/// marginalized diagram must equal `exists_var` on the non-marginal diagram.
+/// subtree preserves the model count, so projecting the marginalized diagram
+/// must equal projecting the non-marginal one.
 #[test]
-fn scoped_marginal_sibling_succeeds() {
+fn projecting_across_a_marginal_sibling_succeeds() {
     let eng = &crate::Engine::new();
     use crate::vtree::{VtreeIdx, VtreeNode};
 
@@ -382,8 +341,7 @@ fn scoped_marginal_sibling_succeeds() {
 
     // Marginalize the disjoint left subtree (a,b) via the test helper, which
     // installs the correct per-node counts. This produces a real width>1
-    // marginal sibling on x's path (the root's left child) — exactly the
-    // shape that crashes `exists_var`'s cofactor-OR.
+    // marginal sibling on x's path (the root's left child).
     let mut fm = f.clone();
     crate::test_helpers::marginalize_subtree(&mut fm, ab);
     assert!(fm.levels[ab.idx()].is_marginal());
@@ -392,11 +350,11 @@ fn scoped_marginal_sibling_succeeds() {
     assert_eq!(fm.model_count().unwrap(), BigUint::from(9u32));
 
     // Must not panic crossing the marginal sibling, and must match the count.
-    let g = (fm).clone().exists_var_with_strategy(VarId(3), QuantificationStrategy::Structural).unwrap();
+    let g = (fm).clone().exists_var(VarId(3)).unwrap();
     assert_eq!(
         g.model_count().unwrap(),
         ref_count,
-        "scoped projection over marginal sibling gave wrong count"
+        "projection over a marginal sibling gave the wrong count"
     );
 }
 
@@ -405,7 +363,7 @@ fn scoped_marginal_sibling_succeeds() {
 /// `regroup_internal` indexes `child_remap[path_child.idx()]`. On internal
 /// levels `NodeIdx(0)` is the constant-true (One) representative, so a
 /// pair whose path-side (x's subtree) is UNCONSTRAINED references it as One.
-/// This test forces exactly that shape to confirm the scoped forget handles a
+/// This test forces exactly that shape to confirm the rewrite handles a
 /// path-side One ref at the root (not just at the leaf-parent).
 ///
 /// F = (v0∨v3) ∧ (v2∨v3) = (v0∧v2) ∨ v3 over balanced(4) [L=(v0,v1), R=(v2,v3)].
@@ -414,33 +372,26 @@ fn scoped_marginal_sibling_succeeds() {
 /// ∃v0.F = v2∨v3; with v1 free and v0's leaf→One, `model_count` = 6·2 = 12, and
 /// PMC onto {v1,v2,v3} = 6.
 #[test]
-fn scoped_path_side_one_ref_at_root() {
+fn projecting_a_path_side_one_ref_at_the_root() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let t1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (4, true)])); // v0∨v3
     let t2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(3, true), (4, true)])); // v2∨v3
     let f = apply_and(t1, t2);
 
-    let g_scoped = (f).clone().exists_var_with_strategy(VarId(1), QuantificationStrategy::Structural).unwrap();
-    let g_ref = (f).clone().exists_var(VarId(1)).unwrap();
-    assert_eq!(
-        g_scoped.model_count().unwrap(),
-        g_ref.model_count().unwrap(),
-        "scoped != cofactor projecting v0 from (v0∨v3)∧(v2∨v3)"
-    );
-    assert_eq!(g_scoped.model_count().unwrap(), BigUint::from(12u32));
-    crate::test_helpers::check::check_determinism(&g_scoped).unwrap();
+    let g = (f).clone().exists_var(VarId(1)).unwrap();
+    assert_canonical(&g);
+    assert_eq!(g.model_count().unwrap(), BigUint::from(12u32));
+    crate::test_helpers::check::check_determinism(&g).unwrap();
 
     // PMC onto show={v1,v2,v3}: project v0, >>1, vs brute force.
     let clauses = vec![vec![1, 4], vec![3, 4]]; // DIMACS 1-indexed: (v0∨v3)∧(v2∨v3)
-    let pmc = ((f).clone().exists_vars_with_strategy(&[VarId(1)], QuantificationStrategy::Structural).unwrap()).model_count().unwrap() >> 1usize;
+    let pmc = ((f).clone().exists_vars(&[VarId(1)]).unwrap()).model_count().unwrap() >> 1usize;
     assert_eq!(pmc, brute_force_pmc(&clauses, 4, &[1, 2, 3]));
 }
 
 /// A weighted diagram stays weighted across a projection.
 ///
-/// The cofactor rewrite reaches its result through a disjunction, and negation
-/// — which a disjunction is built from — copies levels without the side table.
 /// A caller that projects a weighted accumulator and reads its values
 /// afterwards depends on this, and would otherwise have to detach and reattach
 /// the store around every call.
@@ -457,66 +408,12 @@ fn projecting_a_weighted_diagram_keeps_its_weight_store() {
     ]);
     let mut tdd = Tdd::clause(&vtree, [1, 2]).unwrap();
     tdd.set_weights(WeightStore::new(algebra, Arithmetic::ExactRational)).unwrap();
-    // No level is marginal, so this takes the cofactor route, not the
-    // structural one that clones the whole diagram.
-    assert!(tdd.levels.iter().all(|l| !l.is_marginal()));
 
     let projected = (tdd).clone().exists_var(VarId(1)).unwrap();
     assert!(
         projected.weights().is_some(),
         "the projection dropped the weight store",
     );
-}
-
-/// A projection whose cofactor copy the armed budget cannot pay for gives the
-/// refusal back, and the engine it ran on is usable for the next call.
-///
-/// The copy is the first reservation the cofactor rewrite makes, so a budget
-/// below one copy of the level array stops the projection there.
-#[test]
-fn a_projection_refuses_a_cofactor_copy_it_cannot_afford() {
-    use crate::limits::LimitConfig;
-    use crate::limits::OperationError;
-
-    let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(8));
-    let mut f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, false)]));
-    for v in 2..8u32 {
-        let c = clause_to_tdd(
-            &eng,
-            &vtree,
-            &crate::test_helpers::clause(&[(v, true), (v + 1, false)]),
-        );
-        f = apply_and(f, c);
-    }
-    assert!(!f.is_zero());
-    let expected = ((f).clone().exists_var(VarId(1)).unwrap()).model_count().unwrap();
-
-    let one_copy = std::mem::size_of_val(f.levels()) as u64;
-    let budget = 64u64;
-    assert!(budget < one_copy, "the budget has to be below one copy of the level array");
-
-    eng.limits().reset_meters();
-    let refused = {
-        let _armed = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(budget)));
-        eng.exists_var_with_strategy(f.clone(), VarId(1), QuantificationStrategy::CofactorOr)
-    };
-    assert!(
-        matches!(refused, Err(OperationError::OverBudget)),
-        "a projection that cannot copy its operand must report the refusal"
-    );
-    // The copy is what asked, so the whole level array was charged before the
-    // refusal. An unreserved copy charges nothing and the refusal lands
-    // somewhere downstream, well short of this.
-    assert!(
-        eng.limits().meters().in_flight_bytes >= one_copy,
-        "the refusal has to come from the copy's own reservation"
-    );
-
-    let out = eng
-        .exists_var_with_strategy(f, VarId(1), QuantificationStrategy::CofactorOr)
-        .expect("the engine takes the next projection after a refusal");
-    assert_eq!(out.model_count().unwrap(), expected);
 }
 
 /// A variable the vtree does not carry is the caller's input, so the engine
@@ -535,35 +432,22 @@ fn projecting_a_variable_outside_the_vtree_is_an_error() {
         eng.exists_vars(f, &[VarId(1), VarId(8)]),
         Err(OperationError::VariableNotInVtree(VarId(8))),
     ));
-}
-
-/// The structural rewrite answers the same request the same way, and so does a
-/// request against the constant-false diagram, whose shortcut must not swallow
-/// the bad variable.
-#[test]
-fn projecting_a_variable_outside_the_vtree_is_an_error_on_every_route() {
-    use crate::OperationError;
-    let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(3));
+    // The constant-false shortcut must not swallow the bad variable either.
     assert!(matches!(
-        eng.exists_var_with_strategy(Tdd::clause(&vtree, [1, -2]).unwrap(), VarId(4), QuantificationStrategy::Structural),
-        Err(OperationError::VariableNotInVtree(VarId(4))),
-    ));
-    assert!(matches!(
-        eng.exists_var(Tdd::zero(&vtree), VarId(4)),
-        Err(OperationError::VariableNotInVtree(VarId(4))),
+        eng.exists_var(Tdd::zero(&vtree), VarId(8)),
+        Err(OperationError::VariableNotInVtree(VarId(8))),
     ));
 }
 
-/// The structural rewrite reduces on the caller's engine, so its byte budget
-/// reaches the reduction.
+/// The rewrite reduces on the caller's engine, so its byte budget reaches the
+/// reduction.
 #[test]
-fn a_structural_projection_is_refused_by_the_engines_budget() {
+fn a_projection_is_refused_by_the_engines_budget() {
     let vtree = Arc::new(Vtree::balanced(4));
     let eng = Engine::new();
     let f = Tdd::clause(&vtree, [1, -2]).unwrap() & Tdd::clause(&vtree, [2, 3]).unwrap() & Tdd::clause(&vtree, [-3, 4]).unwrap();
     let _armed = eng.limits().scope(crate::limits::LimitConfig::none().with_memory_budget_bytes(Some(0)));
-    assert_eq!(eng.exists_var_with_strategy(f, VarId(2), QuantificationStrategy::Structural).err(), Some(crate::OperationError::OverBudget));
+    assert_eq!(eng.exists_var(f, VarId(2)).err(), Some(crate::OperationError::OverBudget));
 }
 
 #[test]
@@ -578,10 +462,6 @@ fn bulk_quantification_validates_late_variables_before_rewriting() {
     let _scope = eng.limits().scope(LimitConfig::none().with_output_node_cap(Some(0)));
     assert_eq!(eng.exists_vars(f.clone(), &vars).unwrap_err(), OperationError::VariableNotInVtree(VarId(100)));
     assert_eq!(eng.and_exists(f.clone(), f.clone(), &vars).unwrap_err(), OperationError::VariableNotInVtree(VarId(100)));
-    for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
-        assert_eq!(eng.exists_vars_with_strategy(f.clone(), &vars, how).unwrap_err(), OperationError::VariableNotInVtree(VarId(100)));
-        assert_eq!(eng.and_exists_with_strategy(f.clone(), f.clone(), &vars, how).unwrap_err(), OperationError::VariableNotInVtree(VarId(100)));
-    }
 }
 
 #[test]
@@ -593,28 +473,20 @@ fn bulk_quantification_preserves_first_occurrence_order_and_skips_repeated_rewri
     crate::test_helpers::assert_canonical(&f);
     let order = [vars[2], vars[0], vars[1]];
     let duplicates = [vars[2], vars[0], vars[2], vars[1], vars[0]];
-    for how in [QuantificationStrategy::Automatic, QuantificationStrategy::Structural] {
-        let eng = Engine::new();
-        let prepared = crate::apply::project::quantification_targets(&eng, &tree, &duplicates).unwrap();
-        assert_eq!(prepared, order.map(|var| tree.leaf_of(var).unwrap()));
-        let expected = eng.exists_vars_with_strategy(f.clone(), &order, how).unwrap();
-        let actual = eng.exists_vars_with_strategy(f.clone(), &duplicates, how).unwrap();
-        assert!(eng.equivalent(&actual, &expected).unwrap());
-        assert_eq!(actual.model_count().unwrap(), BigUint::from(8u32));
-        crate::test_helpers::assert_canonical(&actual);
-        crate::test_helpers::assert_canonical(&expected);
-    }
+    let eng = Engine::new();
+    let prepared = crate::apply::project::quantification_targets(&eng, &tree, &duplicates).unwrap();
+    assert_eq!(prepared, order.map(|var| tree.leaf_of(var).unwrap()));
+    let expected = eng.exists_vars(f.clone(), &order).unwrap();
+    let actual = eng.exists_vars(f.clone(), &duplicates).unwrap();
+    assert!(eng.equivalent(&actual, &expected).unwrap());
+    assert_eq!(actual.model_count().unwrap(), BigUint::from(8u32));
+    crate::test_helpers::assert_canonical(&actual);
+    crate::test_helpers::assert_canonical(&expected);
 }
 
-/// The three rewrites of one quantification, over structural input.
-const REWRITES: [QuantificationStrategy; 3] = [
-    QuantificationStrategy::Automatic,
-    QuantificationStrategy::Structural,
-    QuantificationStrategy::CofactorOr,
-];
-
+/// Projection against brute-force projected counting, on every vtree shape.
 #[test]
-fn every_rewrite_projects_the_brute_force_answer_on_every_vtree_shape() {
+fn projection_matches_the_brute_force_answer_on_every_vtree_shape() {
     for (num_vars, clauses) in test_cases() {
         if num_vars > 8 {
             continue;
@@ -626,58 +498,46 @@ fn every_rewrite_projects_the_brute_force_answer_on_every_vtree_shape() {
         for (shape, vtree) in vtree_shapes(num_vars) {
             let f = compile_clauses(&vtree, &clauses);
             assert_canonical(&f);
-            let mut results = Vec::new();
-            for how in REWRITES {
-                let projected = f.clone().exists_vars_with_strategy(&forgotten, how).unwrap();
-                assert_canonical(&projected);
-                let count = projected.model_count().unwrap() >> forgotten.len();
-                assert_eq!(count, expected, "{shape}: {how:?} projected {clauses:?} wrongly");
-                results.push(projected);
-            }
-            // One function on one vtree, so canonicity makes the diagrams equal.
-            for other in &results[1..] {
-                assert_same_shape(&results[0], other, shape);
-            }
+            let projected = f.exists_vars(&forgotten).unwrap();
+            assert_canonical(&projected);
+            let count = projected.model_count().unwrap() >> forgotten.len();
+            assert_eq!(count, expected, "{shape}: projected {clauses:?} wrongly");
         }
     }
 }
 
+/// Random conjunctions, projected on every vtree shape and checked against
+/// brute-force projected counting. Every shape sees the same answer.
 #[test]
-fn the_rewrites_agree_on_random_conjunctions() {
+fn projection_matches_brute_force_on_random_conjunctions() {
     let mut rng = Lcg::new(20260918);
     for round in 0..20 {
         let num_vars = 6 + round % 5;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 8, width: 3 });
         let forgotten: Vec<VarId> = (1..=num_vars).filter(|v| v % 3 == 0).map(VarId).collect();
+        let kept: Vec<usize> = (1..=num_vars).filter(|v| v % 3 != 0).map(|v| v as usize - 1).collect();
+        let expected = brute_force_pmc(&clauses, num_vars as usize, &kept);
         for (shape, vtree) in vtree_shapes(num_vars) {
             let f = compile_clauses(&vtree, &clauses);
-            let mut results = Vec::new();
-            for how in REWRITES {
-                let projected = f.clone().exists_vars_with_strategy(&forgotten, how).unwrap();
-                assert_canonical(&projected);
-                results.push(projected);
-            }
-            for other in &results[1..] {
-                assert_same_shape(&results[0], other, shape);
-            }
+            let projected = f.exists_vars(&forgotten).unwrap();
+            assert_canonical(&projected);
+            let count = projected.model_count().unwrap() >> forgotten.len();
+            assert_eq!(count, expected, "{shape}: projected {clauses:?} wrongly");
         }
     }
 }
 
+/// Quantification regroups rather than disjoining, so a marginal level away
+/// from the variable's path does not refuse the request.
 #[test]
-fn cofactor_rewriting_refuses_a_marginalized_operand() {
-    // The marginal leaf sits far enough from variable 1 for the structural
-    // rewrite's path preconditions to hold.
+fn projection_crosses_a_marginalized_level() {
+    // The marginal leaf sits far enough from variable 1 for the rewrite's
+    // path preconditions to hold.
     let vtree = Arc::new(Vtree::balanced(8));
     let mut f = Tdd::clause(&vtree, [1, 2]).unwrap() & Tdd::clause(&vtree, [-1, 3]).unwrap();
     f.minimize().unwrap();
     let leaf = vtree.leaf_of(VarId(8)).unwrap();
     f.marginalize_levels(&[leaf]).unwrap();
-    assert!(matches!(
-        f.clone().exists_var_with_strategy(VarId(1), QuantificationStrategy::CofactorOr),
-        Err(crate::OperationError::MarginalLevel(_)),
-    ));
-    // The automatic choice regroups instead, which the marginal level allows.
-    let projected = f.exists_var_with_strategy(VarId(1), QuantificationStrategy::Automatic).unwrap();
+    let projected = f.exists_var(VarId(1)).unwrap();
     assert!(!projected.is_zero());
 }
