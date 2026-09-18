@@ -30,7 +30,7 @@ pub enum GraftError {
     VariableOutOfRange {
         /// The destination variable.
         variable: VarId,
-        /// The exclusive upper bound on variable ids.
+        /// The largest variable id the destination's id space holds.
         num_vars: u32,
     },
     /// A part's stored values cannot be interpreted in the requested destination.
@@ -50,7 +50,7 @@ impl std::fmt::Display for GraftError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Vtree(error) => write!(f, "grafted vtree: {error}"),
-            Self::MissingVariableMapping { part, variable } => write!(f, "part {part} has no mapping for variable {}", variable.idx()),
+            Self::MissingVariableMapping { part, variable } => write!(f, "part {part} has no mapping for variable {}", variable.0),
             Self::VariableOutOfRange { variable, num_vars } => write!(f, "grafted variable {} is outside the variables 1 to {num_vars}", variable.0),
             Self::PartWeights { part, source } => write!(f, "part {part}: {source}"),
             Self::DestinationWeights(error) => write!(f, "graft destination: {error}"),

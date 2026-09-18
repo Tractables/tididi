@@ -57,7 +57,7 @@ impl Tdd {
     /// let h = Tdd::clause(&a, [1, 2])?;
     /// let k = Tdd::clause(&b, [3, -4])?;
     /// match Tdd::graft(vec![h, k], &[VarId(1)]) {
-    ///     Ok(_) => unreachable!("var 0 is already in the first part"),
+    ///     Ok(_) => unreachable!("variable 1 is already in the first part"),
     ///     Err(e) => assert!(matches!(e, GraftError::Vtree(VtreeError::OverlappingVariable(VarId(1))))),
     /// }
     /// # Ok::<(), Box<dyn std::error::Error>>(())
