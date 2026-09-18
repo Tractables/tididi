@@ -4,7 +4,7 @@ use crate::Engine;
 use crate::vtree::VtreeIdx;
 
 use crate::limits::OperationError;
-use crate::diagram::{ChildPair, EncodedNode, MultiPairRange, NodeKind, Tdd, TddLevel};
+use crate::diagram::{EncodedNode, MultiPairRange, NodeKind, Tdd, TddLevel};
 
 use super::super::scratch::{DuplicateScratch, MergeRemap};
 
@@ -130,7 +130,7 @@ pub(super) fn concat_twin_pairs(
     // compaction (`duplicate_pair_resolve`).
     #[cfg(debug_assertions)]
     if !level.any_inlined_side() && !allow_dups {
-        let mut chk: Vec<ChildPair> = level.pairs[new_start..].to_vec();
+        let mut chk = level.pairs[new_start..].to_vec();
         chk.sort_unstable();
         debug_assert!(
             chk.windows(2).all(|w| w[0] != w[1]),
