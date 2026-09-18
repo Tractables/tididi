@@ -233,7 +233,7 @@ fn assemble(
     if tdd.is_zero() {
         return Ok(crate::build::constant_zero(eng, into));
     }
-    let mut builder = Tdd::builder(eng, into);
+    let mut builder = Tdd::builder(eng, into)?;
     let over_a_renamed_leaf = match fill(eng, tdd, into, plan, &mut builder) {
         Ok(over_a_renamed_leaf) => over_a_renamed_leaf,
         Err(error) => {
@@ -271,11 +271,11 @@ fn fill(
         gate.poll(1)?;
         let (left, right) = into.children(t);
         if plan.mapped[t.idx()] == 0 {
-            builder.push(t, &[ChildPair::new(true_node(into, left), true_node(into, right))]);
+            builder.push(eng, t, &[ChildPair::new(true_node(into, left), true_node(into, right))])?;
         } else if let Some(source) = plan.covered_by[t.idx()] {
             let view = LevelView::unweighted(tdd.level(source))
                 .expect("a diagram with no marginal level has no weighted level");
-            builder.replace_level(t, view).map_err(|error| GraftError::Operation(error.into()))?;
+            builder.replace_level(eng, t, view)?;
         } else {
             let free_is_left = plan.mapped[left.idx()] == 0;
             let (free, carries) = if free_is_left { (left, right) } else { (right, left) };
@@ -294,7 +294,7 @@ fn fill(
                 } else {
                     ChildPair::new(child, one)
                 };
-                builder.push(t, &[pair]);
+                builder.push(eng, t, &[pair])?;
             }
         }
     }

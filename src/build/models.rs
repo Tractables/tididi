@@ -252,7 +252,7 @@ fn from_models(
     let sorted = distinct_rows(lim, vars.len(), &layout, rows, w)?;
     let m = sorted.len() / w;
 
-    let mut builder = Tdd::try_builder(eng, vtree)?;
+    let mut builder = Tdd::builder(eng, vtree)?;
     match fill(eng, &mut builder, vtree, &layout, &sorted, w, m) {
         Ok(output) => Ok(builder.finish(output)?),
         Err(e) => {
@@ -460,7 +460,7 @@ fn free_subtree(
     } else {
         let (left, right) = vtree.children(t);
         let pair = ChildPair::new(true_node(state, left), true_node(state, right));
-        builder.try_push(eng, t, &[pair])?
+        builder.push(eng, t, &[pair])?
     };
     Ok(Finished { atoms: AtomOfRow::Uniform, locals: vec![local] })
 }
@@ -490,14 +490,14 @@ fn carry_child(
     let from = state[constrained.idx()].take().expect("a child is finished before its parent");
     let mut locals = Vec::new();
     eng.limits().reserve_exact(&mut locals, from.locals.len())?;
-    builder.try_reserve(eng, t, from.locals.len(), 0)?;
+    builder.reserve(eng, t, from.locals.len(), 0)?;
     for &child in &from.locals {
         let pair = if constrained == left {
             ChildPair::new(child, free_local)
         } else {
             ChildPair::new(free_local, child)
         };
-        locals.push(builder.try_push(eng, t, &[pair])?);
+        locals.push(builder.push(eng, t, &[pair])?);
     }
     Ok(Finished { atoms: from.atoms, locals })
 }
@@ -708,7 +708,7 @@ fn store_level(
     scratch.pairs.sort_unstable();
     scratch.pairs.dedup();
 
-    builder.try_reserve(eng, t, atoms.count, scratch.pairs.len())?;
+    builder.reserve(eng, t, atoms.count, scratch.pairs.len())?;
     let mut at = 0usize;
     for a in 0..atoms.count {
         scratch.pair_list.clear();
@@ -719,7 +719,7 @@ fn store_level(
             at += 1;
         }
         debug_assert!(!scratch.pair_list.is_empty(), "every atom is realized by a row");
-        locals.push(builder.try_push(eng, t, &scratch.pair_list)?);
+        locals.push(builder.push(eng, t, &scratch.pair_list)?);
     }
     Ok(Finished { atoms: AtomOfRow::PerRow(atoms.of_row), locals })
 }

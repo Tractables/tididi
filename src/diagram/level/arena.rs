@@ -387,6 +387,18 @@ impl TddLevel {
         Ok(index)
     }
 
+    /// Size the arenas for `nodes` more nodes and `pairs` more pairs, charging
+    /// the growth to `lim`.
+    pub(crate) fn reserve_on(
+        &mut self,
+        lim: &crate::limits::Limits,
+        nodes: usize,
+        pairs: usize,
+    ) -> Result<(), OperationError> {
+        lim.reserve_exact(&mut self.nodes, nodes)?;
+        lim.reserve_exact(&mut self.pairs, pairs)
+    }
+
     /// The allocated bytes of the three structural arenas.
     pub(crate) fn arena_capacity_bytes(&self) -> u64 {
         (self.nodes.capacity() * std::mem::size_of::<EncodedNode>()

@@ -238,7 +238,7 @@ fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
         let eng = Engine::new();
         // Park a level array so the pool holds exactly one either way: a build
         // that takes it and then refuses has to hand it back.
-        Tdd::builder(&eng, &vtree).abandon(&eng);
+        Tdd::builder(&eng, &vtree).unwrap().abandon(&eng);
         eng.limits().refuse_nth_reserve(cut);
         match eng.from_models(&vtree, &vars(6), &rows) {
             Ok(f) => assert_canonical(&f),

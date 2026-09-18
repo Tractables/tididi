@@ -11,8 +11,8 @@ fn unchecked_builder_matches_checked_construction() {
     let vtree = Arc::new(Vtree::balanced(2));
     let root = vtree.root();
     let build = || {
-        let mut builder = Tdd::builder(&eng, &vtree);
-        let local = builder.push(root, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]);
+        let mut builder = Tdd::builder(&eng, &vtree).unwrap();
+        let local = builder.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
         (builder, TddNodeId { vtree: root, local })
     };
     let (builder, output) = build();

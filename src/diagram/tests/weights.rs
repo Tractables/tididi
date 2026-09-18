@@ -25,9 +25,9 @@ fn weighted_levels_require_their_columns() {
     let vtree = Arc::new(Vtree::balanced(4));
     let f = weighted_with_a_marginal_level(&eng, &vtree);
     crate::test_helpers::assert_canonical(&f);
-    let mut b = Tdd::builder(&eng, &vtree);
+    let mut b = Tdd::builder(&eng, &vtree).unwrap();
     for t in vtree.bottomup() {
-        b.replace_level(t, f.level_view(t)).unwrap();
+        b.replace_level(&eng, t, f.level_view(t)).unwrap();
     }
     assert!(b.set_weights(f.weights().unwrap().empty_like()).is_err());
     let g = b.finish(f.output()).unwrap();
@@ -76,9 +76,9 @@ fn a_build_copying_a_weight_marginal_level_finishes_with_its_store() {
     let vtree = Arc::new(Vtree::balanced(4));
     let f = weighted_with_a_marginal_level(&eng, &vtree);
 
-    let mut b = Tdd::builder(&eng, &vtree);
+    let mut b = Tdd::builder(&eng, &vtree).unwrap();
     for (t, _, _) in vtree.internal_bottomup() {
-        b.replace_level(t, f.level_view(t)).unwrap();
+        b.replace_level(&eng, t, f.level_view(t)).unwrap();
     }
     let g = b.finish(f.output()).expect("the store holds the copied level's values");
     let value = |t: &Tdd| exact_weight(&t.weighted_value().unwrap().expect("the diagram is weighted"));
@@ -147,8 +147,8 @@ fn copied_pinned_leaf_columns_are_checked_in_both_arithmetics() {
         let leaf = tree.leaf_bottomup().next().unwrap().0;
         eng.marginalize_levels(&mut f, &[leaf]).unwrap();
         crate::test_helpers::assert_canonical(&f);
-        let mut builder = Tdd::builder(&eng, &tree);
-        for t in tree.bottomup() { builder.replace_level(t, f.level_view(t)).unwrap(); }
+        let mut builder = Tdd::builder(&eng, &tree).unwrap();
+        for t in tree.bottomup() { builder.replace_level(&eng, t, f.level_view(t)).unwrap(); }
         let copied = builder.finish(f.output()).unwrap();
         crate::test_helpers::assert_canonical(&copied);
         let mut malformed = f.weights().unwrap().clone();

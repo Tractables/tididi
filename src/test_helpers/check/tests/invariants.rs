@@ -517,12 +517,12 @@ fn canonicity_rejects_a_duplicated_node() {
         .find(|&t| !tdd.level(t).nodes().is_empty())
         .expect("the diagram holds at least one internal node");
 
-    let mut b = Tdd::builder(eng, &vtree);
+    let mut b = Tdd::builder(eng, &vtree).unwrap();
     for (t, _, _) in vtree.internal_bottomup() {
-        b.replace_level(t, tdd.level_view(t)).unwrap();
+        b.replace_level(eng, t, tdd.level_view(t)).unwrap();
         if t == target {
             let pairs: Vec<ChildPair> = tdd.level(t).pairs_of_idx(0).to_vec();
-            b.push(t, &pairs);
+            b.push(eng, t, &pairs).unwrap();
         }
     }
     let corrupted = b.finish(tdd.output()).expect("a duplicated node is still well-formed");
@@ -566,10 +566,10 @@ fn dropping_an_input_pair_changes_the_model_count() {
             continue;
         };
 
-        let mut b = Tdd::builder(eng, &vtree);
+        let mut b = Tdd::builder(eng, &vtree).unwrap();
         for (t, _, _) in vtree.internal_bottomup() {
             if t != target_level {
-                b.replace_level(t, tdd.level_view(t)).unwrap();
+                b.replace_level(eng, t, tdd.level_view(t)).unwrap();
                 continue;
             }
             for i in 0..tdd.level(t).nodes().len() {
@@ -577,7 +577,7 @@ fn dropping_an_input_pair_changes_the_model_count() {
                 if i == target_node {
                     pairs.pop();
                 }
-                b.push(t, &pairs);
+                b.push(eng, t, &pairs).unwrap();
             }
         }
         let corrupted = b
