@@ -72,28 +72,30 @@ pub(crate) fn reset_level(level: &mut TddLevel) {
 /// before it was parked, a level added by the resize is fresh, and a
 /// fresh array is empty by construction.
 pub(crate) fn take_levels(eng: &Engine, num_nodes: usize) -> Vec<TddLevel> {
-    take_levels_with(eng, num_nodes, |levels, additional| {
-        levels.reserve_exact(additional);
-        Ok(())
-    }).expect("infallible level reservation")
+    take_levels_with(eng, num_nodes, false).expect("an untracked take cannot be refused")
 }
 
 /// Take empty levels from the pool, charging any array growth to the engine.
 pub(crate) fn try_take_levels(eng: &Engine, num_nodes: usize) -> Result<Vec<TddLevel>, crate::limits::OperationError> {
-    take_levels_with(eng, num_nodes, |levels, additional| eng.limits().reserve_exact(levels, additional))
+    take_levels_with(eng, num_nodes, true)
 }
 
-/// Resize the first available level array using the caller's reservation policy.
+/// Resize the first available level array. `charged` grows it through the
+/// engine's budget, which may refuse; otherwise it grows through `Vec`.
 fn take_levels_with(
     eng: &Engine,
     num_nodes: usize,
-    reserve: impl FnOnce(&mut Vec<TddLevel>, usize) -> Result<(), crate::limits::OperationError>,
+    charged: bool,
 ) -> Result<Vec<TddLevel>, crate::limits::OperationError> {
     let pool = eng.levels();
     let mut levels = pool.primary.take().or_else(|| pool.secondary.take()).unwrap_or_default();
     if levels.len() < num_nodes {
         let additional = num_nodes - levels.len();
-        reserve(&mut levels, additional)?;
+        if charged {
+            eng.limits().reserve_exact(&mut levels, additional)?;
+        } else {
+            levels.reserve_exact(additional);
+        }
         levels.resize_with(num_nodes, TddLevel::new);
     } else if levels.len() > num_nodes {
         levels.truncate(num_nodes);

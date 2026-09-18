@@ -242,19 +242,14 @@ impl Tdd {
     /// in: it establishes what this trusts.
     pub(crate) fn from_levels_unchecked(vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Self {
         Self::assemble(Arc::clone(&vtree), levels, output, Dirty::default(),
-            vtree.internal_bottomup().map(|(t, _, _)| t), |list, n| { list.reserve(n); Ok(()) }, || Ok(()))
-            .expect("infallible worklist reservation")
+            vtree.internal_bottomup().map(|(t, _, _)| t), None)
+            .expect("an untracked assembly cannot be refused")
     }
 
     /// Assemble trusted levels, charging initial reduction worklists to the engine.
     pub(crate) fn try_from_levels_on(eng: &crate::Engine, vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Result<Self, crate::OperationError> {
-        let lim = eng.limits();
-        let mut gate = lim.gate();
-        let result = Self::assemble(Arc::clone(&vtree), levels, output, Dirty::default(),
-            vtree.internal_bottomup().map(|(t, _, _)| t),
-            |list, n| lim.reserve(list, n), || gate.poll(1))?;
-        gate.flush()?;
-        Ok(result)
+        Self::assemble(Arc::clone(&vtree), levels, output, Dirty::default(),
+            vtree.internal_bottomup().map(|(t, _, _)| t), Some(eng))
     }
 
     /// Construct a diagram from raw levels with contract worklists supplied by
@@ -274,22 +269,16 @@ impl Tdd {
         eng: &crate::Engine, vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId,
         carried: Dirty, rebuilt: &[VtreeIdx],
     ) -> Result<Self, crate::OperationError> {
-        let lim = eng.limits();
-        let mut gate = lim.gate();
-        let result = Self::assemble(vtree, levels, output, carried, rebuilt.iter().copied(),
-            |list, n| lim.reserve(list, n), || gate.poll(1))?;
-        gate.flush()?;
-        Ok(result)
+        Self::assemble(vtree, levels, output, carried, rebuilt.iter().copied(), Some(eng))
     }
 
-    /// Seed and compact reduction worklists using the caller's allocation policy.
+    /// Seed and compact reduction worklists, charged to `eng` when there is one.
     fn assemble(
         vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId, mut dirty: Dirty,
         rebuilt: impl Iterator<Item = VtreeIdx>,
-        reserve: impl FnMut(&mut Vec<u32>, usize) -> Result<(), crate::OperationError>,
-        poll: impl FnMut() -> Result<(), crate::OperationError>,
+        eng: Option<&crate::Engine>,
     ) -> Result<Self, crate::OperationError> {
-        dirty.seed_rebuilt(rebuilt, reserve, poll)?;
+        dirty.seed_rebuilt(rebuilt, eng)?;
         dirty.dedup_above(vtree.num_nodes());
         Ok(Self { vtree, levels, output, dirty, weights: None })
     }

@@ -32,6 +32,10 @@ impl Pass {
     const ALL: [Pass; 3] = [Pass::Contract, Pass::LeafContract, Pass::ContentTwin];
 }
 
+/// The passes an assembly seeds: the content-twin fixpoint drives its own
+/// rounds from inside itself and takes nothing from an assembly.
+const SEEDED: [Pass; 2] = [Pass::Contract, Pass::LeafContract];
+
 /// One worklist per reduction pass: the vtree levels that pass still has to
 /// revisit. Not serialized, and never part of the function the diagram
 /// denotes.
@@ -52,16 +56,19 @@ impl Dirty {
         &mut self.lists[pass as usize]
     }
 
-    /// Tell every pass that `level` needs revisiting, through `push` so the
-    /// caller decides whether a refused allocation is possible.
+    /// Tell every pass that `level` needs revisiting, charged to `eng` when
+    /// there is one.
     #[inline]
     fn push_all(
         &mut self,
         level: u32,
-        push: &mut impl FnMut(&mut Vec<u32>, u32) -> Result<(), crate::OperationError>,
+        eng: Option<&crate::Engine>,
     ) -> Result<(), crate::OperationError> {
         for pass in Pass::ALL {
-            push(self.list(pass), level)?;
+            match eng {
+                Some(eng) => eng.limits().try_push(self.list(pass), level)?,
+                None => self.list(pass).push(level),
+            }
         }
         Ok(())
     }
@@ -137,32 +144,44 @@ impl Dirty {
         }
     }
 
-    /// Seed the contraction passes with the levels an assembly rebuilt, through
-    /// the caller's allocation policy.
+    /// Seed the contraction passes with the levels an assembly rebuilt.
+    ///
+    /// `eng` charges the seeding to a budget and polls for cancellation as it
+    /// goes; `None` is the untracked assembly, which grows through `Vec` and
+    /// cannot fail.
     pub(crate) fn seed_rebuilt(
         &mut self,
         rebuilt: impl Iterator<Item = VtreeIdx>,
-        mut reserve: impl FnMut(&mut Vec<u32>, usize) -> Result<(), crate::OperationError>,
-        mut poll: impl FnMut() -> Result<(), crate::OperationError>,
+        eng: Option<&crate::Engine>,
     ) -> Result<(), crate::OperationError> {
+        let Some(eng) = eng else {
+            for t in rebuilt {
+                for pass in SEEDED {
+                    self.list(pass).push(t.0);
+                }
+            }
+            return Ok(());
+        };
+        let lim = eng.limits();
+        let mut gate = lim.gate();
         let minimum = rebuilt.size_hint().0;
-        for pass in [Pass::Contract, Pass::LeafContract] {
+        for pass in SEEDED {
             let list = self.list(pass);
             if minimum > list.capacity() - list.len() {
-                reserve(list, minimum)?;
+                lim.reserve(list, minimum)?;
             }
         }
         for t in rebuilt {
-            poll()?;
-            for pass in [Pass::Contract, Pass::LeafContract] {
+            gate.poll(1)?;
+            for pass in SEEDED {
                 let list = self.list(pass);
                 if list.len() == list.capacity() {
-                    reserve(list, 1)?;
+                    lim.reserve(list, 1)?;
                 }
                 list.push(t.0);
             }
         }
-        Ok(())
+        gate.flush()
     }
 }
 
@@ -186,8 +205,7 @@ impl Tdd {
     /// dedups through `needs_check`, and leaf contraction re-checks anyway.
     #[inline]
     pub(crate) fn invalidate(&mut self, level: VtreeIdx) {
-        self.invalidate_with(level, false, |list, t| { list.push(t); Ok(()) })
-            .expect("infallible worklist push");
+        self.invalidate_with(level, false, None).expect("an untracked push cannot be refused");
     }
 
     /// [`invalidate`](Self::invalidate), and additionally that nodes of
@@ -195,26 +213,26 @@ impl Tdd {
     /// changed identity, and the parent may now hold twins of its own.
     #[inline]
     pub(crate) fn invalidate_with_parent(&mut self, level: VtreeIdx) {
-        self.invalidate_with(level, true, |list, t| { list.push(t); Ok(()) })
-            .expect("infallible worklist push");
+        self.invalidate_with(level, true, None).expect("an untracked push cannot be refused");
     }
 
     /// [`invalidate`](Self::invalidate) under the engine's limits; the caller
     /// discards the diagram if a worklist push fails.
     pub(crate) fn try_invalidate(&mut self, eng: &crate::Engine, level: VtreeIdx) -> Result<(), crate::OperationError> {
-        self.invalidate_with(level, false, |list, t| eng.limits().try_push(list, t))
+        self.invalidate_with(level, false, Some(eng))
     }
 
-    /// Map a change to its reduction obligations using the caller's push policy.
+    /// Map a change to its reduction obligations, charged to `eng` when there
+    /// is one.
+    #[inline]
     fn invalidate_with(
-        &mut self, level: VtreeIdx, nodes_moved: bool,
-        mut push: impl FnMut(&mut Vec<u32>, u32) -> Result<(), crate::OperationError>,
+        &mut self, level: VtreeIdx, nodes_moved: bool, eng: Option<&crate::Engine>,
     ) -> Result<(), crate::OperationError> {
-        self.dirty.push_all(level.0, &mut push)?;
+        self.dirty.push_all(level.0, eng)?;
         if nodes_moved
             && let Some(parent) = self.vtree.node(level).parent()
         {
-            self.dirty.push_all(parent.0, &mut push)?;
+            self.dirty.push_all(parent.0, eng)?;
         }
         Ok(())
     }

@@ -20,38 +20,12 @@ enum ShrunkEncoding {
     NewRangeEntry,
 }
 
-/// How a node push grows the level's buffers.
-///
-/// The construction and reduction paths push through `Vec`'s own growth;
-/// the apply emitters reserve first and report a refused allocation to the
-/// caller, which maps it to `OperationError::OverBudget`.
-pub(crate) trait Growth {
-    type Err;
-    fn reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err>;
-}
-
-/// [`Growth`] through `Vec`'s own reallocation.
-pub(crate) struct Grow;
-
-impl Growth for Grow {
-    type Err = std::convert::Infallible;
-    #[inline(always)]
-    fn reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
-        v.reserve(additional);
-        Ok(())
-    }
-}
-
-/// [`Growth`] that refuses instead of aborting: `try_reserve`, with a failed
-/// reservation reported as `Err(())`.
-pub(crate) struct TryGrow;
-
-impl Growth for TryGrow {
-    type Err = ();
-    #[inline(always)]
-    fn reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(), Self::Err> {
-        v.try_reserve(additional).map_err(|_| ())
-    }
+/// Reserve room for `additional` more elements, refusing rather than
+/// aborting. The allocator's own error carries nothing the caller can use —
+/// the request size is known at the site that reports it — so it is dropped.
+#[inline(always)]
+fn reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(), ()> {
+    v.try_reserve(additional).map_err(|_| ())
 }
 
 impl TddLevel {
@@ -63,20 +37,23 @@ impl TddLevel {
     ///
     /// # Panics
     ///
-    /// Panics if `pair_len == 1` (that value aliases the `multi_ranged` encoding).
+    /// Panics if `pair_len == 1` (that value aliases the `multi_ranged`
+    /// encoding), or if the allocator refuses the `multi_pairs` entry — use
+    /// [`try_encode_multi`](Self::try_encode_multi) where a refusal is an
+    /// answer.
     #[inline]
     pub(crate) fn encode_multi(&mut self, pair_start: usize, pair_len: usize) -> EncodedNode {
-        self.encode_multi_in::<Grow>(pair_start, pair_len).unwrap_or_else(|never| match never {})
+        self.try_encode_multi(pair_start, pair_len).expect("out of memory encoding a node")
     }
 
-    /// [`encode_multi`](Self::encode_multi) growing through `G`; only the
-    /// extended branch allocates.
+    /// [`encode_multi`](Self::encode_multi) refusing instead of aborting; only
+    /// the extended branch allocates.
     ///
     /// # Errors
     ///
-    /// The `multi_pairs` reservation `G` refused.
+    /// The `multi_pairs` reservation was refused.
     #[inline]
-    fn encode_multi_in<G: Growth>(&mut self, pair_start: usize, pair_len: usize) -> Result<EncodedNode, G::Err> {
+    fn try_encode_multi(&mut self, pair_start: usize, pair_len: usize) -> Result<EncodedNode, ()> {
         assert!(pair_len != 1, "encode_multi: pair_len=1 aliases multi_ranged encoding; use encode_single");
         let fits_u31 = pair_start < (1usize << 31) && pair_len < (1usize << 31);
         if fits_u31 {
@@ -84,7 +61,7 @@ impl TddLevel {
         } else {
             let multi_pairs_idx = self.multi_pairs.len();
             debug_assert!(multi_pairs_idx < (1usize << 31), "too many extended nodes in a single level");
-            G::reserve(&mut self.multi_pairs, 1)?;
+            reserve(&mut self.multi_pairs, 1)?;
             self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: pair_len as u64 });
             Ok(EncodedNode::multi_ranged(multi_pairs_idx as u32))
         }
@@ -385,24 +362,15 @@ impl TddLevel {
     /// Append a node with the given pairs and return its index. Chooses the
     /// storage encoding itself; the only way to add a node when building a
     /// diagram by hand. `input_pairs` must be non-empty.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the allocator refuses a buffer — use
+    /// [`try_push_internal_node`](Self::try_push_internal_node) where a
+    /// refusal is an answer.
     #[inline]
     pub(crate) fn push_internal_node(&mut self, input_pairs: &[ChildPair]) -> NodeIdx {
-        self.push_internal_node_in::<Grow>(input_pairs).unwrap_or_else(|never| match never {})
-    }
-
-    /// [`push_internal_node`](Self::push_internal_node) for the apply
-    /// emitters: every push reserves first, and a refused reservation comes
-    /// back as `Err(())`, which the caller maps to `OperationError::OverBudget`.
-    ///
-    /// # Errors
-    ///
-    /// A buffer reservation was refused.
-    #[inline]
-    pub(crate) fn try_push_internal_node(
-        &mut self,
-        input_pairs: &[ChildPair],
-    ) -> Result<NodeIdx, ()> {
-        self.push_internal_node_in::<TryGrow>(input_pairs)
+        self.try_push_internal_node(input_pairs).expect("out of memory pushing a node")
     }
 
     /// Append a node through the fallible encoder and charge its arena growth to the engine.
@@ -427,39 +395,42 @@ impl TddLevel {
             + self.multi_pairs.capacity() * std::mem::size_of::<MultiPairRange>()) as u64
     }
 
-    /// The node push, growing through `G`.
+    /// [`push_internal_node`](Self::push_internal_node) for the apply
+    /// emitters: every buffer is reserved first, and a refused reservation
+    /// comes back as `Err(())`, which the caller maps to
+    /// `OperationError::OverBudget`.
     ///
     /// # Errors
     ///
-    /// A buffer reservation `G` refused.
+    /// A buffer reservation was refused.
     #[inline]
-    fn push_internal_node_in<G: Growth>(
+    pub(crate) fn try_push_internal_node(
         &mut self,
         input_pairs: &[ChildPair],
-    ) -> Result<NodeIdx, G::Err> {
+    ) -> Result<NodeIdx, ()> {
         let idx = NodeIdx(self.nodes.len() as u32);
         if input_pairs.len() == 1 && input_pairs[0].can_inline() {
-            G::reserve(&mut self.nodes, 1)?;
+            reserve(&mut self.nodes, 1)?;
             self.nodes.push(EncodedNode::inline(input_pairs[0]));
         } else if input_pairs.len() == 1 {
             // Single pair that can't be inlined (right has `LEAF_BIT` or left has `MULTI_BIT`).
             // Use extended encoding — the only form that supports pair_len=1 without
             // aliasing either the leaf or `multi_ranged` encoding.
             let pair_start = self.pairs.len();
-            G::reserve(&mut self.pairs, 1)?;
+            reserve(&mut self.pairs, 1)?;
             self.pairs.push(input_pairs[0]);
             let multi_pairs_idx = self.multi_pairs.len();
-            G::reserve(&mut self.multi_pairs, 1)?;
+            reserve(&mut self.multi_pairs, 1)?;
             self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: 1 });
-            G::reserve(&mut self.nodes, 1)?;
+            reserve(&mut self.nodes, 1)?;
             self.nodes.push(EncodedNode::multi_ranged(multi_pairs_idx as u32));
         } else {
             let pair_start = self.pairs.len();
             let pair_len = input_pairs.len();
-            G::reserve(&mut self.pairs, pair_len)?;
+            reserve(&mut self.pairs, pair_len)?;
             self.pairs.extend_from_slice(input_pairs);
-            let data = self.encode_multi_in::<G>(pair_start, pair_len)?;
-            G::reserve(&mut self.nodes, 1)?;
+            let data = self.try_encode_multi(pair_start, pair_len)?;
+            reserve(&mut self.nodes, 1)?;
             self.nodes.push(data);
         }
         Ok(idx)
@@ -508,7 +479,7 @@ impl TddLevel {
         self.push_multi_by_range_slow(pair_start, pair_len)
     }
 
-    /// Growth / extended-encoding arm of `try_push_multi_by_range`, reached
+    /// Growth and extended-encoding arm of `try_push_multi_by_range`, reached
     /// only when `nodes` is full or when `pair_start`/`pair_len` overflow
     /// 31 bits.
     #[cold]
@@ -518,8 +489,8 @@ impl TddLevel {
         pair_start: usize,
         pair_len: usize,
     ) -> Result<(), ()> {
-        let data = self.encode_multi_in::<TryGrow>(pair_start, pair_len)?;
-        self.nodes.try_reserve(1).map_err(|_| ())?;
+        let data = self.try_encode_multi(pair_start, pair_len)?;
+        reserve(&mut self.nodes, 1)?;
         self.nodes.push(data);
         Ok(())
     }
