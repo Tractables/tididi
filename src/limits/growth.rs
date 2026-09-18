@@ -89,6 +89,16 @@ impl Limits {
         self.check_output_cap(out_nodes)
     }
 
+    /// The most node slots one level may hold, which is what a `NodeIdx` can
+    /// address. A level that has filled it answers
+    /// [`OperationError::IndexOverflow`], which no budget makes succeed.
+    #[inline]
+    pub(crate) fn level_width_cap(&self) -> usize {
+        #[cfg(test)]
+        if let Some(cap) = self.width_cap_pin.get() { return cap; }
+        crate::diagram::NodeIdx::MAX_LIVE
+    }
+
     /// Refuse an emitted-node total above the installed cap.
     #[inline]
     pub(crate) fn check_output_cap(&self, out_nodes: u64) -> Result<(), OperationError> {

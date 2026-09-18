@@ -4,11 +4,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::Engine;
+use crate::limits::{Limits, OperationError};
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::build_error::TddBuildError;
 use super::level::TddLevel;
-use super::pool::{return_levels, take_levels, PoolSlot};
+use super::pool::{return_levels, take_levels, try_take_levels, PoolSlot};
 use super::primitives::{ChildPair, NodeIdx, TddNodeId};
 use super::tdd::Tdd;
 use super::weights::WeightStore;
@@ -36,14 +37,29 @@ impl InternTable {
         }
     }
 
-    /// Index a node without replacing an earlier occurrence of its pair list.
-    fn insert(&mut self, pairs: &[ChildPair], index: NodeIdx) {
+    /// Index a node without replacing an earlier occurrence of its pair list,
+    /// charging the table's growth to `lim` when there is one. Growth through
+    /// `None` cannot be refused.
+    fn insert_on(
+        &mut self,
+        lim: Option<&Limits>,
+        pairs: &[ChildPair],
+        index: NodeIdx,
+    ) -> Result<(), OperationError> {
         if let [pair] = pairs {
+            if let Some(lim) = lim {
+                lim.reserve_map(&mut self.single, 1)?;
+            }
             self.single.entry(((pair.left.0 as u64) << 32) | pair.right.0 as u64).or_insert(index);
         } else {
+            if let Some(lim) = lim {
+                lim.reserve_map(&mut self.multi, 1)?;
+            }
             self.multi.entry(pairs.into()).or_insert(index);
         }
+        Ok(())
     }
+
 }
 
 /// A borrowed level together with the store interpreting its weighted columns.
@@ -127,16 +143,37 @@ impl Tdd {
     ///
     /// See [`TddBuilder`].
     pub fn builder(eng: &Engine, vtree: &Arc<Vtree>) -> TddBuilder {
+        TddBuilder::over(take_levels(eng, vtree.num_nodes()), vtree)
+    }
+
+    /// [`builder`](Self::builder) with the level buffers taken under the
+    /// engine's limits, for a build that answers a refusal instead of
+    /// panicking on one.
+    ///
+    /// The fallible [`try_push`](TddBuilder::try_push),
+    /// [`try_intern`](TddBuilder::try_intern) and
+    /// [`try_reserve`](TddBuilder::try_reserve) are what keep the rest of the
+    /// build within the same budget.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] if the buffers are refused.
+    pub fn try_builder(eng: &Engine, vtree: &Arc<Vtree>) -> Result<TddBuilder, OperationError> {
+        Ok(TddBuilder::over(try_take_levels(eng, vtree.num_nodes())?, vtree))
+    }
+}
+
+impl TddBuilder {
+    /// A builder over `vtree` holding `levels`, whichever way they were taken.
+    fn over(levels: Vec<TddLevel>, vtree: &Arc<Vtree>) -> TddBuilder {
         TddBuilder {
-            levels: take_levels(eng, vtree.num_nodes()),
+            levels,
             vtree: Arc::clone(vtree),
             interned: Vec::new(),
             weights: None,
         }
     }
-}
 
-impl TddBuilder {
     /// The level of vtree node `t` as built so far.
     pub fn level(&self, t: VtreeIdx) -> &TddLevel {
         &self.levels[t.idx()]
@@ -147,31 +184,145 @@ impl TddBuilder {
     /// Build bottom-up: both sides of a pair name a child node that already
     /// exists, which a debug assertion checks here against the child level as
     /// it stands.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a buffer is refused. [`try_push`](Self::try_push) answers a
+    /// refusal with an error and charges what it takes to the engine.
     pub fn push(&mut self, t: VtreeIdx, pairs: &[ChildPair]) -> NodeIdx {
         if cfg!(debug_assertions) {
             debug_assert_pairs(&self.vtree, &self.levels, t, pairs);
         }
         let index = self.levels[t.idx()].push_internal_node(pairs);
-        if let Some(Some(table)) = self.interned.get_mut(t.idx()) {
-            table.insert(pairs, index);
-        }
+        self.note_pushed(None, t, pairs, index).expect("an uncharged index insert cannot be refused");
         index
     }
 
+    /// [`push`](Self::push) charged to the engine, answering a refusal instead
+    /// of panicking on one.
+    ///
+    /// The node arena, the pair arena and the level's index all grow through
+    /// the engine's limits, so a build under a byte budget refuses here rather
+    /// than past it. A refusal is not a rollback: the level keeps whatever it
+    /// already holds, and a builder that cannot go on hands its buffers back
+    /// with [`abandon`](Self::abandon) rather than dropping them.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] when a reservation is refused, and
+    /// [`OperationError::IndexOverflow`] when the level already holds every
+    /// node a [`NodeIdx`] can address, which no budget answers.
+    pub fn try_push(
+        &mut self,
+        eng: &Engine,
+        t: VtreeIdx,
+        pairs: &[ChildPair],
+    ) -> Result<NodeIdx, OperationError> {
+        if cfg!(debug_assertions) {
+            debug_assert_pairs(&self.vtree, &self.levels, t, pairs);
+        }
+        if self.levels[t.idx()].slot_count() >= eng.limits().level_width_cap() {
+            return Err(OperationError::IndexOverflow);
+        }
+        let index = self.levels[t.idx()].push_node_on(eng, pairs)?;
+        self.note_pushed(Some(eng.limits()), t, pairs, index)?;
+        Ok(index)
+    }
+
+    /// Size level `t`'s arenas for `nodes` more nodes and `pairs` more pairs,
+    /// charging the growth to the engine.
+    ///
+    /// A build that knows a level's width up front reserves once instead of
+    /// paying for the doubling steps, and meets a budget's refusal at the
+    /// reservation rather than partway through the level.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] if either reservation is refused.
+    pub fn try_reserve(
+        &mut self,
+        eng: &Engine,
+        t: VtreeIdx,
+        nodes: usize,
+        pairs: usize,
+    ) -> Result<(), OperationError> {
+        let lim = eng.limits();
+        let level = &mut self.levels[t.idx()];
+        lim.reserve_exact(&mut level.nodes, nodes)?;
+        lim.reserve_exact(&mut level.pairs, pairs)
+    }
+
     /// Return the first node with these pairs, indexing prior pushes lazily and appending if absent.
+    ///
+    /// # Panics
+    ///
+    /// As [`push`](Self::push), which this appends through.
     pub fn intern(&mut self, t: VtreeIdx, pairs: &[ChildPair]) -> NodeIdx {
+        self.index_level(None, t).expect("an uncharged index cannot be refused");
+        match self.interned[t.idx()].as_ref().and_then(|table| table.get(pairs)) {
+            Some(index) => index,
+            None => self.push(t, pairs),
+        }
+    }
+
+    /// [`intern`](Self::intern) charged to the engine, answering a refusal
+    /// instead of panicking on one.
+    ///
+    /// The level's index is built on the first call for that level and costs
+    /// one entry per node already there, which is charged here; the append is
+    /// [`try_push`](Self::try_push)'s.
+    ///
+    /// # Errors
+    ///
+    /// As [`try_push`](Self::try_push).
+    pub fn try_intern(
+        &mut self,
+        eng: &Engine,
+        t: VtreeIdx,
+        pairs: &[ChildPair],
+    ) -> Result<NodeIdx, OperationError> {
+        self.index_level(Some(eng.limits()), t)?;
+        match self.interned[t.idx()].as_ref().and_then(|table| table.get(pairs)) {
+            Some(index) => Ok(index),
+            None => self.try_push(eng, t, pairs),
+        }
+    }
+
+    /// Record a just-appended node in level `t`'s index, if one is live.
+    fn note_pushed(
+        &mut self,
+        lim: Option<&Limits>,
+        t: VtreeIdx,
+        pairs: &[ChildPair],
+        index: NodeIdx,
+    ) -> Result<(), OperationError> {
+        match self.interned.get_mut(t.idx()) {
+            Some(Some(table)) => table.insert_on(lim, pairs, index),
+            _ => Ok(()),
+        }
+    }
+
+    /// Index level `t`'s existing nodes, once per level, charging the table to
+    /// `lim` when there is one. [`replace_level`](Self::replace_level)
+    /// discards the index it invalidates.
+    fn index_level(&mut self, lim: Option<&Limits>, t: VtreeIdx) -> Result<(), OperationError> {
         if self.interned.is_empty() {
+            match lim {
+                Some(lim) => lim.reserve_exact(&mut self.interned, self.levels.len())?,
+                None => self.interned.reserve_exact(self.levels.len()),
+            }
             self.interned.resize_with(self.levels.len(), || None);
         }
-        let table = self.interned[t.idx()].get_or_insert_with(|| {
-            let mut table = InternTable::default();
-            for (i, _) in self.levels[t.idx()].internal_inputs_iter() {
-                table.insert(self.levels[t.idx()].pairs_of_idx(i), NodeIdx(i as u32));
-            }
-            table
-        });
-        if let Some(index) = table.get(pairs) { return index; }
-        self.push(t, pairs)
+        if self.interned[t.idx()].is_some() {
+            return Ok(());
+        }
+        let mut table = InternTable::default();
+        let level = &self.levels[t.idx()];
+        for (i, _) in level.internal_inputs_iter() {
+            table.insert_on(lim, level.pairs_of_idx(i), NodeIdx(i as u32))?;
+        }
+        self.interned[t.idx()] = Some(table);
+        Ok(())
     }
 
     /// Attach literal weights, preserving the configuration of any copied weighted levels.

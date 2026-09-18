@@ -16,6 +16,11 @@ impl NodeIdx {
     #[inline(always)]
     pub fn idx(self) -> usize { self.0 as usize }
 
+    /// Node slots one level can address. A stored pair side reserves bit 31
+    /// (`RESERVED_BIT`), so an index carries 31 bits and a level that has
+    /// filled them has nowhere to put another node.
+    pub(crate) const MAX_LIVE: usize = RESERVED_BIT as usize;
+
     /// True when the word is a reserved sentinel rather than a reference into
     /// a level.
     ///

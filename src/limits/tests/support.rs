@@ -19,6 +19,12 @@ impl Limits {
     pub(crate) fn pin_reduce_poll_stride(&self, stride: Option<u64>) -> Option<u64> {
         self.poll_stride_pin.replace(stride)
     }
+
+    /// Pin a level width cap standing in for the one a `NodeIdx` imposes, so a
+    /// test reaches the refusal without filling 31 bits of index.
+    pub(crate) fn pin_level_width_cap(&self, cap: Option<usize>) {
+        self.width_cap_pin.set(cap);
+    }
 }
 
 impl Limits {

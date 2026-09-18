@@ -84,3 +84,102 @@ fn finish_allows_unused_deleted_slots() {
     assert_canonical(&result);
     assert_eq!(result.model_count().unwrap(), 4u32.into());
 }
+
+/// Assemble `x1 ∧ ¬x2` over `tree` through the fallible methods, returning the
+/// output node for [`TddBuilder::finish`].
+fn fill_through_fallible(
+    eng: &Engine,
+    b: &mut crate::diagram::TddBuilder,
+    tree: &Arc<Vtree>,
+) -> Result<TddNodeId, crate::OperationError> {
+    let root = tree.root();
+    let (left, right) = tree.children(root);
+    b.try_reserve(eng, left, 4, 4)?;
+    let pair = [ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)];
+    let l = b.try_push(eng, left, &pair)?;
+    let again = b.try_intern(eng, left, &pair)?;
+    let r = b.try_push(eng, right, &[ChildPair::new(ONE_LEAF_IDX, ONE_LEAF_IDX)])?;
+    let out = b.try_intern(eng, root, &[ChildPair::new(l, r)])?;
+    assert_eq!(again, l, "interning an existing pair list appends nothing");
+    Ok(TddNodeId { vtree: root, local: out })
+}
+
+#[test]
+fn the_fallible_methods_build_what_the_infallible_ones_do() {
+    let tree = Arc::new(Vtree::balanced(4));
+    let root = tree.root();
+    let (left, right) = tree.children(root);
+    let eng = Engine::new();
+
+    let mut b = Tdd::builder(&eng, &tree);
+    let l = b.push(left, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]);
+    let r = b.intern(right, &[ChildPair::new(ONE_LEAF_IDX, ONE_LEAF_IDX)]);
+    let o = b.intern(root, &[ChildPair::new(l, r)]);
+    let want = b.finish(TddNodeId { vtree: root, local: o }).unwrap();
+
+    let mut b = Tdd::try_builder(&eng, &tree).unwrap();
+    let output = fill_through_fallible(&eng, &mut b, &tree).unwrap();
+    let got = b.finish(output).unwrap();
+
+    assert_canonical(&want);
+    assert_canonical(&got);
+    crate::test_helpers::assert_same_shape(&want, &got, "fallible against infallible");
+    assert_eq!(got.model_count().unwrap(), 4u32.into());
+}
+
+#[test]
+fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
+    let tree = Arc::new(Vtree::balanced(4));
+    let mut refused = 0;
+    for cut in 0..10u32 {
+        let eng = Engine::new();
+        let mut b = Tdd::try_builder(&eng, &tree).unwrap();
+        eng.limits().refuse_nth_reserve(cut);
+        match fill_through_fallible(&eng, &mut b, &tree) {
+            Ok(output) => {
+                eng.limits().grant_every_reserve();
+                let f = b.finish(output).unwrap();
+                assert_canonical(&f);
+                assert_eq!(f.model_count().unwrap(), 4u32.into());
+            }
+            Err(e) => {
+                assert_eq!(e, crate::OperationError::OverBudget, "cut {cut}");
+                eng.limits().grant_every_reserve();
+                b.abandon(&eng);
+                assert_eq!(eng.levels().occupancy(), 1, "cut {cut} left a buffer outside the pool");
+                refused += 1;
+            }
+        }
+    }
+    assert!(refused > 0, "no reservation was refused across the sweep");
+}
+
+#[test]
+fn a_refused_level_take_leaves_try_builder_over_budget() {
+    let tree = Arc::new(Vtree::balanced(4));
+    let eng = Engine::new();
+    eng.limits().refuse_nth_reserve(0);
+    assert_eq!(Tdd::try_builder(&eng, &tree).unwrap_err(), crate::OperationError::OverBudget);
+    eng.limits().grant_every_reserve();
+    assert!(Tdd::try_builder(&eng, &tree).is_ok());
+}
+
+#[test]
+fn a_full_level_answers_index_overflow() {
+    let tree = Arc::new(Vtree::balanced(2));
+    let eng = Engine::new();
+    let root = tree.root();
+    let mut b = Tdd::try_builder(&eng, &tree).unwrap();
+    eng.limits().pin_level_width_cap(Some(1));
+    let first = [ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)];
+    let second = [ChildPair::new(NEG_LEAF_IDX, POS_LEAF_IDX)];
+    let one = b.try_push(&eng, root, &first).unwrap();
+    // Interning a pair list the level already holds reads the index instead of
+    // appending, so the cap does not apply to it.
+    assert_eq!(b.try_intern(&eng, root, &first).unwrap(), one);
+    assert_eq!(b.try_push(&eng, root, &second).unwrap_err(), crate::OperationError::IndexOverflow);
+    assert_eq!(b.try_intern(&eng, root, &second).unwrap_err(), crate::OperationError::IndexOverflow);
+    let f = b.finish(TddNodeId { vtree: root, local: one }).unwrap();
+    assert_canonical(&f);
+    assert_eq!(f.model_count().unwrap(), 1u32.into());
+}
