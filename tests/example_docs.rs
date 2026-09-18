@@ -58,7 +58,7 @@ fn walkthrough_code_comes_from_the_runnable_examples() {
 /// The README shows the crate example without its hidden error-handling wrapper.
 #[test]
 fn readme_example_matches_the_tested_crate_example() {
-    let readme = include_str!("../README.md");
+    let readme = normalized(include_str!("../README.md"));
     let (_, example) = readme.split_once("```rust\n").expect("README Rust example");
     let (example, rest) = example.split_once("\n```").expect("closed README example");
     assert!(!rest.contains("```rust"), "check every README Rust example");

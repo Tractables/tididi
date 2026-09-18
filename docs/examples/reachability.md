@@ -1,94 +1,97 @@
 # Explore reachable states
 
-Starting at A, which nodes can we reach by following these arrows?
+Starting at node 0, which nodes can we reach by following these arrows?
 
-![Start at A. Arrows lead from A to B, B to C, and C to B. D is isolated.](https://raw.githubusercontent.com/Tractables/tididi/main/docs/reachability.svg)
+![A directed graph with 16 nodes. Node 0 starts a three-by-four grid. Node 3 has edges to nodes 2 and 7 but no incoming edges. Nodes 12 through 15 form a separate cycle.](https://raw.githubusercontent.com/Tractables/tididi/main/docs/reachability.svg)
 
-We will describe the graph as a Boolean formula, then repeatedly compute
-successors until no new states appear. The result should be {A, B, C}; we
-will also check that D is unreachable.
+We will turn this graph into a Boolean formula, then compute successors until
+no new states appear. The graph has 16 nodes and 25 edges; a helper constructs
+the state formulas, and a loop builds the transition relation from this list:
+
+```rust,ignore,{class=tested-example}
+const NODES: usize = 16;
+const EDGES: &[(usize, usize)] = &[
+    (0, 1), (1, 2), (3, 2), (4, 5), (5, 6), (6, 7), (8, 9), (9, 10), (10, 11),
+    (0, 4), (1, 5), (2, 6), (3, 7), (4, 8), (5, 9), (6, 10), (7, 11),
+    (4, 0), (5, 1), (10, 6), (11, 7), (12, 13), (13, 15), (15, 14), (14, 12),
+];
+```
 
 Run it with `cargo run --example symbolic_reachability`.
 
 ## Describe a state with Boolean indicators
 
-Give each node an indicator: `a` means “we are at A”, `b` means “we are at B”,
-and so on. Exactly one is true in a state. Write the four state formulas as:
-
-```text
-A(a, b, c, d) =  a ∧ ¬b ∧ ¬c ∧ ¬d
-B(a, b, c, d) = ¬a ∧  b ∧ ¬c ∧ ¬d
-C(a, b, c, d) = ¬a ∧ ¬b ∧  c ∧ ¬d
-D(a, b, c, d) = ¬a ∧ ¬b ∧ ¬c ∧  d
-```
-
-## Write the transition relation
-
-Write `x = (a, b, c, d)` for the current indicators and
-`x′ = (a′, b′, c′, d′)` for the next ones. The three edges give:
-
-```text
-T(x, x′) = (A(x) ∧ B(x′)) ∨ (B(x) ∧ C(x′)) ∨ (C(x) ∧ B(x′))
-```
-
-The first term says “we are at A now and at B next”. The relation is true
-exactly for the three allowed moves. No term enters or leaves D.
-
-## Build those formulas
-
-Use integer literals 1 through 4 for the current indicators and 5 through 8
-for the next ones:
-
-| Indicator | Current literal | Next literal |
-|---|---|---|
-| a | 1 | 5 |
-| b | 2 | 6 |
-| c | 3 | 7 |
-| d | 4 | 8 |
-
-A negative literal means negation. [`Tdd::cube`](crate::Tdd::cube) conjoins
-its literals, so `[1, -2, -3, -4]` is precisely `A(x)` above.
+Allocate one Boolean variable per node for the current state, and another
+group for the next state:
 
 ```rust,ignore,{class=tested-example}
 use std::sync::Arc;
 
 use tididi::vtree::VarId;
-use tididi::{and, and_exists, or, OperationError, Tdd, Vtree};
+use tididi::{and_exists, Literal, OperationError, Tdd, Vtree};
+
+let vtree = Arc::new(Vtree::balanced(2 * NODES as u32));
+let current_vars: Vec<_> = (1..=NODES as u32).map(VarId).collect();
+let next_vars: Vec<_> = (NODES as u32 + 1..=2 * NODES as u32).map(VarId).collect();
 ```
 
-```rust,ignore,{class=tested-example}
-let vtree = Arc::new(Vtree::balanced(8));
-// Indicators a,b,c,d use literals 1..4; next-state indicators use 5..8.
-let at_a = Tdd::cube(&vtree, [1, -2, -3, -4])?;
-let at_b = Tdd::cube(&vtree, [-1, 2, -3, -4])?;
-let at_c = Tdd::cube(&vtree, [-1, -2, 3, -4])?;
-let at_d = Tdd::cube(&vtree, [-1, -2, -3, 4])?;
-let next_b = Tdd::cube(&vtree, [-5, 6, -7, -8])?;
-let next_c = Tdd::cube(&vtree, [-5, -6, 7, -8])?;
+The variables in `current_vars` are our indicators `x₀, …, x₁₅`: `x₀` means “we
+are at node 0”, `x₁` means “we are at node 1”, and so on. A state formula
+makes exactly one indicator true. For example:
+
+```text
+S₀(x₀, …, x₁₅) =  x₀ ∧ ¬x₁ ∧ ¬x₂ ∧ … ∧ ¬x₁₅
+S₁(x₀, …, x₁₅) = ¬x₀ ∧  x₁ ∧ ¬x₂ ∧ … ∧ ¬x₁₅
 ```
 
-Translate the three terms of `T` directly:
+In general, `Sᵢ` makes indicator `i` true and every other indicator false.
+
+Now construct the state formulas. [`Tdd::cube`](crate::Tdd::cube) conjoins
+literals; [`Literal::new`](crate::Literal::new) makes each literal positive
+only when its index is the selected node. Use the helper for both groups:
 
 ```rust,ignore,{class=tested-example}
-let a_to_b = and(at_a.clone(), next_b.clone())?;
-let b_to_c = and(at_b.clone(), next_c)?;
-let c_to_b = and(at_c.clone(), next_b)?;
-let transition = or(a_to_b, or(b_to_c, c_to_b)?)?;
+fn state(vtree: &Arc<Vtree>, indicators: &[VarId], node: usize)
+    -> Result<Tdd, OperationError> {
+    Tdd::cube(vtree, indicators.iter().enumerate()
+        .map(|(i, &var)| Literal::new(var, i == node)))
+}
+
+let mut at_current = Vec::new();
+let mut at_next = Vec::new();
+for node in 0..NODES {
+    at_current.push(state(&vtree, &current_vars, node)?);
+    at_next.push(state(&vtree, &next_vars, node)?);
+}
 ```
 
-Initially only A has been reached: `R₀(x) = A(x)`.
-We also name the current variables and the mapping from next to current
-indicators for the search.
-A `VarId` carries the same number as the integer literal, without a sign.
+`at_current[i]` now represents `Sᵢ(x)` and `at_next[i]` represents `Sᵢ(x′)`, where
+`x = (x₀, …, x₁₅)` and `x′ = (x′₀, …, x′₁₅)`.
+
+## Build the transition relation
+
+An edge `(i, j)` allows a move from state `i` now to state `j` next. Conjoin
+those two state formulas, then take the disjunction over all edges:
+
+```text
+T(x, x′) = ⋁_{(i, j) ∈ EDGES} (Sᵢ(x) ∧ Sⱼ(x′))
+```
+
+The loop follows this formula directly. It starts with false (no allowed
+moves) and adds one term per edge:
 
 ```rust,ignore,{class=tested-example}
-let mut reached = at_a.clone();
-let current = [VarId(1), VarId(2), VarId(3), VarId(4)];
-let next_to_current = [
-    (VarId(5), VarId(1)), (VarId(6), VarId(2)),
-    (VarId(7), VarId(3)), (VarId(8), VarId(4)),
-];
-let mut iterations = 0;
+let mut transition = Tdd::zero(&vtree);
+for &(from, to) in EDGES {
+    let step = at_current[from].clone() & at_next[to].clone();
+    transition = transition | step;
+}
+```
+
+Initially only node 0 has been reached: `R₀(x) = S₀(x)`.
+
+```rust,ignore,{class=tested-example}
+let mut reached = at_current[0].clone();
 ```
 
 ## Compute successor states
@@ -96,130 +99,152 @@ let mut iterations = 0;
 A next state is a successor if **some** reached state has an edge to it:
 
 ```text
-S(x′) = ∃a,b,c,d. (R(x) ∧ T(x, x′))
+S(x′) = ∃x₀, …, x₁₅. (R(x) ∧ T(x, x′))
 ```
 
 The existential quantifier removes the source indicators, keeping the
-possible destinations. Starting with `R = A`, only the first edge is possible,
-so this formula gives `S(x′) = B(x′)`.
+possible destinations. From node 0, the first image contains nodes 1 and 4.
 
 Conjoin the reached set with the relation, then quantify the current variables:
 
 ```rust,ignore,{class=tested-example}
-let possible_steps = and(reached.clone(), transition.clone())?;
-let successors = possible_steps.exists_vars(&current)?;
+let possible_steps = reached.clone() & transition.clone();
+let successors = possible_steps.exists_vars(&current_vars)?;
 ```
 
-The result uses next-state variables. Rename them so it can serve as a
-current-state set in another step: `B(x′)` becomes `B(x)`.
+Pair each next-state indicator with its current counterpart, then rename
+the result so it can serve as a current-state set in another step:
 
 ```rust,ignore,{class=tested-example}
+let next_to_current: Vec<_> = next_vars.iter().copied()
+    .zip(current_vars.iter().copied()).collect();
 let successors = successors.rename_vars(&next_to_current)?;
 ```
 
-[`and_exists`](crate::and_exists) combines the first two operations. Use it
-to write an image helper for the search:
+[`and_exists`](crate::and_exists) combines the first two operations above into
+one call: conjoin the reached states with the transition relation, then
+existentially quantify the current-state variables. Renaming is still a separate
+step. Put both calls in an image helper for the search:
 
 ```rust,ignore,{class=tested-example}
 fn image(
     states: Tdd,
     transition: Tdd,
-    current: &[VarId],
+    current_vars: &[VarId],
     next_to_current: &[(VarId, VarId)],
 ) -> Result<Tdd, OperationError> {
-    and_exists(states, transition, current)?.rename_vars(next_to_current)
+    and_exists(states, transition, current_vars)?.rename_vars(next_to_current)
 }
 ```
 
 ## Repeat until the set stops growing
 
 Add each image to the states already reached. The first update gives
-`A(x) ∨ B(x)`, allowing either state. Stop when
+`S₀(x) ∨ S₁(x) ∨ S₄(x)`, allowing any of those three states. Stop when
 [`equivalent`](crate::Tdd::equivalent) says the set has not changed:
 
 ```rust,ignore,{class=tested-example}
+let mut iterations = 0;
 loop {
-    let successors = image(reached.clone(), transition.clone(), &current, &next_to_current)?;
-    let enlarged = or(reached.clone(), successors)?;
+    let successors = image(reached.clone(), transition.clone(), &current_vars, &next_to_current)?;
+    let enlarged = reached.clone() | successors;
     iterations += 1;
 
-    // Count distinct current states, regardless of next-state assignments.
-    let state_count = enlarged.projected_model_count(&current)?;
-    println!("Iteration {iterations}: {state_count} reachable states");
+    let state_count = enlarged.projected_model_count(&current_vars)?;
+    let nodes = enlarged.node_count();
+    let pairs = enlarged.pair_count();
+    println!(
+        "Iteration {iterations}: {state_count} states, {nodes} circuit nodes, {pairs} pairs"
+    );
     if enlarged.equivalent(&reached)? {
+        println!("Fixed point reached");
         break;
     }
     reached = enlarged;
-    assert!(
-        iterations < 4,
-        "a four-state system must converge within four images"
-    );
 }
 ```
 
 Output:
 
 ```text
-Iteration 1: 2 reachable states
-Iteration 2: 3 reachable states
-Iteration 3: 3 reachable states
+Iteration 1: 3 states, 35 circuit nodes, 37 pairs
+Iteration 2: 6 states, 40 circuit nodes, 45 pairs
+Iteration 3: 8 states, 41 circuit nodes, 48 pairs
+Iteration 4: 10 states, 42 circuit nodes, 51 pairs
+Iteration 5: 11 states, 42 circuit nodes, 52 pairs
+Iteration 6: 11 states, 42 circuit nodes, 52 pairs
+Fixed point reached
 ```
 
 [`projected_model_count`](crate::Tdd::projected_model_count) counts only the
 current-state assignments. Ordinary counting would also count the free
 next-state indicators.
 
-| Image step | Successors | Accumulated states |
-|---|---|---|
-| 1 | {B} | {A, B} |
-| 2 | {B, C} | {A, B, C} |
-| 3 | {B, C} | {A, B, C}: fixed point |
+[`node_count`](crate::Tdd::node_count) counts stored circuit nodes;
+[`pair_count`](crate::Tdd::pair_count) counts their child pairs. These describe
+the circuit representing the reachable set, rather than the graph's nodes and edges.
+
+Iterations 5 and 6 have the same reachable set and circuit size: 42 nodes and
+52 pairs. The stopping condition remains equivalence; matching sizes alone
+would not prove stability.
 
 ## Check a safety property
 
-The final circuit represents the union of A, B and C. To check that D is
-unreachable, ask whether every reached state satisfies `¬D(x)`:
+Node 3 belongs to the same component as node 0 if we ignore arrow direction,
+but its edges only lead away from it: `3 → 2` and `3 → 7`. No path from node 0
+can enter it. Check that it is absent from the reached set:
 
 ```rust,ignore,{class=tested-example}
-let safe = at_d.negate()?;
-assert!(reached.implies(&safe)?);
-println!("D is unreachable");
+println!("Node 3 unreachable: {}", reached.implies(&!at_current[3].clone())?);
 ```
 
 Output:
 
 ```text
-D is unreachable
+Node 3 unreachable: true
+```
+
+The four nodes in the separate component are also unreachable. Form the
+union of their state formulas and check that every reached state lies outside it:
+
+```rust,ignore,{class=tested-example}
+let mut forbidden = Tdd::zero(&vtree);
+for node in &at_current[12..16] {
+    forbidden = forbidden | node.clone();
+}
+println!("Nodes 12–15 unreachable: {}", reached.implies(&!forbidden)?);
+```
+
+Output:
+
+```text
+Nodes 12–15 unreachable: true
 ```
 
 ## Find a reachable target
 
-Intersect the reached set with `C(x)` to find a reachable assignment at C:
+Intersect the reached set with `S₁₁(x)` and ask for a satisfying assignment.
+The positive current-state indicator identifies the target node:
 
 ```rust,ignore,{class=tested-example}
-let reachable_target = and(reached, at_c)?;
-let witness = reachable_target
-    .satisfying_assignment()?
-    .expect("C is reachable");
-println!("Reachable target witness:");
-for literal in witness.iter().filter(|literal| current.contains(&literal.var)) {
-    println!("  {}: {}", ["a", "b", "c", "d"][literal.var.idx()], literal.positive);
-}
+let reachable_target = reached & at_current[11].clone();
+let witness = reachable_target.satisfying_assignment()?.expect("node 11 is reachable");
+let active: Vec<_> = current_vars.iter().enumerate()
+    .filter(|&(_, &var)| witness.contains(&Literal::pos(var)))
+    .map(|(node, _)| node)
+    .collect();
+println!("Reachable target: {active:?}");
 ```
 
 Output:
 
 ```text
-Reachable target witness:
-  a: false
-  b: false
-  c: true
-  d: false
+Reachable target: [11]
 ```
 
-Recovering a path to C would also require retaining predecessor information
-during the search.
+This finds a state assignment. Recovering a path to it would also require
+retaining predecessor information during the search.
 
 The [complete program](https://github.com/Tractables/tididi/blob/main/examples/symbolic_reachability.rs)
-also checks that the reachable set is exactly {A, B, C} and verifies the
-witness indicators.
+also checks the symbolic result against an ordinary graph traversal and
+verifies the witness.

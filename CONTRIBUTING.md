@@ -44,9 +44,9 @@ standalone consumer of the crate archive.
 - Return errors for invalid input and refused work. Named operations are
   checked; do not add panicking twins or `try_` aliases.
 - Put each operation's contract on its default entry point. Batch methods
-  link to that contract and explain their limit behavior. Examples use
-  `literal`, `and`, `or` and related free functions, and name the shared vtree
-  `vtree`.
+  link to that contract and explain their limit behavior. Introduce Boolean
+  expressions with `!`, `&` and `|`; introduce checked calls when discussing
+  error handling. Name the shared vtree `vtree`.
 - Keep the vtree text format and shared constructors/accessors compatible
   with [vitri](https://github.com/Tractables/vitri).
 

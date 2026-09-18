@@ -4,7 +4,7 @@ use crate::vtree::VarId;
 
 /// A Boolean variable and its polarity.
 ///
-/// Integer inputs use signed literals: `1` is positive `VarId(2)`,
+/// Integer inputs use signed literals: `1` is positive `VarId(1)`,
 /// and `-2` is negative `VarId(2)`. Zero is invalid and conversion returns an error.
 /// Use the typed constructors when your application already holds variable ids:
 ///
@@ -14,6 +14,8 @@ use crate::vtree::VarId;
 ///
 /// assert_eq!(Literal::try_from(1)?, Literal::pos(VarId(1)));
 /// assert_eq!(Literal::try_from(-2)?, Literal::neg(VarId(2)));
+/// assert!(Literal::pos(VarId(1)).sign);
+/// assert!(!Literal::neg(VarId(1)).sign);
 /// assert_eq!(Literal::pos(VarId(1)).negated(), Literal::neg(VarId(1)));
 /// assert_eq!(Literal::try_from(0), Err(OperationError::InvalidLiteral(0)));
 /// # Ok::<(), OperationError>(())
@@ -21,20 +23,21 @@ use crate::vtree::VarId;
 ///
 /// Constructors such as [`Tdd::clause`](crate::Tdd::clause) accept iterators
 /// of integers or typed literals, by value or reference.
-/// [`Tdd::and_clause`](crate::Tdd::and_clause) accepts arrays, slices and vectors
-/// of either type.
+/// [`Tdd::and_clause`](crate::Tdd::and_clause) and
+/// [`ModelCounter::observe`](crate::query::ModelCounter::observe) accept arrays,
+/// slices and vectors of either type.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct Literal {
     /// The variable this literal refers to.
     pub var: VarId,
     /// `true` for a positive literal, `false` for a negated one.
-    pub positive: bool,
+    pub sign: bool,
 }
 
 impl Literal {
-    /// Construct a literal over `var` with the given polarity.
-    pub fn new(var: VarId, positive: bool) -> Self {
-        Literal { var, positive }
+    /// Construct a literal over `var` with the given sign.
+    pub fn new(var: VarId, sign: bool) -> Self {
+        Literal { var, sign }
     }
 
     /// The positive literal over `var`.
@@ -52,14 +55,14 @@ impl Literal {
     pub fn negated(self) -> Self {
         Literal {
             var: self.var,
-            positive: !self.positive,
+            sign: !self.sign,
         }
     }
 }
 
 /// Build a `Literal` from a signed **DIMACS** integer.
 ///
-/// The magnitude is the variable number (`1` is `VarId(2)`) and a negative
+/// The magnitude is the variable number (`1` is `VarId(1)`) and a negative
 /// value denotes a negated literal.
 ///
 /// # Errors
@@ -123,6 +126,60 @@ impl From<&Literal> for Literal {
     }
 }
 
+/// A signed integer or typed literal accepted by clause conjunction and observations.
+///
+/// Implemented for [`Literal`] and signed, one-based `i32` literals. Pass an
+/// array, slice or vector to [`Tdd::and_clause`](crate::Tdd::and_clause) or
+/// [`ModelCounter::observe`](crate::query::ModelCounter::observe).
+/// This trait is sealed.
+pub trait LiteralInput: input::Sealed {}
+
+impl LiteralInput for Literal {}
+impl LiteralInput for i32 {}
+
+mod input {
+    use super::Literal;
+    use crate::{Engine, OperationError, Tdd};
+    use crate::apply::conjoin_clause::conjoin_clause_owned;
+
+    pub trait Sealed: Copy {
+        fn literal(self) -> Result<Literal, OperationError>;
+        /// Convert the clause when necessary, then invoke the typed conjunction.
+        fn conjoin(eng: &Engine, f: Tdd, clause: &[Self]) -> Result<Tdd, OperationError>;
+    }
+
+    impl Sealed for Literal {
+        fn literal(self) -> Result<Literal, OperationError> { Ok(self) }
+
+        #[inline]
+        fn conjoin(eng: &Engine, f: Tdd, clause: &[Self]) -> Result<Tdd, OperationError> {
+            conjoin_clause_owned(eng, f, clause)
+        }
+    }
+
+    impl Sealed for i32 {
+        fn literal(self) -> Result<Literal, OperationError> { Literal::try_from(self) }
+
+        fn conjoin(eng: &Engine, f: Tdd, clause: &[Self]) -> Result<Tdd, OperationError> {
+            let lim = eng.limits();
+            let _op = lim.begin_operation();
+            lim.check_stop()?;
+            let mut gate = lim.gate();
+            let mut literals = Vec::new();
+            for &value in clause {
+                gate.poll(1)?;
+                let literal = Literal::try_from(value)?;
+                if f.vtree().leaf_of(literal.var).is_none() {
+                    return Err(OperationError::VariableNotInVtree(literal.var));
+                }
+                lim.try_push(&mut literals, literal)?;
+            }
+            gate.flush()?;
+            conjoin_clause_owned(eng, f, &literals)
+        }
+    }
+}
+
 /// Whether `clause` names one variable in both polarities, which makes the
 /// disjunction true under every assignment.
 ///
@@ -137,10 +194,10 @@ pub(crate) fn is_tautological(lim: &crate::limits::Limits, clause: &[Literal]) -
     for (i, lit) in clause.iter().enumerate() {
         gate.poll(1)?;
         let conflict = if clause.len() <= PAIRWISE_MAX {
-            clause[..i].iter().any(|e| e.var == lit.var && e.positive != lit.positive)
+            clause[..i].iter().any(|e| e.var == lit.var && e.sign != lit.sign)
         } else {
             if !seen.contains_key(&lit.var) { lim.reserve_map(&mut seen, 1)?; }
-            matches!(seen.insert(lit.var, lit.positive), Some(p) if p != lit.positive)
+            matches!(seen.insert(lit.var, lit.sign), Some(p) if p != lit.sign)
         };
         if conflict { gate.flush()?; return Ok(true); }
     }

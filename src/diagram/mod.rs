@@ -179,7 +179,7 @@ mod tdd;
 mod weights;
 
 // primitives
-pub use literal::Literal;
+pub use literal::{Literal, LiteralInput};
 pub(crate) use literal::is_tautological;
 pub use primitives::{
     ChildPair, PairsIter, EncodedChildRef, LeafLabel, NodeIdx, EncodedNode, TddNodeId,

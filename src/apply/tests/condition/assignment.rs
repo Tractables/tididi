@@ -110,7 +110,7 @@ fn sparse_assignments_on_rotated_trees_match_enumeration() {
                 let mut values = vec![false; 72];
                 for (i, &var) in vars.iter().enumerate() { values[var.idx()] = bits & (1 << i) != 0; }
                 let mut fixed = values.clone();
-                for literal in &assignment { fixed[literal.var.idx()] = literal.positive; }
+                for literal in &assignment { fixed[literal.var.idx()] = literal.sign; }
                 let expected = (fixed[19] || !fixed[2]) && (fixed[2] || fixed[71] || !fixed[8]);
                 assert_eq!(eval(&result, &values), expected, "assignment {code}, row {bits}");
                 count += u32::from(expected);

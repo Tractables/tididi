@@ -1,35 +1,92 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="560" height="174" viewBox="0 0 560 174" role="img" aria-labelledby="title description">
-  <title id="title">Reachability from A</title>
-  <desc id="description">Start at A. The directed edges are A to B, B to C, and C to B. D is isolated.</desc>
-  <rect width="560" height="174" rx="12" fill="#fff"/>
-  <g fill="none" stroke="#2774AE" stroke-width="2.5" stroke-linecap="round">
-    <path d="M 80 34 V 57"/>
-    <path d="M 110 88 H 204"/>
-    <path d="M 257 69 Q 310 24 361 68"/>
-    <path d="M 363 107 Q 310 152 259 108"/>
-  </g>
-  <g fill="#2774AE">
-    <path d="M 80 57 L 75 47 L 85 47 Z"/>
-    <path d="M 204 88 L 194 83 L 194 93 Z"/>
-    <path d="M 361 68 L 350 65 L 357 58 Z"/>
-    <path d="M 259 108 L 270 111 L 263 118 Z"/>
-  </g>
-  <g stroke="#2774AE" stroke-width="2.5">
-    <circle cx="80" cy="88" r="30" fill="#FFD100"/>
-    <circle cx="235" cy="88" r="30" fill="#eef5fa"/>
-    <circle cx="385" cy="88" r="30" fill="#eef5fa"/>
-    <circle cx="500" cy="88" r="30" fill="#f5f6f8" stroke="#8996a4"/>
-  </g>
-  <g font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" text-anchor="middle">
-    <g font-size="24" font-weight="600" fill="#173c58">
-      <text x="80" y="96">A</text>
-      <text x="235" y="96">B</text>
-      <text x="385" y="96">C</text>
-      <text x="500" y="96" fill="#526170">D</text>
-    </g>
-    <g font-size="15" fill="#526170">
-      <text x="80" y="23">start</text>
-      <text x="500" y="144">isolated</text>
-    </g>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="400" viewBox="0 0 860 400" role="img" aria-labelledby="title description">
+<title id="title">Reachability from node 0 in a 16-node graph</title>
+<desc id="description">Nodes 0 through 11 form three rows of four nodes, with edges right and down except that the top-right edge points from 3 to 2. Node 3 also points to 7 and has no incoming edges. Return edges go from 4 to 0, 5 to 1, 10 to 6, and 11 to 7. A disconnected cycle follows 12 to 13 to 15 to 14 to 12. Node 0 is the start.</desc>
+<rect width="860" height="400" rx="12" fill="white"/>
+<path d="M 577 60 V 355" stroke="#dce3e9" stroke-dasharray="5 6"/>
+
+<path d="M 92.0 85.0 L 176.0 85.0" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 176.0 85.0 L 167.0 89.0 L 167.0 81.0 Z" fill="#2774AE"/>
+<path d="M 232.0 85.0 L 316.0 85.0" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 316.0 85.0 L 307.0 89.0 L 307.0 81.0 Z" fill="#2774AE"/>
+<path d="M 458.0 85.0 L 374.0 85.0" fill="none" stroke="#8996a4" stroke-width="2"/>
+<path d="M 374.0 85.0 L 383.0 81.0 L 383.0 89.0 Z" fill="#8996a4"/>
+<path d="M 92.0 210.0 L 176.0 210.0" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 176.0 210.0 L 167.0 214.0 L 167.0 206.0 Z" fill="#2774AE"/>
+<path d="M 232.0 210.0 L 316.0 210.0" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 316.0 210.0 L 307.0 214.0 L 307.0 206.0 Z" fill="#2774AE"/>
+<path d="M 372.0 210.0 L 456.0 210.0" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 456.0 210.0 L 447.0 214.0 L 447.0 206.0 Z" fill="#2774AE"/>
+<path d="M 92.0 335.0 L 176.0 335.0" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 176.0 335.0 L 167.0 339.0 L 167.0 331.0 Z" fill="#2774AE"/>
+<path d="M 232.0 335.0 L 316.0 335.0" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 316.0 335.0 L 307.0 339.0 L 307.0 331.0 Z" fill="#2774AE"/>
+<path d="M 372.0 335.0 L 456.0 335.0" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 456.0 335.0 L 447.0 339.0 L 447.0 331.0 Z" fill="#2774AE"/>
+<path d="M 65.0 112.0 L 65.0 181.0" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 65.0 181.0 L 61.0 172.0 L 69.0 172.0 Z" fill="#2774AE"/>
+<path d="M 205.0 112.0 L 205.0 181.0" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 205.0 181.0 L 201.0 172.0 L 209.0 172.0 Z" fill="#2774AE"/>
+<path d="M 345.0 112.0 L 345.0 181.0" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 345.0 181.0 L 341.0 172.0 L 349.0 172.0 Z" fill="#2774AE"/>
+<path d="M 485.0 112.0 L 485.0 181.0" fill="none" stroke="#8996a4" stroke-width="2"/>
+<path d="M 485.0 181.0 L 481.0 172.0 L 489.0 172.0 Z" fill="#8996a4"/>
+<path d="M 65.0 237.0 L 65.0 306.0" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 65.0 306.0 L 61.0 297.0 L 69.0 297.0 Z" fill="#2774AE"/>
+<path d="M 205.0 237.0 L 205.0 306.0" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 205.0 306.0 L 201.0 297.0 L 209.0 297.0 Z" fill="#2774AE"/>
+<path d="M 345.0 237.0 L 345.0 306.0" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 345.0 306.0 L 341.0 297.0 L 349.0 297.0 Z" fill="#2774AE"/>
+<path d="M 485.0 237.0 L 485.0 306.0" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 485.0 306.0 L 481.0 297.0 L 489.0 297.0 Z" fill="#2774AE"/>
+<path d="M 692.0 130.0 L 766.0 130.0" fill="none" stroke="#8996a4" stroke-width="2"/>
+<path d="M 766.0 130.0 L 757.0 134.0 L 757.0 126.0 Z" fill="#8996a4"/>
+<path d="M 795.0 157.0 L 795.0 246.0" fill="none" stroke="#8996a4" stroke-width="2"/>
+<path d="M 795.0 246.0 L 791.0 237.0 L 799.0 237.0 Z" fill="#8996a4"/>
+<path d="M 768.0 275.0 L 694.0 275.0" fill="none" stroke="#8996a4" stroke-width="2"/>
+<path d="M 694.0 275.0 L 703.0 271.0 L 703.0 279.0 Z" fill="#8996a4"/>
+<path d="M 665.0 248.0 L 665.0 159.0" fill="none" stroke="#8996a4" stroke-width="2"/>
+<path d="M 665.0 159.0 L 669.0 168.0 L 661.0 168.0 Z" fill="#8996a4"/>
+<path d="M 86 192 C 128 155, 128 140, 86 103" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 86.0 103.0 L 95.4 105.9 L 90.1 112.0 Z" fill="#2774AE"/>
+<path d="M 226 192 C 268 155, 268 140, 226 103" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 226.0 103.0 L 235.4 105.9 L 230.1 112.0 Z" fill="#2774AE"/>
+<path d="M 366 317 C 408 280, 408 265, 366 228" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 366.0 228.0 L 375.4 230.9 L 370.1 237.0 Z" fill="#2774AE"/>
+<path d="M 506 317 C 548 280, 548 265, 506 228" fill="none" stroke="#2774AE" stroke-width="2"/>
+<path d="M 506.0 228.0 L 515.4 230.9 L 510.1 237.0 Z" fill="#2774AE"/>
+<g font-family="DejaVu Sans, sans-serif" text-anchor="middle">
+<circle cx="65" cy="85" r="26" fill="#FFD100" stroke="#2774AE" stroke-width="2"/>
+<text x="65" y="92" font-size="20" font-weight="600" fill="#173c58">0</text>
+<circle cx="205" cy="85" r="26" fill="#eef5fa" stroke="#2774AE" stroke-width="2"/>
+<text x="205" y="92" font-size="20" font-weight="600" fill="#173c58">1</text>
+<circle cx="345" cy="85" r="26" fill="#eef5fa" stroke="#2774AE" stroke-width="2"/>
+<text x="345" y="92" font-size="20" font-weight="600" fill="#173c58">2</text>
+<circle cx="485" cy="85" r="26" fill="#f5f6f8" stroke="#8996a4" stroke-width="2"/>
+<text x="485" y="92" font-size="20" font-weight="600" fill="#173c58">3</text>
+<circle cx="65" cy="210" r="26" fill="#eef5fa" stroke="#2774AE" stroke-width="2"/>
+<text x="65" y="217" font-size="20" font-weight="600" fill="#173c58">4</text>
+<circle cx="205" cy="210" r="26" fill="#eef5fa" stroke="#2774AE" stroke-width="2"/>
+<text x="205" y="217" font-size="20" font-weight="600" fill="#173c58">5</text>
+<circle cx="345" cy="210" r="26" fill="#eef5fa" stroke="#2774AE" stroke-width="2"/>
+<text x="345" y="217" font-size="20" font-weight="600" fill="#173c58">6</text>
+<circle cx="485" cy="210" r="26" fill="#eef5fa" stroke="#2774AE" stroke-width="2"/>
+<text x="485" y="217" font-size="20" font-weight="600" fill="#173c58">7</text>
+<circle cx="65" cy="335" r="26" fill="#eef5fa" stroke="#2774AE" stroke-width="2"/>
+<text x="65" y="342" font-size="20" font-weight="600" fill="#173c58">8</text>
+<circle cx="205" cy="335" r="26" fill="#eef5fa" stroke="#2774AE" stroke-width="2"/>
+<text x="205" y="342" font-size="20" font-weight="600" fill="#173c58">9</text>
+<circle cx="345" cy="335" r="26" fill="#eef5fa" stroke="#2774AE" stroke-width="2"/>
+<text x="345" y="342" font-size="20" font-weight="600" fill="#173c58">10</text>
+<circle cx="485" cy="335" r="26" fill="#eef5fa" stroke="#2774AE" stroke-width="2"/>
+<text x="485" y="342" font-size="20" font-weight="600" fill="#173c58">11</text>
+<circle cx="665" cy="130" r="26" fill="#f5f6f8" stroke="#8996a4" stroke-width="2"/>
+<text x="665" y="137" font-size="20" font-weight="600" fill="#173c58">12</text>
+<circle cx="795" cy="130" r="26" fill="#f5f6f8" stroke="#8996a4" stroke-width="2"/>
+<text x="795" y="137" font-size="20" font-weight="600" fill="#173c58">13</text>
+<circle cx="665" cy="275" r="26" fill="#f5f6f8" stroke="#8996a4" stroke-width="2"/>
+<text x="665" y="282" font-size="20" font-weight="600" fill="#173c58">14</text>
+<circle cx="795" cy="275" r="26" fill="#f5f6f8" stroke="#8996a4" stroke-width="2"/>
+<text x="795" y="282" font-size="20" font-weight="600" fill="#173c58">15</text>
+<text x="65" y="38" font-size="16" fill="#526170">start</text>
+<text x="730" y="65" font-size="16" fill="#526170">separate component</text>
+</g></svg>

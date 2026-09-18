@@ -4,6 +4,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 import re
+import json
 import sys
 
 
@@ -100,6 +101,28 @@ def check(root, source):
         rule = ".example-wrap.ignore:has(> pre.tested-example) > .tooltip { display: none; }"
         if rule not in page.text:
             errors.append(f"{markdown.stem}: missing scoped checked-excerpt styling")
+    navigation = source / "docs/example-navigation.js"
+    if navigation.is_file():
+        index = pages.get(root / "tididi/guide/examples/index.html")
+        match = re.search(r"const examples = (\[.*?\]);", index.text) if index else None
+        if not match:
+            errors.append("Missing numbered example navigation")
+        else:
+            entries = json.loads(match[1].replace(",]", "]"))
+            names = [name for name, _ in entries]
+            if sorted(names) != sorted(path.stem for path in walkthroughs):
+                errors.append("Example navigation must name each walkthrough once")
+            listing = re.search(r"<ol>(.*?)</ol>", index.text, re.S)
+            links = re.findall(r'href="([^"/]+)/index.html"', listing[1]) if listing else []
+            if links != names:
+                errors.append("Example index and sidebar have different reading orders")
+            script = navigation.read_text(encoding="utf-8").strip()
+            for name in [None, *names]:
+                path = root / "tididi/guide/examples"
+                path = path / name if name else path
+                page = pages.get(path / "index.html")
+                if not page or match[0] not in page.text or script not in page.text:
+                    errors.append(f"{name or 'index'}: missing shared example navigation")
     print(f"Checked {checked} local links and {len(walkthroughs)} rendered walkthroughs.")
     return errors
 

@@ -1,32 +1,33 @@
 //! Compare two variable groupings for the same pair of equality constraints.
 //! Run with `cargo run --example vtree_grouping`.
 
-use std::sync::Arc;
-
-use tididi::{and, OperationError, Tdd, Vtree};
-use tididi::vtree::VarId;
-
-/// Build two independent equalities and minimize under the supplied vtree.
-fn equal_pairs(vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
-    let first_equal = and(Tdd::clause(vtree, [-1, 3])?, Tdd::clause(vtree, [1, -3])?)?;
-    let second_equal = and(Tdd::clause(vtree, [-2, 4])?, Tdd::clause(vtree, [2, -4])?)?;
-    let mut f = and(first_equal, second_equal)?;
-    f.minimize()?;
-    Ok(f)
-}
-
-/// Check equal model counts and compare storage after minimization.
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::Arc;
+
+    use tididi::{literal, OperationError, Tdd, Vtree};
+    use tididi::vtree::VarId;
+
     let grouped_vtree = Arc::new(Vtree::balanced_over(&[
         VarId(1), VarId(3), VarId(2), VarId(4),
     ])?);
     let split_vtree = Arc::new(Vtree::balanced(4));
+
+    fn equal_pairs(vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
+        let x1 = literal(vtree, 1)?;
+        let x2 = literal(vtree, 2)?;
+        let x3 = literal(vtree, 3)?;
+        let x4 = literal(vtree, 4)?;
+        let first_equal = (!x1.clone() | x3.clone()) & (x1 | !x3);
+        let second_equal = (!x2.clone() | x4.clone()) & (x2 | !x4);
+        let mut f = first_equal & second_equal;
+        f.minimize()?;
+        Ok(f)
+    }
+
     let grouped = equal_pairs(&grouped_vtree)?;
     let split = equal_pairs(&split_vtree)?;
-    assert_eq!(grouped.model_count()?, 4u32.into());
-    assert_eq!(split.model_count()?, 4u32.into());
-    assert_eq!(grouped.pair_count(), 5);
-    assert_eq!(split.pair_count(), 12);
+    println!("Models: grouped = {}, split = {}",
+        grouped.model_count()?, split.model_count()?);
     println!("Grouped equalities: {} pairs; split equalities: {} pairs",
         grouped.pair_count(), split.pair_count());
     Ok(())

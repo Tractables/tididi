@@ -79,7 +79,7 @@ pub mod guide;
 #[doc(hidden)]
 pub mod test_helpers;
 
-pub use diagram::{Literal, Tdd};
+pub use diagram::{Literal, LiteralInput, Tdd};
 pub use vtree::Vtree;
 pub use limits::OperationError;
 pub use execution::{Context, Engine};

@@ -87,7 +87,7 @@ fn cube_to_tdd(
         if label[leaf.idx()] != ONE_LEAF_IDX {
             return Err(OperationError::DuplicateVariable(lit.var));
         }
-        label[leaf.idx()] = if lit.positive { POS_LEAF_IDX } else { NEG_LEAF_IDX };
+        label[leaf.idx()] = if lit.sign { POS_LEAF_IDX } else { NEG_LEAF_IDX };
     }
     let label_at = |t: crate::vtree::VtreeIdx| {
         if label.is_empty() { ONE_LEAF_IDX } else { label[t.idx()] }

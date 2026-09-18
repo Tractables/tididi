@@ -175,7 +175,7 @@ pub(super) fn fill_leaf_maps(
         let t = vtree.leaf_of(lit.var).expect("the vtree carries this variable");
         let base = level_base[t.idx()];
         let compute_dt = need_dt[t.idx()];
-        let (clause_idx, compl_idx) = if lit.positive {
+        let (clause_idx, compl_idx) = if lit.sign {
             (POS_LEAF_IDX.0 as usize, NEG_LEAF_IDX.0 as usize)
         } else {
             (NEG_LEAF_IDX.0 as usize, POS_LEAF_IDX.0 as usize)

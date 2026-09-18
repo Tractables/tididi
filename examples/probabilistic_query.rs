@@ -1,75 +1,49 @@
 //! Compile a query and evidence once, then reevaluate them with new probabilities.
 //! Run with `cargo run --example probabilistic_query`.
 
-use std::sync::Arc;
+fn main() -> Result<(), tididi::OperationError> {
+    use std::sync::Arc;
 
-use num_rational::BigRational;
-use num_traits::{One, Zero};
-use tididi::diagram::{LiteralWeights, RationalWeights};
-use tididi::{and, literal, or, OperationError, Tdd, Vtree};
+    use num_rational::BigRational;
+    use num_traits::One;
+    use tididi::diagram::{LiteralWeights, RationalWeights};
+    use tididi::{literal, Vtree};
 
-fn fraction(numerator: i64, denominator: i64) -> BigRational {
-    BigRational::new(numerator.into(), denominator.into())
-}
-
-fn bernoulli(positive: BigRational) -> LiteralWeights<BigRational> {
-    LiteralWeights {
-        negative: BigRational::one() - &positive,
-        positive,
-    }
-}
-
-// Both masses use the same weight table; zero-mass evidence has no conditional
-// probability. The caller represents that case explicitly with None.
-fn conditional_probability(
-    query_and_evidence: &Tdd,
-    evidence: &Tdd,
-    weights: &RationalWeights,
-) -> Result<Option<BigRational>, OperationError> {
-    let evidence_mass = evidence.evaluate(weights)?;
-    if evidence_mass.is_zero() {
-        Ok(None)
-    } else {
-        Ok(Some(query_and_evidence.evaluate(weights)? / evidence_mass))
-    }
-}
-
-fn main() -> Result<(), OperationError> {
     let vtree = Arc::new(Vtree::balanced(3));
     let rain = literal(&vtree, 1)?;
     let sprinkler = literal(&vtree, 2)?;
-    // Wet grass is the evidence: rain OR sprinkler. Variable 3 (wind) is free.
-    let wet = or(rain.clone(), sprinkler)?;
-    let rain_and_wet = and(rain.clone(), wet.clone())?;
+    let wet = rain.clone() | sprinkler;
+    let rain_and_wet = rain & wet.clone();
+
+    fn fraction(numerator: i64, denominator: i64) -> BigRational {
+        BigRational::new(numerator.into(), denominator.into())
+    }
+
+    fn bernoulli(positive: BigRational) -> LiteralWeights<BigRational> {
+        LiteralWeights {
+            negative: BigRational::one() - &positive,
+            positive,
+        }
+    }
 
     let scenarios = [
-        (fraction(1, 5), fraction(1, 10), Some(fraction(5, 7))),
-        (fraction(3, 5), fraction(1, 10), Some(fraction(15, 16))),
-        (fraction(0, 1), fraction(0, 1), None),
+        (fraction(1, 5), fraction(1, 10)),
+        (fraction(3, 5), fraction(1, 10)),
     ];
-    for (rain_probability, sprinkler_probability, expected) in scenarios {
+
+    for (rain_probability, sprinkler_probability) in scenarios {
         // Rain, sprinkler and wind have independent priors.
         let weights = RationalWeights::from_literals(&[
             bernoulli(rain_probability.clone()),
-            bernoulli(sprinkler_probability.clone()),
+            bernoulli(sprinkler_probability),
             bernoulli(fraction(2, 5)), // free wind contributes 2/5 + 3/5 = 1
         ]);
 
-        // The diagrams stay structural and unchanged; each call performs a fresh fold.
         let wet_probability = wet.evaluate(&weights)?;
-        assert_eq!(rain.evaluate(&weights)?, rain_probability);
-        assert_eq!(
-            wet_probability,
-            &rain_probability + &sprinkler_probability - &rain_probability * &sprinkler_probability
-        );
-        let conditional = conditional_probability(&rain_and_wet, &wet, &weights)?;
-        assert_eq!(conditional, expected);
+        let conditional = rain_and_wet.evaluate(&weights)? / &wet_probability;
 
         println!("P(rain) = {rain_probability}, P(wet) = {wet_probability}");
-        match conditional {
-            Some(value) => println!("P(rain | wet) = {value}"),
-            None => println!("P(rain | wet) is undefined: the evidence has probability zero"),
-        }
+        println!("P(rain | wet) = {conditional}");
     }
     Ok(())
 }

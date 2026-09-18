@@ -7,33 +7,22 @@ representations.
 
 Run `cargo run --example vtree_grouping`.
 
-```rust,ignore,{class=tested-example}
-use std::sync::Arc;
-
-use tididi::{and, OperationError, Tdd, Vtree};
-use tididi::vtree::VarId;
-```
-
 ## Keep each equality together, or split both
 
 The vtrees have the same shape and variables. Only the leaf order changes:
 
-```text
-Equalities grouped                  Equalities split
-
-         root                                root
-        /    \                              /    \
-       /      \                            /      \
-      •        •                          •        •
-     / \      / \                        / \      / \
-    x1  x3   x2  x4                      x1  x2   x3  x4
-```
+<img src="https://raw.githubusercontent.com/Tractables/tididi/main/docs/vtree-grouping.svg" alt="Two balanced vtrees: the grouped vtree pairs x1 with x3 and x2 with x4; the split vtree pairs x1 with x2 and x3 with x4." width="760">
 
 [`Vtree::balanced_over`](crate::Vtree::balanced_over) takes the
 variable identifiers in left-to-right leaf order. Changing their positions
 does not rename them: `VarId(3)` still means `x3`.
 
 ```rust,ignore,{class=tested-example}
+use std::sync::Arc;
+
+use tididi::{literal, OperationError, Tdd, Vtree};
+use tididi::vtree::VarId;
+
 let grouped_vtree = Arc::new(Vtree::balanced_over(&[
     VarId(1), VarId(3), VarId(2), VarId(4),
 ])?);
@@ -43,26 +32,26 @@ let split_vtree = Arc::new(Vtree::balanced(4));
 ## Build the same formula on each vtree
 
 Equality is a pair of implications: `x1 ↔ x3` is
-`(¬x1 ∨ x3) ∧ (x1 ∨ ¬x3)`. The helper uses the same literal numbers for either
+`(¬x1 ∨ x3) ∧ (x1 ∨ ¬x3)`. The helper uses the same variables for either
 vtree, then minimizes before comparing storage:
 
 ```rust,ignore,{class=tested-example}
 fn equal_pairs(vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
-    let first_equal = and(Tdd::clause(vtree, [-1, 3])?, Tdd::clause(vtree, [1, -3])?)?;
-    let second_equal = and(Tdd::clause(vtree, [-2, 4])?, Tdd::clause(vtree, [2, -4])?)?;
-    let mut f = and(first_equal, second_equal)?;
+    let x1 = literal(vtree, 1)?;
+    let x2 = literal(vtree, 2)?;
+    let x3 = literal(vtree, 3)?;
+    let x4 = literal(vtree, 4)?;
+    let first_equal = (!x1.clone() | x3.clone()) & (x1 | !x3);
+    let second_equal = (!x2.clone() | x4.clone()) & (x2 | !x4);
+    let mut f = first_equal & second_equal;
     f.minimize()?;
     Ok(f)
 }
-```
 
-```rust,ignore,{class=tested-example}
 let grouped = equal_pairs(&grouped_vtree)?;
 let split = equal_pairs(&split_vtree)?;
-assert_eq!(grouped.model_count()?, 4u32.into());
-assert_eq!(split.model_count()?, 4u32.into());
-assert_eq!(grouped.pair_count(), 5);
-assert_eq!(split.pair_count(), 12);
+println!("Models: grouped = {}, split = {}",
+    grouped.model_count()?, split.model_count()?);
 println!("Grouped equalities: {} pairs; split equalities: {} pairs",
     grouped.pair_count(), split.pair_count());
 ```
@@ -70,6 +59,7 @@ println!("Grouped equalities: {} pairs; split equalities: {} pairs",
 Output:
 
 ```text
+Models: grouped = 4, split = 4
 Grouped equalities: 5 pairs; split equalities: 12 pairs
 ```
 
@@ -100,4 +90,4 @@ subtree. Compare the resulting sizes for your own constraints.
 changes on an existing diagram. The [data model](crate::guide::model) explains
 how those decompositions represent functions, and the
 [complete program](https://github.com/Tractables/tididi/blob/main/examples/vtree_grouping.rs)
-checks the counts and pair totals above.
+runs this comparison.

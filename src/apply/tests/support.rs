@@ -143,15 +143,12 @@ fn implied_literals_matches_condition_oracle() {
     use crate::diagram::Literal;
 
 
-    // Oracle: (v, val) is implied iff f is SAT but conditioning v := !val makes
-    // it UNSAT — i.e. Every model pins v = val.
+    // A literal is implied iff conditioning its variable to the opposite sign
+    // leaves no satisfying assignments, including when f already has none.
     let oracle = |f: &Tdd, nvars: u32| -> Vec<Literal> {
         let mut out = Vec::new();
-        if count_is_zero(f) {
-            return out;
-        }
         for v in 0..nvars {
-            for val in [true, false] {
+            for val in [false, true] {
                 if count_is_zero(&(f).clone().condition_var(VarId(v + 1), !val).unwrap()) {
                     out.push(Literal::new(VarId(v + 1), val));
                 }
@@ -180,8 +177,10 @@ fn implied_literals_matches_condition_oracle() {
     assert_eq!(bbg, oracle(&g, 3));
     assert!(bbg.iter().all(|lit| lit.var != VarId(3)));
 
-    // UNSAT (x0 & ~x0): no models, no implied literals.
+    // UNSAT (x0 & ~x0) implies both signs, even for the unused variables.
     let mut z = and2(&x0, &nx0);
     z.minimize().unwrap();
-    assert!(z.implied_literals().unwrap().is_empty());
+    crate::test_helpers::assert_canonical(&z);
+    assert_eq!(z.implied_literals().unwrap(), oracle(&z, 3));
+    assert_eq!(z.implied_literals().unwrap().len(), 6);
 }

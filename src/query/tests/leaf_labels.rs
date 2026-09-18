@@ -30,20 +30,46 @@ fn support_and_backbone_match_sparse_id_truth_tables() {
                 if (0..8).any(|row| ((bits >> row) & 1) != ((bits >> (row ^ (1 << i))) & 1)) {
                     expected_support.push(var);
                 }
-                if bits != 0 {
-                    for positive in [false, true] {
-                        if (0..8).filter(|row| bits & (1 << row) != 0)
-                            .all(|row| (row & (1 << i) != 0) == positive) {
-                            expected_backbone.push(Literal::new(var, positive));
-                        }
+                for sign in [false, true] {
+                    if (0..8).filter(|row| bits & (1 << row) != 0)
+                        .all(|row| (row & (1 << i) != 0) == sign) {
+                        expected_backbone.push(Literal::new(var, sign));
                     }
                 }
             }
             expected_support.sort_unstable();
-            expected_backbone.sort_unstable_by_key(|literal| literal.var);
+            expected_backbone.sort_unstable_by_key(|literal| (literal.var, literal.sign));
             assert_eq!(eng.support(&f).unwrap(), expected_support, "truth table {bits}");
             assert_eq!(f.implied_literals().unwrap(), expected_backbone, "truth table {bits}");
             assert_eq!(checked_backbone, expected_backbone, "truth table {bits}");
+        }
+    }
+}
+
+#[test]
+fn unsatisfiable_implies_both_signs_of_every_vtree_variable() {
+    let eng = Engine::new();
+    let vars = [VarId(20), VarId(3), VarId(9)];
+    let vtree = Arc::new(Vtree::balanced_over(&vars).unwrap());
+    let positive = eng.literal(&vtree, Literal::pos(vars[0])).unwrap();
+    let negative = eng.literal(&vtree, Literal::neg(vars[0])).unwrap();
+    assert_canonical(&positive);
+    assert_canonical(&negative);
+    let mut contradiction = eng.and(positive, negative).unwrap();
+    contradiction.minimize().unwrap();
+
+    // With no models, neither sign has a counterexample. This includes the
+    // two variables absent from the contradiction, in variable-id order.
+    let expected = [-3, 3, -9, 9, -20, 20].map(|n| Literal::try_from(n).unwrap());
+    for f in [Tdd::zero(&vtree), contradiction] {
+        assert_canonical(&f);
+        assert!(!f.is_sat().unwrap());
+        assert_eq!(f.implied_literals().unwrap(), expected);
+        assert_eq!(eng.implied_literals(&f).unwrap(), expected);
+        for literal in expected {
+            let conclusion = eng.literal(&vtree, literal).unwrap();
+            assert_canonical(&conclusion);
+            assert!(f.implies(&conclusion).unwrap());
         }
     }
 }
@@ -54,7 +80,7 @@ fn leaf_outputs_have_only_their_forced_literal() {
     let var = VarId(20);
     let tree = Arc::new(Vtree::leaf(var));
     for (f, expected) in [
-        (Tdd::zero(&tree), vec![]),
+        (Tdd::zero(&tree), vec![Literal::neg(var), Literal::pos(var)]),
         (Tdd::one(&tree), vec![]),
         (eng.literal(&tree, Literal::pos(var)).unwrap(), vec![Literal::pos(var)]),
         (eng.literal(&tree, Literal::neg(var)).unwrap(), vec![Literal::neg(var)]),
@@ -62,7 +88,8 @@ fn leaf_outputs_have_only_their_forced_literal() {
         assert_canonical(&f);
         assert_eq!(f.implied_literals().unwrap(), expected);
         assert_eq!(eng.implied_literals(&f).unwrap(), expected);
-        assert_eq!(eng.support(&f).unwrap(), expected.iter().map(|literal| literal.var).collect::<Vec<_>>());
+        let expected_support = if expected.len() == 1 { vec![var] } else { vec![] };
+        assert_eq!(eng.support(&f).unwrap(), expected_support);
     }
 }
 
@@ -131,18 +158,22 @@ fn checked_backbone_preserves_inputs_across_resource_refusals() {
     let tree = Arc::new(Vtree::balanced(3));
     let f = engine.cube(&tree, [1, -2]).unwrap();
     assert_canonical(&f);
+    let zero = engine.zero(&tree);
+    assert_canonical(&zero);
     {
         let _scope = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
         assert_eq!(engine.implied_literals(&f), Err(OperationError::OverBudget));
+        assert_eq!(engine.implied_literals(&zero), Err(OperationError::OverBudget));
     }
-    let zero = engine.zero(&tree);
-    assert_canonical(&zero);
     {
         let _scope = engine.limits().scope(LimitConfig::none().with_stop_callback(Some(
             StopCallback::new(|_, _| StopDecision::Stop))));
         assert_eq!(engine.implied_literals(&f), Err(OperationError::Stopped));
         assert_eq!(engine.implied_literals(&zero), Err(OperationError::Stopped));
     }
+    assert_eq!(engine.implied_literals(&zero).unwrap(),
+        [-1, 1, -2, 2, -3, 3].map(|n| Literal::try_from(n).unwrap()));
+    assert_canonical(&zero);
     assert_eq!(engine.implied_literals(&f).unwrap(), vec![1.try_into().unwrap(), (-2).try_into().unwrap()]);
     assert_eq!(engine.model_count(&f).unwrap(), 2u32.into());
     assert_canonical(&f);

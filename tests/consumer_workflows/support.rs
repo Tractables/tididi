@@ -123,7 +123,7 @@ pub(super) fn assert_truth(engine: &Engine, diagram: &Tdd, expected: &[bool], co
                     *var,
                     "{context}, witness variable"
                 );
-                if literal.positive {
+                if literal.sign {
                     row |= 1 << var.idx();
                 }
             }

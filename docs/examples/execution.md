@@ -5,7 +5,7 @@ explicit batch when you need resource limits; release idle scratch when you
 no longer need the retained memory.
 
 This continues the [configuration walkthrough](crate::guide::examples::configurations),
-using its `configurations`, `vtree` and `count`. Run both parts with
+using its `configurations` and `vtree`. Run both parts with
 `cargo run --example build_minimize_count`.
 
 ## Bound a batch of operations
@@ -19,7 +19,7 @@ use tididi::limits::LimitConfig;
 let context = Arc::clone(vtree.context());
 let limit = LimitConfig::none().with_memory_budget_bytes(Some(0));
 let attempt = context.with_limits(limit, |operations| {
-    operations.clause(&vtree, [1, 2])
+    operations.clause(&vtree, [local_choice, remote_choice])
 });
 ```
 
@@ -29,7 +29,6 @@ growth per operation; [`LimitConfig`](crate::limits::LimitConfig) describes
 what it measures. Handle a refusal like any other error:
 
 ```rust,ignore,{class=tested-example}
-assert!(matches!(attempt, Err(OperationError::OverBudget)));
 match attempt {
     Ok(diagram) => println!("Destination choices: {}", diagram.model_count()?),
     Err(OperationError::OverBudget) => println!("Not enough budget to build the destination rule"),
@@ -47,9 +46,16 @@ The budget ends with the batch. A later operation succeeds, and the original
 rules remain available:
 
 ```rust,ignore,{class=tested-example}
-let destination = Tdd::clause(&vtree, [1, 2])?;
-assert_eq!(destination.model_count()?, 12u32.into());
-assert_eq!(configurations.model_count()?, count);
+let destination = Tdd::clause(&vtree, [local_choice, remote_choice])?;
+println!("Destination choices: {}", destination.model_count()?);
+println!("Valid configurations: {}", configurations.model_count()?);
+```
+
+Output:
+
+```text
+Destination choices: 12
+Valid configurations: 8
 ```
 
 Use [`Context::run`](crate::Context::run) for a batch with no
@@ -62,13 +68,14 @@ changing the function or vtree:
 
 ```rust,ignore,{class=tested-example}
 configurations.minimize()?;
-assert_eq!(configurations.model_count()?, count);
+println!("Valid configurations: {}", configurations.model_count()?);
 println!("Minimized representation: {} pairs", configurations.pair_count());
 ```
 
 Output:
 
 ```text
+Valid configurations: 8
 Minimized representation: 8 pairs
 ```
 
@@ -86,7 +93,13 @@ let query_limit = LimitConfig::none().with_memory_budget_bytes(Some(1_000_000));
 let bounded_count = context.with_limits(query_limit, |operations| {
     counter.bind(operations).model_count()
 })?;
-assert_eq!(bounded_count, count);
+println!("Count with a budget: {bounded_count}");
+```
+
+Output:
+
+```text
+Count with a budget: 8
 ```
 
 After the batch, the counter keeps its observations and cached counts.

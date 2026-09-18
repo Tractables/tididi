@@ -48,7 +48,7 @@ fn comparisons_support_and_witnesses_match_all_two_variable_truth_tables() {
                 );
                 let row = model
                     .iter()
-                    .fold(0usize, |a, l| a | ((l.positive as usize) << l.var.idx()));
+                    .fold(0usize, |a, l| a | ((l.sign as usize) << l.var.idx()));
                 assert_ne!(bits & (1 << row), 0);
             }
         }
@@ -559,7 +559,7 @@ fn witness_walk_handles_deep_vtrees_without_recursion() {
     let f = eng.literal(&tree, 8192).unwrap();
     let model = eng.satisfying_assignment(&f).unwrap().unwrap();
     assert_eq!(model.len(), 8192);
-    assert!(model[..8191].iter().all(|lit| !lit.positive));
+    assert!(model[..8191].iter().all(|lit| !lit.sign));
     assert_eq!(model[8191], Literal::pos(VarId(8192)));
 }
 

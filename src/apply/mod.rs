@@ -27,7 +27,6 @@ mod substitute;
 
 pub(crate) use conjoin::apply_and;
 pub use conjoin::and;
-pub use conjoin_clause::ClauseLiteral;
 pub(crate) use disjoin::apply_or;
 pub use disjoin::or;
 pub use compose::{xor, ite, and_exists, and_exists_with_strategy};

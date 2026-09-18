@@ -1,58 +1,58 @@
 //! Find the minimum cost of a valid backup configuration.
 //! Run with `cargo run --example minimum_cost`.
 
-use std::sync::Arc;
-use tididi::diagram::{EvalAlgebra, LeafLabel};
-use tididi::vtree::VarId;
-use tididi::{and, literal, Tdd, Vtree};
+fn main() -> Result<(), tididi::OperationError> {
+    use std::sync::Arc;
+    use tididi::{literal, Vtree};
 
-/// Enabling costs for local backups, remote backups, encryption and notifications.
-struct Costs([u32; 4]);
+    let vtree = Arc::new(Vtree::balanced(4));
+    let local = literal(&vtree, 1)?;
+    let remote = literal(&vtree, 2)?;
+    let encrypted = literal(&vtree, 3)?;
+    let configurations = (local | remote.clone()) & (!remote.clone() | encrypted.clone());
 
-impl EvalAlgebra for Costs {
-    type Value = Option<u64>;
+    use tididi::diagram::{EvalAlgebra, LeafLabel};
+    use tididi::vtree::VarId;
 
-    fn zero(&self) -> Self::Value { None }
+    struct Costs([u32; 4]);
 
-    fn leaf(&self, var: VarId, label: LeafLabel) -> Self::Value {
-        match label {
-            LeafLabel::Pos => Some(u64::from(self.0[var.idx()])),
-            LeafLabel::Neg | LeafLabel::One => Some(0),
-            LeafLabel::Zero => None,
+    impl EvalAlgebra for Costs {
+        type Value = Option<u64>;
+
+        fn zero(&self) -> Self::Value { None }
+
+        fn leaf(&self, var: VarId, label: LeafLabel) -> Self::Value {
+            match label {
+                LeafLabel::Pos => Some(u64::from(self.0[var.idx()])),
+                LeafLabel::Neg | LeafLabel::One => Some(0),
+                LeafLabel::Zero => None,
+            }
+        }
+
+        fn add_assign(&self, best: &mut Self::Value, candidate: &Self::Value) {
+            *best = match (*best, *candidate) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+        }
+
+        fn mul(&self, left: &Self::Value, right: &Self::Value) -> Self::Value {
+            // A valid circuit combines disjoint variables; four u32 costs fit in u64.
+            Some((*left)? + (*right)?)
         }
     }
 
-    fn add_assign(&self, best: &mut Self::Value, candidate: &Self::Value) {
-        *best = match (*best, *candidate) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        };
-    }
-
-    fn mul(&self, left: &Self::Value, right: &Self::Value) -> Self::Value {
-        // A valid circuit combines disjoint variables; four u32 costs fit in u64.
-        Some((*left)? + (*right)?)
-    }
-}
-
-fn main() -> Result<(), tididi::OperationError> {
-    let vtree = Arc::new(Vtree::balanced(4));
-    let configurations = and(
-        Tdd::clause(&vtree, [1, 2])?,
-        Tdd::clause(&vtree, [-2, 3])?,
-    )?;
     let costs = Costs([5, 2, 1, 0]);
     let minimum = configurations.evaluate(&costs)?.expect("the rules have a solution");
-    assert_eq!(minimum, 3);
     println!("Minimum configuration cost: {minimum}");
 
     let local_discount = Costs([1, 2, 1, 0]);
-    assert_eq!(configurations.evaluate(&local_discount)?, Some(1));
+    println!("Minimum with discount: {:?}", configurations.evaluate(&local_discount)?);
 
-    let with_remote = and(configurations.clone(), literal(&vtree, 2)?)?;
-    assert_eq!(with_remote.evaluate(&local_discount)?, Some(3));
-    let conflicting = and(with_remote, literal(&vtree, -3)?)?;
-    assert_eq!(conflicting.evaluate(&costs)?, None);
+    let with_remote = configurations.clone() & remote;
+    println!("Minimum with remote backups: {:?}", with_remote.evaluate(&local_discount)?);
+    let remote_without_encryption = with_remote & !encrypted;
+    println!("Minimum without encryption: {:?}", remote_without_encryption.evaluate(&costs)?);
 
     // Independently enumerate this small model to verify both cost scenarios.
     for prices in [&costs, &local_discount] {

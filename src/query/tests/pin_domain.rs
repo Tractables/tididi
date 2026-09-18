@@ -92,6 +92,8 @@ fn marginal_pins(retention: Retention) {
             assert_eq!(counter.set_pin(VarId(1), pin), Err(OperationError::MarginalLevel(summed)));
         }
         assert_eq!(counter.observe([3, 1]), Err(OperationError::MarginalLevel(summed)));
+        assert_eq!(counter.observe([Literal::pos(VarId(3)), Literal::pos(VarId(1))]),
+            Err(OperationError::MarginalLevel(summed)));
         assert_eq!(counter.model_count().unwrap(), 4u32.into());
         counter.set_pin(VarId(3), None).unwrap();
         assert_eq!(counter.model_count().unwrap(), 12u32.into());
@@ -141,7 +143,7 @@ fn observed_counts(retention: Retention) {
         counter.observe([3, -3, 10]).unwrap();
         let expected: BigUint = if semantics == PinSemantics::Evidence { 2u32 } else { 8 }.into();
         assert_eq!(counter.model_count().unwrap(), expected);
-        counter.observe([]).unwrap();
+        counter.observe([] as [i32; 0]).unwrap();
         assert_eq!(counter.model_count().unwrap(), expected);
         for pending in [false, true] {
             if pending { counter.observe([-72]).unwrap(); }
@@ -165,4 +167,45 @@ fn observed_counts(retention: Retention) {
 fn signed_observations_count_and_reject_invalid_batches_atomically() {
     observed_counts(Retention::All);
     observed_counts(Retention::Frontier);
+}
+
+#[test]
+fn named_observations_match_signed_inputs_and_preserve_rejected_batches() {
+    let vtree = Arc::new(Vtree::balanced_over(&[VarId(10), VarId(3), VarId(72)]).unwrap());
+    let f = Tdd::clause(&vtree, [3, 10]).unwrap();
+    assert_canonical(&f);
+    let remote = Literal::pos(VarId(10));
+    let encrypted = Literal::pos(VarId(3));
+    let notifications = Literal::pos(VarId(72));
+    for retention in [Retention::All, Retention::Frontier] {
+        for semantics in [PinSemantics::Evidence, PinSemantics::Cofactor] {
+            let mut typed = f.counter_with(retention, semantics).unwrap();
+            let mut signed = f.counter_with(retention, semantics).unwrap();
+            for inputs in [vec![remote], vec![notifications.negated()],
+                vec![remote.negated(), encrypted], vec![encrypted, encrypted.negated()]] {
+                let numbers: Vec<i32> = inputs.iter().map(|lit| {
+                    if lit.sign { lit.var.0 as i32 } else { -(lit.var.0 as i32) }
+                }).collect();
+                typed.observe(&inputs).unwrap();
+                signed.observe(numbers).unwrap();
+                assert_eq!(typed.model_count().unwrap(), signed.model_count().unwrap());
+            }
+            typed.clear_pins();
+            typed.observe([remote]).unwrap();
+            let before = typed.model_count().unwrap();
+            typed.observe([] as [Literal; 0]).unwrap();
+            assert_eq!(typed.model_count().unwrap(), before);
+            for pending in [false, true] {
+                if pending { typed.observe([notifications.negated()]).unwrap(); }
+                assert_eq!(typed.observe([remote.negated(), Literal::pos(VarId(999))]),
+                    Err(OperationError::VariableNotInVtree(VarId(999))));
+                let expected: BigUint = if semantics == PinSemantics::Cofactor { 8u32 }
+                    else if pending { 2 } else { 4 }.into();
+                assert_eq!(typed.model_count().unwrap(), expected);
+            }
+            let eng = Engine::new();
+            let _limit = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
+            typed.bind(&eng).observe([remote.negated(), encrypted]).unwrap();
+        }
+    }
 }

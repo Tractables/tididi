@@ -43,7 +43,7 @@ pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<I
     for literal in assignment {
         let literal = literal.try_into().map_err(Into::into)?;
         let leaf = f.vtree.leaf_of(literal.var).ok_or(OperationError::VariableNotInVtree(literal.var))?;
-        let pol = if literal.positive { Polarity::Positive } else { Polarity::Negative };
+        let pol = if literal.sign { Polarity::Positive } else { Polarity::Negative };
         lim.try_push(&mut targets, (leaf, pol))?;
         gate.poll(1)?;
     }

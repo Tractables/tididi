@@ -75,7 +75,26 @@ impl Engine {
     /// on cancellation. Allocation refusals return
     /// [`OperationError::OverBudget`].
     pub fn implied_literals(&self, f: &Tdd) -> Result<Vec<Literal>, OperationError> {
-        self.collect_leaf_labels(f, |var, labels| labels.implied(var), |literal| literal.var)
+        if !f.is_zero() {
+            return self.collect_leaf_labels(f, |var, labels| labels.implied(var), |literal| literal.var);
+        }
+        f.require_structure()?;
+        let lim = self.limits();
+        let _op = lim.begin_operation();
+        lim.check_stop()?;
+        let mut result = Vec::new();
+        let mut gate = lim.gate();
+        // False implies both signs, including variables absent from its support.
+        for t in f.vtree().bottomup() {
+            gate.poll(1)?;
+            if let VtreeNode::Leaf { var, .. } = *f.vtree().node(t) {
+                lim.try_push(&mut result, Literal::neg(var))?;
+                lim.try_push(&mut result, Literal::pos(var))?;
+            }
+        }
+        result.sort_unstable_by_key(|literal| (literal.var, literal.sign));
+        gate.flush()?;
+        Ok(result)
     }
 
     /// Collect one optional answer per structural leaf from a checked minimized copy.

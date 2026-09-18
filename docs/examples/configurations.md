@@ -10,48 +10,50 @@ Run this example with `cargo run --example build_minimize_count`.
 ## Give each option a variable
 
 A vtree arranges the variables used by our diagrams. Start with a balanced vtree
-over four variables and share it between the option diagrams:
+over four variables. Name the literals so we can use them both to build option
+diagrams and to record user choices:
 
 ```rust,ignore,{class=tested-example}
 use std::sync::Arc;
 
-use tididi::{and, literal, or, Tdd, Vtree};
-```
+use tididi::{literal, Literal, Tdd, Vtree};
 
-```rust,ignore,{class=tested-example}
 let vtree = Arc::new(Vtree::balanced(4));
 let names = ["local backups", "remote backups", "encryption", "notifications"];
-let local = literal(&vtree, 1)?;
-let remote = literal(&vtree, 2)?;
-let encrypted = literal(&vtree, 3)?;
+let local_choice = Literal::try_from(1)?;
+let remote_choice = Literal::try_from(2)?;
+let encrypted_choice = Literal::try_from(3)?;
+let notifications_choice = Literal::try_from(4)?;
+let local = literal(&vtree, local_choice)?;
+let remote = literal(&vtree, remote_choice)?;
+let encrypted = literal(&vtree, encrypted_choice)?;
+let notifications = literal(&vtree, notifications_choice)?;
 ```
 
-Integer literals start at 1; a negative integer means the option is off.
-Notifications need no literal here: they remain an unconstrained variable
-in the vtree.
+A `Literal` names one variable and its sign; `literal` builds the corresponding
+circuit. Integer literals start at 1; a negative integer means the option is off.
 
 ## Write the rules as Boolean expressions
 
-Combine alternatives with [`or`](crate::or) and requirements with
-[`and`](crate::and). "Remote requires encryption" means either remote backups
-are off or encryption is on:
+Use `|` for OR, `&` for AND, and `!` for NOT. "Remote requires encryption"
+means either remote backups are off or encryption is on:
 
 ```rust,ignore,{class=tested-example}
-let destination = or(local, remote.clone())?;
-let encryption_rule = or(remote.clone().negate()?, encrypted)?;
-let mut configurations = and(destination, encryption_rule)?;
+let destination = local | remote.clone();
+let encryption_rule = !remote.clone() | encrypted.clone();
+let mut configurations = destination & encryption_rule;
 ```
 
-Boolean operations consume their operands, so `remote.clone()` keeps a copy
-for later use. Queries borrow the circuit. All these diagrams share one vtree.
-The `?` operator propagates errors from `main`, which returns
-`Result<(), tididi::OperationError>`.
+Notifications remain optional because neither rule constrains them.
+
+Boolean operators consume their operands. Cloning supplies a copy to the
+operation, leaving the original `remote` or `encrypted` available for later use.
+Queries borrow the circuit. All these diagrams share one vtree.
 
 ## Count configurations
 
 ```rust,ignore,{class=tested-example}
 let count = configurations.model_count()?;
-assert_eq!(count, 8u32.into());
 println!("Valid configurations: {count}");
 ```
 
@@ -78,9 +80,8 @@ the full vtree. Counting returns an arbitrary-precision integer.
 If a user selects remote backups, conjoin that option with a copy of the rules:
 
 ```rust,ignore,{class=tested-example}
-let with_remote = and(configurations.clone(), remote)?;
+let with_remote = configurations.clone() & remote;
 let remote_count = with_remote.model_count()?;
-assert_eq!(remote_count, 4u32.into());
 println!("Configurations with remote backups: {remote_count}");
 ```
 
@@ -103,9 +104,8 @@ by every remaining configuration:
 
 ```rust,ignore,{class=tested-example}
 let forced = with_remote.implied_literals()?;
-assert!(forced.contains(&3.try_into()?));
 for literal in &forced {
-    println!("Required choice: {} = {}", names[literal.var.idx()], literal.positive);
+    println!("Required choice: {} = {}", names[literal.var.idx()], literal.sign);
 }
 ```
 
@@ -120,12 +120,15 @@ Local backups and notifications remain optional.
 If the user also disables encryption, no configuration satisfies the choices:
 
 ```rust,ignore,{class=tested-example}
-let conflicting = and(with_remote, literal(&vtree, -3)?)?;
-assert!(!conflicting.is_sat()?);
+let remote_without_encryption = with_remote & !encrypted.clone();
+println!("Satisfiable: {}", remote_without_encryption.is_sat()?);
 ```
 
-Check satisfiability before displaying forced choices for arbitrary user input;
-an empty list can mean either a conflict or that no choice is forced.
+Output:
+
+```text
+Satisfiable: false
+```
 
 ## Ask for one concrete configuration
 
@@ -136,7 +139,7 @@ let witness = configurations.satisfying_assignment()?
     .expect("the backup rules have a solution");
 println!("One valid configuration:");
 for literal in &witness {
-    println!("  {}: {}", names[literal.var.idx()], literal.positive);
+    println!("  {}: {}", names[literal.var.idx()], literal.sign);
 }
 ```
 
@@ -154,8 +157,14 @@ The witness assigns every option. Check that this configuration satisfies
 the rules:
 
 ```rust,ignore,{class=tested-example}
-let selected = and(configurations.clone(), Tdd::cube(&vtree, &witness)?)?;
-assert_eq!(selected.model_count()?, 1u32.into());
+let selected = configurations.clone() & Tdd::cube(&vtree, &witness)?;
+println!("Selected valid configurations: {}", selected.model_count()?);
+```
+
+Output:
+
+```text
+Selected valid configurations: 1
 ```
 
 ## Reuse the circuit as choices change
@@ -166,24 +175,41 @@ change. First the user selects remote backups:
 
 ```rust,ignore,{class=tested-example}
 let mut counter = configurations.counter()?;
-counter.observe([2])?;
-assert_eq!(counter.model_count()?, 4u32.into());
+counter.observe([remote_choice])?;
+println!("Matching configurations: {}", counter.model_count()?);
 ```
 
-Observations use the same signed literal numbers as circuit construction.
+Output:
+
+```text
+Matching configurations: 4
+```
+
 Turning notifications off adds a second choice while keeping remote backups on:
 
 ```rust,ignore,{class=tested-example}
-counter.observe([-4])?;
-assert_eq!(counter.model_count()?, 2u32.into());
+counter.observe([notifications_choice.negated()])?;
+println!("Matching configurations: {}", counter.model_count()?);
+```
+
+Output:
+
+```text
+Matching configurations: 2
 ```
 
 Now the user switches remote backups off and disables encryption. Notifications
 remain off, and local backups must be on: only one configuration remains.
 
 ```rust,ignore,{class=tested-example}
-counter.observe([-2, -3])?;
-assert_eq!(counter.model_count()?, 1u32.into());
+counter.observe([remote_choice.negated(), encrypted_choice.negated()])?;
+println!("Matching configurations: {}", counter.model_count()?);
+```
+
+Output:
+
+```text
+Matching configurations: 1
 ```
 
 Each [`observe`](crate::query::ModelCounter::observe) call changes only the
@@ -191,11 +217,40 @@ listed choices. Clear them all to recover the original count:
 
 ```rust,ignore,{class=tested-example}
 counter.clear_pins();
-assert_eq!(counter.model_count()?, count);
+println!("Matching configurations: {}", counter.model_count()?);
+```
+
+Output:
+
+```text
+Matching configurations: 8
 ```
 
 The circuit stays unchanged. Use [`set_pin`](crate::query::ModelCounter::set_pin)
 to clear one observation.
+
+## Handle operation errors
+
+The Boolean operators panic if an operation fails. To handle failures, use
+[`and`](crate::and), [`or`](crate::or), and [`negate`](crate::Tdd::negate),
+which return `Result`. Here is the same model written that way:
+
+```rust,ignore,{class=tested-example}
+use tididi::{and, or};
+
+let local = literal(&vtree, local_choice)?;
+let remote = literal(&vtree, remote_choice)?;
+let encrypted = literal(&vtree, encrypted_choice)?;
+let destination = or(local, remote.clone())?;
+let encryption_rule = or(remote.negate()?, encrypted)?;
+let checked = and(destination, encryption_rule)?;
+```
+
+The `?` operator returns an error to the caller; use `match` if you want to
+handle it here. Constructors and queries already return `Result`, which is
+why their calls use `?` throughout this example. The
+[execution example](crate::guide::examples::execution) shows how to handle
+a memory-budget error.
 
 Continue with [minimum costs](crate::guide::examples::optimization),
 [probabilities](crate::guide::examples::probability), or

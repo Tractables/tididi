@@ -1,7 +1,7 @@
 //! The hybrid u128/`BigUint` counting engine and the incremental pinned counter.
 
 use crate::Engine;
-use crate::diagram::{ChildRef, EncodedChildRef, LeafLabel, Literal, NodeIdx, PairsIter, Tdd, ValueRef};
+use crate::diagram::{ChildRef, EncodedChildRef, LeafLabel, NodeIdx, PairsIter, Tdd, ValueRef};
 use num_bigint::BigUint;
 
 use super::{leaf_seed, PinSemantics};
@@ -269,8 +269,8 @@ impl BoundModelCounter<'_, '_> {
         self.counter.get_mut().set_pins(pins)
     }
 
-    /// Apply signed-literal observations with [`ModelCounter::observe`] semantics.
-    pub fn observe(&mut self, literals: impl AsRef<[i32]>) -> Result<(), OperationError> {
+    /// Apply literal observations with [`ModelCounter::observe`] semantics.
+    pub fn observe<L: crate::LiteralInput>(&mut self, literals: impl AsRef<[L]>) -> Result<(), OperationError> {
         self.counter.get_mut().observe(literals)
     }
 
@@ -446,13 +446,13 @@ impl<'a> ModelCounter<'a> {
         Ok(())
     }
 
-    /// Set observations using signed, one-based literals, as in [`crate::literal`].
+    /// Set observations using signed integers or named [`Literal`](crate::Literal) values.
     ///
     /// `2` observes the second variable as true; `-2` observes it as false.
     /// Only listed variables change, and the last occurrence of a variable wins.
     /// An empty input has no effect. Updates allocate no storage and defer
     /// counting until the next read. Use [`Self::clear_pins`] to remove all
-    /// observations, or [`Self::set_pin`] to clear one or use a typed variable id.
+    /// observations, or [`Self::set_pin`] to clear one.
     ///
     /// # Errors
     ///
@@ -462,12 +462,14 @@ impl<'a> ModelCounter<'a> {
     ///
     /// ```
     /// use std::sync::Arc;
-    /// use tididi::{Tdd, Vtree};
+    /// use tididi::{Literal, Tdd, Vtree};
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, 2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
     /// let mut counter = f.counter()?;
-    /// counter.observe([1, -3])?;
+    /// let enabled = Literal::try_from(1)?;
+    /// let disabled = Literal::try_from(-3)?;
+    /// counter.observe([enabled, disabled])?;
     /// assert_eq!(counter.model_count()?, 2u32.into());
     /// counter.observe([-1])?;
     /// assert_eq!(counter.model_count()?, 1u32.into());
@@ -475,14 +477,14 @@ impl<'a> ModelCounter<'a> {
     /// assert_eq!(counter.model_count()?, 6u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn observe(&mut self, literals: impl AsRef<[i32]>) -> Result<(), OperationError> {
+    pub fn observe<L: crate::LiteralInput>(&mut self, literals: impl AsRef<[L]>) -> Result<(), OperationError> {
         let literals = literals.as_ref();
         for &input in literals {
-            self.validate_pin(Literal::try_from(input)?.var)?;
+            self.validate_pin(input.literal()?.var)?;
         }
         for &input in literals {
-            let literal = Literal::try_from(input)?;
-            self.set_pin(literal.var, Some(literal.positive))?;
+            let literal = input.literal()?;
+            self.set_pin(literal.var, Some(literal.sign))?;
         }
         Ok(())
     }

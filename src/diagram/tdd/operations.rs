@@ -73,7 +73,7 @@ impl Tdd {
     /// assert_eq!(f.model_count()?, 6u32.into()); // remote implies encrypted
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn and_clause<L: crate::apply::ClauseLiteral>(self, clause: impl AsRef<[L]>) -> Result<Tdd, OperationError> {
+    pub fn and_clause<L: crate::LiteralInput>(self, clause: impl AsRef<[L]>) -> Result<Tdd, OperationError> {
         let context = Arc::clone(self.context());
         context.run(|eng| eng.and_clause(self, clause.as_ref()))
     }
@@ -474,10 +474,11 @@ impl Tdd {
 
     /// Return literals true in every model, sorted by variable identifier.
     ///
-    /// This is the function's backbone. Both constant functions return an empty
-    /// list, including the unsatisfiable function. Borrows a structural diagram
-    /// and minimizes a copy; the input need not be minimal and remains unchanged.
-    /// Literal weights are ignored.
+    /// An unsatisfiable function implies both signs of every variable in its
+    /// vtree, with the negative literal first. The constant-true function implies
+    /// no literals. For a satisfiable function, the result is its backbone.
+    /// Borrows a structural diagram and minimizes a copy; the input need not
+    /// be minimal and remains unchanged. Literal weights are ignored.
     ///
     /// # Errors
     ///
