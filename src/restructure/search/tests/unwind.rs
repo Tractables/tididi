@@ -1,23 +1,21 @@
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
-use crate::diagram::{Tdd, TddLevel};
+use crate::diagram::Tdd;
 use crate::Engine;
 use crate::restructure::relevel::RestructureScratch;
 use crate::restructure::search::probe::{probe, ProbeRule};
-use crate::restructure::search::RotationObjective;
+use crate::restructure::search::RotationProbe;
 use crate::test_helpers::assert_canonical;
 use crate::vtree::{RotationKind, Vtree};
 
 struct Panicking;
 
-impl RotationObjective for Panicking {
-    fn delta(&mut self, _: (&TddLevel, &TddLevel), _: (&TddLevel, &TddLevel)) -> i64 {
+impl ProbeRule for Panicking {
+    fn keeps(&mut self, _: &RotationProbe<'_>, _: &crate::vtree::rotate::RotationInfo) -> bool {
         panic!("objective failed")
     }
 }
-
-impl ProbeRule for Panicking {}
 
 #[test]
 fn an_objective_panic_restores_the_rotation_trial() {
@@ -41,11 +39,9 @@ fn an_objective_panic_restores_the_rotation_trial() {
 
 struct Reject;
 
-impl RotationObjective for Reject {
-    fn delta(&mut self, _: (&TddLevel, &TddLevel), _: (&TddLevel, &TddLevel)) -> i64 { 0 }
+impl ProbeRule for Reject {
+    fn keeps(&mut self, _: &RotationProbe<'_>, _: &crate::vtree::rotate::RotationInfo) -> bool { false }
 }
-
-impl ProbeRule for Reject {}
 
 #[test]
 fn a_rejected_rotation_preserves_the_shared_vtree_and_worklists() {
@@ -62,11 +58,9 @@ fn a_rejected_rotation_preserves_the_shared_vtree_and_worklists() {
 
 struct AcceptThenFail(bool);
 
-impl RotationObjective for AcceptThenFail {
-    fn delta(&mut self, _: (&TddLevel, &TddLevel), _: (&TddLevel, &TddLevel)) -> i64 { -1 }
-}
-
 impl ProbeRule for AcceptThenFail {
+    fn keeps(&mut self, _: &RotationProbe<'_>, _: &crate::vtree::rotate::RotationInfo) -> bool { true }
+
     fn on_accept(&mut self, _: &Engine, _: &mut Tdd, _: &crate::vtree::rotate::RotationInfo) -> Result<(), crate::OperationError> {
         if self.0 { panic!("accepted callback failed"); }
         Err(crate::OperationError::Stopped)

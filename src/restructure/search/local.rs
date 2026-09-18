@@ -11,7 +11,7 @@ use crate::limits::OperationError;
 use crate::Engine;
 use crate::vtree::{RotationKind, Vtree, VtreeIdx};
 use crate::vtree::rotate::RotationInfo;
-use crate::diagram::{Tdd, TddLevel};
+use crate::diagram::Tdd;
 
 use super::policy::AcceptancePolicy;
 use super::probe::*;
@@ -20,44 +20,28 @@ use super::probe::*;
 /// inline storage is sized for.
 const MAX_SEQUENCE: usize = 3;
 
-/// Scores a candidate rotation for [`Tdd::rotation_search`].
+/// Scores a probed rotation sequence for [`Tdd::rotation_search`].
 ///
-/// By Rotation Locality a rotation changes exactly
-/// the two affected levels, so the objective is handed precisely their old and
-/// new contents and nothing else.
-///
-/// A [`Neighborhood`] wider than one rotation changes more than two levels, and
-/// the search then calls this once per pair of them, adding the results. An odd
-/// number of changed levels pairs the last one with an empty level, which costs
-/// the same before as after.
+/// A rotation changes exactly the two levels at its pivot, so the probe holds
+/// precisely the levels the sequence rebuilt, before and after, and nothing
+/// else needs reading.
 pub trait RotationObjective {
-    /// Score a probed rotation. `before` is the `(v, w)` levels prior to the
-    /// rotation; `after` is the same two levels after the restructure.
-    /// A **negative** result means the move improves the objective — the search
-    /// accepts a rotation iff `delta < 0`.
-    fn delta(
-        &mut self,
-        before: (&TddLevel, &TddLevel),
-        after: (&TddLevel, &TddLevel),
-    ) -> i64;
+    /// Score a probed sequence. A **negative** result means it improves the
+    /// objective, which is what [`Greedy`](super::Greedy) keeps.
+    fn delta(&mut self, probe: &RotationProbe<'_>) -> i64;
 }
 
 /// Accept rotations that reduce the total number of live pairs.
 ///
-/// Only the two changed levels need to be scored. Use with
-/// [`Tdd::rotation_search`]; implement [`RotationObjective`] for another cost.
+/// Use with [`Tdd::rotation_search`]; implement [`RotationObjective`] for
+/// another cost.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MinimizePairs;
 
 impl RotationObjective for MinimizePairs {
-    fn delta(
-        &mut self,
-        before: (&TddLevel, &TddLevel),
-        after: (&TddLevel, &TddLevel),
-    ) -> i64 {
-        let old = before.0.live_pairs() + before.1.live_pairs();
-        let new = after.0.live_pairs() + after.1.live_pairs();
-        new as i64 - old as i64
+    #[inline]
+    fn delta(&mut self, probe: &RotationProbe<'_>) -> i64 {
+        probe.live_pairs_delta()
     }
 }
 
@@ -154,17 +138,8 @@ pub(crate) fn rotation_search_on<O: RotationObjective, A: AcceptancePolicy>(
     }
     let _op = eng.limits().begin_operation();
     let mut stats = RotationSearchStats { probes: 0, accepts: 0, sweeps: 0 };
-    let mut rule = Policed {
-        objective,
-        policy,
-        moves: [NO_MOVE; MAX_SEQUENCE],
-        len: 0,
-        probed: 0,
-        accepts: 0,
-        log: Vec::new(),
-        logging: false,
-    };
-    rule.logging = rule.policy.may_worsen();
+    let logging = policy.may_worsen();
+    let mut rule = Policed { objective, policy, probed: 0, accepts: 0, log: Vec::new(), logging };
     let mut scratch = eng.restructure().checkout(eng.limits());
 
     // Rotation-locality precondition: the locality assertion and the level
@@ -261,8 +236,7 @@ fn sweep_pivot<O: RotationObjective, A: AcceptancePolicy>(
     Ok(0)
 }
 
-/// Probe one sequence, recording it on the rule so the policy sees what it is
-/// deciding about.
+/// Probe one sequence and note a kept one on the search tree.
 fn try_sequence<O: RotationObjective, A: AcceptancePolicy>(
     eng: &Engine,
     search: &mut super::SearchTree<'_>,
@@ -271,10 +245,7 @@ fn try_sequence<O: RotationObjective, A: AcceptancePolicy>(
     scratch: &mut crate::limits::pool::PoolGuard<'_, crate::restructure::relevel::RestructureScratch>,
     config: &RotationSearchConfig,
 ) -> Result<bool, OperationError> {
-    rule.len = moves.len();
-    rule.moves[..moves.len()].copy_from_slice(moves);
-    let kept =
-        probe_moves(eng, search.tdd, moves, rule, scratch, config.max_inner_pairs)?;
+    let kept = probe_moves(eng, search.tdd, moves, rule, scratch, config.max_inner_pairs)?;
     if kept {
         search.original = None;
     }
@@ -332,35 +303,20 @@ fn rewind_to_best(
 /// The two directions a sweep tries at every pivot.
 const KINDS: [RotationKind; 2] = [RotationKind::Left, RotationKind::Right];
 
-/// The filler the sequence buffer starts at; every slot a probe reads has been
-/// written first.
-const NO_MOVE: RotationMove =
-    RotationMove { pivot: VtreeIdx(0), kind: RotationKind::Left };
-
 /// The rule the rewind probes under: whatever it is shown, it keeps.
 struct Forced;
 
-impl RotationObjective for Forced {
-    fn delta(&mut self, _: (&TddLevel, &TddLevel), _: (&TddLevel, &TddLevel)) -> i64 {
-        0
-    }
-}
-
 impl ProbeRule for Forced {
-    fn keeps(&mut self, _probe: &RotationProbe<'_>, _delta: i64, _credit: i64) -> bool {
+    fn keeps(&mut self, _probe: &RotationProbe<'_>, _info: &RotationInfo) -> bool {
         true
     }
 }
 
-/// The search's own [`ProbeRule`]: the caller's objective and policy, the
-/// sequence currently being probed, and the tallies
-/// [`RotationSearchStats`] reports.
+/// The search's own [`ProbeRule`]: the caller's objective and policy, and the
+/// tallies [`RotationSearchStats`] reports.
 struct Policed<'a, O, A> {
     objective: &'a mut O,
     policy: &'a mut A,
-    /// The sequence `probe_moves` is scoring, for the policy to read.
-    moves: [RotationMove; MAX_SEQUENCE],
-    len: usize,
     probed: usize,
     accepts: usize,
     /// Every kept sequence and its score, for the rewind. Empty unless the
@@ -377,26 +333,15 @@ impl<O, A> Policed<'_, O, A> {
     }
 }
 
-impl<O: RotationObjective, A> RotationObjective for Policed<'_, O, A> {
-    #[inline]
-    fn delta(
-        &mut self,
-        before: (&TddLevel, &TddLevel),
-        after: (&TddLevel, &TddLevel),
-    ) -> i64 {
-        self.objective.delta(before, after)
-    }
-}
-
 impl<O: RotationObjective, A: AcceptancePolicy> ProbeRule for Policed<'_, O, A> {
     #[inline]
-    fn keeps(&mut self, _probe: &RotationProbe<'_>, delta: i64, credit: i64) -> bool {
+    fn keeps(&mut self, probe: &RotationProbe<'_>, _info: &RotationInfo) -> bool {
         self.probed += 1;
-        let moves = &self.moves[..self.len];
-        let kept = self.policy.accept(moves, delta - credit);
-        self.policy.observe(moves, delta, kept);
+        let delta = self.objective.delta(probe);
+        let kept = self.policy.accept(probe, delta);
+        self.policy.observe(probe, delta, kept);
         if kept && self.logging {
-            self.log.push((SmallVec::from_slice(moves), delta));
+            self.log.push((SmallVec::from_slice(probe.moves()), delta));
         }
         kept
     }

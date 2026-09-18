@@ -166,11 +166,7 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
 struct AcceptProbe(usize);
 
 impl tididi::restructure::search::RotationObjective for AcceptProbe {
-    fn delta(
-        &mut self,
-        _: (&tididi::diagram::TddLevel, &tididi::diagram::TddLevel),
-        _: (&tididi::diagram::TddLevel, &tididi::diagram::TddLevel),
-    ) -> i64 {
+    fn delta(&mut self, _: &tididi::restructure::search::RotationProbe<'_>) -> i64 {
         if self.0 == 0 { return 0; }
         self.0 -= 1;
         if self.0 == 0 { -1 } else { 0 }

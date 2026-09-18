@@ -92,7 +92,7 @@ fn rotation_search_on_non_canonical_clause_build_preserves_count() {
 fn reject_all_objective_leaves_tdd_untouched() {
     struct RejectAll;
     impl RotationObjective for RejectAll {
-        fn delta(&mut self, _before: (&TddLevel, &TddLevel), _after: (&TddLevel, &TddLevel)) -> i64 {
+        fn delta(&mut self, _: &RotationProbe<'_>) -> i64 {
             0 // never < 0 ⇒ every probe reverts
         }
     }
@@ -124,10 +124,9 @@ fn reject_all_objective_leaves_tdd_untouched() {
 fn a_search_keeps_its_private_tree_between_rejected_probes() {
     use crate::restructure::relevel::RestructureScratch;
     struct Reject;
-    impl RotationObjective for Reject {
-        fn delta(&mut self, _: (&TddLevel, &TddLevel), _: (&TddLevel, &TddLevel)) -> i64 { 0 }
+    impl ProbeRule for Reject {
+        fn keeps(&mut self, _: &RotationProbe<'_>, _: &crate::vtree::rotate::RotationInfo) -> bool { false }
     }
-    impl ProbeRule for Reject {}
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(8));
     let mut f = Tdd::one(&tree);
@@ -150,7 +149,7 @@ fn a_search_keeps_its_private_tree_between_rejected_probes() {
 fn a_panicking_search_restores_shared_tree_identity() {
     struct Panic;
     impl RotationObjective for Panic {
-        fn delta(&mut self, _: (&TddLevel, &TddLevel), _: (&TddLevel, &TddLevel)) -> i64 { panic!("objective failed") }
+        fn delta(&mut self, _: &RotationProbe<'_>) -> i64 { panic!("objective failed") }
     }
     let tree = Arc::new(Vtree::balanced(8));
     let mut f = Tdd::one(&tree);

@@ -4,24 +4,20 @@ use std::sync::Arc;
 
 use crate::limits::{LimitConfig, OperationError};
 use crate::restructure::relevel::RestructureScratch;
-use crate::restructure::search::RotationObjective;
+use crate::restructure::search::RotationProbe;
 use crate::restructure::search::probe::{ProbeRule, probe};
 use crate::test_helpers::assert_canonical;
 use crate::vtree::{RotationKind, Vtree};
-use crate::diagram::{Tdd, TddLevel};
+use crate::diagram::Tdd;
 use crate::{Engine, and};
 
 /// Scores every rotation an improvement, so a refusal is the only way the
 /// probe can come back without keeping one.
 struct Accept;
 
-impl RotationObjective for Accept {
-    fn delta(&mut self, _: (&TddLevel, &TddLevel), _: (&TddLevel, &TddLevel)) -> i64 {
-        -1
-    }
+impl ProbeRule for Accept {
+    fn keeps(&mut self, _: &RotationProbe<'_>, _: &crate::vtree::rotate::RotationInfo) -> bool { true }
 }
-
-impl ProbeRule for Accept {}
 
 #[test]
 fn a_rebuild_that_does_not_fit_the_budget_is_refused_not_taken() {

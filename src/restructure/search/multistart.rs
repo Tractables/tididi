@@ -121,7 +121,7 @@ fn kick(
         let pivot = VtreeIdx(rng.below(nodes) as u32);
         let kind = if rng.below(2) == 0 { RotationKind::Left } else { RotationKind::Right };
         eng.limits().check_stop()?;
-        tdd.try_rotations(&[RotationMove { pivot, kind }], usize::MAX, |_| true)?;
+        tdd.rotate_if(&[RotationMove { pivot, kind }], usize::MAX, |_| true)?;
     }
     Ok(())
 }

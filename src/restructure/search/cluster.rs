@@ -9,10 +9,10 @@ use rustc_hash::FxHashSet;
 
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 use crate::vtree::rotate::RotationInfo;
-use crate::diagram::{Tdd, TddLevel};
+use crate::diagram::Tdd;
 use crate::limits::OperationError;
 
-use super::local::{RotationObjective, MinimizePairs};
+use super::local::{MinimizePairs, RotationObjective};
 
 use super::probe::*;
 
@@ -127,19 +127,6 @@ struct ClusterRule {
     bound_mult: usize,
 }
 
-impl RotationObjective for ClusterRule {
-    /// The pair growth of the two affected levels, which this pass scores
-    /// against the closure credit rather than accepting on its own sign — so
-    /// the measurement is the default objective's, unchanged.
-    fn delta(
-        &mut self,
-        before: (&TddLevel, &TddLevel),
-        after: (&TddLevel, &TddLevel),
-    ) -> i64 {
-        MinimizePairs.delta(before, after)
-    }
-}
-
 impl ProbeRule for ClusterRule {
     /// Only a rotation that leaves `w` over two marginal children can produce a
     /// collapse — and a pivot whose two levels are already vast costs a
@@ -162,18 +149,21 @@ impl ProbeRule for ClusterRule {
         pivot_pairs(tdd, info).saturating_mul(self.bound_mult).max(64)
     }
 
-    /// The pairs `marginalize_closure` is about to remove. Scored as a credit,
-    /// the accept test `delta - credit < 0` reads as "the v/w growth must be
-    /// repaid by the imminent closure" — a purely two-level comparison, where
-    /// calling `tdd.pair_count()` would be O(total nodes) per rotation.
+    /// The pair growth of the two rebuilt levels — the default objective's
+    /// measurement, unchanged — against the pairs `marginalize_closure` is
+    /// about to remove. The test `delta < credit` reads as "the v/w growth
+    /// must be repaid by the imminent closure", a purely two-level comparison,
+    /// where calling `tdd.pair_count()` would be O(total nodes) per rotation.
     ///
     /// A rotation with nothing to close is not this pass's business even when
     /// it happens to shrink, so no closure means a credit that declines.
-    fn credit(&mut self, tdd: &Tdd, info: &RotationInfo) -> i64 {
-        match predict_closure_savings(tdd, &tdd.vtree, info.w_idx) {
+    fn keeps(&mut self, probe: &RotationProbe<'_>, info: &RotationInfo) -> bool {
+        let tdd = probe.diagram();
+        let credit = match predict_closure_savings(tdd, &tdd.vtree, info.w_idx) {
             0 => i64::MIN / 2,
             savings => savings as i64,
-        }
+        };
+        MinimizePairs.delta(probe) < credit
     }
 
     /// Collapse the cluster the rotation just created. An `Err` here is the

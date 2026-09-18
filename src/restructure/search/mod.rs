@@ -12,7 +12,7 @@
 //! one rotation to two or three at a time, and
 //! [`Engine::rotation_multistart`](crate::Engine::rotation_multistart) runs
 //! several searches from perturbed copies and keeps the smallest result.
-//! [`Tdd::try_rotations`] is the primitive underneath all of them: apply
+//! [`Tdd::rotate_if`] is the primitive underneath all of them: apply
 //! rotations, look at what they did, and keep or undo them.
 //!
 //! A changed vtree belongs to the resulting diagram. Build subsequent operands

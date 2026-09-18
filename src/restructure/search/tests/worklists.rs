@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use crate::Engine;
-use crate::diagram::{Pass, Tdd, TddLevel};
+use crate::diagram::{Pass, Tdd};
 use crate::restructure::relevel::RestructureScratch;
-use crate::restructure::search::RotationObjective;
+use crate::restructure::search::RotationProbe;
 use crate::restructure::search::probe::{ProbeRule, probe};
 use crate::test_helpers::assert_canonical;
 use crate::vtree::{RotationKind, Vtree};
@@ -13,13 +13,9 @@ use crate::vtree::{RotationKind, Vtree};
 /// Scores every rotation an improvement, so the trial commits.
 struct Accept;
 
-impl RotationObjective for Accept {
-    fn delta(&mut self, _: (&TddLevel, &TddLevel), _: (&TddLevel, &TddLevel)) -> i64 {
-        -1
-    }
+impl ProbeRule for Accept {
+    fn keeps(&mut self, _: &RotationProbe<'_>, _: &crate::vtree::rotate::RotationInfo) -> bool { true }
 }
-
-impl ProbeRule for Accept {}
 
 /// The levels the diagram still owes each reduction pass, read without
 /// consuming them.

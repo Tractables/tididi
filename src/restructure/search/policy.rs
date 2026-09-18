@@ -18,7 +18,7 @@ use rustc_hash::FxBuildHasher;
 
 use crate::vtree::rng::Lcg;
 
-use super::{RotationMove, RotationSearchStats};
+use super::{RotationMove, RotationProbe, RotationSearchStats};
 
 /// Whether a probed sequence of rotations is kept, given its cost.
 ///
@@ -26,11 +26,12 @@ use super::{RotationMove, RotationSearchStats};
 /// search: [`observe`](Self::observe) reports every decision and
 /// [`keep_sweeping`](Self::keep_sweeping) ends the search.
 pub trait AcceptancePolicy {
-    /// Keep this sequence? A negative `delta` improves the objective.
-    fn accept(&mut self, moves: &[RotationMove], delta: i64) -> bool;
+    /// Keep this sequence? `delta` is the objective's score for `probe`, and
+    /// a negative one improves it.
+    fn accept(&mut self, probe: &RotationProbe<'_>, delta: i64) -> bool;
 
     /// Record the outcome, kept or not, for a policy with memory.
-    fn observe(&mut self, _moves: &[RotationMove], _delta: i64, _kept: bool) {}
+    fn observe(&mut self, _probe: &RotationProbe<'_>, _delta: i64, _kept: bool) {}
 
     /// Continue after a finished sweep that kept `accepted` sequences?
     ///
@@ -60,7 +61,7 @@ pub struct Greedy;
 
 impl AcceptancePolicy for Greedy {
     #[inline]
-    fn accept(&mut self, _moves: &[RotationMove], delta: i64) -> bool {
+    fn accept(&mut self, _probe: &RotationProbe<'_>, delta: i64) -> bool {
         delta < 0
     }
 }
@@ -127,14 +128,15 @@ impl Default for Tabu {
 }
 
 impl AcceptancePolicy for Tabu {
-    fn accept(&mut self, moves: &[RotationMove], delta: i64) -> bool {
+    fn accept(&mut self, probe: &RotationProbe<'_>, delta: i64) -> bool {
         // Aspiration: a sequence that reaches a new best is kept whether or not
         // one of its moves is forbidden, since the reason to forbid a move is
         // that it leads back somewhere already seen.
         if self.cost + delta < self.best {
             return true;
         }
-        let forbidden = moves
+        let forbidden = probe
+            .moves()
             .iter()
             .any(|mv| self.forbidden.get(mv).is_some_and(|&until| until > self.step));
         if forbidden {
@@ -148,14 +150,14 @@ impl AcceptancePolicy for Tabu {
         std::mem::take(&mut self.stuck)
     }
 
-    fn observe(&mut self, moves: &[RotationMove], delta: i64, kept: bool) {
+    fn observe(&mut self, probe: &RotationProbe<'_>, delta: i64, kept: bool) {
         if !kept {
             return;
         }
         self.step += 1;
         self.cost += delta;
         let until = self.step + self.tenure;
-        for mv in moves {
+        for mv in probe.moves() {
             self.forbidden.insert(mv.inverse(), until);
         }
         if self.cost < self.best {
@@ -220,7 +222,7 @@ impl Default for Annealing {
 }
 
 impl AcceptancePolicy for Annealing {
-    fn accept(&mut self, _moves: &[RotationMove], delta: i64) -> bool {
+    fn accept(&mut self, _probe: &RotationProbe<'_>, delta: i64) -> bool {
         if delta < 0 {
             return true;
         }

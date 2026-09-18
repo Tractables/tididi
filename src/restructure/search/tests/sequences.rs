@@ -1,4 +1,4 @@
-//! [`Tdd::try_rotations`]: what a kept sequence leaves behind, and what a
+//! [`Tdd::rotate_if`]: what a kept sequence leaves behind, and what a
 //! declined one does not.
 
 use std::sync::Arc;
@@ -52,7 +52,7 @@ fn a_declined_sequence_leaves_the_diagram_and_its_vtree_exactly_as_they_were() {
         let nodes = tdd.node_count();
         for moves in sequences(&vtree, k) {
             let mut probed = tdd.clone();
-            let kept = probed.try_rotations(&moves, usize::MAX, |_| false).unwrap();
+            let kept = probed.rotate_if(&moves, usize::MAX, |_| false).unwrap();
             assert!(!kept, "a closure that declines cannot keep a sequence");
             assert!(probed.vtree().same_tree(&vtree), "k = {k}, moves {moves:?}");
             assert!(probed.equivalent(&tdd).unwrap());
@@ -71,7 +71,7 @@ fn a_kept_sequence_preserves_the_function_and_stays_canonical() {
         let count = tdd.model_count().unwrap();
         for moves in sequences(&vtree, k) {
             let mut probed = tdd.clone();
-            probed.try_rotations(&moves, usize::MAX, |_| true).unwrap();
+            probed.rotate_if(&moves, usize::MAX, |_| true).unwrap();
             probed.minimize().unwrap();
             assert_canonical(&probed);
             assert_eq!(probed.model_count().unwrap(), count, "k = {k}, moves {moves:?}");
@@ -84,11 +84,11 @@ fn a_sequence_and_its_inverse_return_the_vtree_and_the_diagram() {
     let (vtree, tdd) = fixture();
     for moves in sequences(&vtree, 2) {
         let mut probed = tdd.clone();
-        if !probed.try_rotations(&moves, usize::MAX, |_| true).unwrap() {
+        if !probed.rotate_if(&moves, usize::MAX, |_| true).unwrap() {
             continue;
         }
         let inverse: Vec<RotationMove> = moves.iter().rev().map(|mv| mv.inverse()).collect();
-        assert!(probed.try_rotations(&inverse, usize::MAX, |_| true).unwrap());
+        assert!(probed.rotate_if(&inverse, usize::MAX, |_| true).unwrap());
         probed.minimize().unwrap();
         assert!(probed.vtree().same_tree(&vtree), "moves {moves:?}");
         assert_eq!(probed.pair_count(), tdd.pair_count());
@@ -102,12 +102,12 @@ fn a_two_move_sequence_gives_what_the_two_moves_give_one_at_a_time() {
     let (vtree, tdd) = fixture();
     for moves in sequences(&vtree, 2) {
         let mut together = tdd.clone();
-        if !together.try_rotations(&moves, usize::MAX, |_| true).unwrap() {
+        if !together.rotate_if(&moves, usize::MAX, |_| true).unwrap() {
             continue;
         }
         let mut apart = tdd.clone();
         for mv in &moves {
-            assert!(apart.try_rotations(&[*mv], usize::MAX, |_| true).unwrap());
+            assert!(apart.rotate_if(&[*mv], usize::MAX, |_| true).unwrap());
         }
         assert!(together.vtree().same_tree(apart.vtree()), "moves {moves:?}");
         assert_eq!(together.pair_count(), apart.pair_count());
@@ -122,14 +122,14 @@ fn a_probe_reads_the_state_before_the_first_move() {
         .into_iter()
         .find(|seq| {
             let mut probed = tdd.clone();
-            probed.try_rotations(seq, usize::MAX, |_| true).unwrap()
+            probed.rotate_if(seq, usize::MAX, |_| true).unwrap()
         })
         .expect("the fixture admits a two-move sequence");
 
     let mut probed = tdd.clone();
     let seen = std::cell::RefCell::new(Vec::new());
     probed
-        .try_rotations(&moves, usize::MAX, |probe| {
+        .rotate_if(&moves, usize::MAX, |probe| {
             for &level in probe.changed() {
                 seen.borrow_mut().push((
                     level,
@@ -158,7 +158,7 @@ fn a_move_that_does_not_apply_declines_without_scoring() {
         .expect("a vtree has leaves");
     let moves = [RotationMove { pivot: leaf, kind: RotationKind::Left }];
     let kept = tdd
-        .try_rotations(&moves, usize::MAX, |_| panic!("an inapplicable move must not be scored"))
+        .rotate_if(&moves, usize::MAX, |_| panic!("an inapplicable move must not be scored"))
         .unwrap();
     assert!(!kept);
     assert!(tdd.vtree().same_tree(&vtree));
@@ -167,7 +167,7 @@ fn a_move_that_does_not_apply_declines_without_scoring() {
 #[test]
 fn an_empty_sequence_keeps_nothing() {
     let (vtree, mut tdd) = fixture();
-    let kept = tdd.try_rotations(&[], usize::MAX, |_| panic!("nothing to score")).unwrap();
+    let kept = tdd.rotate_if(&[], usize::MAX, |_| panic!("nothing to score")).unwrap();
     assert!(!kept);
     assert!(tdd.vtree().same_tree(&vtree));
 }

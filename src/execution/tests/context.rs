@@ -254,12 +254,11 @@ fn sharing_context_does_not_make_distinct_trees_compatible() {
 
 #[test]
 fn accepted_rotation_keeps_context_and_detaches_only_the_changed_tree() {
-    use crate::diagram::TddLevel;
-    use crate::restructure::search::{RotationObjective, RotationSearchConfig};
+    use crate::restructure::search::{RotationObjective, RotationProbe, RotationSearchConfig};
     use crate::test_helpers::eval;
     struct AcceptOnce(bool);
     impl RotationObjective for AcceptOnce {
-        fn delta(&mut self, _: (&TddLevel, &TddLevel), _: (&TddLevel, &TddLevel)) -> i64 {
+        fn delta(&mut self, _: &RotationProbe<'_>) -> i64 {
             if std::mem::replace(&mut self.0, false) { -1 } else { 0 }
         }
     }

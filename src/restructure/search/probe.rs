@@ -18,8 +18,6 @@ use crate::restructure::relevel::{RestructureScratch, restructure_inner_search};
 use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
 use crate::vtree::{RotationKind, Vtree, VtreeIdx};
 
-use super::local::RotationObjective;
-
 /// One rotation: which internal vtree node it turns, and which way.
 ///
 /// A left rotation at `pivot` promotes `pivot`'s right child, a right rotation
@@ -49,9 +47,10 @@ impl RotationMove {
 /// are now.
 ///
 /// Handed to the decision a trial is waiting on — the closure of
-/// [`Tdd::try_rotations`] or an [`AcceptancePolicy`](super::AcceptancePolicy)
-/// — while the sequence is applied but not yet kept. Reading it costs nothing:
-/// the preimages are the trial's own, not copies.
+/// [`Tdd::rotate_if`], a [`RotationObjective`](super::RotationObjective) or an
+/// [`AcceptancePolicy`](super::AcceptancePolicy) — while the sequence is
+/// applied but not yet kept. Reading it costs nothing: the preimages are the
+/// trial's own, not copies.
 ///
 /// `before` is the state ahead of the *first* move, not the move that last
 /// touched the level. A pair of rotations whose first move grows the diagram
@@ -59,17 +58,33 @@ impl RotationMove {
 /// step it is meant to be.
 pub struct RotationProbe<'a> {
     tdd: &'a Tdd,
+    moves: &'a [RotationMove],
     changed: &'a [VtreeIdx],
     preimages: &'a [TddLevel],
 }
 
 impl std::fmt::Debug for RotationProbe<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RotationProbe").field("changed", &self.changed).finish_non_exhaustive()
+        f.debug_struct("RotationProbe")
+            .field("moves", &self.moves)
+            .field("changed", &self.changed)
+            .finish_non_exhaustive()
     }
 }
 
 impl RotationProbe<'_> {
+    /// The sequence that was applied, in the order it was applied.
+    #[inline]
+    pub fn moves(&self) -> &[RotationMove] {
+        self.moves
+    }
+
+    /// The diagram with the sequence applied, on its rotated vtree.
+    #[inline]
+    pub fn diagram(&self) -> &Tdd {
+        self.tdd
+    }
+
     /// The levels the sequence rebuilt, each listed once, in the order its
     /// moves first reached them: the outer then the inner level of the first
     /// move, then whichever of the next move's two levels is new, and so on.
@@ -109,19 +124,13 @@ impl RotationProbe<'_> {
     fn position(&self, level: VtreeIdx) -> Option<usize> {
         self.changed.iter().position(|&t| t == level)
     }
-
-    /// The `i`th changed level's before and after, without the lookup.
-    #[inline]
-    fn at(&self, i: usize) -> (&TddLevel, &TddLevel) {
-        (&self.preimages[i], self.tdd.level(self.changed[i]))
-    }
 }
 
 /// What a caller of [`probe_moves`] adds to the shared protocol.
 ///
-/// The search supplies admission, size bounds, acceptance credit and an
-/// accepted-rotation callback. Defaults use the objective alone.
-pub(super) trait ProbeRule: RotationObjective {
+/// The search supplies admission, size bounds, the decision and an
+/// accepted-rotation callback.
+pub(super) trait ProbeRule {
     /// A last gate before the expensive restructure, read on the rotated vtree
     /// with the levels still untouched. `false` reverts the pointers and
     /// declines the probe. Consulted once per move of the sequence.
@@ -134,20 +143,9 @@ pub(super) trait ProbeRule: RotationObjective {
         default_bound
     }
 
-    /// What an accepted rotation is worth beyond its own level delta — the
-    /// win a pass knows is about to follow but the scored levels cannot show.
-    /// Read with the last move's information.
-    fn credit(&mut self, _tdd: &Tdd, _info: &RotationInfo) -> i64 {
-        0
-    }
-
-    /// Keep this sequence? `delta` is this rule's objective folded over the
-    /// levels the sequence rebuilt, and `credit` is what
-    /// [`credit`](Self::credit) returned.
-    #[inline]
-    fn keeps(&mut self, _probe: &RotationProbe<'_>, delta: i64, credit: i64) -> bool {
-        delta < credit
-    }
+    /// Keep this sequence? `probe` shows the levels it rebuilt, and `info`
+    /// is the last move's rotation information.
+    fn keeps(&mut self, probe: &RotationProbe<'_>, info: &RotationInfo) -> bool;
 
     /// Run after the rotation is committed. Its `Err` propagates with the
     /// rotation kept: what it leaves unfinished is an optimization, never the
@@ -166,8 +164,9 @@ impl Tdd {
     /// Apply `moves` in order, show the levels they changed to `accept`, and
     /// keep the sequence only if it says so.
     ///
-    /// One move is a single rotation; two and three are the connected pair and
-    /// triple neighborhoods a [rotation search](Self::rotation_search) probes.
+    /// This is the trial every rotation search runs on. One move is a single
+    /// rotation; two and three are the connected pair and triple neighborhoods
+    /// a [rotation search](Self::rotation_search) probes.
     /// The sequence is scored as one step: [`RotationProbe::before`] is the
     /// state ahead of the first move, so a pair whose first half grows the
     /// diagram and whose second half more than pays for it is seen as the
@@ -200,13 +199,13 @@ impl Tdd {
     /// let before = f.pair_count();
     /// let turn = RotationMove { pivot: vtree.root(), kind: RotationKind::Left };
     /// // Keep the rotation only where it does not cost storage.
-    /// let kept = f.try_rotations(&[turn], 1 << 20, |probe| probe.live_pairs_delta() <= 0)?;
+    /// let kept = f.rotate_if(&[turn], 1 << 20, |probe| probe.live_pairs_delta() <= 0)?;
     /// if !kept {
     ///     assert_eq!(f.pair_count(), before);
     /// }
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn try_rotations<F>(
+    pub fn rotate_if<F>(
         &mut self,
         moves: &[RotationMove],
         bound: usize,
@@ -225,20 +224,14 @@ impl Tdd {
     }
 }
 
-/// The rule a [`Tdd::try_rotations`] call probes under: the caller's closure,
-/// consulted once, with no objective of its own.
+/// The rule a [`Tdd::rotate_if`] call probes under: the caller's closure,
+/// consulted once.
 struct Closure<F> {
     accept: Option<F>,
 }
 
-impl<F> RotationObjective for Closure<F> {
-    fn delta(&mut self, _: (&TddLevel, &TddLevel), _: (&TddLevel, &TddLevel)) -> i64 {
-        0
-    }
-}
-
 impl<F: FnOnce(&RotationProbe<'_>) -> bool> ProbeRule for Closure<F> {
-    fn keeps(&mut self, probe: &RotationProbe<'_>, _delta: i64, _credit: i64) -> bool {
+    fn keeps(&mut self, probe: &RotationProbe<'_>, _info: &RotationInfo) -> bool {
         (self.accept.take().expect("a probe is scored once"))(probe)
     }
 }
@@ -304,13 +297,15 @@ pub(super) fn probe_moves<R: ProbeRule>(
     let info = trial.last_info();
     #[cfg(debug_assertions)]
     crate::test_helpers::check::debug_assert_rotation_locality(eng, trial.tdd, info.w_idx);
-    let credit = rule.credit(trial.tdd, &info);
-    let keep = {
-        let probe =
-            RotationProbe { tdd: trial.tdd, changed: &trial.changed, preimages: &trial.preimages };
-        let delta = fold_delta(rule, &probe);
-        rule.keeps(&probe, delta, credit)
-    };
+    let keep = rule.keeps(
+        &RotationProbe {
+            tdd: trial.tdd,
+            moves,
+            changed: &trial.changed,
+            preimages: &trial.preimages,
+        },
+        &info,
+    );
     if keep {
         trial.commit();
         rule.on_accept(eng, tdd, &info)?;
@@ -318,32 +313,6 @@ pub(super) fn probe_moves<R: ProbeRule>(
     } else {
         Ok(false)
     }
-}
-
-/// Score a probed sequence with `objective`.
-///
-/// The objective reads two levels at a time, which is exactly one rotation's
-/// worth, so a longer sequence hands it the changed levels in pairs. An odd
-/// count pairs the last level with an empty one: an objective is a cost over
-/// the levels it is shown, and an empty level costs the same before and after.
-fn fold_delta<O: RotationObjective + ?Sized>(objective: &mut O, probe: &RotationProbe<'_>) -> i64 {
-    let n = probe.changed.len();
-    if n == 2 {
-        let (v_before, v_after) = probe.at(0);
-        let (w_before, w_after) = probe.at(1);
-        return objective.delta((v_before, w_before), (v_after, w_after));
-    }
-    let empty = TddLevel::new();
-    let mut delta = 0i64;
-    let mut i = 0;
-    while i < n {
-        let (a_before, a_after) = probe.at(i);
-        let (b_before, b_after) =
-            if i + 1 < n { probe.at(i + 1) } else { (&empty, &empty) };
-        delta += objective.delta((a_before, b_before), (a_after, b_after));
-        i += 2;
-    }
-    delta
 }
 
 /// Own a sequence's preimage until its topology and levels are committed together.
