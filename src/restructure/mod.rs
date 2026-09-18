@@ -1,10 +1,12 @@
 //! Change a diagram's vtree while preserving its function.
 //!
 //! [`Tdd::rotation_search`](crate::Tdd::rotation_search) searches for rotations
-//! that improve a [`search::RotationObjective`]. [`Tdd::graft`](crate::Tdd::graft)
-//! joins diagrams over disjoint variables on a grafted vtree.
-//! [`Tdd::embed`](crate::Tdd::embed) copies one diagram onto a larger vtree
-//! under a renaming of its variables.
+//! that improve a [`search::RotationObjective`], and
+//! [`Tdd::try_rotations`](crate::Tdd::try_rotations) applies rotations one
+//! sequence at a time under the caller's own decision.
+//! [`Tdd::graft`](crate::Tdd::graft) joins diagrams over disjoint variables on
+//! a grafted vtree. [`Tdd::embed`](crate::Tdd::embed) copies one diagram onto a
+//! larger vtree under a renaming of its variables.
 
 pub(crate) mod relevel;
 pub(crate) mod scratch;

@@ -115,7 +115,8 @@ fn a_stride_wider_than_the_pass_never_polls() {
         eng.rotate_marginal_cluster(&mut tdd, root, 8, &mut tried)
     });
 
-    r.expect("a stride the pass never reaches must not read the clock at all");
+    let accepted = r.expect("a stride the pass never reaches must not read the clock at all");
+    assert_eq!(accepted, 1, "the fixture's one candidate must be clustered, not merely visited");
     assert_eq!(
         before,
         tdd.model_count().unwrap(),

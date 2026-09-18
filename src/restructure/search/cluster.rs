@@ -222,8 +222,9 @@ impl Engine {
     /// An invalid `root` returns [`OperationError::LevelNotInVtree`] before
     /// mutation. Allocation refusal or cancellation returns the corresponding
     /// [`OperationError`]; accepted rotations and attempt flags remain in place,
-    /// and the diagram remains count-correct. Trial storage is outside the
-    /// byte budget and output cap, as in [`Engine::rotation_search`].
+    /// and the diagram remains count-correct. A trial's own storage is charged
+    /// to the byte budget and given back when the trial ends, as in
+    /// [`Engine::rotation_search`]; the output cap does not apply.
     pub fn rotate_marginal_cluster(
         &self,
         tdd: &mut Tdd,

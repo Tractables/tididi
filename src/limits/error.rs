@@ -56,6 +56,17 @@ pub enum OperationError {
     VariableNotInVtree(crate::vtree::VarId),
     /// An input cube or substitution map names the same source variable more than once.
     DuplicateVariable(crate::vtree::VarId),
+    /// An option was left without the bound the operation needs, so the work
+    /// it would do has no size limit.
+    ///
+    /// Not a resource condition: nothing about the machine makes it succeed.
+    /// Setting the named option is what answers it.
+    UnboundedSearch {
+        /// The option that has no bound.
+        option: &'static str,
+        /// What needs it bounded.
+        needed_by: &'static str,
+    },
     /// A diagram assembled or reweighted for the operation failed the storage
     /// checks of [`TddBuilder::finish`](crate::diagram::TddBuilder::finish).
     /// `?` on a [`TddBuildError`](crate::diagram::TddBuildError) produces it,
@@ -77,6 +88,9 @@ impl std::fmt::Display for OperationError {
             OperationError::Stopped => f.write_str("operation stopped"),
             OperationError::OutputCap => f.write_str("output node cap exceeded"),
             OperationError::DuplicateVariable(var) => write!(f, "input names variable x{} twice", var.0),
+            OperationError::UnboundedSearch { option, needed_by } => {
+                write!(f, "{option} has no bound, which {needed_by} requires")
+            }
             OperationError::InvalidDiagram(source) => write!(f, "invalid diagram: {source}"),
             OperationError::VariableNotInVtree(var) => {
                 write!(f, "variable x{} is not in the vtree", var.0)

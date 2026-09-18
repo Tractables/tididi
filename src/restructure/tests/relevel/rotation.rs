@@ -27,7 +27,7 @@ fn left_rotation_preserves_model_count() {
     let root = vt.root();
     let info = rotate_left(&mut vt, root).unwrap();
     tdd.vtree = Arc::new(vt);
-    restructure_inner_search(&eng_lim, &mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
+    restructure_inner_search(&eng_lim, &mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX).expect("nothing is armed");
     tdd.minimize().unwrap();
     assert_canonical(&tdd);
     assert_eq!(mc_before, tdd.model_count().unwrap());
@@ -49,13 +49,13 @@ fn right_rotation_preserves_model_count() {
     let root = vt.root();
     let left_idx = rotate_left(&mut vt, root).unwrap();
     tdd.vtree = Arc::new(vt.clone());
-    restructure_inner_search(&eng_lim, &mut tdd, &left_idx, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
+    restructure_inner_search(&eng_lim, &mut tdd, &left_idx, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX).expect("nothing is armed");
     tdd.minimize().unwrap();
     assert_eq!(mc_before, tdd.model_count().unwrap(), "the left rotation moved the count");
 
     let right_idx = rotate_right(&mut vt, root).unwrap();
     tdd.vtree = Arc::new(vt);
-    restructure_inner_search(&eng_lim, &mut tdd, &right_idx, RotationKind::Right, &mut RestructureScratch::default(), usize::MAX);
+    restructure_inner_search(&eng_lim, &mut tdd, &right_idx, RotationKind::Right, &mut RestructureScratch::default(), usize::MAX).expect("nothing is armed");
     tdd.minimize().unwrap();
     assert_canonical(&tdd);
     assert_eq!(mc_before, tdd.model_count().unwrap(), "the round trip moved the count");
@@ -72,7 +72,7 @@ fn left_rotation_unsat_stays_unsat() {
     let root = vt.root();
     if let Some(info) = rotate_left(&mut vt, root) {
         tdd.vtree = Arc::new(vt);
-        restructure_inner_search(&eng_lim, &mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
+        restructure_inner_search(&eng_lim, &mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX).expect("nothing is armed");
         tdd.minimize().unwrap();
         assert_canonical(&tdd);
         assert_eq!(tdd.model_count().unwrap(), num_bigint::BigUint::ZERO);
@@ -118,7 +118,7 @@ fn parent_of_marginal_rotation_preserves_model_count() {
     let info = rotate_left(&mut vt, root).unwrap();
     let new_vtree = Arc::new(vt);
     tdd.vtree = Arc::clone(&new_vtree);
-    restructure_inner_search(&eng_lim, &mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
+    restructure_inner_search(&eng_lim, &mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX).expect("nothing is armed");
     // Close clusters (the production path runs `marginalize_closure` after search).
     marginalize_closure(&eng, &mut tdd).expect("no wall is installed in a test");
     tdd.minimize().unwrap();
@@ -175,7 +175,7 @@ fn cluster_rotation_frees_subsumed_child_stores() {
     let info = rotate_left(&mut vt, root).unwrap();
     let new_vtree = Arc::new(vt);
     tdd.vtree = Arc::clone(&new_vtree);
-    restructure_inner_search(&eng_lim, &mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
+    restructure_inner_search(&eng_lim, &mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX).expect("nothing is armed");
     marginalize_closure(&eng, &mut tdd).expect("no wall is installed in a test");
 
     assert!(
