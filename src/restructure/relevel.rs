@@ -21,7 +21,6 @@ use crate::diagram::ChildDecoder;
 
 use crate::diagram::EncodedChildRef;
 
-use crate::diagram::Changed;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::vtree::rotate::RotationInfo;
@@ -162,7 +161,7 @@ pub(crate) fn restructure_inner_search(
 
     // Rotation locality: only w_idx can have fresh twins, and contraction reaches
     // a level through its parent, so the outer level is what changed here.
-    tdd.invalidate(crate::vtree::VtreeIdx(v_idx as u32), Changed::PAIRS);
+    tdd.invalidate(crate::vtree::VtreeIdx(v_idx as u32));
     let old_w_level = std::mem::replace(&mut tdd.levels[w_idx], inner_level);
     let old_v_level = std::mem::replace(&mut tdd.levels[v_idx], outer_level);
     Some((old_v_level, old_w_level))

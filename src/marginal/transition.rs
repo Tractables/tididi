@@ -1,6 +1,6 @@
 //! Installing marginal columns and settling the levels that refer to them.
 
-use crate::diagram::{Changed, Tdd, TddLevel, WeightStore, WeightValue, assert_can_make_marginal, remap_refs_into};
+use crate::diagram::{Tdd, TddLevel, WeightStore, WeightValue, assert_can_make_marginal, remap_refs_into};
 use crate::value::{Column, CountVec, IntFold, WeightFold, ValueDomain};
 use crate::vtree::{Vtree, VtreeIdx};
 use super::free_subsumed_marginal_children;
@@ -196,7 +196,7 @@ pub(crate) fn install_finished<K: MarginalDomain>(
         // The load-bearing seed is the boundary parent that stays explicit;
         // within a marginalizing subtree the parent usually marginalizes too, and
         // contraction then skips it harmlessly.
-        tdd.invalidate(parent_vi, Changed::PAIRS);
+        tdd.invalidate(parent_vi);
     }
 
     let remap = K::install(tdd, level, col, store);

@@ -6,7 +6,6 @@
 //! own level and its parent's must be structural; `check_conditionable`
 //! checks that.
 
-use crate::diagram::Changed;
 use crate::Engine;
 use std::sync::Arc;
 
@@ -101,7 +100,7 @@ fn propagate_false_nodes(tdd: &mut Tdd) {
                 Some(pair)
             }
         });
-        tdd.invalidate(vi, Changed::PAIRS);
+        tdd.invalidate(vi);
     }
     let output = tdd.output;
     if empty_node(&tdd.levels[output.vtree.idx()], output.local.idx()) {
@@ -211,7 +210,7 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
             ChildPair::new(p.left, ONE_LEAF_IDX)
         })
     });
-    tdd.invalidate(parent_vi, Changed::PAIRS);
+    tdd.invalidate(parent_vi);
     emptied
 }
 

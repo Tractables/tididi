@@ -10,7 +10,6 @@
 //! The prune, merge, contract fixpoint that drives the merge is
 //! `reduce::canonicalize_content_twins`.
 
-use crate::diagram::Changed;
 use crate::Engine;
 use crate::limits::pool::PooledScratch;
 
@@ -317,7 +316,7 @@ fn redirect_parent_refs(
 
     // The ref rewrite may have created context-equal twins at the grandparent,
     // and may have changed which leaf labels appear in its pairs.
-    tdd.invalidate(grandparent, Changed::VALUES);
+    tdd.invalidate(grandparent);
     // In-pass cascade: the rewrite may have made two of the parent's nodes
     // content-equal. The parent is later in `order`, so admitting it to the
     // live worklist means the current pass catches the new twins.

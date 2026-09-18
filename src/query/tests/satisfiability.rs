@@ -96,7 +96,7 @@ fn checked_satisfiability_walks_an_edited_marginal_diagram_under_limits() {
         .filter(|&t| under_left[t.idx()]).collect();
     engine.marginalize_levels(&mut g, &summed).unwrap();
     let mut f = engine.and(g, engine.literal(&tree, 8).unwrap()).unwrap();
-    assert!(f.has_marginal_level() && !f.worklists_empty());
+    assert!(f.has_marginal_level() && !f.dirty.is_empty());
     engine.limits().pin_reduce_poll_stride(Some(1));
     {
         let _scope = engine.limits().scope(LimitConfig::none().with_stop_rules(StopRules {
@@ -106,7 +106,7 @@ fn checked_satisfiability_walks_an_edited_marginal_diagram_under_limits() {
     }
     assert_eq!(engine.is_sat(&f), Ok(true));
     f.minimize().unwrap();
-    assert!(f.worklists_empty());
+    assert!(f.dirty.is_empty());
     let before = engine.limits().work_units();
     assert_eq!(engine.is_sat(&f), Ok(true));
     assert_eq!(engine.limits().work_units(), before);
@@ -127,7 +127,7 @@ fn checked_satisfiability_reads_the_output_above_weighted_levels() {
     let (left, _) = tree.children(tree.root());
     engine.marginalize_levels(&mut g, &[left]).unwrap();
     let f = engine.and(g, engine.literal(&tree, 4).unwrap()).unwrap();
-    assert!(f.has_marginal_level() && !f.worklists_empty());
+    assert!(f.has_marginal_level() && !f.dirty.is_empty());
     let before = engine.limits().work_units();
     assert_eq!(engine.is_sat(&f), Ok(true));
     assert_eq!(engine.limits().work_units(), before);

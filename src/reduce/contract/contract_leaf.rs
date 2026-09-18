@@ -13,7 +13,7 @@
 //! rewritten only when every pair list there admits it (every `(Pos, S)` has
 //! its `(Neg, S)` partner in the same list, and vice versa).
 
-use crate::diagram::Changed;
+use crate::diagram::Pass;
 use crate::Engine;
 use crate::diagram::ChildSide;
 use crate::diagram::{EncodedChildRef, ChildPair, Tdd, TddLevel, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
@@ -40,7 +40,7 @@ pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> Result<bool, O
     let n = vtree.num_nodes();
     // Every site that mutates a pair list pushes its level here, so the
     // per-call cost is O(|dirty|) instead of O(num_vtree_nodes).
-    let dirty = tdd.take_leaf_worklist();
+    let dirty = tdd.dirty.take(Pass::LeafContract);
     if dirty.is_empty() {
         return Ok(false);
     }
@@ -50,7 +50,7 @@ pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> Result<bool, O
         match contract_leaf_sides(eng, tdd, &vtree, VtreeIdx(vi_raw)) {
             Ok(fired) => changed |= fired,
             Err(e) => {
-                tdd.requeue_leaf_contract(dirty[k..].iter().copied());
+                tdd.dirty.requeue(Pass::LeafContract, dirty[k..].iter().copied());
                 return Err(e);
             }
         }
@@ -247,7 +247,7 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
     // copied through verbatim. The dropped slots stay in the arena until the
     // level's compaction threshold; no pair-arena offset is held across it.
     level.compact_pairs_if_stale();
-    tdd.invalidate(parent_vi, Changed::PAIRS);
+    tdd.invalidate(parent_vi);
     Ok(())
 }
 

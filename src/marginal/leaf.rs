@@ -1,6 +1,5 @@
 //! Summing out a single-variable vtree leaf, in both representations.
 
-use crate::diagram::Changed;
 use crate::diagram::WeightValue;
 use crate::diagram::{for_each_side_ref_mut, ChildSide, LeafLabel, MarginalSide, ValueRef, Tdd, TddLevel};
 use crate::diagram::{leaf_canon_map, leaf_column_vals, leaf_count};
@@ -37,7 +36,7 @@ pub(crate) fn marginalize_leaf_inline(
             let leaf_is_left = pl == leaf;
             let side = if leaf_is_left { ChildSide::Left } else { ChildSide::Right };
             inline_leaf_refs_at_parent(tdd, parent_vi, side);
-            tdd.invalidate(parent_vi, Changed::PAIRS);
+            tdd.invalidate(parent_vi);
             if leaf_is_left {
                 tdd.levels[pi].set_marginal_inlined_left(true);
             } else {
@@ -191,7 +190,7 @@ pub(crate) fn marginalize_leaf_weighted(
                     );
                 }
             }
-            tdd.invalidate(parent_vi, Changed::PAIRS);
+            tdd.invalidate(parent_vi);
         }
     tdd.levels[left_idx].become_marginal_weighted(values.len() as u32);
     ws.set_level(left_idx, values);

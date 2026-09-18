@@ -7,7 +7,6 @@
 
 use crate::diagram::EncodedChildRef;
 
-use crate::diagram::Changed;
 use crate::Engine;
 use crate::diagram::NodeIdx;
 
@@ -254,7 +253,7 @@ fn rewrite_child_refs(
 fn seed_dirty_levels(tdd: &mut Tdd, level_dirty: &[bool]) {
     for (t_idx, dirty) in level_dirty.iter().enumerate() {
         if *dirty {
-            tdd.invalidate(VtreeIdx(t_idx as u32), Changed::PAIRS);
+            tdd.invalidate(VtreeIdx(t_idx as u32));
         }
     }
 }

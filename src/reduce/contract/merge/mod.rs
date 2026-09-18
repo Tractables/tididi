@@ -1,6 +1,5 @@
 //! Twin-group contraction: merging nodes that share a parent context.
 
-use crate::diagram::Changed;
 use crate::Engine;
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
@@ -85,8 +84,8 @@ pub(super) fn contract_twins(
     }
     // The parent's pair lists are remapped and deduplicated below; t1's nodes
     // were merged, so its pair lists and the identity of its nodes changed.
-    tdd.invalidate(parent, Changed::PAIRS);
-    tdd.invalidate(t1, Changed::PAIRS | Changed::NODES);
+    tdd.invalidate(parent);
+    tdd.invalidate_with_parent(t1);
 
     build_final_remap(remap, width);
     rewrite_parent(tdd, parent, t1_side, remap);

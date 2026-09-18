@@ -122,7 +122,7 @@ impl<'a> RotationTrial<'a> {
         // dropped both, which left a later `minimize` skipping levels it still
         // owed work on.
         let carried = self.old_dirty.take().expect("a trial takes the worklists when it is created");
-        self.tdd.merge_carried_dirty(carried);
+        self.tdd.dirty.merge_under(carried);
     }
 }
 

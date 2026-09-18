@@ -11,7 +11,6 @@
 //! merged to restore the partition. The per-level node remap feeds the next
 //! level up; sibling refs are copied verbatim and never dereferenced.
 
-use crate::diagram::Changed;
 use crate::Engine;
 use crate::limits::{OperationError, PollGate};
 use crate::reduce::{ReductionPlan};
@@ -69,7 +68,7 @@ pub(super) fn exists_var_structural(
     // Append the union node and point the output at it (prune drops the rest).
     let new_out = tdd.levels[root_vi.idx()].push_node_on(eng, &out_pairs)?;
     tdd.output.local = new_out;
-    tdd.try_invalidate(eng, root_vi, Changed::PAIRS)?;
+    tdd.try_invalidate(eng, root_vi)?;
 
     work.emitted += 1;
     lim.level_done(work.emitted)?;
@@ -377,7 +376,7 @@ fn write_level(work: &mut Rewrite<'_>, tdd: &mut Tdd, parent: VtreeIdx, new_node
         work.emitted += 1;
         work.eng.limits().level_done(work.emitted)?;
     }
-    tdd.try_invalidate(work.eng, parent, Changed::PAIRS)?;
+    tdd.try_invalidate(work.eng, parent)?;
     Ok(())
 }
 

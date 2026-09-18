@@ -1,5 +1,6 @@
 //! The content-twin canonicalization fixpoint and its size gate.
 
+use crate::diagram::Pass;
 use crate::Engine;
 use crate::limits::OperationError;
 use crate::diagram::Tdd;
@@ -61,8 +62,8 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
     // drained into `next_filter` and restricts the next scan. Clear it at
     // entry so nothing left by work outside this call reaches the first
     // worklist, then seed it with the slot prune's value merges.
-    tdd.clear_c2_worklist();
-    tdd.extend_c2_worklist(pre_stats.value_merged_levels.iter().copied());
+    tdd.dirty.clear(Pass::ContentTwin);
+    tdd.dirty.requeue(Pass::ContentTwin, pre_stats.value_merged_levels.iter().copied());
 
     // `None` is the full scan of the first round; `Some(set)` a worklist scan.
     // Each round either merges a content twin, which the prune then removes,
@@ -82,7 +83,7 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
             && set.is_empty() {
                 break;
             }
-        tdd.clear_c2_worklist();
+        tdd.dirty.clear(Pass::ContentTwin);
 
         // Each duplicate has its parent refs (and the output ref) rewritten
         // onto the canonical node and is left unreferenced for the prune. The
@@ -104,15 +105,15 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
 
         let slot_stats = crate::reduce::slot_prune::prune_value_slots(eng, tdd);
         // A value merge at marginal level v can mint content twins at v's parent.
-        tdd.extend_c2_worklist(slot_stats.value_merged_levels.iter().copied());
+        tdd.dirty.requeue(Pass::ContentTwin, slot_stats.value_merged_levels.iter().copied());
 
-        let raw = tdd.take_c2_worklist();
+        let raw = tdd.dirty.take(Pass::ContentTwin);
         let mut set: rustc_hash::FxHashSet<u32> = rustc_hash::FxHashSet::default();
         set.extend(raw);
         next_filter = Some(set);
     }
     // Leave the worklist empty outside this call.
-    tdd.clear_c2_worklist();
+    tdd.dirty.clear(Pass::ContentTwin);
 
     Ok(())
 }

@@ -15,6 +15,7 @@
 //! invariant holds even after a rotation has scrambled raw node indices, and even
 //! when a parent is activated dynamically by an ancestor firing.
 
+use crate::diagram::Pass;
 use crate::Engine;
 use std::collections::BinaryHeap;
 
@@ -133,11 +134,11 @@ fn restore_pending_dirty(
     heap: &BinaryHeap<(u32, u32)>,
 ) {
     if let Some(p) = current {
-        tdd.requeue_contract(p);
+        tdd.dirty.requeue(Pass::Contract, [p]);
         scratch.needs_check[p as usize] = false;
     }
     for &(_topo_pos, p) in heap.iter() {
-        tdd.requeue_contract(p);
+        tdd.dirty.requeue(Pass::Contract, [p]);
         scratch.needs_check[p as usize] = false;
     }
 }
@@ -161,7 +162,7 @@ pub(crate) fn contract_all_twins(
     let lim = eng.limits();
     let num_nodes = tdd.vtree.num_nodes();
 
-    let dirty_parents = tdd.take_contract_worklist();
+    let dirty_parents = tdd.dirty.take(Pass::Contract);
     if dirty_parents.is_empty() {
         return Ok(());
     }
@@ -170,7 +171,7 @@ pub(crate) fn contract_all_twins(
     // On OOM here the heap is not yet built, so restore the intact taken worklist
     // wholesale — dropping it would leak the whole dirty set.
     if let Err(e) = lim.try_resize(&mut scratch.needs_check, num_nodes, false) {
-        tdd.restore_contract_worklist(dirty_parents);
+        tdd.dirty.restore(Pass::Contract, dirty_parents);
         return Err(e);
     }
     // The unit of work is the parent: a level whose pairs were mutated is a

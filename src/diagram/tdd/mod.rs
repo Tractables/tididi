@@ -9,6 +9,8 @@ mod reach;
 mod operations;
 mod worklists;
 
+pub(crate) use worklists::{Dirty, Pass};
+
 #[cfg(test)]
 mod tests;
 
@@ -20,66 +22,6 @@ use crate::diagram::WeightStore;
 use super::build_error::TddBuildError;
 use super::level::TddLevel;
 use super::primitives::{LEAF_WIDTH, TddNodeId, ZERO};
-
-/// The reduction passes' worklists on a diagram: which levels changed since the
-/// last contraction, and which the content-twin scan still has to revisit. Not
-/// serialized, and never part of the function the diagram denotes.
-///
-/// The fields are private to this module. Everything that changes a diagram
-/// states what it changed through [`Tdd::invalidate`], which is the one place
-/// that decides which worklist owes what; everything that consumes a worklist
-/// goes through the `take_*` accessors below.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct Dirty {
-    /// Internal vtree node indices whose pair lists changed since the last
-    /// `contract_all_twins` pass; it consumes the list to seed its worklist
-    /// (children of dirty parents) instead of scanning every level. May hold
-    /// duplicates and stale entries (filtered at consume time). A level absent
-    /// from the list is at its contraction fixpoint.
-    contract: Vec<u32>,
-    /// The same, for the leaf-side twin contraction (`contract_leaf_twins`).
-    leaf_contract: Vec<u32>,
-    /// Worklist for the content-twin fixpoint: vtree indices whose
-    /// boundary-parent levels may have gained new content twins since the last
-    /// scan round. Only meaningful inside `canonicalize_content_twins`; empty
-    /// outside it.
-    right_rescan: Vec<u32>,
-}
-
-/// What a rewrite did to one level, as the reduction passes see it.
-///
-/// A rewrite states this and nothing else; [`Tdd::invalidate`] turns it into
-/// worklist entries. The three are independent and combine with `|`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Changed(u8);
-
-impl Changed {
-    /// This level's pair lists were rewritten in place — refs, lengths, or
-    /// order. Its children's contexts moved, so they are twin candidates, and
-    /// its own leaf-side verdict is stale.
-    pub(crate) const PAIRS: Changed = Changed(1 << 0);
-    /// Nodes of this level were merged or dropped, so the parent's references
-    /// into it changed identity: the parent may now hold twins.
-    pub(crate) const NODES: Changed = Changed(1 << 1);
-    /// Marginal values behind references from this level were merged or
-    /// renumbered. Structurally the same as `PAIRS` for the worklists — the
-    /// refs this level holds mean something different than they did.
-    pub(crate) const VALUES: Changed = Changed(1 << 2);
-
-    /// Does `self` include any of `other`'s kinds?
-    #[inline]
-    fn intersects(self, other: Changed) -> bool {
-        self.0 & other.0 != 0
-    }
-}
-
-impl std::ops::BitOr for Changed {
-    type Output = Changed;
-    #[inline]
-    fn bitor(self, rhs: Changed) -> Changed {
-        Changed(self.0 | rhs.0)
-    }
-}
 
 /// A Boolean function represented by a Tree Decision Diagram.
 ///
@@ -344,31 +286,11 @@ impl Tdd {
     fn assemble(
         vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId, mut dirty: Dirty,
         rebuilt: impl Iterator<Item = VtreeIdx>,
-        mut reserve: impl FnMut(&mut Vec<u32>, usize) -> Result<(), crate::OperationError>,
-        mut poll: impl FnMut() -> Result<(), crate::OperationError>,
+        reserve: impl FnMut(&mut Vec<u32>, usize) -> Result<(), crate::OperationError>,
+        poll: impl FnMut() -> Result<(), crate::OperationError>,
     ) -> Result<Self, crate::OperationError> {
-        let minimum = rebuilt.size_hint().0;
-        for list in [&mut dirty.contract, &mut dirty.leaf_contract] {
-            if minimum > list.capacity() - list.len() { reserve(list, minimum)?; }
-        }
-        for t in rebuilt {
-            poll()?;
-            for list in [&mut dirty.contract, &mut dirty.leaf_contract] {
-                if list.len() == list.capacity() { reserve(list, 1)?; }
-                list.push(t.0);
-            }
-        }
-        // Bound the carried lists: entries are level indices, so a list longer
-        // than `n` holds duplicates, and a chain of applies that never drains a
-        // list would otherwise grow it without bound. Dedup keeps the set the
-        // list denotes, and fires at most once per `n` pushes.
-        let n = vtree.num_nodes();
-        for list in [&mut dirty.contract, &mut dirty.leaf_contract] {
-            if list.len() > n {
-                list.sort_unstable();
-                list.dedup();
-            }
-        }
+        dirty.seed_rebuilt(rebuilt, reserve, poll)?;
+        dirty.dedup_above(vtree.num_nodes());
         Ok(Self { vtree, levels, output, dirty, weights: None })
     }
 
