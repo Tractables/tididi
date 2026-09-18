@@ -8,6 +8,8 @@ use crate::limits::{OperationError};
 
 use crate::diagram::{self, *};
 
+mod models;
+
 /// Build a diagram computing the constant-false function (no assignment satisfies it).
 /// Output points to the `ZERO` sentinel (`u32::MAX`) — no actual nodes are created.
 pub(crate) fn constant_zero(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {

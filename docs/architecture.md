@@ -73,7 +73,7 @@ identical representations.
 | [`diagram`] | Diagram storage, child references, weights and level pools. |
 | [`limits`] | Resource limits, cancellation, memory hooks, measurements and scratch pools. |
 | `value` | Count arithmetic, value domains, column storage and the shared value traversal. |
-| `build` | Constants, literals and cubes. |
+| `build` | Constants, literals, cubes and sets of models. |
 | [`apply`] | Boolean composition, conditioning, projection and restriction. |
 | `marginal` | Summing levels into values and restoring marginal invariants. |
 | [`reduce`] | Reachability pruning, twin contraction, pair fusion and value-slot pruning. |
