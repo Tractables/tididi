@@ -234,11 +234,13 @@ fn assemble(
         return Ok(crate::build::constant_zero(eng, into));
     }
     let mut builder = Tdd::builder(eng, into);
-    let mut over_a_renamed_leaf = false;
-    if let Err(error) = fill(eng, tdd, into, plan, &mut builder, &mut over_a_renamed_leaf) {
-        builder.abandon(eng);
-        return Err(error);
-    }
+    let over_a_renamed_leaf = match fill(eng, tdd, into, plan, &mut builder) {
+        Ok(over_a_renamed_leaf) => over_a_renamed_leaf,
+        Err(error) => {
+            builder.abandon(eng);
+            return Err(error);
+        }
+    };
     // Index preservation carries the source's output index through the
     // pass-through levels above it, so the result is seated at the same index.
     let output = TddNodeId { vtree: into.root(), local: tdd.output().local };
@@ -249,17 +251,19 @@ fn assemble(
     Ok(result)
 }
 
-/// One level per destination node, children before parents.
+/// One level per destination node, children before parents. Returns whether
+/// a pass-through level sat directly over a renamed leaf, which is what the
+/// prune after assembly is for.
 fn fill(
     eng: &Engine,
     tdd: &Tdd,
     into: &Vtree,
     plan: &Plan,
     builder: &mut TddBuilder,
-    over_a_renamed_leaf: &mut bool,
-) -> Result<(), GraftError> {
+) -> Result<bool, GraftError> {
     let lim = eng.limits();
     let mut gate = lim.gate();
+    let mut over_a_renamed_leaf = false;
     for t in into.bottomup() {
         if into.node(t).is_leaf() {
             continue;
@@ -282,7 +286,7 @@ fn fill(
             // labels, so the copied level above finds the label it names at
             // that label's own index. It may name only some of them, which is
             // what the prune after assembly is for.
-            *over_a_renamed_leaf |= carries_leaf;
+            over_a_renamed_leaf |= carries_leaf;
             for i in 0..width {
                 let child = NodeIdx(i as u32);
                 let pair = if free_is_left {
@@ -295,7 +299,7 @@ fn fill(
         }
     }
     gate.flush()?;
-    Ok(())
+    Ok(over_a_renamed_leaf)
 }
 
 /// The index of the constant-true node on `child`'s level: the `One` label on
