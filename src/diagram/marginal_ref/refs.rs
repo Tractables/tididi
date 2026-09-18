@@ -138,33 +138,22 @@ fn boundary_entry(tdd: &Tdd, v: VtreeIdx) -> Option<(VtreeIdx, VtreeIdx, ChildSi
     Some((v, parent, side_of(tdd, parent, v)))
 }
 
-/// Fill `out` with every boundary marginal level and its non-marginal parent.
+/// Fill `out` with the boundary marginal levels and their non-marginal
+/// parents, in ascending marginal-child index.
+///
+/// `parents` restricts the result to boundaries under those vtree nodes, and
+/// costs two lookups per parent instead of a scan over every level — each
+/// parent has at most two boundaries, reached directly. `None` is every level.
 pub(crate) fn boundary_marginal_levels_into(
     tdd: &Tdd,
+    parents: Option<&[VtreeIdx]>,
     out: &mut Vec<(VtreeIdx, VtreeIdx, ChildSide)>,
 ) {
     out.clear();
-    out.extend((0..tdd.levels.len()).filter_map(|i| boundary_entry(tdd, VtreeIdx(i as u32))));
-}
-
-/// Iterate boundary marginal levels with their non-marginal parent.
-pub(crate) fn boundary_marginal_levels(tdd: &Tdd) -> Vec<(VtreeIdx, VtreeIdx, ChildSide)> {
-    let mut out = Vec::new();
-    boundary_marginal_levels_into(tdd, &mut out);
-    out
-}
-
-/// Fill `out` with the boundary marginal levels whose parent is in
-/// `parents`: the same triples `boundary_marginal_levels` would yield, in
-/// the same (ascending marginal-child index) order, restricted to that parent
-/// set. O(parents) rather than O(levels): each parent has at most two
-/// boundaries, reached directly.
-pub(crate) fn boundary_marginal_levels_of(
-    tdd: &Tdd,
-    parents: &[VtreeIdx],
-    out: &mut Vec<(VtreeIdx, VtreeIdx, ChildSide)>,
-) {
-    out.clear();
+    let Some(parents) = parents else {
+        out.extend((0..tdd.levels.len()).filter_map(|i| boundary_entry(tdd, VtreeIdx(i as u32))));
+        return;
+    };
     for &p in parents {
         if let VtreeNode::Internal { left, right, .. } = tdd.vtree.node(p) {
             out.extend(boundary_entry(tdd, *left));
@@ -175,4 +164,12 @@ pub(crate) fn boundary_marginal_levels_of(
     // parent would yield; a marginal level has exactly one boundary entry.
     out.sort_unstable_by_key(|&(v, _, _)| v.0);
     out.dedup_by_key(|&mut (v, _, _)| v.0);
+}
+
+/// Every boundary marginal level with its non-marginal parent, in a fresh
+/// `Vec`, for a caller with no buffer to reuse.
+pub(crate) fn boundary_marginal_levels(tdd: &Tdd) -> Vec<(VtreeIdx, VtreeIdx, ChildSide)> {
+    let mut out = Vec::new();
+    boundary_marginal_levels_into(tdd, None, &mut out);
+    out
 }

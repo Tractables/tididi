@@ -191,7 +191,7 @@ pub(crate) use primitives::{MultiPairRange, CHILD_PAIR_BYTES};
 pub use marginal_ref::{CountOverflow, ChildRef, ChildDecoder, ValueRef, ValueRefError};
 pub(crate) use marginal_ref::{
     MarginalSide,
-    boundary_marginal_levels, boundary_marginal_levels_into, boundary_marginal_levels_of,
+    boundary_marginal_levels, boundary_marginal_levels_into,
     for_each_side_ref_mut, remap_refs_into, ChildSide, Sides,
     MARGINAL_INLINE_MAX,
     tag_all_marginal_side_slots,

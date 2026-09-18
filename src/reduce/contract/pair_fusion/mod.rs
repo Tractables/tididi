@@ -9,7 +9,7 @@ use crate::limits::OperationError;
 use crate::diagram::{Tdd, ValueRef};
 use crate::vtree::VtreeIdx;
 
-use crate::diagram::{ChildSide, boundary_marginal_levels_into, boundary_marginal_levels_of};
+use crate::diagram::{ChildSide, boundary_marginal_levels_into};
 use crate::value::slots::SlotValues;
 use crate::value::{IntFold, WeightFold};
 
@@ -89,7 +89,7 @@ pub(super) fn fuse_pairs_inner(
         None => false,
     };
     let mut stats = PairFusionStats::default();
-    fill_boundaries(tdd, parent_filter, &mut scratch.boundaries);
+    boundary_marginal_levels_into(tdd, parent_filter, &mut scratch.boundaries);
     // Indexed so the per-boundary work can borrow `scratch.pair_fusion` (a
     // disjoint field) while this list stays live. Snapshotting the set before
     // the loop is safe: fusion never marginalizes a level, and invariant 5
@@ -166,21 +166,6 @@ fn fuse_boundary<D: SlotValues>(
     // filter above preserves that order), which is the cursor-walk
     // precondition. See `rebuild_parent_level`.
     rebuild_parent_level(eng, tdd, parent, side, any_inline, &plans)
-}
-
-/// Fill `out` with the boundary set this sweep covers, scoped to the caller's
-/// parents when it named any; a filtered call costs two vtree lookups per
-/// parent instead of a scan over every level.
-#[inline(always)]
-fn fill_boundaries(
-    tdd: &Tdd,
-    parent_filter: Option<&[VtreeIdx]>,
-    out: &mut Vec<(VtreeIdx, VtreeIdx, ChildSide)>,
-) {
-    match parent_filter {
-        Some(parents) => boundary_marginal_levels_of(tdd, parents, out),
-        None => boundary_marginal_levels_into(tdd, out),
-    }
 }
 
 #[cfg(test)]

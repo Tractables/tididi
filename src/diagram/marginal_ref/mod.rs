@@ -479,7 +479,7 @@ mod swap;
 mod tag;
 
 pub(crate) use refs::{
-    boundary_marginal_levels, boundary_marginal_levels_into, boundary_marginal_levels_of,
+    boundary_marginal_levels, boundary_marginal_levels_into,
     for_each_side_ref_mut, remap_refs_into, ChildSide, Sides,
 };
 pub(crate) use swap::resolve_swapped_marginal_side;

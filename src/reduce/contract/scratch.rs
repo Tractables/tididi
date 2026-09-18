@@ -232,7 +232,7 @@ pub(crate) struct ContractScratch {
     /// `pair_fusion::collect_fusion_plans`.
     pub(super) pair_fusion: PFusionScratch,
     /// Boundary-marginal levels for the current `fuse_pairs_inner` sweep
-    /// (`diagram::boundary_marginal_levels{,_of}`). A separate field from
+    /// (`diagram::boundary_marginal_levels_into`). A separate field from
     /// `pair_fusion` so the per-boundary plan collection can borrow that one while
     /// this list is being iterated by index.
     pub(super) boundaries: Vec<(crate::vtree::VtreeIdx, crate::vtree::VtreeIdx, crate::diagram::ChildSide)>,
