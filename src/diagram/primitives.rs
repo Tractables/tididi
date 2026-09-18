@@ -13,7 +13,6 @@ pub struct NodeIdx(pub u32);
 
 impl NodeIdx {
     /// The index as a `usize`.
-    #[inline(always)]
     pub fn idx(self) -> usize { self.0 as usize }
 
     /// Node slots one level can address. A stored pair side reserves bit 31
@@ -29,7 +28,6 @@ impl NodeIdx {
     /// side leaves bit 31 clear by construction (see
     /// [`MarginalSide`](super::MarginalSide)), so only [`ZERO`] and the
     /// scratch words that carry it set it.
-    #[inline(always)]
     pub(crate) fn is_reserved(self) -> bool {
         self.0 & RESERVED_BIT != 0
     }
@@ -91,7 +89,6 @@ impl LeafLabel {
     /// # Panics
     ///
     /// Panics if `i >= LEAF_WIDTH`.
-    #[inline(always)]
     pub(crate) fn from_idx(i: usize) -> LeafLabel {
         match i {
             0 => LeafLabel::One,
@@ -119,21 +116,17 @@ pub struct EncodedChildRef(pub(crate) u32);
 
 impl EncodedChildRef {
     /// Preserve a raw word; its validity is checked in the context of a child level.
-    #[inline(always)]
     pub const fn from_raw(raw: u32) -> Self { Self(raw) }
 
     /// The encoded word, for persistence and representation inspection.
-    #[inline(always)]
     pub const fn raw(self) -> u32 { self.0 }
 
     /// Whether this word is a reserved sentinel rather than a stored child reference.
-    #[inline(always)]
     pub(crate) fn is_reserved(self) -> bool { self.0 & RESERVED_BIT != 0 }
 }
 
 impl From<NodeIdx> for EncodedChildRef {
     /// Encode an untagged node index, value slot, or implicit leaf label.
-    #[inline(always)]
     fn from(index: NodeIdx) -> Self { Self(index.0) }
 }
 
@@ -203,11 +196,11 @@ pub(crate) struct MultiPairRange {
 
 /// A stored node: 8 bytes encoding where its pairs live.
 ///
-/// A reader never decodes the word itself: [`TddLevel::pairs_of`] and
+/// A reader never decodes the words itself: [`TddLevel::pairs_of`] and
 /// [`TddLevel::pairs_iter_of`] resolve a node to its pairs, and
-/// [`is_internal`](Self::is_internal) classifies it. Every node of a valid
-/// diagram is internal or a tombstone (a dead slot, unreferenced, that
-/// `minimize` removes).
+/// [`is_internal`](Self::is_internal) says whether it has any. Every node of a valid diagram is
+/// internal or a tombstone (a dead slot, unreferenced, that `minimize`
+/// removes).
 ///
 /// The two `u32` words carry a four-way encoding:
 ///
@@ -222,10 +215,11 @@ pub(crate) struct MultiPairRange {
 /// └───────────────────────────────┴───────────────────────────────┘
 /// ```
 ///
-/// Decoding stays cheap, and the hot test is first: `b & LEAF_BIT != 0` means
-/// leaf; else `a & MULTI_BIT == 0` means inline pair; else `b == 1` means
-/// extended multi-pair (its size lives in the level's `multi_pairs` table); else
-/// normal multi-pair. `LEAF_BIT` and `MULTI_BIT` are both `1 << 31`;
+/// The cases are tested in that order, hottest first:
+/// `b & LEAF_BIT != 0` means leaf; else `a & MULTI_BIT == 0` means inline
+/// pair; else `b == 1` means extended multi-pair (its size lives in the
+/// level's `multi_pairs` table); else normal multi-pair. `LEAF_BIT` and
+/// `MULTI_BIT` are both `1 << 31`;
 /// `pair_len == 1` is forbidden for multi-pair (the caller converts it to
 /// inline), which is what leaves `b == 1` free as the extended sentinel.
 /// `pair_len == 0` is legal.
@@ -249,11 +243,41 @@ pub struct EncodedNode {
     pub(crate) b: u32,  // leaf: LEAF_BIT; inline: right child; multi: pair_len
 }
 
+/// What an [`EncodedNode`]'s two words encode, as returned by
+/// [`EncodedNode::kind`].
+///
+/// The cases are exactly the rows of the encoding table on [`EncodedNode`],
+/// plus the tombstone that shares the leaf row's bit. Each carries the payload
+/// that case has, so a reader that matches never asks a second question to
+/// find out whether the payload it wants is there.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub(crate) enum NodeKind {
+    /// A leaf-label node. No valid diagram stores one; the leaf side of a pair
+    /// carries the label instead.
+    Leaf(LeafLabel),
+    /// A dead slot left in place by an index-stable rewrite.
+    Tombstone,
+    /// One pair, stored in the node's own two words.
+    Inline(ChildPair),
+    /// Pairs at `[start, start + len)` of the level's `pairs` arena.
+    Multi { start: u32, len: u32 },
+    /// Pairs whose 64-bit `(start, len)` live in the level's `multi_pairs`
+    /// side table at this index.
+    MultiRanged(u32),
+}
+
+impl NodeKind {
+    /// Whether the node's pairs live in the level's `pairs` arena rather than
+    /// in the node's own two words.
+    pub(crate) fn pairs_in_arena(self) -> bool {
+        matches!(self, NodeKind::Multi { .. } | NodeKind::MultiRanged(_))
+    }
+}
+
 impl EncodedNode {
     /// Create an inline single-pair node. `a` and `b` store the pair's left/right indices.
     /// Caller must verify `pair.can_inline()` — violating this aliases the leaf or
     /// `multi_ranged` encoding and causes silent data corruption.
-    #[inline(always)]
     pub(crate) fn inline(pair: ChildPair) -> Self {
         debug_assert!(pair.can_inline(), "pair cannot be inlined: would alias leaf/multi_ranged encoding");
         EncodedNode { a: pair.left.0, b: pair.right.0 }
@@ -263,7 +287,6 @@ impl EncodedNode {
     /// `[pair_start, pair_start+pair_len)`. Both must fit in 31 bits; use
     /// `TddLevel::encode_multi` for arbitrary sizes (it promotes to extended
     /// form when needed). `pair_len` may be 0, for an empty placeholder node.
-    #[inline(always)]
     pub(crate) fn multi_pair(pair_start: u32, pair_len: u32) -> Self {
         debug_assert!(pair_start & MULTI_BIT == 0, "pair_start too large; use encode_multi");
         debug_assert!(pair_len & LEAF_BIT == 0, "pair_len overflow; use encode_multi");
@@ -273,80 +296,58 @@ impl EncodedNode {
     /// Create an extended multi-pair node whose `(start, len)` live in the level's
     /// `multi_pairs` side table at `multi_pairs_idx`. `b = RANGE_SENTINEL` (= 1) distinguishes this
     /// from normal multi (which has `pair_len` ∈ {0, 2, 3, …}).
-    #[inline(always)]
     pub(crate) fn multi_ranged(multi_pairs_idx: u32) -> Self {
         debug_assert!(multi_pairs_idx & MULTI_BIT == 0, "multi_pairs_idx too large");
         EncodedNode { a: multi_pairs_idx | MULTI_BIT, b: RANGE_SENTINEL }
     }
 
+    /// Decode the two words into the case they encode.
+    ///
+    /// This is the only reader of the bit layout; everything else matches on
+    /// what comes back, so a new case has to be handled at every site.
+    pub(crate) fn kind(&self) -> NodeKind {
+        if self.b & LEAF_BIT != 0 {
+            if self.b == TOMBSTONE_B {
+                NodeKind::Tombstone
+            } else if self.a == LeafLabel::Zero as u32 {
+                NodeKind::Leaf(LeafLabel::Zero)
+            } else {
+                NodeKind::Leaf(LeafLabel::from_idx(self.a as usize))
+            }
+        } else if self.a & MULTI_BIT == 0 {
+            NodeKind::Inline(ChildPair::new(
+                EncodedChildRef::from_raw(self.a),
+                EncodedChildRef::from_raw(self.b),
+            ))
+        } else if self.b == RANGE_SENTINEL {
+            NodeKind::MultiRanged(self.a & !MULTI_BIT)
+        } else {
+            NodeKind::Multi { start: self.a & !MULTI_BIT, len: self.b }
+        }
+    }
+
     /// True when the node holds no pairs: a tombstone, or a leaf-label node
     /// (which no valid diagram stores).
-    #[inline(always)]
-    pub(crate) fn is_leaf(&self) -> bool { self.b & LEAF_BIT != 0 }
+    pub(crate) fn is_leaf(&self) -> bool {
+        matches!(self.kind(), NodeKind::Leaf(_) | NodeKind::Tombstone)
+    }
 
     /// True for a node with pairs (inline or multi-pair).
-    #[inline(always)]
-    pub fn is_internal(&self) -> bool { self.b & LEAF_BIT == 0 }
+    pub fn is_internal(&self) -> bool { !self.is_leaf() }
 
     /// True for a dead slot left in place by an index-stable rewrite. It is
     /// referenced by no pair; `slot_count()` still counts it, `live_slot_count()` does
     /// not, and `minimize` removes it.
-    #[inline(always)]
-    pub(crate) fn is_tombstone(&self) -> bool { self.b == TOMBSTONE_B }
-
-    /// True for a node with exactly one pair, stored in the node word.
-    #[inline(always)]
-    pub(crate) fn is_inline(&self) -> bool { self.b & LEAF_BIT == 0 && self.a & MULTI_BIT == 0 }
-
-    /// True for a node whose pairs live in the level's `pairs` arena.
-    #[inline(always)]
-    pub(crate) fn is_multi(&self) -> bool { self.b & LEAF_BIT == 0 && self.a & MULTI_BIT != 0 }
-
-    /// True for extended multi-pair nodes (start/len live in `level.multi_pairs`).
-    /// Disambiguated by `b == 1` — impossible for normal multi since `pair_len` == 1
-    /// is forbidden (caller uses inline).
-    #[inline(always)]
-    pub(crate) fn is_multi_ranged(&self) -> bool {
-        self.a & MULTI_BIT != 0 && self.b == RANGE_SENTINEL
-    }
-
-    /// True for normal (non-extended) multi-pair nodes.
-    #[inline(always)]
-    pub(crate) fn is_multi_normal(&self) -> bool {
-        self.b & LEAF_BIT == 0 && self.a & MULTI_BIT != 0 && self.b != RANGE_SENTINEL
-    }
-
-    /// Ext table index for an extended multi node. Only valid when `is_multi_ranged()`.
-    #[inline(always)]
-    pub(crate) fn multi_pairs_idx(&self) -> u32 {
-        debug_assert!(self.is_multi_ranged());
-        self.a & !MULTI_BIT
-    }
-
-    /// Decode the leaf label. Only valid for leaf nodes.
-    #[inline(always)]
-    pub(crate) fn leaf_label(&self) -> LeafLabel {
-        debug_assert!(self.is_leaf());
-        if self.a == LeafLabel::Zero as u32 {
-            LeafLabel::Zero
-        } else {
-            LeafLabel::from_idx(self.a as usize)
-        }
-    }
-
-    /// The pair of an [`is_inline`](Self::is_inline) node.
-    #[inline(always)]
-    pub(crate) fn inline_pair(&self) -> ChildPair {
-        debug_assert!(self.is_inline());
-        ChildPair::new(EncodedChildRef::from_raw(self.a), EncodedChildRef::from_raw(self.b))
-    }
+    pub(crate) fn is_tombstone(&self) -> bool { matches!(self.kind(), NodeKind::Tombstone) }
 
     /// Shrink `pair_len` for a **normal** multi-pair node (used during dedup remapping).
     /// Caller must ensure `new_len` >= 2; use `EncodedNode::inline` to convert to inline.
     /// For extended nodes, use `TddLevel::set_pair_len` which updates the side table.
-    #[inline(always)]
     pub(crate) fn set_pair_len(&mut self, new_len: u32) {
-        debug_assert!(self.is_multi_normal(), "use TddLevel::set_pair_len for extended");
+        debug_assert!(
+            matches!(self.kind(), NodeKind::Multi { .. }),
+            "use TddLevel::set_pair_len for extended"
+        );
         debug_assert!(new_len >= 2, "use EncodedNode::inline for single-pair conversion");
         debug_assert!(new_len & LEAF_BIT == 0);
         self.b = new_len;
@@ -355,16 +356,14 @@ impl EncodedNode {
 
 impl std::fmt::Debug for EncodedNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.is_tombstone() {
-            write!(f, "Tombstone")
-        } else if self.is_leaf() {
-            write!(f, "Leaf({:?})", self.leaf_label())
-        } else if self.is_inline() {
-            write!(f, "Inline {{ left: {}, right: {} }}", self.a, self.b)
-        } else if self.is_multi_ranged() {
-            write!(f, "MultiExt {{ multi_pairs_idx: {} }}", self.a & !MULTI_BIT)
-        } else {
-            write!(f, "Multi {{ pair_start: {}, pair_len: {} }}", self.a & !MULTI_BIT, self.b)
+        match self.kind() {
+            NodeKind::Tombstone => write!(f, "Tombstone"),
+            NodeKind::Leaf(label) => write!(f, "Leaf({label:?})"),
+            NodeKind::Inline(_) => write!(f, "Inline {{ left: {}, right: {} }}", self.a, self.b),
+            NodeKind::MultiRanged(idx) => write!(f, "MultiExt {{ multi_pairs_idx: {idx} }}"),
+            NodeKind::Multi { start, len } => {
+                write!(f, "Multi {{ pair_start: {start}, pair_len: {len} }}")
+            }
         }
     }
 }

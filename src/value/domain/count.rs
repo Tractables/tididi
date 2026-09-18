@@ -1,7 +1,7 @@
 //! The integer arm of the streaming fold.
 
 use super::*;
-use crate::diagram::{EncodedChildRef, ChildPair, ChildDecoder, ValueRef, TddLevel, WeightStore};
+use crate::diagram::{EncodedChildRef, ChildPair, ChildDecoder, MarginalSide, ValueRef, TddLevel, WeightStore};
 use crate::value::{Count, CountRef, CountVec, IntFold, COUNT_OVERFLOW};
 use crate::diagram::LEAF_COUNTS;
 
@@ -23,10 +23,9 @@ pub(crate) type StreamChildCounts<'a> = StreamChild<'a, IntFold>;
 /// `counts[idx]` relied on: the fold visits only live cells whose child refs
 /// decode to valid `counts` indices (dead / bit-31 sentinel refs are pruned
 /// before the fold). A `debug_assert` re-checks the bound in test/debug builds.
-#[inline(always)]
 unsafe fn read_fast<const MARGINAL: bool>(raw: u32, c: &StreamChildCounts<'_>) -> u128 {
     if MARGINAL {
-        if let Some(c) = ValueRef::inline_count(raw) {
+        if let ValueRef::Inline(c) = ValueRef::from_raw(MarginalSide(raw)) {
             c as u128
         } else {
             let idx = ChildDecoder::marginal().coord(EncodedChildRef::from_raw(raw)) as usize;
@@ -48,7 +47,6 @@ unsafe fn read_fast<const MARGINAL: bool>(raw: u32, c: &StreamChildCounts<'_>) -
 /// loop: the mask/tag test is gone (compile-time via `read_fast`), the bounds
 /// check is gone (`get_unchecked`), and even/odd products retire into two
 /// independent `adc` chains (the carry-chain break).
-#[inline(always)]
 pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
     pairs: &[ChildPair],
     left: &StreamChildCounts<'_>,
@@ -100,10 +98,9 @@ pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
 /// The polarity is self-describing: for a marginal child a ref with bit 30 set is
 /// an inline count and one with bit 30 clear is a slot index (a fresh mid-apply grid
 /// index is a bare node index, which is its slot, and decodes correctly here).
-#[inline(always)]
 fn read_marginal_count(raw: u32, c: &StreamChildCounts<'_>, view: ChildDecoder) -> (u128, usize) {
     if view.is_marginal()
-        && let Some(c) = ValueRef::inline_count(raw)
+        && let ValueRef::Inline(c) = ValueRef::from_raw(MarginalSide(raw))
     {
         (c as u128, usize::MAX)
     } else {
@@ -297,7 +294,6 @@ impl ValueDomain for IntFold {
         StreamChild { col, is_marginal }
     }
 
-    #[inline(always)]
     fn fold_cell(
         pairs: &[ChildPair],
         left: &StreamChildCounts<'_>,

@@ -59,7 +59,6 @@ pub fn save_tdd(f: &Tdd, path: impl AsRef<Path>) -> Result<(), IoError> {
 }
 
 /// Append an integer to a byte buffer through `itoa`, without `fmt::Formatter`.
-#[inline(always)]
 fn push_num<N: itoa::Integer>(buf: &mut Vec<u8>, n: N) {
     let mut b = itoa::Buffer::new();
     buf.extend_from_slice(b.format(n).as_bytes());

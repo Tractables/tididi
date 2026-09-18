@@ -35,7 +35,6 @@ pub(super) struct SidePlan {
 impl SidePlan {
     /// True when this side carries an operand field through instead of
     /// gridding it.
-    #[inline(always)]
     pub(super) fn is_passthrough(&self) -> bool {
         self.carrier.is_some()
     }
@@ -69,7 +68,6 @@ impl EntryMarginality {
     }
 
     /// Whether operand `carrier`'s level `idx` was marginal at entry.
-    #[inline(always)]
     fn was_marginal(&self, carrier: Carrier, idx: usize) -> bool {
         let Some(sides) = &self.0 else { return false };
         let side = match carrier { Carrier::F => &sides.left, Carrier::G => &sides.right };
@@ -95,7 +93,6 @@ pub(super) struct MarginalPlan {
 /// them. Both operands are tested because either may be the identity, and
 /// the entry snapshot lets the test see a child that was marginal at entry
 /// but has since been stolen into the output by an identity swap.
-#[inline(always)]
 fn carrier(
     f: &Tdd,
     g: &Tdd,
@@ -260,7 +257,6 @@ pub(super) struct ChildGrid {
 /// picked at compile time. A pass-through side is skipped entirely: the
 /// marginal child has no product grid, and its field is a model count, not a
 /// row/column index, so the builders below would index out of bounds.
-#[inline(always)]
 pub(super) fn build_side_masks<const RIGHT: bool>(
     eng: &Engine,
     right_level: &TddLevel,

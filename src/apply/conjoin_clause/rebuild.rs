@@ -169,7 +169,6 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
 /// `pairs` is not deduplicated: at a level whose subtree includes a marginal
 /// child the accumulator's pair list may be a multiset, two equal pairs each
 /// carrying one summed-out family's contribution, and dropping one loses count.
-#[inline(always)]
 fn emit_clause_node(
     pairs: &mut [ChildPair],
     level: &mut TddLevel,
@@ -193,7 +192,6 @@ fn emit_clause_node(
 /// `try_push_internal_node` so its encoding matches the buffered path, or
 /// writes `NO_PRODUCT` when no pairs were produced. Like `emit_clause_node`,
 /// it does not deduplicate.
-#[inline(always)]
 fn emit_clause_node_direct(
     level: &mut TddLevel,
     pair_start: usize,

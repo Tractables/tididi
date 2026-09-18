@@ -60,7 +60,6 @@ impl<'a> CountRead<'a> {
     /// [`COUNT_OVERFLOW`] reads through to the big table, which holds an
     /// entry for every such slot. Every reader of a stored count decodes
     /// through here.
-    #[inline(always)]
     pub(crate) fn from_slot(fast: &[u128], big: Option<&'a CountOverflow>, i: usize) -> Self {
         let raw = fast[i];
         if raw == COUNT_OVERFLOW {
@@ -128,6 +127,10 @@ impl CountVec {
     /// An empty column with `cap` slots reserved exactly up front (the
     /// streaming output column pre-reserves `left_width.max(right_width)` and then grows
     /// fallibly via [`Self::push`]).
+    ///
+    /// Forced inline: sharing the constructor across the width and capacity
+    /// paths cost 20% of the instructions it retired on a mid-size model-count
+    /// fixture, and forcing it back inline recovered them.
     #[inline(always)]
     pub(crate) fn try_with_capacity(eng: &Engine, cap: usize) -> Result<Self, OperationError> {
         let mut fast: Vec<u128> = Vec::new();
@@ -142,7 +145,6 @@ impl CountVec {
     /// Borrow this column as a [`CountRef`], carrying the certificate rather
     /// than re-deriving it (a re-scan could disagree with the incrementally
     /// maintained flag on a column whose overflow slot was later overwritten).
-    #[inline(always)]
     pub(crate) fn as_count_ref(&self) -> CountRef<'_> {
         CountRef {
             fast: &self.fast,
@@ -152,7 +154,6 @@ impl CountVec {
     }
 
     /// Overwrite slot `i` (pre-sized fill; see [`Self::try_with_width`]).
-    #[inline(always)]
     pub(crate) fn set(&mut self, eng: &Engine, i: usize, c: Count) -> Result<(), OperationError> {
         match c {
             Count::Fast(v) => {
@@ -185,7 +186,6 @@ impl CountVec {
     /// Append one value, growing by amortized doubling. A `Big` append records
     /// one side-table entry under the new slot's index; a `Fast` append leaves
     /// the side table untouched.
-    #[inline(always)]
     pub(crate) fn push(&mut self, eng: &Engine, c: Count) -> Result<(), OperationError> {
         eng.limits().reserve(&mut self.fast, 1)?;
         match c {
@@ -213,12 +213,10 @@ impl CountVec {
     }
 
     /// Decode slot `i`: a sentinel fast value reads through to the big table.
-    #[inline(always)]
     pub(crate) fn get(&self, i: usize) -> CountRead<'_> {
         CountRead::from_slot(&self.fast, self.big.as_ref(), i)
     }
 
-    #[inline(always)]
     pub(crate) fn len(&self) -> usize {
         self.fast.len()
     }
@@ -268,29 +266,24 @@ impl<'a> CountRef<'a> {
 
     /// Raw view of the fast column (sentinels included) — for the
     /// monomorphized unchecked-read fold fast path (`streaming_marginal::read_fast`).
-    #[inline(always)]
     pub(crate) fn fast_slice(&self) -> &'a [u128] {
         self.fast
     }
 
     /// Raw fast-slot read (sentinel included, no big-table decode).
-    #[inline(always)]
     pub(crate) fn fast_val(&self, i: usize) -> u128 {
         self.fast[i]
     }
 
     /// Raw big-table read; `None` when slot `i` has no overflow value.
-    #[inline(always)]
     pub(crate) fn big_val(&self, i: usize) -> Option<&'a BigUint> {
         self.big.and_then(|v| v.get(i))
     }
 
-    #[inline(always)]
     pub(crate) fn len(&self) -> usize {
         self.fast.len()
     }
 
-    #[inline(always)]
     pub(crate) fn all_u64(&self) -> bool {
         self.all_u64
     }

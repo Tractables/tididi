@@ -16,7 +16,7 @@
 use crate::diagram::Pass;
 use crate::Engine;
 use crate::diagram::ChildSide;
-use crate::diagram::{EncodedChildRef, ChildPair, Tdd, TddLevel, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
+use crate::diagram::{EncodedChildRef, ChildPair, NodeKind, Tdd, TddLevel, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 use crate::limits::OperationError;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
@@ -184,13 +184,12 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
         if !level.nodes[i].is_internal() {
             continue;
         }
-        if level.nodes[i].is_inline() {
+        if let NodeKind::Inline(p) = level.nodes[i].kind() {
             // A single-pair node is labelled `One` on `side` (the singleton
             // pre-pass in `try_contract_leaf_twins` aborted the level on a
             // lone literal), and `One` pairs are copied verbatim.
             debug_assert!(
                 {
-                    let p = level.nodes[i].inline_pair();
                     let label = if side == ChildSide::Left { p.left } else { p.right };
                     label != POS_LEAF_IDX.into() && label != NEG_LEAF_IDX.into()
                 },
@@ -258,8 +257,7 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
 fn fresh_range_entries(level: &TddLevel, side: ChildSide) -> usize {
     (0..level.nodes.len())
         .filter(|&i| {
-            let node = level.nodes[i];
-            if !node.is_internal() || node.is_inline() || node.is_multi_ranged() {
+            if !matches!(level.nodes[i].kind(), NodeKind::Multi { .. }) {
                 return false;
             }
             let pairs = level.pairs_of_idx(i);

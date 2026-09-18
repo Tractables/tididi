@@ -11,7 +11,6 @@ use super::scratch::{ContractScratch, EMPTY_SLOT, TwinSlot};
 /// `fingerprints[]` is read sequentially, so the slot for iteration i+D is
 /// known D iterations ahead. No-op on non-x86_64, and under Miri, which does
 /// not implement the intrinsic.
-#[inline(always)]
 fn prefetch_slot(p: *const TwinSlot, slot: usize) {
     #[cfg(all(target_arch = "x86_64", not(miri)))]
     unsafe {
@@ -69,7 +68,6 @@ pub(super) fn for_each_target_sibling(
 /// whether a golden-ratio increment is added first) — that prelude is what
 /// makes each rule's fingerprint distribution distinct, so do not fold one
 /// caller's prelude in here.
-#[inline(always)]
 pub(super) fn mix64(mut x: u64) -> u64 {
     x = (x ^ (x >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
     x = (x ^ (x >> 27)).wrapping_mul(0x94D049BB133111EB);
@@ -84,7 +82,6 @@ pub(super) fn mix64(mut x: u64) -> u64 {
 /// duplicate contexts contribute 2h rather than cancelling; removal of a
 /// contribution uses wrapping_sub. Order-independence holds because addition
 /// commutes.
-#[inline(always)]
 pub(super) fn context_hash(parent_i: u32, sibling_j: u32) -> u64 {
     // Prelude: pack two 32-bit values; no increment.
     mix64((parent_i as u64) << 32 | sibling_j as u64)

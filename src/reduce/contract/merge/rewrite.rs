@@ -3,7 +3,7 @@
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::diagram::{NodeIdx, Tdd, TddLevel};
+use crate::diagram::{NodeIdx, NodeKind, Tdd, TddLevel};
 
 use super::super::scratch::MergeRemap;
 
@@ -59,9 +59,9 @@ pub(super) fn rewrite_parent(
     let mut dead_acc = 0usize;
     let parent_level = &mut tdd.levels[parent.idx()];
     for node_idx in 0..parent_level.nodes.len() {
-        if parent_level.nodes[node_idx].is_inline() {
+        if matches!(parent_level.nodes[node_idx].kind(), NodeKind::Inline(_)) {
             remap_inline_node(parent_level, node_idx, t1_side, &remap.final_remap);
-        } else if parent_level.nodes[node_idx].is_multi() {
+        } else if parent_level.nodes[node_idx].kind().pairs_in_arena() {
             let old_len = parent_level.multi_len_at(node_idx);
             let new_len = keep_canonical_pairs(parent_level, node_idx, t1_side, remap);
             if new_len < old_len {

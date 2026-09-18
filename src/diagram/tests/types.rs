@@ -247,10 +247,10 @@
         let huge_start = 1usize << 31;
         let data = level.encode_multi(huge_start, 3);
         level.nodes.push(data);
-        assert!(data.is_multi(), "huge-start node should be multi");
-        assert!(data.is_multi_ranged(), "huge-start node should promote to extended");
-        assert!(!data.is_leaf(), "extended multi must not be mis-flagged as leaf");
-        assert!(!data.is_inline(), "extended multi must not be mis-flagged as inline");
+        assert!(
+            matches!(data.kind(), NodeKind::MultiRanged(_)),
+            "huge-start node should promote to extended, got {:?}", data.kind()
+        );
         assert_eq!(level.multi_start_at(0), huge_start);
         assert_eq!(level.multi_len_at(0), 3);
         assert_eq!(level.pair_count_at(0), 3);
@@ -266,8 +266,11 @@
         let huge_len = 1usize << 31;
         let data = level.encode_multi(0, huge_len);
         level.nodes.push(data);
-        assert!(data.is_multi_ranged(), "huge-len node should be extended");
-        assert!(!data.is_leaf(), "extended multi must not be mis-flagged as leaf — this is the bug that caused qmr-100 UNSAT");
+        assert!(
+            matches!(data.kind(), NodeKind::MultiRanged(_)),
+            "huge-len node should be extended, got {:?} — mis-reading it as a leaf is \
+             what made qmr-100 come back UNSAT", data.kind()
+        );
         assert_eq!(level.multi_len_at(0), huge_len);
     }
 
@@ -278,8 +281,10 @@
         let mut level = TddLevel::new();
         let data = level.encode_multi(100, 5);
         level.nodes.push(data);
-        assert!(data.is_multi_normal(), "small multi should stay in packed form");
-        assert!(!data.is_multi_ranged());
+        assert!(
+            matches!(data.kind(), NodeKind::Multi { .. }),
+            "small multi should stay in packed form, got {:?}", data.kind()
+        );
         assert_eq!(level.multi_start_at(0), 100);
         assert_eq!(level.multi_len_at(0), 5);
         assert_eq!(level.multi_pairs.len(), 0, "no multi_pairs slot allocated for packed form");
@@ -293,7 +298,10 @@
         let data = level.encode_multi(0, 1 << 31);
         level.nodes.push(data);
         level.set_pair_len(0, 100);
-        assert!(level.nodes[0].is_multi_ranged(), "still extended after shrink");
+        assert!(
+            matches!(level.nodes[0].kind(), NodeKind::MultiRanged(_)),
+            "still extended after shrink"
+        );
         assert_eq!(level.multi_len_at(0), 100);
     }
 

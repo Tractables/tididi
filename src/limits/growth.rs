@@ -1,5 +1,11 @@
 //! The memory half of the limits: how much room is left, which growth mode a
 //! level runs in, and the allocation helpers that charge against the budget.
+//!
+//! The allocation helpers are `#[inline(always)]` because they are called once
+//! per reserve on paths that reserve constantly; the same measurement that
+//! kept the attribute on `CountVec::try_with_capacity` puts `reserve_impl`
+//! among the handful of functions whose instruction count moves when the
+//! forcing goes away.
 
 use crate::limits::OperationError;
 

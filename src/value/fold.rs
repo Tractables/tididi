@@ -80,7 +80,6 @@ impl MarginalFold for IntFold {
         CountVec::try_with_width(eng, width)
     }
 
-    #[inline(always)]
     fn set_col(
         eng: &Engine,
         col: &mut CountVec,
@@ -97,7 +96,6 @@ impl MarginalFold for IntFold {
         CountVec::try_with_capacity(eng, cap)
     }
 
-    #[inline(always)]
     fn push_col(
         eng: &Engine,
         col: &mut CountVec,
@@ -106,7 +104,6 @@ impl MarginalFold for IntFold {
         col.push(eng, v)
     }
 
-    #[inline(always)]
     fn col_len(col: &CountVec) -> usize {
         col.len()
     }
@@ -127,7 +124,6 @@ impl MarginalFold for WeightFold {
         Ok(v)
     }
 
-    #[inline(always)]
     fn set_col(
         _eng: &Engine,
         col: &mut Vec<WeightValue>,
@@ -147,7 +143,6 @@ impl MarginalFold for WeightFold {
         Ok(col)
     }
 
-    #[inline(always)]
     fn push_col(
         eng: &Engine,
         col: &mut Vec<WeightValue>,
@@ -158,7 +153,6 @@ impl MarginalFold for WeightFold {
         Ok(())
     }
 
-    #[inline(always)]
     fn col_len(col: &Vec<WeightValue>) -> usize {
         col.len()
     }

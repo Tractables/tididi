@@ -27,7 +27,6 @@ pub(crate) fn compute_cell_weight(
 ) -> WeightValue {
     // Resolve a marginal/non-marginal ref to its value; both index the snapshot by
     // reference.
-    #[inline(always)]
     fn resolve<'a>(raw: u32, is_marginal: bool, snap: &'a [WeightValue]) -> std::borrow::Cow<'a, WeightValue> {
         if is_marginal {
             match ValueRef::from_raw(MarginalSide(raw)) {
@@ -107,7 +106,6 @@ impl ValueDomain for WeightFold {
         StreamChild { col: std::borrow::Cow::Borrowed(col), is_marginal: false }
     }
 
-    #[inline(always)]
     fn fold_cell(
         pairs: &[ChildPair],
         left: &StreamChild<'_, WeightFold>,

@@ -24,7 +24,6 @@ use super::PlanEntry;
 /// then the `k` fused pairs are appended at the cursor, still inside the old
 /// range since `kept + k ≤ old_len − k`. The abandoned tail is charged to
 /// `dead_pairs` and reclaimed by the level's arena sweep at the end.
-#[inline(always)]
 pub(super) fn rebuild_parent_level<V>(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -94,7 +93,7 @@ fn fuse_node_pairs<V>(
     // so it is arena-backed — never a leaf, a tombstone, or an inline node
     // whose single pair lives in the node word.
     debug_assert!(
-        level.nodes[n].is_multi(),
+        level.nodes[n].kind().pairs_in_arena(),
         "rebuild_parent_level: node {n} carries a plan but owns no arena range",
     );
     let start = level.multi_start_at(n);

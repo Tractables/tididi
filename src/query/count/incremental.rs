@@ -42,7 +42,6 @@ impl LevelFold for OverflowingCounts<'_> {
         eng.limits().release_bytes(bytes);
     }
 
-    #[inline(always)]
     fn set(&self, eng: &Engine, col: &mut CountVec, i: usize, v: Count) -> Result<(), OperationError> {
         col.set(eng, i, v)
     }

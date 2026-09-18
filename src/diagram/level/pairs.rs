@@ -5,10 +5,7 @@ use crate::diagram::EncodedChildRef;
 
 use crate::diagram::marginal_ref::ChildDecoder;
 use crate::diagram::PairsIter;
-use crate::diagram::primitives::{
-    ChildPair, EncodedNode,
-    MULTI_BIT, RANGE_SENTINEL,
-};
+use crate::diagram::primitives::{ChildPair, EncodedNode, NodeKind};
 use super::TddLevel;
 
 impl TddLevel {
@@ -30,19 +27,18 @@ impl TddLevel {
 
     /// A multi-pair node's pair-arena start and pair count, decoded from
     /// either the packed or the extended (side-table) encoding.
-    #[inline(always)]
     fn multi_span(&self, node: &EncodedNode) -> (usize, usize) {
-        debug_assert!(node.is_multi());
-        if node.b == RANGE_SENTINEL {
-            let e = &self.multi_pairs[(node.a & !MULTI_BIT) as usize];
-            (e.start as usize, e.len as usize)
-        } else {
-            ((node.a & !MULTI_BIT) as usize, node.b as usize)
+        match node.kind() {
+            NodeKind::Multi { start, len } => (start as usize, len as usize),
+            NodeKind::MultiRanged(idx) => {
+                let e = &self.multi_pairs[idx as usize];
+                (e.start as usize, e.len as usize)
+            }
+            other => panic!("multi_span on {other:?}"),
         }
     }
 
     /// A multi-pair node's pair-arena range.
-    #[inline(always)]
     pub(crate) fn multi_range(&self, node: &EncodedNode) -> std::ops::Range<usize> {
         let (start, len) = self.multi_span(node);
         start..start + len
@@ -66,17 +62,17 @@ impl TddLevel {
     /// }
     /// assert!(!pairs.is_empty()); // the copied node no longer exists
     /// ```
-    #[inline(always)]
     pub fn pairs_of<'a>(&'a self, node: &'a EncodedNode) -> &'a [ChildPair] {
-        if node.is_leaf() { return &[]; }
-        if node.is_multi() {
-            &self.pairs[self.multi_range(node)]
-        } else {
+        match node.kind() {
+            NodeKind::Leaf(_) | NodeKind::Tombstone => &[],
             // Safety: EncodedNode is #[repr(C)] {a: u32, b: u32}.
             //         ChildPair is #[repr(C)] {left: EncodedChildRef(u32), right: EncodedChildRef(u32)}.
             //         For inline nodes, a == left.0 and b == right.0 by construction.
             //         Both types have identical {u32, u32} layout, so the cast is valid.
-            unsafe { std::slice::from_ref(&*(node as *const EncodedNode as *const ChildPair)) }
+            NodeKind::Inline(_) => unsafe {
+                std::slice::from_ref(&*(node as *const EncodedNode as *const ChildPair))
+            },
+            NodeKind::Multi { .. } | NodeKind::MultiRanged(_) => &self.pairs[self.multi_range(node)],
         }
     }
 
@@ -86,7 +82,6 @@ impl TddLevel {
     ///
     /// Panics if `idx` is not below `nodes().len()`, which on a marginal level
     /// is every `idx`.
-    #[inline(always)]
     pub fn pairs_of_idx(&self, idx: usize) -> &[ChildPair] {
         // A debug_assert! rather than a check: this is a hot path, and callers
         // route around marginal levels.
@@ -102,7 +97,6 @@ impl TddLevel {
 
     /// [`pairs_iter_of`](Self::pairs_iter_of) by node index; not valid on a
     /// marginal level.
-    #[inline(always)]
     pub(crate) fn pairs_iter_of_idx(&self, idx: usize) -> PairsIter<'_> {
         debug_assert!(
             !self.is_marginal(),
@@ -117,7 +111,6 @@ impl TddLevel {
     ///
     /// With neither child marginal this is the zero-copy `pairs_of_idx`;
     /// otherwise it materializes a decoded copy into `scratch`.
-    #[inline(always)]
     pub(crate) fn pairs_view_decoded<'a>(
         &'a self,
         idx: usize,
@@ -152,15 +145,13 @@ impl TddLevel {
     /// [`pairs_of`](Self::pairs_of).
     #[inline]
     pub fn pairs_iter_of<'a>(&'a self, node: &'a EncodedNode) -> PairsIter<'a> {
-        if node.is_leaf() {
-            return PairsIter::empty();
-        }
-        if node.is_multi() {
-            let range = self.multi_range(node);
-            PairsIter::slice(&self.pairs[range])
-        } else {
-            // Inline node: a / b directly hold the pair fields.
-            PairsIter::inline(ChildPair::new(EncodedChildRef::from_raw(node.a), EncodedChildRef::from_raw(node.b)))
+        match node.kind() {
+            NodeKind::Leaf(_) | NodeKind::Tombstone => PairsIter::empty(),
+            NodeKind::Inline(pair) => PairsIter::inline(pair),
+            NodeKind::Multi { .. } | NodeKind::MultiRanged(_) => {
+                let range = self.multi_range(node);
+                PairsIter::slice(&self.pairs[range])
+            }
         }
     }
 
@@ -171,7 +162,7 @@ impl TddLevel {
         if self.nodes[idx].is_leaf() {
             return &mut [];
         }
-        debug_assert!(self.nodes[idx].is_multi(),
+        debug_assert!(self.nodes[idx].kind().pairs_in_arena(),
             "pairs_mut called on inline node");
         let range = self.multi_range(&self.nodes[idx]);
         &mut self.pairs[range]
@@ -195,7 +186,7 @@ impl TddLevel {
         if self.nodes[idx].is_leaf() {
             return;
         }
-        debug_assert!(self.nodes[idx].is_multi(),
+        debug_assert!(self.nodes[idx].kind().pairs_in_arena(),
             "pairs_remap_indexed called on inline node");
         let range = self.multi_range(&self.nodes[idx]);
         for pair in &mut self.pairs[range] {
@@ -232,7 +223,7 @@ impl TddLevel {
     pub fn pair_count_at(&self, idx: usize) -> usize {
         let n = &self.nodes[idx];
         debug_assert!(n.is_internal());
-        if n.is_inline() { 1 } else { self.multi_len_at(idx) }
+        if matches!(n.kind(), NodeKind::Inline(_)) { 1 } else { self.multi_len_at(idx) }
     }
 
     /// The pair count of every node in index order: a node's pairs, or 0 for

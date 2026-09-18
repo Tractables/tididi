@@ -20,7 +20,7 @@
 //! fresh slots; slot-prune value-merge later shares them with equal-valued
 //! slots.
 
-use crate::diagram::{ChildPair, ChildSide, EncodedChildRef, EncodedNode, MultiPairRange, Sides, Tdd};
+use crate::diagram::{ChildPair, ChildSide, EncodedChildRef, EncodedNode, MultiPairRange, NodeKind, Sides, Tdd};
 
 use crate::Engine;
 use super::scratch::DuplicateScratch;
@@ -186,7 +186,7 @@ fn write_back_resolved_pairs(
     if inlined.right {
         level.set_marginal_inlined(ChildSide::Right, true);
     }
-    if level.nodes[idx].is_inline() {
+    if matches!(level.nodes[idx].kind(), NodeKind::Inline(_)) {
         unreachable!("inline single-pair node cannot hold duplicates");
     }
     let new_len = out.len();

@@ -14,7 +14,7 @@ use crate::diagram::ChildSide;
 use crate::limits::OperationError;
 use crate::reduce::{ReductionPlan};
 use crate::diagram::sort_pairs;
-use crate::diagram::{EncodedChildRef, ChildDecoder, ChildPair, Tdd, TddLevel, EncodedNode, ZERO};
+use crate::diagram::{EncodedChildRef, ChildDecoder, ChildPair, NodeKind, Tdd, TddLevel, EncodedNode, ZERO};
 use crate::vtree::{VarId, VtreeIdx};
 use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 
@@ -237,9 +237,8 @@ fn rewrite_level_pairs(
             continue;
         }
 
-        if level.nodes[i].is_inline() {
+        if let NodeKind::Inline(p) = level.nodes[i].kind() {
             // The single pair lives in the node's own two words, not the arena.
-            let p = level.nodes[i].inline_pair();
             match rewrite_pair(p) {
                 Some(np) => {
                     // Still inlinable: the untouched side keeps whatever bit it

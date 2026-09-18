@@ -75,7 +75,9 @@ fn scale_weight_leaf_by_lookup(
     // The zero sentinel (bit 31) names no slot. A weighted leaf side carries no
     // inline (bit-30) ref either — nothing mints one — so both decline rather
     // than being decoded as a column index.
-    if MarginalSide(raw).is_zero_sentinel() || ValueRef::is_inline_raw(raw) {
+    if MarginalSide(raw).is_zero_sentinel()
+        || matches!(ValueRef::from_raw(MarginalSide(raw)), ValueRef::Inline(_))
+    {
         return None;
     }
     let slot = raw as usize;

@@ -19,7 +19,6 @@ pub(crate) struct ParEntry {
 pub(crate) struct LeftNodeIdx(pub(crate) u32);
 
 impl LeftNodeIdx {
-    #[inline(always)]
     pub(crate) fn idx(self) -> usize { self.0 as usize }
 }
 
@@ -29,7 +28,6 @@ impl LeftNodeIdx {
 pub(crate) struct RightNodeIdx(pub(crate) u32);
 
 impl RightNodeIdx {
-    #[inline(always)]
     pub(crate) fn idx(self) -> usize { self.0 as usize }
 }
 

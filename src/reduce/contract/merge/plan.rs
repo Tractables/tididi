@@ -223,7 +223,7 @@ pub(super) fn reserve_transactional(
     let parent_ext = tdd.levels[parent.idx()]
         .nodes
         .iter()
-        .filter(|n| n.is_multi())
+        .filter(|n| n.kind().pairs_in_arena())
         .count();
     if parent_ext > 0 {
         lim.reserve(&mut tdd.levels[parent.idx()].multi_pairs, parent_ext)?;

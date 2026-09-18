@@ -44,7 +44,6 @@ pub(crate) struct MarginalSide(pub u32);
 
 impl MarginalSide {
     /// The word as it is stored in a pair side.
-    #[inline(always)]
     pub(crate) fn side(self) -> EncodedChildRef {
         EncodedChildRef(self.0)
     }
@@ -53,7 +52,6 @@ impl MarginalSide {
     /// reference into the child level. The sentinel never appears in a stored
     /// pair; a scratch array being swept can still hold one, and every decode
     /// tests this before interpreting the payload.
-    #[inline(always)]
     pub(crate) fn is_zero_sentinel(self) -> bool {
         self.side().is_reserved()
     }
@@ -91,7 +89,6 @@ impl std::error::Error for ValueRefError {}
 
 impl ValueRef {
     /// Decode a pair side whose child level is marginal.
-    #[inline(always)]
     pub(crate) fn from_raw(r: MarginalSide) -> Self {
         debug_assert!(
             !r.is_zero_sentinel(),
@@ -110,7 +107,6 @@ impl ValueRef {
     ///
     /// Returns [`ValueRefError`] if the inline count or slot index exceeds
     /// `2^30 - 1`. Larger counts must be stored in a slot.
-    #[inline(always)]
     pub fn side(self) -> Result<EncodedChildRef, ValueRefError> {
         let (payload, tag) = match self {
             ValueRef::Inline(count) => (count, MARGINAL_OVERFLOW_TAG),
@@ -123,47 +119,24 @@ impl ValueRef {
     }
 
     /// Encode an internally constructed reference whose payload fits in 30 bits.
-    #[inline(always)]
     pub(crate) fn to_raw(self) -> MarginalSide {
         MarginalSide(self.side().expect("internal marginal reference must fit in 30 bits").raw())
-    }
-
-    /// The count a marginal-side word carries inline, or `None` when it is a slot
-    /// reference. The two-instruction decode the counting fold wants, without
-    /// building a `ValueRef` it would immediately match on.
-    #[inline(always)]
-    pub(crate) fn inline_count(raw: u32) -> Option<u32> {
-        if raw & MARGINAL_OVERFLOW_TAG != 0 {
-            Some(raw & MARGINAL_VALUE_MASK)
-        } else {
-            None
-        }
-    }
-
-    /// Whether a marginal-side word carries its count inline — the predicate the
-    /// invariant checks want, with no payload.
-    #[inline(always)]
-    pub(crate) fn is_inline_raw(raw: u32) -> bool {
-        raw & MARGINAL_OVERFLOW_TAG != 0
     }
 
     /// Whether `slot_idx` fits the payload a pair side can hold. A store that
     /// outgrows it cannot be referenced at all, so the caller that minted the
     /// slot must fail rather than truncate.
-    #[inline(always)]
     pub(crate) fn slot_is_referenceable(slot_idx: u32) -> bool {
         slot_idx & !MARGINAL_VALUE_MASK == 0
     }
 
     /// Convenience: encode a slot index as a raw u32 marginal-side ref.
-    #[inline(always)]
     pub(crate) fn slot_raw(slot_idx: u32) -> u32 {
         ValueRef::Slot(slot_idx).to_raw().0
     }
 
     /// Convenience: encode an inline count as a raw u32 marginal-side ref.
     /// Returns `None` if the count doesn't fit (caller should allocate a slot).
-    #[inline(always)]
     pub(crate) fn inline_raw(count: u128) -> Option<u32> {
         if count <= MARGINAL_INLINE_MAX as u128 {
             Some(ValueRef::Inline(count as u32).to_raw().0)
@@ -323,7 +296,6 @@ impl ChildRef {
     /// The cell of the child level this side indexes — `nodes` for a node,
     /// `marginal_counts` for a slot. `None` for an inline value, which names
     /// no cell of the child at all.
-    #[inline(always)]
     pub(crate) fn index(self) -> Option<usize> {
         match self {
             ChildRef::Node(NodeIdx(i)) | ChildRef::Value(ValueRef::Slot(i)) => Some(i as usize),
@@ -361,26 +333,22 @@ pub struct ChildDecoder {
 
 impl ChildDecoder {
     /// Sides pointing at a structural or leaf level: every word is a node index.
-    #[inline(always)]
     pub const fn structural() -> Self {
         ChildDecoder { valued: false }
     }
 
     /// Sides pointing at a marginal level: every word is a [`ValueRef`].
-    #[inline(always)]
     pub const fn marginal() -> Self {
         ChildDecoder { valued: true }
     }
 
     /// Whether the child level is marginal — whether a side of it carries a
     /// [`ValueRef`] rather than a node index.
-    #[inline(always)]
     pub const fn is_marginal(self) -> bool {
         self.valued
     }
 
     /// What `side` denotes in the child level.
-    #[inline(always)]
     pub fn child(self, side: EncodedChildRef) -> ChildRef {
         if self.valued {
             // Bare-is-slot: a side left over from before the child marginalized
@@ -393,7 +361,6 @@ impl ChildDecoder {
     }
 
     /// Decode a side known to point at a structural child.
-    #[inline(always)]
     pub(crate) fn node(self, side: EncodedChildRef) -> NodeIdx {
         match self.child(side) {
             ChildRef::Node(index) => index,
@@ -431,7 +398,6 @@ impl ChildDecoder {
     /// entry decode for structural reads, which consume the value as a grid or
     /// array coordinate. Bit-31 sentinels (a dead-node ref) pass through
     /// untouched, so such a ref round-trips exactly as an untagged read saw it.
-    #[inline(always)]
     pub(crate) fn coord(self, side: EncodedChildRef) -> u32 {
         if self.valued && !side.is_reserved() {
             side.0 & MARGINAL_VALUE_MASK

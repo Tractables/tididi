@@ -51,13 +51,11 @@ impl LiveCounts {
     }
 
     /// Record that level `t_idx` now holds `v` output nodes.
-    #[inline(always)]
     pub(super) fn set(&mut self, t_idx: usize, v: usize) {
         self.per_level[t_idx] = v;
     }
 
     /// Level `t_idx`'s output-node count.
-    #[inline(always)]
     pub(super) fn at(&self, t_idx: usize) -> usize {
         self.per_level[t_idx]
     }
@@ -65,7 +63,6 @@ impl LiveCounts {
 
 /// Bookkeeping for a freshly built sparse-output level: refresh its live-node
 /// count, mark its product list as populated, and shrink its final arrays.
-#[inline(always)]
 pub(super) fn finish_sparse_output(
     live_counts: &mut LiveCounts,
     has_pl: &mut [bool],
@@ -89,7 +86,6 @@ pub(super) fn finish_sparse_output(
 ///
 /// Shared by the general per-level tail (`finalize_level`) and the sparse
 /// one-marginal-child route, which returns before that tail runs.
-#[inline(always)]
 pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, passthrough: Sides<bool>) {
     if (passthrough.left || passthrough.right) && !level.is_marginal() {
         if passthrough.left { level.set_marginal_inlined(ChildSide::Left, true); }
@@ -100,7 +96,6 @@ pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, passthrough: Sides<
 /// Per-level tail after the cell-build route dispatch: stream commit,
 /// `live_counts` update, grid tagging, `shrink_arrays`, the output-pair meter,
 /// and the pass-through inline-emit flags.
-#[inline(always)]
 pub(super) fn finalize_level(
     eng: &Engine,
     stream_state: &mut Option<StreamLevelState>,

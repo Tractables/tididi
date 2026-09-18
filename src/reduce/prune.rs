@@ -5,7 +5,7 @@
 //! order), so sorted pair lists remain sorted after remapping. Levels that lost
 //! a node go onto the contract worklists; `reduce` runs the contraction.
 
-use crate::diagram::{EncodedChildRef, NodeIdx, Tdd};
+use crate::diagram::{EncodedChildRef, NodeIdx, NodeKind, Tdd};
 
 use crate::Engine;
 
@@ -229,12 +229,15 @@ fn rewrite_child_refs(
             if remap[base + i] == UNREACHED {
                 continue;
             }
-            if tdd.levels[t_idx].nodes[i].is_inline() {
-                let node = &mut tdd.levels[t_idx].nodes[i];
-                node.a = left_view.remap(EncodedChildRef::from_raw(node.a), left_remap).0;
-                node.b = right_view.remap(EncodedChildRef::from_raw(node.b), right_remap).0;
-            } else if tdd.levels[t_idx].nodes[i].is_multi() {
-                tdd.levels[t_idx].pairs_remap_indexed(i, left_remap, right_remap, left_view, right_view);
+            match tdd.levels[t_idx].nodes[i].kind() {
+                NodeKind::Inline(_) => {
+                    let node = &mut tdd.levels[t_idx].nodes[i];
+                    node.a = left_view.remap(EncodedChildRef::from_raw(node.a), left_remap).0;
+                    node.b = right_view.remap(EncodedChildRef::from_raw(node.b), right_remap).0;
+                }
+                k if k.pairs_in_arena() => tdd.levels[t_idx]
+                    .pairs_remap_indexed(i, left_remap, right_remap, left_view, right_view),
+                _ => {}
             }
         }
     }
