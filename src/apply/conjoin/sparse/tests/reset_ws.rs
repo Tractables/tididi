@@ -1,8 +1,7 @@
-//! `reset_sparse_ws` must FULLY drop the engine's workspace (all retained
+//! `SparseWorkspace::reset` must FULLY drop the engine's workspace (all retained
 //! capacity), not the conditional per-array trim `release_if_large` applies on
 //! the normal apply exit. The engine-owned workspace survives an unwinding
 //! panic at full size, so recovery relies on this reset to release it.
-use super::reset_sparse_ws;
 use crate::Engine;
 
 #[test]
@@ -24,7 +23,7 @@ fn reset_drops_all_capacity() {
         assert!(ws.rev_entries_c1.capacity() > 0);
     }
 
-    reset_sparse_ws(&eng);
+    eng.sparse().borrow_mut().reset();
 
     {
         let ws = eng.sparse().borrow();

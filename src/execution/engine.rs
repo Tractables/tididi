@@ -185,7 +185,7 @@ impl Engine {
         self.clause.drain();
         self.reduce.drain();
         self.restructure.drain();
-        crate::apply::conjoin::reset_sparse_ws(self);
-        crate::diagram::drop_pools(self);
+        self.sparse.borrow_mut().reset();
+        self.levels.drain();
     }
 }

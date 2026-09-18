@@ -255,14 +255,14 @@ pub(crate) fn release_sparse_ws_if_large(eng: &Engine) {
     eng.sparse().borrow_mut().release_if_large(eng.limits());
 }
 
-/// Replace the engine's sparse workspace with `SparseWorkspace::default()`,
-/// releasing every bucket array, reverse index and emit buffer unconditionally;
-/// `release_sparse_ws_if_large` trims per array on the normal apply exit.
-///
-/// # Panics
-///
-/// Panics on the `RefCell` double borrow if an apply on this engine holds the
-/// workspace, so call it only between operations.
-pub(crate) fn reset_sparse_ws(eng: &Engine) {
-    *eng.sparse().borrow_mut() = SparseWorkspace::default();
+impl SparseWorkspace {
+    /// Release every bucket array, reverse index and emit buffer
+    /// unconditionally; `release_sparse_ws_if_large` trims per array on the
+    /// normal apply exit.
+    ///
+    /// For a recovery boundary: the engine-owned workspace survives an
+    /// unwinding panic at full size.
+    pub(crate) fn reset(&mut self) {
+        *self = SparseWorkspace::default();
+    }
 }

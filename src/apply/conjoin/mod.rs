@@ -26,7 +26,7 @@ use cell::{
 };
 
 mod sparse;
-pub(crate) use sparse::{reset_sparse_ws, SparseWorkspace};
+pub(crate) use sparse::SparseWorkspace;
 use sparse::{
     ProductEntry, is_self_conjunction, apply_sparse_level, apply_leaf_levels,
     compute_apply_output, release_sparse_ws_if_large,

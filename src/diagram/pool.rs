@@ -154,11 +154,3 @@ pub(crate) fn return_levels(eng: &Engine, slot: PoolSlot, levels: Vec<TddLevel>)
     return_levels_to(cell, levels)
 }
 
-/// Empty both level-pool slots, releasing any recycled `Vec<TddLevel>` capacity
-/// (up to `POOL_NODE_CAP_LIMIT` per slot) back to the allocator.
-///
-/// For a recovery boundary, so a failed compile's pooled levels do not carry over.
-pub(crate) fn drop_pools(eng: &Engine) {
-    eng.levels().drain();
-}
-

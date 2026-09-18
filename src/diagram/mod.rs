@@ -208,7 +208,7 @@ pub(crate) use level::sort_pairs;
 
 // pool
 pub(crate) use pool::{return_levels, take_levels, try_take_levels};
-pub(crate) use pool::{drop_pools, PoolSlot};
+pub(crate) use pool::PoolSlot;
 pub(crate) use pool::LevelPool;
 
 // tdd
