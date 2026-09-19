@@ -42,9 +42,10 @@ impl Tdd {
     /// node with constrained variables on both sides costs a pass over the
     /// rows, and fewer than `vars.len()` nodes are like that; a node with them
     /// on one side costs a pass over its own width, and a node with none costs
-    /// nothing. Working memory is the packed rows, plus one index per row for
-    /// each subtree that is finished and not yet used by its parent — at most
-    /// the vtree's depth of those at once.
+    /// nothing. Working memory is twice the packed rows while they are being
+    /// sorted and once afterwards, plus one index per row for each subtree
+    /// that is finished and not yet used by its parent — at most the vtree's
+    /// depth of those at once.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -322,7 +323,7 @@ fn distinct_rows(
         // One word is the whole row, so the words sort and deduplicate where
         // they are and the detour through a permutation buys nothing.
         gate.flush()?;
-        packed.sort_unstable();
+        sort_words(lim, &mut packed, num_vars)?;
         packed.dedup();
         return Ok(packed);
     }
@@ -345,6 +346,64 @@ fn distinct_rows(
     lim.discard(packed);
     lim.discard(order);
     Ok(out)
+}
+
+/// Bits of a row one radix pass places, which puts the counts in the
+/// first-level cache and covers a row of any width in at most six passes.
+const RADIX_BITS: usize = 11;
+
+/// Rows below which the comparison sort wins: a radix pass is linear but reads
+/// and writes the whole buffer whatever the rows look like.
+const RADIX_MIN_ROWS: usize = 1 << 14;
+
+/// Sort one-word rows ascending.
+///
+/// The words are bit-packed values over `num_vars` bits, so a radix sort
+/// places them in a fixed number of linear passes where a comparison sort
+/// takes a logarithmic number over the whole buffer. Both leave the same
+/// order: on integers there is only one.
+fn sort_words(lim: &Limits, packed: &mut Vec<u64>, num_vars: usize) -> Result<(), OperationError> {
+    let m = packed.len();
+    if m < RADIX_MIN_ROWS {
+        packed.sort_unstable();
+        return Ok(());
+    }
+    let mask = (1u64 << RADIX_BITS) - 1;
+    let mut other: Vec<u64> = Vec::new();
+    lim.try_resize(&mut other, m, 0u64)?;
+    let mut counts: Vec<u32> = Vec::new();
+    lim.try_resize(&mut counts, 1 << RADIX_BITS, 0u32)?;
+
+    let mut gate = lim.gate();
+    for pass in 0..num_vars.div_ceil(RADIX_BITS) {
+        gate.poll(m as u64)?;
+        let shift = pass * RADIX_BITS;
+        counts.fill(0);
+        for &word in packed.iter() {
+            counts[((word >> shift) & mask) as usize] += 1;
+        }
+        if counts[((packed[0] >> shift) & mask) as usize] as usize == m {
+            // Every row holds the same digit, so this pass would copy the
+            // buffer onto itself. A bit-packed table often has such a pass.
+            continue;
+        }
+        let mut at = 0u32;
+        for count in counts.iter_mut() {
+            let here = *count;
+            *count = at;
+            at += here;
+        }
+        for &word in packed.iter() {
+            let digit = ((word >> shift) & mask) as usize;
+            other[counts[digit] as usize] = word;
+            counts[digit] += 1;
+        }
+        std::mem::swap(packed, &mut other);
+    }
+    gate.flush()?;
+    lim.discard(other);
+    lim.discard(counts);
+    Ok(())
 }
 
 /// Compare two whole rows, high word first, so that the order agrees with

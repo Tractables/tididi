@@ -207,6 +207,22 @@ fn a_relation_wider_than_one_word_reads_both_words() {
 }
 
 #[test]
+fn the_radix_pass_leaves_the_order_a_comparison_sort_leaves() {
+    let mut rng = Lcg::new(5);
+    for num_vars in [1usize, 11, 12, 34, 63, 64] {
+        let mask = if num_vars == 64 { !0u64 } else { (1u64 << num_vars) - 1 };
+        let words: Vec<u64> =
+            (0..super::RADIX_MIN_ROWS + 37).map(|_| rng.next_u64() & mask).collect();
+        let mut want = words.clone();
+        want.sort_unstable();
+        let mut got = words;
+        let eng = Engine::new();
+        super::sort_words(eng.limits(), &mut got, num_vars).unwrap();
+        assert_eq!(got, want, "{num_vars} variables");
+    }
+}
+
+#[test]
 fn a_tiny_budget_refuses_without_leaving_a_diagram() {
     let vtree = Arc::new(Vtree::linear(12));
     let mut rng = Lcg::new(3);
