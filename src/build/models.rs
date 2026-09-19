@@ -666,6 +666,20 @@ fn order_by_value(
         // the vtree's right spine is like that, which for a right-linear vtree
         // is every internal node, and they are the widest ones.
         scratch.order.extend(0..m as u32);
+    } else if width == 1 {
+        // Only a constrained leaf is this narrow, and over two buckets the
+        // counting sort is a stable partition: place the zeros from the front
+        // and the ones from the back in one pass and turn the ones round,
+        // rather than pass over the rows once to count and again to place.
+        scratch.order.resize(m, 0);
+        let (mut zeros, mut ones) = (0usize, m);
+        for k in 0..m {
+            let bit = value_at(row_at(sorted, w, k as u32), lo, 1) as usize;
+            ones -= bit;
+            scratch.order[if bit == 0 { zeros } else { ones }] = k as u32;
+            zeros += 1 - bit;
+        }
+        scratch.order[zeros..].reverse();
     } else if width <= 16 {
         // A counting sort beats a comparison sort while the value range is
         // small, and most nodes of a vtree wider than the query are narrow.
