@@ -19,7 +19,10 @@
 //!   its references are copied verbatim, never dereferenced, so it may be
 //!   marginal.
 //!
-//! The per-level node remap feeds the level above.
+//! The per-level node remap feeds the level above. A regroup that merges
+//! nothing returns no remap: its cells are its old nodes in order, so every
+//! level above it would rewrite itself to what it already holds and the sweep
+//! stops climbing.
 
 use crate::Engine;
 use crate::limits::{OperationError, PollGate};
@@ -118,8 +121,9 @@ impl<T: Copy> Runs<T> {
 /// new partition cells (owner classes); the level above re-expands a reference
 /// to `old` over all listed new cells.
 ///
-/// `None` in place of one stands for the identity: that is how a level with no
-/// quantified leaf below it is treated, its references being copied verbatim.
+/// `None` in place of one stands for the identity: the level above keeps the
+/// reference it stores, which is also how a level with no quantified leaf below
+/// it is treated.
 type Remap = Runs<u32>;
 
 /// How a vtree node relates to the quantified leaves.
@@ -190,7 +194,11 @@ pub(super) fn exists_leaves_structural(
             Role::Split => {
                 let (left, right) = vtree.children(level);
                 let (below_left, below_right) = (remap[left.idx()].take(), remap[right.idx()].take());
-                regroup(&mut work, &mut tdd, level, below_left.as_ref(), below_right.as_ref())?
+                if below_left.is_none() && below_right.is_none() {
+                    None
+                } else {
+                    regroup(&mut work, &mut tdd, level, below_left.as_ref(), below_right.as_ref())?
+                }
             }
         };
     }
@@ -286,8 +294,9 @@ fn check_levels_are_rewritable(
 /// each satisfiable, so each denotes ⊤ once its variables are free, and the
 /// whole partition becomes one node whose pair names ⊤ on both sides.
 ///
-/// `wanted` is whether the level above reads the map; `None` comes back when it
-/// does not.
+/// `wanted` is whether the level above reads the map. `None` comes back when it
+/// does not, and when the map is the identity because the level held one node —
+/// the level above then keeps its own references and is left alone.
 fn free_subtree_level(
     work: &mut Rewrite<'_>,
     tdd: &mut Tdd,
@@ -306,7 +315,7 @@ fn free_subtree_level(
     work.emitted += 1;
     lim.level_done(work.emitted)?;
     tdd.try_invalidate(work.eng, level)?;
-    if !wanted {
+    if !wanted || n_nodes == 1 {
         return Ok(None);
     }
     Runs::all_to_first(lim, n_nodes, 0u32).map(Some)
@@ -365,6 +374,10 @@ fn expand<'a>(remap: Option<&'a Remap>, kept: &'a mut u32, side: EncodedChildRef
 /// This keeps the new level a valid partition: two atoms with different owner
 /// sets land in different cells (mutex by construction of the owner set), and
 /// `∃.g` is reconstructed exactly as the OR over `g`'s cells.
+///
+/// `None` comes back when the partition did not change — cell `i` holds
+/// exactly what node `i` expanded to — because the level above would then
+/// rewrite itself to what it already holds.
 fn regroup(
     work: &mut Rewrite<'_>,
     tdd: &mut Tdd,
@@ -488,9 +501,19 @@ fn regroup(
         lim.try_push(&mut cell_pairs, (new_cell, pair))?;
     }
 
+    // One cell per node and one owner per cell: the owner sets are singletons
+    // and pairwise distinct, and cells open in node order, so cell `i` is
+    // node `i` expanded. Every reference from above still names the node it
+    // named, and the level above would hand back its own pairs.
+    let unchanged = n_cells as usize == n_nodes && fanout.len() == n_nodes;
+
     let mut new_nodes = Runs::pack(lim, n_cells as usize, &cell_pairs, TRUE_PAIR)?;
     lim.discard(cell_pairs);
     write_level(work, tdd, parent, &mut new_nodes)?;
+    if unchanged {
+        lim.discard(fanout);
+        return Ok(None);
+    }
     let remap = Runs::pack(lim, n_nodes, &fanout, 0u32)?;
     lim.discard(fanout);
     Ok(Some(remap))
