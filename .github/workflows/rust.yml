@@ -108,7 +108,7 @@ jobs:
     # about thirteen seconds, where adding the exhaustive sorting-network
     # permutation test alone takes twelve minutes.
     - name: Interpret the tests over unsafe code
-      run: cargo miri test --lib -- reduce::contract::fingerprint value::domain
+      run: cargo +nightly miri test --lib -- reduce::contract::fingerprint value::domain
 
   msrv:
     runs-on: ubuntu-latest
