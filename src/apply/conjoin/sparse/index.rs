@@ -79,6 +79,15 @@ pub(crate) struct SparseWorkspace {
     pub(crate) filtered: Vec<Vec<(u32, u32)>>,
     pub(crate) filtered_touched: Vec<u32>,          // indices of `filtered` written this outer, to clear
 
+    // ── Output-sensitive join: the inner-g children the emit will read ──
+    // The emit reads `filtered` only at the g children this outer's f parents
+    // name through their live left products, so the build buckets only those
+    // — a semi-join of the g side against the f side, one level up.
+    pub(crate) wanted: Vec<u32>,                    // inner-g children this outer's emit reads
+    pub(crate) wanted_epoch: u32,                   // the stamp that counts as marked
+    pub(crate) inner_seen: Vec<u32>,                // inner f children already walked this outer
+    pub(crate) inner_seen_epoch: u32,               // likewise
+
     // ── Phase E: parent dedup ──
     pub(crate) par_buckets: Vec<Vec<ParEntry>>,     // surviving candidates bucketed by f-parent
     pub(crate) p2_map: Vec<u32>,                    // flat lookup: p2_map[right_parent] → compacted idx, NO_PRODUCT if new
@@ -115,6 +124,8 @@ impl SparseWorkspace {
         drop_if_large(lim, &mut self.left_buckets);
         drop_if_large(lim, &mut self.par_buckets);
         drop_if_large(lim, &mut self.filtered);
+        crate::limits::pool::release_if_oversized(lim, &mut self.wanted);
+        crate::limits::pool::release_if_oversized(lim, &mut self.inner_seen);
     }
 }
 

@@ -140,6 +140,10 @@ struct ScatterSides<'w> {
     inner_prods: &'w mut Vec<Vec<(u32, u32)>>,
     /// Per-outer g index, keyed by the join's inner-g child.
     filtered: TouchedBuckets<'w>,
+    /// The inner-g children this outer's emit reads, and the inner f children
+    /// already walked to find them.
+    wanted: EpochFlags<'w>,
+    inner_seen: EpochFlags<'w>,
     /// Surviving candidates, bucketed by f parent.
     par_buckets: &'w mut Vec<Vec<ParEntry>>,
     /// How many outer keys the emit loop walks.
@@ -174,6 +178,47 @@ impl TouchedBuckets<'_> {
     }
 }
 
+/// A marking array emptied by advancing a stamp rather than by clearing it,
+/// so starting a round is free however many keys the last one marked. The
+/// stamp lives in the workspace and only ever moves forward, so a slot left
+/// by an earlier round, level or apply reads as unmarked.
+struct EpochFlags<'a> {
+    stamps: &'a mut Vec<u32>,
+    epoch: &'a mut u32,
+    cur: u32,
+}
+
+impl EpochFlags<'_> {
+    /// Empty the array: every key is unmarked again.
+    #[inline]
+    fn begin(&mut self) {
+        self.cur = self.cur.wrapping_add(1);
+        if self.cur == 0 {
+            // The stamp wrapped, so a slot left by an older round could read
+            // as marked. This costs one pass per 2^32 rounds.
+            self.stamps.fill(0);
+            self.cur = 1;
+        }
+        *self.epoch = self.cur;
+    }
+
+    /// Mark `key`, and report whether this call is the one that marked it.
+    #[inline]
+    fn mark(&mut self, key: u32) -> bool {
+        let slot = &mut self.stamps[key as usize];
+        if *slot == self.cur {
+            return false;
+        }
+        *slot = self.cur;
+        true
+    }
+
+    #[inline]
+    fn is_set(&self, key: u32) -> bool {
+        self.stamps[key as usize] == self.cur
+    }
+}
+
 /// Take this direction's view of the workspace, with every bucket array this
 /// arm writes cleared to `shape`'s dimensions.
 fn sides<'w, const SWAPPED: bool>(
@@ -190,7 +235,8 @@ fn sides<'w, const SWAPPED: bool>(
     let SparseWorkspace {
         rev_offsets_c1, rev_entries_c1, rev_offsets_c2, rev_entries_c2,
         prod_by_a1, prod_by_s1, right_buckets, left_buckets,
-        filtered, filtered_touched, par_buckets, ..
+        filtered, filtered_touched, par_buckets,
+        wanted, wanted_epoch, inner_seen, inner_seen_epoch, ..
     } = ws;
     let (inner_prods, outer_buckets) = if !SWAPPED {
         (prod_by_a1, right_buckets)
@@ -201,10 +247,14 @@ fn sides<'w, const SWAPPED: bool>(
     ensure_buckets_cleared(eng, outer_buckets, outer_k)?;
     ensure_buckets_cleared(eng, filtered, filtered_dim)?;
     filtered_touched.clear();
+    eng.limits().try_resize(wanted, filtered_dim, 0u32)?;
+    eng.limits().try_resize(inner_seen, inner_k, 0u32)?;
     Ok(ScatterSides {
         rev_offsets_c1, rev_entries_c1, rev_offsets_c2, rev_entries_c2,
         outer_buckets, inner_prods,
         filtered: TouchedBuckets { buckets: filtered, touched: filtered_touched },
+        wanted: EpochFlags { cur: *wanted_epoch, stamps: wanted, epoch: wanted_epoch },
+        inner_seen: EpochFlags { cur: *inner_seen_epoch, stamps: inner_seen, epoch: inner_seen_epoch },
         par_buckets,
         outer_k,
     })
@@ -245,10 +295,44 @@ impl ScatterSides<'_> {
             let end = self.rev_offsets_c2[right_key as usize + 1] as usize;
             for ei in off..end {
                 let RevEntry { parent: p2, other: inner_c2 } = self.rev_entries_c2[ei];
+                // The emit reads only the keys `mark_wanted_for_outer` found;
+                // a g parent under any other one would be bucketed, cleared
+                // and never looked at.
+                if !self.wanted.is_set(inner_c2) {
+                    continue;
+                }
                 self.filtered.push(lim, inner_c2, (p2, attached))?;
             }
         }
         Ok(())
+    }
+
+    /// Mark the inner-g children this outer's emit will read: for each
+    /// distinct inner f child under the outer key, the g children its live
+    /// left products name.
+    ///
+    /// This is the join's own semi-join, one level up. What
+    /// `build_filtered_for_outer` buckets is every g parent under the outer's
+    /// g keys, which is unrelated to how many of them the emit then reads:
+    /// where the two sides meet in few places, most of that index is written,
+    /// cleared and never looked at. Marking first bounds the build by what
+    /// the emit reads, and the marking walk is itself bounded by the emit's
+    /// own outer loop — it visits the same products, once per distinct inner
+    /// child rather than once per f parent.
+    fn mark_wanted_for_outer(&mut self, outer: usize) {
+        self.wanted.begin();
+        self.inner_seen.begin();
+        let off = self.rev_offsets_c1[outer] as usize;
+        let end = self.rev_offsets_c1[outer + 1] as usize;
+        for ci in off..end {
+            let inner1 = self.rev_entries_c1[ci].other;
+            if !self.inner_seen.mark(inner1) {
+                continue;
+            }
+            for &(inner_c2, _) in &self.inner_prods[inner1 as usize] {
+                self.wanted.mark(inner_c2);
+            }
+        }
     }
 
     /// Emit for one outer key: walk the f parents sharing it and, for each
@@ -309,6 +393,7 @@ fn scatter_general_arm<const SWAPPED: bool>(
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     for outer in 0..s.outer_k {
         if s.outer_buckets[outer].is_empty() { continue; }
+        s.mark_wanted_for_outer(outer);
         s.build_filtered_for_outer(lim, outer)?;
         s.emit_for_outer::<SWAPPED>(lim, outer, &mut ticker)?;
         s.filtered.clear_touched();
