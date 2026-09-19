@@ -213,6 +213,9 @@ struct Scratch {
     buckets: Vec<u32>,
     /// A row's words with the current node's own bits cleared.
     outside: Vec<u64>,
+    /// The current node's own bits, one mask per word its value reaches into,
+    /// starting at word `lo / 64`.
+    value: Vec<u64>,
     /// Where in `order` each atom's first run sits, as `(start, length)`.
     runs: Vec<(u32, u32)>,
     /// The next atom sharing an entry's hash, or `u32::MAX`.
@@ -397,11 +400,12 @@ fn value_words(lo: usize, width: usize) -> std::ops::RangeInclusive<usize> {
     lo / 64..=(lo + width - 1) / 64
 }
 
-/// Whether two rows agree on the `width` bits starting at `lo`.
+/// Whether two rows agree on one node's bits, `mask` holding that node's bits
+/// of the words from `first` on — the level computes it once, in
+/// `Scratch::value`, rather than deriving it from `(lo, width)` per row.
 #[inline]
-fn same_value(sorted: &[u64], w: usize, lo: usize, width: usize, a: u32, b: u32) -> bool {
-    let (x, y) = (row_at(sorted, w, a), row_at(sorted, w, b));
-    value_words(lo, width).all(|i| (x[i] ^ y[i]) & value_mask(lo, width, i) == 0)
+fn same_value(x: &[u64], y: &[u64], first: usize, mask: &[u64]) -> bool {
+    mask.iter().enumerate().all(|(i, &m)| (x[first + i] ^ y[first + i]) & m == 0)
 }
 
 /// Compare two rows by the `width` bits starting at `lo`, high word first,
@@ -588,11 +592,17 @@ fn group_rows(
     let ValueSpan { lo, width, .. } = span;
     order_by_value(lim, scratch, sorted, w, span, m)?;
 
+    let words = value_words(lo, width);
+    let first = *words.start();
+    scratch.value.clear();
+    lim.reserve_exact(&mut scratch.value, words.clone().count())?;
     scratch.outside.clear();
     lim.reserve_exact(&mut scratch.outside, w)?;
     scratch.outside.resize(w, !0u64);
-    for i in value_words(lo, width) {
-        scratch.outside[i] &= !value_mask(lo, width, i);
+    for i in words {
+        let mask = value_mask(lo, width, i);
+        scratch.value.push(mask);
+        scratch.outside[i] &= !mask;
     }
 
     scratch.runs.clear();
@@ -607,8 +617,11 @@ fn group_rows(
     let mut i = 0usize;
     while i < m {
         gate.poll(w as u64)?;
+        let head = row_at(sorted, w, scratch.order[i]);
         let mut j = i + 1;
-        while j < m && same_value(sorted, w, lo, width, scratch.order[i], scratch.order[j]) {
+        while j < m
+            && same_value(head, row_at(sorted, w, scratch.order[j]), first, &scratch.value)
+        {
             j += 1;
         }
         let atom = atom_of_run(scratch, sorted, w, i, j);
