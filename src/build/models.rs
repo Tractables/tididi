@@ -265,6 +265,11 @@ fn from_models(
 }
 
 /// Re-encode the rows into leaf order, sort them and drop the repeats.
+///
+/// The order is by bit position, the highest first, which is the order
+/// [`compare_value`] reads a node's value in. A node whose bits reach the top
+/// of the row therefore finds the rows already grouped — see
+/// [`order_by_value`].
 fn distinct_rows(
     lim: &Limits,
     num_vars: usize,
@@ -294,7 +299,7 @@ fn distinct_rows(
     let mut order: Vec<u32> = Vec::new();
     lim.reserve_exact(&mut order, n)?;
     order.extend(0..n as u32);
-    order.sort_unstable_by(|&a, &b| row_at(&packed, w, a).cmp(row_at(&packed, w, b)));
+    order.sort_unstable_by(|&a, &b| compare_row(&packed, w, a, b));
 
     let mut out: Vec<u64> = Vec::new();
     lim.reserve_exact(&mut out, packed.len())?;
@@ -309,6 +314,19 @@ fn distinct_rows(
     lim.discard(packed);
     lim.discard(order);
     Ok(out)
+}
+
+/// Compare two whole rows, high word first, so that the order agrees with
+/// [`compare_value`] on any value that reaches the top of the row.
+fn compare_row(packed: &[u64], w: usize, a: u32, b: u32) -> std::cmp::Ordering {
+    let (x, y) = (row_at(packed, w, a), row_at(packed, w, b));
+    for i in (0..w).rev() {
+        let ord = x[i].cmp(&y[i]);
+        if ord != std::cmp::Ordering::Equal {
+            return ord;
+        }
+    }
+    std::cmp::Ordering::Equal
 }
 
 /// Row `k` of a buffer of `w`-word rows.
@@ -395,6 +413,7 @@ fn fill(
     lim.reserve_exact(&mut state, vtree.num_nodes())?;
     state.resize_with(vtree.num_nodes(), || None);
     let mut emitted = 0u64;
+    let num_vars = layout.count[vtree.root().idx()] as usize;
 
     for t in vtree.bottomup() {
         lim.check_stop()?;
@@ -407,7 +426,8 @@ fn fill(
             }
             _ => {
                 let lo = layout.lo[t.idx()] as usize;
-                let atoms = group_rows(lim, &mut scratch, sorted, w, lo, width, m)?;
+                let span = ValueSpan { lo, width, at_top: lo + width == num_vars };
+                let atoms = group_rows(lim, &mut scratch, sorted, w, span, m)?;
                 store_level(eng, builder, vtree, &state, &mut scratch, t, atoms)?
             }
         };
@@ -507,6 +527,16 @@ fn carry_child(
     Ok(Finished { atoms: from.atoms, locals })
 }
 
+/// Where one vtree node's constrained variables sit in a row: the bit range
+/// `[lo, lo + width)`, and whether it reaches the row's top, which is what
+/// lets the node read the rows in the order they already lie in.
+#[derive(Clone, Copy)]
+struct ValueSpan {
+    lo: usize,
+    width: usize,
+    at_top: bool,
+}
+
 /// The atoms of one vtree node.
 struct Atoms {
     count: usize,
@@ -524,11 +554,11 @@ fn group_rows(
     scratch: &mut Scratch,
     sorted: &[u64],
     w: usize,
-    lo: usize,
-    width: usize,
+    span: ValueSpan,
     m: usize,
 ) -> Result<Atoms, OperationError> {
-    order_by_value(lim, scratch, sorted, w, lo, width, m)?;
+    let ValueSpan { lo, width, .. } = span;
+    order_by_value(lim, scratch, sorted, w, span, m)?;
 
     scratch.outside.clear();
     lim.reserve_exact(&mut scratch.outside, w)?;
@@ -577,13 +607,19 @@ fn order_by_value(
     scratch: &mut Scratch,
     sorted: &[u64],
     w: usize,
-    lo: usize,
-    width: usize,
+    span: ValueSpan,
     m: usize,
 ) -> Result<(), OperationError> {
+    let ValueSpan { lo, width, at_top } = span;
     scratch.order.clear();
     lim.reserve_exact(&mut scratch.order, m)?;
-    if width <= 16 {
+    if at_top {
+        // The rows are sorted by the whole row, highest bit first, so a value
+        // that reaches the top of the row already runs in order. Every node on
+        // the vtree's right spine is like that, which for a right-linear vtree
+        // is every internal node, and they are the widest ones.
+        scratch.order.extend(0..m as u32);
+    } else if width <= 16 {
         // A counting sort beats a comparison sort while the value range is
         // small, and most nodes of a vtree wider than the query are narrow.
         let range = 1usize << width;
