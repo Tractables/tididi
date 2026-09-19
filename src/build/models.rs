@@ -618,13 +618,19 @@ fn group_rows(
     while i < m {
         gate.poll(w as u64)?;
         let head = row_at(sorted, w, scratch.order[i]);
+        // One pass finds where the run ends and hashes its completions.
+        let mut hasher = FxHasher::default();
+        write_completion(&mut hasher, head, &scratch.outside);
         let mut j = i + 1;
-        while j < m
-            && same_value(head, row_at(sorted, w, scratch.order[j]), first, &scratch.value)
-        {
+        while j < m {
+            let row = row_at(sorted, w, scratch.order[j]);
+            if !same_value(head, row, first, &scratch.value) {
+                break;
+            }
+            write_completion(&mut hasher, row, &scratch.outside);
             j += 1;
         }
-        let atom = atom_of_run(scratch, sorted, w, i, j);
+        let atom = atom_of_run(scratch, sorted, w, hasher.finish(), i, j);
         for &k in &scratch.order[i..j] {
             of_row[k as usize] = atom as u32;
         }
@@ -696,20 +702,29 @@ fn order_by_value(
     Ok(())
 }
 
-/// The atom of the run `order[i..j]`, adding one when its set of completions
-/// has not been seen at this node.
+/// Write one row's completion — its words outside the node's own bits — into
+/// the hash of the run it belongs to.
+#[inline]
+fn write_completion(hasher: &mut FxHasher, row: &[u64], outside: &[u64]) {
+    for (word, &mask) in row.iter().zip(outside) {
+        hasher.write_u64(word & mask);
+    }
+}
+
+/// The atom of the run `order[i..j]`, whose completions hash to `hash`, adding
+/// one when that set of completions has not been seen at this node.
 ///
 /// Rows of one run share the node's value and so differ only outside it, and
 /// the run lists those completions in the order the whole-row sort put them
 /// in. Two runs are the same atom exactly when those lists match.
-fn atom_of_run(scratch: &mut Scratch, sorted: &[u64], w: usize, i: usize, j: usize) -> usize {
-    let mut hasher = FxHasher::default();
-    for &k in &scratch.order[i..j] {
-        for (word, &mask) in row_at(sorted, w, k).iter().zip(&scratch.outside) {
-            hasher.write_u64(word & mask);
-        }
-    }
-    let hash = hasher.finish();
+fn atom_of_run(
+    scratch: &mut Scratch,
+    sorted: &[u64],
+    w: usize,
+    hash: u64,
+    i: usize,
+    j: usize,
+) -> usize {
     let first = scratch.head.get(&hash).copied().unwrap_or(u32::MAX);
     let mut candidate = first;
     while candidate != u32::MAX {
