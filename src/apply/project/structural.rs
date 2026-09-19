@@ -6,7 +6,7 @@
 //! sibling-child references in a pair list are mutually exclusive and ∃x is a
 //! structural regrouping. Path levels are processed leaf to root: at each, the
 //! path-side child reference is replaced by its forgotten image (Pos/Neg/One
-//! become One at the leaf parent; `c` becomes `child_remap[c]` above), then
+//! become One at the leaf parent; `c` becomes `child_remap.get(c)` above), then
 //! nodes that now share an atom (same path image, same sibling ref) are
 //! merged to restore the partition. The per-level node remap feeds the next
 //! level up; sibling refs are copied verbatim and never dereferenced.
@@ -22,12 +22,80 @@ use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 
 use rustc_hash::FxHashMap;
 
-/// Per-level fan-out map: `remap[old_node_idx]` lists every new node index that
-/// the old node contributes to after the ∃x regroup. Multi-valued because
+/// Items grouped by a `u32` key into contiguous runs: key `k` owns
+/// `items[starts[k]..starts[k + 1]]`.
+///
+/// Both regroups emit their `(key, item)` entries in scan order rather than
+/// grouped by key — a new cell is opened part way through a level and later
+/// entries join it — so the grouping is a counting sort over the keys. The
+/// scatter is stable, which is what keeps a node's fan-out ascending: cells
+/// are opened in increasing order, so the entries naming one node arrive in
+/// that order too.
+struct Runs<T> {
+    starts: Vec<u32>,
+    items: Vec<T>,
+}
+
+impl<T: Copy> Runs<T> {
+    /// The runs of a level that held no nodes: every key maps to nothing.
+    fn empty() -> Runs<T> {
+        Runs { starts: Vec::new(), items: Vec::new() }
+    }
+
+    /// Group `entries` under `keys` keys, `zero` seeding the scatter buffer.
+    fn pack(
+        lim: &crate::limits::Limits,
+        keys: usize,
+        entries: &[(u32, T)],
+        zero: T,
+    ) -> Result<Runs<T>, OperationError> {
+        u32::try_from(entries.len()).map_err(|_| OperationError::OverBudget)?;
+        let mut starts = Vec::new();
+        lim.try_resize(&mut starts, keys + 1, 0u32)?;
+        for &(key, _) in entries {
+            starts[key as usize + 1] += 1;
+        }
+        for k in 0..keys {
+            starts[k + 1] += starts[k];
+        }
+        let mut items = Vec::new();
+        lim.try_resize(&mut items, entries.len(), zero)?;
+        let mut cursor = Vec::new();
+        lim.reserve_exact(&mut cursor, keys)?;
+        cursor.extend_from_slice(&starts[..keys]);
+        for &(key, item) in entries {
+            let slot = &mut cursor[key as usize];
+            items[*slot as usize] = item;
+            *slot += 1;
+        }
+        lim.discard(cursor);
+        Ok(Runs { starts, items })
+    }
+
+    /// How many keys the runs cover.
+    fn len(&self) -> usize {
+        self.starts.len().saturating_sub(1)
+    }
+
+    fn get(&self, key: usize) -> &[T] {
+        match self.starts.get(key + 1) {
+            Some(&end) => &self.items[self.starts[key] as usize..end as usize],
+            None => &[],
+        }
+    }
+
+    fn get_mut(&mut self, key: usize) -> &mut [T] {
+        let (lo, hi) = (self.starts[key] as usize, self.starts[key + 1] as usize);
+        &mut self.items[lo..hi]
+    }
+}
+
+/// Per-level fan-out map: `remap.get(old_node_idx)` lists every new node index
+/// that the old node contributes to after the ∃x regroup. Multi-valued because
 /// forgetting x can split one old node's sibling refs across several new
 /// partition cells (owner classes); the level above re-expands a reference to
 /// `old` over all listed new cells.
-type Remap = Vec<Vec<u32>>;
+type Remap = Runs<u32>;
 
 /// Existentially quantify `x` from `tdd` by an in-place leaf-to-root rewrite,
 /// then reduce on `eng`, checking its limits throughout the rewrite. `leaf_idx` is
@@ -64,7 +132,7 @@ pub(super) fn exists_var_structural(
     let child_remap = rewrite_path(&mut work, &mut tdd, &path, leaf_idx)?;
 
     let root_vi = *path.last().expect("path is non-empty (output not at leaf)");
-    let out_pairs = union_of_root_cells(&mut work, &tdd, root_vi, &child_remap[tdd.output.local.idx()])?;
+    let out_pairs = union_of_root_cells(&mut work, &tdd, root_vi, child_remap.get(tdd.output.local.idx()))?;
     // Append the union node and point the output at it (prune drops the rest).
     let new_out = tdd.levels[root_vi.idx()].push_node_on(eng, &out_pairs)?;
     tdd.output.local = new_out;
@@ -126,7 +194,7 @@ fn ancestor_path(work: &mut Rewrite<'_>, vtree: &crate::vtree::Vtree, leaf_idx: 
 /// step is the special one: its "child" is x's own leaf, which has no map.
 fn rewrite_path(work: &mut Rewrite<'_>, tdd: &mut Tdd, path: &[VtreeIdx], leaf_idx: VtreeIdx) -> Result<Remap, OperationError> {
     let vtree = tdd.vtree.clone();
-    let mut child_remap: Remap = Vec::new();
+    let mut child_remap: Remap = Runs::empty();
     let mut child_vi = leaf_idx;
     for (step, &parent) in path.iter().enumerate() {
         let (left_child, right_child) = match *vtree.node(parent) {
@@ -191,7 +259,7 @@ struct OwnerKey {
 fn regroup_leaf_parent(work: &mut Rewrite<'_>, tdd: &mut Tdd, parent: VtreeIdx, path_is_left: bool) -> Result<Remap, OperationError> {
     let level = &tdd.levels[parent.idx()];
     let n_nodes = level.nodes.len();
-    if n_nodes == 0 { return Ok(Vec::new()); }
+    if n_nodes == 0 { return Ok(Runs::empty()); }
     let lim = work.eng.limits();
 
     let read_pair = |p: &ChildPair| -> (EncodedChildRef, EncodedChildRef) {
@@ -226,28 +294,28 @@ fn regroup_leaf_parent(work: &mut Rewrite<'_>, tdd: &mut Tdd, parent: VtreeIdx, 
     // Group sibling refs by their unordered owner key, one new cell each. The
     // fan-out is recorded at cell creation; cells are created in increasing
     // index order, so each old node's fan-out list comes out ascending.
-    let mut key_to_new: FxHashMap<(u32, u32), usize> = FxHashMap::default();
-    let mut new_nodes: Vec<Vec<ChildPair>> = Vec::new();
-    let mut remap = Vec::new();
-    lim.try_resize(&mut remap, n_nodes, Vec::new())?;
+    let mut key_to_new: FxHashMap<(u32, u32), u32> = FxHashMap::default();
+    let mut cell_pairs: Vec<(u32, ChildPair)> = Vec::new();
+    lim.reserve_exact(&mut cell_pairs, order.len())?;
+    let mut fanout: Vec<(u32, u32)> = Vec::new();
+    let mut n_cells = 0u32;
 
     for &sib in &order {
         work.poll()?;
         let ok = owners[&sib];
         let (a, b) = (ok.pos, ok.neg);
         let key = if a <= b { (a, b) } else { (b, a) };
-        let idx = if let Some(&idx) = key_to_new.get(&key) {
-            idx
+        let cell = if let Some(&cell) = key_to_new.get(&key) {
+            cell
         } else {
-            let k = new_nodes.len();
-            let cell = u32::try_from(k).map_err(|_| OperationError::OverBudget)?;
+            let cell = n_cells;
             if cell == u32::MAX { return Err(OperationError::OverBudget); }
-            lim.try_push(&mut new_nodes, Vec::new())?;
-            if key.0 != u32::MAX { lim.try_push(&mut remap[key.0 as usize], cell)?; }
-            if key.1 != u32::MAX && key.1 != key.0 { lim.try_push(&mut remap[key.1 as usize], cell)?; }
+            n_cells += 1;
+            if key.0 != u32::MAX { lim.try_push(&mut fanout, (key.0, cell))?; }
+            if key.1 != u32::MAX && key.1 != key.0 { lim.try_push(&mut fanout, (key.1, cell))?; }
             lim.reserve_map(&mut key_to_new, 1)?;
-            key_to_new.insert(key, k);
-            k
+            key_to_new.insert(key, cell);
+            cell
         };
         let pair = if path_is_left {
             ChildPair::new(ONE_LEAF_IDX, EncodedChildRef::from_raw(sib))
@@ -255,18 +323,23 @@ fn regroup_leaf_parent(work: &mut Rewrite<'_>, tdd: &mut Tdd, parent: VtreeIdx, 
             ChildPair::new(EncodedChildRef::from_raw(sib), ONE_LEAF_IDX)
         };
         // `order` holds distinct sibs and the pair is injective in `sib`, so
-        // every pushed pair within a cell is already distinct.
-        lim.try_push(&mut new_nodes[idx], pair)?;
+        // every pair within a cell is already distinct.
+        lim.try_push(&mut cell_pairs, (cell, pair))?;
     }
 
+    let mut new_nodes =
+        Runs::pack(lim, n_cells as usize, &cell_pairs, ChildPair::new(ONE_LEAF_IDX, ONE_LEAF_IDX))?;
+    lim.discard(cell_pairs);
     write_level(work, tdd, parent, &mut new_nodes)?;
+    let remap = Runs::pack(lim, n_nodes, &fanout, 0u32)?;
+    lim.discard(fanout);
     Ok(remap)
 }
 
 /// Regroup an internal path level `parent` after the level below it was forgotten.
 ///
 /// Each old pair `(c, sib)` has its path-side child `c` expanded via
-/// `child_remap[c]` into new child cells. The expanded atom `(Pc, sib)` (Pc a
+/// `child_remap.get(c)` into new child cells. The expanded atom `(Pc, sib)` (Pc a
 /// new child cell) is then re-partitioned by the **owner-set** rule — the exact
 /// generalization of the leaf-parent owner-pair grouping:
 ///
@@ -288,7 +361,7 @@ fn regroup_internal(
 ) -> Result<Remap, OperationError> {
     let level = &tdd.levels[parent.idx()];
     let n_nodes = level.nodes.len();
-    if n_nodes == 0 { return Ok(Vec::new()); }
+    if n_nodes == 0 { return Ok(Runs::empty()); }
     let lim = work.eng.limits();
 
     let read_pair = |p: &ChildPair| -> (EncodedChildRef, EncodedChildRef) {
@@ -317,7 +390,7 @@ fn regroup_internal(
         for p in level.pairs_of_idx(i) {
             work.poll()?;
             let (path_child, sib) = read_pair(p);
-            for &cell in &child_remap[ChildDecoder::structural().node(path_child).idx()] {
+            for &cell in child_remap.get(ChildDecoder::structural().node(path_child).idx()) {
                 work.poll()?;
                 let key = (cell, sib.0);
                 let atom = match atom_index.get(&key) {
@@ -367,9 +440,10 @@ fn regroup_internal(
     // hashing the run and comparing it against the cells that hash alike.
     let mut by_hash: FxHashMap<u64, Vec<u32>> = FxHashMap::default();
     let mut cell_atom: Vec<u32> = Vec::new();
-    let mut new_nodes: Vec<Vec<ChildPair>> = Vec::new();
-    let mut remap = Vec::new();
-    lim.try_resize(&mut remap, n_nodes, Vec::new())?;
+    let mut cell_pairs: Vec<(u32, ChildPair)> = Vec::new();
+    lim.reserve_exact(&mut cell_pairs, atoms.len())?;
+    let mut fanout: Vec<(u32, u32)> = Vec::new();
+    let mut n_cells = 0u32;
 
     for (atom, &(cell, sib)) in atoms.iter().enumerate() {
         work.poll()?;
@@ -380,20 +454,19 @@ fn regroup_internal(
         let candidates = by_hash.entry(digest).or_default();
         let found = candidates.iter().copied()
             .find(|&idx| owners[run(cell_atom[idx as usize] as usize)] == owners[mine.clone()]);
-        let idx = match found {
-            Some(idx) => idx as usize,
+        let new_cell = match found {
+            Some(idx) => idx,
             None => {
-                let idx = new_nodes.len();
-                let new_cell = u32::try_from(idx).map_err(|_| OperationError::OverBudget)?;
+                let new_cell = n_cells;
                 if new_cell == u32::MAX { return Err(OperationError::OverBudget); }
+                n_cells += 1;
                 lim.try_push(candidates, new_cell)?;
                 lim.try_push(&mut cell_atom, u32::try_from(atom).map_err(|_| OperationError::OverBudget)?)?;
-                lim.try_push(&mut new_nodes, Vec::new())?;
                 for &owner in &owners[mine] {
                     work.poll()?;
-                    lim.try_push(&mut remap[owner as usize], new_cell)?;
+                    lim.try_push(&mut fanout, (owner, new_cell))?;
                 }
-                idx
+                new_cell
             }
         };
         let pair = if path_is_left {
@@ -402,29 +475,51 @@ fn regroup_internal(
             ChildPair::new(EncodedChildRef::from_raw(sib), EncodedChildRef::from_raw(cell))
         };
         // `atoms` holds distinct atoms and the pair is injective in the
-        // atom, so every pushed pair within a cell is already distinct.
-        lim.try_push(&mut new_nodes[idx], pair)?;
+        // atom, so every pair within a cell is already distinct.
+        lim.try_push(&mut cell_pairs, (new_cell, pair))?;
     }
 
+    let mut new_nodes =
+        Runs::pack(lim, n_cells as usize, &cell_pairs, ChildPair::new(ONE_LEAF_IDX, ONE_LEAF_IDX))?;
+    lim.discard(cell_pairs);
     write_level(work, tdd, parent, &mut new_nodes)?;
+    let remap = Runs::pack(lim, n_nodes, &fanout, 0u32)?;
+    lim.discard(fanout);
     Ok(remap)
 }
 
-/// Replace level `parent`'s nodes with `new_nodes` (each a pair list), sorting each
-/// pair list canonically, and mark the level dirty for contraction.
-fn write_level(work: &mut Rewrite<'_>, tdd: &mut Tdd, parent: VtreeIdx, new_nodes: &mut [Vec<ChildPair>]) -> Result<(), OperationError> {
+/// Replace level `parent`'s nodes with `new_nodes` (one run of pairs per new
+/// cell), sorting each pair list canonically, and mark the level dirty for
+/// contraction.
+fn write_level(work: &mut Rewrite<'_>, tdd: &mut Tdd, parent: VtreeIdx, new_nodes: &mut Runs<ChildPair>) -> Result<(), OperationError> {
     let level = &mut tdd.levels[parent.idx()];
     level.clear();
-    for pairs in new_nodes.iter_mut() {
+    for cell in 0..new_nodes.len() {
         work.poll()?;
+        let pairs = new_nodes.get_mut(cell);
         sort_pairs(pairs);
-        pairs.dedup();
-        level.push_node_on(work.eng, pairs)?;
+        let kept = dedup_sorted(pairs);
+        level.push_node_on(work.eng, &pairs[..kept])?;
         work.emitted += 1;
         work.eng.limits().level_done(work.emitted)?;
     }
     tdd.try_invalidate(work.eng, parent)?;
     Ok(())
+}
+
+/// Drop the repeats from a sorted slice in place, returning how many entries
+/// are kept — `Vec::dedup` for a slice. Both regroups build pair lists that
+/// are already distinct by construction, so this is a guard, not a pass that
+/// normally removes anything.
+fn dedup_sorted(pairs: &mut [ChildPair]) -> usize {
+    let mut kept = 0usize;
+    for i in 0..pairs.len() {
+        if kept == 0 || pairs[i] != pairs[kept - 1] {
+            pairs[kept] = pairs[i];
+            kept += 1;
+        }
+    }
+    kept
 }
 
 /// Hash one atom's owner run, so runs are compared only against those that
