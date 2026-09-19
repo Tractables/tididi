@@ -156,6 +156,12 @@ impl Layout {
         }
         Ok(Layout { count, lo, position })
     }
+
+    /// Whether `vars` was already given in leaf order, so that re-encoding a
+    /// row is a copy.
+    fn is_identity(&self) -> bool {
+        self.position.iter().enumerate().all(|(i, &p)| p as usize == i)
+    }
 }
 
 /// Which atom of a finished vtree node each row belongs to.
@@ -281,19 +287,41 @@ fn distinct_rows(
     let mut packed: Vec<u64> = Vec::new();
     lim.try_resize(&mut packed, rows.len(), 0u64)?;
     let mut gate = lim.gate();
-    for k in 0..n {
-        gate.poll(w as u64)?;
-        for (j, &word) in rows[k * w..(k + 1) * w].iter().enumerate() {
-            // A row's bits past the last variable carry no assignment.
-            let used = num_vars - j * 64;
-            let mut live = if used >= 64 { word } else { word & ((1u64 << used) - 1) };
-            while live != 0 {
-                let bit = live.trailing_zeros() as usize;
-                live &= live - 1;
-                let to = layout.position[j * 64 + bit] as usize;
-                packed[k * w + to / 64] |= 1u64 << (to % 64);
+    if layout.is_identity() {
+        // `vars` already runs in the vtree's leaf order, so re-encoding a row
+        // is a copy and only the bits past the last variable have to go.
+        let tail = num_vars - (w - 1) * 64;
+        let tail_mask = if tail == 64 { !0u64 } else { (1u64 << tail) - 1 };
+        for k in 0..n {
+            gate.poll(w as u64)?;
+            let to = &mut packed[k * w..(k + 1) * w];
+            to.copy_from_slice(&rows[k * w..(k + 1) * w]);
+            to[w - 1] &= tail_mask;
+        }
+    } else {
+        for k in 0..n {
+            gate.poll(w as u64)?;
+            for (j, &word) in rows[k * w..(k + 1) * w].iter().enumerate() {
+                // A row's bits past the last variable carry no assignment.
+                let used = num_vars - j * 64;
+                let mut live = if used >= 64 { word } else { word & ((1u64 << used) - 1) };
+                while live != 0 {
+                    let bit = live.trailing_zeros() as usize;
+                    live &= live - 1;
+                    let to = layout.position[j * 64 + bit] as usize;
+                    packed[k * w + to / 64] |= 1u64 << (to % 64);
+                }
             }
         }
+    }
+
+    if w == 1 {
+        // One word is the whole row, so the words sort and deduplicate where
+        // they are and the detour through a permutation buys nothing.
+        gate.flush()?;
+        packed.sort_unstable();
+        packed.dedup();
+        return Ok(packed);
     }
 
     let mut order: Vec<u32> = Vec::new();
