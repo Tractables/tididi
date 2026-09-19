@@ -10,8 +10,10 @@ use super::Limits;
 
 /// Maximum retained scratch capacity between operations. Larger buffers are
 /// released so an unusually large operation does not permanently retain them.
+/// Sized so a repeated wide conjunction keeps the buffers it fills — a
+/// smaller cap re-grows them, and pays their page faults, on every call.
 /// Level arenas have a separate limit, `diagram::MAX_LEVEL_ARENA_BYTES`.
-pub(crate) const SCRATCH_RETAIN_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const SCRATCH_RETAIN_BYTES: usize = 128 * 1024 * 1024;
 
 /// A scratch value parked between operations, absent while checked out.
 ///
