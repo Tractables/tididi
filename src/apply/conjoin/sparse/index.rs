@@ -63,13 +63,12 @@ pub(crate) struct SparseWorkspace {
     pub(crate) rev_entries_c2: Vec<RevEntry>,
     pub(crate) rev_offsets_c2: Vec<u32>,
 
-    // ── Fused scatter-filter: product lookup ──
-    pub(crate) prod_by_a1: Vec<Vec<(u32, u32)>>,    // a1 → [(a2, a_prod)] from alive left products
-    pub(crate) prod_by_s1: Vec<Vec<(u32, u32)>>,    // s1 → [(s2, sib_prod)] from alive right products (swapped dir)
-
-    // ── Phase C: sibling/child liveness filter ──
-    pub(crate) right_buckets: Vec<Vec<(u32, u32)>>, // right products bucketed by f-index: (right_idx, prod_idx)
-    pub(crate) left_buckets: Vec<Vec<(u32, u32)>>,  // left products bucketed by f-index (swapped direction)
+    // ── The two children's product lists read by f index ──
+    // A product list is emitted in ascending `left_idx` order by every
+    // producer, so its bucket for one f index is a slice of it; these hold
+    // the slice bounds (`bucket_offsets`) for the inner and the outer child.
+    pub(crate) inner_offsets: Vec<u32>,
+    pub(crate) outer_offsets: Vec<u32>,
 
     // ── Output-sensitive join (`scatter_outsens`) ──
     // Per-outer filtered g index: inner-g-child → [(p2, attached_prod)], rebuilt
@@ -133,10 +132,8 @@ impl SparseWorkspace {
     /// past [`SCRATCH_RETAIN_BYTES`]. Called after a large sparse level to avoid
     /// retaining peak allocations. Covers every `Vec<Vec<_>>` bucket array.
     fn release_if_large(&mut self, lim: &Limits) {
-        drop_if_large(lim, &mut self.prod_by_a1);
-        drop_if_large(lim, &mut self.prod_by_s1);
-        drop_if_large(lim, &mut self.right_buckets);
-        drop_if_large(lim, &mut self.left_buckets);
+        crate::limits::pool::release_if_oversized(lim, &mut self.inner_offsets);
+        crate::limits::pool::release_if_oversized(lim, &mut self.outer_offsets);
         drop_if_large(lim, &mut self.par_buckets);
         drop_if_large(lim, &mut self.filtered);
         crate::limits::pool::release_if_oversized(lim, &mut self.wanted);

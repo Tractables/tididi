@@ -145,6 +145,53 @@ fn build_inner_index<const SWAPPED: bool>(
     }
 }
 
+/// A child's product list read as buckets by f index.
+///
+/// Every producer emits a product list in ascending `left_idx` order — the
+/// dense grid scan row by row, the identity fill, the sparse emit by f
+/// parent, the sparse-marginal rows in order — so the products of f node `i`
+/// are one contiguous slice, and `offsets` holds its bounds.
+#[derive(Clone, Copy)]
+struct ByLeft<'a> {
+    offsets: &'a [u32],
+    list: &'a [ProductEntry],
+}
+
+impl<'a> ByLeft<'a> {
+    /// The products of f node `i`.
+    #[inline]
+    fn bucket(self, i: usize) -> &'a [ProductEntry] {
+        &self.list[self.offsets[i] as usize..self.offsets[i + 1] as usize]
+    }
+}
+
+/// Fill `offsets` with the bucket bounds of `list` over `width` f indices:
+/// `list[offsets[i]..offsets[i + 1]]` is the run of entries with `left_idx`
+/// `i`. One pass, since the list is already in that order; a list that is
+/// not leaves entries unconsumed, which the check at the end catches.
+fn bucket_offsets(
+    lim: &crate::limits::Limits,
+    list: &[ProductEntry],
+    width: usize,
+    offsets: &mut Vec<u32>,
+) -> Result<(), OperationError> {
+    lim.try_resize(offsets, width + 1, 0u32)?;
+    let mut pos = 0usize;
+    for (i, slot) in offsets.iter_mut().enumerate().take(width) {
+        *slot = pos as u32;
+        while pos < list.len() && list[pos].left_idx.idx() == i {
+            pos += 1;
+        }
+    }
+    offsets[width] = pos as u32;
+    cheap_assert!(
+        pos == list.len(),
+        "a product list is not in ascending f order ({} of {} entries bucketed over width {width})",
+        pos, list.len()
+    );
+    Ok(())
+}
+
 /// One direction's view of the scatter workspace.
 ///
 /// `SWAPPED` renames left↔right throughout the join. Selecting the buffers
@@ -159,11 +206,10 @@ struct ScatterSides<'w> {
     /// g's reverse index, keyed by the filtering axis.
     rev_offsets_c2: &'w [u32],
     rev_entries_c2: &'w [RevEntry],
-    /// Live products of the outer child, bucketed by their f index:
-    /// `[(right_idx, prod_idx)]`.
-    outer_buckets: &'w mut Vec<Vec<(u32, u32)>>,
+    /// Live products of the outer child, by their f index.
+    outer: ByLeft<'w>,
     /// Live products of the inner child, likewise.
-    inner_prods: &'w mut Vec<Vec<(u32, u32)>>,
+    inner: ByLeft<'w>,
     /// g's reverse index keyed by the join's inner-g child.
     rev_offsets_c3: &'w [u32],
     rev_entries_c3: &'w [RevEntry],
@@ -254,12 +300,15 @@ impl EpochFlags<'_> {
 }
 
 /// Take this direction's view of the workspace, with every bucket array this
-/// arm writes cleared to `shape`'s dimensions.
+/// arm writes cleared to `shape`'s dimensions and both product lists
+/// bucketed by f index.
 #[inline(never)]
 fn sides<'w, const SWAPPED: bool>(
     eng: &Engine,
     ws: &'w mut SparseWorkspace,
     shape: LevelShape,
+    pl_inner: &'w [ProductEntry],
+    pl_outer: &'w [ProductEntry],
 ) -> Result<ScatterSides<'w>, OperationError> {
     let LevelShape { f, g, .. } = shape;
     let (inner_k, outer_k, filtered_dim, outer_g_dim) = if !SWAPPED {
@@ -270,19 +319,14 @@ fn sides<'w, const SWAPPED: bool>(
     let SparseWorkspace {
         rev_offsets_c1, rev_entries_c1, rev_offsets_c2, rev_entries_c2,
         rev_offsets_c3, rev_entries_c3,
-        prod_by_a1, prod_by_s1, right_buckets, left_buckets,
+        inner_offsets, outer_offsets,
         filtered, filtered_touched, par_buckets,
         wanted, wanted_epoch, wanted_keys, inner_seen, inner_seen_epoch,
         outer_keys, outer_keys_epoch, outer_attached,
         ..
     } = ws;
-    let (inner_prods, outer_buckets) = if !SWAPPED {
-        (prod_by_a1, right_buckets)
-    } else {
-        (prod_by_s1, left_buckets)
-    };
-    ensure_buckets_cleared(eng, inner_prods, inner_k)?;
-    ensure_buckets_cleared(eng, outer_buckets, outer_k)?;
+    bucket_offsets(eng.limits(), pl_inner, inner_k, inner_offsets)?;
+    bucket_offsets(eng.limits(), pl_outer, outer_k, outer_offsets)?;
     ensure_buckets_cleared(eng, filtered, filtered_dim)?;
     filtered_touched.clear();
     eng.limits().try_resize(wanted, filtered_dim, 0u32)?;
@@ -293,7 +337,8 @@ fn sides<'w, const SWAPPED: bool>(
     Ok(ScatterSides {
         rev_offsets_c1, rev_entries_c1, rev_offsets_c2, rev_entries_c2,
         rev_offsets_c3, rev_entries_c3,
-        outer_buckets, inner_prods,
+        outer: ByLeft { offsets: outer_offsets, list: pl_outer },
+        inner: ByLeft { offsets: inner_offsets, list: pl_inner },
         filtered: TouchedBuckets { buckets: filtered, touched: filtered_touched },
         wanted: EpochFlags { cur: *wanted_epoch, stamps: wanted, epoch: wanted_epoch },
         wanted_keys,
@@ -306,26 +351,6 @@ fn sides<'w, const SWAPPED: bool>(
 }
 
 impl ScatterSides<'_> {
-    /// Bucket both product lists: an inner product table for the non-iterated
-    /// list, and the outer loop's liveness buckets.
-    ///
-    ///   normal:  `prod_by_a1[a1] = [(a2, a_prod)]`,   `right_buckets[s1] = [(s2, sib_idx)]`
-    ///   swapped: `prod_by_s1[s1] = [(s2, sib_prod)]`, `left_buckets[a1] = [(a2, a_prod)]`
-    fn bucket_products(
-        &mut self,
-        lim: &crate::limits::Limits,
-        pl_inner: &[ProductEntry],
-        pl_outer: &[ProductEntry],
-    ) -> Result<(), OperationError> {
-        for &ProductEntry { left_idx: LeftNodeIdx(f), right_idx: RightNodeIdx(g), prod_idx: ProductNodeIdx(product) } in pl_inner {
-            lim.try_push(&mut self.inner_prods[f as usize], (g, product))?;
-        }
-        for &ProductEntry { left_idx: LeftNodeIdx(f), right_idx: RightNodeIdx(g), prod_idx: ProductNodeIdx(product) } in pl_outer {
-            lim.try_push(&mut self.outer_buckets[f as usize], (g, product))?;
-        }
-        Ok(())
-    }
-
     /// Fill `filtered` for one outer key: for each live `(inner_live, attached)`
     /// in the outer's liveness bucket, walk the opposite-keyed g index and
     /// bucket each g parent by its inner child, carrying `attached` along.
@@ -334,8 +359,8 @@ impl ScatterSides<'_> {
         lim: &crate::limits::Limits,
         outer: usize,
     ) -> Result<(), OperationError> {
-        for left_idx in 0..self.outer_buckets[outer].len() {
-            let (right_key, attached) = self.outer_buckets[outer][left_idx];
+        for e in self.outer.bucket(outer) {
+            let (right_key, attached) = (e.right_idx.0, e.prod_idx.0);
             let off = self.rev_offsets_c2[right_key as usize] as usize;
             let end = self.rev_offsets_c2[right_key as usize + 1] as usize;
             for &RevEntry { parent: p2, other: inner_c2 } in &self.rev_entries_c2[off..end] {
@@ -374,7 +399,8 @@ impl ScatterSides<'_> {
             if !self.inner_seen.mark(inner1) {
                 continue;
             }
-            for &(inner_c2, _) in &self.inner_prods[inner1 as usize] {
+            for e in self.inner.bucket(inner1 as usize) {
+                let inner_c2 = e.right_idx.0;
                 if self.wanted.mark(inner_c2) {
                     self.wanted_keys.push(inner_c2);
                 }
@@ -399,13 +425,13 @@ impl ScatterSides<'_> {
         outer: usize,
     ) -> Result<(), OperationError> {
         let ScatterSides {
-            outer_buckets, outer_keys, outer_attached, wanted_keys,
+            outer: outer_products, outer_keys, outer_attached, wanted_keys,
             rev_offsets_c3, rev_entries_c3, filtered, ..
         } = self;
         outer_keys.begin();
-        for &(right_key, attached) in outer_buckets[outer].iter() {
-            outer_keys.mark(right_key);
-            outer_attached[right_key as usize] = attached;
+        for e in outer_products.bucket(outer) {
+            outer_keys.mark(e.right_idx.0);
+            outer_attached[e.right_idx.idx()] = e.prod_idx.0;
         }
         for &inner_c2 in wanted_keys.iter() {
             let off = rev_offsets_c3[inner_c2 as usize] as usize;
@@ -423,9 +449,10 @@ impl ScatterSides<'_> {
     /// The g index entries each way of building this outer's `filtered`
     /// walks: by the outer's g keys, and by the wanted inner-g children.
     fn filtered_build_costs(&self, outer: usize) -> (usize, usize) {
-        let by_key = self.outer_buckets[outer]
+        let by_key = self.outer
+            .bucket(outer)
             .iter()
-            .map(|&(k, _)| (self.rev_offsets_c2[k as usize + 1] - self.rev_offsets_c2[k as usize]) as usize)
+            .map(|e| (self.rev_offsets_c2[e.right_idx.idx() + 1] - self.rev_offsets_c2[e.right_idx.idx()]) as usize)
             .sum();
         let by_inner = self.wanted_keys
             .iter()
@@ -447,13 +474,9 @@ impl ScatterSides<'_> {
         let left_end = self.rev_offsets_c1[outer + 1] as usize;
         for ci in left_off..left_end {
             let RevEntry { parent: p1, other: inner1 } = self.rev_entries_c1[ci];
-            debug_assert!(
-                (inner1 as usize) < self.inner_prods.len(),
-                "reverse index names inner product {inner1} of {} built",
-                self.inner_prods.len()
-            );
             let bucket = &mut self.par_buckets[p1 as usize];
-            for &(inner_c2, inner_prod) in &self.inner_prods[inner1 as usize] {
+            for e in self.inner.bucket(inner1 as usize) {
+                let (inner_c2, inner_prod) = (e.right_idx.0, e.prod_idx.0);
                 let fb = self.filtered.get(inner_c2);
                 for &(p2, attached) in fb {
                     // The outer side carries the sibling product normally and
@@ -483,8 +506,7 @@ fn scatter_general_arm<const SWAPPED: bool>(
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let (pl_inner, pl_outer) = if !SWAPPED { (pl.left, pl.right) } else { (pl.right, pl.left) };
-    let mut s = sides::<SWAPPED>(eng, ws, shape)?;
-    s.bucket_products(lim, pl_inner, pl_outer)?;
+    let mut s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer)?;
 
     // Amortized cancellation/deadline poll. The sparse join has no other
     // mid-level break, so a wide level could otherwise wait out an expired
@@ -492,7 +514,7 @@ fn scatter_general_arm<const SWAPPED: bool>(
     // covers, so the workspace stays reusable.
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     for outer in 0..s.outer_k {
-        if s.outer_buckets[outer].is_empty() { continue; }
+        if s.outer.bucket(outer).is_empty() { continue; }
         s.mark_wanted_for_outer(outer);
         let (by_key, by_inner) = s.filtered_build_costs(outer);
         if by_inner < by_key {
