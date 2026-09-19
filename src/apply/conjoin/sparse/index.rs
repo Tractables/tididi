@@ -219,7 +219,9 @@ pub(crate) struct RevEntry {
 ///
 /// `BY_RIGHT` is a const generic so the `if BY_RIGHT` branches fold away.
 /// Four-pass counting sort:
-///   1. Count: `offsets[key] = number of pairs with that key-side child`
+///   1. Count: `offsets[key] = number of pairs with that key-side child` —
+///      or copy `counts`, the same numbers when the direction estimate has
+///      already counted this level's pairs by this child
 ///   2. Exclusive prefix sum: `offsets[i]` becomes the start-of-bucket for `i`
 ///   3. Fill: scatter `(parent_idx, other_side)` using `offsets` as write cursors,
 ///      leaving each `offsets[i]` one-past-the-end of bucket `i`
@@ -228,19 +230,25 @@ pub(crate) fn build_reverse_index<const BY_RIGHT: bool>(
     eng: &Engine,
     level: &TddLevel,
     key_width: usize,
+    counts: Option<&[u32]>,
     offsets: &mut Vec<u32>,
     entries: &mut Vec<RevEntry>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     // Pass 1: count
     lim.try_resize(offsets, key_width + 1, 0)?;
-    offsets[..key_width + 1].fill(0);
-    // Unpacked slice iterator (vectorizable).
-    for node in level.nodes.iter() {
-        if !node.is_internal() { continue; }
-        for pair in level.pairs_of(node) {
-            let key = if BY_RIGHT { pair.right.0 } else { pair.left.0 } as usize;
-            offsets[key] += 1;
+    offsets[key_width] = 0;
+    if let Some(counts) = counts {
+        offsets[..key_width].copy_from_slice(counts);
+    } else {
+        offsets[..key_width].fill(0);
+        // Unpacked slice iterator (vectorizable).
+        for node in level.nodes.iter() {
+            if !node.is_internal() { continue; }
+            for pair in level.pairs_of(node) {
+                let key = if BY_RIGHT { pair.right.0 } else { pair.left.0 } as usize;
+                offsets[key] += 1;
+            }
         }
     }
     // Pass 2: exclusive prefix sum

@@ -95,7 +95,9 @@ pub(crate) fn flat_candidates_win(thresholds: SparseThresholds, parents: usize, 
 /// Cost is O(|f pairs| + |g pairs| + |pl_left| + |pl_right|), small next to
 /// the work the choice governs. The four counter arrays are carved out of
 /// the pooled `est_counts` buffer, sized through `try_resize` so a refusal
-/// is `OverBudget` rather than an abort.
+/// is `OverBudget` rather than an abort, and are left there for the
+/// reverse-index builds, which start from the same counts: see
+/// [`EstCounts`].
 pub(crate) fn estimate_scatter_direction(
     eng: &Engine,
     est_counts: &mut Vec<u32>,
@@ -146,6 +148,30 @@ pub(crate) fn estimate_scatter_direction(
         swapped,
         emit_steps: if swapped { walk_by_right } else { walk_by_left },
     })
+}
+
+/// The four pair counts [`estimate_scatter_direction`] leaves in
+/// `est_counts`, one per child of each operand, packed back to back.
+///
+/// A reverse index keyed by one of those children starts from the same
+/// count, so a build after the estimate takes it from here rather than
+/// counting the pairs again.
+pub(crate) struct EstCounts<'a> {
+    pub(crate) f_left: &'a [u32],
+    pub(crate) f_right: &'a [u32],
+    pub(crate) g_left: &'a [u32],
+    pub(crate) g_right: &'a [u32],
+}
+
+impl<'a> EstCounts<'a> {
+    /// Split the buffer the estimate filled for `shape`.
+    pub(crate) fn of(est_counts: &'a [u32], shape: crate::apply::conjoin::setup::LevelShape) -> EstCounts<'a> {
+        let crate::apply::conjoin::setup::LevelShape { f, g, .. } = shape;
+        let (f_left, rest) = est_counts.split_at(f.left);
+        let (f_right, rest) = rest.split_at(f.right);
+        let (g_left, rest) = rest.split_at(g.left);
+        EstCounts { f_left, f_right, g_left, g_right: &rest[..g.right] }
+    }
 }
 
 /// The three sums one child's product list contributes to the direction

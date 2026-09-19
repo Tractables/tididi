@@ -94,13 +94,15 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
     leaves: Sides<bool>,
 ) -> Result<(), OperationError> {
     // The leaf arm runs when the leaf side is a leaf: the left child normally,
-    // the right one when swapped.
+    // the right one when swapped. The direction estimate ran, and its counts
+    // start the index builds, when neither child is a leaf.
     let leaf_side_is_leaf = if !SWAPPED { leaves.left } else { leaves.right };
-    build_scatter_indexes::<SWAPPED>(eng, ws, left_level, right_level, shape)?;
+    let counted = !leaves.left && !leaves.right;
+    build_scatter_indexes::<SWAPPED>(eng, ws, left_level, right_level, shape, counted)?;
     if leaf_side_is_leaf {
         return scatter_leaf_arm::<SWAPPED>(eng, ws, pl);
     }
-    build_inner_index::<SWAPPED>(eng, ws, right_level, shape)?;
+    build_inner_index::<SWAPPED>(eng, ws, right_level, shape, counted)?;
     scatter_general_arm::<SWAPPED>(eng, ws, shape, pl)
 }
 
@@ -111,6 +113,9 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
 /// — which is also exactly the keying the leaf arm wants, since that groups g
 /// by the non-leaf outer child, so one build serves both arms: normal → by
 /// right `s2`, entries `(p2, a2)`; swapped → by left `a2`, entries `(p2, s2)`.
+///
+/// With `counted`, the direction estimate has run for this level and its
+/// counts start each build.
 #[inline(never)]
 fn build_scatter_indexes<const SWAPPED: bool>(
     eng: &Engine,
@@ -118,15 +123,20 @@ fn build_scatter_indexes<const SWAPPED: bool>(
     left_level: &TddLevel,
     right_level: &TddLevel,
     shape: LevelShape,
+    counted: bool,
 ) -> Result<(), OperationError> {
+    let SparseWorkspace {
+        est_counts, rev_offsets_c1, rev_entries_c1, rev_offsets_c2, rev_entries_c2, ..
+    } = ws;
+    let counts = counted.then(|| EstCounts::of(est_counts, shape));
     // Keyed by the outer dimension: the right sibling normally, the left child
     // when swapped.
     if !SWAPPED {
-        build_reverse_index::<true>(eng, left_level, shape.f.right, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
-        build_reverse_index::<true>(eng, right_level, shape.g.right, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
+        build_reverse_index::<true>(eng, left_level, shape.f.right, counts.as_ref().map(|c| c.f_right), rev_offsets_c1, rev_entries_c1)?;
+        build_reverse_index::<true>(eng, right_level, shape.g.right, counts.as_ref().map(|c| c.g_right), rev_offsets_c2, rev_entries_c2)?;
     } else {
-        build_reverse_index::<false>(eng, left_level, shape.f.left, &mut ws.rev_offsets_c1, &mut ws.rev_entries_c1)?;
-        build_reverse_index::<false>(eng, right_level, shape.g.left, &mut ws.rev_offsets_c2, &mut ws.rev_entries_c2)?;
+        build_reverse_index::<false>(eng, left_level, shape.f.left, counts.as_ref().map(|c| c.f_left), rev_offsets_c1, rev_entries_c1)?;
+        build_reverse_index::<false>(eng, right_level, shape.g.left, counts.as_ref().map(|c| c.g_left), rev_offsets_c2, rev_entries_c2)?;
     }
     Ok(())
 }
@@ -140,11 +150,14 @@ fn build_inner_index<const SWAPPED: bool>(
     ws: &mut SparseWorkspace,
     right_level: &TddLevel,
     shape: LevelShape,
+    counted: bool,
 ) -> Result<(), OperationError> {
+    let SparseWorkspace { est_counts, rev_offsets_c3, rev_entries_c3, .. } = ws;
+    let counts = counted.then(|| EstCounts::of(est_counts, shape));
     if !SWAPPED {
-        build_reverse_index::<false>(eng, right_level, shape.g.left, &mut ws.rev_offsets_c3, &mut ws.rev_entries_c3)
+        build_reverse_index::<false>(eng, right_level, shape.g.left, counts.as_ref().map(|c| c.g_left), rev_offsets_c3, rev_entries_c3)
     } else {
-        build_reverse_index::<true>(eng, right_level, shape.g.right, &mut ws.rev_offsets_c3, &mut ws.rev_entries_c3)
+        build_reverse_index::<true>(eng, right_level, shape.g.right, counts.as_ref().map(|c| c.g_right), rev_offsets_c3, rev_entries_c3)
     }
 }
 
