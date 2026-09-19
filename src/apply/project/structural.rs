@@ -299,7 +299,13 @@ fn regroup_internal(
     // nodes contributing it — is accumulated as a run of (atom, owner) entries.
     // The outer loop visits `i` in increasing order and `last_owner` drops
     // repeats, so each atom's owners come out sorted and unique.
+    //
+    // The level's pairs are a lower bound on the distinct atoms — a pair whose
+    // path child fans out contributes several — so reserving that many never
+    // over-allocates, and it takes most of the doublings off a map that is
+    // otherwise grown one insert at a time.
     let mut atom_index: FxHashMap<(u32, u32), u32> = FxHashMap::default();
+    lim.reserve_map(&mut atom_index, level.live_pairs())?;
     let mut atoms: Vec<(u32, u32)> = Vec::new();
     let mut owner_count: Vec<u32> = Vec::new();
     let mut last_owner: Vec<u32> = Vec::new();
