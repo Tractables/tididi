@@ -80,29 +80,67 @@ pub(super) fn build_live_cols_bitmask(
     debug_assert!(side_width == 0 || (side_width - 1) >> shift < 128);
     live_cols.clear();
     lim.try_resize(live_cols, k1_side, 0u128)?;
-    let bucket = 1usize << shift;
-    // Indexes `live_cols` and, through a computed row base, `node_idx`.
-    #[expect(clippy::needless_range_loop)]
-    for a in 0..k1_side {
-        let row_base = base + a * side_width;
-        let mut mask = 0u128;
-        // Per bucket: stop at the first alive column (one set bit per bucket).
-        let mut b0 = 0;
-        let mut bit = 1u128;
-        while b0 < side_width {
-            let b1 = (b0 + bucket).min(side_width);
-            for b in b0..b1 {
-                if node_idx[row_base + b] != NO_PRODUCT {
-                    mask |= bit;
-                    break;
-                }
-            }
-            b0 = b1;
-            bit <<= 1;
+    if side_width == 0 {
+        return Ok(());
+    }
+    // The rows in order, and one dispatch for the whole grid rather than one
+    // per row: `shift` is a property of the side's width.
+    let grid = &node_idx[base..base + k1_side * side_width];
+    let rows = grid.chunks_exact(side_width);
+    if shift == 0 {
+        for (slot, row) in live_cols[..k1_side].iter_mut().zip(rows) {
+            *slot = row_mask_exact(row);
         }
-        live_cols[a] = mask;
+    } else {
+        for (slot, row) in live_cols[..k1_side].iter_mut().zip(rows) {
+            *slot = row_mask_bucketed(row, shift);
+        }
     }
     Ok(())
+}
+
+/// The bit-exact mask of a row: bit `b` set iff column `b` is alive.
+///
+/// One column is one compare and one 64-bit shift-or, in the two halves the
+/// mask's 128 bits divide into, so a row pays no 128-bit shift and nothing
+/// that scales with the mask rather than the row. This is the width every
+/// level at or under the mask's 128 columns takes.
+#[inline]
+fn row_mask_exact(row: &[u32]) -> u128 {
+    debug_assert!(row.len() <= 128);
+    fn half(part: &[u32]) -> u64 {
+        let mut bits = 0u64;
+        for (b, &v) in part.iter().enumerate() {
+            bits |= u64::from(v != NO_PRODUCT) << b;
+        }
+        bits
+    }
+    // Most sides are narrower than the low half, and there are as many rows as
+    // the child has nodes, so the half that is always empty on those is worth
+    // not assembling.
+    if row.len() <= 64 {
+        return u128::from(half(row));
+    }
+    let (low, high) = row.split_at(64);
+    u128::from(half(low)) | (u128::from(half(high)) << 64)
+}
+
+/// The bucketed mask of a row, for a side wider than the 128 mask bits: bit
+/// `b >> shift` set iff some column of that bucket is alive. Each bucket stops
+/// at its first alive column.
+#[inline]
+fn row_mask_bucketed(row: &[u32], shift: u32) -> u128 {
+    let mut mask = 0u128;
+    // The bucket's bit walks up with the buckets: a 128-bit shift by a
+    // variable is a branchy sequence, where doubling is two instructions.
+    let mut bit = 1u128;
+    for bucket in row.chunks(1usize << shift) {
+        if bucket.iter().any(|&v| v != NO_PRODUCT) {
+            mask |= bit;
+        }
+        bit <<= 1;
+    }
+    mask
 }
 
 /// Per-g-node child-reach bucket mask. For each g node `j`, `reach[j]` is
