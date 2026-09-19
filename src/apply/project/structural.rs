@@ -23,6 +23,10 @@
 //! nothing returns no remap: its cells are its old nodes in order, so every
 //! level above it would rewrite itself to what it already holds and the sweep
 //! stops climbing.
+//!
+//! The sweep reads every node of a level it regroups, so an operand that has
+//! not been pruned since it was built makes it read nodes nothing references;
+//! it discharges that debt before it starts.
 
 use crate::Engine;
 use crate::limits::{OperationError, PollGate};
@@ -140,7 +144,8 @@ enum Role {
 /// Existentially quantify the variables at `targets` out of `tdd` by one
 /// in-place bottom-up sweep, then reduce on `eng`, checking its limits
 /// throughout. `targets` are distinct leaves of the diagram's vtree, looked up
-/// by the caller. Levels with no quantified leaf below them are left
+/// by the caller. An operand that still owes the reduction passes is pruned
+/// first. The sweep then leaves levels with no quantified leaf below them
 /// byte-identical; the preconditions on the rest are those of
 /// `check_levels_are_rewritable`.
 ///
@@ -166,6 +171,15 @@ pub(super) fn exists_leaves_structural(
     let mut work = Rewrite { eng, gate: lim.gate(), emitted: 0 };
     if tdd.is_zero() {
         return Ok(tdd);
+    }
+    if !tdd.dirty.is_empty() {
+        // An operand straight out of an apply still owes the reduction passes,
+        // and the debt it owes the prune is one the sweep would pay for twice:
+        // a node nothing reaches costs a share of its level's regroup, and the
+        // atoms it owns refine the owner-set partition the level above then
+        // has to fan out over. A diagram already at the fixpoint owes nothing
+        // and skips the pass.
+        eng.reduce(&mut tdd, ReductionPlan::Prune)?;
     }
     let vtree = std::sync::Arc::clone(&tdd.vtree);
     let role = roles(&mut work, &vtree, targets)?;

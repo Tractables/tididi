@@ -108,3 +108,27 @@ fn structural_projection_recovers_after_each_refused_reservation() {
     }
     assert!(reached_success, "the sweep must cover every reservation");
 }
+
+#[test]
+fn quantifying_an_unreduced_product_matches_quantifying_a_reduced_one() {
+    // `and` leaves its result for the caller to reduce, so the product holds
+    // nodes nothing reaches. The sweep prunes them first; what comes out is
+    // what comes out of the same quantification over the reduced product.
+    let tree = Arc::new(Vtree::balanced(6));
+    let product = Tdd::clause(&tree, [1, -2, 3]).unwrap()
+        & Tdd::clause(&tree, [-1, 4, 5]).unwrap()
+        & Tdd::clause(&tree, [2, -4, 6]).unwrap();
+    assert!(!product.dirty.is_empty(), "the product still owes the passes");
+    let mut reduced = product.clone();
+    reduced.minimize().unwrap();
+    assert!(reduced.dirty.is_empty(), "minimize discharges them");
+
+    let leaves: Vec<VtreeIdx> = [1, 4].iter().map(|&v| tree.leaf_of(VarId(v)).unwrap()).collect();
+    let eng = Engine::new();
+    let from_product = exists_leaves_structural(&eng, product, &leaves).unwrap();
+    let from_reduced = exists_leaves_structural(&eng, reduced, &leaves).unwrap();
+    assert_canonical(&from_product);
+    assert_eq!(from_product.node_count(), from_reduced.node_count());
+    assert_eq!(from_product.pair_count(), from_reduced.pair_count());
+    assert_eq!(from_product.model_count().unwrap(), from_reduced.model_count().unwrap());
+}
