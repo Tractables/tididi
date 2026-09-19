@@ -401,60 +401,57 @@ fn flush_chunk_phase_e(
     // `ws.filtered_touched.clear()`).
     ws.p2_map_touched.clear();
 
-    // Index-based iteration so the mutable accesses to `ws.p2_map` and
-    // `ws.emit_pairs` inside the loop don't conflict with the immutable
-    // borrow of `ws.par_buckets[p1]`.
-    for p1 in p1_start..p1_end {
-        let bucket_len = ws.par_buckets[p1].len();
-        if bucket_len == 0 { continue; }
-
-        for ei in 0..bucket_len {
-            let entry = ws.par_buckets[p1][ei];
-            let global_idx = {
-                let slot_val = ws.p2_map[entry.p2 as usize];
-                if slot_val == NO_PRODUCT {
-                    let idx = pl_output.len() as u32;
-                    ws.p2_map[entry.p2 as usize] = idx;
-                    ws.p2_map_touched.push(entry.p2);
-                    lim.try_push(pl_output, ProductEntry {
-                        left_idx: LeftNodeIdx(p1 as u32),
-                        right_idx: RightNodeIdx(entry.p2),
-                        prod_idx: ProductNodeIdx(idx),
-                    })?;
-                    idx
-                } else {
-                    slot_val
-                }
-            };
-            let local = global_idx - chunk_parent_start;
-            // Marginal children never reach the sparse path (guarded at
-            // `apply_sparse_level` entry), so child refs are plain structural
-            // indices — no bit-30 slot tagging here.
-            let left_raw = entry.a_prod;
-            let right_raw = entry.sib_idx;
-            lim.try_push(&mut ws.emit_pairs, (local, ChildPair::new(EncodedChildRef::from_raw(left_raw), EncodedChildRef::from_raw(right_raw))))?;
-        }
-
-        // Lazy-clear p2_map (only entries actually written this p1, via the
-        // touched list — avoids rescanning `par_buckets[p1]` a second time).
-        for ti in 0..ws.p2_map_touched.len() {
-            let p2 = ws.p2_map_touched[ti];
-            ws.p2_map[p2 as usize] = NO_PRODUCT;
-        }
-        ws.p2_map_touched.clear();
-    }
-
-    // Multi-chunk mode: drop consumed par_buckets allocations (replace with
-    // Vec::new()) so the backing memory is freed before the next chunk's
-    // emit_pairs / sorted_pairs grow — chunking bounds that growth.
+    // Each bucket is moved out for its walk rather than borrowed in place: the
+    // emit writes `ws.p2_map` and `ws.emit_pairs`, which an outstanding borrow
+    // of `ws.par_buckets` conflicts with, and indexing the bucket per entry to
+    // work around that re-reads its pointer and length for every candidate.
     //
-    // Single-chunk mode: leave buckets alone. The next apply's
-    // `ensure_buckets_cleared` will `.clear()` (length=0, retain capacity),
-    // so the buckets keep their capacity across applies and the next apply's
-    // scatter pushes do not have to grow them again.
-    if drop_consumed {
-        for p1 in p1_start..p1_end {
-            ws.par_buckets[p1] = Vec::new();
+    // Multi-chunk mode wants the consumed bucket's memory freed anyway, before
+    // the next chunk's emit_pairs / sorted_pairs grow — chunking bounds that
+    // growth — so there it simply is not handed back. Single-chunk mode hands
+    // it back, because the next apply's `ensure_buckets_cleared` only
+    // `.clear()`s (length=0, capacity retained) and that capacity saves the
+    // next apply's scatter pushes from growing the bucket again.
+    for p1 in p1_start..p1_end {
+        let bucket = std::mem::take(&mut ws.par_buckets[p1]);
+        if !bucket.is_empty() {
+            for &entry in bucket.iter() {
+                let global_idx = {
+                    let slot_val = ws.p2_map[entry.p2 as usize];
+                    if slot_val == NO_PRODUCT {
+                        let idx = pl_output.len() as u32;
+                        ws.p2_map[entry.p2 as usize] = idx;
+                        ws.p2_map_touched.push(entry.p2);
+                        lim.try_push(pl_output, ProductEntry {
+                            left_idx: LeftNodeIdx(p1 as u32),
+                            right_idx: RightNodeIdx(entry.p2),
+                            prod_idx: ProductNodeIdx(idx),
+                        })?;
+                        idx
+                    } else {
+                        slot_val
+                    }
+                };
+                let local = global_idx - chunk_parent_start;
+                // Marginal children never reach the sparse path (guarded at
+                // `apply_sparse_level` entry), so child refs are plain
+                // structural indices — no bit-30 slot tagging here.
+                let left_raw = entry.a_prod;
+                let right_raw = entry.sib_idx;
+                lim.try_push(&mut ws.emit_pairs, (local, ChildPair::new(EncodedChildRef::from_raw(left_raw), EncodedChildRef::from_raw(right_raw))))?;
+            }
+
+            // Lazy-clear p2_map (only entries actually written this p1, via
+            // the touched list — avoids rescanning the bucket a second time).
+            for ti in 0..ws.p2_map_touched.len() {
+                let p2 = ws.p2_map_touched[ti];
+                ws.p2_map[p2 as usize] = NO_PRODUCT;
+            }
+            ws.p2_map_touched.clear();
+        }
+
+        if !drop_consumed {
+            ws.par_buckets[p1] = bucket;
         }
     }
     Ok(())
