@@ -30,6 +30,7 @@ impl Drop for ForcedThresholds {
     }
 }
 
+mod inner_index;
 mod regression;
 mod reset_ws;
 mod retention;

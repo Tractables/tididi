@@ -97,6 +97,7 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
     if leaf_side_is_leaf {
         return scatter_leaf_arm::<SWAPPED>(eng, ws, pl);
     }
+    build_inner_index::<SWAPPED>(eng, ws, right_level, shape)?;
     scatter_general_arm::<SWAPPED>(eng, ws, shape, pl)
 }
 
@@ -127,6 +128,23 @@ fn build_scatter_indexes<const SWAPPED: bool>(
     Ok(())
 }
 
+/// Build g's reverse index keyed by the join's inner-g child — the key
+/// `rev_entries_c2` is not keyed by — for the general arm's second way of
+/// building an outer's `filtered` index.
+#[inline(never)]
+fn build_inner_index<const SWAPPED: bool>(
+    eng: &Engine,
+    ws: &mut SparseWorkspace,
+    right_level: &TddLevel,
+    shape: LevelShape,
+) -> Result<(), OperationError> {
+    if !SWAPPED {
+        build_reverse_index::<false>(eng, right_level, shape.g.left, &mut ws.rev_offsets_c3, &mut ws.rev_entries_c3)
+    } else {
+        build_reverse_index::<true>(eng, right_level, shape.g.right, &mut ws.rev_offsets_c3, &mut ws.rev_entries_c3)
+    }
+}
+
 /// One direction's view of the scatter workspace.
 ///
 /// `SWAPPED` renames left↔right throughout the join. Selecting the buffers
@@ -146,12 +164,20 @@ struct ScatterSides<'w> {
     outer_buckets: &'w mut Vec<Vec<(u32, u32)>>,
     /// Live products of the inner child, likewise.
     inner_prods: &'w mut Vec<Vec<(u32, u32)>>,
+    /// g's reverse index keyed by the join's inner-g child.
+    rev_offsets_c3: &'w [u32],
+    rev_entries_c3: &'w [RevEntry],
     /// Per-outer g index, keyed by the join's inner-g child.
     filtered: TouchedBuckets<'w>,
     /// The inner-g children this outer's emit reads, and the inner f children
     /// already walked to find them.
     wanted: EpochFlags<'w>,
+    wanted_keys: &'w mut Vec<u32>,
     inner_seen: EpochFlags<'w>,
+    /// The outer's live g keys and their products, for the walk by inner-g
+    /// child.
+    outer_keys: EpochFlags<'w>,
+    outer_attached: &'w mut Vec<u32>,
     /// Surviving candidates, bucketed by f parent.
     par_buckets: &'w mut Vec<Vec<ParEntry>>,
     /// How many outer keys the emit loop walks.
@@ -236,16 +262,19 @@ fn sides<'w, const SWAPPED: bool>(
     shape: LevelShape,
 ) -> Result<ScatterSides<'w>, OperationError> {
     let LevelShape { f, g, .. } = shape;
-    let (inner_k, outer_k, filtered_dim) = if !SWAPPED {
-        (f.left, f.right, g.left)
+    let (inner_k, outer_k, filtered_dim, outer_g_dim) = if !SWAPPED {
+        (f.left, f.right, g.left, g.right)
     } else {
-        (f.right, f.left, g.right)
+        (f.right, f.left, g.right, g.left)
     };
     let SparseWorkspace {
         rev_offsets_c1, rev_entries_c1, rev_offsets_c2, rev_entries_c2,
+        rev_offsets_c3, rev_entries_c3,
         prod_by_a1, prod_by_s1, right_buckets, left_buckets,
         filtered, filtered_touched, par_buckets,
-        wanted, wanted_epoch, inner_seen, inner_seen_epoch, ..
+        wanted, wanted_epoch, wanted_keys, inner_seen, inner_seen_epoch,
+        outer_keys, outer_keys_epoch, outer_attached,
+        ..
     } = ws;
     let (inner_prods, outer_buckets) = if !SWAPPED {
         (prod_by_a1, right_buckets)
@@ -257,13 +286,20 @@ fn sides<'w, const SWAPPED: bool>(
     ensure_buckets_cleared(eng, filtered, filtered_dim)?;
     filtered_touched.clear();
     eng.limits().try_resize(wanted, filtered_dim, 0u32)?;
+    wanted_keys.clear();
     eng.limits().try_resize(inner_seen, inner_k, 0u32)?;
+    eng.limits().try_resize(outer_keys, outer_g_dim, 0u32)?;
+    eng.limits().try_resize(outer_attached, outer_g_dim, 0u32)?;
     Ok(ScatterSides {
         rev_offsets_c1, rev_entries_c1, rev_offsets_c2, rev_entries_c2,
+        rev_offsets_c3, rev_entries_c3,
         outer_buckets, inner_prods,
         filtered: TouchedBuckets { buckets: filtered, touched: filtered_touched },
         wanted: EpochFlags { cur: *wanted_epoch, stamps: wanted, epoch: wanted_epoch },
+        wanted_keys,
         inner_seen: EpochFlags { cur: *inner_seen_epoch, stamps: inner_seen, epoch: inner_seen_epoch },
+        outer_keys: EpochFlags { cur: *outer_keys_epoch, stamps: outer_keys, epoch: outer_keys_epoch },
+        outer_attached,
         par_buckets,
         outer_k,
     })
@@ -329,6 +365,7 @@ impl ScatterSides<'_> {
     /// child rather than once per f parent.
     fn mark_wanted_for_outer(&mut self, outer: usize) {
         self.wanted.begin();
+        self.wanted_keys.clear();
         self.inner_seen.begin();
         let off = self.rev_offsets_c1[outer] as usize;
         let end = self.rev_offsets_c1[outer + 1] as usize;
@@ -338,9 +375,63 @@ impl ScatterSides<'_> {
                 continue;
             }
             for &(inner_c2, _) in &self.inner_prods[inner1 as usize] {
-                self.wanted.mark(inner_c2);
+                if self.wanted.mark(inner_c2) {
+                    self.wanted_keys.push(inner_c2);
+                }
             }
         }
+    }
+
+    /// Fill `filtered` for one outer key the other way round: for each wanted
+    /// inner-g child, walk its g parents and keep those under one of the
+    /// outer's live g keys, carrying that key's product along.
+    ///
+    /// Same entries as [`ScatterSides::build_filtered_for_outer`], from the
+    /// other index. That walk costs the g pairs under the outer's keys; this
+    /// one costs the g pairs under the wanted children. A g operand free over
+    /// the outer child keeps every one of its pairs under a single key, so
+    /// the first walk reads the whole level once per outer while this one
+    /// reads a few parents; on other levels the first is the cheaper. Each
+    /// outer takes whichever its two index slices say is smaller.
+    fn build_filtered_by_inner(
+        &mut self,
+        lim: &crate::limits::Limits,
+        outer: usize,
+    ) -> Result<(), OperationError> {
+        let ScatterSides {
+            outer_buckets, outer_keys, outer_attached, wanted_keys,
+            rev_offsets_c3, rev_entries_c3, filtered, ..
+        } = self;
+        outer_keys.begin();
+        for &(right_key, attached) in outer_buckets[outer].iter() {
+            outer_keys.mark(right_key);
+            outer_attached[right_key as usize] = attached;
+        }
+        for &inner_c2 in wanted_keys.iter() {
+            let off = rev_offsets_c3[inner_c2 as usize] as usize;
+            let end = rev_offsets_c3[inner_c2 as usize + 1] as usize;
+            for &RevEntry { parent: p2, other: right_key } in &rev_entries_c3[off..end] {
+                if !outer_keys.is_set(right_key) {
+                    continue;
+                }
+                filtered.push(lim, inner_c2, (p2, outer_attached[right_key as usize]))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The g index entries each way of building this outer's `filtered`
+    /// walks: by the outer's g keys, and by the wanted inner-g children.
+    fn filtered_build_costs(&self, outer: usize) -> (usize, usize) {
+        let by_key = self.outer_buckets[outer]
+            .iter()
+            .map(|&(k, _)| (self.rev_offsets_c2[k as usize + 1] - self.rev_offsets_c2[k as usize]) as usize)
+            .sum();
+        let by_inner = self.wanted_keys
+            .iter()
+            .map(|&a| (self.rev_offsets_c3[a as usize + 1] - self.rev_offsets_c3[a as usize]) as usize)
+            .sum();
+        (by_key, by_inner)
     }
 
     /// Emit for one outer key: walk the f parents sharing it and, for each
@@ -403,7 +494,12 @@ fn scatter_general_arm<const SWAPPED: bool>(
     for outer in 0..s.outer_k {
         if s.outer_buckets[outer].is_empty() { continue; }
         s.mark_wanted_for_outer(outer);
-        s.build_filtered_for_outer(lim, outer)?;
+        let (by_key, by_inner) = s.filtered_build_costs(outer);
+        if by_inner < by_key {
+            s.build_filtered_by_inner(lim, outer)?;
+        } else {
+            s.build_filtered_for_outer(lim, outer)?;
+        }
         s.emit_for_outer::<SWAPPED>(lim, outer, &mut ticker)?;
         s.filtered.clear_touched();
     }

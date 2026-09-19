@@ -85,8 +85,23 @@ pub(crate) struct SparseWorkspace {
     // — a semi-join of the g side against the f side, one level up.
     pub(crate) wanted: Vec<u32>,                    // inner-g children this outer's emit reads
     pub(crate) wanted_epoch: u32,                   // the stamp that counts as marked
+    pub(crate) wanted_keys: Vec<u32>,               // the marked inner-g children, in marking order
     pub(crate) inner_seen: Vec<u32>,                // inner f children already walked this outer
     pub(crate) inner_seen_epoch: u32,               // likewise
+
+    // ── Output-sensitive join: the second way to build `filtered` ──
+    // g's reverse index keyed by the join's inner-g child, the opposite key
+    // from `rev_entries_c2`. An outer whose g keys hold most of the level's g
+    // pairs — a g operand free over the outer child has all of them under one
+    // key — builds `filtered` from this index instead, walking the parents of
+    // the wanted inner-g children and keeping those under one of the outer's
+    // keys. `outer_keys` marks those keys for the walk and `outer_attached`
+    // holds each one's product.
+    pub(crate) rev_entries_c3: Vec<RevEntry>,
+    pub(crate) rev_offsets_c3: Vec<u32>,
+    pub(crate) outer_keys: Vec<u32>,
+    pub(crate) outer_keys_epoch: u32,
+    pub(crate) outer_attached: Vec<u32>,
 
     // ── Phase E: parent dedup ──
     pub(crate) par_buckets: Vec<Vec<ParEntry>>,     // surviving candidates bucketed by f-parent
@@ -125,7 +140,12 @@ impl SparseWorkspace {
         drop_if_large(lim, &mut self.par_buckets);
         drop_if_large(lim, &mut self.filtered);
         crate::limits::pool::release_if_oversized(lim, &mut self.wanted);
+        crate::limits::pool::release_if_oversized(lim, &mut self.wanted_keys);
         crate::limits::pool::release_if_oversized(lim, &mut self.inner_seen);
+        crate::limits::pool::release_if_oversized(lim, &mut self.rev_entries_c3);
+        crate::limits::pool::release_if_oversized(lim, &mut self.rev_offsets_c3);
+        crate::limits::pool::release_if_oversized(lim, &mut self.outer_keys);
+        crate::limits::pool::release_if_oversized(lim, &mut self.outer_attached);
     }
 }
 
