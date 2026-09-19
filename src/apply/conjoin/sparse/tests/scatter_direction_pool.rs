@@ -30,15 +30,16 @@ fn entry(f: u32, g: u32) -> ProductEntry {
 fn pooled_counters_are_rezeroed_between_levels() {
     let eng = Engine::new();
     // Shape A, 2 slots per child side: f's parent node puts both of its
-    // refs on left-child 0, so the normal direction probes twice what the
-    // swapped one does ⇒ swap.
+    // refs on left-child 0, so the walk through the left products is twice
+    // the walk through the right ones ⇒ swap.
     let mut left_a = TddLevel::new();
     left_a.push_internal_node(&[pair(0, 0), pair(0, 1)]);
     let mut right_a = TddLevel::new();
     right_a.push_internal_node(&[pair(0, 0)]);
     let pl_a = [entry(0, 0)];
 
-    // Shape B, 1 slot per child side: both directions probe once ⇒ no swap.
+    // Shape B, 1 slot per child side: both directions cost the same and the
+    // children are equally wide ⇒ no swap.
     let mut left_b = TddLevel::new();
     left_b.push_internal_node(&[pair(0, 0)]);
     let mut right_b = TddLevel::new();

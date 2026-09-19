@@ -99,8 +99,8 @@ fn scatter_level(
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let t_idx = shape.t.idx();
-    // Direction: selectivity estimator (general path) picks the side with fewer
-    // dead probes. Do not substitute a plain grid-size proxy — it ignores
+    // Direction: the estimator (general path) sums what each direction walks
+    // around the emit. Do not substitute a plain grid-size proxy — it ignores
     // selectivity and mispicks on wide×wide segment conjoins.
     let both_non_leaf = !leaves.left && !leaves.right;
     let swap_direction = if both_non_leaf {

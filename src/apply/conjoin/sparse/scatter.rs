@@ -77,9 +77,10 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
 /// front-end is shared.
 ///
 /// **General arm** (both sides non-leaf), per outer key:
-///   1. Build `filtered`: for each live `(inner_live, attached)` in the outer's
-///      liveness bucket, walk the opposite-keyed g index and bucket its parents
-///      by the join's inner-g child, attaching the live product.
+///   1. Build `filtered`: bucket the g parents under the outer's live g keys
+///      by the join's inner-g child, attaching the live product — from
+///      whichever g index is the cheaper to walk, and only for the children
+///      the emit will read when finding those costs less than it saves.
 ///   2. Emit: for each f-parent sharing the outer, for each alive inner product,
 ///      push the precomputed alive `(p2, product)` entries — zero dead probes.
 ///   3. Clear only the `filtered` buckets touched this outer.
@@ -354,7 +355,12 @@ impl ScatterSides<'_> {
     /// Fill `filtered` for one outer key: for each live `(inner_live, attached)`
     /// in the outer's liveness bucket, walk the opposite-keyed g index and
     /// bucket each g parent by its inner child, carrying `attached` along.
-    fn build_filtered_for_outer(
+    ///
+    /// With `FILTER`, only the keys `mark_wanted_for_outer` found are
+    /// bucketed: the emit reads no other, so a g parent under any other one
+    /// would be bucketed, cleared and never looked at. Without it the walk
+    /// is bounded already and the marking has not run.
+    fn build_filtered_for_outer<const FILTER: bool>(
         &mut self,
         lim: &crate::limits::Limits,
         outer: usize,
@@ -364,16 +370,19 @@ impl ScatterSides<'_> {
             let off = self.rev_offsets_c2[right_key as usize] as usize;
             let end = self.rev_offsets_c2[right_key as usize + 1] as usize;
             for &RevEntry { parent: p2, other: inner_c2 } in &self.rev_entries_c2[off..end] {
-                // The emit reads only the keys `mark_wanted_for_outer` found;
-                // a g parent under any other one would be bucketed, cleared
-                // and never looked at.
-                if !self.wanted.is_set(inner_c2) {
+                if FILTER && !self.wanted.is_set(inner_c2) {
                     continue;
                 }
                 self.filtered.push(lim, inner_c2, (p2, attached))?;
             }
         }
         Ok(())
+    }
+
+    /// The f pairs under one outer key: what the emit walks for it, and so
+    /// the least the outer costs whatever else is done for it.
+    fn f_pairs_under(&self, outer: usize) -> usize {
+        (self.rev_offsets_c1[outer + 1] - self.rev_offsets_c1[outer]) as usize
     }
 
     /// Mark the inner-g children this outer's emit will read: for each
@@ -446,19 +455,23 @@ impl ScatterSides<'_> {
         Ok(())
     }
 
-    /// The g index entries each way of building this outer's `filtered`
-    /// walks: by the outer's g keys, and by the wanted inner-g children.
-    fn filtered_build_costs(&self, outer: usize) -> (usize, usize) {
-        let by_key = self.outer
+    /// The g index entries building this outer's `filtered` by the outer's
+    /// g keys walks.
+    fn build_cost_by_key(&self, outer: usize) -> usize {
+        self.outer
             .bucket(outer)
             .iter()
             .map(|e| (self.rev_offsets_c2[e.right_idx.idx() + 1] - self.rev_offsets_c2[e.right_idx.idx()]) as usize)
-            .sum();
-        let by_inner = self.wanted_keys
+            .sum()
+    }
+
+    /// The g index entries building this outer's `filtered` by the wanted
+    /// inner-g children walks; the marking has run.
+    fn build_cost_by_inner(&self) -> usize {
+        self.wanted_keys
             .iter()
             .map(|&a| (self.rev_offsets_c3[a as usize + 1] - self.rev_offsets_c3[a as usize]) as usize)
-            .sum();
-        (by_key, by_inner)
+            .sum()
     }
 
     /// Emit for one outer key: walk the f parents sharing it and, for each
@@ -515,12 +528,20 @@ fn scatter_general_arm<const SWAPPED: bool>(
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     for outer in 0..s.outer_k {
         if s.outer.bucket(outer).is_empty() { continue; }
-        s.mark_wanted_for_outer(outer);
-        let (by_key, by_inner) = s.filtered_build_costs(outer);
-        if by_inner < by_key {
-            s.build_filtered_by_inner(lim, outer)?;
+        let by_key = s.build_cost_by_key(outer);
+        if by_key <= s.f_pairs_under(outer) {
+            // The walk by the outer's g keys costs no more than the emit's
+            // own walk of the f pairs under it, and the marking costs at
+            // least that walk: neither it nor the filter it feeds can pay
+            // for itself here.
+            s.build_filtered_for_outer::<false>(lim, outer)?;
         } else {
-            s.build_filtered_for_outer(lim, outer)?;
+            s.mark_wanted_for_outer(outer);
+            if s.build_cost_by_inner() < by_key {
+                s.build_filtered_by_inner(lim, outer)?;
+            } else {
+                s.build_filtered_for_outer::<true>(lim, outer)?;
+            }
         }
         s.emit_for_outer::<SWAPPED>(lim, outer, &mut ticker)?;
         s.filtered.clear_touched();
