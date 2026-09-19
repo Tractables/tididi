@@ -302,8 +302,7 @@ impl ScatterSides<'_> {
             let (right_key, attached) = self.outer_buckets[outer][left_idx];
             let off = self.rev_offsets_c2[right_key as usize] as usize;
             let end = self.rev_offsets_c2[right_key as usize + 1] as usize;
-            for ei in off..end {
-                let RevEntry { parent: p2, other: inner_c2 } = self.rev_entries_c2[ei];
+            for &RevEntry { parent: p2, other: inner_c2 } in &self.rev_entries_c2[off..end] {
                 // The emit reads only the keys `mark_wanted_for_outer` found;
                 // a g parent under any other one would be bucketed, cleared
                 // and never looked at.
