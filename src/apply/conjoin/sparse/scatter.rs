@@ -11,6 +11,13 @@ use crate::Engine;
 /// The leaf arm of the scatter: one side of the join is a vtree leaf, so the
 /// leaf-side product comes straight from the conjunction table and the walk
 /// stays selective by iterating the non-leaf product list.
+// The level's steps are kept out of line from one another. Each runs once per
+// level (or, for the chunk phases, once per chunk), so the call costs nothing
+// against what it then does, and holding them apart means a change inside one
+// cannot re-balance the inlining, register allocation or layout of the others:
+// a measurement of one step then says what it means, instead of moving a step
+// the change never touched.
+#[inline(never)]
 fn scatter_leaf_arm<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
@@ -100,6 +107,7 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
 /// — which is also exactly the keying the leaf arm wants, since that groups g
 /// by the non-leaf outer child, so one build serves both arms: normal → by
 /// right `s2`, entries `(p2, a2)`; swapped → by left `a2`, entries `(p2, s2)`.
+#[inline(never)]
 fn build_scatter_indexes<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
@@ -221,6 +229,7 @@ impl EpochFlags<'_> {
 
 /// Take this direction's view of the workspace, with every bucket array this
 /// arm writes cleared to `shape`'s dimensions.
+#[inline(never)]
 fn sides<'w, const SWAPPED: bool>(
     eng: &Engine,
     ws: &'w mut SparseWorkspace,
@@ -375,6 +384,7 @@ impl ScatterSides<'_> {
 
 /// The general arm: both sides non-leaf. Per outer key, build the filtered g
 /// index, emit against it, then clear only the buckets this outer touched.
+#[inline(never)]
 fn scatter_general_arm<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
@@ -471,6 +481,7 @@ pub(crate) fn flush_chunk(
 /// into `ws.emit_pairs`, and optionally drop consumed `par_buckets` rows.
 ///
 /// Called exclusively from `flush_chunk`.
+#[inline(never)]
 fn flush_chunk_phase_e(
     eng: &Engine,
     ws: &mut SparseWorkspace,
@@ -547,6 +558,7 @@ fn flush_chunk_phase_e(
 ///
 /// Called exclusively from `flush_chunk`. No-ops when `ws.emit_pairs` produced
 /// zero new parents for this chunk.
+#[inline(never)]
 fn flush_chunk_phase_f(
     eng: &Engine,
     ws: &mut SparseWorkspace,
