@@ -161,18 +161,41 @@ impl ApplyRun {
     ///
     /// The density test is exact arithmetic on `u128`: the two maxima are
     /// products of widths and overflow `u64` on wide levels.
+    ///
+    /// The two routes also differ in what they do to the children first. A
+    /// child the sparse pipeline built has a product list and no grid, and a
+    /// dense route here fills that grid before its own, at the product of the
+    /// operands' widths there; a child the dense pipeline built has a grid and
+    /// no product list, and the sparse route scans every cell of it for one.
+    /// `child_grid_wins` says whether the grids the dense route would fill
+    /// outweigh the grids the sparse route would scan — and at least one of
+    /// the former is over the size floor and sparse against its live products
+    /// — so that the dense route's setup alone loses to the scatter walk,
+    /// however small this level's own grid is.
     pub(super) fn sparse_gate(&self, shape: LevelShape) -> SparseGate {
         let LevelShape { left, right, f, g, .. } = shape;
         let max_left = (f.left * g.left) as u128;
         let max_right = (f.right * g.right) as u128;
         let live_l = self.live_counts.at(left.idx()) as u128;
         let live_r = self.live_counts.at(right.idx()) as u128;
+        let factor = self.thresholds.sparsity_factor;
+        let min_grid = self.thresholds.min_grid;
+        let ungridded = |child: VtreeIdx| self.arena.is_sparse(child.idx());
+        let wide_and_sparse = |child: VtreeIdx, max: u128, live: u128| {
+            ungridded(child) && max > min_grid as u128 && factor * live < max
+        };
+        let split = |child: VtreeIdx, max: u128| if ungridded(child) { (max, 0) } else { (0, max) };
+        let (fill_l, scan_l) = split(left, max_left);
+        let (fill_r, scan_r) = split(right, max_right);
         SparseGate {
             available: self.arena.is_bump(),
             density_wins: max_left > 0
                 && max_right > 0
-                && self.thresholds.sparsity_factor * live_l * live_r < max_left * max_right,
-            min_grid: self.thresholds.min_grid,
+                && factor * live_l * live_r < max_left * max_right,
+            child_grid_wins: (wide_and_sparse(left, max_left, live_l)
+                || wide_and_sparse(right, max_right, live_r))
+                && fill_l + fill_r > scan_l + scan_r,
+            min_grid,
         }
     }
 

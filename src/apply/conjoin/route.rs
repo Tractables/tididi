@@ -92,6 +92,11 @@ pub(super) struct SparseGate {
     /// The online density check: the children's live product counts are small
     /// enough against their maxima that scattering wins.
     pub(super) density_wins: bool,
+    /// The child grids the dense route would have to fill outweigh the child
+    /// grids the sparse route would have to scan, and one of the former is
+    /// over `min_grid` and sparse against its live products: reason enough
+    /// to scatter whatever this level's own grid is.
+    pub(super) child_grid_wins: bool,
     /// Grids at or below this many cells are not worth either sparse route's
     /// setup, whatever the density says.
     pub(super) min_grid: usize,
@@ -110,7 +115,13 @@ pub(super) fn route_level(
     marginal: &LevelMarg,
     sparse: SparseGate,
 ) -> Route {
-    let big_grid = shape.f.here * shape.g.here > sparse.min_grid;
+    // The dense routes write this level's grid and, before it, the grid of
+    // any child the sparse pipeline left as a product list; the sparse routes
+    // walk the live products and write none of the three. A level with a
+    // small grid of its own can sit over wide, sparse children — an operand's
+    // root does, with one node each side and the whole diagram below — so a
+    // child grid the dense route would have to materialize counts as well.
+    let big_grid = shape.f.here * shape.g.here > sparse.min_grid || sparse.child_grid_wins;
 
     // A marginal child on either side rules the scatter walk out entirely, so
     // the density check never has to hold for a level with count payloads.
