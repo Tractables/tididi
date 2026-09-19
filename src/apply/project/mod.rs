@@ -1,9 +1,10 @@
 //! Existential quantification of variables from a diagram.
 //!
-//! `∃x.T` is a leaf-to-root regroup of the levels on x's path, rewritten in
-//! place. It never calls apply or negate, so it is sound when a level off that
-//! path is marginal, and it costs one pass over the path rather than a product
-//! of two full diagrams.
+//! `∃X.T` is one bottom-up regroup of the levels above X's leaves, rewritten in
+//! place. It never calls apply or negate, so it is sound when a level elsewhere
+//! is marginal, and it costs one pass over those levels rather than a product
+//! of two full diagrams — one pass for the whole request, not one per
+//! variable.
 
 use crate::Engine;
 
@@ -19,19 +20,19 @@ pub(crate) fn exists_var_on(eng: &Engine, f: Tdd, x: VarId) -> Result<Tdd, Opera
     // Caller input, so it is answered before any work and before the ⊥ shortcut:
     // the same request is refused whatever the operand happens to be.
     let leaf_idx = f.vtree.leaf_of(x).ok_or(OperationError::VariableNotInVtree(x))?;
-    exists_leaf_on(eng, f, leaf_idx)
+    exists_leaves_on(eng, f, &[leaf_idx])
 }
 
-/// Quantify a validated leaf index on the operand's unchanged vtree.
-fn exists_leaf_on(eng: &Engine, f: Tdd, leaf_idx: VtreeIdx) -> Result<Tdd, OperationError> {
+/// Quantify validated leaf indices on the operand's unchanged vtree.
+fn exists_leaves_on(eng: &Engine, f: Tdd, targets: &[VtreeIdx]) -> Result<Tdd, OperationError> {
     eng.limits().check_stop()?;
     if f.is_zero() {
         return Ok(f);
     }
-    structural::exists_var_structural(eng, f, leaf_idx)
+    structural::exists_leaves_structural(eng, f, targets)
 }
 
-/// Existentially quantify every variable in `vars` out of `f`, one at a time.
+/// Existentially quantify every variable in `vars` out of `f` in one sweep.
 pub(crate) fn exists_vars_on(eng: &Engine, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
     let _op = eng.limits().begin_operation();
     let targets = quantification_targets(eng, f.vtree(), vars)?;
@@ -59,12 +60,12 @@ pub(super) fn quantification_targets(eng: &Engine, tree: &Vtree, vars: &[VarId])
     Ok(leaves)
 }
 
-/// Quantify prepared leaves without repeating validation or changing their order.
-pub(super) fn exists_targets_on(eng: &Engine, mut f: Tdd, targets: &[VtreeIdx]) -> Result<Tdd, OperationError> {
-    for &leaf in targets {
-        f = exists_leaf_on(eng, f, leaf)?;
+/// Quantify prepared leaves without repeating validation.
+pub(super) fn exists_targets_on(eng: &Engine, f: Tdd, targets: &[VtreeIdx]) -> Result<Tdd, OperationError> {
+    if targets.is_empty() {
+        return Ok(f);
     }
-    Ok(f)
+    exists_leaves_on(eng, f, targets)
 }
 
 impl crate::Engine {

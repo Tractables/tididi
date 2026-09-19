@@ -217,9 +217,9 @@ impl Tdd {
     /// as one remaining assignment.
     ///
     /// Consumes the diagram on success and error, retaining its vtree and weights.
-    /// Each distinct variable is processed once, in first-occurrence order. An
-    /// empty slice returns the operand unchanged; a nonempty request minimizes a
-    /// nonfalse operand. A false operand remains false.
+    /// A repeated variable is quantified once. An empty slice returns the operand
+    /// unchanged; a nonempty request minimizes a nonfalse operand. A false operand
+    /// remains false.
     ///
     /// The quantified variables remain free in the unchanged vtree. Divide the
     /// result's full model count by `2^k` to count over the remaining variables,
