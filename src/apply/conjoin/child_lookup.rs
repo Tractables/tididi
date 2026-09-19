@@ -31,7 +31,24 @@ fn child_grid_mul(a: u32, stride: u32) -> usize {
 /// holding a borrow keeps the dense impl free of an aliasing borrow against
 /// the output writes into the same slab.
 pub(super) trait ChildLookup {
-    fn get(&self, node_idx: &[u32], row: u32, col: u32) -> u32;
+    /// A child grid row resolved once. The pair walks hold `row` fixed across
+    /// a run of columns — both child coordinates of a cell take their row from
+    /// the same f pair — so resolving the row is hoisted out of the column
+    /// loop and the per-column lookup is one add and one load.
+    type Row: Copy;
+
+    /// Resolve child row `row`, for the column loop to reuse.
+    fn row(&self, row: u32) -> Self::Row;
+
+    /// The child node at `col` of an already-resolved row.
+    fn get_in_row(&self, node_idx: &[u32], row: Self::Row, col: u32) -> u32;
+
+    /// Resolve a child node at grid position `(row, col)` in one call, for a
+    /// walk whose row changes per lookup.
+    #[inline(always)]
+    fn get(&self, node_idx: &[u32], row: u32, col: u32) -> u32 {
+        self.get_in_row(node_idx, self.row(row), col)
+    }
 
     /// True when this side is a marginal pass-through carrier: `get` returns
     /// the carried operand field verbatim (an inline model count or tagged
@@ -53,14 +70,20 @@ pub(super) struct DenseLookup {
 }
 
 impl ChildLookup for DenseLookup {
+    /// The row's flat offset into the slab.
+    type Row = usize;
+
     #[inline(always)]
-    fn get(&self, node_idx: &[u32], row: u32, col: u32) -> u32 {
+    fn row(&self, row: u32) -> usize {
+        self.base + child_grid_mul(row, self.stride)
+    }
+
+    #[inline(always)]
+    fn get_in_row(&self, node_idx: &[u32], row: usize, col: u32) -> u32 {
         // Safety: callers only query positions within the child's
         // rows-by-columns slab. `child_grid_mul` widens before
         // the multiply so the index is exact on 64-bit targets.
-        unsafe {
-            *node_idx.get_unchecked(self.base + child_grid_mul(row, self.stride) + col as usize)
-        }
+        unsafe { *node_idx.get_unchecked(row + col as usize) }
     }
 }
 
@@ -94,18 +117,30 @@ impl MarginalLookup {
 }
 
 impl ChildLookup for MarginalLookup {
+    /// The row's flat slab offset off pass-through, and the carried f field
+    /// itself on it — where the value is the answer rather than a coordinate.
+    type Row = usize;
+
     #[inline(always)]
-    fn get(&self, node_idx: &[u32], row: u32, col: u32) -> u32 {
+    fn row(&self, row: u32) -> usize {
         if self.passthrough {
-            if self.pt_c1 { row } else { col }
+            row as usize
         } else {
-            // Safety: identical access to `DenseLookup::get` — off pass-through
-            // the fields are structural coordinates within the child's
-            // rows-by-columns slab. `child_grid_mul` widens before the
+            self.base + child_grid_mul(row, self.stride)
+        }
+    }
+
+    #[inline(always)]
+    fn get_in_row(&self, node_idx: &[u32], row: usize, col: u32) -> u32 {
+        if self.passthrough {
+            // `row` round-tripped through `usize` from the u32 pair field.
+            if self.pt_c1 { row as u32 } else { col }
+        } else {
+            // Safety: identical access to `DenseLookup::get_in_row` — off
+            // pass-through the fields are structural coordinates within the
+            // child's rows-by-columns slab. `child_grid_mul` widens before the
             // multiply so the index is exact on 64-bit targets.
-            unsafe {
-                *node_idx.get_unchecked(self.base + child_grid_mul(row, self.stride) + col as usize)
-            }
+            unsafe { *node_idx.get_unchecked(row + col as usize) }
         }
     }
 

@@ -277,17 +277,28 @@ where
     let n = if ITER_C1 { inputs1.len() } else { inputs2.len() };
     gate.poll(n as u64)?;
     let cell_start = sink.begin();
-    for k in 0..n {
-        let (p1, p2) = if ITER_C1 {
-            (&inputs1[k], &inputs2[0])
-        } else {
-            (&inputs1[0], &inputs2[k])
-        };
-        let lc = left.get(node_idx, p1.left.0, p2.left.0);
-        if lc == NO_PRODUCT { continue; }
-        let rc = right.get(node_idx, p1.right.0, p2.right.0);
-        if rc == NO_PRODUCT { continue; }
-        sink.pair(eng, lc, rc)?;
+    if ITER_C1 {
+        // N×1: the row changes per pair, so each lookup resolves its own.
+        let p2 = &inputs2[0];
+        for p1 in inputs1 {
+            let lc = left.get(node_idx, p1.left.0, p2.left.0);
+            if lc == NO_PRODUCT { continue; }
+            let rc = right.get(node_idx, p1.right.0, p2.right.0);
+            if rc == NO_PRODUCT { continue; }
+            sink.pair(eng, lc, rc)?;
+        }
+    } else {
+        // 1×N: one f pair fixes both child rows for the whole sweep.
+        let p1 = &inputs1[0];
+        let lrow = left.row(p1.left.0);
+        let rrow = right.row(p1.right.0);
+        for p2 in inputs2 {
+            let lc = left.get_in_row(node_idx, lrow, p2.left.0);
+            if lc == NO_PRODUCT { continue; }
+            let rc = right.get_in_row(node_idx, rrow, p2.right.0);
+            if rc == NO_PRODUCT { continue; }
+            sink.pair(eng, lc, rc)?;
+        }
     }
     sink.end(eng, node_idx, grid_pos, cell_start)?;
     Ok(())
@@ -369,8 +380,9 @@ where
                     if ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j] == 0 {
                         continue;
                     }
+                    let rrow = right.row(p1.right.0);
                     for p2 in g2 {
-                        let rc = right.get(node_idx, p1.right.0, p2.right.0);
+                        let rc = right.get_in_row(node_idx, rrow, p2.right.0);
                         if rc == NO_PRODUCT { continue; }
                         sink.pair(eng, lc, rc)?;
                     }
@@ -389,10 +401,12 @@ where
                 && ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j] == 0 {
                 continue;
             }
+            let lrow = left.row(p1.left.0);
+            let rrow = right.row(p1.right.0);
             for p2 in inputs2 {
-                let lc = left.get(node_idx, p1.left.0, p2.left.0);
+                let lc = left.get_in_row(node_idx, lrow, p2.left.0);
                 if lc == NO_PRODUCT { continue; }
-                let rc = right.get(node_idx, p1.right.0, p2.right.0);
+                let rc = right.get_in_row(node_idx, rrow, p2.right.0);
                 if rc == NO_PRODUCT { continue; }
                 sink.pair(eng, lc, rc)?;
             }

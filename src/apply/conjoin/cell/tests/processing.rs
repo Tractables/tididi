@@ -174,7 +174,9 @@ fn collect_sink_respects_soft_budget() {
     // (p1, p2) combination emits one pair.
     struct AliveLookup;
     impl ChildLookup for AliveLookup {
-        fn get(&self, _node_idx: &[u32], _row: u32, _col: u32) -> u32 { 1 }
+        type Row = ();
+        fn row(&self, _row: u32) {}
+        fn get_in_row(&self, _node_idx: &[u32], _row: (), _col: u32) -> u32 { 1 }
     }
 
     // g level: a single inline node → exactly one decoded pair for j = 0,
@@ -261,7 +263,9 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
     // Every child ref resolves live, so no cull short-circuits the walk.
     struct AliveLookup;
     impl ChildLookup for AliveLookup {
-        fn get(&self, _node_idx: &[u32], _row: u32, _col: u32) -> u32 { 1 }
+        type Row = ();
+        fn row(&self, _row: u32) {}
+        fn get_in_row(&self, _node_idx: &[u32], _row: (), _col: u32) -> u32 { 1 }
     }
 
     // The pair-collecting sink, driven through the shared row loop so the
@@ -344,7 +348,9 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
     // which column entries the walk actually read.
     struct RefLookup;
     impl ChildLookup for RefLookup {
-        fn get(&self, _node_idx: &[u32], row: u32, col: u32) -> u32 {
+        type Row = u32;
+        fn row(&self, row: u32) -> u32 { row }
+        fn get_in_row(&self, _node_idx: &[u32], row: u32, col: u32) -> u32 {
             row.wrapping_mul(31).wrapping_add(col) & 0x00ff_ffff
         }
     }
