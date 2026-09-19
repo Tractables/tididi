@@ -249,12 +249,8 @@ impl PairSink for CollectSink<'_> {
 #[expect(clippy::too_many_arguments)]
 fn cell_one_sided<const ITER_C1: bool, L, R, S>(
     eng: &Engine,
-    j: usize,
     inputs1: &[ChildPair],
     inputs2: &[ChildPair],
-    left_alive_mask: u128,
-    right_alive_mask: u128,
-    ctx: &CellCtx<'_>,
     node_idx: &mut [u32],
     grid_pos: usize,
     left: &L,
@@ -267,13 +263,6 @@ where
     R: ChildLookup,
     S: PairSink,
 {
-    let both_multi_pair = ctx.both_multi_pair;
-    if both_multi_pair && !left.passthrough() && left_alive_mask & ctx.sides.left.reach[j] == 0 {
-        return Ok(());
-    }
-    if both_multi_pair && !right.passthrough() && right_alive_mask & ctx.sides.right.reach[j] == 0 {
-        return Ok(());
-    }
     let n = if ITER_C1 { inputs1.len() } else { inputs2.len() };
     gate.poll(n as u64)?;
     let cell_start = sink.begin();
@@ -313,8 +302,6 @@ fn cell_prefilter<L, R, S>(
     j: usize,
     inputs1: &[ChildPair],
     inputs2: &[ChildPair],
-    left_alive_mask: u128,
-    right_alive_mask: u128,
     ctx: &CellCtx<'_>,
     node_idx: &mut [u32],
     grid_pos: usize,
@@ -329,14 +316,9 @@ where
     S: PairSink,
 {
     // ── N×M (implies both_multi_pair: both levels multi-pair ⟹ masks built) ──────
-    let left_dead = !left.passthrough()
-        && left_alive_mask & ctx.sides.left.reach[j] == 0;
-    let right_dead = !right.passthrough()
-        && right_alive_mask & ctx.sides.right.reach[j] == 0;
-    if left_dead || right_dead {
-        return Ok(());
-    }
-
+    // The whole-cell dead test belongs to the row loop, which applies it to
+    // every arm before the cell is entered; what is left here is the per-`p1`
+    // form of it, which only this arm can use.
     let cell_start = sink.begin();
     if !left.passthrough() && !right.passthrough()
         && inputs1.len() >= 64 && inputs2.len() >= 64
@@ -446,8 +428,6 @@ pub(crate) fn process_cell<L, R, S>(
     j: usize,
     row_base: usize,
     inputs1: &[ChildPair],
-    left_alive_mask: u128,
-    right_alive_mask: u128,
     ctx: &CellCtx<'_>,
     right_level: &TddLevel,
     inputs2_scratch: &mut Vec<ChildPair>,
@@ -500,18 +480,16 @@ where
         }
     } else if inputs2.len() == 1 {
         cell_one_sided::<true, _, _, _>(
-            eng, j, inputs1, inputs2, left_alive_mask, right_alive_mask, ctx,
-            node_idx, grid_pos, left, right, sink, gate,
+            eng, inputs1, inputs2, node_idx, grid_pos, left, right, sink, gate,
         )?;
     } else if inputs1.len() == 1 {
         cell_one_sided::<false, _, _, _>(
-            eng, j, inputs1, inputs2, left_alive_mask, right_alive_mask, ctx,
-            node_idx, grid_pos, left, right, sink, gate,
+            eng, inputs1, inputs2, node_idx, grid_pos, left, right, sink, gate,
         )?;
     } else {
         cell_prefilter(
             eng,
-            j, inputs1, inputs2, left_alive_mask, right_alive_mask, ctx,
+            j, inputs1, inputs2, ctx,
             node_idx, grid_pos, left, right, sink, gate,
         )?;
     }

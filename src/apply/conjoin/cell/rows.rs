@@ -63,8 +63,6 @@ pub(super) struct CellArgs<'a, 'c, L, R> {
     pub(super) row_base: usize,
     /// Decoded pairs of f row `i` (never empty — empty rows are skipped).
     pub(super) inputs1: &'a [ChildPair],
-    pub(super) left_alive_mask: u128,
-    pub(super) right_alive_mask: u128,
     pub(super) ctx: &'a CellCtx<'c>,
     pub(super) right_level_t: &'a TddLevel,
     pub(super) inputs2_scratch: &'a mut Vec<ChildPair>,
@@ -145,6 +143,11 @@ where
     // waiting for the next vtree-level boundary (20+ s on the widest levels).
     let mut poll = lim.gate_with(super::super::budget::DENSE_CELL_POLL_STRIDE);
     let right_width = ctx.right_width;
+    // Whether the per-column cull below can fire at all: the reach masks exist
+    // only where both levels are multi-pair, a pass-through side has no grid to
+    // be dead in, and `DENSE` is the regime where the masks are not folded.
+    let cull_left = !DENSE && ctx.both_multi_pair && !left.passthrough();
+    let cull_right = !DENSE && ctx.both_multi_pair && !right.passthrough();
 
     // One slab fill instead of `left_width` row fills. On a dense-slab action the
     // per-row resets below tile `output_grid_base .. output_grid_base + left_width*right_width` exactly once each
@@ -195,6 +198,19 @@ where
 
 
         for j in 0..right_width {
+            // The cell's own dead-cell test, taken before the cell is entered.
+            // A column whose g node reaches no live child of this row cannot
+            // produce anything, whatever arm the cell would have taken, so the
+            // cheapest place to find that out is here — ahead of the column's
+            // pair slice, the empty test and the arm dispatch. Both sides read
+            // the row's mask, which is the union over the row's references, so
+            // a clear intersection proves every cell of the column dead.
+            if cull_left && left_alive_mask & ctx.sides.left.reach[j] == 0 {
+                continue;
+            }
+            if cull_right && right_alive_mask & ctx.sides.right.reach[j] == 0 {
+                continue;
+            }
             action.cell(
                 eng,
                 CellArgs {
@@ -202,8 +218,6 @@ where
                     i,
                     row_base,
                     inputs1,
-                    left_alive_mask,
-                    right_alive_mask,
                     ctx,
                     right_level_t,
                     left,
@@ -254,8 +268,6 @@ impl<const A: bool, L: ChildLookup, R: ChildLookup> CellAction<L, R> for Emit<'_
             a.j,
             a.row_base,
             a.inputs1,
-            a.left_alive_mask,
-            a.right_alive_mask,
             a.ctx,
             a.right_level_t,
             a.inputs2_scratch,
@@ -333,8 +345,6 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
             a.j,
             a.row_base,
             a.inputs1,
-            a.left_alive_mask,
-            a.right_alive_mask,
             a.ctx,
             a.right_level_t,
             a.inputs2_scratch,

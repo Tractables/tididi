@@ -91,8 +91,6 @@ impl<L: ChildLookup, R: ChildLookup, F: ValueDomain> CellAction<L, R> for Stream
             a.j,
             a.row_base,
             a.inputs1,
-            a.left_alive_mask,
-            a.right_alive_mask,
             a.ctx,
             a.right_level_t,
             a.inputs2_scratch,

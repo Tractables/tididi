@@ -207,7 +207,7 @@ fn collect_sink_respects_soft_budget() {
         let eng = Engine::new();
         process_cell::<_, _, _>(
             &eng,
-            0, 0, &small, 0, 0, &ctx, &g, &mut scratch, &mut node_idx,
+            0, 0, &small, &ctx, &g, &mut scratch, &mut node_idx,
             &AliveLookup, &AliveLookup, &mut CollectSink { out: &mut out },
             &mut eng.limits().gate_with(u64::MAX),
         )
@@ -227,7 +227,7 @@ fn collect_sink_respects_soft_budget() {
     lim.set_budget(Some(4096));
         process_cell::<_, _, _>(
             &eng,
-            0, 0, &big, 0, 0, &ctx, &g, &mut scratch, &mut node_idx,
+            0, 0, &big, &ctx, &g, &mut scratch, &mut node_idx,
             &AliveLookup, &AliveLookup, &mut CollectSink { out: &mut out },
             &mut eng.limits().gate_with(u64::MAX),
         )
@@ -280,7 +280,7 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
         fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
             process_cell::<_, _, _>(
                 eng,
-                a.j, a.row_base, a.inputs1, a.left_alive_mask, a.right_alive_mask,
+                a.j, a.row_base, a.inputs1,
                 a.ctx, a.right_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
                 &mut CollectSink { out: &mut *self.out },
                 a.gate,
@@ -383,7 +383,7 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
         let mut node_idx: Vec<u32> = Vec::new();
         for j in 0..right_width {
             process_cell(
-                &eng, j, 0, &inputs1, u128::MAX, u128::MAX, &ctx, &lvl,
+                &eng, j, 0, &inputs1, &ctx, &lvl,
                 &mut scratch, &mut node_idx,
                 &RefLookup, &RefLookup, &mut CollectSink { out: &mut out },
                 &mut eng.limits().gate_with(u64::MAX),
