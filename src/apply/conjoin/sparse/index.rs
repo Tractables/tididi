@@ -12,6 +12,14 @@ pub(crate) struct ParEntry {
     pub(crate) sib_idx: u32, // compacted right-child product index
 }
 
+/// A candidate with the f parent it belongs to, as the flat list holds it
+/// before the sort by parent.
+#[derive(Clone, Copy)]
+pub(crate) struct Candidate {
+    pub(crate) parent: u32,
+    pub(crate) entry: ParEntry,
+}
+
 /// Index of a node in `f.levels[t].nodes`. Distinct from `RightNodeIdx` and
 /// `ProductNodeIdx` so that construction-site swaps are caught at compile time.
 #[repr(transparent)]
@@ -104,6 +112,16 @@ pub(crate) struct SparseWorkspace {
 
     // ── Phase E: parent dedup ──
     pub(crate) par_buckets: Vec<Vec<ParEntry>>,     // surviving candidates bucketed by f-parent
+    // The flat alternative a level with many more parents than candidates
+    // takes (`flat_candidates_win`): the scatter appends every candidate
+    // with its parent to `par_flat`, and `sort_candidates` counting-sorts
+    // them into `par_sorted`, parent `p1`'s run being
+    // `par_sorted[par_offsets[p1]..par_offsets[p1 + 1]]`. `flat_candidates`
+    // says which representation the current level filled.
+    pub(crate) flat_candidates: bool,
+    pub(crate) par_flat: Vec<Candidate>,
+    pub(crate) par_sorted: Vec<ParEntry>,
+    pub(crate) par_offsets: Vec<u32>,
     pub(crate) p2_map: Vec<u32>,                    // flat lookup: p2_map[right_parent] → compacted idx, NO_PRODUCT if new
     pub(crate) p2_map_touched: Vec<u32>,            // p2 values written into p2_map this p1's emit pass, to clear
 
@@ -135,6 +153,9 @@ impl SparseWorkspace {
         crate::limits::pool::release_if_oversized(lim, &mut self.inner_offsets);
         crate::limits::pool::release_if_oversized(lim, &mut self.outer_offsets);
         drop_if_large(lim, &mut self.par_buckets);
+        crate::limits::pool::release_if_oversized(lim, &mut self.par_flat);
+        crate::limits::pool::release_if_oversized(lim, &mut self.par_sorted);
+        crate::limits::pool::release_if_oversized(lim, &mut self.par_offsets);
         drop_if_large(lim, &mut self.filtered);
         crate::limits::pool::release_if_oversized(lim, &mut self.wanted);
         crate::limits::pool::release_if_oversized(lim, &mut self.wanted_keys);

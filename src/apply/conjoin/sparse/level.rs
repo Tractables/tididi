@@ -84,48 +84,62 @@ pub(crate) fn fill_identity_product_list(
     }
 }
 
-/// Run the scatter for one level: choose which side to iterate, then join.
+/// Run the scatter for one level: choose which side to iterate and how the
+/// candidates are collected, then join.
 ///
 /// With both children non-leaf the direction comes from
-/// `estimate_scatter_direction`; with a leaf child the larger grid is iterated.
+/// `estimate_scatter_direction`, and its emit-step count decides between a
+/// bucket per f parent and the flat list (`flat_candidates_win`); with a
+/// leaf child the larger grid is iterated into buckets.
 fn scatter_level(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     f: &Tdd,
     g: &Tdd,
     shape: LevelShape,
-    leaves: Sides<bool>,
     pl: Sides<&[ProductEntry]>,
+    thresholds: SparseThresholds,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let t_idx = shape.t.idx();
+    let leaves = Sides {
+        left: f.vtree.node(shape.left).is_leaf(),
+        right: f.vtree.node(shape.right).is_leaf(),
+    };
     // Direction: the estimator (general path) sums what each direction walks
     // around the emit. Do not substitute a plain grid-size proxy — it ignores
     // selectivity and mispicks on wide×wide segment conjoins.
     let both_non_leaf = !leaves.left && !leaves.right;
-    let swap_direction = if both_non_leaf {
-        estimate_scatter_direction(
+    let (swap_direction, flat) = if both_non_leaf {
+        let choice = estimate_scatter_direction(
             eng,
             &mut ws.est_counts,
             &f.levels[t_idx], &g.levels[t_idx], pl.left, pl.right,
             shape,
-        )?
+        )?;
+        (choice.swapped, flat_candidates_win(thresholds, shape.f.here, choice.emit_steps))
     } else {
-        shape.f.left * shape.g.left > shape.f.right * shape.g.right
+        (shape.f.left * shape.g.left > shape.f.right * shape.g.right, false)
     };
 
-    ensure_buckets_cleared(eng, &mut ws.par_buckets, shape.f.here)?;
+    ws.flat_candidates = flat;
+    if flat {
+        ws.par_flat.clear();
+    } else {
+        ensure_buckets_cleared(eng, &mut ws.par_buckets, shape.f.here)?;
+    }
     lim.try_resize(&mut ws.p2_map, shape.g.here, NO_PRODUCT)?;
 
     // Output-sensitive join: the one scatter engine, for both leaf and general
     // levels. The general arm carries no dead-probe inner loop; the leaf arm
     // keeps the leaf fast-path shape.
     if !swap_direction {
-        scatter_outsens::<false>(eng, ws, &f.levels[t_idx], &g.levels[t_idx],
-            shape, pl, leaves.left)?;
+        scatter_outsens::<false>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves)?;
     } else {
-        scatter_outsens::<true>(eng, ws, &f.levels[t_idx], &g.levels[t_idx],
-            shape, pl, leaves.right)?;
+        scatter_outsens::<true>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves)?;
+    }
+    if flat {
+        sort_candidates(eng, ws, shape.f.here)?;
     }
     Ok(())
 }
@@ -186,8 +200,8 @@ impl std::ops::DerefMut for WsGuard<'_> {
 ///   F:   counting-sort pairs by parent product, create output nodes
 ///
 /// Phases E+F are chunked by f-parent index range when the projected transient
-/// exceeds `chunk_bytes`; each chunk's `par_buckets` rows are dropped before
-/// the next chunk's `emit_pairs` grows.
+/// exceeds `thresholds.chunk_bytes`; each chunk's `par_buckets` rows are
+/// dropped before the next chunk's `emit_pairs` grows.
 ///
 /// # Errors
 ///
@@ -199,15 +213,11 @@ pub(crate) fn apply_sparse_level(
     g: &Tdd,
     levels: &mut [TddLevel],
     lists: ProductLists<'_>,
-    chunk_bytes: usize,
+    thresholds: SparseThresholds,
 ) -> Result<(), OperationError> {
     let t_idx = shape.t.idx();
     let ProductLists { left, right, out: pl_output } = lists;
     let pl = Sides { left, right };
-    let leaves = Sides {
-        left: f.vtree.node(shape.left).is_leaf(),
-        right: f.vtree.node(shape.right).is_leaf(),
-    };
 
     assert_no_marginal_children(t_idx, shape.left, shape.right, f, g, levels);
 
@@ -236,7 +246,7 @@ pub(crate) fn apply_sparse_level(
     // opposite operand is keyed by the non-leaf child for selectivity,
     // and `CONJOIN_GRID` supplies the leaf product directly.
 
-    scatter_level(eng, ws, f, g, shape, leaves, pl)?;
+    scatter_level(eng, ws, f, g, shape, pl, thresholds)?;
 
     // `plan_e_f_chunks` greedy-packs f-parent indices into Phase E+F chunks
     // under the sparse chunk budget (`usize::MAX` disables).
@@ -246,7 +256,11 @@ pub(crate) fn apply_sparse_level(
     // releasing each consumed range's `par_buckets[p1]` before the next
     // chunk's `emit_pairs` grows.
     let level = &mut levels[t_idx];
-    let boundaries = plan_e_f_chunks(&ws.par_buckets, shape.f.here, chunk_bytes);
+    let boundaries = if ws.flat_candidates {
+        plan_e_f_chunks(ws.par_offsets.windows(2).map(|w| (w[1] - w[0]) as usize), shape.f.here, thresholds.chunk_bytes)
+    } else {
+        plan_e_f_chunks(ws.par_buckets.iter().map(Vec::len), shape.f.here, thresholds.chunk_bytes)
+    };
     let is_chunked = boundaries.len() > 2;
     for window in boundaries.windows(2) {
         flush_chunk(eng, ws, level, pl_output,

@@ -14,13 +14,13 @@ use crate::vtree::{VarId, Vtree};
 use crate::Engine;
 
 /// The block of `bits` variables starting at `first`, most significant first.
-fn block(first: u32, bits: u32) -> Vec<VarId> {
+pub(super) fn block(first: u32, bits: u32) -> Vec<VarId> {
     (first..first + bits).map(VarId).collect()
 }
 
 /// Rows of `values` packed for `from_models` over `blocks`, one value per
 /// block, in the order the blocks' variables are concatenated.
-fn pack(blocks: &[&[VarId]], values: &[Vec<u64>]) -> (Vec<VarId>, Vec<u64>) {
+pub(super) fn pack(blocks: &[&[VarId]], values: &[Vec<u64>]) -> (Vec<VarId>, Vec<u64>) {
     let vars: Vec<VarId> = blocks.iter().flat_map(|b| b.iter().copied()).collect();
     assert!(vars.len() <= 64);
     let rows = values

@@ -48,7 +48,7 @@ fn g_free_over_the_right_child_keys_the_outer_loop_by_the_left() {
     let mut counts = Vec::new();
     let swap = estimate_scatter_direction(
         &eng, &mut counts, &f, &g, &pl_left, &pl_right, shape([4, 4, 4], [4, 4, 1]),
-    ).expect("estimate");
+    ).expect("estimate").swapped;
     assert!(swap, "a g free over the right child must key the outer loop by the left child");
 }
 
@@ -66,6 +66,6 @@ fn f_free_over_the_right_child_keys_the_outer_loop_by_the_right() {
     let mut counts = Vec::new();
     let swap = estimate_scatter_direction(
         &eng, &mut counts, &f, &g, &pl_left, &pl_right, shape([4, 4, 1], [4, 4, 4]),
-    ).expect("estimate");
+    ).expect("estimate").swapped;
     assert!(!swap, "an f free over the right child must key the outer loop by the right child");
 }

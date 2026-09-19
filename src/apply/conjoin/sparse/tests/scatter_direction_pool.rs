@@ -50,21 +50,21 @@ fn pooled_counters_are_rezeroed_between_levels() {
     let b_alone = estimate_scatter_direction(
         &eng,
         &mut fresh, &left_b, &right_b, &pl_b, &pl_b, square_shape(1),
-    ).expect("estimate on shape B");
+    ).expect("estimate on shape B").swapped;
     assert!(!b_alone, "symmetric level: the estimator must not swap");
 
     let mut pooled: Vec<u32> = Vec::new();
     let a_first = estimate_scatter_direction(
         &eng,
         &mut pooled, &left_a, &right_a, &pl_a, &pl_a, square_shape(2),
-    ).expect("estimate on shape A");
+    ).expect("estimate on shape A").swapped;
     assert!(a_first, "left-heavy level: the estimator must swap");
 
     // Same buffer, now holding A's counts beyond B's shorter prefix.
     let b_after_a = estimate_scatter_direction(
         &eng,
         &mut pooled, &left_b, &right_b, &pl_b, &pl_b, square_shape(1),
-    ).expect("estimate on shape B after A");
+    ).expect("estimate on shape B after A").swapped;
     assert_eq!(
         b_after_a, b_alone,
         "pooled counters leaked a wider level's residue into a narrower one",

@@ -43,7 +43,7 @@ pub(super) fn run_sparse_level(
         shape, f, g,
         &mut run.levels,
         ProductLists { left: pl_left, right: pl_right, out: pl_output },
-        run.thresholds.chunk_bytes,
+        run.thresholds,
     )?;
     // Release oversized bucket Vecs to avoid retaining peak allocations.
     release_sparse_ws_if_large(eng);

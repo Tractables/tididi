@@ -91,9 +91,11 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
     right_level: &TddLevel,
     shape: LevelShape,
     pl: Sides<&[ProductEntry]>,
-    // `left_is_leaf` when `!SWAPPED`; `right_is_leaf` when `SWAPPED`.
-    leaf_side_is_leaf: bool,
+    leaves: Sides<bool>,
 ) -> Result<(), OperationError> {
+    // The leaf arm runs when the leaf side is a leaf: the left child normally,
+    // the right one when swapped.
+    let leaf_side_is_leaf = if !SWAPPED { leaves.left } else { leaves.right };
     build_scatter_indexes::<SWAPPED>(eng, ws, left_level, right_level, shape)?;
     if leaf_side_is_leaf {
         return scatter_leaf_arm::<SWAPPED>(eng, ws, pl);
@@ -225,8 +227,10 @@ struct ScatterSides<'w> {
     /// child.
     outer_keys: EpochFlags<'w>,
     outer_attached: &'w mut Vec<u32>,
-    /// Surviving candidates, bucketed by f parent.
+    /// Surviving candidates, bucketed by f parent — or, on a level that
+    /// collects them flat, appended with their parent for the sort.
     par_buckets: &'w mut Vec<Vec<ParEntry>>,
+    par_flat: &'w mut Vec<Candidate>,
     /// How many outer keys the emit loop walks.
     outer_k: usize,
 }
@@ -321,7 +325,7 @@ fn sides<'w, const SWAPPED: bool>(
         rev_offsets_c1, rev_entries_c1, rev_offsets_c2, rev_entries_c2,
         rev_offsets_c3, rev_entries_c3,
         inner_offsets, outer_offsets,
-        filtered, filtered_touched, par_buckets,
+        filtered, filtered_touched, par_buckets, par_flat,
         wanted, wanted_epoch, wanted_keys, inner_seen, inner_seen_epoch,
         outer_keys, outer_keys_epoch, outer_attached,
         ..
@@ -347,6 +351,7 @@ fn sides<'w, const SWAPPED: bool>(
         outer_keys: EpochFlags { cur: *outer_keys_epoch, stamps: outer_keys, epoch: outer_keys_epoch },
         outer_attached,
         par_buckets,
+        par_flat,
         outer_k,
     })
 }
@@ -506,6 +511,36 @@ impl ScatterSides<'_> {
         }
         Ok(())
     }
+
+    /// [`ScatterSides::emit_for_outer`] for a level collecting its
+    /// candidates flat: the same walk, each candidate appended with its f
+    /// parent for the sort that groups them afterwards.
+    fn emit_for_outer_flat<const SWAPPED: bool>(
+        &mut self,
+        lim: &crate::limits::Limits,
+        outer: usize,
+        ticker: &mut crate::limits::PollGate,
+    ) -> Result<(), OperationError> {
+        let left_off = self.rev_offsets_c1[outer] as usize;
+        let left_end = self.rev_offsets_c1[outer + 1] as usize;
+        for ci in left_off..left_end {
+            let RevEntry { parent: p1, other: inner1 } = self.rev_entries_c1[ci];
+            for e in self.inner.bucket(inner1 as usize) {
+                let (inner_c2, inner_prod) = (e.right_idx.0, e.prod_idx.0);
+                let fb = self.filtered.get(inner_c2);
+                for &(p2, attached) in fb {
+                    let (a_prod, sib_idx) = if !SWAPPED {
+                        (inner_prod, attached)
+                    } else {
+                        (attached, inner_prod)
+                    };
+                    lim.try_push(self.par_flat, Candidate { parent: p1, entry: ParEntry { p2, a_prod, sib_idx } })?;
+                }
+                ticker.poll(fb.len() as u64)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The general arm: both sides non-leaf. Per outer key, build the filtered g
@@ -518,6 +553,7 @@ fn scatter_general_arm<const SWAPPED: bool>(
     pl: Sides<&[ProductEntry]>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
+    let flat = ws.flat_candidates;
     let (pl_inner, pl_outer) = if !SWAPPED { (pl.left, pl.right) } else { (pl.right, pl.left) };
     let mut s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer)?;
 
@@ -543,15 +579,55 @@ fn scatter_general_arm<const SWAPPED: bool>(
                 s.build_filtered_for_outer::<true>(lim, outer)?;
             }
         }
-        s.emit_for_outer::<SWAPPED>(lim, outer, &mut ticker)?;
+        if flat {
+            s.emit_for_outer_flat::<SWAPPED>(lim, outer, &mut ticker)?;
+        } else {
+            s.emit_for_outer::<SWAPPED>(lim, outer, &mut ticker)?;
+        }
         s.filtered.clear_touched();
     }
     Ok(())
 }
 
+/// Group a flat level's candidates by f parent: counting-sort `par_flat`
+/// into `par_sorted`, leaving parent `p1`'s run at
+/// `par_sorted[par_offsets[p1]..par_offsets[p1 + 1]]`. The four passes are
+/// those of `build_reverse_index`.
+#[inline(never)]
+pub(crate) fn sort_candidates(
+    eng: &Engine,
+    ws: &mut SparseWorkspace,
+    parents: usize,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let SparseWorkspace { par_flat, par_sorted, par_offsets, .. } = ws;
+    lim.try_resize(par_offsets, parents + 1, 0)?;
+    par_offsets[..parents + 1].fill(0);
+    for c in par_flat.iter() {
+        par_offsets[c.parent as usize] += 1;
+    }
+    let mut total = 0u32;
+    for slot in par_offsets.iter_mut().take(parents) {
+        let count = *slot;
+        *slot = total;
+        total += count;
+    }
+    par_offsets[parents] = total;
+    lim.try_resize(par_sorted, total as usize, ParEntry { p2: 0, a_prod: 0, sib_idx: 0 })?;
+    for c in par_flat.iter() {
+        let slot = par_offsets[c.parent as usize] as usize;
+        par_sorted[slot] = c.entry;
+        par_offsets[c.parent as usize] += 1;
+    }
+    shift_offsets_right_by_one(&mut par_offsets[..=parents]);
+    Ok(())
+}
+
 /// Greedy bin-pack of f-parent indices into chunks whose projected Phase E+F
-/// transient byte cost stays under `bytes_budget`. Returns boundary indices
-/// `[0, p1_a, p1_b, ..., left_width]`; each chunk processes `par_buckets[boundaries[i] .. boundaries[i+1]]`.
+/// transient byte cost stays under `bytes_budget`. `candidates` gives each
+/// of the `left_width` parents' candidate count in parent order. Returns
+/// boundary indices `[0, p1_a, p1_b, ..., left_width]`; each chunk processes
+/// the parents `boundaries[i] .. boundaries[i+1]`.
 ///
 /// A single p1's bucket is never split. Returns the single-chunk degenerate
 /// list `[0, left_width]` when `bytes_budget` is `0` or `usize::MAX`, or when the
@@ -559,7 +635,7 @@ fn scatter_general_arm<const SWAPPED: bool>(
 /// exactly once and the path is byte-for-byte equivalent to the unchunked code.
 #[inline]
 pub(crate) fn plan_e_f_chunks(
-    par_buckets: &[Vec<ParEntry>],
+    candidates: impl Iterator<Item = usize>,
     left_width: usize,
     bytes_budget: usize,
 ) -> SmallVec<[u32; 8]> {
@@ -571,8 +647,7 @@ pub(crate) fn plan_e_f_chunks(
     }
     let entries_budget = bytes_budget / BYTES_PER_PAR_ENTRY;
     let mut acc = 0usize;
-    for (p1, bucket) in par_buckets.iter().enumerate().take(left_width) {
-        let n = bucket.len();
+    for (p1, n) in candidates.enumerate().take(left_width) {
         if acc != 0 && acc.saturating_add(n) > entries_budget {
             out.push(p1 as u32);
             acc = 0;
@@ -635,6 +710,22 @@ fn flush_chunk_phase_e(
     // `ws.filtered_touched.clear()`).
     ws.p2_map_touched.clear();
 
+    if ws.flat_candidates {
+        // The sorted list is moved out for the walk for the reason a bucket
+        // is below, and handed back whatever the walk found: a level's
+        // worth of candidates is worth keeping warm.
+        let sorted = std::mem::take(&mut ws.par_sorted);
+        let mut walked = Ok(());
+        for p1 in p1_start..p1_end {
+            let (off, end) = (ws.par_offsets[p1] as usize, ws.par_offsets[p1 + 1] as usize);
+            if off == end { continue; }
+            walked = emit_parent(lim, ws, pl_output, chunk_parent_start, p1, &sorted[off..end]);
+            if walked.is_err() { break; }
+        }
+        ws.par_sorted = sorted;
+        return walked;
+    }
+
     // Each bucket is moved out for its walk rather than borrowed in place: the
     // emit writes `ws.p2_map` and `ws.emit_pairs`, which an outstanding borrow
     // of `ws.par_buckets` conflicts with, and indexing the bucket per entry to
@@ -649,45 +740,61 @@ fn flush_chunk_phase_e(
     for p1 in p1_start..p1_end {
         let bucket = std::mem::take(&mut ws.par_buckets[p1]);
         if !bucket.is_empty() {
-            for &entry in bucket.iter() {
-                let global_idx = {
-                    let slot_val = ws.p2_map[entry.p2 as usize];
-                    if slot_val == NO_PRODUCT {
-                        let idx = pl_output.len() as u32;
-                        ws.p2_map[entry.p2 as usize] = idx;
-                        ws.p2_map_touched.push(entry.p2);
-                        lim.try_push(pl_output, ProductEntry {
-                            left_idx: LeftNodeIdx(p1 as u32),
-                            right_idx: RightNodeIdx(entry.p2),
-                            prod_idx: ProductNodeIdx(idx),
-                        })?;
-                        idx
-                    } else {
-                        slot_val
-                    }
-                };
-                let local = global_idx - chunk_parent_start;
-                // Marginal children never reach the sparse path (guarded at
-                // `apply_sparse_level` entry), so child refs are plain
-                // structural indices — no bit-30 slot tagging here.
-                let left_raw = entry.a_prod;
-                let right_raw = entry.sib_idx;
-                lim.try_push(&mut ws.emit_pairs, (local, ChildPair::new(EncodedChildRef::from_raw(left_raw), EncodedChildRef::from_raw(right_raw))))?;
-            }
-
-            // Lazy-clear p2_map (only entries actually written this p1, via
-            // the touched list — avoids rescanning the bucket a second time).
-            for ti in 0..ws.p2_map_touched.len() {
-                let p2 = ws.p2_map_touched[ti];
-                ws.p2_map[p2 as usize] = NO_PRODUCT;
-            }
-            ws.p2_map_touched.clear();
+            emit_parent(lim, ws, pl_output, chunk_parent_start, p1, &bucket)?;
         }
 
         if !drop_consumed {
             ws.par_buckets[p1] = bucket;
         }
     }
+    Ok(())
+}
+
+/// Phase E for one f parent: dedup its candidates' g parents through
+/// `p2_map` into output products, and emit each candidate's child pair
+/// against its product.
+#[inline]
+fn emit_parent(
+    lim: &crate::limits::Limits,
+    ws: &mut SparseWorkspace,
+    pl_output: &mut Vec<ProductEntry>,
+    chunk_parent_start: u32,
+    p1: usize,
+    candidates: &[ParEntry],
+) -> Result<(), OperationError> {
+    for &entry in candidates {
+        let global_idx = {
+            let slot_val = ws.p2_map[entry.p2 as usize];
+            if slot_val == NO_PRODUCT {
+                let idx = pl_output.len() as u32;
+                ws.p2_map[entry.p2 as usize] = idx;
+                ws.p2_map_touched.push(entry.p2);
+                lim.try_push(pl_output, ProductEntry {
+                    left_idx: LeftNodeIdx(p1 as u32),
+                    right_idx: RightNodeIdx(entry.p2),
+                    prod_idx: ProductNodeIdx(idx),
+                })?;
+                idx
+            } else {
+                slot_val
+            }
+        };
+        let local = global_idx - chunk_parent_start;
+        // Marginal children never reach the sparse path (guarded at
+        // `apply_sparse_level` entry), so child refs are plain
+        // structural indices — no bit-30 slot tagging here.
+        let left_raw = entry.a_prod;
+        let right_raw = entry.sib_idx;
+        lim.try_push(&mut ws.emit_pairs, (local, ChildPair::new(EncodedChildRef::from_raw(left_raw), EncodedChildRef::from_raw(right_raw))))?;
+    }
+
+    // Lazy-clear p2_map (only entries actually written this p1, via
+    // the touched list — avoids rescanning the candidates a second time).
+    for ti in 0..ws.p2_map_touched.len() {
+        let p2 = ws.p2_map_touched[ti];
+        ws.p2_map[p2 as usize] = NO_PRODUCT;
+    }
+    ws.p2_map_touched.clear();
     Ok(())
 }
 

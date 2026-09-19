@@ -18,6 +18,10 @@ pub(crate) struct SparseThresholds {
     /// split into several chunks and release each consumed range before the
     /// next one grows. `usize::MAX` never splits.
     pub(crate) chunk_bytes: usize,
+    /// f parents at or above which a level may collect its candidates in one
+    /// flat list sorted afterwards, instead of one bucket per parent; see
+    /// [`flat_candidates_win`].
+    pub(crate) flat_parents: usize,
 }
 
 impl SparseThresholds {
@@ -26,6 +30,7 @@ impl SparseThresholds {
         min_grid: 4096,
         sparsity_factor: 64,
         chunk_bytes: 256 * 1024 * 1024,
+        flat_parents: 1 << 15,
     };
 }
 
@@ -33,6 +38,31 @@ impl SparseThresholds {
 /// has installed others on this thread.
 pub(crate) fn sparse_thresholds() -> SparseThresholds {
     forced().unwrap_or(SparseThresholds::PRODUCTION)
+}
+
+/// The direction estimate's verdict for one level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ScatterChoice {
+    /// Key the outer loop by f's left child rather than its right one.
+    pub(crate) swapped: bool,
+    /// The steps the emit takes in that direction: one per f pair per
+    /// product of the inner child, whatever each finds.
+    pub(crate) emit_steps: u128,
+}
+
+/// Whether a level collects its candidates in one flat list, sorted by f
+/// parent once the scatter is done, rather than in a bucket per parent.
+///
+/// A bucket costs a few touches of its header per level whether or not a
+/// candidate lands in it, and its first candidate an allocation, so a level
+/// with far more parents than candidates spends its time on buckets that
+/// hold one entry or none. The flat list costs every candidate a counting
+/// sort instead, two passes over the candidates and one over the parents.
+/// It wins when the parents outnumber half the emit's steps, the steps
+/// standing in for the candidates the emit has not yet produced, and is
+/// not worth the switch below `flat_parents` parents.
+pub(crate) fn flat_candidates_win(thresholds: SparseThresholds, parents: usize, emit_steps: u128) -> bool {
+    parents >= thresholds.flat_parents && (parents as u128) * 2 > emit_steps
 }
 
 /// Choose the scatter's direction on a level whose children are both
@@ -74,7 +104,7 @@ pub(crate) fn estimate_scatter_direction(
     pl_left: &[ProductEntry],
     pl_right: &[ProductEntry],
     shape: crate::apply::conjoin::setup::LevelShape,
-) -> Result<bool, OperationError> {
+) -> Result<ScatterChoice, OperationError> {
     let lim = eng.limits();
     let crate::apply::conjoin::setup::LevelShape { f, g, .. } = shape;
     let total = f.left + f.right + g.left + g.right;
@@ -110,8 +140,12 @@ pub(crate) fn estimate_scatter_direction(
     let (walk_by_right, reach_by_right, keys_by_right) = walk_and_keys(pl_right, cnt_f_right, deg_g_right);
     let cost_normal = pl_right.len() as u128 + walk_by_left + keys_by_right.min(reach_by_left);
     let cost_swapped = pl_left.len() as u128 + walk_by_right + keys_by_left.min(reach_by_right);
-    Ok(cost_swapped < cost_normal
-        || (cost_swapped == cost_normal && f.right + g.right < f.left + g.left))
+    let swapped = cost_swapped < cost_normal
+        || (cost_swapped == cost_normal && f.right + g.right < f.left + g.left);
+    Ok(ScatterChoice {
+        swapped,
+        emit_steps: if swapped { walk_by_right } else { walk_by_left },
+    })
 }
 
 /// The three sums one child's product list contributes to the direction
