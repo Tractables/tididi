@@ -55,3 +55,82 @@ fn expand_full_preserves_determinism() {
         assert_eq!(total, expected);
     }
 }
+
+// ── Randomized sweeps ────────────────────────────────────────────────────
+
+/// Every internal structural level of `tdd` covers every cell of its
+/// `lefts × rights` basis. Returns the first level that does not.
+fn first_not_full(tdd: &Tdd) -> Option<(usize, usize, usize)> {
+    let vtree = Arc::clone(tdd.vtree());
+    for (t, left, right) in vtree.internal_bottomup() {
+        let lefts = ChildBasis::of(&vtree, &tdd.levels, left);
+        let rights = ChildBasis::of(&vtree, &tdd.levels, right);
+        let level = &tdd.levels[t.idx()];
+        let mut seen = vec![false; lefts.len() * rights.len()];
+        for node in &level.nodes {
+            if !node.is_internal() {
+                continue;
+            }
+            for pair in level.pairs_of(node) {
+                let (l, r) = (pair.left.0, pair.right.0);
+                if lefts.contains(l) && rights.contains(r) {
+                    seen[(l - lefts.start) as usize * rights.len() + (r - rights.start) as usize] = true;
+                }
+            }
+        }
+        let covered = seen.iter().filter(|&&b| b).count();
+        if covered != seen.len() {
+            return Some((t.idx(), covered, seen.len()));
+        }
+    }
+    None
+}
+
+#[test]
+fn expand_full_fills_every_level_on_random_formulas() {
+    use crate::test_helpers::{compile_clauses_on, rand_cnf, CnfShape, Lcg};
+    let eng = &crate::Engine::new();
+    let mut rng = Lcg::new(0x9e37_79b9);
+    for num_vars in [3u32, 5, 8] {
+        for (_name, vtree) in crate::test_helpers::vtree_shapes(num_vars) {
+            for _ in 0..12 {
+                let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 6, width: 3 });
+                let mut tdd = compile_clauses_on(eng, &vtree, &clauses);
+                if tdd.is_zero() {
+                    continue;
+                }
+                let before = tdd.model_count().unwrap();
+                expand_full(eng, &mut tdd).unwrap();
+                assert_eq!(before, tdd.model_count().unwrap(), "expand_full changed the count");
+                assert_eq!(first_not_full(&tdd), None, "a level is not full: {clauses:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn negate_matches_the_truth_table_on_random_formulas() {
+    use crate::test_helpers::{compile_clauses_on, eval, rand_cnf, CnfShape, Lcg};
+    let eng = &crate::Engine::new();
+    let mut rng = Lcg::new(0x5f37_59df);
+    for num_vars in [3u32, 5, 7] {
+        for (_name, vtree) in crate::test_helpers::vtree_shapes(num_vars) {
+            for _ in 0..12 {
+                let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 6, width: 3 });
+                let f = compile_clauses_on(eng, &vtree, &clauses);
+                let not_f = eng.negate(f.clone()).unwrap();
+                for mask in 0u32..(1 << num_vars) {
+                    let asn: Vec<bool> = (0..num_vars).map(|i| mask >> i & 1 == 1).collect();
+                    assert_eq!(
+                        eval(&not_f, &asn),
+                        !eval(&f, &asn),
+                        "negate disagrees at {asn:?} on {clauses:?}"
+                    );
+                }
+                // Double negation returns the function.
+                let back = eng.negate(not_f).unwrap();
+                assert!(crate::test_helpers::equiv(&f, &back), "!!f != f on {clauses:?}");
+            }
+        }
+    }
+}

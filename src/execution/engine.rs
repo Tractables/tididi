@@ -53,6 +53,7 @@ pub struct Engine {
     apply: crate::apply::conjoin::ApplyScratch,
     clause: crate::apply::conjoin_clause::ClauseScratch,
     reduce: crate::reduce::ReduceScratch,
+    negate: crate::apply::negate::NegateScratch,
     restructure: crate::limits::pool::Pool<crate::restructure::scratch::RestructureScratch>,
     sparse: std::cell::RefCell<crate::apply::conjoin::SparseWorkspace>,
     levels: crate::diagram::LevelPool,
@@ -98,6 +99,7 @@ impl Engine {
             apply: crate::apply::conjoin::ApplyScratch::default(),
             clause: crate::apply::conjoin_clause::ClauseScratch::default(),
             reduce: crate::reduce::ReduceScratch::default(),
+            negate: crate::apply::negate::NegateScratch::default(),
             restructure: crate::limits::pool::Pool::default(),
             sparse: std::cell::RefCell::new(crate::apply::conjoin::SparseWorkspace::default()),
             levels: crate::diagram::LevelPool::default(),
@@ -137,6 +139,13 @@ impl Engine {
     #[inline]
     pub(crate) fn reduce_scratch(&self) -> &crate::reduce::ReduceScratch {
         &self.reduce
+    }
+
+    /// The negation pools.
+    #[must_use]
+    #[inline]
+    pub(crate) fn negate_scratch(&self) -> &crate::apply::negate::NegateScratch {
+        &self.negate
     }
 
     /// The rotation-search pool.
@@ -184,6 +193,7 @@ impl Engine {
         self.apply.drain();
         self.clause.drain();
         self.reduce.drain();
+        self.negate.drain();
         self.restructure.drain();
         self.sparse.borrow_mut().reset();
         self.levels.drain();
