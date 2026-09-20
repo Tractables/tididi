@@ -27,6 +27,11 @@ literals to its solutions, neither building a second circuit.
 These transformations consume their operands; [`Tdd`](crate::Tdd) explains
 when to clone a circuit you want to keep.
 
+When a table behind a circuit gains or loses a row,
+[`Tdd::maintain`](crate::Tdd::maintain) edits the circuit in place rather
+than rebuilding it: see the [`maintain`](crate::maintain) module for what
+one assignment costs and when the edit applies.
+
 ## Query solutions
 
 | Question | Operation |

@@ -387,6 +387,93 @@ impl TddLevel {
         Ok(index)
     }
 
+    /// Add one pair to the node at `idx`, in place.
+    ///
+    /// The node's pairs stay contiguous: a range already at the arena's tail
+    /// simply grows, and any other range is copied to the tail and the slots
+    /// it leaves behind are noted dead, the same move twin contraction makes
+    /// when it concatenates two pair lists. An inline node's own pair moves to
+    /// the arena with the new one.
+    ///
+    /// The caller owes the representation invariants: `pair` must be disjoint
+    /// from the node's own pairs and owned by no other node of the level.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` if the arena growth is refused.
+    pub(crate) fn push_pair_onto_node(
+        &mut self, eng: &Engine, idx: usize, pair: ChildPair,
+    ) -> Result<(), OperationError> {
+        let lim = eng.limits();
+        #[cfg(test)]
+        if lim.refuses_reserve() { return Err(OperationError::OverBudget); }
+        let before = self.arena_capacity_bytes();
+        let node = self.nodes[idx].kind();
+        match node {
+            NodeKind::Inline(existing) => {
+                let start = self.pairs.len();
+                lim.reserve(&mut self.pairs, 2)?;
+                self.pairs.push(existing);
+                self.pairs.push(pair);
+                self.nodes[idx] = self.try_encode_multi(start, 2).map_err(|()| OperationError::OverBudget)?;
+            }
+            NodeKind::Multi { .. } | NodeKind::MultiRanged(_) => {
+                let range = self.pair_range_at(idx);
+                let len = range.len();
+                if range.end == self.pairs.len() {
+                    lim.reserve(&mut self.pairs, 1)?;
+                    self.pairs.push(pair);
+                    // A multi node holds two pairs or more, so the grown
+                    // length never aliases the one-pair encoding.
+                    self.set_pair_len(idx, (len + 1) as u32);
+                } else {
+                    let start = self.pairs.len();
+                    lim.reserve(&mut self.pairs, len + 1)?;
+                    self.pairs.extend_from_within(range);
+                    self.pairs.push(pair);
+                    self.nodes[idx] = self.try_encode_multi(start, len + 1).map_err(|()| OperationError::OverBudget)?;
+                    self.note_dead_pairs(len);
+                }
+            }
+            NodeKind::Leaf(_) | NodeKind::Tombstone => {
+                panic!("push_pair_onto_node: node {idx} holds no pairs")
+            }
+        }
+        lim.charge_bytes(self.arena_capacity_bytes().saturating_sub(before))?;
+        Ok(())
+    }
+
+    /// Drop one pair from the node at `idx`, in place, and report whether the
+    /// node still has pairs.
+    ///
+    /// Returns `Ok(false)` when `pair` was the node's only one, leaving the
+    /// node untouched: a node with no pairs computes false, which invariant 2
+    /// forbids, so emptying one is the caller's decision to make.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` if the re-encoding's range entry is
+    /// refused.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the node does not hold `pair`; a caller reaches this through
+    /// the level's own pair list.
+    pub(crate) fn remove_pair_from_node(
+        &mut self, eng: &Engine, idx: usize, pair: ChildPair,
+    ) -> Result<bool, OperationError> {
+        let at = self.pairs_of_idx(idx).iter().position(|p| *p == pair)
+            .unwrap_or_else(|| panic!("remove_pair_from_node: node {idx} does not hold {pair:?}"));
+        let len = self.pairs_of_idx(idx).len();
+        if len == 1 { return Ok(false); }
+        self.reserve_shrunk_multi(eng, idx, len - 1)?;
+        let range = self.pair_range_at(idx);
+        self.pairs.copy_within(range.start + at + 1..range.end, range.start + at);
+        let dead = self.reencode_shrunk_multi_reserved(idx, range.start, len, len - 1);
+        self.note_dead_pairs(dead);
+        Ok(true)
+    }
+
     /// Size the arenas for `nodes` more nodes and `pairs` more pairs, charging
     /// the growth to `lim`.
     pub(crate) fn reserve_on(

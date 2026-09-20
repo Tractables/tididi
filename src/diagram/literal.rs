@@ -139,6 +139,7 @@ impl LiteralInput for i32 {}
 
 mod input {
     use super::Literal;
+    use crate::vtree::Vtree;
     use crate::{Engine, OperationError, Tdd};
     use crate::apply::conjoin_clause::{conjoin_clause_owned, disjoin_cube_owned};
 
@@ -148,6 +149,9 @@ mod input {
         fn conjoin(eng: &Engine, f: Tdd, clause: &[Self]) -> Result<Tdd, OperationError>;
         /// Convert the cube when necessary, then invoke the typed disjunction.
         fn disjoin(eng: &Engine, f: Tdd, cube: &[Self]) -> Result<Tdd, OperationError>;
+        /// Append these inputs to `out` as typed literals, checking each
+        /// variable against `vtree`.
+        fn collect(eng: &Engine, vtree: &Vtree, input: &[Self], out: &mut Vec<Literal>) -> Result<(), OperationError>;
     }
 
     impl Sealed for Literal {
@@ -161,6 +165,19 @@ mod input {
         #[inline]
         fn disjoin(eng: &Engine, f: Tdd, cube: &[Self]) -> Result<Tdd, OperationError> {
             disjoin_cube_owned(eng, f, cube)
+        }
+
+        fn collect(eng: &Engine, vtree: &Vtree, input: &[Self], out: &mut Vec<Literal>) -> Result<(), OperationError> {
+            let lim = eng.limits();
+            let mut gate = lim.gate();
+            for &literal in input {
+                gate.poll(1)?;
+                if vtree.leaf_of(literal.var).is_none() {
+                    return Err(OperationError::VariableNotInVtree(literal.var));
+                }
+                lim.try_push(out, literal)?;
+            }
+            gate.flush()
         }
     }
 
@@ -182,24 +199,28 @@ mod input {
             let literals = typed(eng, &f, cube)?;
             disjoin_cube_owned(eng, f, &literals)
         }
+
+        fn collect(eng: &Engine, vtree: &Vtree, input: &[Self], out: &mut Vec<Literal>) -> Result<(), OperationError> {
+            let lim = eng.limits();
+            let mut gate = lim.gate();
+            for &value in input {
+                gate.poll(1)?;
+                let literal = Literal::try_from(value)?;
+                if vtree.leaf_of(literal.var).is_none() {
+                    return Err(OperationError::VariableNotInVtree(literal.var));
+                }
+                lim.try_push(out, literal)?;
+            }
+            gate.flush()
+        }
     }
 
     /// Convert a slice of signed integers, checking each variable against the
     /// operand's vtree. Runs inside the caller's operation scope, so the
     /// conversion is charged to the operation it prepares.
     fn typed(eng: &Engine, f: &Tdd, input: &[i32]) -> Result<Vec<Literal>, OperationError> {
-        let lim = eng.limits();
-        let mut gate = lim.gate();
         let mut literals = Vec::new();
-        for &value in input {
-            gate.poll(1)?;
-            let literal = Literal::try_from(value)?;
-            if f.vtree().leaf_of(literal.var).is_none() {
-                return Err(OperationError::VariableNotInVtree(literal.var));
-            }
-            lim.try_push(&mut literals, literal)?;
-        }
-        gate.flush()?;
+        <i32 as Sealed>::collect(eng, f.vtree(), input, &mut literals)?;
         Ok(literals)
     }
 }

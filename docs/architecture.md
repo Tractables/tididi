@@ -76,6 +76,7 @@ identical representations.
 | `build` | Constants, literals, cubes and sets of models. |
 | [`apply`] | Boolean composition, conditioning, projection and restriction. |
 | `marginal` | Summing levels into values and restoring marginal invariants. |
+| [`maintain`] | Adding and removing one assignment at a time, in place. |
 | [`reduce`] | Reachability pruning, twin contraction, pair fusion and value-slot pruning. |
 | [`restructure`] | Vtree search, grafting and embedding with the corresponding diagram edits. |
 | [`query`] | Counting, satisfiability, evaluation and traversal of borrowed diagrams. |
@@ -177,6 +178,7 @@ listed below — which a release build otherwise does not compile.
 [`guide`]: crate::guide
 [`io`]: crate::io
 [`limits`]: crate::limits
+[`maintain`]: crate::maintain
 [`marginal::marginalize_levels`]: crate::Tdd::marginalize_levels
 [`marginalize_levels`]: crate::Tdd::marginalize_levels
 [`query`]: crate::query
