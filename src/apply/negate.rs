@@ -43,9 +43,24 @@ impl Engine {
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn negate(&self, f: Tdd) -> Result<Tdd, OperationError> {
+        self.negate_with(f, crate::reduce::ReductionPlan::default())
+    }
+
+    /// [`negate`](Self::negate) with the reduction it ends with chosen
+    /// explicitly. See [`Tdd::negate_with`] for what the plans cost and what
+    /// they leave behind.
+    ///
+    /// # Errors
+    ///
+    /// As [`negate`](Self::negate).
+    pub fn negate_with(
+        &self,
+        f: Tdd,
+        plan: crate::reduce::ReductionPlan<'_>,
+    ) -> Result<Tdd, OperationError> {
         let _op = self.limits().begin_operation();
         let mut result = negate_tdd_owned(self, f)?;
-        self.reduce(&mut result, crate::reduce::ReductionPlan::default())?;
+        self.reduce(&mut result, plan)?;
         Ok(result)
     }
 }

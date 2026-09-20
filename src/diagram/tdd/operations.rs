@@ -45,6 +45,31 @@ impl Tdd {
         context.run(|eng| eng.negate(self))
     }
 
+    /// The Boolean complement, with the reduction the complement ends with
+    /// chosen explicitly.
+    ///
+    /// [`negate`](Self::negate) uses the default plan. The complement is built
+    /// by making the operand full — which adds a fill node per level — and
+    /// subtracting the output node's cells at the root, so the result carries
+    /// the operand's old output cone as well, unreachable. Pruning is what
+    /// removes both, and every plan here includes it; the choice is what else
+    /// to pay for.
+    ///
+    /// [`ReductionPlan::Prune`] is the cheapest result that is still free of
+    /// unreachable nodes. It is the right plan when the caller minimizes the
+    /// result anyway, or conjoins it into an accumulator that is minimized
+    /// afterwards — but the result is not in canonical form, and handing a
+    /// larger diagram to the next operation has its own cost, so measure
+    /// rather than assume.
+    ///
+    /// # Errors
+    ///
+    /// As [`negate`](Self::negate).
+    pub fn negate_with(self, plan: crate::reduce::ReductionPlan<'_>) -> Result<Tdd, OperationError> {
+        let context = Arc::clone(self.context());
+        context.run(|eng| eng.negate_with(self, plan))
+    }
+
     /// Conjoin a disjunction of literals without building a separate diagram.
     ///
     /// Accepts arrays, slices and vectors of signed, one-based integers or typed
