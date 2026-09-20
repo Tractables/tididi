@@ -194,34 +194,89 @@ impl Engine {
         super::prepare_weights([&mut f, &mut g])?;
         let _op = self.limits().begin_operation();
         self.limits().check_stop()?;
-        let mut targets = super::project::quantification_targets(self, f.vtree(), vars)?;
-        if how == Quantification::Fused {
-            let pushed = push_local_targets(self, f, g, &mut targets)?;
-            f = pushed.0;
-            g = pushed.1;
+        let targets = super::project::quantification_targets(self, f.vtree(), vars)?;
+        // A weighted operand is left on the reference route. Quantifying one of
+        // them away entirely would replace its store by an empty one, and which
+        // of the two stores the product then carries is a question the rewrites
+        // below do not answer.
+        let fused = how == Quantification::Fused && f.weights.is_none();
+        if !fused {
+            let product = self.and(f, g)?;
+            let identity = targets.is_empty() || product.is_zero();
+            let mut result = super::project::exists_targets_on(self, product, &targets, &[])?;
+            if identity { self.minimize(&mut result)?; }
+            return Ok(result);
         }
-        let product = self.and(f, g)?;
+        (f, g) = push_local_targets(self, f, g, &targets)?;
+        let vtree = std::sync::Arc::clone(f.vtree());
+        let subtrees = quantified_subtrees(self, &vtree, &targets)?;
+        let (product, swept) =
+            super::conjoin::conjoin_quantifying(self, f, g, &subtrees.whole)?;
         // A nonempty quantification minimizes a non-false product.
         let identity = targets.is_empty() || product.is_zero();
-        let mut result = super::project::exists_targets_on(self, product, &targets)?;
+        let collapsed: &[bool] = if swept { &subtrees.maximal } else { &[] };
+        let mut result = super::project::exists_targets_on(self, product, &targets, collapsed)?;
         if identity { self.minimize(&mut result)?; }
         Ok(result)
     }
 }
 
+/// Which vtree nodes a quantification takes whole, and which of those are the
+/// tops of their subtrees.
+struct Quantified {
+    /// Every node all of whose leaves are quantified: what the conjunction
+    /// collapses instead of building.
+    whole: Vec<bool>,
+    /// The maximal ones among the internal nodes: the levels whose parents the
+    /// quantification sweep must regroup even though they now hold one node.
+    maximal: Vec<bool>,
+}
+
+/// Label the vtree by [`Quantified`]'s two rules, bottom-up.
+///
+/// A leaf that is its subtree's top is not recorded: the sweep hands its
+/// parent a map for the three leaf labels whatever the level looks like, so
+/// the regroup there already runs.
+///
+/// # Errors
+///
+/// A refused reservation for either label array.
+fn quantified_subtrees(
+    eng: &Engine,
+    vtree: &crate::vtree::Vtree,
+    targets: &[VtreeIdx],
+) -> Result<Quantified, OperationError> {
+    let lim = eng.limits();
+    let num_nodes = vtree.num_nodes();
+    let mut whole = Vec::new();
+    lim.try_resize(&mut whole, num_nodes, false)?;
+    let mut maximal = Vec::new();
+    lim.try_resize(&mut maximal, num_nodes, false)?;
+    for &leaf in targets {
+        whole[leaf.idx()] = true;
+    }
+    for (t, left, right) in vtree.internal_bottomup() {
+        whole[t.idx()] = whole[left.idx()] && whole[right.idx()];
+    }
+    for (t, _, _) in vtree.internal_bottomup() {
+        maximal[t.idx()] = whole[t.idx()]
+            && vtree.node(t).parent().is_none_or(|p| !whole[p.idx()]);
+    }
+    Ok(Quantified { whole, maximal })
+}
+
 /// Quantify the targets one operand does not constrain out of the other one,
-/// before the product, and retain in `targets` only the ones that survive.
+/// before the product.
 ///
 /// `∃ℓ.(f ∧ g) = f ∧ (∃ℓ.g)` whenever `f` is constant over `ℓ`, and
-/// symmetrically; a target neither operand constrains is not in the product at
-/// all and is dropped. Leaf-constancy is decided by the conjunction's own
-/// identity precompute, which reads it off the references into the leaf's
-/// level: sound, and deliberately incomplete — a missed target only stays in
-/// the product.
+/// symmetrically. Leaf-constancy is decided by the conjunction's own identity
+/// precompute, which reads it off the references into the leaf's level: sound,
+/// and deliberately incomplete — a missed target only stays in the product.
 ///
-/// Weighted operands are left alone. Quantifying one of them away entirely
-/// would replace its store by an empty one, and which of the two stores the
-/// product then carries is a question this identity does not answer.
+/// Every target stays a target. A leaf removed here leaves both operands
+/// constant over it, so quantifying it again is the identity; keeping it is
+/// what holds each subtree's target set down-closed, and a subtree that is not
+/// down-closed is one the conjunction cannot collapse.
 ///
 /// # Errors
 ///
@@ -231,9 +286,9 @@ fn push_local_targets(
     eng: &Engine,
     mut f: Tdd,
     mut g: Tdd,
-    targets: &mut Vec<VtreeIdx>,
+    targets: &[VtreeIdx],
 ) -> Result<(Tdd, Tdd), OperationError> {
-    if targets.is_empty() || f.is_zero() || g.is_zero() || f.weights.is_some() {
+    if targets.is_empty() || f.is_zero() || g.is_zero() {
         return Ok((f, g));
     }
     let lim = eng.limits();
@@ -246,31 +301,24 @@ fn push_local_targets(
     let split = (|| -> Result<(), OperationError> {
         super::conjoin::init_leaf_identity(eng, &mut free_in_f, &f, &vtree, num_nodes)?;
         super::conjoin::init_leaf_identity(eng, &mut free_in_g, &g, &vtree, num_nodes)?;
-        let mut kept = 0usize;
-        for i in 0..targets.len() {
-            let leaf = targets[i];
-            match (free_in_f[leaf.idx()], free_in_g[leaf.idx()]) {
-                // Neither operand constrains it: the product does not either.
-                (true, true) => {}
-                (true, false) => lim.try_push(&mut into_g, leaf)?,
-                (false, true) => lim.try_push(&mut into_f, leaf)?,
-                (false, false) => {
-                    targets[kept] = leaf;
-                    kept += 1;
-                }
+        for &leaf in targets {
+            // A leaf both operands are constant over needs no pass at all.
+            if free_in_f[leaf.idx()] && !free_in_g[leaf.idx()] {
+                lim.try_push(&mut into_g, leaf)?;
+            } else if free_in_g[leaf.idx()] && !free_in_f[leaf.idx()] {
+                lim.try_push(&mut into_f, leaf)?;
             }
         }
-        targets.truncate(kept);
         Ok(())
     })();
     eng.apply().left_identity.put(free_in_f);
     eng.apply().right_identity.put(free_in_g);
     split?;
     if !into_f.is_empty() {
-        f = super::project::exists_targets_on(eng, f, &into_f)?;
+        f = super::project::exists_targets_on(eng, f, &into_f, &[])?;
     }
     if !into_g.is_empty() {
-        g = super::project::exists_targets_on(eng, g, &into_g)?;
+        g = super::project::exists_targets_on(eng, g, &into_g, &[])?;
     }
     lim.discard(into_f);
     lim.discard(into_g);

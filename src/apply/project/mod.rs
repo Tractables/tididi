@@ -20,23 +20,26 @@ pub(crate) fn exists_var_on(eng: &Engine, f: Tdd, x: VarId) -> Result<Tdd, Opera
     // Caller input, so it is answered before any work and before the ⊥ shortcut:
     // the same request is refused whatever the operand happens to be.
     let leaf_idx = f.vtree.leaf_of(x).ok_or(OperationError::VariableNotInVtree(x))?;
-    exists_leaves_on(eng, f, &[leaf_idx])
+    exists_leaves_on(eng, f, &[leaf_idx], &[])
 }
 
 /// Quantify validated leaf indices on the operand's unchanged vtree.
-fn exists_leaves_on(eng: &Engine, f: Tdd, targets: &[VtreeIdx]) -> Result<Tdd, OperationError> {
+///
+/// `collapsed` names the levels a fused conjunction already reduced to the
+/// single `⊤` node; empty for an operand nothing has quantified yet.
+fn exists_leaves_on(eng: &Engine, f: Tdd, targets: &[VtreeIdx], collapsed: &[bool]) -> Result<Tdd, OperationError> {
     eng.limits().check_stop()?;
     if f.is_zero() {
         return Ok(f);
     }
-    structural::exists_leaves_structural(eng, f, targets)
+    structural::exists_leaves_structural(eng, f, targets, collapsed)
 }
 
 /// Existentially quantify every variable in `vars` out of `f` in one sweep.
 pub(crate) fn exists_vars_on(eng: &Engine, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
     let _op = eng.limits().begin_operation();
     let targets = quantification_targets(eng, f.vtree(), vars)?;
-    exists_targets_on(eng, f, &targets)
+    exists_targets_on(eng, f, &targets, &[])
 }
 
 /// Validate the entire request and retain each leaf once in first-occurrence order.
@@ -60,12 +63,18 @@ pub(super) fn quantification_targets(eng: &Engine, tree: &Vtree, vars: &[VarId])
     Ok(leaves)
 }
 
-/// Quantify prepared leaves without repeating validation.
-pub(super) fn exists_targets_on(eng: &Engine, f: Tdd, targets: &[VtreeIdx]) -> Result<Tdd, OperationError> {
+/// Quantify prepared leaves without repeating validation. `collapsed` is
+/// [`exists_leaves_on`]'s.
+pub(super) fn exists_targets_on(
+    eng: &Engine,
+    f: Tdd,
+    targets: &[VtreeIdx],
+    collapsed: &[bool],
+) -> Result<Tdd, OperationError> {
     if targets.is_empty() {
         return Ok(f);
     }
-    exists_leaves_on(eng, f, targets)
+    exists_leaves_on(eng, f, targets, collapsed)
 }
 
 impl crate::Engine {

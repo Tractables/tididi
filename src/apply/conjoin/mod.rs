@@ -58,6 +58,8 @@ mod grid_arena;
 pub(in crate::apply::conjoin) use grid_arena::{GridArena, GridBase};
 mod output;
 use output::*;
+pub(crate) mod quantify;
+pub(crate) use quantify::QuantifiedSubtrees;
 mod drive;
 pub(crate) use drive::apply_and_fallible;
 use drive::Sweep;
@@ -89,7 +91,24 @@ pub(crate) fn conjoin_owned(
     // can return without ever reaching `apply_and_fallible_inner`.
     crate::apply::check_vtree(&f, &g)?;
     crate::apply::prepare_weights([&mut f, &mut g])?;
-    conjoin_checked(eng, f, g, marginalize_targets)
+    Ok(conjoin_checked(eng, f, g, marginalize_targets, QuantifiedSubtrees::default())?.0)
+}
+
+/// Conjoin validated operands, collapsing every subtree in `whole` to the
+/// constant-true node instead of building it — see [`quantify`].
+///
+/// The flag says whether the sweep ran, which is what decides whether the
+/// caller's quantification has collapsed levels to account for: the shortcuts
+/// for a false operand and for `f ∧ f` return without collapsing anything.
+pub(crate) fn conjoin_quantifying(
+    eng: &Engine,
+    mut f: Tdd,
+    mut g: Tdd,
+    whole: &[bool],
+) -> Result<(Tdd, bool), OperationError> {
+    crate::apply::check_vtree(&f, &g)?;
+    crate::apply::prepare_weights([&mut f, &mut g])?;
+    conjoin_checked(eng, f, g, None, QuantifiedSubtrees::new(Some(whole)))
 }
 
 /// [`conjoin_owned`] after its operand checks: for a caller that has already
@@ -99,7 +118,8 @@ pub(crate) fn conjoin_checked(
     mut f: Tdd,
     mut g: Tdd,
     marginalize_targets: Option<&[bool]>,
-) -> Result<Tdd, OperationError> {
+    quantified: QuantifiedSubtrees<'_>,
+) -> Result<(Tdd, bool), OperationError> {
     // Make `g` the narrower operand: the identity fast path tests
     // `right_width == 1` first, so the narrower side on the right takes it at
     // more levels, and grid rows (width `right_width`) get shorter. Only this
@@ -115,12 +135,15 @@ pub(crate) fn conjoin_checked(
         let _op = eng.limits().begin_operation();
         eng.limits().check_stop()?;
         diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels));
-        return Ok(f);
+        return Ok((f, false));
     }
-    let result = apply_and_fallible(eng, &mut f, &mut g, MarginalTargets::new(marginalize_targets));
+    let zero = f.is_zero() || g.is_zero();
+    let result = apply_and_fallible(
+        eng, &mut f, &mut g, MarginalTargets::new(marginalize_targets), quantified,
+    );
     diagram::return_levels(eng, diagram::PoolSlot::First, std::mem::take(&mut f.levels));
     diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels));
-    result
+    result.map(|out| (out, !zero))
 }
 
 /// Return the conjunction of two diagrams sharing the same vtree allocation.
@@ -231,7 +254,9 @@ impl crate::Engine {
         for &t in targets {
             mask[t.idx()] = !vtree.node(t).is_leaf();
         }
-        let mut out = crate::apply::conjoin::conjoin_checked(self, f, g, Some(&mask))?;
+        let (mut out, _) = crate::apply::conjoin::conjoin_checked(
+            self, f, g, Some(&mask), QuantifiedSubtrees::default(),
+        )?;
         // Streaming can finish every target; only retained structure needs the pass.
         if !out.is_zero() && targets.iter().any(|&t| !out.level(t).is_marginal()) {
             self.marginalize_levels(&mut out, targets)?;

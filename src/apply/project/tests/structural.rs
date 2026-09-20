@@ -26,7 +26,7 @@ fn regrouping_checks_its_allocations_before_reduction() {
         let mut work = Rewrite { eng: &eng, gate: eng.limits().gate_with(1), emitted: 0 };
         assert_eq!(regroup(&mut work, &mut original.clone(), parent, below_left, below_right).err(), Some(OperationError::OverBudget));
     }
-    let result = exists_leaves_structural(&eng, original, &[leaf]).unwrap();
+    let result = exists_leaves_structural(&eng, original, &[leaf], &[]).unwrap();
     assert_canonical(&result);
     assert_eq!(result.model_count().unwrap(), 16u32.into());
 }
@@ -61,11 +61,11 @@ fn freeing_a_whole_subtree_matches_one_variable_at_a_time() {
     // The balanced vtree over six variables groups 1..=3 under one subtree.
     let block: Vec<VtreeIdx> = [1, 2, 3].iter().map(|&v| tree.leaf_of(VarId(v)).unwrap()).collect();
     let eng = Engine::new();
-    let at_once = exists_leaves_structural(&eng, f.clone(), &block).unwrap();
+    let at_once = exists_leaves_structural(&eng, f.clone(), &block, &[]).unwrap();
     assert_canonical(&at_once);
     let mut one_at_a_time = f;
     for &leaf in &block {
-        one_at_a_time = exists_leaves_structural(&eng, one_at_a_time, &[leaf]).unwrap();
+        one_at_a_time = exists_leaves_structural(&eng, one_at_a_time, &[leaf], &[]).unwrap();
     }
     assert_canonical(&one_at_a_time);
     assert!(at_once.equivalent(&one_at_a_time).unwrap());
@@ -80,7 +80,7 @@ fn quantifying_every_variable_leaves_the_constant() {
     let f = Tdd::clause(&tree, [1, -2, 3]).unwrap();
     let all: Vec<VtreeIdx> = (1..=4).map(|v| tree.leaf_of(VarId(v)).unwrap()).collect();
     let eng = Engine::new();
-    let result = exists_leaves_structural(&eng, f, &all).unwrap();
+    let result = exists_leaves_structural(&eng, f, &all, &[]).unwrap();
     assert_canonical(&result);
     assert_eq!(result.model_count().unwrap(), 16u32.into());
 }
@@ -97,12 +97,12 @@ fn structural_projection_recovers_after_each_refused_reservation() {
     for nth in 0..512 {
         let eng = Engine::new();
         eng.limits().refuse_nth_reserve(nth);
-        match exists_leaves_structural(&eng, f.clone(), &[leaf]) {
+        match exists_leaves_structural(&eng, f.clone(), &[leaf], &[]) {
             Ok(result) => { assert_canonical(&result); reached_success = true; break; }
             Err(error) => assert_eq!(error, OperationError::OverBudget),
         }
         eng.limits().grant_every_reserve();
-        let result = exists_leaves_structural(&eng, f.clone(), &[leaf]).unwrap();
+        let result = exists_leaves_structural(&eng, f.clone(), &[leaf], &[]).unwrap();
         assert_canonical(&result);
         assert_eq!(result.model_count().unwrap(), 30u32.into());
     }
@@ -125,8 +125,8 @@ fn quantifying_an_unreduced_product_matches_quantifying_a_reduced_one() {
 
     let leaves: Vec<VtreeIdx> = [1, 4].iter().map(|&v| tree.leaf_of(VarId(v)).unwrap()).collect();
     let eng = Engine::new();
-    let from_product = exists_leaves_structural(&eng, product, &leaves).unwrap();
-    let from_reduced = exists_leaves_structural(&eng, reduced, &leaves).unwrap();
+    let from_product = exists_leaves_structural(&eng, product, &leaves, &[]).unwrap();
+    let from_reduced = exists_leaves_structural(&eng, reduced, &leaves, &[]).unwrap();
     assert_canonical(&from_product);
     assert_eq!(from_product.node_count(), from_reduced.node_count());
     assert_eq!(from_product.pair_count(), from_reduced.pair_count());

@@ -263,3 +263,43 @@ fn is_below(vtree: &Vtree, root: VtreeIdx, leaf: VtreeIdx) -> bool {
     }
     false
 }
+
+/// A subtree every leaf of which is quantified is never built. The pin is the
+/// emitted-node cap again: both operands constrain the whole block, so nothing
+/// can be pushed into an operand and the collapse inside the sweep is the only
+/// thing that can keep the count down. The reference route emits the block's
+/// product — about a thousand nodes — where the fused route emits one per level
+/// of it.
+#[test]
+fn a_quantified_subtree_is_never_built() {
+    // A right-linear stick, so everything but the first variable is one
+    // subtree, and that subtree is what gets quantified.
+    let vtree = Arc::new(Vtree::linear(18));
+    // `f` pairs 2..9 with 10..17 bit by bit; `g` pairs them rotated by three,
+    // so each has 2^8 cofactor classes over the block and neither operand is
+    // constant anywhere in it.
+    let mut f_clauses: Vec<Vec<i32>> = Vec::new();
+    let mut g_clauses: Vec<Vec<i32>> = Vec::new();
+    for i in 0..8i32 {
+        let (bit, same, rotated) = (2 + i, 10 + i, 10 + (i + 3) % 8);
+        f_clauses.push(vec![-bit, same]);
+        f_clauses.push(vec![bit, -same]);
+        g_clauses.push(vec![-bit, rotated]);
+        g_clauses.push(vec![bit, -rotated]);
+    }
+    let f = compile_clauses(&vtree, &f_clauses);
+    let g = compile_clauses(&vtree, &g_clauses);
+    let vars: Vec<VarId> = (2..=18).map(VarId).collect();
+    let capped = |how, cap| {
+        let cfg = LimitConfig::none().with_output_node_cap(Some(cap));
+        std::sync::Arc::clone(vtree.context())
+            .with_limits(cfg, |eng| eng.and_exists_with(f.clone(), g.clone(), &vars, how))
+    };
+    assert!(capped(Quantification::Fused, 64).is_ok(), "the fused route built the block");
+    assert_eq!(capped(Quantification::Product, 64).unwrap_err(), OperationError::OutputCap);
+    assert_same_shape(
+        &capped(Quantification::Fused, u64::MAX).unwrap(),
+        &capped(Quantification::Product, u64::MAX).unwrap(),
+        "a quantified block both operands constrain",
+    );
+}

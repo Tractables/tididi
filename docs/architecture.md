@@ -46,7 +46,7 @@ builder and reader does not establish it for an arbitrary circuit.
 
 | # | Statement | Established by | Transiently broken by | Decided by |
 |---|---|---|---|---|
-| 1 | Structural determinism: distinct nodes at one level compute disjoint functions; each child pair belongs to at most one node. | apply's emit | — | `test_helpers::check::check_determinism` |
+| 1 | Structural determinism: distinct nodes at one level compute disjoint functions; each child pair belongs to at most one node. | apply's emit; projection's owner-set regroup | [`and_exists`]'s subtree collapse, until that regroup runs | `test_helpers::check::check_determinism` |
 | 2 | Every live node in a structural diagram is satisfiable; ⊥ is the output sentinel only. | checked builder; apply's emit; conditioning's falsity sweep | conditioning's leaf rewrite, within one call | `test_helpers::check::check_no_false_nodes` |
 | 3 | Content uniqueness, structural diagrams: no two stored nodes at one level have equal pair multisets. | [`reduce::minimize`] | any apply or marginalization | `test_helpers::check::check_canonicity` |
 | 4 | Reachability: every live stored node is reachable from the output. | [`reduce::minimize`] | conditioning, restriction | `test_helpers::check_minimize_soundness` |
@@ -100,6 +100,14 @@ the optimized algorithms.
 compatibility, and walks levels bottom-up. At each structural level it combines operand
 nodes in a product grid and emits surviving child pairs. Consumed level
 arenas return to the engine's pools for reuse.
+
+A conjunction that is also quantifying an existential
+([`and_exists`]) does not build a subtree every leaf of which is quantified:
+that subtree contributes one satisfiability bit, so the level is decided by an
+early-exiting test per product cell and written as the single ⊤ node. The
+result is then the product with those subtrees replaced by ⊤, which is what the
+quantification sweep would have reached there; the sweep's owner-set regroup
+re-establishes the level-wide disjointness the collapse breaks.
 
 The result has the correct function and count but may retain unreachable
 nodes and context twins. A full reduction first prunes, then contracts inner
@@ -160,6 +168,7 @@ adds the `test_helpers` module — oracles, generators and the invariant checker
 listed below — which a release build otherwise does not compile.
 
 [`and(f, g)`]: crate::and
+[`and_exists`]: crate::and_exists
 [`Arithmetic`]: crate::diagram::Arithmetic
 [`EvalAlgebra`]: crate::diagram::EvalAlgebra
 [`OperationError`]: crate::OperationError

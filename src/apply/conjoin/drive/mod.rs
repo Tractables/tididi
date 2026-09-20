@@ -26,10 +26,13 @@ use crate::Engine;
 pub(super) struct Sweep<'a> {
     pub(super) vtree: &'a crate::vtree::Vtree,
     pub(super) targets: MarginalTargets<'a>,
+    /// The subtrees collapsed instead of built. See [`quantify`](super::quantify).
+    pub(super) quantified: QuantifiedSubtrees<'a>,
     pub(super) ws: Option<&'a mut crate::diagram::WeightStore>,
 }
 
-/// Build a conjunction, emitting selected levels as marginal values.
+/// Build a conjunction, emitting selected levels as marginal values and
+/// collapsing every subtree `quantified` names instead of building it.
 ///
 /// The sweep consumes operand levels as it proceeds. An error leaves both
 /// operands partially drained; retrying requires copies taken before the call.
@@ -40,10 +43,11 @@ pub(crate) fn apply_and_fallible(
     f: &mut Tdd,
     g: &mut Tdd,
     marginalize_targets: MarginalTargets<'_>,
+    quantified: QuantifiedSubtrees<'_>,
 ) -> Result<Tdd, OperationError> {
     // No swap to the narrower operand here: callers of this borrowed path keep
     // per-operand bookkeeping by side. `conjoin_owned` swaps.
-    let mut out = apply_and_fallible_inner(eng, f, g, marginalize_targets)?;
+    let mut out = apply_and_fallible_inner(eng, f, g, marginalize_targets, quantified)?;
     // Apply emits self-describing marginal refs — bit-30 set is an inline count,
     // bit-30 clear a bare slot; see `MARGINAL_OVERFLOW_TAG` for why that polarity —
     // so a bit-30-clear ref here is never an already-inline count.
@@ -123,6 +127,18 @@ fn sweep_levels(
         let shape = run.shape(t, left, right);
         let (left_idx, right_idx) = (left.idx(), right.idx());
 
+        if sweep.quantified.is_whole(t.idx()) {
+            // Every leaf below this level is quantified, so the level is one
+            // satisfiability test per cell and no structure at all. The
+            // identity fast paths are skipped: what they would build is the
+            // structure this route exists not to build.
+            super::quantify::drop_dead_children(f, g, shape);
+            super::quantify::build_level_quantified(eng, run, f, g, shape)?;
+            output_nodes += run.levels[t.idx()].slot_count() as u64;
+            run.reclaim_child_grids(left_idx, right_idx);
+            continue;
+        }
+
         // Identity fast paths and the operand-child drops that precede them.
         let taken = take_fast_path(eng, run, f, g, shape)?;
 
@@ -154,6 +170,7 @@ fn apply_and_fallible_inner(
     f: &mut Tdd,
     g: &mut Tdd,
     marginalize_targets: MarginalTargets<'_>,
+    quantified: QuantifiedSubtrees<'_>,
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     lim.eager_reclaim();
@@ -218,7 +235,7 @@ fn apply_and_fallible_inner(
 
     sweep_levels(
         eng, &mut run, f, g,
-        &mut Sweep { vtree: &vtree, targets: marginalize_targets, ws: ws.as_mut() },
+        &mut Sweep { vtree: &vtree, targets: marginalize_targets, quantified, ws: ws.as_mut() },
     )?;
 
     crate::marginal::canonicalize_apply_leaf_refs(&canon_leaves, &vtree, &mut run.levels, ws.as_ref());
