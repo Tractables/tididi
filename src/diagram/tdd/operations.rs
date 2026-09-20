@@ -78,6 +78,51 @@ impl Tdd {
         context.run(|eng| eng.and_clause(self, clause.as_ref()))
     }
 
+    /// Disjoin a conjunction of literals without building a separate diagram.
+    ///
+    /// The dual of [`and_clause`](Self::and_clause), and the way to add one
+    /// model to a diagram: a cube naming every variable of the vtree is a
+    /// single assignment, and disjoining it rebuilds the levels on that
+    /// assignment's path instead of complementing the operand. [`or`](crate::or)
+    /// complements both operands and their conjunction, so it can grow a
+    /// diagram where this does not.
+    ///
+    /// Accepts arrays, slices and vectors of signed, one-based integers or typed
+    /// [`Literal`] values. Collect an iterator into a vector before passing it.
+    ///
+    /// Consumes the diagram on success and error; the result retains its vtree and
+    /// weights. Repeated literals are ignored, opposite polarities make the cube
+    /// false and leave the operand unchanged, and an empty cube makes the result
+    /// true. The result counts correctly but may need
+    /// [`minimize`](Self::minimize) to establish canonical form.
+    ///
+    /// A cube that leaves a variable free is disjoined by complementation
+    /// instead, at the cost of two make-full passes: over a free subtree the
+    /// cube is that subtree's constant-true function, which a diagram whose
+    /// nodes are disjoint but not exhaustive does not hold as a node.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::InvalidLiteral`] for integer zero,
+    /// [`OperationError::VariableNotInVtree`] for an absent variable,
+    /// [`OperationError::MarginalLevel`] if a required level has discarded its
+    /// structure, or [`OperationError::OverBudget`] if an allocation is refused.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let mut f = Tdd::cube(&vtree, [1, 2, 3])?.or_cube([-1, -2, -3])?;
+    /// f.minimize()?;
+    /// assert_eq!(f.model_count()?, 2u32.into());
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn or_cube<L: crate::LiteralInput>(self, cube: impl AsRef<[L]>) -> Result<Tdd, OperationError> {
+        let context = Arc::clone(self.context());
+        context.run(|eng| eng.or_cube(self, cube.as_ref()))
+    }
+
     /// Substitute an assignment into this function and return its minimized cofactor.
     ///
     /// Positive literals set variables to true, negative literals to false. Integers

@@ -63,6 +63,7 @@ pub(crate) mod value;
 
 mod build;
 pub mod apply;
+pub mod maintain;
 mod marginal;
 pub mod reduce;
 pub mod restructure;

@@ -1,4 +1,4 @@
-//! Specialized diagram × clause conjunction.
+//! Specialized diagram × clause conjunction, and its dual.
 //!
 //! The clause is never built as a diagram. At each vtree level `t` it stands for
 //! exactly two functions over that subtree's variables:
@@ -11,6 +11,10 @@
 //! bottom-up walk carry both branches of the clause at once: a level's output
 //! for an accumulator node is its conjunction with `c_t` and with `d_t`, kept
 //! side by side in `cd_map`. The whole file is written in terms of this pair.
+//!
+//! The same walk disjoins a cube: `¬M` is a clause whose `d_t` is `M_t`, so
+//! [`cube`] rides the lanes this one already carries. See that module for the
+//! derivation.
 
 use crate::Engine;
 use crate::limits::pool::Pool;
@@ -30,6 +34,9 @@ mod pairs;
 use pairs::*;
 mod rebuild;
 use rebuild::*;
+mod cube;
+use cube::CubeChain;
+pub(crate) use cube::disjoin_cube_owned;
 
 /// Every buffer one engine's clause conjunctions reuse between calls.
 ///
@@ -72,6 +79,18 @@ impl ClauseScratch {
 /// # Errors
 /// Returns the [`OperationError`] the conjunction stopped on.
 pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, OperationError> {
+    spine_walk(eng, f, clause, false)
+}
+
+/// The shared bottom-up walk: conjoin `clause` into `f`, or — with `disjoin` —
+/// disjoin the cube `clause` negates, by carrying the [`CubeChain`] alongside.
+///
+/// A disjunction's caller has already handled the operands the two modes read
+/// differently; only the tautological clause, which is the false cube, is the
+/// identity for both.
+fn spine_walk(eng: &Engine, f: &mut Tdd, clause: &[Literal], disjoin: bool) -> Result<Tdd, OperationError> {
+    debug_assert!(!disjoin || (!f.is_zero() && !clause.is_empty()),
+        "a disjunction's caller answers the false accumulator and the true cube");
     let lim = eng.limits();
     let _op = lim.begin_operation();
     lim.check_stop()?;
@@ -164,6 +183,7 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
     // written before any parent reads them. The stop axis and the output cap
     // are checked after each level, the cap against the rebuilt levels' nodes.
     let mut out_nodes = 0u64;
+    let mut chain = if disjoin { Some(CubeChain::new(lim, vtree, clause)?) } else { None };
     let mut tables = ClauseTables {
         cd_map: &mut cd_map,
         level_base: &level_base,
@@ -171,9 +191,26 @@ pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal])
         on_spine: &on_spine,
         t3_buf: &mut clause_t3_buf,
         dt_pairs: &mut clause_dt_pairs,
+        output_cube_pair: None,
     };
     for &t in &spine_internal {
+        // The `cd_map` block of a level is sized at its width before the
+        // rebuild, which is also the range the chain reads back.
+        let old_width = levels[t.idx()].slot_count();
+        if let Some(chain) = chain.as_ref() {
+            // The output level is last in the bottom-up order, so the chain
+            // is complete below it and the cube joins the output node here.
+            tables.output_cube_pair = (t == out_vtree)
+                .then(|| (level_base[t.idx()] + out_local_in.idx(), chain.pair_at(vtree, t)));
+        }
         rebuild_spine_level(eng, t, vtree, &mut levels, &mut tables)?;
+        if let Some(chain) = chain.as_mut()
+            && t != out_vtree
+        {
+            let base = tables.level_base[t.idx()];
+            let lanes = &tables.cd_map[base..base + old_width];
+            chain.close_level(eng, t, vtree, &mut levels[t.idx()], lanes)?;
+        }
         out_nodes += levels[t.idx()].slot_count() as u64;
         lim.level_done(out_nodes)?;
     }
@@ -303,6 +340,21 @@ impl crate::Engine {
     /// counts nodes in the levels rebuilt so far.
     pub fn and_clause<L: crate::LiteralInput>(&self, f: Tdd, clause: &[L]) -> Result<Tdd, OperationError> {
         L::conjoin(self, f, clause)
+    }
+
+    /// Run [`Tdd::or_cube`](crate::Tdd::or_cube) using this batch's scratch and resource limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns the linked operation's errors; cancellation, allocation refusal and
+    /// the output-node cap return [`OperationError::Stopped`],
+    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
+    ///
+    /// Borrow a slice of signed integers or typed literals.
+    /// Stop and output limits are checked once per rebuilt level; the output cap
+    /// counts nodes in the levels rebuilt so far.
+    pub fn or_cube<L: crate::LiteralInput>(&self, f: Tdd, cube: &[L]) -> Result<Tdd, OperationError> {
+        L::disjoin(self, f, cube)
     }
 }
 
