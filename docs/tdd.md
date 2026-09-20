@@ -42,7 +42,9 @@ the disjunction of those two conjunctions.
 In a structural TDD, a given pair of child nodes belongs to at most one node
 at its parent level. Distinct pairs may share either child, but not both.
 A leaf level always offers `x`, `¬x` and `true`; the rule at a leaf is that
-one parent node refers either to `true` or to the literals, never both.
+the level as a whole refers either to `true` or to the literals, never both.
+The rule is level-global, not per-parent: two parent nodes at the same level
+may not disagree, because `x ∧ true` is not `⊥` and the two would overlap.
 Together these syntactic rules make the functions of distinct nodes at a
 level disjoint.
 

@@ -101,6 +101,18 @@ pub fn check_determinism(tdd: &Tdd) -> Result<(), String> {
                 let tdd_j = tdd_with_output(tdd, &shared_vtree, t, j as u32);
 
                 let conjoined = apply_and(tdd_i, tdd_j);
+                // Emptiness is decided by the count, although determinism is
+                // what this function is checking and the count's
+                // multiply-and-add rule is justified by determinism. That is
+                // not circular *for this predicate*: summing the product of
+                // child counts over a node's pairs counts every model once per
+                // derivation, so it is `>= |models|`, with equality exactly when
+                // derivations are unique. It can over-count, never under-count,
+                // so `count == 0` holds iff the conjunction is `⊥` whether or
+                // not the operands are deterministic. A structural
+                // `conjoined.is_zero()` would be the cheaper test but a weaker
+                // one, since it would also require `and` to canonicalize every
+                // empty result to `ZERO`.
                 let count = conjoined.model_count().unwrap();
 
                 if count != BigUint::ZERO {
