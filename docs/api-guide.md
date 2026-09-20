@@ -21,7 +21,9 @@ rows over a chosen list of variables.
 Combine circuits with [`and`](crate::and), [`or`](crate::or),
 [`xor`](crate::xor) and [`Tdd::negate`](crate::Tdd::negate), or use
 [`ite`](crate::ite) to choose between two branches.
-[`Tdd::and_clause`](crate::Tdd::and_clause) adds a clause to an existing circuit.
+[`Tdd::and_clause`](crate::Tdd::and_clause) adds a clause to an existing
+circuit and [`Tdd::or_cube`](crate::Tdd::or_cube) adds a conjunction of
+literals to its solutions, neither building a second circuit.
 These transformations consume their operands; [`Tdd`](crate::Tdd) explains
 when to clone a circuit you want to keep.
 

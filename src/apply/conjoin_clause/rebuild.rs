@@ -19,6 +19,10 @@ pub(super) struct ClauseTables<'a> {
     pub(super) t3_buf: &'a mut Vec<ChildPair>,
     /// The `d_t` pairs of the node being rebuilt.
     pub(super) dt_pairs: &'a mut Vec<ChildPair>,
+    /// Disjunction only: the `cd_map` slot of the accumulator's output node
+    /// and the one extra pair naming the cube, appended to that node's `c_t`
+    /// pair list. `None` for a conjunction; see [`cube`](super::cube).
+    pub(super) output_cube_pair: Option<(usize, ChildPair)>,
 }
 
 /// The child-map offsets and worst-case output pairs per input pair for a spine level.
@@ -41,9 +45,11 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
     slot: usize,
     tables: &mut ClauseTables<'_>,
 ) -> Result<(), OperationError> {
+    // The cube pair of a disjunction, if this is the node that carries it.
+    let cube_pair = tables.output_cube_pair.and_then(|(s, p)| (s == slot).then_some(p));
     // Reserve this node's whole worst case before emitting any of it, so
     // the direct c_t pushes stay infallible `Vec::push`es.
-    reserve_pairs_for_emit(eng, level, ctx.pair_mult * inputs.len())?;
+    reserve_pairs_for_emit(eng, level, ctx.pair_mult * inputs.len() + usize::from(cube_pair.is_some()))?;
     let ct_start = level.pairs.len();
     if DT { tables.dt_pairs.clear(); }
 
@@ -54,6 +60,14 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
         build_both_rel_pairs::<DT>(eng, inputs, ctx, level, tables)?;
     } else {
         build_single_rel_pairs::<LEFT, DT>(eng, inputs, ctx, level, tables)?;
+    }
+    if let Some(pair) = cube_pair {
+        // `c_t` emits only the (c,c), (c,d) and (d,c) cells, so the cube's
+        // (d,d) cell is free and the union stays disjoint. Its child indices
+        // are the cube chain's, unrelated to the accumulator's order, so the
+        // node's pair list is re-sorted.
+        level.pairs.push(pair);
+        sort_pairs(&mut level.pairs[ct_start..]);
     }
     emit_clause_node_direct(level, ct_start, tables.cd_map, 0, slot)?;
     // The parent's both-relevant pass requires the c_t index below d_t.
@@ -113,7 +127,9 @@ pub(super) fn rebuild_spine_level(
     // sized at the input pair count and topped up per node, so the peak never
     // holds a whole-level worst case beside the still-live `old`.
     let pair_mult = (if both_rel { 3 } else { 1 }) + usize::from(compute_dt);
-    lim.begin_level(Some((in_pairs as u128).saturating_mul(pair_mult as u128)));
+    // One more for a disjunction's cube pair, which this level may carry.
+    let level_pairs = (in_pairs as u128).saturating_mul(pair_mult as u128).saturating_add(1);
+    lim.begin_level(Some(level_pairs));
     lim.reserve(&mut level.pairs, in_pairs)?;
     let ctx = SpineCtx { left_grid_base, right_grid_base, pair_mult };
     match (left_rel, right_rel, compute_dt) {
@@ -152,7 +168,8 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
             || node.b == u32::MAX,  // inline pair with right=ZERO (dead node)
             "expected internal node at internal vtree position: i={i}");
         let inputs = old.pairs_of(node);
-        if inputs.is_empty() {
+        let carries_cube = tables.output_cube_pair.is_some_and(|(s, _)| s == base + i);
+        if inputs.is_empty() && !carries_cube {
             // Dead accumulator node: nothing emitted, and this is the one
             // write of its map entry.
             tables.cd_map[base + i] = [NO_PRODUCT, NO_PRODUCT];
