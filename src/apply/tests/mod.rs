@@ -21,6 +21,7 @@ use crate::Engine;
 
 use crate::vtree::{VarId, Vtree};
 
+mod and_exists;
 mod project;
 mod restrict_to_care;
 mod restrict_marginal;

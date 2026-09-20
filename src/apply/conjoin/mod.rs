@@ -34,7 +34,8 @@ use sparse::{
 
 // Identity/constant-true detection and the per-level identity fast paths.
 mod identity;
-use identity::{init_leaf_identity, take_level_fast_path};
+pub(crate) use identity::init_leaf_identity;
+use identity::take_level_fast_path;
 
 // Apply setup → `ApplyRun`.
 mod setup;
