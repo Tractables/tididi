@@ -24,10 +24,6 @@ pub(crate) struct NegateScratch {
     /// The cells of a basis that no node covers: a level's fill pairs, then
     /// the root's complement pairs.
     cells: Pool<Vec<ChildPair>>,
-    /// One node's pair list while its `One` references are being split.
-    node_pairs: Pool<Vec<ChildPair>>,
-    /// The level a `One` split is rebuilt into, swapped with the original.
-    rebuild: Pool<TddLevel>,
 }
 
 impl NegateScratch {
@@ -35,8 +31,6 @@ impl NegateScratch {
     pub(crate) fn drain(&self) {
         self.cover.drain();
         self.cells.drain();
-        self.node_pairs.drain();
-        self.rebuild.drain();
     }
 }
 
@@ -66,8 +60,8 @@ pub(crate) fn negate_tdd_owned(eng: &Engine, mut tdd: Tdd) -> Result<Tdd, Operat
         crate::build::constant_one(eng, &tdd.vtree)
     } else {
         let vtree = Arc::clone(&tdd.vtree);
-        expand_full(eng, &mut tdd)?;
-        complement_full_at_root(eng, tdd, &vtree)?
+        let root_form = expand_full(eng, &mut tdd)?;
+        complement_full_at_root(eng, tdd, &vtree, root_form)?
     };
     result.weights = weights;
     Ok(result)
@@ -76,7 +70,12 @@ pub(crate) fn negate_tdd_owned(eng: &Engine, mut tdd: Tdd) -> Result<Tdd, Operat
 /// Complement a full diagram at its root: collect the root-level pairs not in
 /// the output node and drop the dead ones. `orig_vtree` is the operand's
 /// vtree, used for the constant fallbacks.
-fn complement_full_at_root(eng: &Engine, full_tdd: Tdd, orig_vtree: &Arc<crate::vtree::Vtree>) -> Result<Tdd, OperationError> {
+fn complement_full_at_root(
+    eng: &Engine,
+    full_tdd: Tdd,
+    orig_vtree: &Arc<crate::vtree::Vtree>,
+    root_form: LeafForm,
+) -> Result<Tdd, OperationError> {
     let vtree = &full_tdd.vtree;
     let root = vtree.root();
     let root_idx = root.idx();
@@ -97,18 +96,21 @@ fn complement_full_at_root(eng: &Engine, full_tdd: Tdd, orig_vtree: &Arc<crate::
             TddNodeId { vtree: root, local: neg_local },
         ))
     } else {
-        // After `expand_full` (which expands One → Pos+Neg), child widths:
+        // Child widths the complement's basis spans:
         // - Leaf children: 2 (the disjoint set {Pos, Neg})
-        // - Internal children: stored width (includes any fill nodes)
+        // - Internal children: stored width (includes any fill node)
         let (left, right) = vtree.children(root);
-        let lefts = ChildBasis::of(vtree, &levels, left);
-        let rights = ChildBasis::of(vtree, &levels, right);
+        let basis = Basis {
+            lefts: ChildBasis::of(vtree, &levels, left),
+            rights: ChildBasis::of(vtree, &levels, right),
+            form: root_form,
+        };
 
         let scratch = eng.negate_scratch();
         let mut bits = scratch.cover.take();
         let mut neg_pairs = scratch.cells.take();
         let collected = collect_complement_pairs(
-            eng, &levels[root_idx], out_local, lefts, rights, &mut bits, &mut neg_pairs,
+            eng, &levels[root_idx], out_local, basis, &mut bits, &mut neg_pairs,
         );
         scratch.cover.put_bounded(eng.limits(), bits);
         if let Err(e) = collected {
@@ -165,29 +167,24 @@ fn complement_full_at_root(eng: &Engine, full_tdd: Tdd, orig_vtree: &Arc<crate::
 // ── `expand_full`: explicit fill-node materialization ────────────────────────────
 
 /// Make a diagram full by materializing fill nodes explicitly at every
-/// structural level; marginal levels are skipped.
+/// structural level; marginal levels are skipped. Returns the leaf form of the
+/// root's level, which the complement above it emits in.
 ///
-/// One bottom-up pass does both halves of the job at each level: splitting the
-/// `One` references a leaf child cannot express in the `{Pos, Neg}` basis, and
-/// adding the node that covers whatever cells of `lefts x rights` are left
-/// over. The same walk decides both, so the split runs only where a `One` is
-/// there to split, and the fill is read off a bitmap of the cells the walk
-/// marked rather than a second enumeration of the basis.
-pub(crate) fn expand_full(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
+/// One bottom-up pass per level marks the cells of `lefts x rights` that the
+/// level's nodes cover, in a bitmap held in engine scratch, and the fill node
+/// is read off the zero bits. The walk also records, per leaf child, whether
+/// the level refers to it as `One` or as `Pos`/`Neg`, and the fill is emitted
+/// in that same form.
+pub(crate) fn expand_full(eng: &Engine, tdd: &mut Tdd) -> Result<LeafForm, OperationError> {
     let scratch = eng.negate_scratch();
     let mut bits = scratch.cover.take();
     let mut cells = scratch.cells.take();
-    let mut node_pairs = scratch.node_pairs.take();
-    let mut rebuild = scratch.rebuild.take();
 
-    let result = expand_full_with(eng, tdd, &mut bits, &mut cells, &mut node_pairs, &mut rebuild);
+    let result = expand_full_with(eng, tdd, &mut bits, &mut cells);
 
     let lim = eng.limits();
     scratch.cover.put_bounded(lim, bits);
     scratch.cells.put_bounded(lim, cells);
-    scratch.node_pairs.put_bounded(lim, node_pairs);
-    crate::diagram::reset_level(&mut rebuild);
-    scratch.rebuild.put(rebuild);
     result
 }
 
@@ -197,10 +194,10 @@ fn expand_full_with(
     tdd: &mut Tdd,
     bits: &mut Vec<u64>,
     cells: &mut Vec<ChildPair>,
-    node_pairs: &mut Vec<ChildPair>,
-    rebuild: &mut TddLevel,
-) -> Result<(), OperationError> {
+) -> Result<LeafForm, OperationError> {
     let vtree = tdd.vtree.clone();
+    let root_idx = vtree.root().idx();
+    let mut root_form = LeafForm::LITERAL;
     for (t, left, right) in vtree.internal_bottomup() {
         // A marginal level has no node list to make full.
         if tdd.levels[t.idx()].is_marginal() {
@@ -210,56 +207,41 @@ fn expand_full_with(
         // added.
         let lefts = ChildBasis::of(&vtree, &tdd.levels, left);
         let rights = ChildBasis::of(&vtree, &tdd.levels, right);
-        let left_leaf = vtree.node(left).is_leaf();
-        let right_leaf = vtree.node(right).is_leaf();
+        let leaf = LeafForm {
+            left_one: vtree.node(left).is_leaf(),
+            right_one: vtree.node(right).is_leaf(),
+        };
         let level = &mut tdd.levels[t.idx()];
 
-        let mut cover = Cover::reset(eng, bits, lefts, rights)?;
-        let mut split = false;
+        let mut cover = Cover::reset(eng, bits, lefts, rights, leaf)?;
         let mut poll = eng.limits().gate();
         for node in &level.nodes {
             if !node.is_internal() {
                 continue;
             }
             for pair in level.pairs_of(node) {
-                let (l, r) = (pair.left.0, pair.right.0);
-                // With implicit leaves, One (index 0) overlaps Pos (1) and
-                // Neg (2), so a leaf side's One stands for both basis cells.
-                let l_one = left_leaf && l == ONE_LEAF_IDX.0;
-                let r_one = right_leaf && r == ONE_LEAF_IDX.0;
-                split |= l_one | r_one;
-                let (la, lb) = if l_one { (POS_LEAF_IDX.0, NEG_LEAF_IDX.0) } else { (l, l) };
-                let (ra, rb) = if r_one { (POS_LEAF_IDX.0, NEG_LEAF_IDX.0) } else { (r, r) };
-                cover.mark(la, ra);
-                if r_one {
-                    cover.mark(la, rb);
-                }
-                if l_one {
-                    cover.mark(lb, ra);
-                    if r_one {
-                        cover.mark(lb, rb);
-                    }
-                }
+                cover.mark_pair(*pair);
                 poll.poll(1)?;
             }
         }
         poll.flush()?;
-
-        // The split rewrites pair lists; the cover already accounts for it.
-        if split {
-            split_ones_in_level(eng, level, rebuild, node_pairs, left_leaf, right_leaf)?;
+        // The walk has seen every reference, so this is the level's form.
+        let form = cover.one_seen;
+        if t.idx() == root_idx {
+            root_form = form;
         }
+
         // Covered every basis cell => already full; nothing to add.
         if !cover.is_full() {
             cells.clear();
-            cover.missing_into(eng, cells)?;
+            cover.missing_into(eng, form, cells)?;
             if !cells.is_empty() {
                 level.push_node_on(eng, cells)?;
             }
         }
         eng.limits().check_stop()?;
     }
-    Ok(())
+    Ok(root_form)
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
@@ -290,59 +272,14 @@ fn complement_leaf_root(out_local: NodeIdx) -> Option<NodeIdx> {
     }
 }
 
-/// Split the `One` references of one level's pairs into `Pos` and `Neg`.
-///
-/// After the split the level's leaf references are all in the `{Pos, Neg}`
-/// basis, which is disjoint, as the cover of `expand_full` and the complement
-/// at the root both need. A node's pair list grows, so the level is rebuilt
-/// into `rebuild` and swapped in; `rebuild` keeps its arenas for the next
-/// level.
-fn split_ones_in_level(
-    eng: &Engine,
-    level: &mut TddLevel,
-    rebuild: &mut TddLevel,
-    node_pairs: &mut Vec<ChildPair>,
-    left_leaf: bool,
-    right_leaf: bool,
-) -> Result<(), OperationError> {
-    rebuild.clear();
-    let lim = eng.limits();
-    let mut poll = lim.gate();
-    for node in &level.nodes {
-        if !node.is_internal() {
-            lim.try_push(&mut rebuild.nodes, *node)?;
-            continue;
-        }
-        node_pairs.clear();
-        for pair in level.pairs_of(node) {
-            let lefts: &[EncodedChildRef] = if left_leaf && pair.left == ONE_LEAF_IDX.into() {
-                &[POS_LEAF_IDX.into(), NEG_LEAF_IDX.into()]
-            } else {
-                std::slice::from_ref(&pair.left)
-            };
-            let rights: &[EncodedChildRef] = if right_leaf && pair.right == ONE_LEAF_IDX.into() {
-                &[POS_LEAF_IDX.into(), NEG_LEAF_IDX.into()]
-            } else {
-                std::slice::from_ref(&pair.right)
-            };
-            for &left in lefts {
-                for &right in rights {
-                    lim.try_push(node_pairs, ChildPair { left, right })?;
-                }
-            }
-            poll.poll(1)?;
-        }
-        node_pairs.sort_unstable();
-        node_pairs.dedup();
-        rebuild.push_node_on(eng, node_pairs)?;
-    }
-    rebuild.n_tombstones = level.n_tombstones;
-    std::mem::swap(level, rebuild);
-    poll.flush()
-}
-
 // The leaf basis is a contiguous range only because Pos and Neg are adjacent.
 const _: () = assert!(NEG_LEAF_IDX.0 == POS_LEAF_IDX.0 + 1);
+
+/// The other half of a leaf's `{Pos, Neg}` couple.
+#[inline]
+fn other_polarity(idx: u32) -> u32 {
+    POS_LEAF_IDX.0 + NEG_LEAF_IDX.0 - idx
+}
 
 /// Expanded child basis: the actual local indices the cross-product spans.
 ///
@@ -385,6 +322,37 @@ impl ChildBasis {
     }
 }
 
+/// How one level refers to a leaf child: as `One`, or as `Pos`/`Neg`.
+///
+/// Determinism keeps the two apart — the labels a level uses at one leaf are a
+/// subset of `{Pos, Neg}` or of `{One}`, never both
+/// (`test_helpers::check::check_determinism`) — so this is a property of the
+/// level, read off the first reference the cover walk sees. A fill node and the
+/// complement at the root are emitted in the same form, which is what keeps the
+/// level's labels on one side of that line.
+#[derive(Copy, Clone, Default)]
+pub(crate) struct LeafForm {
+    /// The left child is a leaf the level refers to as `One`.
+    left_one: bool,
+    /// The right child is a leaf the level refers to as `One`.
+    right_one: bool,
+}
+
+impl LeafForm {
+    /// Neither side is in `One` form: what a level with no leaf-side `One`
+    /// reference uses, and what an empty level defaults to.
+    const LITERAL: LeafForm = LeafForm { left_one: false, right_one: false };
+}
+
+/// One level's cross-product basis together with the leaf form it names its
+/// leaf children in: what the complement at the root needs to read and write.
+#[derive(Copy, Clone)]
+struct Basis {
+    lefts: ChildBasis,
+    rights: ChildBasis,
+    form: LeafForm,
+}
+
 /// A bitmap over one level's `lefts x rights` basis: cell `(l, r)` is bit
 /// `(l - lefts.start) * rights.len() + (r - rights.start)`.
 ///
@@ -396,6 +364,11 @@ struct Cover<'a> {
     bits: &'a mut Vec<u64>,
     lefts: ChildBasis,
     rights: ChildBasis,
+    /// Which sides are leaf children, so index 0 there reads as `One`.
+    leaf: LeafForm,
+    /// Which of those the walk has actually seen named as `One` — the level's
+    /// leaf form, which the fill is emitted in.
+    one_seen: LeafForm,
     /// `rights.len()`, the row stride.
     stride: usize,
     /// `lefts.len() * rights.len()`, the cell count.
@@ -405,17 +378,51 @@ struct Cover<'a> {
 }
 
 impl<'a> Cover<'a> {
-    /// Clear `bits` and size it for the `lefts x rights` basis.
+    /// Clear `bits` and size it for the `lefts x rights` basis. `leaf` says
+    /// which sides are leaf children.
     fn reset(
         eng: &Engine,
         bits: &'a mut Vec<u64>,
         lefts: ChildBasis,
         rights: ChildBasis,
+        leaf: LeafForm,
     ) -> Result<Cover<'a>, OperationError> {
         let len = lefts.len().checked_mul(rights.len()).ok_or(OperationError::OverBudget)?;
         bits.clear();
         eng.limits().try_resize(bits, len.div_ceil(64), 0u64)?;
-        Ok(Cover { bits, lefts, rights, stride: rights.len(), len, covered: 0 })
+        Ok(Cover {
+            bits,
+            lefts,
+            rights,
+            leaf,
+            one_seen: LeafForm::LITERAL,
+            stride: rights.len(),
+            len,
+            covered: 0,
+        })
+    }
+
+    /// Mark the cells `pair` covers, a leaf side's `One` standing for both
+    /// cells of that leaf's `{Pos, Neg}` couple.
+    #[inline]
+    fn mark_pair(&mut self, pair: ChildPair) {
+        let (l, r) = (pair.left.0, pair.right.0);
+        let l_one = self.leaf.left_one && l == ONE_LEAF_IDX.0;
+        let r_one = self.leaf.right_one && r == ONE_LEAF_IDX.0;
+        self.one_seen.left_one |= l_one;
+        self.one_seen.right_one |= r_one;
+        let (la, lb) = if l_one { (POS_LEAF_IDX.0, NEG_LEAF_IDX.0) } else { (l, l) };
+        let (ra, rb) = if r_one { (POS_LEAF_IDX.0, NEG_LEAF_IDX.0) } else { (r, r) };
+        self.mark(la, ra);
+        if r_one {
+            self.mark(la, rb);
+        }
+        if l_one {
+            self.mark(lb, ra);
+            if r_one {
+                self.mark(lb, rb);
+            }
+        }
     }
 
     /// Mark cell `(l, r)`; a cell outside the basis is not one to cover.
@@ -439,8 +446,33 @@ impl<'a> Cover<'a> {
         self.covered == self.len
     }
 
-    /// Append the unmarked cells to `out`, in ascending `(l, r)` order.
-    fn missing_into(&self, eng: &Engine, out: &mut Vec<ChildPair>) -> Result<(), OperationError> {
+    /// Whether cell `(l, r)` is unmarked. Out-of-basis indices are not cells
+    /// and answer false.
+    #[inline]
+    fn is_missing(&self, l: u32, r: u32) -> bool {
+        if !self.lefts.contains(l) || !self.rights.contains(r) {
+            return false;
+        }
+        let cell = (l - self.lefts.start) as usize * self.stride + (r - self.rights.start) as usize;
+        self.bits[cell >> 6] & (1u64 << (cell & 63)) == 0
+    }
+
+    /// Append the unmarked cells to `out`, in ascending `(l, r)` order, writing
+    /// a side the level refers to as `One` back in that form.
+    ///
+    /// A `One` side's covered cells come in `{Pos, Neg}` couples — the walk
+    /// marks both for each reference — so the unmarked cells do too, and the
+    /// couple is emitted once, on its `Pos` row, as a `One`. Keeping the form
+    /// is what lets the fill join a level whose other labels are `One` without
+    /// splitting them: mixing the two at one leaf would break determinism's
+    /// label rule and, downstream, block leaf-twin contraction, which is
+    /// all-or-nothing per level.
+    fn missing_into(
+        &self,
+        eng: &Engine,
+        form: LeafForm,
+        out: &mut Vec<ChildPair>,
+    ) -> Result<(), OperationError> {
         let lim = eng.limits();
         let mut poll = lim.gate();
         for (w, &word) in self.bits.iter().enumerate() {
@@ -456,6 +488,22 @@ impl<'a> Cover<'a> {
                 missing &= missing - 1;
                 let l = self.lefts.start + (cell / self.stride) as u32;
                 let r = self.rights.start + (cell % self.stride) as u32;
+                let couple_l = form.left_one && self.is_missing(other_polarity(l), r);
+                let couple_r = form.right_one && self.is_missing(l, other_polarity(r));
+                debug_assert!(
+                    !form.left_one || couple_l,
+                    "negate: a One-form leaf's unmarked cells are not couples"
+                );
+                debug_assert!(
+                    !form.right_one || couple_r,
+                    "negate: a One-form leaf's unmarked cells are not couples"
+                );
+                // Emit a couple once, from its Pos row.
+                if (couple_l && l == NEG_LEAF_IDX.0) || (couple_r && r == NEG_LEAF_IDX.0) {
+                    continue;
+                }
+                let l = if couple_l { ONE_LEAF_IDX.0 } else { l };
+                let r = if couple_r { ONE_LEAF_IDX.0 } else { r };
                 lim.try_push(
                     out,
                     ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)),
@@ -468,24 +516,21 @@ impl<'a> Cover<'a> {
 }
 
 /// Collect into `out` the cells of `lefts x rights` that are not pairs of
-/// `exclude_node`.
+/// `exclude_node`, in the root level's leaf form.
 fn collect_complement_pairs(
     eng: &Engine,
     level: &TddLevel,
     exclude_node: NodeIdx,
-    lefts: ChildBasis,
-    rights: ChildBasis,
+    basis: Basis,
     bits: &mut Vec<u64>,
     out: &mut Vec<ChildPair>,
 ) -> Result<(), OperationError> {
-    let mut cover = Cover::reset(eng, bits, lefts, rights)?;
-    // The root level has been through `expand_full`, so its leaf references
-    // are already in the `{Pos, Neg}` basis and a pair is one cell.
+    let mut cover = Cover::reset(eng, bits, basis.lefts, basis.rights, basis.form)?;
     for pair in level.pairs_of_idx(exclude_node.idx()) {
-        cover.mark(pair.left.0, pair.right.0);
+        cover.mark_pair(*pair);
     }
     out.clear();
-    cover.missing_into(eng, out)
+    cover.missing_into(eng, basis.form, out)
 }
 
 #[cfg(test)]

@@ -60,21 +60,46 @@ fn expand_full_preserves_determinism() {
 
 /// Every internal structural level of `tdd` covers every cell of its
 /// `lefts × rights` basis. Returns the first level that does not.
+///
+/// A leaf-side `One` covers both cells of that leaf's `{Pos, Neg}` couple, as
+/// it does for the cover `expand_full` builds; a level left in `One` form is
+/// full when the couples it names are.
 fn first_not_full(tdd: &Tdd) -> Option<(usize, usize, usize)> {
     let vtree = Arc::clone(tdd.vtree());
     for (t, left, right) in vtree.internal_bottomup() {
         let lefts = ChildBasis::of(&vtree, &tdd.levels, left);
         let rights = ChildBasis::of(&vtree, &tdd.levels, right);
+        let left_leaf = vtree.node(left).is_leaf();
+        let right_leaf = vtree.node(right).is_leaf();
         let level = &tdd.levels[t.idx()];
         let mut seen = vec![false; lefts.len() * rights.len()];
+        let mark = |l: u32, r: u32, seen: &mut Vec<bool>| {
+            if lefts.contains(l) && rights.contains(r) {
+                seen[(l - lefts.start) as usize * rights.len() + (r - rights.start) as usize] = true;
+            }
+        };
         for node in &level.nodes {
             if !node.is_internal() {
                 continue;
             }
             for pair in level.pairs_of(node) {
                 let (l, r) = (pair.left.0, pair.right.0);
-                if lefts.contains(l) && rights.contains(r) {
-                    seen[(l - lefts.start) as usize * rights.len() + (r - rights.start) as usize] = true;
+                let l_one = left_leaf && l == crate::diagram::ONE_LEAF_IDX.0;
+                let r_one = right_leaf && r == crate::diagram::ONE_LEAF_IDX.0;
+                let ls: &[u32] = if l_one {
+                    &[crate::diagram::POS_LEAF_IDX.0, crate::diagram::NEG_LEAF_IDX.0]
+                } else {
+                    std::slice::from_ref(&l)
+                };
+                let rs: &[u32] = if r_one {
+                    &[crate::diagram::POS_LEAF_IDX.0, crate::diagram::NEG_LEAF_IDX.0]
+                } else {
+                    std::slice::from_ref(&r)
+                };
+                for &li in ls {
+                    for &ri in rs {
+                        mark(li, ri, &mut seen);
+                    }
                 }
             }
         }
