@@ -52,16 +52,42 @@ pub(crate) fn disjoin_owned(eng: &Engine, mut f: Tdd, mut g: Tdd) -> Result<Tdd,
 
 /// Disjoin owned operands by De Morgan with one final complement.
 ///
-/// `!f_1 ^ ... ^ !f_n` is built first and complemented once. The conjunction
-/// folds as a balanced tree so that no single fold step meets the whole
-/// accumulated conjunction.
+/// `!f_1 ^ ... ^ !f_n` is [`nor_many_owned`]; this complements it once.
 pub(crate) fn disjoin_many_owned(eng: &Engine, operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
-    use crate::apply::conjoin::conjoin_owned;
-
     let _op = eng.limits().begin_operation();
     eng.limits().check_stop()?;
+    let (complements, a_false_one) = complements_of(eng, operands)?;
+    if complements.is_empty() {
+        // Every operand is false, so the disjunction is: the operand itself,
+        // which carries the vtree and the weights.
+        return a_false_one.ok_or(OperationError::EmptyOperands);
+    }
+    let mut result = negate_tdd_owned(eng, fold_conjunction(eng, complements)?)?;
+    eng.reduce(&mut result, ReductionPlan::default())?;
+    Ok(result)
+}
 
-    // A false operand contributes no model; every operand false is false.
+/// `!f_1 ^ ... ^ !f_n` over owned operands: the conjunction of the complements,
+/// which is [`disjoin_many_owned`] without its final complement.
+pub(crate) fn nor_many_owned(eng: &Engine, operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
+    let _op = eng.limits().begin_operation();
+    eng.limits().check_stop()?;
+    let (complements, a_false_one) = complements_of(eng, operands)?;
+    if complements.is_empty() {
+        // Every operand is false, so every complement is true.
+        let f = a_false_one.ok_or(OperationError::EmptyOperands)?;
+        return Ok(crate::build::constant_one(eng, &f.vtree));
+    }
+    fold_conjunction(eng, complements)
+}
+
+/// Complement every operand that is not false, without minimizing; a false
+/// operand is returned separately, since its complement is the constant true
+/// and contributes nothing to the conjunction.
+fn complements_of(
+    eng: &Engine,
+    operands: Vec<Tdd>,
+) -> Result<(Vec<Tdd>, Option<Tdd>), OperationError> {
     let mut complements: Vec<Tdd> = Vec::with_capacity(operands.len());
     let mut a_false_one: Option<Tdd> = None;
     for mut f in operands {
@@ -73,19 +99,18 @@ pub(crate) fn disjoin_many_owned(eng: &Engine, operands: Vec<Tdd>) -> Result<Tdd
         }
         complements.push(negate_tdd_owned(eng, f)?);
     }
-    if complements.is_empty() {
-        return a_false_one.ok_or(OperationError::EmptyOperands);
-    }
-    if complements.len() == 1 {
-        let mut result = negate_tdd_owned(eng, complements.pop().expect("one operand"))?;
-        eng.reduce(&mut result, ReductionPlan::default())?;
-        return Ok(result);
-    }
-    // Balanced fold: a chain would touch the growing conjunction once per
-    // operand and so cost the square of the operand count.
-    while complements.len() > 1 {
-        let mut next = Vec::with_capacity(complements.len().div_ceil(2));
-        let mut it = complements.into_iter();
+    Ok((complements, a_false_one))
+}
+
+/// Conjoin a non-empty operand list as a balanced tree, minimizing each
+/// result. A chain would touch the growing conjunction once per operand and so
+/// cost the square of the operand count.
+fn fold_conjunction(eng: &Engine, mut operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
+    use crate::apply::conjoin::conjoin_owned;
+    debug_assert!(!operands.is_empty());
+    while operands.len() > 1 {
+        let mut next = Vec::with_capacity(operands.len().div_ceil(2));
+        let mut it = operands.into_iter();
         while let Some(a) = it.next() {
             match it.next() {
                 Some(b) => {
@@ -96,9 +121,9 @@ pub(crate) fn disjoin_many_owned(eng: &Engine, operands: Vec<Tdd>) -> Result<Tdd
                 None => next.push(a),
             }
         }
-        complements = next;
+        operands = next;
     }
-    let mut result = negate_tdd_owned(eng, complements.pop().expect("one operand"))?;
+    let mut result = operands.pop().expect("a non-empty operand list");
     eng.reduce(&mut result, ReductionPlan::default())?;
     Ok(result)
 }
@@ -182,7 +207,63 @@ pub fn or_many(operands: impl IntoIterator<Item = Tdd>) -> Result<Tdd, Operation
     context.run(|eng| eng.or_many(operands))
 }
 
+/// The conjunction of the operands' complements, `!f_1 ^ ... ^ !f_n`.
+///
+/// The shape a Tp-compilation consumer issues for a rule body set,
+/// `mu_a' = mu_a ^ (^_r !body_r)`, and [`or_many`] without its final
+/// complement: the complement of a negation happens only at the root, so below
+/// it `!f_i` is `f_i`'s own nodes plus one fill node per level, and the
+/// operands are conjoined as a balanced tree.
+///
+/// All operands are consumed and must share a vtree. The result is minimized.
+/// A false operand is dropped, its complement being the constant true; if
+/// every operand is false, the result is the constant true.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{nor_many, Tdd, Vtree};
+///
+/// let vtree = Arc::new(Vtree::balanced(4));
+/// let bodies = [Tdd::cube(&vtree, [1, 2])?, Tdd::cube(&vtree, [3])?];
+/// let f = nor_many(bodies)?;
+/// // 16 assignments, 4 with x1 ^ x2, 8 with x3, 2 with both.
+/// assert_eq!(f.model_count()?, 6u32.into());
+/// # Ok::<(), tididi::OperationError>(())
+/// ```
+///
+/// # Errors
+///
+/// [`OperationError::EmptyOperands`] when no operand is given, since the
+/// vtree of the result would be unknown; the other errors follow [`or`].
+pub fn nor_many(operands: impl IntoIterator<Item = Tdd>) -> Result<Tdd, OperationError> {
+    let operands: Vec<Tdd> = operands.into_iter().collect();
+    let Some(first) = operands.first() else {
+        return Err(OperationError::EmptyOperands);
+    };
+    for g in &operands[1..] {
+        crate::apply::check_vtree(first, g)?;
+    }
+    let context = std::sync::Arc::clone(first.context());
+    context.run(|eng| eng.nor_many(operands))
+}
+
 impl crate::Engine {
+    /// Run [`nor_many`] using this batch's scratch and resource limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns the operation's errors, plus [`OperationError::Stopped`] or
+    /// [`OperationError::OutputCap`] when an installed limit refuses the work.
+    pub fn nor_many(&self, operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
+        let Some(first) = operands.first() else {
+            return Err(OperationError::EmptyOperands);
+        };
+        for g in &operands[1..] {
+            crate::apply::check_vtree(first, g)?;
+        }
+        crate::apply::disjoin::nor_many_owned(self, operands)
+    }
+
     /// Run [`or`] using this batch's scratch and resource limits.
     ///
     /// # Errors
