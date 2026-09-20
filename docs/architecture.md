@@ -102,12 +102,15 @@ nodes in a product grid and emits surviving child pairs. Consumed level
 arenas return to the engine's pools for reuse.
 
 A conjunction that is also quantifying an existential
-([`and_exists`]) does not build a subtree every leaf of which is quantified:
-that subtree contributes one satisfiability bit, so the level is decided by an
-early-exiting test per product cell and written as the single ⊤ node. The
-result is then the product with those subtrees replaced by ⊤, which is what the
-quantification sweep would have reached there; the sweep's owner-set regroup
-re-establishes the level-wide disjointness the collapse breaks.
+([`and_exists`]) can decline to build a subtree every leaf of which is
+quantified: that subtree contributes one satisfiability bit, so the level is
+decided by an early-exiting test per product cell and written as the single ⊤
+node. The result is then the product with those subtrees replaced by ⊤, which
+is what the quantification sweep would have reached there; the sweep's
+owner-set regroup re-establishes the level-wide disjointness the collapse
+breaks. It is `Quantification::FusedSubtrees` and not the default, because it
+reaches the level by a walk of the whole product grid and so gives up whatever
+cheaper route that level had.
 
 The result has the correct function and count but may retain unreachable
 nodes and context twins. A full reduction first prunes, then contracts inner

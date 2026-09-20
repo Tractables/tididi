@@ -64,19 +64,48 @@ pub fn ite(condition: Tdd, then_branch: Tdd, else_branch: Tdd) -> Result<Tdd, Op
 
 /// How [`and_exists`] removes the quantified variables.
 ///
-/// Both settings compute the same function and return it in the same canonical
-/// form; they differ in what is built on the way.
+/// Every setting computes the same function and returns it in the same
+/// canonical form; they differ in what is built on the way, and a disagreement
+/// between any two of them is a defect.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Quantification {
-    /// Remove what can be removed before the product, and build only the part
-    /// of it the answer depends on. The default.
+    /// Quantify each variable one operand leaves free out of the *other*
+    /// operand, before the product. The default: it is the rewrite that can
+    /// remove a variable from the problem rather than from the answer, and it
+    /// costs one pass over an operand that is about to be conjoined anyway.
     #[default]
     Fused,
+    /// [`Fused`](Quantification::Fused), and additionally do not build a vtree
+    /// subtree every leaf of which is quantified: decide each of its product
+    /// cells by one satisfiability test and write the `⊤` that quantifying it
+    /// would have left.
+    ///
+    /// This is the deeper rewrite and it is *not* the default, because it wins
+    /// only where the collapsed subtree would otherwise have been materialized
+    /// in full. Where the conjunction would have reached that subtree by a
+    /// route cheaper than a walk of its product grid — the sparse route, or an
+    /// identity level — the collapse bypasses that route and pays more than the
+    /// build it replaces.
+    FusedSubtrees,
     /// Build the whole conjunction, then quantify it. The reference route: it
     /// is what a fused result is compared against, and what a caller falls back
     /// to when a fused result is in doubt.
     Product,
+}
+
+impl Quantification {
+    /// Whether this setting rewrites the operands before the product.
+    #[inline]
+    fn pushes_through(self) -> bool {
+        matches!(self, Quantification::Fused | Quantification::FusedSubtrees)
+    }
+
+    /// Whether this setting collapses a fully quantified subtree.
+    #[inline]
+    fn collapses_subtrees(self) -> bool {
+        matches!(self, Quantification::FusedSubtrees)
+    }
 }
 
 /// Existential conjunction: `exists vars. (f AND g)`.
@@ -199,7 +228,7 @@ impl Engine {
         // them away entirely would replace its store by an empty one, and which
         // of the two stores the product then carries is a question the rewrites
         // below do not answer.
-        let fused = how == Quantification::Fused && f.weights.is_none();
+        let fused = how.pushes_through() && f.weights.is_none();
         if !fused {
             let product = self.and(f, g)?;
             let identity = targets.is_empty() || product.is_zero();
@@ -208,14 +237,18 @@ impl Engine {
             return Ok(result);
         }
         (f, g) = push_local_targets(self, f, g, &targets)?;
-        let vtree = std::sync::Arc::clone(f.vtree());
-        let subtrees = quantified_subtrees(self, &vtree, &targets)?;
-        let (product, swept) =
-            super::conjoin::conjoin_quantifying(self, f, g, &subtrees.whole)?;
+        let (product, collapsed) = if how.collapses_subtrees() {
+            let vtree = std::sync::Arc::clone(f.vtree());
+            let subtrees = quantified_subtrees(self, &vtree, &targets)?;
+            let (product, swept) =
+                super::conjoin::conjoin_quantifying(self, f, g, &subtrees.whole)?;
+            (product, if swept { subtrees.maximal } else { Vec::new() })
+        } else {
+            (self.and(f, g)?, Vec::new())
+        };
         // A nonempty quantification minimizes a non-false product.
         let identity = targets.is_empty() || product.is_zero();
-        let collapsed: &[bool] = if swept { &subtrees.maximal } else { &[] };
-        let mut result = super::project::exists_targets_on(self, product, &targets, collapsed)?;
+        let mut result = super::project::exists_targets_on(self, product, &targets, &collapsed)?;
         if identity { self.minimize(&mut result)?; }
         Ok(result)
     }

@@ -1,5 +1,12 @@
 //! Collapsing a fully quantified subtree while the product is built.
 //!
+//! This is [`Quantification::FusedSubtrees`](crate::Quantification::FusedSubtrees),
+//! which is not the default. It reaches a level by walking its whole product
+//! grid, so it wins exactly where that grid was going to be walked and
+//! materialized anyway, and loses where the level had a cheaper route — the
+//! sparse one, or an identity. Making the choice per level is the open problem
+//! stated at the bottom of this comment.
+//!
 //! [`Engine::and_exists`](crate::Engine::and_exists) removes a set of leaves
 //! from `f ∧ g`. A vtree node every leaf of which is removed contributes one
 //! bit to the answer and nothing else: over its variables, `∃(f_i ∧ g_j)` is
@@ -24,6 +31,14 @@
 //! a collapsed level *had* more than one node, so it is told which levels were
 //! collapsed: a level already reduced to `⊤` still owes its ancestors the
 //! regroup.
+//!
+//! **Open.** The choice is all-or-nothing per quantified subtree, because a
+//! level built here reads its children's grids positionally and a level built
+//! by the sparse route has no grid to read. Deciding per level would mean
+//! writing the satisfiability bit through the same route selection and child
+//! lookup the emitting build uses, rather than beside them; until that is
+//! done, a caller choosing this setting is choosing the dense walk for every
+//! level of every subtree it collapses.
 
 use crate::Engine;
 use crate::diagram::{ChildPair, EncodedChildRef, ONE_LEAF_IDX, Tdd};
