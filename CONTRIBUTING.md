@@ -41,7 +41,7 @@ standalone consumer of the crate archive.
 
 Hidden `scenario:` comments link teaching material to its script and complete
 instance list in [docs/scenarios.md](docs/scenarios.md). When changing a lesson,
-update that script as needed and review its Rust, Python and figure instances.
+update that script as needed and review its Rust, Python, C and figure instances.
 Then run `python3 scripts/check_scenarios.py --review <scenario-id>` to record
 that review. CI rejects missing links, unregistered lessons and stale reviews;
 it does not establish semantic agreement. Keep running the example checks.
@@ -54,6 +54,15 @@ Sphinx Gallery executes the narrative scripts in `bindings/python/examples` to
 produce the tutorials and their output; edit those scripts, not generated pages.
 Keep Python signatures in `tididi/__init__.pyi` aligned with the extension.
 CI tests wheels on Linux, macOS, and Windows, and checks a source-archive install.
+
+## C bindings
+
+`bindings/c` calls the public Rust API through an opaque-handle interface. Run
+`python bindings/c/check.py --docs` to verify the generated header, C/C++ consumers,
+installed CMake package and executable guide. Its [README](bindings/c/README.rst)
+lists prerequisites. Edit function contracts in `bindings/c/src`; the header and
+API reference are generated from them. Tutorials include the compiled C sources
+and captured output. CI checks Linux, macOS and Windows.
 
 ## Repository conventions
 

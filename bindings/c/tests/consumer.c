@@ -1,0 +1,141 @@
+#include "tididi.h"
+#include <inttypes.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define CHECK(x) do { if (!(x)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); } } while (0)
+static void ok(TididiError *error) {
+    if (error) { fprintf(stderr, "%s\n", tididi_error_message(error)); tididi_error_free(error); abort(); }
+}
+static void failure(TididiError *error, TididiErrorCode expected) {
+    CHECK(error != NULL);
+    if (tididi_error_code(error) != expected) fprintf(stderr, "%s\n", tididi_error_message(error));
+    CHECK(tididi_error_code(error) == expected);
+    tididi_error_free(error);
+}
+static TididiCircuit *lit(TididiVtree *v, int64_t id) {
+    TididiCircuit *f = NULL; ok(tididi_literal(v, id, &f, NULL)); return f;
+}
+static uint64_t count(TididiCircuit *f) { uint64_t n = 0; ok(tididi_model_count(f, &n, NULL)); return n; }
+static bool consumed(TididiCircuit *f) { bool b = false; ok(tididi_is_consumed(f, &b)); return b; }
+static void ownership(void) {
+    TididiVtree *v = NULL, *other = NULL;
+    ok(tididi_vtree_balanced(3, &v)); ok(tididi_vtree_balanced(3, &other));
+    TididiCircuit *a = lit(v, 1), *b = lit(v, 2), *alien = lit(other, 1), *f = NULL, *copy = NULL;
+    failure(tididi_and(a, a, &f, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    failure(tididi_and(a, alien, &f, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    failure(tididi_and(a, b, NULL, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    failure(tididi_and(a, b, &a, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    CHECK(count(a) == 4 && !consumed(b));
+    ok(tididi_and(a, b, &f, NULL));
+    CHECK(count(f) == 2 && consumed(a) && consumed(b));
+    uint64_t unchanged = 123;
+    failure(tididi_model_count(a, &unchanged, NULL), TIDIDI_ERROR_CODE_CONSUMED_CIRCUIT);
+    CHECK(unchanged == 123);
+    failure(tididi_and(f, a, &copy, NULL), TIDIDI_ERROR_CODE_CONSUMED_CIRCUIT);
+    CHECK(!consumed(f));
+    ok(tididi_copy(f, &copy));
+    bool same = false; ok(tididi_equivalent(f, f, &same, NULL)); CHECK(same);
+    ok(tididi_implies(copy, f, &same, NULL)); CHECK(same);
+    int64_t duplicate[] = {1, -1}; TididiCircuit *bad = NULL;
+    failure(tididi_condition(f, duplicate, 2, &bad, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    uint32_t absent = 4;
+    failure(tididi_exists(f, &absent, 1, &bad, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    CHECK(count(f) == 2);
+    TididiLimits limit = tididi_limits_default(); limit.timeout_seconds = 0;
+    failure(tididi_and(f, copy, &bad, &limit), TIDIDI_ERROR_CODE_RESOURCE_LIMIT);
+    CHECK(consumed(f) && consumed(copy) && bad == NULL);
+    TididiCircuit *handles[] = {a,b,alien,f,copy};
+    for (size_t i=0; i<5; ++i) ok(tididi_circuit_free(handles[i]));
+    ok(tididi_circuit_free(NULL)); tididi_vtree_free(v); tididi_vtree_free(other);
+}
+static void queries(void) {
+    TididiVtree *v = NULL; ok(tididi_vtree_balanced(3, &v));
+    TididiCircuit *f = NULL, *impossible = NULL;
+    int64_t clause[] = {1, 2}; ok(tididi_clause(v, clause, 2, &f, NULL)); ok(tididi_zero(v, &impossible));
+    TididiLiterals *support = NULL, *forced = NULL, *witness = NULL;
+    ok(tididi_support(f, &support, NULL)); CHECK(tididi_literals_len(support) == 2);
+    CHECK(tididi_literals_data(support)[0] == 1 && tididi_literals_data(support)[1] == 2);
+    ok(tididi_implied_literals(impossible, &forced, NULL)); CHECK(tididi_literals_len(forced) == 6);
+    for (int64_t literal=-3; literal<=3; ++literal) {
+        if (!literal) continue;
+        size_t found=0; for (size_t i=0;i<6;++i) found += tididi_literals_data(forced)[i] == literal;
+        CHECK(found == 1);
+    }
+    ok(tididi_satisfying_assignment(f, &witness, NULL)); CHECK(tididi_literals_len(witness) == 3);
+    TididiCircuit *selected = NULL;
+    ok(tididi_cube(v, tididi_literals_data(witness), tididi_literals_len(witness), &selected, NULL));
+    bool yes = false; ok(tididi_implies(selected, f, &yes, NULL)); CHECK(yes);
+    uint32_t vars[] = {1,2}; uint64_t n=0;
+    ok(tididi_projected_model_count(f, vars, 2, &n, NULL)); CHECK(n==3);
+    TididiCircuit *projected = NULL; ok(tididi_exists(f, vars, 2, &projected, NULL)); CHECK(count(projected)==8);
+    tididi_literals_free(support); tididi_literals_free(forced); tididi_literals_free(witness);
+    ok(tididi_circuit_free(f)); ok(tididi_circuit_free(impossible)); ok(tididi_circuit_free(selected)); ok(tididi_circuit_free(projected)); tididi_vtree_free(v);
+}
+static void big_counts_and_rows(void) {
+    TididiVtree *v = NULL; TididiCircuit *f = NULL;
+    ok(tididi_vtree_balanced(257, &v)); ok(tididi_one(v, &f));
+    uint64_t n=17; failure(tididi_model_count(f, &n, NULL), TIDIDI_ERROR_CODE_OVERFLOW); CHECK(n==17);
+    char *decimal = NULL; ok(tididi_model_count_decimal(f, &decimal, NULL));
+    CHECK(strcmp(decimal,"231584178474632390847141970017375815706539969331281128078915168015826259279872")==0);
+    tididi_string_free(decimal); ok(tididi_circuit_free(f)); tididi_vtree_free(v);
+    v=NULL; f=NULL; ok(tididi_vtree_balanced(65,&v));
+    uint32_t vars[65]; uint8_t rows[3*65]={0};
+    for(uint32_t i=0;i<65;++i) vars[i]=i+1;
+    rows[65+64]=1; rows[2*65+64]=1;
+    ok(tididi_from_models(v,vars,65,rows,3,&f,NULL)); CHECK(count(f)==2);
+    TididiCircuit *updated=NULL; int64_t removed[]={65}; TididiCube cube={removed,1};
+    ok(tididi_update(f,NULL,0,&cube,1,&updated,NULL)); CHECK(count(updated)==1);
+    TididiCircuit *bad=NULL; rows[0]=2;
+    failure(tididi_from_models(v,vars,65,rows,3,&bad,NULL),TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    ok(tididi_circuit_free(f));ok(tididi_circuit_free(updated));tididi_vtree_free(v);
+}
+static void counters_and_persistence(void) {
+    TididiVtree *v=NULL;ok(tididi_vtree_balanced(3,&v));
+    TididiCircuit *f=NULL;int64_t disjunction[]={1,2};ok(tididi_clause(v,disjunction,2,&f,NULL));
+    TididiBytes *bytes=NULL;ok(tididi_to_bytes(f,&bytes));char *text=NULL;ok(tididi_vtree_to_text(v,&text));
+    TididiVtree *restored=NULL;TididiCircuit *loaded=NULL;ok(tididi_vtree_from_text(text,&restored));
+    ok(tididi_from_bytes(restored,tididi_bytes_data(bytes),tididi_bytes_len(bytes),&loaded));CHECK(count(loaded)==6);
+    TididiCircuit *bad=NULL;uint8_t corrupt[]={0,1,2};failure(tididi_from_bytes(restored,corrupt,3,&bad),TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    TididiNodeSizes *sizes=NULL;ok(tididi_node_sizes(f,&sizes));size_t pairs=0,nodes=0,sum=0;ok(tididi_size(f,&nodes,&pairs));
+    for(size_t i=0;i<tididi_node_sizes_len(sizes);++i)sum+=tididi_node_sizes_data(sizes)[i].pairs;
+    CHECK(sum==pairs);
+    TididiCounter *counter=NULL;ok(tididi_counter(f,&counter));ok(tididi_circuit_free(f));tididi_vtree_free(v);
+    uint64_t n=0;ok(tididi_counter_model_count(counter,&n,NULL));CHECK(n==6);
+    int64_t observation[]={-1};ok(tididi_counter_observe(counter,observation,1));ok(tididi_counter_model_count(counter,&n,NULL));CHECK(n==2);
+    int64_t invalid[]={1,4};failure(tididi_counter_observe(counter,invalid,2),TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    ok(tididi_counter_model_count(counter,&n,NULL));CHECK(n==2);
+    ok(tididi_counter_clear(counter,1));ok(tididi_counter_model_count(counter,&n,NULL));CHECK(n==6);
+    TididiCircuit *recovered=NULL;ok(tididi_counter_finish(counter,&recovered));CHECK(count(recovered)==6);
+    failure(tididi_counter_model_count(counter,&n,NULL),TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    ok(tididi_counter_free(counter));ok(tididi_circuit_free(recovered));ok(tididi_circuit_free(loaded));tididi_vtree_free(restored);
+    tididi_bytes_free(bytes);tididi_string_free(text);tididi_node_sizes_free(sizes);
+}
+typedef struct { TididiCircuit *circuit; size_t calls; } CallbackState;
+static double zero(void *state) { (void)state;return 0; }
+static double leaf(void *data,uint32_t var,int8_t sign) {
+    CallbackState *state=(CallbackState*)data;(void)var;state->calls++;
+    TididiCircuit *out=NULL;
+    failure(tididi_negate(state->circuit,&out,NULL),TIDIDI_ERROR_CODE_BORROW_CONFLICT);
+    failure(tididi_circuit_free(state->circuit),TIDIDI_ERROR_CODE_BORROW_CONFLICT);
+    return sign<0?2:1;
+}
+static double add(void *data,double a,double b){(void)data;return a+b;}
+static double mul(void *data,double a,double b){(void)data;return a*b;}
+static void evaluation(void) {
+    TididiVtree *v=NULL;ok(tididi_vtree_balanced(3,&v));TididiCircuit *f=NULL,*rain=lit(v,1),*no=NULL;
+    int64_t values[]={1,2};ok(tididi_clause(v,values,2,&f,NULL));ok(tididi_zero(v,&no));
+    TididiWeight weights[]={{1,"4/5","1/5"},{2,"9/10","1/10"},{3,"3/5","2/5"}};
+    char *mass=NULL,*ratio=NULL;ok(tididi_weighted_count(f,weights,3,&mass,NULL));CHECK(strcmp(mass,"7/25")==0);
+    ok(tididi_weighted_ratio(rain,f,weights,3,&ratio,NULL));CHECK(strcmp(ratio,"5/7")==0);
+    char *bad=NULL;failure(tididi_weighted_ratio(f,no,weights,3,&bad,NULL),TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    failure(tididi_weighted_count(f,weights,2,&bad,NULL),TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    CallbackState state={f,0};TididiAlgebra algebra={&state,zero,leaf,add,mul};double result=0;
+    ok(tididi_evaluate_f64(f,&algebra,&result,NULL));CHECK(result==6 && state.calls>0 && count(f)==6);
+    tididi_string_free(mass);tididi_string_free(ratio);ok(tididi_circuit_free(f));ok(tididi_circuit_free(rain));ok(tididi_circuit_free(no));tididi_vtree_free(v);
+}
+int main(void) {
+    ownership();queries();big_counts_and_rows();counters_and_persistence();evaluation();
+    puts("C ownership, queries, exact arithmetic, callbacks and persistence passed.");return 0;
+}

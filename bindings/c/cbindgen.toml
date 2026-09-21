@@ -1,0 +1,27 @@
+language = "C"
+cpp_compat = true
+include_guard = "TIDIDI_H"
+usize_is_size_t = true
+style = "both"
+documentation = true
+line_length = 100
+autogen_warning = "/* Generated from the Rust C binding. Regenerate with python bindings/c/check.py --write-header. */"
+header = """
+/* tididi C interface
+ *
+ * TididiError* results: NULL is success. Otherwise read the error, then free it.
+ * Owned output pointers must be initialized to NULL; scalar outputs need live storage.
+ * All output storage must be separate from input storage.
+ * Transformations consume circuit payloads. Free their empty handles afterwards.
+ * Queries borrow circuits. Use tididi_copy before a transformation to retain an input.
+ * Invalid arguments preserve inputs; execution failures may leave inputs consumed.
+ * Arrays may be NULL only at length zero. Strings are NUL-terminated UTF-8.
+ * Handles must be live objects from this library; synchronize access across threads.
+ * Returned allocations require their matching tididi_*_free function, never free().
+ * Callbacks and userdata are borrowed for the call; callbacks must not unwind or longjmp.
+ * Full guide: https://tractables.github.io/tididi/c/
+ */
+"""
+[enum]
+prefix_with_name = true
+rename_variants = "ScreamingSnakeCase"

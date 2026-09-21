@@ -1,7 +1,7 @@
 # Shared teaching scenarios
 
-These scripts describe the model and teaching sequence behind the Rust and
-Python documentation. Each lists its guides, runnable programs and figures.
+These scripts describe the model and teaching sequence behind the Rust, Python and
+C documentation. Each lists its guides, runnable programs and figures.
 Hidden `scenario:` comments in those files point back here.
 
 When editing an instance, update its scenario as needed and review every listed
@@ -29,12 +29,20 @@ Rust uses `Tdd`, `!` and `clone()`; Python uses `Circuit`, `~` and `copy()`.
 Rust's checked calls return `Result`; Python operators raise exceptions.
 Keep installation instructions specific to the language and publication state.
 
+C uses opaque handles, output slots initialized to NULL, and explicit error and
+cleanup functions. Its shared example helper wraps checking, copying, counting
+and freeing without changing their ownership rules.
+
 ### Instances
 
-- [Rust README](../README.md) <!-- reviewed: e180a3b9533c7519063a76866d2f032e4cb7f46c12ff57e28674015f9735e994 -->
-- [Rust crate introduction](../src/lib.rs) <!-- reviewed: aa1145e31d14be778e9f79a73deefe543341203a5631d4c0608750c2e5d0e7c6 -->
-- [Python README](../bindings/python/README.rst) <!-- reviewed: c1cb68756607b2850e7bf9433faa319bb1219b21c2da5d7ebde94465e1e51b67 -->
-- [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: b7b67a6af0114e3f28b50731fc9fdbddb12d78b142d58cedb977f7f57f26103a -->
+- [Rust README](../README.md) <!-- reviewed: ff8cb955dded726fc9de884c0236de0c6511aa162eac4bb0f39c3b03c05ed7e4 -->
+- [Rust crate introduction](../src/lib.rs) <!-- reviewed: 9c14ea28438b319153d89020cbb32df4b6f0c1757d839ddf5465874e73f3be2a -->
+- [Python README](../bindings/python/README.rst) <!-- reviewed: 9c7db6c3ac5276041c1399f2d840ed60a91f57259bdfa0f412f5aad358c05648 -->
+- [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: c6ead730e1436ba112d8bc518610d932e3f72180e516b274c1daff51c24f651a -->
+- [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: c45e0c121d6f2bacf5652ce841d428f9dd4f99a0e7c55dfef8363ca55e4157b5 -->
+- [C program first_circuit](../bindings/c/examples/first_circuit.c) <!-- reviewed: 3039126c0a5c738421a4eedf9848b5401d3e1657eefa9f2ec8e19f7e794a3894 -->
+- [C example](../bindings/c/examples/example.h) <!-- reviewed: 1019207b1a680a883f8df2e9b09bb850465a9a4f8b0fd345169d89200f299a70 -->
+- [C README](../bindings/c/README.rst) <!-- reviewed: c2505b3c85690814ce3c911401bb3554ffff1a9ec08b4bff9cd813e029a7b987 -->
 
 ## Reading order
 
@@ -45,11 +53,15 @@ limits, minimum costs and storage statistics. Keep the index and sidebar in
 that order. Link reference material separately; do not make beginners choose
 an API category before they have seen a circuit.
 
+The C guide adds a first-circuit chapter and places its ownership chapter before
+resource limits; the application chapters retain the same order.
+
 ### Instances
 
-- [Rust guide and example navigation](../src/guide.rs) <!-- reviewed: 17795aa04c6fbd91188af399fffa242441bbbe0ecce2fd9b6b44a6ad3c6feb58 -->
-- [Python guide index](../bindings/python/docs/index.rst) <!-- reviewed: bd95b43d37e627891d9149f842387051e2b7d99596d30f3229784610bd8bbcf5 -->
-- [Python gallery introduction](../bindings/python/examples/GALLERY_HEADER.rst) <!-- reviewed: 5670a051f6c14a681d384f870bbed2b7caefda7ea0ec7230a8f2513337c2430f -->
+- [Rust guide and example navigation](../src/guide.rs) <!-- reviewed: 8df6c35c664cceea9eb99b51109de233195df672ebdb0c3713f0b98dfca46aa5 -->
+- [Python guide index](../bindings/python/docs/index.rst) <!-- reviewed: a66ac8188cb1e662310009c7363479abdb86ff58a3da2a0f81573ccf2902ec6e -->
+- [Python gallery introduction](../bindings/python/examples/GALLERY_HEADER.rst) <!-- reviewed: 573697e8780b45dd469960f93fef69fe3b2c83193ddcd6ec41be851dd6d318dd -->
+- [C index](../bindings/c/docs/index.rst) <!-- reviewed: d45fcd5873553f016f81d2848fff6396e0cbad3d0767dd5b468f0efa67673627 -->
 
 ## Configurations
 
@@ -68,11 +80,17 @@ Rust's counter borrows its diagram; Python's owns it until `finish()`.
 Teach checked calls after operators in Rust. Python operators already raise
 exceptions. The Rust program also supplies the execution-limits lesson.
 
+C expresses clauses through named signed integer constants. Its shorter lesson
+shows counts 8 and 4, forced remote/encryption, then counter counts 4, 2 and 8.
+It omits the witness, replacement observation and minimization demonstrations.
+
 ### Instances
 
-- [Rust walkthrough](examples/configurations.md) <!-- reviewed: 7dc8c3a3accf2084eb53e2d7008429907749fb821bfc31489294e81b3b5a7647 -->
-- [Rust program](../examples/build_minimize_count.rs) <!-- reviewed: 814befb94204e5fecf0da2b4cdc2b79c146b38e078765a659b942c8daf120b39 -->
-- [Python walkthrough and program](../bindings/python/examples/01_configurations.py) <!-- reviewed: f3880bd2807224bcdbe555018f79d97f508e0fe5c2121a281803dc6b9bd68fd5 -->
+- [Rust walkthrough](examples/configurations.md) <!-- reviewed: 1d1e2eede05e5159c8bbd9ee4c33a80c11015361604f13d7423b841d11c71bb7 -->
+- [Rust program](../examples/build_minimize_count.rs) <!-- reviewed: 8608014d21d1284454cc9220ee95b049aeb15d0b1e529de69df7ffe98f3e0b7d -->
+- [Python walkthrough and program](../bindings/python/examples/01_configurations.py) <!-- reviewed: 0aa18e286e024c73704ecdfa5c9716bdd0f044119deb6baf6f6291add69d4993 -->
+- [C configurations](../bindings/c/docs/configurations.rst) <!-- reviewed: afa91c98a64dec891370050699f07dc3d2aaa8ede6f07039aba5ff676c090e3b -->
+- [C program configurations](../bindings/c/examples/configurations.c) <!-- reviewed: 3a3557b4369cf8a7ffa7f2252570c4a695940095870e69e476a4ebef24e35c54 -->
 
 ## Probability
 
@@ -87,11 +105,17 @@ conditional-probability formula before the calculation; reuse the circuits
 when weights change. Unit weights give 6 models of W over all three variables.
 Rust uses BigRational; Python uses the standard-library Fraction.
 
+C passes exact weights as fraction strings and returns owned fraction strings.
+Its weighted-ratio call divides the two event masses; it omits the unit-weight
+comparison to keep arithmetic and allocation details out of the narrative.
+
 ### Instances
 
-- [Rust walkthrough](examples/probability.md) <!-- reviewed: cb40fb5e14fb8a0f7c429327764090ebf1fa0eab1167f35888648bb0ff709366 -->
-- [Rust program](../examples/probabilistic_query.rs) <!-- reviewed: 4e17e03373c7f4f03043eb75f8f760d01730622a8b8a9dc031d2c93de21f427b -->
-- [Python walkthrough and program](../bindings/python/examples/02_probability.py) <!-- reviewed: 6f442fa45ef018a70a4c2c3ffec4767153a743d08d385720982975f0c6998de4 -->
+- [Rust walkthrough](examples/probability.md) <!-- reviewed: 90d6c93d0927c51e41a32bd036ecae851af5393d3451d1d8ccd1fac128a16d04 -->
+- [Rust program](../examples/probabilistic_query.rs) <!-- reviewed: d22223b12cf6725aa5c100ba833eb3f3cdb4388ba64d6e5640d67c309c30fa3f -->
+- [Python walkthrough and program](../bindings/python/examples/02_probability.py) <!-- reviewed: 43ebc3fefabcb732dbad5b04b78a9171aded6421a1a2a4f7eaf05bf9c81ada86 -->
+- [C probability](../bindings/c/docs/probability.rst) <!-- reviewed: 5d30ac6f3b39409e65615580882a2bd742bbaf1c3da847116dde7ed8237d4931 -->
+- [C program probability](../bindings/c/examples/probability.c) <!-- reviewed: f63e88702fd6a8afe3aa25132c2fe78197512554315d01ca33ef391454c3ee15 -->
 
 ## Reachability
 
@@ -121,12 +145,18 @@ component. All five are unreachable. A target query finds node 11. Its witness
 is a state assignment, not a path. Ordinary model counts also include free
 next-state variables; use projection for the number of states.
 
+C uses the same graph, formula and fixed-point sequence, with explicit release
+of consumed handles. It lists unreachable nodes instead of printing a target
+witness; the reachable-set semantics are unchanged.
+
 ### Instances
 
-- [Rust walkthrough](examples/reachability.md) <!-- reviewed: ed07ea316ae735f30c1b7ac20967afe465ae5be40b0a8ed7728de09cc1f1ddc5 -->
-- [Rust program](../examples/symbolic_reachability.rs) <!-- reviewed: 71aa0435ef7d54a050186df2995e93cffaecb31534be9a65f159538b4123ff58 -->
-- [Python walkthrough and program](../bindings/python/examples/03_reachability.py) <!-- reviewed: ef05ed7b9e779c4af2f463393005de5b6cfdffbe1df2d233436810e58e6d83f5 -->
-- [Shared directed graph](reachability.svg) <!-- reviewed: 156e5685631817dd39d6b34389cbd1d76dda693bc141ea1de06846184f2d4a6d -->
+- [Rust walkthrough](examples/reachability.md) <!-- reviewed: e1bccd77d6ae7f2a945c071fab535bae147d0052350f6752a11f606ac93ed968 -->
+- [Rust program](../examples/symbolic_reachability.rs) <!-- reviewed: 1256ee4c4e8f749de730a6e94e724db978b87c9cb976d7b56cdc8375bdfd2cd2 -->
+- [Python walkthrough and program](../bindings/python/examples/03_reachability.py) <!-- reviewed: 959d0a9aea4d72b273a51ff60a2124ed1740a3ca0531376773705f423e8755ad -->
+- [Shared directed graph](reachability.svg) <!-- reviewed: b578209ba2f5bf62b32b3ba8100d7efefe03ccb8f10745da60d5af30cda85cdf -->
+- [C reachability](../bindings/c/docs/reachability.rst) <!-- reviewed: 2399b28271eb37b09b22d0955b4fefec4fdd910a5c92cc79f9e9727439ab77b4 -->
+- [C program reachability](../bindings/c/examples/reachability.c) <!-- reviewed: 7cdd197b4de9653f1be4ba24080f3f0761ada2db9cfae8f2255c9d18415b18c5 -->
 
 ## Tables
 
@@ -141,11 +171,16 @@ Python accepts Boolean rows and `update(insert=..., remove=...)`, consuming
 the old wrapper and returning its minimized replacement. The language-specific
 storage and ownership explanations must match these different interfaces.
 
+C takes row-major Boolean bytes and arrays of signed-literal cubes. Like Python,
+its update consumes the old circuit and returns a minimized replacement.
+
 ### Instances
 
-- [Rust walkthrough](examples/tables.md) <!-- reviewed: 95ef30a3554a345ca48d7806b7dc0daa86b220e12620176df5028546f63bad31 -->
-- [Rust program](../examples/table_updates.rs) <!-- reviewed: 07c298527ea7664fcbe0756273e58c7ce35fc6d1a3ec361b4f2ddf1a9c4b039f -->
-- [Python walkthrough and program](../bindings/python/examples/04_tables.py) <!-- reviewed: ef2b854203464afb300d8196c835452452d088edddb5b6234ced503fb4a4e17a -->
+- [Rust walkthrough](examples/tables.md) <!-- reviewed: f8919277261cd75a8f3275df82ae8a659b281a971c8d7e16829a85b6136dbc19 -->
+- [Rust program](../examples/table_updates.rs) <!-- reviewed: 3dfb36347e323a687c86e6d0bf1eb19955e6d305f24f6eb7b9520c2d8dd3d973 -->
+- [Python walkthrough and program](../bindings/python/examples/04_tables.py) <!-- reviewed: 332bfeafd76deb93ec93dfb50d94d0b3b0d7a6ec71e85a2eea2433205b0128f1 -->
+- [C tables](../bindings/c/docs/tables.rst) <!-- reviewed: b1eb59b11462e80ade4b6474c01f84bf8c61163ffa67dccbc76e0928cfc50b45 -->
+- [C program tables](../bindings/c/examples/tables.c) <!-- reviewed: 1d1951432101bcb405b36cdea1285704f0e91fd0979bc72c64feb4fd63b6b308 -->
 
 ## Persistence
 
@@ -159,11 +194,17 @@ Explain why separately reconstructed vtrees are not interchangeable domains.
 Bytes and vtree text can be stored independently. Rust demonstrates readers
 and writers; Python demonstrates strings and bytes and points to path helpers.
 
+C returns owned byte buffers and UTF-8 vtree text, leaving file I/O to the
+application. The tutorial restores both rules and counts their conjunction;
+equivalence and malformed input are checked separately by the C consumer tests.
+
 ### Instances
 
-- [Rust walkthrough](examples/persistence.md) <!-- reviewed: 2ef400c0cb389f79a174fce970c323a727c239a0766aad79787212480a78b79a -->
-- [Rust program](../examples/save_reload.rs) <!-- reviewed: f8a6b1df8dc3e9efc6c194d1f5cefadee649b37ef5db79e2cb89ad0e708d71da -->
-- [Python walkthrough and program](../bindings/python/examples/05_persistence.py) <!-- reviewed: 3b04acd5e833af63df54b62087672e0e54765e7bafd59d0db9e68ae7fff9996e -->
+- [Rust walkthrough](examples/persistence.md) <!-- reviewed: 8c3005e5acccf6749cd7233b42802f698448dd1d90de2bf99fb05eb9510b018d -->
+- [Rust program](../examples/save_reload.rs) <!-- reviewed: a17fb99fe7fa1d3faf36f7137fac700566ae2a417761a49e08c7353947f51ee5 -->
+- [Python walkthrough and program](../bindings/python/examples/05_persistence.py) <!-- reviewed: 2495a36faff122077a3e3a4135ec0f4ee83b46c86c2c05c920835b5766c85d42 -->
+- [C persistence](../bindings/c/docs/persistence.rst) <!-- reviewed: 89fc3a373f111bc21b4d2489890849bc6c8dbfd9e00b40267721c75de23c3bd0 -->
+- [C program persistence](../bindings/c/examples/persistence.c) <!-- reviewed: 3874298127872ef693e984c146532ff7c381b857fcb7825c2ef7fbe5772c649e -->
 
 ## Vtrees
 
@@ -175,12 +216,17 @@ and construct the same function for each. Introduce join and linear vtrees
 only after the comparison. Explain size as a consequence of grouping, without
 claiming that any heuristic guarantees small circuits.
 
+C focuses on the two balanced groupings. Its reference documents join and linear
+constructors without adding another construction to the introductory comparison.
+
 ### Instances
 
-- [Rust walkthrough](examples/vtrees.md) <!-- reviewed: 5620d581df647cdad5f226ff679c68fd71b736dfa79a7d8acc229b319ba3f98b -->
-- [Rust program](../examples/vtree_grouping.rs) <!-- reviewed: 79c4a7b229fb91c3535e73082ba99250e070fd50b04eedf1a49e8d7b17d89f57 -->
-- [Python walkthrough and program](../bindings/python/examples/06_vtrees.py) <!-- reviewed: ee729b8a4257f4ac57677740eb960c4af8914fbcdce60d99c0136228b0c0bd8e -->
-- [Shared grouping figure](vtree-grouping.svg) <!-- reviewed: b55861dc4606d7267949e4b2a7ef5b53c5a4bdca8d5d720293e0badc7840646c -->
+- [Rust walkthrough](examples/vtrees.md) <!-- reviewed: 3fc349d63f3cfd1c7a88123c21205a6eab6ed4496e5bb62efd495ed5b991c705 -->
+- [Rust program](../examples/vtree_grouping.rs) <!-- reviewed: 72aba010a8335d636e15482c780aed00ffb2e416adb376b4b80aeb7abad1e058 -->
+- [Python walkthrough and program](../bindings/python/examples/06_vtrees.py) <!-- reviewed: 6123259fa237f8a8c8430b51f61cdd913f5c6a0b820061dfcc5c2624d12e0610 -->
+- [Shared grouping figure](vtree-grouping.svg) <!-- reviewed: aa5a790a0ab8d92ed87f6fcf143fe99f96ca68bc5db321bf2645b621a596c356 -->
+- [C vtrees](../bindings/c/docs/vtrees.rst) <!-- reviewed: 8c08faf87c6e40a63d44c30825b6cd19238d7f398906b0f472840468910ef085 -->
+- [C program vtrees](../bindings/c/examples/vtrees.c) <!-- reviewed: 18e0b69174b5fe04d81e9c5b27a2ec6c3e51093a23851d8d4643340fdf9d5b3e -->
 
 ## Execution
 
@@ -196,11 +242,17 @@ copies preserving operands for retry, and counts 6 models of `(L ∨ R) ∧ E`.
 These query counts differ because the examples deliberately constrain different
 functions. Preserve that distinction when editing either lesson.
 
+C demonstrates the same retry and six-model function as Python, using a
+TididiLimits pointer and an owned error. It goes directly to the consuming
+operation failure rather than repeating the constructor-budget demonstration.
+
 ### Instances
 
-- [Rust walkthrough](examples/execution.md) <!-- reviewed: bffcba21a82218dbfd12d65eb545f490d108eef4e221c6dd6932a4954405454d -->
-- [Rust program](../examples/build_minimize_count.rs) <!-- reviewed: d6bd5453066abf1ee6bf17f6c8abc3d251c1091e16957d863a3f63d178630708 -->
-- [Python walkthrough and program](../bindings/python/examples/07_execution.py) <!-- reviewed: 05879013dc86c3c1f9c5a024264a1b89226d4410a7cd014f3024d28b2afba3ad -->
+- [Rust walkthrough](examples/execution.md) <!-- reviewed: 985edbc1da2ce69cb439e0fb9cd1457106ae8a01eb9bcd1c0c507b942797b1e5 -->
+- [Rust program](../examples/build_minimize_count.rs) <!-- reviewed: 62e42d9dde24b58fd50b01a19d13c6af7518793736328cb2d1257ce34679ef3b -->
+- [Python walkthrough and program](../bindings/python/examples/07_execution.py) <!-- reviewed: 9e28b5649d1aae35713b715fce2114e670ee34bd98b02e56ce33b160888d46e2 -->
+- [C execution](../bindings/c/docs/execution.rst) <!-- reviewed: b68e839a2b3f124840b656b65fb9ccd20218c4f5c79eb740da2de26ea64b39eb -->
+- [C program execution](../bindings/c/examples/execution.c) <!-- reviewed: 4bd5a512dad7d406d0ed60ef382d3900dfff386fbd53efcd3f649b1baecde176 -->
 
 ## Minimum cost
 
@@ -216,11 +268,17 @@ is infeasible. Rust represents infeasibility with None and feasible costs
 with Some; Python uses infinity. Python callbacks must not mutate their
 arguments. Evaluation borrows circuits, so changing prices needs no rebuild.
 
+C uses a double-valued callback table and infinity for infeasibility. It shows
+minimum costs 3 and 1 and the remote-without-encryption conflict; the remote-only
+comparison remains in the Rust and Python lessons.
+
 ### Instances
 
-- [Rust walkthrough](examples/optimization.md) <!-- reviewed: a4fa4a960687d63fb6ffc8c8dd071cf5cb7c4f3e70f7a3f0f675ccc4353a6cbd -->
-- [Rust program](../examples/minimum_cost.rs) <!-- reviewed: 140f72939fa780ee26c9e59c3b7df3bb96f1d07940d4c3786c692ea83a7144c4 -->
-- [Python walkthrough and program](../bindings/python/examples/08_minimum_cost.py) <!-- reviewed: 6aefd6fc047e39d986bf5ca5ec3a434f130af708b7f6b48734550ee29ce6d065 -->
+- [Rust walkthrough](examples/optimization.md) <!-- reviewed: dee7fd4bb19f3289a301610d4b74325b077d0f2c8bee35bd01876e69eecd4313 -->
+- [Rust program](../examples/minimum_cost.rs) <!-- reviewed: 709797710d52a145fbaf72dab43f6e0322f300b9d3fb00bf0714117fbf9870ed -->
+- [Python walkthrough and program](../bindings/python/examples/08_minimum_cost.py) <!-- reviewed: 5c6bd447fe9c8726369e4d66ce2a210533f60361d10adc7b109624ce6b87ae17 -->
+- [C minimum cost](../bindings/c/docs/minimum_cost.rst) <!-- reviewed: 5416f241a7fef812e7a66e8a5d53236824015a5e297e6e88959b5800034428d1 -->
+- [C program minimum_cost](../bindings/c/examples/minimum_cost.c) <!-- reviewed: de0fd8dfc8e5478f657d2d8843dac54496f3fa5309db0f5b87882072755abaac -->
 
 ## Statistics
 
@@ -234,11 +292,16 @@ Python traverses a `node_sizes()` snapshot and uses None when it is empty.
 Storage IDs and the chosen maximum on ties are not semantic identities.
 Python may use its XOR operator while Rust demonstrates its Boolean expansion.
 
+C reports XOR totals and the maximum pair count from an owned snapshot. It
+omits the literal comparison and represents an empty maximum by zero pairs.
+
 ### Instances
 
-- [Rust walkthrough](examples/statistics.md) <!-- reviewed: 364a391f218e32e5f60c0bd16547aaa373d8bc529f01c683d95f5fb341b30011 -->
-- [Rust program](../examples/statistic.rs) <!-- reviewed: 21f033fba1922a0b58288c80979efdd2cf741182d17c0e3a376cce88bbe7caf6 -->
-- [Python walkthrough and program](../bindings/python/examples/09_statistics.py) <!-- reviewed: ed8e5506d68db2c74cb39af3ec8c8f0e92e051d437eb6a7f084b6292bb965871 -->
+- [Rust walkthrough](examples/statistics.md) <!-- reviewed: 524e408c83bd1802cbe11e2bc611033d7b7c97eb2563a7f5f43273621ccf6250 -->
+- [Rust program](../examples/statistic.rs) <!-- reviewed: c3ced7fe8b01876068a251673521a905290535a4ba172665d70ee285ddf3b004 -->
+- [Python walkthrough and program](../bindings/python/examples/09_statistics.py) <!-- reviewed: 7b12de2327edc2c955b8bac8cd33dca31802b9bac47b5510fc454cdec7d1ef81 -->
+- [C statistics](../bindings/c/docs/statistics.rst) <!-- reviewed: c80ccb0be03a8d51492c35eeaddfc0bac5012d440dbcc36a30d0d1c87c92633a -->
+- [C program statistics](../bindings/c/examples/statistics.c) <!-- reviewed: cd12646e33b210286fc0e79ab6a38375e267409a656ac44960c4ef19bda62d64 -->
 
 ## Ownership
 
@@ -254,10 +317,16 @@ Its counter owns the diagram until finish(); Rust's counter borrows it.
 Python documents aliasing, retry after execution failure, and caller threads;
 these mechanisms need no artificial Rust equivalent.
 
+C retains a consumed handle until explicit free and reports a typed owned error
+on reuse. It documents pointer validity, output initialization, borrowed arrays,
+cleanup, callback reentry and caller synchronization. Like Python, its counter
+owns the circuit until finish; unlike Python, freeing the handle ends all checks.
+
 ### Instances
 
-- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: 37042a15836ba02e5eb38f7eff75dd9c9f87e7ca154230b88b0b007a41e4fc16 -->
-- [Python ownership guide](../bindings/python/docs/ownership.rst) <!-- reviewed: 00fc7987d60bef7cc0c71ec744439043860ba74d07d02c82002701d123aba310 -->
+- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: 53443f07dc2f9e75af49bac56ed05003a96c15808cf5708dda4adfd41fab2a6c -->
+- [Python ownership guide](../bindings/python/docs/ownership.rst) <!-- reviewed: 49e98fe18f2ea5b0d769f3b2301737e040ae22238e00b4dd9ac5296e493e94a0 -->
+- [C ownership](../bindings/c/docs/ownership.rst) <!-- reviewed: 6fa3921cd9c76acae60b9bb7d58e71544dd85f15c8a54c55815cf910628e80c4 -->
 
 ## API overview
 
@@ -270,10 +339,15 @@ The Python reference is generated from binding docstrings. The Rust overview
 also links specialized operations not yet exposed in Python. An operation
 appearing in one reference does not imply that the other language exposes it.
 
+The C header and reference are generated from the Rust binding declarations and
+their contracts. Its numeric callback algebra uses doubles; exact weighted
+evaluation has its own rational-string interface.
+
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: 2f528a2a54100bc71caece17a90538c60bcd4cd1f839fc814f46db31379cec0b -->
-- [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: a2fa21a16b4f8d4ded0682a1200f27bbc01cd2ff83c9ea5305eb5ee030c8382f -->
+- [Rust API overview](api-guide.md) <!-- reviewed: 1dcb8bcb169508574068a763ab9bf94031d9275a67bb96728b90288cde190d24 -->
+- [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: d84656b4597b1d8e16dad491f13447ac988b6f3973877b4da1eccc47d1c5e40f -->
+- [C api](../bindings/c/docs/api.rst) <!-- reviewed: 90f6d8e6e656bd253f7a1299b4fca958c9911b0b6e23c9e152c51a58dfedf54b -->
 
 ## Representation
 

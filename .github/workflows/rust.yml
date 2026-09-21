@@ -1,4 +1,4 @@
-name: Rust and Python
+name: Rust and bindings
 
 on:
   push:
@@ -135,6 +135,8 @@ jobs:
       run: cargo +1.88 test --all-targets --verbose
     - name: Documentation tests
       run: cargo +1.88 test --doc
+    - name: C binding minimum-version checks
+      run: cargo +1.88 test --locked --manifest-path bindings/c/Cargo.toml
 
   python:
     strategy:
@@ -193,9 +195,56 @@ jobs:
         name: python-${{ matrix.os }}-${{ matrix.python }}
         path: dist
 
+  c:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+    - name: Build and test C, C++, and the installed package
+      run: python bindings/c/check.py
+    - name: Check the Rust ownership boundary
+      if: runner.os == 'Linux'
+      run: |
+        cargo test --locked --manifest-path bindings/c/Cargo.toml
+        cargo clippy --locked --manifest-path bindings/c/Cargo.toml --all-targets -- -D warnings
+    - name: Check native memory ownership
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y valgrind
+        valgrind --leak-check=full --errors-for-leak-kinds=definite,indirect --error-exitcode=99 bindings/c/build/bin/consumer
+        for source in bindings/c/examples/*.c; do
+          valgrind --leak-check=full --errors-for-leak-kinds=definite,indirect --error-exitcode=99 "bindings/c/build/bin/$(basename "$source" .c)"
+        done
+    - name: Build the executable C guide
+      if: runner.os == 'Linux'
+      run: |
+        python -m pip install -r bindings/c/docs/requirements.txt
+        python bindings/c/check.py --docs
+    - name: Save C documentation
+      if: runner.os == 'Linux' && github.event_name != 'pull_request'
+      uses: actions/upload-artifact@v4
+      with:
+        name: c-documentation
+        path: bindings/c/build/docs
+    - name: Save the native package
+      uses: actions/upload-artifact@v4
+      with:
+        name: c-${{ matrix.os }}
+        path: bindings/c/build/package
+
   documentation:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build, msrv, python, documentation-scenarios]
+    needs: [build, msrv, python, c, documentation-scenarios]
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -215,6 +264,10 @@ jobs:
       with:
         name: python-documentation
         path: site/python
+    - uses: actions/download-artifact@v4
+      with:
+        name: c-documentation
+        path: site/c
     - uses: actions/upload-pages-artifact@v4
       with:
         path: site
@@ -224,7 +277,7 @@ jobs:
 
   release-documentation:
     if: github.event_name == 'release'
-    needs: [build, msrv, python, documentation-scenarios]
+    needs: [build, msrv, python, c, documentation-scenarios]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -240,6 +293,10 @@ jobs:
       with:
         name: python-documentation
         path: documentation/python
+    - uses: actions/download-artifact@v4
+      with:
+        name: c-documentation
+        path: documentation/c
     - name: Archive the documentation
       env:
         RELEASE_TAG: ${{ github.event.release.tag_name }}

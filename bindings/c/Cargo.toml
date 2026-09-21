@@ -1,0 +1,26 @@
+[package]
+name = "tididi-c"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+description = "C interface to Tree Decision Diagrams"
+repository = "https://github.com/Tractables/tididi"
+publish = false
+autotests = false
+
+[lib]
+name = "tididi_c"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+tididi = { path = "../.." }
+num-rational = "0.4"
+num-traits = "0.2"
+self_cell = "1.2"
+
+[build-dependencies]
+cbindgen = "0.29"
+
+[dev-dependencies]
+tididi = { path = "../..", features = ["testing"] }

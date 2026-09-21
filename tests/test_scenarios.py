@@ -54,6 +54,14 @@ class ScenarioTests(unittest.TestCase):
         self.write("docs/figures/new.svg", "<svg/>\n")
         self.assertIn("new.svg: missing hidden scenario reference", "\n".join(check(self.root)))
 
+    def test_c_lessons_are_discovered_but_generated_reference_is_not(self):
+        self.write("bindings/c/docs/_generated/functions.rst", "Generated reference")
+        self.assertEqual(check(self.root), [])
+        for name in ("docs/new.rst", "examples/new.c", "examples/helper.h", "README.rst"):
+            path = "bindings/c/" + name
+            self.write(path, "An unregistered lesson")
+            self.assertIn(path + ": missing hidden scenario reference", "\n".join(check(self.root)))
+
     def test_backlink_is_required_in_both_directions(self):
         self.edit("docs/scenarios.md", "- [Example](../README.md)", "- [Example](../other.md)")
         self.write("other.md", "An unlinked instance.\n")

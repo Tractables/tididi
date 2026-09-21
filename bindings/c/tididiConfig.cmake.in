@@ -1,0 +1,18 @@
+@PACKAGE_INIT@
+if(NOT TARGET tididi::tididi)
+  add_library(tididi::tididi SHARED IMPORTED)
+  set_target_properties(tididi::tididi PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
+  if(WIN32)
+    set_target_properties(tididi::tididi PROPERTIES
+      IMPORTED_LOCATION "@PACKAGE_CMAKE_INSTALL_BINDIR@/tididi_c.dll"
+      IMPORTED_IMPLIB "@PACKAGE_CMAKE_INSTALL_LIBDIR@/tididi_c.dll.lib")
+  else()
+    set_target_properties(tididi::tididi PROPERTIES
+      IMPORTED_LOCATION "@PACKAGE_CMAKE_INSTALL_LIBDIR@/${CMAKE_SHARED_LIBRARY_PREFIX}tididi_c${CMAKE_SHARED_LIBRARY_SUFFIX}")
+  endif()
+  if(UNIX AND NOT APPLE)
+    set_target_properties(tididi::tididi PROPERTIES IMPORTED_NO_SONAME TRUE)
+  endif()
+endif()
+check_required_components(tididi)

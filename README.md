@@ -13,7 +13,9 @@ without listing them. Build a circuit once, then combine it with other circuits
 or query it as your inputs change.
 
 For Python, start with the [Python guide](https://tractables.github.io/tididi/python/)
-and [installation instructions](bindings/python/README.rst).
+and [installation instructions](bindings/python/README.rst). For C or C++, use
+the [C guide](https://tractables.github.io/tididi/c/) and
+[build instructions](bindings/c/README.rst).
 
 TDDs can be much smaller in practice than widely used binary decision diagrams.
 They can be made canonical, so equivalent functions have the same diagram.

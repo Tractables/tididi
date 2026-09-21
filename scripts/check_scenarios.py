@@ -79,11 +79,12 @@ def teaching_files(root):
     paths = {Path(p) for p in ["README.md", "src/lib.rs", "src/guide.rs", "bindings/python/README.rst"]}
     patterns = ["docs/**/*.md", "docs/**/*.svg", "examples/**/*.rs",
                 "bindings/python/docs/**/*.rst", "bindings/python/examples/**/*.py",
-                "bindings/python/examples/**/*.rst"]
+                "bindings/python/examples/**/*.rst", "bindings/c/README.rst",
+                "bindings/c/docs/**/*.rst", "bindings/c/examples/**/*.c", "bindings/c/examples/**/*.h"]
     for pattern in patterns:
         for path in root.glob(pattern):
             relative = path.relative_to(root)
-            if any(part in {"_build", "_static", "tutorials", "__pycache__"} for part in relative.parts):
+            if any(part in {"_build", "_static", "_generated", "tutorials", "__pycache__"} for part in relative.parts):
                 continue
             if relative == RECORD or path.name in {"logo.svg", "sg_execution_times.rst"}:
                 continue
