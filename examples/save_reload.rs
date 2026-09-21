@@ -1,3 +1,5 @@
+// scenario: docs/scenarios.md#persistence
+
 //! Save two diagrams, restore their shared domain, and combine them.
 //! Run with `cargo run --example save_reload`.
 

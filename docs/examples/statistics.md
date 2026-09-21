@@ -1,3 +1,5 @@
+<!-- scenario: docs/scenarios.md#statistics -->
+
 # Inspect the stored circuit
 
 Find the circuit node with the most child pairs and the vtree level where

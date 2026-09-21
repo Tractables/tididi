@@ -1,3 +1,5 @@
+<!-- scenario: docs/scenarios.md#api-overview -->
+
 # API overview
 
 A [`Tdd`](crate::Tdd) represents a Boolean function. Start with the

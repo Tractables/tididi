@@ -1,3 +1,5 @@
+// scenario: docs/scenarios.md#probability
+
 //! Compile a query and evidence once, then reevaluate them with new probabilities.
 //! Run with `cargo run --example probabilistic_query`.
 

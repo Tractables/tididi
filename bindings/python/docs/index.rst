@@ -1,3 +1,5 @@
+.. scenario: docs/scenarios.md#reading-order
+
 tididi for Python
 =====================
 

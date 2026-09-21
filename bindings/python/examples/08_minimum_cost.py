@@ -1,3 +1,5 @@
+# scenario: docs/scenarios.md#minimum-cost
+
 """
 A custom minimum-cost calculation
 =====================================

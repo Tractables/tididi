@@ -1,3 +1,5 @@
+<!-- scenario: docs/scenarios.md#vtrees -->
+
 # Choose a variable grouping
 
 The same Boolean function can need different amounts of storage under different

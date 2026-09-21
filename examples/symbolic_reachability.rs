@@ -1,3 +1,5 @@
+// scenario: docs/scenarios.md#reachability
+
 //! Compute reachable states using image, renaming and semantic equivalence.
 //! Run with `cargo run --example symbolic_reachability`.
 

@@ -12,6 +12,18 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  documentation-scenarios:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+    - name: Check shared teaching scenarios
+      run: |
+        python3 -m unittest discover -s tests -p test_scenarios.py
+        python3 scripts/check_scenarios.py
+
   build:
     strategy:
       fail-fast: false
@@ -183,7 +195,7 @@ jobs:
 
   documentation:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build, msrv, python]
+    needs: [build, msrv, python, documentation-scenarios]
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -212,7 +224,7 @@ jobs:
 
   release-documentation:
     if: github.event_name == 'release'
-    needs: [build, msrv, python]
+    needs: [build, msrv, python, documentation-scenarios]
     runs-on: ubuntu-latest
     permissions:
       contents: write

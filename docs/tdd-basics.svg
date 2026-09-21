@@ -1,3 +1,5 @@
+<!-- scenario: docs/scenarios.md#representation -->
+
 <svg xmlns="http://www.w3.org/2000/svg" width="820" height="360" viewBox="0 0 820 360" role="img" aria-labelledby="title description">
   <title id="title">A variable tree and the TDD for exclusive disjunction</title>
   <desc id="description">The vtree splits x on the left from y on the right. The TDD output f is the disjunction of two pairs: x with not y, and not x with y. Each pair takes one child from each variable's leaf level.</desc>

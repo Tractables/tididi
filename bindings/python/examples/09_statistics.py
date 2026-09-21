@@ -1,3 +1,5 @@
+# scenario: docs/scenarios.md#statistics
+
 """
 Inspecting circuit size
 ===========================

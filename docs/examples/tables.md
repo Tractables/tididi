@@ -1,3 +1,5 @@
+<!-- scenario: docs/scenarios.md#tables -->
+
 # Maintaining a table of allowed choices
 
 Suppose an application stores the permission combinations it allows:

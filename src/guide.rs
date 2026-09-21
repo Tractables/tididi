@@ -1,3 +1,5 @@
+// scenario: docs/scenarios.md#reading-order
+
 //! The [API overview](api) groups circuit operations and links to their specifications.
 //! The [worked examples](examples) combine these operations in applications.
 //! Read the [data model](model) for the representation or the

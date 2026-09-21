@@ -1,3 +1,5 @@
+// scenario: docs/scenarios.md#ownership
+
 //! The `Tdd` struct.
 //!
 //! A node's pair list is unordered: the node's identity is its set of pairs,

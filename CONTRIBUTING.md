@@ -12,6 +12,8 @@ python3 tests/rendered_docs.py target/doc --unbundled
 python3 scripts/prepare_docs.py target/doc
 python3 tests/rendered_docs.py target/doc
 python3 tests/package_examples.py --self-test
+python3 scripts/check_scenarios.py
+python3 -m unittest discover -s tests -p test_scenarios.py
 ```
 
 The README snippet matches the tested crate example; `docs/` is compiled into
@@ -34,6 +36,15 @@ Set `TIDIDI_FUZZ_SEED` to replay a run and `TIDIDI_FUZZ_SECONDS` to set its dura
 Changes to packaging, examples or their displayed output also need `cargo package`
 followed by `python3 tests/package_examples.py`, which runs each example as a
 standalone consumer of the crate archive.
+
+## Shared teaching scenarios
+
+Hidden `scenario:` comments link teaching material to its script and complete
+instance list in [docs/scenarios.md](docs/scenarios.md). When changing a lesson,
+update that script as needed and review its Rust, Python and figure instances.
+Then run `python3 scripts/check_scenarios.py --review <scenario-id>` to record
+that review. CI rejects missing links, unregistered lessons and stale reviews;
+it does not establish semantic agreement. Keep running the example checks.
 
 ## Python bindings
 

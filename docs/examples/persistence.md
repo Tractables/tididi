@@ -1,3 +1,5 @@
+<!-- scenario: docs/scenarios.md#persistence -->
+
 # Save, reload, and combine diagrams
 
 A service might compile its rules once and load them for each new session.

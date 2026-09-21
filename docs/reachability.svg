@@ -1,3 +1,5 @@
+<!-- scenario: docs/scenarios.md#reachability -->
+
 <svg xmlns="http://www.w3.org/2000/svg" width="860" height="400" viewBox="0 0 860 400" role="img" aria-labelledby="title description">
 <title id="title">Reachability from node 0 in a 16-node graph</title>
 <desc id="description">Nodes 0 through 11 form three rows of four nodes, with edges right and down except that the top-right edge points from 3 to 2. Node 3 also points to 7 and has no incoming edges. Return edges go from 4 to 0, 5 to 1, 10 to 6, and 11 to 7. A disconnected cycle follows 12 to 13 to 15 to 14 to 12. Node 0 is the start.</desc>

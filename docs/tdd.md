@@ -1,3 +1,5 @@
+<!-- scenario: docs/scenarios.md#representation -->
+
 # Tree Decision Diagrams
 
 A Tree Decision Diagram represents a Boolean function by decomposing it along

@@ -1,3 +1,5 @@
+<!-- scenario: docs/scenarios.md#architecture -->
+
 # Architecture
 
 This reference describes the storage, passes, and invariants used by the

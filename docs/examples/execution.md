@@ -1,3 +1,5 @@
+<!-- scenario: docs/scenarios.md#execution -->
+
 # Control execution and release working memory
 
 Ordinary operations reuse scratch buffers attached to the vtree. Use an

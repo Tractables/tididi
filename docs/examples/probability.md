@@ -1,3 +1,5 @@
+<!-- scenario: docs/scenarios.md#probability -->
+
 # Reevaluate a probability model
 
 Suppose rain and a sprinkler independently make the grass wet. After observing

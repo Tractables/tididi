@@ -1,3 +1,5 @@
+# scenario: docs/scenarios.md#reachability
+
 """
 Reachability in a directed graph
 ====================================

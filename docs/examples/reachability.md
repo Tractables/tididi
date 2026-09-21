@@ -1,3 +1,5 @@
+<!-- scenario: docs/scenarios.md#reachability -->
+
 # Explore reachable states
 
 Starting at node 0, which nodes can we reach by following these arrows?

@@ -1,3 +1,5 @@
+# scenario: docs/scenarios.md#probability
+
 """
 Probabilities under changing assumptions
 ============================================

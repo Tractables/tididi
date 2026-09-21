@@ -1,3 +1,5 @@
+// scenario: docs/scenarios.md#minimum-cost
+
 //! Find the minimum cost of a valid backup configuration.
 //! Run with `cargo run --example minimum_cost`.
 

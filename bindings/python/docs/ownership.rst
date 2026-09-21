@@ -1,3 +1,5 @@
+.. scenario: docs/scenarios.md#ownership
+
 Using and reusing circuits
 ==============================
 

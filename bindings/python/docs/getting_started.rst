@@ -1,3 +1,5 @@
+.. scenario: docs/scenarios.md#first-circuit
+
 A first circuit
 ===================
 

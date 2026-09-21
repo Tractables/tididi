@@ -1,3 +1,5 @@
+.. scenario: docs/scenarios.md#representation
+
 Functions, vtrees, and circuit size
 =======================================
 

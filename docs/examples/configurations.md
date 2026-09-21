@@ -1,3 +1,5 @@
+<!-- scenario: docs/scenarios.md#configurations -->
+
 # Count and query valid configurations
 
 Suppose a backup service offers four on/off options: local backups, remote

@@ -1,3 +1,5 @@
+<!-- scenario: docs/scenarios.md#first-circuit -->
+
 <p align="center">
   <img src="docs/logo.svg" alt="tididi" width="400">
 </p>

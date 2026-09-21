@@ -1,3 +1,5 @@
+<!-- scenario: docs/scenarios.md#minimum-cost -->
+
 # Find the cost of the cheapest configuration
 
 The [configuration walkthrough](crate::guide::examples::configurations) counts

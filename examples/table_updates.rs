@@ -1,3 +1,5 @@
+// scenario: docs/scenarios.md#tables
+
 //! Build and maintain a table of permitted access combinations.
 use std::sync::Arc;
 

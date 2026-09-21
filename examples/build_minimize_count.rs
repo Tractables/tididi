@@ -1,3 +1,6 @@
+// scenario: docs/scenarios.md#configurations
+// scenario: docs/scenarios.md#execution
+
 //! Count backup configurations, find a solution, and apply an observation.
 //! Run with `cargo run --example build_minimize_count`.
 

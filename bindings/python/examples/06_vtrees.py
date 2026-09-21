@@ -1,3 +1,5 @@
+# scenario: docs/scenarios.md#vtrees
+
 """
 Choosing a variable grouping
 ================================

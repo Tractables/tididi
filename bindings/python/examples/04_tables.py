@@ -1,3 +1,5 @@
+# scenario: docs/scenarios.md#tables
+
 """
 Tables and updates
 ======================

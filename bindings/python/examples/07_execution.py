@@ -1,3 +1,5 @@
+# scenario: docs/scenarios.md#execution
+
 """
 Errors, limits, and retained scratch
 ========================================
