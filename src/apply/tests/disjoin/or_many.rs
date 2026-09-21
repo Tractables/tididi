@@ -1,6 +1,7 @@
 //! `or_many` against a fold of `or`: the same function, fewer complements.
 
 use std::sync::Arc;
+use crate::test_helpers::assert_canonical;
 
 use crate::build::constant_zero;
 use crate::vtree::Vtree;
@@ -33,6 +34,7 @@ fn or_many_equals_a_fold_of_or() {
             .reduce(|a, b| or(a, b).expect("a disjunction"))
             .expect("a nonempty set");
         let many = or_many(operands).expect("a disjunction");
+        assert_canonical(&many);
         assert!(many.equivalent(&folded).expect("comparable"), "{} against {}", many.model_count().unwrap(), folded.model_count().unwrap());
     }
 }
@@ -49,6 +51,7 @@ fn or_many_is_no_larger_than_a_fold() {
             .reduce(|a, b| or(a, b).expect("a disjunction"))
             .expect("a nonempty set");
         let many = or_many(operands).expect("a disjunction");
+        assert_canonical(&many);
         assert_eq!(many.pair_count(), folded.pair_count(), "both results are minimized, so both are canonical");
     }
 }
@@ -59,6 +62,7 @@ fn a_false_operand_drops_out() {
     let v = vtree(4);
     let f = Tdd::cube(&v, [1, 2]).expect("a cube");
     let with_zero = or_many([f.clone(), constant_zero(eng, &v)]).expect("a disjunction");
+    assert_canonical(&with_zero);
     assert!(with_zero.equivalent(&f).expect("comparable"));
 }
 
@@ -67,6 +71,7 @@ fn every_operand_false_is_false() {
     let eng = &crate::Engine::new();
     let v = vtree(4);
     let result = or_many([constant_zero(eng, &v), constant_zero(eng, &v)]).expect("a disjunction");
+    assert_canonical(&result);
     assert!(result.is_zero());
 }
 
@@ -75,6 +80,7 @@ fn one_operand_is_that_operand() {
     let v = vtree(4);
     let f = Tdd::cube(&v, [1, -3]).expect("a cube");
     let result = or_many([f.clone()]).expect("a disjunction");
+    assert_canonical(&result);
     assert!(result.equivalent(&f).expect("comparable"));
 }
 

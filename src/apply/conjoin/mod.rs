@@ -90,7 +90,7 @@ pub(crate) fn conjoin_owned(
     // Checked before the swap and the self-conjunction shortcut, both of which
     // can return without ever reaching `apply_and_fallible_inner`.
     crate::apply::check_vtree(&f, &g)?;
-    crate::apply::prepare_weights([&mut f, &mut g])?;
+    crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
     Ok(conjoin_checked(eng, f, g, marginalize_targets, QuantifiedSubtrees::default())?.0)
 }
 
@@ -107,7 +107,7 @@ pub(crate) fn conjoin_quantifying(
     whole: &[bool],
 ) -> Result<(Tdd, bool), OperationError> {
     crate::apply::check_vtree(&f, &g)?;
-    crate::apply::prepare_weights([&mut f, &mut g])?;
+    crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
     conjoin_checked(eng, f, g, None, QuantifiedSubtrees::new(Some(whole)))
 }
 
@@ -243,7 +243,7 @@ impl crate::Engine {
     ) -> Result<Tdd, OperationError> {
         crate::apply::check_vtree(&f, &g)?;
         f.check_level_indices(targets)?;
-        crate::apply::prepare_weights([&mut f, &mut g])?;
+        crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
         let _op = self.limits().begin_operation();
         // The apply core asks "is level `t` a target?" once per level it emits,
         // so the membership array is derived here, once, at the cost the caller

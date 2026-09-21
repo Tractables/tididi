@@ -29,7 +29,7 @@
 //! it discharges that debt before it starts.
 
 use crate::Engine;
-use crate::limits::{OperationError, PollGate};
+use crate::limits::{Charged, OperationError, PollGate, Transient};
 use crate::reduce::{ReductionPlan};
 use crate::diagram::{EncodedChildRef, ChildDecoder, ChildPair, Tdd};
 use crate::diagram::sort_pairs;
@@ -58,6 +58,10 @@ const TRUE_PAIR: ChildPair = ChildPair {
 struct Runs<T> {
     starts: Vec<u32>,
     items: Vec<T>,
+}
+
+impl<T> Charged for Runs<T> {
+    fn charged_bytes(&self) -> u64 { self.starts.charged_bytes() + self.items.charged_bytes() }
 }
 
 impl<T: Copy> Runs<T> {
@@ -209,19 +213,21 @@ pub(super) fn exists_leaves_structural(
             }
             Role::Split => {
                 let (left, right) = vtree.children(level);
-                let (below_left, below_right) = (remap[left.idx()].take(), remap[right.idx()].take());
+                let below_left = remap[left.idx()].take().map(|v| Transient::new(lim, v));
+                let below_right = remap[right.idx()].take().map(|v| Transient::new(lim, v));
                 if below_left.is_none() && below_right.is_none() {
                     None
                 } else {
-                    regroup(&mut work, &mut tdd, level, below_left.as_ref(), below_right.as_ref())?
+                    regroup(&mut work, &mut tdd, level, below_left.as_deref(), below_right.as_deref())?
                 }
             }
         };
     }
 
     if let Some(root_cells) = remap[root_vi.idx()].take() {
-        let out_pairs =
-            union_of_root_cells(&mut work, &tdd, root_vi, root_cells.get(tdd.output.local.idx()))?;
+        let root_cells = Transient::new(lim, root_cells);
+        let out_pairs = Transient::new(lim,
+            union_of_root_cells(&mut work, &tdd, root_vi, root_cells.get(tdd.output.local.idx()))?);
         // Append the union node and point the output at it (prune drops the rest).
         let new_out = tdd.levels[root_vi.idx()].push_node_on(eng, &out_pairs)?;
         tdd.output.local = new_out;
@@ -463,6 +469,9 @@ fn regroup(
         }
     }
 
+    lim.discard(atom_index);
+    lim.discard(last_owner);
+
     // Owner sets, packed one run per atom: the entries were produced in
     // increasing owner order, so scattering them by atom keeps each run sorted.
     let mut starts = Vec::new();
@@ -484,6 +493,10 @@ fn regroup(
         owners[*slot as usize] = owner;
         *slot += 1;
     }
+
+    lim.discard(entries);
+    lim.discard(cursor);
+    lim.discard(owner_count);
 
     // Group atoms by owner set → one new cell per distinct owner set, found by
     // hashing the run and comparing it against the cells that hash alike.
@@ -530,7 +543,13 @@ fn regroup(
     // named, and the level above would hand back its own pairs.
     let unchanged = n_cells as usize == n_nodes && fanout.len() == n_nodes;
 
-    let mut new_nodes = Runs::pack(lim, n_cells as usize, &cell_pairs, TRUE_PAIR)?;
+    lim.discard(atoms);
+    lim.discard(starts);
+    lim.discard(owners);
+    lim.discard(cell_atom);
+    for candidates in by_hash.values_mut() { lim.discard(std::mem::take(candidates)); }
+    lim.discard(by_hash);
+    let mut new_nodes = Transient::new(lim, Runs::pack(lim, n_cells as usize, &cell_pairs, TRUE_PAIR)?);
     lim.discard(cell_pairs);
     write_level(work, tdd, parent, &mut new_nodes)?;
     if unchanged {

@@ -38,30 +38,24 @@ impl Tdd {
     /// [`minimize`](Self::minimize) step follows it, unlike a diagram
     /// assembled through [`TddBuilder`](crate::diagram::TddBuilder).
     ///
-    /// Cost is one sort of the rows and then one pass over the vtree. A vtree
-    /// node with constrained variables on both sides costs a pass over the
-    /// rows, and fewer than `vars.len()` nodes are like that; a node with them
-    /// on one side costs a pass over its own width, and a node with none costs
-    /// nothing. Working memory is twice the packed rows while they are being
-    /// sorted and once afterwards, plus one index per row for each subtree
-    /// that is finished and not yet used by its parent — at most the vtree's
-    /// depth of those at once.
+    /// Construction sorts the packed rows and groups their projections while
+    /// walking the vtree bottom-up. Small projections use counting or radix
+    /// sorting; wider ones require comparisons. Work depends on row count,
+    /// row width and how the vtree groups constrained variables. Temporary
+    /// storage includes packed rows, sorting scratch and unfinished child maps.
     ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Tdd, Vtree};
     /// use tididi::vtree::VarId;
     ///
-    /// // Pairs of two-bit numbers: bits 0 and 1 of a row hold the first
-    /// // number, bits 2 and 3 the second, high bit first within each.
-    /// let vtree = Arc::new(Vtree::linear(5));
-    /// let vars: Vec<VarId> = (1..=4).map(VarId).collect();
-    /// let row = |a: u64, b: u64| (a >> 1) | ((a & 1) << 1) | ((b >> 1) << 2) | ((b & 1) << 3);
-    /// let rows = [row(0, 1), row(1, 2), row(2, 0)];
-    ///
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let vars = [VarId(1), VarId(2), VarId(3)];
+    /// // Bit 0 is read access, bit 1 write access, bit 2 sharing.
+    /// let rows = [0b001, 0b011, 0b101, 0b011];
     /// let f = Tdd::from_models(&vtree, &vars, &rows)?;
-    /// // Three pairs, and the fifth variable is free.
-    /// assert_eq!(f.model_count()?, 6u32.into());
+    /// println!("Distinct permission sets: {}", f.model_count()?);
+    /// # assert_eq!(f.model_count()?, 3u32.into());
     /// # tididi::test_helpers::assert_canonical(&f);
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
@@ -689,7 +683,7 @@ fn group_rows(
             write_completion(&mut hasher, row, &scratch.outside);
             j += 1;
         }
-        let atom = atom_of_run(scratch, sorted, w, hasher.finish(), i, j);
+        let atom = atom_of_run(lim, scratch, sorted, w, hasher.finish(), i, j)?;
         for &k in &scratch.order[i..j] {
             of_row[k as usize] = atom as u32;
         }
@@ -791,13 +785,14 @@ fn write_completion(hasher: &mut FxHasher, row: &[u64], outside: &[u64]) {
 /// the run lists those completions in the order the whole-row sort put them
 /// in. Two runs are the same atom exactly when those lists match.
 fn atom_of_run(
+    lim: &Limits,
     scratch: &mut Scratch,
     sorted: &[u64],
     w: usize,
     hash: u64,
     i: usize,
     j: usize,
-) -> usize {
+) -> Result<usize, OperationError> {
     let first = scratch.head.get(&hash).copied().unwrap_or(u32::MAX);
     let mut candidate = first;
     while candidate != u32::MAX {
@@ -805,16 +800,17 @@ fn atom_of_run(
         if len as usize == j - i
             && same_completions(scratch, sorted, w, start as usize, len as usize, i)
         {
-            return candidate as usize;
+            return Ok(candidate as usize);
         }
         candidate = scratch.next[candidate as usize];
     }
     let atom = scratch.runs.len();
-    scratch.runs.push((i as u32, (j - i) as u32));
-    scratch.next.push(first);
+    lim.try_push(&mut scratch.runs, (i as u32, (j - i) as u32))?;
+    lim.try_push(&mut scratch.next, first)?;
+    lim.reserve_map(&mut scratch.head, 1)?;
     scratch.head.insert(hash, atom as u32);
-    scratch.leaf_values.push(0);
-    atom
+    lim.try_push(&mut scratch.leaf_values, 0)?;
+    Ok(atom)
 }
 
 /// Whether the run at `start` and the one at `other`, both `len` rows long,
@@ -885,7 +881,7 @@ fn store_level(
         while at < scratch.pairs.len() && (scratch.pairs[at] >> 64) as usize == a {
             let packed = scratch.pairs[at] as u64;
             let pair = ChildPair::new(NodeIdx((packed >> 32) as u32), NodeIdx(packed as u32));
-            scratch.pair_list.push(pair);
+            lim.try_push(&mut scratch.pair_list, pair)?;
             at += 1;
         }
         debug_assert!(!scratch.pair_list.is_empty(), "every atom is realized by a row");

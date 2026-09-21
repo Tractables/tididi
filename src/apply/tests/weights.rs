@@ -236,7 +236,7 @@ fn ternary_weight_conflicts_leave_unweighted_operands_unmodified() {
         operands[(missing + 1) % 3] = weighted(Tdd::one(&tree), 1, Arithmetic::ExactRational);
         operands[(missing + 2) % 3] = weighted(Tdd::one(&tree), 2, Arithmetic::ExactRational);
         let [a, b, c] = &mut operands;
-        assert_eq!(crate::apply::prepare_weights([a, b, c]), Err(OperationError::IncompatibleWeights));
+        assert_eq!(crate::apply::prepare_weights(&mut [a, b, c]), Err(OperationError::IncompatibleWeights));
         assert!(operands[missing].weights().is_none());
         for f in &operands { assert_canonical(f); }
     }

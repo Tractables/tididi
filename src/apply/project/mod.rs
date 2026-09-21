@@ -42,25 +42,21 @@ pub(crate) fn exists_vars_on(eng: &Engine, f: Tdd, vars: &[VarId]) -> Result<Tdd
     exists_targets_on(eng, f, &targets, &[])
 }
 
-/// Validate the entire request and retain each leaf once in first-occurrence order.
-pub(super) fn quantification_targets(eng: &Engine, tree: &Vtree, vars: &[VarId]) -> Result<Vec<VtreeIdx>, OperationError> {
+/// Validate the entire request and retain each leaf once.
+pub(super) fn quantification_targets(eng: &Engine, vtree: &Vtree, vars: &[VarId]) -> Result<Vec<VtreeIdx>, OperationError> {
     let lim = eng.limits();
     lim.check_stop()?;
     let mut gate = lim.gate();
     let mut targets = Vec::new();
-    for (position, &var) in vars.iter().enumerate() {
-        let leaf = tree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
-        lim.try_push(&mut targets, (leaf, position))?;
+    for &var in vars {
+        let leaf = vtree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
+        lim.try_push(&mut targets, leaf)?;
         gate.poll(1)?;
     }
-    targets.sort_unstable_by_key(|&(leaf, position)| (leaf, position));
-    targets.dedup_by_key(|(leaf, _)| *leaf);
-    targets.sort_unstable_by_key(|&(_, position)| position);
+    targets.sort_unstable();
+    targets.dedup();
     gate.flush()?;
-    let mut leaves = Vec::new();
-    lim.reserve_exact(&mut leaves, targets.len())?;
-    leaves.extend(targets.into_iter().map(|(leaf, _)| leaf));
-    Ok(leaves)
+    Ok(targets)
 }
 
 /// Quantify prepared leaves without repeating validation. `collapsed` is

@@ -30,7 +30,7 @@ pub(crate) fn disjoin_owned(eng: &Engine, mut f: Tdd, mut g: Tdd) -> Result<Tdd,
     use crate::apply::conjoin::conjoin_owned;
 
     crate::apply::check_vtree(&f, &g)?;
-    crate::apply::prepare_weights([&mut f, &mut g])?;
+    crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
     f.require_structure()?;
     g.require_structure()?;
     let _op = eng.limits().begin_operation();
@@ -76,7 +76,9 @@ pub(crate) fn nor_many_owned(eng: &Engine, operands: Vec<Tdd>) -> Result<Tdd, Op
     if complements.is_empty() {
         // Every operand is false, so every complement is true.
         let f = a_false_one.ok_or(OperationError::EmptyOperands)?;
-        return Ok(crate::build::constant_one(eng, &f.vtree));
+        let mut out = crate::build::constant_one(eng, &f.vtree);
+        out.weights = f.weights;
+        return Ok(out);
     }
     fold_conjunction(eng, complements)
 }
@@ -86,13 +88,14 @@ pub(crate) fn nor_many_owned(eng: &Engine, operands: Vec<Tdd>) -> Result<Tdd, Op
 /// and contributes nothing to the conjunction.
 fn complements_of(
     eng: &Engine,
-    operands: Vec<Tdd>,
+    mut operands: Vec<Tdd>,
 ) -> Result<(Vec<Tdd>, Option<Tdd>), OperationError> {
-    let mut complements: Vec<Tdd> = Vec::with_capacity(operands.len());
+    crate::apply::prepare_weights(&mut operands)?;
+    for f in &operands { f.require_structure()?; }
+    let mut complements: Vec<Tdd> = Vec::new();
+    eng.limits().reserve_exact(&mut complements, operands.len())?;
     let mut a_false_one: Option<Tdd> = None;
-    for mut f in operands {
-        crate::apply::prepare_weights([&mut f])?;
-        f.require_structure()?;
+    for f in operands {
         if f.is_zero() {
             a_false_one = Some(f);
             continue;
@@ -104,12 +107,15 @@ fn complements_of(
 
 /// Conjoin a non-empty operand list as a balanced tree, minimizing each
 /// result. A chain would touch the growing conjunction once per operand and so
-/// cost the square of the operand count.
+/// repeatedly combine a large intermediate with a small operand.
 fn fold_conjunction(eng: &Engine, mut operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
     use crate::apply::conjoin::conjoin_owned;
+    use crate::limits::Charged;
     debug_assert!(!operands.is_empty());
     while operands.len() > 1 {
-        let mut next = Vec::with_capacity(operands.len().div_ceil(2));
+        let mut next = Vec::new();
+        eng.limits().reserve_exact(&mut next, operands.len().div_ceil(2))?;
+        let operand_bytes = operands.charged_bytes();
         let mut it = operands.into_iter();
         while let Some(a) = it.next() {
             match it.next() {
@@ -121,11 +127,24 @@ fn fold_conjunction(eng: &Engine, mut operands: Vec<Tdd>) -> Result<Tdd, Operati
                 None => next.push(a),
             }
         }
+        drop(it);
+        eng.limits().release_bytes(operand_bytes);
         operands = next;
     }
     let mut result = operands.pop().expect("a non-empty operand list");
+    eng.limits().discard(operands);
     eng.reduce(&mut result, ReductionPlan::default())?;
     Ok(result)
+}
+
+/// Collect the caller's operands without turning allocator refusal into a panic.
+fn collect_operands(operands: impl IntoIterator<Item = Tdd>) -> Result<Vec<Tdd>, OperationError> {
+    let mut out = Vec::new();
+    for operand in operands {
+        out.try_reserve(1).map_err(|_| OperationError::OverBudget)?;
+        out.push(operand);
+    }
+    Ok(out)
 }
 
 /// Return the disjunction of two structural diagrams sharing a vtree allocation.
@@ -165,16 +184,14 @@ pub fn or(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
 
 /// Return the disjunction of any number of diagrams sharing a vtree allocation.
 ///
-/// **Prefer this to folding [`or`]** whenever more than two operands are in
-/// hand. A disjunction is `!(!f ^ !g)`, so a fold of `n` operands complements
-/// `3(n - 1)` times and two of every three of those complements fall on the
-/// running disjunction, the largest diagram in the fold. This builds
-/// `!f_1 ^ ... ^ !f_n` and complements once, which is `n + 1` complements on
-/// the operands alone. The conjunction in the middle is where a disjunction
-/// of diagrams is cheap, and it is folded as a balanced tree.
+/// Complements each nonfalse operand, conjoins those complements in a balanced
+/// tree, then complements the result. This avoids repeatedly complementing a
+/// running disjunction, as a fold of [`or`] would. Intermediate sizes still
+/// depend on the operands and their grouping.
 ///
 /// All operands are consumed. The result is minimized. A false operand is
-/// dropped; if every operand is false, so is the result.
+/// dropped after checking weight compatibility; if every operand is false,
+/// so is the result. The result retains the agreed weights, as in [`or`].
 ///
 /// ```
 /// use std::sync::Arc;
@@ -196,7 +213,7 @@ pub fn or(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
 /// [`OperationError::EmptyOperands`] when no operand is given, since the
 /// vtree of the result would be unknown; the other errors follow [`or`].
 pub fn or_many(operands: impl IntoIterator<Item = Tdd>) -> Result<Tdd, OperationError> {
-    let operands: Vec<Tdd> = operands.into_iter().collect();
+    let operands = collect_operands(operands)?;
     let Some(first) = operands.first() else {
         return Err(OperationError::EmptyOperands);
     };
@@ -209,15 +226,13 @@ pub fn or_many(operands: impl IntoIterator<Item = Tdd>) -> Result<Tdd, Operation
 
 /// The conjunction of the operands' complements, `!f_1 ^ ... ^ !f_n`.
 ///
-/// The shape a Tp-compilation consumer issues for a rule body set,
-/// `mu_a' = mu_a ^ (^_r !body_r)`, and [`or_many`] without its final
-/// complement: the complement of a negation happens only at the root, so below
-/// it `!f_i` is `f_i`'s own nodes plus one fill node per level, and the
-/// operands are conjoined as a balanced tree.
+/// True exactly when none of the operands is true. Uses the same balanced
+/// conjunction as [`or_many`], without its final complement.
 ///
 /// All operands are consumed and must share a vtree. The result is minimized.
 /// A false operand is dropped, its complement being the constant true; if
-/// every operand is false, the result is the constant true.
+/// every operand is false, the result is the constant true. Weight compatibility
+/// and inheritance follow [`or`], including for false operands.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -236,7 +251,7 @@ pub fn or_many(operands: impl IntoIterator<Item = Tdd>) -> Result<Tdd, Operation
 /// [`OperationError::EmptyOperands`] when no operand is given, since the
 /// vtree of the result would be unknown; the other errors follow [`or`].
 pub fn nor_many(operands: impl IntoIterator<Item = Tdd>) -> Result<Tdd, OperationError> {
-    let operands: Vec<Tdd> = operands.into_iter().collect();
+    let operands = collect_operands(operands)?;
     let Some(first) = operands.first() else {
         return Err(OperationError::EmptyOperands);
     };

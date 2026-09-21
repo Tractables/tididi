@@ -2,6 +2,7 @@
 
 use crate::{Tdd, Vtree, nor_many, or_many};
 use std::sync::Arc;
+use crate::test_helpers::assert_canonical;
 
 #[test]
 fn nor_many_is_the_conjunction_of_the_complements() {
@@ -24,6 +25,7 @@ fn nor_many_is_the_conjunction_of_the_complements() {
                 }
                 eng.minimize(&mut want).unwrap();
                 let got = nor_many(operands).unwrap();
+                assert_canonical(&got);
                 assert!(got.equivalent(&want).unwrap(), "nor_many disagrees with the fold");
             }
         }
@@ -41,7 +43,9 @@ fn or_many_is_the_complement_of_nor_many() {
         ]
     };
     let disjunction = or_many(cubes()).unwrap();
+    assert_canonical(&disjunction);
     let complement = nor_many(cubes()).unwrap().negate().unwrap();
+    assert_canonical(&complement);
     assert!(disjunction.equivalent(&complement).unwrap());
     assert_eq!(disjunction.model_count().unwrap(), 13u32.into());
 }
@@ -52,9 +56,12 @@ fn a_false_operand_drops_out_and_all_false_is_true() {
     let f = Tdd::cube(&vtree, [1]).unwrap();
     let zero = Tdd::zero(&vtree);
     let with_zero = nor_many([f.clone(), zero.clone()]).unwrap();
+    assert_canonical(&with_zero);
     let without = nor_many([f]).unwrap();
+    assert_canonical(&without);
     assert!(with_zero.equivalent(&without).unwrap());
     let all_false = nor_many([zero.clone(), zero]).unwrap();
+    assert_canonical(&all_false);
     assert_eq!(all_false.model_count().unwrap(), 8u32.into());
     assert!(matches!(
         nor_many(Vec::new()),

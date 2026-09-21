@@ -153,7 +153,7 @@ pub(crate) fn disjoin_cube_owned(eng: &Engine, f: Tdd, cube: &[Literal]) -> Resu
     // A one-variable vtree has no internal level to hang the chain on, and an
     // output below the root leaves levels the walk would not reach.
     let root = vtree.root();
-    if clause.len() != vtree.num_vars() as usize || f.output.vtree != root || vtree.node(root).is_leaf() {
+    if clause.len() != vtree.num_leaves() as usize || f.output.vtree != root || vtree.node(root).is_leaf() {
         return disjoin_cube_by_complement(eng, f, &clause);
     }
 

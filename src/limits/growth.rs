@@ -265,6 +265,12 @@ pub(crate) trait Charged {
     fn charged_bytes(&self) -> u64;
 }
 
+impl<K, V, S> Charged for std::collections::HashMap<K, V, S> {
+    fn charged_bytes(&self) -> u64 {
+        (self.capacity() as u64).saturating_mul((std::mem::size_of::<(K, V)>() + 1) as u64)
+    }
+}
+
 impl<T> Charged for Vec<T> {
     #[inline]
     fn charged_bytes(&self) -> u64 {

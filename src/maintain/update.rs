@@ -10,28 +10,26 @@
 use super::*;
 
 impl Maintenance<'_> {
-    /// Add one assignment to the diagram's models.
+    /// Run [`Tdd::insert_model`] within this batch, reusing its index.
     ///
-    /// Accepts arrays, slices and vectors of signed, one-based integers or
-    /// typed [`Literal`] values, as [`Tdd::or_cube`] does. An assignment the
-    /// diagram already has leaves it alone; a variable in both polarities
-    /// names no assignment and does too.
+    /// A failed update preserves the previous function and leaves the batch
+    /// usable. With [`Engine::maintain`], each call uses the engine's limits
+    /// as a separate operation.
     ///
     /// # Errors
     ///
     /// Returns [`OperationError::InvalidLiteral`] for integer zero,
     /// [`OperationError::VariableNotInVtree`] for an absent variable,
     /// [`OperationError::MarginalLevel`] for a level that has discarded its
-    /// structure, or [`OperationError::OverBudget`] for a refused allocation.
+    /// structure, [`OperationError::OverBudget`] for a refused allocation,
+    /// or [`OperationError::Stopped`] when a stop request fires.
     pub fn insert_model<L: crate::LiteralInput>(&mut self, model: impl AsRef<[L]>) -> Result<(), OperationError> {
         self.update(model.as_ref(), Edit::Insert)
     }
 
-    /// Drop one assignment from the diagram's models.
+    /// Run [`Tdd::remove_model`] within this batch, reusing its index.
     ///
-    /// An assignment the diagram does not have leaves it alone, as does a
-    /// variable named in both polarities. Inputs and errors follow
-    /// [`insert_model`](Self::insert_model).
+    /// Recovery and limits follow [`insert_model`](Self::insert_model).
     ///
     /// # Errors
     ///
@@ -43,17 +41,28 @@ impl Maintenance<'_> {
     /// Convert the input once, then run the update inside the batch's context.
     fn update<L: crate::LiteralInput>(&mut self, model: &[L], edit: Edit) -> Result<(), OperationError> {
         let context = Arc::clone(&self.context);
-        context.run(|eng| {
-            let mut input = std::mem::take(&mut self.literals);
-            input.clear();
-            let outcome = L::collect(eng, &self.vtree, model, &mut input)
-                .and_then(|()| match edit {
-                    Edit::Insert => self.insert_literals(eng, &input),
-                    Edit::Remove => self.remove_literals(eng, &input),
-                });
-            self.literals = input;
-            outcome
-        })
+        match self.engine {
+            Some(eng) => self.update_on(eng, model, edit),
+            None => context.run(|eng| self.update_on(eng, model, edit)),
+        }
+    }
+
+    /// Keep an operation scope around input preparation and the complete edit.
+    fn update_on<L: crate::LiteralInput>(&mut self, eng: &Engine, model: &[L], edit: Edit) -> Result<(), OperationError> {
+        let _op = eng.limits().begin_operation();
+        eng.limits().check_stop()?;
+        let mut input = std::mem::take(&mut self.literals);
+        input.clear();
+        let outcome = L::collect(eng, &self.vtree, model, &mut input)
+            .and_then(|()| match edit {
+                Edit::Insert => self.insert_literals(eng, &input),
+                Edit::Remove => self.remove_literals(eng, &input),
+            });
+        self.literals = input;
+        // A refused node push can leave a new, unreachable node. The function
+        // is unchanged, but the next update must rebuild its index.
+        if outcome.is_err() { self.index = None; }
+        outcome
     }
 
     /// [`insert_model`](Self::insert_model) on typed literals inside a context.
@@ -86,17 +95,19 @@ impl Maintenance<'_> {
         let vtree = Arc::clone(&self.vtree);
         for (t, _, _) in vtree.internal_bottomup() {
             if self.path[t.idx()] != FRESH { continue; }
+            eng.limits().check_stop()?;
+            self.tdd.try_invalidate(eng, t)?;
             let pair = self.path_pair(t);
             let index = self.index.as_mut().expect("`editable` refreshed the index");
+            index.reserve_edit(eng, t, t != root)?;
             if t == root {
                 self.tdd.levels[t.idx()].push_pair_onto_node(eng, output.idx(), pair)?;
-                index.note_appended_pair(eng, t, pair, output)?;
+                index.note_appended_pair(t, pair, output);
             } else {
                 let idx = self.tdd.levels[t.idx()].push_node_on(eng, &[pair])?;
                 self.path[t.idx()] = idx.0;
-                index.note_appended_node(eng, t, pair, idx)?;
+                index.note_appended_node(t, pair, idx);
             }
-            self.tdd.try_invalidate(eng, t)?;
         }
         Ok(())
     }
@@ -124,9 +135,9 @@ impl Maintenance<'_> {
         if NodeIdx(owner) != self.tdd.output.local { return Ok(()); }
 
         let pair = self.path_pair(root);
+        self.tdd.try_invalidate(eng, root)?;
         if self.tdd.levels[root.idx()].remove_pair_from_node(eng, owner as usize, pair)? {
             self.index.as_mut().expect("`editable` refreshed the index").note_removed_pair(root, pair);
-            self.tdd.try_invalidate(eng, root)?;
         } else {
             // The output node named this assignment and nothing else, so the
             // diagram is now false. A node with no pairs is not a
@@ -161,7 +172,9 @@ impl Maintenance<'_> {
 
     /// The rebuild route: the whole-diagram operation the edit stands in for.
     fn rebuild(&mut self, eng: &Engine, model: &[Literal], edit: Edit) -> Result<(), OperationError> {
-        let taken = self.take_diagram(eng);
+        // The consuming operation may fail after changing its input. Keep
+        // the original until the rebuilt function is ready to install.
+        let taken = self.tdd.try_clone_on(eng)?;
         let out = match edit {
             Edit::Insert => crate::apply::conjoin_clause::disjoin_cube_owned(eng, taken, model)?,
             Edit::Remove => {

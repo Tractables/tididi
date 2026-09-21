@@ -407,39 +407,42 @@ impl TddLevel {
         let lim = eng.limits();
         #[cfg(test)]
         if lim.refuses_reserve() { return Err(OperationError::OverBudget); }
-        let before = self.arena_capacity_bytes();
         let node = self.nodes[idx].kind();
-        match node {
-            NodeKind::Inline(existing) => {
-                let start = self.pairs.len();
-                lim.reserve(&mut self.pairs, 2)?;
-                self.pairs.push(existing);
-                self.pairs.push(pair);
-                self.nodes[idx] = self.try_encode_multi(start, 2).map_err(|()| OperationError::OverBudget)?;
-            }
+        let (old_len, old_range, inline) = match node {
+            NodeKind::Inline(existing) => (1, None, Some(existing)),
             NodeKind::Multi { .. } | NodeKind::MultiRanged(_) => {
                 let range = self.pair_range_at(idx);
-                let len = range.len();
-                if range.end == self.pairs.len() {
-                    lim.reserve(&mut self.pairs, 1)?;
-                    self.pairs.push(pair);
-                    // A multi node holds two pairs or more, so the grown
-                    // length never aliases the one-pair encoding.
-                    self.set_pair_len(idx, (len + 1) as u32);
-                } else {
-                    let start = self.pairs.len();
-                    lim.reserve(&mut self.pairs, len + 1)?;
-                    self.pairs.extend_from_within(range);
-                    self.pairs.push(pair);
-                    self.nodes[idx] = self.try_encode_multi(start, len + 1).map_err(|()| OperationError::OverBudget)?;
-                    self.note_dead_pairs(len);
-                }
+                (range.len(), Some(range), None)
             }
-            NodeKind::Leaf(_) | NodeKind::Tombstone => {
-                panic!("push_pair_onto_node: node {idx} holds no pairs")
+            NodeKind::Leaf(_) | NodeKind::Tombstone => panic!("push_pair_onto_node: node {idx} holds no pairs"),
+        };
+        let len = old_len.checked_add(1).ok_or(OperationError::IndexOverflow)?;
+        let at_tail = old_range.as_ref().is_some_and(|r| r.end == self.pairs.len());
+        let start = if at_tail { old_range.as_ref().unwrap().start } else { self.pairs.len() };
+        let extended = start >= (1usize << 31) || len >= (1usize << 31);
+        let reused = match node { NodeKind::MultiRanged(i) => Some(i as usize), _ => None };
+        // Reserve and charge everything before changing any live node or pair.
+        lim.reserve(&mut self.pairs, if at_tail { 1 } else { len })?;
+        if extended && reused.is_none() { lim.reserve(&mut self.multi_pairs, 1)?; }
+        if !at_tail {
+            if let Some(existing) = inline {
+                self.pairs.push(existing);
+            } else {
+                self.pairs.extend_from_within(old_range.unwrap());
+                self.note_dead_pairs(old_len);
             }
         }
-        lim.charge_bytes(self.arena_capacity_bytes().saturating_sub(before))?;
+        self.pairs.push(pair);
+        self.nodes[idx] = if let Some(i) = reused {
+            self.multi_pairs[i] = MultiPairRange { start: start as u64, len: len as u64 };
+            EncodedNode::multi_ranged(i as u32)
+        } else if extended {
+            let i = self.multi_pairs.len();
+            self.multi_pairs.push(MultiPairRange { start: start as u64, len: len as u64 });
+            EncodedNode::multi_ranged(i as u32)
+        } else {
+            EncodedNode::multi_pair(start as u32, len as u32)
+        };
         Ok(())
     }
 

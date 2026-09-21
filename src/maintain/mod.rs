@@ -1,37 +1,21 @@
-//! Adding and removing one assignment at a time, in place.
+//! Update a diagram as rows enter or leave a table.
 //!
-//! A diagram compiled from a table is maintained rather than rebuilt when a
-//! row arrives or leaves. What one assignment does to a level is small: at
-//! every vtree node `v` the value the assignment takes over `v`'s subtree
-//! gains or loses one extension, and no other value's extensions change. So
-//! the level's blocks move by the least a partition can — the value leaves its
-//! block, and every other block stands.
+//! [`Maintenance`] indexes a diagram once, then reuses that index for a batch
+//! of updates. A complete assignment can often be added or removed by editing
+//! the output's pairs and adding singleton nodes below it. When an assignment
+//! belongs to a block containing other assignments, the update rebuilds through
+//! [`Tdd::or_cube`] or [`Tdd::and_clause`] instead.
 //!
-//! The cost is what that split forces on the level's *parents*. A block is a
-//! set of values, and the diagram's levels are partitions, so a value that
-//! leaves its block makes that block cease to exist and every pair naming it
-//! has to be rewritten, whether or not the parent's own function changed.
-//! Where the block on the path is already a **singleton** there is nothing to
-//! split, however many parents name it, and the update is one pair: the
-//! chain of singleton nodes for the new value, and one pair added to or
-//! removed from the output node.
+//! Indexing traverses the diagram. Each update reads its literals and walks
+//! the vtree; an edit can also copy or shift a node's pair list. A rebuild
+//! copies the diagram before applying the update, so a failure preserves the
+//! previous function. [`Maintenance::rebuilds`] reports how often that route
+//! was needed. After consecutive rebuilds, the batch stops rebuilding its index.
 //!
-//! [`Maintenance`] takes that path. It indexes the diagram once, in time
-//! linear in its size, and then answers each update in time linear in the
-//! vtree's depth. An update whose path meets a block holding more than the
-//! one assignment cannot be done by an edit, and falls back to the rebuild
-//! [`Tdd::or_cube`] and [`Tdd::and_clause`] perform — correct, and linear in
-//! the diagram. Which route an update took is [`Maintenance::rebuilds`].
-//!
-//! Whether the edit is available is a property of the diagram, not of the
-//! update, so a batch that keeps falling back stops paying for an index it
-//! cannot use and leaves the rest of its updates to the rebuild. A batch
-//! therefore never costs materially more than the operations it replaces.
-//!
-//! An edit leaves the diagram sound — its levels are partitions and its nodes
-//! are satisfiable — but not canonical: a block whose extensions changed may
-//! now belong with another, and only [`Tdd::minimize`] decides that. Minimize
-//! once at the end of a batch rather than after every update.
+//! Updates preserve the represented function on error, including earlier
+//! successful updates in the batch. Storage may contain unreachable nodes;
+//! the batch remains usable. Successful edits need not be canonical: call
+//! [`Tdd::minimize`] after the batch, before comparing diagram shapes.
 
 use std::sync::Arc;
 
@@ -76,16 +60,12 @@ enum Probe {
     Splits,
 }
 
-/// A batch of single-assignment updates to one diagram.
+/// A batch of assignment updates to one diagram.
 ///
-/// Built by [`Tdd::maintain`], which indexes the diagram in time linear in its
-/// size; each [`insert_model`](Self::insert_model) or
-/// [`remove_model`](Self::remove_model) then costs the vtree's depth, unless
-/// its path meets a block holding more than that one assignment, where the
-/// rebuild answers instead and the index is rebuilt on the next update.
-///
-/// The diagram is left sound but not canonical — see the module
-/// documentation. Minimize it once the batch is over.
+/// Created by [`Tdd::maintain`] or [`Engine::maintain`]. The index is reused
+/// when updates can edit singleton nodes; other updates rebuild the diagram.
+/// Minimize the diagram after the batch. See the [module](crate::maintain)
+/// for costs and recovery after an error.
 ///
 /// ```
 /// use std::sync::Arc;
@@ -110,6 +90,8 @@ pub struct Maintenance<'a> {
     /// diagram mutably.
     vtree: Arc<Vtree>,
     context: Arc<Context>,
+    /// Explicit execution workspace, when the batch is bounded.
+    engine: Option<&'a Engine>,
     /// The pair index, or `None` once a rebuild invalidated it.
     index: Option<Index>,
     /// Per level, the node denoting the assignment's value over that subtree,
@@ -136,7 +118,7 @@ impl std::fmt::Debug for Maintenance<'_> {
 }
 
 impl Tdd {
-    /// Begin a batch of single-assignment updates.
+    /// Begin a batch of assignment updates.
     ///
     /// The index this builds costs one pass over the diagram and is reused by
     /// every update of the batch, so a run of updates between queries pays for
@@ -161,50 +143,78 @@ impl Tdd {
     /// structure, or [`OperationError::OverBudget`] if the index is refused.
     pub fn maintain(&mut self) -> Result<Maintenance<'_>, OperationError> {
         let context = Arc::clone(self.context());
-        let vtree = Arc::clone(self.vtree());
-        let n = vtree.num_nodes();
-        let index = context.run(|eng| Index::build(eng, self))?;
-        Ok(Maintenance {
-            tdd: self,
-            vtree,
-            context,
-            index: Some(index),
-            path: vec![FRESH; n],
-            labels: vec![ONE_LEAF_IDX.0; n],
-            literals: Vec::new(),
-            rebuilds: 0,
-            misses: 0,
-        })
+        context.run(|eng| Maintenance::new(eng, self, None))
     }
 
-    /// Add one assignment to this diagram's models, in place.
+    /// Add every assignment matching `model` to this diagram, in place.
     ///
-    /// Equivalent to [`or_cube`](Self::or_cube) with a cube over every
-    /// variable, and the same contract: the result counts correctly but may
-    /// need [`minimize`](Self::minimize). For more than one update, open a
-    /// [`Maintenance`] batch instead — this builds and discards its index.
+    /// A literal for every vtree variable names one model. Omitted variables
+    /// are free: `[1]` adds every assignment with variable 1 true, and an empty
+    /// input adds all assignments. Repeated literals are harmless; opposite
+    /// literals of the same variable name no assignments and change nothing.
+    ///
+    /// Equivalent to [`or_cube`](Self::or_cube). The result counts correctly
+    /// but may need [`minimize`](Self::minimize). For several updates, reuse a
+    /// [`Maintenance`] batch instead of building an index for each call.
+    /// An error preserves the previous function; the diagram remains usable.
     ///
     /// # Errors
     ///
     /// Returns [`OperationError::InvalidLiteral`] for integer zero,
     /// [`OperationError::VariableNotInVtree`] for an absent variable,
     /// [`OperationError::MarginalLevel`] for a level that has discarded its
-    /// structure, or [`OperationError::OverBudget`] for a refused allocation.
+    /// structure, [`OperationError::OverBudget`] for a refused allocation,
+    /// or [`OperationError::Stopped`] when a stop request fires.
     pub fn insert_model<L: crate::LiteralInput>(&mut self, model: impl AsRef<[L]>) -> Result<(), OperationError> {
         self.maintain()?.insert_model(model)
     }
 
-    /// Drop one assignment from this diagram's models, in place.
+    /// Remove every assignment matching `model` from this diagram, in place.
     ///
-    /// Equivalent to [`and_clause`](Self::and_clause) with the assignment's
-    /// negation, and the same contract. For more than one update, open a
-    /// [`Maintenance`] batch instead — this builds and discards its index.
+    /// Input semantics follow [`insert_model`](Self::insert_model): partial
+    /// input removes every completion, empty input removes all models, and
+    /// contradictory input changes nothing. Equivalent to
+    /// [`and_clause`](Self::and_clause) with the input's literals negated.
+    /// For several updates, reuse a [`Maintenance`] batch.
+    /// An error preserves the previous function; the diagram remains usable.
     ///
     /// # Errors
     ///
     /// As [`insert_model`](Self::insert_model).
     pub fn remove_model<L: crate::LiteralInput>(&mut self, model: impl AsRef<[L]>) -> Result<(), OperationError> {
         self.maintain()?.remove_model(model)
+    }
+}
+
+impl Engine {
+    /// Begin [`Tdd::maintain`] using this engine's scratch and limits.
+    /// Each update is a separate operation; a failed update preserves the
+    /// function and leaves the batch usable.
+    ///
+    /// # Errors
+    ///
+    /// As [`Tdd::maintain`], including cancellation and refused allocations.
+    pub fn maintain<'a>(&'a self, tdd: &'a mut Tdd) -> Result<Maintenance<'a>, OperationError> {
+        Maintenance::new(self, tdd, Some(self))
+    }
+}
+
+impl<'a> Maintenance<'a> {
+    /// Allocate the index and per-level paths before lending the diagram.
+    fn new(eng: &Engine, tdd: &'a mut Tdd, engine: Option<&'a Engine>) -> Result<Self, OperationError> {
+        let lim = eng.limits();
+        let _op = lim.begin_operation();
+        lim.check_stop()?;
+        tdd.require_structure()?;
+        let vtree = Arc::clone(tdd.vtree());
+        let context = Arc::clone(tdd.context());
+        let index = Index::build(eng, tdd)?;
+        let mut path = Vec::new();
+        let mut labels = Vec::new();
+        lim.try_resize(&mut path, vtree.num_nodes(), FRESH)?;
+        lim.try_resize(&mut labels, vtree.num_nodes(), ONE_LEAF_IDX.0)?;
+        Ok(Self { tdd, vtree, context, engine, index: Some(index), path, labels,
+            literals: Vec::new(), rebuilds: 0, misses: 0 })
     }
 }
 
@@ -233,7 +243,6 @@ impl Maintenance<'_> {
     /// rebuild's to answer.
     fn read_model(&mut self, model: &[Literal]) -> Result<ModelShape, OperationError> {
         self.labels.fill(ONE_LEAF_IDX.0);
-        self.literals.clear();
         let mut assigned = 0u32;
         for lit in model {
             let leaf = self.vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
@@ -242,12 +251,11 @@ impl Maintenance<'_> {
             if *slot == ONE_LEAF_IDX.0 {
                 *slot = want;
                 assigned += 1;
-                self.literals.push(*lit);
             } else if *slot != want {
                 return Ok(ModelShape::Inconsistent);
             }
         }
-        if assigned != self.vtree.num_vars() { return Ok(ModelShape::Partial); }
+        if assigned != self.vtree.num_leaves() { return Ok(ModelShape::Partial); }
         Ok(ModelShape::Complete)
     }
 
@@ -286,12 +294,7 @@ impl Maintenance<'_> {
         ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r))
     }
 
-    /// Take the diagram out, leaving a false one in its place, for a route
-    /// that consumes its operand.
-    fn take_diagram(&mut self, eng: &Engine) -> Tdd {
-        let placeholder = crate::build::constant_zero(eng, &self.vtree);
-        std::mem::replace(self.tdd, placeholder)
-    }
+
 }
 
 /// What [`Maintenance::read_model`] found.

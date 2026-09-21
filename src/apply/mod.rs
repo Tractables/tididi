@@ -44,19 +44,21 @@ pub(crate) fn check_vtree(f: &crate::Tdd, g: &crate::Tdd) -> Result<(), crate::O
 }
 
 /// Validate one weight interpretation for all operands, then install it where absent.
-pub(crate) fn prepare_weights<const N: usize>(mut operands: [&mut crate::Tdd; N]) -> Result<(), crate::OperationError> {
-    let Some(source) = operands.iter().position(|f| f.weights.is_some()) else { return Ok(()) };
+pub(crate) fn prepare_weights<T: std::borrow::BorrowMut<crate::Tdd>>(operands: &mut [T]) -> Result<(), crate::OperationError> {
+    let Some(source) = operands.iter().position(|f| f.borrow().weights.is_some()) else { return Ok(()) };
     let (before, rest) = operands.split_at_mut(source);
     let (source, after) = rest.split_first_mut().unwrap();
-    let weights = source.weights.as_ref().unwrap();
-    for f in before.iter().chain(after.iter()) {
+    let weights = source.borrow().weights.as_ref().unwrap();
+    for operand in before.iter().chain(after.iter()) {
+        let f = operand.borrow();
         match &f.weights {
             Some(other) if !weights.compatible(other) => return Err(crate::OperationError::IncompatibleWeights),
             None if f.has_marginal_level() => return Err(crate::OperationError::IncompatibleWeights),
             _ => {}
         }
     }
-    for f in before.iter_mut().chain(after.iter_mut()) {
+    for operand in before.iter_mut().chain(after.iter_mut()) {
+        let f = operand.borrow_mut();
         if f.weights.is_none() { f.weights = Some(weights.empty_like()); }
     }
     Ok(())

@@ -88,9 +88,8 @@ pub enum Quantification {
     /// identity level — the collapse bypasses that route and pays more than the
     /// build it replaces.
     FusedSubtrees,
-    /// Build the whole conjunction, then quantify it. The reference route: it
-    /// is what a fused result is compared against, and what a caller falls back
-    /// to when a fused result is in doubt.
+    /// Build the whole conjunction, then quantify it. Useful when neither
+    /// operand offers variables that can be eliminated before conjunction.
     Product,
 }
 
@@ -160,7 +159,7 @@ impl Engine {
         for f in [&condition, &then_branch, &else_branch] {
             f.require_structure()?;
         }
-        super::prepare_weights([&mut condition, &mut then_branch, &mut else_branch])?;
+        super::prepare_weights(&mut [&mut condition, &mut then_branch, &mut else_branch])?;
         let _op = self.limits().begin_operation();
         self.limits().check_stop()?;
         let otherwise = self.negate(condition.try_clone_on(self)?)?;
@@ -183,7 +182,7 @@ impl Engine {
         super::check_vtree(&f, &g)?;
         f.require_structure()?;
         g.require_structure()?;
-        super::prepare_weights([&mut f, &mut g])?;
+        super::prepare_weights(&mut [&mut f, &mut g])?;
         let _op = self.limits().begin_operation();
         self.limits().check_stop()?;
         let not_g = self.negate(g.try_clone_on(self)?)?;
@@ -203,8 +202,9 @@ impl Engine {
     /// Run [`and_exists`] with a chosen [`Quantification`], using this batch's
     /// scratch and resource limits.
     ///
-    /// The two settings agree on the function and on the canonical form it
-    /// comes back in, so a disagreement is a defect in the fused route.
+    /// All settings return the same canonical function. Weighted operands
+    /// always use [`Quantification::Product`] to preserve their interpretation,
+    /// even when a fused setting is requested.
     ///
     /// # Errors
     ///
@@ -220,7 +220,7 @@ impl Engine {
         super::check_vtree(&f, &g)?;
         f.require_structure()?;
         g.require_structure()?;
-        super::prepare_weights([&mut f, &mut g])?;
+        super::prepare_weights(&mut [&mut f, &mut g])?;
         let _op = self.limits().begin_operation();
         self.limits().check_stop()?;
         let targets = super::project::quantification_targets(self, f.vtree(), vars)?;

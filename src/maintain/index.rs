@@ -74,30 +74,25 @@ impl Index {
         Ok(Index { owners, singleton, any_one_mode })
     }
 
-    /// Record a node appended at level `t` with the single pair `pair`, which
-    /// denotes one assignment by construction.
-    pub(super) fn note_appended_node(&mut self, eng: &Engine, t: VtreeIdx, pair: ChildPair, idx: NodeIdx)
-        -> Result<(), OperationError>
-    {
-        let lim = eng.limits();
-        lim.reserve_map(&mut self.owners[t.idx()], 1)?;
+    /// Reserve the index changes before changing diagram storage.
+    pub(super) fn reserve_edit(&mut self, eng: &Engine, t: VtreeIdx, new_node: bool) -> Result<(), OperationError> {
+        eng.limits().reserve_map(&mut self.owners[t.idx()], 1)?;
+        if new_node { eng.limits().reserve(&mut self.singleton[t.idx()], 1)?; }
+        Ok(())
+    }
+
+    /// Record a new singleton after `reserve_edit` succeeds.
+    pub(super) fn note_appended_node(&mut self, t: VtreeIdx, pair: ChildPair, idx: NodeIdx) {
         self.owners[t.idx()].insert((pair.left.raw(), pair.right.raw()), idx.0);
         let flags = &mut self.singleton[t.idx()];
         debug_assert_eq!(flags.len(), idx.idx(), "the node was appended at the level's end");
-        lim.try_push(flags, true)
+        flags.push(true);
     }
 
-    /// Record a pair added to a node that is already there.
-    pub(super) fn note_appended_pair(&mut self, eng: &Engine, t: VtreeIdx, pair: ChildPair, idx: NodeIdx)
-        -> Result<(), OperationError>
-    {
-        eng.limits().reserve_map(&mut self.owners[t.idx()], 1)?;
+    /// Record a pair added to an existing node after reserving its index entry.
+    pub(super) fn note_appended_pair(&mut self, t: VtreeIdx, pair: ChildPair, idx: NodeIdx) {
         self.owners[t.idx()].insert((pair.left.raw(), pair.right.raw()), idx.0);
-        // The node has two pairs or more now, so it is no longer a single
-        // assignment. A root level's flags are never read, but the level may
-        // be any one the caller edits.
         if let Some(flag) = self.singleton[t.idx()].get_mut(idx.idx()) { *flag = false; }
-        Ok(())
     }
 
     /// Record a pair dropped from the node at level `t`.

@@ -465,7 +465,7 @@ fn bulk_quantification_validates_late_variables_before_rewriting() {
 }
 
 #[test]
-fn bulk_quantification_preserves_first_occurrence_order_and_skips_repeated_rewrites() {
+fn bulk_quantification_is_a_set_independent_of_request_order() {
     use crate::Engine;
     let vars = [VarId(20), VarId(3), VarId(9)];
     let tree = Arc::new(Vtree::balanced_over(&vars).unwrap());
@@ -475,7 +475,9 @@ fn bulk_quantification_preserves_first_occurrence_order_and_skips_repeated_rewri
     let duplicates = [vars[2], vars[0], vars[2], vars[1], vars[0]];
     let eng = Engine::new();
     let prepared = crate::apply::project::quantification_targets(&eng, &tree, &duplicates).unwrap();
-    assert_eq!(prepared, order.map(|var| tree.leaf_of(var).unwrap()));
+    let mut leaves = order.map(|var| tree.leaf_of(var).unwrap());
+    leaves.sort_unstable();
+    assert_eq!(prepared, leaves);
     let expected = eng.exists_vars(f.clone(), &order).unwrap();
     let actual = eng.exists_vars(f.clone(), &duplicates).unwrap();
     assert!(eng.equivalent(&actual, &expected).unwrap());

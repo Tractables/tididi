@@ -280,3 +280,137 @@ fn an_edited_node_outgrows_its_arena_range() {
     assert_same_shape(&f, &Tdd::cube(&vtree, assignment(5, 31)).expect("the cube is over the vtree"),
         "the one assignment left");
 }
+
+#[test]
+fn every_refused_update_preserves_the_function_and_can_be_retried() {
+    let vtree = Arc::new(Vtree::balanced(4));
+    let vars: Vec<_> = (1..=4).map(VarId).collect();
+    for (model, insert) in [
+        (vec![1, -2, -3, -4], true),
+        (vec![1], true),
+        (vec![-1, -2, -3, -4], false),
+        (vec![1], false),
+    ] {
+        let original = Tdd::from_models(&vtree, &vars, &[0, 5, 15]).unwrap();
+        let want = rebuilt(&vtree, &original, &model, insert);
+        let mut refusals = 0;
+        let mut finished = false;
+        for cut in 0..600 {
+            let eng = Engine::new();
+            let mut got = original.clone();
+            {
+                let mut batch = eng.maintain(&mut got).unwrap();
+                eng.limits().refuse_nth_reserve(cut);
+                let result = if insert { batch.insert_model(&model) } else { batch.remove_model(&model) };
+                eng.limits().grant_every_reserve();
+                match result {
+                    Err(error) => {
+                        assert_eq!(error, OperationError::OverBudget, "cut {cut}");
+                        assert!(batch.diagram().equivalent(&original).unwrap(), "cut {cut} changed the function");
+                        refusals += 1;
+                    }
+                    Ok(()) => finished = true,
+                }
+                // The same batch must be usable after refusal, including when
+                // a new unreachable node was appended before the refusal.
+                if insert { batch.insert_model(&model) } else { batch.remove_model(&model) }.unwrap();
+            }
+            got.minimize().unwrap();
+            assert_canonical(&got);
+            assert_same_shape(&got, &want, &format!("retry after cut {cut}"));
+            if finished { break; }
+        }
+        assert!(finished && refusals > 0, "the sweep must reach success and a refusal");
+    }
+}
+
+#[test]
+fn sparse_ids_still_take_the_single_assignment_edit() {
+    let vtree = Arc::new(Vtree::balanced_over(&[VarId(2), VarId(5), VarId(9)]).unwrap());
+    let vars = [VarId(2), VarId(5), VarId(9)];
+    let mut f = Tdd::from_models(&vtree, &vars, &[0, 7]).unwrap();
+    {
+        let mut batch = f.maintain().unwrap();
+        batch.insert_model([2, -5, -9]).unwrap();
+        batch.remove_model([-2, -5, -9]).unwrap();
+        assert_eq!(batch.rebuilds(), 0);
+    }
+    f.minimize().unwrap();
+    assert_canonical(&f);
+    let want = Tdd::from_models(&vtree, &vars, &[1, 7]).unwrap();
+    assert_same_shape(&f, &want, "sparse variable IDs");
+}
+
+#[test]
+fn empty_cubes_add_or_remove_every_assignment() {
+    let vtree = Arc::new(Vtree::balanced(3));
+    let mut f = Tdd::cube(&vtree, [1, 2, 3]).unwrap();
+    f.insert_model([] as [i32; 0]).unwrap();
+    f.minimize().unwrap();
+    assert_canonical(&f);
+    assert_eq!(f.model_count().unwrap(), 8u32.into());
+    f.remove_model([] as [i32; 0]).unwrap();
+    assert_canonical(&f);
+    assert!(f.is_zero());
+}
+
+#[test]
+fn maintenance_uses_the_explicit_engines_limits() {
+    use crate::limits::LimitConfig;
+    let vtree = Arc::new(Vtree::balanced(3));
+    let mut f = Tdd::cube(&vtree, [1, 2, 3]).unwrap();
+    let eng = Engine::new();
+    let zero_budget = LimitConfig::none().with_memory_budget_bytes(Some(0));
+    {
+        let _scope = eng.limits().scope(zero_budget.clone());
+        assert_eq!(eng.maintain(&mut f).unwrap_err(), OperationError::OverBudget);
+    }
+    {
+        let mut batch = eng.maintain(&mut f).unwrap();
+        let scope = eng.limits().scope(zero_budget);
+        assert_eq!(batch.insert_model([-1, 2, 3]).unwrap_err(), OperationError::OverBudget);
+        drop(scope);
+        batch.insert_model([-1, 2, 3]).unwrap();
+    }
+    f.minimize().unwrap();
+    assert_canonical(&f);
+    assert_eq!(f.model_count().unwrap(), 2u32.into());
+}
+
+#[test]
+fn weighted_updates_preserve_weights_on_refusal_and_on_the_last_removal() {
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    use crate::test_helpers::rat;
+    let vtree = Arc::new(Vtree::balanced(3));
+    for (model, insert) in [(vec![-1], true), (vec![1, 2, 3], false)] {
+        let mut original = Tdd::cube(&vtree, [1, 2, 3]).unwrap();
+        let table = vec![LiteralWeights { negative: rat(2, 1), positive: rat(2, 1) }; 3];
+        original.set_weights(WeightStore::new(RationalWeights::from_literals(&table), Arithmetic::ExactRational)).unwrap();
+        let mut succeeded = false;
+        for cut in 0..400 {
+            let eng = Engine::new();
+            let mut f = original.clone();
+            {
+                let mut batch = eng.maintain(&mut f).unwrap();
+                eng.limits().refuse_nth_reserve(cut);
+                let outcome = if insert { batch.insert_model(&model) } else { batch.remove_model(&model) };
+                eng.limits().grant_every_reserve();
+                match outcome {
+                    Err(e) => {
+                        assert_eq!(e, OperationError::OverBudget);
+                        assert!(batch.diagram().equivalent(&original).unwrap());
+                        assert_eq!(batch.diagram().weighted_value().unwrap().unwrap().as_rational().into_owned(), rat(8, 1));
+                    }
+                    Ok(()) => succeeded = true,
+                }
+                if insert { batch.insert_model(&model) } else { batch.remove_model(&model) }.unwrap();
+            }
+            f.minimize().unwrap();
+            assert_canonical(&f);
+            assert_eq!(f.model_count().unwrap(), if insert { 5u32 } else { 0 }.into());
+            assert_eq!(f.weighted_value().unwrap().unwrap().as_rational().into_owned(), rat(if insert { 40 } else { 0 }, 1));
+            if succeeded { break; }
+        }
+        assert!(succeeded);
+    }
+}
