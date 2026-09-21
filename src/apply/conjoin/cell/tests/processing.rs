@@ -399,3 +399,21 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
         "the per-cell fallback must walk the same columns as the hoisted table",
     );
 }
+
+/// Alternating borrowed and decoded columns must not leave stale pointers in the pool.
+#[test]
+fn columns_reuse_descriptors_after_the_source_level_is_dropped() {
+    let eng = Engine::new();
+    for iteration in 0..6 {
+        let (mut level, _) = marginal_shaped_level();
+        if iteration % 2 == 0 { level.push_internal_node(&[pair(2, 3)]); }
+        let decoder = if iteration % 3 == 0 { ChildDecoder::marginal() } else { ChildDecoder::structural() };
+        let columns = RightColumns::build(&eng, &level, level.nodes.len(), ChildDecoder::structural(), decoder).unwrap();
+        let mut scratch = Vec::new();
+        for j in 0..level.nodes.len() {
+            assert_eq!(columns.get(j), level.pairs_view_decoded(j, &mut scratch, ChildDecoder::structural(), decoder));
+        }
+        drop(columns);
+        drop(level);
+    }
+}

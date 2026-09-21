@@ -90,10 +90,10 @@ Operation implementations live with their algorithms, including methods on
 accessors rather than decoding references themselves. Queries leave borrowed
 diagrams unchanged.
 
-`test_helpers::check` is compiled under `cfg(test)` or `debug_assertions`;
-`assert_canonical` is a no-op in other builds. Run the differential suite in
-both debug and release configurations to exercise the structural checks and
-the optimized algorithms.
+`test_helpers::check` is compiled under `cfg(test)`, `debug_assertions`, or
+the `testing` feature. The feature keeps invariant checks active in release
+integration tests without enabling debug assertions in the kernels. Run the
+differential suite in both profiles.
 
 ## One conjunction
 

@@ -11,8 +11,8 @@
 //! [`assert_marginal_canonical`], structural equality by
 //! [`assert_same_shape`], and [`assert_restrict_ok`]. The invariant checkers
 //! in `check`, one per numbered invariant of `docs/architecture.md`, run only
-//! under `cfg(test)` or `debug_assertions`, since each walks the whole
-//! diagram. The rest is compiled only under `cfg(test)`, by what a test needs
+//! under `cfg(test)`, `debug_assertions`, or the explicit `testing` feature.
+//! They walk the whole diagram, including in release integration tests. The rest is compiled only under `cfg(test)`, by what a test needs
 //! it for:
 //!
 //! - `gen` — the fixed `test_cases` corpus, the `vtree_shapes` a formula is
@@ -36,7 +36,7 @@
 //! `reduce::tests::canonicity::every_route_to_one_function_minimizes_to_the_same_diagram`
 //! reaches one function by three routes and demands one diagram back.
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(any(test, debug_assertions, feature = "testing"))]
 pub mod check;
 #[cfg(test)]
 mod access;
