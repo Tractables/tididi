@@ -1,9 +1,13 @@
 //! Prune phase: remove diagram nodes not reachable from the output.
 //!
-//! Marks reachability top-down from the output node, then compacts each level
-//! bottom-up while remapping child references. The remap is monotone (preserves
-//! order), so sorted pair lists remain sorted after remapping. Levels that lost
-//! a node go onto the contract worklists; `reduce` runs the contraction.
+//! Marks reachability top-down from the output node, then compacts the levels
+//! it walked bottom-up while remapping child references. The remap is monotone
+//! (preserves order), so sorted pair lists remain sorted after remapping.
+//! Levels that lost a node go onto the contract worklists; `reduce` runs the
+//! contraction.
+//!
+//! [`PruneScope`] says how many levels that is: every one of them, or only the
+//! ones a change at the root can have reached.
 
 use crate::diagram::{EncodedChildRef, NodeIdx, NodeKind, Tdd};
 
@@ -24,6 +28,25 @@ const UNREACHED: u32 = u32::MAX;
 /// slot's compacted index. Only its inequality with `UNREACHED` is meaningful.
 const REACHED: u32 = 0;
 
+/// How much of the diagram a prune has to walk.
+pub(crate) enum PruneScope {
+    /// Every level, assuming nothing about how the nodes became unreachable.
+    Whole,
+    /// Only what a change at the root can have made unreachable.
+    ///
+    /// Valid when every node of every non-root level is referenced by a node of
+    /// its parent level — reachable or not — and the output is the root. A
+    /// level that then loses no node has a subtree that loses no node: each of
+    /// its children's slots is named by one of its own surviving nodes, and so
+    /// on down. The walk stops at such a level and never looks below it.
+    ///
+    /// `expand_full` establishes the condition for the diagram a negation
+    /// complements: it leaves every structural level covering the whole
+    /// `lefts x rights` basis of its children, so every child slot is named by
+    /// some pair of the level above.
+    BelowRoot,
+}
+
 /// Remove nodes not reachable from the output.
 ///
 /// Marks reachability top-down, then compacts each level bottom-up, remapping
@@ -31,14 +54,21 @@ const REACHED: u32 = 0;
 /// lists stay sorted. Every level that lost a node is pushed onto the contract
 /// worklists (`seed_dirty_levels`), so the caller needs no reseed.
 ///
+/// `scope` says how much of the diagram has to be walked; see [`PruneScope`].
+/// A `BelowRoot` scope on a diagram that is not the shape that walk starts
+/// from — an output below the root, a leaf or marginal root level — walks the
+/// whole diagram instead.
+///
 /// # Errors
 ///
 /// Returns `Err(OperationError::OverBudget)` if the reservation of `remap`, the
-/// one buffer proportional to the summed level width, is refused. It is taken
+/// one buffer proportional to the walked level widths, is refused. It is taken
 /// before any mutation of `tdd`, so the diagram is then untouched.
-pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
-    let num_nodes = tdd.vtree.num_nodes();
-
+pub(crate) fn prune_unreachable(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    scope: PruneScope,
+) -> Result<(), OperationError> {
     // `ZERO` sentinel: the entire diagram computes ⊥ (UNSAT). No nodes are reachable.
     if tdd.is_zero() {
         for level in &mut tdd.levels {
@@ -47,6 +77,29 @@ pub(crate) fn prune_unreachable(eng: &Engine, tdd: &mut Tdd) -> Result<(), Opera
         }
         return Ok(());
     }
+
+    if matches!(scope, PruneScope::BelowRoot) && below_root_walk_applies(tdd) {
+        prune_below_root(eng, tdd)
+    } else {
+        prune_whole(eng, tdd)
+    }
+}
+
+/// Whether the seeded walk can start on `tdd` at all: it starts at the output,
+/// which has to be the root, and the root level has to be one it can compact.
+/// An output below the root leaves every level above it unreachable, which is
+/// not a change below the root.
+pub(crate) fn below_root_walk_applies(tdd: &Tdd) -> bool {
+    let root = tdd.vtree.root();
+    tdd.output.vtree == root
+        && !tdd.vtree.node(root).is_leaf()
+        && !tdd.levels[root.idx()].is_marginal()
+}
+
+/// [`prune_unreachable`] over every level: mark from the output, then compact
+/// each level bottom-up.
+fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
+    let num_nodes = tdd.vtree.num_nodes();
 
     let pool = eng.reduce_scratch();
     let mut level_base = pool.prune_level_base.take();
@@ -130,78 +183,125 @@ fn compact_levels(
     // before it rewrites its child references; raw indices do not encode
     // parent/child order on a rotated vtree.
     for v in vtree.bottomup_slice() {
-        let t_idx = v.idx();
+        let t = *v;
+        let t_idx = t.idx();
         let base = level_base[t_idx];
-        let eff_width = tdd.reference_slot_count(VtreeIdx(t_idx as u32));
+        let eff_width = tdd.reference_slot_count(t);
 
         if eff_width == 0 {
             continue;
         }
 
-        // Leaf levels: marginal nodes, always identity remap.
-        if vtree.node(VtreeIdx(t_idx as u32)).is_leaf() {
-            for i in 0..eff_width {
-                remap[base + i] = i as u32;
-            }
-            continue;
-        }
-
-        let width = tdd.levels[t_idx].slot_count();
+        // Leaf and marginal levels keep their indices. A leaf level's nodes
+        // are implicit, so there is nothing to compact.
+        //
         // A marginal level keeps its content in a value store that parents
         // reference by store-relative slot index, and such refs may be minted
         // after this prune (contract's inline-to-slot redirect). The walk marks
         // only the slots referenced right now, so compacting the store here
         // could drop a slot a later ref reads. Marginal stores keep their full
         // length; `prune_value_slots` collects their orphans.
-        let mut new_idx = 0u32;
-        if tdd.levels[t_idx].is_marginal() {
-            for i in 0..width {
+        if vtree.node(t).is_leaf() || tdd.levels[t_idx].is_marginal() {
+            for i in 0..eff_width {
                 remap[base + i] = i as u32;
             }
-            new_idx = width as u32;
-        } else {
-            for i in 0..width {
-                if remap[base + i] != UNREACHED {
-                    remap[base + i] = new_idx;
-                    new_idx += 1;
-                }
-            }
-        }
-        // Did this level lose any node? (remap stays valid identity either way.)
-        let this_dirty = (new_idx as usize) != width;
-        level_dirty[t_idx] = this_dirty;
-
-        if tdd.levels[t_idx].is_marginal() {
-            // The identity remap above forces `this_dirty == false` here.
-            debug_assert!(!this_dirty);
             continue;
         }
 
-        rewrite_child_refs(tdd, VtreeIdx(t_idx as u32), base, width, level_base, &level_dirty, remap);
-
-        // Compact the node Vec in place, O(width) with no allocation. The
-        // pair arena is not swept here; a pruned level keeps its arena slack
-        // until `shrink_arrays`.
-        if this_dirty {
-            let mut i = 0;
-            tdd.levels[t_idx].nodes.retain(|_| {
-                let keep = remap[base + i] != UNREACHED;
-                i += 1;
-                keep
-            });
-            // Tombstones are unreferenced, hence unreachable, hence dropped by
-            // the retain above.
-            tdd.levels[t_idx].n_tombstones = 0;
-        }
+        let (left, right) = vtree.children(t);
+        level_dirty[t_idx] = compact_one_level(
+            tdd,
+            t,
+            base,
+            remap,
+            &[],
+            Child::at(level_base[left.idx()], level_dirty[left.idx()]),
+            Child::at(level_base[right.idx()], level_dirty[right.idx()]),
+        );
     }
     level_dirty
 }
 
-/// Rewrite level `t`'s child references through its child levels' remaps.
-/// `base` and `width` are `t`'s own block in `remap`; `level_base` says where
-/// each level's block starts, `level_dirty` which levels shrank.
+/// Where a child level's remap is, as the parent rewriting its references
+/// needs to read it.
+#[derive(Clone, Copy)]
+struct Child {
+    /// Offset of the child's block in `remap`; unused when `identity`.
+    base: usize,
+    /// The child kept every slot, so its remap is the identity and it has no
+    /// block of its own — the shared identity run stands in for it.
+    identity: bool,
+    /// The child lost a node, so the parent has to rewrite its references.
+    dirty: bool,
+}
+
+impl Child {
+    /// A child with its own block in `remap`.
+    const fn at(base: usize, dirty: bool) -> Child {
+        Child { base, identity: false, dirty }
+    }
+
+    /// A child that kept every slot.
+    const IDENTITY: Child = Child { base: 0, identity: true, dirty: false };
+}
+
+/// Compact one structural level: overwrite each reached slot's mark with the
+/// slot's compacted index, rewrite the level's child references through the
+/// children's remaps, and drop the unreachable nodes. Returns whether the
+/// level lost a node.
 ///
-/// A no-op unless a child level actually shrank: otherwise both child remaps
+/// `identity` is the ascending run a child marked [`Child::IDENTITY`] reads its
+/// remap from; it must be at least as long as that child's width.
+fn compact_one_level(
+    tdd: &mut Tdd,
+    t: VtreeIdx,
+    base: usize,
+    remap: &mut [u32],
+    identity: &[u32],
+    left: Child,
+    right: Child,
+) -> bool {
+    let t_idx = t.idx();
+    let width = tdd.levels[t_idx].slot_count();
+    let mut new_idx = 0u32;
+    for i in 0..width {
+        if remap[base + i] != UNREACHED {
+            remap[base + i] = new_idx;
+            new_idx += 1;
+        }
+    }
+    // Did this level lose any node? (remap stays valid identity either way.)
+    let this_dirty = (new_idx as usize) != width;
+
+    if left.dirty || right.dirty {
+        let marks: &[u32] = remap;
+        let left_remap = if left.identity { identity } else { &marks[left.base..] };
+        let right_remap = if right.identity { identity } else { &marks[right.base..] };
+        rewrite_child_refs(tdd, t, width, &marks[base..], left_remap, right_remap);
+    }
+
+    // Compact the node Vec in place, O(width) with no allocation. The
+    // pair arena is not swept here; a pruned level keeps its arena slack
+    // until `shrink_arrays`.
+    if this_dirty {
+        let mut i = 0;
+        tdd.levels[t_idx].nodes.retain(|_| {
+            let keep = remap[base + i] != UNREACHED;
+            i += 1;
+            keep
+        });
+        // Tombstones are unreferenced, hence unreachable, hence dropped by
+        // the retain above.
+        tdd.levels[t_idx].n_tombstones = 0;
+    }
+    this_dirty
+}
+
+/// Rewrite level `t`'s child references through its child levels' remaps.
+/// `own` is `t`'s own block of marks; `left_remap` and `right_remap` are the
+/// children's remaps, each starting at its own level's first slot.
+///
+/// Called only when a child level actually shrank: otherwise both child remaps
 /// are the identity and every write would store a value back onto itself.
 ///
 /// The three tables are parameters rather than one struct: a slice loaded out
@@ -210,35 +310,28 @@ fn compact_levels(
 fn rewrite_child_refs(
     tdd: &mut Tdd,
     t: VtreeIdx,
-    base: usize,
     width: usize,
-    level_base: &[usize],
-    level_dirty: &[bool],
-    remap: &[u32],
+    own: &[u32],
+    left_remap: &[u32],
+    right_remap: &[u32],
 ) {
     let t_idx = t.idx();
     let (left, right) = tdd.vtree.children(t);
-    let left_grid_base = level_base[left.idx()];
-    let right_grid_base = level_base[right.idx()];
     let left_view = tdd.levels[left.idx()].child_decoder();
     let right_view = tdd.levels[right.idx()].child_decoder();
-    if level_dirty[left.idx()] || level_dirty[right.idx()] {
-        let left_remap = &remap[left_grid_base..];
-        let right_remap = &remap[right_grid_base..];
-        for i in 0..width {
-            if remap[base + i] == UNREACHED {
-                continue;
+    for (i, &mark) in own.iter().take(width).enumerate() {
+        if mark == UNREACHED {
+            continue;
+        }
+        match tdd.levels[t_idx].nodes[i].kind() {
+            NodeKind::Inline(_) => {
+                let node = &mut tdd.levels[t_idx].nodes[i];
+                node.a = left_view.remap(EncodedChildRef::from_raw(node.a), left_remap).0;
+                node.b = right_view.remap(EncodedChildRef::from_raw(node.b), right_remap).0;
             }
-            match tdd.levels[t_idx].nodes[i].kind() {
-                NodeKind::Inline(_) => {
-                    let node = &mut tdd.levels[t_idx].nodes[i];
-                    node.a = left_view.remap(EncodedChildRef::from_raw(node.a), left_remap).0;
-                    node.b = right_view.remap(EncodedChildRef::from_raw(node.b), right_remap).0;
-                }
-                k if k.pairs_in_arena() => tdd.levels[t_idx]
-                    .pairs_remap_indexed(i, left_remap, right_remap, left_view, right_view),
-                _ => {}
-            }
+            k if k.pairs_in_arena() => tdd.levels[t_idx]
+                .pairs_remap_indexed(i, left_remap, right_remap, left_view, right_view),
+            _ => {}
         }
     }
 }
@@ -269,42 +362,245 @@ fn classic_mark(tdd: &Tdd, level_base: &[usize], remap: &mut [u32]) {
     remap[level_base[tdd.output.vtree.idx()] + tdd.output.local.idx()] = REACHED;
     let topo = vtree.bottomup_slice();
     for v in topo.iter().rev() {
-        let t_idx = v.idx();
-        if vtree.node(VtreeIdx(t_idx as u32)).is_leaf() {
+        let t = *v;
+        // A marginal level has no pairs, and by invariant 5 every level
+        // beneath it is marginal too, so there is nothing to mark below.
+        if vtree.node(t).is_leaf() || tdd.levels[t.idx()].is_marginal() {
             continue;
         }
-        let (left, right) = vtree.children(*v);
-        let left_grid_base = level_base[left.idx()];
-        let right_grid_base = level_base[right.idx()];
-        let output_grid_base = level_base[t_idx];
+        let (left, right) = vtree.children(t);
+        mark_children_of_level(
+            tdd,
+            t,
+            level_base[t.idx()],
+            level_base[left.idx()],
+            level_base[right.idx()],
+            remap,
+        );
+    }
+}
 
-        let width = tdd.levels[t_idx].slot_count();
-        if tdd.levels[t_idx].is_marginal() {
-            // A marginal level has no pairs, and by invariant 5 every level
-            // beneath it is marginal too, so there is nothing to mark below.
+/// Mark every child slot the reached nodes of level `t` name. `base`,
+/// `left_base` and `right_base` are the three levels' blocks in `remap`.
+///
+/// A side of a marginal child may be an inline count rather than a slot; such a
+/// side names no child slot, so the decoder answers `None` for it and only real
+/// slots are marked. A structural side is its own slot.
+fn mark_children_of_level(
+    tdd: &Tdd,
+    t: VtreeIdx,
+    base: usize,
+    left_base: usize,
+    right_base: usize,
+    remap: &mut [u32],
+) {
+    let (left, right) = tdd.vtree.children(t);
+    let left_view = tdd.levels[left.idx()].child_decoder();
+    let right_view = tdd.levels[right.idx()].child_decoder();
+    let level = &tdd.levels[t.idx()];
+    for i in 0..level.slot_count() {
+        if remap[base + i] == UNREACHED {
             continue;
         }
-        // A side of a marginal child may be an inline count rather than a slot;
-        // such a side names no child cell, so `cell()` skips it and only real
-        // cells are marked. A structural side is its own cell.
-        let left_view = tdd.levels[left.idx()].child_decoder();
-        let right_view = tdd.levels[right.idx()].child_decoder();
-        let level = &tdd.levels[t_idx];
-        for i in 0..width {
-            if remap[output_grid_base + i] == UNREACHED {
-                continue;
-            }
-            if level.nodes[i].is_internal() {
-                for pair in level.pairs_of_idx(i) {
-                    if let Some(s) = left_view.child(pair.left).index() {
-                        remap[left_grid_base + s] = REACHED;
-                    }
-                    if let Some(s) = right_view.child(pair.right).index() {
-                        remap[right_grid_base + s] = REACHED;
-                    }
+        if level.nodes[i].is_internal() {
+            for pair in level.pairs_of_idx(i) {
+                if let Some(s) = left_view.child(pair.left).index() {
+                    remap[left_base + s] = REACHED;
+                }
+                if let Some(s) = right_view.child(pair.right).index() {
+                    remap[right_base + s] = REACHED;
                 }
             }
         }
     }
 }
 
+// ── The seeded walk ──────────────────────────────────────────────────────────
+
+/// One level the seeded walk marked: where its marks live, and what it reads
+/// its children's remaps from.
+#[derive(Clone, Copy)]
+pub(crate) struct Visit {
+    level: VtreeIdx,
+    /// This level's block in `remap`.
+    base: usize,
+    left: Child,
+    right: Child,
+}
+
+impl Visit {
+    /// A level whose block is marked but whose children are not settled yet.
+    const fn new(level: VtreeIdx, base: usize) -> Visit {
+        Visit { level, base, left: Child::IDENTITY, right: Child::IDENTITY }
+    }
+}
+
+/// [`prune_unreachable`] under [`PruneScope::BelowRoot`]: walk down from the
+/// output, stopping at every level that loses no node.
+fn prune_below_root(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
+    let pool = eng.reduce_scratch();
+    let mut remap = pool.prune_remap.take();
+    let mut identity = pool.prune_identity.take();
+    let mut visits = pool.prune_visits.take();
+
+    let result = prune_below_root_with(eng, tdd, &mut remap, &mut identity, &mut visits);
+
+    let lim = eng.limits();
+    pool.prune_remap.put_bounded(lim, remap);
+    pool.prune_identity.put_bounded(lim, identity);
+    pool.prune_visits.put_bounded(lim, visits);
+    result
+}
+
+/// [`prune_below_root`] with the scratch checked out.
+fn prune_below_root_with(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    remap: &mut Vec<u32>,
+    identity: &mut Vec<u32>,
+    visits: &mut Vec<Visit>,
+) -> Result<(), OperationError> {
+    let vtree = std::sync::Arc::clone(&tdd.vtree);
+    let root = tdd.output.vtree;
+    visits.clear();
+    let mut used = 0usize;
+
+    // The root's block, with the output node the only slot reached: whatever
+    // else the root level holds is what the change at the root dropped.
+    let base = alloc_block(eng, remap, &mut used, tdd.levels[root.idx()].slot_count())?;
+    remap[base + tdd.output.local.idx()] = REACHED;
+    visits.push(Visit::new(root, base));
+
+    // Where the marks of a child the walk does not descend into go: a leaf
+    // level, whose remap is the identity, or a marginal one, which is never
+    // compacted. Sized to the widest such child, shared by every level, and
+    // never read. `(base, width)`.
+    let mut sink = (0usize, 0usize);
+
+    // Marking, top-down. A level has one parent, so a level's marks are
+    // complete as soon as that parent has been walked, and a queue is a valid
+    // order.
+    let mut i = 0;
+    while i < visits.len() {
+        let t = visits[i].level;
+        let (left, right) = vtree.children(t);
+        let (lw, rw) = (tdd.reference_slot_count(left), tdd.reference_slot_count(right));
+        let (l_own, r_own) = (descends_into(tdd, left), descends_into(tdd, right));
+        // The identity run stands in for either child the level keeps whole.
+        identity_upto(eng, identity, lw.max(rw))?;
+        let lb = if l_own {
+            alloc_block(eng, remap, &mut used, lw)?
+        } else {
+            sink_block(eng, remap, &mut used, &mut sink, lw)?
+        };
+        let rb = if r_own {
+            alloc_block(eng, remap, &mut used, rw)?
+        } else {
+            sink_block(eng, remap, &mut used, &mut sink, rw)?
+        };
+
+        mark_children_of_level(tdd, t, visits[i].base, lb, rb, remap);
+
+        visits[i].left = settle_child(remap, lb, lw, l_own);
+        visits[i].right = settle_child(remap, rb, rw, r_own);
+        if visits[i].left.dirty {
+            visits.push(Visit::new(left, lb));
+        }
+        if visits[i].right.dirty {
+            visits.push(Visit::new(right, rb));
+        }
+        i += 1;
+    }
+
+    // Compaction, bottom-up: a level was pushed after its parent, so the walk
+    // order reversed puts every level after its own children.
+    for k in (0..visits.len()).rev() {
+        let v = visits[k];
+        if compact_one_level(tdd, v.level, v.base, remap, identity, v.left, v.right) {
+            tdd.invalidate(v.level);
+        }
+    }
+
+    tdd.output.local = NodeIdx(remap[visits[0].base + tdd.output.local.idx()]);
+
+    // As in `prune_whole`: both walks cross every slot they reserved, and
+    // neither can stop partway.
+    eng.limits().charge_work(2 * used as u64);
+    Ok(())
+}
+
+/// Whether the walk descends into `child`: a structural internal level is the
+/// only kind that can lose a node.
+fn descends_into(tdd: &Tdd, child: VtreeIdx) -> bool {
+    !tdd.vtree.node(child).is_leaf() && !tdd.levels[child.idx()].is_marginal()
+}
+
+/// What a walked level's parent reads for it: a child that kept every slot
+/// needs no block, and one that lost a slot is walked in turn.
+fn settle_child(remap: &[u32], base: usize, width: usize, walked: bool) -> Child {
+    if !walked {
+        return Child::IDENTITY;
+    }
+    if remap[base..base + width].iter().all(|&m| m != UNREACHED) {
+        Child::IDENTITY
+    } else {
+        Child::at(base, true)
+    }
+}
+
+/// Reserve `width` fresh slots at the end of `remap`, `UNREACHED` throughout.
+///
+/// The reservation goes through the engine's limits. Nothing in the diagram has
+/// been written while the walk is taking blocks, so a refusal leaves it as it
+/// was.
+fn alloc_block(
+    eng: &Engine,
+    remap: &mut Vec<u32>,
+    used: &mut usize,
+    width: usize,
+) -> Result<usize, OperationError> {
+    let base = *used;
+    let end = base + width;
+    if remap.len() < end {
+        eng.limits().try_resize(remap, end, UNREACHED)?;
+    }
+    remap[base..end].fill(UNREACHED);
+    *used = end;
+    Ok(base)
+}
+
+/// The shared block the marks of a child the walk ignores go into. It is never
+/// read, so it needs no reset — only room for the widest such child.
+fn sink_block(
+    eng: &Engine,
+    remap: &mut Vec<u32>,
+    used: &mut usize,
+    sink: &mut (usize, usize),
+    width: usize,
+) -> Result<usize, OperationError> {
+    if sink.1 < width {
+        let base = *used;
+        let end = base + width;
+        if remap.len() < end {
+            eng.limits().try_resize(remap, end, UNREACHED)?;
+        }
+        *used = end;
+        *sink = (base, width);
+    }
+    Ok(sink.0)
+}
+
+/// Grow the shared identity run to `n` entries, `identity[i] == i`.
+///
+/// Every child level the walk keeps whole remaps through it, so one ascending
+/// run serves all of them, and it only ever grows.
+fn identity_upto(eng: &Engine, identity: &mut Vec<u32>, n: usize) -> Result<(), OperationError> {
+    if identity.len() < n {
+        let start = identity.len();
+        eng.limits().try_resize(identity, n, 0u32)?;
+        for (i, slot) in identity.iter_mut().enumerate().skip(start) {
+            *slot = i as u32;
+        }
+    }
+    Ok(())
+}

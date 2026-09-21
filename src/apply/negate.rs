@@ -60,7 +60,10 @@ impl Engine {
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().begin_operation();
         let mut result = negate_tdd_owned(self, f)?;
-        self.reduce(&mut result, plan)?;
+        // `expand_full` left every level covering its children's whole basis,
+        // so every node is named from the level above and the only nodes the
+        // complement can have orphaned are below the root cells it dropped.
+        self.reduce_scoped(&mut result, plan, crate::reduce::prune::PruneScope::BelowRoot)?;
         Ok(result)
     }
 }

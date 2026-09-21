@@ -6,6 +6,7 @@ use crate::limits::OperationError;
 use crate::diagram::Tdd;
 
 use super::{contract_twins_and_leaves, prune_unreachable, ContentTwinSchedule};
+use super::prune::PruneScope;
 
 // Node count below which the content-twin scan runs on every minimize; above
 // it the scan runs only when the galloping probe in `scan_if_due` says so.
@@ -100,7 +101,7 @@ pub(crate) fn canonicalize_content_twins(eng: &Engine, tdd: &mut Tdd) -> Result<
         // The prune removes the unreferenced duplicates and seeds the contract
         // worklists with the levels it shrank; the contraction then merges the
         // context twins the ref rewrite created.
-        prune_unreachable(eng, tdd)?;
+        prune_unreachable(eng, tdd, PruneScope::Whole)?;
         contract_twins_and_leaves(eng, tdd)?;
 
         let slot_stats = crate::reduce::slot_prune::prune_value_slots(eng, tdd);

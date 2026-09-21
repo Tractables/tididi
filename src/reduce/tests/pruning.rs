@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::reduce::prune::prune_unreachable;
+use crate::reduce::prune::{PruneScope, prune_unreachable};
 
 use crate::test_helpers::{assert_canonical, compile_clauses};
 use crate::diagram::EncodedNode;
@@ -44,7 +44,7 @@ use crate::vtree::Vtree;
         assert_eq!(tdd.levels[target].live_slot_count(), len_before);
         assert!(tdd.levels[target].nodes.last().unwrap().is_tombstone());
 
-        prune_unreachable(eng, &mut tdd).expect("tiny scratch reservation cannot fail");
+        prune_unreachable(eng, &mut tdd, PruneScope::Whole).expect("tiny scratch reservation cannot fail");
         assert_canonical(&tdd);
         assert_eq!(tdd.levels[target].n_tombstones, 0);
         assert!(!tdd.levels.iter().any(|l| l.nodes.iter().any(|n| n.is_tombstone())));
@@ -69,7 +69,7 @@ fn the_prune_scratch_reservation_goes_through_the_engine() {
     tdd.minimize().unwrap();
     let (size_before, mc_before) = (tdd.pair_count(), tdd.model_count().unwrap());
     eng.limits().refuse_nth_reserve(0);
-    let refused = prune_unreachable(eng, &mut tdd);
+    let refused = prune_unreachable(eng, &mut tdd, PruneScope::Whole);
     eng.limits().grant_every_reserve();
     assert!(refused.is_err(), "the armed injection must refuse the scratch reservation");
     assert_eq!(tdd.pair_count(), size_before, "a refused prune must not touch the diagram");
@@ -80,7 +80,7 @@ fn the_prune_scratch_reservation_goes_through_the_engine() {
     let mut tdd = compile_clauses(&vtree, &clauses);
     tdd.minimize().unwrap();
     eng.limits().reset_meters();
-    prune_unreachable(eng, &mut tdd).expect("a tiny scratch reservation cannot fail");
+    prune_unreachable(eng, &mut tdd, PruneScope::Whole).expect("a tiny scratch reservation cannot fail");
     assert!(
         eng.limits().meters().in_flight_bytes > 0,
         "the scratch reservation must be charged against the byte budget",

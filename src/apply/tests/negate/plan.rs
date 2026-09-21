@@ -5,7 +5,7 @@ use crate::reduce::ReductionPlan;
 
 /// Every node's pairs, level by level: two diagrams agree here iff they are
 /// the same diagram.
-fn shape(t: &Tdd) -> String {
+pub(super) fn shape(t: &Tdd) -> String {
     let mut s = format!("out={}:{}", t.output.vtree.idx(), t.output.local.idx());
     for (i, lv) in t.levels.iter().enumerate() {
         if lv.slot_count() == 0 || lv.is_marginal() {
