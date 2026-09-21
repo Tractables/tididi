@@ -30,7 +30,7 @@ reusing a consumed circuit raises ``ConsumedCircuitError``.
 
 The `Python guide <https://tractables.github.io/tididi/python/>`_ introduces
 configuration rules, probabilities, reachability, tables, and advanced evaluation.
-Each walkthrough includes its executed output and downloadable Python and notebook versions.
+Application tutorials include executed output and downloadable Python and notebook versions.
 
 Build from source
 -----------------

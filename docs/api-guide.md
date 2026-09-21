@@ -53,6 +53,9 @@ for a user's changing selections.
 
 ## Condition, quantify and rename
 
+The [counting tutorial](crate::guide::examples::counting) compares observation,
+substitution and projection on one model.
+
 Conjoin an observation to retain the assignments consistent with it;
 [`Tdd::condition`](crate::Tdd::condition) substitutes its values into the
 function and documents how that affects counting.

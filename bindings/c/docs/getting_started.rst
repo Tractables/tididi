@@ -16,13 +16,9 @@ We will represent **(x ∧ y) ∨ z**: either both ``x`` and ``y``
 are true, or ``z`` is true. A vtree groups the variables used by related circuits.
 Here it contains three variables, numbered 1 through 3.
 
-The examples include ``example.h``, which includes ``tididi.h`` and a few
-small helpers. ``check`` handles an error; ``count`` calls the counting API:
-
-.. literalinclude:: ../examples/example.h
-   :language: c
-   :start-at: static inline void check
-   :end-before: /* The documentation
+The examples use small helpers: ``check`` prints an error and stops on failure,
+``count`` queries the model count, and ``copy`` and ``release`` manage circuit
+handles. Their definitions appear below.
 
 Construct the three literals, then combine them. A final ``NULL`` means no
 operation limits. Initialize every owned output pointer to ``NULL``.
@@ -68,6 +64,17 @@ to be freed, along with the result handles. ``release`` calls
    :start-after: // begin: cleanup
    :end-before: // end: cleanup
    :dedent: 4
+
+Example helpers
+---------------
+
+These helpers call the public API directly. An application that handles errors
+locally can inspect the returned error instead of exiting; see :doc:`execution`.
+
+.. literalinclude:: ../examples/example.h
+   :language: c
+   :start-at: static inline void check
+   :end-before: /* The documentation
 
 Complete program
 ----------------

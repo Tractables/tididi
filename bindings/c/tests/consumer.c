@@ -38,8 +38,8 @@ static void ownership(void) {
     ok(tididi_copy(f, &copy));
     bool same = false; ok(tididi_equivalent(f, f, &same, NULL)); CHECK(same);
     ok(tididi_implies(copy, f, &same, NULL)); CHECK(same);
-    int64_t duplicate[] = {1, -1}; TididiCircuit *bad = NULL;
-    failure(tididi_condition(f, duplicate, 2, &bad, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    int64_t invalid_assignment[] = {1, -1, 4}; TididiCircuit *bad = NULL;
+    failure(tididi_condition(f, invalid_assignment, sizeof(invalid_assignment) / sizeof(*invalid_assignment), &bad, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
     uint32_t absent = 4;
     failure(tididi_exists(f, &absent, 1, &bad, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
     CHECK(count(f) == 2);
@@ -135,7 +135,22 @@ static void evaluation(void) {
     ok(tididi_evaluate_f64(f,&algebra,&result,NULL));CHECK(result==6 && state.calls>0 && count(f)==6);
     tididi_string_free(mass);tididi_string_free(ratio);ok(tididi_circuit_free(f));ok(tididi_circuit_free(rain));ok(tididi_circuit_free(no));tididi_vtree_free(v);
 }
+
+static void conditioning(void) {
+    TididiVtree *vtree = NULL;
+    ok(tididi_vtree_balanced(3, &vtree));
+    TididiCircuit *a = lit(vtree, 1), *b = lit(vtree, 1), *repeated = NULL, *conflict = NULL;
+    const int64_t repeat[] = {1,1}, opposite[] = {1,-1};
+    ok(tididi_condition(a, repeat, 2, &repeated, NULL));
+    ok(tididi_condition(b, opposite, 2, &conflict, NULL));
+    CHECK(count(repeated) == 8 && count(conflict) == 0);
+    CHECK(consumed(a) && consumed(b));
+    ok(tididi_circuit_free(a)); ok(tididi_circuit_free(b));
+    ok(tididi_circuit_free(repeated)); ok(tididi_circuit_free(conflict));
+    tididi_vtree_free(vtree);
+}
+
 int main(void) {
-    ownership();queries();big_counts_and_rows();counters_and_persistence();evaluation();
+    conditioning();ownership();queries();big_counts_and_rows();counters_and_persistence();evaluation();
     puts("C ownership, queries, exact arithmetic, callbacks and persistence passed.");return 0;
 }

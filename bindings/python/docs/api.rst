@@ -6,7 +6,8 @@ Python API
 Construct circuits on a shared :class:`~tididi.Vtree`; combine them with
 operators or the named functions below. Transformation methods consume their
 circuit inputs. Query methods borrow them. See :doc:`ownership` for the rules
-that apply across the API.
+that apply across the API, and :doc:`counting` for observations, substitution
+and projection.
 
 .. currentmodule:: tididi
 

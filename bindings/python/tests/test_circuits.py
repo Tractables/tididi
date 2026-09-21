@@ -59,7 +59,7 @@ def test_preflight_errors_do_not_consume_other_operands():
     with pytest.raises(ValueError):
         a.rename({1: 9})
     with pytest.raises(ValueError):
-        a.condition([1, -1])
+        a.condition([1, 4])
     assert a.model_count() == 4
 
 
@@ -306,3 +306,16 @@ def test_seeded_boolean_formulas_match_independent_assignments():
             assert counter.model_count() == int(assignment in models)
         circuit = counter.finish()
         assert (~circuit).model_count() == 16 - len(models)
+
+
+def test_conditioning_repeats_and_conflicts_match_rust_semantics():
+    vtree = td.Vtree.balanced(3)
+    original = td.clause(vtree, [1, 2])
+    assert original.copy().condition([1, 1]).equivalent(original.copy().condition([1]))
+    conflicted = original.copy()
+    assert not conflicted.condition([1, -1]).is_sat()
+    assert conflicted.is_consumed
+    # Contradiction must not hide another invalid variable.
+    with pytest.raises(ValueError):
+        original.condition([1, -1, 4])
+    assert original.model_count() == 6

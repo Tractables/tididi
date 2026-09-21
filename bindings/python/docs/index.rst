@@ -24,6 +24,7 @@ conjunction, quantification, and renaming to explore a directed graph.
    :maxdepth: 1
 
    tutorials/01_configurations
+   counting
    tutorials/02_probability
    tutorials/03_reachability
    tutorials/04_tables
@@ -40,6 +41,5 @@ conjunction, quantification, and renaming to explore a directed graph.
    api
    representation
 
-Every walkthrough is a runnable Python file. Its displayed output is captured
-when the documentation builds; download the same program or notebook from the
+Download an application tutorial as a runnable program or notebook from the
 bottom of its page.

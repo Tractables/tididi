@@ -12,7 +12,8 @@ fingerprints in hidden comments below; a change to an instance or its scenario
 requires review again. It checks links and review freshness, not semantic truth;
 executed examples and human review still establish that.
 
-For Rust API source files, only doc comments enter the fingerprint; changing
+For Rust API source files, including binding implementations, only doc comments
+enter the fingerprint; changing
 runtime code alone does not invalidate a documentation review. The generated
 navigation in `src/guide.rs` is checked as a whole. Standalone lessons are
 automatically discovered, so a new page cannot silently omit its scenario.
@@ -37,9 +38,9 @@ and freeing without changing their ownership rules.
 
 - [Rust README](../README.md) <!-- reviewed: ff8cb955dded726fc9de884c0236de0c6511aa162eac4bb0f39c3b03c05ed7e4 -->
 - [Rust crate introduction](../src/lib.rs) <!-- reviewed: 9c14ea28438b319153d89020cbb32df4b6f0c1757d839ddf5465874e73f3be2a -->
-- [Python README](../bindings/python/README.rst) <!-- reviewed: 9c7db6c3ac5276041c1399f2d840ed60a91f57259bdfa0f412f5aad358c05648 -->
+- [Python README](../bindings/python/README.rst) <!-- reviewed: 42cb63be6010d5beef49526d85187050c634956301696846c96e5d5f4708357b -->
 - [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: c6ead730e1436ba112d8bc518610d932e3f72180e516b274c1daff51c24f651a -->
-- [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: c45e0c121d6f2bacf5652ce841d428f9dd4f99a0e7c55dfef8363ca55e4157b5 -->
+- [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: fbcc2bf0db46b0e1845f76c8fe9f00f3675645dc41f8b80beb905da887ecac25 -->
 - [C program first_circuit](../bindings/c/examples/first_circuit.c) <!-- reviewed: 3039126c0a5c738421a4eedf9848b5401d3e1657eefa9f2ec8e19f7e794a3894 -->
 - [C example](../bindings/c/examples/example.h) <!-- reviewed: 1019207b1a680a883f8df2e9b09bb850465a9a4f8b0fd345169d89200f299a70 -->
 - [C README](../bindings/c/README.rst) <!-- reviewed: c2505b3c85690814ce3c911401bb3554ffff1a9ec08b4bff9cd813e029a7b987 -->
@@ -48,20 +49,23 @@ and freeing without changing their ownership rules.
 
 Lead with what a reader can build and query, then connect capabilities to
 applications. The worked examples progress through configurations,
-probabilities, reachability, tables, persistence, vtree grouping, execution
+counting choices, probabilities, reachability, tables, persistence, vtree grouping, execution
 limits, minimum costs and storage statistics. Keep the index and sidebar in
 that order. Link reference material separately; do not make beginners choose
 an API category before they have seen a circuit.
+
+The counting lesson follows configurations in every language. Python uses a
+short doctested page for this comparison instead of a gallery application.
 
 The C guide adds a first-circuit chapter and places its ownership chapter before
 resource limits; the application chapters retain the same order.
 
 ### Instances
 
-- [Rust guide and example navigation](../src/guide.rs) <!-- reviewed: 8df6c35c664cceea9eb99b51109de233195df672ebdb0c3713f0b98dfca46aa5 -->
-- [Python guide index](../bindings/python/docs/index.rst) <!-- reviewed: a66ac8188cb1e662310009c7363479abdb86ff58a3da2a0f81573ccf2902ec6e -->
-- [Python gallery introduction](../bindings/python/examples/GALLERY_HEADER.rst) <!-- reviewed: 573697e8780b45dd469960f93fef69fe3b2c83193ddcd6ec41be851dd6d318dd -->
-- [C index](../bindings/c/docs/index.rst) <!-- reviewed: d45fcd5873553f016f81d2848fff6396e0cbad3d0767dd5b468f0efa67673627 -->
+- [Rust guide and example navigation](../src/guide.rs) <!-- reviewed: 9aed7787c13edd9b55351026bbb2c078d3937ad76b3bc3be836fb47c76266117 -->
+- [Python guide index](../bindings/python/docs/index.rst) <!-- reviewed: 3e37633982df857e843e4c08b7e6907be104d696591140bc49d47f3a8c8f2388 -->
+- [Python gallery introduction](../bindings/python/examples/GALLERY_HEADER.rst) <!-- reviewed: 384e1195cdd6c396cf480dcaa55364a78f21025e3ec1c9ee0d972e8c459f4963 -->
+- [C index](../bindings/c/docs/index.rst) <!-- reviewed: 88b473341ab11e2afe200e6e253ddf34694202cb55b0f2002c27815d92c6047a -->
 
 ## Configurations
 
@@ -91,6 +95,34 @@ It omits the witness, replacement observation and minimization demonstrations.
 - [Python walkthrough and program](../bindings/python/examples/01_configurations.py) <!-- reviewed: 0aa18e286e024c73704ecdfa5c9716bdd0f044119deb6baf6f6291add69d4993 -->
 - [C configurations](../bindings/c/docs/configurations.rst) <!-- reviewed: afa91c98a64dec891370050699f07dc3d2aaa8ede6f07039aba5ff676c090e3b -->
 - [C program configurations](../bindings/c/examples/configurations.c) <!-- reviewed: 3a3557b4369cf8a7ffa7f2252570c4a695940095870e69e476a4ebef24e35c54 -->
+
+## Counting choices
+
+Use the four-option backup rule `(L ∨ R) ∧ (¬R ∨ E)`, with N free.
+It has 8 configurations. Conjoining R leaves 4; observing R in a counter
+also gives 4. Substituting R=true yields E, whose ordinary count is 8 because
+L, R and N are free in the unchanged vtree. Projecting that residual onto
+L, E and N yields the 4 distinct remaining choices.
+
+The original rules projected onto L,R have 3 choices: local only, remote only,
+or both. Quantifying E,N produces L∨R. Its full-vtree count is 12; projecting
+onto L,R returns 3. Explain each changed Boolean function before its code and
+show output beside it. Projection takes variables to keep; exists takes
+variables to eliminate. No operation here shrinks the vtree. The conditioning contract agrees in all
+languages: repeat assignments are ignored, contradictions produce false, and
+invalid variables are still errors even in a contradictory assignment.
+
+Rust and C use standalone programs with checked excerpts. Python uses a short
+interactive doctested lesson. Counters borrow the circuit in Rust and own an
+explicit copy in Python/C. All queries have identical counts across languages.
+
+### Instances
+
+- [Rust walkthrough](examples/counting.md) <!-- reviewed: 6df899ab956bc8bab21e39f81a71435648f1494cc5add94ee1d45f0c0eaa6f34 -->
+- [Rust program](../examples/counting_choices.rs) <!-- reviewed: bb1cf3ae7ed7e7982e1cb32090d196796737e81b378da3c1e6e53d086726687f -->
+- [Python lesson](../bindings/python/docs/counting.rst) <!-- reviewed: 240a243498376cfae2200bd33b3900fbba718b34db9917317dfee8f8d1b1ca0b -->
+- [C walkthrough](../bindings/c/docs/counting.rst) <!-- reviewed: 7c8e8e8daff3c97e986125d470a0efed7dd42464b01e5f21293555639ce1d0ac -->
+- [C program](../bindings/c/examples/counting.c) <!-- reviewed: 4f2d04d3f0373f4b26b264100f83ab71f183d579d5027b1ee81d9bff738038af -->
 
 ## Probability
 
@@ -156,7 +188,7 @@ witness; the reachable-set semantics are unchanged.
 - [Python walkthrough and program](../bindings/python/examples/03_reachability.py) <!-- reviewed: 959d0a9aea4d72b273a51ff60a2124ed1740a3ca0531376773705f423e8755ad -->
 - [Shared directed graph](reachability.svg) <!-- reviewed: b578209ba2f5bf62b32b3ba8100d7efefe03ccb8f10745da60d5af30cda85cdf -->
 - [C reachability](../bindings/c/docs/reachability.rst) <!-- reviewed: 2399b28271eb37b09b22d0955b4fefec4fdd910a5c92cc79f9e9727439ab77b4 -->
-- [C program reachability](../bindings/c/examples/reachability.c) <!-- reviewed: 7cdd197b4de9653f1be4ba24080f3f0761ada2db9cfae8f2255c9d18415b18c5 -->
+- [C program reachability](../bindings/c/examples/reachability.c) <!-- reviewed: 8bf234fbfbed5a58bf1f034478670ddb75efea33ed66112b311ae91b851699b4 -->
 
 ## Tables
 
@@ -268,17 +300,24 @@ is infeasible. Rust represents infeasibility with None and feasible costs
 with Some; Python uses infinity. Python callbacks must not mutate their
 arguments. Evaluation borrows circuits, so changing prices needs no rebuild.
 
+Every language documents the algebraic laws and the free-variable value on its
+API item. A free leaf combines both signs; it is not automatically a unit value.
+Floating-point calculations can approximate these laws but exact rational
+weights have their own evaluation path.
+
 C uses a double-valued callback table and infinity for infeasibility. It shows
 minimum costs 3 and 1 and the remote-without-encryption conflict; the remote-only
 comparison remains in the Rust and Python lessons.
 
 ### Instances
 
-- [Rust walkthrough](examples/optimization.md) <!-- reviewed: dee7fd4bb19f3289a301610d4b74325b077d0f2c8bee35bd01876e69eecd4313 -->
-- [Rust program](../examples/minimum_cost.rs) <!-- reviewed: 709797710d52a145fbaf72dab43f6e0322f300b9d3fb00bf0714117fbf9870ed -->
-- [Python walkthrough and program](../bindings/python/examples/08_minimum_cost.py) <!-- reviewed: 5c6bd447fe9c8726369e4d66ce2a210533f60361d10adc7b109624ce6b87ae17 -->
-- [C minimum cost](../bindings/c/docs/minimum_cost.rst) <!-- reviewed: 5416f241a7fef812e7a66e8a5d53236824015a5e297e6e88959b5800034428d1 -->
-- [C program minimum_cost](../bindings/c/examples/minimum_cost.c) <!-- reviewed: de0fd8dfc8e5478f657d2d8843dac54496f3fa5309db0f5b87882072755abaac -->
+- [Rust walkthrough](examples/optimization.md) <!-- reviewed: b840639bfb25f1c5816b73da3b9090f010efe0ba738fc54b7eed4229ae96a627 -->
+- [Rust program](../examples/minimum_cost.rs) <!-- reviewed: f3acca4df6cfe8655f3bd1180b79d3e42e7d6c1183f32bcb5d0079041f9d56be -->
+- [Python walkthrough and program](../bindings/python/examples/08_minimum_cost.py) <!-- reviewed: 79dce3065ddab786f40085239b1e037fa83dbb734744bb7f262e6184f5e49638 -->
+- [C minimum cost](../bindings/c/docs/minimum_cost.rst) <!-- reviewed: 31066073b902872f8b5ee0ed058b91001fe74c245575b5ce7462e0ebf4d99a05 -->
+- [C program minimum_cost](../bindings/c/examples/minimum_cost.c) <!-- reviewed: d376304fe91f8dfee13b0efe4d45afcc69743b2d0082fdccafae3ef828303b8b -->
+- [Python algebra contract](../bindings/python/tididi/__init__.py) <!-- reviewed: 0c18b270daece6e0970726e34b88e130d84ab7c208569a754c358b54ced8258e -->
+- [C algebra contract](../bindings/c/src/evaluation.rs) <!-- reviewed: 290593cd8b5102135539193b1242d9cb2159140a95ccb263c3b2f652ffee9983 -->
 
 ## Statistics
 
@@ -340,14 +379,14 @@ also links specialized operations not yet exposed in Python. An operation
 appearing in one reference does not imply that the other language exposes it.
 
 The C header and reference are generated from the Rust binding declarations and
-their contracts. Its numeric callback algebra uses doubles; exact weighted
+their contracts; the reference groups functions by purpose. Its numeric callback algebra uses doubles; exact weighted
 evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: 1dcb8bcb169508574068a763ab9bf94031d9275a67bb96728b90288cde190d24 -->
-- [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: d84656b4597b1d8e16dad491f13447ac988b6f3973877b4da1eccc47d1c5e40f -->
-- [C api](../bindings/c/docs/api.rst) <!-- reviewed: 90f6d8e6e656bd253f7a1299b4fca958c9911b0b6e23c9e152c51a58dfedf54b -->
+- [Rust API overview](api-guide.md) <!-- reviewed: 01b129199cb7799ca739854cee03cbef35370ce384ae4975bd6526cedbf8aaad -->
+- [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: cf89774fb5f52ca207dd8cfb414e648661e4769736be8b529bf80ebe6eb7aeb2 -->
+- [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 
 ## Representation
 

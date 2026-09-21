@@ -89,16 +89,17 @@ def teaching_files(root):
             if relative == RECORD or path.name in {"logo.svg", "sg_execution_times.rst"}:
                 continue
             paths.add(relative)
-    # Item-level Rust documentation can also participate in a shared scenario.
-    for path in (root / "src").rglob("*.rs"):
-        if REFERENCE.search(path.read_text(encoding="utf-8")):
-            paths.add(path.relative_to(root))
+    # API contracts in the crate and bindings can participate in a shared scenario.
+    for directory in ("src", "bindings/c/src", "bindings/python/src", "bindings/python/tididi"):
+        for path in (root / directory).rglob("*"):
+            if path.suffix in {".rs", ".py"} and REFERENCE.search(path.read_text(encoding="utf-8")):
+                paths.add(path.relative_to(root))
     return paths
 
 
 def fingerprint(root, scenario, instance):
     text = (root / instance.path).read_text(encoding="utf-8")
-    if instance.path.parts[0] == "src" and instance.path != Path("src/guide.rs"):
+    if instance.path.suffix == ".rs" and "src" in instance.path.parts and instance.path != Path("src/guide.rs"):
         # Runtime edits should not require reviewing an unchanged explanation.
         text = "\n".join(line.strip() for line in text.splitlines()
                          if line.lstrip().startswith(("//!", "///")))

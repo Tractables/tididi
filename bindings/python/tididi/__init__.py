@@ -1,3 +1,4 @@
+# scenario: docs/scenarios.md#minimum-cost
 """Boolean circuits with explicit ownership, exact counts, and weighted evaluation."""
 from typing import Protocol, TypeVar
 from ._tididi import (
@@ -16,7 +17,16 @@ _T = TypeVar("_T")
 
 
 class Algebra(Protocol[_T]):
-    """Evaluation operations over immutable values; leaf sign None denotes a free variable."""
+    """Evaluate disjoint alternatives with add and independent groups with mul.
+
+    Values must be immutable. Both operations must be associative and commutative;
+    mul distributes over add. zero is the identity for add and absorbing for mul.
+    For each variable, leaf(variable, None) must equal
+    add(leaf(variable, False), leaf(variable, True)): a free variable includes
+    both assignments. Violating these laws can make equivalent circuits evaluate
+    differently. Floating-point arithmetic only approximates the algebraic laws;
+    use exact values when exact results matter.
+    """
 
     def zero(self) -> _T:
         """The value of an impossible event (the additive identity)."""

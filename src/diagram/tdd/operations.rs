@@ -45,22 +45,13 @@ impl Tdd {
         context.run(|eng| eng.negate(self))
     }
 
-    /// The Boolean complement, with the reduction the complement ends with
-    /// chosen explicitly.
+    /// Complement the diagram using an explicit reduction plan.
     ///
-    /// [`negate`](Self::negate) uses the default plan. The complement is built
-    /// by making the operand full — which adds a fill node per level — and
-    /// subtracting the output node's cells at the root, so the result carries
-    /// the operand's old output cone as well, unreachable. Pruning is what
-    /// removes both, and every plan here includes it; the choice is what else
-    /// to pay for.
-    ///
-    /// [`ReductionPlan::Prune`](crate::reduce::ReductionPlan::Prune) is the cheapest result that is still free of
-    /// unreachable nodes. It is the right plan when the caller minimizes the
-    /// result anyway, or conjoins it into an accumulator that is minimized
-    /// afterwards — but the result is not in canonical form, and handing a
-    /// larger diagram to the next operation has its own cost, so measure
-    /// rather than assume.
+    /// Use [`negate`](Self::negate) for the default minimized result.
+    /// [`ReductionPlan::Prune`](crate::reduce::ReductionPlan::Prune) removes
+    /// unreachable storage without establishing canonical form. It can avoid
+    /// redundant work when a later step minimizes the result, but the larger
+    /// intermediate diagram may make that step more expensive.
     ///
     /// # Errors
     ///

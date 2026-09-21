@@ -13,19 +13,32 @@ pub(crate) unsafe fn borrow<'a>(value: *const TididiCircuit) -> Result<Ref<'a, T
     let value = unsafe { required(value)? }.0.try_borrow().map_err(|_| busy())?;
     Ref::filter_map(value, Option::as_ref).map_err(|_| consumed())
 }
-pub(crate) unsafe fn take_many(values: &[*mut TididiCircuit], validate: impl FnOnce(&Vtree) -> Result<()>) -> Result<(Arc<Vtree>, Vec<Tdd>)> {
+/// Borrow and validate every operand before taking any payload.
+/// Holding the guards also prevents reentrant mutation during validation.
+pub(crate) unsafe fn take_many(values: &[*mut TididiCircuit], validate: impl FnOnce(&Vtree) -> Result<()>)
+    -> Result<(Arc<Vtree>, Vec<Tdd>)> {
     if values.is_empty() { return Err(invalid("at least one circuit is required")); }
     let mut seen = HashSet::new();
-    for value in values { if !seen.insert(*value) { return Err(invalid("the same circuit occurs twice; copy one operand")); } }
+    for value in values {
+        if !seen.insert(*value) {
+            return Err(invalid("the same circuit occurs twice; copy one operand"));
+        }
+    }
     let mut handles = Vec::new();
-    for &value in values { handles.push(unsafe { required(value)? }.0.try_borrow_mut().map_err(|_| busy())?); }
+    for &value in values {
+        handles.push(unsafe { required(value)? }.0.try_borrow_mut().map_err(|_| busy())?);
+    }
     let vtree = Arc::clone(handles[0].as_ref().ok_or_else(consumed)?.vtree());
     for handle in &handles {
-        if !Arc::ptr_eq(handle.as_ref().ok_or_else(consumed)?.vtree(), &vtree) { return Err(invalid("circuits must share one vtree")); }
+        if !Arc::ptr_eq(handle.as_ref().ok_or_else(consumed)?.vtree(), &vtree) {
+            return Err(invalid("circuits must share one vtree"));
+        }
     }
     validate(&vtree)?;
-    Ok((vtree, handles.iter_mut().map(|f| f.take().unwrap()).collect()))
+    let circuits = handles.iter_mut().map(|handle| handle.take().unwrap()).collect();
+    Ok((vtree, circuits))
 }
+
 unsafe fn unary(value: *mut TididiCircuit, config: LimitConfig, validate: impl FnOnce(&Vtree) -> Result<()>,
     operation: impl FnOnce(&Engine, Tdd) -> std::result::Result<Tdd, tididi::OperationError>) -> Result<Tdd> {
     let (vtree, mut inputs) = unsafe { take_many(&[value], validate)? };
@@ -111,14 +124,21 @@ pub unsafe extern "C" fn tididi_negate(value: *mut TididiCircuit, out: *mut *mut
 pub unsafe extern "C" fn tididi_minimize(value: *mut TididiCircuit, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; *out = circuit(unsafe { unary(value, limits(config)?, |_| Ok(()), |e, mut f| { e.minimize(&mut f)?; Ok(f) })? }); Ok(()) })
 }
-/// Substitute literal values, consuming the circuit. Each variable must appear once.
+/// Substitute literal values, consuming the circuit. Repeats are ignored; opposite signs produce false.
 /// Substituted variables remain free in the counting universe; use a counter to count under observations.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn tididi_condition(value: *mut TididiCircuit, assignments: *const i64, len: usize, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
-    boundary(|| { let out = unsafe { vacant(out)? }; let assignments = literals(unsafe { array(assignments, len)? })?;
-        let mut seen = HashSet::new(); if assignments.iter().any(|l| !seen.insert(l.var)) { return Err(invalid("each assignment variable must appear once")); }
-        let vars: Vec<_> = assignments.iter().map(|l| l.var).collect();
-        *out = circuit(unsafe { unary(value, limits(config)?, |v| check_variables(v, vars), |e, f| e.condition(f, assignments))? }); Ok(()) })
+pub unsafe extern "C" fn tididi_condition(value: *mut TididiCircuit, assignments: *const i64, len: usize,
+    out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
+    boundary(|| {
+        let out = unsafe { vacant(out)? };
+        let assignments = literals(unsafe { array(assignments, len)? })?;
+        let vars: Vec<_> = assignments.iter().map(|literal| literal.var).collect();
+        *out = circuit(unsafe {
+            unary(value, limits(config)?, |vtree| check_variables(vtree, vars),
+                |engine, circuit| engine.condition(circuit, assignments))?
+        });
+        Ok(())
+    })
 }
 /// Existentially quantify variables, consuming the circuit. They remain free in the vtree's counting universe.
 #[unsafe(no_mangle)]

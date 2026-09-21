@@ -1,3 +1,4 @@
+// scenario: docs/scenarios.md#minimum-cost
 use std::ffi::{c_char, c_void};
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -43,6 +44,12 @@ pub unsafe extern "C" fn tididi_weighted_ratio(numerator: *const TididiCircuit, 
 }
 /// Numeric evaluation callbacks. Every callback is required; userdata is borrowed for the call.
 /// leaf sign is 1 (true), 0 (false), or -1 (free). Callbacks must not unwind or longjmp.
+/// add combines disjoint alternatives; mul combines independent variable groups.
+/// Both operations must be associative and commutative, mul must distribute over add,
+/// and zero must be the identity for add and absorbing for mul.
+/// leaf(v, -1) must equal add(leaf(v, 0), leaf(v, 1)): a free variable includes both signs.
+/// Equivalent circuits need not evaluate equally if these laws are violated.
+/// Double arithmetic approximates these laws; use weighted_count for exact rational sums.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct TididiAlgebra {

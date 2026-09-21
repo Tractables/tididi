@@ -119,16 +119,9 @@ impl Limits {
     /// Ask the callback before checking thresholds, allowing it to replace an
     /// expired rule and let the operation continue.
     ///
-    /// The host clock is read at most once, and only for a rule that asks for
-    /// it: a [`StopAt::WorkUnits`] threshold never does, and neither does a
-    /// pair floor the operation has not reached, so an engine armed only with
-    /// those pays a pair of `Cell` reads per poll. The saving is not a
-    /// micro-optimization. A poll falls at every level of every operation, so
-    /// a consumer building many small diagrams under a size bound polls
-    /// millions of times a second, and reading the clock each time cost a
-    /// fifth of one such compile on a host whose clocksource is the TSC and
-    /// most of it on one falling back to the HPET, where `Instant::now()`
-    /// costs about a microsecond rather than about twenty nanoseconds.
+    /// Read the clock at most once, only for a reached pair floor with a time
+    /// threshold, an unconditional deadline, or a callback that needs it.
+    /// Work-unit-only rules avoid a clock read on each poll.
     #[inline]
     pub(crate) fn should_stop(&self) -> bool {
         let stop = self.stop.get();

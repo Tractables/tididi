@@ -1,10 +1,9 @@
 //! Circuit objects expose borrowing queries and explicitly consuming transformations.
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use pyo3::prelude::*;
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::PyTypeError;
 use pyo3::types::{PyBytes, PyDict};
 use num_bigint::BigUint;
 use num_rational::BigRational;
@@ -82,16 +81,13 @@ impl PyCircuit {
     }
 
     /// Substitute the given literal values, consuming this circuit.
+    /// Repeated literals are ignored; opposite signs for one variable produce false.
     /// Assigned variables become free in the resulting function's counting universe.
     /// To count assignments consistent with evidence, use counter() instead.
     #[pyo3(signature = (literals, *, limits=None))]
     fn condition(&mut self, py: Python<'_>, literals: &Bound<'_, PyAny>, limits: Option<&PyLimits>) -> PyResult<Self> {
         let literals = domain::read_literals(literals)?;
         domain::check_variables(self.get()?.vtree(), literals.iter().map(|l| l.var))?;
-        let mut seen = HashSet::new();
-        if literals.iter().any(|l| !seen.insert(l.var)) {
-            return Err(PyValueError::new_err("an assignment must name each variable once"));
-        }
         let limits = domain::config(limits)?;
         let f = self.take()?;
         let vtree = Arc::clone(f.vtree());

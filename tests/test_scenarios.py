@@ -111,6 +111,18 @@ class ScenarioTests(unittest.TestCase):
         self.edit("src/lib.rs", "A lesson", "New documentation")
         self.assertIn("src/lib.rs", "\n".join(check(self.root)))
 
+    def test_binding_rust_contracts_ignore_runtime_only_edits(self):
+        name = "bindings/c/src/evaluation.rs"
+        self.write(name, "// scenario: docs/scenarios.md#lesson\n/// Algebra requirements.\n")
+        self.assertIn(name + ": not listed", "\n".join(check(self.root)))
+        record = self.root / "docs/scenarios.md"
+        record.write_text(record.read_text() + f"- [C contract](../{name}) <!-- reviewed: {'0' * 64} -->\n")
+        self.assertEqual(check(self.root, "lesson"), [])
+        self.write(name, (self.root / name).read_text() + "pub fn callback() {}\n")
+        self.assertEqual(check(self.root), [])
+        self.edit(name, "Algebra requirements", "Expanded algebra requirements")
+        self.assertIn(name, "\n".join(check(self.root)))
+
     def test_windows_newlines_and_generated_pages_do_not_invalidate_review(self):
         for name in self.files + ["docs/scenarios.md"]:
             path = self.root / name

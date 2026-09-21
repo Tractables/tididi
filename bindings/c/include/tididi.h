@@ -142,6 +142,12 @@ typedef struct TididiWeight {
 /**
  * Numeric evaluation callbacks. Every callback is required; userdata is borrowed for the call.
  * leaf sign is 1 (true), 0 (false), or -1 (free). Callbacks must not unwind or longjmp.
+ * add combines disjoint alternatives; mul combines independent variable groups.
+ * Both operations must be associative and commutative, mul must distribute over add,
+ * and zero must be the identity for add and absorbing for mul.
+ * leaf(v, -1) must equal add(leaf(v, 0), leaf(v, 1)): a free variable includes both signs.
+ * Equivalent circuits need not evaluate equally if these laws are violated.
+ * Double arithmetic approximates these laws; use weighted_count for exact rational sums.
  */
 typedef struct TididiAlgebra {
   void *userdata;
@@ -328,7 +334,7 @@ struct TididiError *tididi_minimize(struct TididiCircuit *value,
                                     const struct TididiLimits *config);
 
 /**
- * Substitute literal values, consuming the circuit. Each variable must appear once.
+ * Substitute literal values, consuming the circuit. Repeats are ignored; opposite signs produce false.
  * Substituted variables remain free in the counting universe; use a counter to count under observations.
  */
 struct TididiError *tididi_condition(struct TididiCircuit *value,

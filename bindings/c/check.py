@@ -37,13 +37,26 @@ def documentation(outputs):
     declared = re.findall(r"\btididi_\w+\s*\([^;]*\);", functions)
     if len(entries) != len(declared):
         raise ValueError("every exported function needs a documented declaration")
+    entries = {re.search(r"\b(tididi_\w+)\(", signature)[1]: (comment, signature)
+               for comment, signature in entries}
+    groups = [("domain", "Vtrees and limits"), ("circuit", "Construct and transform circuits"),
+              ("query", "Query and inspect"), ("counter", "Observe choices"),
+              ("evaluation", "Evaluate weights and costs"), ("storage", "Save and export"),
+              ("lib", "Errors and strings")]
     reference = []
-    for comment, signature in entries:
-        signature = " ".join(signature.split())
-        reference.append(f".. c:function:: {signature}\n\n")
-        for line in comment.splitlines():
-            reference.append("   " + re.sub(r"^\s*\* ?", "", line).rstrip() + "\n")
-        reference.append("\n")
+    for module, title in groups:
+        reference.extend([title + "\n", "~" * len(title) + "\n\n"])
+        source = (ROOT / "src" / (module + ".rs")).read_text(encoding="utf-8")
+        names = re.findall(r'pub (?:unsafe )?extern "C" fn (tididi_\w+)\(', source)
+        for name in names:
+            comment, signature = entries.pop(name)
+            signature = " ".join(signature.split())
+            reference.append(f".. c:function:: {signature}\n\n")
+            for line in comment.splitlines():
+                reference.append("   " + re.sub(r"^\s*\* ?", "", line).rstrip() + "\n")
+            reference.append("\n")
+    if entries:
+        raise ValueError(f"functions missing from the reference groups: {sorted(entries)}")
     (generated / "functions.rst").write_text("".join(reference), encoding="utf-8")
     run(sys.executable, "-m", "sphinx", "-W", "--keep-going", "-b", "html",
         ROOT / "docs", BUILD / "docs")

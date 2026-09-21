@@ -29,15 +29,16 @@ int main(void) {
     // end: graph
 
     // begin: transition
-    TididiCircuit *terms[25] = {NULL}, *transition = NULL;
-    for (size_t i = 0; i < 25; ++i) {
+    enum { EDGE_COUNT = sizeof(edges) / sizeof(edges[0]) };
+    TididiCircuit *terms[EDGE_COUNT] = {NULL}, *transition = NULL;
+    for (size_t i = 0; i < EDGE_COUNT; ++i) {
         TididiCircuit *source = state(vtree, current_vars, edges[i][0]);
         TididiCircuit *target = state(vtree, next_vars, edges[i][1]);
         check(tididi_and(source, target, &terms[i], NULL));
         release(source); release(target);
     }
-    check(tididi_or_many(terms, 25, &transition, NULL));
-    for (size_t i = 0; i < 25; ++i) release(terms[i]);
+    check(tididi_or_many(terms, EDGE_COUNT, &transition, NULL));
+    for (size_t i = 0; i < EDGE_COUNT; ++i) release(terms[i]);
     TididiCircuit *reached = state(vtree, current_vars, 0);
     // end: transition
 

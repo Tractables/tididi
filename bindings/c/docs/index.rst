@@ -17,6 +17,7 @@ The later chapters cover ownership, resource limits, and custom evaluation.
 
    getting_started
    configurations
+   counting
    probability
    reachability
    tables

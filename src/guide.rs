@@ -37,6 +37,7 @@ macro_rules! walkthroughs {
 
 walkthroughs! {
     configurations => ("Configurations", "Build rules, count solutions, and update a user's choices."),
+    counting => ("What are we counting?", "Distinguish observations, substitution, and projection."),
     probability => ("Probabilities", "Evaluate events under changing probabilities."),
     reachability => ("Reachability", "Explore the states reachable through a transition system."),
     tables => ("Tables and updates", "Build a circuit from rows and maintain it as the table changes."),
