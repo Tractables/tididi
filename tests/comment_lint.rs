@@ -28,7 +28,8 @@ use std::path::PathBuf;
 
 /// Upper-case words that are the ordinary spelling of the thing they name.
 const ACRONYMS: &[&str] = &[
-    "API", "BDD", "CNF", "DFS", "DIMACS", "DOT", "LCA", "OOM", "RSS", "SAT", "SDD", "TDD", "UNSAT",
+    "API", "BDD", "CNF", "DFS", "DIMACS", "DOT", "HPET", "LCA", "OOM", "RSS", "SAT", "SDD", "TDD",
+    "TSC", "UNSAT",
 ];
 
 /// The one public module with no row in the boundary table: a doc-hidden shim

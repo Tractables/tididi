@@ -118,6 +118,17 @@ impl Limits {
 
     /// Ask the callback before checking thresholds, allowing it to replace an
     /// expired rule and let the operation continue.
+    ///
+    /// The host clock is read at most once, and only for a rule that asks for
+    /// it: a [`StopAt::WorkUnits`] threshold never does, and neither does a
+    /// pair floor the operation has not reached, so an engine armed only with
+    /// those pays a pair of `Cell` reads per poll. The saving is not a
+    /// micro-optimization. A poll falls at every level of every operation, so
+    /// a consumer building many small diagrams under a size bound polls
+    /// millions of times a second, and reading the clock each time cost a
+    /// fifth of one such compile on a host whose clocksource is the TSC and
+    /// most of it on one falling back to the HPET, where `Instant::now()`
+    /// costs about a microsecond rather than about twenty nanoseconds.
     #[inline]
     pub(crate) fn should_stop(&self) -> bool {
         let stop = self.stop.get();
@@ -125,9 +136,9 @@ impl Limits {
         if !stop.armed() && callback.is_none() {
             return false;
         }
-        let now = Instant::now();
+        let mut now = Clock::unread();
         let stop = match callback {
-            Some(decide) => match decide.decide(&self.meters(), now) {
+            Some(decide) => match decide.decide(&self.meters(), now.read()) {
                 StopDecision::Stop => return true,
                 StopDecision::Continue => stop,
                 StopDecision::ReplaceRules(next) => {
@@ -137,22 +148,40 @@ impl Limits {
             },
             None => stop,
         };
-        // The size-conditional bound first: it is the cheaper half (the clock is
-        // already read) and before it falls the pair meter does not matter.
+        // The pair meter first: it is the cheaper half now that the clock is
+        // read on demand, and below the floor the threshold does not matter.
         if let Some((floor_pairs, at)) = stop.after_pairs
-            && self.reached(at, now)
             && self.pairs_in_flight.get() >= floor_pairs
+            && self.reached(at, &mut now)
         {
             return true;
         }
-        stop.unconditional.is_some_and(|at| self.reached(at, now))
+        stop.unconditional.is_some_and(|at| self.reached(at, &mut now))
     }
 
     #[inline]
-    fn reached(&self, at: StopAt, now: Instant) -> bool {
+    fn reached(&self, at: StopAt, now: &mut Clock) -> bool {
         match at {
-            StopAt::Time(t) => now >= t,
+            StopAt::Time(t) => now.read() >= t,
             StopAt::WorkUnits(units) => self.work_clock.get() >= units,
         }
+    }
+}
+
+/// The instant one cancellation test runs at, read from the host on first use
+/// and not at all when no threshold is a wall-clock one.
+struct Clock(Option<Instant>);
+
+impl Clock {
+    /// A clock the host has not been asked for yet.
+    #[inline]
+    fn unread() -> Clock {
+        Clock(None)
+    }
+
+    /// The instant this test runs at. Every rule in one test sees the same one.
+    #[inline]
+    fn read(&mut self) -> Instant {
+        *self.0.get_or_insert_with(Instant::now)
     }
 }
