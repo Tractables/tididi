@@ -3,6 +3,8 @@ name: Rust
 on:
   push:
     branches: [ "main" ]
+  release:
+    types: [published]
   pull_request:
     branches: [ "main" ]
 
@@ -45,14 +47,19 @@ jobs:
       run: cargo doc --no-deps
     - name: Check rendered documentation
       if: runner.os == 'Linux'
+      env:
+        RELEASE_TAG: ${{ github.event.release.tag_name }}
       run: |
         python3 tests/rendered_docs.py --self-test
-        python3 scripts/prepare_docs.py target/doc
+        python3 tests/rendered_docs.py target/doc --unbundled
+        python3 scripts/prepare_docs.py target/doc --release-tag "$RELEASE_TAG"
         python3 tests/rendered_docs.py target/doc
-    - name: Prepare documentation site
-      if: runner.os == 'Linux' && github.event_name == 'push'
-      run: |
-        echo '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=tididi/"><title>tididi documentation</title><a href="tididi/">Open the documentation</a>' > target/doc/index.html
+    - name: Save release documentation
+      if: runner.os == 'Linux' && github.event_name == 'release'
+      uses: actions/upload-artifact@v4
+      with:
+        name: release-documentation
+        path: target/doc
     - name: Upload documentation
       if: runner.os == 'Linux' && github.event_name == 'push'
       uses: actions/upload-pages-artifact@v4
@@ -139,3 +146,31 @@ jobs:
     - name: Publish documentation
       id: deployment
       uses: actions/deploy-pages@v4
+
+  release-documentation:
+    if: github.event_name == 'release'
+    needs: [build, msrv]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release-documentation-${{ github.event.release.tag_name }}
+      cancel-in-progress: false
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        name: release-documentation
+        path: documentation
+    - name: Archive the documentation
+      env:
+        RELEASE_TAG: ${{ github.event.release.tag_name }}
+      run: |
+        cd documentation
+        zip -q -r "../tididi-docs-${RELEASE_TAG}.zip" .
+    - name: Attach the snapshot to the release
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        RELEASE_TAG: ${{ github.event.release.tag_name }}
+      # No --clobber: rerunning this job must not replace a published snapshot.
+      run: gh release upload "$RELEASE_TAG" "tididi-docs-${RELEASE_TAG}.zip"

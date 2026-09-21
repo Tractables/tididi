@@ -8,6 +8,7 @@ cargo test --doc
 cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 python3 tests/rendered_docs.py --self-test
+python3 tests/rendered_docs.py target/doc --unbundled
 python3 scripts/prepare_docs.py target/doc
 python3 tests/rendered_docs.py target/doc
 python3 tests/package_examples.py --self-test
@@ -54,3 +55,12 @@ standalone consumer of the crate archive.
 
 [Architecture](docs/architecture.md) documents module responsibilities and
 the representation invariants.
+
+## Releasing
+
+Use a `v<version>` tag matching `Cargo.toml`. Update the versioned documentation
+URL in that manifest and the example/figure links in `docs/` when bumping the
+version; the documentation checks catch mismatches. Publish the crate to
+crates.io for versioned API docs on docs.rs. Publishing the GitHub release
+runs the checks and attaches a bundled HTML archive; it does not publish the
+crate. The archive is kept when the development Pages site changes.

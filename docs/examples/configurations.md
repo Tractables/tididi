@@ -255,5 +255,5 @@ a memory-budget error.
 Continue with [minimum costs](crate::guide::examples::optimization),
 [probabilities](crate::guide::examples::probability), or
 [execution limits](crate::guide::examples::execution).
-The [complete program](https://github.com/Tractables/tididi/blob/main/examples/build_minimize_count.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/build_minimize_count.rs)
 includes the queries above and the execution example.

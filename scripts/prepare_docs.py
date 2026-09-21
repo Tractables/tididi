@@ -39,15 +39,25 @@ def normalized(text):
     return "\n".join(line.strip() for line in text.strip().splitlines())
 
 
-def prepare(source, preview):
+def release_tag(source):
+    manifest = (source / "Cargo.toml").read_text(encoding="utf-8")
+    return "v" + re.search(r'^version = "([^"]+)"', manifest, re.M)[1]
+
+
+def prepare(source, preview, tag=None):
+    expected_tag = release_tag(source)
+    if tag and tag != expected_tag:
+        raise ValueError(f"release tag {tag} differs from package version {expected_tag}")
     programs = {}
     pages = {}
     for markdown in sorted((source / "docs/examples").glob("*.md")):
         text = markdown.read_text(encoding="utf-8")
-        match = re.search(r"complete program\]\((https://github\.com/Tractables/tididi/blob/main/examples/([\w]+\.rs))\)", text)
+        match = re.search(r"complete program\]\((https://github\.com/Tractables/tididi/blob/([^/]+)/examples/([\w]+\.rs))\)", text)
         if not match:
             raise ValueError(f"{markdown}: missing complete-program link")
-        url, filename = match.groups()
+        url, linked_tag, filename = match.groups()
+        if linked_tag != expected_tag:
+            raise ValueError(f"{markdown}: expected a {expected_tag} complete-program link")
         program = (source / "examples" / filename).read_text(encoding="utf-8")
         page = preview / "tididi/guide/examples" / markdown.stem / "index.html"
         rendered = page.read_text(encoding="utf-8")
@@ -89,12 +99,14 @@ code {{ font: 14px/1.6 ui-monospace, monospace; }}
     for page, text in pages.items():
         page.write_text(text, encoding="utf-8")
 
-    images = re.compile(r'https://raw\.githubusercontent\.com/Tractables/tididi/main/([^"<>\s]+\.(?:svg|png))')
+    images = re.compile(r'https://raw\.githubusercontent\.com/Tractables/tididi/([^/]+)/([^"<>\s]+\.(?:svg|png))')
     for page in preview.rglob("*.html"):
         original = page.read_text(encoding="utf-8")
 
         def localize(match):
-            relative = Path(match[1])
+            if match[1] != expected_tag:
+                raise ValueError(f"{page}: expected a {expected_tag} image link")
+            relative = Path(match[2])
             target = preview / "assets" / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source / relative, target)
@@ -107,6 +119,10 @@ code {{ font: 14px/1.6 ui-monospace, monospace; }}
     for asset in (preview / "assets").rglob("*"):
         if asset.is_file():
             shutil.copyfile(source / asset.relative_to(preview / "assets"), asset)
+    (preview / "index.html").write_text(
+        '<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=tididi/">'
+        '<title>tididi documentation</title><a href="tididi/">Open the documentation</a>',
+        encoding="utf-8")
     print(f"Bundled {len(programs)} programs for {len(pages)} walkthroughs.")
 
 
@@ -114,5 +130,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("preview", type=Path, nargs="?", default=Path("target/doc"))
+    parser.add_argument("--release-tag", help="Check that the release tag matches Cargo.toml.")
     args = parser.parse_args()
-    prepare(args.source.resolve(), args.preview.resolve())
+    prepare(args.source.resolve(), args.preview.resolve(), args.release_tag)

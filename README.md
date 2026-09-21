@@ -86,6 +86,8 @@ contract. Contributors can start with the [architecture reference].
 To browse the documentation locally, run `cargo doc --no-deps`, then
 `python3 scripts/prepare_docs.py target/doc`, and open `target/doc/tididi/index.html`.
 This bundles the matching full programs and figures with the pages.
+[GitHub releases](https://github.com/Tractables/tididi/releases) include a ZIP
+of these pages; unpack it and open `index.html` to read offline.
 
 ## Citing
 

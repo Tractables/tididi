@@ -11,7 +11,7 @@ Run `cargo run --example vtree_grouping`.
 
 The vtrees have the same shape and variables. Only the leaf order changes:
 
-<img src="https://raw.githubusercontent.com/Tractables/tididi/main/docs/vtree-grouping.svg" alt="Two balanced vtrees: the grouped vtree pairs x1 with x3 and x2 with x4; the split vtree pairs x1 with x2 and x3 with x4." width="760">
+<img src="https://raw.githubusercontent.com/Tractables/tididi/v0.1.0/docs/vtree-grouping.svg" alt="Two balanced vtrees: the grouped vtree pairs x1 with x3 and x2 with x4; the split vtree pairs x1 with x2 and x3 with x4." width="760">
 
 [`Vtree::balanced_over`](crate::Vtree::balanced_over) takes the
 variable identifiers in left-to-right leaf order. Changing their positions
@@ -89,5 +89,5 @@ subtree. Compare the resulting sizes for your own constraints.
 [`Tdd::rotation_search`](crate::Tdd::rotation_search) can search vtree
 changes on an existing diagram. The [data model](crate::guide::model) explains
 how those decompositions represent functions, and the
-[complete program](https://github.com/Tractables/tididi/blob/main/examples/vtree_grouping.rs)
+[complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/vtree_grouping.rs)
 runs this comparison.

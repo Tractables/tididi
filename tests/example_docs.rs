@@ -77,6 +77,10 @@ fn readme_example_matches_the_tested_crate_example() {
 #[test]
 fn crate_documentation_uses_intra_doc_links() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let version = env!("CARGO_PKG_VERSION");
+    assert!(include_str!("../Cargo.toml").contains(&format!(
+        "documentation = \"https://docs.rs/tididi/{version}/tididi/\"")),
+        "Cargo.toml must link to this release's documentation");
     let mut directories = vec![root.join("docs"), root.join("src")];
     while let Some(directory) = directories.pop() {
         for entry in std::fs::read_dir(directory).unwrap() {
@@ -87,6 +91,14 @@ fn crate_documentation_uses_intra_doc_links() {
                 let source = std::fs::read_to_string(&path).unwrap();
                 assert!(!source.contains("https://docs.rs/tididi/"),
                     "{}: use a crate:: link so rustdoc resolves the current version", path.display());
+                for url in source.split("https://").skip(1) {
+                    for prefix in ["github.com/Tractables/tididi/blob/", "raw.githubusercontent.com/Tractables/tididi/"] {
+                        if let Some(destination) = url.strip_prefix(prefix) {
+                            assert!(destination.starts_with(&format!("v{version}/")),
+                                "{}: example and figure links must use v{version}", path.display());
+                        }
+                    }
+                }
             }
         }
     }

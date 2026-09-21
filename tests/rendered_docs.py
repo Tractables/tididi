@@ -6,6 +6,10 @@ from urllib.parse import unquote, urlsplit
 import re
 import json
 import sys
+import runpy
+
+
+BUNDLER = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/prepare_docs.py"))
 
 
 class Page(HTMLParser):
@@ -38,11 +42,12 @@ class Page(HTMLParser):
             self.highlights += 1
 
 
-def check(root, source):
+def check(root, source, bundled=True):
     root = root.resolve()
     pages = {path.resolve(): Page(path) for path in root.rglob("*.html")}
     errors = []
     checked = 0
+    tag = BUNDLER["release_tag"](source)
     if root / "tididi/index.html" not in pages:
         return ["Missing crate documentation; run cargo doc --no-deps first."]
 
@@ -51,9 +56,13 @@ def check(root, source):
         url = urlsplit(href)
         if url.netloc == "tractables.github.io" and url.path.startswith("/tididi/tididi/"):
             target = root / unquote(url.path.removeprefix("/tididi/"))
-        elif ((url.netloc == "raw.githubusercontent.com" and url.path.startswith("/Tractables/tididi/main/"))
-              or (url.netloc == "github.com" and url.path.startswith("/Tractables/tididi/blob/main/examples/"))):
-            errors.append(f"{origin.relative_to(root)}: unbundled asset {href}; run scripts/prepare_docs.py")
+        elif ((url.netloc == "raw.githubusercontent.com" and url.path.startswith("/Tractables/tididi/"))
+              or (url.netloc == "github.com" and url.path.startswith("/Tractables/tididi/blob/"))):
+            prefix = f"/Tractables/tididi/{'blob/' if url.netloc == 'github.com' else ''}{tag}/"
+            if not url.path.startswith(prefix):
+                errors.append(f"{origin.relative_to(root)}: asset must use release tag {tag}: {href}")
+            elif bundled:
+                errors.append(f"{origin.relative_to(root)}: unbundled asset {href}; run scripts/prepare_docs.py")
             return
         elif url.scheme or url.netloc:
             return
@@ -134,6 +143,7 @@ def test_checker():
     import tempfile
     with tempfile.TemporaryDirectory() as directory:
         source = Path(directory)
+        (source / "Cargo.toml").write_text('[package]\nversion = "0.1.0"\n')
         root = source / "target/doc"
         (root / "tididi/guide/examples/demo").mkdir(parents=True)
         (source / "docs/examples").mkdir(parents=True)
@@ -157,6 +167,15 @@ def test_checker():
         ]:
             page.write_text(damaged)
             assert any(reason in error for error in check(root, source)), reason
+        for prefix in ["https://github.com/Tractables/tididi/blob/",
+                       "https://raw.githubusercontent.com/Tractables/tididi/"]:
+            pinned = f'<a href="{prefix}v0.1.0/examples/demo.rs">source</a>'
+            page.write_text(html + pinned)
+            assert not check(root, source, bundled=False)
+            assert any("unbundled asset" in error for error in check(root, source))
+            for wrong in ["main", "v0.2.0"]:
+                page.write_text(html + pinned.replace("v0.1.0", wrong))
+                assert any("release tag" in error for error in check(root, source, bundled=False))
         page.write_text(html)
         index.write_text('<a href="missing.html">Missing page</a>')
         assert any("missing target" in error for error in check(root, source))
@@ -166,25 +185,31 @@ def test_checker():
 
 def test_bundler():
     """Bundling is repeatable and refuses pages built from different source."""
-    import runpy
     import tempfile
-    prepare = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/prepare_docs.py"))["prepare"]
+    prepare = BUNDLER["prepare"]
     with tempfile.TemporaryDirectory() as directory:
         source = Path(directory)
+        (source / "Cargo.toml").write_text('[package]\nversion = "0.1.0"\n')
         root = source / "target/doc"
         page = root / "tididi/guide/examples/demo/index.html"
         page.parent.mkdir(parents=True)
         (source / "examples").mkdir()
         (source / "docs/examples").mkdir(parents=True)
-        url = "https://github.com/Tractables/tididi/blob/main/examples/demo.rs"
+        url = "https://github.com/Tractables/tididi/blob/v0.1.0/examples/demo.rs"
         (source / "examples/demo.rs").write_text("fn main() { println!(\"example\"); }\n")
         (source / "docs/examples/demo.md").write_text(
             f"[complete program]({url})\n```rust,ignore,{{class=tested-example}}\nfn main() {{ println!(\"example\"); }}\n```\n")
         (source / "docs/graph.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"></svg>')
         page.write_text(f'<a href="{url}">complete program</a>'
                        '<pre class="tested-example"><code>fn main() { println!(&quot;example&quot;); }</code></pre>'
-                       '<img src="https://raw.githubusercontent.com/Tractables/tididi/main/docs/graph.svg">')
-        prepare(source, root)
+                       '<img src="https://raw.githubusercontent.com/Tractables/tididi/v0.1.0/docs/graph.svg">')
+        try:
+            prepare(source, root, "v0.2.0")
+        except ValueError as error:
+            assert "differs from package version" in str(error)
+        else:
+            raise AssertionError("mismatched release tags must be rejected")
+        prepare(source, root, "v0.1.0")
         first = page.read_text()
         assert "github.com" not in first and "githubusercontent.com" not in first
         assert (root / "examples/demo.rs").read_text() == (source / "examples/demo.rs").read_text()
@@ -204,9 +229,13 @@ if __name__ == "__main__":
     if "--self-test" in sys.argv:
         test_checker()
         sys.exit(0)
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("root", type=Path, nargs="?", default=Path("target/doc"))
+    parser.add_argument("--unbundled", action="store_true", help="Allow version-pinned remote assets from plain cargo doc.")
+    args = parser.parse_args()
     source = Path(__file__).resolve().parents[1]
-    root = Path(sys.argv[1]) if len(sys.argv) > 1 else source / "target/doc"
-    errors = check(root, source)
+    errors = check(args.root, source, bundled=not args.unbundled)
     for error in errors:
         print(error, file=sys.stderr)
     sys.exit(bool(errors))

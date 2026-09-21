@@ -2,7 +2,7 @@
 
 Starting at node 0, which nodes can we reach by following these arrows?
 
-![A directed graph with 16 nodes. Node 0 starts a three-by-four grid. Node 3 has edges to nodes 2 and 7 but no incoming edges. Nodes 12 through 15 form a separate cycle.](https://raw.githubusercontent.com/Tractables/tididi/main/docs/reachability.svg)
+![A directed graph with 16 nodes. Node 0 starts a three-by-four grid. Node 3 has edges to nodes 2 and 7 but no incoming edges. Nodes 12 through 15 form a separate cycle.](https://raw.githubusercontent.com/Tractables/tididi/v0.1.0/docs/reachability.svg)
 
 We will turn this graph into a Boolean formula, then compute successors until
 no new states appear. The graph has 16 nodes and 25 edges; a helper constructs
@@ -245,7 +245,7 @@ Reachable target: [11]
 This finds a state assignment. Recovering a path to it would also require
 retaining predecessor information during the search.
 
-The [complete program](https://github.com/Tractables/tididi/blob/main/examples/symbolic_reachability.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/symbolic_reachability.rs)
 also checks the symbolic result against an ordinary graph traversal and
 verifies the witness.
 

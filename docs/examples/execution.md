@@ -117,5 +117,5 @@ context.clear_scratch();
 
 Dropping the last reference to a context also frees its idle buffers.
 
-The [complete program](https://github.com/Tractables/tididi/blob/main/examples/build_minimize_count.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/build_minimize_count.rs)
 contains the basic workflow and these execution controls.

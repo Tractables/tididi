@@ -87,5 +87,5 @@ Total XOR pairs: 4
 ```
 
 Adapt the same traversal for a histogram of node sizes or a per-level report.
-The [complete program](https://github.com/Tractables/tididi/blob/main/examples/statistic.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/statistic.rs)
 includes the runnable entry point.

@@ -96,5 +96,5 @@ P(rain | wet) = 15/16
 ```
 
 [`evaluate`](crate::Tdd::evaluate) reads each new weight table without changing
-the diagrams. The [complete program](https://github.com/Tractables/tididi/blob/main/examples/probabilistic_query.rs)
+the diagrams. The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/probabilistic_query.rs)
 puts the helpers and scenario loop together.

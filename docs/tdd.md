@@ -31,7 +31,7 @@ For example, with `x` and `y` at the two leaves, a node with the pairs
 one way to satisfy the node. At a larger level, either child can itself be a
 node containing several pairs.
 
-![The vtree splits x and y; the TDD output joins the pairs (x, not y) and (not x, y).](https://raw.githubusercontent.com/Tractables/tididi/main/docs/tdd-basics.svg)
+![The vtree splits x and y; the TDD output joins the pairs (x, not y) and (not x, y).](https://raw.githubusercontent.com/Tractables/tididi/v0.1.0/docs/tdd-basics.svg)
 
 The yellow dots are pairs, not additional TDD nodes: each selects one child
 from the `x` level and one from the `y` level. The blue output node takes
