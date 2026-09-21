@@ -10,6 +10,9 @@ a Boolean function as a circuit, so you can work with its satisfying assignments
 without listing them. Build a circuit once, then combine it with other circuits
 or query it as your inputs change.
 
+For Python, start with the [Python guide](https://tractables.github.io/tididi/python/)
+and [installation instructions](bindings/python/README.rst).
+
 TDDs can be much smaller in practice than widely used binary decision diagrams.
 They can be made canonical, so equivalent functions have the same diagram.
 They can also be combined efficiently using Boolean operations. Their

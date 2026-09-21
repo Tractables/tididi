@@ -1,0 +1,30 @@
+[build-system]
+requires = ["maturin>=1.9.4,<2"]
+build-backend = "maturin"
+
+[project]
+name = "tididi"
+dynamic = ["version"]
+description = "Tree Decision Diagrams for Boolean functions, counting and weighted evaluation"
+readme = "README.rst"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE-APACHE"]
+classifiers = ["Programming Language :: Python :: 3", "Programming Language :: Rust", "Topic :: Scientific/Engineering"]
+
+[project.urls]
+Repository = "https://github.com/Tractables/tididi"
+Documentation = "https://tractables.github.io/tididi/python/"
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10"]
+docs = ["sphinx>=8,<9", "sphinx-gallery>=0.19,<0.23", "matplotlib>=3.8,<4", "furo>=2024.8"]
+
+[tool.maturin]
+module-name = "tididi._tididi"
+python-source = "."
+exclude = ["**/__pycache__/**", "**/*.pyc", "docs/_build/**", "docs/tutorials/**", "docs/_static/**", "docs/sg_execution_times.rst"]
+include = [{path = "docs/**", format = "sdist"}, {path = "examples/**", format = "sdist"}, {path = "tests/**", format = "sdist"}]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -35,6 +35,15 @@ Changes to packaging, examples or their displayed output also need `cargo packag
 followed by `python3 tests/package_examples.py`, which runs each example as a
 standalone consumer of the crate archive.
 
+## Python bindings
+
+The independent package in `bindings/python` calls this crate through its public
+API. Its [README](bindings/python/README.rst) gives the build and test commands.
+Sphinx Gallery executes the narrative scripts in `bindings/python/examples` to
+produce the tutorials and their output; edit those scripts, not generated pages.
+Keep Python signatures in `tididi/__init__.pyi` aligned with the extension.
+CI tests wheels on Linux, macOS, and Windows, and checks a source-archive install.
+
 ## Repository conventions
 
 - Do not run rustfmt over the crate; it is not rustfmt-formatted.

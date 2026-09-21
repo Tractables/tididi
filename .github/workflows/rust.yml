@@ -1,4 +1,4 @@
-name: Rust
+name: Rust and Python
 
 on:
   push:
@@ -54,16 +54,11 @@ jobs:
         python3 tests/rendered_docs.py target/doc --unbundled
         python3 scripts/prepare_docs.py target/doc --release-tag "$RELEASE_TAG"
         python3 tests/rendered_docs.py target/doc
-    - name: Save release documentation
-      if: runner.os == 'Linux' && github.event_name == 'release'
+    - name: Save Rust documentation
+      if: runner.os == 'Linux' && github.event_name != 'pull_request'
       uses: actions/upload-artifact@v4
       with:
-        name: release-documentation
-        path: target/doc
-    - name: Upload documentation
-      if: runner.os == 'Linux' && github.event_name == 'push'
-      uses: actions/upload-pages-artifact@v4
-      with:
+        name: rust-documentation
         path: target/doc
     - name: Differential sweep, release profile
       if: runner.os == 'Linux'
@@ -129,9 +124,66 @@ jobs:
     - name: Documentation tests
       run: cargo +1.88 test --doc
 
+  python:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10"]
+        include:
+          - os: ubuntu-latest
+            python: "3.14"
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python }}
+    - name: Build wheel
+      uses: PyO3/maturin-action@v1
+      with:
+        command: build
+        args: --release --locked --manifest-path bindings/python/Cargo.toml --out dist --interpreter ${{ runner.os == 'Linux' && format('python{0}', matrix.python) || 'python' }}
+        manylinux: "2_28"
+        rust-toolchain: "1.94.0"
+    - name: Test installed wheel
+      run: |
+        python -m pip install pytest dist/*.whl
+        python -m pytest bindings/python/tests -q
+    - name: Check binding source
+      if: runner.os == 'Linux' && matrix.python == '3.10'
+      run: cargo clippy --locked --manifest-path bindings/python/Cargo.toml -- -D warnings
+    - name: Build and test the Python guide
+      if: runner.os == 'Linux' && matrix.python == '3.10'
+      run: |
+        for wheel in dist/*.whl; do python -m pip install "${wheel}[docs]"; done
+        python -m sphinx -W --keep-going -b html -d target/python-docs-cache bindings/python/docs target/python-docs
+        python -m sphinx -W --keep-going -b doctest bindings/python/docs target/python-doctests
+    - name: Test the source distribution
+      if: runner.os == 'Linux' && matrix.python == '3.10'
+      run: |
+        python -m pip install 'maturin>=1.9.4,<2'
+        maturin sdist --manifest-path bindings/python/Cargo.toml --out dist
+        python -m pip install --force-reinstall dist/*.tar.gz
+        python -m pytest bindings/python/tests -q
+    - name: Save Python documentation
+      if: runner.os == 'Linux' && matrix.python == '3.10' && github.event_name != 'pull_request'
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-documentation
+        path: target/python-docs
+    - name: Save wheels and source archive
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-${{ matrix.os }}-${{ matrix.python }}
+        path: dist
+
   documentation:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: [build, msrv]
+    needs: [build, msrv, python]
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -143,13 +195,24 @@ jobs:
       group: documentation
       cancel-in-progress: true
     steps:
+    - uses: actions/download-artifact@v4
+      with:
+        name: rust-documentation
+        path: site
+    - uses: actions/download-artifact@v4
+      with:
+        name: python-documentation
+        path: site/python
+    - uses: actions/upload-pages-artifact@v4
+      with:
+        path: site
     - name: Publish documentation
       id: deployment
       uses: actions/deploy-pages@v4
 
   release-documentation:
     if: github.event_name == 'release'
-    needs: [build, msrv]
+    needs: [build, msrv, python]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -159,8 +222,12 @@ jobs:
     steps:
     - uses: actions/download-artifact@v4
       with:
-        name: release-documentation
+        name: rust-documentation
         path: documentation
+    - uses: actions/download-artifact@v4
+      with:
+        name: python-documentation
+        path: documentation/python
     - name: Archive the documentation
       env:
         RELEASE_TAG: ${{ github.event.release.tag_name }}

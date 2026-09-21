@@ -10,7 +10,7 @@ documentation = "https://docs.rs/tididi/0.1.0/tididi/"
 readme = "README.md"
 keywords = ["decision-diagram", "model-counting", "knowledge-compilation", "bdd", "wmc"]
 categories = ["science", "algorithms", "data-structures"]
-exclude = [".github/", ".gitignore", "CLAUDE.md", "AGENTS.md", "rust-toolchain.toml"]
+exclude = ["bindings/", ".github/", ".gitignore", "CLAUDE.md", "AGENTS.md", "rust-toolchain.toml"]
 
 [features]
 # The oracles, generators and invariant checkers under `test_helpers`. On for

@@ -1,0 +1,11 @@
+/target/
+/.venv/
+/docs/_build/
+/docs/auto_examples/
+/docs/sg_execution_times.rst
+__pycache__/
+*.so
+*.pyd
+.pytest_cache/
+/docs/tutorials/
+/docs/_static/
