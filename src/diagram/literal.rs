@@ -126,11 +126,12 @@ impl From<&Literal> for Literal {
     }
 }
 
-/// A signed integer or typed literal accepted by clause conjunction and observations.
+/// A signed integer or typed literal accepted by cube, clause and observation operations.
 ///
 /// Implemented for [`Literal`] and signed, one-based `i32` literals. Pass an
 /// array, slice or vector to [`Tdd::and_clause`](crate::Tdd::and_clause) or
-/// [`ModelCounter::observe`](crate::query::ModelCounter::observe).
+/// [`ModelCounter::observe`](crate::query::ModelCounter::observe), including
+/// assignment updates through [`Maintenance`](crate::maintain::Maintenance).
 /// This trait is sealed.
 pub trait LiteralInput: input::Sealed {}
 

@@ -8,6 +8,7 @@ cargo test --doc
 cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 python3 tests/rendered_docs.py --self-test
+python3 scripts/prepare_docs.py target/doc
 python3 tests/rendered_docs.py target/doc
 python3 tests/package_examples.py --self-test
 ```
@@ -40,7 +41,8 @@ standalone consumer of the crate archive.
   a correct query result alone does not establish a valid representation.
 - Keep algorithms single-threaded. Callers control parallelism, limits and
   memory probes; the library reads no environment variables and has no
-  process-wide state, Cargo features or native dependencies.
+  process-wide state or native dependencies. Consumers need no Cargo features;
+  `testing` enables generators, oracles and invariant checks for tests.
 - Return errors for invalid input and refused work. Named operations are
   checked; do not add panicking twins or `try_` aliases.
 - Put each operation's contract on its default entry point. Batch methods

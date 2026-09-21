@@ -248,3 +248,6 @@ retaining predecessor information during the search.
 The [complete program](https://github.com/Tractables/tididi/blob/main/examples/symbolic_reachability.rs)
 also checks the symbolic result against an ordinary graph traversal and
 verifies the witness.
+
+When the terms of a union are already available as circuits,
+[`or_many`](crate::or_many) combines them in one batch.

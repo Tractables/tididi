@@ -55,7 +55,7 @@ impl Tdd {
     /// removes both, and every plan here includes it; the choice is what else
     /// to pay for.
     ///
-    /// [`ReductionPlan::Prune`] is the cheapest result that is still free of
+    /// [`ReductionPlan::Prune`](crate::reduce::ReductionPlan::Prune) is the cheapest result that is still free of
     /// unreachable nodes. It is the right plan when the caller minimizes the
     /// result anyway, or conjoins it into an accumulator that is minimized
     /// afterwards — but the result is not in canonical form, and handing a

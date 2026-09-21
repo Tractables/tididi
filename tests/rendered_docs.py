@@ -51,8 +51,10 @@ def check(root, source):
         url = urlsplit(href)
         if url.netloc == "tractables.github.io" and url.path.startswith("/tididi/tididi/"):
             target = root / unquote(url.path.removeprefix("/tididi/"))
-        elif url.netloc == "raw.githubusercontent.com" and url.path.startswith("/Tractables/tididi/main/"):
-            target = source / unquote(url.path.removeprefix("/Tractables/tididi/main/"))
+        elif ((url.netloc == "raw.githubusercontent.com" and url.path.startswith("/Tractables/tididi/main/"))
+              or (url.netloc == "github.com" and url.path.startswith("/Tractables/tididi/blob/main/examples/"))):
+            errors.append(f"{origin.relative_to(root)}: unbundled asset {href}; run scripts/prepare_docs.py")
+            return
         elif url.scheme or url.netloc:
             return
         else:
@@ -158,7 +160,44 @@ def test_checker():
         page.write_text(html)
         index.write_text('<a href="missing.html">Missing page</a>')
         assert any("missing target" in error for error in check(root, source))
+    test_bundler()
     print("Documentation checker regression cases passed.")
+
+
+def test_bundler():
+    """Bundling is repeatable and refuses pages built from different source."""
+    import runpy
+    import tempfile
+    prepare = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/prepare_docs.py"))["prepare"]
+    with tempfile.TemporaryDirectory() as directory:
+        source = Path(directory)
+        root = source / "target/doc"
+        page = root / "tididi/guide/examples/demo/index.html"
+        page.parent.mkdir(parents=True)
+        (source / "examples").mkdir()
+        (source / "docs/examples").mkdir(parents=True)
+        url = "https://github.com/Tractables/tididi/blob/main/examples/demo.rs"
+        (source / "examples/demo.rs").write_text("fn main() { println!(\"example\"); }\n")
+        (source / "docs/examples/demo.md").write_text(
+            f"[complete program]({url})\n```rust,ignore,{{class=tested-example}}\nfn main() {{ println!(\"example\"); }}\n```\n")
+        (source / "docs/graph.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"></svg>')
+        page.write_text(f'<a href="{url}">complete program</a>'
+                       '<pre class="tested-example"><code>fn main() { println!(&quot;example&quot;); }</code></pre>'
+                       '<img src="https://raw.githubusercontent.com/Tractables/tididi/main/docs/graph.svg">')
+        prepare(source, root)
+        first = page.read_text()
+        assert "github.com" not in first and "githubusercontent.com" not in first
+        assert (root / "examples/demo.rs").read_text() == (source / "examples/demo.rs").read_text()
+        assert (root / "assets/docs/graph.svg").read_text() == (source / "docs/graph.svg").read_text()
+        prepare(source, root)
+        assert page.read_text() == first
+        page.write_text(first.replace("println!", "print!"))
+        try:
+            prepare(source, root)
+        except ValueError as error:
+            assert "stale excerpts" in str(error)
+        else:
+            raise AssertionError("stale rendered pages must not receive new programs")
 
 
 if __name__ == "__main__":

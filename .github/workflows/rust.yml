@@ -47,6 +47,7 @@ jobs:
       if: runner.os == 'Linux'
       run: |
         python3 tests/rendered_docs.py --self-test
+        python3 scripts/prepare_docs.py target/doc
         python3 tests/rendered_docs.py target/doc
     - name: Prepare documentation site
       if: runner.os == 'Linux' && github.event_name == 'push'
@@ -101,14 +102,9 @@ jobs:
     - uses: dtolnay/rust-toolchain@nightly
       with:
         components: miri
-    # The tests that reach the crate's unsafe code: the fast count and weight
-    # reads through `get_unchecked`, the twin-table walks, and the pair views
-    # that reinterpret a node as a pair. Miri interprets rather than executes,
-    # so the set is chosen for what it covers per second: these twelve take
-    # about thirteen seconds, where adding the exhaustive sorting-network
-    # permutation test alone takes twelve minutes.
+    # Small tests at the unsafe lookup, pair-view and reused-column boundaries.
     - name: Interpret the tests over unsafe code
-      run: cargo +nightly miri test --lib -- reduce::contract::fingerprint value::domain
+      run: cargo +nightly miri test --lib -- reduce::contract::fingerprint value::domain conjoin::child_lookup::tests conjoin::cell::tests::processing::columns
 
   msrv:
     runs-on: ubuntu-latest

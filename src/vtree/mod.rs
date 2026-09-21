@@ -97,7 +97,7 @@ pub enum VtreeError {
     /// stay legal; the bound grows with the node list, so a tree that really
     /// does carry millions of variables is unaffected.
     VariableSpaceTooLarge {
-        /// The id space asked for, one past the largest variable id.
+        /// The requested inclusive upper bound on variable IDs.
         num_vars: u32,
         /// The widest id space this node list may declare.
         max_num_vars: u32,

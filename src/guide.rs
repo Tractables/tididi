@@ -37,6 +37,7 @@ walkthroughs! {
     configurations => ("Configurations", "Build rules, count solutions, and update a user's choices."),
     probability => ("Probabilities", "Evaluate events under changing probabilities."),
     reachability => ("Reachability", "Explore the states reachable through a transition system."),
+    tables => ("Tables and updates", "Build a circuit from rows and maintain it as the table changes."),
     persistence => ("Saving and loading", "Save circuits and restore them for later use."),
     vtrees => ("Variable grouping", "Compare circuit sizes under different vtrees."),
     execution => ("Execution limits", "Bound work and release retained scratch buffers."),

@@ -13,16 +13,22 @@
 //!
 //! ```
 //! use std::sync::Arc;
-//! use tididi::{and, literal, or, Vtree};
+//! use tididi::{literal, Vtree};
 //!
 //! let vtree = Arc::new(Vtree::balanced(3));
 //! let x = literal(&vtree, 1)?;
 //! let y = literal(&vtree, 2)?;
 //! let z = literal(&vtree, 3)?;
-//! let f = or(and(x, y)?, z)?;
-//! let count = u64::try_from(f.model_count()?)?;
-//! assert_eq!(count, 5);
-//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! let f = (x & y) | z;
+//! println!("Satisfying assignments: {}", f.model_count()?);
+//! # assert_eq!(f.model_count()?, 5u32.into());
+//! # Ok::<(), tididi::OperationError>(())
+//! ```
+//!
+//! Output:
+//!
+//! ```text
+//! Satisfying assignments: 5
 //! ```
 //!
 //! Integer literals are signed and one-based. Reuse the same `Arc<Vtree>` for

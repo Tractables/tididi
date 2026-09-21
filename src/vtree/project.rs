@@ -22,7 +22,7 @@ impl Vtree {
     ///
     /// # Panics
     ///
-    /// Panics if `local_of` yields an id at or past `num_local`, or the same
+    /// Panics if `local_of` yields an id greater than `num_local`, or the same
     /// id for two variables.
     pub fn project_to_vars<F>(&self, local_of: F, num_local: u32) -> Option<Vtree>
     where

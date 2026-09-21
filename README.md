@@ -42,15 +42,20 @@ and counts its satisfying assignments:
 
 ```rust
 use std::sync::Arc;
-use tididi::{and, literal, or, Vtree};
+use tididi::{literal, Vtree};
 
 let vtree = Arc::new(Vtree::balanced(3));
 let x = literal(&vtree, 1)?;
 let y = literal(&vtree, 2)?;
 let z = literal(&vtree, 3)?;
-let f = or(and(x, y)?, z)?;
-let count = u64::try_from(f.model_count()?)?;
-assert_eq!(count, 5);
+let f = (x & y) | z;
+println!("Satisfying assignments: {}", f.model_count()?);
+```
+
+Output:
+
+```text
+Satisfying assignments: 5
 ```
 
 There are four models with `z` true, and one more with `z` false and both
@@ -78,8 +83,9 @@ shown in the [custom-statistic example].
 
 Use the [API overview] to find an operation and the [API reference] for its
 contract. Contributors can start with the [architecture reference].
-To browse the documentation locally, run `cargo doc --no-deps` and open
-`target/doc/tididi/index.html`.
+To browse the documentation locally, run `cargo doc --no-deps`, then
+`python3 scripts/prepare_docs.py target/doc`, and open `target/doc/tididi/index.html`.
+This bundles the matching full programs and figures with the pages.
 
 ## Citing
 

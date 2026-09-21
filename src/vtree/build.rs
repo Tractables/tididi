@@ -355,7 +355,7 @@ impl Vtree {
     /// # Errors
     ///
     /// [`VtreeError::Invalid`] if `nodes` is empty, if an index names no node,
-    /// if a leaf carries a variable at or past `num_vars`, or if the links do
+    /// if a leaf carries a variable greater than `num_vars`, or if the links do
     /// not reach every node exactly once from `root`;
     /// [`VtreeError::OverlappingVariable`] if two leaves carry one variable;
     /// [`VtreeError::VariableSpaceTooLarge`] if `num_vars` is wider than the

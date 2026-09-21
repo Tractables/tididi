@@ -1,0 +1,89 @@
+# Maintaining a table of allowed choices
+
+Suppose an application stores the permission combinations it allows:
+
+| Read | Write | Share |
+| --- | --- | --- |
+| true | false | false |
+| true | true | false |
+| true | false | true |
+| true | true | false |
+
+The duplicate row does not add another choice: a Boolean function describes a
+set of assignments. We can build that function directly from the table with
+[`Tdd::from_models`](crate::Tdd::from_models).
+
+The [complete program](https://github.com/Tractables/tididi/blob/main/examples/table_updates.rs)
+runs with `cargo run --example table_updates`.
+
+## Build the circuit
+
+Each column becomes a variable. Pack a row into a word with read in bit 0,
+write in bit 1 and share in bit 2; for example, `0b101` enables read and share.
+
+```rust,ignore,{class=tested-example}
+use std::sync::Arc;
+
+use tididi::vtree::VarId;
+use tididi::{literal, Tdd, Vtree};
+```
+
+```rust,ignore,{class=tested-example}
+let vtree = Arc::new(Vtree::balanced(3));
+let vars = [VarId(1), VarId(2), VarId(3)];
+// Low to high bits: read, write, share.
+let rows = [0b001, 0b011, 0b101, 0b011];
+let mut permissions = Tdd::from_models(&vtree, &vars, &rows)?;
+println!("Distinct permission sets: {}", permissions.model_count()?);
+```
+
+Output:
+
+```text
+Distinct permission sets: 3
+```
+
+## Change the allowed combinations
+
+Now allow all three permissions together and withdraw read-and-write without
+sharing. A [`Maintenance`](crate::maintain::Maintenance) batch reuses an index
+across these edits; minimize after the batch to remove any redundancy.
+
+```rust,ignore,{class=tested-example}
+{
+    let mut batch = permissions.maintain()?;
+    batch.insert_model([1, 2, 3])?;
+    batch.remove_model([1, 2, -3])?;
+}
+permissions.minimize()?;
+println!("After updates: {}", permissions.model_count()?);
+```
+
+Output:
+
+```text
+After updates: 3
+```
+
+These updates name every column; see [`insert_model`](crate::Tdd::insert_model)
+for updates that leave some columns unspecified.
+
+## Query the updated table
+
+The result supports the same operations as any other circuit. Conjoin it with
+sharing to select the permission sets that allow it:
+
+```rust,ignore,{class=tested-example}
+let share = literal(&vtree, 3)?;
+let sharing = permissions & share;
+println!("Permission sets allowing sharing: {}", sharing.model_count()?);
+```
+
+Output:
+
+```text
+Permission sets allowing sharing: 2
+```
+
+To combine relations and eliminate columns, see
+[`and_exists`](crate::and_exists) and the [reachability example](crate::guide::examples::reachability).

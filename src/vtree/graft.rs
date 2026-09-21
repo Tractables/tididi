@@ -79,7 +79,7 @@ impl Vtree {
     ///
     /// # Panics
     ///
-    /// Panics if a renamed id or a spine variable is at or past `num_vars`.
+    /// Panics if a renamed id or a spine variable is greater than `num_vars`.
     ///
     /// ```
     /// use tididi::vtree::{VarId, Vtree, VtreeError};
