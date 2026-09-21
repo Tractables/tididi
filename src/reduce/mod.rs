@@ -5,7 +5,7 @@
 //! merges nodes with the same parent context, and pair fusion combines
 //! contributions at marginal boundaries.
 
-mod prune;
+pub(crate) mod prune;
 pub(crate) mod contract;
 pub(crate) mod slot_prune; // post-tagger marginal-slot compaction
 mod content_twins;
@@ -22,8 +22,14 @@ use crate::value::slots::RefSlotScratch;
 pub(crate) struct ReduceScratch {
     /// `prune_unreachable`'s flat reachability/remap array.
     prune_remap: Pool<Vec<u32>>,
-    /// `prune_unreachable`'s per-level offsets into `prune_remap`.
+    /// `prune_unreachable`'s per-level offsets into `prune_remap`, for the
+    /// walk over the whole diagram.
     prune_level_base: Pool<Vec<usize>>,
+    /// The levels the seeded walk of `prune_unreachable` descended into.
+    prune_visits: Pool<Vec<self::prune::Visit>>,
+    /// The ascending run the seeded walk remaps an unchanged child level
+    /// through.
+    prune_identity: Pool<Vec<u32>>,
     /// `prune_value_slots`'s per-store slot bookkeeping.
     slot_prune_slots: Pool<RefSlotScratch>,
     /// `prune_value_slots`'s slot remap array.
@@ -39,6 +45,8 @@ impl ReduceScratch {
     pub(crate) fn drain(&self) {
         self.prune_remap.drain();
         self.prune_level_base.drain();
+        self.prune_visits.drain();
+        self.prune_identity.drain();
         self.slot_prune_slots.drain();
         self.slot_prune_remap.drain();
         self.contract.drain();
@@ -93,7 +101,7 @@ pub struct ContentTwinSchedule {
 use crate::Engine;
 use self::contract::contract_leaf::contract_leaf_twins;
 use self::contract::contract_all_twins;
-use self::prune::prune_unreachable;
+use self::prune::{PruneScope, prune_unreachable};
 use crate::limits::OperationError;
 use crate::diagram::Tdd;
 
@@ -134,6 +142,18 @@ impl Engine {
     /// Allocation and stop refusals leave the diagram at the last completed pass
     /// boundary, where its count is still readable and preserved.
     pub fn reduce(&self, f: &mut Tdd, plan: ReductionPlan<'_>) -> Result<(), OperationError> {
+        self.reduce_scoped(f, plan, PruneScope::Whole)
+    }
+
+    /// [`reduce`](Self::reduce) with the scope of its prune chosen by the
+    /// caller. Only an operation that knows how the diagram it just built
+    /// became unreachable in places may narrow it; see [`PruneScope`].
+    pub(crate) fn reduce_scoped(
+        &self,
+        f: &mut Tdd,
+        plan: ReductionPlan<'_>,
+        scope: PruneScope,
+    ) -> Result<(), OperationError> {
         let eng = self;
         let _op = eng.limits().begin_operation();
         let content_twins = match plan {
@@ -142,7 +162,7 @@ impl Engine {
                 // Prune removes nodes, which can create twins in a shrunk level's
                 // children; `prune_unreachable` seeds the contract worklists with
                 // those levels so a later contraction pass covers them.
-                prune_unreachable(eng, f)?;
+                prune_unreachable(eng, f, scope)?;
                 // Pairs the prune removed may have orphaned marginal count slots.
                 crate::reduce::slot_prune::prune_value_slots(eng, f);
                 return Ok(());
@@ -155,7 +175,7 @@ impl Engine {
         #[cfg(debug_assertions)]
         let marginal_before = snapshot_marginal_flags(f);
 
-        prune_unreachable(eng, f)?;
+        prune_unreachable(eng, f, scope)?;
         #[cfg(debug_assertions)]
         assert_no_demarginalization(f, &marginal_before, "prune");
 
