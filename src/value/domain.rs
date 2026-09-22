@@ -6,7 +6,7 @@
 //! built inside an apply. Both folds are written once against [`ValueDomain`] and reserve columns
 //! through the engine, returning allocation refusals as operation errors.
 
-use crate::diagram::{ChildPair, Tdd, TddLevel, WeightStore};
+use crate::diagram::{ChildPair, TddLevel, WeightStore};
 use crate::Engine;
 
 use crate::limits::OperationError;
@@ -174,36 +174,6 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
             retain.frontier(root),
         )
     }
-}
-
-/// Where a marginal level's per-slot values live, for the slot prune
-/// (`reduce::slot_prune`). Implemented on the same two domains as
-/// [`ValueDomain`].
-pub(crate) trait SlotStore {
-    /// Slot count of level `v`'s store: the domain of the remap that
-    /// `compact_store` fills, and the pre-compaction width.
-    fn store_len(tdd: &Tdd, v: VtreeIdx) -> usize;
-
-    /// Compact level `v`'s store to `referenced` with value-dedup, write
-    /// the composed `old_slot → new_slot` map into `remap`, and commit the
-    /// compacted store. Returns `(new_len, values_merged)`; `values_merged`
-    /// counts referenced slots that landed on an earlier equal-valued slot.
-    fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> (usize, usize);
-
-    /// Record that a compaction of level `v` dropped `freed` slots.
-    ///
-    /// Only a domain that cannot recover the number from its store keeps a
-    /// tally; for one whose live width *is* the store's length, the drop is
-    /// already accounted for by [`commit_width`](Self::commit_width).
-    fn retire_slots(tdd: &mut Tdd, v: VtreeIdx, freed: usize);
-
-    /// Make `new_len` level `v`'s live slot count, which is what
-    /// [`TddLevel::slot_count`](crate::diagram::TddLevel::slot_count) answers
-    /// and what the apply and streaming buffers are sized from.
-    ///
-    /// A domain whose store is the level's own column has already committed it
-    /// by compacting that column, and only checks here.
-    fn commit_width(tdd: &mut Tdd, v: VtreeIdx, new_len: usize);
 }
 
 mod count;

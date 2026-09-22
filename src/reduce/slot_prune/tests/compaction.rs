@@ -19,8 +19,7 @@ pub(super) fn exact_vals(values: &[crate::diagram::WeightValue]) -> Vec<num_rati
 /// `prune_merges_equal_value_referenced_slots`): two referenced slots holding
 /// equal `BigRational` values must merge to one output slot, parent refs to
 /// both rewritten onto the survivor, and `weight_width` (the weighted
-/// width carrier) SET to the new length. Fails on `main`, where the weighted
-/// branch early-returns default stats and leaves the store full-width.
+/// width carrier) set to the new length.
 #[test]
 fn weighted_prune_merges_equal_value_slots() {
     let eng = &crate::Engine::new();
@@ -58,7 +57,7 @@ fn weighted_prune_merges_equal_value_slots() {
 
 /// Weighted orphan compaction (no dedup): three distinct-valued slots, only
 /// slot 1 referenced → store compacts to that one value at index 0, the parent
-/// ref remaps, and two slots are freed. Fails on `main` (full-width store).
+/// ref remaps, and two slots are freed.
 #[test]
 fn weighted_prune_compacts_orphans() {
     let eng = &crate::Engine::new();
@@ -248,12 +247,13 @@ mod compact_store_in_place_tests {
         );
 
         let mut remap = vec![u32::MAX; 6];
-        let (new_len, values_merged) =
+        let values_merged =
             IntFold::compact_store(&mut tdd, v, &[1, 2, 3, 5], &mut remap);
 
-        assert_eq!(new_len, 3, "three distinct values survive");
+        assert_eq!(tdd.levels[v.idx()].slot_count(), 3, "live width follows compaction");
         assert_eq!(values_merged, 1, "slot3 merges onto slot2's compacted slot");
         let level = &tdd.levels[v.idx()];
+        assert_eq!(level.retired_marginal_slots(), 3);
         assert_eq!(
             level.marginal_counts().unwrap(),
             &[BIG + 5, u128::MAX, BIG + 7],
@@ -318,12 +318,12 @@ mod compact_store_in_place_tests {
         let v = boundary_marginal_levels(&tdd)[0].0;
 
         let mut remap = vec![u32::MAX; 6];
-        let (new_len, values_merged) =
+        let values_merged =
             WeightFold::compact_store(&mut tdd, v, &[1, 2, 3, 5], &mut remap);
 
         let values = super::exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
 
-        assert_eq!(new_len, 3, "three distinct values survive");
+        assert_eq!(tdd.levels[v.idx()].slot_count(), 3, "live width follows compaction");
         assert_eq!(values_merged, 1, "slot3 merges onto slot2's compacted slot");
         assert_eq!(values, vec![v_a, v_b, v_c], "survivors move down in referenced order");
         assert_eq!(

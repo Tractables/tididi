@@ -96,10 +96,33 @@ pub(crate) fn compact_slots<S: ?Sized, K: Hash + Eq>(
     (new_len, values_merged)
 }
 
+/// Compact counts and rekey their overflow entries together. As with
+/// [`compact_slots`], the caller truncates the column to the returned length.
+/// `kept` is strictly ascending; unreferenced entries in `remap` are `u32::MAX`.
+pub(crate) fn compact_count_slots(
+    counts: &mut Vec<u128>,
+    big: &mut Option<CountOverflow>,
+    kept: impl IntoIterator<Item = usize>,
+    remap: &mut [u32],
+) -> (usize, usize) {
+    let (new_len, merged) = compact_slots(
+        counts,
+        kept,
+        |counts, old| count_key_at(counts, big.as_ref(), old),
+        |counts, dst, src| counts[dst] = counts[src],
+        remap,
+    );
+    // Keeping every slot without merging makes the remap the identity.
+    if new_len != counts.len() {
+        *big = rekey_big(big.take(), remap);
+    }
+    (new_len, merged)
+}
+
 /// Re-file an overflow table under the compacted slot indices: a slot `remap`
 /// leaves at `u32::MAX` is dropped with its value, and a merged slot writes an
 /// equal value over its canonical's entry. One drain, values moved not cloned.
-pub(crate) fn rekey_big(big: Option<CountOverflow>, remap: &[u32]) -> Option<CountOverflow> {
+fn rekey_big(big: Option<CountOverflow>, remap: &[u32]) -> Option<CountOverflow> {
     big.map(|b| {
         b.into_iter()
             .filter_map(|(slot, v)| {

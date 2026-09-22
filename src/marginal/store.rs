@@ -1,6 +1,6 @@
 //! Reading and writing the per-node marginal count / weight stores.
 
-use crate::value::slots::{compact_slots, count_key_at, rekey_big, truncate_with_slack};
+use crate::value::slots::{compact_count_slots, truncate_with_slack};
 use crate::diagram::{CountOverflow, TddLevel};
 use crate::diagram::{WeightStore, WeightValue};
 use crate::value::CountVec;
@@ -65,28 +65,21 @@ pub(crate) fn free_subsumed_marginal_children(
 /// [`CountOverflow`], which costs only the surviving overflow entries.
 pub(crate) fn dedup_fresh_store(
     mut counts: Vec<u128>,
-    big: Option<CountOverflow>,
+    mut big: Option<CountOverflow>,
 ) -> (Vec<u128>, Option<CountOverflow>, Vec<u32>) {
     let n = counts.len();
     // Written for every `i`, so the remap is final as it is written and the
     // overflow table can be rekeyed in one drain once it is complete.
     let mut remap: Vec<u32> = vec![0; n];
-    let (new_len, _) = compact_slots(
-        &mut counts,
-        0..n,
-        |counts, i| count_key_at(counts, big.as_ref(), i),
-        |counts, dst, src| counts[dst] = counts[src],
-        &mut remap,
-    );
+    let (new_len, _) = compact_count_slots(&mut counts, &mut big, 0..n, &mut remap);
 
     if new_len == n {
         // No duplicates: `remap` is the identity, and so would be the rekey.
         return (counts, big, remap);
     }
 
-    let new_big = rekey_big(big, &remap);
     truncate_with_slack(&mut counts, new_len);
-    (counts, new_big, remap)
+    (counts, big, remap)
 }
 
 

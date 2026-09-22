@@ -299,7 +299,7 @@ mod stream_cache;
 
 pub(crate) use fold::*;
 pub use fold::Retention;
-pub(crate) use domain::{Column, FoldInput, FoldScope, SlotStore, StreamChild, ValueDomain};
+pub(crate) use domain::{Column, FoldInput, FoldScope, StreamChild, ValueDomain};
 pub(crate) use stream_cache::StreamCache;
 
 
