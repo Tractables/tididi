@@ -251,7 +251,8 @@ Compare `(x₁ ↔ x₃) ∧ (x₂ ↔ x₄)` under balanced leaf orders [1,3,2,
 and [1,2,3,4]. The first groups each equality together; the second separates
 its variables. Both functions have 4 models, while minimized pair counts are
 5 and 12 in the demonstrated representation. Show both groupings in a figure
-and construct the same function for each. Introduce join and linear vtrees
+and construct the same function for each using negated XOR for equality.
+Introduce join and linear vtrees
 only after the comparison. Explain size as a consequence of grouping, without
 claiming that any heuristic guarantees small circuits.
 
@@ -260,12 +261,12 @@ constructors without adding another construction to the introductory comparison.
 
 ### Instances
 
-- [Rust walkthrough](examples/vtrees.md) <!-- reviewed: 3fc349d63f3cfd1c7a88123c21205a6eab6ed4496e5bb62efd495ed5b991c705 -->
-- [Rust program](../examples/vtree_grouping.rs) <!-- reviewed: 72aba010a8335d636e15482c780aed00ffb2e416adb376b4b80aeb7abad1e058 -->
-- [Python walkthrough and program](../bindings/python/examples/06_vtrees.py) <!-- reviewed: 6123259fa237f8a8c8430b51f61cdd913f5c6a0b820061dfcc5c2624d12e0610 -->
-- [Shared grouping figure](vtree-grouping.svg) <!-- reviewed: aa5a790a0ab8d92ed87f6fcf143fe99f96ca68bc5db321bf2645b621a596c356 -->
-- [C vtrees](../bindings/c/docs/vtrees.rst) <!-- reviewed: 8c08faf87c6e40a63d44c30825b6cd19238d7f398906b0f472840468910ef085 -->
-- [C program vtrees](../bindings/c/examples/vtrees.c) <!-- reviewed: 18e0b69174b5fe04d81e9c5b27a2ec6c3e51093a23851d8d4643340fdf9d5b3e -->
+- [Rust walkthrough](examples/vtrees.md) <!-- reviewed: fba45c6a039e9bff7d1263e27dc31dbb30457cd3a56c1e40b636dd379c7a13cf -->
+- [Rust program](../examples/vtree_grouping.rs) <!-- reviewed: 13d87eb115f2a05353f29e067bbf018fa79e091dea7916a27a2ef12a3d909c3f -->
+- [Python walkthrough and program](../bindings/python/examples/06_vtrees.py) <!-- reviewed: eb7e3d5cdcd211eee86994d058fa5e1ea745bc8dc15ade88141a5c963eb02113 -->
+- [Shared grouping figure](vtree-grouping.svg) <!-- reviewed: e9c0efa139f3728e27c1073aeef91573670de9ded84b519b2a2264f4d1a87e9c -->
+- [C vtrees](../bindings/c/docs/vtrees.rst) <!-- reviewed: ca64314bd76037516607c6dfdb4afae61e993b23963d52bb4ce77771431541f7 -->
+- [C program vtrees](../bindings/c/examples/vtrees.c) <!-- reviewed: 838d836a9d4e6c44d01333d8642df1a3ca7a4b0f1e46fbdfe32a9686181b3ee4 -->
 
 ## Execution
 
@@ -337,18 +338,20 @@ and model count (8 for XOR with the other two variables free).
 Rust traverses level storage directly and uses (root,0) for an empty traversal.
 Python traverses a `node_sizes()` snapshot and uses None when it is empty.
 Storage IDs and the chosen maximum on ties are not semantic identities.
-Python may use its XOR operator while Rust demonstrates its Boolean expansion.
+Use the direct XOR operation to construct the circuit. Rust passes a copy
+of x₁ to XOR so the original stays available for its literal comparison;
+Python uses its XOR operator.
 
 C reports XOR totals and the maximum pair count from an owned snapshot. It
 omits the literal comparison and represents an empty maximum by zero pairs.
 
 ### Instances
 
-- [Rust walkthrough](examples/statistics.md) <!-- reviewed: 524e408c83bd1802cbe11e2bc611033d7b7c97eb2563a7f5f43273621ccf6250 -->
-- [Rust program](../examples/statistic.rs) <!-- reviewed: c3ced7fe8b01876068a251673521a905290535a4ba172665d70ee285ddf3b004 -->
-- [Python walkthrough and program](../bindings/python/examples/09_statistics.py) <!-- reviewed: 7b12de2327edc2c955b8bac8cd33dca31802b9bac47b5510fc454cdec7d1ef81 -->
-- [C statistics](../bindings/c/docs/statistics.rst) <!-- reviewed: c80ccb0be03a8d51492c35eeaddfc0bac5012d440dbcc36a30d0d1c87c92633a -->
-- [C program statistics](../bindings/c/examples/statistics.c) <!-- reviewed: cd12646e33b210286fc0e79ab6a38375e267409a656ac44960c4ef19bda62d64 -->
+- [Rust walkthrough](examples/statistics.md) <!-- reviewed: 06e4e156be565338ec21f07e6e2b2a05350a9cde4917122501210f5660cd3b56 -->
+- [Rust program](../examples/statistic.rs) <!-- reviewed: cbb09b31bd5294ddf33d4cfc5a353d5b86636c7c875b80e03452d791220969ab -->
+- [Python walkthrough and program](../bindings/python/examples/09_statistics.py) <!-- reviewed: d405decff7aa771faa37c7c8694e017388052b40060de82be72e3180fee835e3 -->
+- [C statistics](../bindings/c/docs/statistics.rst) <!-- reviewed: 9445ca2077f5955c6a34013c4abec4f0132b827e6c32738aa84bfb7cee1d367c -->
+- [C program statistics](../bindings/c/examples/statistics.c) <!-- reviewed: d4b8534d0c233aa6b18754eb98bb3f6be219cdeb5009eb252f34da77531c044d -->
 
 ## Ownership
 

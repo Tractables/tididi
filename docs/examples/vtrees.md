@@ -22,7 +22,7 @@ does not rename them: `VarId(3)` still means `x3`.
 ```rust,ignore,{class=tested-example}
 use std::sync::Arc;
 
-use tididi::{literal, OperationError, Tdd, Vtree};
+use tididi::{literal, xor, OperationError, Tdd, Vtree};
 use tididi::vtree::VarId;
 
 let grouped_vtree = Arc::new(Vtree::balanced_over(&[
@@ -33,9 +33,9 @@ let split_vtree = Arc::new(Vtree::balanced(4));
 
 ## Build the same formula on each vtree
 
-Equality is a pair of implications: `x1 ↔ x3` is
-`(¬x1 ∨ x3) ∧ (x1 ∨ ¬x3)`. The helper uses the same variables for either
-vtree, then minimizes before comparing storage:
+Two variables agree when their exclusive OR is false: `x1 ↔ x3` is
+`¬(x1 XOR x3)`. Use [`xor`](crate::xor) to build each disagreement, negate it,
+then conjoin the equalities. The helper minimizes before comparing storage:
 
 ```rust,ignore,{class=tested-example}
 fn equal_pairs(vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
@@ -43,8 +43,8 @@ fn equal_pairs(vtree: &Arc<Vtree>) -> Result<Tdd, OperationError> {
     let x2 = literal(vtree, 2)?;
     let x3 = literal(vtree, 3)?;
     let x4 = literal(vtree, 4)?;
-    let first_equal = (!x1.clone() | x3.clone()) & (x1 | !x3);
-    let second_equal = (!x2.clone() | x4.clone()) & (x2 | !x4);
+    let first_equal = !xor(x1, x3)?;
+    let second_equal = !xor(x2, x4)?;
     let mut f = first_equal & second_equal;
     f.minimize()?;
     Ok(f)

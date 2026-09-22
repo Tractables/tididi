@@ -6,7 +6,7 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::Arc;
 
-    use tididi::{literal, OperationError, Tdd, Vtree};
+    use tididi::{literal, xor, OperationError, Tdd, Vtree};
     use tididi::vtree::VarId;
 
     let grouped_vtree = Arc::new(Vtree::balanced_over(&[
@@ -19,8 +19,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let x2 = literal(vtree, 2)?;
         let x3 = literal(vtree, 3)?;
         let x4 = literal(vtree, 4)?;
-        let first_equal = (!x1.clone() | x3.clone()) & (x1 | !x3);
-        let second_equal = (!x2.clone() | x4.clone()) & (x2 | !x4);
+        let first_equal = !xor(x1, x3)?;
+        let second_equal = !xor(x2, x4)?;
         let mut f = first_equal & second_equal;
         f.minimize()?;
         Ok(f)
