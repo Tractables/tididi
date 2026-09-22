@@ -16,6 +16,11 @@ fn child_level_determines_reference_meaning() {
     for value in [ValueRef::Inline(0), ValueRef::Inline(7), ValueRef::Inline(MARGINAL_INLINE_MAX), ValueRef::Slot(0), ValueRef::Slot(7), ValueRef::Slot(MARGINAL_INLINE_MAX)] {
         let side = value.side().unwrap();
         assert_eq!(EncodedChildRef::from_raw(side.raw()), side);
+        assert_eq!(ChildDecoder::marginal().value(side), value);
+        assert_eq!(ChildDecoder::structural().index(side), side.raw() as usize);
+        if let ValueRef::Slot(slot) = value {
+            assert_eq!(ChildDecoder::marginal().index(side), slot as usize);
+        }
         assert_eq!(ChildDecoder::marginal().child(side), ChildRef::Value(value));
         assert_eq!(ChildDecoder::structural().child(side), ChildRef::Node(NodeIdx(side.raw())));
     }
@@ -43,4 +48,10 @@ fn inline_and_arena_pairs_preserve_tagged_references() {
         assert_eq!(level.pairs_of_idx(node.idx()), expected);
         assert_eq!(level.pairs_iter_of_idx(node.idx()).collect::<Vec<_>>(), expected);
     }
+}
+
+#[test]
+#[should_panic(expected = "an inline count has no column slot")]
+fn inline_count_cannot_index_a_column() {
+    ChildDecoder::marginal().index(ValueRef::Inline(0).side().unwrap());
 }

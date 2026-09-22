@@ -1,7 +1,7 @@
 //! The integer arm of the streaming fold.
 
 use super::*;
-use crate::diagram::{EncodedChildRef, ChildPair, ChildDecoder, ChildRef, MarginalSide, ValueRef, TddLevel, WeightStore};
+use crate::diagram::{EncodedChildRef, ChildPair, ChildDecoder, ChildRef, ValueRef, TddLevel, WeightStore};
 use crate::value::{Count, CountRead, CountRef, CountVec, IntFold, COUNT_OVERFLOW};
 use crate::diagram::LEAF_COUNTS;
 
@@ -25,12 +25,13 @@ pub(crate) type StreamChildCounts<'a> = StreamChild<'a, IntFold>;
 /// before the fold). A `debug_assert` re-checks the bound in test/debug builds.
 unsafe fn read_fast<const MARGINAL: bool>(raw: u32, c: &StreamChildCounts<'_>) -> u128 {
     if MARGINAL {
-        if let ValueRef::Inline(c) = ValueRef::from_raw(MarginalSide(raw)) {
-            c as u128
-        } else {
-            let idx = ChildDecoder::marginal().coord(EncodedChildRef::from_raw(raw)) as usize;
-            debug_assert!(idx < c.col.len(), "marginal slot index is past the column end");
-            unsafe { *c.col.fast_slice().get_unchecked(idx) }
+        match ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw)) {
+            ValueRef::Inline(value) => value as u128,
+            ValueRef::Slot(slot) => {
+                let idx = slot as usize;
+                debug_assert!(idx < c.col.len(), "marginal slot index is past the column end");
+                unsafe { *c.col.fast_slice().get_unchecked(idx) }
+            }
         }
     } else {
         // A structural side needs no decode: the ref is the index.
@@ -91,13 +92,10 @@ pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
 
 /// Read the fast count or overflow sentinel without consulting the exact side table.
 fn read_marginal_count(raw: u32, c: &StreamChildCounts<'_>, view: ChildDecoder) -> u128 {
-    if view.is_marginal()
-        && let ValueRef::Inline(c) = ValueRef::from_raw(MarginalSide(raw))
-    {
-        c as u128
-    } else {
-        let idx = view.coord(EncodedChildRef::from_raw(raw)) as usize;
-        c.col.fast_val(idx)
+    match view.child(EncodedChildRef::from_raw(raw)) {
+        ChildRef::Value(ValueRef::Inline(value)) => value as u128,
+        ChildRef::Node(crate::diagram::NodeIdx(index))
+        | ChildRef::Value(ValueRef::Slot(index)) => c.col.fast_val(index as usize),
     }
 }
 
@@ -119,8 +117,6 @@ pub(crate) fn compute_cell_count(
     left: &StreamChildCounts<'_>,
     right: &StreamChildCounts<'_>,
 ) -> Count {
-    // Tag-at-creation: a marginal child's refs may carry the bit-30 slot tag —
-    // strip it before indexing. Non-marginal and leaf children index verbatim.
     let left_view = if left.is_marginal { ChildDecoder::marginal() } else { ChildDecoder::structural() };
     let right_view = if right.is_marginal { ChildDecoder::marginal() } else { ChildDecoder::structural() };
     let mut total: u128 = 0;

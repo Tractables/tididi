@@ -1,19 +1,8 @@
 //! The weighted arm of the streaming fold.
 
 use super::*;
-use crate::diagram::{ChildPair, ValueRef, TddLevel, WeightStore, WeightValue};
+use crate::diagram::{ChildPair, ChildDecoder, TddLevel, WeightStore, WeightValue};
 use crate::value::{WeightFold};
-use crate::diagram::MarginalSide;
-
-// ── Weighted payload (algebraic model counting) ──────────────────────────────
-//
-// The weighted hooks swap the `u128`/`BigUint` model-count payload for an exact
-// `BigRational` semiring value carried in the external `WeightStore`, which is
-// attached to the diagram for the duration of the compile. BigRational doesn't overflow,
-// so there is no big/overflow second pass — a single clean fold. The per-child
-// value lookup is the shared `marginal::read_weight`: read from the
-// `WeightStore` for a weight-marginal child, the semiring leaf base for a leaf,
-// else the per-batch `computed` scratch.
 
 /// Weighted analogue of [`super::count::compute_cell_count`]. `Σ left[idx(p.left)] * right[idx(p.right)]`.
 /// No overflow handling.
@@ -25,22 +14,12 @@ pub(crate) fn compute_cell_weight(
     right_is_marginal: bool,
     ws: &WeightStore,
 ) -> WeightValue {
-    // Resolve a marginal/non-marginal ref to its value; both index the snapshot by
-    // reference.
-    fn resolve<'a>(raw: u32, is_marginal: bool, snap: &'a [WeightValue]) -> std::borrow::Cow<'a, WeightValue> {
-        if is_marginal {
-            match ValueRef::from_raw(MarginalSide(raw)) {
-                ValueRef::Inline(_) => unreachable!("weighted marginal-side refs are bare slots"),
-                ValueRef::Slot(s) => std::borrow::Cow::Borrowed(&snap[s as usize]),
-            }
-        } else {
-            std::borrow::Cow::Borrowed(&snap[raw as usize])
-        }
-    }
+    let left_view = if left_is_marginal { ChildDecoder::marginal() } else { ChildDecoder::structural() };
+    let right_view = if right_is_marginal { ChildDecoder::marginal() } else { ChildDecoder::structural() };
     WeightFold::fold(
         pairs.iter().copied(),
-        |k| resolve(k.raw(), left_is_marginal, left),
-        |k| resolve(k.raw(), right_is_marginal, right),
+        |k| std::borrow::Cow::Borrowed(&left[left_view.index(k)]),
+        |k| std::borrow::Cow::Borrowed(&right[right_view.index(k)]),
         ws.wzero(),
     )
 }

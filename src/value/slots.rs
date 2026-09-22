@@ -11,7 +11,7 @@ use crate::value::{Count, CountRead, IntFold, WeightFold};
 use crate::diagram::marginal_ref::refs::ChildSide;
 use crate::diagram::semiring::{weight_key, WeightKey};
 use crate::diagram::{
-    EncodedChildRef, CountOverflow, ChildPair, MarginalSide, Tdd, TddLevel, ValueRef, WeightStore, WeightValue,
+    EncodedChildRef, ChildDecoder, CountOverflow, ChildPair, Tdd, TddLevel, ValueRef, WeightStore, WeightValue,
 };
 use crate::Engine;
 use crate::limits::OperationError;
@@ -208,7 +208,7 @@ impl SlotValues for IntFold {
     }
 
     fn scaled(tdd: &Tdd, v: VtreeIdx, raw: u32, k: u32) -> Count {
-        match ValueRef::from_raw(MarginalSide(raw)) {
+        match ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw)) {
             // c ≤ 2^30−1, k ≤ 2^32−1 → product fits u128 with room to spare.
             ValueRef::Inline(c) => Count::Fast(c as u128 * k as u128),
             ValueRef::Slot(s) => {
@@ -302,45 +302,23 @@ impl SlotValues for WeightFold {
             // The zero sentinel (bit 31) never appears in a pair list; if it
             // did, it would contribute the additive identity, so it is skipped.
             debug_assert!(
-                !MarginalSide(raw).is_zero_sentinel(),
+                !EncodedChildRef::from_raw(raw).is_reserved(),
                 "the zero sentinel must not reach a marginal-side pair ref"
             );
-            if MarginalSide(raw).is_zero_sentinel() {
+            if EncodedChildRef::from_raw(raw).is_reserved() {
                 continue;
             }
-            match ValueRef::from_raw(MarginalSide(raw)) {
-                ValueRef::Inline(_) => unreachable!("weighted marginal-side refs are bare slots"),
-                ValueRef::Slot(s) => {
-                    let v = &values.expect("weighted pair fusion: marginal level has no WeightStore")
-                        [s as usize];
-                    acc.add_assign(v);
-                }
-            }
+            let slot = ChildDecoder::marginal().index(EncodedChildRef::from_raw(raw));
+            acc.add_assign(&values.expect("weighted pair fusion: marginal level has no WeightStore")[slot]);
         }
         acc
     }
 
     fn scaled(tdd: &Tdd, v: VtreeIdx, raw: u32, k: u32) -> WeightValue {
-        // Weighted marginal-side refs reaching here are always Slot — nothing mints a
-        // weighted `Inline` — and the arm below only holds the match exhaustive.
-        // Zero sentinels carry no value and are not scaled here.
-        match ValueRef::from_raw(MarginalSide(raw)) {
-            ValueRef::Slot(s) => {
-                let ws = tdd.weight_store();
-                let values = ws
-                    .level(v.idx())
-                    .expect("scale: weighted level has no store");
-                scaled_weight(ws, &values[s as usize], k)
-            }
-            ValueRef::Inline(_) => {
-                unreachable!(
-                    "a weighted marginal ref is always a store slot: no path mints an \
-                     Inline ref on a weighted level, and an Inline ref here would \
-                     dangle across component graft (store rebuild drops the intern \
-                     table)"
-                )
-            }
-        }
+        let slot = ChildDecoder::marginal().index(EncodedChildRef::from_raw(raw));
+        let ws = tdd.weight_store();
+        let values = ws.level(v.idx()).expect("scale: weighted level has no store");
+        scaled_weight(ws, &values[slot], k)
     }
 
     /// An inline payload is an integer count, which a weighted value has no
@@ -382,7 +360,7 @@ impl SlotValues for WeightFold {
         }
         tdd.levels[v.idx()].set_weight_width(s + 1);
         debug_assert!(
-            !MarginalSide(ValueRef::slot_raw(s)).is_zero_sentinel(),
+            !ValueRef::Slot(s).to_raw().side().is_reserved(),
             "a minted weighted marginal ref must never alias the zero sentinel",
         );
         Ok(s)
@@ -418,11 +396,6 @@ pub(crate) fn count_key_at(
 
 /// Sum the values at `indices`, each a marginal-side reference.
 ///
-/// A reference is either an inline value (bit 30 set: the value is the count,
-/// with no array load) or a bare slot (bit 30 clear: an index into `counts`).
-/// `ValueRef::from_raw` does that split; its bit-31 assert fires in a debug
-/// build if a zero sentinel ever reaches here.
-///
 /// The arithmetic is [`IntFold::fold`] driven with a constant 1 on the right,
 /// so the overflow rule, including the promotion of a total landing on the
 /// sentinel, is applied there.
@@ -432,7 +405,7 @@ pub(crate) fn sum_marginal_counts(
     indices: &[u32],
 ) -> Count {
     let read = |raw: EncodedChildRef| -> CountRead<'_> {
-        match ValueRef::from_raw(MarginalSide(raw.raw())) {
+        match ChildDecoder::marginal().value(raw) {
             ValueRef::Inline(v) => CountRead::Fast(v as u128),
             ValueRef::Slot(s) => CountRead::from_slot(counts, big, s as usize),
         }
@@ -489,10 +462,10 @@ pub(crate) fn referenced_marginal_slots<'a>(
                 ChildSide::Right => p.right.0,
                 ChildSide::Left => p.left.0,
             };
-            if MarginalSide(raw).is_zero_sentinel() {
+            if EncodedChildRef::from_raw(raw).is_reserved() {
                 continue;
             }
-            if let ValueRef::Slot(s) = ValueRef::from_raw(MarginalSide(raw))
+            if let ValueRef::Slot(s) = ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw))
                 && seen.insert(s) {
                     referenced.push(s);
                 }

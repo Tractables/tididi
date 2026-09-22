@@ -368,6 +368,21 @@ impl ChildDecoder {
         }
     }
 
+    /// Decode a side known to point at a marginal child.
+    #[inline]
+    pub(crate) fn value(self, side: EncodedChildRef) -> ValueRef {
+        match self.child(side) {
+            ChildRef::Value(value) => value,
+            ChildRef::Node(_) => panic!("expected a marginal child"),
+        }
+    }
+
+    /// Index a stored or computed column; inline counts have no column slot.
+    #[inline]
+    pub(crate) fn index(self, side: EncodedChildRef) -> usize {
+        self.child(side).index().expect("an inline count has no column slot")
+    }
+
     /// Rewrite `side` through a `remap` indexed by the child level's cells —
     /// the child was compacted and every cell moved to `remap[cell]`.
     ///

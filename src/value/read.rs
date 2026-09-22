@@ -1,6 +1,6 @@
 //! Borrowed access to stored and transient value columns.
 
-use crate::diagram::{EncodedChildRef, ChildDecoder, LeafLabel, MarginalSide, TddLevel, ValueRef, WeightStore, WeightValue, leaf_count};
+use crate::diagram::{EncodedChildRef, ChildDecoder, LeafLabel, TddLevel, ValueRef, WeightStore, WeightValue, leaf_count};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use super::{CountRead, CountVec};
 
@@ -43,12 +43,8 @@ pub(crate) fn column_of<'a>(
 /// Resolve one child ref to a count read, against a level slice and the
 /// per-batch `computed` scratch; a `Big` read borrows the `BigUint`.
 ///
-/// At a marginal level the ref decodes by its own bits: bit 30 set is an
-/// inline count (at most 2^30−1, so never an overflow sentinel); bit 30 clear
-/// is a bare slot index into the store (a pre-tag mid-batch ref is a bare node
-/// index, and that is its slot index). The decode keys off the ref rather than
-/// the level's `marginal_inlined` marker because a parent level rebuilt from
-/// scratch can lose the flag while its pairs still carry inline refs.
+/// Marginal leaves can retain bare label references with an empty count
+/// column; their counts still come from the fixed leaf labels.
 #[inline]
 pub(crate) fn read_count<'a>(
     level_idx: usize,
@@ -58,11 +54,10 @@ pub(crate) fn read_count<'a>(
     computed: &'a [Option<CountVec>],
 ) -> CountRead<'a> {
     if let Some(ic) = levels[level_idx].marginal_counts() {
-        let raw = side.raw();
-        if MarginalSide(raw).is_zero_sentinel() {
+        if side.is_reserved() {
             return CountRead::Fast(0); // ZERO sentinel — never decode (mirrors emit_or_tag)
         }
-        return match ValueRef::from_raw(MarginalSide(raw)) {
+        return match ChildDecoder::marginal().value(side) {
             ValueRef::Inline(v) => CountRead::Fast(v as u128),
             // A marginal leaf keeps an empty store under the inline path (all
             // counts live inline at the parent), so a bare slot ref here is a
@@ -111,16 +106,12 @@ pub(crate) fn read_weight<'a>(
 ) -> std::borrow::Cow<'a, WeightValue> {
     let ws = cols.store();
     if let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32)) {
-        let raw = side.raw();
-        if MarginalSide(raw).is_zero_sentinel() {
+        if side.is_reserved() {
             // `ZERO` sentinel — mirrors `read_count`. Leaf levels only ever
             // carry Pos/Neg/One, but the bit is tested before every decode.
             return std::borrow::Cow::Owned(ws.wzero());
         }
-        let label_idx = match ValueRef::from_raw(MarginalSide(raw)) {
-            ValueRef::Inline(_) => unreachable!("weighted marginal-side refs are bare slots"),
-            ValueRef::Slot(s) => s as usize,
-        };
+        let label_idx = ChildDecoder::marginal().index(side);
         let v = ws.leaf_val(var, LeafLabel::from_idx(label_idx));
         #[cfg(debug_assertions)]
         debug_assert!(
@@ -135,17 +126,11 @@ pub(crate) fn read_weight<'a>(
     // another live diagram while this one's level is still structural, and a
     // structural level's node indices are not slots of that column.
     if let Some(values) = cols.get(level_idx) {
-            let raw = side.raw();
-            if MarginalSide(raw).is_zero_sentinel() {
-                // `ZERO` sentinel — mirrors `read_count`
-                return std::borrow::Cow::Owned(ws.wzero());
-            }
-            let slot = match ValueRef::from_raw(MarginalSide(raw)) {
-                ValueRef::Inline(_) => unreachable!("weighted marginal-side refs are bare slots"),
-                ValueRef::Slot(s) => s as usize,
-            };
-            return std::borrow::Cow::Borrowed(&values[slot]);
+        if side.is_reserved() {
+            return std::borrow::Cow::Owned(ws.wzero());
         }
+        return std::borrow::Cow::Borrowed(&values[ChildDecoder::marginal().index(side)]);
+    }
     if let Some(w) = &computed_weights[level_idx] {
         return std::borrow::Cow::Borrowed(&w[ChildDecoder::structural().node(side).idx()]);
     }
