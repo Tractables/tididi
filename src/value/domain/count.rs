@@ -1,8 +1,8 @@
 //! The integer arm of the streaming fold.
 
 use super::*;
-use crate::diagram::{EncodedChildRef, ChildPair, ChildDecoder, MarginalSide, ValueRef, TddLevel, WeightStore};
-use crate::value::{Count, CountRef, CountVec, IntFold, COUNT_OVERFLOW};
+use crate::diagram::{EncodedChildRef, ChildPair, ChildDecoder, ChildRef, MarginalSide, ValueRef, TddLevel, WeightStore};
+use crate::value::{Count, CountRead, CountRef, CountVec, IntFold, COUNT_OVERFLOW};
 use crate::diagram::LEAF_COUNTS;
 
 pub(crate) type StreamChildCounts<'a> = StreamChild<'a, IntFold>;
@@ -89,81 +89,26 @@ pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
     t0.checked_add(t1)
 }
 
-/// Read one pair side as `(count_value_or_sentinel, slot_index)`.
-///
-/// For an inline ref with bit 30 set the value is itself the count and the slot index is
-/// unused: such a count is at most `MARGINAL_INLINE_MAX`, never `COUNT_OVERFLOW`,
-/// so the big path never dereferences the sentinel index.
-///
-/// The polarity is self-describing: for a marginal child a ref with bit 30 set is
-/// an inline count and one with bit 30 clear is a slot index (a fresh mid-apply grid
-/// index is a bare node index, which is its slot, and decodes correctly here).
-fn read_marginal_count(raw: u32, c: &StreamChildCounts<'_>, view: ChildDecoder) -> (u128, usize) {
+/// Read the fast count or overflow sentinel without consulting the exact side table.
+fn read_marginal_count(raw: u32, c: &StreamChildCounts<'_>, view: ChildDecoder) -> u128 {
     if view.is_marginal()
         && let ValueRef::Inline(c) = ValueRef::from_raw(MarginalSide(raw))
     {
-        (c as u128, usize::MAX)
+        c as u128
     } else {
         let idx = view.coord(EncodedChildRef::from_raw(raw)) as usize;
-        (c.col.fast_val(idx), idx)
+        c.col.fast_val(idx)
     }
 }
 
 
-/// Re-sum every pair in arbitrary precision, once a u128 accumulation overflowed.
-///
-/// The inner product branches on which inputs are still u128 and which already
-/// overflowed. The u128/u128 path skips BigUint multiplication entirely (just an
-/// `AddAssign<u128>`); the mixed paths use a scalar BigUint multiply, one
-/// allocation for the product and no `BigUint::from(u128)` intermediate; only
-/// the both-big case takes a full bigint multiply. The branch trims the
-/// allocations per pair from as many as three down to zero or one.
-fn sum_pairs_big(
-    pairs: &[ChildPair],
-    left: &StreamChildCounts<'_>,
-    right: &StreamChildCounts<'_>,
-    left_view: ChildDecoder,
-    right_view: ChildDecoder,
-) -> num_bigint::BigUint {
-    let mut bt = num_bigint::BigUint::ZERO;
-    for pair in pairs {
-        let (lc_val, left_idx) = read_marginal_count(pair.left.0, left, left_view);
-        let (rc_val, right_idx) = read_marginal_count(pair.right.0, right, right_view);
-        let lc_is_big = lc_val == COUNT_OVERFLOW;
-        let rc_is_big = rc_val == COUNT_OVERFLOW;
-        match (lc_is_big, rc_is_big) {
-            (false, false) => {
-                // Both inputs u128; the running BigUint sum is needed
-                // only because aggregate `bt` already overflowed.
-                if let Some(product) = lc_val.checked_mul(rc_val) {
-                    bt += product;
-                } else {
-                    // u128 × u128 overflows: 128-bit BigUint then scalar.
-                    let mut tmp = num_bigint::BigUint::from(lc_val);
-                    tmp *= rc_val;
-                    bt += tmp;
-                }
-            }
-            (true, false) => {
-                let lc_ref = left.col.big_val(left_idx)
-                    .expect("missing BigUint for overflowed left count");
-                bt += lc_ref * rc_val;
-            }
-            (false, true) => {
-                let rc_ref = right.col.big_val(right_idx)
-                    .expect("missing BigUint for overflowed right count");
-                bt += rc_ref * lc_val;
-            }
-            (true, true) => {
-                let lc_ref = left.col.big_val(left_idx)
-                    .expect("missing BigUint for overflowed left count");
-                let rc_ref = right.col.big_val(right_idx)
-                    .expect("missing BigUint for overflowed right count");
-                bt += lc_ref * rc_ref;
-            }
-        }
+/// Resolve a pair side without exposing the count column's overflow encoding.
+fn read_count<'a>(side: EncodedChildRef, child: &StreamChildCounts<'a>, view: ChildDecoder) -> CountRead<'a> {
+    match view.child(side) {
+        ChildRef::Value(ValueRef::Inline(value)) => CountRead::Fast(value as u128),
+        ChildRef::Node(crate::diagram::NodeIdx(index))
+        | ChildRef::Value(ValueRef::Slot(index)) => child.col.get(index as usize),
     }
-    bt
 }
 
 /// Sum `Σ counts_left[p.left] * counts_right[p.right]` over `pairs`: `Count::Fast`
@@ -199,8 +144,8 @@ pub(crate) fn compute_cell_count(
         }
     } else {
         for pair in pairs {
-            let (lc, _) = read_marginal_count(pair.left.0, left, left_view);
-            let (rc, _) = read_marginal_count(pair.right.0, right, right_view);
+            let lc = read_marginal_count(pair.left.0, left, left_view);
+            let rc = read_marginal_count(pair.right.0, right, right_view);
             if lc == COUNT_OVERFLOW || rc == COUNT_OVERFLOW {
                 overflowed = true;
                 break;
@@ -216,7 +161,11 @@ pub(crate) fn compute_cell_count(
         // `u128::MAX` == `COUNT_OVERFLOW` must not be stored as a fast value).
         return Count::from_u128(total);
     }
-    Count::Big(sum_pairs_big(pairs, left, right, left_view, right_view))
+    Count::Big(IntFold::sum_exact(
+        pairs.iter().copied(),
+        |side| read_count(side, left, left_view),
+        |side| read_count(side, right, right_view),
+    ))
 }
 
 impl ValueDomain for IntFold {

@@ -331,3 +331,67 @@ fn refused_big_push_preserves_length_and_slot_alignment() {
     assert_eq!(col.len(), 2);
     assert_eq!(col.get(1).to_count(), Count::Big(BigUint::from(1u32) << 200));
 }
+
+#[test]
+fn query_and_streaming_folds_match_exact_products_across_storage_boundaries() {
+    let eng = Engine::new();
+    let values = vec![
+        Count::Fast(0), Count::Fast(1), Count::Fast(u64::MAX as u128),
+        Count::Fast(u64::MAX as u128 + 1), Count::Fast(u128::MAX - 1),
+        Count::Big(BigUint::from(u128::MAX)),
+        Count::Big(BigUint::from(1u32) << 180), Count::Big(BigUint::ZERO),
+    ];
+    let exact: Vec<BigUint> = values.iter().map(|v| match v {
+        Count::Fast(v) => BigUint::from(*v),
+        Count::Big(v) => v.clone(),
+    }).collect();
+    let column = col(&eng, values);
+    let pairs: Vec<_> = (0..exact.len()).flat_map(|l| {
+        (0..exact.len()).map(move |r| pair(l as u32, r as u32))
+    }).collect();
+    let sum: BigUint = exact.iter().sum();
+    let expected_total = &sum * &sum;
+    let as_big = |value| match value {
+        Count::Fast(v) => BigUint::from(v),
+        Count::Big(v) => v,
+    };
+    for left_marginal in [false, true] {
+        for right_marginal in [false, true] {
+            let left = StreamChild::<IntFold> { col: column.as_count_ref(), is_marginal: left_marginal };
+            let right = StreamChild::<IntFold> { col: column.as_count_ref(), is_marginal: right_marginal };
+            for (i, pair) in pairs.iter().enumerate() {
+                let expected = &exact[i / exact.len()] * &exact[i % exact.len()];
+                let streamed = IntFold::fold_cell(std::slice::from_ref(pair), &left, &right, &());
+                let queried = IntFold::fold(std::iter::once(*pair),
+                    |k| column.get(k.raw() as usize), |k| column.get(k.raw() as usize));
+                assert_eq!(as_big(streamed), expected);
+                assert_eq!(as_big(queried), expected);
+            }
+            assert_eq!(as_big(IntFold::fold_cell(&pairs, &left, &right, &())), expected_total);
+        }
+    }
+}
+
+#[test]
+fn streaming_exact_fallback_handles_inline_counts_and_accumulation_overflow() {
+    use crate::diagram::{ChildPair, EncodedChildRef, ValueRef};
+    let eng = Engine::new();
+    let large = BigUint::from(1u32) << 180usize;
+    let column = col(&eng, vec![Count::Big(large.clone())]);
+    let empty = CountVec::default();
+    let left = StreamChild::<IntFold> { col: empty.as_count_ref(), is_marginal: true };
+    let right = StreamChild::<IntFold> { col: column.as_count_ref(), is_marginal: true };
+    let inline = [0, 7, crate::diagram::MARGINAL_INLINE_MAX];
+    let pairs: Vec<_> = inline.into_iter().map(|n| ChildPair {
+        left: EncodedChildRef::from_raw(ValueRef::Inline(n).to_raw().0),
+        right: EncodedChildRef::from_raw(0),
+    }).collect();
+    assert_eq!(IntFold::fold_cell(&pairs, &left, &right, &()),
+        Count::Big(large * (7u64 + crate::diagram::MARGINAL_INLINE_MAX as u64)));
+
+    // Individual widening products fit u128, but their sum does not.
+    let column = col(&eng, vec![Count::Fast(u64::MAX as u128)]);
+    let side = StreamChild::<IntFold> { col: column.as_count_ref(), is_marginal: false };
+    assert_eq!(IntFold::fold_cell(&[pair(0, 0); 3], &side, &side, &()),
+        Count::Big(BigUint::from(u64::MAX).pow(2) * 3u32));
+}

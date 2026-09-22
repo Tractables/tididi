@@ -168,8 +168,8 @@ impl IntFold {
     /// touches the bigint allocator. A pass-1 total that lands on the overflow
     /// sentinel is promoted by [`Count::from_u128`].
     ///
-    /// Both passes skip a pair with a zero operand without reading the other
-    /// side.
+    /// Zero products are skipped; the fast pass can skip the right read when
+    /// the left count is zero.
     pub(crate) fn fold<'a, P, L, R>(pairs: P, l: L, r: R) -> Count
     where
         P: Iterator<Item = ChildPair> + Clone,
@@ -206,10 +206,19 @@ impl IntFold {
         if !overflowed {
             return Count::from_u128(total);
         }
+        Count::Big(Self::sum_exact(pairs, l, r))
+    }
+
+    /// Sum products in arbitrary precision after a fast fold refuses the total.
+    /// Readers supply decoded values; this fold does not know their storage layout.
+    #[inline(always)]
+    pub(crate) fn sum_exact<'a>(
+        pairs: impl Iterator<Item = ChildPair>,
+        l: impl Fn(EncodedChildRef) -> CountRead<'a>,
+        r: impl Fn(EncodedChildRef) -> CountRead<'a>,
+    ) -> BigUint {
         let mut bt = BigUint::ZERO;
         for pair in pairs {
-            // Same skip, and here it also buys the allocation a zero operand
-            // would otherwise pay for on the mixed-magnitude branches.
             let (l, r) = (l(pair.left), r(pair.right));
             if matches!(l, CountRead::Fast(0)) || matches!(r, CountRead::Fast(0)) {
                 continue;
@@ -229,7 +238,7 @@ impl IntFold {
                 (CountRead::Big(a), CountRead::Big(b)) => bt += a * b,
             }
         }
-        Count::Big(bt)
+        bt
     }
 }
 

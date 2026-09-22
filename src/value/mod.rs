@@ -276,9 +276,10 @@ impl<'a> CountRef<'a> {
         self.fast[i]
     }
 
-    /// Raw big-table read; `None` when slot `i` has no overflow value.
-    pub(crate) fn big_val(&self, i: usize) -> Option<&'a BigUint> {
-        self.big.and_then(|v| v.get(i))
+    /// Read a stored value, borrowing its exact count when the fast slot overflowed.
+    #[inline]
+    pub(crate) fn get(&self, i: usize) -> CountRead<'a> {
+        CountRead::from_slot(self.fast, self.big, i)
     }
 
     pub(crate) fn len(&self) -> usize {

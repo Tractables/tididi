@@ -97,6 +97,16 @@ the `testing` feature. The feature keeps invariant checks active in release
 integration tests without enabling debug assertions in the kernels. Run the
 differential suite in both profiles.
 
+## Counting boundaries
+
+`CountVec` owns count columns; `CountRef` borrows them. Both decode stored
+values through `CountRead`, which hides the overflow side table from arithmetic.
+Query folds and streaming apply retain their specialized fixed-width loops,
+then use `IntFold::sum_exact` when a product, sum, or child value exceeds the
+fast representation. The exact fold receives decoded values from its readers,
+so it handles arithmetic without knowing whether a value came from a query
+column, marginal storage, or an inline reference.
+
 ## One conjunction
 
 [`and(f, g)`] borrows an engine from the shared context, validates operand
