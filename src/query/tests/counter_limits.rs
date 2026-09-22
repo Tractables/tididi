@@ -159,3 +159,71 @@ fn counters_sharing_a_context_retain_independent_evidence() {
     assert_eq!(first.model_count().unwrap(), 12u32.into());
     assert_eq!(second.model_count().unwrap(), 4u32.into());
 }
+
+/// Setup and fold storage must fit together, not in two independent budgets.
+#[test]
+fn node_count_export_shares_one_allocation_budget() {
+    let engine = Engine::new();
+    let vtree = Arc::new(Vtree::leaf(VarId(1)));
+    let f = Tdd::one(&vtree);
+    assert_canonical(&f);
+    let header = std::mem::size_of::<crate::value::CountVec>() as u64;
+    let values = (crate::diagram::LEAF_WIDTH * std::mem::size_of::<u128>()) as u64;
+    {
+        let _scope = engine.limits().scope(LimitConfig::none()
+            .with_memory_budget_bytes(Some(header.max(values))));
+        assert_eq!(engine.node_counts_u128(&f), Err(OperationError::OverBudget));
+    }
+    let counts = engine.node_counts_u128(&f).unwrap();
+    assert_eq!(counts[vtree.root().idx()], [2, 1, 1]);
+    assert_canonical(&f);
+}
+
+/// A short fold still reports the work stop at its final polling boundary.
+#[test]
+fn node_count_export_checks_stops_after_the_fold() {
+    use crate::limits::{StopAt, StopRules};
+    let engine = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(3));
+    let f = Tdd::clause(&vtree, [1, 2]).unwrap();
+    assert_canonical(&f);
+    {
+        let stop_at = engine.limits().work_units() + 1;
+        let _scope = engine.limits().scope(LimitConfig::none().with_stop_rules(StopRules {
+            unconditional: Some(StopAt::WorkUnits(stop_at)), after_pairs: None,
+        }));
+        assert_eq!(engine.node_counts_u128(&f), Err(OperationError::Stopped));
+    }
+    let counts = engine.node_counts_u128(&f).unwrap();
+    assert_eq!(counts[vtree.root().idx()][f.output().local.idx()], 6);
+    assert_canonical(&f);
+}
+
+/// Refuse every reservation, including the final array of exported columns.
+#[test]
+fn node_count_export_recovers_from_each_allocation_refusal() {
+    let engine = Engine::new();
+    let vtree = Arc::new(Vtree::leaf(VarId(1)));
+    let f = Tdd::one(&vtree);
+    assert_canonical(&f);
+    let expected = f.node_counts_u128().unwrap();
+    let mut refusals = 0;
+    let mut completed = false;
+    for cut in 0..16 {
+        engine.limits().refuse_nth_reserve(cut);
+        let result = engine.node_counts_u128(&f);
+        engine.limits().grant_every_reserve();
+        assert_eq!(engine.node_counts_u128(&f).unwrap(), expected);
+        match result {
+            Err(OperationError::OverBudget) => refusals += 1,
+            Ok(counts) => {
+                assert_eq!(counts, expected);
+                completed = true;
+                break;
+            }
+            other => panic!("reservation {cut}: {other:?}"),
+        }
+    }
+    assert!(completed && refusals >= 3, "setup, column and export buffers must be fallible");
+    assert_canonical(&f);
+}

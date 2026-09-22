@@ -145,7 +145,8 @@ impl Tdd {
     /// # Errors
     ///
     /// Returns [`OperationError::IncompatibleWeights`] for weighted marginal
-    /// levels, or [`OperationError::OverBudget`] if an allocation is refused.
+    /// levels, [`OperationError::OverBudget`] if an allocation is refused,
+    /// or [`OperationError::Stopped`] on cancellation.
     pub fn node_counts_u128(&self) -> Result<Vec<Vec<u128>>, OperationError> {
         self.context().run(|eng| eng.node_counts_u128(self))
     }
@@ -201,6 +202,7 @@ impl Engine {
     ///
     /// Returns the query's errors or [`OperationError::Stopped`] on cancellation.
     pub fn node_counts_u128(&self, tdd: &Tdd) -> Result<Vec<Vec<u128>>, OperationError> {
+        let _op = self.limits().begin_operation();
         ModelCounter::allocate(self, tdd, 0, Retention::All, PinSemantics::Cofactor)?
             .into_fast_counts(self)
     }

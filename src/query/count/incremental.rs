@@ -684,10 +684,17 @@ impl ModelCounter<'_> {
     /// Only a [`Retention::All`] counter holds every slot after the pass.
     pub(crate) fn into_fast_counts(mut self, eng: &Engine) -> Result<Vec<Vec<u128>>, OperationError> {
         debug_assert_eq!(self.retention, Retention::All, "a frontier counter frees the columns this reads");
-        let _op = eng.limits().begin_operation();
-        let mut gate = eng.limits().gate();
+        let lim = eng.limits();
+        let mut gate = lim.gate();
         self.refresh(eng, &mut gate)?;
-        Ok(self.cols.into_iter().map(|c| c.into_parts().0).collect())
+        let mut counts = Vec::new();
+        lim.reserve_exact(&mut counts, self.cols.len())?;
+        for column in self.cols {
+            gate.poll(1)?;
+            counts.push(column.into_parts().0);
+        }
+        gate.flush()?;
+        Ok(counts)
     }
 }
 
