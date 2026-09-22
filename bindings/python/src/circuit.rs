@@ -7,7 +7,7 @@ use pyo3::exceptions::PyTypeError;
 use pyo3::types::{PyBytes, PyDict};
 use num_bigint::BigUint;
 use num_rational::BigRational;
-use tididi::Tdd;
+use tididi::{Engine, OperationError, Tdd};
 use crate::domain::{self, PyLimits, PyLiteral, PyVtree};
 use crate::operations;
 
@@ -27,6 +27,15 @@ impl PyCircuit {
         self.circuit.as_ref().ok_or_else(consumed)
     }
     pub fn take(&mut self) -> PyResult<Tdd> { self.circuit.take().ok_or_else(consumed) }
+
+    /// Call after validating operation arguments; only execution errors consume the circuit.
+    fn transform(&mut self, py: Python<'_>, limits: Option<&PyLimits>,
+        operation: impl FnOnce(&Engine, Tdd) -> Result<Tdd, OperationError> + Send) -> PyResult<Self> {
+        let limits = domain::config(limits)?;
+        let f = self.take()?;
+        let vtree = Arc::clone(f.vtree());
+        operations::run(py, &vtree, limits, move |engine| operation(engine, f)).map(Self::new)
+    }
 }
 
 fn consumed() -> PyErr {
@@ -74,10 +83,7 @@ impl PyCircuit {
     /// Complement this circuit, consuming it. Equivalent to ~circuit, with optional limits.
     #[pyo3(signature = (*, limits=None))]
     fn negate(&mut self, py: Python<'_>, limits: Option<&PyLimits>) -> PyResult<Self> {
-        let limits = domain::config(limits)?;
-        let f = self.take()?;
-        let vtree = Arc::clone(f.vtree());
-        operations::run(py, &vtree, limits, move |e| e.negate(f)).map(Self::new)
+        self.transform(py, limits, Engine::negate)
     }
 
     /// Substitute the given literal values, consuming this circuit.
@@ -88,10 +94,7 @@ impl PyCircuit {
     fn condition(&mut self, py: Python<'_>, literals: &Bound<'_, PyAny>, limits: Option<&PyLimits>) -> PyResult<Self> {
         let literals = domain::read_literals(literals)?;
         domain::check_variables(self.get()?.vtree(), literals.iter().map(|l| l.var))?;
-        let limits = domain::config(limits)?;
-        let f = self.take()?;
-        let vtree = Arc::clone(f.vtree());
-        operations::run(py, &vtree, limits, move |e| e.condition(f, literals)).map(Self::new)
+        self.transform(py, limits, move |e, f| e.condition(f, literals))
     }
 
     /// Existentially quantify variables, consuming this circuit.
@@ -100,10 +103,7 @@ impl PyCircuit {
     fn exists(&mut self, py: Python<'_>, variables: Vec<u32>, limits: Option<&PyLimits>) -> PyResult<Self> {
         let vars = domain::variable_ids(&variables)?;
         domain::check_variables(self.get()?.vtree(), vars.iter().copied())?;
-        let limits = domain::config(limits)?;
-        let f = self.take()?;
-        let vtree = Arc::clone(f.vtree());
-        operations::run(py, &vtree, limits, move |e| e.exists_vars(f, &vars)).map(Self::new)
+        self.transform(py, limits, move |e, f| e.exists_vars(f, &vars))
     }
 
     /// Simultaneously rename variables using a dict {source: target}, consuming this circuit.
@@ -114,20 +114,14 @@ impl PyCircuit {
         let pairs = mapping.iter().map(|(a, b)| Ok((domain::variable_id(a.extract()?)?, domain::variable_id(b.extract()?)?)))
             .collect::<PyResult<Vec<_>>>()?;
         domain::check_variables(self.get()?.vtree(), pairs.iter().flat_map(|&(a, b)| [a, b]))?;
-        let limits = domain::config(limits)?;
-        let f = self.take()?;
-        let vtree = Arc::clone(f.vtree());
-        operations::run(py, &vtree, limits, move |e| e.rename_vars(f, &pairs)).map(Self::new)
+        self.transform(py, limits, move |e, f| e.rename_vars(f, &pairs))
     }
 
     /// Minimize and return this circuit, consuming the old wrapper.
     /// The result is canonical for its vtree; its Boolean function is unchanged.
     #[pyo3(signature = (*, limits=None))]
     fn minimize(&mut self, py: Python<'_>, limits: Option<&PyLimits>) -> PyResult<Self> {
-        let limits = domain::config(limits)?;
-        let mut f = self.take()?;
-        let vtree = Arc::clone(f.vtree());
-        operations::run(py, &vtree, limits, move |e| { e.minimize(&mut f)?; Ok(f) }).map(Self::new)
+        self.transform(py, limits, |e, mut f| { e.minimize(&mut f)?; Ok(f) })
     }
 
     /// Insert cubes, then remove cubes, returning a minimized circuit and consuming this one.
@@ -142,10 +136,7 @@ impl PyCircuit {
         let insert = read(insert)?;
         let remove = read(remove)?;
         domain::check_variables(self.get()?.vtree(), insert.iter().chain(&remove).flatten().map(|l| l.var))?;
-        let limits = domain::config(limits)?;
-        let mut f = self.take()?;
-        let vtree = Arc::clone(f.vtree());
-        operations::run(py, &vtree, limits, move |e| {
+        self.transform(py, limits, move |e, mut f| {
             {
                 let mut batch = e.maintain(&mut f)?;
                 for row in insert { batch.insert_model(row)?; }
@@ -153,7 +144,7 @@ impl PyCircuit {
             }
             e.minimize(&mut f)?;
             Ok(f)
-        }).map(Self::new)
+        })
     }
 
     /// Count satisfying assignments over all vtree variables. Returns an arbitrary-precision int.

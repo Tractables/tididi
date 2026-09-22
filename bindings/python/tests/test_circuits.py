@@ -319,3 +319,33 @@ def test_conditioning_repeats_and_conflicts_match_rust_semantics():
     with pytest.raises(ValueError):
         original.condition([1, -1, 4])
     assert original.model_count() == 6
+
+
+@pytest.mark.parametrize("build", [td.Vtree.leaf, lambda v: td.Vtree.balanced_over([v]),
+                                   lambda v: td.Vtree.linear([v])])
+def test_vtree_constructors_report_oversized_variable_spaces_as_value_errors(build):
+    with pytest.raises(ValueError, match="variable-id space"):
+        build(2**32 - 1)
+
+
+@pytest.mark.parametrize("transform", [lambda f, **kw: f.negate(**kw),
+                                      lambda f, **kw: f.condition([1], **kw),
+                                      lambda f, **kw: f.exists([1], **kw),
+                                      lambda f, **kw: f.rename({1: 2}, **kw),
+                                      lambda f, **kw: f.minimize(**kw),
+                                      lambda f, **kw: f.update(insert=[[1]], **kw)])
+def test_unary_transformations_share_consumption_and_error_behavior(transform):
+    vtree = td.Vtree.balanced(4)
+    original = td.clause(vtree, [1, 2])
+    with pytest.raises(TypeError):
+        transform(original, limits="invalid")
+    assert original.model_count() == 12
+    result = transform(original)
+    assert original.is_consumed
+    assert isinstance(result.model_count(), int)
+    with pytest.raises(td.ConsumedCircuitError):
+        transform(original)
+    refused = td.clause(vtree, [1, 2])
+    with pytest.raises(td.ResourceLimitError):
+        transform(refused, limits=td.Limits(timeout=0))
+    assert refused.is_consumed

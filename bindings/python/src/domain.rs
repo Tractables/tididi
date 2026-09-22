@@ -39,7 +39,7 @@ impl PyVtree {
     /// Build a one-variable vtree.
     #[staticmethod]
     fn leaf(variable: u32) -> PyResult<Self> {
-        Ok(Self(Arc::new(Vtree::leaf(variable_id(variable)?))))
+        Self::balanced_over(vec![variable])
     }
 
     /// Join disjoint vtrees under a new root, leaving both inputs usable.
