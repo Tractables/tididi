@@ -30,7 +30,7 @@ impl Tdd {
     /// levels are moved, which is why `parts` is taken by value; a part's
     /// integer marginal levels move with it. Structural parts may carry weights,
     /// which this unweighted entry discards. Parts with computed weight columns
-    /// require [`Tdd::graft_over`] and a compatible destination store. Runs on a
+    /// require [`Tdd::graft_over`] and a compatible destination store. Runs on
     /// the first part's context with no limits armed, or a fresh context when
     /// there are no parts. The result follows [`Vtree::graft`]'s context policy.
     ///

@@ -23,9 +23,8 @@ use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
 /// Where each level of an embedded diagram landed in the destination vtree.
 ///
 /// [`Tdd::embed`] returns one beside the result. Index it by a node of the
-/// embedded diagram's vtree to find the level of the result holding that
-/// level's copy — what a caller keeping side tables keyed by vtree index needs
-/// to relocate them.
+/// source diagram's vtree to find the level holding its copy in the result.
+/// Use this map to relocate side tables keyed by source vtree index.
 #[derive(Clone, Debug)]
 pub struct Embedding {
     /// The destination node each source node was copied to, indexed by the
@@ -38,7 +37,7 @@ impl Embedding {
     ///
     /// # Panics
     ///
-    /// Panics if `source` is not a node of the embedded diagram's vtree.
+    /// Panics if `source` is not a node of the source diagram's vtree.
     #[must_use]
     pub fn level_of(&self, source: VtreeIdx) -> VtreeIdx {
         self.levels[source.idx()]
@@ -65,7 +64,7 @@ impl Tdd {
     /// The levels are copied: no apply runs, the result shares `into`, and it
     /// is canonical when this diagram is. The cost is the size of `into` plus
     /// the size of this diagram plus, at each destination level with renamed
-    /// variables on one side only, the width of its other side. Structural
+    /// variables on one side only, the width of that populated side. Structural
     /// diagrams only; any weights are dropped.
     ///
     /// The returned [`Embedding`] says which level of the result each level of

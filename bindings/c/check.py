@@ -7,6 +7,7 @@ import re
 import runpy
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parent
 BUILD = ROOT / "build"
@@ -62,6 +63,40 @@ def documentation(outputs):
         ROOT / "docs", BUILD / "docs")
 
 
+def check_installation(package):
+    """Build and run a consumer using a moved installation, without build artifacts."""
+    consumer = BUILD / "installed-consumer"
+    consumer.mkdir(exist_ok=True)
+    (consumer / "main.cpp").write_bytes((ROOT / "tests/cpp.cpp").read_bytes())
+    (consumer / "CMakeLists.txt").write_text('''cmake_minimum_required(VERSION 3.16)
+project(installed_consumer LANGUAGES CXX)
+find_package(tididi CONFIG REQUIRED)
+add_executable(consumer main.cpp)
+set_target_properties(consumer PROPERTIES CXX_STANDARD 11 CXX_STANDARD_REQUIRED ON)
+target_link_libraries(consumer PRIVATE tididi::tididi)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+set_target_properties(consumer PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+  RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin")
+''', encoding="utf-8")
+    with tempfile.TemporaryDirectory(prefix="installed-check-", dir=BUILD) as temporary:
+        build = Path(temporary) / "consumer-build"
+        relocated = Path(temporary) / "prefix"
+        hidden = Path(temporary) / "cargo-hidden"
+        package.rename(relocated)
+        try:
+            (BUILD / "cargo").rename(hidden)
+            try:
+                run("cmake", "-S", consumer, "-B", build, f"-DCMAKE_PREFIX_PATH={relocated}", "-DCMAKE_BUILD_TYPE=Release")
+                run("cmake", "--build", build, "--config", "Release", "--parallel", "8")
+                environment = dict(os.environ)
+                environment["PATH"] = str(relocated / "bin") + os.pathsep + environment.get("PATH", "")
+                run(build / "bin" / ("consumer.exe" if os.name == "nt" else "consumer"), env=environment)
+            finally:
+                hidden.rename(BUILD / "cargo")
+        finally:
+            relocated.rename(package)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write-header", action="store_true", help="replace the checked-in header with generated declarations")
@@ -90,25 +125,7 @@ def main():
     run("ctest", "--test-dir", BUILD, "-C", "Release", "--output-on-failure")
     package = BUILD / "package"
     run("cmake", "--install", BUILD, "--config", "Release", "--prefix", package)
-    # Verify the installed interface from an independent CMake project.
-    consumer = BUILD / "installed-consumer"
-    consumer.mkdir(exist_ok=True)
-    (consumer / "main.cpp").write_bytes((ROOT / "tests/cpp.cpp").read_bytes())
-    (consumer / "CMakeLists.txt").write_text('''cmake_minimum_required(VERSION 3.16)
-project(installed_consumer LANGUAGES CXX)
-find_package(tididi CONFIG REQUIRED)
-add_executable(consumer main.cpp)
-set_target_properties(consumer PROPERTIES CXX_STANDARD 11 CXX_STANDARD_REQUIRED ON)
-target_link_libraries(consumer PRIVATE tididi::tididi)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
-set_target_properties(consumer PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
-  RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/bin")
-''', encoding="utf-8")
-    run("cmake", "-S", consumer, "-B", consumer / "build", f"-DCMAKE_PREFIX_PATH={package}", "-DCMAKE_BUILD_TYPE=Release")
-    run("cmake", "--build", consumer / "build", "--config", "Release", "--parallel", "8")
-    environment = dict(os.environ)
-    environment["PATH"] = str(package / "bin") + os.pathsep + environment.get("PATH", "")
-    run(consumer / "build/bin" / ("consumer.exe" if os.name == "nt" else "consumer"), env=environment)
+    check_installation(package)
     suffix = ".exe" if os.name == "nt" else ""
     outputs = {source.stem: run(BUILD / "bin" / (source.stem + suffix), capture_output=True, text=True).stdout
                for source in sorted((ROOT / "examples").glob("*.c"))}

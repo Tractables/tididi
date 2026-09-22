@@ -50,8 +50,9 @@ and freeing without changing their ownership rules.
 Lead with what a reader can build and query, then connect capabilities to
 applications. The worked examples progress through configurations,
 counting choices, probabilities, reachability, tables, persistence, vtree grouping, execution
-limits, minimum costs and storage statistics. Keep the index and sidebar in
-that order. Link reference material separately; do not make beginners choose
+limits, minimum costs and storage statistics. Rust adds reusable components
+after vtree grouping; embedding is currently exposed only in Rust. Keep the
+index and sidebar in that order. Link reference material separately; do not make beginners choose
 an API category before they have seen a circuit.
 
 The counting lesson follows configurations in every language. Python uses a
@@ -62,10 +63,10 @@ resource limits; the application chapters retain the same order.
 
 ### Instances
 
-- [Rust guide and example navigation](../src/guide.rs) <!-- reviewed: 9aed7787c13edd9b55351026bbb2c078d3937ad76b3bc3be836fb47c76266117 -->
-- [Python guide index](../bindings/python/docs/index.rst) <!-- reviewed: 3e37633982df857e843e4c08b7e6907be104d696591140bc49d47f3a8c8f2388 -->
-- [Python gallery introduction](../bindings/python/examples/GALLERY_HEADER.rst) <!-- reviewed: 384e1195cdd6c396cf480dcaa55364a78f21025e3ec1c9ee0d972e8c459f4963 -->
-- [C index](../bindings/c/docs/index.rst) <!-- reviewed: 88b473341ab11e2afe200e6e253ddf34694202cb55b0f2002c27815d92c6047a -->
+- [Rust guide and example navigation](../src/guide.rs) <!-- reviewed: 99b9fb7554b6c096d6c86626988cf74f6529cb87a9c18fc2d9411fa23b6522e5 -->
+- [Python guide index](../bindings/python/docs/index.rst) <!-- reviewed: f41367362e458fe17f8c608e980ef6cdf7169a0be66b6c616e99613069d1c2ac -->
+- [Python gallery introduction](../bindings/python/examples/GALLERY_HEADER.rst) <!-- reviewed: dfda32e6316ede7503e373ad4274201737d32aef4c092c1c5efb4674a4a9f665 -->
+- [C index](../bindings/c/docs/index.rst) <!-- reviewed: 4650f2722c043bcb88c47bad60d7266460fa75e9a854db83a6445aded68cbb1d -->
 
 ## Configurations
 
@@ -384,7 +385,7 @@ evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: 01b129199cb7799ca739854cee03cbef35370ce384ae4975bd6526cedbf8aaad -->
+- [Rust API overview](api-guide.md) <!-- reviewed: e33abb878c6a514ac28c20846d2c1c37401eca77e5cc5b1d7ecfc1dfb6daae49 -->
 - [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: cf89774fb5f52ca207dd8cfb414e648661e4769736be8b529bf80ebe6eb7aeb2 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 
@@ -419,3 +420,23 @@ there is no separate Python implementation to describe.
 ### Instances
 
 - [Rust architecture reference](architecture.md) <!-- reviewed: c9fd514f97aad9abed3618f51f21cdea0db569025309fb4826bc167895976b90 -->
+
+## Reusable components
+
+Build one backup rule L∨R on a two-leaf vtree: 3 choices. Embed it twice in
+a balanced four-leaf destination, mapping (1,2) to (1,2) and (3,4). Each
+copy alone has 12 models because the other server's variables are free;
+their conjunction has 9. Add ¬(R_A∧R_B) to represent shared remote capacity,
+leaving 5 choices. The borrowed source still has 3 models.
+
+Introduce the application, the local rule, the variable mapping, then the
+connecting constraint. Explain matching variable grouping and destination
+identity at placement, and attached-weight loss before suggesting evaluation.
+Distinguish graft for components already using disjoint variable identifiers.
+This lesson is Rust-only: the bindings do not yet expose embedding or grafting.
+Do not invent a language counterpart that rebuilds the rule instead of reusing it.
+
+### Instances
+
+- [Rust walkthrough](examples/composition.md) <!-- reviewed: 9ba8bcd2b2328164bbfb3e67f9eeaff4fb0e5ed270a55f74087428ba2c493280 -->
+- [Rust program](../examples/reusable_components.rs) <!-- reviewed: fd0b1dfed09cde22d73d5eacbdb9f39b32f32e31b41a929594d165bd6492e37b -->
