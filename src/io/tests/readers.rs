@@ -168,3 +168,24 @@ fn rotated_version_one_file_with_original_indices_still_loads() {
     assert!(loaded.equivalent(&expected).unwrap());
     refused(text, &Arc::new(Vtree::balanced(4)));
 }
+
+/// Unknown layouts must be rejected before parsing their version-specific fields.
+#[test]
+fn header_errors_check_version_before_interpreting_fields() {
+    let vtree = Arc::new(Vtree::balanced(2));
+    for (header, diagnostic) in [
+        ("p tdd 2 unknown fields may differ", "file is format version 2"),
+        ("p tdd 0 unknown fields may differ extra", "file is format version 0"),
+        ("p tdd nope 2 3 2 ZERO", "format version is not a number"),
+        ("p tdd 1 nope 3 2 ZERO", "leaf count is not a number"),
+        ("p tdd 1 2 3 2 ZERO extra", "unexpected trailing field"),
+        ("p tdd 2 3 2 ZERO", "no format version"),
+    ] {
+        let text = format!("c header follows\n{header}\n");
+        let Err(IoError::Format(message)) = read_tdd(&mut text.as_bytes(), &vtree) else {
+            panic!("expected a format error for {header:?}");
+        };
+        assert!(message.contains("line 2"), "{message}");
+        assert!(message.contains(diagnostic), "{header:?}: {message}");
+    }
+}

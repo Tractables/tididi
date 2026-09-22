@@ -187,16 +187,18 @@ fn next_vtree_idx<'a>(
     Ok(VtreeIdx(raw))
 }
 
-/// The version field of the problem line, against the version this reader
-/// understands.
-///
-/// `fields` is everything after `p tdd`. A version-1 line has five of them, so
-/// four or fewer is a file from before the format was versioned: its first
-/// field is the leaf count, and reading it as a version would turn a
-/// pre-release file into a nonsense diagram. Beyond that the arity is the
-/// version's business, so a longer line is left to the version check to refuse.
-fn check_version(fields: &[&str], line: usize) -> Result<(), IoError> {
-    let Some(&raw) = fields.first().filter(|_| fields.len() >= 5) else {
+/// Check the format version before interpreting the remaining header fields.
+fn parse_problem_line<'a>(
+    tok: &mut (impl Iterator<Item = &'a str> + Clone),
+    line: usize,
+) -> Result<ProblemLine, IoError> {
+    match tok.next() {
+        Some("tdd") => {}
+        other => return Err(malformed(line, format!("expected `p tdd`, found `p {other:?}`"))),
+    }
+    // Versioned headers have at least five fields. Peek without consuming them
+    // so a shorter, unversioned header is not mistaken for a version number.
+    if tok.clone().nth(4).is_none() {
         return Err(malformed(
             line,
             format!(
@@ -205,10 +207,8 @@ fn check_version(fields: &[&str], line: usize) -> Result<(), IoError> {
                  {TDD_FORMAT_VERSION} and can only load a file that names its own"
             ),
         ));
-    };
-    let version: u32 = raw
-        .parse()
-        .map_err(|_| malformed(line, format!("format version is not a number: {raw:?}")))?;
+    }
+    let version = next_u32(tok, "format version", line)?;
     if version != TDD_FORMAT_VERSION {
         return Err(malformed(
             line,
@@ -218,24 +218,6 @@ fn check_version(fields: &[&str], line: usize) -> Result<(), IoError> {
             ),
         ));
     }
-    Ok(())
-}
-
-fn parse_problem_line<'a>(
-    tok: &mut impl Iterator<Item = &'a str>,
-    line: usize,
-) -> Result<ProblemLine, IoError> {
-    match tok.next() {
-        Some("tdd") => {}
-        other => return Err(malformed(line, format!("expected `p tdd`, found `p {other:?}`"))),
-    }
-    // The version is the first field, and the rest of the line is read behind
-    // it — an unreadable version means the fields after it are not this
-    // format's and must not be parsed as if they were.
-    let fields: Vec<&str> = tok.collect();
-    check_version(&fields, line)?;
-    let mut rest = fields.into_iter().skip(1);
-    let tok = &mut rest;
     let num_leaves = next_u32(tok, "leaf count", line)?;
     let num_vtree_nodes = next_u32(tok, "vtree node count", line)? as usize;
     let out_vtree = VtreeIdx(next_u32(tok, "output vtree node", line)?);
