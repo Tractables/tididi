@@ -50,6 +50,45 @@ static void ownership(void) {
     for (size_t i=0; i<5; ++i) ok(tididi_circuit_free(handles[i]));
     ok(tididi_circuit_free(NULL)); tididi_vtree_free(v); tididi_vtree_free(other);
 }
+/* Invalid later operands must not consume the valid handles checked before them. */
+static void multi_operand_preflight(void) {
+    TididiVtree *vtree = NULL, *other = NULL;
+    ok(tididi_vtree_balanced(3, &vtree));
+    ok(tididi_vtree_balanced(3, &other));
+    TididiCircuit *a = lit(vtree, 1), *b = lit(vtree, 2), *used = lit(vtree, 3);
+    TididiCircuit *alien = lit(other, 3), *negative = NULL, *out = NULL;
+    ok(tididi_negate(used, &negative, NULL));
+    TididiCircuit *invalid_last[] = {a, used, NULL, alien};
+    TididiErrorCode errors[] = {TIDIDI_ERROR_CODE_INVALID_ARGUMENT,
+        TIDIDI_ERROR_CODE_CONSUMED_CIRCUIT, TIDIDI_ERROR_CODE_INVALID_ARGUMENT,
+        TIDIDI_ERROR_CODE_INVALID_ARGUMENT};
+    for (size_t i = 0; i < sizeof(invalid_last) / sizeof(*invalid_last); ++i) {
+        TididiCircuit *inputs[] = {a, b, invalid_last[i]};
+        failure(tididi_or_many(inputs, 3, &out, NULL), errors[i]);
+        failure(tididi_ite(a, b, invalid_last[i], &out, NULL), errors[i]);
+        CHECK(out == NULL && count(a) == 4 && count(b) == 4);
+    }
+    TididiCircuit *inputs[] = {a, b, negative};
+    failure(tididi_or_many(inputs, 3, NULL, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    failure(tididi_ite(a, b, negative, NULL, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    out = alien;
+    failure(tididi_or_many(inputs, 3, &out, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    failure(tididi_ite(a, b, negative, &out, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    CHECK(out == alien && count(alien) == 4);
+    out = NULL;
+    TididiLimits limits = tididi_limits_default();
+    limits.timeout_seconds = -2;
+    failure(tididi_or_many(inputs, 3, &out, &limits), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    failure(tididi_ite(a, b, negative, &out, &limits), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    CHECK(out == NULL && count(a) == 4 && count(b) == 4 && count(negative) == 4);
+    ok(tididi_or_many(inputs, 3, &out, NULL));
+    CHECK(count(out) == 7 && consumed(a) && consumed(b) && consumed(negative));
+    TididiCircuit *handles[] = {a, b, used, alien, negative, out};
+    for (size_t i = 0; i < sizeof(handles) / sizeof(*handles); ++i) ok(tididi_circuit_free(handles[i]));
+    tididi_vtree_free(vtree);
+    tididi_vtree_free(other);
+}
+
 static void queries(void) {
     TididiVtree *v = NULL; ok(tididi_vtree_balanced(3, &v));
     TididiCircuit *f = NULL, *impossible = NULL;
@@ -112,13 +151,16 @@ static void counters_and_persistence(void) {
     ok(tididi_counter_free(counter));ok(tididi_circuit_free(recovered));ok(tididi_circuit_free(loaded));tididi_vtree_free(restored);
     tididi_bytes_free(bytes);tididi_string_free(text);tididi_node_sizes_free(sizes);
 }
-typedef struct { TididiCircuit *circuit; size_t calls; } CallbackState;
+typedef struct { TididiCircuit *circuit; TididiCircuit *spare; size_t calls; } CallbackState;
 static double zero(void *state) { (void)state;return 0; }
 static double leaf(void *data,uint32_t var,int8_t sign) {
     CallbackState *state=(CallbackState*)data;(void)var;state->calls++;
     TididiCircuit *out=NULL;
     failure(tididi_negate(state->circuit,&out,NULL),TIDIDI_ERROR_CODE_BORROW_CONFLICT);
     failure(tididi_circuit_free(state->circuit),TIDIDI_ERROR_CODE_BORROW_CONFLICT);
+    TididiCircuit *inputs[] = {state->spare, state->circuit};
+    failure(tididi_or_many(inputs, 2, &out, NULL), TIDIDI_ERROR_CODE_BORROW_CONFLICT);
+    CHECK(out == NULL && !consumed(state->spare));
     return sign<0?2:1;
 }
 static double add(void *data,double a,double b){(void)data;return a+b;}
@@ -131,8 +173,8 @@ static void evaluation(void) {
     ok(tididi_weighted_ratio(rain,f,weights,3,&ratio,NULL));CHECK(strcmp(ratio,"5/7")==0);
     char *bad=NULL;failure(tididi_weighted_ratio(f,no,weights,3,&bad,NULL),TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
     failure(tididi_weighted_count(f,weights,2,&bad,NULL),TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
-    CallbackState state={f,0};TididiAlgebra algebra={&state,zero,leaf,add,mul};double result=0;
-    ok(tididi_evaluate_f64(f,&algebra,&result,NULL));CHECK(result==6 && state.calls>0 && count(f)==6);
+    CallbackState state={f,rain,0};TididiAlgebra algebra={&state,zero,leaf,add,mul};double result=0;
+    ok(tididi_evaluate_f64(f,&algebra,&result,NULL));CHECK(result==6 && state.calls>0 && count(f)==6 && count(rain)==4);
     tididi_string_free(mass);tididi_string_free(ratio);ok(tididi_circuit_free(f));ok(tididi_circuit_free(rain));ok(tididi_circuit_free(no));tididi_vtree_free(v);
 }
 
@@ -151,6 +193,6 @@ static void conditioning(void) {
 }
 
 int main(void) {
-    conditioning();ownership();queries();big_counts_and_rows();counters_and_persistence();evaluation();
+    conditioning();ownership();multi_operand_preflight();queries();big_counts_and_rows();counters_and_persistence();evaluation();
     puts("C ownership, queries, exact arithmetic, callbacks and persistence passed.");return 0;
 }
