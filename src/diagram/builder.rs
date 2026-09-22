@@ -167,7 +167,8 @@ impl TddBuilder {
     /// Build bottom-up: both sides of a pair name a child node that already
     /// exists, which a debug assertion checks here against the child level as
     /// it stands. The node arena, the pair arena and the level's index all
-    /// grow through the engine's limits.
+    /// grow through the engine's limits. If updating the index is refused after
+    /// the node is stored, [`intern`](Self::intern) can recover that node on retry.
     ///
     /// # Errors
     ///
@@ -186,8 +187,14 @@ impl TddBuilder {
         if self.levels[t.idx()].slot_count() >= eng.limits().level_width_cap() {
             return Err(OperationError::IndexOverflow);
         }
+        // Keep the cache only if both the append and its index update succeed.
+        // Either can refuse after changing storage; the next intern then rebuilds.
+        let cached = self.interned.get_mut(t.idx()).and_then(Option::take);
         let index = self.levels[t.idx()].push_node_on(eng, pairs)?;
-        self.note_pushed(eng.limits(), t, pairs, index)?;
+        if let Some(mut table) = cached {
+            table.insert_on(eng.limits(), pairs, index)?;
+            self.interned[t.idx()] = Some(table);
+        }
         Ok(index)
     }
 
@@ -230,20 +237,6 @@ impl TddBuilder {
         match self.interned[t.idx()].as_ref().and_then(|table| table.get(pairs)) {
             Some(index) => Ok(index),
             None => self.push(eng, t, pairs),
-        }
-    }
-
-    /// Record a just-appended node in level `t`'s index, if one is live.
-    fn note_pushed(
-        &mut self,
-        lim: &Limits,
-        t: VtreeIdx,
-        pairs: &[ChildPair],
-        index: NodeIdx,
-    ) -> Result<(), OperationError> {
-        match self.interned.get_mut(t.idx()) {
-            Some(Some(table)) => table.insert_on(lim, pairs, index),
-            _ => Ok(()),
         }
     }
 

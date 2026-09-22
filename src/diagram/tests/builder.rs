@@ -163,3 +163,44 @@ fn a_full_level_answers_index_overflow() {
     assert_canonical(&f);
     assert_eq!(f.model_count().unwrap(), 1u32.into());
 }
+
+/// A node survives a refused index update; retry must find it rather than append a duplicate.
+#[test]
+fn interning_recovers_after_an_index_update_is_refused() {
+    use crate::diagram::NodeIdx;
+    use crate::OperationError;
+
+    for multiple_pairs in [false, true] {
+        let vtree = Arc::new(Vtree::balanced(2));
+        let root = vtree.root();
+        let eng = Engine::new();
+        let mut builder = Tdd::builder(&eng, &vtree).unwrap();
+        let mut first = vec![ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)];
+        let mut second = vec![ChildPair::new(NEG_LEAF_IDX, NEG_LEAF_IDX)];
+        if multiple_pairs {
+            first.push(ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX));
+            second.push(ChildPair::new(NEG_LEAF_IDX, POS_LEAF_IDX));
+        }
+        let original = builder.intern(&eng, root, &first).unwrap();
+        builder.reserve(&eng, root, 1, second.len()).unwrap();
+        // Allow the node append, then refuse its hash-table update.
+        eng.limits().refuse_nth_reserve(1);
+        assert_eq!(builder.push(&eng, root, &second), Err(OperationError::OverBudget));
+        eng.limits().grant_every_reserve();
+        assert_eq!(builder.level(root).slot_count(), 2);
+        // Rebuilding the discarded index may also be refused and retried.
+        eng.limits().refuse_nth_reserve(0);
+        assert_eq!(builder.intern(&eng, root, &second), Err(OperationError::OverBudget));
+        eng.limits().grant_every_reserve();
+        let recovered = builder.intern(&eng, root, &second).unwrap();
+        assert_eq!(recovered, NodeIdx(1));
+        assert_eq!(builder.intern(&eng, root, &first).unwrap(), original);
+        assert_eq!(builder.level(root).slot_count(), 2);
+
+        // The unfinished level has an unused node and may have uncontracted twins.
+        let mut result = builder.finish(TddNodeId { vtree: root, local: recovered }).unwrap();
+        result.minimize().unwrap();
+        assert_canonical(&result);
+        assert_eq!(result.model_count().unwrap(), if multiple_pairs { 2u32.into() } else { 1u32.into() });
+    }
+}
