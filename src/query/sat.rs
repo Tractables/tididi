@@ -13,7 +13,9 @@ impl Engine {
     /// # Errors
     ///
     /// Returns the operation's errors or [`OperationError::Stopped`](crate::OperationError::Stopped)
-    /// on cancellation.
+    /// on cancellation. A traversal over pending count-marginal reductions can
+    /// also return [`OperationError::OverBudget`](crate::OperationError::OverBudget)
+    /// when its column buffers exceed the budget.
     pub fn is_sat(&self, f: &Tdd) -> Result<bool, crate::OperationError> {
         let lim = self.limits();
         let _op = lim.begin_operation();
@@ -51,12 +53,13 @@ pub(crate) fn is_sat_structural(eng: &Engine, f: &Tdd) -> Result<bool, crate::Op
     }
     let fold = SatBits;
     let mut cols: Vec<Vec<bool>> = Vec::new();
-    eng.limits().reserve(&mut cols, f.vtree.num_nodes())?;
-    for i in 0..f.vtree.num_nodes() {
-        cols.push(fold.alloc(eng, f.reference_slot_count(VtreeIdx(i as u32)))?);
-    }
+    eng.limits().try_resize(&mut cols, f.vtree.num_nodes(), Vec::new())?;
     let mut poll = eng.limits().gate();
-    fold_bottom_up(&fold, eng, f, &mut cols, Retention::Frontier, Some(&mut poll), |_, _| Ok(()))?;
+    fold_bottom_up(&fold, eng, f, &mut cols, Retention::Frontier, Some(&mut poll), |cols, ti| {
+        cols[ti] = fold.alloc(eng, f.reference_slot_count(VtreeIdx(ti as u32)))?;
+        Ok(())
+    })?;
+    poll.flush()?;
     let (out_t, out_i) = (f.output.vtree.idx(), f.output.local.idx());
     Ok(cols[out_t][out_i])
 }
@@ -70,8 +73,14 @@ impl LevelFold for SatBits {
     type Value = bool;
     type Col = Vec<bool>;
 
-    fn alloc(&self, _eng: &Engine, width: usize) -> Result<Vec<bool>, crate::OperationError> {
-        Ok(vec![false; width])
+    fn alloc(&self, eng: &Engine, width: usize) -> Result<Vec<bool>, crate::OperationError> {
+        let mut col = Vec::new();
+        eng.limits().try_resize(&mut col, width, false)?;
+        Ok(col)
+    }
+
+    fn release(&self, eng: &Engine, col: &mut Self::Col) {
+        eng.limits().discard(std::mem::take(col));
     }
 
     fn set(&self, _eng: &Engine, col: &mut Vec<bool>, i: usize, v: bool) -> Result<(), crate::OperationError> {
