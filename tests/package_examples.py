@@ -95,8 +95,11 @@ def main():
             app = work / source.stem
             (app / "src").mkdir(parents=True)
             shutil.copyfile(library / "examples" / source.name, app / "src/main.rs")
-            # This example names rational numbers and their numeric traits directly.
-            extra = '\nnum-rational = "0.4"\nnum-traits = "0.2"' if source.stem == "probabilistic_query" else ""
+            # Only add dependencies that the standalone program imports directly.
+            extra = {
+                "probabilistic_query": '\nnum-rational = "0.4"\nnum-traits = "0.2"',
+                "marginalize_components": '\nnum-rational = "0.4"',
+            }.get(source.stem, "")
             (app / "Cargo.toml").write_text(
                 f'[package]\nname = "packaged-{source.stem}"\nversion = "0.0.0"\nedition = "2024"\n'
                 f'[workspace]\n[dependencies]\ntididi = {{ path = "../{name}" }}{extra}\n'

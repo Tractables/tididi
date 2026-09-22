@@ -47,6 +47,7 @@ walkthroughs! {
     care => ("Simplify under assumptions", "Reduce a circuit where a care set is guaranteed to hold."),
     execution => ("Execution limits", "Bound work and release retained scratch buffers."),
     optimization => ("Minimum costs", "Define a custom evaluation algebra."),
+    marginalization => ("Keep values instead of structure", "Preserve counts or fixed weighted values while discarding a subtree."),
     statistics => ("Circuit statistics", "Traverse nodes and pairs for a custom measurement."),
 }
 

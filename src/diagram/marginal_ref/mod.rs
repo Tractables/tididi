@@ -156,7 +156,7 @@ impl ValueRef {
 /// overflowed at all.
 ///
 /// Keyed by slot index, not parallel to the fast column: a slot lands here
-/// only when its count exceeds `u128::MAX`, so the cost is proportional to the
+/// only when its count reaches `u128::MAX`, so the cost is proportional to the
 /// overflow set and an empty `CountOverflow` owns no heap. A slot with no entry
 /// means the value fits the fast `u128` lane.
 ///

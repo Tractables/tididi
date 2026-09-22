@@ -109,7 +109,7 @@ For more specialized control:
 |---|---|
 | Select reduction passes | [`Tdd::reduce`](crate::Tdd::reduce), [`ReductionPlan`](crate::reduce::ReductionPlan) |
 | Simplify within a care set | [`Tdd::restrict_to_care`](crate::Tdd::restrict_to_care); [worked example](crate::guide::examples::care) |
-| Replace structure with counts or fixed weighted values | [`Tdd::marginalize_levels`](crate::Tdd::marginalize_levels) |
+| Replace structure with counts or fixed weighted values | [`Tdd::marginalize_levels`](crate::Tdd::marginalize_levels); [worked example](crate::guide::examples::marginalization) |
 | Combine disjoint variable domains | [`Tdd::graft`](crate::Tdd::graft), [`Tdd::graft_over`](crate::Tdd::graft_over) |
 | Place a circuit on a larger vtree under a renaming | [`Tdd::embed`](crate::Tdd::embed); [reusable components](crate::guide::examples::composition) |
 | Assemble levels and pairs directly | [`TddBuilder`](crate::diagram::TddBuilder), started with [`Tdd::builder`](crate::Tdd::builder) |

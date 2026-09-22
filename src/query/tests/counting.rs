@@ -246,3 +246,28 @@ fn batch_model_count_matches_ordinary_count_and_honors_the_stop_axis() {
 
 
 
+
+
+#[test]
+fn saturated_node_counts_include_the_exact_u128_maximum() {
+    let vtree = Arc::new(Vtree::balanced(128));
+    let maximum = Tdd::clause(&vtree, 1..=128).unwrap();
+    let overflow = Tdd::one(&vtree);
+    for (mut f, exact) in [
+        (maximum, BigUint::from(u128::MAX)),
+        (overflow, BigUint::from(u128::MAX) + BigUint::from(1u32)),
+    ] {
+        crate::test_helpers::assert_canonical(&f);
+        let output = f.output();
+        let counts = f.node_counts_u128().unwrap();
+        assert_eq!(counts[output.vtree.idx()][output.local.idx()], u128::MAX);
+        assert_eq!(f.model_count().unwrap(), exact);
+        f.marginalize_levels(&[vtree.root()]).unwrap();
+        crate::test_helpers::assert_canonical(&f);
+        let level = f.level(vtree.root());
+        let slot = f.output().local.idx();
+        assert_eq!(level.marginal_counts().unwrap()[slot], u128::MAX);
+        assert_eq!(level.marginal_counts_big().unwrap().get(slot), Some(&exact));
+        assert_eq!(f.model_count().unwrap(), exact);
+    }
+}

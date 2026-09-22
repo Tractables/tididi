@@ -135,8 +135,9 @@ impl Tdd {
     /// Return per-node counts, saturating values above `u128::MAX`.
     ///
     /// Indexed by vtree level and local node index. Zero and all values below
-    /// `u128::MAX` are exact; `u128::MAX` marks a count that does not fit, whose
-    /// exact value [`model_count`](Self::model_count) still returns. Leaf columns contain three labels;
+    /// `u128::MAX` are exact. A value of `u128::MAX` means the count is at least
+    /// that large; it cannot distinguish an exact maximum from overflow.
+    /// [`model_count`](Self::model_count) returns the exact total. Leaf columns contain three labels;
     /// count-marginal columns contain their stored values. Internal columns of
     /// a false diagram are empty. Uses the diagram's context and retains all
     /// columns during the fold.

@@ -29,11 +29,11 @@ pub struct LiteralWeights<T> {
 /// tree; `vtree.num_vars()` entries suffice. A missing entry can panic during evaluation.
 /// A free variable contributes the sum of its positive and negative weights.
 /// Unit weights reproduce the model count; nonnegative complementary weights
-/// give independent-variable probabilities, as in [`Engine::evaluate`](crate::Engine::evaluate).
+/// give independent-variable probabilities, as in [`Tdd::evaluate`](crate::Tdd::evaluate).
 ///
 /// Weights may also be zero or negative. A zero result therefore does not imply
 /// that the Boolean function is unsatisfiable, and no normalization is performed.
-/// [`Engine::evaluate`](crate::Engine::evaluate) shows the dependency setup and
+/// [`Tdd::evaluate`](crate::Tdd::evaluate) shows the dependency setup and
 /// a complete probability calculation.
 #[derive(Clone, PartialEq, Eq)]
 pub struct RationalWeights {

@@ -75,7 +75,8 @@ up to node numbering and pair order. This is the minimization result of
 or with weighted values if the diagram has an attached [`WeightStore`].
 This preserves the chosen evaluation but discards the assignments behind it:
 keep the structure if you will need to recover assignments or change weights
-later.
+later. The [marginalization walkthrough](crate::guide::examples::marginalization)
+compares the queries available before and after discarding a subtree.
 
 Marginal levels can share equal values and carry pair multiplicities. Their
 storage follows the separate rules in the [`diagram`] reference.

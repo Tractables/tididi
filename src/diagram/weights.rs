@@ -34,7 +34,7 @@ pub enum Arithmetic {
 /// Fixed literal weights and the values computed when structure is marginalized.
 ///
 /// Attach a store with [`Tdd::set_weights`](crate::Tdd::set_weights), then query
-/// it with [`Engine::weighted_value`](crate::Engine::weighted_value).
+/// it with [`Tdd::weighted_value`](crate::Tdd::weighted_value).
 /// Choose [`Arithmetic::ExactRational`] for exact results or
 /// [`Arithmetic::SignedLog`] for bounded precision over a wider numeric range
 /// than ordinary floating-point weights.
@@ -42,7 +42,7 @@ pub enum Arithmetic {
 /// The literal table is shared by derived stores. Once structure has been
 /// replaced by values, those levels cannot be evaluated under new weights.
 /// For repeated evaluations with changing weights, retain a structural diagram
-/// and use [`Engine::evaluate`](crate::Engine::evaluate).
+/// and use [`Tdd::evaluate`](crate::Tdd::evaluate).
 ///
 /// Each stored column belongs to a marginal vtree level; its entries use the
 /// same slot indices as that level's marginal child references.

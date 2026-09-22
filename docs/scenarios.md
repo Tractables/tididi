@@ -51,7 +51,8 @@ Lead with what a reader can build and query, then connect capabilities to
 applications. The worked examples progress through configurations,
 counting choices, probabilities, reachability, tables, persistence, vtree grouping, execution
 limits, minimum costs and storage statistics. Rust adds reusable components and care-set simplification
-after vtree grouping; these operations are currently exposed only in Rust. Keep the
+after vtree grouping, and marginalization after minimum costs; these operations
+are currently exposed only in Rust. Keep the
 index and sidebar in that order. Link reference material separately; do not make beginners choose
 an API category before they have seen a circuit.
 
@@ -63,10 +64,10 @@ resource limits; the application chapters retain the same order.
 
 ### Instances
 
-- [Rust guide and example navigation](../src/guide.rs) <!-- reviewed: 75211b70d22a0c94ad90d23711916dd957398dc809d14b211079b2e0592757db -->
-- [Python guide index](../bindings/python/docs/index.rst) <!-- reviewed: 0f595c2b5ad5a75c532d817b403bbf9ff69e6d1f3127c478bb6bae1eedf38dcb -->
-- [Python gallery introduction](../bindings/python/examples/GALLERY_HEADER.rst) <!-- reviewed: b6d1b6a086126be7afe23cd6c546df6b3ee2aa9e02394ec3c0e057daa58f7d2d -->
-- [C index](../bindings/c/docs/index.rst) <!-- reviewed: a45d573d93344b5b787dc75a3029fcc457887714dfe4c57c88900c02fe142ac6 -->
+- [Rust guide and example navigation](../src/guide.rs) <!-- reviewed: a659b4c3434b3dd1f96b690f00f9da9bd078896c1c58fc88e795b1287bcfaab9 -->
+- [Python guide index](../bindings/python/docs/index.rst) <!-- reviewed: f9cb128a9cbd5b76db5695320ace78dd852ce38a7cdbc4ca2a453cdfbef4bce6 -->
+- [Python gallery introduction](../bindings/python/examples/GALLERY_HEADER.rst) <!-- reviewed: 836d9d8f1ff4c5feb0b5f766281cc25372579e2d299f6a993cd825dfa81a7850 -->
+- [C index](../bindings/c/docs/index.rst) <!-- reviewed: 0e6c564d98419e17db63d947b0488f27c319d95fdd65f20f4e3ee1677a8326fa -->
 
 ## Configurations
 
@@ -385,7 +386,7 @@ evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: 5d07c27b4e011d8f473aab82b48047c33a6308c8d94789aaf2394c363c752ce9 -->
+- [Rust API overview](api-guide.md) <!-- reviewed: ff5a012f8ed7377d978254fa3333321d6dd4f02f1d0e56312cc885c3320a86de -->
 - [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: cf89774fb5f52ca207dd8cfb414e648661e4769736be8b529bf80ebe6eb7aeb2 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 
@@ -404,7 +405,7 @@ invariants and marginal levels; Python concentrates on using shared vtrees.
 
 ### Instances
 
-- [Rust data model](tdd.md) <!-- reviewed: a88d58885452192b8bbbed7178bbb2d81af322e5217d371e4d1faf691cbf8ae3 -->
+- [Rust data model](tdd.md) <!-- reviewed: 18e89ce1fbc9df16446520cf22f37e8752b56068d9f7f1045d083408f06630dc -->
 - [Python data model](../bindings/python/docs/representation.rst) <!-- reviewed: ed52b71f88c82caf64b54c6227acbe5de4215ce34886e327f1b102cdd338b20c -->
 - [Shared decomposition figure](tdd-basics.svg) <!-- reviewed: 5f2ab1677522a6a53385289841534c2a0096087bc65c8ce7f6c51d3be0e83c12 -->
 
@@ -461,3 +462,25 @@ care-set restriction yet.
 
 - [Rust walkthrough](examples/care.md) <!-- reviewed: 4adaf01367ef2ebeafbb401be9f2080ae34c325770025a866f1df1bd24968a98 -->
 - [Rust program](../examples/care_sets.rs) <!-- reviewed: 9a1bf5d9f30981a960eb4b67fce5a675b6d6af75c342a2c197383dfcd0ba2d57 -->
+
+## Keeping values
+
+Use two servers with F=(L_A∨R_A)∧(L_B∨R_B), grouped by server in a balanced
+four-leaf vtree. There are 9 models. Summarize A's subtree on a clone: its count
+stays 9, while the original projected onto B has 3 choices. Observing R_B in
+the summarized circuit gives 6; observing R_A raises MarginalLevel. Keeping the
+original allows observing both remote options, giving 4 configurations.
+
+For the weighted version, start from a structural copy and attach independent
+probability-1/2 weights in exact rational arithmetic before marginalizing A.
+The weighted value stays 9/16. Change every probability to 1/3 and evaluate the
+original: 25/81. Evaluating the summarized circuit with a new algebra is refused
+because assignments were discarded. Do not suggest that changing a weight table
+can reconstruct a stored sum, or that projection and marginalization count the
+same thing. Select a vtree subtree, not variable IDs. Rust-only: the bindings
+currently expose structural evaluation, not marginalization or attached stores.
+
+### Instances
+
+- [Rust walkthrough](examples/marginalization.md) <!-- reviewed: bdbd4d5377657fa83ff5583e345fae2fc1a05e7d8056f215b247c37fa6224fe2 -->
+- [Rust program](../examples/marginalize_components.rs) <!-- reviewed: 34e1e83142c0de3c1bf7f49e0241fec6e0edf238b9ace003ecf3a40ae25b67d8 -->

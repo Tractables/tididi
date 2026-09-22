@@ -16,8 +16,8 @@ use super::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode};
 ///   implicit (see [`LeafLabel`](super::LeafLabel));
 /// - [`is_marginal`](Self::is_marginal): it stores no nodes;
 ///   [`marginal_counts`](Self::marginal_counts)`[i]` is the model count of
-///   node `i`, with `u128::MAX` meaning "exceeds `u128`, read
-///   [`marginal_counts_big`](Self::marginal_counts_big)`.get(i)`". When
+///   node `i`, with `u128::MAX` marking a value at least that large; read
+///   [`marginal_counts_big`](Self::marginal_counts_big)`.get(i)` for the exact value. When
 ///   [`is_weight_marginal`](Self::is_weight_marginal) the counts are `None`
 ///   and value `i` is entry `i` of the diagram's
 ///   [`WeightStore::level`](crate::diagram::WeightStore::level) for this
@@ -84,8 +84,8 @@ pub struct TddLevel {
 pub(crate) enum LevelState {
     /// Nodes and pairs; `nodes`/`pairs`/`multi_pairs` carry the level.
     Structural,
-    /// Model counts, one per node slot. `u128::MAX` marks a count that exceeds
-    /// `u128`, whose exact value is the entry `big` holds for that slot.
+    /// Model counts, one per node slot. `u128::MAX` marks a count at least
+    /// that large, whose exact value is the entry `big` holds for that slot.
     Counts {
         counts: Vec<u128>,
         big: Option<CountOverflow>,
@@ -218,8 +218,9 @@ impl TddLevel {
     /// [`NodeIdx`]; `None` on any other level, and on a weight-marginal one
     /// (whose values live in the [`WeightStore`](crate::diagram::WeightStore)).
     ///
-    /// A value of `u128::MAX` means the count exceeds `u128` and the exact one
-    /// is [`marginal_counts_big`](Self::marginal_counts_big)`.get(i)`.
+    /// A value of `u128::MAX` means the count is at least that large. Read
+    /// [`marginal_counts_big`](Self::marginal_counts_big)`.get(i)` for its exact
+    /// value, including when the count equals `u128::MAX`.
     #[inline]
     pub fn marginal_counts(&self) -> Option<&[u128]> {
         match &self.state {
@@ -250,7 +251,7 @@ impl TddLevel {
 
     /// The exact values of the [`marginal_counts`](Self::marginal_counts)
     /// slots that hold `u128::MAX`. `None` and an empty table both mean no
-    /// slot overflowed.
+    /// slot needs an entry in the table.
     #[inline]
     pub fn marginal_counts_big(&self) -> Option<&CountOverflow> {
         match &self.state {
