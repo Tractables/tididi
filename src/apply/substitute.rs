@@ -92,12 +92,18 @@ impl Engine {
             match *vtree.node(t) {
                 VtreeNode::Leaf { var, .. } => {
                     let replacement = by_leaf[t.idx()].unwrap_or(Replacement::Literal(Literal::pos(var)));
-                    let mut positive = match replacement {
-                        Replacement::Diagram(diagram) => diagram.try_clone_on(self)?,
-                        Replacement::Literal(literal) => self.literal(&vtree, literal)?,
+                    let (positive, negative) = match replacement {
+                        Replacement::Diagram(diagram) => {
+                            let mut positive = diagram.try_clone_on(self)?;
+                            positive.weights = None;
+                            let negative = self.negate(positive.try_clone_on(self)?)?;
+                            (positive, negative)
+                        }
+                        Replacement::Literal(literal) => (
+                            self.literal(&vtree, literal)?,
+                            self.literal(&vtree, literal.negated())?,
+                        ),
                     };
-                    positive.weights = None;
-                    let negative = self.negate(positive.try_clone_on(self)?)?;
                     let one = self.cube(&vtree, std::iter::empty::<Literal>())?;
                     lim.reserve_exact(&mut columns[t.idx()], 3)?;
                     // LeafLabel's stable slot order is One, Pos, Neg.

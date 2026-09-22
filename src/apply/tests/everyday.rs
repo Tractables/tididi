@@ -623,3 +623,48 @@ fn rename_validates_each_entry_before_shortcuts_or_literal_construction() {
         }
     }
 }
+
+/// A failed consuming transform must not alter any of its borrowed replacements.
+#[test]
+fn substitution_refusals_leave_replacements_usable() {
+    let vtree = Arc::new(Vtree::balanced(3));
+    let f = Tdd::cube(&vtree, [1, -2, 3]).unwrap();
+    let mut g = Tdd::clause(&vtree, [2, 3]).unwrap();
+    let h = Tdd::clause(&vtree, [-1, -3]).unwrap();
+    g.set_weights(WeightStore::new(RationalWeights::unit(3), Arithmetic::SignedLog)).unwrap();
+    let expected = Tdd::cube(&vtree, [1, 3]).unwrap();
+    for diagram in [&f, &g, &h, &expected] { assert_canonical(diagram); }
+    let before = format!("{g:?} {h:?}");
+    let replacements = [(VarId(1), &g), (VarId(2), &h)];
+    let mut completed = false;
+    let mut refusals = 0;
+    for cut in 0..2000 {
+        let eng = Engine::new();
+        let input = f.clone();
+        eng.limits().refuse_nth_reserve(cut);
+        let result = eng.substitute(input, &replacements);
+        eng.limits().grant_every_reserve();
+        assert_eq!(format!("{g:?} {h:?}"), before, "reservation {cut}");
+        match result {
+            Err(OperationError::OverBudget) => refusals += 1,
+            Ok(result) => {
+                assert_canonical(&result);
+                assert!(result.weights().is_none());
+                assert!(result.equivalent(&expected).unwrap());
+                completed = true;
+            }
+            other => panic!("reservation {cut}: {other:?}"),
+        }
+        // Reuse both the engine and borrowed inputs after a refused transform.
+        let retry = eng.substitute(f.clone(), &replacements).unwrap();
+        assert_canonical(&retry);
+        assert!(retry.equivalent(&expected).unwrap());
+        if completed { break; }
+    }
+    assert!(completed && refusals > 2, "exercise the rebuild, not just input preparation");
+    assert_eq!(g.model_count().unwrap(), 6u32.into());
+    assert_eq!(h.model_count().unwrap(), 6u32.into());
+    assert_eq!(g.weights().unwrap().arithmetic(), Arithmetic::SignedLog);
+    assert_canonical(&g);
+    assert_canonical(&h);
+}
