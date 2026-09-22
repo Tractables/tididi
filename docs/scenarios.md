@@ -79,12 +79,13 @@ Remote forces encryption; remote without encryption is unsatisfiable.
 
 A witness describes one complete valid assignment; conjoining its cube leaves
 1 configuration. Observe R, then ¬N, then replace R and E by ¬R and ¬E:
-the counter reports 4, 2, 1; clearing observations restores 8. Minimization
-preserves those models. Do not require one particular witness or storage ID.
+the counter reports 4, 2, 1; clearing observations restores 8. Do not require
+one particular witness or storage ID.
 
 Rust's counter borrows its diagram; Python's owns it until `finish()`.
 Teach checked calls after operators in Rust. Python operators already raise
-exceptions. The Rust program also supplies the execution-limits lesson.
+exceptions. Python finishes its owning counter and minimizes the returned
+diagram, preserving the same models; Rust needs no ownership handoff.
 
 C expresses clauses through named signed integer constants. Its shorter lesson
 shows counts 8 and 4, forced remote/encryption, then counter counts 4, 2 and 8.
@@ -92,11 +93,11 @@ It omits the witness, replacement observation and minimization demonstrations.
 
 ### Instances
 
-- [Rust walkthrough](examples/configurations.md) <!-- reviewed: 1d1e2eede05e5159c8bbd9ee4c33a80c11015361604f13d7423b841d11c71bb7 -->
-- [Rust program](../examples/build_minimize_count.rs) <!-- reviewed: 8608014d21d1284454cc9220ee95b049aeb15d0b1e529de69df7ffe98f3e0b7d -->
-- [Python walkthrough and program](../bindings/python/examples/01_configurations.py) <!-- reviewed: 0aa18e286e024c73704ecdfa5c9716bdd0f044119deb6baf6f6291add69d4993 -->
-- [C configurations](../bindings/c/docs/configurations.rst) <!-- reviewed: afa91c98a64dec891370050699f07dc3d2aaa8ede6f07039aba5ff676c090e3b -->
-- [C program configurations](../bindings/c/examples/configurations.c) <!-- reviewed: 3a3557b4369cf8a7ffa7f2252570c4a695940095870e69e476a4ebef24e35c54 -->
+- [Rust walkthrough](examples/configurations.md) <!-- reviewed: 3d2f49ea5b1910c45d050759f5a07e88c735e16e72aa53ce705dbfa68fbf7b02 -->
+- [Rust program](../examples/configurations.rs) <!-- reviewed: 79ec2d3fa05da95e1360b51129c1de3d8090c146a1a6aead105ef16c08c11dd4 -->
+- [Python walkthrough and program](../bindings/python/examples/01_configurations.py) <!-- reviewed: 6a369c0d5f4dd63db5fe776ae2f5699ac0d370d32925b2a9bc6a9e9c6ae67006 -->
+- [C configurations](../bindings/c/docs/configurations.rst) <!-- reviewed: ac03abce92815601a4e6410435e1724f471e5ffcd9be87a436fae77a9fd2e392 -->
+- [C program configurations](../bindings/c/examples/configurations.c) <!-- reviewed: 2030cee871c5dd5621f1f7e144c0319450e8bab6709470e436581bba30702e19 -->
 
 ## Counting choices
 
@@ -264,17 +265,18 @@ constructors without adding another construction to the introductory comparison.
 
 ## Execution
 
-Continue the four-variable backup model. A zero-byte operation budget refuses
+Use the four backup variables L, R, E and N. A zero-byte operation budget refuses
 construction of L ∨ R; a later unrestricted call succeeds and counts 12.
 Limits do not remain installed on unrelated calls. Show a bounded query and
 releasing idle scratch while keeping circuits usable. Budgets cover charged
 operation storage, not the entire process; deadlines are polled cooperatively.
 
-Rust uses a context-supplied engine for bounded batches, minimizes the complete
-backup rule, and counts its 8 models. Python uses per-call `limits=`, shows
-copies preserving operands for retry, and counts 6 models of `(L ∨ R) ∧ E`.
-These query counts differ because the examples deliberately constrain different
-functions. Preserve that distinction when editing either lesson.
+Conjoin L ∨ R with E under a zero-byte budget, preserving the original operands
+by passing copies. On failure, retry without a limit and count the 6 models of
+`(L ∨ R) ∧ E`. Rust uses a context-supplied engine for bounded batches; Python
+uses per-call `limits=`. Both show a bounded count of 6 and a satisfiability
+query after releasing idle scratch. Rust retries inside the error branch;
+Python demonstrates retaining its objects, then combines the originals.
 
 C demonstrates the same retry and six-model function as Python, using a
 TididiLimits pointer and an owned error. It goes directly to the consuming
@@ -282,11 +284,11 @@ operation failure rather than repeating the constructor-budget demonstration.
 
 ### Instances
 
-- [Rust walkthrough](examples/execution.md) <!-- reviewed: 985edbc1da2ce69cb439e0fb9cd1457106ae8a01eb9bcd1c0c507b942797b1e5 -->
-- [Rust program](../examples/build_minimize_count.rs) <!-- reviewed: 62e42d9dde24b58fd50b01a19d13c6af7518793736328cb2d1257ce34679ef3b -->
-- [Python walkthrough and program](../bindings/python/examples/07_execution.py) <!-- reviewed: 9e28b5649d1aae35713b715fce2114e670ee34bd98b02e56ce33b160888d46e2 -->
-- [C execution](../bindings/c/docs/execution.rst) <!-- reviewed: b68e839a2b3f124840b656b65fb9ccd20218c4f5c79eb740da2de26ea64b39eb -->
-- [C program execution](../bindings/c/examples/execution.c) <!-- reviewed: 4bd5a512dad7d406d0ed60ef382d3900dfff386fbd53efcd3f649b1baecde176 -->
+- [Rust walkthrough](examples/execution.md) <!-- reviewed: 990f2793a555f51d5587456369d6dbac5d8eaed03ca401d1f127b31245009bfa -->
+- [Rust program](../examples/execution_limits.rs) <!-- reviewed: 8ca0a398251f6c57a165d7321c5c85b675f6f8f3b5e99ded33c848041fe7d877 -->
+- [Python walkthrough and program](../bindings/python/examples/07_execution.py) <!-- reviewed: b49d78efdd305db3f28a88755b9796ffc53f3d2765436b9e269f6e9ce58d6625 -->
+- [C execution](../bindings/c/docs/execution.rst) <!-- reviewed: fcbcae5fd17cc60cdedbcca19811e88043792a963803773f5b29f1bd30df430a -->
+- [C program execution](../bindings/c/examples/execution.c) <!-- reviewed: 16932faf09936f0e2a42cc7bdf15f7294b5e0447dfdca84ed256f6fb35c8f5a1 -->
 
 ## Minimum cost
 

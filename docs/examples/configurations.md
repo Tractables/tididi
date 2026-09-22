@@ -7,7 +7,7 @@ backups, encryption, and notifications. A configuration must choose at least
 one backup destination, and remote backups require encryption. We want to count
 valid configurations and find one we can offer to a user.
 
-Run this example with `cargo run --example build_minimize_count`.
+Run this example with `cargo run --example configurations`.
 
 ## Give each option a variable
 
@@ -43,7 +43,7 @@ means either remote backups are off or encryption is on:
 ```rust,ignore,{class=tested-example}
 let destination = local | remote.clone();
 let encryption_rule = !remote.clone() | encrypted.clone();
-let mut configurations = destination & encryption_rule;
+let configurations = destination & encryption_rule;
 ```
 
 Notifications remain optional because neither rule constrains them.
@@ -76,6 +76,19 @@ The four valid choices for the constrained options are:
 
 Every row has two choices for notifications, giving eight assignments over
 the full vtree. Counting returns an arbitrary-precision integer.
+
+Requiring notifications leaves one assignment per row:
+
+```rust,ignore,{class=tested-example}
+let with_notifications = configurations.clone() & notifications;
+println!("Configurations with notifications: {}", with_notifications.model_count()?);
+```
+
+Output:
+
+```text
+Configurations with notifications: 4
+```
 
 ## Add a requirement without losing the original
 
@@ -246,6 +259,13 @@ let encrypted = literal(&vtree, encrypted_choice)?;
 let destination = or(local, remote.clone())?;
 let encryption_rule = or(remote.negate()?, encrypted)?;
 let checked = and(destination, encryption_rule)?;
+println!("Same valid configurations: {}", checked.equivalent(&configurations)?);
+```
+
+Output:
+
+```text
+Same valid configurations: true
 ```
 
 The `?` operator returns an error to the caller; use `match` if you want to
@@ -257,5 +277,5 @@ a memory-budget error.
 Continue with [minimum costs](crate::guide::examples::optimization),
 [probabilities](crate::guide::examples::probability), or
 [execution limits](crate::guide::examples::execution).
-The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/build_minimize_count.rs)
-includes the queries above and the execution example.
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/configurations.rs)
+contains all the queries above.
