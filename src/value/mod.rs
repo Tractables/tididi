@@ -188,28 +188,9 @@ impl CountVec {
     /// one side-table entry under the new slot's index; a `Fast` append leaves
     /// the side table untouched.
     pub(crate) fn push(&mut self, eng: &Engine, c: Count) -> Result<(), OperationError> {
-        eng.limits().reserve(&mut self.fast, 1)?;
-        match c {
-            Count::Fast(v) => {
-                debug_assert!(
-                    v != COUNT_OVERFLOW,
-                    "Count::Fast carrying the overflow sentinel — Count::from_u128 should have promoted this to Big"
-                );
-                self.fast.push(v);
-                if v > u64::MAX as u128 {
-                    self.all_u64 = false;
-                }
-            }
-            Count::Big(b) => {
-                let idx = self.fast.len();
-                // Strictly ascending key ⇒ an O(1) amortized push inside `CountOverflow`.
-                self.big
-                    .get_or_insert_with(CountOverflow::default)
-                    .try_insert(eng, idx, b)?;
-                self.fast.push(COUNT_OVERFLOW);
-                self.all_u64 = false;
-            }
-        }
+        let fits_u64 = matches!(c, Count::Fast(v) if v <= u64::MAX as u128);
+        append_count(eng, &mut self.fast, &mut self.big, c)?;
+        self.all_u64 &= fits_u64;
         Ok(())
     }
 
@@ -228,6 +209,30 @@ impl CountVec {
     pub(crate) fn into_parts(self) -> (Vec<u128>, Option<CountOverflow>) {
         (self.fast, self.big)
     }
+}
+
+/// Append one count, reserving both stores before committing its dense slot.
+/// On refusal the existing values and length are unchanged; capacity may grow.
+fn append_count(
+    eng: &Engine,
+    fast: &mut Vec<u128>,
+    big: &mut Option<CountOverflow>,
+    value: Count,
+) -> Result<(), OperationError> {
+    eng.limits().reserve(fast, 1)?;
+    let raw = match value {
+        Count::Fast(v) => {
+            debug_assert!(v != COUNT_OVERFLOW, "Count::from_u128 must promote the overflow sentinel");
+            v
+        }
+        Count::Big(value) => {
+            big.get_or_insert_with(CountOverflow::default)
+                .try_insert(eng, fast.len(), value)?;
+            COUNT_OVERFLOW
+        }
+    };
+    fast.push(raw);
+    Ok(())
 }
 
 /// The `all_u64` certificate of a raw fast column: every stored value fits in

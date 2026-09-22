@@ -17,39 +17,6 @@ use crate::Engine;
 use crate::limits::OperationError;
 use crate::vtree::VtreeIdx;
 
-/// Append `key` to a marginal store as a freshly minted slot, never reusing an
-/// existing one; returns the new slot index.
-///
-/// `counts[i]` holds the small count, or the `u128::MAX` sentinel meaning the
-/// real value is `big`'s entry for slot `i`; `big` is allocated on the first
-/// overflow, a `Fast` push writes nothing there and a `Big` push records one
-/// entry. Growth is reserved through the engine, so an over-budget push
-/// returns `OperationError::OverBudget`.
-pub(crate) fn push_count_key(
-    eng: &Engine,
-    counts: &mut Vec<u128>,
-    big: &mut Option<CountOverflow>,
-    key: &Count,
-) -> Result<u32, OperationError> {
-    let lim = eng.limits();
-    let new_idx = counts.len() as u32;
-    match key {
-        Count::Fast(c) => {
-            // A small count landing exactly on the sentinel would be re-read as
-            // `COUNT_OVERFLOW` with no `big` entry behind it; producers must route that
-            // value to `Big` (see `sum_marginal_counts` and its pinned test).
-            debug_assert!(*c != u128::MAX, "small count must not alias the overflow sentinel");
-            lim.try_push(counts, *c)?;
-        }
-        Count::Big(v) => {
-            lim.try_push(counts, u128::MAX)?;
-            big.get_or_insert_with(CountOverflow::default)
-                .try_insert(eng, counts.len() - 1, v.clone())?;
-        }
-    }
-    Ok(new_idx)
-}
-
 // ── Compaction ───────────────────────────────────────────────────────────────
 
 /// Compact a store to the slots `kept` names, in the ascending order given,
@@ -272,7 +239,9 @@ impl SlotValues for IntFold {
         let (counts, big) = tdd.levels[v.idx()]
             .marginal_store_mut()
             .expect("push_slot: level is not marginal");
-        push_count_key(eng, counts, big, &value)
+        let slot = counts.len() as u32;
+        super::append_count(eng, counts, big, value)?;
+        Ok(slot)
     }
 
     /// An integer leaf's store is written like an internal one.

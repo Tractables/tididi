@@ -395,3 +395,34 @@ fn streaming_exact_fallback_handles_inline_counts_and_accumulation_overflow() {
     assert_eq!(IntFold::fold_cell(&[pair(0, 0); 3], &side, &side, &()),
         Count::Big(BigUint::from(u64::MAX).pow(2) * 3u32));
 }
+
+#[test]
+fn refused_overflow_append_preserves_the_existing_slots() {
+    use crate::value::slots::count_key_at;
+    for prefix in [vec![Count::Fast(7)], vec![Count::Big(BigUint::from(1u32) << 160)]] {
+        for refusal in 0..2 {
+            let eng = Engine::new();
+            let mut counts = Vec::new();
+            let mut big = None;
+            for value in &prefix {
+                append_count(&eng, &mut counts, &mut big, value.clone()).unwrap();
+            }
+            let next = Count::Big(BigUint::from(1u32) << 200);
+            eng.limits().refuse_nth_reserve(refusal);
+            assert_eq!(
+                append_count(&eng, &mut counts, &mut big, next.clone()),
+                Err(OperationError::OverBudget),
+            );
+            eng.limits().grant_every_reserve();
+            assert_eq!(counts.len(), prefix.len());
+            for (i, expected) in prefix.iter().enumerate() {
+                assert_eq!(&count_key_at(&counts, big.as_ref(), i), expected);
+            }
+            assert!(big.as_ref().is_none_or(|b| b.len() == prefix.iter()
+                .filter(|v| matches!(v, Count::Big(_))).count()));
+            append_count(&eng, &mut counts, &mut big, next.clone()).unwrap();
+            assert_eq!(counts.len(), prefix.len() + 1);
+            assert_eq!(count_key_at(&counts, big.as_ref(), prefix.len()), next);
+        }
+    }
+}
