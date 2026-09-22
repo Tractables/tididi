@@ -167,6 +167,13 @@ pub(crate) trait SlotValues {
     fn leaf_ref(tdd: &Tdd, v: VtreeIdx, value: &Self::Value) -> Option<u32>;
 }
 
+/// Check the next slot against the reference encoding before growing a store.
+fn next_slot_index(len: usize) -> Result<u32, OperationError> {
+    let slot = u32::try_from(len).map_err(|_| OperationError::IndexOverflow)?;
+    ValueRef::Slot(slot).side().map_err(|_| OperationError::IndexOverflow)?;
+    Ok(slot)
+}
+
 /// `value` as a marginal-side reference into level `v`: inline where the
 /// domain can carry it in the pair, a fresh slot otherwise. No interning: the
 /// slot pruner merges equal-valued slots on the next prune.
@@ -239,7 +246,7 @@ impl SlotValues for IntFold {
         let (counts, big) = tdd.levels[v.idx()]
             .marginal_store_mut()
             .expect("push_slot: level is not marginal");
-        let slot = counts.len() as u32;
+        let slot = next_slot_index(counts.len())?;
         super::append_count(eng, counts, big, value)?;
         Ok(slot)
     }
@@ -331,9 +338,8 @@ impl SlotValues for WeightFold {
     /// Signed weights make a value of exactly 0 reachable (for instance from
     /// `+a` and `−a`). That is a value like any other and gets its own slot — it
     /// must never become the bit-31 zero sentinel, which denotes the structural
-    /// false node; `slot_raw` keeps bit 31 clear by construction and the assert
-    /// pins it.
-    fn push_slot(_: &Engine, tdd: &mut Tdd, v: VtreeIdx, value: WeightValue) -> Result<u32, OperationError> {
+    /// false node. The slot is checked before allocation or mutation.
+    fn push_slot(eng: &Engine, tdd: &mut Tdd, v: VtreeIdx, value: WeightValue) -> Result<u32, OperationError> {
         // A weighted leaf column is pinned to three label-ordered slots that
         // every diagram of the compile aliases; appending a fourth would break
         // that alias. The leaf paths resolve by lookup and never reach here.
@@ -342,20 +348,12 @@ impl SlotValues for WeightFold {
             "refusing to mint a weight slot into a pinned leaf column (level {})",
             v.0
         );
-        let s = tdd.weight_store_mut().push_value(v.idx(), value);
-        let s = u32::try_from(s).map_err(|_| OperationError::OverBudget)?;
-        if !ValueRef::slot_is_referenceable(s) {
-            // A slot index that would not fit the 30-bit marginal-ref payload cannot
-            // be referenced at all — surface it as OverBudget (routed to
-            // recovery) rather than truncate a ref.
-            return Err(OperationError::OverBudget);
-        }
-        tdd.levels[v.idx()].set_weight_width(s + 1);
-        debug_assert!(
-            !ValueRef::Slot(s).encode().is_reserved(),
-            "a minted weighted marginal ref must never alias the zero sentinel",
-        );
-        Ok(s)
+        let values = tdd.weight_store_mut().level_vals_mut(v.idx())
+            .expect("push_slot: weighted level has no store");
+        let slot = next_slot_index(values.len())?;
+        eng.limits().try_push(values, value)?;
+        tdd.levels[v.idx()].set_weight_width(slot + 1);
+        Ok(slot)
     }
 
     /// A weighted leaf column is the pinned, label-ordered three-slot cache

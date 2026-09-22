@@ -244,23 +244,6 @@ impl WeightStore {
         self.per_level.get_mut(&level)
     }
 
-    /// Append `val` as a fresh slot to a weight-marginal level, returning the
-    /// new slot index. No value interning: slot prune merges equal-valued slots
-    /// on its next pass.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `level` has no values yet (`set_level` was never called for it).
-    pub(crate) fn push_value(&mut self, level: usize, val: WeightValue) -> usize {
-        let vec = self
-            .per_level
-            .get_mut(&level)
-            .expect("push_value: level has no weighted store");
-        let idx = vec.len();
-        vec.push(val);
-        idx
-    }
-
     /// Remove `level`'s values from this store and hand them over, or `None` if
     /// that level is not weight-marginal.
     #[inline]

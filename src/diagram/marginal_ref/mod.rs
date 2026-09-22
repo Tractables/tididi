@@ -89,13 +89,6 @@ impl ValueRef {
         self.side().expect("internal marginal reference must fit in 30 bits")
     }
 
-    /// Whether `slot_idx` fits the payload a pair side can hold. A store that
-    /// outgrows it cannot be referenced at all, so the caller that minted the
-    /// slot must fail rather than truncate.
-    pub(crate) fn slot_is_referenceable(slot_idx: u32) -> bool {
-        slot_idx & !MARGINAL_VALUE_MASK == 0
-    }
-
     /// Convenience: encode a slot index as a raw u32 marginal-side ref.
     pub(crate) fn slot_raw(slot_idx: u32) -> u32 {
         ValueRef::Slot(slot_idx).encode().raw()
