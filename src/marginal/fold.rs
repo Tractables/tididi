@@ -1,12 +1,11 @@
 //! The bottom-up fold that marginalizes scheduled levels, in either value domain.
 
-use crate::value::{Retention};
 use crate::diagram::Tdd;
 use crate::Engine;
 use crate::limits::OperationError;
 use crate::vtree::{Vtree, VtreeIdx};
 
-use crate::value::{Column, FoldInput, FoldScope, IntFold};
+use crate::value::{Column, FoldInput, IntFold, Retention};
 use super::transition::{InternalLevel, MarginalDomain, install_finished};
 
 /// Marginalize `targets` into per-node model counts.
@@ -110,25 +109,11 @@ fn marginalize_level<K: MarginalDomain>(
     ensure_below::<K>(eng, tdd, left, vtree, store, computed)?;
     ensure_below::<K>(eng, tdd, right, vtree, store, computed)?;
 
-    let width = tdd.levels[di].slot_count();
     let zero = K::zero(store);
-    let mut col = K::alloc_col(eng, width, &zero)?;
-    let at = FoldScope {
-        lvl: di,
-        left: left.idx(),
-        right: right.idx(),
-        input: FoldInput { vtree, levels: &tdd.levels, store },
-        computed,
-        zero: &zero,
-    };
-    for (i, _pairs) in tdd.levels[di].internal_inputs_iter() {
-        let v = K::fold_node(&at, i);
-        K::set_col(eng, &mut col, i, v)?;
-    }
-
-    // Park the column where the cascade below can reach it (uncompacted,
-    // indexed by node index), then take it back for the install.
-    computed[di] = Some(col);
+    let col = K::fold_column(
+        eng, d, FoldInput { vtree, levels: &tdd.levels, store },
+        computed, &zero, |_| Ok(()),
+    )?;
 
     // Marginalize the children before `d` (bottom-up), so that by the time `d` is marginal
     // both of them are marginal or are leaves — the `assert_can_make_marginal`
@@ -136,10 +121,7 @@ fn marginalize_level<K: MarginalDomain>(
     cascade::<K>(tdd, vtree, left, store, computed);
     cascade::<K>(tdd, vtree, right, store, computed);
 
-    let col = computed[di].take().expect("the column was just computed for this level");
     install_finished::<K>(tdd, vtree, level, col, store);
-    // Nothing re-fills `computed[di]`: once `d` is marginal every reader reads
-    // the installed store, and `computed` persists across the pass's targets.
     Ok(())
 }
 
@@ -174,10 +156,6 @@ fn cascade<K: MarginalDomain>(
 
 /// Populate the column of `t` and everything below it that a fold at `t` will
 /// read.
-///
-/// The marginalization walk's own "already stored" test, which the weighted domain must
-/// answer from its store: a level whose column the store already holds is
-/// marginal even though the level slice cannot say so on its own.
 fn ensure_below<K: MarginalDomain>(
     eng: &Engine,
     tdd: &Tdd,

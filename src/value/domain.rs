@@ -125,6 +125,29 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
         store: &Self::Store,
     ) -> Self::Scalar;
 
+    /// Compute a complete column without changing the diagram or its cached
+    /// columns. Child values must already be available through `input` or `computed`.
+    fn fold_column(
+        eng: &Engine,
+        t: VtreeIdx,
+        input: FoldInput<'_, Self>,
+        computed: &[Option<Self::Col>],
+        zero: &Self::Scalar,
+        mut before_node: impl FnMut(u64) -> Result<(), OperationError>,
+    ) -> Result<Self::Col, OperationError> {
+        let lvl = t.idx();
+        let (left, right) = input.vtree.children(t);
+        let level = &input.levels[lvl];
+        let mut col = Self::alloc_col(eng, level.slot_count(), zero)?;
+        let at = FoldScope { lvl, left: left.idx(), right: right.idx(), input, computed, zero };
+        for (i, pairs) in level.internal_inputs_iter() {
+            before_node(1 + pairs.len() as u64)?;
+            let value = Self::fold_node(&at, i);
+            Self::set_col(eng, &mut col, i, value)?;
+        }
+        Ok(col)
+    }
+
     /// Populate `computed[root]` and every column below it that a fold at
     /// `root` will read.
     ///
@@ -142,7 +165,7 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
         retain: Retention,
         mut before_node: impl FnMut(u64) -> Result<(), OperationError>,
     ) -> Result<(), OperationError> {
-        let FoldInput { vtree, levels, store } = input;
+        let FoldInput { vtree, store, .. } = input;
         let zero = Self::zero(store);
         walk_bottom_up(
             vtree,
@@ -156,17 +179,9 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
                     || vtree.node(VtreeIdx(i as u32)).is_leaf()
             },
             |computed, t| {
-                let lvl = t.idx();
-                let (l, r) = vtree.children(t);
-                // Reserve before folding so a refused column leaves its level unchanged.
-                let mut col = Self::alloc_col(eng, levels[lvl].slot_count(), &zero)?;
-                let at = FoldScope { lvl, left: l.idx(), right: r.idx(), input, computed, zero: &zero };
-                for (i, pairs) in levels[lvl].internal_inputs_iter() {
-                    before_node(1 + pairs.len() as u64)?;
-                    let v = Self::fold_node(&at, i);
-                    Self::set_col(eng, &mut col, i, v)?;
-                }
-                computed[lvl] = Some(col);
+                computed[t.idx()] = Some(Self::fold_column(
+                    eng, t, input, computed, &zero, &mut before_node,
+                )?);
                 Ok(())
             },
             |computed, i| computed[i] = None,

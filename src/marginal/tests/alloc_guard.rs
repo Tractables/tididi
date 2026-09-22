@@ -57,25 +57,32 @@ fn clone_guarded_copies_big_overflow_exactly() {
 /// Refuse every reservation in turn, then resume using the same engine and diagram.
 fn marginal_refusals(weighted: bool, overflow: bool) {
     use std::sync::Arc;
-    use crate::diagram::{Arithmetic, RationalWeights, Tdd, WeightStore};
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Tdd, WeightStore};
 
 
-    use crate::test_helpers::{assert_canonical, assert_marginal_canonical, compile_clauses};
+    use crate::test_helpers::{assert_canonical, assert_marginal_canonical, compile_clauses, rat};
     use crate::vtree::Vtree;
     use crate::OperationError;
 
     let eng = Engine::new();
-    let n = if overflow { 132 } else { 4 };
+    let n = if overflow { 132 } else { 8 };
     let vtree = Arc::new(Vtree::balanced(n));
     let mut original = if overflow {
         Tdd::one(&vtree)
     } else {
-        compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![3, 4], vec![-1, -4]])
+        compile_clauses(&vtree, &[
+            vec![1, 2, -5], vec![-2, 3, 6], vec![4, -7, 8], vec![-1, 5, -8],
+        ])
     };
     assert_canonical(&original);
-    if weighted {
-        original.set_weights(WeightStore::new(RationalWeights::unit(n as usize), Arithmetic::ExactRational)).unwrap();
-    }
+    let expected_weight = weighted.then(|| {
+        let weights = RationalWeights::from_literals(&vec![
+            LiteralWeights { negative: rat(1, 3), positive: rat(2, 5) }; n as usize
+        ]);
+        let expected = original.evaluate(&weights).unwrap();
+        original.set_weights(WeightStore::new(weights, Arithmetic::ExactRational)).unwrap();
+        expected
+    });
     let targets = if overflow {
         vec![vtree.root()]
     } else {
@@ -83,7 +90,6 @@ fn marginal_refusals(weighted: bool, overflow: bool) {
         vec![left, right]
     };
     let expected_count = (!weighted).then(|| original.model_count().unwrap());
-    let expected_weight = weighted.then(|| original.weighted_value().unwrap().unwrap().into_rational_opt().unwrap());
     let check_value = |f: &Tdd| {
         if let Some(expected) = &expected_count { assert_eq!(&eng.model_count(f).unwrap(), expected); }
         if let Some(expected) = &expected_weight { assert_eq!(&f.weighted_value().unwrap().unwrap().into_rational_opt().unwrap(), expected); }
