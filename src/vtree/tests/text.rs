@@ -21,6 +21,8 @@ fn malformed_tree_graphs_and_records_are_refused() {
     for text in [
         "", "\n c comments only\n", "comment\nvtree 1\nL 0 1\n", "vtree 0\n", "vtree 3\n", "vtree 1 extra\nL 0 1\n",
         "vtree 1\nL 0 0\n", "vtree 1\nL 0 1 extra\n",
+        "vtree 3\nL 0 1\nL 1 2\nI 2 0 1 extra\n",
+        "vtree 1\nL 0 1 extra more\n",
         "vtree 3\nL 0 1\nL 1 1\nI 2 0 1\n",
         "vtree 3\nL 0 1\nL 1 2\nI 2 0 0\n",
         "vtree 3\nL 0 1\nL 1 2\nI 2 2 1\n",
@@ -47,7 +49,7 @@ fn deterministic_token_mutations_are_refused_and_valid_text_round_trips() {
         for end in 0..text.trim_end().len() {
             if let Ok(parsed) = Vtree::from_text(&text[..end]) { assert_eq!(parsed.validate(), Ok(())); }
         }
-        for variant in [text.clone(), text.replace('\n', "\r\n"), text.trim_end().to_owned(), text.replace('\n', "\n\n"),
+        for variant in [text.clone(), text.replace('\n', "\r\n"), text.replace(' ', "\t"), text.trim_end().to_owned(), text.replace('\n', "\n\n"),
             format!("\n  c vtree with comments\n\n{}c end\n", text.replace('\n', "\n c between records\n"))] {
             let restored = Vtree::from_text(&variant).unwrap();
             assert_eq!(restored.validate(), Ok(()));
@@ -84,4 +86,15 @@ fn a_sparse_id_space_under_the_cap_still_round_trips() {
     assert_eq!(tree.num_vars(), 1_000_000);
     assert_eq!(tree.num_leaves(), 1);
     assert!(Vtree::from_text(&tree.to_text()).unwrap().same_tree(&tree));
+}
+
+/// File labels and record order are independent; only the last record chooses the root.
+#[test]
+fn forward_references_and_sparse_variables_round_trip() {
+    let text = "vtree 5\nI 4 2 0\nL 0 9\nL 2 3\nL 3 1\nI 1 3 4\n";
+    let parsed = Vtree::from_text(text).unwrap();
+    let expected = Vtree::linear_from_order(&[VarId(1), VarId(3), VarId(9)]).unwrap();
+    assert_eq!(parsed.validate(), Ok(()));
+    assert!(parsed.same_tree(&expected));
+    assert!(Vtree::from_text(&parsed.to_text()).unwrap().same_tree(&parsed));
 }

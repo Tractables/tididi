@@ -57,23 +57,14 @@ impl Vtree {
             return Err(format!("header declares {n} nodes but the file contains {records} node records"));
         }
         let mut nodes = vec![None; n];
-        let mut num_vars: u32 = 0;
         let mut last_id = 0usize;
-        // A vtree carries each variable on exactly one leaf. A file naming one
-        // twice is caught here rather than left to the leaf-count assertion a
-        // consumer of the tree eventually trips over.
-        let mut leaf_of_var: std::collections::HashMap<u32, usize> =
-            std::collections::HashMap::new();
-
         for line in lines {
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            let (id, node) = match parts[0] {
-                "L" => parse_leaf_line(&parts, line, n, &mut num_vars, &mut leaf_of_var)?,
-                "I" => parse_internal_line(&parts, line, n)?,
-                _ => return Err(format!("unknown line type: {}", line)),
-            };
-            if nodes[id].is_some() { return Err(format!("duplicate node id {id}")); }
-            nodes[id] = Some(node);
+            let (id, node) = parse_node(line)?;
+            let slot = nodes.get_mut(id).ok_or_else(|| {
+                format!("node id {id} is out of range for the {n} nodes the header declares")
+            })?;
+            if slot.is_some() { return Err(format!("duplicate node id {id}")); }
+            *slot = Some(node);
             last_id = id;
         }
 
@@ -83,6 +74,10 @@ impl Vtree {
             .map(|(i, n)| n.ok_or_else(|| format!("missing node {}", i)))
             .collect::<Result<_, _>>()?;
 
+        let num_vars = nodes.iter().filter_map(|node| match node {
+            VtreeNode::Leaf { var, .. } => Some(var.0),
+            VtreeNode::Internal { .. } => None,
+        }).max().unwrap_or(0);
         let root = VtreeIdx(last_id as u32);
         Self::from_nodes(nodes, root, num_vars).map_err(|e| match e {
             VtreeError::Invalid(msg) | VtreeError::Text(msg) => msg,
@@ -126,90 +121,39 @@ impl Vtree {
 
 /// The declared node count from the `vtree N` header line.
 fn parse_header(header: &str) -> Result<usize, String> {
-    let n: usize = header
-        .strip_prefix("vtree ")
-        .ok_or("missing 'vtree N' header")?
-        .trim()
-        .parse()
-        .map_err(|_| "invalid node count in header")?;
+    let mut fields = header.split_whitespace();
+    let (Some("vtree"), Some(count), None) = (fields.next(), fields.next(), fields.next()) else {
+        return Err("expected a `vtree N` header".into());
+    };
+    let n = count.parse().map_err(|_| "invalid node count in header")?;
     if n == 0 {
         return Err("header declares 0 nodes; a vtree has at least one".to_string());
     }
     Ok(n)
 }
 
-/// Every id a node line names — the node's own, and an internal node's two
-/// children — has to address a node the header declared.
-fn check_id(what: &str, id: usize, n: usize) -> Result<(), String> {
-    if id < n {
-        Ok(())
-    } else {
-        Err(format!(
-            "{what} {id} is out of range for the {n} nodes the header declares"
-        ))
-    }
+/// Parse record syntax; `from_nodes` checks variables and child relationships.
+fn parse_node(line: &str) -> Result<(usize, VtreeNode), String> {
+    let mut fields = line.split_whitespace();
+    let record = (fields.next(), fields.next(), fields.next(), fields.next(), fields.next());
+    let (id, node) = match record {
+        (Some("L"), Some(id), Some(var), None, None) => (
+            id, VtreeNode::Leaf { var: VarId(parse_number(var, "variable")?), parent: None },
+        ),
+        (Some("I"), Some(id), Some(left), Some(right), None) => (
+            id, VtreeNode::Internal {
+                left: VtreeIdx(parse_number(left, "left child")?),
+                right: VtreeIdx(parse_number(right, "right child")?),
+                parent: None,
+            },
+        ),
+        _ => return Err(format!("expected `L <id> <var>` or `I <id> <left> <right>`, found {line:?}")),
+    };
+    Ok((parse_number(id, "node id")? as usize, node))
 }
 
-/// An `L <id> <var_1indexed>` line, recording the variable so a second leaf
-/// naming it is rejected.
-fn parse_leaf_line(
-    parts: &[&str],
-    line: &str,
-    n: usize,
-    num_vars: &mut u32,
-    leaf_of_var: &mut std::collections::HashMap<u32, usize>,
-) -> Result<(usize, VtreeNode), String> {
-    if parts.len() != 3 {
-        return Err(format!("bad leaf line: {}", line));
-    }
-    let id: usize = parts[1]
-        .parse()
-        .map_err(|_| format!("bad id: {}", parts[1]))?;
-    check_id("node id", id, n)?;
-    let var_1: u32 = parts[2]
-        .parse()
-        .map_err(|_| format!("bad var: {}", parts[2]))?;
-    if var_1 == 0 {
-        return Err(format!(
-            "leaf {id} names variable 0; vtree variables are 1-based"
-        ));
-    }
-    if let Some(first) = leaf_of_var.insert(var_1, id) {
-        return Err(format!(
-            "leaves {first} and {id} both name variable {var_1}; a vtree carries \
-             each variable on exactly one leaf"
-        ));
-    }
-    let var = VarId(var_1);
-    *num_vars = (*num_vars).max(var_1);
-    Ok((id, VtreeNode::Leaf { var, parent: None }))
-}
-
-/// An `I <id> <left> <right>` line.
-fn parse_internal_line(parts: &[&str], line: &str, n: usize) -> Result<(usize, VtreeNode), String> {
-    if parts.len() != 4 {
-        return Err(format!("bad internal line: {}", line));
-    }
-    let id: usize = parts[1]
-        .parse()
-        .map_err(|_| format!("bad id: {}", parts[1]))?;
-    check_id("node id", id, n)?;
-    let left: u32 = parts[2]
-        .parse()
-        .map_err(|_| format!("bad left: {}", parts[2]))?;
-    check_id("left child", left as usize, n)?;
-    let right: u32 = parts[3]
-        .parse()
-        .map_err(|_| format!("bad right: {}", parts[3]))?;
-    check_id("right child", right as usize, n)?;
-    Ok((
-        id,
-        VtreeNode::Internal {
-            left: VtreeIdx(left),
-            right: VtreeIdx(right),
-            parent: None,
-        },
-    ))
+fn parse_number(token: &str, what: &str) -> Result<u32, String> {
+    token.parse().map_err(|_| format!("invalid {what}: {token:?}"))
 }
 
 /// The `.vtree` text format, so `vtree.to_string()` writes it.
