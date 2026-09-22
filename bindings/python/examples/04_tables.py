@@ -30,10 +30,22 @@ print("Distinct permission sets:", permissions.model_count())
 # false. The operation consumes the old circuit and returns its replacement.
 permissions = permissions.update(insert=[[read, write, share]], remove=[[read, write, -share]])
 print("After updates:", permissions.model_count())
-sharing = permissions & literal(vtree, share)
+
+# %%
+# The updated table contains read-only, read-and-share, and all three permissions.
+# Filter a copy so the full table stays available for the next update.
+sharing = permissions.copy() & literal(vtree, share)
 print("Permission sets allowing sharing:", sharing.model_count())
 
 # %%
-# An update can also describe several rows at once. A partial cube leaves its
-# omitted variables free: removing ``[share]`` would remove every combination
-# that permits sharing. An empty cube matches all assignments.
+# Remove a group of rows
+# ----------------------
+# Suppose sharing is withdrawn entirely. A partial assignment names just the
+# permissions to match: ``[share]`` selects every row where sharing is true,
+# whatever its read and write values.
+permissions = permissions.update(remove=[[share]])
+print("After withdrawing sharing:", permissions.model_count())
+
+# %%
+# Only read access without write or share remains. Removing matching rows does
+# not change their share column to false. An empty cube matches all assignments.

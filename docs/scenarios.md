@@ -197,7 +197,11 @@ witness; the reachable-set semantics are unchanged.
 
 Model read, write and share permissions with variables 1, 2 and 3. Load rows
 100, 110, 101, 110; duplicates describe one assignment, so the count is 3.
-Insert 111 and remove 110: the count stays 3, and requiring share leaves 2.
+Insert 111 and remove 110: the count stays 3, but the rows become 100, 101, 111.
+Filter a copy by share to count 2, preserving the table for the next update.
+Then remove the partial assignment [share]: every sharing row disappears,
+leaving only 100 and a count of 1. This deletes matching rows rather than
+setting their share column to false.
 Explain column order, free omitted variables, and signed-literal updates.
 A partial cube edits all matching assignments; an empty cube matches all.
 
@@ -211,11 +215,11 @@ its update consumes the old circuit and returns a minimized replacement.
 
 ### Instances
 
-- [Rust walkthrough](examples/tables.md) <!-- reviewed: f8919277261cd75a8f3275df82ae8a659b281a971c8d7e16829a85b6136dbc19 -->
-- [Rust program](../examples/table_updates.rs) <!-- reviewed: 3dfb36347e323a687c86e6d0bf1eb19955e6d305f24f6eb7b9520c2d8dd3d973 -->
-- [Python walkthrough and program](../bindings/python/examples/04_tables.py) <!-- reviewed: 332bfeafd76deb93ec93dfb50d94d0b3b0d7a6ec71e85a2eea2433205b0128f1 -->
-- [C tables](../bindings/c/docs/tables.rst) <!-- reviewed: b1eb59b11462e80ade4b6474c01f84bf8c61163ffa67dccbc76e0928cfc50b45 -->
-- [C program tables](../bindings/c/examples/tables.c) <!-- reviewed: 1d1951432101bcb405b36cdea1285704f0e91fd0979bc72c64feb4fd63b6b308 -->
+- [Rust walkthrough](examples/tables.md) <!-- reviewed: 5ab77cbf1320d27871f4706cec6f4040af87f8b32c8f5b30aa8bddc058598a47 -->
+- [Rust program](../examples/table_updates.rs) <!-- reviewed: 96b6a3d9ae912ebd88700613c7eefc5844b27b0b13b2d036ddc4959af8b79cb8 -->
+- [Python walkthrough and program](../bindings/python/examples/04_tables.py) <!-- reviewed: dbc98d8e11b63d057e7342fa6749cf9c52cb09fab96d416f932b5b47d652b5d6 -->
+- [C tables](../bindings/c/docs/tables.rst) <!-- reviewed: 218aea5f39680c7479c6526ad8416a3ea0e00f25a1928dc72644bd91d6a0b1b5 -->
+- [C program tables](../bindings/c/examples/tables.c) <!-- reviewed: 740e508e413b467b7b10d527d4808f3b5ea5aa1e153278afcf480fbc8a347d91 -->
 
 ## Persistence
 

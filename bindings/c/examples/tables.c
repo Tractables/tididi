@@ -25,12 +25,22 @@ int main(void) {
 
     section("filter");
     // begin: filter
-    TididiCircuit *share = NULL, *selected = NULL;
+    TididiCircuit *share = NULL, *selected = NULL, *table_copy = copy(updated);
     check(tididi_literal(vtree, SHARE, &share, NULL));
-    check(tididi_and(updated, share, &selected, NULL));
+    check(tididi_and(table_copy, share, &selected, NULL));
     printf("Rows allowing sharing: %" PRIu64 "\n", count(selected));
     // end: filter
+
+    section("bulk_remove");
+    // begin: bulk_remove
+    const int64_t sharing[] = {SHARE};
+    const TididiCube matching[] = {{sharing, 1}};
+    TididiCircuit *without_sharing = NULL;
+    check(tididi_update(updated, NULL, 0, matching, 1, &without_sharing, NULL));
+    printf("After withdrawing sharing: %" PRIu64 "\n", count(without_sharing));
+    // end: bulk_remove
     release(table); release(updated); release(share); release(selected);
+    release(table_copy); release(without_sharing);
     tididi_vtree_free(vtree);
     return 0;
 }

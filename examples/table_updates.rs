@@ -1,12 +1,12 @@
 // scenario: docs/scenarios.md#tables
 
 //! Build and maintain a table of permitted access combinations.
-use std::sync::Arc;
-
-use tididi::vtree::VarId;
-use tididi::{literal, Tdd, Vtree};
-
 fn main() -> Result<(), tididi::OperationError> {
+    use std::sync::Arc;
+
+    use tididi::vtree::VarId;
+    use tididi::{literal, Tdd, Vtree};
+
     let vtree = Arc::new(Vtree::balanced(3));
     let vars = [VarId(1), VarId(2), VarId(3)];
     // Low to high bits: read, write, share.
@@ -23,7 +23,11 @@ fn main() -> Result<(), tididi::OperationError> {
     println!("After updates: {}", permissions.model_count()?);
 
     let share = literal(&vtree, 3)?;
-    let sharing = permissions & share;
+    let sharing = permissions.clone() & share;
     println!("Permission sets allowing sharing: {}", sharing.model_count()?);
+
+    // Remove every row that grants sharing, regardless of its other permissions.
+    permissions.remove_model([3])?;
+    println!("After withdrawing sharing: {}", permissions.model_count()?);
     Ok(())
 }

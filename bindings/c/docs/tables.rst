@@ -40,10 +40,14 @@ Output:
 .. literalinclude:: _generated/tables-update.txt
    :language: text
 
+The updated table contains read-only, read-and-share, and all three permissions.
+The count is unchanged, but its rows differ.
+
 Filter rows
 -----------
 
-Conjunction with the share literal selects rows that permit sharing.
+Conjunction with the share literal selects rows that permit sharing. Filter a
+copy so the full table stays available for the next update.
 
 .. literalinclude:: ../examples/tables.c
    :language: c
@@ -55,6 +59,27 @@ Output:
 
 .. literalinclude:: _generated/tables-filter.txt
    :language: text
+
+Remove a group of rows
+----------------------
+
+Suppose sharing is withdrawn entirely. A partial assignment names just the
+permissions to match: ``{SHARE}`` selects every row where sharing is true,
+whatever its read and write values. Pass no insertions and one deletion cube:
+
+.. literalinclude:: ../examples/tables.c
+   :language: c
+   :start-after: // begin: bulk_remove
+   :end-before: // end: bulk_remove
+   :dedent: 4
+
+Output:
+
+.. literalinclude:: _generated/tables-bulk_remove.txt
+   :language: text
+
+Only read access without write or share remains. Removing matching rows does
+not change their share column to false. An empty cube matches all assignments.
 
 Complete program
 ----------------

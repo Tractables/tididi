@@ -1,6 +1,6 @@
 <!-- scenario: docs/scenarios.md#tables -->
 
-# Maintaining a table of allowed choices
+# Build and update a table of allowed choices
 
 Suppose an application stores the permission combinations it allows:
 
@@ -28,9 +28,7 @@ use std::sync::Arc;
 
 use tididi::vtree::VarId;
 use tididi::{literal, Tdd, Vtree};
-```
 
-```rust,ignore,{class=tested-example}
 let vtree = Arc::new(Vtree::balanced(3));
 let vars = [VarId(1), VarId(2), VarId(3)];
 // Low to high bits: read, write, share.
@@ -67,17 +65,23 @@ Output:
 After updates: 3
 ```
 
-These updates name every column; see [`insert_model`](crate::Tdd::insert_model)
-for updates that leave some columns unspecified.
+The count is still three, but the allowed combinations have changed:
+
+| Read | Write | Share |
+| --- | --- | --- |
+| true | false | false |
+| true | false | true |
+| true | true | true |
 
 ## Query the updated table
 
-The result supports the same operations as any other circuit. Conjoin it with
-sharing to select the permission sets that allow it:
+The result supports the same operations as any other circuit. Conjoin a copy
+with sharing to select the permission sets that allow it, keeping the original
+available for further updates:
 
 ```rust,ignore,{class=tested-example}
 let share = literal(&vtree, 3)?;
-let sharing = permissions & share;
+let sharing = permissions.clone() & share;
 println!("Permission sets allowing sharing: {}", sharing.model_count()?);
 ```
 
@@ -86,6 +90,28 @@ Output:
 ```text
 Permission sets allowing sharing: 2
 ```
+
+## Remove a group of rows
+
+Suppose sharing is withdrawn entirely. A partial assignment names just the
+permissions to match: `[3]` selects every row where sharing is true, whatever
+its read and write values. Remove those rows in one call:
+
+```rust,ignore,{class=tested-example}
+permissions.remove_model([3])?;
+println!("After withdrawing sharing: {}", permissions.model_count()?);
+```
+
+Output:
+
+```text
+After withdrawing sharing: 1
+```
+
+Only read access without write or share remains. This changes the allowed table;
+it does not change sharing to false in existing rows. See
+[`remove_model`](crate::Tdd::remove_model) and [`insert_model`](crate::Tdd::insert_model)
+for partial assignments and empty inputs.
 
 To combine relations and eliminate columns, see
 [`and_exists`](crate::and_exists) and the [reachability example](crate::guide::examples::reachability).
