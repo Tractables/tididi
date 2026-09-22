@@ -14,7 +14,7 @@ use crate::limits::OperationError;
 /// Slot value in [`resolve_swapped_marginal_side`]'s interners meaning "this count
 /// has no dst slot yet" — the pre-scan collected the key, and the dst seed pass
 /// found no existing slot carrying it. Real slot indices are `< MARGINAL_OVERFLOW_TAG`
-/// (2^30, asserted by `ValueRef::to_raw`), so `u32::MAX` cannot collide with one.
+/// (2^30, asserted by `ValueRef::encode`), so `u32::MAX` cannot collide with one.
 const SLOT_UNSEEDED: u32 = u32::MAX;
 
 /// What [`resolve_swapped_marginal_side`] must do with one marginal-side ref of the
@@ -299,7 +299,7 @@ fn remap_swap_ref(
         // `ZERO` sentinel or already-inline count: store-independent.
         SwapRef::Keep => return raw,
         // Small enough to carry in the ref (bit-30 set): store-independent.
-        SwapRef::Inline(c) => return ValueRef::Inline(c).to_raw().0,
+        SwapRef::Inline(c) => return ValueRef::Inline(c).encode().raw(),
         SwapRef::Mint(s, c) => (s, c),
     };
     // Big (`u128::MAX` sentinel) or large-but-u128 count: re-mint into dst store,

@@ -1,7 +1,6 @@
 //! Where pair fusion and twin contraction meet: a fusion redex that creates
 //! twins, and the fork-down content twins above a boundary parent.
 
-use crate::diagram::MarginalSide;
 use crate::diagram::*;
 use crate::diagram::{NodeIdx, ValueRef};
 use crate::Engine;
@@ -151,7 +150,7 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     );
     let marginal_raw = root_pairs[0].right.0;
     let marginal_counts = tdd.levels[v_right.idx()].marginal_counts().unwrap();
-    let count = match ValueRef::from_raw(MarginalSide(marginal_raw)) {
+    let count = match ChildDecoder::marginal().value(EncodedChildRef::from_raw(marginal_raw)) {
         ValueRef::Slot(s) => marginal_counts[s as usize],
         ValueRef::Inline(c) => c as u128,
     };

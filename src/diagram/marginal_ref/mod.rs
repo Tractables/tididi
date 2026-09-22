@@ -23,40 +23,6 @@ pub(super) const MARGINAL_VALUE_MASK: u32 = MARGINAL_OVERFLOW_TAG - 1;
 /// the child's `marginal_counts` and referenced by index.
 pub(crate) const MARGINAL_INLINE_MAX: u32 = MARGINAL_OVERFLOW_TAG - 1;
 
-/// A pair side whose child level is marginal: the stored word, before decode.
-///
-/// The bits are laid out as
-///
-/// ```text
-///   bit 31    | always 0 — the `EncodedNode` inline-pair encoding claims it
-///   bit 30    | tag: 0 = slot index, 1 = inline count
-///   bits 29..0| payload (the count, or the index into `marginal_counts`)
-/// ```
-///
-/// Bit 30 is a tag only here — on a side whose child level is structural it is
-/// an ordinary index bit, which is why the decode needs the child's kind and
-/// why [`ChildDecoder`] carries it. The [`super::ZERO`] sentinel
-/// (`u32::MAX`) has bit 31 set and so lies outside the encoding entirely; it
-/// never appears in a pair list.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
-#[repr(transparent)]
-pub(crate) struct MarginalSide(pub u32);
-
-impl MarginalSide {
-    /// The word as it is stored in a pair side.
-    pub(crate) fn side(self) -> EncodedChildRef {
-        EncodedChildRef(self.0)
-    }
-
-    /// True when the word is the [`super::ZERO`] sentinel rather than a
-    /// reference into the child level. The sentinel never appears in a stored
-    /// pair; a scratch array being swept can still hold one, and every decode
-    /// tests this before interpreting the payload.
-    pub(crate) fn is_zero_sentinel(self) -> bool {
-        self.side().is_reserved()
-    }
-}
-
 /// The value a pair side denotes when its child level is marginal: either the
 /// count itself or the slot that holds it.
 ///
@@ -89,9 +55,9 @@ impl std::error::Error for ValueRefError {}
 
 impl ValueRef {
     /// Decode a pair side whose child level is marginal.
-    pub(crate) fn from_raw(r: MarginalSide) -> Self {
+    fn from_raw(r: EncodedChildRef) -> Self {
         debug_assert!(
-            !r.is_zero_sentinel(),
+            !r.is_reserved(),
             "marginal-side ref must not be the zero sentinel"
         );
         if r.0 & MARGINAL_OVERFLOW_TAG != 0 {
@@ -119,8 +85,8 @@ impl ValueRef {
     }
 
     /// Encode an internally constructed reference whose payload fits in 30 bits.
-    pub(crate) fn to_raw(self) -> MarginalSide {
-        MarginalSide(self.side().expect("internal marginal reference must fit in 30 bits").raw())
+    pub(crate) fn encode(self) -> EncodedChildRef {
+        self.side().expect("internal marginal reference must fit in 30 bits")
     }
 
     /// Whether `slot_idx` fits the payload a pair side can hold. A store that
@@ -132,14 +98,14 @@ impl ValueRef {
 
     /// Convenience: encode a slot index as a raw u32 marginal-side ref.
     pub(crate) fn slot_raw(slot_idx: u32) -> u32 {
-        ValueRef::Slot(slot_idx).to_raw().0
+        ValueRef::Slot(slot_idx).encode().raw()
     }
 
     /// Convenience: encode an inline count as a raw u32 marginal-side ref.
     /// Returns `None` if the count doesn't fit (caller should allocate a slot).
     pub(crate) fn inline_raw(count: u128) -> Option<u32> {
         if count <= MARGINAL_INLINE_MAX as u128 {
-            Some(ValueRef::Inline(count as u32).to_raw().0)
+            Some(ValueRef::Inline(count as u32).encode().raw())
         } else {
             None
         }
@@ -354,7 +320,7 @@ impl ChildDecoder {
             // Bare-is-slot: a side left over from before the child marginalized
             // is already a valid slot, so nothing needs re-tagging and only the
             // inline optimisation sets bit 30.
-            ChildRef::Value(ValueRef::from_raw(MarginalSide(side.0)))
+            ChildRef::Value(ValueRef::from_raw(side))
         } else {
             ChildRef::Node(NodeIdx(side.0))
         }
@@ -402,7 +368,7 @@ impl ChildDecoder {
         );
         match self.child(side) {
             ChildRef::Node(NodeIdx(i)) => EncodedChildRef(remap[i as usize]),
-            ChildRef::Value(ValueRef::Slot(s)) => ValueRef::Slot(remap[s as usize]).to_raw().side(),
+            ChildRef::Value(ValueRef::Slot(s)) => ValueRef::Slot(remap[s as usize]).encode(),
             ChildRef::Value(ValueRef::Inline(_)) => side,
         }
     }

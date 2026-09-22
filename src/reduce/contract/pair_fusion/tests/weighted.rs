@@ -28,7 +28,7 @@ use num_traits::Zero;
 
 use crate::diagram::{LiteralWeights, RationalWeights, SignedLog, WeightValue};
 use crate::marginal::marginalize_leaf_weighted;
-use crate::diagram::{MarginalSide, LeafLabel, TddLevel, TddNodeId, LEAF_WIDTH};
+use crate::diagram::{ChildDecoder, LeafLabel, TddLevel, TddNodeId, LEAF_WIDTH};
 use crate::diagram::{Arithmetic, WeightStore};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use crate::test_helpers::{rat, toy_weighted};
@@ -171,7 +171,7 @@ fn assert_leaf_column_pinned(tdd: &Tdd, ws: &WeightStore, leaf: VtreeIdx) {
 
 /// Resolve a marginal-side ref to its exact value.
 fn marginal_value(ws: &WeightStore, marginal: VtreeIdx, raw: u32) -> BigRational {
-    let ValueRef::Slot(s) = ValueRef::from_raw(MarginalSide(raw)) else {
+    let ValueRef::Slot(s) = ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw)) else {
         panic!("weighted marginal-side refs are bare slots")
     };
     ws.level(marginal.idx()).expect("weighted level")[s as usize]
@@ -223,10 +223,10 @@ fn assert_refs_and_width_in_sync(tdd: &Tdd, ws: &WeightStore, root: VtreeIdx, ma
         for p in tdd.levels[root.idx()].pairs_of_idx(n) {
             let raw = p.right.0;
             assert!(
-                !MarginalSide(raw).is_zero_sentinel(),
+                !EncodedChildRef::from_raw(raw).is_reserved(),
                 "marginal ref {raw} aliases the ZERO sentinel"
             );
-            match ValueRef::from_raw(MarginalSide(raw)) {
+            match ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw)) {
                 ValueRef::Slot(s) => assert!(
                     (s as usize) < store_len,
                     "slot ref {s} out of range for a store of {store_len}",

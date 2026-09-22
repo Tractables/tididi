@@ -13,7 +13,7 @@
 //! site.
 //!
 //! **Precondition:** parent levels must be in post-tagger form (marginal-side refs
-//! decodable with `ValueRef::from_raw`) — never mid-apply.
+//! decodable with `ChildDecoder`) — never mid-apply.
 //!
 //! Runs at the end of `Engine::reduce` and after each `fuse_pairs_at_parents`
 //! sweep; the contract-only path kills no pairs and skips it.

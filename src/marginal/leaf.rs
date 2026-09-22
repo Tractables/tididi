@@ -1,7 +1,7 @@
 //! Summing out a single-variable vtree leaf, in both representations.
 
 use crate::diagram::WeightValue;
-use crate::diagram::{for_each_side_ref_mut, ChildSide, LeafLabel, MarginalSide, ValueRef, Tdd, TddLevel};
+use crate::diagram::{EncodedChildRef, for_each_side_ref_mut, ChildSide, LeafLabel, ChildDecoder, ValueRef, Tdd, TddLevel};
 use crate::diagram::{leaf_canon_map, leaf_column_vals, leaf_count};
 use crate::diagram::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
@@ -52,7 +52,7 @@ pub(crate) fn marginalize_leaf_inline(
 /// node encoding.
 fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, side: ChildSide) {
     let to_inline = |raw: u32| -> u32 {
-        if MarginalSide(raw).is_zero_sentinel() {
+        if EncodedChildRef::from_raw(raw).is_reserved() {
             return raw; // ZERO sentinel (count 0) — already self-describing
         }
         // Idempotent: a ref that already carries the inline tag (bit 30) is an
@@ -60,7 +60,7 @@ fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, side: ChildSide
         // this guard a re-entry (parent revisited while its leaf-side refs are
         // already inline) would feed a bit-30 value into `LeafLabel::from_idx`,
         // whose `_ => unreachable!` panics (the leaf labels are only 0/1/2).
-        if matches!(ValueRef::from_raw(MarginalSide(raw)), ValueRef::Inline(_)) {
+        if matches!(ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw)), ValueRef::Inline(_)) {
             return raw;
         }
         let count: u128 = match raw {
@@ -96,7 +96,7 @@ pub(crate) fn canonicalize_leaf_refs_at_parent(
          the walk rather than pay a level scan that rewrites nothing"
     );
     let to_canon = |raw: u32| -> u32 {
-        if MarginalSide(raw).is_zero_sentinel() {
+        if EncodedChildRef::from_raw(raw).is_reserved() {
             return raw; // ZERO sentinel — carries no slot
         }
         // A weighted leaf side is a bare slot in the pinned label range: the

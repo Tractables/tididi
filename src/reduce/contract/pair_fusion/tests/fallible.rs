@@ -2,7 +2,7 @@ use super::*;
 use crate::diagram::{ValueRef, NodeIdx};
 use crate::Engine;
 use crate::diagram::*;
-use crate::diagram::{MarginalSide, TddLevel, TddNodeId};
+use crate::diagram::{ChildDecoder, TddLevel, TddNodeId};
 use crate::vtree::{Vtree, VtreeNode};
 use std::sync::Arc;
 
@@ -132,7 +132,7 @@ fn fusion_sums_inline_inline_pairs() {
     let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
     assert_eq!(pairs.len(), 1, "fusion must collapse two pairs to one");
     let fused_raw = pairs[0].right.0;
-    let fused_count = match ValueRef::from_raw(MarginalSide(fused_raw)) {
+    let fused_count = match ChildDecoder::marginal().value(EncodedChildRef::from_raw(fused_raw)) {
         ValueRef::Inline(v) => v as u128,
         ValueRef::Slot(s) => counts[s as usize],
     };
@@ -184,7 +184,7 @@ fn fusion_groups_by_inline_explicit_refs() {
         .iter()
         .find(|p| p.left.0 == inline_3)
         .expect("the fused pair keeps its explicit-side ref");
-    let fused_count = match ValueRef::from_raw(MarginalSide(fused.right.0)) {
+    let fused_count = match ChildDecoder::marginal().value(fused.right) {
         ValueRef::Inline(v) => v as u128,
         ValueRef::Slot(s) => counts[s as usize],
     };
@@ -240,7 +240,7 @@ fn fusion_sums_inline_plus_slot_into_slot() {
     let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
     assert_eq!(pairs.len(), 1, "fusion must collapse two pairs to one");
     let fused_raw = pairs[0].right.0;
-    let fused_ref = ValueRef::from_raw(MarginalSide(fused_raw));
+    let fused_ref = ChildDecoder::marginal().value(EncodedChildRef::from_raw(fused_raw));
     assert!(
         matches!(fused_ref, ValueRef::Slot(_)),
         "fused count (1<<40)+5 must be a slot ref (bit-30 clear); got {fused_ref:?}",
@@ -293,7 +293,7 @@ fn fusion_sums_identical_ref_occurrences() {
     let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
     let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
     assert_eq!(pairs.len(), 1, "fusion must collapse the two identical pairs to one");
-    let fused_count = match ValueRef::from_raw(MarginalSide(pairs[0].right.0)) {
+    let fused_count = match ChildDecoder::marginal().value(pairs[0].right) {
         ValueRef::Inline(v) => v as u128,
         ValueRef::Slot(s) => counts[s as usize],
     };
@@ -346,7 +346,7 @@ fn fusion_partitions_two_independent_x_groups() {
     // Map each surviving fused pair by its preserved x-side (left) index.
     let mut by_left: std::collections::HashMap<u32, u128> = std::collections::HashMap::new();
     for p in pairs {
-        let c = match ValueRef::from_raw(MarginalSide(p.right.0)) {
+        let c = match ChildDecoder::marginal().value(p.right) {
             ValueRef::Inline(v) => v as u128,
             ValueRef::Slot(s) => counts[s as usize],
         };

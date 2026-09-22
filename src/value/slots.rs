@@ -360,7 +360,7 @@ impl SlotValues for WeightFold {
         }
         tdd.levels[v.idx()].set_weight_width(s + 1);
         debug_assert!(
-            !ValueRef::Slot(s).to_raw().side().is_reserved(),
+            !ValueRef::Slot(s).encode().is_reserved(),
             "a minted weighted marginal ref must never alias the zero sentinel",
         );
         Ok(s)

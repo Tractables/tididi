@@ -21,7 +21,7 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::diagram::{CountOverflow, ChildPair, Tdd, TddLevel};
+use crate::diagram::{EncodedChildRef, CountOverflow, ChildPair, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::{ChildSide, boundary_marginal_levels};
@@ -134,14 +134,14 @@ pub fn check_pair_fusion_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> R
 
 /// Decide whether a group's exact sum can be stored without changing a pinned column.
 fn fusion_value_representable(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> bool {
-    use crate::diagram::{MarginalSide, ValueRef};
+    use crate::diagram::{ChildDecoder, ValueRef};
     let Some(ws) = tdd.weights().filter(|_| tdd.vtree.node(v).is_leaf()) else {
         return true;
     };
     let col = ws.level(v.idx()).expect("weighted marginal leaf has a column");
     let mut sum = num_rational::BigRational::from_integer(0.into());
     for &raw in refs {
-        let ValueRef::Slot(slot) = ValueRef::from_raw(MarginalSide(raw)) else {
+        let ValueRef::Slot(slot) = ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw)) else {
             panic!("weighted marginal references are slots");
         };
         sum += col[slot as usize].as_rational().as_ref();

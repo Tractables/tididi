@@ -4,7 +4,6 @@
 
 use crate::Engine;
 use crate::diagram::{ValueRef, NodeIdx};
-use crate::diagram::MarginalSide;
 use crate::diagram::*;
 use crate::vtree::Vtree;
 use std::sync::Arc;
@@ -113,7 +112,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
         .iter()
         .map(|pr| {
             let p_pair = tdd.levels[bp.idx()].pairs_of_idx(pr.left.0 as usize)[0];
-            match ValueRef::from_raw(MarginalSide(p_pair.right.0)) {
+            match ChildDecoder::marginal().value(p_pair.right) {
                 ValueRef::Slot(sl) => marginal_counts[sl as usize],
                 ValueRef::Inline(c) => c as u128,
             }
@@ -236,7 +235,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
                 let mut acc = BigRational::from_integer(BigInt::from(0));
                 for &(l, _) in &surv_pairs {
                     let p_pair = tdd.levels[bp.idx()].pairs_of_idx(l as usize)[0];
-                    let slot = match ValueRef::from_raw(MarginalSide(p_pair.right.0)) {
+                    let slot = match ChildDecoder::marginal().value(p_pair.right) {
                         ValueRef::Slot(sl) => sl as usize,
                         ValueRef::Inline(_) => unreachable!("weighted marginal ref is never inline"),
                     };
@@ -357,7 +356,7 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
 
     let marginal_counts = tdd.levels[m_v.idx()].marginal_counts().unwrap();
     let decode = |raw: u32| -> u128 {
-        match ValueRef::from_raw(MarginalSide(raw)) {
+        match ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw)) {
             ValueRef::Slot(sl) => marginal_counts[sl as usize],
             ValueRef::Inline(c) => c as u128,
         }
@@ -474,7 +473,7 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
     // Survivor: one pair whose marginal ref decodes to Pos(1)·2 = 2.
     assert_eq!(tdd.levels[bp.idx()].pair_count_at(0), 1, "duplicate must collapse to 1 pair");
     let scaled_ref = tdd.levels[bp.idx()].pairs_of_idx(0)[0].right.0;
-    let count = match ValueRef::from_raw(MarginalSide(scaled_ref)) {
+    let count = match ChildDecoder::marginal().value(EncodedChildRef::from_raw(scaled_ref)) {
         ValueRef::Inline(c) => c as u128,
         ValueRef::Slot(_) => panic!("leaf scale must inline, never mint a leaf slot"),
     };

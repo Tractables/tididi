@@ -383,7 +383,7 @@ fn streaming_exact_fallback_handles_inline_counts_and_accumulation_overflow() {
     let right = StreamChild::<IntFold> { col: column.as_count_ref(), is_marginal: true };
     let inline = [0, 7, crate::diagram::MARGINAL_INLINE_MAX];
     let pairs: Vec<_> = inline.into_iter().map(|n| ChildPair {
-        left: EncodedChildRef::from_raw(ValueRef::Inline(n).to_raw().0),
+        left: ValueRef::Inline(n).encode(),
         right: EncodedChildRef::from_raw(0),
     }).collect();
     assert_eq!(IntFold::fold_cell(&pairs, &left, &right, &()),

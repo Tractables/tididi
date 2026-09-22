@@ -1,7 +1,7 @@
 //! Multiplying a duplicate pair's marginal side by its run length.
 
 use crate::Engine;
-use crate::diagram::{ChildPair, ChildSide, EncodedChildRef, LeafLabel, MarginalSide, Tdd, ValueRef};
+use crate::diagram::{leaf_count, ChildPair, ChildSide, EncodedChildRef, LeafLabel, ChildDecoder, Tdd, ValueRef};
 
 use crate::limits::OperationError;
 use crate::value::slots::{mint_ref, scaled_weight, SlotValues};
@@ -29,24 +29,18 @@ fn scale_ref<D: SlotValues>(eng: &Engine, tdd: &mut Tdd, mv: VtreeIdx, raw: u32,
 /// store. A bare `Slot(s)` ref is a leaf-label index — decoded with the same
 /// fixed-count mapping as `read_marginal_count`;
 /// an `Inline(c)` ref carries the count directly. Returns the scaled value as an
-/// inline ref (`Some(Ok(..))`), or `None` when the scaled value cannot inline:
+/// inline ref (`Some(..)`), or `None` when the scaled value cannot inline:
 /// the leaf side cannot absorb the factor, and we must never mint a slot into a
 /// leaf store, so the caller routes the factor to the other side / bails.
-fn scale_leaf_marginal_label(raw: u32, k: u32) -> Option<Result<u32, OperationError>> {
-    let base: u128 = match ValueRef::from_raw(MarginalSide(raw)) {
+fn scale_leaf_marginal_label(raw: u32, k: u32) -> Option<u32> {
+    let base: u128 = match ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw)) {
         ValueRef::Inline(c) => c as u128,
-        // Same fixed-count mapping as `read_marginal_count`: a bare leaf ref is a
-        // `LeafLabel` index (Zero→0, One→2, Pos|Neg→1), not a store slot.
-        ValueRef::Slot(s) => match LeafLabel::from_idx(s as usize) {
-            LeafLabel::Zero => 0,
-            LeafLabel::One => 2,
-            LeafLabel::Pos | LeafLabel::Neg => 1,
-        },
+        ValueRef::Slot(s) => leaf_count(LeafLabel::from_idx(s as usize)),
     };
     // base ≤ 2 (label) or ≤ `MARGINAL_INLINE_MAX` (inline), k ≤ 2^32−1 ⇒ product fits u128.
     let scaled = base * k as u128;
     // `None` (can't inline) ⇒ this side can't absorb — never mint into a leaf store.
-    ValueRef::inline_raw(scaled).map(Ok)
+    ValueRef::inline_raw(scaled)
 }
 
 /// Scale a ref into a weight-marginal leaf by `k` without minting: compute
@@ -54,13 +48,9 @@ fn scale_leaf_marginal_label(raw: u32, k: u32) -> Option<Result<u32, OperationEr
 /// three slots (`diagram::find_leaf_slot_by_value`), returning the slot ref if
 /// it is there and `None` if it is not.
 ///
-/// This is the weighted counterpart of `scale_leaf_marginal_label`'s inline
-/// absorb. The integer arm can encode any scaled count in the ref itself; a
-/// weighted `ValueRef::Inline(gidx)` indexes the store's intern
-/// table, so the only representable results here are the column's existing
-/// values. After `marginal::canonicalize_leaf_refs_at_parent` the duplicate
-/// runs that reach this path have equal values, and for `w⁺ = w⁻` the product
-/// lands on the column: `2·Pos = w⁺+w⁻ = One`.
+/// Unlike integer counts, weighted values cannot be inlined. The result must
+/// already occur in the pinned column. For equal literal weights,
+/// `2 · Pos = w⁺ + w⁻ = One`.
 ///
 /// Exact domain only: in log mode `weight_key` equality compares `f64` bit
 /// patterns, so a hit would be a rounding coincidence, and we decline.
@@ -72,27 +62,17 @@ fn scale_weight_leaf_by_lookup(
 ) -> Option<u32> {
     use crate::diagram::find_leaf_slot_by_value;
     debug_assert!(k >= 2);
-    // The zero sentinel (bit 31) names no slot. A weighted leaf side carries no
-    // inline (bit-30) ref either — nothing mints one — so both decline rather
-    // than being decoded as a column index.
-    if MarginalSide(raw).is_zero_sentinel()
-        || matches!(ValueRef::from_raw(MarginalSide(raw)), ValueRef::Inline(_))
-    {
+    let side = EncodedChildRef::from_raw(raw);
+    if side.is_reserved() || ws.is_log() {
         return None;
     }
-    let slot = raw as usize;
-    {
-        if ws.is_log() {
-            return None;
-        }
-        let base = ws.level(cv.idx())?.get(slot)?;
-        let want = scaled_weight(ws, base, k);
-        // The shared search scans in ascending slot order, so the hit is the
-        // canonical slot for that value (`leaf_canon_map`'s min-index rule). Folding
-        // onto anything else would re-introduce exactly the non-canonical ref the
-        // canon pass exists to remove.
-        find_leaf_slot_by_value(ws, cv.idx(), &want).map(ValueRef::slot_raw)
-    }
+    let ValueRef::Slot(slot) = ChildDecoder::marginal().value(side) else {
+        return None;
+    };
+    let base = ws.level(cv.idx())?.get(slot as usize)?;
+    let want = scaled_weight(ws, base, k);
+    // The first matching slot is the canonical representative of this value.
+    find_leaf_slot_by_value(ws, cv.idx(), &want).map(ValueRef::slot_raw)
 }
 
 /// Try to scale the O(1)-absorbing side of a pair: the ref `raw` into the
@@ -111,28 +91,26 @@ fn try_scale_child(
         tdd.levels[cv.idx()].is_marginal(),
         "try_scale_child: only a marginal child is an O(1) absorber",
     );
-    {
-        // At a leaf nothing is minted. An integer-marginal leaf has an empty
-        // store: a bare ref is a leaf label (decoded as `read_marginal_count`
-        // does), so the label is scaled and inlined, or `None` says this side
-        // cannot absorb. A weight-marginal leaf's column is pinned
-        // (`test_helpers::check::marginal::check_leaf_columns_pinned`), so the
-        // scaled value is looked up in the column and `None` returned when it
-        // is absent. On `None` the caller tries the other side or keeps the
-        // run as k multiset terms; nothing has been mutated at that point.
-        if tdd.vtree.node(cv).is_leaf() {
-            if tdd.levels[cv.idx()].is_weight_marginal() {
-                let ws = tdd.weight_store();
-                return scale_weight_leaf_by_lookup(ws, cv, raw, k).map(Ok);
-            }
-            return scale_leaf_marginal_label(raw, k);
+    // At a leaf nothing is minted. An integer-marginal leaf has an empty
+    // store: a bare ref is a leaf label (decoded as `read_marginal_count`
+    // does), so the label is scaled and inlined, or `None` says this side
+    // cannot absorb. A weight-marginal leaf's column is pinned
+    // (`test_helpers::check::marginal::check_leaf_columns_pinned`), so the
+    // scaled value is looked up in the column and `None` returned when it
+    // is absent. On `None` the caller tries the other side or keeps the
+    // run as k multiset terms; nothing has been mutated at that point.
+    if tdd.vtree.node(cv).is_leaf() {
+        if tdd.levels[cv.idx()].is_weight_marginal() {
+            let ws = tdd.weight_store();
+            return scale_weight_leaf_by_lookup(ws, cv, raw, k).map(Ok);
         }
-        Some(if tdd.levels[cv.idx()].is_weight_marginal() {
-            scale_ref::<WeightFold>(eng, tdd, cv, raw, k)
-        } else {
-            scale_ref::<IntFold>(eng, tdd, cv, raw, k)
-        })
+        return scale_leaf_marginal_label(raw, k).map(Ok);
     }
+    Some(if tdd.levels[cv.idx()].is_weight_marginal() {
+        scale_ref::<WeightFold>(eng, tdd, cv, raw, k)
+    } else {
+        scale_ref::<IntFold>(eng, tdd, cv, raw, k)
+    })
 }
 
 /// True when a duplicate run at plain level `pv` has an O(1) absorber: one of
@@ -168,15 +146,7 @@ pub(super) fn scale_pair_one_side(
     k: u32,
 ) -> Option<Result<ScaledPair, OperationError>> {
     let (lv, rv) = tdd.vtree.children(pv);
-    // Right first unless the left side is the only O(1) absorber.
-    let left_first =
-        tdd.levels[lv.idx()].is_marginal() && !tdd.levels[rv.idx()].is_marginal();
-    let order = if left_first {
-        [ChildSide::Left, ChildSide::Right]
-    } else {
-        [ChildSide::Right, ChildSide::Left]
-    };
-    for side in order {
+    for side in [ChildSide::Right, ChildSide::Left] {
         let (cv, raw) = match side {
             ChildSide::Left => (lv, l),
             ChildSide::Right => (rv, r),
@@ -192,8 +162,7 @@ pub(super) fn scale_pair_one_side(
             Ok(v) => v,
             Err(e) => return Some(Err(e)),
         };
-        let inlined = if tdd.levels[cv.idx()].is_marginal()
-            && matches!(ValueRef::from_raw(MarginalSide(new_raw)), ValueRef::Inline(_))
+        let inlined = if matches!(ChildDecoder::marginal().value(EncodedChildRef::from_raw(new_raw)), ValueRef::Inline(_))
         {
             Some(side)
         } else {

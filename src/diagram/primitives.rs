@@ -26,7 +26,7 @@ impl NodeIdx {
     /// Bit 31 is the one test, whatever the side's child level turns out to
     /// be: a structural index is bounded by the level's width and a marginal
     /// side leaves bit 31 clear by construction (see
-    /// [`MarginalSide`](super::MarginalSide)), so only [`ZERO`] and the
+    /// [`ValueRef`](super::ValueRef)), so only [`ZERO`] and the
     /// scratch words that carry it set it.
     pub(crate) fn is_reserved(self) -> bool {
         self.0 & RESERVED_BIT != 0

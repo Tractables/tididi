@@ -340,7 +340,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     levels[v_marginal.idx()].set_counts_state(vec![C, C, D], None);
 
     // v_parent4: two 2-pair nodes p and q.
-    //   Marg-side (right) refs are bare indices (`ValueRef::Slot(i).to_raw().0 == i`,
+    //   Marg-side (right) refs are bare indices (`ValueRef::Slot(i).encode().raw() == i`,
     //   bit-30 clear). BIG values cannot inline; slot-prune leaves them as slots.
     //   p: [(Pos, slot_0), (Neg, slot_2)]
     //   q: [(Pos, slot_1), (Neg, slot_2)]

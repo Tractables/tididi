@@ -1,4 +1,3 @@
-use crate::diagram::MarginalSide;
 use crate::diagram::*;
 use crate::diagram::{NodeIdx, ValueRef};
 use crate::Engine;
@@ -230,7 +229,7 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
     // Tagger rewrites both small-count slot refs to Inline(5) — equal raws.
     crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
     for p in tdd.levels[root.idx()].pairs_of_idx(0) {
-        match ValueRef::from_raw(MarginalSide(p.right.0)) {
+        match ChildDecoder::marginal().value(p.right) {
             ValueRef::Inline(c) => assert_eq!(c, 5, "tagger must inline count 5"),
             other => panic!("sibling ref must be inline after tagging, got {other:?}"),
         }
@@ -247,7 +246,7 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
     );
     let parent_node_pairs = tdd.levels[root.idx()].pairs_of_idx(0);
     assert_eq!(parent_node_pairs.len(), 1, "duplicate pair must be removed");
-    match ValueRef::from_raw(MarginalSide(parent_node_pairs[0].right.0)) {
+    match ChildDecoder::marginal().value(parent_node_pairs[0].right) {
         ValueRef::Inline(c) => assert_eq!(c, 5, "merged pair keeps the inline count"),
         other => panic!("merged sibling must stay inline, got {other:?}"),
     }
@@ -375,7 +374,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
 
     // The surviving root pair must reference the new sum slot.
     let sum_slot_raw = root_pairs[0].left.0;
-    match ValueRef::from_raw(MarginalSide(sum_slot_raw)) {
+    match ChildDecoder::marginal().value(EncodedChildRef::from_raw(sum_slot_raw)) {
         ValueRef::Slot(s) => assert_eq!(
             s, 2,
             "surviving pair must reference new sum slot (index 2); got slot {s}",
@@ -483,7 +482,7 @@ fn p_fusion_redex_closed_within_contract_all_twins() {
     // The surviving marginal-side ref must decode to the summed count `COUNT_SUM`.
     let surviving_raw = root_pairs[0].right.0;
     let marginal_counts = tdd.levels[v_right.idx()].marginal_counts().unwrap();
-    let fused_count = match ValueRef::from_raw(MarginalSide(surviving_raw)) {
+    let fused_count = match ChildDecoder::marginal().value(EncodedChildRef::from_raw(surviving_raw)) {
         ValueRef::Slot(s) => marginal_counts[s as usize],
         ValueRef::Inline(v) => v as u128,
     };

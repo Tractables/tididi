@@ -6,7 +6,7 @@ mod rewrite;
 
 use crate::Engine;
 use crate::limits::OperationError;
-use crate::diagram::{MarginalSide, Tdd, ValueRef};
+use crate::diagram::{EncodedChildRef, ChildDecoder, Tdd, ValueRef};
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::{ChildSide, boundary_marginal_levels_into};
@@ -153,7 +153,7 @@ fn fuse_boundary<D: SlotValues>(
             return Ok(());
         }
         plans.iter().any(|plan| {
-            matches!(ValueRef::from_raw(MarginalSide(plan.new_ref)), ValueRef::Inline(_))
+            matches!(ChildDecoder::marginal().value(EncodedChildRef::from_raw(plan.new_ref)), ValueRef::Inline(_))
         })
     } else {
         allocate_fusion_slots::<D>(eng, tdd, v, &mut plans)?

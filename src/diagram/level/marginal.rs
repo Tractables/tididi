@@ -42,7 +42,7 @@ impl TddLevel {
                 // Counts at marginalization are ≥ 1 on any compile path (apply
                 // is zero-suppressed), so `Inline(0)` arises only from a
                 // hand-built diagram.
-                ValueRef::Inline(c as u32).to_raw().0
+                ValueRef::Inline(c as u32).encode().raw()
             } else {
                 raw // keep as a bare slot (bit-30 clear)
             }
