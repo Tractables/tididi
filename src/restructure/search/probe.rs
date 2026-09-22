@@ -215,13 +215,22 @@ impl Tdd {
         F: FnOnce(&RotationProbe<'_>) -> bool,
     {
         let context = Arc::clone(self.context());
-        context.run(|eng| {
-            let _op = eng.limits().begin_operation();
-            let mut scratch = eng.restructure().checkout(eng.limits());
-            let mut rule = Closure { accept: Some(accept) };
-            probe_moves(eng, self, moves, &mut rule, &mut scratch, bound)
-        })
+        context.run(|eng| rotate_if_on(eng, self, moves, bound, accept))
     }
+}
+
+/// Run a standalone trial using the caller's scratch and resource limits.
+pub(super) fn rotate_if_on(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    moves: &[RotationMove],
+    bound: usize,
+    accept: impl FnOnce(&RotationProbe<'_>) -> bool,
+) -> Result<bool, OperationError> {
+    let _op = eng.limits().begin_operation();
+    let mut scratch = eng.restructure().checkout(eng.limits());
+    let mut rule = Closure { accept: Some(accept) };
+    probe_moves(eng, tdd, moves, &mut rule, &mut scratch, bound)
 }
 
 /// The rule a [`Tdd::rotate_if`] call probes under: the caller's closure,

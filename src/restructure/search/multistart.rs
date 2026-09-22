@@ -27,7 +27,8 @@ pub struct MultistartConfig {
     /// The seed the kicks are drawn from. The same seed gives the same
     /// restarts.
     pub seed: u64,
-    /// The configuration each search runs under.
+    /// The configuration each search runs under. Its `max_inner_pairs` bound
+    /// also applies to the random rotations before each search.
     pub search: RotationSearchConfig,
 }
 
@@ -93,7 +94,7 @@ impl crate::Engine {
         let mut rng = Lcg::new(config.seed);
         for round in 1..=config.restarts {
             let mut candidate = tdd.clone();
-            kick(self, &mut candidate, config.kick, &mut rng)?;
+            kick(self, &mut candidate, config.kick, config.search.max_inner_pairs, &mut rng)?;
             let run = self.rotation_search(&mut candidate, objective, &config.search)?;
             add(&mut stats.search, &run);
             stats.rounds += 1;
@@ -114,6 +115,7 @@ fn kick(
     eng: &crate::Engine,
     tdd: &mut Tdd,
     count: usize,
+    bound: usize,
     rng: &mut Lcg,
 ) -> Result<(), OperationError> {
     for _ in 0..count {
@@ -121,7 +123,7 @@ fn kick(
         let pivot = VtreeIdx(rng.below(nodes) as u32);
         let kind = if rng.below(2) == 0 { RotationKind::Left } else { RotationKind::Right };
         eng.limits().check_stop()?;
-        tdd.rotate_if(&[RotationMove { pivot, kind }], usize::MAX, |_| true)?;
+        super::probe::rotate_if_on(eng, tdd, &[RotationMove { pivot, kind }], bound, |_| true)?;
     }
     Ok(())
 }
@@ -132,3 +134,7 @@ fn add(total: &mut RotationSearchStats, round: &RotationSearchStats) {
     total.accepts += round.accepts;
     total.sweeps += round.sweeps;
 }
+
+#[cfg(test)]
+#[path = "tests/multistart.rs"]
+mod tests;

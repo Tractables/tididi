@@ -165,19 +165,6 @@ impl ProbeRule for ClusterRule {
         };
         MinimizePairs.delta(probe) < credit
     }
-
-    /// Collapse the cluster the rotation just created. An `Err` here is the
-    /// caller's wall passing mid-closure: the rotation is committed and
-    /// count-preserving, and what the cut leaves behind is a level that is
-    /// still structural, not a level that is wrong.
-    fn on_accept(
-        &mut self,
-        eng: &Engine,
-        tdd: &mut Tdd,
-        _info: &RotationInfo,
-    ) -> Result<(), OperationError> {
-        crate::marginal::marginalize_closure(eng, tdd).map(|_| ())
-    }
 }
 
 /// The pair count of the two levels a rotation rebuilds — what both the local
@@ -259,12 +246,8 @@ impl Engine {
         loop {
             let mut progress = false;
             for (v, kind) in cands {
-                // The cut lands between attempts: an attempt either commits its rotation and
-                // closes the cluster or reverts everything it touched, so the pass is
-                // only ever interrupted at a point where the diagram is one some
-                // completed attempt left behind. `tried` keeps whatever it recorded —
-                // a pivot marked before the cut is one this compile will not
-                // reconsider, which is the flag's own best-effort contract.
+                // Poll between attempts. A later closure refusal retains its
+                // committed rotation and the attempt flags already recorded.
                 poll.poll(tdd.levels[v.idx()].live_pairs() as u64 + 1)?;
                 // Attempt-once per (pivot, kind). Marginality is monotonic within a
                 // compile, so a rejected cluster stays a candidate and — without this
@@ -284,7 +267,9 @@ impl Engine {
                 }
                 tried[v.idx()] |= bit;
                 if probe(eng, tdd, v, kind, &mut rule, &mut scratch, usize::MAX)? {
+                    // Keep the committed vtree even if the follow-up closure fails.
                     search.original = None;
+                    crate::marginal::marginalize_closure(eng, tdd)?;
                     accepted += 1;
                     progress = true;
                 }

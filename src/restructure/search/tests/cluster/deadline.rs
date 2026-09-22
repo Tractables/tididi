@@ -30,7 +30,7 @@ use crate::test_helpers::deadline_probe;
 /// `root = (A, w)` and `w = (B, C)` with A and B already forgotten, so a
 /// LEFT rotation at the root would bring the two marginal levels under one
 /// parent. Returns the diagram, its root, and its model count.
-fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
+pub(super) fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
     let eng = Engine::new();
     let vt_str = "vtree 9\n\
         L 0 1\nL 1 2\nI 2 0 1\n\
