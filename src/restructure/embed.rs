@@ -138,9 +138,8 @@ impl Engine {
 
 /// What each destination node does in the copy, and where each source level went.
 struct Plan {
-    /// Renamed variables in each destination node's subtree. Zero marks a
-    /// subtree the renaming does not reach.
-    mapped: Vec<u32>,
+    /// Whether each destination subtree contains a renamed source variable.
+    mapped: Vec<bool>,
     /// The source node a destination node is the image of, where there is one.
     covered_by: Vec<Option<VtreeIdx>>,
     /// The destination node each source node maps to.
@@ -166,23 +165,26 @@ impl Plan {
         }
         let source = tdd.vtree();
         let mut mapped = Vec::new();
-        lim.try_resize(&mut mapped, into.num_nodes(), 0u32)?;
+        lim.try_resize(&mut mapped, into.num_nodes(), false)?;
         let mut embedding = Vec::new();
         lim.try_resize(&mut embedding, source.num_nodes(), into.root())?;
+        let mut gate = lim.gate();
         for (leaf, var) in source.leaf_bottomup() {
+            gate.poll(1)?;
             let image = map(var);
             let target = into.leaf_of(image).ok_or(GraftError::VariableOutOfRange {
                 variable: image,
                 num_vars: into.num_vars(),
             })?;
-            if mapped[target.idx()] != 0 {
+            if mapped[target.idx()] {
                 return Err(VtreeError::OverlappingVariable(image).into());
             }
-            mapped[target.idx()] = 1;
+            mapped[target.idx()] = true;
             embedding[leaf.idx()] = target;
         }
         for (t, left, right) in into.internal_bottomup() {
-            mapped[t.idx()] = mapped[left.idx()] + mapped[right.idx()];
+            gate.poll(1)?;
+            mapped[t.idx()] = mapped[left.idx()] || mapped[right.idx()];
         }
 
         let mut covered_by = Vec::new();
@@ -190,10 +192,11 @@ impl Plan {
         let mut stack = Vec::new();
         lim.try_push(&mut stack, (into.root(), source.root()))?;
         while let Some((d, s)) = stack.pop() {
+            gate.poll(1)?;
             if !into.node(d).is_leaf() {
                 let (left, right) = into.children(d);
-                if mapped[left.idx()] == 0 || mapped[right.idx()] == 0 {
-                    let carries = if mapped[left.idx()] == 0 { right } else { left };
+                if !mapped[left.idx()] || !mapped[right.idx()] {
+                    let carries = if !mapped[left.idx()] { right } else { left };
                     lim.try_push(&mut stack, (carries, s))?;
                     continue;
                 }
@@ -217,6 +220,7 @@ impl Plan {
             source.num_nodes(),
             "a completed match gives every source level an image",
         );
+        gate.flush()?;
         Ok(Plan { mapped, covered_by, embedding })
     }
 }
@@ -269,14 +273,14 @@ fn fill(
         }
         gate.poll(1)?;
         let (left, right) = into.children(t);
-        if plan.mapped[t.idx()] == 0 {
+        if !plan.mapped[t.idx()] {
             builder.push(eng, t, &[ChildPair::new(true_node(into, left), true_node(into, right))])?;
         } else if let Some(source) = plan.covered_by[t.idx()] {
             let view = LevelView::unweighted(tdd.level(source))
                 .expect("a diagram with no marginal level has no weighted level");
             builder.replace_level(eng, t, view)?;
         } else {
-            let free_is_left = plan.mapped[left.idx()] == 0;
+            let free_is_left = !plan.mapped[left.idx()];
             let (free, carries) = if free_is_left { (left, right) } else { (right, left) };
             let one = true_node(into, free);
             let carries_leaf = into.node(carries).is_leaf();

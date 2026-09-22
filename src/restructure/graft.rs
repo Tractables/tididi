@@ -179,32 +179,12 @@ fn graft_impl(
     for (k, tdd) in parts.iter_mut().enumerate() {
         let comp_to_full_k = &layout.comp_to_full[k];
         let mut part_ws = merged.as_ref().and_then(|_| tdd.detach_weights());
-        // Indexes `comp_to_full_k` and the component vtree at the same position.
-        #[expect(clippy::needless_range_loop)]
-        for c_idx in 0..tdd.vtree.num_nodes() {
-            let f_idx = comp_to_full_k[c_idx];
+        for (c_idx, &f_idx) in comp_to_full_k.iter().enumerate() {
             if tdd.levels[c_idx].is_weight_marginal()
                 && let (Some(merged), Some(part_ws)) = (merged.as_mut(), part_ws.as_mut())
                 && let Some(values) = part_ws.take_level(c_idx)
             {
                 merged.set_level(f_idx.idx(), values);
-            }
-            if tdd.vtree.node(VtreeIdx(c_idx as u32)).is_leaf() {
-                // A non-marginal leaf carries no state — the fresh `TddLevel::new()`
-                // already at the grafted position is its correct representation, so
-                // skip the move. A leaf-marginalized leaf, however, carries its
-                // `is_marginal()` flag (with an empty store): the signal every reader
-                // uses to decode the parent's inline leaf-count refs (bit-30). If the
-                // graft drops it, the parent's relocated inline refs outlive the
-                // child's marginal flag, and prune / model-count misread the inline
-                // count as a node index, reading out of bounds. Relocate marginal
-                // leaves so the invariant "parent inlined leaf ⟺ leaf level
-                // `is_marginal`" survives.
-                if tdd.levels[c_idx].is_marginal() {
-                    levels[f_idx.idx()] =
-                        std::mem::take(&mut tdd.levels[c_idx]);
-                }
-                continue;
             }
             levels[f_idx.idx()] = std::mem::take(&mut tdd.levels[c_idx]);
         }

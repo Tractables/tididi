@@ -85,3 +85,73 @@ fn a_diagram_with_a_marginal_level_is_refused() {
         Err(GraftError::Operation(OperationError::MarginalLevel(_))),
     ));
 }
+
+#[test]
+fn embedding_checks_planning_work_before_the_false_shortcut() {
+    use crate::limits::{LimitConfig, StopAt, StopRules};
+
+    let small = Arc::new(Vtree::linear(2));
+    let f = Tdd::zero(&small);
+    let big = Arc::new(Vtree::linear(8));
+    assert_canonical(&f);
+    for stride in [None, Some(1)] {
+        let engine = Engine::new();
+        engine.limits().pin_reduce_poll_stride(stride);
+        let result = {
+            let _scope = engine.limits().scope(LimitConfig::none().with_stop_rules(StopRules {
+                unconditional: Some(StopAt::WorkUnits(1)), ..StopRules::default()
+            }));
+            engine.embed(&f, &big, |var| VarId(var.0 + 2))
+        };
+        assert_eq!(result.unwrap_err(), GraftError::Operation(OperationError::Stopped));
+        let (g, levels) = engine.embed(&f, &big, |var| VarId(var.0 + 2)).unwrap();
+        assert_canonical(&g);
+        assert!(g.is_zero());
+        for (leaf, var) in small.leaf_bottomup() {
+            assert_eq!(levels.level_of(leaf), big.leaf_of(VarId(var.0 + 2)).unwrap());
+        }
+    }
+}
+
+#[test]
+fn embedding_retries_after_each_refused_reservation_without_changing_the_source() {
+    use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+
+    let (_, mut f) = pair_relation();
+    f.set_weights(WeightStore::new(RationalWeights::unit(2), Arithmetic::ExactRational)).unwrap();
+    let before = format!("{f:?}");
+    let big = Arc::new(Vtree::linear(6));
+    let rename = |var: VarId| VarId(if var == VarId(1) { 2 } else { 5 });
+    let expected = Tdd::clause(&big, [2, 5]).unwrap();
+    assert_canonical(&f);
+    assert_canonical(&expected);
+    let mut completed = false;
+    let mut refusals = 0;
+    for cut in 0..256 {
+        let engine = Engine::new();
+        engine.limits().refuse_nth_reserve(cut);
+        let result = engine.embed(&f, &big, rename);
+        engine.limits().grant_every_reserve();
+        let (g, levels) = match result {
+            Ok(result) => { completed = true; result }
+            Err(error) => {
+                assert_eq!(error, GraftError::Operation(OperationError::OverBudget));
+                refusals += 1;
+                engine.embed(&f, &big, rename).unwrap()
+            }
+        };
+        assert_canonical(&g);
+        assert!(g.equivalent(&expected).unwrap());
+        assert!(g.weights().is_none());
+        for (leaf, var) in f.vtree().leaf_bottomup() {
+            assert_eq!(levels.level_of(leaf), big.leaf_of(rename(var)).unwrap());
+        }
+        assert_eq!(format!("{f:?}"), before);
+        assert!(f.weights().is_some());
+        assert_eq!(f.weighted_value().unwrap().unwrap().as_rational().into_owned(),
+            num_rational::BigRational::from_integer(3.into()));
+        assert_canonical(&f);
+        if completed { break; }
+    }
+    assert!(completed && refusals > 0, "cover planning, assembly and cleanup reservations");
+}
