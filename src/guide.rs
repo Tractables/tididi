@@ -44,6 +44,7 @@ walkthroughs! {
     persistence => ("Saving and loading", "Save circuits and restore them for later use."),
     vtrees => ("Variable grouping", "Compare circuit sizes under different vtrees."),
     composition => ("Reusable components", "Place a compiled circuit in a larger model and connect its copies."),
+    care => ("Simplify under assumptions", "Reduce a circuit where a care set is guaranteed to hold."),
     execution => ("Execution limits", "Bound work and release retained scratch buffers."),
     optimization => ("Minimum costs", "Define a custom evaluation algebra."),
     statistics => ("Circuit statistics", "Traverse nodes and pairs for a custom measurement."),

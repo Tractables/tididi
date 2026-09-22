@@ -50,8 +50,8 @@ and freeing without changing their ownership rules.
 Lead with what a reader can build and query, then connect capabilities to
 applications. The worked examples progress through configurations,
 counting choices, probabilities, reachability, tables, persistence, vtree grouping, execution
-limits, minimum costs and storage statistics. Rust adds reusable components
-after vtree grouping; embedding is currently exposed only in Rust. Keep the
+limits, minimum costs and storage statistics. Rust adds reusable components and care-set simplification
+after vtree grouping; these operations are currently exposed only in Rust. Keep the
 index and sidebar in that order. Link reference material separately; do not make beginners choose
 an API category before they have seen a circuit.
 
@@ -63,10 +63,10 @@ resource limits; the application chapters retain the same order.
 
 ### Instances
 
-- [Rust guide and example navigation](../src/guide.rs) <!-- reviewed: 99b9fb7554b6c096d6c86626988cf74f6529cb87a9c18fc2d9411fa23b6522e5 -->
-- [Python guide index](../bindings/python/docs/index.rst) <!-- reviewed: f41367362e458fe17f8c608e980ef6cdf7169a0be66b6c616e99613069d1c2ac -->
-- [Python gallery introduction](../bindings/python/examples/GALLERY_HEADER.rst) <!-- reviewed: dfda32e6316ede7503e373ad4274201737d32aef4c092c1c5efb4674a4a9f665 -->
-- [C index](../bindings/c/docs/index.rst) <!-- reviewed: 4650f2722c043bcb88c47bad60d7266460fa75e9a854db83a6445aded68cbb1d -->
+- [Rust guide and example navigation](../src/guide.rs) <!-- reviewed: 75211b70d22a0c94ad90d23711916dd957398dc809d14b211079b2e0592757db -->
+- [Python guide index](../bindings/python/docs/index.rst) <!-- reviewed: 0f595c2b5ad5a75c532d817b403bbf9ff69e6d1f3127c478bb6bae1eedf38dcb -->
+- [Python gallery introduction](../bindings/python/examples/GALLERY_HEADER.rst) <!-- reviewed: b6d1b6a086126be7afe23cd6c546df6b3ee2aa9e02394ec3c0e057daa58f7d2d -->
+- [C index](../bindings/c/docs/index.rst) <!-- reviewed: a45d573d93344b5b787dc75a3029fcc457887714dfe4c57c88900c02fe142ac6 -->
 
 ## Configurations
 
@@ -385,7 +385,7 @@ evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: e33abb878c6a514ac28c20846d2c1c37401eca77e5cc5b1d7ecfc1dfb6daae49 -->
+- [Rust API overview](api-guide.md) <!-- reviewed: 5d07c27b4e011d8f473aab82b48047c33a6308c8d94789aaf2394c363c752ce9 -->
 - [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: cf89774fb5f52ca207dd8cfb414e648661e4769736be8b529bf80ebe6eb7aeb2 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 
@@ -440,3 +440,24 @@ Do not invent a language counterpart that rebuilds the rule instead of reusing i
 
 - [Rust walkthrough](examples/composition.md) <!-- reviewed: 9ba8bcd2b2328164bbfb3e67f9eeaff4fb0e5ed270a55f74087428ba2c493280 -->
 - [Rust program](../examples/reusable_components.rs) <!-- reviewed: fd0b1dfed09cde22d73d5eacbdb9f39b32f32e31b41a929594d165bd6492e37b -->
+
+## Care sets
+
+A backup rule F=L∨R has three models. The deployment guarantees
+C=(R→L)=¬R∨L. Under this assumption the rule simplifies to L. Build F and C
+on the same two-leaf vtree, restrict a copy of F, extract the result and minimize.
+The example reduces three pairs to one. Compare G∧C with F∧C: equivalent,
+with two models (local only and both). Compare F and G without C: not equivalent.
+The remote-only assignment (L=false,R=true) satisfies F but not G.
+
+State the Boolean functions before the code. Explain that C is enforced
+elsewhere, and that changing the deployment invalidates the simplification.
+Contrast with conjunction for the exact constrained set and substitution for
+fixed variable values. Do not promise a particular formula or maximal shrink
+for arbitrary inputs. This is a Rust-only lesson; neither binding exposes
+care-set restriction yet.
+
+### Instances
+
+- [Rust walkthrough](examples/care.md) <!-- reviewed: 4adaf01367ef2ebeafbb401be9f2080ae34c325770025a866f1df1bd24968a98 -->
+- [Rust program](../examples/care_sets.rs) <!-- reviewed: 9a1bf5d9f30981a960eb4b67fce5a675b6d6af75c342a2c197383dfcd0ba2d57 -->

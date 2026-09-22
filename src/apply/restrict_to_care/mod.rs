@@ -40,20 +40,18 @@ use crate::diagram::Tdd;
 /// without comparing diagrams.
 #[derive(Debug)]
 pub enum RestrictionOutcome {
-    /// Provably `g == f` (nothing reachable died, zero-/leaf-f early-out, or
-    /// incomparable roots). No new diagram was built: the operand rides back
-    /// unchanged.
+    /// The original circuit, returned without rebuilding it.
     Unchanged(Tdd),
-    /// A strict subgraph `g ⊊ f` (some pair died and the rebuild produced a
-    /// smaller, count-correct-but-non-canonical `g`; caller canonicalizes).
+    /// A smaller circuit that agrees with the original on the care set.
+    /// Call [`Tdd::minimize`] if a canonical result is needed.
     Shrunk(Tdd),
-    /// `care` killed every model of `f` (`care ≡ ⊥` or `f ∧ care = ∅`): the
-    /// canonical `⊥` over the operand's vtree, retaining its weight configuration.
+    /// No assignments satisfy both the original circuit and the care set.
+    /// Contains false on the original vtree, retaining its weight configuration.
     Unsatisfiable(Tdd),
 }
 
 impl RestrictionOutcome {
-    /// Collapse to a concrete `g`, whichever arm it is.
+    /// Take the resulting circuit from any outcome.
     #[must_use]
     pub fn into_tdd(self) -> Tdd {
         match self {
