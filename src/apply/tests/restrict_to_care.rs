@@ -7,6 +7,42 @@ use super::*;
 use crate::Engine;
 
 #[test]
+fn restrict_single_variable_reports_contradictions() {
+    use crate::apply::RestrictionOutcome;
+    use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+
+    let vtree = Arc::new(Vtree::leaf(VarId(1)));
+    let operands = [Tdd::zero(&vtree), Tdd::one(&vtree),
+        Tdd::clause(&vtree, [1]).unwrap(), Tdd::clause(&vtree, [-1]).unwrap()];
+    for weighted in [false, true] {
+        for f in &operands {
+            for care in &operands {
+                let mut f = f.clone();
+                if weighted {
+                    f.set_weights(WeightStore::new(RationalWeights::unit(1), Arithmetic::ExactRational)).unwrap();
+                }
+                assert_canonical(&f);
+                assert_canonical(care);
+                let live = [false, true].into_iter().any(|x| eval(&f, &[x]) && eval(care, &[x]));
+                let result = f.clone().restrict_to_care(care.clone()).unwrap();
+                if !f.is_zero() && !live {
+                    assert!(matches!(result, RestrictionOutcome::Unsatisfiable(_)));
+                } else {
+                    assert!(matches!(result, RestrictionOutcome::Unchanged(_)));
+                }
+                let g = result.into_tdd();
+                assert_canonical(&g);
+                assert_eq!(g.is_zero(), !live);
+                assert_eq!(g.weights().is_some(), weighted);
+                for x in [false, true] {
+                    assert_eq!(eval(&g, &[x]) && eval(care, &[x]), eval(&f, &[x]) && eval(care, &[x]));
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn restrict_tautological_care_is_identity() {
     let eng = Engine::new();
     // c = ⊤ pins g everywhere → g must equal f (no don't-cares).

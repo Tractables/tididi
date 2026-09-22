@@ -156,3 +156,52 @@ fn falsity_cascades_preserve_marginal_sibling_values_on_either_side() {
         }
     }
 }
+
+#[test]
+fn conditioning_recovers_from_each_reservation_refusal() {
+    use crate::diagram::{Arithmetic, RationalWeights, WeightStore};
+
+    let vtree = Arc::new(Vtree::balanced(8));
+    let setup = Engine::new();
+    for marginal in [None, Some(false), Some(true)] {
+        let mut f = setup.and(Tdd::clause(&vtree, [1, 5]).unwrap(), Tdd::clause(&vtree, [8]).unwrap()).unwrap();
+        assert_canonical(&f);
+        if let Some(weighted) = marginal {
+            if weighted {
+                f.set_weights(WeightStore::new(RationalWeights::unit(8), Arithmetic::ExactRational)).unwrap();
+            }
+            setup.marginalize_levels(&mut f, &[vtree.children(vtree.root()).0]).unwrap();
+            assert_canonical(&f);
+        }
+        for last in [-8, 8] {
+            let mut completed = false;
+            let mut refusals = 0;
+            for cut in 0..256 {
+                let engine = Engine::new();
+                engine.limits().refuse_nth_reserve(cut);
+                let result = engine.condition(f.clone(), [-5, last]);
+                engine.limits().grant_every_reserve();
+                let g = match result {
+                    Ok(g) => { completed = true; g }
+                    Err(error) => {
+                        assert_eq!(error, OperationError::OverBudget);
+                        refusals += 1;
+                        engine.condition(f.clone(), [-5, last]).unwrap()
+                    }
+                };
+                assert_canonical(&g);
+                assert_eq!(g.is_zero(), last < 0);
+                let expected = if last < 0 { 0u32 } else { 128 };
+                if marginal == Some(true) {
+                    assert_eq!(g.weighted_value().unwrap().unwrap().as_rational().into_owned(),
+                        num_rational::BigRational::from_integer(expected.into()));
+                } else {
+                    assert_eq!(g.model_count().unwrap(), expected.into());
+                }
+                if completed { break; }
+            }
+            assert!(completed && refusals > 0, "must refuse and then complete every variant");
+            assert_canonical(&f);
+        }
+    }
+}

@@ -49,8 +49,7 @@ impl Marking {
         let root_key = match ctx.child(r, None, None) {
             Child::Pair(k) => k,
             Child::Live => {
-                // `r` is a root, so this is `f` marginal at its own root (a scalar):
-                // nothing to mark, nothing died.
+                // A compatible leaf or a marginal scalar: nothing died.
                 return Marking::trivial(eng, f, true);
             }
             Child::Dead => return Marking::trivial(eng, f, false),

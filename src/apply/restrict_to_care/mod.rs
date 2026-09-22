@@ -76,10 +76,6 @@ fn restrict_to_care_on(eng: &Engine, f: Tdd, mut care: Tdd) -> Result<Restrictio
         return Ok(RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)));
     }
     let v0 = f.output.vtree;
-    if f.vtree.node(v0).is_leaf() {
-        // A literal has no internal pairs to drop.
-        return Ok(RestrictionOutcome::Unchanged(f));
-    }
     // Both operands must share vtree structure; the walk reads indices in `f.vtree`.
     let r = f.vtree.lca(v0, care.output.vtree);
     if r != v0 && r != care.output.vtree {

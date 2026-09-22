@@ -69,7 +69,7 @@ pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<I
 /// structural child is empty, which empties further nodes above and cascades.
 /// What is left unreferenced is removed by `prune_unreachable` in the
 /// reduction that follows; an emptied output is collapsed to the sentinel by
-/// `canonicalize_false_output`.
+/// the satisfiability check before reduction.
 ///
 /// Marginal levels are passed over: their structure is summed out, so they hold
 /// no node that could have been emptied by a leaf restriction.
@@ -139,7 +139,7 @@ fn condition_targets(
     if emptied { propagate_false_nodes(&mut tdd); }
 
     // Set the false sentinel before pruning, so its empty nodes are unreachable.
-    canonicalize_false_output(eng, &mut tdd)?;
+    if !eng.is_sat(&tdd)? { tdd.output.local = ZERO; }
     eng.reduce(&mut tdd, ReductionPlan::default())?;
     Ok(tdd)
 }
@@ -293,33 +293,6 @@ fn rewrite_level_pairs(
     // range, so live ranges stay pairwise disjoint.
     level.compact_pairs_if_stale();
     emptied
-}
-
-/// Collapse a structurally false diagram (output node has pairs,
-/// `model_count == 0`, `is_zero() == false`) to the `ZERO` sentinel; conditioning
-/// plus `minimize` produces that state whenever it kills every model without
-/// emptying the output node. `is_sat_structural` agrees with `model_count > 0`,
-/// so the count is unchanged.
-///
-/// Declines on a weighted diagram: a weight-marginal level keeps its values in
-/// the `WeightStore`, which the satisfiability pass cannot evaluate.
-fn canonicalize_false_output(eng: &Engine, tdd: &mut crate::diagram::Tdd) -> Result<(), OperationError> {
-    if tdd.is_zero() {
-        return Ok(());
-    }
-    if tdd.levels.iter().any(|l| l.is_weight_marginal()) {
-        return Ok(());
-    }
-    let sat = crate::query::sat::is_sat_structural(eng, tdd)?;
-    debug_assert_eq!(
-        sat,
-        tdd.model_count().unwrap() != num_bigint::BigUint::ZERO,
-        "is_sat_structural disagrees with model_count > 0"
-    );
-    if !sat {
-        tdd.output.local = crate::diagram::ZERO;
-    }
-    Ok(())
 }
 
 #[cfg(test)]
