@@ -41,7 +41,7 @@ pub(super) fn run_sparse_level(
     apply_sparse_level(
         eng,
         shape, f, g,
-        &mut run.levels,
+        run.levels,
         ProductLists { left: pl_left, right: pl_right, out: pl_output },
         run.thresholds,
     )?;
@@ -394,7 +394,7 @@ pub(super) fn build_level_dense(
     }
 
     let mut stream_state: Option<StreamLevelState> =
-        build_stream_state(eng, shape, &mut run.levels, &mut run.stream_cache, sweep)?;
+        build_stream_state(eng, shape, run.levels, &mut run.stream_cache, sweep)?;
 
     // `t` and its two vtree children are three distinct tree nodes, so these
     // are three disjoint level slots: the streaming row loops read the child

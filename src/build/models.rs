@@ -258,14 +258,9 @@ fn from_models(
     let sorted = distinct_rows(lim, vars.len(), &layout, rows, w)?;
     let m = sorted.len() / w;
 
-    let mut builder = Tdd::builder(eng, vtree)?;
-    match fill(eng, &mut builder, vtree, &layout, &sorted, w, m) {
-        Ok(output) => Ok(builder.finish(output)?),
-        Err(e) => {
-            builder.abandon(eng);
-            Err(e)
-        }
-    }
+    let mut builder = crate::diagram::Assembly::new(eng, vtree)?;
+    let output = fill(eng, &mut builder, vtree, &layout, &sorted, w, m)?;
+    Ok(builder.finish_checked(output)?)
 }
 
 /// Re-encode the rows into leaf order, sort them and drop the repeats.

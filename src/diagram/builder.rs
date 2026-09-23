@@ -147,16 +147,24 @@ impl Tdd {
     ///
     /// [`OperationError::OverBudget`] if the level buffers are refused.
     pub fn builder(eng: &Engine, vtree: &Arc<Vtree>) -> Result<TddBuilder, OperationError> {
-        Ok(TddBuilder {
-            levels: try_take_levels(eng, vtree.num_nodes())?,
-            vtree: Arc::clone(vtree),
-            interned: Vec::new(),
-            weights: None,
-        })
+        Ok(TddBuilder::from_levels(Arc::clone(vtree), try_take_levels(eng, vtree.num_nodes())?, None))
     }
 }
 
 impl TddBuilder {
+    /// Shared storage initialization for public and operation-local construction.
+    pub(super) fn from_levels(vtree: Arc<Vtree>, levels: Vec<TddLevel>, weights: Option<WeightStore>) -> Self {
+        Self { vtree, levels, weights, interned: Vec::new() }
+    }
+
+    pub(super) fn parts_mut(&mut self) -> (&mut Vec<TddLevel>, &mut Option<WeightStore>) {
+        (&mut self.levels, &mut self.weights)
+    }
+
+    pub(super) fn check(&self, output: TddNodeId) -> Result<(), TddBuildError> {
+        check_levels(&self.vtree, &self.levels, output, self.weights.as_ref())
+    }
+
     /// The level of vtree node `t` as built so far.
     pub fn level(&self, t: VtreeIdx) -> &TddLevel {
         &self.levels[t.idx()]
@@ -359,9 +367,10 @@ impl TddBuilder {
     /// }
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn finish(mut self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
-        check_levels(&self.vtree, &self.levels, output, self.weights.as_ref())?;
-        Ok(self.seat(output))
+    pub fn finish(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
+        self.check(output)?;
+        let dirty = self.seed_worklists(None).expect("untracked worklists cannot be refused");
+        Ok(self.seat(output, dirty))
     }
 
     /// Finish without the storage validation performed by [`finish`](Self::finish).
@@ -382,21 +391,25 @@ impl TddBuilder {
     /// # Panics
     ///
     /// Debug builds check storage validity and panic if it fails.
-    pub unsafe fn finish_unchecked(mut self, output: TddNodeId) -> Tdd {
+    pub unsafe fn finish_unchecked(self, output: TddNodeId) -> Tdd {
         debug_assert!(
             check_levels(&self.vtree, &self.levels, output, self.weights.as_ref()).is_ok(),
             "an unchecked seat was handed a diagram the checked one would refuse",
         );
-        self.seat(output)
+        let dirty = self.seed_worklists(None).expect("untracked worklists cannot be refused");
+        self.seat(output, dirty)
     }
 
-    /// Hand the levels to a [`Tdd`] seated on `output`, re-attaching the store.
-    /// The invariants are the caller's to have established.
-    fn seat(&mut self, output: TddNodeId) -> Tdd {
-        let levels = std::mem::take(&mut self.levels);
-        let mut tdd = Tdd::from_levels_unchecked(Arc::clone(&self.vtree), levels, output);
-        tdd.weights = self.weights.take();
-        tdd
+    /// Prepare reduction work before transferring ownership of the arenas.
+    pub(super) fn seed_worklists(&self, eng: Option<&Engine>) -> Result<super::Dirty, OperationError> {
+        Tdd::prepare_worklists(&self.vtree, Default::default(),
+            self.vtree.internal_bottomup().map(|(t, _, _)| t), eng)
+    }
+
+    /// Transfer storage and its prepared worklists without copying the vtree handle.
+    #[inline]
+    pub(super) fn seat(self, output: TddNodeId, dirty: super::Dirty) -> Tdd {
+        Tdd { vtree: self.vtree, levels: self.levels, weights: self.weights, output, dirty }
     }
 
     /// Give up on the diagram, returning its levels to the engine's pool.

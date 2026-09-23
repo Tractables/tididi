@@ -4,7 +4,7 @@
 
 use crate::Engine;
 use crate::vtree::VtreeIdx;
-use crate::diagram::{self, *};
+use crate::diagram::*;
 use super::{liveness, OperationError, LevelGrid, APPLY_BYTES_PER_CELL};
 use super::grid_arena::GridArena;
 use crate::value::StreamCache;
@@ -53,8 +53,8 @@ impl<'a> MarginalTargets<'a> {
 
 /// Bundled result of `apply_and_setup` — the per-apply working state produced
 /// before the bottom-up level sweep.
-pub(super) struct ApplyRun {
-    pub(super) levels: Vec<TddLevel>,
+pub(super) struct ApplyRun<'a> {
+    pub(super) levels: &'a mut [TddLevel],
     pub(super) left_widths: Vec<usize>,
     pub(super) right_widths: Vec<usize>,
     /// The sparse-route thresholds this apply decides by.
@@ -113,7 +113,7 @@ pub(super) struct OperandWidths {
     pub(super) right: usize,
 }
 
-impl ApplyRun {
+impl ApplyRun<'_> {
     /// The shape of the level at `t`, read off the entry width snapshot.
     pub(super) fn shape(&self, t: VtreeIdx, left: VtreeIdx, right: VtreeIdx) -> LevelShape {
         let (t_idx, left_idx, right_idx) = (t.idx(), left.idx(), right.idx());
@@ -199,11 +199,11 @@ impl ApplyRun {
         }
     }
 
-    /// Hand every pooled buffer back to the engine and return the built levels.
+    /// Hand the computation scratch back; the assembly owns the output levels.
     ///
     /// Heavy buffers are capped at the scratch-retention cap on the way out, so a
     /// single wide conjunction cannot park GiB-scale allocations in the pools.
-    pub(super) fn finish(mut self, eng: &Engine) -> Vec<TddLevel> {
+    pub(super) fn finish(mut self, eng: &Engine) {
         let pool = eng.apply();
         let (slab, grids) = self.arena.into_parts();
         pool.node_idx.put_bounded(eng.limits(), slab);
@@ -224,7 +224,6 @@ impl ApplyRun {
         self.prefilter_masks.release_oversized(eng.limits());
         pool.prefilter_masks.put(self.prefilter_masks);
         self.stream_cache.put(eng.limits(), &pool.stream_cache);
-        self.levels
     }
 }
 
@@ -325,19 +324,19 @@ fn preflight_dense_budget(lim: &crate::limits::Limits, total_cells: u64) -> Resu
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] from the dense preflight or a buffer reservation.
-pub(super) fn apply_and_setup(
+pub(super) fn apply_and_setup<'a>(
     eng: &Engine,
     f: &mut Tdd,
     g: &mut Tdd,
     vtree: &crate::vtree::Vtree,
-    num_nodes: usize,
     marginalize_targets: MarginalTargets<'_>,
     weighted: bool,
-) -> Result<ApplyRun, OperationError> {
+    levels: &'a mut [TddLevel],
+) -> Result<ApplyRun<'a>, OperationError> {
+    let num_nodes = vtree.num_nodes();
     let lim = eng.limits();
     let thresholds = sparse_thresholds();
     let min_grid = thresholds.min_grid;
-    let levels: Vec<TddLevel> = diagram::take_levels(eng, num_nodes);
 
     let mut grids: Vec<LevelGrid> = eng.apply().grids.take();
     if grids.len() < num_nodes + 1 {

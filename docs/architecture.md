@@ -13,6 +13,11 @@ borrow those diagrams according to their signatures and use an engine for
 scratch and limits. The diagram's dirty worklists record which levels need
 reduction after an edit; they do not contribute to its Boolean meaning.
 
+`diagram::Assembly` owns unfinished output levels and their weights, returning
+the arenas to the pool if construction fails. Coordinated edits in
+`diagram/tdd/edit.rs` keep a level rewrite or slot renumbering together with
+its reference updates and reduction work.
+
 Structural levels hold pair lists. Marginal levels hold counts or fixed
 weighted values, and their references may carry an inline value instead of
 a node index. The `diagram` module owns that encoding; other modules read it

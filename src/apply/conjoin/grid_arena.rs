@@ -315,7 +315,7 @@ impl GridArena {
     }
 }
 
-impl ApplyRun {
+impl ApplyRun<'_> {
     /// Reclaim the two consumed child grids — dead once this level is built
     /// (each node has exactly one parent). Invoked at every level-finishing
     /// exit.

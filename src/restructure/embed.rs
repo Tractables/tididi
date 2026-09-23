@@ -14,7 +14,7 @@ use super::GraftError;
 
 use crate::Engine;
 use crate::diagram::{
-    ChildPair, LevelView, NodeIdx, Tdd, TddBuilder, TddNodeId, LEAF_WIDTH, ONE_LEAF_IDX,
+    Assembly, ChildPair, LevelView, NodeIdx, Tdd, TddBuilder, TddNodeId, LEAF_WIDTH, ONE_LEAF_IDX,
 };
 use crate::limits::{Limits, OperationError};
 use crate::reduce::ReductionPlan;
@@ -236,18 +236,12 @@ fn assemble(
     if tdd.is_zero() {
         return Ok(crate::build::constant_zero(eng, into));
     }
-    let mut builder = Tdd::builder(eng, into)?;
-    let over_a_renamed_leaf = match fill(eng, tdd, into, plan, &mut builder) {
-        Ok(over_a_renamed_leaf) => over_a_renamed_leaf,
-        Err(error) => {
-            builder.abandon(eng);
-            return Err(error);
-        }
-    };
+    let mut builder = Assembly::new(eng, into)?;
+    let over_a_renamed_leaf = fill(eng, tdd, into, plan, &mut builder)?;
     // Index preservation carries the source's output index through the
     // pass-through levels above it, so the result is seated at the same index.
     let output = TddNodeId { vtree: into.root(), local: tdd.output().local };
-    let mut result = builder.finish(output).map_err(|error| GraftError::Operation(error.into()))?;
+    let mut result = builder.finish_checked(output).map_err(|error| GraftError::Operation(error.into()))?;
     if over_a_renamed_leaf {
         eng.reduce(&mut result, ReductionPlan::Prune)?;
     }

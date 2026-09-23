@@ -1,11 +1,12 @@
 //! Re-emitting the live subgraph as a new diagram.
 
+#[cfg(test)]
 use std::sync::Arc;
 
 use crate::Engine;
 use crate::limits::{OperationError, PollGate};
 use crate::reduce::{ReductionPlan};
-use crate::diagram::{ChildDecoder, ChildPair, ChildSide, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, try_take_levels};
+use crate::diagram::{ChildDecoder, ChildPair, ChildSide, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, Assembly};
 use crate::diagram::sort_pairs;
 use crate::vtree::VtreeIdx;
 
@@ -27,15 +28,16 @@ impl Marking {
                 lim.try_resize(row, level.nodes.len(), DeadRebuilder::UNVISITED)?;
             }
         }
+        let mut assembly = Assembly::new(eng, &f.vtree)?;
+        let (out, weights) = assembly.parts_mut();
         let mut rb = DeadRebuilder {
             f: &f,
             alive: self.alive,
             pair_alive: self.pair_alive,
-            out: try_take_levels(eng, nlev)?,
+            out,
             memo,
         };
         let root = rb.rebuild(eng, &mut gate, v0, f.output.local)?;
-        let mut out = std::mem::take(&mut rb.out);
         drop(rb);
         for (vi, level) in out.iter_mut().enumerate() {
             gate.poll(1)?;
@@ -48,8 +50,8 @@ impl Marking {
             }
         }
         gate.flush()?;
-        let mut g = Tdd::try_from_levels_on(eng, Arc::clone(&f.vtree), out, TddNodeId { vtree: v0, local: root })?;
-        g.weights = f.weights;
+        *weights = f.weights.take();
+        let mut g = assembly.finish(TddNodeId { vtree: v0, local: root })?;
         // A child emitted before its pair partner collapses can become an orphan.
         eng.reduce(&mut g, ReductionPlan::Prune)?;
         Ok(g)
@@ -62,7 +64,7 @@ struct DeadRebuilder<'a> {
     alive: Vec<Vec<bool>>,
     /// Bit k marks a live pair; all bits set means no pair-level information.
     pair_alive: Vec<Vec<u64>>,
-    out: Vec<TddLevel>,
+    out: &'a mut [TddLevel],
     memo: Vec<Vec<u32>>,
 }
 

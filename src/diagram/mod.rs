@@ -169,6 +169,9 @@
 mod literal;
 mod primitives;
 pub(crate) mod marginal_ref;
+mod assembly;
+pub(crate) use assembly::Assembly;
+
 mod build_error;
 mod leaf_column;
 pub(crate) mod builder;

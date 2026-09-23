@@ -181,7 +181,7 @@ fn apply_and_fallible_inner(
     // result's, and every level this apply marginalizes writes its values there.
     // Their marginal levels are the two disjoint subtrees they were built over,
     // so the merge loses nothing.
-    let mut ws: Option<crate::diagram::WeightStore> =
+    let ws: Option<crate::diagram::WeightStore> =
         match (f.weights.take(), g.weights.take()) {
             (Some(mut a), Some(b)) => {
                 a.absorb(b);
@@ -202,16 +202,15 @@ fn apply_and_fallible_inner(
     if f.is_zero() || g.is_zero() {
         lim.check_stop()?;
         let levels = diagram::take_levels(eng, num_nodes);
-        let mut out = Tdd::from_levels_unchecked(
-            vtree,
-            levels,
-            TddNodeId { vtree: f.output.vtree, local: ZERO },
-        );
-        out.weights = ws;
-        return Ok(out);
+        return Ok(diagram::Assembly::from_levels(eng, vtree, levels, ws)
+            .finish_untracked(TddNodeId { vtree: f.output.vtree, local: ZERO }));
     }
 
-    let mut run = apply_and_setup(eng, f, g, &vtree, num_nodes, marginalize_targets, ws.is_some())?;
+    let mut assembly = diagram::Assembly::from_levels(
+        eng, Arc::clone(&vtree), diagram::take_levels(eng, num_nodes), ws,
+    );
+    let (levels, ws) = assembly.parts_mut();
+    let mut run = apply_and_setup(eng, f, g, &vtree, marginalize_targets, ws.is_some(), levels)?;
 
     // `right_identity[t]` is true when `g` computes constant-true over subtree
     // `t`, so `f`'s nodes pass through unchanged (`x ∧ 1 = x`) and the
@@ -228,7 +227,7 @@ fn apply_and_fallible_inner(
     apply_leaf_levels(eng, &vtree, &mut run)?;
 
     let canon_leaves = super::leaf_seed::seed_output_leaves(
-        f, g, &vtree, &mut run.levels,
+        f, g, &vtree, run.levels,
         Sides { left: &run.left_identity[..], right: &run.right_identity[..] },
         ws.as_ref(),
     );
@@ -238,16 +237,12 @@ fn apply_and_fallible_inner(
         &mut Sweep { vtree: &vtree, targets: marginalize_targets, quantified, ws: ws.as_mut() },
     )?;
 
-    crate::marginal::canonicalize_apply_leaf_refs(&canon_leaves, &vtree, &mut run.levels, ws.as_ref());
+    crate::marginal::canonicalize_apply_leaf_refs(&canon_leaves, &vtree, run.levels, ws.as_ref());
 
     let out_local = compute_apply_output(f, g, &run, &vtree).unwrap_or(ZERO);
     let out_vtree = f.output.vtree;
 
 
-    let levels = run.finish(eng);
-
-    let output = TddNodeId { vtree: out_vtree, local: out_local };
-    let mut out = Tdd::from_levels_unchecked(vtree, levels, output);
-    out.weights = ws;
-    Ok(out)
+    run.finish(eng);
+    Ok(assembly.finish_untracked(TddNodeId { vtree: out_vtree, local: out_local }))
 }

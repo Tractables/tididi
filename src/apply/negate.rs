@@ -5,7 +5,7 @@
 //! `expand_full` materializes the fill nodes explicitly; `negate` complements
 //! the full diagram at its root.
 
-use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd, TddLevel, TddNodeId};
+use crate::diagram::{Assembly, ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd, TddLevel, TddNodeId};
 
 use crate::Engine;
 use crate::limits::OperationError;
@@ -99,7 +99,8 @@ fn complement_full_at_root(
     let root_idx = root.idx();
     let out_local = full_tdd.output.local;
 
-    let mut levels = full_tdd.levels;
+    let mut assembly = Assembly::from_levels(eng, Arc::clone(orig_vtree), full_tdd.levels, None);
+    let (levels, _) = assembly.parts_mut();
 
     if vtree.node(root).is_leaf() {
         // Implicit leaf: the output index and the label are the same number. It stays in
@@ -108,19 +109,15 @@ fn complement_full_at_root(
         let Some(neg_local) = complement_leaf_root(out_local) else {
             return Ok(crate::build::constant_zero(eng, orig_vtree));
         };
-        Ok(Tdd::from_levels_unchecked(
-            Arc::clone(orig_vtree),
-            levels,
-            TddNodeId { vtree: root, local: neg_local },
-        ))
+        Ok(assembly.finish_untracked(TddNodeId { vtree: root, local: neg_local }))
     } else {
         // Child widths the complement's basis spans:
         // - Leaf children: 2 (the disjoint set {Pos, Neg})
         // - Internal children: stored width (includes any fill node)
         let (left, right) = vtree.children(root);
         let basis = Basis {
-            lefts: ChildBasis::of(vtree, &levels, left),
-            rights: ChildBasis::of(vtree, &levels, right),
+            lefts: ChildBasis::of(vtree, levels, left),
+            rights: ChildBasis::of(vtree, levels, right),
             form: root_form,
         };
 
@@ -174,11 +171,7 @@ fn complement_full_at_root(
         scratch.cells.put_bounded(eng.limits(), neg_pairs);
         let neg_idx = pushed?;
 
-        Ok(Tdd::from_levels_unchecked(
-            Arc::clone(orig_vtree),
-            levels,
-            TddNodeId { vtree: root, local: neg_idx },
-        ))
+        Ok(assembly.finish_untracked(TddNodeId { vtree: root, local: neg_idx }))
     }
 }
 

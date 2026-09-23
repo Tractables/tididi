@@ -275,15 +275,22 @@ impl Tdd {
         Self::assemble(vtree, levels, output, carried, rebuilt.iter().copied(), Some(eng))
     }
 
-    /// Seed and compact reduction worklists, charged to `eng` when there is one.
     fn assemble(
-        vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId, mut dirty: Dirty,
-        rebuilt: impl Iterator<Item = VtreeIdx>,
-        eng: Option<&crate::Engine>,
+        vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId, dirty: Dirty,
+        rebuilt: impl Iterator<Item = VtreeIdx>, eng: Option<&crate::Engine>,
     ) -> Result<Self, crate::OperationError> {
+        let dirty = Self::prepare_worklists(&vtree, dirty, rebuilt, eng)?;
+        Ok(super::TddBuilder::from_levels(vtree, levels, None).seat(output, dirty))
+    }
+
+    /// Seed and compact reduction worklists before taking the output storage.
+    pub(super) fn prepare_worklists(
+        vtree: &Vtree, mut dirty: Dirty, rebuilt: impl Iterator<Item = VtreeIdx>,
+        eng: Option<&crate::Engine>,
+    ) -> Result<Dirty, crate::OperationError> {
         dirty.seed_rebuilt(rebuilt, eng)?;
         dirty.dedup_above(vtree.num_nodes());
-        Ok(Self { vtree, levels, output, dirty, weights: None })
+        Ok(dirty)
     }
 
     /// Put the diagram in weighted mode: its weight-marginal levels keep their

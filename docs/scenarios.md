@@ -374,7 +374,7 @@ owns the circuit until finish; unlike Python, freeing the handle ends all checks
 
 ### Instances
 
-- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: ca39c13d7c52ea253eeec45a84c105e3f22068353aace07727d4be2e196f2cac -->
+- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: 4cb2b4773b74bbed2fa8c5a767a3fae3158fe93a6d8743e31a66ab1cce8682cb -->
 - [Python ownership guide](../bindings/python/docs/ownership.rst) <!-- reviewed: 49e98fe18f2ea5b0d769f3b2301737e040ae22238e00b4dd9ac5296e493e94a0 -->
 - [C ownership](../bindings/c/docs/ownership.rst) <!-- reviewed: 6fa3921cd9c76acae60b9bb7d58e71544dd85f15c8a54c55815cf910628e80c4 -->
 
@@ -421,7 +421,9 @@ invariants and marginal levels; Python concentrates on using shared vtrees.
 ## Architecture
 
 Explain the Rust implementation through storage ownership, level arenas,
-child-reference decoding, reduction passes, scratch and limits. Define terms
+child-reference decoding, reduction passes, scratch and limits. Include unfinished
+output ownership and the boundary that coordinates level edits with references
+and worklists. Define terms
 once, map modules to responsibilities, and identify which operations establish
 or temporarily break each invariant. Distinguish validation of stored data
 from proving structural determinism. This is a Rust implementation reference;
@@ -429,7 +431,7 @@ there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: 60b4754958721a023b9e339309262188b58a66b195715613b52f6fbc82d1bf0c -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: e6d0b2eca73af549c4cbc19172b8f2734c99af509d251dba6d2180c4500db925 -->
 
 ## Reusable components
 
