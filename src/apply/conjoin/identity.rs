@@ -230,15 +230,15 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
         )?;
     }
 
-    if run.arena.is_bump() {
-        run.live_counts.set(t_idx, k_carrier);
+    if run.products.arena.is_bump() {
+        run.products.record_live(t_idx, k_carrier);
     } else {
-        let output_grid_base = run.arena.materialized(t_idx).expect("a pre-planned layout grids every level");
-        let slab = run.arena.slab_mut();
+        let output_grid_base = run.products.arena.materialized(t_idx).expect("a pre-planned layout grids every level");
+        let slab = run.products.arena.slab_mut();
         for idx in 0..k_carrier {
             slab[output_grid_base.idx() + idx] = idx as u32;
         }
-        run.arena.set_dense(t_idx, output_grid_base);
+        run.products.arena.set_dense(t_idx, output_grid_base);
     }
     Ok(())
 }
@@ -274,11 +274,11 @@ fn try_zero_width_marginal(
         // to the dense path → the same empty-nodes panic one level up.
         run.left_identity[t_idx] = true;
         run.right_identity[t_idx] = true;
-        if run.arena.is_bump() {
-            run.live_counts.set(t_idx, 0);
+        if run.products.arena.is_bump() {
+            run.products.record_live(t_idx, 0);
         } else {
-            let output_grid_base = run.arena.materialized(t_idx).expect("a pre-planned layout grids every level");
-            run.arena.set_dense(t_idx, output_grid_base);
+            let output_grid_base = run.products.arena.materialized(t_idx).expect("a pre-planned layout grids every level");
+            run.products.arena.set_dense(t_idx, output_grid_base);
         }
         return true;
     }

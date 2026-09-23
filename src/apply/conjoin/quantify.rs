@@ -108,12 +108,12 @@ pub(super) fn build_level_quantified(
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
     let cells = fw.here * gw.here;
-    let grid = run.arena.alloc(eng, ti, cells)?;
-    run.arena.set_dense(ti, grid);
+    let grid = run.products.arena.alloc(eng, ti, cells)?;
+    run.products.arena.set_dense(ti, grid);
     let base = grid.idx();
     let sides = Bases {
-        left: run.arena.materialized(li).expect("a collapsed level's left child has a grid").idx(),
-        right: run.arena.materialized(ri).expect("a collapsed level's right child has a grid").idx(),
+        left: run.products.arena.materialized(li).expect("a collapsed level's left child has a grid").idx(),
+        right: run.products.arena.materialized(ri).expect("a collapsed level's right child has a grid").idx(),
         left_stride: gw.left,
         right_stride: gw.right,
     };
@@ -123,9 +123,9 @@ pub(super) fn build_level_quantified(
     lim.begin_level(None);
 
     let (f_level, g_level) = (f.level(t), g.level(t));
-    let ApplyRun { levels, arena, live_counts, .. } = run;
+    let ApplyRun { levels, products, .. } = run;
     let level = &mut levels[ti];
-    let slab = arena.slab_mut();
+    let slab = products.arena.slab_mut();
     slab[base..base + cells].fill(NO_PRODUCT);
 
     let mut gate = lim.gate();
@@ -150,7 +150,7 @@ pub(super) fn build_level_quantified(
         }
     }
     gate.flush()?;
-    live_counts.set(ti, level.slot_count());
+    products.record_live(ti, level.slot_count());
     level.shrink_arrays();
     lim.level_settled(level.pairs.len() as u64);
     Ok(())

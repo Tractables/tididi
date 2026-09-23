@@ -31,7 +31,7 @@ impl Engine {
         let result = if tdd.is_zero() {
             algebra.zero()
         } else {
-            let fold = Evaluate(algebra);
+            let fold = Evaluate::new(algebra, &[]);
             let mut cols = Vec::new();
             lim.reserve_exact(&mut cols, tdd.vtree.num_nodes())?;
             cols.resize_with(tdd.vtree.num_nodes(), Vec::new);
@@ -49,7 +49,16 @@ impl Engine {
 }
 
 /// [`evaluate`] as an instance of the shared bottom-up walk.
-struct Evaluate<'a, S>(&'a S);
+pub(super) struct Evaluate<'a, S> {
+    algebra: &'a S,
+    pins: &'a [super::cache::PinState],
+}
+
+impl<'a, S> Evaluate<'a, S> {
+    pub(super) fn new(algebra: &'a S, pins: &'a [super::cache::PinState]) -> Self {
+        Self { algebra, pins }
+    }
+}
 
 impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
     type Value = S::Value;
@@ -58,7 +67,7 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
     fn alloc(&self, eng: &Engine, width: usize) -> Result<Vec<S::Value>, OperationError> {
         let mut col = Vec::new();
         eng.limits().reserve_exact(&mut col, width)?;
-        col.resize(width, self.0.zero());
+        col.resize(width, self.algebra.zero());
         Ok(col)
     }
 
@@ -71,10 +80,15 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
         Ok(())
     }
 
-    fn leaf(&self, _leaf: VtreeIdx, var: VarId, label: LeafLabel) -> S::Value {
+    fn leaf(&self, leaf: VtreeIdx, var: VarId, mut label: LeafLabel) -> S::Value {
+        if let Some(pin) = self.pins.get(leaf.idx()).and_then(|pin| pin.value) {
+            let observed = if pin { LeafLabel::Pos } else { LeafLabel::Neg };
+            if label == LeafLabel::One { label = observed; }
+            else if label != observed { return self.algebra.zero(); }
+        }
         match label {
-            LeafLabel::Zero => self.0.zero(),
-            _ => self.0.leaf(var, label),
+            LeafLabel::Zero => self.algebra.zero(),
+            _ => self.algebra.leaf(var, label),
         }
     }
 
@@ -102,7 +116,7 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
 
 impl<S: EvalAlgebra> PairAlgebra for Evaluate<'_, S> {
     fn zero(&self) -> S::Value {
-        self.0.zero()
+        self.algebra.zero()
     }
     fn read(&self, col: &Vec<S::Value>, i: usize) -> S::Value {
         col[i].clone()
@@ -111,10 +125,10 @@ impl<S: EvalAlgebra> PairAlgebra for Evaluate<'_, S> {
         unreachable!("evaluate: a marginal level's inline ref (see the precondition)")
     }
     fn add_assign(&self, acc: &mut S::Value, v: &S::Value) {
-        self.0.add_assign(acc, v);
+        self.algebra.add_assign(acc, v);
     }
     fn mul(&self, a: &S::Value, b: &S::Value) -> S::Value {
-        self.0.mul(a, b)
+        self.algebra.mul(a, b)
     }
 }
 

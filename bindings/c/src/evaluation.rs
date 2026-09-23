@@ -10,7 +10,7 @@ use crate::*;
 /// Exact negative/positive literal weights, written as integers or fractions such as "3/5".
 #[repr(C)]
 pub struct TididiWeight { pub variable: u32, pub negative: *const c_char, pub positive: *const c_char }
-unsafe fn weights(f: &tididi::Tdd, values: *const TididiWeight, len: usize) -> Result<RationalWeights> {
+pub(crate) unsafe fn weights(f: &tididi::Tdd, values: *const TididiWeight, len: usize) -> Result<RationalWeights> {
     let mut rows = vec![LiteralWeights { negative: BigRational::one(), positive: BigRational::one() }; f.vtree().num_vars() as usize];
     let mut seen = HashSet::new();
     for value in unsafe { array(values, len)? } {

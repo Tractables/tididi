@@ -168,7 +168,7 @@ pub(crate) trait SlotValues {
 }
 
 /// Check the next slot against the reference encoding before growing a store.
-fn next_slot_index(len: usize) -> Result<u32, OperationError> {
+pub(crate) fn next_slot_index(len: usize) -> Result<u32, OperationError> {
     let slot = u32::try_from(len).map_err(|_| OperationError::IndexOverflow)?;
     ValueRef::Slot(slot).side().map_err(|_| OperationError::IndexOverflow)?;
     Ok(slot)
@@ -348,12 +348,8 @@ impl SlotValues for WeightFold {
             "refusing to mint a weight slot into a pinned leaf column (level {})",
             v.0
         );
-        let values = tdd.weight_store_mut().level_vals_mut(v.idx())
-            .expect("push_slot: weighted level has no store");
-        let slot = next_slot_index(values.len())?;
-        eng.limits().try_push(values, value)?;
-        tdd.levels[v.idx()].set_weight_width(slot + 1);
-        Ok(slot)
+        crate::diagram::MarginalStorage::new(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v.idx())
+            .push_weight(eng, value)
     }
 
     /// A weighted leaf column is the pinned, label-ordered three-slot cache

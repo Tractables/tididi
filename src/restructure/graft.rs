@@ -180,13 +180,8 @@ fn graft_impl(
         let comp_to_full_k = &layout.comp_to_full[k];
         let mut part_ws = merged.as_ref().and_then(|_| tdd.detach_weights());
         for (c_idx, &f_idx) in comp_to_full_k.iter().enumerate() {
-            if tdd.levels[c_idx].is_weight_marginal()
-                && let (Some(merged), Some(part_ws)) = (merged.as_mut(), part_ws.as_mut())
-                && let Some(values) = part_ws.take_level(c_idx)
-            {
-                merged.set_level(f_idx.idx(), values);
-            }
-            levels[f_idx.idx()] = std::mem::take(&mut tdd.levels[c_idx]);
+            crate::diagram::MarginalStorage::new(&mut levels[f_idx.idx()], merged.as_mut(), f_idx.idx())
+                .move_from(&mut tdd.levels[c_idx], part_ws.as_mut(), c_idx);
         }
     }
 

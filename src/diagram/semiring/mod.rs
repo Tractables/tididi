@@ -19,7 +19,8 @@ use crate::vtree::VarId;
 
 /// Define a value at each leaf and how to combine values at conjunctions and alternatives.
 ///
-/// Pass an implementation to [`Tdd::evaluate`](crate::Tdd::evaluate).
+/// Pass an implementation to [`Tdd::evaluate`](crate::Tdd::evaluate), or retain
+/// values under changing observations with [`Tdd::evaluator`](crate::Tdd::evaluator).
 /// [`RationalWeights`] computes weighted sums; the
 /// [cost example](crate::guide::examples::optimization) uses minimum and addition.
 ///

@@ -31,6 +31,7 @@ fn _tididi(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<domain::PyLimits>()?;
     module.add_class::<circuit::PyCircuit>()?;
     module.add_class::<counter::PyCounter>()?;
+    module.add_class::<counter::PyEvaluator>()?;
     module.add("ConsumedCircuitError", module.py().get_type::<ConsumedCircuitError>())?;
     module.add("ResourceLimitError", module.py().get_type::<ResourceLimitError>())?;
     module.add("__version__", env!("CARGO_PKG_VERSION"))?;

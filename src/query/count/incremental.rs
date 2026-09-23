@@ -5,19 +5,11 @@ use crate::diagram::{ChildRef, EncodedChildRef, LeafLabel, NodeIdx, PairsIter, T
 use num_bigint::BigUint;
 
 use super::{leaf_seed, PinSemantics};
-use super::super::fold::{fold_bottom_up, fold_level, LevelFold, Side};
+use super::super::fold::{LevelFold, Side};
+use super::super::cache::{Observations, PinState, refresh_columns, BoundState};
 use crate::limits::{OperationError, PollGate};
 use crate::value::{Retention, Count, CountRead, CountVec, IntFold};
 use crate::vtree::{VarId, VtreeIdx};
-
-/// A leaf observation and its membership in the pending ancestor traversal.
-#[derive(Clone, Copy, Debug, Default)]
-/// Per-node state of an incremental counter: the pin, meaningful on a leaf,
-/// and whether the node's cached column awaits recomputation.
-struct PinState {
-    value: Option<bool>,
-    dirty: bool,
-}
 
 /// The u128-primary counting fold: native arithmetic for the vast majority of
 /// nodes, spilling a node to the exact `BigUint` side table only where it
@@ -59,10 +51,9 @@ impl LevelFold for OverflowingCounts<'_> {
         col: &mut CountVec,
     ) -> Result<(), OperationError> {
         let level = &tdd.levels[t.idx()];
-        let counts = level.marginal_counts().expect("a marginal level carries counts");
-        let big = level.marginal_counts_big();
-        for i in 0..counts.len() {
-            col.set(eng, i, CountRead::from_slot(counts, big, i).to_count())?;
+        let values = crate::diagram::MarginalValues::read(level, None, t.idx()).expect("marginal count column");
+        for i in 0..values.len() {
+            col.set(eng, i, values.count(i).to_count())?;
         }
         Ok(())
     }
@@ -150,11 +141,8 @@ fn read_side<'a>(side: Side<'a, CountVec>, k: EncodedChildRef) -> CountRead<'a> 
 pub struct ModelCounter<'a> {
     tdd: &'a Tdd,
     cols: Vec<CountVec>,
-    pins: Vec<PinState>,
-    changed: Vec<VtreeIdx>,
-    retention: Retention,
+    observations: Observations,
     convention: PinSemantics,
-    evaluated: bool,
 }
 
 impl Tdd {
@@ -228,31 +216,15 @@ impl Tdd {
 /// counter.model_count().unwrap();
 /// ```
 pub struct BoundModelCounter<'a, 'batch> {
-    counter: CounterStorage<'a, 'batch>,
+    counter: BoundState<'batch, ModelCounter<'a>>,
     engine: &'batch Engine,
-}
-
-/// Store a batch's counter or borrow the state of a persistent counter.
-enum CounterStorage<'a, 'batch> {
-    Owned(ModelCounter<'a>),
-    Borrowed(&'batch mut ModelCounter<'a>),
-}
-
-impl<'a> CounterStorage<'a, '_> {
-    /// Borrow the counter state used by either kind of batch binding.
-    fn get_mut(&mut self) -> &mut ModelCounter<'a> {
-        match self {
-            Self::Owned(counter) => counter,
-            Self::Borrowed(counter) => counter,
-        }
-    }
 }
 
 impl std::fmt::Debug for BoundModelCounter<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let counter = match &self.counter {
-            CounterStorage::Owned(counter) => counter,
-            CounterStorage::Borrowed(counter) => counter,
+            BoundState::Owned(counter) => counter,
+            BoundState::Borrowed(counter) => counter,
         };
         f.debug_struct("BoundModelCounter").field("counter", counter).finish_non_exhaustive()
     }
@@ -349,17 +321,17 @@ impl Engine {
     /// ```
     pub fn counter_with<'a, 'batch>(&'batch self, tdd: &'a Tdd, retention: Retention, convention: PinSemantics) -> Result<BoundModelCounter<'a, 'batch>, OperationError> {
         let counter = ModelCounter::allocate(self, tdd, tdd.vtree.num_leaves() as usize, retention, convention)?;
-        Ok(BoundModelCounter { counter: CounterStorage::Owned(counter), engine: self })
+        Ok(BoundModelCounter { counter: BoundState::Owned(counter), engine: self })
     }
 }
 
 impl std::fmt::Debug for ModelCounter<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ModelCounter")
-            .field("retention", &self.retention)
-            .field("evaluated", &self.evaluated)
-            .field("pins", &self.pins)
-            .field("changed_since_pass", &self.changed.len())
+            .field("retention", &self.observations.retention)
+            .field("evaluated", &self.observations.evaluated)
+            .field("pins", &self.observations.pins)
+            .field("changed_since_pass", &self.observations.changed.len())
             .finish()
     }
 }
@@ -389,7 +361,7 @@ impl<'a> ModelCounter<'a> {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn bind<'batch>(&'batch mut self, engine: &'batch Engine) -> BoundModelCounter<'a, 'batch> {
-        BoundModelCounter { counter: CounterStorage::Borrowed(self), engine }
+        BoundModelCounter { counter: BoundState::Borrowed(self), engine }
     }
 
     /// Allocate leaf-indexed pin slots, or zero slots for an internal unpinned query.
@@ -403,14 +375,9 @@ impl<'a> ModelCounter<'a> {
         let mut cols = Vec::new();
         lim.reserve_exact(&mut cols, tdd.vtree.num_nodes())?;
         cols.resize_with(tdd.vtree.num_nodes(), CountVec::default);
-        let mut pins = Vec::new();
-        lim.try_resize(&mut pins, pin_slots, PinState::default())?;
-        let mut changed = Vec::new();
-        if pin_slots != 0 && retention == Retention::All {
-            lim.reserve_exact(&mut changed, pin_slots)?;
-        }
+        let observations = Observations::new(eng, pin_slots, retention)?;
         lim.check_stop()?;
-        Ok(Self { tdd, cols, pins, changed, retention, convention, evaluated: false })
+        Ok(Self { tdd, cols, observations, convention })
     }
 
     /// Set or clear a vtree variable's pin, deferring affected counts until the next read.
@@ -441,9 +408,7 @@ impl<'a> ModelCounter<'a> {
     /// # Ok::<(), OperationError>(())
     /// ```
     pub fn set_pin(&mut self, var: VarId, val: Option<bool>) -> Result<(), OperationError> {
-        let leaf = self.validate_pin(var)?;
-        self.set_leaf_pin(leaf, val);
-        Ok(())
+        self.observations.set_pin(self.tdd, var, val)
     }
 
     /// Set observations using signed integers or named [`Literal`](crate::Literal) values.
@@ -478,15 +443,7 @@ impl<'a> ModelCounter<'a> {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn observe<L: crate::LiteralInput>(&mut self, literals: impl AsRef<[L]>) -> Result<(), OperationError> {
-        let literals = literals.as_ref();
-        for &input in literals {
-            self.validate_pin(input.literal()?.var)?;
-        }
-        for &input in literals {
-            let literal = input.literal()?;
-            self.set_pin(literal.var, Some(literal.sign))?;
-        }
-        Ok(())
+        self.observations.observe(self.tdd, literals)
     }
 
     /// Apply a group of pin changes after validating every variable.
@@ -518,12 +475,7 @@ impl<'a> ModelCounter<'a> {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn set_pins(&mut self, pins: &[(VarId, Option<bool>)]) -> Result<(), OperationError> {
-        for &(var, _) in pins { self.validate_pin(var)?; }
-        for &(var, val) in pins {
-            let leaf = self.tdd.vtree.leaf_of(var).expect("validated pin variable");
-            self.set_leaf_pin(leaf, val);
-        }
-        Ok(())
+        self.observations.set_pins(self.tdd, pins)
     }
 
     /// Clear every pin without allocating, deferring affected counts until the next read.
@@ -546,43 +498,7 @@ impl<'a> ModelCounter<'a> {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn clear_pins(&mut self) {
-        for leaf in 0..self.pins.len() {
-            if self.pins[leaf].value.is_some() { self.set_leaf_pin(VtreeIdx(leaf as u32), None); }
-        }
-    }
-
-    /// Resolve a variable to its structural leaf without changing counter state.
-    fn validate_pin(&self, var: VarId) -> Result<VtreeIdx, OperationError> {
-        let leaf = self.tdd.vtree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
-        // An implicit integer leaf can remain below a marginal parent.
-        for level in std::iter::once(leaf).chain(self.tdd.vtree.node(leaf).parent()) {
-            if self.tdd.levels[level.idx()].is_marginal() {
-                return Err(OperationError::MarginalLevel(level));
-            }
-        }
-        Ok(leaf)
-    }
-
-    /// Update a validated leaf's pin and record its deferred refresh once.
-    fn set_leaf_pin(&mut self, leaf: VtreeIdx, val: Option<bool>) {
-        if self.retention == Retention::Frontier {
-            if self.pins[leaf.idx()].value != val {
-                self.pins[leaf.idx()].value = val;
-                self.evaluated = false;
-            }
-            return;
-        }
-        if !self.evaluated {
-            self.clear_changed();
-            self.pins[leaf.idx()].value = val;
-            return;
-        }
-        if self.pins[leaf.idx()].value == val { return; }
-        self.pins[leaf.idx()].value = val;
-        if !self.pins[leaf.idx()].dirty {
-            self.changed.push(leaf);
-            self.pins[leaf.idx()].dirty = true;
-        }
+        self.observations.clear_pins()
     }
 
     /// Refresh the current pins and count under the diagram context's allocation and stop rules.
@@ -624,58 +540,22 @@ impl<'a> ModelCounter<'a> {
             Ok(count)
         })();
         if result.is_err() {
-            self.evaluated = false;
-            self.clear_changed();
+            self.observations.invalidate();
         }
         result
     }
 
-    /// Refresh all columns or the dirty ancestor cone, leaving a failed pass invalidated.
     fn refresh(&mut self, eng: &Engine, gate: &mut PollGate) -> Result<(), OperationError> {
-        if self.evaluated && self.changed.is_empty() { return Ok(()); }
-        let incremental = self.evaluated && self.retention == Retention::All;
-        self.evaluated = false;
-        let tdd = self.tdd;
-        if incremental {
-            eng.limits().try_resize(&mut self.pins, tdd.vtree.num_nodes(), PinState::default())?;
-            let leaves = self.changed.len();
-            for i in 0..leaves {
-                let mut current = self.changed[i];
-                while let Some(parent) = tdd.vtree.node(current).parent() {
-                    if self.pins[parent.idx()].dirty { break; }
-                    eng.limits().try_push(&mut self.changed, parent)?;
-                    self.pins[parent.idx()].dirty = true;
-                    gate.poll(1)?;
-                    current = parent;
-                }
-                gate.poll(1)?;
-            }
-            tdd.vtree.sort_bottom_up(&mut self.changed);
-            let fold = OverflowingCounts { pins: &self.pins, convention: self.convention };
-            for &level in &self.changed {
-                fold_level(&fold, eng, tdd, &mut self.cols, level, Some(gate))?;
-            }
-        } else {
-            let fold = OverflowingCounts { pins: &self.pins, convention: self.convention };
-            if self.retention == Retention::Frontier {
-                for col in &mut self.cols { *col = CountVec::default(); }
-            }
-            fold_bottom_up(&fold, eng, tdd, &mut self.cols, self.retention, Some(gate), |cols, ti| {
-                let width = tdd.reference_slot_count(VtreeIdx(ti as u32));
-                if cols[ti].len() != width { cols[ti] = fold.alloc(eng, width)?; }
+        let (tdd, cols, convention) = (self.tdd, &mut self.cols, self.convention);
+        self.observations.refresh(eng, tdd, gate, |pins, changed, gate| {
+            let fold = OverflowingCounts { pins, convention };
+            refresh_columns(&fold, eng, tdd, cols, changed, gate, |fold, col, width| {
+                if col.len() != width { *col = fold.alloc(eng, width)?; }
                 Ok(())
-            })?;
-        }
-        self.clear_changed();
-        self.evaluated = true;
-        Ok(())
+            })
+        })
     }
 
-    /// Clear pending traversal membership while retaining its allocated storage.
-    fn clear_changed(&mut self) {
-        for &level in &self.changed { self.pins[level.idx()].dirty = false; }
-        self.changed.clear();
-    }
 }
 
 impl ModelCounter<'_> {
@@ -683,7 +563,7 @@ impl ModelCounter<'_> {
     ///
     /// Only a [`Retention::All`] counter holds every slot after the pass.
     pub(crate) fn into_fast_counts(mut self, eng: &Engine) -> Result<Vec<Vec<u128>>, OperationError> {
-        debug_assert_eq!(self.retention, Retention::All, "a frontier counter frees the columns this reads");
+        debug_assert_eq!(self.observations.retention, Retention::All, "a frontier counter frees the columns this reads");
         let lim = eng.limits();
         let mut gate = lim.gate();
         self.refresh(eng, &mut gate)?;

@@ -32,8 +32,7 @@
 use crate::Engine;
 use super::{OperationError, NO_PRODUCT};
 use super::budget::try_resize_dead;
-use super::setup::ApplyRun;
-use super::sparse::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx, fill_identity_product_list};
+use super::sparse::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx};
 
 /// Per-level descriptor for the product grid's slice of the flat arena.
 #[derive(Clone, Copy, Debug)]
@@ -312,63 +311,5 @@ impl GridArena {
             }
         }
         Ok(())
-    }
-}
-
-impl ApplyRun<'_> {
-    /// Reclaim the two consumed child grids — dead once this level is built
-    /// (each node has exactly one parent). Invoked at every level-finishing
-    /// exit.
-    pub(super) fn reclaim_child_grids(&mut self, left_idx: usize, right_idx: usize) {
-        for v in [left_idx, right_idx] {
-            self.arena.free_child(v, self.left_widths[v] * self.right_widths[v]);
-        }
-    }
-
-    /// Ensure `product_lists[ci]` is populated. Tries the cheap identity fast
-    /// path first (constant-true operand → the product list is just the
-    /// non-identity operand's nodes); falls back to scanning the dense grid.
-    /// Used on both the sparse and dense paths of the level loop.
-    pub(super) fn ensure_product_list_for_child(
-        &mut self,
-        eng: &Engine,
-        ci: usize, left_width: usize, right_width: usize,
-    ) -> Result<(), OperationError> {
-        if self.has_pl[ci] { return Ok(()); }
-        if !fill_identity_product_list(
-            eng,
-            left_width, right_width,
-            self.right_identity[ci], self.left_identity[ci],
-            &mut self.product_lists[ci],
-            &mut self.has_pl[ci],
-        )? {
-            self.arena.ensure_product_list(
-                eng, ci, left_width, right_width, &mut self.product_lists[ci], &mut self.has_pl,
-            )?;
-        }
-        Ok(())
-    }
-
-    /// Materialize one child on the dense-parent path: build its product list
-    /// if not already built, then grid it.
-    ///
-    /// This is the dense path, so the child is known to be ungridded — the
-    /// identity fast path is the only way to build its product list.
-    pub(super) fn materialize_dense_child(
-        &mut self,
-        eng: &Engine,
-        idx: usize,
-        left_width_c: usize,
-        right_width_c: usize,
-    ) -> Result<(), OperationError> {
-        if !self.has_pl[idx] {
-            let filled = fill_identity_product_list(
-                eng, left_width_c, right_width_c,
-                self.right_identity[idx], self.left_identity[idx],
-                &mut self.product_lists[idx], &mut self.has_pl[idx],
-            )?;
-            cheap_assert!(filled, "an ungridded child on the dense path has an identity operand");
-        }
-        self.arena.ensure_grid(eng, idx, left_width_c, right_width_c, &self.product_lists[idx])
     }
 }

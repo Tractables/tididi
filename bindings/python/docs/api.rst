@@ -49,6 +49,9 @@ Circuits and counters
 .. autoclass:: Counter
    :members:
 
+.. autoclass:: Evaluator
+   :members:
+
 Custom evaluation
 ---------------------
 

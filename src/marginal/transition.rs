@@ -3,7 +3,8 @@
 use crate::diagram::{Tdd, TddLevel, WeightStore, WeightValue, assert_can_make_marginal};
 use crate::value::{Column, CountVec, IntFold, WeightFold, ValueDomain};
 use crate::vtree::{Vtree, VtreeIdx};
-use super::free_subsumed_marginal_children;
+use crate::value::slots::{compact_count_slots, truncate_with_slack};
+use crate::diagram::CountOverflow;
 
 /// A vtree index that is known to be an internal node.
 ///
@@ -91,7 +92,8 @@ impl MarginalDomain for IntFold {
         col: CountVec,
         _store: &mut (),
     ) {
-        crate::marginal::install_int_column(&mut levels[left_idx], col);
+        let (counts, big) = col.into_parts();
+        crate::diagram::MarginalStorage::new(&mut levels[left_idx], None, left_idx).install_counts(counts, big);
     }
 
     /// Counts are deduped before they are installed, so the level satisfies invariant 10 — no
@@ -100,13 +102,13 @@ impl MarginalDomain for IntFold {
     /// remap.
     fn install(
         level: &mut TddLevel,
-        _t: InternalLevel,
+        t: InternalLevel,
         col: CountVec,
         _store: &mut (),
     ) -> Option<Vec<u32>> {
         let (fast, big) = col.into_parts();
-        let (counts, big, remap) = crate::marginal::dedup_fresh_store(fast, big);
-        level.become_marginal(counts, big);
+        let (counts, big, remap) = dedup_fresh_store(fast, big);
+        crate::diagram::MarginalStorage::new(level, None, t.vtree_idx().idx()).install_counts(counts, big);
         Some(remap)
     }
 
@@ -145,9 +147,9 @@ impl MarginalDomain for WeightFold {
     ) {
         // No parent contract-dirty marking: the shared level-state machine
         // establishes invariant 10 at slot-prune, which runs in weighted mode too via
-        // `prune_marginal_slots_generic::<WeightFold>`; only the integer
+        // `prune_value_slots`; only the integer
         // count-preservation localizer around it is gated off.
-        crate::marginal::install_weight_column(&mut levels[left_idx], left_idx, col, store);
+        crate::diagram::MarginalStorage::new(&mut levels[left_idx], Some(store), left_idx).install_weights(col);
     }
 
     /// The weighted store is full width and its references stay bare slots
@@ -161,7 +163,7 @@ impl MarginalDomain for WeightFold {
     ) -> Option<Vec<u32>> {
         // The column is full width — one slot per node, tombstones included —
         // which is the slot count the level records.
-        crate::marginal::install_weight_column(level, t.vtree_idx().idx(), col, store);
+        crate::diagram::MarginalStorage::new(level, Some(store), t.vtree_idx().idx()).install_weights(col);
         None
     }
 
@@ -209,4 +211,61 @@ pub(crate) fn install_streamed<K: MarginalDomain>(
     assert_can_make_marginal(levels, vtree, t);
     K::commit_in_flight(levels, t.idx(), col, store);
     free_subsumed_marginal_children(levels, vtree, t, K::weight_store(store));
+}
+
+/// Free the per-node store of `parent`'s marginal children; call it at the
+/// moment `parent` becomes marginal.
+///
+/// A marginal parent carries no pair lists, so nothing reads its children's
+/// stores again. The integer store is emptied and the weighted column cleared
+/// through `ws`; either way the child's `slot_count()` then reports 0 while it stays
+/// marginal. A weight-marginal leaf's column is left alone (invariant 11).
+pub(crate) fn free_subsumed_marginal_children(
+    levels: &mut [TddLevel],
+    vtree: &Vtree,
+    parent: VtreeIdx,
+    mut ws: Option<&mut WeightStore>,
+) {
+    if vtree.node(parent).is_leaf() {
+        return;
+    }
+    let (l, r) = vtree.children(parent);
+    for c in [l.idx(), r.idx()] {
+        crate::diagram::MarginalStorage::new(&mut levels[c], ws.as_deref_mut(), c)
+            .clear(vtree.node(VtreeIdx(c as u32)).is_leaf());
+    }
+}
+
+
+/// Compact a freshly built marginal store so that each count value occupies at
+/// most one slot (invariant 10), returning the deduped store and a slot remap,
+/// `remap[old] = new`.
+///
+/// Duplicates merge onto the first slot holding their value, so the returned
+/// column may be shorter than the input; with no duplicates both come back
+/// unchanged. Refs are not remapped here: the caller must redirect every
+/// parent-side ref into the old store through `remap` (the marginalization pass
+/// does so with `remap_refs_into`). An emit-born store does not pass through
+/// here; its invariant 10 is established by `prune_value_slots`.
+///
+/// The count column is compacted in place, so no second full-length column is
+/// resident at the peak; the overflow table is rekeyed into a fresh
+/// [`CountOverflow`], which costs only the surviving overflow entries.
+pub(crate) fn dedup_fresh_store(
+    mut counts: Vec<u128>,
+    mut big: Option<CountOverflow>,
+) -> (Vec<u128>, Option<CountOverflow>, Vec<u32>) {
+    let n = counts.len();
+    // Written for every `i`, so the remap is final as it is written and the
+    // overflow table can be rekeyed in one drain once it is complete.
+    let mut remap: Vec<u32> = vec![0; n];
+    let (new_len, _) = compact_count_slots(&mut counts, &mut big, 0..n, &mut remap);
+
+    if new_len == n {
+        // No duplicates: `remap` is the identity, and so would be the rekey.
+        return (counts, big, remap);
+    }
+
+    truncate_with_slack(&mut counts, new_len);
+    (counts, big, remap)
 }

@@ -16,7 +16,10 @@ reduction after an edit; they do not contribute to its Boolean meaning.
 `diagram::Assembly` owns unfinished output levels and their weights, returning
 the arenas to the pool if construction fails. Coordinated edits in
 `diagram/tdd/edit.rs` keep a level rewrite or slot renumbering together with
-its reference updates and reduction work.
+its reference updates and reduction work. `MarginalStorage` coordinates count
+and weighted payload changes with their slot metadata without changing the
+compact level layout. Conjunction's `Products` owns dense grids, sparse lists,
+conversions and the metadata that makes each representation readable.
 
 Structural levels hold pair lists. Marginal levels hold counts or fixed
 weighted values, and their references may carry an inline value instead of
@@ -111,6 +114,11 @@ then use `IntFold::sum_exact` when a product, sum, or child value exceeds the
 fast representation. The exact fold receives decoded values from its readers,
 so it handles arithmetic without knowing whether a value came from a query
 column, marginal storage, or an inline reference.
+
+`query::cache::Observations` tracks observations and schedules affected
+ancestors for both `ModelCounter` and `Evaluator`. The shared refresh walk
+uses their respective folds; counting retains its native-integer overflow
+path. An evaluator owns its algebra so replacing it can invalidate all columns.
 
 ## One conjunction
 

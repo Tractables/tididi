@@ -223,6 +223,13 @@ impl PyCircuit {
     }
 
     /// Move this circuit into a reusable evidence counter. Call counter.finish() to recover it.
+    /// Consume this circuit into an exact weighted evaluator. Copy first to retain the circuit.
+    /// Supply every variable's (negative, positive) int or Fraction weights.
+    fn evaluator(&mut self, py: Python<'_>, weights: &Bound<'_, PyDict>) -> PyResult<crate::counter::PyEvaluator> {
+        let weights = crate::evaluation::weights(py, self.get()?, weights)?;
+        crate::counter::PyEvaluator::new(py, self.take()?, weights)
+    }
+
     /// Copy first to retain an independently usable circuit while the counter is open.
     fn counter(&mut self, py: Python<'_>) -> PyResult<crate::counter::PyCounter> {
         crate::counter::PyCounter::new(py, self.take()?)

@@ -192,7 +192,44 @@ static void conditioning(void) {
     tididi_vtree_free(vtree);
 }
 
+static void weighted_evaluator(void) {
+    TididiVtree *v = NULL;
+    ok(tididi_vtree_balanced(2, &v));
+    TididiCircuit *f = NULL;
+    const int64_t literals[] = {1, 2};
+    ok(tididi_clause(v, literals, 2, &f, NULL));
+    TididiWeight weights[] = {{1, "4/5", "1/5"}, {2, "9/10", "1/10"}};
+    TididiEvaluator *e = NULL;
+    failure(tididi_evaluator(f, weights, 1, &e), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    CHECK(count(f) == 3 && e == NULL);
+    ok(tididi_evaluator(f, weights, 2, &e));
+    CHECK(consumed(f));
+    char *value = NULL;
+    ok(tididi_evaluator_value(e, &value, NULL));
+    CHECK(strcmp(value, "7/25") == 0); tididi_string_free(value); value = NULL;
+    const int64_t evidence[] = {-1};
+    ok(tididi_evaluator_observe(e, evidence, 1));
+    const int64_t invalid[] = {1, 3};
+    failure(tididi_evaluator_observe(e, invalid, 2), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    ok(tididi_evaluator_value(e, &value, NULL));
+    CHECK(strcmp(value, "2/25") == 0); tididi_string_free(value); value = NULL;
+    TididiWeight unit[] = {{1, "1", "1"}, {2, "1", "1"}};
+    ok(tididi_evaluator_set_weights(e, unit, 2));
+    ok(tididi_evaluator_value(e, &value, NULL));
+    CHECK(strcmp(value, "1") == 0); tididi_string_free(value); value = NULL;
+    ok(tididi_evaluator_clear(e, 1));
+    ok(tididi_evaluator_clear_all(e));
+    ok(tididi_evaluator_value(e, &value, NULL));
+    CHECK(strcmp(value, "3") == 0); tididi_string_free(value); value = NULL;
+    TididiCircuit *restored = NULL;
+    ok(tididi_evaluator_finish(e, &restored));
+    CHECK(count(restored) == 3);
+    failure(tididi_evaluator_value(e, &value, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    ok(tididi_evaluator_free(e)); ok(tididi_evaluator_free(NULL));
+    ok(tididi_circuit_free(restored)); ok(tididi_circuit_free(f)); tididi_vtree_free(v);
+}
+
 int main(void) {
-    conditioning();ownership();multi_operand_preflight();queries();big_counts_and_rows();counters_and_persistence();evaluation();
+    weighted_evaluator();conditioning();ownership();multi_operand_preflight();queries();big_counts_and_rows();counters_and_persistence();evaluation();
     puts("C ownership, queries, exact arithmetic, callbacks and persistence passed.");return 0;
 }

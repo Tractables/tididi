@@ -19,18 +19,16 @@
 //! sweep; the contract-only path kills no pairs and skips it.
 //!
 //! Integer and weighted levels share the one skeleton
-//! `prune_marginal_slots_generic`, generic over the `SlotStore` trait.
+//! `prune_marginal_slots`; the diagram storage owns their compaction.
 
 use crate::Engine;
 
 
-use crate::diagram::{Tdd, TddLevel, WeightStore};
+use crate::diagram::{Tdd, MarginalValues, MarginalStorage};
 use crate::vtree::VtreeIdx;
 
-use crate::value::{IntFold, WeightFold};
 use crate::value::slots::{RefSlotScratch, referenced_marginal_slots};
 use crate::diagram::boundary_marginal_levels;
-use crate::value::slots::{compact_slots, compact_count_slots, truncate_with_slack};
 
 impl crate::limits::pool::PooledScratch for RefSlotScratch {
     fn prepare(&mut self) { self.clear(); }
@@ -54,76 +52,11 @@ pub(crate) struct ValueSlotPruneStats {
 /// Collect orphaned marginal-count slots diagram-wide. Precondition: the
 /// diagram is in post-tagger form (module doc).
 pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> ValueSlotPruneStats {
-    if tdd.weights.is_some() {
-        prune_marginal_slots_generic::<WeightFold>(eng, tdd)
-    } else {
-        prune_marginal_slots_generic::<IntFold>(eng, tdd)
-    }
+    prune_marginal_slots(eng, tdd)
 }
 
-
-/// Storage-specific part of pruning. Each implementation commits its values
-/// and metadata together; the traversal only discovers and rewrites references.
-trait SlotStore {
-    fn store_len(tdd: &Tdd, v: VtreeIdx) -> usize;
-
-    /// Keep the sorted `referenced` slots, merge equal values and fill `remap`.
-    /// `remap` has the old store length. Update live width and retirement
-    /// accounting; return the number merged.
-    fn compact_store(level: &mut TddLevel, weights: Option<&mut WeightStore>, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> usize;
-}
-
-impl SlotStore for IntFold {
-    fn store_len(tdd: &Tdd, v: VtreeIdx) -> usize {
-        tdd.levels[v.idx()].marginal_counts().map_or(0, |c| c.len())
-    }
-
-    fn compact_store(level: &mut TddLevel, _weights: Option<&mut WeightStore>, _v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> usize {
-        let Some((counts, big)) = level.marginal_store_mut() else { return 0 };
-        let old_len = counts.len();
-        if old_len == 0 {
-            return 0;
-        }
-        let (new_len, merged) = compact_count_slots(
-            counts, big, referenced.iter().map(|&old| old as usize), remap,
-        );
-        truncate_with_slack(counts, new_len);
-        // Integer live width is the column length; only the retirement tally
-        // needs an explicit update after truncating it.
-        level.retire_marginal_slots((old_len - new_len) as u32);
-        merged
-    }
-}
-
-impl SlotStore for WeightFold {
-    fn store_len(tdd: &Tdd, v: VtreeIdx) -> usize {
-        tdd.weights.as_ref().and_then(|ws| ws.level(v.idx())).map_or(0, |s| s.len())
-    }
-
-    fn compact_store(level: &mut TddLevel, weights: Option<&mut WeightStore>, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> usize {
-        use crate::diagram::semiring::weight_key;
-        if remap.is_empty() {
-            level.set_weight_width(0);
-            return 0;
-        }
-        let values = weights.expect("weighted compaction requires its store").level_vals_mut(v.idx())
-            .expect("a nonempty weighted store has a column");
-        let (new_len, merged) = compact_slots(
-            values,
-            referenced.iter().map(|&old| old as usize),
-            |values, old| weight_key(&values[old]),
-            // Displaced values are dead and dropped by truncation.
-            |values, dst, src| values.swap(dst, src),
-            remap,
-        );
-        truncate_with_slack(values, new_len);
-        level.set_weight_width(new_len as u32);
-        merged
-    }
-}
-
-/// The one prune skeleton, generic over where the values live.
-fn prune_marginal_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> ValueSlotPruneStats {
+/// Prune boundary columns through their shared storage interface.
+fn prune_marginal_slots(eng: &Engine, tdd: &mut Tdd) -> ValueSlotPruneStats {
     // Invariant 11 (`check_leaf_columns_pinned`), checked here because this
     // pass runs after every pass that could break it.
     #[cfg(debug_assertions)]
@@ -139,7 +72,7 @@ fn prune_marginal_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> Va
     let out_v = tdd.output.vtree;
 
 
-    compact_boundary_stores::<S>(tdd, out_v, &mut stats, &mut slots, &mut remap);
+    compact_boundary_stores(tdd, out_v, &mut stats, &mut slots, &mut remap);
 
     // It rewrites stores in place and so cannot stop partway, for the reason
     // `prune_unreachable` gives; charging keeps the walk on the work clock.
@@ -150,7 +83,7 @@ fn prune_marginal_slots_generic<S: SlotStore>(eng: &Engine, tdd: &mut Tdd) -> Va
 
 /// Compact each boundary store to its parent-referenced set and rewrite the
 /// parent's refs through the composed remap.
-fn compact_boundary_stores<S: SlotStore>(
+fn compact_boundary_stores(
     tdd: &mut Tdd,
     out_v: VtreeIdx,
     stats: &mut ValueSlotPruneStats,
@@ -172,10 +105,10 @@ fn compact_boundary_stores<S: SlotStore>(
         }
         // Empty stores need no parent walks. Weighted live width still needs
         // synchronization, even when no store column is installed.
-        let store_len = S::store_len(tdd, v);
+        let store_len = MarginalValues::read(&tdd.levels[v.idx()], tdd.weights.as_ref(), v.idx()).map_or(0, |values| values.len());
         if store_len == 0 {
             tdd.reindex_level(v, &[], &mut [], |level, weights, referenced, remap| {
-                S::compact_store(level, weights, v, referenced, remap)
+                MarginalStorage::new(level, weights, v.idx()).compact(referenced, remap)
             });
             continue;
         }
@@ -193,7 +126,7 @@ fn compact_boundary_stores<S: SlotStore>(
         remap.clear();
         remap.resize(store_len, u32::MAX);
         let values_merged = tdd.reindex_level(v, referenced, remap, |level, weights, referenced, remap| {
-            S::compact_store(level, weights, v, referenced, remap)
+            MarginalStorage::new(level, weights, v.idx()).compact(referenced, remap)
         });
         stats.values_merged += values_merged;
         if values_merged > 0 {

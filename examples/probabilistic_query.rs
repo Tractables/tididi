@@ -47,5 +47,16 @@ fn main() -> Result<(), tididi::OperationError> {
         println!("P(rain) = {rain_probability}, P(wet) = {wet_probability}");
         println!("P(rain | wet) = {conditional}");
     }
+
+    let weights = RationalWeights::from_literals(&[
+        bernoulli(fraction(3, 5)),
+        bernoulli(fraction(1, 10)),
+        bernoulli(fraction(2, 5)),
+    ]);
+    let mut evaluator = wet.evaluator(weights)?;
+    evaluator.observe([-1])?;
+    println!("P(wet and no rain) = {}", evaluator.value()?);
+    evaluator.clear_pins();
+    println!("P(wet) = {}", evaluator.value()?);
     Ok(())
 }

@@ -224,3 +224,6 @@ pub(crate) use tdd::{Dirty, Pass};
 
 #[cfg(test)]
 mod tests;
+
+mod marginal_values;
+pub(crate) use marginal_values::{MarginalStorage, MarginalValues};

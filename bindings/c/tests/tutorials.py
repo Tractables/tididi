@@ -10,7 +10,7 @@ def verify(outputs):
         "counting": ["Valid configurations: 8", "With remote backups: 4", "Observed remote backups: 4",
                      "After substituting remote = true: 8", "Distinct remaining choices: 4",
                      "Valid destination choices: 3", "Destination rule over the full vtree: 12", "Destination rule projected: 3"],
-        "probability": ["P(wet) = 7/25", "P(rain | wet) = 5/7", "P(wet) = 16/25", "P(rain | wet) = 15/16"],
+        "probability": ["P(wet) = 7/25", "P(rain | wet) = 5/7", "P(wet) = 16/25", "P(rain | wet) = 15/16", "P(wet and no rain) = 1/25"],
         "tables": ["Distinct rows: 3", "After updating: 3", "Rows allowing sharing: 2",
                    "After withdrawing sharing: 1"],
         "persistence": ["Restored valid configurations: 4"],

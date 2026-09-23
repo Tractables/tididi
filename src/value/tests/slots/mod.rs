@@ -24,7 +24,7 @@ fn refused_weight_slot_preserves_values_and_width() {
     let width = tdd.levels[level.idx()].slot_count();
     let expected = tdd.weighted_value().unwrap().unwrap().into_rational();
     // Force the next append to grow instead of using spare capacity.
-    let column = tdd.weight_store_mut().level_vals_mut(level.idx()).unwrap();
+    let column = tdd.weights.as_mut().unwrap().level_vals_mut(level.idx()).unwrap();
     *column = std::mem::take(column).into_boxed_slice().into_vec();
     eng.limits().refuse_nth_reserve(0);
     let result = WeightFold::push_slot(&eng, &mut tdd, level, WeightValue::ExactSmall(0));

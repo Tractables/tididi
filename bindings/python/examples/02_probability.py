@@ -40,3 +40,17 @@ for rain_probability in [Fraction(1, 5), Fraction(3, 5)]:
 # one: unit weights recover the model count.
 unit_weights = {variable: (1, 1) for variable in vtree.variables}
 print("Models of wet:", wet.weighted_count(unit_weights))
+
+
+# %%
+# Change observations
+# -------------------
+# An evaluator caches values so changing an observation refreshes only affected
+# branches. It consumes ``wet``; ``finish()`` returns the circuit when we are done.
+# The value with no rain is the joint probability ``P(W ∧ ¬R)``, without normalization.
+evaluator = wet.evaluator(weights)
+evaluator.observe([-1])
+print("P(wet and no rain) =", evaluator.value())
+evaluator.clear_observations()
+print("P(wet) =", evaluator.value())
+wet = evaluator.finish()

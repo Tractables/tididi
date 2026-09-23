@@ -140,17 +140,21 @@ conditional-probability formula before the calculation; reuse the circuits
 when weights change. Unit weights give 6 models of W over all three variables.
 Rust uses BigRational; Python uses the standard-library Fraction.
 
+With the second set of priors, retain an evaluator and observe no rain.
+Its joint mass is P(W ∧ ¬R)=1/25; clearing observations restores P(W)=16/25.
+Rust borrows the circuit; Python and C consume it and return it on finish.
+
 C passes exact weights as fraction strings and returns owned fraction strings.
 Its weighted-ratio call divides the two event masses; it omits the unit-weight
 comparison to keep arithmetic and allocation details out of the narrative.
 
 ### Instances
 
-- [Rust walkthrough](examples/probability.md) <!-- reviewed: 90d6c93d0927c51e41a32bd036ecae851af5393d3451d1d8ccd1fac128a16d04 -->
-- [Rust program](../examples/probabilistic_query.rs) <!-- reviewed: d22223b12cf6725aa5c100ba833eb3f3cdb4388ba64d6e5640d67c309c30fa3f -->
-- [Python walkthrough and program](../bindings/python/examples/02_probability.py) <!-- reviewed: 43ebc3fefabcb732dbad5b04b78a9171aded6421a1a2a4f7eaf05bf9c81ada86 -->
-- [C probability](../bindings/c/docs/probability.rst) <!-- reviewed: 5d30ac6f3b39409e65615580882a2bd742bbaf1c3da847116dde7ed8237d4931 -->
-- [C program probability](../bindings/c/examples/probability.c) <!-- reviewed: f63e88702fd6a8afe3aa25132c2fe78197512554315d01ca33ef391454c3ee15 -->
+- [Rust walkthrough](examples/probability.md) <!-- reviewed: 2a793fc7fd2e4233da78067e90e7dae75f3d374790e549c4448ccb4db2c23449 -->
+- [Rust program](../examples/probabilistic_query.rs) <!-- reviewed: b38574885581a35a0618e3ea60eb02bfb65814374fea0bf201e07ad024a0e403 -->
+- [Python walkthrough and program](../bindings/python/examples/02_probability.py) <!-- reviewed: 2cb09a4d22d3c587ca0055ee88a9b3d6b72bb5c5a8f049485a9c77d0a47e26a0 -->
+- [C probability](../bindings/c/docs/probability.rst) <!-- reviewed: 70407f3617cf030796406fe1a00da39d51e104f851b1401f59c6106075ab888c -->
+- [C program probability](../bindings/c/examples/probability.c) <!-- reviewed: b0fbc98b3e3f91980df886ed3e078f16ce313ac8d70c387c330ea3420adac282 -->
 
 ## Reachability
 
@@ -325,7 +329,7 @@ comparison remains in the Rust and Python lessons.
 - [Python walkthrough and program](../bindings/python/examples/08_minimum_cost.py) <!-- reviewed: 79dce3065ddab786f40085239b1e037fa83dbb734744bb7f262e6184f5e49638 -->
 - [C minimum cost](../bindings/c/docs/minimum_cost.rst) <!-- reviewed: 31066073b902872f8b5ee0ed058b91001fe74c245575b5ce7462e0ebf4d99a05 -->
 - [C program minimum_cost](../bindings/c/examples/minimum_cost.c) <!-- reviewed: d376304fe91f8dfee13b0efe4d45afcc69743b2d0082fdccafae3ef828303b8b -->
-- [Python algebra contract](../bindings/python/tididi/__init__.py) <!-- reviewed: 0c18b270daece6e0970726e34b88e130d84ab7c208569a754c358b54ced8258e -->
+- [Python algebra contract](../bindings/python/tididi/__init__.py) <!-- reviewed: e78c4042d15680740ab229fed8a25880e95f436177a0c00c28f1fceef7f674a2 -->
 - [C algebra contract](../bindings/c/src/evaluation.rs) <!-- reviewed: 290593cd8b5102135539193b1242d9cb2159140a95ccb263c3b2f652ffee9983 -->
 
 ## Statistics
@@ -374,7 +378,7 @@ owns the circuit until finish; unlike Python, freeing the handle ends all checks
 
 ### Instances
 
-- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: 4cb2b4773b74bbed2fa8c5a767a3fae3158fe93a6d8743e31a66ab1cce8682cb -->
+- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: 353874100c8d2a65c8a9db684172a53ddea622c276fb33a8199f31470d91f7ae -->
 - [Python ownership guide](../bindings/python/docs/ownership.rst) <!-- reviewed: 49e98fe18f2ea5b0d769f3b2301737e040ae22238e00b4dd9ac5296e493e94a0 -->
 - [C ownership](../bindings/c/docs/ownership.rst) <!-- reviewed: 6fa3921cd9c76acae60b9bb7d58e71544dd85f15c8a54c55815cf910628e80c4 -->
 
@@ -396,7 +400,7 @@ evaluation has its own rational-string interface.
 ### Instances
 
 - [Rust API overview](api-guide.md) <!-- reviewed: ff5a012f8ed7377d978254fa3333321d6dd4f02f1d0e56312cc885c3320a86de -->
-- [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: cf89774fb5f52ca207dd8cfb414e648661e4769736be8b529bf80ebe6eb7aeb2 -->
+- [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: 619c8cf6bbe3d4b720da766850817f34b4fdf92c866f3c6cd9828cd555fdcd39 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 
 ## Representation
@@ -422,7 +426,8 @@ invariants and marginal levels; Python concentrates on using shared vtrees.
 
 Explain the Rust implementation through storage ownership, level arenas,
 child-reference decoding, reduction passes, scratch and limits. Include unfinished
-output ownership and the boundary that coordinates level edits with references
+output ownership, intermediate product storage, coordinated marginal payloads,
+shared incremental query scheduling, and the boundary that coordinates level edits with references
 and worklists. Define terms
 once, map modules to responsibilities, and identify which operations establish
 or temporarily break each invariant. Distinguish validation of stored data
@@ -431,7 +436,7 @@ there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: e6d0b2eca73af549c4cbc19172b8f2734c99af509d251dba6d2180c4500db925 -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: 805236e00d5c804e7f861bfd756854a451f4a9da04c0b7cc1e6e9b9804091511 -->
 
 ## Reusable components
 

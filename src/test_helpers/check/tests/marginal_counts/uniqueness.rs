@@ -1,6 +1,6 @@
 use num_bigint::BigUint;
 use crate::test_helpers::check::marginal::check_store_counts;
-use crate::marginal::dedup_fresh_store;
+use crate::marginal::transition::dedup_fresh_store;
 use crate::diagram::{EncodedChildRef, CountOverflow, ChildDecoder, ValueRef};
 
 // ── `dedup_fresh_store` for marginalization-time stores ────────────────

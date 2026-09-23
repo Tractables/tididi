@@ -5,7 +5,7 @@
 use super::*;
 
 use crate::Engine;
-use crate::marginal::free_subsumed_marginal_children;
+use crate::marginal::transition::free_subsumed_marginal_children;
 use crate::test_helpers::compile_clauses;
 use crate::diagram::EncodedNode;
 use crate::reduce::contract::contract_all_twins;

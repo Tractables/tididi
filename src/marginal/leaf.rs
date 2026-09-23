@@ -187,8 +187,7 @@ pub(crate) fn marginalize_leaf_weighted(
             }
             tdd.invalidate(parent_vi);
         }
-    tdd.levels[left_idx].become_marginal_weighted(values.len() as u32);
-    ws.set_level(left_idx, values);
+    crate::diagram::MarginalStorage::new(&mut tdd.levels[left_idx], Some(ws), left_idx).install_weights(values);
 }
 
 /// Rewrite the leaf-side refs of every leaf that one operand made

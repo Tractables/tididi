@@ -372,14 +372,6 @@ impl Tdd {
             .expect("a weighted operation on a diagram with no weight store")
     }
 
-    /// [`Tdd::weight_store`] for a caller that writes.
-    #[inline]
-    pub(crate) fn weight_store_mut(&mut self) -> &mut WeightStore {
-        self.weights
-            .as_mut()
-            .expect("a weighted operation on a diagram with no weight store")
-    }
-
     /// Whether the output is the [`ZERO`] sentinel for the constant-false function.
     ///
     /// For a structural diagram this decides unsatisfiability without minimization.

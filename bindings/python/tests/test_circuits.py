@@ -349,3 +349,34 @@ def test_unary_transformations_share_consumption_and_error_behavior(transform):
     with pytest.raises(td.ResourceLimitError):
         transform(refused, limits=td.Limits(timeout=0))
     assert refused.is_consumed
+
+
+def test_weighted_evaluator_ownership_validation_and_retry():
+    from fractions import Fraction
+    from tididi import Vtree, clause, ConsumedCircuitError
+    vtree = Vtree.balanced(2)
+    f = clause(vtree, [1, 2])
+    weights = {1: (Fraction(4, 5), Fraction(1, 5)), 2: (Fraction(9, 10), Fraction(1, 10))}
+    with pytest.raises(ValueError):
+        f.evaluator({1: (1, 1)})
+    assert f.model_count() == 3
+    e = f.evaluator(weights)
+    with pytest.raises(ConsumedCircuitError):
+        f.model_count()
+    assert e.value() == Fraction(7, 25)
+    e.observe([-1])
+    assert e.value() == Fraction(2, 25)
+    with pytest.raises(ValueError):
+        e.observe([1, 3])
+    assert e.value() == Fraction(2, 25)
+    e.set_weights({1: (1, 1), 2: (1, 1)})
+    assert e.value() == 1
+    e.clear(1)
+    assert e.value() == 3
+    e.observe([-2])
+    e.clear_observations()
+    assert e.value() == 3
+    restored = e.finish()
+    assert restored.model_count() == 3
+    with pytest.raises(RuntimeError):
+        e.value()

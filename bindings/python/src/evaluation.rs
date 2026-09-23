@@ -13,7 +13,7 @@ use tididi::vtree::VarId;
 use tididi::Tdd;
 use crate::{domain, operations};
 
-pub fn weighted_count(py: Python<'_>, f: &Tdd, values: &Bound<'_, PyDict>, limits: LimitConfig) -> PyResult<BigRational> {
+pub(crate) fn weights(py: Python<'_>, f: &Tdd, values: &Bound<'_, PyDict>) -> PyResult<RationalWeights> {
     let fraction = py.import("fractions")?.getattr("Fraction")?;
     let rational = |value: Bound<'_, PyAny>| -> PyResult<BigRational> {
         if value.is_instance_of::<PyInt>() {
@@ -37,7 +37,11 @@ pub fn weighted_count(py: Python<'_>, f: &Tdd, values: &Bound<'_, PyDict>, limit
             return Err(PyValueError::new_err(format!("missing weights for variable {}", var.0)));
         }
     }
-    let weights = RationalWeights::from_literals(&weights);
+    Ok(RationalWeights::from_literals(&weights))
+}
+
+pub fn weighted_count(py: Python<'_>, f: &Tdd, values: &Bound<'_, PyDict>, limits: LimitConfig) -> PyResult<BigRational> {
+    let weights = weights(py, f, values)?;
     operations::run(py, f.vtree(), limits, |engine| engine.evaluate(f, &weights))
 }
 

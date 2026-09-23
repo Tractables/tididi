@@ -349,7 +349,7 @@ pub fn check_store_counts(counts: &[u128], big: Option<&CountOverflow>) -> Resul
 /// A marginal level whose parent is marginal holds no value store. The parent's
 /// aggregate is all a reader above can reach, so the marginalization pass and the
 /// marginalizing conjunction free each child's store as the parent becomes
-/// marginal (`marginal::free_subsumed_marginal_children`) and no later pass
+/// marginal (`marginal::transition::free_subsumed_marginal_children`) and no later pass
 /// refills it.
 /// A weight-marginal leaf is exempt: its column is the pinned leaf cache
 /// (invariant 11), live whatever its parent is.

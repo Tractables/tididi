@@ -11,18 +11,14 @@
 //! restores invariants 7, 8 and 10 before it returns. Folding a weighted
 //! diagram down to its value is [`Tdd::weighted_value`].
 
-pub(crate) use store::{install_int_column, install_weight_column};
 pub(crate) mod transition;
 mod fold;
 mod leaf;
-mod store;
-pub(crate) use store::free_subsumed_marginal_children;
 
 use crate::Engine;
 pub(crate) use fold::marginalize_batch;
 pub(crate) use leaf::canonicalize_apply_leaf_refs;
 pub(crate) use leaf::{marginalize_leaf_inline, marginalize_leaf_weighted};
-pub(crate) use store::dedup_fresh_store;
 
 use crate::value::WeightFold;
 use crate::limits::OperationError;

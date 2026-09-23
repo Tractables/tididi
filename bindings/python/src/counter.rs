@@ -80,3 +80,72 @@ impl PyCounter {
         if self.cell.is_some() { "Counter(open)" } else { "Counter(finished)" }
     }
 }
+
+
+type NativeEvaluator<'a> = tididi::query::Evaluator<'a, tididi::diagram::RationalWeights>;
+self_cell::self_cell!(
+    struct EvaluatorCell {
+        owner: Tdd,
+        #[covariant]
+        dependent: NativeEvaluator,
+    }
+);
+
+/// Cache exact weighted sums under changing evidence. Circuit.evaluator(weights) consumes the circuit.
+/// value() returns the joint weight of the circuit and observations. finish() returns the circuit.
+#[pyclass(name = "Evaluator", module = "tididi")]
+pub struct PyEvaluator { cell: Option<EvaluatorCell> }
+
+impl PyEvaluator {
+    pub fn new(py: Python<'_>, circuit: Tdd, weights: tididi::diagram::RationalWeights) -> PyResult<Self> {
+        let cell = py.detach(|| EvaluatorCell::try_new(circuit, |f| f.evaluator(weights))).map_err(crate::operation_error)?;
+        Ok(Self { cell: Some(cell) })
+    }
+    fn cell(&mut self) -> PyResult<&mut EvaluatorCell> {
+        self.cell.as_mut().ok_or_else(|| PyRuntimeError::new_err("Evaluator has been finished"))
+    }
+}
+
+#[pymethods]
+impl PyEvaluator {
+    /// Observe signed integers or Literal values. Invalid input preserves all observations.
+    fn observe(&mut self, literals: &Bound<'_, PyAny>) -> PyResult<()> {
+        let literals = domain::read_literals(literals)?;
+        self.cell()?.with_dependent_mut(|_, e| e.observe(literals)).map_err(crate::operation_error)
+    }
+    /// Clear one observation.
+    fn clear(&mut self, variable: u32) -> PyResult<()> {
+        let variable = domain::variable_id(variable)?;
+        self.cell()?.with_dependent_mut(|_, e| e.set_pin(variable, None)).map_err(crate::operation_error)
+    }
+    /// Clear all observations, retaining cached storage.
+    fn clear_observations(&mut self) -> PyResult<()> {
+        self.cell()?.with_dependent_mut(|_, e| e.clear_pins());
+        Ok(())
+    }
+    /// Replace every variable's (negative, positive) weights, retaining observations.
+    /// Weights are int or Fraction values. Invalid input leaves previous weights in place.
+    fn set_weights(&mut self, py: Python<'_>, weights: &Bound<'_, pyo3::types::PyDict>) -> PyResult<()> {
+        let cell = self.cell()?;
+        let weights = crate::evaluation::weights(py, cell.borrow_owner(), weights)?;
+        cell.with_dependent_mut(|_, e| { e.replace_algebra(weights); });
+        Ok(())
+    }
+    /// Return the exact weighted sum under observations, refreshing only affected ancestors.
+    /// Probability weights give joint probability; no normalization is performed.
+    #[pyo3(signature = (*, limits=None))]
+    fn value(&mut self, py: Python<'_>, limits: Option<&PyLimits>) -> PyResult<num_rational::BigRational> {
+        let config = domain::config(limits)?;
+        let cell = self.cell()?;
+        let vtree = std::sync::Arc::clone(cell.borrow_owner().vtree());
+        operations::run(py, &vtree, config, |engine| cell.with_dependent_mut(|_, e| e.bind(engine).value()))
+    }
+    /// Close this evaluator and return the original circuit without its observations.
+    fn finish(&mut self) -> PyResult<PyCircuit> {
+        self.cell.take().map(|cell| PyCircuit::new(cell.into_owner()))
+            .ok_or_else(|| PyRuntimeError::new_err("Evaluator has been finished"))
+    }
+    fn __repr__(&self) -> &'static str {
+        if self.cell.is_some() { "Evaluator(open)" } else { "Evaluator(finished)" }
+    }
+}

@@ -5,12 +5,11 @@
 use crate::Engine;
 use crate::vtree::VtreeIdx;
 use crate::diagram::*;
-use super::{liveness, OperationError, LevelGrid, APPLY_BYTES_PER_CELL};
-use super::grid_arena::GridArena;
+use super::{liveness, OperationError, APPLY_BYTES_PER_CELL};
+use super::products::Products;
 use crate::value::StreamCache;
-use super::output::LiveCounts;
 use super::marginal_plan::EntryMarginality;
-use super::sparse::{sparse_thresholds, ProductEntry, SparseThresholds};
+use super::sparse::{sparse_thresholds, SparseThresholds};
 use super::route::{LevelMarg, SparseGate};
 
 /// The vtree nodes whose levels the bottom-up sweep marginalizes.
@@ -62,12 +61,7 @@ pub(super) struct ApplyRun<'a> {
     /// Lazily computed child columns for the streaming-marginal path. See
     /// [`StreamCache`].
     pub(super) stream_cache: StreamCache,
-    /// The flat product-grid slab and every level's claim on it. See
-    /// [`GridArena`].
-    pub(super) arena: GridArena,
-    pub(super) product_lists: Vec<Vec<ProductEntry>>,
-    pub(super) live_counts: LiveCounts,
-    pub(super) has_pl: Vec<bool>,
+    pub(super) products: Products,
     /// Which levels of each operand were marginal at apply entry. See
     /// [`EntryMarginality`].
     pub(super) entry_marginality: EntryMarginality,
@@ -176,11 +170,11 @@ impl ApplyRun<'_> {
         let LevelShape { left, right, f, g, .. } = shape;
         let max_left = (f.left * g.left) as u128;
         let max_right = (f.right * g.right) as u128;
-        let live_l = self.live_counts.at(left.idx()) as u128;
-        let live_r = self.live_counts.at(right.idx()) as u128;
+        let live_l = self.products.live(left.idx()) as u128;
+        let live_r = self.products.live(right.idx()) as u128;
         let factor = self.thresholds.sparsity_factor;
         let min_grid = self.thresholds.min_grid;
-        let ungridded = |child: VtreeIdx| self.arena.is_sparse(child.idx());
+        let ungridded = |child: VtreeIdx| self.products.arena.is_sparse(child.idx());
         let wide_and_sparse = |child: VtreeIdx, max: u128, live: u128| {
             ungridded(child) && max > min_grid as u128 && factor * live < max
         };
@@ -188,7 +182,7 @@ impl ApplyRun<'_> {
         let (fill_l, scan_l) = split(left, max_left);
         let (fill_r, scan_r) = split(right, max_right);
         SparseGate {
-            available: self.arena.is_bump(),
+            available: self.products.arena.is_bump(),
             density_wins: max_left > 0
                 && max_right > 0
                 && factor * live_l * live_r < max_left * max_right,
@@ -199,23 +193,30 @@ impl ApplyRun<'_> {
         }
     }
 
+    pub(super) fn reclaim_child_grids(&mut self, left: usize, right: usize) {
+        self.products.reclaim_children([
+            (left, self.left_widths[left] * self.right_widths[left]),
+            (right, self.left_widths[right] * self.right_widths[right]),
+        ]);
+    }
+
+    pub(super) fn ensure_product_list_for_child(&mut self, eng: &Engine, t: usize, left: usize, right: usize) -> Result<(), OperationError> {
+        self.products.ensure_product_list_for_child(eng, t, left, right, self.right_identity[t], self.left_identity[t])
+    }
+
+    pub(super) fn materialize_dense_child(&mut self, eng: &Engine, t: usize, left: usize, right: usize) -> Result<(), OperationError> {
+        self.products.materialize_dense_child(eng, t, left, right, self.right_identity[t], self.left_identity[t])
+    }
+
     /// Hand the computation scratch back; the assembly owns the output levels.
     ///
     /// Heavy buffers are capped at the scratch-retention cap on the way out, so a
     /// single wide conjunction cannot park GiB-scale allocations in the pools.
     pub(super) fn finish(mut self, eng: &Engine) {
         let pool = eng.apply();
-        let (slab, grids) = self.arena.into_parts();
-        pool.node_idx.put_bounded(eng.limits(), slab);
-        pool.grids.put(grids);
+        self.products.finish(eng);
         pool.right_identity.put(self.right_identity);
         pool.left_identity.put(self.left_identity);
-        for pl in &mut self.product_lists {
-            crate::limits::pool::release_if_oversized(eng.limits(), pl);
-        }
-        pool.product_lists.put(self.product_lists);
-        self.live_counts.into_pool(&pool.live_counts);
-        pool.has_pl.put(self.has_pl);
         pool.left_widths.put(self.left_widths);
         pool.right_widths.put(self.right_widths);
         pool.inputs1.put_bounded(eng.limits(), self.inputs1_scratch);
@@ -255,44 +256,6 @@ fn snapshot_widths(
         }
     }
     (total_cells, any_entry_marginal)
-}
-
-/// Clear the per-level sparse bookkeeping of every level.
-fn reset_level_tracking(
-    num_nodes: usize,
-    product_lists: &mut [Vec<ProductEntry>],
-    has_pl: &mut [bool],
-) {
-    for i in 0..num_nodes {
-        product_lists[i].clear();
-        has_pl[i] = false;
-    }
-}
-
-/// Build the product-grid arena in the shape this apply needs.
-///
-/// With any sparse level possible the arena bumps: every level starts
-/// ungridded and claims space when it is reached. Otherwise every level's base
-/// is computed up front and the slab is sized once.
-fn layout_grids(
-    eng: &Engine,
-    might_use_sparse: bool,
-    num_nodes: usize,
-    left_widths: &[usize],
-    right_widths: &[usize],
-    grids: Vec<LevelGrid>,
-) -> Result<GridArena, OperationError> {
-    let cells = eng.apply().node_idx.take();
-    if might_use_sparse {
-        Ok(GridArena::bump(cells, grids, 0..=num_nodes))
-    } else {
-        GridArena::preplanned(
-            eng, cells, grids,
-            (0..num_nodes)
-                .map(|i| (i, left_widths[i] * right_widths[i]))
-                .chain(std::iter::once((num_nodes, 0))),
-        )
-    }
 }
 
 /// Refuse before allocating anything if the cells this apply is *guaranteed* to
@@ -338,11 +301,6 @@ pub(super) fn apply_and_setup<'a>(
     let thresholds = sparse_thresholds();
     let min_grid = thresholds.min_grid;
 
-    let mut grids: Vec<LevelGrid> = eng.apply().grids.take();
-    if grids.len() < num_nodes + 1 {
-        grids.resize(num_nodes + 1, LevelGrid::Sparse);
-    }
-
     let mut left_widths = eng.apply().left_widths.take();
     let mut right_widths = eng.apply().right_widths.take();
     if left_widths.len() < num_nodes { left_widths.resize(num_nodes, 0); }
@@ -369,20 +327,7 @@ pub(super) fn apply_and_setup<'a>(
         marginalize_targets.any().then_some(weighted),
     );
 
-    // Product lists, live counts, and has_pl are only used when might_use_sparse.
-    let mut product_lists = eng.apply().product_lists.take();
-    let live_counts = LiveCounts::take(&eng.apply().live_counts, num_nodes);
-    let mut has_pl = eng.apply().has_pl.take();
-
-    if product_lists.len() < num_nodes { product_lists.resize_with(num_nodes, Vec::new); }
-    has_pl.resize(num_nodes, false);
-
-    reset_level_tracking(num_nodes, &mut product_lists, &mut has_pl);
-
-    let arena = layout_grids(
-        eng,
-        might_use_sparse, num_nodes, &left_widths, &right_widths, grids,
-    )?;
+    let products = Products::take(eng, might_use_sparse, num_nodes, &left_widths, &right_widths)?;
 
     let mut inputs1_scratch: Vec<ChildPair> = eng.apply().inputs1.take();
     let mut inputs2_scratch: Vec<ChildPair> = eng.apply().inputs2.take();
@@ -393,8 +338,7 @@ pub(super) fn apply_and_setup<'a>(
         levels, left_widths, right_widths,
         thresholds,
         stream_cache,
-        arena,
-        product_lists, live_counts, has_pl,
+        products,
         entry_marginality,
         right_identity: eng.apply().right_identity.take(),
         left_identity: eng.apply().left_identity.take(),

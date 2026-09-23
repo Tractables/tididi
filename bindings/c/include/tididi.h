@@ -81,6 +81,11 @@ typedef struct TididiCounter TididiCounter;
 typedef struct TididiError TididiError;
 
 /**
+ * A reusable exact weighted evaluator owning its circuit until finish. Free even after finish.
+ */
+typedef struct TididiEvaluator TididiEvaluator;
+
+/**
  * An owned list of signed, one-based literals. Its data remains valid until the list is freed.
  */
 typedef struct TididiLiterals TididiLiterals;
@@ -579,6 +584,61 @@ struct TididiError *tididi_counter_finish(struct TididiCounter *value,
  * Free a counter handle, whether open or finished. NULL is accepted; active handles return BorrowConflict.
  */
 struct TididiError *tididi_counter_free(struct TididiCounter *value);
+
+/**
+ * Move a circuit into an evaluator. Supply weights for every variable; they are copied.
+ * Invalid weights leave the circuit usable. Copy the circuit first to retain it after success.
+ */
+struct TididiError *tididi_evaluator(struct TididiCircuit *value,
+                                     const struct TididiWeight *values,
+                                     size_t len,
+                                     struct TididiEvaluator **out);
+
+/**
+ * Observe signed literals; later values replace earlier observations of the same variable.
+ * Invalid input preserves all observations.
+ */
+struct TididiError *tididi_evaluator_observe(struct TididiEvaluator *value,
+                                             const int64_t *values,
+                                             size_t len);
+
+/**
+ * Clear one variable's observation.
+ */
+struct TididiError *tididi_evaluator_clear(struct TididiEvaluator *value, uint32_t var);
+
+/**
+ * Clear all observations, retaining cached storage.
+ */
+struct TididiError *tididi_evaluator_clear_all(struct TididiEvaluator *value);
+
+/**
+ * Replace every variable's weights, retaining observations and invalidating cached values.
+ * Invalid weights leave the previous values in place.
+ */
+struct TididiError *tididi_evaluator_set_weights(struct TididiEvaluator *value,
+                                                 const struct TididiWeight *values,
+                                                 size_t len);
+
+/**
+ * Return the exact weighted sum under observations as an owned integer/fraction string.
+ * Probability weights give joint probability, without normalization. Free with tididi_string_free.
+ * Reads obey limits, including cached reads; refused work retains observations for retry.
+ */
+struct TididiError *tididi_evaluator_value(struct TididiEvaluator *value,
+                                           char **out,
+                                           const struct TididiLimits *config);
+
+/**
+ * Close an evaluator and return its original circuit, discarding observations. The handle still needs freeing.
+ */
+struct TididiError *tididi_evaluator_finish(struct TididiEvaluator *value,
+                                            struct TididiCircuit **out);
+
+/**
+ * Free an evaluator handle. NULL is accepted; active handles return BorrowConflict.
+ */
+struct TididiError *tididi_evaluator_free(struct TididiEvaluator *value);
 
 /**
  * Exact weighted sum, returned as an owned integer/fraction string. Supply weights for every vtree variable.

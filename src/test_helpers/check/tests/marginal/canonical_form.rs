@@ -134,7 +134,7 @@ fn c4_orphan_slot_cleared_after_prune() {
 #[test]
 fn subsumed_store_detected_and_freed() {
     use crate::diagram::{NodeIdx, Tdd, TddLevel, TddNodeId};
-    use crate::marginal::free_subsumed_marginal_children;
+    use crate::marginal::transition::free_subsumed_marginal_children;
     use crate::vtree::Vtree;
     use num_bigint::BigUint;
     use std::sync::Arc;

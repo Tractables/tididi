@@ -4,7 +4,7 @@
 //! [`Tdd::model_count`](crate::Tdd::model_count) for an exact
 //! count or [`Tdd::satisfying_assignment`](crate::Tdd::satisfying_assignment)
 //! for a witness. These queries borrow the diagram and accept nonminimal structural inputs.
-//! [`ModelCounter`] retains counting state for repeated evidence updates.
+//! [`ModelCounter`] retains counts and [`Evaluator`] retains algebra values for repeated evidence updates.
 //!
 //! [`Tdd::equivalent`](crate::Tdd::equivalent) compares Boolean functions;
 //! [`Tdd::implies`](crate::Tdd::implies) tests entailment.
@@ -26,6 +26,9 @@ pub(crate) mod fold;
 pub(crate) mod sat;
 pub(crate) mod evaluate;
 mod boolean;
+mod cache;
+mod evaluator;
+pub use evaluator::{Evaluator, BoundEvaluator};
 
 pub use count::{ModelCounter, BoundModelCounter, Retention, PinSemantics};
 

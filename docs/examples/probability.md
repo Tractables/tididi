@@ -97,6 +97,30 @@ P(rain) = 3/5, P(wet) = 16/25
 P(rain | wet) = 15/16
 ```
 
-[`evaluate`](crate::Tdd::evaluate) reads each new weight table without changing
-the diagrams. The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/probabilistic_query.rs)
-puts the helpers and scenario loop together.
+## Change observations
+
+[`evaluator`](crate::Tdd::evaluator) retains values for repeated queries under
+evidence; here we observe that it did not rain, then remove that observation.
+
+```rust,ignore,{class=tested-example}
+let weights = RationalWeights::from_literals(&[
+    bernoulli(fraction(3, 5)),
+    bernoulli(fraction(1, 10)),
+    bernoulli(fraction(2, 5)),
+]);
+let mut evaluator = wet.evaluator(weights)?;
+evaluator.observe([-1])?;
+println!("P(wet and no rain) = {}", evaluator.value()?);
+evaluator.clear_pins();
+println!("P(wet) = {}", evaluator.value()?);
+```
+
+Output:
+
+```text
+P(wet and no rain) = 1/25
+P(wet) = 16/25
+```
+
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/probabilistic_query.rs)
+includes both the changing priors and observations.

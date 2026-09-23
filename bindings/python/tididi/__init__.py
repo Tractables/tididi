@@ -2,13 +2,13 @@
 """Boolean circuits with explicit ownership, exact counts, and weighted evaluation."""
 from typing import Protocol, TypeVar
 from ._tididi import (
-    Circuit, ConsumedCircuitError, Counter, Limits, Literal, ResourceLimitError,
+    Circuit, ConsumedCircuitError, Counter, Evaluator, Limits, Literal, ResourceLimitError,
     Vtree, and_, and_exists, clause, cube, from_models, ite, literal, one,
     or_, or_many, xor, zero, __version__,
 )
 
 __all__ = [
-    "Algebra", "Circuit", "ConsumedCircuitError", "Counter", "Limits", "Literal",
+    "Algebra", "Circuit", "ConsumedCircuitError", "Counter", "Evaluator", "Limits", "Literal",
     "ResourceLimitError", "Vtree", "and_", "and_exists", "clause", "cube",
     "from_models", "ite", "literal", "one", "or_", "or_many", "xor", "zero",
 ]

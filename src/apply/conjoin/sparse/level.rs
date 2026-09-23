@@ -329,15 +329,15 @@ pub(crate) fn apply_leaf_levels(
     vtree: &crate::vtree::Vtree,
     run: &mut ApplyRun,
 ) -> Result<(), OperationError> {
-    let ApplyRun { left_widths, right_widths, arena, live_counts, .. } = run;
+    let ApplyRun { left_widths, right_widths, products, .. } = run;
     for (t, _leaf_var) in vtree.leaf_bottomup() {
         let t_idx = t.idx();
         let left_width = left_widths[t_idx];
         let right_width = right_widths[t_idx];
-        let base = arena.alloc(eng, t_idx, left_width * right_width)?;
-        arena.set_dense(t_idx, base);
+        let base = products.arena.alloc(eng, t_idx, left_width * right_width)?;
+        products.arena.set_dense(t_idx, base);
         let output_grid_base = base.idx();
-        let slab = arena.slab_mut();
+        let slab = products.arena.slab_mut();
         let mut count = 0usize;
         for i in 0..left_width {
             for j in 0..right_width {
@@ -346,7 +346,7 @@ pub(crate) fn apply_leaf_levels(
                 if val != NO_PRODUCT { count += 1; }
             }
         }
-        if arena.is_bump() { live_counts.set(t_idx, count); }
+        if products.arena.is_bump() { products.record_live(t_idx, count); }
     }
     Ok(())
 }
@@ -368,52 +368,16 @@ pub(crate) fn compute_apply_output(
     run: &ApplyRun,
     vtree: &crate::vtree::Vtree,
 ) -> Option<NodeIdx> {
-    let ApplyRun {
-        arena, right_widths, left_identity, right_identity, has_pl, product_lists, levels, ..
-    } = run;
     let out_ti = f.output.vtree.idx();
-    let out_local = if let Some(out_base) = arena.materialized(out_ti) {
-        let out_flat = out_base.idx()
-            + f.output.local.idx() * right_widths[out_ti]
-            + g.output.local.idx();
-        let val = arena.slab()[out_flat];
-        if val == NO_PRODUCT { return None; }
-        NodeIdx(val)
-    } else {
-        let left_out = f.output.local.0;
-        let right_out = g.output.local.0;
-        if !has_pl[out_ti] {
-            // Root is an identity level: pass through the non-identity operand's output.
-            if right_identity[out_ti] {
-                NodeIdx(left_out)
-            } else if left_identity[out_ti] {
-                NodeIdx(right_out)
-            } else {
-                // Invariant violation, not an UNSAT result: fabricating a zero
-                // result here would silently miscount, so abort loudly in every
-                // build.
-                cheap_assert!(
-                    false,
-                    "compute_apply_output: root level t={out_ti} has no grid, no \
-                     product list, and neither identity flag — apply-routing invariant \
-                     violated (left_out={left_out} right_out={right_out})"
-                );
-                return None;
-            }
-        } else {
-            let hit = product_lists[out_ti]
-                .iter()
-                .find(|e| e.left_idx == LeftNodeIdx(left_out) && e.right_idx == RightNodeIdx(right_out))?;
-            NodeIdx(hit.prod_idx.0)
-        }
-    };
+    let out_local = run.products.lookup(out_ti, f.output.local.0, g.output.local.0,
+        run.right_widths[out_ti], run.right_identity[out_ti], run.left_identity[out_ti])?;
     // Mirror the later passes' indexing exactly: effective width is
     // `LEAF_WIDTH` for a leaf root and the level's own width otherwise — the
     // same quantity `prune`/`minimize` index their remap arena by.
     let eff_width = if vtree.node(crate::vtree::VtreeIdx(out_ti as u32)).is_leaf() {
         crate::diagram::LEAF_WIDTH
     } else {
-        levels[out_ti].slot_count()
+        run.levels[out_ti].slot_count()
     };
     if out_local != ZERO && (out_local.0 as usize) >= eff_width {
         return None;

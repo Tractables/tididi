@@ -3,7 +3,7 @@
 //! The fixtures these read are in `mod.rs`.
 
 use crate::Engine;
-use crate::marginal::free_subsumed_marginal_children;
+use crate::marginal::transition::free_subsumed_marginal_children;
 
 use crate::diagram::{
     EncodedChildRef, ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
