@@ -15,7 +15,6 @@ use crate::limits::pool::PooledScratch;
 
 use rustc_hash::FxHashMap;
 
-use crate::diagram::remap_refs_into;
 use crate::diagram::Tdd;
 use crate::limits::{OperationError, Limits};
 use crate::vtree::VtreeIdx;
@@ -300,22 +299,7 @@ fn redirect_parent_refs(
     remap: &[u32],
     live: &mut Option<rustc_hash::FxHashSet<u32>>,
 ) {
-    // The output can reference a node at any level, so it is remapped too:
-    // pointing it at a duplicate would send the next apply into a node the
-    // prune removes. The remap can collapse two of a grandparent node's refs
-    // onto one child, minting a duplicate pair; the dirty push below hands a
-    // marginal-flagged grandparent to pair fusion, and at a plain one the two
-    // entries stay as multiset terms.
-    remap_refs_into(tdd, parent_v, remap);
-
-    let Some(grandparent) = tdd.vtree.node(parent_v).parent() else {
-        // parent_v is the vtree root: the output was the only external ref.
-        return;
-    };
-
-    // The ref rewrite may have created context-equal twins at the grandparent,
-    // and may have changed which leaf labels appear in its pairs.
-    tdd.invalidate(grandparent);
+    let Some(grandparent) = tdd.merge_level_nodes(parent_v, remap) else { return };
     // In-pass cascade: the rewrite may have made two of the parent's nodes
     // content-equal. The parent is later in `order`, so admitting it to the
     // live worklist means the current pass catches the new twins.

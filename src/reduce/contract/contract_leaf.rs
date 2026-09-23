@@ -178,75 +178,76 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
     if fresh > 0 {
         eng.limits().reserve(&mut level.multi_pairs, fresh)?;
     }
-    for i in 0..level.nodes.len() {
-        // Tombstone slots and leaf words own no pair range and are left as
-        // they are, which also keeps `n_tombstones` correct.
-        if !level.nodes[i].is_internal() {
-            continue;
-        }
-        if let NodeKind::Inline(p) = level.nodes[i].kind() {
-            // A single-pair node is labelled `One` on `side` (the singleton
-            // pre-pass in `try_contract_leaf_twins` aborted the level on a
-            // lone literal), and `One` pairs are copied verbatim.
-            debug_assert!(
-                {
-                    let label = if side == ChildSide::Left { p.left } else { p.right };
-                    label != POS_LEAF_IDX.into() && label != NEG_LEAF_IDX.into()
-                },
-                "leaf rewrite: a contractible level cannot hold a single-pair literal node"
-            );
-            continue;
-        }
-        let range = level.pair_range_at(i);
-        let (start, old_len) = (range.start, range.len());
-        let mut w = start;
-        for r in start..start + old_len {
-            let p = level.pairs[r];
-            let label = if side == ChildSide::Left { p.left } else { p.right };
-            if label == NEG_LEAF_IDX.into() {
-                // Dropped: its matching Pos contributes the (One, partner)
-                // pair. No re-sort and no dedup: pair lists are unordered,
-                // `classify` rejected the mode-mixed lists that could mint a
-                // new duplicate, and duplicates already present (legal in a
-                // marginalized diagram) must be carried through one-for-one.
+    tdd.rewrite_level(parent_vi, |level| {
+        for i in 0..level.nodes.len() {
+            // Tombstone slots and leaf words own no pair range and are left as
+            // they are, which also keeps `n_tombstones` correct.
+            if !level.nodes[i].is_internal() {
                 continue;
             }
-            let np = if label == POS_LEAF_IDX.into() {
-                if side == ChildSide::Left {
-                    ChildPair::new(ONE_LEAF_IDX, p.right)
-                } else {
-                    ChildPair::new(p.left, ONE_LEAF_IDX)
+            if let NodeKind::Inline(p) = level.nodes[i].kind() {
+                // A single-pair node is labelled `One` on `side` (the singleton
+                // pre-pass in `try_contract_leaf_twins` aborted the level on a
+                // lone literal), and `One` pairs are copied verbatim.
+                debug_assert!(
+                    {
+                        let label = if side == ChildSide::Left { p.left } else { p.right };
+                        label != POS_LEAF_IDX.into() && label != NEG_LEAF_IDX.into()
+                    },
+                    "leaf rewrite: a contractible level cannot hold a single-pair literal node"
+                );
+                continue;
+            }
+            let range = level.pair_range_at(i);
+            let (start, old_len) = (range.start, range.len());
+            let mut w = start;
+            for r in start..start + old_len {
+                let p = level.pairs[r];
+                let label = if side == ChildSide::Left { p.left } else { p.right };
+                if label == NEG_LEAF_IDX.into() {
+                    // Dropped: its matching Pos contributes the (One, partner)
+                    // pair. No re-sort and no dedup: pair lists are unordered,
+                    // `classify` rejected the mode-mixed lists that could mint a
+                    // new duplicate, and duplicates already present (legal in a
+                    // marginalized diagram) must be carried through one-for-one.
+                    continue;
                 }
-            } else {
-                p
-            };
-            debug_assert!(w <= r, "leaf rewrite: write cursor overtook the read cursor");
-            level.pairs[w] = np;
-            w += 1;
+                let np = if label == POS_LEAF_IDX.into() {
+                    if side == ChildSide::Left {
+                        ChildPair::new(ONE_LEAF_IDX, p.right)
+                    } else {
+                        ChildPair::new(p.left, ONE_LEAF_IDX)
+                    }
+                } else {
+                    p
+                };
+                debug_assert!(w <= r, "leaf rewrite: write cursor overtook the read cursor");
+                level.pairs[w] = np;
+                w += 1;
+            }
+            let new_len = w - start;
+            debug_assert!(
+                new_len == old_len || new_len * 2 == old_len,
+                "leaf rewrite: `classify` admits a pure-One list (unchanged) or a matched \
+                 literal list (halved), got {new_len} of {old_len}"
+            );
+            if new_len == old_len {
+                // Pure-`One` node (or the empty-multi placeholder): every store above
+                // was an identity copy, and the node word already says `new_len`.
+                continue;
+            }
+            // Shrink the node onto the prefix the cursor wrote. The abandoned tail
+            // slots are unreferenced arena, tallied into `dead_pairs` for the
+            // sweep below; that counter only decides when a sweep runs.
+            let dead = level.reencode_shrunk_multi_reserved(i, start, old_len, new_len);
+            level.note_dead_pairs(dead);
         }
-        let new_len = w - start;
-        debug_assert!(
-            new_len == old_len || new_len * 2 == old_len,
-            "leaf rewrite: `classify` admits a pure-One list (unchanged) or a matched \
-             literal list (halved), got {new_len} of {old_len}"
-        );
-        if new_len == old_len {
-            // Pure-`One` node (or the empty-multi placeholder): every store above
-            // was an identity copy, and the node word already says `new_len`.
-            continue;
-        }
-        // Shrink the node onto the prefix the cursor wrote. The abandoned tail
-        // slots are unreferenced arena, tallied into `dead_pairs` for the
-        // sweep below; that counter only decides when a sweep runs.
-        let dead = level.reencode_shrunk_multi_reserved(i, start, old_len, new_len);
-        level.note_dead_pairs(dead);
-    }
 
-    // `inlined_sides` still describes the level: every marginal-side ref was
-    // copied through verbatim. The dropped slots stay in the arena until the
-    // level's compaction threshold; no pair-arena offset is held across it.
-    level.compact_pairs_if_stale();
-    tdd.invalidate(parent_vi);
+        // `inlined_sides` still describes the level: every marginal-side ref was
+        // copied through verbatim. The dropped slots stay in the arena until the
+        // level's compaction threshold; no pair-arena offset is held across it.
+        level.compact_pairs_if_stale();
+    });
     Ok(())
 }
 

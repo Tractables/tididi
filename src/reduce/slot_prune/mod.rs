@@ -24,12 +24,12 @@
 use crate::Engine;
 
 
-use crate::diagram::Tdd;
+use crate::diagram::{Tdd, TddLevel, WeightStore};
 use crate::vtree::VtreeIdx;
 
 use crate::value::{IntFold, WeightFold};
 use crate::value::slots::{RefSlotScratch, referenced_marginal_slots};
-use crate::diagram::{boundary_marginal_levels, remap_refs_into};
+use crate::diagram::boundary_marginal_levels;
 use crate::value::slots::{compact_slots, compact_count_slots, truncate_with_slack};
 
 impl crate::limits::pool::PooledScratch for RefSlotScratch {
@@ -70,7 +70,7 @@ trait SlotStore {
     /// Keep the sorted `referenced` slots, merge equal values and fill `remap`.
     /// `remap` has the old store length. Update live width and retirement
     /// accounting; return the number merged.
-    fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> usize;
+    fn compact_store(level: &mut TddLevel, weights: Option<&mut WeightStore>, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> usize;
 }
 
 impl SlotStore for IntFold {
@@ -78,8 +78,7 @@ impl SlotStore for IntFold {
         tdd.levels[v.idx()].marginal_counts().map_or(0, |c| c.len())
     }
 
-    fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> usize {
-        let level = &mut tdd.levels[v.idx()];
+    fn compact_store(level: &mut TddLevel, _weights: Option<&mut WeightStore>, _v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> usize {
         let Some((counts, big)) = level.marginal_store_mut() else { return 0 };
         let old_len = counts.len();
         if old_len == 0 {
@@ -101,13 +100,13 @@ impl SlotStore for WeightFold {
         tdd.weights.as_ref().and_then(|ws| ws.level(v.idx())).map_or(0, |s| s.len())
     }
 
-    fn compact_store(tdd: &mut Tdd, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> usize {
+    fn compact_store(level: &mut TddLevel, weights: Option<&mut WeightStore>, v: VtreeIdx, referenced: &[u32], remap: &mut [u32]) -> usize {
         use crate::diagram::semiring::weight_key;
         if remap.is_empty() {
-            tdd.levels[v.idx()].set_weight_width(0);
+            level.set_weight_width(0);
             return 0;
         }
-        let values = tdd.weight_store_mut().level_vals_mut(v.idx())
+        let values = weights.expect("weighted compaction requires its store").level_vals_mut(v.idx())
             .expect("a nonempty weighted store has a column");
         let (new_len, merged) = compact_slots(
             values,
@@ -118,7 +117,7 @@ impl SlotStore for WeightFold {
             remap,
         );
         truncate_with_slack(values, new_len);
-        tdd.levels[v.idx()].set_weight_width(new_len as u32);
+        level.set_weight_width(new_len as u32);
         merged
     }
 }
@@ -175,7 +174,9 @@ fn compact_boundary_stores<S: SlotStore>(
         // synchronization, even when no store column is installed.
         let store_len = S::store_len(tdd, v);
         if store_len == 0 {
-            S::compact_store(tdd, v, &[], &mut []);
+            tdd.reindex_level(v, &[], &mut [], |level, weights, referenced, remap| {
+                S::compact_store(level, weights, v, referenced, remap)
+            });
             continue;
         }
 
@@ -191,20 +192,13 @@ fn compact_boundary_stores<S: SlotStore>(
         // occurrence wins).
         remap.clear();
         remap.resize(store_len, u32::MAX);
-        let values_merged = S::compact_store(tdd, v, referenced, remap);
+        let values_merged = tdd.reindex_level(v, referenced, remap, |level, weights, referenced, remap| {
+            S::compact_store(level, weights, v, referenced, remap)
+        });
         stats.values_merged += values_merged;
         if values_merged > 0 {
             stats.value_merged_levels.push(v.0);
         }
-
-        // `referenced` is exactly the set of `ValueRef::Slot` refs the parent
-        // holds on this side; when it is empty every ref there is an inline
-        // count or a `ZERO` sentinel, which the remap leaves untouched.
-        if referenced.is_empty() {
-            continue;
-        }
-
-        remap_refs_into(tdd, v, remap);
     }
 }
 

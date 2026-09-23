@@ -173,12 +173,10 @@ pub(crate) fn restructure_inner_search(
         marginal_ctx,
     )?;
 
-    // Rotation locality: only w_idx can have fresh twins, and contraction reaches
-    // a level through its parent, so the outer level is what changed here.
-    tdd.invalidate(crate::vtree::VtreeIdx(v_idx as u32));
-    let old_w_level = std::mem::replace(&mut tdd.levels[w_idx], inner_level.keep());
-    let old_v_level = std::mem::replace(&mut tdd.levels[v_idx], outer_level);
-    Ok(Some((old_v_level, old_w_level)))
+    Ok(Some(tdd.replace_level_pair(
+        (crate::vtree::VtreeIdx(v_idx as u32), outer_level),
+        (crate::vtree::VtreeIdx(w_idx as u32), inner_level.keep()),
+    )))
 }
 
 /// Phase 1: expand every old v-pair against the w-level into packed triples,

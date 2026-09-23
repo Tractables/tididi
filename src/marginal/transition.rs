@@ -1,6 +1,6 @@
 //! Installing marginal columns and settling the levels that refer to them.
 
-use crate::diagram::{Tdd, TddLevel, WeightStore, WeightValue, assert_can_make_marginal, remap_refs_into};
+use crate::diagram::{Tdd, TddLevel, WeightStore, WeightValue, assert_can_make_marginal};
 use crate::value::{Column, CountVec, IntFold, WeightFold, ValueDomain};
 use crate::vtree::{Vtree, VtreeIdx};
 use super::free_subsumed_marginal_children;
@@ -57,7 +57,7 @@ pub(crate) trait MarginalDomain: ValueDomain {
     /// be rewritten through it. `None` means every node kept its own slot and a
     /// bare reference is already correct.
     fn install(
-        tdd: &mut Tdd,
+        level: &mut TddLevel,
         t: InternalLevel,
         col: Column<Self>,
         store: &mut Self::Store,
@@ -91,7 +91,7 @@ impl MarginalDomain for IntFold {
         col: CountVec,
         _store: &mut (),
     ) {
-        crate::marginal::install_int_column(levels, left_idx, col);
+        crate::marginal::install_int_column(&mut levels[left_idx], col);
     }
 
     /// Counts are deduped before they are installed, so the level satisfies invariant 10 — no
@@ -99,14 +99,14 @@ impl MarginalDomain for IntFold {
     /// That is what mints new slot numbers, and why this domain returns a
     /// remap.
     fn install(
-        tdd: &mut Tdd,
-        t: InternalLevel,
+        level: &mut TddLevel,
+        _t: InternalLevel,
         col: CountVec,
         _store: &mut (),
     ) -> Option<Vec<u32>> {
         let (fast, big) = col.into_parts();
         let (counts, big, remap) = crate::marginal::dedup_fresh_store(fast, big);
-        tdd.levels[t.vtree_idx().idx()].become_marginal(counts, big);
+        level.become_marginal(counts, big);
         Some(remap)
     }
 
@@ -147,21 +147,21 @@ impl MarginalDomain for WeightFold {
         // establishes invariant 10 at slot-prune, which runs in weighted mode too via
         // `prune_marginal_slots_generic::<WeightFold>`; only the integer
         // count-preservation localizer around it is gated off.
-        crate::marginal::install_weight_column(levels, left_idx, col, store);
+        crate::marginal::install_weight_column(&mut levels[left_idx], left_idx, col, store);
     }
 
     /// The weighted store is full width and its references stay bare slots
     /// (slot index == node index), so nothing is minted and the parent's
     /// references need no rewrite.
     fn install(
-        tdd: &mut Tdd,
+        level: &mut TddLevel,
         t: InternalLevel,
         col: Vec<WeightValue>,
         store: &mut WeightStore,
     ) -> Option<Vec<u32>> {
         // The column is full width — one slot per node, tombstones included —
         // which is the slot count the level records.
-        crate::marginal::install_weight_column(&mut tdd.levels, t.vtree_idx().idx(), col, store);
+        crate::marginal::install_weight_column(level, t.vtree_idx().idx(), col, store);
         None
     }
 
@@ -191,25 +191,7 @@ pub(crate) fn install_finished<K: MarginalDomain>(
     let t = level.vtree_idx();
     assert_can_make_marginal(&tdd.levels, vtree, t);
 
-    let parent = vtree.node(t).parent();
-    if let Some(parent_vi) = parent {
-        // The load-bearing seed is the boundary parent that stays explicit;
-        // within a marginalizing subtree the parent usually marginalizes too, and
-        // contraction then skips it harmlessly.
-        tdd.invalidate(parent_vi);
-    }
-
-    let remap = K::install(tdd, level, col, store);
-
-    // Only meaningful while the parent is still explicit — a marginal parent has
-    // no pair lists to redirect. Every parent ref into `t` is still a bare slot
-    // index here (the tagger has not run), and `remap[old_slot] = new_slot`
-    // came from `dedup_fresh_store`, so the store is born satisfying
-    // invariant 10 rather than waiting for a later pass.
-    if let (Some(remap), Some(parent_vi)) = (remap, parent)
-        && !tdd.levels[parent_vi.idx()].is_marginal() {
-            remap_refs_into(tdd, t, &remap);
-        }
+    tdd.install_marginal_level(t, |storage| K::install(storage, level, col, store));
 
     // `t` now subsumes its children — free their dead stores (O(1)).
     free_subsumed_marginal_children(&mut tdd.levels, vtree, t, K::weight_store(store));

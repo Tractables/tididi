@@ -248,7 +248,7 @@ mod compact_store_in_place_tests {
 
         let mut remap = vec![u32::MAX; 6];
         let values_merged =
-            IntFold::compact_store(&mut tdd, v, &[1, 2, 3, 5], &mut remap);
+            IntFold::compact_store(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v, &[1, 2, 3, 5], &mut remap);
 
         assert_eq!(tdd.levels[v.idx()].slot_count(), 3, "live width follows compaction");
         assert_eq!(values_merged, 1, "slot3 merges onto slot2's compacted slot");
@@ -319,7 +319,7 @@ mod compact_store_in_place_tests {
 
         let mut remap = vec![u32::MAX; 6];
         let values_merged =
-            WeightFold::compact_store(&mut tdd, v, &[1, 2, 3, 5], &mut remap);
+            WeightFold::compact_store(&mut tdd.levels[v.idx()], tdd.weights.as_mut(), v, &[1, 2, 3, 5], &mut remap);
 
         let values = super::exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
 

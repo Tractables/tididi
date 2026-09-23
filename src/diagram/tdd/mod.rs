@@ -7,6 +7,7 @@
 //! multiplicity). Twin contraction sorts each signature before comparing, so
 //! an operation may push pairs in any order.
 
+mod edit;
 mod reach;
 mod operations;
 mod worklists;
