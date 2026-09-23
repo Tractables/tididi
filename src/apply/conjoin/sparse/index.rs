@@ -303,21 +303,7 @@ pub(crate) fn ensure_buckets_cleared<T>(eng: &Engine, buckets: &mut Vec<Vec<T>>,
     Ok(())
 }
 
-/// Release the engine's sparse workspace bucket memory if it grew too large.
-///
-/// Called from `apply_and_fallible` after each sparse level to cap retained peak.
-pub(crate) fn release_sparse_ws_if_large(eng: &Engine) {
-    eng.sparse().borrow_mut().release_if_large(eng.limits());
-}
-
-impl SparseWorkspace {
-    /// Release every bucket array, reverse index and emit buffer
-    /// unconditionally; `release_sparse_ws_if_large` trims per array on the
-    /// normal apply exit.
-    ///
-    /// For a recovery boundary: the engine-owned workspace survives an
-    /// unwinding panic at full size.
-    pub(crate) fn reset(&mut self) {
-        *self = SparseWorkspace::default();
-    }
+impl crate::limits::pool::PooledScratch for SparseWorkspace {
+    fn prepare(&mut self) {}
+    fn retain(&mut self, lim: &Limits) { self.release_if_large(lim); }
 }

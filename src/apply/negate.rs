@@ -122,16 +122,11 @@ fn complement_full_at_root(
         };
 
         let scratch = eng.negate_scratch();
-        let mut bits = scratch.cover.take();
-        let mut neg_pairs = scratch.cells.take();
-        let collected = collect_complement_pairs(
+        let mut bits = scratch.cover.checkout_preserving(eng.limits());
+        let mut neg_pairs = scratch.cells.checkout_preserving(eng.limits());
+        collect_complement_pairs(
             eng, &levels[root_idx], out_local, basis, &mut bits, &mut neg_pairs,
-        );
-        scratch.cover.put_bounded(eng.limits(), bits);
-        if let Err(e) = collected {
-            scratch.cells.put_bounded(eng.limits(), neg_pairs);
-            return Err(e);
-        }
+        )?;
 
         // Drop the pairs whose child computes the Zero function (an internal
         // node with no pairs), which a fill node of `expand_full` can be. The
@@ -163,13 +158,10 @@ fn complement_full_at_root(
         });
 
         if neg_pairs.is_empty() {
-            scratch.cells.put_bounded(eng.limits(), neg_pairs);
             return Ok(crate::build::constant_zero(eng, orig_vtree));
         }
 
-        let pushed = levels[root_idx].push_node_on(eng, &neg_pairs);
-        scratch.cells.put_bounded(eng.limits(), neg_pairs);
-        let neg_idx = pushed?;
+        let neg_idx = levels[root_idx].push_node_on(eng, &neg_pairs)?;
 
         Ok(assembly.finish_untracked(TddNodeId { vtree: root, local: neg_idx }))
     }
@@ -188,15 +180,10 @@ fn complement_full_at_root(
 /// in that same form.
 pub(crate) fn expand_full(eng: &Engine, tdd: &mut Tdd) -> Result<LeafForm, OperationError> {
     let scratch = eng.negate_scratch();
-    let mut bits = scratch.cover.take();
-    let mut cells = scratch.cells.take();
+    let mut bits = scratch.cover.checkout_preserving(eng.limits());
+    let mut cells = scratch.cells.checkout_preserving(eng.limits());
 
-    let result = expand_full_with(eng, tdd, &mut bits, &mut cells);
-
-    let lim = eng.limits();
-    scratch.cover.put_bounded(lim, bits);
-    scratch.cells.put_bounded(lim, cells);
-    result
+    expand_full_with(eng, tdd, &mut bits, &mut cells)
 }
 
 /// [`expand_full`] with the scratch checked out.

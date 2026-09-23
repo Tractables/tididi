@@ -39,7 +39,7 @@ impl PrefilterSideMasks {
 
 /// Both sides' dead-pair pre-filter masks as one pooled scratch bundle.
 ///
-/// Bundled so that one pool slot (`eng.apply().prefilter_masks`) and one
+/// Bundled so that one workspace field and one
 /// retention rule cover all four buffers, instead of each apply re-growing
 /// them from empty.
 pub(crate) type PrefilterMaskScratch = Sides<PrefilterSideMasks>;

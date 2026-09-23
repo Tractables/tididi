@@ -126,3 +126,16 @@ fn releasing_an_undersized_buffer_keeps_both_the_allocation_and_the_charge() {
     assert!(buf.capacity() >= 8, "an under-cap buffer stays warm");
     assert_eq!(lim.meters().in_flight_bytes, charged, "nothing was freed, so nothing is returned");
 }
+
+#[test]
+fn preserving_checkout_keeps_initialized_entries() {
+    let lim = crate::limits::Limits::new();
+    let pool = Pool::default();
+    pool.put(vec![7u32, 11]);
+    let mut scratch = pool.checkout_preserving(&lim);
+    assert_eq!(&**scratch, &[7, 11]);
+    scratch[1] = 13;
+    drop(scratch);
+    assert_eq!(&**pool.checkout_preserving(&lim), &[7, 13]);
+    assert!(pool.checkout(&lim).is_empty());
+}

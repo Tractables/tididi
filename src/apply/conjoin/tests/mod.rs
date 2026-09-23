@@ -8,3 +8,4 @@ mod marginal_orphan;
 mod marginal_subsumed;
 
 mod target_completion;
+mod workspace;

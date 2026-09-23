@@ -8,7 +8,6 @@
 use std::sync::Arc;
 
 use crate::vtree::VtreeIdx;
-use grid_arena::LevelGrid;
 use super::CONJOIN_GRID;
 use crate::diagram::{self, *};
 
@@ -28,8 +27,8 @@ use cell::{
 mod sparse;
 pub(crate) use sparse::SparseWorkspace;
 use sparse::{
-    ProductEntry, is_self_conjunction, apply_sparse_level, apply_leaf_levels,
-    compute_apply_output, release_sparse_ws_if_large,
+    is_self_conjunction, apply_sparse_level, apply_leaf_levels,
+    compute_apply_output,
 };
 
 // Identity/constant-true detection and the per-level identity fast paths.

@@ -1,34 +1,34 @@
-//! `SparseWorkspace::reset` must FULLY drop the engine's workspace (all retained
-//! capacity), not the conditional per-array trim `release_if_large` applies on
-//! the normal apply exit. The engine-owned workspace survives an unwinding
-//! panic at full size, so recovery relies on this reset to release it.
 use crate::Engine;
 
 #[test]
-fn reset_drops_all_capacity() {
-    // Grow a few representative buffers directly — the private fields are
-    // visible from this in-module submodule. `reserve` allocates capacity
-    // without faulting pages in (len stays 0), so RSS stays KB-scale.
+fn clearing_scratch_leaves_active_workspace_independent() {
     let eng = Engine::new();
     {
-        let mut ws = eng.sparse().borrow_mut();
-        ws.par_buckets.push(Vec::with_capacity(256));
-        ws.emit_pairs.reserve(256);
-        ws.rev_entries_c1.reserve(256);
+        let mut outer = eng.sparse().checkout(eng.limits());
+        outer.emit_pairs.reserve(256);
+        let allocation = outer.emit_pairs.as_ptr();
+        eng.clear_scratch();
+        let mut inner = eng.sparse().checkout(eng.limits());
+        inner.emit_pairs.reserve(128);
+        assert_ne!(inner.emit_pairs.as_ptr(), allocation);
+        drop(inner);
+        assert_eq!(outer.emit_pairs.as_ptr(), allocation);
     }
-    {
-        let ws = eng.sparse().borrow();
-        assert!(ws.par_buckets.capacity() > 0, "precondition: workspace grown");
-        assert!(ws.emit_pairs.capacity() > 0);
-        assert!(ws.rev_entries_c1.capacity() > 0);
-    }
+    assert!(eng.sparse().checkout(eng.limits()).emit_pairs.capacity() >= 256);
+    eng.clear_scratch();
+    let ws = eng.sparse().checkout(eng.limits());
+    assert_eq!(ws.par_buckets.capacity(), 0);
+    assert_eq!(ws.emit_pairs.capacity(), 0);
+    assert_eq!(ws.rev_entries_c1.capacity(), 0);
+}
 
-    eng.sparse().borrow_mut().reset();
-
-    {
-        let ws = eng.sparse().borrow();
-        assert_eq!(ws.par_buckets.capacity(), 0, "par_buckets released");
-        assert_eq!(ws.emit_pairs.capacity(), 0, "emit_pairs released");
-        assert_eq!(ws.rev_entries_c1.capacity(), 0, "rev_entries_c1 released");
-    }
+#[test]
+fn unwinding_discards_partially_filled_sparse_workspace() {
+    let eng = Engine::new();
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut ws = eng.sparse().checkout(eng.limits());
+        ws.p2_map.push(42);
+        panic!("interrupt scatter");
+    }));
+    assert!(eng.sparse().checkout(eng.limits()).p2_map.is_empty());
 }

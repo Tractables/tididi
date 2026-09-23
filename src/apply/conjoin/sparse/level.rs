@@ -144,7 +144,7 @@ fn scatter_level(
     Ok(())
 }
 
-/// The sparse workspace, borrowed for one level.
+/// The sparse workspace, checked out for one level.
 ///
 /// `p2_map` is lazily cleared — the emit pass restores only the entries it
 /// wrote — so a bail mid-level (an `OverBudget` out of a `try_push` deep in the
@@ -154,13 +154,13 @@ fn scatter_level(
 /// only, because [`WsGuard::scatter_clean`] disarms it once the level's own
 /// cleanup has finished.
 struct WsGuard<'a> {
-    ws: std::cell::RefMut<'a, SparseWorkspace>,
+    ws: crate::limits::pool::PoolGuard<'a, SparseWorkspace>,
     repair: bool,
 }
 
 impl<'a> WsGuard<'a> {
     fn new(eng: &'a Engine) -> Self {
-        WsGuard { ws: eng.sparse().borrow_mut(), repair: true }
+        WsGuard { ws: eng.sparse().checkout(eng.limits()), repair: true }
     }
 
     /// The lookup tables are all `NO_PRODUCT` again; nothing to repair.

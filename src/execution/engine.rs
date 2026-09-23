@@ -55,8 +55,9 @@ pub struct Engine {
     reduce: crate::reduce::ReduceScratch,
     negate: crate::apply::negate::NegateScratch,
     restructure: crate::limits::pool::Pool<crate::restructure::scratch::RestructureScratch>,
-    sparse: std::cell::RefCell<crate::apply::conjoin::SparseWorkspace>,
+    sparse: crate::limits::pool::Pool<crate::apply::conjoin::SparseWorkspace>,
     levels: crate::diagram::LevelPool,
+    model_layout: crate::limits::pool::Pool<crate::build::models::layout::Layout>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -101,8 +102,9 @@ impl Engine {
             reduce: crate::reduce::ReduceScratch::default(),
             negate: crate::apply::negate::NegateScratch::default(),
             restructure: crate::limits::pool::Pool::default(),
-            sparse: std::cell::RefCell::new(crate::apply::conjoin::SparseWorkspace::default()),
+            sparse: crate::limits::pool::Pool::default(),
             levels: crate::diagram::LevelPool::default(),
+            model_layout: crate::limits::pool::Pool::default(),
         }
     }
 
@@ -158,8 +160,12 @@ impl Engine {
     /// The sparse-level workspace.
     #[must_use]
     #[inline]
-    pub(crate) fn sparse(&self) -> &std::cell::RefCell<crate::apply::conjoin::SparseWorkspace> {
+    pub(crate) fn sparse(&self) -> &crate::limits::pool::Pool<crate::apply::conjoin::SparseWorkspace> {
         &self.sparse
+    }
+
+    pub(crate) fn model_layout(&self) -> &crate::limits::pool::Pool<crate::build::models::layout::Layout> {
+        &self.model_layout
     }
 
     /// The recycled level arrays.
@@ -184,18 +190,15 @@ impl Engine {
     /// Call between operations to release capacity retained by completed or
     /// refused work. Diagram results remain intact.
     /// [`Context::clear_scratch`] releases the idle workspace in a shared context.
-    ///
-    /// # Panics
-    ///
-    /// If called from a callback during a conjunction that holds this engine's
-    /// sparse workspace borrowed.
+    /// Active operations keep their checked-out buffers until they finish.
     pub fn clear_scratch(&self) {
         self.apply.drain();
         self.clause.drain();
         self.reduce.drain();
         self.negate.drain();
         self.restructure.drain();
-        self.sparse.borrow_mut().reset();
+        self.sparse.drain();
         self.levels.drain();
+        self.model_layout.drain();
     }
 }

@@ -40,8 +40,6 @@ pub(super) fn run_sparse_level(
         run.products.lists(li, ri, ti),
         run.thresholds,
     )?;
-    // Release oversized bucket Vecs to avoid retaining peak allocations.
-    release_sparse_ws_if_large(eng);
     run.products.finish_sparse(&mut run.levels[ti], ti);
     Ok(())
 }
@@ -384,7 +382,7 @@ pub(super) fn build_level_dense(
     }
 
     let mut stream_state: Option<StreamLevelState> =
-        build_stream_state(eng, shape, run.levels, &mut run.stream_cache, sweep)?;
+        build_stream_state(eng, shape, run.levels, run.stream_cache, sweep)?;
 
     // `t` and its two vtree children are three distinct tree nodes, so these
     // are three disjoint level slots: the streaming row loops read the child
@@ -397,7 +395,7 @@ pub(super) fn build_level_dense(
 
 
     let right_cols = RightColumns::build(eng, g.level(t), gw.here, sides.left.view, sides.right.view);
-    let cell_ctx = build_cell_ctx(shape, &plan, output_grid_base.idx(), bases, &run.prefilter_masks, right_cols.as_ref());
+    let cell_ctx = build_cell_ctx(shape, &plan, output_grid_base.idx(), bases, run.prefilter_masks, right_cols.as_ref());
 
     open_level_arenas(lim, f, g, shape, level, route)?;
 
@@ -411,9 +409,9 @@ pub(super) fn build_level_dense(
             },
             output_grid_base, level,
             SparseMargScratch {
-                inputs1: &mut run.inputs1_scratch,
-                inputs2: &mut run.inputs2_scratch,
-                products: &mut run.products,
+                inputs1: run.inputs1_scratch,
+                inputs2: run.inputs2_scratch,
+                products: run.products,
             },
             passthrough,
         );
@@ -427,8 +425,8 @@ pub(super) fn build_level_dense(
             ctx: &cell_ctx, f_width: fw.here,
         },
         RowScratch {
-            inputs1: &mut run.inputs1_scratch,
-            inputs2: &mut run.inputs2_scratch,
+            inputs1: run.inputs1_scratch,
+            inputs2: run.inputs2_scratch,
             node_idx: run.products.arena.slab_mut(),
         },
         level,
@@ -436,7 +434,7 @@ pub(super) fn build_level_dense(
             left_idx: li,
             right_idx: ri,
             vtree: sweep.vtree,
-            cache: &run.stream_cache,
+            cache: run.stream_cache,
             ws: sweep.ws.as_deref(),
         },
         &mut stream_state,

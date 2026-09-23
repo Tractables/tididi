@@ -139,8 +139,8 @@ fn spine_walk(eng: &Engine, f: &mut Tdd, clause: &[Literal], disjoin: bool) -> R
     // The clause spine — the Steiner tree of its variables' leaves — and the
     // `need_dt` flag propagated top-down over it.
     let mut on_spine = SpineMarks::take(lim, &pool.on_spine, num_nodes)?;
-    let mut spine_internal = pool.spine_internal.take();
-    let mut dfs_stack = pool.dfs_stack.take();
+    let mut spine_internal = pool.spine_internal.checkout_preserving(lim);
+    let mut dfs_stack = pool.dfs_stack.checkout_preserving(lim);
     build_clause_spine(lim, vtree, clause, &mut on_spine, &mut spine_internal, &mut dfs_stack)?;
     let mut need_dt = SpineMarks::take(lim, &pool.need_dt, num_nodes)?;
     propagate_need_dt(vtree, &spine_internal, &on_spine, &mut need_dt);
@@ -159,7 +159,7 @@ fn spine_walk(eng: &Engine, f: &mut Tdd, clause: &[Literal], disjoin: bool) -> R
     // Per-level base offsets into `cd_map`: only spine levels get storage, so
     // the map is `O(Σ spine widths)` rather than `O(|f|)`; off-spine levels
     // are read through raw pair indices. See `plan_cd_map_bases`.
-    let mut level_base = pool.level_base.take();
+    let mut level_base = pool.level_base.checkout_preserving(lim);
     lim.try_resize(&mut level_base, num_nodes, 0usize)?;
     let total = plan_cd_map_bases(vtree, clause, &spine_internal, &levels, &mut level_base)?;
 
@@ -167,7 +167,7 @@ fn spine_walk(eng: &Engine, f: &mut Tdd, clause: &[Literal], disjoin: bool) -> R
     // entry is written once below, so no bulk `NO_PRODUCT` fill is needed. A
     // `d_t` lane is written iff `need_dt[t]`, and a read of one implies
     // `need_dt` on that child, so a stale lane is never read.
-    let mut cd_map = pool.cd_map.take();
+    let mut cd_map = pool.cd_map.checkout_preserving(lim);
     lim.try_resize(&mut cd_map, total, [NO_PRODUCT, NO_PRODUCT])?;
 
     fill_leaf_maps(vtree, clause, &level_base, &need_dt, &mut cd_map);
@@ -193,7 +193,7 @@ fn spine_walk(eng: &Engine, f: &mut Tdd, clause: &[Literal], disjoin: bool) -> R
         dt_pairs: &mut clause_dt_pairs,
         output_cube_pair: None,
     };
-    for &t in &spine_internal {
+    for &t in spine_internal.iter() {
         // The `cd_map` block of a level is sized at its width before the
         // rebuild, which is also the range the chain reads back.
         let old_width = levels[t.idx()].slot_count();
@@ -237,13 +237,6 @@ fn spine_walk(eng: &Engine, f: &mut Tdd, clause: &[Literal], disjoin: bool) -> R
         &spine_internal,
     )?;
     out.weights = f_weights;
-
-    // `level_base` needs no reset — every spine entry is rewritten each call
-    // and irrelevant entries are never read.
-    pool.cd_map.put_bounded(lim, cd_map);
-    pool.level_base.put(level_base);
-    pool.spine_internal.put(spine_internal);
-    pool.dfs_stack.put(dfs_stack);
 
     Ok(out)
 }

@@ -6,9 +6,10 @@
 
 use crate::{Engine, OperationError};
 use crate::diagram::TddLevel;
-use super::grid_arena::{GridArena, LevelGrid};
+use super::grid_arena::GridArena;
 use super::sparse::{ProductEntry, ProductLists, fill_identity_product_list};
 
+#[derive(Default)]
 pub(super) struct Products {
     pub(super) arena: GridArena,
     product_lists: Vec<Vec<ProductEntry>>,
@@ -17,33 +18,20 @@ pub(super) struct Products {
 }
 
 impl Products {
-    pub(super) fn take(eng: &Engine, sparse: bool, n: usize, left: &[usize], right: &[usize]) -> Result<Self, OperationError> {
-        let pool = eng.apply();
-        let mut grids = pool.grids.take();
-        if grids.len() < n + 1 { grids.resize(n + 1, LevelGrid::Sparse); }
-        let mut product_lists = pool.product_lists.take();
-        if product_lists.len() < n { product_lists.resize_with(n, Vec::new); }
-        let mut has_pl = pool.has_pl.take();
-        has_pl.resize(n, false);
-        for i in 0..n { product_lists[i].clear(); has_pl[i] = false; }
-        let mut live_counts = pool.live_counts.take();
-        live_counts.clear();
-        live_counts.resize(n, 0);
-        let arena = layout_grids(eng, sparse, n, left, right, grids)?;
-        Ok(Self { arena, product_lists, live_counts, has_pl })
+    pub(super) fn reset(&mut self, eng: &Engine, sparse: bool, n: usize, left: &[usize], right: &[usize]) -> Result<(), OperationError> {
+        if self.product_lists.len() < n { self.product_lists.resize_with(n, Vec::new); }
+        self.has_pl.resize(n, false);
+        for i in 0..n { self.product_lists[i].clear(); self.has_pl[i] = false; }
+        self.live_counts.clear();
+        self.live_counts.resize(n, 0);
+        self.arena.reset(eng, sparse, n, left, right)
     }
 
-    pub(super) fn finish(mut self, eng: &Engine) {
-        let pool = eng.apply();
-        let (slab, grids) = self.arena.into_parts();
-        pool.node_idx.put_bounded(eng.limits(), slab);
-        pool.grids.put(grids);
+    pub(super) fn retain(&mut self, lim: &crate::limits::Limits) {
+        self.arena.retain(lim);
         for list in &mut self.product_lists {
-            crate::limits::pool::release_if_oversized(eng.limits(), list);
+            crate::limits::pool::release_if_oversized(lim, list);
         }
-        pool.product_lists.put(self.product_lists);
-        pool.live_counts.put(self.live_counts);
-        pool.has_pl.put(self.has_pl);
     }
 
     pub(super) fn live(&self, level: usize) -> usize { self.live_counts[level] }
@@ -128,31 +116,5 @@ impl Products {
             cheap_assert!(filled, "an ungridded child on the dense path has an identity operand");
         }
         self.arena.ensure_grid(eng, idx, left_width_c, right_width_c, &self.product_lists[idx])
-    }
-}
-
-/// Build the product-grid arena in the shape this apply needs.
-///
-/// With any sparse level possible the arena bumps: every level starts
-/// ungridded and claims space when it is reached. Otherwise every level's base
-/// is computed up front and the slab is sized once.
-fn layout_grids(
-    eng: &Engine,
-    might_use_sparse: bool,
-    num_nodes: usize,
-    left_widths: &[usize],
-    right_widths: &[usize],
-    grids: Vec<LevelGrid>,
-) -> Result<GridArena, OperationError> {
-    let cells = eng.apply().node_idx.take();
-    if might_use_sparse {
-        Ok(GridArena::bump(cells, grids, 0..=num_nodes))
-    } else {
-        GridArena::preplanned(
-            eng, cells, grids,
-            (0..num_nodes)
-                .map(|i| (i, left_widths[i] * right_widths[i]))
-                .chain(std::iter::once((num_nodes, 0))),
-        )
     }
 }

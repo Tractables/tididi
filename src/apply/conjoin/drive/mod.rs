@@ -209,8 +209,9 @@ fn apply_and_fallible_inner(
     let mut assembly = diagram::Assembly::from_levels(
         eng, Arc::clone(&vtree), diagram::take_levels(eng, num_nodes), ws,
     );
+    let mut scratch = eng.apply().workspace.checkout(lim);
     let (levels, ws) = assembly.parts_mut();
-    let mut run = apply_and_setup(eng, f, g, &vtree, marginalize_targets, ws.is_some(), levels)?;
+    let mut run = apply_and_setup(eng, f, g, marginalize_targets, ws.is_some(), levels, &mut scratch)?;
 
     // `right_identity[t]` is true when `g` computes constant-true over subtree
     // `t`, so `f`'s nodes pass through unchanged (`x ∧ 1 = x`) and the
@@ -221,8 +222,8 @@ fn apply_and_fallible_inner(
     // both children identity, which the sweep accretes as it goes up. The
     // predicate is incomplete; a miss only sends a small grid down the dense
     // path.
-    init_leaf_identity(eng, &mut run.right_identity, g, &vtree, num_nodes)?;
-    init_leaf_identity(eng, &mut run.left_identity, f, &vtree, num_nodes)?;
+    init_leaf_identity(eng, run.right_identity, g, &vtree, num_nodes)?;
+    init_leaf_identity(eng, run.left_identity, f, &vtree, num_nodes)?;
 
     apply_leaf_levels(eng, &vtree, &mut run)?;
 
@@ -243,6 +244,5 @@ fn apply_and_fallible_inner(
     let out_vtree = f.output.vtree;
 
 
-    run.finish(eng);
     Ok(assembly.finish_untracked(TddNodeId { vtree: out_vtree, local: out_local }))
 }

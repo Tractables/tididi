@@ -91,34 +91,38 @@ pub(super) enum GridArena {
     Bump { cells: Vec<u32>, end: usize, free: Vec<Region>, grids: Vec<LevelGrid> },
 }
 
+impl Default for GridArena {
+    fn default() -> Self { Self::Preplanned { cells: Vec::new(), grids: Vec::new() } }
+}
+
 impl GridArena {
-    /// The pre-planned arena: every level gets the base its width dictates and
-    /// the slab is sized once to hold them all.
-    pub(super) fn preplanned(
-        eng: &Engine,
-        mut cells: Vec<u32>,
-        mut grids: Vec<LevelGrid>,
-        layout: impl Iterator<Item = (usize, usize)>,
-    ) -> Result<Self, OperationError> {
-        let mut cursor = 0usize;
-        for (i, level_cells) in layout {
-            grids[i] = LevelGrid::Materialized { base: cursor };
-            cursor += level_cells;
+    pub(super) fn reset(&mut self, eng: &Engine, sparse: bool, n: usize, left: &[usize], right: &[usize]) -> Result<(), OperationError> {
+        let (cells, mut grids) = match std::mem::take(self) {
+            Self::Preplanned { cells, grids } | Self::Bump { cells, grids, .. } => (cells, grids),
+        };
+        grids.resize(n + 1, LevelGrid::Sparse);
+        if sparse {
+            grids.fill(LevelGrid::Sparse);
+            *self = Self::Bump { cells, grids, end: 0, free: Vec::new() };
+        } else {
+            let mut cursor = 0;
+            for i in 0..n {
+                grids[i] = LevelGrid::Materialized { base: cursor };
+                cursor += left[i] * right[i];
+            }
+            grids[n] = LevelGrid::Materialized { base: cursor };
+            *self = Self::Preplanned { cells, grids };
+            if let Self::Preplanned { cells, .. } = self { try_resize_dead(eng, cells, cursor)?; }
         }
-        try_resize_dead(eng, &mut cells, cursor)?;
-        Ok(GridArena::Preplanned { cells, grids })
+        Ok(())
     }
 
-    /// The bump arena: every touched level starts ungridded.
-    pub(super) fn bump(
-        cells: Vec<u32>,
-        mut grids: Vec<LevelGrid>,
-        touched: impl Iterator<Item = usize>,
-    ) -> Self {
-        for i in touched {
-            grids[i] = LevelGrid::Sparse;
+    pub(super) fn retain(&mut self, lim: &crate::limits::Limits) {
+        match self {
+            Self::Preplanned { cells, .. } | Self::Bump { cells, .. } => {
+                crate::limits::pool::release_if_oversized(lim, cells);
+            }
         }
-        GridArena::Bump { cells, end: 0, free: Vec::new(), grids }
     }
 
     /// True when levels claim space as they are reached — the one behavioural
@@ -139,14 +143,6 @@ impl GridArena {
     pub(super) fn slab_mut(&mut self) -> &mut [u32] {
         match self {
             GridArena::Preplanned { cells, .. } | GridArena::Bump { cells, .. } => cells,
-        }
-    }
-
-    /// Give the slab and the per-level descriptors back to the engine's pools.
-    pub(super) fn into_parts(self) -> (Vec<u32>, Vec<LevelGrid>) {
-        match self {
-            GridArena::Preplanned { cells, grids }
-            | GridArena::Bump { cells, grids, .. } => (cells, grids),
         }
     }
 

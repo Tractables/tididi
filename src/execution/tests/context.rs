@@ -84,8 +84,8 @@ fn returned_and_unwound_batches_release_callback_captures() {
 #[test]
 fn clearing_scratch_releases_only_the_idle_checkout() {
     let context = Arc::new(Context::new());
-    context.run(|engine| engine.apply().node_idx.put(vec![17]));
-    context.run(|engine| assert_eq!(engine.apply().node_idx.take(), vec![17]));
+    context.run(|engine| engine.apply().subvars.put(vec![17]));
+    context.run(|engine| assert_eq!(engine.apply().subvars.take(), vec![17]));
     context.run(|_| {
         context.clear_scratch();
         assert!(context.idle.lock().unwrap().is_none());
@@ -166,38 +166,6 @@ fn grafts_preserve_only_a_context_agreed_by_every_source() {
     assert!(!Arc::ptr_eq(standalone.context(), &context));
 }
 
-#[test]
-fn ordinary_conjunctions_use_the_parked_scratch_allocation() {
-    let tree = Arc::new(Vtree::balanced(4));
-    let context = tree.context();
-    let left = Tdd::clause(&tree, [1, 3]).unwrap();
-    let right = Tdd::clause(&tree, [2, 4]).unwrap();
-    assert_canonical(&left);
-    assert_canonical(&right);
-    for operator in [false, true] {
-        let allocation = context.run(|engine| {
-            let cells = Vec::with_capacity(4096);
-            let allocation = cells.as_ptr();
-            engine.apply().node_idx.put(cells);
-            allocation
-        });
-        let mut result = if operator {
-            left.clone() & right.clone()
-        } else {
-            crate::and(left.clone(), right.clone()).unwrap()
-        };
-        context.run(|engine| {
-            let cells = engine.apply().node_idx.take();
-            assert!(!cells.is_empty(), "the operation must populate the retained grid");
-            assert_eq!(cells.as_ptr(), allocation, "the operation must reuse its vtree's scratch");
-            engine.apply().node_idx.put(cells);
-        });
-        assert!(Arc::ptr_eq(result.context(), context));
-        result.minimize().unwrap();
-        assert_canonical(&result);
-        assert_eq!(result.model_count().unwrap(), 9u32.into());
-    }
-}
 
 #[test]
 fn ordinary_diagram_methods_can_reenter_from_a_stop_callback() {

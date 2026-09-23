@@ -25,7 +25,15 @@ the arenas to the pool if construction fails. Coordinated edits in
 its reference updates and reduction work. `MarginalStorage` coordinates count
 and weighted payload changes with their slot metadata without changing the
 compact level layout. Conjunction's `Products` owns dense grids, sparse lists,
-conversions and the metadata that makes each representation readable.
+conversions and the metadata that makes each representation readable. A pooled
+conjunction workspace owns these products and the sweep's other temporary buffers;
+algorithms borrow them, and guards return them on success or error. Sparse-level
+scratch uses independent checkouts, so nested calls do not borrow active storage.
+
+Relation construction separates variable layout, row normalization and atom
+assembly. The engine caches the last validated layout by vtree allocation and
+column order, holding only a weak vtree reference. Rows and constructed diagrams
+are never retained by that cache.
 
 Structural levels hold pair lists. Marginal levels hold counts or fixed
 weighted values, and their references may carry an inline value instead of

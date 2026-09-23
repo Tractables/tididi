@@ -7,6 +7,7 @@ use crate::vtree::VtreeIdx;
 use crate::diagram::*;
 use super::{liveness, OperationError, APPLY_BYTES_PER_CELL};
 use super::products::Products;
+use super::scratch::ApplyWorkspace;
 use crate::value::StreamCache;
 use super::marginal_plan::EntryMarginality;
 use super::sparse::{sparse_thresholds, SparseThresholds};
@@ -54,28 +55,28 @@ impl<'a> MarginalTargets<'a> {
 /// before the bottom-up level sweep.
 pub(super) struct ApplyRun<'a> {
     pub(super) levels: &'a mut [TddLevel],
-    pub(super) left_widths: Vec<usize>,
-    pub(super) right_widths: Vec<usize>,
+    pub(super) left_widths: &'a mut Vec<usize>,
+    pub(super) right_widths: &'a mut Vec<usize>,
     /// The sparse-route thresholds this apply decides by.
     pub(super) thresholds: SparseThresholds,
     /// Lazily computed child columns for the streaming-marginal path. See
     /// [`StreamCache`].
-    pub(super) stream_cache: StreamCache,
-    pub(super) products: Products,
+    pub(super) stream_cache: &'a mut StreamCache,
+    pub(super) products: &'a mut Products,
     /// Which levels of each operand were marginal at apply entry. See
     /// [`EntryMarginality`].
     pub(super) entry_marginality: EntryMarginality,
     /// `right_identity[t]` — g computes constant-true over subtree `t`, so f's
     /// nodes pass through unchanged. Lazily accreted, so a false reading only
     /// costs a fallback to the dense grid.
-    pub(super) right_identity: Vec<bool>,
+    pub(super) right_identity: &'a mut Vec<bool>,
     /// The symmetric flag for f.
-    pub(super) left_identity: Vec<bool>,
+    pub(super) left_identity: &'a mut Vec<bool>,
     /// Decode buffers for one cell's pairs, one per operand.
-    pub(super) inputs1_scratch: Vec<ChildPair>,
-    pub(super) inputs2_scratch: Vec<ChildPair>,
+    pub(super) inputs1_scratch: &'a mut Vec<ChildPair>,
+    pub(super) inputs2_scratch: &'a mut Vec<ChildPair>,
     /// The four dead-pair pre-filter masks, reused across internal levels.
-    pub(super) prefilter_masks: liveness::PrefilterMaskScratch,
+    pub(super) prefilter_masks: &'a mut liveness::PrefilterMaskScratch,
 }
 
 /// One internal vtree level's identity: the node, its two children, and both
@@ -208,24 +209,7 @@ impl ApplyRun<'_> {
         self.products.materialize_dense_child(eng, t, left, right, self.right_identity[t], self.left_identity[t])
     }
 
-    /// Hand the computation scratch back; the assembly owns the output levels.
-    ///
-    /// Heavy buffers are capped at the scratch-retention cap on the way out, so a
-    /// single wide conjunction cannot park GiB-scale allocations in the pools.
-    pub(super) fn finish(mut self, eng: &Engine) {
-        let pool = eng.apply();
-        self.products.finish(eng);
-        pool.right_identity.put(self.right_identity);
-        pool.left_identity.put(self.left_identity);
-        pool.left_widths.put(self.left_widths);
-        pool.right_widths.put(self.right_widths);
-        pool.inputs1.put_bounded(eng.limits(), self.inputs1_scratch);
-        pool.inputs2.put_bounded(eng.limits(), self.inputs2_scratch);
-        // Same retention rule, applied to the bundle's four fields.
-        self.prefilter_masks.release_oversized(eng.limits());
-        pool.prefilter_masks.put(self.prefilter_masks);
-        self.stream_cache.put(eng.limits(), &pool.stream_cache);
-    }
+
 }
 
 /// Snapshot both operands' per-level widths, note whether either carries a
@@ -289,24 +273,25 @@ fn preflight_dense_budget(lim: &crate::limits::Limits, total_cells: u64) -> Resu
 /// [`OperationError::OverBudget`] from the dense preflight or a buffer reservation.
 pub(super) fn apply_and_setup<'a>(
     eng: &Engine,
-    f: &mut Tdd,
-    g: &mut Tdd,
-    vtree: &crate::vtree::Vtree,
+    f: &Tdd,
+    g: &Tdd,
     marginalize_targets: MarginalTargets<'_>,
     weighted: bool,
     levels: &'a mut [TddLevel],
+    scratch: &'a mut ApplyWorkspace,
 ) -> Result<ApplyRun<'a>, OperationError> {
+    let vtree = &f.vtree;
     let num_nodes = vtree.num_nodes();
     let lim = eng.limits();
     let thresholds = sparse_thresholds();
     let min_grid = thresholds.min_grid;
 
-    let mut left_widths = eng.apply().left_widths.take();
-    let mut right_widths = eng.apply().right_widths.take();
+    let ApplyWorkspace { left_widths, right_widths, left_identity, right_identity,
+        inputs1_scratch, inputs2_scratch, products, stream_cache, prefilter_masks } = scratch;
     if left_widths.len() < num_nodes { left_widths.resize(num_nodes, 0); }
     if right_widths.len() < num_nodes { right_widths.resize(num_nodes, 0); }
     let (total_cells, any_entry_marginal) = snapshot_widths(
-        f, g, num_nodes, min_grid, &mut left_widths, &mut right_widths,
+        f, g, num_nodes, min_grid, left_widths, right_widths,
     );
 
     let entry_marginality = EntryMarginality::snapshot(f, g, num_nodes, any_entry_marginal);
@@ -321,18 +306,8 @@ pub(super) fn apply_and_setup<'a>(
 
     // Streaming-marginal scratch: lazily computed child columns for
     // streaming-target levels whose children are still explicit.
-    let stream_cache = StreamCache::take(
-        &eng.apply().stream_cache,
-        num_nodes,
-        marginalize_targets.any().then_some(weighted),
-    );
-
-    let products = Products::take(eng, might_use_sparse, num_nodes, &left_widths, &right_widths)?;
-
-    let mut inputs1_scratch: Vec<ChildPair> = eng.apply().inputs1.take();
-    let mut inputs2_scratch: Vec<ChildPair> = eng.apply().inputs2.take();
-    inputs1_scratch.clear();
-    inputs2_scratch.clear();
+    stream_cache.reset(num_nodes, marginalize_targets.any().then_some(weighted));
+    products.reset(eng, might_use_sparse, num_nodes, left_widths, right_widths)?;
 
     Ok(ApplyRun {
         levels, left_widths, right_widths,
@@ -340,10 +315,10 @@ pub(super) fn apply_and_setup<'a>(
         stream_cache,
         products,
         entry_marginality,
-        right_identity: eng.apply().right_identity.take(),
-        left_identity: eng.apply().left_identity.take(),
+        right_identity,
+        left_identity,
         inputs1_scratch,
         inputs2_scratch,
-        prefilter_masks: eng.apply().prefilter_masks.take(),
+        prefilter_masks,
     })
 }

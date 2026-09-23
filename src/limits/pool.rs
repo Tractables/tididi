@@ -81,9 +81,16 @@ impl<T: PooledScratch> Pool<T> {
     /// drops, and whatever it frees is given back to the byte meter there.
     #[inline]
     pub(crate) fn checkout<'a>(&'a self, lim: &'a Limits) -> PoolGuard<'a, T> {
-        let mut value = self.take();
-        value.prepare();
-        PoolGuard { pool: self, lim, value }
+        let mut guard = self.checkout_preserving(lim);
+        guard.prepare();
+        guard
+    }
+
+    /// Keep initialized entries for algorithms that overwrite their live range.
+    /// The caller must invalidate stale results before reading them.
+    #[inline]
+    pub(crate) fn checkout_preserving<'a>(&'a self, lim: &'a Limits) -> PoolGuard<'a, T> {
+        PoolGuard { pool: self, lim, value: self.take() }
     }
 }
 

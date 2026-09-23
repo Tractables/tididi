@@ -102,8 +102,8 @@ fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     let num_nodes = tdd.vtree.num_nodes();
 
     let pool = eng.reduce_scratch();
-    let mut level_base = pool.prune_level_base.take();
-    let mut remap = pool.prune_remap.take();
+    let mut level_base = pool.prune_level_base.checkout_preserving(eng.limits());
+    let mut remap = pool.prune_remap.checkout_preserving(eng.limits());
 
     // Flat offset table: level t occupies remap[level_base[t]..level_base[t+1]].
     // Use `reference_slot_count()` so leaf levels get `LEAF_WIDTH` slots for marginal nodes.
@@ -120,11 +120,7 @@ fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     // can be returned; through the engine's limits so the reservation is
     // charged against the byte budget.
     let need_remap = total.saturating_sub(remap.len());
-    if eng.limits().reserve_exact(&mut remap, need_remap).is_err() {
-        pool.prune_level_base.put(level_base);
-        pool.prune_remap.put_bounded(eng.limits(), remap);
-        return Err(OperationError::OverBudget);
-    }
+    eng.limits().reserve_exact(&mut remap, need_remap)?;
 
     // Reset the marks. Split so the grown tail is initialized once, by `resize`,
     // rather than written by `resize` and again by the fill.
@@ -150,9 +146,6 @@ fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     // Charge the walk so a work budget sees it; the cancellation test belongs to
     // the callers, between prunes.
     eng.limits().charge_work(2 * total as u64);
-
-    pool.prune_level_base.put(level_base);
-    pool.prune_remap.put_bounded(eng.limits(), remap);
 
     Ok(())
 }
@@ -439,17 +432,11 @@ impl Visit {
 /// output, stopping at every level that loses no node.
 fn prune_below_root(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     let pool = eng.reduce_scratch();
-    let mut remap = pool.prune_remap.take();
-    let mut identity = pool.prune_identity.take();
-    let mut visits = pool.prune_visits.take();
+    let mut remap = pool.prune_remap.checkout_preserving(eng.limits());
+    let mut identity = pool.prune_identity.checkout_preserving(eng.limits());
+    let mut visits = pool.prune_visits.checkout_preserving(eng.limits());
 
-    let result = prune_below_root_with(eng, tdd, &mut remap, &mut identity, &mut visits);
-
-    let lim = eng.limits();
-    pool.prune_remap.put_bounded(lim, remap);
-    pool.prune_identity.put_bounded(lim, identity);
-    pool.prune_visits.put_bounded(lim, visits);
-    result
+    prune_below_root_with(eng, tdd, &mut remap, &mut identity, &mut visits)
 }
 
 /// [`prune_below_root`] with the scratch checked out.

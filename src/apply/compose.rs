@@ -355,8 +355,8 @@ fn push_local_targets(
     let lim = eng.limits();
     let vtree = std::sync::Arc::clone(f.vtree());
     let num_nodes = vtree.num_nodes();
-    let mut free_in_f = eng.apply().left_identity.take();
-    let mut free_in_g = eng.apply().right_identity.take();
+    let mut free_in_f = eng.apply().left_identity.checkout(lim);
+    let mut free_in_g = eng.apply().right_identity.checkout(lim);
     let mut into_f: Vec<VtreeIdx> = Vec::new();
     let mut into_g: Vec<VtreeIdx> = Vec::new();
     let split = (|| -> Result<(), OperationError> {
@@ -372,8 +372,8 @@ fn push_local_targets(
         }
         Ok(())
     })();
-    eng.apply().left_identity.put(free_in_f);
-    eng.apply().right_identity.put(free_in_g);
+    drop(free_in_f);
+    drop(free_in_g);
     split?;
     if !into_f.is_empty() {
         f = super::project::exists_targets_on(eng, f, &into_f, &[])?;

@@ -1,7 +1,7 @@
 //! The per-apply cache of already-computed child columns for streaming levels.
 
 use crate::diagram::WeightValue;
-use crate::limits::pool::{Pool, release_if_oversized};
+use crate::limits::pool::{PooledScratch, release_if_oversized};
 use super::CountVec;
 
 /// Lazily computed child columns for streaming-target levels whose children
@@ -20,36 +20,15 @@ pub(crate) enum StreamCache {
 }
 
 impl StreamCache {
-    /// Take an empty cache with `num_nodes` slots, or return
-    /// [`StreamCache::None`] when this apply marginalizes nothing.
-    ///
-    /// `weighted` is `None` when nothing is being marginalized. A pooled cache
-    /// of the other kind is dropped: an engine runs one kind, so this costs a
-    /// reallocation only on the first apply after a kind switch.
-    pub(crate) fn take(pool: &Pool<StreamCache>, num_nodes: usize, weighted: Option<bool>) -> Self {
-        let Some(weighted) = weighted else { return StreamCache::None };
-        match (pool.take(), weighted) {
-            (StreamCache::Weighted(mut cols), true) => {
-                cols.resize_with(num_nodes, || None);
-                StreamCache::Weighted(cols)
-            }
-            (StreamCache::Int(mut cols), false) => {
-                cols.resize_with(num_nodes, || None);
-                StreamCache::Int(cols)
-            }
-            (_, true) => StreamCache::Weighted(vec_of_none(num_nodes)),
-            (_, false) => StreamCache::Int(vec_of_none(num_nodes)),
+    /// Select the column kind and size; nonstreaming operations leave it parked.
+    pub(crate) fn reset(&mut self, num_nodes: usize, weighted: Option<bool>) {
+        let Some(weighted) = weighted else { return };
+        match (self, weighted) {
+            (StreamCache::Weighted(cols), true) => cols.resize_with(num_nodes, || None),
+            (StreamCache::Int(cols), false) => cols.resize_with(num_nodes, || None),
+            (cache, true) => *cache = StreamCache::Weighted(vec_of_none(num_nodes)),
+            (cache, false) => *cache = StreamCache::Int(vec_of_none(num_nodes)),
         }
-    }
-
-    /// Discard computed columns and return bounded table capacity to the pool.
-    pub(crate) fn put(mut self, lim: &crate::limits::Limits, pool: &Pool<StreamCache>) {
-        match &mut self {
-            StreamCache::None => return,
-            StreamCache::Int(cols) => retire(lim, cols),
-            StreamCache::Weighted(cols) => retire(lim, cols),
-        }
-        pool.put(self);
     }
 
     /// The integer columns. Only ever asked for on the integer route.
@@ -96,4 +75,15 @@ fn vec_of_none<T>(num_nodes: usize) -> Vec<Option<T>> {
 fn retire<T>(lim: &crate::limits::Limits, cols: &mut Vec<Option<T>>) {
     cols.clear();
     release_if_oversized(lim, cols);
+}
+
+impl PooledScratch for StreamCache {
+    fn prepare(&mut self) {}
+    fn retain(&mut self, lim: &crate::limits::Limits) {
+        match self {
+            Self::None => {},
+            Self::Int(cols) => retire(lim, cols),
+            Self::Weighted(cols) => retire(lim, cols),
+        }
+    }
 }
