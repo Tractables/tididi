@@ -32,6 +32,11 @@ weighted values, and their references may carry an inline value instead of
 a node index. The `diagram` module owns that encoding; other modules read it
 through `ChildDecoder`.
 
+Vtree constructors and grafts finish through one checked node-list constructor,
+which derives parent links and returns the node permutation used by graft layouts.
+`TopoOrder` owns and validates the traversal order, inverse positions and exact
+leaf/internal subsequences; `Vtree::validate` checks links and variable tables.
+
 ## Glossary
 
 | Term | Meaning |

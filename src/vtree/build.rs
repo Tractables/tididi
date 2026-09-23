@@ -26,17 +26,8 @@ const MIN_NUM_VARS: u32 = {
     if entries > u32::MAX as usize { u32::MAX } else { entries as u32 }
 };
 
-/// The widest id space a list of `num_nodes` nodes may declare. Three tables
-/// are sized by the id space rather than by the number of leaves — the seen-set
-/// in [`Vtree::check_each_var_once`] and the `var_to_leaf` maps in
-/// [`Vtree::from_nodes`] and the graft — so without a bound one large id sizes
-/// all three however few leaves the list holds.
-///
-/// The bound is the node list's own footprint: the widest table is one
-/// `VtreeIdx` per id, and it may not outweigh the nodes it indexes. A dense
-/// vtree is far inside that, since `2n - 1` nodes carry `n` variables, and it
-/// leaves room for the sparse ids a consumer's own numbering produces.
-/// [`MIN_NUM_VARS`] is the floor, so a small list is not held to a small space.
+/// Bound variable-indexed tables by the node list's footprint, with a floor
+/// that permits sparse identifiers in small vtrees.
 fn max_num_vars(num_nodes: usize) -> u32 {
     let bytes = num_nodes.saturating_mul(size_of::<VtreeNode>());
     let entries = (bytes / size_of::<VtreeIdx>()).min(u32::MAX as usize) as u32;
@@ -44,9 +35,8 @@ fn max_num_vars(num_nodes: usize) -> u32 {
 }
 
 /// Refuse an id space too wide for the node list to index. Every construction
-/// reaches this through [`Vtree::check_each_var_once`], which runs it before
-/// the first table sized by an id.
-pub(super) fn check_var_space(num_vars: u32, num_nodes: usize) -> Result<(), VtreeError> {
+/// checks this before allocating a table indexed by variable id.
+fn check_var_space(num_vars: u32, num_nodes: usize) -> Result<(), VtreeError> {
     let max_num_vars = max_num_vars(num_nodes);
     if num_vars > max_num_vars {
         return Err(VtreeError::VariableSpaceTooLarge { num_vars, max_num_vars });
@@ -216,8 +206,8 @@ impl Vtree {
         Self::linear_from_order(&vars).expect("the ids are distinct")
     }
 
-    /// A right-linear vtree over `n-1, …, 0`, reversing [`Vtree::linear`]'s order:
-    /// variable `n-1` is the root's left leaf and variable `0` sits deepest.
+    /// A right-linear vtree over `num_vars, …, 1`, reversing [`Vtree::linear`]'s
+    /// order: variable `num_vars` is the root's left leaf and `1` sits deepest.
     ///
     /// # Panics
     ///
@@ -294,32 +284,20 @@ impl Vtree {
         Self::from_nodes(nodes, forest[0], num_vars).expect("the forest collapses to one tree")
     }
 
-    /// The overlap check [`Vtree::from_nodes`] and the graft share: every leaf
-    /// in `nodes` carries a distinct variable below `num_vars`.
-    pub(super) fn check_each_var_once(nodes: &[VtreeNode], num_vars: u32) -> Result<(), VtreeError> {
-        check_var_space(num_vars, nodes.len())?;
-        let mut seen = vec![false; num_vars as usize];
-        for node in nodes {
-            if let VtreeNode::Leaf { var, .. } = node
-                && std::mem::replace(&mut seen[var.idx()], true) {
-                    return Err(VtreeError::OverlappingVariable(*var));
-                }
-        }
-        Ok(())
-    }
-
-    /// Re-index all nodes in bottom-up level order (leaves first, root last),
+    /// Validate the child links and variables, then reindex bottom-up,
     /// returning the tree and the `old_to_new` permutation a caller translates
     /// pre-reindex `VtreeIdx` values through.
     ///
     /// Leaves take the indices `0..num_leaves`, then the internal nodes in
     /// bottom-up level order, left to right within a level, so the identity
     /// order is a valid initial [`TopoOrder`](crate::vtree::topo::TopoOrder).
-    pub(super) fn reindex_bottomup_with_map(
-        root: VtreeIdx,
+    pub(super) fn from_nodes_with_map(
         old_nodes: Vec<VtreeNode>,
-        mut var_to_leaf: Vec<VtreeIdx>,
-    ) -> (Self, Vec<VtreeIdx>) {
+        root: VtreeIdx,
+        num_vars: u32,
+    ) -> Result<(Self, Vec<VtreeIdx>), VtreeError> {
+        check_node_list(&old_nodes, root, num_vars)?;
+        let mut var_to_leaf = vec![VtreeIdx(0); num_vars as usize];
         let levels = levels_from_root(root, &old_nodes);
         let (new_nodes, old_to_new, actual_leaf_count) =
             relabel_leaves_then_internals(&levels, &old_nodes, &mut var_to_leaf);
@@ -336,7 +314,8 @@ impl Vtree {
             leaf_count: actual_leaf_count,
             topo,
         };
-        (vtree, old_to_new)
+        debug_assert_eq!(vtree.validate(), Ok(()));
+        Ok((vtree, old_to_new))
     }
 
     /// Construct a vtree from a raw node list and root index, reindexing
@@ -355,7 +334,7 @@ impl Vtree {
     /// # Errors
     ///
     /// [`VtreeError::Invalid`] if `nodes` is empty, if an index names no node,
-    /// if a leaf carries a variable greater than `num_vars`, or if the links do
+    /// if a leaf carries a variable outside `1..=num_vars`, or if the links do
     /// not reach every node exactly once from `root`;
     /// [`VtreeError::OverlappingVariable`] if two leaves carry one variable;
     /// [`VtreeError::VariableSpaceTooLarge`] if `num_vars` is wider than the
@@ -389,11 +368,7 @@ impl Vtree {
         root: VtreeIdx,
         num_vars: u32,
     ) -> Result<Self, VtreeError> {
-        check_node_list(&nodes, root, num_vars)?;
-        let var_to_leaf = vec![VtreeIdx(0); num_vars as usize];
-        let (vtree, _) = Self::reindex_bottomup_with_map(root, nodes, var_to_leaf);
-        debug_assert_eq!(vtree.validate(), Ok(()));
-        Ok(vtree)
+        Self::from_nodes_with_map(nodes, root, num_vars).map(|(vtree, _)| vtree)
     }
 }
 
@@ -413,6 +388,8 @@ fn check_node_list(nodes: &[VtreeNode], root: VtreeIdx, num_vars: u32) -> Result
     if root.idx() >= n {
         return Err(VtreeError::Invalid(format!("root {} is not a node index", root.0)));
     }
+    check_var_space(num_vars, n)?;
+    let mut variables = vec![false; num_vars as usize];
     for node in nodes {
         match *node {
             VtreeNode::Leaf { var, .. } => {
@@ -421,6 +398,9 @@ fn check_node_list(nodes: &[VtreeNode], root: VtreeIdx, num_vars: u32) -> Result
                         "leaf variable {} is outside the variables 1 to {num_vars}",
                         var.0
                     )));
+                }
+                if std::mem::replace(&mut variables[var.idx()], true) {
+                    return Err(VtreeError::OverlappingVariable(var));
                 }
             }
             VtreeNode::Internal { left, right, .. } => {
@@ -459,7 +439,7 @@ fn check_node_list(nodes: &[VtreeNode], root: VtreeIdx, num_vars: u32) -> Result
             n - reached
         )));
     }
-    Vtree::check_each_var_once(nodes, num_vars)
+    Ok(())
 }
 
 /// The nodes reachable from `root`, grouped by depth, walked breadth-first from the root.

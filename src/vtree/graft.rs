@@ -1,4 +1,4 @@
-//! Joining independent subtrees and spine variables under one right-linear spine.
+//! Joining independent subtrees and spine variables under one left-linear spine.
 
 use super::build::{append_subtree, push_internal, push_leaf};
 use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
@@ -21,9 +21,9 @@ pub struct GraftLayout {
 
 impl Vtree {
     /// Join independent subtrees and single-variable leaves under one
-    /// right-linear spine: `subtrees[0]` is the leftmost piece, each later
-    /// subtree and then each `spine_vars` leaf is hung one join further down
-    /// the right spine, in the order given. A diagram over the result is what
+    /// left-linear spine: `subtrees[0]` is the leftmost piece, each later
+    /// subtree and then each `spine_vars` leaf is attached to a new root on
+    /// the right, in the order given. A diagram over the result is what
     /// [`crate::Tdd::graft`] builds from diagrams over the pieces.
     ///
     /// ```text
@@ -41,7 +41,8 @@ impl Vtree {
     /// # Errors
     ///
     /// [`VtreeError::OverlappingVariable`] if two pieces carry the same
-    /// variable; [`VtreeError::Invalid`] if there is no piece at all.
+    /// variable; [`VtreeError::Invalid`] if there is no piece or a spine variable
+    /// is zero; [`VtreeError::VariableSpaceTooLarge`] if the id space is too large.
     ///
     /// ```
     /// use tididi::vtree::{VarId, Vtree, VtreeError};
@@ -68,18 +69,14 @@ impl Vtree {
     /// [`Vtree::graft`] with each subtree's leaves renamed through
     /// `rename(k, local)` on the way in, an explicit id space (which must hold
     /// every renamed id), and the [`GraftLayout`] the diagram-side graft places
-    /// levels by. The one graft implementation. It is public because a caller
-    /// compiling components in per-component id spaces needs it.
+    /// levels by. Use it when the pieces have separate variable id spaces.
     ///
     /// # Errors
     ///
     /// As [`Vtree::graft`], over the renamed ids: [`VtreeError::OverlappingVariable`]
     /// if two pieces land on the same variable, [`VtreeError::Invalid`] if
-    /// there is nothing to graft.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a renamed id or a spine variable is greater than `num_vars`.
+    /// there is nothing to graft or a variable is outside `1..=num_vars`;
+    /// [`VtreeError::VariableSpaceTooLarge`] if the id space is too large.
     ///
     /// ```
     /// use tididi::vtree::{VarId, Vtree, VtreeError};
@@ -133,14 +130,12 @@ impl Vtree {
             chain_pre.push(root);
         }
 
-        Self::check_each_var_once(&nodes, num_vars)?;
-        let (mut vtree, old_to_new) = Self::reindex_bottomup_with_map(root, nodes, vec![VtreeIdx(0); num_vars as usize]);
+        let (mut vtree, old_to_new) = Self::from_nodes_with_map(nodes, root, num_vars)?;
         if let Some(first) = subtrees.first()
             && subtrees.iter().all(|sub| std::sync::Arc::ptr_eq(sub.context(), first.context()))
         {
             vtree.context = std::sync::Arc::clone(first.context());
         }
-        debug_assert_eq!(vtree.validate(), Ok(()));
 
         let comp_to_full: Vec<Vec<VtreeIdx>> = comp_offsets
             .iter()

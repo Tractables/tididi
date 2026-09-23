@@ -103,7 +103,7 @@ fn test_linear_structure() {
     // 4 leaves + 3 internal = 7 nodes
     assert_eq!(vtree.num_nodes(), 7);
 
-    // The root's left child is the leaf of variable 0, the first in the order.
+    // The root's left child is the leaf of variable 1, the first in the order.
     let (l, r) = vtree.children(vtree.root);
     assert!(vtree.node(l).is_leaf());
     assert_eq!(vtree.leaf_var(l), VarId(1));
@@ -184,7 +184,7 @@ fn vtree_text_header_node_count() {
 
 #[test]
 fn vtree_text_vars_one_indexed() {
-    // Leaf variable IDs in the `.vtree` format are 1-indexed (internal 0-indexed VarId + 1).
+    // Leaf variable IDs in the `.vtree` format are 1-indexed, matching VarId.
     let num_vars = 5u32;
     let vtree = Vtree::balanced(num_vars);
     let fmt = vtree.to_text();
@@ -504,7 +504,7 @@ fn balanced_over_follows_the_order_and_allows_gaps() {
 }
 
 #[test]
-fn graft_hangs_pieces_down_a_right_spine() {
+fn graft_attaches_each_piece_to_a_new_root() {
     let parts = [
         Vtree::balanced_over(&[VarId(1), VarId(2)]).unwrap(),
         Vtree::balanced_over(&[VarId(5), VarId(6)]).unwrap(),
@@ -641,4 +641,47 @@ fn leaf_order_constructors_refuse_empty_and_repeated_orders() {
         );
         assert_eq!(build(&[VarId(4)]).unwrap().num_vars(), 4);
     }
+}
+
+#[test]
+fn graft_rejects_out_of_domain_variables_without_panicking() {
+    let source = Vtree::leaf(VarId(1));
+    for bad in [VarId(0), VarId(3)] {
+        assert!(matches!(
+            Vtree::graft_over(&[&source], |_, _| bad, &[], 2),
+            Err(VtreeError::Invalid(_)),
+        ));
+        assert!(matches!(
+            Vtree::graft_over(&[&source], |_, v| v, &[bad], 2),
+            Err(VtreeError::Invalid(_)),
+        ));
+    }
+    assert!(matches!(Vtree::graft(&[], &[VarId(0)]), Err(VtreeError::Invalid(_))));
+}
+
+#[test]
+fn graft_mapping_preserves_rotated_nodes_and_shared_context() {
+    let context = std::sync::Arc::new(crate::Context::new());
+    let mut source = Vtree::linear(5).with_context(context.clone());
+    let root = source.root();
+    assert!(rotate_left(&mut source, root).is_some());
+    let (grafted, layout) = Vtree::graft_over(&[&source], |_, v| VarId(v.0 + 2), &[VarId(1)], 7).unwrap();
+    assert_eq!(grafted.validate(), Ok(()));
+    assert!(std::sync::Arc::ptr_eq(grafted.context(), &context));
+    let map = &layout.comp_to_full[0];
+    for (i, node) in source.nodes.iter().enumerate() {
+        match *node {
+            VtreeNode::Leaf { var, .. } => assert_eq!(grafted.leaf_var(map[i]), VarId(var.0 + 2)),
+            VtreeNode::Internal { left, right, .. } => {
+                assert_eq!(grafted.children(map[i]), (map[left.idx()], map[right.idx()]));
+            }
+        }
+    }
+}
+
+#[test]
+fn validation_rejects_variable_zero_without_panicking() {
+    let mut vtree = Vtree::leaf(VarId(1));
+    vtree.nodes[0] = VtreeNode::Leaf { var: VarId(0), parent: None };
+    assert!(matches!(vtree.validate(), Err(VtreeError::Invalid(_))));
 }

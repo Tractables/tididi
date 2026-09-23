@@ -146,10 +146,33 @@ impl TopoOrder {
         }
     }
 
-    /// Whether the order covers exactly `n` nodes with a consistent inverse.
-    #[inline]
-    pub(super) fn covers(&self, n: usize) -> bool {
-        self.order.len() == n && self.pos.len() == n
+    /// Check the order, its inverse and both filtered views against the nodes.
+    /// The caller has already checked child indices.
+    pub(super) fn validate(&self, nodes: &[VtreeNode]) -> Result<(), String> {
+        let n = nodes.len();
+        if self.order.len() != n || self.pos.len() != n {
+            return Err("bottom-up order does not cover the node list".into());
+        }
+        let mut seen = vec![false; n];
+        for (pos, &t) in self.order.iter().enumerate() {
+            if t.idx() >= n || seen[t.idx()] {
+                return Err(format!("bottom-up order lists node {} twice or out of range", t.0));
+            }
+            if self.pos[t.idx()] as usize != pos {
+                return Err(format!("bottom-up position of node {} is inconsistent", t.0));
+            }
+            if let VtreeNode::Internal { left, right, .. } = nodes[t.idx()]
+                && (!seen[left.idx()] || !seen[right.idx()]) {
+                    return Err(format!("node {} precedes one of its children in the bottom-up order", t.0));
+                }
+            seen[t.idx()] = true;
+        }
+        let leaves = self.order.iter().copied().filter(|t| nodes[t.idx()].is_leaf());
+        let internal = self.order.iter().copied().filter(|t| !nodes[t.idx()].is_leaf());
+        if !leaves.eq(self.leaves.iter().copied()) || !internal.eq(self.internal.iter().copied()) {
+            return Err("leaf/internal views disagree with the bottom-up order".into());
+        }
+        Ok(())
     }
 }
 

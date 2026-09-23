@@ -428,7 +428,8 @@ Explain the Rust implementation through storage ownership, level arenas,
 child-reference decoding, reduction passes, scratch and limits. Include unfinished
 output ownership, intermediate product storage, coordinated marginal payloads,
 shared incremental query scheduling for borrowed and owned circuits, reusable
-embedding plans, reduction scheduling, and the boundary that coordinates level edits with references
+embedding plans, reduction scheduling, checked vtree construction and traversal
+validation, and the boundary that coordinates level edits with references
 and worklists. Define terms
 once, map modules to responsibilities, and identify which operations establish
 or temporarily break each invariant. Distinguish validation of stored data
@@ -437,7 +438,7 @@ there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: 6debf07355af66c8c85ad6784498bae09cc2b113f9779d68672b7f37bdf16c87 -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: 522ac5fb1f5bd6634a98f76645ac707c54cc43e053f3fe03c133481154065c18 -->
 
 ## Reusable components
 

@@ -52,7 +52,7 @@ impl Vtree {
             return invalid(format!("root {} is not a node index", self.root.0));
         }
         self.validate_links(n)?;
-        self.validate_bottomup_order(n)?;
+        self.topo.validate(&self.nodes).map_err(VtreeError::Invalid)?;
         self.validate_leaves()
     }
 
@@ -88,36 +88,6 @@ impl Vtree {
         Ok(())
     }
 
-    /// The bottom-up order lists every node once, children before parents, with
-    /// consistent inverse positions and filtered views.
-    fn validate_bottomup_order(&self, n: usize) -> Result<(), VtreeError> {
-        if !self.topo.covers(n) {
-            return invalid("bottom-up order does not cover the node list".to_string());
-        }
-        let mut seen = vec![false; n];
-        for (pos, &t) in self.topo.all().iter().enumerate() {
-            if t.idx() >= n || std::mem::replace(&mut seen[t.idx()], true) {
-                return invalid(format!("bottom-up order lists node {} twice or out of range", t.0));
-            }
-            if self.topo.pos(t) as usize != pos {
-                return invalid(format!("bottom-up position of node {} is inconsistent", t.0));
-            }
-            if let VtreeNode::Internal { left, right, .. } = &self.nodes[t.idx()]
-                && (!seen[left.idx()] || !seen[right.idx()]) {
-                    return invalid(format!("node {} precedes one of its children in the bottom-up order", t.0));
-                }
-        }
-        let leaves_in_order = self.topo.all().iter().filter(|t| self.nodes[t.idx()].is_leaf()).count();
-        if self.topo.leaves().len() != leaves_in_order
-            || self.topo.internal().len() != n - leaves_in_order
-            || !self.topo.leaves().iter().all(|t| self.nodes[t.idx()].is_leaf())
-            || self.topo.internal().iter().any(|t| self.nodes[t.idx()].is_leaf())
-        {
-            return invalid("leaf/internal views disagree with the bottom-up order".to_string());
-        }
-        Ok(())
-    }
-
     /// Distinct variables inside the id space, each inverted by `leaf_of`, and
     /// a leaf count that matches [`Vtree::num_leaves`].
     fn validate_leaves(&self) -> Result<(), VtreeError> {
@@ -126,7 +96,7 @@ impl Vtree {
         for (i, node) in self.nodes.iter().enumerate() {
             if let VtreeNode::Leaf { var, .. } = node {
                 leaf_count += 1;
-                if var.idx() >= carried.len() {
+                if var.0 == 0 || var.idx() >= carried.len() {
                     return invalid(format!("leaf {i} carries variable {} outside the id space {}", var.0, carried.len()));
                 }
                 if std::mem::replace(&mut carried[var.idx()], true) {
