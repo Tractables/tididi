@@ -10,14 +10,11 @@
 
 use std::sync::Arc;
 
-use super::GraftError;
+use super::{GraftError, placement::Placement};
 
 use crate::Engine;
-use crate::diagram::{
-    Assembly, ChildPair, LevelView, NodeIdx, Tdd, TddBuilder, TddNodeId, LEAF_WIDTH, ONE_LEAF_IDX,
-};
+use crate::diagram::Tdd;
 use crate::limits::{Limits, OperationError};
-use crate::reduce::ReductionPlan;
 use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
 
 /// Where each level of an embedded diagram landed in the destination vtree.
@@ -335,73 +332,22 @@ fn assemble(
     if tdd.is_zero() {
         return Ok(crate::build::constant_zero(eng, into));
     }
-    let mut builder = Assembly::new(eng, into)?;
-    let over_a_renamed_leaf = fill(eng, tdd, into, plan, &mut builder)?;
-    // Index preservation carries the source's output index through the
-    // pass-through levels above it, so the result is seated at the same index.
-    let output = TddNodeId { vtree: into.root(), local: tdd.output().local };
-    let mut result = builder.finish_checked(output).map_err(|error| GraftError::Operation(error.into()))?;
-    if over_a_renamed_leaf {
-        eng.reduce(&mut result, ReductionPlan::Prune)?;
-    }
-    Ok(result)
-}
-
-/// One level per destination node, children before parents. Returns whether
-/// a pass-through level sat directly over a renamed leaf, which is what the
-/// prune after assembly is for.
-fn fill(
-    eng: &Engine,
-    tdd: &Tdd,
-    into: &Vtree,
-    plan: &Plan,
-    builder: &mut TddBuilder,
-) -> Result<bool, GraftError> {
-    let lim = eng.limits();
-    let mut gate = lim.gate();
-    let mut over_a_renamed_leaf = false;
+    let mut placement = Placement::copying(eng, into)?;
+    let mut gate = eng.limits().gate();
     for t in into.bottomup() {
-        if into.node(t).is_leaf() {
-            continue;
-        }
+        if into.node(t).is_leaf() { continue; }
         gate.poll(1)?;
         let (left, right) = into.children(t);
         if !plan.mapped[t.idx()] {
-            builder.push(eng, t, &[ChildPair::new(true_node(into, left), true_node(into, right))])?;
+            placement.join(t, placement.true_node(left), placement.true_node(right))?;
         } else if let Some(source) = plan.covered_by[t.idx()] {
-            let view = LevelView::unweighted(tdd.level(source))
-                .expect("a diagram with no marginal level has no weighted level");
-            builder.replace_level(eng, t, view)?;
+            placement.copy_level(tdd, source, t)?;
         } else {
-            let free_is_left = !plan.mapped[left.idx()];
-            let (free, carries) = if free_is_left { (left, right) } else { (right, left) };
-            let one = true_node(into, free);
-            let carries_leaf = into.node(carries).is_leaf();
-            let width = if carries_leaf { LEAF_WIDTH } else { builder.level(carries).slot_count() };
-            // A renamed leaf gets a pass-through node for each of its three
-            // labels, so the copied level above finds the label it names at
-            // that label's own index. It may name only some of them, which is
-            // what the prune after assembly is for.
-            over_a_renamed_leaf |= carries_leaf;
-            for i in 0..width {
-                let child = NodeIdx(i as u32);
-                let pair = if free_is_left {
-                    ChildPair::new(one, child)
-                } else {
-                    ChildPair::new(child, one)
-                };
-                builder.push(eng, t, &[pair])?;
-            }
+            placement.pass_through(t, !plan.mapped[left.idx()])?;
         }
     }
     gate.flush()?;
-    Ok(over_a_renamed_leaf)
-}
-
-/// The index of the constant-true node on `child`'s level: the `One` label on
-/// a leaf level, and the one node a free internal level holds otherwise.
-fn true_node(vtree: &Vtree, child: VtreeIdx) -> NodeIdx {
-    if vtree.node(child).is_leaf() { ONE_LEAF_IDX } else { NodeIdx(0) }
+    placement.finish(tdd.output().local)
 }
 
 #[cfg(test)]

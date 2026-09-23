@@ -5,7 +5,7 @@
 //! local node indices. Canonical parts introduce no structural twins; marginal
 //! roots are tagged and pruned after acquiring their new parent references.
 
-use super::GraftError;
+use super::{GraftError, placement::Placement};
 
 use crate::Engine;
 use std::sync::Arc;
@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::vtree::{GraftLayout, VarId, Vtree, VtreeIdx};
 
 use crate::diagram::{
-    return_levels, take_levels, ChildPair, NodeIdx, NodeKind, PoolSlot, Tdd, TddLevel, TddNodeId,
+    return_levels, ChildPair, NodeIdx, NodeKind, PoolSlot, Tdd, TddLevel,
     TddBuildError, WeightStore, ONE_LEAF_IDX,
 };
 
@@ -158,8 +158,6 @@ fn graft_impl(
         check_part_weights(tdd, into.as_ref(), |local| rename(part, local))
             .map_err(|source| GraftError::PartWeights { part, source })?;
     }
-    let repair_boundary = !layout.chain_internals.is_empty()
-        && parts.iter().any(|part| part.levels[part.output.vtree.idx()].is_marginal());
     let into = into.map(|store| store.empty_like());
 
     // A ⊥ part makes the conjunction ⊥; the chain below would name the `ZERO`
@@ -170,19 +168,9 @@ fn graft_impl(
         return Ok((result, layout));
     }
 
-    // Move each part's internal levels into their grafted positions, and its
-    // weighted values with them: the store is keyed by level, so a level that
-    // moves takes its column along or its parents' refs read another node's
-    // weight.
-    let mut levels = take_levels(eng, grafted_arc.num_nodes());
-    let mut merged = into;
-    for (k, tdd) in parts.iter_mut().enumerate() {
-        let comp_to_full_k = &layout.comp_to_full[k];
-        let mut part_ws = merged.as_ref().and_then(|_| tdd.detach_weights());
-        for (c_idx, &f_idx) in comp_to_full_k.iter().enumerate() {
-            crate::diagram::MarginalStorage::new(&mut levels[f_idx.idx()], merged.as_mut(), f_idx.idx())
-                .move_from(&mut tdd.levels[c_idx], part_ws.as_mut(), c_idx);
-        }
+    let mut placement = Placement::moving(eng, &grafted_arc, into);
+    for (part, map) in parts.iter_mut().zip(&layout.comp_to_full) {
+        placement.move_part(part, map);
     }
 
     // Each piece's "true" reference, as a NodeIdx into the piece's root
@@ -201,7 +189,7 @@ fn graft_impl(
     for (j, &chain_idx) in layout.chain_internals.iter().enumerate() {
         let left = if j == 0 { piece_ref(0) } else { NodeIdx(0) };
         let right = piece_ref(j + 1);
-        levels[chain_idx.idx()].push_internal_node(&[ChildPair::new(left, right)]);
+        placement.join(chain_idx, left, right)?;
     }
 
     // The output is the last chain join when there is one; otherwise the sole
@@ -211,26 +199,7 @@ fn graft_impl(
     } else {
         NodeIdx(0)
     };
-    let output = TddNodeId {
-        vtree: grafted_arc.root(),
-        local: output_local,
-    };
-
-    let mut grafted = Tdd::from_levels_unchecked(grafted_arc, levels, output);
-    if let Some(merged) = merged {
-        grafted.set_weights(merged).map_err(GraftError::DestinationWeights)?;
-    }
-    if repair_boundary {
-        for (leaf, _) in grafted.vtree.leaf_bottomup() {
-            if grafted.levels[leaf.idx()].is_weight_marginal() {
-                crate::marginal::canonicalize_apply_leaf_refs(
-                    &[leaf.idx()], &grafted.vtree, &mut grafted.levels, grafted.weights.as_ref());
-            }
-        }
-        crate::diagram::tag_all_marginal_side_slots(&mut grafted, None);
-        eng.reduce(&mut grafted, crate::reduce::ReductionPlan::Prune)?;
-    }
-    Ok((grafted, layout))
+    Ok((placement.finish(output_local)?, layout))
 }
 
 /// Require a destination interpretation for every marginal value that a part will carry across.

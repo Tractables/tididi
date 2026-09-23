@@ -13,6 +13,7 @@ pub(crate) mod scratch;
 pub mod search;
 pub(crate) mod embed;
 pub(crate) mod graft;
+mod placement;
 
 pub use embed::{Embedding, EmbeddingPlan};
 
