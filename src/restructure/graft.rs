@@ -305,7 +305,7 @@ impl Tdd {
         self.levels[t.idx()].clear();
         self.levels[t.idx()].push_internal_node(&[ChildPair::new(left_ptr, right_ptr)]);
 
-        return_levels(eng, PoolSlot::First, std::mem::take(&mut other.levels));
+        return_levels(eng, PoolSlot::First, std::mem::take(&mut other.levels).into_vec());
 
         if let Some(rw) = other.detach_weights() {
             match self.detach_weights() {

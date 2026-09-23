@@ -160,7 +160,7 @@ pub(crate) fn disjoin_cube_owned(eng: &Engine, f: Tdd, cube: &[Literal]) -> Resu
     let mut f = f;
     let result = spine_walk(eng, &mut f, &clause, true);
     // Recycle what is left of `f`, as the conjunction does.
-    let spent = std::mem::take(&mut f.levels);
+    let spent = std::mem::take(&mut f.levels).into_vec();
     if !spent.is_empty() {
         diagram::return_levels(eng, diagram::PoolSlot::First, spent);
     }

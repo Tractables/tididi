@@ -336,6 +336,7 @@ struct RotationTrial<'a> {
     changed: SmallVec<[VtreeIdx; 2]>,
     preimages: SmallVec<[Transient<'a, TddLevel>; 2]>,
     old_output: TddNodeId,
+    old_canonical: bool,
     shared_tree: Option<Arc<Vtree>>,
     old_dirty: Option<Dirty>,
     /// Set by [`commit`](RotationTrial::commit), so the rollback in `Drop` knows
@@ -347,6 +348,7 @@ impl<'a> RotationTrial<'a> {
     /// Detach a shared vtree and take the state a rollback restores.
     fn new(tdd: &'a mut Tdd, lim: &'a Limits) -> Self {
         let old_output = tdd.output;
+        let old_canonical = tdd.levels.is_canonical(old_output);
         let shared_tree = (Arc::strong_count(&tdd.vtree) > 1 || Arc::weak_count(&tdd.vtree) > 0)
             .then(|| Arc::clone(&tdd.vtree));
         let old_dirty = Some(std::mem::take(&mut tdd.dirty));
@@ -357,6 +359,7 @@ impl<'a> RotationTrial<'a> {
             changed: SmallVec::new(),
             preimages: SmallVec::new(),
             old_output,
+            old_canonical,
             shared_tree,
             old_dirty,
             committed: false,
@@ -365,6 +368,7 @@ impl<'a> RotationTrial<'a> {
 
     /// Rotate the pointers for one move, retaining what a rollback needs.
     fn rotate(&mut self, mv: RotationMove) -> Option<RotationInfo> {
+        self.tdd.levels.forget();
         let pending = rotate_pointers(Arc::make_mut(&mut self.tdd.vtree), mv.pivot, mv.kind)?;
         let info = pending.info();
         self.pending.push(pending);
@@ -432,5 +436,6 @@ impl Drop for RotationTrial<'_> {
         if let Some(tree) = self.shared_tree.take() {
             self.tdd.vtree = tree;
         }
+        if self.old_canonical { self.tdd.levels.certify(self.old_output); }
     }
 }

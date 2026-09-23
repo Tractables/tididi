@@ -1,6 +1,7 @@
 //! Simultaneous substitution through the Boolean apply kernels.
 
 use crate::diagram::{LeafLabel, Literal};
+use super::compose::SharedCircuit;
 use crate::limits::PollGate;
 use crate::vtree::{VarId, VtreeNode};
 use crate::{Engine, OperationError, Tdd};
@@ -85,42 +86,68 @@ impl Engine {
         let lim = self.limits();
         self.minimize(&mut f)?;
         let vtree = f.vtree().clone();
-        let mut columns = Vec::<Vec<Tdd>>::new();
-        lim.try_resize(&mut columns, vtree.num_nodes(), Vec::new())?;
+        let mut uses = Vec::<Vec<usize>>::new();
+        lim.try_resize(&mut uses, vtree.num_nodes(), Vec::new())?;
+        for t in vtree.bottomup() {
+            gate.poll(1)?;
+            let width = if vtree.node(t).is_leaf() { 3 } else { f.level(t).nodes.len() };
+            lim.try_resize(&mut uses[t.idx()], width, 0)?;
+            if let VtreeNode::Internal { left, right, .. } = *vtree.node(t) {
+                for node in &f.level(t).nodes {
+                    for pair in f.level(t).pairs_of(node) {
+                        gate.poll(1)?;
+                        uses[left.idx()][pair.left.raw() as usize] += 1;
+                        uses[right.idx()][pair.right.raw() as usize] += 1;
+                    }
+                }
+            }
+        }
+        uses[f.output().vtree.idx()][f.output().local.idx()] += 1;
+        let mut columns = Vec::<Vec<SharedCircuit>>::new();
+        lim.reserve_exact(&mut columns, vtree.num_nodes())?;
+        columns.resize_with(vtree.num_nodes(), Vec::new);
         for t in vtree.bottomup() {
             gate.poll(1)?;
             match *vtree.node(t) {
                 VtreeNode::Leaf { var, .. } => {
                     let replacement = by_leaf[t.idx()].unwrap_or(Replacement::Literal(Literal::pos(var)));
-                    let (positive, negative) = match replacement {
-                        Replacement::Diagram(diagram) => {
-                            let mut positive = diagram.try_clone_on(self)?;
-                            positive.weights = None;
-                            let negative = self.negate(positive.try_clone_on(self)?)?;
-                            (positive, negative)
-                        }
-                        Replacement::Literal(literal) => (
-                            self.literal(&vtree, literal)?,
-                            self.literal(&vtree, literal.negated())?,
-                        ),
-                    };
-                    let one = self.cube(&vtree, std::iter::empty::<Literal>())?;
                     lim.reserve_exact(&mut columns[t.idx()], 3)?;
                     // LeafLabel's stable slot order is One, Pos, Neg.
                     debug_assert_eq!(LeafLabel::Pos as usize, 1);
-                    columns[t.idx()].extend([one, positive, negative]);
+                    for (slot, &count) in uses[t.idx()].iter().enumerate() {
+                        let value = if count == 0 {
+                            SharedCircuit::default()
+                        } else {
+                            let value = if slot == 0 {
+                                self.cube(&vtree, std::iter::empty::<Literal>())?
+                            } else {
+                                match replacement {
+                                    Replacement::Diagram(diagram) => {
+                                        let mut value = diagram.try_clone_on(self)?;
+                                        value.weights = None;
+                                        if slot == 2 { self.negate(value)? } else { value }
+                                    }
+                                    Replacement::Literal(literal) => {
+                                        self.literal(&vtree, if slot == 2 { literal.negated() } else { literal })?
+                                    }
+                                }
+                            };
+                            SharedCircuit::new(value, count)
+                        };
+                        columns[t.idx()].push(value);
+                    }
                 }
                 VtreeNode::Internal { left, right, .. } => {
                     let level = f.level(t);
                     lim.reserve_exact(&mut columns[t.idx()], level.nodes.len())?;
-                    for node in &level.nodes {
+                    for (i, node) in level.nodes.iter().enumerate() {
                         let mut sum = None;
                         for pair in level.pairs_of(node) {
                             gate.poll(1)?;
                             let a =
-                                columns[left.idx()][pair.left.raw() as usize].try_clone_on(self)?;
+                                columns[left.idx()][pair.left.raw() as usize].take(self)?;
                             let b = columns[right.idx()][pair.right.raw() as usize]
-                                .try_clone_on(self)?;
+                                .take(self)?;
                             let term = self.and(a, b)?;
                             sum = Some(match sum {
                                 None => term,
@@ -129,7 +156,7 @@ impl Engine {
                         }
                         let mut result = sum.expect("structural node has a pair");
                         self.minimize(&mut result)?;
-                        columns[t.idx()].push(result);
+                        columns[t.idx()].push(SharedCircuit::new(result, uses[t.idx()][i]));
                     }
                     columns[left.idx()] = Vec::new();
                     columns[right.idx()] = Vec::new();
@@ -137,7 +164,7 @@ impl Engine {
             }
         }
         gate.flush()?;
-        let mut result = columns[f.output().vtree.idx()].swap_remove(f.output().local.idx());
+        let mut result = columns[f.output().vtree.idx()][f.output().local.idx()].take(self)?;
         // The destination universe is unchanged; weights stay bound to its variables.
         result.weights = f.weights.take().map(|weights| weights.empty_like());
         // Internal columns are minimized when built; a leaf can return a cloned replacement.

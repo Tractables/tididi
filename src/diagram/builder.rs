@@ -409,7 +409,7 @@ impl TddBuilder {
     /// Transfer storage and its prepared worklists without copying the vtree handle.
     #[inline]
     pub(super) fn seat(self, output: TddNodeId, dirty: super::Dirty) -> Tdd {
-        Tdd { vtree: self.vtree, levels: self.levels, weights: self.weights, output, dirty }
+        Tdd { vtree: self.vtree, levels: self.levels.into(), weights: self.weights, output, dirty }
     }
 
     /// Give up on the diagram, returning its levels to the engine's pool.

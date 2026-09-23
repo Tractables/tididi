@@ -155,7 +155,7 @@ pub fn reroot_to_child(t: &Tdd, left_child: bool) -> Tdd {
     let (child, local) = if left_child { (lc, p.left) } else { (rc, p.right) };
     Tdd::from_levels_unchecked(
         t.vtree.clone(),
-        t.levels.clone(),
+        t.levels.clone().into_vec(),
         TddNodeId { vtree: child, local: t.levels[child.idx()].child_decoder().node(local) },
     )
 }

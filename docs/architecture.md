@@ -13,6 +13,12 @@ borrow those diagrams according to their signatures and use an engine for
 scratch and limits. The diagram's dirty worklists record which levels need
 reduction after an edit; they do not contribute to its Boolean meaning.
 
+`LevelStorage` records the output for which a completed structural minimization
+established canonical form. Mutable level access or vtree reseating forgets that
+guarantee; rotation rollback restores it with the original storage. Builders
+start without it. Boolean queries borrow certified inputs and otherwise minimize
+a private copy. Empty worklists alone do not establish canonical form.
+
 `diagram::Assembly` owns unfinished output levels and their weights, returning
 the arenas to the pool if construction fails. Coordinated edits in
 `diagram/tdd/edit.rs` keep a level rewrite or slot renumbering together with
@@ -132,6 +138,12 @@ composition builds a direct placement without intermediate circuit copies.
 boundary cleanup. Kernels report leaf rewrites, merged nodes and merged value
 levels; the driver chooses their follow-up passes. Contraction keeps its local
 sibling fixed point and restores pending work on refusal.
+
+Composition counts the consumers of each intermediate circuit. `SharedCircuit`
+keeps its storage until the last consumer takes it, cloning fallibly for earlier
+uses. Substitution releases child columns after their parent is built and only
+materializes leaf labels referenced by the source. Replacement functions are
+not recursively substituted.
 
 ## One conjunction
 

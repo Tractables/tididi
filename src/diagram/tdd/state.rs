@@ -1,4 +1,4 @@
-//! What a diagram still owes the reduction passes.
+//! Owned level storage, established canonical form and pending reduction work.
 //!
 //! Three passes each drain their own worklist: twin contraction, leaf-twin
 //! contraction, and the content-twin scan. They run at different times, so
@@ -13,6 +13,63 @@
 use crate::vtree::VtreeIdx;
 
 use super::Tdd;
+
+use std::ops::{Deref, DerefMut};
+use super::{TddLevel, TddNodeId};
+
+/// Any mutable access forgets the guarantee, including raw level indexing.
+/// The output is recorded separately because changing it need not touch levels.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct LevelStorage {
+    levels: Vec<TddLevel>,
+    canonical_output: Option<TddNodeId>,
+}
+
+impl LevelStorage {
+    pub(crate) fn is_canonical(&self, output: TddNodeId) -> bool {
+        self.canonical_output == Some(output)
+    }
+
+    pub(crate) fn certify(&mut self, output: TddNodeId) {
+        self.canonical_output = Some(output);
+    }
+
+    pub(crate) fn forget(&mut self) { self.canonical_output = None; }
+
+    pub(crate) fn into_vec(self) -> Vec<TddLevel> { self.levels }
+}
+
+impl From<Vec<TddLevel>> for LevelStorage {
+    fn from(levels: Vec<TddLevel>) -> Self { Self { levels, canonical_output: None } }
+}
+
+impl Deref for LevelStorage {
+    type Target = Vec<TddLevel>;
+    fn deref(&self) -> &Self::Target { &self.levels }
+}
+
+impl DerefMut for LevelStorage {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.forget();
+        &mut self.levels
+    }
+}
+
+impl<'a> IntoIterator for &'a LevelStorage {
+    type Item = &'a TddLevel;
+    type IntoIter = std::slice::Iter<'a, TddLevel>;
+    fn into_iter(self) -> Self::IntoIter { self.levels.iter() }
+}
+
+impl<'a> IntoIterator for &'a mut LevelStorage {
+    type Item = &'a mut TddLevel;
+    type IntoIter = std::slice::IterMut<'a, TddLevel>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.forget();
+        self.levels.iter_mut()
+    }
+}
+
 
 /// The reduction pass a worklist belongs to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

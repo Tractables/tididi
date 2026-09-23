@@ -26,6 +26,7 @@ impl<'a> Reduction<'a> {
 
     pub(super) fn run(&mut self, plan: ReductionPlan<'_>, scope: PruneScope) -> Result<(), OperationError> {
         let _op = self.eng.limits().begin_operation();
+        let whole = matches!(scope, PruneScope::Whole);
         let policy = match plan {
             ReductionPlan::Contract => return contract_all_twins(self.eng, self.tdd),
             ReductionPlan::Prune => {
@@ -48,7 +49,14 @@ impl<'a> Reduction<'a> {
             ContentTwinPolicy::Fresh => self.scan_if_due(&mut ContentTwinSchedule::default())?,
             ContentTwinPolicy::Adaptive(schedule) => self.scan_if_due(schedule)?,
         }
-        for level in &mut self.tdd.levels { level.shrink_arrays(); }
+        let mut structural = true;
+        for level in &mut self.tdd.levels {
+            structural &= !level.is_marginal();
+            level.shrink_arrays();
+        }
+        if whole && structural {
+            self.tdd.levels.certify(self.tdd.output);
+        }
         Ok(())
     }
 

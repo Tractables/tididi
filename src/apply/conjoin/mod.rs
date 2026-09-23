@@ -135,15 +135,15 @@ pub(crate) fn conjoin_checked(
     if is_self_conjunction(&f, &g) {
         let _op = eng.limits().begin_operation();
         eng.limits().check_stop()?;
-        diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels));
+        diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
         return Ok((f, false));
     }
     let zero = f.is_zero() || g.is_zero();
     let result = apply_and_fallible(
         eng, &mut f, &mut g, MarginalTargets::new(marginalize_targets), quantified,
     );
-    diagram::return_levels(eng, diagram::PoolSlot::First, std::mem::take(&mut f.levels));
-    diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels));
+    diagram::return_levels(eng, diagram::PoolSlot::First, std::mem::take(&mut f.levels).into_vec());
+    diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
     result.map(|out| (out, !zero))
 }
 

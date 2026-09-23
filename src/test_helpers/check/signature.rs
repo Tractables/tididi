@@ -202,7 +202,7 @@ pub(super) fn tdd_with_output(
 ) -> Tdd {
     Tdd::from_levels_unchecked(
         Arc::clone(vtree),
-        tdd.levels.clone(),
+        tdd.levels.clone().into_vec(),
         TddNodeId { vtree: vtree_node, local: NodeIdx(local) },
     )
 }

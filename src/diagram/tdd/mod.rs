@@ -10,9 +10,9 @@
 mod edit;
 mod reach;
 mod operations;
-mod worklists;
+mod state;
 
-pub(crate) use worklists::{Dirty, Pass};
+pub(crate) use state::{Dirty, Pass};
 
 #[cfg(test)]
 mod tests;
@@ -98,7 +98,7 @@ pub struct Tdd {
     pub(crate) vtree: Arc<Vtree>,
     /// One level per vtree node: `levels[t.idx()]` is the level of `t`
     /// ([`level`](Self::level)).
-    pub(crate) levels: Vec<TddLevel>,
+    pub(crate) levels: state::LevelStorage,
     /// The node denoting the function: a node of the root level, or
     /// `local == ZERO` for the constant-false function ([`is_zero`](Self::is_zero)).
     pub(crate) output: TddNodeId,
@@ -194,6 +194,8 @@ impl Tdd {
         for level in &self.levels {
             levels.push(level.try_clone_on(lim)?);
         }
+        let mut levels = state::LevelStorage::from(levels);
+        if self.levels.is_canonical(self.output) { levels.certify(self.output); }
         Ok(Tdd {
             vtree: Arc::clone(&self.vtree),
             levels,
@@ -228,6 +230,7 @@ impl Tdd {
             self.vtree.num_nodes(), vtree.num_nodes(),
             "reseat_vtree_unchecked onto a tree of a different size leaves levels unaddressable",
         );
+        self.levels.forget();
         self.vtree = Arc::clone(vtree);
     }
 

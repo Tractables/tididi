@@ -3,6 +3,32 @@
 use crate::vtree::{VarId, VtreeIdx};
 use crate::{Engine, OperationError, Tdd};
 
+/// A composition owns one result until its last consumer can take the storage.
+/// Earlier consumers get fallible copies; no scratch survives the operation.
+#[derive(Default)]
+pub(super) struct SharedCircuit {
+    value: Option<Tdd>,
+    remaining: usize,
+}
+
+impl SharedCircuit {
+    pub(super) fn new(value: Tdd, uses: usize) -> Self {
+        debug_assert!(uses > 0);
+        Self { value: Some(value), remaining: uses }
+    }
+
+    pub(super) fn take(&mut self, eng: &Engine) -> Result<Tdd, OperationError> {
+        debug_assert!(self.remaining > 0);
+        let result = if self.remaining == 1 {
+            self.value.take().expect("live composition operand")
+        } else {
+            self.value.as_ref().expect("live composition operand").try_clone_on(eng)?
+        };
+        self.remaining -= 1;
+        Ok(result)
+    }
+}
+
 /// Exclusive disjunction: exactly one operand holds.
 ///
 /// Uses the shared vtree's execution context automatically.
@@ -162,8 +188,9 @@ impl Engine {
         super::prepare_weights(&mut [&mut condition, &mut then_branch, &mut else_branch])?;
         let _op = self.limits().begin_operation();
         self.limits().check_stop()?;
-        let otherwise = self.negate(condition.try_clone_on(self)?)?;
-        let yes = self.and(condition, then_branch)?;
+        let mut condition = SharedCircuit::new(condition, 2);
+        let otherwise = self.negate(condition.take(self)?)?;
+        let yes = self.and(condition.take(self)?, then_branch)?;
         let no = self.and(otherwise, else_branch)?;
         // Disjunction minimizes unless a false operand selects its identity shortcut.
         let identity = yes.is_zero() || no.is_zero();
@@ -185,8 +212,9 @@ impl Engine {
         super::prepare_weights(&mut [&mut f, &mut g])?;
         let _op = self.limits().begin_operation();
         self.limits().check_stop()?;
-        let not_g = self.negate(g.try_clone_on(self)?)?;
-        self.ite(f, not_g, g)
+        let mut g = SharedCircuit::new(g, 2);
+        let not_g = self.negate(g.take(self)?)?;
+        self.ite(f, not_g, g.take(self)?)
     }
 
     /// Run [`and_exists`] using this batch's scratch and resource limits.

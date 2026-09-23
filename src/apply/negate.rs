@@ -99,7 +99,7 @@ fn complement_full_at_root(
     let root_idx = root.idx();
     let out_local = full_tdd.output.local;
 
-    let mut assembly = Assembly::from_levels(eng, Arc::clone(orig_vtree), full_tdd.levels, None);
+    let mut assembly = Assembly::from_levels(eng, Arc::clone(orig_vtree), full_tdd.levels.into_vec(), None);
     let (levels, _) = assembly.parts_mut();
 
     if vtree.node(root).is_leaf() {

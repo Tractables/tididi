@@ -25,10 +25,8 @@ impl Engine {
         if std::ptr::eq(f, g) {
             return Ok(true);
         }
-        let mut f = f.try_clone_on(self)?;
-        let mut g = g.try_clone_on(self)?;
-        self.minimize(&mut f)?;
-        self.minimize(&mut g)?;
+        let f = self.canonical(f)?;
+        let g = self.canonical(g)?;
         same_minimized(self, &f, &g)
     }
 
@@ -97,7 +95,7 @@ impl Engine {
         Ok(result)
     }
 
-    /// Collect one optional answer per structural leaf from a checked minimized copy.
+    /// Collect one optional answer per structural leaf from a checked canonical diagram.
     fn collect_leaf_labels<T>(
         &self,
         f: &Tdd,
@@ -109,8 +107,7 @@ impl Engine {
         let _op = lim.begin_operation();
         lim.check_stop()?;
         if f.is_zero() { return Ok(Vec::new()); }
-        let mut f = f.try_clone_on(self)?;
-        self.minimize(&mut f)?;
+        let f = self.canonical(f)?;
         let mut result = Vec::new();
         let mut gate = lim.gate();
         visit_leaf_labels(&f, |work| gate.poll(work), |var, labels| {
@@ -122,6 +119,16 @@ impl Engine {
         result.sort_unstable_by_key(key);
         gate.flush()?;
         Ok(result)
+    }
+
+    /// Borrow an established canonical representation; otherwise minimize a private copy.
+    fn canonical<'a>(&self, f: &'a Tdd) -> Result<std::borrow::Cow<'a, Tdd>, OperationError> {
+        if f.levels.is_canonical(f.output()) {
+            return Ok(std::borrow::Cow::Borrowed(f));
+        }
+        let mut copy = f.try_clone_on(self)?;
+        self.minimize(&mut copy)?;
+        Ok(std::borrow::Cow::Owned(copy))
     }
 
     /// Run [`Tdd::satisfying_assignment`](crate::Tdd::satisfying_assignment) using this batch's scratch and resource limits.

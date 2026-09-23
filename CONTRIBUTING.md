@@ -93,3 +93,12 @@ version; the documentation checks catch mismatches. Publish the crate to
 crates.io for versioned API docs on docs.rs. Publishing the GitHub release
 runs the checks and attaches a bundled HTML archive; it does not publish the
 crate. The archive is kept when the development Pages site changes.
+
+## Cross-language behavior
+
+`tests/fixtures/conformance.txt` contains operation traces and independent truth
+tables shared by the Rust, Python and C test suites. Add semantic regressions
+in `tests/conformance_cases.py`, regenerate with `--write`, and run all three
+suites. Each interpreter checks every assignment, cached evidence counts,
+support and implied literals. Ownership and error handling stay in each
+language's tests. `python3 tests/conformance_cases.py` checks fixture freshness.

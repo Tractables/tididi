@@ -131,7 +131,7 @@ fn spine_walk(eng: &Engine, f: &mut Tdd, clause: &[Literal], disjoin: bool) -> R
         let vtree = Arc::clone(vtree);
         let output = f.output;
         let mut out =
-            Tdd::try_from_levels_on(eng, vtree, std::mem::take(&mut f.levels), output)?;
+            Tdd::try_from_levels_on(eng, vtree, std::mem::take(&mut f.levels).into_vec(), output)?;
         out.weights = f.weights.take();
         return Ok(out);
     }
@@ -150,7 +150,7 @@ fn spine_walk(eng: &Engine, f: &mut Tdd, clause: &[Literal], disjoin: bool) -> R
     // left with empty levels.
     let out_vtree = f.output.vtree;
     let out_local_in = f.output.local;
-    let mut levels = std::mem::take(&mut f.levels);
+    let mut levels = std::mem::take(&mut f.levels).into_vec();
     // The accumulator's marginal values move to the output along with its levels:
     // a clause carries none of its own, and the output is nothing but the
     // accumulator, one clause further on.
@@ -260,7 +260,7 @@ pub(crate) fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal])
     // Recycle what is left of `f` only if it is a real level array: on every
     // path but the zero early-out `f` is left empty, and parking an empty Vec
     // would evict the warm entry the one-slot pool holds.
-    let spent = std::mem::take(&mut f.levels);
+    let spent = std::mem::take(&mut f.levels).into_vec();
     if !spent.is_empty() {
         diagram::return_levels(eng, diagram::PoolSlot::First, spent);
     }
