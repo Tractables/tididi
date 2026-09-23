@@ -8,7 +8,8 @@
 pub(crate) mod prune;
 pub(crate) mod contract;
 pub(crate) mod slot_prune; // post-tagger marginal-slot compaction
-mod content_twins;
+mod driver;
+pub(crate) use driver::restore_marginal_invariants;
 
 
 use crate::limits::pool::Pool;
@@ -80,7 +81,7 @@ pub enum ContentTwinPolicy<'a> {
     #[default]
     Fresh,
     /// Carry the scan schedule across successive diagrams. A weighted diagram
-    /// is scanned on every call and leaves the schedule unchanged.
+    /// is scanned on every call regardless of the scheduled size.
     Adaptive(&'a mut ContentTwinSchedule),
 }
 
@@ -99,32 +100,9 @@ pub struct ContentTwinSchedule {
 }
 
 use crate::Engine;
-use self::contract::contract_leaf::contract_leaf_twins;
-use self::contract::contract_all_twins;
-use self::prune::{PruneScope, prune_unreachable};
+use self::prune::PruneScope;
 use crate::limits::OperationError;
 use crate::diagram::Tdd;
-
-/// Snapshot per-level `is_marginal` flags so a later
-/// `assert_no_demarginalization` can detect a violation of invariant 5 (marginality is
-/// permanent — see `test_helpers::check::marginal`) and name the offending pass.
-#[cfg(debug_assertions)]
-fn snapshot_marginal_flags(tdd: &Tdd) -> Vec<bool> {
-    tdd.levels.iter().map(|l| l.is_marginal()).collect()
-}
-
-/// Assert no level present in `before` (as marginal) has become structural.
-/// Panics naming the level and the `pass` that violated invariant 5.
-#[cfg(debug_assertions)]
-fn assert_no_demarginalization(tdd: &Tdd, before: &[bool], pass: &str) {
-    for (i, &was_marginal) in before.iter().enumerate() {
-        if was_marginal && !tdd.levels[i].is_marginal() {
-            panic!(
-                "vtree level {i} became structural during {pass}; marginalization is permanent"
-            );
-        }
-    }
-}
 
 impl Engine {
     /// Minimize a diagram under this engine's resource limits.
@@ -154,64 +132,8 @@ impl Engine {
         plan: ReductionPlan<'_>,
         scope: PruneScope,
     ) -> Result<(), OperationError> {
-        let eng = self;
-        let _op = eng.limits().begin_operation();
-        let content_twins = match plan {
-            ReductionPlan::Contract => return contract_all_twins(eng, f),
-            ReductionPlan::Prune => {
-                // Prune removes nodes, which can create twins in a shrunk level's
-                // children; `prune_unreachable` seeds the contract worklists with
-                // those levels so a later contraction pass covers them.
-                prune_unreachable(eng, f, scope)?;
-                // Pairs the prune removed may have orphaned marginal count slots.
-                crate::reduce::slot_prune::prune_value_slots(eng, f);
-                return Ok(());
-            }
-            ReductionPlan::Full(policy) => policy,
-        };
-
-        // Invariant 5 guard: snapshot the marginal flags before the structural
-        // passes so `assert_no_demarginalization` can name the offending pass.
-        #[cfg(debug_assertions)]
-        let marginal_before = snapshot_marginal_flags(f);
-
-        prune_unreachable(eng, f, scope)?;
-        #[cfg(debug_assertions)]
-        assert_no_demarginalization(f, &marginal_before, "prune");
-
-        contract_twins_and_leaves(eng, f)?;
-        #[cfg(debug_assertions)]
-        assert_no_demarginalization(f, &marginal_before, "contract+leaf");
-
-        // Content-twin scanning includes compaction of orphaned value slots.
-        match content_twins {
-            ContentTwinPolicy::Skip => {},
-            ContentTwinPolicy::Fresh => content_twins::scan_if_due(eng, f, None)?,
-            ContentTwinPolicy::Adaptive(probe) => content_twins::scan_if_due(eng, f, Some(probe))?,
-        }
-
-        // Release the doubling overshoot a rebuilt pair arena leaves behind.
-        // `shrink_arrays` only acts when capacity exceeds 4x the length, so levels
-        // without slack pay nothing.
-        for level in &mut f.levels {
-            level.shrink_arrays();
-        }
-
-        Ok(())
+        driver::Reduction::new(self, f).run(plan, scope)
     }
-}
-
-/// Twin contraction, then leaf-twin contraction, then twin contraction again
-/// if the leaf pass fired. Both passes drain a worklist, so a clean diagram
-/// costs one empty check each.
-fn contract_twins_and_leaves(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
-    contract_all_twins(eng, tdd)?;
-    // Leaf labels are implicit indices, not stored nodes, so inner-node twin
-    // contraction cannot reach them; the leaf rewrite can mint inner twins.
-    if contract_leaf_twins(eng, tdd)? {
-        contract_all_twins(eng, tdd)?;
-    }
-    Ok(())
 }
 
 

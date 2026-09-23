@@ -113,5 +113,31 @@ If independently built components already use disjoint variable identifiers,
 Embedding is useful when you choose that shared destination in advance, including
 when different components need to refer to the same variable.
 
+## Reuse a placement as rules change
+
+Suppose server B must now use local storage only: **L ∧ ¬R**. Its variables
+still occupy the same positions. An [`EmbeddingPlan`](crate::restructure::EmbeddingPlan)
+lets us prepare that placement once and apply it to successive rules:
+
+```rust,ignore,{class=tested-example}
+use tididi::restructure::EmbeddingPlan;
+let place_b = EmbeddingPlan::new(&component_vtree, &vtree, |var| VarId(var.0 + 2))?;
+let local_only = Tdd::cube(&component_vtree, [1, -2])?;
+let original_b = place_b.apply(&backup)?;
+let updated_b = place_b.apply(&local_only)?;
+println!("Server B choices before and after: {} -> {}",
+    original_b.model_count()?, updated_b.model_count()?);
+```
+
+Output:
+
+```text
+Server B choices before and after: 12 -> 4
+```
+
+Server B now has one choice, while server A's two variables remain free.
+[`EmbeddingPlan::then`](crate::restructure::EmbeddingPlan::then) composes
+placements when a component is nested inside a larger system.
+
 The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/reusable_components.rs)
 builds and connects both server models.

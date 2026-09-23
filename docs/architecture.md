@@ -118,7 +118,20 @@ column, marginal storage, or an inline reference.
 `query::cache::Observations` tracks observations and schedules affected
 ancestors for both `ModelCounter` and `Evaluator`. The shared refresh walk
 uses their respective folds; counting retains its native-integer overflow
-path. An evaluator owns its algebra so replacing it can invalidate all columns.
+path. Query state has no reference to its circuit: `Counter<D>` and
+`Evaluation<S, D>` store either a borrow or the owned `Tdd` alongside it.
+The borrowed aliases are `ModelCounter` and `Evaluator`; owned queries can be
+moved and stored without self-reference. Python and C use those owned forms.
+An evaluator owns its algebra so replacing it can invalidate all columns.
+
+`restructure::EmbeddingPlan` retains its source and destination vtrees and the
+validated level correspondence. Reusing it skips variable and shape validation;
+composition builds a direct placement without intermediate circuit copies.
+
+`reduce::driver` owns pass ordering, content-twin rescan policy and marginal
+boundary cleanup. Kernels report leaf rewrites, merged nodes and merged value
+levels; the driver chooses their follow-up passes. Contraction keeps its local
+sibling fixed point and restores pending work on refusal.
 
 ## One conjunction
 

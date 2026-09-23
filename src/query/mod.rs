@@ -28,9 +28,9 @@ pub(crate) mod evaluate;
 mod boolean;
 mod cache;
 mod evaluator;
-pub use evaluator::{Evaluator, BoundEvaluator};
+pub use evaluator::{Evaluation, Evaluator, OwnedEvaluator, BoundEvaluation, BoundEvaluator};
 
-pub use count::{ModelCounter, BoundModelCounter, Retention, PinSemantics};
+pub use count::{Counter, ModelCounter, OwnedModelCounter, BoundCounter, BoundModelCounter, Retention, PinSemantics};
 
 #[cfg(test)]
 mod tests;

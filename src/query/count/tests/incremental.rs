@@ -17,11 +17,11 @@ fn interrupted_ancestor_growth_leaves_room_for_further_pin_updates() {
         engine.limits().refuse_nth_reserve(reserve);
         let result = counter.bind(&engine).model_count();
         engine.limits().grant_every_reserve();
-        let capacity = counter.observations.changed.capacity();
+        let capacity = counter.state.observations.changed.capacity();
         counter.clear_pins();
         let pins: Vec<_> = (1..=16).map(|v| (VarId(v), Some(v % 2 == 0))).collect();
         counter.set_pins(&pins).unwrap();
-        assert_eq!(counter.observations.changed.capacity(), capacity, "pin updates must reuse reserved storage");
+        assert_eq!(counter.state.observations.changed.capacity(), capacity, "pin updates must reuse reserved storage");
         assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32));
         counter.clear_pins();
         assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32) << 16);
@@ -57,11 +57,11 @@ fn panicking_refresh_keeps_dirty_membership_reusable() {
                 }))));
             catch_unwind(AssertUnwindSafe(|| counter.bind(&engine).model_count().unwrap()))
         };
-        let capacity = counter.observations.changed.capacity();
+        let capacity = counter.state.observations.changed.capacity();
         counter.clear_pins();
         let pins: Vec<_> = (1..=16).map(|v| (VarId(v), Some(false))).collect();
         counter.set_pins(&pins).unwrap();
-        assert_eq!(counter.observations.changed.capacity(), capacity);
+        assert_eq!(counter.state.observations.changed.capacity(), capacity);
         assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32));
         counter.set_pin(VarId(1), None).unwrap();
         assert_eq!(counter.model_count().unwrap(), BigUint::from(2u32));
@@ -79,23 +79,23 @@ fn frontier_evidence_invalidates_without_retaining_a_dirty_worklist() {
     assert_canonical(&diagram);
     let engine = Engine::new();
     let mut counter = diagram.counter_with(Retention::Frontier, PinSemantics::Evidence).unwrap();
-    assert_eq!(counter.observations.changed.capacity(), 0);
+    assert_eq!(counter.state.observations.changed.capacity(), 0);
     assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32) << 16);
     let pins: Vec<_> = (1..=16).map(|v| (VarId(v), Some(false))).collect();
     counter.set_pins(&pins).unwrap();
-    assert!(!counter.observations.evaluated);
+    assert!(!counter.state.observations.evaluated);
     assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32));
     // Repeating observations leaves the root cached, even if allocations would be refused.
     engine.limits().refuse_nth_reserve(0);
     counter.set_pins(&pins).unwrap();
-    assert!(counter.observations.evaluated);
+    assert!(counter.state.observations.evaluated);
     assert_eq!(counter.bind(&engine).model_count().unwrap(), BigUint::from(1u32));
     engine.limits().grant_every_reserve();
     counter.clear_pins();
-    assert!(!counter.observations.evaluated);
+    assert!(!counter.state.observations.evaluated);
     assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32) << 16);
     counter.clear_pins();
-    assert!(counter.observations.evaluated);
-    assert_eq!(counter.observations.changed.capacity(), 0);
-    assert!(counter.observations.pins.iter().all(|pin| !pin.dirty));
+    assert!(counter.state.observations.evaluated);
+    assert_eq!(counter.state.observations.changed.capacity(), 0);
+    assert!(counter.state.observations.pins.iter().all(|pin| !pin.dirty));
 }

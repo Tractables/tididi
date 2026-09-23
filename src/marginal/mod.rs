@@ -2,7 +2,7 @@
 //!
 //! A marginalized level stops carrying pair structure and carries one value per
 //! node instead: the number of assignments to its vtree subtree that reach that
-//! node, or — with a [`WeightStore`] attached — that node's weighted value. The
+//! node, or — with a [`WeightStore`](crate::diagram::WeightStore) attached — that node's weighted value. The
 //! encoding a parent reads those values through is [`crate::diagram`]; the
 //! reduction passes the epilogue calls are [`crate::reduce`]; counting over a
 //! partly marginalized diagram is [`crate::query`].
@@ -23,10 +23,8 @@ pub(crate) use leaf::{marginalize_leaf_inline, marginalize_leaf_weighted};
 use crate::value::WeightFold;
 use crate::limits::OperationError;
 use crate::diagram::Tdd;
-use crate::diagram::WeightStore;
 use crate::vtree::{Vtree, VtreeIdx};
-use crate::reduce::contract::pair_fusion::fuse_pairs_at_parents;
-use crate::reduce::slot_prune::prune_value_slots;
+use crate::reduce::restore_marginal_invariants;
 
 /// Marginalize every structural level whose two children are both marginal,
 /// visiting affected parents until no level qualifies; returns the number of levels marginalized.
@@ -105,34 +103,6 @@ fn evaluate_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx], vtree: &Vtree
     } else {
         marginalize_batch(eng, f, levels, vtree)
     }
-}
-
-/// The epilogue of [`marginalize_levels`]: fuse the redexes marginalizing just minted, then
-/// collect the slots it orphaned.
-///
-/// Fusion is what makes a parent P-saturated — at most one pair per (left
-/// child, marginal side) — and it is skipped in the log domain, where two
-/// slots that fusion would fold carry values whose sum is not representable
-/// without loss. The prune runs either way: marginalization inlines small counts
-/// and so orphans their slots whatever the arithmetic.
-fn restore_marginal_invariants(
-    eng: &Engine,
-    f: &mut Tdd,
-    levels: &[VtreeIdx],
-    vtree: &Vtree,
-) -> Result<(), OperationError> {
-    let log_domain = f.weights().is_some_and(WeightStore::is_log);
-    if !log_domain {
-        let mut parents: Vec<VtreeIdx> =
-            levels.iter().filter_map(|&l| vtree.node(l).parent()).collect();
-        parents.sort_unstable();
-        parents.dedup();
-        fuse_pairs_at_parents(eng, f, &parents)?;
-        #[cfg(debug_assertions)]
-        crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(f, Some(&parents), "marginalize_levels");
-    }
-    prune_value_slots(eng, f);
-    Ok(())
 }
 
 #[cfg(test)]

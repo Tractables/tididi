@@ -399,7 +399,7 @@ evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: ff5a012f8ed7377d978254fa3333321d6dd4f02f1d0e56312cc885c3320a86de -->
+- [Rust API overview](api-guide.md) <!-- reviewed: a20f42bb852a01303a221d9336877006d1426482dd11ae294400924be6353b23 -->
 - [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: 619c8cf6bbe3d4b720da766850817f34b4fdf92c866f3c6cd9828cd555fdcd39 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 
@@ -427,7 +427,8 @@ invariants and marginal levels; Python concentrates on using shared vtrees.
 Explain the Rust implementation through storage ownership, level arenas,
 child-reference decoding, reduction passes, scratch and limits. Include unfinished
 output ownership, intermediate product storage, coordinated marginal payloads,
-shared incremental query scheduling, and the boundary that coordinates level edits with references
+shared incremental query scheduling for borrowed and owned circuits, reusable
+embedding plans, reduction scheduling, and the boundary that coordinates level edits with references
 and worklists. Define terms
 once, map modules to responsibilities, and identify which operations establish
 or temporarily break each invariant. Distinguish validation of stored data
@@ -436,7 +437,7 @@ there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: 805236e00d5c804e7f861bfd756854a451f4a9da04c0b7cc1e6e9b9804091511 -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: 9f1bac30369014259140a724353c9a45cf785d677cbde264fe97f62bc33c2ab6 -->
 
 ## Reusable components
 
@@ -450,13 +451,15 @@ Introduce the application, the local rule, the variable mapping, then the
 connecting constraint. Explain matching variable grouping and destination
 identity at placement, and attached-weight loss before suggesting evaluation.
 Distinguish graft for components already using disjoint variable identifiers.
+Then reuse a prepared placement for server B, comparing L∨R (12 models over
+the destination) with L∧¬R (4); server A remains free in both.
 This lesson is Rust-only: the bindings do not yet expose embedding or grafting.
 Do not invent a language counterpart that rebuilds the rule instead of reusing it.
 
 ### Instances
 
-- [Rust walkthrough](examples/composition.md) <!-- reviewed: 9ba8bcd2b2328164bbfb3e67f9eeaff4fb0e5ed270a55f74087428ba2c493280 -->
-- [Rust program](../examples/reusable_components.rs) <!-- reviewed: fd0b1dfed09cde22d73d5eacbdb9f39b32f32e31b41a929594d165bd6492e37b -->
+- [Rust walkthrough](examples/composition.md) <!-- reviewed: ceab167a5966abf8bb9d401f229a372fccf34dfd0a626556457e50b0dbe8b054 -->
+- [Rust program](../examples/reusable_components.rs) <!-- reviewed: ab8256a1de3317d4f53841dec9361268a0ecd155a6a9791e554c4f5bc6a7e91e -->
 
 ## Care sets
 

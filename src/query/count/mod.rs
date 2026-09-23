@@ -8,7 +8,7 @@ mod incremental;
 
 use crate::Engine;
 use crate::limits::OperationError;
-pub use incremental::{ModelCounter, BoundModelCounter};
+pub use incremental::{Counter, ModelCounter, OwnedModelCounter, BoundCounter, BoundModelCounter};
 pub use crate::value::Retention;
 
 use num_bigint::BigUint;

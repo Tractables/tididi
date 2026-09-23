@@ -1,35 +1,28 @@
-//! Own the diagram and its borrowing counter without exposing Rust lifetimes to Python.
+//! Python handles for owned cached queries.
 
 use pyo3::prelude::*;
 use pyo3::exceptions::PyRuntimeError;
 use num_bigint::BigUint;
-use tididi::query::ModelCounter;
+use tididi::query::OwnedModelCounter;
 use tididi::Tdd;
 use crate::circuit::PyCircuit;
 use crate::domain::{self, PyLimits};
 use crate::operations;
 
-self_cell::self_cell!(
-    struct CounterCell {
-        owner: Tdd,
-        #[covariant]
-        dependent: ModelCounter,
-    }
-);
 
 /// Reuse cached counts while observations change. Created by Circuit.counter(), which consumes it.
 /// observe() replaces pins for the named variables; other pins remain. finish() returns the original circuit.
 #[pyclass(name = "Counter", module = "tididi")]
 pub struct PyCounter {
-    cell: Option<CounterCell>,
+    cell: Option<OwnedModelCounter>,
 }
 
 impl PyCounter {
     pub fn new(py: Python<'_>, circuit: Tdd) -> PyResult<Self> {
-        let cell = py.detach(|| CounterCell::try_new(circuit, |f| f.counter())).map_err(crate::operation_error)?;
+        let cell = py.detach(|| circuit.into_counter()).map_err(crate::operation_error)?;
         Ok(Self { cell: Some(cell) })
     }
-    fn cell(&mut self) -> PyResult<&mut CounterCell> {
+    fn cell(&mut self) -> PyResult<&mut OwnedModelCounter> {
         self.cell.as_mut().ok_or_else(|| PyRuntimeError::new_err("Counter has been finished"))
     }
 }
@@ -41,21 +34,21 @@ impl PyCounter {
     fn observe(&mut self, literals: &Bound<'_, PyAny>) -> PyResult<()> {
         let literals = domain::read_literals(literals)?;
         let cell = self.cell()?;
-        domain::check_variables(cell.borrow_owner().vtree(), literals.iter().map(|l| l.var))?;
-        cell.with_dependent_mut(|_, counter| counter.observe(literals)).map_err(crate::operation_error)
+        domain::check_variables(cell.circuit().vtree(), literals.iter().map(|l| l.var))?;
+        cell.observe(literals).map_err(crate::operation_error)
     }
 
     /// Remove one observation, leaving that variable free again.
     fn clear(&mut self, variable: u32) -> PyResult<()> {
         let var = domain::variable_id(variable)?;
         let cell = self.cell()?;
-        domain::check_variables(cell.borrow_owner().vtree(), [var])?;
-        cell.with_dependent_mut(|_, counter| counter.set_pin(var, None)).map_err(crate::operation_error)
+        domain::check_variables(cell.circuit().vtree(), [var])?;
+        cell.set_pin(var, None).map_err(crate::operation_error)
     }
 
     /// Remove all observations.
     fn clear_observations(&mut self) -> PyResult<()> {
-        self.cell()?.with_dependent_mut(|_, counter| counter.clear_pins());
+        self.cell()?.clear_pins();
         Ok(())
     }
 
@@ -64,15 +57,15 @@ impl PyCounter {
     fn model_count(&mut self, py: Python<'_>, limits: Option<&PyLimits>) -> PyResult<BigUint> {
         let limits = domain::config(limits)?;
         let cell = self.cell()?;
-        let vtree = std::sync::Arc::clone(cell.borrow_owner().vtree());
+        let vtree = std::sync::Arc::clone(cell.circuit().vtree());
         operations::run(py, &vtree, limits, |engine| {
-            cell.with_dependent_mut(|_, counter| counter.bind(engine).model_count())
+            cell.bind(engine).model_count()
         })
     }
 
     /// Discard cached counts and observations, returning the original circuit. Closes this counter.
     fn finish(&mut self) -> PyResult<PyCircuit> {
-        self.cell.take().map(|cell| PyCircuit::new(cell.into_owner()))
+        self.cell.take().map(|cell| PyCircuit::new(cell.into_inner()))
             .ok_or_else(|| PyRuntimeError::new_err("Counter has been finished"))
     }
 
@@ -82,26 +75,19 @@ impl PyCounter {
 }
 
 
-type NativeEvaluator<'a> = tididi::query::Evaluator<'a, tididi::diagram::RationalWeights>;
-self_cell::self_cell!(
-    struct EvaluatorCell {
-        owner: Tdd,
-        #[covariant]
-        dependent: NativeEvaluator,
-    }
-);
+type NativeEvaluator = tididi::query::OwnedEvaluator<tididi::diagram::RationalWeights>;
 
 /// Cache exact weighted sums under changing evidence. Circuit.evaluator(weights) consumes the circuit.
 /// value() returns the joint weight of the circuit and observations. finish() returns the circuit.
 #[pyclass(name = "Evaluator", module = "tididi")]
-pub struct PyEvaluator { cell: Option<EvaluatorCell> }
+pub struct PyEvaluator { cell: Option<NativeEvaluator> }
 
 impl PyEvaluator {
     pub fn new(py: Python<'_>, circuit: Tdd, weights: tididi::diagram::RationalWeights) -> PyResult<Self> {
-        let cell = py.detach(|| EvaluatorCell::try_new(circuit, |f| f.evaluator(weights))).map_err(crate::operation_error)?;
+        let cell = py.detach(|| circuit.into_evaluator(weights)).map_err(crate::operation_error)?;
         Ok(Self { cell: Some(cell) })
     }
-    fn cell(&mut self) -> PyResult<&mut EvaluatorCell> {
+    fn cell(&mut self) -> PyResult<&mut NativeEvaluator> {
         self.cell.as_mut().ok_or_else(|| PyRuntimeError::new_err("Evaluator has been finished"))
     }
 }
@@ -111,24 +97,24 @@ impl PyEvaluator {
     /// Observe signed integers or Literal values. Invalid input preserves all observations.
     fn observe(&mut self, literals: &Bound<'_, PyAny>) -> PyResult<()> {
         let literals = domain::read_literals(literals)?;
-        self.cell()?.with_dependent_mut(|_, e| e.observe(literals)).map_err(crate::operation_error)
+        self.cell()?.observe(literals).map_err(crate::operation_error)
     }
     /// Clear one observation.
     fn clear(&mut self, variable: u32) -> PyResult<()> {
         let variable = domain::variable_id(variable)?;
-        self.cell()?.with_dependent_mut(|_, e| e.set_pin(variable, None)).map_err(crate::operation_error)
+        self.cell()?.set_pin(variable, None).map_err(crate::operation_error)
     }
     /// Clear all observations, retaining cached storage.
     fn clear_observations(&mut self) -> PyResult<()> {
-        self.cell()?.with_dependent_mut(|_, e| e.clear_pins());
+        self.cell()?.clear_pins();
         Ok(())
     }
     /// Replace every variable's (negative, positive) weights, retaining observations.
     /// Weights are int or Fraction values. Invalid input leaves previous weights in place.
     fn set_weights(&mut self, py: Python<'_>, weights: &Bound<'_, pyo3::types::PyDict>) -> PyResult<()> {
         let cell = self.cell()?;
-        let weights = crate::evaluation::weights(py, cell.borrow_owner(), weights)?;
-        cell.with_dependent_mut(|_, e| { e.replace_algebra(weights); });
+        let weights = crate::evaluation::weights(py, cell.circuit(), weights)?;
+        cell.replace_algebra(weights);
         Ok(())
     }
     /// Return the exact weighted sum under observations, refreshing only affected ancestors.
@@ -137,12 +123,12 @@ impl PyEvaluator {
     fn value(&mut self, py: Python<'_>, limits: Option<&PyLimits>) -> PyResult<num_rational::BigRational> {
         let config = domain::config(limits)?;
         let cell = self.cell()?;
-        let vtree = std::sync::Arc::clone(cell.borrow_owner().vtree());
-        operations::run(py, &vtree, config, |engine| cell.with_dependent_mut(|_, e| e.bind(engine).value()))
+        let vtree = std::sync::Arc::clone(cell.circuit().vtree());
+        operations::run(py, &vtree, config, |engine| cell.bind(engine).value())
     }
     /// Close this evaluator and return the original circuit without its observations.
     fn finish(&mut self) -> PyResult<PyCircuit> {
-        self.cell.take().map(|cell| PyCircuit::new(cell.into_owner()))
+        self.cell.take().map(|cell| PyCircuit::new(cell.into_inner()))
             .ok_or_else(|| PyRuntimeError::new_err("Evaluator has been finished"))
     }
     fn __repr__(&self) -> &'static str {

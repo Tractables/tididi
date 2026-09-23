@@ -14,7 +14,7 @@ pub mod search;
 pub(crate) mod embed;
 pub(crate) mod graft;
 
-pub use embed::Embedding;
+pub use embed::{Embedding, EmbeddingPlan};
 
 use crate::diagram::TddBuildError;
 use crate::limits::OperationError;

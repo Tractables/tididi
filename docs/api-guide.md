@@ -47,7 +47,9 @@ one assignment costs and when the edit applies.
 | Do two functions agree? Does one imply the other? | [`Tdd::equivalent`](crate::Tdd::equivalent), [`Tdd::implies`](crate::Tdd::implies) |
 
 For changing observations, [`Tdd::counter`](crate::Tdd::counter) keeps counting
-state between calls to [`observe`](crate::query::ModelCounter::observe).
+state between calls to [`observe`](crate::query::ModelCounter::observe);
+[`Tdd::into_counter`](crate::Tdd::into_counter) moves the circuit into that state
+when the counter needs to own it.
 The [configuration example](crate::guide::examples::configurations) uses this
 for a user's changing selections.
 

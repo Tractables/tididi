@@ -50,6 +50,78 @@ impl Embedding {
     }
 }
 
+/// A validated placement of a source vtree into a destination vtree.
+///
+/// Prepare once with [`Self::new`], then [`Self::apply`] to any structural
+/// circuit sharing the source vtree allocation. Variable renaming and shape
+/// validation happen once; each application only copies and prunes the diagram.
+/// Both vtrees are retained, so their structure cannot change behind the plan.
+/// The placement and weight semantics are those of [`Tdd::embed`].
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::{Tdd, Vtree};
+/// use tididi::vtree::VarId;
+/// use tididi::restructure::EmbeddingPlan;
+/// let small = Arc::new(Vtree::linear(2));
+/// let wide = Arc::new(Vtree::linear(4));
+/// let place = EmbeddingPlan::new(&small, &wide, |v| VarId(v.0 + 2))?;
+/// for literals in [[1, 2], [-1, 2]] {
+///     let circuit = Tdd::clause(&small, literals)?;
+///     let copy = place.apply(&circuit)?;
+///     assert_eq!(copy.model_count()?, 12u32.into());
+///     # tididi::test_helpers::assert_canonical(&circuit);
+///     # tididi::test_helpers::assert_canonical(&copy);
+/// }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug)]
+pub struct EmbeddingPlan {
+    source: Arc<Vtree>,
+    destination: Arc<Vtree>,
+    layout: Plan,
+}
+
+impl EmbeddingPlan {
+    /// Validate an injective, shape-preserving renaming, using the destination context.
+    ///
+    /// Returns the variable, shape and resource errors of [`Tdd::embed`].
+    /// `map` is called once per source variable, during construction only.
+    pub fn new(source: &Arc<Vtree>, destination: &Arc<Vtree>, map: impl Fn(VarId) -> VarId) -> Result<Self, GraftError> {
+        destination.context().run(|eng| eng.embedding_plan(source, destination, map))
+    }
+
+    /// Source vtree allocation required by [`Self::apply`].
+    pub fn source(&self) -> &Arc<Vtree> { &self.source }
+
+    /// Destination vtree shared by every result.
+    pub fn destination(&self) -> &Arc<Vtree> { &self.destination }
+
+    /// Destination level for each source level, for relocating side tables.
+    pub fn levels(&self) -> &Embedding { &self.layout.embedding }
+
+    /// Place a circuit using this plan, leaving the source unchanged.
+    ///
+    /// Runs on the destination's context. A different source vtree allocation
+    /// returns [`OperationError::VtreeMismatch`] wrapped in [`GraftError::Operation`].
+    /// Other errors and weight semantics are those of [`Tdd::embed`].
+    pub fn apply(&self, circuit: &Tdd) -> Result<Tdd, GraftError> {
+        self.destination.context().run(|eng| eng.embed_with(circuit, self))
+    }
+
+    /// Compose this placement with a placement of its destination.
+    ///
+    /// The result places the original source directly into `next`'s destination,
+    /// without building an intermediate circuit. Intermediate free variables
+    /// remain free. `self.destination()` and `next.source()` must share an
+    /// allocation, otherwise this returns [`OperationError::VtreeMismatch`].
+    /// Construction uses the final destination context and can return the
+    /// resource errors of [`Self::new`].
+    pub fn then(&self, next: &Self) -> Result<Self, GraftError> {
+        next.destination.context().run(|eng| eng.compose_embeddings(self, next))
+    }
+}
+
 impl Tdd {
     /// This diagram on a larger vtree, with each of its variables renamed
     /// through `map` and every other variable of `into` left free.
@@ -70,6 +142,7 @@ impl Tdd {
     /// The returned [`Embedding`] says which level of the result each level of
     /// this diagram became. Runs on `into`'s execution context; use
     /// [`Engine::embed`] inside a batch with resource limits.
+    /// For repeated placements, prepare an [`EmbeddingPlan`].
     ///
     /// # Errors
     ///
@@ -116,6 +189,34 @@ impl Tdd {
 }
 
 impl Engine {
+    /// Prepare an [`EmbeddingPlan`] under this engine's limits.
+    pub fn embedding_plan(&self, source: &Arc<Vtree>, destination: &Arc<Vtree>, map: impl Fn(VarId) -> VarId) -> Result<EmbeddingPlan, GraftError> {
+        let lim = self.limits();
+        let _op = lim.begin_operation();
+        lim.check_stop()?;
+        let layout = Plan::build(lim, source, destination, map)?;
+        Ok(EmbeddingPlan { source: source.clone(), destination: destination.clone(), layout })
+    }
+
+    /// [`EmbeddingPlan::apply`] under this engine's limits.
+    pub fn embed_with(&self, circuit: &Tdd, plan: &EmbeddingPlan) -> Result<Tdd, GraftError> {
+        let _op = self.limits().begin_operation();
+        self.limits().check_stop()?;
+        if !Arc::ptr_eq(circuit.vtree(), &plan.source) { return Err(OperationError::VtreeMismatch.into()); }
+        circuit.require_structure()?;
+        assemble(self, circuit, &plan.destination, &plan.layout)
+    }
+
+    /// [`EmbeddingPlan::then`] under this engine's limits.
+    pub fn compose_embeddings(&self, first: &EmbeddingPlan, next: &EmbeddingPlan) -> Result<EmbeddingPlan, GraftError> {
+        if !Arc::ptr_eq(&first.destination, &next.source) { return Err(OperationError::VtreeMismatch.into()); }
+        self.embedding_plan(&first.source, &next.destination, |var| {
+            let leaf = first.source.leaf_of(var).expect("source leaf");
+            let intermediate = first.levels().level_of(leaf);
+            next.destination.leaf_var(next.levels().level_of(intermediate))
+        })
+    }
+
     /// [`Tdd::embed`] under this batch's scratch and resource limits.
     ///
     /// # Errors
@@ -130,20 +231,22 @@ impl Engine {
         let lim = self.limits();
         let _op = lim.begin_operation();
         lim.check_stop()?;
-        let plan = Plan::build(lim, tdd, into, map)?;
+        tdd.require_structure()?;
+        let plan = Plan::build(lim, tdd.vtree(), into, map)?;
         let result = assemble(self, tdd, into, &plan)?;
-        Ok((result, Embedding { levels: plan.embedding }))
+        Ok((result, plan.embedding))
     }
 }
 
 /// What each destination node does in the copy, and where each source level went.
+#[derive(Debug)]
 struct Plan {
     /// Whether each destination subtree contains a renamed source variable.
     mapped: Vec<bool>,
     /// The source node a destination node is the image of, where there is one.
     covered_by: Vec<Option<VtreeIdx>>,
     /// The destination node each source node maps to.
-    embedding: Vec<VtreeIdx>,
+    embedding: Embedding,
 }
 
 impl Plan {
@@ -156,14 +259,10 @@ impl Plan {
     /// correspond to the current source node. `O(nodes of into)`.
     fn build(
         lim: &Limits,
-        tdd: &Tdd,
+        source: &Vtree,
         into: &Vtree,
         map: impl Fn(VarId) -> VarId,
     ) -> Result<Plan, GraftError> {
-        if let Some(level) = tdd.levels().iter().position(|level| level.is_marginal()) {
-            return Err(OperationError::MarginalLevel(VtreeIdx(level as u32)).into());
-        }
-        let source = tdd.vtree();
         let mut mapped = Vec::new();
         lim.try_resize(&mut mapped, into.num_nodes(), false)?;
         let mut embedding = Vec::new();
@@ -221,7 +320,7 @@ impl Plan {
             "a completed match gives every source level an image",
         );
         gate.flush()?;
-        Ok(Plan { mapped, covered_by, embedding })
+        Ok(Plan { mapped, covered_by, embedding: Embedding { levels: embedding } })
     }
 }
 

@@ -17,7 +17,6 @@ crate-type = ["cdylib", "staticlib"]
 tididi = { path = "../.." }
 num-rational = "0.4"
 num-traits = "0.2"
-self_cell = "1.2"
 
 [build-dependencies]
 cbindgen = "0.29"
