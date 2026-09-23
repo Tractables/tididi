@@ -157,7 +157,7 @@ fn content_twin_scratch_is_cleared_on_take() {
     fp_counts.insert(11, 2);
     let mut key_to_canonical: rustc_hash::FxHashMap<Vec<(u32, u32)>, u32> = Default::default();
     key_to_canonical.insert(vec![(1, 2)], 3);
-    eng.reduce_scratch().content_twin.put(ContentTwinScratch {
+    eng.reduce_scratch().content_twin.put(eng.limits(), ContentTwinScratch {
         node_fp: vec![11, 11],
         fp_counts,
         key_to_canonical,

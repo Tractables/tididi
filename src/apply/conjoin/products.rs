@@ -18,6 +18,16 @@ pub(super) struct Products {
 }
 
 impl Products {
+    pub(super) fn retained_bytes(&self) -> usize {
+        use crate::limits::pool::{capacity_bytes, nested_bytes};
+        [
+            self.arena.retained_bytes(),
+            nested_bytes(&self.product_lists),
+            capacity_bytes(&self.live_counts),
+            capacity_bytes(&self.has_pl),
+        ].into_iter().sum()
+    }
+
     pub(super) fn reset(&mut self, eng: &Engine, sparse: bool, n: usize, left: &[usize], right: &[usize]) -> Result<(), OperationError> {
         if self.product_lists.len() < n { self.product_lists.resize_with(n, Vec::new); }
         self.has_pl.resize(n, false);

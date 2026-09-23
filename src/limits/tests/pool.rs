@@ -7,6 +7,11 @@ struct WorkingSet {
 }
 
 impl PooledScratch for WorkingSet {
+    fn retained_bytes(&self) -> usize {
+        use crate::limits::pool::capacity_bytes;
+        [capacity_bytes(&self.values)].into_iter().sum()
+    }
+
     fn prepare(&mut self) {
         self.values.clear();
         self.valid = false;
@@ -131,11 +136,79 @@ fn releasing_an_undersized_buffer_keeps_both_the_allocation_and_the_charge() {
 fn preserving_checkout_keeps_initialized_entries() {
     let lim = crate::limits::Limits::new();
     let pool = Pool::default();
-    pool.put(vec![7u32, 11]);
+    pool.put(&lim, vec![7u32, 11]);
     let mut scratch = pool.checkout_preserving(&lim);
     assert_eq!(&**scratch, &[7, 11]);
     scratch[1] = 13;
     drop(scratch);
     assert_eq!(&**pool.checkout_preserving(&lim), &[7, 13]);
     assert!(pool.checkout(&lim).is_empty());
+}
+
+/// Report large capacities without making a large allocation in a unit test.
+#[derive(Default)]
+struct Capacity(usize);
+impl PooledScratch for Capacity {
+    fn prepare(&mut self) {}
+    fn retain(&mut self, _: &crate::limits::Limits) {}
+    fn retained_bytes(&self) -> usize { self.0 }
+}
+
+#[test]
+fn independent_pools_share_one_ceiling_and_release_their_claims() {
+    use crate::limits::pool::ENGINE_RETAIN_BYTES;
+    let lim = crate::limits::Limits::new();
+    let first = Pool::<Capacity>::default();
+    let second = Pool::<Capacity>::default();
+    let half = ENGINE_RETAIN_BYTES / 2;
+    first.put(&lim, Capacity(half));
+    second.put(&lim, Capacity(half + 1));
+    assert_eq!(lim.retained_scratch.get(), half);
+    assert!(!second.occupied());
+    second.put(&lim, Capacity(half));
+    assert_eq!(lim.retained_scratch.get(), ENGINE_RETAIN_BYTES);
+    let checked_out = first.take(&lim);
+    assert_eq!(lim.retained_scratch.get(), half);
+    second.drain(&lim);
+    first.put(&lim, checked_out);
+    first.drain(&lim);
+    assert_eq!(lim.retained_scratch.get(), 0);
+}
+
+#[test]
+fn nested_return_replaces_its_claim_and_unwind_leaves_other_pools_usable() {
+    let lim = crate::limits::Limits::new();
+    let pool = Pool::<Capacity>::default();
+    let mut outer = pool.checkout(&lim);
+    outer.0 = 17;
+    { let mut inner = pool.checkout(&lim); inner.0 = 23; }
+    assert_eq!(lim.retained_scratch.get(), 23);
+    drop(outer);
+    assert_eq!(lim.retained_scratch.get(), 17);
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _active = pool.checkout(&lim);
+        { let mut inner = pool.checkout(&lim); inner.0 = 31; }
+        panic!("interrupted outer operation");
+    }));
+    assert!(result.is_err());
+    assert_eq!(lim.retained_scratch.get(), 31);
+    pool.drain(&lim);
+    assert_eq!(lim.retained_scratch.get(), 0);
+}
+
+#[test]
+fn recycled_levels_and_scratch_use_the_same_allowance() {
+    use crate::limits::pool::ENGINE_RETAIN_BYTES;
+    use crate::diagram::{take_levels, return_levels, PoolSlot};
+    let eng = crate::Engine::new();
+    let blocker = Pool::<Capacity>::default();
+    blocker.put(eng.limits(), Capacity(ENGINE_RETAIN_BYTES));
+    return_levels(&eng, PoolSlot::First, take_levels(&eng, 3));
+    assert_eq!(eng.levels().occupancy(), 0);
+    blocker.drain(eng.limits());
+    return_levels(&eng, PoolSlot::First, take_levels(&eng, 3));
+    assert_eq!(eng.levels().occupancy(), 1);
+    assert!(eng.limits().retained_scratch.get() > 0);
+    eng.clear_scratch();
+    assert_eq!(eng.limits().retained_scratch.get(), 0);
 }

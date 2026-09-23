@@ -38,6 +38,16 @@ pub(crate) struct ContentTwinScratch {
 }
 
 impl PooledScratch for ContentTwinScratch {
+    fn retained_bytes(&self) -> usize {
+        use crate::limits::pool::capacity_bytes;
+        [
+            capacity_bytes(&self.node_fp),
+            capacity_bytes(&self.fp_counts),
+            capacity_bytes(&self.key_to_canonical),
+            capacity_bytes(&self.remap),
+        ].into_iter().sum()
+    }
+
     fn prepare(&mut self) {
         self.node_fp.clear();
         self.fp_counts.clear();
@@ -46,6 +56,7 @@ impl PooledScratch for ContentTwinScratch {
     }
 
     fn retain(&mut self, lim: &crate::limits::Limits) {
+        self.key_to_canonical.clear();
         crate::limits::pool::release_if_oversized(lim, &mut self.node_fp);
         crate::limits::pool::release_if_oversized(lim, &mut self.remap);
         crate::limits::pool::release_if_oversized(lim, &mut self.fp_counts);

@@ -15,14 +15,14 @@ pub(crate) struct ApplyScratch {
 }
 
 impl ApplyScratch {
-    pub(crate) fn drain(&self) {
-        self.workspace.drain();
-        self.left_identity.drain();
-        self.right_identity.drain();
-        self.subvars.drain();
-        self.marginal_stack.drain();
-        self.cell_pairs.drain();
-        self.right_cols.drain();
+    pub(crate) fn drain(&self, lim: &crate::limits::Limits) {
+        self.workspace.drain(lim);
+        self.left_identity.drain(lim);
+        self.right_identity.drain(lim);
+        self.subvars.drain(lim);
+        self.marginal_stack.drain(lim);
+        self.cell_pairs.drain(lim);
+        self.right_cols.drain(lim);
     }
 }
 
@@ -41,6 +41,21 @@ pub(crate) struct ApplyWorkspace {
 }
 
 impl PooledScratch for ApplyWorkspace {
+    fn retained_bytes(&self) -> usize {
+        use crate::limits::pool::capacity_bytes;
+        [
+            capacity_bytes(&self.left_widths),
+            capacity_bytes(&self.right_widths),
+            capacity_bytes(&self.left_identity),
+            capacity_bytes(&self.right_identity),
+            capacity_bytes(&self.inputs1_scratch),
+            capacity_bytes(&self.inputs2_scratch),
+            self.products.retained_bytes(),
+            self.stream_cache.retained_bytes(),
+            self.prefilter_masks.retained_bytes(),
+        ].into_iter().sum()
+    }
+
     fn prepare(&mut self) {
         self.inputs1_scratch.clear();
         self.inputs2_scratch.clear();

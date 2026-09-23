@@ -149,11 +149,6 @@ pub struct ChildPair {
     pub right: EncodedChildRef,
 }
 
-/// Bytes one input pair occupies in a diagram, the unit `Tdd::pair_count()` counts
-/// in. The same under both encodings: a single-pair node stores its pair in
-/// the two `u32` fields of `EncodedNode`.
-pub(crate) const CHILD_PAIR_BYTES: usize = size_of::<ChildPair>();
-
 impl ChildPair {
     /// Form an ordered pair of child references, encoding plain indices when supplied.
     #[inline]

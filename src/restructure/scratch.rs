@@ -29,6 +29,17 @@ pub(crate) struct RestructureScratch {
 }
 
 impl PooledScratch for RestructureScratch {
+    fn retained_bytes(&self) -> usize {
+        use crate::limits::pool::{capacity_bytes, nested_bytes};
+        [
+            capacity_bytes(&self.inner_pair_to_idx),
+            nested_bytes(&self.per_v_pairs),
+            capacity_bytes(&self.distinct_inner),
+            capacity_bytes(&self.group_info),
+            capacity_bytes(&self.packed),
+        ].into_iter().sum()
+    }
+
     fn prepare(&mut self) {
         self.inner_pair_to_idx.clear();
         self.distinct_inner.clear();

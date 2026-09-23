@@ -54,3 +54,58 @@ def test_shared_behavioral_traces():
             not (truth >> x) & 1 or bool(x & (1 << (abs(v) - 1))) == (v > 0) for x in range(1 << n))]
         assert sorted(map(int, f.implied_literals())) == expected_implied, context
         circuits.append(f)
+
+
+def test_shared_stateful_sessions():
+    import pytest
+    generator = runpy.run_path(str(ROOT / "tests/conformance_cases.py"))
+    fixture = ROOT / "tests/fixtures/conformance_sessions.txt"
+    assert fixture.read_text() == generator["generate_sessions"]()
+    f = saved = query = None
+    for number, line in enumerate(fixture.read_text().splitlines(), 1):
+        if line.startswith("#"):
+            continue
+        op, a, b, c, expected = line.split()
+        a, b, c, expected = int(a), int(b), int(c), int(expected, 16)
+        context = f"line {number}: {line}"
+        pins = [v for v in [a, b] if v]
+        if op == "case":
+            n, weighted, truth = a, bool(c), expected
+            vtree = td.Vtree.balanced(n) if b == 0 else td.Vtree.linear(list(range(1, n + 1)))
+            f, saved, query = td.clause(vtree, [1, 2]), None, None
+            continue
+        if op == "save": saved = f.copy()
+        elif op == "open":
+            previous = f
+            query = f.evaluator({v: (1, 1) for v in range(1, n + 1)}) if weighted else f.counter()
+            assert previous.is_consumed, context
+            with pytest.raises(td.ConsumedCircuitError): previous.model_count()
+            f = None
+        elif op == "observe": query.observe(pins)
+        elif op == "reject_observe":
+            with pytest.raises(ValueError): query.observe(pins)
+        elif op in {"refuse_read", "refuse_dirty"}:
+            if op == "refuse_dirty": query.observe(pins)
+            with pytest.raises(td.ResourceLimitError):
+                (query.value if weighted else query.model_count)(limits=td.Limits(timeout=0))
+        elif op == "clear_one": query.clear(a)
+        elif op == "clear": query.clear_observations()
+        elif op == "finish":
+            f = query.finish()
+            with pytest.raises(RuntimeError, match="finished"):
+                (query.value if weighted else query.model_count)()
+            with pytest.raises(RuntimeError, match="finished"): query.finish()
+            query = None
+        elif op == "refuse_transform":
+            other = saved.copy()
+            with pytest.raises(td.ResourceLimitError): td.and_(f, other, limits=td.Limits(timeout=0))
+            assert f.is_consumed and other.is_consumed, context
+            with pytest.raises(td.ConsumedCircuitError): f.model_count()
+            f = None
+        elif op == "recover": f = saved.copy()
+        elif op == "roundtrip": f = td.Circuit.from_bytes(vtree, f.to_bytes())
+        elif op == "minimize": f = f.minimize()
+        else: raise AssertionError(op)
+        answer = (query.value() if weighted else query.model_count()) if query is not None else (f if f is not None else saved).model_count()
+        assert answer == expected, context
+        if saved is not None: assert saved.model_count() == truth.bit_count(), context

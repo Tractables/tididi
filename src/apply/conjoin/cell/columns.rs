@@ -109,10 +109,10 @@ impl<'a> RightColumns<'a> {
             lim.reserve_exact(&mut flat, total).ok()?;
         }
 
-        let mut cols: Vec<ColumnSlice> = eng.apply().right_cols.take();
+        let mut cols: Vec<ColumnSlice> = eng.apply().right_cols.take(lim);
         cols.clear();
         if cols.try_reserve(right_width).is_err() {
-            eng.apply().right_cols.put_bounded(lim, cols);
+            eng.apply().right_cols.put(lim, cols);
             return None;
         }
 
@@ -159,6 +159,6 @@ impl Drop for RightColumns<'_> {
         self.eng
             .apply()
             .right_cols
-            .put_bounded(self.eng.limits(), std::mem::take(&mut self.cols));
+            .put(self.eng.limits(), std::mem::take(&mut self.cols));
     }
 }

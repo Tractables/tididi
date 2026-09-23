@@ -78,6 +78,14 @@ fn retire<T>(lim: &crate::limits::Limits, cols: &mut Vec<Option<T>>) {
 }
 
 impl PooledScratch for StreamCache {
+    fn retained_bytes(&self) -> usize {
+        use crate::limits::pool::capacity_bytes;
+        match self {
+            Self::None => 0,
+            Self::Int(cols) => capacity_bytes(cols),
+            Self::Weighted(cols) => capacity_bytes(cols),
+        }
+    }
     fn prepare(&mut self) {}
     fn retain(&mut self, lim: &crate::limits::Limits) {
         match self {

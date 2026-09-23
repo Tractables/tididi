@@ -63,13 +63,13 @@ pub(crate) struct ClauseScratch {
 
 impl ClauseScratch {
     /// Release every retained buffer, leaving the pools empty.
-    pub(crate) fn drain(&self) {
-        self.cd_map.drain();
-        self.level_base.drain();
-        self.on_spine.drain();
-        self.need_dt.drain();
-        self.spine_internal.drain();
-        self.dfs_stack.drain();
+    pub(crate) fn drain(&self, lim: &crate::limits::Limits) {
+        self.cd_map.drain(lim);
+        self.level_base.drain(lim);
+        self.on_spine.drain(lim);
+        self.need_dt.drain(lim);
+        self.spine_internal.drain(lim);
+        self.dfs_stack.drain(lim);
     }
 }
 

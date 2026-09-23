@@ -201,8 +201,8 @@ fn sweep_scratch_is_cleared_on_take() {
     let eng = &crate::Engine::new();
     let mut dirty = RefSlotScratch::default();
     dirty.referenced.push(7);
-    eng.reduce_scratch().slot_prune_slots.put(dirty);
-    eng.reduce_scratch().slot_prune_remap.put(vec![1, 2, 3]);
+    eng.reduce_scratch().slot_prune_slots.put(eng.limits(), dirty);
+    eng.reduce_scratch().slot_prune_remap.put(eng.limits(), vec![1, 2, 3]);
 
     let slots = eng.reduce_scratch().slot_prune_slots.checkout(eng.limits());
     let remap = eng.reduce_scratch().slot_prune_remap.checkout(eng.limits());

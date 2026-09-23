@@ -65,6 +65,16 @@ pub(super) struct PFusionScratch {
     pub(super) generation: u32,
 }
 
+impl PFusionScratch {
+    fn retained_bytes(&self) -> usize {
+        use crate::limits::pool::capacity_bytes;
+        self.groups.iter().filter(|group| group.spilled()).fold(
+            capacity_bytes(&self.cells).saturating_add(capacity_bytes(&self.touched)).saturating_add(capacity_bytes(&self.groups)),
+            |bytes, group| bytes.saturating_add(group.capacity().saturating_mul(std::mem::size_of::<u32>())),
+        )
+    }
+}
+
 /// Per-level working buffers for planning and committing twin merges.
 #[derive(Default)]
 pub(super) struct MergeBuffers {
@@ -93,6 +103,20 @@ pub(super) struct MergeBuffers {
 }
 
 impl MergeBuffers {
+    fn retained_bytes(&self) -> usize {
+        use crate::limits::pool::capacity_bytes;
+        [
+            capacity_bytes(&self.resolve_keeps),
+            capacity_bytes(&self.filtered),
+            capacity_bytes(&self.duplicate_members),
+            capacity_bytes(&self.keep_pairs_sorted),
+            capacity_bytes(&self.member_pairs),
+            capacity_bytes(&self.seen_pairs),
+            capacity_bytes(&self.sel),
+            capacity_bytes(&self.group_plans),
+        ].into_iter().sum()
+    }
+
     /// Empty every buffer, retaining capacity.
     pub(super) fn clear(&mut self) {
         self.resolve_keeps.clear();
@@ -134,6 +158,15 @@ pub(super) struct DuplicateScratch {
 }
 
 impl DuplicateScratch {
+    fn retained_bytes(&self) -> usize {
+        use crate::limits::pool::capacity_bytes;
+        [
+            capacity_bytes(&self.pairs),
+            capacity_bytes(&self.counts),
+            capacity_bytes(&self.out),
+        ].into_iter().sum()
+    }
+
     /// Empty every buffer, retaining capacity. Called at the top of each
     /// `resolve_duplicate_pairs_in_node` so a handed-down scratch is
     /// indistinguishable from a fresh one; the mid-function `?` bails
@@ -246,6 +279,28 @@ pub(crate) struct ContractScratch {
 }
 
 impl PooledScratch for ContractScratch {
+    fn retained_bytes(&self) -> usize {
+        use crate::limits::pool::capacity_bytes;
+        [
+            capacity_bytes(&self.counts),
+            capacity_bytes(&self.entries),
+            capacity_bytes(&self.cursors),
+            capacity_bytes(&self.twin_hash_table),
+            capacity_bytes(&self.fingerprints),
+            capacity_bytes(&self.flat_groups),
+            capacity_bytes(&self.group_starts),
+            capacity_bytes(&self.is_candidate),
+            capacity_bytes(&self.slice_unsorted),
+            capacity_bytes(&self.remap.merge_target).saturating_add(capacity_bytes(&self.remap.final_remap)).saturating_add(capacity_bytes(&self.remap.duplicate_redirect)),
+            capacity_bytes(&self.has_marginal_below),
+            capacity_bytes(&self.needs_check),
+            self.pair_fusion.retained_bytes(),
+            capacity_bytes(&self.boundaries),
+            self.merge.retained_bytes(),
+            self.duplicate.retained_bytes(),
+        ].into_iter().sum()
+    }
+
     fn prepare(&mut self) {
         // The parked `has_marginal_below` describes whatever diagram last checked the
         // scratch out. Invalidate on checkout, not on return, so no path can read a

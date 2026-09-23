@@ -8,7 +8,8 @@ use super::Context;
 /// [`Context::run`] and [`Context::with_limits`] lend an engine across a sequence
 /// of operations. An engine can also be created directly with [`new`](Self::new).
 /// It retains scratch buffers between calls; diagrams own their results and can
-/// outlive it.
+/// outlive it. Retained scratch shares one capacity ceiling across operations;
+/// [`clear_scratch`](Self::clear_scratch) releases it explicitly.
 /// Operands may come from different engines; binary operations require a shared
 /// vtree allocation, as described on [`Tdd`](crate::Tdd).
 /// Ordinary [`and`](crate::and), [`or`](crate::or) and diagram queries use the
@@ -192,13 +193,13 @@ impl Engine {
     /// [`Context::clear_scratch`] releases the idle workspace in a shared context.
     /// Active operations keep their checked-out buffers until they finish.
     pub fn clear_scratch(&self) {
-        self.apply.drain();
-        self.clause.drain();
-        self.reduce.drain();
-        self.negate.drain();
-        self.restructure.drain();
-        self.sparse.drain();
-        self.levels.drain();
-        self.model_layout.drain();
+        self.apply.drain(&self.limits);
+        self.clause.drain(&self.limits);
+        self.reduce.drain(&self.limits);
+        self.negate.drain(&self.limits);
+        self.restructure.drain(&self.limits);
+        self.sparse.drain(&self.limits);
+        self.levels.drain(&self.limits);
+        self.model_layout.drain(&self.limits);
     }
 }

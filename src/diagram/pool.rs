@@ -1,10 +1,9 @@
 //! Recycling pool for `Vec<TddLevel>` allocations, owned by the engine.
 
 use crate::Engine;
-use std::cell::Cell;
+use crate::limits::{Limits, pool::{Pool, PooledScratch, capacity_bytes}};
 
 use super::level::TddLevel;
-use super::primitives::{MultiPairRange, EncodedNode};
 
 /// The engine's two recycled level arrays.
 ///
@@ -12,35 +11,24 @@ use super::primitives::{MultiPairRange, EncodedNode};
 /// drop the second's arenas. `take_levels` prefers the primary.
 #[derive(Default)]
 pub(crate) struct LevelPool {
-    primary: Cell<Option<Vec<TddLevel>>>,
-    secondary: Cell<Option<Vec<TddLevel>>>,
+    primary: Pool<LevelBuffer>,
+    secondary: Pool<LevelBuffer>,
 }
 
 impl LevelPool {
     /// How many of the two slots currently hold a recycled vector.
     pub(crate) fn occupancy(&self) -> usize {
-        let primary = self.primary.take();
-        let secondary = self.secondary.take();
-        let held = usize::from(primary.is_some()) + usize::from(secondary.is_some());
-        self.primary.set(primary);
-        self.secondary.set(secondary);
-        held
+        usize::from(self.primary.occupied()) + usize::from(self.secondary.occupied())
     }
 
     /// Empty both slots, releasing the recycled capacity to the allocator.
-    pub(crate) fn drain(&self) {
-        self.primary.set(None);
-        self.secondary.set(None);
+    pub(crate) fn drain(&self, lim: &Limits) {
+        self.primary.drain(lim);
+        self.secondary.drain(lim);
     }
 }
 
-/// Per-arena capacity cap on pooled levels, in bytes.
-///
-/// A level's arena (`nodes`/`pairs`/`multi_pairs`) survives pool recycle only if its
-/// allocated capacity is under this cap; a larger one is replaced with a fresh
-/// empty `Vec` when the levels are handed back. The `POOL_NODE_CAP_LIMIT` gate
-/// reads only `nodes.capacity()`, so without this cap a minimized intermediate
-/// could park a huge `pairs` arena that the next small diagram is then charged for.
+/// Trim oversized individual arenas before applying the engine's shared ceiling.
 pub(crate) const MAX_LEVEL_ARENA_BYTES: usize = 32 * 1024 * 1024;
 
 /// Reset one recycled level to empty state.
@@ -51,24 +39,18 @@ pub(crate) const MAX_LEVEL_ARENA_BYTES: usize = 32 * 1024 * 1024;
 ///
 /// Runs on the return path, so everything parked is already in this state.
 #[inline]
-pub(crate) fn reset_level(level: &mut TddLevel) {
-    use std::mem::size_of;
+pub(crate) fn reset_level(level: &mut TddLevel) -> usize {
+    fn retain<T>(arena: &mut Vec<T>) -> usize {
+        let bytes = arena.capacity() * std::mem::size_of::<T>();
+        if bytes > MAX_LEVEL_ARENA_BYTES { *arena = Vec::new(); 0 } else { bytes }
+    }
     level.clear();
-    // Drop oversized arenas; keep small ones warm.
-    if level.nodes.capacity().saturating_mul(size_of::<EncodedNode>()) > MAX_LEVEL_ARENA_BYTES {
-        level.nodes = Vec::new();
-    }
-    if level.pairs.capacity().saturating_mul(super::CHILD_PAIR_BYTES) > MAX_LEVEL_ARENA_BYTES {
-        level.pairs = Vec::new();
-    }
-    if level.multi_pairs.capacity().saturating_mul(size_of::<MultiPairRange>()) > MAX_LEVEL_ARENA_BYTES {
-        level.multi_pairs = Vec::new();
-    }
+    retain(&mut level.nodes) + retain(&mut level.pairs) + retain(&mut level.multi_pairs)
 }
 
 /// Take a pre-allocated `Vec<TddLevel>` from the pool (resized to `num_nodes` by
 /// the pool if a slot has one), or allocate a fresh one. All levels are
-/// guaranteed to be empty — a pooled entry was reset by `return_levels_to`
+/// guaranteed to be empty — a pooled entry was reset by `return_levels`
 /// before it was parked, a level added by the resize is fresh, and a
 /// fresh array is empty by construction.
 pub(crate) fn take_levels(eng: &Engine, num_nodes: usize) -> Vec<TddLevel> {
@@ -88,7 +70,8 @@ fn take_levels_with(
     charged: bool,
 ) -> Result<Vec<TddLevel>, crate::limits::OperationError> {
     let pool = eng.levels();
-    let mut levels = pool.primary.take().or_else(|| pool.secondary.take()).unwrap_or_default();
+    let mut levels = if pool.primary.occupied() { pool.primary.take(eng.limits()) }
+        else { pool.secondary.take(eng.limits()) }.levels;
     if levels.len() < num_nodes {
         let additional = num_nodes - levels.len();
         if charged {
@@ -106,29 +89,20 @@ fn take_levels_with(
     Ok(levels)
 }
 
-/// Maximum total node capacity (across all levels) to retain in the pool.
-/// Levels exceeding this limit are dropped rather than pooled, to avoid
-/// retaining the capacity of large intermediate diagrams indefinitely.
-/// 4M nodes × 8 bytes/node = 32 MB per pool slot.
-const POOL_NODE_CAP_LIMIT: usize = 4_000_000;
+/// Recycled structural arrays. Clearing a level drops its marginal values.
+#[derive(Default)]
+struct LevelBuffer {
+    levels: Vec<TddLevel>,
+    bytes: usize,
+}
 
-/// Return a `Vec<TddLevel>` to a pool slot for reuse. Drops the levels when
-/// their total node capacity exceeds `POOL_NODE_CAP_LIMIT` so we don't
-/// retain peak memory from rare giant intermediate diagrams.
-///
-/// The gate reads `nodes.capacity()` before the reset, which would zero an
-/// oversized arena; the reset happens here so a parked entry is already clean.
-#[inline]
-fn return_levels_to(slot: &Cell<Option<Vec<TddLevel>>>, mut levels: Vec<TddLevel>) {
-    let mut node_capacity = 0usize;
-    for level in &mut levels {
-        node_capacity += level.nodes.capacity();
-        reset_level(level);
+impl PooledScratch for LevelBuffer {
+    fn prepare(&mut self) {}
+    fn retain(&mut self, _lim: &Limits) {
+        self.bytes = capacity_bytes(&self.levels);
+        for level in &mut self.levels { self.bytes += reset_level(level); }
     }
-    if node_capacity <= POOL_NODE_CAP_LIMIT {
-        slot.set(Some(levels));
-    }
-    // else: drop levels, releasing the retained capacity
+    fn retained_bytes(&self) -> usize { self.bytes }
 }
 
 /// Which of the two pool slots a level array goes back to.
@@ -151,6 +125,6 @@ pub(crate) fn return_levels(eng: &Engine, slot: PoolSlot, levels: Vec<TddLevel>)
         PoolSlot::First => &pool.primary,
         PoolSlot::Second => &pool.secondary,
     };
-    return_levels_to(cell, levels)
+    cell.put(eng.limits(), LevelBuffer { levels, bytes: 0 })
 }
 

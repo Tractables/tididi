@@ -20,10 +20,18 @@ pub(super) struct MarkBuffer {
     set: Vec<VtreeIdx>,
 }
 
+impl crate::limits::pool::PooledScratch for MarkBuffer {
+    fn prepare(&mut self) {}
+    fn retain(&mut self, _lim: &crate::limits::Limits) {}
+    fn retained_bytes(&self) -> usize {
+        crate::limits::pool::capacity_bytes(&self.flags).saturating_add(crate::limits::pool::capacity_bytes(&self.set))
+    }
+}
+
 impl<'a> SpineMarks<'a> {
     /// Take the pooled array, grown to cover `num_nodes` levels.
     pub(super) fn take(lim: &'a crate::limits::Limits, pool: &'a Pool<MarkBuffer>, num_nodes: usize) -> Result<Self, crate::limits::OperationError> {
-        let MarkBuffer { mut flags, mut set } = pool.take();
+        let MarkBuffer { mut flags, mut set } = pool.take(lim);
         lim.try_resize(&mut flags, num_nodes, false)?;
         lim.reserve_exact(&mut set, num_nodes)?;
         Ok(SpineMarks { flags, set, pool, lim })
@@ -59,7 +67,7 @@ impl Drop for SpineMarks<'_> {
         self.set.clear();
         crate::limits::pool::release_if_oversized(self.lim, &mut self.set);
         crate::limits::pool::release_if_oversized(self.lim, &mut self.flags);
-        self.pool.put(MarkBuffer { flags: std::mem::take(&mut self.flags), set: std::mem::take(&mut self.set) });
+        self.pool.put(self.lim, MarkBuffer { flags: std::mem::take(&mut self.flags), set: std::mem::take(&mut self.set) });
     }
 }
 

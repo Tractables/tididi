@@ -29,6 +29,10 @@ conversions and the metadata that makes each representation readable. A pooled
 conjunction workspace owns these products and the sweep's other temporary buffers;
 algorithms borrow them, and guards return them on success or error. Sparse-level
 scratch uses independent checkouts, so nested calls do not borrow active storage.
+Every pool reports its retained capacity to one engine-wide allowance, including
+nested buffers and recycled diagram levels. Checkout removes that claim; return
+admits the retired working set only if it fits. This idle-capacity estimate is
+separate from operation growth charges and excludes allocator metadata.
 
 Relation construction separates variable layout, row normalization and atom
 assembly. The engine caches the last validated layout by vtree allocation and

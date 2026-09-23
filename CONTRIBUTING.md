@@ -96,9 +96,9 @@ crate. The archive is kept when the development Pages site changes.
 
 ## Cross-language behavior
 
-`tests/fixtures/conformance.txt` contains operation traces and independent truth
-tables shared by the Rust, Python and C test suites. Add semantic regressions
+`tests/fixtures/conformance*.txt` contains operation traces, stateful query
+sessions and independent answers shared by the Rust, Python and C test suites. Add semantic regressions
 in `tests/conformance_cases.py`, regenerate with `--write`, and run all three
 suites. Each interpreter checks every assignment, cached evidence counts,
-support and implied literals. Ownership and error handling stay in each
-language's tests. `python3 tests/conformance_cases.py` checks fixture freshness.
+support and implied literals. Session traces also check ownership transfers, invalid observations, resource
+refusals and retries, with each language checking its own handle lifecycle. `python3 tests/conformance_cases.py` checks fixture freshness.

@@ -55,14 +55,9 @@ pub(crate) struct ProductEntry {
 
 /// Reusable workspace for sparse product construction.
 ///
-/// Engine-owned, behind a `RefCell` (`apply_and` is never re-entrant). All Vecs grow
-/// monotonically and are never shrunk — capacity is retained across calls to
-/// amortize allocation cost. Cleared/resized at the start of each use.
-///
-/// Exception: after a large call whose bucket arrays exceed
-/// [`SCRATCH_RETAIN_BYTES`] of retained capacity, they are dropped. This caps
-/// the memory retained from rare large calls without hurting performance on
-/// typical calls.
+/// Each checkout owns its buffers, including during nested operations. Capacity
+/// is reused within the engine's shared retention ceiling; arrays are reset over
+/// their live range before use.
 #[derive(Default)]
 pub(crate) struct SparseWorkspace {
     // ── Phase A: reverse indices (child → parent) for scatter ──
@@ -304,6 +299,37 @@ pub(crate) fn ensure_buckets_cleared<T>(eng: &Engine, buckets: &mut Vec<Vec<T>>,
 }
 
 impl crate::limits::pool::PooledScratch for SparseWorkspace {
+    fn retained_bytes(&self) -> usize {
+        use crate::limits::pool::{capacity_bytes, nested_bytes};
+        [
+            capacity_bytes(&self.rev_entries_c1),
+            capacity_bytes(&self.rev_offsets_c1),
+            capacity_bytes(&self.rev_entries_c2),
+            capacity_bytes(&self.rev_offsets_c2),
+            capacity_bytes(&self.inner_offsets),
+            capacity_bytes(&self.outer_offsets),
+            nested_bytes(&self.filtered),
+            capacity_bytes(&self.filtered_touched),
+            capacity_bytes(&self.wanted),
+            capacity_bytes(&self.wanted_keys),
+            capacity_bytes(&self.inner_seen),
+            capacity_bytes(&self.rev_entries_c3),
+            capacity_bytes(&self.rev_offsets_c3),
+            capacity_bytes(&self.outer_keys),
+            capacity_bytes(&self.outer_attached),
+            nested_bytes(&self.par_buckets),
+            capacity_bytes(&self.par_flat),
+            capacity_bytes(&self.par_sorted),
+            capacity_bytes(&self.par_offsets),
+            capacity_bytes(&self.p2_map),
+            capacity_bytes(&self.p2_map_touched),
+            capacity_bytes(&self.est_counts),
+            capacity_bytes(&self.emit_pairs),
+            capacity_bytes(&self.pair_counts),
+            capacity_bytes(&self.sorted_pairs),
+        ].into_iter().sum()
+    }
+
     fn prepare(&mut self) {}
     fn retain(&mut self, lim: &Limits) { self.release_if_large(lim); }
 }

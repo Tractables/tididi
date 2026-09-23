@@ -80,10 +80,19 @@ impl Layout {
 }
 
 impl crate::limits::pool::PooledScratch for Layout {
+    fn retained_bytes(&self) -> usize {
+        use crate::limits::pool::capacity_bytes;
+        [
+            capacity_bytes(&self.vars),
+            capacity_bytes(&self.count),
+            capacity_bytes(&self.lo),
+            capacity_bytes(&self.position),
+        ].into_iter().sum()
+    }
+
     fn prepare(&mut self) {}
     fn retain(&mut self, lim: &Limits) {
-        let bytes = (self.count.capacity() + self.lo.capacity() + self.position.capacity())
-            * std::mem::size_of::<u32>() + self.vars.capacity() * std::mem::size_of::<VarId>();
+        let bytes = self.retained_bytes();
         if bytes > crate::limits::pool::SCRATCH_RETAIN_BYTES || self.vtree.strong_count() == 0 {
             *self = Self::default();
             lim.release_bytes(bytes as u64);

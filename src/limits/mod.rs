@@ -241,6 +241,7 @@ impl LimitConfig {
 ///
 /// Callbacks may inspect or change settings without holding an internal borrow.
 pub struct Limits {
+    pub(crate) retained_scratch: Cell<usize>,
     budget: Cell<Option<u64>>,
     in_flight_bytes: Cell<u64>,
     pairs_in_flight: Cell<u64>,
@@ -295,6 +296,7 @@ impl Limits {
     #[must_use]
     pub(crate) const fn new() -> Limits {
         Limits {
+            retained_scratch: Cell::new(0),
             budget: Cell::new(None),
             in_flight_bytes: Cell::new(0),
             pairs_in_flight: Cell::new(0),

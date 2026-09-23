@@ -96,6 +96,13 @@ impl Default for GridArena {
 }
 
 impl GridArena {
+    pub(super) fn retained_bytes(&self) -> usize {
+        use crate::limits::pool::capacity_bytes;
+        match self {
+            Self::Preplanned { cells, grids } => capacity_bytes(cells).saturating_add(capacity_bytes(grids)),
+            Self::Bump { cells, grids, free, .. } => capacity_bytes(cells).saturating_add(capacity_bytes(grids)).saturating_add(capacity_bytes(free)),
+        }
+    }
     pub(super) fn reset(&mut self, eng: &Engine, sparse: bool, n: usize, left: &[usize], right: &[usize]) -> Result<(), OperationError> {
         let (cells, mut grids) = match std::mem::take(self) {
             Self::Preplanned { cells, grids } | Self::Bump { cells, grids, .. } => (cells, grids),

@@ -77,9 +77,58 @@ def generate():
     return "\n".join(lines) + "\n"
 
 
+SESSION_FIXTURE = FIXTURE.with_name("conformance_sessions.txt")
+
+
+def generate_sessions():
+    """Expected answers for ownership, refusal and cached-evidence sequences."""
+    lines = ["# op a b c expected-count; case gives variables, linear, weighted, truth-mask.",
+             "# save/recover copy the circuit; open/finish transfer it to/from a cached query."]
+    for n, linear in [(2, 0), (4, 0), (5, 1)]:
+        for weighted in [0, 1]:
+            truth = sum(1 << x for x in range(1 << n) if x & 3)
+            lines.append(f"case {n} {linear} {weighted} {truth:x}")
+            pins = {}
+            rng = random.Random(71967025 + n)
+
+            def emit(op, a=0, b=0):
+                if op in {"observe", "refuse_dirty"}:
+                    for v in [a, b]:
+                        if v: pins[abs(v)] = v > 0
+                elif op == "clear_one": pins.pop(a, None)
+                elif op in {"clear", "finish"}: pins.clear()
+                count = sum(bool(truth >> x & 1) and all(
+                    bool(x & (1 << (v - 1))) == value for v, value in pins.items())
+                    for x in range(1 << n))
+                lines.append(f"{op} {a} {b} 0 {count:x}")
+
+            emit("save")
+            emit("open")
+            emit("refuse_read")  # Cold cache.
+            emit("observe", -1)
+            emit("reject_observe", 1, n + 1)  # Valid prefix must not take effect.
+            emit("refuse_read")  # Warm cache.
+            for _ in range(12):
+                a = rng.choice([-1, 1]) * rng.randint(1, n)
+                b = rng.choice([-1, 1]) * rng.randint(1, n)
+                emit("observe", a, b)
+                emit("refuse_dirty", -a, -b)  # Fail a dirty refresh, then retry.
+                emit("clear_one", abs(a))
+            emit("clear")
+            emit("finish")
+            emit("refuse_transform")
+            emit("recover")
+            emit("roundtrip")
+            emit("minimize")
+            emit("open")
+            emit("observe", -1, -2)
+            emit("finish")
+    return "\n".join(lines) + "\n"
+
+
 if __name__ == "__main__":
-    expected = generate()
-    if sys.argv[1:] == ["--write"]:
-        FIXTURE.write_text(expected)
-    elif FIXTURE.read_text() != expected:
-        raise SystemExit("conformance fixture is stale; run python3 tests/conformance_cases.py --write")
+    for path, expected in [(FIXTURE, generate()), (SESSION_FIXTURE, generate_sessions())]:
+        if sys.argv[1:] == ["--write"]:
+            path.write_text(expected)
+        elif path.read_text() != expected:
+            raise SystemExit(f"{path.name} is stale; run python3 tests/conformance_cases.py --write")

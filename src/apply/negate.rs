@@ -28,9 +28,9 @@ pub(crate) struct NegateScratch {
 
 impl NegateScratch {
     /// Release every retained buffer, leaving the pools empty.
-    pub(crate) fn drain(&self) {
-        self.cover.drain();
-        self.cells.drain();
+    pub(crate) fn drain(&self, lim: &crate::limits::Limits) {
+        self.cover.drain(lim);
+        self.cells.drain(lim);
     }
 }
 

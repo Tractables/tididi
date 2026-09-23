@@ -31,6 +31,7 @@ use crate::value::slots::{RefSlotScratch, referenced_marginal_slots};
 use crate::diagram::boundary_marginal_levels;
 
 impl crate::limits::pool::PooledScratch for RefSlotScratch {
+    fn retained_bytes(&self) -> usize { RefSlotScratch::retained_bytes(self) }
     fn prepare(&mut self) { self.clear(); }
     fn retain(&mut self, lim: &crate::limits::Limits) { self.release_oversized(lim); }
 }

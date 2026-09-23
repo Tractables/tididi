@@ -43,15 +43,15 @@ pub(crate) struct ReduceScratch {
 
 impl ReduceScratch {
     /// Release every retained buffer, leaving the pools empty.
-    pub(crate) fn drain(&self) {
-        self.prune_remap.drain();
-        self.prune_level_base.drain();
-        self.prune_visits.drain();
-        self.prune_identity.drain();
-        self.slot_prune_slots.drain();
-        self.slot_prune_remap.drain();
-        self.contract.drain();
-        self.content_twin.drain();
+    pub(crate) fn drain(&self, lim: &crate::limits::Limits) {
+        self.prune_remap.drain(lim);
+        self.prune_level_base.drain(lim);
+        self.prune_visits.drain(lim);
+        self.prune_identity.drain(lim);
+        self.slot_prune_slots.drain(lim);
+        self.slot_prune_remap.drain(lim);
+        self.contract.drain(lim);
+        self.content_twin.drain(lim);
     }
 }
 

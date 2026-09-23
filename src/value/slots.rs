@@ -412,6 +412,11 @@ pub(crate) struct RefSlotScratch {
 }
 
 impl RefSlotScratch {
+    pub(crate) fn retained_bytes(&self) -> usize {
+        use crate::limits::pool::capacity_bytes;
+        [capacity_bytes(&self.referenced), capacity_bytes(&self.seen)].into_iter().sum()
+    }
+
     /// Empty both buffers, retaining their allocations.
     pub(crate) fn clear(&mut self) {
         self.referenced.clear();

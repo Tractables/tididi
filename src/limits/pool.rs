@@ -15,46 +15,58 @@ use super::Limits;
 /// Level arenas have a separate limit, `diagram::MAX_LEVEL_ARENA_BYTES`.
 pub(crate) const SCRATCH_RETAIN_BYTES: usize = 128 * 1024 * 1024;
 
+/// Combined capacity estimate parked in one engine, including recycled diagram levels.
+/// This counts backing storage, not allocator metadata or live operation results.
+pub(crate) const ENGINE_RETAIN_BYTES: usize = 256 * 1024 * 1024;
+
 /// A scratch value parked between operations, absent while checked out.
 ///
 /// A nested checkout finds an empty pool and creates a fresh working set.
-pub(crate) struct Pool<T>(Cell<Option<T>>);
+pub(crate) struct Pool<T> {
+    value: Cell<Option<T>>,
+    bytes: Cell<usize>,
+}
 
 impl<T> Default for Pool<T> {
     fn default() -> Self {
-        Pool(Cell::new(None))
+        Pool { value: Cell::new(None), bytes: Cell::new(0) }
     }
 }
 
 impl<T: Default> Pool<T> {
     /// Take the parked value, creating an empty one if the pool is vacant.
     #[inline]
-    pub(crate) fn take(&self) -> T {
-        self.0.take().unwrap_or_default()
+    pub(crate) fn take(&self, lim: &Limits) -> T {
+        lim.retained_scratch.set(lim.retained_scratch.get() - self.bytes.replace(0));
+        self.value.take().unwrap_or_default()
     }
 }
 
 impl<T> Pool<T> {
     /// Drop whatever this pool retains.
     #[inline]
-    pub(crate) fn drain(&self) {
-        self.0.take();
+    pub(crate) fn drain(&self, lim: &Limits) {
+        lim.retained_scratch.set(lim.retained_scratch.get() - self.bytes.replace(0));
+        self.value.take();
     }
 
-    /// Park `value`, replacing whatever is there.
-    #[inline]
-    pub(crate) fn put(&self, value: T) {
-        self.0.set(Some(value));
-    }
+    /// Whether this slot contains a parked value.
+    pub(crate) fn occupied(&self) -> bool { self.bytes.get() != 0 }
 }
 
-impl<T> Pool<Vec<T>> {
-    /// Park `v`, dropping its allocation first if it is oversized; see
-    /// [`release_if_oversized`].
+impl<T: PooledScratch> Pool<T> {
+    /// Retire a working set and admit it against the engine's shared ceiling.
     #[inline]
-    pub(crate) fn put_bounded(&self, lim: &Limits, mut v: Vec<T>) {
-        release_if_oversized(lim, &mut v);
-        self.put(v);
+    pub(crate) fn put(&self, lim: &Limits, mut value: T) {
+        self.drain(lim);
+        value.retain(lim);
+        let bytes = value.retained_bytes();
+        let total = lim.retained_scratch.get().saturating_add(bytes);
+        if total <= ENGINE_RETAIN_BYTES {
+            lim.retained_scratch.set(total);
+            self.bytes.set(bytes);
+            self.value.set(Some(value));
+        }
     }
 }
 
@@ -65,6 +77,8 @@ pub(crate) trait PooledScratch: Default {
     /// Release allocations that exceed this working set's retention policy,
     /// giving the freed bytes back to `lim`.
     fn retain(&mut self, lim: &Limits);
+    /// Backing capacity after retirement, including owned inner allocations.
+    fn retained_bytes(&self) -> usize;
 }
 
 impl<T> PooledScratch for Vec<T> {
@@ -72,6 +86,8 @@ impl<T> PooledScratch for Vec<T> {
     fn prepare(&mut self) { self.clear(); }
     #[inline]
     fn retain(&mut self, lim: &Limits) { release_if_oversized(lim, self); }
+    #[inline]
+    fn retained_bytes(&self) -> usize { Scratch::retained_bytes(self) }
 }
 
 impl<T: PooledScratch> Pool<T> {
@@ -90,7 +106,7 @@ impl<T: PooledScratch> Pool<T> {
     /// The caller must invalidate stale results before reading them.
     #[inline]
     pub(crate) fn checkout_preserving<'a>(&'a self, lim: &'a Limits) -> PoolGuard<'a, T> {
-        PoolGuard { pool: self, lim, value: self.take() }
+        PoolGuard { pool: self, lim, value: self.take(lim) }
     }
 }
 
@@ -118,8 +134,7 @@ impl<T: PooledScratch> std::ops::DerefMut for PoolGuard<'_, T> {
 impl<T: PooledScratch> Drop for PoolGuard<'_, T> {
     fn drop(&mut self) {
         if !std::thread::panicking() {
-            self.value.retain(self.lim);
-            self.pool.put(std::mem::take(&mut self.value));
+            self.pool.put(self.lim, std::mem::take(&mut self.value));
         }
     }
 }
@@ -199,11 +214,21 @@ impl<K, V, S: Default> Scratch for std::collections::HashMap<K, V, S> {
     }
 }
 
+/// Capacity of a flat buffer or hash table, excluding allocations in elements.
+/// The products and sums of distinct owned allocations fit the address space.
+#[inline]
+pub(crate) fn capacity_bytes(buf: &impl Scratch) -> usize { buf.entries() * buf.entry_bytes() }
+
+/// Capacity of a vector of vectors, including its outer allocation.
+pub(crate) fn nested_bytes<T>(rows: &Vec<Vec<T>>) -> usize {
+    capacity_bytes(rows) + rows.iter().map(capacity_bytes).sum::<usize>()
+}
+
 /// Drop `buf`'s allocation, leaving it empty, if what it retains exceeds
 /// [`SCRATCH_RETAIN_BYTES`].
 ///
 /// The single implementation of the scratch-retention rule.
-/// [`Pool::put_bounded`] applies it to a pooled buffer; scratch held as struct
+/// [`Pool::put`] applies it to a pooled buffer; scratch held as struct
 /// fields, which cannot round-trip through a pool per buffer, applies it field
 /// by field.
 #[inline]
