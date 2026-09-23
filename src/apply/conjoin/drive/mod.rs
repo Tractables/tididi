@@ -23,12 +23,13 @@ use crate::Engine;
 
 /// What one sweep carries beside its [`ApplyRun`]: the vtree, the
 /// marginalization schedule, and the weight store the marginal levels write to.
-pub(super) struct Sweep<'a> {
+pub(super) struct Sweep<'a, 'filter> {
     pub(super) vtree: &'a crate::vtree::Vtree,
     pub(super) targets: MarginalTargets<'a>,
     /// The subtrees collapsed instead of built. See [`quantify`](super::quantify).
     pub(super) quantified: QuantifiedSubtrees<'a>,
     pub(super) ws: Option<&'a mut crate::diagram::WeightStore>,
+    pub(super) filter: Option<&'a mut (dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool + 'filter)>,
 }
 
 /// Build a conjunction, emitting selected levels as marginal values and
@@ -47,7 +48,15 @@ pub(crate) fn apply_and_fallible(
 ) -> Result<Tdd, OperationError> {
     // No swap to the narrower operand here: callers of this borrowed path keep
     // per-operand bookkeeping by side. `conjoin_owned` swaps.
-    let mut out = apply_and_fallible_inner(eng, f, g, marginalize_targets, quantified)?;
+    apply_and_filtered(eng, f, g, marginalize_targets, quantified, None)
+}
+
+pub(super) fn apply_and_filtered(
+    eng: &Engine, f: &mut Tdd, g: &mut Tdd,
+    marginalize_targets: MarginalTargets<'_>, quantified: QuantifiedSubtrees<'_>,
+    filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
+) -> Result<Tdd, OperationError> {
+    let mut out = apply_and_fallible_inner(eng, f, g, marginalize_targets, quantified, filter)?;
     // Apply emits self-describing marginal refs — bit-30 set is an inline count,
     // bit-30 clear a bare slot; see `MARGINAL_OVERFLOW_TAG` for why that polarity —
     // so a bit-30-clear ref here is never an already-inline count.
@@ -101,7 +110,7 @@ fn sweep_levels(
     run: &mut ApplyRun,
     f: &mut Tdd,
     g: &mut Tdd,
-    sweep: &mut Sweep<'_>,
+    sweep: &mut Sweep<'_, '_>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let vtree = sweep.vtree;
@@ -140,7 +149,11 @@ fn sweep_levels(
         }
 
         // Identity fast paths and the operand-child drops that precede them.
-        let taken = take_fast_path(eng, run, f, g, shape)?;
+        let taken = if sweep.filter.is_some() {
+            // A filtered child product cannot be bypassed by an identity copy.
+            super::quantify::drop_dead_children(f, g, shape);
+            false
+        } else { take_fast_path(eng, run, f, g, shape)? };
 
         if !taken {
             // One decision per level, taken before any of the level's storage
@@ -156,6 +169,9 @@ fn sweep_levels(
             }
         }
 
+        if let Some(filter) = sweep.filter.as_deref_mut() {
+            run.products.filter_level(eng, shape, filter)?;
+        }
         output_nodes += run.levels[t.idx()].slot_count() as u64;
         // Release this level's children's grid regions for a later level to
         // reuse, before the next iteration's own reserve fires.
@@ -171,6 +187,7 @@ fn apply_and_fallible_inner(
     g: &mut Tdd,
     marginalize_targets: MarginalTargets<'_>,
     quantified: QuantifiedSubtrees<'_>,
+    filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     lim.eager_reclaim();
@@ -235,7 +252,7 @@ fn apply_and_fallible_inner(
 
     sweep_levels(
         eng, &mut run, f, g,
-        &mut Sweep { vtree: &vtree, targets: marginalize_targets, quantified, ws: ws.as_mut() },
+        &mut Sweep { vtree: &vtree, targets: marginalize_targets, quantified, ws: ws.as_mut(), filter },
     )?;
 
     crate::marginal::canonicalize_apply_leaf_refs(&canon_leaves, &vtree, run.levels, ws.as_ref());

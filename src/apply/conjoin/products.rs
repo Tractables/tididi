@@ -37,6 +37,32 @@ impl Products {
         self.arena.reset(eng, sparse, n, left, right)
     }
 
+    pub(super) fn filter_level(
+        &mut self, eng: &Engine, shape: super::LevelShape,
+        keep: &mut dyn FnMut(crate::vtree::VtreeIdx, super::NodeIdx, super::NodeIdx) -> bool,
+    ) -> Result<(), OperationError> {
+        let t = shape.t.idx();
+        self.ensure_product_list_for_child(eng, t, shape.f.here, shape.g.here, false, false)?;
+        let base = self.arena.materialized(t);
+        let grid = self.arena.slab_mut();
+        let list = &mut self.product_lists[t];
+        let mut write = 0;
+        let mut poll = eng.limits().gate();
+        for read in 0..list.len() {
+            poll.poll(1)?;
+            let entry = list[read];
+            if keep(shape.t, super::NodeIdx(entry.left_idx.0), super::NodeIdx(entry.right_idx.0)) {
+                list[write] = entry; write += 1;
+            } else if let Some(base) = base {
+                grid[base.idx() + entry.left_idx.0 as usize * shape.g.here + entry.right_idx.0 as usize] = super::NO_PRODUCT;
+            }
+        }
+        poll.flush()?;
+        list.truncate(write);
+        self.live_counts[t] = write;
+        Ok(())
+    }
+
     pub(super) fn retain(&mut self, lim: &crate::limits::Limits) {
         self.arena.retain(lim);
         for list in &mut self.product_lists {

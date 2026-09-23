@@ -1,0 +1,43 @@
+//! Filtering intermediate products before a conjunction builds their parents.
+use super::*;
+
+impl Engine {
+    /// Conjoin structural diagrams, omitting intermediate products rejected by `keep`.
+    ///
+    /// The callback receives a vtree level and the original left and right node
+    /// indices. It visits live internal products after their level is built,
+    /// before any parent reads them. Leaves are retained. Returning false can
+    /// only remove models; the caller supplies the justification for removals.
+    /// If every rejected product is impossible under a common care constraint,
+    /// conjoining that constraint with the result preserves the original
+    /// conjunction under the same constraint.
+    /// The result may retain unreachable nodes and needs minimization for
+    /// canonical form. Both operands are consumed on every outcome.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::MarginalLevel`] for a summed-out level, and
+    /// the vtree, weight and resource errors of [`Engine::and`]. Callback work
+    /// is the caller's responsibility.
+    pub fn and_filter_products(
+        &self, mut f: Tdd, mut g: Tdd,
+        mut keep: impl FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool,
+    ) -> Result<Tdd, OperationError> {
+        crate::apply::check_vtree(&f, &g)?;
+        crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
+        for t in f.vtree().bottomup() {
+            if f.level(t).is_marginal() || g.level(t).is_marginal() {
+                return Err(OperationError::MarginalLevel(t));
+            }
+        }
+        let result = super::drive::apply_and_filtered(self, &mut f, &mut g,
+            MarginalTargets::None, QuantifiedSubtrees::default(), Some(&mut keep));
+        diagram::return_levels(self, diagram::PoolSlot::First, std::mem::take(&mut f.levels).into_vec());
+        diagram::return_levels(self, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
+        result
+    }
+}
+
+#[cfg(test)]
+#[path = "tests/filter.rs"]
+mod tests;

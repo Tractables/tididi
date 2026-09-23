@@ -55,7 +55,7 @@ pub(super) fn finalize_level(
     output_grid_base: GridBase,
     passthrough: Sides<bool>,
     run: &mut ApplyRun,
-    sweep: &mut Sweep<'_>,
+    sweep: &mut Sweep<'_, '_>,
 ) {
     let lim = eng.limits();
     let (t, t_idx) = (shape.t, shape.t.idx());

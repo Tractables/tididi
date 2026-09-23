@@ -351,7 +351,7 @@ pub(super) fn build_level_dense(
     f: &mut Tdd,
     g: &mut Tdd,
     level: LevelBuild,
-    sweep: &mut Sweep<'_>,
+    sweep: &mut Sweep<'_, '_>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let LevelBuild { shape, route, plan } = level;
