@@ -71,6 +71,13 @@ fn restrict_to_care_on(eng: &Engine, f: Tdd, mut care: Tdd) -> Result<Restrictio
     // Sound for any representation of `care`, since `g ∧ care == f ∧ care`
     // does not depend on it; the reduced one gives the walk fewer pairs.
     eng.reduce(&mut care, crate::reduce::ReductionPlan::default())?;
+    restrict_prepared::<false>(eng, f, &care, u64::MAX)
+}
+
+fn restrict_prepared<const BOUNDED: bool>(eng: &Engine, f: Tdd, care: &Tdd, max_pair_visits: u64) -> Result<RestrictionOutcome, OperationError> {
+    if BOUNDED && max_pair_visits == 0 {
+        return Ok(RestrictionOutcome::Unchanged(f));
+    }
     if care.is_zero() {
         // care ≡ ∅ ⇒ f ∧ care = ∅ ⇒ ⊥ is the smallest sound representative.
         return Ok(RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)));
@@ -82,7 +89,9 @@ fn restrict_to_care_on(eng: &Engine, f: Tdd, mut care: Tdd) -> Result<Restrictio
         // Incomparable roots ⇒ disjoint variable regions ⇒ care can't constrain f.
         return Ok(RestrictionOutcome::Unchanged(f));
     }
-    let marks = Marking::walk(eng, &f, &care, r)?;
+    let Some(marks) = Marking::walk::<BOUNDED>(eng, &f, care, r, max_pair_visits)? else {
+        return Ok(RestrictionOutcome::Unchanged(f));
+    };
     if !marks.root_live {
         // care killed every model of f ⇒ f ∧ care = ∅.
         return Ok(RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)));
@@ -106,6 +115,31 @@ struct Marking {
 }
 
 impl crate::Engine {
+    /// Restrict to a borrowed care diagram, abandoning an expensive discovery.
+    ///
+    /// Has the semantic and size guarantees of [`Tdd::restrict_to_care`].
+    /// The care diagram is neither copied nor reduced. `max_pair_visits`
+    /// bounds product-pair probes across discovery and liveness evaluation.
+    /// Exhausting it returns [`RestrictionOutcome::Unchanged`] with the
+    /// original operand intact. Zero skips the optional restriction.
+    ///
+    /// The allowance does not bound linear setup, the reachable-node check,
+    /// or rebuilding after successful discovery. It is not a wall-time or
+    /// total-work limit; the engine's limits still govern those operations.
+    ///
+    /// # Errors
+    ///
+    /// Vtree mismatch and engine cancellation, allocation and output limits
+    /// are errors as for [`Self::restrict_to_care`]. Exhausting the discovery
+    /// allowance does not suppress engine cancellation.
+    pub fn restrict_to_care_bounded(&self, f: Tdd, care: &Tdd, max_pair_visits: u64) -> Result<RestrictionOutcome, OperationError> {
+        crate::apply::check_vtree(&f, care)?;
+        let _op = self.limits().begin_operation();
+        self.limits().check_stop()?;
+        if f.is_zero() { return Ok(RestrictionOutcome::Unchanged(f)); }
+        restrict_prepared::<true>(self, f, care, max_pair_visits)
+    }
+
     /// Run [`Tdd::restrict_to_care`](crate::Tdd::restrict_to_care) using this batch's scratch and resource limits.
     ///
     /// # Errors

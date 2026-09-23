@@ -35,7 +35,7 @@ impl Marking {
     /// Walk the reachable pairs of `f × care` from vtree node `r` (a root of one
     /// operand) and mark every live f-node and f-pair. Two phases: discover the
     /// pairs top-down with a work stack, then evaluate their liveness bottom-up.
-    pub(super) fn walk(eng: &Engine, f: &Tdd, care: &Tdd, r: VtreeIdx) -> Result<Marking, OperationError> {
+    pub(super) fn walk<const BOUNDED: bool>(eng: &Engine, f: &Tdd, care: &Tdd, r: VtreeIdx, mut remaining: u64) -> Result<Option<Marking>, OperationError> {
         let mut poll = eng.limits().gate();
         let vtree = &f.vtree;
         let nlev = vtree.num_nodes();
@@ -50,9 +50,9 @@ impl Marking {
             Child::Pair(k) => k,
             Child::Live => {
                 // A compatible leaf or a marginal scalar: nothing died.
-                return Marking::trivial(eng, f, true);
+                return Marking::trivial(eng, f, true).map(Some);
             }
-            Child::Dead => return Marking::trivial(eng, f, false),
+            Child::Dead => return Marking::trivial(eng, f, false).map(Some),
         };
         let mut stack = Vec::new();
         eng.limits().try_push(&mut stack, (r, root_key))?;
@@ -61,6 +61,13 @@ impl Marking {
             let (lc, rc) = vtree.children(v);
             for (fl, fr) in refs(f, v, fo) {
                 for (cl, cr) in refs(care, v, co) {
+                    if BOUNDED {
+                        if remaining == 0 {
+                            poll.flush()?;
+                            return Ok(None);
+                        }
+                        remaining -= 1;
+                    }
                     poll.poll(1)?;
                     for (cv, a, b) in [(lc, fl, cl), (rc, fr, cr)] {
                         if let Child::Pair(k) = ctx.child(cv, a, b)
@@ -82,6 +89,13 @@ impl Marking {
                 for (k, (fl, fr)) in refs(f, v, fo).enumerate() {
                     let mut live = false;
                     for (cl, cr) in refs(care, v, co) {
+                        if BOUNDED {
+                            if remaining == 0 {
+                                poll.flush()?;
+                                return Ok(None);
+                            }
+                            remaining -= 1;
+                        }
                         poll.poll(1)?;
                         if ctx.live_of(&levels, lc, fl, cl) && ctx.live_of(&levels, rc, fr, cr) {
                             live = true;
@@ -108,7 +122,7 @@ impl Marking {
         }
         let root_live = levels[r.idx()].live[0];
         poll.flush()?;
-        Ok(Marking { alive, pair_alive, root_live })
+        Ok(Some(Marking { alive, pair_alive, root_live }))
     }
 
     /// Marks for a walk that never examined a pair: nothing dies (every reachable
