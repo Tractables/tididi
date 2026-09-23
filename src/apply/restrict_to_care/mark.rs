@@ -127,7 +127,7 @@ impl Marking {
 
     /// Marks for a walk that never examined a pair: nothing dies (every reachable
     /// node is reported alive, so `nothing_reachable_died` holds).
-    fn trivial(eng: &Engine, f: &Tdd, root_live: bool) -> Result<Marking, OperationError> {
+    pub(super) fn trivial(eng: &Engine, f: &Tdd, root_live: bool) -> Result<Marking, OperationError> {
         Ok(Marking {
             alive: mark_rows(eng, f, true)?,
             pair_alive: mark_rows(eng, f, u64::MAX)?,

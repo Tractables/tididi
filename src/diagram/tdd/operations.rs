@@ -421,6 +421,34 @@ impl Tdd {
         context.run(|eng| eng.restrict_to_care(self, care))
     }
 
+    /// Remove internal circuit nodes rejected by `keep`, dropping every pair
+    /// that uses them and cascading empty nodes to false.
+    ///
+    /// Calls `keep` once per stored structural internal node, including
+    /// unreachable nodes, except for an already-false operand. Leaves and
+    /// marginalized levels are retained. Node IDs refer to this operand before
+    /// rebuilding. Rejecting only unreachable nodes returns it unchanged.
+    ///
+    /// The result retains the vtree, weights and arithmetic, has no more pairs
+    /// than the input, and is orphan-free but need not be canonical. Call
+    /// [`Self::minimize`] when a canonical result is required. For a structural
+    /// diagram its models are a subset of the original models. This operation
+    /// does not establish that a rejected node is impossible under a care set;
+    /// that proof belongs to the caller.
+    ///
+    /// Consumes the operand on success and error. Keeping every node returns
+    /// its original allocation. The callback's own work is not bounded by the
+    /// engine's limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns allocation, cancellation and output-limit errors as for
+    /// [`Self::restrict_to_care`].
+    pub fn filter_nodes(self, keep: impl FnMut(crate::diagram::TddNodeId) -> bool) -> Result<Tdd, OperationError> {
+        let context = Arc::clone(self.context());
+        context.run(|eng| eng.filter_nodes(self, keep))
+    }
+
     /// Whether two structural diagrams represent the same Boolean function.
     ///
     /// Borrows both operands without changing them; they must share the same vtree
