@@ -178,6 +178,8 @@ impl Drop for WsGuard<'_> {
     fn drop(&mut self) {
         if self.repair {
             self.ws.p2_map.fill(NO_PRODUCT);
+            self.ws.p2_map_touched.clear();
+            self.ws.filtered_touched.clear();
         }
     }
 }
