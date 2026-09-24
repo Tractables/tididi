@@ -20,7 +20,7 @@
 //!    walked under `⊤` below it. Every pair is scanned (no early exit): an
 //!    `f`-pair is marked live when it is live against *some* care pair, and an
 //!    `f`-node when some pair of it is.
-//! 3. If the root pair is dead, `f ∧ care ≡ ⊥` → `False`. If every node and pair
+//! 3. If the root pair is dead, `f ∧ care ≡ ⊥` → `Unsatisfiable`. If every node and pair
 //!    reachable from `f`'s root is live → `Unchanged`. Otherwise `DeadRebuilder`
 //!    re-emits the live subgraph (marginal levels verbatim) and the orphan prune
 //!    reclaims children stranded by a collapsed partner → `Shrunk`.

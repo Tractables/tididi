@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::vtree::Vtree;
 use crate::Engine;
-use crate::limits::{OperationError};
+use crate::limits::OperationError;
 
 use crate::diagram::{self, *};
 

@@ -30,21 +30,15 @@
 
 use crate::Engine;
 use crate::limits::{Charged, OperationError, PollGate, Transient};
-use crate::reduce::{ReductionPlan};
+use crate::reduce::ReductionPlan;
 use crate::diagram::{EncodedChildRef, ChildDecoder, ChildPair, Tdd};
 use crate::diagram::sort_pairs;
 use crate::vtree::{Vtree, VtreeIdx};
 
-use crate::diagram::{LEAF_WIDTH, ONE_LEAF_IDX};
+use crate::diagram::LEAF_WIDTH;
+use crate::apply::TRUE_PAIR;
 
 use rustc_hash::FxHashMap;
-
-/// The pair of a ⊤ node: the constant-true node sits at local index 0 of every
-/// level, leaf or internal, so both sides name it.
-const TRUE_PAIR: ChildPair = ChildPair {
-    left: EncodedChildRef::from_raw(ONE_LEAF_IDX.0),
-    right: EncodedChildRef::from_raw(ONE_LEAF_IDX.0),
-};
 
 /// Items grouped by a `u32` key into contiguous runs: key `k` owns
 /// `items[starts[k]..starts[k + 1]]`.

@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use crate::Engine;
-use crate::limits::{OperationError};
+use crate::limits::OperationError;
 
 use crate::diagram::{ChildPair, NodeIdx, Tdd, ZERO};
 use crate::vtree::VtreeIdx;

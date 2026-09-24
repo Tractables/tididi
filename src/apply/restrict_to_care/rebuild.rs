@@ -1,11 +1,8 @@
 //! Re-emitting the live subgraph as a new diagram.
 
-#[cfg(test)]
-use std::sync::Arc;
-
 use crate::Engine;
 use crate::limits::{OperationError, PollGate};
-use crate::reduce::{ReductionPlan};
+use crate::reduce::ReductionPlan;
 use crate::diagram::{ChildDecoder, ChildPair, ChildSide, NodeIdx, Tdd, TddLevel, TddNodeId, ZERO, Assembly};
 use crate::diagram::sort_pairs;
 use crate::vtree::VtreeIdx;

@@ -70,6 +70,13 @@ pub(crate) fn prepare_weights<T: std::borrow::BorrowMut<crate::Tdd>>(operands: &
     Ok(())
 }
 
+/// The pair of a ⊤ node: the constant-true node sits at local index 0 of every
+/// level, leaf or internal, so both sides name it.
+pub(crate) const TRUE_PAIR: crate::diagram::ChildPair = crate::diagram::ChildPair {
+    left: crate::diagram::EncodedChildRef::from_raw(crate::diagram::ONE_LEAF_IDX.0),
+    right: crate::diagram::EncodedChildRef::from_raw(crate::diagram::ONE_LEAF_IDX.0),
+};
+
 /// Static 3×3 conjunction grid for implicit leaf product.
 ///
 /// `CONJOIN_GRID[i][j]` = output label index when conjoining leaf label `i`

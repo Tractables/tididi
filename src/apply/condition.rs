@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::build::constant_like;
 use crate::diagram::ChildSide;
 use crate::limits::OperationError;
-use crate::reduce::{ReductionPlan};
+use crate::reduce::ReductionPlan;
 use crate::diagram::sort_pairs;
 use crate::diagram::{EncodedChildRef, ChildDecoder, ChildPair, NodeKind, Tdd, TddLevel, EncodedNode, ZERO};
 use crate::vtree::{VarId, VtreeIdx};
@@ -203,7 +203,7 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, kee
 /// with no pairs at all.
 ///
 /// Both of conditioning's rewrites are this pass under a different predicate:
-/// the leaf restriction above, and the falsity sweep below.
+/// the leaf restriction and the falsity sweep above.
 fn rewrite_level_pairs(
     level: &mut TddLevel,
     rewrite_pair: impl Fn(ChildPair) -> Option<ChildPair>,
