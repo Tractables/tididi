@@ -32,10 +32,6 @@ const ACRONYMS: &[&str] = &[
     "TSC", "UNSAT",
 ];
 
-/// The one public module with no row in the boundary table: a doc-hidden shim
-/// that carries the README into the reference and holds nothing else.
-const UNTABLED_MODULES: &[&str] = &["readme"];
-
 fn crate_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
@@ -569,14 +565,13 @@ fn every_public_module_has_a_row_in_the_module_table() {
         .expect("the architecture document is readable")
         .replace(['[', ']'], "");
     let lib = fs::read_to_string(crate_dir().join("src/lib.rs")).expect("lib.rs is readable");
-    let untabled: HashSet<&str> = UNTABLED_MODULES.iter().copied().collect();
     let mut missing: Vec<String> = Vec::new();
     for line in lib.lines() {
         let trimmed = line.trim_start();
         let Some(rest) = trimmed.strip_prefix("pub mod ") else { continue };
         let name: String =
             rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
-        if name.is_empty() || untabled.contains(name.as_str()) {
+        if name.is_empty() {
             continue;
         }
         if !table.contains(&format!("| `{name}` |")) {

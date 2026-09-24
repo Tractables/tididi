@@ -42,8 +42,8 @@ pub mod check;
 mod access;
 #[cfg(test)]
 mod compile;
-pub mod r#gen;
-pub mod oracle;
+pub(crate) mod r#gen;
+pub(crate) mod oracle;
 #[cfg(test)]
 mod toy;
 

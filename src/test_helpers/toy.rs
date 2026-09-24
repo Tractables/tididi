@@ -60,7 +60,6 @@ pub const BIG: u128 = 1u128 << 40;
 /// marginal with `counts`, root holding one internal node per entry of
 /// `node_pair_lists` (pairs as raw `(left, right)` values; slot refs are
 /// bare indices under the bare-is-slot polarity).
-#[cfg(test)]
 pub fn toy(counts: Vec<u128>, node_pair_lists: &[&[(u32, u32)]]) -> Tdd {
     let vtree = Arc::new(Vtree::balanced(2));
     let root = vtree.root();

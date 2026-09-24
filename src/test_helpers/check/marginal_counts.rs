@@ -1,22 +1,9 @@
-//! Count-preservation brackets and the store-level slot checks.
-//!
-//! Sibling of `marginal.rs`, which holds the structural invariants; these are the
-//! ones stated in terms of the values a marginal store holds.
-
-use num_bigint::BigUint;
+//! The store-level slot checks: sibling of `marginal.rs`, which holds the
+//! structural invariants; these are stated in terms of the values a marginal
+//! store holds.
 
 use crate::diagram::Tdd;
 use crate::vtree::VtreeIdx;
-
-// ── Count-preservation localizer ─────────────────────────────────────────
-//
-// A *count-neutral* marginal rewrite — pair fusion, contract's marginal pass,
-// the marginal-context expansion in `restructure::relevel` — must leave the
-// diagram's model count unchanged: it re-encodes / merges
-// marginal nodes but represents the same set of models. `model_count_snapshot` /
-// `assert_model_count_preserved` bracket one such rewrite and panic, naming the op, when
-// the count moved. Each snapshot is a full `model_count`, so the caller decides
-// where (and whether) to place the pair.
 
 /// Marginal levels under a marginal parent that still hold per-node data.
 ///
@@ -51,48 +38,6 @@ pub fn subsumed_marginal_data_violations(tdd: &Tdd) -> Vec<VtreeIdx> {
         }
     }
     bad
-}
-
-/// Snapshot the diagram's model count for [`assert_model_count_preserved`]. `None` in
-/// weighted mode, where marginal levels carry no integer counts. Full
-/// `model_count` cost — pair it around one count-neutral marginal rewrite at
-/// a time.
-pub fn model_count_snapshot(tdd: &Tdd) -> Option<BigUint> {
-    if tdd.weights().is_some() {
-        return None;
-    }
-    Some(tdd.model_count().unwrap())
-}
-
-/// Assert the model count is unchanged vs a prior [`model_count_snapshot`]. Panics with
-/// the op label on mismatch. No-op when the
-/// snapshot was `None` (check disabled).
-///
-/// # Panics
-///
-/// Panics if the current model count differs from `before` (a count-neutral op
-/// changed the count). No-op when `before` is `None`.
-pub fn assert_model_count_preserved(tdd: &Tdd, before: Option<BigUint>, op: &str) {
-    // weighted mode: marginal levels carry no integer counts; skip the
-    // count-reading checks.
-    if tdd.weights().is_some() {
-        return;
-    }
-    let Some(before) = before else { return };
-    let after = tdd.model_count().unwrap();
-    if after != before {
-        // Surface the multiplicative factor (×2 for the m139 doubler) when it
-        // divides cleanly, to make the signature unmistakable in the panic.
-        let factor = if before != BigUint::ZERO && &after % &before == BigUint::ZERO {
-            format!(" (after = {}× before)", &after / &before)
-        } else {
-            String::new()
-        };
-        panic!(
-            "count-neutral op `{op}` changed the model count{factor}\n  \
-             before = {before}\n  after  = {after}"
-        );
-    }
 }
 
 #[cfg(test)]
