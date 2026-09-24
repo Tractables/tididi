@@ -84,7 +84,12 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
 ///   2. Emit: for each f-parent sharing the outer, for each alive inner product,
 ///      push the precomputed alive `(p2, product)` entries — zero dead probes.
 ///   3. Clear only the `filtered` buckets touched this outer.
-pub(crate) fn scatter_outsens<const SWAPPED: bool>(
+///
+/// `counted` says the direction estimate ran for this level, so its counts
+/// start the index builds; `flat` says the candidates go to the flat list
+/// rather than a bucket per f parent.
+#[expect(clippy::too_many_arguments)]
+pub(super) fn scatter_outsens<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     left_level: &TddLevel,
@@ -92,18 +97,18 @@ pub(crate) fn scatter_outsens<const SWAPPED: bool>(
     shape: LevelShape,
     pl: Sides<&[ProductEntry]>,
     leaves: Sides<bool>,
+    counted: bool,
+    flat: bool,
 ) -> Result<(), OperationError> {
     // The leaf arm runs when the leaf side is a leaf: the left child normally,
-    // the right one when swapped. The direction estimate ran, and its counts
-    // start the index builds, when neither child is a leaf.
+    // the right one when swapped.
     let leaf_side_is_leaf = if !SWAPPED { leaves.left } else { leaves.right };
-    let counted = !leaves.left && !leaves.right;
     build_scatter_indexes::<SWAPPED>(eng, ws, left_level, right_level, shape, counted)?;
     if leaf_side_is_leaf {
         return scatter_leaf_arm::<SWAPPED>(eng, ws, pl);
     }
     build_inner_index::<SWAPPED>(eng, ws, right_level, shape, counted)?;
-    scatter_general_arm::<SWAPPED>(eng, ws, shape, pl)
+    scatter_general_arm::<SWAPPED>(eng, ws, shape, pl, flat)
 }
 
 /// Build the two reverse indexes both arms read.
@@ -564,9 +569,9 @@ fn scatter_general_arm<const SWAPPED: bool>(
     ws: &mut SparseWorkspace,
     shape: LevelShape,
     pl: Sides<&[ProductEntry]>,
+    flat: bool,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
-    let flat = ws.flat_candidates;
     let (pl_inner, pl_outer) = if !SWAPPED { (pl.left, pl.right) } else { (pl.right, pl.left) };
     let mut s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer)?;
 
@@ -607,7 +612,7 @@ fn scatter_general_arm<const SWAPPED: bool>(
 /// `par_sorted[par_offsets[p1]..par_offsets[p1 + 1]]`. The four passes are
 /// those of `build_reverse_index`.
 #[inline(never)]
-pub(crate) fn sort_candidates(
+pub(super) fn sort_candidates(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     parents: usize,
@@ -643,18 +648,18 @@ pub(crate) fn sort_candidates(
 /// the parents `boundaries[i] .. boundaries[i+1]`.
 ///
 /// A single p1's bucket is never split. Returns the single-chunk degenerate
-/// list `[0, left_width]` when `bytes_budget` is `0` or `usize::MAX`, or when the
+/// list `[0, left_width]` when `bytes_budget` is `usize::MAX`, or when the
 /// whole level fits in one chunk — in which case the call site's loop runs
 /// exactly once and the path is byte-for-byte equivalent to the unchunked code.
 #[inline]
-pub(crate) fn plan_e_f_chunks(
+pub(super) fn plan_e_f_chunks(
     candidates: impl Iterator<Item = usize>,
     left_width: usize,
     bytes_budget: usize,
 ) -> SmallVec<[u32; 8]> {
     let mut out: SmallVec<[u32; 8]> = SmallVec::new();
     out.push(0);
-    if bytes_budget == 0 || bytes_budget == usize::MAX {
+    if bytes_budget == usize::MAX {
         out.push(left_width as u32);
         return out;
     }
@@ -671,59 +676,31 @@ pub(crate) fn plan_e_f_chunks(
     out
 }
 
-/// Emit output nodes for f-parents in `[p1_start..p1_end)` (Phase E + Phase F
-/// applied to one chunk). Reuses `ws.emit_pairs`, `ws.pair_counts`,
-/// `ws.sorted_pairs` from scratch (cleared/resized at chunk entry) so peak
-/// transient bytes stay bounded by the chunk size. After emit, drops the
-/// inner allocations of `ws.par_buckets[p1_start..p1_end]` so the next
-/// chunk's `emit_pairs` grows in already-released address space.
+/// Phase E for the f parents in `[p1_start..p1_end)`: dedup parent products
+/// via `p2_map`, emit `ChildPair`s into `ws.emit_pairs` (cleared by the
+/// caller), and with `drop_consumed` drop the consumed `par_buckets` rows so
+/// the next chunk's `emit_pairs` grows in already-released address space.
 ///
-/// Pre: `ws.par_buckets[p1_start..p1_end]` is populated by Phase C/D.
-/// `pl_output.len()` at entry == number of parents emitted by previous chunks
-/// (so `prod_idx` stays sequential globally).
-///
-/// `emit_pairs` stores the *chunk-local* parent index (`prod_idx - chunk_parent_start`),
-/// allowing `pair_counts` to be sized to `num_new_parents` rather than the
-/// running total.
-#[inline]
-pub(crate) fn flush_chunk(
-    eng: &Engine,
-    ws: &mut SparseWorkspace,
-    level: &mut TddLevel,
-    pl_output: &mut Vec<ProductEntry>,
-    p1_start: usize,
-    p1_end: usize,
-    drop_consumed: bool,
-) -> Result<(), OperationError> {
-    let chunk_parent_start = pl_output.len() as u32;
-    ws.emit_pairs.clear();
-
-    flush_chunk_phase_e(eng, ws, pl_output, chunk_parent_start, p1_start, p1_end, drop_consumed)?;
-    flush_chunk_phase_f(eng, ws, level, pl_output, chunk_parent_start)?;
-    Ok(())
-}
-
-/// Phase E (chunk-local): dedup parent products via `p2_map`, emit `ChildPair`s
-/// into `ws.emit_pairs`, and optionally drop consumed `par_buckets` rows.
-///
-/// Called exclusively from `flush_chunk`.
+/// `chunk_parent_start` is `pl_output.len()` at entry, the number of parents
+/// emitted by previous chunks; `emit_pairs` stores the chunk-local parent
+/// index `prod_idx - chunk_parent_start`, so `pair_counts` is sized to this
+/// chunk's parents rather than the running total. `flat` says the candidates
+/// sit in the sorted flat list rather than the buckets.
 #[inline(never)]
-fn flush_chunk_phase_e(
+#[expect(clippy::too_many_arguments)]
+pub(super) fn flush_chunk_phase_e(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     pl_output: &mut Vec<ProductEntry>,
     chunk_parent_start: u32,
     p1_start: usize,
     p1_end: usize,
+    flat: bool,
     drop_consumed: bool,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
-    // Defensive: guard against a prior call bailing mid-loop and leaving
-    // stale touched entries (mirrors `scatter_outsens`'s own defensive
-    // `ws.filtered_touched.clear()`).
-    ws.p2_map_touched.clear();
 
-    if ws.flat_candidates {
+    if flat {
         // The sorted list is moved out for the walk for the reason a bucket
         // is below, and handed back whatever the walk found: a level's
         // worth of candidates is worth keeping warm.
@@ -803,8 +780,7 @@ fn emit_parent(
 
     // Lazy-clear p2_map (only entries actually written this p1, via
     // the touched list — avoids rescanning the candidates a second time).
-    for ti in 0..ws.p2_map_touched.len() {
-        let p2 = ws.p2_map_touched[ti];
+    for &p2 in &ws.p2_map_touched {
         ws.p2_map[p2 as usize] = NO_PRODUCT;
     }
     ws.p2_map_touched.clear();
@@ -812,24 +788,24 @@ fn emit_parent(
 }
 
 /// Phase F (chunk-local): counting-sort `ws.emit_pairs` by chunk-local parent
-/// index and create output nodes in `level`.
+/// index and create output nodes in `level`. No-ops when `ws.emit_pairs`
+/// produced zero new parents for this chunk.
 ///
-/// Called exclusively from `flush_chunk`. No-ops when `ws.emit_pairs` produced
-/// zero new parents for this chunk.
+/// `duplicates_legal` says a node's pair list may repeat a pair: some level
+/// of an operand, or of the output so far, is marginal, so pair lists are
+/// multisets feeding a sum. Read only by the debug duplicate check below.
 #[inline(never)]
-fn flush_chunk_phase_f(
+pub(super) fn flush_chunk_phase_f(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     level: &mut TddLevel,
     pl_output: &[ProductEntry],
     chunk_parent_start: u32,
+    duplicates_legal: bool,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let num_new_parents = pl_output.len() - chunk_parent_start as usize;
     if num_new_parents == 0 { return Ok(()); }
-
-    // Copied out before `ws.sorted_pairs` is mutably borrowed below.
-    let duplicates_legal = ws.duplicates_legal;
 
     let pc = &mut ws.pair_counts;
     lim.try_resize(pc, num_new_parents + 1, 0)?;
@@ -867,7 +843,7 @@ fn flush_chunk_phase_f(
         // No sort and no dedup: pair lists are order-free, and canonical child
         // levels make the grid lookups injective, so a duplicate in a purely
         // Boolean diagram is an upstream canonicity violation. Once any level
-        // is marginal, duplicates are legal (`ws.duplicates_legal`).
+        // is marginal, duplicates are legal (`duplicates_legal`).
         debug_assert!(
             duplicates_legal || {
                 let mut seen = std::collections::HashSet::new();

@@ -80,7 +80,8 @@ pub(crate) fn fill_identity_product_list(
 }
 
 /// Run the scatter for one level: choose which side to iterate and how the
-/// candidates are collected, then join.
+/// candidates are collected, then join. Returns whether the candidates were
+/// collected flat, which is where the emit reads them from.
 ///
 /// With both children non-leaf the direction comes from
 /// `estimate_scatter_direction`, and its emit-step count decides between a
@@ -94,7 +95,7 @@ fn scatter_level(
     shape: LevelShape,
     pl: Sides<&[ProductEntry]>,
     thresholds: SparseThresholds,
-) -> Result<(), OperationError> {
+) -> Result<bool, OperationError> {
     let lim = eng.limits();
     let t_idx = shape.t.idx();
     let leaves = Sides {
@@ -117,7 +118,6 @@ fn scatter_level(
         (shape.f.left * shape.g.left > shape.f.right * shape.g.right, false)
     };
 
-    ws.flat_candidates = flat;
     if flat {
         ws.par_flat.clear();
     } else {
@@ -129,25 +129,35 @@ fn scatter_level(
     // levels. The general arm carries no dead-probe inner loop; the leaf arm
     // keeps the leaf fast-path shape.
     if !swap_direction {
-        scatter_outsens::<false>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves)?;
+        scatter_outsens::<false>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, both_non_leaf, flat)?;
     } else {
-        scatter_outsens::<true>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves)?;
+        scatter_outsens::<true>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, both_non_leaf, flat)?;
     }
     if flat {
         sort_candidates(eng, ws, shape.f.here)?;
+        // Sorted, the flat list is dead; its capacity stays for the next
+        // level and the retention cap decides its fate at checkout's end.
+        ws.par_flat.clear();
     }
-    Ok(())
+    Ok(flat)
 }
 
 /// The sparse workspace, checked out for one level.
 ///
 /// `p2_map` is lazily cleared — the emit pass restores only the entries it
-/// wrote — so a bail mid-level (an `OverBudget` out of a `try_push` deep in the
-/// scatter) would leave stale product indices behind, and the next level would
-/// read them as live and undercount. The guard makes that impossible without
-/// any state surviving the call: the repair runs in `Drop`, on the bail path
-/// only, because [`WsGuard::scatter_clean`] disarms it once the level's own
-/// cleanup has finished.
+/// wrote, listed in `p2_map_touched` — so a bail mid-level (an `OverBudget`
+/// out of a `try_push` deep in the scatter) would leave stale product indices
+/// behind, and the next level would read them as live and undercount; a stale
+/// touched list would index a narrower level's map out of bounds. The guard
+/// makes that impossible without any state surviving the call: the repair
+/// runs in `Drop`, on the bail path only, because [`WsGuard::scatter_clean`]
+/// disarms it once the level's own cleanup has finished.
+///
+/// Nothing else needs repair. Every other buffer is resized, filled or
+/// cleared over its live range when the next level enters (`sides`,
+/// `ensure_buckets_cleared`, `build_reverse_index`, the chunk phases), the
+/// marking arrays are emptied by advancing their epoch, and `filtered`'s
+/// touched list is cleared with it here for the same reason as `p2_map`'s.
 struct WsGuard<'a> {
     ws: crate::limits::pool::PoolGuard<'a, SparseWorkspace>,
     repair: bool,
@@ -196,7 +206,9 @@ impl std::ops::DerefMut for WsGuard<'_> {
 ///
 /// Phases E+F are chunked by f-parent index range when the projected transient
 /// exceeds `thresholds.chunk_bytes`; each chunk's `par_buckets` rows are
-/// dropped before the next chunk's `emit_pairs` grows.
+/// dropped before the next chunk's `emit_pairs` grows. A level whose
+/// candidates were collected flat holds them in one sorted list the chunks
+/// read in place, so chunking bounds only its emit buffers.
 ///
 /// # Errors
 ///
@@ -220,14 +232,14 @@ pub(crate) fn apply_sparse_level(
     let ws = &mut *guard;
 
     // Duplicate pairs in one node's list are legal once any level of the
-    // diagram is marginal — pair lists are then multisets feeding a sum
-    // A duplicate here is *inherited*: an
-    // operand parent whose own list holds the same pair twice produces the
-    // same product pair twice, which is exactly the multiplicity the count
-    // recurrence needs. Only the pure-Boolean case still guarantees
-    // set-ness, so that is where the Phase F check stays armed. `cfg!` is a
-    // compile-time constant, so the level scan is dead code in release.
-    ws.duplicates_legal = cfg!(debug_assertions)
+    // diagram is marginal — pair lists are then multisets feeding a sum.
+    // A duplicate here is *inherited*: an operand parent whose own list
+    // holds the same pair twice produces the same product pair twice, which
+    // is exactly the multiplicity the count recurrence needs. Only the
+    // pure-Boolean case still guarantees set-ness, so that is where the
+    // Phase F check stays armed. `cfg!` is a compile-time constant, so the
+    // level scan is dead code in release.
+    let duplicates_legal = cfg!(debug_assertions)
         && (f.levels.iter().any(|l| l.is_marginal())
             || g.levels.iter().any(|l| l.is_marginal())
             || levels.iter().any(|l| l.is_marginal()));
@@ -241,25 +253,30 @@ pub(crate) fn apply_sparse_level(
     // opposite operand is keyed by the non-leaf child for selectivity,
     // and `CONJOIN_GRID` supplies the leaf product directly.
 
-    scatter_level(eng, ws, f, g, shape, pl, thresholds)?;
+    let flat = scatter_level(eng, ws, f, g, shape, pl, thresholds)?;
 
     // `plan_e_f_chunks` greedy-packs f-parent indices into Phase E+F chunks
-    // under the sparse chunk budget (`usize::MAX` disables).
-    // A level that fits in one chunk takes a single `flush_chunk` call with
-    // `drop_consumed=false`, preserving cross-apply par_buckets capacity reuse.
-    // Wider levels split into several chunks with `drop_consumed=true`,
-    // releasing each consumed range's `par_buckets[p1]` before the next
-    // chunk's `emit_pairs` grows.
+    // under the sparse chunk budget (`usize::MAX` disables). A level that
+    // fits in one chunk is flushed once with `drop_consumed=false`,
+    // preserving cross-apply par_buckets capacity reuse. Wider levels split
+    // into several chunks with `drop_consumed=true`, releasing each consumed
+    // range's `par_buckets[p1]` before the next chunk's `emit_pairs` grows.
+    // Each chunk reuses `emit_pairs`, `pair_counts` and `sorted_pairs`, so
+    // the peak transient stays bounded by the chunk size; `pl_output` grows
+    // across chunks, so `prod_idx` stays sequential over the level.
     let level = &mut levels[t_idx];
-    let boundaries = if ws.flat_candidates {
+    let boundaries = if flat {
         plan_e_f_chunks(ws.par_offsets.windows(2).map(|w| (w[1] - w[0]) as usize), shape.f.here, thresholds.chunk_bytes)
     } else {
         plan_e_f_chunks(ws.par_buckets.iter().map(Vec::len), shape.f.here, thresholds.chunk_bytes)
     };
     let is_chunked = boundaries.len() > 2;
     for window in boundaries.windows(2) {
-        flush_chunk(eng, ws, level, pl_output,
-            window[0] as usize, window[1] as usize, is_chunked)?;
+        let (p1_start, p1_end) = (window[0] as usize, window[1] as usize);
+        let chunk_parent_start = pl_output.len() as u32;
+        ws.emit_pairs.clear();
+        flush_chunk_phase_e(eng, ws, pl_output, chunk_parent_start, p1_start, p1_end, flat, is_chunked)?;
+        flush_chunk_phase_f(eng, ws, level, pl_output, chunk_parent_start, duplicates_legal)?;
     }
 
     #[cfg(debug_assertions)]

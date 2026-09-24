@@ -7,7 +7,7 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 
 use super::inner_index::{block, pack};
-use super::{ForcedThresholds, SparseThresholds};
+use super::{ForcedThresholds, SparseThresholds, BYTES_PER_PAR_ENTRY};
 
 use crate::diagram::Tdd;
 use crate::vtree::{VarId, Vtree};
@@ -64,4 +64,18 @@ fn flat_candidates_agree_with_buckets_and_the_dense_grid() {
     }
     assert!(from_flat.equivalent(&from_buckets).unwrap());
     assert!(from_flat.equivalent(&from_dense).unwrap());
+}
+
+#[test]
+fn chunked_flat_candidates_match_the_unchunked_list() {
+    let eng = Engine::new();
+    let sparse = SparseThresholds { min_grid: 1, sparsity_factor: 1, ..SparseThresholds::PRODUCTION };
+    let flat = SparseThresholds { flat_parents: 1, ..sparse };
+    // A one-entry budget gives every parent with a candidate a chunk of its own.
+    let chunked = SparseThresholds { chunk_bytes: BYTES_PER_PAR_ENTRY, ..flat };
+    let vtree = vtree();
+    let whole = keyed_join(&eng, &vtree, flat);
+    let in_chunks = keyed_join(&eng, &vtree, chunked);
+    assert_eq!(in_chunks.model_count().unwrap(), BigUint::from(10u32));
+    assert!(in_chunks.equivalent(&whole).unwrap());
 }

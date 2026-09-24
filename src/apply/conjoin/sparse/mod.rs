@@ -13,13 +13,18 @@ use super::{OperationError, NO_PRODUCT, Tdd, TddLevel, ChildPair, ZERO,
 };
 
 mod config;
-pub(crate) use config::*;
+use config::*;
+pub(crate) use config::{sparse_thresholds, SparseThresholds};
 mod index;
-pub(crate) use index::*;
+use index::*;
+pub(crate) use index::{LeftNodeIdx, ProductEntry, ProductNodeIdx, RightNodeIdx, SparseWorkspace};
 mod scatter;
-pub(crate) use scatter::*;
+use scatter::*;
 mod level;
-pub(crate) use level::*;
+pub(crate) use level::{
+    apply_leaf_levels, apply_sparse_level, compute_apply_output, fill_identity_product_list,
+    is_self_conjunction, ProductLists,
+};
 
 #[cfg(test)]
 mod tests;

@@ -6,18 +6,18 @@ use crate::limits::Limits;
 
 /// Candidate that survived the sibling liveness filter, grouped by f-parent.
 #[derive(Clone, Copy)]
-pub(crate) struct ParEntry {
-    pub(crate) p2: u32,      // g parent index
-    pub(crate) a_prod: u32,  // compacted left-child product index
-    pub(crate) sib_idx: u32, // compacted right-child product index
+pub(super) struct ParEntry {
+    pub(super) p2: u32,      // g parent index
+    pub(super) a_prod: u32,  // compacted left-child product index
+    pub(super) sib_idx: u32, // compacted right-child product index
 }
 
 /// A candidate with the f parent it belongs to, as the flat list holds it
 /// before the sort by parent.
 #[derive(Clone, Copy)]
-pub(crate) struct Candidate {
-    pub(crate) parent: u32,
-    pub(crate) entry: ParEntry,
+pub(super) struct Candidate {
+    pub(super) parent: u32,
+    pub(super) entry: ParEntry,
 }
 
 /// Index of a node in `f.levels[t].nodes`. Distinct from `RightNodeIdx` and
@@ -61,35 +61,35 @@ pub(crate) struct ProductEntry {
 #[derive(Default)]
 pub(crate) struct SparseWorkspace {
     // ── Phase A: reverse indices (child → parent) for scatter ──
-    pub(crate) rev_entries_c1: Vec<RevEntry>,
-    pub(crate) rev_offsets_c1: Vec<u32>,         // prefix-sum offsets, length = child_width + 1
-    pub(crate) rev_entries_c2: Vec<RevEntry>,
-    pub(crate) rev_offsets_c2: Vec<u32>,
+    pub(super) rev_entries_c1: Vec<RevEntry>,
+    pub(super) rev_offsets_c1: Vec<u32>,         // prefix-sum offsets, length = child_width + 1
+    pub(super) rev_entries_c2: Vec<RevEntry>,
+    pub(super) rev_offsets_c2: Vec<u32>,
 
     // ── The two children's product lists read by f index ──
     // A product list is emitted in ascending `left_idx` order by every
     // producer, so its bucket for one f index is a slice of it; these hold
     // the slice bounds (`bucket_offsets`) for the inner and the outer child.
-    pub(crate) inner_offsets: Vec<u32>,
-    pub(crate) outer_offsets: Vec<u32>,
+    pub(super) inner_offsets: Vec<u32>,
+    pub(super) outer_offsets: Vec<u32>,
 
     // ── Output-sensitive join (`scatter_outsens`) ──
     // Per-outer filtered g index: inner-g-child → [(p2, attached_prod)], rebuilt
     // each outer from the live set + the opposite-keyed g reverse index, so the
     // emit loop iterates only alive entries, with no dead probes.
     //   normal:  filtered[a2] = [(p2, sib_idx)]   swapped: filtered[s2] = [(p2, a_prod)]
-    pub(crate) filtered: Vec<Vec<(u32, u32)>>,
-    pub(crate) filtered_touched: Vec<u32>,          // indices of `filtered` written this outer, to clear
+    pub(super) filtered: Vec<Vec<(u32, u32)>>,
+    pub(super) filtered_touched: Vec<u32>,          // indices of `filtered` written this outer, to clear
 
     // ── Output-sensitive join: the inner-g children the emit will read ──
     // The emit reads `filtered` only at the g children this outer's f parents
     // name through their live left products, so the build buckets only those
     // — a semi-join of the g side against the f side, one level up.
-    pub(crate) wanted: Vec<u32>,                    // inner-g children this outer's emit reads
-    pub(crate) wanted_epoch: u32,                   // the stamp that counts as marked
-    pub(crate) wanted_keys: Vec<u32>,               // the marked inner-g children, in marking order
-    pub(crate) inner_seen: Vec<u32>,                // inner f children already walked this outer
-    pub(crate) inner_seen_epoch: u32,               // likewise
+    pub(super) wanted: Vec<u32>,                    // inner-g children this outer's emit reads
+    pub(super) wanted_epoch: u32,                   // the stamp that counts as marked
+    pub(super) wanted_keys: Vec<u32>,               // the marked inner-g children, in marking order
+    pub(super) inner_seen: Vec<u32>,                // inner f children already walked this outer
+    pub(super) inner_seen_epoch: u32,               // likewise
 
     // ── Output-sensitive join: the second way to build `filtered` ──
     // g's reverse index keyed by the join's inner-g child, the opposite key
@@ -99,45 +99,35 @@ pub(crate) struct SparseWorkspace {
     // the wanted inner-g children and keeping those under one of the outer's
     // keys. `outer_keys` marks those keys for the walk and `outer_attached`
     // holds each one's product.
-    pub(crate) rev_entries_c3: Vec<RevEntry>,
-    pub(crate) rev_offsets_c3: Vec<u32>,
-    pub(crate) outer_keys: Vec<u32>,
-    pub(crate) outer_keys_epoch: u32,
-    pub(crate) outer_attached: Vec<u32>,
+    pub(super) rev_entries_c3: Vec<RevEntry>,
+    pub(super) rev_offsets_c3: Vec<u32>,
+    pub(super) outer_keys: Vec<u32>,
+    pub(super) outer_keys_epoch: u32,
+    pub(super) outer_attached: Vec<u32>,
 
     // ── Phase E: parent dedup ──
-    pub(crate) par_buckets: Vec<Vec<ParEntry>>,     // surviving candidates bucketed by f-parent
+    pub(super) par_buckets: Vec<Vec<ParEntry>>,     // surviving candidates bucketed by f-parent
     // The flat alternative a level with many more parents than candidates
     // takes (`flat_candidates_win`): the scatter appends every candidate
     // with its parent to `par_flat`, and `sort_candidates` counting-sorts
     // them into `par_sorted`, parent `p1`'s run being
-    // `par_sorted[par_offsets[p1]..par_offsets[p1 + 1]]`. `flat_candidates`
-    // says which representation the current level filled.
-    pub(crate) flat_candidates: bool,
-    pub(crate) par_flat: Vec<Candidate>,
-    pub(crate) par_sorted: Vec<ParEntry>,
-    pub(crate) par_offsets: Vec<u32>,
-    pub(crate) p2_map: Vec<u32>,                    // flat lookup: p2_map[right_parent] → compacted idx, NO_PRODUCT if new
-    pub(crate) p2_map_touched: Vec<u32>,            // p2 values written into p2_map this p1's emit pass, to clear
+    // `par_sorted[par_offsets[p1]..par_offsets[p1 + 1]]`.
+    pub(super) par_flat: Vec<Candidate>,
+    pub(super) par_sorted: Vec<ParEntry>,
+    pub(super) par_offsets: Vec<u32>,
+    pub(super) p2_map: Vec<u32>,                    // flat lookup: p2_map[right_parent] → compacted idx, NO_PRODUCT if new
+    pub(super) p2_map_touched: Vec<u32>,            // p2 values written into p2_map this p1's emit pass, to clear
 
     // ── Scatter-direction estimator ──
     // Per-child-index pair counters for the four (operand × side) index spaces
     // `estimate_scatter_direction` sums over, packed back-to-back in one buffer:
     // f-by-left, f-by-right, g-by-left, g-by-right.
-    pub(crate) est_counts: Vec<u32>,
+    pub(super) est_counts: Vec<u32>,
 
     // ── Phase F: counting-sort pairs into output nodes ──
-    pub(crate) emit_pairs: Vec<(u32, ChildPair)>,   // (parent_prod_idx, pair) for all surviving pairs
-    pub(crate) pair_counts: Vec<u32>,               // per-parent pair count, then prefix-sum offsets
-    pub(crate) sorted_pairs: Vec<ChildPair>,        // output buffer for counting sort
-
-    /// True when some level of an operand (or of the output built so far) is
-    /// marginal, which makes a node's pair list a legal *multiset* rather than a
-    /// set (see `content_twin.rs`). Set on entry to
-    /// `apply_sparse_level`; read only by the debug-only duplicate-pair check in
-    /// Phase F, and always `false` in release (the scan is `cfg!`-gated so it
-    /// compiles out).
-    pub(crate) duplicates_legal: bool,
+    pub(super) emit_pairs: Vec<(u32, ChildPair)>,   // (parent_prod_idx, pair) for all surviving pairs
+    pub(super) pair_counts: Vec<u32>,               // per-parent pair count, then prefix-sum offsets
+    pub(super) sorted_pairs: Vec<ChildPair>,        // output buffer for counting sort
 }
 
 impl SparseWorkspace {
@@ -172,7 +162,7 @@ impl SparseWorkspace {
 /// finishes the summation, because the amount handed back to `lim` has to be
 /// what is actually freed and not just the threshold that tripped.
 #[inline]
-pub(crate) fn drop_if_large<E>(lim: &Limits, v: &mut Vec<Vec<E>>) {
+pub(super) fn drop_if_large<E>(lim: &Limits, v: &mut Vec<Vec<E>>) {
     let elem = std::mem::size_of::<E>();
     let spine = v.capacity().saturating_mul(std::mem::size_of::<Vec<E>>());
     let mut bytes = spine;
@@ -199,9 +189,9 @@ pub(crate) fn drop_if_large<E>(lim: &Limits, v: &mut Vec<Vec<E>>) {
 /// One entry of a reverse index: a parent of the keyed child, and the child it
 /// holds on the other side of the same pair.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct RevEntry {
-    pub(crate) parent: u32,
-    pub(crate) other: u32,
+pub(super) struct RevEntry {
+    pub(super) parent: u32,
+    pub(super) other: u32,
 }
 
 /// Build a reverse index from a level's pairs, keyed by one child side:
@@ -221,7 +211,7 @@ pub(crate) struct RevEntry {
 ///   3. Fill: scatter `(parent_idx, other_side)` using `offsets` as write cursors,
 ///      leaving each `offsets[i]` one-past-the-end of bucket `i`
 ///   4. Restore: shift right by one so `offsets[i]` is back at start-of-bucket
-pub(crate) fn build_reverse_index<const BY_RIGHT: bool>(
+pub(super) fn build_reverse_index<const BY_RIGHT: bool>(
     eng: &Engine,
     level: &TddLevel,
     key_width: usize,
@@ -275,7 +265,7 @@ pub(crate) fn build_reverse_index<const BY_RIGHT: bool>(
 /// the end of bucket `i`, shift the slice right by one so every `offsets[i]`
 /// is restored to the start of its bucket (and `offsets[0] = 0`).
 #[inline]
-pub(crate) fn shift_offsets_right_by_one(offsets: &mut [u32]) {
+pub(super) fn shift_offsets_right_by_one(offsets: &mut [u32]) {
     let mut prev = 0u32;
     for slot in offsets.iter_mut() {
         std::mem::swap(&mut *slot, &mut prev);
@@ -285,7 +275,7 @@ pub(crate) fn shift_offsets_right_by_one(offsets: &mut [u32]) {
 /// Ensure `buckets` has ≥ `n` inner Vecs (growing via `resize_with`), then clear
 /// the first `n`. Buckets that already existed keep their reserved capacity —
 /// this is how the sparse workspace amortizes allocations across calls.
-pub(crate) fn ensure_buckets_cleared<T>(eng: &Engine, buckets: &mut Vec<Vec<T>>, n: usize) -> Result<(), OperationError> {
+pub(super) fn ensure_buckets_cleared<T>(eng: &Engine, buckets: &mut Vec<Vec<T>>, n: usize) -> Result<(), OperationError> {
     let lim = eng.limits();
     if buckets.len() < n {
         let additional = n - buckets.len();

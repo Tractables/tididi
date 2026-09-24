@@ -42,12 +42,12 @@ pub(crate) fn sparse_thresholds() -> SparseThresholds {
 
 /// The direction estimate's verdict for one level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ScatterChoice {
+pub(super) struct ScatterChoice {
     /// Key the outer loop by f's left child rather than its right one.
-    pub(crate) swapped: bool,
+    pub(super) swapped: bool,
     /// The steps the emit takes in that direction: one per f pair per
     /// product of the inner child, whatever each finds.
-    pub(crate) emit_steps: u128,
+    pub(super) emit_steps: u128,
 }
 
 /// Whether a level collects its candidates in one flat list, sorted by f
@@ -61,7 +61,7 @@ pub(crate) struct ScatterChoice {
 /// It wins when the parents outnumber half the emit's steps, the steps
 /// standing in for the candidates the emit has not yet produced, and is
 /// not worth the switch below `flat_parents` parents.
-pub(crate) fn flat_candidates_win(thresholds: SparseThresholds, parents: usize, emit_steps: u128) -> bool {
+pub(super) fn flat_candidates_win(thresholds: SparseThresholds, parents: usize, emit_steps: u128) -> bool {
     parents >= thresholds.flat_parents && (parents as u128) * 2 > emit_steps
 }
 
@@ -98,7 +98,7 @@ pub(crate) fn flat_candidates_win(thresholds: SparseThresholds, parents: usize, 
 /// is `OverBudget` rather than an abort, and are left there for the
 /// reverse-index builds, which start from the same counts: see
 /// [`EstCounts`].
-pub(crate) fn estimate_scatter_direction(
+pub(super) fn estimate_scatter_direction(
     eng: &Engine,
     est_counts: &mut Vec<u32>,
     left_level: &TddLevel,
@@ -156,16 +156,16 @@ pub(crate) fn estimate_scatter_direction(
 /// A reverse index keyed by one of those children starts from the same
 /// count, so a build after the estimate takes it from here rather than
 /// counting the pairs again.
-pub(crate) struct EstCounts<'a> {
-    pub(crate) f_left: &'a [u32],
-    pub(crate) f_right: &'a [u32],
-    pub(crate) g_left: &'a [u32],
-    pub(crate) g_right: &'a [u32],
+pub(super) struct EstCounts<'a> {
+    pub(super) f_left: &'a [u32],
+    pub(super) f_right: &'a [u32],
+    pub(super) g_left: &'a [u32],
+    pub(super) g_right: &'a [u32],
 }
 
 impl<'a> EstCounts<'a> {
     /// Split the buffer the estimate filled for `shape`.
-    pub(crate) fn of(est_counts: &'a [u32], shape: crate::apply::conjoin::setup::LevelShape) -> EstCounts<'a> {
+    pub(super) fn of(est_counts: &'a [u32], shape: crate::apply::conjoin::setup::LevelShape) -> EstCounts<'a> {
         let crate::apply::conjoin::setup::LevelShape { f, g, .. } = shape;
         let (f_left, rest) = est_counts.split_at(f.left);
         let (f_right, rest) = rest.split_at(f.right);
@@ -198,8 +198,11 @@ fn walk_and_keys(pl: &[ProductEntry], cnt_f: &[u32], deg_g: &[u32]) -> (u128, u1
 /// + sizeof(ChildPair)            = 8    (Phase F output → sorted_pairs)
 /// ```
 ///
-/// Used by `plan_e_f_chunks` to size chunks under the byte budget.
-pub(crate) const BYTES_PER_PAR_ENTRY: usize = 32;
+/// Used by `plan_e_f_chunks` to size chunks under the byte budget. A level
+/// that collected its candidates flat holds each in the sorted list at the
+/// same `ParEntry` size, so the projection is the same; what differs is
+/// that no chunk releases any of it, the list being one allocation.
+pub(super) const BYTES_PER_PAR_ENTRY: usize = 32;
 
 // Tests override the routing thresholds; production always uses the defaults.
 #[cfg(test)]
