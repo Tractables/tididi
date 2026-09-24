@@ -38,4 +38,3 @@ mod everyday;
 
 mod shortcuts;
 
-mod filter_nodes;

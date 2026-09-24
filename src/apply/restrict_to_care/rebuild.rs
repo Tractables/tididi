@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::Engine;
 use crate::limits::OperationError;
 use crate::reduce::ReductionPlan;
-use crate::diagram::{ChildDecoder, EncodedChildRef, Tdd, TddLevel, ZERO};
+use crate::diagram::{ChildDecoder, EncodedChildRef, NodeIdx, Tdd, TddLevel, ZERO};
 use crate::vtree::VtreeIdx;
 use crate::apply::falsity::{propagate_false_nodes, rewrite_level_pairs};
 
@@ -37,12 +37,10 @@ impl Marking {
                 .expect("a parent and its children are distinct levels");
             let before = level.live_pairs();
             gate.poll(before as u64)?;
-            let masks = &self.pair_alive[v.idx()];
-            rewrite_level_pairs(level, |i, k, pair| {
-                // A node with more than 64 pairs carries no per-pair marks.
-                let mask = masks[i];
-                let masked_out = mask != u64::MAX && k < 64 && (mask >> k) & 1 == 0;
-                if masked_out || dead(left, left_level, pair.left) || dead(right, right_level, pair.right) {
+            let marks = &self.pair_alive;
+            rewrite_level_pairs(level, |i, k, count, pair| {
+                if !marks.contains(v, NodeIdx(i as u32), k, count)
+                    || dead(left, left_level, pair.left) || dead(right, right_level, pair.right) {
                     None
                 } else {
                     Some(pair)

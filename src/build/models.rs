@@ -127,8 +127,12 @@ impl Engine {
 
 /// Which atom of a finished vtree node each row belongs to.
 enum AtomOfRow {
-    /// The subtree constrains nothing, so every row is in its one atom.
+    /// Every row is in the subtree's one atom, which may constrain it.
     Uniform,
+    /// A constrained leaf whose two values have different completions.
+    /// Read its atom directly from the packed row, including after carrying
+    /// the leaf through a subtree whose other variables are free.
+    Bit { word: usize, mask: u64 },
     /// One atom index per row, in the sorted row order.
     PerRow(Vec<u32>),
 }
@@ -143,9 +147,10 @@ struct Finished {
 impl Finished {
     /// The atom row `row` falls in.
     #[inline]
-    fn atom_of(&self, row: usize) -> usize {
+    fn atom_of(&self, row: usize, sorted: &[u64], w: usize) -> usize {
         match &self.atoms {
             AtomOfRow::Uniform => 0,
+            AtomOfRow::Bit { word, mask } => usize::from(sorted[row * w + word] & mask != 0),
             AtomOfRow::PerRow(of_row) => of_row[row] as usize,
         }
     }
@@ -154,7 +159,7 @@ impl Finished {
 impl Charged for Finished {
     fn charged_bytes(&self) -> u64 {
         let index = match &self.atoms {
-            AtomOfRow::Uniform => 0,
+            AtomOfRow::Uniform | AtomOfRow::Bit { .. } => 0,
             AtomOfRow::PerRow(of_row) => of_row.charged_bytes(),
         };
         index + self.locals.charged_bytes()
@@ -185,8 +190,6 @@ struct Scratch {
     head: FxHashMap<u64, u32>,
     /// One run's first row and its atom, one entry per run.
     run_atoms: Vec<(u32, u32)>,
-    /// Which of the two values each atom of a constrained leaf holds.
-    leaf_values: Vec<u8>,
     /// The level's pairs, each above its atom, ready to sort.
     pairs: Vec<u128>,
     /// One atom's pairs, as the assembly takes them.
@@ -272,6 +275,7 @@ fn fill(
     state.resize_with(vtree.num_nodes(), || None);
     let mut emitted = 0u64;
     let num_vars = layout.count[vtree.root().idx()] as usize;
+    let varying = varying_bits(lim, sorted, w)?;
 
     for t in vtree.bottomup() {
         lim.check_stop()?;
@@ -279,14 +283,18 @@ fn fill(
         let width = layout.count[t.idx()] as usize;
         let finished = match (width, one_sided_child(vtree, layout, t)) {
             (0, _) => free_subtree(eng, assembly, vtree, &state, t, leaf)?,
+            (_, _) if leaf => leaf_atoms(lim, sorted, w, layout.lo[t.idx()] as usize, &varying)?,
             (_, Some(constrained)) => {
                 carry_child(eng, assembly, vtree, &mut state, t, constrained)?
+            }
+            _ if width == num_vars => {
+                close_subtree(eng, assembly, vtree, &state, &mut scratch, t, sorted, w)?
             }
             _ => {
                 let lo = layout.lo[t.idx()] as usize;
                 let span = ValueSpan { lo, width, at_top: lo + width == num_vars };
                 let atoms = group_rows(lim, &mut scratch, sorted, w, span, m)?;
-                store_level(eng, assembly, vtree, &state, &mut scratch, t, atoms)?
+                store_level(eng, assembly, vtree, &state, &mut scratch, t, atoms, sorted, w)?
             }
         };
         if !leaf {
@@ -307,6 +315,110 @@ fn fill(
     let done = state[root.idx()].as_ref().expect("the root was just finished");
     debug_assert_eq!(done.locals.len(), 1, "the root level holds one atom");
     Ok(TddNodeId { vtree: root, local: done.locals[0] })
+}
+
+/// All constrained columns lie below this node, so every row has the same
+/// empty external completion. Its single atom is the union of the realized
+/// child-atom pairs; an atom index per row and completion hashing add nothing.
+#[allow(clippy::too_many_arguments)]
+fn close_subtree(
+    eng: &Engine, assembly: &mut Assembly<'_>, vtree: &Vtree,
+    state: &[Option<Finished>], scratch: &mut Scratch, t: VtreeIdx,
+    sorted: &[u64], w: usize,
+) -> Result<Finished, OperationError> {
+    let lim = eng.limits();
+    let (left, right) = vtree.children(t);
+    let (l, r) = (below(state, left), below(state, right));
+    let pairs = &mut scratch.pair_list;
+    pairs.clear();
+    let rows = sorted.len() / w;
+    lim.reserve_exact(pairs, rows)?;
+    let mut gate = lim.gate();
+    for row in 0..rows {
+        gate.poll(1)?;
+        pairs.push(ChildPair::new(l.locals[l.atom_of(row, sorted, w)], r.locals[r.atom_of(row, sorted, w)]));
+    }
+    gate.flush()?;
+    pairs.sort_unstable();
+    pairs.dedup();
+    lim.check_stop()?;
+    assembly.reserve(eng, t, 1, pairs.len())?;
+    let mut locals = Vec::new();
+    lim.reserve_exact(&mut locals, 1)?;
+    locals.push(assembly.push(eng, t, pairs)?);
+    Ok(Finished { atoms: AtomOfRow::Uniform, locals })
+}
+
+/// Bits that differ from the first row somewhere in the nonempty relation.
+fn varying_bits(lim: &Limits, sorted: &[u64], w: usize) -> Result<Vec<u64>, OperationError> {
+    let mut varying = Vec::new();
+    lim.try_resize(&mut varying, w, 0u64)?;
+    let first = &sorted[..w];
+    let mut gate = lim.gate();
+    for row in sorted.chunks_exact(w).skip(1) {
+        gate.poll(w as u64)?;
+        for j in 0..w { varying[j] |= row[j] ^ first[j]; }
+    }
+    gate.flush()?;
+    Ok(varying)
+}
+
+/// A leaf has one literal atom, two literal atoms, or one free atom. The
+/// two values merge exactly when toggling the bit permutes the row set.
+fn leaf_atoms(
+    lim: &Limits, sorted: &[u64], w: usize, bit: usize, varying: &[u64],
+) -> Result<Finished, OperationError> {
+    let (word, mask) = (bit / 64, 1u64 << (bit % 64));
+    let mut locals = Vec::new();
+    lim.reserve_exact(&mut locals, 2)?;
+    let atoms = if varying[word] & mask == 0 {
+        locals.push(if sorted[word] & mask == 0 { NEG_LEAF_IDX } else { POS_LEAF_IDX });
+        AtomOfRow::Uniform
+    } else if independent_bit(lim, sorted, w, word, mask)? {
+        locals.push(ONE_LEAF_IDX);
+        AtomOfRow::Uniform
+    } else {
+        locals.extend([NEG_LEAF_IDX, POS_LEAF_IDX]);
+        AtomOfRow::Bit { word, mask }
+    };
+    Ok(Finished { atoms, locals })
+}
+
+/// Sorted distinct rows closed under one bit's toggle. Within each higher-
+/// bit prefix, the zero and one runs must have equal lower-bit sequences.
+/// Compare those sequences exactly; a hash cannot establish independence.
+fn independent_bit(
+    lim: &Limits, sorted: &[u64], w: usize, word: usize, mask: u64,
+) -> Result<bool, OperationError> {
+    let m = sorted.len() / w;
+    if !m.is_multiple_of(2) { return Ok(false); }
+    let mut gate = lim.gate();
+    let answer = (|| {
+        let mut start = 0;
+        while start < m {
+            gate.poll(1)?;
+            if sorted[start * w + word] & mask != 0 { return Ok(false); }
+            let mut split = start + 1;
+            while split < m && sorted[split * w + word] & mask == 0 {
+                gate.poll(1)?;
+                split += 1;
+            }
+            let len = split - start;
+            if len > m - split { return Ok(false); }
+            for offset in 0..len {
+                gate.poll(w as u64)?;
+                let a = &sorted[(start + offset) * w..][..w];
+                let b = &sorted[(split + offset) * w..][..w];
+                for j in 0..w {
+                    if a[j] ^ b[j] != if j == word { mask } else { 0 } { return Ok(false); }
+                }
+            }
+            start = split + len;
+        }
+        Ok(true)
+    })();
+    gate.flush()?;
+    answer
 }
 
 /// The constrained child of an internal node whose other child constrains
@@ -405,8 +517,7 @@ struct Atoms {
 ///
 /// Leaves `scratch.order` holding the row indices ordered by their value at
 /// this node, `scratch.runs` the first run of each atom, `scratch.run_atoms`
-/// one entry per run, and `scratch.leaf_values` the values each atom of a
-/// constrained leaf holds.
+/// one entry per run. Leaves are handled separately by `leaf_atoms`.
 fn group_rows(
     lim: &Limits,
     scratch: &mut Scratch,
@@ -435,7 +546,6 @@ fn group_rows(
     scratch.next.clear();
     scratch.head.clear();
     scratch.run_atoms.clear();
-    scratch.leaf_values.clear();
     let mut of_row: Vec<u32> = Vec::new();
     lim.try_resize(&mut of_row, m, 0u32)?;
 
@@ -462,11 +572,6 @@ fn group_rows(
         }
         let entry = (scratch.order[i], atom as u32);
         lim.try_push(&mut scratch.run_atoms, entry)?;
-        if width == 1 {
-            // Only a constrained leaf is this narrow: an internal node with one
-            // constrained variable has a free side and never reaches here.
-            scratch.leaf_values[atom] |= 1 << value_at(row_at(sorted, w, scratch.order[i]), lo, 1);
-        }
         i = j;
     }
     gate.flush()?;
@@ -492,20 +597,6 @@ fn order_by_value(
         // the vtree's right spine is like that, which for a right-linear vtree
         // is every internal node, and they are the widest ones.
         scratch.order.extend(0..m as u32);
-    } else if width == 1 {
-        // Only a constrained leaf is this narrow, and over two buckets the
-        // counting sort is a stable partition: place the zeros from the front
-        // and the ones from the back in one pass and turn the ones round,
-        // rather than pass over the rows once to count and again to place.
-        scratch.order.resize(m, 0);
-        let (mut zeros, mut ones) = (0usize, m);
-        for k in 0..m {
-            let bit = value_at(row_at(sorted, w, k as u32), lo, 1) as usize;
-            ones -= bit;
-            scratch.order[if bit == 0 { zeros } else { ones }] = k as u32;
-            zeros += 1 - bit;
-        }
-        scratch.order[zeros..].reverse();
     } else if width <= 16 {
         // A counting sort beats a comparison sort while the value range is
         // small, and most nodes of a vtree wider than the query are narrow.
@@ -582,7 +673,6 @@ fn atom_of_run(
     lim.try_push(&mut scratch.next, first)?;
     lim.reserve_map(&mut scratch.head, 1)?;
     scratch.head.insert(hash, atom as u32);
-    lim.try_push(&mut scratch.leaf_values, 0)?;
     Ok(atom)
 }
 
@@ -604,6 +694,7 @@ fn same_completions(
 }
 
 /// Store one node per atom, and record where each landed.
+#[allow(clippy::too_many_arguments)]
 fn store_level(
     eng: &Engine,
     assembly: &mut Assembly<'_>,
@@ -612,25 +703,29 @@ fn store_level(
     scratch: &mut Scratch,
     t: VtreeIdx,
     atoms: Atoms,
+    sorted: &[u64],
+    w: usize,
 ) -> Result<Finished, OperationError> {
     let lim = eng.limits();
     let mut locals = Vec::new();
     lim.reserve_exact(&mut locals, atoms.count)?;
-    if vtree.node(t).is_leaf() {
-        // A leaf level stores nothing: an atom holding one of the two values is
-        // that literal, and an atom holding both leaves the variable free.
-        for a in 0..atoms.count {
-            locals.push(match scratch.leaf_values[a] {
-                0b01 => NEG_LEAF_IDX,
-                0b10 => POS_LEAF_IDX,
-                _ => ONE_LEAF_IDX,
-            });
-        }
-        return Ok(Finished { atoms: AtomOfRow::PerRow(atoms.of_row), locals });
-    }
-
     let (left, right) = vtree.children(t);
     let (under_left, under_right) = (below(state, left), below(state, right));
+    if atoms.count == scratch.run_atoms.len() {
+        // Each value run introduced a new atom, in encounter order. Its
+        // single child pair needs neither sorting nor deduplication.
+        assembly.reserve(eng, t, atoms.count, atoms.count)?;
+        let mut gate = lim.gate();
+        for &(row, atom) in &scratch.run_atoms {
+            gate.poll(1)?;
+            debug_assert_eq!(atom as usize, locals.len());
+            let l = under_left.locals[under_left.atom_of(row as usize, sorted, w)];
+            let r = under_right.locals[under_right.atom_of(row as usize, sorted, w)];
+            locals.push(assembly.push(eng, t, &[ChildPair::new(l, r)])?);
+        }
+        gate.flush()?;
+        return Ok(Finished { atoms: AtomOfRow::PerRow(atoms.of_row), locals });
+    }
     scratch.pairs.clear();
     lim.reserve_exact(&mut scratch.pairs, scratch.run_atoms.len())?;
     let mut gate = lim.gate();
@@ -638,8 +733,8 @@ fn store_level(
         gate.poll(1)?;
         // Every row of a run shares this node's value, hence both children's
         // values, hence both children's atoms: one pair per run.
-        let l = under_left.locals[under_left.atom_of(row as usize)];
-        let r = under_right.locals[under_right.atom_of(row as usize)];
+        let l = under_left.locals[under_left.atom_of(row as usize, sorted, w)];
+        let r = under_right.locals[under_right.atom_of(row as usize, sorted, w)];
         scratch.pairs.push(((atom as u128) << 64) | ((l.0 as u128) << 32) | r.0 as u128);
     }
     gate.flush()?;

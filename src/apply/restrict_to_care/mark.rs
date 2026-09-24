@@ -84,7 +84,7 @@ impl Marking {
 
         // Phase 2: evaluate bottom-up (children before parents) and mark.
         let mut alive = mark_rows(eng, f, false)?;
-        let mut pair_alive = mark_rows(eng, f, 0u64)?;
+        let mut pair_alive = super::pairs::PairMarks::new(eng, f)?;
         for (v, lc, rc) in vtree.internal_bottomup() {
             for i in 0..levels[v.idx()].keys.len() {
                 let (fo, co) = levels[v.idx()].keys[i];
@@ -106,17 +106,11 @@ impl Marking {
                         any = true;
                         if let Some(fnode) = fo {
                             alive[v.idx()][fnode.idx()] = true;
-                            if k < 64 {
-                                pair_alive[v.idx()][fnode.idx()] |= 1 << k;
-                            }
+                            pair_alive.mark(eng, v, fnode, k,
+                                f.levels[v.idx()].pairs_of_idx(fnode.idx()).len())?;
                         }
                     }
                 }
-                if any
-                    && let Some(fnode) = fo
-                        && f.levels[v.idx()].pairs_of_idx(fnode.idx()).len() > 64 {
-                            pair_alive[v.idx()][fnode.idx()] = u64::MAX;
-                        }
                 levels[v.idx()].live[i] = any;
             }
         }
@@ -130,7 +124,7 @@ impl Marking {
     pub(super) fn trivial(eng: &Engine, f: &Tdd, root_live: bool) -> Result<Marking, OperationError> {
         Ok(Marking {
             alive: mark_rows(eng, f, true)?,
-            pair_alive: mark_rows(eng, f, u64::MAX)?,
+            pair_alive: super::pairs::PairMarks::all(),
             root_live,
         })
     }
@@ -155,8 +149,7 @@ impl Marking {
                 return Ok(false);
             }
             let pairs = f.levels[v.idx()].pairs_of_idx(l.idx());
-            let mask = self.pair_alive[v.idx()][l.idx()];
-            if mask != u64::MAX && (mask.count_ones() as usize) < pairs.len() {
+            if !self.pair_alive.complete(v, l, pairs.len()) {
                 return Ok(false);
             }
             let (lc, rc) = vtree.children(v);

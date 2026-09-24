@@ -30,6 +30,7 @@
 
 mod mark;
 mod rebuild;
+mod pairs;
 
 use crate::Engine;
 use crate::limits::OperationError;
@@ -91,49 +92,13 @@ fn restrict_prepared(eng: &Engine, f: Tdd, care: &Tdd, max_pair_visits: u64) -> 
 struct Marking {
     /// `[v.idx()][f-local]` — does this f-node survive under care?
     alive: Vec<Vec<bool>>,
-    /// `[v.idx()][f-local]` — bit `k` set iff pair `k` of the f-node is live
-    /// against some care pair; `u64::MAX` for a live node with more than 64
-    /// pairs (no pair info: the rebuild keeps every pair of it).
-    pair_alive: Vec<Vec<u64>>,
+    /// Pair liveness, including nodes wider than a machine word.
+    pair_alive: pairs::PairMarks,
     /// Is the root pair live, i.e. is `f ∧ care` structurally non-false?
     root_live: bool,
 }
 
 impl crate::Engine {
-    /// Run [`Tdd::filter_nodes`] with this engine's allocation, cancellation
-    /// and output limits. A callback's own work is the caller's responsibility.
-    ///
-    /// # Errors
-    ///
-    /// Returns an engine resource refusal as for [`Self::restrict_to_care`].
-    pub fn filter_nodes(&self, f: Tdd, mut keep: impl FnMut(crate::diagram::TddNodeId) -> bool) -> Result<Tdd, OperationError> {
-        let _op = self.limits().begin_operation();
-        self.limits().check_stop()?;
-        if f.is_zero() { return Ok(f); }
-        let mut marks = Marking::trivial(self, &f, true)?;
-        let mut poll = self.limits().gate();
-        let mut removed = false;
-        for v in f.vtree.bottomup().filter(|&v| !f.vtree.node(v).is_leaf()) {
-            let level = &f.levels[v.idx()];
-            if level.is_marginal() { continue; }
-            for i in 0..level.nodes.len() {
-                poll.poll(1)?;
-                let id = crate::diagram::TddNodeId { vtree: v, local: crate::diagram::NodeIdx(i as u32) };
-                if !keep(id) { marks.alive[v.idx()][i] = false; removed = true; }
-            }
-        }
-        poll.flush()?;
-        if !removed { return Ok(f); }
-        let root = f.output;
-        if f.is_structural_internal(root.vtree)
-            && !marks.alive[root.vtree.idx()][root.local.idx()]
-        {
-            return crate::build::constant_like(self, &f, false);
-        }
-        if marks.nothing_reachable_died(self, &f)? { return Ok(f); }
-        marks.rebuild(self, f)
-    }
-
     /// Restrict to a borrowed care diagram, abandoning an expensive discovery.
     ///
     /// Has the semantic and size guarantees of [`Tdd::restrict_to_care`].

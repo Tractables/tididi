@@ -17,7 +17,7 @@ impl Tdd {
     /// Top-down reachability propagation over a pre-seeded root set. Every root
     /// node must already be marked `true` in `reachable`; on return every node
     /// reachable from those roots is marked.
-    pub(super) fn propagate_reachability(&self, reachable: &mut [Vec<bool>]) {
+    pub(crate) fn propagate_reachability(&self, reachable: &mut [Vec<bool>]) {
         for (t, left_vtree, right_vtree) in self.vtree.internal_bottomup().rev() {
             // A marginal-side ref decodes to a slot index, or to an inline
             // count that names no child node and marks nothing.

@@ -126,7 +126,7 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, kee
     // it named the conditioned leaf. `One`, and any reference to an internal
     // child, is carried through as-is.
     if tdd.levels[parent_vi.idx()].nodes.is_empty() { return false; }
-    tdd.rewrite_level(parent_vi, |level| rewrite_level_pairs(level, |_, _, p: ChildPair| {
+    tdd.rewrite_level(parent_vi, |level| rewrite_level_pairs(level, |_, _, _, p: ChildPair| {
         let label = if side == ChildSide::Left { p.left } else { p.right };
         if label != POS_LEAF_IDX.into() && label != NEG_LEAF_IDX.into() {
             return Some(p);

@@ -41,7 +41,7 @@ pub(super) fn propagate_false_nodes(tdd: &mut Tdd) {
             child == ZERO.into()
                 || (structural && empty_node(level, ChildDecoder::structural().node(child).idx()))
         };
-        rewrite_level_pairs(parent, |_, _, pair| {
+        rewrite_level_pairs(parent, |_, _, _, pair| {
             if dead(left_structural, left_level, pair.left) || dead(right_structural, right_level, pair.right) {
                 None
             } else {
@@ -62,15 +62,15 @@ pub(super) fn empty_node(level: &TddLevel, i: usize) -> bool {
 }
 
 /// Rewrite a level's pair lists in place through `rewrite_pair`, which sees
-/// each pair with its node's index and its position in that node, and drop
-/// every pair it answers `None` for. Answers whether any node was left with
+/// each pair with its node's index, its position in that node and the node's
+/// pair count, and drop every pair it answers `None` for. Answers whether any node was left with
 /// no pairs at all.
 ///
 /// Both of conditioning's rewrites and the care restriction's are this pass
 /// under a different predicate.
 pub(super) fn rewrite_level_pairs(
     level: &mut TddLevel,
-    mut rewrite_pair: impl FnMut(usize, usize, ChildPair) -> Option<ChildPair>,
+    mut rewrite_pair: impl FnMut(usize, usize, usize, ChildPair) -> Option<ChildPair>,
 ) -> bool {
     let n_nodes = level.nodes.len();
     if n_nodes == 0 {
@@ -82,7 +82,7 @@ pub(super) fn rewrite_level_pairs(
     for i in 0..n_nodes {
         if let NodeKind::Inline(p) = level.nodes[i].kind() {
             // The single pair lives in the node's own two words, not the arena.
-            match rewrite_pair(i, 0, p) {
+            match rewrite_pair(i, 0, 1, p) {
                 Some(np) => {
                     level.nodes[i] = EncodedNode::inline(np);
                 }
@@ -102,7 +102,7 @@ pub(super) fn rewrite_level_pairs(
         let pairs = level.pairs_mut(i);
         let mut w = 0usize;
         for r in 0..old_len {
-            if let Some(np) = rewrite_pair(i, r, pairs[r]) {
+            if let Some(np) = rewrite_pair(i, r, old_len, pairs[r]) {
                 // `w <= r`, so this write is at or below a slot already read.
                 pairs[w] = np;
                 w += 1;
