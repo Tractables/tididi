@@ -62,6 +62,7 @@ impl PooledScratch for ApplyWorkspace {
 
     fn retain(&mut self, lim: &Limits) {
         self.stream_cache.discard_columns();
+        self.products.drop_unused_lists(lim);
         self.release_oversized(lim);
     }
 }
