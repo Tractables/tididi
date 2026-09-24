@@ -51,10 +51,16 @@ impl<'a> Reduction<'a> {
         self.contract()?;
         #[cfg(debug_assertions)]
         self.assert_marginal_flags(&marginal_before, "contract+leaf");
-        match policy {
-            ContentTwinPolicy::Skip => {},
+        let scanned = match policy {
+            ContentTwinPolicy::Skip => false,
             ContentTwinPolicy::Fresh => self.scan_if_due(&mut ContentTwinSchedule::default())?,
             ContentTwinPolicy::Adaptive(schedule) => self.scan_if_due(schedule)?,
+        };
+        // A content-twin scan ends with the slot prune. Without one, the slots
+        // that prune and contraction orphaned at the boundary stores are still
+        // there.
+        if !scanned && self.tdd.has_marginal_level() {
+            prune_value_slots(self.eng, self.tdd);
         }
         let mut structural = true;
         for level in &mut self.tdd.levels {
@@ -86,16 +92,18 @@ impl<'a> Reduction<'a> {
     }
 
     /// Always scan small or weighted marginal diagrams. Large unweighted
-    /// diagrams use the schedule's fourfold growth threshold.
-    fn scan_if_due(&mut self, schedule: &mut ContentTwinSchedule) -> Result<(), OperationError> {
-        if !self.tdd.has_marginal_level() { return Ok(()); }
+    /// diagrams use the schedule's fourfold growth threshold. Returns whether
+    /// a scan ran.
+    fn scan_if_due(&mut self, schedule: &mut ContentTwinSchedule) -> Result<bool, OperationError> {
+        if !self.tdd.has_marginal_level() { return Ok(false); }
         let before: u64 = self.tdd.levels.iter().map(|l| l.nodes.len() as u64).sum();
         if self.tdd.weights.is_some() || before <= CONTENT_SCAN_MAX_NODES || before >= schedule.next_scan_at_nodes {
             self.content_twins()?;
             let after: u64 = self.tdd.levels.iter().map(|l| l.nodes.len() as u64).sum();
             schedule.next_scan_at_nodes = if after > CONTENT_SCAN_MAX_NODES { before.saturating_mul(4) } else { 0 };
+            return Ok(true);
         }
-        Ok(())
+        Ok(false)
     }
 
     /// Slot compaction reports value merges at marginal levels. They may

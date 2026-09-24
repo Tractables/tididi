@@ -15,11 +15,9 @@
 //! **Precondition:** parent levels must be in post-tagger form (marginal-side refs
 //! decodable with `ChildDecoder`) — never mid-apply.
 //!
-//! Runs at the end of `Engine::reduce` and after each `fuse_pairs_at_parents`
-//! sweep; the contract-only path kills no pairs and skips it.
-//!
-//! Integer and weighted levels share the one skeleton
-//! `prune_marginal_slots`; the diagram storage owns their compaction.
+//! Runs at the end of every prune and every full reduction, and after each
+//! `fuse_pairs_at_parents` sweep; the contract-only plan kills no pairs and
+//! skips it.
 
 use crate::Engine;
 

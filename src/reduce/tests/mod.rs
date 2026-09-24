@@ -18,6 +18,7 @@ mod canonicity;
 mod fixpoint;
 mod marginal;
 mod pair_arena;
+mod plans;
 mod pruning;
 mod twins;
 mod twins_budget;
