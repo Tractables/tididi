@@ -97,15 +97,14 @@ pub(crate) trait PairSink {
     /// One surviving (lc, rc) pair of a multi-pair cell.
     fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError>;
 
-    /// Finish a multi-pair cell; returns the number of pairs committed
-    /// (non-emit impls return 0).
+    /// Finish a multi-pair cell.
     fn end(
         &mut self,
         eng: &Engine,
         node_idx: &mut [u32],
         grid_pos: usize,
         start: usize,
-    ) -> Result<usize, OperationError>;
+    ) -> Result<(), OperationError>;
 }
 
 /// Build the output level: push pairs, emit product nodes, write `node_idx`.
@@ -148,10 +147,8 @@ impl PairSink for EmitSink<'_> {
         &mut self, eng: &Engine, node_idx: &mut [u32],
         grid_pos: usize,
         start: usize,
-    ) -> Result<usize, OperationError> {
-        let pair_count = self.level.pair_tail_len(start);
-        emit_product_node(eng, self.level, node_idx, grid_pos, start)?;
-        Ok(pair_count)
+    ) -> Result<(), OperationError> {
+        emit_product_node(eng, self.level, node_idx, grid_pos, start)
     }
 }
 
@@ -204,8 +201,8 @@ impl PairSink for CollectSink<'_> {
         _node_idx: &mut [u32],
         _grid_pos: usize,
         _start: usize,
-    ) -> Result<usize, OperationError> {
-        Ok(0)
+    ) -> Result<(), OperationError> {
+        Ok(())
     }
 }
 
