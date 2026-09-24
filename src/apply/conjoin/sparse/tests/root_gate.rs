@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::inner_index::{block, pack};
-use crate::apply::conjoin::conjoin_owned;
+
 use crate::diagram::Tdd;
 use crate::limits::{LimitConfig, MemoryHooks};
 use crate::vtree::{VarId, Vtree};
@@ -52,7 +52,7 @@ fn a_one_node_root_over_wide_children_never_materializes_their_grids() {
     );
     let out = {
         let _installed = eng.limits().scope(LimitConfig::none().with_memory_hooks(hooks));
-        conjoin_owned(&eng, f, g, None).expect("an unarmed engine refuses nothing")
+        eng.and(f, g).expect("an unarmed engine refuses nothing")
     };
     assert!(out.model_count().unwrap() > num_bigint::BigUint::from(0u32), "the join is non-empty");
     let largest = largest.load(Ordering::Relaxed);

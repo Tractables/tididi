@@ -37,7 +37,7 @@ fn a_zero_width_marginal_orphan_conjoins_to_the_same_count() {
             t.levels[orphan.idx()].set_counts_state(vec![], None);
         }
     }
-    let out = conjoin_owned(&eng, f, g, None)
+    let out = eng.and(f, g)
         .expect("a zero-width orphan must not fail the conjunction");
 
     assert_eq!(

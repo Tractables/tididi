@@ -30,11 +30,7 @@ impl Engine {
                 return Err(OperationError::MarginalLevel(t));
             }
         }
-        let result = super::drive::apply_and_filtered(self, &mut f, &mut g,
-            MarginalTargets::None, QuantifiedSubtrees::default(), Some(&mut keep));
-        diagram::return_levels(self, diagram::PoolSlot::First, std::mem::take(&mut f.levels).into_vec());
-        diagram::return_levels(self, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
-        result
+        conjoin_recycling(self, f, g, VtreeMask::default(), VtreeMask::default(), Some(&mut keep))
     }
 }
 

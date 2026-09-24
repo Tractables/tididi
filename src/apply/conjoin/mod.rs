@@ -50,7 +50,7 @@ mod leaf_seed;
 
 mod scratch;
 pub(crate) use scratch::ApplyScratch;
-pub(crate) use setup::MarginalTargets;
+pub(crate) use setup::VtreeMask;
 mod route;
 use route::*;
 mod grid_arena;
@@ -59,7 +59,6 @@ pub(in crate::apply::conjoin) use grid_arena::GridBase;
 mod output;
 use output::*;
 pub(crate) mod quantify;
-pub(crate) use quantify::QuantifiedSubtrees;
 mod drive;
 pub(crate) use drive::apply_and_fallible;
 use drive::Sweep;
@@ -78,48 +77,37 @@ pub(crate) fn apply_and(f: Tdd, g: Tdd) -> Tdd {
         .expect("apply_and: operation refused; use tididi::and to handle errors")
 }
 
-/// Conjoin owned operands, recycling their levels as the bottom-up walk proceeds.
-/// `marginalize_targets` selects levels emitted as values instead of structure.
+/// Conjoin owned operands, recycling their levels as the bottom-up walk
+/// proceeds, and collapsing every subtree in `quantified` to the constant-true
+/// node instead of building it — see [`quantify`].
+///
+/// The flag says whether the sweep ran, which is what decides whether the
+/// caller's quantification has collapsed levels to account for: the shortcuts
+/// for a false operand and for `f ∧ f` return without collapsing anything.
 /// Operand validation and allocation, cancellation and output-cap errors follow
 /// [`Engine::and`]. Both inputs are consumed on every outcome.
 pub(crate) fn conjoin_owned(
     eng: &Engine,
     mut f: Tdd,
     mut g: Tdd,
-    marginalize_targets: Option<&[bool]>,
-) -> Result<Tdd, OperationError> {
-    // Checked before the swap and the self-conjunction shortcut, both of which
-    // can return without ever reaching `apply_and_fallible_inner`.
-    crate::apply::check_vtree(&f, &g)?;
-    crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
-    Ok(conjoin_checked(eng, f, g, marginalize_targets, QuantifiedSubtrees::default())?.0)
-}
-
-/// Conjoin validated operands, collapsing every subtree in `whole` to the
-/// constant-true node instead of building it — see [`quantify`].
-///
-/// The flag says whether the sweep ran, which is what decides whether the
-/// caller's quantification has collapsed levels to account for: the shortcuts
-/// for a false operand and for `f ∧ f` return without collapsing anything.
-pub(crate) fn conjoin_quantifying(
-    eng: &Engine,
-    mut f: Tdd,
-    mut g: Tdd,
-    whole: &[bool],
+    quantified: VtreeMask<'_>,
 ) -> Result<(Tdd, bool), OperationError> {
+    // Checked before the swap and the self-conjunction shortcut, both of which
+    // can return without ever reaching `apply_and_fallible`.
     crate::apply::check_vtree(&f, &g)?;
     crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
-    conjoin_checked(eng, f, g, None, QuantifiedSubtrees::new(Some(whole)))
+    conjoin_checked(eng, f, g, VtreeMask::default(), quantified)
 }
 
-/// [`conjoin_owned`] after its operand checks: for a caller that has already
-/// validated and weight-aligned the operands.
+/// [`conjoin_owned`] after its operand checks, summing out the levels in
+/// `targets`: for a caller that has already validated and weight-aligned the
+/// operands.
 pub(crate) fn conjoin_checked(
     eng: &Engine,
     mut f: Tdd,
     mut g: Tdd,
-    marginalize_targets: Option<&[bool]>,
-    quantified: QuantifiedSubtrees<'_>,
+    targets: VtreeMask<'_>,
+    quantified: VtreeMask<'_>,
 ) -> Result<(Tdd, bool), OperationError> {
     // Make `g` the narrower operand: the identity fast path tests
     // `right_width == 1` first, so the narrower side on the right takes it at
@@ -139,12 +127,24 @@ pub(crate) fn conjoin_checked(
         return Ok((f, false));
     }
     let zero = f.is_zero() || g.is_zero();
-    let result = apply_and_fallible(
-        eng, &mut f, &mut g, MarginalTargets::new(marginalize_targets), quantified,
-    );
+    let result = conjoin_recycling(eng, f, g, targets, quantified, None);
+    result.map(|out| (out, !zero))
+}
+
+/// Run the sweep over `f` and `g`, then hand both operands' level arrays back
+/// to the pool whatever the outcome.
+fn conjoin_recycling(
+    eng: &Engine,
+    mut f: Tdd,
+    mut g: Tdd,
+    targets: VtreeMask<'_>,
+    quantified: VtreeMask<'_>,
+    filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
+) -> Result<Tdd, OperationError> {
+    let result = apply_and_fallible(eng, &mut f, &mut g, targets, quantified, filter);
     diagram::return_levels(eng, diagram::PoolSlot::First, std::mem::take(&mut f.levels).into_vec());
     diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
-    result.map(|out| (out, !zero))
+    result
 }
 
 /// Return the conjunction of two diagrams sharing the same vtree allocation.
@@ -201,7 +201,7 @@ impl crate::Engine {
     /// Returns the operation's errors, plus [`OperationError::Stopped`] or
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn and(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
-        crate::apply::conjoin::conjoin_owned(self, f, g, None)
+        conjoin_owned(self, f, g, VtreeMask::default()).map(|(out, _)| out)
     }
 
     /// Conjoin two diagrams and replace selected subtrees with marginal values.
@@ -255,8 +255,8 @@ impl crate::Engine {
         for &t in targets {
             mask[t.idx()] = !vtree.node(t).is_leaf();
         }
-        let (mut out, _) = crate::apply::conjoin::conjoin_checked(
-            self, f, g, Some(&mask), QuantifiedSubtrees::default(),
+        let (mut out, _) = conjoin_checked(
+            self, f, g, VtreeMask::new(Some(&mask)), VtreeMask::default(),
         )?;
         // Streaming can finish every target; only retained structure needs the pass.
         if !out.is_zero() && targets.iter().any(|&t| !out.level(t).is_marginal()) {

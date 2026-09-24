@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 
-use crate::apply::conjoin::conjoin_owned;
+use crate::apply::conjoin::{conjoin_checked, VtreeMask};
 
 use super::{ForcedThresholds, SparseThresholds};
 use crate::test_helpers::clause_to_tdd;
@@ -50,10 +50,12 @@ impl Sparse {
         Sparse { eng: Engine::new(), thresholds: SparseThresholds { chunk_bytes, ..self.thresholds } }
     }
 
-    /// `Engine::and` under these thresholds.
+    /// `Engine::and` under these thresholds, summing out the levels in
+    /// `targets`.
     fn and(&self, f: Tdd, g: Tdd, targets: Option<&[bool]>) -> Tdd {
         let _forced = ForcedThresholds::install(self.thresholds);
-        conjoin_owned(&self.eng, f, g, targets).expect("an unarmed engine refuses nothing")
+        conjoin_checked(&self.eng, f, g, VtreeMask::new(targets), VtreeMask::default())
+            .expect("an unarmed engine refuses nothing").0
     }
 
     /// Clause-by-clause fold with a minimize after each clause, as

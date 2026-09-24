@@ -88,7 +88,6 @@ const RESERVES_PER_DISJUNCTION: u32 = 96;
 /// a granted run answers the same count, and the engine stays usable.
 #[test]
 fn a_refused_reserve_inside_the_disjunction_returns_over_budget() {
-    use crate::apply::conjoin::conjoin_owned;
     use crate::apply::negate::negate_tdd_owned;
     use crate::Engine;
     use crate::limits::OperationError;
@@ -125,7 +124,7 @@ fn a_refused_reserve_inside_the_disjunction_returns_over_budget() {
     let mut refused_and = 0;
     for nth in 0..RESERVES_PER_DISJUNCTION {
         eng.limits().refuse_nth_reserve(nth);
-        let res = conjoin_owned(eng, not_f.clone(), not_g.clone(), None);
+        let res = eng.and(not_f.clone(), not_g.clone());
         eng.limits().grant_every_reserve();
         if res.is_err() {
             refused_and += 1;

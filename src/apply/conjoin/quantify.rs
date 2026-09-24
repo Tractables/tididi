@@ -54,26 +54,6 @@ const TRUE_PAIR: ChildPair = ChildPair {
     right: EncodedChildRef::from_raw(ONE_LEAF_IDX.0),
 };
 
-/// The vtree nodes whose subtrees the sweep collapses: those every leaf of
-/// which the caller quantifies.
-#[derive(Clone, Copy, Default)]
-pub(crate) struct QuantifiedSubtrees<'a> {
-    whole: Option<&'a [bool]>,
-}
-
-impl<'a> QuantifiedSubtrees<'a> {
-    /// The set given, or none.
-    pub(crate) fn new(whole: Option<&'a [bool]>) -> Self {
-        QuantifiedSubtrees { whole }
-    }
-
-    /// Whether every leaf below vtree node `t_idx` is quantified.
-    #[inline]
-    pub(crate) fn is_whole(self, t_idx: usize) -> bool {
-        self.whole.is_some_and(|w| w[t_idx])
-    }
-}
-
 /// Drop this level's dead operand-child levels before its own reserve fires,
 /// so the allocator can reuse their slabs. Shared with the routed path, whose
 /// fast-path entry does the same thing first.

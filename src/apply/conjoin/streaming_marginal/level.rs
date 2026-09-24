@@ -30,7 +30,7 @@ pub(in crate::apply::conjoin) fn build_stream_state(
     cache: &mut StreamCache,
     sweep: &mut Sweep<'_, '_>,
 ) -> Result<Option<StreamLevelState>, OperationError> {
-    if !sweep.targets.is_target(shape.t.idx()) {
+    if !sweep.targets.contains(shape.t.idx()) {
         return Ok(None);
     }
     if let Some(ws) = sweep.ws.as_deref_mut() {

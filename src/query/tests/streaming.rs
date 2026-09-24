@@ -5,7 +5,7 @@
 
 use crate::Engine;
 use crate::apply::conjoin::apply_and;
-use crate::apply::conjoin::MarginalTargets;
+use crate::apply::conjoin::VtreeMask;
 use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;
 use crate::test_helpers::{literals, rand_cnf, CnfShape, Lcg};
@@ -55,12 +55,12 @@ fn streaming_fold_count_matches_materialized_randomized() {
             let oracle = {
                 let mut a_o = a.clone();
                 let mut b_o = b.clone();
-                (apply_and_fallible(&eng, &mut a_o, &mut b_o, MarginalTargets::None, Default::default()).unwrap()).model_count().unwrap()
+                (apply_and_fallible(&eng, &mut a_o, &mut b_o, VtreeMask::default(), VtreeMask::default(), None).unwrap()).model_count().unwrap()
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
-                (apply_and_fallible(&eng, &mut a_f, &mut b_f, MarginalTargets::At(&targets), Default::default()).unwrap()).model_count().unwrap()
+                (apply_and_fallible(&eng, &mut a_f, &mut b_f, VtreeMask::new(Some(&targets)), VtreeMask::default(), None).unwrap()).model_count().unwrap()
             };
             assert_eq!(fold, oracle, "nvars={nvars}: streaming fold != materialized");
             checked += 1;
@@ -148,14 +148,14 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
                 let mut a_o = a.clone();
                 let mut b_o = b.clone();
                 a_o.set_weights(store()).unwrap();
-                let result = apply_and_fallible(&eng, &mut a_o, &mut b_o, MarginalTargets::None, Default::default()).unwrap();
+                let result = apply_and_fallible(&eng, &mut a_o, &mut b_o, VtreeMask::default(), VtreeMask::default(), None).unwrap();
                 exact_weight(&result.weighted_value().unwrap().expect("store follows the result"))
             };
             let fold = {
                 let mut a_f = a.clone();
                 let mut b_f = b.clone();
                 a_f.set_weights(store()).unwrap();
-                let result = apply_and_fallible(&eng, &mut a_f, &mut b_f, MarginalTargets::At(&targets), Default::default()).unwrap();
+                let result = apply_and_fallible(&eng, &mut a_f, &mut b_f, VtreeMask::new(Some(&targets)), VtreeMask::default(), None).unwrap();
                 exact_weight(&result.weighted_value().unwrap().expect("store follows the result"))
             };
             assert_eq!(

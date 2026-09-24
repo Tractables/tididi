@@ -83,7 +83,6 @@ fn complements_of(eng: &Engine, operands: Vec<Tdd>) -> Result<Vec<Tdd>, Operatio
 /// result. A chain would touch the growing conjunction once per operand and so
 /// repeatedly combine a large intermediate with a small operand.
 fn fold_conjunction(eng: &Engine, mut operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
-    use crate::apply::conjoin::conjoin_owned;
     use crate::limits::Charged;
     debug_assert!(!operands.is_empty());
     let lone = operands.len() == 1;
@@ -95,7 +94,7 @@ fn fold_conjunction(eng: &Engine, mut operands: Vec<Tdd>) -> Result<Tdd, Operati
         while let Some(a) = it.next() {
             match it.next() {
                 Some(b) => {
-                    let mut c = conjoin_owned(eng, a, b, None)?;
+                    let mut c = eng.and(a, b)?;
                     eng.reduce(&mut c, ReductionPlan::default())?;
                     next.push(c);
                 }

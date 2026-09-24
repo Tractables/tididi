@@ -239,7 +239,7 @@ fn test_apply_output_node_cap_bails_cleanly() {
     let mut b = build(&vtree, fb);
     let uncapped = {
         let eng = Engine::new();
-        apply_and_fallible(&eng, &mut a, &mut b, MarginalTargets::None, Default::default())
+        apply_and_fallible(&eng, &mut a, &mut b, VtreeMask::default(), VtreeMask::default(), None)
     };
     assert!(uncapped.is_ok(), "no cap: conjoin should complete, got {:?}", uncapped.err());
 
@@ -249,7 +249,7 @@ fn test_apply_output_node_cap_bails_cleanly() {
     let capped = {
         let eng = Engine::new();
         let _prior = eng.limits().install(LimitConfig::none().with_output_node_cap(Some(1)));
-        apply_and_fallible(&eng, &mut a, &mut b, MarginalTargets::None, Default::default())
+        apply_and_fallible(&eng, &mut a, &mut b, VtreeMask::default(), VtreeMask::default(), None)
     };
     assert_eq!(
         capped.err(),

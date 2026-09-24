@@ -13,41 +13,28 @@ use super::marginal_plan::EntryMarginality;
 use super::sparse::{sparse_thresholds, SparseThresholds};
 use super::route::{LevelMarg, SparseGate};
 
-/// The vtree nodes whose levels the bottom-up sweep marginalizes.
-#[derive(Clone, Copy)]
-pub(crate) enum MarginalTargets<'a> {
-    /// This apply marginalizes nothing.
-    None,
-    /// `true` at every vtree node whose level is summed out.
-    At(&'a [bool]),
-}
+/// A set of vtree nodes handed to the sweep: the levels it sums out, or the
+/// subtrees it collapses. A membership array, or nothing.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct VtreeMask<'a>(Option<&'a [bool]>);
 
-impl<'a> MarginalTargets<'a> {
-    /// The set given, or `None` when none was.
-    pub(crate) fn new(targets: Option<&'a [bool]>) -> Self {
-        match targets {
-            Some(t) => MarginalTargets::At(t),
-            None => MarginalTargets::None,
-        }
+impl<'a> VtreeMask<'a> {
+    /// The set `members` describes; `None` is the empty set.
+    pub(crate) fn new(members: Option<&'a [bool]>) -> Self {
+        VtreeMask(members)
     }
 
-    /// Whether anything is summed out at all — what the streaming scratch and
-    /// its pooling are conditioned on.
+    /// Whether the set was given at all — what the streaming scratch and its
+    /// pooling are conditioned on.
     #[inline]
-    pub(crate) fn any(self) -> bool {
-        matches!(self, MarginalTargets::At(_))
+    pub(crate) fn is_empty(self) -> bool {
+        self.0.is_none()
     }
 
-    /// Whether level `t_idx` is summed out. A target streams its marginal:
-    /// the emit-growth mode decision and `build_stream_state`'s setup read
-    /// this per level, and the commit then keys off `stream_state` being
-    /// `Some` rather than re-reading the predicate.
+    /// Whether vtree node `t_idx` is in the set.
     #[inline]
-    pub(crate) fn is_target(self, t_idx: usize) -> bool {
-        match self {
-            MarginalTargets::None => false,
-            MarginalTargets::At(t) => t[t_idx],
-        }
+    pub(crate) fn contains(self, t_idx: usize) -> bool {
+        self.0.is_some_and(|members| members[t_idx])
     }
 }
 
@@ -133,7 +120,7 @@ impl ApplyRun<'_> {
         f: &Tdd,
         g: &Tdd,
         shape: LevelShape,
-        marginalize_targets: MarginalTargets<'_>,
+        targets: VtreeMask<'_>,
     ) -> LevelMarg {
         let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
         let now = |i: usize| self.levels[i].is_marginal();
@@ -147,7 +134,7 @@ impl ApplyRun<'_> {
             right_now: now(right_idx),
             left_any: any(left_idx),
             right_any: any(right_idx),
-            is_target: marginalize_targets.is_target(t_idx),
+            is_target: targets.contains(t_idx),
         }
     }
 
@@ -275,7 +262,7 @@ pub(super) fn apply_and_setup<'a>(
     eng: &Engine,
     f: &Tdd,
     g: &Tdd,
-    marginalize_targets: MarginalTargets<'_>,
+    targets: VtreeMask<'_>,
     weighted: bool,
     levels: &'a mut [TddLevel],
     scratch: &'a mut ApplyWorkspace,
@@ -306,7 +293,7 @@ pub(super) fn apply_and_setup<'a>(
 
     // Streaming-marginal scratch: lazily computed child columns for
     // streaming-target levels whose children are still explicit.
-    stream_cache.reset(num_nodes, marginalize_targets.any().then_some(weighted));
+    stream_cache.reset(num_nodes, (!targets.is_empty()).then_some(weighted));
     products.reset(eng, might_use_sparse, num_nodes, left_widths, right_widths)?;
 
     Ok(ApplyRun {

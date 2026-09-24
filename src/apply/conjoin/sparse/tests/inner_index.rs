@@ -8,7 +8,7 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 
 use super::{ForcedThresholds, SparseThresholds};
-use crate::apply::conjoin::conjoin_owned;
+
 use crate::diagram::Tdd;
 use crate::vtree::{VarId, Vtree};
 use crate::Engine;
@@ -83,7 +83,7 @@ fn fk_join(
     let g = eng.from_models(vtree, &gv, &gr).unwrap();
 
     let _forced = ForcedThresholds::install(thresholds);
-    conjoin_owned(eng, f, g, None).expect("an unarmed engine refuses nothing")
+    eng.and(f, g).expect("an unarmed engine refuses nothing")
 }
 
 #[test]
