@@ -78,7 +78,7 @@ pub(crate) enum Pass {
     Contract,
     /// Leaf-side twin contraction (`contract_leaf_twins`).
     LeafContract,
-    /// The content-twin fixpoint (`canonicalize_content_twins`). Read only
+    /// The content-twin fixpoint (`Reduction::content_twins`). Read only
     /// inside that pass, which clears it on entry so a round starts from a
     /// known set rather than from whatever ran before.
     ContentTwin,

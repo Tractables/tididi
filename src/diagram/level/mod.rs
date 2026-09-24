@@ -57,8 +57,8 @@ pub struct TddLevel {
     /// Twin contraction mints these: a merged union is appended at the arena
     /// tail (`concat_twin_pairs`), abandoning every source range, and the parent
     /// rewrite / duplicate resolution shrink pair lists in place, abandoning
-    /// their tails. `compact_pairs_if_stale`
-    /// reclaims them and resets this to 0.
+    /// their tails. Pruning and restriction do the same when they drop pairs.
+    /// `compact_pairs_if_stale` reclaims them and resets this to 0.
     ///
     /// Approximate: it only triggers the sweep, which derives liveness from
     /// `nodes`/`ranges`. Reset to 0 wherever the pair arena is replaced.
