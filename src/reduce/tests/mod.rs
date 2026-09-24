@@ -15,7 +15,9 @@ use crate::vtree::{VarId, Vtree};
 use std::sync::Arc;
 
 mod canonicity;
+mod fixpoint;
 mod marginal;
+mod pair_arena;
 mod pruning;
 mod twins;
 mod twins_budget;

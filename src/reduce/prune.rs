@@ -73,6 +73,9 @@ pub(crate) fn prune_unreachable(
     if tdd.is_zero() {
         for level in &mut tdd.levels {
             level.nodes.clear();
+            level.pairs.clear();
+            level.ranges.clear();
+            level.dead_pairs = 0;
         }
         return Ok(());
     }
@@ -256,10 +259,15 @@ fn compact_one_level(
     let t_idx = t.idx();
     let width = tdd.levels[t_idx].slot_count();
     let mut new_idx = 0u32;
+    // The arena slots the dropped nodes own, summed here where each slot's
+    // mark is read anyway and noted once after the retain.
+    let mut dead = 0usize;
     for i in 0..width {
         if remap[base + i] != UNREACHED {
             remap[base + i] = new_idx;
             new_idx += 1;
+        } else {
+            dead += tdd.levels[t_idx].arena_pairs_at(i);
         }
     }
     // Did this level lose any node? (remap stays valid identity either way.)
@@ -272,9 +280,10 @@ fn compact_one_level(
         rewrite_child_refs(tdd, t, width, &marks[base..], left_remap, right_remap);
     }
 
-    // Compact the node Vec in place, O(width) with no allocation. The
-    // pair arena is not swept here; a pruned level keeps its arena slack
-    // until `shrink_arrays`.
+    // Compact the node Vec in place, O(width) with no allocation. Dropping a
+    // node abandons its pair range; the arena is swept once enough of it is
+    // dead, which is legal here because no pair offset is held across the
+    // call.
     if this_dirty {
         let mut i = 0;
         tdd.levels[t_idx].nodes.retain(|_| {
@@ -282,6 +291,8 @@ fn compact_one_level(
             i += 1;
             keep
         });
+        tdd.levels[t_idx].note_dead_pairs(dead);
+        tdd.levels[t_idx].compact_pairs_if_stale();
     }
     this_dirty
 }
