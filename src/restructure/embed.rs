@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use super::{GraftError, placement::Placement};
+use super::{GraftError, placement::CopyPlacement};
 
 use crate::Engine;
 use crate::diagram::Tdd;
@@ -332,7 +332,7 @@ fn assemble(
     if tdd.is_zero() {
         return Ok(crate::build::constant_zero(eng, into));
     }
-    let mut placement = Placement::copying(eng, into)?;
+    let mut placement = CopyPlacement::new(eng, into)?;
     let mut gate = eng.limits().gate();
     for t in into.bottomup() {
         if into.node(t).is_leaf() { continue; }
@@ -347,7 +347,7 @@ fn assemble(
         }
     }
     gate.flush()?;
-    placement.finish(tdd.output().local)
+    Ok(placement.finish(tdd.output().local)?)
 }
 
 #[cfg(test)]

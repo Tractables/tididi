@@ -1,4 +1,10 @@
 //! Place levels and connect their roots after an operation validates its layout.
+//!
+//! Two assemblers own the destination storage while an operation fills it.
+//! [`CopyPlacement`] copies structural levels out of a source that stays as it
+//! is, the way an embedding does; [`MovePlacement`] moves whole parts, levels
+//! and weight columns alike, the way a graft does. Both keep local node
+//! indices through the transfer and prune what the new joins leave unused.
 
 use std::sync::Arc;
 
@@ -10,21 +16,23 @@ use crate::diagram::{
 use crate::vtree::{Vtree, VtreeIdx};
 use super::GraftError;
 
-/// Own destination storage, its weight columns, and the repair owed by new joins.
-/// Layout validation belongs to the caller; local node indices survive placement.
-/// `COPY` selects bounded structural copies at compile time; moves retain graft
-/// assembly's untracked contract. Both run required pruning under the engine.
-pub(super) struct Placement<'a, const COPY: bool> {
+/// Drop the nodes the joins made in `result` that nothing refers to.
+fn prune(eng: &Engine, result: &mut Tdd) -> Result<(), OperationError> {
+    eng.reduce(result, crate::reduce::ReductionPlan::Prune)
+}
+
+/// Bounded structural copies into a fresh destination, under the engine's
+/// limits.
+pub(super) struct CopyPlacement<'a> {
     eng: &'a Engine,
     vtree: &'a Arc<Vtree>,
     assembly: Assembly<'a>,
     prune: bool,
 }
 
-impl<'a> Placement<'a, true> {
-    pub(super) fn copying(eng: &'a Engine, vtree: &'a Arc<Vtree>) -> Result<Self, OperationError> {
-        Ok(Self { eng, vtree, assembly: Assembly::new(eng, vtree)?,
-            prune: false })
+impl<'a> CopyPlacement<'a> {
+    pub(super) fn new(eng: &'a Engine, vtree: &'a Arc<Vtree>) -> Result<Self, OperationError> {
+        Ok(Self { eng, vtree, assembly: Assembly::new(eng, vtree)?, prune: false })
     }
 
     /// Copy a structural level without its source's weight configuration.
@@ -59,10 +67,37 @@ impl<'a> Placement<'a, true> {
         }
         Ok(())
     }
+
+    /// Add a connecting node.
+    #[inline]
+    pub(super) fn join(&mut self, at: VtreeIdx, left: NodeIdx, right: NodeIdx) -> Result<NodeIdx, OperationError> {
+        self.assembly.push(self.eng, at, &[ChildPair::new(left, right)])
+    }
+
+    /// Seat the chosen root reference and drop what the joins left unused.
+    pub(super) fn finish(self, local: NodeIdx) -> Result<Tdd, OperationError> {
+        let output = TddNodeId { vtree: self.vtree.root(), local };
+        let mut result = self.assembly.finish_checked(output)?;
+        if self.prune {
+            prune(self.eng, &mut result)?;
+        }
+        Ok(result)
+    }
 }
 
-impl<'a> Placement<'a, false> {
-    pub(super) fn moving(eng: &'a Engine, vtree: &'a Arc<Vtree>, weights: Option<WeightStore>) -> Result<Self, OperationError> {
+/// Whole parts moved into a destination, levels and weight columns alike,
+/// under graft assembly's untracked contract.
+pub(super) struct MovePlacement<'a> {
+    eng: &'a Engine,
+    vtree: &'a Arc<Vtree>,
+    assembly: Assembly<'a>,
+    /// Whether a join sits over a marginal level, which is what leaves
+    /// references to repair.
+    prune: bool,
+}
+
+impl<'a> MovePlacement<'a> {
+    pub(super) fn new(eng: &'a Engine, vtree: &'a Arc<Vtree>, weights: Option<WeightStore>) -> Result<Self, OperationError> {
         let levels = try_take_levels(eng, vtree.num_nodes())?;
         let assembly = Assembly::from_levels(eng, Arc::clone(vtree), levels, weights);
         Ok(Self { eng, vtree, assembly, prune: false })
@@ -78,35 +113,24 @@ impl<'a> Placement<'a, false> {
                 .move_from(&mut source.levels[from], source.weights.as_mut(), from);
         }
     }
-}
 
-impl<const COPY: bool> Placement<'_, COPY> {
     /// Add a connecting node, recording any marginal boundary it introduces.
     #[inline]
-    pub(super) fn join(&mut self, at: VtreeIdx, left: NodeIdx, right: NodeIdx) -> Result<NodeIdx, OperationError> {
-        let pair = ChildPair::new(left, right);
-        if COPY {
-            self.assembly.push(self.eng, at, &[pair])
-        } else {
-            let (l, r) = self.vtree.children(at);
-            self.prune |= self.assembly.level(l).is_marginal() || self.assembly.level(r).is_marginal();
-            Ok(self.assembly.parts_mut().0[at.idx()].push_internal_node(&[pair]))
-        }
+    pub(super) fn join(&mut self, at: VtreeIdx, left: NodeIdx, right: NodeIdx) -> NodeIdx {
+        let (l, r) = self.vtree.children(at);
+        self.prune |= self.assembly.level(l).is_marginal() || self.assembly.level(r).is_marginal();
+        self.assembly.parts_mut().0[at.idx()].push_internal_node(&[ChildPair::new(left, right)])
     }
 
     /// Seat the chosen root reference and repair the boundaries introduced here.
     pub(super) fn finish(mut self, local: NodeIdx) -> Result<Tdd, GraftError> {
         let output = TddNodeId { vtree: self.vtree.root(), local };
-        let mut result = if COPY {
-            self.assembly.finish_checked(output)?
-        } else {
-            let (levels, weights) = self.assembly.parts_mut();
-            if let Some(weights) = weights {
-                weights.check_levels(self.vtree, levels).map_err(GraftError::DestinationWeights)?;
-            }
-            self.assembly.finish(output)?
-        };
-        if !COPY && self.prune {
+        let (levels, weights) = self.assembly.parts_mut();
+        if let Some(weights) = weights {
+            weights.check_levels(self.vtree, levels).map_err(GraftError::DestinationWeights)?;
+        }
+        let mut result = self.assembly.finish(output)?;
+        if self.prune {
             for (leaf, _) in result.vtree.leaf_bottomup() {
                 if result.levels[leaf.idx()].is_weight_marginal() {
                     crate::marginal::canonicalize_apply_leaf_refs(
@@ -114,9 +138,7 @@ impl<const COPY: bool> Placement<'_, COPY> {
                 }
             }
             crate::diagram::inline_small_marginal_refs(&mut result, None);
-        }
-        if self.prune {
-            self.eng.reduce(&mut result, crate::reduce::ReductionPlan::Prune)?;
+            prune(self.eng, &mut result)?;
         }
         Ok(result)
     }

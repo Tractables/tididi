@@ -5,7 +5,7 @@
 //! local node indices. Canonical parts introduce no structural twins; marginal
 //! roots are tagged and pruned after acquiring their new parent references.
 
-use super::{GraftError, placement::Placement};
+use super::{GraftError, placement::MovePlacement};
 
 use crate::Engine;
 use std::sync::Arc;
@@ -158,7 +158,7 @@ fn graft_impl(
         return Ok((result, layout));
     }
 
-    let mut placement = Placement::moving(eng, &grafted_arc, into)?;
+    let mut placement = MovePlacement::new(eng, &grafted_arc, into)?;
     for (part, map) in parts.iter_mut().zip(&layout.comp_to_full) {
         placement.move_part(part, map);
     }
@@ -179,7 +179,7 @@ fn graft_impl(
     for (j, &chain_idx) in layout.chain_internals.iter().enumerate() {
         let left = if j == 0 { piece_ref(0) } else { NodeIdx(0) };
         let right = piece_ref(j + 1);
-        placement.join(chain_idx, left, right)?;
+        placement.join(chain_idx, left, right);
     }
 
     // The output is the last chain join when there is one; otherwise the sole
