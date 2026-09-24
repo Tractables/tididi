@@ -169,7 +169,7 @@ pub(super) fn exists_leaves_structural(
     eng: &Engine,
     mut tdd: Tdd,
     targets: &[VtreeIdx],
-    collapsed: &[bool],
+    collapsed: bool,
 ) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     lim.check_stop()?;
@@ -208,8 +208,7 @@ pub(super) fn exists_leaves_structural(
             Role::Whole => {
                 let above = vtree.node(level).parent();
                 let wanted = above.is_some_and(|p| role[p.idx()] == Role::Split);
-                let pre_collapsed = collapsed.get(level.idx()).copied().unwrap_or(false);
-                free_subtree_level(&mut work, &mut tdd, &vtree, level, wanted, pre_collapsed)?
+                free_subtree_level(&mut work, &mut tdd, &vtree, level, wanted, collapsed)?
             }
             Role::Split => {
                 let (left, right) = vtree.children(level);
@@ -320,7 +319,7 @@ fn check_levels_are_rewritable(
 /// does not, and when the map is the identity because the level held one node —
 /// the level above then keeps its own references and is left alone.
 ///
-/// `pre_collapsed` suspends that second shortcut. A level a fused conjunction
+/// `collapsed` suspends that second shortcut. A level a fused conjunction
 /// already reduced to `⊤` holds one node *now* but stood for many when the
 /// level above was built, so its references no longer separate what they
 /// separated: the level above still owes the regroup, and only a map it is
@@ -331,7 +330,7 @@ fn free_subtree_level(
     vtree: &Vtree,
     level: VtreeIdx,
     wanted: bool,
-    pre_collapsed: bool,
+    collapsed: bool,
 ) -> Result<Option<Remap>, OperationError> {
     let lim = work.eng.limits();
     if vtree.node(level).is_leaf() {
@@ -344,7 +343,7 @@ fn free_subtree_level(
     work.emitted += 1;
     lim.level_done(work.emitted)?;
     tdd.try_invalidate(work.eng, level)?;
-    if !wanted || (n_nodes == 1 && !pre_collapsed) {
+    if !wanted || (n_nodes == 1 && !collapsed) {
         return Ok(None);
     }
     Runs::all_to_first(lim, n_nodes, 0u32).map(Some)

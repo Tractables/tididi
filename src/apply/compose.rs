@@ -1,5 +1,6 @@
 //! Boolean combinations built from the shared apply and quantification kernels.
 
+use crate::limits::Transient;
 use crate::vtree::{VarId, VtreeIdx};
 use crate::{Engine, OperationError, Tdd};
 
@@ -253,73 +254,44 @@ impl Engine {
         // of the two stores the product then carries is a question the rewrites
         // below do not answer.
         let fused = how.pushes_through() && f.weights.is_none();
-        if !fused {
-            let product = self.and(f, g)?;
-            let identity = targets.is_empty() || product.is_zero();
-            let mut result = super::project::exists_targets_on(self, product, &targets, &[])?;
-            if identity { self.minimize(&mut result)?; }
-            return Ok(result);
-        }
-        (f, g) = push_local_targets(self, f, g, &targets)?;
-        let (product, collapsed) = if how.collapses_subtrees() {
-            let vtree = std::sync::Arc::clone(f.vtree());
-            let subtrees = quantified_subtrees(self, &vtree, &targets)?;
-            let (product, swept) =
-                super::conjoin::conjoin_quantifying(self, f, g, &subtrees.whole)?;
-            (product, if swept { subtrees.maximal } else { Vec::new() })
+        let (product, collapsed) = if fused {
+            (f, g) = push_local_targets(self, f, g, &targets)?;
+            if how.collapses_subtrees() {
+                let vtree = std::sync::Arc::clone(f.vtree());
+                let whole = Transient::new(self.limits(), quantified_subtrees(self, &vtree, &targets)?);
+                super::conjoin::conjoin_quantifying(self, f, g, &whole)?
+            } else {
+                (self.and(f, g)?, false)
+            }
         } else {
-            (self.and(f, g)?, Vec::new())
+            (self.and(f, g)?, false)
         };
-        // A nonempty quantification minimizes a non-false product.
-        let identity = targets.is_empty() || product.is_zero();
-        let mut result = super::project::exists_targets_on(self, product, &targets, &collapsed)?;
-        if identity { self.minimize(&mut result)?; }
+        let mut result = super::project::exists_targets_on(self, product, &targets, collapsed)?;
+        self.minimize(&mut result)?;
         Ok(result)
     }
 }
 
-/// Which vtree nodes a quantification takes whole, and which of those are the
-/// tops of their subtrees.
-struct Quantified {
-    /// Every node all of whose leaves are quantified: what the conjunction
-    /// collapses instead of building.
-    whole: Vec<bool>,
-    /// The maximal ones among the internal nodes: the levels whose parents the
-    /// quantification sweep must regroup even though they now hold one node.
-    maximal: Vec<bool>,
-}
-
-/// Label the vtree by [`Quantified`]'s two rules, bottom-up.
-///
-/// A leaf that is its subtree's top is not recorded: the sweep hands its
-/// parent a map for the three leaf labels whatever the level looks like, so
-/// the regroup there already runs.
+/// Label every vtree node all of whose leaves are quantified, bottom-up: what
+/// the conjunction collapses instead of building.
 ///
 /// # Errors
 ///
-/// A refused reservation for either label array.
+/// A refused reservation for the label array.
 fn quantified_subtrees(
     eng: &Engine,
     vtree: &crate::vtree::Vtree,
     targets: &[VtreeIdx],
-) -> Result<Quantified, OperationError> {
-    let lim = eng.limits();
-    let num_nodes = vtree.num_nodes();
+) -> Result<Vec<bool>, OperationError> {
     let mut whole = Vec::new();
-    lim.try_resize(&mut whole, num_nodes, false)?;
-    let mut maximal = Vec::new();
-    lim.try_resize(&mut maximal, num_nodes, false)?;
+    eng.limits().try_resize(&mut whole, vtree.num_nodes(), false)?;
     for &leaf in targets {
         whole[leaf.idx()] = true;
     }
     for (t, left, right) in vtree.internal_bottomup() {
         whole[t.idx()] = whole[left.idx()] && whole[right.idx()];
     }
-    for (t, _, _) in vtree.internal_bottomup() {
-        maximal[t.idx()] = whole[t.idx()]
-            && vtree.node(t).parent().is_none_or(|p| !whole[p.idx()]);
-    }
-    Ok(Quantified { whole, maximal })
+    Ok(whole)
 }
 
 /// Quantify the targets one operand does not constrain out of the other one,
@@ -351,11 +323,11 @@ fn push_local_targets(
     let lim = eng.limits();
     let vtree = std::sync::Arc::clone(f.vtree());
     let num_nodes = vtree.num_nodes();
-    let mut free_in_f = eng.apply().left_identity.checkout(lim);
-    let mut free_in_g = eng.apply().right_identity.checkout(lim);
-    let mut into_f: Vec<VtreeIdx> = Vec::new();
-    let mut into_g: Vec<VtreeIdx> = Vec::new();
-    let split = (|| -> Result<(), OperationError> {
+    let mut into_f = Transient::new(lim, Vec::<VtreeIdx>::new());
+    let mut into_g = Transient::new(lim, Vec::<VtreeIdx>::new());
+    {
+        let mut free_in_f = eng.apply().left_identity.checkout(lim);
+        let mut free_in_g = eng.apply().right_identity.checkout(lim);
         super::conjoin::init_leaf_identity(eng, &mut free_in_f, &f, &vtree, num_nodes)?;
         super::conjoin::init_leaf_identity(eng, &mut free_in_g, &g, &vtree, num_nodes)?;
         for &leaf in targets {
@@ -366,18 +338,12 @@ fn push_local_targets(
                 lim.try_push(&mut into_f, leaf)?;
             }
         }
-        Ok(())
-    })();
-    drop(free_in_f);
-    drop(free_in_g);
-    split?;
+    }
     if !into_f.is_empty() {
-        f = super::project::exists_targets_on(eng, f, &into_f, &[])?;
+        f = super::project::exists_targets_on(eng, f, &into_f, false)?;
     }
     if !into_g.is_empty() {
-        g = super::project::exists_targets_on(eng, g, &into_g, &[])?;
+        g = super::project::exists_targets_on(eng, g, &into_g, false)?;
     }
-    lim.discard(into_f);
-    lim.discard(into_g);
     Ok((f, g))
 }
