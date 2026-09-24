@@ -79,8 +79,7 @@ pub(super) struct CellArgs<'a, 'c, L, R> {
 /// Per-row / per-cell action of the shared row loop ([`run_level_rows`]).
 ///
 /// All hooks are `#[inline(always)]` in impls, so each instantiation
-/// monomorphizes to what the hand-written per-route loop produced and the hooks
-/// three of the four routes leave at their empty defaults vanish entirely.
+/// monomorphizes to a loop specialized to its route.
 pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
     /// Whether the driver debug-asserts that each f row node is structurally
     /// internal before decoding its pairs. Mirrors [`PairSink::ASSERT_INTERNAL`],
@@ -282,17 +281,13 @@ impl<const A: bool, L: ChildLookup, R: ChildLookup> CellAction<L, R> for Emit<'_
     }
 }
 
-/// Route A row-loop: forward-order scatter for levels with at least one marginal child.
-///
-/// The `Route::MarginalChild` row loop. Iterates rows
-/// `0..left_width` in forward order, running the emit kernel for each cell.
+/// The `Route::MarginalChild` row loop: a level with at least one marginal
+/// child. Iterates rows `0..left_width` in forward order, running the emit
+/// kernel for each cell.
 ///
 /// Never streams: streaming marginal-child levels take the collapse-at-source
 /// walker ([`run_level_rows_stream_count`]) unconditionally — there is no
 /// materialize-then-convert fallback for them.
-///
-/// `rows.f_level` is a pre-taken immutable borrow into `f`'s level array so the
-/// caller can keep its `vtree = &f.vtree` borrow live simultaneously.
 pub(crate) fn run_level_rows_marginal(
     eng: &Engine,
     rows: RowLoop<'_>,
@@ -371,7 +366,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
     }
 }
 
-/// Sparse-output variant of Route A for an *exactly-one*-marginal-child level
+/// The `Route::SparseMarg` row loop: an *exactly-one*-marginal-child level
 /// whose output is structural (never a marginalization target).
 ///
 /// Same emit kernel as [`run_level_rows_marginal`], but instead of a dense
@@ -411,9 +406,8 @@ pub(crate) fn run_level_rows_marginal_sparse(
     )
 }
 
-/// Route B row-loop: forward pass for plain (non-marginal-child) levels.
-///
-/// The row loop of the routes with no marginal child. Iterates rows in forward order.
+/// The row loop of `Route::PlainDense` and `Route::Dense`: a level with no
+/// marginal child. Iterates rows in forward order.
 /// Runs the emit kernel with positional grid lookups on both sides (no
 /// pass-through, no mask decode — the caller guarantees no marginal child).
 ///

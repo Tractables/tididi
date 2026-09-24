@@ -73,9 +73,8 @@ pub(in crate::apply::conjoin) fn emit_single_pair(eng: &Engine, level: &mut TddL
 /// in impls, so each kernel instantiation monomorphizes to a specialized walk.
 pub(crate) trait PairSink {
     /// Whether the kernel asserts the g parent node is structurally internal.
-    /// True for the emit walks; false for count/collect walks, which may visit
-    /// marginal-encoded
-    /// operand nodes (e.g. the both-marginal collapse).
+    /// True for the emit sink; false for the collect sink, which may visit
+    /// marginal-encoded operand nodes (the both-marginal collapse).
     const ASSERT_INTERNAL: bool;
 
     /// 1×1 cell fast path: the cell's single surviving pair. The emit impl
@@ -154,15 +153,12 @@ impl PairSink for EmitSink<'_> {
 
 /// Collect surviving `(lc, rc)` pairs into a caller-owned scratch Vec — the
 /// streaming collapse-at-source walk (`run_level_rows_stream_count`). Touches
-/// neither `level` nor `node_idx[grid_pos]`; the caller feeds the collected
-/// refs straight to `compute_cell_count`. Pushes are budget-tracked
+/// neither `level` nor `node_idx[grid_pos]`; the caller folds the collected
+/// refs through its fold's `fold_cell`. Pushes are budget-tracked
 /// (`try_push`), matching the emit walk's `try_push_pair_into`: a wide
 /// streaming cell's scratch growth charges the apply soft budget and degrades
-/// to `Err(OverBudget)` instead of an allocator abort. (The generic route
-/// charges the same transient — it materializes these pairs into
-/// `level.pairs` before truncating — so this keeps the collapse route's
-/// budget accounting equivalent.) The scratch is bounded to one cell's pairs
-/// and reused across cells.
+/// to `Err(OverBudget)` instead of an allocator abort. The scratch is bounded
+/// to one cell's pairs and reused across cells.
 pub(crate) struct CollectSink<'a> {
     pub(crate) out: &'a mut Vec<ChildPair>,
 }
@@ -210,11 +206,6 @@ impl PairSink for CollectSink<'_> {
 /// is swept. `ITER_C1` says which — `true` sweeps `inputs1` against the lone g
 /// pair (N×1), `false` sweeps `inputs2` against the lone f pair (1×N). The
 /// grid lookup is ordered `(f field, g field)` in both directions.
-///
-/// Both directions cull on the reach masks first — if no live left (resp.
-/// right) column can reach g-node `j`'s children, every lookup below is `NO_PRODUCT`
-/// and the cell emits nothing. The cull is gated on `both_multi_pair` because the reach
-/// masks exist only when both levels are multi-pair.
 ///
 /// The pair count is known before the sweep, so the whole cell is charged to
 /// the work clock in one go: one branch per cell rather than one per pair.
@@ -373,9 +364,10 @@ where
 
 /// Merged per-cell product walk — one kernel for every dense cell action.
 ///
-/// The lookups (`L`, `R`) resolve child refs per representation (dense grid /
-/// sparse point index / marginal pass-through — see `child_lookup.rs`); the
-/// sink (`S`) is the per-pair action (emit / count / collect).
+/// The lookups (`L`, `R`) resolve child refs per representation — a
+/// `DenseLookup` grid read or a `MarginalLookup` pass-through, see
+/// `child_lookup.rs`; the sink (`S`) is the per-pair action, `EmitSink` or
+/// `CollectSink`.
 ///
 /// Arms: 1×1 (single-pair fast path via `sink.single`), N×1 / 1×N (one side
 /// single — [`cell_one_sided`], one loop in both directions), N×M (reach-mask
@@ -391,7 +383,7 @@ where
 /// `inputs2_scratch` as the decode buffer — neither aliases the output slab.
 ///
 /// Sink allocation can return [`OperationError::OverBudget`]; every arm polls
-/// for [`OperationError::Stopped`], including count-only sinks.
+/// for [`OperationError::Stopped`], the collect sink included.
 ///
 /// Keep input slices and lookup geometry as direct parameters so the optimizer
 /// retains their aliasing information within the pair loops.

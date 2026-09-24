@@ -233,13 +233,16 @@ fn snapshot_widths(
 /// pairs (8B) + nodes (8B) + scratch (4–8B) ≈ 24B.
 const APPLY_BYTES_PER_CELL: u64 = 24;
 
-/// Refuse before allocating anything if the cells this apply is *guaranteed* to
-/// materialize already exceed the remaining soft budget.
+/// Refuse before allocating anything if a lower bound on the cells this apply
+/// materializes already exceeds the remaining soft budget.
 ///
-/// `total_cells` counts levels at or under the sparse threshold only: a level
-/// above it never materializes its grid, and its cost, the surviving pairs, is
-/// charged per push at each growth site. `APPLY_BYTES_PER_CELL` is the pair,
-/// node and scratch bytes one dense cell costs.
+/// `total_cells` counts the levels at or under the sparse gate's `min_grid`,
+/// which take a dense route whatever their density. It is a lower bound: a
+/// level above the gate goes dense too when its products are not sparse, and
+/// a level under it goes sparse when a child grid wins. A sparse level's
+/// cost, the surviving pairs, is charged per push at each growth site.
+/// `APPLY_BYTES_PER_CELL` is the pair, node and scratch bytes one dense cell
+/// costs.
 ///
 /// Nothing is reserved here; every arena growth in the apply is fallible at
 /// its own site.

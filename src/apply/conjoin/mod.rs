@@ -61,7 +61,7 @@ pub(crate) use drive::apply_and_fallible;
 use drive::Sweep;
 mod filter;
 
-mod liveness; // Used by `marginal_plan::build_side_masks`.
+mod liveness;
 
 pub(crate) mod streaming_marginal;
 use crate::value::StreamCache;

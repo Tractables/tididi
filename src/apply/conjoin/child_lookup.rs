@@ -9,7 +9,8 @@
 //! - [`DenseLookup`] — the grid index. Holds no borrow (it takes the
 //!   `node_idx` slab as a call argument), so it never aliases the
 //!   `&mut node_idx` the emit writes its output into.
-//! - [`MarginalLookup`] — the marginal-aware Route A lookup (below).
+//! - [`MarginalLookup`] — the marginal-aware lookup of a level with a
+//!   marginal child (below).
 
 /// Flat row offset `a * stride` of child node row `a` in a child grid whose rows
 /// are `stride` columns wide.
@@ -87,7 +88,7 @@ impl ChildLookup for DenseLookup {
     }
 }
 
-/// Marginal-aware child lookup for the Route A (≥1 marginal child) cell walk.
+/// Marginal-aware child lookup for the cell walks of a level with a marginal child.
 ///
 /// Off pass-through this is exactly a [`DenseLookup`] grid read. On a
 /// pass-through side the raw operand field (`row` = the f pair field, `col` =

@@ -6,10 +6,18 @@
 //!
 //! - identity fast path, when one operand is constant-true over the subtree:
 //!   the other operand's level is moved into the output;
-//! - sparse, when `left_width * right_width` exceeds the sparse gate's
-//!   `min_grid`: scatter, filter and dedup over live products only, in the
-//!   engine-owned `sparse::SparseWorkspace`;
-//! - dense, otherwise: the full grid is walked and written to the grid arena.
+//! - sparse, when the level's grid, or a child grid the dense build would
+//!   have to materialize, is over the sparse gate's `min_grid` and the live
+//!   products are sparse in it: scatter, filter and dedup over live products
+//!   only, in the engine-owned `sparse::SparseWorkspace`. A level with
+//!   exactly one marginal child that is not a target takes the sparse-marginal
+//!   variant;
+//! - streaming, when the level is a streaming marginalization target: each
+//!   cell folds to a value and no product node is built;
+//! - dense, otherwise: the full grid is walked and written to the grid arena,
+//!   through `MarginalLookup` sides when a child is marginal.
+//!
+//! `route::route_level` makes the choice.
 //!
 //! A self-conjunction `f ∧ f` returns `f` from `conjoin_owned` before the
 //! driver runs.
@@ -162,7 +170,7 @@ pub(crate) fn apply_and_fallible(
     );
 
     // Early return for zero inputs: `x ∧ 0 = 0`.
-    // Avoids allocating levels, level_base, and node_idx for unsatisfiable operands.
+    // Avoids allocating the output's levels and arenas for unsatisfiable operands.
     let vtree = Arc::clone(&f.vtree);
     let num_nodes = vtree.num_nodes();
     if f.is_zero() || g.is_zero() {

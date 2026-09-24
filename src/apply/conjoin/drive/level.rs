@@ -151,14 +151,13 @@ pub(super) fn open_level_arenas(
     Ok(())
 }
 
-/// Build every cell of this level, on whichever of the two row-loop routes the
-/// level's marginal-child pattern selects.
+/// Build every cell of this level on the row loop its route names.
 ///
-/// Route A (at least one marginal child or pass-through side) runs the shared
-/// cell kernel with `MarginalLookup` sides; Route B assumes neither and uses
-/// positional dense lookups. Both collapse to a streaming fold instead of
-/// materializing product nodes when the level is a streaming marginalization
-/// target.
+/// A streaming marginalization target folds each cell to a value instead of
+/// materializing product nodes; [`Route::MarginalChild`] runs the shared cell
+/// kernel with `MarginalLookup` sides; [`Route::Dense`] and
+/// [`Route::PlainDense`] assume no marginal child and read both child grids
+/// positionally.
 fn run_row_loop(
     eng: &Engine,
     route: Route,
@@ -271,8 +270,8 @@ struct SparseMargScratch<'a> {
 /// Build a [`Route::SparseMarg`] level and close it out.
 ///
 /// Runs the shared emit kernel, but writes into the reused `right_width`-row scratch —
-/// `cell_ctx.output_grid_base` serves directly as the row base, and the driver is called with `i = 0`, so
-/// a grid position is just `row_base + j` — and records each surviving cell in
+/// `cell_ctx.output_grid_base` serves directly as the row base and the action's
+/// `grid_row` is 0, so a grid position is just `row_base + j` — and records each surviving cell in
 /// the output product list instead of a dense slab. The scratch goes back
 /// immediately: the level is tagged sparse, its product list is the
 /// authoritative representation, and the grandparent densifies it lazily.
@@ -366,10 +365,6 @@ pub(super) fn build_level_dense(
     let output_grid_base = materialize_children_and_grid(eng, run, shape, use_sparse_marginal)?;
 
     // Child grid geometry: product `(a, b)` sits at `base + a * k2_child + b`.
-    // The `NO_PRODUCT`-fill is interleaved with the product construction, one row at a
-    // time before that row's cells are computed, which keeps the active row in
-    // L1 during `process_cell` instead of polluting the cache with a single
-    // bulk fill of the whole f-by-g grid.
     let bases = Sides {
         left: run.products.arena.materialized(li).expect("the left child's grid is materialized"),
         right: run.products.arena.materialized(ri).expect("the right child's grid is materialized"),
