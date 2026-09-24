@@ -172,8 +172,9 @@ fn fixup_equivalence_left_at_root() {
 
 #[test]
 fn fixup_equivalence_right_at_root_balanced() {
-    // balanced(4) is the case the early-exit cannot use (right rotation
-    // pre-fixup has C after w in topo) — exercises the slice-rotate path.
+    // balanced(4) is the case the early exit cannot take: before the fixup a
+    // right rotation leaves C after w in topological order, so this takes the
+    // slice-rotate path.
     check_fixup_equivalence_right(Vtree::balanced(4), Vtree::balanced(4).root);
 }
 

@@ -232,11 +232,10 @@ fn weighted_column_alloc_charges_soft_budget() {
     );
 }
 
-/// Regression guard for the sparse side-table discipline: the overflow table
-/// is keyed by slot, so `Fast` pushes after a `Big` push must add nothing to
-/// it — there is no separate "fits the fast lane" flag, an absent entry encodes
-/// it — and a read at a
-/// fast-lane slot must resolve as fast-only, not panic.
+/// The overflow table is keyed by slot, so `Fast` pushes after a `Big` push
+/// must add nothing to it: there is no separate "fits the fast lane" flag, an
+/// absent entry encodes it, and a read at a fast-lane slot must resolve as
+/// fast-only, not panic.
 #[test]
 fn fast_push_after_big_leaves_side_table_sparse() {
     let eng = Engine::new();
