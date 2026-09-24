@@ -6,6 +6,7 @@
 cargo test --all-targets
 cargo test --doc
 cargo clippy --all-targets -- -D warnings
+cargo clippy --release --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 python3 tests/rendered_docs.py --self-test
 python3 tests/rendered_docs.py target/doc --unbundled
@@ -78,14 +79,26 @@ and captured output. CI checks Linux, macOS and Windows.
 - Return errors for invalid input and refused work. Named operations are
   checked; do not add panicking twins or `try_` aliases.
 - Put each operation's contract on its default entry point. Batch methods
-  link to that contract and explain their limit behavior. Introduce Boolean
-  expressions with `!`, `&` and `|`; introduce checked calls when discussing
-  error handling. Name the shared vtree `vtree`.
+  link to that contract and explain their limit behavior. Guides introduce
+  tasks and link to the items instead of repeating their contracts. Introduce
+  Boolean expressions with `!`, `&` and `|`; introduce checked calls when
+  discussing error handling. Name the shared vtree `vtree`.
+- Public docs describe current behavior; keep benchmark results, development
+  history and implementation debates out of them.
+- Put unit tests in a nearby `tests/` directory: for a standalone `foo.rs`,
+  `tests/foo.rs` (or `tests/foo/` for several files) declared with a `#[path]`
+  module attribute. Implementation directories hold implementation code;
+  integration tests go in the crate-root `tests/`. Use fixed seeds and no
+  timing assertions. `tests/comment_lint.rs` checks comments and test
+  placement; fix a violation rather than adding an exemption.
 - Keep the vtree text format and shared constructors/accessors compatible
   with [vitri](https://github.com/Tractables/vitri).
+- Commit messages must be suitable for publication: no tool footers, session
+  links or machine-specific details.
 
 [Architecture](docs/architecture.md) documents module responsibilities and
-the representation invariants.
+the representation invariants; add a row to its module table for a new public
+module, and reference its invariants from code rather than restating them.
 
 ## Releasing
 
