@@ -81,7 +81,7 @@ fn scatter_level(
 ///
 /// Nothing else needs repair. Every other buffer is resized, filled or
 /// cleared over its live range when the next level enters (`sides`,
-/// `ensure_buckets_cleared`, `build_reverse_index`, the chunk phases), the
+/// `ensure_buckets_cleared`, `build_reverse_index`, the chunk steps), the
 /// marking arrays are emptied by advancing their epoch, and `filtered`'s
 /// touched list is cleared with it here for the same reason as `p2_map`'s.
 struct WsGuard<'a> {
@@ -127,12 +127,12 @@ impl std::ops::DerefMut for WsGuard<'_> {
 /// reverse indices over the parent pairs, a scatter from the live child
 /// products upward, then dedup and emit. Only alive products are touched.
 ///
-/// Phases:
-///   A+C: fused scatter-filter by right sibling
-///   E:   dedup parent products via `p2_map[p2]`; emit `ChildPair`s
-///   F:   counting-sort pairs by parent product, create output nodes
+/// Steps:
+///   scatter:    fused scatter-filter by the outer child
+///   dedup:      dedup parent products via `p2_map[g_parent]`; emit `ChildPair`s
+///   node build: counting-sort pairs by parent product, create output nodes
 ///
-/// Phases E+F are chunked by f-parent index range when the projected transient
+/// Dedup and node build are chunked by f-parent index range when the projected transient
 /// exceeds `thresholds.chunk_bytes`; each chunk's `par_buckets` rows are
 /// dropped before the next chunk's `emit_pairs` grows. A level whose
 /// candidates were collected flat holds them in one sorted list the chunks
@@ -165,7 +165,7 @@ pub(crate) fn apply_sparse_level(
     // holds the same pair twice produces the same product pair twice, which
     // is exactly the multiplicity the count recurrence needs. Only the
     // pure-Boolean case still guarantees set-ness, so that is where the
-    // Phase F check stays armed. `cfg!` is a compile-time constant, so the
+    // node build's check stays armed. `cfg!` is a compile-time constant, so the
     // level scan is dead code in release.
     let duplicates_legal = cfg!(debug_assertions)
         && (f.levels.iter().any(|l| l.is_marginal())
@@ -183,7 +183,7 @@ pub(crate) fn apply_sparse_level(
 
     let flat = scatter_level(eng, ws, f, g, shape, pl, thresholds)?;
 
-    // `plan_e_f_chunks` greedy-packs f-parent indices into Phase E+F chunks
+    // `plan_chunks` greedy-packs f-parent indices into dedup and node-build chunks
     // under the sparse chunk budget (`usize::MAX` disables). A level that
     // fits in one chunk is flushed once with `drop_consumed=false`,
     // preserving cross-apply par_buckets capacity reuse. Wider levels split
@@ -194,17 +194,17 @@ pub(crate) fn apply_sparse_level(
     // across chunks, so `prod_idx` stays sequential over the level.
     let level = &mut levels[t_idx];
     let boundaries = if flat {
-        plan_e_f_chunks(ws.par_sorted.offsets.windows(2).map(|w| (w[1] - w[0]) as usize), shape.f.here, thresholds.chunk_bytes)
+        plan_chunks(ws.par_sorted.offsets.windows(2).map(|w| (w[1] - w[0]) as usize), shape.f.here, thresholds.chunk_bytes)
     } else {
-        plan_e_f_chunks(ws.par_buckets.iter().map(Vec::len), shape.f.here, thresholds.chunk_bytes)
+        plan_chunks(ws.par_buckets.iter().map(Vec::len), shape.f.here, thresholds.chunk_bytes)
     };
     let is_chunked = boundaries.len() > 2;
     for window in boundaries.windows(2) {
         let (p1_start, p1_end) = (window[0] as usize, window[1] as usize);
         let chunk_parent_start = pl_output.len() as u32;
         ws.emit_pairs.clear();
-        flush_chunk_phase_e(eng, ws, pl_output, chunk_parent_start, p1_start, p1_end, flat, is_chunked)?;
-        flush_chunk_phase_f(eng, ws, level, pl_output, chunk_parent_start, duplicates_legal)?;
+        dedup_chunk(eng, ws, pl_output, chunk_parent_start, p1_start, p1_end, flat, is_chunked)?;
+        build_chunk_nodes(eng, ws, level, pl_output, chunk_parent_start, duplicates_legal)?;
     }
 
     #[cfg(debug_assertions)]

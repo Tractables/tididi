@@ -14,8 +14,8 @@ fn shape(f: [usize; 3], g: [usize; 3]) -> LevelShape {
 
 fn entry(f: u32, g: u32) -> ProductEntry {
     ProductEntry {
-        left_idx: LeftNodeIdx(f),
-        right_idx: RightNodeIdx(g),
+        f_idx: FNodeIdx(f),
+        g_idx: GNodeIdx(g),
         prod_idx: ProductNodeIdx(0),
     }
 }

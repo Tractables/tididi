@@ -7,9 +7,9 @@ use crate::limits::Limits;
 /// Candidate that survived the sibling liveness filter, grouped by f-parent.
 #[derive(Clone, Copy)]
 pub(super) struct ParEntry {
-    pub(super) p2: u32,      // g parent index
-    pub(super) a_prod: u32,  // compacted left-child product index
-    pub(super) sib_idx: u32, // compacted right-child product index
+    pub(super) g_parent: u32,   // g parent index
+    pub(super) left_prod: u32,  // compacted left-child product index
+    pub(super) right_prod: u32, // compacted right-child product index
 }
 
 /// A candidate with the f parent it belongs to, as the flat list holds it
@@ -27,12 +27,12 @@ pub(super) struct Candidate {
 /// their live range before use.
 #[derive(Default)]
 pub(crate) struct SparseWorkspace {
-    // ── Phase A: reverse indices (child → parent) for scatter ──
-    pub(super) rev_c1: Grouped<RevEntry>,
-    pub(super) rev_c2: Grouped<RevEntry>,
+    // ── Scatter: reverse indices (child → parent) ──
+    pub(super) f_by_outer: Grouped<RevEntry>,
+    pub(super) g_by_outer: Grouped<RevEntry>,
 
     // ── The two children's product lists read by f index ──
-    // A product list is emitted in ascending `left_idx` order by every
+    // A product list is emitted in ascending `f_idx` order by every
     // producer, so its bucket for one f index is a slice of it; these hold
     // the slice bounds (`bucket_offsets`) for the inner and the outer child.
     pub(super) inner_offsets: Vec<u32>,
@@ -42,7 +42,7 @@ pub(crate) struct SparseWorkspace {
     // Per-outer filtered g index: inner-g-child → [(p2, attached_prod)], rebuilt
     // each outer from the live set + the opposite-keyed g reverse index, so the
     // emit loop iterates only alive entries, with no dead probes.
-    //   normal:  filtered[a2] = [(p2, sib_idx)]   swapped: filtered[s2] = [(p2, a_prod)]
+    //   normal:  filtered[a2] = [(g_parent, right_prod)]   swapped: filtered[s2] = [(g_parent, left_prod)]
     pub(super) filtered: Vec<Vec<(u32, u32)>>,
     pub(super) filtered_touched: Vec<u32>,          // indices of `filtered` written this outer, to clear
 
@@ -58,18 +58,18 @@ pub(crate) struct SparseWorkspace {
 
     // ── Output-sensitive join: the second way to build `filtered` ──
     // g's reverse index keyed by the join's inner-g child, the opposite key
-    // from `rev_c2`. An outer whose g keys hold most of the level's g
+    // from `g_by_outer`. An outer whose g keys hold most of the level's g
     // pairs — a g operand free over the outer child has all of them under one
     // key — builds `filtered` from this index instead, walking the parents of
     // the wanted inner-g children and keeping those under one of the outer's
     // keys. `outer_keys` marks those keys for the walk and `outer_attached`
     // holds each one's product.
-    pub(super) rev_c3: Grouped<RevEntry>,
+    pub(super) g_by_inner: Grouped<RevEntry>,
     pub(super) outer_keys: Vec<u32>,
     pub(super) outer_keys_epoch: u32,
     pub(super) outer_attached: Vec<u32>,
 
-    // ── Phase E: parent dedup ──
+    // ── Dedup: parent dedup ──
     pub(super) par_buckets: Vec<Vec<ParEntry>>,     // surviving candidates bucketed by f-parent
     // The flat alternative a level with many more parents than candidates
     // takes (`flat_candidates_win`): the scatter appends every candidate
@@ -86,7 +86,7 @@ pub(crate) struct SparseWorkspace {
     // f-by-left, f-by-right, g-by-left, g-by-right.
     pub(super) est_counts: Vec<u32>,
 
-    // ── Phase F: counting-sort pairs into output nodes ──
+    // ── Node build: counting-sort pairs into output nodes ──
     pub(super) emit_pairs: Vec<(u32, ChildPair)>,   // (parent_prod_idx, pair) for all surviving pairs
     pub(super) pairs_by_parent: Grouped<ChildPair>, // the same pairs grouped by chunk-local parent
 }
@@ -105,7 +105,7 @@ impl SparseWorkspace {
         crate::limits::pool::release_if_oversized(lim, &mut self.wanted);
         crate::limits::pool::release_if_oversized(lim, &mut self.wanted_keys);
         crate::limits::pool::release_if_oversized(lim, &mut self.inner_seen);
-        self.rev_c3.release_if_oversized(lim);
+        self.g_by_inner.release_if_oversized(lim);
         crate::limits::pool::release_if_oversized(lim, &mut self.outer_keys);
         crate::limits::pool::release_if_oversized(lim, &mut self.outer_attached);
     }
@@ -318,8 +318,8 @@ impl crate::limits::pool::PooledScratch for SparseWorkspace {
     fn retained_bytes(&self) -> usize {
         use crate::limits::pool::{capacity_bytes, nested_bytes};
         [
-            self.rev_c1.retained_bytes(),
-            self.rev_c2.retained_bytes(),
+            self.f_by_outer.retained_bytes(),
+            self.g_by_outer.retained_bytes(),
             capacity_bytes(&self.inner_offsets),
             capacity_bytes(&self.outer_offsets),
             nested_bytes(&self.filtered),
@@ -327,7 +327,7 @@ impl crate::limits::pool::PooledScratch for SparseWorkspace {
             capacity_bytes(&self.wanted),
             capacity_bytes(&self.wanted_keys),
             capacity_bytes(&self.inner_seen),
-            self.rev_c3.retained_bytes(),
+            self.g_by_inner.retained_bytes(),
             capacity_bytes(&self.outer_keys),
             capacity_bytes(&self.outer_attached),
             nested_bytes(&self.par_buckets),

@@ -8,22 +8,22 @@ use crate::{Engine, OperationError};
 use crate::diagram::TddLevel;
 use super::grid_arena::GridArena;
 
-/// Index of a node in `f.levels[t].nodes`. Distinct from `RightNodeIdx` and
+/// Index of a node in `f.levels[t].nodes`. Distinct from `GNodeIdx` and
 /// `ProductNodeIdx` so that construction-site swaps are caught at compile time.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) struct LeftNodeIdx(pub(crate) u32);
+pub(crate) struct FNodeIdx(pub(crate) u32);
 
-impl LeftNodeIdx {
+impl FNodeIdx {
     pub(crate) fn idx(self) -> usize { self.0 as usize }
 }
 
 /// Index of a node in `g.levels[t].nodes`.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) struct RightNodeIdx(pub(crate) u32);
+pub(crate) struct GNodeIdx(pub(crate) u32);
 
-impl RightNodeIdx {
+impl GNodeIdx {
     pub(crate) fn idx(self) -> usize { self.0 as usize }
 }
 
@@ -32,12 +32,12 @@ impl RightNodeIdx {
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) struct ProductNodeIdx(pub(crate) u32);
 
-/// A live product node: the conjunction `f[left_idx] ∧ g[right_idx]` produced
+/// A live product node: the conjunction `f[f_idx] ∧ g[g_idx]` produced
 /// the output node at `prod_idx` in the output level.
 #[derive(Clone, Copy)]
 pub(crate) struct ProductEntry {
-    pub(crate) left_idx: LeftNodeIdx,
-    pub(crate) right_idx: RightNodeIdx,
+    pub(crate) f_idx: FNodeIdx,
+    pub(crate) g_idx: GNodeIdx,
     pub(crate) prod_idx: ProductNodeIdx,
 }
 
@@ -68,13 +68,13 @@ fn fill_identity_product_list(
     if right_id {
         lim.reserve(pl, f_width)?;
         for i in 0..f_width as u32 {
-            pl.push(ProductEntry { left_idx: LeftNodeIdx(i), right_idx: RightNodeIdx(ID_IDX), prod_idx: ProductNodeIdx(i) });
+            pl.push(ProductEntry { f_idx: FNodeIdx(i), g_idx: GNodeIdx(ID_IDX), prod_idx: ProductNodeIdx(i) });
         }
         Ok(true)
     } else if left_id {
         lim.reserve(pl, g_width)?;
         for j in 0..g_width as u32 {
-            pl.push(ProductEntry { left_idx: LeftNodeIdx(ID_IDX), right_idx: RightNodeIdx(j), prod_idx: ProductNodeIdx(j) });
+            pl.push(ProductEntry { f_idx: FNodeIdx(ID_IDX), g_idx: GNodeIdx(j), prod_idx: ProductNodeIdx(j) });
         }
         Ok(true)
     } else {
@@ -124,10 +124,10 @@ impl Products {
         for read in 0..list.len() {
             poll.poll(1)?;
             let entry = list[read];
-            if keep(shape.t, super::NodeIdx(entry.left_idx.0), super::NodeIdx(entry.right_idx.0)) {
+            if keep(shape.t, super::NodeIdx(entry.f_idx.0), super::NodeIdx(entry.g_idx.0)) {
                 list[write] = entry; write += 1;
             } else if let Some(base) = base {
-                grid[base.idx() + entry.left_idx.0 as usize * shape.g.here + entry.right_idx.0 as usize] = super::NO_PRODUCT;
+                grid[base.idx() + entry.f_idx.0 as usize * shape.g.here + entry.g_idx.0 as usize] = super::NO_PRODUCT;
             }
         }
         poll.flush()?;
@@ -167,7 +167,7 @@ impl Products {
         let value = if let Some(base) = self.arena.materialized(t) {
             self.arena.slab()[base.idx() + f as usize * g_width + g as usize]
         } else if self.has_pl[t] {
-            self.product_lists[t].iter().find(|entry| entry.left_idx.0 == f && entry.right_idx.0 == g)?.prod_idx.0
+            self.product_lists[t].iter().find(|entry| entry.f_idx.0 == f && entry.g_idx.0 == g)?.prod_idx.0
         } else if g_identity { f }
         else if f_identity { g }
         else { panic!("product level {t} has neither stored products nor an identity operand") };

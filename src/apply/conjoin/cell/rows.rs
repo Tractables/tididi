@@ -54,7 +54,7 @@ pub(super) struct CellArgs<'a, 'c, L, R> {
     pub(super) j: usize,
     /// The f row index itself — not necessarily the grid row: the sparse-marginal route
     /// builds every row at grid row 0 and needs this as the product entry's
-    /// `left_idx`.
+    /// `f_idx`.
     pub(super) i: usize,
     /// Flat slab offset of the grid row this cell writes into —
     /// `ctx.output_grid_base + CellAction::grid_row(i) * ctx.right_width`, computed once per row by
@@ -325,7 +325,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
     /// One reused `right_width`-wide row scratch instead of a dense slab: every
     /// structural row builds at grid row 0, so `row_base == ctx.output_grid_base`.
     /// The true row index survives only in `CellArgs::i`, which the product
-    /// entry's `left_idx` reads below.
+    /// entry's `f_idx` reads below.
     #[inline(always)]
     fn grid_row(&self, _i: usize) -> usize {
         0
@@ -356,8 +356,8 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
             lim.try_push(
                 self.product_list,
                 ProductEntry {
-                    left_idx: LeftNodeIdx(a.i as u32),
-                    right_idx: RightNodeIdx(a.j as u32),
+                    f_idx: FNodeIdx(a.i as u32),
+                    g_idx: GNodeIdx(a.j as u32),
                     prod_idx: ProductNodeIdx(nid),
                 },
             )?;
@@ -380,7 +380,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
 /// Every cell is built at grid row 0, so the kernel's
 /// `grid_pos == cell_ctx.output_grid_base + j`, then read back from the scratch
 /// and, if alive, pushed as
-/// `ProductEntry { left_idx: row i, right_idx: col j, prod_idx: node }`.
+/// `ProductEntry { f_idx: row i, g_idx: col j, prod_idx: node }`.
 ///
 /// Never streams: [`Route::SparseMarg`](crate::apply::conjoin::route::Route::SparseMarg)
 /// is chosen only for a level that is not a marginalization target.

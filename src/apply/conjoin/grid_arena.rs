@@ -32,7 +32,7 @@
 use crate::Engine;
 use super::{OperationError, NO_PRODUCT};
 use super::budget::try_resize_dead;
-use super::products::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx};
+use super::products::{ProductEntry, FNodeIdx, GNodeIdx, ProductNodeIdx};
 
 /// Offset of a level's grid within the arena's flat slab.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -234,8 +234,8 @@ impl GridArena {
         self.set_dense(ti, GridBase(base));
         let slab = self.slab_mut();
         slab[base..base + cells].fill(NO_PRODUCT);
-        for &ProductEntry { left_idx, right_idx, prod_idx } in product_list {
-            slab[base + left_idx.idx() * g_width + right_idx.idx()] = prod_idx.0;
+        for &ProductEntry { f_idx, g_idx, prod_idx } in product_list {
+            slab[base + f_idx.idx() * g_width + g_idx.idx()] = prod_idx.0;
         }
         Ok(())
     }
@@ -255,8 +255,8 @@ impl GridArena {
                 let idx = slab[base + i * g_width + j];
                 if idx != NO_PRODUCT {
                     lim.try_push(product_list, ProductEntry {
-                        left_idx: LeftNodeIdx(i as u32),
-                        right_idx: RightNodeIdx(j as u32),
+                        f_idx: FNodeIdx(i as u32),
+                        g_idx: GNodeIdx(j as u32),
                         prod_idx: ProductNodeIdx(idx),
                     })?;
                 }

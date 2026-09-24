@@ -15,8 +15,8 @@ fn square_shape(k: usize) -> crate::apply::conjoin::setup::LevelShape {
 
 fn entry(f: u32, g: u32) -> ProductEntry {
     ProductEntry {
-        left_idx: LeftNodeIdx(f),
-        right_idx: RightNodeIdx(g),
+        f_idx: FNodeIdx(f),
+        g_idx: GNodeIdx(g),
         prod_idx: ProductNodeIdx(0),
     }
 }

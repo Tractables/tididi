@@ -101,8 +101,8 @@ pub(super) fn flat_candidates_win(thresholds: SparseThresholds, parents: usize, 
 pub(super) fn estimate_scatter_direction(
     eng: &Engine,
     est_counts: &mut Vec<u32>,
-    left_level: &TddLevel,
-    right_level: &TddLevel,
+    f_level: &TddLevel,
+    g_level: &TddLevel,
     pl_left: &[ProductEntry],
     pl_right: &[ProductEntry],
     shape: crate::apply::conjoin::setup::LevelShape,
@@ -121,16 +121,16 @@ pub(super) fn estimate_scatter_direction(
     let (cnt_f_left, rest) = buf.split_at_mut(f.left);
     let (cnt_f_right, rest) = rest.split_at_mut(f.right);
     let (deg_g_left, deg_g_right) = rest.split_at_mut(g.left);
-    for node in left_level.nodes.iter() {
+    for node in f_level.nodes.iter() {
         if !node.is_internal() { continue; }
-        for pair in left_level.pairs_of(node) {
+        for pair in f_level.pairs_of(node) {
             cnt_f_left[pair.left.0 as usize] += 1;
             cnt_f_right[pair.right.0 as usize] += 1;
         }
     }
-    for node in right_level.nodes.iter() {
+    for node in g_level.nodes.iter() {
         if !node.is_internal() { continue; }
-        for pair in right_level.pairs_of(node) {
+        for pair in g_level.pairs_of(node) {
             deg_g_left[pair.left.0 as usize] += 1;
             deg_g_right[pair.right.0 as usize] += 1;
         }
@@ -181,8 +181,8 @@ impl<'a> EstCounts<'a> {
 fn walk_and_keys(pl: &[ProductEntry], cnt_f: &[u32], deg_g: &[u32]) -> (u128, u128, u128) {
     let (mut walk, mut reach, mut keys) = (0u128, 0u128, 0u128);
     for e in pl {
-        let cnt = cnt_f[e.left_idx.idx()] as u128;
-        let deg = deg_g[e.right_idx.idx()] as u128;
+        let cnt = cnt_f[e.f_idx.idx()] as u128;
+        let deg = deg_g[e.g_idx.idx()] as u128;
         walk += cnt;
         reach += cnt * deg;
         keys += deg;
@@ -193,12 +193,12 @@ fn walk_and_keys(pl: &[ProductEntry], cnt_f: &[u32], deg_g: &[u32]) -> (u128, u1
 /// Projected transient cost per surviving `ParEntry`:
 ///
 /// ```text
-///   sizeof(ParEntry)             = 12   (Phase C/E input)
-/// + sizeof((u32, ChildPair))     = 12   (Phase E output → emit_pairs)
-/// + sizeof(ChildPair)            = 8    (Phase F output → pairs_by_parent)
+///   sizeof(ParEntry)             = 12   (scatter output, dedup input)
+/// + sizeof((u32, ChildPair))     = 12   (dedup output → emit_pairs)
+/// + sizeof(ChildPair)            = 8    (node build output → pairs_by_parent)
 /// ```
 ///
-/// Used by `plan_e_f_chunks` to size chunks under the byte budget. A level
+/// Used by `plan_chunks` to size chunks under the byte budget. A level
 /// that collected its candidates flat holds each in the sorted list at the
 /// same `ParEntry` size, so the projection is the same; what differs is
 /// that no chunk releases any of it, the list being one allocation.
