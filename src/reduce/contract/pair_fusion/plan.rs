@@ -31,7 +31,6 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
     scratch: &mut PFusionScratch,
 ) -> Result<Vec<PlanEntry<D::Value>>, OperationError> {
     let plevel = &tdd.levels[parent.idx()];
-    let child = MarginalChild { v, side };
     let mut out: Vec<PlanEntry<D::Value>> = Vec::new();
 
     // The grouping key is the raw explicit-side ref (opposite the marginal
@@ -43,82 +42,37 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
     // it, so both kinds are ordinary keys and the table is sized by the node's
     // pair count.
     for n in 0..plevel.nodes.len() {
-        group_node_pairs::<D>(eng, tdd, plevel, child, n, &mut out, scratch)?;
+        // A group needs two pairs sharing one explicit-side ref, so a node
+        // with fewer than two pairs, the common case, has nothing to group.
+        if plevel.pair_count_at(n) < 2 {
+            continue;
+        }
+        group_by_scatter::<D>(eng, tdd, plevel, v, side, n, &mut out, scratch)?;
     }
     Ok(out)
 }
 
-/// The marginal child a fusion pass fuses over: its vtree node and which
-/// side of the parent it sits on. The diagram and the parent level travel
-/// beside it as parameters, since a reference loaded out of a struct loses
-/// the aliasing facts a reference parameter carries.
-#[derive(Clone, Copy)]
-struct MarginalChild {
-    v: VtreeIdx,
-    side: ChildSide,
-}
-
-/// Shared per-group emission. `margs` is the whole occurrence multiset of
-/// marginal-side refs at this x (no dedup): with value-keyed slot sharing a
-/// node's pair list may legitimately contain `(x, M)` more than once, each
-/// occurrence carrying one earlier plan's `c(M)` contribution, so the
-/// fused value sums over occurrences, not over distinct M. Distinct marginal
-/// nodes are disjoint Z-sets, so their values add — `c(L)·v1 + c(L)·v2 + … =
-/// c(L)·(v1+v2+…)`, the fusion invariant, in whichever domain `D` is.
-fn emit_fusion_plan<D: SlotValues>(
-    eng: &Engine,
-    tdd: &Tdd,
-    v: VtreeIdx,
-    n: usize,
-    x_idx: u32,
-    margs: &[u32],
-    out: &mut Vec<PlanEntry<D::Value>>,
-) -> Result<(), OperationError> {
-    eng.limits().try_push(out, PlanEntry {
-        node_idx: n,
-        x_idx,
-        value: D::sum_refs(tdd, v, margs),
-        new_ref: u32::MAX,
-    })
-}
-
-
-/// Group one parent node's pairs by their explicit-side index and emit a plan
-/// for every group holding more than one marginal-side ref.
-fn group_node_pairs<D: SlotValues>(
-    eng: &Engine,
-    tdd: &Tdd,
-    plevel: &TddLevel,
-    child: MarginalChild,
-    n: usize,
-    out: &mut Vec<PlanEntry<D::Value>>,
-    sc: &mut PFusionScratch,
-) -> Result<(), OperationError> {
-    if !plevel.nodes[n].is_internal() {
-        return Ok(());
-    }
-    // A same-x fusion group needs ≥2 pairs sharing one x_idx, which
-    // requires the node to hold ≥2 pairs at all. Single-pair nodes
-    // (the common case) can never fuse — skip them before any
-    // grouping work; most scanned nodes produce no plan.
-    if plevel.pair_count_at(n) < 2 {
-        return Ok(());
-    }
-    group_by_scatter::<D>(eng, tdd, plevel, child, n, out, sc)
-}
-
-/// Group through the generation-stamped table in `sc`, keyed on the raw
-/// explicit-side ref.
+/// Group one parent node's pairs by their explicit-side ref through the
+/// generation-stamped table in `sc`, and emit a plan for every group holding
+/// more than one marginal-side ref.
+///
+/// A plan's value sums the group's whole occurrence multiset of marginal-side
+/// refs (no dedup): with value-keyed slot sharing a node's pair list may
+/// legitimately contain `(x, M)` more than once, each occurrence carrying one
+/// earlier plan's `c(M)` contribution. Distinct marginal nodes are disjoint
+/// Z-sets, so their values add — `c(L)·v1 + c(L)·v2 + … = c(L)·(v1+v2+…)`,
+/// the fusion invariant, in whichever domain `D` is.
+#[expect(clippy::too_many_arguments)]
 fn group_by_scatter<D: SlotValues>(
     eng: &Engine,
     tdd: &Tdd,
     plevel: &TddLevel,
-    child: MarginalChild,
+    v: VtreeIdx,
+    side: ChildSide,
     n: usize,
     out: &mut Vec<PlanEntry<D::Value>>,
     sc: &mut PFusionScratch,
 ) -> Result<(), OperationError> {
-    let MarginalChild { v, side } = child;
     let lim = eng.limits();
     // Bump the generation instead of clearing the cells (O(1) per-node
     // reset). On u32 wrap, zero the stamps and restart at 1 (0 is the
@@ -191,7 +145,12 @@ fn group_by_scatter<D: SlotValues>(
             // A single pair at this x cannot fuse.
             continue;
         }
-        emit_fusion_plan::<D>(eng, tdd, v, n, sc.touched[i], &sc.groups[i], out)?;
+        lim.try_push(out, PlanEntry {
+            node_idx: n,
+            x_idx: sc.touched[i],
+            value: D::sum_refs(tdd, v, &sc.groups[i]),
+            new_ref: u32::MAX,
+        })?;
     }
     Ok(())
 }
