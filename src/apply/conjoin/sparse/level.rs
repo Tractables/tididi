@@ -188,12 +188,12 @@ pub(crate) fn apply_sparse_level(
     // preserving cross-apply par_buckets capacity reuse. Wider levels split
     // into several chunks with `drop_consumed=true`, releasing each consumed
     // range's `par_buckets[p1]` before the next chunk's `emit_pairs` grows.
-    // Each chunk reuses `emit_pairs`, `pair_counts` and `sorted_pairs`, so
+    // Each chunk reuses `emit_pairs` and `pairs_by_parent`, so
     // the peak transient stays bounded by the chunk size; `pl_output` grows
     // across chunks, so `prod_idx` stays sequential over the level.
     let level = &mut levels[t_idx];
     let boundaries = if flat {
-        plan_e_f_chunks(ws.par_offsets.windows(2).map(|w| (w[1] - w[0]) as usize), shape.f.here, thresholds.chunk_bytes)
+        plan_e_f_chunks(ws.par_sorted.offsets.windows(2).map(|w| (w[1] - w[0]) as usize), shape.f.here, thresholds.chunk_bytes)
     } else {
         plan_e_f_chunks(ws.par_buckets.iter().map(Vec::len), shape.f.here, thresholds.chunk_bytes)
     };

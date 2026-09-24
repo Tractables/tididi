@@ -25,7 +25,7 @@ fn clearing_scratch_leaves_active_workspace_independent() {
     let ws = eng.sparse().checkout(eng.limits());
     assert_eq!(ws.par_buckets.capacity(), 0);
     assert_eq!(ws.emit_pairs.capacity(), 0);
-    assert_eq!(ws.rev_entries_c1.capacity(), 0);
+    assert_eq!(ws.rev_c1.entries.capacity(), 0);
 }
 
 #[test]

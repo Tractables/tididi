@@ -28,10 +28,8 @@ pub(super) struct Candidate {
 #[derive(Default)]
 pub(crate) struct SparseWorkspace {
     // ── Phase A: reverse indices (child → parent) for scatter ──
-    pub(super) rev_entries_c1: Vec<RevEntry>,
-    pub(super) rev_offsets_c1: Vec<u32>,         // prefix-sum offsets, length = child_width + 1
-    pub(super) rev_entries_c2: Vec<RevEntry>,
-    pub(super) rev_offsets_c2: Vec<u32>,
+    pub(super) rev_c1: Grouped<RevEntry>,
+    pub(super) rev_c2: Grouped<RevEntry>,
 
     // ── The two children's product lists read by f index ──
     // A product list is emitted in ascending `left_idx` order by every
@@ -60,14 +58,13 @@ pub(crate) struct SparseWorkspace {
 
     // ── Output-sensitive join: the second way to build `filtered` ──
     // g's reverse index keyed by the join's inner-g child, the opposite key
-    // from `rev_entries_c2`. An outer whose g keys hold most of the level's g
+    // from `rev_c2`. An outer whose g keys hold most of the level's g
     // pairs — a g operand free over the outer child has all of them under one
     // key — builds `filtered` from this index instead, walking the parents of
     // the wanted inner-g children and keeping those under one of the outer's
     // keys. `outer_keys` marks those keys for the walk and `outer_attached`
     // holds each one's product.
-    pub(super) rev_entries_c3: Vec<RevEntry>,
-    pub(super) rev_offsets_c3: Vec<u32>,
+    pub(super) rev_c3: Grouped<RevEntry>,
     pub(super) outer_keys: Vec<u32>,
     pub(super) outer_keys_epoch: u32,
     pub(super) outer_attached: Vec<u32>,
@@ -76,12 +73,10 @@ pub(crate) struct SparseWorkspace {
     pub(super) par_buckets: Vec<Vec<ParEntry>>,     // surviving candidates bucketed by f-parent
     // The flat alternative a level with many more parents than candidates
     // takes (`flat_candidates_win`): the scatter appends every candidate
-    // with its parent to `par_flat`, and `sort_candidates` counting-sorts
-    // them into `par_sorted`, parent `p1`'s run being
-    // `par_sorted[par_offsets[p1]..par_offsets[p1 + 1]]`.
+    // with its parent to `par_flat`, and `sort_candidates` groups them by
+    // parent into `par_sorted`.
     pub(super) par_flat: Vec<Candidate>,
-    pub(super) par_sorted: Vec<ParEntry>,
-    pub(super) par_offsets: Vec<u32>,
+    pub(super) par_sorted: Grouped<ParEntry>,
     pub(super) p2_map: Vec<u32>,                    // flat lookup: p2_map[right_parent] → compacted idx, NO_PRODUCT if new
     pub(super) p2_map_touched: Vec<u32>,            // p2 values written into p2_map this p1's emit pass, to clear
 
@@ -93,8 +88,7 @@ pub(crate) struct SparseWorkspace {
 
     // ── Phase F: counting-sort pairs into output nodes ──
     pub(super) emit_pairs: Vec<(u32, ChildPair)>,   // (parent_prod_idx, pair) for all surviving pairs
-    pub(super) pair_counts: Vec<u32>,               // per-parent pair count, then prefix-sum offsets
-    pub(super) sorted_pairs: Vec<ChildPair>,        // output buffer for counting sort
+    pub(super) pairs_by_parent: Grouped<ChildPair>, // the same pairs grouped by chunk-local parent
 }
 
 impl SparseWorkspace {
@@ -106,14 +100,12 @@ impl SparseWorkspace {
         crate::limits::pool::release_if_oversized(lim, &mut self.outer_offsets);
         drop_if_large(lim, &mut self.par_buckets);
         crate::limits::pool::release_if_oversized(lim, &mut self.par_flat);
-        crate::limits::pool::release_if_oversized(lim, &mut self.par_sorted);
-        crate::limits::pool::release_if_oversized(lim, &mut self.par_offsets);
+        self.par_sorted.release_if_oversized(lim);
         drop_if_large(lim, &mut self.filtered);
         crate::limits::pool::release_if_oversized(lim, &mut self.wanted);
         crate::limits::pool::release_if_oversized(lim, &mut self.wanted_keys);
         crate::limits::pool::release_if_oversized(lim, &mut self.inner_seen);
-        crate::limits::pool::release_if_oversized(lim, &mut self.rev_entries_c3);
-        crate::limits::pool::release_if_oversized(lim, &mut self.rev_offsets_c3);
+        self.rev_c3.release_if_oversized(lim);
         crate::limits::pool::release_if_oversized(lim, &mut self.outer_keys);
         crate::limits::pool::release_if_oversized(lim, &mut self.outer_attached);
     }
@@ -161,13 +153,65 @@ pub(super) struct RevEntry {
     pub(super) other: u32,
 }
 
+/// Entries grouped by a key in `0..n`: key `k`'s run is
+/// `entries[offsets[k]..offsets[k + 1]]`, so `offsets` holds `n + 1` bounds.
+pub(super) struct Grouped<T> {
+    pub(super) offsets: Vec<u32>,
+    pub(super) entries: Vec<T>,
+}
+
+impl<T> Default for Grouped<T> {
+    fn default() -> Self {
+        Grouped { offsets: Vec::new(), entries: Vec::new() }
+    }
+}
+
+impl<T> Grouped<T> {
+    /// The grouping, borrowed for reading.
+    #[inline]
+    pub(super) fn view(&self) -> GroupedView<'_, T> {
+        GroupedView { offsets: &self.offsets, entries: &self.entries }
+    }
+
+    /// The bytes both buffers hold.
+    pub(super) fn retained_bytes(&self) -> usize {
+        use crate::limits::pool::capacity_bytes;
+        capacity_bytes(&self.offsets).saturating_add(capacity_bytes(&self.entries))
+    }
+
+    /// Hand back either buffer whose capacity grew past the retention cap.
+    pub(super) fn release_if_oversized(&mut self, lim: &Limits) {
+        crate::limits::pool::release_if_oversized(lim, &mut self.offsets);
+        crate::limits::pool::release_if_oversized(lim, &mut self.entries);
+    }
+}
+
+/// A [`Grouped`] borrowed for reading, or any list already in key order
+/// together with its bucket bounds.
+#[derive(Clone, Copy)]
+pub(super) struct GroupedView<'a, T> {
+    pub(super) offsets: &'a [u32],
+    pub(super) entries: &'a [T],
+}
+
+impl<'a, T> GroupedView<'a, T> {
+    /// The entries under key `k`.
+    #[inline]
+    pub(super) fn bucket(self, k: usize) -> &'a [T] {
+        &self.entries[self.offsets[k] as usize..self.offsets[k + 1] as usize]
+    }
+
+    /// How many entries key `k` holds.
+    #[inline]
+    pub(super) fn len(self, k: usize) -> usize {
+        (self.offsets[k + 1] - self.offsets[k]) as usize
+    }
+}
+
 /// Build a reverse index from a level's pairs, keyed by one child side:
 ///   `BY_RIGHT = false`: left_child_idx  → [(parent_idx, right_sibling_idx)]
 ///   `BY_RIGHT = true` : right_sibling_idx → [(parent_idx, left_child_idx)]
-/// stored counting-sort style as a flat `entries` buffer plus prefix-sum `offsets`.
-///
-/// After this call: `entries[offsets[key] .. offsets[key + 1]]` is the slice of
-/// `(parent_idx, other_side_idx)` pairs for each key-side child index.
+/// grouped by the key-side child index.
 ///
 /// `BY_RIGHT` is a const generic so the `if BY_RIGHT` branches fold away.
 /// Four-pass counting sort:
@@ -183,10 +227,10 @@ pub(super) fn build_reverse_index<const BY_RIGHT: bool>(
     level: &TddLevel,
     key_width: usize,
     counts: Option<&[u32]>,
-    offsets: &mut Vec<u32>,
-    entries: &mut Vec<RevEntry>,
+    index: &mut Grouped<RevEntry>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
+    let Grouped { offsets, entries } = index;
     // Pass 1: count
     lim.try_resize(offsets, key_width + 1, 0)?;
     offsets[key_width] = 0;
@@ -259,10 +303,8 @@ impl crate::limits::pool::PooledScratch for SparseWorkspace {
     fn retained_bytes(&self) -> usize {
         use crate::limits::pool::{capacity_bytes, nested_bytes};
         [
-            capacity_bytes(&self.rev_entries_c1),
-            capacity_bytes(&self.rev_offsets_c1),
-            capacity_bytes(&self.rev_entries_c2),
-            capacity_bytes(&self.rev_offsets_c2),
+            self.rev_c1.retained_bytes(),
+            self.rev_c2.retained_bytes(),
             capacity_bytes(&self.inner_offsets),
             capacity_bytes(&self.outer_offsets),
             nested_bytes(&self.filtered),
@@ -270,20 +312,17 @@ impl crate::limits::pool::PooledScratch for SparseWorkspace {
             capacity_bytes(&self.wanted),
             capacity_bytes(&self.wanted_keys),
             capacity_bytes(&self.inner_seen),
-            capacity_bytes(&self.rev_entries_c3),
-            capacity_bytes(&self.rev_offsets_c3),
+            self.rev_c3.retained_bytes(),
             capacity_bytes(&self.outer_keys),
             capacity_bytes(&self.outer_attached),
             nested_bytes(&self.par_buckets),
             capacity_bytes(&self.par_flat),
-            capacity_bytes(&self.par_sorted),
-            capacity_bytes(&self.par_offsets),
+            self.par_sorted.retained_bytes(),
             capacity_bytes(&self.p2_map),
             capacity_bytes(&self.p2_map_touched),
             capacity_bytes(&self.est_counts),
             capacity_bytes(&self.emit_pairs),
-            capacity_bytes(&self.pair_counts),
-            capacity_bytes(&self.sorted_pairs),
+            self.pairs_by_parent.retained_bytes(),
         ].into_iter().sum()
     }
 

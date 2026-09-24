@@ -195,7 +195,7 @@ fn walk_and_keys(pl: &[ProductEntry], cnt_f: &[u32], deg_g: &[u32]) -> (u128, u1
 /// ```text
 ///   sizeof(ParEntry)             = 12   (Phase C/E input)
 /// + sizeof((u32, ChildPair))     = 12   (Phase E output → emit_pairs)
-/// + sizeof(ChildPair)            = 8    (Phase F output → sorted_pairs)
+/// + sizeof(ChildPair)            = 8    (Phase F output → pairs_by_parent)
 /// ```
 ///
 /// Used by `plan_e_f_chunks` to size chunks under the byte budget. A level
