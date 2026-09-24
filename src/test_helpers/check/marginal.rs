@@ -3,9 +3,9 @@
 //! saturation, and model-count preservation.
 //!
 //! The invariants are numbered in `docs/architecture.md` and stated there once.
-//! This module decides five of them: 5 (marginality permanent and
-//! downward-closed), 7 (inline discipline), 8 (pair-fusion saturation), 9 (twin
-//! canonicality) and 10 (value-slot uniqueness).
+//! This module decides six of them: 7 (inline discipline), 8 (pair-fusion
+//! saturation), 9 (twin canonicality), 10 (value-slot uniqueness), 11 (the
+//! weighted leaf column pin) and 12 (slot reachability).
 //!
 //! Invariants 8, 9 and 10 hold at the fixpoint of twin contraction,
 //! canonicalization by value, and pair fusion, at every boundary-marginal level
@@ -199,7 +199,7 @@ fn stored_slot_count(tdd: &Tdd, left_idx: usize) -> usize {
     tdd.levels[left_idx].marginal_counts().map_or(0, |c| c.len())
 }
 
-/// Invariant 4 garbage-freedom: after the slot prune, every slot index in
+/// Invariant 12, slot reachability: after the slot prune, every slot index in
 /// `0..store_len` at a boundary marginal level (a marginal child of a
 /// structural parent) is referenced by at least one parent marginal-side ref.
 /// An unreferenced slot is an orphan `prune_value_slots` should have
@@ -227,7 +227,7 @@ pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
             for &s in referenced {
                 if (s as usize) >= store_len {
                     return Err(format!(
-                        "invariant 4 (garbage-freedom) violation at boundary weight-marginal level {} \
+                        "invariant 12 (slot reachability) violation at boundary weight-marginal level {} \
                          (non-marginal parent {}, side {:?}): reference to slot {} is past \
                          the end of a {}-slot column",
                         v.idx(),
@@ -254,7 +254,7 @@ pub fn check_no_orphan_slots(tdd: &Tdd) -> Result<(), String> {
         for (slot, referenced) in ref_set.iter().enumerate().take(store_len) {
             if !referenced {
                 return Err(format!(
-                    "invariant 4 (garbage-freedom) violation at boundary marginal level {} \
+                    "invariant 12 (slot reachability) violation at boundary marginal level {} \
                      (non-marginal parent {}, side {:?}): slot {} is not \
                      referenced by any parent ref (store_len={}, referenced={})",
                     v.idx(),

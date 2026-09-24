@@ -9,18 +9,9 @@
 //! `test_helpers`.
 //!
 //! Every checker returns `Ok(())` or `Err(String)` naming the violation. The
-//! marginal-canonical-form checks and the model-count localizer are reached
-//! through the `marginal` submodule, which is the one path to them.
-//!
-//! ## Available checks
-//!
-//! | Checker | Cost | When to use |
-//! |---------|------|-------------|
-//! | `validate_vtree_structure` | O(size) | Always |
-//! | `check_no_false_nodes` | O(nodes) | Always |
-//! | `check_no_false_nodes_in_levels` | O(nodes) | Pre-minimize |
-//! | `check_canonicity` | O(size × rounds) | After minimize |
-//! | `check_determinism` | O(width² × apply / level + size) | Small diagrams only (≤5 vars). Includes leaf-level label-mode consistency. |
+//! invariant table in `docs/architecture.md` names the checker that decides
+//! each invariant; the marginal-form checks are reached through the
+//! `marginal` submodule.
 
 mod canonicity;
 mod rotation;

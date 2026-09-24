@@ -51,7 +51,7 @@ fn detects_unmerged_twins() {
 /// Invariant 10 negative: two slots carrying equal counts should have been
 /// canonicalized onto one slot (and the orphan collected).
 #[test]
-fn c3_detects_duplicate_counts() {
+fn slot_uniqueness_detects_duplicate_counts() {
     let tdd = toy(vec![BIG, BIG], &[&[(0, 0), (1, 1)]]);
     let err = check_slot_count_uniqueness(&tdd).unwrap_err();
     assert!(err.contains("invariant 10"), "wrong violation: {err}");
@@ -60,7 +60,7 @@ fn c3_detects_duplicate_counts() {
 /// Invariant 10 covers all slots: a stale duplicate is a violation too — and
 /// `prune_value_slots` is the fix (collects the orphan, after which invariant 10 holds).
 #[test]
-fn c3_rejects_stale_duplicate_until_slot_prune() {
+fn slot_uniqueness_rejects_a_stale_duplicate_until_the_slot_prune() {
     let eng = &crate::Engine::new();
     let mut tdd = toy(vec![BIG, BIG], &[&[(0, 0)]]);
     let err = check_slot_count_uniqueness(&tdd).unwrap_err();
@@ -69,37 +69,37 @@ fn c3_rejects_stale_duplicate_until_slot_prune() {
     check_slot_count_uniqueness(&tdd).unwrap();
 }
 
-/// invariants 4 and 7 negative: an inline-eligible count parked in a REFERENCED slot.
+/// Invariant 7 negative: an inline-eligible count parked in a referenced slot.
 #[test]
-fn c4_rejects_inline_eligible_slot() {
+fn inline_discipline_rejects_a_referenced_inline_eligible_slot() {
     let tdd = toy(vec![5], &[&[(0, 0)]]);
     let err = check_marginal_canonical_form(&tdd).unwrap_err();
     assert!(err.contains("invariant 7"), "wrong violation: {err}");
 }
 
-/// invariants 4 and 7 exemption: an inline-eligible count on an UNREFERENCED slot is
+/// Invariant 7 exemption: an inline-eligible count on an unreferenced slot is
 /// fine — count vectors are never shrunk, so a slot whose refs were all
 /// retagged inline legitimately retains its small count.
 #[test]
-fn c4_ignores_stale_inline_eligible_slot() {
+fn inline_discipline_ignores_an_unreferenced_inline_eligible_slot() {
     let tdd = toy(vec![BIG, 5], &[&[(0, 0)]]);
     check_inline_discipline(&tdd).unwrap();
 }
 
-// ── Invariant 4 garbage-freedom (`check_no_orphan_slots`) ───────────────────────────
+// ── Invariant 12 slot reachability (`check_no_orphan_slots`) ─────────────────────────
 
 /// Negative: a boundary store with an extra unreferenced slot (slot 1 is
 /// orphaned — only slot 0 is referenced). `check_no_orphan_slots` must
 /// return an `Err` naming the orphan.
 #[test]
-fn c4_orphan_slot_detects_unreferenced_boundary_slot() {
+fn slot_reachability_detects_an_unreferenced_boundary_slot() {
     // Slot 0 is referenced (parent has right-ref = 0).
     // Slot 1 is orphaned — no parent ref points to it.
     let tdd = toy(vec![BIG + 10, BIG + 20], &[&[(0, 0)]]);
     let err = check_no_orphan_slots(&tdd).unwrap_err();
     assert!(
-        err.contains("invariant 4"),
-        "wrong violation kind (expected invariant 4): {err}"
+        err.contains("invariant 12"),
+        "wrong violation kind (expected invariant 12): {err}"
     );
     assert!(
         err.contains('1') || err.contains("slot 1"),
@@ -110,16 +110,16 @@ fn c4_orphan_slot_detects_unreferenced_boundary_slot() {
 /// Positive: after `prune_value_slots`, the orphan is removed and
 /// `check_no_orphan_slots` passes. invariant 10 must also hold.
 #[test]
-fn c4_orphan_slot_cleared_after_prune() {
+fn slot_reachability_holds_after_the_slot_prune() {
     let eng = &crate::Engine::new();
     let mut tdd = toy(vec![BIG + 10, BIG + 20], &[&[(0, 0)]]);
-    // Pre-condition: invariant 4 violated.
+    // Pre-condition: invariant 12 violated.
     assert!(
         check_no_orphan_slots(&tdd).is_err(),
-        "pre-prune: expected invariant 4 violation"
+        "pre-prune: expected invariant 12 violation"
     );
     crate::reduce::slot_prune::prune_value_slots(eng, &mut tdd);
-    // Post-condition: invariant 4 passes.
+    // Post-condition: invariant 12 passes.
     check_no_orphan_slots(&tdd).unwrap();
     // invariant 10 must also hold after prune.
     check_slot_count_uniqueness(&tdd).unwrap();
@@ -166,7 +166,7 @@ fn subsumed_store_detected_and_freed() {
 // ── The same checks in the weighted domain ───────────────────────────────
 //
 // A weighted diagram stores its marginal values in the external `WeightStore`
-// instead of the level, and never dedups them, so invariant 10 and invariant 4 claim something
+// instead of the level, and never dedups them, so invariants 10 and 12 claim something
 // different there — see `check_weight_column_is_full_width` and the weighted
 // arm of `check_no_orphan_slots`. Invariant 9 is about pair multisets and claims the
 // same thing in both domains.
@@ -197,7 +197,7 @@ fn weighted_marginal_level() -> crate::vtree::VtreeIdx {
 /// weighted column, and a parent references a node by its own index, so equal
 /// values are not two spellings of one node.
 #[test]
-fn c3_weighted_allows_equal_values() {
+fn weighted_slot_uniqueness_allows_equal_values() {
     let tdd = toy_weighted(
         weighted_store(),
         vec![rat(3, 7), rat(3, 7)],
@@ -209,7 +209,7 @@ fn c3_weighted_allows_equal_values() {
 /// Invariant 10 negative, weighted: a column short of the level's width breaks the
 /// slot-index-is-node-index identity the bare-slot encoding rests on.
 #[test]
-fn c3_weighted_detects_short_column() {
+fn weighted_slot_uniqueness_detects_a_short_column() {
     let mut tdd = toy_weighted(weighted_store(), vec![rat(3, 7), rat(1, 2)], &[&[(0, 0)]]);
     let marginal = weighted_marginal_level();
     // Claim a third node without giving it a slot.
@@ -218,23 +218,23 @@ fn c3_weighted_detects_short_column() {
     assert!(err.contains("invariant 10 (weighted)"), "wrong violation: {err}");
 }
 
-/// Invariant 4 positive, weighted: an unreferenced slot is not garbage in a weighted
+/// Invariant 12 positive, weighted: an unreferenced slot is not garbage in a weighted
 /// column — nothing prunes one, and the column stays full width.
 #[test]
-fn c4_weighted_allows_unreferenced_slots() {
+fn weighted_slot_reachability_allows_unreferenced_slots() {
     let tdd = toy_weighted(weighted_store(), vec![rat(3, 7), rat(1, 2)], &[&[(0, 0)]]);
     check_no_orphan_slots(&tdd).unwrap();
 }
 
-/// Invariant 4 negative, weighted: a reference past the end of the column is a dangling
+/// Invariant 12 negative, weighted: a reference past the end of the column is a dangling
 /// slot, which the bare-slot encoding cannot tolerate.
 #[test]
-fn c4_weighted_detects_dangling_reference() {
+fn weighted_slot_reachability_detects_a_dangling_reference() {
     let dangling = ValueRef::slot_raw(5);
     let tdd = toy_weighted(weighted_store(), vec![rat(3, 7), rat(1, 2)], &[&[(0, dangling)]]);
     let err = check_no_orphan_slots(&tdd).unwrap_err();
-    assert!(err.contains("invariant 4"), "wrong violation: {err}");
-    assert!(err.contains("past the end"), "wrong invariant 4 arm: {err}");
+    assert!(err.contains("invariant 12"), "wrong violation: {err}");
+    assert!(err.contains("past the end"), "wrong invariant 12 arm: {err}");
 }
 
 /// Invariant 9, weighted: two root nodes with identical pair lists are unmerged twins
