@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use crate::test_helpers::check::check_determinism;
 use crate::test_helpers::{
-    assert_canonical, assert_same_shape, compile_clauses, rand_cnf, test_cases, vtree_shapes,
-    CnfShape, Lcg,
+    assert_canonical, assert_same_shape, assignment, compile_clauses, rand_cnf, sweep_shapes,
+    test_cases, vtree_shapes, CnfShape, Lcg,
 };
 use crate::vtree::VarId;
 
@@ -28,23 +28,6 @@ fn or_cube_minimized(f: &Tdd, cube: &[i32]) -> Tdd {
 /// in the level widths, so callers keep the variable count small.
 fn assert_partition(f: &Tdd, what: &str) {
     check_determinism(f).unwrap_or_else(|e| panic!("{what}: a level is not a partition: {e}"));
-}
-
-/// The assignment whose `v`-th bit is `bits >> (v - 1)`, as signed literals.
-fn assignment(num_vars: u32, bits: u64) -> Vec<i32> {
-    (1..=num_vars as i32)
-        .map(|v| if bits >> (v - 1) & 1 == 1 { v } else { -v })
-        .collect()
-}
-
-/// The three vtree shapes the exhaustive sweeps take. Each cell compiles a
-/// second diagram and complements it three times, so the full list of shapes
-/// is more than the coverage is worth.
-fn sweep_shapes(num_vars: u32) -> Vec<(&'static str, Arc<Vtree>)> {
-    vtree_shapes(num_vars)
-        .into_iter()
-        .filter(|(shape, _)| matches!(*shape, "balanced" | "linear" | "random(42)"))
-        .collect()
 }
 
 /// The cases an exhaustive sweep over assignments can afford. The oracle is

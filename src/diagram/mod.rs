@@ -168,16 +168,16 @@
 
 mod literal;
 mod primitives;
-pub(crate) mod marginal_ref;
+mod marginal_ref;
 mod assembly;
 pub(crate) use assembly::Assembly;
 
 mod build_error;
 mod leaf_column;
-pub(crate) mod builder;
+mod builder;
 mod level;
 mod pool;
-pub(crate) mod semiring;
+mod semiring;
 mod tdd;
 mod weights;
 
@@ -201,6 +201,7 @@ pub(crate) use marginal_ref::{
 
 // semiring
 pub use semiring::{EvalAlgebra, LiteralWeights, RationalWeights, SignedLog, WeightValue};
+pub(crate) use semiring::{weight_key, WeightKey};
 pub use weights::{Arithmetic, WeightStore};
 
 // level
@@ -215,6 +216,7 @@ pub(crate) use pool::LevelPool;
 // tdd
 pub use build_error::TddBuildError;
 pub use builder::{LevelView, TddBuilder};
+pub(crate) use builder::check_levels;
 pub use tdd::Tdd;
 pub(crate) use leaf_column::{
     find_leaf_slot_by_value, leaf_canon_map, leaf_column_vals, leaf_count, LEAF_COUNTS,

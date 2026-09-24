@@ -237,7 +237,7 @@ impl Tdd {
     /// Assemble a diagram from levels built by hand, unchecked.
     ///
     /// The caller guarantees the invariants
-    /// [`check_levels`](crate::diagram::builder::check_levels) checks; nothing
+    /// [`check_levels`](crate::diagram::check_levels) checks; nothing
     /// here verifies them, and a violation surfaces later as a wrong answer or
     /// a panic. The result need not be canonical:
     /// [`minimize`](crate::Tdd::minimize) makes it so. Every

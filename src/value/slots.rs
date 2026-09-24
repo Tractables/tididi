@@ -8,8 +8,7 @@ use num_bigint::BigUint;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::value::{Count, CountRead, IntFold, WeightFold};
-use crate::diagram::marginal_ref::refs::ChildSide;
-use crate::diagram::semiring::{weight_key, WeightKey};
+use crate::diagram::{weight_key, ChildSide, WeightKey};
 use crate::diagram::{
     EncodedChildRef, ChildDecoder, CountOverflow, ChildPair, Tdd, TddLevel, ValueRef, WeightStore, WeightValue,
 };

@@ -147,7 +147,7 @@ fn leaf_column_slot_agrees(
     label_idx: usize,
     expect: &WeightValue,
 ) -> bool {
-    use crate::diagram::semiring::weight_key;
+    use crate::diagram::weight_key;
     let Some(col) = ws.level(level_idx) else { return true };
     if col.len() != crate::diagram::LEAF_WIDTH {
         return false; // some pass compacted, erased or appended to the column

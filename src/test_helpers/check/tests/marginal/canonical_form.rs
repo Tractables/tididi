@@ -253,7 +253,7 @@ fn weighted_column_survives_the_checks() {
     let tdd = toy_weighted(weighted_store(), vec![rat(3, 7), rat(1, 2)], &[&[(0, 0), (1, 1)]]);
     let ws = tdd.weights().expect("weighted diagram");
     let col = ws.level(weighted_marginal_level().idx()).expect("column installed");
-    use crate::diagram::semiring::weight_key;
+    use crate::diagram::weight_key;
     let got: Vec<_> = col.iter().map(weight_key).collect();
     let want: Vec<_> = [rat(3, 7), rat(1, 2)]
         .into_iter()
