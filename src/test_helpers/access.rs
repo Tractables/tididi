@@ -10,7 +10,7 @@ use crate::value::{Count, CountVec};
 use crate::vtree::rotate::rotate_pointers;
 use crate::vtree::RotationKind;
 use crate::vtree::rotate::RotationInfo;
-use crate::diagram::{Tdd, TddNodeId};
+use crate::diagram::{ChildSide, Tdd, TddNodeId};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 /// Count-column fixture builders that expect every reservation to succeed.
@@ -71,7 +71,7 @@ pub(crate) fn rotate_right(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInf
 /// only way to reach the differing-root operand shape a tightly-rooted segment
 /// would take. The root level must hold a single identity pair, the `g ∧ ⊤`
 /// shape a single-region function compiles to.
-pub fn reroot_to_child(t: &Tdd, left_child: bool) -> Tdd {
+pub(crate) fn reroot_to_child(t: &Tdd, child: ChildSide) -> Tdd {
     let root = t.output.vtree;
     let (lc, rc) = match *t.vtree.node(root) {
         VtreeNode::Internal { left, right, .. } => (left, right),
@@ -80,7 +80,7 @@ pub fn reroot_to_child(t: &Tdd, left_child: bool) -> Tdd {
     let pairs = t.levels[root.idx()].pairs_of_idx(t.output.local.idx());
     assert_eq!(pairs.len(), 1, "reroot_to_child expects the single-region g ∧ ⊤ shape");
     let p = pairs[0];
-    let (child, local) = if left_child { (lc, p.left) } else { (rc, p.right) };
+    let (child, local) = if child == ChildSide::Left { (lc, p.left) } else { (rc, p.right) };
     Tdd::from_levels_unchecked(
         t.vtree.clone(),
         t.levels.clone().into_vec(),

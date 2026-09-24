@@ -3,6 +3,7 @@
 //! Fixtures come from `crate::test_helpers`, re-exported by the parent.
 
 use super::*;
+use crate::diagram::ChildSide;
 
 use crate::Engine;
 
@@ -236,8 +237,8 @@ fn restrict_differing_root_containment_difftest() {
     let x2and3 = and2(&lit(2, true), &lit(3, true));
     let sel = apply_or(and2(&lit(0, true), &x2or3), and2(&lit(0, false), &x2and3));
     // L = {0..3} (left child of the global root R); sel ⊆ L.
-    let sel_l = reroot_to_child(&sel, true); // sel rooted at L
-    let force_x0_l = reroot_to_child(&and2(&lit(0, true), &lit(1, true)), true); // (x0∧x1) at L
+    let sel_l = reroot_to_child(&sel, ChildSide::Left); // sel rooted at L
+    let force_x0_l = reroot_to_child(&and2(&lit(0, true), &lit(1, true)), ChildSide::Left); // (x0∧x1) at L
 
     // ── Case A: care BELOW f (care@L strictly below f@R) ──
     let f_a = sel.clone(); // global root R
@@ -262,7 +263,7 @@ fn restrict_differing_root_containment_difftest() {
     // ── Case C: disjoint supports, incomparable roots — sound no-op, g == f ──
     let rt = apply_or(lit(4, true), lit(5, true)); // (x4∨x5), depends on {4,5} ⊂ Rt
     let f_c = sel_l.clone(); // L = {0..3}
-    let care_c = reroot_to_child(&rt, false); // (x4∨x5) at Rt = {4..7}
+    let care_c = reroot_to_child(&rt, ChildSide::Right); // (x4∨x5) at Rt = {4..7}
     assert_ne!(f_c.output.vtree, care_c.output.vtree, "Case C must be differing-root");
     let g_c = assert_sound(&f_c, &care_c, 8);
     assert_eq!(
@@ -407,7 +408,7 @@ fn restrict_differing_root_randomized() {
         if m.is_zero() || m.levels[m.output.vtree.idx()].pairs_of_idx(m.output.local.idx()).len() != 1 {
             return None;
         }
-        Some(reroot_to_child(&m, true))
+        Some(reroot_to_child(&m, ChildSide::Left))
     };
     let all_vars: Vec<u32> = (1..=nvars).collect();
     let check = |f: &Tdd, c: &Tdd| -> bool {

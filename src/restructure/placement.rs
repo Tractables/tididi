@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::{Engine, OperationError};
 use crate::diagram::{
-    Assembly, ChildPair, LevelView, MarginalStorage, NodeIdx, Tdd, TddNodeId,
+    Assembly, ChildPair, ChildSide, LevelView, MarginalStorage, NodeIdx, Tdd, TddNodeId,
     WeightStore, LEAF_WIDTH, ONE_LEAF_IDX, try_take_levels,
 };
 use crate::vtree::{Vtree, VtreeIdx};
@@ -51,9 +51,9 @@ impl<'a> CopyPlacement<'a> {
 
     /// Lift all references from one child through a join with a free sibling.
     #[inline]
-    pub(super) fn pass_through(&mut self, at: VtreeIdx, free_is_left: bool) -> Result<(), OperationError> {
+    pub(super) fn pass_through(&mut self, at: VtreeIdx, free_side: ChildSide) -> Result<(), OperationError> {
         let (left, right) = self.vtree.children(at);
-        let (free, carries) = if free_is_left { (left, right) } else { (right, left) };
+        let (free, carries) = if free_side == ChildSide::Left { (left, right) } else { (right, left) };
         let one = self.true_node(free);
         let carries_leaf = self.vtree.node(carries).is_leaf();
         let width = if carries_leaf { LEAF_WIDTH } else { self.assembly.level(carries).slot_count() };
@@ -62,7 +62,7 @@ impl<'a> CopyPlacement<'a> {
         self.prune |= carries_leaf;
         for i in 0..width {
             let child = NodeIdx(i as u32);
-            let (left, right) = if free_is_left { (one, child) } else { (child, one) };
+            let (left, right) = if free_side == ChildSide::Left { (one, child) } else { (child, one) };
             self.join(at, left, right)?;
         }
         Ok(())

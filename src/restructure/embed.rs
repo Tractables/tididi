@@ -13,7 +13,7 @@ use std::sync::Arc;
 use super::{EmbedError, Embedding, placement::CopyPlacement};
 
 use crate::Engine;
-use crate::diagram::Tdd;
+use crate::diagram::{ChildSide, Tdd};
 use crate::limits::{Limits, OperationError};
 use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
 
@@ -313,7 +313,7 @@ fn assemble(
         } else if let Some(source) = plan.covered_by[t.idx()] {
             placement.copy_level(tdd, source, t)?;
         } else {
-            placement.pass_through(t, !plan.mapped[left.idx()])?;
+            placement.pass_through(t, if plan.mapped[left.idx()] { ChildSide::Right } else { ChildSide::Left })?;
         }
     }
     gate.flush()?;
