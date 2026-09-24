@@ -402,17 +402,25 @@ impl WeightValue {
         *self = WeightValue::exact(acc);
     }
 
-    /// Multiply `self` by the exact scalar `corr`, converted to `self`'s own
-    /// mode first so the multiply is a same-mode `mul`.
+    /// Multiply `self` by the exact rational `r`, converted to `self`'s own
+    /// arithmetic first: exact for an exact value, log domain for a log value.
+    ///
+    /// ```
+    /// use num_rational::BigRational;
+    /// use tididi::diagram::WeightValue;
+    /// let six = WeightValue::exact(BigRational::from_integer(6.into()));
+    /// let half = BigRational::new(1.into(), 2.into());
+    /// assert_eq!(six.mul_rational(&half).into_rational(), BigRational::from_integer(3.into()));
+    /// ```
     #[inline]
     #[must_use]
-    pub fn mul_correction(&self, corr: &BigRational) -> WeightValue {
-        let cw = if matches!(self, WeightValue::Log(_)) {
-            WeightValue::Log(SignedLog::from_rational(corr))
+    pub fn mul_rational(&self, r: &BigRational) -> WeightValue {
+        let scale = if matches!(self, WeightValue::Log(_)) {
+            WeightValue::Log(SignedLog::from_rational(r))
         } else {
-            WeightValue::exact(corr.clone())
+            WeightValue::exact(r.clone())
         };
-        self.mul(&cw)
+        self.mul(&scale)
     }
 }
 
