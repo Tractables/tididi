@@ -628,7 +628,7 @@ fn overlapping_variable_error_formats_the_full_id_range() {
     for (variable, number) in [(1, "1"), (u32::MAX, "4294967295")] {
         assert_eq!(
             VtreeError::OverlappingVariable(VarId(variable)).to_string(),
-            format!("variable {number} is carried by more than one of the trees being combined"),
+            format!("variable {number} is carried by more than one leaf"),
         );
     }
 }

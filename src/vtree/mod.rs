@@ -85,7 +85,7 @@ impl VarId {
 pub enum VtreeError {
     /// `.vtree` text that does not describe a single tree.
     Text(String),
-    /// Two of the trees being combined both carry this variable.
+    /// This variable sits on more than one leaf.
     OverlappingVariable(VarId),
     /// A structural invariant that does not hold (see [`Vtree::validate`](crate::vtree::Vtree::validate)),
     /// or a construction handed nothing to build from.
@@ -108,11 +108,9 @@ impl std::fmt::Display for VtreeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             VtreeError::Text(msg) => write!(f, "malformed vtree text: {msg}"),
-            VtreeError::OverlappingVariable(var) => write!(
-                f,
-                "variable {} is carried by more than one of the trees being combined",
-                var.0
-            ),
+            VtreeError::OverlappingVariable(var) => {
+                write!(f, "variable {} is carried by more than one leaf", var.0)
+            }
             VtreeError::Invalid(msg) => write!(f, "invalid vtree: {msg}"),
             VtreeError::VariableSpaceTooLarge { num_vars, max_num_vars } => write!(
                 f,
