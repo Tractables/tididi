@@ -72,6 +72,7 @@ impl TddLevel {
     /// of 1 aliases the `multi_ranged` encoding.
     #[inline]
     pub(crate) fn encode_single(&mut self, start: usize, pair: ChildPair) -> EncodedNode {
+        debug_assert!(pair.can_inline(), "a stored pair has no reserved bit, so it inlines");
         if pair.can_inline() {
             return EncodedNode::inline(pair);
         }
@@ -191,6 +192,7 @@ impl TddLevel {
             return ShrunkEncoding::Truncate;
         }
         let surviving = self.pairs[start];
+        debug_assert!(surviving.can_inline(), "a stored pair has no reserved bit, so it inlines");
         if surviving.can_inline() {
             return ShrunkEncoding::Inline(surviving);
         }
@@ -508,6 +510,10 @@ impl TddLevel {
         input_pairs: &[ChildPair],
     ) -> Result<NodeIdx, ()> {
         let idx = NodeIdx(self.nodes.len() as u32);
+        debug_assert!(
+            input_pairs.len() != 1 || input_pairs[0].can_inline(),
+            "a stored pair has no reserved bit, so it inlines"
+        );
         if input_pairs.len() == 1 && input_pairs[0].can_inline() {
             reserve(&mut self.nodes, 1)?;
             self.nodes.push(EncodedNode::inline(input_pairs[0]));

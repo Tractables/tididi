@@ -195,6 +195,7 @@ fn write_back_resolved_pairs(
     let abandoned = if new_len == 1 { old_len } else { old_len - new_len };
     if new_len == 1 {
         let surviving = out[0];
+        debug_assert!(surviving.can_inline(), "a stored pair has no reserved bit, so it inlines");
         if surviving.can_inline() {
             level.nodes[idx] = EncodedNode::inline(surviving);
         } else {

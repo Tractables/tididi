@@ -168,6 +168,7 @@ fn finalize_merged_node(
 ) {
     if new_len == 1 {
         let pair = level.pairs[new_start];
+        debug_assert!(pair.can_inline(), "a stored pair has no reserved bit, so it inlines");
         if pair.can_inline() {
             level.pairs.pop();
             level.nodes[keep] = EncodedNode::inline(pair);

@@ -274,6 +274,7 @@ fn fresh_range_entries(level: &TddLevel, side: ChildSide) -> usize {
                     ChildSide::Left => ChildPair::new(ONE_LEAF_IDX, partner),
                     ChildSide::Right => ChildPair::new(partner, ONE_LEAF_IDX),
                 };
+                debug_assert!(survivor.can_inline(), "a stored pair has no reserved bit, so it inlines");
                 label == POS_LEAF_IDX.into() && !survivor.can_inline()
             })
         })

@@ -76,6 +76,7 @@ pub(crate) fn emit_product_node(
 #[inline(always)]
 fn emit_single_pair(eng: &Engine, level: &mut TddLevel, pair: ChildPair) -> Result<(), OperationError> {
     let lim = eng.limits();
+    debug_assert!(pair.can_inline(), "a stored pair has no reserved bit, so it inlines");
     if pair.can_inline() {
         lim.try_push(&mut level.nodes, EncodedNode::inline(pair))
     } else {
