@@ -32,8 +32,9 @@ use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 ///
 /// # Errors
 ///
-/// The rewrite allocates nothing, so this does not refuse; the signature
-/// matches the other contraction passes.
+/// [`OperationError::OverBudget`] when the partner lists a level is classified
+/// with cannot be reserved; the levels already rewritten stay rewritten and
+/// the rest stay queued for the next call.
 pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> Result<bool, OperationError> {
     let vtree = tdd.vtree.clone();
     let n = vtree.num_nodes();
