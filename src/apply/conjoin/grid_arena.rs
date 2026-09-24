@@ -8,13 +8,13 @@
 //!
 //! The arena has two shapes:
 //!
-//! * [`GridArena::Preplanned`] — no level can go sparse, so every level's base
-//!   is computed up front and the slab is sized once. Nothing is ever
-//!   reclaimed: the whole layout is live until the apply ends.
-//! * [`GridArena::Bump`] — some level may take the sparse route and skip its
-//!   grid, so space is claimed level by level and released again as soon as a
-//!   level's single parent has consumed it. This caps the slab at the live
-//!   frontier instead of the sum of every densified level.
+//! * Pre-planned — no level can go sparse, so every level's base is computed
+//!   up front and the slab is sized once. Nothing is ever reclaimed: the whole
+//!   layout is live until the apply ends.
+//! * Bumping — some level may take the sparse route and skip its grid, so
+//!   space is claimed level by level and released again as soon as a level's
+//!   single parent has consumed it. This caps the slab at the live frontier
+//!   instead of the sum of every densified level.
 //!
 //! Correctness of the reclaim rests on the single-consumer invariant: each
 //! vtree node's grid is read by exactly its one parent and is dead afterwards,
@@ -26,45 +26,13 @@
 //! one. The dense routes fill a level's whole grid, `NO_PRODUCT` included; the sparse
 //! route writes only the cells its scatter produced and leaves the rest as
 //! whatever the region's previous tenant left. So a read is sound only for a
-//! level whose [`LevelGrid`] says the grid was materialized — which is what
+//! level whose grid was materialized — which is what
 //! [`GridArena::materialized`] returns and what every consumer goes through.
 
 use crate::Engine;
 use super::{OperationError, NO_PRODUCT};
 use super::budget::try_resize_dead;
 use super::products::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx};
-
-/// Per-level descriptor for the product grid's slice of the flat arena.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum LevelGrid {
-    /// No grid allocated; consumers must go through `product_lists[t]`.
-    Sparse,
-    /// Grid allocated at `base` and filled — by the leaf `CONJOIN_GRID` lookup
-    /// or by one of the internal-level producers (the scatter from a product
-    /// list, the sequential dense emit, an identity shortcut).
-    Materialized { base: usize },
-}
-
-impl LevelGrid {
-    /// Base offset into the flat `node_idx` arena, or `None` if unallocated.
-    #[inline]
-    pub(crate) fn base(&self) -> Option<usize> {
-        match self {
-            LevelGrid::Sparse => None,
-            LevelGrid::Materialized { base } => Some(*base),
-        }
-    }
-
-    /// Base offset; panics if the grid is not allocated.
-    #[inline]
-    pub(crate) fn base_unchecked(&self) -> usize {
-        self.base().expect("expected allocated grid, found Sparse")
-    }
-
-    /// Whether no grid is allocated for this level.
-    #[inline]
-    pub(crate) fn is_sparse(&self) -> bool { matches!(self, LevelGrid::Sparse) }
-}
 
 /// Offset of a level's grid within the arena's flat slab.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -77,114 +45,98 @@ impl GridBase {
 
 /// A stretch of the slab that is not currently any level's grid.
 #[derive(Clone, Copy)]
-pub(in crate::apply::conjoin) struct Region {
+struct Region {
     base: GridBase,
     len: usize,
 }
 
-/// The flat product-grid slab and every level's claim on it.
-pub(super) enum GridArena {
-    /// Whole layout computed up front; no level goes sparse and nothing is
-    /// reclaimed.
-    Preplanned { cells: Vec<u32>, grids: Vec<LevelGrid> },
-    /// Space claimed and released as the sweep proceeds.
-    Bump { cells: Vec<u32>, end: usize, free: Vec<Region>, grids: Vec<LevelGrid> },
+/// The state of a layout that claims and releases space as the sweep proceeds.
+#[derive(Default)]
+struct Bump {
+    /// The frontier: no cell past it has been claimed.
+    end: usize,
+    /// Released regions below the frontier, reused best-fit.
+    free: Vec<Region>,
 }
 
-impl Default for GridArena {
-    fn default() -> Self { Self::Preplanned { cells: Vec::new(), grids: Vec::new() } }
+/// The flat product-grid slab and every level's claim on it.
+#[derive(Default)]
+pub(super) struct GridArena {
+    cells: Vec<u32>,
+    /// Each level's grid base, `None` while the level has no grid and its
+    /// consumers must go through its product list.
+    grids: Vec<Option<GridBase>>,
+    /// The bump allocator's state; `None` on a pre-planned layout.
+    bump: Option<Bump>,
 }
 
 impl GridArena {
     pub(super) fn retained_bytes(&self) -> usize {
         use crate::limits::pool::capacity_bytes;
-        match self {
-            Self::Preplanned { cells, grids } => capacity_bytes(cells).saturating_add(capacity_bytes(grids)),
-            Self::Bump { cells, grids, free, .. } => capacity_bytes(cells).saturating_add(capacity_bytes(grids)).saturating_add(capacity_bytes(free)),
-        }
+        let free = self.bump.as_ref().map_or(0, |bump| capacity_bytes(&bump.free));
+        capacity_bytes(&self.cells).saturating_add(capacity_bytes(&self.grids)).saturating_add(free)
     }
+
     pub(super) fn reset(&mut self, eng: &Engine, sparse: bool, n: usize, left: &[usize], right: &[usize]) -> Result<(), OperationError> {
-        let (cells, mut grids) = match std::mem::take(self) {
-            Self::Preplanned { cells, grids } | Self::Bump { cells, grids, .. } => (cells, grids),
-        };
-        grids.resize(n + 1, LevelGrid::Sparse);
+        self.grids.clear();
+        self.grids.resize(n, None);
+        let mut bump = self.bump.take().unwrap_or_default();
+        bump.end = 0;
+        bump.free.clear();
         if sparse {
-            grids.fill(LevelGrid::Sparse);
-            *self = Self::Bump { cells, grids, end: 0, free: Vec::new() };
+            self.bump = Some(bump);
         } else {
             let mut cursor = 0;
             for i in 0..n {
-                grids[i] = LevelGrid::Materialized { base: cursor };
+                self.grids[i] = Some(GridBase(cursor));
                 cursor += left[i] * right[i];
             }
-            grids[n] = LevelGrid::Materialized { base: cursor };
-            *self = Self::Preplanned { cells, grids };
-            if let Self::Preplanned { cells, .. } = self { try_resize_dead(eng, cells, cursor)?; }
+            try_resize_dead(eng, &mut self.cells, cursor)?;
         }
         Ok(())
     }
 
     pub(super) fn retain(&mut self, lim: &crate::limits::Limits) {
-        match self {
-            Self::Preplanned { cells, .. } | Self::Bump { cells, .. } => {
-                crate::limits::pool::release_if_oversized(lim, cells);
-            }
-        }
+        crate::limits::pool::release_if_oversized(lim, &mut self.cells);
     }
 
     /// True when levels claim space as they are reached — the one behavioural
     /// difference the sweep still has to ask about, because a level's live
     /// count is only maintained (and only read) in that shape.
     pub(super) fn is_bump(&self) -> bool {
-        matches!(self, GridArena::Bump { .. })
+        self.bump.is_some()
     }
 
     /// The flat slab every grid is a slice of.
     pub(super) fn slab(&self) -> &[u32] {
-        match self {
-            GridArena::Preplanned { cells, .. } | GridArena::Bump { cells, .. } => cells,
-        }
+        &self.cells
     }
 
     /// The flat slab, for a producer writing its level's cells.
     pub(super) fn slab_mut(&mut self) -> &mut [u32] {
-        match self {
-            GridArena::Preplanned { cells, .. } | GridArena::Bump { cells, .. } => cells,
-        }
-    }
-
-    fn grids(&self) -> &[LevelGrid] {
-        match self {
-            GridArena::Preplanned { grids, .. } | GridArena::Bump { grids, .. } => grids,
-        }
-    }
-
-    fn grids_mut(&mut self) -> &mut [LevelGrid] {
-        match self {
-            GridArena::Preplanned { grids, .. } | GridArena::Bump { grids, .. } => grids,
-        }
+        &mut self.cells
     }
 
     /// Level `t`'s grid base, or `None` if it has none — the one way to learn
     /// whether a level's cells may be read.
     pub(super) fn materialized(&self, t: usize) -> Option<GridBase> {
-        self.grids()[t].base().map(GridBase)
+        self.grids[t]
     }
 
     /// True when level `t` has no grid, so consumers must go through its
     /// product list.
     pub(super) fn is_sparse(&self, t: usize) -> bool {
-        self.grids()[t].is_sparse()
+        self.grids[t].is_none()
     }
 
     /// Record that level `t`'s grid has been materialized by a producer.
     pub(super) fn set_dense(&mut self, t: usize, base: GridBase) {
-        self.grids_mut()[t] = LevelGrid::Materialized { base: base.0 };
+        self.grids[t] = Some(base);
     }
 
     /// Record that level `t` has no grid.
     pub(super) fn set_sparse(&mut self, t: usize) {
-        self.grids_mut()[t] = LevelGrid::Sparse;
+        self.grids[t] = None;
     }
 
     /// Claim `cells` of slab for level `t`.
@@ -198,45 +150,44 @@ impl GridArena {
         t: usize,
         cells: usize,
     ) -> Result<GridBase, OperationError> {
-        match self {
-            GridArena::Preplanned { grids, .. } => Ok(GridBase(grids[t].base_unchecked())),
-            GridArena::Bump { cells: slab, end, free, .. } => {
-                if cells == 0 {
-                    // Zero-width grid: never read or freed meaningfully; hand
-                    // out the cursor without growing.
-                    return Ok(GridBase(*end));
-                }
-                // Best-fit: smallest free region that still fits. <500 regions,
-                // so linear.
-                let mut best: Option<usize> = None;
-                for (i, r) in free.iter().enumerate() {
-                    if r.len >= cells && best.is_none_or(|b| r.len < free[b].len) {
-                        best = Some(i);
-                    }
-                }
-                if let Some(i) = best {
-                    let Region { base, len } = free[i];
-                    if len == cells {
-                        free.swap_remove(i);
-                    } else {
-                        free[i] = Region { base: GridBase(base.0 + cells), len: len - cells };
-                    }
-                    return Ok(base);
-                }
-                let base = *end;
-                *end += cells;
-                try_resize_dead(eng, slab, *end)?;
-                Ok(GridBase(base))
+        let Some(bump) = &mut self.bump else {
+            return Ok(self.grids[t].expect("a pre-planned layout grids every level"));
+        };
+        if cells == 0 {
+            // Zero-width grid: never read or freed meaningfully; hand
+            // out the cursor without growing.
+            return Ok(GridBase(bump.end));
+        }
+        // Best-fit: smallest free region that still fits. <500 regions,
+        // so linear.
+        let mut best: Option<usize> = None;
+        for (i, r) in bump.free.iter().enumerate() {
+            if r.len >= cells && best.is_none_or(|b| r.len < bump.free[b].len) {
+                best = Some(i);
             }
         }
+        if let Some(i) = best {
+            let Region { base, len } = bump.free[i];
+            if len == cells {
+                bump.free.swap_remove(i);
+            } else {
+                bump.free[i] = Region { base: GridBase(base.0 + cells), len: len - cells };
+            }
+            return Ok(base);
+        }
+        let base = bump.end;
+        bump.end += cells;
+        try_resize_dead(eng, &mut self.cells, bump.end)?;
+        Ok(GridBase(base))
     }
 
     /// Return a consumed region, coalescing with physically adjacent free
     /// regions to limit fragmentation. A no-op on a pre-planned layout, which
     /// owns one contiguous block and must not be freed piecemeal.
     pub(super) fn free(&mut self, base: GridBase, cells: usize) {
-        let GridArena::Bump { free, .. } = self else { return };
+        let Some(bump) = &mut self.bump else { return };
         if cells == 0 { return; }
+        let free = &mut bump.free;
         let mut region = Region { base, len: cells };
         // Repeatedly absorb a neighbor on either side (at most a left and a right).
         let mut merged = true;

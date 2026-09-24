@@ -238,7 +238,6 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
         for idx in 0..k_carrier {
             slab[output_grid_base.idx() + idx] = idx as u32;
         }
-        run.products.arena.set_dense(t_idx, output_grid_base);
     }
     Ok(())
 }
@@ -276,9 +275,6 @@ fn try_zero_width_marginal(
         run.right_identity[t_idx] = true;
         if run.products.arena.is_bump() {
             run.products.record_live(t_idx, 0);
-        } else {
-            let output_grid_base = run.products.arena.materialized(t_idx).expect("a pre-planned layout grids every level");
-            run.products.arena.set_dense(t_idx, output_grid_base);
         }
         return true;
     }
