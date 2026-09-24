@@ -77,29 +77,26 @@ pub(crate) fn negate_tdd_owned(eng: &Engine, mut tdd: Tdd) -> Result<Tdd, Operat
     let mut result = if tdd.is_zero() {
         crate::build::constant_one(eng, &tdd.vtree)
     } else {
-        let vtree = Arc::clone(&tdd.vtree);
         let root_form = expand_full(eng, &mut tdd)?;
-        complement_full_at_root(eng, tdd, &vtree, root_form)?
+        complement_full_at_root(eng, tdd, root_form)?
     };
     result.weights = weights;
     Ok(result)
 }
 
 /// Complement a full diagram at its root: collect the root-level pairs not in
-/// the output node and drop the dead ones. `orig_vtree` is the operand's
-/// vtree, used for the constant fallbacks.
+/// the output node and drop the dead ones.
 fn complement_full_at_root(
     eng: &Engine,
     full_tdd: Tdd,
-    orig_vtree: &Arc<crate::vtree::Vtree>,
     root_form: LeafForm,
 ) -> Result<Tdd, OperationError> {
-    let vtree = &full_tdd.vtree;
+    let vtree = Arc::clone(&full_tdd.vtree);
     let root = vtree.root();
     let root_idx = root.idx();
     let out_local = full_tdd.output.local;
 
-    let mut assembly = Assembly::from_levels(eng, Arc::clone(orig_vtree), full_tdd.levels.into_vec(), None);
+    let mut assembly = Assembly::from_levels(eng, Arc::clone(&vtree), full_tdd.levels.into_vec(), None);
     let (levels, _) = assembly.parts_mut();
 
     if vtree.node(root).is_leaf() {
@@ -107,7 +104,7 @@ fn complement_full_at_root(
         // {Pos,Neg,One} unless the output is One (complement = Zero, returned as the zero
         // constant diagram).
         let Some(neg_local) = complement_leaf_root(out_local) else {
-            return Ok(crate::build::constant_zero(eng, orig_vtree));
+            return Ok(crate::build::constant_zero(eng, &vtree));
         };
         assembly.finish(TddNodeId { vtree: root, local: neg_local })
     } else {
@@ -116,8 +113,8 @@ fn complement_full_at_root(
         // - Internal children: stored width (includes any fill node)
         let (left, right) = vtree.children(root);
         let basis = Basis {
-            lefts: ChildBasis::of(vtree, levels, left),
-            rights: ChildBasis::of(vtree, levels, right),
+            lefts: ChildBasis::of(&vtree, levels, left),
+            rights: ChildBasis::of(&vtree, levels, right),
             form: root_form,
         };
 
@@ -129,22 +126,9 @@ fn complement_full_at_root(
         )?;
 
         // Drop the pairs whose child computes the Zero function (an internal
-        // node with no pairs), which a fill node of `expand_full` can be. The
-        // root's children must not be marginal: the structural complement is
-        // undefined on a partially aggregated diagram.
+        // node with no pairs), which a fill node of `expand_full` can be.
         let left_is_leaf = vtree.node(left).is_leaf();
         let right_is_leaf = vtree.node(right).is_leaf();
-        debug_assert!(
-            left_is_leaf || !levels[left.idx()].is_marginal(),
-            "negate_tdd: root's left child VtreeIdx({}) is marginal — \
-             complement is undefined on a partially-aggregated TDD",
-            left.idx()
-        );
-        debug_assert!(
-            right_is_leaf || !levels[right.idx()].is_marginal(),
-            "negate_tdd: root's right child VtreeIdx({}) is marginal",
-            right.idx()
-        );
         neg_pairs.retain(|pair| {
             let left_alive = left_is_leaf || {
                 let node = &levels[left.idx()].nodes[ChildDecoder::structural().node(pair.left).idx()];
@@ -158,7 +142,7 @@ fn complement_full_at_root(
         });
 
         if neg_pairs.is_empty() {
-            return Ok(crate::build::constant_zero(eng, orig_vtree));
+            return Ok(crate::build::constant_zero(eng, &vtree));
         }
 
         let neg_idx = levels[root_idx].push_node(eng.limits(), &neg_pairs)?;
@@ -169,9 +153,9 @@ fn complement_full_at_root(
 
 // ── `expand_full`: explicit fill-node materialization ────────────────────────────
 
-/// Make a diagram full by materializing fill nodes explicitly at every
-/// structural level; marginal levels are skipped. Returns the leaf form of the
-/// root's level, which the complement above it emits in.
+/// Make a structural diagram full by materializing fill nodes explicitly at
+/// every level. Returns the leaf form of the root's level, which the
+/// complement above it emits in.
 ///
 /// One bottom-up pass per level marks the cells of `lefts x rights` that the
 /// level's nodes cover, in a bitmap held in engine scratch, and the fill node
@@ -197,10 +181,6 @@ fn expand_full_with(
     let root_idx = vtree.root().idx();
     let mut root_form = LeafForm::LITERAL;
     for (t, left, right) in vtree.internal_bottomup() {
-        // A marginal level has no node list to make full.
-        if tdd.levels[t.idx()].is_marginal() {
-            continue;
-        }
         // Read bottom-up: a child's basis includes the fill node its own visit
         // added.
         let lefts = ChildBasis::of(&vtree, &tdd.levels, left);
