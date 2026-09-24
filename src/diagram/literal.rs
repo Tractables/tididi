@@ -210,28 +210,3 @@ mod input {
         op(eng, f, &literals)
     }
 }
-
-/// Whether `clause` names one variable in both polarities, which makes the
-/// disjunction true under every assignment.
-///
-/// The clause builders index one column per variable and would read such a
-/// clause as a single literal, so each calls this first and answers ⊤. A
-/// short clause is scanned pairwise, a long one through a set.
-pub(crate) fn is_tautological(lim: &crate::limits::Limits, clause: &[Literal]) -> Result<bool, crate::limits::OperationError> {
-    let mut gate = lim.gate();
-    /// Above this many literals the pairwise scan is no longer the cheaper one.
-    const PAIRWISE_MAX: usize = 32;
-    let mut seen = rustc_hash::FxHashMap::default();
-    for (i, lit) in clause.iter().enumerate() {
-        gate.poll(1)?;
-        let conflict = if clause.len() <= PAIRWISE_MAX {
-            clause[..i].iter().any(|e| e.var == lit.var && e.sign != lit.sign)
-        } else {
-            if !seen.contains_key(&lit.var) { lim.reserve_map(&mut seen, 1)?; }
-            matches!(seen.insert(lit.var, lit.sign), Some(p) if p != lit.sign)
-        };
-        if conflict { gate.flush()?; return Ok(true); }
-    }
-    gate.flush()?;
-    Ok(false)
-}

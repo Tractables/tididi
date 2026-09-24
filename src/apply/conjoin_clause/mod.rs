@@ -93,22 +93,23 @@ enum Normalized {
 /// whatever else the clause says, and the limits' errors.
 fn normalize(lim: &Limits, vtree: &Vtree, lits: &[Literal], negate: bool) -> Result<Normalized, OperationError> {
     let mut gate = lim.gate();
-    let mut seen = Vec::new();
-    lim.try_resize(&mut seen, vtree.num_nodes(), false)?;
+    // The polarity each leaf was first seen with, indexed by vtree node.
+    let mut seen: Vec<Option<bool>> = Vec::new();
+    lim.try_resize(&mut seen, vtree.num_nodes(), None)?;
     let mut clause = Vec::new();
+    // Every literal is resolved before a tautology is answered, so an absent
+    // variable errors whatever else the clause says.
+    let mut tautology = false;
     for lit in lits {
         gate.poll(1)?;
         let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
-        if std::mem::replace(&mut seen[leaf.idx()], true) { continue; }
-        lim.try_push(&mut clause, (if negate { lit.negated() } else { *lit }, leaf))?;
+        match seen[leaf.idx()].replace(lit.sign) {
+            Some(sign) => tautology |= sign != lit.sign,
+            None => lim.try_push(&mut clause, (if negate { lit.negated() } else { *lit }, leaf))?,
+        }
     }
     gate.flush()?;
-    // The table above keeps a variable's first polarity only, so the conflict
-    // scan reads the literals as given.
-    if diagram::is_tautological(lim, lits)? {
-        return Ok(Normalized::Tautology);
-    }
-    Ok(Normalized::Clause(clause))
+    Ok(if tautology { Normalized::Tautology } else { Normalized::Clause(clause) })
 }
 
 /// The shared bottom-up walk: conjoin the clause `lits` into `f`, or — with
