@@ -10,6 +10,7 @@ use crate::diagram::{Assembly, ChildDecoder, ChildPair, EncodedChildRef, LeafLab
 use crate::Engine;
 use crate::limits::OperationError;
 use crate::limits::pool::Pool;
+use crate::apply::condition::empty_node;
 use std::sync::Arc;
 
 /// The buffers negation reuses between calls.
@@ -130,14 +131,10 @@ fn complement_full_at_root(
         let left_is_leaf = vtree.node(left).is_leaf();
         let right_is_leaf = vtree.node(right).is_leaf();
         neg_pairs.retain(|pair| {
-            let left_alive = left_is_leaf || {
-                let node = &levels[left.idx()].nodes[ChildDecoder::structural().node(pair.left).idx()];
-                node.is_internal() && !levels[left.idx()].pairs_of(node).is_empty()
-            };
-            let right_alive = right_is_leaf || {
-                let node = &levels[right.idx()].nodes[ChildDecoder::structural().node(pair.right).idx()];
-                node.is_internal() && !levels[right.idx()].pairs_of(node).is_empty()
-            };
+            let left_alive = left_is_leaf
+                || !empty_node(&levels[left.idx()], ChildDecoder::structural().node(pair.left).idx());
+            let right_alive = right_is_leaf
+                || !empty_node(&levels[right.idx()], ChildDecoder::structural().node(pair.right).idx());
             left_alive && right_alive
         });
 

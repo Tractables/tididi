@@ -47,22 +47,20 @@ pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<I
     condition_targets(eng, f, &mut targets)
 }
 
-/// Propagate falsity upward after a restriction rewrite, so that no node left
-/// in the diagram computes ⊥.
+/// Propagate falsity upward after pairs were dropped in place, so that no
+/// node left in the diagram computes ⊥.
 ///
-/// Restriction empties a node whenever every one of its pairs belonged to the
-/// opposite cofactor. That node computes ⊥, which invariant 2
+/// A node whose every pair was dropped computes ⊥, which invariant 2
 /// (`docs/architecture.md`) forbids, and every reduction rule that follows
-/// assumes such a node is already gone. Conditioning rewrites in place, so it
-/// restores the invariant here: one bottom-up pass dropping every pair whose
-/// structural child is empty, which empties further nodes above and cascades.
-/// What is left unreferenced is removed by `prune_unreachable` in the
-/// reduction that follows; an emptied output is collapsed to the sentinel by
-/// the satisfiability check before reduction.
+/// assumes such a node is already gone. One bottom-up pass drops every pair
+/// whose structural child is empty, which empties further nodes above and
+/// cascades. What is left unreferenced is removed by `prune_unreachable` in
+/// the reduction that follows; an emptied output is collapsed to the
+/// sentinel. Conditioning and care restriction both end in this pass.
 ///
 /// Marginal levels are passed over: their structure is summed out, so they hold
-/// no node that could have been emptied by a leaf restriction.
-fn propagate_false_nodes(tdd: &mut Tdd) {
+/// no node that a dropped pair could have emptied.
+pub(super) fn propagate_false_nodes(tdd: &mut Tdd) {
     let vtree = Arc::clone(&tdd.vtree);
     for (vi, left, right) in vtree.internal_bottomup() {
         if tdd.levels[vi.idx()].is_marginal() { continue; }
@@ -82,7 +80,7 @@ fn propagate_false_nodes(tdd: &mut Tdd) {
             child == ZERO.into()
                 || (structural && empty_node(level, ChildDecoder::structural().node(child).idx()))
         };
-        rewrite_level_pairs(parent, |pair| {
+        rewrite_level_pairs(parent, |_, _, pair| {
             if dead(left_structural, left_level, pair.left) || dead(right_structural, right_level, pair.right) {
                 None
             } else {
@@ -98,7 +96,7 @@ fn propagate_false_nodes(tdd: &mut Tdd) {
 }
 
 /// Whether an existing structural node owns no pairs; tombstones are not nodes.
-fn empty_node(level: &TddLevel, i: usize) -> bool {
+pub(super) fn empty_node(level: &TddLevel, i: usize) -> bool {
     level.nodes[i].is_internal() && level.pair_count_at(i) == 0
 }
 
@@ -181,7 +179,7 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, kee
     // it named the conditioned leaf. `One`, and any reference to an internal
     // child, is carried through as-is.
     if tdd.levels[parent_vi.idx()].nodes.is_empty() { return false; }
-    tdd.rewrite_level(parent_vi, |level| rewrite_level_pairs(level, |p: ChildPair| {
+    tdd.rewrite_level(parent_vi, |level| rewrite_level_pairs(level, |_, _, p: ChildPair| {
         let label = if side == ChildSide::Left { p.left } else { p.right };
         if label != POS_LEAF_IDX.into() && label != NEG_LEAF_IDX.into() {
             return Some(p);
@@ -198,15 +196,16 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, kee
     }))
 }
 
-/// Rewrite a level's pair lists in place through `rewrite_pair`,
-/// dropping every pair it answers `None` for. Answers whether any node was left
-/// with no pairs at all.
+/// Rewrite a level's pair lists in place through `rewrite_pair`, which sees
+/// each pair with its node's index and its position in that node, and drop
+/// every pair it answers `None` for. Answers whether any node was left with
+/// no pairs at all.
 ///
-/// Both of conditioning's rewrites are this pass under a different predicate:
-/// the leaf restriction and the falsity sweep above.
-fn rewrite_level_pairs(
+/// Both of conditioning's rewrites and the care restriction's are this pass
+/// under a different predicate.
+pub(super) fn rewrite_level_pairs(
     level: &mut TddLevel,
-    rewrite_pair: impl Fn(ChildPair) -> Option<ChildPair>,
+    mut rewrite_pair: impl FnMut(usize, usize, ChildPair) -> Option<ChildPair>,
 ) -> bool {
     let n_nodes = level.nodes.len();
     if n_nodes == 0 {
@@ -223,8 +222,10 @@ fn rewrite_level_pairs(
 
         if let NodeKind::Inline(p) = level.nodes[i].kind() {
             // The single pair lives in the node's own two words, not the arena.
-            match rewrite_pair(p) {
-                Some(np) => level.nodes[i] = EncodedNode::inline(np),
+            match rewrite_pair(i, 0, p) {
+                Some(np) => {
+                    level.nodes[i] = EncodedNode::inline(np);
+                }
                 None => {
                     // Emptied: the slot holds no pair, which `propagate_false_nodes`
                     // reads as the node computing false and drops every reference to.
@@ -241,7 +242,7 @@ fn rewrite_level_pairs(
         let pairs = level.pairs_mut(i);
         let mut w = 0usize;
         for r in 0..old_len {
-            if let Some(np) = rewrite_pair(pairs[r]) {
+            if let Some(np) = rewrite_pair(i, r, pairs[r]) {
                 // `w <= r`, so this write is at or below a slot already read.
                 pairs[w] = np;
                 w += 1;
