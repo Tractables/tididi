@@ -61,9 +61,9 @@ fn two_twin_groups() -> (Arc<Vtree>, Tdd) {
 }
 
 /// A reserve failure anywhere in twin contraction must leave the model count
-/// UNCHANGED (transactional grand reserve). Fails on the pre-fix code, which
-/// grows one group's survivor before the second group's reserve fails while the
-/// parent still references both.
+/// unchanged: the sweep reserves for the whole level before it grows any
+/// group's survivor, so a refusal never leaves the parent referencing a
+/// half-merged group.
 #[test]
 fn test_contract_twins_overbudget_w1_count_unchanged() {
     let mut refusals = 0;
@@ -150,9 +150,9 @@ fn test_contract_dirty_worklist_restored_on_err() {
     assert!(refusals > 0, "the sweep must actually refuse something");
 }
 
-/// Regression: prune value-merge can mint twins after contract ran.
-/// Pre-fix: the broken one-shot sequence leaves unmerged twins.
-/// Post-fix: `Engine::reduce`'s iterate-to-fixpoint loop eliminates them.
+/// A prune's value merge can mint twins after contraction ran, so a single
+/// contract-then-prune sequence leaves unmerged twins; `Engine::reduce`
+/// iterates the two to a fixpoint.
 ///
 /// Fixture: boundary store at v_marginal holds 3 slots [C, C, D] (slots 0,1 equal;
 /// slot 2 distinct). Parent-level nodes p and q each hold two pairs with the
@@ -252,47 +252,45 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
         TddNodeId { vtree: root_idx, local: root_node },
     );
 
-    // ── Pre-fix verification: the broken one-shot sequence leaves twins ────────
+    // ── One contract-then-prune sequence leaves twins ──────────────────────
     //
-    // Manually reproduce the PRE-FIX order: contract (no merge since p!=q), then
-    // `prune_value_slots` once (merges equal slots, mints twins). Assert `check_twin_canonicality`
-    // fails — confirming the test pins the fixed behaviour.
+    // Contract (no merge, since p != q), then `prune_value_slots` once (merges
+    // the equal slots, minting twins): `check_twin_canonicality` must fail,
+    // which is what the fixpoint loop below has to repair.
     {
         let mut tdd2 = tdd.clone();
         // Seed dirty list: contract short-circuits on an empty list.
         tdd2.seed_contract_worklist([root_idx.0]);
         // Step 1: contract — p and q have different slot refs -> no twins -> no-op.
         super::contract::contract_all_twins(&eng, &mut tdd2)
-            .expect("contract must not OOM in pre-fix verification");
+            .expect("contract must not OOM");
         // Step 2: one prune pass — slots 0,1 both = C -> merge -> twins minted.
         let merged = prune_value_slots(&eng, &mut tdd2);
         assert!(
             !merged.is_empty(),
-            "pre-fix verification: prune must report values_merged > 0 \
-             (equal-valued slots 0 and 1 must collapse)"
+            "prune must report a value merge (equal-valued slots 0 and 1 collapse)"
         );
         // Step 3: `check_twin_canonicality` must FAIL (twins minted, no re-contract ran).
         assert!(
             check_twin_canonicality(&tdd2).is_err(),
-            "pre-fix verification: check_twin_canonicality must FAIL after the broken \
-             one-shot contract->prune sequence (twin pair minted by value-merge)"
+            "check_twin_canonicality must fail after one contract-then-prune sequence"
         );
     }
 
-    // ── Post-fix: Engine::reduce iterates to the true joint fixpoint ────────────
+    // ── Engine::reduce iterates to the joint fixpoint ───────────────────────
     //
-    // Seed dirty list so the initial contract pass runs; prune reports
-    // values_merged > 0, the fix re-seeds and re-contracts, prune next pass
-    // reports 0 -> loop exits.
+    // Seed the worklist so the initial contract pass runs; the prune reports
+    // a value merge, the driver re-seeds and re-contracts, and the next prune
+    // reports none.
     tdd.seed_contract_worklist([root_idx.0]);
     eng.reduce(&mut tdd, ReductionPlan::default()).expect("Engine::reduce must not OOM");
     // The content-twin scan is not run by Engine::reduce's normal path, so
     // call the canonicalization machinery directly so the assertions hold.
     canonicalize_content_twins(&eng, &mut tdd).unwrap();
 
-    // (a) Primary: no unmerged twins after the fix's iterate-to-fixpoint loop.
+    // (a) No unmerged twins after the fixpoint loop.
     check_twin_canonicality(&tdd)
-        .expect("post-fix: check_twin_canonicality must pass after Engine::reduce");
+        .expect("check_twin_canonicality must pass after Engine::reduce");
 
     // (b) No duplicate slot values remain.
     check_slot_count_uniqueness(&tdd)
@@ -300,7 +298,7 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
 
     // (c) No orphan slots remain.
     check_no_orphan_slots(&tdd)
-        .expect("post-fix: check_no_orphan_slots must pass after Engine::reduce");
+        .expect("check_no_orphan_slots must pass after Engine::reduce");
 }
 
 /// Reserves a full reduction of `edited_marginal_diagram` is asked for,

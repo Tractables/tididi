@@ -61,7 +61,7 @@ fn deterministic_token_mutations_are_refused_and_valid_text_round_trips() {
 #[test]
 fn a_tiny_file_naming_a_huge_variable_is_refused_rather_than_sized_from_it() {
     // The id-indexed tables are sized by the largest id, not by the number of
-    // leaves, so these two lines used to ask for gigabytes.
+    // leaves, so without the bound these two lines would ask for gigabytes.
     refused("vtree 1\nL 0 4000000000\n");
     // Through the node list the refusal keeps its variant; the text reader
     // flattens every build error into `Text`, as its `# Errors` section says.

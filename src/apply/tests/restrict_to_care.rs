@@ -197,32 +197,18 @@ fn restrict_runs_on_assorted_small_circuits() {
     }
 }
 
-// `restrict_to_care` where `f` and `care` root at DIFFERENT vtree nodes (one contained
-// in the other, or disjoint). The un-generalized guard bailed `f.clone()` on
-// any root mismatch, so the productive containment cases below silently
-// returned f unchanged. `assert_restrict_ok` alone can't catch that (g == f is
-// always sound), so each productive case also asserts a STRICT prune — those
-// assertions FAIL on the un-generalized `restrict_to_care` and pass once it lifts the
-// lower operand to the common root.
-//
-// `restrict_to_care` drops dead NODES (then the pairs that point at them), so a real
-// prune needs an INTERNAL node of `f` to become unreachable under `care` — not
-// merely fewer satisfying assignments. That needs vtree depth ≥3, so we use
-// balanced(8): a "selector" `sel = (x0∧(x2∨x3)) ∨ (¬x0∧(x2∧x3))` has two
-// distinct nodes at the {2,3} level — forcing x0 makes one of them unreachable.
-// `sel` depends only on {0,2,3} ⊂ block {0..3} = L (a child of the global root
-// R), so it can be re-homed to L, and a care that forces x0 prunes it.
+// `restrict_to_care` where `f` and `care` root at different vtree nodes, one
+// inside the other or disjoint. Each productive containment case asserts a
+// strict prune: a real prune needs an internal node of `f` to become
+// unreachable under `care`, so the fixture uses balanced(8) and a selector
+// `sel = (x0∧(x2∨x3)) ∨ (¬x0∧(x2∧x3))` with two nodes at the {2,3} level,
+// one of which forcing x0 makes unreachable. `sel` depends only on {0,2,3},
+// so it re-homes to the left block, and a care that forces x0 prunes it.
 //
 // Soundness is checked with the apply-free `eval` oracle over the full truth
-// table (the real `g∧c == f∧c` contract) plus the never-larger gate — not
-// `assert_restrict_ok`, whose `check_all_fast` enforces the global-root
-// *structural* convention (`validate_vtree_structure`: output.vtree == root).
-// That convention is what makes differing-root `restrict_to_care` a non-event in
-// production — every validated diagram (including marginalized ones, which mark
-// upper levels marginal rather than re-homing the root) is global-rooted. A
-// re-homed low-rooted operand is the not-yet-built "tightly-rooted segment"
-// shape; `restrict_to_care` computes the correct *function* for it (Case B's g is rooted
-// at f's own low node L, outside that structural convention, hence eval-only).
+// table (g∧c == f∧c) plus the never-larger gate, not `assert_restrict_ok`:
+// its `check_all_fast` requires a global-rooted diagram, and a re-homed
+// low-rooted operand is not one.
 #[test]
 fn restrict_differing_root_containment_difftest() {
     let eng = &crate::Engine::new();
@@ -464,13 +450,11 @@ fn restrict_differing_root_randomized() {
 
 #[test]
 fn restrict_raw_output_is_apply_safe() {
-    // Regression for the WS_FAST_REDUCE panic (prune.rs index-OOB): that lever
-    // swaps in the RAW `restrict_to_care` output (un-minimized) and then conjoins
-    // it — `apply_and(g, other)` followed by the conjoin's `minimize`. Public
-    // `restrict_to_care` minimizes g first, so the raw-output → apply path is otherwise
-    // untested. Assert (A) the raw g is a valid diagram and (B) conjoining it with an
-    // arbitrary other member, then minimizing the product, stays valid and never
-    // panics — over many random (f, care, other) across vtree sizes.
+    // The public `restrict_to_care` minimizes its output before anything
+    // conjoins it, so the raw (unminimized) output is only reached from
+    // inside the crate. Assert that the raw g is a valid diagram and that
+    // conjoining it with another diagram and minimizing the product stays
+    // valid, over random (f, care, other) across vtree sizes.
     use crate::test_helpers::check::check_all_fast;
     let mut rng = Lcg::new(0x0bad_f00d_1337_c0de);
     let mut conjoined = 0;
