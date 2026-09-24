@@ -182,7 +182,7 @@ pub(super) fn plan_groups(
 /// infallible push/extend.
 ///
 /// Sized from the decided actions: only a `Concat` appends, and only the
-/// members it selected; `needed_ext` is one `MultiPairRange` per concat, the
+/// members it selected; `needed_ext` is one `PairRange` per concat, the
 /// most `finalize_merged_node` pushes per group.
 ///
 /// # Errors
@@ -215,7 +215,7 @@ pub(super) fn reserve_transactional(
         // Immutable sizing borrow above ends here; take the mutable arena borrow.
         let level = &mut tdd.levels[t1.idx()];
         lim.reserve_exact(&mut level.pairs, needed_pairs)?;
-        lim.reserve_exact(&mut level.multi_pairs, needed_ext)?;
+        lim.reserve_exact(&mut level.ranges, needed_ext)?;
     }
     Ok(())
 }

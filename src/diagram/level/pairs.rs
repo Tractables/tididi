@@ -32,7 +32,7 @@ impl TddLevel {
             NodeKind::Inline(_) => return None,
             NodeKind::Multi { start, len } => (start as usize, len as usize),
             NodeKind::MultiRanged(idx) => {
-                let e = &self.multi_pairs[idx as usize];
+                let e = &self.ranges[idx as usize];
                 (e.start as usize, e.len as usize)
             }
         };
@@ -207,7 +207,7 @@ impl TddLevel {
         match self.nodes[idx].kind() {
             NodeKind::Inline(_) => 1,
             NodeKind::Multi { len, .. } => len as usize,
-            NodeKind::MultiRanged(e) => self.multi_pairs[e as usize].len as usize,
+            NodeKind::MultiRanged(e) => self.ranges[e as usize].len as usize,
         }
     }
 

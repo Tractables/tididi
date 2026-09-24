@@ -188,7 +188,7 @@ fn a_clause_builds_the_levels_its_conjunction_into_one_emits() {
             assert_eq!(built.levels.len(), conjoined.levels.len(), "{label}: level count");
             for (t, (a, b)) in built.levels.iter().zip(&conjoined.levels).enumerate() {
                 assert!(
-                    a.nodes == b.nodes && a.pairs == b.pairs && a.multi_pairs == b.multi_pairs,
+                    a.nodes == b.nodes && a.pairs == b.pairs && a.ranges == b.ranges,
                     "{label}: level {t} stores different nodes or pairs"
                 );
                 assert!(!a.is_marginal() && !b.is_marginal(), "{label}: level {t} is structural");

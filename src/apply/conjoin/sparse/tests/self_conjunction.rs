@@ -1,10 +1,10 @@
 //! Regression tests for `is_self_conjunction`. The structural shortcut
 //! `f ∧ g = f.clone()` fires only when the operands are the same function, so
 //! the comparison covers marginal content (a marginal level clears
-//! `nodes`/`pairs`) and the `multi_pairs` table as well as `nodes` and `pairs`.
+//! `nodes`/`pairs`) and the `ranges` table as well as `nodes` and `pairs`.
 use super::is_self_conjunction;
 use crate::diagram::{
-    MultiPairRange, ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId,
+    PairRange, ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId,
     assert_can_make_marginal, take_levels,
 };
 use crate::vtree::{Vtree, VtreeIdx};
@@ -67,11 +67,11 @@ fn differing_ext_blocks_shortcut() {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let a = build_operand(&vtree);
     let mut b = build_operand(&vtree);
-    // Equal nodes+pairs but a different `multi_pairs` arrangement is a different
+    // Equal nodes+pairs but a different `ranges` arrangement is a different
     // function.
-    b.levels[root.idx()].multi_pairs.push(MultiPairRange { start: 0, len: 2 });
+    b.levels[root.idx()].ranges.push(PairRange { start: 0, len: 2 });
     assert!(
         !is_self_conjunction(&a, &b),
-        "operands whose `multi_pairs` tables differ must not be treated as self-conjunction"
+        "operands whose `ranges` tables differ must not be treated as self-conjunction"
     );
 }

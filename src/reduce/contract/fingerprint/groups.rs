@@ -121,7 +121,7 @@ fn count_candidate_entries(
     // ── u32 offset boundary (checked, not assumed) ─────────────────────────────
     //
     // A level's parent-pair fan-out has no structural u32 cap
-    // (`MultiPairRange::start` and `len` are u64), so refuse the level through
+    // (`PairRange::start` and `len` are u64), so refuse the level through
     // `IndexOverflow` rather than truncate an offset. Checked before the prefix
     // sum, so no offset is stored; the counts may have wrapped, but nothing
     // reads them after the bail (the next call re-fills from zero).

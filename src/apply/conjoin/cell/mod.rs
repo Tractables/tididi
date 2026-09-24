@@ -5,7 +5,7 @@
 //! One [`PollGate`](crate::limits::PollGate) spans a level, charging visited
 //! input pairs and output cells so wide cells remain cancellable.
 
-use crate::diagram::{ChildPair, TddLevel, EncodedNode, MultiPairRange};
+use crate::diagram::{ChildPair, TddLevel, EncodedNode};
 use crate::value::{IntFold, WeightFold};
 use crate::Engine;
 

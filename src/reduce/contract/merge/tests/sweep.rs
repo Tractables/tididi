@@ -48,10 +48,10 @@ fn contraction_garbage_is_swept_leaving_content_identical() {
     // node, order (these keep the LOWEST starts while the merged survivors
     // sit at the tail). First an extended (side-table) node, staged by hand
     // since the encoder only goes extended past 2^31 slots: its start lives
-    // in `multi_pairs` rather than the node word. Then an inline node, which
+    // in `ranges` rather than the node word. Then an inline node, which
     // owns no arena slot at all.
     level.pairs.extend([pair(1, 7), pair(2, 7)]);
-    level.multi_pairs.push(MultiPairRange { start: 0, len: 2 });
+    level.ranges.push(PairRange { start: 0, len: 2 });
     level.nodes.push(EncodedNode::multi_ranged(0));
     level.push_internal_node(&[pair(3, 4)]);
     let first_multi = level.nodes.len();
@@ -89,7 +89,7 @@ fn contraction_garbage_is_swept_leaving_content_identical() {
 }
 
 /// A parent node already in the extended (side-table) encoding that shrinks to
-/// a single non-inlinable pair must rewrite its own `multi_pairs` entry, not
+/// a single non-inlinable pair must rewrite its own `ranges` entry, not
 /// mint a second one and abandon the first.
 ///
 /// Hand-encoded because the arm needs a length-≥2 extended node, which only a
@@ -101,7 +101,7 @@ fn a_shrunk_extended_parent_node_inlines_its_survivor() {
     let mut levels: Vec<TddLevel> =
         (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
     // An extended node staged by hand (the encoder only goes extended past
-    // 2^31 slots): its sole survivor goes inline, and its `multi_pairs` entry
+    // 2^31 slots): its sole survivor goes inline, and its `ranges` entry
     // is left in place rather than replaced.
     let sibling = NodeIdx(3);
     let parent = &mut levels[root.idx()];
@@ -109,7 +109,7 @@ fn a_shrunk_extended_parent_node_inlines_its_survivor() {
         ChildPair::new(NodeIdx(0), sibling),
         ChildPair::new(NodeIdx(1), sibling),
     ];
-    parent.multi_pairs = vec![MultiPairRange { start: 0, len: 2 }];
+    parent.ranges = vec![PairRange { start: 0, len: 2 }];
     parent.nodes = vec![EncodedNode::multi_ranged(0)];
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
@@ -124,7 +124,7 @@ fn a_shrunk_extended_parent_node_inlines_its_survivor() {
     rewrite_parent(&mut tdd, root, ChildSide::Left, &remap);
 
     let parent = &tdd.levels[root.idx()];
-    assert_eq!(parent.multi_pairs.len(), 1, "no range entry is added for an inlined survivor");
+    assert_eq!(parent.ranges.len(), 1, "no range entry is added for an inlined survivor");
     assert!(matches!(parent.nodes[0].kind(), NodeKind::Inline(_)), "the sole survivor is stored inline");
     assert_eq!(
         parent.pairs_of_idx(0),

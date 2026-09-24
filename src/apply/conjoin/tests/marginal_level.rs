@@ -9,7 +9,7 @@ use crate::test_helpers::clause_to_tdd;
 
 
 use crate::diagram::{
-    CountOverflow, MultiPairRange, TddLevel,
+    CountOverflow, PairRange, TddLevel,
 };
 use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree, VtreeIdx};
@@ -138,7 +138,7 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
 
     // ── Branch 1: must take the shortcut ────────────────────────────────
     // Byte-identical, non-marginal clones satisfy `is_self_conjunction` by
-    // construction (equal output, equal per-level nodes/pairs/multi_pairs).
+    // construction (equal output, equal per-level nodes/pairs/ranges).
     let shortcut_lhs = tdd.clone();
     let shortcut_rhs = tdd.clone();
     assert!(
@@ -154,10 +154,10 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
 
     // ── Branch 2: must take the general path ────────────────────────────
     // same represented function, but one clone carries one extra,
-    // completely UNREFERENCED `multi_pairs` side-table entry at the root level —
+    // completely UNREFERENCED `ranges` side-table entry at the root level —
     // mirrors `conjoin::sparse::tests::self_conjunction::
     // `differing_ext_blocks_shortcut``, which pins that ``is_self_conjunction``
-    // treats a differing `multi_pairs` table as a structural difference even when
+    // treats a differing `ranges` table as a structural difference even when
     // `nodes`/`pairs` agree. No node encodes a reference to the new entry
     // (append-only, past the end of the existing table), so the represented
     // function is completely unchanged — only the raw structural comparison
@@ -167,10 +167,10 @@ fn test_apply_and_self_conjunction_shortcut_vs_general_path() {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let general_lhs = tdd.clone();
     let mut general_rhs = tdd.clone();
-    general_rhs.levels[root.idx()].multi_pairs.push(MultiPairRange { start: 0, len: 2 });
+    general_rhs.levels[root.idx()].ranges.push(PairRange { start: 0, len: 2 });
     assert!(
         !is_self_conjunction(&general_lhs, &general_rhs),
-        "operand with a differing (unreferenced) multi_pairs entry must NOT satisfy the shortcut predicate"
+        "operand with a differing (unreferenced) ranges entry must NOT satisfy the shortcut predicate"
     );
     let mut general_result = apply_and(general_lhs, general_rhs);
     general_result.minimize().unwrap();

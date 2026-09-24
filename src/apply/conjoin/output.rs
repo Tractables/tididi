@@ -2,7 +2,7 @@
 
 use super::*;
 
-/// Drop the `nodes`, `pairs` and `multi_pairs` arenas of an operand level
+/// Drop the `nodes`, `pairs` and `ranges` arenas of an operand level
 /// whose parent is about to be built.
 ///
 /// The caller must hold that nothing reads the level's arenas again: the sweep
@@ -15,13 +15,13 @@ pub(super) fn drop_dead_operand_level(level: &mut crate::diagram::TddLevel) {
     // output reserve could use; exact capacities, so the test never misfires.
     let bytes = level.nodes.capacity() * std::mem::size_of::<EncodedNode>()
         + level.pairs.capacity() * std::mem::size_of::<ChildPair>()
-        + level.multi_pairs.capacity() * std::mem::size_of::<crate::diagram::MultiPairRange>();
+        + level.ranges.capacity() * std::mem::size_of::<crate::diagram::PairRange>();
     // `dead_pairs` counts garbage in `pairs`, so it is zeroed only where
     // `pairs` is emptied.
     if bytes <= 64 { return; }
     level.nodes = Vec::new();
     level.pairs = Vec::new();
-    level.multi_pairs = Vec::new();
+    level.ranges = Vec::new();
     // No arena left to sweep, so no garbage to remember.
     level.dead_pairs = 0;
 }

@@ -1,5 +1,5 @@
 //! Primitive node types: `NodeIdx`, `TddNodeId`, `LeafLabel`, `ChildPair`,
-//! `EncodedNode`, `MultiPairRange`, and related constants.
+//! `EncodedNode`, `PairRange`, and related constants.
 
 use crate::vtree::VtreeIdx;
 
@@ -174,10 +174,10 @@ pub(super) const MULTI_BIT: u32 = 1 << 31;
 pub(super) const RANGE_SENTINEL: u32 = 1;
 
 /// Side-table entry for ranged multi-pair nodes (`pair_start` or `pair_len` ≥ 2^31).
-/// The node data holds `(a = multi_pairs_idx | MULTI_BIT, b = RANGE_SENTINEL)`, and this struct
+/// The node data holds `(a = range_idx | MULTI_BIT, b = RANGE_SENTINEL)`, and this struct
 /// holds the actual start/len. Only allocated when the 31-bit encoding would overflow.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub(crate) struct MultiPairRange {
+pub(crate) struct PairRange {
     pub(crate) start: u64,
     pub(crate) len: u64,
 }
@@ -195,13 +195,13 @@ pub(crate) struct MultiPairRange {
 /// ├───────────────────────────────┼───────────────────────────────┤
 /// │ left child index              │ right child index             │  ← inline pair
 /// │ pair_start | `MULTI_BIT`      │ pair_len (∈ {0, 2, 3, …})     │  ← normal multi-pair
-/// │ multi_pairs_idx | `MULTI_BIT` │ `RANGE_SENTINEL` (= 1)        │  ← ranged multi-pair
+/// │ range_idx | `MULTI_BIT` │ `RANGE_SENTINEL` (= 1)        │  ← ranged multi-pair
 /// └───────────────────────────────┴───────────────────────────────┘
 /// ```
 ///
 /// The cases are tested in that order, hottest first: `a & MULTI_BIT == 0`
 /// means inline pair (a stored side never has bit 31 set); else `b == 1`
-/// means ranged multi-pair (its size lives in the level's `multi_pairs`
+/// means ranged multi-pair (its size lives in the level's `ranges`
 /// table); else normal multi-pair. A single pair is always stored inline,
 /// so `pair_len == 1` never occurs for multi-pair, which is what leaves
 /// `b == 1` free as the ranged sentinel. `pair_len == 0` is legal.
@@ -237,7 +237,7 @@ pub(crate) enum NodeKind {
     Inline(ChildPair),
     /// Pairs at `[start, start + len)` of the level's `pairs` arena.
     Multi { start: u32, len: u32 },
-    /// Pairs whose 64-bit `(start, len)` live in the level's `multi_pairs`
+    /// Pairs whose 64-bit `(start, len)` live in the level's `ranges`
     /// side table at this index.
     MultiRanged(u32),
 }
@@ -273,11 +273,11 @@ impl EncodedNode {
     }
 
     /// Create an ranged multi-pair node whose `(start, len)` live in the level's
-    /// `multi_pairs` side table at `multi_pairs_idx`. `b = RANGE_SENTINEL` (= 1) distinguishes this
+    /// `ranges` side table at `range_idx`. `b = RANGE_SENTINEL` (= 1) distinguishes this
     /// from normal multi (which has `pair_len` ∈ {0, 2, 3, …}).
-    pub(crate) fn multi_ranged(multi_pairs_idx: u32) -> Self {
-        debug_assert!(multi_pairs_idx & MULTI_BIT == 0, "multi_pairs_idx too large");
-        EncodedNode { a: multi_pairs_idx | MULTI_BIT, b: RANGE_SENTINEL }
+    pub(crate) fn multi_ranged(range_idx: u32) -> Self {
+        debug_assert!(range_idx & MULTI_BIT == 0, "range_idx too large");
+        EncodedNode { a: range_idx | MULTI_BIT, b: RANGE_SENTINEL }
     }
 
     /// Decode the two words into the case they encode.
@@ -305,7 +305,7 @@ impl std::fmt::Debug for EncodedNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind() {
             NodeKind::Inline(_) => write!(f, "Inline {{ left: {}, right: {} }}", self.a, self.b),
-            NodeKind::MultiRanged(idx) => write!(f, "MultiRanged {{ multi_pairs_idx: {idx} }}"),
+            NodeKind::MultiRanged(idx) => write!(f, "MultiRanged {{ range_idx: {idx} }}"),
             NodeKind::Multi { start, len } => {
                 write!(f, "Multi {{ pair_start: {start}, pair_len: {len} }}")
             }

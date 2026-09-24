@@ -38,7 +38,7 @@ fn test_apply_and_with_constant_one() {
     // shortcut, `conjoin/sparse/mod.rs`) is a genuine canonical-equality
     // check: after `minimize`, two operands representing the same function
     // on the same vtree must have identical output + identical per-level
-    // nodes/pairs/multi_pairs (diagram canonicity). Neither operand here carries a
+    // nodes/pairs/ranges (diagram canonicity). Neither operand here carries a
     // marginal level, so the check is meaningful (see its doc comment for
     // the marginal-level caveat).
     assert!(

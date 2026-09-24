@@ -197,9 +197,9 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
     // Arenas pre-reserved so the twin run's grand reserve and parent re-encode
     // charge nothing: only the three scratch buffers are left to be charged.
     levels[v_left.idx()].pairs.reserve(8 * width);
-    levels[v_left.idx()].multi_pairs.reserve(width);
+    levels[v_left.idx()].ranges.reserve(width);
     levels[root.idx()].pairs.reserve(8 * width);
-    levels[root.idx()].multi_pairs.reserve(width);
+    levels[root.idx()].ranges.reserve(width);
 
     let mut nodes = Vec::with_capacity(width);
     for i in 0..width {

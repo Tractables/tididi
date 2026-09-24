@@ -14,7 +14,7 @@ pub(crate) struct ProductLists<'a> {
 /// True when `f` and `g` represent the same Boolean function, in which case
 /// `apply_and` reduces to `f ∧ f = f` and we can short-circuit to a copy.
 /// Canonicity means equal functions have identical *explicit* level structure —
-/// so equal `output` plus equal `(nodes, pairs, multi_pairs)` on every level is
+/// so equal `output` plus equal `(nodes, pairs, ranges)` on every level is
 /// sufficient. This is structural equality, not pointer identity — but it is
 /// only sound when no level is marginal, since a marginal level hides its
 /// content outside `nodes`/`pairs` where the structural test cannot see it.
@@ -34,9 +34,9 @@ pub(crate) fn is_self_conjunction(f: &Tdd, g: &Tdd) -> bool {
     }
     f.output == g.output
         && f.levels.iter().zip(g.levels.iter()).all(|(l1, l2)| {
-            // `multi_pairs` too: equal nodes+pairs with a differently-arranged `multi_pairs` table
+            // `ranges` too: equal nodes+pairs with a differently-arranged `ranges` table
             // is a different function.
-            l1.nodes == l2.nodes && l1.pairs == l2.pairs && l1.multi_pairs == l2.multi_pairs
+            l1.nodes == l2.nodes && l1.pairs == l2.pairs && l1.ranges == l2.ranges
         })
 }
 

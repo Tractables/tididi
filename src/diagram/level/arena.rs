@@ -1,7 +1,7 @@
 //! The pair arena: node encoding, in-place resizing, compaction, and node pushes.
 
 use crate::Engine;
-use crate::diagram::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode, NodeKind, MULTI_BIT};
+use crate::diagram::primitives::{PairRange, ChildPair, NodeIdx, EncodedNode, NodeKind, MULTI_BIT};
 use crate::limits::{Charged, Limits, OperationError};
 use super::TddLevel;
 
@@ -37,14 +37,14 @@ impl ArenaGrowth for Untracked {
 impl TddLevel {
     /// Build a multi-pair node data from `(pair_start, pair_len)`, promoting to the
     /// ranged encoding when either value doesn't fit in 31 bits and allocates an
-    /// `multi_pairs` entry as needed.
+    /// `ranges` entry as needed.
     /// `pair_len == 1` is [`EncodedNode::inline`]'s; `pair_len == 0` is
     /// allowed, for an empty placeholder node.
     ///
     /// # Panics
     ///
     /// Panics if `pair_len == 1` (that value aliases the `multi_ranged`
-    /// encoding), or if the allocator refuses the `multi_pairs` entry — use
+    /// encoding), or if the allocator refuses the `ranges` entry — use
     /// [`try_encode_multi`](Self::try_encode_multi) where a refusal is an
     /// answer.
     #[inline]
@@ -57,7 +57,7 @@ impl TddLevel {
     ///
     /// # Errors
     ///
-    /// The `multi_pairs` growth was refused.
+    /// The `ranges` growth was refused.
     #[inline]
     fn try_encode_multi<G: ArenaGrowth>(
         &mut self, growth: &G, pair_start: usize, pair_len: usize,
@@ -67,13 +67,13 @@ impl TddLevel {
         if fits_u31 {
             Ok(EncodedNode::multi_pair(pair_start as u32, pair_len as u32))
         } else {
-            let multi_pairs_idx = self.multi_pairs.len();
-            debug_assert!(multi_pairs_idx < (1usize << 31), "too many ranged nodes in a single level");
-            if self.multi_pairs.len() == self.multi_pairs.capacity() {
-                growth.grow(&mut self.multi_pairs, 1)?;
+            let range_idx = self.ranges.len();
+            debug_assert!(range_idx < (1usize << 31), "too many ranged nodes in a single level");
+            if self.ranges.len() == self.ranges.capacity() {
+                growth.grow(&mut self.ranges, 1)?;
             }
-            self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: pair_len as u64 });
-            Ok(EncodedNode::multi_ranged(multi_pairs_idx as u32))
+            self.ranges.push(PairRange { start: pair_start as u64, len: pair_len as u64 });
+            Ok(EncodedNode::multi_ranged(range_idx as u32))
         }
     }
 
@@ -91,8 +91,8 @@ impl TddLevel {
         debug_assert!(new_len & MULTI_BIT == 0);
         match self.nodes[node_idx].kind() {
             // Shrinking stays ranged even if new_len now fits in u31 — the
-            // multi_pairs slot is already allocated, and callers don't rely on form.
-            NodeKind::MultiRanged(idx) => self.multi_pairs[idx as usize].len = new_len as u64,
+            // ranges slot is already allocated, and callers don't rely on form.
+            NodeKind::MultiRanged(idx) => self.ranges[idx as usize].len = new_len as u64,
             NodeKind::Multi { .. } => self.nodes[node_idx].b = new_len,
             NodeKind::Inline(_) => panic!("set_pair_len on an inline node"),
         }
@@ -106,7 +106,7 @@ impl TddLevel {
     /// and only conditioning produces, for its falsity sweep to remove. The
     /// epilogue of every pass that compacts a node's own range in place; it
     /// allocates nothing. A node in the ranged encoding keeps its
-    /// `multi_pairs` entry, which the inline and empty forms leave unused.
+    /// `ranges` entry, which the inline and empty forms leave unused.
     ///
     /// Precondition (debug-asserted): `new_len < old_len`.
     ///
@@ -142,11 +142,11 @@ impl TddLevel {
     ///
     /// A normal-multi node keeps its packed form: the new start is ≤ the old one,
     /// which already fit 31 bits, so the encoding cannot overflow. A ranged
-    /// node stays ranged (its `multi_pairs` slot is already allocated).
+    /// node stays ranged (its `ranges` slot is already allocated).
     #[inline]
     fn set_multi_start(&mut self, node_idx: usize, new_start: usize) {
         match self.nodes[node_idx].kind() {
-            NodeKind::MultiRanged(idx) => self.multi_pairs[idx as usize].start = new_start as u64,
+            NodeKind::MultiRanged(idx) => self.ranges[idx as usize].start = new_start as u64,
             NodeKind::Multi { .. } => {
                 debug_assert!(new_start < (1usize << 31), "set_multi_start: start overflows the packed encoding");
                 self.nodes[node_idx].a = (new_start as u32) | MULTI_BIT;
@@ -187,7 +187,7 @@ impl TddLevel {
     /// them down. Every node's pairs read the same afterwards.
     ///
     /// Callers must hold no pair-arena offset across the call; a range's
-    /// start lives only in the owning node's word or its `multi_pairs` entry,
+    /// start lives only in the owning node's word or its `ranges` entry,
     /// both rewritten here.
     pub(crate) fn compact_pairs_if_stale(&mut self) -> bool {
         let dead = self.dead_pairs as usize;
@@ -372,7 +372,7 @@ impl TddLevel {
         let reused = match node { NodeKind::MultiRanged(i) => Some(i as usize), _ => None };
         // Reserve and charge everything before changing any live node or pair.
         lim.reserve(&mut self.pairs, if at_tail { 1 } else { len })?;
-        if ranged && reused.is_none() { lim.reserve(&mut self.multi_pairs, 1)?; }
+        if ranged && reused.is_none() { lim.reserve(&mut self.ranges, 1)?; }
         if !at_tail {
             if let Some(existing) = inline {
                 self.pairs.push(existing);
@@ -383,11 +383,11 @@ impl TddLevel {
         }
         self.pairs.push(pair);
         self.nodes[idx] = if let Some(i) = reused {
-            self.multi_pairs[i] = MultiPairRange { start: start as u64, len: len as u64 };
+            self.ranges[i] = PairRange { start: start as u64, len: len as u64 };
             EncodedNode::multi_ranged(i as u32)
         } else if ranged {
-            let i = self.multi_pairs.len();
-            self.multi_pairs.push(MultiPairRange { start: start as u64, len: len as u64 });
+            let i = self.ranges.len();
+            self.ranges.push(PairRange { start: start as u64, len: len as u64 });
             EncodedNode::multi_ranged(i as u32)
         } else {
             EncodedNode::multi_pair(start as u32, len as u32)
@@ -432,7 +432,7 @@ impl TddLevel {
 
     /// The allocated bytes of the three structural arenas.
     pub(crate) fn arena_capacity_bytes(&self) -> u64 {
-        self.nodes.charged_bytes() + self.pairs.charged_bytes() + self.multi_pairs.charged_bytes()
+        self.nodes.charged_bytes() + self.pairs.charged_bytes() + self.ranges.charged_bytes()
     }
 
     /// Push a multi-pair node (fallible). Pairs are assumed already in `self.pairs`.

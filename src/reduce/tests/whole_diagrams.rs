@@ -211,7 +211,7 @@ fn test_minimize_sat_2vars_reduces_width() {
 //
 // An `OperationError::OverBudget` raised part-way through `contract_twins`' group-
 // merge loop must never corrupt the model count. Every reserve the pass needs
-// — the survivors' pair growth AND the parent's `multi_pairs` growth — is taken in one
+// — the survivors' pair growth AND the parent's `ranges` growth — is taken in one
 // grand reserve before the loop mutates anything, so a refusal bails with the
 // diagram exactly as it was: count unchanged, worklist restored. The commit
 // pass that follows the reserve pushes infallibly.

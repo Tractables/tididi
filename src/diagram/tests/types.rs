@@ -7,12 +7,12 @@
         // pairs as `pairs_of_idx` on an unpacked level.
         let mut lvl = TddLevel::new();
         // Push some multi-pair nodes and an inline pair.
-        let multi_pairs = vec![
+        let three = vec![
             ChildPair::new(NodeIdx(1), NodeIdx(2)),
             ChildPair::new(NodeIdx(3), NodeIdx(4)),
             ChildPair::new(NodeIdx(5), NodeIdx(6)),
         ];
-        lvl.push_internal_node(&multi_pairs);
+        lvl.push_internal_node(&three);
         lvl.push_internal_node(&[ChildPair::new(NodeIdx(99), NodeIdx(100))]);
 
         let from_slice: Vec<ChildPair> = lvl.pairs_of_idx(0).to_vec();
@@ -270,14 +270,14 @@
         );
         assert_eq!(level.pair_range_at(0), huge_start..huge_start + 3);
         assert_eq!(level.pair_count_at(0), 3);
-        assert_eq!(level.multi_pairs.len(), 1);
+        assert_eq!(level.ranges.len(), 1);
     }
 
     #[test]
     fn test_encode_multi_promotes_to_ranged_on_huge_len() {
         // A pair_len at 2^31 triggers the ranged encoding. We don't actually
         // allocate that much arena memory — `encode_multi` only stores the count
-        // and `multi_pairs_idx`; the arena is the caller's concern.
+        // and `range_idx`; the arena is the caller's concern.
         let mut level = TddLevel::new();
         let huge_len = 1usize << 31;
         let data = level.encode_multi(0, huge_len);
@@ -292,7 +292,7 @@
 
     #[test]
     fn test_encode_multi_stays_normal_for_small_values() {
-        // Normal-sized multi nodes don't allocate an multi_pairs slot — the packed
+        // Normal-sized multi nodes don't allocate an ranges slot — the packed
         // 8-byte encoding handles them.
         let mut level = TddLevel::new();
         let data = level.encode_multi(100, 5);
@@ -302,7 +302,7 @@
             "small multi should stay in packed form, got {:?}", data.kind()
         );
         assert_eq!(level.pair_range_at(0), 100..105);
-        assert_eq!(level.multi_pairs.len(), 0, "no multi_pairs slot allocated for packed form");
+        assert_eq!(level.ranges.len(), 0, "no ranges slot allocated for packed form");
     }
 
     #[test]
@@ -325,12 +325,12 @@
         let mut level = TddLevel::new();
         let data = level.encode_multi(1 << 31, 3);
         level.nodes.push(data);
-        assert_eq!(level.multi_pairs.len(), 1);
+        assert_eq!(level.ranges.len(), 1);
         let mut levels = vec![level];
         for level in &mut levels {
             reset_level(level);
         }
-        assert_eq!(levels[0].multi_pairs.len(), 0);
+        assert_eq!(levels[0].ranges.len(), 0);
         assert_eq!(levels[0].nodes.len(), 0);
         assert!(!levels[0].has_multi_pair());
     }

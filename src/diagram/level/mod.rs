@@ -10,7 +10,7 @@ pub(crate) use arena::Untracked;
 pub(crate) use marginal::{assert_can_make_marginal, non_marginal_child};
 
 use super::marginal_ref::{ChildDecoder, ChildSide};
-use super::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode};
+use super::primitives::{PairRange, ChildPair, NodeIdx, EncodedNode};
 
 /// The diagram storage associated with one vtree node.
 ///
@@ -41,7 +41,7 @@ pub struct TddLevel {
     pub(crate) pairs: Vec<ChildPair>,
     /// Side table for multi-pair nodes whose arena start or length exceeds
     /// 2^31 (huge product grids). See `EncodedNode` for the encoding.
-    pub(crate) multi_pairs: Vec<MultiPairRange>,
+    pub(crate) ranges: Vec<PairRange>,
     /// Which of this level's pair sides hold value references into a marginal
     /// child that have been through `inline_small_marginal_refs`: bit 0 the
     /// left side, bit 1 the right. A side toward a structural child, or one
@@ -61,7 +61,7 @@ pub struct TddLevel {
     /// reclaims them and resets this to 0.
     ///
     /// Approximate: it only triggers the sweep, which derives liveness from
-    /// `nodes`/`multi_pairs`. Reset to 0 wherever the pair arena is replaced.
+    /// `nodes`/`ranges`. Reset to 0 wherever the pair arena is replaced.
     pub(crate) dead_pairs: u32,
     /// Whether this level still denotes its functions structurally, and if not,
     /// which values it holds instead.
@@ -77,7 +77,7 @@ pub struct TddLevel {
 /// the slot count stays here.
 #[derive(Clone, Debug)]
 pub(crate) enum LevelState {
-    /// Nodes and pairs; `nodes`/`pairs`/`multi_pairs` carry the level.
+    /// Nodes and pairs; `nodes`/`pairs`/`ranges` carry the level.
     Structural,
     /// Model counts, one per node slot. `u128::MAX` marks a count at least
     /// that large, whose exact value is the entry `big` holds for that slot.
@@ -136,7 +136,7 @@ impl TddLevel {
         TddLevel {
             nodes: Vec::new(),
             pairs: Vec::new(),
-            multi_pairs: Vec::new(),
+            ranges: Vec::new(),
             value_ref_sides: 0,
             dead_pairs: 0,
             state: LevelState::Structural,
@@ -149,7 +149,7 @@ impl TddLevel {
     pub(crate) fn clear(&mut self) {
         self.nodes.clear();
         self.pairs.clear();
-        self.multi_pairs.clear();
+        self.ranges.clear();
         self.value_ref_sides = 0;
         self.dead_pairs = 0;
         self.state = LevelState::Structural;
@@ -165,8 +165,8 @@ impl TddLevel {
         self.nodes.shrink_to_fit();
         self.pairs.clear();
         self.pairs.shrink_to_fit();
-        self.multi_pairs.clear();
-        self.multi_pairs.shrink_to_fit();
+        self.ranges.clear();
+        self.ranges.shrink_to_fit();
         self.dead_pairs = 0;
         self.value_ref_sides = 0;
     }
@@ -304,7 +304,7 @@ impl TddLevel {
     }
 
 
-    /// Trim retained slack in `nodes`, `pairs`, and `multi_pairs` when capacity exceeds
+    /// Trim retained slack in `nodes`, `pairs`, and `ranges` when capacity exceeds
     /// 4× length and absolute capacity is ≥ 1 Ki slots. The ratio trades peak
     /// savings against realloc-copies on levels that are re-grown soon.
     /// Count-marginal levels (already shrunk by `become_marginal`) are skipped.
@@ -325,8 +325,8 @@ impl TddLevel {
         if should_shrink(self.pairs.capacity(), self.pairs.len()) {
             self.pairs.shrink_to_fit();
         }
-        if should_shrink(self.multi_pairs.capacity(), self.multi_pairs.len()) {
-            self.multi_pairs.shrink_to_fit();
+        if should_shrink(self.ranges.capacity(), self.ranges.len()) {
+            self.ranges.shrink_to_fit();
         }
     }
 
@@ -354,7 +354,7 @@ impl TddLevel {
         Ok(TddLevel {
             nodes: copy(lim, &self.nodes)?,
             pairs: copy(lim, &self.pairs)?,
-            multi_pairs: copy(lim, &self.multi_pairs)?,
+            ranges: copy(lim, &self.ranges)?,
             value_ref_sides: self.value_ref_sides,
             dead_pairs: self.dead_pairs,
             state,

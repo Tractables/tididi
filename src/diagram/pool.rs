@@ -34,7 +34,7 @@ pub(crate) const MAX_LEVEL_ARENA_BYTES: usize = 32 * 1024 * 1024;
 /// Reset one recycled level to empty state.
 ///
 /// Beyond clearing content, also enforces the per-arena capacity cap
-/// (`MAX_LEVEL_ARENA_BYTES`): any arena (`nodes`/`pairs`/`multi_pairs`) whose
+/// (`MAX_LEVEL_ARENA_BYTES`): any arena (`nodes`/`pairs`/`ranges`) whose
 /// `.capacity()` exceeds the cap is replaced with a fresh empty `Vec`.
 ///
 /// Runs on the return path, so everything parked is already in this state.
@@ -45,7 +45,7 @@ pub(crate) fn reset_level(level: &mut TddLevel) -> usize {
         if bytes > MAX_LEVEL_ARENA_BYTES { *arena = Vec::new(); 0 } else { bytes }
     }
     level.clear();
-    retain(&mut level.nodes) + retain(&mut level.pairs) + retain(&mut level.multi_pairs)
+    retain(&mut level.nodes) + retain(&mut level.pairs) + retain(&mut level.ranges)
 }
 
 /// Take `num_nodes` empty levels from the pool, growing the array through

@@ -1,7 +1,7 @@
 use super::*;
 use crate::Engine;
 use crate::vtree::{RotationKind, Vtree};
-use crate::diagram::{EncodedNode, MultiPairRange};
+use crate::diagram::{EncodedNode, PairRange};
 use crate::test_helpers::{assert_canonical, compile_clauses, rotate_left, rotate_right};
 use crate::restructure::relevel::restructure_inner_search;
 
@@ -333,18 +333,18 @@ fn gc1_sweep_undercount_repro() {
 // post. These tests assert that property directly on snapshotted level
 // contents.
 
-/// Snapshot the content of every level (nodes + pairs + multi_pairs). Dirty-tracking
+/// Snapshot the content of every level (nodes + pairs + ranges). Dirty-tracking
 /// state may legitimately differ post-rotation; only content is invariant.
-fn snapshot_levels(tdd: &Tdd) -> Vec<(Vec<EncodedNode>, Vec<ChildPair>, Vec<MultiPairRange>)> {
+fn snapshot_levels(tdd: &Tdd) -> Vec<(Vec<EncodedNode>, Vec<ChildPair>, Vec<PairRange>)> {
     tdd.levels
         .iter()
-        .map(|l| (l.nodes.clone(), l.pairs.clone(), l.multi_pairs.clone()))
+        .map(|l| (l.nodes.clone(), l.pairs.clone(), l.ranges.clone()))
         .collect()
 }
 
 fn assert_locality(
     tdd: &Tdd,
-    snap: &[(Vec<EncodedNode>, Vec<ChildPair>, Vec<MultiPairRange>)],
+    snap: &[(Vec<EncodedNode>, Vec<ChildPair>, Vec<PairRange>)],
     v_idx: usize,
     w_idx: usize,
 ) {
@@ -359,8 +359,8 @@ fn assert_locality(
             "rotation-locality: level {i} pairs changed (v={v_idx}, w={w_idx})",
         );
         assert_eq!(
-            level.multi_pairs, snap[i].2,
-            "rotation-locality: level {i} multi_pairs changed (v={v_idx}, w={w_idx})",
+            level.ranges, snap[i].2,
+            "rotation-locality: level {i} ranges changed (v={v_idx}, w={w_idx})",
         );
     }
 }
