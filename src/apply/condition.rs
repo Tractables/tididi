@@ -18,16 +18,6 @@ use crate::diagram::{EncodedChildRef, ChildDecoder, ChildPair, NodeKind, Tdd, Td
 use crate::vtree::{VarId, VtreeIdx};
 use crate::diagram::{ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 
-/// Polarity of a leaf restriction: keep the positive (Pos) or negative (Neg) branch.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) enum Polarity {
-    /// Keep the positive (x=⊤) branch.
-    Positive,
-    /// Keep the negative (x=⊥) branch.
-    Negative,
-}
-
-
 /// The implementation behind [`Engine::condition_vars`](crate::Engine::condition_vars).
 pub(crate) fn condition_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], value: bool) -> Result<Tdd, OperationError> {
     condition_on(eng, f, vars.iter().map(|&var| crate::diagram::Literal::new(var, value)))
@@ -43,8 +33,7 @@ pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<I
     for literal in assignment {
         let literal = literal.try_into().map_err(Into::into)?;
         let leaf = f.vtree.leaf_of(literal.var).ok_or(OperationError::VariableNotInVtree(literal.var))?;
-        let pol = if literal.sign { Polarity::Positive } else { Polarity::Negative };
-        lim.try_push(&mut targets, (leaf, pol))?;
+        lim.try_push(&mut targets, (leaf, literal.sign))?;
         gate.poll(1)?;
     }
     gate.flush()?;
@@ -113,15 +102,17 @@ fn empty_node(level: &TddLevel, i: usize) -> bool {
     level.nodes[i].is_internal() && level.pair_count_at(i) == 0
 }
 
-/// Validate distinct target leaves, rewrite their parents, propagate falsity, and reduce once.
+/// Validate distinct target leaves, rewrite their parents, propagate falsity,
+/// and reduce once. Each target is a leaf and whether its positive branch is
+/// the one kept.
 fn condition_targets(
     eng: &Engine,
     mut tdd: Tdd,
-    targets: &mut [(VtreeIdx, Polarity)],
+    targets: &mut [(VtreeIdx, bool)],
 ) -> Result<Tdd, OperationError> {
     for &(leaf, _) in targets.iter() { check_conditionable(&tdd, leaf)?; }
-    if let Some(&(_, pol)) = targets.iter().find(|&&(leaf, _)| leaf == tdd.output.vtree) {
-        return Ok(condition_leaf_output(eng, &tdd, pol));
+    if let Some(&(_, keep_positive)) = targets.iter().find(|&&(leaf, _)| leaf == tdd.output.vtree) {
+        return Ok(condition_leaf_output(eng, &tdd, keep_positive));
     }
     let vtree = Arc::clone(&tdd.vtree);
     // Parent index, then left before right, fixes the rewrite and invalidation order.
@@ -131,10 +122,10 @@ fn condition_targets(
     };
     targets.sort_unstable_by_key(|&(leaf, _)| route(leaf));
     let mut emptied = false;
-    for &(leaf, pol) in targets.iter() {
+    for &(leaf, keep_positive) in targets.iter() {
         let (parent, right) = route(leaf);
         let side = if right { ChildSide::Right } else { ChildSide::Left };
-        emptied |= rewrite_for_restrict(&mut tdd, parent, side, pol);
+        emptied |= rewrite_for_restrict(&mut tdd, parent, side, keep_positive);
     }
     if emptied { propagate_false_nodes(&mut tdd); }
 
@@ -159,16 +150,16 @@ fn check_conditionable(t: &Tdd, leaf_idx: VtreeIdx) -> Result<(), OperationError
 }
 
 /// Handle conditioning when the diagram output sits directly at the conditioned leaf.
-fn condition_leaf_output(eng: &Engine, t: &Tdd, polarity: Polarity) -> Tdd {
+fn condition_leaf_output(eng: &Engine, t: &Tdd, keep_positive: bool) -> Tdd {
     let output_label = t.output.local;
     let satisfied = if output_label == ZERO {
         false
     } else if output_label == ONE_LEAF_IDX {
         true
     } else if output_label == POS_LEAF_IDX {
-        polarity == Polarity::Positive
+        keep_positive
     } else if output_label == NEG_LEAF_IDX {
-        polarity == Polarity::Negative
+        !keep_positive
     } else {
         unreachable!("unexpected output local index {:?} at leaf", output_label)
     };
@@ -184,7 +175,7 @@ fn condition_leaf_output(eng: &Engine, t: &Tdd, polarity: Polarity) -> Tdd {
 /// fit in the prefix of the arena range it already owns and node indices are
 /// preserved. Abandoned range tails are reported through `note_dead_pairs`
 /// and reclaimed by the arena's own amortized sweep.
-fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, polarity: Polarity) -> bool {
+fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, keep_positive: bool) -> bool {
     // Restriction of one pair: `None` = dropped (the pair belongs to the
     // opposite cofactor), `Some` = kept, with the target side fixed to One when
     // it named the conditioned leaf. `One`, and any reference to an internal
@@ -196,7 +187,7 @@ fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, pol
             return Some(p);
         }
         // x=⊤ pairs are excluded from the x=⊥ cofactor, and vice versa.
-        if (label == POS_LEAF_IDX.into()) != (polarity == Polarity::Positive) {
+        if (label == POS_LEAF_IDX.into()) != keep_positive {
             return None;
         }
         Some(if side == ChildSide::Left {

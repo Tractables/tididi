@@ -31,7 +31,7 @@ fn rewrite_for_restrict_shrinks_pair_lists_in_place() {
     level.push_internal_node(&[ChildPair::new(NEG_LEAF_IDX, ONE_LEAF_IDX)]);
     let arena_len_before = level.pairs.len();
 
-    rewrite_for_restrict(&mut tdd, root, ChildSide::Left, Polarity::Positive);
+    rewrite_for_restrict(&mut tdd, root, ChildSide::Left, true);
 
     let level = &tdd.levels[root.idx()];
     assert_eq!(level.nodes.len(), 3, "node indices are preserved");
