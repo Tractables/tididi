@@ -220,13 +220,13 @@ fn apply_identity_fast_path<const F_IS_CARRIER: bool>(
     if carrier_levels[left_idx].is_marginal() && levels[left_idx].is_marginal() {
         diagram::resolve_swapped_marginal_side(
             eng,
-            levels, t_idx, left_idx, &carrier_levels[left_idx], true,
+            levels, t_idx, left_idx, &carrier_levels[left_idx], ChildSide::Left,
         )?;
     }
     if carrier_levels[right_idx].is_marginal() && levels[right_idx].is_marginal() {
         diagram::resolve_swapped_marginal_side(
             eng,
-            levels, t_idx, right_idx, &carrier_levels[right_idx], false,
+            levels, t_idx, right_idx, &carrier_levels[right_idx], ChildSide::Right,
         )?;
     }
 

@@ -93,7 +93,7 @@ pub(crate) fn resolve_swapped_marginal_side(
     ti: usize,
     ci: usize,
     src_child: &TddLevel,
-    is_left: bool,
+    side: ChildSide,
 ) -> Result<(), OperationError> {
     debug_assert_ne!(ti, ci);
     // Weighted stores have nothing to re-resolve, by construction. The whole
@@ -130,7 +130,6 @@ pub(crate) fn resolve_swapped_marginal_side(
         counts: src_counts,
         big: src_big,
     };
-    let side = if is_left { ChildSide::Left } else { ChildSide::Right };
     let mut interners = collect_swap_mints(parent, side, &src)?;
     reserve_and_seed_dst(eng, &mut interners, dst_counts, dst_big)?;
     rewrite_swapped_refs(parent, side, &src, &mut interners, dst_counts, dst_big);

@@ -34,7 +34,7 @@ fn resolve_left_inline_dedup_mint_passthrough() {
     ]);
     levels[0].push_internal_node(&[pair(ValueRef::slot_raw(1), 0)]);
 
-    resolve_swapped_marginal_side(&eng, &mut levels, 0, 1, &src, true).expect("within budget");
+    resolve_swapped_marginal_side(&eng, &mut levels, 0, 1, &src, ChildSide::Left).expect("within budget");
 
     let p = &levels[0].pairs;
     assert_eq!(p[0].left.0, ValueRef::inline_raw(3).unwrap(), "small count must inline");
@@ -68,7 +68,7 @@ fn resolve_all_inlinable_leaves_dst_store_untouched() {
     ]);
     levels[0].push_internal_node(&[pair(ValueRef::slot_raw(1), 0)]);
 
-    resolve_swapped_marginal_side(&eng, &mut levels, 0, 1, &src, true).expect("allocates nothing");
+    resolve_swapped_marginal_side(&eng, &mut levels, 0, 1, &src, ChildSide::Left).expect("allocates nothing");
 
     let p = &levels[0].pairs;
     assert_eq!(p[0].left.0, ValueRef::inline_raw(3).unwrap());
@@ -105,7 +105,7 @@ fn resolve_right_biguint_mint_and_dedup() {
         pair(1, ValueRef::slot_raw(0)),
     ]);
 
-    resolve_swapped_marginal_side(&eng, &mut levels, 0, 1, &src, false).expect("within budget");
+    resolve_swapped_marginal_side(&eng, &mut levels, 0, 1, &src, ChildSide::Right).expect("within budget");
 
     let p = &levels[0].pairs;
     assert_eq!(p[0].right.0, ValueRef::slot_raw(1), "big count must re-mint a dst slot");
