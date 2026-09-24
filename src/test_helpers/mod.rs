@@ -9,7 +9,8 @@
 //! [`CnfShape`], enumeration by [`brute_force_count`], the apply-free
 //! evaluator [`eval`], canonicity by [`assert_canonical`] and
 //! [`assert_marginal_canonical`], structural equality by
-//! [`assert_same_shape`], and [`assert_restrict_ok`]. The invariant checkers
+//! [`assert_same_shape`], [`assert_restrict_ok`], and [`ClauseStore`] for
+//! deciding CNF encodings without a solver. The invariant checkers
 //! in `check`, one per numbered invariant of `docs/architecture.md`, run only
 //! under `cfg(test)`, `debug_assertions`, or the explicit `testing` feature.
 //! They walk the whole diagram, including in release integration tests. The rest is compiled only under `cfg(test)`, by what a test needs
@@ -22,6 +23,9 @@
 //!   seeded `rand_conj` / `rand_conj_over` pair, `reroot_to_child` for the
 //!   low-rooted operand shape, plus the small constructors (`pair`, `rat`,
 //!   `exact_weight`) that hand-built fixtures need.
+//! - `diagrams` — the hand-built `chain` and seeded diagrams with unreachable
+//!   nodes, tombstones or summed-out levels, and `node_value`, which
+//!   evaluates one node of them.
 //! - `oracle` — the projected `brute_force_pmc`, what is built on the
 //!   evaluator (`equiv`, `equiv_nf`, `count_is_zero`), the support oracles,
 //!   and `deadline_probe` for the cut-at-a-deadline family.
@@ -40,8 +44,11 @@
 pub mod check;
 #[cfg(test)]
 mod access;
+pub mod cnf;
 #[cfg(test)]
 mod compile;
+#[cfg(test)]
+mod diagrams;
 pub mod r#gen;
 pub mod oracle;
 #[cfg(test)]
@@ -49,8 +56,11 @@ mod toy;
 
 #[cfg(test)]
 pub(crate) use access::*;
+pub use cnf::ClauseStore;
 #[cfg(test)]
 pub(crate) use compile::*;
+#[cfg(test)]
+pub(crate) use diagrams::*;
 pub use r#gen::*;
 pub use oracle::*;
 #[cfg(test)]

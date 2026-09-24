@@ -112,6 +112,7 @@ For more specialized control:
 | Select reduction passes | [`Tdd::reduce`](crate::Tdd::reduce), [`ReductionPlan`](crate::reduce::ReductionPlan) |
 | Simplify within a care set | [`Tdd::restrict_to_care`](crate::Tdd::restrict_to_care); [worked example](crate::guide::examples::care) |
 | Remove internal nodes chosen by a predicate | [`Tdd::filter_nodes`](crate::Tdd::filter_nodes), [`FilterOutcome`](crate::apply::FilterOutcome) |
+| Encode nodes as clauses for an external SAT solver | [`Tdd::encode_cnf`](crate::Tdd::encode_cnf), [`ClauseSink`](crate::cnf::ClauseSink) |
 | Replace structure with counts or fixed weighted values | [`Tdd::marginalize_levels`](crate::Tdd::marginalize_levels); [worked example](crate::guide::examples::marginalization) |
 | Combine disjoint variable domains | [`Tdd::graft`](crate::Tdd::graft), [`Tdd::graft_over`](crate::Tdd::graft_over) |
 | Place a circuit on a larger vtree under a renaming | [`Tdd::embed`](crate::Tdd::embed); [reusable components](crate::guide::examples::composition) |

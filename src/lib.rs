@@ -76,6 +76,7 @@ mod marginal;
 pub mod reduce;
 pub mod restructure;
 pub mod query;
+pub mod cnf;
 pub mod execution;
 pub mod io;
 pub mod guide;

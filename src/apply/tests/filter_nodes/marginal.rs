@@ -17,60 +17,6 @@ use super::*;
 use crate::diagram::TddLevel;
 use crate::query::PinSemantics;
 
-/// The value of `f` at `assignment`, indexed by `VarId::idx`, with every
-/// structural node `rejected` names read as false: a pair is the product of
-/// its sides, a marginal side is its count and a leaf side is its label's
-/// truth under the assignment.
-fn value(f: &Tdd, rejected: &dyn Fn(TddNodeId) -> bool, assignment: &[bool]) -> BigUint {
-    fn side(
-        f: &Tdd, rejected: &dyn Fn(TddNodeId) -> bool, assignment: &[bool],
-        memo: &mut HashMap<TddNodeId, BigUint>, child: VtreeIdx, raw: EncodedChildRef,
-    ) -> BigUint {
-        if raw == ZERO.into() { return BigUint::ZERO; }
-        let level = &f.levels[child.idx()];
-        if level.is_marginal() {
-            return match ChildDecoder::marginal().value(raw) {
-                ValueRef::Inline(count) => BigUint::from(count),
-                ValueRef::Slot(slot) => BigUint::from(level.marginal_counts().expect("a count level")[slot as usize]),
-            };
-        }
-        if f.vtree.node(child).is_leaf() {
-            let x = assignment[f.vtree.leaf_var(child).idx()];
-            return BigUint::from(match raw.raw() { 0 => 1u8, 1 => u8::from(x), 2 => u8::from(!x), other => panic!("leaf label {other}") });
-        }
-        let id = TddNodeId { vtree: child, local: ChildDecoder::structural().node(raw) };
-        if let Some(v) = memo.get(&id) { return v.clone(); }
-        let v = if rejected(id) {
-            BigUint::ZERO
-        } else {
-            let (left, right) = f.vtree.children(child);
-            level.pairs_of_idx(id.local.idx()).iter()
-                .map(|p| side(f, rejected, assignment, memo, left, p.left) * side(f, rejected, assignment, memo, right, p.right))
-                .sum()
-        };
-        memo.insert(id, v.clone());
-        v
-    }
-    let out = f.output();
-    side(f, rejected, assignment, &mut HashMap::new(), out.vtree, out.local.into())
-}
-
-/// Which variables of `f` still sit below structural levels only.
-fn free_vars(f: &Tdd) -> Vec<bool> {
-    let vtree = f.vtree();
-    let mut free = vec![false; vtree.num_vars() as usize];
-    for i in 0..vtree.num_nodes() {
-        let mut t = VtreeIdx(i as u32);
-        if !vtree.node(t).is_leaf() { continue; }
-        let var = vtree.leaf_var(t);
-        free[var.idx()] = loop {
-            if f.levels[t.idx()].is_marginal() { break false; }
-            match vtree.node(t).parent() { Some(p) => t = p, None => break true }
-        };
-    }
-    free
-}
-
 /// Check `g` against `f` with the rejected nodes false, the variables `g`
 /// no longer has free summed out, and `literal`, when given, conjoined.
 fn check(g: &Tdd, f: &Tdd, rejected: &dyn Fn(TddNodeId) -> bool, literal: Option<i32>, what: &str) {
@@ -83,7 +29,7 @@ fn check(g: &Tdd, f: &Tdd, rejected: &dyn Fn(TddNodeId) -> bool, literal: Option
         let holds = literal.is_none_or(|l| assignment[l.unsigned_abs() as usize - 1] == (l > 0));
         let key: Vec<bool> = (0..in_f.len()).map(|v| in_g[v] && assignment[v]).collect();
         let entry = expected.entry(key).or_default();
-        if holds { *entry += value(f, rejected, &assignment); }
+        if holds { *entry += node_value(f, f.output(), rejected, &assignment); }
     }
     for (key, want) in expected {
         let pins: Vec<Option<bool>> = (0..in_g.len()).map(|v| in_g[v].then_some(key[v])).collect();
@@ -121,7 +67,7 @@ fn marginal_levels_are_copied_and_the_marker_carried() {
     let mut shapes_differ = [0usize; 4];
     let mut markers_differ = [0usize; 4];
     let mut compared = 0;
-    for (k, (f, summed)) in marginal_diagrams(0x3a7c, 200).into_iter().enumerate() {
+    for (k, (f, summed)) in marginal_diagrams(0x3a7c, 200, 8..12).into_iter().enumerate() {
         let keep = sparing_output(&f, k as u64, 10);
         let rejected = |id: TddNodeId| !keep(id);
         let eng = Engine::new();

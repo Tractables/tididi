@@ -95,8 +95,8 @@ fn copy_markers(g: &mut Tdd, f: &Tdd) {
 /// Satisfiable structural and marginal operands, each with a sparse
 /// rejection.
 fn cases() -> impl Iterator<Item = (Tdd, impl Fn(TddNodeId) -> bool)> {
-    let marginal = marginal_diagrams(0xb5e2, 80).into_iter().map(|(f, _)| f);
-    random_diagrams(0xb5e1, 60).into_iter().chain(marginal).filter(|f| !f.is_zero()).enumerate()
+    let marginal = marginal_diagrams(0xb5e2, 80, 8..12).into_iter().map(|(f, _)| f);
+    random_diagrams(0xb5e1, 60, 8..13).into_iter().chain(marginal).filter(|f| !f.is_zero()).enumerate()
         .map(|(k, f)| { let keep = sparing_output(&f, k as u64, 10); (f, keep) })
 }
 

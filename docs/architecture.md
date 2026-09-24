@@ -113,6 +113,7 @@ identical representations.
 | [`reduce`] | Reachability pruning, twin contraction, pair fusion and value-slot pruning. |
 | [`restructure`] | Vtree search, grafting and embedding with the corresponding diagram edits. |
 | [`query`] | Counting, satisfiability, evaluation and traversal of borrowed diagrams. |
+| [`cnf`] | Clauses that define a diagram's nodes, for an external SAT solver. |
 | [`execution`] | Shared context checkouts and each batch's scratch and limits. |
 | [`io`] | Diagram persistence and Graphviz output. |
 | [`guide`] | Markdown guides included in rustdoc and doctests. |
@@ -256,6 +257,7 @@ listed below — which a release build otherwise does not compile.
 [`TddLevel`]: crate::diagram::TddLevel
 [`WeightStore`]: crate::diagram::WeightStore
 [`apply`]: crate::apply
+[`cnf`]: crate::cnf
 [`diagram`]: crate::diagram
 [`execution`]: crate::execution
 [`guide`]: crate::guide

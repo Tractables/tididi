@@ -9,31 +9,6 @@ use crate::vtree::{Vtree, VtreeIdx};
 mod builder_sweep;
 mod marginal;
 
-/// A hand-built diagram on the right-linear vtree over four variables, with
-/// one unreachable node on each of the two lower levels, and those levels
-/// from the bottom up.
-///
-/// Level `b` holds the four cubes over x3 and x4, `x3 x4`, `x3 ¬x4`,
-/// `¬x3 x4` and `¬x3 ¬x4`, the last unreachable. Level `a` holds
-/// `x2 (x3 x4) ∨ ¬x2 (x3 ¬x4)`, `¬x2 (¬x3 x4)` and the unreachable
-/// `x2 (¬x3 ¬x4)`. The output joins `x1` with the first and `¬x1` with the
-/// second.
-fn chain() -> (Tdd, [VtreeIdx; 3]) {
-    let eng = Engine::new();
-    let vtree = Arc::new(Vtree::linear(4));
-    let root = vtree.root();
-    let a = vtree.children(root).1;
-    let b = vtree.children(a).1;
-    let mut builder = Tdd::builder(&eng, &vtree).unwrap();
-    let cubes = [(POS_LEAF_IDX, POS_LEAF_IDX), (POS_LEAF_IDX, NEG_LEAF_IDX), (NEG_LEAF_IDX, POS_LEAF_IDX), (NEG_LEAF_IDX, NEG_LEAF_IDX)];
-    let [p, w, q, z] = cubes.map(|(l, r)| builder.push(&eng, b, &[ChildPair::new(l, r)]).unwrap());
-    let s = builder.push(&eng, a, &[ChildPair::new(POS_LEAF_IDX, p), ChildPair::new(NEG_LEAF_IDX, w)]).unwrap();
-    let t = builder.push(&eng, a, &[ChildPair::new(NEG_LEAF_IDX, q)]).unwrap();
-    builder.push(&eng, a, &[ChildPair::new(POS_LEAF_IDX, z)]).unwrap();
-    let out = builder.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, s), ChildPair::new(NEG_LEAF_IDX, t)]).unwrap();
-    (builder.finish(TddNodeId { vtree: root, local: out }).unwrap(), [b, a, root])
-}
-
 fn node(vtree: VtreeIdx, local: u32) -> TddNodeId {
     TddNodeId { vtree, local: NodeIdx(local) }
 }
@@ -130,30 +105,6 @@ fn survivors_keep_their_order_and_their_pairs_order() {
     assert_eq!(pairs(root, 0), [ChildPair::new(POS_LEAF_IDX, NodeIdx(0)), ChildPair::new(NEG_LEAF_IDX, NodeIdx(1))]);
 }
 
-/// Seeded diagrams: each drawn clause set compiled on every vtree shape, and
-/// every other one also conjoined without reduction with a second draw, which
-/// leaves unreachable nodes and tombstones in place.
-fn random_diagrams(seed: u64, count: usize) -> Vec<Tdd> {
-    let mut rng = Lcg::new(seed);
-    let mut out = Vec::new();
-    while out.len() < count {
-        let n = 8 + rng.below(5) as u32;
-        let shape = CnfShape { clauses: n as usize, width: 4 };
-        for (_, vtree) in vtree_shapes(n) {
-            let eng = Engine::new();
-            let f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
-            assert_canonical(&f);
-            if out.len() % 2 == 1 {
-                let g = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
-                assert_canonical(&g);
-                out.push(eng.and(f.clone(), g).unwrap());
-            }
-            out.push(f);
-        }
-    }
-    out
-}
-
 /// A seeded predicate rejecting about one node in `every`.
 fn sparse_rejection(seed: u64, every: u64) -> impl Fn(TddNodeId) -> bool {
     move |id| !(u64::from(id.vtree.0).wrapping_mul(0x9e37_79b9) ^ u64::from(id.local.0).wrapping_mul(0x85eb_ca6b) ^ seed).is_multiple_of(every)
@@ -166,49 +117,10 @@ fn sparing_output(f: &Tdd, seed: u64, every: u64) -> impl Fn(TddNodeId) -> bool 
     move |id| id == output || reject(id)
 }
 
-/// Seeded diagrams holding inline marginal references: each drawn clause set
-/// compiled on every vtree shape, then one internal subtree below the output
-/// and one leaf outside it summed out, and the result minimized. Each comes
-/// with the summed subtree.
-fn marginal_diagrams(seed: u64, count: usize) -> Vec<(Tdd, VtreeIdx)> {
-    let mut rng = Lcg::new(seed);
-    let mut out = Vec::new();
-    while out.len() < count {
-        let n = 8 + rng.below(4) as u32;
-        let shape = CnfShape { clauses: n as usize, width: 4 };
-        for (_, vtree) in vtree_shapes(n) {
-            let eng = Engine::new();
-            let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, shape));
-            let inner: Vec<VtreeIdx> = vtree.internal_bottomup().map(|(t, _, _)| t).filter(|&t| t != vtree.root()).collect();
-            if f.is_zero() || inner.is_empty() { continue; }
-            let summed = inner[rng.below(inner.len() as u64) as usize];
-            let leaves: Vec<VtreeIdx> = (0..vtree.num_nodes() as u32).map(VtreeIdx)
-                .filter(|&t| vtree.node(t).is_leaf() && !under(&vtree, t, summed)).collect();
-            let leaf = leaves[rng.below(leaves.len() as u64) as usize];
-            eng.marginalize_levels(&mut f, &[summed, leaf]).unwrap();
-            eng.minimize(&mut f).unwrap();
-            assert_marginal_canonical(&f);
-            out.push((f, summed));
-        }
-    }
-    out
-}
-
-/// Whether `t` lies in the subtree rooted at `root`.
-fn under(vtree: &Vtree, mut t: VtreeIdx, root: VtreeIdx) -> bool {
-    loop {
-        if t == root { return true; }
-        match vtree.node(t).parent() {
-            Some(parent) => t = parent,
-            None => return false,
-        }
-    }
-}
-
 #[test]
 fn renumbering_is_monotone_and_pair_lists_keep_their_order() {
-    let marginal = marginal_diagrams(0x51f8, 20).into_iter().map(|(f, _)| f);
-    for (k, f) in random_diagrams(0x51f7, 40).into_iter().chain(marginal).enumerate() {
+    let marginal = marginal_diagrams(0x51f8, 20, 8..12).into_iter().map(|(f, _)| f);
+    for (k, f) in random_diagrams(0x51f7, 40, 8..13).into_iter().chain(marginal).enumerate() {
         let f = &f;
         let eng = Engine::new();
         let Some(mut remap) = ask(&eng, f, sparse_rejection(k as u64, 3)).unwrap() else { continue };
