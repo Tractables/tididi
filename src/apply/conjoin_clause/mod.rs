@@ -10,7 +10,7 @@
 //! Together they partition the subtree's assignments, which is what lets one
 //! bottom-up walk carry both branches of the clause at once: a level's output
 //! for an accumulator node is its conjunction with `c_t` and with `d_t`, kept
-//! side by side in `cd_map`. The whole file is written in terms of this pair.
+//! side by side in `cd_map`. The whole module is written in terms of this pair.
 //!
 //! The same walk disjoins a cube: `¬M` is a clause whose `d_t` is `M_t`, so
 //! [`cube`] rides the lanes this one already carries. See that module for the
@@ -305,6 +305,9 @@ impl crate::Engine {
     }
 
     /// Run [`Tdd::and_clause`](crate::Tdd::and_clause) using this batch's scratch and resource limits.
+    /// Borrow a slice of signed integers or typed literals. Stop and output
+    /// limits are checked once per rebuilt level; the output cap counts nodes
+    /// in the levels rebuilt so far.
     ///
     /// # Errors
     ///
@@ -312,14 +315,14 @@ impl crate::Engine {
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     ///
-    /// Borrow a slice of signed integers or typed literals.
-    /// Stop and output limits are checked once per rebuilt level; the output cap
-    /// counts nodes in the levels rebuilt so far.
     pub fn and_clause<L: crate::LiteralInput>(&self, f: Tdd, clause: &[L]) -> Result<Tdd, OperationError> {
         L::conjoin(self, f, clause)
     }
 
     /// Run [`Tdd::or_cube`](crate::Tdd::or_cube) using this batch's scratch and resource limits.
+    /// Borrow a slice of signed integers or typed literals. Stop and output
+    /// limits are checked once per rebuilt level; the output cap counts nodes
+    /// in the levels rebuilt so far.
     ///
     /// # Errors
     ///
@@ -327,9 +330,6 @@ impl crate::Engine {
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     ///
-    /// Borrow a slice of signed integers or typed literals.
-    /// Stop and output limits are checked once per rebuilt level; the output cap
-    /// counts nodes in the levels rebuilt so far.
     pub fn or_cube<L: crate::LiteralInput>(&self, f: Tdd, cube: &[L]) -> Result<Tdd, OperationError> {
         L::disjoin(self, f, cube)
     }
