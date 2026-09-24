@@ -81,7 +81,7 @@ fn node_variables_match_evaluation_with_summed_out_levels() {
 fn node_variables_match_evaluation_on_the_hand_built_diagrams() {
     // The boundary fixtures are the ones that read count slots.
     check(&chain().0);
-    check(&golden::inline_marginal().0);
-    check(&golden::marginal_boundary(LeafLabel::Neg).0);
-    check(&golden::marginal_boundary(LeafLabel::Pos).0);
+    check(&inline_marginal().0);
+    check(&marginal_boundary(LeafLabel::Neg).0);
+    check(&marginal_boundary(LeafLabel::Pos).0);
 }

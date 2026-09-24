@@ -4,7 +4,10 @@
 //! variable and passes the clauses that define it to a [`ClauseSink`], the
 //! caller's binding to its solver. The sink supplies every variable, receives
 //! every clause and decides at each [`EncodePoint`] whether the encoding goes
-//! on. The library holds no solver and reads no clock.
+//! on. [`Engine::probe_nodes`] then asks the same solver, as a [`SatOracle`],
+//! which encoded nodes can be true, and marks the others dead for
+//! [`Engine::filter_nodes_with`](crate::Engine::filter_nodes_with) to remove.
+//! The library holds no solver and reads no clock.
 
 use std::ops::ControlFlow;
 
@@ -14,6 +17,9 @@ use crate::vtree::{VarId, VtreeIdx};
 use crate::Engine;
 
 mod encode;
+mod probe;
+
+pub use probe::{ProbeOrder, ProbeOutcome, ProbePoint, ProbePolicy, ProbeStats, SatOracle, SolveCall, SolveStatus, Witness};
 
 /// The caller's solver, as an encoding uses it.
 ///

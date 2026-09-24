@@ -35,7 +35,7 @@ enum Side {
 }
 
 /// An all-`fill` table with one entry per reference slot of every level.
-fn table<T: Clone>(lim: &Limits, f: &Tdd, fill: T) -> Result<Vec<Vec<T>>, OperationError> {
+pub(super) fn table<T: Clone>(lim: &Limits, f: &Tdd, fill: T) -> Result<Vec<Vec<T>>, OperationError> {
     let mut rows = Vec::new();
     lim.reserve_exact(&mut rows, f.levels.len())?;
     for i in 0..f.levels.len() {

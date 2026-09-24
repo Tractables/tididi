@@ -1,6 +1,6 @@
-//! A hand-built diagram with unreachable nodes, seeded diagrams with the
-//! storage that only unreduced or summed-out diagrams have, and a direct
-//! evaluation of their nodes.
+//! Hand-built diagrams with unreachable nodes or summed-out children, seeded
+//! diagrams with the storage that only unreduced or summed-out diagrams have,
+//! and a direct evaluation of their nodes.
 
 use std::collections::HashMap;
 use std::ops::Range;
@@ -8,8 +8,8 @@ use std::sync::Arc;
 
 use num_bigint::BigUint;
 
-use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, Tdd, TddNodeId, ValueRef, NEG_LEAF_IDX, POS_LEAF_IDX, ZERO};
-use crate::vtree::{Vtree, VtreeIdx};
+use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, NodeIdx, Tdd, TddBuilder, TddNodeId, ValueRef, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO};
+use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::Engine;
 
 use super::compile::compile_clauses_on;
@@ -44,6 +44,96 @@ pub fn chain() -> (Tdd, [VtreeIdx; 3]) {
     builder.push(&eng, a, &[ChildPair::new(POS_LEAF_IDX, z)]).unwrap();
     let out = builder.push(&eng, root, &[ChildPair::new(POS_LEAF_IDX, s), ChildPair::new(NEG_LEAF_IDX, t)]).unwrap();
     (builder.finish(TddNodeId { vtree: root, local: out }).unwrap(), [b, a, root])
+}
+
+/// Bonsai's inline marginal fixture on the balanced vtree over four
+/// variables. Level `v4 = (x1, x2)` with x2 summed out holds `x1 · 5` and
+/// `¬x1 · 0`, which is dead; level `v5 = (x3, x4)` holds `x3` and `¬x3`;
+/// the output joins the first of each and the second of each.
+pub fn inline_marginal() -> (Tdd, [VtreeIdx; 3]) {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = vtree.root();
+    let (v4, v5) = vtree.children(root);
+    let mut builder = Tdd::builder(&eng, &vtree).unwrap();
+    sum_out_leaf(&eng, &vtree, &mut builder, vtree.children(v4).1);
+    let p = builder.push(&eng, v4, &[ChildPair::new(POS_LEAF_IDX, inline_side(5))]).unwrap();
+    let dead = builder.push(&eng, v4, &[ChildPair::new(NEG_LEAF_IDX, inline_side(0))]).unwrap();
+    let s0 = builder.push(&eng, v5, &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX)]).unwrap();
+    let s1 = builder.push(&eng, v5, &[ChildPair::new(NEG_LEAF_IDX, ONE_LEAF_IDX)]).unwrap();
+    let out = builder.push(&eng, root, &[ChildPair::new(p, s0), ChildPair::new(dead, s1)]).unwrap();
+    (builder.finish(TddNodeId { vtree: root, local: out }).unwrap(), [v4, v5, root])
+}
+
+/// Bonsai's donor of a level with two count slots, 2^31 and 2^32, too large
+/// to sit inline: the right child of the balanced vtree over 64 variables,
+/// summed out under an output that reads it through its first two nodes.
+fn marginal_slot_donor(eng: &Engine) -> (Tdd, VtreeIdx) {
+    let vtree = Arc::new(Vtree::balanced(64));
+    let mut builder = Tdd::builder(eng, &vtree).unwrap();
+    let mut labels = vec![[ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX]; vtree.num_nodes()];
+    for level in vtree.bottomup() {
+        if vtree.node(level).is_leaf() { continue; }
+        let (left, right) = vtree.children(level);
+        labels[level.idx()] = std::array::from_fn(|label| {
+            builder.push(eng, level, &[ChildPair::new(labels[left.idx()][label], labels[right.idx()][0])]).unwrap()
+        });
+    }
+    let root = vtree.root();
+    let (left, source) = vtree.children(root);
+    let output = builder.push(eng, root, &[
+        ChildPair::new(labels[left.idx()][1], labels[source.idx()][0]),
+        ChildPair::new(labels[left.idx()][2], labels[source.idx()][1]),
+    ]).unwrap();
+    let mut donor = builder.finish(TddNodeId { vtree: root, local: output }).unwrap();
+    eng.marginalize_levels(&mut donor, &[source]).unwrap();
+    let mut counts = donor.level(source).marginal_counts().unwrap().to_vec();
+    counts.sort_unstable();
+    assert_eq!(counts, [1u128 << 31, 1u128 << 32]);
+    (donor, source)
+}
+
+/// Bonsai's marginal boundary fixture. On the vtree
+/// `((x1, (x2, x5)), (x3, x4))` the level `m = (x2, x5)` is summed out with
+/// two count slots. Level `v4 = (x1, m)` holds `x1 · slot 0` and
+/// `second · slot 1`, level `v5 = (x3, x4)` holds `x3`, and the output joins
+/// each node of `v4` with it.
+pub fn marginal_boundary(second: LeafLabel) -> (Tdd, [VtreeIdx; 4]) {
+    let leaf = |v: u32| Vtree::leaf(VarId(v));
+    let vtree = Arc::new(Vtree::join(
+        &Vtree::join(&leaf(1), &Vtree::join(&leaf(2), &leaf(5)).unwrap()).unwrap(),
+        &Vtree::join(&leaf(3), &leaf(4)).unwrap(),
+    ).unwrap());
+    let root = vtree.root();
+    let (v4, v5) = vtree.children(root);
+    let m = vtree.children(v4).1;
+    let eng = Engine::new();
+    let mut builder = Tdd::builder(&eng, &vtree).unwrap();
+    let (donor, source) = marginal_slot_donor(&eng);
+    builder.replace_level(&eng, m, donor.level_view(source)).unwrap();
+    let n1 = builder.push(&eng, v4, &[ChildPair::new(POS_LEAF_IDX, slot_side(0))]).unwrap();
+    let n2 = builder.push(&eng, v4, &[ChildPair::new(NodeIdx(second as u32), slot_side(1))]).unwrap();
+    let s0 = builder.push(&eng, v5, &[ChildPair::new(POS_LEAF_IDX, ONE_LEAF_IDX)]).unwrap();
+    let out = builder.push(&eng, root, &[ChildPair::new(n1, s0), ChildPair::new(n2, s0)]).unwrap();
+    (builder.finish(TddNodeId { vtree: root, local: out }).unwrap(), [m, v4, v5, root])
+}
+
+/// An inline marginal side holding `count`.
+pub fn inline_side(count: u32) -> EncodedChildRef {
+    ValueRef::Inline(count).side().expect("the fixture's counts fit inline")
+}
+
+/// A marginal side naming count slot `slot`.
+pub fn slot_side(slot: u32) -> EncodedChildRef {
+    ValueRef::Slot(slot).side().expect("the fixture's slots fit")
+}
+
+/// Give `builder` a summed-out leaf at `leaf`, whose sides are all inline.
+pub fn sum_out_leaf(eng: &Engine, vtree: &Arc<Vtree>, builder: &mut TddBuilder, leaf: VtreeIdx) {
+    let mut donor = eng.cube(vtree, std::iter::empty::<i32>()).unwrap();
+    eng.marginalize_levels(&mut donor, &[leaf]).unwrap();
+    assert_eq!(donor.level(leaf).marginal_counts(), Some([].as_slice()));
+    builder.replace_level(eng, leaf, donor.level_view(leaf)).unwrap();
 }
 
 /// Seeded diagrams over a number of variables drawn from `vars`: each drawn

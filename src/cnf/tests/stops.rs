@@ -66,9 +66,9 @@ fn assert_cuts(f: &Tdd, sound: bool) {
 #[test]
 fn every_poll_cuts_the_hand_built_diagrams() {
     assert_cuts(&chain().0, true);
-    assert_cuts(&super::golden::inline_marginal().0, true);
+    assert_cuts(&inline_marginal().0, true);
     for second in [crate::diagram::LeafLabel::Neg, crate::diagram::LeafLabel::Pos] {
-        assert_cuts(&super::golden::marginal_boundary(second).0, true);
+        assert_cuts(&marginal_boundary(second).0, true);
     }
 }
 

@@ -10,7 +10,7 @@
 //! evaluator [`eval`], canonicity by [`assert_canonical`] and
 //! [`assert_marginal_canonical`], structural equality by
 //! [`assert_same_shape`], [`assert_restrict_ok`], and [`ClauseStore`] for
-//! deciding CNF encodings without a solver. The invariant checkers
+//! deciding CNF encodings and probes without a solver. The invariant checkers
 //! in `check`, one per numbered invariant of `docs/architecture.md`, run only
 //! under `cfg(test)`, `debug_assertions`, or the explicit `testing` feature.
 //! They walk the whole diagram, including in release integration tests. The rest is compiled only under `cfg(test)`, by what a test needs
@@ -23,9 +23,10 @@
 //!   seeded `rand_conj` / `rand_conj_over` pair, `reroot_to_child` for the
 //!   low-rooted operand shape, plus the small constructors (`pair`, `rat`,
 //!   `exact_weight`) that hand-built fixtures need.
-//! - `diagrams` — the hand-built `chain` and seeded diagrams with unreachable
-//!   nodes, tombstones or summed-out levels, and `node_value`, which
-//!   evaluates one node of them.
+//! - `diagrams` — the hand-built `chain`, `inline_marginal` and
+//!   `marginal_boundary` with the side constructors they use, seeded diagrams
+//!   with unreachable nodes, tombstones or summed-out levels, and
+//!   `node_value`, which evaluates one node of them.
 //! - `oracle` — the projected `brute_force_pmc`, what is built on the
 //!   evaluator (`equiv`, `equiv_nf`, `count_is_zero`), the support oracles,
 //!   and `deadline_probe` for the cut-at-a-deadline family.
