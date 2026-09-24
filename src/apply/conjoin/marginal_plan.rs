@@ -138,49 +138,34 @@ fn carrier(
 /// Conjoining two marginal nodes is undefined: |f ∧ g| is not a function of |f|
 /// and |g|, so there is no correct way to combine them in the product grid. A
 /// marginal child must always be conjoined against an identity on the other
-/// operand, since a marginalized scope is never re-constrained. Both operands
-/// carrying a non-identity marginal level at the same child means the logic
+/// operand, since a marginalized scope is never re-constrained, and the
+/// identity is what makes the child a pass-through carrier. Both operands
+/// carrying a marginal level at the same child with no carrier means the logic
 /// deciding when to marginalize is broken — a scope was summed out while a later
 /// conjunction still constrained it — so this panics rather than silently
 /// computing a wrong count.
 ///
 /// The check is a debug assertion and is compiled out of a release build.
-// The assertions are written as the negation of the forbidden shape so the
-// condition reads as the invariant it guards; De Morgan's form does not.
-#[expect(clippy::nonminimal_bool)]
 fn debug_assert_no_marginal_products(
     f: &Tdd,
     g: &Tdd,
     shape: LevelShape,
-    run: &ApplyRun,
     passthrough: Sides<bool>,
 ) {
-    let (t, t_idx, left_idx, right_idx) = (shape.t, shape.t.idx(), shape.left.idx(), shape.right.idx());
-    let ApplyRun { left_identity, right_identity, .. } = run;
-    let Sides { left: left_passthrough, right: right_passthrough } = passthrough;
+    let t_idx = shape.t.idx();
+    let both_marginal = |child_idx: usize| f.levels[child_idx].is_marginal() && g.levels[child_idx].is_marginal();
     debug_assert!(
-        !(f.levels[left_idx].is_marginal() && g.levels[left_idx].is_marginal()
-            && !left_identity[left_idx] && !right_identity[left_idx]),
-        "marginal×marginal product at left child {left_idx} (vtree {t_idx}): both \
-         operands carry non-identity marginal counts — marginalize_levels scheduling is unsound \
-         (a marginalized scope was re-constrained)"
+        !both_marginal(shape.left.idx()) || passthrough.left,
+        "marginal×marginal product at left child {} (vtree {t_idx}): both operands carry \
+         marginal counts and neither is the identity — a marginalized scope was re-constrained",
+        shape.left.idx()
     );
     debug_assert!(
-        !(f.levels[right_idx].is_marginal() && g.levels[right_idx].is_marginal()
-            && !left_identity[right_idx] && !right_identity[right_idx]),
-        "marginal×marginal product at right child {right_idx} (vtree {t_idx}): both \
-         operands carry non-identity marginal counts — marginalize_levels scheduling is unsound \
-         (a marginalized scope was re-constrained)"
+        !both_marginal(shape.right.idx()) || passthrough.right,
+        "marginal×marginal product at right child {} (vtree {t_idx}): both operands carry \
+         marginal counts and neither is the identity — a marginalized scope was re-constrained",
+        shape.right.idx()
     );
-    // Hard case: two genuinely marginal sides with neither identity. This is
-    // same-left pair fusion territory and must never reach the clause/child-merge apply.
-    // Fires loud in debug if the disjoint-subtree assumption is ever violated.
-    debug_assert!(
-        !(f.levels[left_idx].is_marginal() && g.levels[left_idx].is_marginal()) || left_passthrough,
-        "two marginal left operands, neither identity — unexpected outside same-left pair fusion (t={t:?})");
-    debug_assert!(
-        !(f.levels[right_idx].is_marginal() && g.levels[right_idx].is_marginal()) || right_passthrough,
-        "two marginal right operands, neither identity — unexpected outside same-left pair fusion (t={t:?})");
 }
 
 /// Classify one level's two child sides: which are marginal, which are
@@ -207,7 +192,7 @@ pub(super) fn plan_marginal_level(
     let carriers = Sides { left: left_idx, right: right_idx }
         .map(|side, child_idx| carrier(f, g, t_idx, child_idx, side, run));
     debug_assert_no_marginal_products(
-        f, g, shape, run,
+        f, g, shape,
         Sides { left: carriers.left.is_some(), right: carriers.right.is_some() },
     );
 
