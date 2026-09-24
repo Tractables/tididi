@@ -96,11 +96,15 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
         }
     }
 
+    // The two partner lists `classify` compares, reused across the level's
+    // nodes so the sort buffers are allocated once per level, not per node.
+    let mut pos: Vec<EncodedChildRef> = Vec::new();
+    let mut neg: Vec<EncodedChildRef> = Vec::new();
     let mut any_literal = false;
     for i in 0..level.nodes.len() {
         if !level.nodes[i].is_internal() { continue; }
         let pairs = level.pairs_of_idx(i);
-        match classify(pairs, side) {
+        match classify(pairs, side, &mut pos, &mut neg) {
             Class::AllContractible { has_literal } => {
                 any_literal |= has_literal;
             }
@@ -123,9 +127,16 @@ enum Class {
     NotContractible,
 }
 
-fn classify(pairs: &[ChildPair], side: ChildSide) -> Class {
-    let mut pos: Vec<EncodedChildRef> = Vec::new();
-    let mut neg: Vec<EncodedChildRef> = Vec::new();
+/// `pos` and `neg` are the caller's buffers for the partners of the `Pos` and
+/// `Neg` pairs; they are cleared here.
+fn classify(
+    pairs: &[ChildPair],
+    side: ChildSide,
+    pos: &mut Vec<EncodedChildRef>,
+    neg: &mut Vec<EncodedChildRef>,
+) -> Class {
+    pos.clear();
+    neg.clear();
     let mut has_one = false;
     for p in pairs {
         let label = if side == ChildSide::Left { p.left } else { p.right };
@@ -144,8 +155,8 @@ fn classify(pairs: &[ChildPair], side: ChildSide) -> Class {
         // labels together. Bail either way.
         return Class::NotContractible;
     }
-    pos.sort();
-    neg.sort();
+    pos.sort_unstable();
+    neg.sort_unstable();
     if pos == neg {
         Class::AllContractible { has_literal }
     } else {
