@@ -41,19 +41,13 @@
 //! level of every subtree it collapses.
 
 use crate::Engine;
-use crate::diagram::{ChildPair, EncodedChildRef, ONE_LEAF_IDX, Tdd};
+use crate::diagram::{ChildPair, ONE_LEAF_IDX, Tdd};
 use crate::limits::{OperationError, PollGate};
 
 use super::{ApplyRun, LevelShape, NO_PRODUCT};
+use crate::apply::TRUE_PAIR;
 use super::child_lookup::{ChildLookup, DenseLookup};
 use crate::diagram::Sides;
-
-/// The pair of a `⊤` node: the constant-true node sits at local index 0 of
-/// every level, leaf or internal, so both sides name it.
-const TRUE_PAIR: ChildPair = ChildPair {
-    left: EncodedChildRef::from_raw(ONE_LEAF_IDX.0),
-    right: EncodedChildRef::from_raw(ONE_LEAF_IDX.0),
-};
 
 /// Build a level every leaf below which is quantified: one satisfiability test
 /// per product cell, and a level holding the single `⊤` node the live cells
