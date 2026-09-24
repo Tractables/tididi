@@ -30,7 +30,7 @@ fn merge_adjacent_round(level: &mut TddLevel, first: usize) {
     let mut keep = first;
     while keep + 1 < n {
         let total = level.pair_count_at(keep) + level.pair_count_at(keep + 1);
-        concat_twin_pairs(level, keep, &[keep as u32, keep as u32 + 1], total, /*allow_dups=*/ false);
+        concat_twin_pairs(level, keep, &[keep as u32, keep as u32 + 1], total, /*allow_dups=*/ false, /*diagram_marginal=*/ false);
         merge_target[keep + 1] = keep as u32;
         keep += 2;
     }

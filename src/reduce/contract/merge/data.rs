@@ -60,7 +60,7 @@ pub(super) fn compact_and_fork_down(
 /// preserved; at a fully non-marginal level determinism (invariant 1) makes
 /// the supports disjoint, which `concat_twin_pairs` checks in debug builds.
 ///
-/// Only called on internal nodes (leaf levels are marginal and never contracted).
+/// Only called on internal nodes: the sweep never contracts a leaf level.
 pub(super) fn merge_twin_data(
     tdd: &mut Tdd,
     t1: VtreeIdx,
@@ -68,24 +68,16 @@ pub(super) fn merge_twin_data(
     allow_dups: bool,
 ) {
     let keep = group[0] as usize;
-    // The debug set-ness check in `concat_twin_pairs` holds only for a purely
-    // Boolean diagram: once any level is marginal, every count consumer folds
-    // `Σ_pairs c(l)·c(r)` and the content-twin merge (`content_twin.rs`)
-    // rewrites refs at plain levels too, so a plain-level node can arrive here
-    // already holding the same pair twice, and concatenating it with a disjoint
-    // twin carries that duplicate through. `cfg!` is a compile-time constant,
-    // so the level scan is dead code in release.
-    let allow_dups = allow_dups || (cfg!(debug_assertions) && tdd.has_marginal_level());
+    // Read only for the debug check in `concat_twin_pairs`; `cfg!` is a
+    // constant, so the level scan is compiled out of release builds.
+    let diagram_marginal = cfg!(debug_assertions) && tdd.has_marginal_level();
     let level = &mut tdd.levels[t1.idx()];
-
-    // Leaf levels are marginal — `contract_all_twins` never calls this for leaves.
     debug_assert!(
         level.nodes[keep].is_internal(),
-        "merge_twin_data called on leaf node — leaf levels should be skipped"
+        "merge_twin_data: the sweep never contracts a leaf level"
     );
-
     let total: usize = group.iter().map(|&idx| level.pair_count_at(idx as usize)).sum();
-    concat_twin_pairs(level, keep, group, total, allow_dups);
+    concat_twin_pairs(level, keep, group, total, allow_dups, diagram_marginal);
 }
 
 /// Concatenate the pair lists of `group`'s nodes at the arena tail and point
@@ -99,12 +91,16 @@ pub(super) fn merge_twin_data(
 /// Every source range is left behind as dead arena and counted into
 /// `TddLevel::dead_pairs`: here for the survivor, in `compact_explicit_level`
 /// for the absorbed members.
+///
+/// `allow_dups` and `diagram_marginal` only decide whether the debug check
+/// for duplicate pairs applies; release builds ignore them.
 pub(super) fn concat_twin_pairs(
     level: &mut TddLevel,
     keep: usize,
     group: &[u32],
     total: usize,
     allow_dups: bool,
+    diagram_marginal: bool,
 ) {
     let new_start = level.pairs.len();
     debug_assert!(
@@ -123,22 +119,22 @@ pub(super) fn concat_twin_pairs(
         }
     }
     debug_assert_eq!(level.pairs.len() - new_start, total);
-    // At fully non-marginal levels determinism (invariant 1) makes twin
+    // In a purely Boolean diagram determinism (invariant 1) makes twin
     // supports pairwise disjoint, so the concatenation has no duplicates; a
-    // debug-only full check. Skipped where the level carries marginal markers,
-    // or where `allow_dups` says the caller resolves the duplicates right after
-    // compaction (`duplicate_pair_resolve`).
-    #[cfg(debug_assertions)]
-    if !level.any_value_ref_side() && !allow_dups {
+    // debug-only full check. A duplicate is legal, and the check skipped,
+    // where the level carries marginal markers, where any level of the
+    // diagram is marginal (every count consumer folds `Σ_pairs c(l)·c(r)`,
+    // and the content-twin merge can leave a plain-level node holding the
+    // same pair twice), and where `allow_dups` says the caller resolves the
+    // duplicates right after compaction (`duplicate_pair_resolve`).
+    if cfg!(debug_assertions) && !allow_dups && !diagram_marginal && !level.any_value_ref_side() {
         let mut chk = level.pairs[new_start..].to_vec();
         chk.sort_unstable();
-        debug_assert!(
+        assert!(
             chk.windows(2).all(|w| w[0] != w[1]),
             "twin contraction (concat merge): duplicate pair across twin supports — invariant 1 violation"
         );
     }
-    #[cfg(not(debug_assertions))]
-    let _ = allow_dups;
     // The survivor is about to point at the tail copy, abandoning its own source
     // range; the absorbed members' ranges are accounted when compaction drops
     // their nodes (`compact_explicit_level`).
