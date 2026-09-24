@@ -173,8 +173,7 @@ impl ChildDecoder {
     pub fn child(self, side: EncodedChildRef) -> ChildRef {
         if self.valued {
             // Bare-is-slot: a side left over from before the child marginalized
-            // is already a valid slot, so nothing needs re-tagging and only the
-            // inline optimisation sets bit 30.
+            // is already a valid slot; only the inlining pass sets bit 30.
             ChildRef::Value(ValueRef::from_raw(side))
         } else {
             ChildRef::Node(NodeIdx(side.0))
@@ -208,7 +207,7 @@ impl ChildDecoder {
     /// the child was compacted and every cell moved to `remap[cell]`.
     ///
     /// An inline value names no cell of the child, so it passes through
-    /// unchanged; a slot comes back re-tagged.
+    /// unchanged; a slot comes back as the slot it moved to.
     #[inline]
     pub(crate) fn remap(self, side: EncodedChildRef, remap: &[u32]) -> EncodedChildRef {
         // A bit-31 sentinel (the `ZERO` ref) names no cell either. It never

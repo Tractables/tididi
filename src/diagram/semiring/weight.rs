@@ -290,7 +290,6 @@ impl WeightValue {
         }
     }
 
-
     /// Consume an exact value into a `BigRational` (moves the big payload out
     /// rather than cloning it).
     ///
@@ -432,19 +431,11 @@ impl WeightValue {
 /// [`WeightValue`]'s canonicalization invariant: an i128-representable value is
 /// always an `ExactSmall`, so no number can produce both an `ExactSmall` key and
 /// an `Exact` key, and equal values therefore always collide onto one entry.
-///
-/// `#[non_exhaustive]` for the same reason [`WeightValue`] is: the key variants
-/// track the value representations one for one, so the two must be free to grow
-/// together.
 #[derive(Hash, Eq, PartialEq, Clone)]
-
-#[non_exhaustive]
 pub(crate) enum WeightKey {
     /// Key for an exact integer value held in the small representation.
-    #[non_exhaustive]
     ExactSmall(i128),
     /// Key for an exact rational value with no small form.
-    #[non_exhaustive]
     Exact(BigRational),
     /// Key for a log value: `(ln_abs.to_bits(), sign)`.
     Log(u64, i8),
@@ -496,7 +487,6 @@ fn debug_assert_canonical_big(r: &BigRational) {
          intern slots (build exact values with WeightValue::exact)"
     );
 }
-
 
 #[cfg(test)]
 #[path = "tests/weight/mod.rs"]

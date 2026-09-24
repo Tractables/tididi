@@ -231,8 +231,6 @@ fn reserve_and_seed_dst(
     dst_counts: &mut Vec<u128>,
     dst_big: &mut Option<CountOverflow>,
 ) -> Result<(), OperationError> {
-
-
     // Upper bound on the slots the rewrite can mint: one per distinct interned
     // count (a second ref carrying it dedups onto the first) plus one per
     // un-keyable overflow.
@@ -247,10 +245,8 @@ fn reserve_and_seed_dst(
     eng.limits().reserve(dst_counts, new_slots)?;
     if !interners.big.is_empty() {
         // A keyed overflow mint always lands here, so the table exists by
-        // the time the rewrite inserts into it. Creating it is not a new
-        // side effect: with no table there is nothing for an overflow ref to
-        // dedup against, so the first such ref minted — and created it —
-        // before this change too.
+        // the time the rewrite inserts into it; with no table there would be
+        // nothing for an overflow ref to dedup against.
         dst_big
             .get_or_insert_with(CountOverflow::default)
             .try_reserve(eng, interners.big.len())?;

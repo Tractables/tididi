@@ -168,12 +168,12 @@ impl ChildPair {
 /// A stored pair side never has bit 31 set, which is what keeps an inline
 /// pair's left side apart from this. See the encoding table on [`EncodedNode`].
 pub(super) const MULTI_BIT: u32 = 1 << 31;
-/// Sentinel value for `b` that marks an extended multi-pair node (side-table form).
+/// Sentinel value for `b` that marks an ranged multi-pair node (side-table form).
 /// Chosen as 1 because `pair_len` == 1 is forbidden for multi (caller uses inline),
 /// so 1 cannot appear as a legitimate normal-multi `pair_len`.
 pub(super) const RANGE_SENTINEL: u32 = 1;
 
-/// Side-table entry for extended multi-pair nodes (`pair_start` or `pair_len` ≥ 2^31).
+/// Side-table entry for ranged multi-pair nodes (`pair_start` or `pair_len` ≥ 2^31).
 /// The node data holds `(a = multi_pairs_idx | MULTI_BIT, b = RANGE_SENTINEL)`, and this struct
 /// holds the actual start/len. Only allocated when the 31-bit encoding would overflow.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -195,16 +195,16 @@ pub(crate) struct MultiPairRange {
 /// ├───────────────────────────────┼───────────────────────────────┤
 /// │ left child index              │ right child index             │  ← inline pair
 /// │ pair_start | `MULTI_BIT`      │ pair_len (∈ {0, 2, 3, …})     │  ← normal multi-pair
-/// │ multi_pairs_idx | `MULTI_BIT` │ `RANGE_SENTINEL` (= 1)        │  ← extended multi-pair
+/// │ multi_pairs_idx | `MULTI_BIT` │ `RANGE_SENTINEL` (= 1)        │  ← ranged multi-pair
 /// └───────────────────────────────┴───────────────────────────────┘
 /// ```
 ///
 /// The cases are tested in that order, hottest first: `a & MULTI_BIT == 0`
 /// means inline pair (a stored side never has bit 31 set); else `b == 1`
-/// means extended multi-pair (its size lives in the level's `multi_pairs`
+/// means ranged multi-pair (its size lives in the level's `multi_pairs`
 /// table); else normal multi-pair. A single pair is always stored inline,
 /// so `pair_len == 1` never occurs for multi-pair, which is what leaves
-/// `b == 1` free as the extended sentinel. `pair_len == 0` is legal.
+/// `b == 1` free as the ranged sentinel. `pair_len == 0` is legal.
 ///
 /// **Inline pairs** are most of the nodes, and store their single
 /// [`ChildPair`] directly in `(a, b)`. `EncodedNode` and `ChildPair` are both
@@ -213,7 +213,7 @@ pub(crate) struct MultiPairRange {
 ///
 /// **Multi-pair** nodes name a contiguous range of the level's `pairs` arena.
 /// The normal form packs `(pair_start, pair_len)` into the two words when both
-/// fit in 31 bits; past that the node goes to the extended form, whose `u64`
+/// fit in 31 bits; past that the node goes to the ranged form, whose `u64`
 /// start and length live in the level's side table.
 ///
 /// [`TddLevel::pairs_of`]: super::TddLevel::pairs_of
@@ -264,7 +264,7 @@ impl EncodedNode {
 
     /// Create a normal multi-pair node referencing the pairs arena at
     /// `[pair_start, pair_start+pair_len)`. Both must fit in 31 bits; use
-    /// `TddLevel::encode_multi` for arbitrary sizes (it promotes to extended
+    /// `TddLevel::encode_multi` for arbitrary sizes (it promotes to ranged
     /// form when needed). `pair_len` may be 0, for an empty placeholder node.
     pub(crate) fn multi_pair(pair_start: u32, pair_len: u32) -> Self {
         debug_assert!(pair_start & MULTI_BIT == 0, "pair_start too large; use encode_multi");
@@ -272,7 +272,7 @@ impl EncodedNode {
         EncodedNode { a: pair_start | MULTI_BIT, b: pair_len }
     }
 
-    /// Create an extended multi-pair node whose `(start, len)` live in the level's
+    /// Create an ranged multi-pair node whose `(start, len)` live in the level's
     /// `multi_pairs` side table at `multi_pairs_idx`. `b = RANGE_SENTINEL` (= 1) distinguishes this
     /// from normal multi (which has `pair_len` ∈ {0, 2, 3, …}).
     pub(crate) fn multi_ranged(multi_pairs_idx: u32) -> Self {
@@ -305,7 +305,7 @@ impl std::fmt::Debug for EncodedNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind() {
             NodeKind::Inline(_) => write!(f, "Inline {{ left: {}, right: {} }}", self.a, self.b),
-            NodeKind::MultiRanged(idx) => write!(f, "MultiExt {{ multi_pairs_idx: {idx} }}"),
+            NodeKind::MultiRanged(idx) => write!(f, "MultiRanged {{ multi_pairs_idx: {idx} }}"),
             NodeKind::Multi { start, len } => {
                 write!(f, "Multi {{ pair_start: {start}, pair_len: {len} }}")
             }

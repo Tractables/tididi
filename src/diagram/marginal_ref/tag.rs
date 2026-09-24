@@ -68,7 +68,7 @@ fn inline_small_marginal_refs_at_level(
     }
     // Mark the sides now carrying inline counts. Keyed off tag_left/tag_right
     // (the marginal-child predicate), not do_*: an already-inline side stays
-    // marked so a later re-tag still skips it.
+    // marked so a later pass still skips it.
     if tag_left {
         levels[ti].set_has_value_refs(ChildSide::Left, true);
     }

@@ -8,7 +8,6 @@
 //! or bounded-precision `SignedLog`); leaf base values come from the store's
 //! [`RationalWeights`], converted to the active mode by `WeightStore::leaf_val`.
 
-
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
@@ -92,7 +91,6 @@ impl WeightStore {
         })
     }
 
-    /// Check that the table covers the vtree and every marginal level has its values.
     /// Validate `self` against `levels` and install it in `slot`. Once a level
     /// holds weight-marginal values, a store that interprets the weights
     /// differently from the one they were computed under is refused.
@@ -112,6 +110,7 @@ impl WeightStore {
         Ok(())
     }
 
+    /// Check that the table covers the vtree and every marginal level has its values.
     pub(crate) fn check_levels(&self, vtree: &crate::vtree::Vtree, levels: &[crate::diagram::TddLevel]) -> Result<(), crate::diagram::TddBuildError> {
         use crate::diagram::{TddBuildError, LEAF_WIDTH};
         self.check_variables(vtree.leaf_bottomup().map(|(_, var)| var))?;

@@ -36,7 +36,7 @@ impl ArenaGrowth for Untracked {
 
 impl TddLevel {
     /// Build a multi-pair node data from `(pair_start, pair_len)`, promoting to the
-    /// extended encoding when either value doesn't fit in 31 bits and allocates an
+    /// ranged encoding when either value doesn't fit in 31 bits and allocates an
     /// `multi_pairs` entry as needed.
     /// `pair_len == 1` is [`EncodedNode::inline`]'s; `pair_len == 0` is
     /// allowed, for an empty placeholder node.
@@ -53,7 +53,7 @@ impl TddLevel {
     }
 
     /// [`encode_multi`](Self::encode_multi) refusing instead of aborting; only
-    /// the extended branch allocates, through `growth`.
+    /// the ranged branch allocates, through `growth`.
     ///
     /// # Errors
     ///
@@ -68,7 +68,7 @@ impl TddLevel {
             Ok(EncodedNode::multi_pair(pair_start as u32, pair_len as u32))
         } else {
             let multi_pairs_idx = self.multi_pairs.len();
-            debug_assert!(multi_pairs_idx < (1usize << 31), "too many extended nodes in a single level");
+            debug_assert!(multi_pairs_idx < (1usize << 31), "too many ranged nodes in a single level");
             if self.multi_pairs.len() == self.multi_pairs.capacity() {
                 growth.grow(&mut self.multi_pairs, 1)?;
             }
@@ -79,7 +79,7 @@ impl TddLevel {
 
     /// Update `pair_len` for a multi-pair node (used after in-place dedup shrinks
     /// the pair count). Caller must ensure `new_len` >= 2; use inline conversion
-    /// for 1-pair results. Correctly handles extended nodes by updating the side table.
+    /// for 1-pair results. Correctly handles ranged nodes by updating the side table.
     ///
     /// # Panics
     ///
@@ -90,7 +90,7 @@ impl TddLevel {
         assert!(new_len >= 2, "set_pair_len: new_len=1 aliases multi_ranged; convert to inline");
         debug_assert!(new_len & MULTI_BIT == 0);
         match self.nodes[node_idx].kind() {
-            // Shrinking stays extended even if new_len now fits in u31 — the
+            // Shrinking stays ranged even if new_len now fits in u31 — the
             // multi_pairs slot is already allocated, and callers don't rely on form.
             NodeKind::MultiRanged(idx) => self.multi_pairs[idx as usize].len = new_len as u64,
             NodeKind::Multi { .. } => self.nodes[node_idx].b = new_len,
@@ -105,7 +105,7 @@ impl TddLevel {
     /// or leave the empty placeholder (`new_len == 0`), which computes false
     /// and only conditioning produces, for its falsity sweep to remove. The
     /// epilogue of every pass that compacts a node's own range in place; it
-    /// allocates nothing. A node in the extended encoding keeps its
+    /// allocates nothing. A node in the ranged encoding keeps its
     /// `multi_pairs` entry, which the inline and empty forms leave unused.
     ///
     /// Precondition (debug-asserted): `new_len < old_len`.
@@ -141,8 +141,8 @@ impl TddLevel {
     /// sweep needs it, and only ever to *lower* a start.
     ///
     /// A normal-multi node keeps its packed form: the new start is ≤ the old one,
-    /// which already fit 31 bits, so the encoding cannot overflow. An extended
-    /// node stays extended (its `multi_pairs` slot is already allocated).
+    /// which already fit 31 bits, so the encoding cannot overflow. A ranged
+    /// node stays ranged (its `multi_pairs` slot is already allocated).
     #[inline]
     fn set_multi_start(&mut self, node_idx: usize, new_start: usize) {
         match self.nodes[node_idx].kind() {
@@ -368,11 +368,11 @@ impl TddLevel {
         let len = old_len.checked_add(1).ok_or(OperationError::IndexOverflow)?;
         let at_tail = old_range.as_ref().is_some_and(|r| r.end == self.pairs.len());
         let start = if at_tail { old_range.as_ref().unwrap().start } else { self.pairs.len() };
-        let extended = start >= (1usize << 31) || len >= (1usize << 31);
+        let ranged = start >= (1usize << 31) || len >= (1usize << 31);
         let reused = match node { NodeKind::MultiRanged(i) => Some(i as usize), _ => None };
         // Reserve and charge everything before changing any live node or pair.
         lim.reserve(&mut self.pairs, if at_tail { 1 } else { len })?;
-        if extended && reused.is_none() { lim.reserve(&mut self.multi_pairs, 1)?; }
+        if ranged && reused.is_none() { lim.reserve(&mut self.multi_pairs, 1)?; }
         if !at_tail {
             if let Some(existing) = inline {
                 self.pairs.push(existing);
@@ -385,7 +385,7 @@ impl TddLevel {
         self.nodes[idx] = if let Some(i) = reused {
             self.multi_pairs[i] = MultiPairRange { start: start as u64, len: len as u64 };
             EncodedNode::multi_ranged(i as u32)
-        } else if extended {
+        } else if ranged {
             let i = self.multi_pairs.len();
             self.multi_pairs.push(MultiPairRange { start: start as u64, len: len as u64 });
             EncodedNode::multi_ranged(i as u32)
@@ -441,7 +441,7 @@ impl TddLevel {
     /// returned, since the caller records it before the push can fail.
     ///
     /// The store with spare capacity and operands under 31 bits is inlined;
-    /// growth and the extended encoding are out of line in
+    /// growth and the ranged encoding are out of line in
     /// `push_multi_by_range_slow`, which keeps the per-node path's frame small.
     ///
     /// # Errors
@@ -477,7 +477,7 @@ impl TddLevel {
         self.push_multi_by_range_slow(pair_start, pair_len)
     }
 
-    /// Growth and extended-encoding arm of `try_push_multi_by_range`, reached
+    /// Growth and ranged-encoding arm of `try_push_multi_by_range`, reached
     /// only when `nodes` is full or when `pair_start`/`pair_len` overflow
     /// 31 bits.
     #[cold]

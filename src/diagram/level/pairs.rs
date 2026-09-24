@@ -24,7 +24,7 @@ impl TddLevel {
     }
 
     /// The pair-arena range a node of this `kind` owns, decoded from either
-    /// the packed or the extended (side-table) encoding; `None` for an inline
+    /// the packed or the ranged (side-table) encoding; `None` for an inline
     /// node, whose pair is in the node itself.
     #[inline]
     pub(crate) fn arena_range(&self, kind: NodeKind) -> Option<std::ops::Range<usize>> {
@@ -171,7 +171,7 @@ impl TddLevel {
     /// through its lookup slice and [`ChildDecoder::remap`], which leaves a
     /// marginal side's inline values alone.
     ///
-    /// Precondition (debug-asserted): `self.nodes[idx].is_multi()`; every
+    /// Precondition (debug-asserted): `self.nodes[idx].kind().pairs_in_arena()`; every
     /// structural coordinate looked up is within its remap slice.
     #[inline]
     pub(crate) fn pairs_remap_indexed(

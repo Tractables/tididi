@@ -257,8 +257,8 @@
     }
 
     #[test]
-    fn test_encode_multi_promotes_to_extended_on_huge_start() {
-        // A pair_start at 2^31 triggers the extended encoding even though
+    fn test_encode_multi_promotes_to_ranged_on_huge_start() {
+        // A pair_start at 2^31 triggers the ranged encoding even though
         // pair_len is small. Verifies the side-table round-trips the stored values.
         let mut level = TddLevel::new();
         let huge_start = 1usize << 31;
@@ -266,7 +266,7 @@
         level.nodes.push(data);
         assert!(
             matches!(data.kind(), NodeKind::MultiRanged(_)),
-            "huge-start node should promote to extended, got {:?}", data.kind()
+            "huge-start node should promote to ranged, got {:?}", data.kind()
         );
         assert_eq!(level.pair_range_at(0), huge_start..huge_start + 3);
         assert_eq!(level.pair_count_at(0), 3);
@@ -274,8 +274,8 @@
     }
 
     #[test]
-    fn test_encode_multi_promotes_to_extended_on_huge_len() {
-        // A pair_len at 2^31 triggers the extended encoding. We don't actually
+    fn test_encode_multi_promotes_to_ranged_on_huge_len() {
+        // A pair_len at 2^31 triggers the ranged encoding. We don't actually
         // allocate that much arena memory — `encode_multi` only stores the count
         // and `multi_pairs_idx`; the arena is the caller's concern.
         let mut level = TddLevel::new();
@@ -284,7 +284,7 @@
         level.nodes.push(data);
         assert!(
             matches!(data.kind(), NodeKind::MultiRanged(_)),
-            "huge-len node should be extended, got {:?} — mis-reading it as a leaf is \
+            "huge-len node should be ranged, got {:?} — mis-reading it as a leaf is \
              what made qmr-100 come back UNSAT", data.kind()
         );
         assert_eq!(level.pair_range_at(0).len(), huge_len);
@@ -306,16 +306,16 @@
     }
 
     #[test]
-    fn test_extended_set_pair_len_updates_side_table() {
-        // Shrinking an extended node's pair_len must update the side table,
-        // not the node's b field (which is the extended-form sentinel).
+    fn test_ranged_set_pair_len_updates_side_table() {
+        // Shrinking an ranged node's pair_len must update the side table,
+        // not the node's b field (which is the ranged-form sentinel).
         let mut level = TddLevel::new();
         let data = level.encode_multi(0, 1 << 31);
         level.nodes.push(data);
         level.set_pair_len(0, 100);
         assert!(
             matches!(level.nodes[0].kind(), NodeKind::MultiRanged(_)),
-            "still extended after shrink"
+            "still ranged after shrink"
         );
         assert_eq!(level.pair_range_at(0).len(), 100);
     }
