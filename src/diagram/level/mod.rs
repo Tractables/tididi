@@ -204,16 +204,6 @@ impl TddLevel {
         }
     }
 
-    /// The counts of a count-marginal level, to be written in place — slot
-    /// pruning and pair fusion rewrite them without changing the level's state.
-    #[inline]
-    pub(crate) fn marginal_counts_mut(&mut self) -> Option<&mut Vec<u128>> {
-        match &mut self.state {
-            LevelState::Counts { counts, .. } => Some(counts),
-            _ => None,
-        }
-    }
-
     /// Both halves of a count-marginal level's store at once: the fast column
     /// and the overflow table, which the compaction passes rewrite together.
     #[inline]
@@ -267,15 +257,6 @@ impl TddLevel {
         match &self.state {
             LevelState::Weights { width, .. } => *width,
             _ => 0,
-        }
-    }
-
-    /// Drop the overflow table of a count-marginal level: every slot's exact
-    /// value now fits the fast column. No-op elsewhere.
-    #[inline]
-    pub(crate) fn clear_marginal_big(&mut self) {
-        if let LevelState::Counts { big, .. } = &mut self.state {
-            *big = None;
         }
     }
 

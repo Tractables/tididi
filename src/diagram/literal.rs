@@ -152,7 +152,19 @@ mod input {
         fn disjoin(eng: &Engine, f: Tdd, cube: &[Self]) -> Result<Tdd, OperationError>;
         /// Append these inputs to `out` as typed literals, checking each
         /// variable against `vtree`.
-        fn collect(eng: &Engine, vtree: &Vtree, input: &[Self], out: &mut Vec<Literal>) -> Result<(), OperationError>;
+        fn collect(eng: &Engine, vtree: &Vtree, input: &[Self], out: &mut Vec<Literal>) -> Result<(), OperationError> {
+            let lim = eng.limits();
+            let mut gate = lim.gate();
+            for &value in input {
+                gate.poll(1)?;
+                let literal = value.literal()?;
+                if vtree.leaf_of(literal.var).is_none() {
+                    return Err(OperationError::VariableNotInVtree(literal.var));
+                }
+                lim.try_push(out, literal)?;
+            }
+            gate.flush()
+        }
     }
 
     impl Sealed for Literal {
@@ -167,62 +179,35 @@ mod input {
         fn disjoin(eng: &Engine, f: Tdd, cube: &[Self]) -> Result<Tdd, OperationError> {
             disjoin_cube_owned(eng, f, cube)
         }
-
-        fn collect(eng: &Engine, vtree: &Vtree, input: &[Self], out: &mut Vec<Literal>) -> Result<(), OperationError> {
-            let lim = eng.limits();
-            let mut gate = lim.gate();
-            for &literal in input {
-                gate.poll(1)?;
-                if vtree.leaf_of(literal.var).is_none() {
-                    return Err(OperationError::VariableNotInVtree(literal.var));
-                }
-                lim.try_push(out, literal)?;
-            }
-            gate.flush()
-        }
     }
 
     impl Sealed for i32 {
         fn literal(self) -> Result<Literal, OperationError> { Literal::try_from(self) }
 
         fn conjoin(eng: &Engine, f: Tdd, clause: &[Self]) -> Result<Tdd, OperationError> {
-            let lim = eng.limits();
-            let _op = lim.begin_operation();
-            lim.check_stop()?;
-            let literals = typed(eng, &f, clause)?;
-            conjoin_clause_owned(eng, f, &literals)
+            typed_op(eng, f, clause, conjoin_clause_owned)
         }
 
         fn disjoin(eng: &Engine, f: Tdd, cube: &[Self]) -> Result<Tdd, OperationError> {
-            let lim = eng.limits();
-            let _op = lim.begin_operation();
-            lim.check_stop()?;
-            let literals = typed(eng, &f, cube)?;
-            disjoin_cube_owned(eng, f, &literals)
-        }
-
-        fn collect(eng: &Engine, vtree: &Vtree, input: &[Self], out: &mut Vec<Literal>) -> Result<(), OperationError> {
-            let lim = eng.limits();
-            let mut gate = lim.gate();
-            for &value in input {
-                gate.poll(1)?;
-                let literal = Literal::try_from(value)?;
-                if vtree.leaf_of(literal.var).is_none() {
-                    return Err(OperationError::VariableNotInVtree(literal.var));
-                }
-                lim.try_push(out, literal)?;
-            }
-            gate.flush()
+            typed_op(eng, f, cube, disjoin_cube_owned)
         }
     }
 
-    /// Convert a slice of signed integers, checking each variable against the
-    /// operand's vtree. Runs inside the caller's operation scope, so the
-    /// conversion is charged to the operation it prepares.
-    fn typed(eng: &Engine, f: &Tdd, input: &[i32]) -> Result<Vec<Literal>, OperationError> {
+    /// Run `op` on `f` and the typed form of `input`, converting the signed
+    /// integers inside the operation's scope so the conversion is charged to
+    /// the operation it prepares.
+    fn typed_op(
+        eng: &Engine,
+        f: Tdd,
+        input: &[i32],
+        op: fn(&Engine, Tdd, &[Literal]) -> Result<Tdd, OperationError>,
+    ) -> Result<Tdd, OperationError> {
+        let lim = eng.limits();
+        let _op = lim.begin_operation();
+        lim.check_stop()?;
         let mut literals = Vec::new();
         <i32 as Sealed>::collect(eng, f.vtree(), input, &mut literals)?;
-        Ok(literals)
+        op(eng, f, &literals)
     }
 }
 

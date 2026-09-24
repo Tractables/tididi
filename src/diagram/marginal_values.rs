@@ -90,11 +90,11 @@ impl<'a> MarginalStorage<'a> {
 
     /// Release a subsumed column without making the level structural again.
     pub(crate) fn clear(&mut self, leaf: bool) {
-        if let Some(values) = self.level.marginal_counts_mut() {
-            if !values.is_empty() { *values = Vec::new(); }
-            self.level.clear_marginal_big();
+        if let Some((counts, big)) = self.level.marginal_store_mut() {
+            if !counts.is_empty() { *counts = Vec::new(); }
+            *big = None;
         }
-        if self.level.is_weight_marginal() && self.level.weight_width() != 0 && !leaf {
+        if self.level.is_weight_marginal() && self.level.slot_count() != 0 && !leaf {
             self.level.set_weight_width(0);
             if let Some(weights) = self.weights.as_mut() { weights.set_level(self.index, Vec::new()); }
         }
