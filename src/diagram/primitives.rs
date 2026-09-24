@@ -170,11 +170,6 @@ pub(super) const LEAF_BIT: u32 = 1 << 31;
 /// Bit 31 of a node's `a` word: the node's pairs live in the level's arena.
 /// See the encoding table on [`EncodedNode`].
 pub(super) const MULTI_BIT: u32 = 1 << 31;
-/// Sentinel `b` for a tombstone: a dead, unreferenced node slot left in
-/// `nodes` by an index-stable rewrite. `LEAF_BIT | 1` collides with no live
-/// encoding (a real leaf has `b == LEAF_BIT`; an internal node has bit 31
-/// clear), and bit 31 set makes every `is_internal()`-gated reader skip it.
-pub(super) const TOMBSTONE_B: u32 = LEAF_BIT | 1;
 /// Sentinel value for `b` that marks an extended multi-pair node (side-table form).
 /// Chosen as 1 because `pair_len` == 1 is forbidden for multi (caller uses inline),
 /// so 1 cannot appear as a legitimate normal-multi `pair_len`.
@@ -194,8 +189,7 @@ pub(crate) struct MultiPairRange {
 /// A reader never decodes the words itself: [`TddLevel::pairs_of`] and
 /// [`TddLevel::pairs_iter_of`] resolve a node to its pairs, and
 /// [`is_internal`](Self::is_internal) says whether it has any. Every node of a valid diagram is
-/// internal or a tombstone (a dead slot, unreferenced, that `minimize`
-/// removes).
+/// internal.
 ///
 /// The two `u32` words carry a four-way encoding:
 ///
@@ -241,17 +235,14 @@ pub struct EncodedNode {
 /// What an [`EncodedNode`]'s two words encode, as returned by
 /// [`EncodedNode::kind`].
 ///
-/// The cases are exactly the rows of the encoding table on [`EncodedNode`],
-/// plus the tombstone that shares the leaf row's bit. Each carries the payload
-/// that case has, so a reader that matches never asks a second question to
-/// find out whether the payload it wants is there.
+/// The cases are exactly the rows of the encoding table on [`EncodedNode`].
+/// Each carries the payload that case has, so a reader that matches never
+/// asks a second question to find out whether the payload it wants is there.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) enum NodeKind {
     /// A leaf-label node. No valid diagram stores one; the leaf side of a pair
     /// carries the label instead.
     Leaf(LeafLabel),
-    /// A dead slot left in place by an index-stable rewrite.
-    Tombstone,
     /// One pair, stored in the node's own two words.
     Inline(ChildPair),
     /// Pairs at `[start, start + len)` of the level's `pairs` arena.
@@ -302,9 +293,7 @@ impl EncodedNode {
     /// what comes back, so a new case has to be handled at every site.
     pub(crate) fn kind(&self) -> NodeKind {
         if self.b & LEAF_BIT != 0 {
-            if self.b == TOMBSTONE_B {
-                NodeKind::Tombstone
-            } else if self.a == LeafLabel::Zero as u32 {
+            if self.a == LeafLabel::Zero as u32 {
                 NodeKind::Leaf(LeafLabel::Zero)
             } else {
                 NodeKind::Leaf(LeafLabel::from_idx(self.a as usize))
@@ -321,19 +310,14 @@ impl EncodedNode {
         }
     }
 
-    /// True when the node holds no pairs: a tombstone, or a leaf-label node
-    /// (which no valid diagram stores).
+    /// True when the node holds no pairs: a leaf-label node, which no valid
+    /// diagram stores.
     pub(crate) fn is_leaf(&self) -> bool {
-        matches!(self.kind(), NodeKind::Leaf(_) | NodeKind::Tombstone)
+        matches!(self.kind(), NodeKind::Leaf(_))
     }
 
     /// True for a node with pairs (inline or multi-pair).
     pub fn is_internal(&self) -> bool { !self.is_leaf() }
-
-    /// True for a dead slot left in place by an index-stable rewrite. It is
-    /// referenced by no pair; `slot_count()` still counts it, `live_slot_count()` does
-    /// not, and `minimize` removes it.
-    pub(crate) fn is_tombstone(&self) -> bool { matches!(self.kind(), NodeKind::Tombstone) }
 
     /// Shrink `pair_len` for a **normal** multi-pair node (used during dedup remapping).
     /// Caller must ensure `new_len` >= 2; use `EncodedNode::inline` to convert to inline.
@@ -352,7 +336,6 @@ impl EncodedNode {
 impl std::fmt::Debug for EncodedNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind() {
-            NodeKind::Tombstone => write!(f, "Tombstone"),
             NodeKind::Leaf(label) => write!(f, "Leaf({label:?})"),
             NodeKind::Inline(_) => write!(f, "Inline {{ left: {}, right: {} }}", self.a, self.b),
             NodeKind::MultiRanged(idx) => write!(f, "MultiExt {{ multi_pairs_idx: {idx} }}"),

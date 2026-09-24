@@ -232,7 +232,7 @@ impl TddLevel {
 
     /// Pair-arena slots owned by the node at `idx` — the one definition of a
     /// node's dead range: its pair count when the node is multi-encoded, 0 for
-    /// the inline/leaf/tombstone encodings (they own no arena slot).
+    /// the inline and leaf encodings (they own no arena slot).
     #[inline]
     pub(crate) fn arena_pairs_at(&self, idx: usize) -> usize {
         if self.nodes[idx].kind().pairs_in_arena() { self.multi_len_at(idx) } else { 0 }
@@ -297,8 +297,8 @@ impl TddLevel {
             "index_live_ranges: node index must fit the packed key's low half"
         );
         for i in 0..self.nodes.len() {
-            // Only a multi-pair node owns an arena slot; leaves, tombstones
-            // and inline nodes own none.
+            // Only a multi-pair node owns an arena slot; leaves and inline
+            // nodes own none.
             let node = self.nodes[i];
             if !node.kind().pairs_in_arena() {
                 continue;
@@ -414,7 +414,7 @@ impl TddLevel {
                 let range = self.pair_range_at(idx);
                 (range.len(), Some(range), None)
             }
-            NodeKind::Leaf(_) | NodeKind::Tombstone => panic!("push_pair_onto_node: node {idx} holds no pairs"),
+            NodeKind::Leaf(_) => panic!("push_pair_onto_node: node {idx} holds no pairs"),
         };
         let len = old_len.checked_add(1).ok_or(OperationError::IndexOverflow)?;
         let at_tail = old_range.as_ref().is_some_and(|r| r.end == self.pairs.len());

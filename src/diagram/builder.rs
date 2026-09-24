@@ -342,7 +342,7 @@ impl TddBuilder {
     ///
     /// The first invariant violated — [`TddBuildError::BadOutput`] when
     /// `output` is neither a live root node nor the false sentinel; other variants
-    /// identify invalid references, deleted children, marginal columns or leaf storage.
+    /// identify invalid references, marginal columns or leaf storage.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -532,9 +532,6 @@ pub(crate) fn check_levels(
         );
         for (i, node) in lvl.nodes.iter().enumerate() {
             let node_idx = NodeIdx(i as u32);
-            if node.is_tombstone() {
-                continue;
-            }
             if node.is_leaf() {
                 return Err(TddBuildError::LeafNodeStored {
                     level: t,
@@ -571,23 +568,12 @@ pub(crate) fn check_levels(
                             child,
                         });
                     }
-                    if !vtree.node(child).is_leaf() && !levels[child.idx()].is_marginal() {
-                        let local = NodeIdx(view.child(side).index().unwrap() as u32);
-                        if levels[child.idx()].nodes[local.idx()].is_tombstone() {
-                            return Err(TddBuildError::DeadChild {
-                                level: t, node: node_idx, child: TddNodeId { vtree: child, local },
-                            });
-                        }
-                    }
                 }
             }
         }
     }
     let root = vtree.root();
-    let dead_output = output.local != ZERO && !vtree.node(root).is_leaf()
-        && !levels[root.idx()].is_marginal()
-        && levels[root.idx()].nodes.get(output.local.idx()).is_some_and(|node| node.is_tombstone());
-    if output.vtree != root || dead_output || (output.local != ZERO && output.local.idx() >= bound(vtree, levels, root)) {
+    if output.vtree != root || (output.local != ZERO && output.local.idx() >= bound(vtree, levels, root)) {
         return Err(TddBuildError::BadOutput(output));
     }
     Ok(())

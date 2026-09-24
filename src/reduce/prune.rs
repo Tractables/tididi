@@ -73,7 +73,6 @@ pub(crate) fn prune_unreachable(
     if tdd.is_zero() {
         for level in &mut tdd.levels {
             level.nodes.clear();
-            level.n_tombstones = 0;
         }
         return Ok(());
     }
@@ -283,9 +282,6 @@ fn compact_one_level(
             i += 1;
             keep
         });
-        // Tombstones are unreferenced, hence unreachable, hence dropped by
-        // the retain above.
-        tdd.levels[t_idx].n_tombstones = 0;
     }
     this_dirty
 }

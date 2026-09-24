@@ -416,18 +416,18 @@ impl Tdd {
         }
     }
 
-    /// The largest [`TddLevel::live_slot_count`] over all levels; 0 for ⊥.
+    /// The largest [`TddLevel::slot_count`] over all levels; 0 for ⊥.
     ///
     /// Marginal value slots contribute to width; implicit ordinary leaf nodes do not.
     pub fn max_width(&self) -> usize {
-        self.levels.iter().map(TddLevel::live_slot_count).max().unwrap_or(0)
+        self.levels.iter().map(TddLevel::slot_count).max().unwrap_or(0)
     }
 
-    /// Number of live structural nodes and marginal value slots over all levels.
+    /// Number of structural nodes and marginal value slots over all levels.
     ///
     /// Implicit ordinary leaf nodes are excluded.
     pub fn node_count(&self) -> usize {
-        self.levels.iter().map(|l| l.live_slot_count()).sum()
+        self.levels.iter().map(TddLevel::slot_count).sum()
     }
 
     /// Running total of marginal-count slots the slot prune has collected,

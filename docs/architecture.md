@@ -57,7 +57,7 @@ leaf/internal subsequences; `Vtree::validate` checks links and variable tables.
 | **level** | One vtree node's storage in a diagram ([`TddLevel`]). |
 | **node** | One function at a level, addressed by [`NodeIdx`]. |
 | **pair** | One `(left, right)` element of a node's decomposition, holding two [`EncodedChildRef`] words decoded through [`ChildDecoder`]. |
-| **slot count** | The number of stored node or value entries at a level, including tombstones; structural leaves store no slots. |
+| **slot count** | The number of stored node or value entries at a level; structural leaves store no slots. |
 | **marginal level** | A level whose structure was summed out into per-node values. |
 | **marginalize** | Replace a level's structure by per-node values. |
 | **value** | The per-node payload of a marginal level: a count, or a weight. |

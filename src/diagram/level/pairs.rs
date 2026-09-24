@@ -9,7 +9,7 @@ use crate::diagram::primitives::{ChildPair, EncodedNode, NodeKind};
 use super::TddLevel;
 
 impl TddLevel {
-    /// Every node with pairs, as `(local index, pairs)`, skipping tombstones.
+    /// Every node with pairs, as `(local index, pairs)`.
     /// The index is the node's slot in `nodes`, so it is valid for arrays
     /// sized by `slot_count()`. Empty on a marginal level.
     pub fn internal_inputs_iter(&self) -> impl Iterator<Item = (usize, PairsIter<'_>)> + '_ {
@@ -44,8 +44,7 @@ impl TddLevel {
         start..start + len
     }
 
-    /// The pairs of `node`, which must describe a node of this level. Empty for a
-    /// tombstone.
+    /// The pairs of `node`, which must describe a node of this level.
     ///
     /// The slice borrows both the level and `node`, because an inline pair lives in the node.
     ///
@@ -64,7 +63,7 @@ impl TddLevel {
     /// ```
     pub fn pairs_of<'a>(&'a self, node: &'a EncodedNode) -> &'a [ChildPair] {
         match node.kind() {
-            NodeKind::Leaf(_) | NodeKind::Tombstone => &[],
+            NodeKind::Leaf(_) => &[],
             // Safety: EncodedNode is #[repr(C)] {a: u32, b: u32}.
             //         ChildPair is #[repr(C)] {left: EncodedChildRef(u32), right: EncodedChildRef(u32)}.
             //         For inline nodes, a == left.0 and b == right.0 by construction.
@@ -146,7 +145,7 @@ impl TddLevel {
     #[inline]
     pub fn pairs_iter_of<'a>(&'a self, node: &'a EncodedNode) -> PairsIter<'a> {
         match node.kind() {
-            NodeKind::Leaf(_) | NodeKind::Tombstone => PairsIter::empty(),
+            NodeKind::Leaf(_) => PairsIter::empty(),
             NodeKind::Inline(pair) => PairsIter::inline(pair),
             NodeKind::Multi { .. } | NodeKind::MultiRanged(_) => {
                 let range = self.multi_range(node);
@@ -214,7 +213,7 @@ impl TddLevel {
     }
 
     /// Number of pairs of the node at `idx`, which must be a node with pairs
-    /// ([`EncodedNode::is_internal`]); a tombstone has no defined count.
+    /// ([`EncodedNode::is_internal`]).
     ///
     /// # Panics
     ///
@@ -227,7 +226,7 @@ impl TddLevel {
     }
 
     /// The pair count of every node in index order: a node's pairs, or 0 for
-    /// a leaf-label node or tombstone. Empty on a marginal level, which holds
+    /// a leaf-label node. Empty on a marginal level, which holds
     /// no nodes.
     #[inline]
     pub(crate) fn pair_counts(&self) -> impl Iterator<Item = usize> + '_ {

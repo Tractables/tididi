@@ -24,8 +24,8 @@
 //!   marginal level, and a parent's side into it decodes through its
 //!   [`TddLevel::child_decoder`].
 //! - A **structural level** stores its nodes in slots; walk them with
-//!   [`TddLevel::internal_inputs_iter`], which yields `(local index, pairs)` and
-//!   skips tombstones, or read one node's pairs with [`TddLevel::pairs_of`].
+//!   [`TddLevel::internal_inputs_iter`], which yields `(local index, pairs)`,
+//!   or read one node's pairs with [`TddLevel::pairs_of`].
 //!   Each [`ChildPair`] indexes a node in the left child level and one in the
 //!   right child level; the node denotes the disjoint union of its pairs'
 //!   products.

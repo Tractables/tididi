@@ -6,14 +6,11 @@ use super::*;
 
 use crate::Engine;
 use crate::marginal::transition::free_subsumed_marginal_children;
-use crate::test_helpers::compile_clauses;
-use crate::diagram::EncodedNode;
-use crate::reduce::contract::contract_all_twins;
 
 use crate::diagram::{
     ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId, assert_can_make_marginal, take_levels,
 };
-use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
+use crate::vtree::{Vtree, VtreeNode};
 use std::sync::Arc;
 use crate::diagram::ChildSide;
 
@@ -230,61 +227,6 @@ fn test_content_twins_merge_at_plain_levels() {
     // (c) Twin canonicality holds everywhere the merge is responsible for, not just here.
     check_twin_canonicality(&tdd).expect("no twins at any explicit level after canonicalization");
 }
-
-    /// Two unreferenced tombstones carry the same empty fingerprint; contract
-    /// must not treat them as twins. Contract on a tombstoned copy must match
-    /// the dense run and leave the tombstones in place.
-    #[test]
-    fn contract_tolerates_tombstones() {
-    let eng = Engine::new();
-        let vtree = Arc::new(Vtree::balanced(5));
-        let clauses = vec![vec![1, 2, -3], vec![-2, 3, 4], vec![3, -4, 5], vec![1, -5]];
-        let mut dense = compile_clauses(&vtree, &clauses);
-        dense.minimize().unwrap();
-        let mc0 = dense.model_count().unwrap();
-
-        // Appending keeps every existing slot index stable.
-        let mut withtomb = dense.clone();
-        let mut injected = 0usize;
-        for t in 0..withtomb.vtree.num_nodes() {
-            if withtomb.vtree.node(VtreeIdx(t as u32)).is_leaf() {
-                continue;
-            }
-            let level = &mut withtomb.levels[t];
-            if level.is_marginal() {
-                continue;
-            }
-            level.nodes.push(EncodedNode::tombstone());
-            level.nodes.push(EncodedNode::tombstone());
-            level.n_tombstones += 2;
-            injected += 2;
-        }
-        assert!(injected > 0);
-        // Seed every internal level as dirty in both copies so the walk
-        // examines the same levels.
-        for t in 0..withtomb.vtree.num_nodes() {
-            if !withtomb.vtree.node(VtreeIdx(t as u32)).is_leaf() {
-                withtomb.seed_contract_worklist([t as u32]);
-                dense.seed_contract_worklist([t as u32]);
-            }
-        }
-        assert_eq!(withtomb.model_count().unwrap(), mc0, "tombstones must not change the count");
-
-        contract_all_twins(&eng, &mut dense).unwrap();
-        contract_all_twins(&eng, &mut withtomb).unwrap();
-
-        assert_eq!(withtomb.model_count().unwrap(), mc0);
-        assert_eq!(dense.model_count().unwrap(), mc0);
-        for t in 0..dense.vtree.num_nodes() {
-            assert_eq!(
-                withtomb.levels[t].live_slot_count(),
-                dense.levels[t].slot_count(),
-                "live width diverged at level {t}"
-            );
-        }
-        let surviving: usize = withtomb.levels.iter().map(|l| l.n_tombstones as usize).sum();
-        assert!(surviving > 0, "contract must not merge tombstones away");
-    }
 
 /// Leaf-twin contraction must leave the parent's marginal-side markers alone.
 ///

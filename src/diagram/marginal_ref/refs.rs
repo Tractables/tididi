@@ -37,9 +37,8 @@ impl<T> Sides<T> {
 ///
 /// `ChildSide::Left` means `pair.left.0` for a multi-pair node and `node.a`
 /// for an inline one; `ChildSide::Right` means `pair.right.0` / `node.b` (an
-/// inline node's `b` carries no `LEAF_BIT`, so it is a plain index). Leaves
-/// and tombstones hold no refs and are skipped; only live nodes' refs are
-/// visited.
+/// inline node's `b` carries no `LEAF_BIT`, so it is a plain index). A leaf
+/// node holds no refs and is skipped.
 #[inline]
 pub(crate) fn for_each_side_ref_mut(
     level: &mut crate::diagram::TddLevel,

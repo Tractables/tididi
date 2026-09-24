@@ -147,16 +147,6 @@ pub(super) fn find_twin_groups(
             scratch.fingerprints[target as usize].wrapping_add(context_hash(pi, sibling));
     });
 
-    // Tombstone slots got no scatter (fp == 0); make them non-colliding so they
-    // are never marked twin candidates. No-op (one branch) on the dense path.
-    let (lc, rc) = tdd.vtree.children(t);
-    let child_t = if t1_side == ChildSide::Left { lc } else { rc };
-    neutralize_tombstone_fingerprints(
-        &tdd.levels[child_t.idx()],
-        child_width,
-        &mut scratch.fingerprints,
-    );
-
     // ── Fingerprint collision check + candidate marking ───────────────────────
     //
     // Open-addressing table keyed by fingerprint. Every node that shares its
@@ -258,28 +248,5 @@ fn mark_candidates(
     }
     Ok(found)
 }
-
-/// Neutralize tombstone slots before twin-candidate marking. A
-/// tombstone is unreferenced, so the parent-pair scatter never touches its
-/// fingerprint — it stays 0, and ≥2 tombstones then collide on 0, group by
-/// their (identical, empty) signature, and get merged, which `merge_twin_data`
-/// rejects (a tombstone is not internal). Give each tombstone slot a distinct
-/// fingerprint so it can never share one with another node. Even if a sentinel
-/// coincidentally equals a live node's fingerprint, `build_twin_groups_after_collision`'s
-/// exact-signature check is the backstop — a tombstone's empty context never
-/// equals a live node's. Gated on `n_tombstones > 0`, so the dense path pays
-/// only a single branch per call, no per-node work.
-#[inline]
-pub(super) fn neutralize_tombstone_fingerprints(level: &TddLevel, width: usize, fingerprints: &mut [u64]) {
-    if level.n_tombstones == 0 {
-        return;
-    }
-    for (i, fp) in fingerprints.iter_mut().enumerate().take(width) {
-        if level.nodes[i].is_tombstone() {
-            *fp = context_hash(u32::MAX, i as u32);
-        }
-    }
-}
-
 
 use groups::build_twin_groups_after_collision;

@@ -23,14 +23,9 @@ use super::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode};
 ///   [`WeightStore::level`](crate::diagram::WeightStore::level) for this
 ///   level;
 /// - otherwise structural: [`nodes`](Self::nodes)`[i]` is node `i`, and its
-///   pairs are [`pairs_of`](Self::pairs_of) of that slot. A node may be a
-///   tombstone (dead, unreferenced, [`EncodedNode::is_internal`] false);
-///   [`internal_inputs_iter`] skips those.
+///   pairs are [`pairs_of`](Self::pairs_of) of that slot.
 ///
-/// `slot_count()` is the number of node slots in any state; `live_slot_count()` excludes
-/// tombstones.
-///
-/// [`internal_inputs_iter`]: Self::internal_inputs_iter
+/// `slot_count()` is the number of node or value slots in any state.
 #[derive(Clone, Debug)]
 pub struct TddLevel {
     /// The stored nodes, indexed by [`NodeIdx`]. Empty on leaf and
@@ -51,12 +46,6 @@ pub struct TddLevel {
     /// [`LevelState`]. Set by apply when it emits or carries through an inlined
     /// side; reset by [`clear`](Self::clear) and by marginalization.
     pub(crate) inlined_sides: u8,
-    /// Number of tombstone slots in `nodes` — dead nodes the index-stable
-    /// conjoin leaves in place instead of compacting out. 0 on the
-    /// dense path. `slot_count()` still counts every slot (it is the index bound for
-    /// flat-array allocation); `live_slot_count()` subtracts this. Reset to 0 by
-    /// `clear()` and after prune compaction (which physically removes them).
-    pub(crate) n_tombstones: u32,
     /// Slots in `pairs` that no live node references any more.
     ///
     /// Twin contraction mints these: a merged union is appended at the arena
@@ -142,7 +131,6 @@ impl TddLevel {
             pairs: Vec::new(),
             multi_pairs: Vec::new(),
             inlined_sides: 0,
-            n_tombstones: 0,
             dead_pairs: 0,
             state: LevelState::Structural,
         }
@@ -156,7 +144,6 @@ impl TddLevel {
         self.pairs.clear();
         self.multi_pairs.clear();
         self.inlined_sides = 0;
-        self.n_tombstones = 0;
         self.dead_pairs = 0;
         self.state = LevelState::Structural;
     }
@@ -173,15 +160,13 @@ impl TddLevel {
         self.pairs.shrink_to_fit();
         self.multi_pairs.clear();
         self.multi_pairs.shrink_to_fit();
-        self.n_tombstones = 0;
         self.dead_pairs = 0;
         self.inlined_sides = 0;
     }
 
-    /// Number of node slots: the number of values on a marginal level, else
-    /// `nodes.len()` (live and tombstone). The index bound for arrays over
-    /// this level; use [`live_slot_count`](Self::live_slot_count) to count nodes. 0 on
-    /// a leaf level that is not marginal (its nodes are implicit).
+    /// Number of slots: the number of values on a marginal level, else
+    /// `nodes.len()`. The index bound for arrays over this level. 0 on a leaf
+    /// level that is not marginal (its nodes are implicit).
     pub fn slot_count(&self) -> usize {
         match &self.state {
             LevelState::Counts { counts, .. } => counts.len(),
@@ -190,25 +175,14 @@ impl TddLevel {
         }
     }
 
-    /// `slot_count()` minus tombstone slots — the number of nodes.
-    pub fn live_slot_count(&self) -> usize {
-        self.slot_count() - self.n_tombstones as usize
-    }
-
-    /// The node slots of a structural level, in index order — tombstones
-    /// included, so slot `i` is `nodes()[i]`. Empty on a leaf or marginal
-    /// level, which store no nodes.
+    /// The nodes of a structural level, in index order, so node `i` is
+    /// `nodes()[i]`. Empty on a leaf or marginal level, which store no nodes.
     #[inline]
     pub fn nodes(&self) -> &[EncodedNode] {
         &self.nodes
     }
 
     /// [`nodes`](Self::nodes) paired with each slot's index.
-    ///
-    /// Tombstones are yielded like any other slot; skip them with
-    /// [`EncodedNode::is_tombstone`], or walk
-    /// [`internal_inputs_iter`](Self::internal_inputs_iter) instead, which
-    /// yields only live nodes with their pairs.
     #[inline]
     pub(crate) fn nodes_iter(&self) -> impl Iterator<Item = (NodeIdx, &EncodedNode)> {
         self.nodes.iter().enumerate().map(|(i, n)| (NodeIdx(i as u32), n))
@@ -396,7 +370,6 @@ impl TddLevel {
             pairs: copy(lim, &self.pairs)?,
             multi_pairs: copy(lim, &self.multi_pairs)?,
             inlined_sides: self.inlined_sides,
-            n_tombstones: self.n_tombstones,
             dead_pairs: self.dead_pairs,
             state,
         })
