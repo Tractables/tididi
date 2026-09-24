@@ -80,7 +80,7 @@ fn signature_arena_holds_candidate_rows_only() {
     );
 
     let mut scratch = ContractScratch::default();
-    let found = find_twin_groups(&eng, &tdd, root, ChildSide::Left, child_width, &mut scratch)
+    let found = find_twin_groups(&eng, &tdd, v_left, root, ChildSide::Left, &mut scratch)
         .expect("find_twin_groups");
 
     assert!(found, "the {} same-context pairs are twin groups", N_TWIN_GROUPS);

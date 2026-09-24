@@ -4,65 +4,21 @@
 //! sit in different parent contexts, so the context-based
 //! `strategies::contract_all_twins` — which groups by the multiset of
 //! `(parent_node, sibling)` contexts — cannot see them.
-//! `merge_content_equal_nodes` detects them by pair-multiset content and
+//! `merge_content_equal_nodes` detects them by pair-multiset content, through
+//! the same grouping over a node's own pairs instead of its contexts, and
 //! rewrites parent/output refs onto the canonical node.
 //!
 //! The prune, merge, contract fixpoint that drives the merge is
-//! `reduce::canonicalize_content_twins`.
+//! `reduce::driver::Reduction::content_twins`.
 
 use crate::Engine;
-use crate::limits::pool::PooledScratch;
-
-use rustc_hash::FxHashMap;
 
 use crate::diagram::Tdd;
-use crate::limits::{OperationError, Limits};
+use crate::limits::{Limits, OperationError};
 use crate::vtree::VtreeIdx;
 
-/// Per-pass working buffers of [`merge_content_equal_nodes`], bundled so one
-/// take/put covers the whole set.
-#[derive(Default)]
-pub(crate) struct ContentTwinScratch {
-    /// Per-node content fingerprint at the level being scanned.
-    pub(super) node_fp: Vec<u64>,
-    /// Fingerprint → number of nodes carrying it (the collision pre-filter).
-    /// Probed by key only, never iterated.
-    pub(super) fp_counts: FxHashMap<u64, u32>,
-    /// Sorted pair-multiset key → canonical node index. Probed by key only.
-    /// Its keys own `Vec`s, but the take-side `clear()` drops every one of them
-    /// — only the table itself is carried across passes, so this pool retains
-    /// one allocation, not a fan-out.
-    pub(super) key_to_canonical: FxHashMap<Vec<(u32, u32)>, u32>,
-    /// Node index → canonical node index at the level being scanned.
-    pub(super) remap: Vec<u32>,
-}
-
-impl PooledScratch for ContentTwinScratch {
-    fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::capacity_bytes;
-        [
-            capacity_bytes(&self.node_fp),
-            capacity_bytes(&self.fp_counts),
-            capacity_bytes(&self.key_to_canonical),
-            capacity_bytes(&self.remap),
-        ].into_iter().sum()
-    }
-
-    fn prepare(&mut self) {
-        self.node_fp.clear();
-        self.fp_counts.clear();
-        self.key_to_canonical.clear();
-        self.remap.clear();
-    }
-
-    fn retain(&mut self, lim: &crate::limits::Limits) {
-        self.key_to_canonical.clear();
-        crate::limits::pool::release_if_oversized(lim, &mut self.node_fp);
-        crate::limits::pool::release_if_oversized(lim, &mut self.remap);
-        crate::limits::pool::release_if_oversized(lim, &mut self.fp_counts);
-        crate::limits::pool::release_if_oversized(lim, &mut self.key_to_canonical);
-    }
-}
+use super::fingerprint::{group_twins_by_entries, ContentEntries};
+use super::scratch::ContractScratch;
 
 /// The levels this merge canonicalizes, children before parents; the checker
 /// `test_helpers::check::marginal::check_twin_canonicality` walks the same set.
@@ -95,14 +51,14 @@ pub(crate) fn content_twin_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
 /// canonical twin. A return of 0 means invariant 9 holds everywhere the filter
 /// reached.
 ///
-/// Two nodes at one level with equal pair multisets are found by sorted key,
-/// and the parent's references and the output reference are rewritten onto
-/// the first index. The duplicates are left in place as unreferenced nodes,
-/// not tombstoned (a streaming apply asserts tombstone-free levels); the
-/// caller must follow with a prune. The parent level is marked dirty for the
-/// next contract pass. Levels are scanned children before parents, so a merge
-/// at `L` that makes two nodes of `parent(L)` content-equal is caught later in
-/// the same pass.
+/// Two nodes at one level with equal pair multisets are found by the twin
+/// grouping over each node's own pairs, and the parent's references and the
+/// output reference are rewritten onto the lowest index. The duplicates are
+/// left in place as unreferenced nodes, not tombstoned (a streaming apply
+/// asserts tombstone-free levels); the caller must follow with a prune. The
+/// parent level is marked dirty for the next contract pass. Levels are
+/// scanned children before parents, so a merge at `L` that makes two nodes of
+/// `parent(L)` content-equal is caught later in the same pass.
 ///
 /// # Soundness
 ///
@@ -114,7 +70,7 @@ pub(crate) fn content_twin_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
 /// `2·c(x)·c(B₁)`, two assignment families sharing a value. A content twin in
 /// Boolean mode is an upstream determinism violation, not work for this pass.
 ///
-/// `filter`: with `Some(set)`, a level `P` is scanned only when `P` or its
+/// `filter`: with `Some(set)`, a level `L` is scanned only when `L` or its
 /// marginal child is in `set` (the slot prune reports value merges under the
 /// marginal level's index while the twins they mint appear at the parent).
 /// With `None`, every explicit level is scanned. A filtered-out level can only
@@ -145,20 +101,19 @@ pub(crate) fn merge_content_equal_nodes(
     // takes effect within this same pass.
     let mut live = filter;
 
-    // Per-level scratch, hoisted out of the walk: the pass visits every
-    // explicit level, so allocating these collections per level would dominate
-    // it on a deep vtree. The pool keeps the capacity across passes too.
-    let mut scratch = eng.reduce_scratch().content_twin.checkout(lim);
-    let ContentTwinScratch { node_fp, fp_counts, key_to_canonical, remap } = &mut *scratch;
+    // The contraction scratch: grouping by content is the contraction's
+    // grouping with a node's own pairs as its entries, and no contraction
+    // sweep runs while this pass does.
+    let mut scratch = eng.reduce_scratch().contract.checkout(lim);
 
-    for parent_v in order {
-        let parent_idx = parent_v.idx();
+    for level_v in order {
+        let level_idx = level_v.idx();
 
         // Worklist filter: skip this level if neither it nor a marginal child
         // was touched in the previous round (or earlier in this pass).
         if let Some(set) = live.as_ref() {
-            let (cl, cr) = tdd.vtree.children(parent_v);
-            let touched = set.contains(&parent_v.0)
+            let (cl, cr) = tdd.vtree.children(level_v);
+            let touched = set.contains(&level_v.0)
                 || (tdd.levels[cl.idx()].is_marginal() && set.contains(&cl.0))
                 || (tdd.levels[cr.idx()].is_marginal() && set.contains(&cr.0));
             if !touched {
@@ -166,155 +121,61 @@ pub(crate) fn merge_content_equal_nodes(
             }
         }
 
-        let width = tdd.levels[parent_idx].slot_count();
+        let level = &tdd.levels[level_idx];
+        let width = level.slot_count();
         if width <= 1 {
             continue;
         }
-
-        if !fingerprint_level_nodes(lim, &tdd.levels[parent_idx], width, node_fp, fp_counts)? {
-            // No two nodes share a fingerprint ⇒ no content-equal pair can exist.
+        if !group_twins_by_entries(eng, &ContentEntries(level), width, &mut scratch)? {
             continue;
         }
-        if !group_content_equal(
-            lim, &tdd.levels[parent_idx], width, node_fp, fp_counts,
-            key_to_canonical, remap,
-        )? {
-            continue;
-        }
-        dups_merged += remap.iter().enumerate().filter(|&(n, &r)| r != n as u32).count();
-        redirect_parent_refs(tdd, parent_v, remap, &mut live);
+        dups_merged += remap_groups_onto_first(lim, &mut scratch, width)?;
+        redirect_parent_refs(tdd, level_v, &scratch.remap.merge_target[..width], &mut live);
     }
 
     Ok(dups_merged)
 }
 
-/// Fingerprint every non-leaf node at a level with an order-independent u64 over
-/// its pair multiset. Returns whether two nodes share a fingerprint — `false`
-/// means no content-equal pair can exist, so the exact key pass can be skipped.
-fn fingerprint_level_nodes(
+/// Fill `scratch.remap.merge_target[..width]` with each node's canonical
+/// index: itself, or the lowest index of its group. Returns how many nodes
+/// map onto another.
+fn remap_groups_onto_first(
     lim: &Limits,
-    level: &crate::diagram::TddLevel,
+    scratch: &mut ContractScratch,
     width: usize,
-    node_fp: &mut Vec<u64>,
-    fp_counts: &mut rustc_hash::FxHashMap<u64, u32>,
-) -> Result<bool, OperationError> {
-    // Equal pair multisets give equal fingerprints (necessary, not
-    // sufficient), so a node with a unique fingerprint has no content-equal
-    // twin and skips the exact sorted-key pass. A pair is mixed into a u64
-    // through the shared finalizer `fingerprint::mix64`; the node fingerprint
-    // is the wrapping sum over its pairs, xor the mixed pair count, so it is
-    // order-independent. The golden-ratio increment keeps this distribution
-    // distinct from `context_hash`'s.
-    fn pair_fingerprint(l: u32, r: u32) -> u64 {
-        let x = ((l as u64) << 32) | (r as u64);
-        super::fingerprint::mix64(x.wrapping_add(0x9E3779B97F4A7C15))
+) -> Result<usize, OperationError> {
+    let ContractScratch { remap, group_starts, flat_groups, .. } = scratch;
+    let target = &mut remap.merge_target;
+    lim.try_resize(target, width, 0u32)?;
+    for (i, slot) in target.iter_mut().enumerate().take(width) {
+        *slot = i as u32;
     }
-
-    node_fp.clear();
-    lim.reserve(node_fp, width)?;
-    node_fp.resize(width, 0u64);
-    fp_counts.clear();
-    let mut any_fp_collision = false;
-    {
-        // Indexes `level.nodes`, the level's pair arena and `node_fp` at the same position.
-        #[expect(clippy::needless_range_loop)]
-        for n in 0..width {
-            if !level.nodes[n].is_internal() {
-                continue;
-            }
-            let pairs_slice = level.pairs_of_idx(n);
-            let len = pairs_slice.len() as u64;
-            let fp_sum: u64 = pairs_slice
-                .iter()
-                .fold(0u64, |acc, p| acc.wrapping_add(pair_fingerprint(p.left.0, p.right.0)));
-            let fp = fp_sum ^ len.wrapping_mul(0x9E3779B97F4A7C15);
-            node_fp[n] = fp;
-            let c = fp_counts.entry(fp).or_insert(0);
-            *c += 1;
-            any_fp_collision |= *c > 1;
+    let mut dups = 0usize;
+    for g in 0..group_starts.len() {
+        let start = group_starts[g] as usize;
+        let end = group_starts.get(g + 1).map_or(flat_groups.len(), |&e| e as usize);
+        let first = flat_groups[start];
+        for &member in &flat_groups[start + 1..end] {
+            target[member as usize] = first;
         }
+        dups += end - start - 1;
     }
-    // The caller skips the exact sorted-key pass (and its allocations) outright
-    // on the overwhelmingly common clean level.
-    Ok(any_fp_collision)
+    Ok(dups)
 }
 
-/// Group the fingerprint-colliding nodes by their sorted pair multiset, filling
-/// `remap[n]` with each node's canonical index. Returns whether any duplicate
-/// was found.
-fn group_content_equal(
-    lim: &Limits,
-    level: &crate::diagram::TddLevel,
-    width: usize,
-    node_fp: &[u64],
-    fp_counts: &rustc_hash::FxHashMap<u64, u32>,
-    key_to_canonical: &mut rustc_hash::FxHashMap<Vec<(u32, u32)>, u32>,
-    remap: &mut Vec<u32>,
-) -> Result<bool, OperationError> {
-    // Group non-leaf (non-tombstone) nodes at this level by their sorted pair
-    // multiset. Two nodes with the same sorted key compute the same function
-    // (and, in a marginalized diagram, carry the same count) and must be merged.
-    key_to_canonical.clear();
-    // remap[n] = canonical node index for node n (identity if n is canonical),
-    // u32-wide because the entries are written straight into `NodeIdx` refs.
-    remap.clear();
-    lim.reserve(remap, width)?;
-    debug_assert!(
-        width <= u32::MAX as usize,
-        "level width {width} exceeds the u32 node-index range",
-    );
-    remap.extend(0..width as u32);
-    let mut any_dup = false;
-
-    {
-        for n in 0..width {
-            if !level.nodes[n].is_internal() {
-                // `is_leaf()` is true for real leaves as well as tombstones; skip both.
-                continue;
-            }
-            // Fast-path: unique fingerprint → no twin possible, skip alloc+sort.
-            if fp_counts.get(&node_fp[n]).copied().unwrap_or(0) <= 1 {
-                continue;
-            }
-            // Build a sorted pair-multiset key for content comparison. The
-            // key is owned by the map on a first occurrence, so it cannot be
-            // a reused buffer — only fingerprint-colliding nodes reach here,
-            // so the allocation is paid on candidates, not on every node.
-            let pairs_slice = level.pairs_of_idx(n);
-            let mut key: Vec<(u32, u32)> = Vec::new();
-            key.try_reserve(pairs_slice.len()).map_err(|_| OperationError::OverBudget)?;
-            key.extend(pairs_slice.iter().map(|p| (p.left.0, p.right.0)));
-            key.sort_unstable();
-
-            use std::collections::hash_map::Entry;
-            match key_to_canonical.entry(key) {
-                Entry::Vacant(e) => {
-                    e.insert(n as u32); // n is the first (canonical) occurrence
-                }
-                Entry::Occupied(e) => {
-                    remap[n] = *e.get(); // n is a duplicate; map to the canonical
-                    any_dup = true;
-                }
-            }
-        }
-    }
-    Ok(any_dup)
-}
-
-/// Point the output ref and the grandparent's refs at each duplicate's canonical node,
-/// then mark the grandparent for the follow-up contract and content scans.
+/// Point the output ref and the parent's refs at each duplicate's canonical
+/// node, then mark the parent for the follow-up contract and content scans.
 fn redirect_parent_refs(
     tdd: &mut Tdd,
-    parent_v: VtreeIdx,
+    level_v: VtreeIdx,
     remap: &[u32],
     live: &mut Option<rustc_hash::FxHashSet<u32>>,
 ) {
-    let Some(grandparent) = tdd.merge_level_nodes(parent_v, remap) else { return };
+    let Some(parent) = tdd.merge_level_nodes(level_v, remap) else { return };
     // In-pass cascade: the rewrite may have made two of the parent's nodes
     // content-equal. The parent is later in `order`, so admitting it to the
     // live worklist means the current pass catches the new twins.
     if let Some(set) = live.as_mut() {
-        set.insert(grandparent.0);
+        set.insert(parent.0);
     }
 }
-

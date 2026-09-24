@@ -47,8 +47,7 @@ fn contract_child(
     if tdd.levels[t1.idx()].is_marginal() {
         return Ok(false);
     }
-    let width = tdd.levels[t1.idx()].slot_count();
-    if width <= 1 {
+    if tdd.levels[t1.idx()].slot_count() <= 1 {
         return Ok(false);
     }
     if !tdd.levels[parent.idx()].has_multi_pair() {
@@ -57,7 +56,7 @@ fn contract_child(
     let (parent_left, _parent_right) = tdd.vtree.children(parent);
     let t1_side = if parent_left == t1 { ChildSide::Left } else { ChildSide::Right };
 
-    let found = find_twin_groups(eng, tdd, parent, t1_side, width, scratch)?;
+    let found = find_twin_groups(eng, tdd, t1, parent, t1_side, scratch)?;
     if !found {
         return Ok(false);
     }

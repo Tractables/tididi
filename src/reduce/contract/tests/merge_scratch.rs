@@ -144,29 +144,6 @@ fn merge_buffers_clear_retains_allocations() {
     assert!(b.group_plans.is_empty(), "group_plans must be cleared");
 }
 
-#[test]
-fn content_twin_scratch_is_cleared_on_take() {
-    let eng = &crate::Engine::new();
-    use super::content_twin::ContentTwinScratch;
-
-    let mut fp_counts: rustc_hash::FxHashMap<u64, u32> = Default::default();
-    fp_counts.insert(11, 2);
-    let mut key_to_canonical: rustc_hash::FxHashMap<Vec<(u32, u32)>, u32> = Default::default();
-    key_to_canonical.insert(vec![(1, 2)], 3);
-    eng.reduce_scratch().content_twin.put(eng.limits(), ContentTwinScratch {
-        node_fp: vec![11, 11],
-        fp_counts,
-        key_to_canonical,
-        remap: vec![0, 0],
-    });
-
-    let s = eng.reduce_scratch().content_twin.checkout(eng.limits());
-    assert!(s.node_fp.is_empty(), "node_fp must be cleared on take");
-    assert!(s.fp_counts.is_empty(), "fp_counts must be cleared on take");
-    assert!(s.key_to_canonical.is_empty(), "key_to_canonical must be cleared on take");
-    assert!(s.remap.is_empty(), "remap must be cleared on take");
-}
-
 // ── Budget: the contract-merge scratch buffers are charged ─────────────────
 
 /// `contract_twins` grows three level-width scratch buffers (`merge_target`,

@@ -26,10 +26,8 @@ fn prefetch_slot(p: *const TwinSlot, slot: usize) {
 /// Iterate parent pairs and yield `(parent_i, target, sibling)` to `f`,
 /// where `target` is the child index at level `t1` (left or right of each pair
 /// depending on `t1_side`) and `sibling` is the other child.
-///
-/// Shared by the scatter passes of `find_twin_groups`.
 #[inline]
-pub(super) fn for_each_target_sibling(
+fn for_each_target_sibling(
     parent_level: &TddLevel,
     t1_side: ChildSide,
     target: ChildDecoder,
@@ -74,43 +72,92 @@ pub(super) fn mix64(mut x: u64) -> u64 {
     x ^ (x >> 31)
 }
 
-/// Hash a (parent_idx, sibling_idx) context pair to a u64 fingerprint.
-///
-/// The wrapping sum of these hashes over a multiset of contexts is a cheap
-/// pre-screen for twin detection (~1/2^64 false-positive probability) before
-/// doing exact signature comparison. Using wrapping_add rather than exclusive-or means
-/// duplicate contexts contribute 2h rather than cancelling; removal of a
-/// contribution uses wrapping_sub. Order-independence holds because addition
-/// commutes.
-pub(super) fn context_hash(parent_i: u32, sibling_j: u32) -> u64 {
-    // Prelude: pack two 32-bit values; no increment.
-    mix64((parent_i as u64) << 32 | sibling_j as u64)
-}
-
 mod groups;
 
 #[cfg(test)]
 mod tests;
 
-/// Find nodes with identical parent-context multisets at the explicit child level.
-///
-/// First compute additive fingerprints and discard nodes with unique fingerprints.
-/// Only collision candidates receive full sorted signatures; equal signatures
-/// form a twin group. Marginal children are handled by pair fusion instead.
-/// Groups are stored in `scratch.flat_groups`, indexed by `scratch.group_starts`.
-/// Returns whether any group contains at least two nodes.
+/// The entries whose multiset per node decides which nodes are twins. The
+/// three scatters of [`group_twins_by_entries`] walk it, and read the same
+/// `(node, entry)` sequence each time.
+pub(super) trait TwinEntries {
+    /// Call `f(node, entry)` once per entry of every node.
+    fn for_each(&self, f: impl FnMut(u32, u64));
+}
+
+/// Two 32-bit values packed into one entry, `hi` in the high half.
+#[inline]
+fn pack(hi: u32, lo: u32) -> u64 {
+    ((hi as u64) << 32) | lo as u64
+}
+
+/// Context twins: a node's entries are the `(parent node, sibling)` contexts
+/// the parent level's pairs put it in, packed parent-high.
+struct ContextEntries<'a> {
+    parent_level: &'a TddLevel,
+    t1_side: ChildSide,
+    t1_view: ChildDecoder,
+}
+
+impl TwinEntries for ContextEntries<'_> {
+    fn for_each(&self, mut f: impl FnMut(u32, u64)) {
+        for_each_target_sibling(self.parent_level, self.t1_side, self.t1_view, |pi, target, sibling| {
+            f(target, pack(pi, sibling));
+        });
+    }
+}
+
+/// Content twins: a node's entries are its own pairs, packed left-high.
+pub(super) struct ContentEntries<'a>(pub(super) &'a TddLevel);
+
+impl TwinEntries for ContentEntries<'_> {
+    fn for_each(&self, mut f: impl FnMut(u32, u64)) {
+        for (i, node) in self.0.nodes.iter().enumerate() {
+            for pair in self.0.pairs_of(node) {
+                f(i as u32, pack(pair.left.0, pair.right.0));
+            }
+        }
+    }
+}
+
+/// Find nodes with identical parent-context multisets at the explicit child
+/// level `t1` of `parent`. Marginal children are handled by pair fusion
+/// instead. See [`group_twins_by_entries`] for what is left in `scratch`.
 pub(super) fn find_twin_groups(
     eng: &Engine,
     tdd: &Tdd,
-    t: VtreeIdx,
+    t1: VtreeIdx,
+    parent: VtreeIdx,
     t1_side: ChildSide,
-    child_width: usize,
+    scratch: &mut ContractScratch,
+) -> Result<bool, OperationError> {
+    let level = &tdd.levels[t1.idx()];
+    let entries = ContextEntries {
+        parent_level: &tdd.levels[parent.idx()],
+        t1_side,
+        t1_view: level.child_decoder(),
+    };
+    group_twins_by_entries(eng, &entries, level.slot_count(), scratch)
+}
+
+/// Group the `width` nodes of `level` by the multiset of their `entries`.
+///
+/// First compute additive fingerprints and discard nodes with unique
+/// fingerprints. Only collision candidates receive full sorted signatures;
+/// equal signatures form a group. Groups are stored in `scratch.flat_groups`,
+/// indexed by `scratch.group_starts`, each group's members in ascending index
+/// order so its first member is the lowest index. Returns whether any group
+/// contains at least two nodes.
+pub(super) fn group_twins_by_entries(
+    eng: &Engine,
+    entries: &impl TwinEntries,
+    width: usize,
     scratch: &mut ContractScratch,
 ) -> Result<bool, OperationError> {
     let lim = eng.limits();
     scratch.flat_groups.clear();
     scratch.group_starts.clear();
-    if child_width == 0 {
+    if width == 0 {
         return Ok(false);
     }
     // Node indices at this level are written u32-wide below (`cursors`,
@@ -119,54 +166,38 @@ pub(super) fn find_twin_groups(
     // ref into a level is a `NodeIdx(u32)`, so a level wider than 2^32
     // slots could not be referenced at all.
     debug_assert!(
-        child_width <= u32::MAX as usize,
-        "level width {child_width} exceeds the u32 node-index range",
+        width <= u32::MAX as usize,
+        "level width {width} exceeds the u32 node-index range",
     );
-
-    let parent_level = &tdd.levels[t.idx()];
-    // How to read the parent refs that point at the contracted child (t1).
-    let (left_c, right_c) = tdd.vtree.children(t);
-    let t1_node = if t1_side == ChildSide::Left { left_c } else { right_c };
-    let t1_view = tdd.levels[t1_node.idx()].child_decoder();
 
     // ── Pre-test: fingerprint-only scatter ────────────────────────────────────
     //
     // The common case is "no twins at this level", so only the additive
     // fingerprint is written here (no counts), touching half the cache lines
-    // per parent pair. Accumulation is `wrapping_add`, which commutes, so the
-    // result is order-independent; duplicate (parent, sibling) pairs contribute
-    // 2h rather than cancelling as exclusive-or would, so even-multiplicity
-    // duplicates (legal at marginal boundary levels) cannot collapse a
-    // fingerprint to 0. Counts are computed in a second pass only after a
-    // collision.
-    lim.try_resize(&mut scratch.fingerprints, child_width, 0u64)?;
-    scratch.fingerprints[..child_width].fill(0);
-
-    for_each_target_sibling(parent_level, t1_side, t1_view, |pi, target, sibling| {
-        scratch.fingerprints[target as usize] =
-            scratch.fingerprints[target as usize].wrapping_add(context_hash(pi, sibling));
+    // per entry. Accumulation is `wrapping_add`, which commutes, so the
+    // result is order-independent; duplicate entries contribute 2h rather
+    // than cancelling as exclusive-or would, so even-multiplicity duplicates
+    // (legal at marginal boundary levels) cannot collapse a fingerprint to 0.
+    // Counts are computed in a second pass only after a collision.
+    lim.try_resize(&mut scratch.fingerprints, width, 0u64)?;
+    scratch.fingerprints[..width].fill(0);
+    entries.for_each(|node, entry| {
+        let fp = &mut scratch.fingerprints[node as usize];
+        *fp = fp.wrapping_add(mix64(entry));
     });
 
     // ── Fingerprint collision check + candidate marking ───────────────────────
     //
-    // Open-addressing table keyed by fingerprint. Every node that shares its
-    // fingerprint with an earlier one is marked a twin candidate; no collision
-    // means no twins, the common case. Marking is folded into this pass and
+    // Every node that shares its fingerprint with an earlier one is marked a
+    // twin candidate; no collision means no twins, the common case. Marking
     // scans the full width (no early exit on the first collision) so that
     // `build_twin_groups_after_collision` can skip the unique-fingerprint
     // nodes in its scatters.
-    if !mark_candidates(eng, scratch, child_width)? {
+    if !mark_candidates(eng, scratch, width)? {
         return Ok(false);
     }
 
-    build_twin_groups_after_collision(
-        eng,
-        parent_level,
-        t1_side,
-        t1_view,
-        child_width,
-        scratch,
-    )
+    build_twin_groups_after_collision(eng, entries, width, scratch)
 }
 
 /// Size the open-addressing twin table for a pass that inserts at most

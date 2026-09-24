@@ -14,7 +14,6 @@ pub(crate) use driver::restore_marginal_invariants;
 
 use crate::limits::pool::Pool;
 
-use self::contract::content_twin::ContentTwinScratch;
 use self::contract::scratch::ContractScratch;
 use crate::value::slots::RefSlotScratch;
 
@@ -35,10 +34,8 @@ pub(crate) struct ReduceScratch {
     slot_prune_slots: Pool<RefSlotScratch>,
     /// `prune_value_slots`'s slot remap array.
     slot_prune_remap: Pool<Vec<u32>>,
-    /// Twin contraction's working set.
+    /// Twin contraction's working set, shared with the content-twin merge.
     contract: Pool<ContractScratch>,
-    /// Content-twin canonicalization's working set.
-    content_twin: Pool<ContentTwinScratch>,
 }
 
 impl ReduceScratch {
@@ -51,7 +48,6 @@ impl ReduceScratch {
         self.slot_prune_slots.drain(lim);
         self.slot_prune_remap.drain(lim);
         self.contract.drain(lim);
-        self.content_twin.drain(lim);
     }
 }
 

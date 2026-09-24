@@ -2,13 +2,11 @@
 
 use crate::Engine;
 use crate::limits::OperationError;
-use crate::diagram::ChildSide;
-use crate::diagram::{ChildDecoder, TddLevel};
 
 use super::super::scratch::ContractScratch;
-use super::{for_each_target_sibling, probe_fingerprints};
+use super::{probe_fingerprints, TwinEntries};
 
-/// Build twin groups for child level `t1` (parent `t`) once
+/// Build twin groups for the `child_width` nodes of one level once
 /// `scratch.fingerprints[..child_width]` has a known collision and
 /// `scratch.is_candidate` is marked (`mark_candidates`): counts scatter,
 /// offset prefix sum, signature-entry scatter, grouping by exact signature
@@ -17,9 +15,7 @@ use super::{for_each_target_sibling, probe_fingerprints};
 /// group exists.
 pub(super) fn build_twin_groups_after_collision(
     eng: &Engine,
-    parent_level: &TddLevel,
-    t1_side: ChildSide,
-    t1_view: ChildDecoder,
+    entries: &impl TwinEntries,
     child_width: usize,
     scratch: &mut ContractScratch,
 ) -> Result<bool, OperationError> {
@@ -28,10 +24,7 @@ pub(super) fn build_twin_groups_after_collision(
     // skipping it keeps count 0, an empty signature range, and a hash slot of
     // its own. A false-positive fingerprint match is separated by the exact
     // signature compare in Pass 1.
-    materialize_candidate_signatures(
-        eng,
-        parent_level, t1_side, t1_view, child_width, scratch,
-    )?;
+    materialize_candidate_signatures(eng, entries, child_width, scratch)?;
 
     // ── Group nodes by signature ──────────────────────────────────────────────
     if child_width == 2 {
@@ -44,20 +37,17 @@ pub(super) fn build_twin_groups_after_collision(
 /// arena and canonicalize the slices that arrived out of order.
 fn materialize_candidate_signatures(
     eng: &Engine,
-    parent_level: &TddLevel,
-    t1_side: ChildSide,
-    t1_view: ChildDecoder,
+    entries: &impl TwinEntries,
     child_width: usize,
     scratch: &mut ContractScratch,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
-    let candidate_mass =
-        count_candidate_entries(eng, parent_level, t1_side, t1_view, child_width, scratch)?;
+    let candidate_mass = count_candidate_entries(eng, entries, child_width, scratch)?;
 
     // ── Pass 2: fill signature entries (scatter-write) ─────────────────────────
     //
-    // The arena holds exactly `candidate_mass` rows, the parent-pair fan-out of
-    // the candidate nodes alone. It is the largest contract allocation, so
+    // The arena holds exactly `candidate_mass` rows, the entries of the
+    // candidate nodes alone. It is the largest contract allocation, so
     // `try_resize` turns a refused allocation into `Err(OverBudget)`.
     lim.try_resize(&mut scratch.entries, candidate_mass, 0u64)?;
     lim.try_resize(&mut scratch.cursors, child_width, 0u32)?;
@@ -66,12 +56,11 @@ fn materialize_candidate_signatures(
     scratch.cursors[..child_width].copy_from_slice(&sig_offsets[..child_width]);
     scratch.slice_unsorted[..child_width].fill(false);
 
-    for_each_target_sibling(parent_level, t1_side, t1_view, |pi, target, sibling| {
-        let idx = target as usize;
+    entries.for_each(|node, e| {
+        let idx = node as usize;
         if scratch.is_candidate[idx] {
             let c = scratch.cursors[idx];
             let ci = c as usize;
-            let e = ((pi as u64) << 32) | sibling as u64;
             // Fused sortedness detection (see canonicalization below): flag the
             // slice if this entry compares below its predecessor. Branchless —
             // `prev` reads index c-1 saturated to 0; that value is arbitrary
@@ -91,7 +80,7 @@ fn materialize_candidate_signatures(
 }
 
 
-/// Count each twin-candidate node's context entries and turn the counts into a
+/// Count each twin-candidate node's entries and turn the counts into a
 /// prefix-sum offset table in `scratch.counts`, returning the total entry count.
 ///
 /// Only reached in the rare twin-present case. `counts` is sized to
@@ -99,9 +88,7 @@ fn materialize_candidate_signatures(
 /// end sentinel without a fallible push. Non-candidate nodes keep count 0.
 fn count_candidate_entries(
     eng: &Engine,
-    parent_level: &TddLevel,
-    t1_side: ChildSide,
-    t1_view: ChildDecoder,
+    entries: &impl TwinEntries,
     child_width: usize,
     scratch: &mut ContractScratch,
 ) -> Result<usize, OperationError> {
@@ -111,8 +98,8 @@ fn count_candidate_entries(
     // Candidate mass bounds every value the u32 `counts` / `cursors` arrays go
     // on to hold (each count, offset and write cursor); see the check below.
     let mut candidate_mass = 0usize;
-    for_each_target_sibling(parent_level, t1_side, t1_view, |_, target, _| {
-        let idx = target as usize;
+    entries.for_each(|node, _| {
+        let idx = node as usize;
         if scratch.is_candidate[idx] {
             scratch.counts[idx] += 1;
             candidate_mass += 1;
@@ -120,7 +107,7 @@ fn count_candidate_entries(
     });
     // ── u32 offset boundary (checked, not assumed) ─────────────────────────────
     //
-    // A level's parent-pair fan-out has no structural u32 cap
+    // A level's entry count has no structural u32 cap
     // (`PairRange::start` and `len` are u64), so refuse the level through
     // `IndexOverflow` rather than truncate an offset. Checked before the prefix
     // sum, so no offset is stored; the counts may have wrapped, but nothing
@@ -149,12 +136,13 @@ fn count_candidate_entries(
 
 /// Sort the signature slices the scatter flagged as out of order.
 ///
-/// Two nodes are twins iff their context sets are equal, and pair lists are
+/// Two nodes are twins iff their entry multisets are equal, and pair lists are
 /// unordered, so slices are compared canonicalized; a missed sort could only
-/// give a spurious mismatch (a missed twin), never a wrong merge. The scatter
-/// walks parent nodes in ascending index order and entries pack the parent
-/// index in the high 32 bits, so a slice arrives sorted except for inversions
-/// within one parent node's pair block; only the flagged slices are sorted.
+/// give a spurious mismatch (a missed twin), never a wrong merge. A context
+/// scatter walks parent nodes in ascending index order and packs the parent
+/// index in the high 32 bits, so its slices arrive sorted except for
+/// inversions within one parent node's pair block; a content slice arrives in
+/// pair-list order. Only the flagged slices are sorted.
 fn canonicalize_signature_slices(child_width: usize, scratch: &mut ContractScratch) {
     let sig_offsets = &scratch.counts;
     for i in 0..child_width {
