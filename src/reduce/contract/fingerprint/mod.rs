@@ -170,13 +170,12 @@ pub(super) fn find_twin_groups(
 }
 
 /// Size the open-addressing twin table for a pass that inserts at most
-/// `max_occupancy` entries. The one sizing rule for `scratch.twin_hash_table`:
-/// Both probe loops (`mark_candidates` and Pass 1 of
-/// `build_twin_groups_after_collision`) call it.
+/// `max_occupancy` entries: the one sizing rule for `scratch.twin_hash_table`,
+/// read by `probe_fingerprints`.
 ///
 /// # Soundness
 ///
-/// Both loops probe linearly and never delete, so a probe for a fingerprint
+/// The probe loop is linear and never deletes, so a probe for a fingerprint
 /// meets every equal-fingerprint entry before an empty slot whatever the size.
 /// The size must exceed `max_occupancy`, or a probe for an absent fingerprint
 /// wraps forever; the `div_ceil` term is at least 1, so it does.
@@ -192,8 +191,7 @@ fn twin_table_size(max_occupancy: usize) -> usize {
 /// Mark twin candidates among `scratch.fingerprints[..width]`: every node whose
 /// fingerprint is shared with ≥1 other node is flagged in
 /// `scratch.is_candidate`. Returns whether any node was flagged; `false` means
-/// all fingerprints are distinct, hence no twins. The fingerprint is stored in
-/// the slot beside the occupant index, so each probe is one random load.
+/// all fingerprints are distinct, hence no twins.
 #[inline]
 fn mark_candidates(
     eng: &Engine,
@@ -201,52 +199,78 @@ fn mark_candidates(
     width: usize,
 ) -> Result<bool, OperationError> {
     let lim = eng.limits();
-    lim.try_resize(&mut scratch.is_candidate, width, false)?;
-    scratch.is_candidate[..width].fill(false);
-    // One insert at most per `0..width` iteration ⇒ occupancy ≤ width.
+    let ContractScratch { fingerprints, twin_hash_table, is_candidate, .. } = scratch;
+    lim.try_resize(is_candidate, width, false)?;
+    is_candidate[..width].fill(false);
+    let mut found = false;
+    probe_fingerprints(lim, twin_hash_table, &fingerprints[..width], |i, occupant| {
+        if let Some(occ) = occupant {
+            // Idempotent stores: re-flagging an already-flagged node is a
+            // redundant write, not a miscount, so the probe needs no guards.
+            is_candidate[i] = true;
+            is_candidate[occ] = true;
+            found = true;
+        }
+        true
+    })?;
+    Ok(found)
+}
+
+/// How many fingerprints ahead the probe loop prefetches.
+const PF_DIST: usize = 8;
+
+/// Insert `fingerprints` one by one into the open-addressing twin table `ht`,
+/// sized and cleared here for that occupancy, probing linearly from each
+/// fingerprint's home slot. For fingerprint `i` the probe calls
+/// `visit(i, Some(j))` at every occupant `j` with the same fingerprint, in
+/// probe order, and stops at the first call that returns `true`; at an empty
+/// slot it inserts `i` and calls `visit(i, None)`, whose result is ignored.
+/// The table stores the fingerprint beside the occupant index, so each probe
+/// is one random load. Both twin-grouping passes run on this loop.
+///
+/// # Errors
+///
+/// `Err(OperationError::OverBudget)` if the table cannot be resized.
+#[inline]
+fn probe_fingerprints(
+    lim: &crate::limits::Limits,
+    ht: &mut Vec<TwinSlot>,
+    fingerprints: &[u64],
+    mut visit: impl FnMut(usize, Option<usize>) -> bool,
+) -> Result<(), OperationError> {
+    let width = fingerprints.len();
+    // One insert at most per fingerprint ⇒ occupancy ≤ width.
     let table_size = twin_table_size(width);
     let mask = table_size - 1;
-    let ht = &mut scratch.twin_hash_table;
     lim.try_resize(ht, table_size, EMPTY_SLOT)?;
     ht[..table_size].fill(EMPTY_SLOT);
-    let mut found = false;
-    const PF_DIST: usize = 8;
     for i in 0..width {
-        // Prefetch the twin-table slot that iteration `i + PF_DIST` will first probe.
-        // `fingerprints[]` is sequential so the slot address is known ahead of time;
-        // the ht probe is a random access into a table that typically misses L2.
-        //
-        // The pointer is re-derived from `ht` each iteration rather than taken
-        // once before the loop: the probe below writes through `ht`, which
-        // invalidates any raw pointer derived from it earlier, so a hoisted
-        // one would be used after it went stale. `as_ptr` is a field read, and
-        // the prefetch is a hint, so nothing here is a real load.
+        // Prefetch the slot that iteration `i + PF_DIST` will first probe:
+        // `fingerprints` is read sequentially, so that slot's address is known
+        // ahead of time, and the probe is a random access into a table that
+        // typically misses L2. The pointer is re-derived from `ht` each
+        // iteration because the insert below writes through `ht`; `as_ptr`
+        // is a field read and the prefetch is a hint, so nothing here is a
+        // real load.
         if i + PF_DIST < width {
-            let a = i + PF_DIST;
-            prefetch_slot(ht.as_ptr(), (scratch.fingerprints[a] as usize) & mask);
+            prefetch_slot(ht.as_ptr(), (fingerprints[i + PF_DIST] as usize) & mask);
         }
-        let fp = scratch.fingerprints[i];
+        let fp = fingerprints[i];
         let mut slot = (fp as usize) & mask;
         loop {
             let s = ht[slot];
             if s.idx == u64::MAX {
                 ht[slot] = TwinSlot { fp, idx: i as u64 };
+                visit(i, None);
                 break;
             }
-            if s.fp == fp {
-                // fingerprint match: both nodes are twin candidates. Idempotent
-                // stores — re-flagging an already-flagged node is a redundant
-                // write, not a miscount, so the probe loop needs no guards.
-                let occ = s.idx as usize;
-                scratch.is_candidate[i] = true;
-                scratch.is_candidate[occ] = true;
-                found = true;
+            if s.fp == fp && visit(i, Some(s.idx as usize)) {
                 break;
             }
             slot = (slot + 1) & mask;
         }
     }
-    Ok(found)
+    Ok(())
 }
 
 use groups::build_twin_groups_after_collision;

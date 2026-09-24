@@ -5,8 +5,8 @@ use crate::limits::OperationError;
 use crate::diagram::ChildSide;
 use crate::diagram::{ChildDecoder, TddLevel};
 
-use super::super::scratch::{ContractScratch, EMPTY_SLOT, TwinSlot};
-use super::{for_each_target_sibling, prefetch_slot, twin_table_size};
+use super::super::scratch::ContractScratch;
+use super::{for_each_target_sibling, probe_fingerprints};
 
 /// Build twin groups for child level `t1` (parent `t`) once
 /// `scratch.fingerprints[..child_width]` has a known collision and
@@ -198,7 +198,6 @@ fn group_by_hashed_signature(
     scratch: &mut ContractScratch,
 ) -> Result<bool, OperationError> {
     let lim = eng.limits();
-    let sig_offsets = &scratch.counts;
     // General case: open-addressing hash table keyed by pre-computed additive
     // fingerprints. O(n) expected time — no sorting needed. Within each
     // bucket we verify actual signature equality (guards against hash collisions).
@@ -206,45 +205,24 @@ fn group_by_hashed_signature(
     // Two passes: (1) map each node to its representative via hash table,
     // (2) build contiguous groups via counting sort.
     {
-        // One insert at most per `0..child_width` iteration ⇒ occupancy ≤ child_width.
-        let table_size = twin_table_size(child_width);
-        let mask = table_size - 1;
-        let ht = &mut scratch.twin_hash_table;
-        lim.try_resize(ht, table_size, EMPTY_SLOT)?;
-        ht[..table_size].fill(EMPTY_SLOT);
-
         // Pass 1: map each node to its representative via hash table.
         // cursors[i] = representative of node i (i itself if first with this signature).
-        const PF_DIST: usize = 8;
-        let ht_ptr = ht.as_ptr();
-        for i in 0..child_width {
-            // Prefetch the twin-table slot that iteration `i + PF_DIST` will first probe.
-            // `fingerprints[]` is sequential so the slot address is known ahead of time;
-            // the ht probe is a random access into a table that typically misses L2.
-            if i + PF_DIST < child_width {
-                let a = i + PF_DIST;
-                prefetch_slot(ht_ptr, (scratch.fingerprints[a] as usize) & mask);
-            }
-            let fp = scratch.fingerprints[i];
-            let mut slot = (fp as usize) & mask;
-            loop {
-                let s = ht[slot];
-                if s.idx == u64::MAX {
-                    ht[slot] = TwinSlot { fp, idx: i as u64 };
-                    scratch.cursors[i] = i as u32;
-                    break;
+        let ContractScratch { fingerprints, twin_hash_table, entries, counts, cursors, .. } = &mut *scratch;
+        let sig_offsets: &[u32] = counts;
+        let signature = |j: usize| &entries[sig_offsets[j] as usize..sig_offsets[j + 1] as usize];
+        probe_fingerprints(lim, twin_hash_table, &fingerprints[..child_width], |i, occupant| {
+            match occupant {
+                Some(j) if signature(i) == signature(j) => {
+                    cursors[i] = j as u32;
+                    true
                 }
-                let j = s.idx as usize;
-                if s.fp == fp
-                    && scratch.entries[sig_offsets[j] as usize..sig_offsets[j + 1] as usize]
-                        == scratch.entries[sig_offsets[i] as usize..sig_offsets[i + 1] as usize]
-                {
-                    scratch.cursors[i] = j as u32;
-                    break;
+                Some(_) => false,
+                None => {
+                    cursors[i] = i as u32;
+                    true
                 }
-                slot = (slot + 1) & mask;
             }
-        }
+        })?;
 
         // Pass 2: build contiguous groups via counting sort. O(n).
         // Repurpose fingerprints[] as per-rep member count (additive fingerprints
