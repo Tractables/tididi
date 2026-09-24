@@ -62,8 +62,8 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
     Ok(())
 }
 
-/// Output-sensitive scatter: the one scatter engine — the four-way join
-/// of f/g parent and child/sibling product lists. `SWAPPED = false` outer-loops
+/// The scatter: the four-way join of f/g parent and child/sibling product
+/// lists. `SWAPPED = false` outer-loops
 /// by right sibling s1; `SWAPPED = true` by left child a1 (every difference is a
 /// pure left↔right role rename; the `if SWAPPED` branches fold at compile time).
 /// A filtered per-outer g index makes the emit walk only alive `(p2, product)`
@@ -77,7 +77,7 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
 /// same as the general arm's (normal → by right, swapped → by left), so the
 /// front-end is shared.
 ///
-/// **General arm** (both sides non-leaf), per outer key:
+/// **General arm** (otherwise; its outer child may be a leaf), per outer key:
 ///   1. Build `filtered`: bucket the g parents under the outer's live g keys
 ///      by the join's inner-g child, attaching the live product — from
 ///      whichever g index is the cheaper to walk, and only for the children
@@ -521,8 +521,9 @@ fn emit_candidates<const SWAPPED: bool>(
     Ok(())
 }
 
-/// The general arm: both sides non-leaf. Per outer key, build the filtered g
-/// index, emit against it, then clear only the buckets this outer touched.
+/// The general arm: the inner side is not a leaf, the outer may be. Per outer
+/// key, build the filtered g index, emit against it, then clear only the
+/// buckets this outer touched.
 #[inline(never)]
 fn scatter_general_arm<const SWAPPED: bool>(
     eng: &Engine,

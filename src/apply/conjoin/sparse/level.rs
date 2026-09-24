@@ -10,8 +10,10 @@ use crate::diagram::Sides;
 ///
 /// With both children non-leaf the direction comes from
 /// `estimate_scatter_direction`, and its emit-step count decides between a
-/// bucket per f parent and the flat list (`flat_candidates_win`); with a
-/// leaf child the larger grid is iterated into buckets.
+/// bucket per f parent and the flat list (`flat_candidates_win`). With a
+/// leaf child the larger child grid is the outer side, into buckets; the leaf
+/// arm runs only when the leaf is the inner side, otherwise the general arm
+/// runs with the leaf as its outer child.
 fn scatter_level(
     eng: &Engine,
     ws: &mut SparseWorkspace,
@@ -50,9 +52,8 @@ fn scatter_level(
     }
     lim.try_resize(&mut ws.p2_map, shape.g.here, NO_PRODUCT)?;
 
-    // Output-sensitive join: the one scatter engine, for both leaf and general
-    // levels. The general arm carries no dead-probe inner loop; the leaf arm
-    // keeps the leaf fast-path shape.
+    // The general arm carries no dead-probe inner loop; the leaf arm keeps
+    // the leaf fast-path shape.
     if !swap_direction {
         scatter_outsens::<false>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, both_non_leaf, flat)?;
     } else {
