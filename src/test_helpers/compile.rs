@@ -6,11 +6,11 @@ use num_rational::BigRational;
 
 
 use crate::build::constant_one;
-use crate::diagram::{ChildPair, Literal, NodeIdx, Tdd, TddNodeId, WeightValue};
+use crate::diagram::{ChildPair, Literal, NodeIdx, Tdd, WeightValue};
 use crate::Engine;
 
 use super::r#gen::Lcg;
-use crate::vtree::{VarId, Vtree, VtreeNode};
+use crate::vtree::{VarId, Vtree};
 
 /// DIMACS-style literals (`±var`) to `Literal`s.
 pub fn literals(clause: &[i32]) -> Vec<Literal> {
@@ -27,6 +27,45 @@ pub fn clause(literals: &[(u32, bool)]) -> Vec<Literal> {
 /// fresh engine.
 pub fn compile_clauses(vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
     compile_clauses_on(&crate::Engine::new(), vtree, clauses)
+}
+
+/// Conjoin DIMACS-style clauses as a pairwise tree, neighbours first and then
+/// their results, and minimize once: a second route to the diagram
+/// [`compile_clauses`] reaches by a left fold.
+pub fn compile_clauses_pairwise(vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
+    let mut queue: Vec<Tdd> = clauses.iter().map(|c| Tdd::clause(vtree, c).unwrap()).collect();
+    while queue.len() > 1 {
+        let mut next = Vec::with_capacity(queue.len().div_ceil(2));
+        let mut it = queue.into_iter();
+        while let Some(a) = it.next() {
+            next.push(match it.next() {
+                Some(b) => crate::and(a, b).unwrap(),
+                None => a,
+            });
+        }
+        queue = next;
+    }
+    let mut tree = queue.pop().unwrap_or_else(|| Tdd::one(vtree));
+    tree.minimize().unwrap();
+    tree
+}
+
+/// The disjunction of one cube per true row of a truth table over `vars`:
+/// row `r` is in when `truth(r)`, and takes `vars[i]` positive when bit `i`
+/// of `r` is set. Every other variable stays free.
+pub fn or_of_cubes(vtree: &Arc<Vtree>, vars: &[VarId], truth: impl Fn(usize) -> bool) -> Tdd {
+    let mut f = Tdd::zero(vtree);
+    for row in 0..1usize << vars.len() {
+        if truth(row) {
+            let cube: Vec<Literal> = vars
+                .iter()
+                .enumerate()
+                .map(|(i, &var)| Literal::new(var, (row >> i) & 1 == 1))
+                .collect();
+            f = crate::or(f, Tdd::cube(vtree, cube).unwrap()).unwrap();
+        }
+    }
+    f
 }
 
 /// [`compile_clauses`] on a caller's engine, so a test that installed its own
@@ -134,30 +173,6 @@ pub fn rand_conj(
 ) -> Tdd {
     let vars: Vec<u32> = (1..=nvars).collect();
     rand_conj_over(vtree, &vars, nclauses_max, width_max, span, rng)
-}
-
-/// Re-home a diagram that depends only on variables under one child of its
-/// root so that it is rooted at that child — a genuinely low-rooted diagram.
-///
-/// Building and applying always root at the vtree root, so re-homing is the
-/// only way to reach the differing-root operand shape a tightly-rooted segment
-/// would take. The root level must hold a single identity pair, the `g ∧ ⊤`
-/// shape a single-region function compiles to.
-pub fn reroot_to_child(t: &Tdd, left_child: bool) -> Tdd {
-    let root = t.output.vtree;
-    let (lc, rc) = match *t.vtree.node(root) {
-        VtreeNode::Internal { left, right, .. } => (left, right),
-        VtreeNode::Leaf { .. } => panic!("reroot_to_child: the root must be internal"),
-    };
-    let pairs = t.levels[root.idx()].pairs_of_idx(t.output.local.idx());
-    assert_eq!(pairs.len(), 1, "reroot_to_child expects the single-region g ∧ ⊤ shape");
-    let p = pairs[0];
-    let (child, local) = if left_child { (lc, p.left) } else { (rc, p.right) };
-    Tdd::from_levels_unchecked(
-        t.vtree.clone(),
-        t.levels.clone().into_vec(),
-        TddNodeId { vtree: child, local: t.levels[child.idx()].child_decoder().node(local) },
-    )
 }
 
 /// Build an unlimited clause fixture independently of the operation's armed engine.

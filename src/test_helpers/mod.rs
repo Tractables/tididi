@@ -6,15 +6,16 @@
 //! it: the seeded `Lcg` / `rand_cnf` pair under a `CnfShape`, the
 //! enumeration oracles, the apply-free evaluator `eval`, canonicity by
 //! `assert_canonical`, structural equality by `assert_same_shape`, and
-//! `assert_restrict_ok`. The modules under `cfg(test)` need crate-private
-//! state:
+//! `assert_restrict_ok`; `compile` turns a formula or a truth table into a
+//! diagram and holds the small constructors (`pair`, `rat`, `exact_weight`)
+//! hand-built fixtures need. Two modules need crate-private state and are
+//! `cfg(test)`:
 //!
-//! - `compile` — turning a formula into a diagram, and the small constructors
-//!   (`pair`, `rat`, `exact_weight`) hand-built fixtures need.
 //! - `toy` — hand-encoded marginal diagrams too small to reach by compiling,
 //!   and `marginalize_subtree`.
 //! - `access` — the infallible `CountVecExt` fixture builders,
-//!   `stopping_engine`, and the whole-tree `rotate_left` / `rotate_right`.
+//!   `stopping_engine`, the whole-tree `rotate_left` / `rotate_right`, and
+//!   `reroot_to_child`.
 //!
 //! The canonicity oracle has a test of its own:
 //! `reduce::tests::canonicity::every_route_to_one_function_minimizes_to_the_same_diagram`
@@ -23,7 +24,7 @@
 pub mod check;
 #[cfg(test)]
 mod access;
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 mod compile;
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod r#gen;
@@ -34,8 +35,8 @@ mod toy;
 
 #[cfg(test)]
 pub(crate) use access::*;
-#[cfg(test)]
-pub(crate) use compile::*;
+#[cfg(any(test, feature = "testing"))]
+pub use compile::*;
 #[cfg(any(test, feature = "testing"))]
 pub use r#gen::*;
 #[cfg(any(test, feature = "testing"))]

@@ -1,9 +1,10 @@
 //! Canonicity: one Boolean function, one diagram.
 //!
 //! Two CNF encodings of the same function, compiled against the same vtree,
-//! must produce structurally identical diagrams — clause order, subsumed
-//! clauses, resolvents, duplicated clauses and transitive closures are all
-//! invisible to the result. Each case is asserted twice: once structurally,
+//! must produce structurally identical diagrams — subsumed clauses,
+//! resolvents, duplicated clauses, transitive closures and, on a formula wide
+//! enough to build real intermediate diagrams, clause order are all invisible
+//! to the result. Each case is asserted twice: once structurally,
 //! by comparing the two diagrams up to node numbering, and once against every
 //! invariant a finished diagram carries — canonicity among them, which hashes
 //! each node to a semiring signature and demands that no two nodes on one
@@ -23,29 +24,6 @@ use crate::test_helpers::{
     test_cases, vtree_shapes,
 };
 use crate::vtree::Vtree;
-
-/// Reordering the clauses cannot reach a different diagram.
-#[test]
-fn clause_order_does_not_reach_a_different_diagram() {
-    for (num_vars, clauses) in test_cases() {
-        if clauses.len() < 2 {
-            continue;
-        }
-        let mut reversed = clauses.clone();
-        reversed.reverse();
-        let mut interleaved: Vec<Vec<i32>> =
-            clauses.iter().step_by(2).cloned().collect();
-        interleaved.extend(clauses.iter().skip(1).step_by(2).cloned());
-
-        for (shape, vtree) in vtree_shapes(num_vars) {
-            let what = format!("{shape} vtree, {num_vars} vars, {} clauses", clauses.len());
-            let original = compile_clauses(&vtree, &clauses);
-            assert_same_shape(&original, &compile_clauses(&vtree, &reversed), &format!("{what}: reversed"));
-            assert_same_shape(&original, &compile_clauses(&vtree, &interleaved), &format!("{what}: interleaved"));
-            assert_canonical(&original);
-        }
-    }
-}
 
 /// A subsumed clause, a resolvent, a duplicate and a transitive closure all
 /// leave the function alone, so they all leave the diagram alone.

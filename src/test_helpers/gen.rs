@@ -44,6 +44,34 @@ pub fn rand_cnf(rng: &mut Lcg, num_vars: u32, shape: CnfShape) -> Vec<Vec<i32>> 
     out
 }
 
+/// Rows of `width` Booleans packed the way [`Tdd::from_models`](crate::Tdd::from_models)
+/// reads them: variable `i` of a row in bit `i`, `ceil(width / 64)` words per
+/// row and one word for an empty row.
+pub fn packed_rows(width: usize, rows: impl IntoIterator<Item = impl AsRef<[bool]>>) -> Vec<u64> {
+    let words = width.div_ceil(64).max(1);
+    let mut out = Vec::new();
+    for row in rows {
+        let row = row.as_ref();
+        assert_eq!(row.len(), width, "a row holds one Boolean per variable");
+        let start = out.len();
+        out.resize(start + words, 0u64);
+        for (i, &set) in row.iter().enumerate() {
+            if set {
+                out[start + i / 64] |= 1u64 << (i % 64);
+            }
+        }
+    }
+    out
+}
+
+/// The assignment whose `v`-th bit is `bits >> (v - 1)`, as signed literals.
+#[cfg(test)]
+pub fn assignment(num_vars: u32, bits: u64) -> Vec<i32> {
+    (1..=num_vars as i32)
+        .map(|v| if bits >> (v - 1) & 1 == 1 { v } else { -v })
+        .collect()
+}
+
 /// Formulas covering SAT, UNSAT, unit, wide, and don't-care shapes.
 #[cfg(test)]
 pub fn test_cases() -> Vec<(u32, Vec<Vec<i32>>)> {
@@ -125,6 +153,17 @@ pub fn vtree_shapes(num_vars: u32) -> Vec<(&'static str, Arc<Vtree>)> {
         shapes.push(("linear interleaved", Arc::new(Vtree::linear_from_order(&interleaved).expect("the ids are distinct"))));
     }
     shapes
+}
+
+/// The three of [`vtree_shapes`] an exhaustive sweep over assignments takes:
+/// each cell compiles a second diagram per assignment, so the full list is
+/// more than the coverage is worth.
+#[cfg(test)]
+pub fn sweep_shapes(num_vars: u32) -> Vec<(&'static str, Arc<Vtree>)> {
+    vtree_shapes(num_vars)
+        .into_iter()
+        .filter(|(shape, _)| matches!(*shape, "balanced" | "linear" | "random(42)"))
+        .collect()
 }
 
 /// N-queens as DIMACS-style clauses over `n * n` variables: one row clause per

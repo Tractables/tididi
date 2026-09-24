@@ -46,7 +46,6 @@ use std::time::{Duration, Instant};
 
 use num_bigint::BigUint;
 use num_rational::BigRational;
-use num_traits::Zero;
 
 use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, SignedLog, WeightStore};
 use tididi::limits::LimitConfig;
@@ -55,11 +54,11 @@ use tididi::io::{load_tdd, save_tdd};
 
 
 use tididi::test_helpers::{
-    assert_canonical, assert_restrict_ok, assert_same_shape,
-    brute_force_count, eval, rand_cnf, CnfShape, Lcg,
+    assert_canonical, assert_restrict_ok, assert_same_shape, brute_force_count,
+    compile_clauses_pairwise, eval, rand_cnf, truth_table, weighted_sum, CnfShape, Lcg,
 };
 use tididi::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
-use tididi::{Engine, Literal, Tdd};
+use tididi::{Engine, Tdd};
 
 // ── The case ────────────────────────────────────────────────────────────────
 
@@ -181,21 +180,6 @@ fn draw_vtree(rng: &mut Lcg, num_vars: u32) -> (Arc<Vtree>, String) {
 
 // ── Oracles this file adds to the shared ones ───────────────────────────────
 
-/// The truth table of a formula, indexed by the assignment read as a bit mask
-/// with variable `i` in bit `i`.
-fn clause_truth(num_vars: u32, clauses: &[Vec<i32>]) -> Vec<bool> {
-    (0..(1u32 << num_vars))
-        .map(|mask| {
-            clauses.iter().all(|clause| {
-                clause.iter().any(|&lit| {
-                    let val = (mask >> (lit.unsigned_abs() - 1)) & 1 == 1;
-                    (lit > 0) == val
-                })
-            })
-        })
-        .collect()
-}
-
 /// The truth table of a diagram, read off the stored encoding by the
 /// apply-free evaluator, so it shares no machinery with the operation that
 /// produced the diagram.
@@ -241,16 +225,6 @@ fn assert_canonical_after_minimize(t: &Tdd) {
     assert_canonical(&m);
 }
 
-/// DIMACS literals as the library's own.
-fn lits(clause: &[i32]) -> Vec<Literal> {
-    clause.iter().map(|&l| Literal::try_from(l).unwrap()).collect()
-}
-
-/// The clause as a canonical diagram.
-fn clause_tdd(vtree: &Arc<Vtree>, clause: &[i32]) -> Tdd {
-    Tdd::clause(vtree, lits(clause)).unwrap()
-}
-
 // ── The battery ─────────────────────────────────────────────────────────────
 
 thread_local! {
@@ -293,7 +267,7 @@ fn compile(case: &Case) -> Tdd {
     let eng = Engine::new();
     let mut acc = Tdd::one(&case.vtree);
     for clause in &case.clauses {
-        acc = eng.and(acc, clause_tdd(&case.vtree, clause)).expect("an unarmed engine refuses nothing");
+        acc = eng.and(acc, Tdd::clause(&case.vtree, clause).unwrap()).expect("an unarmed engine refuses nothing");
         acc.minimize().unwrap();
     }
     acc
@@ -309,7 +283,7 @@ fn count_matches_enumeration(case: &Case) {
     );
     assert_truth(
         &diagram_truth(&f, case.num_vars),
-        &clause_truth(case.num_vars, &case.clauses),
+        &truth_table(case.num_vars, &case.clauses),
         case.num_vars,
         "compiled diagram",
     );
@@ -319,33 +293,17 @@ fn count_matches_enumeration(case: &Case) {
 /// tree, and a fold of the clause-at-a-time entry point. The canonical form is
 /// a property of the function and the vtree, so all three are the same diagram.
 fn orders_agree(case: &Case) {
-    let eng = Engine::new();
-
     let mut left = compile(case);
     left.minimize().unwrap();
     assert_canonical(&left);
 
-    let mut queue: Vec<Tdd> =
-        case.clauses.iter().map(|c| clause_tdd(&case.vtree, c)).collect();
-    while queue.len() > 1 {
-        let mut next = Vec::with_capacity(queue.len().div_ceil(2));
-        let mut it = queue.into_iter();
-        while let Some(a) = it.next() {
-            match it.next() {
-                Some(b) => next.push(eng.and(a, b).expect("an unarmed engine refuses nothing")),
-                None => next.push(a),
-            }
-        }
-        queue = next;
-    }
-    let mut tree = queue.pop().unwrap_or_else(|| Tdd::one(&case.vtree));
-    tree.minimize().unwrap();
+    let tree = compile_clauses_pairwise(&case.vtree, &case.clauses);
     assert_canonical(&tree);
     assert_same_shape(&left, &tree, "clause fold against pairwise tree");
 
     let mut by_clause = Tdd::one(&case.vtree);
     for clause in &case.clauses {
-        by_clause = by_clause.and_clause(lits(clause)).unwrap();
+        by_clause = by_clause.and_clause(clause).unwrap();
     }
     by_clause.minimize().unwrap();
     assert_canonical(&by_clause);
@@ -572,7 +530,7 @@ fn weighted_case(case: &Case) -> Weighted {
         })
         .collect();
 
-    let truth = clause_truth(n, &case.clauses);
+    let truth = truth_table(n, &case.clauses);
     let (want, magnitude) = weighted_sum(&truth, &weights);
 
     Weighted {
@@ -582,25 +540,6 @@ fn weighted_case(case: &Case) -> Weighted {
         want,
         magnitude,
     }
-}
-
-/// Enumerate the weighted sum and term magnitudes of a truth table.
-fn weighted_sum(truth: &[bool], weights: &[LiteralWeights<BigRational>]) -> (BigRational, BigRational) {
-    let mut want = BigRational::zero();
-    let mut magnitude = BigRational::zero();
-    for (mask, &sat) in truth.iter().enumerate() {
-        if !sat {
-            continue;
-        }
-        let mut term = BigRational::new(1.into(), 1.into());
-        for (i, w) in weights.iter().enumerate() {
-            let positive = (mask >> i) & 1 == 1;
-            term *= if positive { w.positive.clone() } else { w.negative.clone() };
-        }
-        magnitude += if term < BigRational::zero() { -term.clone() } else { term.clone() };
-        want += term;
-    }
-    (want, magnitude)
 }
 
 /// Compare both stored arithmetics against an enumerated sum on its term-magnitude scale.
@@ -675,7 +614,7 @@ fn a_tight_budget_refuses_rather_than_panics(case: &Case) {
         let _armed = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(budget)));
         let mut acc = Tdd::one(&case.vtree);
         for (i, clause) in case.clauses.iter().enumerate() {
-            let Ok(cl) = eng.clause(&case.vtree, lits(clause)) else { break };
+            let Ok(cl) = eng.clause(&case.vtree, clause) else { break };
             let Ok(next) = eng.and(acc, cl) else { break };
             acc = next;
             let opts = tididi::reduce::ReductionPlan::default();
@@ -686,7 +625,7 @@ fn a_tight_budget_refuses_rather_than_panics(case: &Case) {
             // Whatever the budget let through has to be the conjunction of the
             // clauses it got through, or a refusal was answered with a wrong
             // diagram rather than an error.
-            let want = clause_truth(n, &case.clauses[..folded]);
+            let want = truth_table(n, &case.clauses[..folded]);
             assert_truth(&diagram_truth(&acc, n), &want, n, "under a byte budget");
             if let Ok(count) = eng.model_count(&acc) {
                 assert_eq!(
@@ -702,7 +641,7 @@ fn a_tight_budget_refuses_rather_than_panics(case: &Case) {
     let want = BigUint::from(brute_force_count(n, &case.clauses));
     let mut acc = Tdd::one(&case.vtree);
     for clause in &case.clauses {
-        acc = eng.and(acc, clause_tdd(&case.vtree, clause)).expect("the budget is lifted");
+        acc = eng.and(acc, Tdd::clause(&case.vtree, clause).unwrap()).expect("the budget is lifted");
         acc.minimize().unwrap();
     }
     assert_canonical(&acc);
@@ -813,7 +752,7 @@ fn a_log_domain_weighted_count_is_a_number() {
 #[test]
 fn conditioning_leaves_no_node_computing_false() {
     let vtree = Arc::new(Vtree::balanced(3));
-    let f = clause_tdd(&vtree, &[1, 2]);
+    let f = Tdd::clause(&vtree, [1, 2]).unwrap();
     let mut c = (f).clone().condition_var(VarId(2), false).unwrap();
     c.minimize().unwrap();
     assert_eq!(c.model_count().unwrap(), BigUint::from(4u32), "the cofactor's count is unaffected");
@@ -832,7 +771,7 @@ fn conditioning_leaves_no_node_computing_false() {
 #[test]
 fn a_clause_naming_one_variable_twice_is_the_clause_it_spells() {
     let vtree = Arc::new(Vtree::balanced(3));
-    let count = |clause: &[i32]| clause_tdd(&vtree, clause).model_count().unwrap();
+    let count = |clause: &[i32]| Tdd::clause(&vtree, clause).unwrap().model_count().unwrap();
     assert_eq!(count(&[1, -1]), BigUint::from(8u32), "x1 ∨ ¬x1 holds everywhere");
     assert_eq!(count(&[-1, 1]), BigUint::from(8u32), "¬x1 ∨ x1 holds everywhere");
     assert_eq!(count(&[1, -1, 2]), BigUint::from(8u32), "a tautology stays one");

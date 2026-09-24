@@ -2,13 +2,15 @@
 //! equality, the support oracles, and the deadline harness.
 
 use num_bigint::BigUint;
+use num_rational::BigRational;
+use num_traits::{Signed, Zero};
 
 #[cfg(test)]
 use std::sync::Arc;
 
 #[cfg(test)]
 use crate::diagram::ChildSide;
-use crate::diagram::{LeafLabel, PairsIter};
+use crate::diagram::{LeafLabel, LiteralWeights, PairsIter};
 use crate::diagram::{ChildDecoder, NodeIdx, Tdd, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO};
 use crate::Engine;
 #[cfg(test)]
@@ -24,18 +26,47 @@ use super::compile::and2;
 use crate::vtree::VarId;
 use crate::vtree::{VtreeIdx, VtreeNode};
 
-/// Model count of DIMACS-style clauses by enumeration.
-pub fn brute_force_count(num_vars: u32, clauses: &[Vec<i32>]) -> u64 {
+/// The truth table of DIMACS-style clauses over `num_vars` variables, indexed
+/// by the assignment read as a bit mask with variable `i + 1` in bit `i`.
+pub fn truth_table(num_vars: u32, clauses: &[Vec<i32>]) -> Vec<bool> {
     (0..(1u64 << num_vars))
-        .filter(|assignment| {
+        .map(|mask| {
             clauses.iter().all(|clause| {
                 clause.iter().any(|&lit| {
-                    let val = (assignment >> (lit.unsigned_abs() - 1)) & 1 == 1;
+                    let val = (mask >> (lit.unsigned_abs() - 1)) & 1 == 1;
                     (lit > 0) == val
                 })
             })
         })
-        .count() as u64
+        .collect()
+}
+
+/// Model count of DIMACS-style clauses by enumeration.
+pub fn brute_force_count(num_vars: u32, clauses: &[Vec<i32>]) -> u64 {
+    truth_table(num_vars, clauses).iter().filter(|&&sat| sat).count() as u64
+}
+
+/// The weighted sum of a truth table's true rows under per-variable literal
+/// weights, and the sum of the terms' magnitudes, which is the scale a signed
+/// fold's accuracy is against. Row `mask` takes variable `i + 1` positive when
+/// bit `i` is set.
+pub fn weighted_sum(truth: &[bool], weights: &[LiteralWeights<BigRational>]) -> (BigRational, BigRational) {
+    assert_eq!(truth.len(), 1 << weights.len());
+    let mut sum = BigRational::zero();
+    let mut magnitude = BigRational::zero();
+    for (mask, &sat) in truth.iter().enumerate() {
+        if !sat {
+            continue;
+        }
+        let term: BigRational = weights
+            .iter()
+            .enumerate()
+            .map(|(i, w)| if (mask >> i) & 1 == 1 { w.positive.clone() } else { w.negative.clone() })
+            .product();
+        magnitude += term.abs();
+        sum += term;
+    }
+    (sum, magnitude)
 }
 
 /// Per-level pair lists with node indices renamed to a canonical order, so two
@@ -574,19 +605,11 @@ pub fn assert_restrict_ok(f: &Tdd, c: &Tdd, nvars: u32) {
 /// which counts satisfying assignments themselves.
 #[cfg(test)]
 pub fn brute_force_pmc(clauses: &[Vec<i32>], n: usize, show: &[usize]) -> BigUint {
-    let mut seen: std::collections::HashSet<Vec<bool>> = std::collections::HashSet::new();
-    for mask in 0u32..(1u32 << n) {
-        let val = |i: usize| (mask >> i) & 1 == 1;
-        let satisfied = clauses.iter().all(|clause| {
-            clause.iter().any(|&lit| {
-                let var = (lit.unsigned_abs() as usize) - 1;
-                if lit > 0 { val(var) } else { !val(var) }
-            })
-        });
-        if !satisfied {
-            continue;
-        }
-        seen.insert(show.iter().map(|&v| val(v)).collect());
-    }
+    let seen: std::collections::HashSet<Vec<bool>> = truth_table(n as u32, clauses)
+        .iter()
+        .enumerate()
+        .filter(|&(_, &sat)| sat)
+        .map(|(mask, _)| show.iter().map(|&v| (mask >> v) & 1 == 1).collect())
+        .collect();
     BigUint::from(seen.len())
 }

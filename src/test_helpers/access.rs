@@ -1,6 +1,6 @@
 //! What a test needs from crate-private state and the library does not run:
-//! infallible fixture builders, an engine that stops at once, and whole-tree
-//! vtree rotations.
+//! infallible fixture builders, an engine that stops at once, whole-tree
+//! vtree rotations, and re-homing a diagram at a child of its root.
 
 use num_bigint::BigUint;
 
@@ -10,7 +10,8 @@ use crate::value::{Count, CountVec};
 use crate::vtree::rotate::rotate_pointers;
 use crate::vtree::RotationKind;
 use crate::vtree::rotate::RotationInfo;
-use crate::vtree::{Vtree, VtreeIdx};
+use crate::diagram::{Tdd, TddNodeId};
+use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 /// Count-column fixture builders that expect every reservation to succeed.
 pub(crate) trait CountVecExt {
@@ -61,4 +62,28 @@ pub(crate) fn rotate_left(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo
 /// the bottom-up order. `None` if `v` or its left child is a leaf.
 pub(crate) fn rotate_right(vtree: &mut Vtree, v: VtreeIdx) -> Option<RotationInfo> {
     Some(rotate_pointers(vtree, v, RotationKind::Right)?.commit(vtree))
+}
+
+/// Re-home a diagram that depends only on variables under one child of its
+/// root so that it is rooted at that child — a genuinely low-rooted diagram.
+///
+/// Building and applying always root at the vtree root, so re-homing is the
+/// only way to reach the differing-root operand shape a tightly-rooted segment
+/// would take. The root level must hold a single identity pair, the `g ∧ ⊤`
+/// shape a single-region function compiles to.
+pub fn reroot_to_child(t: &Tdd, left_child: bool) -> Tdd {
+    let root = t.output.vtree;
+    let (lc, rc) = match *t.vtree.node(root) {
+        VtreeNode::Internal { left, right, .. } => (left, right),
+        VtreeNode::Leaf { .. } => panic!("reroot_to_child: the root must be internal"),
+    };
+    let pairs = t.levels[root.idx()].pairs_of_idx(t.output.local.idx());
+    assert_eq!(pairs.len(), 1, "reroot_to_child expects the single-region g ∧ ⊤ shape");
+    let p = pairs[0];
+    let (child, local) = if left_child { (lc, p.left) } else { (rc, p.right) };
+    Tdd::from_levels_unchecked(
+        t.vtree.clone(),
+        t.levels.clone().into_vec(),
+        TddNodeId { vtree: child, local: t.levels[child.idx()].child_decoder().node(local) },
+    )
 }
