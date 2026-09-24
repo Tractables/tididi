@@ -72,7 +72,7 @@ impl EntryMarginality {
     fn was_marginal(&self, carrier: Carrier, idx: usize) -> bool {
         let Some(sides) = &self.0 else { return false };
         let side = match carrier { Carrier::F => &sides.left, Carrier::G => &sides.right };
-        side.get(idx).copied().unwrap_or(false)
+        side[idx]
     }
 }
 

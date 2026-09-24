@@ -27,8 +27,10 @@ use super::setup::{ApplyRun, LevelShape};
 /// `marginal_counts[0] == 2^subvars_t`. Any other shape constrains the
 /// subtree, and every leaf below it is marked non-identity; a leaf flag left
 /// true there would let `take_level_fast_path` drop the operand's content.
-pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd, vtree: &crate::vtree::Vtree, num_nodes: usize) -> Result<(), OperationError> {
+pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd) -> Result<(), OperationError> {
     let lim = eng.limits();
+    let vtree = tdd.vtree();
+    let num_nodes = vtree.num_nodes();
     lim.try_resize(buf, num_nodes, false)?;
     for (t, _) in vtree.leaf_bottomup() {
         buf[t.idx()] = true;  // assume identity until proven otherwise

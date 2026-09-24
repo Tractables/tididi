@@ -41,7 +41,7 @@ mod setup;
 use setup::{apply_and_setup, ApplyRun, LevelShape};
 
 // Per-level marginal classification plan and dead-pair masks.
-pub(crate) mod marginal_plan;
+mod marginal_plan;
 use marginal_plan::{ChildGrid, MarginalPlan, SidePlan, plan_marginal_level, build_side_masks};
 
 // Seeding the output's marginal vtree leaves from the operands, before the
@@ -58,7 +58,7 @@ mod products;
 pub(in crate::apply::conjoin) use grid_arena::GridBase;
 mod output;
 use output::*;
-pub(crate) mod quantify;
+mod quantify;
 mod drive;
 pub(crate) use drive::apply_and_fallible;
 use drive::Sweep;

@@ -321,15 +321,13 @@ fn push_local_targets(
         return Ok((f, g));
     }
     let lim = eng.limits();
-    let vtree = std::sync::Arc::clone(f.vtree());
-    let num_nodes = vtree.num_nodes();
     let mut into_f = Transient::new(lim, Vec::<VtreeIdx>::new());
     let mut into_g = Transient::new(lim, Vec::<VtreeIdx>::new());
     {
         let mut free_in_f = eng.apply().left_identity.checkout(lim);
         let mut free_in_g = eng.apply().right_identity.checkout(lim);
-        super::conjoin::init_leaf_identity(eng, &mut free_in_f, &f, &vtree, num_nodes)?;
-        super::conjoin::init_leaf_identity(eng, &mut free_in_g, &g, &vtree, num_nodes)?;
+        super::conjoin::init_leaf_identity(eng, &mut free_in_f, &f)?;
+        super::conjoin::init_leaf_identity(eng, &mut free_in_g, &g)?;
         for &leaf in targets {
             // A leaf both operands are constant over needs no pass at all.
             if free_in_f[leaf.idx()] && !free_in_g[leaf.idx()] {

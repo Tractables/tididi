@@ -38,9 +38,9 @@ pub(crate) struct RowLoop<'a> {
 /// exclusive borrows, and a route that hands them on moves the bundle.
 pub(crate) struct RowScratch<'a> {
     /// Decode buffer for the current row's `f` pairs.
-    pub inputs1: &'a mut Vec<ChildPair>,
+    pub(crate) inputs1: &'a mut Vec<ChildPair>,
     /// Decode buffer for the current cell's `g` pairs.
-    pub inputs2: &'a mut Vec<ChildPair>,
+    pub(crate) inputs2: &'a mut Vec<ChildPair>,
     /// The product-grid slab.
     pub(crate) node_idx: &'a mut [u32],
 }

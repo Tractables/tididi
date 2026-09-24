@@ -188,8 +188,8 @@ pub(crate) fn apply_and_fallible(
     // both children identity, which the sweep accretes as it goes up. The
     // predicate is incomplete; a miss only sends a small grid down the dense
     // path.
-    init_leaf_identity(eng, run.right_identity, g, &vtree, num_nodes)?;
-    init_leaf_identity(eng, run.left_identity, f, &vtree, num_nodes)?;
+    init_leaf_identity(eng, run.right_identity, g)?;
+    init_leaf_identity(eng, run.left_identity, f)?;
 
     apply_leaf_levels(eng, &vtree, &mut run)?;
 

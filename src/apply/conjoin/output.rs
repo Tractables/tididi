@@ -40,17 +40,16 @@ fn drop_dead_operand_level(level: &mut crate::diagram::TddLevel) {
 /// inline counts carried verbatim from the carrier operand (already emitted),
 /// not fresh slots. Mark them so the end-of-apply tagger's emit arm skips
 /// re-emitting (which would misread an inline count as a slot index →
-/// miscount). Guarded on `!is_marginal()`: a level that became marginal during
-/// its build had its markers reset by `become_marginal` and has no structural
-/// pairs to describe. `passthrough` is emit-gated.
+/// miscount). A level that became marginal during its build had its markers
+/// reset by `become_marginal` and has no structural pairs to describe, so it
+/// is left alone.
 ///
 /// Shared by the general per-level tail (`finalize_level`) and the sparse
 /// one-marginal-child route, which returns before that tail runs.
 pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, passthrough: Sides<bool>) {
-    if (passthrough.left || passthrough.right) && !level.is_marginal() {
-        if passthrough.left { level.set_has_value_refs(ChildSide::Left, true); }
-        if passthrough.right { level.set_has_value_refs(ChildSide::Right, true); }
-    }
+    if level.is_marginal() { return; }
+    if passthrough.left { level.set_has_value_refs(ChildSide::Left, true); }
+    if passthrough.right { level.set_has_value_refs(ChildSide::Right, true); }
 }
 
 /// Per-level tail after the cell-build route dispatch: stream commit,
