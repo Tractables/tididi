@@ -89,35 +89,6 @@ pub(crate) fn seat_canonical(eng: &Engine, vtree: &Arc<Vtree>, levels: Vec<TddLe
     tdd
 }
 
-/// Build the cube diagram under the engine's limits.
-fn cube_to_tdd(
-    eng: &Engine,
-    vtree: &Arc<Vtree>,
-    literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>,
-) -> Result<Tdd, OperationError> {
-    let lim = eng.limits();
-    let _op = lim.begin_operation();
-    lim.check_stop()?;
-    let mut gate = lim.gate();
-    let mut label = Vec::new();
-    for lit in literals {
-        gate.poll(1)?;
-        let lit: Literal = lit.try_into().map_err(Into::into)?;
-        let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
-        if label.is_empty() { lim.try_resize(&mut label, vtree.num_nodes(), ONE_LEAF_IDX)?; }
-        if label[leaf.idx()] != ONE_LEAF_IDX {
-            return Err(OperationError::DuplicateVariable(lit.var));
-        }
-        label[leaf.idx()] = if lit.sign { POS_LEAF_IDX } else { NEG_LEAF_IDX };
-    }
-    gate.flush()?;
-    let label_at = |t: VtreeIdx| {
-        if label.is_empty() { ONE_LEAF_IDX } else { label[t.idx()] }
-    };
-    let levels = cube_levels(eng, vtree, label_at, true)?;
-    Ok(seat_canonical(eng, vtree, levels, TddNodeId { vtree: vtree.root(), local: label_at(vtree.root()) }))
-}
-
 /// Build a canonical diagram for one literal, leaving other variables free.
 ///
 /// Integers are signed and one-based; typed [`Literal`] values also work.
@@ -246,7 +217,27 @@ impl crate::Engine {
         vtree: &Arc<Vtree>,
         literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>,
     ) -> Result<Tdd, OperationError> {
-        crate::build::cube_to_tdd(self, vtree, literals)
+        let lim = self.limits();
+        let _op = lim.begin_operation();
+        lim.check_stop()?;
+        let mut gate = lim.gate();
+        let mut label = Vec::new();
+        for lit in literals {
+            gate.poll(1)?;
+            let lit: Literal = lit.try_into().map_err(Into::into)?;
+            let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
+            if label.is_empty() { lim.try_resize(&mut label, vtree.num_nodes(), ONE_LEAF_IDX)?; }
+            if label[leaf.idx()] != ONE_LEAF_IDX {
+                return Err(OperationError::DuplicateVariable(lit.var));
+            }
+            label[leaf.idx()] = if lit.sign { POS_LEAF_IDX } else { NEG_LEAF_IDX };
+        }
+        gate.flush()?;
+        let label_at = |t: VtreeIdx| {
+            if label.is_empty() { ONE_LEAF_IDX } else { label[t.idx()] }
+        };
+        let levels = cube_levels(self, vtree, label_at, true)?;
+        Ok(seat_canonical(self, vtree, levels, TddNodeId { vtree: vtree.root(), local: label_at(vtree.root()) }))
     }
 }
 

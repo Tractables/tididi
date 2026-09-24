@@ -60,20 +60,6 @@ impl RestrictionOutcome {
     }
 }
 
-/// The implementation behind [`Engine::restrict_to_care`](crate::Engine::restrict_to_care).
-fn restrict_to_care_on(eng: &Engine, f: Tdd, mut care: Tdd) -> Result<RestrictionOutcome, OperationError> {
-    crate::apply::check_vtree(&f, &care)?;
-    let _op = eng.limits().begin_operation();
-    eng.limits().check_stop()?;
-    if f.is_zero() {
-        return Ok(RestrictionOutcome::Unchanged(f));
-    }
-    // Sound for any representation of `care`, since `g ∧ care == f ∧ care`
-    // does not depend on it; the reduced one gives the walk fewer pairs.
-    eng.reduce(&mut care, crate::reduce::ReductionPlan::default())?;
-    restrict_prepared(eng, f, &care, u64::MAX)
-}
-
 /// Restrict a non-false `f` to `care`, giving the walk `max_pair_visits`
 /// product-pair probes.
 fn restrict_prepared(eng: &Engine, f: Tdd, care: &Tdd, max_pair_visits: u64) -> Result<RestrictionOutcome, OperationError> {
@@ -182,7 +168,16 @@ impl crate::Engine {
     /// Returns the linked operation's errors; cancellation, allocation refusal and
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
-    pub fn restrict_to_care(&self, f: Tdd, care: Tdd) -> Result<RestrictionOutcome, OperationError> {
-        crate::apply::restrict_to_care::restrict_to_care_on(self, f, care)
+    pub fn restrict_to_care(&self, f: Tdd, mut care: Tdd) -> Result<RestrictionOutcome, OperationError> {
+        crate::apply::check_vtree(&f, &care)?;
+        let _op = self.limits().begin_operation();
+        self.limits().check_stop()?;
+        if f.is_zero() {
+            return Ok(RestrictionOutcome::Unchanged(f));
+        }
+        // Sound for any representation of `care`, since `g ∧ care == f ∧ care`
+        // does not depend on it; the reduced one gives the walk fewer pairs.
+        self.reduce(&mut care, crate::reduce::ReductionPlan::default())?;
+        restrict_prepared(self, f, &care, u64::MAX)
     }
 }

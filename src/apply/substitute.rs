@@ -2,7 +2,7 @@
 
 use crate::diagram::{LeafLabel, Literal};
 use super::compose::SharedCircuit;
-use super::disjoin::disjoin_many_owned;
+use super::disjoin::disjoin_many_on;
 use crate::limits::PollGate;
 use crate::vtree::{VarId, VtreeNode};
 use crate::{Engine, OperationError, Tdd};
@@ -154,7 +154,7 @@ impl Engine {
                                 .take(self)?;
                             terms.push(self.and(a, b)?);
                         }
-                        let result = disjoin_many_owned(self, terms)?;
+                        let result = disjoin_many_on(self, terms)?;
                         columns[t.idx()].push(SharedCircuit::new(result, uses[t.idx()][i]));
                     }
                     columns[left.idx()] = Vec::new();

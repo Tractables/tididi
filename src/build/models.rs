@@ -95,7 +95,33 @@ impl Engine {
         vars: &[VarId],
         rows: &[u64],
     ) -> Result<Tdd, OperationError> {
-        from_models(self, vtree, vars, rows)
+        let w = words_per_row(vars.len());
+        if !rows.len().is_multiple_of(w) {
+            return Err(OperationError::RaggedRows { words: rows.len(), per_row: w });
+        }
+        let lim = self.limits();
+        let _op = lim.begin_operation();
+        lim.check_stop()?;
+
+        let mut layout = self.model_layout().checkout(lim);
+        layout.prepare_for(lim, vtree, vars)?;
+        if rows.is_empty() || vars.is_empty() {
+            return super::constant_on(self, vtree, !rows.is_empty());
+        }
+        if rows.len() / w > NodeIdx::MAX_LIVE {
+            // A level holds at most one node per row, and the pass indexes the
+            // rows with the same width the level's nodes are indexed with.
+            return Err(OperationError::IndexOverflow);
+        }
+
+        let sorted = distinct_rows(lim, vars.len(), &layout, rows, w)?;
+        let m = sorted.len() / w;
+
+        let mut assembly = Assembly::new(self, vtree)?;
+        let output = fill(self, &mut assembly, vtree, &layout, &sorted, w, m)?;
+        // The levels are canonical as built: seat them with nothing to reduce.
+        let (levels, _) = assembly.parts_mut();
+        Ok(super::seat_canonical(self, vtree, std::mem::take(levels), output))
     }
 }
 
@@ -165,42 +191,6 @@ struct Scratch {
     pairs: Vec<u128>,
     /// One atom's pairs, as the assembly takes them.
     pair_list: Vec<ChildPair>,
-}
-
-/// Build the diagram, handing the level buffers back on any refusal.
-fn from_models(
-    eng: &Engine,
-    vtree: &Arc<Vtree>,
-    vars: &[VarId],
-    rows: &[u64],
-) -> Result<Tdd, OperationError> {
-    let w = words_per_row(vars.len());
-    if !rows.len().is_multiple_of(w) {
-        return Err(OperationError::RaggedRows { words: rows.len(), per_row: w });
-    }
-    let lim = eng.limits();
-    let _op = lim.begin_operation();
-    lim.check_stop()?;
-
-    let mut layout = eng.model_layout().checkout(lim);
-    layout.prepare_for(lim, vtree, vars)?;
-    if rows.is_empty() || vars.is_empty() {
-        return super::constant_on(eng, vtree, !rows.is_empty());
-    }
-    if rows.len() / w > NodeIdx::MAX_LIVE {
-        // A level holds at most one node per row, and the pass indexes the
-        // rows with the same width the level's nodes are indexed with.
-        return Err(OperationError::IndexOverflow);
-    }
-
-    let sorted = distinct_rows(lim, vars.len(), &layout, rows, w)?;
-    let m = sorted.len() / w;
-
-    let mut assembly = Assembly::new(eng, vtree)?;
-    let output = fill(eng, &mut assembly, vtree, &layout, &sorted, w, m)?;
-    // The levels are canonical as built: seat them with nothing to reduce.
-    let (levels, _) = assembly.parts_mut();
-    Ok(super::seat_canonical(eng, vtree, std::mem::take(levels), output))
 }
 
 /// The value of the `width` bits starting at `lo` in a row, for a `width` of
