@@ -10,7 +10,7 @@ The Boolean event is **wet = rain ∨ sprinkler**: either cause makes the grass
 wet. We assume independent inputs. A third variable, wind, stays free; its
 probability should not affect the answer.
 
-Run the complete program with `cargo run --example probabilistic_query`.
+Run the complete program with `cargo run --example probability`.
 The external crate `num-rational` provides exact fractions; `num-traits`
 provides numeric operations such as `one()`. In a separate application, add `num-rational = "0.4"` and `num-traits = "0.2"`
 alongside `tididi` to use the exact arithmetic shown here.
@@ -122,5 +122,5 @@ P(wet and no rain) = 1/25
 P(wet) = 16/25
 ```
 
-The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/probabilistic_query.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/probability.rs)
 includes both the changing priors and observations.

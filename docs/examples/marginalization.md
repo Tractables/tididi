@@ -11,7 +11,7 @@ This operation is called *marginalization*. It preserves the total count, but
 forgets which server A assignments produced it. We will keep the original
 circuit as well, so we can compare what each version can answer.
 
-Run `cargo run --example marginalize_components`. The probability section uses
+Run `cargo run --example marginalization`. The probability section uses
 `num-rational = "0.4"` alongside `tididi` for exact fractions.
 
 ## Build the two-server model
@@ -153,5 +153,5 @@ Reevaluation needs discarded structure: true
 
 Keep structure for changing weights, recovering assignments, or observing the
 variables you would otherwise discard. Marginalize a subtree when retaining its
-contribution is sufficient. The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/marginalize_components.rs)
+contribution is sufficient. The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/marginalization.rs)
 compares both representations.

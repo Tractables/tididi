@@ -7,7 +7,7 @@ both. We can build the rule **L ∨ R** once and reuse it for each server. Then
 we will add a constraint connecting them: the shared remote service can serve
 at most one server.
 
-Run `cargo run --example reusable_components`.
+Run `cargo run --example composition`.
 
 ## Build one component
 
@@ -139,5 +139,5 @@ Server B now has one choice, while server A's two variables remain free.
 [`EmbeddingPlan::then`](crate::restructure::EmbeddingPlan::then) composes
 placements when a component is nested inside a larger system.
 
-The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/reusable_components.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/composition.rs)
 builds and connects both server models.

@@ -1,7 +1,7 @@
 // scenario: docs/scenarios.md#execution
 
 //! Bound operations, retain inputs for a retry, and release idle scratch.
-//! Run with `cargo run --example execution_limits`.
+//! Run with `cargo run --example execution`.
 
 fn main() -> Result<(), tididi::OperationError> {
     use std::sync::Arc;

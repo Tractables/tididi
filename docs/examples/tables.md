@@ -15,8 +15,8 @@ The duplicate row does not add another choice: a Boolean function describes a
 set of assignments. We can build that function directly from the table with
 [`Tdd::from_models`](crate::Tdd::from_models).
 
-The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/table_updates.rs)
-runs with `cargo run --example table_updates`.
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/tables.rs)
+runs with `cargo run --example tables`.
 
 ## Build the circuit
 

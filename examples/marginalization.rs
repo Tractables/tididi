@@ -1,4 +1,5 @@
 // scenario: docs/scenarios.md#keeping-values
+// Dependencies beyond tididi: num-rational = "0.4"
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::Arc;

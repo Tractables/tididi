@@ -1,7 +1,7 @@
 // scenario: docs/scenarios.md#statistics
 
 //! A custom statistic over the stored encoding: the node with the most pairs
-//! and the vtree level it sits at. Run with `cargo run --example statistic`.
+//! and the vtree level it sits at. Run with `cargo run --example statistics`.
 
 fn main() -> Result<(), tididi::OperationError> {
     use std::sync::Arc;

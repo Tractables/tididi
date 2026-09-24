@@ -1,7 +1,7 @@
 // scenario: docs/scenarios.md#reachability
 
 //! Compute reachable states using image, renaming and semantic equivalence.
-//! Run with `cargo run --example symbolic_reachability`.
+//! Run with `cargo run --example reachability`.
 
 const NODES: usize = 16;
 const EDGES: &[(usize, usize)] = &[

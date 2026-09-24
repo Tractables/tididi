@@ -1,7 +1,8 @@
 // scenario: docs/scenarios.md#probability
+// Dependencies beyond tididi: num-rational = "0.4", num-traits = "0.2"
 
 //! Compile a query and evidence once, then reevaluate them with new probabilities.
-//! Run with `cargo run --example probabilistic_query`.
+//! Run with `cargo run --example probability`.
 
 fn main() -> Result<(), tididi::OperationError> {
     use std::sync::Arc;

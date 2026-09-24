@@ -1,7 +1,7 @@
 // scenario: docs/scenarios.md#persistence
 
 //! Save two diagrams, restore their shared domain, and combine them.
-//! Run with `cargo run --example save_reload`.
+//! Run with `cargo run --example persistence`.
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::Arc;

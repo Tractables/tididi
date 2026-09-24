@@ -9,6 +9,9 @@ import subprocess
 import tarfile
 import tempfile
 
+# The header line naming a program's dependencies beyond tididi.
+DEPENDENCIES = "// Dependencies beyond tididi:"
+
 
 def check_output(markdown, stdout, name):
     """Check displayed output against complete stdout lines, in document order."""
@@ -95,11 +98,14 @@ def main():
             app = work / source.stem
             (app / "src").mkdir(parents=True)
             shutil.copyfile(library / "examples" / source.name, app / "src/main.rs")
-            # Only add dependencies that the standalone program imports directly.
-            extra = {
-                "probabilistic_query": '\nnum-rational = "0.4"\nnum-traits = "0.2"',
-                "marginalize_components": '\nnum-rational = "0.4"',
-            }.get(source.stem, "")
+            # A program that imports more than tididi names the crates in a
+            # header comment, which is what its standalone manifest depends on.
+            extra = "".join(
+                "\n" + dependency.strip()
+                for line in source.read_text(encoding="utf-8").splitlines()
+                if line.startswith(DEPENDENCIES)
+                for dependency in line[len(DEPENDENCIES):].split(",")
+            )
             (app / "Cargo.toml").write_text(
                 f'[package]\nname = "packaged-{source.stem}"\nversion = "0.0.0"\nedition = "2024"\n'
                 f'[workspace]\n[dependencies]\ntididi = {{ path = "../{name}" }}{extra}\n'
@@ -111,13 +117,16 @@ def main():
                 cwd=app, check=True, stdout=subprocess.PIPE, text=True,
             )
             print(result.stdout, end="", flush=True)
-            for page in sorted((root / "docs/examples").glob("*.md")):
-                markdown = page.read_text(encoding="utf-8")
-                if f"/examples/{source.name})" in markdown:
-                    checked = check_output(markdown, result.stdout, page.name)
-                    if not checked:
-                        raise ValueError(f"{page.name}: no documented output checked")
-                    print(f"Checked {checked} output blocks in {page.name}.", flush=True)
+            page = root / "docs/examples" / f"{source.stem}.md"
+            if not page.is_file():
+                raise ValueError(f"{source.name}: no walkthrough {page.name}")
+            markdown = page.read_text(encoding="utf-8")
+            if f"/examples/{source.name})" not in markdown:
+                raise ValueError(f"{page.name}: no complete-program link to {source.name}")
+            checked = check_output(markdown, result.stdout, page.name)
+            if not checked:
+                raise ValueError(f"{page.name}: no documented output checked")
+            print(f"Checked {checked} output blocks in {page.name}.", flush=True)
         print(f"Passed {len(examples)} standalone packaged examples.", flush=True)
 
 

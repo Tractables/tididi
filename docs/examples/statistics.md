@@ -5,7 +5,7 @@
 Find the circuit node with the most child pairs and the vtree level where
 it lives. This helps locate the largest decomposition in a stored diagram.
 
-Run the complete program with `cargo run --example statistic`. Read the
+Run the complete program with `cargo run --example statistics`. Read the
 [data model](crate::guide::model) first
 if the distinction between a vtree level, a TDD node, and a child pair is new.
 
@@ -97,5 +97,5 @@ two variables is free, so the model count is 2 × 2 × 2 = 8. The four stored
 pairs describe those eight assignments.
 
 Adapt the same traversal for a histogram of node sizes or a per-level report.
-The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/statistic.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/statistics.rs)
 includes the runnable entry point.

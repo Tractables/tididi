@@ -7,7 +7,7 @@ valid backup configurations. Suppose each enabled option also has a cost.
 Compute the minimum total cost by evaluating the same circuit with costs.
 
 This advanced example implements [`EvalAlgebra`](crate::diagram::EvalAlgebra).
-Run it with `cargo run --example minimum_cost`.
+Run it with `cargo run --example optimization`.
 
 ## Keep the rules, assign costs
 
@@ -129,7 +129,7 @@ Minimum with remote backups: Some(3)
 Minimum without encryption: None
 ```
 
-The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/minimum_cost.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/optimization.rs)
 also checks both price scenarios by enumerating the sixteen assignments.
 For evaluation by weighted sums instead of minima, see the
 [probability walkthrough](crate::guide::examples::probability).

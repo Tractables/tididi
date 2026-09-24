@@ -1,7 +1,7 @@
 // scenario: docs/scenarios.md#minimum-cost
 
 //! Find the minimum cost of a valid backup configuration.
-//! Run with `cargo run --example minimum_cost`.
+//! Run with `cargo run --example optimization`.
 
 fn main() -> Result<(), tididi::OperationError> {
     use std::sync::Arc;

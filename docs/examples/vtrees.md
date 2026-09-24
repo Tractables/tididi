@@ -7,7 +7,7 @@ vtrees. Consider `(x1 ↔ x3) ∧ (x2 ↔ x4)`: two independent pairs of variabl
 must agree. We will build it under two balanced vtrees and compare the minimized
 representations.
 
-Run `cargo run --example vtree_grouping`.
+Run `cargo run --example vtrees`.
 
 ## Keep each equality together, or split both
 
@@ -91,5 +91,5 @@ subtree. Compare the resulting sizes for your own constraints.
 [`Tdd::rotation_search`](crate::Tdd::rotation_search) can search vtree
 changes on an existing diagram. The [data model](crate::guide::model) explains
 how those decompositions represent functions, and the
-[complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/vtree_grouping.rs)
+[complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/vtrees.rs)
 runs this comparison.

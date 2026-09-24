@@ -8,8 +8,8 @@ no longer need the retained memory.
 
 We use four backup options: local L, remote R, encryption E, and notifications N.
 First build L ∨ R, then require encryption to obtain (L ∨ R) ∧ E.
-Notifications remain free. Run the [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/execution_limits.rs)
-with `cargo run --example execution_limits`.
+Notifications remain free. Run the [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/execution.rs)
+with `cargo run --example execution`.
 
 ## Bound a batch of operations
 

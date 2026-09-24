@@ -8,7 +8,7 @@ Notifications are optional. We will use the same model to answer three questions
 how many configurations match a choice, what rules remain after substituting it,
 and how many distinct choices are possible for selected options.
 
-Run this example with `cargo run --example counting_choices`.
+Run this example with `cargo run --example counting`.
 
 ## Build the rules
 
@@ -108,5 +108,5 @@ the number of distinct destination choices, and
 [`exists_vars`](crate::Tdd::exists_vars) when you need the rule itself for further
 composition, as in the [reachability example](crate::guide::examples::reachability).
 
-The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/counting_choices.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/counting.rs)
 contains these queries.

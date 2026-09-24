@@ -5,7 +5,8 @@ fn normalized(source: &str) -> String {
     source.lines().map(str::trim).collect::<Vec<_>>().join("\n")
 }
 
-/// Every walkthrough with the example program its "complete program" link names.
+/// Every walkthrough with the example program of the same name, which its
+/// "complete program" link must name too.
 fn walkthroughs() -> Vec<(String, String, String)> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut out = Vec::new();
@@ -13,10 +14,9 @@ fn walkthroughs() -> Vec<(String, String, String)> {
         let path = entry.unwrap().path();
         let name = path.file_stem().unwrap().to_str().unwrap().to_string();
         let markdown = std::fs::read_to_string(&path).unwrap();
-        let (_, rest) = markdown.split_once("complete program](").unwrap_or_else(|| panic!("{name}: no complete-program link"));
-        let (link, _) = rest.split_once(')').unwrap();
-        let example = link.rsplit_once("/examples/").map(|(_, file)| file).unwrap_or_else(|| panic!("{name}: the link {link} names no example"));
-        let source = std::fs::read_to_string(root.join("examples").join(example)).unwrap_or_else(|e| panic!("{name}: {example}: {e}"));
+        let example = format!("{name}.rs");
+        assert!(markdown.contains(&format!("/examples/{example})")), "{name}: the complete-program link names {example}");
+        let source = std::fs::read_to_string(root.join("examples").join(&example)).unwrap_or_else(|e| panic!("{name}: {example}: {e}"));
         out.push((name, markdown, source));
     }
     assert!(!out.is_empty(), "no walkthroughs found");

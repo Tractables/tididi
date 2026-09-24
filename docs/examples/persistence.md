@@ -7,7 +7,7 @@ Here we save two rules separately, discard their original diagrams, then
 restore and combine them. The saved vtree tells the reader how both diagrams
 interpret their variables.
 
-Run `cargo run --example save_reload`. This example saves to byte buffers;
+Run `cargo run --example persistence`. This example saves to byte buffers;
 it does not create files.
 
 ## Build two rules in one variable domain
@@ -101,5 +101,5 @@ Equivalent to the original rules: true
 ```
 
 See [`read_tdd`](crate::io::read_tdd) for format requirements and the
-[complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/save_reload.rs)
+[complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/persistence.rs)
 for the runnable example.

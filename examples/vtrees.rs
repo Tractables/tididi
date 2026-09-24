@@ -1,7 +1,7 @@
 // scenario: docs/scenarios.md#vtrees
 
 //! Compare two variable groupings for the same pair of equality constraints.
-//! Run with `cargo run --example vtree_grouping`.
+//! Run with `cargo run --example vtrees`.
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     use std::sync::Arc;

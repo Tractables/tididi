@@ -19,7 +19,7 @@ const EDGES: &[(usize, usize)] = &[
 ];
 ```
 
-Run it with `cargo run --example symbolic_reachability`.
+Run it with `cargo run --example reachability`.
 
 ## Describe a state with Boolean indicators
 
@@ -247,7 +247,7 @@ Reachable target: [11]
 This finds a state assignment. Recovering a path to it would also require
 retaining predecessor information during the search.
 
-The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/symbolic_reachability.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/reachability.rs)
 also checks the symbolic result against an ordinary graph traversal and
 verifies the witness.
 
