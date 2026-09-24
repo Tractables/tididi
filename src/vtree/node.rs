@@ -145,15 +145,6 @@ impl Vtree {
         self.leaf_count
     }
 
-    /// Takes `nodes` by mutable slice rather than `&mut self` so it can be
-    /// called during vtree construction before the owning `Vtree` is assembled.
-    pub(crate) fn set_parent(nodes: &mut [VtreeNode], child: VtreeIdx, parent: VtreeIdx) {
-        match &mut nodes[child.idx()] {
-            VtreeNode::Leaf { parent: p, .. } => *p = Some(parent),
-            VtreeNode::Internal { parent: p, .. } => *p = Some(parent),
-        }
-    }
-
     /// The node at `idx`.
     ///
     /// # Panics

@@ -73,13 +73,13 @@
 //! occupy a non-contiguous range of `topo` positions, so nothing may index a
 //! subtree by position range.
 
+use super::build::set_parent;
 use super::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 
 /// Information about a completed rotation, sufficient to undo it or restructure
 /// a diagram. Field naming follows the **left-rotation** geometry; right rotation
 /// stores the same fields but with the corresponding subtrees.
 #[derive(Clone, Copy, Debug)]
-#[non_exhaustive]
 pub(crate) struct RotationInfo {
     /// Outer node index (parent before & after rotation).
     pub(crate) v_idx: VtreeIdx,
@@ -102,7 +102,7 @@ pub(crate) struct RotationInfo {
 /// in place is the right one again. It is `#[must_use]` and
 /// debug-asserts if dropped unsettled; a caller that can unwind must own a
 /// rollback guard that settles it before releasing the tree.
-#[must_use = "a pointer-only rotation owes the bottom-up order a commit, revert, or abandon"]
+#[must_use = "a pointer-only rotation owes the bottom-up order a commit or a revert"]
 pub(crate) struct PendingTopo {
     info: RotationInfo,
     kind: RotationKind,
@@ -139,7 +139,7 @@ impl Drop for PendingTopo {
     fn drop(&mut self) {
         debug_assert!(
             self.settled,
-            "a pointer-only rotation was dropped without committing, reverting, or abandoning it: \
+            "a pointer-only rotation was dropped without being committed or reverted: \
              the vtree's bottom-up order no longer matches its links",
         );
     }
@@ -195,8 +195,8 @@ pub(crate) fn rotate_pointers(vtree: &mut Vtree, v: VtreeIdx, kind: RotationKind
 
     vtree.nodes[v.idx()] = internal_with(kind, y, w, v_parent);
     vtree.nodes[w.idx()] = internal_with(kind, z, x, Some(v));
-    Vtree::set_parent(&mut vtree.nodes, x, w);
-    Vtree::set_parent(&mut vtree.nodes, y, v);
+    set_parent(&mut vtree.nodes, x, w);
+    set_parent(&mut vtree.nodes, y, v);
 
     let (a_idx, c_idx) = match kind {
         RotationKind::Left => (x, y),
@@ -223,8 +223,8 @@ fn unrotate_pointers(vtree: &mut Vtree, info: &RotationInfo, kind: RotationKind)
 
     vtree.nodes[v_idx.idx()] = internal_with(kind, w_idx, x, v_parent);
     vtree.nodes[w_idx.idx()] = internal_with(kind, y, b_idx, Some(v_idx));
-    Vtree::set_parent(&mut vtree.nodes, x, v_idx);
-    Vtree::set_parent(&mut vtree.nodes, y, w_idx);
+    set_parent(&mut vtree.nodes, x, v_idx);
+    set_parent(&mut vtree.nodes, y, w_idx);
 }
 
 #[cfg(test)]

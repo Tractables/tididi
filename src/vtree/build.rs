@@ -52,6 +52,15 @@ fn id_space(vars: &[VarId]) -> Result<u32, VtreeError> {
         .ok_or_else(|| VtreeError::Invalid("a vtree needs at least one variable".to_string()))
 }
 
+/// Point `child`'s parent link at `parent`, in a node list that may still be
+/// under construction.
+pub(super) fn set_parent(nodes: &mut [VtreeNode], child: VtreeIdx, parent: VtreeIdx) {
+    match &mut nodes[child.idx()] {
+        VtreeNode::Leaf { parent: p, .. } => *p = Some(parent),
+        VtreeNode::Internal { parent: p, .. } => *p = Some(parent),
+    }
+}
+
 /// Append a leaf carrying `var` to a node list under construction.
 pub(super) fn push_leaf(nodes: &mut Vec<VtreeNode>, var: VarId) -> VtreeIdx {
     let idx = VtreeIdx(nodes.len() as u32);
@@ -514,8 +523,8 @@ fn relabel_leaves_then_internals(
                     right: new_right,
                     parent: None,
                 });
-                Vtree::set_parent(&mut new_nodes, new_left, new_idx);
-                Vtree::set_parent(&mut new_nodes, new_right, new_idx);
+                set_parent(&mut new_nodes, new_left, new_idx);
+                set_parent(&mut new_nodes, new_right, new_idx);
             }
         }
     }

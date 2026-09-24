@@ -27,24 +27,19 @@
 //! [`Vtree::to_text`] and [`Vtree::from_text`] use the `.vtree` interchange
 //! format; serialization preserves shape and variable labels, not node indices.
 
-
 mod build;
 pub(crate) mod graft;
 mod node;
 mod project;
 pub(crate) mod rng;
+pub(crate) mod rotate;
+mod text;
 mod topo;
 mod validate;
 
 pub use graft::GraftLayout;
 pub use node::{Vtree, VtreeNode};
 pub use topo::RotationKind;
-
-
-/// The `.vtree` text codec, in both directions.
-mod text;
-
-pub(crate) mod rotate; // In-place vtree left/right rotations + topo fixup
 
 
 /// A variable identifier, independent of its position in the vtree.

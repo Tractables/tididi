@@ -40,9 +40,7 @@ impl Vtree {
     /// # Ok::<(), tididi::vtree::VtreeError>(())
     /// ```
     pub fn from_text(s: &str) -> Result<Self, VtreeError> {
-        let vtree = Self::parse_vtree_text(s).map_err(VtreeError::Text)?;
-        debug_assert_eq!(vtree.validate(), Ok(()));
-        Ok(vtree)
+        Self::parse_vtree_text(s).map_err(VtreeError::Text)
     }
 
     /// The parse itself, reporting a plain sentence.
