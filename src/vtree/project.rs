@@ -22,8 +22,10 @@ impl Vtree {
     ///
     /// # Panics
     ///
-    /// Panics if `local_of` yields an id outside `1..=num_local`, or the same
-    /// id for two variables.
+    /// Panics if `local_of` yields an id outside `1..=num_local` or the same
+    /// id for two variables, or if `num_local` is wider than the id space
+    /// the result's node list may declare (the bound behind
+    /// [`VtreeError::VariableSpaceTooLarge`](super::VtreeError::VariableSpaceTooLarge)).
     pub fn project_to_vars<F>(&self, local_of: F, num_local: u32) -> Option<Vtree>
     where
         F: Fn(VarId) -> Option<VarId>,
@@ -35,7 +37,8 @@ impl Vtree {
         // in the fresh (pre-reindex) node array. A spliced-out internal node maps
         // to its single surviving child, so parents see one contiguous skeleton.
         let mut new_of: Vec<Option<VtreeIdx>> = vec![None; self.nodes.len()];
-        let mut nodes: Vec<VtreeNode> = Vec::with_capacity(2 * num_local as usize);
+        // The result keeps at most every node of `self`.
+        let mut nodes: Vec<VtreeNode> = Vec::with_capacity(self.nodes.len());
 
         // `bottomup()` walks the side `topo` array, so children are always
         // visited before their parent even after rotations.
@@ -58,7 +61,8 @@ impl Vtree {
         }
 
         let root = new_of[self.root.idx()]?;
-        Some(Self::from_nodes(nodes, root, num_local).expect("the surviving skeleton is one tree")
-            .with_context(std::sync::Arc::clone(&self.context)))
+        let projected = Self::from_nodes(nodes, root, num_local)
+            .unwrap_or_else(|error| panic!("Vtree::project_to_vars: {error}"));
+        Some(projected.with_context(std::sync::Arc::clone(&self.context)))
     }
 }

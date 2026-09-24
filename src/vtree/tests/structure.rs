@@ -600,6 +600,24 @@ fn same_tree_ignores_numbering() {
 }
 
 #[test]
+#[should_panic(expected = "Vtree::leaf(0): invalid vtree: leaf variable 0 is outside")]
+fn a_leaf_over_variable_zero_names_the_variable() {
+    Vtree::leaf(VarId(0));
+}
+
+#[test]
+#[should_panic(expected = "Vtree::leaf(4294967295): variable-id space of 4294967295 exceeds")]
+fn a_leaf_too_wide_for_one_node_names_the_bound() {
+    Vtree::leaf(VarId(u32::MAX));
+}
+
+#[test]
+#[should_panic(expected = "Vtree::project_to_vars: variable-id space of 4294967295 exceeds")]
+fn a_projection_too_wide_for_its_nodes_names_the_bound() {
+    Vtree::balanced(2).project_to_vars(Some, u32::MAX);
+}
+
+#[test]
 #[should_panic(expected = "a balanced subtree needs at least one variable")]
 fn balanced_subtree_rejects_an_empty_variable_list() {
     Vtree::build_balanced_recursive(&[], &mut Vec::new());

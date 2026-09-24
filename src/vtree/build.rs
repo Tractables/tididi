@@ -94,6 +94,12 @@ impl Vtree {
     /// A vtree of one leaf carrying `var`. Its id space is `var.0`, so a
     /// leaf over `VarId(5)` has `num_vars() == 5` and `num_leaves() == 1`.
     ///
+    /// # Panics
+    ///
+    /// Panics if `var` is zero, which is not a variable, or if it is wider
+    /// than the id space one node may declare (the bound behind
+    /// [`VtreeError::VariableSpaceTooLarge`]).
+    ///
     /// ```
     /// use tididi::vtree::{VarId, Vtree};
     /// let vtree = Vtree::leaf(VarId(5));
@@ -102,7 +108,8 @@ impl Vtree {
     pub fn leaf(var: VarId) -> Self {
         let mut nodes = Vec::with_capacity(1);
         let root = push_leaf(&mut nodes, var);
-        Self::from_nodes(nodes, root, var.0).expect("one leaf is a tree")
+        Self::from_nodes(nodes, root, var.0)
+            .unwrap_or_else(|error| panic!("Vtree::leaf({}): {error}", var.0))
     }
 
     /// A new root with `left` and `right` as its subtrees — the composition
