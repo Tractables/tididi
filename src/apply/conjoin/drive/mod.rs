@@ -97,8 +97,8 @@ fn sweep_levels(
         if !taken {
             // One decision per level, taken before any of the level's storage
             // is touched: the marginal plan and the two gates read only metadata.
-            let plan = plan_marginal_level(f, g, shape, run);
             let marginal = run.level_marginal(f, g, shape, sweep.targets);
+            let plan = plan_marginal_level(f, g, shape, run, &marginal);
             let route = route_level(shape, &plan, &marginal, run.sparse_gate(shape));
             route.validate(f, g, shape, &marginal, run)?;
 

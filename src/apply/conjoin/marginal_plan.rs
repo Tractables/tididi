@@ -8,6 +8,7 @@ use super::OperationError;
 use crate::Engine;
 use super::liveness::{bucket_shift, build_live_cols_bitmask, build_reach_masks, PrefilterSideMasks};
 use super::setup::{ApplyRun, LevelShape};
+use super::route::LevelMarg;
 
 /// Which operand supplies a pass-through side's per-pair field.
 ///
@@ -189,23 +190,20 @@ fn debug_assert_no_marginal_products(
 /// This half reads no grid, so the caller can pick the route before
 /// materializing any child grid. The liveness masks the `both_multi_pair` flag enables are
 /// filled separately by `build_level_prefilter_masks`, which does read the grids.
+///
+/// A child is marginal in `marginal`'s wider sense, in the output or in
+/// either operand: an identity shortcut can move a marginal child from an
+/// operand to the output, and the remaining parent references still use that
+/// child's marginal encoding.
 pub(super) fn plan_marginal_level(
     f: &Tdd,
     g: &Tdd,
     shape: LevelShape,
     run: &ApplyRun,
+    marginal: &LevelMarg,
 ) -> MarginalPlan {
     let (t, t_idx, left_idx, right_idx) = (shape.t, shape.t.idx(), shape.left.idx(), shape.right.idx());
-    let levels = &run.levels[..];
-    // An identity shortcut can move a marginal child from an operand to the
-    // output. Check all three locations when selecting the decoder; the
-    // remaining parent references still use that child's marginal encoding.
-    let left_marginal = levels[left_idx].is_marginal()
-        || f.levels[left_idx].is_marginal()
-        || g.levels[left_idx].is_marginal();
-    let right_marginal = levels[right_idx].is_marginal()
-        || f.levels[right_idx].is_marginal()
-        || g.levels[right_idx].is_marginal();
+    let (left_marginal, right_marginal) = (marginal.left_any, marginal.right_any);
     let carriers = Sides { left: left_idx, right: right_idx }
         .map(|side, child_idx| carrier(f, g, t_idx, child_idx, side, run));
     debug_assert_no_marginal_products(

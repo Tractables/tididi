@@ -50,14 +50,16 @@ pub(super) enum Route {
     /// `marginal_children` picks the child lookup — marginal sides are read
     /// through `MarginalLookup`, structural ones positionally.
     Stream { marginal_children: bool },
-    /// At least one marginal child, materializing output: the shared cell
-    /// kernel over the dense grid with `MarginalLookup` sides.
+    /// At least one marginal child or pass-through side, materializing
+    /// output: the shared cell kernel over the dense grid with
+    /// `MarginalLookup` sides.
     MarginalChild,
     /// No marginal child, no streaming, no dead-pair masks and no pass-through side:
     /// the dense grid with positional child lookups.
     PlainDense,
-    /// The dense grid in its general form — dead-pair liveness masks, or a
-    /// pass-through side to carry across.
+    /// No marginal child and no pass-through side, but both operands
+    /// multi-pair at this level: the dense grid with positional child lookups
+    /// and the dead-pair liveness masks.
     Dense,
 }
 
@@ -139,10 +141,14 @@ pub(super) fn route_level(
     if marginal.is_target {
         return Route::Stream { marginal_children: marginal.left_now || marginal.right_now };
     }
-    if marginal.left_now || marginal.right_now {
+    // The positional lookups of the two dense routes cannot carry a side
+    // through, so a pass-through side takes the marginal-child build too.
+    if marginal.left_now || marginal.right_now
+        || plan.sides.left.is_passthrough() || plan.sides.right.is_passthrough()
+    {
         return Route::MarginalChild;
     }
-    if plan.both_multi_pair || plan.sides.left.is_passthrough() || plan.sides.right.is_passthrough() {
+    if plan.both_multi_pair {
         return Route::Dense;
     }
     Route::PlainDense

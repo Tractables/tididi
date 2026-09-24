@@ -154,10 +154,11 @@ pub(super) fn open_level_arenas(
 /// Build every cell of this level, on whichever of the two row-loop routes the
 /// level's marginal-child pattern selects.
 ///
-/// Route A (at least one marginal child) runs the shared cell kernel with
-/// `MarginalLookup` sides; Route B assumes no marginal child and uses positional
-/// dense lookups. Both collapse to a streaming fold instead of materializing
-/// product nodes when the level is a streaming marginalization target.
+/// Route A (at least one marginal child or pass-through side) runs the shared
+/// cell kernel with `MarginalLookup` sides; Route B assumes neither and uses
+/// positional dense lookups. Both collapse to a streaming fold instead of
+/// materializing product nodes when the level is a streaming marginalization
+/// target.
 fn run_row_loop(
     eng: &Engine,
     route: Route,
@@ -207,10 +208,11 @@ fn run_row_loop(
         // carries counts is what picks the lookups.
         Route::Stream { marginal_children: true } => stream_rows!(&left_marginal, &right_marginal),
         Route::Stream { marginal_children: false } => stream_rows!(&left_dense, &right_dense),
-        // A materializing level with at least one marginal child. It runs the
-        // same per-cell kernel as the structural routes, with `MarginalLookup`
-        // sides; isolating it here is what lets those routes assume no child
-        // is marginal. Refs come out in the encoding the structural path
+        // A materializing level with at least one marginal child or
+        // pass-through side. It runs the same per-cell kernel as the
+        // structural routes, with `MarginalLookup` sides; isolating it here is
+        // what lets those routes assume no child is marginal and no side is
+        // carried through. Refs come out in the encoding the structural path
         // produces, so this level still relies on the end-of-apply tagger.
         // Both-marginal levels route here too — pure Σ left × right with no
         // structural product — and carrying them here keeps them off the
@@ -219,7 +221,14 @@ fn run_row_loop(
         // The four level-invariant guards all hold, so the simplified emit
         // runs: no streaming, no dead-pair masks, no pass-through side.
         Route::PlainDense => plain_rows!(true),
-        Route::Dense => plain_rows!(false),
+        // Dead-pair masks only: the positional lookups carry nothing through.
+        Route::Dense => {
+            debug_assert!(
+                !cell_ctx.sides.left.plan.is_passthrough() && !cell_ctx.sides.right.plan.is_passthrough(),
+                "a pass-through side takes the marginal-child build"
+            );
+            plain_rows!(false)
+        }
         Route::Sparse | Route::SparseMarg => {
             unreachable!("the sparse routes build their level before the row loop")
         }
