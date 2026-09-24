@@ -72,7 +72,9 @@ and captured output. CI checks Linux, macOS and Windows.
 - Keep algorithms single-threaded. Callers control parallelism, limits and
   memory probes; the library reads no environment variables and has no
   process-wide state or native dependencies. Consumers need no Cargo features;
-  `testing` enables generators, oracles and invariant checks for tests.
+  `testing` exposes the generators and oracles in `test_helpers` and keeps its
+  invariant checkers in a release build, as stated in the
+  [architecture reference](docs/architecture.md#invariants).
 - Return errors for invalid input and refused work. Named operations are
   checked; do not add panicking twins or `try_` aliases.
 - Put each operation's contract on its default entry point. Batch methods

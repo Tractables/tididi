@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::diagram::{ChildRef, LEAF_WIDTH, LeafLabel, NodeIdx, Tdd, TddNodeId, ValueRef, WeightValue};
 
 use num_bigint::BigUint;
-use crate::test_helpers::Lcg;
+use crate::vtree::rng::Lcg;
 use crate::vtree::VtreeIdx;
 
 // ── EvalAlgebra helpers (probabilistic equivalence testing) ─────────────────────

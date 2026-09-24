@@ -1,7 +1,7 @@
 //! Canonicity checking by random-assignment signatures.
 
 use std::collections::HashSet;
-use crate::test_helpers::Lcg;
+use crate::vtree::rng::Lcg;
 use crate::diagram::Tdd;
 use super::signature::{eval_all_signatures, random_var_assignments};
 

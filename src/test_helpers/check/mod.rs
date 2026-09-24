@@ -1,10 +1,12 @@
-//! The invariant checkers, one per numbered invariant, compiled only under
-//! `cfg(test)` or `debug_assertions`.
+//! The invariant checkers, one per numbered invariant. Compiled in every
+//! debug build, because the library's own `debug_assert` sites call them, and
+//! under the `testing` feature in any profile.
 //!
 //! A checker reports and never repairs: restoring an invariant belongs to the
 //! pass that broke it, in [`crate::reduce`] or [`Tdd::marginalize_levels`](crate::Tdd::marginalize_levels). Every
-//! checker walks the whole diagram, which is why a release build does not carry
-//! them. A test suite built on the crate reaches them through `test_helpers`.
+//! checker walks the whole diagram, which is why a consumer's release build
+//! does not carry them. A test suite built on the crate reaches them through
+//! `test_helpers`.
 //!
 //! Every checker returns `Ok(())` or `Err(String)` naming the violation. The
 //! marginal-canonical-form checks and the model-count localizer are reached

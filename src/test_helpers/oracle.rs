@@ -1,7 +1,6 @@
 //! How a test decides a diagram is right: enumeration, canonicity, structural
 //! equality, the support oracles, and the deadline harness.
 
-#[cfg(any(test, debug_assertions, feature = "testing"))]
 use num_bigint::BigUint;
 
 #[cfg(test)]
@@ -9,26 +8,19 @@ use std::sync::Arc;
 
 #[cfg(test)]
 use crate::diagram::ChildSide;
-#[cfg(any(test, debug_assertions, feature = "testing"))]
 use crate::diagram::{LeafLabel, PairsIter};
 use crate::diagram::{ChildDecoder, NodeIdx, Tdd, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO};
-#[cfg(any(test, debug_assertions, feature = "testing"))]
 use crate::Engine;
 #[cfg(test)]
 use super::access::stopping_engine;
-#[cfg(any(test, debug_assertions, feature = "testing"))]
 use crate::query::count::leaf_seed;
-#[cfg(any(test, debug_assertions, feature = "testing"))]
 use crate::query::fold::{fold_bottom_up, LevelFold, PairAlgebra, Side};
-#[cfg(any(test, debug_assertions, feature = "testing"))]
 use crate::query::PinSemantics;
-#[cfg(any(test, debug_assertions, feature = "testing"))]
 use crate::value::{Retention, CountRead};
 
 
 #[cfg(test)]
 use super::compile::and2;
-#[cfg(any(test, debug_assertions, feature = "testing"))]
 use crate::vtree::VarId;
 use crate::vtree::{VtreeIdx, VtreeNode};
 
@@ -100,7 +92,6 @@ pub(crate) fn normalized_levels(tdd: &Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
 /// shares the walk with [`ModelCounter`](crate::query::ModelCounter) and nothing else — its
 /// arithmetic is independent, which is what makes the differential test
 /// between the two worth running.
-#[cfg(any(test, debug_assertions, feature = "testing"))]
 pub fn node_counts(tdd: &Tdd) -> Vec<Vec<BigUint>> {
     count_big(tdd, &[], PinSemantics::Cofactor)
 }
@@ -129,7 +120,6 @@ pub fn pinned_counts(tdd: &Tdd, pins: &[Option<bool>], convention: PinSemantics)
 /// The walk behind [`node_counts`] and [`pinned_counts`], with per-variable
 /// pins indexed by `VarId::idx()` (out-of-range or `None` entries leave the
 /// variable free) and the seed convention the pinned leaves count under.
-#[cfg(any(test, debug_assertions, feature = "testing"))]
 fn count_big(tdd: &Tdd, pins: &[Option<bool>], convention: PinSemantics) -> Vec<Vec<BigUint>> {
     let eng = Engine::new();
     let fold = BigCounts { pins, convention };
@@ -142,13 +132,11 @@ fn count_big(tdd: &Tdd, pins: &[Option<bool>], convention: PinSemantics) -> Vec<
 }
 
 /// The exact-`BigUint` counting fold.
-#[cfg(any(test, debug_assertions, feature = "testing"))]
 struct BigCounts<'a> {
     pins: &'a [Option<bool>],
     convention: PinSemantics,
 }
 
-#[cfg(any(test, debug_assertions, feature = "testing"))]
 impl LevelFold for BigCounts<'_> {
     type Value = BigUint;
     type Col = Vec<BigUint>;
@@ -192,7 +180,6 @@ impl LevelFold for BigCounts<'_> {
     }
 }
 
-#[cfg(any(test, debug_assertions, feature = "testing"))]
 impl PairAlgebra for BigCounts<'_> {
     fn zero(&self) -> BigUint {
         BigUint::ZERO
@@ -218,7 +205,6 @@ impl PairAlgebra for BigCounts<'_> {
 ///
 /// Mutates `tdd` by that one `minimize`; safe on an already minimized
 /// diagram, where it doubles as an idempotency check.
-#[cfg(any(test, debug_assertions, feature = "testing"))]
 pub fn check_minimize_soundness(tdd: &mut Tdd, rounds: u32) -> Result<(), String> {
     use crate::test_helpers::Lcg;
     use crate::test_helpers::check::signature::{eval_all_signatures, random_var_assignments};
@@ -264,7 +250,6 @@ pub fn big_to_u128(b: &BigUint) -> u128 {
 /// marginal level. A test whose subject produces a diagram asserts this on the
 /// result; only a test whose subject is mid-flight (an accumulator, a shrunk
 /// operand) has cause to skip it.
-#[cfg(any(test, debug_assertions, feature = "testing"))]
 pub fn assert_canonical(tdd: &Tdd) {
     crate::test_helpers::check::check_all_fast(tdd, "assert_canonical");
     if tdd.has_marginal_level() {
@@ -283,20 +268,19 @@ pub fn assert_canonical(tdd: &Tdd) {
 /// identically, and a node with a repeated pair over a marginal subtree signs
 /// as one pair over twice the count. What still holds after summing levels
 /// out is the marginal family, and that is what this asserts.
-#[cfg(any(test, debug_assertions, feature = "testing"))]
 pub fn assert_marginal_canonical(tdd: &Tdd) {
     crate::test_helpers::check::validate_vtree_structure(tdd)
         .unwrap_or_else(|e| panic!("assert_marginal_canonical: vtree structure: {e}"));
     marginal_family(tdd, "assert_marginal_canonical");
 }
 
-/// The two marginal-form checkers, failing under `label`.
-#[cfg(any(test, debug_assertions, feature = "testing"))]
+/// The marginal-form checkers and the leaf column pin, failing under `label`.
 fn marginal_family(tdd: &Tdd, label: &str) {
     type MarginalCheck = fn(&Tdd) -> Result<(), String>;
-    let checks: [(&str, MarginalCheck); 2] = [
+    let checks: [(&str, MarginalCheck); 3] = [
         ("no_orphan_slots", crate::test_helpers::check::marginal::check_no_orphan_slots),
         ("marginal_canonical_form", crate::test_helpers::check::marginal::check_marginal_canonical_form),
+        ("leaf_columns_pinned", crate::test_helpers::check::marginal::check_leaf_columns_pinned),
     ];
     for (name, check) in checks {
         check(tdd).unwrap_or_else(|e| panic!("{label}: {name}: {e}"));
@@ -569,8 +553,7 @@ pub fn assert_restrict_ok(f: &Tdd, c: &Tdd, nvars: u32) {
     }
     let mut gm = g.clone();
     gm.minimize().unwrap();
-    #[cfg(any(test, debug_assertions, feature = "testing"))]
-    {
+        {
         crate::test_helpers::check::check_all_fast(&gm, "restrict_to_care-output");
         crate::test_helpers::check::check_determinism(&gm)
             .expect("restrict_to_care output must be deterministic (mutex pairs)");

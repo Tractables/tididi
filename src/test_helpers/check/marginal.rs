@@ -415,7 +415,6 @@ pub(crate) fn debug_assert_pair_fusion_saturated(tdd: &Tdd, filter: Option<&[Vtr
 ///      leaf. Exact domain only, and only once the column is installed.
 ///
 /// `Ok(())` whenever the diagram carries no weight store.
-#[cfg(debug_assertions)]
 pub fn check_leaf_columns_pinned(tdd: &Tdd) -> Result<(), String> {
     use crate::diagram::semiring::weight_key;
     use crate::diagram::{leaf_canon_map, LeafLabel, LEAF_WIDTH};

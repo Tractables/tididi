@@ -123,10 +123,12 @@ Operation implementations live with their algorithms, including methods on
 accessors rather than decoding references themselves. Queries leave borrowed
 diagrams unchanged.
 
-`test_helpers::check` is compiled under `cfg(test)`, `debug_assertions`, or
-the `testing` feature. The feature keeps invariant checks active in release
-integration tests without enabling debug assertions in the kernels. Run the
-differential suite in both profiles.
+`test_helpers::check` is compiled in every debug build, because the
+`debug_assert` sites in `reduce`, `marginal` and `restructure` call it, and
+under the `testing` feature in any profile, which keeps the invariant checks
+active in release integration tests. The generators and oracles in
+`test_helpers` compile only under that feature. Run the differential suite in
+both profiles.
 
 ## Counting boundaries
 
@@ -239,8 +241,8 @@ vtrees contain shape alone and receive fresh execution state when loaded.
 
 The crate is pure Rust, with no build script. It reads no environment variables
 and owns no threads or process-wide state. Its one optional feature, `testing`,
-adds the `test_helpers` module — oracles, generators and the invariant checkers
-listed below — which a release build otherwise does not compile.
+compiles `test_helpers` in a release build; the gate is stated under
+[Invariants](#invariants).
 
 [`and(f, g)`]: crate::and
 [`and_exists`]: crate::and_exists
