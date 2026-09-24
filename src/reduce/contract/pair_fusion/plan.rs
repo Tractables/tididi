@@ -4,7 +4,7 @@ use crate::Engine;
 use smallvec::SmallVec;
 use rustc_hash::FxHashMap;
 
-use crate::limits::OperationError;
+use crate::limits::{OperationError, Transient};
 use crate::diagram::{Tdd, TddLevel, ValueRef};
 use crate::vtree::VtreeIdx;
 
@@ -131,11 +131,15 @@ fn group_by_scatter<D: SlotValues>(
         // or heap, has spare capacity, push cannot fail. At capacity —
         // both the inline-to-heap spill and every subsequent heap regrow — use
         // `try_reserve` so allocation failure becomes OverBudget rather
-        // than a process abort. Guarding on `capacity()` keeps every
-        // growth fallible for the rare large x-group.
+        // than a process abort, and charge the grown capacity to the byte
+        // meter as `Limits::reserve` would. Guarding on `capacity()` keeps
+        // every growth fallible for the rare large x-group.
         let g = &mut sc.groups[slot];
         if g.len() == g.capacity() {
+            let before = g.capacity();
             g.try_reserve(1).map_err(|_| OperationError::OverBudget)?;
+            let grown = g.capacity().saturating_sub(before) * std::mem::size_of::<u32>();
+            lim.charge_bytes(grown as u64)?;
         }
         g.push(marginal_idx);
     }
@@ -173,9 +177,13 @@ pub(super) fn allocate_fusion_slots<D: SlotValues>(
     v: VtreeIdx,
     plans: &mut [PlanEntry<D::Value>],
 ) -> Result<bool, OperationError> {
+    let lim = eng.limits();
     let mut any_inline = false;
-    let mut by_value: FxHashMap<D::Key, u32> = FxHashMap::default();
+    // Charged for the sweep and handed back on every exit: one entry per
+    // plan beyond whatever the domain seeded.
+    let mut by_value: Transient<'_, FxHashMap<D::Key, u32>> = Transient::new(lim, FxHashMap::default());
     D::seed(tdd, v, &mut by_value);
+    lim.reserve_map(&mut by_value, plans.len())?;
     for plan in plans.iter_mut() {
         if let Some(raw) = D::inline_ref(&plan.value) {
             plan.new_ref = raw;

@@ -109,17 +109,16 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
     assert_eq!(parent_pairs, 2, "parent must have 2 pairs (A_merged and B); got {parent_pairs}");
 }
 
-// Merge buffers are cleared before planning each level; content-twin scratch
-// is cleared on checkout. Leftover plans could replay another level's groups,
-// and stale content keys could redirect refs onto another level's nodes.
+// Merge buffers are cleared before planning each level. Leftover plans could
+// replay another level's groups.
 
 #[test]
 fn merge_buffers_clear_retains_allocations() {
     use super::merge::{GroupAction, GroupPlan};
     use super::scratch::MergeBuffers;
 
-    let mut seen_pairs: rustc_hash::FxHashSet<(u32, u32)> = Default::default();
-    seen_pairs.insert((5, 6));
+    let mut seen_pairs: rustc_hash::FxHashMap<(u32, u32), ()> = Default::default();
+    seen_pairs.insert((5, 6), ());
     let mut b = MergeBuffers {
         resolve_keeps: vec![1],
         filtered: vec![2],

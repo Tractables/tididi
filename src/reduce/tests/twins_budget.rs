@@ -5,6 +5,8 @@
 use super::*;
 
 use crate::Engine;
+use crate::limits::OperationError;
+use crate::reduce::{ContentTwinPolicy, ReductionPlan};
 
 use crate::diagram::{
     ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId, take_levels,
@@ -299,4 +301,34 @@ fn test_prune_value_merge_does_not_mint_twins_at_minimize_exit() {
     // (c) No orphan slots remain.
     check_no_orphan_slots(&tdd)
         .expect("post-fix: check_no_orphan_slots must pass after Engine::reduce");
+}
+
+/// Reserves a full reduction of `edited_marginal_diagram` is asked for,
+/// generously over-estimated, as `RESERVES_PER_CONTRACTION` is.
+const RESERVES_PER_MARGINAL_REDUCTION: u32 = 256;
+
+/// Every reservation a full reduction of a marginalized diagram makes goes
+/// through the budget: refusing any one of them comes back as `OverBudget`
+/// with the count intact, and the same diagram then reduces to canonical
+/// form once every reservation is granted.
+#[test]
+fn a_full_reduction_of_a_marginal_diagram_refuses_cleanly_at_every_reserve() {
+    let eng = Engine::new();
+    let mut refusals = 0;
+    for nth in 0..RESERVES_PER_MARGINAL_REDUCTION {
+        let mut f = edited_marginal_diagram(&eng);
+        let count = f.model_count().unwrap();
+        eng.limits().refuse_nth_reserve(nth);
+        let res = eng.reduce(&mut f, ReductionPlan::Full(ContentTwinPolicy::Fresh));
+        eng.limits().grant_every_reserve();
+        if let Err(e) = res {
+            refusals += 1;
+            assert_eq!(e, OperationError::OverBudget, "reserve {nth}");
+            assert_eq!(f.model_count().unwrap(), count, "reserve {nth} must leave the count intact");
+            eng.minimize(&mut f).unwrap();
+        }
+        assert_canonical(&f);
+        assert_eq!(f.model_count().unwrap(), count, "reserve {nth}");
+    }
+    assert!(refusals > 0, "the sweep must actually refuse something");
 }

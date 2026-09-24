@@ -2,7 +2,9 @@
 
 use rustc_hash::FxHashMap;
 
+use crate::limits::{OperationError, Transient};
 use crate::diagram::{EncodedChildRef, ChildPair, Tdd, TddLevel};
+use crate::Engine;
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::ChildSide;
@@ -23,12 +25,13 @@ use super::PlanEntry;
 /// range since `kept + k ≤ old_len − k`. The abandoned tail is charged to
 /// `dead_pairs` and reclaimed by the level's arena sweep at the end.
 pub(super) fn rebuild_parent_level<V>(
+    eng: &Engine,
     tdd: &mut Tdd,
     parent: VtreeIdx,
     side: ChildSide,
     any_inline: bool,
     plans: &[PlanEntry<V>],
-) {
+) -> Result<(), OperationError> {
     let level = &mut tdd.levels[parent.idx()];
     // Fusion-inline may mint a fresh inline marginal-side ref (bit-30 tagged) this
     // sweep; the marker for that side must be raised or the end-of-apply tagger
@@ -43,7 +46,8 @@ pub(super) fn rebuild_parent_level<V>(
     // removes every pair at its x_idx (its group is the whole marginal multiset
     // there), so "this pair is fused away" is exactly `fused_x.contains_key`. A
     // node can carry thousands of plans, so membership stays a hash lookup.
-    let mut fused_x: FxHashMap<u32, u32> = FxHashMap::default();
+    // Charged as it grows and handed back when the sweep ends.
+    let mut fused_x: Transient<'_, FxHashMap<u32, u32>> = Transient::new(eng.limits(), FxHashMap::default());
     // Arena slots the shrink abandons, noted in one charge below: the counter's
     // only reader is the sweep at the end, so per-node saturating adds buy nothing.
     let mut dead_acc = 0usize;
@@ -56,29 +60,31 @@ pub(super) fn rebuild_parent_level<V>(
             cursor += 1;
         }
         let this_plans = &plans[plan_start..cursor];
-        dead_acc += fuse_node_pairs(level, n, side, this_plans, &mut fused_x);
+        dead_acc += fuse_node_pairs(eng, level, n, side, this_plans, &mut fused_x)?;
     }
     level.note_dead_pairs(dead_acc);
     // Legal only now: the rewrite is done, so no pair-arena offset is held
     // across the call (the caller obligation on `compact_pairs_if_stale`).
     level.compact_pairs_if_stale();
+    Ok(())
 }
 
 /// Rewrite one node's pair list in place: drop every pair whose x-side carries a
 /// plan, then append one fused pair per plan. Returns the arena slots the shrink
 /// abandoned.
 fn fuse_node_pairs<V>(
+    eng: &Engine,
     level: &mut TddLevel,
     n: usize,
     side: ChildSide,
     this_plans: &[PlanEntry<V>],
     fused_x: &mut FxHashMap<u32, u32>,
-) -> usize {
-
+) -> Result<usize, OperationError> {
     fused_x.clear();
     // Each plan covers a distinct x_idx (Phase 1 emits one plan per
     // (node, x_idx) group), so the map holds one entry per plan — an
     // x_idx collision here would silently drop a fused pair's count.
+    eng.limits().reserve_map(fused_x, this_plans.len())?;
     for plan in this_plans {
         fused_x.insert(plan.x_idx, plan.new_ref);
     }
@@ -135,5 +141,5 @@ fn fuse_node_pairs<V>(
 
     // Re-encode via the shared epilogue: shrink in place, or inline the sole
     // survivor.
-    level.reencode_shrunk(n, start, old_len, write - start)
+    Ok(level.reencode_shrunk(n, start, old_len, write - start))
 }

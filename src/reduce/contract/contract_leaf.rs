@@ -17,7 +17,7 @@ use crate::diagram::Pass;
 use crate::Engine;
 use crate::diagram::ChildSide;
 use crate::diagram::{EncodedChildRef, ChildPair, NodeKind, Tdd, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
-use crate::limits::OperationError;
+use crate::limits::{Limits, OperationError, Transient};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 /// Rewrite `(Pos_x, S) + (Neg_x, S)` pairs to `(One_x, S)` wherever feasible —
@@ -97,14 +97,16 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
     }
 
     // The two partner lists `classify` compares, reused across the level's
-    // nodes so the sort buffers are allocated once per level, not per node.
-    let mut pos: Vec<EncodedChildRef> = Vec::new();
-    let mut neg: Vec<EncodedChildRef> = Vec::new();
+    // nodes so the sort buffers are allocated once per level, not per node,
+    // and charged only while the level is classified.
+    let lim = eng.limits();
+    let mut pos: Transient<'_, Vec<EncodedChildRef>> = Transient::new(lim, Vec::new());
+    let mut neg: Transient<'_, Vec<EncodedChildRef>> = Transient::new(lim, Vec::new());
     let mut any_literal = false;
     for i in 0..level.nodes.len() {
         if !level.nodes[i].is_internal() { continue; }
         let pairs = level.pairs_of_idx(i);
-        match classify(pairs, side, &mut pos, &mut neg) {
+        match classify(lim, pairs, side, &mut pos, &mut neg)? {
             Class::AllContractible { has_literal } => {
                 any_literal |= has_literal;
             }
@@ -128,23 +130,24 @@ enum Class {
 }
 
 /// `pos` and `neg` are the caller's buffers for the partners of the `Pos` and
-/// `Neg` pairs; they are cleared here.
+/// `Neg` pairs; they are cleared here and grown against `lim`.
 fn classify(
+    lim: &Limits,
     pairs: &[ChildPair],
     side: ChildSide,
     pos: &mut Vec<EncodedChildRef>,
     neg: &mut Vec<EncodedChildRef>,
-) -> Class {
+) -> Result<Class, OperationError> {
     pos.clear();
     neg.clear();
     let mut has_one = false;
     for p in pairs {
         let label = if side == ChildSide::Left { p.left } else { p.right };
         let partner = if side == ChildSide::Left { p.right } else { p.left };
-        if label == POS_LEAF_IDX.into() { pos.push(partner); }
-        else if label == NEG_LEAF_IDX.into() { neg.push(partner); }
+        if label == POS_LEAF_IDX.into() { lim.try_push(pos, partner)?; }
+        else if label == NEG_LEAF_IDX.into() { lim.try_push(neg, partner)?; }
         else if label == ONE_LEAF_IDX.into() { has_one = true; }
-        else { return Class::NotContractible; }
+        else { return Ok(Class::NotContractible); }
     }
     let has_literal = !pos.is_empty() || !neg.is_empty();
     if has_literal && has_one {
@@ -153,15 +156,11 @@ fn classify(
         // select values in the pinned column and
         // `marginal::leaf::canonicalize_leaf_refs_at_parent` folds equal-valued
         // labels together. Bail either way.
-        return Class::NotContractible;
+        return Ok(Class::NotContractible);
     }
     pos.sort_unstable();
     neg.sort_unstable();
-    if pos == neg {
-        Class::AllContractible { has_literal }
-    } else {
-        Class::NotContractible
-    }
+    Ok(if pos == neg { Class::AllContractible { has_literal } } else { Class::NotContractible })
 }
 
 /// Apply the `(Pos_x, S) + (Neg_x, S) → (One_x, S)` rewrite to every pair list

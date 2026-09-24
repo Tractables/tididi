@@ -3,7 +3,7 @@
 use crate::Engine;
 use crate::vtree::VtreeIdx;
 
-use crate::limits::OperationError;
+use crate::limits::{Limits, OperationError};
 use crate::diagram::Tdd;
 
 use super::super::scratch::MergeBuffers;
@@ -79,26 +79,60 @@ impl MergePolicy {
 /// most one twin group, and committing a group only re-points its own members
 /// and appends at the arena tail. `sel` holds each acting group's members
 /// contiguously, survivor first.
+///
+/// The planner buffers are reserved up front, sized by the widest group and
+/// its pair mass, so a refused reservation returns before any group is
+/// planned and the loop itself pushes without checking.
 pub(super) fn plan_groups(
+    lim: &Limits,
     tdd: &Tdd,
     t1: VtreeIdx,
     policy: &MergePolicy,
     group_starts: &[u32],
     flat_groups: &[u32],
     bufs: &mut MergeBuffers,
-) {
+) -> Result<(), OperationError> {
     let MergeBuffers {
         filtered, duplicate_members, keep_pairs_sorted, member_pairs, seen_pairs, sel, group_plans, ..
     } = bufs;
     let plain_level = policy.plain_level;
     let t1_scalable = policy.t1_scalable;
     let parent_marginal = policy.parent_marginal;
+    let level = &tdd.levels[t1.idx()];
+    let group_bounds = |g: usize| {
+        let start = group_starts[g] as usize;
+        let end = if g + 1 < group_starts.len() { group_starts[g + 1] as usize } else { flat_groups.len() };
+        (start, end)
+    };
+    lim.reserve_exact(sel, flat_groups.len())?;
+    lim.reserve_exact(group_plans, group_starts.len())?;
+    if plain_level && !t1_scalable {
+        // The overlap filter below holds one group's members and pairs at a
+        // time: `filtered` and `duplicate_members` up to the widest group,
+        // `keep_pairs_sorted` and `member_pairs` up to the longest pair list,
+        // `seen_pairs` up to one group's pair mass.
+        let (mut max_members, mut max_pairs, mut max_mass) = (0usize, 0usize, 0usize);
+        for g in 0..group_starts.len() {
+            let (start, end) = group_bounds(g);
+            max_members = max_members.max(end - start);
+            let mut mass = 0usize;
+            for &idx in &flat_groups[start..end] {
+                let n = level.pair_count_at(idx as usize);
+                max_pairs = max_pairs.max(n);
+                mass += n;
+            }
+            max_mass = max_mass.max(mass);
+        }
+        lim.reserve_exact(filtered, max_members)?;
+        lim.reserve_exact(duplicate_members, max_members)?;
+        lim.reserve_exact(keep_pairs_sorted, max_pairs)?;
+        lim.reserve_exact(member_pairs, max_pairs)?;
+        lim.reserve_map(seen_pairs, max_mass)?;
+    }
     {
         // The per-group buffers are cleared before each group below.
-        let level = &tdd.levels[t1.idx()];
         for g in 0..group_starts.len() {
-            let start = group_starts[g] as usize;
-            let end = if g + 1 < group_starts.len() { group_starts[g + 1] as usize } else { flat_groups.len() };
+            let (start, end) = group_bounds(g);
             let group = &flat_groups[start..end];
             let keep = group[0];
             if !plain_level || t1_scalable {
@@ -121,7 +155,7 @@ pub(super) fn plan_groups(
             keep_pairs_sorted.clear();
             filtered.push(keep);
             for p in level.pairs_of_idx(keep as usize) {
-                seen_pairs.insert((p.left.0, p.right.0));
+                seen_pairs.insert((p.left.0, p.right.0), ());
                 keep_pairs_sorted.push((p.left.0, p.right.0));
             }
             keep_pairs_sorted.sort_unstable();
@@ -130,12 +164,12 @@ pub(super) fn plan_groups(
                 member_pairs.clear();
                 for p in level.pairs_of_idx(idx as usize) {
                     let lr = (p.left.0, p.right.0);
-                    overlap |= seen_pairs.contains(&lr);
+                    overlap |= seen_pairs.contains_key(&lr);
                     member_pairs.push(lr);
                 }
                 if !overlap {
                     for &(l, r) in member_pairs.iter() {
-                        seen_pairs.insert((l, r));
+                        seen_pairs.insert((l, r), ());
                     }
                     filtered.push(idx);
                 } else if parent_marginal {
@@ -175,6 +209,7 @@ pub(super) fn plan_groups(
             group_plans.push(GroupPlan { action, start: sel_start as u32, end: sel.len() as u32 });
         }
     }
+    Ok(())
 }
 
 /// Reserve the commit pass's whole arena growth up front, so a refused

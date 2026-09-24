@@ -6,8 +6,10 @@ use crate::diagram::{NEG_LEAF_IDX, POS_LEAF_IDX, Tdd};
 use crate::reduce::{ContentTwinPolicy, ContentTwinSchedule, ReductionPlan};
 use crate::test_helpers::check::marginal::check_no_orphan_slots;
 use crate::test_helpers::{assert_canonical, assert_same_shape, compile_clauses, toy};
-use crate::vtree::{Vtree, VtreeIdx};
+use crate::vtree::Vtree;
 use crate::Engine;
+
+use super::edited_marginal_diagram;
 
 /// A boundary store of three slots, of which the root node names two.
 fn with_an_orphaned_slot() -> Tdd {
@@ -32,24 +34,6 @@ fn a_prune_drops_orphaned_slots() {
     f.reduce(ReductionPlan::Prune).unwrap();
     check_no_orphan_slots(&f).unwrap();
     assert_eq!(f.model_count().unwrap(), count);
-}
-
-/// A count-marginal diagram straight out of a conjunction, still owing every
-/// pass.
-fn edited_marginal_diagram(eng: &Engine) -> Tdd {
-    let vtree = Arc::new(Vtree::balanced(8));
-    let mut g = eng.clause(&vtree, [1, 5]).unwrap();
-    let (left, _) = vtree.children(vtree.root());
-    let summed: Vec<VtreeIdx> = vtree.internal_bottomup_slice().iter().copied()
-        .filter(|&t| { let mut cur = t; loop {
-            if cur == left { break true; }
-            match vtree.node(cur).parent() { Some(p) => cur = p, None => break false }
-        } })
-        .collect();
-    eng.marginalize_levels(&mut g, &summed).unwrap();
-    let f = eng.and(g, eng.literal(&vtree, 8).unwrap()).unwrap();
-    assert!(f.has_marginal_level() && !f.dirty.is_empty());
-    f
 }
 
 #[test]

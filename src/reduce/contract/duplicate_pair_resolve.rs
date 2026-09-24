@@ -24,7 +24,7 @@ use crate::diagram::{ChildPair, ChildSide, EncodedChildRef, NodeKind, Sides, Tdd
 
 use crate::Engine;
 use super::scratch::DuplicateScratch;
-use crate::limits::OperationError;
+use crate::limits::{Limits, OperationError};
 
 #[path = "duplicate_pair_scale.rs"]
 mod duplicate_pair_scale;
@@ -34,15 +34,20 @@ use crate::vtree::VtreeIdx;
 /// `has_marginal_below[v]` — v's vtree subtree (including v itself) contains a
 /// marginal level. Stable across one minimize pass: marginalization converts
 /// levels between compile phases, never during contraction. Fills `below` in
-/// place (buffer reused across contract runs via ContractScratch).
+/// place (buffer reused across contract runs via ContractScratch), charging
+/// its growth to `lim`.
 ///
 /// O(vtree nodes), so the caller fills it lazily — on the first merge a sweep
 /// attempts, never on a sweep that finds no twins. See
 /// `ContractScratch::has_marginal_below_valid`.
-pub(crate) fn compute_has_marginal_below_into(tdd: &Tdd, below: &mut Vec<bool>) {
+pub(super) fn compute_has_marginal_below_into(
+    lim: &Limits,
+    tdd: &Tdd,
+    below: &mut Vec<bool>,
+) -> Result<(), OperationError> {
     let n = tdd.vtree.num_nodes();
     below.clear();
-    below.resize(n, false);
+    lim.try_resize(below, n, false)?;
     for i in 0..n.min(tdd.levels.len()) {
         if tdd.levels[i].is_marginal() {
             let mut v = Some(VtreeIdx(i as u32));
@@ -55,6 +60,7 @@ pub(crate) fn compute_has_marginal_below_into(tdd: &Tdd, below: &mut Vec<bool>) 
             }
         }
     }
+    Ok(())
 }
 
 
@@ -90,22 +96,20 @@ pub(super) fn resolve_duplicate_pairs_in_node(
     if !has_o1_absorber(tdd, pv) {
         return Ok(false);
     }
+    let lim = eng.limits();
     scratch.clear();
     let DuplicateScratch { pairs, counts, out } = scratch;
-    pairs.extend(
-        tdd.levels[pv.idx()]
-            .pairs_of_idx(idx)
-            .iter()
-            .map(|p| (p.left.0, p.right.0)),
-    );
-    if pairs.len() < 2 {
+    let node_pairs = tdd.levels[pv.idx()].pairs_of_idx(idx);
+    if node_pairs.len() < 2 {
         return Ok(false);
     }
+    lim.reserve_exact(pairs, node_pairs.len())?;
+    pairs.extend(node_pairs.iter().map(|p| (p.left.0, p.right.0)));
     // Pair lists are unordered, so duplicates are grouped by a hash count in
     // O(p) rather than a sort; `out` comes back in hash order, which is allowed
     // because nothing reads a pair list positionally, and scaling distinct
     // pairs scales distinct children, so order does not matter.
-    counts.reserve(pairs.len());
+    lim.reserve_map(counts, pairs.len())?;
     for &p in pairs.iter() {
         *counts.entry(p).or_insert(0) += 1;
     }
@@ -135,8 +139,9 @@ fn scale_duplicate_runs(
     out: &mut Vec<ChildPair>,
     expected: usize,
 ) -> Result<Sides<bool>, OperationError> {
-    // Worst case (nothing absorbs) `out` is the input multiset verbatim.
-    out.reserve(expected);
+    // Worst case (nothing absorbs) `out` is the input multiset verbatim, so
+    // one reservation covers every push below.
+    eng.limits().reserve_exact(out, expected)?;
     let mut inlined = Sides { left: false, right: false };
     for (&(l, r), &k) in counts.iter() {
         let pair = ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r));

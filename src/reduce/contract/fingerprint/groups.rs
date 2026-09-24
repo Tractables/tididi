@@ -1,7 +1,7 @@
 //! Materializing candidate context signatures and grouping nodes by them.
 
 use crate::Engine;
-use crate::limits::OperationError;
+use crate::limits::{Limits, OperationError};
 
 use super::super::scratch::ContractScratch;
 use super::{probe_fingerprints, TwinEntries};
@@ -28,7 +28,7 @@ pub(super) fn build_twin_groups_after_collision(
 
     // ── Group nodes by signature ──────────────────────────────────────────────
     if child_width == 2 {
-        return Ok(group_width_two(scratch));
+        return group_width_two(eng.limits(), scratch);
     }
     group_by_hashed_signature(eng, child_width, scratch)
 }
@@ -155,7 +155,7 @@ fn canonicalize_signature_slices(child_width: usize, scratch: &mut ContractScrat
 }
 
 /// Width-2 fast path: the two signatures are compared directly, no hashing.
-fn group_width_two(scratch: &mut ContractScratch) -> bool {
+fn group_width_two(lim: &Limits, scratch: &mut ContractScratch) -> Result<bool, OperationError> {
     let sig_offsets = &scratch.counts;
     // Width-2 fast path: direct comparison, no hashing.
     {
@@ -168,11 +168,12 @@ fn group_width_two(scratch: &mut ContractScratch) -> bool {
         let sig1 = &scratch.entries[sig_offsets[1] as usize..sig_offsets[2] as usize];
         let found = sig0 == sig1;
         if found {
-            scratch.group_starts.push(0);
-            scratch.flat_groups.push(0);
-            scratch.flat_groups.push(1);
+            lim.try_push(&mut scratch.group_starts, 0)?;
+            lim.try_resize(&mut scratch.flat_groups, 2, 0)?;
+            scratch.flat_groups[0] = 0;
+            scratch.flat_groups[1] = 1;
         }
-        found
+        Ok(found)
     }
 
 
@@ -226,7 +227,7 @@ fn group_by_hashed_signature(
         let mut pos = 0usize;
         for i in 0..child_width {
             if scratch.cursors[i] as usize == i && scratch.fingerprints[i] >= 2 {
-                scratch.group_starts.push(pos as u32);
+                lim.try_push(&mut scratch.group_starts, pos as u32)?;
                 let cnt = scratch.fingerprints[i] as usize;
                 scratch.fingerprints[i] = pos as u64;
                 pos += cnt;

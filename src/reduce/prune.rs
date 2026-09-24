@@ -14,7 +14,7 @@ use crate::diagram::{EncodedChildRef, NodeIdx, NodeKind, Tdd};
 use crate::Engine;
 
 use crate::vtree::VtreeIdx;
-use crate::limits::OperationError;
+use crate::limits::{OperationError, Transient};
 
 /// `remap` entry for a slot the pass-1 walk never reached — the whole
 /// reachability bitmap, folded into the remap array (they are indexed
@@ -109,9 +109,7 @@ fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
 
     // Flat offset table: level t occupies remap[level_base[t]..level_base[t+1]].
     // Use `reference_slot_count()` so leaf levels get `LEAF_WIDTH` slots for marginal nodes.
-    if level_base.len() < num_nodes + 1 {
-        level_base.resize(num_nodes + 1, 0usize);
-    }
+    eng.limits().try_resize(&mut level_base, num_nodes + 1, 0usize)?;
     level_base[0] = 0;
     for i in 0..num_nodes {
         level_base[i + 1] = level_base[i] + tdd.reference_slot_count(VtreeIdx(i as u32));
@@ -134,8 +132,12 @@ fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     // ── Pass 1 (top-down): mark reachable nodes ──────────────────────────
     classic_mark(tdd, &level_base, &mut remap[..total]);
 
+    // `level_dirty[t]` records whether level `t` lost a node; charged for
+    // this prune and handed back with it.
+    let mut level_dirty: Transient<'_, Vec<bool>> = Transient::new(eng.limits(), Vec::new());
+    eng.limits().try_resize(&mut level_dirty, num_nodes, false)?;
     let vtree = std::sync::Arc::clone(&tdd.vtree);
-    let level_dirty = compact_levels(tdd, &vtree, &level_base, &mut remap[..total], num_nodes);
+    compact_levels(tdd, &vtree, &level_base, &mut remap[..total], &mut level_dirty);
     seed_dirty_levels(tdd, &level_dirty);
 
     tdd.output.local = NodeIdx(
@@ -154,25 +156,23 @@ fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
 
 /// Pass 2 (bottom-up): compact unreachable nodes, overwriting the pass-1 marks
 /// in `remap` with each surviving node's compacted index and rewriting child
-/// references as it goes. Returns the per-level "this level lost a node" flags.
+/// references as it goes. Sets `level_dirty[t]` where level `t` lost a node.
 fn compact_levels(
     tdd: &mut Tdd,
     vtree: &crate::vtree::Vtree,
     level_base: &[usize],
     remap: &mut [u32],
-    num_nodes: usize,
-) -> Vec<bool> {
+    level_dirty: &mut [bool],
+) {
     // Overwrite the pass-1 marks with the remap (old index → new index) in
     // place, rewrite child references, and drop unreachable nodes in one
     // pass. A slot's mark is only read before its own remap value is written,
     // and `UNREACHED` survives on every slot that is never remapped, so
     // `remap[s] != UNREACHED` stays the reachability predicate throughout.
     //
-    // `level_dirty[t]` records whether level `t` lost a node. A level's
-    // child-ref rewrite is needed only when a child level shrank (otherwise
-    // that child's remap is the identity), and its retain only when the level
-    // itself shrank, so all-reachable levels skip both walks.
-    let mut level_dirty = vec![false; num_nodes];
+    // A level's child-ref rewrite is needed only when a child level shrank
+    // (otherwise that child's remap is the identity), and its retain only when
+    // the level itself shrank, so all-reachable levels skip both walks.
 
     // Bottom-up topological order, so a level's child levels are remapped
     // before it rewrites its child references; raw indices do not encode
@@ -214,7 +214,6 @@ fn compact_levels(
             Child::at(level_base[right.idx()], level_dirty[right.idx()]),
         );
     }
-    level_dirty
 }
 
 /// Where a child level's remap is, as the parent rewriting its references
@@ -463,7 +462,7 @@ fn prune_below_root_with(
     // else the root level holds is what the change at the root dropped.
     let base = alloc_block(eng, remap, &mut used, tdd.levels[root.idx()].slot_count())?;
     remap[base + tdd.output.local.idx()] = REACHED;
-    visits.push(Visit::new(root, base));
+    eng.limits().try_push(visits, Visit::new(root, base))?;
 
     // Where the marks of a child the walk does not descend into go: a leaf
     // level, whose remap is the identity, or a marginal one, which is never
@@ -498,10 +497,10 @@ fn prune_below_root_with(
         visits[i].left = settle_child(remap, lb, lw, l_own);
         visits[i].right = settle_child(remap, rb, rw, r_own);
         if visits[i].left.dirty {
-            visits.push(Visit::new(left, lb));
+            eng.limits().try_push(visits, Visit::new(left, lb))?;
         }
         if visits[i].right.dirty {
-            visits.push(Visit::new(right, rb));
+            eng.limits().try_push(visits, Visit::new(right, rb))?;
         }
         i += 1;
     }

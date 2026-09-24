@@ -74,7 +74,9 @@ pub(super) fn contract_twins(
     lim.try_resize(&mut remap.duplicate_redirect, width, false)?;
     bufs.clear();
 
-    plan_groups(tdd, t1, &policy, group_starts, flat_groups, bufs);
+    plan_groups(lim, tdd, t1, &policy, group_starts, flat_groups, bufs)?;
+    // At most one fork-down survivor per planned group.
+    lim.reserve_exact(&mut bufs.resolve_keeps, bufs.group_plans.len())?;
     reserve_transactional(eng, tdd, t1, bufs)?;
     let merged_members = commit_group_actions(tdd, t1, &policy, remap, bufs);
     if merged_members == 0 {
