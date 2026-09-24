@@ -201,7 +201,7 @@ fn from_models(
 
     let mut builder = crate::diagram::Assembly::new(eng, vtree)?;
     let output = fill(eng, &mut builder, vtree, &layout, &sorted, w, m)?;
-    Ok(builder.finish_checked(output)?)
+    builder.finish_checked(output)
 }
 
 /// The value of the `width` bits starting at `lo` in a row, for a `width` of

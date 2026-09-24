@@ -53,6 +53,23 @@
     }
 
     #[test]
+    fn a_refused_level_array_growth_answers_over_budget() {
+        let eng = &Engine::new();
+        eng.limits().refuse_nth_reserve(0);
+        assert_eq!(try_take_levels(eng, 3).unwrap_err(), crate::OperationError::OverBudget);
+        // The allocator-only take does not consult the budget.
+        let levels = take_levels(eng, 3);
+        assert_eq!(levels.len(), 3);
+        return_levels(eng, PoolSlot::First, levels);
+        eng.limits().grant_every_reserve();
+        // A parked array long enough for the request grows nothing.
+        eng.limits().refuse_nth_reserve(0);
+        assert_eq!(try_take_levels(eng, 2).unwrap().len(), 2);
+        eng.limits().grant_every_reserve();
+        assert_eq!(try_take_levels(eng, 5).unwrap().len(), 5);
+    }
+
+    #[test]
     fn test_pool_roundtrip() {
         let eng = &Engine::new();
         // Take fresh, return, take again — should reuse

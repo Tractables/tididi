@@ -4,7 +4,7 @@ use std::{ops::DerefMut, sync::Arc};
 
 use crate::{Engine, OperationError};
 use crate::vtree::Vtree;
-use super::{Tdd, TddBuilder, TddBuildError, TddLevel, TddNodeId, WeightStore};
+use super::{Tdd, TddBuilder, TddLevel, TddNodeId, WeightStore};
 
 /// An operation's output, returned to the level pool if construction fails.
 ///
@@ -37,25 +37,29 @@ impl<'a> Assembly<'a> {
         self.deref_mut().parts_mut()
     }
 
-    /// Validate storage using the public builder's checks before seating it.
+    /// Validate storage using the public builder's checks, then
+    /// [`finish`](Self::finish) it.
+    ///
+    /// # Errors
+    ///
+    /// A failed check, as [`OperationError::InvalidDiagram`], or a refused
+    /// worklist growth.
     #[inline]
-    pub(crate) fn finish_checked(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
+    pub(crate) fn finish_checked(self, output: TddNodeId) -> Result<Tdd, OperationError> {
         self.check(output)?;
-        Ok(self.finish_untracked(output))
+        self.finish(output)
     }
 
     /// Seat kernel-built storage and charge its reduction worklists.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when the worklist growth is refused;
+    /// the levels go back to the pool.
     #[inline]
     pub(crate) fn finish(mut self, output: TddNodeId) -> Result<Tdd, OperationError> {
         let dirty = self.seed_worklists(Some(self.engine))?;
         Ok(self.builder.take().expect("unfinished assembly").seat(output, dirty))
-    }
-
-    /// Seat kernel-built storage using the untracked assembly contract.
-    #[inline]
-    pub(crate) fn finish_untracked(mut self, output: TddNodeId) -> Tdd {
-        let dirty = self.seed_worklists(None).expect("untracked worklists cannot be refused");
-        self.builder.take().expect("unfinished assembly").seat(output, dirty)
     }
 }
 

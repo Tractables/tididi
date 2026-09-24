@@ -218,13 +218,13 @@ fn apply_and_fallible_inner(
     let num_nodes = vtree.num_nodes();
     if f.is_zero() || g.is_zero() {
         lim.check_stop()?;
-        let levels = diagram::take_levels(eng, num_nodes);
-        return Ok(diagram::Assembly::from_levels(eng, vtree, levels, ws)
-            .finish_untracked(TddNodeId { vtree: f.output.vtree, local: ZERO }));
+        let levels = diagram::try_take_levels(eng, num_nodes)?;
+        return diagram::Assembly::from_levels(eng, vtree, levels, ws)
+            .finish(TddNodeId { vtree: f.output.vtree, local: ZERO });
     }
 
     let mut assembly = diagram::Assembly::from_levels(
-        eng, Arc::clone(&vtree), diagram::take_levels(eng, num_nodes), ws,
+        eng, Arc::clone(&vtree), diagram::try_take_levels(eng, num_nodes)?, ws,
     );
     let mut scratch = eng.apply().workspace.checkout(lim);
     let (levels, ws) = assembly.parts_mut();
@@ -261,5 +261,5 @@ fn apply_and_fallible_inner(
     let out_vtree = f.output.vtree;
 
 
-    Ok(assembly.finish_untracked(TddNodeId { vtree: out_vtree, local: out_local }))
+    assembly.finish(TddNodeId { vtree: out_vtree, local: out_local })
 }

@@ -109,7 +109,7 @@ fn complement_full_at_root(
         let Some(neg_local) = complement_leaf_root(out_local) else {
             return Ok(crate::build::constant_zero(eng, orig_vtree));
         };
-        Ok(assembly.finish_untracked(TddNodeId { vtree: root, local: neg_local }))
+        assembly.finish(TddNodeId { vtree: root, local: neg_local })
     } else {
         // Child widths the complement's basis spans:
         // - Leaf children: 2 (the disjoint set {Pos, Neg})
@@ -163,7 +163,7 @@ fn complement_full_at_root(
 
         let neg_idx = levels[root_idx].push_node(eng.limits(), &neg_pairs)?;
 
-        Ok(assembly.finish_untracked(TddNodeId { vtree: root, local: neg_idx }))
+        assembly.finish(TddNodeId { vtree: root, local: neg_idx })
     }
 }
 

@@ -48,45 +48,48 @@ pub(crate) fn reset_level(level: &mut TddLevel) -> usize {
     retain(&mut level.nodes) + retain(&mut level.pairs) + retain(&mut level.multi_pairs)
 }
 
-/// Take a pre-allocated `Vec<TddLevel>` from the pool (resized to `num_nodes` by
-/// the pool if a slot has one), or allocate a fresh one. All levels are
-/// guaranteed to be empty — a pooled entry was reset by `return_levels`
-/// before it was parked, a level added by the resize is fresh, and a
-/// fresh array is empty by construction.
+/// Take `num_nodes` empty levels from the pool, growing the array through
+/// the allocator when the pooled one is shorter. For the infallible
+/// constructors and tests; an operation takes its levels through
+/// [`try_take_levels`]. Every level is empty: a pooled entry was reset by
+/// `return_levels` before it was parked, and a level added here is fresh.
 pub(crate) fn take_levels(eng: &Engine, num_nodes: usize) -> Vec<TddLevel> {
-    take_levels_with(eng, num_nodes, false).expect("an untracked take cannot be refused")
+    let mut levels = take_level_array(eng, num_nodes);
+    if levels.len() < num_nodes {
+        levels.reserve_exact(num_nodes - levels.len());
+        levels.resize_with(num_nodes, TddLevel::new);
+    }
+    levels
 }
 
-/// Take empty levels from the pool, charging any array growth to the engine.
+/// [`take_levels`] charging the array's growth to the engine.
+///
+/// # Errors
+///
+/// `Err(OperationError::OverBudget)` when the growth is refused; the pooled
+/// array is dropped with it.
 pub(crate) fn try_take_levels(eng: &Engine, num_nodes: usize) -> Result<Vec<TddLevel>, crate::limits::OperationError> {
-    take_levels_with(eng, num_nodes, true)
+    let mut levels = take_level_array(eng, num_nodes);
+    let missing = num_nodes - levels.len();
+    if missing > 0 {
+        eng.limits().reserve_exact(&mut levels, missing)?;
+        levels.resize_with(num_nodes, TddLevel::new);
+    }
+    Ok(levels)
 }
 
-/// Resize the first available level array. `charged` grows it through the
-/// engine's budget, which may refuse; otherwise it grows through `Vec`.
-fn take_levels_with(
-    eng: &Engine,
-    num_nodes: usize,
-    charged: bool,
-) -> Result<Vec<TddLevel>, crate::limits::OperationError> {
+/// The first parked level array, cut down to at most `num_nodes` levels.
+fn take_level_array(eng: &Engine, num_nodes: usize) -> Vec<TddLevel> {
     let pool = eng.levels();
     let mut levels = if pool.primary.occupied() { pool.primary.take(eng.limits()) }
         else { pool.secondary.take(eng.limits()) }.levels;
-    if levels.len() < num_nodes {
-        let additional = num_nodes - levels.len();
-        if charged {
-            eng.limits().reserve_exact(&mut levels, additional)?;
-        } else {
-            levels.reserve_exact(additional);
-        }
-        levels.resize_with(num_nodes, TddLevel::new);
-    } else if levels.len() > num_nodes {
+    if levels.len() > num_nodes {
         levels.truncate(num_nodes);
         if levels.capacity().saturating_mul(std::mem::size_of::<TddLevel>()) > MAX_LEVEL_ARENA_BYTES {
             levels.shrink_to_fit();
         }
     }
-    Ok(levels)
+    levels
 }
 
 /// Recycled structural arrays. Clearing a level drops its marginal values.

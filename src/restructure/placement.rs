@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::{Engine, OperationError};
 use crate::diagram::{
     Assembly, ChildPair, LevelView, MarginalStorage, NodeIdx, Tdd, TddNodeId,
-    WeightStore, LEAF_WIDTH, ONE_LEAF_IDX, take_levels,
+    WeightStore, LEAF_WIDTH, ONE_LEAF_IDX, try_take_levels,
 };
 use crate::vtree::{Vtree, VtreeIdx};
 use super::GraftError;
@@ -62,9 +62,10 @@ impl<'a> Placement<'a, true> {
 }
 
 impl<'a> Placement<'a, false> {
-    pub(super) fn moving(eng: &'a Engine, vtree: &'a Arc<Vtree>, weights: Option<WeightStore>) -> Self {
-        let assembly = Assembly::from_levels(eng, Arc::clone(vtree), take_levels(eng, vtree.num_nodes()), weights);
-        Self { eng, vtree, assembly, prune: false }
+    pub(super) fn moving(eng: &'a Engine, vtree: &'a Arc<Vtree>, weights: Option<WeightStore>) -> Result<Self, OperationError> {
+        let levels = try_take_levels(eng, vtree.num_nodes())?;
+        let assembly = Assembly::from_levels(eng, Arc::clone(vtree), levels, weights);
+        Ok(Self { eng, vtree, assembly, prune: false })
     }
 
     /// Move every level and its weighted column through a checked placement map.
@@ -97,13 +98,13 @@ impl<const COPY: bool> Placement<'_, COPY> {
     pub(super) fn finish(mut self, local: NodeIdx) -> Result<Tdd, GraftError> {
         let output = TddNodeId { vtree: self.vtree.root(), local };
         let mut result = if COPY {
-            self.assembly.finish_checked(output).map_err(OperationError::from)?
+            self.assembly.finish_checked(output)?
         } else {
             let (levels, weights) = self.assembly.parts_mut();
             if let Some(weights) = weights {
                 weights.check_levels(self.vtree, levels).map_err(GraftError::DestinationWeights)?;
             }
-            self.assembly.finish_untracked(output)
+            self.assembly.finish(output)?
         };
         if !COPY && self.prune {
             for (leaf, _) in result.vtree.leaf_bottomup() {
