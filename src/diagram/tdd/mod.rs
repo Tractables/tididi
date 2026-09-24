@@ -416,6 +416,12 @@ impl Tdd {
         }
     }
 
+    /// Whether `idx` is an internal level that still holds structure: the
+    /// only kind of level whose nodes a walk descends into.
+    pub(crate) fn is_structural_internal(&self, idx: VtreeIdx) -> bool {
+        !self.vtree.node(idx).is_leaf() && !self.levels[idx.idx()].is_marginal()
+    }
+
     /// The largest [`TddLevel::slot_count`] over all levels; 0 for ⊥.
     ///
     /// Marginal value slots contribute to width; implicit ordinary leaf nodes do not.

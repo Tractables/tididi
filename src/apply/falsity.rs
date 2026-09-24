@@ -25,12 +25,12 @@ pub(super) fn propagate_false_nodes(tdd: &mut Tdd) {
     let vtree = Arc::clone(&tdd.vtree);
     for (vi, left, right) in vtree.internal_bottomup() {
         if tdd.levels[vi.idx()].is_marginal() { continue; }
+        // Leaf labels and marginal values do not name structural nodes.
+        let left_structural = tdd.is_structural_internal(left);
+        let right_structural = tdd.is_structural_internal(right);
         let [parent, left_level, right_level] = tdd.levels
             .get_disjoint_mut([vi.idx(), left.idx(), right.idx()])
             .expect("a parent and its children are distinct levels");
-        // Leaf labels and marginal values do not name structural nodes.
-        let left_structural = !vtree.node(left).is_leaf() && !left_level.is_marginal();
-        let right_structural = !vtree.node(right).is_leaf() && !right_level.is_marginal();
         let has_empty = |structural: bool, level: &TddLevel| {
             structural && (0..level.nodes.len()).any(|i| empty_node(level, i))
         };

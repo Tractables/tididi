@@ -194,7 +194,7 @@ fn compact_levels(
         // only the slots referenced right now, so compacting the store here
         // could drop a slot a later ref reads. Marginal stores keep their full
         // length; `prune_value_slots` collects their orphans.
-        if vtree.node(t).is_leaf() || tdd.levels[t_idx].is_marginal() {
+        if !tdd.is_structural_internal(t) {
             for i in 0..eff_width {
                 remap[base + i] = i as u32;
             }
@@ -362,7 +362,7 @@ fn classic_mark(tdd: &Tdd, level_base: &[usize], remap: &mut [u32]) {
         let t = *v;
         // A marginal level has no pairs, and by invariant 5 every level
         // beneath it is marginal too, so there is nothing to mark below.
-        if vtree.node(t).is_leaf() || tdd.levels[t.idx()].is_marginal() {
+        if !tdd.is_structural_internal(t) {
             continue;
         }
         let (left, right) = vtree.children(t);
@@ -474,7 +474,7 @@ fn prune_below_root_with(
         let t = visits[i].level;
         let (left, right) = vtree.children(t);
         let (lw, rw) = (tdd.reference_slot_count(left), tdd.reference_slot_count(right));
-        let (l_own, r_own) = (descends_into(tdd, left), descends_into(tdd, right));
+        let (l_own, r_own) = (tdd.is_structural_internal(left), tdd.is_structural_internal(right));
         // The identity run stands in for either child the level keeps whole.
         identity_upto(eng, identity, lw.max(rw))?;
         let lb = if l_own {
@@ -516,12 +516,6 @@ fn prune_below_root_with(
     // neither can stop partway.
     eng.limits().charge_work(2 * used as u64);
     Ok(())
-}
-
-/// Whether the walk descends into `child`: a structural internal level is the
-/// only kind that can lose a node.
-fn descends_into(tdd: &Tdd, child: VtreeIdx) -> bool {
-    !tdd.vtree.node(child).is_leaf() && !tdd.levels[child.idx()].is_marginal()
 }
 
 /// What a walked level's parent reads for it: a child that kept every slot

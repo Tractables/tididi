@@ -125,7 +125,7 @@ impl crate::Engine {
         poll.flush()?;
         if !removed { return Ok(f); }
         let root = f.output;
-        if !f.vtree.node(root.vtree).is_leaf() && !f.levels[root.vtree.idx()].is_marginal()
+        if f.is_structural_internal(root.vtree)
             && !marks.alive[root.vtree.idx()][root.local.idx()]
         {
             return crate::build::constant_like(self, &f, false);
