@@ -182,7 +182,7 @@ pub(super) fn allocate_fusion_slots<D: SlotValues>(
     // Charged for the sweep and handed back on every exit: one entry per
     // plan beyond whatever the domain seeded.
     let mut by_value: Transient<'_, FxHashMap<D::Key, u32>> = Transient::new(lim, FxHashMap::default());
-    D::seed(tdd, v, &mut by_value);
+    D::seed(lim, tdd, v, &mut by_value)?;
     lim.reserve_map(&mut by_value, plans.len())?;
     for plan in plans.iter_mut() {
         if let Some(raw) = D::inline_ref(&plan.value) {

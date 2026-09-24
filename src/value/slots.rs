@@ -14,7 +14,7 @@ use crate::diagram::{
     EncodedChildRef, ChildDecoder, CountOverflow, ChildPair, Tdd, TddLevel, ValueRef, WeightStore, WeightValue,
 };
 use crate::Engine;
-use crate::limits::OperationError;
+use crate::limits::{Limits, OperationError};
 use crate::vtree::VtreeIdx;
 
 // ── Compaction ───────────────────────────────────────────────────────────────
@@ -113,11 +113,15 @@ pub(crate) fn truncate_with_slack<T>(store: &mut Vec<T>, new_len: usize) {
 
 /// Map every distinct count of a store to its first slot; a duplicate count
 /// collapses to its first occurrence.
-fn seed_slot_map(map: &mut FxHashMap<Count, u32>, counts: &[u128], big: Option<&CountOverflow>) {
+fn seed_slot_map(
+    lim: &Limits, map: &mut FxHashMap<Count, u32>, counts: &[u128], big: Option<&CountOverflow>,
+) -> Result<(), OperationError> {
+    lim.reserve_map(map, counts.len())?;
     for i in 0..counts.len() {
         let key = count_key_at(counts, big, i);
         map.entry(key).or_insert(i as u32);
     }
+    Ok(())
 }
 
 // ── SlotValues ───────────────────────────────────────────────────────────────
@@ -150,8 +154,13 @@ pub(crate) trait SlotValues {
     fn inline_ref(value: &Self::Value) -> Option<u32>;
 
     /// Enter the slots level `v` already holds into `map`, for a domain that
-    /// shares an existing slot with a value equal to it.
-    fn seed(tdd: &Tdd, v: VtreeIdx, map: &mut FxHashMap<Self::Key, u32>);
+    /// shares an existing slot with a value equal to it; the map's growth is
+    /// charged to `lim`.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when the growth is refused.
+    fn seed(lim: &Limits, tdd: &Tdd, v: VtreeIdx, map: &mut FxHashMap<Self::Key, u32>) -> Result<(), OperationError>;
 
     /// Append `value` as a fresh slot of level `v`'s store and return its
     /// index.
@@ -236,10 +245,10 @@ impl SlotValues for IntFold {
 
     /// Seeded with the whole store, so a value equal to an existing slot's
     /// reuses it and the store stays at one slot per value.
-    fn seed(tdd: &Tdd, v: VtreeIdx, map: &mut FxHashMap<Count, u32>) {
+    fn seed(lim: &Limits, tdd: &Tdd, v: VtreeIdx, map: &mut FxHashMap<Count, u32>) -> Result<(), OperationError> {
         let level = &tdd.levels[v.idx()];
         let counts = level.marginal_counts().expect("pair fusion: the marginal level has no count store");
-        seed_slot_map(map, counts, level.marginal_counts_big());
+        seed_slot_map(lim, map, counts, level.marginal_counts_big())
     }
 
     fn push_slot(eng: &Engine, tdd: &mut Tdd, v: VtreeIdx, value: Count) -> Result<u32, OperationError> {
@@ -330,7 +339,9 @@ impl SlotValues for WeightFold {
     /// Nothing: a fused value shares a slot with the plans of the same sweep
     /// only. Sharing with an existing slot is deferred to the slot pruner's
     /// value merge on the next prune.
-    fn seed(_: &Tdd, _: VtreeIdx, _: &mut FxHashMap<WeightKey, u32>) {}
+    fn seed(_: &Limits, _: &Tdd, _: VtreeIdx, _: &mut FxHashMap<WeightKey, u32>) -> Result<(), OperationError> {
+        Ok(())
+    }
 
     /// Bumps `weight_width`, the weighted level's live slot count, which is
     /// what `slot_count()` reads and apply sizes its buffers from.
