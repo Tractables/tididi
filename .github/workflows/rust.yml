@@ -42,6 +42,8 @@ jobs:
     - name: Documentation tests
       run: cargo test --locked --doc
     - name: Run consumer examples
+      # On Linux the packaged-example step below runs them.
+      if: runner.os != 'Linux'
       run: |
         for example in examples/*.rs; do
           cargo run --locked --example "$(basename "$example" .rs)"
@@ -127,8 +129,6 @@ jobs:
     - uses: dtolnay/rust-toolchain@1.88
     - name: Report the toolchain in use
       run: cargo +1.88 --version --verbose
-    - name: Build
-      run: cargo +1.88 build --all-targets --verbose
     - name: Test
       env:
         RUST_BACKTRACE: full
@@ -210,7 +210,13 @@ jobs:
       with:
         python-version: "3.10"
     - name: Build and test C, C++, and the installed package
+      if: runner.os != 'Linux'
       run: python bindings/c/check.py
+    - name: Build and test C, C++, the installed package and the executable guide
+      if: runner.os == 'Linux'
+      run: |
+        python -m pip install -r bindings/c/docs/requirements.txt
+        python bindings/c/check.py --docs
     - name: Check the Rust ownership boundary
       if: runner.os == 'Linux'
       run: |
@@ -225,11 +231,6 @@ jobs:
         for source in bindings/c/examples/*.c; do
           valgrind --leak-check=full --errors-for-leak-kinds=definite,indirect --error-exitcode=99 "bindings/c/build/bin/$(basename "$source" .c)"
         done
-    - name: Build the executable C guide
-      if: runner.os == 'Linux'
-      run: |
-        python -m pip install -r bindings/c/docs/requirements.txt
-        python bindings/c/check.py --docs
     - name: Save C documentation
       if: runner.os == 'Linux' && github.event_name != 'pull_request'
       uses: actions/upload-artifact@v4

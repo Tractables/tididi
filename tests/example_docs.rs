@@ -73,7 +73,9 @@ fn readme_example_matches_the_tested_crate_example() {
     assert_eq!(normalized(example), normalized(&visible), "README must match the executed doctest");
 }
 
-/// Keep links within the documentation version rustdoc is rendering.
+/// Keep links within the documentation version rustdoc is rendering. The
+/// rendered pages are checked for the versioned example and figure links by
+/// `tests/rendered_docs.py`.
 #[test]
 fn crate_documentation_uses_intra_doc_links() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -91,14 +93,6 @@ fn crate_documentation_uses_intra_doc_links() {
                 let source = std::fs::read_to_string(&path).unwrap();
                 assert!(!source.contains("https://docs.rs/tididi/"),
                     "{}: use a crate:: link so rustdoc resolves the current version", path.display());
-                for url in source.split("https://").skip(1) {
-                    for prefix in ["github.com/Tractables/tididi/blob/", "raw.githubusercontent.com/Tractables/tididi/"] {
-                        if let Some(destination) = url.strip_prefix(prefix) {
-                            assert!(destination.starts_with(&format!("v{version}/")),
-                                "{}: example and figure links must use v{version}", path.display());
-                        }
-                    }
-                }
             }
         }
     }
