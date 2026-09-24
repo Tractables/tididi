@@ -132,6 +132,15 @@ impl Quantification {
     fn collapses_subtrees(self) -> bool {
         matches!(self, Quantification::FusedSubtrees)
     }
+
+    /// The setting's name, for an error that names it.
+    fn name(self) -> &'static str {
+        match self {
+            Quantification::Fused => "Quantification::Fused",
+            Quantification::FusedSubtrees => "Quantification::FusedSubtrees",
+            Quantification::Product => "Quantification::Product",
+        }
+    }
 }
 
 /// Existential conjunction: `exists vars. (f AND g)`.
@@ -143,8 +152,9 @@ impl Quantification {
 /// free in that universe, as in [`Tdd::exists_vars`]. Summing counts with
 /// [`Engine::and_marginalizing`] is a different operation.
 ///
-/// Quantification follows [`Quantification::Fused`]; see
-/// [`Engine::and_exists_with`] for the reference route.
+/// Quantification follows [`Quantification::Fused`] on unweighted operands
+/// and [`Quantification::Product`] on weighted ones; [`Engine::and_exists_with`]
+/// takes the choice.
 ///
 /// # Errors
 ///
@@ -216,24 +226,34 @@ impl Engine {
 
     /// Run [`and_exists`] using this batch's scratch and resource limits.
     ///
+    /// Unweighted operands take [`Quantification::Fused`]; weighted operands
+    /// take [`Quantification::Product`], the one setting they admit.
+    ///
     /// # Errors
     ///
     /// Returns the operation's errors, plus [`OperationError::Stopped`] or
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn and_exists(&self, f: Tdd, g: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
-        self.and_exists_with(f, g, vars, Quantification::default())
+        let how = if f.weights.is_some() || g.weights.is_some() {
+            Quantification::Product
+        } else {
+            Quantification::default()
+        };
+        self.and_exists_with(f, g, vars, how)
     }
 
     /// Run [`and_exists`] with a chosen [`Quantification`], using this batch's
     /// scratch and resource limits.
     ///
-    /// All settings return the same canonical function. Weighted operands
-    /// always use [`Quantification::Product`] to preserve their interpretation,
-    /// even when a fused setting is requested.
+    /// All settings return the same canonical function.
     ///
     /// # Errors
     ///
-    /// Returns the operation's errors, plus [`OperationError::Stopped`] or
+    /// [`OperationError::InertOption`] when a fused setting is chosen for
+    /// weighted operands: quantifying a variable out of one of them before the
+    /// product would leave the product's weights unresolved, so weighted
+    /// operands admit only [`Quantification::Product`]. Otherwise the
+    /// operation's errors, plus [`OperationError::Stopped`] or
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn and_exists_with(
         &self,
@@ -246,15 +266,16 @@ impl Engine {
         f.require_structure()?;
         g.require_structure()?;
         super::prepare_weights(&mut [&mut f, &mut g])?;
+        // Quantifying a weighted operand away entirely would replace its store
+        // by an empty one, and which of the two stores the product then carries
+        // is a question the rewrites below do not answer.
+        if how.pushes_through() && f.weights.is_some() {
+            return Err(OperationError::InertOption { option: how.name(), needs: "unweighted operands" });
+        }
         let _op = self.limits().begin_operation();
         self.limits().check_stop()?;
         let targets = super::project::quantification_targets(self, f.vtree(), vars)?;
-        // A weighted operand is left on the reference route. Quantifying one of
-        // them away entirely would replace its store by an empty one, and which
-        // of the two stores the product then carries is a question the rewrites
-        // below do not answer.
-        let fused = how.pushes_through() && f.weights.is_none();
-        let (product, collapsed) = if fused {
+        let (product, collapsed) = if how.pushes_through() {
             (f, g) = push_local_targets(self, f, g, &targets)?;
             if how.collapses_subtrees() {
                 let vtree = std::sync::Arc::clone(f.vtree());

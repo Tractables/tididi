@@ -28,7 +28,7 @@
 //! owner-set regroup in [`crate::apply::project`] runs over the ancestors
 //! exactly as it would have, and re-establishes the level-wide disjointness
 //! the collapse breaks. The one thing that sweep cannot see for itself is that
-//! a collapsed level *had* more than one node, so it is told which levels were
+//! a collapsed level *had* more than one node, so it is told that levels were
 //! collapsed: a level already reduced to `⊤` still owes its ancestors the
 //! regroup.
 //!

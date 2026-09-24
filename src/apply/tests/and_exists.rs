@@ -328,3 +328,27 @@ fn a_quantified_subtree_is_never_built() {
         "a quantified block both operands constrain",
     );
 }
+
+#[test]
+fn weighted_operands_admit_only_the_product_setting() {
+    use crate::diagram::Arithmetic;
+    use super::weights::weighted;
+    let vtree = Arc::new(Vtree::balanced(4));
+    let eng = Engine::new();
+    let f = weighted(compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3]]), 2, Arithmetic::ExactRational);
+    let g = weighted(compile_clauses(&vtree, &[vec![3, 4]]), 2, Arithmetic::ExactRational);
+    let vars = [VarId(2)];
+    for (how, name) in [
+        (Quantification::Fused, "Quantification::Fused"),
+        (Quantification::FusedSubtrees, "Quantification::FusedSubtrees"),
+    ] {
+        assert_eq!(
+            eng.and_exists_with(f.clone(), g.clone(), &vars, how).unwrap_err(),
+            OperationError::InertOption { option: name, needs: "unweighted operands" },
+        );
+    }
+    let product = eng.and_exists_with(f.clone(), g.clone(), &vars, Quantification::Product).unwrap();
+    assert_canonical(&product);
+    let chosen = eng.and_exists(f, g, &vars).unwrap();
+    assert_same_shape(&chosen, &product, "the default choice on weighted operands");
+}

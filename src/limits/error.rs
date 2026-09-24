@@ -77,6 +77,17 @@ pub enum OperationError {
         /// What needs it bounded.
         needed_by: &'static str,
     },
+    /// An option was chosen that the operation cannot honor on these operands,
+    /// so it would have had no effect.
+    ///
+    /// Not a resource condition. Choosing a setting the operands admit, or
+    /// leaving the choice to the operation, is what answers it.
+    InertOption {
+        /// The option as chosen.
+        option: &'static str,
+        /// What honoring it needs.
+        needs: &'static str,
+    },
     /// A diagram assembled or reweighted for the operation failed the storage
     /// checks of [`TddBuilder::finish`](crate::diagram::TddBuilder::finish).
     /// `?` on a [`TddBuildError`](crate::diagram::TddBuildError) produces it,
@@ -104,6 +115,9 @@ impl std::fmt::Display for OperationError {
             }
             OperationError::UnboundedSearch { option, needed_by } => {
                 write!(f, "{option} has no bound, which {needed_by} requires")
+            }
+            OperationError::InertOption { option, needs } => {
+                write!(f, "{option} has no effect here; it needs {needs}")
             }
             OperationError::InvalidDiagram(source) => write!(f, "invalid diagram: {source}"),
             OperationError::VariableNotInVtree(var) => {
