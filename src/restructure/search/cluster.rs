@@ -5,8 +5,6 @@
 
 use crate::Engine;
 
-use rustc_hash::FxHashSet;
-
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
 use crate::vtree::rotate::RotationInfo;
 use crate::diagram::Tdd;
@@ -43,16 +41,16 @@ fn subtree_allow_mask(vtree: &Vtree, root: VtreeIdx) -> Vec<bool> {
 /// closure only removes final-size pairs, so the churn buys no peak reduction.
 /// This is a *local* gate on the rotated levels, not a whole-diagram cost, and the
 /// number is a policy value chosen at the same scale as the minimize twin-scan
-/// cap (`C2_SCAN_MAX_NODES`). Below it, rotate freely; above it, skip and mark
-/// the pair tried.
+/// cap (`CONTENT_SCAN_MAX_NODES`). Below it, rotate freely; above it, skip and
+/// mark the pair tried.
 const CLUSTER_MAX_LEVEL_PAIRS: usize = 131_072;
 
 /// Collect candidate `(pivot, kind)` rotations that would cluster two marginal
 /// levels under one parent. Read-only — does not touch the vtree Arc, so the
 /// common "nothing to cluster" case costs no clone.
 ///
-/// A `Left` rotation at `v=(A, w)`, `w=(B, C)` produces a lower node `(A, B)`
-/// (rotate.rs cascade test): it clusters `A = v.left` and `B = v.right.left`.
+/// A `Left` rotation at `v=(A, w)`, `w=(B, C)` produces a lower node `(A, B)`:
+/// it clusters `A = v.left` and `B = v.right.left`.
 /// A `Right` rotation at `v=(w, C)`, `w=(A, B)` produces `(B, C)`: it clusters
 /// `B = v.left.right` and `C = v.right`.
 fn collect_cluster_candidates(tdd: &Tdd, allow: &[bool]) -> Vec<(VtreeIdx, RotationKind)> {
@@ -91,23 +89,24 @@ fn collect_cluster_candidates(tdd: &Tdd, allow: &[bool]) -> Vec<(VtreeIdx, Rotat
 /// rotation worth accepting even when its local restructure grew.
 fn predict_closure_savings(tdd: &Tdd, vtree: &Vtree, seed: VtreeIdx) -> usize {
     let mut savings = 0usize;
-    let mut will_marginal: FxHashSet<usize> = FxHashSet::default();
+    // The climb only goes up, so the one level that will be marginal without
+    // being so yet is the last one it collapsed.
+    let mut prev_collapsed: Option<VtreeIdx> = None;
     let mut cur = Some(seed);
     while let Some(t) = cur {
-        let ti = t.idx();
-        if vtree.node(VtreeIdx(ti as u32)).is_leaf() || tdd.levels[ti].is_marginal() || will_marginal.contains(&ti) {
-            // Already (will be) marginal/leaf — no pairs here, but it can be one
+        let node = vtree.node(t);
+        if node.is_leaf() || tdd.levels[t.idx()].is_marginal() {
+            // Already marginal or a leaf: no pairs here, but it can be one
             // half of a cluster one level up. Keep climbing.
-            cur = vtree.node(VtreeIdx(ti as u32)).parent();
+            cur = node.parent();
             continue;
         }
         let (l, r) = vtree.children(t);
-        let lm = tdd.levels[l.idx()].is_marginal() || will_marginal.contains(&l.idx());
-        let rm = tdd.levels[r.idx()].is_marginal() || will_marginal.contains(&r.idx());
-        if lm && rm {
-            savings += tdd.levels[ti].live_pairs();
-            will_marginal.insert(ti);
-            cur = vtree.node(VtreeIdx(ti as u32)).parent();
+        let marginal = |c: VtreeIdx| tdd.levels[c.idx()].is_marginal() || prev_collapsed == Some(c);
+        if marginal(l) && marginal(r) {
+            savings += tdd.levels[t.idx()].live_pairs();
+            prev_collapsed = Some(t);
+            cur = node.parent();
         } else {
             break;
         }
@@ -236,7 +235,7 @@ impl Engine {
         // for as long as it makes progress, and one attempt restructures the pivot's
         // two levels as a multiset — tens of calls per leaf compile, none of
         // which returned to the caller's wall. Metered in pairs of the pivot level,
-        // the size `rotate_cluster`'s churn is bounded by (`bound_mult ×
+        // the size `rotate_marginal_cluster`'s churn is bounded by (`bound_mult ×
         // old_pairs`). With no stop axis installed it is an add and three cell loads
         // per candidate.
         let mut poll = lim.gate();
