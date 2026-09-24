@@ -62,7 +62,7 @@ fn an_expired_wall_cuts_the_contract_walk() {
     // worklist, so a later minimize finishes the contraction this one abandoned.
     assert!(
         !tdd.contract_worklist().is_empty(),
-        "a cut walk must hand its unprocessed parents back to dirty_contract",
+        "a cut walk must hand its unprocessed parents back to the contract worklist",
     );
 }
 

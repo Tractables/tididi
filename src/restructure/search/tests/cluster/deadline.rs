@@ -7,9 +7,9 @@
 //! that the diagram a cut hands back still counts the formula it was given, and
 //! that the poll is amortized rather than per-candidate.
 //!
-//! The DISARMED property is pinned once, on the reduce walk
-//! (`reduce::contract::strategies::tests::deadline`) — see the note in
-//! `marginal`'s deadline tests.
+//! That a wall stays out of the way until a limit installs it is pinned once,
+//! on the reduce walk (`reduce::contract::tests::sweep::deadline`); see the
+//! note in `marginal`'s deadline tests.
 
 use super::*;
 

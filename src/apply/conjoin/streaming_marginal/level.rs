@@ -109,7 +109,7 @@ pub(crate) fn attach_children<'a, F: ValueDomain>(
 /// Both children of `t` must already be marginal or leaves, which the
 /// bottom-up sweep guarantees for a scheduled target. Values are not deduped
 /// here (see [`MarginalDomain::commit_in_flight`]); the slot prune establishes
-/// slot uniqueness (`test_helpers::check::check_slot_count_uniqueness`).
+/// slot uniqueness (`test_helpers::check::marginal::check_slot_count_uniqueness`).
 pub(crate) fn commit_stream_state(
     st: StreamLevelState,
     t: VtreeIdx,

@@ -6,7 +6,7 @@ use crate::vtree::Vtree;
 use num_bigint::BigUint;
 
 /// Fold a formula into a diagram over `vtree`, one clause at a time through
-/// `apply_and_clause` — the rebuild path under test.
+/// `and_clause` — the rebuild path under test.
 fn fold_cnf(_eng: &Engine, vtree: &Arc<Vtree>, cnf: &[Vec<i32>]) -> Tdd {
     let mut acc = Tdd::one(vtree);
     for clause in cnf {

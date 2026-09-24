@@ -34,7 +34,7 @@ fn test_apply_and_with_constant_one() {
     // returns a re-canonicalized-but-DIFFERENT diagram for `1 ∧ clause` would
     // still pass the `model_count` assertion above. `is_self_conjunction`
     // (the same predicate `apply_and` itself consults for its structural
-    // shortcut, `conjoin/sparse/mod.rs`) is a genuine canonical-equality
+    // shortcut, `conjoin/mod.rs`) is a genuine canonical-equality
     // check: after `minimize`, two operands representing the same function
     // on the same vtree must have identical output + identical per-level
     // nodes/pairs/ranges (diagram canonicity). Neither operand here carries a
@@ -127,14 +127,12 @@ fn test_apply_and_self_conjunction_owned() {
 }
 
 #[test]
-fn test_apply_and_stick_vtree_reachability() {
+fn test_apply_and_stick_vtree_conjunction() {
     let eng = &crate::Engine::new();
-    // Exercise the top-down reachability path on a stick (right-linear) vtree.
-    // On sticks, every internal level has a leaf left child (3×3 grid),
-    // triggering reachability gating at every level.
+    // A stick (right-linear) vtree: every internal level has a leaf left
+    // child, so every level takes the leaf route of the conjunction.
     //
-    // Build diagrams from individual clauses (not compile_cnf) to keep both on
-    // the same vtree Arc — compile_cnf grafts multi-component formulas.
+    // Both operands are folded clause by clause over the one vtree `Arc`.
     let vtree = Arc::new(Vtree::linear(8));
 
     let clauses1 = [

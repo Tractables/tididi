@@ -152,7 +152,7 @@ fn restrict_true_marginal_care_multiregion_difftest() {
         // ── FOLD STEP ─────────────────────────────────────────────────────
         // The `restrict_to_care` contract (#(f∧care)) holds above, yet production panics
         // when the SHRUNK operand feeds the fold's `apply_and` and then marginalizes.
-        // Mimic `merge_one_pair`: conjoin g with the care operand, then sum out
+        // Conjoin g with the care operand, then sum out
         // the now-private `live` vars via the PRODUCTION batch marginalizer, and
         // VALIDATE STRUCTURE (not just the count) at each stage — the dangling
         // marginal-side ref the contract checks miss. care∧g == care∧fm (`restrict_to_care`
@@ -167,8 +167,7 @@ fn restrict_true_marginal_care_multiregion_difftest() {
             let mut prod_g = and2(&care, &g);
             let mut prod_f = and2(&care, &fm);
             // care∧g == care∧fm, so they share support — filter the live (now
-            // private) vars to those actually present, exactly as
-            // marginalize_private_vars does (it derives dead vars from support).
+            // private) vars to those actually present in the support.
             let supp = support_mask(&prod_g);
             let mut targets: Vec<VtreeIdx> = live
                 .iter()

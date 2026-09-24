@@ -4,8 +4,8 @@ use super::*;
 impl Engine {
     /// Conjoin structural diagrams, omitting intermediate products rejected by `keep`.
     ///
-    /// The callback receives a vtree level and the original left and right node
-    /// indices. It visits live internal products after their level is built,
+    /// The callback receives a vtree level and the node indices of `f` and `g`
+    /// there. It visits live internal products after their level is built,
     /// before any parent reads them. Leaves are retained. Returning false can
     /// only remove models; the caller supplies the justification for removals.
     /// If every rejected product is impossible under a common care constraint,

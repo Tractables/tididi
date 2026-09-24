@@ -42,10 +42,10 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     let pl_outer = if !SWAPPED { pl.right } else { pl.left };
     for &ProductEntry { f_idx: FNodeIdx(outer1), g_idx: GNodeIdx(outer2), prod_idx: ProductNodeIdx(outer_prod) } in pl_outer {
-        let under_c1 = ws.f_by_outer.view().bucket(outer1 as usize);
-        if under_c1.is_empty() { continue; }
+        let f_under_outer = ws.f_by_outer.view().bucket(outer1 as usize);
+        if f_under_outer.is_empty() { continue; }
         for &RevEntry { parent: g_parent, other: inner2 } in ws.g_by_outer.view().bucket(outer2 as usize) {
-            for &RevEntry { parent: p1, other: inner1 } in under_c1 {
+            for &RevEntry { parent: p1, other: inner1 } in f_under_outer {
                 // The grid supplies the leaf side's product, the product list
                 // the other side's.
                 let grid_prod = CONJOIN_GRID[inner1 as usize][inner2 as usize];
@@ -56,7 +56,7 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
                     })?;
                 }
             }
-            ticker.poll(under_c1.len() as u64)?;
+            ticker.poll(f_under_outer.len() as u64)?;
         }
     }
     Ok(())

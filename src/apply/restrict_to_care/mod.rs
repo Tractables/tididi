@@ -7,8 +7,8 @@
 //! The result is orphan-free but otherwise non-canonical, so a caller that
 //! needs a reduced diagram runs `minimize` on it.
 //!
-//! Algorithm — a memoized top-down walk over node pairs of `f × care`, then a
-//! rebuild:
+//! Algorithm — a memoized top-down walk over node pairs of `f × care`, then an
+//! in-place drop of what it marked dead:
 //! 1. Start at `r = lca(root(f), root(care))`. An operand not rooted at `r` is
 //!    `⊤` there (`None`) and becomes its root node once the walk reaches that
 //!    vtree node. Incomparable roots cover disjoint variables, so `care` cannot
@@ -21,12 +21,12 @@
 //!    `f`-pair is marked live when it is live against *some* care pair, and an
 //!    `f`-node when some pair of it is.
 //! 3. If the root pair is dead, `f ∧ care ≡ ⊥` → `Unsatisfiable`. If every node and pair
-//!    reachable from `f`'s root is live → `Unchanged`. Otherwise `DeadRebuilder`
-//!    re-emits the live subgraph (marginal levels verbatim) and the orphan prune
+//!    reachable from `f`'s root is live → `Unchanged`. Otherwise the dead pairs
+//!    are dropped in place (marginal levels untouched) and the orphan prune
 //!    reclaims children stranded by a collapsed partner → `Shrunk`.
 //!
 //! The walk is stack-driven and visits at most `|f| · |care|` node pairs;
-//! its discovery tables, marking rows, rebuild arenas and work stacks use the caller's limits.
+//! its discovery tables, marking rows and work stacks use the caller's limits.
 
 mod mark;
 mod rebuild;

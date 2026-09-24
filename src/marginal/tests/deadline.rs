@@ -8,11 +8,10 @@
 //! back is still readable — same count, same invariants — because the batch is
 //! only ever interrupted between two targets, with the end-sweep tagger run.
 //!
-//! The DISARMED property (a wall in the past is invisible without the arming
-//! call) is pinned once, on the reduce walk
-//! (`reduce::contract::strategies::tests::deadline`): all three post-apply walks
-//! consult the one arming cell through the one `PollGate`, so re-testing it
-//! here would pin nothing new and would race the flag, which is process-global.
+//! That a wall stays out of the way until a limit installs it is pinned once,
+//! on the reduce walk (`reduce::contract::tests::sweep::deadline`): all three
+//! post-apply walks consult the same `PollGate`, so re-testing it here would
+//! pin nothing new.
 
 use super::*;
 

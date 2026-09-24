@@ -12,7 +12,8 @@ use crate::vtree::Vtree;
 use std::sync::Arc;
 
 
-/// Regression: marginal-sibling fold-allowed — fix in `merge_content_equal_nodes`.
+/// Content twins whose parent pairs share a marginal sibling: the redirect
+/// mints a duplicate pair, pair fusion folds it, and the sibling's count doubles.
 ///
 /// Layout (balanced(6)):
 ///   sub_left_r = internal(leaf1, leaf2) — right child of v_left; made marginal (count `C_SLR`=5)
@@ -24,9 +25,8 @@ use std::sync::Arc;
 ///
 /// Pre-minimize `model_count` = Q1_count*`C_VR` + Q2_count*`C_VR` = 5*3 + 5*3 = 30.
 ///
-/// Both v_left and root are pre-marked contracted=true so the initial
-/// `contract_all_twins` in Engine::reduce is a no-op. This forces the content-twin scan to be the only
-/// mechanism that handles the Q1/Q2 twin merge. The scan must then:
+/// `canonicalize_content_twins` is called directly, so the content-twin scan
+/// is the only mechanism that merges Q1 and Q2. It must:
 ///   1. Perform the redirect Q2→Q1 (creating duplicate (Q1,slot0),(Q1,slot0) pairs at root).
 ///   2. Direct contract's pair fusion to fold the duplicate into one (Q1, slot1=2*`C_VR`) pair.
 ///   3. Let `prune_value_slots` compact v_right's store to a single slot with count 2*`C_VR`.
@@ -36,7 +36,7 @@ use std::sync::Arc;
 /// cancelling it instead would leave v_right's slot count at `C_VR`. The
 /// discriminating assertion is (d): v_right's surviving count = 2*`C_VR`.
 #[test]
-fn test_marginal_sibling_fold_allowed_regression() {
+fn content_twins_under_a_marginal_sibling_fold_their_pairs() {
     use crate::vtree::VtreeNode;
 
     // Every count below is too wide to fit a ref, so the slot refs stay bare
@@ -82,7 +82,7 @@ fn test_marginal_sibling_fold_allowed_regression() {
 
     // --- v_right: make marginal (count `C_VR`). This is the SIBLING of v_left at root. ---
     // When the redirect Q2→Q1 creates duplicate (Q1,slot0),(Q1,slot0) at root,
-    // the fold_allowed check sees `v_right.is_marginal() == true` and allows the redirect.
+    // the redirect is allowed because `v_right` is marginal.
     assert_can_make_marginal(&levels, &vtree, v_right);
     const C_VR: u128 = (1u128 << 40) + 3; // model count stored at v_right's slot 0
     levels[v_right.idx()].become_marginal(vec![C_VR], None);
@@ -101,18 +101,13 @@ fn test_marginal_sibling_fold_allowed_regression() {
     // --- root: one node R with pairs (Q1, slot0_vright) and (Q2, slot0_vright). ---
     //
     // Both Q1 and Q2 are referenced with the same marginal sibling (slot0 of v_right).
-    // After the fix the redirect Q2→Q1 is allowed (fold_allowed=true); root gets
+    // The redirect Q2→Q1 is allowed; root gets
     // (Q1,slot0),(Q1,slot0); pair fusion folds to (Q1, slot1=2*`C_VR`); prune compacts.
     let vr_slot0 = NodeIdx(0); // slot index 0 of v_right (marginal)
     let root_node = levels[root_idx.idx()].push_internal_node(&[
         ChildPair::new(q1, vr_slot0),
         ChildPair::new(q2, vr_slot0),
     ]);
-
-    // Pre-mark v_left and root as contracted (harmless when calling
-    // `canonicalize_content_twins` directly, kept for documentation: the scan
-    // must be the sole merge mechanism exercised here — not contract's fork-down
-    // concat path — so the fold_allowed discriminator assertion (d) is clean).
 
     let mut tdd = Tdd::from_levels_unchecked(
         vtree.clone(),
@@ -155,8 +150,8 @@ fn test_marginal_sibling_fold_allowed_regression() {
     );
 
     // (b) v_left must have contracted from width 2 to width 1 (Q2 merged).
-    //     This holds on both fixed and unfixed code (contract's fork-down path also
-    //     merges them when fold_allowed is absent). The key discriminator is (d).
+    //     Contraction's fork-down path would merge them too; (d) is what
+    //     tells the two apart.
     assert_eq!(
         tdd.levels[v_left.idx()].slot_count(), 1,
         "fold-allowed regression: Q1 and Q2 must merge at v_left (width 2 → 1)"
@@ -170,13 +165,11 @@ fn test_marginal_sibling_fold_allowed_regression() {
 
     // (d) THE DISCRIMINATING ASSERTION: the surviving count at v_right must be 2*`C_VR`.
     //
-    // On UNFIXED code: fold_allowed is absent; the redirect is cancelled; contract uses
-    // the fork-down concat path which scales sub_left_r's count instead of v_right's.
-    // v_right's slot stays at `C_VR`=3. This assertion fails: left=3, right=6.
-    //
-    // On FIXED code: fold_allowed fires; root gets duplicate (Q1,slot0),(Q1,slot0) pairs;
-    // pair fusion folds them into (Q1, new_slot=2*`C_VR`=6); `prune_value_slots` compacts v_right
-    // from [C_VR, 2*C_VR] down to [2*C_VR]. This assertion passes.
+    // The redirect leaves root with duplicate (Q1,slot0),(Q1,slot0) pairs;
+    // pair fusion folds them into (Q1, new_slot=2*`C_VR`) and `prune_value_slots`
+    // compacts v_right from [C_VR, 2*C_VR] down to [2*C_VR]. Cancelling the
+    // redirect instead would take contraction's fork-down path, which scales
+    // sub_left_r's count and leaves v_right's slot at `C_VR`.
     assert_eq!(
         tdd.levels[v_right.idx()].marginal_counts().unwrap()[0],
         2 * C_VR,

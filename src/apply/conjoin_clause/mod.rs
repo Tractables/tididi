@@ -36,7 +36,7 @@ mod rebuild;
 use rebuild::*;
 mod cube;
 use cube::{CubeChain, disjoin_cube_by_complement};
-pub(crate) use cube::disjoin_cube_owned;
+pub(crate) use cube::disjoin_cube_on;
 
 /// Every buffer one engine's clause conjunctions reuse between calls.
 ///
@@ -275,7 +275,7 @@ fn rebuild_along_spine(eng: &Engine, f: &mut Tdd, clause: &[(Literal, VtreeIdx)]
     }
 
     // Output: conjunction of f's output with c_t at the root. `out_vtree` is
-    // an ancestor of every clause leaf, so it is on the spine and its ct_map
+    // an ancestor of every clause leaf, so it is on the spine and its `cd_map`
     // block is filled.
     let out_base = level_base[out_vtree.idx()];
     let ct_out = cd_map[out_base + out_local_in.idx()][0];
@@ -306,7 +306,7 @@ fn rebuild_along_spine(eng: &Engine, f: &mut Tdd, clause: &[(Literal, VtreeIdx)]
 /// # Errors
 ///
 /// The errors of [`Engine::and_clause`](crate::Engine::and_clause).
-pub(crate) fn conjoin_clause_owned(eng: &Engine, f: Tdd, clause: &[Literal]) -> Result<Tdd, OperationError> {
+pub(crate) fn conjoin_clause_on(eng: &Engine, f: Tdd, clause: &[Literal]) -> Result<Tdd, OperationError> {
     spine_walk(eng, f, clause, false)
 }
 
@@ -366,7 +366,7 @@ impl crate::Engine {
         }
         gate.flush()?;
         let one = self.cube(vtree, std::iter::empty::<Literal>())?;
-        conjoin_clause_owned(self, one, &clause)
+        conjoin_clause_on(self, one, &clause)
     }
 
     /// Run [`Tdd::and_clause`](crate::Tdd::and_clause) using this batch's scratch and resource limits.

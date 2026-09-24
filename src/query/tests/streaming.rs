@@ -32,8 +32,8 @@ fn streaming_fold_count_matches_materialized_randomized() {
     let mut nonzero = 0u32;
     for &nvars in &[2u32, 3, 4, 5, 6] {
         let vtree = Arc::new(Vtree::balanced(nvars));
-        // All interior vtree levels marginalized — mirrors the fused-terminal
-        // `ws_fuse_targets` (`!is_leaf(i)`), so every interior level streams.
+        // Every interior vtree level marginalized, so every interior level
+        // streams.
         let targets: Vec<bool> =
             (0..vtree.num_nodes()).map(|i| !vtree.node(VtreeIdx(i as u32)).is_leaf()).collect();
         // Conjoined without an intervening minimize: the fold under test must

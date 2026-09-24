@@ -88,7 +88,7 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
 
 /// Two dirty parents, an `OverBudget` during the first (root-most) parent's
 /// contraction: both the failing parent and the still-queued second parent must
-/// survive in `dirty_contract`. The second parent (`v_right`) is never popped —
+/// survive in the contract worklist. The second parent (`v_right`) is never popped —
 /// it proves the heap-remainder restore; `root` proves the failed-mid-processing
 /// restore. Fails if the worklist is dropped instead of restored (→ empty).
 fn two_dirty_parents() -> (Arc<Vtree>, Tdd, VtreeIdx, VtreeIdx) {
@@ -136,13 +136,13 @@ fn test_contract_dirty_worklist_restored_on_err() {
             assert!(
                 tdd.contract_worklist().contains(&v_right.0),
                 "the unprocessed parent still queued in the heap must be restored on Err \
-                 at reserve {nth}; dirty_contract = {:?}",
+                 at reserve {nth}; contract worklist = {:?}",
                 tdd.contract_worklist(),
             );
             assert!(
                 tdd.contract_worklist().contains(&root.0),
                 "the parent that failed mid-processing must be restored on Err at reserve \
-                 {nth}; dirty_contract = {:?}",
+                 {nth}; contract worklist = {:?}",
                 tdd.contract_worklist(),
             );
         }

@@ -113,10 +113,8 @@ fn exists_var_soundness_brute_force() {
 
 /// A zero-width marginal level must not crash the marginalization cascade.
 ///
-/// `ensure_counts` needs the same `slot_count() == 0` guard `marginalize_batch`
-/// has. When an internal vtree level
-/// has 0 pair nodes, `ensure_counts` computes empty counts → the cascade
-/// calls `become_marginal(vec![], None)` → 0-width marginal. A conjunction
+/// When an internal vtree level has 0 pair nodes, the cascade computes empty
+/// counts and calls `become_marginal(vec![], None)` → 0-width marginal. A conjunction
 /// whose operands both inherit that level then reaches `apply_and` with
 /// left_width=right_width=0 and both levels marginal, which neither
 /// identity fast-path (both require k==1) handles — dense path panics at
@@ -140,8 +138,8 @@ fn exists_var_soundness_brute_force() {
 /// the right half, so the left half holds only trivial structure. Mirror
 /// production's marginalized left half in both operands:
 ///   A = Internal(var0,var1) → `become_marginal(vec![], None)` — the 0-width
-///       orphan, exactly what the marginalization cascade / `ensure_counts` emits
-///       for a 0-node level (it lacks `marginalize_batch`'s width()==0 guard);
+///       orphan, exactly what the marginalization cascade emits for a 0-node
+///       level;
 ///   B = Internal(var2,var3) → marginal [4]  (vars 2,3 free);
 ///   C = parent(A,B)         → marginal [16] (vars 0..3 free).
 /// C being marginal is what makes A a true orphan (marginal levels carry
@@ -360,7 +358,7 @@ fn projecting_across_a_marginal_sibling_succeeds() {
 
 /// Regression for the path-side `One` reference at an INTERNAL ancestor level.
 ///
-/// `regroup_internal` indexes `child_remap[path_child.idx()]`. On internal
+/// `regroup` indexes a child remap by `path_child.idx()`. On internal
 /// levels `NodeIdx(0)` is the constant-true (One) representative, so a
 /// pair whose path-side (x's subtree) is UNCONSTRAINED references it as One.
 /// This test forces exactly that shape to confirm the rewrite handles a

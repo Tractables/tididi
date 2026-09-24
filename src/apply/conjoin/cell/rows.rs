@@ -210,7 +210,7 @@ where
                 },
             )?;
         }
-        // One `tick_by(right_width)` per row instead of `tick()` per cell: the ticker only
+        // One `poll(right_width)` per row instead of one per cell: the gate only
         // meters accumulated work, so the same total is booked either way. A row
         // wider than the stride now polls once rather than once per stride's worth
         // of cells — the poll is an idempotent deadline read, so firing once per

@@ -137,7 +137,7 @@ impl ProbeRule for ClusterRule {
 
     /// Generous: clustering two marginal children full-expands `w` as a
     /// multiset (no Boolean dedup) before the collapse removes it, so the tight
-    /// `old_pairs` bound would bail on the rotations this pass exists for. The
+    /// default bound would bail on the rotations this pass exists for. The
     /// multiple still rejects pathological blow-up.
     fn bound(&mut self, tdd: &Tdd, info: &RotationInfo, _default_bound: usize) -> usize {
         pivot_pairs(tdd, info).saturating_mul(self.bound_mult).max(64)
@@ -230,9 +230,9 @@ impl Engine {
         // for as long as it makes progress, and one attempt restructures the pivot's
         // two levels as a multiset — tens of calls per leaf compile, none of
         // which returned to the caller's wall. Metered in pairs of the pivot level,
-        // the size `rotate_marginal_cluster`'s churn is bounded by (`bound_mult ×
-        // old_pairs`). With no stop axis installed it is an add and three cell loads
-        // per candidate.
+        // the size `rotate_marginal_cluster`'s churn is bounded by
+        // `bound_mult × pivot_pairs`. With no stop axis installed it is an add
+        // and three cell loads per candidate.
         let mut poll = lim.gate();
         // Each accept strictly shrinks size, so the fixpoint terminates. Re-scan
         // after each sweep: a closed cluster can expose a fresh one a level up.
