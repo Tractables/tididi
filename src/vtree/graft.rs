@@ -3,20 +3,68 @@
 use super::build::{append_subtree, push_internal, push_leaf};
 use super::{VarId, Vtree, VtreeError, VtreeIdx, VtreeNode};
 
+/// Where each node of a source vtree landed in a destination vtree.
+///
+/// `Tdd::embed` returns one beside its result, and a [`GraftLayout`] holds
+/// one per part. Index it by a node of the source vtree to find the node of
+/// the destination that took its place, which is the level holding that
+/// source level's copy in the result. Use this map to relocate side tables
+/// keyed by source vtree index.
+#[derive(Clone, Debug)]
+pub struct Embedding {
+    /// The destination node each source node went to, indexed by the source
+    /// node's index.
+    pub(crate) levels: Vec<VtreeIdx>,
+}
+
+impl Embedding {
+    /// The destination node that `source` went to.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `source` is not a node of the source vtree.
+    #[must_use]
+    pub fn level_of(&self, source: VtreeIdx) -> VtreeIdx {
+        self.levels[source.idx()]
+    }
+
+    /// The whole map, indexed by the source vtree's node index.
+    #[must_use]
+    pub fn as_slice(&self) -> &[VtreeIdx] {
+        &self.levels
+    }
+}
+
 /// Where each subtree of a [`Vtree::graft_over`] landed in the finished vtree,
 /// so a caller can translate a node index of a piece into one of the result.
 #[derive(Clone, Debug)]
-#[non_exhaustive]
 pub struct GraftLayout {
-    /// `comp_to_full[k][c]` = final `VtreeIdx` of subtree `k`'s own node `c`
-    /// (indexed as in that subtree's node array, `0..num_nodes()`).
-    pub comp_to_full: Vec<Vec<VtreeIdx>>,
+    /// One map per subtree, in input order.
+    parts: Vec<Embedding>,
     /// Final `VtreeIdx` of each spine join, in build order. Pieces are
     /// `[subtree 0, …, subtree k-1, spine_var 0 leaf, …, spine_var m-1 leaf]`
     /// and `chain_internals[j]` is the join whose left child is the running
     /// chain root and whose right child is piece `j+1`; empty for a single
     /// piece.
     pub(crate) chain_internals: Vec<VtreeIdx>,
+}
+
+impl GraftLayout {
+    /// Where subtree `k`'s nodes landed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if there were fewer than `k + 1` subtrees.
+    #[must_use]
+    pub fn part(&self, k: usize) -> &Embedding {
+        &self.parts[k]
+    }
+
+    /// The maps of every subtree, in input order.
+    #[must_use]
+    pub fn parts(&self) -> &[Embedding] {
+        &self.parts
+    }
 }
 
 /// The id space a graft of `subtrees` and `spine_vars` needs when the pieces
@@ -93,7 +141,7 @@ impl Vtree {
     /// let shift = |k: usize, v: VarId| VarId(v.0 + 2 * k as u32);
     /// let (vtree, layout) = Vtree::graft_over(&[&a, &b], shift, &[VarId(5)], 5)?;
     /// assert_eq!(vtree.num_leaves(), 5);
-    /// assert_eq!(layout.comp_to_full.len(), 2);
+    /// assert_eq!(layout.parts().len(), 2);
     ///
     /// // The same call without the rename lands both pieces on the same ids.
     /// match Vtree::graft_over(&[&a, &b], |_, v| v, &[VarId(5)], 5) {
@@ -143,23 +191,15 @@ impl Vtree {
             vtree.context = std::sync::Arc::clone(first.context());
         }
 
-        let comp_to_full: Vec<Vec<VtreeIdx>> = comp_offsets
+        let parts: Vec<Embedding> = comp_offsets
             .iter()
             .zip(subtrees)
-            .map(|(&offset, sub)| {
-                (0..sub.num_nodes())
-                    .map(|c| old_to_new[offset as usize + c])
-                    .collect()
+            .map(|(&offset, sub)| Embedding {
+                levels: (0..sub.num_nodes()).map(|c| old_to_new[offset as usize + c]).collect(),
             })
             .collect();
         let chain_internals: Vec<VtreeIdx> =
             chain_pre.iter().map(|p| old_to_new[p.idx()]).collect();
-        Ok((
-            vtree,
-            GraftLayout {
-                comp_to_full,
-                chain_internals,
-            },
-        ))
+        Ok((vtree, GraftLayout { parts, chain_internals }))
     }
 }

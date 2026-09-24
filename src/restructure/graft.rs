@@ -156,8 +156,8 @@ fn graft_impl(
     }
 
     let mut placement = MovePlacement::new(eng, &grafted_arc, into)?;
-    for (part, map) in parts.iter_mut().zip(&layout.comp_to_full) {
-        placement.move_part(part, map);
+    for (k, part) in parts.iter_mut().enumerate() {
+        placement.move_part(part, layout.part(k).as_slice());
     }
 
     // Each piece's "true" reference, as a NodeIdx into the piece's root

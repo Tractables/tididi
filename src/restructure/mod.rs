@@ -16,14 +16,68 @@ pub(crate) mod graft;
 mod placement;
 mod splice;
 
-pub use embed::{Embedding, EmbeddingPlan};
+pub use crate::vtree::graft::Embedding;
+pub use embed::EmbeddingPlan;
 
 use crate::diagram::TddBuildError;
 use crate::limits::OperationError;
 use crate::vtree::{VarId, VtreeError, VtreeIdx};
 
-/// Why a diagram could not be assembled on the requested vtree with its
-/// structure and weight interpretation preserved.
+/// Why a diagram could not be copied onto the requested vtree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum EmbedError {
+    /// The renamed variables cannot form a vtree: two of them share an image.
+    Vtree(VtreeError),
+    /// A renamed variable is not a leaf of the destination.
+    VariableOutOfRange {
+        /// The destination variable.
+        variable: VarId,
+        /// The largest variable id the destination's id space holds.
+        num_vars: u32,
+    },
+    /// The destination vtree does not contain the source vtree's shape under
+    /// the renaming, so no level-by-level copy exists.
+    NotIsomorphic {
+        /// The source vtree node the destination stopped matching at.
+        source: VtreeIdx,
+    },
+    /// An operation the copy runs was refused: a source that has discarded
+    /// the structure at a level, a refused allocation, or an armed stop.
+    Operation(OperationError),
+}
+
+impl std::fmt::Display for EmbedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Vtree(error) => write!(f, "embedding: {error}"),
+            Self::VariableOutOfRange { variable, num_vars } => write!(f, "renamed variable {} is outside the variables 1 to {num_vars}", variable.0),
+            Self::NotIsomorphic { source } => write!(f, "the destination vtree does not contain the source vtree's shape at node {}", source.idx()),
+            Self::Operation(error) => write!(f, "copying the diagram: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for EmbedError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Vtree(error) => Some(error),
+            Self::Operation(error) => Some(error),
+            Self::VariableOutOfRange { .. } | Self::NotIsomorphic { .. } => None,
+        }
+    }
+}
+
+impl From<VtreeError> for EmbedError {
+    fn from(error: VtreeError) -> Self { Self::Vtree(error) }
+}
+
+impl From<OperationError> for EmbedError {
+    fn from(error: OperationError) -> Self { Self::Operation(error) }
+}
+
+/// Why diagrams could not be joined on a grafted vtree with their structure
+/// and weight interpretation preserved.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum GraftError {
@@ -42,12 +96,6 @@ pub enum GraftError {
         variable: VarId,
         /// The largest variable id the destination's id space holds.
         num_vars: u32,
-    },
-    /// The destination vtree does not contain the source vtree's shape under
-    /// the renaming, so no level-by-level copy exists.
-    NotIsomorphic {
-        /// The source vtree node the destination stopped matching at.
-        source: VtreeIdx,
     },
     /// A part's stored values cannot be interpreted in the requested destination.
     PartWeights {
@@ -70,7 +118,6 @@ impl std::fmt::Display for GraftError {
             Self::Vtree(error) => write!(f, "grafted vtree: {error}"),
             Self::MissingVariableMapping { part, variable } => write!(f, "part {part} has no mapping for variable {}", variable.0),
             Self::VariableOutOfRange { variable, num_vars } => write!(f, "grafted variable {} is outside the variables 1 to {num_vars}", variable.0),
-            Self::NotIsomorphic { source } => write!(f, "the destination vtree does not contain the source vtree's shape at node {}", source.idx()),
             Self::PartWeights { part, source } => write!(f, "part {part}: {source}"),
             Self::DestinationWeights(error) => write!(f, "graft destination: {error}"),
             Self::Operation(error) => write!(f, "assembling the result: {error}"),
@@ -84,9 +131,7 @@ impl std::error::Error for GraftError {
             Self::Vtree(error) => Some(error),
             Self::PartWeights { source, .. } | Self::DestinationWeights(source) => Some(source),
             Self::Operation(error) => Some(error),
-            Self::MissingVariableMapping { .. }
-            | Self::VariableOutOfRange { .. }
-            | Self::NotIsomorphic { .. } => None,
+            Self::MissingVariableMapping { .. } | Self::VariableOutOfRange { .. } => None,
         }
     }
 }

@@ -84,11 +84,11 @@ fn graft_with_layout_renames_local_parts_and_maps_their_levels() {
     .expect("the parts carry disjoint variables");
     assert_canonical(&t);
     assert_eq!(count(&t), 3 * 2 * 2);
-    assert_eq!(layout.comp_to_full.len(), 2);
+    assert_eq!(layout.parts().len(), 2);
     assert_eq!(layout.chain_internals.len(), 2);
     // Part 0's root maps to the left child of the first chain join.
     let (left, _) = t.vtree.children(layout.chain_internals[0]);
-    assert_eq!(layout.comp_to_full[0][local.root().idx()], left);
+    assert_eq!(layout.part(0).level_of(local.root()), left);
 }
 
 /// A weighted part keeps its values across the graft: each part's store rows

@@ -10,42 +10,12 @@
 
 use std::sync::Arc;
 
-use super::{GraftError, placement::CopyPlacement};
+use super::{EmbedError, Embedding, placement::CopyPlacement};
 
 use crate::Engine;
 use crate::diagram::Tdd;
 use crate::limits::{Limits, OperationError};
 use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
-
-/// Where each level of an embedded diagram landed in the destination vtree.
-///
-/// [`Tdd::embed`] returns one beside the result. Index it by a node of the
-/// source diagram's vtree to find the level holding its copy in the result.
-/// Use this map to relocate side tables keyed by source vtree index.
-#[derive(Clone, Debug)]
-pub struct Embedding {
-    /// The destination node each source node was copied to, indexed by the
-    /// source node's index.
-    levels: Vec<VtreeIdx>,
-}
-
-impl Embedding {
-    /// The destination level that `source`'s level was copied to.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `source` is not a node of the source diagram's vtree.
-    #[must_use]
-    pub fn level_of(&self, source: VtreeIdx) -> VtreeIdx {
-        self.levels[source.idx()]
-    }
-
-    /// The whole map, indexed by the source vtree's node index.
-    #[must_use]
-    pub fn as_slice(&self) -> &[VtreeIdx] {
-        &self.levels
-    }
-}
 
 /// A validated placement of a source vtree into a destination vtree.
 ///
@@ -84,7 +54,7 @@ impl EmbeddingPlan {
     ///
     /// Returns the variable, shape and resource errors of [`Tdd::embed`].
     /// `map` is called once per source variable, during construction only.
-    pub fn new(source: &Arc<Vtree>, destination: &Arc<Vtree>, map: impl Fn(VarId) -> VarId) -> Result<Self, GraftError> {
+    pub fn new(source: &Arc<Vtree>, destination: &Arc<Vtree>, map: impl Fn(VarId) -> VarId) -> Result<Self, EmbedError> {
         destination.context().run(|eng| eng.embedding_plan(source, destination, map))
     }
 
@@ -100,9 +70,9 @@ impl EmbeddingPlan {
     /// Place a circuit using this plan, leaving the source unchanged.
     ///
     /// Runs on the destination's context. A different source vtree allocation
-    /// returns [`OperationError::VtreeMismatch`] wrapped in [`GraftError::Operation`].
+    /// returns [`OperationError::VtreeMismatch`] wrapped in [`EmbedError::Operation`].
     /// Other errors and weight semantics are those of [`Tdd::embed`].
-    pub fn apply(&self, circuit: &Tdd) -> Result<Tdd, GraftError> {
+    pub fn apply(&self, circuit: &Tdd) -> Result<Tdd, EmbedError> {
         self.destination.context().run(|eng| eng.embed_with(circuit, self))
     }
 
@@ -114,7 +84,7 @@ impl EmbeddingPlan {
     /// allocation, otherwise this returns [`OperationError::VtreeMismatch`].
     /// Construction uses the final destination context and can return the
     /// resource errors of [`Self::new`].
-    pub fn then(&self, next: &Self) -> Result<Self, GraftError> {
+    pub fn then(&self, next: &Self) -> Result<Self, EmbedError> {
         next.destination.context().run(|eng| eng.compose_embeddings(self, next))
     }
 }
@@ -143,12 +113,12 @@ impl Tdd {
     ///
     /// # Errors
     ///
-    /// [`GraftError::NotIsomorphic`] when the shapes do not match, naming the
+    /// [`EmbedError::NotIsomorphic`] when the shapes do not match, naming the
     /// node of this diagram's vtree where the match failed;
-    /// [`GraftError::VariableOutOfRange`] when a renamed variable is not a leaf
-    /// of `into`; [`GraftError::Vtree`] with
+    /// [`EmbedError::VariableOutOfRange`] when a renamed variable is not a leaf
+    /// of `into`; [`EmbedError::Vtree`] with
     /// [`VtreeError::OverlappingVariable`] when two variables share an image;
-    /// [`GraftError::Operation`] with [`OperationError::MarginalLevel`] for a
+    /// [`EmbedError::Operation`] with [`OperationError::MarginalLevel`] for a
     /// diagram that has discarded the structure at a level, and for a refused
     /// allocation or an armed stop.
     ///
@@ -180,14 +150,14 @@ impl Tdd {
         &self,
         into: &Arc<Vtree>,
         map: impl Fn(VarId) -> VarId,
-    ) -> Result<(Tdd, Embedding), GraftError> {
+    ) -> Result<(Tdd, Embedding), EmbedError> {
         into.context().run(|eng| eng.embed(self, into, map))
     }
 }
 
 impl Engine {
     /// Prepare an [`EmbeddingPlan`] under this engine's limits.
-    pub fn embedding_plan(&self, source: &Arc<Vtree>, destination: &Arc<Vtree>, map: impl Fn(VarId) -> VarId) -> Result<EmbeddingPlan, GraftError> {
+    pub fn embedding_plan(&self, source: &Arc<Vtree>, destination: &Arc<Vtree>, map: impl Fn(VarId) -> VarId) -> Result<EmbeddingPlan, EmbedError> {
         let lim = self.limits();
         let _op = lim.begin_operation();
         lim.check_stop()?;
@@ -196,7 +166,7 @@ impl Engine {
     }
 
     /// [`EmbeddingPlan::apply`] under this engine's limits.
-    pub fn embed_with(&self, circuit: &Tdd, plan: &EmbeddingPlan) -> Result<Tdd, GraftError> {
+    pub fn embed_with(&self, circuit: &Tdd, plan: &EmbeddingPlan) -> Result<Tdd, EmbedError> {
         let _op = self.limits().begin_operation();
         self.limits().check_stop()?;
         if !Arc::ptr_eq(circuit.vtree(), &plan.source) { return Err(OperationError::VtreeMismatch.into()); }
@@ -205,7 +175,7 @@ impl Engine {
     }
 
     /// [`EmbeddingPlan::then`] under this engine's limits.
-    pub fn compose_embeddings(&self, first: &EmbeddingPlan, next: &EmbeddingPlan) -> Result<EmbeddingPlan, GraftError> {
+    pub fn compose_embeddings(&self, first: &EmbeddingPlan, next: &EmbeddingPlan) -> Result<EmbeddingPlan, EmbedError> {
         if !Arc::ptr_eq(&first.destination, &next.source) { return Err(OperationError::VtreeMismatch.into()); }
         self.embedding_plan(&first.source, &next.destination, |var| {
             let leaf = first.source.leaf_of(var).expect("source leaf");
@@ -224,7 +194,7 @@ impl Engine {
         tdd: &Tdd,
         into: &Arc<Vtree>,
         map: impl Fn(VarId) -> VarId,
-    ) -> Result<(Tdd, Embedding), GraftError> {
+    ) -> Result<(Tdd, Embedding), EmbedError> {
         let lim = self.limits();
         let _op = lim.begin_operation();
         lim.check_stop()?;
@@ -259,7 +229,7 @@ impl Plan {
         source: &Vtree,
         into: &Vtree,
         map: impl Fn(VarId) -> VarId,
-    ) -> Result<Plan, GraftError> {
+    ) -> Result<Plan, EmbedError> {
         let mut mapped = Vec::new();
         lim.try_resize(&mut mapped, into.num_nodes(), false)?;
         let mut embedding = Vec::new();
@@ -268,7 +238,7 @@ impl Plan {
         for (leaf, var) in source.leaf_bottomup() {
             gate.poll(1)?;
             let image = map(var);
-            let target = into.leaf_of(image).ok_or(GraftError::VariableOutOfRange {
+            let target = into.leaf_of(image).ok_or(EmbedError::VariableOutOfRange {
                 variable: image,
                 num_vars: into.num_vars(),
             })?;
@@ -306,7 +276,7 @@ impl Plan {
                     lim.try_push(&mut stack, (left, source_left))?;
                     lim.try_push(&mut stack, (right, source_right))?;
                 }
-                _ => return Err(GraftError::NotIsomorphic { source: s }),
+                _ => return Err(EmbedError::NotIsomorphic { source: s }),
             }
             embedding[s.idx()] = d;
             covered_by[d.idx()] = Some(s);
@@ -328,7 +298,7 @@ fn assemble(
     tdd: &Tdd,
     into: &Arc<Vtree>,
     plan: &Plan,
-) -> Result<Tdd, GraftError> {
+) -> Result<Tdd, EmbedError> {
     if tdd.is_zero() {
         return Ok(crate::build::constant_zero(eng, into));
     }

@@ -30,7 +30,7 @@ fn copied_and_moved_parts_agree_on_renamed_sparse_layouts() {
             let (copy, placed) = source.embed(grafted.vtree(), |var| maps[part][var.idx()]).unwrap();
             assert_canonical(&copy);
             assert!(copy.weights().is_none());
-            assert_eq!(placed.as_slice(), layout.comp_to_full[part]);
+            assert_eq!(placed.as_slice(), layout.part(part).as_slice());
             copy
         }).collect();
         let mut copies = copies.into_iter();
@@ -74,7 +74,7 @@ fn moving_preserves_level_allocations_and_relocates_weight_columns() {
         vec![(circuit, vec![VarId(4), VarId(2), VarId(5)])], &[VarId(1)], 5,
         Some(WeightStore::new(RationalWeights::unit(5), Arithmetic::ExactRational))).unwrap();
     assert_canonical(&placed);
-    assert_eq!(placed.level(map.comp_to_full[0][root.idx()]).nodes().as_ptr(), nodes);
-    assert_eq!(placed.weights().unwrap().level(map.comp_to_full[0][inner.idx()].idx()).unwrap().as_ptr(), column);
+    assert_eq!(placed.level(map.part(0).level_of(root)).nodes().as_ptr(), nodes);
+    assert_eq!(placed.weights().unwrap().level(map.part(0).level_of(inner).idx()).unwrap().as_ptr(), column);
     assert_eq!(placed.weighted_value().unwrap().unwrap().as_rational().into_owned(), value.as_rational().into_owned() * num_bigint::BigInt::from(2));
 }

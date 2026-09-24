@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use tididi::restructure::GraftError;
+use tididi::restructure::EmbedError;
 use tididi::test_helpers::{assert_canonical, brute_force_count};
 use tididi::vtree::{VarId, Vtree};
 use tididi::{and, Engine, OperationError, Tdd};
@@ -80,20 +80,20 @@ fn a_renaming_the_destination_cannot_carry_is_refused() {
     let big = Arc::new(Vtree::linear(4));
 
     // Two variables cannot share one destination leaf.
-    assert!(matches!(f.embed(&big, |_| VarId(2)), Err(GraftError::Vtree(_))));
+    assert!(matches!(f.embed(&big, |_| VarId(2)), Err(EmbedError::Vtree(_))));
     // Nor can a variable land outside the destination.
     assert!(matches!(
         f.embed(&big, |v| VarId(v.0 + 4)),
-        Err(GraftError::VariableOutOfRange { .. }),
+        Err(EmbedError::VariableOutOfRange { .. }),
     ));
     // Nor may the renaming cross the destination's leaf order.
     let reversed = |v: VarId| if v == VarId(1) { VarId(3) } else { VarId(1) };
-    assert!(matches!(f.embed(&big, reversed), Err(GraftError::NotIsomorphic { .. })));
+    assert!(matches!(f.embed(&big, reversed), Err(EmbedError::NotIsomorphic { .. })));
 
     // A level whose structure has been summed out cannot be copied.
     Engine::new().marginalize_levels(&mut f, &[small.root()]).unwrap();
     assert!(matches!(
         f.embed(&big, |v| v),
-        Err(GraftError::Operation(OperationError::MarginalLevel(_))),
+        Err(EmbedError::Operation(OperationError::MarginalLevel(_))),
     ));
 }

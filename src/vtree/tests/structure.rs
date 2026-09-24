@@ -686,7 +686,7 @@ fn graft_mapping_preserves_rotated_nodes_and_shared_context() {
     let (grafted, layout) = Vtree::graft_over(&[&source], |_, v| VarId(v.0 + 2), &[VarId(1)], 7).unwrap();
     assert_eq!(grafted.validate(), Ok(()));
     assert!(std::sync::Arc::ptr_eq(grafted.context(), &context));
-    let map = &layout.comp_to_full[0];
+    let map = layout.part(0).as_slice();
     for (i, node) in source.nodes.iter().enumerate() {
         match *node {
             VtreeNode::Leaf { var, .. } => assert_eq!(grafted.leaf_var(map[i]), VarId(var.0 + 2)),

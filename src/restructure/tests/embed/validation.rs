@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::restructure::GraftError;
+use crate::restructure::EmbedError;
 use crate::vtree::{VarId, Vtree, VtreeError};
 use crate::{Engine, OperationError, Tdd};
 
@@ -21,7 +21,7 @@ fn two_variables_may_not_share_an_image() {
     let big = Arc::new(Vtree::linear(4));
     assert_eq!(
         f.embed(&big, |_| VarId(3)).unwrap_err(),
-        GraftError::Vtree(VtreeError::OverlappingVariable(VarId(3))),
+        EmbedError::Vtree(VtreeError::OverlappingVariable(VarId(3))),
     );
 }
 
@@ -31,11 +31,11 @@ fn an_image_variable_outside_the_destination_is_refused() {
     let big = Arc::new(Vtree::linear(4));
     assert_eq!(
         f.embed(&big, |v| VarId(v.0 + 9)).unwrap_err(),
-        GraftError::VariableOutOfRange { variable: VarId(10), num_vars: 4 },
+        EmbedError::VariableOutOfRange { variable: VarId(10), num_vars: 4 },
     );
     assert_eq!(
         f.embed(&big, |v| VarId(v.0 + 9)).unwrap_err().to_string(),
-        "grafted variable 10 is outside the variables 1 to 4",
+        "renamed variable 10 is outside the variables 1 to 4",
     );
 }
 
@@ -45,7 +45,7 @@ fn a_renaming_that_reverses_the_leaf_order_is_refused() {
     let big = Arc::new(Vtree::linear(4));
     // The relation's first variable would land to the right of its second.
     let reversed = |v: VarId| if v == VarId(1) { VarId(3) } else { VarId(1) };
-    let Err(GraftError::NotIsomorphic { source }) = f.embed(&big, reversed) else {
+    let Err(EmbedError::NotIsomorphic { source }) = f.embed(&big, reversed) else {
         panic!("a reversed renaming has no level-by-level copy");
     };
     assert!(small.node(source).is_leaf());
@@ -60,7 +60,7 @@ fn a_destination_grouping_the_variables_differently_is_refused() {
     // branches where the source has a single variable.
     let big = Arc::new(Vtree::linear(8));
     let error = f.embed(&big, |v| v).unwrap_err();
-    assert!(matches!(error, GraftError::NotIsomorphic { .. }));
+    assert!(matches!(error, EmbedError::NotIsomorphic { .. }));
     assert!(error.to_string().contains("does not contain the source vtree's shape"));
 }
 
@@ -72,7 +72,7 @@ fn a_destination_leaf_where_the_source_branches_is_refused() {
     // The other direction: the destination runs out of variables where the
     // source still has a subtree to copy.
     let big = Arc::new(Vtree::balanced(4));
-    assert!(matches!(f.embed(&big, |v| v), Err(GraftError::NotIsomorphic { .. })));
+    assert!(matches!(f.embed(&big, |v| v), Err(EmbedError::NotIsomorphic { .. })));
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn a_diagram_with_a_marginal_level_is_refused() {
     let big = Arc::new(Vtree::linear(4));
     assert!(matches!(
         f.embed(&big, |v| v),
-        Err(GraftError::Operation(OperationError::MarginalLevel(_))),
+        Err(EmbedError::Operation(OperationError::MarginalLevel(_))),
     ));
 }
 
@@ -103,7 +103,7 @@ fn embedding_checks_planning_work_before_the_false_shortcut() {
             }));
             engine.embed(&f, &big, |var| VarId(var.0 + 2))
         };
-        assert_eq!(result.unwrap_err(), GraftError::Operation(OperationError::Stopped));
+        assert_eq!(result.unwrap_err(), EmbedError::Operation(OperationError::Stopped));
         let (g, levels) = engine.embed(&f, &big, |var| VarId(var.0 + 2)).unwrap();
         assert_canonical(&g);
         assert!(g.is_zero());
@@ -135,7 +135,7 @@ fn embedding_retries_after_each_refused_reservation_without_changing_the_source(
         let (g, levels) = match result {
             Ok(result) => { completed = true; result }
             Err(error) => {
-                assert_eq!(error, GraftError::Operation(OperationError::OverBudget));
+                assert_eq!(error, EmbedError::Operation(OperationError::OverBudget));
                 refusals += 1;
                 engine.embed(&f, &big, rename).unwrap()
             }

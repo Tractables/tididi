@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use crate::{Engine, Tdd, Vtree, OperationError};
-use crate::restructure::{EmbeddingPlan, GraftError};
+use crate::restructure::{EmbeddingPlan, EmbedError};
 use crate::vtree::VarId;
 use crate::test_helpers::assert_canonical;
 
@@ -44,12 +44,12 @@ fn plans_validate_once_and_reject_wrong_sources_without_using_level_indices() {
     assert_eq!(calls.get(), 2);
     let wrong = Tdd::one(&Arc::new(Vtree::balanced(2)));
     assert_canonical(&wrong);
-    assert!(matches!(plan.apply(&wrong), Err(GraftError::Operation(OperationError::VtreeMismatch))));
-    assert!(matches!(plan.then(&plan), Err(GraftError::Operation(OperationError::VtreeMismatch))));
+    assert!(matches!(plan.apply(&wrong), Err(EmbedError::Operation(OperationError::VtreeMismatch))));
+    assert!(matches!(plan.then(&plan), Err(EmbedError::Operation(OperationError::VtreeMismatch))));
     let mut marginal = Tdd::one(&source);
     marginal.marginalize_levels(&[source.root()]).unwrap();
     assert_canonical(&marginal);
-    assert!(matches!(plan.apply(&marginal), Err(GraftError::Operation(OperationError::MarginalLevel(_)))));
+    assert!(matches!(plan.apply(&marginal), Err(EmbedError::Operation(OperationError::MarginalLevel(_)))));
 }
 
 #[test]
@@ -70,7 +70,7 @@ fn prepared_placements_recover_from_allocation_refusal_without_rebuilding_the_pl
         assert_eq!(retry.model_count().unwrap(), 112u32.into());
         match result {
             Ok(result) => { assert_canonical(&result); completed = true; break; }
-            Err(error) => assert_eq!(error, GraftError::Operation(OperationError::OverBudget)),
+            Err(error) => assert_eq!(error, EmbedError::Operation(OperationError::OverBudget)),
         }
     }
     assert!(completed);
