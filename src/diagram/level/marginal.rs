@@ -1,17 +1,17 @@
 //! Converting a level to its marginal form, and the marginal-side slot writer.
 
 use crate::diagram::marginal_ref::refs::{for_each_side_ref_mut, ChildSide};
-use crate::diagram::marginal_ref::{MARGINAL_OVERFLOW_TAG, ValueRef};
+use crate::diagram::marginal_ref::{INLINE_VALUE_BIT, ValueRef};
 use crate::diagram::NodeIdx;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 use super::{CountOverflow, LevelState, TddLevel};
 
 impl TddLevel {
-    /// Inline-emit writer (end-of-apply tagger inner): for each bare marginal-side
-    /// slot ref, look up its child count and either inline it (bit-30 set) when
-    /// small, or keep it a bare self-describing slot (bit-30 clear) when
-    /// large/big-table.
-    pub(crate) fn emit_marginal_side_slots(
+    /// One level's share of `inline_small_marginal_refs`: for each bare slot
+    /// reference on a side with counts, look up the child's count and
+    /// replace the reference with the count itself (bit 30 set) when it
+    /// fits; a larger count, the overflow marker included, keeps its slot.
+    pub(crate) fn inline_small_refs(
         &mut self,
         left_counts: Option<&[u128]>,
         right_counts: Option<&[u128]>,
@@ -30,7 +30,7 @@ impl TddLevel {
             if NodeIdx(raw).is_reserved() {
                 return raw;
             }
-            if raw & MARGINAL_OVERFLOW_TAG != 0 {
+            if raw & INLINE_VALUE_BIT != 0 {
                 return raw; // already inline (bit-30 set) — idempotent
             }
             let slot = (raw & crate::diagram::marginal_ref::MARGINAL_VALUE_MASK) as usize;

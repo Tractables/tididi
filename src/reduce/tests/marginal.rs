@@ -127,7 +127,7 @@ fn test_marginal_sibling_fold_allowed_regression() {
     // (right child sub_left_r is marginal) and root (right child v_right is marginal).
     // No count here fits a ref, so nothing inlines; the markers enable decode in
     // `model_count`.
-    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
+    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
 
     // Pre-minimize model count:
     //   Q1's count at v_left = Pos_leaf0 × `C_SLR` = 1 × `C_SLR`.

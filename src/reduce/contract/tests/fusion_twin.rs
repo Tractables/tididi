@@ -106,7 +106,7 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
     // Tag marginal-side refs for consistent boundary decode.
-    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
+    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
 
     // Precondition A: fusion redexes are present.
     assert!(

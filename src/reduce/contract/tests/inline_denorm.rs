@@ -73,7 +73,7 @@ fn twins_with_marginal_sibling_are_contracted() {
     let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
     // Tag marginal-side refs so the boundary decode is consistent.
-    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
+    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
     // Declare root dirty so `contract_all_twins` picks it up.
     tdd.seed_contract_worklist([root.0]);
 
@@ -157,7 +157,7 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
     };
     let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
-    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
+    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
     tdd.seed_contract_worklist([root.0]);
 
     contract_all_twins(&eng, &mut tdd).expect("contract_all_twins");
@@ -217,7 +217,7 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
     let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
     // Tagger rewrites both small-count slot refs to Inline(5) — equal raws.
-    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
+    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
     for p in tdd.levels[root.idx()].pairs_of_idx(0) {
         match ChildDecoder::marginal().value(p.right) {
             ValueRef::Inline(c) => assert_eq!(c, 5, "tagger must inline count 5"),
@@ -313,7 +313,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
     let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
     // Tag marginal-side refs and mark root dirty; the full pipeline closes the redex.
-    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
+    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
     tdd.seed_contract_worklist([root.0]);
     contract_all_twins(&eng, &mut tdd).expect("contract_all_twins");
 
@@ -445,7 +445,7 @@ fn p_fusion_redex_closed_within_contract_all_twins() {
     let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree, levels, output);
 
     // Tag marginal-side refs so the boundary decode is consistent.
-    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
+    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
     // Mark root dirty so `contract_all_twins` picks it up.
     tdd.seed_contract_worklist([root.0]);
 

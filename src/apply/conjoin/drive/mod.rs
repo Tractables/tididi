@@ -58,9 +58,9 @@ pub(super) fn apply_and_filtered(
 ) -> Result<Tdd, OperationError> {
     let mut out = apply_and_fallible_inner(eng, f, g, marginalize_targets, quantified, filter)?;
     // Apply emits self-describing marginal refs — bit-30 set is an inline count,
-    // bit-30 clear a bare slot; see `MARGINAL_OVERFLOW_TAG` for why that polarity —
+    // bit-30 clear a bare slot; see `INLINE_VALUE_BIT` for why that polarity —
     // so a bit-30-clear ref here is never an already-inline count.
-    crate::diagram::tag_all_marginal_side_slots(&mut out, None);
+    crate::diagram::inline_small_marginal_refs(&mut out, None);
     Ok(out)
 }
 

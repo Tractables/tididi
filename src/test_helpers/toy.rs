@@ -48,7 +48,7 @@ pub fn marginalize_subtree(tdd: &mut Tdd, root: VtreeIdx) {
     // Emulate production marginalization, which tags every persisted marginal-side
     // slot ref (bit 30) so the 0=inline decode invariant holds. Without this the
     // strict decode assert fires when a later reader hits a raw slot ref.
-    crate::diagram::tag_all_marginal_side_slots(tdd, None);
+    crate::diagram::inline_small_marginal_refs(tdd, None);
 }
 
 // ── Marginal-invariant fixtures ──────────────────────────────────────────────

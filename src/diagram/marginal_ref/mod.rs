@@ -2,21 +2,20 @@
 
 use super::primitives::{EncodedChildRef, NodeIdx};
 
-/// Bit 30 of a pair side whose child level is marginal: clear means the value
-/// is an index into the child's `marginal_counts`, set means the low 30 bits
-/// are the model count itself. Readers use [`ChildDecoder`] instead of testing
-/// this bit.
+/// Bit 30 of a pair side whose child level is marginal: set means the low 30
+/// bits are the model count itself, clear means they index the child's
+/// `marginal_counts`. Readers use [`ChildDecoder`] instead of testing this
+/// bit.
 ///
 /// After a child level is marginalized, slot index equals node index in
 /// `marginal_counts`, so a parent's bare node index is already a valid slot
-/// reference and nothing has to be re-tagged; only the inline optimization
-/// sets bit 30.
-pub(super) const MARGINAL_OVERFLOW_TAG: u32 = 1 << 30;
+/// reference; only `inline_small_marginal_refs` sets bit 30.
+pub(super) const INLINE_VALUE_BIT: u32 = 1 << 30;
 /// Mask for the 30-bit payload (count value or slot index).
-pub(super) const MARGINAL_VALUE_MASK: u32 = MARGINAL_OVERFLOW_TAG - 1;
+pub(super) const MARGINAL_VALUE_MASK: u32 = INLINE_VALUE_BIT - 1;
 /// Largest model count a pair side stores inline; larger counts are held in
 /// the child's `marginal_counts` and referenced by index.
-pub(crate) const MARGINAL_INLINE_MAX: u32 = MARGINAL_OVERFLOW_TAG - 1;
+pub(crate) const MARGINAL_INLINE_MAX: u32 = INLINE_VALUE_BIT - 1;
 
 /// The value a pair side denotes when its child level is marginal: either the
 /// count itself or the slot that holds it.
@@ -55,7 +54,7 @@ impl ValueRef {
             !r.is_reserved(),
             "marginal-side ref must not be the zero sentinel"
         );
-        if r.0 & MARGINAL_OVERFLOW_TAG != 0 {
+        if r.0 & INLINE_VALUE_BIT != 0 {
             ValueRef::Inline(r.0 & MARGINAL_VALUE_MASK)
         } else {
             ValueRef::Slot(r.0)
@@ -70,7 +69,7 @@ impl ValueRef {
     /// `2^30 - 1`. Larger counts must be stored in a slot.
     pub fn side(self) -> Result<EncodedChildRef, ValueRefError> {
         let (payload, tag) = match self {
-            ValueRef::Inline(count) => (count, MARGINAL_OVERFLOW_TAG),
+            ValueRef::Inline(count) => (count, INLINE_VALUE_BIT),
             ValueRef::Slot(slot) => (slot, 0),
         };
         if payload > MARGINAL_VALUE_MASK {
@@ -253,7 +252,7 @@ pub(crate) use refs::{
     for_each_side_ref_mut, remap_refs_into, ChildSide, Sides,
 };
 pub(crate) use swap::resolve_swapped_marginal_side;
-pub(crate) use tag::tag_all_marginal_side_slots;
+pub(crate) use tag::inline_small_marginal_refs;
 
 #[cfg(test)]
 mod tests;

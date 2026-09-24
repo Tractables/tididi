@@ -9,7 +9,7 @@
 //! cancellation at every round.
 
 use super::*;
-use crate::diagram::{ChildPair, LeafLabel, NodeIdx, tag_all_marginal_side_slots, TddLevel, TddNodeId, ValueRef};
+use crate::diagram::{ChildPair, LeafLabel, NodeIdx, inline_small_marginal_refs, TddLevel, TddNodeId, ValueRef};
 
 use crate::Engine;
 use crate::vtree::Vtree;
@@ -40,7 +40,7 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
 
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
-    tag_all_marginal_side_slots(&mut tdd, None);
+    inline_small_marginal_refs(&mut tdd, None);
     tdd.seed_contract_worklist([root.0]);
     (tdd, v_left)
 }

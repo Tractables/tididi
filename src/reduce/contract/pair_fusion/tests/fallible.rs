@@ -73,7 +73,7 @@ fn p_fusion_over_budget_is_catchable() {
 // ── Tests: fusion of inline-ref parent pairs ─────────────────────────────
 //
 // `fusable_tdd()` uses bare slot indices (bit-30 clear) in parent pairs.
-// The two tests below use INLINE marginal refs (bit-30 set = `MARGINAL_OVERFLOW_TAG`)
+// The two tests below use INLINE marginal refs (bit-30 set = `INLINE_VALUE_BIT`)
 // directly in the parent pair fields, exercising the
 // `ValueRef::Inline` branch of `sum_marginal_counts`.
 
@@ -94,7 +94,7 @@ fn inline_fusable_tdd(c0: u32, f: u32) -> Tdd {
     // Right child: marginal level with ZERO slots (inline refs are self-contained).
     levels[right.idx()].set_counts_state(vec![], None);
     // Root: one internal node, two pairs sharing x=0, with INLINE marginal refs.
-    // Bit-30 (`MARGINAL_OVERFLOW_TAG`) set marks these as inline count refs.
+    // Bit-30 (`INLINE_VALUE_BIT`) set marks these as inline count refs.
     let r0_raw = ValueRef::inline_raw(c0 as u128).expect("test inline count must fit inline encoding");
     let r1_raw = ValueRef::inline_raw(f as u128).expect("test inline count must fit inline encoding");
     levels[root.idx()].push_internal_node(&[

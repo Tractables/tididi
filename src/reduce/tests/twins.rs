@@ -164,7 +164,7 @@ fn test_minimize_contracts_marginal_twins() {
     // Hand-rolled `become_marginal` bypasses production marginalization; tag the
     // now-marginal level's persisted parent refs so the 0=inline decode
     // invariant holds (mirrors `marginalize_batch` / `marginalize_subtree`).
-    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
+    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
 
     let phase2_count = tdd.model_count().unwrap();
     assert_eq!(tdd.levels[v_left.idx()].slot_count(), 2, "phase 2: marginalization preserves width");
@@ -203,7 +203,7 @@ fn test_minimize_contracts_marginal_twins() {
     // The rebuilt root pairs reuse the bare phase-1 refs `a`/`b`, which now
     // point into the marginal v_left and must be tagged (production's
     // end-of-apply tagger does this after apply rebuilds the root level).
-    crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
+    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
 
     let phase3_count = tdd.model_count().unwrap();
 

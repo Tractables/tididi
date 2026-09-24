@@ -1,16 +1,17 @@
-//! The end-of-apply tagger: making every persisted marginal-side reference
-//! self-describing.
+//! The end-of-apply pass that inlines small counts into the references
+//! toward a marginal child.
 
 use crate::diagram::level::TddLevel;
 use super::refs::ChildSide;
 use crate::diagram::tdd::Tdd;
 
-/// Set the slot tag on every persisted marginal-side reference in the diagram
-/// whose child level is marginal.
+/// Replace every bare slot reference toward a marginal child whose count is
+/// small enough with the count itself (bit 30 set); a larger count keeps
+/// its slot reference.
 ///
 /// Called once after each apply completes, before any persisted count decode.
-/// Idempotent: an already inline side is left alone.
-pub(crate) fn tag_all_marginal_side_slots(
+/// Idempotent: a side already through this pass is left alone.
+pub(crate) fn inline_small_marginal_refs(
     tdd: &mut Tdd,
     // `Some(snapshot)`: `snapshot[i]` is whether level `i` was already marginal
     // at the enclosing `marginalize_batch` entry, and only sides whose child
@@ -23,12 +24,12 @@ pub(crate) fn tag_all_marginal_side_slots(
     let vtree = &tdd.vtree;
     let levels = &mut tdd.levels;
     for (t, left, right) in vtree.internal_bottomup() {
-        tag_marginal_side_slots_at_level(levels, was_marginal, t, left, right);
+        inline_small_marginal_refs_at_level(levels, was_marginal, t, left, right);
     }
 }
 
-/// One internal level's share of [`tag_all_marginal_side_slots`].
-fn tag_marginal_side_slots_at_level(
+/// One internal level's share of [`inline_small_marginal_refs`].
+fn inline_small_marginal_refs_at_level(
     levels: &mut [TddLevel],
     was_marginal: Option<&[bool]>,
     t: crate::vtree::VtreeIdx,
@@ -60,7 +61,7 @@ fn tag_marginal_side_slots_at_level(
         };
     if do_left || do_right {
         let [p, l, r] = levels.get_disjoint_mut([ti, left_idx, right_idx]).expect("distinct");
-        p.emit_marginal_side_slots(
+        p.inline_small_refs(
             do_left.then(|| l.marginal_counts()).flatten(),
             do_right.then(|| r.marginal_counts()).flatten(),
         );

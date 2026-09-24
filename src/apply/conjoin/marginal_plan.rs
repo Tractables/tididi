@@ -28,7 +28,7 @@ pub(super) struct SidePlan {
     /// Decode for this side's pair fields: `MARGINAL_VALUE_MASK` when the child is
     /// marginal, so a bit-30 inline tag is stripped and the remaining payload
     /// is read as a coordinate; an identity view otherwise. See
-    /// `MARGINAL_OVERFLOW_TAG` for the encoding.
+    /// `INLINE_VALUE_BIT` for the encoding.
     pub(crate) view: ChildDecoder,
 }
 

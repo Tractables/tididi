@@ -196,7 +196,7 @@ pub(crate) use marginal_ref::{
     boundary_marginal_levels, boundary_marginal_levels_into,
     for_each_side_ref_mut, remap_refs_into, ChildSide, Sides,
     MARGINAL_INLINE_MAX,
-    tag_all_marginal_side_slots,
+    inline_small_marginal_refs,
     resolve_swapped_marginal_side,
 };
 

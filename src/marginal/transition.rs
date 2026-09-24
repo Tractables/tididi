@@ -130,7 +130,7 @@ impl MarginalDomain for IntFold {
     /// off children that a prior pass marginalized: those already carry inline
     /// counts, and re-resolving them as bare slots would misread them.
     fn end_sweep(tdd: &mut Tdd, was_marginal: &[bool]) {
-        crate::diagram::tag_all_marginal_side_slots(tdd, Some(was_marginal));
+        crate::diagram::inline_small_marginal_refs(tdd, Some(was_marginal));
     }
 }
 impl MarginalDomain for WeightFold {

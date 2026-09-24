@@ -87,7 +87,7 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
         };
         let mut tdd = crate::diagram::Tdd::from_levels_unchecked(vtree.clone(), levels, output);
         // Tag marginal-side refs for the boundary decode.
-        crate::diagram::tag_all_marginal_side_slots(&mut tdd, None);
+        crate::diagram::inline_small_marginal_refs(&mut tdd, None);
         tdd.seed_contract_worklist([root.0]);
         tdd
     };
@@ -219,7 +219,7 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
 
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, output);
-    tag_all_marginal_side_slots(&mut tdd, None);
+    inline_small_marginal_refs(&mut tdd, None);
     tdd.seed_contract_worklist([root.0]);
     tdd
 }

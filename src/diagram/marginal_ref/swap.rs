@@ -7,14 +7,14 @@ use rustc_hash::FxHashMap;
 
 use super::super::level::TddLevel;
 use super::refs::{for_each_side_ref, for_each_side_ref_mut, ChildSide};
-use super::{MARGINAL_OVERFLOW_TAG, MARGINAL_VALUE_MASK, ValueRef};
+use super::{INLINE_VALUE_BIT, MARGINAL_VALUE_MASK, ValueRef};
 use crate::diagram::CountOverflow;
 use crate::diagram::NodeIdx;
 use crate::limits::OperationError;
 
 /// Slot value in [`resolve_swapped_marginal_side`]'s interners meaning "this count
 /// has no dst slot yet" — the pre-scan collected the key, and the dst seed pass
-/// found no existing slot carrying it. Real slot indices are `< MARGINAL_OVERFLOW_TAG`
+/// found no existing slot carrying it. Real slot indices are `< INLINE_VALUE_BIT`
 /// (2^30, asserted by `ValueRef::encode`), so `u32::MAX` cannot collide with one.
 const SLOT_UNSEEDED: u32 = u32::MAX;
 
@@ -47,7 +47,7 @@ fn classify_swap_ref(raw: u32, src_counts: &[u128]) -> SwapRef {
     if NodeIdx(raw).is_reserved() {
         return SwapRef::Keep;
     }
-    if raw & MARGINAL_OVERFLOW_TAG != 0 {
+    if raw & INLINE_VALUE_BIT != 0 {
         return SwapRef::Keep; // already an inline count (bit-30 set)
     }
     // Bare slot (bit-30 clear): store-relative index into the source store.

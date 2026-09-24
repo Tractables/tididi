@@ -113,7 +113,7 @@ impl<const COPY: bool> Placement<'_, COPY> {
                         &[leaf.idx()], &result.vtree, &mut result.levels, result.weights.as_ref());
                 }
             }
-            crate::diagram::tag_all_marginal_side_slots(&mut result, None);
+            crate::diagram::inline_small_marginal_refs(&mut result, None);
         }
         if self.prune {
             self.eng.reduce(&mut result, crate::reduce::ReductionPlan::Prune)?;
