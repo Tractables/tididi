@@ -118,14 +118,13 @@ pub(crate) fn content_twin_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
 /// marginal child is in `set` (the slot prune reports value merges under the
 /// marginal level's index while the twins they mint appear at the parent).
 /// With `None`, every explicit level is scanned. A filtered-out level can only
-/// be left with unmerged twins, which costs size, not correctness.
+/// be left with unmerged twins, which costs size, not correctness. The set is
+/// taken by value because the pass adds to it as it goes.
 pub(crate) fn merge_content_equal_nodes(
     eng: &Engine,
     tdd: &mut Tdd,
-    filter: Option<&rustc_hash::FxHashSet<u32>>,
+    filter: Option<rustc_hash::FxHashSet<u32>>,
 ) -> Result<usize, OperationError> {
-    use rustc_hash::FxHashSet;
-
     // Marginalized diagrams only (`# Soundness` above).
     if !tdd.has_marginal_level() {
         return Ok(0);
@@ -140,11 +139,11 @@ pub(crate) fn merge_content_equal_nodes(
     // which is what lets a single pass chase the merge cascade upward.
     let order = content_twin_scan_levels(tdd);
 
-    // In-pass copy of the worklist filter. A merge at level L rewrites
+    // The worklist filter, grown in-pass. A merge at level L rewrites
     // parent(L)'s refs, so parent(L) must be scanned even if last round's
     // worklist did not name it; it is later in `order`, so inserting it here
     // takes effect within this same pass.
-    let mut live: Option<FxHashSet<u32>> = filter.cloned();
+    let mut live = filter;
 
     // Per-level scratch, hoisted out of the walk: the pass visits every
     // explicit level, so allocating these collections per level would dominate

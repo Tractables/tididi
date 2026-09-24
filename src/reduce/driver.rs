@@ -114,16 +114,16 @@ impl<'a> Reduction<'a> {
     }
 
     /// Each productive round removes at least one node. Its rewrites mark the
-    /// levels to revisit; only the first round scans the whole diagram.
+    /// levels to revisit; only the first round scans the whole diagram, so
+    /// what the slot prune before it reports is not kept.
     pub(super) fn content_twins(&mut self) -> Result<(), OperationError> {
+        prune_value_slots(self.eng, self.tdd);
         self.tdd.dirty.clear(Pass::ContentTwin);
-        self.compact_for_rescan();
         let mut next: Option<rustc_hash::FxHashSet<u32>> = None;
         loop {
             self.eng.limits().check_stop()?;
             if next.as_ref().is_some_and(|levels| levels.is_empty()) { break; }
-            self.tdd.dirty.clear(Pass::ContentTwin);
-            let merged = merge_content_equal_nodes(self.eng, self.tdd, next.as_ref())?;
+            let merged = merge_content_equal_nodes(self.eng, self.tdd, next.take())?;
             if merged == 0 { break; }
             prune_unreachable(self.eng, self.tdd, PruneScope::Whole)?;
             self.contract()?;
