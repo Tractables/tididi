@@ -94,8 +94,9 @@ impl ValueRef {
         ValueRef::Slot(slot_idx).encode().raw()
     }
 
-    /// Convenience: encode an inline count as a raw u32 marginal-side ref.
-    /// Returns `None` if the count doesn't fit (caller should allocate a slot).
+    /// Encode `count` as a raw inline marginal-side ref, or `None` when it
+    /// does not fit in 30 bits and must be stored in a slot. This is the one
+    /// place that decides whether a count is inlined.
     pub(crate) fn inline_raw(count: u128) -> Option<u32> {
         if count <= MARGINAL_INLINE_MAX as u128 {
             Some(ValueRef::Inline(count as u32).encode().raw())

@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 
 use super::super::level::TddLevel;
 use super::refs::{for_each_side_ref_mut, ChildSide};
-use super::{CountOverflow, MARGINAL_INLINE_MAX, MARGINAL_OVERFLOW_TAG, MARGINAL_VALUE_MASK, ValueRef};
+use super::{CountOverflow, MARGINAL_OVERFLOW_TAG, MARGINAL_VALUE_MASK, ValueRef};
 use crate::diagram::NodeIdx;
 use crate::limits::OperationError;
 
@@ -27,8 +27,8 @@ enum SwapRef {
     /// Store-independent: a `ZERO` sentinel (bit 31) or an already-inline count
     /// (bit 30). Passes through untouched.
     Keep,
-    /// Bare slot whose source count fits inline: rewritten to an inline ref,
-    /// which is store-independent. Touches no store.
+    /// Bare slot whose source count fits inline: rewritten to this encoded
+    /// inline ref, which is store-independent. Touches no store.
     Inline(u32),
     /// Bare slot whose source count is above the inline threshold (or is the
     /// `u128::MAX` BigUint sentinel): must be interned into the dst store.
@@ -52,10 +52,9 @@ fn classify_swap_ref(raw: u32, src_counts: &[u128]) -> SwapRef {
     // Bare slot (bit-30 clear): store-relative index into the source store.
     let s = (raw & MARGINAL_VALUE_MASK) as usize;
     let c = src_counts[s];
-    if c != u128::MAX && c <= MARGINAL_INLINE_MAX as u128 {
-        SwapRef::Inline(c as u32) // store-independent once written
-    } else {
-        SwapRef::Mint(s, c)
+    match ValueRef::inline_raw(c) {
+        Some(inline) => SwapRef::Inline(inline), // store-independent once written
+        None => SwapRef::Mint(s, c),
     }
 }
 
@@ -299,7 +298,7 @@ fn remap_swap_ref(
         // `ZERO` sentinel or already-inline count: store-independent.
         SwapRef::Keep => return raw,
         // Small enough to carry in the ref (bit-30 set): store-independent.
-        SwapRef::Inline(c) => return ValueRef::Inline(c).encode().raw(),
+        SwapRef::Inline(inline) => return inline,
         SwapRef::Mint(s, c) => (s, c),
     };
     // Big (`u128::MAX` sentinel) or large-but-u128 count: re-mint into dst store,

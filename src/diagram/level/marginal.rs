@@ -1,7 +1,7 @@
 //! Converting a level to its marginal form, and the marginal-side slot writer.
 
 use crate::diagram::marginal_ref::refs::{for_each_side_ref_mut, ChildSide};
-use crate::diagram::marginal_ref::{CountOverflow, MARGINAL_INLINE_MAX, MARGINAL_OVERFLOW_TAG, ValueRef};
+use crate::diagram::marginal_ref::{CountOverflow, MARGINAL_OVERFLOW_TAG, ValueRef};
 use crate::diagram::NodeIdx;
 use super::{LevelState, TddLevel};
 
@@ -16,8 +16,8 @@ impl TddLevel {
         right_counts: Option<&[u128]>,
     ) {
         // Inline rule: a bare marginal-side slot ref is inlined when its count
-        // is at most `MARGINAL_INLINE_MAX` and not a `u128::MAX` overflow;
-        // otherwise it stays a bare slot, which is already a correct reference.
+        // fits an inline value (`ValueRef::inline_raw`); otherwise it stays a
+        // bare slot, which is already a correct reference.
         // Counts need not be unique on the child level: a marginal node has no
         // identity beyond its count, and duplicate pairs are summed, not
         // deduped (see `conjoin_clause/rebuild.rs`), so two same-count refs
@@ -36,16 +36,11 @@ impl TddLevel {
             if slot >= counts.len() {
                 return raw; // OOB ⟹ keep as a bare slot
             }
-            let c = counts[slot];
-            let inlinable = c != u128::MAX && c <= MARGINAL_INLINE_MAX as u128;
-            if inlinable {
-                // Counts at marginalization are ≥ 1 on any compile path (apply
-                // is zero-suppressed), so `Inline(0)` arises only from a
-                // hand-built diagram.
-                ValueRef::Inline(c as u32).encode().raw()
-            } else {
-                raw // keep as a bare slot (bit-30 clear)
-            }
+            // Counts at marginalization are ≥ 1 on any compile path (apply
+            // is zero-suppressed), so `Inline(0)` arises only from a
+            // hand-built diagram. A count too large to inline, the
+            // `u128::MAX` overflow marker included, keeps its bare slot.
+            ValueRef::inline_raw(counts[slot]).unwrap_or(raw)
         }
         if let Some(lc) = left_counts {
             for_each_side_ref_mut(self, ChildSide::Left, |r| *r = emit_or_tag(*r, lc));
