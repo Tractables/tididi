@@ -5,7 +5,7 @@
 use crate::Engine;
 use crate::vtree::VtreeIdx;
 use crate::diagram::*;
-use super::{liveness, OperationError, APPLY_BYTES_PER_CELL};
+use super::{liveness, OperationError};
 use super::products::Products;
 use super::scratch::ApplyWorkspace;
 use crate::value::StreamCache;
@@ -228,6 +228,10 @@ fn snapshot_widths(
     }
     (total_cells, any_entry_marginal)
 }
+
+/// Conservative per-cell byte factor for the apply's product grid:
+/// pairs (8B) + nodes (8B) + scratch (4–8B) ≈ 24B.
+const APPLY_BYTES_PER_CELL: u64 = 24;
 
 /// Refuse before allocating anything if the cells this apply is *guaranteed* to
 /// materialize already exceed the remaining soft budget.
