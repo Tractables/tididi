@@ -2,6 +2,7 @@
 
 use crate::diagram::{LeafLabel, Literal};
 use super::compose::SharedCircuit;
+use super::disjoin::disjoin_many_owned;
 use crate::limits::PollGate;
 use crate::vtree::{VarId, VtreeNode};
 use crate::{Engine, OperationError, Tdd};
@@ -141,21 +142,19 @@ impl Engine {
                     let level = f.level(t);
                     lim.reserve_exact(&mut columns[t.idx()], level.nodes.len())?;
                     for (i, node) in level.nodes.iter().enumerate() {
-                        let mut sum = None;
+                        // One disjunction per node: a fold of `or` over the
+                        // pairs would complement the growing sum at each step.
+                        let mut terms = Vec::new();
+                        terms.try_reserve(level.pair_count_at(i)).map_err(|_| OperationError::OverBudget)?;
                         for pair in level.pairs_of(node) {
                             gate.poll(1)?;
                             let a =
                                 columns[left.idx()][pair.left.raw() as usize].take(self)?;
                             let b = columns[right.idx()][pair.right.raw() as usize]
                                 .take(self)?;
-                            let term = self.and(a, b)?;
-                            sum = Some(match sum {
-                                None => term,
-                                Some(sum) => self.or(sum, term)?,
-                            });
+                            terms.push(self.and(a, b)?);
                         }
-                        let mut result = sum.expect("structural node has a pair");
-                        self.minimize(&mut result)?;
+                        let result = disjoin_many_owned(self, terms)?;
                         columns[t.idx()].push(SharedCircuit::new(result, uses[t.idx()][i]));
                     }
                     columns[left.idx()] = Vec::new();
@@ -167,10 +166,8 @@ impl Engine {
         let mut result = columns[f.output().vtree.idx()][f.output().local.idx()].take(self)?;
         // The destination universe is unchanged; weights stay bound to its variables.
         result.weights = f.weights.take().map(|weights| weights.empty_like());
-        // Internal columns are minimized when built; a leaf can return a cloned replacement.
-        if vtree.node(f.output().vtree).is_leaf() {
-            self.minimize(&mut result)?;
-        }
+        // A leaf output can be a cloned replacement, which need not be minimized.
+        self.minimize(&mut result)?;
         Ok(result)
     }
 }

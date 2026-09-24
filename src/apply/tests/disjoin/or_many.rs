@@ -95,3 +95,35 @@ fn operands_must_share_a_vtree() {
     let other = Tdd::cube(&vtree(4), [2]).expect("a cube");
     assert!(matches!(or_many([one, other]), Err(OperationError::VtreeMismatch)));
 }
+
+/// A false operand does not short-circuit the two-operand form either: the
+/// other operand comes back minimized whichever side it is on, and two false
+/// operands give a minimized false.
+#[test]
+fn a_false_operand_leaves_the_other_minimized() {
+    let eng = &crate::Engine::new();
+    let v = vtree(4);
+    let zero = constant_zero(eng, &v);
+    let raw = crate::apply::apply_and(
+        Tdd::clause(&v, [1, 2]).expect("a clause"),
+        Tdd::clause(&v, [1, -3]).expect("a clause"),
+    );
+    assert!(!raw.levels.is_canonical(raw.output), "the fixture still owes its reduction");
+    for (f, g) in [(zero.clone(), raw.clone()), (raw.clone(), zero.clone())] {
+        let result = eng.or(f, g).expect("a disjunction");
+        assert_canonical(&result);
+        assert!(result.levels.is_canonical(result.output));
+        assert!(result.equivalent(&raw).expect("comparable"));
+    }
+    let both = eng.or(zero.clone(), zero).expect("a disjunction");
+    assert!(both.is_zero());
+    assert!(both.levels.is_canonical(both.output));
+}
+
+#[test]
+fn two_operands_must_share_a_vtree() {
+    let eng = &crate::Engine::new();
+    let one = Tdd::cube(&vtree(4), [1]).expect("a cube");
+    let other = Tdd::cube(&vtree(4), [2]).expect("a cube");
+    assert!(matches!(eng.or(one, other), Err(OperationError::VtreeMismatch)));
+}

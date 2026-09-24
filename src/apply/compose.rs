@@ -192,11 +192,7 @@ impl Engine {
         let otherwise = self.negate(condition.take(self)?)?;
         let yes = self.and(condition.take(self)?, then_branch)?;
         let no = self.and(otherwise, else_branch)?;
-        // Disjunction minimizes unless a false operand selects its identity shortcut.
-        let identity = yes.is_zero() || no.is_zero();
-        let mut result = self.or(yes, no)?;
-        if identity { self.minimize(&mut result)?; }
-        Ok(result)
+        self.or(yes, no)
     }
 
     /// Run [`xor`] using this batch's scratch and resource limits.
