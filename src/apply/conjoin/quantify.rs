@@ -45,7 +45,6 @@ use crate::diagram::{ChildPair, EncodedChildRef, ONE_LEAF_IDX, Tdd};
 use crate::limits::{OperationError, PollGate};
 
 use super::{ApplyRun, LevelShape, NO_PRODUCT};
-use super::output::drop_dead_operand_level;
 
 /// The pair of a `⊤` node: the constant-true node sits at local index 0 of
 /// every level, leaf or internal, so both sides name it.
@@ -53,17 +52,6 @@ const TRUE_PAIR: ChildPair = ChildPair {
     left: EncodedChildRef::from_raw(ONE_LEAF_IDX.0),
     right: EncodedChildRef::from_raw(ONE_LEAF_IDX.0),
 };
-
-/// Drop this level's dead operand-child levels before its own reserve fires,
-/// so the allocator can reuse their slabs. Shared with the routed path, whose
-/// fast-path entry does the same thing first.
-pub(super) fn drop_dead_children(f: &mut Tdd, g: &mut Tdd, shape: LevelShape) {
-    let (li, ri) = (shape.left.idx(), shape.right.idx());
-    drop_dead_operand_level(&mut f.levels[li]);
-    drop_dead_operand_level(&mut f.levels[ri]);
-    drop_dead_operand_level(&mut g.levels[li]);
-    drop_dead_operand_level(&mut g.levels[ri]);
-}
 
 /// Build a level every leaf below which is quantified: one satisfiability test
 /// per product cell, and a level holding the single `⊤` node the live cells

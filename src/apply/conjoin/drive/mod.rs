@@ -33,34 +33,6 @@ pub(super) struct Sweep<'a, 'filter> {
     pub(super) filter: Option<&'a mut (dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool + 'filter)>,
 }
 
-/// Drop this level's dead operand children, then try the identity fast paths.
-///
-/// `Ok(true)` means a fast path built the level and the caller moves on.
-fn take_fast_path(
-    eng: &Engine,
-    run: &mut ApplyRun,
-    f: &mut Tdd,
-    g: &mut Tdd,
-    shape: LevelShape,
-) -> Result<bool, OperationError> {
-    let (li, ri) = (shape.left.idx(), shape.right.idx());
-    // Drop dead operand-child levels before this level's output reserve fires,
-    // so the allocator can reuse their slabs for it. Sound because the body
-    // reads the children only through the width snapshots taken at setup,
-    // never through their arenas; the drop keeps `marginal_counts`, so
-    // `is_marginal()` stays accurate.
-    drop_dead_operand_level(&mut f.levels[li]);
-    drop_dead_operand_level(&mut f.levels[ri]);
-    drop_dead_operand_level(&mut g.levels[li]);
-    drop_dead_operand_level(&mut g.levels[ri]);
-
-    // Identity fast paths: FP1 (f carrier / g identity), FP2 (symmetric),
-    // and the 0-width orphan-marginal case. See `take_level_fast_path` for
-    // the full guard logic.
-    take_level_fast_path(eng, run, f, g, shape)
-}
-
-
 /// Walk the vtree bottom-up, building one level at a time.
 ///
 /// At each level the product `f[i] ∧ g[j]` is computed over all node pairs,
@@ -104,25 +76,23 @@ fn sweep_levels(
 
         let shape = run.shape(t, left, right);
         let (left_idx, right_idx) = (left.idx(), right.idx());
+        // Before this level's output reserve fires, so the allocator can
+        // reuse the children's slabs for it.
+        drop_dead_children(f, g, shape);
 
         if sweep.quantified.contains(t.idx()) {
             // Every leaf below this level is quantified, so the level is one
             // satisfiability test per cell and no structure at all. The
             // identity fast paths are skipped: what they would build is the
             // structure this route exists not to build.
-            super::quantify::drop_dead_children(f, g, shape);
             super::quantify::build_level_quantified(eng, run, f, g, shape)?;
             output_nodes += run.levels[t.idx()].slot_count() as u64;
             run.reclaim_child_grids(left_idx, right_idx);
             continue;
         }
 
-        // Identity fast paths and the operand-child drops that precede them.
-        let taken = if sweep.filter.is_some() {
-            // A filtered child product cannot be bypassed by an identity copy.
-            super::quantify::drop_dead_children(f, g, shape);
-            false
-        } else { take_fast_path(eng, run, f, g, shape)? };
+        // A filtered child product cannot be bypassed by an identity copy.
+        let taken = sweep.filter.is_none() && take_level_fast_path(eng, run, f, g, shape)?;
 
         if !taken {
             // One decision per level, taken before any of the level's storage

@@ -2,15 +2,23 @@
 
 use super::*;
 
-/// Drop the `nodes`, `pairs` and `ranges` arenas of an operand level
-/// whose parent is about to be built.
+/// Drop the arenas of a level's four operand children before the level's own
+/// reserve fires, so the allocator can reuse their slabs.
 ///
-/// The caller must hold that nothing reads the level's arenas again: the sweep
-/// reads finished children only through the width snapshots taken at setup.
-/// `marginal_counts` is kept, so `is_marginal()` stays accurate. Called before
-/// the parent's output reserve so the allocator can reuse the freed slabs.
+/// Sound because the sweep reads finished children only through the width
+/// snapshots taken at setup, never through their arenas; the drop keeps
+/// `marginal_counts`, so `is_marginal()` stays accurate.
+pub(super) fn drop_dead_children(f: &mut Tdd, g: &mut Tdd, shape: LevelShape) {
+    let (li, ri) = (shape.left.idx(), shape.right.idx());
+    drop_dead_operand_level(&mut f.levels[li]);
+    drop_dead_operand_level(&mut f.levels[ri]);
+    drop_dead_operand_level(&mut g.levels[li]);
+    drop_dead_operand_level(&mut g.levels[ri]);
+}
+
+/// Drop the `nodes`, `pairs` and `ranges` arenas of one operand level.
 #[inline]
-pub(super) fn drop_dead_operand_level(level: &mut crate::diagram::TddLevel) {
+fn drop_dead_operand_level(level: &mut crate::diagram::TddLevel) {
     // Arenas that together fit one `Vec` minimum allocation return no slab the
     // output reserve could use; exact capacities, so the test never misfires.
     let bytes = level.nodes.capacity() * std::mem::size_of::<EncodedNode>()
