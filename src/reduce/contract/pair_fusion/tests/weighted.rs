@@ -206,15 +206,15 @@ fn node_value(
 }
 
 /// Every marginal-side ref the parent still holds must resolve in bounds, and the
-/// level's live width (`weight_width` on a weight-marginal level, which is
-/// what apply sizes its buffers from) must cover the whole WeightStore vec.
+/// level's live width (its slot count, which is what apply sizes its
+/// buffers from) must cover the whole WeightStore vec.
 fn assert_refs_and_width_in_sync(tdd: &Tdd, ws: &WeightStore, root: VtreeIdx, marginal: VtreeIdx) {
     let store_len = ws.level(marginal.idx()).expect("weighted level").len();
     assert_eq!(
         tdd.levels[marginal.idx()].slot_count(),
         store_len,
         "weight-marginal level width must track the WeightStore length \
-         (a missed weight_width bump mis-sizes apply buffers)",
+         (a missed width bump mis-sizes apply buffers)",
     );
     for n in 0..tdd.levels[root.idx()].nodes.len() {
         if !tdd.levels[root.idx()].nodes[n].is_internal() {
@@ -361,8 +361,8 @@ fn weighted_fusion_keeps_both_occurrences_on_an_equal_sum_collision() {
 /// The width pin on its own, over a group large enough to exercise the >2
 /// accumulate: every surviving marginal ref resolves in bounds and the weight-
 /// marginal level's `slot_count()` still equals the WeightStore length. (The
-/// intern-table-full SLOT fallback — the one branch that bumps
-/// `weight_width` — needs >2^30 distinct values to reach and cannot be
+/// intern-table-full SLOT fallback — the one branch that bumps the
+/// width — needs >2^30 distinct values to reach and cannot be
 /// provoked from a test; this asserts the invariant it exists to maintain.)
 #[test]
 fn weighted_fusion_keeps_width_and_refs_in_sync() {

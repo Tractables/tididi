@@ -255,17 +255,6 @@ impl TddLevel {
         }
     }
 
-    /// The live slot count of a weight-marginal level, 0 elsewhere. `slot_count()`
-    /// reads it back; a caller that mints a slot bumps it through
-    /// [`set_weight_width`](Self::set_weight_width).
-    #[inline]
-    pub(crate) fn weight_width(&self) -> u32 {
-        match &self.state {
-            LevelState::Weights { width, .. } => *width,
-            _ => 0,
-        }
-    }
-
     /// Set the live slot count of a weight-marginal level. No-op elsewhere.
     #[inline]
     pub(crate) fn set_weight_width(&mut self, w: u32) {

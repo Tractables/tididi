@@ -19,8 +19,8 @@ pub(super) fn exact_vals(values: &[crate::diagram::WeightValue]) -> Vec<num_rati
 /// Weighted boundary value-dedup (the weighted analogue of
 /// `prune_merges_equal_value_referenced_slots`): two referenced slots holding
 /// equal `BigRational` values must merge to one output slot, parent refs to
-/// both rewritten onto the survivor, and `weight_width` (the weighted
-/// width carrier) set to the new length.
+/// both rewritten onto the survivor, and the level's slot count set to the
+/// new length.
 #[test]
 fn weighted_prune_merges_equal_value_slots() {
     let eng = &crate::Engine::new();
@@ -43,13 +43,13 @@ fn weighted_prune_merges_equal_value_slots() {
     let merged = prune_value_slots(eng, &mut tdd);
 
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
-    let width = tdd.levels[v.idx()].weight_width();
+    let width = tdd.levels[v.idx()].slot_count();
     let mut buf = crate::value::slots::RefSlotScratch::default();
     let refs = referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut buf);
 
     assert_eq!(new_vals.len(), 1, "equal-valued slots must merge to one");
     assert_eq!(new_vals[0], r(3, 7), "survivor keeps the value");
-    assert_eq!(width, 1, "weight_width must be SET to the new width");
+    assert_eq!(width, 1, "the level's slot count must drop to the new width");
     assert_eq!(slots_before - new_vals.len(), 1, "one duplicate slot freed");
     assert_eq!(merged, vec![v.0], "merged level reported for twin-scan");
     assert_eq!(refs, vec![0], "both parent refs remap to the merged slot 0");
@@ -77,12 +77,12 @@ fn weighted_prune_compacts_orphans() {
     let merged = prune_value_slots(eng, &mut tdd);
 
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
-    let width = tdd.levels[v.idx()].weight_width();
+    let width = tdd.levels[v.idx()].slot_count();
     let mut buf = crate::value::slots::RefSlotScratch::default();
     let refs = referenced_marginal_slots(&tdd.levels[parent.idx()], side, &mut buf);
 
     assert_eq!(new_vals, vec![r(2, 1)], "only the referenced slot's value survives");
-    assert_eq!(width, 1, "weight_width SET to compacted width");
+    assert_eq!(width, 1, "the level's slot count must drop to the compacted width");
     assert_eq!(slots_before - new_vals.len(), 2, "two orphan slots freed");
     assert!(merged.is_empty(), "no value-dedup (all distinct)");
     assert_eq!(refs, vec![0], "parent ref remapped to compacted slot 0");

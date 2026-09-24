@@ -153,9 +153,10 @@ An evaluator owns its algebra so replacing it can invalidate all columns.
 `restructure::EmbeddingPlan` retains its source and destination vtrees and the
 validated level correspondence. Reusing it skips variable and shape validation;
 composition builds a direct placement without intermediate circuit copies.
-Embedding and grafting assemble through `restructure::placement::Placement`,
-which owns destination levels and weights, preserves local indices during
-transfer, and repairs references introduced by new joins. Shape and weight
+Embedding assembles through `restructure::placement::CopyPlacement` and
+grafting through `MovePlacement`; both own destination levels and weights,
+preserve local indices during transfer, and repair references introduced by
+new joins. Shape and weight
 compatibility checks remain in the respective operations.
 
 `reduce::driver` owns pass ordering, content-twin rescan policy and marginal

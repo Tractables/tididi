@@ -343,8 +343,8 @@ impl SlotValues for WeightFold {
         Ok(())
     }
 
-    /// Bumps `weight_width`, the weighted level's live slot count, which is
-    /// what `slot_count()` reads and apply sizes its buffers from.
+    /// Bumps the weighted level's live slot count, which is what
+    /// `slot_count()` reads and apply sizes its buffers from.
     ///
     /// Signed weights make a value of exactly 0 reachable (for instance from
     /// `+a` and `−a`). That is a value like any other and gets its own slot — it
