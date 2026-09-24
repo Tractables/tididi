@@ -26,6 +26,9 @@
 //! - [`weighted_counts_match_enumeration`] — exact rational weights reproduce
 //!   the weighted sum, and the log domain reproduces it to `1e-9` of the sum of
 //!   the term magnitudes, which is the scale a signed fold's accuracy is against.
+//! - [`streaming_marginalization_matches_enumeration`] — the marginalizing
+//!   conjunction answers what conjoining and then summing the levels out
+//!   answers, in both arithmetics.
 //! - [`weighted_composition_matches_enumeration`] — restriction retains the input
 //!   weights and grafting preserves weighted values through renaming and marginalization.
 //! - [`a_tight_budget_refuses_rather_than_panics`] — under a byte budget too
@@ -37,9 +40,6 @@
 //! [`check_case`] on it from an ordinary `#[test]` — the regression tests at the
 //! bottom of this file. A failure prints the seed, the claim that broke, the
 //! formula in DIMACS and the vtree before it panics.
-//!
-//! The regression tests at the bottom are cases the sweep found, each written
-//! down as a `Case::literal`.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -493,14 +493,17 @@ fn log_weighted_count_matches_enumeration(case: &Case) {
     )).unwrap();
     eng.marginalize_levels(&mut logged, &w.targets).expect("an unarmed engine refuses nothing");
     let got = logged.weighted_value().unwrap().expect("a store is attached");
-    let got = *got.as_log().expect("a log store answers in the log domain");
-    let want_f = ratio_to_f64(&w.want);
-    let got_f = f64::from(got.sign) * got.ln_abs.exp();
-    let scale = ratio_to_f64(&w.magnitude).max(f64::MIN_POSITIVE);
-    assert!(
-        (got_f - want_f).abs() <= 1e-9 * scale,
-        "the log-domain weighted fold is off: {got_f} against {want_f}"
-    );
+    let got = got.as_log().expect("a log store answers in the log domain");
+    assert_log_close(got, &w.want, &w.magnitude, "the log-domain weighted fold is off");
+}
+
+/// The log domain reproduces `want` to `1e-9` of `magnitude`, the sum of the
+/// term magnitudes.
+fn assert_log_close(got: &SignedLog, want: &BigRational, magnitude: &BigRational, what: &str) {
+    let value = f64::from(got.sign) * got.ln_abs.exp();
+    let want = ratio_to_f64(want);
+    let scale = ratio_to_f64(magnitude).max(f64::MIN_POSITIVE);
+    assert!((value - want).abs() <= 1e-9 * scale, "{what}: {value} against {want}");
 }
 
 /// The weighted problem drawn from a case: the literal weights, the compiled
@@ -546,9 +549,7 @@ fn weighted_case(case: &Case) -> Weighted {
 fn assert_weighted_sum(tdd: &Tdd, want: &BigRational, magnitude: &BigRational) {
     let got = tdd.weighted_value().unwrap().expect("composition retains its weight configuration");
     if let Some(log) = got.as_log() {
-        let got_f = f64::from(log.sign) * log.ln_abs.exp();
-        let scale = ratio_to_f64(magnitude).max(f64::MIN_POSITIVE);
-        assert!((got_f - ratio_to_f64(want)).abs() <= 1e-9 * scale, "weighted composition changed the log value");
+        assert_log_close(log, want, magnitude, "weighted composition changed the log value");
     } else {
         assert_eq!(got.as_rational().as_ref(), want, "weighted composition changed the exact value");
     }
@@ -815,10 +816,7 @@ fn streaming_marginalization_matches_enumeration(case: &Case) {
         match arithmetic {
             Arithmetic::ExactRational => assert_eq!(got.as_rational().into_owned(), w.want),
             Arithmetic::SignedLog => {
-                let got = got.as_log().unwrap();
-                let value = f64::from(got.sign) * got.ln_abs.exp();
-                let scale = ratio_to_f64(&w.magnitude).max(f64::MIN_POSITIVE);
-                assert!((value - ratio_to_f64(&w.want)).abs() <= 1e-9 * scale);
+                assert_log_close(got.as_log().unwrap(), &w.want, &w.magnitude, "the streamed log value is off");
             }
             _ => unreachable!(),
         }

@@ -14,9 +14,9 @@ intend to combine. [`literal`](crate::literal) builds an atom;
 [`Tdd::clause`](crate::Tdd::clause) joins literals with OR, and
 [`Tdd::cube`](crate::Tdd::cube) joins them with AND;
 [`Tdd::one`](crate::Tdd::one) and [`Tdd::zero`](crate::Tdd::zero) are the
-constants. Integer literals are signed and start at 1; a
-[`VarId`](crate::vtree::VarId), used to quantify and rename, carries the same
-number without the sign. [`Tdd::from_models`](crate::Tdd::from_models) builds
+constants. A [`VarId`](crate::vtree::VarId), used to quantify and rename,
+names a variable by the number its literals carry, without the sign.
+[`Tdd::from_models`](crate::Tdd::from_models) builds
 the canonical circuit for a whole table of assignments at once, from bit-packed
 rows over a chosen list of variables.
 

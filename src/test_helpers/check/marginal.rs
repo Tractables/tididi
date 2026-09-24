@@ -33,9 +33,9 @@ use crate::value::slots::{RefSlotScratch, count_key_at, referenced_marginal_slot
 /// (at most `MARGINAL_INLINE_MAX`, with no big-overflow entry).
 ///
 /// Scope:
-/// - **Unreferenced/stale slots are exempt** — count vectors are never shrunk
-///   count vectors are never shrunk, so a slot whose
-///   refs were all retagged inline legitimately retains its small count.
+/// - **Unreferenced/stale slots are exempt** — count vectors are never shrunk,
+///   so a slot whose refs were all retagged inline legitimately retains its
+///   small count.
 /// - **Deep-marginal and root levels are exempt** — a marginal level whose
 ///   parent is itself marginal (or that has no parent) carries no parent pair
 ///   refs to inline into; its counts (e.g. the final model count) must live in

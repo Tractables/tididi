@@ -47,11 +47,8 @@
 //! The [probability example](guide::examples::probability) evaluates events under
 //! changing weights to answer conditional-probability queries.
 //!
-//! The [API overview](guide::api) groups circuit operations and links to their
-//! specifications. Further [worked examples](guide::examples) cover persistence,
-//! execution limits, variable grouping, and custom traversal.
-//! The [data model](guide::model) explains the representation, and the
-//! [architecture reference](guide::architecture) describes the implementation.
+//! The [guide] holds the API overview, further worked examples, the
+//! data model and the architecture reference.
 
 // Guards the public-release doc surface: an undocumented public item warns.
 #![warn(missing_docs)]

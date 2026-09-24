@@ -37,7 +37,7 @@ and freeing without changing their ownership rules.
 ### Instances
 
 - [Rust README](../README.md) <!-- reviewed: ff8cb955dded726fc9de884c0236de0c6511aa162eac4bb0f39c3b03c05ed7e4 -->
-- [Rust crate introduction](../src/lib.rs) <!-- reviewed: 9c14ea28438b319153d89020cbb32df4b6f0c1757d839ddf5465874e73f3be2a -->
+- [Rust crate introduction](../src/lib.rs) <!-- reviewed: f8ef33c5adac727fb4242c5b7c3f57a605d555cd9ce468ccf893f8edd353b056 -->
 - [Python README](../bindings/python/README.rst) <!-- reviewed: 42cb63be6010d5beef49526d85187050c634956301696846c96e5d5f4708357b -->
 - [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: c6ead730e1436ba112d8bc518610d932e3f72180e516b274c1daff51c24f651a -->
 - [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: fbcc2bf0db46b0e1845f76c8fe9f00f3675645dc41f8b80beb905da887ecac25 -->
@@ -399,7 +399,7 @@ evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: 64ee73868ad5131770f19a041552243f3642b259aef3150cdba13eb3def84b40 -->
+- [Rust API overview](api-guide.md) <!-- reviewed: ec90285d73654b340ade96d01c470569afffee5a7a2a4a26524f222d61980e40 -->
 - [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: 619c8cf6bbe3d4b720da766850817f34b4fdf92c866f3c6cd9828cd555fdcd39 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 
@@ -441,7 +441,7 @@ there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: 9b58aa7cbca9c649039033e801c94a9fd95e5f7b10af6aa827b50440c233d8e9 -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: 146319044bb4fae46f9550806e176e14701cc9420eb57aa62edad83f69042541 -->
 
 ## Reusable components
 
