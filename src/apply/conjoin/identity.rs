@@ -9,6 +9,7 @@ use crate::Engine;
 use crate::diagram::{self, *};
 use super::OperationError;
 use super::setup::{ApplyRun, LevelShape};
+use super::products::Products;
 
 /// Compute which leaf levels are "identity" (constant-true) for a diagram operand.
 ///
@@ -230,16 +231,23 @@ fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
         )?;
     }
 
-    if run.products.arena.is_bump() {
-        run.products.record_live(t_idx, k_carrier);
-    } else {
-        let output_grid_base = run.products.arena.materialized(t_idx).expect("a pre-planned layout grids every level");
-        let slab = run.products.arena.slab_mut();
-        for idx in 0..k_carrier {
-            slab[output_grid_base.idx() + idx] = idx as u32;
-        }
-    }
+    publish_identity_level(run.products, t_idx, k_carrier);
     Ok(())
+}
+
+/// Record an identity-built level of `width` nodes in the product store: its
+/// live count when the arena bumps, else its grid, whose cell `i` names node
+/// `i`.
+fn publish_identity_level(products: &mut Products, t_idx: usize, width: usize) {
+    if products.arena.is_bump() {
+        products.record_live(t_idx, width);
+        return;
+    }
+    let base = products.arena.materialized(t_idx).expect("a pre-planned layout grids every level").idx();
+    let slab = products.arena.slab_mut();
+    for idx in 0..width {
+        slab[base + idx] = idx as u32;
+    }
 }
 
 
@@ -264,18 +272,9 @@ fn try_zero_width_marginal(
     // fast path fires (both need width 1). Without this guard the dense path
     // would read pairs out of the empty level.
     if fw.here == 0 && gw.here == 0 && f.level(t).is_marginal() && g.level(t).is_marginal() {
-        // A 0-width marginal is an orphan: consistent inputs cannot hold a
-        // pair reference into an empty level, so no ancestor constrains or
-        // reads this subtree — it is vacuously identity for the ancestor
-        // fast-paths. Without these flags, the already-marginal ancestor
-        // sitting above the orphan (its counts were snapshotted before the
-        // orphan formed) fails both k==1 identity checks and falls through
-        // to the dense path → the same empty-nodes panic one level up.
         run.left_identity[t_idx] = true;
         run.right_identity[t_idx] = true;
-        if run.products.arena.is_bump() {
-            run.products.record_live(t_idx, 0);
-        }
+        publish_identity_level(run.products, t_idx, 0);
         return true;
     }
     false
@@ -289,9 +288,8 @@ fn try_zero_width_marginal(
 /// function signals by returning `true`; `false` means no fast path matched
 /// and the level takes the dense or sparse route.
 ///
-/// The arena is only written on the zero-width orphan path (and only when the
-/// layout is pre-planned); on FP1/FP2 that write flows through
-/// `apply_identity_fast_path`.
+/// Every path publishes its level through `publish_identity_level`, and none
+/// drops the children: the driver released them before trying the fast paths.
 pub(super) fn take_level_fast_path(
     eng: &Engine,
     run: &mut ApplyRun,
@@ -345,8 +343,6 @@ pub(super) fn take_level_fast_path(
     {
         // FP1: f is the carrier, g is the identity operand.
         apply_identity_fast_path::<true>(eng, shape, &mut f.levels, run)?;
-        // No drop here: the start-of-iteration drop already released the
-        // children.
         return Ok(true);
     }
 
@@ -361,8 +357,6 @@ pub(super) fn take_level_fast_path(
     {
         // FP2: g is the carrier, f is the identity operand.
         apply_identity_fast_path::<false>(eng, shape, &mut g.levels, run)?;
-        // No drop here: the start-of-iteration drop already released the
-        // children.
         return Ok(true);
     }
 
