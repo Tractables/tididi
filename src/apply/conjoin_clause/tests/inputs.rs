@@ -29,3 +29,34 @@ fn typed_clause_adapter_preserves_kernel_allocation_requests() {
     assert!(!requests[0].is_empty());
     assert_eq!(requests[0], requests[1]);
 }
+
+#[test]
+fn repeated_and_conflicting_literals_read_as_the_normalized_clause_in_both_modes() {
+    let vtree = Arc::new(Vtree::balanced(4));
+    let eng = Engine::new();
+    let f = Tdd::clause(&vtree, [1, 3]).unwrap();
+    assert_eq!(f.model_count().unwrap(), 12u32.into());
+    let count = |mut g: Tdd| {
+        g.minimize().unwrap();
+        assert_canonical(&g);
+        g.model_count().unwrap()
+    };
+
+    // `f ∧ (x2 ∨ ¬x4)`, with the repeats and without.
+    let repeated = count(eng.and_clause(f.clone(), &[2, 2, -4, 2][..]).unwrap());
+    assert_eq!(repeated, 9u32.into());
+    assert_eq!(repeated, count(eng.and_clause(f.clone(), &[2, -4][..]).unwrap()));
+    // A variable in both polarities: the clause is true and `f` is the answer.
+    assert_eq!(count(eng.and_clause(f.clone(), &[2, -2, 4][..]).unwrap()), 12u32.into());
+
+    // `f ∨ (¬x1 ∧ x2 ∧ ¬x3 ∧ x4)` on the chain route once the repeat is gone,
+    // and `f ∨ (x2 ∧ ¬x4)` on the complement route.
+    let full = count(eng.or_cube(f.clone(), &[-1, 2, -3, 4, 2][..]).unwrap());
+    assert_eq!(full, 13u32.into());
+    assert_eq!(full, count(eng.or_cube(f.clone(), &[-1, 2, -3, 4][..]).unwrap()));
+    let partial = count(eng.or_cube(f.clone(), &[2, 2, -4][..]).unwrap());
+    assert_eq!(partial, 13u32.into());
+    assert_eq!(partial, count(eng.or_cube(f.clone(), &[2, -4][..]).unwrap()));
+    // A variable in both polarities: the cube is false and `f` is the answer.
+    assert_eq!(count(eng.or_cube(f.clone(), &[2, -2, 4][..]).unwrap()), 12u32.into());
+}

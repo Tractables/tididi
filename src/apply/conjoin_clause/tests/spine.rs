@@ -17,7 +17,7 @@ fn interrupted_ancestor_walk_returns_clean_flags_for_retry() {
     let mut internal = Vec::new();
     let mut stack = Vec::new();
     eng.limits().pin_reduce_poll_stride(Some(1));
-    let clause = [Literal::pos(crate::vtree::VarId(1)), Literal::pos(crate::vtree::VarId(4))];
+    let clause = [crate::vtree::VarId(1), crate::vtree::VarId(4)].map(|var| (Literal::pos(var), vtree.leaf_of(var).unwrap()));
     {
         let mut flags = take(eng.limits(), &pool, vtree.num_nodes()).unwrap();
         let _scope = eng.limits().scope(crate::limits::LimitConfig::none().with_stop_rules(crate::limits::StopRules {
@@ -32,8 +32,8 @@ fn interrupted_ancestor_walk_returns_clean_flags_for_retry() {
     assert!(flags.iter().all(|&flag| !flag));
     build_clause_spine(eng.limits(), &vtree, &clause, &mut flags, &mut internal, &mut stack).unwrap();
     let mut expected = vec![false; vtree.num_nodes()];
-    for literal in clause {
-        let mut current = Some(vtree.leaf_of(literal.var).unwrap());
+    for (_, leaf) in clause {
+        let mut current = Some(leaf);
         while let Some(t) = current {
             expected[t.idx()] = true;
             current = vtree.node(t).parent();

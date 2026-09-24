@@ -67,14 +67,14 @@ impl crate::limits::pool::PooledScratch for MarkBuffer {
 pub(super) fn build_clause_spine(
     lim: &crate::limits::Limits,
     vtree: &crate::vtree::Vtree,
-    clause: &[Literal],
+    clause: &[(Literal, VtreeIdx)],
     on_spine: &mut MarkBuffer,
     spine_internal: &mut Vec<VtreeIdx>,
     dfs_stack: &mut Vec<(VtreeIdx, bool)>,
 ) -> Result<(), OperationError> {
     let mut gate = lim.gate();
-    for lit in clause {
-        let mut cur = vtree.leaf_of(lit.var).expect("the vtree carries this variable");
+    for &(_, leaf) in clause {
+        let mut cur = leaf;
         loop {
             gate.poll(1)?;
             if !on_spine.mark(cur) { break; }
@@ -134,16 +134,14 @@ pub(super) fn propagate_need_dt(
 ///
 /// Returns [`OperationError::MarginalLevel`] when the clause needs structure already summed out.
 pub(super) fn plan_cd_map_bases(
-    vtree: &Vtree,
-    clause: &[Literal],
+    clause: &[(Literal, VtreeIdx)],
     spine_internal: &[VtreeIdx],
     levels: &[TddLevel],
     level_base: &mut [usize],
 ) -> Result<usize, OperationError> {
     let mut total = 0usize;
-    for lit in clause {
-        let ti = vtree.leaf_of(lit.var).expect("the vtree carries this variable").idx();
-        level_base[ti] = total;
+    for &(_, leaf) in clause {
+        level_base[leaf.idx()] = total;
         total += LEAF_WIDTH;
     }
     for &t in spine_internal {
@@ -163,14 +161,12 @@ pub(super) fn plan_cd_map_bases(
 /// literal picks the `c_t` column and its complement the `d_t` one, and
 /// `CONJOIN_GRID` gives both directly.
 pub(super) fn fill_leaf_maps(
-    vtree: &Vtree,
-    clause: &[Literal],
+    clause: &[(Literal, VtreeIdx)],
     level_base: &[usize],
     need_dt: &[bool],
     cd_map: &mut [[u32; 2]],
 ) {
-    for lit in clause {
-        let t = vtree.leaf_of(lit.var).expect("the vtree carries this variable");
+    for &(lit, t) in clause {
         let base = level_base[t.idx()];
         let compute_dt = need_dt[t.idx()];
         let (clause_idx, compl_idx) = if lit.sign {

@@ -48,12 +48,11 @@ impl CubeChain {
     pub(super) fn new(
         lim: &crate::limits::Limits,
         vtree: &Vtree,
-        clause: &[Literal],
+        clause: &[(Literal, VtreeIdx)],
     ) -> Result<Self, OperationError> {
         let mut m_idx = Vec::new();
         lim.try_resize(&mut m_idx, vtree.num_nodes(), NO_PRODUCT)?;
-        for lit in clause {
-            let t = vtree.leaf_of(lit.var).expect("the vtree carries this variable");
+        for &(lit, t) in clause {
             m_idx[t.idx()] = if lit.sign { NEG_LEAF_IDX.0 } else { POS_LEAF_IDX.0 };
         }
         Ok(CubeChain { m_idx })
@@ -110,63 +109,17 @@ impl CubeChain {
 ///
 /// Returns the [`OperationError`] the disjunction stopped on.
 pub(crate) fn disjoin_cube_owned(eng: &Engine, f: Tdd, cube: &[Literal]) -> Result<Tdd, OperationError> {
-    let lim = eng.limits();
-    let _op = lim.begin_operation();
-    lim.check_stop()?;
-    let vtree = Arc::clone(&f.vtree);
-
-    // One literal per variable, in first-occurrence order, as the negated
-    // clause the spine walk takes. Repeats agree or the cube is false.
-    let mut gate = lim.gate();
-    let mut assigned = Vec::new();
-    lim.try_resize(&mut assigned, vtree.num_nodes(), None::<bool>)?;
-    let mut clause = Vec::new();
-    for lit in cube {
-        gate.poll(1)?;
-        let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
-        match assigned[leaf.idx()] {
-            None => {
-                assigned[leaf.idx()] = Some(lit.sign);
-                lim.try_push(&mut clause, lit.negated())?;
-            }
-            // Both polarities: the cube is false and the disjunction is `f`.
-            Some(sign) if sign != lit.sign => { gate.flush()?; return Ok(f); }
-            Some(_) => {}
-        }
-    }
-    gate.flush()?;
-
-    // The empty cube is true, and so is the disjunction.
-    if clause.is_empty() {
-        let mut out = crate::build::constant_one(eng, &vtree);
-        out.weights = f.weights.as_ref().map(WeightStore::empty_like);
-        return Ok(out);
-    }
-    if f.is_zero() {
-        let mut out = eng.cube(&vtree, clause.iter().map(|lit| lit.negated()))?;
-        out.weights = f.weights.as_ref().map(WeightStore::empty_like);
-        return Ok(out);
-    }
-
-    // The chain needs a node at every level, which the two lanes supply only
-    // where the cube constrains the subtree; see the module documentation.
-    // A one-variable vtree has no internal level to hang the chain on, and an
-    // output below the root leaves levels the walk would not reach.
-    let root = vtree.root();
-    if clause.len() != vtree.num_leaves() as usize || f.output.vtree != root || vtree.node(root).is_leaf() {
-        return disjoin_cube_by_complement(eng, f, &clause);
-    }
-
-    spine_walk(eng, f, &clause, true)
+    spine_walk(eng, f, cube, true)
 }
 
 /// `f ∨ M` as `¬(¬f ∧ ¬M)` — two make-full passes rather than the three a
 /// general disjunction runs, and the route for a cube the spine walk's chain
-/// cannot name. The result is minimized.
-fn disjoin_cube_by_complement(eng: &Engine, f: Tdd, clause: &[Literal]) -> Result<Tdd, OperationError> {
+/// cannot name. `clause` is `¬M` normalized and non-empty, and `f` has
+/// structure at its leaves. The result is minimized.
+pub(super) fn disjoin_cube_by_complement(eng: &Engine, f: Tdd, clause: &[(Literal, VtreeIdx)]) -> Result<Tdd, OperationError> {
     f.require_structure()?;
     let not_f = negate_tdd_owned(eng, f)?;
-    let mut rest = conjoin_clause_owned(eng, not_f, clause)?;
+    let mut rest = conjoin_normalized(eng, not_f, clause)?;
     eng.reduce(&mut rest, ReductionPlan::default())?;
     let mut out = negate_tdd_owned(eng, rest)?;
     eng.reduce(&mut out, ReductionPlan::default())?;
