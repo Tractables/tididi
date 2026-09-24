@@ -188,7 +188,7 @@ fn write_back_resolved_pairs(
         !matches!(level.nodes[idx].kind(), NodeKind::Inline(_)),
         "inline single-pair node cannot hold duplicates"
     );
-    let start = level.multi_start_at(idx);
+    let start = level.pair_range_at(idx).start;
     level.pairs_mut(idx)[..out.len()].copy_from_slice(out);
     let dead = level.reencode_shrunk(idx, start, old_len, out.len());
     level.note_dead_pairs(dead);

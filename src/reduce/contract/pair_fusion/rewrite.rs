@@ -91,8 +91,8 @@ fn fuse_node_pairs<V>(
         level.nodes[n].kind().pairs_in_arena(),
         "rebuild_parent_level: node {n} carries a plan but owns no arena range",
     );
-    let start = level.multi_start_at(n);
-    let old_len = level.multi_len_at(n);
+    let range = level.pair_range_at(n);
+    let (start, old_len) = (range.start, range.len());
 
     // Fused away iff the x-side index carries a plan (see `fused_x` above).
     let is_fused = |p: ChildPair| {

@@ -88,12 +88,13 @@ impl TddLevel {
     #[inline]
     pub(crate) fn set_pair_len(&mut self, node_idx: usize, new_len: u32) {
         assert!(new_len >= 2, "set_pair_len: new_len=1 aliases multi_ranged; convert to inline");
-        if let NodeKind::MultiRanged(idx) = self.nodes[node_idx].kind() {
+        debug_assert!(new_len & MULTI_BIT == 0);
+        match self.nodes[node_idx].kind() {
             // Shrinking stays extended even if new_len now fits in u31 — the
             // multi_pairs slot is already allocated, and callers don't rely on form.
-            self.multi_pairs[idx as usize].len = new_len as u64;
-        } else {
-            self.nodes[node_idx].set_pair_len(new_len);
+            NodeKind::MultiRanged(idx) => self.multi_pairs[idx as usize].len = new_len as u64,
+            NodeKind::Multi { .. } => self.nodes[node_idx].b = new_len,
+            NodeKind::Inline(_) => panic!("set_pair_len on an inline node"),
         }
     }
 
@@ -170,7 +171,7 @@ impl TddLevel {
     /// an inline node (it owns no arena slot).
     #[inline]
     pub(crate) fn arena_pairs_at(&self, idx: usize) -> usize {
-        if self.nodes[idx].kind().pairs_in_arena() { self.multi_len_at(idx) } else { 0 }
+        if self.nodes[idx].kind().pairs_in_arena() { self.pair_range_at(idx).len() } else { 0 }
     }
 
     /// Pairs-arena compaction trigger. A sweep runs only when the dead-slot
@@ -263,7 +264,7 @@ impl TddLevel {
             if start < prev_end {
                 return false;
             }
-            prev_end = start + self.multi_len_at(key as u32 as usize);
+            prev_end = start + self.pair_range_at(key as u32 as usize).len();
         }
         true
     }
@@ -278,7 +279,7 @@ impl TddLevel {
         for &key in order {
             let node_idx = key as u32 as usize;
             let start = (key >> 32) as usize;
-            let len = self.multi_len_at(node_idx);
+            let len = self.pair_range_at(node_idx).len();
             if start > write {
                 self.pairs.copy_within(start..start + len, write);
             }

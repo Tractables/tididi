@@ -268,8 +268,7 @@
             matches!(data.kind(), NodeKind::MultiRanged(_)),
             "huge-start node should promote to extended, got {:?}", data.kind()
         );
-        assert_eq!(level.multi_start_at(0), huge_start);
-        assert_eq!(level.multi_len_at(0), 3);
+        assert_eq!(level.pair_range_at(0), huge_start..huge_start + 3);
         assert_eq!(level.pair_count_at(0), 3);
         assert_eq!(level.multi_pairs.len(), 1);
     }
@@ -288,7 +287,7 @@
             "huge-len node should be extended, got {:?} — mis-reading it as a leaf is \
              what made qmr-100 come back UNSAT", data.kind()
         );
-        assert_eq!(level.multi_len_at(0), huge_len);
+        assert_eq!(level.pair_range_at(0).len(), huge_len);
     }
 
     #[test]
@@ -302,8 +301,7 @@
             matches!(data.kind(), NodeKind::Multi { .. }),
             "small multi should stay in packed form, got {:?}", data.kind()
         );
-        assert_eq!(level.multi_start_at(0), 100);
-        assert_eq!(level.multi_len_at(0), 5);
+        assert_eq!(level.pair_range_at(0), 100..105);
         assert_eq!(level.multi_pairs.len(), 0, "no multi_pairs slot allocated for packed form");
     }
 
@@ -319,7 +317,7 @@
             matches!(level.nodes[0].kind(), NodeKind::MultiRanged(_)),
             "still extended after shrink"
         );
-        assert_eq!(level.multi_len_at(0), 100);
+        assert_eq!(level.pair_range_at(0).len(), 100);
     }
 
     #[test]

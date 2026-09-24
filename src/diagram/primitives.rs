@@ -292,19 +292,6 @@ impl EncodedNode {
 
     /// True for a node with pairs, which every stored node is.
     pub fn is_internal(&self) -> bool { true }
-
-    /// Shrink `pair_len` for a **normal** multi-pair node (used during dedup remapping).
-    /// Caller must ensure `new_len` >= 2; use `EncodedNode::inline` to convert to inline.
-    /// For extended nodes, use `TddLevel::set_pair_len` which updates the side table.
-    pub(crate) fn set_pair_len(&mut self, new_len: u32) {
-        debug_assert!(
-            matches!(self.kind(), NodeKind::Multi { .. }),
-            "use TddLevel::set_pair_len for extended"
-        );
-        debug_assert!(new_len >= 2, "use EncodedNode::inline for single-pair conversion");
-        debug_assert!(new_len & MULTI_BIT == 0);
-        self.b = new_len;
-    }
 }
 
 impl std::fmt::Debug for EncodedNode {

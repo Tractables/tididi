@@ -290,9 +290,7 @@ impl TddLevel {
     /// True if any node has more than one pair. O(width).
     #[inline]
     pub(crate) fn has_multi_pair(&self) -> bool {
-        (0..self.nodes.len()).any(|i| {
-            self.nodes[i].kind().pairs_in_arena() && self.multi_len_at(i) >= 2
-        })
+        self.nodes.iter().any(|n| n.kind().pairs_in_arena() && self.multi_range(n).len() >= 2)
     }
 
     /// How to read the pair sides of a parent that point at this level.

@@ -62,11 +62,10 @@ pub(super) fn rewrite_parent(
         if matches!(parent_level.nodes[node_idx].kind(), NodeKind::Inline(_)) {
             remap_inline_node(parent_level, node_idx, t1_side, &remap.final_remap);
         } else if parent_level.nodes[node_idx].kind().pairs_in_arena() {
-            let old_len = parent_level.multi_len_at(node_idx);
+            let range = parent_level.pair_range_at(node_idx);
             let new_len = keep_canonical_pairs(parent_level, node_idx, t1_side, remap);
-            if new_len < old_len {
-                let start = parent_level.multi_start_at(node_idx);
-                dead_acc += parent_level.reencode_shrunk(node_idx, start, old_len, new_len);
+            if new_len < range.len() {
+                dead_acc += parent_level.reencode_shrunk(node_idx, range.start, range.len(), new_len);
             }
         }
     }

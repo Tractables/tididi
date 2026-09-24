@@ -23,22 +23,21 @@ impl TddLevel {
         self.nodes[range].iter().enumerate().map(move |(i, n)| (start + i, self.pairs_iter_of(n)))
     }
 
-    /// A multi-pair node's pair-arena start and pair count, decoded from
-    /// either the packed or the extended (side-table) encoding.
-    fn multi_span(&self, node: &EncodedNode) -> (usize, usize) {
-        match node.kind() {
+    /// A multi-pair node's pair-arena range, decoded from either the packed
+    /// or the extended (side-table) encoding.
+    ///
+    /// # Panics
+    ///
+    /// Panics on an inline node, whose pair is not in the arena.
+    pub(crate) fn multi_range(&self, node: &EncodedNode) -> std::ops::Range<usize> {
+        let (start, len) = match node.kind() {
             NodeKind::Multi { start, len } => (start as usize, len as usize),
             NodeKind::MultiRanged(idx) => {
                 let e = &self.multi_pairs[idx as usize];
                 (e.start as usize, e.len as usize)
             }
-            other => panic!("multi_span on {other:?}"),
-        }
-    }
-
-    /// A multi-pair node's pair-arena range.
-    pub(crate) fn multi_range(&self, node: &EncodedNode) -> std::ops::Range<usize> {
-        let (start, len) = self.multi_span(node);
+            other => panic!("multi_range on {other:?}"),
+        };
         start..start + len
     }
 
@@ -184,19 +183,7 @@ impl TddLevel {
         }
     }
 
-    /// Pair-arena start offset for a multi-pair node at `idx` (normal or extended).
-    #[inline]
-    pub(crate) fn multi_start_at(&self, idx: usize) -> usize {
-        self.multi_span(&self.nodes[idx]).0
-    }
-
-    /// Pair count for a multi-pair node at `idx` (normal or extended).
-    #[inline]
-    pub(crate) fn multi_len_at(&self, idx: usize) -> usize {
-        self.multi_span(&self.nodes[idx]).1
-    }
-
-    /// Pair-arena range for a multi-pair node at `idx` (normal or extended).
+    /// [`multi_range`](Self::multi_range) of the node at `idx`.
     #[inline]
     pub(crate) fn pair_range_at(&self, idx: usize) -> std::ops::Range<usize> {
         self.multi_range(&self.nodes[idx])
@@ -209,7 +196,11 @@ impl TddLevel {
     /// Panics if `idx` is not below `nodes().len()`.
     #[inline]
     pub fn pair_count_at(&self, idx: usize) -> usize {
-        if matches!(self.nodes[idx].kind(), NodeKind::Inline(_)) { 1 } else { self.multi_len_at(idx) }
+        match self.nodes[idx].kind() {
+            NodeKind::Inline(_) => 1,
+            NodeKind::Multi { len, .. } => len as usize,
+            NodeKind::MultiRanged(e) => self.multi_pairs[e as usize].len as usize,
+        }
     }
 
     /// The pair count of every node in index order. Empty on a marginal

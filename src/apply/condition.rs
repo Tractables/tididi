@@ -245,8 +245,8 @@ fn rewrite_level_pairs(
             continue;
         }
 
-        let start = level.multi_start_at(i);
-        let old_len = level.multi_len_at(i);
+        let range = level.pair_range_at(i);
+        let (start, old_len) = (range.start, range.len());
         let pairs = level.pairs_mut(i);
         let mut w = 0usize;
         for r in 0..old_len {
