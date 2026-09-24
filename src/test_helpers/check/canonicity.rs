@@ -17,10 +17,12 @@ use super::signature::{eval_all_signatures, random_var_assignments};
 ///
 /// Cost: O(diagram size × rounds).
 ///
-/// Limitation: a marginal level's node signature is its stored count, so a
-/// structural level both of whose children are marginal is not decided by this
-/// test — distinct nodes there can share a signature (4×1 and 2×2) and the
-/// check passes.
+/// Limitation: a marginal level's node signature is its stored count, so
+/// over summed-out storage this check can report a collision between two
+/// distinct nodes: a structural level whose children are both marginal signs
+/// `4 × 1` and `2 × 2` identically. A diagram with a marginal level is decided
+/// by the marginal family instead, which is what `test_helpers::assert_canonical`
+/// does.
 pub fn check_canonicity(tdd: &Tdd, rounds: u32) -> Result<(), String> {
     let vtree = &tdd.vtree;
     let num_vars = vtree.num_vars() as usize;

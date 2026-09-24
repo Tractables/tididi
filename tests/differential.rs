@@ -55,7 +55,7 @@ use tididi::io::{load_tdd, save_tdd};
 
 
 use tididi::test_helpers::{
-    assert_canonical, assert_marginal_canonical, assert_restrict_ok, assert_same_shape,
+    assert_canonical, assert_restrict_ok, assert_same_shape,
     brute_force_count, eval, rand_cnf, CnfShape, Lcg,
 };
 use tididi::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
@@ -238,16 +238,7 @@ fn assert_canonical_after_minimize(t: &Tdd) {
     }
     let mut m = t.clone();
     m.minimize().unwrap();
-    assert_finished_canonical(&m);
-}
-
-/// Use value-slot invariants after marginalization, and Boolean signatures otherwise.
-fn assert_finished_canonical(t: &Tdd) {
-    if t.has_marginal_level() {
-        assert_marginal_canonical(t);
-    } else {
-        assert_canonical(t);
-    }
+    assert_canonical(&m);
 }
 
 /// DIMACS literals as the library's own.
@@ -651,13 +642,13 @@ fn weighted_composition_matches_enumeration(case: &Case) {
         let targets = if case.seed & 1 == 0 { vec![case.vtree.root()] } else { w.targets.clone() };
         eng.marginalize_levels(&mut source, &targets).unwrap();
         source.minimize().unwrap();
-        assert_finished_canonical(&source);
+        assert_canonical(&source);
         let map: Vec<VarId> = (1..=case.num_vars).rev().map(VarId).collect();
         let mut global: Vec<_> = w.weights.iter().rev().cloned().collect();
         global.push(LiteralWeights { negative: BigRational::from_integer(2.into()), positive: BigRational::from_integer(3.into()) });
         let (grafted, _) = Tdd::graft_over(&eng, vec![(source, map)], &[VarId(case.num_vars + 1)], case.num_vars + 1,
             Some(WeightStore::new(RationalWeights::from_literals(&global), arithmetic))).unwrap();
-        assert_finished_canonical(&grafted);
+        assert_canonical(&grafted);
         assert_weighted_sum(&grafted, &(&w.want * BigRational::from_integer(5.into())), &(&w.magnitude * BigRational::from_integer(5.into())));
     }
 }
@@ -870,7 +861,7 @@ fn streaming_marginalization_matches_enumeration(case: &Case) {
     }
     let mut integer = eng.and_marginalizing(left.clone(), right.clone(), &targets).unwrap();
     integer.minimize().unwrap();
-    assert_finished_canonical(&integer);
+    assert_canonical(&integer);
     assert_eq!(integer.model_count().unwrap(), BigUint::from(brute_force_count(case.num_vars, &case.clauses)));
     let w = weighted_case(case);
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
@@ -880,7 +871,7 @@ fn streaming_marginalization_matches_enumeration(case: &Case) {
         g.set_weights(store).unwrap();
         let mut result = eng.and_marginalizing(f, g, &targets).unwrap();
         result.minimize().unwrap();
-        assert_finished_canonical(&result);
+        assert_canonical(&result);
         let got = eng.weighted_value(&result).unwrap().unwrap();
         match arithmetic {
             Arithmetic::ExactRational => assert_eq!(got.as_rational().into_owned(), w.want),
@@ -909,7 +900,7 @@ fn streaming_and_standalone_marginalization_preserve_overflow_values() {
     eng.marginalize_levels(&mut standalone, &targets).unwrap();
     for result in [&mut streamed, &mut standalone] {
         result.minimize().unwrap();
-        assert_finished_canonical(result);
+        assert_canonical(result);
         assert_eq!(result.model_count().unwrap(), want);
     }
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
@@ -919,7 +910,7 @@ fn streaming_and_standalone_marginalization_preserve_overflow_values() {
         g.set_weights(store).unwrap();
         let mut result = eng.and_marginalizing(f, g, &targets).unwrap();
         result.minimize().unwrap();
-        assert_finished_canonical(&result);
+        assert_canonical(&result);
         let value = eng.weighted_value(&result).unwrap().unwrap();
         match arithmetic {
             Arithmetic::ExactRational => assert_eq!(value.as_rational().into_owned(), BigRational::from_integer(want.clone().into())),
@@ -944,7 +935,7 @@ fn streaming_weighted_leaf_fusion_respects_arithmetic_and_pinned_columns() {
 }
 
 #[test]
-fn streaming_marginal_values_need_the_marginal_canonicality_oracle() {
+fn streaming_marginal_values_sign_identically_over_summed_out_storage() {
     check_case(&Case::literal(
         20260955,
         10,

@@ -245,33 +245,36 @@ pub fn big_to_u128(b: &BigUint) -> u128 {
     }
 }
 
-/// Every invariant that holds of a finished diagram, in one call: the fast
-/// family always, and the marginal family whenever the diagram carries a
-/// marginal level. A test whose subject produces a diagram asserts this on the
-/// result; only a test whose subject is mid-flight (an accumulator, a shrunk
-/// operand) has cause to skip it.
+/// Every invariant that holds of a finished diagram, in one call. A test whose
+/// subject produces a diagram asserts this on the result; only a test whose
+/// subject is mid-flight (an accumulator, a shrunk operand) has cause to skip
+/// it.
+///
+/// A structural diagram gets the fast family: vtree structure, no false
+/// nodes, and canonicity by random-assignment signature. A diagram with a
+/// marginal level gets the structure and false-node checks and then the
+/// marginal family instead of the signature check: a marginal child
+/// contributes its stored count to a signature rather than anything
+/// structural, so two distinct nodes over summed-out storage can sign
+/// identically (`4 × 1` and `2 × 2`), and a node with a repeated pair over a
+/// marginal subtree signs as one pair over twice the count. What still holds
+/// after summing levels out is the marginal family.
 pub fn assert_canonical(tdd: &Tdd) {
-    crate::test_helpers::check::check_all_fast(tdd, "assert_canonical");
-    if tdd.has_marginal_level() {
-        marginal_family(tdd, "assert_canonical");
+    use crate::test_helpers::check::{check_all_fast, check_no_false_nodes, validate_vtree_structure};
+    if !tdd.has_marginal_level() {
+        check_all_fast(tdd, "assert_canonical");
+        return;
     }
+    validate_vtree_structure(tdd).unwrap_or_else(|e| panic!("assert_canonical: vtree structure: {e}"));
+    check_no_false_nodes(tdd).unwrap_or_else(|e| panic!("assert_canonical: no_false_nodes: {e}"));
+    marginal_family(tdd, "assert_canonical");
 }
 
-/// The invariants a marginalized diagram is held to: the vtree structure and
-/// the marginal family.
-///
-/// Not [`assert_canonical`]: its canonicity check separates two nodes at a
-/// level by a random-assignment signature, and a marginal child contributes
-/// its stored count to that signature rather than anything structural, so the
-/// check cannot decide a level that sits over summed-out storage — a
-/// structural level whose two children are marginal signs `4 × 1` and `2 × 2`
-/// identically, and a node with a repeated pair over a marginal subtree signs
-/// as one pair over twice the count. What still holds after summing levels
-/// out is the marginal family, and that is what this asserts.
+/// [`assert_canonical`] on a diagram the test expects to have marginalized:
+/// panics first if no level is marginal.
 pub fn assert_marginal_canonical(tdd: &Tdd) {
-    crate::test_helpers::check::validate_vtree_structure(tdd)
-        .unwrap_or_else(|e| panic!("assert_marginal_canonical: vtree structure: {e}"));
-    marginal_family(tdd, "assert_marginal_canonical");
+    assert!(tdd.has_marginal_level(), "assert_marginal_canonical: the diagram has no marginal level");
+    assert_canonical(tdd);
 }
 
 /// The marginal-form checkers and the leaf column pin, failing under `label`.
