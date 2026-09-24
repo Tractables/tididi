@@ -32,16 +32,19 @@ impl RotationKind {
 ///
 /// The node list itself is only topological at construction — a rotation
 /// relinks nodes without moving them — so this, not `0..num_nodes`, is what
-/// every bottom-up traversal reads. It is derived state:
-/// [`fixup_after_rotate`](Self::fixup_after_rotate),
-/// [`refresh_filtered`](Self::refresh_filtered) and the test-only `rebuild`
-/// below are its only mutators, and each takes the node list to re-derive
-/// from, so the order can never be edited into disagreement with the tree.
+/// every bottom-up traversal reads. It is derived state: [`identity`](Self::identity)
+/// builds it from a freshly reindexed node list, [`fixup_after_rotate`](Self::fixup_after_rotate)
+/// repairs it from a rotation's record, and the test-only `rebuild` re-derives
+/// it from the links, so the order can never be edited into disagreement with
+/// the tree. Whether a node is a leaf never changes, so the two filtered views
+/// are functions of `order` alone and follow it.
 ///
 /// **Root-last**: for every node `t`, `pos(t)` is the *maximum* of `pos(d)`
 /// over `d ∈ {t} ∪ descendants(t)` — each subtree's root sits at the latest
-/// position among its members. `rebuild`'s strict postorder establishes it and
-/// `fixup_after_rotate` preserves it; the fixup's O(1) case test depends on it.
+/// position among its members. The reindex every construction ends in
+/// (`Vtree::from_nodes`) lays the nodes out leaves first, then the internal
+/// nodes deepest level first, so the identity order has it from the start;
+/// `fixup_after_rotate` preserves it, and its O(1) case test depends on it.
 ///
 /// **Subtree contiguity is not guaranteed**: after a sequence of rotations a
 /// subtree's members may occupy a non-contiguous set of positions. Enumerate a
@@ -78,26 +81,21 @@ impl TopoOrder {
     /// The order as it stands for a freshly built tree whose node list is
     /// already in bottom-up layout: position is index.
     pub(super) fn identity(nodes: &[VtreeNode]) -> Self {
-        let mut o = TopoOrder {
-            order: (0..nodes.len() as u32).map(VtreeIdx).collect(),
+        let all = || (0..nodes.len() as u32).map(VtreeIdx);
+        TopoOrder {
+            order: all().collect(),
             pos: (0..nodes.len() as u32).collect(),
-            internal: Vec::new(),
-            leaves: Vec::new(),
-        };
-        o.refresh_filtered(nodes);
-        o
+            internal: all().filter(|t| !nodes[t.idx()].is_leaf()).collect(),
+            leaves: all().filter(|t| nodes[t.idx()].is_leaf()).collect(),
+        }
     }
 
-    /// Localized repair after a single rotation: `O(subtree)` where
-    /// `rebuild` is `O(num_nodes)`, which is what makes the
-    /// rotation search loop affordable. See the `vtree::rotate` module
-    /// documentation for the proof.
-    pub(super) fn fixup_after_rotate(
-        &mut self,
-        nodes: &[VtreeNode],
-        info: &rotate::RotationInfo,
-        kind: RotationKind,
-    ) {
+    /// Localized repair after a single rotation. Nothing moves when the order
+    /// already satisfies the rotated tree; otherwise the cost is the span of
+    /// positions from `w` to the misplaced subtree's root, which is what keeps
+    /// a committed move cheap next to the `O(num_nodes)` `rebuild`. See the
+    /// `vtree::rotate` module documentation for the proof.
+    pub(super) fn fixup_after_rotate(&mut self, info: &rotate::RotationInfo, kind: RotationKind) {
         let w_pos = self.pos[info.w_idx.idx()] as usize;
         // The single new children-before-parents constraint a rotation introduces:
         //   Left rotation  v=(A,w),w=(B,C) → v=(w,C),w=(A,B): need A < w.
@@ -108,41 +106,37 @@ impl TopoOrder {
         };
         // By root-last, the misplaced root's position is the maximum over its
         // whole subtree. When it precedes w the order already satisfies the new
-        // constraint and only the filtered views need refreshing.
+        // constraint.
         let m_end = self.pos[misplaced_root.idx()] as usize;
-        if m_end >= w_pos {
-            debug_assert!(m_end > w_pos, "misplaced_root and w cannot share a position");
-
-            // The slice [w_pos ..= m_end] starts with w and ends with the
-            // misplaced subtree's root. After `rotate_left(1)`, w sits at m_end
-            // (one past every element of that subtree lying in the slice) and
-            // everything in (w_pos..=m_end] shifts one position left — a single
-            // contiguous memmove.
-            //
-            // Subtree contiguity is not required: even with non-misplaced
-            // elements in (w_pos..m_end), the shift preserves
-            // children-before-parents for every edge of the post-rotation tree.
-            // The full proof is in the `vtree::rotate` module doc.
-            self.order[w_pos..=m_end].rotate_left(1);
-            for (offset, &node) in self.order[w_pos..=m_end].iter().enumerate() {
-                self.pos[node.idx()] = (w_pos + offset) as u32;
-            }
+        if m_end < w_pos {
+            return;
         }
-        self.refresh_filtered(nodes);
-    }
+        debug_assert!(m_end > w_pos, "misplaced_root and w cannot share a position");
 
-    /// Refilter the internal and leaf views from the current order,
-    /// `O(num_nodes)` — what a rotation fixup owes after moving a node between
-    /// positions without changing the full order's membership.
-    pub(super) fn refresh_filtered(&mut self, nodes: &[VtreeNode]) {
-        self.internal.clear();
-        self.leaves.clear();
-        for &t in &self.order {
-            if nodes[t.idx()].is_leaf() {
-                self.leaves.push(t);
-            } else {
-                self.internal.push(t);
-            }
+        // The slice [w_pos ..= m_end] starts with w and ends with the
+        // misplaced subtree's root. After `rotate_left(1)`, w sits at m_end
+        // (one past every element of that subtree lying in the slice) and
+        // everything in (w_pos..=m_end] shifts one position left — a single
+        // contiguous memmove.
+        //
+        // Subtree contiguity is not required: even with non-misplaced
+        // elements in (w_pos..m_end), the shift preserves
+        // children-before-parents for every edge of the post-rotation tree.
+        // The full proof is in the `vtree::rotate` module doc.
+        //
+        // Only w changes its place relative to the other nodes, and w is
+        // internal: the leaf view is untouched, and in the internal view w
+        // moves past the internal nodes of the slice. Both views are sorted
+        // by position, so their bounds come from the positions before the
+        // shift.
+        let i_w = self.internal.partition_point(|&t| (self.pos[t.idx()] as usize) < w_pos);
+        let i_end = self.internal.partition_point(|&t| (self.pos[t.idx()] as usize) <= m_end);
+        debug_assert_eq!(self.internal[i_w], info.w_idx);
+        self.internal[i_w..i_end].rotate_left(1);
+
+        self.order[w_pos..=m_end].rotate_left(1);
+        for (offset, &node) in self.order[w_pos..=m_end].iter().enumerate() {
+            self.pos[node.idx()] = (w_pos + offset) as u32;
         }
     }
 
@@ -223,9 +217,10 @@ impl Vtree {
         self.topo.internal()
     }
 
-    /// Repair the bottom-up order after one rotation, in `O(subtree)`.
+    /// Repair the bottom-up order after one rotation; see
+    /// [`TopoOrder::fixup_after_rotate`] for the cost.
     pub(super) fn fixup_topo_after_rotate(&mut self, info: &rotate::RotationInfo, kind: RotationKind) {
-        self.topo.fixup_after_rotate(&self.nodes, info, kind);
+        self.topo.fixup_after_rotate(info, kind);
     }
 
     /// Bottom-up topological order over all nodes (children before parents) as

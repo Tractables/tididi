@@ -48,9 +48,10 @@
 //! This is *not* asserted after every operation, but it holds inductively
 //! through any legal sequence of rebuilds + rotations:
 //!
-//! - **Base**: a full rebuild of the order produces strict postorder, in which
-//!   each subtree root is visited after all of its descendants. Property
-//!   holds trivially.
+//! - **Base**: every construction ends in `Vtree::from_nodes`, whose reindex
+//!   lays the nodes out leaves first and then the internal nodes deepest
+//!   level first, so in the identity order a node follows every node of its
+//!   subtree.
 //! - **Pointer-only rotation**: pointer surgery only edits the parent/child
 //!   links of `v` and `w`. The descendant *sets* of subtrees `A`, `B`, `C`
 //!   (and of any node not in `v`'s subtree) are unchanged, so their
@@ -65,7 +66,8 @@
 //!   the property is restored for `w` and `v`.
 //!
 //! `TopoOrder::fixup_after_rotate` relies on it to decide in O(1) whether any
-//! reordering is needed.
+//! reordering is needed; when some is, only the positions from `w` to the
+//! misplaced subtree's root are touched.
 //!
 //! Subtree contiguity is not preserved: after rotations a subtree's members may
 //! occupy a non-contiguous range of `topo` positions, so nothing may index a
