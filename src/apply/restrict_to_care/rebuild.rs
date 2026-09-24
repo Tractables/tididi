@@ -62,8 +62,8 @@ impl Marking {
 struct DeadRebuilder<'a> {
     f: &'a Tdd,
     alive: Vec<Vec<bool>>,
-    /// Bit k marks a live pair; all bits set means no pair-level information.
-    pair_alive: Vec<Vec<u64>>,
+    /// Liveness of each source pair, independent of node width.
+    pair_alive: super::pairs::PairMarks,
     out: &'a mut [TddLevel],
     memo: Vec<Vec<u32>>,
 }
@@ -126,8 +126,7 @@ impl DeadRebuilder<'_> {
                 self.memo[v.idx()][local.idx()] = result.0;
                 continue;
             }
-            let mask = self.pair_alive[v.idx()][local.idx()];
-            if source.len() <= 64 && mask != u64::MAX && (mask >> k) & 1 == 0 {
+            if !self.pair_alive.contains(v, local, k, source.len()) {
                 stack.last_mut().expect("the current frame exists").next_pair += 1;
                 continue;
             }

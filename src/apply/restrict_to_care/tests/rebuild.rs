@@ -7,7 +7,7 @@ use crate::vtree::Vtree;
 fn all_live(f: &Tdd) -> Marking {
     Marking {
         alive: f.levels.iter().map(|l| vec![true; l.nodes.len()]).collect(),
-        pair_alive: f.levels.iter().map(|l| vec![u64::MAX; l.nodes.len()]).collect(),
+        pair_alive: crate::apply::restrict_to_care::pairs::PairMarks::all(),
         root_live: true,
     }
 }

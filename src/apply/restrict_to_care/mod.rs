@@ -30,6 +30,7 @@
 
 mod mark;
 mod rebuild;
+mod pairs;
 
 use crate::Engine;
 use crate::limits::OperationError;
@@ -106,10 +107,8 @@ fn restrict_prepared<const BOUNDED: bool>(eng: &Engine, f: Tdd, care: &Tdd, max_
 struct Marking {
     /// `[v.idx()][f-local]` — does this f-node survive under care?
     alive: Vec<Vec<bool>>,
-    /// `[v.idx()][f-local]` — bit `k` set iff pair `k` of the f-node is live
-    /// against some care pair; `u64::MAX` for a live node with more than 64
-    /// pairs (no pair info: the rebuild keeps every pair of it).
-    pair_alive: Vec<Vec<u64>>,
+    /// Pair liveness, including nodes wider than a machine word.
+    pair_alive: pairs::PairMarks,
     /// Is the root pair live, i.e. is `f ∧ care` structurally non-false?
     root_live: bool,
 }
