@@ -7,7 +7,80 @@
 use crate::{Engine, OperationError};
 use crate::diagram::TddLevel;
 use super::grid_arena::GridArena;
-use super::sparse::{ProductEntry, ProductLists, fill_identity_product_list};
+
+/// Index of a node in `f.levels[t].nodes`. Distinct from `RightNodeIdx` and
+/// `ProductNodeIdx` so that construction-site swaps are caught at compile time.
+#[repr(transparent)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) struct LeftNodeIdx(pub(crate) u32);
+
+impl LeftNodeIdx {
+    pub(crate) fn idx(self) -> usize { self.0 as usize }
+}
+
+/// Index of a node in `g.levels[t].nodes`.
+#[repr(transparent)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) struct RightNodeIdx(pub(crate) u32);
+
+impl RightNodeIdx {
+    pub(crate) fn idx(self) -> usize { self.0 as usize }
+}
+
+/// Index of a node in the output `levels[t].nodes`.
+#[repr(transparent)]
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) struct ProductNodeIdx(pub(crate) u32);
+
+/// A live product node: the conjunction `f[left_idx] ∧ g[right_idx]` produced
+/// the output node at `prod_idx` in the output level.
+#[derive(Clone, Copy)]
+pub(crate) struct ProductEntry {
+    pub(crate) left_idx: LeftNodeIdx,
+    pub(crate) right_idx: RightNodeIdx,
+    pub(crate) prod_idx: ProductNodeIdx,
+}
+
+/// The three product lists one sparse level reads and writes.
+pub(crate) struct ProductLists<'a> {
+    pub(crate) left: &'a [ProductEntry],
+    pub(crate) right: &'a [ProductEntry],
+    pub(crate) out: &'a mut Vec<ProductEntry>,
+}
+
+/// Fill `pl` with the identity product mapping for a level where one operand
+/// is constant-true, and say whether it did: `x ∧ 1 = x`, so the product list
+/// maps each node of the other operand to itself. The constant-true operand's
+/// One node is at index 0 on every level, leaf or internal
+/// (`ONE_LEAF_IDX.0 == LeafLabel::One as u32 == 0`), so there is no
+/// leaf/internal split. With neither operand constant-true `pl` is left
+/// untouched for the caller to fill some other way.
+fn fill_identity_product_list(
+    eng: &Engine,
+    left_width: usize,
+    right_width: usize,
+    right_id: bool,
+    left_id: bool,
+    pl: &mut Vec<ProductEntry>,
+) -> Result<bool, OperationError> {
+    let lim = eng.limits();
+    const ID_IDX: u32 = 0;
+    if right_id {
+        lim.reserve(pl, left_width)?;
+        for i in 0..left_width as u32 {
+            pl.push(ProductEntry { left_idx: LeftNodeIdx(i), right_idx: RightNodeIdx(ID_IDX), prod_idx: ProductNodeIdx(i) });
+        }
+        Ok(true)
+    } else if left_id {
+        lim.reserve(pl, right_width)?;
+        for j in 0..right_width as u32 {
+            pl.push(ProductEntry { left_idx: LeftNodeIdx(ID_IDX), right_idx: RightNodeIdx(j), prod_idx: ProductNodeIdx(j) });
+        }
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
 
 #[derive(Default)]
 pub(super) struct Products {

@@ -3,7 +3,6 @@ use crate::Engine;
 use crate::limits::LimitConfig;
 // Named explicitly, not through the glob above, so it resolves however
 // `conjoin` routes its own import of it.
-use super::sparse::is_self_conjunction;
 use crate::test_helpers::assert_canonical;
 use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;

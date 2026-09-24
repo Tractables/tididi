@@ -26,10 +26,7 @@ use cell::{
 
 mod sparse;
 pub(crate) use sparse::SparseWorkspace;
-use sparse::{
-    is_self_conjunction, apply_sparse_level, apply_leaf_levels,
-    compute_apply_output,
-};
+use sparse::apply_sparse_level;
 
 // Identity/constant-true detection and the per-level identity fast paths.
 mod identity;
@@ -44,9 +41,9 @@ use setup::{apply_and_setup, ApplyRun, LevelShape};
 mod marginal_plan;
 use marginal_plan::{ChildGrid, MarginalPlan, SidePlan, plan_marginal_level, build_side_masks};
 
-// Seeding the output's marginal vtree leaves from the operands, before the
-// bottom-up loop.
+// The leaf levels, before the bottom-up loop.
 mod leaf_seed;
+use leaf_seed::apply_leaf_levels;
 
 mod scratch;
 pub(crate) use scratch::ApplyScratch;
@@ -97,6 +94,35 @@ pub(crate) fn conjoin_owned(
     crate::apply::check_vtree(&f, &g)?;
     crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
     conjoin_checked(eng, f, g, VtreeMask::default(), quantified)
+}
+
+/// True when `f` and `g` represent the same Boolean function, in which case
+/// `apply_and` reduces to `f ∧ f = f` and we can short-circuit to a copy.
+/// Canonicity means equal functions have identical *explicit* level structure —
+/// so equal `output` plus equal `(nodes, pairs, ranges)` on every level is
+/// sufficient. This is structural equality, not pointer identity — but it is
+/// only sound when no level is marginal, since a marginal level hides its
+/// content outside `nodes`/`pairs` where the structural test cannot see it.
+fn is_self_conjunction(f: &Tdd, g: &Tdd) -> bool {
+    // The shortcut lets `f ∧ g` return `f.clone()` when the operands are the
+    // same function. It is a pure perf optimization, never needed for
+    // correctness. A marginal level clears `nodes`/`pairs` (integer-marginal) or
+    // `pairs` (weight-marginal) and moves its real content into
+    // `marginal_counts`/the external weight store — which this structural test
+    // does not compare. Two operands agreeing on every explicit level but
+    // differing in marginal mass (or holding a marginal×marginal unsound
+    // schedule the callers debug-assert against) would compare equal and
+    // silently drop one side's content. Bail whenever either operand carries any
+    // marginal level.
+    if f.levels.iter().any(|l| l.is_marginal()) || g.levels.iter().any(|l| l.is_marginal()) {
+        return false;
+    }
+    f.output == g.output
+        && f.levels.iter().zip(g.levels.iter()).all(|(l1, l2)| {
+            // `ranges` too: equal nodes+pairs with a differently-arranged `ranges` table
+            // is a different function.
+            l1.nodes == l2.nodes && l1.pairs == l2.pairs && l1.ranges == l2.ranges
+        })
 }
 
 /// [`conjoin_owned`] after its operand checks, summing out the levels in

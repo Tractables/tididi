@@ -32,7 +32,7 @@
 use crate::Engine;
 use super::{OperationError, NO_PRODUCT};
 use super::budget::try_resize_dead;
-use super::sparse::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx};
+use super::products::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx};
 
 /// Per-level descriptor for the product grid's slice of the flat arena.
 #[derive(Clone, Copy, Debug)]

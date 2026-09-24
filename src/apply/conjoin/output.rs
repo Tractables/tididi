@@ -91,3 +91,37 @@ pub(super) fn finalize_level(
 
     mark_passthrough_inlined(&mut levels[t_idx], passthrough);
 }
+
+/// The conjunction's output local index, or `None` when the product is false.
+///
+/// Three cases by how the root level was processed:
+/// - Dense grid: O(1) lookup in the slab.
+/// - Ungridded with a product list: scan the list for the (left_out, right_out) entry.
+/// - Ungridded identity: pass through the non-identity operand's output.
+///
+/// `None` when the grid says so (a `NO_PRODUCT` cell, or no product-list
+/// entry) and also when the root level holds no slot at all, where the grid
+/// branch reads a cell no producer wrote; the width test below rejects the
+/// index in that case, so a `Some` always names an existing slot.
+pub(super) fn compute_apply_output(
+    f: &Tdd,
+    g: &Tdd,
+    run: &ApplyRun,
+    vtree: &crate::vtree::Vtree,
+) -> Option<NodeIdx> {
+    let out_ti = f.output.vtree.idx();
+    let out_local = run.products.lookup(out_ti, f.output.local.0, g.output.local.0,
+        run.right_widths[out_ti], run.right_identity[out_ti], run.left_identity[out_ti])?;
+    // Mirror the later passes' indexing exactly: effective width is
+    // `LEAF_WIDTH` for a leaf root and the level's own width otherwise — the
+    // same quantity `prune`/`minimize` index their remap arena by.
+    let eff_width = if vtree.node(crate::vtree::VtreeIdx(out_ti as u32)).is_leaf() {
+        crate::diagram::LEAF_WIDTH
+    } else {
+        run.levels[out_ti].slot_count()
+    };
+    if out_local != ZERO && (out_local.0 as usize) >= eff_width {
+        return None;
+    }
+    Some(out_local)
+}

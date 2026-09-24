@@ -17,7 +17,7 @@ use crate::value::ValueDomain;
 use super::child_lookup::{ChildLookup, MarginalLookup};
 use super::marginal_plan::SidePlan;
 use crate::diagram::Sides;
-use super::sparse::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx};
+use super::products::{ProductEntry, LeftNodeIdx, RightNodeIdx, ProductNodeIdx};
 
 /// Everything the cell walk needs about one child side of a level: how the
 /// side is read ([`SidePlan`]), where its product grid lives, and its dead-pair

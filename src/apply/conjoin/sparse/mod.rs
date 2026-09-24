@@ -1,30 +1,25 @@
-//! Sparse product construction for the apply algorithm.
-//!
-//! For levels where left_width * right_width exceeds `min_grid`, the dense grid iteration is
-//! replaced by a scatter-filter-dedup pipeline. This module also contains the
-//! leaf-level processing, identity product lists, and output index computation.
+//! The sparse route: a level whose product grid would be far larger than
+//! its live products is built by a scatter-filter-dedup pipeline over the
+//! children's product lists instead of by walking the grid. `route.rs`
+//! decides which levels take it.
 
 use smallvec::SmallVec;
 
 use crate::vtree::VtreeIdx;
 use crate::Engine;
-use super::{OperationError, NO_PRODUCT, Tdd, TddLevel, ChildPair, ZERO,
-    NodeIdx, CONJOIN_GRID,
-};
+use super::{OperationError, NO_PRODUCT, Tdd, TddLevel, ChildPair, CONJOIN_GRID};
+use super::products::{LeftNodeIdx, ProductEntry, ProductLists, ProductNodeIdx, RightNodeIdx};
 
 mod config;
 use config::*;
 pub(crate) use config::{sparse_thresholds, SparseThresholds};
 mod index;
 use index::*;
-pub(crate) use index::{LeftNodeIdx, ProductEntry, ProductNodeIdx, RightNodeIdx, SparseWorkspace};
+pub(crate) use index::SparseWorkspace;
 mod scatter;
 use scatter::*;
 mod level;
-pub(crate) use level::{
-    apply_leaf_levels, apply_sparse_level, compute_apply_output, fill_identity_product_list,
-    is_self_conjunction, ProductLists,
-};
+pub(crate) use level::apply_sparse_level;
 
 #[cfg(test)]
 mod tests;

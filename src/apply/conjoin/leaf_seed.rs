@@ -1,8 +1,45 @@
-//! Seeding the conjunction output's marginal vtree leaves from its operands.
+//! The leaf levels before the bottom-up loop: their constant product grids,
+//! and the output's marginal leaves seeded from the operands.
 
+use crate::{Engine, OperationError};
 use crate::diagram::{Tdd, TddLevel, WeightStore};
 use crate::vtree::Vtree;
 use crate::diagram::Sides;
+use super::setup::ApplyRun;
+use super::{CONJOIN_GRID, NO_PRODUCT};
+
+/// Fill grid entries at leaf vtree levels from the static `CONJOIN_GRID` table.
+///
+/// At leaf levels the conjunction is a constant 3×3 truth table (Pos, Neg, One),
+/// so we just copy from `CONJOIN_GRID` into `node_idx`. When the arena bumps,
+/// grid space is allocated as we go and live counts are recorded for parent
+/// density checks; otherwise the grid offsets are pre-computed.
+pub(super) fn apply_leaf_levels(
+    eng: &Engine,
+    vtree: &crate::vtree::Vtree,
+    run: &mut ApplyRun,
+) -> Result<(), OperationError> {
+    let ApplyRun { left_widths, right_widths, products, .. } = run;
+    for (t, _leaf_var) in vtree.leaf_bottomup() {
+        let t_idx = t.idx();
+        let left_width = left_widths[t_idx];
+        let right_width = right_widths[t_idx];
+        let base = products.arena.alloc(eng, t_idx, left_width * right_width)?;
+        products.arena.set_dense(t_idx, base);
+        let output_grid_base = base.idx();
+        let slab = products.arena.slab_mut();
+        let mut count = 0usize;
+        for i in 0..left_width {
+            for j in 0..right_width {
+                let val = CONJOIN_GRID[i][j];
+                slab[output_grid_base + i * right_width + j] = val;
+                if val != NO_PRODUCT { count += 1; }
+            }
+        }
+        if products.arena.is_bump() { products.record_live(t_idx, count); }
+    }
+    Ok(())
+}
 
 /// Mark the output's marginal vtree leaves, which the bottom-up loop never
 /// visits as a level of its own, and collect the weight-marginal leaves whose

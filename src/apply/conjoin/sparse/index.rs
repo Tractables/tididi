@@ -1,4 +1,4 @@
-//! The reusable sparse workspace: reverse indices, buckets and node-index newtypes.
+//! The reusable sparse workspace: reverse indices and buckets.
 
 use super::*;
 use crate::limits::pool::SCRATCH_RETAIN_BYTES;
@@ -18,39 +18,6 @@ pub(super) struct ParEntry {
 pub(super) struct Candidate {
     pub(super) parent: u32,
     pub(super) entry: ParEntry,
-}
-
-/// Index of a node in `f.levels[t].nodes`. Distinct from `RightNodeIdx` and
-/// `ProductNodeIdx` so that construction-site swaps are caught at compile time.
-#[repr(transparent)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) struct LeftNodeIdx(pub(crate) u32);
-
-impl LeftNodeIdx {
-    pub(crate) fn idx(self) -> usize { self.0 as usize }
-}
-
-/// Index of a node in `g.levels[t].nodes`.
-#[repr(transparent)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) struct RightNodeIdx(pub(crate) u32);
-
-impl RightNodeIdx {
-    pub(crate) fn idx(self) -> usize { self.0 as usize }
-}
-
-/// Index of a node in the output `levels[t].nodes`.
-#[repr(transparent)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) struct ProductNodeIdx(pub(crate) u32);
-
-/// A live product node: the conjunction `f[left_idx] ∧ g[right_idx]` produced
-/// the output node at `prod_idx` in the output level.
-#[derive(Clone, Copy)]
-pub(crate) struct ProductEntry {
-    pub(crate) left_idx: LeftNodeIdx,
-    pub(crate) right_idx: RightNodeIdx,
-    pub(crate) prod_idx: ProductNodeIdx,
 }
 
 /// Reusable workspace for sparse product construction.
