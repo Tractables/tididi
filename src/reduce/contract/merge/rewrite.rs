@@ -65,12 +65,8 @@ pub(super) fn rewrite_parent(
             let old_len = parent_level.multi_len_at(node_idx);
             let new_len = keep_canonical_pairs(parent_level, node_idx, t1_side, remap);
             if new_len < old_len {
-                // The one entry the re-encode's allocating arm can need is
-                // covered by the parent reserve in `reserve_transactional`, so
-                // the infallible form applies here.
                 let start = parent_level.multi_start_at(node_idx);
-                dead_acc += parent_level
-                    .reencode_shrunk_multi_reserved(node_idx, start, old_len, new_len);
+                dead_acc += parent_level.reencode_shrunk(node_idx, start, old_len, new_len);
             }
         }
     }

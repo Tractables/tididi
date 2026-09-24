@@ -231,7 +231,7 @@ fn rewrite_level(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
             // Shrink the node onto the prefix the cursor wrote. The abandoned tail
             // slots are unreferenced arena, tallied into `dead_pairs` for the
             // sweep below; that counter only decides when a sweep runs.
-            let dead = level.reencode_shrunk_multi_reserved(i, start, old_len, new_len);
+            let dead = level.reencode_shrunk(i, start, old_len, new_len);
             level.note_dead_pairs(dead);
         }
 

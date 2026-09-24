@@ -74,30 +74,38 @@ impl TddLevel {
     /// Re-encode a multi-pair node at `node_idx` after an in-place rewrite has
     /// compacted its arena range `[start, start+old_len)` down to `new_len`
     /// live survivors sitting at the prefix `[start, start+new_len)`: shrink
-    /// in place (`new_len >= 2`) or inline the sole survivor (`new_len == 1`).
-    /// The epilogue of every pass that compacts a node's own range in place;
-    /// it allocates nothing. A node in the extended encoding keeps its
-    /// `multi_pairs` entry, which the inline form leaves unused.
+    /// in place (`new_len >= 2`), inline the sole survivor (`new_len == 1`),
+    /// or leave the empty placeholder (`new_len == 0`), which computes false
+    /// and only conditioning produces, for its falsity sweep to remove. The
+    /// epilogue of every pass that compacts a node's own range in place; it
+    /// allocates nothing. A node in the extended encoding keeps its
+    /// `multi_pairs` entry, which the inline and empty forms leave unused.
     ///
-    /// Precondition (debug-asserted): `1 <= new_len < old_len`.
+    /// Precondition (debug-asserted): `new_len < old_len`.
     ///
     /// Returns the number of pair-arena slots this abandons, the caller's
     /// `dead_pairs` contribution.
     #[inline]
-    pub(crate) fn reencode_shrunk_multi_reserved(
+    pub(crate) fn reencode_shrunk(
         &mut self, node_idx: usize,
         start: usize,
         old_len: usize,
         new_len: usize,
     ) -> usize {
-        debug_assert!(new_len < old_len, "reencode_shrunk_multi: not a shrink");
-        debug_assert!(new_len >= 1, "reencode_shrunk_multi: emptying a node is a different path");
-        if new_len >= 2 {
-            self.set_pair_len(node_idx, new_len as u32);
-            old_len - new_len
-        } else {
-            self.nodes[node_idx] = EncodedNode::inline(self.pairs[start]);
-            old_len // an inline node owns no arena slot
+        debug_assert!(new_len < old_len, "reencode_shrunk: not a shrink");
+        match new_len {
+            0 => {
+                self.nodes[node_idx] = self.encode_multi(0, 0);
+                old_len
+            }
+            1 => {
+                self.nodes[node_idx] = EncodedNode::inline(self.pairs[start]);
+                old_len // an inline node owns no arena slot
+            }
+            _ => {
+                self.set_pair_len(node_idx, new_len as u32);
+                old_len - new_len
+            }
         }
     }
 
@@ -364,7 +372,7 @@ impl TddLevel {
         if len == 1 { return false; }
         let range = self.pair_range_at(idx);
         self.pairs.copy_within(range.start + at + 1..range.end, range.start + at);
-        let dead = self.reencode_shrunk_multi_reserved(idx, range.start, len, len - 1);
+        let dead = self.reencode_shrunk(idx, range.start, len, len - 1);
         self.note_dead_pairs(dead);
         true
     }

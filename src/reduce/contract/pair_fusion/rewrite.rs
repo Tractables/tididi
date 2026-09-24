@@ -135,5 +135,5 @@ fn fuse_node_pairs<V>(
 
     // Re-encode via the shared epilogue: shrink in place, or inline the sole
     // survivor.
-    level.reencode_shrunk_multi_reserved(n, start, old_len, write - start)
+    level.reencode_shrunk(n, start, old_len, write - start)
 }

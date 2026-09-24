@@ -257,21 +257,12 @@ fn rewrite_level_pairs(
             }
         }
         sort_pairs(&mut pairs[..w]);
-
-        match w {
-            0 => {
-                // As in the inline arm: an empty slot is the node computing
-                // false, and the falsity sweep drops what still names it.
-                let empty = level.encode_multi(0, 0);
-                level.nodes[i] = empty;
-                emptied = true;
-            }
-            1 => level.nodes[i] = EncodedNode::inline(level.pairs[start]),
-            _ => level.set_pair_len(i, w as u32),
+        if w < old_len {
+            // As in the inline arm, an emptied node computes false, and the
+            // falsity sweep drops what still names it.
+            dead += level.reencode_shrunk(i, start, old_len, w);
+            emptied |= w == 0;
         }
-        // What the re-encoded node still owns is `arena_pairs_at` — 0 once it
-        // went inline or empty; the rest of its old range is now garbage.
-        dead += old_len - level.arena_pairs_at(i);
     }
 
     level.note_dead_pairs(dead);

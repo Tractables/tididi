@@ -20,7 +20,7 @@
 //! fresh slots; slot-prune value-merge later shares them with equal-valued
 //! slots.
 
-use crate::diagram::{ChildPair, ChildSide, EncodedChildRef, EncodedNode, NodeKind, Sides, Tdd};
+use crate::diagram::{ChildPair, ChildSide, EncodedChildRef, NodeKind, Sides, Tdd};
 
 use crate::Engine;
 use super::scratch::DuplicateScratch;
@@ -188,16 +188,8 @@ fn write_back_resolved_pairs(
         !matches!(level.nodes[idx].kind(), NodeKind::Inline(_)),
         "inline single-pair node cannot hold duplicates"
     );
-    let new_len = out.len();
-    // Slots the shrink leaves behind are unreferenced arena; the inline
-    // re-encode abandons the whole old range.
-    let abandoned = if new_len == 1 { old_len } else { old_len - new_len };
-    if new_len == 1 {
-        level.nodes[idx] = EncodedNode::inline(out[0]);
-    } else {
-        let dst = level.pairs_mut(idx);
-        dst[..new_len].copy_from_slice(out);
-        level.set_pair_len(idx, new_len as u32);
-    }
-    level.note_dead_pairs(abandoned);
+    let start = level.multi_start_at(idx);
+    level.pairs_mut(idx)[..out.len()].copy_from_slice(out);
+    let dead = level.reencode_shrunk(idx, start, old_len, out.len());
+    level.note_dead_pairs(dead);
 }
