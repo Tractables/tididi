@@ -571,36 +571,19 @@ fn scatter_general_arm<const SWAPPED: bool>(
 }
 
 /// Group a flat level's candidates by f parent: counting-sort `par_flat`
-/// into `par_sorted`. The four passes are those of `build_reverse_index`.
+/// into `par_sorted`.
 #[inline(never)]
 pub(super) fn sort_candidates(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     parents: usize,
 ) -> Result<(), OperationError> {
-    let lim = eng.limits();
     let SparseWorkspace { par_flat, par_sorted, .. } = ws;
-    let Grouped { offsets: par_offsets, entries: par_sorted } = par_sorted;
-    lim.try_resize(par_offsets, parents + 1, 0)?;
-    par_offsets[..parents + 1].fill(0);
-    for c in par_flat.iter() {
-        par_offsets[c.parent as usize] += 1;
-    }
-    let mut total = 0u32;
-    for slot in par_offsets.iter_mut().take(parents) {
-        let count = *slot;
-        *slot = total;
-        total += count;
-    }
-    par_offsets[parents] = total;
-    lim.try_resize(par_sorted, total as usize, ParEntry { p2: 0, a_prod: 0, sib_idx: 0 })?;
-    for c in par_flat.iter() {
-        let slot = par_offsets[c.parent as usize] as usize;
-        par_sorted[slot] = c.entry;
-        par_offsets[c.parent as usize] += 1;
-    }
-    shift_offsets_right_by_one(&mut par_offsets[..=parents]);
-    Ok(())
+    counting_sort(
+        eng.limits(), parents, par_flat.iter().copied(),
+        |c| (c.parent as usize, c.entry),
+        None, ParEntry { p2: 0, a_prod: 0, sib_idx: 0 }, par_sorted,
+    )
 }
 
 /// Greedy bin-pack of f-parent indices into chunks whose projected Phase E+F
@@ -769,32 +752,12 @@ pub(super) fn flush_chunk_phase_f(
     let num_new_parents = pl_output.len() - chunk_parent_start as usize;
     if num_new_parents == 0 { return Ok(()); }
 
-    let Grouped { offsets: pc, entries: sp } = &mut ws.pairs_by_parent;
-    lim.try_resize(pc, num_new_parents + 1, 0)?;
-    pc[..num_new_parents + 1].fill(0);
-    for &(local_parent, _) in &ws.emit_pairs {
-        debug_assert!((local_parent as usize) < num_new_parents);
-        pc[local_parent as usize] += 1;
-    }
-    let mut total = 0u32;
-    for slot in pc.iter_mut().take(num_new_parents) {
-        let c = *slot;
-        *slot = total;
-        total += c;
-    }
-    pc[num_new_parents] = total;
-
-    let n = total as usize;
-    lim.try_resize(sp, n, ChildPair::new(EncodedChildRef::from_raw(0), EncodedChildRef::from_raw(0)))?;
-    for &(local_parent, pair) in &ws.emit_pairs {
-        let pos = pc[local_parent as usize] as usize;
-        sp[pos] = pair;
-        pc[local_parent as usize] += 1;
-    }
-    // After the fill pass each pc[i] points one-past-end of its bucket;
-    // shift right so pc[i] is back at start-of-bucket (same pass-4 restore
-    // as `build_reverse_index`) for the node-creation loop below.
-    shift_offsets_right_by_one(&mut pc[..=num_new_parents]);
+    let SparseWorkspace { emit_pairs, pairs_by_parent, .. } = &mut *ws;
+    counting_sort(
+        lim, num_new_parents, emit_pairs.iter().copied(),
+        |(local_parent, pair)| (local_parent as usize, pair),
+        None, ChildPair::new(EncodedChildRef::from_raw(0), EncodedChildRef::from_raw(0)), pairs_by_parent,
+    )?;
 
     lim.reserve(&mut level.nodes, num_new_parents)?;
     let by_parent = ws.pairs_by_parent.view();

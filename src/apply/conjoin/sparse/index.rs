@@ -208,20 +208,65 @@ impl<'a, T> GroupedView<'a, T> {
     }
 }
 
+/// Group `items` by key into `out`: a counting sort in four passes. Count
+/// each key — or take `counts`, the histogram when the caller already has
+/// one — turn the counts into exclusive prefix sums, scatter every item
+/// through its key's offset as the write cursor, then shift the offsets back
+/// by one so each names the start of its run again. `items` is walked twice,
+/// so it is an iterator that can be cloned; `item` gives each one's key and
+/// the value stored for it, and `fill` is what the entries are sized with
+/// before the scatter.
+pub(super) fn counting_sort<S, T: Copy, I>(
+    lim: &Limits,
+    n_keys: usize,
+    items: I,
+    item: impl Fn(S) -> (usize, T),
+    counts: Option<&[u32]>,
+    fill: T,
+    out: &mut Grouped<T>,
+) -> Result<(), OperationError>
+where
+    I: Iterator<Item = S> + Clone,
+{
+    let Grouped { offsets, entries } = out;
+    lim.try_resize(offsets, n_keys + 1, 0)?;
+    offsets[n_keys] = 0;
+    if let Some(counts) = counts {
+        offsets[..n_keys].copy_from_slice(counts);
+    } else {
+        offsets[..n_keys].fill(0);
+        for s in items.clone() {
+            let (key, _) = item(s);
+            debug_assert!(key < n_keys, "key {key} outside the {n_keys} keys sorted");
+            offsets[key] += 1;
+        }
+    }
+    let mut total = 0u32;
+    for slot in offsets.iter_mut().take(n_keys) {
+        let count = *slot;
+        *slot = total;
+        total += count;
+    }
+    offsets[n_keys] = total;
+    lim.try_resize(entries, total as usize, fill)?;
+    for s in items {
+        let (key, value) = item(s);
+        let slot = offsets[key] as usize;
+        entries[slot] = value;
+        offsets[key] += 1;
+    }
+    shift_offsets_right_by_one(&mut offsets[..=n_keys]);
+    Ok(())
+}
+
 /// Build a reverse index from a level's pairs, keyed by one child side:
 ///   `BY_RIGHT = false`: left_child_idx  → [(parent_idx, right_sibling_idx)]
 ///   `BY_RIGHT = true` : right_sibling_idx → [(parent_idx, left_child_idx)]
 /// grouped by the key-side child index.
 ///
 /// `BY_RIGHT` is a const generic so the `if BY_RIGHT` branches fold away.
-/// Four-pass counting sort:
-///   1. Count: `offsets[key] = number of pairs with that key-side child` —
-///      or copy `counts`, the same numbers when the direction estimate has
-///      already counted this level's pairs by this child
-///   2. Exclusive prefix sum: `offsets[i]` becomes the start-of-bucket for `i`
-///   3. Fill: scatter `(parent_idx, other_side)` using `offsets` as write cursors,
-///      leaving each `offsets[i]` one-past-the-end of bucket `i`
-///   4. Restore: shift right by one so `offsets[i]` is back at start-of-bucket
+/// `counts` is the histogram by this child when the direction estimate has
+/// already counted this level's pairs.
 pub(super) fn build_reverse_index<const BY_RIGHT: bool>(
     eng: &Engine,
     level: &TddLevel,
@@ -229,54 +274,24 @@ pub(super) fn build_reverse_index<const BY_RIGHT: bool>(
     counts: Option<&[u32]>,
     index: &mut Grouped<RevEntry>,
 ) -> Result<(), OperationError> {
-    let lim = eng.limits();
-    let Grouped { offsets, entries } = index;
-    // Pass 1: count
-    lim.try_resize(offsets, key_width + 1, 0)?;
-    offsets[key_width] = 0;
-    if let Some(counts) = counts {
-        offsets[..key_width].copy_from_slice(counts);
-    } else {
-        offsets[..key_width].fill(0);
-        // Unpacked slice iterator (vectorizable).
-        for node in level.nodes.iter() {
-            if !node.is_internal() { continue; }
-            for pair in level.pairs_of(node) {
-                let key = if BY_RIGHT { pair.right.0 } else { pair.left.0 } as usize;
-                offsets[key] += 1;
-            }
-        }
-    }
-    // Pass 2: exclusive prefix sum
-    let mut total = 0u32;
-    for slot in offsets.iter_mut().take(key_width) {
-        let count = *slot;
-        *slot = total;
-        total += count;
-    }
-    offsets[key_width] = total;
-    // Pass 3: fill, bumping offsets[key] as a write cursor
-    lim.try_resize(entries, total as usize, RevEntry { parent: 0, other: 0 })?;
-    for (parent_idx, node) in level.nodes.iter().enumerate() {
-        if !node.is_internal() { continue; }
-        for pair in level.pairs_of(node) {
-            let key = if BY_RIGHT { pair.right.0 } else { pair.left.0 } as usize;
-            let other = if BY_RIGHT { pair.left.0 } else { pair.right.0 };
-            let slot = offsets[key] as usize;
-            entries[slot] = RevEntry { parent: parent_idx as u32, other };
-            offsets[key] += 1;
-        }
-    }
-    // Pass 4: shift right by one so offsets[i] is back at start-of-bucket i
-    shift_offsets_right_by_one(&mut offsets[..=key_width]);
-    Ok(())
+    let pairs = level.nodes.iter().enumerate()
+        .filter(|(_, node)| node.is_internal())
+        .flat_map(|(parent, node)| level.pairs_of(node).iter().map(move |&pair| (parent as u32, pair)));
+    counting_sort(
+        eng.limits(), key_width, pairs,
+        |(parent, pair)| {
+            let (key, other) = if BY_RIGHT { (pair.right.0, pair.left.0) } else { (pair.left.0, pair.right.0) };
+            (key as usize, RevEntry { parent, other })
+        },
+        counts, RevEntry { parent: 0, other: 0 }, index,
+    )
 }
 
 /// After a counting-sort fill pass leaves each `offsets[i]` pointing one-past
 /// the end of bucket `i`, shift the slice right by one so every `offsets[i]`
 /// is restored to the start of its bucket (and `offsets[0] = 0`).
 #[inline]
-pub(super) fn shift_offsets_right_by_one(offsets: &mut [u32]) {
+fn shift_offsets_right_by_one(offsets: &mut [u32]) {
     let mut prev = 0u32;
     for slot in offsets.iter_mut() {
         std::mem::swap(&mut *slot, &mut prev);
