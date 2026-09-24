@@ -286,7 +286,7 @@ pub(super) fn probe_moves<R: ProbeRule>(
         trial.record(&info, old);
     }
     let info = trial.last_info();
-    #[cfg(debug_assertions)]
+    #[cfg(any(test, feature = "testing"))]
     crate::test_helpers::check::debug_assert_rotation_locality(eng, trial.tdd, info.w_idx);
     let keep = rule.keeps(
         &RotationProbe {
