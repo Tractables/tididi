@@ -11,7 +11,6 @@ pub(crate) mod slot_prune; // post-tagger marginal-slot compaction
 mod driver;
 pub(crate) use driver::restore_marginal_invariants;
 
-
 use crate::limits::pool::Pool;
 
 use self::contract::scratch::ContractScratch;
@@ -131,7 +130,6 @@ impl Engine {
         driver::Reduction::new(self, f).run(plan, scope)
     }
 }
-
 
 #[cfg(test)]
 mod tests;

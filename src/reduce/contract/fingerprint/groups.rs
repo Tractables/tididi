@@ -79,7 +79,6 @@ fn materialize_candidate_signatures(
     Ok(())
 }
 
-
 /// Count each twin-candidate node's entries and turn the counts into a
 /// prefix-sum offset table in `scratch.counts`, returning the total entry count.
 ///
@@ -121,16 +120,14 @@ fn count_candidate_entries(
     // Repurpose `counts` in-place as a prefix-sum offset table: after this loop,
     // sig_offsets[i] = start of node i's signature entries in the flat buffer.
     // This avoids allocating a separate Vec for offsets.
-    {
-        let sig_offsets = &mut scratch.counts;
-        let mut running = 0u32;
-        for slot in sig_offsets.iter_mut().take(child_width) {
-            let c = *slot;
-            *slot = running;
-            running += c; // ≤ candidate_mass < u32::MAX, checked above
-        }
-        sig_offsets[child_width] = running; // sentinel (pre-allocated above)
+    let sig_offsets = &mut scratch.counts;
+    let mut running = 0u32;
+    for slot in sig_offsets.iter_mut().take(child_width) {
+        let c = *slot;
+        *slot = running;
+        running += c; // ≤ candidate_mass < u32::MAX, checked above
     }
+    sig_offsets[child_width] = running; // sentinel (pre-allocated above)
     Ok(candidate_mass)
 }
 
@@ -157,26 +154,21 @@ fn canonicalize_signature_slices(child_width: usize, scratch: &mut ContractScrat
 /// Width-2 fast path: the two signatures are compared directly, no hashing.
 fn group_width_two(lim: &Limits, scratch: &mut ContractScratch) -> Result<bool, OperationError> {
     let sig_offsets = &scratch.counts;
-    // Width-2 fast path: direct comparison, no hashing.
-    {
-        // Reaching here means `mark_candidates` found a fingerprint collision, and
-        // at width 2 the only collision possible marks both nodes — so both
-        // signatures are materialized and neither slice is an unmaterialized empty
-        // one that would compare equal to anything.
-        debug_assert!(scratch.is_candidate[0] && scratch.is_candidate[1]);
-        let sig0 = &scratch.entries[sig_offsets[0] as usize..sig_offsets[1] as usize];
-        let sig1 = &scratch.entries[sig_offsets[1] as usize..sig_offsets[2] as usize];
-        let found = sig0 == sig1;
-        if found {
-            lim.try_push(&mut scratch.group_starts, 0)?;
-            lim.try_resize(&mut scratch.flat_groups, 2, 0)?;
-            scratch.flat_groups[0] = 0;
-            scratch.flat_groups[1] = 1;
-        }
-        Ok(found)
+    // Reaching here means `mark_candidates` found a fingerprint collision, and
+    // at width 2 the only collision possible marks both nodes — so both
+    // signatures are materialized and neither slice is an unmaterialized empty
+    // one that would compare equal to anything.
+    debug_assert!(scratch.is_candidate[0] && scratch.is_candidate[1]);
+    let sig0 = &scratch.entries[sig_offsets[0] as usize..sig_offsets[1] as usize];
+    let sig1 = &scratch.entries[sig_offsets[1] as usize..sig_offsets[2] as usize];
+    let found = sig0 == sig1;
+    if found {
+        lim.try_push(&mut scratch.group_starts, 0)?;
+        lim.try_resize(&mut scratch.flat_groups, 2, 0)?;
+        scratch.flat_groups[0] = 0;
+        scratch.flat_groups[1] = 1;
     }
-
-
+    Ok(found)
 }
 
 /// General case: bucket nodes by their additive fingerprint, verify exact
@@ -193,57 +185,55 @@ fn group_by_hashed_signature(
     //
     // Two passes: (1) map each node to its representative via hash table,
     // (2) build contiguous groups via counting sort.
-    {
-        // Pass 1: map each node to its representative via hash table.
-        // cursors[i] = representative of node i (i itself if first with this signature).
-        let ContractScratch { fingerprints, twin_hash_table, entries, counts, cursors, .. } = &mut *scratch;
-        let sig_offsets: &[u32] = counts;
-        let signature = |j: usize| &entries[sig_offsets[j] as usize..sig_offsets[j + 1] as usize];
-        probe_fingerprints(lim, twin_hash_table, &fingerprints[..child_width], |i, occupant| {
-            match occupant {
-                Some(j) if signature(i) == signature(j) => {
-                    cursors[i] = j as u32;
-                    true
-                }
-                Some(_) => false,
-                None => {
-                    cursors[i] = i as u32;
-                    true
-                }
+    // Pass 1: map each node to its representative via hash table.
+    // cursors[i] = representative of node i (i itself if first with this signature).
+    let ContractScratch { fingerprints, twin_hash_table, entries, counts, cursors, .. } = &mut *scratch;
+    let sig_offsets: &[u32] = counts;
+    let signature = |j: usize| &entries[sig_offsets[j] as usize..sig_offsets[j + 1] as usize];
+    probe_fingerprints(lim, twin_hash_table, &fingerprints[..child_width], |i, occupant| {
+        match occupant {
+            Some(j) if signature(i) == signature(j) => {
+                cursors[i] = j as u32;
+                true
             }
-        })?;
+            Some(_) => false,
+            None => {
+                cursors[i] = i as u32;
+                true
+            }
+        }
+    })?;
 
-        // Pass 2: build contiguous groups via counting sort. O(n).
-        // Repurpose fingerprints[] as per-rep member count (additive fingerprints
-        // are no longer needed after hash table construction).
-        scratch.fingerprints[..child_width].fill(0);
-        for i in 0..child_width {
-            scratch.fingerprints[scratch.cursors[i] as usize] += 1;
+    // Pass 2: build contiguous groups via counting sort. O(n).
+    // Repurpose fingerprints[] as per-rep member count (additive fingerprints
+    // are no longer needed after hash table construction).
+    scratch.fingerprints[..child_width].fill(0);
+    for i in 0..child_width {
+        scratch.fingerprints[scratch.cursors[i] as usize] += 1;
+    }
+    // Assign group offsets for reps with ≥2 members; store write cursor.
+    // `pos` counts group members, so it never exceeds `child_width` (each
+    // node joins at most one group) — the `as u32` narrowings below are
+    // exact by the level-width invariant asserted in `find_twin_groups`.
+    let mut pos = 0usize;
+    for i in 0..child_width {
+        if scratch.cursors[i] as usize == i && scratch.fingerprints[i] >= 2 {
+            lim.try_push(&mut scratch.group_starts, pos as u32)?;
+            let cnt = scratch.fingerprints[i] as usize;
+            scratch.fingerprints[i] = pos as u64;
+            pos += cnt;
+        } else {
+            scratch.fingerprints[i] = u64::MAX;
         }
-        // Assign group offsets for reps with ≥2 members; store write cursor.
-        // `pos` counts group members, so it never exceeds `child_width` (each
-        // node joins at most one group) — the `as u32` narrowings below are
-        // exact by the level-width invariant asserted in `find_twin_groups`.
-        let mut pos = 0usize;
-        for i in 0..child_width {
-            if scratch.cursors[i] as usize == i && scratch.fingerprints[i] >= 2 {
-                lim.try_push(&mut scratch.group_starts, pos as u32)?;
-                let cnt = scratch.fingerprints[i] as usize;
-                scratch.fingerprints[i] = pos as u64;
-                pos += cnt;
-            } else {
-                scratch.fingerprints[i] = u64::MAX;
-            }
-        }
-        // Scatter-write members into flat_groups.
-        lim.try_resize(&mut scratch.flat_groups, pos, 0)?;
-        for i in 0..child_width {
-            let rep = scratch.cursors[i] as usize;
-            let cursor = scratch.fingerprints[rep];
-            if cursor != u64::MAX {
-                scratch.flat_groups[cursor as usize] = i as u32;
-                scratch.fingerprints[rep] = cursor + 1;
-            }
+    }
+    // Scatter-write members into flat_groups.
+    lim.try_resize(&mut scratch.flat_groups, pos, 0)?;
+    for i in 0..child_width {
+        let rep = scratch.cursors[i] as usize;
+        let cursor = scratch.fingerprints[rep];
+        if cursor != u64::MAX {
+            scratch.flat_groups[cursor as usize] = i as u32;
+            scratch.fingerprints[rep] = cursor + 1;
         }
     }
 

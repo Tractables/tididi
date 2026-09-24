@@ -291,8 +291,6 @@ impl Maintenance<'_> {
         let r = child_slot(&self.vtree, &self.path, &self.labels, right).expect("the children are resolved");
         ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r))
     }
-
-
 }
 
 /// What [`Maintenance::read_model`] found.

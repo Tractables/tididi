@@ -44,30 +44,31 @@ impl MergePolicy {
         parent: VtreeIdx,
         has_marginal_below: &[bool],
     ) -> Self {
-    // At a plain (no inlined side) level, twin members whose supports overlap
-    // (share a pair) are not concat-merged: the union would hold duplicate
-    // pairs, which carry a multiplicity only at marginal-flagged levels and
-    // break determinism (invariant 1) elsewhere. The greedy filter in
-    // `plan_groups` accepts pairwise-disjoint members, one hash-set pass over
-    // the group's pairs.
+        // At a plain (no inlined side) level, twin members whose supports
+        // overlap (share a pair) are not concat-merged: the union would hold
+        // duplicate pairs, which carry a multiplicity only at marginal-flagged
+        // levels and break determinism (invariant 1) elsewhere. The greedy
+        // filter in `plan_groups` accepts pairwise-disjoint members, one
+        // hash-set pass over the group's pairs.
         let plain_level = !tdd.levels[t1.idx()].any_value_ref_side();
-    // Content-equal twins at a plain level merge under a marginal-flagged
-    // parent: the survivor's pair list already is the shared function, and the
-    // member's parent pairs are remapped onto the survivor, where the resulting
-    // duplicates are legal multiset entries that pair fusion sums. Under a
-    // plain parent the multiplicity has nowhere to live, so they stay apart.
+        // Content-equal twins at a plain level merge under a marginal-flagged
+        // parent: the survivor's pair list already is the shared function, and
+        // the member's parent pairs are remapped onto the survivor, where the
+        // resulting duplicates are legal multiset entries that pair fusion
+        // sums. Under a plain parent the multiplicity has nowhere to live, so
+        // they stay apart.
         let parent_marginal = tdd.levels[parent.idx()].any_value_ref_side();
-    // When a child side of t1 has marginalization below it, overlapping twins
-    // concat-merge unconditionally and `compact_and_fork_down` folds the
-    // resulting duplicate pairs where it can; see the module doc of
-    // `duplicate_pair_resolve`. False unless `plain_level`.
+        // When a child side of t1 has marginalization below it, overlapping
+        // twins concat-merge unconditionally and `compact_and_fork_down` folds
+        // the resulting duplicate pairs where it can; see the module doc of
+        // `duplicate_pair_resolve`. False unless `plain_level`.
         let t1_scalable = if plain_level {
-        let (t1_l, t1_r) = tdd.vtree.children(t1);
-        has_marginal_below.get(t1_l.idx()).copied().unwrap_or(false)
-            || has_marginal_below.get(t1_r.idx()).copied().unwrap_or(false)
-    } else {
-        false
-    };
+            let (t1_l, t1_r) = tdd.vtree.children(t1);
+            has_marginal_below.get(t1_l.idx()).copied().unwrap_or(false)
+                || has_marginal_below.get(t1_r.idx()).copied().unwrap_or(false)
+        } else {
+            false
+        };
         Self { plain_level, parent_marginal, t1_scalable }
     }
 }
@@ -129,85 +130,83 @@ pub(super) fn plan_groups(
         lim.reserve_exact(member_pairs, max_pairs)?;
         lim.reserve_map(seen_pairs, max_mass)?;
     }
-    {
-        // The per-group buffers are cleared before each group below.
-        for g in 0..group_starts.len() {
-            let (start, end) = group_bounds(g);
-            let group = &flat_groups[start..end];
-            let keep = group[0];
-            if !plain_level || t1_scalable {
-                // Concat every member, overlapping or not: at a marginal-flagged
-                // level duplicate pairs are legal multiset entries, and on the
-                // scalable plain path fork-down resolves them right after
-                // compaction (`duplicate_pair_resolve`).
-                let sel_start = sel.len();
-                sel.extend_from_slice(group);
-                group_plans.push(GroupPlan {
-                    action: GroupAction::Concat,
-                    start: sel_start as u32,
-                    end: sel.len() as u32,
-                });
-                continue;
-            }
-            filtered.clear();
-            duplicate_members.clear();
-            seen_pairs.clear();
-            keep_pairs_sorted.clear();
-            filtered.push(keep);
-            for p in level.pairs_of_idx(keep as usize) {
-                seen_pairs.insert((p.left.0, p.right.0), ());
-                keep_pairs_sorted.push((p.left.0, p.right.0));
-            }
-            keep_pairs_sorted.sort_unstable();
-            for &idx in &group[1..] {
-                let mut overlap = false;
-                member_pairs.clear();
-                for p in level.pairs_of_idx(idx as usize) {
-                    let lr = (p.left.0, p.right.0);
-                    overlap |= seen_pairs.contains_key(&lr);
-                    member_pairs.push(lr);
-                }
-                if !overlap {
-                    for &(l, r) in member_pairs.iter() {
-                        seen_pairs.insert((l, r), ());
-                    }
-                    filtered.push(idx);
-                } else if parent_marginal {
-                    member_pairs.sort_unstable();
-                    if member_pairs == keep_pairs_sorted {
-                        duplicate_members.push(idx);
-                    }
-                }
-            }
-            // Dups are redirected only when no two members have disjoint
-            // supports; a mixed group concatenates first, and the duplicate member
-            // is then no longer content-equal to the grown survivor, so it
-            // stays a separate node.
-            let take_dups = !duplicate_members.is_empty() && filtered.len() < 2;
+    // The per-group buffers are cleared before each group below.
+    for g in 0..group_starts.len() {
+        let (start, end) = group_bounds(g);
+        let group = &flat_groups[start..end];
+        let keep = group[0];
+        if !plain_level || t1_scalable {
+            // Concat every member, overlapping or not: at a marginal-flagged
+            // level duplicate pairs are legal multiset entries, and on the
+            // scalable plain path fork-down resolves them right after
+            // compaction (`duplicate_pair_resolve`).
             let sel_start = sel.len();
-            let action = if take_dups {
-                // Redirect the content-equal members onto the survivor without
-                // touching its pair list; the parent rewrite keeps the members'
-                // pairs and pair fusion sums the multiplicity. Appends nothing to
-                // the arena, so this group is charged nothing below.
-                sel.push(keep);
-                sel.extend_from_slice(duplicate_members);
-                GroupAction::DupRedirect
-            } else if filtered.len() >= 2 {
-                // Disjoint-support concat merge. Content-equal members (if any)
-                // are skipped this round: the survivor's function grows, so a
-                // duplicate redirect against the grown survivor would no longer carry
-                // the right value. They are re-examined on the next fixpoint
-                // iteration (and stay unmerged if no longer content-equal —
-                // sound, non-canonical residue).
-                sel.extend_from_slice(filtered); // filtered[0] == keep
-                GroupAction::Concat
-            } else {
-                // Nothing in this group can act this round.
-                continue;
-            };
-            group_plans.push(GroupPlan { action, start: sel_start as u32, end: sel.len() as u32 });
+            sel.extend_from_slice(group);
+            group_plans.push(GroupPlan {
+                action: GroupAction::Concat,
+                start: sel_start as u32,
+                end: sel.len() as u32,
+            });
+            continue;
         }
+        filtered.clear();
+        duplicate_members.clear();
+        seen_pairs.clear();
+        keep_pairs_sorted.clear();
+        filtered.push(keep);
+        for p in level.pairs_of_idx(keep as usize) {
+            seen_pairs.insert((p.left.0, p.right.0), ());
+            keep_pairs_sorted.push((p.left.0, p.right.0));
+        }
+        keep_pairs_sorted.sort_unstable();
+        for &idx in &group[1..] {
+            let mut overlap = false;
+            member_pairs.clear();
+            for p in level.pairs_of_idx(idx as usize) {
+                let lr = (p.left.0, p.right.0);
+                overlap |= seen_pairs.contains_key(&lr);
+                member_pairs.push(lr);
+            }
+            if !overlap {
+                for &(l, r) in member_pairs.iter() {
+                    seen_pairs.insert((l, r), ());
+                }
+                filtered.push(idx);
+            } else if parent_marginal {
+                member_pairs.sort_unstable();
+                if member_pairs == keep_pairs_sorted {
+                    duplicate_members.push(idx);
+                }
+            }
+        }
+        // Dups are redirected only when no two members have disjoint
+        // supports; a mixed group concatenates first, and the duplicate member
+        // is then no longer content-equal to the grown survivor, so it
+        // stays a separate node.
+        let take_dups = !duplicate_members.is_empty() && filtered.len() < 2;
+        let sel_start = sel.len();
+        let action = if take_dups {
+            // Redirect the content-equal members onto the survivor without
+            // touching its pair list; the parent rewrite keeps the members'
+            // pairs and pair fusion sums the multiplicity. Appends nothing to
+            // the arena, so this group is charged nothing below.
+            sel.push(keep);
+            sel.extend_from_slice(duplicate_members);
+            GroupAction::DupRedirect
+        } else if filtered.len() >= 2 {
+            // Disjoint-support concat merge. Content-equal members (if any)
+            // are skipped this round: the survivor's function grows, so a
+            // duplicate redirect against the grown survivor would no longer carry
+            // the right value. They are re-examined on the next fixpoint
+            // iteration (and stay unmerged if no longer content-equal —
+            // sound, non-canonical residue).
+            sel.extend_from_slice(filtered); // filtered[0] == keep
+            GroupAction::Concat
+        } else {
+            // Nothing in this group can act this round.
+            continue;
+        };
+        group_plans.push(GroupPlan { action, start: sel_start as u32, end: sel.len() as u32 });
     }
     Ok(())
 }

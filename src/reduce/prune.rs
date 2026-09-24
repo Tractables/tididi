@@ -1,10 +1,8 @@
 //! Prune phase: remove diagram nodes not reachable from the output.
 //!
 //! Marks reachability top-down from the output node, then compacts the levels
-//! it walked bottom-up while remapping child references. The remap is monotone
-//! (preserves order), so sorted pair lists remain sorted after remapping.
-//! Levels that lost a node go onto the contract worklists; `reduce` runs the
-//! contraction.
+//! it walked bottom-up while remapping child references. Levels that lost a
+//! node go onto the contract worklists; `reduce` runs the contraction.
 //!
 //! [`PruneScope`] says how many levels that is: every one of them, or only the
 //! ones a change at the root can have reached.
@@ -50,9 +48,9 @@ pub(crate) enum PruneScope {
 /// Remove nodes not reachable from the output.
 ///
 /// Marks reachability top-down, then compacts each level bottom-up, remapping
-/// child references in the same pass. The remap is monotone, so sorted pair
-/// lists stay sorted. Every level that lost a node is pushed onto the contract
-/// worklists (`seed_dirty_levels`), so the caller needs no reseed.
+/// child references in the same pass. Every level that lost a node is pushed
+/// onto the contract worklists (`seed_dirty_levels`), so the caller needs no
+/// reseed.
 ///
 /// `scope` says how much of the diagram has to be walked; see [`PruneScope`].
 /// A `BelowRoot` scope on a diagram that is not the shape that walk starts

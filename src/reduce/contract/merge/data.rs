@@ -169,8 +169,7 @@ fn finalize_merged_node(
 ///
 /// Walks `level.nodes`, keeping only entries whose `merge_target[read] == read`
 /// (i.e. canonical survivors; absorbed twins are skipped). Survivors are shifted
-/// left in-place via `swap` and the vec is truncated. Mirrors `compact_levels`
-/// in `reduce/prune.rs` for the non-marginal case.
+/// left in-place via `swap` and the vec is truncated.
 ///
 /// Also the accounting point for absorbed twins' pair ranges: dropping the node
 /// is what makes its range unreferenced (whether the merge copied the content to

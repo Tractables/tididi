@@ -63,7 +63,6 @@ pub(super) fn compute_has_marginal_below_into(
     Ok(())
 }
 
-
 /// Resolve duplicate pairs in node `idx` at plain structural level `pv`:
 /// each run of k > 1 equal `(L, R)` pairs whose level has an O(1) absorber is
 /// replaced by a single pair with the marginal side scaled by k. Returns whether

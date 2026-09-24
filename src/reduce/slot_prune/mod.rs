@@ -21,7 +21,6 @@
 
 use crate::Engine;
 
-
 use crate::diagram::{Tdd, MarginalValues, MarginalStorage};
 
 use crate::value::slots::{RefSlotScratch, referenced_marginal_slots};
