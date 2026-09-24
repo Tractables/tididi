@@ -37,19 +37,6 @@ impl<'a> Assembly<'a> {
         self.deref_mut().parts_mut()
     }
 
-    /// Validate storage using the public builder's checks, then
-    /// [`finish`](Self::finish) it.
-    ///
-    /// # Errors
-    ///
-    /// A failed check, as [`OperationError::InvalidDiagram`], or a refused
-    /// worklist growth.
-    #[inline]
-    pub(crate) fn finish_checked(self, output: TddNodeId) -> Result<Tdd, OperationError> {
-        self.check(output)?;
-        self.finish(output)
-    }
-
     /// Seat kernel-built storage and charge its reduction worklists, which
     /// start with every internal level.
     ///

@@ -104,7 +104,17 @@ impl<'a> CopyPlacement<'a> {
     /// Seat the chosen root reference and drop what the joins left unused.
     pub(super) fn finish(self, local: NodeIdx) -> Result<Tdd, OperationError> {
         let output = TddNodeId { vtree: self.vtree.root(), local };
-        let mut result = self.assembly.finish_checked(output)?;
+        // The copy places levels of a valid diagram verbatim on the nodes the
+        // plan maps them to and builds the rest from true nodes and
+        // pass-through pairs over them, which is every invariant the builder's
+        // check tests; testing them again walked every pair of the result, a
+        // twentieth of a run made of embeds. Debug builds still check, as
+        // `TddBuilder::finish_unchecked` does.
+        debug_assert!(
+            self.assembly.check(output).is_ok(),
+            "an embedding placed a diagram the builder's check would refuse",
+        );
+        let mut result = self.assembly.finish(output)?;
         if self.prune {
             prune(self.eng, &mut result)?;
         }
