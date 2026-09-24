@@ -104,7 +104,7 @@ impl Maintenance<'_> {
                 self.tdd.levels[t.idx()].push_pair_onto_node(eng, output.idx(), pair)?;
                 index.note_appended_pair(t, pair, output);
             } else {
-                let idx = self.tdd.levels[t.idx()].push_node_on(eng, &[pair])?;
+                let idx = self.tdd.levels[t.idx()].push_node(eng.limits(), &[pair])?;
                 self.path[t.idx()] = idx.0;
                 index.note_appended_node(t, pair, idx);
             }

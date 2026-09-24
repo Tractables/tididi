@@ -117,7 +117,7 @@ impl DeadRebuilder<'_> {
                 } else {
                     // Equal pairs carry multiplicity when a child level is marginal.
                     sort_pairs(&mut frame.pairs);
-                    let result = self.out[v.idx()].push_node_on(eng, &frame.pairs)?;
+                    let result = self.out[v.idx()].push_node(eng.limits(), &frame.pairs)?;
                     if result.0 >= Self::UNVISITED { return Err(OperationError::OverBudget); }
                     emitted += 1;
                     lim.level_done(emitted)?;

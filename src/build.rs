@@ -95,7 +95,7 @@ fn cube_to_tdd(
     let mut levels = diagram::try_take_levels(eng, vtree.num_nodes())?;
     for (emitted, (t, left, right)) in vtree.internal_bottomup().enumerate() {
         gate.poll(1)?;
-        let index = levels[t.idx()].push_node_on(eng, &[ChildPair::new(label_at(left), label_at(right))])?;
+        let index = levels[t.idx()].push_node(eng.limits(), &[ChildPair::new(label_at(left), label_at(right))])?;
         // A cleared internal level receives exactly one node, at the free label's index.
         debug_assert_eq!(index, ONE_LEAF_IDX);
         lim.check_output_cap(emitted as u64 + 1)?;

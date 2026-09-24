@@ -10,9 +10,9 @@ fn appended_pairs_charge_only_new_capacity() {
     let mut level = TddLevel::new();
     let first = ChildPair::new(crate::diagram::POS_LEAF_IDX, crate::diagram::NEG_LEAF_IDX);
     let other = ChildPair::new(crate::diagram::NEG_LEAF_IDX, crate::diagram::POS_LEAF_IDX);
-    let node = level.push_node_on(&eng, &[first]).unwrap();
+    let node = level.push_node(eng.limits(), &[first]).unwrap();
     for i in 0..12 {
-        if i % 3 == 0 { level.push_node_on(&eng, &[first, other]).unwrap(); }
+        if i % 3 == 0 { level.push_node(eng.limits(), &[first, other]).unwrap(); }
         let before = level.charged_bytes();
         let charged = eng.limits().meters().in_flight_bytes;
         level.push_pair_onto_node(&eng, node.idx(), other).unwrap();

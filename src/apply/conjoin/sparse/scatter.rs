@@ -879,8 +879,7 @@ fn flush_chunk_phase_f(
         // grows `level.pairs` with a raw `try_reserve`, so the dense walk's
         // choke point never sees these. See `Limits::pairs_in_flight`.
         let pre_pairs_cap = level.pairs.capacity();
-        level.try_push_internal_node(pair_slice)
-            .map_err(|_| OperationError::OverBudget)?;
+        level.push_node(&crate::diagram::Untracked, pair_slice)?;
         lim.charge_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
     }
     Ok(())

@@ -350,7 +350,7 @@ fn expand_every_pair(
     inner_pair_to_idx: &mut FxHashMap<ChildPair, NodeIdx>,
 ) -> Result<(), OperationError> {
     for g in group_info {
-        let idx = inner_level.push_node_within(lim, &[g.1])?;
+        let idx = inner_level.push_node(lim, &[g.1])?;
         inner_pair_to_idx.insert(g.1, idx);
     }
     Ok(())
@@ -386,7 +386,7 @@ fn cluster_by_cell_list(
 ) -> Result<(), OperationError> {
     for bucket in hash_buckets(group_info) {
         if bucket.len() == 1 {
-            let idx = inner_level.push_node_within(lim, &[bucket[0].1])?;
+            let idx = inner_level.push_node(lim, &[bucket[0].1])?;
             inner_pair_to_idx.insert(bucket[0].1, idx);
             continue;
         }
@@ -407,7 +407,7 @@ fn cluster_by_cell_list(
             // contraction, but twin detection is order-independent
             // (`find_twin_groups` sorts each signature slice before comparing),
             // so the node's pair order is free (see `ChildPair`).
-            let idx = inner_level.push_node_within(lim, &pairs)?;
+            let idx = inner_level.push_node(lim, &pairs)?;
             for &p in &pairs {
                 inner_pair_to_idx.insert(p, idx);
             }
@@ -504,7 +504,7 @@ fn fill_outer_level(
         if !marginal_ctx {
             per_v_pairs[i].dedup();
         }
-        outer_level.push_node_within(lim, &per_v_pairs[i])?;
+        outer_level.push_node(lim, &per_v_pairs[i])?;
     }
     Ok(())
 }

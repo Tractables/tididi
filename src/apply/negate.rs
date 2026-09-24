@@ -161,7 +161,7 @@ fn complement_full_at_root(
             return Ok(crate::build::constant_zero(eng, orig_vtree));
         }
 
-        let neg_idx = levels[root_idx].push_node_on(eng, &neg_pairs)?;
+        let neg_idx = levels[root_idx].push_node(eng.limits(), &neg_pairs)?;
 
         Ok(assembly.finish_untracked(TddNodeId { vtree: root, local: neg_idx }))
     }
@@ -234,7 +234,7 @@ fn expand_full_with(
             cells.clear();
             cover.missing_into(eng, form, cells)?;
             if !cells.is_empty() {
-                level.push_node_on(eng, cells)?;
+                level.push_node(eng.limits(), cells)?;
             }
         }
         eng.limits().check_stop()?;

@@ -198,7 +198,7 @@ impl TddBuilder {
         // Keep the cache only if both the append and its index update succeed.
         // Either can refuse after changing storage; the next intern then rebuilds.
         let cached = self.interned.get_mut(t.idx()).and_then(Option::take);
-        let index = self.levels[t.idx()].push_node_on(eng, pairs)?;
+        let index = self.levels[t.idx()].push_node(eng.limits(), pairs)?;
         if let Some(mut table) = cached {
             table.insert_on(eng.limits(), pairs, index)?;
             self.interned[t.idx()] = Some(table);

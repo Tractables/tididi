@@ -144,7 +144,7 @@ pub(super) fn build_level_quantified(
             if level.nodes.is_empty() {
                 // The one node this level ever holds, minted on the first live
                 // cell so a level with none stays empty and reads as `⊥`.
-                level.push_node_on(eng, &[TRUE_PAIR])?;
+                level.push_node(eng.limits(), &[TRUE_PAIR])?;
             }
             slab[row + j] = ONE_LEAF_IDX.0;
         }

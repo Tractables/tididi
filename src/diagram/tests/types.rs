@@ -12,8 +12,8 @@
             ChildPair::new(NodeIdx(3), NodeIdx(4)),
             ChildPair::new(NodeIdx(5), NodeIdx(6)),
         ];
-        lvl.try_push_internal_node(&multi_pairs).unwrap();
-        lvl.try_push_internal_node(&[ChildPair::new(NodeIdx(99), NodeIdx(100))]).unwrap();
+        lvl.push_internal_node(&multi_pairs);
+        lvl.push_internal_node(&[ChildPair::new(NodeIdx(99), NodeIdx(100))]);
 
         let from_slice: Vec<ChildPair> = lvl.pairs_of_idx(0).to_vec();
         let from_iter: Vec<ChildPair> = lvl.pairs_iter_of_idx(0).collect();
@@ -30,11 +30,11 @@
         // ExactSizeIterator: `size_hint` correctly reports the count for all
         // four variants.
         let mut lvl = TddLevel::new();
-        lvl.try_push_internal_node(&[
+        lvl.push_internal_node(&[
             ChildPair::new(NodeIdx(1), NodeIdx(2)),
             ChildPair::new(NodeIdx(3), NodeIdx(4)),
             ChildPair::new(NodeIdx(5), NodeIdx(6)),
-        ]).unwrap();
+        ]);
         let it = lvl.pairs_iter_of_idx(0);
         assert_eq!(it.size_hint(), (3, Some(3)));
         assert_eq!(it.len(), 3);
@@ -572,7 +572,7 @@ mod try_from_levels {
         level.nodes.reserve(1);
         let _scope = eng.limits().scope(LimitConfig::none().with_memory_hooks(hooks));
         let pair = ChildPair::new(NodeIdx(0), NodeIdx(0));
-        let index = level.push_node_on(&eng, &[pair]).unwrap();
+        let index = level.push_node(eng.limits(), &[pair]).unwrap();
         assert_eq!(index, NodeIdx(0));
         assert_eq!(level.pairs_of_idx(0), &[pair]);
         assert_eq!(requests.load(Ordering::Relaxed), 0);

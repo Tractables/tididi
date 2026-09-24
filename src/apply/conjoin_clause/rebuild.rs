@@ -195,7 +195,7 @@ fn emit_clause_node(
 ) -> Result<(), OperationError> {
     if !pairs.is_empty() {
         result_map[base_plus_idx][lane] = level.nodes.len() as u32;
-        level.try_push_internal_node(pairs).map_err(|_| OperationError::OverBudget)?;
+        level.push_node(&crate::diagram::Untracked, pairs)?;
     } else {
         // Empty c_t/d_t: no node emitted, and this is the one write of the
         // map entry (there is no bulk `NO_PRODUCT` fill).
@@ -206,7 +206,7 @@ fn emit_clause_node(
 
 /// `emit_clause_node` for pairs already pushed onto `level.pairs` from
 /// `pair_start` on: finalizes the node, re-dispatching a single pair through
-/// `try_push_internal_node` so its encoding matches the buffered path, or
+/// `push_node` so its encoding matches the buffered path, or
 /// writes `NO_PRODUCT` when no pairs were produced. Like `emit_clause_node`,
 /// it does not deduplicate.
 fn emit_clause_node_direct(
@@ -225,7 +225,7 @@ fn emit_clause_node_direct(
         let pair = level.pairs[pair_start];
         level.pairs.truncate(pair_start);
         result_map[base_plus_idx][lane] = level.nodes.len() as u32;
-        level.try_push_internal_node(&[pair]).map_err(|_| OperationError::OverBudget)?;
+        level.push_node(&crate::diagram::Untracked, &[pair])?;
     } else {
         // `try_push_multi_by_range` requires `pair_len >= 2`, which the arm
         // above guarantees.

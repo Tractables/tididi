@@ -42,8 +42,8 @@ fn inline_and_arena_pairs_preserve_tagged_references() {
     let tagged = ChildPair::new(ValueRef::Inline(7).side().unwrap(), ValueRef::Slot(9).side().unwrap());
     let other = ChildPair::new(NodeIdx(1), NodeIdx(2));
     let mut level = TddLevel::new();
-    let inline = level.try_push_internal_node(&[tagged]).unwrap();
-    let arena = level.try_push_internal_node(&[tagged, other]).unwrap();
+    let inline = level.push_internal_node(&[tagged]);
+    let arena = level.push_internal_node(&[tagged, other]);
     for (node, expected) in [(inline, &[tagged][..]), (arena, &[tagged, other][..])] {
         assert_eq!(level.pairs_of_idx(node.idx()), expected);
         assert_eq!(level.pairs_iter_of_idx(node.idx()).collect::<Vec<_>>(), expected);

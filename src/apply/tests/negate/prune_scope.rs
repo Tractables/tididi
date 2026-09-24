@@ -99,7 +99,7 @@ fn an_operand_with_unreachable_nodes_negates_the_same_under_either_scope() {
                     if pairs.is_empty() {
                         continue;
                     }
-                    f.levels[t].push_node_on(eng, &pairs).unwrap();
+                    f.levels[t].push_node(eng.limits(), &pairs).unwrap();
                     orphaned = true;
                     break;
                 }

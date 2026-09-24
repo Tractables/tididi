@@ -4,6 +4,7 @@ mod arena;
 mod marginal;
 mod pairs;
 pub(crate) use pairs::sort_pairs;
+pub(crate) use arena::Untracked;
 
 use super::marginal_ref::{ChildDecoder, ChildSide, CountOverflow};
 use super::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode};

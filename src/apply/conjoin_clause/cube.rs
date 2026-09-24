@@ -96,7 +96,7 @@ impl CubeChain {
         }
         if found == NO_PRODUCT {
             let pair = self.pair_at(vtree, t);
-            found = level.push_node_on(eng, &[pair])?.0;
+            found = level.push_node(eng.limits(), &[pair])?.0;
         }
         self.m_idx[t.idx()] = found;
         Ok(())

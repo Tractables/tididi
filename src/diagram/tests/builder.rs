@@ -125,8 +125,9 @@ fn interning_recovers_after_an_index_update_is_refused() {
         }
         let original = builder.intern(&eng, root, &first).unwrap();
         builder.reserve(&eng, root, 1, second.len()).unwrap();
-        // Allow the node append, then refuse its hash-table update.
-        eng.limits().refuse_nth_reserve(1);
+        // The append fits the reservation, so the first reserve the push
+        // takes is its hash-table update: refuse that one.
+        eng.limits().refuse_nth_reserve(0);
         assert_eq!(builder.push(&eng, root, &second), Err(OperationError::OverBudget));
         eng.limits().grant_every_reserve();
         assert_eq!(builder.level(root).slot_count(), 2);

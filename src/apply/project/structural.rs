@@ -229,7 +229,7 @@ pub(super) fn exists_leaves_structural(
         let out_pairs = Transient::new(lim,
             union_of_root_cells(&mut work, &tdd, root_vi, root_cells.get(tdd.output.local.idx()))?);
         // Append the union node and point the output at it (prune drops the rest).
-        let new_out = tdd.levels[root_vi.idx()].push_node_on(eng, &out_pairs)?;
+        let new_out = tdd.levels[root_vi.idx()].push_node(eng.limits(), &out_pairs)?;
         tdd.output.local = new_out;
         tdd.try_invalidate(eng, root_vi)?;
         work.emitted += 1;
@@ -340,7 +340,7 @@ fn free_subtree_level(
     let n_nodes = tdd.levels[level.idx()].nodes.len();
     let store = &mut tdd.levels[level.idx()];
     store.clear();
-    store.push_node_on(work.eng, &[TRUE_PAIR])?;
+    store.push_node(work.eng.limits(), &[TRUE_PAIR])?;
     work.emitted += 1;
     lim.level_done(work.emitted)?;
     tdd.try_invalidate(work.eng, level)?;
@@ -572,7 +572,7 @@ fn write_level(work: &mut Rewrite<'_>, tdd: &mut Tdd, parent: VtreeIdx, new_node
         let pairs = new_nodes.get_mut(cell);
         sort_pairs(pairs);
         let kept = dedup_sorted(pairs);
-        level.push_node_on(work.eng, &pairs[..kept])?;
+        level.push_node(work.eng.limits(), &pairs[..kept])?;
         work.emitted += 1;
         work.eng.limits().level_done(work.emitted)?;
     }

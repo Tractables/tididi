@@ -2,14 +2,36 @@
 
 use crate::Engine;
 use crate::diagram::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode, NodeKind, MULTI_BIT};
-use crate::limits::{Charged, OperationError};
+use crate::limits::{Charged, Limits, OperationError};
 use super::TddLevel;
 
-/// Reserve room for `additional` more elements, refusing rather than
-/// aborting. The allocator's own error carries nothing the caller can use —
-/// the request size is known at the site that reports it — so it is dropped.
-fn reserve<T>(v: &mut Vec<T>, additional: usize) -> Result<(), ()> {
-    v.try_reserve(additional).map_err(|_| ())
+/// Where a node push takes its arena growth from: the engine's budget for a
+/// node built inside an operation, the allocator alone otherwise.
+pub(crate) trait ArenaGrowth {
+    /// Make room for `additional` more elements in `v`.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when the growth is refused.
+    fn grow<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError>;
+}
+
+impl ArenaGrowth for Limits {
+    #[inline]
+    fn grow<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
+        self.reserve(v, additional)
+    }
+}
+
+/// The allocator alone, for storage built outside an operation. A refused
+/// allocation is reported like a budget refusal.
+pub(crate) struct Untracked;
+
+impl ArenaGrowth for Untracked {
+    #[inline]
+    fn grow<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
+        v.try_reserve(additional).map_err(|_| OperationError::OverBudget)
+    }
 }
 
 impl TddLevel {
@@ -27,17 +49,19 @@ impl TddLevel {
     /// answer.
     #[inline]
     pub(crate) fn encode_multi(&mut self, pair_start: usize, pair_len: usize) -> EncodedNode {
-        self.try_encode_multi(pair_start, pair_len).expect("out of memory encoding a node")
+        self.try_encode_multi(&Untracked, pair_start, pair_len).expect("out of memory encoding a node")
     }
 
     /// [`encode_multi`](Self::encode_multi) refusing instead of aborting; only
-    /// the extended branch allocates.
+    /// the extended branch allocates, through `growth`.
     ///
     /// # Errors
     ///
-    /// The `multi_pairs` reservation was refused.
+    /// The `multi_pairs` growth was refused.
     #[inline]
-    fn try_encode_multi(&mut self, pair_start: usize, pair_len: usize) -> Result<EncodedNode, ()> {
+    fn try_encode_multi<G: ArenaGrowth>(
+        &mut self, growth: &G, pair_start: usize, pair_len: usize,
+    ) -> Result<EncodedNode, OperationError> {
         assert!(pair_len != 1, "encode_multi: pair_len=1 aliases multi_ranged encoding; use EncodedNode::inline");
         let fits_u31 = pair_start < (1usize << 31) && pair_len < (1usize << 31);
         if fits_u31 {
@@ -45,7 +69,9 @@ impl TddLevel {
         } else {
             let multi_pairs_idx = self.multi_pairs.len();
             debug_assert!(multi_pairs_idx < (1usize << 31), "too many extended nodes in a single level");
-            reserve(&mut self.multi_pairs, 1)?;
+            if self.multi_pairs.len() == self.multi_pairs.capacity() {
+                growth.grow(&mut self.multi_pairs, 1)?;
+            }
             self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: pair_len as u64 });
             Ok(EncodedNode::multi_ranged(multi_pairs_idx as u32))
         }
@@ -262,38 +288,54 @@ impl TddLevel {
         self.pairs.truncate(write);
     }
 
-    /// Append a node with the given pairs and return its index. Chooses the
-    /// storage encoding itself; the only way to add a node when building a
-    /// diagram by hand. `input_pairs` must be non-empty.
+    /// Append a node with the given pairs and return its index, taking
+    /// whatever arena growth it needs from the allocator. For storage built
+    /// outside an operation: the constructors, the file reader and tests.
+    /// `input_pairs` must be non-empty.
     ///
     /// # Panics
     ///
     /// Panics if the allocator refuses a buffer — use
-    /// [`try_push_internal_node`](Self::try_push_internal_node) where a
-    /// refusal is an answer.
+    /// [`push_node`](Self::push_node) where a refusal is an answer.
     #[inline]
     pub(crate) fn push_internal_node(&mut self, input_pairs: &[ChildPair]) -> NodeIdx {
-        self.try_push_internal_node(input_pairs).expect("out of memory pushing a node")
+        self.push_node(&Untracked, input_pairs).expect("out of memory pushing a node")
     }
 
-    /// Append a node through the fallible encoder and charge its arena growth to the engine.
-    pub(crate) fn push_node_on(&mut self, eng: &Engine, pairs: &[ChildPair]) -> Result<NodeIdx, OperationError> {
-        self.push_node_within(eng.limits(), pairs)
-    }
-
-    /// [`push_node_on`](Self::push_node_on) for a caller holding the limits
-    /// rather than the engine, such as the rotation rebuild.
-    pub(crate) fn push_node_within(&mut self, lim: &crate::limits::Limits, pairs: &[ChildPair]) -> Result<NodeIdx, OperationError> {
-        #[cfg(test)]
-        if lim.refuses_reserve() { return Err(OperationError::OverBudget); }
-        if pairs.len() == 1 && self.nodes.len() < self.nodes.capacity() {
-            return self.try_push_internal_node(pairs).map_err(|_| OperationError::OverBudget);
+    /// Append a node with these pairs and return its index, taking the arena
+    /// growth it needs from `growth`: the engine's [`Limits`] inside an
+    /// operation, [`Untracked`] outside one. A single pair is stored inline;
+    /// a longer list goes to the pair arena. A refused growth leaves the
+    /// level's contents as they were.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when a buffer's growth is refused.
+    pub(crate) fn push_node<G: ArenaGrowth>(
+        &mut self, growth: &G, pairs: &[ChildPair],
+    ) -> Result<NodeIdx, OperationError> {
+        let idx = NodeIdx(self.nodes.len() as u32);
+        if self.nodes.len() == self.nodes.capacity() {
+            growth.grow(&mut self.nodes, 1)?;
         }
-        let before = self.arena_capacity_bytes();
-        lim.preflight_alloc(std::mem::size_of_val(pairs) as u64);
-        let index = self.try_push_internal_node(pairs).map_err(|_| OperationError::OverBudget)?;
-        lim.charge_bytes(self.arena_capacity_bytes().saturating_sub(before))?;
-        Ok(index)
+        let node = if let [pair] = pairs {
+            EncodedNode::inline(*pair)
+        } else {
+            let start = self.pairs.len();
+            if self.pairs.capacity() - start < pairs.len() {
+                growth.grow(&mut self.pairs, pairs.len())?;
+            }
+            self.pairs.extend_from_slice(pairs);
+            match self.try_encode_multi(growth, start, pairs.len()) {
+                Ok(node) => node,
+                Err(refused) => {
+                    self.pairs.truncate(start);
+                    return Err(refused);
+                }
+            }
+        };
+        self.nodes.push(node);
+        Ok(idx)
     }
 
     /// Add one pair to the node at `idx`, in place.
@@ -314,8 +356,6 @@ impl TddLevel {
         &mut self, eng: &Engine, idx: usize, pair: ChildPair,
     ) -> Result<(), OperationError> {
         let lim = eng.limits();
-        #[cfg(test)]
-        if lim.refuses_reserve() { return Err(OperationError::OverBudget); }
         let node = self.nodes[idx].kind();
         let (old_len, old_range, inline) = match node {
             NodeKind::Inline(existing) => (1, None, Some(existing)),
@@ -394,35 +434,6 @@ impl TddLevel {
         self.nodes.charged_bytes() + self.pairs.charged_bytes() + self.multi_pairs.charged_bytes()
     }
 
-    /// [`push_internal_node`](Self::push_internal_node) for the apply
-    /// emitters: every buffer is reserved first, and a refused reservation
-    /// comes back as `Err(())`, which the caller maps to
-    /// `OperationError::OverBudget`.
-    ///
-    /// # Errors
-    ///
-    /// A buffer reservation was refused.
-    #[inline]
-    pub(crate) fn try_push_internal_node(
-        &mut self,
-        input_pairs: &[ChildPair],
-    ) -> Result<NodeIdx, ()> {
-        let idx = NodeIdx(self.nodes.len() as u32);
-        if input_pairs.len() == 1 {
-            reserve(&mut self.nodes, 1)?;
-            self.nodes.push(EncodedNode::inline(input_pairs[0]));
-        } else {
-            let pair_start = self.pairs.len();
-            let pair_len = input_pairs.len();
-            reserve(&mut self.pairs, pair_len)?;
-            self.pairs.extend_from_slice(input_pairs);
-            let data = self.try_encode_multi(pair_start, pair_len)?;
-            reserve(&mut self.nodes, 1)?;
-            self.nodes.push(data);
-        }
-        Ok(idx)
-    }
-
     /// Push a multi-pair node (fallible). Pairs are assumed already in `self.pairs`.
     ///
     /// The new node's index is `self.nodes.len()` before the call; it is not
@@ -475,8 +486,8 @@ impl TddLevel {
         pair_start: usize,
         pair_len: usize,
     ) -> Result<(), ()> {
-        let data = self.try_encode_multi(pair_start, pair_len)?;
-        reserve(&mut self.nodes, 1)?;
+        let data = self.try_encode_multi(&Untracked, pair_start, pair_len).map_err(|_| ())?;
+        Untracked.grow(&mut self.nodes, 1).map_err(|_| ())?;
         self.nodes.push(data);
         Ok(())
     }
