@@ -210,21 +210,33 @@ fn sweep_pivot<O: RotationObjective, A: AcceptancePolicy>(
     if kept > 0 || config.neighborhood == Neighborhood::Single {
         return Ok(kept);
     }
+    // A move followed by its inverse puts the tree back where it was: two
+    // rebuilds for a sequence that scores zero, so it is not tried. The tree
+    // is restored between probes, which is why the connected pivots can be
+    // read once per pivot rather than once per direction.
     let second = connected(&search.tdd.vtree, v);
     for &k1 in &KINDS {
+        let first = RotationMove { pivot: v, kind: k1 };
         for &p2 in &second {
+            let third = (config.neighborhood == Neighborhood::Triple)
+                .then(|| connected(&search.tdd.vtree, p2));
             for &k2 in &KINDS {
-                let pair =
-                    [RotationMove { pivot: v, kind: k1 }, RotationMove { pivot: p2, kind: k2 }];
+                let next = RotationMove { pivot: p2, kind: k2 };
+                if next == first.inverse() {
+                    continue;
+                }
+                let pair = [first, next];
                 if try_sequence(eng, search, &pair, rule, scratch, config)? {
                     return Ok(1);
                 }
-                if config.neighborhood != Neighborhood::Triple {
-                    continue;
-                }
-                for &p3 in &connected(&search.tdd.vtree, p2) {
+                let Some(third) = &third else { continue };
+                for &p3 in third {
                     for &k3 in &KINDS {
-                        let triple = [pair[0], pair[1], RotationMove { pivot: p3, kind: k3 }];
+                        let last = RotationMove { pivot: p3, kind: k3 };
+                        if last == next.inverse() {
+                            continue;
+                        }
+                        let triple = [first, next, last];
                         if try_sequence(eng, search, &triple, rule, scratch, config)? {
                             return Ok(1);
                         }
@@ -252,19 +264,23 @@ fn try_sequence<O: RotationObjective, A: AcceptancePolicy>(
     Ok(kept)
 }
 
-/// The pivots a sequence may continue at: the one it just turned, its parent,
-/// and its two children. A pivot that is no longer internal when the sequence
-/// reaches it simply abandons that sequence.
+/// The pivots a sequence may continue at after turning the internal node
+/// `v`: `v` itself, its parent, and whichever of its children are internal.
+/// A leaf is never a pivot and no rotation makes one internal, so a leaf
+/// child is left out here rather than found out after the first move's
+/// rebuild. A pivot that is no longer internal when the sequence reaches it
+/// simply abandons that sequence.
 fn connected(vtree: &Vtree, v: VtreeIdx) -> SmallVec<[VtreeIdx; 4]> {
     let mut out: SmallVec<[VtreeIdx; 4]> = SmallVec::new();
     out.push(v);
     if let Some(parent) = vtree.node(v).parent() {
         out.push(parent);
     }
-    if !vtree.node(v).is_leaf() {
-        let (left, right) = vtree.children(v);
-        out.push(left);
-        out.push(right);
+    let (left, right) = vtree.children(v);
+    for child in [left, right] {
+        if !vtree.node(child).is_leaf() {
+            out.push(child);
+        }
     }
     out
 }
