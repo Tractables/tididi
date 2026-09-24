@@ -109,8 +109,8 @@ impl<'a> Reduction<'a> {
     /// Slot compaction reports value merges at marginal levels. They may
     /// make their parents' nodes equal, so include those boundaries in a rescan.
     fn compact_for_rescan(&mut self) {
-        let effects = prune_value_slots(self.eng, self.tdd);
-        self.tdd.dirty.requeue(Pass::ContentTwin, effects.value_merged_levels);
+        let merged = prune_value_slots(self.eng, self.tdd);
+        self.tdd.dirty.requeue(Pass::ContentTwin, merged);
     }
 
     /// Each productive round removes at least one node. Its rewrites mark the

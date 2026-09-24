@@ -39,7 +39,7 @@ fn weighted_prune_merges_equal_value_slots() {
     let mut tdd = toy_weighted(ws, vec![r(3, 7), r(3, 7)], &[&[(0, 0)], &[(0, 1)]]);
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
     let slots_before = tdd.weights().unwrap().level(v.idx()).unwrap().len();
-    let stats = prune_value_slots(eng, &mut tdd);
+    let merged = prune_value_slots(eng, &mut tdd);
 
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
     let width = tdd.levels[v.idx()].weight_width();
@@ -50,8 +50,7 @@ fn weighted_prune_merges_equal_value_slots() {
     assert_eq!(new_vals[0], r(3, 7), "survivor keeps the value");
     assert_eq!(width, 1, "weight_width must be SET to the new width");
     assert_eq!(slots_before - new_vals.len(), 1, "one duplicate slot freed");
-    assert_eq!(stats.values_merged, 1, "one value-dedup merge");
-    assert_eq!(stats.value_merged_levels, vec![v.0], "merged level reported for twin-scan");
+    assert_eq!(merged, vec![v.0], "merged level reported for twin-scan");
     assert_eq!(refs, vec![0], "both parent refs remap to the merged slot 0");
 }
 
@@ -74,7 +73,7 @@ fn weighted_prune_compacts_orphans() {
     let mut tdd = toy_weighted(ws, vec![r(1, 1), r(2, 1), r(3, 1)], &[&[(0, 1)]]);
     let (v, parent, side) = boundary_marginal_levels(&tdd)[0];
     let slots_before = tdd.weights().unwrap().level(v.idx()).unwrap().len();
-    let stats = prune_value_slots(eng, &mut tdd);
+    let merged = prune_value_slots(eng, &mut tdd);
 
     let new_vals = exact_vals(tdd.weights().unwrap().level(v.idx()).unwrap());
     let width = tdd.levels[v.idx()].weight_width();
@@ -84,7 +83,7 @@ fn weighted_prune_compacts_orphans() {
     assert_eq!(new_vals, vec![r(2, 1)], "only the referenced slot's value survives");
     assert_eq!(width, 1, "weight_width SET to compacted width");
     assert_eq!(slots_before - new_vals.len(), 2, "two orphan slots freed");
-    assert_eq!(stats.values_merged, 0, "no value-dedup (all distinct)");
+    assert!(merged.is_empty(), "no value-dedup (all distinct)");
     assert_eq!(refs, vec![0], "parent ref remapped to compacted slot 0");
 }
 
