@@ -189,8 +189,10 @@ impl AcceptancePolicy for Tabu {
 /// own generator, so a given `seed` gives the same search every time.
 ///
 /// The search stops once `t` is cold enough that no uphill step is realistic
-/// and a sweep keeps nothing, and rewinds to the best diagram it passed
-/// through.
+/// and a sweep improves nothing, and rewinds to the best diagram it passed
+/// through. A sequence that costs nothing is always kept, so a sweep that
+/// keeps something is not by itself a reason to go on: a diagram with free
+/// variables has such sequences at every temperature.
 #[derive(Debug)]
 pub struct Annealing {
     /// The temperature the search starts at. The default is 4.
@@ -199,6 +201,8 @@ pub struct Annealing {
     /// 0.5.
     pub cooling: f64,
     temperature: f64,
+    /// Whether the sweep now running kept a strictly improving sequence.
+    improved: bool,
     rng: Lcg,
 }
 
@@ -210,7 +214,7 @@ impl Annealing {
     /// An annealing policy with the given seed, start temperature and cooling
     /// factor.
     pub fn new(seed: u64, start: f64, cooling: f64) -> Annealing {
-        Annealing { start, cooling, temperature: start, rng: Lcg::new(seed) }
+        Annealing { start, cooling, temperature: start, improved: false, rng: Lcg::new(seed) }
     }
 }
 
@@ -235,9 +239,16 @@ impl AcceptancePolicy for Annealing {
         draw < probability
     }
 
-    fn keep_sweeping(&mut self, _stats: &RotationSearchStats, accepted: usize) -> bool {
+    fn observe(&mut self, _probe: &RotationProbe<'_>, delta: i64, kept: bool) {
+        if kept && delta < 0 {
+            self.improved = true;
+        }
+    }
+
+    fn keep_sweeping(&mut self, _stats: &RotationSearchStats, _accepted: usize) -> bool {
         self.temperature *= self.cooling;
-        self.temperature >= COLD || accepted > 0
+        let improved = std::mem::take(&mut self.improved);
+        self.temperature >= COLD || improved
     }
 
     fn may_worsen(&self) -> bool {
