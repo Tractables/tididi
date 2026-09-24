@@ -42,6 +42,13 @@ pub enum EmbedError {
         /// The source vtree node the destination stopped matching at.
         source: VtreeIdx,
     },
+    /// The diagram's stored values cannot be interpreted in the destination:
+    /// a weight-marginal level without a destination store, or a destination
+    /// table that disagrees with the diagram's under the renaming.
+    SourceWeights(TddBuildError),
+    /// The destination weight table does not cover the result's variables or
+    /// columns.
+    DestinationWeights(TddBuildError),
     /// An operation the copy runs was refused: a source that has discarded
     /// the structure at a level, a refused allocation, or an armed stop.
     Operation(OperationError),
@@ -53,6 +60,8 @@ impl std::fmt::Display for EmbedError {
             Self::Vtree(error) => write!(f, "embedding: {error}"),
             Self::VariableOutOfRange { variable, num_vars } => write!(f, "renamed variable {} is outside the variables 1 to {num_vars}", variable.0),
             Self::NotIsomorphic { source } => write!(f, "the destination vtree does not contain the source vtree's shape at node {}", source.idx()),
+            Self::SourceWeights(error) => write!(f, "embedded diagram: {error}"),
+            Self::DestinationWeights(error) => write!(f, "embedding destination: {error}"),
             Self::Operation(error) => write!(f, "copying the diagram: {error}"),
         }
     }
@@ -62,6 +71,7 @@ impl std::error::Error for EmbedError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Vtree(error) => Some(error),
+            Self::SourceWeights(error) | Self::DestinationWeights(error) => Some(error),
             Self::Operation(error) => Some(error),
             Self::VariableOutOfRange { .. } | Self::NotIsomorphic { .. } => None,
         }

@@ -159,7 +159,12 @@ Embedding assembles through `restructure::placement::CopyPlacement` and
 grafting through `MovePlacement`; both own destination levels and weights,
 preserve local indices during transfer, and repair references introduced by
 new joins. Shape and weight
-compatibility checks remain in the respective operations.
+compatibility checks remain in the respective operations. `Engine::embed_over`
+moves weight-marginal levels with their values through `MovePlacement`: a
+free variable under such a level's image scales its values by the variable's
+weight of `true`, an internal level the destination adds under it is marginal
+without values, and a pass-through placed over a marginal child finishes with
+a contraction, since its nodes are told apart by value slots alone.
 
 `reduce::driver` owns pass ordering, content-twin rescan policy and marginal
 boundary cleanup. Kernels report leaf rewrites, merged nodes and merged value
