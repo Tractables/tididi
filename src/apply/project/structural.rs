@@ -66,7 +66,7 @@ impl<T: Copy> Runs<T> {
         entries: &[(u32, T)],
         zero: T,
     ) -> Result<Runs<T>, OperationError> {
-        u32::try_from(entries.len()).map_err(|_| OperationError::OverBudget)?;
+        u32::try_from(entries.len()).map_err(|_| OperationError::IndexOverflow)?;
         let mut starts = Vec::new();
         lim.try_resize(&mut starts, keys + 1, 0u32)?;
         for &(key, _) in entries {
@@ -93,7 +93,7 @@ impl<T: Copy> Runs<T> {
     fn all_to_first(lim: &crate::limits::Limits, keys: usize, zero: T) -> Result<Runs<T>, OperationError> {
         let mut starts = Vec::new();
         lim.reserve_exact(&mut starts, keys + 1)?;
-        starts.extend(0..=u32::try_from(keys).map_err(|_| OperationError::OverBudget)?);
+        starts.extend(0..=u32::try_from(keys).map_err(|_| OperationError::IndexOverflow)?);
         let mut items = Vec::new();
         lim.try_resize(&mut items, keys, zero)?;
         Ok(Runs { starts, items })
@@ -343,25 +343,24 @@ fn free_subtree_level(
     Runs::all_to_first(lim, n_nodes, 0u32).map(Some)
 }
 
-/// The pairs of the result's single output node: the deduped union of the root
-/// cells the old output fanned out into.
+/// The pairs of the result's single output node: the union of the root cells
+/// the old output fanned out into.
 ///
 /// The cells are mutex among themselves and each is a valid
 /// deterministic/decomposable pair list, so their union is a sound single root
-/// node. The other (unreferenced) root cells are dropped by `minimize`'s prune.
+/// node with no repeated pair. The other (unreferenced) root cells are dropped
+/// by `minimize`'s prune.
 fn union_of_root_cells(work: &mut Rewrite<'_>, tdd: &Tdd, root_vi: VtreeIdx, out_cells: &[u32]) -> Result<Vec<ChildPair>, OperationError> {
     let level = &tdd.levels[root_vi.idx()];
     let mut out_pairs: Vec<ChildPair> = Vec::new();
     for &k in out_cells {
-        // Copy the cell's pairs; the cells are mutually exclusive, so the one
-        // dedup below is all the union needs.
         for pair in level.pairs_iter_of_idx(k as usize) {
             work.poll()?;
             work.eng.limits().try_push(&mut out_pairs, pair)?;
         }
     }
     sort_pairs(&mut out_pairs);
-    out_pairs.dedup();
+    debug_assert!(out_pairs.windows(2).all(|w| w[0] != w[1]), "root cells share a pair");
     Ok(out_pairs)
 }
 
@@ -424,14 +423,13 @@ fn regroup(
     let mut atom_index: FxHashMap<(u32, u32), u32> = FxHashMap::default();
     lim.reserve_map(&mut atom_index, level.live_pairs())?;
     let mut atoms: Vec<(u32, u32)> = Vec::new();
-    let mut owner_count: Vec<u32> = Vec::new();
     let mut last_owner: Vec<u32> = Vec::new();
     let mut entries: Vec<(u32, u32)> = Vec::new();
     let (mut kept_left, mut kept_right) = (0u32, 0u32);
 
     for i in 0..n_nodes {
         work.poll()?;
-        let owner = u32::try_from(i).map_err(|_| OperationError::OverBudget)?;
+        let owner = u32::try_from(i).map_err(|_| OperationError::IndexOverflow)?;
         for p in level.pairs_of_idx(i) {
             work.poll()?;
             let lefts = expand(left_remap, &mut kept_left, p.left);
@@ -443,18 +441,16 @@ fn regroup(
                     let atom = match atom_index.get(&key) {
                         Some(&atom) => atom,
                         None => {
-                            let atom = u32::try_from(atoms.len()).map_err(|_| OperationError::OverBudget)?;
+                            let atom = u32::try_from(atoms.len()).map_err(|_| OperationError::IndexOverflow)?;
                             lim.reserve_map(&mut atom_index, 1)?;
                             atom_index.insert(key, atom);
                             lim.try_push(&mut atoms, key)?;
-                            lim.try_push(&mut owner_count, 0)?;
                             lim.try_push(&mut last_owner, u32::MAX)?;
                             atom
                         }
                     };
                     if last_owner[atom as usize] != owner {
                         last_owner[atom as usize] = owner;
-                        owner_count[atom as usize] += 1;
                         lim.try_push(&mut entries, (atom, owner))?;
                     }
                 }
@@ -465,31 +461,10 @@ fn regroup(
     lim.discard(atom_index);
     lim.discard(last_owner);
 
-    // Owner sets, packed one run per atom: the entries were produced in
-    // increasing owner order, so scattering them by atom keeps each run sorted.
-    let mut starts = Vec::new();
-    lim.reserve_exact(&mut starts, atoms.len() + 1)?;
-    let mut total = 0u32;
-    for &count in &owner_count {
-        starts.push(total);
-        total += count;
-    }
-    starts.push(total);
-    let mut cursor = Vec::new();
-    lim.reserve_exact(&mut cursor, atoms.len())?;
-    cursor.extend_from_slice(&starts[..atoms.len()]);
-    let mut owners = Vec::new();
-    lim.try_resize(&mut owners, entries.len(), 0u32)?;
-    for &(atom, owner) in &entries {
-        work.poll()?;
-        let slot = &mut cursor[atom as usize];
-        owners[*slot as usize] = owner;
-        *slot += 1;
-    }
-
+    // Owner sets, one run per atom: the entries were produced in increasing
+    // owner order, and the stable scatter keeps each run sorted.
+    let owners = Runs::pack(lim, atoms.len(), &entries, 0u32)?;
     lim.discard(entries);
-    lim.discard(cursor);
-    lim.discard(owner_count);
 
     // Group atoms by owner set → one new cell per distinct owner set, found by
     // hashing the run and comparing it against the cells that hash alike.
@@ -502,22 +477,21 @@ fn regroup(
 
     for (atom, &(left, right)) in atoms.iter().enumerate() {
         work.poll()?;
-        let run = |atom: usize| starts[atom] as usize..starts[atom + 1] as usize;
-        let mine = run(atom);
-        let digest = owner_set_hash(&owners[mine.clone()]);
+        let mine = owners.get(atom);
+        let digest = owner_set_hash(mine);
         lim.reserve_map(&mut by_hash, 1)?;
         let candidates = by_hash.entry(digest).or_default();
         let found = candidates.iter().copied()
-            .find(|&idx| owners[run(cell_atom[idx as usize] as usize)] == owners[mine.clone()]);
+            .find(|&idx| owners.get(cell_atom[idx as usize] as usize) == mine);
         let new_cell = match found {
             Some(idx) => idx,
             None => {
                 let new_cell = n_cells;
-                if new_cell == u32::MAX { return Err(OperationError::OverBudget); }
+                if new_cell == u32::MAX { return Err(OperationError::IndexOverflow); }
                 n_cells += 1;
                 lim.try_push(candidates, new_cell)?;
-                lim.try_push(&mut cell_atom, u32::try_from(atom).map_err(|_| OperationError::OverBudget)?)?;
-                for &owner in &owners[mine] {
+                lim.try_push(&mut cell_atom, u32::try_from(atom).map_err(|_| OperationError::IndexOverflow)?)?;
+                for &owner in mine {
                     work.poll()?;
                     lim.try_push(&mut fanout, (owner, new_cell))?;
                 }
@@ -537,7 +511,6 @@ fn regroup(
     let unchanged = n_cells as usize == n_nodes && fanout.len() == n_nodes;
 
     lim.discard(atoms);
-    lim.discard(starts);
     lim.discard(owners);
     lim.discard(cell_atom);
     for candidates in by_hash.values_mut() { lim.discard(std::mem::take(candidates)); }
@@ -564,28 +537,13 @@ fn write_level(work: &mut Rewrite<'_>, tdd: &mut Tdd, parent: VtreeIdx, new_node
         work.poll()?;
         let pairs = new_nodes.get_mut(cell);
         sort_pairs(pairs);
-        let kept = dedup_sorted(pairs);
-        level.push_node(work.eng.limits(), &pairs[..kept])?;
+        debug_assert!(pairs.windows(2).all(|w| w[0] != w[1]), "a regrouped cell repeats a pair");
+        level.push_node(work.eng.limits(), pairs)?;
         work.emitted += 1;
         work.eng.limits().level_done(work.emitted)?;
     }
     tdd.try_invalidate(work.eng, parent)?;
     Ok(())
-}
-
-/// Drop the repeats from a sorted slice in place, returning how many entries
-/// are kept — `Vec::dedup` for a slice. The regroup builds pair lists that are
-/// already distinct by construction, so this is a guard, not a pass that
-/// normally removes anything.
-fn dedup_sorted(pairs: &mut [ChildPair]) -> usize {
-    let mut kept = 0usize;
-    for i in 0..pairs.len() {
-        if kept == 0 || pairs[i] != pairs[kept - 1] {
-            pairs[kept] = pairs[i];
-            kept += 1;
-        }
-    }
-    kept
 }
 
 /// Hash one atom's owner run, so runs are compared only against those that
