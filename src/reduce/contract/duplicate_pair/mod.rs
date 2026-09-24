@@ -26,9 +26,8 @@ use crate::Engine;
 use super::scratch::DuplicateScratch;
 use crate::limits::{Limits, OperationError};
 
-#[path = "duplicate_pair_scale.rs"]
-mod duplicate_pair_scale;
-use duplicate_pair_scale::{has_o1_absorber, scale_pair_one_side};
+mod scale;
+use scale::{has_o1_absorber, scale_pair_one_side};
 use crate::vtree::VtreeIdx;
 
 /// `has_marginal_below[v]` — v's vtree subtree (including v itself) contains a

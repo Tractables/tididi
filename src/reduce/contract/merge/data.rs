@@ -13,7 +13,7 @@ use super::super::scratch::{DuplicateScratch, MergeRemap};
 /// path. Fork-down runs after compaction so survivor indices are final; it
 /// folds a run of k equal pairs into one pair with its marginal side scaled by
 /// k only where t1 has a marginal child, and otherwise leaves the run (see the
-/// module doc of `duplicate_pair_resolve`).
+/// module doc of `duplicate_pair`).
 pub(super) fn compact_and_fork_down(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -46,7 +46,7 @@ pub(super) fn compact_and_fork_down(
     // One scratch for the whole loop, cleared per node inside the callee.
     for &old_keep in resolve_keeps {
         let new_idx = remap.final_remap[old_keep as usize].idx();
-        super::super::duplicate_pair_resolve::resolve_duplicate_pairs_in_node(eng, tdd, t1, new_idx, duplicate)?;
+        super::super::duplicate_pair::resolve_duplicate_pairs_in_node(eng, tdd, t1, new_idx, duplicate)?;
     }
     Ok(())
 }
@@ -126,7 +126,7 @@ pub(super) fn concat_twin_pairs(
     // diagram is marginal (every count consumer folds `Σ_pairs c(l)·c(r)`,
     // and the content-twin merge can leave a plain-level node holding the
     // same pair twice), and where `allow_dups` says the caller resolves the
-    // duplicates right after compaction (`duplicate_pair_resolve`).
+    // duplicates right after compaction (`duplicate_pair`).
     if cfg!(debug_assertions) && !allow_dups && !diagram_marginal && !level.any_value_ref_side() {
         let mut chk = level.pairs[new_start..].to_vec();
         chk.sort_unstable();

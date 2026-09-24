@@ -11,7 +11,7 @@ use crate::vtree::VtreeIdx;
 use super::sweep::contract_all_twins;
 
 /// Directed fixture for duplicate-pair resolution by fork-down scaling
-/// (`duplicate_pair_resolve`): content-equal context-twins at a PLAIN level whose merge
+/// (`duplicate_pair`): content-equal context-twins at a PLAIN level whose merge
 /// mints a duplicate pair, resolved by scaling the marginal-carrying child.
 ///
 /// Fixture (`boundary_internal_marginal_vtree`), left spine root → gp → bp:
@@ -448,7 +448,7 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
 
     // PANICS without the leaf branch (counts[label] on empty leaf store).
     let changed =
-        super::duplicate_pair_resolve::resolve_duplicate_pairs_in_node(&eng, &mut tdd, bp, 0, &mut scratch)
+        super::duplicate_pair::resolve_duplicate_pairs_in_node(&eng, &mut tdd, bp, 0, &mut scratch)
             .expect("resolve must not error");
     assert!(changed, "duplicate pair must be resolved");
 
@@ -485,7 +485,7 @@ fn b4_fork_down_leaf_inline_overflow_keeps_run() {
 
     let mut scratch = super::scratch::DuplicateScratch::default();
     let changed =
-        super::duplicate_pair_resolve::resolve_duplicate_pairs_in_node(&eng, &mut tdd, bp, 0, &mut scratch)
+        super::duplicate_pair::resolve_duplicate_pairs_in_node(&eng, &mut tdd, bp, 0, &mut scratch)
             .expect("keeping the run is not an error");
     assert!(!changed, "nothing can absorb the factor — the run must be kept as-is");
 

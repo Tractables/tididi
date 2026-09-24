@@ -141,7 +141,7 @@ pub fn toy_weighted(
 /// so the marginal-carrying level `m` sits at an internal vtree node: an integer
 /// marginal leaf keeps an empty store (bare refs are leaf labels, decoded by
 /// `read_marginal_count`), so it is not a legal fork-down scale target
-/// (`scale_leaf_marginal_label` in `reduce/contract/duplicate_pair_scale.rs`).
+/// (`scale_leaf_marginal_label` in `reduce/contract/duplicate_pair/scale.rs`).
 /// Shape (left spine root → gp → bp; each 2-leaf subtree on the right):
 ///   root → (gp, σ);  gp → (bp, s);  bp → (x, a leaf; m, internal);
 ///   m → (m_l, m_r);  s → (s_l, s_r);  σ → (sig_l, sig_r).

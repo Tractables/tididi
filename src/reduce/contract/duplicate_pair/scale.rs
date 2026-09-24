@@ -135,7 +135,7 @@ pub(super) struct ScaledPair {
 ///
 /// Either side would be sound, `k·(L⊗R) = L⊗(k·R) = (k·L)⊗R`, and so would not
 /// scaling at all; only a marginal child is cheap, since the factor multiplies
-/// one count (the cost policy in the module doc of `duplicate_pair_resolve`).
+/// one count (the cost policy in the module doc of `duplicate_pair`).
 /// So only marginal sides are considered, the right one first when both are.
 pub(super) fn scale_pair_one_side(
     eng: &Engine,

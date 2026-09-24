@@ -66,7 +66,7 @@ fn contract_child(
     // sweep. See `ContractScratch::has_marginal_below_valid` for why one fill covers
     // the rest of the checkout.
     if !scratch.has_marginal_below_valid {
-        super::duplicate_pair_resolve::compute_has_marginal_below_into(
+        super::duplicate_pair::compute_has_marginal_below_into(
             eng.limits(),
             tdd,
             &mut scratch.has_marginal_below,

@@ -61,7 +61,7 @@ impl MergePolicy {
         // When a child side of t1 has marginalization below it, overlapping
         // twins concat-merge unconditionally and `compact_and_fork_down` folds
         // the resulting duplicate pairs where it can; see the module doc of
-        // `duplicate_pair_resolve`. False unless `plain_level`.
+        // `duplicate_pair`. False unless `plain_level`.
         let t1_scalable = if plain_level {
             let (t1_l, t1_r) = tdd.vtree.children(t1);
             has_marginal_below.get(t1_l.idx()).copied().unwrap_or(false)
@@ -139,7 +139,7 @@ pub(super) fn plan_groups(
             // Concat every member, overlapping or not: at a marginal-flagged
             // level duplicate pairs are legal multiset entries, and on the
             // scalable plain path fork-down resolves them right after
-            // compaction (`duplicate_pair_resolve`).
+            // compaction (`duplicate_pair`).
             let sel_start = sel.len();
             sel.extend_from_slice(group);
             group_plans.push(GroupPlan {

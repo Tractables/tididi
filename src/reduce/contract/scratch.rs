@@ -144,7 +144,7 @@ impl MergeBuffers {
     }
 }
 
-/// Per-node working buffers of `duplicate_pair_resolve::resolve_duplicate_pairs_in_node`,
+/// Per-node working buffers of `duplicate_pair::resolve_duplicate_pairs_in_node`,
 /// held in `ContractScratch` and handed down by `&mut` from the fork-down loop,
 /// cleared per node inside the callee.
 #[derive(Default)]
@@ -246,7 +246,7 @@ pub(crate) struct ContractScratch {
     /// Twin survivor selection and compacted node indices.
     pub(super) remap: MergeRemap,
     /// `has_marginal_below[v]` for every vtree node — computed at most once per
-    /// scratch checkout (see `duplicate_pair_resolve::compute_has_marginal_below_into`). Drives
+    /// scratch checkout (see `duplicate_pair::compute_has_marginal_below_into`). Drives
     /// the concat-then-fork-down path for overlapping twins at plain levels.
     pub(super) has_marginal_below: Vec<bool>,
     /// Is [`has_marginal_below`](Self::has_marginal_below) filled for the diagram
