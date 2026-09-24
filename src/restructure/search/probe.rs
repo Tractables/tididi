@@ -128,8 +128,7 @@ impl RotationProbe<'_> {
 
 /// What a caller of [`probe_moves`] adds to the shared protocol.
 ///
-/// The search supplies admission, size bounds, the decision and an
-/// accepted-rotation callback.
+/// The search supplies admission, size bounds and the decision.
 pub(super) trait ProbeRule {
     /// A last gate before the expensive restructure, read on the rotated vtree
     /// with the levels still untouched. `false` reverts the pointers and
@@ -146,18 +145,6 @@ pub(super) trait ProbeRule {
     /// Keep this sequence? `probe` shows the levels it rebuilt, and `info`
     /// is the last move's rotation information.
     fn keeps(&mut self, probe: &RotationProbe<'_>, info: &RotationInfo) -> bool;
-
-    /// Run after the rotation is committed. Its `Err` propagates with the
-    /// rotation kept: what it leaves unfinished is an optimization, never the
-    /// diagram's correctness.
-    fn on_accept(
-        &mut self,
-        _eng: &Engine,
-        _tdd: &mut Tdd,
-        _info: &RotationInfo,
-    ) -> Result<(), OperationError> {
-        Ok(())
-    }
 }
 
 impl Tdd {
@@ -273,8 +260,7 @@ pub(super) fn probe<R: ProbeRule>(
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] from a refused rebuild, with the diagram at
-/// its pre-probe state, or whatever [`ProbeRule::on_accept`] returns, with the
-/// sequence kept.
+/// its pre-probe state.
 pub(super) fn probe_moves<R: ProbeRule>(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -317,11 +303,8 @@ pub(super) fn probe_moves<R: ProbeRule>(
     );
     if keep {
         trial.commit();
-        rule.on_accept(eng, tdd, &info)?;
-        Ok(true)
-    } else {
-        Ok(false)
     }
+    Ok(keep)
 }
 
 /// Own a sequence's preimage until its topology and levels are committed together.
@@ -394,7 +377,7 @@ impl<'a> RotationTrial<'a> {
         self.pending.last().expect("a scored trial has applied a move").info()
     }
 
-    /// Repair topology and release the preimage before any accepted-rotation callback.
+    /// Repair topology and release the preimage.
     fn commit(mut self) {
         self.committed = true;
         // Dropping the preimages hands their charge back, and the rebuild

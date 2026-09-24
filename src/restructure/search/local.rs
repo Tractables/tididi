@@ -94,7 +94,7 @@ impl Default for RotationSearchConfig {
 }
 
 /// Work performed by [`Tdd::rotation_search`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct RotationSearchStats {
     /// Sequences the objective scored: those that applied, rebuilt their
@@ -137,9 +137,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective, A: AcceptancePolicy>(
         });
     }
     let _op = eng.limits().begin_operation();
-    let mut stats = RotationSearchStats { probes: 0, accepts: 0, sweeps: 0 };
-    let logging = policy.may_worsen();
-    let mut rule = Policed { objective, policy, probed: 0, accepts: 0, log: Vec::new(), logging };
+    let mut rule = Policed { objective, policy, stats: RotationSearchStats::default(), log: Vec::new() };
     let mut scratch = eng.restructure().checkout(eng.limits());
 
     // Rotation-locality precondition: the locality assertion and the level
@@ -154,10 +152,10 @@ pub(crate) fn rotation_search_on<O: RotationObjective, A: AcceptancePolicy>(
     let mut search = super::SearchTree::new(tdd);
     loop {
         if let Some(cap) = config.max_sweeps
-            && stats.sweeps >= cap {
+            && rule.stats.sweeps >= cap {
                 break;
             }
-        stats.sweeps += 1;
+        rule.stats.sweeps += 1;
 
         // Unevaluated snapshot of the internal nodes each sweep: an accept relabels
         // parent/child relations, so re-collecting keeps the walk honest (a stale
@@ -175,14 +173,11 @@ pub(crate) fn rotation_search_on<O: RotationObjective, A: AcceptancePolicy>(
             let kept = sweep_pivot(eng, &mut search, v, &mut rule, &mut scratch, config)?;
             accepted_this_sweep += kept;
         }
-        if !rule.policy.keep_sweeping(&stats, accepted_this_sweep) {
+        if !rule.policy.keep_sweeping(&rule.stats, accepted_this_sweep) {
             break;
         }
     }
-    stats.probes = rule.probes();
-    stats.accepts = rule.accepts;
-    let log = std::mem::take(&mut rule.log);
-    drop(rule);
+    let Policed { stats, log, .. } = rule;
     rewind_to_best(eng, search.tdd, &log, &mut scratch)?;
     Ok(stats)
 }
@@ -333,43 +328,28 @@ impl ProbeRule for Forced {
 struct Policed<'a, O, A> {
     objective: &'a mut O,
     policy: &'a mut A,
-    probed: usize,
-    accepts: usize,
+    /// The probes and accepts so far, and the sweeps the search loop counts.
+    stats: RotationSearchStats,
     /// Every kept sequence and its score, for the rewind. Empty unless the
     /// policy may keep a worsening sequence.
     log: Vec<(SmallVec<[RotationMove; MAX_SEQUENCE]>, i64)>,
-    logging: bool,
-}
-
-impl<O, A> Policed<'_, O, A> {
-    /// Sequences the objective scored, which is what
-    /// [`RotationSearchStats::probes`] counts.
-    fn probes(&self) -> usize {
-        self.probed
-    }
 }
 
 impl<O: RotationObjective, A: AcceptancePolicy> ProbeRule for Policed<'_, O, A> {
     #[inline]
     fn keeps(&mut self, probe: &RotationProbe<'_>, _info: &RotationInfo) -> bool {
-        self.probed += 1;
+        self.stats.probes += 1;
         let delta = self.objective.delta(probe);
         let kept = self.policy.accept(probe, delta);
         self.policy.observe(probe, delta, kept);
-        if kept && self.logging {
-            self.log.push((SmallVec::from_slice(probe.moves()), delta));
+        if kept {
+            // A kept sequence commits without fail, so this is the accept count.
+            self.stats.accepts += 1;
+            if self.policy.may_worsen() {
+                self.log.push((SmallVec::from_slice(probe.moves()), delta));
+            }
         }
         kept
-    }
-
-    fn on_accept(
-        &mut self,
-        _eng: &Engine,
-        _tdd: &mut Tdd,
-        _info: &RotationInfo,
-    ) -> Result<(), OperationError> {
-        self.accepts += 1;
-        Ok(())
     }
 }
 

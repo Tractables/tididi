@@ -55,33 +55,3 @@ fn a_rejected_rotation_preserves_the_shared_vtree_and_worklists() {
     assert!(Arc::ptr_eq(f.vtree(), &vtree));
     assert_canonical(&f);
 }
-
-struct AcceptThenFail(bool);
-
-impl ProbeRule for AcceptThenFail {
-    fn keeps(&mut self, _: &RotationProbe<'_>, _: &crate::vtree::rotate::RotationInfo) -> bool { true }
-
-    fn on_accept(&mut self, _: &Engine, _: &mut Tdd, _: &crate::vtree::rotate::RotationInfo) -> Result<(), crate::OperationError> {
-        if self.0 { panic!("accepted callback failed"); }
-        Err(crate::OperationError::Stopped)
-    }
-}
-
-#[test]
-fn acceptance_is_committed_before_a_failing_callback() {
-    for panic in [false, true] {
-        let eng = Engine::new();
-        let tree = Arc::new(Vtree::balanced(4));
-        let mut f = Tdd::clause(&tree, [1, 2]).unwrap() & Tdd::clause(&tree, [3, 4]).unwrap();
-        assert_canonical(&f);
-        let count = f.model_count().unwrap();
-        let result = catch_unwind(AssertUnwindSafe(|| {
-            probe(&eng, &mut f, tree.root(), RotationKind::Left, &mut AcceptThenFail(panic), &mut RestructureScratch::default(), usize::MAX)
-        }));
-        if panic { assert!(result.is_err()); }
-        else { assert!(matches!(result, Ok(Err(crate::OperationError::Stopped)))); }
-        assert_ne!(f.vtree().to_text(), tree.to_text());
-        assert_eq!(f.model_count().unwrap(), count);
-        assert_canonical(&f);
-    }
-}
