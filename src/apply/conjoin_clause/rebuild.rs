@@ -69,11 +69,18 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
         level.pairs.push(pair);
         sort_pairs(&mut level.pairs[ct_start..]);
     }
-    emit_clause_node_direct(level, ct_start, tables.cd_map, 0, slot)?;
-    // The parent's both-relevant pass requires the c_t index below d_t.
-    if DT {
-        emit_clause_node(tables.dt_pairs, level, tables.cd_map, 1, slot)?;
-    }
+    let ct = emit_from(level, ct_start)?;
+    // The parent's both-relevant pass requires the c_t index below d_t. The
+    // d_t pairs fit the reservation above: at most one per input pair, which
+    // `pair_mult` counts.
+    let dt = if DT {
+        let dt_start = level.pairs.len();
+        level.pairs.extend_from_slice(tables.dt_pairs);
+        emit_from(level, dt_start)?
+    } else {
+        NO_PRODUCT
+    };
+    tables.cd_map[slot] = [ct, dt];
     Ok(())
 }
 
@@ -180,59 +187,30 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     Ok(())
 }
 
-/// If `pairs` is non-empty, emit as a new internal node in the level and
-/// record its index in `result_map[base_plus_idx]`.
+/// Emit the node whose pairs sit at `level.pairs[pair_start..]` and return
+/// its index, or [`NO_PRODUCT`] when there are none. A single pair is popped
+/// back off the arena and re-dispatched so its encoding is the inline one.
 ///
-/// `pairs` is not deduplicated: at a level whose subtree includes a marginal
-/// child the accumulator's pair list may be a multiset, two equal pairs each
-/// carrying one summed-out family's contribution, and dropping one loses count.
-fn emit_clause_node(
-    pairs: &mut [ChildPair],
-    level: &mut TddLevel,
-    result_map: &mut [[u32; 2]],
-    lane: usize,
-    base_plus_idx: usize,
-) -> Result<(), OperationError> {
-    if !pairs.is_empty() {
-        result_map[base_plus_idx][lane] = level.nodes.len() as u32;
-        level.push_node(&crate::diagram::Untracked, pairs)?;
-    } else {
-        // Empty c_t/d_t: no node emitted, and this is the one write of the
-        // map entry (there is no bulk `NO_PRODUCT` fill).
-        result_map[base_plus_idx][lane] = NO_PRODUCT;
-    }
-    Ok(())
-}
-
-/// `emit_clause_node` for pairs already pushed onto `level.pairs` from
-/// `pair_start` on: finalizes the node, re-dispatching a single pair through
-/// `push_node` so its encoding matches the buffered path, or
-/// writes `NO_PRODUCT` when no pairs were produced. Like `emit_clause_node`,
-/// it does not deduplicate.
-fn emit_clause_node_direct(
-    level: &mut TddLevel,
-    pair_start: usize,
-    result_map: &mut [[u32; 2]],
-    lane: usize,
-    base_plus_idx: usize,
-) -> Result<(), OperationError> {
+/// The pairs are not deduplicated: at a level whose subtree includes a
+/// marginal child the accumulator's pair list may be a multiset, two equal
+/// pairs each carrying one summed-out family's contribution, and dropping one
+/// loses count.
+fn emit_from(level: &mut TddLevel, pair_start: usize) -> Result<u32, OperationError> {
     let pair_len = level.pairs.len() - pair_start;
     if pair_len == 0 {
-        result_map[base_plus_idx][lane] = NO_PRODUCT;
-    } else if pair_len == 1 {
-        // Single pair: pop it back off the arena and re-dispatch so the
-        // inline encoding (no arena slot) is preserved exactly.
+        return Ok(NO_PRODUCT);
+    }
+    let idx = level.nodes.len() as u32;
+    if pair_len == 1 {
         let pair = level.pairs[pair_start];
         level.pairs.truncate(pair_start);
-        result_map[base_plus_idx][lane] = level.nodes.len() as u32;
         level.push_node(&crate::diagram::Untracked, &[pair])?;
     } else {
         // `try_push_multi_by_range` requires `pair_len >= 2`, which the arm
         // above guarantees.
-        result_map[base_plus_idx][lane] = level.nodes.len() as u32;
         level
             .try_push_multi_by_range(pair_start, pair_len)
             .map_err(|_| OperationError::OverBudget)?;
     }
-    Ok(())
+    Ok(idx)
 }
