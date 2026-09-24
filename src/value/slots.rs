@@ -423,20 +423,21 @@ pub(crate) struct RefSlotScratch {
 }
 
 impl RefSlotScratch {
-    pub(crate) fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::capacity_bytes;
-        [capacity_bytes(&self.referenced), capacity_bytes(&self.seen)].into_iter().sum()
-    }
-
     /// Empty both buffers, retaining their allocations.
     pub(crate) fn clear(&mut self) {
         self.referenced.clear();
         self.seen.clear();
     }
+}
 
-    /// Drop the allocation of either buffer whose retained capacity exceeds
-    /// the scratch-retention cap; each buffer is judged on its own capacity.
-    pub(crate) fn release_oversized(&mut self, lim: &crate::limits::Limits) {
+impl crate::limits::pool::PooledScratch for RefSlotScratch {
+    fn retained_bytes(&self) -> usize {
+        use crate::limits::pool::capacity_bytes;
+        [capacity_bytes(&self.referenced), capacity_bytes(&self.seen)].into_iter().sum()
+    }
+    fn prepare(&mut self) { self.clear(); }
+    /// Each buffer is judged on its own capacity.
+    fn retain(&mut self, lim: &Limits) {
         crate::limits::pool::release_if_oversized(lim, &mut self.referenced);
         crate::limits::pool::release_if_oversized(lim, &mut self.seen);
     }

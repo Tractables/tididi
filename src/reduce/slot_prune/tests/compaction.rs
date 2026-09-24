@@ -1,6 +1,7 @@
 use crate::test_helpers::{toy, toy_weighted, BIG};
 use crate::test_helpers::check::marginal::check_slot_count_uniqueness;
 use super::*;
+use crate::value::slots::RefSlotScratch;
 
 /// Extract the exact `BigRational`s from a weighted store slice (these tests
 /// run in the default exact mode, so every value is `WeightValue::Exact`).
