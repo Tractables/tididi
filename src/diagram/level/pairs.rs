@@ -299,7 +299,7 @@ pub(crate) fn sort_pairs(pairs: &mut [ChildPair]) {
             // `left.cmp(&right) else right.cmp(...)`; the u64 form is a single
             // unsigned compare and lets the branchless partition in
             // `sort_unstable` kick in.
-            pairs.sort_unstable_by_key(|p| ((p.left.0 as u64) << 32) | (p.right.0 as u64));
+            pairs.sort_unstable_by_key(|p| p.key());
         }
     }
 }

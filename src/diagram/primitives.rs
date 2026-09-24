@@ -155,6 +155,13 @@ impl ChildPair {
     pub fn new(left: impl Into<EncodedChildRef>, right: impl Into<EncodedChildRef>) -> Self {
         Self { left: left.into(), right: right.into() }
     }
+
+    /// The pair as one word, left side high: the key the intern table hashes
+    /// and the one a pair list is sorted by, left side first.
+    #[inline]
+    pub(crate) fn key(self) -> u64 {
+        ((self.left.0 as u64) << 32) | self.right.0 as u64
+    }
 }
 
 /// Bit 31 of a node's `a` word: the node's pairs live in the level's arena.

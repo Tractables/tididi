@@ -10,10 +10,10 @@ use crate::vtree::{Vtree, VtreeIdx};
 use super::build_error::TddBuildError;
 use super::level::TddLevel;
 use super::pool::{return_levels, try_take_levels, PoolSlot};
-use super::primitives::{ChildPair, NodeIdx, TddNodeId};
+use super::primitives::{ChildPair, EncodedChildRef, NodeIdx, TddNodeId};
 use super::tdd::Tdd;
 use super::weights::WeightStore;
-use super::{ChildRef, ValueRef, LEAF_WIDTH};
+use super::{ChildDecoder, ChildRef, ValueRef, LEAF_WIDTH};
 
 /// Hash-cons tables for one level.
 ///
@@ -31,7 +31,7 @@ impl InternTable {
     /// The first node indexed under this pair list.
     fn get(&self, pairs: &[ChildPair]) -> Option<NodeIdx> {
         if let [pair] = pairs {
-            self.single.get(&(((pair.left.0 as u64) << 32) | pair.right.0 as u64)).copied()
+            self.single.get(&pair.key()).copied()
         } else {
             self.multi.get(pairs).copied()
         }
@@ -47,7 +47,7 @@ impl InternTable {
     ) -> Result<(), OperationError> {
         if let [pair] = pairs {
             lim.reserve_map(&mut self.single, 1)?;
-            self.single.entry(((pair.left.0 as u64) << 32) | pair.right.0 as u64).or_insert(index);
+            self.single.entry(pair.key()).or_insert(index);
         } else {
             lim.reserve_map(&mut self.multi, 1)?;
             self.multi.entry(pairs.into()).or_insert(index);
@@ -433,6 +433,16 @@ fn bound(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx) -> usize {
     }
 }
 
+/// Whether a pair side, read through its child level's decoder, names an
+/// entry below `bound`. An inline marginal value names no entry and is
+/// always in range.
+fn side_in_range(view: ChildDecoder, side: EncodedChildRef, bound: usize) -> bool {
+    match view.child(side) {
+        ChildRef::Value(ValueRef::Inline(_)) => true,
+        r => r.index().unwrap() < bound,
+    }
+}
+
 /// Panic if a pair pushed at level `t` names a child that does not exist, or
 /// sets the reserved bit.
 fn debug_assert_pairs(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, pairs: &[ChildPair]) {
@@ -445,12 +455,8 @@ fn debug_assert_pairs(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, pairs: &[
                 !side.is_reserved(),
                 "pair side {side:?} pushed at level {t:?} has the reserved bit set",
             );
-            let in_range = match view.child(side) {
-                ChildRef::Value(ValueRef::Inline(_)) => true,
-                r => r.index().unwrap() < b,
-            };
             debug_assert!(
-                in_range,
+                side_in_range(view, side, b),
                 "pair side {side:?} pushed at level {t:?} is past its child level's {b} entries",
             );
         }
@@ -474,8 +480,6 @@ pub(crate) fn check_levels(
     output: TddNodeId,
     weights: Option<&WeightStore>,
 ) -> Result<(), TddBuildError> {
-    use super::primitives::ZERO;
-
     let n = vtree.num_nodes();
     if levels.len() != n {
         return Err(TddBuildError::LevelCountMismatch {
@@ -488,9 +492,21 @@ pub(crate) fn check_levels(
     } else if let Some(t) = vtree.bottomup().find(|t| levels[t.idx()].is_weight_marginal()) {
         return Err(TddBuildError::WeightedLevelWithoutStore { level: t });
     }
-    // A structural leaf level stores nothing. A count-marginal one carries the
-    // pinned label column `[2, 1, 1]` or nothing at all (its parents then hold
-    // the counts inline); a weight-marginal column is checked by the store.
+    check_leaf_levels(vtree, levels)?;
+    for (t, left, right) in vtree.internal_bottomup() {
+        if levels[t.idx()].is_marginal() {
+            check_marginal_level(vtree, levels, t, left, right)?;
+        } else {
+            check_structural_level(vtree, levels, t, left, right)?;
+        }
+    }
+    check_output(vtree, levels, output)
+}
+
+/// A structural leaf level stores nothing. A count-marginal one carries the
+/// pinned label column `[2, 1, 1]` or nothing at all (its parents then hold
+/// the counts inline); a weight-marginal column is checked by the store.
+fn check_leaf_levels(vtree: &Vtree, levels: &[TddLevel]) -> Result<(), TddBuildError> {
     for (leaf, _var) in vtree.leaf_bottomup() {
         let lvl = &levels[leaf.idx()];
         let stores_structure = !lvl.nodes.is_empty() || !lvl.pairs.is_empty();
@@ -504,68 +520,62 @@ pub(crate) fn check_levels(
             return Err(TddBuildError::NonEmptyLeafLevel(leaf));
         }
     }
-    for (t, left, right) in vtree.internal_bottomup() {
-        let lvl = &levels[t.idx()];
-        if lvl.is_marginal() {
-            for child in [left, right] {
-                if !vtree.node(child).is_leaf() && !levels[child.idx()].is_marginal() {
-                    return Err(TddBuildError::MarginalNotDownwardClosed { level: t, child });
-                }
-            }
-            if let Some(counts) = lvl.marginal_counts() {
-                for (slot, &c) in counts.iter().enumerate() {
-                    let backed = lvl.marginal_counts_big().and_then(|b| b.get(slot));
-                    if c == u128::MAX && backed.is_none() {
-                        return Err(TddBuildError::OverflowWithoutValue { level: t, slot });
-                    }
-                }
-            }
-            continue;
+    Ok(())
+}
+
+/// A marginal level's children are leaves or marginal themselves, and every
+/// overflowed count has its exact value behind it.
+fn check_marginal_level(
+    vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, left: VtreeIdx, right: VtreeIdx,
+) -> Result<(), TddBuildError> {
+    let lvl = &levels[t.idx()];
+    for child in [left, right] {
+        if !vtree.node(child).is_leaf() && !levels[child.idx()].is_marginal() {
+            return Err(TddBuildError::MarginalNotDownwardClosed { level: t, child });
         }
-        let (lm, rm) = (
-            levels[left.idx()].child_decoder(),
-            levels[right.idx()].child_decoder(),
-        );
-        let (lb, rb) = (
-            bound(vtree, levels, left),
-            bound(vtree, levels, right),
-        );
-        for (i, node) in lvl.nodes.iter().enumerate() {
-            let node_idx = NodeIdx(i as u32);
-            let pairs = lvl.pairs_of(node);
-            if pairs.is_empty() {
-                return Err(TddBuildError::EmptyNode {
-                    level: t,
-                    node: node_idx,
-                });
+    }
+    if let Some(counts) = lvl.marginal_counts() {
+        for (slot, &c) in counts.iter().enumerate() {
+            let backed = lvl.marginal_counts_big().and_then(|b| b.get(slot));
+            if c == u128::MAX && backed.is_none() {
+                return Err(TddBuildError::OverflowWithoutValue { level: t, slot });
             }
-            for &pair in pairs {
-                for (side, view, b, child) in
-                    [(pair.left, lm, lb, left), (pair.right, rm, rb, right)]
-                {
-                    if side.is_reserved() {
-                        return Err(TddBuildError::ReservedBitSet {
-                            level: t,
-                            node: node_idx,
-                            pair,
-                        });
-                    }
-                    let in_range = match view.child(side) {
-                        ChildRef::Value(ValueRef::Inline(_)) => true,
-                        r => r.index().unwrap() < b,
-                    };
-                    if !in_range {
-                        return Err(TddBuildError::ChildIndexOutOfRange {
-                            level: t,
-                            node: node_idx,
-                            pair,
-                            child,
-                        });
-                    }
+        }
+    }
+    Ok(())
+}
+
+/// Every node of a structural level has a pair, and every pair side names
+/// an entry of its child level without the reserved bit.
+fn check_structural_level(
+    vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, left: VtreeIdx, right: VtreeIdx,
+) -> Result<(), TddBuildError> {
+    let lvl = &levels[t.idx()];
+    let (lm, rm) = (levels[left.idx()].child_decoder(), levels[right.idx()].child_decoder());
+    let (lb, rb) = (bound(vtree, levels, left), bound(vtree, levels, right));
+    for (i, node) in lvl.nodes.iter().enumerate() {
+        let node_idx = NodeIdx(i as u32);
+        let pairs = lvl.pairs_of(node);
+        if pairs.is_empty() {
+            return Err(TddBuildError::EmptyNode { level: t, node: node_idx });
+        }
+        for &pair in pairs {
+            for (side, view, b, child) in [(pair.left, lm, lb, left), (pair.right, rm, rb, right)] {
+                if side.is_reserved() {
+                    return Err(TddBuildError::ReservedBitSet { level: t, node: node_idx, pair });
+                }
+                if !side_in_range(view, side, b) {
+                    return Err(TddBuildError::ChildIndexOutOfRange { level: t, node: node_idx, pair, child });
                 }
             }
         }
     }
+    Ok(())
+}
+
+/// The output is a node of the root level, or `ZERO`.
+fn check_output(vtree: &Vtree, levels: &[TddLevel], output: TddNodeId) -> Result<(), TddBuildError> {
+    use super::primitives::ZERO;
     let root = vtree.root();
     if output.vtree != root || (output.local != ZERO && output.local.idx() >= bound(vtree, levels, root)) {
         return Err(TddBuildError::BadOutput(output));
