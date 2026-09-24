@@ -414,8 +414,8 @@ pub(crate) fn run_level_rows_marginal_sparse(
 /// Route B row-loop: forward pass for plain (non-marginal-child) levels.
 ///
 /// The row loop of the routes with no marginal child. Iterates rows in forward order.
-/// Runs the emit kernel with the caller's plain lookups (no pass-through, no
-/// mask decode — the caller guarantees no marginal child).
+/// Runs the emit kernel with positional grid lookups on both sides (no
+/// pass-through, no mask decode — the caller guarantees no marginal child).
 ///
 /// `DENSE = true` asserts two level-invariant facts, `cell_ctx.both_multi_pair
 /// == false` and no pass-through side, so the inner loop carries no branch on
@@ -425,14 +425,14 @@ pub(crate) fn run_level_rows_marginal_sparse(
 /// ([`run_level_rows_stream_count`]) unconditionally — there is no post-cell
 /// snapshot conversion.
 #[inline(always)]
-pub(crate) fn run_level_rows_plain<const DENSE: bool, L: ChildLookup, R: ChildLookup>(
+pub(crate) fn run_level_rows_plain<const DENSE: bool>(
     eng: &Engine,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
     level: &mut TddLevel,
-    left_lookup: &L,
-    right_lookup: &R,
 ) -> Result<(), OperationError> {
+    let left = DenseLookup { base: rows.ctx.sides.left.base, stride: rows.ctx.sides.left.stride };
+    let right = DenseLookup { base: rows.ctx.sides.right.base, stride: rows.ctx.sides.right.stride };
     // When `DENSE`, the alive masks are constants (both_multi_pair is false, no pass-through):
     //   left_alive_mask  = 0u128      (the !both_multi_pair branch of `row_alive_masks`)
     //   right_alive_mask = `u128::MAX`  (the `|| !both_multi_pair` branch of `row_alive_masks`)
@@ -442,8 +442,8 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool, L: ChildLookup, R: ChildLo
         eng,
         rows,
         scratch,
-        left_lookup,
-        right_lookup,
+        &left,
+        &right,
         &mut action,
     )
 }

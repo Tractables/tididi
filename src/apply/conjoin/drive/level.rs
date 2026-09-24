@@ -169,15 +169,6 @@ fn run_row_loop(
     stream_state: &mut Option<StreamLevelState>,
 ) -> Result<(), OperationError> {
     let cell_ctx = rows.ctx;
-    // Marginal sides are read through `MarginalLookup`, which decodes a count
-    // payload or degrades to a dense grid read; structural sides are read
-    // positionally.
-    let left_marginal = child_lookup::MarginalLookup::new(&cell_ctx.sides.left);
-    let right_marginal = child_lookup::MarginalLookup::new(&cell_ctx.sides.right);
-    let left_dense = child_lookup::DenseLookup {
-        base: cell_ctx.sides.left.base, stride: cell_ctx.sides.left.stride };
-    let right_dense = child_lookup::DenseLookup {
-        base: cell_ctx.sides.right.base, stride: cell_ctx.sides.right.stride };
 
     macro_rules! stream_rows {
         ($l:expr, $r:expr) => {
@@ -192,12 +183,7 @@ fn run_row_loop(
     }
     macro_rules! plain_rows {
         ($dense:literal) => {
-            run_level_rows_plain::<$dense, _, _>(
-                eng,
-                rows, scratch,
-                level,
-                &left_dense, &right_dense,
-            )?
+            run_level_rows_plain::<$dense>(eng, rows, scratch, level)?
         };
     }
 
@@ -205,9 +191,19 @@ fn run_row_loop(
         // A streaming marginalization target collapses to Σ left × right per cell:
         // nothing downstream survives, so build each alive cell's scalar from
         // the surviving refs and never materialize a product node. Which side
-        // carries counts is what picks the lookups.
-        Route::Stream { marginal_children: true } => stream_rows!(&left_marginal, &right_marginal),
-        Route::Stream { marginal_children: false } => stream_rows!(&left_dense, &right_dense),
+        // carries counts is what picks the lookups: a marginal side is read
+        // through `MarginalLookup`, which decodes a count payload or degrades
+        // to a dense grid read; structural sides are read positionally.
+        Route::Stream { marginal_children: true } => {
+            let left = child_lookup::MarginalLookup::new(&cell_ctx.sides.left);
+            let right = child_lookup::MarginalLookup::new(&cell_ctx.sides.right);
+            stream_rows!(&left, &right)
+        }
+        Route::Stream { marginal_children: false } => {
+            let left = child_lookup::DenseLookup { base: cell_ctx.sides.left.base, stride: cell_ctx.sides.left.stride };
+            let right = child_lookup::DenseLookup { base: cell_ctx.sides.right.base, stride: cell_ctx.sides.right.stride };
+            stream_rows!(&left, &right)
+        }
         // A materializing level with at least one marginal child or
         // pass-through side. It runs the same per-cell kernel as the
         // structural routes, with `MarginalLookup` sides; isolating it here is
