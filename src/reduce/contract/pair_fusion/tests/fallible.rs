@@ -3,6 +3,7 @@ use crate::diagram::{ValueRef, NodeIdx};
 use crate::Engine;
 use crate::diagram::*;
 use crate::diagram::{ChildDecoder, TddLevel, TddNodeId};
+use crate::test_helpers::toy;
 use crate::vtree::{Vtree, VtreeNode};
 use std::sync::Arc;
 
@@ -19,23 +20,7 @@ fn marginal_slots(tdd: &Tdd) -> usize {
 /// the same x-side index and distinct marginal-side indices `{0, 1}`.
 /// `fuse_pairs` must fuse those into one fresh slot.
 fn fusable_tdd() -> Tdd {
-    let vtree = Arc::new(Vtree::balanced(2));
-    let root = vtree.root();
-    let right = match vtree.node(root) {
-        VtreeNode::Internal { right, .. } => *right,
-        _ => panic!("balanced(2) root must be internal"),
-    };
-    let n = vtree.num_nodes();
-    let mut levels: Vec<TddLevel> = (0..n).map(|_| TddLevel::new()).collect();
-    // Right child: marginal level with two distinct slots.
-    levels[right.idx()].set_counts_state(vec![5u128, 7u128], None);
-    // Root: one internal node, two pairs same x (left=0), distinct marginal (right=0,1).
-    levels[root.idx()].push_internal_node(&[
-        ChildPair::new(NodeIdx(0), NodeIdx(0)),
-        ChildPair::new(NodeIdx(0), NodeIdx(1)),
-    ]);
-    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
-    Tdd::from_levels_unchecked(vtree, levels, output)
+    toy(vec![5, 7], &[&[(0, 0), (0, 1)]])
 }
 
 /// Happy path: with no apply budget set, the fusion succeeds. The fused
@@ -83,26 +68,10 @@ fn p_fusion_over_budget_is_catchable() {
 /// The marginal level has no slots at all — the inline counts are
 /// self-contained in the pair fields.
 fn inline_fusable_tdd(c0: u32, f: u32) -> Tdd {
-    let vtree = Arc::new(Vtree::balanced(2));
-    let root = vtree.root();
-    let right = match vtree.node(root) {
-        VtreeNode::Internal { right, .. } => *right,
-        _ => panic!("balanced(2) root must be internal"),
-    };
-    let n = vtree.num_nodes();
-    let mut levels: Vec<TddLevel> = (0..n).map(|_| TddLevel::new()).collect();
-    // Right child: marginal level with ZERO slots (inline refs are self-contained).
-    levels[right.idx()].set_counts_state(vec![], None);
-    // Root: one internal node, two pairs sharing x=0, with INLINE marginal refs.
     // Bit-30 (`INLINE_VALUE_BIT`) set marks these as inline count refs.
     let r0_raw = ValueRef::inline_raw(c0 as u128).expect("test inline count must fit inline encoding");
     let r1_raw = ValueRef::inline_raw(f as u128).expect("test inline count must fit inline encoding");
-    levels[root.idx()].push_internal_node(&[
-        ChildPair::new(NodeIdx(0), NodeIdx(r0_raw)),
-        ChildPair::new(NodeIdx(0), NodeIdx(r1_raw)),
-    ]);
-    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
-    Tdd::from_levels_unchecked(vtree, levels, output)
+    toy(vec![], &[&[(0, r0_raw), (0, r1_raw)]])
 }
 
 /// One parent node with pairs `(x, Inline(5))` and `(x, Inline(7))`;
@@ -208,25 +177,13 @@ fn fusion_sums_inline_plus_slot_into_slot() {
 
     const BIG: u128 = 1u128 << 40; // too wide to fit a ref
 
-    let vtree = Arc::new(Vtree::balanced(2));
-    let root = vtree.root();
-    let right = match vtree.node(root) {
-        VtreeNode::Internal { right, .. } => *right,
-        _ => panic!("balanced(2) root must be internal"),
-    };
-    let n = vtree.num_nodes();
-    let mut levels: Vec<TddLevel> = (0..n).map(|_| TddLevel::new()).collect();
-    // Right child: marginal level with one slot carrying count BIG.
-    levels[right.idx()].set_counts_state(vec![BIG], None);
-    // Root: one internal node; left pair has inline count 5, right pair is slot 0.
+    // One slot carrying count BIG; the root node pairs inline count 5 with
+    // slot 0 at the same x.
     let inline_5_raw = ValueRef::inline_raw(5u128).expect("test inline count must fit inline encoding");
     let slot_0_raw = ValueRef::slot_raw(0); // bare slot index 0 (bit-30 clear)
-    levels[root.idx()].push_internal_node(&[
-        ChildPair::new(NodeIdx(0), NodeIdx(inline_5_raw)),
-        ChildPair::new(NodeIdx(0), NodeIdx(slot_0_raw)),
-    ]);
-    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
-    let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
+    let mut tdd = toy(vec![BIG], &[&[(0, inline_5_raw), (0, slot_0_raw)]]);
+    let root = tdd.vtree.root();
+    let (_, right) = tdd.vtree.children(root);
 
     let (slots_before, size_before) = (marginal_slots(&tdd), tdd.pair_count());
     let stats = fuse_pairs(&eng, &mut tdd).expect("inline+slot fusion must not over-budget");
@@ -266,23 +223,11 @@ fn fusion_sums_inline_plus_slot_into_slot() {
 #[test]
 fn fusion_sums_identical_ref_occurrences() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
-    let root = vtree.root();
-    let right = match vtree.node(root) {
-        VtreeNode::Internal { right, .. } => *right,
-        _ => panic!("balanced(2) root must be internal"),
-    };
-    let n = vtree.num_nodes();
-    let mut levels: Vec<TddLevel> = (0..n).map(|_| TddLevel::new()).collect();
-    // One marginal slot, count 6.
-    levels[right.idx()].set_counts_state(vec![6u128], None);
-    // Root node 0: two IDENTICAL pairs (x=0, slot 0).
-    levels[root.idx()].push_internal_node(&[
-        ChildPair::new(NodeIdx(0), NodeIdx(0)),
-        ChildPair::new(NodeIdx(0), NodeIdx(0)),
-    ]);
-    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
-    let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
+    // One marginal slot, count 6; the root node holds two IDENTICAL pairs
+    // (x=0, slot 0).
+    let mut tdd = toy(vec![6], &[&[(0, 0), (0, 0)]]);
+    let root = tdd.vtree.root();
+    let (_, right) = tdd.vtree.children(root);
 
     let (slots_before, size_before) = (marginal_slots(&tdd), tdd.pair_count());
     let stats = fuse_pairs(&eng, &mut tdd).expect("identical-ref fusion must not over-budget");
@@ -312,26 +257,11 @@ fn fusion_sums_identical_ref_occurrences() {
 #[test]
 fn fusion_partitions_two_independent_x_groups() {
     let eng = Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
-    let root = vtree.root();
-    let right = match vtree.node(root) {
-        VtreeNode::Internal { right, .. } => *right,
-        _ => panic!("balanced(2) root must be internal"),
-    };
-    let n = vtree.num_nodes();
-    let mut levels: Vec<TddLevel> = (0..n).map(|_| TddLevel::new()).collect();
     // Five slots: x=0 → {0:3, 1:5, 2:7} (sum 15); x=1 → {3:11, 4:13} (sum 24).
-    levels[right.idx()].set_counts_state(vec![3u128, 5, 7, 11, 13], None);
-    // Interleave the two groups: grouping must be by x, not by pair order.
-    levels[root.idx()].push_internal_node(&[
-        ChildPair::new(NodeIdx(0), NodeIdx(0)),
-        ChildPair::new(NodeIdx(1), NodeIdx(3)),
-        ChildPair::new(NodeIdx(0), NodeIdx(1)),
-        ChildPair::new(NodeIdx(1), NodeIdx(4)),
-        ChildPair::new(NodeIdx(0), NodeIdx(2)),
-    ]);
-    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
-    let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
+    // The two groups are interleaved: grouping must be by x, not by pair order.
+    let mut tdd = toy(vec![3, 5, 7, 11, 13], &[&[(0, 0), (1, 3), (0, 1), (1, 4), (0, 2)]]);
+    let root = tdd.vtree.root();
+    let (_, right) = tdd.vtree.children(root);
 
     let (slots_before, size_before) = (marginal_slots(&tdd), tdd.pair_count());
     let stats = fuse_pairs(&eng, &mut tdd).expect("two-group fusion must not over-budget");
