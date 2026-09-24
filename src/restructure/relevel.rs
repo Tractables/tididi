@@ -116,7 +116,7 @@ pub(crate) fn restructure_inner_search(
 
     // `group_info` addresses `triples` with u32 offsets. The u32 width of a
     // `NodeIdx` bounds node indices, not this arena-scale offset: past 2^32
-    // triples the `as u32` casts below would wrap, `cells_eq` would compare
+    // triples the `as u32` casts below would wrap, `same_cells` would compare
     // wrong-but-in-range cell slices, and the resulting inner-node sharing would
     // silently change the count. `write <= read <= n`, so this single check
     // covers every cast in the scan.
@@ -217,9 +217,16 @@ fn collect_triples(
     Ok(true)
 }
 
-/// One distinct inner pair: its cell list's fingerprint hash, the pair itself,
-/// and the `[start, end)` bounds of its cells in the packed `triples`.
-pub(super) type PairGroup = (u64, ChildPair, u32, u32);
+/// One distinct inner pair and where its cells sit in the packed `triples`.
+#[derive(Clone, Copy)]
+pub(super) struct PairGroup {
+    /// A fingerprint of the cell list; equal lists have equal hashes.
+    hash: u64,
+    inner: ChildPair,
+    /// The `[start, end)` bounds of the cells in `triples`.
+    start: u32,
+    end: u32,
+}
 
 /// Phase 2: dedup cells in-place within each inner-pair group of the sorted
 /// `triples` and record the group boundaries with a rolling fingerprint hash.
@@ -238,7 +245,8 @@ fn group_by_inner_pair(
     let mut write = 0;
     let n = triples.len();
     while read < n {
-        let inner_key = tri_inner_key(triples[read]);
+        let first = triples[read];
+        let inner_key = tri_inner_key(first);
         let group_start = write as u32;
         let mut fp_hash: u64 = 0;
         let mut prev_cell = u64::MAX;
@@ -253,8 +261,8 @@ fn group_by_inner_pair(
             }
             read += 1;
         }
-        let inner = ChildPair::new(EncodedChildRef::from_raw((inner_key >> 32) as u32), EncodedChildRef::from_raw(inner_key as u32));
-        lim.try_push(group_info, (fp_hash, inner, group_start, write as u32))?;
+        let group = PairGroup { hash: fp_hash, inner: tri_inner(first), start: group_start, end: write as u32 };
+        lim.try_push(group_info, group)?;
     }
     triples.truncate(write);
     Ok(())
@@ -296,7 +304,7 @@ fn build_inner_level(
     } else {
         // Phase 3: sort groups by fingerprint hash, so entries that can share a
         // node land in one bucket, then count the distinct cell lists that survive.
-        group_info.sort_unstable_by_key(|g| g.0);
+        group_info.sort_unstable_by_key(|g| g.hash);
         if count_distinct_cell_lists(triples, group_info) + n_w_pairs >= max_pairs {
             return Ok(None);
         }
@@ -312,9 +320,9 @@ fn build_inner_level(
 fn hash_buckets(group_info: &[PairGroup]) -> impl Iterator<Item = &[PairGroup]> {
     let mut start = 0;
     std::iter::from_fn(move || {
-        let hash = group_info.get(start)?.0;
+        let hash = group_info.get(start)?.hash;
         let mut end = start + 1;
-        while end < group_info.len() && group_info[end].0 == hash {
+        while end < group_info.len() && group_info[end].hash == hash {
             end += 1;
         }
         let bucket = &group_info[start..end];
@@ -336,8 +344,8 @@ fn expand_every_pair(
     inner_pair_to_idx: &mut FxHashMap<ChildPair, NodeIdx>,
 ) -> Result<(), OperationError> {
     for g in group_info {
-        let idx = inner_level.push_node(lim, &[g.1])?;
-        inner_pair_to_idx.insert(g.1, idx);
+        let idx = inner_level.push_node(lim, &[g.inner])?;
+        inner_pair_to_idx.insert(g.inner, idx);
     }
     Ok(())
 }
@@ -352,9 +360,7 @@ fn count_distinct_cell_lists(triples: &[u128], group_info: &[PairGroup]) -> usiz
     let mut n_fps = 0usize;
     for bucket in hash_buckets(group_info) {
         for j in 0..bucket.len() {
-            let is_new = !(0..j).any(|k| {
-                cells_eq(triples, bucket[j].2, bucket[j].3, bucket[k].2, bucket[k].3)
-            });
+            let is_new = !(0..j).any(|k| same_cells(triples, &bucket[j], &bucket[k]));
             if is_new { n_fps += 1; }
         }
     }
@@ -374,8 +380,8 @@ fn cluster_by_cell_list(
 ) -> Result<(), OperationError> {
     for bucket in hash_buckets(group_info) {
         if bucket.len() == 1 {
-            let idx = inner_level.push_node(lim, &[bucket[0].1])?;
-            inner_pair_to_idx.insert(bucket[0].1, idx);
+            let idx = inner_level.push_node(lim, &[bucket[0].inner])?;
+            inner_pair_to_idx.insert(bucket[0].inner, idx);
             continue;
         }
         let BucketScratch { done, pairs } = scratch;
@@ -384,13 +390,12 @@ fn cluster_by_cell_list(
         for j in 0..bucket.len() {
             if done[j] { continue; }
             pairs.clear();
-            lim.try_push(pairs, bucket[j].1)?;
+            lim.try_push(pairs, bucket[j].inner)?;
             done[j] = true;
             for k in (j + 1)..bucket.len() {
                 if done[k] { continue; }
-                if cells_eq(triples, bucket[j].2, bucket[j].3,
-                            bucket[k].2, bucket[k].3) {
-                    lim.try_push(pairs, bucket[k].1)?;
+                if same_cells(triples, &bucket[j], &bucket[k]) {
+                    lim.try_push(pairs, bucket[k].inner)?;
                     done[k] = true;
                 }
             }
@@ -484,8 +489,9 @@ fn fill_outer_level(
         }
         // Load-bearing dedup: distinct triples can produce the same outer pair,
         // so duplicates are genuinely manufactured here. The sort exists only to
-        // enable the adjacent `dedup` — not to canonicalize node order.
-        per_v_pairs[i].sort_unstable();
+        // enable the adjacent `dedup` — not to canonicalize node order, which
+        // is free (see `ChildPair`).
+        //
         // Marginal full-expand keeps the outer multiset: a duplicate outer pair is
         // a legitimate separate count-mass (two marginalization-collapsed twin
         // primes), so Σ over the kept multiset = the pre-rotation count exactly;
@@ -493,6 +499,7 @@ fn fill_outer_level(
         // dedup: under determinism a repeated outer pair is a genuinely redundant
         // path.
         if !marginal_ctx {
+            per_v_pairs[i].sort_unstable();
             per_v_pairs[i].dedup();
         }
         outer_level.push_node(lim, &per_v_pairs[i])?;
@@ -501,18 +508,14 @@ fn fill_outer_level(
 }
 
 
-/// Compare two cell-list slices in the deduped (packed) triples array. Two cells
-/// are equal iff their `(src, axis)` parts match — that is the low 64 bits of the
-/// packed key (`tri_cell`), so the comparison reduces to a `u64` elementwise
-/// equality over the two slices.
+/// Whether two groups carry the same cell list in the deduped (packed)
+/// triples array. Two cells are equal iff their `(src, axis)` parts match —
+/// that is the low 64 bits of the packed key (`tri_cell`), so the comparison
+/// reduces to a `u64` elementwise equality over the two slices.
 #[inline]
-fn cells_eq(
-    triples: &[u128],
-    a_start: u32, a_end: u32,
-    b_start: u32, b_end: u32,
-) -> bool {
-    let a = &triples[a_start as usize..a_end as usize];
-    let b = &triples[b_start as usize..b_end as usize];
+fn same_cells(triples: &[u128], a: &PairGroup, b: &PairGroup) -> bool {
+    let a = &triples[a.start as usize..a.end as usize];
+    let b = &triples[b.start as usize..b.end as usize];
     a.len() == b.len() && a.iter().zip(b.iter()).all(|(&x, &y)| tri_cell(x) == tri_cell(y))
 }
 
