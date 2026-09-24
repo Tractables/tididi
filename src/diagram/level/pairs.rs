@@ -23,22 +23,30 @@ impl TddLevel {
         self.nodes[range].iter().enumerate().map(move |(i, n)| (start + i, self.pairs_iter_of(n)))
     }
 
-    /// A multi-pair node's pair-arena range, decoded from either the packed
-    /// or the extended (side-table) encoding.
-    ///
-    /// # Panics
-    ///
-    /// Panics on an inline node, whose pair is not in the arena.
-    pub(crate) fn multi_range(&self, node: &EncodedNode) -> std::ops::Range<usize> {
-        let (start, len) = match node.kind() {
+    /// The pair-arena range a node of this `kind` owns, decoded from either
+    /// the packed or the extended (side-table) encoding; `None` for an inline
+    /// node, whose pair is in the node itself.
+    #[inline]
+    pub(crate) fn arena_range(&self, kind: NodeKind) -> Option<std::ops::Range<usize>> {
+        let (start, len) = match kind {
+            NodeKind::Inline(_) => return None,
             NodeKind::Multi { start, len } => (start as usize, len as usize),
             NodeKind::MultiRanged(idx) => {
                 let e = &self.multi_pairs[idx as usize];
                 (e.start as usize, e.len as usize)
             }
-            other => panic!("multi_range on {other:?}"),
         };
-        start..start + len
+        Some(start..start + len)
+    }
+
+    /// A multi-pair node's pair-arena range.
+    ///
+    /// # Panics
+    ///
+    /// Panics on an inline node, whose pair is not in the arena.
+    #[inline]
+    pub(crate) fn multi_range(&self, node: &EncodedNode) -> std::ops::Range<usize> {
+        self.arena_range(node.kind()).expect("multi_range on an inline node")
     }
 
     /// The pairs of `node`, which must describe a node of this level.

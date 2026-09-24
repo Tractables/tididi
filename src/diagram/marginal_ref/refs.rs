@@ -4,7 +4,7 @@
 //! decoded through the child's [`ChildDecoder`](super::ChildDecoder). The mapping from
 //! a side to the word of a node that holds it lives here.
 
-use crate::diagram::{EncodedChildRef, ChildDecoder, NodeIdx, Tdd};
+use crate::diagram::{EncodedChildRef, ChildDecoder, NodeIdx, Tdd, TddLevel};
 use crate::vtree::{VtreeIdx, VtreeNode};
 
 /// One of a parent's two child sides.
@@ -33,29 +33,43 @@ impl<T> Sides<T> {
     }
 }
 
-/// Apply `f` to every reference the nodes of `level` hold on `side`.
+/// Apply `f` to every reference the nodes of `level` hold on `side`, in
+/// node order and, within a node, in pair order.
 ///
 /// `ChildSide::Left` means `pair.left.0` for a multi-pair node and `node.a`
 /// for an inline one; `ChildSide::Right` means `pair.right.0` / `node.b`.
 #[inline]
 pub(crate) fn for_each_side_ref_mut(
-    level: &mut crate::diagram::TddLevel,
+    level: &mut TddLevel,
     side: ChildSide,
     mut f: impl FnMut(&mut u32),
 ) {
     for ni in 0..level.nodes.len() {
-        if level.nodes[ni].kind().pairs_in_arena() {
-            for p in level.pairs_mut(ni) {
+        match level.arena_range(level.nodes[ni].kind()) {
+            Some(range) => match side {
+                ChildSide::Left => level.pairs[range].iter_mut().for_each(|p| f(&mut p.left.0)),
+                ChildSide::Right => level.pairs[range].iter_mut().for_each(|p| f(&mut p.right.0)),
+            },
+            None => {
+                let node = &mut level.nodes[ni];
                 f(match side {
-                    ChildSide::Left => &mut p.left.0,
-                    ChildSide::Right => &mut p.right.0,
+                    ChildSide::Left => &mut node.a,
+                    ChildSide::Right => &mut node.b,
                 });
             }
-        } else {
-            let node = &mut level.nodes[ni];
+        }
+    }
+}
+
+/// Read-only [`for_each_side_ref_mut`]: `f` sees every reference on `side`
+/// in the same order.
+#[inline]
+pub(crate) fn for_each_side_ref(level: &TddLevel, side: ChildSide, mut f: impl FnMut(u32)) {
+    for node in &level.nodes {
+        for p in level.pairs_of(node) {
             f(match side {
-                ChildSide::Left => &mut node.a,
-                ChildSide::Right => &mut node.b,
+                ChildSide::Left => p.left.0,
+                ChildSide::Right => p.right.0,
             });
         }
     }

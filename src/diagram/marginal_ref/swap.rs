@@ -6,7 +6,7 @@ use num_bigint::BigUint;
 use rustc_hash::FxHashMap;
 
 use super::super::level::TddLevel;
-use super::refs::{for_each_side_ref_mut, ChildSide};
+use super::refs::{for_each_side_ref, for_each_side_ref_mut, ChildSide};
 use super::{CountOverflow, MARGINAL_OVERFLOW_TAG, MARGINAL_VALUE_MASK, ValueRef};
 use crate::diagram::NodeIdx;
 use crate::limits::OperationError;
@@ -117,14 +117,7 @@ pub(crate) fn resolve_swapped_marginal_side(
         .marginal_counts()
         .expect("resolve_swapped_marginal_side: src child missing marginal_counts");
     let src_big = src_child.marginal_counts_big();
-    // Disjoint &mut borrows of the parent (ti) and output child (ci) levels.
-    let (parent, dst_child) = if ti < ci {
-        let (a, b) = levels.split_at_mut(ci);
-        (&mut a[ti], &mut b[0])
-    } else {
-        let (a, b) = levels.split_at_mut(ti);
-        (&mut b[0], &mut a[ci])
-    };
+    let [parent, dst_child] = levels.get_disjoint_mut([ti, ci]).expect("distinct");
     // The destination side table is sparse (`CountOverflow`), so it needs no
     // pre-alignment to the destination store's width — a re-minted overflow
     // slot simply records its own key. Disjoint field borrows of `dst_child`.
@@ -176,7 +169,7 @@ struct SwapInterners {
 ///
 /// `Err(OperationError::OverBudget)` when an interner entry cannot be reserved.
 fn collect_swap_mints(
-    parent: &mut TddLevel,
+    parent: &TddLevel,
     side: ChildSide,
     src: &SwapSource<'_>,
 ) -> Result<SwapInterners, OperationError> {
@@ -187,8 +180,8 @@ fn collect_swap_mints(
     // exactly the refs the rewrite will. A failed reservation is carried out
     // of the walk; nothing after it is interned.
     let mut failed = false;
-    for_each_side_ref_mut(parent, side, |r| {
-        let SwapRef::Mint(s, c) = classify_swap_ref(*r, src.counts) else {
+    for_each_side_ref(parent, side, |r| {
+        let SwapRef::Mint(s, c) = classify_swap_ref(r, src.counts) else {
             return;
         };
         if failed {
