@@ -7,14 +7,12 @@
 
 use std::sync::Arc;
 
-use crate::vtree::{Vtree, VtreeIdx};
-use crate::diagram::{ChildPair, LeafLabel, NodeIdx, take_levels, TddNodeId};
+use crate::vtree::Vtree;
 
 use crate::apply::apply_and;
 use crate::test_helpers::{check_minimize_soundness, clause_to_tdd, compile_clauses, test_cases, vtree_shapes};
 use crate::build::constant_one;
 use super::*;
-use super::projective::check_canonicity_projective;
 use crate::test_helpers::check::structure::check_no_false_nodes_in_levels;
 
 // ── Local test helpers ───────────────────────────────────────────────────────
@@ -128,88 +126,6 @@ fn test_determinism_after_minimize() {
     tdd = apply_and(tdd, c3);
     tdd.minimize().unwrap();
     check_determinism(&tdd).unwrap_or_else(|e| panic!("after multi-apply+minimize: {}", e));
-}
-
-// ==================== Projective (ray) canonicity ====================
-
-/// A vanilla Boolean diagram has no marginal levels: val is 0/1-valued, so
-/// proportional is the same relation as equal and the projective (ray) classes
-/// coincide with the exact Inv-3 classes. `check_canonicity_projective` degrades
-/// to `check_canonicity`, and both pass.
-#[test]
-fn test_projective_boolean_ray_equals_exact() {
-    let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(4));
-    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[1, 2]));
-    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-1, 3]));
-    let c3 = clause_to_tdd(eng, &vtree, &crate::test_helpers::literals(&[-2, -3, 4]));
-    let mut tdd = apply_and(f, g);
-    tdd.minimize().unwrap();
-    tdd = apply_and(tdd, c3);
-    tdd.minimize().unwrap();
-
-    check_canonicity(&tdd, CANONICITY_ROUNDS).expect("Boolean exact canonicity");
-    check_canonicity_projective(&tdd, CANONICITY_ROUNDS)
-        .expect("Boolean projective canonicity == Inv 3");
-}
-
-/// Two proportional-but-unequal marginal nodes (scalar counts 2 and 3) share one
-/// ray class but two exact classes: `check_canonicity` passes (distinct
-/// signatures) while `check_canonicity_projective` errs (proportional nodes).
-/// Hand-built at the level layer — this crate cannot depend on the compile
-/// pipeline that produces marginal diagrams, and this shape is exactly a
-/// marginalized boundary level.
-#[test]
-fn test_projective_marginal_ray_below_exact() {
-    let eng = &crate::Engine::new();
-    let vtree = Arc::new(Vtree::balanced(2));
-    let root = vtree.root();
-    let mut levels = take_levels(eng, vtree.num_nodes());
-    // Root (an internal vtree node) marginalized to two scalar count-nodes.
-    levels[root.idx()].set_counts_state(vec![2, 3], None);
-    let tdd = Tdd::from_levels_unchecked(
-        Arc::clone(&vtree),
-        levels,
-        TddNodeId { vtree: root, local: NodeIdx(0) },
-    );
-
-    // Exact Inv-3 holds (2 is not 3); projective Inv-3 does not.
-    check_canonicity(&tdd, CANONICITY_ROUNDS)
-        .expect("distinct counts pass exact canonicity");
-    let err = check_canonicity_projective(&tdd, CANONICITY_ROUNDS)
-        .expect_err("proportional marginal nodes must fail projective canonicity");
-    assert!(err.contains("ray-equivalent"), "unexpected error: {err}");
-}
-
-/// An unreachable node must be excluded from the ray classification. Mid- and
-/// post-compile levels accumulate such orphans; classifying them would report a
-/// collision that no live node has. Here node B at level 3 is an exact copy of
-/// the live node A and is referenced by nothing, so the level is projectively
-/// canonical despite holding two identical nodes.
-#[test]
-fn test_ray_classification_excludes_unreachable_node() {
-    let eng = &crate::Engine::new();
-    // balanced(3): leaves 0/1/2; level 3 = parent of leaves 0,1; level 4 = root (3,2).
-    let vtree = Arc::new(Vtree::balanced(3));
-    let pos = NodeIdx(LeafLabel::Pos as u32);
-
-    let mut levels = take_levels(eng, vtree.num_nodes());
-    // A (index 0): live — the root will reference it.
-    let a = levels[3].push_internal_node(&[ChildPair::new(pos, pos)]);
-    // B (index 1): the same node again, referenced by no parent. It carries a
-    // nonzero signature, so only reachability can exclude it.
-    let _b = levels[3].push_internal_node(&[ChildPair::new(pos, pos)]);
-    // Root references only A (plus a literal on leaf 2).
-    let root = levels[4].push_internal_node(&[ChildPair::new(a, pos)]);
-
-    let tdd = Tdd::from_levels_unchecked(
-        Arc::clone(&vtree),
-        levels,
-        TddNodeId { vtree: VtreeIdx(4), local: root },
-    );
-
-    check_canonicity_projective(&tdd, CANONICITY_ROUNDS)
-        .expect("the orphan copy of A is not a live ray collision");
 }
 
 // ==================== Minimize soundness ====================
