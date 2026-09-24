@@ -157,14 +157,7 @@ pub(crate) fn disjoin_cube_owned(eng: &Engine, f: Tdd, cube: &[Literal]) -> Resu
         return disjoin_cube_by_complement(eng, f, &clause);
     }
 
-    let mut f = f;
-    let result = spine_walk(eng, &mut f, &clause, true);
-    // Recycle what is left of `f`, as the conjunction does.
-    let spent = std::mem::take(&mut f.levels).into_vec();
-    if !spent.is_empty() {
-        diagram::return_levels(eng, diagram::PoolSlot::First, spent);
-    }
-    result
+    spine_walk(eng, f, &clause, true)
 }
 
 /// `f ∨ M` as `¬(¬f ∧ ¬M)` — two make-full passes rather than the three a

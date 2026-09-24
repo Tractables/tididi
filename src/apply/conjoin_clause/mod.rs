@@ -73,68 +73,59 @@ impl ClauseScratch {
     }
 }
 
-/// Conjoin `clause` into `f`, moving `f`'s levels and weights into the result;
-/// `f` is left empty on `Err` as well as on `Ok`.
-///
-/// # Errors
-/// Returns the [`OperationError`] the conjunction stopped on.
-pub(crate) fn conjoin_clause_into(eng: &Engine, f: &mut Tdd, clause: &[Literal]) -> Result<Tdd, OperationError> {
-    spine_walk(eng, f, clause, false)
-}
-
 /// The shared bottom-up walk: conjoin `clause` into `f`, or — with `disjoin` —
 /// disjoin the cube `clause` negates, by carrying the [`CubeChain`] alongside.
+/// `f` is consumed on every outcome; a level array it no longer needs goes
+/// back to the engine's pool.
 ///
 /// A disjunction's caller has already handled the operands the two modes read
 /// differently; only the tautological clause, which is the false cube, is the
 /// identity for both.
-fn spine_walk(eng: &Engine, f: &mut Tdd, clause: &[Literal], disjoin: bool) -> Result<Tdd, OperationError> {
+fn spine_walk(eng: &Engine, mut f: Tdd, clause: &[Literal], disjoin: bool) -> Result<Tdd, OperationError> {
     debug_assert!(!disjoin || (!f.is_zero() && !clause.is_empty()),
         "a disjunction's caller answers the false accumulator and the true cube");
     let lim = eng.limits();
     let _op = lim.begin_operation();
     lim.check_stop()?;
     let mut gate = lim.gate();
-    let pool = eng.clause_pool();
     let vtree = &f.vtree;
-    let num_nodes = vtree.num_nodes();
     for lit in clause {
         gate.poll(1)?;
         let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
         f.require_structure_at(leaf)?;
     }
-
     gate.flush()?;
-    if f.is_zero() {
-        let levels = diagram::try_take_levels(eng, num_nodes)?;
-        let mut out = Tdd::try_from_levels_on(eng,
-            Arc::clone(vtree),
-            levels,
-            TddNodeId { vtree: f.output.vtree, local: ZERO },
-        )?;
-        out.weights = f.weights.take();
-        return Ok(out);
-    }
 
     // The empty clause is false, so conjoining it gives ⊥ whatever `f` is.
     if clause.is_empty() {
-        let levels = diagram::try_take_levels(eng, num_nodes)?;
+        let levels = diagram::try_take_levels(eng, vtree.num_nodes())?;
         let mut out = Tdd::try_from_levels_on(eng, Arc::clone(vtree), levels, TddNodeId { vtree: vtree.root(), local: ZERO })?;
         out.weights = f.weights.as_ref().map(WeightStore::empty_like);
+        diagram::return_levels(eng, diagram::PoolSlot::First, std::mem::take(&mut f.levels).into_vec());
         return Ok(out);
     }
 
-    // A variable named in both polarities satisfies the clause whatever its
-    // value, so conjoining it is the identity. The rebuild below keeps one
-    // column per variable of the clause and cannot say that.
-    if crate::diagram::is_tautological(lim, clause)? {
-        let vtree = Arc::clone(vtree);
-        let output = f.output;
-        let mut out =
-            Tdd::try_from_levels_on(eng, vtree, std::mem::take(&mut f.levels).into_vec(), output)?;
-        out.weights = f.weights.take();
-        return Ok(out);
+    // `⊥ ∧ c = ⊥`, and a variable named in both polarities satisfies the
+    // clause whatever its value, so conjoining it is the identity: the
+    // accumulator is the answer as it stands, worklists included. The rebuild
+    // below keeps one column per variable of the clause and cannot say that.
+    if f.is_zero() || crate::diagram::is_tautological(lim, clause)? {
+        return Ok(f);
     }
+
+    // The rebuild takes `f`'s levels for the output; on an error they are
+    // dropped with the partial result, so `f` owns nothing worth recycling.
+    rebuild_along_spine(eng, &mut f, clause, disjoin)
+}
+
+/// Rebuild every level on the clause's spine, moving `f`'s levels into the
+/// result. `f` has structure at every clause leaf and is neither false nor
+/// conjoined with a tautology.
+fn rebuild_along_spine(eng: &Engine, f: &mut Tdd, clause: &[Literal], disjoin: bool) -> Result<Tdd, OperationError> {
+    let lim = eng.limits();
+    let pool = eng.clause_pool();
+    let vtree = &f.vtree;
+    let num_nodes = vtree.num_nodes();
 
     // The clause spine — the Steiner tree of its variables' leaves — and the
     // `need_dt` flag propagated top-down over it.
@@ -243,23 +234,14 @@ fn spine_walk(eng: &Engine, f: &mut Tdd, clause: &[Literal], disjoin: bool) -> R
     Ok(out)
 }
 
-/// Conjoin `clause` into `f` under `eng`'s limits, recycling the accumulator's
-/// levels when it still owns any. The implementation behind
+/// Conjoin `clause` into `f` under `eng`'s limits. The implementation behind
 /// [`Engine::and_clause`](crate::Engine::and_clause).
 ///
 /// # Errors
 ///
-/// Returns `Err(OperationError::OverBudget)` if any internal allocation is refused.
-pub(crate) fn conjoin_clause_owned(eng: &Engine, mut f: Tdd, clause: &[Literal]) -> Result<Tdd, OperationError> {
-    let result = conjoin_clause_into(eng, &mut f, clause);
-    // Recycle what is left of `f` only if it is a real level array: on every
-    // path but the zero early-out `f` is left empty, and parking an empty Vec
-    // would evict the warm entry the one-slot pool holds.
-    let spent = std::mem::take(&mut f.levels).into_vec();
-    if !spent.is_empty() {
-        diagram::return_levels(eng, diagram::PoolSlot::First, spent);
-    }
-    result
+/// The errors of [`Engine::and_clause`](crate::Engine::and_clause).
+pub(crate) fn conjoin_clause_owned(eng: &Engine, f: Tdd, clause: &[Literal]) -> Result<Tdd, OperationError> {
+    spine_walk(eng, f, clause, false)
 }
 
 impl Tdd {
