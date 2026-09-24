@@ -9,7 +9,7 @@ fn shared_behavioral_traces() {
     let mut vtree = Arc::new(Vtree::balanced(1));
     let mut circuits = Vec::<Tdd>::new();
     let mut n = 1;
-    for (line_number, line) in include_str!("fixtures/conformance.txt").lines().enumerate() {
+    for (line_number, line) in include_str!("../fixtures/conformance.txt").lines().enumerate() {
         if line.starts_with('#') { continue; }
         let fields: Vec<_> = line.split_whitespace().collect();
         assert_eq!(fields.len(), 5);
@@ -108,7 +108,7 @@ fn shared_stateful_sessions() {
     let mut query: Option<Cached> = None;
     let mut weighted = false;
     let mut original_truth = 0;
-    for (line_number, line) in include_str!("fixtures/conformance_sessions.txt").lines().enumerate() {
+    for (line_number, line) in include_str!("../fixtures/conformance_sessions.txt").lines().enumerate() {
         if line.starts_with('#') { continue; }
         let fields: Vec<_> = line.split_whitespace().collect();
         let [a, b, c] = [1, 2, 3].map(|i| fields[i].parse::<i32>().unwrap());
