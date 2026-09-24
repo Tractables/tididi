@@ -12,9 +12,7 @@
 //! diagram built, queried and dropped, the extra sweeps usually cost more than
 //! the storage they save.
 
-use std::collections::HashMap;
-
-use rustc_hash::FxBuildHasher;
+use rustc_hash::FxHashMap;
 
 use crate::vtree::rng::Lcg;
 
@@ -93,7 +91,7 @@ pub struct Tabu {
     /// Accepted moves so far: the clock the tenures are measured on.
     step: usize,
     /// Forbidden move to the step it is forbidden until.
-    forbidden: HashMap<RotationMove, usize, FxBuildHasher>,
+    forbidden: FxHashMap<RotationMove, usize>,
     /// Objective cost relative to the diagram the search started from.
     cost: i64,
     /// The lowest `cost` reached.
@@ -114,7 +112,7 @@ impl Tabu {
             tenure,
             patience,
             step: 0,
-            forbidden: HashMap::default(),
+            forbidden: FxHashMap::default(),
             cost: 0,
             best: 0,
             improved: false,
@@ -164,6 +162,8 @@ impl AcceptancePolicy for Tabu {
         }
         self.step += 1;
         self.cost += delta;
+        let step = self.step;
+        self.forbidden.retain(|_, &mut until| until > step);
         let until = self.step + self.tenure;
         for mv in probe.moves() {
             self.forbidden.insert(mv.inverse(), until);

@@ -100,16 +100,16 @@ impl crate::Engine {
         let mut stats = MultistartStats {
             rounds: 1,
             best_round: 0,
-            search: RotationSearchStats { probes: 0, accepts: 0, sweeps: 0 },
+            search: RotationSearchStats::default(),
         };
         let first = self.rotation_search(tdd, objective, &config.search)?;
-        add(&mut stats.search, &first);
+        stats.search += &first;
         let mut rng = Lcg::new(config.seed);
         for round in 1..=config.restarts {
             let mut candidate = tdd.clone();
             kick(self, &mut candidate, config.kick, config.search.max_inner_pairs, &mut rng)?;
             let run = self.rotation_search(&mut candidate, objective, &config.search)?;
-            add(&mut stats.search, &run);
+            stats.search += &run;
             stats.rounds += 1;
             if candidate.node_count() < tdd.node_count() {
                 *tdd = candidate;
@@ -146,12 +146,6 @@ fn kick(
 }
 
 /// Add one round's work to the running total.
-fn add(total: &mut RotationSearchStats, round: &RotationSearchStats) {
-    total.probes += round.probes;
-    total.accepts += round.accepts;
-    total.sweeps += round.sweeps;
-}
-
 #[cfg(test)]
 #[path = "tests/multistart.rs"]
 mod tests;

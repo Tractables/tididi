@@ -107,6 +107,15 @@ pub struct RotationSearchStats {
     pub sweeps: usize,
 }
 
+impl std::ops::AddAssign<&RotationSearchStats> for RotationSearchStats {
+    /// Add another search's work to this one's.
+    fn add_assign(&mut self, other: &RotationSearchStats) {
+        self.probes += other.probes;
+        self.accepts += other.accepts;
+        self.sweeps += other.sweeps;
+    }
+}
+
 /// The search behind [`Engine::rotation_search_with`]: sweep every internal
 /// vtree node, probe the configured neighborhood at each, and keep a sequence
 /// whenever `policy` accepts its score. Sweeps repeat until the policy stops
@@ -147,7 +156,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective, A: AcceptancePolicy>(
     // Marginal-free diagrams only: in marginal context the restructure keeps
     // the child multiset without Boolean dedup, which is what preserves the
     // count, and a minimize here would collapse it.
-    if !tdd.levels.iter().any(|l| l.is_marginal()) {
+    if !tdd.has_marginal_level() {
         eng.reduce(tdd, crate::reduce::ReductionPlan::default())?;
     }
 
