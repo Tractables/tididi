@@ -28,13 +28,15 @@ pub struct MultistartConfig {
     /// restarts.
     pub seed: u64,
     /// The configuration each search runs under. Its `max_inner_pairs` bound
-    /// also applies to the random rotations before each search.
+    /// also applies to the random rotations before each search, and it must
+    /// be set when `restarts` and `kick` are both nonzero.
     pub search: RotationSearchConfig,
 }
 
 impl Default for MultistartConfig {
     /// Four restarts of eight rotations each, seed 0, and the default search
-    /// configuration.
+    /// configuration. That search configuration has no `max_inner_pairs`
+    /// bound, and the restarts need one, so set it before searching.
     fn default() -> MultistartConfig {
         MultistartConfig {
             restarts: 4,
@@ -75,15 +77,26 @@ impl crate::Engine {
     ///
     /// # Errors
     ///
-    /// Whatever [`rotation_search`](Self::rotation_search) returns, from the
-    /// round that hit it. The diagram is then the best result of the rounds
-    /// that finished, which is still the same function.
+    /// [`OperationError::UnboundedSearch`] when `config.restarts` and
+    /// `config.kick` are both nonzero and `config.search.max_inner_pairs`
+    /// has no bound, before anything is searched: a kick keeps its rotation
+    /// whatever the rebuild costs, and only the bound keeps it from asking
+    /// for more memory than the host has. Otherwise whatever
+    /// [`rotation_search`](Self::rotation_search) returns, from the round
+    /// that hit it. The diagram is then the best result of the rounds that
+    /// finished, which is still the same function.
     pub fn rotation_multistart<O: RotationObjective>(
         &self,
         tdd: &mut Tdd,
         objective: &mut O,
         config: &MultistartConfig,
     ) -> Result<MultistartStats, OperationError> {
+        if config.restarts > 0 && config.kick > 0 && config.search.max_inner_pairs == usize::MAX {
+            return Err(OperationError::UnboundedSearch {
+                option: "MultistartConfig::search.max_inner_pairs",
+                needed_by: "restarts with kicks",
+            });
+        }
         let mut stats = MultistartStats {
             rounds: 1,
             best_round: 0,

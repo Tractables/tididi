@@ -155,6 +155,27 @@ fn annealing_is_the_same_search_every_time_for_one_seed() {
     assert_eq!(first.node_count(), second.node_count());
 }
 
+/// Variables 5 to 8 are free and sit in one subtree of the balanced vtree, so
+/// every rotation inside it rebuilds two one-pair levels as two one-pair
+/// levels: a zero-cost move at every temperature.
+#[test]
+fn annealing_stops_on_a_plateau_of_zero_cost_moves() {
+    let vtree = Arc::new(Vtree::balanced(8));
+    let mut tdd = compile_clauses(&vtree, &[vec![1, 2], vec![-2, 3], vec![3, -4]]);
+    tdd.minimize().expect("an unarmed engine refuses nothing");
+    for neighborhood in [Neighborhood::Single, Neighborhood::Pair] {
+        let mut copy = tdd.clone();
+        let count = copy.model_count().unwrap();
+        let config = RotationSearchConfig { neighborhood, max_sweeps: Some(1000), ..bounded() };
+        let stats = Engine::new()
+            .rotation_search_with(&mut copy, &mut MinimizePairs, &mut Annealing::default(), &config)
+            .unwrap();
+        assert!(stats.sweeps < 1000, "{neighborhood:?}: the search ran to the sweep cap");
+        assert_canonical(&copy);
+        assert_eq!(copy.model_count().unwrap(), count);
+    }
+}
+
 #[test]
 fn a_policy_that_keeps_worsening_moves_needs_a_bound() {
     let eng = Engine::new();
@@ -184,6 +205,32 @@ fn a_policy_that_keeps_worsening_moves_needs_a_bound() {
     // The descent is fine without one: it never keeps a sequence that grows.
     let mut tdd = plateau();
     assert!(eng.rotation_search_with(&mut tdd, &mut MinimizePairs, &mut Greedy, &unbounded).is_ok());
+}
+
+#[test]
+fn restarts_with_kicks_need_a_bound() {
+    let eng = Engine::new();
+    let unbounded = MultistartConfig::default();
+    assert_eq!(unbounded.search.max_inner_pairs, usize::MAX);
+    let mut tdd = plateau();
+    let before = tdd.clone();
+    let Err(OperationError::UnboundedSearch { option, needed_by }) =
+        eng.rotation_multistart(&mut tdd, &mut MinimizePairs, &unbounded)
+    else {
+        panic!("the restarts kicked with no rebuild bound");
+    };
+    assert_eq!(option, "MultistartConfig::search.max_inner_pairs");
+    assert!(needed_by.contains("kick"), "{needed_by}");
+    assert!(tdd.vtree().same_tree(before.vtree()), "the refusal comes before any search");
+    // With no restart, or with restarts that do not kick, nothing is rotated
+    // blindly and the descent needs no bound.
+    for config in [
+        MultistartConfig { restarts: 0, ..MultistartConfig::default() },
+        MultistartConfig { kick: 0, ..MultistartConfig::default() },
+    ] {
+        let mut tdd = plateau();
+        assert!(eng.rotation_multistart(&mut tdd, &mut MinimizePairs, &config).is_ok());
+    }
 }
 
 #[test]
