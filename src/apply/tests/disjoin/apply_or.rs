@@ -8,10 +8,9 @@ use num_bigint::BigUint;
 
 #[test]
 fn test_apply_or_basic() {
-    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
-    let mut g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(3, true), (4, true)]));
+    let mut f = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
+    let mut g = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(3, true), (4, true)]));
     f.minimize().unwrap();
     g.minimize().unwrap();
 
@@ -23,7 +22,7 @@ fn test_apply_or_basic() {
 fn test_apply_or_with_zero() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let mut f = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)]));
     f.minimize().unwrap();
     let zero = constant_zero(eng, &vtree);
 
@@ -33,12 +32,11 @@ fn test_apply_or_with_zero() {
 
 #[test]
 fn test_apply_or_canonical() {
-    let eng = &crate::Engine::new();
     use crate::test_helpers::check::check_all_fast;
 
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
-    let mut g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(3, true), (4, true)]));
+    let mut f = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
+    let mut g = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(3, true), (4, true)]));
     f.minimize().unwrap();
     g.minimize().unwrap();
 
@@ -48,16 +46,15 @@ fn test_apply_or_canonical() {
 
 #[test]
 fn test_apply_or_compiled_formulas() {
-    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
 
-    let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
-    let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(3, true), (4, true)]));
+    let f = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
+    let g = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(3, true), (4, true)]));
     let mut f = apply_and(f, g);
     f.minimize().unwrap();
 
-    let c3 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
-    let c4 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(3, true)]));
+    let c3 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let c4 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(3, true)]));
     let mut g = apply_and(c3, c4);
     g.minimize().unwrap();
 
@@ -94,8 +91,8 @@ fn a_refused_reserve_inside_the_disjunction_returns_over_budget() {
 
     let eng = &Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
-    let mut g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(3, true), (4, false)]));
+    let mut f = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
+    let mut g = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(3, true), (4, false)]));
     f.minimize().unwrap();
     g.minimize().unwrap();
     let expected = (super::apply_or(f.clone(), g.clone())).model_count().unwrap();

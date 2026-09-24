@@ -48,7 +48,7 @@ pub(super) fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
     ];
     let mut acc: Option<Tdd> = None;
     for c in &clauses {
-        let clause = clause_to_tdd(&eng, &vtree, c);
+        let clause = clause_to_tdd(&vtree, c);
         acc = Some(match acc {
             Some(prev) => {
                 let mut r = apply_and(prev, clause);

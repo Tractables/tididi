@@ -73,7 +73,7 @@ pub fn or_of_cubes(vtree: &Arc<Vtree>, vars: &[VarId], truth: impl Fn(usize) -> 
 pub fn compile_clauses_on(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
     let mut acc = constant_one(eng, vtree);
     for clause in clauses {
-        let cl = clause_to_tdd(eng, vtree, &literals(clause));
+        let cl = clause_to_tdd(vtree, &literals(clause));
         acc = eng.and(acc, cl).expect("compile_clauses_on: allocation refused");
         eng.reduce(&mut acc, crate::reduce::ReductionPlan::default())
             .expect("compile_clauses_on: allocation refused");
@@ -109,10 +109,9 @@ pub fn and2(a: &Tdd, b: &Tdd) -> Tdd {
 /// A cube — a conjunction of literals — as a diagram, folded one unit clause
 /// at a time.
 pub fn cube(vtree: &Arc<Vtree>, literals: &[(u32, bool)]) -> Tdd {
-    let eng = Engine::new();
-    let mut acc = clause_to_tdd(&eng, vtree, &clause(&[literals[0]]));
+    let mut acc = clause_to_tdd(vtree, &clause(&[literals[0]]));
     for &l in &literals[1..] {
-        acc = and2(&acc, &clause_to_tdd(&eng, vtree, &clause(&[l])));
+        acc = and2(&acc, &clause_to_tdd(vtree, &clause(&[l])));
     }
     acc
 }
@@ -133,10 +132,9 @@ pub fn rand_conj_over(
     span: bool,
     rng: &mut Lcg,
 ) -> Tdd {
-    let eng = Engine::new();
     let mut acc: Option<Tdd> = if span && vars.len() >= 2 {
         let ends = clause(&[(vars[0], true), (vars[vars.len() - 1], true)]);
-        Some(clause_to_tdd(&eng, vtree, &ends))
+        Some(clause_to_tdd(vtree, &ends))
     } else {
         None
     };
@@ -153,7 +151,7 @@ pub fn rand_conj_over(
             literals.push((v, positive));
         }
         literals.sort_by_key(|&(v, _)| v);
-        let cl = clause_to_tdd(&eng, vtree, &clause(&literals));
+        let cl = clause_to_tdd(vtree, &clause(&literals));
         acc = Some(match acc {
             None => cl,
             Some(a) => and2(&a, &cl),
@@ -176,6 +174,6 @@ pub fn rand_conj(
 }
 
 /// Build an unlimited clause fixture independently of the operation's armed engine.
-pub(crate) fn clause_to_tdd(_eng: &crate::Engine, vtree: &std::sync::Arc<crate::vtree::Vtree>, clause: &[crate::Literal]) -> crate::Tdd {
+pub(crate) fn clause_to_tdd(vtree: &std::sync::Arc<crate::vtree::Vtree>, clause: &[crate::Literal]) -> crate::Tdd {
     crate::Tdd::clause(vtree, clause).unwrap()
 }

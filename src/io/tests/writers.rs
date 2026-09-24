@@ -158,7 +158,7 @@ fn writing_a_diagram_and_reading_it_back_returns_the_same_diagram() {
             for _ in 0..10 {
                 let mut f = constant_one(&eng, &vtree);
                 for clause in rand_cnf(&mut rng, nvars, CnfShape { clauses: 4, width: 3 }) {
-                    f = apply_and(f, clause_to_tdd(&eng, &vtree, &literals(&clause)));
+                    f = apply_and(f, clause_to_tdd(&vtree, &literals(&clause)));
                 }
                 f.minimize().unwrap();
                 assert_canonical(&f);
@@ -195,7 +195,7 @@ fn the_reader_refuses_what_is_not_this_diagram() {
     let vtree = Arc::new(Vtree::balanced(3));
     let f = apply_and(
         constant_one(&eng, &vtree),
-        clause_to_tdd(&eng, &vtree, &[Literal::pos(VarId(1)), Literal::neg(VarId(2))]),
+        clause_to_tdd(&vtree, &[Literal::pos(VarId(1)), Literal::neg(VarId(2))]),
     );
     let mut bytes: Vec<u8> = Vec::new();
     write_tdd(&mut bytes, &f).expect("an explicit diagram writes");

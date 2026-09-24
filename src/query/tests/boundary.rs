@@ -9,9 +9,9 @@ use crate::query::count::{PinSemantics, Retention};
 use crate::test_helpers::{assert_canonical, rat};
 
 /// `(x0 ∨ x2) ∧ (¬x1 ∨ x3)` over `balanced(4)`, minimized.
-fn two_clauses(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
-    let t1 = clause_to_tdd(eng, vtree, &[Literal::pos(VarId(1)), Literal::pos(VarId(3))]);
-    let t2 = clause_to_tdd(eng, vtree, &[Literal::neg(VarId(2)), Literal::pos(VarId(4))]);
+fn two_clauses(vtree: &Arc<Vtree>) -> Tdd {
+    let t1 = clause_to_tdd(vtree, &[Literal::pos(VarId(1)), Literal::pos(VarId(3))]);
+    let t2 = clause_to_tdd(vtree, &[Literal::neg(VarId(2)), Literal::pos(VarId(4))]);
     let mut t = apply_and(t1, t2);
     t.minimize().unwrap();
     t
@@ -32,7 +32,7 @@ fn internal_levels_bottom_up(vtree: &Vtree) -> Vec<VtreeIdx> {
 fn a_count_marginal_output_answers_from_its_count() {
     let eng = &Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut f = two_clauses(eng, &vtree);
+    let mut f = two_clauses(&vtree);
     let before = f.model_count().unwrap();
     eng.marginalize_levels(&mut f, &internal_levels_bottom_up(&vtree)).unwrap();
     assert!(f.levels[f.output.vtree.idx()].marginal_counts().is_some(), "output level is count-marginal");
@@ -44,7 +44,7 @@ fn a_count_marginal_output_answers_from_its_count() {
 fn a_weight_marginal_output_is_refused_by_name() {
     let eng = &Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let mut f = two_clauses(eng, &vtree);
+    let mut f = two_clauses(&vtree);
     let weights: Vec<_> = (0..4).map(|_| LiteralWeights { negative: rat(1, 2), positive: rat(1, 3) }).collect();
     f.set_weights(WeightStore::new(RationalWeights::from_literals(&weights), Arithmetic::ExactRational)).unwrap();
     eng.marginalize_levels(&mut f, &internal_levels_bottom_up(&vtree)).unwrap();

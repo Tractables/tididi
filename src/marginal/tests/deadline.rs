@@ -33,7 +33,6 @@ use std::sync::Arc;
 /// work — which is what lets a stride cut between them rather than only before
 /// the first.
 fn two_target_tdd() -> (Tdd, Arc<Vtree>, [VtreeIdx; 2]) {
-    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let lit = |v: u32, sign: bool| Literal::new(VarId(v + 1), sign);
     let clauses = [
@@ -44,7 +43,7 @@ fn two_target_tdd() -> (Tdd, Arc<Vtree>, [VtreeIdx; 2]) {
     ];
     let mut acc: Option<Tdd> = None;
     for c in &clauses {
-        let clause = clause_to_tdd(eng, &vtree, c);
+        let clause = clause_to_tdd(&vtree, c);
         acc = Some(match acc {
             Some(prev) => {
                 let mut r = apply_and(prev, clause);

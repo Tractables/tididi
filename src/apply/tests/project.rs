@@ -47,9 +47,8 @@ fn exists_var_of_constant_zero_is_zero() {
 
 #[test]
 fn exists_var_of_literal_is_one() {
-    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(1));
-    let tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let tdd = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)]));
     assert_eq!(tdd.model_count().unwrap(), BigUint::from(1u32));
 
     let result = (tdd).clone().exists_var(VarId(1)).unwrap();
@@ -59,10 +58,9 @@ fn exists_var_of_literal_is_one() {
 
 #[test]
 fn exists_var_of_x_and_y_drops_x() {
-    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(2));
-    let tdd_x = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
-    let tdd_y = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, true)]));
+    let tdd_x = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let tdd_y = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, true)]));
 
     let tdd_xy = apply_and(tdd_x, tdd_y);
     assert_eq!(tdd_xy.model_count().unwrap(), BigUint::from(1u32));
@@ -74,12 +72,11 @@ fn exists_var_of_x_and_y_drops_x() {
 
 #[test]
 fn exists_var_soundness_brute_force() {
-    let eng = &crate::Engine::new();
     // F = (x ∨ y) ∧ (¬y ∨ z), vars 0=x 1=y 2=z. Project out y.
     let vtree = Arc::new(Vtree::balanced(3));
 
-    let tdd1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
-    let tdd2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(2, false), (3, true)]));
+    let tdd1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
+    let tdd2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(2, false), (3, true)]));
 
     let tdd_f = apply_and(tdd1, tdd2);
 
@@ -150,13 +147,12 @@ fn exists_var_soundness_brute_force() {
 /// through empty and the conjunction's count is unchanged.
 #[test]
 fn apply_and_zero_width_marginal_levels() {
-    let eng = &crate::Engine::new();
     use crate::vtree::VtreeIdx;
 
     let vtree = Arc::new(Vtree::balanced(8));
     // Baseline: var4 ∧ var5 over 8 vars = 2^6 models.
-    let b1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(5, true)]));
-    let b2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(6, true)]));
+    let b1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(5, true)]));
+    let b2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(6, true)]));
     let baseline = (apply_and(b1, b2)).model_count().unwrap();
     assert_eq!(baseline, BigUint::from(64u32));
 
@@ -178,8 +174,8 @@ fn apply_and_zero_width_marginal_levels() {
     let c = vtree.node(a).parent().expect("A has a parent");
     assert_eq!(vtree.node(b).parent(), Some(c), "C must be Internal(A,B)");
 
-    let mut f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(5, true)]));
-    let mut g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(6, true)]));
+    let mut f = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(5, true)]));
+    let mut g = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(6, true)]));
     for t in [&mut f, &mut g] {
         t.levels[a.idx()].become_marginal(vec![], None); // 0-width orphan
         t.levels[b.idx()].become_marginal(vec![4], None);
@@ -221,7 +217,7 @@ fn apply_and_rejects_marginalize_schedule_violation() {
     let build = |cls: &[&[(u32, bool)]]| -> Tdd {
         let mut acc: Option<Tdd> = None;
         for literals in cls {
-            let cl = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(literals));
+            let cl = clause_to_tdd(&vtree, &crate::test_helpers::clause(literals));
             acc = Some(match acc {
                 None => cl,
                 Some(a) => and2(&a, &cl),
@@ -313,12 +309,11 @@ fn apply_and_rejects_marginalize_schedule_violation() {
 /// must equal projecting the non-marginal one.
 #[test]
 fn projecting_across_a_marginal_sibling_succeeds() {
-    let eng = &crate::Engine::new();
     use crate::vtree::{VtreeIdx, VtreeNode};
 
     let vtree = Arc::new(Vtree::balanced(4));
-    let t1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)])); // a∨b
-    let t2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(3, true), (4, true)])); // x∨w
+    let t1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, true)])); // a∨b
+    let t2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(3, true), (4, true)])); // x∨w
     let f = apply_and(t1, t2);
     assert_eq!(f.model_count().unwrap(), BigUint::from(9u32));
 
@@ -371,10 +366,9 @@ fn projecting_across_a_marginal_sibling_succeeds() {
 /// PMC onto {v1,v2,v3} = 6.
 #[test]
 fn projecting_a_path_side_one_ref_at_the_root() {
-    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
-    let t1 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (4, true)])); // v0∨v3
-    let t2 = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(3, true), (4, true)])); // v2∨v3
+    let t1 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (4, true)])); // v0∨v3
+    let t2 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(3, true), (4, true)])); // v2∨v3
     let f = apply_and(t1, t2);
 
     let g = (f).clone().exists_var(VarId(1)).unwrap();

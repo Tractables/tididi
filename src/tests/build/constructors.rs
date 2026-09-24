@@ -36,7 +36,6 @@ fn test_constant_one() {
 
 #[test]
 fn test_clause_tdd_minimize_preserves_function() {
-    let eng = &crate::Engine::new();
     // Minimize changes clause diagram structure (prune removes the unreachable d_root
     // at the root, and for sparse clauses cascades further), but must preserve
     // the Boolean function. Verify via model count.
@@ -53,7 +52,7 @@ fn test_clause_tdd_minimize_preserves_function() {
     for (num_vars, lits) in &cases {
         let clause = literals(lits);
         for (shape_name, vtree) in vtree_shapes(*num_vars) {
-            let tdd_before = clause_to_tdd(eng, &vtree, &clause);
+            let tdd_before = clause_to_tdd(&vtree, &clause);
             let count_before = tdd_before.model_count().unwrap();
 
             let mut tdd_after = tdd_before.clone();
@@ -128,7 +127,6 @@ fn validate_all_nodes_reachable(tdd: &Tdd) -> Result<(), String> {
 
 #[test]
 fn test_clause_to_tdd_is_minimal() {
-    let eng = &crate::Engine::new();
     // `clause_to_tdd` should return a minimal, canonical diagram with no
     // unreachable nodes.
     let cases: Vec<(u32, Vec<i32>)> = vec![
@@ -144,7 +142,7 @@ fn test_clause_to_tdd_is_minimal() {
     for (num_vars, lits) in &cases {
         let clause = literals(lits);
         for (shape_name, vtree) in vtree_shapes(*num_vars) {
-            let tdd = clause_to_tdd(eng, &vtree, &clause);
+            let tdd = clause_to_tdd(&vtree, &clause);
             let label = format!("clause {:?} ({} vars, {})", lits, num_vars, shape_name);
 
             assert_canonical(&tdd);
@@ -180,7 +178,7 @@ fn a_clause_builds_the_levels_its_conjunction_into_one_emits() {
         let clause = literals(lits);
         for (shape_name, vtree) in vtree_shapes(*num_vars) {
             let label = format!("clause {lits:?} ({num_vars} vars, {shape_name})");
-            let built = clause_to_tdd(eng, &vtree, &clause);
+            let built = clause_to_tdd(&vtree, &clause);
             let conjoined =
                 conjoin_clause_on(eng, constant_one(eng, &vtree), &clause)
                     .unwrap_or_else(|e| panic!("{label}: {e:?}"));

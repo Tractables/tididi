@@ -43,7 +43,7 @@ fn streaming_fold_count_matches_materialized_randomized() {
             let shape = CnfShape { clauses: 4, width: nvars as usize };
             let mut acc = constant_one(&eng, &vtree);
             for clause in rand_cnf(rng, nvars, shape) {
-                let cl = clause_to_tdd(&eng, &vtree, &literals(&clause));
+                let cl = clause_to_tdd(&vtree, &literals(&clause));
                 acc = apply_and(acc, cl);
             }
             acc
@@ -118,7 +118,7 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
             let shape = CnfShape { clauses: 4, width: nvars as usize };
             let mut acc = constant_one(&eng, &vtree);
             for clause in rand_cnf(rng, nvars, shape) {
-                let cl = clause_to_tdd(&eng, &vtree, &literals(&clause));
+                let cl = clause_to_tdd(&vtree, &literals(&clause));
                 acc = apply_and(acc, cl);
             }
             acc

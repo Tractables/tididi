@@ -140,24 +140,24 @@ fn restrict_ancestor_marginal_operand_gate() {
     {
         // b = (p∨q) ∧ (p∨z) ∧ (q∨z2) ; forgetting V2 keeps (p,q) entangled with a
         // surviving marginal level. care=(¬p) forces p=false ⇒ prunes the p-branch.
-        let f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(p, true), (q, true)]));
-        let g = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(p, true), (z, true)]));
-        let c3 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(q, true), (z2, true)]));
+        let f = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(p, true), (q, true)]));
+        let g = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(p, true), (z, true)]));
+        let c3 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(q, true), (z2, true)]));
         let mut b = and2(&and2(&f, &g), &c3);
         forget_v2(&mut b);
         assert!(has_marginal(&b), "deterministic case 1 lost its marginal level");
-        let care = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(p, false)])); // ¬p
+        let care = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(p, false)])); // ¬p
         check(&b, &care, "det1", &mut fail, &mut first_fail);
     }
     {
         // b = (¬p∨q) ∧ (p∨z) ∧ (q∨z2) ; care=(¬q) forces q=false ⇒ ¬p, prunes branches.
-        let f = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(p, false), (q, true)]));
-        let g = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(p, true), (z, true)]));
-        let c3 = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(q, true), (z2, true)]));
+        let f = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(p, false), (q, true)]));
+        let g = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(p, true), (z, true)]));
+        let c3 = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(q, true), (z2, true)]));
         let mut b = and2(&and2(&f, &g), &c3);
         forget_v2(&mut b);
         assert!(has_marginal(&b), "deterministic case 2 lost its marginal level");
-        let care = clause_to_tdd(&eng, &vtree, &crate::test_helpers::clause(&[(q, false)])); // ¬q
+        let care = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(q, false)])); // ¬q
         check(&b, &care, "det2", &mut fail, &mut first_fail);
     }
 

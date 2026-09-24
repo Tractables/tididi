@@ -19,7 +19,7 @@ fn test_apply_and_with_constant_one() {
     let vtree = Arc::new(Vtree::balanced(3));
     let one = constant_one(eng, &vtree);
     let clause = vec![Literal::pos(VarId(1))];
-    let clause_tdd = clause_to_tdd(eng, &vtree, &clause);
+    let clause_tdd = clause_to_tdd(&vtree, &clause);
 
     // 1 ∧ clause = clause (after minimize)
     let mut expected = clause_tdd.clone();
@@ -49,13 +49,12 @@ fn test_apply_and_with_constant_one() {
 
 #[test]
 fn test_apply_and_two_clauses() {
-    let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(3));
     let f = vec![Literal::pos(VarId(1))];
     let g = vec![Literal::neg(VarId(2))];
 
-    let t1 = clause_to_tdd(eng, &vtree, &f);
-    let t2 = clause_to_tdd(eng, &vtree, &g);
+    let t1 = clause_to_tdd(&vtree, &f);
+    let t2 = clause_to_tdd(&vtree, &g);
     let mut result = apply_and(t1, t2);
     result.minimize().unwrap();
     assert_canonical(&result);
@@ -65,14 +64,13 @@ fn test_apply_and_two_clauses() {
 
 #[test]
 fn test_apply_and_contradictory() {
-    let eng = &crate::Engine::new();
     // x0 ∧ ¬x0 should have no models
     let vtree = Arc::new(Vtree::balanced(1));
     let f = vec![Literal::pos(VarId(1))];
     let g = vec![Literal::neg(VarId(1))];
 
-    let t1 = clause_to_tdd(eng, &vtree, &f);
-    let t2 = clause_to_tdd(eng, &vtree, &g);
+    let t1 = clause_to_tdd(&vtree, &f);
+    let t2 = clause_to_tdd(&vtree, &g);
     let mut result = apply_and(t1, t2);
     result.minimize().unwrap();
     assert_canonical(&result);
@@ -82,13 +80,12 @@ fn test_apply_and_contradictory() {
 
 #[test]
 fn test_apply_and_self_conjunction() {
-    let eng = &crate::Engine::new();
     // f ∧ f = f for a non-trivial diagram.
     let vtree = Arc::new(Vtree::balanced(4));
     let f = vec![Literal::pos(VarId(1)), Literal::pos(VarId(3))];
     let g = vec![Literal::neg(VarId(2)), Literal::pos(VarId(4))];
-    let mut tdd = clause_to_tdd(eng, &vtree, &f);
-    let t2 = clause_to_tdd(eng, &vtree, &g);
+    let mut tdd = clause_to_tdd(&vtree, &f);
+    let t2 = clause_to_tdd(&vtree, &g);
     tdd = apply_and(tdd, t2);
     tdd.minimize().unwrap();
 
@@ -107,13 +104,12 @@ fn test_apply_and_self_conjunction() {
 
 #[test]
 fn test_apply_and_self_conjunction_owned() {
-    let eng = &crate::Engine::new();
     // f ∧ f = f via the owned variant (avoids clone).
     let vtree = Arc::new(Vtree::balanced(4));
     let f = vec![Literal::pos(VarId(1)), Literal::neg(VarId(3))];
     let g = vec![Literal::pos(VarId(2)), Literal::pos(VarId(4))];
-    let mut tdd = clause_to_tdd(eng, &vtree, &f);
-    let t2 = clause_to_tdd(eng, &vtree, &g);
+    let mut tdd = clause_to_tdd(&vtree, &f);
+    let t2 = clause_to_tdd(&vtree, &g);
     tdd = apply_and(tdd, t2);
     tdd.minimize().unwrap();
 
@@ -143,7 +139,7 @@ fn test_apply_and_stick_vtree_conjunction() {
     ];
     let mut f = constant_one(eng, &vtree);
     for clause in &clauses1 {
-        let cl = clause_to_tdd(eng, &vtree, clause);
+        let cl = clause_to_tdd(&vtree, clause);
         f = apply_and(f, cl);
         f.minimize().unwrap();
     }
@@ -156,7 +152,7 @@ fn test_apply_and_stick_vtree_conjunction() {
     ];
     let mut g = constant_one(eng, &vtree);
     for clause in &clauses2 {
-        let cl = clause_to_tdd(eng, &vtree, clause);
+        let cl = clause_to_tdd(&vtree, clause);
         g = apply_and(g, cl);
         g.minimize().unwrap();
     }
@@ -210,7 +206,7 @@ fn test_apply_output_node_cap_bails_cleanly() {
             let clause: Vec<Literal> = literals.iter()
                 .map(|&l| Literal::new(VarId(l.unsigned_abs()), l > 0))
                 .collect();
-            let c = clause_to_tdd(eng, vtree, &clause);
+            let c = clause_to_tdd(vtree, &clause);
             acc = apply_and(acc, c);
         }
         acc
