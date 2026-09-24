@@ -138,6 +138,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective, A: AcceptancePolicy>(
         });
     }
     let _op = eng.limits().begin_operation();
+    policy.begin();
     let mut rule = Policed { objective, policy, stats: RotationSearchStats::default(), log: Vec::new() };
     let mut scratch = eng.restructure().checkout(eng.limits());
 

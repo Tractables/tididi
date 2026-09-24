@@ -23,9 +23,13 @@ use super::{RotationMove, RotationProbe, RotationSearchStats};
 /// Whether a probed sequence of rotations is kept, given its cost.
 ///
 /// A policy is consulted once per scored sequence and may hold state across a
-/// search: [`observe`](Self::observe) reports every decision and
-/// [`keep_sweeping`](Self::keep_sweeping) ends the search.
+/// search: [`begin`](Self::begin) opens it, [`observe`](Self::observe) reports
+/// every decision and [`keep_sweeping`](Self::keep_sweeping) ends it. One
+/// policy value can drive any number of searches in turn.
 pub trait AcceptancePolicy {
+    /// Start a search: forget whatever an earlier search left behind.
+    fn begin(&mut self) {}
+
     /// Keep this sequence? `delta` is the objective's score for `probe`, and
     /// a negative one improves it.
     fn accept(&mut self, probe: &RotationProbe<'_>, delta: i64) -> bool;
@@ -128,6 +132,10 @@ impl Default for Tabu {
 }
 
 impl AcceptancePolicy for Tabu {
+    fn begin(&mut self) {
+        *self = Tabu::new(self.tenure, self.patience);
+    }
+
     fn accept(&mut self, probe: &RotationProbe<'_>, delta: i64) -> bool {
         // Aspiration: a sequence that reaches a new best is kept whether or not
         // one of its moves is forbidden, since the reason to forbid a move is
@@ -200,6 +208,8 @@ pub struct Annealing {
     /// What the temperature is multiplied by after each sweep. The default is
     /// 0.5.
     pub cooling: f64,
+    /// What the generator is started from at each search.
+    pub seed: u64,
     temperature: f64,
     /// Whether the sweep now running kept a strictly improving sequence.
     improved: bool,
@@ -214,7 +224,7 @@ impl Annealing {
     /// An annealing policy with the given seed, start temperature and cooling
     /// factor.
     pub fn new(seed: u64, start: f64, cooling: f64) -> Annealing {
-        Annealing { start, cooling, temperature: start, improved: false, rng: Lcg::new(seed) }
+        Annealing { start, cooling, seed, temperature: start, improved: false, rng: Lcg::new(seed) }
     }
 }
 
@@ -226,6 +236,12 @@ impl Default for Annealing {
 }
 
 impl AcceptancePolicy for Annealing {
+    fn begin(&mut self) {
+        self.temperature = self.start;
+        self.improved = false;
+        self.rng = Lcg::new(self.seed);
+    }
+
     fn accept(&mut self, _probe: &RotationProbe<'_>, delta: i64) -> bool {
         if delta < 0 {
             return true;

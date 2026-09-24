@@ -155,6 +155,36 @@ fn annealing_is_the_same_search_every_time_for_one_seed() {
     assert_eq!(first.node_count(), second.node_count());
 }
 
+/// A policy carries no memory from one search into the next: the same
+/// value run twice is the same search twice, and its public settings are
+/// read afresh each time.
+#[test]
+fn a_policy_starts_every_search_from_its_settings() {
+    let mut annealing = Annealing::new(11, 4.0, 0.5);
+    let mut first = plateau();
+    search_with(&mut first, &mut annealing, &bounded());
+    let mut second = plateau();
+    search_with(&mut second, &mut annealing, &bounded());
+    assert!(first.vtree().same_tree(second.vtree()));
+    assert_eq!(first.pair_count(), second.pair_count());
+
+    // With the temperature raised after construction, the reused value runs
+    // the hotter search, which is what a fresh value with that start runs.
+    annealing.start = 64.0;
+    let mut hot = plateau();
+    search_with(&mut hot, &mut annealing, &bounded());
+    let mut fresh = plateau();
+    search_with(&mut fresh, &mut Annealing::new(11, 64.0, 0.5), &bounded());
+    assert!(hot.vtree().same_tree(fresh.vtree()));
+
+    let mut tabu = Tabu::new(4, 1);
+    let mut first = plateau();
+    search_with(&mut first, &mut tabu, &bounded());
+    let mut second = plateau();
+    search_with(&mut second, &mut tabu, &bounded());
+    assert!(first.vtree().same_tree(second.vtree()));
+}
+
 /// Variables 5 to 8 are free and sit in one subtree of the balanced vtree, so
 /// every rotation inside it rebuilds two one-pair levels as two one-pair
 /// levels: a zero-cost move at every temperature.
