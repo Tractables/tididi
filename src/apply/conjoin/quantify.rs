@@ -45,6 +45,8 @@ use crate::diagram::{ChildPair, EncodedChildRef, ONE_LEAF_IDX, Tdd};
 use crate::limits::{OperationError, PollGate};
 
 use super::{ApplyRun, LevelShape, NO_PRODUCT};
+use super::child_lookup::{ChildLookup, DenseLookup};
+use crate::diagram::Sides;
 
 /// The pair of a `⊤` node: the constant-true node sits at local index 0 of
 /// every level, leaf or internal, so both sides name it.
@@ -79,11 +81,17 @@ pub(super) fn build_level_quantified(
     let grid = run.products.arena.alloc(eng, ti, cells)?;
     run.products.arena.set_dense(ti, grid);
     let base = grid.idx();
-    let sides = Bases {
-        left: run.products.arena.materialized(li).expect("a collapsed level's left child has a grid").idx(),
-        right: run.products.arena.materialized(ri).expect("a collapsed level's right child has a grid").idx(),
-        left_stride: gw.left,
-        right_stride: gw.right,
+    // The children's grids, read positionally as the dense cell walk reads
+    // them.
+    let sides = Sides {
+        left: DenseLookup {
+            base: run.products.arena.materialized(li).expect("a collapsed level's left child has a grid").idx(),
+            stride: gw.left as u32,
+        },
+        right: DenseLookup {
+            base: run.products.arena.materialized(ri).expect("a collapsed level's right child has a grid").idx(),
+            stride: gw.right as u32,
+        },
     };
     // This route emits at most one pair, so it arms no emit-growth bound; the
     // routed path's `open_level_arenas` makes the same call for the routes
@@ -106,7 +114,7 @@ pub(super) fn build_level_quantified(
         for j in 0..gw.here {
             gate.poll(1)?;
             let g_pairs = g_level.pairs_of_idx(j);
-            if !cell_is_satisfiable(f_pairs, g_pairs, slab, sides, &mut gate)? {
+            if !cell_is_satisfiable(f_pairs, g_pairs, slab, &sides, &mut gate)? {
                 continue;
             }
             if level.nodes.is_empty() {
@@ -124,17 +132,6 @@ pub(super) fn build_level_quantified(
     Ok(())
 }
 
-/// Where one collapsed level reads its two children's grids.
-#[derive(Clone, Copy)]
-struct Bases {
-    left: usize,
-    right: usize,
-    /// Column count of the left child's grid: g's width there.
-    left_stride: usize,
-    /// The same for the right child.
-    right_stride: usize,
-}
-
 /// Whether `f_pairs ∧ g_pairs` has a model, which is what one cell of a
 /// collapsed level contributes.
 ///
@@ -147,22 +144,16 @@ fn cell_is_satisfiable(
     f_pairs: &[ChildPair],
     g_pairs: &[ChildPair],
     slab: &[u32],
-    sides: Bases,
+    sides: &Sides<DenseLookup>,
     gate: &mut PollGate<'_>,
 ) -> Result<bool, OperationError> {
-    // Widened before the multiply: a child grid is allocated with `usize`
-    // arithmetic and a single level can exceed 2^32 cells, so a `u32` product
-    // would wrap and read the wrong cell.
-    let at = |base: usize, stride: usize, a: EncodedChildRef, b: EncodedChildRef| {
-        slab[base + a.0 as usize * stride + b.0 as usize]
-    };
     for p1 in f_pairs {
         gate.poll(g_pairs.len() as u64)?;
         for p2 in g_pairs {
-            if at(sides.left, sides.left_stride, p1.left, p2.left) == NO_PRODUCT {
+            if sides.left.get(slab, p1.left.0, p2.left.0) == NO_PRODUCT {
                 continue;
             }
-            if at(sides.right, sides.right_stride, p1.right, p2.right) == NO_PRODUCT {
+            if sides.right.get(slab, p1.right.0, p2.right.0) == NO_PRODUCT {
                 continue;
             }
             return Ok(true);
