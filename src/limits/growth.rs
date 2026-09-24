@@ -214,6 +214,20 @@ impl Limits {
         self.charge_bytes((map.capacity().saturating_sub(before) as u64).saturating_mul(bytes))
     }
 
+    /// [`reserve_map`](Self::reserve_map) for a hash set.
+    pub(crate) fn reserve_set<T: Eq + std::hash::Hash, S: std::hash::BuildHasher>(
+        &self, set: &mut std::collections::HashSet<T, S>, additional: usize,
+    ) -> Result<(), OperationError> {
+        #[cfg(test)]
+        if self.refuses_reserve() { return Err(OperationError::OverBudget); }
+        let before = set.capacity();
+        let bytes = (std::mem::size_of::<T>() + 1) as u64;
+        let request = (additional as u64).saturating_mul(bytes);
+        if additional > before - set.len() { self.preflight_alloc(request); }
+        set.try_reserve(additional).map_err(|_| self.note_refused(request))?;
+        self.charge_bytes((set.capacity().saturating_sub(before) as u64).saturating_mul(bytes))
+    }
+
     /// Fallible `push`: reserve one slot before the push so allocation failure
     /// returns `Err(OverBudget)` instead of aborting the process.
     ///

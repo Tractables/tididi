@@ -92,9 +92,8 @@ pub(super) struct MergeBuffers {
     /// The candidate member's pair list, sorted for the same test.
     pub(super) member_pairs: Vec<(u32, u32)>,
     /// Pairs already claimed by an accepted member of the current group
-    /// (support-overlap detection). A map to `()` rather than a set so its
-    /// growth goes through `Limits::reserve_map`.
-    pub(super) seen_pairs: rustc_hash::FxHashMap<(u32, u32), ()>,
+    /// (support-overlap detection).
+    pub(super) seen_pairs: rustc_hash::FxHashSet<(u32, u32)>,
     /// Pass A's flat selection buffer: every acting group's members
     /// contiguously, survivor first. u32 node indices, as above.
     pub(super) sel: Vec<u32>,

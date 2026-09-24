@@ -128,7 +128,7 @@ pub(super) fn plan_groups(
         lim.reserve_exact(duplicate_members, max_members)?;
         lim.reserve_exact(keep_pairs_sorted, max_pairs)?;
         lim.reserve_exact(member_pairs, max_pairs)?;
-        lim.reserve_map(seen_pairs, max_mass)?;
+        lim.reserve_set(seen_pairs, max_mass)?;
     }
     // The per-group buffers are cleared before each group below.
     for g in 0..group_starts.len() {
@@ -155,7 +155,7 @@ pub(super) fn plan_groups(
         keep_pairs_sorted.clear();
         filtered.push(keep);
         for p in level.pairs_of_idx(keep as usize) {
-            seen_pairs.insert((p.left.0, p.right.0), ());
+            seen_pairs.insert((p.left.0, p.right.0));
             keep_pairs_sorted.push((p.left.0, p.right.0));
         }
         keep_pairs_sorted.sort_unstable();
@@ -164,12 +164,12 @@ pub(super) fn plan_groups(
             member_pairs.clear();
             for p in level.pairs_of_idx(idx as usize) {
                 let lr = (p.left.0, p.right.0);
-                overlap |= seen_pairs.contains_key(&lr);
+                overlap |= seen_pairs.contains(&lr);
                 member_pairs.push(lr);
             }
             if !overlap {
                 for &(l, r) in member_pairs.iter() {
-                    seen_pairs.insert((l, r), ());
+                    seen_pairs.insert((l, r));
                 }
                 filtered.push(idx);
             } else if parent_marginal {

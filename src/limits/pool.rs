@@ -181,9 +181,10 @@ impl<T, S: Default> Scratch for std::collections::HashSet<T, S> {
     fn entries(&self) -> usize {
         self.capacity()
     }
+    /// One control byte per entry, as `Limits::reserve_set` charges it.
     #[inline]
     fn entry_bytes(&self) -> usize {
-        std::mem::size_of::<T>()
+        std::mem::size_of::<T>() + 1
     }
     #[inline]
     fn release(&mut self) {
@@ -200,9 +201,10 @@ impl<K, V, S: Default> Scratch for std::collections::HashMap<K, V, S> {
     fn entries(&self) -> usize {
         self.capacity()
     }
+    /// One control byte per entry, as `Limits::reserve_map` charges it.
     #[inline]
     fn entry_bytes(&self) -> usize {
-        std::mem::size_of::<(K, V)>()
+        std::mem::size_of::<(K, V)>() + 1
     }
     #[inline]
     fn release(&mut self) {

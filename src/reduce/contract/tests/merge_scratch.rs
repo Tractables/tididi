@@ -117,8 +117,8 @@ fn merge_buffers_clear_retains_allocations() {
     use super::merge::{GroupAction, GroupPlan};
     use super::scratch::MergeBuffers;
 
-    let mut seen_pairs: rustc_hash::FxHashMap<(u32, u32), ()> = Default::default();
-    seen_pairs.insert((5, 6), ());
+    let mut seen_pairs: rustc_hash::FxHashSet<(u32, u32)> = Default::default();
+    seen_pairs.insert((5, 6));
     let mut b = MergeBuffers {
         resolve_keeps: vec![1],
         filtered: vec![2],
