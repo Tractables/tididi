@@ -402,15 +402,15 @@ impl TddLevel {
         })
     }
 
-    /// Source-agnostic pair count. Use this for `pair_start` snapshots in
-    /// the emit loop.
+    /// Length of the pair arena, dead entries included: the start offset the
+    /// next multi-pair node's range gets. Not the level's pair count; see
+    /// [`live_pairs`](Self::live_pairs) for that.
     #[inline]
-    pub(crate) fn pair_count(&self) -> usize {
+    pub(crate) fn arena_len(&self) -> usize {
         self.pairs.len()
     }
 
-    /// Source-agnostic pop, returns the last pair from the pairs arena.
-    /// Used by `emit_product_node!`'s 1-pair inline path.
+    /// Pop the last pair off the arena.
     #[inline]
     pub(crate) fn pop_pair(&mut self) -> Option<ChildPair> {
         self.pairs.pop()

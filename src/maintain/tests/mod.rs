@@ -1,5 +1,7 @@
 use super::*;
 
+use rustc_hash::FxHashMap;
+
 use crate::test_helpers::check::check_determinism;
 use crate::test_helpers::{assert_canonical, assert_same_shape, compile_clauses, test_cases, vtree_shapes};
 use crate::vtree::rng::Lcg;
@@ -413,4 +415,25 @@ fn weighted_updates_preserve_weights_on_refusal_and_on_the_last_removal() {
         }
         assert!(succeeded);
     }
+}
+
+#[test]
+fn the_pair_index_charges_one_entry_per_pair_of_every_node() {
+    // A cube's internal levels each hold one node with one pair, stored inline
+    // and not in the pair arena, so the owner maps' charge must follow the
+    // pair count of the nodes, not the arena length.
+    let vtree = Arc::new(Vtree::balanced(8));
+    let tdd = Tdd::cube(&vtree, assignment(8, 0b1010_0110)).unwrap();
+    let live_pairs: usize = vtree.internal_bottomup().map(|(t, _, _)| tdd.level(t).live_pairs()).sum();
+    assert_eq!(live_pairs, 7);
+    let eng = Engine::new();
+    let index = Index::build(&eng, &tdd).unwrap();
+    assert_eq!(index.owners.iter().map(FxHashMap::len).sum::<usize>(), live_pairs);
+    let n = vtree.num_nodes();
+    let fixed = n * (std::mem::size_of::<FxHashMap<(u32, u32), u32>>() + std::mem::size_of::<Vec<bool>>());
+    let per_entry = std::mem::size_of::<((u32, u32), u32)>() + 1;
+    assert!(
+        eng.limits().meters().in_flight_bytes as usize >= fixed + live_pairs * per_entry,
+        "the owner maps grew past their charged reservation"
+    );
 }

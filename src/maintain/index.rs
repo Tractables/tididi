@@ -52,7 +52,7 @@ impl Index {
             let width = level.slot_count();
             let mut flags = Vec::new();
             lim.try_resize(&mut flags, width, false)?;
-            lim.reserve_map(&mut owners[t.idx()], level.pair_count())?;
+            lim.reserve_map(&mut owners[t.idx()], level.live_pairs())?;
             for (i, flag) in flags.iter_mut().enumerate() {
                 if !level.nodes()[i].is_internal() { continue; }
                 let pairs = level.pairs_of_idx(i);

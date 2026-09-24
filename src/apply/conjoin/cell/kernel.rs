@@ -79,7 +79,7 @@ fn emit_single_pair(eng: &Engine, level: &mut TddLevel, pair: ChildPair) -> Resu
     if pair.can_inline() {
         lim.try_push(&mut level.nodes, EncodedNode::inline(pair))
     } else {
-        let ps = level.pair_count();
+        let ps = level.arena_len();
         try_push_pair_into(eng, level, pair)?;
         let ei = level.multi_pairs.len();
         lim.try_push(&mut level.multi_pairs, MultiPairRange { start: ps as u64, len: 1 })?;
@@ -115,7 +115,7 @@ pub(crate) trait PairSink {
     ) -> Result<(), OperationError>;
 
     /// Start a multi-pair cell; returns the start token `end` consumes
-    /// (the emit impl snapshots `level.pair_count()`).
+    /// (the emit impl snapshots `level.arena_len()`).
     fn begin(&mut self) -> usize;
 
     /// One surviving (lc, rc) pair of a multi-pair cell.
@@ -155,7 +155,7 @@ impl PairSink for EmitSink<'_> {
 
     #[inline(always)]
     fn begin(&mut self) -> usize {
-        self.level.pair_count()
+        self.level.arena_len()
     }
 
     #[inline(always)]
