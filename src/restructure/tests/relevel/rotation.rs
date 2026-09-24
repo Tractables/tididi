@@ -33,6 +33,43 @@ fn left_rotation_preserves_model_count() {
     assert_eq!(mc_before, tdd.model_count().unwrap());
 }
 
+/// Every reservation the rebuild makes is one the limits can refuse, the
+/// inner pair table's included, and each refusal leaves the levels as they
+/// were.
+#[test]
+fn every_reservation_of_a_rebuild_can_be_refused() {
+    let vtree = Arc::new(Vtree::balanced(6));
+    let original = compile_clauses(&vtree, &[vec![1, 2, 3], vec![4, -5, 6], vec![-1, 4]]);
+    let mut vt = (*vtree).clone();
+    let root = vt.root();
+    let info = rotate_left(&mut vt, root).unwrap();
+    let rotated = Arc::new(vt);
+
+    let mut refused = 0;
+    let mut completed = false;
+    for cut in 0..64 {
+        let lim = crate::limits::Limits::new();
+        let mut tdd = original.clone();
+        tdd.vtree = Arc::clone(&rotated);
+        let before = snapshot_levels(&tdd);
+        lim.refuse_nth_reserve(cut);
+        let result = restructure_inner_search(
+            &lim, &mut tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX,
+        );
+        lim.grant_every_reserve();
+        match result {
+            Err(OperationError::OverBudget) => {
+                refused += 1;
+                assert_eq!(snapshot_levels(&tdd), before, "reservation {cut}");
+            }
+            Ok(Some(_)) => completed = true,
+            Ok(None) => panic!("reservation {cut}: an unbounded rebuild bailed"),
+            Err(other) => panic!("reservation {cut}: {other:?}"),
+        }
+    }
+    assert!(refused > 0 && completed);
+}
+
 /// A left rotation and the right rotation that undoes it both hold the count,
 /// so the count after the round trip is the count before it — not merely the
 /// count reached midway.

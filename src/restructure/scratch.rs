@@ -2,7 +2,7 @@
 
 use crate::limits::pool::PooledScratch;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use crate::diagram::{ChildPair, NodeIdx};
 
@@ -11,15 +11,17 @@ use crate::diagram::{ChildPair, NodeIdx};
 /// search rather than once per probe. Each field is `clear()`-ed before use in
 /// `restructure_inner_search`, preserving the underlying capacity; a field is
 /// then released at its last read within the call rather than held across the
-/// successor-level builds (see `SCRATCH_RETAIN_ENTRIES`).
+/// successor-level builds (see `SCRATCH_RETAIN_ENTRIES`). Every field grows
+/// through the engine's limits, so its growth is charged to the operation's
+/// byte meter, and what the retention policy drops is given back there.
 #[derive(Default)]
 pub(crate) struct RestructureScratch {
     pub(super) inner_pair_to_idx: FxHashMap<ChildPair, NodeIdx>,
     // Per-v-node output pair lists; outer Vec grown with `resize_with`, inner
     // Vecs `clear()`-ed per call so their capacity survives across probes.
     pub(super) per_v_pairs: Vec<Vec<ChildPair>>,
-    pub(super) distinct_inner: FxHashSet<ChildPair>,
     pub(super) group_info: Vec<super::relevel::PairGroup>,
+    pub(super) bucket: BucketScratch,
     // Search path triples, packed one-per-u128 (see `pack_triple`). The sort in
     // `restructure_inner_search` is the dominant cost of the joint next-merge-cost
     // probe on single-large-component pools; sorting a `Vec<u128>` by a single
@@ -28,23 +30,34 @@ pub(crate) struct RestructureScratch {
     pub(super) packed: Vec<u128>,
 }
 
+/// The walk over one fingerprint bucket in the clustering build of the inner
+/// level: which of the bucket's groups are already placed under a node, and
+/// the pairs of the node being emitted.
+#[derive(Default)]
+pub(super) struct BucketScratch {
+    pub(super) done: Vec<bool>,
+    pub(super) pairs: Vec<ChildPair>,
+}
+
 impl PooledScratch for RestructureScratch {
     fn retained_bytes(&self) -> usize {
         use crate::limits::pool::{capacity_bytes, nested_bytes};
         [
             capacity_bytes(&self.inner_pair_to_idx),
             nested_bytes(&self.per_v_pairs),
-            capacity_bytes(&self.distinct_inner),
             capacity_bytes(&self.group_info),
             capacity_bytes(&self.packed),
+            capacity_bytes(&self.bucket.done),
+            capacity_bytes(&self.bucket.pairs),
         ].into_iter().sum()
     }
 
     fn prepare(&mut self) {
         self.inner_pair_to_idx.clear();
-        self.distinct_inner.clear();
         self.group_info.clear();
         self.packed.clear();
+        self.bucket.done.clear();
+        self.bucket.pairs.clear();
         // Keep the outer Vec's length (bounded by `PER_V_PAIRS_RETAIN` on
         // return): `restructure_inner_search` only `resize_with`s it upward and
         // clears the prefix it uses, so the inner Vecs' capacities are exactly
@@ -57,13 +70,15 @@ impl PooledScratch for RestructureScratch {
     fn retain(&mut self, lim: &crate::limits::Limits) {
         self.per_v_pairs.truncate(PER_V_PAIRS_RETAIN);
         if self.packed.capacity() > RESTRUCTURE_PACKED_CAP_LIMIT {
-            // Only the two size-proportional Vecs were charged through the
-            // byte meter; the maps grow through their own allocator.
             lim.discard(std::mem::take(&mut self.packed));
             lim.discard(std::mem::take(&mut self.group_info));
-            self.per_v_pairs = Vec::new();
-            self.inner_pair_to_idx = FxHashMap::default();
-            self.distinct_inner = FxHashSet::default();
+            lim.discard(std::mem::take(&mut self.inner_pair_to_idx));
+            lim.discard(std::mem::take(&mut self.bucket.done));
+            lim.discard(std::mem::take(&mut self.bucket.pairs));
+            for lists in self.per_v_pairs.drain(..) {
+                lim.discard(lists);
+            }
+            lim.discard(std::mem::take(&mut self.per_v_pairs));
         }
     }
 }

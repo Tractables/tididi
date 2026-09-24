@@ -19,7 +19,7 @@
 
 use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, NodeIdx, Tdd, TddLevel};
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use crate::vtree::rotate::RotationInfo;
 use crate::vtree::RotationKind;
@@ -28,7 +28,7 @@ use crate::vtree::RotationKind;
 // deduping; the argument is the module doc's "Marginal context" section.
 
 pub(crate) use super::scratch::RestructureScratch;
-use super::scratch::SCRATCH_RETAIN_ENTRIES;
+use super::scratch::{BucketScratch, SCRATCH_RETAIN_ENTRIES};
 use crate::limits::pool::release_or_clear;
 use crate::limits::{Limits, OperationError, Transient};
 
@@ -80,9 +80,10 @@ fn tri_axis(p: u128) -> EncodedChildRef { EncodedChildRef::from_raw(p as u32) }
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] when a buffer the rebuild needs is refused,
-/// either by the allocator or by the armed byte budget. Every allocation the
-/// expansion makes goes through the engine's limits, so a rotation too wide
-/// for the host comes back as an answer rather than an abort.
+/// either by the allocator or by the armed byte budget. Every buffer the
+/// expansion grows, the pair table included, is charged through the engine's
+/// limits, so a rotation too wide for the host comes back as an answer rather
+/// than an abort.
 pub(crate) fn restructure_inner_search(
     lim: &Limits,
     tdd: &mut Tdd,
@@ -102,19 +103,9 @@ pub(crate) fn restructure_inner_search(
     let (old_v, old_w) = (&tdd.levels[v_idx], &tdd.levels[w_idx]);
 
     scratch.packed.clear();
-    scratch.distinct_inner.clear();
-    let Some(n_w_pairs) = collect_triples(
-        lim,
-        old_v,
-        old_w,
-        dir,
-        &mut scratch.packed,
-        &mut scratch.distinct_inner,
-        max_pairs,
-    )?
-    else {
+    if !collect_triples(lim, old_v, old_w, dir, &mut scratch.packed, max_pairs)? {
         return Ok(None);
-    };
+    }
 
     // Phase 2: sort the packed triples. A `u128` numeric sort is order-identical
     // to sorting the `(inner, src, axis)` tuple lexicographically (see
@@ -148,8 +139,8 @@ pub(crate) fn restructure_inner_search(
         &scratch.packed,
         &mut scratch.group_info,
         &mut scratch.inner_pair_to_idx,
+        &mut scratch.bucket,
         marginal_ctx,
-        n_w_pairs,
         max_pairs,
     )?
     else {
@@ -174,15 +165,15 @@ pub(crate) fn restructure_inner_search(
     )?;
 
     Ok(Some(tdd.replace_level_pair(
-        (crate::vtree::VtreeIdx(v_idx as u32), outer_level),
-        (crate::vtree::VtreeIdx(w_idx as u32), inner_level.keep()),
+        (info.v_idx, outer_level),
+        (info.w_idx, inner_level.keep()),
     )))
 }
 
-/// Phase 1: expand every old v-pair against the w-level into packed triples,
-/// and count the distinct inner pairs (bail check 1). Returns the distinct-inner
-/// count, or `Ok(None)` if the rotation would exceed `max_pairs`.
-/// `distinct_inner` is released before returning — only its count survives.
+/// Phase 1: expand every old v-pair against the w-level into packed triples.
+/// Returns `false` if the triple count reaches `max_pairs` (bail check 1): the
+/// distinct inner pairs are never more numerous than the triples, so a count
+/// of them could not bail earlier.
 ///
 /// # Errors
 ///
@@ -193,9 +184,8 @@ fn collect_triples(
     old_w_level: &TddLevel,
     dir: RotationKind,
     triples: &mut Vec<u128>,
-    distinct_inner: &mut FxHashSet<ChildPair>,
     max_pairs: usize,
-) -> Result<Option<usize>, OperationError> {
+) -> Result<bool, OperationError> {
     for i in 0..old_v_level.nodes.len() {
         if !old_v_level.nodes[i].is_internal() { continue; }
         let src = i as u32;
@@ -215,27 +205,16 @@ fn collect_triples(
                         wp.left,
                     ),
                 };
-                distinct_inner.insert(inner);
                 lim.try_push(triples, pack_triple(inner, src, axis))?;
-                // Bail on the raw triple count too: one `vp` whose `w_local` fans
-                // out widely can push `triples` far past `max_pairs` before the
-                // end-of-vp check below runs. `triples.len() >=
-                // distinct_inner.len()` always, so this bail is the tighter one.
+                // Checked per triple: one `vp` whose `w_local` fans out widely
+                // can push `triples` far past `max_pairs` within one `vp`.
                 if triples.len() >= max_pairs {
-                    return Ok(None);
+                    return Ok(false);
                 }
-            }
-            if distinct_inner.len() >= max_pairs {
-                return Ok(None);
             }
         }
     }
-    let n_w_pairs = distinct_inner.len();
-    // Last read of `distinct_inner`: only its count survives (bail check 2).
-    // Release it here — it is one slot per distinct inner pair and would
-    // otherwise stay resident across the sort and both level builds.
-    release_or_clear(lim, distinct_inner, SCRATCH_RETAIN_ENTRIES);
-    Ok(Some(n_w_pairs))
+    Ok(true)
 }
 
 /// One distinct inner pair: its cell list's fingerprint hash, the pair itself,
@@ -290,23 +269,29 @@ fn group_by_inner_pair(
 ///
 /// # Errors
 ///
-/// [`OperationError::OverBudget`] if the level's arena is refused. The
-/// partially built level is dropped, so its charge goes back first.
+/// [`OperationError::OverBudget`] if the pair table's growth or the level's
+/// arena is refused. The partially built level is dropped, so its charge goes
+/// back first.
 fn build_inner_level(
     lim: &Limits,
     triples: &[u128],
     group_info: &mut [PairGroup],
     inner_pair_to_idx: &mut FxHashMap<ChildPair, NodeIdx>,
+    bucket: &mut BucketScratch,
     marginal_ctx: bool,
-    n_w_pairs: usize,
     max_pairs: usize,
 ) -> Result<Option<TddLevel>, OperationError> {
+    // One group per distinct inner pair, so this is the new inner level's
+    // pair count, which bail check 2 adds to its node count.
+    let n_w_pairs = group_info.len();
     let mut level = Transient::new(lim, TddLevel::new());
     if marginal_ctx {
         // Bail check 2 (full-expand): one inner node per distinct inner pair.
         if group_info.len() + n_w_pairs >= max_pairs {
             return Ok(None);
         }
+        // Every group's pair gets an entry, in either shape.
+        lim.reserve_map(inner_pair_to_idx, group_info.len())?;
         expand_every_pair(lim, &mut level, group_info, inner_pair_to_idx)?;
     } else {
         // Phase 3: sort groups by fingerprint hash, so entries that can share a
@@ -315,7 +300,8 @@ fn build_inner_level(
         if count_distinct_cell_lists(triples, group_info) + n_w_pairs >= max_pairs {
             return Ok(None);
         }
-        cluster_by_cell_list(lim, &mut level, triples, group_info, inner_pair_to_idx)?;
+        lim.reserve_map(inner_pair_to_idx, group_info.len())?;
+        cluster_by_cell_list(lim, &mut level, triples, group_info, inner_pair_to_idx, bucket)?;
     }
     Ok(Some(level.keep()))
 }
@@ -376,13 +362,15 @@ fn count_distinct_cell_lists(triples: &[u128], group_info: &[PairGroup]) -> usiz
 }
 
 /// Phase 4: emit one inner node per distinct cell list, with every group that
-/// carries that cell list pointing at it.
+/// carries that cell list pointing at it. `scratch` is what a bucket of more
+/// than one group is walked with.
 fn cluster_by_cell_list(
     lim: &Limits,
     inner_level: &mut TddLevel,
     triples: &[u128],
     group_info: &[PairGroup],
     inner_pair_to_idx: &mut FxHashMap<ChildPair, NodeIdx>,
+    scratch: &mut BucketScratch,
 ) -> Result<(), OperationError> {
     for bucket in hash_buckets(group_info) {
         if bucket.len() == 1 {
@@ -390,25 +378,28 @@ fn cluster_by_cell_list(
             inner_pair_to_idx.insert(bucket[0].1, idx);
             continue;
         }
-        let mut processed = vec![false; bucket.len()];
+        let BucketScratch { done, pairs } = scratch;
+        done.clear();
+        lim.try_resize(done, bucket.len(), false)?;
         for j in 0..bucket.len() {
-            if processed[j] { continue; }
-            let mut pairs = vec![bucket[j].1];
-            processed[j] = true;
+            if done[j] { continue; }
+            pairs.clear();
+            lim.try_push(pairs, bucket[j].1)?;
+            done[j] = true;
             for k in (j + 1)..bucket.len() {
-                if processed[k] { continue; }
+                if done[k] { continue; }
                 if cells_eq(triples, bucket[j].2, bucket[j].3,
                             bucket[k].2, bucket[k].3) {
-                    pairs.push(bucket[k].1);
-                    processed[k] = true;
+                    lim.try_push(pairs, bucket[k].1)?;
+                    done[k] = true;
                 }
             }
             // No canonicalizing sort: this rotated level is queued for twin
             // contraction, but twin detection is order-independent
             // (`find_twin_groups` sorts each signature slice before comparing),
             // so the node's pair order is free (see `ChildPair`).
-            let idx = inner_level.push_node(lim, &pairs)?;
-            for &p in &pairs {
+            let idx = inner_level.push_node(lim, pairs)?;
+            for &p in pairs.iter() {
                 inner_pair_to_idx.insert(p, idx);
             }
         }
