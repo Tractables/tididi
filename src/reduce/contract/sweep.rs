@@ -66,7 +66,11 @@ fn contract_child(
     // sweep. See `ContractScratch::has_marginal_below_valid` for why one fill covers
     // the rest of the checkout.
     if !scratch.has_marginal_below_valid {
-        super::duplicate_pair_resolve::compute_has_marginal_below_into(tdd, &mut scratch.has_marginal_below);
+        super::duplicate_pair_resolve::compute_has_marginal_below_into(
+            eng.limits(),
+            tdd,
+            &mut scratch.has_marginal_below,
+        )?;
         scratch.has_marginal_below_valid = true;
     }
     let merged = contract_twins(eng, tdd, t1, parent, t1_side, scratch)?;
@@ -100,19 +104,6 @@ pub(super) fn push_parent(
     }
 }
 
-/// Seed the contraction max-heap with every eligible parent in `dirty_parents`.
-fn seed_contract_heap(
-    tdd: &Tdd,
-    dirty_parents: &[u32],
-    scratch: &mut ContractScratch,
-    heap: &mut BinaryHeap<(u32, u32)>,
-    num_nodes: usize,
-) {
-    for &dp in dirty_parents {
-        push_parent(tdd, scratch, heap, num_nodes, dp as usize);
-    }
-}
-
 /// Re-queue the parent that was mid-process (`current`) and every parent still
 /// in `heap` on an error exit from a sweep, clearing their `needs_check` so
 /// the pooled scratch is all-false again for the next sweep.
@@ -128,14 +119,8 @@ fn restore_pending_dirty(
     current: Option<u32>,
     heap: &BinaryHeap<(u32, u32)>,
 ) {
-    if let Some(p) = current {
-        tdd.dirty.requeue(Pass::Contract, [p]);
-        scratch.needs_check[p as usize] = false;
-    }
-    for &(_topo_pos, p) in heap.iter() {
-        tdd.dirty.requeue(Pass::Contract, [p]);
-        scratch.needs_check[p as usize] = false;
-    }
+    let pending = current.into_iter().chain(heap.iter().map(|&(_, p)| p));
+    tdd.dirty.requeue(Pass::Contract, pending.inspect(|&p| scratch.needs_check[p as usize] = false));
 }
 
 /// Contract every twin in the diagram in one top-down pass over the parents
@@ -148,8 +133,8 @@ fn restore_pending_dirty(
 /// Returns `Err(OperationError::OverBudget)` if a budget-gated rewrite step fails, or
 /// `Err(OperationError::Stopped)` if the caller's wall passed while the walk was
 /// running and the reduce poll is armed. Either way the diagram is well-formed and
-/// the unprocessed parents are back in `dirty_contract`, so a later minimize
-/// resumes them.
+/// the unprocessed parents are back on the `Pass::Contract` worklist, so a
+/// later minimize resumes them.
 pub(crate) fn contract_all_twins(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -172,7 +157,9 @@ pub(crate) fn contract_all_twins(
     // The unit of work is the parent: a level whose pairs were mutated is a
     // parent whose children's contexts may have moved.
     let mut heap: BinaryHeap<(u32, u32)> = BinaryHeap::new();
-    seed_contract_heap(tdd, &dirty_parents, &mut scratch, &mut heap, num_nodes);
+    for &dp in &dirty_parents {
+        push_parent(tdd, &mut scratch, &mut heap, num_nodes, dp as usize);
+    }
 
     // The walk's one preemption point, amortized. With no stop axis installed the
     // poll short-circuits before any clock read, so the meter below costs an add
@@ -255,7 +242,7 @@ fn joint_contract_fixpoint(
     let mut left_fired = false;
     let mut right_fired = false;
     loop {
-        // As in `canonicalize_content_twins`: termination is argued, not
+        // As in `Reduction::content_twins`: termination is argued, not
         // bounded, so the round boundary is where cancellation cuts in.
         eng.limits().check_stop()?;
         let mut changed = false;
@@ -286,5 +273,5 @@ fn joint_contract_fixpoint(
 }
 
 #[cfg(test)]
-#[path = "tests/strategies/mod.rs"]
+#[path = "tests/sweep/mod.rs"]
 mod tests;

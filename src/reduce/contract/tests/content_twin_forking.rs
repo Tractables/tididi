@@ -8,7 +8,7 @@ use crate::diagram::*;
 use crate::vtree::Vtree;
 use std::sync::Arc;
 use crate::vtree::VtreeIdx;
-use super::strategies::contract_all_twins;
+use super::sweep::contract_all_twins;
 
 /// Directed fixture for duplicate-pair resolution by fork-down scaling
 /// (`duplicate_pair_resolve`): content-equal context-twins at a PLAIN level whose merge

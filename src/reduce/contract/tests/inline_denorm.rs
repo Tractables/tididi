@@ -6,7 +6,7 @@ use crate::vtree::VtreeIdx;
 use std::sync::Arc;
 use crate::test_helpers::BIG;
 
-use super::strategies::contract_all_twins;
+use super::sweep::contract_all_twins;
 
 // ── Test: explicit twin contraction when the SIBLING side is marginal ───
 

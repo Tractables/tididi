@@ -2,7 +2,7 @@
 //!
 //! Two nodes at the same level can be raw-identical (same pair multisets) yet
 //! sit in different parent contexts, so the context-based
-//! `strategies::contract_all_twins` — which groups by the multiset of
+//! `sweep::contract_all_twins` — which groups by the multiset of
 //! `(parent_node, sibling)` contexts — cannot see them.
 //! `merge_content_equal_nodes` detects them by pair-multiset content, through
 //! the same grouping over a node's own pairs instead of its contexts, and

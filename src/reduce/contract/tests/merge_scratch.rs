@@ -8,7 +8,7 @@ use crate::diagram::*;
 use crate::vtree::Vtree;
 use std::sync::Arc;
 use crate::vtree::VtreeIdx;
-use super::strategies::contract_all_twins;
+use super::sweep::contract_all_twins;
 
 /// A twin group holding both disjoint-support members and a content-equal duplicate
 /// member concatenates the disjoint members; the duplicate member is not redirected.

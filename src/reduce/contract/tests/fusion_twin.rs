@@ -8,7 +8,7 @@ use crate::vtree::Vtree;
 use crate::vtree::VtreeIdx;
 use std::sync::Arc;
 
-use super::strategies::contract_all_twins;
+use super::sweep::contract_all_twins;
 
 // ── Change-C: directed fixture — fusion redex creates twins ─────────────
 
