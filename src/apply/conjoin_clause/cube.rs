@@ -31,7 +31,7 @@
 
 use super::*;
 
-use crate::apply::negate::negate_tdd_owned;
+use crate::apply::negate::negate_on;
 use crate::reduce::ReductionPlan;
 
 /// The cube's node at each level, built bottom-up beside the spine walk.
@@ -118,10 +118,10 @@ pub(crate) fn disjoin_cube_owned(eng: &Engine, f: Tdd, cube: &[Literal]) -> Resu
 /// structure at its leaves. The result is minimized.
 pub(super) fn disjoin_cube_by_complement(eng: &Engine, f: Tdd, clause: &[(Literal, VtreeIdx)]) -> Result<Tdd, OperationError> {
     f.require_structure()?;
-    let not_f = negate_tdd_owned(eng, f)?;
+    let not_f = negate_on(eng, f)?;
     let mut rest = conjoin_normalized(eng, not_f, clause)?;
     eng.reduce(&mut rest, ReductionPlan::default())?;
-    let mut out = negate_tdd_owned(eng, rest)?;
+    let mut out = negate_on(eng, rest)?;
     eng.reduce(&mut out, ReductionPlan::default())?;
     Ok(out)
 }

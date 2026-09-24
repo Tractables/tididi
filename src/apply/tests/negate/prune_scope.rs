@@ -13,7 +13,7 @@ use super::plan::shape;
 /// `Engine::negate_with` uses; `Whole` is the same negation with the walk that
 /// assumes nothing.
 fn negate_scoped(eng: &Engine, f: Tdd, plan: ReductionPlan<'_>, scope: PruneScope) -> Tdd {
-    let mut result = crate::apply::negate::negate_tdd_owned(eng, f).unwrap();
+    let mut result = crate::apply::negate::negate_on(eng, f).unwrap();
     assert!(
         below_root_walk_applies(&result) || result.is_zero(),
         "the seeded walk has to be the one under test"

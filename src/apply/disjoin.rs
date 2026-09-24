@@ -14,7 +14,7 @@
 use crate::Engine;
 use crate::diagram::Tdd;
 use crate::limits::OperationError;
-use crate::apply::negate::negate_tdd_owned;
+use crate::apply::negate::negate_on;
 use crate::reduce::ReductionPlan;
 
 /// Panicking disjunction used by `BitOr` and test fixtures.
@@ -44,7 +44,7 @@ pub(crate) fn disjoin_many_on(eng: &Engine, operands: Vec<Tdd>) -> Result<Tdd, O
         eng.reduce(&mut result, ReductionPlan::default())?;
         return Ok(result);
     }
-    let mut result = negate_tdd_owned(eng, fold_conjunction(eng, complements_of(eng, live)?)?)?;
+    let mut result = negate_on(eng, fold_conjunction(eng, complements_of(eng, live)?)?)?;
     eng.reduce(&mut result, ReductionPlan::default())?;
     Ok(result)
 }
@@ -74,7 +74,7 @@ fn complements_of(eng: &Engine, operands: Vec<Tdd>) -> Result<Vec<Tdd>, Operatio
     let mut complements: Vec<Tdd> = Vec::new();
     eng.limits().reserve_exact(&mut complements, operands.len())?;
     for f in operands {
-        complements.push(negate_tdd_owned(eng, f)?);
+        complements.push(negate_on(eng, f)?);
     }
     Ok(complements)
 }

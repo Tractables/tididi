@@ -77,8 +77,8 @@ fn no_negation_mixes_the_two_leaf_forms_on_random_formulas() {
                 assert_no_mixed_leaf_side(&full, "expand_full");
                 // Before `reduce`, so the complement at the root is checked in
                 // the form it was emitted in rather than after contraction.
-                let raw = crate::apply::negate::negate_tdd_owned(eng, f.clone()).unwrap();
-                assert_no_mixed_leaf_side(&raw, "negate_tdd_owned");
+                let raw = crate::apply::negate::negate_on(eng, f.clone()).unwrap();
+                assert_no_mixed_leaf_side(&raw, "negate_on");
                 assert_no_mixed_leaf_side(&eng.negate(f).unwrap(), "negate");
             }
         }

@@ -10,7 +10,7 @@ use crate::diagram::{Assembly, ChildDecoder, ChildPair, EncodedChildRef, LeafLab
 use crate::Engine;
 use crate::limits::OperationError;
 use crate::limits::pool::Pool;
-use crate::apply::condition::empty_node;
+use crate::apply::falsity::empty_node;
 use std::sync::Arc;
 
 /// The buffers negation reuses between calls.
@@ -60,7 +60,7 @@ impl Engine {
         plan: crate::reduce::ReductionPlan<'_>,
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().begin_operation();
-        let mut result = negate_tdd_owned(self, f)?;
+        let mut result = negate_on(self, f)?;
         // `expand_full` left every level covering its children's whole basis,
         // so every node is named from the level above and the only nodes the
         // complement can have orphaned are below the root cells it dropped.
@@ -71,7 +71,7 @@ impl Engine {
 
 /// Make `tdd` full and complement it at the root, consuming the operand;
 /// [`Engine::negate`] also minimizes the result.
-pub(crate) fn negate_tdd_owned(eng: &Engine, mut tdd: Tdd) -> Result<Tdd, OperationError> {
+pub(crate) fn negate_on(eng: &Engine, mut tdd: Tdd) -> Result<Tdd, OperationError> {
     tdd.require_structure()?;
     eng.limits().check_stop()?;
     let weights = tdd.weights.take();

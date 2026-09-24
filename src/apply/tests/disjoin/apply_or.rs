@@ -88,7 +88,7 @@ const RESERVES_PER_DISJUNCTION: u32 = 96;
 /// a granted run answers the same count, and the engine stays usable.
 #[test]
 fn a_refused_reserve_inside_the_disjunction_returns_over_budget() {
-    use crate::apply::negate::negate_tdd_owned;
+    use crate::apply::negate::negate_on;
     use crate::Engine;
     use crate::limits::OperationError;
 
@@ -119,8 +119,8 @@ fn a_refused_reserve_inside_the_disjunction_returns_over_budget() {
     // The conjunction between the negated operands alone takes fewer reserves
     // than the whole disjunction, because the two minimizations that follow it
     // reserve through the same engine.
-    let not_f = negate_tdd_owned(eng, f.clone()).unwrap();
-    let not_g = negate_tdd_owned(eng, g.clone()).unwrap();
+    let not_f = negate_on(eng, f.clone()).unwrap();
+    let not_g = negate_on(eng, g.clone()).unwrap();
     let mut refused_and = 0;
     for nth in 0..RESERVES_PER_DISJUNCTION {
         eng.limits().refuse_nth_reserve(nth);
