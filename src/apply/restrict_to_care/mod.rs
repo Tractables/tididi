@@ -80,7 +80,7 @@ fn restrict_prepared<const BOUNDED: bool>(eng: &Engine, f: Tdd, care: &Tdd, max_
     }
     if care.is_zero() {
         // care ≡ ∅ ⇒ f ∧ care = ∅ ⇒ ⊥ is the smallest sound representative.
-        return Ok(RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)));
+        return Ok(RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)?));
     }
     let v0 = f.output.vtree;
     // Both operands must share vtree structure; the walk reads indices in `f.vtree`.
@@ -94,7 +94,7 @@ fn restrict_prepared<const BOUNDED: bool>(eng: &Engine, f: Tdd, care: &Tdd, max_
     };
     if !marks.root_live {
         // care killed every model of f ⇒ f ∧ care = ∅.
-        return Ok(RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)));
+        return Ok(RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)?));
     }
     if marks.nothing_reachable_died(eng, &f)? {
         return Ok(RestrictionOutcome::Unchanged(f));
@@ -145,7 +145,7 @@ impl crate::Engine {
         if !f.vtree.node(root.vtree).is_leaf() && !f.levels[root.vtree.idx()].is_marginal()
             && !marks.alive[root.vtree.idx()][root.local.idx()]
         {
-            return Ok(crate::build::constant_like(self, &f, false));
+            return crate::build::constant_like(self, &f, false);
         }
         if marks.nothing_reachable_died(self, &f)? { return Ok(f); }
         marks.rebuild(self, f)

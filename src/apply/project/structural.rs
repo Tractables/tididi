@@ -187,9 +187,7 @@ pub(super) fn exists_leaves_structural(
     let root_vi = vtree.root();
     if role[root_vi.idx()] == Role::Whole {
         // Every variable is quantified and the operand is satisfiable: ∃.F = ⊤.
-        let mut result = eng.cube(&tdd.vtree, std::iter::empty::<crate::Literal>())?;
-        result.weights = tdd.weights.as_ref().map(crate::diagram::WeightStore::empty_like);
-        return Ok(result);
+        return crate::build::constant_like(eng, &tdd, true);
     }
 
     let mut remap: Vec<Option<Remap>> = Vec::new();

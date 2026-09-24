@@ -40,7 +40,7 @@ pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<I
     targets.sort_unstable_by_key(|&(leaf, _)| leaf);
     let contradictory = targets.windows(2).any(|pair| pair[0].0 == pair[1].0 && pair[0].1 != pair[1].1);
     if contradictory {
-        return Ok(constant_like(eng, &f, false));
+        return constant_like(eng, &f, false);
     }
     targets.dedup_by_key(|entry| entry.0);
     if f.is_zero() || targets.is_empty() { return Ok(f); }
@@ -112,7 +112,7 @@ fn condition_targets(
 ) -> Result<Tdd, OperationError> {
     for &(leaf, _) in targets.iter() { check_conditionable(&tdd, leaf)?; }
     if let Some(&(_, keep_positive)) = targets.iter().find(|&&(leaf, _)| leaf == tdd.output.vtree) {
-        return Ok(condition_leaf_output(eng, &tdd, keep_positive));
+        return condition_leaf_output(eng, &tdd, keep_positive);
     }
     let vtree = Arc::clone(&tdd.vtree);
     // Parent index, then left before right, fixes the rewrite and invalidation order.
@@ -150,7 +150,7 @@ fn check_conditionable(t: &Tdd, leaf_idx: VtreeIdx) -> Result<(), OperationError
 }
 
 /// Handle conditioning when the diagram output sits directly at the conditioned leaf.
-fn condition_leaf_output(eng: &Engine, t: &Tdd, keep_positive: bool) -> Tdd {
+fn condition_leaf_output(eng: &Engine, t: &Tdd, keep_positive: bool) -> Result<Tdd, OperationError> {
     let output_label = t.output.local;
     let satisfied = if output_label == ZERO {
         false

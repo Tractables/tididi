@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::vtree::Vtree;
+use crate::vtree::{Vtree, VtreeIdx};
 use crate::Engine;
 use crate::limits::OperationError;
 
@@ -10,65 +10,86 @@ use crate::diagram::{self, *};
 
 pub(crate) mod models;
 
-/// Build a diagram computing the constant-false function (no assignment satisfies it).
-/// Output points to the `ZERO` sentinel (`u32::MAX`) — no actual nodes are created.
-pub(crate) fn constant_zero(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
-    let levels = diagram::take_levels(eng, vtree.num_nodes());
-    Tdd::from_levels_unchecked(
-        Arc::clone(vtree),
-        levels,
-        TddNodeId { vtree: vtree.root(), local: ZERO },
-    )
-}
-
-/// Build a diagram computing the constant-true function (all assignments satisfy it).
-/// Width 1 at every internal vtree level (only one node at index 0).
-/// Leaf levels are implicit (no stored nodes); One is at index 0 (`ONE_LEAF_IDX`).
-pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
-    let mut levels = diagram::take_levels(eng, vtree.num_nodes());
-
-    // Internal levels: each has one node pairing the child's "true" node.
-    // Leaf children reference One (`ONE_LEAF_IDX`); internal children reference
-    // their single node at index 0.
-    for (t, left, right) in vtree.internal_bottomup() {
-        let left_child_idx = if vtree.node(left).is_leaf() {
-            ONE_LEAF_IDX
-        } else {
-            NodeIdx(0)
-        };
-        let right_child_idx = if vtree.node(right).is_leaf() {
-            ONE_LEAF_IDX
-        } else {
-            NodeIdx(0)
-        };
-        let pair = ChildPair::new(left_child_idx, right_child_idx);
-        levels[t.idx()].push_internal_node(&[pair]);
-    }
-
-    // Output: One (for single-variable vtrees) or the sole internal node (index 0).
-    let out_local = if vtree.node(vtree.root()).is_leaf() {
-        ONE_LEAF_IDX
-    } else {
-        NodeIdx(0)
-    };
-    Tdd::from_levels_unchecked(
-        Arc::clone(vtree),
-        levels,
-        TddNodeId { vtree: vtree.root(), local: out_local },
-    )
-}
-
-/// Build a constant with the operand's vtree and weight configuration, without its computed columns.
-pub(crate) fn constant_like(eng: &Engine, source: &Tdd, value: bool) -> Tdd {
-    let mut result = if value { constant_one(eng, &source.vtree) } else { constant_zero(eng, &source.vtree) };
-    result.weights = source.weights.as_ref().map(WeightStore::empty_like);
-    result
-}
-
-/// Build the cube diagram: one width-1 node per internal vtree node, whose
-/// pair names the leaf label the cube assigns to each side's subtree.
+/// The constant-false diagram over `vtree`, built outside the limits.
 ///
-/// Bottom-up, so the pair a node writes names children that already exist.
+/// The output points at the `ZERO` sentinel, so no node is stored.
+pub(crate) fn constant_zero(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
+    seat_canonical(eng, vtree, diagram::take_levels(eng, vtree.num_nodes()), TddNodeId { vtree: vtree.root(), local: ZERO })
+}
+
+/// The constant-true diagram over `vtree`, built outside the limits: the empty
+/// cube, one node per internal level.
+pub(crate) fn constant_one(eng: &Engine, vtree: &Arc<Vtree>) -> Tdd {
+    let levels = cube_levels(eng, vtree, |_| ONE_LEAF_IDX, false).expect("an untracked build cannot be refused");
+    seat_canonical(eng, vtree, levels, TddNodeId { vtree: vtree.root(), local: ONE_LEAF_IDX })
+}
+
+/// A constant over `vtree`, built under the engine's limits.
+pub(crate) fn constant_on(eng: &Engine, vtree: &Arc<Vtree>, value: bool) -> Result<Tdd, OperationError> {
+    eng.limits().check_stop()?;
+    let (levels, local) = if value {
+        (cube_levels(eng, vtree, |_| ONE_LEAF_IDX, true)?, ONE_LEAF_IDX)
+    } else {
+        (diagram::try_take_levels(eng, vtree.num_nodes())?, ZERO)
+    };
+    Ok(seat_canonical(eng, vtree, levels, TddNodeId { vtree: vtree.root(), local }))
+}
+
+/// A constant with the operand's vtree and weight configuration, without its
+/// computed columns, built under the engine's limits.
+pub(crate) fn constant_like(eng: &Engine, source: &Tdd, value: bool) -> Result<Tdd, OperationError> {
+    let mut result = constant_on(eng, &source.vtree, value)?;
+    result.weights = source.weights.as_ref().map(WeightStore::empty_like);
+    Ok(result)
+}
+
+/// The levels of a cube: one node per internal vtree node, whose pair names
+/// the leaf label the cube assigns to each side's subtree, bottom-up so the
+/// pair a node writes names children that already exist. Every node lands at
+/// the free label's index, so a side naming an internal child and a side
+/// naming a free leaf are written the same way.
+///
+/// `charged` builds through the engine's limits, which may refuse; otherwise
+/// the levels grow through `Vec`.
+fn cube_levels(
+    eng: &Engine,
+    vtree: &Arc<Vtree>,
+    label_at: impl Fn(VtreeIdx) -> NodeIdx,
+    charged: bool,
+) -> Result<Vec<TddLevel>, OperationError> {
+    let lim = eng.limits();
+    let mut levels = if charged {
+        diagram::try_take_levels(eng, vtree.num_nodes())?
+    } else {
+        diagram::take_levels(eng, vtree.num_nodes())
+    };
+    let mut gate = lim.gate();
+    for (emitted, (t, left, right)) in vtree.internal_bottomup().enumerate() {
+        let pair = ChildPair::new(label_at(left), label_at(right));
+        let index = if charged {
+            gate.poll(1)?;
+            let index = levels[t.idx()].push_node(eng.limits(), &[pair])?;
+            lim.check_output_cap(emitted as u64 + 1)?;
+            index
+        } else {
+            levels[t.idx()].push_internal_node(&[pair])
+        };
+        debug_assert_eq!(index, ONE_LEAF_IDX, "a cleared internal level receives its one node at the free label's index");
+    }
+    if charged { gate.flush()?; }
+    Ok(levels)
+}
+
+/// Seat levels that are canonical as built: no level owes a contraction pass,
+/// and the output is certified so the next reduction returns at once.
+pub(crate) fn seat_canonical(eng: &Engine, vtree: &Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Tdd {
+    let mut tdd = Tdd::try_with_levels_dirty(eng, Arc::clone(vtree), levels, output, Dirty::default(), &[])
+        .expect("seeding no worklist cannot be refused");
+    tdd.levels.certify(output);
+    tdd
+}
+
+/// Build the cube diagram under the engine's limits.
 fn cube_to_tdd(
     eng: &Engine,
     vtree: &Arc<Vtree>,
@@ -89,20 +110,12 @@ fn cube_to_tdd(
         }
         label[leaf.idx()] = if lit.sign { POS_LEAF_IDX } else { NEG_LEAF_IDX };
     }
-    let label_at = |t: crate::vtree::VtreeIdx| {
+    gate.flush()?;
+    let label_at = |t: VtreeIdx| {
         if label.is_empty() { ONE_LEAF_IDX } else { label[t.idx()] }
     };
-    let mut levels = diagram::try_take_levels(eng, vtree.num_nodes())?;
-    for (emitted, (t, left, right)) in vtree.internal_bottomup().enumerate() {
-        gate.poll(1)?;
-        let index = levels[t.idx()].push_node(eng.limits(), &[ChildPair::new(label_at(left), label_at(right))])?;
-        // A cleared internal level receives exactly one node, at the free label's index.
-        debug_assert_eq!(index, ONE_LEAF_IDX);
-        lim.check_output_cap(emitted as u64 + 1)?;
-    }
-    gate.flush()?;
-    let root = vtree.root();
-    Tdd::try_from_levels_on(eng, Arc::clone(vtree), levels, TddNodeId { vtree: root, local: label_at(root) })
+    let levels = cube_levels(eng, vtree, label_at, true)?;
+    Ok(seat_canonical(eng, vtree, levels, TddNodeId { vtree: vtree.root(), local: label_at(vtree.root()) }))
 }
 
 /// Build a canonical diagram for one literal, leaving other variables free.

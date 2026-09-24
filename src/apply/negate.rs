@@ -75,7 +75,7 @@ pub(crate) fn negate_tdd_owned(eng: &Engine, mut tdd: Tdd) -> Result<Tdd, Operat
     eng.limits().check_stop()?;
     let weights = tdd.weights.take();
     let mut result = if tdd.is_zero() {
-        crate::build::constant_one(eng, &tdd.vtree)
+        crate::build::constant_on(eng, &tdd.vtree, true)?
     } else {
         let root_form = expand_full(eng, &mut tdd)?;
         complement_full_at_root(eng, tdd, root_form)?
@@ -104,7 +104,7 @@ fn complement_full_at_root(
         // {Pos,Neg,One} unless the output is One (complement = Zero, returned as the zero
         // constant diagram).
         let Some(neg_local) = complement_leaf_root(out_local) else {
-            return Ok(crate::build::constant_zero(eng, &vtree));
+            return crate::build::constant_on(eng, &vtree, false);
         };
         assembly.finish(TddNodeId { vtree: root, local: neg_local })
     } else {
@@ -142,7 +142,7 @@ fn complement_full_at_root(
         });
 
         if neg_pairs.is_empty() {
-            return Ok(crate::build::constant_zero(eng, &vtree));
+            return crate::build::constant_on(eng, &vtree, false);
         }
 
         let neg_idx = levels[root_idx].push_node(eng.limits(), &neg_pairs)?;

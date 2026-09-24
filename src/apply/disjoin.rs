@@ -58,9 +58,7 @@ pub(crate) fn nor_many_owned(eng: &Engine, operands: Vec<Tdd>) -> Result<Tdd, Op
     if live.is_empty() {
         // Every operand is false, so every complement is true.
         let f = a_false_one.ok_or(OperationError::EmptyOperands)?;
-        let mut out = crate::build::constant_one(eng, &f.vtree);
-        out.weights = f.weights;
-        return Ok(out);
+        return crate::build::constant_like(eng, &f, true);
     }
     fold_conjunction(eng, complements_of(eng, live)?)
 }
