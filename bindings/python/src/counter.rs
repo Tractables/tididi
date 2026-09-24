@@ -34,7 +34,6 @@ impl PyCounter {
     fn observe(&mut self, literals: &Bound<'_, PyAny>) -> PyResult<()> {
         let literals = domain::read_literals(literals)?;
         let cell = self.cell()?;
-        domain::check_variables(cell.circuit().vtree(), literals.iter().map(|l| l.var))?;
         cell.observe(literals).map_err(crate::operation_error)
     }
 
@@ -42,7 +41,6 @@ impl PyCounter {
     fn clear(&mut self, variable: u32) -> PyResult<()> {
         let var = domain::variable_id(variable)?;
         let cell = self.cell()?;
-        domain::check_variables(cell.circuit().vtree(), [var])?;
         cell.set_pin(var, None).map_err(crate::operation_error)
     }
 

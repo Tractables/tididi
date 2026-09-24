@@ -21,14 +21,12 @@ pub unsafe extern "C" fn tididi_counter(value: *mut TididiCircuit, out: *mut *mu
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_counter_observe(value: *mut TididiCounter, values: *const i64, len: usize) -> *mut TididiError {
     boundary(|| { let values = literals(unsafe { array(values, len)? })?; let mut cell = unsafe { counter(value)? };
-        check_variables(cell.circuit().vtree(), values.iter().map(|l| l.var))?;
         cell.observe(values)?; Ok(()) })
 }
 /// Remove the observation for one variable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_counter_clear(value: *mut TididiCounter, var: u32) -> *mut TididiError {
     boundary(|| { let var = variable(var)?; let mut cell = unsafe { counter(value)? };
-        check_variables(cell.circuit().vtree(), [var])?;
         cell.set_pin(var, None)?; Ok(()) })
 }
 /// Remove all observations, retaining the circuit and reusable counter.

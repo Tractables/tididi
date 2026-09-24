@@ -184,7 +184,7 @@ pub unsafe extern "C" fn tididi_ite(condition: *mut TididiCircuit, yes: *mut Tid
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_from_models(tree: *const TididiVtree, vars: *const u32, nvars: usize, rows: *const u8, nrows: usize, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
     boundary(|| { let out = unsafe { vacant(out)? }; let vtree = unsafe { vtree(tree)? };
-        let vars = variables(unsafe { array(vars, nvars)? })?; check_variables(vtree, vars.iter().copied())?;
+        let vars = variables(unsafe { array(vars, nvars)? })?;
         let cells = nrows.checked_mul(nvars).ok_or_else(|| invalid("row dimensions overflow"))?;
         let rows = unsafe { array(rows, cells)? }; if rows.iter().any(|&v| v > 1) { return Err(invalid("row values must be 0 or 1")); }
         let words = nvars.div_ceil(64).max(1); let len = nrows.checked_mul(words).ok_or_else(|| invalid("row dimensions overflow"))?;

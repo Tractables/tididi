@@ -52,7 +52,6 @@ pub fn binary(py: Python<'_>, left: Py<PyCircuit>, right: Py<PyCircuit>, limits:
 #[pyo3(signature = (vtree, value, *, limits=None))]
 pub fn literal(py: Python<'_>, vtree: &PyVtree, value: &Bound<'_, PyAny>, limits: Option<&PyLimits>) -> PyResult<PyCircuit> {
     let value = domain::read_literal(value)?;
-    domain::check_variables(&vtree.0, [value.var])?;
     run(py, &vtree.0, domain::config(limits)?, |e| e.literal(&vtree.0, value)).map(PyCircuit::new)
 }
 
@@ -88,7 +87,6 @@ pub fn zero(vtree: &PyVtree) -> PyCircuit { PyCircuit::new(Tdd::zero(&vtree.0)) 
 #[pyo3(signature = (vtree, variables, rows, *, limits=None))]
 pub fn from_models(py: Python<'_>, vtree: &PyVtree, variables: Vec<u32>, rows: &Bound<'_, PyAny>, limits: Option<&PyLimits>) -> PyResult<PyCircuit> {
     let variables = domain::variable_ids(&variables)?;
-    domain::check_variables(&vtree.0, variables.iter().copied())?;
     let words = variables.len().div_ceil(64).max(1);
     let mut packed = Vec::new();
     for row in rows.try_iter()? {
