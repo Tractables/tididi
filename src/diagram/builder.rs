@@ -495,7 +495,7 @@ pub(crate) fn check_levels(
     check_leaf_levels(vtree, levels)?;
     for (t, left, right) in vtree.internal_bottomup() {
         if levels[t.idx()].is_marginal() {
-            check_marginal_level(vtree, levels, t, left, right)?;
+            check_marginal_level(vtree, levels, t)?;
         } else {
             check_structural_level(vtree, levels, t, left, right)?;
         }
@@ -525,14 +525,10 @@ fn check_leaf_levels(vtree: &Vtree, levels: &[TddLevel]) -> Result<(), TddBuildE
 
 /// A marginal level's children are leaves or marginal themselves, and every
 /// overflowed count has its exact value behind it.
-fn check_marginal_level(
-    vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, left: VtreeIdx, right: VtreeIdx,
-) -> Result<(), TddBuildError> {
+fn check_marginal_level(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx) -> Result<(), TddBuildError> {
     let lvl = &levels[t.idx()];
-    for child in [left, right] {
-        if !vtree.node(child).is_leaf() && !levels[child.idx()].is_marginal() {
-            return Err(TddBuildError::MarginalNotDownwardClosed { level: t, child });
-        }
+    if let Some(child) = super::level::non_marginal_child(levels, vtree, t) {
+        return Err(TddBuildError::MarginalNotDownwardClosed { level: t, child });
     }
     if let Some(counts) = lvl.marginal_counts() {
         for (slot, &c) in counts.iter().enumerate() {

@@ -176,7 +176,7 @@ mod build_error;
 mod leaf_column;
 pub(crate) mod builder;
 mod level;
-pub(crate) mod pool;
+mod pool;
 pub(crate) mod semiring;
 mod tdd;
 mod weights;
@@ -189,16 +189,15 @@ pub use primitives::{
     LEAF_WIDTH, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX, ZERO,
 };
 pub(crate) use primitives::{MultiPairRange, NodeKind};
-pub(crate) use level::Untracked;
 
 // marginal
-pub use marginal_ref::{CountOverflow, ChildRef, ChildDecoder, ValueRef, ValueRefError};
+pub use marginal_ref::{ChildRef, ChildDecoder, ValueRef, ValueRefError};
 pub(crate) use marginal_ref::{
     boundary_marginal_levels, boundary_marginal_levels_into,
     for_each_side_ref_mut, remap_refs_into, ChildSide, Sides,
     MARGINAL_INLINE_MAX,
     tag_all_marginal_side_slots,
-    assert_can_make_marginal, resolve_swapped_marginal_side,
+    resolve_swapped_marginal_side,
 };
 
 // semiring
@@ -206,8 +205,8 @@ pub use semiring::{EvalAlgebra, LiteralWeights, RationalWeights, SignedLog, Weig
 pub use weights::{Arithmetic, WeightStore};
 
 // level
-pub use level::TddLevel;
-pub(crate) use level::sort_pairs;
+pub use level::{CountOverflow, TddLevel};
+pub(crate) use level::{assert_can_make_marginal, sort_pairs, Untracked};
 
 // pool
 pub(crate) use pool::{return_levels, take_levels, try_take_levels};

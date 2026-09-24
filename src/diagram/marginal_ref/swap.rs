@@ -7,7 +7,8 @@ use rustc_hash::FxHashMap;
 
 use super::super::level::TddLevel;
 use super::refs::{for_each_side_ref, for_each_side_ref_mut, ChildSide};
-use super::{CountOverflow, MARGINAL_OVERFLOW_TAG, MARGINAL_VALUE_MASK, ValueRef};
+use super::{MARGINAL_OVERFLOW_TAG, MARGINAL_VALUE_MASK, ValueRef};
+use crate::diagram::CountOverflow;
 use crate::diagram::NodeIdx;
 use crate::limits::OperationError;
 

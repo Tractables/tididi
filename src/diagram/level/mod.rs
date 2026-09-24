@@ -1,12 +1,15 @@
 //! The `TddLevel` structure, its state predicates, and its size accessors.
 
 mod arena;
+mod count_overflow;
 mod marginal;
 mod pairs;
+pub use count_overflow::CountOverflow;
 pub(crate) use pairs::sort_pairs;
 pub(crate) use arena::Untracked;
+pub(crate) use marginal::{assert_can_make_marginal, non_marginal_child};
 
-use super::marginal_ref::{ChildDecoder, ChildSide, CountOverflow};
+use super::marginal_ref::{ChildDecoder, ChildSide};
 use super::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode};
 
 /// The diagram storage associated with one vtree node.

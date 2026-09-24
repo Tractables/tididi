@@ -1,9 +1,10 @@
 //! Converting a level to its marginal form, and the marginal-side slot writer.
 
 use crate::diagram::marginal_ref::refs::{for_each_side_ref_mut, ChildSide};
-use crate::diagram::marginal_ref::{CountOverflow, MARGINAL_OVERFLOW_TAG, ValueRef};
+use crate::diagram::marginal_ref::{MARGINAL_OVERFLOW_TAG, ValueRef};
 use crate::diagram::NodeIdx;
-use super::{LevelState, TddLevel};
+use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
+use super::{CountOverflow, LevelState, TddLevel};
 
 impl TddLevel {
     /// Inline-emit writer (end-of-apply tagger inner): for each bare marginal-side
@@ -77,5 +78,39 @@ impl TddLevel {
         );
         self.drop_structure();
         self.state = LevelState::Weights { width: slots, retired: 0 };
+    }
+}
+
+/// The child of `t` that keeps `t` from being marginal, if any: an internal
+/// child that is not marginal itself. Marginality is downward-closed; a leaf
+/// child counts as marginal, its counts being fixed by label, so a leaf `t`
+/// has no such child.
+pub(crate) fn non_marginal_child(levels: &[TddLevel], vtree: &Vtree, t: VtreeIdx) -> Option<VtreeIdx> {
+    let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else {
+        return None;
+    };
+    [left, right].into_iter().find(|child| {
+        !matches!(*vtree.node(*child), VtreeNode::Leaf { .. }) && !levels[child.idx()].is_marginal()
+    })
+}
+
+/// Soundness precondition for [`TddLevel::become_marginal`]: both children
+/// of the target vtree node `t` must already be marginal
+/// ([`non_marginal_child`] finds none).
+///
+/// # Panics
+///
+/// Panics if an internal child of `t` is not yet marginal; process targets
+/// bottom-up so the precondition holds.
+#[inline]
+pub(crate) fn assert_can_make_marginal(levels: &[TddLevel], vtree: &Vtree, t: VtreeIdx) {
+    if let Some(child) = non_marginal_child(levels, vtree, t) {
+        panic!(
+            "become_marginal({}) precondition violated: child {} is internal \
+             but not yet marginal. Process marginalization targets bottom-up so \
+             children are marginalized before parents.",
+            t.idx(),
+            child.idx(),
+        );
     }
 }

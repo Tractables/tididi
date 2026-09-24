@@ -1,5 +1,5 @@
 use super::*;
-use crate::diagram::{ChildPair, EncodedChildRef, EncodedNode};
+use crate::diagram::{ChildPair, EncodedChildRef, EncodedNode, TddLevel};
 
 #[test]
 fn encoded_references_preserve_pair_layout() {
