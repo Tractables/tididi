@@ -212,6 +212,20 @@ impl Vtree {
         }
     }
 
+    /// Every node of the subtree rooted at `root`, `root` included, parents
+    /// before children.
+    pub(crate) fn subtree(&self, root: VtreeIdx) -> impl Iterator<Item = VtreeIdx> + '_ {
+        let mut stack = vec![root];
+        std::iter::from_fn(move || {
+            let idx = stack.pop()?;
+            if let VtreeNode::Internal { left, right, .. } = self.nodes[idx.idx()] {
+                stack.push(left);
+                stack.push(right);
+            }
+            Some(idx)
+        })
+    }
+
     /// Whether both vtrees have the same shape and variable at each corresponding leaf.
     ///
     /// Corresponding nodes are reached by the same left/right steps from the

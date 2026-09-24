@@ -14,6 +14,7 @@ pub mod search;
 pub(crate) mod embed;
 pub(crate) mod graft;
 mod placement;
+mod splice;
 
 pub use embed::{Embedding, EmbeddingPlan};
 

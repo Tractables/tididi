@@ -5,7 +5,7 @@
 
 use crate::Engine;
 
-use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
+use crate::vtree::{RotationKind, Vtree, VtreeIdx};
 use crate::vtree::rotate::RotationInfo;
 use crate::diagram::Tdd;
 use crate::limits::OperationError;
@@ -22,13 +22,8 @@ use super::probe::*;
 /// correspondence at v_idx (rotation locality).
 fn subtree_allow_mask(vtree: &Vtree, root: VtreeIdx) -> Vec<bool> {
     let mut mask = vec![false; vtree.num_nodes()];
-    let mut stack: Vec<VtreeIdx> = vec![root];
-    while let Some(n) = stack.pop() {
-        if let VtreeNode::Internal { left, right, .. } = *vtree.node(n) {
-            mask[n.idx()] = true;
-            stack.push(left);
-            stack.push(right);
-        }
+    for n in vtree.subtree(root) {
+        mask[n.idx()] = !vtree.node(n).is_leaf();
     }
     mask
 }
