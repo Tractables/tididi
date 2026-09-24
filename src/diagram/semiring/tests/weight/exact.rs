@@ -15,7 +15,7 @@
 //!   parked in `Exact` would intern as a second, non-colliding copy of itself.
 //!   [`assert_canonical_variant`] pins that at every step.
 
-use super::{small_of, WeightValue};
+use super::{same_value, small_of, weight_key, WeightValue};
 use num_bigint::BigInt;
 use num_rational::BigRational;
 use num_traits::{One, Zero};
@@ -337,4 +337,26 @@ fn randomized_op_sequence_matches_a_pure_bigrational_reference() {
     assert!(saw_small > 100, "sequence never settled in the small form ({saw_small})");
     assert!(saw_big > 100, "sequence never spilled out of the small form ({saw_big})");
     assert!(saw_frac > 10, "sequence never held a fractional value ({saw_frac})");
+}
+
+/// `same_value` is `weight_key` equality on every pair of representations.
+#[test]
+fn same_value_agrees_with_key_equality() {
+    let big = BigRational::new(BigInt::from(i128::MAX), BigInt::from(1)) + BigRational::one();
+    let values = [
+        WeightValue::exact(BigRational::zero()),
+        WeightValue::exact(BigRational::from_integer(7.into())),
+        WeightValue::exact(BigRational::new(1.into(), 2.into())),
+        WeightValue::exact(BigRational::new((-1).into(), 2.into())),
+        WeightValue::exact(big.clone()),
+        WeightValue::exact(big),
+        WeightValue::Log(super::SignedLog::from_rational(&BigRational::new(1.into(), 2.into()))),
+        WeightValue::Log(super::SignedLog::from_rational(&BigRational::new((-1).into(), 2.into()))),
+        WeightValue::Log(super::SignedLog::zero()),
+    ];
+    for a in &values {
+        for b in &values {
+            assert_eq!(same_value(a, b), weight_key(a) == weight_key(b), "{a:?} vs {b:?}");
+        }
+    }
 }

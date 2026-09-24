@@ -123,7 +123,7 @@ impl WeightStore {
                 }
                 for (slot, value) in values.iter().enumerate() {
                     let expected = self.leaf_val(var, LeafLabel::from_idx(slot));
-                    if crate::diagram::semiring::weight_key(value) != crate::diagram::semiring::weight_key(&expected) {
+                    if !crate::diagram::semiring::same_value(value, &expected) {
                         return Err(TddBuildError::InvalidWeightColumn { level: leaf, reason: "does not match its pinned leaf values" });
                     }
                 }

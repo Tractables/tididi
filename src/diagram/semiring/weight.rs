@@ -449,17 +449,44 @@ pub(crate) fn weight_key(v: &WeightValue) -> WeightKey {
     match v {
         WeightValue::ExactSmall(n) => WeightKey::ExactSmall(*n),
         WeightValue::Exact(r) => {
-            debug_assert!(
-                small_of(r).is_none(),
-                "canonicalization invariant: an i128-representable exact value must be \
-                 WeightValue::ExactSmall — a non-canonical WeightValue::Exact would key and hash \
-                 as a value distinct from its own small form, splitting one value across two \
-                 intern slots (build exact values with WeightValue::exact)"
-            );
+            debug_assert_canonical_big(r);
             WeightKey::Exact(r.clone())
         }
         WeightValue::Log(s) => WeightKey::Log(s.ln_abs.to_bits(), s.sign),
     }
+}
+
+/// Whether `a` and `b` would share one [`WeightKey`]: the same exact value,
+/// or bit-identical logs. For a comparison, this is
+/// `weight_key(a) == weight_key(b)` without building either key, which
+/// clones a big rational.
+pub(crate) fn same_value(a: &WeightValue, b: &WeightValue) -> bool {
+    match (a, b) {
+        (WeightValue::ExactSmall(x), WeightValue::ExactSmall(y)) => x == y,
+        (WeightValue::Exact(x), WeightValue::Exact(y)) => {
+            debug_assert_canonical_big(x);
+            debug_assert_canonical_big(y);
+            x == y
+        }
+        (WeightValue::Log(x), WeightValue::Log(y)) => {
+            x.ln_abs.to_bits() == y.ln_abs.to_bits() && x.sign == y.sign
+        }
+        // The canonical form puts every i128-representable value in the small
+        // variant, so a small and a big value are never equal.
+        _ => false,
+    }
+}
+
+/// The canonicalization invariant a big exact value must meet.
+#[inline]
+fn debug_assert_canonical_big(r: &BigRational) {
+    debug_assert!(
+        small_of(r).is_none(),
+        "canonicalization invariant: an i128-representable exact value must be \
+         WeightValue::ExactSmall — a non-canonical WeightValue::Exact would key and hash \
+         as a value distinct from its own small form, splitting one value across two \
+         intern slots (build exact values with WeightValue::exact)"
+    );
 }
 
 

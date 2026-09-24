@@ -12,7 +12,7 @@ mod weight;
 
 pub use rational::{LiteralWeights, RationalWeights};
 pub use weight::{SignedLog, WeightValue};
-pub(crate) use weight::{weight_key, WeightKey};
+pub(crate) use weight::{same_value, weight_key, WeightKey};
 
 use crate::diagram::LeafLabel;
 use crate::vtree::VarId;

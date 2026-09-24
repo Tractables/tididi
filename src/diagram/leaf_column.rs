@@ -53,20 +53,19 @@ pub(crate) fn leaf_column_vals(ws: &WeightStore, var: VarId) -> Vec<WeightValue>
 ///
 /// (`w⁺ = w⁻ = 0` collapses all three onto slot 0, which the same rule produces.)
 pub(crate) fn leaf_canon_map(values: &[WeightValue]) -> [u32; 3] {
-    use crate::diagram::semiring::weight_key;
+    use crate::diagram::semiring::same_value;
     debug_assert_eq!(
         values.len(),
         crate::diagram::LEAF_WIDTH,
         "leaf_canon_map: not a pinned leaf column"
     );
-    let keys = [weight_key(&values[0]), weight_key(&values[1]), weight_key(&values[2])];
     let mut canon = [0u32, 1, 2];
     // `s < r` and equality is transitive, so the first earlier slot carrying
     // `values[r]` can only be the minimum one (an even earlier match would have
     // matched `s` too, and `s` was taken as the first).
     for r in 1..crate::diagram::LEAF_WIDTH {
         for s in 0..r {
-            if keys[s] == keys[r] {
+            if same_value(&values[s], &values[r]) {
                 canon[r] = s as u32;
                 break;
             }
@@ -85,18 +84,17 @@ pub(crate) fn leaf_canon_map(values: &[WeightValue]) -> [u32; 3] {
 /// its value class ([`leaf_canon_map`], checked by
 /// [`check_leaf_columns_pinned`](crate::test_helpers::check::marginal::check_leaf_columns_pinned));
 /// scanning from 0 and taking the first hit is that minimum. Equality is
-/// `weight_key`, so callers must restrict this to the exact domain, as for
-/// [`leaf_canon_map`].
+/// that of `weight_key`, so callers must restrict this to the exact domain,
+/// as for [`leaf_canon_map`].
 pub(crate) fn find_leaf_slot_by_value(
     ws: &WeightStore,
     level_idx: usize,
     want: &WeightValue,
 ) -> Option<u32> {
-    use crate::diagram::semiring::weight_key;
+    use crate::diagram::semiring::same_value;
     let col = ws.level(level_idx)?;
-    let want = weight_key(want);
     col.iter()
         .take(crate::diagram::LEAF_WIDTH)
-        .position(|v| weight_key(v) == want)
+        .position(|v| same_value(v, want))
         .map(|s| s as u32)
 }
