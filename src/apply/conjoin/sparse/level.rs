@@ -55,9 +55,9 @@ fn scatter_level(
     // The general arm carries no dead-probe inner loop; the leaf arm keeps
     // the leaf fast-path shape.
     if !swap_direction {
-        scatter_outsens::<false>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, both_non_leaf, flat)?;
+        scatter_join::<false>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, both_non_leaf, flat)?;
     } else {
-        scatter_outsens::<true>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, both_non_leaf, flat)?;
+        scatter_join::<true>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, both_non_leaf, flat)?;
     }
     if flat {
         sort_candidates(eng, ws, shape.f.here)?;

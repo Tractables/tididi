@@ -38,7 +38,7 @@ pub(crate) struct SparseWorkspace {
     pub(super) inner_offsets: Vec<u32>,
     pub(super) outer_offsets: Vec<u32>,
 
-    // ── The scatter (`scatter_outsens`) ──
+    // ── The scatter (`scatter_join`) ──
     // Per-outer filtered g index: inner-g-child → [(p2, attached_prod)], rebuilt
     // each outer from the live set + the opposite-keyed g reverse index, so the
     // emit loop iterates only alive entries, with no dead probes.

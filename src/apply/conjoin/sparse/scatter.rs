@@ -90,7 +90,7 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
 /// start the index builds; `flat` says the candidates go to the flat list
 /// rather than a bucket per f parent.
 #[expect(clippy::too_many_arguments)]
-pub(super) fn scatter_outsens<const SWAPPED: bool>(
+pub(super) fn scatter_join<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     f_level: &TddLevel,
