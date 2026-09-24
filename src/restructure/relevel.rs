@@ -186,7 +186,6 @@ fn collect_triples(
     max_pairs: usize,
 ) -> Result<bool, OperationError> {
     for i in 0..old_v_level.nodes.len() {
-        if !old_v_level.nodes[i].is_internal() { continue; }
         let src = i as u32;
         for vp in old_v_level.pairs_iter_of_idx(i) {
             let (w_local, v_axis) = match dir {
@@ -442,7 +441,7 @@ fn build_outer_level(
     distributed?;
 
     let mut outer_level = Transient::new(lim, TddLevel::new());
-    fill_outer_level(lim, &mut outer_level, old_v_level, per_v_pairs, n_v, marginal_ctx)?;
+    fill_outer_level(lim, &mut outer_level, per_v_pairs, n_v, marginal_ctx)?;
     Ok(outer_level.keep())
 }
 
@@ -474,18 +473,11 @@ fn distribute_outer_pairs(
 fn fill_outer_level(
     lim: &Limits,
     outer_level: &mut TddLevel,
-    old_v_level: &TddLevel,
     per_v_pairs: &mut [Vec<ChildPair>],
     n_v: usize,
     marginal_ctx: bool,
 ) -> Result<(), OperationError> {
-    // Indexes `old_v_level.nodes` and `per_v_pairs` at the same position.
-    #[expect(clippy::needless_range_loop)]
-    for i in 0..n_v {
-        if !old_v_level.nodes[i].is_internal() {
-            lim.try_push(&mut outer_level.nodes, old_v_level.nodes[i])?;
-            continue;
-        }
+    for pairs in &mut per_v_pairs[..n_v] {
         // Load-bearing dedup: distinct triples can produce the same outer pair,
         // so duplicates are genuinely manufactured here. The sort exists only to
         // enable the adjacent `dedup` — not to canonicalize node order, which
@@ -498,10 +490,10 @@ fn fill_outer_level(
         // dedup: under determinism a repeated outer pair is a genuinely redundant
         // path.
         if !marginal_ctx {
-            per_v_pairs[i].sort_unstable();
-            per_v_pairs[i].dedup();
+            pairs.sort_unstable();
+            pairs.dedup();
         }
-        outer_level.push_node(lim, &per_v_pairs[i])?;
+        outer_level.push_node(lim, pairs)?;
     }
     Ok(())
 }

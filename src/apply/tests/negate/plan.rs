@@ -13,10 +13,6 @@ pub(super) fn shape(t: &Tdd) -> String {
         }
         s.push_str(&format!("|L{i}"));
         for j in 0..lv.slot_count() {
-            if !lv.nodes[j].is_internal() {
-                s.push_str(";-");
-                continue;
-            }
             s.push_str(&format!(";{j}:"));
             for p in lv.pairs_of_idx(j) {
                 s.push_str(&format!("({},{})", p.left.0, p.right.0));

@@ -399,14 +399,12 @@ fn mark_children_of_level(
         if remap[base + i] == UNREACHED {
             continue;
         }
-        if level.nodes[i].is_internal() {
-            for pair in level.pairs_of_idx(i) {
-                if let Some(s) = left_view.child(pair.left).index() {
-                    remap[left_base + s] = REACHED;
-                }
-                if let Some(s) = right_view.child(pair.right).index() {
-                    remap[right_base + s] = REACHED;
-                }
+        for pair in level.pairs_of_idx(i) {
+            if let Some(s) = left_view.child(pair.left).index() {
+                remap[left_base + s] = REACHED;
+            }
+            if let Some(s) = right_view.child(pair.right).index() {
+                remap[right_base + s] = REACHED;
             }
         }
     }

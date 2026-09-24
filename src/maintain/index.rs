@@ -60,7 +60,6 @@ impl Index {
             lim.try_resize(&mut flags, width, false)?;
             lim.reserve_map(&mut owners[t.idx()], level.live_pairs())?;
             for (i, flag) in flags.iter_mut().enumerate() {
-                if !level.nodes()[i].is_internal() { continue; }
                 let pairs = level.pairs_of_idx(i);
                 for p in pairs {
                     gate.poll(1)?;

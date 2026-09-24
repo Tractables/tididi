@@ -63,7 +63,6 @@ pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd) -
         // levels, so this guard is a no-op there.)
         if level.is_marginal() { continue; }
         'nodes: for node in level.nodes.iter() {
-            if !node.is_internal() { continue; }
             for pair in level.pairs_of(node) {
                 if want_left && pair.left != ONE_LEAF_IDX.into() {
                     buf[left.idx()] = false;
@@ -214,7 +213,7 @@ fn apply_identity_fast_path<const F_IS_CARRIER: bool>(
     std::mem::swap(&mut levels[t_idx], &mut carrier_levels[t_idx]);
 
     // When a source-marginal child remains marginal in the output, re-resolve the
-    // swapped-in carrier level's bit-30-tagged refs into the output child
+    // swapped-in carrier level's marginal refs into the output child
     // store-space. `?`: the re-resolve reserves the destination store growth it
     // needs before rewriting anything, so `OverBudget` here aborts the apply with
     // the swapped-in level untouched — never half-remapped.

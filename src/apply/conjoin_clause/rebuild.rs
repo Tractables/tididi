@@ -171,9 +171,6 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     base: usize, tables: &mut ClauseTables<'_>,
 ) -> Result<(), OperationError> {
     for (i, node) in nodes.iter().enumerate() {
-        debug_assert!(node.is_internal()
-            || node.b == u32::MAX,  // inline pair with right=ZERO (dead node)
-            "expected internal node at internal vtree position: i={i}");
         let inputs = old.pairs_of(node);
         let carries_cube = tables.output_cube_pair.is_some_and(|(s, _)| s == base + i);
         if inputs.is_empty() && !carries_cube {

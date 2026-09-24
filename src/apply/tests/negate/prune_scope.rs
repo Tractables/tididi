@@ -92,9 +92,6 @@ fn an_operand_with_unreachable_nodes_negates_the_same_under_either_scope() {
                     if f.levels[t].is_marginal() || f.levels[t].slot_count() == 0 {
                         continue;
                     }
-                    if !f.levels[t].nodes[0].is_internal() {
-                        continue;
-                    }
                     let pairs: Vec<ChildPair> = f.levels[t].pairs_of_idx(0).to_vec();
                     if pairs.is_empty() {
                         continue;

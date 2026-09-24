@@ -18,9 +18,6 @@ fn labels_at(tdd: &Tdd, t: usize, side: ChildSide) -> (bool, bool) {
         return (one, literal);
     }
     for j in 0..level.slot_count() {
-        if !level.nodes[j].is_internal() {
-            continue;
-        }
         for p in level.pairs_of_idx(j) {
             let label = if side == ChildSide::Left { p.left.0 } else { p.right.0 };
             one |= label == ONE_LEAF_IDX.0;

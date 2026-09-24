@@ -116,12 +116,10 @@ impl crate::Engine {
         for v in f.vtree.bottomup().filter(|&v| !f.vtree.node(v).is_leaf()) {
             let level = &f.levels[v.idx()];
             if level.is_marginal() { continue; }
-            for (i, node) in level.nodes.iter().enumerate() {
+            for i in 0..level.nodes.len() {
                 poll.poll(1)?;
-                if node.is_internal() {
-                    let id = crate::diagram::TddNodeId { vtree: v, local: crate::diagram::NodeIdx(i as u32) };
-                    if !keep(id) { marks.alive[v.idx()][i] = false; removed = true; }
-                }
+                let id = crate::diagram::TddNodeId { vtree: v, local: crate::diagram::NodeIdx(i as u32) };
+                if !keep(id) { marks.alive[v.idx()][i] = false; removed = true; }
             }
         }
         poll.flush()?;

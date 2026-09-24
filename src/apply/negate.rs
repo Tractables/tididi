@@ -191,9 +191,6 @@ fn expand_full_with(
         let mut cover = Cover::reset(eng, bits, lefts, rights, leaf)?;
         let mut poll = eng.limits().gate();
         for node in &level.nodes {
-            if !node.is_internal() {
-                continue;
-            }
             for pair in level.pairs_of(node) {
                 cover.mark_pair(*pair);
                 poll.poll(1)?;

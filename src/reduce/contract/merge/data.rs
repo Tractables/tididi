@@ -72,10 +72,6 @@ pub(super) fn merge_twin_data(
     // constant, so the level scan is compiled out of release builds.
     let diagram_marginal = cfg!(debug_assertions) && tdd.has_marginal_level();
     let level = &mut tdd.levels[t1.idx()];
-    debug_assert!(
-        level.nodes[keep].is_internal(),
-        "merge_twin_data: the sweep never contracts a leaf level"
-    );
     let total: usize = group.iter().map(|&idx| level.pair_count_at(idx as usize)).sum();
     concat_twin_pairs(level, keep, group, total, allow_dups, diagram_marginal);
 }

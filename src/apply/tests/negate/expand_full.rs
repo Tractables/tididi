@@ -74,9 +74,6 @@ fn first_not_full(tdd: &Tdd) -> Option<(usize, usize, usize)> {
             }
         };
         for node in &level.nodes {
-            if !node.is_internal() {
-                continue;
-            }
             for pair in level.pairs_of(node) {
                 let (l, r) = (pair.left.0, pair.right.0);
                 let l_one = left_leaf && l == crate::diagram::ONE_LEAF_IDX.0;

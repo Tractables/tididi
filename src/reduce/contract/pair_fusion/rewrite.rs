@@ -36,8 +36,8 @@ pub(super) fn rebuild_parent_level<V>(
     // Fusion-inline may mint a fresh inline marginal-side ref (bit-30 tagged) this
     // sweep; the marker for that side must be raised or the end-of-apply tagger
     // and the apply reader misread the ref as a grid coordinate. Rewriting in place
-    // preserves every other flag — including the marker for a side that was
-    // already inlined, and `n_tombstones` — by construction.
+    // preserves every other flag, including the marker for a side that was
+    // already inlined, by construction.
     if any_inline {
         level.set_has_value_refs(side, true);
     }
@@ -91,8 +91,8 @@ fn fuse_node_pairs<V>(
     debug_assert_eq!(fused_x.len(), this_plans.len(), "plans must have distinct x_idx per node");
 
     // A plan-carrying node held ≥2 pairs (Phase 1 skips `pair_count_at < 2`),
-    // so it is arena-backed — never a leaf, a tombstone, or an inline node
-    // whose single pair lives in the node word.
+    // so it is arena-backed, never an inline node whose single pair lives in
+    // the node word.
     debug_assert!(
         level.nodes[n].kind().pairs_in_arena(),
         "rebuild_parent_level: node {n} carries a plan but owns no arena range",

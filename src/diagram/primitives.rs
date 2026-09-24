@@ -296,9 +296,6 @@ impl EncodedNode {
             NodeKind::Multi { start: self.a & !MULTI_BIT, len: self.b }
         }
     }
-
-    /// True for a node with pairs, which every stored node is.
-    pub fn is_internal(&self) -> bool { true }
 }
 
 impl std::fmt::Debug for EncodedNode {

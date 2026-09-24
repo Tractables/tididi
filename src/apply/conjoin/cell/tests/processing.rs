@@ -272,7 +272,6 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
     // level's residual charge is flushed the way the real routes flush it.
     struct Collect<'a> { out: &'a mut Vec<ChildPair> }
     impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for Collect<'_> {
-        const ASSERT_INTERNAL: bool = false;
         const DENSE_SLAB: bool = true;
         #[inline(always)]
         fn grid_row(&self, i: usize) -> usize { i }

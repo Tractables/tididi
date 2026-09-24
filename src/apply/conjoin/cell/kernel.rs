@@ -72,11 +72,6 @@ pub(in crate::apply::conjoin) fn emit_single_pair(eng: &Engine, level: &mut TddL
 /// Per-pair action of the cell product walk. All hooks are `#[inline(always)]`
 /// in impls, so each kernel instantiation monomorphizes to a specialized walk.
 pub(crate) trait PairSink {
-    /// Whether the kernel asserts the g parent node is structurally internal.
-    /// True for the emit sink; false for the collect sink, which may visit
-    /// marginal-encoded operand nodes (the both-marginal collapse).
-    const ASSERT_INTERNAL: bool;
-
     /// 1×1 cell fast path: the cell's single surviving pair. The emit impl
     /// writes `node_idx[grid_pos]` and builds the node directly, without a
     /// push-then-pop round trip through the pair arena.
@@ -112,8 +107,6 @@ pub(crate) struct EmitSink<'a> {
 }
 
 impl PairSink for EmitSink<'_> {
-    const ASSERT_INTERNAL: bool = true;
-
     #[inline(always)]
     fn single(
         &mut self, eng: &Engine, node_idx: &mut [u32],
@@ -164,10 +157,6 @@ pub(crate) struct CollectSink<'a> {
 }
 
 impl PairSink for CollectSink<'_> {
-    // Collect walks may visit marginal-encoded operand nodes (the both-marginal
-    // collapse), which the structural-internal assert would reject.
-    const ASSERT_INTERNAL: bool = false;
-
     #[inline(always)]
     fn single(
         &mut self, eng: &Engine, _node_idx: &mut [u32],
@@ -407,14 +396,6 @@ where
     R: ChildLookup,
     S: PairSink,
 {
-    if S::ASSERT_INTERNAL {
-        debug_assert!(
-            right_level.nodes[j].is_internal() || right_level.nodes[j].b == u32::MAX,
-            "expected internal node at internal vtree position: j={j} right_width={} node_a={:#x} node_b={:#x}",
-            ctx.right_width, right_level.nodes[j].a, right_level.nodes[j].b
-        );
-    }
-
     // Column `j`'s pairs. Everything about resolving them — masks, encoding,
     // range — depends only on `j` and the level, so it was hoisted into the
     // per-level [`RightColumns`] table and this is two loads. `None` is the

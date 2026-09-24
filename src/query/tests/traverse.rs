@@ -72,7 +72,7 @@ fn count(t: &Tdd) -> BigUint {
             ChildRef::Value(ValueRef::Inline(k)) => BigUint::from(k),
             r => child[r.index().unwrap()].clone(),
         };
-        // `internal_inputs_iter` skips tombstones; `i` is the slot index.
+        // `i` is the slot index.
         for (i, pairs) in lvl.internal_inputs_iter() {
             let mut total = BigUint::ZERO;
             for p in pairs {

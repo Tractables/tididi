@@ -95,9 +95,9 @@ pub(super) fn propagate_false_nodes(tdd: &mut Tdd) {
     }
 }
 
-/// Whether an existing structural node owns no pairs; tombstones are not nodes.
+/// Whether node `i` owns no pairs.
 pub(super) fn empty_node(level: &TddLevel, i: usize) -> bool {
-    level.nodes[i].is_internal() && level.pair_count_at(i) == 0
+    level.pair_count_at(i) == 0
 }
 
 /// Validate distinct target leaves, rewrite their parents, propagate falsity,
@@ -215,11 +215,6 @@ pub(super) fn rewrite_level_pairs(
     let mut emptied = false;
     let mut dead = 0usize;
     for i in 0..n_nodes {
-        if !level.nodes[i].is_internal() {
-            // Leaves and tombstones own no pair list — leave the slot as it is.
-            continue;
-        }
-
         if let NodeKind::Inline(p) = level.nodes[i].kind() {
             // The single pair lives in the node's own two words, not the arena.
             match rewrite_pair(i, 0, p) {

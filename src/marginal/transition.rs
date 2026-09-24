@@ -161,8 +161,8 @@ impl MarginalDomain for WeightFold {
         col: Vec<WeightValue>,
         store: &mut WeightStore,
     ) -> Option<Vec<u32>> {
-        // The column is full width — one slot per node, tombstones included —
-        // which is the slot count the level records.
+        // The column is full width, one slot per node, which is the slot count
+        // the level records.
         crate::diagram::MarginalStorage::new(level, Some(store), t.vtree_idx().idx()).install_weights(col);
         None
     }

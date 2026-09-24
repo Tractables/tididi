@@ -81,13 +81,6 @@ pub(super) struct CellArgs<'a, 'c, L, R> {
 /// All hooks are `#[inline(always)]` in impls, so each instantiation
 /// monomorphizes to a loop specialized to its route.
 pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
-    /// Whether the driver debug-asserts that each f row node is structurally
-    /// internal before decoding its pairs. Mirrors [`PairSink::ASSERT_INTERNAL`],
-    /// and for the same reason cannot be a shared unconditional assert: the
-    /// collapse and marginal-child routes legitimately walk marginal-encoded
-    /// operand nodes.
-    const ASSERT_INTERNAL: bool;
-
     /// Whether this action owns a dense `left_width × right_width` slab — one grid row per f row,
     /// so the per-row `NO_PRODUCT` resets tile the level's whole slab exactly once and
     /// can be replaced by a single fill (see [`run_level_rows`]). `false` for
@@ -167,16 +160,6 @@ where
             node_idx[row_base..row_base + right_width].fill(NO_PRODUCT);
         }
 
-        if A::ASSERT_INTERNAL {
-            debug_assert!(
-                left_level_t.nodes[i].is_internal() || left_level_t.nodes[i].b == u32::MAX,
-                "expected internal node at internal vtree position: output_grid_base={} i={i} left_width={left_width} node_a={:#x} node_b={:#x}",
-                ctx.output_grid_base,
-                left_level_t.nodes[i].a,
-                left_level_t.nodes[i].b
-            );
-        }
-
         let f_pairs =
             left_level_t.pairs_view_decoded(i, f_pairs_scratch, ctx.sides.left.plan.view, ctx.sides.right.plan.view);
         // Empty pairs means dead (zero-containing) node — skip this row.
@@ -242,16 +225,13 @@ where
 }
 
 /// Materializing action: each surviving cell becomes a product node in the
-/// dense `left_width × right_width` output slab. Both dense routes are this action; they differ
-/// only in `ASSERT_INTERNAL`, which route B can afford and route A cannot — a
-/// marginal-child level's f rows may be marginal-encoded.
-struct Emit<'a, const ASSERT_INTERNAL: bool> {
+/// dense `left_width × right_width` output slab. Both dense routes are this
+/// action.
+struct Emit<'a> {
     level: &'a mut TddLevel,
 }
 
-impl<const A: bool, L: ChildLookup, R: ChildLookup> CellAction<L, R> for Emit<'_, A> {
-    const ASSERT_INTERNAL: bool = A;
-
+impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for Emit<'_> {
     const DENSE_SLAB: bool = true;
 
     /// Dense slab: one grid row per f row.
@@ -302,7 +282,7 @@ pub(crate) fn run_level_rows_marginal(
         scratch,
         &left,
         &right,
-        &mut Emit::<false> { level },
+        &mut Emit { level },
     )
 }
 
@@ -314,9 +294,6 @@ struct SparseMargEmit<'a> {
 }
 
 impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
-    /// A marginal-child level's f rows may be marginal-encoded.
-    const ASSERT_INTERNAL: bool = false;
-
     /// Not a dense slab — every structural row is rebuilt in the same `right_width`-wide
     /// scratch row, so its `NO_PRODUCT` reset must fire between rows and cannot be
     /// hoisted into a one-shot slab fill.
@@ -431,7 +408,7 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool>(
     //   left_alive_mask  = 0u128      (the !both_multi_pair branch of `row_alive_masks`)
     //   right_alive_mask = `u128::MAX`  (the `|| !both_multi_pair` branch of `row_alive_masks`)
     // The driver passes those directly to the kernel, skipping the fold.
-    let mut action = Emit::<true> { level };
+    let mut action = Emit { level };
     run_level_rows::<DENSE, _, _, _>(
         eng,
         rows,

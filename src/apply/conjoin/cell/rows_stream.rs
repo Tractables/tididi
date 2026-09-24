@@ -71,9 +71,6 @@ struct StreamCollapse<'a, 'data, F: ValueDomain> {
 }
 
 impl<L: ChildLookup, R: ChildLookup, F: ValueDomain> CellAction<L, R> for StreamCollapse<'_, '_, F> {
-    /// Collapse walks may visit marginal-encoded operand nodes.
-    const ASSERT_INTERNAL: bool = false;
-
     const DENSE_SLAB: bool = true;
 
     /// Dense slab: one grid row per f row (the collapsed scalars live in the

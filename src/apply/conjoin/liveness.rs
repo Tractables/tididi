@@ -172,7 +172,6 @@ pub(super) fn build_reach_masks(
     #[expect(clippy::needless_range_loop)]
     for j in 0..k_level {
         let node = &level.nodes[j];
-        if !node.is_internal() { continue; }
         for p in level.pairs_of(node) {
             reach[j] |= 1u128 << (pair_side(p) >> shift);
         }

@@ -96,9 +96,7 @@ impl<'a> RightColumns<'a> {
         if !identity {
             let mut total: usize = 0;
             for j in 0..right_width {
-                if right_level.nodes[j].is_internal() {
-                    total += right_level.pair_count_at(j);
-                }
+                total += right_level.pair_count_at(j);
             }
             if total > u32::MAX as usize {
                 return None;

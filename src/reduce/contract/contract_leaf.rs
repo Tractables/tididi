@@ -86,7 +86,6 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
     // level is not contractible. O(1) per node, against `classify`'s
     // collect-and-sort per pair list.
     for i in 0..level.nodes.len() {
-        if !level.nodes[i].is_internal() { continue; }
         let pairs = level.pairs_of_idx(i);
         if pairs.len() == 1 {
             let label = if side == ChildSide::Left { pairs[0].left } else { pairs[0].right };
@@ -104,7 +103,6 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
     let mut neg: Transient<'_, Vec<EncodedChildRef>> = Transient::new(lim, Vec::new());
     let mut any_literal = false;
     for i in 0..level.nodes.len() {
-        if !level.nodes[i].is_internal() { continue; }
         let pairs = level.pairs_of_idx(i);
         match classify(lim, pairs, side, &mut pos, &mut neg)? {
             Class::AllContractible { has_literal } => {
@@ -182,11 +180,6 @@ fn classify(
 fn rewrite_level(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
     tdd.rewrite_level(parent_vi, |level| {
         for i in 0..level.nodes.len() {
-            // Tombstone slots and leaf words own no pair range and are left as
-            // they are, which also keeps `n_tombstones` correct.
-            if !level.nodes[i].is_internal() {
-                continue;
-            }
             if let NodeKind::Inline(p) = level.nodes[i].kind() {
                 // A single-pair node is labelled `One` on `side` (the singleton
                 // pre-pass in `try_contract_leaf_twins` aborted the level on a

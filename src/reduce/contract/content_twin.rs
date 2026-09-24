@@ -54,9 +54,8 @@ pub(crate) fn content_twin_scan_levels(tdd: &Tdd) -> Vec<VtreeIdx> {
 /// Two nodes at one level with equal pair multisets are found by the twin
 /// grouping over each node's own pairs, and the parent's references and the
 /// output reference are rewritten onto the lowest index. The duplicates are
-/// left in place as unreferenced nodes, not tombstoned (a streaming apply
-/// asserts tombstone-free levels); the caller must follow with a prune. The
-/// parent level is marked dirty for the next contract pass. Levels are
+/// left in place as unreferenced nodes; the caller must follow with a prune.
+/// The parent level is marked dirty for the next contract pass. Levels are
 /// scanned children before parents, so a merge at `L` that makes two nodes of
 /// `parent(L)` content-equal is caught later in the same pass.
 ///

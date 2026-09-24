@@ -217,9 +217,6 @@ fn assert_refs_and_width_in_sync(tdd: &Tdd, ws: &WeightStore, root: VtreeIdx, ma
          (a missed width bump mis-sizes apply buffers)",
     );
     for n in 0..tdd.levels[root.idx()].nodes.len() {
-        if !tdd.levels[root.idx()].nodes[n].is_internal() {
-            continue;
-        }
         for p in tdd.levels[root.idx()].pairs_of_idx(n) {
             let raw = p.right.0;
             assert!(

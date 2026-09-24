@@ -381,9 +381,6 @@ pub fn support_mask(t: &Tdd) -> Vec<bool> {
             };
             let level = &mt.levels[vi];
             'scan: for ni in 0..level.nodes.len() {
-                if !level.nodes[ni].is_internal() {
-                    continue;
-                }
                 for p in level.pairs_of(&level.nodes[ni]) {
                     let child = match side {
                         ChildSide::Left => p.left,
@@ -445,9 +442,6 @@ pub fn support_bits(t: &Tdd) -> Vec<u64> {
         let mut need_l = lvar.is_some();
         let mut need_r = rvar.is_some();
         'scan: for ni in 0..level.nodes.len() {
-            if !level.nodes[ni].is_internal() {
-                continue;
-            }
             for p in level.pairs_of(&level.nodes[ni]) {
                 if need_l && (p.left == POS_LEAF_IDX.into() || p.left == NEG_LEAF_IDX.into()) {
                     let x = lvar.unwrap();
@@ -484,7 +478,7 @@ pub(crate) fn reachable_pairs(t: &Tdd) -> usize {
         }
         let level = &t.levels[vi];
         for i in 0..level.nodes.len() {
-            if reach[vi][i] && level.nodes[i].is_internal() {
+            if reach[vi][i] {
                 n += level.pair_count_at(i);
             }
         }
