@@ -183,12 +183,12 @@ impl Maintenance<'_> {
         // the original until the rebuilt function is ready to install.
         let taken = self.tdd.try_clone_on(eng)?;
         let out = match edit {
-            Edit::Insert => crate::apply::conjoin_clause::disjoin_cube_owned(eng, taken, model)?,
+            Edit::Insert => crate::apply::conjoin_clause::disjoin_cube_on(eng, taken, model)?,
             Edit::Remove => {
                 let mut clause = Vec::new();
                 eng.limits().reserve_exact(&mut clause, model.len())?;
                 clause.extend(model.iter().map(|lit| lit.negated()));
-                crate::apply::conjoin_clause::conjoin_clause_owned(eng, taken, &clause)?
+                crate::apply::conjoin_clause::conjoin_clause_on(eng, taken, &clause)?
             }
         };
         *self.tdd = out;

@@ -83,7 +83,7 @@ pub(crate) fn apply_and(f: Tdd, g: Tdd) -> Tdd {
 /// for a false operand and for `f ∧ f` return without collapsing anything.
 /// Operand validation and allocation, cancellation and output-cap errors follow
 /// [`Engine::and`]. Both inputs are consumed on every outcome.
-pub(crate) fn conjoin_owned(
+pub(crate) fn conjoin_on(
     eng: &Engine,
     mut f: Tdd,
     mut g: Tdd,
@@ -125,7 +125,7 @@ fn is_self_conjunction(f: &Tdd, g: &Tdd) -> bool {
         })
 }
 
-/// [`conjoin_owned`] after its operand checks, summing out the levels in
+/// [`conjoin_on`] after its operand checks, summing out the levels in
 /// `targets`: for a caller that has already validated and weight-aligned the
 /// operands.
 pub(crate) fn conjoin_checked(
@@ -227,7 +227,7 @@ impl crate::Engine {
     /// Returns the operation's errors, plus [`OperationError::Stopped`] or
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn and(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
-        conjoin_owned(self, f, g, VtreeMask::default()).map(|(out, _)| out)
+        conjoin_on(self, f, g, VtreeMask::default()).map(|(out, _)| out)
     }
 
     /// Conjoin two diagrams and replace selected subtrees with marginal values.

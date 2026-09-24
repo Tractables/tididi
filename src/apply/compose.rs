@@ -280,7 +280,7 @@ impl Engine {
             if how.collapses_subtrees() {
                 let vtree = std::sync::Arc::clone(f.vtree());
                 let whole = Transient::new(self.limits(), quantified_subtrees(self, &vtree, &targets)?);
-                super::conjoin::conjoin_owned(self, f, g, super::conjoin::VtreeMask::new(Some(&whole[..])))?
+                super::conjoin::conjoin_on(self, f, g, super::conjoin::VtreeMask::new(Some(&whole[..])))?
             } else {
                 (self.and(f, g)?, false)
             }

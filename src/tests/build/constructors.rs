@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use super::*;
 
-use crate::apply::conjoin_clause::conjoin_clause_owned;
+use crate::apply::conjoin_clause::conjoin_clause_on;
 use crate::test_helpers::clause_to_tdd;
 
 
@@ -182,7 +182,7 @@ fn a_clause_builds_the_levels_its_conjunction_into_one_emits() {
             let label = format!("clause {lits:?} ({num_vars} vars, {shape_name})");
             let built = clause_to_tdd(eng, &vtree, &clause);
             let conjoined =
-                conjoin_clause_owned(eng, constant_one(eng, &vtree), &clause)
+                conjoin_clause_on(eng, constant_one(eng, &vtree), &clause)
                     .unwrap_or_else(|e| panic!("{label}: {e:?}"));
             assert_eq!(built.output, conjoined.output, "{label}: output");
             assert_eq!(built.levels.len(), conjoined.levels.len(), "{label}: level count");

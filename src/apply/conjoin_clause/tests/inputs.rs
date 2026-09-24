@@ -19,7 +19,7 @@ fn typed_clause_adapter_preserves_kernel_allocation_requests() {
         let mut result = if use_adapter {
             engine.and_clause(input.clone(), literals.as_slice()).unwrap()
         } else {
-            conjoin_clause_owned(&engine, input.clone(), &literals).unwrap()
+            conjoin_clause_on(&engine, input.clone(), &literals).unwrap()
         };
         requests.push(allocations.lock().unwrap().clone());
         result.minimize().unwrap();

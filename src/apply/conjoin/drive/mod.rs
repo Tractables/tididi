@@ -19,7 +19,7 @@
 //!
 //! `route::route_level` makes the choice.
 //!
-//! A self-conjunction `f ∧ f` returns `f` from `conjoin_owned` before the
+//! A self-conjunction `f ∧ f` returns `f` from `conjoin_on` before the
 //! driver runs.
 
 mod level;
@@ -135,7 +135,7 @@ fn sweep_levels(
 /// The sweep consumes operand levels as it proceeds. An error leaves both
 /// operands partially drained; retrying requires copies taken before the call.
 /// No swap to the narrower operand here: callers of this borrowed path keep
-/// per-operand bookkeeping by side, and `conjoin_owned` swaps. The result's
+/// per-operand bookkeeping by side, and `conjoin_on` swaps. The result's
 /// marginal references are tagged before return. Allocation, cancellation and
 /// output-cap failures return [`OperationError`].
 pub(crate) fn apply_and_fallible(

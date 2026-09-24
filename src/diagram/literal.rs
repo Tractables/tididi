@@ -142,7 +142,7 @@ mod input {
     use super::Literal;
     use crate::vtree::Vtree;
     use crate::{Engine, OperationError, Tdd};
-    use crate::apply::conjoin_clause::{conjoin_clause_owned, disjoin_cube_owned};
+    use crate::apply::conjoin_clause::{conjoin_clause_on, disjoin_cube_on};
 
     pub trait Sealed: Copy {
         fn literal(self) -> Result<Literal, OperationError>;
@@ -172,12 +172,12 @@ mod input {
 
         #[inline]
         fn conjoin(eng: &Engine, f: Tdd, clause: &[Self]) -> Result<Tdd, OperationError> {
-            conjoin_clause_owned(eng, f, clause)
+            conjoin_clause_on(eng, f, clause)
         }
 
         #[inline]
         fn disjoin(eng: &Engine, f: Tdd, cube: &[Self]) -> Result<Tdd, OperationError> {
-            disjoin_cube_owned(eng, f, cube)
+            disjoin_cube_on(eng, f, cube)
         }
     }
 
@@ -185,11 +185,11 @@ mod input {
         fn literal(self) -> Result<Literal, OperationError> { Literal::try_from(self) }
 
         fn conjoin(eng: &Engine, f: Tdd, clause: &[Self]) -> Result<Tdd, OperationError> {
-            typed_op(eng, f, clause, conjoin_clause_owned)
+            typed_op(eng, f, clause, conjoin_clause_on)
         }
 
         fn disjoin(eng: &Engine, f: Tdd, cube: &[Self]) -> Result<Tdd, OperationError> {
-            typed_op(eng, f, cube, disjoin_cube_owned)
+            typed_op(eng, f, cube, disjoin_cube_on)
         }
     }
 
