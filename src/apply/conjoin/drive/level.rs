@@ -100,7 +100,11 @@ fn materialize_children_and_grid(
 /// growing through the ordinary fallible push path, and `finalize_level`'s
 /// `shrink_arrays` hands the unused tail back. Both are fallible: under a tight
 /// budget even the capped reservation may not fit.
-fn open_level_arenas(
+///
+/// A streaming route folds counts and writes neither arena, so it reserves
+/// nothing and arms no growth mode. Called exactly once per level on every
+/// route, so a previous level's near-cap decision cannot leak into this one.
+pub(super) fn open_level_arenas(
     lim: &crate::limits::Limits,
     f: &Tdd,
     g: &Tdd,
@@ -108,6 +112,15 @@ fn open_level_arenas(
     level: &mut TddLevel,
     route: Route,
 ) -> Result<(), OperationError> {
+    let emits_pairs = matches!(
+        route,
+        Route::MarginalChild | Route::PlainDense | Route::Dense | Route::SparseMarg
+    );
+    if !emits_pairs {
+        debug_assert!(matches!(route, Route::Stream { .. }), "the sparse route opens no arena here");
+        lim.begin_level(None);
+        return Ok(());
+    }
     let (t, left_width, right_width) = (shape.t, shape.f.here, shape.g.here);
     // One node per live cell, and compaction only removes dead ones, so
     // `left_width * right_width` is an exact bound.
@@ -117,42 +130,24 @@ fn open_level_arenas(
         .max(left_width.max(right_width));
     lim.reserve(&mut level.nodes, nodes_reserve)?;
 
-    // The bound is a *growth policy*, not a correctness step, and the per-push
-    // budget checks in the emit apply either way — so a route that never emits
-    // into `level.pairs` can skip it. Called exactly once per level on every
-    // route, so a previous level's near-cap decision cannot leak into this one.
-    //
-    // `Route::Stream { marginal_children: false }` reserves even though its fold
-    // emits no pair either: dropping the reserve there would change what the
-    // soft budget sees mid-apply, which is a separate decision from naming the
-    // routes.
-    let emits_pairs = !matches!(
-        route,
-        Route::SparseMarg | Route::Stream { marginal_children: true }
-    );
-    let stream_marginal = matches!(route, Route::Stream { .. });
-    if emits_pairs {
-        // The one per-level emit-pair bound: every product pair emits at most
-        // once, so `|f.pairs| × |g.pairs|` bounds this level's emit. Used
-        // twice — once to pick the growth mode, once to size the pairs
-        // arena — computed once so the two can never disagree.
-        let emit_pair_bound = (f.level(t).pairs.len() as u128)
-            .saturating_mul(g.level(t).pairs.len() as u128);
-        lim.begin_level((!stream_marginal).then_some(emit_pair_bound));
-        // Seed `level.pairs` at that bound instead of letting it double from
-        // empty on every level; the emit's own `try_push_pair_into` choke
-        // point, under the growth mode just armed, carries a level that
-        // outgrows the cap.
-        let pairs_reserve =
-            emit_pair_bound.min(LEVEL_RESERVE_PAIRS_CAP as u128) as usize;
-        let pre_pairs_cap = level.pairs.capacity();
-        lim.reserve(&mut level.pairs, pairs_reserve)?;
-        // Output-pair meter: this bulk seed is real arena capacity the
-        // emit walk will not charge again.
-        lim.charge_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
-    } else {
-        lim.begin_level(None);
-    }
+    // The one per-level emit-pair bound: every product pair emits at most
+    // once, so `|f.pairs| × |g.pairs|` bounds this level's emit. Used
+    // twice — once to pick the growth mode, once to size the pairs
+    // arena — computed once so the two can never disagree.
+    let emit_pair_bound = (f.level(t).pairs.len() as u128)
+        .saturating_mul(g.level(t).pairs.len() as u128);
+    lim.begin_level(Some(emit_pair_bound));
+    // Seed `level.pairs` at that bound instead of letting it double from
+    // empty on every level; the emit's own `try_push_pair_into` choke
+    // point, under the growth mode just armed, carries a level that
+    // outgrows the cap.
+    let pairs_reserve =
+        emit_pair_bound.min(LEVEL_RESERVE_PAIRS_CAP as u128) as usize;
+    let pre_pairs_cap = level.pairs.capacity();
+    lim.reserve(&mut level.pairs, pairs_reserve)?;
+    // Output-pair meter: this bulk seed is real arena capacity the
+    // emit walk will not charge again.
+    lim.charge_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
     Ok(())
 }
 
@@ -445,3 +440,7 @@ pub(super) fn build_level_dense(
     finalize_level(eng, &mut stream_state, shape, output_grid_base, passthrough, run, sweep);
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "tests/level.rs"]
+mod tests;
