@@ -67,12 +67,12 @@ fn changing_weights_and_evidence_match_exact_assignment_sums() {
             .collect();
         // All combinations of boundary and interior priors, then repeat the first table.
         for setting in (0..27).chain(std::iter::once(0)) {
-            let values = [fraction(0, 1), fraction(1, 3), fraction(1, 1)];
+            let values = [rat(0, 1), rat(1, 3), rat(1, 1)];
             let weights = bernoulli(&[
                 values[setting % 3].clone(),
                 values[(setting / 3) % 3].clone(),
                 values[setting / 9].clone(),
-                fraction(2, 5),
+                rat(2, 5),
             ]);
             let algebra = RationalWeights::from_literals(&weights);
             for (step, (observation, (evidence_diagram, observed_joint))) in
@@ -87,8 +87,8 @@ fn changing_weights_and_evidence_match_exact_assignment_sums() {
                 let joint_truth: Vec<_> = (0..16)
                     .map(|row| evidence_truth[row] && query(row))
                     .collect();
-                let expected_evidence = mass(&evidence_truth, &weights);
-                let expected_joint = mass(&joint_truth, &weights);
+                let expected_evidence = weighted_sum(&evidence_truth, &weights).0;
+                let expected_joint = weighted_sum(&joint_truth, &weights).0;
                 let got_evidence = evidence_diagram.evaluate(&algebra).unwrap();
                 let got_joint = observed_joint.evaluate(&algebra).unwrap();
                 assert_eq!(got_evidence, expected_evidence, "{context}, evidence mass");
@@ -173,7 +173,7 @@ fn pin_sequence(retention: Retention, engine: &Engine, diagram: &Tdd, convention
 fn incremental_observations_match_enumeration_after_changes_and_resets() {
     let engine = Engine::new();
     for tree in trees(4) {
-        let diagram = compile(&engine, &tree, &[VarId(1), VarId(2), VarId(3)], theory);
+        let diagram = or_of_cubes(&tree, &[VarId(1), VarId(2), VarId(3)], theory);
         for convention in [PinSemantics::Evidence, PinSemantics::Cofactor] {
             pin_sequence(Retention::All, &engine, &diagram, convention);
             pin_sequence(Retention::Frontier, &engine, &diagram, convention);

@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use tididi::io::{read_tdd, write_tdd};
-use tididi::test_helpers::{assert_canonical, eval, Lcg};
+use tididi::test_helpers::{assert_canonical, eval, packed_rows, Lcg};
 use tididi::vtree::VarId;
 use tididi::{nor_many, or_many, Engine, Literal, Tdd, Vtree};
 
@@ -85,20 +85,15 @@ fn row_construction_crosses_word_and_sort_boundaries() {
     for width in [16, 17, 63, 64, 65] {
         let vars: Vec<_> = (1..=width).map(VarId).collect();
         let vtree = Arc::new(Vtree::balanced(width));
-        let words = (width as usize).div_ceil(64);
         let mut rows = BTreeSet::new();
         for _ in 0..40 {
-            let mut row: Vec<_> = (0..words).map(|_| rng.next_u64()).collect();
-            if width % 64 != 0 { row[words - 1] &= (1 << (width % 64)) - 1; }
-            rows.insert(row);
+            rows.insert((0..width).map(|_| rng.next_u64() & 1 == 1).collect::<Vec<bool>>());
         }
-        let packed: Vec<_> = rows.iter().flatten().copied().collect();
-        let f = Tdd::from_models(&vtree, &vars, &packed).unwrap();
+        let f = Tdd::from_models(&vtree, &vars, &packed_rows(width as usize, &rows)).unwrap();
         assert_canonical(&f);
         assert_eq!(f.model_count().unwrap(), (rows.len() as u64).into());
-        for row in rows {
-            let assignment: Vec<_> = (0..width as usize).map(|bit| row[bit / 64] & (1 << (bit % 64)) != 0).collect();
-            assert!(eval(&f, &assignment));
+        for row in &rows {
+            assert!(eval(&f, row));
         }
     }
     let vars: Vec<_> = (1..=15).map(VarId).collect();

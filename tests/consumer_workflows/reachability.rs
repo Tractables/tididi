@@ -13,15 +13,12 @@ fn every_symbolic_image_matches_explicit_graph_search() {
     ];
     for (shape, tree) in trees(5).iter().enumerate() {
         for edges in graphs {
-            let transition = compile(
-                &engine,
-                tree,
-                &[VarId(1), VarId(2), VarId(3), VarId(4)],
-                |row| edges & (1 << (4 * (row & 3) + ((row >> 2) & 3))) != 0,
-            );
+            let transition = or_of_cubes(tree, &[VarId(1), VarId(2), VarId(3), VarId(4)], |row| {
+                edges & (1 << (4 * (row & 3) + ((row >> 2) & 3))) != 0
+            });
             for initial in [0u8, 1, 2, 5, 15] {
                 let mut explicit = initial;
-                let mut reached = compile(&engine, tree, &[VarId(1), VarId(2)], |s| {
+                let mut reached = or_of_cubes(tree, &[VarId(1), VarId(2)], |s| {
                     initial & (1 << s) != 0
                 });
                 let mut retained = Vec::new();

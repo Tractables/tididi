@@ -18,12 +18,12 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
         // The caller stores names and weights separately, in an order different
         // from variable IDs and from the vtree's leaf order.
         let variables = [
-            (VarId(3), "rain", fraction(1, 5)),
-            (VarId(1), "sprinkler", fraction(1, 3)),
-            (VarId(4), "sensor", fraction(3, 4)),
-            (VarId(2), "wind", fraction(2, 5)),
+            (VarId(3), "rain", rat(1, 5)),
+            (VarId(1), "sprinkler", rat(1, 3)),
+            (VarId(4), "sensor", rat(3, 4)),
+            (VarId(2), "wind", rat(2, 5)),
         ];
-        let mut weights = bernoulli(&vec![fraction(0, 1); 4]);
+        let mut weights = bernoulli(&vec![rat(0, 1); 4]);
         let mut metadata = String::new();
         for (var, name, probability) in &variables {
             weights[var.idx()] = bernoulli(std::slice::from_ref(probability)).remove(0);
@@ -49,12 +49,7 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
         ]);
         let mut encoded_roots = BTreeMap::new();
         for (name, truth) in &root_truths {
-            let mut diagram = compile(
-                &engine,
-                tree,
-                &[VarId(1), VarId(2), VarId(3), VarId(4)],
-                |row| truth[row],
-            );
+            let mut diagram = or_of_cubes(tree, &[VarId(1), VarId(2), VarId(3), VarId(4)], |row| truth[row]);
             diagram
                 .set_weights(WeightStore::new(
                     RationalWeights::from_literals(&weights),
@@ -99,7 +94,7 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
                 &format!("shape {shape}, restored {name}"),
             );
             diagram.set_weights(store.clone()).unwrap();
-            let expected_mass = mass(expected, &weights);
+            let expected_mass = weighted_sum(expected, &weights).0;
             assert_eq!(diagram.evaluate(&algebra).unwrap(), expected_mass);
             assert_eq!(
                 engine
@@ -156,7 +151,7 @@ fn named_roots_and_weight_metadata_survive_a_fresh_context() {
                 .unwrap()
                 .as_rational()
                 .as_ref(),
-            &mass(&joint_truth, &weights)
+            &weighted_sum(&joint_truth, &weights).0
         );
     }
 }

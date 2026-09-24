@@ -22,7 +22,7 @@ fn alternating_quantifiers_match_all_three_variable_games() {
             let accepts = |state: usize, action: usize, response: usize| {
                 table & (1usize << (state | (action << 1) | (response << 2))) != 0
             };
-            let relation = compile(&engine, tree, &[VarId(1), VarId(2), VarId(3)], |row| {
+            let relation = or_of_cubes(tree, &[VarId(1), VarId(2), VarId(3)], |row| {
                 table & (1 << row) != 0
             });
             let responsive = forall(

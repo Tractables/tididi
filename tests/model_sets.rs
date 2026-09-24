@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use tididi::limits::{LimitConfig, OperationError};
-use tididi::test_helpers::assert_canonical;
+use tididi::test_helpers::{assert_canonical, packed_rows};
 use tididi::vtree::VarId;
 use tididi::{and, Tdd, Vtree};
 
@@ -12,27 +12,14 @@ fn block(first: u32, width: u32) -> Vec<VarId> {
     (first..first + width).map(VarId).collect()
 }
 
-/// `code` written most significant bit first onto `width` bits at `offset` of
-/// a row that is `words` words long.
-fn write_code(row: &mut [u64], offset: u32, width: u32, code: u32) {
-    for j in 0..width {
-        if (code >> (width - 1 - j)) & 1 == 1 {
-            let bit = (offset + j) as usize;
-            row[bit / 64] |= 1u64 << (bit % 64);
-        }
-    }
-}
-
-/// Pairs packed as two `width`-bit codes, the first in the low bits.
+/// Pairs as rows of two `width`-bit codes, most significant bit first, the
+/// first code in the low bits.
 fn pair_rows(edges: &[(u32, u32)], width: u32) -> Vec<u64> {
-    let words = (2 * width as usize).div_ceil(64).max(1);
-    let mut rows = vec![0u64; words * edges.len()];
-    for (k, &(u, v)) in edges.iter().enumerate() {
-        let row = &mut rows[k * words..(k + 1) * words];
-        write_code(row, 0, width, u);
-        write_code(row, width, width, v);
-    }
-    rows
+    let code_bits = |code: u32| (0..width).map(move |j| (code >> (width - 1 - j)) & 1 == 1);
+    packed_rows(
+        2 * width as usize,
+        edges.iter().map(|&(u, v)| code_bits(u).chain(code_bits(v)).collect::<Vec<bool>>()),
+    )
 }
 
 #[test]
@@ -70,14 +57,7 @@ fn a_hundred_variables_span_two_words_per_row() {
     let vtree = Arc::new(Vtree::balanced(100));
     let vars: Vec<VarId> = (1..=100).map(VarId).collect();
     // Row k sets the variables whose position is a multiple of k + 2.
-    let mut rows = vec![0u64; 2 * 8];
-    for k in 0..8usize {
-        for i in 0..100usize {
-            if i % (k + 2) == 0 {
-                rows[k * 2 + i / 64] |= 1u64 << (i % 64);
-            }
-        }
-    }
+    let rows = packed_rows(100, (0..8usize).map(|k| (0..100).map(|i| i % (k + 2) == 0).collect::<Vec<bool>>()));
     let f = Tdd::from_models(&vtree, &vars, &rows).unwrap();
     assert_canonical(&f);
     assert_eq!(f.model_count().unwrap(), 8u32.into());
