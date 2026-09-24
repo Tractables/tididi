@@ -19,10 +19,8 @@
 
 use std::sync::Arc;
 
-use rustc_hash::FxHashMap;
-
 use crate::diagram::{
-    ChildPair, EncodedChildRef, Literal, NodeIdx, Tdd, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX,
+    ChildPair, EncodedChildRef, Literal, Tdd, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX,
 };
 use crate::limits::OperationError;
 use crate::vtree::{Vtree, VtreeIdx};
@@ -318,14 +316,6 @@ fn child_slot(vtree: &Vtree, path: &[u32], labels: &[u32], child: VtreeIdx) -> O
         FRESH => None,
         i => Some(i),
     }
-}
-
-/// Whether a child reference denotes exactly one assignment over its subtree.
-fn child_is_singleton(singleton: &[Vec<bool>], child: VtreeIdx, is_leaf: bool, slot: u32) -> bool {
-    if is_leaf {
-        return slot == POS_LEAF_IDX.0 || slot == NEG_LEAF_IDX.0;
-    }
-    singleton[child.idx()][slot as usize]
 }
 
 #[cfg(test)]

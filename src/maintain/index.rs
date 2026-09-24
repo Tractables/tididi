@@ -11,7 +11,14 @@
 //! together — so a diagram that names `One` has no node for a single value at
 //! that leaf, and the edit route is unavailable.
 
-use super::*;
+use std::sync::Arc;
+
+use rustc_hash::FxHashMap;
+
+use crate::diagram::{ChildPair, NodeIdx, Tdd, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
+use crate::limits::OperationError;
+use crate::vtree::VtreeIdx;
+use crate::Engine;
 
 /// What a batch knows about the diagram between updates.
 pub(super) struct Index {
@@ -25,16 +32,15 @@ pub(super) struct Index {
 }
 
 impl Index {
-    /// Index `tdd` bottom-up.
+    /// Index `tdd` bottom-up. Runs inside the caller's operation scope.
     ///
     /// # Errors
     ///
     /// [`OperationError::MarginalLevel`] for a level that has discarded its
-    /// structure, and [`OperationError::OverBudget`] for a refused allocation.
+    /// structure, [`OperationError::OverBudget`] for a refused allocation, and
+    /// [`OperationError::Stopped`] when a stop request fires during the walk.
     pub(super) fn build(eng: &Engine, tdd: &Tdd) -> Result<Index, OperationError> {
         let lim = eng.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
         let vtree = Arc::clone(tdd.vtree());
         let n = vtree.num_nodes();
         let mut owners: Vec<FxHashMap<(u32, u32), u32>> = Vec::new();
@@ -99,4 +105,12 @@ impl Index {
     pub(super) fn note_removed_pair(&mut self, t: VtreeIdx, pair: ChildPair) {
         self.owners[t.idx()].remove(&(pair.left.raw(), pair.right.raw()));
     }
+}
+
+/// Whether a child reference denotes exactly one assignment over its subtree.
+fn child_is_singleton(singleton: &[Vec<bool>], child: VtreeIdx, is_leaf: bool, slot: u32) -> bool {
+    if is_leaf {
+        return slot == POS_LEAF_IDX.0 || slot == NEG_LEAF_IDX.0;
+    }
+    singleton[child.idx()][slot as usize]
 }

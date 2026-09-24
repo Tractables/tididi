@@ -7,10 +7,17 @@
 //! — a block with more than the one assignment, a free variable, a leaf named
 //! through `One`, an output below the root — is the rebuild's to answer.
 
-use super::*;
+use std::sync::Arc;
+
+use crate::diagram::{Literal, NodeIdx};
+use crate::limits::OperationError;
+use crate::Engine;
+
+use super::index::Index;
+use super::{Maintenance, ModelShape, Probe, FRESH, GIVE_UP};
 
 impl Maintenance<'_> {
-    /// Run [`Tdd::insert_model`] within this batch, reusing its index.
+    /// Run [`Tdd::insert_model`](crate::Tdd::insert_model) within this batch, reusing its index.
     ///
     /// A failed update preserves the previous function and leaves the batch
     /// usable. With [`Engine::maintain`], each call uses the engine's limits
@@ -27,7 +34,7 @@ impl Maintenance<'_> {
         self.update(model.as_ref(), Edit::Insert)
     }
 
-    /// Run [`Tdd::remove_model`] within this batch, reusing its index.
+    /// Run [`Tdd::remove_model`](crate::Tdd::remove_model) within this batch, reusing its index.
     ///
     /// Recovery and limits follow [`insert_model`](Self::insert_model).
     ///
