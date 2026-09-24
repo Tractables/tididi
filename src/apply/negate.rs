@@ -365,7 +365,7 @@ impl<'a> Cover<'a> {
         rights: ChildBasis,
         leaf: LeafForm,
     ) -> Result<Cover<'a>, OperationError> {
-        let len = lefts.len().checked_mul(rights.len()).ok_or(OperationError::OverBudget)?;
+        let len = lefts.len().checked_mul(rights.len()).ok_or(OperationError::IndexOverflow)?;
         bits.clear();
         eng.limits().try_resize(bits, len.div_ceil(64), 0u64)?;
         Ok(Cover {
