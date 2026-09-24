@@ -45,7 +45,7 @@ impl Marking {
                 *level = std::mem::take(&mut f.levels[vi]);
             } else {
                 for side in [ChildSide::Left, ChildSide::Right] {
-                    level.set_marginal_inlined(side, f.levels[vi].marginal_inlined(side));
+                    level.set_has_value_refs(side, f.levels[vi].has_value_refs(side));
                 }
             }
         }

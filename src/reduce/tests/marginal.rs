@@ -123,7 +123,7 @@ fn test_marginal_sibling_fold_allowed_regression() {
     // marginalization step frees as `v_right` becomes marginal.
     free_subsumed_marginal_children(&mut tdd.levels, &vtree, v_right, None);
 
-    // Tag marginal-side slots so the `marginal_inlined` markers are set on v_left
+    // Tag marginal-side slots so the `has_value_refs` markers are set on v_left
     // (right child sub_left_r is marginal) and root (right child v_right is marginal).
     // No count here fits a ref, so nothing inlines; the markers enable decode in
     // `model_count`.

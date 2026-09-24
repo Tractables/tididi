@@ -36,7 +36,7 @@ pub(super) fn rebuild_parent_level<V>(
     // preserves every other flag — including the marker for a side that was
     // already inlined, and `n_tombstones` — by construction.
     if any_inline {
-        level.set_marginal_inlined(side, true);
+        level.set_has_value_refs(side, true);
     }
 
     // `fused_x` maps each fused x_idx to its new marginal-side ref. A plan

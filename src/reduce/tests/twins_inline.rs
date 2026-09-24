@@ -63,7 +63,7 @@ fn test_inline_ref_twins_merged_by_minimize() {
     // v_marginal: empty store — all marginal-side refs from v_parent4 are inline.
     levels[v_marginal.idx()].set_counts_state(vec![], None);
     // Mark the marginal side inlined so the tagger and readers decode correctly.
-    levels[v_parent4.idx()].set_marginal_inlined(ChildSide::Right, true);
+    levels[v_parent4.idx()].set_has_value_refs(ChildSide::Right, true);
 
     let inline_ref = ValueRef::Inline(INLINE_VAL).side().unwrap();
     let pos = NodeIdx(LeafLabel::Pos as u32);
@@ -230,7 +230,7 @@ fn test_content_twins_merge_at_plain_levels() {
 
 /// Leaf-twin contraction must leave the parent's marginal-side markers alone.
 ///
-/// `marginal_inlined(Right)` says "this level's refs toward its marginal right child
+/// `has_value_refs(Right)` says "this level's refs toward its marginal right child
 /// already hold inline counts". The contraction rewrites the LEFT (literal)
 /// side of a pair list and copies every right field through verbatim, so the
 /// marker still describes the level truthfully afterward — but the rewrite
@@ -280,7 +280,7 @@ fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
     );
     inline_small_marginal_refs(&mut tdd, None);
     assert!(
-        tdd.levels[root_idx.idx()].marginal_inlined(ChildSide::Right),
+        tdd.levels[root_idx.idx()].has_value_refs(ChildSide::Right),
         "the tagger must inline the marginal side and mark it, or the fixture proves nothing"
     );
 
@@ -290,7 +290,7 @@ fn contracting_a_leaf_twin_keeps_the_parents_marginal_side_marker() {
         "the two pairs differ only in the polarity of x, so the level contracts"
     );
     assert!(
-        tdd.levels[root_idx.idx()].marginal_inlined(ChildSide::Right),
+        tdd.levels[root_idx.idx()].has_value_refs(ChildSide::Right),
         "the rewrite copies the marginal side through verbatim, so its marker still holds"
     );
 }

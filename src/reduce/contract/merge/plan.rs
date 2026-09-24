@@ -50,13 +50,13 @@ impl MergePolicy {
     // break determinism (invariant 1) elsewhere. The greedy filter in
     // `plan_groups` accepts pairwise-disjoint members, one hash-set pass over
     // the group's pairs.
-        let plain_level = !tdd.levels[t1.idx()].any_inlined_side();
+        let plain_level = !tdd.levels[t1.idx()].any_value_ref_side();
     // Content-equal twins at a plain level merge under a marginal-flagged
     // parent: the survivor's pair list already is the shared function, and the
     // member's parent pairs are remapped onto the survivor, where the resulting
     // duplicates are legal multiset entries that pair fusion sums. Under a
     // plain parent the multiplicity has nowhere to live, so they stay apart.
-        let parent_marginal = tdd.levels[parent.idx()].any_inlined_side();
+        let parent_marginal = tdd.levels[parent.idx()].any_value_ref_side();
     // When a child side of t1 has marginalization below it, overlapping twins
     // concat-merge unconditionally and `compact_and_fork_down` folds the
     // resulting duplicate pairs where it can; see the module doc of

@@ -143,16 +143,16 @@ pub(super) fn rebuild_spine_level(
     }
     // Free `old` before `shrink_arrays` reallocates the rebuilt arenas, so
     // the two are not resident together at the peak.
-    let old_inlined_sides = old.inlined_sides;
+    let old_inlined_sides = old.value_ref_sides;
     drop(old);
     // Trim the slack the per-node top-up growth left behind.
     level.shrink_arrays();
 
     // The rebuilt level copied the irrelevant side's pair refs verbatim,
-    // inline marginal counts included, but started with zero `inlined_sides`.
+    // inline marginal counts included, but started with zero `value_ref_sides`.
     // The relevant side is never marginal (`plan_cd_map_bases` rejects it), so
     // the input level's markers carry over exactly.
-    level.inlined_sides = old_inlined_sides;
+    level.value_ref_sides = old_inlined_sides;
     Ok(())
 }
 

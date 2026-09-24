@@ -129,7 +129,7 @@ pub(super) fn concat_twin_pairs(
     // or where `allow_dups` says the caller resolves the duplicates right after
     // compaction (`duplicate_pair_resolve`).
     #[cfg(debug_assertions)]
-    if !level.any_inlined_side() && !allow_dups {
+    if !level.any_value_ref_side() && !allow_dups {
         let mut chk = level.pairs[new_start..].to_vec();
         chk.sort_unstable();
         debug_assert!(

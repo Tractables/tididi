@@ -192,7 +192,7 @@ fn a_clause_builds_the_levels_its_conjunction_into_one_emits() {
                     "{label}: level {t} stores different nodes or pairs"
                 );
                 assert!(!a.is_marginal() && !b.is_marginal(), "{label}: level {t} is structural");
-                assert_eq!(a.inlined_sides, b.inlined_sides, "{label}: level {t} inline markers");
+                assert_eq!(a.value_ref_sides, b.value_ref_sides, "{label}: level {t} inline markers");
                 assert_eq!(a.dead_pairs, b.dead_pairs, "{label}: level {t} dead pairs");
             }
         }

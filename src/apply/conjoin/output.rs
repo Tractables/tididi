@@ -40,8 +40,8 @@ pub(super) fn drop_dead_operand_level(level: &mut crate::diagram::TddLevel) {
 /// one-marginal-child route, which returns before that tail runs.
 pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, passthrough: Sides<bool>) {
     if (passthrough.left || passthrough.right) && !level.is_marginal() {
-        if passthrough.left { level.set_marginal_inlined(ChildSide::Left, true); }
-        if passthrough.right { level.set_marginal_inlined(ChildSide::Right, true); }
+        if passthrough.left { level.set_has_value_refs(ChildSide::Left, true); }
+        if passthrough.right { level.set_has_value_refs(ChildSide::Right, true); }
     }
 }
 

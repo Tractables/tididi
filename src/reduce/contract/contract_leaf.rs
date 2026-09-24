@@ -235,7 +235,7 @@ fn rewrite_level(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
             level.note_dead_pairs(dead);
         }
 
-        // `inlined_sides` still describes the level: every marginal-side ref was
+        // `value_ref_sides` still describes the level: every marginal-side ref was
         // copied through verbatim. The dropped slots stay in the arena until the
         // level's compaction threshold; no pair-arena offset is held across it.
         level.compact_pairs_if_stale();

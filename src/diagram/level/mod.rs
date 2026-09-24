@@ -42,14 +42,16 @@ pub struct TddLevel {
     /// Side table for multi-pair nodes whose arena start or length exceeds
     /// 2^31 (huge product grids). See `EncodedNode` for the encoding.
     pub(crate) multi_pairs: Vec<MultiPairRange>,
-    /// Which of this level's pair-side fields already hold inline model counts
-    /// toward a marginal child, rather than fresh slot indices: bit 0 the left
-    /// side, bit 1 the right.
+    /// Which of this level's pair sides hold value references into a marginal
+    /// child that have been through `inline_small_marginal_refs`: bit 0 the
+    /// left side, bit 1 the right. A side toward a structural child, or one
+    /// whose child became marginal since, has its bit clear.
     ///
     /// A boundary parent is structural, so this sits outside
-    /// [`LevelState`]. Set by apply when it emits or carries through an inlined
-    /// side; reset by [`clear`](Self::clear) and by marginalization.
-    pub(crate) inlined_sides: u8,
+    /// [`LevelState`]. Set by apply when it emits or carries through such a
+    /// side and by the inlining pass; reset by [`clear`](Self::clear) and by
+    /// marginalization.
+    pub(crate) value_ref_sides: u8,
     /// Slots in `pairs` that no live node references any more.
     ///
     /// Twin contraction mints these: a merged union is appended at the arena
@@ -104,27 +106,28 @@ impl Default for TddLevel {
 }
 
 impl TddLevel {
-    /// `side`'s bit in `inlined_sides`. See the field doc.
-    const fn inlined_bit(side: ChildSide) -> u8 {
+    /// `side`'s bit in `value_ref_sides`. See the field doc.
+    const fn side_bit(side: ChildSide) -> u8 {
         1 << side as u8
     }
 
-    /// True if this level's refs toward its marginal `side` child are
-    /// inline-encoded in the pair field.
-    pub(crate) fn marginal_inlined(&self, side: ChildSide) -> bool {
-        self.inlined_sides & Self::inlined_bit(side) != 0
+    /// True if this level's references on `side` are value references into
+    /// a marginal child that the inlining pass has been over; see
+    /// [`value_ref_sides`](Self::value_ref_sides).
+    pub(crate) fn has_value_refs(&self, side: ChildSide) -> bool {
+        self.value_ref_sides & Self::side_bit(side) != 0
     }
-    /// Set or clear the marker [`marginal_inlined`](Self::marginal_inlined)
+    /// Set or clear the marker [`has_value_refs`](Self::has_value_refs)
     /// reads.
-    pub(crate) fn set_marginal_inlined(&mut self, side: ChildSide, v: bool) {
-        if v { self.inlined_sides |= Self::inlined_bit(side) }
-        else { self.inlined_sides &= !Self::inlined_bit(side) }
+    pub(crate) fn set_has_value_refs(&mut self, side: ChildSide, v: bool) {
+        if v { self.value_ref_sides |= Self::side_bit(side) }
+        else { self.value_ref_sides &= !Self::side_bit(side) }
     }
-    /// True if either side carries the inline-encoding marker. A level with
-    /// neither is "plain": every pair side toward a marginal child is a bare
-    /// slot, so duplicate pairs cannot be count-carrying multiset entries.
-    pub(crate) fn any_inlined_side(&self) -> bool {
-        self.inlined_sides != 0
+    /// True if either side holds value references. A level with neither is
+    /// "plain": every pair side toward a marginal child is a bare slot, so
+    /// duplicate pairs cannot be count-carrying multiset entries.
+    pub(crate) fn any_value_ref_side(&self) -> bool {
+        self.value_ref_sides != 0
     }
 
     /// An empty level: the state of every leaf level, and the starting point
@@ -134,7 +137,7 @@ impl TddLevel {
             nodes: Vec::new(),
             pairs: Vec::new(),
             multi_pairs: Vec::new(),
-            inlined_sides: 0,
+            value_ref_sides: 0,
             dead_pairs: 0,
             state: LevelState::Structural,
         }
@@ -147,7 +150,7 @@ impl TddLevel {
         self.nodes.clear();
         self.pairs.clear();
         self.multi_pairs.clear();
-        self.inlined_sides = 0;
+        self.value_ref_sides = 0;
         self.dead_pairs = 0;
         self.state = LevelState::Structural;
     }
@@ -165,7 +168,7 @@ impl TddLevel {
         self.multi_pairs.clear();
         self.multi_pairs.shrink_to_fit();
         self.dead_pairs = 0;
-        self.inlined_sides = 0;
+        self.value_ref_sides = 0;
     }
 
     /// Number of slots: the number of values on a marginal level, else
@@ -352,7 +355,7 @@ impl TddLevel {
             nodes: copy(lim, &self.nodes)?,
             pairs: copy(lim, &self.pairs)?,
             multi_pairs: copy(lim, &self.multi_pairs)?,
-            inlined_sides: self.inlined_sides,
+            value_ref_sides: self.value_ref_sides,
             dead_pairs: self.dead_pairs,
             state,
         })

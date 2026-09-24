@@ -17,7 +17,7 @@ pub(crate) fn inline_small_marginal_refs(
     // at the enclosing `marginalize_batch` entry, and only sides whose child
     // became marginal in this batch are emitted (an already inline ref
     // re-read as a slot index would index out of bounds). `None` falls back to
-    // the level's `marginal_inlined` markers.
+    // the level's `has_value_refs` markers.
     was_marginal: Option<&[bool]>,
 ) {
     // Disjoint-field borrow: vtree (shape) immutable, levels (data) mutable.
@@ -52,12 +52,12 @@ fn inline_small_marginal_refs_at_level(
     let do_left = tag_left
         && match was_marginal {
             Some(wm) => !wm[left_idx],
-            None => !levels[ti].marginal_inlined(ChildSide::Left),
+            None => !levels[ti].has_value_refs(ChildSide::Left),
         };
     let do_right = tag_right
         && match was_marginal {
             Some(wm) => !wm[right_idx],
-            None => !levels[ti].marginal_inlined(ChildSide::Right),
+            None => !levels[ti].has_value_refs(ChildSide::Right),
         };
     if do_left || do_right {
         let [p, l, r] = levels.get_disjoint_mut([ti, left_idx, right_idx]).expect("distinct");
@@ -70,9 +70,9 @@ fn inline_small_marginal_refs_at_level(
     // (the marginal-child predicate), not do_*: an already-inline side stays
     // marked so a later re-tag still skips it.
     if tag_left {
-        levels[ti].set_marginal_inlined(ChildSide::Left, true);
+        levels[ti].set_has_value_refs(ChildSide::Left, true);
     }
     if tag_right {
-        levels[ti].set_marginal_inlined(ChildSide::Right, true);
+        levels[ti].set_has_value_refs(ChildSide::Right, true);
     }
 }

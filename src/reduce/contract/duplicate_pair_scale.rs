@@ -123,7 +123,7 @@ pub(super) fn has_o1_absorber(tdd: &Tdd, pv: VtreeIdx) -> bool {
 
 /// One pair with exactly one side scaled by k, plus which side (if any) now
 /// carries an inline marginal ref — the caller must raise that side's
-/// `marginal_inlined` marker on the level it writes the pair into, or the apply
+/// `has_value_refs` marker on the level it writes the pair into, or the apply
 /// reader misdecodes the bit-30-tagged count as a grid coordinate.
 pub(super) struct ScaledPair {
     pub(super) pair: ChildPair,

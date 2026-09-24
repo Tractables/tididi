@@ -110,14 +110,14 @@ fn carrier(
     //   (2) the carrier's field is a marginal ref: its child is marginal now,
     //       or was at entry and has since been swapped into the output by the
     //       identity fast path (the swap moves the store, so the slots stay
-    //       valid), or the level's `marginal_inlined` marker says the side's
+    //       valid), or the level's `has_value_refs` marker says the side's
     //       fields were already inlined.
     // Testing (1) alone would carry a structural node index into slot space;
     // testing (2) alone would read a slot as a grid coordinate. The output
     // child's own marginality is not tested here: its snapshot predates the
     // mid-loop cascade, and reads stale-false in the cells where the child
     // marginalizes mid-loop.
-    let inlined = |f: &Tdd| f.levels[t_idx].marginal_inlined(side);
+    let inlined = |f: &Tdd| f.levels[t_idx].has_value_refs(side);
     let left_ref = f.levels[child_idx].is_marginal()
         || entry.was_marginal(Carrier::F, child_idx) || inlined(f);
     if right_identity[child_idx] && left_ref {
