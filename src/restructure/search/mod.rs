@@ -91,10 +91,16 @@ impl crate::Engine {
     }
 }
 
-/// Keep one private vtree across probes, restoring shared identity if none was accepted.
+/// Keep one private vtree across probes, restoring shared identity if none was
+/// accepted.
+///
+/// Every probe of a diagram's vtree goes through here: the tree is detached
+/// from its sharers once, before the first probe, and put back when the
+/// search ends with nothing kept, so a declined trial leaves not just the
+/// shape but the allocation as it was.
 pub(super) struct SearchTree<'a> {
     pub(super) tdd: &'a mut Tdd,
-    pub(super) original: Option<std::sync::Arc<crate::Vtree>>,
+    original: Option<std::sync::Arc<crate::Vtree>>,
 }
 
 impl<'a> SearchTree<'a> {
@@ -105,6 +111,23 @@ impl<'a> SearchTree<'a> {
             .then(|| Arc::clone(&tdd.vtree));
         Arc::make_mut(&mut tdd.vtree);
         Self { tdd, original }
+    }
+
+    /// [`probe_moves`](probe::probe_moves) on the private tree; a kept
+    /// sequence is what makes the private tree the diagram's own.
+    fn probe_moves<R: probe::ProbeRule>(
+        &mut self,
+        eng: &crate::Engine,
+        moves: &[RotationMove],
+        rule: &mut R,
+        scratch: &mut crate::restructure::scratch::RestructureScratch,
+        bound: usize,
+    ) -> Result<bool, OperationError> {
+        let kept = probe::probe_moves(eng, self.tdd, moves, rule, scratch, bound)?;
+        if kept {
+            self.original = None;
+        }
+        Ok(kept)
     }
 }
 

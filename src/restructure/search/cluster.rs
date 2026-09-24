@@ -228,7 +228,6 @@ impl Engine {
         // shared Arc until the caller reseats them — sound
         // because rotations only change indices inside subtree(root).
         let mut search = super::SearchTree::new(tdd);
-        let tdd = &mut *search.tdd;
 
         let mut scratch = eng.restructure().checkout(lim);
         let mut rule = ClusterRule { bound_mult };
@@ -248,7 +247,7 @@ impl Engine {
             for (v, kind) in cands {
                 // Poll between attempts. A later closure refusal retains its
                 // committed rotation and the attempt flags already recorded.
-                poll.poll(tdd.levels[v.idx()].live_pairs() as u64 + 1)?;
+                poll.poll(search.tdd.levels[v.idx()].live_pairs() as u64 + 1)?;
                 // Attempt-once per (pivot, kind). Marginality is monotonic within a
                 // compile, so a rejected cluster stays a candidate and — without this
                 // guard — would be re-considered (full O(size) restructure + revert)
@@ -262,14 +261,15 @@ impl Engine {
                     continue;
                 }
                 // A prior accept this sweep may have collapsed this pivot already.
-                if tdd.levels[v.idx()].is_marginal() {
+                if search.tdd.levels[v.idx()].is_marginal() {
                     continue;
                 }
                 tried[v.idx()] |= bit;
-                if probe(eng, tdd, v, kind, &mut rule, &mut scratch, usize::MAX)? {
-                    // Keep the committed vtree even if the follow-up closure fails.
-                    search.original = None;
-                    crate::marginal::marginalize_closure(eng, tdd)?;
+                let turn = RotationMove { pivot: v, kind };
+                // The bound is the rule's own, so the default passed here is unread.
+                if search.probe_moves(eng, &[turn], &mut rule, &mut scratch, usize::MAX)? {
+                    // The vtree stays committed even if the follow-up closure fails.
+                    crate::marginal::marginalize_closure(eng, search.tdd)?;
                     accepted += 1;
                     progress = true;
                 }
@@ -277,7 +277,7 @@ impl Engine {
             if !progress {
                 break;
             }
-            cands = collect_cluster_candidates(tdd, &allow);
+            cands = collect_cluster_candidates(search.tdd, &allow);
             if cands.is_empty() {
                 break;
             }

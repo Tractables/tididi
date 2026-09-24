@@ -131,12 +131,16 @@ fn kick(
     bound: usize,
     rng: &mut Lcg,
 ) -> Result<(), OperationError> {
+    let _op = eng.limits().begin_operation();
+    let mut scratch = eng.restructure().checkout(eng.limits());
+    let mut search = super::SearchTree::new(tdd);
     for _ in 0..count {
-        let nodes = tdd.vtree().num_nodes() as u64;
+        let nodes = search.tdd.vtree().num_nodes() as u64;
         let pivot = VtreeIdx(rng.below(nodes) as u32);
         let kind = if rng.below(2) == 0 { RotationKind::Left } else { RotationKind::Right };
         eng.limits().check_stop()?;
-        super::probe::rotate_if_on(eng, tdd, &[RotationMove { pivot, kind }], bound, |_| true)?;
+        let turn = RotationMove { pivot, kind };
+        search.probe_moves(eng, &[turn], &mut super::probe::Forced, &mut scratch, bound)?;
     }
     Ok(())
 }

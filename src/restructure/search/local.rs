@@ -9,6 +9,7 @@ use smallvec::SmallVec;
 
 use crate::limits::OperationError;
 use crate::Engine;
+use crate::restructure::scratch::RestructureScratch;
 use crate::vtree::{RotationKind, Vtree, VtreeIdx};
 use crate::vtree::rotate::RotationInfo;
 use crate::diagram::Tdd;
@@ -193,7 +194,7 @@ fn sweep_pivot<O: RotationObjective, A: AcceptancePolicy>(
     search: &mut super::SearchTree<'_>,
     v: VtreeIdx,
     rule: &mut Policed<'_, O, A>,
-    scratch: &mut crate::limits::pool::PoolGuard<'_, crate::restructure::relevel::RestructureScratch>,
+    scratch: &mut RestructureScratch,
     config: &RotationSearchConfig,
 ) -> Result<usize, OperationError> {
     let mut kept = 0usize;
@@ -243,20 +244,16 @@ fn sweep_pivot<O: RotationObjective, A: AcceptancePolicy>(
     Ok(0)
 }
 
-/// Probe one sequence and note a kept one on the search tree.
+/// Probe one sequence under the search's rule and bound.
 fn try_sequence<O: RotationObjective, A: AcceptancePolicy>(
     eng: &Engine,
     search: &mut super::SearchTree<'_>,
     moves: &[RotationMove],
     rule: &mut Policed<'_, O, A>,
-    scratch: &mut crate::limits::pool::PoolGuard<'_, crate::restructure::relevel::RestructureScratch>,
+    scratch: &mut RestructureScratch,
     config: &RotationSearchConfig,
 ) -> Result<bool, OperationError> {
-    let kept = probe_moves(eng, search.tdd, moves, rule, scratch, config.max_inner_pairs)?;
-    if kept {
-        search.original = None;
-    }
-    Ok(kept)
+    search.probe_moves(eng, moves, rule, scratch, config.max_inner_pairs)
 }
 
 /// The pivots a sequence may continue at after turning the internal node
@@ -291,7 +288,7 @@ fn rewind_to_best(
     eng: &Engine,
     tdd: &mut Tdd,
     log: &[(SmallVec<[RotationMove; MAX_SEQUENCE]>, i64)],
-    scratch: &mut crate::limits::pool::PoolGuard<'_, crate::restructure::relevel::RestructureScratch>,
+    scratch: &mut RestructureScratch,
 ) -> Result<(), OperationError> {
     let mut cost = 0i64;
     let mut best = 0i64;
@@ -313,15 +310,6 @@ fn rewind_to_best(
 
 /// The two directions a sweep tries at every pivot.
 const KINDS: [RotationKind; 2] = [RotationKind::Left, RotationKind::Right];
-
-/// The rule the rewind probes under: whatever it is shown, it keeps.
-struct Forced;
-
-impl ProbeRule for Forced {
-    fn keeps(&mut self, _probe: &RotationProbe<'_>, _info: &RotationInfo) -> bool {
-        true
-    }
-}
 
 /// The search's own [`ProbeRule`]: the caller's objective and policy, and the
 /// tallies [`RotationSearchStats`] reports.

@@ -3,19 +3,10 @@ use std::sync::Arc;
 
 use crate::diagram::Tdd;
 use crate::Engine;
-use crate::restructure::relevel::RestructureScratch;
-use crate::restructure::search::probe::{probe, ProbeRule};
-use crate::restructure::search::RotationProbe;
+use crate::restructure::search::RotationMove;
+use crate::restructure::search::probe::rotate_if_on;
 use crate::test_helpers::assert_canonical;
 use crate::vtree::{RotationKind, Vtree};
-
-struct Panicking;
-
-impl ProbeRule for Panicking {
-    fn keeps(&mut self, _: &RotationProbe<'_>, _: &crate::vtree::rotate::RotationInfo) -> bool {
-        panic!("objective failed")
-    }
-}
 
 #[test]
 fn an_objective_panic_restores_the_rotation_trial() {
@@ -26,8 +17,9 @@ fn an_objective_panic_restores_the_rotation_trial() {
         assert_canonical(&f);
         let before = format!("{f:?}");
         let count = f.model_count().unwrap();
+        let turn = RotationMove { pivot: vtree.root(), kind };
         let result = catch_unwind(AssertUnwindSafe(|| {
-            probe(&eng, &mut f, vtree.root(), kind, &mut Panicking, &mut RestructureScratch::default(), usize::MAX)
+            rotate_if_on(&eng, &mut f, &[turn], usize::MAX, |_| panic!("objective failed"))
         }));
         assert!(result.is_err());
         assert_eq!(format!("{f:?}"), before);
@@ -37,12 +29,6 @@ fn an_objective_panic_restores_the_rotation_trial() {
     }
 }
 
-struct Reject;
-
-impl ProbeRule for Reject {
-    fn keeps(&mut self, _: &RotationProbe<'_>, _: &crate::vtree::rotate::RotationInfo) -> bool { false }
-}
-
 #[test]
 fn a_rejected_rotation_preserves_the_shared_vtree_and_worklists() {
     let eng = Engine::new();
@@ -50,7 +36,8 @@ fn a_rejected_rotation_preserves_the_shared_vtree_and_worklists() {
     let mut f = Tdd::clause(&vtree, [1, 2]).unwrap() & Tdd::clause(&vtree, [3, 4]).unwrap();
     assert_canonical(&f);
     let before = format!("{f:?}");
-    assert!(!probe(&eng, &mut f, vtree.root(), RotationKind::Left, &mut Reject, &mut RestructureScratch::default(), usize::MAX).unwrap());
+    let turn = RotationMove { pivot: vtree.root(), kind: RotationKind::Left };
+    assert!(!rotate_if_on(&eng, &mut f, &[turn], usize::MAX, |_| false).unwrap());
     assert_eq!(format!("{f:?}"), before);
     assert!(Arc::ptr_eq(f.vtree(), &vtree));
     assert_canonical(&f);

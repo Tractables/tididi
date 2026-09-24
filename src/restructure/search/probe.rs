@@ -14,9 +14,10 @@ use smallvec::SmallVec;
 use crate::Engine;
 use crate::diagram::{Dirty, Tdd, TddLevel, TddNodeId};
 use crate::limits::{Limits, OperationError, Transient};
-use crate::restructure::relevel::{RestructureScratch, restructure_inner_search};
+use crate::restructure::relevel::restructure_inner_search;
+use crate::restructure::scratch::RestructureScratch;
 use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
-use crate::vtree::{RotationKind, Vtree, VtreeIdx};
+use crate::vtree::{RotationKind, VtreeIdx};
 
 /// One rotation: which internal vtree node it turns, and which way.
 ///
@@ -217,7 +218,7 @@ pub(super) fn rotate_if_on(
     let _op = eng.limits().begin_operation();
     let mut scratch = eng.restructure().checkout(eng.limits());
     let mut rule = Closure { accept: Some(accept) };
-    probe_moves(eng, tdd, moves, &mut rule, &mut scratch, bound)
+    super::SearchTree::new(tdd).probe_moves(eng, moves, &mut rule, &mut scratch, bound)
 }
 
 /// The rule a [`Tdd::rotate_if`] call probes under: the caller's closure,
@@ -232,26 +233,21 @@ impl<F: FnOnce(&RotationProbe<'_>) -> bool> ProbeRule for Closure<F> {
     }
 }
 
-/// Probe the `kind` rotation at pivot `v` and keep it iff `rule` scores it an
-/// improvement. Returns whether the rotation was kept; on a decline the diagram
-/// is restored bit-for-bit, vtree included.
-///
-/// Rotation locality restricts rebuilding, scoring and rollback to two levels.
-pub(super) fn probe<R: ProbeRule>(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    v: VtreeIdx,
-    kind: RotationKind,
-    rule: &mut R,
-    scratch: &mut RestructureScratch,
-    default_bound: usize,
-) -> Result<bool, OperationError> {
-    probe_moves(eng, tdd, &[RotationMove { pivot: v, kind }], rule, scratch, default_bound)
+/// The rule that keeps whatever it is shown: the rewind and the multistart
+/// kicks probe under it.
+pub(super) struct Forced;
+
+impl ProbeRule for Forced {
+    fn keeps(&mut self, _probe: &RotationProbe<'_>, _info: &RotationInfo) -> bool {
+        true
+    }
 }
 
 /// Apply `moves` in order, score the levels they rebuilt as one step, and keep
 /// the sequence iff `rule` says so. Returns whether it was kept; on a decline
-/// the diagram is restored bit-for-bit, vtree included.
+/// the diagram's levels and its vtree's shape are restored bit-for-bit. The
+/// vtree must be the diagram's own: [`SearchTree`](super::SearchTree) detaches
+/// a shared one and restores its identity when nothing is kept.
 ///
 /// A move that does not apply at its pivot, a level that is marginal, a gate
 /// the rule closes or a rebuild past its bound abandons the sequence without
@@ -320,7 +316,6 @@ struct RotationTrial<'a> {
     preimages: SmallVec<[Transient<'a, TddLevel>; 2]>,
     old_output: TddNodeId,
     old_canonical: bool,
-    shared_tree: Option<Arc<Vtree>>,
     old_dirty: Option<Dirty>,
     /// Set by [`commit`](RotationTrial::commit), so the rollback in `Drop` knows
     /// there is nothing left to roll back.
@@ -328,12 +323,10 @@ struct RotationTrial<'a> {
 }
 
 impl<'a> RotationTrial<'a> {
-    /// Detach a shared vtree and take the state a rollback restores.
+    /// Take the state a rollback restores.
     fn new(tdd: &'a mut Tdd, lim: &'a Limits) -> Self {
         let old_output = tdd.output;
         let old_canonical = tdd.levels.is_canonical(old_output);
-        let shared_tree = (Arc::strong_count(&tdd.vtree) > 1 || Arc::weak_count(&tdd.vtree) > 0)
-            .then(|| Arc::clone(&tdd.vtree));
         let old_dirty = Some(std::mem::take(&mut tdd.dirty));
         RotationTrial {
             tdd,
@@ -343,7 +336,6 @@ impl<'a> RotationTrial<'a> {
             preimages: SmallVec::new(),
             old_output,
             old_canonical,
-            shared_tree,
             old_dirty,
             committed: false,
         }
@@ -415,9 +407,6 @@ impl Drop for RotationTrial<'_> {
         self.tdd.output = self.old_output;
         if let Some(dirty) = self.old_dirty.take() {
             self.tdd.dirty = dirty;
-        }
-        if let Some(tree) = self.shared_tree.take() {
-            self.tdd.vtree = tree;
         }
         if self.old_canonical { self.tdd.levels.certify(self.old_output); }
     }

@@ -122,7 +122,6 @@ fn reject_all_objective_leaves_tdd_untouched() {
 
 #[test]
 fn a_search_keeps_its_private_tree_between_rejected_probes() {
-    use crate::restructure::relevel::RestructureScratch;
     struct Reject;
     impl ProbeRule for Reject {
         fn keeps(&mut self, _: &RotationProbe<'_>, _: &crate::vtree::rotate::RotationInfo) -> bool { false }
@@ -132,12 +131,13 @@ fn a_search_keeps_its_private_tree_between_rejected_probes() {
     let mut f = Tdd::one(&tree);
     assert_canonical(&f);
     {
-        let search = crate::restructure::search::SearchTree::new(&mut f);
+        let mut search = crate::restructure::search::SearchTree::new(&mut f);
         let private = Arc::as_ptr(search.tdd.vtree());
         assert_ne!(private, Arc::as_ptr(&tree));
         let mut scratch = RestructureScratch::default();
         for kind in [RotationKind::Left, RotationKind::Right] {
-            assert!(!probe(&eng, search.tdd, tree.root(), kind, &mut Reject, &mut scratch, usize::MAX).unwrap());
+            let turn = RotationMove { pivot: tree.root(), kind };
+            assert!(!search.probe_moves(&eng, &[turn], &mut Reject, &mut scratch, usize::MAX).unwrap());
             assert_eq!(private, Arc::as_ptr(search.tdd.vtree()));
         }
     }

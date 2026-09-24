@@ -4,18 +4,10 @@ use std::sync::Arc;
 
 use crate::Engine;
 use crate::diagram::{Pass, Tdd};
-use crate::restructure::relevel::RestructureScratch;
-use crate::restructure::search::RotationProbe;
-use crate::restructure::search::probe::{ProbeRule, probe};
+use crate::restructure::search::RotationMove;
+use crate::restructure::search::probe::rotate_if_on;
 use crate::test_helpers::assert_canonical;
 use crate::vtree::{RotationKind, Vtree};
-
-/// Scores every rotation an improvement, so the trial commits.
-struct Accept;
-
-impl ProbeRule for Accept {
-    fn keeps(&mut self, _: &RotationProbe<'_>, _: &crate::vtree::rotate::RotationInfo) -> bool { true }
-}
 
 /// The levels the diagram still owes each reduction pass, read without
 /// consuming them.
@@ -36,15 +28,8 @@ fn an_accepted_rotation_keeps_what_the_diagram_already_owed() {
     let before = owed(&f);
     assert!(before.iter().any(|list| !list.is_empty()), "the fixture owes no pass anything");
 
-    let kept = probe(
-        &eng,
-        &mut f,
-        vtree.root(),
-        RotationKind::Left,
-        &mut Accept,
-        &mut RestructureScratch::default(),
-        usize::MAX,
-    );
+    let turn = RotationMove { pivot: vtree.root(), kind: RotationKind::Left };
+    let kept = rotate_if_on(&eng, &mut f, &[turn], usize::MAX, |_| true);
     assert_eq!(kept, Ok(true));
 
     // A level absent from a pass's list is taken to be at that pass's fixpoint,
