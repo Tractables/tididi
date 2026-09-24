@@ -1,5 +1,13 @@
 use super::*;
-use crate::limits::pool::Pool;
+use crate::limits::pool::{Pool, PoolGuard};
+use crate::limits::Limits;
+
+/// A mark buffer from `pool`, covering `num_nodes` levels.
+fn take<'a>(lim: &'a Limits, pool: &'a Pool<MarkBuffer>, num_nodes: usize) -> Result<PoolGuard<'a, MarkBuffer>, OperationError> {
+    let mut marks = pool.checkout(lim);
+    marks.cover(lim, num_nodes)?;
+    Ok(marks)
+}
 
 #[test]
 fn interrupted_ancestor_walk_returns_clean_flags_for_retry() {
@@ -11,7 +19,7 @@ fn interrupted_ancestor_walk_returns_clean_flags_for_retry() {
     eng.limits().pin_reduce_poll_stride(Some(1));
     let clause = [Literal::pos(crate::vtree::VarId(1)), Literal::pos(crate::vtree::VarId(4))];
     {
-        let mut flags = SpineMarks::take(eng.limits(), &pool, vtree.num_nodes()).unwrap();
+        let mut flags = take(eng.limits(), &pool, vtree.num_nodes()).unwrap();
         let _scope = eng.limits().scope(crate::limits::LimitConfig::none().with_stop_rules(crate::limits::StopRules {
             unconditional: Some(crate::limits::StopAt::WorkUnits(3)),
             after_pairs: None,
@@ -20,7 +28,7 @@ fn interrupted_ancestor_walk_returns_clean_flags_for_retry() {
         assert_eq!(result, Err(OperationError::Stopped));
         assert!(flags.iter().any(|&flag| flag));
     }
-    let mut flags = SpineMarks::take(eng.limits(), &pool, vtree.num_nodes()).unwrap();
+    let mut flags = take(eng.limits(), &pool, vtree.num_nodes()).unwrap();
     assert!(flags.iter().all(|&flag| !flag));
     build_clause_spine(eng.limits(), &vtree, &clause, &mut flags, &mut internal, &mut stack).unwrap();
     let mut expected = vec![false; vtree.num_nodes()];
@@ -31,41 +39,40 @@ fn interrupted_ancestor_walk_returns_clean_flags_for_retry() {
             current = vtree.node(t).parent();
         }
     }
-    assert_eq!(&*flags, &expected);
+    assert_eq!(&**flags, &expected);
 }
 
-
 #[test]
-fn warmed_flags_reuse_the_rollback_log_after_unwind() {
+fn a_stopped_walk_hands_back_flags_the_next_checkout_reuses() {
     let eng = Engine::new();
     let pool = Pool::default();
-    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut flags = SpineMarks::take(eng.limits(), &pool, 100).unwrap();
-        flags.set(VtreeIdx(7));
-        flags.set(VtreeIdx(7));
-        panic!("marking stopped");
-    }));
-    assert!(result.is_err());
+    let allocation = {
+        let mut flags = take(eng.limits(), &pool, 100).unwrap();
+        flags.mark(VtreeIdx(7));
+        flags.mark(VtreeIdx(7));
+        flags.as_ptr()
+    };
     let _limit = eng.limits().scope(crate::limits::LimitConfig::none().with_memory_budget_bytes(Some(0)));
-    let flags = SpineMarks::take(eng.limits(), &pool, 100).unwrap();
+    let flags = take(eng.limits(), &pool, 100).unwrap();
     assert!(flags.iter().all(|&flag| !flag));
+    assert_eq!(flags.as_ptr(), allocation, "the warmed buffer is reused, not reallocated");
 }
 
 #[test]
-fn set_reports_first_visit_and_nested_scopes_keep_independent_marks() {
+fn mark_reports_first_visit_and_nested_checkouts_keep_independent_marks() {
     let eng = Engine::new();
     let pool = Pool::default();
-    let mut outer = SpineMarks::take(eng.limits(), &pool, 8).unwrap();
-    assert!(outer.set(VtreeIdx(3)));
-    assert!(!outer.set(VtreeIdx(3)));
+    let mut outer = take(eng.limits(), &pool, 8).unwrap();
+    assert!(outer.mark(VtreeIdx(3)));
+    assert!(!outer.mark(VtreeIdx(3)));
     {
-        let mut inner = SpineMarks::take(eng.limits(), &pool, 8).unwrap();
-        assert!(inner.set(VtreeIdx(3)));
-        assert!(inner.set(VtreeIdx(5)));
+        let mut inner = take(eng.limits(), &pool, 8).unwrap();
+        assert!(inner.mark(VtreeIdx(3)));
+        assert!(inner.mark(VtreeIdx(5)));
     }
     assert!(outer[3]);
     assert!(!outer[5]);
     drop(outer);
-    let reused = SpineMarks::take(eng.limits(), &pool, 8).unwrap();
+    let reused = take(eng.limits(), &pool, 8).unwrap();
     assert!(reused.iter().all(|&flag| !flag));
 }

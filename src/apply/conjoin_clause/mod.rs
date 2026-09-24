@@ -138,11 +138,13 @@ fn spine_walk(eng: &Engine, f: &mut Tdd, clause: &[Literal], disjoin: bool) -> R
 
     // The clause spine — the Steiner tree of its variables' leaves — and the
     // `need_dt` flag propagated top-down over it.
-    let mut on_spine = SpineMarks::take(lim, &pool.on_spine, num_nodes)?;
+    let mut on_spine = pool.on_spine.checkout(lim);
+    on_spine.cover(lim, num_nodes)?;
     let mut spine_internal = pool.spine_internal.checkout_preserving(lim);
     let mut dfs_stack = pool.dfs_stack.checkout_preserving(lim);
     build_clause_spine(lim, vtree, clause, &mut on_spine, &mut spine_internal, &mut dfs_stack)?;
-    let mut need_dt = SpineMarks::take(lim, &pool.need_dt, num_nodes)?;
+    let mut need_dt = pool.need_dt.checkout(lim);
+    need_dt.cover(lim, num_nodes)?;
     propagate_need_dt(vtree, &spine_internal, &on_spine, &mut need_dt);
 
     // Take ownership of f's levels: off-spine levels pass through as the

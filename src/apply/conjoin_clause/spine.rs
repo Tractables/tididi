@@ -2,44 +2,29 @@
 
 use super::*;
 
-/// Clause-spine marks, cleared and returned to their pool on every exit.
-/// Reset visits only marked levels, including during error unwinding.
-pub(super) struct SpineMarks<'a> {
-    flags: Vec<bool>,
-    set: Vec<VtreeIdx>,
-    pool: &'a Pool<MarkBuffer>,
-    /// Held for `Drop`, which is where the retain cap frees the buffers and so
-    /// where their bytes go back to the meter.
-    lim: &'a crate::limits::Limits,
-}
-
-/// The flags and their rollback log reuse capacity together.
+/// Per-level marks over the vtree, with a rollback log so clearing them
+/// visits only the levels marked.
+///
+/// The flags are all false whenever the buffer is parked in its pool: the
+/// log is replayed when the buffer goes back, on an error exit as much as on
+/// success, so a walk that stopped part-way leaves nothing behind for the
+/// next checkout.
 #[derive(Default)]
 pub(super) struct MarkBuffer {
     flags: Vec<bool>,
     set: Vec<VtreeIdx>,
 }
 
-impl crate::limits::pool::PooledScratch for MarkBuffer {
-    fn prepare(&mut self) {}
-    fn retain(&mut self, _lim: &crate::limits::Limits) {}
-    fn retained_bytes(&self) -> usize {
-        crate::limits::pool::capacity_bytes(&self.flags).saturating_add(crate::limits::pool::capacity_bytes(&self.set))
-    }
-}
-
-impl<'a> SpineMarks<'a> {
-    /// Take the pooled array, grown to cover `num_nodes` levels.
-    pub(super) fn take(lim: &'a crate::limits::Limits, pool: &'a Pool<MarkBuffer>, num_nodes: usize) -> Result<Self, crate::limits::OperationError> {
-        let MarkBuffer { mut flags, mut set } = pool.take(lim);
-        lim.try_resize(&mut flags, num_nodes, false)?;
-        lim.reserve_exact(&mut set, num_nodes)?;
-        Ok(SpineMarks { flags, set, pool, lim })
+impl MarkBuffer {
+    /// Grow the flags to cover `num_nodes` levels, charging `lim`.
+    pub(super) fn cover(&mut self, lim: &crate::limits::Limits, num_nodes: usize) -> Result<(), crate::limits::OperationError> {
+        lim.try_resize(&mut self.flags, num_nodes, false)?;
+        lim.reserve_exact(&mut self.set, num_nodes)
     }
 
     /// Mark level `t` and report whether it was newly marked.
     #[inline]
-    pub(super) fn set(&mut self, t: VtreeIdx) -> bool {
+    pub(super) fn mark(&mut self, t: VtreeIdx) -> bool {
         if self.flags[t.idx()] { return false; }
         self.flags[t.idx()] = true;
         self.set.push(t);
@@ -47,7 +32,7 @@ impl<'a> SpineMarks<'a> {
     }
 }
 
-impl std::ops::Deref for SpineMarks<'_> {
+impl std::ops::Deref for MarkBuffer {
     type Target = [bool];
     #[inline]
     fn deref(&self) -> &[bool] {
@@ -55,19 +40,24 @@ impl std::ops::Deref for SpineMarks<'_> {
     }
 }
 
-impl Drop for SpineMarks<'_> {
-    fn drop(&mut self) {
+impl crate::limits::pool::PooledScratch for MarkBuffer {
+    fn prepare(&mut self) {
+        debug_assert!(self.set.is_empty() && self.flags.iter().all(|&b| !b), "clause-spine marks were not cleared");
+    }
+
+    /// Replay the log so the parked buffer is all false, then apply the
+    /// retention cap to both arrays.
+    fn retain(&mut self, lim: &crate::limits::Limits) {
         for &t in &self.set {
             self.flags[t.idx()] = false;
         }
-        debug_assert!(
-            self.flags.iter().all(|&b| !b),
-            "clause-spine marks were not cleared",
-        );
         self.set.clear();
-        crate::limits::pool::release_if_oversized(self.lim, &mut self.set);
-        crate::limits::pool::release_if_oversized(self.lim, &mut self.flags);
-        self.pool.put(self.lim, MarkBuffer { flags: std::mem::take(&mut self.flags), set: std::mem::take(&mut self.set) });
+        crate::limits::pool::release_if_oversized(lim, &mut self.set);
+        crate::limits::pool::release_if_oversized(lim, &mut self.flags);
+    }
+
+    fn retained_bytes(&self) -> usize {
+        crate::limits::pool::capacity_bytes(&self.flags).saturating_add(crate::limits::pool::capacity_bytes(&self.set))
     }
 }
 
@@ -78,7 +68,7 @@ pub(super) fn build_clause_spine(
     lim: &crate::limits::Limits,
     vtree: &crate::vtree::Vtree,
     clause: &[Literal],
-    on_spine: &mut SpineMarks<'_>,
+    on_spine: &mut MarkBuffer,
     spine_internal: &mut Vec<VtreeIdx>,
     dfs_stack: &mut Vec<(VtreeIdx, bool)>,
 ) -> Result<(), OperationError> {
@@ -87,7 +77,7 @@ pub(super) fn build_clause_spine(
         let mut cur = vtree.leaf_of(lit.var).expect("the vtree carries this variable");
         loop {
             gate.poll(1)?;
-            if !on_spine.set(cur) { break; }
+            if !on_spine.mark(cur) { break; }
             match vtree.node(cur).parent() {
                 Some(p) => cur = p,
                 None => break,
@@ -125,15 +115,15 @@ pub(super) fn propagate_need_dt(
     vtree: &crate::vtree::Vtree,
     spine_internal: &[VtreeIdx],
     on_spine: &[bool],
-    need_dt: &mut SpineMarks<'_>,
+    need_dt: &mut MarkBuffer,
 ) {
     for &t in spine_internal.iter().rev() {
         let (l, r) = vtree.children(t);
         let both = on_spine[l.idx()] && on_spine[r.idx()];
         let inherited = need_dt[t.idx()] || both;
         if inherited {
-            if on_spine[l.idx()] { need_dt.set(l); }
-            if on_spine[r.idx()] { need_dt.set(r); }
+            if on_spine[l.idx()] { need_dt.mark(l); }
+            if on_spine[r.idx()] { need_dt.mark(r); }
         }
     }
 }
