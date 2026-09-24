@@ -8,6 +8,14 @@ use crate::diagram::Sides;
 
 use crate::Engine;
 
+/// A candidate's `(a_prod, sib_idx)` from the products the join met it by:
+/// the inner side's product is the left child's normally and the right
+/// sibling's when swapped, the outer side's the other way round.
+#[inline(always)]
+fn orient<const SWAPPED: bool>(inner: u32, outer: u32) -> (u32, u32) {
+    if !SWAPPED { (inner, outer) } else { (outer, inner) }
+}
+
 /// The leaf arm of the scatter: one side of the join is a vtree leaf, so the
 /// leaf-side product comes straight from the conjunction table and the walk
 /// stays selective by iterating the non-leaf product list.
@@ -38,15 +46,11 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
         if under_c1.is_empty() { continue; }
         for &RevEntry { parent: p2, other: inner2 } in ws.rev_c2.view().bucket(outer2 as usize) {
             for &RevEntry { parent: p1, other: inner1 } in under_c1 {
-                // normal:  outer_prod = sib_idx (right pl), grid computes a_prod.
-                // swapped: outer_prod = a_prod  (left pl),  grid computes sib_idx.
+                // The grid supplies the leaf side's product, the product list
+                // the other side's.
                 let grid_prod = CONJOIN_GRID[inner1 as usize][inner2 as usize];
                 if grid_prod != NO_PRODUCT {
-                    let (a_prod, sib_idx) = if !SWAPPED {
-                        (grid_prod, outer_prod)
-                    } else {
-                        (outer_prod, grid_prod)
-                    };
+                    let (a_prod, sib_idx) = orient::<SWAPPED>(grid_prod, outer_prod);
                     lim.try_push(&mut ws.par_buckets[p1 as usize], ParEntry {
                         p2, a_prod, sib_idx,
                     })?;
@@ -468,60 +472,53 @@ impl ScatterSides<'_> {
 
     /// Emit for one outer key: walk the f parents sharing it and, for each
     /// alive inner product, replay the precomputed alive `filtered` entries —
-    /// so the inner loop probes no dead cell.
-    fn emit_for_outer<const SWAPPED: bool>(
+    /// so the inner loop probes no dead cell. Each candidate goes to its f
+    /// parent's bucket, or with `FLAT` to the flat list with its parent for
+    /// the sort that groups them afterwards.
+    fn emit_for_outer<const SWAPPED: bool, const FLAT: bool>(
         &mut self,
         lim: &crate::limits::Limits,
         outer: usize,
         ticker: &mut crate::limits::PollGate,
     ) -> Result<(), OperationError> {
         for &RevEntry { parent: p1, other: inner1 } in self.rev_c1.bucket(outer) {
-            let bucket = &mut self.par_buckets[p1 as usize];
-            for e in self.inner.bucket(inner1 as usize) {
-                let (inner_c2, inner_prod) = (e.right_idx.0, e.prod_idx.0);
-                let fb = self.filtered.get(inner_c2);
-                for &(p2, attached) in fb {
-                    // The outer side carries the sibling product normally and
-                    // the left-child product when swapped.
-                    let (a_prod, sib_idx) = if !SWAPPED {
-                        (inner_prod, attached)
-                    } else {
-                        (attached, inner_prod)
-                    };
-                    lim.try_push(bucket, ParEntry { p2, a_prod, sib_idx })?;
-                }
-                ticker.poll(fb.len() as u64)?;
+            // The bucket is resolved once per f parent, outside the walk of
+            // its products.
+            if FLAT {
+                let flat = &mut *self.par_flat;
+                emit_candidates::<SWAPPED>(self.inner, &self.filtered, inner1, ticker,
+                    |entry| lim.try_push(flat, Candidate { parent: p1, entry }))?;
+            } else {
+                let bucket = &mut self.par_buckets[p1 as usize];
+                emit_candidates::<SWAPPED>(self.inner, &self.filtered, inner1, ticker,
+                    |entry| lim.try_push(bucket, entry))?;
             }
         }
         Ok(())
     }
+}
 
-    /// [`ScatterSides::emit_for_outer`] for a level collecting its
-    /// candidates flat: the same walk, each candidate appended with its f
-    /// parent for the sort that groups them afterwards.
-    fn emit_for_outer_flat<const SWAPPED: bool>(
-        &mut self,
-        lim: &crate::limits::Limits,
-        outer: usize,
-        ticker: &mut crate::limits::PollGate,
-    ) -> Result<(), OperationError> {
-        for &RevEntry { parent: p1, other: inner1 } in self.rev_c1.bucket(outer) {
-            for e in self.inner.bucket(inner1 as usize) {
-                let (inner_c2, inner_prod) = (e.right_idx.0, e.prod_idx.0);
-                let fb = self.filtered.get(inner_c2);
-                for &(p2, attached) in fb {
-                    let (a_prod, sib_idx) = if !SWAPPED {
-                        (inner_prod, attached)
-                    } else {
-                        (attached, inner_prod)
-                    };
-                    lim.try_push(self.par_flat, Candidate { parent: p1, entry: ParEntry { p2, a_prod, sib_idx } })?;
-                }
-                ticker.poll(fb.len() as u64)?;
-            }
+/// The candidates of one f parent under the current outer key: for each of
+/// its alive inner products, every alive `(p2, attached)` the `filtered`
+/// index holds for the product's inner-g child, handed to `push`.
+#[inline(always)]
+fn emit_candidates<const SWAPPED: bool>(
+    inner: GroupedView<'_, ProductEntry>,
+    filtered: &TouchedBuckets<'_>,
+    inner1: u32,
+    ticker: &mut crate::limits::PollGate,
+    mut push: impl FnMut(ParEntry) -> Result<(), OperationError>,
+) -> Result<(), OperationError> {
+    for e in inner.bucket(inner1 as usize) {
+        let (inner_c2, inner_prod) = (e.right_idx.0, e.prod_idx.0);
+        let fb = filtered.get(inner_c2);
+        for &(p2, attached) in fb {
+            let (a_prod, sib_idx) = orient::<SWAPPED>(inner_prod, attached);
+            push(ParEntry { p2, a_prod, sib_idx })?;
         }
-        Ok(())
+        ticker.poll(fb.len() as u64)?;
     }
+    Ok(())
 }
 
 /// The general arm: both sides non-leaf. Per outer key, build the filtered g
@@ -561,9 +558,9 @@ fn scatter_general_arm<const SWAPPED: bool>(
             }
         }
         if flat {
-            s.emit_for_outer_flat::<SWAPPED>(lim, outer, &mut ticker)?;
+            s.emit_for_outer::<SWAPPED, true>(lim, outer, &mut ticker)?;
         } else {
-            s.emit_for_outer::<SWAPPED>(lim, outer, &mut ticker)?;
+            s.emit_for_outer::<SWAPPED, false>(lim, outer, &mut ticker)?;
         }
         s.filtered.clear_touched();
     }
