@@ -7,7 +7,7 @@ use crate::limits::OperationError;
 use crate::reduce::ReductionPlan;
 use crate::diagram::{ChildDecoder, EncodedChildRef, Tdd, TddLevel, ZERO};
 use crate::vtree::VtreeIdx;
-use crate::apply::condition::{propagate_false_nodes, rewrite_level_pairs};
+use crate::apply::falsity::{propagate_false_nodes, rewrite_level_pairs};
 
 use super::Marking;
 
