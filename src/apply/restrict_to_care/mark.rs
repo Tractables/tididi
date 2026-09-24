@@ -1,10 +1,13 @@
 //! The liveness walk over `f × care`.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
+
 use crate::Engine;
 use crate::limits::OperationError;
 
-use crate::diagram::{ChildPair, NodeIdx, Tdd, ZERO};
+use crate::apply::CONJOIN_GRID;
+use crate::apply::conjoin::budget::NO_PRODUCT;
+use crate::diagram::{ChildPair, NodeIdx, Tdd, LEAF_WIDTH, ZERO};
 use crate::vtree::VtreeIdx;
 
 use super::Marking;
@@ -26,7 +29,7 @@ enum Child {
 /// liveness (filled bottom-up once every child level is evaluated).
 #[derive(Default)]
 struct LevelPairs {
-    index: HashMap<Key, u32>,
+    index: FxHashMap<Key, u32>,
     keys: Vec<Key>,
     live: Vec<bool>,
 }
@@ -35,7 +38,10 @@ impl Marking {
     /// Walk the reachable pairs of `f × care` from vtree node `r` (a root of one
     /// operand) and mark every live f-node and f-pair. Two phases: discover the
     /// pairs top-down with a work stack, then evaluate their liveness bottom-up.
-    pub(super) fn walk<const BOUNDED: bool>(eng: &Engine, f: &Tdd, care: &Tdd, r: VtreeIdx, mut remaining: u64) -> Result<Option<Marking>, OperationError> {
+    ///
+    /// `remaining` is the allowance of product-pair probes across both phases;
+    /// spending it returns `None` with the marks abandoned.
+    pub(super) fn walk(eng: &Engine, f: &Tdd, care: &Tdd, r: VtreeIdx, mut remaining: u64) -> Result<Option<Marking>, OperationError> {
         let mut poll = eng.limits().gate();
         let vtree = &f.vtree;
         let nlev = vtree.num_nodes();
@@ -61,12 +67,9 @@ impl Marking {
             let (lc, rc) = vtree.children(v);
             for (fl, fr) in refs(f, v, fo) {
                 for (cl, cr) in refs(care, v, co) {
-                    if BOUNDED {
-                        if remaining == 0 {
-                            poll.flush()?;
-                            return Ok(None);
-                        }
-                        remaining -= 1;
+                    if !spend(&mut remaining) {
+                        poll.flush()?;
+                        return Ok(None);
                     }
                     poll.poll(1)?;
                     for (cv, a, b) in [(lc, fl, cl), (rc, fr, cr)] {
@@ -89,12 +92,9 @@ impl Marking {
                 for (k, (fl, fr)) in refs(f, v, fo).enumerate() {
                     let mut live = false;
                     for (cl, cr) in refs(care, v, co) {
-                        if BOUNDED {
-                            if remaining == 0 {
-                                poll.flush()?;
-                                return Ok(None);
-                            }
-                            remaining -= 1;
+                        if !spend(&mut remaining) {
+                            poll.flush()?;
+                            return Ok(None);
                         }
                         poll.poll(1)?;
                         if ctx.live_of(&levels, lc, fl, cl) && ctx.live_of(&levels, rc, fr, cr) {
@@ -178,11 +178,11 @@ impl Marking {
 impl LevelPairs {
     /// Record `k` if new; true iff it was.
     fn push(&mut self, eng: &Engine, k: Key) -> Result<bool, OperationError> {
-        if self.index.contains_key(&k) {
-            return Ok(false);
-        }
         if self.index.len() == self.index.capacity() { eng.limits().reserve_map(&mut self.index, 1)?; }
-        self.index.insert(k, self.keys.len() as u32);
+        let std::collections::hash_map::Entry::Vacant(slot) = self.index.entry(k) else {
+            return Ok(false);
+        };
+        slot.insert(self.keys.len() as u32);
         eng.limits().try_push(&mut self.keys, k)?;
         eng.limits().try_push(&mut self.live, false)?;
         Ok(true)
@@ -232,13 +232,26 @@ impl WalkCtx<'_> {
     }
 }
 
-/// The 3×3 leaf table: two literals conflict only as `{Pos, Neg}`; `One` and
-/// `⊤` (`None`) are wildcards. Index 3 (`LeafLabel::Zero`) is never stored.
+/// Whether two leaf references conflict: only `{Pos, Neg}` does, and `⊤`
+/// (`None`) is a wildcard. `ZERO` never reaches here.
 fn leaf_dead(fo: Ref, co: Ref) -> bool {
     match (fo, co) {
-        (Some(a), Some(b)) => a.0 >= 3 || b.0 >= 3 || a.0 + b.0 == 3,
+        (Some(a), Some(b)) => {
+            debug_assert!(a.idx() < LEAF_WIDTH && b.idx() < LEAF_WIDTH, "a leaf reference names a label");
+            CONJOIN_GRID[a.idx()][b.idx()] == NO_PRODUCT
+        }
         _ => false,
     }
+}
+
+/// Take one probe from the allowance; false once it is spent.
+#[inline]
+fn spend(remaining: &mut u64) -> bool {
+    if *remaining == 0 {
+        return false;
+    }
+    *remaining -= 1;
+    true
 }
 
 /// The (left, right) child references of one operand at level `v`: its node's

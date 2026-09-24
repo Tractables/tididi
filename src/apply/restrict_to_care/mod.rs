@@ -71,13 +71,12 @@ fn restrict_to_care_on(eng: &Engine, f: Tdd, mut care: Tdd) -> Result<Restrictio
     // Sound for any representation of `care`, since `g ∧ care == f ∧ care`
     // does not depend on it; the reduced one gives the walk fewer pairs.
     eng.reduce(&mut care, crate::reduce::ReductionPlan::default())?;
-    restrict_prepared::<false>(eng, f, &care, u64::MAX)
+    restrict_prepared(eng, f, &care, u64::MAX)
 }
 
-fn restrict_prepared<const BOUNDED: bool>(eng: &Engine, f: Tdd, care: &Tdd, max_pair_visits: u64) -> Result<RestrictionOutcome, OperationError> {
-    if BOUNDED && max_pair_visits == 0 {
-        return Ok(RestrictionOutcome::Unchanged(f));
-    }
+/// Restrict a non-false `f` to `care`, giving the walk `max_pair_visits`
+/// product-pair probes.
+fn restrict_prepared(eng: &Engine, f: Tdd, care: &Tdd, max_pair_visits: u64) -> Result<RestrictionOutcome, OperationError> {
     if care.is_zero() {
         // care ≡ ∅ ⇒ f ∧ care = ∅ ⇒ ⊥ is the smallest sound representative.
         return Ok(RestrictionOutcome::Unsatisfiable(crate::build::constant_like(eng, &f, false)?));
@@ -89,7 +88,7 @@ fn restrict_prepared<const BOUNDED: bool>(eng: &Engine, f: Tdd, care: &Tdd, max_
         // Incomparable roots ⇒ disjoint variable regions ⇒ care can't constrain f.
         return Ok(RestrictionOutcome::Unchanged(f));
     }
-    let Some(marks) = Marking::walk::<BOUNDED>(eng, &f, care, r, max_pair_visits)? else {
+    let Some(marks) = Marking::walk(eng, &f, care, r, max_pair_visits)? else {
         return Ok(RestrictionOutcome::Unchanged(f));
     };
     if !marks.root_live {
@@ -172,8 +171,8 @@ impl crate::Engine {
         crate::apply::check_vtree(&f, care)?;
         let _op = self.limits().begin_operation();
         self.limits().check_stop()?;
-        if f.is_zero() { return Ok(RestrictionOutcome::Unchanged(f)); }
-        restrict_prepared::<true>(self, f, care, max_pair_visits)
+        if f.is_zero() || max_pair_visits == 0 { return Ok(RestrictionOutcome::Unchanged(f)); }
+        restrict_prepared(self, f, care, max_pair_visits)
     }
 
     /// Run [`Tdd::restrict_to_care`](crate::Tdd::restrict_to_care) using this batch's scratch and resource limits.
