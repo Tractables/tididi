@@ -34,7 +34,14 @@ impl<'a> Reduction<'a> {
                 prune_value_slots(self.eng, self.tdd);
                 return Ok(());
             }
-            ReductionPlan::Full(policy) => policy,
+            ReductionPlan::Full(policy) => {
+                // A certified diagram with nothing owed is at the fixpoint of
+                // every pass below, so there is nothing to run.
+                if self.tdd.levels.is_canonical(self.tdd.output) && self.tdd.dirty.is_empty() {
+                    return Ok(());
+                }
+                policy
+            }
         };
         #[cfg(debug_assertions)]
         let marginal_before: Vec<_> = self.tdd.levels.iter().map(|l| l.is_marginal()).collect();
@@ -54,8 +61,17 @@ impl<'a> Reduction<'a> {
             structural &= !level.is_marginal();
             level.shrink_arrays();
         }
-        if whole && structural {
-            self.tdd.levels.certify(self.tdd.output);
+        if whole {
+            // The passes above are the fixpoint of everything a worklist can
+            // ask for. What the lists still hold is what the passes' own
+            // rewrites pushed after the sweep had taken its list, plus
+            // content-twin entries that only the scan reads.
+            for pass in [Pass::Contract, Pass::LeafContract, Pass::ContentTwin] {
+                self.tdd.dirty.clear(pass);
+            }
+            if structural {
+                self.tdd.levels.certify(self.tdd.output);
+            }
         }
         Ok(())
     }

@@ -437,3 +437,30 @@ fn the_pair_index_charges_one_entry_per_pair_of_every_node() {
         "the owner maps grew past their charged reservation"
     );
 }
+
+#[test]
+fn a_long_run_of_edits_keeps_the_reduction_worklists_bounded() {
+    use crate::diagram::Pass;
+    let vtree = Arc::new(Vtree::balanced(6));
+    let vars: Vec<VarId> = (1..=6).map(VarId).collect();
+    let mut f = Tdd::from_models(&vtree, &vars, &[0b000000]).expect("the rows fit");
+    let mut rng = Lcg::new(5);
+    {
+        let mut batch = f.maintain().expect("the index fits");
+        for _ in 0..1000 {
+            let model = assignment(6, rng.below(64));
+            if rng.coin() {
+                batch.insert_model(&model).expect("the insert fits");
+            } else {
+                batch.remove_model(&model).expect("the remove fits");
+            }
+        }
+    }
+    let bound = vtree.num_nodes();
+    for pass in [Pass::Contract, Pass::LeafContract, Pass::ContentTwin] {
+        let len = f.dirty.levels(pass).len();
+        assert!(len <= bound, "{pass:?} holds {len} entries over {bound} levels");
+    }
+    f.minimize().expect("minimizing fits");
+    assert_canonical(&f);
+}

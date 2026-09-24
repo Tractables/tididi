@@ -165,8 +165,8 @@ impl Dirty {
         self.list(pass).clear();
     }
 
-    /// True when no pass has work left: nothing was edited since the last
-    /// [`minimize`](Tdd::minimize), or every edit since has been reduced.
+    /// True when no pass has work left: a whole-diagram
+    /// [`minimize`](Tdd::minimize) ended, and nothing was edited since.
     #[inline]
     pub(crate) fn is_empty(&self) -> bool {
         self.lists.iter().all(Vec::is_empty)
@@ -189,9 +189,9 @@ impl Dirty {
     }
 
     /// Bound every list: entries are level indices, so a list longer than `n`
-    /// holds duplicates, and a chain of applies that never drains one would
-    /// otherwise grow it without bound. Dedup keeps the set the list denotes,
-    /// and fires at most once per `n` pushes.
+    /// holds duplicates, and a chain of applies or in-place edits that never
+    /// drains one would otherwise grow it without bound. Dedup keeps the set
+    /// the list denotes, and fires at most once per `n` pushes.
     pub(crate) fn dedup_above(&mut self, n: usize) {
         for list in &mut self.lists {
             if list.len() > n {
@@ -281,6 +281,10 @@ impl Tdd {
 
     /// Map a change to its reduction obligations, charged to `eng` when there
     /// is one.
+    ///
+    /// The lists are deduplicated once they hold more entries than the vtree
+    /// has levels, so a run of edits with no reduction in between keeps them
+    /// bounded.
     #[inline]
     fn invalidate_with(
         &mut self, level: VtreeIdx, nodes_moved: bool, eng: Option<&crate::Engine>,
@@ -291,6 +295,7 @@ impl Tdd {
         {
             self.dirty.push_all(parent.0, eng)?;
         }
+        self.dirty.dedup_above(self.vtree.num_nodes());
         Ok(())
     }
 }
