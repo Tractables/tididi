@@ -27,9 +27,9 @@ mod access;
 #[cfg(any(test, feature = "testing"))]
 mod compile;
 #[cfg(any(test, feature = "testing"))]
-pub(crate) mod r#gen;
+mod r#gen;
 #[cfg(any(test, feature = "testing"))]
-pub(crate) mod oracle;
+mod oracle;
 #[cfg(test)]
 mod toy;
 

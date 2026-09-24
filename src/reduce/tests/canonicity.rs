@@ -19,9 +19,8 @@ use num_bigint::BigInt;
 use num_rational::BigRational;
 
 use crate::apply::apply_and;
-use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;
-use crate::diagram::{Literal, Tdd};
+use crate::diagram::Tdd;
 use crate::Engine;
 use crate::marginal::marginalize_closure;
 
@@ -31,41 +30,18 @@ use crate::diagram::RationalWeights;
 use crate::restructure::relevel::rebuild_rotated_levels;
 use crate::vtree::RotationKind;
 use crate::restructure::scratch::RestructureScratch;
-use crate::test_helpers::{assert_canonical, exact_weight, normalized_levels, rotate_left, rotate_right, Lcg};
-use crate::vtree::{VarId, Vtree};
+use crate::test_helpers::{assert_canonical, assert_same_shape, compile_clauses_pairwise, exact_weight, rand_cnf, rotate_left, rotate_right, CnfShape, Lcg};
+use crate::vtree::Vtree;
 use crate::diagram::{Arithmetic, WeightStore};
 
 /// Route 1: fold the clauses left to right into one accumulator.
-fn build_by_folding(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<Literal>]) -> Tdd {
+fn build_by_folding(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<i32>]) -> Tdd {
     let mut acc = constant_one(eng, vtree);
     for c in clauses {
-        acc = apply_and(acc, clause_to_tdd(eng, vtree, c));
+        acc = apply_and(acc, Tdd::clause(vtree, c).unwrap());
     }
     acc.minimize().unwrap();
     acc
-}
-
-/// Route 2: conjoin the clauses pairwise, halving the operand count each round,
-/// so no conjunction sees the lopsided big-against-tiny shape route 1 is made of.
-fn build_by_tournament(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<Literal>]) -> Tdd {
-    let mut round: Vec<Tdd> = clauses.iter().map(|c| clause_to_tdd(eng, vtree, c)).collect();
-    if round.is_empty() {
-        round.push(constant_one(eng, vtree));
-    }
-    while round.len() > 1 {
-        let mut next = Vec::with_capacity(round.len().div_ceil(2));
-        let mut it = round.into_iter();
-        while let Some(a) = it.next() {
-            match it.next() {
-                Some(b) => next.push(apply_and(a, b)),
-                None => next.push(a),
-            }
-        }
-        round = next;
-    }
-    let mut out = round.pop().expect("the tournament ends with one diagram");
-    out.minimize().unwrap();
-    out
 }
 
 /// Route 3: fold the clauses in reverse, then left-rotate the root, rebuild the
@@ -74,11 +50,11 @@ fn build_by_tournament(eng: &Engine, vtree: &Arc<Vtree>, clauses: &[Vec<Literal>
 fn build_by_rotation_round_trip(
     eng: &Engine,
     vtree: &Arc<Vtree>,
-    clauses: &[Vec<Literal>],
+    clauses: &[Vec<i32>],
 ) -> Option<Tdd> {
     let mut acc = constant_one(eng, vtree);
     for c in clauses.iter().rev() {
-        acc = apply_and(acc, clause_to_tdd(eng, vtree, c));
+        acc = apply_and(acc, Tdd::clause(vtree, c).unwrap());
     }
     acc.minimize().unwrap();
 
@@ -123,29 +99,6 @@ fn weighted_unit_value(eng: &Engine, vtree: &Arc<Vtree>, f: &Tdd) -> BigRational
 }
 
 /// Random 3-ish-CNFs over a small variable count, as clause literal lists.
-fn random_clauses(rng: &mut Lcg, nvars: u32) -> Vec<Vec<Literal>> {
-    let nclauses = 1 + rng.below(5) as usize;
-    let mut out = Vec::with_capacity(nclauses);
-    for _ in 0..nclauses {
-        let width = 1 + rng.below(3) as usize;
-        let mut seen = vec![false; nvars as usize];
-        let mut literals = Vec::new();
-        for _ in 0..width {
-            let v = rng.below(u64::from(nvars)) as u32;
-            if seen[v as usize] {
-                continue;
-            }
-            seen[v as usize] = true;
-            literals.push(if rng.coin() { Literal::pos(VarId(v + 1)) } else { Literal::neg(VarId(v + 1)) });
-        }
-        if literals.is_empty() {
-            literals.push(Literal::pos(VarId(1)));
-        }
-        out.push(literals);
-    }
-    out
-}
-
 /// Three independent routes to the same function, minimized, must agree level
 /// by level — and the weighted evaluation of the result must agree with its
 /// model count.
@@ -159,25 +112,15 @@ fn every_route_to_one_function_minimizes_to_the_same_diagram() {
         for &nvars in &[3u32, 4, 5, 6] {
             let vtree = Arc::new(Vtree::balanced(nvars));
             for _ in 0..12 {
-                let clauses = random_clauses(&mut rng, nvars);
+                let clauses = rand_cnf(&mut rng, nvars, CnfShape { clauses: 5, width: 3 });
                 let folded = build_by_folding(&eng, &vtree, &clauses);
-                let tournament = build_by_tournament(&eng, &vtree, &clauses);
+                let pairwise = compile_clauses_pairwise(&vtree, &clauses);
                 assert_canonical(&folded);
-                assert_canonical(&tournament);
-                assert_eq!(
-                    normalized_levels(&folded),
-                    normalized_levels(&tournament),
-                    "nvars={nvars} clauses={clauses:?}: folding and the tournament \
-                     minimized to different diagrams"
-                );
+                assert_canonical(&pairwise);
+                assert_same_shape(&folded, &pairwise, &format!("nvars={nvars} clauses={clauses:?}: folding and pairwise"));
                 if let Some(rotated_back) = build_by_rotation_round_trip(&eng, &vtree, &clauses) {
                     assert_canonical(&rotated_back);
-                    assert_eq!(
-                        normalized_levels(&folded),
-                        normalized_levels(&rotated_back),
-                        "nvars={nvars} clauses={clauses:?}: the rotation round trip \
-                         minimized to a different diagram"
-                    );
+                    assert_same_shape(&folded, &rotated_back, &format!("nvars={nvars} clauses={clauses:?}: folding and the rotation round trip"));
                     rotated += 1;
                 }
                 let mc = folded.model_count().unwrap();

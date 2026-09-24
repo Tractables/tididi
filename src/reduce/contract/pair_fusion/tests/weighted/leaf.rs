@@ -55,7 +55,7 @@ fn weighted_leaf_fusion_folds_pos_plus_neg_onto_the_pinned_one_slot() {
     );
     assert_eq!(fused, wp.clone() + wn.clone(), "the fused value must be exactly w⁺ + w⁻");
     assert_eq!(before, after, "the leaf fold must preserve the diagram's semiring value");
-    crate::test_helpers::oracle::assert_canonical(&tdd);
+    crate::test_helpers::assert_canonical(&tdd);
 }
 
 // ── T7: a leaf group whose sum is not in the column stays unfused ────────────
@@ -114,7 +114,7 @@ fn weighted_leaf_fusion_declines_a_sum_the_pinned_column_cannot_hold() {
     assert_eq!(store_len(&tdd, leaf), slots_before, "declining must not mint anything either");
     assert_eq!(before, after, "an unrepresentable group must be left exactly as it was");
     assert_eq!(before_val, after_val, "declining must preserve the diagram's semiring value");
-    crate::test_helpers::oracle::assert_canonical(&tdd);
+    crate::test_helpers::assert_canonical(&tdd);
 }
 
 // ── T8: equal weights — the post-canon duplicate run folds on either route ───

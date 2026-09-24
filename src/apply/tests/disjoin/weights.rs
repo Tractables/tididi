@@ -1,14 +1,8 @@
 use std::sync::Arc;
 use crate::{Engine, OperationError, Tdd, Vtree};
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore, WeightValue};
-use crate::test_helpers::{assert_canonical, rat};
-
-fn weighted(mut f: Tdd, n: i64, arithmetic: Arithmetic) -> Tdd {
-    let weights = vec![LiteralWeights { negative: rat(n, 1), positive: rat(n, 1) };
-        f.vtree().num_vars() as usize];
-    f.set_weights(WeightStore::new(RationalWeights::from_literals(&weights), arithmetic)).unwrap();
-    f
-}
+use crate::diagram::{Arithmetic, WeightValue};
+use crate::apply::tests::weights::weighted;
+use crate::test_helpers::assert_canonical;
 
 fn same_weight(a: Option<WeightValue>, b: Option<WeightValue>) {
     let (a, b) = (a.expect("weights retained"), b.expect("reference is weighted"));

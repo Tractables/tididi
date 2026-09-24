@@ -4,7 +4,7 @@ use num_bigint::BigUint;
 
 use crate::diagram::Tdd;
 use crate::limits::{LimitConfig, OperationError};
-use crate::test_helpers::{assert_canonical, assert_same_shape, brute_force_count, vtree_shapes};
+use crate::test_helpers::{assert_canonical, assert_same_shape, brute_force_count, packed_rows, vtree_shapes};
 use crate::vtree::rng::Lcg;
 use crate::vtree::{VarId, Vtree};
 use crate::Engine;
@@ -12,20 +12,6 @@ use crate::Engine;
 /// The variables `1..=n`.
 fn vars(n: u32) -> Vec<VarId> {
     (1..=n).map(VarId).collect()
-}
-
-/// A flat row buffer from one value per constrained variable per row.
-fn rows_of(table: &[Vec<bool>]) -> Vec<u64> {
-    let w = super::words_per_row(table.first().map_or(0, Vec::len));
-    let mut out = vec![0u64; w * table.len()];
-    for (k, bits) in table.iter().enumerate() {
-        for (i, &b) in bits.iter().enumerate() {
-            if b {
-                out[k * w + i / 64] |= 1u64 << (i % 64);
-            }
-        }
-    }
-    out
 }
 
 /// The `width` bits of `code`, most significant first.
@@ -51,8 +37,10 @@ fn blocking_clauses(table: &[Vec<bool>], width: u32) -> Vec<Vec<i32>> {
     clauses
 }
 
-/// The same function built as a disjunction of cubes.
-fn or_of_cubes(vtree: &Arc<Vtree>, constrained: &[VarId], table: &[Vec<bool>]) -> Tdd {
+/// The rows of `table` as a function of `constrained`, built as a disjunction
+/// of one cube per row. Row-driven rather than truth-table driven, so a
+/// relation over seventy variables is as cheap as its row count.
+fn table_function(vtree: &Arc<Vtree>, constrained: &[VarId], table: &[Vec<bool>]) -> Tdd {
     let mut f = Tdd::zero(vtree);
     for bits in table {
         let cube: Vec<i32> = bits
@@ -128,10 +116,10 @@ fn free_variables_in_the_middle_of_the_vtree_multiply_the_count() {
     let constrained = [VarId(2), VarId(5), VarId(7)];
     let table = vec![vec![false, false, true], vec![true, true, true], vec![true, false, false]];
     for (name, vtree) in vtree_shapes(8) {
-        let f = Tdd::from_models(&vtree, &constrained, &rows_of(&table)).unwrap();
+        let f = Tdd::from_models(&vtree, &constrained, &packed_rows(table.first().map_or(0, Vec::len), &table)).unwrap();
         assert_canonical(&f);
         assert_eq!(f.model_count().unwrap(), (3u32 * 32).into(), "{name}");
-        assert_same_shape(&f, &or_of_cubes(&vtree, &constrained, &table), name);
+        assert_same_shape(&f, &table_function(&vtree, &constrained, &table), name);
     }
 }
 
@@ -149,13 +137,13 @@ fn the_canonicity_gap_of_four_nodes_and_six_edges() {
         })
         .collect();
     for (name, vtree) in vtree_shapes(4) {
-        let f = Tdd::from_models(&vtree, &vars(4), &rows_of(&table)).unwrap();
+        let f = Tdd::from_models(&vtree, &vars(4), &packed_rows(table.first().map_or(0, Vec::len), &table)).unwrap();
         assert_canonical(&f);
         assert_eq!(f.model_count().unwrap(), 6u32.into(), "{name}");
         let mut minimized = f.clone();
         minimized.minimize().unwrap();
         assert_eq!(minimized.node_count(), f.node_count(), "{name} was not already minimal");
-        assert_same_shape(&f, &or_of_cubes(&vtree, &vars(4), &table), name);
+        assert_same_shape(&f, &table_function(&vtree, &vars(4), &table), name);
     }
 }
 
@@ -172,12 +160,12 @@ fn small_relations_match_an_or_of_cubes_and_the_enumerated_count() {
                         .map(|code| (0..width).map(|i| (code >> i) & 1 == 1).collect())
                         .collect();
                     let constrained = vars(width);
-                    let f = Tdd::from_models(&vtree, &constrained, &rows_of(&table)).unwrap();
+                    let f = Tdd::from_models(&vtree, &constrained, &packed_rows(table.first().map_or(0, Vec::len), &table)).unwrap();
                     assert_canonical(&f);
                     let label = format!("{name}, {width} constrained, {free} free, round {round}");
                     let want = brute_force_count(num_vars, &blocking_clauses(&table, width));
                     assert_eq!(f.model_count().unwrap(), want.into(), "{label}");
-                    assert_same_shape(&f, &or_of_cubes(&vtree, &constrained, &table), &label);
+                    assert_same_shape(&f, &table_function(&vtree, &constrained, &table), &label);
                 }
             }
         }
@@ -193,7 +181,7 @@ fn a_relation_wider_than_one_word_reads_both_words() {
     let mut rng = Lcg::new(7);
     let table: Vec<Vec<bool>> =
         (0..40).map(|_| (0..70).map(|_| rng.coin()).collect()).collect();
-    let rows = rows_of(&table);
+    let rows = packed_rows(table.first().map_or(0, Vec::len), &table);
     assert_eq!(rows.len(), 2 * table.len());
 
     let f = Tdd::from_models(&vtree, &constrained, &rows).unwrap();
@@ -201,7 +189,7 @@ fn a_relation_wider_than_one_word_reads_both_words() {
     assert_eq!(f.model_count().unwrap(), BigUint::from(distinct(&table)) << 30u32);
     assert_same_shape(
         &f,
-        &or_of_cubes(&vtree, &constrained, &table),
+        &table_function(&vtree, &constrained, &table),
         "seventy variables over two words",
     );
 }
@@ -228,7 +216,7 @@ fn a_tiny_budget_refuses_without_leaving_a_diagram() {
     let mut rng = Lcg::new(3);
     let table: Vec<Vec<bool>> =
         (0..200).map(|_| (0..12).map(|_| rng.coin()).collect()).collect();
-    let rows = rows_of(&table);
+    let rows = packed_rows(table.first().map_or(0, Vec::len), &table);
 
     let refused = vtree.context().with_limits(
         LimitConfig::none().with_memory_budget_bytes(Some(64)),
@@ -248,7 +236,7 @@ fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
     let table: Vec<Vec<bool>> = (0..20u32)
         .map(|code| (0..6).map(|i| ((code * 7) >> i) & 1 == 1).collect())
         .collect();
-    let rows = rows_of(&table);
+    let rows = packed_rows(table.first().map_or(0, Vec::len), &table);
     let mut refused = 0;
     for cut in 0..40u32 {
         let eng = Engine::new();
@@ -279,7 +267,7 @@ fn cached_layout_tracks_column_order_and_vtree_identity() {
             for rows in [&[1u64][..], &[2u64, 3][..], &[][..]] {
                 let f = eng.from_models(vtree, &columns, rows).unwrap();
                 let table: Vec<_> = rows.iter().map(|&r| vec![r & 1 != 0, r & 2 != 0]).collect();
-                let expected = or_of_cubes(vtree, &columns, &table);
+                let expected = table_function(vtree, &columns, &table);
                 assert_canonical(&f);
                 assert_canonical(&expected);
                 assert!(f.equivalent(&expected).unwrap());

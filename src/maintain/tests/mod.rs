@@ -3,25 +3,9 @@ use super::*;
 use rustc_hash::FxHashMap;
 
 use crate::test_helpers::check::check_determinism;
-use crate::test_helpers::{assert_canonical, assert_same_shape, compile_clauses, test_cases, vtree_shapes};
+use crate::test_helpers::{assert_canonical, assert_same_shape, assignment, compile_clauses, sweep_shapes, test_cases, vtree_shapes};
 use crate::vtree::rng::Lcg;
 use crate::vtree::VarId;
-
-/// The assignment whose `v`-th bit is `bits >> (v - 1)`, as signed literals.
-fn assignment(num_vars: u32, bits: u64) -> Vec<i32> {
-    (1..=num_vars as i32)
-        .map(|v| if bits >> (v - 1) & 1 == 1 { v } else { -v })
-        .collect()
-}
-
-/// The three vtree shapes the sweeps take. The oracle compiles a second
-/// diagram per cell, so the full list is more than the coverage is worth.
-fn sweep_shapes(num_vars: u32) -> Vec<(&'static str, Arc<Vtree>)> {
-    vtree_shapes(num_vars)
-        .into_iter()
-        .filter(|(shape, _)| matches!(*shape, "balanced" | "linear" | "random(42)"))
-        .collect()
-}
 
 /// What the update stands in for, built by the general operations: `f ∨ M`
 /// through a compiled cube diagram, and `f ∧ ¬M` through the clause walk.

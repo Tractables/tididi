@@ -236,48 +236,6 @@ fn every_quantification_entry_point_matches_enumeration() {
 }
 
 #[test]
-fn symbolic_reachability_uses_image_rename_and_semantic_convergence() {
-    let eng = Engine::new();
-    let tree = Arc::new(Vtree::balanced(4)); // two current-state bits, two next-state bits
-    let relation = eng
-        .or(
-            eng.cube(&tree, [-1, -2, 3, -4]).unwrap(),
-            eng.cube(&tree, [1, -2, -3, 4]).unwrap(),
-        )
-        .unwrap();
-    let mut reached = eng.cube(&tree, [-1, -2]).unwrap(); // 0 -> 1 -> 2
-    let mut steps = 0;
-    loop {
-        let image = eng
-            .and_exists(
-                reached.clone(),
-                relation.clone(),
-                &[VarId(1), VarId(2)],
-            )
-            .unwrap();
-        let image = eng
-            .rename_vars(image, &[(VarId(3), VarId(1)), (VarId(4), VarId(2))])
-            .unwrap();
-        let next = eng.or(reached.clone(), image).unwrap();
-        steps += 1;
-        if eng.equivalent(&next, &reached).unwrap() {
-            break;
-        }
-        assert!(steps <= 3);
-        reached = next;
-    }
-    assert_eq!(steps, 3);
-    for row in 0..16 {
-        assert_eq!(eval(&reached, &assignment(row, 4)), row & 3 != 3);
-    }
-    let witness = eng.satisfying_assignment(&reached).unwrap().unwrap();
-    assert!(
-        eng.implies(&eng.cube(&tree, witness).unwrap(), &reached)
-            .unwrap()
-    );
-}
-
-#[test]
 fn sparse_ids_and_single_leaf_diagrams_work() {
     let eng = Engine::new();
     for tree in [

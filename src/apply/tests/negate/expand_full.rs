@@ -2,20 +2,15 @@ use super::*;
 use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_one;
 
-
 use crate::vtree::Vtree;
 use num_bigint::BigUint;
-
-fn balanced_vtree(n: u32) -> Arc<Vtree> {
-    Arc::new(Vtree::balanced(n))
-}
 
 // ── Explicit `expand_full` tests ─────────────────────────────────────────
 
 #[test]
 fn expand_full_constant_one() {
     let eng = &crate::Engine::new();
-    let vtree = balanced_vtree(4);
+    let vtree = Arc::new(Vtree::balanced(4));
     let mut tdd = constant_one(eng, &vtree);
     expand_full(&crate::Engine::new(), &mut tdd).unwrap();
 }
@@ -23,7 +18,7 @@ fn expand_full_constant_one() {
 #[test]
 fn expand_full_single_clause() {
     let eng = &crate::Engine::new();
-    let vtree = balanced_vtree(4);
+    let vtree = Arc::new(Vtree::balanced(4));
     let mut tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, false)]));
     let count_before = tdd.model_count().unwrap();
     expand_full(&crate::Engine::new(), &mut tdd).unwrap();
@@ -33,7 +28,7 @@ fn expand_full_single_clause() {
 #[test]
 fn expand_full_preserves_determinism() {
     let eng = &crate::Engine::new();
-    let vtree = balanced_vtree(4);
+    let vtree = Arc::new(Vtree::balanced(4));
     let mut tdd = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (3, false)]));
     tdd.minimize().unwrap();
     let widths_before: Vec<usize> = tdd.levels.iter().map(|l| l.slot_count()).collect();

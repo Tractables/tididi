@@ -3,18 +3,13 @@ use crate::test_helpers::clause_to_tdd;
 use crate::build::constant_zero;
 use crate::apply::apply_and;
 
-
 use crate::vtree::Vtree;
 use num_bigint::BigUint;
-
-fn balanced_vtree(n: u32) -> Arc<Vtree> {
-    Arc::new(Vtree::balanced(n))
-}
 
 #[test]
 fn test_apply_or_basic() {
     let eng = &crate::Engine::new();
-    let vtree = balanced_vtree(4);
+    let vtree = Arc::new(Vtree::balanced(4));
     let mut f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
     let mut g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(3, true), (4, true)]));
     f.minimize().unwrap();
@@ -27,7 +22,7 @@ fn test_apply_or_basic() {
 #[test]
 fn test_apply_or_with_zero() {
     let eng = &crate::Engine::new();
-    let vtree = balanced_vtree(4);
+    let vtree = Arc::new(Vtree::balanced(4));
     let mut f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true)]));
     f.minimize().unwrap();
     let zero = constant_zero(eng, &vtree);
@@ -41,7 +36,7 @@ fn test_apply_or_canonical() {
     let eng = &crate::Engine::new();
     use crate::test_helpers::check::check_all_fast;
 
-    let vtree = balanced_vtree(4);
+    let vtree = Arc::new(Vtree::balanced(4));
     let mut f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
     let mut g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(3, true), (4, true)]));
     f.minimize().unwrap();
@@ -54,7 +49,7 @@ fn test_apply_or_canonical() {
 #[test]
 fn test_apply_or_compiled_formulas() {
     let eng = &crate::Engine::new();
-    let vtree = balanced_vtree(4);
+    let vtree = Arc::new(Vtree::balanced(4));
 
     let f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
     let g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(3, true), (4, true)]));
@@ -99,7 +94,7 @@ fn a_refused_reserve_inside_the_disjunction_returns_over_budget() {
     use crate::limits::OperationError;
 
     let eng = &Engine::new();
-    let vtree = balanced_vtree(4);
+    let vtree = Arc::new(Vtree::balanced(4));
     let mut f = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(1, true), (2, true)]));
     let mut g = clause_to_tdd(eng, &vtree, &crate::test_helpers::clause(&[(3, true), (4, false)]));
     f.minimize().unwrap();

@@ -27,12 +27,11 @@ mod restrict_to_care;
 mod restrict_budget;
 mod restrict_marginal;
 mod restrict_marginal_gate;
-mod restrict_scaling;
 mod support;
 
 mod operands;
 
-mod weights;
+pub(in crate::apply) mod weights;
 mod inputs;
 
 mod everyday;

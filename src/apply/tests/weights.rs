@@ -5,7 +5,7 @@ use crate::limits::{LimitConfig, OperationError};
 
 
 /// Attach one equal weight to both polarities of every variable.
-fn weighted(mut f: Tdd, n: i64, arithmetic: Arithmetic) -> Tdd {
+pub(in crate::apply) fn weighted(mut f: Tdd, n: i64, arithmetic: Arithmetic) -> Tdd {
     let values = vec![LiteralWeights { negative: rat(n, 1), positive: rat(n, 1) }; f.vtree.num_vars() as usize];
     f.set_weights(WeightStore::new(RationalWeights::from_literals(&values), arithmetic)).unwrap();
     assert_canonical(&f);

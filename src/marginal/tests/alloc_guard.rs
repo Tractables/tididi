@@ -60,7 +60,7 @@ fn marginal_refusals(weighted: bool, overflow: bool) {
     use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, Tdd, WeightStore};
 
 
-    use crate::test_helpers::{assert_canonical, assert_marginal_canonical, compile_clauses, rat};
+    use crate::test_helpers::{assert_canonical, compile_clauses, rat};
     use crate::vtree::Vtree;
     use crate::OperationError;
 
@@ -114,7 +114,7 @@ fn marginal_refusals(weighted: bool, overflow: bool) {
             && !f.levels[targets[targets.len() - 1].idx()].is_marginal();
         eng.marginalize_levels(&mut f, &targets).unwrap();
         check_value(&f);
-        assert_marginal_canonical(&f);
+        assert_canonical(&f);
     }
     assert!(completed, "every reservation must be covered");
     if !overflow { assert!(partial, "exercise a refusal after committing the first target"); }

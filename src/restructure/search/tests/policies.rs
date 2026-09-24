@@ -299,7 +299,7 @@ fn multistart_with_no_restarts_is_one_search() {
 
 #[test]
 fn tabu_is_never_worse_than_the_descent_over_a_seeded_corpus() {
-    use crate::test_helpers::r#gen::{CnfShape, Lcg, rand_cnf};
+    use crate::test_helpers::{CnfShape, Lcg, rand_cnf};
 
     let eng = Engine::new();
     let mut better = 0usize;
