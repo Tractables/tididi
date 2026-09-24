@@ -83,7 +83,7 @@ fn tri_axis(p: u128) -> EncodedChildRef { EncodedChildRef::from_raw(p as u32) }
 /// expansion grows, the pair table included, is charged through the engine's
 /// limits, so a rotation too wide for the host comes back as an answer rather
 /// than an abort.
-pub(crate) fn restructure_inner_search(
+pub(crate) fn rebuild_rotated_levels(
     lim: &Limits,
     tdd: &mut Tdd,
     info: &RotationInfo,

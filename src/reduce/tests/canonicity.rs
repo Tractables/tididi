@@ -28,7 +28,7 @@ use crate::marginal::marginalize_closure;
 use crate::diagram::RationalWeights;
 
 
-use crate::restructure::relevel::restructure_inner_search;
+use crate::restructure::relevel::rebuild_rotated_levels;
 use crate::vtree::RotationKind;
 use crate::restructure::scratch::RestructureScratch;
 use crate::test_helpers::{assert_canonical, exact_weight, normalized_levels, rotate_left, rotate_right, Lcg};
@@ -89,12 +89,12 @@ fn build_by_rotation_round_trip(
     let left = rotate_left(&mut vt, root)?;
     acc.vtree = Arc::new(vt.clone());
     let mut scratch = RestructureScratch::default();
-    restructure_inner_search(eng.limits(), &mut acc, &left, RotationKind::Left, &mut scratch, usize::MAX).expect("nothing is armed")?;
+    rebuild_rotated_levels(eng.limits(), &mut acc, &left, RotationKind::Left, &mut scratch, usize::MAX).expect("nothing is armed")?;
     acc.minimize().unwrap();
 
     let right = rotate_right(&mut vt, root).expect("a left rotation leaves the root right-rotatable");
     acc.vtree = Arc::new(vt);
-    restructure_inner_search(eng.limits(), &mut acc, &right, RotationKind::Right, &mut scratch, usize::MAX).expect("nothing is armed")?;
+    rebuild_rotated_levels(eng.limits(), &mut acc, &right, RotationKind::Right, &mut scratch, usize::MAX).expect("nothing is armed")?;
     acc.minimize().unwrap();
     let nodes = |v: &Vtree| -> Vec<crate::vtree::VtreeNode> {
         (0..v.num_nodes()).map(|i| v.node(crate::vtree::VtreeIdx(i as u32)).clone()).collect()

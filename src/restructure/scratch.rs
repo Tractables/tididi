@@ -6,10 +6,10 @@ use rustc_hash::FxHashMap;
 
 use crate::diagram::{ChildPair, NodeIdx};
 
-/// Reusable scratch for `restructure_inner_search`. Threaded by
+/// Reusable scratch for `rebuild_rotated_levels`. Threaded by
 /// the rotation-search loops so the per-probe allocator churn is paid once per
 /// search rather than once per probe. Each field is `clear()`-ed before use in
-/// `restructure_inner_search`, preserving the underlying capacity; a field is
+/// `rebuild_rotated_levels`, preserving the underlying capacity; a field is
 /// then released at its last read within the call rather than held across the
 /// successor-level builds (see `SCRATCH_RETAIN_ENTRIES`). Every field grows
 /// through the engine's limits, so its growth is charged to the operation's
@@ -23,7 +23,7 @@ pub(crate) struct RestructureScratch {
     pub(super) group_info: Vec<super::relevel::PairGroup>,
     pub(super) bucket: BucketScratch,
     // Search path triples, packed one-per-u128 (see `pack_triple`). The sort in
-    // `restructure_inner_search` is the dominant cost of the joint next-merge-cost
+    // `rebuild_rotated_levels` is the dominant cost of the joint next-merge-cost
     // probe on single-large-component pools; sorting a `Vec<u128>` by a single
     // integer key replaces the derived lexicographic compare over the
     // `(ChildPair, u32, NodeIdx)` tuple's four u32 fields.
@@ -59,7 +59,7 @@ impl PooledScratch for RestructureScratch {
         self.bucket.done.clear();
         self.bucket.pairs.clear();
         // Keep the outer Vec's length (bounded by `PER_V_PAIRS_RETAIN` on
-        // return): `restructure_inner_search` only `resize_with`s it upward and
+        // return): `rebuild_rotated_levels` only `resize_with`s it upward and
         // clears the prefix it uses, so the inner Vecs' capacities are exactly
         // what we want to carry forward.
         for v in &mut self.per_v_pairs {
@@ -93,7 +93,7 @@ const RESTRUCTURE_PACKED_CAP_LIMIT: usize = 4_000_000;
 /// `clear()` walks the whole outer Vec, so an unbounded one would tax every
 /// later (small) search with the widest level this engine ever saw — the pool
 /// must not turn one wide rotation into a permanent per-call O(width) sweep.
-/// Beyond this the tail is dropped; `restructure_inner_search` re-grows it with
+/// Beyond this the tail is dropped; `rebuild_rotated_levels` re-grows it with
 /// `resize_with` exactly as it does on a cold scratch.
 const PER_V_PAIRS_RETAIN: usize = 1024;
 

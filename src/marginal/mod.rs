@@ -29,7 +29,7 @@ use crate::reduce::restore_marginal_invariants;
 /// Marginalize every structural level whose two children are both marginal,
 /// visiting affected parents until no level qualifies; returns the number of levels marginalized.
 ///
-/// `restructure_inner_search` never collapses a node to counts, so a rotation
+/// `rebuild_rotated_levels` never collapses a node to counts, so a rotation
 /// that brings two marginal children together leaves a structural parent over
 /// two marginal children, which is not a canonical marginal form. Each round
 /// collects the bottom layer of such levels and marginalizes it through
