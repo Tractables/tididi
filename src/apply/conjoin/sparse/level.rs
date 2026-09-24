@@ -42,10 +42,8 @@ pub(crate) fn is_self_conjunction(f: &Tdd, g: &Tdd) -> bool {
 
 /// Fill `pl` with the identity product mapping for a level where one diagram operand
 /// is constant-true. Returns `true` if the level was identity (g-identity or
-/// f-identity), `false` otherwise. On the identity path also sets
-/// `*has_pl_slot = true` itself (co-located with the fill); on the non-identity
-/// path `has_pl_slot` is left untouched for the caller to set once it fills `pl`
-/// some other way.
+/// f-identity), `false` otherwise, leaving `pl` untouched for the caller to
+/// fill some other way.
 ///
 /// Identity means x ∧ 1 = x — the constant-true operand contributes a single
 /// fixed index. The One label is at local index 0 on every level (leaf and
@@ -57,7 +55,6 @@ pub(crate) fn fill_identity_product_list(
     right_id: bool,
     left_id: bool,
     pl: &mut Vec<ProductEntry>,
-    has_pl_slot: &mut bool,
 ) -> Result<bool, OperationError> {
     let lim = eng.limits();
     // The constant-true operand's One node is at index 0 regardless of leaf-ness
@@ -69,7 +66,6 @@ pub(crate) fn fill_identity_product_list(
             // x ∧ 1 = x: output index equals f index (identity mapping).
             pl.push(ProductEntry { left_idx: LeftNodeIdx(i), right_idx: RightNodeIdx(ID_IDX), prod_idx: ProductNodeIdx(i) });
         }
-        *has_pl_slot = true;
         Ok(true)
     } else if left_id {
         lim.reserve(pl, right_width)?;
@@ -77,7 +73,6 @@ pub(crate) fn fill_identity_product_list(
             // 1 ∧ x = x: output index equals g index (identity mapping).
             pl.push(ProductEntry { left_idx: LeftNodeIdx(ID_IDX), right_idx: RightNodeIdx(j), prod_idx: ProductNodeIdx(j) });
         }
-        *has_pl_slot = true;
         Ok(true)
     } else {
         Ok(false)

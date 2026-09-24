@@ -121,12 +121,12 @@ impl Products {
             left_width, right_width,
             right_identity, left_identity,
             &mut self.product_lists[ci],
-            &mut self.has_pl[ci],
         )? {
             self.arena.ensure_product_list(
                 eng, ci, left_width, right_width, &mut self.product_lists[ci], &mut self.has_pl,
             )?;
         }
+        self.has_pl[ci] = true;
         Ok(())
     }
 
@@ -147,9 +147,10 @@ impl Products {
             let filled = fill_identity_product_list(
                 eng, left_width_c, right_width_c,
                 right_identity, left_identity,
-                &mut self.product_lists[idx], &mut self.has_pl[idx],
+                &mut self.product_lists[idx],
             )?;
             cheap_assert!(filled, "an ungridded child on the dense path has an identity operand");
+            self.has_pl[idx] = true;
         }
         self.arena.ensure_grid(eng, idx, left_width_c, right_width_c, &self.product_lists[idx])
     }
