@@ -223,6 +223,94 @@ fn the_radix_pass_leaves_the_order_a_comparison_sort_leaves() {
 }
 
 #[test]
+fn leaf_partitions_match_every_small_relation() {
+    // Exhaustive row sets include independence, constants and correlations.
+    // Free leaves exercise carrying a lazy bit through a one-sided subtree.
+    for subset in 1u32..256 {
+        let table: Vec<Vec<bool>> = (0..8).filter(|row| subset & (1 << row) != 0)
+            .map(|row| (0..3).map(|bit| row & (1 << bit) != 0).collect()).collect();
+        for (name, vtree) in vtree_shapes(5) {
+            let constrained = [VarId(1), VarId(3), VarId(5)];
+            let f = Tdd::from_models(&vtree, &constrained, &rows_of(&table)).unwrap();
+            assert_canonical(&f);
+            assert_same_shape(&f, &or_of_cubes(&vtree, &constrained, &table), name);
+        }
+    }
+}
+
+#[test]
+fn leaf_independence_checks_the_complete_external_assignment() {
+    let eng = Engine::new();
+    // A shifted two-word encoding moves the toggled bit across word edges;
+    // equal counts of zeros and ones alone do not imply equal completions.
+    for bit in [0usize, 31, 63, 64, 65, 70] {
+        let word = bit / 64;
+        let mask = 1u64 << (bit % 64);
+        let mut rng = Lcg::new(317);
+        for correlated in [false, true] {
+            let mut rows = Vec::new();
+            for _ in 0..13 {
+                let mut row = [rng.next_u64(), rng.next_u64()];
+                row[word] &= !mask;
+                rows.push(row);
+                row[word] |= mask;
+                if correlated { row[1 - word] ^= 1; }
+                rows.push(row);
+            }
+            rows.sort_unstable_by_key(|r| (r[1], r[0]));
+            rows.dedup();
+            let expected = rows.iter().all(|r| {
+                let mut toggled = *r;
+                toggled[word] ^= mask;
+                rows.contains(&toggled)
+            });
+            let packed: Vec<_> = rows.into_iter().flatten().collect();
+            assert_eq!(super::independent_bit(eng.limits(), &packed, 2, word, mask).unwrap(), expected);
+        }
+    }
+}
+
+#[test]
+fn a_closed_subtree_merges_duplicate_child_pairs_below_free_ancestors() {
+    let vtree = Arc::new(Vtree::balanced(16));
+    // The constrained columns occupy a proper subtree. Cartesian blocks
+    // repeat child-atom pairs, while correlations keep other atoms separate.
+    for constrained in [vec![VarId(1), VarId(2), VarId(3), VarId(4)],
+                        vec![VarId(1), VarId(3), VarId(5), VarId(7)]] {
+        let table: Vec<Vec<bool>> = (0u32..16)
+            .filter(|r| r & 0b1100 == 0 || r & 0b0011 == 0b0011)
+            .map(|r| (0..4).map(|b| r & (1 << b) != 0).collect()).collect();
+        let f = Tdd::from_models(&vtree, &constrained, &rows_of(&table)).unwrap();
+        assert_canonical(&f);
+        assert_same_shape(&f, &or_of_cubes(&vtree, &constrained, &table), "closed proper subtree");
+        assert_eq!(f.model_count().unwrap(), BigUint::from(table.len()) << 12);
+    }
+}
+
+#[test]
+fn unique_and_shared_completions_match_cube_construction() {
+    // A bijection gives each value its own completion; a many-to-one map
+    // merges some values into atoms with multiple child pairs.
+    for merge in [false, true] {
+        let table: Vec<Vec<bool>> = (0u32..16).map(|x| {
+            let y = if merge { x % 4 } else { (x * 7) % 16 };
+            let mut bits = code_bits(x, 4);
+            bits.extend(code_bits(y, 4));
+            bits
+        }).collect();
+        for (name, vtree) in vtree_shapes(12) {
+            for constrained in [vars(8), vec![VarId(1), VarId(2), VarId(4), VarId(5),
+                VarId(7), VarId(8), VarId(10), VarId(11)]] {
+                let f = Tdd::from_models(&vtree, &constrained, &rows_of(&table)).unwrap();
+                assert_canonical(&f);
+                assert_same_shape(&f, &or_of_cubes(&vtree, &constrained, &table), name);
+                assert_eq!(f.model_count().unwrap(), 256u32.into());
+            }
+        }
+    }
+}
+
+#[test]
 fn a_tiny_budget_refuses_without_leaving_a_diagram() {
     let vtree = Arc::new(Vtree::linear(12));
     let mut rng = Lcg::new(3);
