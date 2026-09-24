@@ -183,9 +183,7 @@ pub(super) fn plan_groups(
 ///
 /// Sized from the decided actions: only a `Concat` appends, and only the
 /// members it selected; `needed_ext` is one `MultiPairRange` per concat, the
-/// most `finalize_merged_node` pushes per group. The parent's `multi_pairs` is
-/// reserved too, one entry per multi-pair node, since a node the rewrite
-/// shrinks to a single pair that cannot inline needs one.
+/// most `finalize_merged_node` pushes per group.
 ///
 /// # Errors
 ///
@@ -195,7 +193,6 @@ pub(super) fn reserve_transactional(
     eng: &Engine,
     tdd: &mut Tdd,
     t1: VtreeIdx,
-    parent: VtreeIdx,
     bufs: &MergeBuffers,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
@@ -219,14 +216,6 @@ pub(super) fn reserve_transactional(
         let level = &mut tdd.levels[t1.idx()];
         lim.reserve_exact(&mut level.pairs, needed_pairs)?;
         lim.reserve_exact(&mut level.multi_pairs, needed_ext)?;
-    }
-    let parent_ext = tdd.levels[parent.idx()]
-        .nodes
-        .iter()
-        .filter(|n| n.kind().pairs_in_arena())
-        .count();
-    if parent_ext > 0 {
-        lim.reserve(&mut tdd.levels[parent.idx()].multi_pairs, parent_ext)?;
     }
     Ok(())
 }

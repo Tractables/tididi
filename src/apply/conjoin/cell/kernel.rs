@@ -70,22 +70,11 @@ pub(crate) fn emit_product_node(
     Ok(())
 }
 
-/// Emit a node holding exactly `pair`, which is not in the arena yet: inline
-/// when the pair fits, else pushed with a one-pair range. Every push is
+/// Emit a node holding exactly `pair`, stored inline. The push is
 /// budget-charged.
 #[inline(always)]
 fn emit_single_pair(eng: &Engine, level: &mut TddLevel, pair: ChildPair) -> Result<(), OperationError> {
-    let lim = eng.limits();
-    debug_assert!(pair.can_inline(), "a stored pair has no reserved bit, so it inlines");
-    if pair.can_inline() {
-        lim.try_push(&mut level.nodes, EncodedNode::inline(pair))
-    } else {
-        let ps = level.arena_len();
-        try_push_pair_into(eng, level, pair)?;
-        let ei = level.multi_pairs.len();
-        lim.try_push(&mut level.multi_pairs, MultiPairRange { start: ps as u64, len: 1 })?;
-        lim.try_push(&mut level.nodes, EncodedNode::multi_ranged(ei as u32))
-    }
+    eng.limits().try_push(&mut level.nodes, EncodedNode::inline(pair))
 }
 
 // ============================== Pair sinks ==============================

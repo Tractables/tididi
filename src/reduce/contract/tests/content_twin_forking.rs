@@ -41,11 +41,9 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     assert!(matches!(*vtree.node(gp), crate::vtree::VtreeNode::Internal { .. }));
     let (bp, s_v) = vtree.children(gp);
     assert!(matches!(*vtree.node(bp), crate::vtree::VtreeNode::Internal { .. }));
-    let (x_v, m_v) = vtree.children(bp);
+    let (_, m_v) = vtree.children(bp);
     // m must be internal: a leaf marginal store cannot hold a slot.
     assert!(matches!(*vtree.node(m_v), crate::vtree::VtreeNode::Internal { .. }));
-    let (s_l, s_r) = vtree.children(s_v);
-    let (sig_l, sig_r) = vtree.children(sigma_v);
 
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let one = NodeIdx(LeafLabel::One as u32);
@@ -58,12 +56,9 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     let slot_0 = NodeIdx(ValueRef::slot_raw(0));
 
     // bp: one node P = {(Pos, slot_0)}.
-    levels[x_v.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
     let p = levels[bp.idx()].push_internal_node(&[ChildPair::new(pos, slot_0)]);
 
     // s: one plain node {(Pos, One)} at gp's right child.
-    levels[s_l.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
-    levels[s_r.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
     let s = levels[s_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
 
     // gp: A and B, identical pair lists {(P, s)} — content-equal twins.
@@ -71,8 +66,6 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     let b = levels[gp.idx()].push_internal_node(&[ChildPair::new(p, s)]);
 
     // σ: one plain node at root's right child.
-    levels[sig_l.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
-    levels[sig_r.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
     let sigma = levels[sigma_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
 
     // root: {(A, σ), (B, σ)} — gives A and B the same context.
@@ -291,10 +284,8 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (gp, sigma_v) = vtree.children(root);
     let (bp, s_v) = vtree.children(gp);
-    let (x_v, m_v) = vtree.children(bp);
+    let (_, m_v) = vtree.children(bp);
     assert!(matches!(*vtree.node(m_v), crate::vtree::VtreeNode::Internal { .. }));
-    let (s_l, s_r) = vtree.children(s_v);
-    let (sig_l, sig_r) = vtree.children(sigma_v);
 
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let neg = NodeIdx(LeafLabel::Neg as u32);
@@ -308,14 +299,11 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
     let slot_q = NodeIdx(ValueRef::slot_raw(1));
     let slot_r = NodeIdx(ValueRef::slot_raw(2));
 
-    levels[x_v.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
     // bp: P, Q, R — distinct structural lefts so gp pairs stay distinct.
     let p = levels[bp.idx()].push_internal_node(&[ChildPair::new(pos, slot_p)]);
     let q = levels[bp.idx()].push_internal_node(&[ChildPair::new(neg, slot_q)]);
     let r = levels[bp.idx()].push_internal_node(&[ChildPair::new(one, slot_r)]);
 
-    levels[s_l.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
-    levels[s_r.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
     let s = levels[s_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
     let t = levels[s_v.idx()].push_internal_node(&[ChildPair::new(neg, one)]);
     let u = levels[s_v.idx()].push_internal_node(&[ChildPair::new(pos, neg)]);
@@ -330,8 +318,6 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
         ChildPair::new(r, u),
     ]);
 
-    levels[sig_l.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
-    levels[sig_r.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
     let sigma = levels[sigma_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
 
     levels[root.idx()].push_internal_node(&[
@@ -406,11 +392,10 @@ fn b4_leaf_hazard_fixture(marginal_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeI
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (gp, _sigma_v) = vtree.children(root);
     let (bp, s_v) = vtree.children(gp);
-    let (x_v, m_v) = vtree.children(bp);
+    let (_, m_v) = vtree.children(bp);
     // The hazard geometry: m_v is a LEAF (balanced(8) bottoms out here), and it
     // is `bp`'s own child — so `bp` HAS an O(1) absorber and fork-down runs.
     assert!(matches!(*vtree.node(m_v), crate::vtree::VtreeNode::Leaf { .. }));
-    let (s_l, s_r) = vtree.children(s_v);
 
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let one = NodeIdx(LeafLabel::One as u32);
@@ -422,7 +407,6 @@ fn b4_leaf_hazard_fixture(marginal_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeI
     // which bare refs are leaf-LABELS, not store slots.
     levels[m_v.idx()].become_marginal(vec![], None);
 
-    levels[x_v.idx()].nodes = vec![EncodedNode::leaf(LeafLabel::Pos)];
     // bp: one PLAIN node holding the duplicate pair (Pos, `marginal_ref`) twice. The
     // marginal side is the leaf `m_v`, so this is exactly the run fork-down folds.
     let p = levels[bp.idx()].push_internal_node(&[
@@ -430,8 +414,6 @@ fn b4_leaf_hazard_fixture(marginal_ref: u32) -> (Tdd, VtreeIdx, VtreeIdx, VtreeI
         ChildPair::new(pos, NodeIdx(marginal_ref)),
     ]);
 
-    levels[s_l.idx()].nodes = vec![EncodedNode::leaf(LeafLabel::Pos)];
-    levels[s_r.idx()].nodes = vec![EncodedNode::leaf(LeafLabel::One)];
     let s = levels[s_v.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
 
     // gp: a plain node over (P, s), so the diagram is well-formed above `bp`.

@@ -155,20 +155,11 @@ impl ChildPair {
     pub fn new(left: impl Into<EncodedChildRef>, right: impl Into<EncodedChildRef>) -> Self {
         Self { left: left.into(), right: right.into() }
     }
-
-    /// Whether this pair can be stored inline in an `EncodedNode` without
-    /// aliasing the leaf or `multi_ranged` encoding.
-    #[inline]
-    pub(crate) fn can_inline(&self) -> bool {
-        self.right.0 & LEAF_BIT == 0 && self.left.0 & MULTI_BIT == 0
-    }
 }
 
-/// Bit 31 of a node's `b` word: the node stores a leaf label, not pairs.
-/// See the encoding table on [`EncodedNode`].
-pub(super) const LEAF_BIT: u32 = 1 << 31;
 /// Bit 31 of a node's `a` word: the node's pairs live in the level's arena.
-/// See the encoding table on [`EncodedNode`].
+/// A stored pair side never has bit 31 set, which is what keeps an inline
+/// pair's left side apart from this. See the encoding table on [`EncodedNode`].
 pub(super) const MULTI_BIT: u32 = 1 << 31;
 /// Sentinel value for `b` that marks an extended multi-pair node (side-table form).
 /// Chosen as 1 because `pair_len` == 1 is forbidden for multi (caller uses inline),
@@ -187,31 +178,26 @@ pub(crate) struct MultiPairRange {
 /// A stored node: 8 bytes encoding where its pairs live.
 ///
 /// A reader never decodes the words itself: [`TddLevel::pairs_of`] and
-/// [`TddLevel::pairs_iter_of`] resolve a node to its pairs, and
-/// [`is_internal`](Self::is_internal) says whether it has any. Every node of a valid diagram is
-/// internal.
+/// [`TddLevel::pairs_iter_of`] resolve a node to its pairs.
 ///
-/// The two `u32` words carry a four-way encoding:
+/// The two `u32` words carry a three-way encoding:
 ///
 /// ```text
 /// ┌───────────────────────────────┬───────────────────────────────┐
 /// │         a (u32)               │         b (u32)               │
 /// ├───────────────────────────────┼───────────────────────────────┤
-/// │ LeafLabel as u32              │ `LEAF_BIT` (1<<31)            │  ← leaf
 /// │ left child index              │ right child index             │  ← inline pair
 /// │ pair_start | `MULTI_BIT`      │ pair_len (∈ {0, 2, 3, …})     │  ← normal multi-pair
 /// │ multi_pairs_idx | `MULTI_BIT` │ `RANGE_SENTINEL` (= 1)        │  ← extended multi-pair
 /// └───────────────────────────────┴───────────────────────────────┘
 /// ```
 ///
-/// The cases are tested in that order, hottest first:
-/// `b & LEAF_BIT != 0` means leaf; else `a & MULTI_BIT == 0` means inline
-/// pair; else `b == 1` means extended multi-pair (its size lives in the
-/// level's `multi_pairs` table); else normal multi-pair. `LEAF_BIT` and
-/// `MULTI_BIT` are both `1 << 31`;
-/// `pair_len == 1` is forbidden for multi-pair (the caller converts it to
-/// inline), which is what leaves `b == 1` free as the extended sentinel.
-/// `pair_len == 0` is legal.
+/// The cases are tested in that order, hottest first: `a & MULTI_BIT == 0`
+/// means inline pair (a stored side never has bit 31 set); else `b == 1`
+/// means extended multi-pair (its size lives in the level's `multi_pairs`
+/// table); else normal multi-pair. A single pair is always stored inline,
+/// so `pair_len == 1` never occurs for multi-pair, which is what leaves
+/// `b == 1` free as the extended sentinel. `pair_len == 0` is legal.
 ///
 /// **Inline pairs** are most of the nodes, and store their single
 /// [`ChildPair`] directly in `(a, b)`. `EncodedNode` and `ChildPair` are both
@@ -228,8 +214,8 @@ pub(crate) struct MultiPairRange {
 #[derive(Copy, Clone, Eq, PartialEq)]
 #[repr(C)]
 pub struct EncodedNode {
-    pub(crate) a: u32,  // leaf: label; inline: left child; multi: pair_start | MULTI_BIT
-    pub(crate) b: u32,  // leaf: LEAF_BIT; inline: right child; multi: pair_len
+    pub(crate) a: u32,  // inline: left child; multi: pair_start | MULTI_BIT
+    pub(crate) b: u32,  // inline: right child; multi: pair_len
 }
 
 /// What an [`EncodedNode`]'s two words encode, as returned by
@@ -240,9 +226,6 @@ pub struct EncodedNode {
 /// asks a second question to find out whether the payload it wants is there.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) enum NodeKind {
-    /// A leaf-label node. No valid diagram stores one; the leaf side of a pair
-    /// carries the label instead.
-    Leaf(LeafLabel),
     /// One pair, stored in the node's own two words.
     Inline(ChildPair),
     /// Pairs at `[start, start + len)` of the level's `pairs` arena.
@@ -262,10 +245,13 @@ impl NodeKind {
 
 impl EncodedNode {
     /// Create an inline single-pair node. `a` and `b` store the pair's left/right indices.
-    /// Caller must verify `pair.can_inline()` — violating this aliases the leaf or
-    /// `multi_ranged` encoding and causes silent data corruption.
+    /// A side with bit 31 set would alias the multi-pair encoding; no stored
+    /// pair has one.
     pub(crate) fn inline(pair: ChildPair) -> Self {
-        debug_assert!(pair.can_inline(), "pair cannot be inlined: would alias leaf/multi_ranged encoding");
+        debug_assert!(
+            !pair.left.is_reserved() && !pair.right.is_reserved(),
+            "a stored pair side never has bit 31 set"
+        );
         EncodedNode { a: pair.left.0, b: pair.right.0 }
     }
 
@@ -275,7 +261,7 @@ impl EncodedNode {
     /// form when needed). `pair_len` may be 0, for an empty placeholder node.
     pub(crate) fn multi_pair(pair_start: u32, pair_len: u32) -> Self {
         debug_assert!(pair_start & MULTI_BIT == 0, "pair_start too large; use encode_multi");
-        debug_assert!(pair_len & LEAF_BIT == 0, "pair_len overflow; use encode_multi");
+        debug_assert!(pair_len & MULTI_BIT == 0, "pair_len too large; use encode_multi");
         EncodedNode { a: pair_start | MULTI_BIT, b: pair_len }
     }
 
@@ -292,13 +278,7 @@ impl EncodedNode {
     /// This is the only reader of the bit layout; everything else matches on
     /// what comes back, so a new case has to be handled at every site.
     pub(crate) fn kind(&self) -> NodeKind {
-        if self.b & LEAF_BIT != 0 {
-            if self.a == LeafLabel::Zero as u32 {
-                NodeKind::Leaf(LeafLabel::Zero)
-            } else {
-                NodeKind::Leaf(LeafLabel::from_idx(self.a as usize))
-            }
-        } else if self.a & MULTI_BIT == 0 {
+        if self.a & MULTI_BIT == 0 {
             NodeKind::Inline(ChildPair::new(
                 EncodedChildRef::from_raw(self.a),
                 EncodedChildRef::from_raw(self.b),
@@ -310,14 +290,8 @@ impl EncodedNode {
         }
     }
 
-    /// True when the node holds no pairs: a leaf-label node, which no valid
-    /// diagram stores.
-    pub(crate) fn is_leaf(&self) -> bool {
-        matches!(self.kind(), NodeKind::Leaf(_))
-    }
-
-    /// True for a node with pairs (inline or multi-pair).
-    pub fn is_internal(&self) -> bool { !self.is_leaf() }
+    /// True for a node with pairs, which every stored node is.
+    pub fn is_internal(&self) -> bool { true }
 
     /// Shrink `pair_len` for a **normal** multi-pair node (used during dedup remapping).
     /// Caller must ensure `new_len` >= 2; use `EncodedNode::inline` to convert to inline.
@@ -328,7 +302,7 @@ impl EncodedNode {
             "use TddLevel::set_pair_len for extended"
         );
         debug_assert!(new_len >= 2, "use EncodedNode::inline for single-pair conversion");
-        debug_assert!(new_len & LEAF_BIT == 0);
+        debug_assert!(new_len & MULTI_BIT == 0);
         self.b = new_len;
     }
 }
@@ -336,7 +310,6 @@ impl EncodedNode {
 impl std::fmt::Debug for EncodedNode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.kind() {
-            NodeKind::Leaf(label) => write!(f, "Leaf({label:?})"),
             NodeKind::Inline(_) => write!(f, "Inline {{ left: {}, right: {} }}", self.a, self.b),
             NodeKind::MultiRanged(idx) => write!(f, "MultiExt {{ multi_pairs_idx: {idx} }}"),
             NodeKind::Multi { start, len } => {
@@ -360,17 +333,11 @@ pub struct PairsIter<'a>(PairStorage<'a>);
 
 #[derive(Clone)]
 enum PairStorage<'a> {
-    Empty,
     Inline(Option<ChildPair>),
     Slice(std::slice::Iter<'a, ChildPair>),
 }
 
 impl<'a> PairsIter<'a> {
-    #[inline]
-    pub(super) fn empty() -> Self {
-        PairsIter(PairStorage::Empty)
-    }
-
     #[inline]
     pub(super) fn inline(pair: ChildPair) -> Self {
         PairsIter(PairStorage::Inline(Some(pair)))
@@ -386,7 +353,6 @@ impl std::fmt::Debug for PairsIter<'_> {
     /// How many pairs are still to come, which is all an iterator's state is.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let remaining = match &self.0 {
-            PairStorage::Empty => 0,
             PairStorage::Inline(opt) => usize::from(opt.is_some()),
             PairStorage::Slice(iter) => iter.len(),
         };
@@ -399,7 +365,6 @@ impl<'a> Iterator for PairsIter<'a> {
     #[inline]
     fn next(&mut self) -> Option<ChildPair> {
         match &mut self.0 {
-            PairStorage::Empty => None,
             PairStorage::Inline(opt) => opt.take(),
             PairStorage::Slice(iter) => iter.next().copied(),
         }
@@ -408,7 +373,6 @@ impl<'a> Iterator for PairsIter<'a> {
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
         let n = match &self.0 {
-            PairStorage::Empty => 0,
             PairStorage::Inline(Some(_)) => 1,
             PairStorage::Inline(None) => 0,
             PairStorage::Slice(iter) => iter.len(),

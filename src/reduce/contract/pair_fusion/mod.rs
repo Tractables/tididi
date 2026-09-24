@@ -167,7 +167,8 @@ fn fuse_boundary<D: SlotValues>(
     // emitted grouped by ascending `node_idx` in Phase 1 (and the leaf-lookup
     // filter above preserves that order), which is the cursor-walk
     // precondition. See `rebuild_parent_level`.
-    rebuild_parent_level(eng, tdd, parent, side, any_inline, &plans)
+    rebuild_parent_level(tdd, parent, side, any_inline, &plans);
+    Ok(())
 }
 
 #[cfg(test)]

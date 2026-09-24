@@ -20,7 +20,7 @@
 //! fresh slots; slot-prune value-merge later shares them with equal-valued
 //! slots.
 
-use crate::diagram::{ChildPair, ChildSide, EncodedChildRef, EncodedNode, MultiPairRange, NodeKind, Sides, Tdd};
+use crate::diagram::{ChildPair, ChildSide, EncodedChildRef, EncodedNode, NodeKind, Sides, Tdd};
 
 use crate::Engine;
 use super::scratch::DuplicateScratch;
@@ -120,7 +120,7 @@ pub(super) fn resolve_duplicate_pairs_in_node(
         // Nothing absorbed — the pair list is unchanged as a multiset.
         return Ok(false);
     }
-    write_back_resolved_pairs(eng, tdd, pv, idx, out, pairs.len(), inlined)?;
+    write_back_resolved_pairs(tdd, pv, idx, out, pairs.len(), inlined);
     Ok(true)
 }
 
@@ -166,15 +166,13 @@ fn scale_duplicate_runs(
 /// Overwrite the node's pair-list prefix with the resolved pairs and shrink it,
 /// raising the level's marginal-inline markers for any side that got an inline ref.
 fn write_back_resolved_pairs(
-    eng: &Engine,
     tdd: &mut Tdd,
     pv: VtreeIdx,
     idx: usize,
     out: &[ChildPair],
     old_len: usize,
     inlined: Sides<bool>,
-) -> Result<(), OperationError> {
-    let lim = eng.limits();
+) {
     // Write back: overwrite the prefix in place and shrink.
     let level = &mut tdd.levels[pv.idx()];
     // A scaled marginal ref may have come back inline (bit-30 tagged). Raise the
@@ -186,35 +184,20 @@ fn write_back_resolved_pairs(
     if inlined.right {
         level.set_marginal_inlined(ChildSide::Right, true);
     }
-    if matches!(level.nodes[idx].kind(), NodeKind::Inline(_)) {
-        unreachable!("inline single-pair node cannot hold duplicates");
-    }
+    debug_assert!(
+        !matches!(level.nodes[idx].kind(), NodeKind::Inline(_)),
+        "inline single-pair node cannot hold duplicates"
+    );
     let new_len = out.len();
-    // Slots the shrink leaves behind are unreferenced arena; the two `new_len == 1`
-    // re-encodes abandon the whole old range (inline word, or a fresh tail slot).
+    // Slots the shrink leaves behind are unreferenced arena; the inline
+    // re-encode abandons the whole old range.
     let abandoned = if new_len == 1 { old_len } else { old_len - new_len };
     if new_len == 1 {
-        let surviving = out[0];
-        debug_assert!(surviving.can_inline(), "a stored pair has no reserved bit, so it inlines");
-        if surviving.can_inline() {
-            level.nodes[idx] = EncodedNode::inline(surviving);
-        } else {
-            // Single pair that can't inline: extended multi with len=1, whose
-            // pair is pushed as a fresh tail slot rather than aliased in place —
-            // `out` is a rewritten pair, not necessarily one already sitting in
-            // this node's range. That is why `abandoned` above covers the entire
-            // old range: the node stops referencing every one of its former slots.
-            let pair_start = level.pairs.len();
-            lim.try_push(&mut level.pairs, surviving)?;
-            let multi_pairs_idx = level.multi_pairs.len();
-            lim.try_push(&mut level.multi_pairs, MultiPairRange { start: pair_start as u64, len: 1 })?;
-            level.nodes[idx] = EncodedNode::multi_ranged(multi_pairs_idx as u32);
-        }
+        level.nodes[idx] = EncodedNode::inline(out[0]);
     } else {
         let dst = level.pairs_mut(idx);
         dst[..new_len].copy_from_slice(out);
         level.set_pair_len(idx, new_len as u32);
     }
     level.note_dead_pairs(abandoned);
-    Ok(())
 }

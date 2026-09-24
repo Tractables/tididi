@@ -304,24 +304,6 @@ fn test_no_false_nodes_multi_apply_before_minimize() {
     }
 }
 
-/// A leaf label stored in an internal level is rejected by the structural check.
-#[test]
-fn test_validate_vtree_structure_internal_has_leaf_node() {
-    use crate::diagram::{LeafLabel, NodeIdx, Tdd, TddLevel, EncodedNode, TddNodeId};
-
-    let vtree = Arc::new(Vtree::balanced(2));
-    let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
-    levels[vtree.root().idx()].nodes.push(EncodedNode::leaf(LeafLabel::One));
-    let tdd = Tdd::from_levels_unchecked(
-        vtree.clone(),
-        levels,
-        TddNodeId { vtree: vtree.root(), local: NodeIdx(0) },
-    );
-    let result = validate_vtree_structure(&tdd);
-    assert!(result.is_err(), "internal level holds a non-internal node");
-    assert!(result.unwrap_err().contains("non-Internal"));
-}
-
 // ── Structural checks on diagrams no builder would hand back ────────────────
 //
 // These reach past the checked construction door on purpose: each names one

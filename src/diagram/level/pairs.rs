@@ -9,7 +9,7 @@ use crate::diagram::primitives::{ChildPair, EncodedNode, NodeKind};
 use super::TddLevel;
 
 impl TddLevel {
-    /// Every node with pairs, as `(local index, pairs)`.
+    /// Every node as `(local index, pairs)`.
     /// The index is the node's slot in `nodes`, so it is valid for arrays
     /// sized by `slot_count()`. Empty on a marginal level.
     pub fn internal_inputs_iter(&self) -> impl Iterator<Item = (usize, PairsIter<'_>)> + '_ {
@@ -20,9 +20,7 @@ impl TddLevel {
     #[inline]
     pub(crate) fn internal_inputs_range(&self, range: std::ops::Range<usize>) -> impl Iterator<Item = (usize, PairsIter<'_>)> + '_ {
         let start = range.start;
-        self.nodes[range].iter().enumerate().filter_map(move |(i, n)| {
-            if n.is_internal() { Some((start + i, self.pairs_iter_of(n))) } else { None }
-        })
+        self.nodes[range].iter().enumerate().map(move |(i, n)| (start + i, self.pairs_iter_of(n)))
     }
 
     /// A multi-pair node's pair-arena start and pair count, decoded from
@@ -63,7 +61,6 @@ impl TddLevel {
     /// ```
     pub fn pairs_of<'a>(&'a self, node: &'a EncodedNode) -> &'a [ChildPair] {
         match node.kind() {
-            NodeKind::Leaf(_) => &[],
             // Safety: EncodedNode is #[repr(C)] {a: u32, b: u32}.
             //         ChildPair is #[repr(C)] {left: EncodedChildRef(u32), right: EncodedChildRef(u32)}.
             //         For inline nodes, a == left.0 and b == right.0 by construction.
@@ -145,7 +142,6 @@ impl TddLevel {
     #[inline]
     pub fn pairs_iter_of<'a>(&'a self, node: &'a EncodedNode) -> PairsIter<'a> {
         match node.kind() {
-            NodeKind::Leaf(_) => PairsIter::empty(),
             NodeKind::Inline(pair) => PairsIter::inline(pair),
             NodeKind::Multi { .. } | NodeKind::MultiRanged(_) => {
                 let range = self.multi_range(node);
@@ -158,9 +154,6 @@ impl TddLevel {
     /// Only valid for multi-pair nodes; panics on inline nodes.
     #[inline]
     pub(crate) fn pairs_mut(&mut self, idx: usize) -> &mut [ChildPair] {
-        if self.nodes[idx].is_leaf() {
-            return &mut [];
-        }
         debug_assert!(self.nodes[idx].kind().pairs_in_arena(),
             "pairs_mut called on inline node");
         let range = self.multi_range(&self.nodes[idx]);
@@ -169,7 +162,7 @@ impl TddLevel {
 
     /// Index-remap a multi-pair node's pairs in place: each side is rewritten
     /// through its lookup slice and [`ChildDecoder::remap`], which leaves a
-    /// marginal side's inline values alone. No-op on a leaf-label node.
+    /// marginal side's inline values alone.
     ///
     /// Precondition (debug-asserted): `self.nodes[idx].is_multi()`; every
     /// structural coordinate looked up is within its remap slice.
@@ -182,9 +175,6 @@ impl TddLevel {
         left: ChildDecoder,
         right: ChildDecoder,
     ) {
-        if self.nodes[idx].is_leaf() {
-            return;
-        }
         debug_assert!(self.nodes[idx].kind().pairs_in_arena(),
             "pairs_remap_indexed called on inline node");
         let range = self.multi_range(&self.nodes[idx]);
@@ -212,26 +202,21 @@ impl TddLevel {
         self.multi_range(&self.nodes[idx])
     }
 
-    /// Number of pairs of the node at `idx`, which must be a node with pairs
-    /// ([`EncodedNode::is_internal`]).
+    /// Number of pairs of the node at `idx`.
     ///
     /// # Panics
     ///
     /// Panics if `idx` is not below `nodes().len()`.
     #[inline]
     pub fn pair_count_at(&self, idx: usize) -> usize {
-        let n = &self.nodes[idx];
-        debug_assert!(n.is_internal());
-        if matches!(n.kind(), NodeKind::Inline(_)) { 1 } else { self.multi_len_at(idx) }
+        if matches!(self.nodes[idx].kind(), NodeKind::Inline(_)) { 1 } else { self.multi_len_at(idx) }
     }
 
-    /// The pair count of every node in index order: a node's pairs, or 0 for
-    /// a leaf-label node. Empty on a marginal level, which holds
-    /// no nodes.
+    /// The pair count of every node in index order. Empty on a marginal
+    /// level, which holds no nodes.
     #[inline]
     pub(crate) fn pair_counts(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..self.nodes.len())
-            .map(|i| if self.nodes[i].is_internal() { self.pair_count_at(i) } else { 0 })
+        (0..self.nodes.len()).map(|i| self.pair_count_at(i))
     }
 
     /// The pairs held by this level's live nodes.

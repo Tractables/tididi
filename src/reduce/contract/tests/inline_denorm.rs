@@ -38,7 +38,6 @@ fn twins_with_marginal_sibling_are_contracted() {
         crate::vtree::VtreeNode::Internal { .. }
     ));
 
-    let (vl_left, vl_right) = vtree.children(v_left);
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let one = NodeIdx(LeafLabel::One as u32);
 
@@ -52,9 +51,6 @@ fn twins_with_marginal_sibling_are_contracted() {
     let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
     let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
 
-    // Leaf children of v_left — give them trivial leaf-label nodes.
-    levels[vl_left.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
-    levels[vl_right.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
 
     // v_right: marginal sibling with a single slot. The count is too wide to fit
     // a ref, so the sibling side stays a bare slot index — the scenario this
@@ -132,7 +128,6 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
         crate::vtree::VtreeNode::Internal { .. }
     ));
 
-    let (vl_left, vl_right) = vtree.children(v_left);
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let one = NodeIdx(LeafLabel::One as u32);
 
@@ -143,8 +138,6 @@ fn twins_with_marginal_sibling_distinct_slots_not_contracted() {
     let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
     let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
 
-    levels[vl_left.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
-    levels[vl_right.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
 
     // Two sibling slots with EQUAL counts but DIFFERENT raw indices. The count
     // is too wide to fit a ref, so the tagger leaves both refs bare slots.
@@ -195,7 +188,6 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
-    let (vl_left, vl_right) = vtree.children(v_left);
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let one = NodeIdx(LeafLabel::One as u32);
 
@@ -206,8 +198,6 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
     let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
     let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
 
-    levels[vl_left.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
-    levels[vl_right.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
 
     // Two DISTINCT slots carrying EQUAL counts (5) — the configuration the
     // slot-form test proves is not contracted when refs stay bare slots.
@@ -294,7 +284,6 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
         crate::vtree::VtreeNode::Internal { .. }
     ));
 
-    let (vr_left, vr_right) = vtree.children(v_right);
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let one = NodeIdx(LeafLabel::One as u32);
 
@@ -308,9 +297,6 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
     // v_right: explicit internal with one node `n` (single pair, leaf children).
     let n = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
 
-    // Leaf children of v_right — trivial leaf-label nodes.
-    levels[vr_left.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
-    levels[vr_right.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
 
     // root: one multi-pair node with two pairs — both reference the same
     // explicit sibling `n` but different marginal refs (slot0, slot1). This is
@@ -426,7 +412,6 @@ fn p_fusion_redex_closed_within_contract_all_twins() {
         crate::vtree::VtreeNode::Internal { .. }
     ));
 
-    let (vl_left, vl_right) = vtree.children(v_left);
 
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let one = NodeIdx(LeafLabel::One as u32);
@@ -438,9 +423,6 @@ fn p_fusion_redex_closed_within_contract_all_twins() {
     // v_left: explicit internal with one node `n` (single pair child nodes).
     let n = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
 
-    // Leaf children of v_left — trivial leaf-label nodes.
-    levels[vl_left.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
-    levels[vl_right.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
 
     // v_right: marginal sibling with two slots carrying different large counts.
     levels[v_right.idx()].become_marginal(vec![COUNT_A, COUNT_B], None);

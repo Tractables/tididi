@@ -64,7 +64,6 @@ fn fusion_creates_twin_both_closed_in_one_call() {
         crate::vtree::VtreeNode::Internal { .. }
     ));
 
-    let (vl_left, vl_right) = vtree.children(v_left);
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let one = NodeIdx(LeafLabel::One as u32);
 
@@ -78,9 +77,6 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
     let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
 
-    // Leaf children of v_left.
-    levels[vl_left.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
-    levels[vl_right.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
 
     // v_right: marginal sibling with FOUR distinct slots (all different counts).
     levels[v_right.idx()].become_marginal(vec![COUNT_A, COUNT_B, COUNT_C, COUNT_D], None);

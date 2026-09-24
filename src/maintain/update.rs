@@ -136,7 +136,7 @@ impl Maintenance<'_> {
 
         let pair = self.path_pair(root);
         self.tdd.try_invalidate(eng, root)?;
-        if self.tdd.levels[root.idx()].remove_pair_from_node(eng, owner as usize, pair)? {
+        if self.tdd.levels[root.idx()].remove_pair_from_node(owner as usize, pair) {
             self.index.as_mut().expect("`editable` refreshed the index").note_removed_pair(root, pair);
         } else {
             // The output node named this assignment and nothing else, so the

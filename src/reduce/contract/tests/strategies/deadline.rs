@@ -9,7 +9,7 @@
 //! cancellation at every round.
 
 use super::*;
-use crate::diagram::{ChildPair, EncodedNode, LeafLabel, NodeIdx, tag_all_marginal_side_slots, TddLevel, TddNodeId, ValueRef};
+use crate::diagram::{ChildPair, LeafLabel, NodeIdx, tag_all_marginal_side_slots, TddLevel, TddNodeId, ValueRef};
 
 use crate::Engine;
 use crate::vtree::Vtree;
@@ -25,15 +25,12 @@ fn dirty_tdd() -> (Tdd, VtreeIdx) {
     let vtree = Arc::new(Vtree::balanced(4));
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
-    let (vl_left, vl_right) = vtree.children(v_left);
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let one = NodeIdx(LeafLabel::One as u32);
 
     let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
     let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
     let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
-    levels[vl_left.idx()].nodes = vec![EncodedNode::leaf(LeafLabel::Pos)];
-    levels[vl_right.idx()].nodes = vec![EncodedNode::leaf(LeafLabel::One)];
     levels[v_right.idx()].become_marginal(vec![3u128], None);
     let sib_slot0 = NodeIdx(ValueRef::slot_raw(0));
     levels[root.idx()].push_internal_node(&[

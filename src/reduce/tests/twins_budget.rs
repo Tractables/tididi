@@ -5,7 +5,6 @@
 use super::*;
 
 use crate::Engine;
-use crate::limits::OperationError;
 
 use crate::diagram::{
     ChildPair, LeafLabel, NodeIdx, Tdd, TddNodeId, take_levels,
@@ -85,68 +84,6 @@ fn test_contract_twins_overbudget_w1_count_unchanged() {
     assert!(refusals > 0, "the sweep must actually refuse something");
 }
 
-/// One twin group at `v_left` whose parent pairs carry a sibling ref with bit 31
-/// set. The bit-31 field is copied but never dereferenced on the top-down
-/// contract path, and it makes the lone surviving parent pair non-inlinable —
-/// which forces the parent's own `multi_pairs` growth, the last allocation the
-/// pass can be refused. `v_right` has width 1 so `contract_child` skips it,
-/// which is what lets its sibling ref carry the bit safely.
-fn twin_group_with_parent_growth() -> (Arc<Vtree>, Tdd, VtreeIdx) {
-    let vtree = Arc::new(Vtree::balanced(4));
-    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
-    let (v_left, v_right) = vtree.children(root);
-
-    let pos = NodeIdx(LeafLabel::Pos as u32);
-    let neg = NodeIdx(LeafLabel::Neg as u32);
-    let one = NodeIdx(LeafLabel::One as u32);
-
-    let mut levels = take_levels(&Engine::new(), vtree.num_nodes());
-    let a = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
-    let b = levels[v_left.idx()].push_internal_node(&[ChildPair::new(pos, neg)]);
-    let s0 = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
-    let sib = NodeIdx((1u32 << 31) | s0.0);
-
-    // Both twins paired with the same (bit-31) sibling ⇒ they share a context ⇒
-    // twins. After they merge, one of the two parent pairs is filtered, shrinking
-    // the parent node to a single non-inlinable pair.
-    let root_node = levels[root.idx()].push_internal_node(&[
-        ChildPair::new(a, sib),
-        ChildPair::new(b, sib),
-    ]);
-
-    let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
-    assert_eq!(tdd.levels[v_left.idx()].slot_count(), 2, "setup: one twin group {{a,b}}");
-    tdd.seed_contract_worklist([root.0]);
-    (vtree, tdd, v_left)
-}
-
-/// The parent's own `multi_pairs` growth is reserved in the same transaction as
-/// the survivors' pairs, so an OverBudget on it — the last refusal the pass can
-/// raise — still bails before anything is rewritten.
-#[test]
-fn test_contract_twins_overbudget_parent_ext_bails() {
-    let mut refusals = 0;
-    for nth in 0..RESERVES_PER_CONTRACTION {
-        let eng = Engine::new();
-        let (_vtree, mut tdd, v_left) = twin_group_with_parent_growth();
-        eng.limits().refuse_nth_reserve(nth);
-        let res = contract_all_twins(&eng, &mut tdd);
-        eng.limits().grant_every_reserve();
-        if res.is_err() {
-            refusals += 1;
-            assert_eq!(
-                tdd.levels[v_left.idx()].slot_count(),
-                2,
-                "every reservation the pass takes is ahead of every mutation, so a refusal \
-                 at reserve {nth} must leave the twin group unmerged",
-            );
-        }
-    }
-    assert!(refusals > 0, "the sweep must actually refuse something");
-    // NB: deliberately DON'T call `model_count` — this fixture carries a bit-31
-    // sibling, which is not a real node ref.
-}
-
 /// Two dirty parents, an `OverBudget` during the first (root-most) parent's
 /// contraction: both the failing parent and the still-queued second parent must
 /// survive in `dirty_contract`. The second parent (`v_right`) is never popped —
@@ -206,78 +143,6 @@ fn test_contract_dirty_worklist_restored_on_err() {
                  {nth}; dirty_contract = {:?}",
                 tdd.contract_worklist(),
             );
-        }
-    }
-    assert!(refusals > 0, "the sweep must actually refuse something");
-}
-
-/// A leaf twin at the root of `(x (y z))` whose sibling ref carries bit 31:
-/// the survivor `(One, sib)` cannot be stored inline, so the rewrite needs a
-/// fresh `multi_pairs` entry — the one reservation leaf contraction takes. The
-/// `(y z)` level is never dereferenced, which is what lets the ref carry the
-/// bit safely.
-fn leaf_twin_with_range_growth() -> (Arc<Vtree>, Tdd, VtreeIdx) {
-    use crate::vtree::VarId;
-
-    let x = Vtree::leaf(VarId(1));
-    let yz = Vtree::balanced_over(&[VarId(2), VarId(3)]).unwrap();
-    let vtree = Arc::new(Vtree::join(&x, &yz).expect("disjoint variable sets"));
-    let root = vtree.root();
-    let (v_leaf, v_right) = vtree.children(root);
-    assert!(vtree.node(v_leaf).is_leaf(), "setup: the root's left child is the leaf x");
-
-    let pos = NodeIdx(LeafLabel::Pos as u32);
-    let neg = NodeIdx(LeafLabel::Neg as u32);
-
-    let mut levels = take_levels(&Engine::new(), vtree.num_nodes());
-    let a = levels[v_right.idx()].push_internal_node(&[ChildPair::new(pos, neg)]);
-    let sib = NodeIdx((1u32 << 31) | a.0);
-    let root_node = levels[root.idx()].push_internal_node(&[
-        ChildPair::new(pos, sib),
-        ChildPair::new(neg, sib),
-    ]);
-
-    let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: root_node });
-    tdd.seed_leaf_worklist([root.0]);
-    (vtree, tdd, root)
-}
-
-/// The leaf rewrite reserves before it moves a pair, so a refused reservation
-/// comes back as `Err(OverBudget)` with the level untouched and still queued,
-/// and the same engine contracts it once the reservation is granted.
-#[test]
-fn test_contract_leaf_twins_overbudget_leaves_the_level_queued_and_unchanged() {
-    let mut refusals = 0;
-    for nth in 0..RESERVES_PER_CONTRACTION {
-        let eng = Engine::new();
-        let (_vtree, mut tdd, root) = leaf_twin_with_range_growth();
-        let before: Vec<ChildPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
-        eng.limits().refuse_nth_reserve(nth);
-        let res = contract_leaf_twins(&eng, &mut tdd);
-        eng.limits().grant_every_reserve();
-        match res {
-            Ok(fired) => {
-                assert!(fired, "with every reservation granted the twin contracts");
-                let one = NodeIdx(LeafLabel::One as u32);
-                assert_eq!(
-                    tdd.levels[root.idx()].pairs_of_idx(0),
-                    &[ChildPair::new(one, before[0].right)],
-                    "the two literal pairs contract to one `One` pair",
-                );
-            }
-            Err(e) => {
-                refusals += 1;
-                assert_eq!(e, OperationError::OverBudget);
-                assert_eq!(
-                    tdd.levels[root.idx()].pairs_of_idx(0),
-                    &before[..],
-                    "a refusal at reserve {nth} must leave the level as it was",
-                );
-                assert!(
-                    contract_leaf_twins(&eng, &mut tdd).expect("every reservation is granted now"),
-                    "the refused level stays on the worklist, so the next call contracts it",
-                );
-            }
         }
     }
     assert!(refusals > 0, "the sweep must actually refuse something");

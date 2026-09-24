@@ -36,9 +36,7 @@ impl<T> Sides<T> {
 /// Apply `f` to every reference the nodes of `level` hold on `side`.
 ///
 /// `ChildSide::Left` means `pair.left.0` for a multi-pair node and `node.a`
-/// for an inline one; `ChildSide::Right` means `pair.right.0` / `node.b` (an
-/// inline node's `b` carries no `LEAF_BIT`, so it is a plain index). A leaf
-/// node holds no refs and is skipped.
+/// for an inline one; `ChildSide::Right` means `pair.right.0` / `node.b`.
 #[inline]
 pub(crate) fn for_each_side_ref_mut(
     level: &mut crate::diagram::TddLevel,
@@ -46,9 +44,6 @@ pub(crate) fn for_each_side_ref_mut(
     mut f: impl FnMut(&mut u32),
 ) {
     for ni in 0..level.nodes.len() {
-        if level.nodes[ni].is_leaf() {
-            continue;
-        }
         if level.nodes[ni].kind().pairs_in_arena() {
             for p in level.pairs_mut(ni) {
                 f(match side {

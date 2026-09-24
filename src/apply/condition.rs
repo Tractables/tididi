@@ -233,13 +233,7 @@ fn rewrite_level_pairs(
         if let NodeKind::Inline(p) = level.nodes[i].kind() {
             // The single pair lives in the node's own two words, not the arena.
             match rewrite_pair(p) {
-                Some(np) => {
-                    // Still inlinable: the untouched side keeps whatever bit it
-                    // had, and the rewritten side becomes One (index 0), which
-                    // sets none — so `can_inline` cannot go from true to false.
-                    debug_assert!(np.can_inline(), "restricting an inline node cannot un-inline it");
-                    level.nodes[i] = EncodedNode::inline(np);
-                }
+                Some(np) => level.nodes[i] = EncodedNode::inline(np),
                 None => {
                     // Emptied: the slot holds no pair, which `propagate_false_nodes`
                     // reads as the node computing false and drops every reference to.
@@ -272,13 +266,7 @@ fn rewrite_level_pairs(
                 level.nodes[i] = empty;
                 emptied = true;
             }
-            1 => {
-                // `pair_len == 1` aliases the extended encoding, so a lone
-                // survivor is either inlined or pointed at through `multi_pairs`
-                // at the slot it already occupies.
-                let survivor = level.pairs[start];
-                level.nodes[i] = level.encode_single(start, survivor);
-            }
+            1 => level.nodes[i] = EncodedNode::inline(level.pairs[start]),
             _ => level.set_pair_len(i, w as u32),
         }
         // What the re-encoded node still owns is `arena_pairs_at` — 0 once it

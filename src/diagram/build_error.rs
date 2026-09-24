@@ -17,13 +17,6 @@ pub enum TddBuildError {
     },
     /// A leaf level stores nodes or pairs.
     NonEmptyLeafLevel(VtreeIdx),
-    /// A stored node is a leaf label, which only leaf levels denote (implicitly).
-    LeafNodeStored {
-        /// The level holding the node.
-        level: VtreeIdx,
-        /// The node.
-        node: NodeIdx,
-    },
     /// A stored node has no pairs; no stored node may compute false.
     EmptyNode {
         /// The level holding the node.
@@ -110,14 +103,6 @@ impl std::fmt::Display for TddBuildError {
                 "level {} is weight-marginal, but a diagram assembled here has no weight store",
                 level.idx()
             ),
-            Self::LeafNodeStored { level, node } => {
-                write!(
-                    f,
-                    "level {} node {} is a leaf label",
-                    level.idx(),
-                    node.idx()
-                )
-            }
             Self::EmptyNode { level, node } => {
                 write!(f, "level {} node {} has no pairs", level.idx(), node.idx())
             }

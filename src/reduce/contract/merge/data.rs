@@ -4,7 +4,7 @@ use crate::Engine;
 use crate::vtree::VtreeIdx;
 
 use crate::limits::OperationError;
-use crate::diagram::{EncodedNode, MultiPairRange, NodeKind, Tdd, TddLevel};
+use crate::diagram::{EncodedNode, NodeKind, Tdd, TddLevel};
 
 use super::super::scratch::{DuplicateScratch, MergeRemap};
 
@@ -150,15 +150,9 @@ pub(super) fn concat_twin_pairs(
 /// Finalize node at `level.nodes[keep]` from a merged pair sequence already
 /// written to `level.pairs[new_start..new_start + new_len]`.
 ///
-/// Encoding picks:
-/// - `new_len == 1` + pair fits inline: pop the speculative pair from the arena
-///   and store the pair directly in the node (no heap traffic).
-/// - `new_len == 1` + pair cannot inline (e.g. high bit set): keep the pair in
-///   the arena, record a 1-element `MultiPairRange` side-entry, and tag the node as
-///   `multi_ranged`. (Required because the packed single-pair encoding aliases
-///   leaf or multi-extended encodings when the high bits are set.)
-/// - `new_len >= 2`: delegate to `encode_multi`, which picks packed vs extended
-///   based on whether `new_start`/`new_len` fit in the packed bit-budget.
+/// A single pair is popped off the arena again and stored inline; a longer
+/// list goes through `encode_multi`, which picks packed or extended by
+/// whether `new_start` and `new_len` fit the packed bit budget.
 #[inline]
 fn finalize_merged_node(
     level: &mut TddLevel,
@@ -168,21 +162,8 @@ fn finalize_merged_node(
 ) {
     if new_len == 1 {
         let pair = level.pairs[new_start];
-        debug_assert!(pair.can_inline(), "a stored pair has no reserved bit, so it inlines");
-        if pair.can_inline() {
-            level.pairs.pop();
-            level.nodes[keep] = EncodedNode::inline(pair);
-        } else {
-            // The grand reserve charged one `MultiPairRange` per group on
-            // `level.multi_pairs`, so this push cannot reallocate — plain push.
-            let multi_pairs_idx = level.multi_pairs.len();
-            debug_assert!(
-                level.multi_pairs.capacity() > level.multi_pairs.len(),
-                "finalize_merged_node: hoisted grand reserve under-sized multi_pairs capacity"
-            );
-            level.multi_pairs.push(MultiPairRange { start: new_start as u64, len: 1 });
-            level.nodes[keep] = EncodedNode::multi_ranged(multi_pairs_idx as u32);
-        }
+        level.pairs.pop();
+        level.nodes[keep] = EncodedNode::inline(pair);
     } else {
         level.nodes[keep] = level.encode_multi(new_start, new_len);
     }

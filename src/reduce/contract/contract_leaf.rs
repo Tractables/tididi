@@ -16,7 +16,7 @@
 use crate::diagram::Pass;
 use crate::Engine;
 use crate::diagram::ChildSide;
-use crate::diagram::{EncodedChildRef, ChildPair, NodeKind, Tdd, TddLevel, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
+use crate::diagram::{EncodedChildRef, ChildPair, NodeKind, Tdd, ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX};
 use crate::limits::OperationError;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
@@ -32,9 +32,8 @@ use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 ///
 /// # Errors
 ///
-/// Returns `Err(OperationError::OverBudget)` if the one reservation a level's
-/// rewrite takes is refused. The level is then as it was, and it and every
-/// level not yet reached are back on the leaf-contraction worklist.
+/// The rewrite allocates nothing, so this does not refuse; the signature
+/// matches the other contraction passes.
 pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> Result<bool, OperationError> {
     let vtree = tdd.vtree.clone();
     let n = vtree.num_nodes();
@@ -110,7 +109,7 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
     }
     if !any_literal { return Ok(false); }
 
-    rewrite_level(eng, tdd, parent_vi, side)?;
+    rewrite_level(tdd, parent_vi, side);
     Ok(true)
 }
 
@@ -169,15 +168,8 @@ fn classify(pairs: &[ChildPair], side: ChildSide) -> Class {
 /// index advances at most once per read and never overtakes it; ranges at a
 /// level are pairwise disjoint (`compact_pairs_if_stale` verifies this before
 /// sliding), so a cursor never reaches another node's pairs. Node indices are
-/// unchanged. The one growth the rewrite can need, a `multi_pairs` entry per
-/// node whose sole survivor cannot be stored inline, is reserved before the
-/// first pair moves, so a refusal leaves the level as it was.
-fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> Result<(), OperationError> {
-    let level = &mut tdd.levels[parent_vi.idx()];
-    let fresh = fresh_range_entries(level, side);
-    if fresh > 0 {
-        eng.limits().reserve(&mut level.multi_pairs, fresh)?;
-    }
+/// unchanged, and nothing is allocated.
+fn rewrite_level(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
     tdd.rewrite_level(parent_vi, |level| {
         for i in 0..level.nodes.len() {
             // Tombstone slots and leaf words own no pair range and are left as
@@ -248,35 +240,4 @@ fn rewrite_level(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSi
         // level's compaction threshold; no pair-arena offset is held across it.
         level.compact_pairs_if_stale();
     });
-    Ok(())
-}
-
-/// How many fresh `multi_pairs` entries the rewrite of `side` at `level` needs:
-/// one per packed multi-pair node whose matched literal pair shrinks to a single
-/// pair that cannot be stored inline, which is the one allocating arm of
-/// `TddLevel::reencode_shrunk_multi_reserved`.
-fn fresh_range_entries(level: &TddLevel, side: ChildSide) -> usize {
-    (0..level.nodes.len())
-        .filter(|&i| {
-            if !matches!(level.nodes[i].kind(), NodeKind::Multi { .. }) {
-                return false;
-            }
-            let pairs = level.pairs_of_idx(i);
-            if pairs.len() != 2 {
-                return false;
-            }
-            pairs.iter().any(|p| {
-                let (label, partner) = match side {
-                    ChildSide::Left => (p.left, p.right),
-                    ChildSide::Right => (p.right, p.left),
-                };
-                let survivor = match side {
-                    ChildSide::Left => ChildPair::new(ONE_LEAF_IDX, partner),
-                    ChildSide::Right => ChildPair::new(partner, ONE_LEAF_IDX),
-                };
-                debug_assert!(survivor.can_inline(), "a stored pair has no reserved bit, so it inlines");
-                label == POS_LEAF_IDX.into() && !survivor.can_inline()
-            })
-        })
-        .count()
 }

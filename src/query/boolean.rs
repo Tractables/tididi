@@ -294,7 +294,7 @@ pub(super) fn visit_leaf_labels(
         if work == 0 { continue; }
         let mut labels = [LeafLabels::default(); 2];
         let level = &f.levels[t.idx()];
-        for node in level.nodes.iter().filter(|node| !node.is_leaf()) {
+        for node in level.nodes.iter().filter(|node| node.is_internal()) {
             for pair in level.pairs_of(node) {
                 poll(work)?;
                 if vars[0].is_some() { labels[0].insert(pair.left); }

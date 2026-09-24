@@ -363,7 +363,7 @@ pub fn support_mask(t: &Tdd) -> Vec<bool> {
             };
             let level = &mt.levels[vi];
             'scan: for ni in 0..level.nodes.len() {
-                if level.nodes[ni].is_leaf() {
+                if !level.nodes[ni].is_internal() {
                     continue;
                 }
                 for p in level.pairs_of(&level.nodes[ni]) {
@@ -427,7 +427,7 @@ pub fn support_bits(t: &Tdd) -> Vec<u64> {
         let mut need_l = lvar.is_some();
         let mut need_r = rvar.is_some();
         'scan: for ni in 0..level.nodes.len() {
-            if level.nodes[ni].is_leaf() {
+            if !level.nodes[ni].is_internal() {
                 continue;
             }
             for p in level.pairs_of(&level.nodes[ni]) {

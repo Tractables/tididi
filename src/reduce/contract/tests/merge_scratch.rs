@@ -48,7 +48,6 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
         "v_left must be internal for this fixture");
     assert!(matches!(*vtree.node(v_right), crate::vtree::VtreeNode::Internal { .. }),
         "v_right must be internal for this fixture");
-    let (vl_left, vl_right) = vtree.children(v_left);
 
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let one = NodeIdx(LeafLabel::One as u32);
@@ -66,9 +65,6 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
         let c = levels[v_left.idx()].push_internal_node(&[ChildPair::new(one, pos)]);
         assert_eq!(a.0, 0); assert_eq!(b.0, 1); assert_eq!(c.0, 2);
 
-        // Leaf children of v_left — trivial leaf-label nodes.
-        levels[vl_left.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::Pos)];
-        levels[vl_right.idx()].nodes = vec![crate::diagram::EncodedNode::leaf(LeafLabel::One)];
 
         // sib (v_right): marginal with slot 0 → count 7.
         levels[v_right.idx()].become_marginal(vec![7u128], None);
@@ -187,7 +183,6 @@ fn content_twin_scratch_is_cleared_on_take() {
 fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
-    let (vl_left, vl_right) = vtree.children(v_left);
     let pos = NodeIdx(LeafLabel::Pos as u32);
     let neg = NodeIdx(LeafLabel::Neg as u32);
     let one = NodeIdx(LeafLabel::One as u32);
@@ -210,8 +205,6 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
     for i in 0..width {
         nodes.push(levels[v_left.idx()].push_internal_node(&[kinds[i % kinds.len()]]));
     }
-    levels[vl_left.idx()].nodes = vec![EncodedNode::leaf(LeafLabel::Pos)];
-    levels[vl_right.idx()].nodes = vec![EncodedNode::leaf(LeafLabel::One)];
 
     // Marginal sibling: one slot shared by every parent pair (twins), or a
     // distinct slot per pair (not twins — raw slot index is the signature key).

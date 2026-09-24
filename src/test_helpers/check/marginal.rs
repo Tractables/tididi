@@ -106,7 +106,7 @@ pub fn check_pair_fusion_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> R
         }
         let plevel = &tdd.levels[parent.idx()];
         for n in 0..plevel.nodes.len() {
-            if plevel.nodes[n].is_leaf() {
+            if !plevel.nodes[n].is_internal() {
                 continue;
             }
             groups.clear();
@@ -163,7 +163,7 @@ pub fn check_twin_canonicality(tdd: &Tdd) -> Result<(), String> {
         let plevel = &tdd.levels[parent.idx()];
         let mut key_to_node: FxHashMap<Vec<(u32, u32)>, usize> = FxHashMap::default();
         for n in 0..plevel.nodes.len() {
-            if plevel.nodes[n].is_leaf() {
+            if !plevel.nodes[n].is_internal() {
                 continue;
             }
             node_pairs_into(plevel, n, &mut pairs_buf);

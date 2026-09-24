@@ -430,18 +430,6 @@ mod try_from_levels {
     }
 
     #[test]
-    fn leaf_label_stored_in_internal_level() {
-        let vtree = Arc::new(Vtree::balanced(4));
-        let (mut levels, out) = build(&vtree);
-        let (l, _) = vtree.children(vtree.root());
-        levels[l.idx()].nodes.push(EncodedNode::leaf(crate::diagram::LeafLabel::One));
-        assert_eq!(
-            try_from_levels(vtree, levels, out).err(),
-            Some(TddBuildError::LeafNodeStored { level: l, node: NodeIdx(2) })
-        );
-    }
-
-    #[test]
     fn child_index_out_of_range() {
         let vtree = Arc::new(Vtree::balanced(4));
         let (mut levels, out) = build(&vtree);
@@ -475,8 +463,10 @@ mod try_from_levels {
         let vtree = Arc::new(Vtree::balanced(2));
         let mut levels = vec![TddLevel::new(); vtree.num_nodes()];
         let root = vtree.root();
-        let bad = ChildPair::new(ZERO, NEG_LEAF_IDX);
-        let node = levels[root.idx()].push_internal_node(&[bad]);
+        // Staged by hand: the encoder debug-asserts against a reserved side.
+        let bad = ChildPair::new(POS_LEAF_IDX, ZERO);
+        levels[root.idx()].nodes.push(EncodedNode { a: bad.left.raw(), b: bad.right.raw() });
+        let node = NodeIdx(0);
         let out = TddNodeId { vtree: root, local: node };
         assert_eq!(
             try_from_levels(vtree, levels, out).err(),

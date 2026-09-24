@@ -1,9 +1,7 @@
 //! Phase 3: rewriting the parent level's pair lists in place.
 
-use crate::Engine;
 use rustc_hash::FxHashMap;
 
-use crate::limits::OperationError;
 use crate::diagram::{EncodedChildRef, ChildPair, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
@@ -25,13 +23,12 @@ use super::PlanEntry;
 /// range since `kept + k ≤ old_len − k`. The abandoned tail is charged to
 /// `dead_pairs` and reclaimed by the level's arena sweep at the end.
 pub(super) fn rebuild_parent_level<V>(
-    eng: &Engine,
     tdd: &mut Tdd,
     parent: VtreeIdx,
     side: ChildSide,
     any_inline: bool,
     plans: &[PlanEntry<V>],
-) -> Result<(), OperationError> {
+) {
     let level = &mut tdd.levels[parent.idx()];
     // Fusion-inline may mint a fresh inline marginal-side ref (bit-30 tagged) this
     // sweep; the marker for that side must be raised or the end-of-apply tagger
@@ -59,26 +56,24 @@ pub(super) fn rebuild_parent_level<V>(
             cursor += 1;
         }
         let this_plans = &plans[plan_start..cursor];
-        dead_acc += fuse_node_pairs(eng, level, n, side, this_plans, &mut fused_x)?;
+        dead_acc += fuse_node_pairs(level, n, side, this_plans, &mut fused_x);
     }
     level.note_dead_pairs(dead_acc);
     // Legal only now: the rewrite is done, so no pair-arena offset is held
     // across the call (the caller obligation on `compact_pairs_if_stale`).
     level.compact_pairs_if_stale();
-    Ok(())
 }
 
 /// Rewrite one node's pair list in place: drop every pair whose x-side carries a
 /// plan, then append one fused pair per plan. Returns the arena slots the shrink
 /// abandoned.
 fn fuse_node_pairs<V>(
-    eng: &Engine,
     level: &mut TddLevel,
     n: usize,
     side: ChildSide,
     this_plans: &[PlanEntry<V>],
     fused_x: &mut FxHashMap<u32, u32>,
-) -> Result<usize, OperationError> {
+) -> usize {
 
     fused_x.clear();
     // Each plan covers a distinct x_idx (Phase 1 emits one plan per
@@ -107,17 +102,6 @@ fn fuse_node_pairs<V>(
         };
         fused_x.contains_key(&x_idx)
     };
-
-    // Reserve before the first write. The re-encode below can need one fresh
-    // `multi_pairs` entry, and taking that allocation after the range has been
-    // rewritten would let an `OverBudget` return a level whose pairs have moved
-    // but whose node word still describes the old range — a wrong count, from a
-    // refusal the public docs on `Tdd::minimize` and `Tdd::reduce` promise is
-    // recoverable. So compute the post-shrink length first; the rewrite below
-    // reproduces it exactly, which the assertion after it checks.
-    let new_len = (start..start + old_len).filter(|&r| !is_fused(level.pairs[r])).count()
-        + fused_x.len();
-    level.reserve_shrunk_multi(eng, n, new_len)?;
 
     // Keep the un-fused pairs, compacting them onto the front of the node's
     // own range: `write` never overtakes `read` (it advances at most once
@@ -149,11 +133,7 @@ fn fuse_node_pairs<V>(
         write += 1;
     }
 
-    debug_assert_eq!(write - start, new_len, "the reserve pre-pass and the rewrite must agree");
-    // Re-encode via the shared epilogue, the infallible half of the pair
-    // reserved above: shrink in place, inline the sole survivor, or fall back
-    // to a length-1 extended multi aliasing the node's own first slot —
-    // reusing its existing `multi_pairs` entry when the node is already
-    // extended, so nothing here abandons an old `multi_pairs` slot as garbage.
-    Ok(level.reencode_shrunk_multi_reserved(n, start, old_len, new_len))
+    // Re-encode via the shared epilogue: shrink in place, or inline the sole
+    // survivor.
+    level.reencode_shrunk_multi_reserved(n, start, old_len, write - start)
 }

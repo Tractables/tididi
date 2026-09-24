@@ -5,21 +5,6 @@ use crate::diagram::primitives::{MultiPairRange, ChildPair, NodeIdx, EncodedNode
 use crate::limits::{Charged, OperationError};
 use super::TddLevel;
 
-/// The encoding a node lands on when its pair list shrinks — see
-/// [`TddLevel::shrunk_encoding`].
-enum ShrunkEncoding {
-    /// Two or more survivors: the node keeps its encoding, only the length moves.
-    Truncate,
-    /// A sole survivor that fits in the node word.
-    Inline(ChildPair),
-    /// A sole survivor that does not fit inline, over the range entry the node
-    /// already owns.
-    ReuseRangeEntry(usize),
-    /// A sole survivor that does not fit inline, on a node holding no range
-    /// entry yet: one has to be appended.
-    NewRangeEntry,
-}
-
 /// Reserve room for `additional` more elements, refusing rather than
 /// aborting. The allocator's own error carries nothing the caller can use —
 /// the request size is known at the site that reports it — so it is dropped.
@@ -31,8 +16,8 @@ impl TddLevel {
     /// Build a multi-pair node data from `(pair_start, pair_len)`, promoting to the
     /// extended encoding when either value doesn't fit in 31 bits and allocates an
     /// `multi_pairs` entry as needed.
-    /// `pair_len == 1` is [`encode_single`](Self::encode_single)'s; `pair_len == 0`
-    /// is allowed, for an empty placeholder node.
+    /// `pair_len == 1` is [`EncodedNode::inline`]'s; `pair_len == 0` is
+    /// allowed, for an empty placeholder node.
     ///
     /// # Panics
     ///
@@ -53,7 +38,7 @@ impl TddLevel {
     /// The `multi_pairs` reservation was refused.
     #[inline]
     fn try_encode_multi(&mut self, pair_start: usize, pair_len: usize) -> Result<EncodedNode, ()> {
-        assert!(pair_len != 1, "encode_multi: pair_len=1 aliases multi_ranged encoding; use encode_single");
+        assert!(pair_len != 1, "encode_multi: pair_len=1 aliases multi_ranged encoding; use EncodedNode::inline");
         let fits_u31 = pair_start < (1usize << 31) && pair_len < (1usize << 31);
         if fits_u31 {
             Ok(EncodedNode::multi_pair(pair_start as u32, pair_len as u32))
@@ -66,21 +51,6 @@ impl TddLevel {
         }
     }
 
-    /// Encode a node holding exactly `pair`, which sits at arena index `start`:
-    /// inline when the pair fits in the node's own words (the arena slot is
-    /// then unused), else a one-pair `multi_pairs` range, since a `pair_len`
-    /// of 1 aliases the `multi_ranged` encoding.
-    #[inline]
-    pub(crate) fn encode_single(&mut self, start: usize, pair: ChildPair) -> EncodedNode {
-        debug_assert!(pair.can_inline(), "a stored pair has no reserved bit, so it inlines");
-        if pair.can_inline() {
-            return EncodedNode::inline(pair);
-        }
-        let multi_pairs_idx = self.multi_pairs.len();
-        self.multi_pairs.push(MultiPairRange { start: start as u64, len: 1 });
-        EncodedNode::multi_ranged(multi_pairs_idx as u32)
-    }
-
     /// Update `pair_len` for a multi-pair node (used after in-place dedup shrinks
     /// the pair count). Caller must ensure `new_len` >= 2; use inline conversion
     /// for 1-pair results. Correctly handles extended nodes by updating the side table.
@@ -88,10 +58,10 @@ impl TddLevel {
     /// # Panics
     ///
     /// Panics if `new_len < 2` (`new_len == 1` aliases the `multi_ranged`
-    /// encoding; convert to the inline or extended form instead).
+    /// encoding; convert to the inline form instead).
     #[inline]
     pub(crate) fn set_pair_len(&mut self, node_idx: usize, new_len: u32) {
-        assert!(new_len >= 2, "set_pair_len: new_len=1 aliases multi_ranged; convert to inline or extended");
+        assert!(new_len >= 2, "set_pair_len: new_len=1 aliases multi_ranged; convert to inline");
         if let NodeKind::MultiRanged(idx) = self.nodes[node_idx].kind() {
             // Shrinking stays extended even if new_len now fits in u31 — the
             // multi_pairs slot is already allocated, and callers don't rely on form.
@@ -104,48 +74,12 @@ impl TddLevel {
     /// Re-encode a multi-pair node at `node_idx` after an in-place rewrite has
     /// compacted its arena range `[start, start+old_len)` down to `new_len`
     /// live survivors sitting at the prefix `[start, start+new_len)`: shrink
-    /// in place (`new_len >= 2`), inline the sole survivor (`new_len == 1` and
-    /// it fits), or a length-1 extended multi pointing at that one slot. The
-    /// epilogue of every pass that compacts a node's own range in place.
+    /// in place (`new_len >= 2`) or inline the sole survivor (`new_len == 1`).
+    /// The epilogue of every pass that compacts a node's own range in place;
+    /// it allocates nothing. A node in the extended encoding keeps its
+    /// `multi_pairs` entry, which the inline form leaves unused.
     ///
     /// Precondition (debug-asserted): `1 <= new_len < old_len`.
-    ///
-    /// Reserve the one `multi_pairs` entry a shrink to `new_len` can need, so
-    /// the caller can rewrite its pair range and then finish with the
-    /// infallible [`reencode_shrunk_multi_reserved`](Self::reencode_shrunk_multi_reserved).
-    ///
-    /// Call this *before* the rewrite. It therefore cannot read the surviving
-    /// pair, which does not exist yet, so it reserves whenever the allocating
-    /// arm is reachable and lets the entry go unused when the survivor turns
-    /// out to be inlinable. Over-reserving costs one `MultiPairRange` of
-    /// capacity and never a length, so the only effect is refusing marginally
-    /// earlier.
-    ///
-    /// A node already `is_multi_ranged()` reuses its own `multi_pairs` entry
-    /// and needs nothing; `multi_pairs` is never compacted, so a fresh push
-    /// would leak the old one.
-    ///
-    /// # Errors
-    ///
-    /// `Err(OperationError::OverBudget)` if that entry cannot be reserved.
-    #[inline]
-    pub(crate) fn reserve_shrunk_multi(
-        &mut self, eng: &Engine, node_idx: usize, new_len: usize,
-    ) -> Result<(), OperationError> {
-        // The pair-independent half of `shrunk_encoding`'s arm choice. The two
-        // must move together: this is the only thing that decides whether the
-        // reserve happens, and `shrunk_encoding` is the only thing that decides
-        // whether the push happens.
-        if new_len < 2 && !matches!(self.nodes[node_idx].kind(), NodeKind::MultiRanged(_)) {
-            eng.limits().reserve(&mut self.multi_pairs, 1)?;
-        }
-        Ok(())
-    }
-
-    /// Re-encode a node whose pair range has just shrunk to `new_len`, for a
-    /// caller that has already reserved through
-    /// [`reserve_shrunk_multi`](Self::reserve_shrunk_multi), so the re-encode
-    /// is infallible.
     ///
     /// Returns the number of pair-arena slots this abandons, the caller's
     /// `dead_pairs` contribution.
@@ -158,47 +92,12 @@ impl TddLevel {
     ) -> usize {
         debug_assert!(new_len < old_len, "reencode_shrunk_multi: not a shrink");
         debug_assert!(new_len >= 1, "reencode_shrunk_multi: emptying a node is a different path");
-        let entry = MultiPairRange { start: start as u64, len: 1 };
-        match self.shrunk_encoding(node_idx, start, new_len) {
-            ShrunkEncoding::Truncate => {
-                self.set_pair_len(node_idx, new_len as u32);
-                return old_len - new_len;
-            }
-            ShrunkEncoding::Inline(surviving) => {
-                self.nodes[node_idx] = EncodedNode::inline(surviving);
-                return old_len; // an inline node owns no arena slot
-            }
-            ShrunkEncoding::ReuseRangeEntry(e) => self.multi_pairs[e] = entry,
-            ShrunkEncoding::NewRangeEntry => {
-                let e = self.multi_pairs.len();
-                debug_assert!(
-                    self.multi_pairs.capacity() > e,
-                    "reencode_shrunk_multi_reserved: caller must reserve the range entry",
-                );
-                self.multi_pairs.push(entry);
-                self.nodes[node_idx] = EncodedNode::multi_ranged(e as u32);
-            }
-        }
-        old_len - 1
-    }
-
-    /// Which encoding a shrink to `new_len` lands the node on. The one place
-    /// the arms are decided; `reserve_shrunk_multi` is its conservative
-    /// pre-rewrite shadow, deciding only whether the allocating arm is
-    /// reachable.
-    #[inline]
-    fn shrunk_encoding(&self, node_idx: usize, start: usize, new_len: usize) -> ShrunkEncoding {
         if new_len >= 2 {
-            return ShrunkEncoding::Truncate;
-        }
-        let surviving = self.pairs[start];
-        debug_assert!(surviving.can_inline(), "a stored pair has no reserved bit, so it inlines");
-        if surviving.can_inline() {
-            return ShrunkEncoding::Inline(surviving);
-        }
-        match self.nodes[node_idx].kind() {
-            NodeKind::MultiRanged(idx) => ShrunkEncoding::ReuseRangeEntry(idx as usize),
-            _ => ShrunkEncoding::NewRangeEntry,
+            self.set_pair_len(node_idx, new_len as u32);
+            old_len - new_len
+        } else {
+            self.nodes[node_idx] = EncodedNode::inline(self.pairs[start]);
+            old_len // an inline node owns no arena slot
         }
     }
 
@@ -234,7 +133,7 @@ impl TddLevel {
 
     /// Pair-arena slots owned by the node at `idx` — the one definition of a
     /// node's dead range: its pair count when the node is multi-encoded, 0 for
-    /// the inline and leaf encodings (they own no arena slot).
+    /// an inline node (it owns no arena slot).
     #[inline]
     pub(crate) fn arena_pairs_at(&self, idx: usize) -> usize {
         if self.nodes[idx].kind().pairs_in_arena() { self.multi_len_at(idx) } else { 0 }
@@ -299,8 +198,8 @@ impl TddLevel {
             "index_live_ranges: node index must fit the packed key's low half"
         );
         for i in 0..self.nodes.len() {
-            // Only a multi-pair node owns an arena slot; leaves and inline
-            // nodes own none.
+            // Only a multi-pair node owns an arena slot; an inline node owns
+            // none.
             let node = self.nodes[i];
             if !node.kind().pairs_in_arena() {
                 continue;
@@ -379,7 +278,7 @@ impl TddLevel {
     pub(crate) fn push_node_within(&mut self, lim: &crate::limits::Limits, pairs: &[ChildPair]) -> Result<NodeIdx, OperationError> {
         #[cfg(test)]
         if lim.refuses_reserve() { return Err(OperationError::OverBudget); }
-        if pairs.len() == 1 && pairs[0].can_inline() && self.nodes.len() < self.nodes.capacity() {
+        if pairs.len() == 1 && self.nodes.len() < self.nodes.capacity() {
             return self.try_push_internal_node(pairs).map_err(|_| OperationError::OverBudget);
         }
         let before = self.arena_capacity_bytes();
@@ -416,7 +315,6 @@ impl TddLevel {
                 let range = self.pair_range_at(idx);
                 (range.len(), Some(range), None)
             }
-            NodeKind::Leaf(_) => panic!("push_pair_onto_node: node {idx} holds no pairs"),
         };
         let len = old_len.checked_add(1).ok_or(OperationError::IndexOverflow)?;
         let at_tail = old_range.as_ref().is_some_and(|r| r.end == self.pairs.len());
@@ -451,32 +349,24 @@ impl TddLevel {
     /// Drop one pair from the node at `idx`, in place, and report whether the
     /// node still has pairs.
     ///
-    /// Returns `Ok(false)` when `pair` was the node's only one, leaving the
+    /// Returns `false` when `pair` was the node's only one, leaving the
     /// node untouched: a node with no pairs computes false, which invariant 2
     /// forbids, so emptying one is the caller's decision to make.
-    ///
-    /// # Errors
-    ///
-    /// `Err(OperationError::OverBudget)` if the re-encoding's range entry is
-    /// refused.
     ///
     /// # Panics
     ///
     /// Panics if the node does not hold `pair`; a caller reaches this through
     /// the level's own pair list.
-    pub(crate) fn remove_pair_from_node(
-        &mut self, eng: &Engine, idx: usize, pair: ChildPair,
-    ) -> Result<bool, OperationError> {
+    pub(crate) fn remove_pair_from_node(&mut self, idx: usize, pair: ChildPair) -> bool {
         let at = self.pairs_of_idx(idx).iter().position(|p| *p == pair)
             .unwrap_or_else(|| panic!("remove_pair_from_node: node {idx} does not hold {pair:?}"));
         let len = self.pairs_of_idx(idx).len();
-        if len == 1 { return Ok(false); }
-        self.reserve_shrunk_multi(eng, idx, len - 1)?;
+        if len == 1 { return false; }
         let range = self.pair_range_at(idx);
         self.pairs.copy_within(range.start + at + 1..range.end, range.start + at);
         let dead = self.reencode_shrunk_multi_reserved(idx, range.start, len, len - 1);
         self.note_dead_pairs(dead);
-        Ok(true)
+        true
     }
 
     /// Size the arenas for `nodes` more nodes and `pairs` more pairs, charging
@@ -510,25 +400,9 @@ impl TddLevel {
         input_pairs: &[ChildPair],
     ) -> Result<NodeIdx, ()> {
         let idx = NodeIdx(self.nodes.len() as u32);
-        debug_assert!(
-            input_pairs.len() != 1 || input_pairs[0].can_inline(),
-            "a stored pair has no reserved bit, so it inlines"
-        );
-        if input_pairs.len() == 1 && input_pairs[0].can_inline() {
+        if input_pairs.len() == 1 {
             reserve(&mut self.nodes, 1)?;
             self.nodes.push(EncodedNode::inline(input_pairs[0]));
-        } else if input_pairs.len() == 1 {
-            // Single pair that can't be inlined (right has `LEAF_BIT` or left has `MULTI_BIT`).
-            // Use extended encoding — the only form that supports pair_len=1 without
-            // aliasing either the leaf or `multi_ranged` encoding.
-            let pair_start = self.pairs.len();
-            reserve(&mut self.pairs, 1)?;
-            self.pairs.push(input_pairs[0]);
-            let multi_pairs_idx = self.multi_pairs.len();
-            reserve(&mut self.multi_pairs, 1)?;
-            self.multi_pairs.push(MultiPairRange { start: pair_start as u64, len: 1 });
-            reserve(&mut self.nodes, 1)?;
-            self.nodes.push(EncodedNode::multi_ranged(multi_pairs_idx as u32));
         } else {
             let pair_start = self.pairs.len();
             let pair_len = input_pairs.len();

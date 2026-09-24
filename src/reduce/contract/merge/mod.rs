@@ -75,7 +75,7 @@ pub(super) fn contract_twins(
     bufs.clear();
 
     plan_groups(tdd, t1, &policy, group_starts, flat_groups, bufs);
-    reserve_transactional(eng, tdd, t1, parent, bufs)?;
+    reserve_transactional(eng, tdd, t1, bufs)?;
     let merged_members = commit_group_actions(tdd, t1, &policy, remap, bufs);
     if merged_members == 0 {
         // Nothing merged: level untouched, no compaction or parent rewrite

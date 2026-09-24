@@ -458,7 +458,7 @@ fn debug_assert_pairs(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx, pairs: &[
 }
 
 /// Check the invariants the [module docs](super) list: one level per vtree
-/// node, empty leaf levels, no stored leaf-label or empty node, every pair
+/// node, empty leaf levels, no empty node, every pair
 /// side naming a live slot in its child level (decoded through `ChildDecoder::child`
 /// when the child is marginal, and never with bit 31 set), every overflowed
 /// marginal count backed by an exact value, marginality downward-closed, a
@@ -532,12 +532,6 @@ pub(crate) fn check_levels(
         );
         for (i, node) in lvl.nodes.iter().enumerate() {
             let node_idx = NodeIdx(i as u32);
-            if node.is_leaf() {
-                return Err(TddBuildError::LeafNodeStored {
-                    level: t,
-                    node: node_idx,
-                });
-            }
             let pairs = lvl.pairs_of(node);
             if pairs.is_empty() {
                 return Err(TddBuildError::EmptyNode {

@@ -46,12 +46,13 @@ fn contraction_garbage_is_swept_leaving_content_identical() {
     // Two nodes that survive both rounds untouched, so the sweep has to
     // handle them alongside the tail survivors — and in ascending-start, not
     // node, order (these keep the LOWEST starts while the merged survivors
-    // sit at the tail). First an extended (side-table) len-1 node, whose
-    // start lives in `multi_pairs` rather than the node word: a left ref with
-    // `MULTI_BIT` set cannot be inlined, which is what routes
-    // `push_internal_node` to the extended encoding. Then an inline node,
-    // which owns no arena slot at all.
-    level.push_internal_node(&[pair(1 << 31, 7)]);
+    // sit at the tail). First an extended (side-table) node, staged by hand
+    // since the encoder only goes extended past 2^31 slots: its start lives
+    // in `multi_pairs` rather than the node word. Then an inline node, which
+    // owns no arena slot at all.
+    level.pairs.extend([pair(1, 7), pair(2, 7)]);
+    level.multi_pairs.push(MultiPairRange { start: 0, len: 2 });
+    level.nodes.push(EncodedNode::multi_ranged(0));
     level.push_internal_node(&[pair(3, 4)]);
     let first_multi = level.nodes.len();
     for i in 0..n {
@@ -94,14 +95,15 @@ fn contraction_garbage_is_swept_leaving_content_identical() {
 /// Hand-encoded because the arm needs a length-≥2 extended node, which only a
 /// pair arena past the 31-bit start/length encoding mints in a real run.
 #[test]
-fn a_shrunk_extended_parent_node_rewrites_its_own_range_entry() {
+fn a_shrunk_extended_parent_node_inlines_its_survivor() {
     let vtree = std::sync::Arc::new(crate::vtree::Vtree::balanced(2));
     let root = vtree.root();
     let mut levels: Vec<TddLevel> =
         (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
-    // A right-side ref with bit 31 set: the survivor cannot go back inline, so
-    // the re-encoding has to keep a `multi_pairs` range for it.
-    let sibling = NodeIdx(1 << 31 | 3);
+    // An extended node staged by hand (the encoder only goes extended past
+    // 2^31 slots): its sole survivor goes inline, and its `multi_pairs` entry
+    // is left in place rather than replaced.
+    let sibling = NodeIdx(3);
     let parent = &mut levels[root.idx()];
     parent.pairs = vec![
         ChildPair::new(NodeIdx(0), sibling),
@@ -122,15 +124,13 @@ fn a_shrunk_extended_parent_node_rewrites_its_own_range_entry() {
     rewrite_parent(&mut tdd, root, ChildSide::Left, &remap);
 
     let parent = &tdd.levels[root.idx()];
-    assert_eq!(
-        parent.multi_pairs.len(), 1,
-        "the shrunk node must keep its own range entry, not abandon it",
-    );
-    assert_eq!(parent.multi_pairs[0], MultiPairRange { start: 0, len: 1 });
+    assert_eq!(parent.multi_pairs.len(), 1, "no range entry is added for an inlined survivor");
+    assert!(matches!(parent.nodes[0].kind(), NodeKind::Inline(_)), "the sole survivor is stored inline");
     assert_eq!(
         parent.pairs_of_idx(0),
         &[ChildPair::new(NodeIdx(0), sibling)],
     );
+    assert_eq!(parent.dead_pairs, 2, "the whole old range is abandoned");
 }
 
 /// A refused arena reservation retains merge capacity, and retry clears its plans.

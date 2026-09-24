@@ -94,7 +94,7 @@ fn group_node_pairs<D: SlotValues>(
     out: &mut Vec<PlanEntry<D::Value>>,
     sc: &mut PFusionScratch,
 ) -> Result<(), OperationError> {
-    if plevel.nodes[n].is_leaf() {
+    if !plevel.nodes[n].is_internal() {
         return Ok(());
     }
     // A same-x fusion group needs ≥2 pairs sharing one x_idx, which

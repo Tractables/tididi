@@ -220,7 +220,7 @@ fn fingerprint_level_nodes(
         // Indexes `level.nodes`, the level's pair arena and `node_fp` at the same position.
         #[expect(clippy::needless_range_loop)]
         for n in 0..width {
-            if level.nodes[n].is_leaf() {
+            if !level.nodes[n].is_internal() {
                 continue;
             }
             let pairs_slice = level.pairs_of_idx(n);
@@ -269,7 +269,7 @@ fn group_content_equal(
 
     {
         for n in 0..width {
-            if level.nodes[n].is_leaf() {
+            if !level.nodes[n].is_internal() {
                 // `is_leaf()` is true for real leaves as well as tombstones; skip both.
                 continue;
             }
