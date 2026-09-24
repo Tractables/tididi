@@ -26,7 +26,7 @@ use super::CONJOIN_GRID;
 use crate::diagram::{self, *};
 
 use crate::limits::OperationError;
-use crate::apply::conjoin::budget::{reserve_pairs_for_emit, NO_PRODUCT};
+use crate::apply::conjoin::budget::{finish_node, reserve_pairs_for_emit, NO_PRODUCT};
 
 mod spine;
 use spine::*;

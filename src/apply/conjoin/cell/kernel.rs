@@ -39,10 +39,9 @@ pub(crate) fn row_alive_masks(ctx: &CellCtx<'_>, inputs1: &[ChildPair]) -> Optio
     Some((left_alive_mask, right_alive_mask))
 }
 
-/// Emit a product node from pairs accumulated in `level.pairs[pair_start..]`.
-/// Handles inline (1 pair) vs multi-pair encoding and updates `node_idx`.
-/// For huge cells (pair_start or `pair_count` ≥ 2^31), uses the extended
-/// side-table encoding via `level.try_push_multi_by_range`.
+/// Emit a product node from the pairs accumulated in
+/// `level.pairs[pair_start..]` and record it at `grid_pos`; a cell that
+/// pushed none leaves `NO_PRODUCT` there.
 #[inline(always)]
 pub(crate) fn emit_product_node(
     eng: &Engine,
@@ -50,22 +49,9 @@ pub(crate) fn emit_product_node(
     node_idx: &mut [u32],
     grid_pos: usize,
     pair_start: usize,
-    pair_count: usize,
 ) -> Result<(), OperationError> {
-    if pair_count > 0 {
-        let nid = level.nodes.len() as u32;
-        node_idx[grid_pos] = nid;
-        if pair_count == 1 {
-            // Phase F: pop from whichever backing is active.
-            let pair = level.pop_pair().unwrap();
-            emit_single_pair(eng, level, pair)?;
-        } else {
-            // Invariant for `try_push_multi_by_range`: `pair_count >= 2` here —
-            // the single-pair case is dispatched to the inline/extended path in
-            // the arm above. Its fast path only `debug_assert!`s this.
-            level.try_push_multi_by_range(pair_start, pair_count)
-                .map_err(|_| OperationError::OverBudget)?;
-        }
+    if let Some(node) = finish_node(eng, level, pair_start)? {
+        node_idx[grid_pos] = node.0;
     }
     Ok(())
 }
@@ -73,7 +59,7 @@ pub(crate) fn emit_product_node(
 /// Emit a node holding exactly `pair`, stored inline. The push is
 /// budget-charged.
 #[inline(always)]
-fn emit_single_pair(eng: &Engine, level: &mut TddLevel, pair: ChildPair) -> Result<(), OperationError> {
+pub(in crate::apply::conjoin) fn emit_single_pair(eng: &Engine, level: &mut TddLevel, pair: ChildPair) -> Result<(), OperationError> {
     eng.limits().try_push(&mut level.nodes, EncodedNode::inline(pair))
 }
 
@@ -164,7 +150,7 @@ impl PairSink for EmitSink<'_> {
         start: usize,
     ) -> Result<usize, OperationError> {
         let pair_count = self.level.pair_tail_len(start);
-        emit_product_node(eng, self.level, node_idx, grid_pos, start, pair_count)?;
+        emit_product_node(eng, self.level, node_idx, grid_pos, start)?;
         Ok(pair_count)
     }
 }

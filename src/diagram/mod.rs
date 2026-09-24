@@ -206,7 +206,7 @@ pub use weights::{Arithmetic, WeightStore};
 
 // level
 pub use level::{CountOverflow, TddLevel};
-pub(crate) use level::{assert_can_make_marginal, sort_pairs, Untracked};
+pub(crate) use level::{assert_can_make_marginal, sort_pairs};
 
 // pool
 pub(crate) use pool::{return_levels, take_levels, try_take_levels};

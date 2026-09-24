@@ -2,8 +2,10 @@
 //! increments, and the poll strides the cell loops run at.
 
 use crate::Engine;
+use crate::diagram::{NodeIdx, TddLevel};
 use crate::limits::PAIR_ELEM_BYTES;
 use crate::limits::OperationError;
+use super::cell::emit_single_pair;
 
 /// Sentinel for dead product cells: `f[i] ∧ g[j] = ⊥` (no output node created).
 ///
@@ -73,6 +75,35 @@ fn push_pair_grow(
     // thing that moves capacity.
     lim.charge_output_pairs(v.capacity().saturating_sub(pre_cap));
     out
+}
+
+/// Turn the pairs pushed since `pair_start` into the level's next node and
+/// say which node it is; `None` when nothing was pushed, so the product is
+/// `⊥`. A single pair is popped back off the arena and stored inline
+/// ([`emit_single_pair`]); two or more stay in the arena as the node's
+/// range. The one node finalizer of the dense, sparse and clause emitters,
+/// so every route meters its node the same way.
+#[inline(always)]
+pub(crate) fn finish_node(
+    eng: &Engine,
+    level: &mut TddLevel,
+    pair_start: usize,
+) -> Result<Option<NodeIdx>, OperationError> {
+    let pair_count = level.pair_tail_len(pair_start);
+    if pair_count == 0 {
+        return Ok(None);
+    }
+    let node = NodeIdx(level.nodes.len() as u32);
+    if pair_count == 1 {
+        let pair = level.pop_pair().expect("the tail holds one pair");
+        emit_single_pair(eng, level, pair)?;
+    } else {
+        // `try_push_multi_by_range` needs two or more pairs, which the arm
+        // above guarantees.
+        level.try_push_multi_by_range(pair_start, pair_count)
+            .map_err(|_| OperationError::OverBudget)?;
+    }
+    Ok(Some(node))
 }
 
 /// Minimum bounded-growth increment for `level.pairs`, in bytes (1 M pairs at

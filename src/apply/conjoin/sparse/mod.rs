@@ -7,7 +7,7 @@ use smallvec::SmallVec;
 
 use crate::vtree::VtreeIdx;
 use crate::Engine;
-use super::{OperationError, NO_PRODUCT, Tdd, TddLevel, ChildPair, CONJOIN_GRID};
+use super::{OperationError, NO_PRODUCT, Tdd, TddLevel, ChildPair, CONJOIN_GRID, finish_node, reserve_pairs_for_emit};
 use super::products::{LeftNodeIdx, ProductEntry, ProductLists, ProductNodeIdx, RightNodeIdx};
 
 mod config;

@@ -69,14 +69,14 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
         level.pairs.push(pair);
         sort_pairs(&mut level.pairs[ct_start..]);
     }
-    let ct = emit_from(level, ct_start)?;
+    let ct = emit_from(eng, level, ct_start)?;
     // The parent's both-relevant pass requires the c_t index below d_t. The
     // d_t pairs fit the reservation above: at most one per input pair, which
     // `pair_mult` counts.
     let dt = if DT {
         let dt_start = level.pairs.len();
         level.pairs.extend_from_slice(tables.dt_pairs);
-        emit_from(level, dt_start)?
+        emit_from(eng, level, dt_start)?
     } else {
         NO_PRODUCT
     };
@@ -188,29 +188,12 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
 }
 
 /// Emit the node whose pairs sit at `level.pairs[pair_start..]` and return
-/// its index, or [`NO_PRODUCT`] when there are none. A single pair is popped
-/// back off the arena and re-dispatched so its encoding is the inline one.
+/// its index, or [`NO_PRODUCT`] when there are none.
 ///
 /// The pairs are not deduplicated: at a level whose subtree includes a
 /// marginal child the accumulator's pair list may be a multiset, two equal
 /// pairs each carrying one summed-out family's contribution, and dropping one
 /// loses count.
-fn emit_from(level: &mut TddLevel, pair_start: usize) -> Result<u32, OperationError> {
-    let pair_len = level.pairs.len() - pair_start;
-    if pair_len == 0 {
-        return Ok(NO_PRODUCT);
-    }
-    let idx = level.nodes.len() as u32;
-    if pair_len == 1 {
-        let pair = level.pairs[pair_start];
-        level.pairs.truncate(pair_start);
-        level.push_node(&crate::diagram::Untracked, &[pair])?;
-    } else {
-        // `try_push_multi_by_range` requires `pair_len >= 2`, which the arm
-        // above guarantees.
-        level
-            .try_push_multi_by_range(pair_start, pair_len)
-            .map_err(|_| OperationError::OverBudget)?;
-    }
-    Ok(idx)
+fn emit_from(eng: &Engine, level: &mut TddLevel, pair_start: usize) -> Result<u32, OperationError> {
+    Ok(finish_node(eng, level, pair_start)?.map_or(NO_PRODUCT, |node| node.0))
 }

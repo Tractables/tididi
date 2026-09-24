@@ -11,7 +11,7 @@ use crate::Engine;
 
 mod rows_stream;
 pub(crate) use rows_stream::run_level_rows_stream_count;
-use super::{OperationError, NO_PRODUCT, try_push_pair_into};
+use super::{OperationError, NO_PRODUCT, finish_node, try_push_pair_into};
 use super::streaming_marginal::{attach_children, StreamEnv, StreamLevelState, StreamState};
 use crate::value::ValueDomain;
 use super::child_lookup::{ChildLookup, MarginalLookup};

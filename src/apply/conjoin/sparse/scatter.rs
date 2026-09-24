@@ -757,6 +757,11 @@ pub(super) fn flush_chunk_phase_f(
     )?;
 
     lim.reserve(&mut level.nodes, num_new_parents)?;
+    // The chunk's pairs are appended to the level's arena under one reserve
+    // and cut into nodes; the output-pair meter is charged once for the
+    // growth, as the dense walk's choke point charges per growth event.
+    let pre_pairs_cap = level.pairs.capacity();
+    reserve_pairs_for_emit(eng, level, ws.pairs_by_parent.entries.len())?;
     let by_parent = ws.pairs_by_parent.view();
     for i in 0..num_new_parents {
         let pair_slice = by_parent.bucket(i);
@@ -771,12 +776,10 @@ pub(super) fn flush_chunk_phase_f(
             },
             "sparse apply: duplicate pair emitted — canonicity violated"
         );
-        // Output-pair meter, charged around the sparse builder's own emit: it
-        // grows `level.pairs` with a raw `try_reserve`, so the dense walk's
-        // choke point never sees these. See `Limits::pairs_in_flight`.
-        let pre_pairs_cap = level.pairs.capacity();
-        level.push_node(&crate::diagram::Untracked, pair_slice)?;
-        lim.charge_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
+        let pair_start = level.pairs.len();
+        level.pairs.extend_from_slice(pair_slice);
+        finish_node(eng, level, pair_start)?.expect("every product of the chunk emitted a pair");
     }
+    lim.charge_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
     Ok(())
 }
