@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use rustc_hash::{FxHashMap, FxHasher};
 
-use crate::diagram::{ChildPair, NodeIdx, Tdd, TddBuilder, TddNodeId};
+use crate::diagram::{Assembly, ChildPair, NodeIdx, Tdd, TddNodeId};
 use crate::diagram::{NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
 use crate::limits::{Charged, Limits, OperationError};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
@@ -163,7 +163,7 @@ struct Scratch {
     leaf_values: Vec<u8>,
     /// The level's pairs, each above its atom, ready to sort.
     pairs: Vec<u128>,
-    /// One atom's pairs, as the builder takes them.
+    /// One atom's pairs, as the assembly takes them.
     pair_list: Vec<ChildPair>,
 }
 
@@ -184,11 +184,8 @@ fn from_models(
 
     let mut layout = eng.model_layout().checkout(lim);
     layout.prepare_for(lim, vtree, vars)?;
-    if rows.is_empty() {
-        return Ok(super::constant_zero(eng, vtree));
-    }
-    if vars.is_empty() {
-        return Ok(super::constant_one(eng, vtree));
+    if rows.is_empty() || vars.is_empty() {
+        return super::constant_on(eng, vtree, !rows.is_empty());
     }
     if rows.len() / w > NodeIdx::MAX_LIVE {
         // A level holds at most one node per row, and the pass indexes the
@@ -199,9 +196,11 @@ fn from_models(
     let sorted = distinct_rows(lim, vars.len(), &layout, rows, w)?;
     let m = sorted.len() / w;
 
-    let mut builder = crate::diagram::Assembly::new(eng, vtree)?;
-    let output = fill(eng, &mut builder, vtree, &layout, &sorted, w, m)?;
-    builder.finish_checked(output)
+    let mut assembly = Assembly::new(eng, vtree)?;
+    let output = fill(eng, &mut assembly, vtree, &layout, &sorted, w, m)?;
+    // The levels are canonical as built: seat them with nothing to reduce.
+    let (levels, _) = assembly.parts_mut();
+    Ok(super::seat_canonical(eng, vtree, std::mem::take(levels), output))
 }
 
 /// The value of the `width` bits starting at `lo` in a row, for a `width` of
@@ -269,7 +268,7 @@ fn compare_value(
 /// Fill every level bottom-up and return the diagram's output node.
 fn fill(
     eng: &Engine,
-    builder: &mut TddBuilder,
+    assembly: &mut Assembly<'_>,
     vtree: &Arc<Vtree>,
     layout: &Layout,
     sorted: &[u64],
@@ -289,15 +288,15 @@ fn fill(
         let leaf = vtree.node(t).is_leaf();
         let width = layout.count[t.idx()] as usize;
         let finished = match (width, one_sided_child(vtree, layout, t)) {
-            (0, _) => free_subtree(eng, builder, vtree, &state, t, leaf)?,
+            (0, _) => free_subtree(eng, assembly, vtree, &state, t, leaf)?,
             (_, Some(constrained)) => {
-                carry_child(eng, builder, vtree, &mut state, t, constrained)?
+                carry_child(eng, assembly, vtree, &mut state, t, constrained)?
             }
             _ => {
                 let lo = layout.lo[t.idx()] as usize;
                 let span = ValueSpan { lo, width, at_top: lo + width == num_vars };
                 let atoms = group_rows(lim, &mut scratch, sorted, w, span, m)?;
-                store_level(eng, builder, vtree, &state, &mut scratch, t, atoms)?
+                store_level(eng, assembly, vtree, &state, &mut scratch, t, atoms)?
             }
         };
         if !leaf {
@@ -340,7 +339,7 @@ fn one_sided_child(vtree: &Vtree, layout: &Layout, t: VtreeIdx) -> Option<VtreeI
 /// every assignment to the subtree's leaves.
 fn free_subtree(
     eng: &Engine,
-    builder: &mut TddBuilder,
+    assembly: &mut Assembly<'_>,
     vtree: &Arc<Vtree>,
     state: &[Option<Finished>],
     t: VtreeIdx,
@@ -351,7 +350,7 @@ fn free_subtree(
     } else {
         let (left, right) = vtree.children(t);
         let pair = ChildPair::new(true_node(state, left), true_node(state, right));
-        builder.push(eng, t, &[pair])?
+        assembly.push(eng, t, &[pair])?
     };
     let mut locals = Vec::new();
     eng.limits().reserve_exact(&mut locals, 1)?;
@@ -373,7 +372,7 @@ fn below(state: &[Option<Finished>], t: VtreeIdx) -> &Finished {
 /// atoms are that child's, each paired with the free side's true node.
 fn carry_child(
     eng: &Engine,
-    builder: &mut TddBuilder,
+    assembly: &mut Assembly<'_>,
     vtree: &Arc<Vtree>,
     state: &mut [Option<Finished>],
     t: VtreeIdx,
@@ -384,14 +383,14 @@ fn carry_child(
     let from = state[constrained.idx()].take().expect("a child is finished before its parent");
     let mut locals = Vec::new();
     eng.limits().reserve_exact(&mut locals, from.locals.len())?;
-    builder.reserve(eng, t, from.locals.len(), 0)?;
+    assembly.reserve(eng, t, from.locals.len(), 0)?;
     for &child in &from.locals {
         let pair = if constrained == left {
             ChildPair::new(child, free_local)
         } else {
             ChildPair::new(free_local, child)
         };
-        locals.push(builder.push(eng, t, &[pair])?);
+        locals.push(assembly.push(eng, t, &[pair])?);
     }
     Ok(Finished { atoms: from.atoms, locals })
 }
@@ -617,7 +616,7 @@ fn same_completions(
 /// Store one node per atom, and record where each landed.
 fn store_level(
     eng: &Engine,
-    builder: &mut TddBuilder,
+    assembly: &mut Assembly<'_>,
     vtree: &Arc<Vtree>,
     state: &[Option<Finished>],
     scratch: &mut Scratch,
@@ -658,7 +657,7 @@ fn store_level(
     scratch.pairs.sort_unstable();
     scratch.pairs.dedup();
 
-    builder.reserve(eng, t, atoms.count, scratch.pairs.len())?;
+    assembly.reserve(eng, t, atoms.count, scratch.pairs.len())?;
     let mut at = 0usize;
     for a in 0..atoms.count {
         scratch.pair_list.clear();
@@ -669,7 +668,7 @@ fn store_level(
             at += 1;
         }
         debug_assert!(!scratch.pair_list.is_empty(), "every atom is realized by a row");
-        locals.push(builder.push(eng, t, &scratch.pair_list)?);
+        locals.push(assembly.push(eng, t, &scratch.pair_list)?);
     }
     Ok(Finished { atoms: AtomOfRow::PerRow(atoms.of_row), locals })
 }

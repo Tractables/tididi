@@ -9,8 +9,8 @@ use crate::test_helpers::clause_to_tdd;
 
 
 use crate::diagram::ZERO;
-use crate::test_helpers::{assert_canonical, literals, vtree_shapes};
-use crate::vtree::{Vtree, VtreeIdx};
+use crate::test_helpers::{assert_canonical, assert_same_shape, literals, vtree_shapes};
+use crate::vtree::{VarId, Vtree, VtreeIdx};
 
 #[test]
 fn test_constant_one() {
@@ -227,5 +227,33 @@ fn a_clause_reads_its_literals_as_a_set() {
             (Tdd::clause(&vtree, literals(&[1, 2])).unwrap()).model_count().unwrap(),
             "{name}: a repeated literal says nothing new"
         );
+    }
+}
+
+/// Constants, cubes and relations are canonical as built: no level owes a
+/// reduction pass, the output is certified, and a full reduction of an
+/// uncertified copy changes nothing.
+#[test]
+fn constructors_come_out_certified_at_their_reduction_fixpoint() {
+    let eng = &crate::Engine::new();
+    for (shape, vtree) in vtree_shapes(5) {
+        let built = [
+            constant_one(eng, &vtree),
+            constant_zero(eng, &vtree),
+            eng.cube(&vtree, std::iter::empty::<Literal>()).unwrap(),
+            eng.cube(&vtree, [1, -3, 5]).unwrap(),
+            eng.from_models(&vtree, &[VarId(1), VarId(3), VarId(5)], &[0b101, 0b010, 0b111]).unwrap(),
+            eng.from_models(&vtree, &[], &[0]).unwrap(),
+            constant_like(eng, &constant_one(eng, &vtree), false).unwrap(),
+        ];
+        for f in built {
+            assert!(f.dirty.is_empty(), "{shape}: a level was left on a worklist");
+            assert!(f.levels.is_canonical(f.output), "{shape}: the output is not certified");
+            assert_canonical(&f);
+            let mut again = f.clone();
+            again.levels.forget();
+            again.minimize().unwrap();
+            assert_same_shape(&again, &f, shape);
+        }
     }
 }

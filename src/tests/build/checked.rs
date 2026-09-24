@@ -136,3 +136,20 @@ fn literal_conversion_handles_signed_endpoints_and_borrowed_inputs() {
     }
     assert_eq!(literal(&vtree, 2).err(), Some(OperationError::VariableNotInVtree(VarId(2))));
 }
+
+#[test]
+fn a_constant_built_inside_an_operation_observes_the_stop_rules() {
+    let vtree = Arc::new(Vtree::balanced(8));
+    let eng = Engine::new();
+    eng.limits().pin_reduce_poll_stride(Some(2));
+    {
+        let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(StopRules {
+            unconditional: Some(StopAt::WorkUnits(2)), ..StopRules::default()
+        }));
+        // No constrained variable: the relation is the constant-true diagram.
+        assert_eq!(eng.from_models(&vtree, &[], &[0]).err(), Some(OperationError::Stopped));
+    }
+    let all = eng.from_models(&vtree, &[], &[0]).unwrap();
+    assert_canonical(&all);
+    assert_eq!(all.model_count().unwrap(), 256u32.into());
+}
