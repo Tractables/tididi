@@ -19,6 +19,17 @@ pub struct GraftLayout {
     pub(crate) chain_internals: Vec<VtreeIdx>,
 }
 
+/// The id space a graft of `subtrees` and `spine_vars` needs when the pieces
+/// keep their own variable ids: the largest id any of them carries.
+pub(crate) fn graft_id_space<'a>(subtrees: impl IntoIterator<Item = &'a Vtree>, spine_vars: &[VarId]) -> u32 {
+    subtrees
+        .into_iter()
+        .map(Vtree::num_vars)
+        .chain(spine_vars.iter().map(|v| v.0))
+        .max()
+        .unwrap_or(0)
+}
+
 impl Vtree {
     /// Join independent subtrees and single-variable leaves under one
     /// left-linear spine: `subtrees[0]` is the leftmost piece, each later
@@ -56,12 +67,7 @@ impl Vtree {
     /// # Ok::<(), tididi::vtree::VtreeError>(())
     /// ```
     pub fn graft(subtrees: &[Vtree], spine_vars: &[VarId]) -> Result<Self, VtreeError> {
-        let num_vars = subtrees
-            .iter()
-            .map(Vtree::num_vars)
-            .chain(spine_vars.iter().map(|v| v.0))
-            .max()
-            .unwrap_or(0);
+        let num_vars = graft_id_space(subtrees.iter(), spine_vars);
         let refs: Vec<&Vtree> = subtrees.iter().collect();
         Self::graft_over(&refs, |_, v| v, spine_vars, num_vars).map(|(vtree, _)| vtree)
     }

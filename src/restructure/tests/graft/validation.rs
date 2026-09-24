@@ -72,6 +72,8 @@ fn graft_rejects_variables_outside_the_destination_space() {
     assert_canonical(&f);
     assert_eq!(Tdd::graft_over(&Engine::new(), vec![(f, vec![VarId(3)])], &[], 2, None).unwrap_err(), GraftError::VariableOutOfRange { variable: VarId(3), num_vars: 2 });
     assert_eq!(Tdd::graft(vec![], &[VarId(0)]).unwrap_err(), GraftError::VariableOutOfRange { variable: VarId(0), num_vars: 0 });
+    // A zero spine variable beside real parts names the space those parts span.
+    assert_eq!(Tdd::graft(vec![Tdd::one(&Arc::new(Vtree::balanced(4)))], &[VarId(0)]).unwrap_err(), GraftError::VariableOutOfRange { variable: VarId(0), num_vars: 4 });
 }
 
 #[test]

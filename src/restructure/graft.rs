@@ -63,17 +63,7 @@ impl Tdd {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn graft(parts: Vec<Tdd>, spine_vars: &[VarId]) -> Result<Tdd, GraftError> {
-        for &variable in spine_vars {
-            if variable.0 == 0 {
-                return Err(GraftError::VariableOutOfRange { variable, num_vars: 0 });
-            }
-        }
-        let num_vars = parts
-            .iter()
-            .map(|t| t.vtree.num_vars())
-            .chain(spine_vars.iter().map(|v| v.0))
-            .max()
-            .unwrap_or(0);
+        let num_vars = crate::vtree::graft::graft_id_space(parts.iter().map(|t| &*t.vtree), spine_vars);
         let context = parts.first().map(|part| Arc::clone(part.context())).unwrap_or_default();
         context.run(|eng| graft_impl(eng, parts, |_, v| v, spine_vars, num_vars, None))
             .map(|(tdd, _)| tdd)
