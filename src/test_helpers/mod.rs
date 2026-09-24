@@ -1,15 +1,14 @@
 //! The generators, oracles and invariant checkers the crate's tests share.
 //!
-//! `check` compiles in every debug build, because the library's own
-//! `debug_assert` sites call it. Everything else needs the `testing` feature,
+//! `check` compiles in every debug build, because the reduction's
+//! `debug_assertions` sites call it. Everything else needs the `testing` feature,
 //! which is how a consumer's tests, and this crate's integration tests, reach
 //! it: the seeded `Lcg` / `rand_cnf` pair under a `CnfShape`, the
 //! enumeration oracles, the apply-free evaluator `eval`, canonicity by
 //! `assert_canonical`, structural equality by `assert_same_shape`, and
 //! `assert_restrict_ok`; `compile` turns a formula or a truth table into a
 //! diagram and holds the small constructors (`pair`, `rat`, `exact_weight`)
-//! hand-built fixtures need. Two modules need crate-private state and are
-//! `cfg(test)`:
+//! hand-built fixtures need. Two modules are `cfg(test)` throughout:
 //!
 //! - `toy` — hand-encoded marginal diagrams too small to reach by compiling,
 //!   and `marginalize_subtree`.

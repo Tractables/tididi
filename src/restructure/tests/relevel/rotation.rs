@@ -413,7 +413,7 @@ fn rotate_left_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::vt
     let snap = snapshot_levels(tdd);
     tdd.vtree = Arc::new(vt);
     let _ = rebuild_rotated_levels(eng.limits(), tdd, &info, RotationKind::Left, &mut RestructureScratch::default(), usize::MAX);
-    crate::test_helpers::check::debug_assert_rotation_locality(eng, tdd, info.w_idx);
+    crate::test_helpers::check::assert_rotation_locality(eng, tdd, info.w_idx);
     let _ = tdd.take_worklists();
     assert_locality(tdd, &snap, v_idx, w_idx);
     assert_canonical(tdd);
@@ -428,7 +428,7 @@ fn rotate_right_and_check_locality(eng: &Engine, tdd: &mut Tdd, target: crate::v
     let snap = snapshot_levels(tdd);
     tdd.vtree = Arc::new(vt);
     let _ = rebuild_rotated_levels(eng.limits(), tdd, &info, RotationKind::Right, &mut RestructureScratch::default(), usize::MAX);
-    crate::test_helpers::check::debug_assert_rotation_locality(eng, tdd, info.w_idx);
+    crate::test_helpers::check::assert_rotation_locality(eng, tdd, info.w_idx);
     let _ = tdd.take_worklists();
     assert_locality(tdd, &snap, v_idx, w_idx);
     assert_canonical(tdd);

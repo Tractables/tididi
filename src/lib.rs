@@ -78,8 +78,8 @@ pub mod io;
 pub mod guide;
 
 // Invariant checkers, generators and oracles. The checkers compile in a debug
-// build regardless of the feature, because the `debug_assert` sites in
-// `reduce`, `marginal` and `restructure` call them; the rest needs `testing`.
+// build regardless of the feature, because the `debug_assertions` sites in
+// `reduce` call them; the rest needs `testing`.
 // A consumer's release build has none of it.
 #[cfg(any(test, debug_assertions, feature = "testing"))]
 #[doc(hidden)]

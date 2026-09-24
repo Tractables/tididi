@@ -24,7 +24,7 @@ use crate::vtree::VtreeIdx;
 ///
 /// Drains the contract worklist as the contraction does; the caller clears
 /// the worklists afterwards either way.
-pub fn debug_assert_rotation_locality(eng: &Engine, tdd: &mut Tdd, w_idx: VtreeIdx) {
+pub fn assert_rotation_locality(eng: &Engine, tdd: &mut Tdd, w_idx: VtreeIdx) {
     if tdd.has_marginal_level() {
         return;
     }

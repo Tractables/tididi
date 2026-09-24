@@ -1,6 +1,6 @@
 //! The invariant checkers, one per numbered invariant. Compiled in every
-//! debug build, because the library's own `debug_assert` sites call them, and
-//! under the `testing` feature in any profile.
+//! debug build, because the reduction's `debug_assertions` sites call them,
+//! and under the `testing` feature in any profile.
 //!
 //! A checker reports and never repairs: restoring an invariant belongs to the
 //! pass that broke it, in [`crate::reduce`] or [`Tdd::marginalize_levels`](crate::Tdd::marginalize_levels). Every
@@ -20,7 +20,7 @@ mod soundness;
 mod structure;
 
 pub use canonicity::check_canonicity;
-pub use rotation::debug_assert_rotation_locality;
+pub use rotation::assert_rotation_locality;
 pub use soundness::check_determinism;
 pub use structure::{check_no_false_nodes, validate_vtree_structure};
 
