@@ -178,10 +178,10 @@ impl Products {
         for (level, cells) in children { self.arena.free_child(level, cells); }
     }
 
-    /// Ensure `product_lists[ci]` is populated. Tries the cheap identity fast
-    /// path first (constant-true operand → the product list is just the
-    /// non-identity operand's nodes); falls back to scanning the dense grid.
-    /// Used on both the sparse and dense paths of the level loop.
+    /// Build level `ci`'s product list if it is not built yet: from the
+    /// identity mapping when an operand is constant-true, by scanning the
+    /// level's grid otherwise. Used on both the sparse and dense paths of the
+    /// level loop.
     pub(super) fn ensure_product_list_for_child(
         &mut self,
         eng: &Engine,
@@ -189,15 +189,9 @@ impl Products {
         right_identity: bool, left_identity: bool,
     ) -> Result<(), OperationError> {
         if self.has_pl[ci] { return Ok(()); }
-        if !fill_identity_product_list(
-            eng,
-            left_width, right_width,
-            right_identity, left_identity,
-            &mut self.product_lists[ci],
-        )? {
-            self.arena.ensure_product_list(
-                eng, ci, left_width, right_width, &mut self.product_lists[ci], &mut self.has_pl,
-            )?;
+        let list = &mut self.product_lists[ci];
+        if !fill_identity_product_list(eng, left_width, right_width, right_identity, left_identity, list)? {
+            self.arena.scan_product_list(eng, ci, left_width, right_width, list)?;
         }
         self.has_pl[ci] = true;
         Ok(())
@@ -207,7 +201,7 @@ impl Products {
     /// if not already built, then grid it.
     ///
     /// This is the dense path, so the child is known to be ungridded — the
-    /// identity fast path is the only way to build its product list.
+    /// identity mapping is the only way to build its product list.
     pub(super) fn materialize_dense_child(
         &mut self,
         eng: &Engine,
@@ -216,15 +210,9 @@ impl Products {
         right_width_c: usize,
         right_identity: bool, left_identity: bool,
     ) -> Result<(), OperationError> {
-        if !self.has_pl[idx] {
-            let filled = fill_identity_product_list(
-                eng, left_width_c, right_width_c,
-                right_identity, left_identity,
-                &mut self.product_lists[idx],
-            )?;
-            cheap_assert!(filled, "an ungridded child on the dense path has an identity operand");
-            self.has_pl[idx] = true;
-        }
+        cheap_assert!(self.has_pl[idx] || right_identity || left_identity,
+            "an ungridded child on the dense path has an identity operand");
+        self.ensure_product_list_for_child(eng, idx, left_width_c, right_width_c, right_identity, left_identity)?;
         self.arena.ensure_grid(eng, idx, left_width_c, right_width_c, &self.product_lists[idx])
     }
 }

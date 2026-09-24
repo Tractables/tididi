@@ -240,17 +240,15 @@ impl GridArena {
         Ok(())
     }
 
-    /// Ensure level `ti` has a product list, scanning its grid if not.
-    pub(super) fn ensure_product_list(
+    /// Append level `ti`'s live cells to `product_list`, scanning its grid.
+    pub(super) fn scan_product_list(
         &self,
         eng: &Engine,
         ti: usize, left_width: usize, right_width: usize,
-        product_list: &mut Vec<ProductEntry>, has_pl: &mut [bool],
+        product_list: &mut Vec<ProductEntry>,
     ) -> Result<(), OperationError> {
         let lim = eng.limits();
-        if has_pl[ti] { return Ok(()); }
-        has_pl[ti] = true;
-        let base = self.materialized(ti).expect("expected allocated grid, found Sparse").idx();
+        let base = self.materialized(ti).expect("a product list is scanned from a materialized grid").idx();
         let slab = self.slab();
         for i in 0..left_width {
             for j in 0..right_width {
