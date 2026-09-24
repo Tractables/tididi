@@ -324,8 +324,8 @@ fn push_local_targets(
     let mut into_f = Transient::new(lim, Vec::<VtreeIdx>::new());
     let mut into_g = Transient::new(lim, Vec::<VtreeIdx>::new());
     {
-        let mut free_in_f = eng.apply().left_identity.checkout(lim);
-        let mut free_in_g = eng.apply().right_identity.checkout(lim);
+        let mut free_in_f = eng.apply().f_identity.checkout(lim);
+        let mut free_in_g = eng.apply().g_identity.checkout(lim);
         super::conjoin::init_leaf_identity(eng, &mut free_in_f, &f)?;
         super::conjoin::init_leaf_identity(eng, &mut free_in_g, &g)?;
         for &leaf in targets {

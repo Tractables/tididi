@@ -38,9 +38,9 @@ pub(crate) struct RowLoop<'a> {
 /// exclusive borrows, and a route that hands them on moves the bundle.
 pub(crate) struct RowScratch<'a> {
     /// Decode buffer for the current row's `f` pairs.
-    pub(crate) inputs1: &'a mut Vec<ChildPair>,
+    pub(crate) f_pairs: &'a mut Vec<ChildPair>,
     /// Decode buffer for the current cell's `g` pairs.
-    pub(crate) inputs2: &'a mut Vec<ChildPair>,
+    pub(crate) g_pairs: &'a mut Vec<ChildPair>,
     /// The product-grid slab.
     pub(crate) node_idx: &'a mut [u32],
 }
@@ -62,10 +62,10 @@ pub(super) struct CellArgs<'a, 'c, L, R> {
     /// and the kernel cannot drift.
     pub(super) row_base: usize,
     /// Decoded pairs of f row `i` (never empty — empty rows are skipped).
-    pub(super) inputs1: &'a [ChildPair],
+    pub(super) f_pairs: &'a [ChildPair],
     pub(super) ctx: &'a CellCtx<'c>,
     pub(super) right_level_t: &'a TddLevel,
-    pub(super) inputs2_scratch: &'a mut Vec<ChildPair>,
+    pub(super) g_pairs_scratch: &'a mut Vec<ChildPair>,
     pub(super) node_idx: &'a mut [u32],
     pub(super) left: &'a L,
     pub(super) right: &'a R,
@@ -135,7 +135,7 @@ where
     let RowLoop { f_level: left_level_t, g_level: right_level_t, ctx, f_width: left_width, .. } = rows;
     // Named once, ahead of the row loop, so the loop body indexes locals rather
     // than reaching back through the bundle at every cell.
-    let RowScratch { inputs1: inputs1_scratch, inputs2: inputs2_scratch, node_idx } = scratch;
+    let RowScratch { f_pairs: f_pairs_scratch, g_pairs: g_pairs_scratch, node_idx } = scratch;
     let lim = eng.limits();
     // Amortized wall-deadline/cancel poll: one read per ~65k cell iterations
     // so an expired deadline cuts within a fraction of a level rather than
@@ -177,17 +177,17 @@ where
             );
         }
 
-        let inputs1 =
-            left_level_t.pairs_view_decoded(i, inputs1_scratch, ctx.sides.left.plan.view, ctx.sides.right.plan.view);
+        let f_pairs =
+            left_level_t.pairs_view_decoded(i, f_pairs_scratch, ctx.sides.left.plan.view, ctx.sides.right.plan.view);
         // Empty pairs means dead (zero-containing) node — skip this row.
-        if inputs1.is_empty() {
+        if f_pairs.is_empty() {
             continue;
         }
 
         let (left_alive_mask, right_alive_mask) = if DENSE {
             (0u128, u128::MAX)
         } else {
-            match row_alive_masks(ctx, inputs1) {
+            match row_alive_masks(ctx, f_pairs) {
                 Some(masks) => masks,
                 // Row skip: if f[i]'s pairs all reference dead child rows,
                 // no cell in this row can produce output.
@@ -216,12 +216,12 @@ where
                     j,
                     i,
                     row_base,
-                    inputs1,
+                    f_pairs,
                     ctx,
                     right_level_t,
                     left,
                     right,
-                    inputs2_scratch: &mut *inputs2_scratch,
+                    g_pairs_scratch: &mut *g_pairs_scratch,
                     node_idx: &mut *node_idx,
                     gate: &mut poll,
                 },
@@ -266,10 +266,10 @@ impl<const A: bool, L: ChildLookup, R: ChildLookup> CellAction<L, R> for Emit<'_
             eng,
             a.j,
             a.row_base,
-            a.inputs1,
+            a.f_pairs,
             a.ctx,
             a.right_level_t,
-            a.inputs2_scratch,
+            a.g_pairs_scratch,
             a.node_idx,
             a.left,
             a.right,
@@ -339,10 +339,10 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for SparseMargEmit<'_> {
             eng,
             a.j,
             a.row_base,
-            a.inputs1,
+            a.f_pairs,
             a.ctx,
             a.right_level_t,
-            a.inputs2_scratch,
+            a.g_pairs_scratch,
             a.node_idx,
             a.left,
             a.right,

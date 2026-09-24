@@ -174,11 +174,11 @@ impl Route {
     ) -> Result<(), OperationError> {
         let LevelShape { t, left, right, .. } = shape;
         let (left_idx, right_idx) = (left.idx(), right.idx());
-        let ApplyRun { left_identity, right_identity, .. } = run;
+        let ApplyRun { f_identity, g_identity, .. } = run;
         let left_marginal = f.level(t).is_marginal();
         let right_marginal = g.level(t).is_marginal();
-        let left_identity_at_t = left_identity[left_idx] && left_identity[right_idx];
-        let right_identity_at_t = right_identity[left_idx] && right_identity[right_idx];
+        let left_identity_at_t = f_identity[left_idx] && f_identity[right_idx];
+        let right_identity_at_t = g_identity[left_idx] && g_identity[right_idx];
         let violation = (left_marginal && !right_marginal && !right_identity_at_t)
             || (right_marginal && !left_marginal && !left_identity_at_t);
         if violation {

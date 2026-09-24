@@ -7,7 +7,7 @@ use crate::diagram::{ChildDecoder, ChildSide, Sides, Tdd, TddLevel};
 use super::OperationError;
 use crate::Engine;
 use super::liveness::{bucket_shift, build_live_cols_bitmask, build_reach_masks, PrefilterSideMasks};
-use super::setup::{ApplyRun, LevelShape};
+use super::setup::{ApplyRun, LevelShape, Operands};
 use super::route::LevelMarg;
 
 /// Which operand supplies a pass-through side's per-pair field.
@@ -53,7 +53,7 @@ impl SidePlan {
 /// taken and every lookup is `false`. That is the dominant case — pure Boolean
 /// and plain model counting — and it is why this is an `Option` rather than two
 /// all-false vectors: the absence of a snapshot is itself the skip.
-pub(super) struct EntryMarginality(Option<Sides<Vec<bool>>>);
+pub(super) struct EntryMarginality(Option<Operands<Vec<bool>>>);
 
 impl EntryMarginality {
     /// Snapshot both operands' per-level marginality, or nothing when neither
@@ -62,17 +62,17 @@ impl EntryMarginality {
         if !any {
             return EntryMarginality(None);
         }
-        EntryMarginality(Some(Sides {
-            left: (0..num_nodes).map(|i| f.levels[i].is_marginal()).collect(),
-            right: (0..num_nodes).map(|i| g.levels[i].is_marginal()).collect(),
+        EntryMarginality(Some(Operands {
+            f: (0..num_nodes).map(|i| f.levels[i].is_marginal()).collect(),
+            g: (0..num_nodes).map(|i| g.levels[i].is_marginal()).collect(),
         }))
     }
 
     /// Whether operand `carrier`'s level `idx` was marginal at entry.
     fn was_marginal(&self, carrier: Carrier, idx: usize) -> bool {
-        let Some(sides) = &self.0 else { return false };
-        let side = match carrier { Carrier::F => &sides.left, Carrier::G => &sides.right };
-        side[idx]
+        let Some(operands) = &self.0 else { return false };
+        let operand = match carrier { Carrier::F => &operands.f, Carrier::G => &operands.g };
+        operand[idx]
     }
 }
 
@@ -102,7 +102,7 @@ fn carrier(
     side: ChildSide,
     run: &ApplyRun,
 ) -> Option<Carrier> {
-    let ApplyRun { left_identity, right_identity, entry_marginality: entry, .. } = run;
+    let ApplyRun { f_identity, g_identity, entry_marginality: entry, .. } = run;
     // The carrier's per-pair field is an inline count or a tagged slot, never a
     // grid coordinate, and is copied into the output pair verbatim. Two facts
     // make that sound, and each side is tested on its own:
@@ -121,12 +121,12 @@ fn carrier(
     let inlined = |f: &Tdd| f.levels[t_idx].has_value_refs(side);
     let left_ref = f.levels[child_idx].is_marginal()
         || entry.was_marginal(Carrier::F, child_idx) || inlined(f);
-    if right_identity[child_idx] && left_ref {
+    if g_identity[child_idx] && left_ref {
         return Some(Carrier::F);
     }
     let right_ref = g.levels[child_idx].is_marginal()
         || entry.was_marginal(Carrier::G, child_idx) || inlined(g);
-    if left_identity[child_idx] && right_ref {
+    if f_identity[child_idx] && right_ref {
         return Some(Carrier::G);
     }
     None
@@ -248,12 +248,12 @@ pub(super) fn build_side_masks<const RIGHT: bool>(
     node_idx: &[u32],
     out: &mut PrefilterSideMasks,
 ) -> Result<(), OperationError> {
-    let ChildGrid { plan, f_width: k1_child, g_width: k2_child, base } = child;
+    let ChildGrid { plan, f_width: f_child_width, g_width: g_child_width, base } = child;
     if plan.is_passthrough() {
         return Ok(());
     }
-    let shift = bucket_shift(k2_child);
-    build_live_cols_bitmask(eng, k1_child, k2_child, base, node_idx, &mut out.live_cols, shift)?;
+    let shift = bucket_shift(g_child_width);
+    build_live_cols_bitmask(eng, f_child_width, g_child_width, base, node_idx, &mut out.live_cols, shift)?;
     let view = plan.view;
     build_reach_masks(eng, right_level, right_width, &mut out.reach,
         |p| view.coord(if RIGHT { p.right } else { p.left }) as usize, shift)

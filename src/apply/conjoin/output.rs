@@ -111,7 +111,7 @@ pub(super) fn compute_apply_output(
 ) -> Option<NodeIdx> {
     let out_ti = f.output.vtree.idx();
     let out_local = run.products.lookup(out_ti, f.output.local.0, g.output.local.0,
-        run.right_widths[out_ti], run.right_identity[out_ti], run.left_identity[out_ti])?;
+        run.g_widths[out_ti], run.g_identity[out_ti], run.f_identity[out_ti])?;
     // Mirror the later passes' indexing exactly: effective width is
     // `LEAF_WIDTH` for a leaf root and the level's own width otherwise — the
     // same quantity `prune`/`minimize` index their remap arena by.

@@ -42,8 +42,8 @@ impl<'a> VtreeMask<'a> {
 /// before the bottom-up level sweep.
 pub(super) struct ApplyRun<'a> {
     pub(super) levels: &'a mut [TddLevel],
-    pub(super) left_widths: &'a mut Vec<usize>,
-    pub(super) right_widths: &'a mut Vec<usize>,
+    pub(super) f_widths: &'a mut Vec<usize>,
+    pub(super) g_widths: &'a mut Vec<usize>,
     /// The sparse-route thresholds this apply decides by.
     pub(super) thresholds: SparseThresholds,
     /// Lazily computed child columns for the streaming-marginal path. See
@@ -53,15 +53,15 @@ pub(super) struct ApplyRun<'a> {
     /// Which levels of each operand were marginal at apply entry. See
     /// [`EntryMarginality`].
     pub(super) entry_marginality: EntryMarginality,
-    /// `right_identity[t]` — g computes constant-true over subtree `t`, so f's
+    /// `g_identity[t]` — g computes constant-true over subtree `t`, so f's
     /// nodes pass through unchanged. Lazily accreted, so a false reading only
     /// costs a fallback to the dense grid.
-    pub(super) right_identity: &'a mut Vec<bool>,
+    pub(super) g_identity: &'a mut Vec<bool>,
     /// The symmetric flag for f.
-    pub(super) left_identity: &'a mut Vec<bool>,
+    pub(super) f_identity: &'a mut Vec<bool>,
     /// Decode buffers for one cell's pairs, one per operand.
-    pub(super) inputs1_scratch: &'a mut Vec<ChildPair>,
-    pub(super) inputs2_scratch: &'a mut Vec<ChildPair>,
+    pub(super) f_pairs_scratch: &'a mut Vec<ChildPair>,
+    pub(super) g_pairs_scratch: &'a mut Vec<ChildPair>,
     /// The four dead-pair pre-filter masks, reused across internal levels.
     pub(super) prefilter_masks: &'a mut liveness::PrefilterMaskScratch,
 }
@@ -83,6 +83,13 @@ pub(super) struct LevelShape {
     pub(super) g: OperandWidths,
 }
 
+/// One value per operand, named by the operand rather than by a child side.
+#[derive(Clone, Copy)]
+pub(super) struct Operands<T> {
+    pub(super) f: T,
+    pub(super) g: T,
+}
+
 /// One operand's widths across a level and its two children.
 ///
 /// The three names are the vtree axis — `here` is the level itself, `left` and
@@ -102,14 +109,14 @@ impl ApplyRun<'_> {
         LevelShape {
             t, left, right,
             f: OperandWidths {
-                here: self.left_widths[t_idx],
-                left: self.left_widths[left_idx],
-                right: self.left_widths[right_idx],
+                here: self.f_widths[t_idx],
+                left: self.f_widths[left_idx],
+                right: self.f_widths[right_idx],
             },
             g: OperandWidths {
-                here: self.right_widths[t_idx],
-                left: self.right_widths[left_idx],
-                right: self.right_widths[right_idx],
+                here: self.g_widths[t_idx],
+                left: self.g_widths[left_idx],
+                right: self.g_widths[right_idx],
             },
         }
     }
@@ -183,17 +190,17 @@ impl ApplyRun<'_> {
 
     pub(super) fn reclaim_child_grids(&mut self, left: usize, right: usize) {
         self.products.reclaim_children([
-            (left, self.left_widths[left] * self.right_widths[left]),
-            (right, self.left_widths[right] * self.right_widths[right]),
+            (left, self.f_widths[left] * self.g_widths[left]),
+            (right, self.f_widths[right] * self.g_widths[right]),
         ]);
     }
 
-    pub(super) fn ensure_product_list_for_child(&mut self, eng: &Engine, t: usize, left: usize, right: usize) -> Result<(), OperationError> {
-        self.products.ensure_product_list_for_child(eng, t, left, right, self.right_identity[t], self.left_identity[t])
+    pub(super) fn ensure_product_list_for_child(&mut self, eng: &Engine, child: usize, f_width: usize, g_width: usize) -> Result<(), OperationError> {
+        self.products.ensure_product_list_for_child(eng, child, f_width, g_width, self.g_identity[child], self.f_identity[child])
     }
 
-    pub(super) fn materialize_dense_child(&mut self, eng: &Engine, t: usize, left: usize, right: usize) -> Result<(), OperationError> {
-        self.products.materialize_dense_child(eng, t, left, right, self.right_identity[t], self.left_identity[t])
+    pub(super) fn materialize_dense_child(&mut self, eng: &Engine, child: usize, f_width: usize, g_width: usize) -> Result<(), OperationError> {
+        self.products.materialize_dense_child(eng, child, f_width, g_width, self.g_identity[child], self.f_identity[child])
     }
 
 
@@ -210,16 +217,16 @@ fn snapshot_widths(
     g: &Tdd,
     num_nodes: usize,
     min_grid: usize,
-    left_widths: &mut [usize],
-    right_widths: &mut [usize],
+    f_widths: &mut [usize],
+    g_widths: &mut [usize],
 ) -> (u64, bool) {
     let mut any_entry_marginal = false;
     let mut total_cells: u64 = 0;
     for i in 0..num_nodes {
         let w1 = f.reference_slot_count(VtreeIdx(i as u32));
         let w2 = g.reference_slot_count(VtreeIdx(i as u32));
-        left_widths[i] = w1;
-        right_widths[i] = w2;
+        f_widths[i] = w1;
+        g_widths[i] = w2;
         any_entry_marginal |= f.levels[i].is_marginal() | g.levels[i].is_marginal();
         let cells = (w1 as u64).saturating_mul(w2 as u64);
         if cells <= min_grid as u64 {
@@ -280,12 +287,12 @@ pub(super) fn apply_and_setup<'a>(
     let thresholds = sparse_thresholds();
     let min_grid = thresholds.min_grid;
 
-    let ApplyWorkspace { left_widths, right_widths, left_identity, right_identity,
-        inputs1_scratch, inputs2_scratch, products, stream_cache, prefilter_masks } = scratch;
-    if left_widths.len() < num_nodes { left_widths.resize(num_nodes, 0); }
-    if right_widths.len() < num_nodes { right_widths.resize(num_nodes, 0); }
+    let ApplyWorkspace { f_widths, g_widths, f_identity, g_identity,
+        f_pairs_scratch, g_pairs_scratch, products, stream_cache, prefilter_masks } = scratch;
+    if f_widths.len() < num_nodes { f_widths.resize(num_nodes, 0); }
+    if g_widths.len() < num_nodes { g_widths.resize(num_nodes, 0); }
     let (total_cells, any_entry_marginal) = snapshot_widths(
-        f, g, num_nodes, min_grid, left_widths, right_widths,
+        f, g, num_nodes, min_grid, f_widths, g_widths,
     );
 
     let entry_marginality = EntryMarginality::snapshot(f, g, num_nodes, any_entry_marginal);
@@ -295,24 +302,24 @@ pub(super) fn apply_and_setup<'a>(
     // With no level over the threshold, all the sparse infrastructure — product
     // lists, live counts, bump allocator — is skipped outright.
     let might_use_sparse = vtree.internal_bottomup().any(|(t, _, _)| {
-        left_widths[t.idx()].saturating_mul(right_widths[t.idx()]) > min_grid
+        f_widths[t.idx()].saturating_mul(g_widths[t.idx()]) > min_grid
     });
 
     // Streaming-marginal scratch: lazily computed child columns for
     // streaming-target levels whose children are still explicit.
     stream_cache.reset(num_nodes, (!targets.is_empty()).then_some(weighted));
-    products.reset(eng, might_use_sparse, num_nodes, left_widths, right_widths)?;
+    products.reset(eng, might_use_sparse, num_nodes, f_widths, g_widths)?;
 
     Ok(ApplyRun {
-        levels, left_widths, right_widths,
+        levels, f_widths, g_widths,
         thresholds,
         stream_cache,
         products,
         entry_marginality,
-        right_identity,
-        left_identity,
-        inputs1_scratch,
-        inputs2_scratch,
+        g_identity,
+        f_identity,
+        f_pairs_scratch,
+        g_pairs_scratch,
         prefilter_masks,
     })
 }

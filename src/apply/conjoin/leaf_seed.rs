@@ -4,7 +4,7 @@
 use crate::{Engine, OperationError};
 use crate::diagram::{Tdd, TddLevel, WeightStore};
 use crate::vtree::Vtree;
-use crate::diagram::Sides;
+use super::setup::Operands;
 use super::setup::ApplyRun;
 use super::{CONJOIN_GRID, NO_PRODUCT};
 
@@ -19,11 +19,11 @@ pub(super) fn apply_leaf_levels(
     vtree: &crate::vtree::Vtree,
     run: &mut ApplyRun,
 ) -> Result<(), OperationError> {
-    let ApplyRun { left_widths, right_widths, products, .. } = run;
+    let ApplyRun { f_widths, g_widths, products, .. } = run;
     for (t, _leaf_var) in vtree.leaf_bottomup() {
         let t_idx = t.idx();
-        let left_width = left_widths[t_idx];
-        let right_width = right_widths[t_idx];
+        let left_width = f_widths[t_idx];
+        let right_width = g_widths[t_idx];
         let base = products.arena.alloc(eng, t_idx, left_width * right_width)?;
         products.arena.set_dense(t_idx, base);
         let output_grid_base = base.idx();
@@ -56,10 +56,10 @@ pub(crate) fn seed_output_leaves(
     g: &Tdd,
     vtree: &Vtree,
     levels: &mut [TddLevel],
-    identity: Sides<&[bool]>,
+    identity: Operands<&[bool]>,
     ws: Option<&WeightStore>,
 ) -> Vec<usize> {
-    let (left_identity, right_identity) = (identity.left, identity.right);
+    let Operands { f: f_identity, g: g_identity } = identity;
     // The bottom-up loop never visits a leaf as `t`, so a marginal leaf's output
     // level is flagged here from the operands. An integer-marginal leaf keeps
     // its counts inline at the parent, so the output store stays empty. A
@@ -80,11 +80,11 @@ pub(crate) fn seed_output_leaves(
         let right_m = g.levels[left_idx].is_marginal();
         if left_m || right_m {
             debug_assert!(
-                (left_m && right_m) || (left_m && right_identity[left_idx]) || (right_m && left_identity[left_idx]),
+                (left_m && right_m) || (left_m && g_identity[left_idx]) || (right_m && f_identity[left_idx]),
                 "marginal leaf {left_idx} conjoined with a non-identity operand \
                  (var not private?): left_m={left_m} right_m={right_m} \
                  left_id={} right_id={}",
-                left_identity[left_idx], right_identity[left_idx],
+                f_identity[left_idx], g_identity[left_idx],
             );
             let w1 = f.levels[left_idx].is_weight_marginal();
             let w2 = g.levels[left_idx].is_weight_marginal();

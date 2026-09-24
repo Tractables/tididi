@@ -186,20 +186,20 @@ pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) ->
 /// checked the guards (identity-operand width 1, identity children, marginal
 /// checks).
 ///
-/// `C1_IS_CARRIER = true`: `g` is the identity operand, `f` the carrier;
+/// `F_IS_CARRIER = true`: `g` is the identity operand, `f` the carrier;
 /// `false`: the reverse. `carrier_levels` is the carrier's `levels`.
-fn apply_identity_fast_path<const C1_IS_CARRIER: bool>(
+fn apply_identity_fast_path<const F_IS_CARRIER: bool>(
     eng: &Engine,
     shape: LevelShape,
     carrier_levels: &mut [TddLevel],
     run: &mut ApplyRun,
 ) -> Result<(), OperationError> {
     let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
-    let k_carrier = if C1_IS_CARRIER { shape.f.here } else { shape.g.here };
-    let (carrier_identity, id_identity) = if C1_IS_CARRIER {
-        (&mut run.left_identity[..], &mut run.right_identity[..])
+    let k_carrier = if F_IS_CARRIER { shape.f.here } else { shape.g.here };
+    let (carrier_identity, id_identity) = if F_IS_CARRIER {
+        (&mut run.f_identity[..], &mut run.g_identity[..])
     } else {
-        (&mut run.right_identity[..], &mut run.left_identity[..])
+        (&mut run.g_identity[..], &mut run.f_identity[..])
     };
     let levels = &mut run.levels[..];
     // Mark the identity operand's slot as identity at this level. The carrier
@@ -272,8 +272,8 @@ fn try_zero_width_marginal(
     // fast path fires (both need width 1). Without this guard the dense path
     // would read pairs out of the empty level.
     if fw.here == 0 && gw.here == 0 && f.level(t).is_marginal() && g.level(t).is_marginal() {
-        run.left_identity[t_idx] = true;
-        run.right_identity[t_idx] = true;
+        run.f_identity[t_idx] = true;
+        run.g_identity[t_idx] = true;
         publish_identity_level(run.products, t_idx, 0);
         return true;
     }
@@ -299,7 +299,7 @@ pub(super) fn take_level_fast_path(
 ) -> Result<bool, OperationError> {
     let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
     let (left_width, right_width) = (shape.f.here, shape.g.here);
-    let ApplyRun { levels, left_identity, right_identity, .. } = run;
+    let ApplyRun { levels, f_identity, g_identity, .. } = run;
     // Identity internal: g has width 1 and both children were identity,
     // so g's single node has one pair (0,0) referencing the identity nodes
     // at each child level. Product of f[i] with g[0] = f[i] unchanged.
@@ -321,8 +321,8 @@ pub(super) fn take_level_fast_path(
     // be equal.
     let both_marginal_w1 = left_width == 1 && right_width == 1
         && f.levels[t_idx].is_marginal() && g.levels[t_idx].is_marginal()
-        && left_identity[left_idx] && left_identity[right_idx]
-        && right_identity[left_idx] && right_identity[right_idx];
+        && f_identity[left_idx] && f_identity[right_idx]
+        && g_identity[left_idx] && g_identity[right_idx];
     #[cfg(debug_assertions)]
     if both_marginal_w1 {
         debug_assert_eq!(
@@ -336,7 +336,7 @@ pub(super) fn take_level_fast_path(
              big masses — absorbing one side would be unsound"
         );
     }
-    if right_width == 1 && right_identity[left_idx] && right_identity[right_idx]
+    if right_width == 1 && g_identity[left_idx] && g_identity[right_idx]
         && (!g.levels[t_idx].is_marginal() || both_marginal_w1)
         && !(!f.levels[t_idx].is_marginal()
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
@@ -350,7 +350,7 @@ pub(super) fn take_level_fast_path(
     // Mirror of the fast-path-1 guard — a marginal f carries count mass
     // that this path would drop (it carries g). Defer to fast-path-1 above
     // (which carries f) when f is marginal.
-    if left_width == 1 && left_identity[left_idx] && left_identity[right_idx]
+    if left_width == 1 && f_identity[left_idx] && f_identity[right_idx]
         && !f.levels[t_idx].is_marginal()
         && !(!g.levels[t_idx].is_marginal()
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))

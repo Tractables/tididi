@@ -19,20 +19,20 @@ use crate::limits::PollGate;
 /// provably dead under `both_multi_pair` (every cell in it would be culled) — the caller
 /// skips the whole row.
 #[inline(always)]
-pub(crate) fn row_alive_masks(ctx: &CellCtx<'_>, inputs1: &[ChildPair]) -> Option<(u128, u128)> {
+pub(crate) fn row_alive_masks(ctx: &CellCtx<'_>, f_pairs: &[ChildPair]) -> Option<(u128, u128)> {
     let left_alive_mask: u128 = if ctx.sides.left.plan.is_passthrough() {
         u128::MAX // pass-through side: no grid; always alive
     } else if !ctx.both_multi_pair {
         0u128
     } else {
-        inputs1.iter().fold(0u128, |acc, p1| acc | ctx.sides.left.live_cols[p1.left.raw() as usize])
+        f_pairs.iter().fold(0u128, |acc, p1| acc | ctx.sides.left.live_cols[p1.left.raw() as usize])
     };
     if ctx.both_multi_pair && left_alive_mask == 0 { return None; }
 
     let right_alive_mask: u128 = if ctx.sides.right.plan.is_passthrough() || !ctx.both_multi_pair {
         u128::MAX
     } else {
-        inputs1.iter().fold(0u128, |acc, p1| acc | ctx.sides.right.live_cols[p1.right.raw() as usize])
+        f_pairs.iter().fold(0u128, |acc, p1| acc | ctx.sides.right.live_cols[p1.right.raw() as usize])
     };
     if ctx.both_multi_pair && right_alive_mask == 0 { return None; }
 
@@ -203,18 +203,18 @@ impl PairSink for CollectSink<'_> {
 }
 
 /// The one-sided product walk: one operand contributes a single pair, the other
-/// is swept. `ITER_C1` says which — `true` sweeps `inputs1` against the lone g
-/// pair (N×1), `false` sweeps `inputs2` against the lone f pair (1×N). The
+/// is swept. `ITER_F` says which — `true` sweeps `f_pairs` against the lone g
+/// pair (N×1), `false` sweeps `g_pairs` against the lone f pair (1×N). The
 /// grid lookup is ordered `(f field, g field)` in both directions.
 ///
 /// The pair count is known before the sweep, so the whole cell is charged to
 /// the work clock in one go: one branch per cell rather than one per pair.
 #[inline(always)]
 #[expect(clippy::too_many_arguments)]
-fn cell_one_sided<const ITER_C1: bool, L, R, S>(
+fn cell_one_sided<const ITER_F: bool, L, R, S>(
     eng: &Engine,
-    inputs1: &[ChildPair],
-    inputs2: &[ChildPair],
+    f_pairs: &[ChildPair],
+    g_pairs: &[ChildPair],
     node_idx: &mut [u32],
     grid_pos: usize,
     left: &L,
@@ -227,13 +227,13 @@ where
     R: ChildLookup,
     S: PairSink,
 {
-    let n = if ITER_C1 { inputs1.len() } else { inputs2.len() };
+    let n = if ITER_F { f_pairs.len() } else { g_pairs.len() };
     gate.poll(n as u64)?;
     let cell_start = sink.begin();
-    if ITER_C1 {
+    if ITER_F {
         // N×1: the row changes per pair, so each lookup resolves its own.
-        let p2 = &inputs2[0];
-        for p1 in inputs1 {
+        let p2 = &g_pairs[0];
+        for p1 in f_pairs {
             let lc = left.get(node_idx, p1.left.0, p2.left.0);
             if lc == NO_PRODUCT { continue; }
             let rc = right.get(node_idx, p1.right.0, p2.right.0);
@@ -242,10 +242,10 @@ where
         }
     } else {
         // 1×N: one f pair fixes both child rows for the whole sweep.
-        let p1 = &inputs1[0];
+        let p1 = &f_pairs[0];
         let lrow = left.row(p1.left.0);
         let rrow = right.row(p1.right.0);
-        for p2 in inputs2 {
+        for p2 in g_pairs {
             let lc = left.get_in_row(node_idx, lrow, p2.left.0);
             if lc == NO_PRODUCT { continue; }
             let rc = right.get_in_row(node_idx, rrow, p2.right.0);
@@ -264,8 +264,8 @@ where
 fn cell_prefilter<L, R, S>(
     eng: &Engine,
     j: usize,
-    inputs1: &[ChildPair],
-    inputs2: &[ChildPair],
+    f_pairs: &[ChildPair],
+    g_pairs: &[ChildPair],
     ctx: &CellCtx<'_>,
     node_idx: &mut [u32],
     grid_pos: usize,
@@ -285,42 +285,42 @@ where
     // form of it, which only this arm can use.
     let cell_start = sink.begin();
     if !left.passthrough() && !right.passthrough()
-        && inputs1.len() >= 64 && inputs2.len() >= 64
+        && f_pairs.len() >= 64 && g_pairs.len() >= 64
     {
         // ── Grouped N×M: run-length groups by shared `.left` ──────────
         // Emits the same pair multiset as the general double loop, in
         // grouped order; every consumer is order-independent (pair lists
         // are unordered sets — see diagram/level/mod.rs).
-        let n2 = inputs2.len();
+        let n2 = g_pairs.len();
         let mut groups2: smallvec::SmallVec<[(usize, usize); 256]> =
             smallvec::SmallVec::new();
         {
             let mut idx = 0;
             while idx < n2 {
                 let start = idx;
-                let left = inputs2[idx].left;
+                let left = g_pairs[idx].left;
                 idx += 1;
-                while idx < n2 && inputs2[idx].left == left { idx += 1; }
+                while idx < n2 && g_pairs[idx].left == left { idx += 1; }
                 groups2.push((start, idx));
             }
         }
-        let n1 = inputs1.len();
+        let n1 = f_pairs.len();
         let mut p1_idx = 0;
         while p1_idx < n1 {
-            let p1_left = inputs1[p1_idx].left;
+            let p1_left = f_pairs[p1_idx].left;
             let g1_start = p1_idx;
             p1_idx += 1;
-            while p1_idx < n1 && inputs1[p1_idx].left == p1_left { p1_idx += 1; }
-            let g1 = &inputs1[g1_start..p1_idx];
+            while p1_idx < n1 && f_pairs[p1_idx].left == p1_left { p1_idx += 1; }
+            let g1 = &f_pairs[g1_start..p1_idx];
             gate.poll((g1.len() * n2) as u64)?;
 
             if ctx.sides.left.live_cols[p1_left.raw() as usize] & ctx.sides.left.reach[j] == 0 { continue; }
 
             for &(g2s, g2e) in &groups2 {
-                let p2_left = inputs2[g2s].left;
+                let p2_left = g_pairs[g2s].left;
                 let lc = left.get(node_idx, p1_left.0, p2_left.0);
                 if lc == NO_PRODUCT { continue; }
-                let g2 = &inputs2[g2s..g2e];
+                let g2 = &g_pairs[g2s..g2e];
 
                 for p1 in g1 {
                     if ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j] == 0 {
@@ -337,8 +337,8 @@ where
         }
     } else {
         // ── General N×M ───────────────────────────────────────────────
-        for p1 in inputs1 {
-            gate.poll(inputs2.len() as u64)?;
+        for p1 in f_pairs {
+            gate.poll(g_pairs.len() as u64)?;
             if !left.passthrough()
                 && ctx.sides.left.live_cols[p1.left.raw() as usize] & ctx.sides.left.reach[j] == 0 {
                 continue;
@@ -349,7 +349,7 @@ where
             }
             let lrow = left.row(p1.left.0);
             let rrow = right.row(p1.right.0);
-            for p2 in inputs2 {
+            for p2 in g_pairs {
                 let lc = left.get_in_row(node_idx, lrow, p2.left.0);
                 if lc == NO_PRODUCT { continue; }
                 let rc = right.get_in_row(node_idx, rrow, p2.right.0);
@@ -378,9 +378,9 @@ where
 /// `ChildLookup::passthrough()` is a constant `false` on `DenseLookup`, so the
 /// plain instantiations carry no pass-through branch in the inner loops.
 ///
-/// The `inputs2_scratch` lifetime is independent from `node_idx`: `right_level`
+/// The `g_pairs_scratch` lifetime is independent from `node_idx`: `right_level`
 /// borrows from a separate `Tdd` operand, and `pairs_view_decoded` borrows
-/// `inputs2_scratch` as the decode buffer — neither aliases the output slab.
+/// `g_pairs_scratch` as the decode buffer — neither aliases the output slab.
 ///
 /// Sink allocation can return [`OperationError::OverBudget`]; every arm polls
 /// for [`OperationError::Stopped`], the collect sink included.
@@ -392,10 +392,10 @@ pub(crate) fn process_cell<L, R, S>(
     eng: &Engine,
     j: usize,
     row_base: usize,
-    inputs1: &[ChildPair],
+    f_pairs: &[ChildPair],
     ctx: &CellCtx<'_>,
     right_level: &TddLevel,
-    inputs2_scratch: &mut Vec<ChildPair>,
+    g_pairs_scratch: &mut Vec<ChildPair>,
     node_idx: &mut [u32],
     left: &L,
     right: &R,
@@ -420,22 +420,22 @@ where
     // per-level [`RightColumns`] table and this is two loads. `None` is the
     // fallback for the levels the table declines (marginal-encoded g, or an
     // arena the budget rejected): re-derive per cell, as before.
-    let inputs2 = match ctx.right_cols {
+    let g_pairs = match ctx.right_cols {
         Some(cols) => cols.get(j),
-        None => right_level.pairs_view_decoded(j, inputs2_scratch, ctx.sides.left.plan.view, ctx.sides.right.plan.view),
+        None => right_level.pairs_view_decoded(j, g_pairs_scratch, ctx.sides.left.plan.view, ctx.sides.right.plan.view),
     };
-    if inputs2.is_empty() { return Ok(()); }
+    if g_pairs.is_empty() { return Ok(()); }
 
     // `row_base` is the row's flat slab offset, already computed by the row loop
     // (`ctx.output_grid_base + grid_row * ctx.right_width`) for its `NO_PRODUCT` reset — reuse it instead of
     // re-deriving the same product per cell.
     let grid_pos = row_base + j;
 
-    if inputs1.len() == 1 && inputs2.len() == 1 {
+    if f_pairs.len() == 1 && g_pairs.len() == 1 {
         // ── 1×1 ──────────────────────────────────────────────────────────
         gate.poll(1)?;
-        let p1 = &inputs1[0];
-        let p2 = &inputs2[0];
+        let p1 = &f_pairs[0];
+        let p2 = &g_pairs[0];
         let lc = left.get(node_idx, p1.left.0, p2.left.0);
         if lc != NO_PRODUCT {
             let rc = right.get(node_idx, p1.right.0, p2.right.0);
@@ -443,18 +443,18 @@ where
                 sink.single(eng, node_idx, grid_pos, lc, rc)?;
             }
         }
-    } else if inputs2.len() == 1 {
+    } else if g_pairs.len() == 1 {
         cell_one_sided::<true, _, _, _>(
-            eng, inputs1, inputs2, node_idx, grid_pos, left, right, sink, gate,
+            eng, f_pairs, g_pairs, node_idx, grid_pos, left, right, sink, gate,
         )?;
-    } else if inputs1.len() == 1 {
+    } else if f_pairs.len() == 1 {
         cell_one_sided::<false, _, _, _>(
-            eng, inputs1, inputs2, node_idx, grid_pos, left, right, sink, gate,
+            eng, f_pairs, g_pairs, node_idx, grid_pos, left, right, sink, gate,
         )?;
     } else {
         cell_prefilter(
             eng,
-            j, inputs1, inputs2, ctx,
+            j, f_pairs, g_pairs, ctx,
             node_idx, grid_pos, left, right, sink, gate,
         )?;
     }

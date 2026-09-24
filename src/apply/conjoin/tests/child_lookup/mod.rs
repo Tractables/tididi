@@ -7,7 +7,7 @@ mod child_grid_mul;
 fn dense_and_marginal_structural_lookups_read_the_same_slab() {
     let slab: Vec<u32> = (0..17).map(|i| 100 + i).collect();
     let dense = DenseLookup { base: 2, stride: 5 };
-    let marginal = MarginalLookup { base: 2, stride: 5, passthrough: false, pt_c1: false };
+    let marginal = MarginalLookup { base: 2, stride: 5, passthrough: false, carry_f: false };
     for row in 0..3 {
         for col in 0..5 {
             let expected = slab[2 + row as usize * 5 + col as usize];
@@ -20,9 +20,9 @@ fn dense_and_marginal_structural_lookups_read_the_same_slab() {
 /// Carried marginal values are payloads, even when they resemble huge indices.
 #[test]
 fn marginal_passthrough_never_reads_the_grid() {
-    for pt_c1 in [false, true] {
-        let lookup = MarginalLookup { base: 99, stride: 99, passthrough: true, pt_c1 };
+    for carry_f in [false, true] {
+        let lookup = MarginalLookup { base: 99, stride: 99, passthrough: true, carry_f };
         assert!(lookup.passthrough());
-        assert_eq!(lookup.get(&[], u32::MAX, 1 << 30), if pt_c1 { u32::MAX } else { 1 << 30 });
+        assert_eq!(lookup.get(&[], u32::MAX, 1 << 30), if carry_f { u32::MAX } else { 1 << 30 });
     }
 }

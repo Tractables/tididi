@@ -57,8 +57,8 @@ pub(crate) struct ProductLists<'a> {
 /// untouched for the caller to fill some other way.
 fn fill_identity_product_list(
     eng: &Engine,
-    left_width: usize,
-    right_width: usize,
+    f_width: usize,
+    g_width: usize,
     right_id: bool,
     left_id: bool,
     pl: &mut Vec<ProductEntry>,
@@ -66,14 +66,14 @@ fn fill_identity_product_list(
     let lim = eng.limits();
     const ID_IDX: u32 = 0;
     if right_id {
-        lim.reserve(pl, left_width)?;
-        for i in 0..left_width as u32 {
+        lim.reserve(pl, f_width)?;
+        for i in 0..f_width as u32 {
             pl.push(ProductEntry { left_idx: LeftNodeIdx(i), right_idx: RightNodeIdx(ID_IDX), prod_idx: ProductNodeIdx(i) });
         }
         Ok(true)
     } else if left_id {
-        lim.reserve(pl, right_width)?;
-        for j in 0..right_width as u32 {
+        lim.reserve(pl, g_width)?;
+        for j in 0..g_width as u32 {
             pl.push(ProductEntry { left_idx: LeftNodeIdx(ID_IDX), right_idx: RightNodeIdx(j), prod_idx: ProductNodeIdx(j) });
         }
         Ok(true)
@@ -101,13 +101,13 @@ impl Products {
         ].into_iter().sum()
     }
 
-    pub(super) fn reset(&mut self, eng: &Engine, sparse: bool, n: usize, left: &[usize], right: &[usize]) -> Result<(), OperationError> {
+    pub(super) fn reset(&mut self, eng: &Engine, sparse: bool, n: usize, f_widths: &[usize], g_widths: &[usize]) -> Result<(), OperationError> {
         if self.product_lists.len() < n { self.product_lists.resize_with(n, Vec::new); }
         self.has_pl.resize(n, false);
         for i in 0..n { self.product_lists[i].clear(); self.has_pl[i] = false; }
         self.live_counts.clear();
         self.live_counts.resize(n, 0);
-        self.arena.reset(eng, sparse, n, left, right)
+        self.arena.reset(eng, sparse, n, f_widths, g_widths)
     }
 
     pub(super) fn filter_level(
@@ -163,13 +163,13 @@ impl Products {
     }
 
     /// Resolve a completed product without exposing its representation to the caller.
-    pub(super) fn lookup(&self, t: usize, left: u32, right: u32, right_width: usize, right_identity: bool, left_identity: bool) -> Option<super::NodeIdx> {
+    pub(super) fn lookup(&self, t: usize, f: u32, g: u32, g_width: usize, g_identity: bool, f_identity: bool) -> Option<super::NodeIdx> {
         let value = if let Some(base) = self.arena.materialized(t) {
-            self.arena.slab()[base.idx() + left as usize * right_width + right as usize]
+            self.arena.slab()[base.idx() + f as usize * g_width + g as usize]
         } else if self.has_pl[t] {
-            self.product_lists[t].iter().find(|entry| entry.left_idx.0 == left && entry.right_idx.0 == right)?.prod_idx.0
-        } else if right_identity { left }
-        else if left_identity { right }
+            self.product_lists[t].iter().find(|entry| entry.left_idx.0 == f && entry.right_idx.0 == g)?.prod_idx.0
+        } else if g_identity { f }
+        else if f_identity { g }
         else { panic!("product level {t} has neither stored products nor an identity operand") };
         (value != super::NO_PRODUCT).then_some(super::NodeIdx(value))
     }
@@ -185,13 +185,13 @@ impl Products {
     pub(super) fn ensure_product_list_for_child(
         &mut self,
         eng: &Engine,
-        ci: usize, left_width: usize, right_width: usize,
-        right_identity: bool, left_identity: bool,
+        ci: usize, f_width: usize, g_width: usize,
+        g_identity: bool, f_identity: bool,
     ) -> Result<(), OperationError> {
         if self.has_pl[ci] { return Ok(()); }
         let list = &mut self.product_lists[ci];
-        if !fill_identity_product_list(eng, left_width, right_width, right_identity, left_identity, list)? {
-            self.arena.scan_product_list(eng, ci, left_width, right_width, list)?;
+        if !fill_identity_product_list(eng, f_width, g_width, g_identity, f_identity, list)? {
+            self.arena.scan_product_list(eng, ci, f_width, g_width, list)?;
         }
         self.has_pl[ci] = true;
         Ok(())
@@ -206,13 +206,13 @@ impl Products {
         &mut self,
         eng: &Engine,
         idx: usize,
-        left_width_c: usize,
-        right_width_c: usize,
-        right_identity: bool, left_identity: bool,
+        f_width: usize,
+        g_width: usize,
+        g_identity: bool, f_identity: bool,
     ) -> Result<(), OperationError> {
-        cheap_assert!(self.has_pl[idx] || right_identity || left_identity,
+        cheap_assert!(self.has_pl[idx] || g_identity || f_identity,
             "an ungridded child on the dense path has an identity operand");
-        self.ensure_product_list_for_child(eng, idx, left_width_c, right_width_c, right_identity, left_identity)?;
-        self.arena.ensure_grid(eng, idx, left_width_c, right_width_c, &self.product_lists[idx])
+        self.ensure_product_list_for_child(eng, idx, f_width, g_width, g_identity, f_identity)?;
+        self.arena.ensure_grid(eng, idx, f_width, g_width, &self.product_lists[idx])
     }
 }

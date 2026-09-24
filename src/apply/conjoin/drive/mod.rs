@@ -187,23 +187,23 @@ pub(crate) fn apply_and_fallible(
     let (levels, ws) = assembly.parts_mut();
     let mut run = apply_and_setup(eng, f, g, targets, ws.is_some(), levels, &mut scratch)?;
 
-    // `right_identity[t]` is true when `g` computes constant-true over subtree
+    // `g_identity[t]` is true when `g` computes constant-true over subtree
     // `t`, so `f`'s nodes pass through unchanged (`x ∧ 1 = x`) and the
     // construction can `mem::swap` them into the output instead of running
-    // the per-node inner loop; `left_identity` is the symmetric case, where
+    // the per-node inner loop; `f_identity` is the symmetric case, where
     // `g`'s nodes are cloned across. A leaf is identity iff only the One label
     // is referenced by parent pairs; an internal node iff it is width-1 with
     // both children identity, which the sweep accretes as it goes up. The
     // predicate is incomplete; a miss only sends a small grid down the dense
     // path.
-    init_leaf_identity(eng, run.right_identity, g)?;
-    init_leaf_identity(eng, run.left_identity, f)?;
+    init_leaf_identity(eng, run.g_identity, g)?;
+    init_leaf_identity(eng, run.f_identity, f)?;
 
     apply_leaf_levels(eng, &vtree, &mut run)?;
 
     let canon_leaves = super::leaf_seed::seed_output_leaves(
         f, g, &vtree, run.levels,
-        Sides { left: &run.left_identity[..], right: &run.right_identity[..] },
+        Operands { f: &run.f_identity[..], g: &run.g_identity[..] },
         ws.as_ref(),
     );
 

@@ -102,7 +102,7 @@ pub(super) struct MarginalLookup {
     stride: u32,
     passthrough: bool,
     /// Carrier selector when `passthrough`: true ⇒ carry the f field (`row`).
-    pt_c1: bool,
+    carry_f: bool,
 }
 
 impl MarginalLookup {
@@ -112,7 +112,7 @@ impl MarginalLookup {
             base: p.base,
             stride: p.stride,
             passthrough: p.plan.carrier.is_some(),
-            pt_c1: matches!(p.plan.carrier, Some(super::marginal_plan::Carrier::F)),
+            carry_f: matches!(p.plan.carrier, Some(super::marginal_plan::Carrier::F)),
         }
     }
 }
@@ -135,7 +135,7 @@ impl ChildLookup for MarginalLookup {
     fn get_in_row(&self, node_idx: &[u32], row: usize, col: u32) -> u32 {
         if self.passthrough {
             // `row` round-tripped through `usize` from the u32 pair field.
-            if self.pt_c1 { row as u32 } else { col }
+            if self.carry_f { row as u32 } else { col }
         } else {
             // Safety: identical access to `DenseLookup::get_in_row` — off
             // pass-through the fields are structural coordinates within the

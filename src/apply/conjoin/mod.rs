@@ -35,7 +35,7 @@ use identity::take_level_fast_path;
 
 // Apply setup → `ApplyRun`.
 mod setup;
-use setup::{apply_and_setup, ApplyRun, LevelShape};
+use setup::{apply_and_setup, ApplyRun, LevelShape, Operands};
 
 // Per-level marginal classification plan and dead-pair masks.
 mod marginal_plan;

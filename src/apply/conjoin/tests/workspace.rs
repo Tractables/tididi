@@ -13,14 +13,14 @@ fn conjunction_returns_workspace_after_refusal_and_reuses_it() {
     let mut f = eng.and(left.clone(), right.clone()).unwrap();
     eng.minimize(&mut f).unwrap();
     assert_canonical(&f);
-    let allocation = eng.apply().workspace.checkout(eng.limits()).left_widths.as_ptr();
+    let allocation = eng.apply().workspace.checkout(eng.limits()).f_widths.as_ptr();
     let mut refusals = 0;
     for cut in 0..20 {
         eng.limits().refuse_nth_reserve(cut);
         let result = eng.and(left.clone(), right.clone());
         eng.limits().grant_every_reserve();
         if result.is_err() { refusals += 1; }
-        assert_eq!(eng.apply().workspace.checkout(eng.limits()).left_widths.as_ptr(), allocation);
+        assert_eq!(eng.apply().workspace.checkout(eng.limits()).f_widths.as_ptr(), allocation);
         let mut recovered = eng.and(left.clone(), right.clone()).unwrap();
         eng.minimize(&mut recovered).unwrap();
         assert_canonical(&recovered);
@@ -40,13 +40,13 @@ fn ordinary_conjunctions_reuse_the_context_workspace() {
     warm.minimize().unwrap();
     assert_canonical(&warm);
     let allocation = vtree.context().run(|eng| {
-        eng.apply().workspace.checkout(eng.limits()).left_widths.as_ptr()
+        eng.apply().workspace.checkout(eng.limits()).f_widths.as_ptr()
     });
     for operator in [false, true] {
         let mut result = if operator { left.clone() & right.clone() }
             else { crate::and(left.clone(), right.clone()).unwrap() };
         vtree.context().run(|eng| {
-            assert_eq!(eng.apply().workspace.checkout(eng.limits()).left_widths.as_ptr(), allocation);
+            assert_eq!(eng.apply().workspace.checkout(eng.limits()).f_widths.as_ptr(), allocation);
         });
         result.minimize().unwrap();
         assert_canonical(&result);

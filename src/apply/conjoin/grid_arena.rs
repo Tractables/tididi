@@ -2,7 +2,7 @@
 //! for it is claimed and reclaimed.
 //!
 //! Every level's product grid is a slice of one flat `Vec<u32>`: cell `(i, j)`
-//! of level `t` sits at `base(t) + i * right_width[t] + j` and holds the output index
+//! of level `t` sits at `base(t) + i * g_width[t] + j` and holds the output index
 //! for `f[i] ∧ g[j]`, or `NO_PRODUCT` where that product was zero. `u32` rather
 //! than `u16` because widths pass 65 535.
 //!
@@ -77,7 +77,7 @@ impl GridArena {
         capacity_bytes(&self.cells).saturating_add(capacity_bytes(&self.grids)).saturating_add(free)
     }
 
-    pub(super) fn reset(&mut self, eng: &Engine, sparse: bool, n: usize, left: &[usize], right: &[usize]) -> Result<(), OperationError> {
+    pub(super) fn reset(&mut self, eng: &Engine, sparse: bool, n: usize, f_widths: &[usize], g_widths: &[usize]) -> Result<(), OperationError> {
         self.grids.clear();
         self.grids.resize(n, None);
         let mut bump = self.bump.take().unwrap_or_default();
@@ -89,7 +89,7 @@ impl GridArena {
             let mut cursor = 0;
             for i in 0..n {
                 self.grids[i] = Some(GridBase(cursor));
-                cursor += left[i] * right[i];
+                cursor += f_widths[i] * g_widths[i];
             }
             try_resize_dead(eng, &mut self.cells, cursor)?;
         }
@@ -225,17 +225,17 @@ impl GridArena {
     pub(super) fn ensure_grid(
         &mut self,
         eng: &Engine,
-        ti: usize, left_width: usize, right_width: usize,
+        ti: usize, f_width: usize, g_width: usize,
         product_list: &[ProductEntry],
     ) -> Result<(), OperationError> {
         if !self.is_sparse(ti) { return Ok(()); }
-        let cells = left_width * right_width;
+        let cells = f_width * g_width;
         let base = self.alloc(eng, ti, cells)?.idx();
         self.set_dense(ti, GridBase(base));
         let slab = self.slab_mut();
         slab[base..base + cells].fill(NO_PRODUCT);
         for &ProductEntry { left_idx, right_idx, prod_idx } in product_list {
-            slab[base + left_idx.idx() * right_width + right_idx.idx()] = prod_idx.0;
+            slab[base + left_idx.idx() * g_width + right_idx.idx()] = prod_idx.0;
         }
         Ok(())
     }
@@ -244,15 +244,15 @@ impl GridArena {
     pub(super) fn scan_product_list(
         &self,
         eng: &Engine,
-        ti: usize, left_width: usize, right_width: usize,
+        ti: usize, f_width: usize, g_width: usize,
         product_list: &mut Vec<ProductEntry>,
     ) -> Result<(), OperationError> {
         let lim = eng.limits();
         let base = self.materialized(ti).expect("a product list is scanned from a materialized grid").idx();
         let slab = self.slab();
-        for i in 0..left_width {
-            for j in 0..right_width {
-                let idx = slab[base + i * right_width + j];
+        for i in 0..f_width {
+            for j in 0..g_width {
+                let idx = slab[base + i * g_width + j];
                 if idx != NO_PRODUCT {
                     lim.try_push(product_list, ProductEntry {
                         left_idx: LeftNodeIdx(i as u32),

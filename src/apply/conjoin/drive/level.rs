@@ -262,8 +262,8 @@ fn build_level_prefilter_masks(
 /// The run buffers [`finish_sparse_marginal_level`] writes, borrowed field by
 /// field: the output level is already split out of the same `ApplyRun`.
 struct SparseMargScratch<'a> {
-    inputs1: &'a mut Vec<ChildPair>,
-    inputs2: &'a mut Vec<ChildPair>,
+    f_pairs: &'a mut Vec<ChildPair>,
+    g_pairs: &'a mut Vec<ChildPair>,
     products: &'a mut super::super::products::Products,
 }
 
@@ -293,13 +293,13 @@ fn finish_sparse_marginal_level(
 ) -> Result<(), OperationError> {
     let LevelShape { t, g: gw, .. } = shape;
     let SparseMargScratch {
-        inputs1, inputs2, products,
+        f_pairs, g_pairs, products,
     } = scratch;
     let (node_idx, product_list) = products.row_buffers(t.idx());
     run_level_rows_marginal_sparse(
         eng,
         rows,
-        RowScratch { inputs1, inputs2, node_idx },
+        RowScratch { f_pairs, g_pairs, node_idx },
         level,
         product_list,
     )?;
@@ -364,7 +364,7 @@ pub(super) fn build_level_dense(
     // for a sparse child on a level that will take the plain-dense emit.
     let output_grid_base = materialize_children_and_grid(eng, run, shape, use_sparse_marginal)?;
 
-    // Child grid geometry: product `(a, b)` sits at `base + a * k2_child + b`.
+    // Child grid geometry: product `(a, b)` sits at `base + a * g_child_width + b`.
     let bases = Sides {
         left: run.products.arena.materialized(li).expect("the left child's grid is materialized"),
         right: run.products.arena.materialized(ri).expect("the right child's grid is materialized"),
@@ -404,8 +404,8 @@ pub(super) fn build_level_dense(
             },
             output_grid_base, level,
             SparseMargScratch {
-                inputs1: run.inputs1_scratch,
-                inputs2: run.inputs2_scratch,
+                f_pairs: run.f_pairs_scratch,
+                g_pairs: run.g_pairs_scratch,
                 products: run.products,
             },
             passthrough,
@@ -420,8 +420,8 @@ pub(super) fn build_level_dense(
             ctx: &cell_ctx, f_width: fw.here,
         },
         RowScratch {
-            inputs1: run.inputs1_scratch,
-            inputs2: run.inputs2_scratch,
+            f_pairs: run.f_pairs_scratch,
+            g_pairs: run.g_pairs_scratch,
             node_idx: run.products.arena.slab_mut(),
         },
         level,

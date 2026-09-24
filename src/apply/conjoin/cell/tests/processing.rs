@@ -180,7 +180,7 @@ fn collect_sink_respects_soft_budget() {
     }
 
     // g level: a single inline node → exactly one decoded pair for j = 0,
-    // putting an N-pair inputs1 into the N×1 arm.
+    // putting an N-pair f_pairs into the N×1 arm.
     let mut g = TddLevel::new();
     g.nodes.push(EncodedNode::inline(ChildPair::new(NodeIdx(2), NodeIdx(3))));
 
@@ -280,8 +280,8 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
         fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
             process_cell::<_, _, _>(
                 eng,
-                a.j, a.row_base, a.inputs1,
-                a.ctx, a.right_level_t, a.inputs2_scratch, a.node_idx, a.left, a.right,
+                a.j, a.row_base, a.f_pairs,
+                a.ctx, a.right_level_t, a.g_pairs_scratch, a.node_idx, a.left, a.right,
                 &mut CollectSink { out: &mut *self.out },
                 a.gate,
             )
@@ -309,8 +309,8 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
 
     let eng = Engine::new();
     eng.limits().reset_meters();
-    let mut inputs1_scratch: Vec<ChildPair> = Vec::new();
-    let mut inputs2_scratch: Vec<ChildPair> = Vec::new();
+    let mut f_pairs_scratch: Vec<ChildPair> = Vec::new();
+    let mut g_pairs_scratch: Vec<ChildPair> = Vec::new();
     let mut node_idx: Vec<u32> = vec![0; K1];
     let mut out: Vec<ChildPair> = Vec::new();
     run_level_rows::<true, _, _, _>(
@@ -318,7 +318,7 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
         // The collecting action never streams, so the child levels stand in for
         // themselves — nothing on this route reads them.
         RowLoop { f_level: &f, g_level: &g, children: Sides { left: &f, right: &g }, ctx: &ctx, f_width: K1 },
-        RowScratch { inputs1: &mut inputs1_scratch, inputs2: &mut inputs2_scratch, node_idx: &mut node_idx },
+        RowScratch { f_pairs: &mut f_pairs_scratch, g_pairs: &mut g_pairs_scratch, node_idx: &mut node_idx },
         &AliveLookup, &AliveLookup, &mut Collect { out: &mut out },
     )
     .expect("nothing is armed, so the level completes");
@@ -370,7 +370,7 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
         base: 0, stride: right_width as u32,
         live_cols: &live_cols, reach: &reach,
     };
-    let inputs1 = [pair(1, 2), pair(4, 5)];
+    let f_pairs = [pair(1, 2), pair(4, 5)];
     let walk = |right_cols| {
         let ctx = CellCtx {
             output_grid_base: 0, right_width,
@@ -383,7 +383,7 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
         let mut node_idx: Vec<u32> = Vec::new();
         for j in 0..right_width {
             process_cell(
-                &eng, j, 0, &inputs1, &ctx, &lvl,
+                &eng, j, 0, &f_pairs, &ctx, &lvl,
                 &mut scratch, &mut node_idx,
                 &RefLookup, &RefLookup, &mut CollectSink { out: &mut out },
                 &mut eng.limits().gate_with(u64::MAX),
