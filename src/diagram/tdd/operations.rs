@@ -421,30 +421,61 @@ impl Tdd {
         context.run(|eng| eng.restrict_to_care(self, care))
     }
 
-    /// Remove internal circuit nodes rejected by `keep`, dropping every pair
-    /// that uses them and cascading empty nodes to false.
+    /// Remove the structural internal nodes `keep` rejects, together with every
+    /// pair that uses one, and remove each node left without pairs in turn.
     ///
-    /// Calls `keep` once per stored structural internal node, including
-    /// unreachable nodes, except for an already-false operand. Leaves and
-    /// marginalized levels are retained. Node IDs refer to this operand before
-    /// rebuilding. Rejecting only unreachable nodes returns it unchanged.
+    /// `keep` is called once for every stored structural internal node,
+    /// reachable or not, unless this diagram is false: level by level in the
+    /// order of [`Vtree::internal_bottomup`](crate::Vtree::internal_bottomup),
+    /// and by index within a level. Node IDs are this diagram's. A pair is also
+    /// removed when a side is `ZERO` or an inline count of zero. Leaves and
+    /// marginalized levels are retained, as are the weights and arithmetic.
     ///
-    /// The result retains the vtree, weights and arithmetic, has no more pairs
-    /// than the input, and is orphan-free but need not be canonical. Call
-    /// [`Self::minimize`] when a canonical result is required. For a structural
-    /// diagram its models are a subset of the original models. This operation
-    /// does not establish that a rejected node is impossible under a care set;
-    /// that proof belongs to the caller.
+    /// This diagram is borrowed and unchanged on every outcome, errors
+    /// included. [`FilterOutcome::Unchanged`](crate::apply::FilterOutcome::Unchanged)
+    /// means every node was kept and nothing was rebuilt. A
+    /// [`Filtered`](crate::apply::FilterOutcome::Filtered) result has no more
+    /// pairs than this diagram and no unreachable nodes, but need not be
+    /// canonical; call [`Self::minimize`] when that is required. For a
+    /// structural diagram its models are a subset of the original models.
+    /// [`Unsatisfiable`](crate::apply::FilterOutcome::Unsatisfiable) means the
+    /// output node was rejected or emptied. The
+    /// [`FilterStats`](crate::apply::FilterStats) count the pairs and nodes the
+    /// removals took with them.
     ///
-    /// Consumes the operand on success and error. Keeping every node returns
-    /// its original allocation. The callback's own work is not bounded by the
-    /// engine's limits.
+    /// The filter does not establish that a rejected node is impossible under
+    /// some constraint; that proof belongs to the caller.
     ///
     /// # Errors
     ///
-    /// Returns allocation, cancellation and output-limit errors as for
-    /// [`Self::restrict_to_care`].
-    pub fn filter_nodes(self, keep: impl FnMut(crate::diagram::TddNodeId) -> bool) -> Result<Tdd, OperationError> {
+    /// [`OperationError::OverBudget`] if an allocation is refused, or
+    /// [`OperationError::IndexOverflow`] for a level wider than a node index
+    /// can address.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{and, literal, or, Tdd, Vtree};
+    /// use tididi::apply::FilterOutcome;
+    /// use tididi::diagram::{ChildPair, POS_LEAF_IDX};
+    ///
+    /// let vtree = Arc::new(Vtree::linear(3));
+    /// let f = or(literal(&vtree, 1)?, and(literal(&vtree, 2)?, literal(&vtree, 3)?)?)?;
+    /// assert!(matches!(f.filter_nodes(|_| true)?, FilterOutcome::Unchanged));
+    ///
+    /// // Reject the node for x2 and x3; the output's pairs that use it go too.
+    /// let (_, below) = vtree.children(vtree.root());
+    /// let both = [ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)];
+    /// let outcome = f.filter_nodes(|id| id.vtree != below || f.level(below).pairs_of_idx(id.local.idx()) != both)?;
+    /// let FilterOutcome::Filtered { tdd, stats } = outcome else { unreachable!("the output keeps a pair") };
+    /// # tididi::test_helpers::assert_canonical(&tdd);
+    /// assert!(tdd.equivalent(&and(literal(&vtree, 1)?, Tdd::clause(&vtree, [-2, -3])?)?)?);
+    /// assert_eq!(stats.pairs_dropped, 2);
+    ///
+    /// let root = f.output();
+    /// assert!(matches!(f.filter_nodes(|id| id != root)?, FilterOutcome::Unsatisfiable { .. }));
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn filter_nodes(&self, keep: impl FnMut(crate::diagram::TddNodeId) -> bool) -> Result<crate::apply::FilterOutcome, OperationError> {
         let context = Arc::clone(self.context());
         context.run(|eng| eng.filter_nodes(self, keep))
     }

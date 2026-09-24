@@ -114,42 +114,6 @@ struct Marking {
 }
 
 impl crate::Engine {
-    /// Run [`Tdd::filter_nodes`] with this engine's allocation, cancellation
-    /// and output limits. A callback's own work is the caller's responsibility.
-    ///
-    /// # Errors
-    ///
-    /// Returns an engine resource refusal as for [`Self::restrict_to_care`].
-    pub fn filter_nodes(&self, f: Tdd, mut keep: impl FnMut(crate::diagram::TddNodeId) -> bool) -> Result<Tdd, OperationError> {
-        let _op = self.limits().begin_operation();
-        self.limits().check_stop()?;
-        if f.is_zero() { return Ok(f); }
-        let mut marks = Marking::trivial(self, &f, true)?;
-        let mut poll = self.limits().gate();
-        let mut removed = false;
-        for v in f.vtree.bottomup().filter(|&v| !f.vtree.node(v).is_leaf()) {
-            let level = &f.levels[v.idx()];
-            if level.is_marginal() { continue; }
-            for (i, node) in level.nodes.iter().enumerate() {
-                poll.poll(1)?;
-                if node.is_internal() {
-                    let id = crate::diagram::TddNodeId { vtree: v, local: crate::diagram::NodeIdx(i as u32) };
-                    if !keep(id) { marks.alive[v.idx()][i] = false; removed = true; }
-                }
-            }
-        }
-        poll.flush()?;
-        if !removed { return Ok(f); }
-        let root = f.output;
-        if !f.vtree.node(root.vtree).is_leaf() && !f.levels[root.vtree.idx()].is_marginal()
-            && !marks.alive[root.vtree.idx()][root.local.idx()]
-        {
-            return Ok(crate::build::constant_like(self, &f, false));
-        }
-        if marks.nothing_reachable_died(self, &f)? { return Ok(f); }
-        marks.rebuild(self, f)
-    }
-
     /// Restrict to a borrowed care diagram, abandoning an expensive discovery.
     ///
     /// Has the semantic and size guarantees of [`Tdd::restrict_to_care`].

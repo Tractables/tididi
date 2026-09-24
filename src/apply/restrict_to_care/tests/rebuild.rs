@@ -58,3 +58,59 @@ fn care_rebuild_recovers_after_each_refused_reservation() {
     }
     assert!(reached_success, "the sweep must cover every reservation");
 }
+
+/// The node filter's bottom-up sweep and this depth-first rebuild keep the
+/// same function once both are minimized, on structural operands and on
+/// operands with a summed-out subtree.
+#[test]
+fn the_node_filter_agrees_with_the_depth_first_rebuild() {
+    use crate::apply::FilterOutcome;
+    use crate::test_helpers::{assert_same_shape, compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
+    let mut rng = Lcg::new(0xdf5);
+    let mut compared = 0;
+    for round in 0..16u32 {
+        let n = 4 + round % 5;
+        for (_, vtree) in vtree_shapes(n) {
+            let eng = Engine::new();
+            let f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: 2 * n as usize, width: 3 }));
+            let mut summed = f.clone();
+            let inner: Vec<_> = vtree.internal_bottomup().map(|(t, _, _)| t).filter(|&t| t != vtree.root()).collect();
+            if let Some(&t) = inner.get(round as usize % inner.len().max(1)) {
+                eng.marginalize_levels(&mut summed, &[t]).unwrap();
+                eng.minimize(&mut summed).unwrap();
+            }
+            for f in [f, summed] {
+                if f.is_zero() { continue; }
+                let root = f.output();
+                let keep = |id: TddNodeId| id == root || !(u64::from(id.vtree.0) * 31 + u64::from(id.local.0) + u64::from(round)).is_multiple_of(5);
+                let sweep = match eng.filter_nodes_with(&f, keep, ReductionPlan::default()).unwrap() {
+                    FilterOutcome::Unchanged => f.clone(),
+                    FilterOutcome::Filtered { tdd, .. } | FilterOutcome::Unsatisfiable { tdd, .. } => tdd,
+                };
+                let mut marks = Marking::trivial(&eng, &f, true).unwrap();
+                for (i, level) in f.levels.iter().enumerate() {
+                    if level.is_marginal() { continue; }
+                    for (j, node) in level.nodes.iter().enumerate() {
+                        if node.is_internal() && !keep(TddNodeId { vtree: VtreeIdx(i as u32), local: NodeIdx(j as u32) }) {
+                            marks.alive[i][j] = false;
+                        }
+                    }
+                }
+                let mut dfs = marks.rebuild(&eng, f.clone()).unwrap();
+                eng.minimize(&mut dfs).unwrap();
+                if sweep.is_zero() {
+                    assert!(dfs.is_zero());
+                    continue;
+                }
+                assert_same_shape(&sweep, &dfs, "the sweep against the depth-first rebuild");
+                assert_eq!(sweep.model_count().unwrap(), dfs.model_count().unwrap());
+                let counts = |g: &Tdd| -> Vec<Option<Vec<u128>>> {
+                    g.levels.iter().map(|level| level.marginal_counts().map(|c| { let mut c = c.to_vec(); c.sort_unstable(); c })).collect()
+                };
+                assert_eq!(counts(&sweep), counts(&dfs));
+                compared += 1;
+            }
+        }
+    }
+    assert!(compared >= 60, "too few operands compared: {compared}");
+}

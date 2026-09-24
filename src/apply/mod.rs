@@ -21,6 +21,7 @@ pub(crate) mod negate;
 pub(crate) mod condition;
 pub(crate) mod project;
 pub(crate) mod restrict_to_care;
+mod filter_nodes;
 mod operators;
 mod compose;
 mod substitute;
@@ -31,6 +32,7 @@ pub(crate) use disjoin::apply_or;
 pub use disjoin::{nor_many, or, or_many};
 pub use compose::{xor, ite, and_exists, Quantification};
 pub use restrict_to_care::RestrictionOutcome;
+pub use filter_nodes::{FilterOutcome, FilterStats};
 
 #[cfg(test)]
 mod tests;
