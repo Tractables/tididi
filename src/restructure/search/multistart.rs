@@ -133,7 +133,7 @@ fn kick(
     rng: &mut Lcg,
 ) -> Result<(), OperationError> {
     let _op = eng.limits().begin_operation();
-    let mut scratch = eng.restructure().checkout(eng.limits());
+    let mut scratch = eng.scratch.restructure.checkout(eng.limits());
     let mut search = super::SearchTree::new(tdd);
     for _ in 0..count {
         let nodes = search.tdd.vtree().num_nodes() as u64;

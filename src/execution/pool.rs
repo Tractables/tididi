@@ -43,15 +43,36 @@ impl<T: Default> Pool<T> {
 }
 
 impl<T> Pool<T> {
+    /// Whether this slot contains a parked value.
+    pub(crate) fn occupied(&self) -> bool { self.bytes.get() != 0 }
+}
+
+/// A pool, whatever it holds, as [`Pools`] lists it.
+pub(crate) trait Drain {
     /// Drop whatever this pool retains.
+    fn drain(&self, lim: &Limits);
+}
+
+impl<T> Drain for Pool<T> {
     #[inline]
-    pub(crate) fn drain(&self, lim: &Limits) {
+    fn drain(&self, lim: &Limits) {
         lim.retained_scratch.set(lim.retained_scratch.get() - self.bytes.replace(0));
         self.value.take();
     }
+}
 
-    /// Whether this slot contains a parked value.
-    pub(crate) fn occupied(&self) -> bool { self.bytes.get() != 0 }
+/// A group of pools that can list them.
+///
+/// Whatever has to reach every pool an engine owns, such as
+/// [`Engine::clear_scratch`](crate::Engine::clear_scratch), walks this one list.
+pub(crate) trait Pools {
+    /// Hand every pool in this group to `visit`, once each.
+    fn pools(&self, visit: &mut dyn FnMut(&dyn Drain));
+
+    /// Drop whatever every pool in this group retains.
+    fn drain(&self, lim: &Limits) {
+        self.pools(&mut |pool| pool.drain(lim));
+    }
 }
 
 impl<T: PooledScratch> Pool<T> {

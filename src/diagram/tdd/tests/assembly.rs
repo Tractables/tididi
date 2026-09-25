@@ -13,7 +13,7 @@ fn checked_assembly_charges_worklists_even_when_levels_are_already_allocated() {
     let _scope = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
     let assembly = crate::diagram::Assembly::from_levels(&eng, tree, source.levels.into_vec(), None);
     assert_eq!(assembly.finish(output).err(), Some(OperationError::OverBudget));
-    assert_eq!(eng.levels().occupancy(), 1, "refused levels go back to the pool");
+    assert_eq!(eng.scratch.levels.occupancy(), 1, "refused levels go back to the pool");
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn operation_assembly_owns_weights_and_recycles_refused_results() {
         };
         if refuse {
             assert_eq!(result.err(), Some(OperationError::OverBudget));
-            assert_eq!(eng.levels().occupancy(), 1);
+            assert_eq!(eng.scratch.levels.occupancy(), 1);
             let fresh = Assembly::new(&eng, &vtree).unwrap();
             for t in vtree.bottomup() {
                 assert_eq!(fresh.level(t).slot_count(), 0);
@@ -64,7 +64,7 @@ fn operation_assembly_owns_weights_and_recycles_refused_results() {
             assert_eq!(result.weighted_value().unwrap().unwrap().into_rational(),
                 source.weighted_value().unwrap().unwrap().into_rational());
             assert!(!result.dirty.is_empty());
-            assert_eq!(eng.levels().occupancy(), 0, "finished arenas belong to the diagram");
+            assert_eq!(eng.scratch.levels.occupancy(), 0, "finished arenas belong to the diagram");
         }
     }
 }
@@ -79,5 +79,5 @@ fn unwinding_discards_unfinished_output_storage() {
         panic!("interrupted output construction");
     }));
     assert!(result.is_err());
-    assert_eq!(eng.levels().occupancy(), 0);
+    assert_eq!(eng.scratch.levels.occupancy(), 0);
 }

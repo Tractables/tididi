@@ -17,7 +17,7 @@
 //! derivation.
 
 use crate::Engine;
-use crate::execution::pool::Pool;
+use crate::execution::pool::{Drain, Pool, Pools};
 use std::sync::Arc;
 
 use crate::diagram::Literal;
@@ -61,15 +61,14 @@ pub(crate) struct ClauseScratch {
     dfs_stack: Pool<Vec<(VtreeIdx, bool)>>,
 }
 
-impl ClauseScratch {
-    /// Release every retained buffer, leaving the pools empty.
-    pub(crate) fn drain(&self, lim: &crate::limits::Limits) {
-        self.cd_map.drain(lim);
-        self.level_base.drain(lim);
-        self.on_spine.drain(lim);
-        self.need_dt.drain(lim);
-        self.spine_internal.drain(lim);
-        self.dfs_stack.drain(lim);
+impl Pools for ClauseScratch {
+    fn pools(&self, visit: &mut dyn FnMut(&dyn Drain)) {
+        visit(&self.cd_map);
+        visit(&self.level_base);
+        visit(&self.on_spine);
+        visit(&self.need_dt);
+        visit(&self.spine_internal);
+        visit(&self.dfs_stack);
     }
 }
 
@@ -186,7 +185,7 @@ fn conjoin_normalized(eng: &Engine, mut f: Tdd, clause: &[(Literal, VtreeIdx)]) 
 /// leaf of it and is not false.
 fn rebuild_along_spine(eng: &Engine, f: &mut Tdd, clause: &[(Literal, VtreeIdx)], disjoin: bool) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
-    let pool = eng.clause_pool();
+    let pool = &eng.scratch.clause;
     let vtree = &f.vtree;
     let num_nodes = vtree.num_nodes();
 

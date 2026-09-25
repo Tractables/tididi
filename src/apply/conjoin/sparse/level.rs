@@ -91,7 +91,7 @@ struct WsGuard<'a> {
 
 impl<'a> WsGuard<'a> {
     fn new(eng: &'a Engine) -> Self {
-        WsGuard { ws: eng.sparse().checkout(eng.limits()), repair: true }
+        WsGuard { ws: eng.scratch.sparse.checkout(eng.limits()), repair: true }
     }
 
     /// The lookup tables are all `NO_PRODUCT` again; nothing to repair.

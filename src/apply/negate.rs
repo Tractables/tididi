@@ -9,7 +9,7 @@ use crate::diagram::{Assembly, ChildDecoder, ChildPair, EncodedChildRef, LeafLab
 
 use crate::Engine;
 use crate::limits::OperationError;
-use crate::execution::pool::Pool;
+use crate::execution::pool::{Drain, Pool, Pools};
 use crate::apply::falsity::empty_node;
 use std::sync::Arc;
 
@@ -27,11 +27,10 @@ pub(crate) struct NegateScratch {
     cells: Pool<Vec<ChildPair>>,
 }
 
-impl NegateScratch {
-    /// Release every retained buffer, leaving the pools empty.
-    pub(crate) fn drain(&self, lim: &crate::limits::Limits) {
-        self.cover.drain(lim);
-        self.cells.drain(lim);
+impl Pools for NegateScratch {
+    fn pools(&self, visit: &mut dyn FnMut(&dyn Drain)) {
+        visit(&self.cover);
+        visit(&self.cells);
     }
 }
 
@@ -119,7 +118,7 @@ fn complement_full_at_root(
             form: root_form,
         };
 
-        let scratch = eng.negate_scratch();
+        let scratch = &eng.scratch.negate;
         let mut bits = scratch.cover.checkout_preserving(eng.limits());
         let mut neg_pairs = scratch.cells.checkout_preserving(eng.limits());
         collect_complement_pairs(
@@ -160,7 +159,7 @@ fn complement_full_at_root(
 /// the level refers to it as `One` or as `Pos`/`Neg`, and the fill is emitted
 /// in that same form.
 pub(crate) fn expand_full(eng: &Engine, tdd: &mut Tdd) -> Result<LeafForm, OperationError> {
-    let scratch = eng.negate_scratch();
+    let scratch = &eng.scratch.negate;
     let mut bits = scratch.cover.checkout_preserving(eng.limits());
     let mut cells = scratch.cells.checkout_preserving(eng.limits());
 

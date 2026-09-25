@@ -219,7 +219,7 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
     // which the twin-free warm-up cannot pre-size: grow them here, untracked and
     // generously, leaving the three merge buffers as the only cold scratch.
     {
-        let mut s = eng.reduce_scratch().contract.checkout(lim);
+        let mut s = eng.scratch.reduce.contract.checkout(lim);
         let big = 64 * width;
         s.flat_groups.resize_with(big, Default::default);
         s.group_starts.resize_with(big, Default::default);
@@ -254,11 +254,11 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
 fn contract_checkout_invalidates_the_previous_diagrams_marginal_map() {
     let eng = crate::Engine::new();
     {
-        let mut scratch = eng.reduce_scratch().contract.checkout(eng.limits());
+        let mut scratch = eng.scratch.reduce.contract.checkout(eng.limits());
         scratch.has_marginal_below = vec![true, false];
         scratch.has_marginal_below_valid = true;
     }
-    let scratch = eng.reduce_scratch().contract.checkout(eng.limits());
+    let scratch = eng.scratch.reduce.contract.checkout(eng.limits());
     assert!(!scratch.has_marginal_below_valid);
     assert_eq!(scratch.has_marginal_below.capacity(), 2);
 }

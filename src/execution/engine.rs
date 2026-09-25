@@ -2,6 +2,7 @@
 
 use crate::limits::Limits;
 use super::Context;
+use super::pool::{Pool, Pools, Drain};
 
 /// An execution workspace for checked operations and explicit resource limits.
 ///
@@ -51,21 +52,41 @@ use super::Context;
 pub struct Engine {
     pub(super) context: std::sync::Weak<Context>,
     pub(super) limits: Limits,
-    apply: crate::apply::conjoin::ApplyScratch,
-    clause: crate::apply::conjoin_clause::ClauseScratch,
-    reduce: crate::reduce::ReduceScratch,
-    negate: crate::apply::negate::NegateScratch,
-    restructure: crate::execution::pool::Pool<crate::restructure::scratch::RestructureScratch>,
-    sparse: crate::execution::pool::Pool<crate::apply::conjoin::SparseWorkspace>,
-    levels: crate::diagram::LevelPool,
-    model_layout: crate::execution::pool::Pool<crate::build::models::layout::Layout>,
+    pub(crate) scratch: EngineScratch,
+}
+
+/// Every pool an engine parks scratch in between operations, one field per
+/// operation that reuses it.
+#[derive(Default)]
+pub(crate) struct EngineScratch {
+    pub(crate) apply: crate::apply::conjoin::ApplyScratch,
+    pub(crate) clause: crate::apply::conjoin_clause::ClauseScratch,
+    pub(crate) reduce: crate::reduce::ReduceScratch,
+    pub(crate) negate: crate::apply::negate::NegateScratch,
+    pub(crate) restructure: Pool<crate::restructure::scratch::RestructureScratch>,
+    pub(crate) sparse: Pool<crate::apply::conjoin::SparseWorkspace>,
+    pub(crate) levels: crate::diagram::LevelPool,
+    pub(crate) model_layout: Pool<crate::build::models::layout::Layout>,
+}
+
+impl Pools for EngineScratch {
+    fn pools(&self, visit: &mut dyn FnMut(&dyn Drain)) {
+        self.apply.pools(visit);
+        self.clause.pools(visit);
+        self.reduce.pools(visit);
+        self.negate.pools(visit);
+        visit(&self.restructure);
+        visit(&self.sparse);
+        self.levels.pools(visit);
+        visit(&self.model_layout);
+    }
 }
 
 impl std::fmt::Debug for Engine {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Engine")
             .field("armed", &self.limits.armed())
-            .field("pooled_levels", &self.levels.occupancy())
+            .field("pooled_levels", &self.scratch.levels.occupancy())
             .finish()
     }
 }
@@ -98,14 +119,7 @@ impl Engine {
         Engine {
             context: std::sync::Weak::new(),
             limits: Limits::new(),
-            apply: crate::apply::conjoin::ApplyScratch::default(),
-            clause: crate::apply::conjoin_clause::ClauseScratch::default(),
-            reduce: crate::reduce::ReduceScratch::default(),
-            negate: crate::apply::negate::NegateScratch::default(),
-            restructure: crate::execution::pool::Pool::default(),
-            sparse: crate::execution::pool::Pool::default(),
-            levels: crate::diagram::LevelPool::default(),
-            model_layout: crate::execution::pool::Pool::default(),
+            scratch: EngineScratch::default(),
         }
     }
 
@@ -123,62 +137,6 @@ impl Engine {
         }
     }
 
-    /// The buffers the conjunctions on this engine reuse.
-    #[must_use]
-    #[inline]
-    pub(crate) fn apply(&self) -> &crate::apply::conjoin::ApplyScratch {
-        &self.apply
-    }
-
-    /// The clause-conjunction pools.
-    #[must_use]
-    #[inline]
-    pub(crate) fn clause_pool(&self) -> &crate::apply::conjoin_clause::ClauseScratch {
-        &self.clause
-    }
-
-    /// The reduction pools.
-    #[must_use]
-    #[inline]
-    pub(crate) fn reduce_scratch(&self) -> &crate::reduce::ReduceScratch {
-        &self.reduce
-    }
-
-    /// The negation pools.
-    #[must_use]
-    #[inline]
-    pub(crate) fn negate_scratch(&self) -> &crate::apply::negate::NegateScratch {
-        &self.negate
-    }
-
-    /// The rotation-search pool.
-    #[must_use]
-    #[inline]
-    pub(crate) fn restructure(&self) -> &crate::execution::pool::Pool<crate::restructure::scratch::RestructureScratch> {
-        &self.restructure
-    }
-
-    /// The sparse-level workspace.
-    #[must_use]
-    #[inline]
-    pub(crate) fn sparse(&self) -> &crate::execution::pool::Pool<crate::apply::conjoin::SparseWorkspace> {
-        &self.sparse
-    }
-
-    /// The model-table layout pool.
-    #[must_use]
-    #[inline]
-    pub(crate) fn model_layout(&self) -> &crate::execution::pool::Pool<crate::build::models::layout::Layout> {
-        &self.model_layout
-    }
-
-    /// The recycled level arrays.
-    #[must_use]
-    #[inline]
-    pub(crate) fn levels(&self) -> &crate::diagram::LevelPool {
-        &self.levels
-    }
-
     /// Access the engine's limit configuration and work measurements.
     ///
     /// [`Limits::scope`] installs limits temporarily; [`Limits::edit`] changes
@@ -188,7 +146,6 @@ impl Engine {
         &self.limits
     }
 
-
     /// Release retained scratch buffers and pooled storage, preserving limits and meters.
     ///
     /// Call between operations to release capacity retained by completed or
@@ -196,13 +153,6 @@ impl Engine {
     /// [`Context::clear_scratch`] releases the idle workspace in a shared context.
     /// Active operations keep their checked-out buffers until they finish.
     pub fn clear_scratch(&self) {
-        self.apply.drain(&self.limits);
-        self.clause.drain(&self.limits);
-        self.reduce.drain(&self.limits);
-        self.negate.drain(&self.limits);
-        self.restructure.drain(&self.limits);
-        self.sparse.drain(&self.limits);
-        self.levels.drain(&self.limits);
-        self.model_layout.drain(&self.limits);
+        self.scratch.drain(&self.limits);
     }
 }

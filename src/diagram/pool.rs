@@ -2,7 +2,7 @@
 
 use crate::Engine;
 use crate::limits::Limits;
-use crate::execution::pool::{Buffers, Pool, PooledScratch, Scratch};
+use crate::execution::pool::{Buffers, Drain, Pool, Pools, PooledScratch, Scratch};
 
 use super::level::TddLevel;
 
@@ -21,11 +21,12 @@ impl LevelPool {
     pub(crate) fn occupancy(&self) -> usize {
         usize::from(self.primary.occupied()) + usize::from(self.secondary.occupied())
     }
+}
 
-    /// Empty both slots, releasing the recycled capacity to the allocator.
-    pub(crate) fn drain(&self, lim: &Limits) {
-        self.primary.drain(lim);
-        self.secondary.drain(lim);
+impl Pools for LevelPool {
+    fn pools(&self, visit: &mut dyn FnMut(&dyn Drain)) {
+        visit(&self.primary);
+        visit(&self.secondary);
     }
 }
 
@@ -82,7 +83,7 @@ pub(crate) fn try_take_levels(eng: &Engine, num_nodes: usize) -> Result<Vec<TddL
 
 /// The first parked level array, cut down to at most `num_nodes` levels.
 fn take_level_array(eng: &Engine, num_nodes: usize) -> Vec<TddLevel> {
-    let pool = eng.levels();
+    let pool = &eng.scratch.levels;
     let mut levels = if pool.primary.occupied() { pool.primary.take(eng.limits()) }
         else { pool.secondary.take(eng.limits()) }.levels;
     if levels.len() > num_nodes {
@@ -134,7 +135,7 @@ pub(crate) enum PoolSlot {
 
 /// Return a `Vec<TddLevel>` to one of the pool slots for reuse.
 pub(crate) fn return_levels(eng: &Engine, slot: PoolSlot, levels: Vec<TddLevel>) {
-    let pool = eng.levels();
+    let pool = &eng.scratch.levels;
     let cell = match slot {
         PoolSlot::First => &pool.primary,
         PoolSlot::Second => &pool.secondary,

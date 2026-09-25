@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::limits::Limits;
-use crate::execution::pool::{Buffers, Pool, PooledScratch, Scratch};
+use crate::execution::pool::{Buffers, Drain, Pool, Pools, PooledScratch, Scratch};
 
 #[derive(Default)]
 pub(crate) struct ApplyScratch {
@@ -15,15 +15,15 @@ pub(crate) struct ApplyScratch {
     pub(crate) right_cols: Pool<Vec<ColumnSlice>>,
 }
 
-impl ApplyScratch {
-    pub(crate) fn drain(&self, lim: &crate::limits::Limits) {
-        self.workspace.drain(lim);
-        self.f_identity.drain(lim);
-        self.g_identity.drain(lim);
-        self.subvars.drain(lim);
-        self.marginal_stack.drain(lim);
-        self.cell_pairs.drain(lim);
-        self.right_cols.drain(lim);
+impl Pools for ApplyScratch {
+    fn pools(&self, visit: &mut dyn FnMut(&dyn Drain)) {
+        visit(&self.workspace);
+        visit(&self.f_identity);
+        visit(&self.g_identity);
+        visit(&self.subvars);
+        visit(&self.marginal_stack);
+        visit(&self.cell_pairs);
+        visit(&self.right_cols);
     }
 }
 

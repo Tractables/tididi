@@ -91,7 +91,7 @@
         // discarded — that is what keeps the arenas warm when components of
         // different variable counts alternate. Both directions, and every level
         // handed out is still empty (the reset barrier is not skipped).
-        eng.levels().drain(eng.limits());
+        eng.clear_scratch();
 
         // Shrink: return a Vec of size 5, then request size 3.
         let levels = take_levels(eng, 5);
@@ -156,7 +156,7 @@
         let eng = &Engine::new();
         // Pre-flush the pool to make this test deterministic regardless of what
         // the engine's pool already holds.
-        eng.levels().drain(eng.limits());
+        eng.clear_scratch();
         let mut levels = take_levels(eng, 3);
         // A level with tiny content but huge `pairs` capacity.
         levels[1].pairs.reserve(8_000_000);

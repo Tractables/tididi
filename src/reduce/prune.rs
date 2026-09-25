@@ -101,7 +101,7 @@ pub(crate) fn below_root_walk_applies(tdd: &Tdd) -> bool {
 fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     let num_nodes = tdd.vtree.num_nodes();
 
-    let pool = eng.reduce_scratch();
+    let pool = &eng.scratch.reduce;
     let mut level_base = pool.prune_level_base.checkout_preserving(eng.limits());
     let mut remap = pool.prune_remap.checkout_preserving(eng.limits());
 
@@ -433,7 +433,7 @@ impl Visit {
 /// [`prune_unreachable`] under [`PruneScope::BelowRoot`]: walk down from the
 /// output, stopping at every level that loses no node.
 fn prune_below_root(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
-    let pool = eng.reduce_scratch();
+    let pool = &eng.scratch.reduce;
     let mut remap = pool.prune_remap.checkout_preserving(eng.limits());
     let mut identity = pool.prune_identity.checkout_preserving(eng.limits());
     let mut visits = pool.prune_visits.checkout_preserving(eng.limits());

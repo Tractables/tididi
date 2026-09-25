@@ -11,7 +11,7 @@ pub(crate) mod slot_prune; // post-tagger marginal-slot compaction
 mod driver;
 pub(crate) use driver::restore_marginal_invariants;
 
-use crate::execution::pool::Pool;
+use crate::execution::pool::{Drain, Pool, Pools};
 
 use self::contract::scratch::ContractScratch;
 use crate::value::slots::RefSlotScratch;
@@ -37,16 +37,15 @@ pub(crate) struct ReduceScratch {
     contract: Pool<ContractScratch>,
 }
 
-impl ReduceScratch {
-    /// Release every retained buffer, leaving the pools empty.
-    pub(crate) fn drain(&self, lim: &crate::limits::Limits) {
-        self.prune_remap.drain(lim);
-        self.prune_level_base.drain(lim);
-        self.prune_visits.drain(lim);
-        self.prune_identity.drain(lim);
-        self.slot_prune_slots.drain(lim);
-        self.slot_prune_remap.drain(lim);
-        self.contract.drain(lim);
+impl Pools for ReduceScratch {
+    fn pools(&self, visit: &mut dyn FnMut(&dyn Drain)) {
+        visit(&self.prune_remap);
+        visit(&self.prune_level_base);
+        visit(&self.prune_visits);
+        visit(&self.prune_identity);
+        visit(&self.slot_prune_slots);
+        visit(&self.slot_prune_remap);
+        visit(&self.contract);
     }
 }
 

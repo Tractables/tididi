@@ -90,7 +90,7 @@ pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd) -
     //   - marginal & non-CT        → recurse into both children
     //   - leaf reached             → mark non-identity
     if has_any_marginal {
-        let mut subvars = eng.apply().subvars.checkout(lim);
+        let mut subvars = eng.scratch.apply.subvars.checkout(lim);
         lim.try_resize(&mut subvars, num_nodes, 0u32)?;
         for (t, _) in vtree.leaf_bottomup() {
             subvars[t.idx()] = 1;
@@ -98,7 +98,7 @@ pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd) -
         for (t, left, right) in vtree.internal_bottomup() {
             subvars[t.idx()] = subvars[left.idx()] + subvars[right.idx()];
         }
-        let mut stack = eng.apply().marginal_stack.checkout(lim);
+        let mut stack = eng.scratch.apply.marginal_stack.checkout(lim);
         stack.clear();
         for (t, _, _) in vtree.internal_bottomup() {
             let level = &tdd.levels[t.idx()];

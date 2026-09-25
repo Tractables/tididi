@@ -1,4 +1,4 @@
-use crate::execution::pool::{Buffers, Nested, Pool, PooledScratch, Scratch};
+use crate::execution::pool::{Buffers, Drain, Nested, Pool, PooledScratch, Scratch};
 
 #[derive(Default)]
 struct WorkingSet {
@@ -211,10 +211,10 @@ fn recycled_levels_and_scratch_use_the_same_allowance() {
     let blocker = Pool::<Capacity>::default();
     blocker.put(eng.limits(), Capacity(ENGINE_RETAIN_BYTES));
     return_levels(&eng, PoolSlot::First, take_levels(&eng, 3));
-    assert_eq!(eng.levels().occupancy(), 0);
+    assert_eq!(eng.scratch.levels.occupancy(), 0);
     blocker.drain(eng.limits());
     return_levels(&eng, PoolSlot::First, take_levels(&eng, 3));
-    assert_eq!(eng.levels().occupancy(), 1);
+    assert_eq!(eng.scratch.levels.occupancy(), 1);
     assert!(eng.limits().retained_scratch.get() > 0);
     eng.clear_scratch();
     assert_eq!(eng.limits().retained_scratch.get(), 0);

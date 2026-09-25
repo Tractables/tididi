@@ -68,7 +68,7 @@ fn every_refusal_point_answers_over_budget_and_returns_the_buffers() {
                 assert_eq!(e, crate::OperationError::OverBudget, "cut {cut}");
                 eng.limits().grant_every_reserve();
                 b.abandon(&eng);
-                assert_eq!(eng.levels().occupancy(), 1, "cut {cut} left a buffer outside the pool");
+                assert_eq!(eng.scratch.levels.occupancy(), 1, "cut {cut} left a buffer outside the pool");
                 refused += 1;
             }
         }

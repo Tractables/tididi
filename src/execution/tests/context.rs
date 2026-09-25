@@ -84,8 +84,8 @@ fn returned_and_unwound_batches_release_callback_captures() {
 #[test]
 fn clearing_scratch_releases_only_the_idle_checkout() {
     let context = Arc::new(Context::new());
-    context.run(|engine| engine.apply().subvars.put(engine.limits(), vec![17]));
-    context.run(|engine| assert_eq!(engine.apply().subvars.take(engine.limits()), vec![17]));
+    context.run(|engine| engine.scratch.apply.subvars.put(engine.limits(), vec![17]));
+    context.run(|engine| assert_eq!(engine.scratch.apply.subvars.take(engine.limits()), vec![17]));
     context.run(|_| {
         context.clear_scratch();
         assert!(context.idle.lock().unwrap().is_none());
@@ -260,7 +260,7 @@ fn accepted_rotation_keeps_context_and_detaches_only_the_changed_tree() {
 fn context_reset_preserves_capacity_accounting_but_not_operation_meters() {
     let context = Arc::new(Context::new());
     let bytes = context.run(|engine| {
-        engine.apply().subvars.put(engine.limits(), vec![1, 2, 3]);
+        engine.scratch.apply.subvars.put(engine.limits(), vec![1, 2, 3]);
         engine.limits().charge_in_flight(999);
         engine.limits().retained_scratch.get()
     });

@@ -31,7 +31,7 @@ unsafe impl Send for ColumnSlice {}
 /// on drop; when that reservation is refused `build` returns `None` and the
 /// walkers decode per cell instead.
 ///
-/// `cols` is pooled scratch (`eng.apply().right_cols`), not budget-charged.
+/// `cols` is pooled scratch (`eng.scratch.apply.right_cols`), not budget-charged.
 pub(crate) struct RightColumns<'a> {
     /// Decode arena, non-empty only on marginal-mask levels. Filled once in
     /// `build` and never touched again, so the heap block the descriptors
@@ -107,10 +107,10 @@ impl<'a> RightColumns<'a> {
             lim.reserve_exact(&mut flat, total).ok()?;
         }
 
-        let mut cols: Vec<ColumnSlice> = eng.apply().right_cols.take(lim);
+        let mut cols: Vec<ColumnSlice> = eng.scratch.apply.right_cols.take(lim);
         cols.clear();
         if cols.try_reserve(right_width).is_err() {
-            eng.apply().right_cols.put(lim, cols);
+            eng.scratch.apply.right_cols.put(lim, cols);
             return None;
         }
 
@@ -155,7 +155,8 @@ impl Drop for RightColumns<'_> {
         // tax every later small apply.
         self.cols.clear();
         self.eng
-            .apply()
+            .scratch
+            .apply
             .right_cols
             .put(self.eng.limits(), std::mem::take(&mut self.cols));
     }
