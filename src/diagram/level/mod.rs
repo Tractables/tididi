@@ -172,7 +172,9 @@ impl TddLevel {
 
     /// Number of slots: the number of values on a marginal level, else
     /// `nodes.len()`. The index bound for arrays over this level. 0 on a leaf
-    /// level that is not marginal (its nodes are implicit).
+    /// level that is not marginal (its nodes are implicit). Use
+    /// [`Tdd::reference_slot_count`](crate::Tdd::reference_slot_count) to size
+    /// arrays indexed by child references.
     pub fn slot_count(&self) -> usize {
         match &self.state {
             LevelState::Counts { counts, .. } => counts.len(),
