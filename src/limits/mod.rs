@@ -418,13 +418,6 @@ impl Limits {
         self.scope(edit(self.armed()))
     }
 
-    /// The armed soft byte budget.
-    #[must_use]
-    #[inline]
-    pub(crate) fn budget(&self) -> Option<u64> {
-        self.budget.get()
-    }
-
     /// Set or clear the soft budget alone, for a caller that re-derives it as it
     /// goes (a compile loop refreshing `budget − live` after every step).
     pub fn set_budget(&self, remaining_bytes: Option<u64>) {

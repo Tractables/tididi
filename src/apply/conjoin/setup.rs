@@ -241,7 +241,8 @@ fn snapshot_widths(
 const APPLY_BYTES_PER_CELL: u64 = 24;
 
 /// Refuse before allocating anything if a lower bound on the cells this apply
-/// materializes already exceeds the remaining soft budget.
+/// materializes already exceeds the soft budget less what the operation has
+/// charged so far.
 ///
 /// `total_cells` counts the levels at or under the sparse gate's `min_grid`,
 /// which take a dense route whatever their density. It is a lower bound: a
@@ -258,7 +259,7 @@ const APPLY_BYTES_PER_CELL: u64 = 24;
 ///
 /// [`OperationError::OverBudget`] when the prediction does not fit.
 fn preflight_dense_budget(lim: &crate::limits::Limits, total_cells: u64) -> Result<(), OperationError> {
-    if let Some(rem) = lim.budget()
+    if let Some(rem) = lim.budget_headroom()
         && total_cells.saturating_mul(APPLY_BYTES_PER_CELL) > rem {
             return Err(OperationError::OverBudget);
         }
@@ -323,3 +324,7 @@ pub(super) fn apply_and_setup<'a>(
         prefilter_masks,
     })
 }
+
+#[cfg(test)]
+#[path = "tests/setup.rs"]
+mod tests;
