@@ -47,7 +47,7 @@ impl Engine {
 /// traversal with every count collapsed to `> 0`, so it agrees with
 /// `f.model_count()? > 0` on every input, including a non-canonical diagram
 /// whose output node's pairs all bottom out in zero-count children.
-pub(crate) fn is_sat_structural(eng: &Engine, f: &Tdd) -> Result<bool, crate::OperationError> {
+pub(super) fn is_sat_structural(eng: &Engine, f: &Tdd) -> Result<bool, crate::OperationError> {
     if f.is_zero() {
         return Ok(false);
     }

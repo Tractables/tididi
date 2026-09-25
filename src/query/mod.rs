@@ -23,8 +23,8 @@
 
 pub(crate) mod count;
 pub(crate) mod fold;
-pub(crate) mod sat;
-pub(crate) mod evaluate;
+mod sat;
+mod evaluate;
 mod boolean;
 mod cache;
 mod evaluator;

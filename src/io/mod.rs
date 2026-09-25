@@ -59,9 +59,9 @@
 //! retain readers for earlier supported versions. Adding comments does not
 //! change the version.
 
-pub(crate) mod dot;
-pub(crate) mod read;
-pub(crate) mod write;
+mod dot;
+mod read;
+mod write;
 
 pub use dot::{tdd_to_dot, vtree_to_dot};
 pub use read::{load_tdd, read_tdd};
@@ -120,7 +120,7 @@ use crate::diagram::Tdd;
 const TDD_FORMAT_VERSION: u32 = 1;
 
 /// Reject marginal values that structural serialization and rendering cannot represent.
-pub(crate) fn reject_marginal_levels(tdd: &Tdd, what: &str) -> Result<(), IoError> {
+fn reject_marginal_levels(tdd: &Tdd, what: &str) -> Result<(), IoError> {
     if tdd.has_marginal_level() {
         return Err(IoError::Format(format!(
             "{what}: the diagram has one or more marginal levels, which store per-node \
