@@ -1,8 +1,8 @@
 //! The integer arm of the streaming fold.
 
 use super::*;
-use crate::diagram::{EncodedChildRef, ChildPair, ChildDecoder, ChildRef, ValueRef, TddLevel, WeightStore};
-use crate::value::{Count, CountRead, CountRef, CountVec, IntFold, COUNT_OVERFLOW};
+use crate::diagram::{EncodedChildRef, ChildPair, ChildDecoder, ValueRef, TddLevel, WeightStore};
+use crate::value::{Count, CountRead, CountRef, CountVec, IntFold};
 use crate::diagram::{LEAF_COUNTS, LeafLabel, leaf_count};
 
 pub(crate) type StreamChildCounts<'a> = StreamChild<'a, IntFold>;
@@ -11,7 +11,7 @@ pub(crate) type StreamChildCounts<'a> = StreamChild<'a, IntFold>;
 
 
 /// Read one child count for the all-`u64` fold. `MARGINAL`
-/// is the child level's `is_marginal` flag, lifted to a const so the per-pair branch
+/// is whether the child's view decodes marginal-side references, lifted to a const so the per-pair branch
 /// folds away at compile time:
 /// - `MARGINAL=false` (non-marginal): the ref is a bare index, so the read is a
 ///   single load with no tag test.
@@ -41,8 +41,8 @@ unsafe fn read_fast<const MARGINAL: bool>(raw: u32, c: &StreamChildCounts<'_>) -
     }
 }
 
-/// The all-u64 two-accumulator fold, monomorphized on each side's `is_marginal`
-/// flag (`LM`/`RM`). Returns `None` on u128 overflow in either lane or the final
+/// The all-u64 two-accumulator fold, monomorphized on whether each side's view
+/// decodes marginal-side references (`LM`/`RM`). Returns `None` on u128 overflow in either lane or the final
 /// combine — the caller then re-folds the same pairs through the exact BigUint
 /// path, so the result is identical, just a rare slow fallback. Branchless inner
 /// loop: the mask/tag test is gone (compile-time via `read_fast`), the bounds
@@ -90,25 +90,6 @@ pub(crate) fn fold_fast<const LM: bool, const RM: bool>(
     t0.checked_add(t1)
 }
 
-/// Read the fast count or overflow sentinel without consulting the exact side table.
-fn read_marginal_count(raw: u32, c: &StreamChildCounts<'_>, view: ChildDecoder) -> u128 {
-    match view.child(EncodedChildRef::from_raw(raw)) {
-        ChildRef::Value(ValueRef::Inline(value)) => value as u128,
-        ChildRef::Node(crate::diagram::NodeIdx(index))
-        | ChildRef::Value(ValueRef::Slot(index)) => c.col.fast_val(index as usize),
-    }
-}
-
-
-/// Resolve a pair side without exposing the count column's overflow encoding.
-fn read_count<'a>(side: EncodedChildRef, child: &StreamChildCounts<'a>, view: ChildDecoder) -> CountRead<'a> {
-    match view.child(side) {
-        ChildRef::Value(ValueRef::Inline(value)) => CountRead::Fast(value as u128),
-        ChildRef::Node(crate::diagram::NodeIdx(index))
-        | ChildRef::Value(ValueRef::Slot(index)) => child.col.get(index as usize),
-    }
-}
-
 /// Resolve one child ref of level `level_idx` to a count read, against the
 /// diagram's levels and the per-batch `computed` scratch; a `Big` read
 /// borrows the `BigUint`.
@@ -153,57 +134,35 @@ fn read_level_count<'a>(
 
 /// Sum `Σ counts_left[p.left] * counts_right[p.right]` over `pairs`: `Count::Fast`
 /// when the total fits `u128`, `Count::Big` when it overflowed or an input is
-/// already at `COUNT_OVERFLOW`.
+/// already an exact big count.
 pub(crate) fn compute_cell_count(
     pairs: &[ChildPair],
     left: &StreamChildCounts<'_>,
     right: &StreamChildCounts<'_>,
 ) -> Count {
-    let left_view = if left.is_marginal { ChildDecoder::marginal() } else { ChildDecoder::structural() };
-    let right_view = if right.is_marginal { ChildDecoder::marginal() } else { ChildDecoder::structural() };
-    let mut total: u128 = 0;
-    let mut overflowed = false;
-    if left.col.all_u64() && right.col.all_u64() {
-        // Every read is at most `u64::MAX` (slots certified by `all_u64`,
-        // inline refs at most `MARGINAL_INLINE_MAX`), so each product is a
-        // widening `u64×u64→u128` multiply that cannot overflow and the
-        // `COUNT_OVERFLOW` sentinel cannot appear. `fold_fast` is monomorphized
-        // on each side's marginality; a `None` (sum overflow) falls to the
-        // `BigUint` re-loop below, which re-reads the pairs.
-        let res = match (left.is_marginal, right.is_marginal) {
-            (false, false) => fold_fast::<false, false>(pairs, left, right),
-            (false, true) => fold_fast::<false, true>(pairs, left, right),
-            (true, false) => fold_fast::<true, false>(pairs, left, right),
-            (true, true) => fold_fast::<true, true>(pairs, left, right),
-        };
-        match res {
-            Some(t) => total = t,
-            None => overflowed = true,
-        }
-    } else {
-        for pair in pairs {
-            let lc = read_marginal_count(pair.left.0, left, left_view);
-            let rc = read_marginal_count(pair.right.0, right, right_view);
-            if lc == COUNT_OVERFLOW || rc == COUNT_OVERFLOW {
-                overflowed = true;
-                break;
-            }
-            match lc.checked_mul(rc).and_then(|p| total.checked_add(p)) {
-                Some(t) => total = t,
-                None => { overflowed = true; break; }
-            }
-        }
+    let read_left = |k: EncodedChildRef| left.col.read(left.view, k);
+    let read_right = |k: EncodedChildRef| right.col.read(right.view, k);
+    if !(left.col.all_u64() && right.col.all_u64()) {
+        return IntFold::fold(pairs.iter().copied(), read_left, read_right);
     }
-    if !overflowed {
+    // Every read is at most `u64::MAX` (slots certified by `all_u64`, inline
+    // refs at most `MARGINAL_INLINE_MAX`), so each product is a widening
+    // `u64×u64→u128` multiply that cannot overflow and no read is an
+    // overflowed slot. `fold_fast` is monomorphized on each side's
+    // marginality; a `None` (sum overflow) falls to the exact sum, which
+    // re-reads the pairs.
+    let res = match (left.view.is_marginal(), right.view.is_marginal()) {
+        (false, false) => fold_fast::<false, false>(pairs, left, right),
+        (false, true) => fold_fast::<false, true>(pairs, left, right),
+        (true, false) => fold_fast::<true, false>(pairs, left, right),
+        (true, true) => fold_fast::<true, true>(pairs, left, right),
+    };
+    match res {
         // `Count::from_u128` owns the exact-max promotion (a total equal to
-        // `u128::MAX` == `COUNT_OVERFLOW` must not be stored as a fast value).
-        return Count::from_u128(total);
+        // `COUNT_OVERFLOW` must not be stored as a fast value).
+        Some(total) => Count::from_u128(total),
+        None => Count::Big(IntFold::sum_exact(pairs.iter().copied(), read_left, read_right)),
     }
-    Count::Big(IntFold::sum_exact(
-        pairs.iter().copied(),
-        |side| read_count(side, left, left_view),
-        |side| read_count(side, right, right_view),
-    ))
 }
 
 impl ValueDomain for IntFold {
@@ -281,7 +240,7 @@ impl ValueDomain for IntFold {
         computed: &'a [Option<CountVec>],
         _store: &'a (),
     ) -> StreamChild<'a, IntFold> {
-        let is_marginal = level.marginal_counts().is_some();
+        let view = if level.marginal_counts().is_some() { ChildDecoder::marginal() } else { ChildDecoder::structural() };
         // Raw-storage sources (`marginal_counts`/`marginal_counts_big` on the level)
         // are viewed through `CountRef::from_parts_scanned` (u64-fit certificate
         // scanned over the stored slots; `COUNT_OVERFLOW` = `u128::MAX` fails the scan,
@@ -312,7 +271,7 @@ impl ValueDomain for IntFold {
             unreachable!("IntFold::child_view: no counts for level {}", level_idx);
         };
 
-        StreamChild { col, is_marginal }
+        StreamChild { col, view }
     }
 
     fn fold_cell(
@@ -326,3 +285,7 @@ impl ValueDomain for IntFold {
 
 }
 
+
+#[cfg(test)]
+#[path = "tests/count.rs"]
+mod tests;

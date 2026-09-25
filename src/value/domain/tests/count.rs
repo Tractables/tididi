@@ -18,7 +18,7 @@ fn child(counts: &[u128]) -> StreamChildCounts<'_> {
     // `from_parts_scanned` is the same certificate scan `child_view` runs over a
     // level's raw marginal arrays, so the test selects the same path production
     // would for these slot values.
-    StreamChildCounts { col: CountRef::from_parts_scanned(counts, None), is_marginal: false }
+    StreamChildCounts { col: CountRef::from_parts_scanned(counts, None), view: crate::diagram::ChildDecoder::structural() }
 }
 
 #[test]

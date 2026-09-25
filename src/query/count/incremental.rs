@@ -2,7 +2,7 @@
 
 use crate::Engine;
 use std::borrow::Borrow;
-use crate::diagram::{ChildRef, EncodedChildRef, LeafLabel, NodeIdx, PairsIter, Tdd, ValueRef};
+use crate::diagram::{EncodedChildRef, LeafLabel, PairsIter, Tdd};
 use num_bigint::BigUint;
 
 use super::{leaf_seed, PinSemantics};
@@ -81,11 +81,7 @@ impl LevelFold for OverflowingCounts<'_> {
 /// change) are all owned by [`CountVec::set`] / [`Count::from_u128`].
 #[inline]
 fn read_side<'a>(side: Side<'a, CountVec>, k: EncodedChildRef) -> CountRead<'a> {
-    let idx = match side.view.child(k) {
-        ChildRef::Value(ValueRef::Inline(c)) => return CountRead::Fast(c as u128),
-        ChildRef::Node(NodeIdx(idx)) | ChildRef::Value(ValueRef::Slot(idx)) => idx as usize,
-    };
-    side.col.get(idx)
+    side.col.as_count_ref().read(side.view, k)
 }
 
 /// Count repeatedly under changing observations without modifying the diagram.

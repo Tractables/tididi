@@ -14,7 +14,7 @@ use crate::Engine;
 
 use num_bigint::BigUint;
 
-use crate::diagram::CountOverflow;
+use crate::diagram::{ChildDecoder, ChildRef, CountOverflow, EncodedChildRef, NodeIdx, ValueRef};
 
 /// The "u128 fold overflowed" sentinel. A fold total equal to this value is
 /// ambiguous between a true count of `u128::MAX` and an overflow whose real
@@ -277,15 +277,21 @@ impl<'a> CountRef<'a> {
         self.fast
     }
 
-    /// Raw fast-slot read (sentinel included, no big-table decode).
-    pub(crate) fn fast_val(&self, i: usize) -> u128 {
-        self.fast[i]
-    }
-
     /// Read a stored value, borrowing its exact count when the fast slot overflowed.
     #[inline]
     pub(crate) fn get(&self, i: usize) -> CountRead<'a> {
         CountRead::from_slot(self.fast, self.big, i)
+    }
+
+    /// Read the value a parent's child reference `r` names in this column:
+    /// an inline count carried in the reference itself, or the slot or node
+    /// index `view` decodes it to.
+    #[inline]
+    pub(crate) fn read(&self, view: ChildDecoder, r: EncodedChildRef) -> CountRead<'a> {
+        match view.child(r) {
+            ChildRef::Value(ValueRef::Inline(c)) => CountRead::Fast(c as u128),
+            ChildRef::Node(NodeIdx(i)) | ChildRef::Value(ValueRef::Slot(i)) => self.get(i as usize),
+        }
     }
 
     pub(crate) fn len(&self) -> usize {

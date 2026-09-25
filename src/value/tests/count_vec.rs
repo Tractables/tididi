@@ -359,8 +359,8 @@ fn query_and_streaming_folds_match_exact_products_across_storage_boundaries() {
     };
     for left_marginal in [false, true] {
         for right_marginal in [false, true] {
-            let left = StreamChild::<IntFold> { col: column.as_count_ref(), is_marginal: left_marginal };
-            let right = StreamChild::<IntFold> { col: column.as_count_ref(), is_marginal: right_marginal };
+            let left = StreamChild::<IntFold> { col: column.as_count_ref(), view: decoder(left_marginal) };
+            let right = StreamChild::<IntFold> { col: column.as_count_ref(), view: decoder(right_marginal) };
             for (i, pair) in pairs.iter().enumerate() {
                 let expected = &exact[i / exact.len()] * &exact[i % exact.len()];
                 let streamed = IntFold::fold_cell(std::slice::from_ref(pair), &left, &right, &());
@@ -381,8 +381,8 @@ fn streaming_exact_fallback_handles_inline_counts_and_accumulation_overflow() {
     let large = BigUint::from(1u32) << 180usize;
     let column = col(&eng, vec![Count::Big(large.clone())]);
     let empty = CountVec::default();
-    let left = StreamChild::<IntFold> { col: empty.as_count_ref(), is_marginal: true };
-    let right = StreamChild::<IntFold> { col: column.as_count_ref(), is_marginal: true };
+    let left = StreamChild::<IntFold> { col: empty.as_count_ref(), view: ChildDecoder::marginal() };
+    let right = StreamChild::<IntFold> { col: column.as_count_ref(), view: ChildDecoder::marginal() };
     let inline = [0, 7, crate::diagram::MARGINAL_INLINE_MAX];
     let pairs: Vec<_> = inline.into_iter().map(|n| ChildPair {
         left: ValueRef::Inline(n).encode(),
@@ -393,7 +393,7 @@ fn streaming_exact_fallback_handles_inline_counts_and_accumulation_overflow() {
 
     // Individual widening products fit u128, but their sum does not.
     let column = col(&eng, vec![Count::Fast(u64::MAX as u128)]);
-    let side = StreamChild::<IntFold> { col: column.as_count_ref(), is_marginal: false };
+    let side = StreamChild::<IntFold> { col: column.as_count_ref(), view: ChildDecoder::structural() };
     assert_eq!(IntFold::fold_cell(&[pair(0, 0); 3], &side, &side, &()),
         Count::Big(BigUint::from(u64::MAX).pow(2) * 3u32));
 }
@@ -427,4 +427,9 @@ fn refused_overflow_append_preserves_the_existing_slots() {
             assert_eq!(count_key_at(&counts, big.as_ref(), prefix.len()), next);
         }
     }
+}
+
+/// The decoder of a marginal or a structural child view.
+fn decoder(marginal: bool) -> ChildDecoder {
+    if marginal { ChildDecoder::marginal() } else { ChildDecoder::structural() }
 }

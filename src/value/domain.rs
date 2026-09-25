@@ -6,7 +6,7 @@
 //! built inside an apply. Both folds are written once against [`ValueDomain`] and reserve columns
 //! through the engine, returning allocation refusals as operation errors.
 
-use crate::diagram::{ChildPair, TddLevel, WeightStore};
+use crate::diagram::{ChildDecoder, ChildPair, TddLevel, WeightStore};
 use crate::Engine;
 
 use crate::limits::OperationError;
@@ -52,12 +52,11 @@ pub(crate) struct FoldScope<'a, D: ValueDomain> {
 /// covers every read in the cell loop.
 pub(crate) struct StreamChild<'a, D: ValueDomain> {
     pub(crate) col: D::ChildCol<'a>,
-    /// True iff this view is of a marginal child level (its refs are
-    /// marginal-side slot refs, possibly bit-30 tagged). When set, the per-cell
-    /// fold decodes the ref before indexing the column. For a
-    /// non-marginal/leaf child the ref is a plain node index (bit 30 may be a
-    /// real high bit) — do not decode.
-    pub(crate) is_marginal: bool,
+    /// How the parent's references into this child decode: marginal-side
+    /// value references (an integer one possibly carrying its count inline)
+    /// for a view of marginal values, plain node indices otherwise, where
+    /// bit 30 may be a real high bit of the index.
+    pub(crate) view: ChildDecoder,
 }
 
 /// One value domain: the arithmetic, its column, and what the two folds need

@@ -14,7 +14,7 @@ fn marginal_child_view_borrows_the_stored_column() {
         level.become_marginal_weighted(64);
         let computed = vec![None; tree.num_nodes()];
         let view = WeightFold::child_view(root, &tree, &level, &computed, &store);
-        assert!(view.is_marginal);
+        assert!(view.view.is_marginal());
         assert!(std::ptr::eq(view.col.as_ref(), store.level(root).unwrap()));
     }
 }
@@ -30,7 +30,7 @@ fn structural_child_view_borrows_scratch_even_when_the_store_has_a_column() {
         let mut computed = vec![None; tree.num_nodes()];
         computed[root] = Some(vec![store.leaf_val(VarId(1), LeafLabel::One)]);
         let view = WeightFold::child_view(root, &tree, &level, &computed, &store);
-        assert!(!view.is_marginal);
+        assert!(!view.view.is_marginal());
         assert!(std::ptr::eq(view.col.as_ref(), computed[root].as_ref().unwrap().as_slice()));
     }
 }

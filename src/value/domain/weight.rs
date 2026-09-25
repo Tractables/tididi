@@ -174,7 +174,7 @@ impl ValueDomain for WeightFold {
         store: &'a WeightStore,
     ) -> StreamChild<'a, WeightFold> {
         if let Some(col) = column_of(store, level, level_idx) {
-            return StreamChild { col: std::borrow::Cow::Borrowed(col), is_marginal: true };
+            return StreamChild { col: std::borrow::Cow::Borrowed(col), view: ChildDecoder::marginal() };
         }
         if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32)) {
             // `LEAF_WIDTH` = 3, ordered {One, Pos, Neg} per `LeafLabel::from_idx` —
@@ -186,12 +186,12 @@ impl ValueDomain for WeightFold {
             // 3-element alloc, so no budget reservation (the bases are not
             // `const`, hence no static to borrow as the integer twin does).
             let col: Vec<WeightValue> = crate::diagram::leaf_column_vals(store, var);
-            return StreamChild { col: std::borrow::Cow::Owned(col), is_marginal: false };
+            return StreamChild { col: std::borrow::Cow::Owned(col), view: ChildDecoder::structural() };
         }
         let col = computed[level_idx]
             .as_ref()
             .expect("WeightFold::child_view: no values for level");
-        StreamChild { col: std::borrow::Cow::Borrowed(col), is_marginal: false }
+        StreamChild { col: std::borrow::Cow::Borrowed(col), view: ChildDecoder::structural() }
     }
 
     fn fold_cell(
@@ -200,12 +200,10 @@ impl ValueDomain for WeightFold {
         right: &StreamChild<'_, WeightFold>,
         store: &WeightStore,
     ) -> WeightValue {
-        let left_view = if left.is_marginal { ChildDecoder::marginal() } else { ChildDecoder::structural() };
-        let right_view = if right.is_marginal { ChildDecoder::marginal() } else { ChildDecoder::structural() };
         WeightFold::fold(
             pairs.iter().copied(),
-            |k| std::borrow::Cow::Borrowed(&left.col[left_view.index(k)]),
-            |k| std::borrow::Cow::Borrowed(&right.col[right_view.index(k)]),
+            |k| std::borrow::Cow::Borrowed(&left.col[left.view.index(k)]),
+            |k| std::borrow::Cow::Borrowed(&right.col[right.view.index(k)]),
             store.wzero(),
         )
     }
