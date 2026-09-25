@@ -224,8 +224,8 @@ impl SlotValues for IntFold {
                 match CountRead::from_slot(counts, level.marginal_counts_big(), s as usize) {
                     CountRead::Big(b) => Count::Big(b * k),
                     CountRead::Fast(c) => match c.checked_mul(k as u128) {
-                        Some(v) if v != u128::MAX => Count::Fast(v),
-                        _ => Count::Big(BigUint::from(c) * k),
+                        Some(v) => Count::from_u128(v),
+                        None => Count::Big(BigUint::from(c) * k),
                     },
                 }
             }
