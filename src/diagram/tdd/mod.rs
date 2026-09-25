@@ -93,8 +93,9 @@ use super::primitives::{LEAF_WIDTH, TddNodeId, ZERO};
 pub struct Tdd {
     /// The vtree the diagram is decomposed along. Operands of a binary
     /// operation must share it (`Arc::ptr_eq`). Read it with
-    /// [`vtree`](Self::vtree); the only way to change it is
-    /// [`reseat_vtree_unchecked`](Self::reseat_vtree_unchecked).
+    /// [`vtree`](Self::vtree). It changes only through
+    /// [`reseat_vtree_unchecked`](Self::reseat_vtree_unchecked) and the vtree
+    /// search, [`rotation_search`](Self::rotation_search), which edits it in place.
     pub(crate) vtree: Arc<Vtree>,
     /// One level per vtree node: `levels[t.idx()]` is the level of `t`
     /// ([`level`](Self::level)).

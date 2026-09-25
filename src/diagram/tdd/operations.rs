@@ -86,7 +86,7 @@ impl Tdd {
     /// use tididi::{Tdd, Vtree};
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// let f = Tdd::one(&vtree).and_clause([-1, 2])?;
-    /// assert_eq!(f.model_count()?, 6u32.into()); // remote implies encrypted
+    /// assert_eq!(f.model_count()?, 6u32.into());
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn and_clause<L: crate::LiteralInput>(self, clause: impl AsRef<[L]>) -> Result<Tdd, OperationError> {
