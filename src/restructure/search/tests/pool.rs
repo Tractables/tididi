@@ -159,7 +159,7 @@ fn a_pool_search_keeps_every_function_and_never_grows_the_pool() {
     let eng = crate::Engine::new();
     for crossed in [false, true] {
         let mut members = original.clone();
-        let config = PoolSearchConfig { max_sweeps: 6, max_inner_pairs: usize::MAX, crossed };
+        let config = PoolSearchConfig { max_sweeps: 6, crossed, ..PoolSearchConfig::default() };
         let stats = with_members(&mut members, |refs| eng.pool_search(refs, &config)).unwrap();
         assert!(stats.pairs_after <= stats.pairs_before, "{stats:?}");
         assert_eq!(stats.pairs_after, members.iter().map(Tdd::pair_count).sum::<usize>());
@@ -168,5 +168,38 @@ fn a_pool_search_keeps_every_function_and_never_grows_the_pool() {
             assert_canonical(m);
             assert_eq!(&truth_table(m), table, "crossed {crossed}");
         }
+    }
+}
+
+#[test]
+fn a_probe_charges_its_rebuilds_to_the_work_clock() {
+    let original = pool();
+    let eng = crate::Engine::new();
+    let mv = moves(original[0].vtree()).into_iter().find(|&mv| {
+        let mut members = original.clone();
+        with_members(&mut members, |refs| eng.rotate_pool_if(refs, mv, usize::MAX, |_| true)).unwrap()
+    });
+    let mv = mv.expect("some move applies");
+    let mut members = original.clone();
+    let start = eng.limits().work_units();
+    assert!(!with_members(&mut members, |refs| eng.rotate_pool_if(refs, mv, usize::MAX, |_| false)).unwrap());
+    assert!(eng.limits().work_units() > start);
+    for m in &members {
+        assert_canonical(m);
+    }
+}
+
+#[test]
+fn a_search_with_no_work_to_spend_probes_nothing() {
+    let original = pool();
+    let eng = crate::Engine::new();
+    let mut members = original.clone();
+    let config = PoolSearchConfig { max_work_units: 0, ..PoolSearchConfig::default() };
+    let stats = with_members(&mut members, |refs| eng.pool_search(refs, &config)).unwrap();
+    assert_eq!((stats.probes, stats.accepts, stats.work_units), (0, 0, 0), "{stats:?}");
+    for (m, o) in members.iter().zip(&original) {
+        assert!(Arc::ptr_eq(m.vtree(), o.vtree()));
+        assert!(m.equivalent(o).unwrap());
+        assert_canonical(m);
     }
 }

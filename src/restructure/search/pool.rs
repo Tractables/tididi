@@ -74,11 +74,14 @@ pub struct PoolSearchConfig {
     pub max_inner_pairs: usize,
     /// Also try the crossed moves.
     pub crossed: bool,
+    /// The search ends, keeping what it kept, once its probes have charged
+    /// this many units to the work clock. `u64::MAX` is no bound.
+    pub max_work_units: u64,
 }
 
 impl Default for PoolSearchConfig {
     fn default() -> Self {
-        PoolSearchConfig { max_sweeps: 4, max_inner_pairs: usize::MAX, crossed: true }
+        PoolSearchConfig { max_sweeps: 4, max_inner_pairs: usize::MAX, crossed: true, max_work_units: u64::MAX }
     }
 }
 
@@ -97,6 +100,8 @@ pub struct PoolSearchStats {
     /// Live pairs over all members after the search and its closing
     /// reduction.
     pub pairs_after: usize,
+    /// Work charged by the probes, the reductions not included.
+    pub work_units: u64,
 }
 
 impl Engine {
@@ -109,6 +114,8 @@ impl Engine {
     /// apply at its pivot, a member with summed-out levels, or a member whose
     /// rebuild would pass `bound` pairs abandons the move and returns
     /// `Ok(false)` without calling `accept`. An empty pool keeps nothing.
+    /// Each member's rebuild charges the pairs of its two old and two new
+    /// levels to the work clock.
     ///
     /// The members should be canonical: a rebuilt level is then
     /// interchangeable with the one it replaced. A kept move can leave twins
@@ -134,12 +141,14 @@ impl Engine {
     /// A greedy descent over the members' shared vtree: at every internal
     /// node, the rotations both ways, crossed and not if `config.crossed`,
     /// each kept when it lowers the members' total live pairs. Sweeps repeat
-    /// until one keeps nothing or `config.max_sweeps` is reached. Every member
-    /// is reduced before the search and after it.
+    /// until one keeps nothing, `config.max_sweeps` is reached, or the probes
+    /// have charged `config.max_work_units`. Every member is reduced before
+    /// the search and after it.
     ///
     /// The members keep their functions and end up sharing one vtree
     /// allocation, a new one if any move was kept. Stops are polled once per
-    /// pivot; a stop keeps the moves kept so far, with the members reduced.
+    /// pivot and within each probe; an error keeps the moves kept so far and
+    /// returns without the closing reduction.
     ///
     /// # Errors
     ///
@@ -157,11 +166,13 @@ impl Engine {
         }
         stats.pairs_before = members.iter().map(|m| m.pair_count()).sum();
         let mut scratch = self.restructure().checkout(self.limits());
+        let start = self.limits().work_units();
         let result = descend(self, members, config, &mut scratch, &mut stats);
+        stats.work_units = self.limits().work_units() - start;
+        result?;
         for m in members.iter_mut() {
             self.reduce(m, crate::reduce::ReductionPlan::default())?;
         }
-        result?;
         stats.pairs_after = members.iter().map(|m| m.pair_count()).sum();
         Ok(stats)
     }
@@ -176,12 +187,17 @@ fn descend(
     stats: &mut PoolSearchStats,
 ) -> Result<(), OperationError> {
     let crossings: &[bool] = if config.crossed { &[false, true] } else { &[false] };
-    while stats.sweeps < config.max_sweeps {
+    let start = eng.limits().work_units();
+    let spent = || eng.limits().work_units() - start >= config.max_work_units;
+    while stats.sweeps < config.max_sweeps && !spent() {
         stats.sweeps += 1;
         let internals: Vec<VtreeIdx> = members[0].vtree.internal_bottomup().map(|(v, _, _)| v).collect();
         let mut kept = 0usize;
         for v in internals {
             eng.limits().check_stop()?;
+            if spent() {
+                return Ok(());
+            }
             'pivot: for kind in [RotationKind::Left, RotationKind::Right] {
                 for &crossed in crossings {
                     let mv = PoolMove { rotation: RotationMove { pivot: v, kind }, crossed };
@@ -240,7 +256,8 @@ fn rotate_pool_on(
     let before: Vec<usize> = members.iter().map(|m| m.levels[v].live_pairs() + m.levels[w].live_pairs()).collect();
     let mut saved: Vec<Saved<'_>> = Vec::with_capacity(members.len());
     let mut outcome: Result<bool, OperationError> = Ok(true);
-    for m in members.iter_mut() {
+    let mut gate = lim.gate();
+    for (m, &old_pairs) in members.iter_mut().zip(&before) {
         saved.push(Saved {
             output: m.output,
             canonical: m.levels.is_canonical(m.output),
@@ -257,6 +274,11 @@ fn rotate_pool_on(
         match rebuilt {
             Ok(Some((outer, inner))) => {
                 saved.last_mut().expect("pushed above").levels = Some((Transient::new(lim, outer), Transient::new(lim, inner)));
+                let new_pairs = m.levels[v].live_pairs() + m.levels[w].live_pairs();
+                if let Err(e) = gate.poll((old_pairs + new_pairs) as u64 + 1) {
+                    outcome = Err(e);
+                    break;
+                }
             }
             Ok(None) => {
                 outcome = Ok(false);
