@@ -100,14 +100,14 @@ impl Limits {
 
 
     /// Pre-allocation release notice for a growth of `request_bytes`.
-    #[inline(always)]
+    #[inline]
     pub(crate) fn preflight_alloc(&self, request_bytes: u64) {
         let mem = self.memory_hooks.borrow().clone();
         mem.preflight_alloc(request_bytes);
     }
 
     /// Once-per-operation eager-reclaim nudge.
-    #[inline(always)]
+    #[inline]
     pub(crate) fn eager_reclaim(&self) {
         let mem = self.memory_hooks.borrow().clone();
         mem.eager_reclaim();
