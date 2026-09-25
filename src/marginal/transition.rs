@@ -1,7 +1,7 @@
 //! Installing marginal columns and settling the levels that refer to them.
 
 use crate::diagram::{Tdd, TddLevel, WeightStore, WeightValue, assert_can_make_marginal};
-use crate::value::{Column, CountVec, IntFold, WeightFold, ValueDomain};
+use crate::value::{CountVec, IntFold, WeightFold, ValueDomain};
 use crate::vtree::{Vtree, VtreeIdx};
 use crate::value::slots::{compact_count_slots, truncate_with_slack};
 use crate::diagram::CountOverflow;
@@ -60,7 +60,7 @@ pub(crate) trait MarginalDomain: ValueDomain {
     fn install(
         level: &mut TddLevel,
         t: InternalLevel,
-        col: Column<Self>,
+        col: Self::Col,
         store: &mut Self::Store,
     ) -> Option<Vec<u32>>;
 
@@ -187,7 +187,7 @@ pub(crate) fn install_finished<K: MarginalDomain>(
     tdd: &mut Tdd,
     vtree: &Vtree,
     level: InternalLevel,
-    col: Column<K>,
+    col: K::Col,
     store: &mut K::Store,
 ) {
     let t = level.vtree_idx();

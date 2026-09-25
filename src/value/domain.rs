@@ -12,10 +12,7 @@ use crate::Engine;
 use crate::limits::OperationError;
 use crate::vtree::{Vtree, VtreeIdx};
 
-use super::{walk_bottom_up, Retention, MarginalFold, StreamCache};
-
-/// The scratch column of one level of the marginalization cascade.
-pub(crate) type Column<D> = <D as MarginalFold>::Col;
+use super::{walk_bottom_up, Retention, StreamCache};
 
 /// The diagram a fold reads: its vtree, its levels, and the domain's store.
 pub(crate) struct FoldInput<'a, D: ValueDomain> {
@@ -69,9 +66,24 @@ pub(crate) struct StreamChild<'a, D: ValueDomain> {
 /// from it.
 ///
 /// Each method is a place where the two domains differ; what they share (the
-/// bottom-up ensure walk, the `Σ pairs (left × right)` fold, the column
-/// contract of [`MarginalFold`]) is written once and takes no hook here.
-pub(crate) trait ValueDomain: MarginalFold + Sized {
+/// bottom-up ensure walk and the column fill in [`Self::fold_column`]) is
+/// written once here. Each domain's `Σ pairs (left × right)` fold is an
+/// inherent method ([`IntFold::fold`](super::IntFold::fold),
+/// [`WeightFold::fold`](super::WeightFold::fold)), because the two reader
+/// shapes differ: a lazy `CountRead` per side against a `Cow<WeightValue>` per
+/// side.
+///
+/// The ensure walk builds a column with [`Self::alloc_col`] and
+/// [`Self::set_col`]; the apply's streaming driver with
+/// [`Self::try_with_capacity`] and [`Self::push_col`], one push per alive
+/// cell.
+pub(crate) trait ValueDomain: Sized {
+    /// One per-node fold result (`Count` | `WeightValue`).
+    type Scalar;
+
+    /// The column of one level's values.
+    type Col;
+
     /// State the domain carries beside the diagram: the weight store, or
     /// nothing at all.
     type Store;
@@ -79,6 +91,38 @@ pub(crate) trait ValueDomain: MarginalFold + Sized {
     /// How this domain reads one child's column for the duration of a row
     /// loop. Stored columns are borrowed; weighted leaf values are computed into an owned column.
     type ChildCol<'a>;
+
+    /// A fresh `width`-element column of `zero`s, reserved through the engine.
+    fn alloc_col(
+        eng: &Engine,
+        width: usize,
+        zero: &Self::Scalar,
+    ) -> Result<Self::Col, OperationError>;
+
+    /// Store one fold result at slot `i` of a pre-sized column.
+    fn set_col(
+        eng: &Engine,
+        col: &mut Self::Col,
+        i: usize,
+        v: Self::Scalar,
+    ) -> Result<(), OperationError>;
+
+    /// An empty column with room for `cap` appends reserved, filled by
+    /// [`Self::push_col`].
+    fn try_with_capacity(
+        eng: &Engine,
+        cap: usize,
+    ) -> Result<Self::Col, OperationError>;
+
+    /// Append one fold result to a column.
+    fn push_col(
+        eng: &Engine,
+        col: &mut Self::Col,
+        v: Self::Scalar,
+    ) -> Result<(), OperationError>;
+
+    /// Number of values currently stored in a column.
+    fn col_len(col: &Self::Col) -> usize;
 
     /// The additive identity, which the weighted domain must read from its
     /// store. Resolved once per walk, not once per node: a weighted zero is a

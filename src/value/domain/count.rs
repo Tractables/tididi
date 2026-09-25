@@ -173,6 +173,45 @@ impl ValueDomain for IntFold {
     /// marginal arrays, a `computed` scratch column, or the static leaf slots.
     type ChildCol<'a> = CountRef<'a>;
 
+    type Scalar = Count;
+    type Col = CountVec;
+
+    fn alloc_col(
+        eng: &Engine,
+        width: usize,
+        _zero: &Count,
+    ) -> Result<CountVec, OperationError> {
+        CountVec::try_with_width(eng, width)
+    }
+
+    fn set_col(
+        eng: &Engine,
+        col: &mut CountVec,
+        i: usize,
+        v: Count,
+    ) -> Result<(), OperationError> {
+        col.set(eng, i, v)
+    }
+
+    fn try_with_capacity(
+        eng: &Engine,
+        cap: usize,
+    ) -> Result<CountVec, OperationError> {
+        CountVec::try_with_capacity(eng, cap)
+    }
+
+    fn push_col(
+        eng: &Engine,
+        col: &mut CountVec,
+        v: Count,
+    ) -> Result<(), OperationError> {
+        col.push(eng, v)
+    }
+
+    fn col_len(col: &CountVec) -> usize {
+        col.len()
+    }
+
     #[inline]
     fn zero(_store: &()) -> Count {
         Count::Fast(0)

@@ -1,8 +1,9 @@
 //! Integer and weighted value folds and their column storage.
 //!
-//! [`IntFold`] and [`WeightFold`] share the sum-of-products traversal through
-//! [`MarginalFold`] and [`walk_bottom_up`]. Marginalization and streaming apply
-//! use the same folds; finished columns belong to `TddLevel` or `WeightStore`.
+//! [`IntFold`] and [`WeightFold`] share the bottom-up traversal through
+//! [`ValueDomain::ensure`] and [`walk_bottom_up`]. Marginalization and
+//! streaming apply use the same folds; finished columns belong to `TddLevel`
+//! or `WeightStore`.
 //!
 //! Integer columns keep `u128` values in a dense array and exact larger values
 //! in a sparse [`CountOverflow`] table. [`Count`], [`CountRead`] and [`CountVec`]
@@ -304,7 +305,7 @@ mod stream_cache;
 
 pub(crate) use fold::*;
 pub use fold::Retention;
-pub(crate) use domain::{Column, FoldInput, StreamChild, ValueDomain};
+pub(crate) use domain::{FoldInput, StreamChild, ValueDomain};
 pub(crate) use stream_cache::StreamCache;
 
 

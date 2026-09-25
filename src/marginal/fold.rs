@@ -5,7 +5,7 @@ use crate::Engine;
 use crate::limits::OperationError;
 use crate::vtree::{Vtree, VtreeIdx};
 
-use crate::value::{Column, FoldInput, IntFold, Retention};
+use crate::value::{FoldInput, IntFold, Retention};
 use super::transition::{InternalLevel, MarginalDomain, install_finished};
 
 /// Marginalize `targets` into per-node model counts.
@@ -57,7 +57,7 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
     let was_marginal: Vec<bool> = tdd.levels.iter().map(|l| l.is_marginal()).collect();
     // One column per vtree level, built on demand. (`CountVec` is not `Clone`,
     // so the buffer cannot use `vec![None; n]`.)
-    let mut computed: Vec<Option<Column<K>>> = (0..vtree.num_nodes()).map(|_| None).collect();
+    let mut computed: Vec<Option<K::Col>> = (0..vtree.num_nodes()).map(|_| None).collect();
     let mut poll = lim.gate();
 
     let mut cut = None;
@@ -93,7 +93,7 @@ fn marginalize_level<K: MarginalDomain>(
     d: VtreeIdx,
     vtree: &Vtree,
     store: &mut K::Store,
-    computed: &mut [Option<Column<K>>],
+    computed: &mut [Option<K::Col>],
 ) -> Result<(), OperationError> {
     let di = d.idx();
     let Some(level) = InternalLevel::new(vtree, d) else {
@@ -132,7 +132,7 @@ fn cascade<K: MarginalDomain>(
     vtree: &Vtree,
     t: VtreeIdx,
     store: &mut K::Store,
-    computed: &mut [Option<Column<K>>],
+    computed: &mut [Option<K::Col>],
 ) {
     let Some(level) = InternalLevel::new(vtree, t) else {
         return;
@@ -162,7 +162,7 @@ fn ensure_below<K: MarginalDomain>(
     t: VtreeIdx,
     vtree: &Vtree,
     store: &K::Store,
-    computed: &mut [Option<Column<K>>],
+    computed: &mut [Option<K::Col>],
 ) -> Result<(), OperationError> {
     let marginal = |i: usize| tdd.levels[i].is_marginal();
     K::ensure(

@@ -1,9 +1,6 @@
-//! The value-kind axis of the marginalization fold, and the walk that drives it.
+//! The two value domains' sum-of-products folds, and the walk that drives them.
 
-use crate::limits::OperationError;
 use crate::diagram::EncodedChildRef;
-
-use crate::Engine;
 
 use num_bigint::BigUint;
 
@@ -11,152 +8,13 @@ use crate::diagram::ChildPair;
 use crate::diagram::WeightValue;
 use crate::vtree::{Vtree, VtreeIdx};
 
-use super::{Count, CountRead, CountVec};
-
-/// The value-kind axis of the marginalization fold: what scalar a per-node
-/// fold produces and what scratch column stores it.
-///
-/// The trait carries only the column contract: the ensure walk builds a
-/// column by [`Self::alloc_col`] and [`Self::set_col`], the apply-side
-/// streaming driver by [`Self::try_with_capacity`] and [`Self::push_col`], one
-/// push per alive cell. Each kind's `fold` is an inherent method
-/// ([`IntFold::fold`], [`WeightFold::fold`]) because the two reader shapes
-/// differ: one lazy `CountRead` per side against one `Cow<WeightValue>` per
-/// side plus an explicit zero. The readers are closures the context hands in,
-/// since how a ref resolves to a value is the storage's business. The apply
-/// driver's remaining per-kind pieces (child view, per-cell fold, in-flight
-/// commit) are on `ValueDomain`.
-pub(crate) trait MarginalFold {
-    /// One per-node fold result (`Count` | `WeightValue`).
-    type Scalar;
-    /// The scratch column for this domain.
-    type Col;
-    /// A fresh `width`-element column of `zero`s, reserved through the engine.
-    fn alloc_col(
-        eng: &Engine,
-        width: usize,
-        zero: &Self::Scalar,
-    ) -> Result<Self::Col, OperationError>;
-    /// Store one fold result at slot `i` of a pre-sized column.
-    fn set_col(
-        eng: &Engine,
-        col: &mut Self::Col,
-        i: usize,
-        v: Self::Scalar,
-    ) -> Result<(), OperationError>;
-    /// An empty column that will be filled by [`Self::push_col`], with room for
-    /// `cap` appends pre-reserved. The append-built counterpart of [`Self::alloc_col`] (which pre-sizes and is
-    /// filled by [`Self::set_col`]) — the apply-side streaming output column is
-    /// built this way, one push per alive cell.
-    fn try_with_capacity(
-        eng: &Engine,
-        cap: usize,
-    ) -> Result<Self::Col, OperationError>;
-    /// Append one fold result to an append-built column.
-    fn push_col(
-        eng: &Engine,
-        col: &mut Self::Col,
-        v: Self::Scalar,
-    ) -> Result<(), OperationError>;
-    /// Number of values currently stored in a column.
-    fn col_len(col: &Self::Col) -> usize;
-}
+use super::{Count, CountRead};
 
 /// Integer model counts: u128 fast path overflowing into exact `BigUint`.
 pub(crate) struct IntFold;
 
 /// Exact weighted semiring values: no overflow machinery.
 pub(crate) struct WeightFold;
-
-impl MarginalFold for IntFold {
-    type Scalar = Count;
-    type Col = CountVec;
-
-    fn alloc_col(
-        eng: &Engine,
-        width: usize,
-        _zero: &Count,
-    ) -> Result<CountVec, OperationError> {
-        CountVec::try_with_width(eng, width)
-    }
-
-    fn set_col(
-        eng: &Engine,
-        col: &mut CountVec,
-        i: usize,
-        v: Count,
-    ) -> Result<(), OperationError> {
-        col.set(eng, i, v)
-    }
-
-    fn try_with_capacity(
-        eng: &Engine,
-        cap: usize,
-    ) -> Result<CountVec, OperationError> {
-        CountVec::try_with_capacity(eng, cap)
-    }
-
-    fn push_col(
-        eng: &Engine,
-        col: &mut CountVec,
-        v: Count,
-    ) -> Result<(), OperationError> {
-        col.push(eng, v)
-    }
-
-    fn col_len(col: &CountVec) -> usize {
-        col.len()
-    }
-}
-
-impl MarginalFold for WeightFold {
-    type Scalar = WeightValue;
-    type Col = Vec<WeightValue>;
-
-    fn alloc_col(
-        eng: &Engine,
-        width: usize,
-        zero: &WeightValue,
-    ) -> Result<Vec<WeightValue>, OperationError> {
-        let mut v: Vec<WeightValue> = Vec::new();
-        eng.limits().reserve_exact(&mut v, width)?;
-        v.resize(width, zero.clone());
-        Ok(v)
-    }
-
-    fn set_col(
-        _eng: &Engine,
-        col: &mut Vec<WeightValue>,
-        i: usize,
-        v: WeightValue,
-    ) -> Result<(), OperationError> {
-        col[i] = v;
-        Ok(())
-    }
-
-    fn try_with_capacity(
-        eng: &Engine,
-        cap: usize,
-    ) -> Result<Vec<WeightValue>, OperationError> {
-        let mut col = Vec::new();
-        eng.limits().reserve_exact(&mut col, cap)?;
-        Ok(col)
-    }
-
-    fn push_col(
-        eng: &Engine,
-        col: &mut Vec<WeightValue>,
-        v: WeightValue,
-    ) -> Result<(), OperationError> {
-        eng.limits().reserve(col, 1)?;
-        col.push(v);
-        Ok(())
-    }
-
-    fn col_len(col: &Vec<WeightValue>) -> usize {
-        col.len()
-    }
-}
 
 impl IntFold {
     /// The two-pass integer fold: `Σ over pairs (left × right)`.

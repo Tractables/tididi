@@ -31,6 +31,53 @@ impl ValueDomain for WeightFold {
     /// Borrow stored columns; own the three computed leaf values.
     type ChildCol<'a> = std::borrow::Cow<'a, [WeightValue]>;
 
+    type Scalar = WeightValue;
+    type Col = Vec<WeightValue>;
+
+    fn alloc_col(
+        eng: &Engine,
+        width: usize,
+        zero: &WeightValue,
+    ) -> Result<Vec<WeightValue>, OperationError> {
+        let mut v: Vec<WeightValue> = Vec::new();
+        eng.limits().reserve_exact(&mut v, width)?;
+        v.resize(width, zero.clone());
+        Ok(v)
+    }
+
+    fn set_col(
+        _eng: &Engine,
+        col: &mut Vec<WeightValue>,
+        i: usize,
+        v: WeightValue,
+    ) -> Result<(), OperationError> {
+        col[i] = v;
+        Ok(())
+    }
+
+    fn try_with_capacity(
+        eng: &Engine,
+        cap: usize,
+    ) -> Result<Vec<WeightValue>, OperationError> {
+        let mut col = Vec::new();
+        eng.limits().reserve_exact(&mut col, cap)?;
+        Ok(col)
+    }
+
+    fn push_col(
+        eng: &Engine,
+        col: &mut Vec<WeightValue>,
+        v: WeightValue,
+    ) -> Result<(), OperationError> {
+        eng.limits().reserve(col, 1)?;
+        col.push(v);
+        Ok(())
+    }
+
+    fn col_len(col: &Vec<WeightValue>) -> usize {
+        col.len()
+    }
+
     fn zero(store: &WeightStore) -> WeightValue {
         store.wzero()
     }
