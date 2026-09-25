@@ -90,6 +90,33 @@ pub(crate) fn rebuild_rotated_levels(
     scratch: &mut RestructureScratch,
     max_pairs: usize,
 ) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
+    rebuild_levels(lim, tdd, info, dir, false, scratch, max_pairs)
+}
+
+/// [`rebuild_rotated_levels`] for a rotation whose promoted node had its two
+/// children swapped first ([`swap_children`](crate::vtree::rotate::swap_children)):
+/// the old w-level is read with its sides exchanged, so the grouping the
+/// rotation makes pairs the other grandchild with `v`'s other child.
+pub(crate) fn rebuild_crossed_levels(
+    lim: &Limits,
+    tdd: &mut Tdd,
+    info: &RotationInfo,
+    dir: RotationKind,
+    scratch: &mut RestructureScratch,
+    max_pairs: usize,
+) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
+    rebuild_levels(lim, tdd, info, dir, true, scratch, max_pairs)
+}
+
+fn rebuild_levels(
+    lim: &Limits,
+    tdd: &mut Tdd,
+    info: &RotationInfo,
+    dir: RotationKind,
+    crossed: bool,
+    scratch: &mut RestructureScratch,
+    max_pairs: usize,
+) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
     let v_idx = info.v_idx.idx();
     let w_idx = info.w_idx.idx();
     let marginal_ctx = tdd.has_marginal_level();
@@ -101,7 +128,7 @@ pub(crate) fn rebuild_rotated_levels(
     let (old_v, old_w) = (&tdd.levels[v_idx], &tdd.levels[w_idx]);
 
     scratch.packed.clear();
-    if !collect_triples(lim, old_v, old_w, dir, &mut scratch.packed, max_pairs)? {
+    if !collect_triples(lim, old_v, old_w, dir, crossed, &mut scratch.packed, max_pairs)? {
         return Ok(None);
     }
 
@@ -181,6 +208,7 @@ fn collect_triples(
     old_v_level: &TddLevel,
     old_w_level: &TddLevel,
     dir: RotationKind,
+    crossed: bool,
     triples: &mut Vec<u128>,
     max_pairs: usize,
 ) -> Result<bool, OperationError> {
@@ -192,14 +220,17 @@ fn collect_triples(
                 RotationKind::Right => (ChildDecoder::structural().node(vp.left).idx(), vp.right),
             };
             for wp in old_w_level.pairs_iter_of_idx(w_local) {
+                // A crossed rotation's w had its children swapped: its left
+                // side is the stored right one.
+                let (w_left, w_right) = if crossed { (wp.right, wp.left) } else { (wp.left, wp.right) };
                 let (inner, axis) = match dir {
                     RotationKind::Left => (
-                        ChildPair::new(v_axis, wp.left),
-                        wp.right,
+                        ChildPair::new(v_axis, w_left),
+                        w_right,
                     ),
                     RotationKind::Right => (
-                        ChildPair::new(wp.right, v_axis),
-                        wp.left,
+                        ChildPair::new(w_right, v_axis),
+                        w_left,
                     ),
                 };
                 lim.try_push(triples, pack_triple(inner, src, axis))?;

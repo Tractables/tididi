@@ -208,6 +208,22 @@ pub(crate) fn rotate_pointers(vtree: &mut Vtree, v: VtreeIdx, kind: RotationKind
     ))
 }
 
+/// Swap the two children of the internal node `v`. Returns `false` for a
+/// leaf.
+///
+/// Every node keeps its descendants, so the bottom-up order stays correct as
+/// it is. A diagram's level at `v` is symmetric in its two sides, which is why
+/// a swap alone does not change any diagram's size; before a rotation it
+/// changes which subtrees the rotation regroups, and with that the
+/// left-to-right order of the leaves, which rotations alone keep.
+pub(crate) fn swap_children(vtree: &mut Vtree, v: VtreeIdx) -> bool {
+    let VtreeNode::Internal { left, right, parent } = vtree.nodes[v.idx()] else {
+        return false;
+    };
+    vtree.nodes[v.idx()] = VtreeNode::Internal { left: right, right: left, parent };
+    true
+}
+
 /// Undo a rotation of `kind`, pointer surgery only: the inverse of
 /// [`rotate_pointers`] on its own [`RotationInfo`]. The bottom-up order is
 /// left as it was before the rotation, which is why this is reachable only
