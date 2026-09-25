@@ -276,12 +276,6 @@ pub struct Limits {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WorkMark(u64);
 
-impl Default for Limits {
-    fn default() -> Self {
-        Limits::new()
-    }
-}
-
 impl std::fmt::Debug for Limits {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Limits")
