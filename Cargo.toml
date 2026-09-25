@@ -13,7 +13,8 @@ categories = ["science", "algorithms", "data-structures"]
 exclude = ["bindings/", ".github/", ".gitignore", "CLAUDE.md", "AGENTS.md", "rust-toolchain.toml"]
 
 [features]
-# The oracles, generators and invariant checkers under `test_helpers`. On for
+# The oracles, generators and invariant checkers under `test_helpers`, and
+# the synthetic byte charge `Limits::charge_in_flight`. On for
 # this crate's own tests through the dev-dependency below; off for a consumer,
 # whose release build then does not compile them at all.
 testing = []

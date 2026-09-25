@@ -129,7 +129,8 @@ diagrams unchanged.
 `debug_assert` sites in `reduce`, `marginal` and `restructure` call it, and
 under the `testing` feature in any profile, which keeps the invariant checks
 active in release integration tests. The generators and oracles in
-`test_helpers` compile only under that feature. Run the differential suite in
+`test_helpers`, and the synthetic byte charge `Limits::charge_in_flight`,
+compile only under that feature. Run the differential suite in
 both profiles.
 
 ## Counting boundaries

@@ -586,6 +586,7 @@ impl Drop for LimitScope<'_> {
     }
 }
 
+#[cfg(any(test, feature = "testing"))]
 impl Limits {
     /// Add a synthetic byte charge for tests without allocating memory.
     #[doc(hidden)]
