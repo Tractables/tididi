@@ -133,7 +133,7 @@ impl<'a> MovePlacement<'a> {
         if self.prune {
             for (leaf, _) in result.vtree.leaf_bottomup() {
                 if result.levels[leaf.idx()].is_weight_marginal() {
-                    crate::marginal::canonicalize_apply_leaf_refs(
+                    crate::marginal::canonicalize_weighted_leaf_refs(
                         &[leaf.idx()], &result.vtree, &mut result.levels, result.weights.as_ref());
                 }
             }

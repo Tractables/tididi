@@ -29,28 +29,32 @@ pub(crate) fn marginalize_leaf_inline(
     }
     // The inline range must hold the largest leaf count (One→2).
     const _: () = assert!(crate::diagram::MARGINAL_INLINE_MAX >= 2);
-    if let Some(parent_vi) = vtree.node(leaf).parent() {
-        let pi = parent_vi.idx();
-        if !tdd.levels[pi].is_marginal() {
-            let (pl, _) = vtree.children(parent_vi);
-            let side = if pl == leaf { ChildSide::Left } else { ChildSide::Right };
-            inline_leaf_refs_at_parent(tdd, parent_vi, side);
-            tdd.invalidate(parent_vi);
-            tdd.levels[pi].set_has_value_refs(side, true);
-        }
+    if let Some((parent, side)) = structural_parent(&tdd.levels, vtree, leaf) {
+        tdd.rewrite_level(parent, |plevel| {
+            inline_leaf_refs_at_parent(plevel, side);
+            plevel.set_has_value_refs(side, true);
+        });
     }
     // Flip the reader/apply signal; the store stays empty (all counts are inline
     // at the parent).
     tdd.levels[leaf.idx()].become_marginal(Vec::new(), None);
 }
 
-/// Rewrite every leaf-side ref of `parent_v`'s nodes from a `LeafLabel` index
+/// `leaf`'s parent and the side `leaf` sits on, when the parent's level is
+/// structural. A marginal parent has folded the leaf into its own values and
+/// holds no leaf-side refs.
+fn structural_parent(levels: &[TddLevel], vtree: &Vtree, leaf: VtreeIdx) -> Option<(VtreeIdx, ChildSide)> {
+    let parent = vtree.node(leaf).parent()?;
+    (!levels[parent.idx()].is_marginal()).then(|| (parent, ChildSide::of(vtree, parent, leaf)))
+}
+
+/// Rewrite every leaf-side ref of `plevel`'s nodes from a `LeafLabel` index
 /// (One/Pos/Neg) into a `ValueRef::Inline(count)` (2/1/1). Mirrors
 /// `remap_refs_into`, but maps leaf labels to inline counts instead of
 /// remapping slot indices. Bit 30 (the inline tag) is disjoint from bit 31
 /// (`RESERVED_BIT` / `MULTI_BIT`), so the rewritten refs keep their inline/multi
 /// node encoding.
-fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, side: ChildSide) {
+fn inline_leaf_refs_at_parent(plevel: &mut TddLevel, side: ChildSide) {
     let to_inline = |raw: u32| -> u32 {
         if EncodedChildRef::from_raw(raw).is_reserved() {
             return raw; // ZERO sentinel (count 0) — already self-describing
@@ -63,20 +67,20 @@ fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, side: ChildSide
         if matches!(ChildDecoder::marginal().value(EncodedChildRef::from_raw(raw)), ValueRef::Inline(_)) {
             return raw;
         }
+        // A pair never names the Zero label; ⊥ is the reserved ref above.
         let count: u128 = match raw {
             0..=2 => leaf_count(LeafLabel::from_idx(raw as usize)),
-            // Zero is the sentinel index — defensive; not normally stored.
-            3 => leaf_count(LeafLabel::Zero),
             other => panic!("inline_leaf_refs_at_parent: unexpected leaf-side ref {other}"),
         };
         ValueRef::inline_raw(count).expect("leaf count 0/1/2 always fits inline")
     };
-    for_each_side_ref_mut(&mut tdd.levels[parent_v.idx()], side, |r| *r = to_inline(*r));
+    for_each_side_ref_mut(plevel, side, |r| *r = to_inline(*r));
 }
 
 /// Rewrite every leaf-side ref of `plevel`'s nodes onto the canonical slot of an
-/// equal-value class in a weight-marginal leaf's pinned column (`canon` from
-/// [`leaf_canon_map`]); `canon` must not be the identity map.
+/// equal-value class in a weight-marginal leaf's pinned column `values`
+/// ([`leaf_canon_map`]). A column of three distinct values rewrites nothing
+/// and skips the walk.
 ///
 /// A ref only ever moves onto a slot holding the same value, so every reader
 /// resolves it to the number it resolved to before. What changes is structure:
@@ -85,16 +89,11 @@ fn inline_leaf_refs_at_parent(tdd: &mut Tdd, parent_v: VtreeIdx, side: ChildSide
 /// because a marginalized leaf's variable is private (no further conjunction
 /// can case-split on it). The column itself is never touched, which is what
 /// the pin (invariant 11) permits.
-pub(crate) fn canonicalize_leaf_refs_at_parent(
-    plevel: &mut TddLevel,
-    side: ChildSide,
-    canon: &[u32; 3],
-) {
-    debug_assert!(
-        *canon != [0, 1, 2],
-        "canonicalize_leaf_refs_at_parent: identity map — the caller must skip \
-         the walk rather than pay a level scan that rewrites nothing"
-    );
+fn canonicalize_leaf_refs_at_parent(plevel: &mut TddLevel, side: ChildSide, values: &[WeightValue]) {
+    let canon = leaf_canon_map(values);
+    if canon == [0, 1, 2] {
+        return;
+    }
     let to_canon = |raw: u32| -> u32 {
         if EncodedChildRef::from_raw(raw).is_reserved() {
             return raw; // ZERO sentinel — carries no slot
@@ -147,12 +146,10 @@ pub(crate) fn marginalize_leaf_weighted(
     ws: &mut WeightStore,
 ) {
     debug_assert!(vtree.node(leaf).is_leaf());
-    let left_idx = leaf.idx();
-    if tdd.levels[left_idx].is_marginal() {
+    if tdd.levels[leaf.idx()].is_marginal() {
         return;
     }
-    let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(left_idx as u32)) else { return };
-    let parent = vtree.node(leaf).parent();
+    let VtreeNode::Leaf { var, .. } = *vtree.node(leaf) else { return };
     // Slot i ≡ `LeafLabel::from_idx(i)`, which is what makes the parent's existing
     // bare leaf-label refs valid slot refs without a rewrite. If that order ever
     // changes, every parent ref into a weight-marginal leaf silently reads the
@@ -169,25 +166,15 @@ pub(crate) fn marginalize_leaf_weighted(
     // only skips the ref rewrite and the parent invalidation: a marginal parent
     // has folded this leaf's bases into its own aggregate and has no leaf-side
     // pairs left.
-    if let Some(parent_vi) = parent
-        && !tdd.levels[parent_vi.idx()].is_marginal() {
+    if let Some((parent, side)) = structural_parent(&tdd.levels, vtree, leaf) {
+        tdd.rewrite_level(parent, |plevel| {
             // Exact domain only; see the doc above.
             if !ws.is_log() {
-                let canon = leaf_canon_map(&values);
-                if canon != [0, 1, 2] {
-                    let (pl, _) = vtree.children(parent_vi);
-                    let side =
-                        if pl == leaf { ChildSide::Left } else { ChildSide::Right };
-                    canonicalize_leaf_refs_at_parent(
-                        &mut tdd.levels[parent_vi.idx()],
-                        side,
-                        &canon,
-                    );
-                }
+                canonicalize_leaf_refs_at_parent(plevel, side, &values);
             }
-            tdd.invalidate(parent_vi);
-        }
-    crate::diagram::MarginalStorage::new(&mut tdd.levels[left_idx], Some(ws), left_idx).install_weights(values);
+        });
+    }
+    crate::diagram::MarginalStorage::new(&mut tdd.levels[leaf.idx()], Some(ws), leaf.idx()).install_weights(values);
 }
 
 /// Rewrite the leaf-side refs of every leaf that one operand made
@@ -197,38 +184,25 @@ pub(crate) fn marginalize_leaf_weighted(
 /// then, and it shares the walk the marginalization pass uses, so a leaf whose
 /// column holds equal values ends up with one representative rather than two
 /// slots the contraction would have to recognize as twins.
-pub(crate) fn canonicalize_apply_leaf_refs(
+pub(crate) fn canonicalize_weighted_leaf_refs(
     canon_leaves: &[usize],
     vtree: &Vtree,
     levels: &mut [TddLevel],
     ws: Option<&WeightStore>,
 ) {
+    // Exact domain only: the log domain's key equality is `f64` bit
+    // equality, not value equality.
+    let Some(ws) = ws.filter(|w| !w.is_log()) else { return };
     // The structural operand contributes leaf-side refs that never passed
     // through the canon map, and the grid carries them into the output
     // unchanged wherever the marginal side reads `One`; moving them onto the
     // canonical slot of their value class is what lets the contraction that
     // follows see the parent's `(·, Pos)` / `(·, Neg)` branches as twins.
-    for &left_idx in canon_leaves {
-        let VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(left_idx as u32)) else { continue };
-        let Some(parent) = vtree.node(VtreeIdx(left_idx as u32)).parent() else { continue };
-        // A marginal parent has no leaf-side pairs left to rewrite.
-        if levels[parent.idx()].is_marginal() {
-            continue;
+    for &leaf_idx in canon_leaves {
+        let leaf = VtreeIdx(leaf_idx as u32);
+        let VtreeNode::Leaf { var, .. } = *vtree.node(leaf) else { continue };
+        if let Some((parent, side)) = structural_parent(levels, vtree, leaf) {
+            canonicalize_leaf_refs_at_parent(&mut levels[parent.idx()], side, &leaf_column_vals(ws, var));
         }
-        // Exact domain only: the log domain's key equality is `f64` bit
-        // equality, not value equality.
-        let Some(w) = ws.as_ref() else { continue };
-        let Some(canon) =
-            (!w.is_log()).then(|| leaf_canon_map(&leaf_column_vals(w, var)))
-        else {
-            continue;
-        };
-        if canon == [0, 1, 2] {
-            continue; // no equal-valued slots — the walk would rewrite nothing
-        }
-        let (pl, _) = vtree.children(parent);
-        let side =
-            if pl.idx() == left_idx { ChildSide::Left } else { ChildSide::Right };
-        canonicalize_leaf_refs_at_parent(&mut levels[parent.idx()], side, &canon);
     }
 }

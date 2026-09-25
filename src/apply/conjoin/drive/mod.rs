@@ -212,7 +212,7 @@ pub(crate) fn apply_and_fallible(
         &mut Sweep { vtree: &vtree, targets, quantified, ws: ws.as_mut(), filter },
     )?;
 
-    crate::marginal::canonicalize_apply_leaf_refs(&canon_leaves, &vtree, run.levels, ws.as_ref());
+    crate::marginal::canonicalize_weighted_leaf_refs(&canon_leaves, &vtree, run.levels, ws.as_ref());
 
     let out_local = compute_apply_output(f, g, &run, &vtree).unwrap_or(ZERO);
     let out_vtree = f.output.vtree;

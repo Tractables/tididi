@@ -5,7 +5,7 @@
 //! a side to the word of a node that holds it lives here.
 
 use crate::diagram::{EncodedChildRef, ChildDecoder, NodeIdx, Tdd, TddLevel};
-use crate::vtree::{VtreeIdx, VtreeNode};
+use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 /// One of a parent's two child sides.
 ///
@@ -17,6 +17,23 @@ use crate::vtree::{VtreeIdx, VtreeNode};
 pub(crate) enum ChildSide {
     Left,
     Right,
+}
+
+impl ChildSide {
+    /// The side at which `child` sits under `parent`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `parent` is a leaf.
+    pub(crate) fn of(vtree: &Vtree, parent: VtreeIdx, child: VtreeIdx) -> Self {
+        let (left, right) = vtree.children(parent);
+        if left == child {
+            ChildSide::Left
+        } else {
+            debug_assert_eq!(right, child, "child must be left or right of parent");
+            ChildSide::Right
+        }
+    }
 }
 
 /// One value per child side.
@@ -110,26 +127,11 @@ pub(crate) fn remap_refs_into(tdd: &mut Tdd, child_v: VtreeIdx, remap: &[u32]) -
         tdd.output.local = NodeIdx(remap[tdd.output.local.idx()]);
     }
     if let Some(parent) = tdd.vtree.node(child_v).parent() {
-        let side = side_of(tdd, parent, child_v);
+        let side = ChildSide::of(&tdd.vtree, parent, child_v);
         let view = tdd.levels[child_v.idx()].child_decoder();
         remap_side_refs(&mut tdd.levels[parent.idx()], side, view, remap);
     }
     true
-}
-
-/// Locate the side at which `child` sits in `parent`.
-fn side_of(tdd: &Tdd, parent: VtreeIdx, child: VtreeIdx) -> ChildSide {
-    match tdd.vtree.node(parent) {
-        VtreeNode::Internal { left, right, .. } => {
-            if *left == child {
-                ChildSide::Left
-            } else {
-                debug_assert_eq!(*right, child, "child must be left or right of parent");
-                ChildSide::Right
-            }
-        }
-        _ => panic!("parent must be internal vtree node"),
-    }
 }
 
 /// The boundary-marginal test for one vtree node: `Some((v, parent, side))`
@@ -143,7 +145,7 @@ fn boundary_entry(tdd: &Tdd, v: VtreeIdx) -> Option<(VtreeIdx, VtreeIdx, ChildSi
     if tdd.levels[parent.idx()].is_marginal() {
         return None; // deep marginal: parent also marginal
     }
-    Some((v, parent, side_of(tdd, parent, v)))
+    Some((v, parent, ChildSide::of(&tdd.vtree, parent, v)))
 }
 
 /// Fill `out` with the boundary marginal levels and their non-marginal

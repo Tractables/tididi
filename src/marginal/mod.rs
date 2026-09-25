@@ -17,7 +17,7 @@ mod leaf;
 
 use crate::Engine;
 pub(crate) use fold::marginalize_batch;
-pub(crate) use leaf::canonicalize_apply_leaf_refs;
+pub(crate) use leaf::canonicalize_weighted_leaf_refs;
 pub(crate) use leaf::{marginalize_leaf_inline, marginalize_leaf_weighted};
 
 use crate::value::WeightFold;
