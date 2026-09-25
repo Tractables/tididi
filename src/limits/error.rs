@@ -10,6 +10,10 @@
 /// Even an engine with no limits installed can report `OverBudget` when a
 /// buffer reservation fails.
 ///
+/// Every operation tests the stop before it checks its inputs: with a stop
+/// armed, it returns [`Stopped`](Self::Stopped) even for inputs it would
+/// otherwise reject.
+///
 /// Recovery depends on how the operation takes its diagram. A consuming
 /// operation such as [`and`](crate::and) drops its operands on
 /// error; keep copies before the call if a retry needs them. A borrowed query

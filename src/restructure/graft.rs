@@ -100,6 +100,7 @@ impl Tdd {
         num_vars: u32,
         into: Option<WeightStore>,
     ) -> Result<(Tdd, GraftLayout), GraftError> {
+        let _op = eng.limits().enter()?;
         for (part, (tdd, map)) in parts.iter().enumerate() {
             for (_, variable) in tdd.vtree.leaf_bottomup() {
                 if map.get(variable.idx()).is_none() {
@@ -123,6 +124,7 @@ fn graft_impl(
     num_vars: u32,
     into: Option<WeightStore>,
 ) -> Result<(Tdd, GraftLayout), GraftError> {
+    let _op = eng.limits().enter()?;
     let n_parts = parts.len();
     let rename = &rename;
     for variable in parts.iter().enumerate()

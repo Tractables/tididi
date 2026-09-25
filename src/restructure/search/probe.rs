@@ -215,7 +215,7 @@ pub(super) fn rotate_if_on(
     bound: usize,
     accept: impl FnOnce(&RotationProbe<'_>) -> bool,
 ) -> Result<bool, OperationError> {
-    let _op = eng.limits().begin_operation();
+    let _op = eng.limits().enter()?;
     let mut scratch = eng.restructure().checkout(eng.limits());
     let mut rule = Closure { accept: Some(accept) };
     super::SearchTree::new(tdd).probe_moves(eng, moves, &mut rule, &mut scratch, bound)

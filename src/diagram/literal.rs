@@ -203,8 +203,7 @@ mod input {
         op: fn(&Engine, Tdd, &[Literal]) -> Result<Tdd, OperationError>,
     ) -> Result<Tdd, OperationError> {
         let lim = eng.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
+        let _op = lim.enter()?;
         let mut literals = Vec::new();
         <i32 as Sealed>::collect(eng, f.vtree(), input, &mut literals)?;
         op(eng, f, &literals)

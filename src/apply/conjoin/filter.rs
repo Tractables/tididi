@@ -23,6 +23,7 @@ impl Engine {
         &self, mut f: Tdd, mut g: Tdd,
         mut keep: impl FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool,
     ) -> Result<Tdd, OperationError> {
+        let _op = self.limits().enter()?;
         crate::apply::check_vtree(&f, &g)?;
         crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
         for t in f.vtree().bottomup() {

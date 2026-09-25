@@ -2,9 +2,9 @@
 //!
 //! `rotate_marginal_cluster` runs after every step's forget, tens
 //! of times per leaf compile, and one attempt restructures two levels as a
-//! multiset — so before the poll a caller's wall was observed only at the seam
-//! past the whole pass. These tests pin that it fires when the wall has passed,
-//! that the diagram a cut hands back still counts the formula it was given, and
+//! multiset — so without a poll inside it a caller's stop was observed only at
+//! its entry and past the whole pass. These tests pin that the poll fires, that
+//! the diagram a cut hands back still counts the formula it was given, and
 //! that the poll is amortized rather than per-candidate.
 //!
 //! That a wall stays out of the way until a limit installs it is pinned once,
@@ -22,7 +22,8 @@ use crate::apply::apply_and;
 use crate::marginal::marginalize_batch;
 use crate::diagram::Literal;
 use crate::vtree::{VarId};
-use crate::test_helpers::deadline_probe;
+use crate::limits::{LimitConfig, StopCallback, StopDecision};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// The shape the pass exists for, as
 /// `parent_of_marginal_rotation_preserves_model_count` builds it in
@@ -74,25 +75,36 @@ pub(super) fn one_candidate_tdd() -> (Tdd, VtreeIdx) {
     (tdd, root)
 }
 
-/// Armed, with a wall already in the past, the pass cuts at its first metered
-/// candidate and reports it through `OperationError::Stopped`. Nothing is rotated,
-/// and what is handed back is the diagram it was given — same count, same
-/// marginal invariants — because the cut lands between two attempts and an
-/// attempt is all-or-nothing.
+/// An engine whose stop lets the entry test through and stops at any later
+/// one, polling every `stride` units of work. The count of stop tests made so
+/// far comes back with it.
+fn stop_after_entry(stride: u64) -> (Engine, Arc<AtomicUsize>) {
+    let tests = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&tests);
+    let eng = Engine::new();
+    eng.limits().pin_reduce_poll_stride(Some(stride));
+    let _prior = eng.limits().install(LimitConfig::none().with_stop_callback(Some(StopCallback::new(move |_, _| {
+        if seen.fetch_add(1, Ordering::Relaxed) == 0 { StopDecision::Continue } else { StopDecision::Stop }
+    }))));
+    (eng, tests)
+}
+
+/// Stopped once the pass is under way, it cuts at its first metered candidate
+/// and reports `OperationError::Stopped`. Nothing is rotated, and what is
+/// handed back is the diagram it was given — same count, same marginal
+/// invariants — because the cut lands between two attempts and an attempt is
+/// all-or-nothing.
 #[test]
-fn an_expired_wall_cuts_the_clustering_pass() {
+fn a_stop_inside_the_pass_cuts_it() {
     let (mut tdd, root) = one_candidate_tdd();
     let before = tdd.model_count().unwrap();
     let mut tried = vec![0u8; tdd.vtree.num_nodes()];
 
-    let r = deadline_probe(Some(1), |eng| {
-        eng.rotate_marginal_cluster(&mut tdd, root, 8, &mut tried)
-    });
+    let (eng, tests) = stop_after_entry(1);
+    let r = eng.rotate_marginal_cluster(&mut tdd, root, 8, &mut tried);
 
-    assert!(
-        matches!(r, Err(OperationError::Stopped)),
-        "a wall in the past must surface Deadline, not run the pass to its fixpoint; got {r:?}",
-    );
+    assert_eq!(r, Err(OperationError::Stopped), "a stop inside the pass must surface, not run it to its fixpoint");
+    assert_eq!(tests.load(Ordering::Relaxed), 2, "the entry test, then the first candidate's");
     assert_eq!(
         before,
         tdd.model_count().unwrap(),
@@ -102,20 +114,20 @@ fn an_expired_wall_cuts_the_clustering_pass() {
 }
 
 /// The poll is amortized, not per-candidate: with a stride wider than the whole
-/// pass's work, an expired wall goes unnoticed and the pass runs to its fixpoint.
-/// Paired with the test above (same fixture, same expired wall, stride 1) this
-/// pins that the stride decides when the clock is read.
+/// pass's work, the stop is tested once, at entry, and the pass runs to its
+/// fixpoint. Paired with the test above (same fixture, stride 1) this pins
+/// that the stride decides when the stop is tested inside the pass.
 #[test]
 fn a_stride_wider_than_the_pass_never_polls() {
     let (mut tdd, root) = one_candidate_tdd();
     let before = tdd.model_count().unwrap();
     let mut tried = vec![0u8; tdd.vtree.num_nodes()];
 
-    let r = deadline_probe(Some(u64::MAX), |eng| {
-        eng.rotate_marginal_cluster(&mut tdd, root, 8, &mut tried)
-    });
+    let (eng, tests) = stop_after_entry(u64::MAX);
+    let r = eng.rotate_marginal_cluster(&mut tdd, root, 8, &mut tried);
 
-    let accepted = r.expect("a stride the pass never reaches must not read the clock at all");
+    let accepted = r.expect("a stride the pass never reaches must not test the stop again");
+    assert_eq!(tests.load(Ordering::Relaxed), 1, "only the entry tests the stop");
     assert_eq!(accepted, 1, "the fixture's one candidate must be clustered, not merely visited");
     assert_eq!(
         before,

@@ -64,3 +64,41 @@ fn compound_operations_refuse_their_own_work_and_release_the_scope() {
     assert_canonical(&one);
     assert_eq!(one.model_count().unwrap(), 16u32.into());
 }
+
+#[test]
+fn an_armed_stop_comes_before_every_input_error() {
+    use crate::vtree::{VarId, VtreeIdx};
+    use crate::OperationError::Stopped;
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let f = Tdd::clause(&vtree, [1, -2]).unwrap();
+    // The same shape on another vtree: every binary operation rejects the pair.
+    let other = Tdd::clause(&Arc::new(Vtree::balanced(4)), [1, -2]).unwrap();
+    let absent = [VarId(99)];
+    let wide: Vec<VarId> = (1..=65).map(VarId).collect();
+    let _stop = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(
+        StopCallback::new(|_, _| StopDecision::Stop))));
+    let g = || other.clone();
+    assert_eq!(eng.equivalent(&f, &other).err(), Some(Stopped));
+    assert_eq!(eng.implies(&f, &other).err(), Some(Stopped));
+    assert_eq!(eng.and(f.clone(), g()).err(), Some(Stopped));
+    assert_eq!(eng.and_marginalizing(f.clone(), g(), &[]).err(), Some(Stopped));
+    assert_eq!(eng.and_filter_products(f.clone(), g(), |_, _, _| true).err(), Some(Stopped));
+    assert_eq!(eng.and_exists(f.clone(), g(), &absent).err(), Some(Stopped));
+    assert_eq!(eng.or(f.clone(), g()).err(), Some(Stopped));
+    assert_eq!(eng.or_many(vec![f.clone(), g()]).err(), Some(Stopped));
+    assert_eq!(eng.nor_many(vec![f.clone(), g()]).err(), Some(Stopped));
+    assert_eq!(eng.xor(f.clone(), g()).err(), Some(Stopped));
+    assert_eq!(eng.ite(f.clone(), g(), f.clone()).err(), Some(Stopped));
+    assert_eq!(eng.restrict_to_care(f.clone(), g()).err(), Some(Stopped));
+    assert_eq!(eng.restrict_to_care_bounded(f.clone(), &other, 10).err(), Some(Stopped));
+    assert_eq!(eng.exists_vars(f.clone(), &absent).err(), Some(Stopped));
+    assert_eq!(eng.projected_model_count(&f, &absent).err(), Some(Stopped));
+    assert_eq!(eng.condition(f.clone(), [99]).err(), Some(Stopped));
+    assert_eq!(eng.cube(&vtree, [99]).err(), Some(Stopped));
+    assert_eq!(eng.clause(&vtree, [0]).err(), Some(Stopped));
+    assert_eq!(eng.from_models(&vtree, &wide, &[0]).err(), Some(Stopped));
+    assert_eq!(eng.rotate_marginal_cluster(&mut f.clone(), VtreeIdx(999), 1, &mut Vec::new()).err(), Some(Stopped));
+    // An unweighted diagram has no weighted value, but the stop is tested first.
+    assert_eq!(eng.weighted_value(&f).err(), Some(Stopped));
+}

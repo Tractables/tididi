@@ -149,8 +149,8 @@ impl Engine {
     /// are outside the best-effort byte budget, as with [`Tdd::model_count`].
     pub fn projected_model_count(&self, tdd: &Tdd, vars: &[VarId]) -> Result<BigUint, OperationError> {
         let lim = self.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
+        let _op = lim.enter()?;
+        tdd.require_structure()?;
         let vtree = tdd.vtree();
         let mut gate = lim.gate();
         for &var in vars {
@@ -158,7 +158,6 @@ impl Engine {
             vtree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
         }
         gate.flush()?;
-        tdd.require_structure()?;
         let satisfiable = self.is_sat(tdd)?;
         if vars.is_empty() || !satisfiable {
             return Ok(u32::from(satisfiable).into());
@@ -189,7 +188,7 @@ impl Engine {
     ///
     /// Returns the query's errors or [`OperationError::Stopped`] on cancellation.
     pub fn node_counts_u128(&self, tdd: &Tdd) -> Result<Vec<Vec<u128>>, OperationError> {
-        let _op = self.limits().begin_operation();
+        let _op = self.limits().enter()?;
         ModelCounter::allocate(self, tdd, 0, Retention::All, PinSemantics::Cofactor)?
             .into_fast_counts(self)
     }
@@ -205,11 +204,8 @@ impl Engine {
     /// Buffer growth is charged to the best-effort byte budget; allocations inside
     /// big-integer arithmetic are outside that budget. The input is unchanged.
     pub fn model_count(&self, tdd: &Tdd) -> Result<BigUint, OperationError> {
-        let _op = self.limits().begin_operation();
-        if tdd.is_zero() {
-            self.limits().check_stop()?;
-            return Ok(BigUint::ZERO);
-        }
+        let _op = self.limits().enter()?;
+        if tdd.is_zero() { return Ok(BigUint::ZERO); }
         // The shared counter fold with no pin storage, releasing each child
         // column once its parent has read it.
         ModelCounter::allocate(self, tdd, 0, Retention::Frontier, PinSemantics::Cofactor)?.count_with(self)

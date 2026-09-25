@@ -218,8 +218,7 @@ impl crate::Engine {
         literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>,
     ) -> Result<Tdd, OperationError> {
         let lim = self.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
+        let _op = lim.enter()?;
         let mut gate = lim.gate();
         let mut label = Vec::new();
         for lit in literals {

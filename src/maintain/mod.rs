@@ -201,8 +201,7 @@ impl<'a> Maintenance<'a> {
     /// Allocate the index and per-level paths before lending the diagram.
     fn new(eng: &Engine, tdd: &'a mut Tdd, engine: Option<&'a Engine>) -> Result<Self, OperationError> {
         let lim = eng.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
+        let _op = lim.enter()?;
         tdd.require_structure()?;
         let vtree = Arc::clone(tdd.vtree());
         let context = Arc::clone(tdd.context());

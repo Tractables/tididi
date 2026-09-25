@@ -40,10 +40,9 @@ impl Engine {
         mut f: Tdd,
         replacements: impl ExactSizeIterator<Item = (VarId, Replacement<'a>)>,
     ) -> Result<Tdd, OperationError> {
-        f.require_structure()?;
         let lim = self.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
+        let _op = lim.enter()?;
+        f.require_structure()?;
         if replacements.len() == 0 { return Ok(f); }
         let mut gate = lim.gate();
         let mut by_leaf = Vec::new();

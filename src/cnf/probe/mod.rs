@@ -277,8 +277,7 @@ impl Engine {
         &self, f: &Tdd, encoding: &CnfEncoding, order: ProbeOrder<'_>, rounds: u32, witness: Witness, host: &mut H,
     ) -> Result<ProbeOutcome, OperationError> {
         let lim = self.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
+        let _op = lim.enter()?;
         walk::probe(self, f, encoding, order, rounds, witness, host)
     }
 }

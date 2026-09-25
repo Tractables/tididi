@@ -268,8 +268,7 @@ impl Engine {
     /// cancellation, which can come after clauses were given to the sink.
     pub fn encode_cnf<K: ClauseSink + ?Sized>(&self, f: &Tdd, scheme: CnfScheme, activation: i32, sink: &mut K) -> Result<CnfEncoding, OperationError> {
         let lim = self.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
+        let _op = lim.enter()?;
         encode::check_literal(activation)?;
         if let Some(level) = f.levels.iter().position(|level| level.is_weight_marginal()) {
             return Err(OperationError::MarginalLevel(VtreeIdx(level as u32)));

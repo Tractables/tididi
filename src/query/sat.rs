@@ -18,8 +18,7 @@ impl Engine {
     /// when its column buffers exceed the budget.
     pub fn is_sat(&self, f: &Tdd) -> Result<bool, crate::OperationError> {
         let lim = self.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
+        let _op = lim.enter()?;
         if f.is_zero() { return Ok(false); }
         let out_vtree = f.output.vtree;
         let out_level = &f.levels[out_vtree.idx()];

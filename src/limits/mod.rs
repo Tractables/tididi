@@ -463,6 +463,16 @@ impl Limits {
         OperationScope { lim: self }
     }
 
+    /// Enter an operation and test the stop before anything else, so an armed
+    /// stop is reported ahead of any input error. Every public operation opens
+    /// with this; [`begin_operation`](Self::begin_operation) alone is for the
+    /// scopes an operation opens inside itself.
+    pub(crate) fn enter(&self) -> Result<OperationScope<'_>, OperationError> {
+        let scope = self.begin_operation();
+        self.check_stop()?;
+        Ok(scope)
+    }
+
     /// The post-conjunction walks' poll stride.
     #[inline]
     pub(crate) fn reduce_poll_stride(&self) -> u64 {

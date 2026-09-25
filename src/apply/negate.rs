@@ -59,7 +59,7 @@ impl Engine {
         f: Tdd,
         plan: crate::reduce::ReductionPlan<'_>,
     ) -> Result<Tdd, OperationError> {
-        let _op = self.limits().begin_operation();
+        let _op = self.limits().enter()?;
         let mut result = negate_on(self, f)?;
         // `expand_full` left every level covering its children's whole basis,
         // so every node is named from the level above and the only nodes the

@@ -16,7 +16,7 @@ mod structural;
 
 /// Existentially quantify every variable in `vars` out of `f` in one sweep.
 pub(crate) fn exists_vars_on(eng: &Engine, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
-    let _op = eng.limits().begin_operation();
+    let _op = eng.limits().enter()?;
     // Caller input, so it is answered before any work and before the ⊥
     // shortcut: the same request is refused whatever the operand happens to be.
     let targets = quantification_targets(eng, f.vtree(), vars)?;
@@ -26,7 +26,6 @@ pub(crate) fn exists_vars_on(eng: &Engine, f: Tdd, vars: &[VarId]) -> Result<Tdd
 /// Validate the entire request and retain each leaf once.
 pub(super) fn quantification_targets(eng: &Engine, vtree: &Vtree, vars: &[VarId]) -> Result<Vec<VtreeIdx>, OperationError> {
     let lim = eng.limits();
-    lim.check_stop()?;
     let mut gate = lim.gate();
     let mut targets = Vec::new();
     for &var in vars {

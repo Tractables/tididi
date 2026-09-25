@@ -14,11 +14,10 @@ impl Engine {
     /// on cancellation. Allocation refusals return
     /// [`OperationError::OverBudget`].
     pub fn equivalent(&self, f: &Tdd, g: &Tdd) -> Result<bool, OperationError> {
+        let _op = self.limits().enter()?;
         crate::apply::check_vtree(f, g)?;
         f.require_structure()?;
         g.require_structure()?;
-        let _op = self.limits().begin_operation();
-        self.limits().check_stop()?;
         if f.is_zero() || g.is_zero() {
             return Ok(f.is_zero() == g.is_zero());
         }
@@ -39,11 +38,10 @@ impl Engine {
     /// [`OperationError::OverBudget`]. An exceeded output-node cap returns
     /// [`OperationError::OutputCap`].
     pub fn implies(&self, f: &Tdd, g: &Tdd) -> Result<bool, OperationError> {
+        let _op = self.limits().enter()?;
         crate::apply::check_vtree(f, g)?;
         f.require_structure()?;
         g.require_structure()?;
-        let _op = self.limits().begin_operation();
-        self.limits().check_stop()?;
         if f.is_zero() || std::ptr::eq(f, g) {
             return Ok(true);
         }
@@ -76,10 +74,9 @@ impl Engine {
         if !f.is_zero() {
             return self.collect_leaf_labels(f, |var, labels| labels.implied(var), |literal| literal.var);
         }
-        f.require_structure()?;
         let lim = self.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
+        let _op = lim.enter()?;
+        f.require_structure()?;
         let mut result = Vec::new();
         let mut gate = lim.gate();
         // False implies both signs, including variables absent from its support.
@@ -102,10 +99,9 @@ impl Engine {
         select: impl Fn(VarId, LeafLabels) -> Option<T>,
         key: impl Fn(&T) -> VarId,
     ) -> Result<Vec<T>, OperationError> {
-        f.require_structure()?;
         let lim = self.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
+        let _op = lim.enter()?;
+        f.require_structure()?;
         if f.is_zero() { return Ok(Vec::new()); }
         let f = self.canonical(f)?;
         let mut result = Vec::new();
@@ -139,10 +135,9 @@ impl Engine {
     /// on cancellation. Allocation refusals return
     /// [`OperationError::OverBudget`].
     pub fn satisfying_assignment(&self, f: &Tdd) -> Result<Option<Vec<Literal>>, OperationError> {
-        f.require_structure()?;
         let lim = self.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
+        let _op = lim.enter()?;
+        f.require_structure()?;
         if f.is_zero() {
             return Ok(None);
         }

@@ -118,8 +118,7 @@ fn normalize(lim: &Limits, vtree: &Vtree, lits: &[Literal], negate: bool) -> Res
 /// needs goes back to the engine's pool.
 fn spine_walk(eng: &Engine, mut f: Tdd, lits: &[Literal], disjoin: bool) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
-    let _op = lim.begin_operation();
-    lim.check_stop()?;
+    let _op = lim.enter()?;
     let vtree = Arc::clone(&f.vtree);
     let clause = match normalize(lim, &vtree, lits, disjoin)? {
         // A variable named in both polarities satisfies the clause whatever
@@ -355,8 +354,7 @@ impl crate::Engine {
         literals: impl IntoIterator<Item = impl TryInto<Literal, Error: Into<OperationError>>>,
     ) -> Result<Tdd, OperationError> {
         let lim = self.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
+        let _op = lim.enter()?;
         let mut gate = lim.gate();
         let mut clause = Vec::new();
         for lit in literals {

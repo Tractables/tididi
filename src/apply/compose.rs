@@ -191,14 +191,13 @@ impl Engine {
         mut then_branch: Tdd,
         mut else_branch: Tdd,
     ) -> Result<Tdd, OperationError> {
+        let _op = self.limits().enter()?;
         super::check_vtree(&condition, &then_branch)?;
         super::check_vtree(&condition, &else_branch)?;
         for f in [&condition, &then_branch, &else_branch] {
             f.require_structure()?;
         }
         super::prepare_weights(&mut [&mut condition, &mut then_branch, &mut else_branch])?;
-        let _op = self.limits().begin_operation();
-        self.limits().check_stop()?;
         let mut condition = SharedCircuit::new(condition, 2);
         let otherwise = self.negate(condition.take(self)?)?;
         let yes = self.and(condition.take(self)?, then_branch)?;
@@ -213,12 +212,11 @@ impl Engine {
     /// Returns the operation's errors, plus [`OperationError::Stopped`] or
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn xor(&self, mut f: Tdd, mut g: Tdd) -> Result<Tdd, OperationError> {
+        let _op = self.limits().enter()?;
         super::check_vtree(&f, &g)?;
         f.require_structure()?;
         g.require_structure()?;
         super::prepare_weights(&mut [&mut f, &mut g])?;
-        let _op = self.limits().begin_operation();
-        self.limits().check_stop()?;
         let mut g = SharedCircuit::new(g, 2);
         let not_g = self.negate(g.take(self)?)?;
         self.ite(f, not_g, g.take(self)?)
@@ -262,6 +260,7 @@ impl Engine {
         vars: &[VarId],
         how: Quantification,
     ) -> Result<Tdd, OperationError> {
+        let _op = self.limits().enter()?;
         super::check_vtree(&f, &g)?;
         f.require_structure()?;
         g.require_structure()?;
@@ -272,8 +271,6 @@ impl Engine {
         if how.pushes_through() && f.weights.is_some() {
             return Err(OperationError::InertOption { option: how.name(), needs: "unweighted operands" });
         }
-        let _op = self.limits().begin_operation();
-        self.limits().check_stop()?;
         let targets = super::project::quantification_targets(self, f.vtree(), vars)?;
         let (product, collapsed) = if how.pushes_through() {
             (f, g) = push_local_targets(self, f, g, &targets)?;

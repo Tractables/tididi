@@ -411,11 +411,10 @@ impl<D: Borrow<Tdd>> Counter<D> {
     /// Allocate leaf-indexed pin slots, or zero slots for an internal unpinned query.
     pub(super) fn allocate(eng: &Engine, tdd: D, pin_slots: usize, retention: Retention, convention: PinSemantics) -> Result<Self, OperationError> {
         let lim = eng.limits();
-        let _op = lim.begin_operation();
+        let _op = lim.enter()?;
         if tdd.borrow().levels.iter().any(|level| level.is_weight_marginal()) {
             return Err(OperationError::IncompatibleWeights);
         }
-        lim.check_stop()?;
         let mut cols = Vec::new();
         lim.reserve_exact(&mut cols, tdd.borrow().vtree.num_nodes())?;
         cols.resize_with(tdd.borrow().vtree.num_nodes(), CountVec::default);
@@ -581,9 +580,8 @@ impl CountState {
     /// Refresh pins and count under the supplied engine's limits for every entry point.
     fn count_with(&mut self, eng: &Engine, tdd: &Tdd) -> Result<BigUint, OperationError> {
         let lim = eng.limits();
-        let _op = lim.begin_operation();
+        let _op = lim.enter()?;
         let result = (|| {
-            lim.check_stop()?;
             let mut gate = lim.gate();
             let count = if tdd.is_zero() {
                 BigUint::ZERO

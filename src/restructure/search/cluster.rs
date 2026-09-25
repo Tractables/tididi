@@ -203,9 +203,10 @@ impl Engine {
         bound_mult: usize,
         tried: &mut Vec<u8>,
     ) -> Result<usize, OperationError> {
-        tdd.check_level_indices(&[root])?;
         let eng = self;
         let lim = eng.limits();
+        let _op = lim.enter()?;
+        tdd.check_level_indices(&[root])?;
         let additional = tdd.vtree.num_nodes().saturating_sub(tried.len());
         if additional != 0 {
             lim.reserve(tried, additional)?;

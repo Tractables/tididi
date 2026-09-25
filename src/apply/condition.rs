@@ -26,8 +26,7 @@ pub(crate) fn condition_vars_on(eng: &Engine, f: Tdd, vars: &[VarId], value: boo
 /// Validate a mixed assignment and condition all its leaves in one reduction.
 pub(crate) fn condition_on(eng: &Engine, f: Tdd, assignment: impl IntoIterator<Item = impl TryInto<crate::diagram::Literal, Error: Into<OperationError>>>) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
-    let _op = lim.begin_operation();
-    lim.check_stop()?;
+    let _op = lim.enter()?;
     let mut gate = lim.gate();
     let mut targets = Vec::new();
     for literal in assignment {

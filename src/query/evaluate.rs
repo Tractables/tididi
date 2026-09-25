@@ -24,9 +24,8 @@ impl Engine {
     /// Caller algebra panics propagate as described on the diagram method.
     pub fn evaluate<S: EvalAlgebra>(&self, tdd: &Tdd, algebra: &S) -> Result<S::Value, OperationError> {
         let lim = self.limits();
-        let _op = lim.begin_operation();
+        let _op = lim.enter()?;
         tdd.require_structure()?;
-        lim.check_stop()?;
         let mut gate = lim.gate();
         let result = if tdd.is_zero() {
             algebra.zero()
@@ -139,9 +138,8 @@ impl Engine {
     /// Stops are checked at entry, at amortized node boundaries and before return.
     /// Numeric payload allocations are outside the best-effort byte budget.
     pub fn weighted_value(&self, tdd: &Tdd) -> Result<Option<WeightValue>, OperationError> {
-        let _op = self.limits().begin_operation();
+        let _op = self.limits().enter()?;
         let Some(ws) = tdd.weights.as_ref() else { return Ok(None); };
-        self.limits().check_stop()?;
         let mut gate = self.limits().gate();
         let value = weighted_output_value(self, tdd, ws, &mut gate)?;
         gate.finish()?;

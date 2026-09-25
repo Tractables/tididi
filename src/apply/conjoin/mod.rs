@@ -147,8 +147,7 @@ pub(crate) fn conjoin_checked(
     // level — see `is_self_conjunction`, where the soundness of both choices
     // is stated.
     if is_self_conjunction(&f, &g) {
-        let _op = eng.limits().begin_operation();
-        eng.limits().check_stop()?;
+        let _op = eng.limits().enter()?;
         diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
         return Ok((f, false));
     }
@@ -227,6 +226,7 @@ impl crate::Engine {
     /// Returns the operation's errors, plus [`OperationError::Stopped`] or
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn and(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
+        let _op = self.limits().enter()?;
         conjoin_on(self, f, g, VtreeMask::default()).map(|(out, _)| out)
     }
 
@@ -268,10 +268,10 @@ impl crate::Engine {
         mut g: Tdd,
         targets: &[VtreeIdx],
     ) -> Result<Tdd, OperationError> {
+        let _op = self.limits().enter()?;
         crate::apply::check_vtree(&f, &g)?;
         f.check_level_indices(targets)?;
         crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
-        let _op = self.limits().begin_operation();
         // The apply core asks "is level `t` a target?" once per level it emits,
         // so the membership array is derived here, once, at the cost the caller
         // would pay to build it.

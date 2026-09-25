@@ -56,8 +56,7 @@ impl Maintenance<'_> {
 
     /// Keep an operation scope around input preparation and the complete edit.
     fn update_on<L: crate::LiteralInput>(&mut self, eng: &Engine, model: &[L], edit: Edit) -> Result<(), OperationError> {
-        let _op = eng.limits().begin_operation();
-        eng.limits().check_stop()?;
+        let _op = eng.limits().enter()?;
         let mut input = std::mem::take(&mut self.literals);
         input.clear();
         let outcome = L::collect(eng, &self.vtree, model, &mut input)

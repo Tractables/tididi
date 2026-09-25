@@ -25,7 +25,7 @@ impl<'a> Reduction<'a> {
     pub(super) fn new(eng: &'a Engine, tdd: &'a mut Tdd) -> Self { Self { eng, tdd } }
 
     pub(super) fn run(&mut self, plan: ReductionPlan<'_>, scope: PruneScope) -> Result<(), OperationError> {
-        let _op = self.eng.limits().begin_operation();
+        let _op = self.eng.limits().enter()?;
         let whole = matches!(scope, PruneScope::Whole);
         let policy = match plan {
             ReductionPlan::Contract => return contract_all_twins(self.eng, self.tdd),

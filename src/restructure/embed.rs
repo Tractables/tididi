@@ -159,16 +159,14 @@ impl Engine {
     /// Prepare an [`EmbeddingPlan`] under this engine's limits.
     pub fn embedding_plan(&self, source: &Arc<Vtree>, destination: &Arc<Vtree>, map: impl Fn(VarId) -> VarId) -> Result<EmbeddingPlan, EmbedError> {
         let lim = self.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
+        let _op = lim.enter()?;
         let layout = Plan::build(lim, source, destination, map)?;
         Ok(EmbeddingPlan { source: source.clone(), destination: destination.clone(), layout })
     }
 
     /// [`EmbeddingPlan::apply`] under this engine's limits.
     pub fn embed_with(&self, circuit: &Tdd, plan: &EmbeddingPlan) -> Result<Tdd, EmbedError> {
-        let _op = self.limits().begin_operation();
-        self.limits().check_stop()?;
+        let _op = self.limits().enter()?;
         if !Arc::ptr_eq(circuit.vtree(), &plan.source) { return Err(OperationError::VtreeMismatch.into()); }
         circuit.require_structure()?;
         assemble(self, circuit, &plan.destination, &plan.layout)
@@ -176,6 +174,7 @@ impl Engine {
 
     /// [`EmbeddingPlan::then`] under this engine's limits.
     pub fn compose_embeddings(&self, first: &EmbeddingPlan, next: &EmbeddingPlan) -> Result<EmbeddingPlan, EmbedError> {
+        let _op = self.limits().enter()?;
         if !Arc::ptr_eq(&first.destination, &next.source) { return Err(OperationError::VtreeMismatch.into()); }
         self.embedding_plan(&first.source, &next.destination, |var| {
             let leaf = first.source.leaf_of(var).expect("source leaf");
@@ -196,8 +195,7 @@ impl Engine {
         map: impl Fn(VarId) -> VarId,
     ) -> Result<(Tdd, Embedding), EmbedError> {
         let lim = self.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
+        let _op = lim.enter()?;
         tdd.require_structure()?;
         let plan = Plan::build(lim, tdd.vtree(), into, map)?;
         let result = assemble(self, tdd, into, &plan)?;

@@ -91,6 +91,7 @@ impl crate::Engine {
         objective: &mut O,
         config: &MultistartConfig,
     ) -> Result<MultistartStats, OperationError> {
+        let _op = self.limits().enter()?;
         if config.restarts > 0 && config.kick > 0 && config.search.max_inner_pairs == usize::MAX {
             return Err(OperationError::UnboundedSearch {
                 option: "MultistartConfig::search.max_inner_pairs",

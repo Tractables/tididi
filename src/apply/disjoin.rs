@@ -34,8 +34,7 @@ pub(crate) fn apply_or(f: Tdd, g: Tdd) -> Tdd {
 /// The operand list is the caller's and is not charged to the engine; the
 /// complements and products built from it are.
 pub(crate) fn disjoin_many_on(eng: &Engine, operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
-    let _op = eng.limits().begin_operation();
-    eng.limits().check_stop()?;
+    let _op = eng.limits().enter()?;
     let (mut live, a_false_one) = live_operands(operands)?;
     if live.len() <= 1 {
         // The operand itself carries the vtree and the weights; when every
@@ -243,9 +242,8 @@ impl crate::Engine {
     /// Returns the operation's errors, plus [`OperationError::Stopped`] or
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn nor_many(&self, operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
+        let _op = self.limits().enter()?;
         crate::apply::check_same_vtree(&operands)?;
-        let _op = self.limits().begin_operation();
-        self.limits().check_stop()?;
         let (live, a_false_one) = live_operands(operands)?;
         if live.is_empty() {
             // Every operand is false, so every complement is true.
@@ -262,6 +260,7 @@ impl crate::Engine {
     /// Returns the operation's errors, plus [`OperationError::Stopped`] or
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn or(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
+        let _op = self.limits().enter()?;
         crate::apply::check_vtree(&f, &g)?;
         disjoin_many_on(self, collect_operands([f, g])?)
     }
@@ -273,6 +272,7 @@ impl crate::Engine {
     /// Returns the operation's errors, plus [`OperationError::Stopped`] or
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn or_many(&self, operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
+        let _op = self.limits().enter()?;
         crate::apply::check_same_vtree(&operands)?;
         disjoin_many_on(self, operands)
     }

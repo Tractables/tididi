@@ -100,9 +100,8 @@ impl Tdd {
 impl<S: EvalAlgebra, D: Borrow<Tdd>> Evaluation<S, D> {
     fn new(eng: &Engine, tdd: D, algebra: S) -> Result<Self, OperationError> {
         let lim = eng.limits();
-        let _op = lim.begin_operation();
+        let _op = lim.enter()?;
         tdd.borrow().require_structure()?;
-        lim.check_stop()?;
         let mut cols = Vec::new();
         lim.reserve_exact(&mut cols, tdd.borrow().vtree.num_nodes())?;
         cols.resize_with(tdd.borrow().vtree.num_nodes(), Vec::new);
@@ -224,9 +223,8 @@ impl<S: EvalAlgebra, D: Borrow<Tdd>> BoundEvaluation<'_, S, D> {
 impl<S: EvalAlgebra> EvaluationState<S> {
     fn value_on(&mut self, eng: &Engine, tdd: &Tdd) -> Result<S::Value, OperationError> {
         let lim = eng.limits();
-        let _op = lim.begin_operation();
+        let _op = lim.enter()?;
         let result = (|| {
-            lim.check_stop()?;
             let mut gate = lim.gate();
             let value = if tdd.is_zero() { self.algebra.zero() } else {
                 let (tdd, algebra, cols) = (tdd, &self.algebra, &mut self.cols);

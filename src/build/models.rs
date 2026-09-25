@@ -95,13 +95,12 @@ impl Engine {
         vars: &[VarId],
         rows: &[u64],
     ) -> Result<Tdd, OperationError> {
+        let lim = self.limits();
+        let _op = lim.enter()?;
         let w = words_per_row(vars.len());
         if !rows.len().is_multiple_of(w) {
             return Err(OperationError::RaggedRows { words: rows.len(), per_row: w });
         }
-        let lim = self.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
 
         let mut layout = self.model_layout().checkout(lim);
         layout.prepare_for(lim, vtree, vars)?;

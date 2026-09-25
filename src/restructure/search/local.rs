@@ -140,13 +140,13 @@ pub(crate) fn rotation_search_on<O: RotationObjective, A: AcceptancePolicy>(
     policy: &mut A,
     config: &RotationSearchConfig,
 ) -> Result<RotationSearchStats, OperationError> {
+    let _op = eng.limits().enter()?;
     if policy.may_worsen() && config.max_inner_pairs == usize::MAX {
         return Err(OperationError::UnboundedSearch {
             option: "RotationSearchConfig::max_inner_pairs",
             needed_by: "a policy that keeps worsening moves",
         });
     }
-    let _op = eng.limits().begin_operation();
     policy.begin();
     let mut rule = Policed { objective, policy, stats: RotationSearchStats::default(), log: Vec::new() };
     let mut scratch = eng.restructure().checkout(eng.limits());

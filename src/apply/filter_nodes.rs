@@ -102,8 +102,7 @@ impl Engine {
         plan: ReductionPlan<'_>,
     ) -> Result<FilterOutcome, OperationError> {
         let lim = self.limits();
-        let _op = lim.begin_operation();
-        lim.check_stop()?;
+        let _op = lim.enter()?;
         if f.is_zero() { return Ok(FilterOutcome::Unchanged); }
         let Some(mut remap) = ask(self, f, keep)? else { return Ok(FilterOutcome::Unchanged) };
         let (assembly, stats) = sweep(self, f, &mut remap)?;

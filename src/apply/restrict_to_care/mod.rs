@@ -117,9 +117,8 @@ impl crate::Engine {
     /// are errors as for [`Self::restrict_to_care`]. Exhausting the discovery
     /// allowance does not suppress engine cancellation.
     pub fn restrict_to_care_bounded(&self, f: Tdd, care: &Tdd, max_pair_visits: u64) -> Result<RestrictionOutcome, OperationError> {
+        let _op = self.limits().enter()?;
         crate::apply::check_vtree(&f, care)?;
-        let _op = self.limits().begin_operation();
-        self.limits().check_stop()?;
         if f.is_zero() || max_pair_visits == 0 { return Ok(RestrictionOutcome::Unchanged(f)); }
         restrict_prepared(self, f, care, max_pair_visits)
     }
@@ -132,9 +131,8 @@ impl crate::Engine {
     /// the output-node cap return [`OperationError::Stopped`],
     /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
     pub fn restrict_to_care(&self, f: Tdd, mut care: Tdd) -> Result<RestrictionOutcome, OperationError> {
+        let _op = self.limits().enter()?;
         crate::apply::check_vtree(&f, &care)?;
-        let _op = self.limits().begin_operation();
-        self.limits().check_stop()?;
         if f.is_zero() {
             return Ok(RestrictionOutcome::Unchanged(f));
         }
