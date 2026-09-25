@@ -389,7 +389,8 @@ pub(super) fn build_level_dense(
     let (left_level, right_level) = (&*left_level, &*right_level);
 
 
-    let right_cols = RightColumns::build(eng, g.level(t), gw.here, sides.left.view, sides.right.view);
+    let grouped = both_multi_pair && !passthrough.left && !passthrough.right;
+    let right_cols = RightColumns::build(eng, g.level(t), gw.here, sides.left.view, sides.right.view, grouped);
     let cell_ctx = build_cell_ctx(shape, &plan, output_grid_base.idx(), bases, run.prefilter_masks, right_cols.as_ref());
 
     open_level_arenas(lim, f, g, shape, level, route)?;

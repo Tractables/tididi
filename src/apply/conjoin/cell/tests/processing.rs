@@ -56,7 +56,7 @@ fn columns_match_per_cell_decode() {
     
     let (lvl, right_width) = marginal_shaped_level();
     let (lm, rm) = (ChildDecoder::structural(), ChildDecoder::marginal()); // right child marginal
-    let cols = RightColumns::build(&eng, &lvl, right_width, lm, rm).expect("a marginal side must build");
+    let cols = RightColumns::build(&eng, &lvl, right_width, lm, rm, false).expect("a marginal side must build");
     let mut scratch: Vec<ChildPair> = Vec::new();
     for j in 0..right_width {
         let want = lvl.pairs_view_decoded(j, &mut scratch, lm, rm).to_vec();
@@ -72,7 +72,7 @@ fn columns_match_per_cell_decode() {
 fn columns_borrow_identity_mask_storage() {
     let eng = Engine::new();
     let (lvl, right_width) = marginal_shaped_level();
-    let cols = RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::structural())
+    let cols = RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::structural(), false)
         .expect("identity masks must build a borrowing table");
     let mut scratch: Vec<ChildPair> = Vec::new();
     for j in 0..right_width {
@@ -94,7 +94,7 @@ fn columns_skip_marginal_levels() {
     let eng = Engine::new();
     let (mut lvl, right_width) = marginal_shaped_level();
     lvl.set_counts_state(vec![0u128; right_width], None);
-    assert!(RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::structural()).is_none());
+    assert!(RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::structural(), false).is_none());
 }
 
 /// Budget guard: the marginal-mask decode arena charges the apply soft budget
@@ -113,7 +113,7 @@ fn columns_charge_and_release_the_soft_budget() {
         let lim = eng.limits();
     lim.set_budget(Some(1 << 20));
         let h0 = lim.budget_headroom().expect("budget installed");
-        let cols = RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::marginal())
+        let cols = RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::marginal(), false)
             .expect("within budget");
         let h_alive = lim.budget_headroom().unwrap();
         assert!(h_alive < h0, "arena reservation must charge the soft budget");
@@ -131,7 +131,7 @@ fn columns_charge_and_release_the_soft_budget() {
         let lim = eng.limits();
     lim.set_budget(Some(1 << 20));
         let h0 = lim.budget_headroom().expect("budget installed");
-        let cols = RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::structural()).expect("within budget");
+        let cols = RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::structural(), false).expect("within budget");
         assert_eq!(
             lim.budget_headroom().unwrap(),
             h0,
@@ -146,7 +146,7 @@ fn columns_charge_and_release_the_soft_budget() {
         let lim = eng.limits();
     lim.set_budget(Some(8));
         let h1 = lim.budget_headroom().unwrap();
-        assert!(RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::marginal()).is_none());
+        assert!(RightColumns::build(&eng, &lvl, right_width, ChildDecoder::structural(), ChildDecoder::marginal(), false).is_none());
         assert_eq!(
             lim.budget_headroom().unwrap(),
             h1,
@@ -357,7 +357,7 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
     let eng = Engine::new();
     let (lvl, right_width) = marginal_shaped_level();
     let (lm, rm) = (ChildDecoder::structural(), ChildDecoder::marginal());
-    let cols = RightColumns::build(&eng, &lvl, right_width, lm, rm)
+    let cols = RightColumns::build(&eng, &lvl, right_width, lm, rm, false)
         .expect("a marginal side must build");
 
     // Nothing culled: every column is reachable and every f row live, so the
@@ -407,7 +407,7 @@ fn columns_reuse_descriptors_after_the_source_level_is_dropped() {
         let (mut level, _) = marginal_shaped_level();
         if iteration % 2 == 0 { level.push_internal_node(&[pair(2, 3)]); }
         let decoder = if iteration % 3 == 0 { ChildDecoder::marginal() } else { ChildDecoder::structural() };
-        let columns = RightColumns::build(&eng, &level, level.nodes.len(), ChildDecoder::structural(), decoder).unwrap();
+        let columns = RightColumns::build(&eng, &level, level.nodes.len(), ChildDecoder::structural(), decoder, false).unwrap();
         let mut scratch = Vec::new();
         for j in 0..level.nodes.len() {
             assert_eq!(columns.get(j), level.pairs_view_decoded(j, &mut scratch, ChildDecoder::structural(), decoder));
@@ -415,4 +415,124 @@ fn columns_reuse_descriptors_after_the_source_level_is_dropped() {
         drop(columns);
         drop(level);
     }
+}
+
+/// A level with one long column in three runs of shared `.left`, and one
+/// column too short to group.
+fn long_and_short_columns() -> TddLevel {
+    let mut level = TddLevel::new();
+    let long: Vec<ChildPair> = (0..70u32).map(|k| pair(if k < 10 { 0 } else if k < 40 { 1 } else { 2 }, k)).collect();
+    level.push_internal_node(&long);
+    level.push_internal_node(&[pair(0, 1), pair(0, 2), pair(1, 3)]);
+    level
+}
+
+/// The run ends of `pairs`, found the plain way.
+fn run_ends_of(pairs: &[ChildPair]) -> Vec<u32> {
+    (1..=pairs.len())
+        .filter(|&i| i == pairs.len() || pairs[i].left != pairs[i - 1].left)
+        .map(|i| i as u32)
+        .collect()
+}
+
+/// A grouped table records the runs of each column long enough to group and
+/// of no other; an ungrouped table records none.
+#[test]
+fn columns_record_the_runs_of_long_columns_on_grouped_levels() {
+    let eng = Engine::new();
+    let level = long_and_short_columns();
+    let views = (ChildDecoder::structural(), ChildDecoder::structural());
+    let grouped = RightColumns::build(&eng, &level, 2, views.0, views.1, true).expect("unbudgeted");
+    let want = run_ends_of(grouped.get(0));
+    assert_eq!(want.len(), 3, "the fixture's long column holds three runs");
+    assert_eq!(grouped.runs(0), Some(&want[..]));
+    assert_eq!(grouped.runs(1), None, "a column under the grouping length is not grouped");
+    drop(grouped);
+    let plain = RightColumns::build(&eng, &level, 2, views.0, views.1, false).expect("unbudgeted");
+    assert_eq!((plain.runs(0), plain.runs(1)), (None, None));
+}
+
+/// The recorded runs charge the soft budget while the table lives and give
+/// the charge back on drop. A budget too small for them leaves the column
+/// ungrouped rather than refusing the table.
+#[test]
+fn column_runs_charge_the_soft_budget_and_degrade_when_refused() {
+    let level = long_and_short_columns();
+    let views = (ChildDecoder::structural(), ChildDecoder::structural());
+
+    let eng = Engine::new();
+    let lim = eng.limits();
+    lim.set_budget(Some(1 << 20));
+    let h0 = lim.budget_headroom().expect("budget installed");
+    let table = RightColumns::build(&eng, &level, 2, views.0, views.1, true).expect("within budget");
+    assert!(table.runs(0).is_some());
+    assert!(lim.budget_headroom().unwrap() < h0, "the runs must charge the soft budget");
+    drop(table);
+    assert_eq!(lim.budget_headroom().unwrap(), h0, "dropping the table must release the runs' charge");
+
+    let eng = Engine::new();
+    let lim = eng.limits();
+    lim.set_budget(Some(4));
+    let h1 = lim.budget_headroom().unwrap();
+    let table = RightColumns::build(&eng, &level, 2, views.0, views.1, true)
+        .expect("identity columns borrow and need no budget");
+    assert_eq!(table.runs(0), None, "a refused run push leaves the column ungrouped");
+    assert_eq!(table.get(0).len(), 70, "the table itself still serves the column");
+    drop(table);
+    assert_eq!(lim.budget_headroom().unwrap(), h1, "a refused recording must not retain a charge");
+}
+
+/// The grouped N×M walk emits exactly the pairs of the ungrouped one.
+///
+/// A long f row against a long column, through a lookup that kills some
+/// `(f, g)` child combinations on each side, so both the per-run left
+/// test and the per-pair right test skip entries.
+#[test]
+fn the_grouped_walk_emits_the_pairs_of_the_ungrouped_walk() {
+    use super::{process_cell, CellCtx, CollectSink};
+    use crate::apply::conjoin::child_lookup::ChildLookup;
+
+    struct SomeDead;
+    impl ChildLookup for SomeDead {
+        type Row = u32;
+        fn row(&self, row: u32) -> u32 { row }
+        fn get_in_row(&self, _node_idx: &[u32], row: u32, col: u32) -> u32 {
+            if (row + col).is_multiple_of(3) { NO_PRODUCT } else { row * 1000 + col }
+        }
+    }
+
+    let eng = Engine::new();
+    let level = long_and_short_columns();
+    let views = (ChildDecoder::structural(), ChildDecoder::structural());
+    let reach = vec![u128::MAX; 2];
+    let live_cols = vec![u128::MAX; 256];
+    let side = ChildPlan {
+        plan: SidePlan { carrier: None, view: ChildDecoder::structural() },
+        base: 0, stride: 2, live_cols: &live_cols, reach: &reach,
+    };
+    let f_pairs: Vec<ChildPair> = (0..66u32).map(|k| pair(k / 6, 2 * k)).collect();
+    let walk = |grouped| {
+        let cols = RightColumns::build(&eng, &level, 2, views.0, views.1, grouped).expect("unbudgeted");
+        assert_eq!(cols.runs(0).is_some(), grouped);
+        let ctx = CellCtx {
+            output_grid_base: 0, right_width: 2,
+            both_multi_pair: true,
+            sides: Sides { left: side, right: side },
+            right_cols: Some(&cols),
+        };
+        let mut out: Vec<ChildPair> = Vec::new();
+        process_cell(
+            &eng, 0, 0, &f_pairs, &ctx, &level,
+            &mut Vec::new(), &mut Vec::<u32>::new(),
+            &SomeDead, &SomeDead, &mut CollectSink { out: &mut out },
+            &mut eng.limits().gate_with(u64::MAX),
+        ).expect("an unbudgeted walk completes");
+        out.sort_by_key(|p| (p.left.raw(), p.right.raw()));
+        out
+    };
+
+    let ungrouped = walk(false);
+    assert!(!ungrouped.is_empty(), "the fixture must emit pairs to compare");
+    assert!(ungrouped.len() < f_pairs.len() * 70, "the fixture must kill some combinations");
+    assert_eq!(walk(true), ungrouped);
 }

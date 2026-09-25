@@ -248,6 +248,10 @@ where
 
 /// The general product walk: every f pair against every g pair, with the
 /// dead-pair pre-filter culling rows and columns that cannot contribute.
+///
+/// On a column the column table grouped (see [`RightColumns::runs`]) and an
+/// f row of at least [`GROUPED_MIN_PAIRS`] pairs, the walk takes both sides a
+/// run of shared `.left` at a time.
 #[inline(always)]
 #[expect(clippy::too_many_arguments)]
 fn cell_prefilter<L, R, S>(
@@ -273,26 +277,16 @@ where
     // every arm before the cell is entered; what is left here is the per-`p1`
     // form of it, which only this arm can use.
     let cell_start = sink.begin();
-    if !left.passthrough() && !right.passthrough()
-        && f_pairs.len() >= 64 && g_pairs.len() >= 64
+    if f_pairs.len() >= GROUPED_MIN_PAIRS
+        && let Some(g_runs) = ctx.right_cols.and_then(|cols| cols.runs(j))
     {
         // ── Grouped N×M: run-length groups by shared `.left` ──────────
         // Emits the same pair multiset as the general double loop, in
         // grouped order; every consumer is order-independent (pair lists
-        // are unordered sets — see diagram/level/mod.rs).
+        // are unordered sets — see diagram/level/mod.rs). The column table
+        // groups only levels with no pass-through side.
+        debug_assert!(!left.passthrough() && !right.passthrough());
         let n2 = g_pairs.len();
-        let mut groups2: smallvec::SmallVec<[(usize, usize); 256]> =
-            smallvec::SmallVec::new();
-        {
-            let mut idx = 0;
-            while idx < n2 {
-                let start = idx;
-                let left = g_pairs[idx].left;
-                idx += 1;
-                while idx < n2 && g_pairs[idx].left == left { idx += 1; }
-                groups2.push((start, idx));
-            }
-        }
         let n1 = f_pairs.len();
         let mut p1_idx = 0;
         while p1_idx < n1 {
@@ -305,11 +299,12 @@ where
 
             if ctx.sides.left.live_cols[p1_left.raw() as usize] & ctx.sides.left.reach[j] == 0 { continue; }
 
-            for &(g2s, g2e) in &groups2 {
-                let p2_left = g_pairs[g2s].left;
-                let lc = left.get(node_idx, p1_left.0, p2_left.0);
+            let mut g2_start = 0;
+            for &g2_end in g_runs {
+                let g2 = &g_pairs[g2_start..g2_end as usize];
+                g2_start = g2_end as usize;
+                let lc = left.get(node_idx, p1_left.0, g2[0].left.0);
                 if lc == NO_PRODUCT { continue; }
-                let g2 = &g_pairs[g2s..g2e];
 
                 for p1 in g1 {
                     if ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j] == 0 {
@@ -360,7 +355,8 @@ where
 ///
 /// Arms: 1×1 (single-pair fast path via `sink.single`), N×1 / 1×N (one side
 /// single — [`cell_one_sided`], one loop in both directions), N×M (reach-mask
-/// culls + the ≥64×64 grouped fast path when neither side is pass-through). A cell in the N×M arm implies `ctx.both_multi_pair` (both sides
+/// culls, grouped by shared `.left` on a long f row against a column the
+/// column table grouped). A cell in the N×M arm implies `ctx.both_multi_pair` (both sides
 /// having >1 pairs means both levels have multi-pair nodes), so the
 /// liveness/reach arrays are always built when the culls read them.
 ///
@@ -400,7 +396,8 @@ where
     // range — depends only on `j` and the level, so it was hoisted into the
     // per-level [`RightColumns`] table and this is two loads. `None` is the
     // fallback for the levels the table declines (marginal-encoded g, or an
-    // arena the budget rejected): re-derive per cell, as before.
+    // arena the budget rejected): re-derive per cell, as before, and walk an
+    // N×M cell ungrouped.
     let g_pairs = match ctx.right_cols {
         Some(cols) => cols.get(j),
         None => right_level.pairs_view_decoded(j, g_pairs_scratch, ctx.sides.left.plan.view, ctx.sides.right.plan.view),
