@@ -22,6 +22,38 @@ pub(crate) fn vas_headroom_with_margin(limit: u64, mapped: u64) -> u64 {
         .saturating_sub(mapped)
 }
 
+impl super::Limits {
+    /// Available bytes under the soft budget, or the host's address-space
+    /// ceiling minus its mapped bytes and a safety margin. An unlimited host
+    /// ceiling yields [`VAS_UNLIMITED_HEADROOM`].
+    #[inline]
+    pub(crate) fn headroom(&self) -> u64 {
+        if let Some(h) = self.budget_headroom() {
+            return h;
+        }
+        match self.address_space_limit() {
+            Some(limit) => {
+                let mem = self.memory_hooks.borrow().clone();
+                vas_headroom_with_margin(limit, mem.mapped_bytes())
+            },
+            None => VAS_UNLIMITED_HEADROOM,
+        }
+    }
+
+    /// The installed address-space ceiling, answered once per install.
+    fn address_space_limit(&self) -> Option<u64> {
+        match self.vas_limit.get() {
+            Some(v) => v,
+            None => {
+                let mem = self.memory_hooks.borrow().clone();
+                let v = mem.address_space_limit();
+                self.vas_limit.set(Some(v));
+                v
+            }
+        }
+    }
+}
+
 /// Owned host memory hooks installed through [`LimitConfig::with_memory_hooks`](crate::limits::LimitConfig::with_memory_hooks).
 #[derive(Clone, Default)]
 pub struct MemoryHooks(Option<std::sync::Arc<dyn MemoryObserver>>);

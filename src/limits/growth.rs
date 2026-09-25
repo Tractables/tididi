@@ -1,5 +1,6 @@
-//! The memory half of the limits: how much room is left, which growth mode a
-//! level runs in, and the allocation helpers that charge against the budget.
+//! Buffer growth under the limits: which growth mode a level runs in, and the
+//! allocation helpers that charge against the budget. The room left for growth
+//! is computed in `memory`.
 //!
 //! The allocation helpers are `#[inline(always)]` because they are called once
 //! per reserve on paths that reserve constantly; the same measurement that
@@ -8,8 +9,6 @@
 //! forcing goes away.
 
 use crate::limits::OperationError;
-
-use crate::limits::memory::{VAS_UNLIMITED_HEADROOM, vas_headroom_with_margin};
 
 use super::Limits;
 
@@ -21,23 +20,6 @@ pub(crate) const DENSE_GROWTH_DECISION_THRESHOLD: u128 = 128 * 1024 * 1024;
 pub(crate) const PAIR_ELEM_BYTES: u64 = std::mem::size_of::<crate::diagram::ChildPair>() as u64;
 
 impl Limits {
-    /// Available bytes under the soft budget, or the host's address-space
-    /// ceiling minus its mapped bytes and a safety margin. An unlimited host
-    /// ceiling yields [`VAS_UNLIMITED_HEADROOM`].
-    #[inline]
-    pub(crate) fn headroom(&self) -> u64 {
-        if let Some(h) = self.budget_headroom() {
-            return h;
-        }
-        match self.address_space_limit() {
-            Some(limit) => {
-                let mem = self.memory_hooks.borrow().clone();
-                vas_headroom_with_margin(limit, mem.mapped_bytes())
-            },
-            None => VAS_UNLIMITED_HEADROOM,
-        }
-    }
-
     /// Remaining soft-budget headroom: `budget − in flight`, saturating, or
     /// `None` when no soft budget is armed. A single reserve of at most this
     /// many bytes is guaranteed not to trip the soft trigger.
@@ -129,19 +111,6 @@ impl Limits {
     pub(crate) fn eager_reclaim(&self) {
         let mem = self.memory_hooks.borrow().clone();
         mem.eager_reclaim();
-    }
-
-    /// The installed address-space ceiling, answered once per install.
-    fn address_space_limit(&self) -> Option<u64> {
-        match self.vas_limit.get() {
-            Some(v) => v,
-            None => {
-                let mem = self.memory_hooks.borrow().clone();
-                let v = mem.address_space_limit();
-                self.vas_limit.set(Some(v));
-                v
-            }
-        }
     }
 
 
