@@ -101,16 +101,16 @@ impl ValueDomain for WeightFold {
     }
 
     fn child_view<'a>(
-        left_idx: usize,
+        level_idx: usize,
         vtree: &crate::vtree::Vtree,
         level: &'a TddLevel,
         computed: &'a [Option<Vec<WeightValue>>],
         store: &'a WeightStore,
     ) -> StreamChild<'a, WeightFold> {
-        if let Some(col) = crate::value::read::column_of(store, level, left_idx) {
+        if let Some(col) = crate::value::read::column_of(store, level, level_idx) {
             return StreamChild { col: std::borrow::Cow::Borrowed(col), is_marginal: true };
         }
-        if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(left_idx as u32)) {
+        if let crate::vtree::VtreeNode::Leaf { var, .. } = *vtree.node(VtreeIdx(level_idx as u32)) {
             // `LEAF_WIDTH` = 3, ordered {One, Pos, Neg} per `LeafLabel::from_idx` —
             // weighted analogue of `IntFold::child_view`'s `LEAF_COUNTS`, but
             // resolving the semiring leaf bases rather than fixed counts. Built by
@@ -122,7 +122,7 @@ impl ValueDomain for WeightFold {
             let col: Vec<WeightValue> = crate::diagram::leaf_column_vals(store, var);
             return StreamChild { col: std::borrow::Cow::Owned(col), is_marginal: false };
         }
-        let col = computed[left_idx]
+        let col = computed[level_idx]
             .as_ref()
             .expect("WeightFold::child_view: no values for level");
         StreamChild { col: std::borrow::Cow::Borrowed(col), is_marginal: false }

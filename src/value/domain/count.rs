@@ -233,7 +233,7 @@ impl ValueDomain for IntFold {
     }
 
     fn child_view<'a>(
-        left_idx: usize,
+        level_idx: usize,
         vtree: &crate::vtree::Vtree,
         level: &'a TddLevel,
         computed: &'a [Option<CountVec>],
@@ -250,7 +250,7 @@ impl ValueDomain for IntFold {
         // into level storage when the level becomes marginal.
         //
         // No arm allocates: every one borrows storage that already exists.
-        let col = if vtree.node(VtreeIdx(left_idx as u32)).is_leaf()
+        let col = if vtree.node(VtreeIdx(level_idx as u32)).is_leaf()
             && level.marginal_counts().is_some_and(|c| c.is_empty())
         {
             // Marginal leaf (leaf marginalization): empty store, all counts inline at
@@ -262,12 +262,12 @@ impl ValueDomain for IntFold {
             CountRef::from_parts_scanned(&LEAF_COUNTS, level.marginal_counts_big())
         } else if let Some(ic) = level.marginal_counts() {
             CountRef::from_parts_scanned(ic, level.marginal_counts_big())
-        } else if let Some(c) = &computed[left_idx] {
+        } else if let Some(c) = &computed[level_idx] {
             c.as_count_ref()
-        } else if vtree.node(VtreeIdx(left_idx as u32)).is_leaf() {
+        } else if vtree.node(VtreeIdx(level_idx as u32)).is_leaf() {
             CountRef::from_parts_scanned(&LEAF_COUNTS, None)
         } else {
-            unreachable!("IntFold::child_view: no counts for level {}", left_idx);
+            unreachable!("IntFold::child_view: no counts for level {}", level_idx);
         };
 
         StreamChild { col, is_marginal }

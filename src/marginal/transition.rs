@@ -9,11 +9,12 @@ use crate::diagram::CountOverflow;
 /// A vtree index that is known to be an internal node.
 ///
 /// Only an internal level has a column to marginalize: a leaf's values are the three
-/// constants of its variable, which every reader resolves by label. Minting
-/// this token is the one place that distinction is checked, so no generic
-/// marginalization path can reach a leaf's column — the weighted leaf pin (a shared,
-/// label-ordered 3-slot cache) depends on nothing ever installing, deduping or
-/// compacting it.
+/// constants of its variable, which every reader resolves by label. Both
+/// install paths, [`install_finished`] and [`install_streamed`], take this
+/// token, and minting it is the one place that distinction is checked, so no
+/// generic marginalization path can reach a leaf's column — the weighted leaf
+/// pin (a shared, label-ordered 3-slot cache) depends on nothing ever
+/// installing, deduping or compacting it.
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct InternalLevel(VtreeIdx);
 
@@ -36,7 +37,7 @@ pub(crate) trait MarginalDomain: ValueDomain {
     /// external one. Only the subsumed-child reclaim needs it generically.
     fn weight_store(store: &mut Self::Store) -> Option<&mut WeightStore>;
 
-    /// Commit a finished column into `levels[left_idx]` mid-apply, turning the level
+    /// Commit a finished column into level `t` mid-apply, turning the level
     /// marginal. The caller has already checked the marginalization
     /// precondition (`diagram::assert_can_make_marginal`).
     ///
@@ -45,7 +46,7 @@ pub(crate) trait MarginalDomain: ValueDomain {
     /// reference is rewritten.
     fn commit_in_flight(
         levels: &mut [TddLevel],
-        left_idx: usize,
+        t: InternalLevel,
         col: Self::Col,
         store: &mut Self::Store,
     );
@@ -88,12 +89,13 @@ impl MarginalDomain for IntFold {
     #[inline]
     fn commit_in_flight(
         levels: &mut [TddLevel],
-        left_idx: usize,
+        t: InternalLevel,
         col: CountVec,
         _store: &mut (),
     ) {
         let (counts, big) = col.into_parts();
-        crate::diagram::MarginalStorage::new(&mut levels[left_idx], None, left_idx).install_counts(counts, big);
+        let i = t.vtree_idx().idx();
+        crate::diagram::MarginalStorage::new(&mut levels[i], None, i).install_counts(counts, big);
     }
 
     /// Counts are deduped before they are installed, so the level satisfies invariant 10 — no
@@ -141,7 +143,7 @@ impl MarginalDomain for WeightFold {
     #[inline]
     fn commit_in_flight(
         levels: &mut [TddLevel],
-        left_idx: usize,
+        t: InternalLevel,
         col: Vec<WeightValue>,
         store: &mut WeightStore,
     ) {
@@ -149,7 +151,8 @@ impl MarginalDomain for WeightFold {
         // establishes invariant 10 at slot-prune, which runs in weighted mode too via
         // `prune_value_slots`; only the integer
         // count-preservation localizer around it is gated off.
-        crate::diagram::MarginalStorage::new(&mut levels[left_idx], Some(store), left_idx).install_weights(col);
+        let i = t.vtree_idx().idx();
+        crate::diagram::MarginalStorage::new(&mut levels[i], Some(store), i).install_weights(col);
     }
 
     /// The weighted store is full width and its references stay bare slots
@@ -204,13 +207,76 @@ pub(crate) fn install_finished<K: MarginalDomain>(
 pub(crate) fn install_streamed<K: MarginalDomain>(
     levels: &mut [TddLevel],
     vtree: &Vtree,
-    t: VtreeIdx,
+    level: InternalLevel,
     col: K::Col,
     store: &mut K::Store,
 ) {
+    let t = level.vtree_idx();
     assert_can_make_marginal(levels, vtree, t);
-    K::commit_in_flight(levels, t.idx(), col, store);
+    K::commit_in_flight(levels, level, col, store);
     free_subsumed_marginal_children(levels, vtree, t, K::weight_store(store));
+}
+
+/// Where a [`cascade`] installs the columns it takes: a finished diagram, or
+/// an apply's output levels while they are still being built.
+pub(crate) trait InstallTarget {
+    /// The levels, read for the marginality test on the way down.
+    fn levels(&self) -> &[TddLevel];
+
+    /// Install `col` as level `t`'s marginal store.
+    fn install<K: MarginalDomain>(&mut self, vtree: &Vtree, t: InternalLevel, col: K::Col, store: &mut K::Store);
+}
+
+/// Installs through [`install_finished`], which dedups the column and
+/// rewrites the parent's references.
+impl InstallTarget for Tdd {
+    fn levels(&self) -> &[TddLevel] {
+        &self.levels
+    }
+
+    fn install<K: MarginalDomain>(&mut self, vtree: &Vtree, t: InternalLevel, col: K::Col, store: &mut K::Store) {
+        install_finished::<K>(self, vtree, t, col, store);
+    }
+}
+
+/// Installs through [`install_streamed`]: the parent is still being built, so
+/// no reference is rewritten.
+impl InstallTarget for [TddLevel] {
+    fn levels(&self) -> &[TddLevel] {
+        self
+    }
+
+    fn install<K: MarginalDomain>(&mut self, vtree: &Vtree, t: InternalLevel, col: K::Col, store: &mut K::Store) {
+        install_streamed::<K>(self, vtree, t, col, store);
+    }
+}
+
+/// Marginalize `t` and every still-structural internal level below it from
+/// the columns an ensure walk left in `computed`, children before parents, so
+/// both children of a level are marginal or leaves by the time it is
+/// installed.
+///
+/// A level with no column in `computed` is left structural: the walk that
+/// filled `computed` did not visit it.
+pub(crate) fn cascade<K: MarginalDomain, S: InstallTarget + ?Sized>(
+    target: &mut S,
+    vtree: &Vtree,
+    t: VtreeIdx,
+    computed: &mut [Option<K::Col>],
+    store: &mut K::Store,
+) {
+    let Some(level) = InternalLevel::new(vtree, t) else {
+        return;
+    };
+    if target.levels()[t.idx()].is_marginal() {
+        return;
+    }
+    let (left, right) = vtree.children(t);
+    cascade::<K, S>(target, vtree, left, computed, store);
+    cascade::<K, S>(target, vtree, right, computed, store);
+    if let Some(col) = computed[t.idx()].take() {
+        target.install::<K>(vtree, level, col, store);
+    }
 }
 
 /// Free the per-node store of `parent`'s marginal children; call it at the

@@ -6,7 +6,7 @@ use crate::limits::OperationError;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use crate::value::{FoldInput, IntFold, Retention};
-use super::transition::{InternalLevel, MarginalDomain, install_finished};
+use super::transition::{MarginalDomain, cascade};
 
 /// Marginalize `targets` into per-node model counts.
 ///
@@ -84,9 +84,9 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
     Ok(())
 }
 
-/// Marginalize one internal level: fold its per-node values, marginalize the levels
-/// beneath it, and install the result. A no-op on a leaf, an empty level, or
-/// one that is already marginal.
+/// Marginalize one internal level: fold its per-node values and those of the
+/// structural levels beneath it, then install them bottom-up. A no-op on a
+/// leaf, an empty level, or one that is already marginal.
 fn marginalize_level<K: MarginalDomain>(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -95,82 +95,23 @@ fn marginalize_level<K: MarginalDomain>(
     store: &mut K::Store,
     computed: &mut [Option<K::Col>],
 ) -> Result<(), OperationError> {
-    let di = d.idx();
-    let Some(level) = InternalLevel::new(vtree, d) else {
-        return Ok(()); // a leaf target is summed out at the end of the pass instead
-    };
-    if tdd.levels[di].is_marginal() || tdd.levels[di].slot_count() == 0 {
+    let level = &tdd.levels[d.idx()];
+    // A leaf target is summed out at the end of the pass instead.
+    if vtree.node(d).is_leaf() || level.is_marginal() || level.slot_count() == 0 {
         return Ok(());
     }
-
-    let (left, right) = vtree.children(d);
     // `Retention::All` is not a choice here: the cascade takes every
     // walked level's column to install it as that level's store.
-    ensure_below::<K>(eng, tdd, left, vtree, store, computed)?;
-    ensure_below::<K>(eng, tdd, right, vtree, store, computed)?;
-
-    let col = K::fold_column(
-        eng, d, FoldInput { vtree, levels: &tdd.levels, store },
-        computed, |_| Ok(()),
-    )?;
-
-    // Marginalize the children before `d` (bottom-up), so that by the time `d` is marginal
-    // both of them are marginal or are leaves — the `assert_can_make_marginal`
-    // precondition.
-    cascade::<K>(tdd, vtree, left, store, computed);
-    cascade::<K>(tdd, vtree, right, store, computed);
-
-    install_finished::<K>(tdd, vtree, level, col, store);
-    Ok(())
-}
-
-/// Walk down from a level whose parent is being marginal, marginalizing every
-/// still-explicit internal descendant from the columns the ensure walk cached.
-fn cascade<K: MarginalDomain>(
-    tdd: &mut Tdd,
-    vtree: &Vtree,
-    t: VtreeIdx,
-    store: &mut K::Store,
-    computed: &mut [Option<K::Col>],
-) {
-    let Some(level) = InternalLevel::new(vtree, t) else {
-        return;
-    };
-    if tdd.levels[t.idx()].is_marginal() {
-        return;
-    }
-    // Children first, so they are marginal (or leaves) by the time `t` is.
-    let (l_child, r_child) = vtree.children(t);
-    cascade::<K>(tdd, vtree, l_child, store, computed);
-    cascade::<K>(tdd, vtree, r_child, store, computed);
-
-    let Some(col) = computed[t.idx()].take() else {
-        // No cached column: the ancestor's fold never visited here, so this
-        // level's cells are structurally unreachable from the target's pair
-        // lists and will never be queried.
-        return;
-    };
-    install_finished::<K>(tdd, vtree, level, col, store);
-}
-
-/// Populate the column of `t` and everything below it that a fold at `t` will
-/// read.
-fn ensure_below<K: MarginalDomain>(
-    eng: &Engine,
-    tdd: &Tdd,
-    t: VtreeIdx,
-    vtree: &Vtree,
-    store: &K::Store,
-    computed: &mut [Option<K::Col>],
-) -> Result<(), OperationError> {
     let marginal = |i: usize| tdd.levels[i].is_marginal();
     K::ensure(
         eng,
-        t,
+        d,
         FoldInput { vtree, levels: &tdd.levels, store },
         computed,
         &marginal,
         Retention::All,
         |_| Ok(()),
-    )
+    )?;
+    cascade::<K, Tdd>(tdd, vtree, d, computed, store);
+    Ok(())
 }

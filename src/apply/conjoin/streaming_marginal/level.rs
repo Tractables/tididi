@@ -3,6 +3,7 @@
 use super::*;
 use crate::apply::conjoin::setup::LevelShape;
 use crate::apply::conjoin::drive::Sweep;
+use crate::vtree::VtreeIdx;
 
 /// What a streaming row loop reads beside its own level: the two child
 /// indices, the vtree, the column cache and the weight store.
@@ -49,8 +50,12 @@ pub(in crate::apply::conjoin) fn build_stream_state(
 /// output column.
 ///
 /// The cascade makes every descendant marginal or a leaf, which streaming
-/// this level requires. The output column is opened at the larger of the two
-/// operands' widths and grows; the reservation is fallible.
+/// this level requires. It is sound because no later level of the apply
+/// refers into those descendants: the caller streams only a level whose
+/// descendants are all targets of this apply or of an earlier batch that left
+/// them explicit, and a parent streams no earlier than any descendant. The
+/// output column is opened at the larger of the two operands' widths and
+/// grows; the reservation is fallible.
 ///
 /// # Errors
 ///
@@ -63,7 +68,6 @@ pub(in crate::apply::conjoin) fn open_stream_output<F: MarginalDomain>(
     computed: &mut [Option<F::Col>],
     store: &mut F::Store,
 ) -> Result<F::Col, OperationError> {
-    let (left_idx, right_idx) = (shape.left.idx(), shape.right.idx());
     // 1. Compute the fold column for every non-leaf non-marginal descendant.
     //
     // Step 2 `take`s the column of every level in the walked subtree to install
@@ -73,8 +77,8 @@ pub(in crate::apply::conjoin) fn open_stream_output<F: MarginalDomain>(
     F::ensure(eng, shape.left, input, computed, &marginal, Retention::All, |_| Ok(()))?;
     F::ensure(eng, shape.right, input, computed, &marginal, Retention::All, |_| Ok(()))?;
     // 2. Cascade-marginalize any still-explicit non-leaf descendant.
-    cascade_marginalize_in_apply::<F>(left_idx, vtree, levels, computed, store);
-    cascade_marginalize_in_apply::<F>(right_idx, vtree, levels, computed, store);
+    cascade::<F, [TddLevel]>(levels, vtree, shape.left, computed, store);
+    cascade::<F, [TddLevel]>(levels, vtree, shape.right, computed, store);
     F::try_with_capacity(eng, shape.f.here.max(shape.g.here))
 }
 
@@ -117,6 +121,7 @@ pub(crate) fn commit_stream_state(
     levels: &mut [TddLevel],
     ws: Option<&mut WeightStore>,
 ) {
+    let t = InternalLevel::new(vtree, t).expect("a streaming target is an internal level");
     match st {
         StreamLevelState::Int(counts) => {
             install_streamed::<IntFold>(levels, vtree, t, counts, &mut ());

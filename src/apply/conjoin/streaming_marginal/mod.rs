@@ -14,10 +14,9 @@ use crate::value::{
     Retention, CountVec, FoldInput, IntFold, StreamChild,
     ValueDomain, WeightFold,
 };
-use crate::vtree::VtreeIdx;
 
 use crate::value::StreamCache;
-use crate::marginal::transition::{MarginalDomain, install_streamed};
+use crate::marginal::transition::{InternalLevel, MarginalDomain, cascade, install_streamed};
 mod level;
 pub(crate) use level::*;
 
@@ -45,41 +44,4 @@ pub(crate) enum StreamLevelState {
     /// Weighted: exact `BigRational` semiring values carried into the
     /// external `WeightStore`.
     Weighted(Vec<WeightValue>),
-}
-
-/// Cascade marginalization through every explicit non-leaf descendant of
-/// `left_idx`, bottom-up. Each level's column must already be populated in
-/// `computed` (call [`ValueDomain::ensure`] first). Mirrors
-/// the marginalization cascade in `marginal::fold` but operates on the in-flight `levels`
-/// slice during apply rather than a finished diagram.
-///
-/// Soundness: bottom-up order satisfies `assert_can_make_marginal` at each
-/// call site (when installing `left_idx`, both children of `left_idx` are
-/// already marginal or leaves). The caller is responsible for ensuring `left_idx`
-/// itself is a sound streaming target (no future references) — within the
-/// apply gate this is guaranteed because `marginalize_targets[left_idx] == true` flags
-/// any descendant we'd touch, and the schedule monotonicity (a parent's
-/// streaming step is at least as late as any descendant's) covers descendants
-/// that aren't in this apply call's target set but were targets of an earlier
-/// sub-batch and only stayed explicit because of the width gate.
-pub(crate) fn cascade_marginalize_in_apply<F: MarginalDomain>(
-    left_idx: usize,
-    vtree: &crate::vtree::Vtree,
-    levels: &mut [TddLevel],
-    computed: &mut [Option<F::Col>],
-    store: &mut F::Store,
-) {
-    if vtree.node(VtreeIdx(left_idx as u32)).is_leaf() || levels[left_idx].is_marginal() {
-        return;
-    }
-    let (left, right) = vtree.children(VtreeIdx(left_idx as u32));
-    cascade_marginalize_in_apply::<F>(left.idx(), vtree, levels, computed, store);
-    cascade_marginalize_in_apply::<F>(right.idx(), vtree, levels, computed, store);
-    let Some(col) = computed[left_idx].take() else {
-        // No cached column: the domain's `ensure` did not visit this branch
-        // (cells structurally unreachable from the target's pair lists). Bail
-        // rather than fabricate values.
-        return;
-    };
-    install_streamed::<F>(levels, vtree, VtreeIdx(left_idx as u32), col, store);
 }

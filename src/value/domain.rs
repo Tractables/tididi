@@ -144,10 +144,10 @@ pub(crate) trait ValueDomain: Sized {
     /// per node, and must not gain a call there.
     fn fold_node(at: &FoldScope<'_, Self>, i: usize) -> Self::Scalar;
 
-    /// Open a read view of child level `left_idx`'s column. `level` is `levels[left_idx]`,
+    /// Open a read view of child level `level_idx`'s column. `level` is `levels[level_idx]`,
     /// handed in already split off from the output level's `&mut` borrow.
     fn child_view<'a>(
-        left_idx: usize,
+        level_idx: usize,
         vtree: &Vtree,
         level: &'a TddLevel,
         computed: &'a [Option<Self::Col>],
