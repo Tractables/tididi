@@ -40,20 +40,24 @@ impl Observations {
     }
 
     pub(crate) fn observe<L: crate::LiteralInput>(&mut self, tdd: &Tdd, literals: impl AsRef<[L]>) -> Result<(), OperationError> {
-        let literals = literals.as_ref();
-        for &input in literals {
-            self.validate_pin(tdd, input.literal()?.var)?;
-        }
-        for &input in literals {
-            let literal = input.literal()?;
-            self.set_pin(tdd, literal.var, Some(literal.sign))?;
-        }
-        Ok(())
+        self.apply_pins(tdd, literals.as_ref().iter().map(|&input| {
+            input.literal().map(|literal| (literal.var, Some(literal.sign)))
+        }))
     }
 
     pub(crate) fn set_pins(&mut self, tdd: &Tdd, pins: &[(VarId, Option<bool>)]) -> Result<(), OperationError> {
-        for &(var, _) in pins { self.validate_pin(tdd, var)?; }
-        for &(var, val) in pins {
+        self.apply_pins(tdd, pins.iter().map(|&pin| Ok(pin)))
+    }
+
+    /// Validate every pin in order, then apply them in order, so an invalid
+    /// one leaves every observation unchanged.
+    fn apply_pins(
+        &mut self, tdd: &Tdd,
+        pins: impl Iterator<Item = Result<(VarId, Option<bool>), OperationError>> + Clone,
+    ) -> Result<(), OperationError> {
+        for pin in pins.clone() { self.validate_pin(tdd, pin?.0)?; }
+        for pin in pins {
+            let (var, val) = pin.expect("validated pin");
             let leaf = tdd.vtree.leaf_of(var).expect("validated pin variable");
             self.set_leaf_pin(leaf, val);
         }
