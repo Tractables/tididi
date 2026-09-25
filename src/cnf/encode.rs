@@ -7,6 +7,7 @@
 
 use crate::diagram::{ChildDecoder, EncodedChildRef, LeafLabel, Tdd, ValueRef, ZERO};
 use crate::limits::{Limits, OperationError};
+use crate::value::CountRead;
 use crate::vtree::VtreeIdx;
 use crate::Engine;
 
@@ -48,10 +49,8 @@ pub(super) fn table<T: Clone>(lim: &Limits, f: &Tdd, fill: T) -> Result<Vec<Vec<
 
 /// Whether a side into a summed-out level can be true: its count is positive.
 fn value_positive(f: &Tdd, child: VtreeIdx, raw: EncodedChildRef) -> bool {
-    match ChildDecoder::marginal().value(raw) {
-        ValueRef::Inline(count) => count > 0,
-        ValueRef::Slot(slot) => f.levels[child.idx()].marginal_counts().expect("weighted levels are refused")[slot as usize] != 0,
-    }
+    let counts = f.levels[child.idx()].count_column().expect("weighted levels are refused");
+    !matches!(counts.read(ChildDecoder::marginal(), raw), CountRead::Fast(0))
 }
 
 /// What a side of a pair reads as, `None` when it cannot be true. `row` is the
@@ -116,9 +115,9 @@ pub(super) fn equivalence<K: ClauseSink + ?Sized>(eng: &Engine, f: &Tdd, activat
     // Summed-out levels, leaf or internal: a reachable value with a positive
     // count reads as true.
     for (i, level) in f.levels.iter().enumerate() {
-        let Some(counts) = level.marginal_counts() else { continue };
-        for (slot, &count) in counts.iter().enumerate() {
-            if reachable[i][slot] && count != 0 { literals[i][slot] = TRUE; }
+        let Some(counts) = level.count_column() else { continue };
+        for (slot, literal) in literals[i][..counts.len()].iter_mut().enumerate() {
+            if reachable[i][slot] && !matches!(counts.get(slot), CountRead::Fast(0)) { *literal = TRUE; }
         }
     }
     // Every node's variable, before any definition.

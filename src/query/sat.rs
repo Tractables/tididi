@@ -1,6 +1,6 @@
 //! Structural satisfiability queries on compiled diagrams.
 
-use crate::value::Retention;
+use crate::value::{CountRead, Retention};
 use crate::diagram::{LeafLabel, PairsIter, Tdd};
 use crate::Engine;
 use crate::vtree::{VarId, VtreeIdx};
@@ -27,7 +27,7 @@ impl Engine {
         }
         if f.vtree.node(out_vtree).is_leaf() { return Ok(true); }
         let out_i = f.output.local.idx();
-        if let Some(counts) = out_level.marginal_counts() { return Ok(counts[out_i] > 0); }
+        if let Some(counts) = out_level.count_column() { return Ok(!matches!(counts.get(out_i), CountRead::Fast(0))); }
         // A structural diagram stores no unsatisfiable node, and neither does
         // a marginal one whose reduction worklists are drained: the output
         // node then decides. Weighted values never stand for an unsatisfiable
@@ -90,13 +90,13 @@ impl LevelFold for SatBits {
         !matches!(label, LeafLabel::Zero)
     }
 
-    /// A count slot has a model iff its summed count is nonzero. The overflow
-    /// sentinel is `u128::MAX`, itself nonzero, so an overflowed — hence huge —
-    /// count reads as satisfiable without consulting the side table. A weighted
+    /// A count slot has a model iff its summed count is nonzero. A weighted
     /// slot always has one: a zero weight does not establish unsatisfiability.
     fn marginal_column(&self, _eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Vec<bool>) -> Result<(), crate::OperationError> {
-        match tdd.levels[t.idx()].marginal_counts() {
-            Some(counts) => for (i, &c) in counts.iter().enumerate() { col[i] = c != 0; },
+        match tdd.levels[t.idx()].count_column() {
+            Some(counts) => for (i, has_model) in col[..counts.len()].iter_mut().enumerate() {
+                *has_model = !matches!(counts.get(i), CountRead::Fast(0));
+            },
             None => col.fill(true),
         }
         Ok(())
