@@ -38,7 +38,7 @@ pub(crate) fn fuse_pairs_at_parents(
 ) -> Result<(), OperationError> {
     // Borrow the pooled scratch; the contract fixpoint calls `fuse_pairs_inner`
     // directly with the scratch it already holds.
-    let mut scratch = eng.scratch.reduce.contract.checkout(eng.limits());
+    let mut scratch = eng.scratch.reduce.contract.checkout(eng);
     fuse_pairs_inner(eng, tdd, Some(parent_vtree_idxs), &mut scratch)?;
     Ok(())
 }

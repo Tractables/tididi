@@ -183,7 +183,7 @@ pub(crate) fn apply_and_fallible(
     let mut assembly = diagram::Assembly::from_levels(
         eng, Arc::clone(&vtree), diagram::try_take_levels(eng, num_nodes)?, ws,
     );
-    let mut scratch = eng.scratch.apply.workspace.checkout(lim);
+    let mut scratch = eng.scratch.apply.workspace.checkout(eng);
     let (levels, ws) = assembly.parts_mut();
     let mut run = apply_and_setup(eng, f, g, targets, ws.is_some(), levels, &mut scratch)?;
 

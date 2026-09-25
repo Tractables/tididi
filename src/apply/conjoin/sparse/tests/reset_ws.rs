@@ -10,19 +10,19 @@ use crate::Engine;
 fn clearing_scratch_leaves_active_workspace_independent() {
     let eng = Engine::new();
     {
-        let mut outer = eng.scratch.sparse.checkout(eng.limits());
+        let mut outer = eng.scratch.sparse.checkout(&eng);
         outer.emit_pairs.reserve(256);
         let allocation = outer.emit_pairs.as_ptr();
         eng.clear_scratch();
-        let mut inner = eng.scratch.sparse.checkout(eng.limits());
+        let mut inner = eng.scratch.sparse.checkout(&eng);
         inner.emit_pairs.reserve(128);
         assert_ne!(inner.emit_pairs.as_ptr(), allocation);
         drop(inner);
         assert_eq!(outer.emit_pairs.as_ptr(), allocation);
     }
-    assert!(eng.scratch.sparse.checkout(eng.limits()).emit_pairs.capacity() >= 256);
+    assert!(eng.scratch.sparse.checkout(&eng).emit_pairs.capacity() >= 256);
     eng.clear_scratch();
-    let ws = eng.scratch.sparse.checkout(eng.limits());
+    let ws = eng.scratch.sparse.checkout(&eng);
     assert_eq!(ws.par_buckets.capacity(), 0);
     assert_eq!(ws.emit_pairs.capacity(), 0);
     assert_eq!(ws.f_by_outer.entries.capacity(), 0);
@@ -32,11 +32,11 @@ fn clearing_scratch_leaves_active_workspace_independent() {
 fn unwinding_discards_partially_filled_sparse_workspace() {
     let eng = Engine::new();
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut ws = eng.scratch.sparse.checkout(eng.limits());
+        let mut ws = eng.scratch.sparse.checkout(&eng);
         ws.p2_map.push(42);
         panic!("interrupt scatter");
     }));
-    assert!(eng.scratch.sparse.checkout(eng.limits()).p2_map.is_empty());
+    assert!(eng.scratch.sparse.checkout(&eng).p2_map.is_empty());
 }
 
 /// `f(a, b, c)` and `g(a, b)` on `((a b) c)`, keyed so that every internal

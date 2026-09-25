@@ -107,10 +107,10 @@ impl<'a> RightColumns<'a> {
             lim.reserve_exact(&mut flat, total).ok()?;
         }
 
-        let mut cols: Vec<ColumnSlice> = eng.scratch.apply.right_cols.take(lim);
+        let mut cols: Vec<ColumnSlice> = eng.scratch.apply.right_cols.take(eng);
         cols.clear();
         if cols.try_reserve(right_width).is_err() {
-            eng.scratch.apply.right_cols.put(lim, cols);
+            eng.scratch.apply.right_cols.put(eng, cols);
             return None;
         }
 
@@ -158,6 +158,6 @@ impl Drop for RightColumns<'_> {
             .scratch
             .apply
             .right_cols
-            .put(self.eng.limits(), std::mem::take(&mut self.cols));
+            .put(self.eng, std::mem::take(&mut self.cols));
     }
 }

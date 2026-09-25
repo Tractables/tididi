@@ -126,9 +126,7 @@ impl Drop for Checkout<'_> {
     fn drop(&mut self) {
         let Some(mut engine) = self.engine.take() else { return; };
         if std::thread::panicking() { return; }
-        let retained = engine.limits.retained_scratch.get();
         engine.limits = Limits::new();
-        engine.limits.retained_scratch.set(retained);
         engine.context = std::sync::Weak::new();
         let previous = self.context.idle.lock().unwrap_or_else(|error| error.into_inner())
             .replace(engine);

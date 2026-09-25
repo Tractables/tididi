@@ -84,8 +84,8 @@ pub(crate) fn try_take_levels(eng: &Engine, num_nodes: usize) -> Result<Vec<TddL
 /// The first parked level array, cut down to at most `num_nodes` levels.
 fn take_level_array(eng: &Engine, num_nodes: usize) -> Vec<TddLevel> {
     let pool = &eng.scratch.levels;
-    let mut levels = if pool.primary.occupied() { pool.primary.take(eng.limits()) }
-        else { pool.secondary.take(eng.limits()) }.levels;
+    let mut levels = if pool.primary.occupied() { pool.primary.take(eng) }
+        else { pool.secondary.take(eng) }.levels;
     if levels.len() > num_nodes {
         levels.truncate(num_nodes);
         if levels.capacity().saturating_mul(std::mem::size_of::<TddLevel>()) > MAX_LEVEL_ARENA_BYTES {
@@ -140,6 +140,6 @@ pub(crate) fn return_levels(eng: &Engine, slot: PoolSlot, levels: Vec<TddLevel>)
         PoolSlot::First => &pool.primary,
         PoolSlot::Second => &pool.secondary,
     };
-    cell.put(eng.limits(), LevelBuffer { levels })
+    cell.put(eng, LevelBuffer { levels })
 }
 

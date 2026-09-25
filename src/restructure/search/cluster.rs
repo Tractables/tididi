@@ -224,7 +224,7 @@ impl Engine {
         // because rotations only change indices inside subtree(root).
         let mut search = super::SearchTree::new(tdd);
 
-        let mut scratch = eng.scratch.restructure.checkout(lim);
+        let mut scratch = eng.scratch.restructure.checkout(eng);
         let mut rule = ClusterRule { bound_mult };
         let mut accepted = 0usize;
         // The pass's one preemption point, amortized. A sweep re-scans and re-attempts

@@ -79,19 +79,19 @@ fn nonstreaming_apply_preserves_parked_table() {
 
 #[test]
 fn nested_streaming_caches_keep_independent_tables() {
-    let lim = crate::limits::Limits::new();
+    let eng = crate::Engine::new();
     for weighted in [false, true] {
         let pool = Pool::<StreamCache>::default();
-        let mut outer = pool.checkout(&lim);
+        let mut outer = pool.checkout(&eng);
         outer.reset(3, Some(weighted));
-        let mut inner = pool.checkout(&lim);
+        let mut inner = pool.checkout(&eng);
         inner.reset(7, Some(weighted));
         assert_ne!(table(&outer).2, table(&inner).2);
         assert_empty(&outer, 3, weighted);
         drop(inner);
         let allocation = table(&outer).2;
         drop(outer);
-        let mut reused = pool.checkout(&lim);
+        let mut reused = pool.checkout(&eng);
         reused.reset(3, Some(weighted));
         assert_eq!(table(&reused).2, allocation);
         assert_empty(&reused, 3, weighted);

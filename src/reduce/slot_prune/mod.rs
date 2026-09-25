@@ -43,8 +43,8 @@ pub(crate) fn prune_value_slots(eng: &Engine, tdd: &mut Tdd) -> Vec<u32> {
     let mut merged_levels = Vec::new();
     // Both buffers are refilled per level, so a pooled pair differs from a
     // fresh one only in capacity.
-    let mut slots = eng.scratch.reduce.slot_prune_slots.checkout(eng.limits());
-    let mut remap = eng.scratch.reduce.slot_prune_remap.checkout(eng.limits());
+    let mut slots = eng.scratch.reduce.slot_prune_slots.checkout(eng);
+    let mut remap = eng.scratch.reduce.slot_prune_remap.checkout(eng);
     // The output level's store is the result; never touch it.
     let out_v = tdd.output.vtree;
     for (v, parent, side) in boundary_marginal_levels(tdd) {

@@ -147,7 +147,7 @@ pub(crate) fn contract_all_twins(
         return Ok(());
     }
 
-    let mut scratch = eng.scratch.reduce.contract.checkout(lim);
+    let mut scratch = eng.scratch.reduce.contract.checkout(eng);
     // On OOM here the heap is not yet built, so restore the intact taken worklist
     // wholesale — dropping it would leak the whole dirty set.
     if let Err(e) = lim.try_resize(&mut scratch.needs_check, num_nodes, false) {

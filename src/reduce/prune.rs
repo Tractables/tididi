@@ -102,8 +102,8 @@ fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     let num_nodes = tdd.vtree.num_nodes();
 
     let pool = &eng.scratch.reduce;
-    let mut level_base = pool.prune_level_base.checkout_preserving(eng.limits());
-    let mut remap = pool.prune_remap.checkout_preserving(eng.limits());
+    let mut level_base = pool.prune_level_base.checkout_preserving(eng);
+    let mut remap = pool.prune_remap.checkout_preserving(eng);
 
     // Flat offset table: level t occupies remap[level_base[t]..level_base[t+1]].
     // Use `reference_slot_count()` so leaf levels get `LEAF_WIDTH` slots for marginal nodes.
@@ -434,9 +434,9 @@ impl Visit {
 /// output, stopping at every level that loses no node.
 fn prune_below_root(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     let pool = &eng.scratch.reduce;
-    let mut remap = pool.prune_remap.checkout_preserving(eng.limits());
-    let mut identity = pool.prune_identity.checkout_preserving(eng.limits());
-    let mut visits = pool.prune_visits.checkout_preserving(eng.limits());
+    let mut remap = pool.prune_remap.checkout_preserving(eng);
+    let mut identity = pool.prune_identity.checkout_preserving(eng);
+    let mut visits = pool.prune_visits.checkout_preserving(eng);
 
     prune_below_root_with(eng, tdd, &mut remap, &mut identity, &mut visits)
 }

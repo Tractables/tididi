@@ -191,12 +191,12 @@ fn rebuild_along_spine(eng: &Engine, f: &mut Tdd, clause: &[(Literal, VtreeIdx)]
 
     // The clause spine — the Steiner tree of its variables' leaves — and the
     // `need_dt` flag propagated top-down over it.
-    let mut on_spine = pool.on_spine.checkout(lim);
+    let mut on_spine = pool.on_spine.checkout(eng);
     on_spine.cover(lim, num_nodes)?;
-    let mut spine_internal = pool.spine_internal.checkout_preserving(lim);
-    let mut dfs_stack = pool.dfs_stack.checkout_preserving(lim);
+    let mut spine_internal = pool.spine_internal.checkout_preserving(eng);
+    let mut dfs_stack = pool.dfs_stack.checkout_preserving(eng);
     build_clause_spine(lim, vtree, clause, &mut on_spine, &mut spine_internal, &mut dfs_stack)?;
-    let mut need_dt = pool.need_dt.checkout(lim);
+    let mut need_dt = pool.need_dt.checkout(eng);
     need_dt.cover(lim, num_nodes)?;
     propagate_need_dt(vtree, &spine_internal, &on_spine, &mut need_dt);
 
@@ -214,7 +214,7 @@ fn rebuild_along_spine(eng: &Engine, f: &mut Tdd, clause: &[(Literal, VtreeIdx)]
     // Per-level base offsets into `cd_map`: only spine levels get storage, so
     // the map is `O(Σ spine widths)` rather than `O(|f|)`; off-spine levels
     // are read through raw pair indices. See `plan_cd_map_bases`.
-    let mut level_base = pool.level_base.checkout_preserving(lim);
+    let mut level_base = pool.level_base.checkout_preserving(eng);
     lim.try_resize(&mut level_base, num_nodes, 0usize)?;
     let total = plan_cd_map_bases(clause, &spine_internal, &levels, &mut level_base)?;
 
@@ -222,7 +222,7 @@ fn rebuild_along_spine(eng: &Engine, f: &mut Tdd, clause: &[(Literal, VtreeIdx)]
     // entry is written once below, so no bulk `NO_PRODUCT` fill is needed. A
     // `d_t` lane is written iff `need_dt[t]`, and a read of one implies
     // `need_dt` on that child, so a stale lane is never read.
-    let mut cd_map = pool.cd_map.checkout_preserving(lim);
+    let mut cd_map = pool.cd_map.checkout_preserving(eng);
     lim.try_resize(&mut cd_map, total, [NO_PRODUCT, NO_PRODUCT])?;
 
     fill_leaf_maps(clause, &level_base, &need_dt, &mut cd_map);

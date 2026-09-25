@@ -56,7 +56,7 @@ fn stream_level<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
     env: StreamEnv<'_>,
 ) -> Result<(), OperationError> {
     let mut st = attach_children::<F>(env, rows.children, counts);
-    let mut cell_pairs = eng.scratch.apply.cell_pairs.checkout(eng.limits());
+    let mut cell_pairs = eng.scratch.apply.cell_pairs.checkout(eng);
     let mut action = StreamCollapse { fold: &mut st, cell_pairs: &mut cell_pairs };
     run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action)
 }

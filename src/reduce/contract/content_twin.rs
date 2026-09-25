@@ -103,7 +103,7 @@ pub(crate) fn merge_content_equal_nodes(
     // The contraction scratch: grouping by content is the contraction's
     // grouping with a node's own pairs as its entries, and no contraction
     // sweep runs while this pass does.
-    let mut scratch = eng.scratch.reduce.contract.checkout(lim);
+    let mut scratch = eng.scratch.reduce.contract.checkout(eng);
 
     for level_v in order {
         let level_idx = level_v.idx();

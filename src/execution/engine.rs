@@ -2,7 +2,7 @@
 
 use crate::limits::Limits;
 use super::Context;
-use super::pool::{Pool, Pools, Drain};
+use super::pool::{Drain, Pool, Pools, ScratchLedger};
 
 /// An execution workspace for checked operations and explicit resource limits.
 ///
@@ -56,9 +56,10 @@ pub struct Engine {
 }
 
 /// Every pool an engine parks scratch in between operations, one field per
-/// operation that reuses it.
+/// operation that reuses it, and the total they park.
 #[derive(Default)]
 pub(crate) struct EngineScratch {
+    pub(super) ledger: ScratchLedger,
     pub(crate) apply: crate::apply::conjoin::ApplyScratch,
     pub(crate) clause: crate::apply::conjoin_clause::ClauseScratch,
     pub(crate) reduce: crate::reduce::ReduceScratch,
@@ -153,6 +154,7 @@ impl Engine {
     /// [`Context::clear_scratch`] releases the idle workspace in a shared context.
     /// Active operations keep their checked-out buffers until they finish.
     pub fn clear_scratch(&self) {
-        self.scratch.drain(&self.limits);
+        self.scratch.drain(self);
+        debug_assert_eq!(self.scratch.ledger.bytes(), 0, "a pool is missing from the list in `EngineScratch`");
     }
 }

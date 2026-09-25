@@ -119,8 +119,8 @@ fn complement_full_at_root(
         };
 
         let scratch = &eng.scratch.negate;
-        let mut bits = scratch.cover.checkout_preserving(eng.limits());
-        let mut neg_pairs = scratch.cells.checkout_preserving(eng.limits());
+        let mut bits = scratch.cover.checkout_preserving(eng);
+        let mut neg_pairs = scratch.cells.checkout_preserving(eng);
         collect_complement_pairs(
             eng, &levels[root_idx], out_local, basis, &mut bits, &mut neg_pairs,
         )?;
@@ -160,8 +160,8 @@ fn complement_full_at_root(
 /// in that same form.
 pub(crate) fn expand_full(eng: &Engine, tdd: &mut Tdd) -> Result<LeafForm, OperationError> {
     let scratch = &eng.scratch.negate;
-    let mut bits = scratch.cover.checkout_preserving(eng.limits());
-    let mut cells = scratch.cells.checkout_preserving(eng.limits());
+    let mut bits = scratch.cover.checkout_preserving(eng);
+    let mut cells = scratch.cells.checkout_preserving(eng);
 
     expand_full_with(eng, tdd, &mut bits, &mut cells)
 }

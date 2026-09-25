@@ -6,6 +6,7 @@
 
 use std::cell::Cell;
 
+use crate::Engine;
 use crate::limits::{Charged, Limits};
 
 /// Maximum retained scratch capacity between operations. Larger buffers are
@@ -33,61 +34,92 @@ impl<T> Default for Pool<T> {
     }
 }
 
-impl<T: Default> Pool<T> {
-    /// Take the parked value, creating an empty one if the pool is vacant.
-    #[inline]
-    pub(crate) fn take(&self, lim: &Limits) -> T {
-        lim.retained_scratch.set(lim.retained_scratch.get() - self.bytes.replace(0));
-        self.value.take().unwrap_or_default()
-    }
-}
-
 impl<T> Pool<T> {
     /// Whether this slot contains a parked value.
     pub(crate) fn occupied(&self) -> bool { self.bytes.get() != 0 }
-}
 
-/// A pool, whatever it holds, as [`Pools`] lists it.
-pub(crate) trait Drain {
-    /// Drop whatever this pool retains.
-    fn drain(&self, lim: &Limits);
-}
-
-impl<T> Drain for Pool<T> {
+    /// Remove the parked value, if any, and its claim on the engine's allowance.
     #[inline]
-    fn drain(&self, lim: &Limits) {
-        lim.retained_scratch.set(lim.retained_scratch.get() - self.bytes.replace(0));
-        self.value.take();
+    fn unpark(&self, eng: &Engine) -> Option<T> {
+        eng.scratch.ledger.release(self.bytes.replace(0));
+        self.value.take()
     }
 }
 
-/// A group of pools that can list them.
-///
-/// Whatever has to reach every pool an engine owns, such as
-/// [`Engine::clear_scratch`](crate::Engine::clear_scratch), walks this one list.
-pub(crate) trait Pools {
-    /// Hand every pool in this group to `visit`, once each.
-    fn pools(&self, visit: &mut dyn FnMut(&dyn Drain));
-
-    /// Drop whatever every pool in this group retains.
-    fn drain(&self, lim: &Limits) {
-        self.pools(&mut |pool| pool.drain(lim));
+impl<T: Default> Pool<T> {
+    /// Take the parked value, creating an empty one if the pool is vacant.
+    #[inline]
+    pub(crate) fn take(&self, eng: &Engine) -> T {
+        self.unpark(eng).unwrap_or_default()
     }
 }
 
 impl<T: PooledScratch> Pool<T> {
     /// Retire a working set and admit it against the engine's shared ceiling.
     #[inline]
-    pub(crate) fn put(&self, lim: &Limits, mut value: T) {
-        self.drain(lim);
-        value.retain(lim);
+    pub(crate) fn put(&self, eng: &Engine, mut value: T) {
+        self.drain(eng);
+        value.retain(eng.limits());
         let bytes = value.retained_bytes();
-        let total = lim.retained_scratch.get().saturating_add(bytes);
-        if total <= ENGINE_RETAIN_BYTES {
-            lim.retained_scratch.set(total);
+        if eng.scratch.ledger.admit(bytes) {
             self.bytes.set(bytes);
             self.value.set(Some(value));
         }
+    }
+}
+
+/// A pool, whatever it holds, as [`Pools`] lists it.
+pub(crate) trait Drain {
+    /// Drop whatever this pool retains.
+    fn drain(&self, eng: &Engine);
+}
+
+impl<T> Drain for Pool<T> {
+    #[inline]
+    fn drain(&self, eng: &Engine) {
+        self.unpark(eng);
+    }
+}
+
+/// A group of pools that can list them.
+///
+/// Whatever has to reach every pool an engine owns, such as
+/// [`Engine::clear_scratch`], walks this one list.
+pub(crate) trait Pools {
+    /// Hand every pool in this group to `visit`, once each.
+    fn pools(&self, visit: &mut dyn FnMut(&dyn Drain));
+
+    /// Drop whatever every pool in this group retains.
+    fn drain(&self, eng: &Engine) {
+        self.pools(&mut |pool| pool.drain(eng));
+    }
+}
+
+/// The capacity an engine's pools hold between operations, kept within
+/// [`ENGINE_RETAIN_BYTES`].
+///
+/// It belongs with the pools rather than with the batch's [`Limits`]: a batch
+/// ends by replacing the limits, and the pools and this total carry over.
+#[derive(Default)]
+pub(crate) struct ScratchLedger(Cell<usize>);
+
+impl ScratchLedger {
+    /// The bytes parked now.
+    pub(crate) fn bytes(&self) -> usize { self.0.get() }
+
+    /// Add `bytes` if the total stays within the ceiling, and say whether it did.
+    #[inline]
+    fn admit(&self, bytes: usize) -> bool {
+        let total = self.0.get().saturating_add(bytes);
+        let fits = total <= ENGINE_RETAIN_BYTES;
+        if fits { self.0.set(total); }
+        fits
+    }
+
+    /// Remove `bytes` that a pool no longer parks.
+    #[inline]
+    fn release(&self, bytes: usize) {
+        self.0.set(self.0.get() - bytes);
     }
 }
 
@@ -145,11 +177,12 @@ impl<T> PooledScratch for Vec<T> {
 impl<T: PooledScratch> Pool<T> {
     /// Check out scratch, returning it automatically on an ordinary exit.
     ///
-    /// `lim` is held for the return: the retention policy runs when the guard
-    /// drops, and whatever it frees is given back to the byte meter there.
+    /// `eng` is held for the return: the retention policy runs when the guard
+    /// drops, whatever it frees is given back to the engine's byte meter, and
+    /// what is kept is admitted against the engine's ceiling.
     #[inline]
-    pub(crate) fn checkout<'a>(&'a self, lim: &'a Limits) -> PoolGuard<'a, T> {
-        let mut guard = self.checkout_preserving(lim);
+    pub(crate) fn checkout<'a>(&'a self, eng: &'a Engine) -> PoolGuard<'a, T> {
+        let mut guard = self.checkout_preserving(eng);
         guard.prepare();
         guard
     }
@@ -157,8 +190,8 @@ impl<T: PooledScratch> Pool<T> {
     /// Keep initialized entries for algorithms that overwrite their live range.
     /// The caller must invalidate stale results before reading them.
     #[inline]
-    pub(crate) fn checkout_preserving<'a>(&'a self, lim: &'a Limits) -> PoolGuard<'a, T> {
-        PoolGuard { pool: self, lim, value: self.take(lim) }
+    pub(crate) fn checkout_preserving<'a>(&'a self, eng: &'a Engine) -> PoolGuard<'a, T> {
+        PoolGuard { pool: self, eng, value: self.take(eng) }
     }
 }
 
@@ -168,7 +201,7 @@ impl<T: PooledScratch> Pool<T> {
 /// retention policy and park it for the next checkout, including nested uses.
 pub(crate) struct PoolGuard<'a, T: PooledScratch> {
     pool: &'a Pool<T>,
-    lim: &'a Limits,
+    eng: &'a Engine,
     value: T,
 }
 
@@ -186,7 +219,7 @@ impl<T: PooledScratch> std::ops::DerefMut for PoolGuard<'_, T> {
 impl<T: PooledScratch> Drop for PoolGuard<'_, T> {
     fn drop(&mut self) {
         if !std::thread::panicking() {
-            self.pool.put(self.lim, std::mem::take(&mut self.value));
+            self.pool.put(self.eng, std::mem::take(&mut self.value));
         }
     }
 }

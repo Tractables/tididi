@@ -149,7 +149,7 @@ pub(crate) fn rotation_search_on<O: RotationObjective, A: AcceptancePolicy>(
     }
     policy.begin();
     let mut rule = Policed { objective, policy, stats: RotationSearchStats::default(), log: Vec::new() };
-    let mut scratch = eng.scratch.restructure.checkout(eng.limits());
+    let mut scratch = eng.scratch.restructure.checkout(eng);
 
     // Rotation-locality precondition: the locality assertion and the level
     // revert need a canonical input, so establish it once here.

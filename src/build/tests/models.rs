@@ -373,16 +373,16 @@ fn layout_cache_reuses_storage_and_does_not_retain_vtree() {
     let f = eng.from_models(&vtree, &columns, &[1, 2]).unwrap();
     assert_canonical(&f);
     drop(f);
-    let allocation = eng.scratch.model_layout.checkout(eng.limits()).position.as_ptr();
+    let allocation = eng.scratch.model_layout.checkout(&eng).position.as_ptr();
     let f = eng.from_models(&vtree, &columns, &[3]).unwrap();
     assert_canonical(&f);
-    assert_eq!(eng.scratch.model_layout.checkout(eng.limits()).position.as_ptr(), allocation);
+    assert_eq!(eng.scratch.model_layout.checkout(&eng).position.as_ptr(), allocation);
     drop(f);
     assert_eq!(eng.from_models(&vtree, &[VarId(2), VarId(2)], &[0]).unwrap_err(),
         OperationError::DuplicateVariable(VarId(2)));
     let f = eng.from_models(&vtree, &columns, &[2]).unwrap();
     assert_canonical(&f);
-    assert_eq!(eng.scratch.model_layout.checkout(eng.limits()).position.as_ptr(), allocation);
+    assert_eq!(eng.scratch.model_layout.checkout(&eng).position.as_ptr(), allocation);
     drop(f);
     drop(vtree);
     // A context parks an engine, so its layout must not keep the vtree alive.
