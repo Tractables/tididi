@@ -165,6 +165,9 @@ impl Engine {
         &self.sparse
     }
 
+    /// The model-table layout pool.
+    #[must_use]
+    #[inline]
     pub(crate) fn model_layout(&self) -> &crate::limits::pool::Pool<crate::build::models::layout::Layout> {
         &self.model_layout
     }
