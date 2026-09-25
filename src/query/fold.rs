@@ -1,11 +1,14 @@
-//! The one bottom-up traversal every whole-diagram query runs.
+//! The bottom-up fold behind model counting, satisfiability and semiring
+//! evaluation.
 //!
-//! Model counting, satisfiability and semiring evaluation ask different
-//! questions of the same walk: seed the leaves, fold each internal node's pairs
-//! into a value, read the marginal levels' stored values instead of folding them,
-//! and release a column once its single parent has consumed it. Only the
-//! arithmetic differs, so the per-level fold is written once here, driven by
-//! [`walk_bottom_up`], and each query supplies its own [`LevelFold`].
+//! These queries ask different questions of the same walk: seed the leaves,
+//! fold each internal node's pairs into a value, read the marginal levels'
+//! stored values instead of folding them, and release a column once its single
+//! parent has consumed it. Only the arithmetic differs, so the per-level fold is
+//! written once here, driven by [`walk_bottom_up`], and each query supplies its
+//! own [`LevelFold`]. `Tdd::weighted_value` is the exception: it folds the
+//! attached weights through the value domains in `value` (`ValueDomain`), the
+//! fold marginalization writes its levels with.
 
 use crate::value::{walk_bottom_up, Retention};
 use crate::diagram::{EncodedChildRef, ChildRef, LeafLabel, PairsIter, ChildDecoder, Tdd, ValueRef, LEAF_WIDTH};
