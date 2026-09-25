@@ -3,7 +3,7 @@
 use super::*;
 use crate::diagram::{EncodedChildRef, ChildPair, ChildDecoder, ChildRef, ValueRef, TddLevel, WeightStore};
 use crate::value::{Count, CountRead, CountRef, CountVec, IntFold, COUNT_OVERFLOW};
-use crate::diagram::LEAF_COUNTS;
+use crate::diagram::{LEAF_COUNTS, LeafLabel, leaf_count};
 
 pub(crate) type StreamChildCounts<'a> = StreamChild<'a, IntFold>;
 
@@ -107,6 +107,48 @@ fn read_count<'a>(side: EncodedChildRef, child: &StreamChildCounts<'a>, view: Ch
         ChildRef::Node(crate::diagram::NodeIdx(index))
         | ChildRef::Value(ValueRef::Slot(index)) => child.col.get(index as usize),
     }
+}
+
+/// Resolve one child ref of level `level_idx` to a count read, against the
+/// diagram's levels and the per-batch `computed` scratch; a `Big` read
+/// borrows the `BigUint`.
+///
+/// Marginal leaves can retain bare label references with an empty count
+/// column; their counts still come from the fixed leaf labels.
+#[inline]
+fn read_level_count<'a>(
+    level_idx: usize,
+    side: EncodedChildRef,
+    vtree: &Vtree,
+    levels: &'a [TddLevel],
+    computed: &'a [Option<CountVec>],
+) -> CountRead<'a> {
+    if let Some(ic) = levels[level_idx].marginal_counts() {
+        if side.is_reserved() {
+            return CountRead::Fast(0); // ZERO sentinel — never decode (mirrors emit_or_tag)
+        }
+        return match ChildDecoder::marginal().value(side) {
+            ValueRef::Inline(v) => CountRead::Fast(v as u128),
+            // A marginal leaf keeps an empty store under the inline path (all
+            // counts live inline at the parent), so a bare slot ref here is a
+            // leaf-label index with a fixed count — decode it directly rather
+            // than indexing the (empty) store. Reached by paths that leave a
+            // leaf-side ref bare (e.g. projection) instead of inlining it.
+            ValueRef::Slot(s) if vtree.node(VtreeIdx(level_idx as u32)).is_leaf() => {
+                CountRead::Fast(leaf_count(LeafLabel::from_idx(s as usize)))
+            }
+            ValueRef::Slot(s) => CountRead::from_slot(ic, levels[level_idx].marginal_counts_big(), s as usize),
+        };
+    }
+    // Check pre-computed buffer (non-marginal level: plain index).
+    if let Some(counts) = &computed[level_idx] {
+        return counts.get(ChildDecoder::structural().node(side).idx());
+    }
+    // Leaf level: fixed counts.
+    if vtree.node(VtreeIdx(level_idx as u32)).is_leaf() {
+        return CountRead::Fast(leaf_count(LeafLabel::from_idx(ChildDecoder::structural().node(side).idx())));
+    }
+    unreachable!("counts not available for level {}", level_idx);
 }
 
 /// Sum `Σ counts_left[p.left] * counts_right[p.right]` over `pairs`: `Count::Fast`
@@ -227,8 +269,8 @@ impl ValueDomain for IntFold {
         let FoldInput { vtree, levels, .. } = at.input;
         IntFold::fold(
             levels[at.lvl].pairs_iter_of_idx(i),
-            |k| crate::value::read::read_count(at.left, k, vtree, levels, at.computed),
-            |k| crate::value::read::read_count(at.right, k, vtree, levels, at.computed),
+            |k| read_level_count(at.left, k, vtree, levels, at.computed),
+            |k| read_level_count(at.right, k, vtree, levels, at.computed),
         )
     }
 

@@ -298,7 +298,6 @@ impl<'a> CountRef<'a> {
 }
 
 mod domain;
-pub(crate) mod read;
 mod fold;
 pub(crate) mod slots;
 mod stream_cache;
