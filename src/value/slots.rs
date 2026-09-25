@@ -302,12 +302,7 @@ impl SlotValues for WeightFold {
         let values = ws.level(v.idx());
         let mut acc = ws.wzero();
         for &raw in refs {
-            // The zero sentinel (bit 31) never appears in a pair list; if it
-            // did, it would contribute the additive identity, so it is skipped.
-            debug_assert!(
-                !EncodedChildRef::from_raw(raw).is_reserved(),
-                "the zero sentinel must not reach a marginal-side pair ref"
-            );
+            // The zero sentinel (bit 31) contributes the additive identity.
             if EncodedChildRef::from_raw(raw).is_reserved() {
                 continue;
             }

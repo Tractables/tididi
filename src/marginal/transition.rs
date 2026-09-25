@@ -326,12 +326,6 @@ pub(crate) fn dedup_fresh_store(
     // overflow table can be rekeyed in one drain once it is complete.
     let mut remap: Vec<u32> = vec![0; n];
     let (new_len, _) = compact_count_slots(&mut counts, &mut big, 0..n, &mut remap);
-
-    if new_len == n {
-        // No duplicates: `remap` is the identity, and so would be the rekey.
-        return (counts, big, remap);
-    }
-
     truncate_with_slack(&mut counts, new_len);
     (counts, big, remap)
 }

@@ -135,10 +135,10 @@ impl Tdd {
 
     /// Require every level's structure before an operation complements the diagram.
     pub(crate) fn require_structure(&self) -> Result<(), crate::OperationError> {
-        for (i, _) in self.levels.iter().enumerate() {
-            self.require_structure_at(VtreeIdx(i as u32))?;
+        match self.levels.iter().position(TddLevel::is_marginal) {
+            Some(level) => Err(crate::OperationError::MarginalLevel(VtreeIdx(level as u32))),
+            None => Ok(()),
         }
-        Ok(())
     }
 
     /// The vtree the diagram is decomposed along.
