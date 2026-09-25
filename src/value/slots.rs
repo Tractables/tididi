@@ -7,7 +7,7 @@ use std::hash::Hash;
 use num_bigint::BigUint;
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::value::{Count, CountRead, IntFold, WeightFold};
+use crate::value::{Count, CountRead, CountRef, IntFold, WeightFold};
 use crate::diagram::{weight_key, ChildSide, WeightKey};
 use crate::diagram::{
     EncodedChildRef, ChildDecoder, CountOverflow, ChildPair, Tdd, TddLevel, ValueRef, WeightStore, WeightValue,
@@ -113,12 +113,11 @@ pub(crate) fn truncate_with_slack<T>(store: &mut Vec<T>, new_len: usize) {
 /// Map every distinct count of a store to its first slot; a duplicate count
 /// collapses to its first occurrence.
 fn seed_slot_map(
-    lim: &Limits, map: &mut FxHashMap<Count, u32>, counts: &[u128], big: Option<&CountOverflow>,
+    lim: &Limits, map: &mut FxHashMap<Count, u32>, counts: CountRef<'_>,
 ) -> Result<(), OperationError> {
     lim.reserve_map(map, counts.len())?;
     for i in 0..counts.len() {
-        let key = count_key_at(counts, big, i);
-        map.entry(key).or_insert(i as u32);
+        map.entry(counts.get(i).to_count()).or_insert(i as u32);
     }
     Ok(())
 }
@@ -207,9 +206,8 @@ impl SlotValues for IntFold {
     }
 
     fn sum_refs(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> Count {
-        let level = &tdd.levels[v.idx()];
-        let counts = level.marginal_counts().expect("pair fusion: the marginal level has no count store");
-        sum_marginal_counts(counts, level.marginal_counts_big(), refs)
+        let counts = tdd.levels[v.idx()].count_column().expect("pair fusion: the marginal level has no count store");
+        sum_marginal_counts(counts, refs)
     }
 
     fn scaled(tdd: &Tdd, v: VtreeIdx, raw: u32, k: u32) -> Count {
@@ -217,11 +215,10 @@ impl SlotValues for IntFold {
             // c ≤ 2^30−1, k ≤ 2^32−1 → product fits u128 with room to spare.
             ValueRef::Inline(c) => Count::Fast(c as u128 * k as u128),
             ValueRef::Slot(s) => {
-                let level = &tdd.levels[v.idx()];
-                let counts = level
-                    .marginal_counts()
+                let counts = tdd.levels[v.idx()]
+                    .count_column()
                     .expect("scale: slot ref into non-marginal level");
-                match CountRead::from_slot(counts, level.marginal_counts_big(), s as usize) {
+                match counts.get(s as usize) {
                     CountRead::Big(b) => Count::Big(b * k),
                     CountRead::Fast(c) => match c.checked_mul(k as u128) {
                         Some(v) => Count::from_u128(v),
@@ -245,9 +242,8 @@ impl SlotValues for IntFold {
     /// Seeded with the whole store, so a value equal to an existing slot's
     /// reuses it and the store stays at one slot per value.
     fn seed(lim: &Limits, tdd: &Tdd, v: VtreeIdx, map: &mut FxHashMap<Count, u32>) -> Result<(), OperationError> {
-        let level = &tdd.levels[v.idx()];
-        let counts = level.marginal_counts().expect("pair fusion: the marginal level has no count store");
-        seed_slot_map(lim, map, counts, level.marginal_counts_big())
+        let counts = tdd.levels[v.idx()].count_column().expect("pair fusion: the marginal level has no count store");
+        seed_slot_map(lim, map, counts)
     }
 
     fn push_slot(eng: &Engine, tdd: &mut Tdd, v: VtreeIdx, value: Count) -> Result<u32, OperationError> {
@@ -395,21 +391,11 @@ pub(crate) fn count_key_at(
 /// The arithmetic is [`IntFold::fold`] driven with a constant 1 on the right,
 /// so the overflow rule, including the promotion of a total landing on the
 /// sentinel, is applied there.
-pub(crate) fn sum_marginal_counts(
-    counts: &[u128],
-    big: Option<&CountOverflow>,
-    indices: &[u32],
-) -> Count {
-    let read = |raw: EncodedChildRef| -> CountRead<'_> {
-        match ChildDecoder::marginal().value(raw) {
-            ValueRef::Inline(v) => CountRead::Fast(v as u128),
-            ValueRef::Slot(s) => CountRead::from_slot(counts, big, s as usize),
-        }
-    };
+pub(crate) fn sum_marginal_counts(counts: CountRef<'_>, indices: &[u32]) -> Count {
     let pairs = indices
         .iter()
         .map(|&raw| ChildPair::new(EncodedChildRef::from_raw(raw), EncodedChildRef::from_raw(0)));
-    IntFold::fold(pairs, read, |_| CountRead::Fast(1))
+    IntFold::fold(pairs, |raw| counts.read(ChildDecoder::marginal(), raw), |_| CountRead::Fast(1))
 }
 
 /// Caller-owned scratch for [`referenced_marginal_slots`], reused across the

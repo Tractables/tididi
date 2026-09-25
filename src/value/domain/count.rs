@@ -104,7 +104,7 @@ fn read_level_count<'a>(
     levels: &'a [TddLevel],
     computed: &'a [Option<CountVec>],
 ) -> CountRead<'a> {
-    if let Some(ic) = levels[level_idx].marginal_counts() {
+    if let Some(col) = levels[level_idx].count_column() {
         if side.is_reserved() {
             return CountRead::Fast(0); // ZERO sentinel — never decode (mirrors emit_or_tag)
         }
@@ -118,7 +118,7 @@ fn read_level_count<'a>(
             ValueRef::Slot(s) if vtree.node(VtreeIdx(level_idx as u32)).is_leaf() => {
                 CountRead::Fast(leaf_count(LeafLabel::from_idx(s as usize)))
             }
-            ValueRef::Slot(s) => CountRead::from_slot(ic, levels[level_idx].marginal_counts_big(), s as usize),
+            ValueRef::Slot(s) => col.get(s as usize),
         };
     }
     // Check pre-computed buffer (non-marginal level: plain index).
@@ -240,37 +240,32 @@ impl ValueDomain for IntFold {
         computed: &'a [Option<CountVec>],
         _store: &'a (),
     ) -> StreamChild<'a, IntFold> {
-        let view = if level.marginal_counts().is_some() { ChildDecoder::marginal() } else { ChildDecoder::structural() };
-        // Raw-storage sources (`marginal_counts`/`marginal_counts_big` on the level)
-        // are viewed through `CountRef::from_parts_scanned` (u64-fit certificate
-        // scanned over the stored slots; `COUNT_OVERFLOW` = `u128::MAX` fails the scan,
-        // so `all_u64` ⇒ no overflow sentinel present). A `computed` source is already
-        // a `CountVec` and lends its own incrementally maintained certificate. The
-        // sources are mutually exclusive: the ensure walk only fills `computed`
-        // for non-marginal levels, and the in-apply cascade moves an entry
-        // into level storage when the level becomes marginal.
+        let leaf = vtree.node(VtreeIdx(level_idx as u32)).is_leaf();
+        // A level's own column is scanned for the `u64`-fit certificate
+        // (`COUNT_OVERFLOW` fails the scan, so `all_u64` ⇒ no overflow slot);
+        // a `computed` column is a `CountVec` and lends its incrementally
+        // maintained one. The sources are mutually exclusive: the ensure walk
+        // only fills `computed` for non-marginal levels, and the in-apply
+        // cascade moves an entry into level storage when the level becomes
+        // marginal.
         //
         // No arm allocates: every one borrows storage that already exists.
-        let col = if vtree.node(VtreeIdx(level_idx as u32)).is_leaf()
-            && level.marginal_counts().is_some_and(|c| c.is_empty())
-        {
-            // Marginal leaf (leaf marginalization): empty store, all counts inline at
-            // the parent. Its conceptual slots are the fixed leaf labels — return
-            // them so any stray bare-label ref (slot 0/1/2) still decodes correctly;
-            // inline refs bypass this column entirely. This integer-side fixed-slot
-            // rule has no weighted counterpart (see `WeightFold::child_view`,
-            // which resolves the semiring leaf bases instead).
-            CountRef::from_parts_scanned(&LEAF_COUNTS, level.marginal_counts_big())
-        } else if let Some(ic) = level.marginal_counts() {
-            CountRef::from_parts_scanned(ic, level.marginal_counts_big())
-        } else if let Some(c) = &computed[level_idx] {
-            c.as_count_ref()
-        } else if vtree.node(VtreeIdx(level_idx as u32)).is_leaf() {
-            CountRef::from_parts_scanned(&LEAF_COUNTS, None)
-        } else {
-            unreachable!("IntFold::child_view: no counts for level {}", level_idx);
+        let (col, view) = match level.count_column() {
+            // Marginal leaf (leaf marginalization): empty store, all counts
+            // inline at the parent. Its conceptual slots are the fixed leaf
+            // labels, so any stray bare-label ref (slot 0/1/2) still decodes
+            // correctly; inline refs bypass this column entirely. This
+            // integer-side fixed-slot rule has no weighted counterpart (see
+            // `WeightFold::child_view`, which resolves the semiring leaf bases
+            // instead).
+            Some(col) if leaf && col.len() == 0 => (CountRef::new(&LEAF_COUNTS, None).certified(), ChildDecoder::marginal()),
+            Some(col) => (col.certified(), ChildDecoder::marginal()),
+            None => match &computed[level_idx] {
+                Some(c) => (c.as_count_ref(), ChildDecoder::structural()),
+                None if leaf => (CountRef::new(&LEAF_COUNTS, None).certified(), ChildDecoder::structural()),
+                None => unreachable!("IntFold::child_view: no counts for level {}", level_idx),
+            },
         };
-
         StreamChild { col, view }
     }
 

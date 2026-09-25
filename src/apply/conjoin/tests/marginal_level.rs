@@ -8,7 +8,7 @@ use crate::test_helpers::clause_to_tdd;
 
 
 use crate::diagram::{
-    CountOverflow, PairRange, TddLevel,
+    PairRange, TddLevel,
 };
 use crate::diagram::Literal;
 use crate::vtree::{VarId, Vtree, VtreeIdx};
@@ -36,22 +36,17 @@ fn test_level_marginal_is_constant_true_small_subvars() {
 }
 
 #[test]
-fn test_level_marginal_is_constant_true_small_subvars_sentinel_never_true() {
-    // subvars < 128 with the u128::MAX overflow sentinel: per the function's
-    // doc comment, this can never be constant-true (2^subvars <= 2^127 <
-    // u128::MAX, so an overflowed real count is strictly greater than the
-    // target) — decided directly by the `subvars < 128` branch, WITHOUT
-    // consulting the big table, even when one is present and would
-    // (incorrectly) "match" if this were misread as a `subvars >= 128` case.
+fn test_level_marginal_is_constant_true_small_subvars_overflowed_count_never_true() {
+    // subvars < 128 with a count past `u128::MAX`: the count exceeds
+    // 2^subvars <= 2^127, so it can never be constant-true.
     let mut level = TddLevel::new();
     level.become_marginal(
         vec![u128::MAX],
-        // present but must be ignored
-        Some([(0u32, BigUint::from(1u32) << 100usize)].into_iter().collect()),
+        Some([(0u32, BigUint::from(1u32) << 128usize)].into_iter().collect()),
     );
     assert!(
         !level_marginal_is_constant_true(&level, 100),
-        "sentinel c0 == u128::MAX at subvars < 128 must never read as constant-true"
+        "an overflowed count at subvars < 128 must never read as constant-true"
     );
 }
 
@@ -79,33 +74,14 @@ fn test_level_marginal_is_constant_true_large_subvars_disqualified() {
     let mut mismatched_big = TddLevel::new();
     mismatched_big.become_marginal(
         vec![u128::MAX],
-        Some([(0u32, BigUint::from(5u32))].into_iter().collect()),
+        Some([(0u32, (BigUint::from(1u32) << 128usize) + 1u32)].into_iter().collect()),
     );
     assert!(
         !level_marginal_is_constant_true(&mismatched_big, subvars),
         "big-table value != 2^subvars must not be constant-true"
     );
 
-    // (2) no big table at all (`marginal_counts_big` is `None`).
-    let mut no_big_table = TddLevel::new();
-    no_big_table.become_marginal(vec![u128::MAX], None);
-    assert!(
-        !level_marginal_is_constant_true(&no_big_table, subvars),
-        "missing big-table side entry must not be constant-true"
-    );
-
-    // (3) big table allocated but carrying no entry for slot 0. Sparse storage
-    // makes "absent entry" the encoding of "fits the fast lane", so this must
-    // read exactly like (2) — the `Some(empty)` shape is the one a caller can
-    // still hand over after every overflow entry was taken back out.
-    let mut none_entry = TddLevel::new();
-    none_entry.become_marginal(vec![u128::MAX], Some(CountOverflow::default()));
-    assert!(
-        !level_marginal_is_constant_true(&none_entry, subvars),
-        "missing big-table entry must not be constant-true"
-    );
-
-    // (4) c0 never overflowed at all (no sentinel): the real value fits in
+    // (2) c0 never overflowed at all (no sentinel): the real value fits in
     // u128, which is always < 2^128, so it can't reach the target —
     // disqualified before ever consulting the big table.
     let mut no_overflow = TddLevel::new();

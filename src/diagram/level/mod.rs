@@ -209,6 +209,17 @@ impl TddLevel {
         }
     }
 
+    /// A count-marginal level's column as one view, its fast values and
+    /// overflow table together; `None` on any other level. The view carries
+    /// no `all_u64` certificate.
+    #[inline]
+    pub(crate) fn count_column(&self) -> Option<crate::value::CountRef<'_>> {
+        match &self.state {
+            LevelState::Counts { counts, big, .. } => Some(crate::value::CountRef::new(counts, big.as_ref())),
+            _ => None,
+        }
+    }
+
     /// Both halves of a count-marginal level's store at once: the fast column
     /// and the overflow table, which the compaction passes rewrite together.
     #[inline]

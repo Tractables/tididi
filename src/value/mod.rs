@@ -59,8 +59,10 @@ pub(crate) enum CountRead<'a> {
 impl<'a> CountRead<'a> {
     /// Decode slot `i` of a `(fast, big)` column: a fast value equal to
     /// [`COUNT_OVERFLOW`] reads through to the big table, which holds an
-    /// entry for every such slot. Every reader of a stored count decodes
-    /// through here.
+    /// entry for every such slot. Every reader of a stored count's value
+    /// decodes through here; the builder's check of that invariant and the
+    /// passes that move raw words between stores compare against
+    /// [`COUNT_OVERFLOW`] instead.
     pub(crate) fn from_slot(fast: &[u128], big: Option<&'a CountOverflow>, i: usize) -> Self {
         let raw = fast[i];
         if raw == COUNT_OVERFLOW {
@@ -259,20 +261,25 @@ pub(crate) struct CountRef<'a> {
 }
 
 impl<'a> CountRef<'a> {
-    /// View raw arrays that are not a `CountVec` (a level's marginal storage,
-    /// or the fixed leaf-label slots). The certificate is scanned
-    /// ([`certify_all_u64`]).
+    /// View raw arrays that are not a `CountVec`: a level's marginal storage
+    /// ([`TddLevel::count_column`](crate::diagram::TddLevel::count_column)),
+    /// or the fixed leaf-label slots. Nothing is scanned, so the view carries
+    /// no certificate and [`Self::all_u64`] is false until [`Self::certified`].
     #[inline]
-    pub(crate) fn from_parts_scanned(fast: &'a [u128], big: Option<&'a CountOverflow>) -> Self {
-        CountRef {
-            fast,
-            big,
-            all_u64: certify_all_u64(fast),
-        }
+    pub(crate) fn new(fast: &'a [u128], big: Option<&'a CountOverflow>) -> Self {
+        CountRef { fast, big, all_u64: false }
+    }
+
+    /// This view with its `all_u64` certificate scanned
+    /// ([`certify_all_u64`]), for a reader that takes the fast path when every
+    /// value fits `u64`.
+    #[inline]
+    pub(crate) fn certified(self) -> Self {
+        CountRef { all_u64: certify_all_u64(self.fast), ..self }
     }
 
     /// Raw view of the fast column (sentinels included) — for the
-    /// monomorphized unchecked-read fold fast path (`streaming_marginal::read_fast`).
+    /// monomorphized unchecked-read fold fast path (`value::domain::count::read_fast`).
     pub(crate) fn fast_slice(&self) -> &'a [u128] {
         self.fast
     }

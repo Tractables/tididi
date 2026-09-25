@@ -11,6 +11,7 @@ use super::{INLINE_VALUE_BIT, MARGINAL_VALUE_MASK, ValueRef};
 use crate::diagram::CountOverflow;
 use crate::diagram::NodeIdx;
 use crate::limits::OperationError;
+use crate::value::COUNT_OVERFLOW;
 
 /// Slot value in [`resolve_swapped_marginal_side`]'s interners meaning "this count
 /// has no dst slot yet" — the pre-scan collected the key, and the dst seed pass
@@ -32,7 +33,7 @@ enum SwapRef {
     /// inline ref, which is store-independent. Touches no store.
     Inline(u32),
     /// Bare slot whose source count is above the inline threshold (or is the
-    /// `u128::MAX` BigUint sentinel): must be interned into the dst store.
+    /// `COUNT_OVERFLOW` sentinel): must be interned into the dst store.
     /// Carries the source slot index and its source count.
     Mint(usize, u128),
 }
@@ -187,7 +188,7 @@ fn collect_swap_mints(
         if failed {
             return;
         }
-        if c == u128::MAX {
+        if c == COUNT_OVERFLOW {
             match src.big.and_then(|sb| sb.get(s)) {
                 Some(b) if !big_to_slot.contains_key(b) => {
                     if big_to_slot.try_reserve(1).is_err() {
@@ -258,7 +259,7 @@ fn reserve_and_seed_dst(
     #[expect(clippy::needless_range_loop)]
     for i in 0..dst_counts.len() {
         let c = dst_counts[i];
-        if c == u128::MAX {
+        if c == COUNT_OVERFLOW {
             if let Some(b) = dst_big.as_ref().and_then(|b| b.get(i))
                 && let Some(slot) = interners.big.get_mut(b)
                     && *slot == SLOT_UNSEEDED {
@@ -290,14 +291,14 @@ fn remap_swap_ref(
         SwapRef::Inline(inline) => return inline,
         SwapRef::Mint(s, c) => (s, c),
     };
-    // Big (`u128::MAX` sentinel) or large-but-u128 count: re-mint into dst store,
+    // Big (`COUNT_OVERFLOW` sentinel) or large-but-u128 count: re-mint into dst store,
     // deduplicating via the inline interner so equal large counts share one slot.
-    if c == u128::MAX {
+    if c == COUNT_OVERFLOW {
         // BigUint path: look up in the big interner first.
         let big_val = src.big.and_then(|sb| sb.get(s));
         debug_assert!(
             big_val.is_some(),
-            "resolve_swapped_marginal_side: src slot {s} is the `u128::MAX` sentinel \
+            "resolve_swapped_marginal_side: src slot {s} is the `COUNT_OVERFLOW` sentinel \
              but has no BigUint entry"
         );
         if let Some(b) = big_val {
@@ -309,7 +310,7 @@ fn remap_swap_ref(
             }
         }
         let new_idx = dst_counts.len() as u32;
-        dst_counts.push(u128::MAX);
+        dst_counts.push(COUNT_OVERFLOW);
         if let Some(b) = big_val {
             dst_big
                 .as_mut()

@@ -5,19 +5,19 @@
 //! install or compact values without separately maintaining their slot count.
 
 use super::{TddLevel, WeightStore, WeightValue};
-use crate::value::CountRead;
+use crate::value::{CountRead, CountRef};
 use crate::value::slots::{compact_count_slots, compact_slots, truncate_with_slack};
 
 /// A level's stored values, with their numeric representation already selected.
 pub(crate) enum MarginalValues<'a> {
-    Counts(&'a [u128], Option<&'a super::CountOverflow>),
+    Counts(CountRef<'a>),
     Weights(&'a [WeightValue]),
 }
 
 impl<'a> MarginalValues<'a> {
     pub(crate) fn read(level: &'a TddLevel, weights: Option<&'a WeightStore>, index: usize) -> Option<Self> {
-        if let Some(counts) = level.marginal_counts() {
-            Some(Self::Counts(counts, level.marginal_counts_big()))
+        if let Some(counts) = level.count_column() {
+            Some(Self::Counts(counts))
         } else if level.is_weight_marginal() {
             Some(Self::Weights(weights.expect("weighted level requires its store").level(index).unwrap_or(&[])))
         } else {
@@ -26,12 +26,12 @@ impl<'a> MarginalValues<'a> {
     }
 
     pub(crate) fn len(&self) -> usize {
-        match self { Self::Counts(values, _) => values.len(), Self::Weights(values) => values.len() }
+        match self { Self::Counts(values) => values.len(), Self::Weights(values) => values.len() }
     }
 
     pub(crate) fn count(&self, slot: usize) -> CountRead<'a> {
         match self {
-            Self::Counts(values, big) => CountRead::from_slot(values, *big, slot),
+            Self::Counts(values) => values.get(slot),
             Self::Weights(_) => panic!("integer read of weighted values"),
         }
     }

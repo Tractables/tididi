@@ -10,7 +10,7 @@ use crate::diagram::ValueRef;
 fn sum_exactly_u128_max_routes_to_big() {
     let counts = vec![u128::MAX - 1, 1u128];
     let refs = [ValueRef::slot_raw(0), ValueRef::slot_raw(1)];
-    match sum_marginal_counts(&counts, None, &refs) {
+    match sum_marginal_counts(CountRef::new(&counts, None), &refs) {
         Count::Big(b) => assert_eq!(b, BigUint::from(u128::MAX)),
         Count::Fast(c) => panic!("sum {c} collides with the OVERFLOW sentinel"),
     }
@@ -21,7 +21,7 @@ fn sum_exactly_u128_max_routes_to_big() {
 fn sum_below_sentinel_stays_small() {
     let counts = vec![u128::MAX - 2, 1u128];
     let refs = [ValueRef::slot_raw(0), ValueRef::slot_raw(1)];
-    match sum_marginal_counts(&counts, None, &refs) {
+    match sum_marginal_counts(CountRef::new(&counts, None), &refs) {
         Count::Fast(c) => assert_eq!(c, u128::MAX - 1),
         Count::Big(b) => panic!("small sum must not promote to Big({b})"),
     }

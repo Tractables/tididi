@@ -533,7 +533,7 @@ fn check_marginal_level(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx) -> Resu
     if let Some(counts) = lvl.marginal_counts() {
         for (slot, &c) in counts.iter().enumerate() {
             let backed = lvl.marginal_counts_big().and_then(|b| b.get(slot));
-            if c == u128::MAX && backed.is_none() {
+            if c == crate::value::COUNT_OVERFLOW && backed.is_none() {
                 return Err(TddBuildError::OverflowWithoutValue { level: t, slot });
             }
         }

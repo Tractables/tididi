@@ -10,6 +10,7 @@ use crate::diagram::{self, *};
 use super::OperationError;
 use super::setup::{ApplyRun, LevelShape};
 use super::products::Products;
+use crate::value::CountRead;
 
 /// Compute which leaf levels are "identity" (constant-true) for a diagram operand.
 ///
@@ -141,10 +142,9 @@ pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd) -
 /// True iff the marginal level represents the constant-true function over its
 /// subtree variables: width 1 with model count exactly 2^subvars.
 ///
-/// Fast path: when `subvars < 128`, the target `1u128 << subvars` fits in u128
-/// and we compare directly without allocating a BigUint. When `subvars >= 128`,
-/// the target exceeds u128, so the only way `counts[0]` can match is via the
-/// overflow sentinel + BigUint side table.
+/// A count that fits `u128` is compared directly without allocating a
+/// `BigUint`; only an exact big count, which `2^subvars` can equal only when
+/// `subvars >= 128`, builds the target.
 pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) -> bool {
     debug_assert!(level.is_marginal());
     // Weighted marginal levels carry no integer counts (values live
@@ -154,29 +154,13 @@ pub(super) fn level_marginal_is_constant_true(level: &TddLevel, subvars: u32) ->
     if level.is_weight_marginal() {
         return false;
     }
-    let counts = level.marginal_counts().expect("is_marginal");
+    let counts = level.count_column().expect("is_marginal");
     if counts.len() != 1 {
         return false;
     }
-    let c0 = counts[0];
-    if subvars < 128 {
-        // Target fits in u128: 2^subvars <= 2^127 < `u128::MAX`. A `c0 == u128::MAX`
-        // sentinel means the real value overflowed u128, which is strictly > target,
-        // so they cannot be equal.
-        if c0 == u128::MAX {
-            return false;
-        }
-        c0 == (1u128 << subvars)
-    } else {
-        // 2^subvars >= 2^128 > `u128::MAX`. If c0 didn't overflow, it can't reach.
-        if c0 != u128::MAX {
-            return false;
-        }
-        let target = num_bigint::BigUint::from(1u32) << subvars as usize;
-        match level.marginal_counts_big().and_then(|b| b.get(0)) {
-            Some(b) => *b == target,
-            None => false,
-        }
+    match counts.get(0) {
+        CountRead::Fast(c) => subvars < 128 && c == 1u128 << subvars,
+        CountRead::Big(b) => *b == num_bigint::BigUint::from(1u32) << subvars as usize,
     }
 }
 
@@ -324,15 +308,11 @@ pub(super) fn take_level_fast_path(
         && g_identity[left_idx] && g_identity[right_idx];
     #[cfg(debug_assertions)]
     if both_marginal_w1 {
+        let mass = |level: &TddLevel| level.count_column().map(|c| c.get(0).to_count());
         debug_assert_eq!(
-            f.levels[t_idx].marginal_counts(), g.levels[t_idx].marginal_counts(),
+            mass(&f.levels[t_idx]), mass(&g.levels[t_idx]),
             "both-marginal width-1 conjunction at t={t_idx}: unequal marginal \
              masses — absorbing one side would be unsound"
-        );
-        debug_assert_eq!(
-            f.levels[t_idx].marginal_counts_big(), g.levels[t_idx].marginal_counts_big(),
-            "both-marginal width-1 conjunction at t={t_idx}: unequal marginal \
-             big masses — absorbing one side would be unsound"
         );
     }
     if right_width == 1 && g_identity[left_idx] && g_identity[right_idx]
