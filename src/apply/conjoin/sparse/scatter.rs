@@ -72,12 +72,12 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
 ///
 /// Two arms behind a shared front-end (the two reverse-index builds):
 ///
-/// **Leaf arm** (`leaf_side_is_leaf`): iterate the non-leaf product list;
-/// `CONJOIN_GRID` supplies the leaf-side product. The `g_by_outer` keying is the
-/// same as the general arm's (normal → by right, swapped → by left), so the
-/// front-end is shared.
+/// **Leaf arm** (the inner child is a leaf, see [`runs_leaf_arm`]): iterate
+/// the non-leaf product list; `CONJOIN_GRID` supplies the leaf-side product.
+/// The `g_by_outer` keying is the same as the general arm's (normal → by
+/// right, swapped → by left), so the front-end is shared.
 ///
-/// **General arm** (otherwise; its outer child may be a leaf), per outer key:
+/// **General arm** (both children non-leaf), per outer key:
 ///   1. Build `filtered`: bucket the g parents under the outer's live g keys
 ///      by the join's inner-g child, attaching the live product — from
 ///      whichever g index is the cheaper to walk, and only for the children
@@ -86,9 +86,11 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
 ///      push the precomputed alive `(p2, product)` entries — zero dead probes.
 ///   3. Clear only the `filtered` buckets touched this outer.
 ///
-/// `counted` says the direction estimate ran for this level, so its counts
-/// start the index builds; `flat` says the candidates go to the flat list
-/// rather than a bucket per f parent.
+/// The direction puts a leaf child on the inner side (`leaf_direction`),
+/// so the general arm sees only levels with two non-leaf children, which are
+/// the levels the direction estimate ran for: its counts start the general
+/// arm's index builds. `flat` says the candidates go to the flat list rather
+/// than a bucket per f parent.
 #[expect(clippy::too_many_arguments)]
 pub(super) fn scatter_join<const SWAPPED: bool>(
     eng: &Engine,
@@ -98,18 +100,22 @@ pub(super) fn scatter_join<const SWAPPED: bool>(
     shape: LevelShape,
     pl: Sides<&[ProductEntry]>,
     leaves: Sides<bool>,
-    counted: bool,
     flat: bool,
 ) -> Result<(), OperationError> {
-    // The leaf arm runs when the leaf side is a leaf: the left child normally,
-    // the right one when swapped.
-    let leaf_side_is_leaf = if !SWAPPED { leaves.left } else { leaves.right };
-    build_scatter_indexes::<SWAPPED>(eng, ws, f_level, g_level, shape, counted)?;
-    if leaf_side_is_leaf {
+    let leaf_arm = runs_leaf_arm(SWAPPED, leaves);
+    debug_assert!(leaf_arm || !(leaves.left || leaves.right), "a leaf child must be the inner side");
+    build_scatter_indexes::<SWAPPED>(eng, ws, f_level, g_level, shape, !leaf_arm)?;
+    if leaf_arm {
         return scatter_leaf_arm::<SWAPPED>(eng, ws, pl);
     }
-    build_inner_index::<SWAPPED>(eng, ws, g_level, shape, counted)?;
+    build_inner_index::<SWAPPED>(eng, ws, g_level, shape)?;
     scatter_general_arm::<SWAPPED>(eng, ws, shape, pl, flat)
+}
+
+/// Whether the join runs its leaf arm: its inner child, the left one
+/// unswapped and the right one swapped, is a leaf.
+pub(super) fn runs_leaf_arm(swapped: bool, leaves: Sides<bool>) -> bool {
+    if !swapped { leaves.left } else { leaves.right }
 }
 
 /// Build the two reverse indexes both arms read.
@@ -147,21 +153,21 @@ fn build_scatter_indexes<const SWAPPED: bool>(
 
 /// Build g's reverse index keyed by the join's inner-g child — the key
 /// `g_by_outer` is not keyed by — for the general arm's second way of
-/// building an outer's `filtered` index.
+/// building an outer's `filtered` index. The direction estimate has run for
+/// the level, and its counts start the build.
 #[inline(never)]
 fn build_inner_index<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     g_level: &TddLevel,
     shape: LevelShape,
-    counted: bool,
 ) -> Result<(), OperationError> {
     let SparseWorkspace { est_counts, g_by_inner, .. } = ws;
-    let counts = counted.then(|| EstCounts::of(est_counts, shape));
+    let counts = EstCounts::of(est_counts, shape);
     if !SWAPPED {
-        build_reverse_index::<false>(eng, g_level, shape.g.left, counts.as_ref().map(|c| c.g_left), g_by_inner)
+        build_reverse_index::<false>(eng, g_level, shape.g.left, Some(counts.g_left), g_by_inner)
     } else {
-        build_reverse_index::<true>(eng, g_level, shape.g.right, counts.as_ref().map(|c| c.g_right), g_by_inner)
+        build_reverse_index::<true>(eng, g_level, shape.g.right, Some(counts.g_right), g_by_inner)
     }
 }
 
@@ -521,9 +527,9 @@ fn emit_candidates<const SWAPPED: bool>(
     Ok(())
 }
 
-/// The general arm: the inner side is not a leaf, the outer may be. Per outer
-/// key, build the filtered g index, emit against it, then clear only the
-/// buckets this outer touched.
+/// The general arm: both children are non-leaf. Per outer key, build the
+/// filtered g index, emit against it, then clear only the buckets this outer
+/// touched.
 #[inline(never)]
 fn scatter_general_arm<const SWAPPED: bool>(
     eng: &Engine,

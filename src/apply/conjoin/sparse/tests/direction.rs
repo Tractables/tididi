@@ -69,3 +69,21 @@ fn f_free_over_the_right_child_keys_the_outer_loop_by_the_right() {
     ).expect("estimate").swapped;
     assert!(!swap, "an f free over the right child must key the outer loop by the right child");
 }
+
+/// A level with a leaf child is joined by the leaf arm, whichever child grid
+/// is the larger: the direction puts the leaf on the inner side, which is the
+/// side the leaf arm reads from `CONJOIN_GRID`.
+#[test]
+fn a_leaf_child_is_joined_by_the_leaf_arm() {
+    use super::super::level::leaf_direction;
+    use crate::diagram::Sides;
+    for (left, right) in [(true, false), (false, true), (true, true)] {
+        let leaves = Sides { left, right };
+        let swapped = leaf_direction(leaves).expect("a leaf child sets the direction");
+        assert!(runs_leaf_arm(swapped, leaves), "leaf children {left}/{right}: the leaf arm must run");
+    }
+    assert_eq!(
+        leaf_direction(Sides { left: false, right: false }), None,
+        "two non-leaf children leave the direction to the estimate",
+    );
+}

@@ -10,10 +10,9 @@ use crate::diagram::Sides;
 ///
 /// With both children non-leaf the direction comes from
 /// `estimate_scatter_direction`, and its emit-step count decides between a
-/// bucket per f parent and the flat list (`flat_candidates_win`). With a
-/// leaf child the larger child grid is the outer side, into buckets; the leaf
-/// arm runs only when the leaf is the inner side, otherwise the general arm
-/// runs with the leaf as its outer child.
+/// bucket per f parent and the flat list (`flat_candidates_win`). A leaf
+/// child is put on the inner side ([`leaf_direction`]), so the leaf arm
+/// joins the level, into buckets.
 fn scatter_level(
     eng: &Engine,
     ws: &mut SparseWorkspace,
@@ -29,20 +28,20 @@ fn scatter_level(
         left: f.vtree.node(shape.left).is_leaf(),
         right: f.vtree.node(shape.right).is_leaf(),
     };
-    // Direction: the estimator (general path) sums what each direction walks
-    // around the emit. Do not substitute a plain grid-size proxy — it ignores
-    // selectivity and mispicks on wide×wide segment conjoins.
-    let both_non_leaf = !leaves.left && !leaves.right;
-    let (swap_direction, flat) = if both_non_leaf {
-        let choice = estimate_scatter_direction(
-            eng,
-            &mut ws.est_counts,
-            &f.levels[t_idx], &g.levels[t_idx], pl.left, pl.right,
-            shape,
-        )?;
-        (choice.swapped, flat_candidates_win(thresholds, shape.f.here, choice.emit_steps))
-    } else {
-        (shape.f.left * shape.g.left > shape.f.right * shape.g.right, false)
+    let (swap_direction, flat) = match leaf_direction(leaves) {
+        Some(swapped) => (swapped, false),
+        None => {
+            // The estimator sums what each direction walks around the emit.
+            // Do not substitute a plain grid-size proxy — it ignores
+            // selectivity and mispicks on wide×wide segment conjoins.
+            let choice = estimate_scatter_direction(
+                eng,
+                &mut ws.est_counts,
+                &f.levels[t_idx], &g.levels[t_idx], pl.left, pl.right,
+                shape,
+            )?;
+            (choice.swapped, flat_candidates_win(thresholds, shape.f.here, choice.emit_steps))
+        }
     };
 
     if flat {
@@ -55,9 +54,9 @@ fn scatter_level(
     // The general arm carries no dead-probe inner loop; the leaf arm keeps
     // the leaf fast-path shape.
     if !swap_direction {
-        scatter_join::<false>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, both_non_leaf, flat)?;
+        scatter_join::<false>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, flat)?;
     } else {
-        scatter_join::<true>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, both_non_leaf, flat)?;
+        scatter_join::<true>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, flat)?;
     }
     if flat {
         sort_candidates(eng, ws, shape.f.here)?;
@@ -66,6 +65,16 @@ fn scatter_level(
         ws.par_flat.clear();
     }
     Ok(flat)
+}
+
+/// The join direction on a level with a leaf child, `None` when neither child
+/// is a leaf and the direction estimate decides.
+///
+/// The leaf goes on the inner side, the left child unswapped and the right
+/// one swapped, where the leaf arm reads its products from `CONJOIN_GRID`
+/// (see [`runs_leaf_arm`]). With two leaf children the left one is inner.
+pub(super) fn leaf_direction(leaves: Sides<bool>) -> Option<bool> {
+    (leaves.left || leaves.right).then_some(!leaves.left)
 }
 
 /// The sparse workspace, checked out for one level.
