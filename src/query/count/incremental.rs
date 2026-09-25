@@ -2,6 +2,7 @@
 
 use crate::Engine;
 use std::borrow::Borrow;
+use std::sync::Arc;
 use crate::diagram::{EncodedChildRef, LeafLabel, PairsIter, Tdd};
 use num_bigint::BigUint;
 
@@ -217,7 +218,7 @@ impl Tdd {
 
     /// [`Self::into_counter`] with the storage and pin semantics of [`Self::counter_with`].
     pub fn into_counter_with(self, retention: Retention, convention: PinSemantics) -> Result<OwnedModelCounter, OperationError> {
-        let context = self.context().clone();
+        let context = Arc::clone(self.context());
         context.run(|eng| Counter::new(eng, self, retention, convention))
     }
 

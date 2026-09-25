@@ -1,6 +1,7 @@
 //! Retained algebra values for repeated evaluations under changing evidence.
 
 use std::borrow::Borrow;
+use std::sync::Arc;
 
 use crate::{Engine, Tdd, OperationError, LiteralInput};
 use crate::diagram::EvalAlgebra;
@@ -108,7 +109,7 @@ impl Tdd {
     /// circuit and algebra; [`Evaluation::into_inner`] recovers the circuit.
     /// On construction failure, the consumed circuit is dropped.
     pub fn into_evaluator<S: EvalAlgebra>(self, algebra: S) -> Result<OwnedEvaluator<S>, OperationError> {
-        let context = self.context().clone();
+        let context = Arc::clone(self.context());
         context.run(|eng| Evaluation::new(eng, self, algebra))
     }
 

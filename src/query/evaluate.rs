@@ -40,6 +40,25 @@ impl Engine {
         gate.finish()?;
         Ok(result)
     }
+
+    /// Run [`Tdd::weighted_value`](crate::Tdd::weighted_value) using this batch's scratch and resource limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns the operation's errors or [`OperationError::Stopped`]
+    /// on cancellation. Allocation refusals return
+    /// [`OperationError::OverBudget`].
+    ///
+    /// Stops are checked at entry, at amortized node boundaries and before return.
+    /// Numeric payload allocations are outside the best-effort byte budget.
+    pub fn weighted_value(&self, tdd: &Tdd) -> Result<Option<WeightValue>, OperationError> {
+        let _op = self.limits().enter()?;
+        let Some(ws) = tdd.weights.as_ref() else { return Ok(None); };
+        let mut gate = self.limits().gate();
+        let value = weighted_output_value(self, tdd, ws, &mut gate)?;
+        gate.finish()?;
+        Ok(Some(value))
+    }
 }
 
 /// [`evaluate`] as an instance of the shared bottom-up walk.
@@ -123,27 +142,6 @@ impl<S: EvalAlgebra> PairAlgebra for Evaluate<'_, S> {
     }
     fn mul(&self, a: &S::Value, b: &S::Value) -> S::Value {
         self.algebra.mul(a, b)
-    }
-}
-
-impl Engine {
-    /// Run [`Tdd::weighted_value`](crate::Tdd::weighted_value) using this batch's scratch and resource limits.
-    ///
-    /// # Errors
-    ///
-    /// Returns the operation's errors or [`OperationError::Stopped`]
-    /// on cancellation. Allocation refusals return
-    /// [`OperationError::OverBudget`].
-    ///
-    /// Stops are checked at entry, at amortized node boundaries and before return.
-    /// Numeric payload allocations are outside the best-effort byte budget.
-    pub fn weighted_value(&self, tdd: &Tdd) -> Result<Option<WeightValue>, OperationError> {
-        let _op = self.limits().enter()?;
-        let Some(ws) = tdd.weights.as_ref() else { return Ok(None); };
-        let mut gate = self.limits().gate();
-        let value = weighted_output_value(self, tdd, ws, &mut gate)?;
-        gate.finish()?;
-        Ok(Some(value))
     }
 }
 

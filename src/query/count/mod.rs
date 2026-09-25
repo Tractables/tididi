@@ -83,63 +83,6 @@ pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: PinSema
     }
 }
 
-impl Tdd {
-    /// Count distinct assignments to `vars` that have a satisfying extension.
-    ///
-    /// Each assignment is counted once, even when several assignments to the
-    /// other variables satisfy the function. Selected variables that the function
-    /// leaves free still contribute a factor of two. Order and duplicates do not
-    /// matter; an empty selection counts one for a satisfiable function and zero
-    /// for an unsatisfiable one. Every selected variable must belong to the vtree.
-    ///
-    /// Borrows a structural diagram, ignores attached weights, and returns an
-    /// exact integer. The query quantifies unselected variables on a copy before
-    /// counting, so it can require more work and memory than [`model_count`](Self::model_count).
-    /// Selecting every vtree variable uses ordinary counting without copying.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`OperationError::VariableNotInVtree`] for an absent variable,
-    /// [`OperationError::MarginalLevel`] for discarded structure, or
-    /// [`OperationError::OverBudget`] if an allocation is refused.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Tdd, Vtree};
-    /// use tididi::vtree::VarId;
-    /// let vtree = Arc::new(Vtree::balanced(3));
-    /// let f = Tdd::clause(&vtree, [1, 2])?;
-    /// # tididi::test_helpers::assert_canonical(&f);
-    /// assert_eq!(f.model_count()?, 6u32.into());
-    /// // Either value of x1 can be extended to a satisfying assignment.
-    /// assert_eq!(f.projected_model_count(&[VarId(1)])?, 2u32.into());
-    /// assert_eq!(f.projected_model_count(&[VarId(1), VarId(2)])?, 3u32.into());
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
-    pub fn projected_model_count(&self, vars: &[VarId]) -> Result<BigUint, OperationError> {
-        self.context().run(|eng| eng.projected_model_count(self, vars))
-    }
-
-    /// Return per-node counts, saturating values above `u128::MAX`.
-    ///
-    /// Indexed by vtree level and local node index. Zero and all values below
-    /// `u128::MAX` are exact. A value of `u128::MAX` means the count is at least
-    /// that large; it cannot distinguish an exact maximum from overflow.
-    /// [`model_count`](Self::model_count) returns the exact total. Leaf columns contain three labels;
-    /// count-marginal columns contain their stored values. Internal columns of
-    /// a false diagram are empty. Uses the diagram's context and retains all
-    /// columns during the fold.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`OperationError::IncompatibleWeights`] for weighted marginal
-    /// levels, [`OperationError::OverBudget`] if an allocation is refused,
-    /// or [`OperationError::Stopped`] on cancellation.
-    pub fn node_counts_u128(&self) -> Result<Vec<Vec<u128>>, OperationError> {
-        self.context().run(|eng| eng.node_counts_u128(self))
-    }
-}
-
 impl Engine {
     /// Run [`Tdd::projected_model_count`] under this batch's resource limits.
     ///
