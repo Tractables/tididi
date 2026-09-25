@@ -78,6 +78,18 @@ fn algebra_evaluation_stops_at_entry_during_work_and_before_return() {
     }
 }
 
+/// The closing stop test charges no work of its own: evaluating the false
+/// diagram walks nothing, so the work clock does not move.
+#[test]
+fn the_closing_stop_test_charges_no_work() {
+    let eng = Engine::new();
+    let f = Tdd::zero(&Arc::new(Vtree::balanced(3)));
+    assert_canonical(&f);
+    let mark = eng.limits().mark();
+    eng.evaluate(&f, &RationalWeights::unit(3)).unwrap();
+    assert_eq!(eng.limits().work_since(mark), 0);
+}
+
 /// Records live algebra values and the charged column-buffer high-water mark.
 #[derive(Default)]
 struct Usage {

@@ -73,6 +73,13 @@ impl PollGate<'_> {
         }
         self.lim.poll_now(done)
     }
+
+    /// Charge the residue and test cancellation even when the gate is empty:
+    /// the last check a query makes before it returns its answer.
+    pub(crate) fn finish(mut self) -> Result<(), OperationError> {
+        self.lim.charge_work(std::mem::replace(&mut self.work, 0));
+        self.lim.check_stop()
+    }
 }
 
 impl Drop for PollGate<'_> {

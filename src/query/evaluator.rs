@@ -241,8 +241,7 @@ impl<S: EvalAlgebra> EvaluationState<S> {
                 let output = tdd.output();
                 self.cols[output.vtree.idx()][output.local.idx()].clone()
             };
-            gate.poll(1)?;
-            gate.flush()?;
+            gate.finish()?;
             Ok(value)
         })();
         if result.is_err() { self.observations.invalidate(); }

@@ -595,8 +595,7 @@ impl CountState {
                     CountRead::Big(value) => value.clone(),
                 }
             };
-            gate.poll(1)?;
-            gate.flush()?;
+            gate.finish()?;
             Ok(count)
         })();
         if result.is_err() {

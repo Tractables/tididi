@@ -45,3 +45,22 @@ fn only_the_flush_reports_a_stop() {
     gate.poll(7).expect("under the stride, so nothing is read");
     assert!(matches!(gate.flush(), Err(OperationError::Stopped)));
 }
+
+/// A query's last check: `finish` tests cancellation even on an empty gate,
+/// and charges only the residue the gate holds.
+#[test]
+fn finish_tests_the_stop_without_adding_work() {
+    let lim = Limits::new();
+    let before = lim.work_units();
+    lim.gate_with(1000).finish().expect("no stop armed");
+    assert_eq!(lim.work_units(), before, "an empty gate charges nothing");
+    let mut gate = lim.gate_with(1000);
+    gate.poll(7).unwrap();
+    gate.finish().expect("no stop armed");
+    assert_eq!(lim.work_units(), before + 7, "the residue is charged once");
+    let _prior = lim.install(LimitConfig::none().with_stop_rules(
+        StopRules::default().after_pairs(0, StopAt::WorkUnits(before + 7)),
+    ));
+    assert!(matches!(lim.gate_with(1000).finish(), Err(OperationError::Stopped)));
+    assert_eq!(lim.work_units(), before + 7);
+}

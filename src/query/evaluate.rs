@@ -42,8 +42,7 @@ impl Engine {
                 })?;
             cols[tdd.output.vtree.idx()].swap_remove(tdd.output.local.idx())
         };
-        gate.poll(1)?;
-        gate.flush()?;
+        gate.finish()?;
         Ok(result)
     }
 }
@@ -149,8 +148,7 @@ impl Engine {
         self.limits().check_stop()?;
         let mut gate = self.limits().gate();
         let value = weighted_output_value(self, tdd, ws, &mut gate)?;
-        gate.poll(1)?;
-        gate.flush()?;
+        gate.finish()?;
         Ok(Some(value))
     }
 }
