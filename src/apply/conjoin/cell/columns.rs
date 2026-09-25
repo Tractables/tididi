@@ -7,7 +7,7 @@ use crate::limits::Transient;
 /// One g column's resolved pair slice, held as raw parts.
 ///
 /// Raw rather than `&[ChildPair]` so the table can live in a `Cell` scratch
-/// pool: [`Pool`](crate::limits::pool::Pool) requires a `'static` buffer type, which a lifetime-
+/// pool: [`Pool`](crate::execution::pool::Pool) requires a `'static` buffer type, which a lifetime-
 /// carrying slice is not. Every construction site below writes the parts of a
 /// live `&[ChildPair]`; [`RightColumns::get`] is the only reader.
 #[derive(Clone, Copy)]

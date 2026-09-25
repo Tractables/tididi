@@ -10,7 +10,6 @@
 //! Output-node limits apply to the operations listed on
 //! [`LimitConfig::with_output_node_cap`]. Cancellation takes effect at poll points.
 
-pub(crate) mod pool;
 mod error;
 pub(crate) mod growth;
 mod memory;

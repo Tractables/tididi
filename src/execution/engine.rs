@@ -55,10 +55,10 @@ pub struct Engine {
     clause: crate::apply::conjoin_clause::ClauseScratch,
     reduce: crate::reduce::ReduceScratch,
     negate: crate::apply::negate::NegateScratch,
-    restructure: crate::limits::pool::Pool<crate::restructure::scratch::RestructureScratch>,
-    sparse: crate::limits::pool::Pool<crate::apply::conjoin::SparseWorkspace>,
+    restructure: crate::execution::pool::Pool<crate::restructure::scratch::RestructureScratch>,
+    sparse: crate::execution::pool::Pool<crate::apply::conjoin::SparseWorkspace>,
     levels: crate::diagram::LevelPool,
-    model_layout: crate::limits::pool::Pool<crate::build::models::layout::Layout>,
+    model_layout: crate::execution::pool::Pool<crate::build::models::layout::Layout>,
 }
 
 impl std::fmt::Debug for Engine {
@@ -102,10 +102,10 @@ impl Engine {
             clause: crate::apply::conjoin_clause::ClauseScratch::default(),
             reduce: crate::reduce::ReduceScratch::default(),
             negate: crate::apply::negate::NegateScratch::default(),
-            restructure: crate::limits::pool::Pool::default(),
-            sparse: crate::limits::pool::Pool::default(),
+            restructure: crate::execution::pool::Pool::default(),
+            sparse: crate::execution::pool::Pool::default(),
             levels: crate::diagram::LevelPool::default(),
-            model_layout: crate::limits::pool::Pool::default(),
+            model_layout: crate::execution::pool::Pool::default(),
         }
     }
 
@@ -154,21 +154,21 @@ impl Engine {
     /// The rotation-search pool.
     #[must_use]
     #[inline]
-    pub(crate) fn restructure(&self) -> &crate::limits::pool::Pool<crate::restructure::scratch::RestructureScratch> {
+    pub(crate) fn restructure(&self) -> &crate::execution::pool::Pool<crate::restructure::scratch::RestructureScratch> {
         &self.restructure
     }
 
     /// The sparse-level workspace.
     #[must_use]
     #[inline]
-    pub(crate) fn sparse(&self) -> &crate::limits::pool::Pool<crate::apply::conjoin::SparseWorkspace> {
+    pub(crate) fn sparse(&self) -> &crate::execution::pool::Pool<crate::apply::conjoin::SparseWorkspace> {
         &self.sparse
     }
 
     /// The model-table layout pool.
     #[must_use]
     #[inline]
-    pub(crate) fn model_layout(&self) -> &crate::limits::pool::Pool<crate::build::models::layout::Layout> {
+    pub(crate) fn model_layout(&self) -> &crate::execution::pool::Pool<crate::build::models::layout::Layout> {
         &self.model_layout
     }
 

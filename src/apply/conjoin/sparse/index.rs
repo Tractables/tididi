@@ -1,7 +1,7 @@
 //! The reusable sparse workspace: reverse indices and buckets.
 
 use super::*;
-use crate::limits::pool::{Buffers, Nested, PooledScratch, Scratch};
+use crate::execution::pool::{Buffers, Nested, PooledScratch, Scratch};
 use crate::limits::Limits;
 
 /// Candidate that survived the sibling liveness filter, grouped by f-parent.

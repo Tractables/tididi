@@ -1,6 +1,6 @@
 use super::*;
 use crate::diagram::WeightValue;
-use crate::limits::pool::{Pool, PooledScratch, SCRATCH_RETAIN_BYTES};
+use crate::execution::pool::{Pool, PooledScratch, SCRATCH_RETAIN_BYTES};
 use crate::test_helpers::{CountVecExt, rat};
 
 fn populated(weighted: bool, n: usize) -> StreamCache {

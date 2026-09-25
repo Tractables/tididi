@@ -6,7 +6,7 @@
 
 use std::cell::Cell;
 
-use super::{Charged, Limits};
+use crate::limits::{Charged, Limits};
 
 /// Maximum retained scratch capacity between operations. Larger buffers are
 /// released so an unusually large operation does not permanently retain them.
@@ -242,3 +242,7 @@ pub(crate) fn release_if_oversized<B: Scratch + ?Sized>(lim: &Limits, buf: &mut 
         lim.release_bytes(bytes);
     }
 }
+
+#[cfg(test)]
+#[path = "tests/pool.rs"]
+mod tests;

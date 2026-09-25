@@ -85,7 +85,7 @@ fn scatter_level(
 /// marking arrays are emptied by advancing their epoch, and `filtered`'s
 /// touched list is cleared with it here for the same reason as `p2_map`'s.
 struct WsGuard<'a> {
-    ws: crate::limits::pool::PoolGuard<'a, SparseWorkspace>,
+    ws: crate::execution::pool::PoolGuard<'a, SparseWorkspace>,
     repair: bool,
 }
 

@@ -1,7 +1,8 @@
 //! Recycling pool for `Vec<TddLevel>` allocations, owned by the engine.
 
 use crate::Engine;
-use crate::limits::{Limits, pool::{Buffers, Pool, PooledScratch, Scratch}};
+use crate::limits::Limits;
+use crate::execution::pool::{Buffers, Pool, PooledScratch, Scratch};
 
 use super::level::TddLevel;
 

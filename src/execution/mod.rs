@@ -5,6 +5,7 @@
 
 mod context;
 mod engine;
+pub(crate) mod pool;
 
 pub use context::Context;
 pub use engine::Engine;

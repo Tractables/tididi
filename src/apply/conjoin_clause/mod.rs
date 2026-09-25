@@ -17,7 +17,7 @@
 //! derivation.
 
 use crate::Engine;
-use crate::limits::pool::Pool;
+use crate::execution::pool::Pool;
 use std::sync::Arc;
 
 use crate::diagram::Literal;

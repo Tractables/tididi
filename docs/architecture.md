@@ -105,7 +105,7 @@ identical representations.
 |---|---|
 | [`vtree`] | Variable grouping, traversal orders, construction and vtree edits. |
 | [`diagram`] | Diagram storage, child references, weights and level pools. |
-| [`limits`] | Resource limits, cancellation, memory hooks, measurements and scratch pools. |
+| [`limits`] | Resource limits, cancellation, memory hooks and measurements. |
 | `value` | Count arithmetic, value domains, column storage and the shared value traversal. |
 | `build` | Constants, literals, cubes and sets of models. |
 | [`apply`] | Boolean composition, conditioning, projection and restriction. |
@@ -115,7 +115,7 @@ identical representations.
 | [`restructure`] | Vtree search, grafting and embedding with the corresponding diagram edits. |
 | [`query`] | Counting, satisfiability, evaluation and traversal of borrowed diagrams. |
 | [`cnf`] | Clauses that define a diagram's nodes, for an external SAT solver, and the probe that asks it which nodes are impossible. |
-| [`execution`] | Shared context checkouts and each batch's scratch and limits. |
+| [`execution`] | Shared context checkouts, scratch pools and each batch's limits. |
 | [`io`] | Diagram persistence and Graphviz output. |
 | [`guide`] | Markdown guides included in rustdoc and doctests. |
 | `test_helpers` | Formula generators, independent oracles and invariant checkers. |

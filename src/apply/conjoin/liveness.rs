@@ -31,7 +31,7 @@ pub(crate) struct PrefilterSideMasks {
 }
 
 impl PrefilterSideMasks {
-    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::limits::pool::Scratch)) {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
         visit(&mut self.live_cols);
         visit(&mut self.reach);
     }
@@ -45,7 +45,7 @@ impl PrefilterSideMasks {
 pub(crate) type PrefilterMaskScratch = Sides<PrefilterSideMasks>;
 
 impl PrefilterMaskScratch {
-    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::limits::pool::Scratch)) {
+    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
         self.left.buffers(visit);
         self.right.buffers(visit);
     }

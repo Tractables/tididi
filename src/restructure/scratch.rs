@@ -1,7 +1,7 @@
 //! The reusable rotation-probe scratch and the engine's pool for it.
 
 use crate::limits::Limits;
-use crate::limits::pool::{Buffers, Nested, PooledScratch, Scratch};
+use crate::execution::pool::{Buffers, Nested, PooledScratch, Scratch};
 
 use rustc_hash::FxHashMap;
 

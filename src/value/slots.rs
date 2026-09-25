@@ -410,14 +410,14 @@ impl RefSlotScratch {
     }
 }
 
-impl crate::limits::pool::Buffers for RefSlotScratch {
-    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::limits::pool::Scratch)) {
+impl crate::execution::pool::Buffers for RefSlotScratch {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
         visit(&mut self.referenced);
         visit(&mut self.seen);
     }
 }
 
-impl crate::limits::pool::PooledScratch for RefSlotScratch {
+impl crate::execution::pool::PooledScratch for RefSlotScratch {
     fn prepare(&mut self) { self.clear(); }
 }
 

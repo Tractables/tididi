@@ -79,8 +79,8 @@ impl Layout {
     }
 }
 
-impl crate::limits::pool::Buffers for Layout {
-    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::limits::pool::Scratch)) {
+impl crate::execution::pool::Buffers for Layout {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
         visit(&mut self.vars);
         visit(&mut self.count);
         visit(&mut self.lo);
@@ -88,13 +88,13 @@ impl crate::limits::pool::Buffers for Layout {
     }
 }
 
-impl crate::limits::pool::PooledScratch for Layout {
+impl crate::execution::pool::PooledScratch for Layout {
     fn prepare(&mut self) {}
     /// The buffers describe one placement together, so they are kept or
     /// released together: released past the byte cap or once the vtree is gone.
     fn retain(&mut self, lim: &Limits) {
-        use crate::limits::pool::Buffers;
-        if self.retained_bytes() > crate::limits::pool::SCRATCH_RETAIN_BYTES || self.vtree.strong_count() == 0 {
+        use crate::execution::pool::Buffers;
+        if self.retained_bytes() > crate::execution::pool::SCRATCH_RETAIN_BYTES || self.vtree.strong_count() == 0 {
             self.release_all(lim);
             *self = Self::default();
         }

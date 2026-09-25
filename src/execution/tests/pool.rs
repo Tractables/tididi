@@ -1,4 +1,4 @@
-use crate::limits::pool::{Buffers, Nested, Pool, PooledScratch, Scratch};
+use crate::execution::pool::{Buffers, Nested, Pool, PooledScratch, Scratch};
 
 #[derive(Default)]
 struct WorkingSet {
@@ -97,7 +97,7 @@ fn return_applies_retention_to_each_checkout() {
 #[test]
 fn releasing_oversized_scratch_returns_its_bytes_to_the_meter() {
     use crate::limits::Limits;
-    use crate::limits::pool::{SCRATCH_RETAIN_BYTES, release_if_oversized};
+    use crate::execution::pool::{SCRATCH_RETAIN_BYTES, release_if_oversized};
 
     let lim = Limits::new();
     let mut buf: Vec<u64> = Vec::new();
@@ -119,7 +119,7 @@ fn releasing_oversized_scratch_returns_its_bytes_to_the_meter() {
 #[test]
 fn releasing_an_undersized_buffer_keeps_both_the_allocation_and_the_charge() {
     use crate::limits::Limits;
-    use crate::limits::pool::release_if_oversized;
+    use crate::execution::pool::release_if_oversized;
 
     let lim = Limits::new();
     let mut buf: Vec<u64> = Vec::new();
@@ -163,7 +163,7 @@ impl PooledScratch for Capacity {
 
 #[test]
 fn independent_pools_share_one_ceiling_and_release_their_claims() {
-    use crate::limits::pool::ENGINE_RETAIN_BYTES;
+    use crate::execution::pool::ENGINE_RETAIN_BYTES;
     let lim = crate::limits::Limits::new();
     let first = Pool::<Capacity>::default();
     let second = Pool::<Capacity>::default();
@@ -205,7 +205,7 @@ fn nested_return_replaces_its_claim_and_unwind_leaves_other_pools_usable() {
 
 #[test]
 fn recycled_levels_and_scratch_use_the_same_allowance() {
-    use crate::limits::pool::ENGINE_RETAIN_BYTES;
+    use crate::execution::pool::ENGINE_RETAIN_BYTES;
     use crate::diagram::{take_levels, return_levels, PoolSlot};
     let eng = crate::Engine::new();
     let blocker = Pool::<Capacity>::default();
@@ -241,7 +241,7 @@ impl PooledScratch for Pair {
 
 #[test]
 fn default_retention_releases_each_listed_buffer_on_its_own_bytes() {
-    use crate::limits::pool::SCRATCH_RETAIN_BYTES;
+    use crate::execution::pool::SCRATCH_RETAIN_BYTES;
     let lim = crate::limits::Limits::new();
     let pool = Pool::<Pair>::default();
     {
@@ -258,7 +258,7 @@ fn default_retention_releases_each_listed_buffer_on_its_own_bytes() {
 
 #[test]
 fn nested_buffers_are_released_on_their_total_bytes() {
-    use crate::limits::pool::{SCRATCH_RETAIN_BYTES, release_if_oversized};
+    use crate::execution::pool::{SCRATCH_RETAIN_BYTES, release_if_oversized};
     let lim = crate::limits::Limits::new();
     // Two outer rows whose inner capacities together pass the cap: a count of
     // outer rows would keep them, the byte count must not.

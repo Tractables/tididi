@@ -91,7 +91,7 @@ impl GridArena {
         Ok(())
     }
 
-    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::limits::pool::Scratch)) {
+    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
         visit(&mut self.cells);
         visit(&mut self.grids);
         if let Some(bump) = &mut self.bump { visit(&mut bump.free); }

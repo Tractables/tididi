@@ -91,9 +91,9 @@ pub(super) struct Products {
 }
 
 impl Products {
-    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::limits::pool::Scratch)) {
+    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
         self.arena.buffers(visit);
-        visit(&mut crate::limits::pool::Nested(&mut self.product_lists));
+        visit(&mut crate::execution::pool::Nested(&mut self.product_lists));
         visit(&mut self.live_counts);
         visit(&mut self.has_pl);
     }

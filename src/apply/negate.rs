@@ -9,7 +9,7 @@ use crate::diagram::{Assembly, ChildDecoder, ChildPair, EncodedChildRef, LeafLab
 
 use crate::Engine;
 use crate::limits::OperationError;
-use crate::limits::pool::Pool;
+use crate::execution::pool::Pool;
 use crate::apply::falsity::empty_node;
 use std::sync::Arc;
 

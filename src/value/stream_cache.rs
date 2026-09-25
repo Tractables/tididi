@@ -1,7 +1,7 @@
 //! The per-apply cache of already-computed child columns for streaming levels.
 
 use crate::diagram::WeightValue;
-use crate::limits::pool::{Buffers, PooledScratch, Scratch};
+use crate::execution::pool::{Buffers, PooledScratch, Scratch};
 use super::CountVec;
 
 /// Lazily computed child columns for streaming-target levels whose children

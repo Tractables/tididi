@@ -12,6 +12,4 @@ mod config_roundtrip;
 mod captured;
 mod conversion;
 
-mod pool;
-
 mod charged;

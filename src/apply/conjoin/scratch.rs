@@ -1,7 +1,8 @@
 //! Workspaces retained between conjunctions.
 
 use super::*;
-use crate::limits::{Limits, pool::{Buffers, Pool, PooledScratch, Scratch}};
+use crate::limits::Limits;
+use crate::execution::pool::{Buffers, Pool, PooledScratch, Scratch};
 
 #[derive(Default)]
 pub(crate) struct ApplyScratch {

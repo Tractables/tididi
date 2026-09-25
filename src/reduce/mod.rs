@@ -11,7 +11,7 @@ pub(crate) mod slot_prune; // post-tagger marginal-slot compaction
 mod driver;
 pub(crate) use driver::restore_marginal_invariants;
 
-use crate::limits::pool::Pool;
+use crate::execution::pool::Pool;
 
 use self::contract::scratch::ContractScratch;
 use crate::value::slots::RefSlotScratch;

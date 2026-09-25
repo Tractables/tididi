@@ -56,7 +56,7 @@ fn ordinary_conjunctions_reuse_the_context_workspace() {
 
 #[test]
 fn returning_the_workspace_trims_the_width_arrays() {
-    use crate::limits::pool::SCRATCH_RETAIN_BYTES;
+    use crate::execution::pool::SCRATCH_RETAIN_BYTES;
     let eng = Engine::new();
     {
         let mut ws = eng.apply().workspace.checkout(eng.limits());
