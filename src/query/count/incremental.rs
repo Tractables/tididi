@@ -608,10 +608,7 @@ impl CountState {
         let (tdd, cols, convention) = (tdd, &mut self.cols, self.convention);
         self.observations.refresh(eng, tdd, gate, |pins, changed, gate| {
             let fold = OverflowingCounts { pins, convention };
-            refresh_columns(&fold, eng, tdd, cols, changed, gate, |fold, col, width| {
-                if col.len() != width { *col = fold.alloc(eng, width)?; }
-                Ok(())
-            })
+            refresh_columns(&fold, eng, tdd, cols, changed, gate)
         })
     }
 

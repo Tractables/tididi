@@ -153,19 +153,18 @@ impl Observations {
 pub(crate) fn refresh_columns<F: LevelFold>(
     fold: &F, eng: &Engine, tdd: &Tdd, cols: &mut [F::Col],
     plan: Refresh<'_>, gate: &mut PollGate,
-    mut ensure: impl FnMut(&F, &mut F::Col, usize) -> Result<(), OperationError>,
 ) -> Result<(), OperationError> {
-    if let Refresh::Changed(changed) = plan {
-        for &level in changed { fold_level(fold, eng, tdd, cols, level, Some(gate))?; }
-        Ok(())
-    } else {
-        let Refresh::All(retention) = plan else { unreachable!() };
-        if retention == Retention::Frontier {
-            for col in cols.iter_mut() { *col = F::Col::default(); }
+    match plan {
+        Refresh::Changed(changed) => {
+            for &level in changed { fold_level(fold, eng, tdd, cols, level, gate)?; }
+            Ok(())
         }
-        fold_bottom_up(fold, eng, tdd, cols, retention, Some(gate), |cols, ti| {
-            ensure(fold, &mut cols[ti], tdd.reference_slot_count(VtreeIdx(ti as u32)))
-        })
+        Refresh::All(retention) => {
+            if retention == Retention::Frontier {
+                for col in cols.iter_mut() { *col = F::Col::default(); }
+            }
+            fold_bottom_up(fold, eng, tdd, cols, retention, gate)
+        }
     }
 }
 

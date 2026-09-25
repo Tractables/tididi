@@ -8,7 +8,6 @@ use crate::vtree::VarId;
 use crate::value::Retention;
 use super::cache::{Observations, BoundState, refresh_columns};
 use super::evaluate::Evaluate;
-use super::fold::LevelFold;
 
 /// Evaluate a circuit repeatedly under changing observations.
 ///
@@ -233,10 +232,7 @@ impl<S: EvalAlgebra> EvaluationState<S> {
                 let (tdd, algebra, cols) = (tdd, &self.algebra, &mut self.cols);
                 self.observations.refresh(eng, tdd, &mut gate, |pins, changed, gate| {
                     let fold = Evaluate::new(algebra, pins);
-                    refresh_columns(&fold, eng, tdd, cols, changed, gate, |fold, col, width| {
-                        if col.len() != width { *col = fold.alloc(eng, width)?; }
-                        Ok(())
-                    })
+                    refresh_columns(&fold, eng, tdd, cols, changed, gate)
                 })?;
                 let output = tdd.output();
                 self.cols[output.vtree.idx()][output.local.idx()].clone()

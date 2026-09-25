@@ -55,10 +55,7 @@ pub(super) fn is_sat_structural(eng: &Engine, f: &Tdd) -> Result<bool, crate::Op
     let mut cols: Vec<Vec<bool>> = Vec::new();
     eng.limits().try_resize(&mut cols, f.vtree.num_nodes(), Vec::new())?;
     let mut poll = eng.limits().gate();
-    fold_bottom_up(&fold, eng, f, &mut cols, Retention::Frontier, Some(&mut poll), |cols, ti| {
-        cols[ti] = fold.alloc(eng, f.reference_slot_count(VtreeIdx(ti as u32)))?;
-        Ok(())
-    })?;
+    fold_bottom_up(&fold, eng, f, &mut cols, Retention::Frontier, &mut poll)?;
     poll.flush()?;
     let (out_t, out_i) = (f.output.vtree.idx(), f.output.local.idx());
     Ok(cols[out_t][out_i])

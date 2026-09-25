@@ -10,7 +10,7 @@
 //! attached weights through the value domains in `value` (`ValueDomain`), the
 //! fold marginalization writes its levels with.
 
-use crate::value::{walk_bottom_up, Retention};
+use crate::value::{walk_bottom_up, CountVec, Retention};
 use crate::diagram::{EncodedChildRef, ChildRef, LeafLabel, PairsIter, ChildDecoder, Tdd, ValueRef, LEAF_WIDTH};
 use crate::Engine;
 use crate::limits::PollGate;
@@ -31,6 +31,24 @@ impl<C> Clone for Side<'_, C> {
 }
 impl<C> Copy for Side<'_, C> {}
 
+/// One level's column of query values, by its slot count.
+pub(crate) trait Column: Default {
+    /// Slots the column holds.
+    fn width(&self) -> usize;
+}
+
+impl<T> Column for Vec<T> {
+    fn width(&self) -> usize {
+        self.len()
+    }
+}
+
+impl Column for CountVec {
+    fn width(&self) -> usize {
+        self.len()
+    }
+}
+
 /// What one query computes per node, and what column it keeps.
 pub(crate) trait LevelFold {
     /// Count work by node slots in bounded batches instead of by pair visits.
@@ -39,7 +57,7 @@ pub(crate) trait LevelFold {
     /// The value of one node.
     type Value;
     /// One level's worth of values.
-    type Col: Default;
+    type Col: Column;
 
     /// A fresh `width`-slot column, returning a reservation refusal.
     fn alloc(&self, eng: &Engine, width: usize) -> Result<Self::Col, OperationError>;
@@ -133,12 +151,10 @@ pub(crate) fn fold_level<F: LevelFold>(
     tdd: &Tdd,
     cols: &mut [F::Col],
     t: VtreeIdx,
-    mut poll: Option<&mut PollGate>,
+    gate: &mut PollGate,
 ) -> Result<(), OperationError> {
     let ti = t.idx();
-    if let Some(gate) = poll.as_deref_mut() {
-        gate.poll(1)?;
-    }
+    gate.poll(1)?;
     if tdd.vtree.node(t).is_leaf() {
         let var = tdd.vtree.leaf_var(t);
         for i in 0..LEAF_WIDTH {
@@ -158,11 +174,11 @@ pub(crate) fn fold_level<F: LevelFold>(
     let batch = if F::NODE_WORK { eng.limits().reduce_poll_stride().clamp(1, 256) as usize } else { usize::MAX };
     for start in (0..level.nodes.len()).step_by(batch) {
         let end = start.saturating_add(batch).min(level.nodes.len());
-        if F::NODE_WORK && let Some(gate) = poll.as_deref_mut() {
+        if F::NODE_WORK {
             gate.poll((end - start) as u64)?;
         }
         for (i, pairs) in level.internal_inputs_range(start..end) {
-            if !F::NODE_WORK && let Some(gate) = poll.as_deref_mut() {
+            if !F::NODE_WORK {
                 gate.poll(pairs.len() as u64 + 1)?;
             }
             let v = f.fold_node(
@@ -182,10 +198,11 @@ pub(crate) fn fold_level<F: LevelFold>(
 /// its parent's is complete; the output level is exempt, being the one column
 /// read afterwards. See [`walk_bottom_up`] for the order and the frontier.
 ///
-/// `ensure_col` is the caller's per-level column sizing, called before each
-/// level is written. `poll` is the caller's stop-axis gate: with one, the walk
-/// is cut at amortized node boundaries and the caller gets the error; without one it runs to
-/// the end.
+/// Before a level is written, its column is allocated at the level's
+/// reference slot count unless it already has that width, so a column kept
+/// from an earlier pass is reused and overwritten. `gate` is the caller's
+/// stop-axis gate: the walk is cut at amortized node boundaries and the caller
+/// gets the error.
 ///
 /// # Errors
 ///
@@ -196,8 +213,7 @@ pub(crate) fn fold_bottom_up<F: LevelFold>(
     tdd: &Tdd,
     cols: &mut [F::Col],
     retain: Retention,
-    mut poll: Option<&mut PollGate>,
-    mut ensure_col: impl FnMut(&mut [F::Col], usize) -> Result<(), OperationError>,
+    gate: &mut PollGate,
 ) -> Result<(), OperationError> {
     walk_bottom_up(
         &tdd.vtree,
@@ -205,8 +221,11 @@ pub(crate) fn fold_bottom_up<F: LevelFold>(
         cols,
         |_, _| false,
         |cols, t| {
-            ensure_col(cols, t.idx())?;
-            fold_level(f, eng, tdd, cols, t, poll.as_deref_mut())
+            let width = tdd.reference_slot_count(t);
+            if cols[t.idx()].width() != width {
+                cols[t.idx()] = f.alloc(eng, width)?;
+            }
+            fold_level(f, eng, tdd, cols, t, gate)
         },
         |cols, i| f.release(eng, &mut cols[i]),
         retain.frontier(tdd.output.vtree),
