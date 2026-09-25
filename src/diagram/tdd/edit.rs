@@ -42,7 +42,6 @@ impl Tdd {
 
     /// Replace structural nodes by values. The domain supplies the column and
     /// optional slot remap; this boundary owns the parent's references and work.
-    #[inline(always)]
     pub(crate) fn install_marginal_level(
         &mut self, v: VtreeIdx,
         install: impl FnOnce(&mut TddLevel) -> Option<Vec<u32>>,
@@ -58,7 +57,6 @@ impl Tdd {
 
     /// Install a rotation only after both levels have been built. Their old
     /// arenas are returned together for a search that may undo the rotation.
-    #[inline(always)]
     pub(crate) fn replace_level_pair(
         &mut self, outer: (VtreeIdx, TddLevel), inner: (VtreeIdx, TddLevel),
     ) -> (TddLevel, TddLevel) {

@@ -69,7 +69,11 @@ impl IntFold {
 
     /// Sum products in arbitrary precision after a fast fold refuses the total.
     /// Readers supply decoded values; this fold does not know their storage layout.
-    #[inline(always)]
+    ///
+    /// Kept out of line: it runs only when a total leaves `u128`, and inlining
+    /// it would put the bigint loop into every caller's fast path.
+    #[cold]
+    #[inline(never)]
     pub(crate) fn sum_exact<'a>(
         pairs: impl Iterator<Item = ChildPair>,
         l: impl Fn(EncodedChildRef) -> CountRead<'a>,
