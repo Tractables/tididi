@@ -83,7 +83,7 @@ impl Tdd {
     /// [`OperationError::OverBudget`] if cache metadata cannot be reserved,
     /// or [`OperationError::Stopped`] for an armed stop.
     pub fn evaluator<S: EvalAlgebra>(&self, algebra: S) -> Result<Evaluator<'_, S>, OperationError> {
-        self.vtree().context().run(|eng| Evaluator::new(eng, self, algebra))
+        self.context().run(|eng| Evaluator::new(eng, self, algebra))
     }
 
     /// Move this circuit into an evaluator without copying it.

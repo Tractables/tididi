@@ -82,19 +82,6 @@ pub(crate) fn leaf_seed(label: LeafLabel, pin: Option<bool>, convention: PinSema
     }
 }
 
-/// Count with exact integer arithmetic, releasing child columns after use.
-///
-/// Uses the shared counter fold without allocating pin storage. Allocation
-/// refusals and cancellation propagate through the engine's limits.
-pub(crate) fn model_count(eng: &Engine, tdd: &Tdd) -> Result<BigUint, OperationError> {
-    let _op = eng.limits().begin_operation();
-    if tdd.is_zero() {
-        eng.limits().check_stop()?;
-        return Ok(BigUint::ZERO);
-    }
-    ModelCounter::allocate(eng, tdd, 0, Retention::Frontier, PinSemantics::Cofactor)?.count_with(eng)
-}
-
 impl Tdd {
     /// Count distinct assignments to `vars` that have a satisfying extension.
     ///
@@ -206,10 +193,7 @@ impl Engine {
         ModelCounter::allocate(self, tdd, 0, Retention::All, PinSemantics::Cofactor)?
             .into_fast_counts(self)
     }
-}
 
-/// The counting entry point on a caller's engine.
-impl crate::Engine {
     /// Run [`Tdd::model_count`](crate::Tdd::model_count) using this batch's scratch and resource limits.
     ///
     /// # Errors
@@ -220,7 +204,14 @@ impl crate::Engine {
     ///
     /// Buffer growth is charged to the best-effort byte budget; allocations inside
     /// big-integer arithmetic are outside that budget. The input is unchanged.
-    pub fn model_count(&self, tdd: &crate::Tdd) -> Result<num_bigint::BigUint, crate::limits::OperationError> {
-        crate::query::count::model_count(self, tdd)
+    pub fn model_count(&self, tdd: &Tdd) -> Result<BigUint, OperationError> {
+        let _op = self.limits().begin_operation();
+        if tdd.is_zero() {
+            self.limits().check_stop()?;
+            return Ok(BigUint::ZERO);
+        }
+        // The shared counter fold with no pin storage, releasing each child
+        // column once its parent has read it.
+        ModelCounter::allocate(self, tdd, 0, Retention::Frontier, PinSemantics::Cofactor)?.count_with(self)
     }
 }
