@@ -1,4 +1,4 @@
-use crate::limits::pool::PooledScratch;
+use crate::limits::pool::{Buffers, Nested, PooledScratch, Scratch};
 
 use smallvec::SmallVec;
 
@@ -65,13 +65,11 @@ pub(super) struct PFusionScratch {
     pub(super) generation: u32,
 }
 
-impl PFusionScratch {
-    fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::capacity_bytes;
-        self.groups.iter().filter(|group| group.spilled()).fold(
-            capacity_bytes(&self.cells).saturating_add(capacity_bytes(&self.touched)).saturating_add(capacity_bytes(&self.groups)),
-            |bytes, group| bytes.saturating_add(group.capacity().saturating_mul(std::mem::size_of::<u32>())),
-        )
+impl Buffers for PFusionScratch {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.cells);
+        visit(&mut self.touched);
+        visit(&mut Nested(&mut self.groups));
     }
 }
 
@@ -102,21 +100,20 @@ pub(super) struct MergeBuffers {
     pub(super) group_plans: Vec<GroupPlan>,
 }
 
-impl MergeBuffers {
-    fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::capacity_bytes;
-        [
-            capacity_bytes(&self.resolve_keeps),
-            capacity_bytes(&self.filtered),
-            capacity_bytes(&self.duplicate_members),
-            capacity_bytes(&self.keep_pairs_sorted),
-            capacity_bytes(&self.member_pairs),
-            capacity_bytes(&self.seen_pairs),
-            capacity_bytes(&self.sel),
-            capacity_bytes(&self.group_plans),
-        ].into_iter().sum()
+impl Buffers for MergeBuffers {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.resolve_keeps);
+        visit(&mut self.filtered);
+        visit(&mut self.duplicate_members);
+        visit(&mut self.keep_pairs_sorted);
+        visit(&mut self.member_pairs);
+        visit(&mut self.seen_pairs);
+        visit(&mut self.sel);
+        visit(&mut self.group_plans);
     }
+}
 
+impl MergeBuffers {
     /// Empty every buffer, retaining capacity.
     pub(super) fn clear(&mut self) {
         self.resolve_keeps.clear();
@@ -127,19 +124,6 @@ impl MergeBuffers {
         self.seen_pairs.clear();
         self.sel.clear();
         self.group_plans.clear();
-    }
-
-    /// Drop the allocation of any buffer whose retained capacity exceeds the
-    /// scratch-retention cap, the same policy as `PooledScratch::retain`.
-    fn release_oversized(&mut self, lim: &crate::limits::Limits) {
-        crate::limits::pool::release_if_oversized(lim, &mut self.resolve_keeps);
-        crate::limits::pool::release_if_oversized(lim, &mut self.filtered);
-        crate::limits::pool::release_if_oversized(lim, &mut self.duplicate_members);
-        crate::limits::pool::release_if_oversized(lim, &mut self.keep_pairs_sorted);
-        crate::limits::pool::release_if_oversized(lim, &mut self.member_pairs);
-        crate::limits::pool::release_if_oversized(lim, &mut self.sel);
-        crate::limits::pool::release_if_oversized(lim, &mut self.group_plans);
-        crate::limits::pool::release_if_oversized(lim, &mut self.seen_pairs);
     }
 }
 
@@ -157,16 +141,15 @@ pub(super) struct DuplicateScratch {
     pub(super) out: Vec<crate::diagram::ChildPair>,
 }
 
-impl DuplicateScratch {
-    fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::capacity_bytes;
-        [
-            capacity_bytes(&self.pairs),
-            capacity_bytes(&self.counts),
-            capacity_bytes(&self.out),
-        ].into_iter().sum()
+impl Buffers for DuplicateScratch {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.pairs);
+        visit(&mut self.counts);
+        visit(&mut self.out);
     }
+}
 
+impl DuplicateScratch {
     /// Empty every buffer, retaining capacity. Called at the top of each
     /// `resolve_duplicate_pairs_in_node` so a handed-down scratch is
     /// indistinguishable from a fresh one; the mid-function `?` bails
@@ -175,13 +158,6 @@ impl DuplicateScratch {
         self.pairs.clear();
         self.counts.clear();
         self.out.clear();
-    }
-
-    /// Per-buffer capacity release, same policy as [`MergeBuffers`].
-    fn release_oversized(&mut self, lim: &crate::limits::Limits) {
-        crate::limits::pool::release_if_oversized(lim, &mut self.pairs);
-        crate::limits::pool::release_if_oversized(lim, &mut self.out);
-        crate::limits::pool::release_if_oversized(lim, &mut self.counts);
     }
 }
 
@@ -199,6 +175,14 @@ pub(super) struct MergeRemap {
     /// multiplicity and are folded by pair fusion into a summed count. Only set at
     /// plain t1 levels under a marginal-flagged parent.
     pub(super) duplicate_redirect: Vec<bool>,
+}
+
+impl Buffers for MergeRemap {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.merge_target);
+        visit(&mut self.final_remap);
+        visit(&mut self.duplicate_redirect);
+    }
 }
 
 /// Scratch buffers reused across `contract_all_twins` calls.
@@ -278,67 +262,39 @@ pub(crate) struct ContractScratch {
     pub(super) duplicate: DuplicateScratch,
 }
 
-impl PooledScratch for ContractScratch {
-    fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::capacity_bytes;
-        [
-            capacity_bytes(&self.counts),
-            capacity_bytes(&self.entries),
-            capacity_bytes(&self.cursors),
-            capacity_bytes(&self.twin_hash_table),
-            capacity_bytes(&self.fingerprints),
-            capacity_bytes(&self.flat_groups),
-            capacity_bytes(&self.group_starts),
-            capacity_bytes(&self.is_candidate),
-            capacity_bytes(&self.slice_unsorted),
-            capacity_bytes(&self.remap.merge_target).saturating_add(capacity_bytes(&self.remap.final_remap)).saturating_add(capacity_bytes(&self.remap.duplicate_redirect)),
-            capacity_bytes(&self.has_marginal_below),
-            capacity_bytes(&self.needs_check),
-            self.pair_fusion.retained_bytes(),
-            capacity_bytes(&self.boundaries),
-            self.merge.retained_bytes(),
-            self.duplicate.retained_bytes(),
-        ].into_iter().sum()
+// Each buffer is bounded against its own capacity, not against one buffer
+// standing in for the set: `entries` is empty on a twin-free level, so gating
+// on it would let the width-sized buffers grow unchecked over a run of wide
+// twin-free levels. Releasing has no behavioural consequence: every buffer is
+// filled or resized over the range it is read on, so a dropped one costs the
+// next call a reallocation; `pair_fusion.cells` regrows zeroed, which its
+// generation stamp (always at least 1) reads as never stamped.
+impl Buffers for ContractScratch {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.counts);
+        visit(&mut self.entries);
+        visit(&mut self.cursors);
+        visit(&mut self.twin_hash_table);
+        visit(&mut self.fingerprints);
+        visit(&mut self.flat_groups);
+        visit(&mut self.group_starts);
+        visit(&mut self.is_candidate);
+        visit(&mut self.slice_unsorted);
+        self.remap.buffers(visit);
+        visit(&mut self.has_marginal_below);
+        visit(&mut self.needs_check);
+        self.pair_fusion.buffers(visit);
+        visit(&mut self.boundaries);
+        self.merge.buffers(visit);
+        self.duplicate.buffers(visit);
     }
+}
 
+impl PooledScratch for ContractScratch {
     fn prepare(&mut self) {
         // The parked `has_marginal_below` describes whatever diagram last checked the
         // scratch out. Invalidate on checkout, not on return, so no path can read a
         // stale marginal map even if it bails before parking.
         self.has_marginal_below_valid = false;
-    }
-
-    fn retain(&mut self, lim: &crate::limits::Limits) {
-        // Bound each buffer against its own capacity, not against one buffer
-        // standing in for the set: `entries` is empty on a twin-free level, so
-        // gating on it would let the width-sized buffers grow unchecked over a run
-        // of wide twin-free levels. Releasing has no behavioural consequence: every
-        // buffer is filled or resized over the range it is read on, so a dropped
-        // one costs the next call a reallocation; `pair_fusion.cells` regrows
-        // zeroed, which its generation stamp (always ≥ 1) reads as never stamped.
-        crate::limits::pool::release_if_oversized(lim, &mut self.counts);
-        crate::limits::pool::release_if_oversized(lim, &mut self.entries);
-        crate::limits::pool::release_if_oversized(lim, &mut self.cursors);
-        crate::limits::pool::release_if_oversized(lim, &mut self.twin_hash_table);
-        crate::limits::pool::release_if_oversized(lim, &mut self.fingerprints);
-        crate::limits::pool::release_if_oversized(lim, &mut self.flat_groups);
-        crate::limits::pool::release_if_oversized(lim, &mut self.group_starts);
-        crate::limits::pool::release_if_oversized(lim, &mut self.is_candidate);
-        crate::limits::pool::release_if_oversized(lim, &mut self.slice_unsorted);
-        crate::limits::pool::release_if_oversized(lim, &mut self.remap.merge_target);
-        crate::limits::pool::release_if_oversized(lim, &mut self.remap.final_remap);
-        crate::limits::pool::release_if_oversized(lim, &mut self.remap.duplicate_redirect);
-        crate::limits::pool::release_if_oversized(lim, &mut self.has_marginal_below);
-        crate::limits::pool::release_if_oversized(lim, &mut self.needs_check);
-        // The grouping table, `touched` and `groups` are sized by one node's pair
-        // count, not by the level width, so the spine bound is the operative one —
-        // the `groups` SmallVec inners only spill past 4 refs for a single
-        // (node, x) group.
-        crate::limits::pool::release_if_oversized(lim, &mut self.pair_fusion.cells);
-        crate::limits::pool::release_if_oversized(lim, &mut self.pair_fusion.touched);
-        crate::limits::pool::release_if_oversized(lim, &mut self.pair_fusion.groups);
-        // Same treatment for the parked `contract_twins` merge buffers.
-        self.merge.release_oversized(lim);
-        self.duplicate.release_oversized(lim);
     }
 }

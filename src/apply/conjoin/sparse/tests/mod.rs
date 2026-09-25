@@ -36,6 +36,5 @@ mod root_gate;
 mod inner_index;
 mod regression;
 mod reset_ws;
-mod retention;
 mod scatter_direction_pool;
 mod product_filter;

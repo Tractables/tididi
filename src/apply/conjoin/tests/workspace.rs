@@ -53,3 +53,18 @@ fn ordinary_conjunctions_reuse_the_context_workspace() {
         assert_eq!(result.model_count().unwrap(), 9u32.into());
     }
 }
+
+#[test]
+fn returning_the_workspace_trims_the_width_arrays() {
+    use crate::limits::pool::SCRATCH_RETAIN_BYTES;
+    let eng = Engine::new();
+    {
+        let mut ws = eng.apply().workspace.checkout(eng.limits());
+        // `reserve` does not touch the pages, so the test stays small in memory.
+        ws.f_widths.reserve(SCRATCH_RETAIN_BYTES / std::mem::size_of::<usize>() + 1);
+        ws.g_widths.reserve(8);
+    }
+    let ws = eng.apply().workspace.checkout(eng.limits());
+    assert_eq!(ws.f_widths.capacity(), 0, "an over-cap width array is released on return");
+    assert!(ws.g_widths.capacity() >= 8, "an under-cap width array stays warm");
+}

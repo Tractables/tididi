@@ -1,4 +1,4 @@
-use crate::limits::pool::{Pool, PooledScratch};
+use crate::limits::pool::{Buffers, Nested, Pool, PooledScratch, Scratch};
 
 #[derive(Default)]
 struct WorkingSet {
@@ -6,12 +6,11 @@ struct WorkingSet {
     valid: bool,
 }
 
-impl PooledScratch for WorkingSet {
-    fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::capacity_bytes;
-        [capacity_bytes(&self.values)].into_iter().sum()
-    }
+impl Buffers for WorkingSet {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) { visit(&mut self.values); }
+}
 
+impl PooledScratch for WorkingSet {
     fn prepare(&mut self) {
         self.values.clear();
         self.valid = false;
@@ -148,10 +147,18 @@ fn preserving_checkout_keeps_initialized_entries() {
 /// Report large capacities without making a large allocation in a unit test.
 #[derive(Default)]
 struct Capacity(usize);
+impl crate::limits::Charged for Capacity {
+    fn charged_bytes(&self) -> u64 { self.0 as u64 }
+}
+impl Scratch for Capacity {
+    fn release(&mut self) { self.0 = 0; }
+}
+impl Buffers for Capacity {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) { visit(self); }
+}
 impl PooledScratch for Capacity {
     fn prepare(&mut self) {}
     fn retain(&mut self, _: &crate::limits::Limits) {}
-    fn retained_bytes(&self) -> usize { self.0 }
 }
 
 #[test]
@@ -211,4 +218,71 @@ fn recycled_levels_and_scratch_use_the_same_allowance() {
     assert!(eng.limits().retained_scratch.get() > 0);
     eng.clear_scratch();
     assert_eq!(eng.limits().retained_scratch.get(), 0);
+}
+
+/// Two scratch buffers with the default retention rule: each is judged on its
+/// own bytes.
+#[derive(Default)]
+struct Pair {
+    small: Vec<u64>,
+    large: Vec<u64>,
+}
+
+impl Buffers for Pair {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.small);
+        visit(&mut self.large);
+    }
+}
+
+impl PooledScratch for Pair {
+    fn prepare(&mut self) {}
+}
+
+#[test]
+fn default_retention_releases_each_listed_buffer_on_its_own_bytes() {
+    use crate::limits::pool::SCRATCH_RETAIN_BYTES;
+    let lim = crate::limits::Limits::new();
+    let pool = Pool::<Pair>::default();
+    {
+        let mut scratch = pool.checkout(&lim);
+        scratch.small.reserve(8);
+        // `reserve` does not touch the pages, so the test stays small in memory.
+        scratch.large.reserve(SCRATCH_RETAIN_BYTES / std::mem::size_of::<u64>() + 1);
+    }
+    let mut scratch = pool.checkout(&lim);
+    assert!(scratch.small.capacity() >= 8, "an under-cap buffer stays warm");
+    assert_eq!(scratch.large.capacity(), 0, "an over-cap buffer is released");
+    assert_eq!(scratch.retained_bytes(), scratch.small.capacity() * std::mem::size_of::<u64>());
+}
+
+#[test]
+fn nested_buffers_are_released_on_their_total_bytes() {
+    use crate::limits::pool::{SCRATCH_RETAIN_BYTES, release_if_oversized};
+    let lim = crate::limits::Limits::new();
+    // Two outer rows whose inner capacities together pass the cap: a count of
+    // outer rows would keep them, the byte count must not.
+    let per_row = SCRATCH_RETAIN_BYTES / (2 * std::mem::size_of::<(u32, u32)>()) + 1;
+    let mut fat: Vec<Vec<(u32, u32)>> = vec![Vec::with_capacity(per_row), Vec::with_capacity(per_row)];
+    release_if_oversized(&lim, &mut Nested(&mut fat));
+    assert_eq!(fat.capacity(), 0, "few but fat rows are released on bytes");
+
+    let mut thin: Vec<Vec<(u32, u32)>> = (0..1000).map(|_| Vec::with_capacity(4)).collect();
+    let before = thin.capacity();
+    release_if_oversized(&lim, &mut Nested(&mut thin));
+    assert_eq!(thin.capacity(), before, "many small rows are kept");
+    assert_eq!(thin.len(), 1000);
+}
+
+#[test]
+fn inline_small_vectors_count_no_heap_bytes() {
+    use crate::limits::Charged;
+    use smallvec::SmallVec;
+    let mut groups: Vec<SmallVec<[u32; 4]>> = Vec::with_capacity(2);
+    groups.push(SmallVec::from_slice(&[1, 2]));
+    let spine = (groups.capacity() * std::mem::size_of::<SmallVec<[u32; 4]>>()) as u64;
+    assert_eq!(Nested(&mut groups).charged_bytes(), spine);
+    groups.push((0..9).collect());
+    let spilled = (groups[1].capacity() * std::mem::size_of::<u32>()) as u64;
+    assert_eq!(Nested(&mut groups).charged_bytes(), spine + spilled);
 }

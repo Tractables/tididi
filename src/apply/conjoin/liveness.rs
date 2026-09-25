@@ -31,14 +31,9 @@ pub(crate) struct PrefilterSideMasks {
 }
 
 impl PrefilterSideMasks {
-    fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::capacity_bytes;
-        [capacity_bytes(&self.live_cols), capacity_bytes(&self.reach)].into_iter().sum()
-    }
-
-    fn release_oversized(&mut self, lim: &crate::limits::Limits) {
-        crate::limits::pool::release_if_oversized(lim, &mut self.live_cols);
-        crate::limits::pool::release_if_oversized(lim, &mut self.reach);
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::limits::pool::Scratch)) {
+        visit(&mut self.live_cols);
+        visit(&mut self.reach);
     }
 }
 
@@ -50,14 +45,9 @@ impl PrefilterSideMasks {
 pub(crate) type PrefilterMaskScratch = Sides<PrefilterSideMasks>;
 
 impl PrefilterMaskScratch {
-    pub(super) fn retained_bytes(&self) -> usize {
-        self.left.retained_bytes().saturating_add(self.right.retained_bytes())
-    }
-    /// The module's scratch-retention rule, applied buffer by buffer (a
-    /// struct-held pool can't round-trip each one through `Pool::put`).
-    pub(super) fn release_oversized(&mut self, lim: &crate::limits::Limits) {
-        self.left.release_oversized(lim);
-        self.right.release_oversized(lim);
+    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::limits::pool::Scratch)) {
+        self.left.buffers(visit);
+        self.right.buffers(visit);
     }
 }
 

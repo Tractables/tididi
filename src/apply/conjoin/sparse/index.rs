@@ -1,7 +1,7 @@
 //! The reusable sparse workspace: reverse indices and buckets.
 
 use super::*;
-use crate::limits::pool::SCRATCH_RETAIN_BYTES;
+use crate::limits::pool::{Buffers, Nested, PooledScratch, Scratch};
 use crate::limits::Limits;
 
 /// Candidate that survived the sibling liveness filter, grouped by f-parent.
@@ -91,60 +91,6 @@ pub(crate) struct SparseWorkspace {
     pub(super) pairs_by_parent: Grouped<ChildPair>, // the same pairs grouped by chunk-local parent
 }
 
-impl SparseWorkspace {
-    /// Release inner Vec memory from bucket arrays whose retained capacity grew
-    /// past [`SCRATCH_RETAIN_BYTES`]. Called after a large sparse level to avoid
-    /// retaining peak allocations. Covers every `Vec<Vec<_>>` bucket array.
-    fn release_if_large(&mut self, lim: &Limits) {
-        crate::limits::pool::release_if_oversized(lim, &mut self.inner_offsets);
-        crate::limits::pool::release_if_oversized(lim, &mut self.outer_offsets);
-        drop_if_large(lim, &mut self.par_buckets);
-        crate::limits::pool::release_if_oversized(lim, &mut self.par_flat);
-        self.par_sorted.release_if_oversized(lim);
-        drop_if_large(lim, &mut self.filtered);
-        crate::limits::pool::release_if_oversized(lim, &mut self.wanted);
-        crate::limits::pool::release_if_oversized(lim, &mut self.wanted_keys);
-        crate::limits::pool::release_if_oversized(lim, &mut self.inner_seen);
-        self.g_by_inner.release_if_oversized(lim);
-        crate::limits::pool::release_if_oversized(lim, &mut self.outer_keys);
-        crate::limits::pool::release_if_oversized(lim, &mut self.outer_attached);
-    }
-}
-
-/// Drop and replace `v` with an empty Vec if its retained capacity — outer spine
-/// (`capacity·size_of::<Vec<E>>`) plus Σ inner `capacity·size_of::<E>` — exceeds
-/// [`SCRATCH_RETAIN_BYTES`], the same rule
-/// [`release_if_oversized`](crate::limits::pool::release_if_oversized) applies to the flat buffers. Frees both the inner elements and the outer
-/// allocation. Early-exits the summation as soon as the threshold is crossed, so
-/// the common under-cap case pays at most one pass and the over-cap case stops
-/// early. `size_of::<E>()` is a compile-time constant. The over-cap branch then
-/// finishes the summation, because the amount handed back to `lim` has to be
-/// what is actually freed and not just the threshold that tripped.
-#[inline]
-pub(super) fn drop_if_large<E>(lim: &Limits, v: &mut Vec<Vec<E>>) {
-    let elem = std::mem::size_of::<E>();
-    let spine = v.capacity().saturating_mul(std::mem::size_of::<Vec<E>>());
-    let mut bytes = spine;
-    let mut over = bytes > SCRATCH_RETAIN_BYTES;
-    if !over {
-        for inner in v.iter() {
-            bytes = bytes.saturating_add(inner.capacity().saturating_mul(elem));
-            if bytes > SCRATCH_RETAIN_BYTES {
-                over = true;
-                break;
-            }
-        }
-    }
-    if over {
-        let freed = v.iter().fold(spine, |acc, inner| {
-            acc.saturating_add(inner.capacity().saturating_mul(elem))
-        });
-        *v = Vec::new();
-        lim.release_bytes(freed as u64);
-    }
-}
-
-
 /// One entry of a reverse index: a parent of the keyed child, and the child it
 /// holds on the other side of the same pair.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -173,16 +119,12 @@ impl<T> Grouped<T> {
         GroupedView { offsets: &self.offsets, entries: &self.entries }
     }
 
-    /// The bytes both buffers hold.
-    pub(super) fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::capacity_bytes;
-        capacity_bytes(&self.offsets).saturating_add(capacity_bytes(&self.entries))
-    }
+}
 
-    /// Hand back either buffer whose capacity grew past the retention cap.
-    pub(super) fn release_if_oversized(&mut self, lim: &Limits) {
-        crate::limits::pool::release_if_oversized(lim, &mut self.offsets);
-        crate::limits::pool::release_if_oversized(lim, &mut self.entries);
+impl<T> Buffers for Grouped<T> {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.offsets);
+        visit(&mut self.entries);
     }
 }
 
@@ -313,33 +255,31 @@ pub(super) fn ensure_buckets_cleared<T>(eng: &Engine, buckets: &mut Vec<Vec<T>>,
     Ok(())
 }
 
-impl crate::limits::pool::PooledScratch for SparseWorkspace {
-    fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::{capacity_bytes, nested_bytes};
-        [
-            self.f_by_outer.retained_bytes(),
-            self.g_by_outer.retained_bytes(),
-            capacity_bytes(&self.inner_offsets),
-            capacity_bytes(&self.outer_offsets),
-            nested_bytes(&self.filtered),
-            capacity_bytes(&self.filtered_touched),
-            capacity_bytes(&self.wanted),
-            capacity_bytes(&self.wanted_keys),
-            capacity_bytes(&self.inner_seen),
-            self.g_by_inner.retained_bytes(),
-            capacity_bytes(&self.outer_keys),
-            capacity_bytes(&self.outer_attached),
-            nested_bytes(&self.par_buckets),
-            capacity_bytes(&self.par_flat),
-            self.par_sorted.retained_bytes(),
-            capacity_bytes(&self.p2_map),
-            capacity_bytes(&self.p2_map_touched),
-            capacity_bytes(&self.est_counts),
-            capacity_bytes(&self.emit_pairs),
-            self.pairs_by_parent.retained_bytes(),
-        ].into_iter().sum()
+impl Buffers for SparseWorkspace {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        self.f_by_outer.buffers(visit);
+        self.g_by_outer.buffers(visit);
+        visit(&mut self.inner_offsets);
+        visit(&mut self.outer_offsets);
+        visit(&mut Nested(&mut self.filtered));
+        visit(&mut self.filtered_touched);
+        visit(&mut self.wanted);
+        visit(&mut self.wanted_keys);
+        visit(&mut self.inner_seen);
+        self.g_by_inner.buffers(visit);
+        visit(&mut self.outer_keys);
+        visit(&mut self.outer_attached);
+        visit(&mut Nested(&mut self.par_buckets));
+        visit(&mut self.par_flat);
+        self.par_sorted.buffers(visit);
+        visit(&mut self.p2_map);
+        visit(&mut self.p2_map_touched);
+        visit(&mut self.est_counts);
+        visit(&mut self.emit_pairs);
+        self.pairs_by_parent.buffers(visit);
     }
+}
 
+impl PooledScratch for SparseWorkspace {
     fn prepare(&mut self) {}
-    fn retain(&mut self, lim: &Limits) { self.release_if_large(lim); }
 }

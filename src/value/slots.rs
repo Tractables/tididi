@@ -429,17 +429,15 @@ impl RefSlotScratch {
     }
 }
 
+impl crate::limits::pool::Buffers for RefSlotScratch {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::limits::pool::Scratch)) {
+        visit(&mut self.referenced);
+        visit(&mut self.seen);
+    }
+}
+
 impl crate::limits::pool::PooledScratch for RefSlotScratch {
-    fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::capacity_bytes;
-        [capacity_bytes(&self.referenced), capacity_bytes(&self.seen)].into_iter().sum()
-    }
     fn prepare(&mut self) { self.clear(); }
-    /// Each buffer is judged on its own capacity.
-    fn retain(&mut self, lim: &Limits) {
-        crate::limits::pool::release_if_oversized(lim, &mut self.referenced);
-        crate::limits::pool::release_if_oversized(lim, &mut self.seen);
-    }
 }
 
 /// Fill `scratch.referenced` with the slots of a boundary-marginal level that

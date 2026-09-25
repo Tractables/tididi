@@ -1,7 +1,7 @@
 //! Recycling pool for `Vec<TddLevel>` allocations, owned by the engine.
 
 use crate::Engine;
-use crate::limits::{Limits, pool::{Pool, PooledScratch, capacity_bytes}};
+use crate::limits::{Limits, pool::{Buffers, Pool, PooledScratch, Scratch}};
 
 use super::level::TddLevel;
 
@@ -39,13 +39,14 @@ pub(crate) const MAX_LEVEL_ARENA_BYTES: usize = 32 * 1024 * 1024;
 ///
 /// Runs on the return path, so everything parked is already in this state.
 #[inline]
-pub(crate) fn reset_level(level: &mut TddLevel) -> usize {
-    fn retain<T>(arena: &mut Vec<T>) -> usize {
-        let bytes = arena.capacity() * std::mem::size_of::<T>();
-        if bytes > MAX_LEVEL_ARENA_BYTES { *arena = Vec::new(); 0 } else { bytes }
+pub(crate) fn reset_level(level: &mut TddLevel) {
+    fn retain<T>(arena: &mut Vec<T>) {
+        if arena.capacity() * std::mem::size_of::<T>() > MAX_LEVEL_ARENA_BYTES { *arena = Vec::new(); }
     }
     level.clear();
-    retain(&mut level.nodes) + retain(&mut level.pairs) + retain(&mut level.ranges)
+    retain(&mut level.nodes);
+    retain(&mut level.pairs);
+    retain(&mut level.ranges);
 }
 
 /// Take `num_nodes` empty levels from the pool, growing the array through
@@ -96,16 +97,25 @@ fn take_level_array(eng: &Engine, num_nodes: usize) -> Vec<TddLevel> {
 #[derive(Default)]
 struct LevelBuffer {
     levels: Vec<TddLevel>,
-    bytes: usize,
+}
+
+impl Buffers for LevelBuffer {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.levels);
+        for level in &mut self.levels {
+            visit(&mut level.nodes);
+            visit(&mut level.pairs);
+            visit(&mut level.ranges);
+        }
+    }
 }
 
 impl PooledScratch for LevelBuffer {
     fn prepare(&mut self) {}
+    /// Levels follow their own per-arena cap, [`MAX_LEVEL_ARENA_BYTES`].
     fn retain(&mut self, _lim: &Limits) {
-        self.bytes = capacity_bytes(&self.levels);
-        for level in &mut self.levels { self.bytes += reset_level(level); }
+        for level in &mut self.levels { reset_level(level); }
     }
-    fn retained_bytes(&self) -> usize { self.bytes }
 }
 
 /// Which of the two pool slots a level array goes back to.
@@ -128,6 +138,6 @@ pub(crate) fn return_levels(eng: &Engine, slot: PoolSlot, levels: Vec<TddLevel>)
         PoolSlot::First => &pool.primary,
         PoolSlot::Second => &pool.secondary,
     };
-    cell.put(eng.limits(), LevelBuffer { levels, bytes: 0 })
+    cell.put(eng.limits(), LevelBuffer { levels })
 }
 

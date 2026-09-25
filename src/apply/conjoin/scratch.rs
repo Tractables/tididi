@@ -1,7 +1,7 @@
 //! Workspaces retained between conjunctions.
 
 use super::*;
-use crate::limits::{Limits, pool::{Pool, PooledScratch, release_if_oversized}};
+use crate::limits::{Limits, pool::{Buffers, Pool, PooledScratch, Scratch}};
 
 #[derive(Default)]
 pub(crate) struct ApplyScratch {
@@ -40,32 +40,28 @@ pub(crate) struct ApplyWorkspace {
     pub(super) prefilter_masks: liveness::PrefilterMaskScratch,
 }
 
-impl PooledScratch for ApplyWorkspace {
-    fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::capacity_bytes;
-        [
-            capacity_bytes(&self.f_widths),
-            capacity_bytes(&self.g_widths),
-            capacity_bytes(&self.f_identity),
-            capacity_bytes(&self.g_identity),
-            capacity_bytes(&self.f_pairs_scratch),
-            capacity_bytes(&self.g_pairs_scratch),
-            self.products.retained_bytes(),
-            self.stream_cache.retained_bytes(),
-            self.prefilter_masks.retained_bytes(),
-        ].into_iter().sum()
+impl Buffers for ApplyWorkspace {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.f_widths);
+        visit(&mut self.g_widths);
+        visit(&mut self.f_identity);
+        visit(&mut self.g_identity);
+        visit(&mut self.f_pairs_scratch);
+        visit(&mut self.g_pairs_scratch);
+        self.products.buffers(visit);
+        self.stream_cache.buffers(visit);
+        self.prefilter_masks.buffers(visit);
     }
+}
 
+impl PooledScratch for ApplyWorkspace {
     fn prepare(&mut self) {
         self.f_pairs_scratch.clear();
         self.g_pairs_scratch.clear();
     }
 
     fn retain(&mut self, lim: &Limits) {
-        release_if_oversized(lim, &mut self.f_pairs_scratch);
-        release_if_oversized(lim, &mut self.g_pairs_scratch);
-        self.products.retain(lim);
-        self.prefilter_masks.release_oversized(lim);
-        self.stream_cache.retain(lim);
+        self.stream_cache.discard_columns();
+        self.release_oversized(lim);
     }
 }

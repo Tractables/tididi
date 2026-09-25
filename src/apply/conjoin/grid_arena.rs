@@ -71,11 +71,6 @@ pub(super) struct GridArena {
 }
 
 impl GridArena {
-    pub(super) fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::capacity_bytes;
-        let free = self.bump.as_ref().map_or(0, |bump| capacity_bytes(&bump.free));
-        capacity_bytes(&self.cells).saturating_add(capacity_bytes(&self.grids)).saturating_add(free)
-    }
 
     pub(super) fn reset(&mut self, eng: &Engine, sparse: bool, n: usize, f_widths: &[usize], g_widths: &[usize]) -> Result<(), OperationError> {
         self.grids.clear();
@@ -96,8 +91,10 @@ impl GridArena {
         Ok(())
     }
 
-    pub(super) fn retain(&mut self, lim: &crate::limits::Limits) {
-        crate::limits::pool::release_if_oversized(lim, &mut self.cells);
+    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::limits::pool::Scratch)) {
+        visit(&mut self.cells);
+        visit(&mut self.grids);
+        if let Some(bump) = &mut self.bump { visit(&mut bump.free); }
     }
 
     /// True when levels claim space as they are reached — the one behavioural

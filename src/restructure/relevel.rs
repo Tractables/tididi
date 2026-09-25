@@ -27,8 +27,7 @@ use crate::vtree::RotationKind;
 // The `marginal_ctx` branches below expand fully instead of sharing and
 // deduping; the argument is the module doc's "Marginal context" section.
 
-use super::scratch::{BucketScratch, RestructureScratch, SCRATCH_RETAIN_ENTRIES};
-use crate::limits::pool::release_or_clear;
+use super::scratch::{BucketScratch, RestructureScratch, release_or_clear};
 use crate::limits::{Limits, OperationError, Transient};
 
 /// Pack a search triple `(inner, src, axis)` into one `u128` whose numeric order
@@ -148,7 +147,7 @@ pub(crate) fn rebuild_rotated_levels(
 
     // Last read of `group_info` (both branches consumed it building the inner
     // level); release it before the outer level's per-v pair lists and arena.
-    release_or_clear(lim, &mut scratch.group_info, SCRATCH_RETAIN_ENTRIES);
+    release_or_clear(lim, &mut scratch.group_info);
 
     // Neither level is installed until both are built; a refusal in between
     // drops the inner one and hands its charge back.
@@ -437,7 +436,7 @@ fn build_outer_level(
     let distributed = distribute_outer_pairs(lim, triples, inner_pair_to_idx, per_v_pairs, dir);
     // Last read of `triples`: `per_v_pairs` now holds every outer pair. Release
     // the 16 B/triple buffer before the arena that copies those pairs is built.
-    release_or_clear(lim, triples, SCRATCH_RETAIN_ENTRIES);
+    release_or_clear(lim, triples);
     distributed?;
 
     let mut outer_level = Transient::new(lim, TddLevel::new());

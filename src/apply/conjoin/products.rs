@@ -91,14 +91,11 @@ pub(super) struct Products {
 }
 
 impl Products {
-    pub(super) fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::{capacity_bytes, nested_bytes};
-        [
-            self.arena.retained_bytes(),
-            nested_bytes(&self.product_lists),
-            capacity_bytes(&self.live_counts),
-            capacity_bytes(&self.has_pl),
-        ].into_iter().sum()
+    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::limits::pool::Scratch)) {
+        self.arena.buffers(visit);
+        visit(&mut crate::limits::pool::Nested(&mut self.product_lists));
+        visit(&mut self.live_counts);
+        visit(&mut self.has_pl);
     }
 
     pub(super) fn reset(&mut self, eng: &Engine, sparse: bool, n: usize, f_widths: &[usize], g_widths: &[usize]) -> Result<(), OperationError> {
@@ -134,13 +131,6 @@ impl Products {
         list.truncate(write);
         self.live_counts[t] = write;
         Ok(())
-    }
-
-    pub(super) fn retain(&mut self, lim: &crate::limits::Limits) {
-        self.arena.retain(lim);
-        for list in &mut self.product_lists {
-            crate::limits::pool::release_if_oversized(lim, list);
-        }
     }
 
     pub(super) fn live(&self, level: usize) -> usize { self.live_counts[level] }

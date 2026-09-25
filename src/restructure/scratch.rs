@@ -1,6 +1,7 @@
 //! The reusable rotation-probe scratch and the engine's pool for it.
 
-use crate::limits::pool::PooledScratch;
+use crate::limits::Limits;
+use crate::limits::pool::{Buffers, Nested, PooledScratch, Scratch};
 
 use rustc_hash::FxHashMap;
 
@@ -39,19 +40,18 @@ pub(super) struct BucketScratch {
     pub(super) pairs: Vec<ChildPair>,
 }
 
-impl PooledScratch for RestructureScratch {
-    fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::{capacity_bytes, nested_bytes};
-        [
-            capacity_bytes(&self.inner_pair_to_idx),
-            nested_bytes(&self.per_v_pairs),
-            capacity_bytes(&self.group_info),
-            capacity_bytes(&self.packed),
-            capacity_bytes(&self.bucket.done),
-            capacity_bytes(&self.bucket.pairs),
-        ].into_iter().sum()
+impl Buffers for RestructureScratch {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.inner_pair_to_idx);
+        visit(&mut Nested(&mut self.per_v_pairs));
+        visit(&mut self.group_info);
+        visit(&mut self.packed);
+        visit(&mut self.bucket.done);
+        visit(&mut self.bucket.pairs);
     }
+}
 
+impl PooledScratch for RestructureScratch {
     fn prepare(&mut self) {
         self.inner_pair_to_idx.clear();
         self.group_info.clear();
@@ -67,18 +67,18 @@ impl PooledScratch for RestructureScratch {
         }
     }
 
-    fn retain(&mut self, lim: &crate::limits::Limits) {
-        self.per_v_pairs.truncate(PER_V_PAIRS_RETAIN);
-        if self.packed.capacity() > RESTRUCTURE_PACKED_CAP_LIMIT {
-            lim.discard(std::mem::take(&mut self.packed));
-            lim.discard(std::mem::take(&mut self.group_info));
-            lim.discard(std::mem::take(&mut self.inner_pair_to_idx));
-            lim.discard(std::mem::take(&mut self.bucket.done));
-            lim.discard(std::mem::take(&mut self.bucket.pairs));
-            for lists in self.per_v_pairs.drain(..) {
+    /// A search whose `packed` outgrew its cap releases every buffer; any
+    /// other keeps each buffer the byte cap allows.
+    fn retain(&mut self, lim: &Limits) {
+        if self.per_v_pairs.len() > PER_V_PAIRS_RETAIN {
+            for lists in self.per_v_pairs.drain(PER_V_PAIRS_RETAIN..) {
                 lim.discard(lists);
             }
-            lim.discard(std::mem::take(&mut self.per_v_pairs));
+        }
+        if self.packed.capacity() > RESTRUCTURE_PACKED_CAP_LIMIT {
+            self.release_all(lim);
+        } else {
+            self.release_oversized(lim);
         }
     }
 }
@@ -106,6 +106,20 @@ const PER_V_PAIRS_RETAIN: usize = 1024;
 /// enough to be over the threshold. Bail-out probes return before any release
 /// point, so the search's common path keeps full capacity either way.
 pub(super) const SCRATCH_RETAIN_ENTRIES: usize = 1 << 16;
+
+/// Retire a buffer at its last read within a probe: past
+/// [`SCRATCH_RETAIN_ENTRIES`] entries of capacity the allocation goes back to
+/// `lim`, otherwise the buffer is emptied and stays warm for the next probe.
+///
+/// A struct field read in place has to be emptied here, or the next probe
+/// would see this one's contents; releasing leaves it empty as well.
+pub(super) fn release_or_clear<T>(lim: &Limits, buf: &mut Vec<T>) {
+    if buf.capacity() > SCRATCH_RETAIN_ENTRIES {
+        lim.discard(std::mem::take(buf));
+    } else {
+        buf.clear();
+    }
+}
 
 #[cfg(test)]
 #[path = "tests/scratch.rs"]

@@ -254,6 +254,12 @@ impl<K, V, S> Charged for std::collections::HashMap<K, V, S> {
     }
 }
 
+impl<T, S> Charged for std::collections::HashSet<T, S> {
+    fn charged_bytes(&self) -> u64 {
+        (self.capacity() as u64).saturating_mul((std::mem::size_of::<T>() + 1) as u64)
+    }
+}
+
 impl<T> Charged for Vec<T> {
     #[inline]
     fn charged_bytes(&self) -> u64 {

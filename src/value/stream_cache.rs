@@ -1,7 +1,7 @@
 //! The per-apply cache of already-computed child columns for streaming levels.
 
 use crate::diagram::WeightValue;
-use crate::limits::pool::{PooledScratch, release_if_oversized};
+use crate::limits::pool::{Buffers, PooledScratch, Scratch};
 use super::CountVec;
 
 /// Lazily computed child columns for streaming-target levels whose children
@@ -71,27 +71,32 @@ fn vec_of_none<T>(num_nodes: usize) -> Vec<Option<T>> {
     cols
 }
 
-/// Discard column values and retain the table allocation within the scratch cap.
-fn retire<T>(lim: &crate::limits::Limits, cols: &mut Vec<Option<T>>) {
-    cols.clear();
-    release_if_oversized(lim, cols);
+impl StreamCache {
+    /// Drop the computed columns, keeping the table they sat in.
+    pub(crate) fn discard_columns(&mut self) {
+        match self {
+            Self::None => {},
+            Self::Int(cols) => cols.clear(),
+            Self::Weighted(cols) => cols.clear(),
+        }
+    }
+}
+
+/// The column table alone: its columns are dropped before it is parked.
+impl Buffers for StreamCache {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        match self {
+            Self::None => {},
+            Self::Int(cols) => visit(cols),
+            Self::Weighted(cols) => visit(cols),
+        }
+    }
 }
 
 impl PooledScratch for StreamCache {
-    fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::capacity_bytes;
-        match self {
-            Self::None => 0,
-            Self::Int(cols) => capacity_bytes(cols),
-            Self::Weighted(cols) => capacity_bytes(cols),
-        }
-    }
     fn prepare(&mut self) {}
     fn retain(&mut self, lim: &crate::limits::Limits) {
-        match self {
-            Self::None => {},
-            Self::Int(cols) => retire(lim, cols),
-            Self::Weighted(cols) => retire(lim, cols),
-        }
+        self.discard_columns();
+        self.release_oversized(lim);
     }
 }

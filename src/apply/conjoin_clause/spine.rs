@@ -40,6 +40,13 @@ impl std::ops::Deref for MarkBuffer {
     }
 }
 
+impl crate::limits::pool::Buffers for MarkBuffer {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::limits::pool::Scratch)) {
+        visit(&mut self.flags);
+        visit(&mut self.set);
+    }
+}
+
 impl crate::limits::pool::PooledScratch for MarkBuffer {
     fn prepare(&mut self) {
         debug_assert!(self.set.is_empty() && self.flags.iter().all(|&b| !b), "clause-spine marks were not cleared");
@@ -48,16 +55,12 @@ impl crate::limits::pool::PooledScratch for MarkBuffer {
     /// Replay the log so the parked buffer is all false, then apply the
     /// retention cap to both arrays.
     fn retain(&mut self, lim: &crate::limits::Limits) {
+        use crate::limits::pool::Buffers;
         for &t in &self.set {
             self.flags[t.idx()] = false;
         }
         self.set.clear();
-        crate::limits::pool::release_if_oversized(lim, &mut self.set);
-        crate::limits::pool::release_if_oversized(lim, &mut self.flags);
-    }
-
-    fn retained_bytes(&self) -> usize {
-        crate::limits::pool::capacity_bytes(&self.flags).saturating_add(crate::limits::pool::capacity_bytes(&self.set))
+        self.release_oversized(lim);
     }
 }
 

@@ -79,23 +79,24 @@ impl Layout {
     }
 }
 
-impl crate::limits::pool::PooledScratch for Layout {
-    fn retained_bytes(&self) -> usize {
-        use crate::limits::pool::capacity_bytes;
-        [
-            capacity_bytes(&self.vars),
-            capacity_bytes(&self.count),
-            capacity_bytes(&self.lo),
-            capacity_bytes(&self.position),
-        ].into_iter().sum()
+impl crate::limits::pool::Buffers for Layout {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::limits::pool::Scratch)) {
+        visit(&mut self.vars);
+        visit(&mut self.count);
+        visit(&mut self.lo);
+        visit(&mut self.position);
     }
+}
 
+impl crate::limits::pool::PooledScratch for Layout {
     fn prepare(&mut self) {}
+    /// The buffers describe one placement together, so they are kept or
+    /// released together: released past the byte cap or once the vtree is gone.
     fn retain(&mut self, lim: &Limits) {
-        let bytes = self.retained_bytes();
-        if bytes > crate::limits::pool::SCRATCH_RETAIN_BYTES || self.vtree.strong_count() == 0 {
+        use crate::limits::pool::Buffers;
+        if self.retained_bytes() > crate::limits::pool::SCRATCH_RETAIN_BYTES || self.vtree.strong_count() == 0 {
+            self.release_all(lim);
             *self = Self::default();
-            lim.release_bytes(bytes as u64);
         }
     }
 }
