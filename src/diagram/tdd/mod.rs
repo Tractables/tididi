@@ -234,66 +234,19 @@ impl Tdd {
         self.vtree = Arc::clone(vtree);
     }
 
-    /// Assemble a diagram from levels built by hand, unchecked.
+    /// Seat hand-built test fixture levels, unchecked.
     ///
-    /// The caller guarantees the invariants
-    /// [`check_levels`](crate::diagram::check_levels) checks; nothing
-    /// here verifies them, and a violation surfaces later as a wrong answer or
-    /// a panic. The result need not be canonical:
-    /// [`minimize`](crate::Tdd::minimize) makes it so. Every
-    /// internal level is marked for twin contraction, so the first minimize
-    /// visits all of them.
-    ///
-    /// Outside the crate, [`TddBuilder`](crate::diagram::TddBuilder) is the way
-    /// in: it establishes what this trusts.
+    /// Nothing verifies the levels, and `output` may name a node below the
+    /// root, which [`TddBuilder::finish_unchecked`](super::TddBuilder::finish_unchecked)
+    /// would refuse in a debug build. Every internal level is marked for twin
+    /// contraction, so the first minimize visits all of them. Operations
+    /// assemble their results through `Assembly`, which returns the levels
+    /// to the engine's pool when seating is refused.
+    #[cfg(any(test, debug_assertions, feature = "testing"))]
     pub(crate) fn from_levels_unchecked(vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Self {
-        Self::assemble(Arc::clone(&vtree), levels, output, Dirty::default(),
-            vtree.internal_bottomup().map(|(t, _, _)| t), None)
-            .expect("an untracked assembly cannot be refused")
-    }
-
-    /// Assemble trusted levels, charging initial reduction worklists to the engine.
-    pub(crate) fn try_from_levels_on(eng: &crate::Engine, vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Result<Self, crate::OperationError> {
-        Self::assemble(Arc::clone(&vtree), levels, output, Dirty::default(),
-            vtree.internal_bottomup().map(|(t, _, _)| t), Some(eng))
-    }
-
-    /// Construct a diagram from raw levels with contract worklists supplied by
-    /// the caller, instead of
-    /// [`from_levels_unchecked`](Self::from_levels_unchecked)' every-internal-level seed.
-    ///
-    /// A level absent from a worklist is taken to be at its contraction
-    /// fixpoint ([`Dirty`]), so the caller owes two things:
-    ///
-    /// 1. Every level whose pair list this operation changed is in `rebuilt`;
-    /// 2. `carried` is the input diagram's own [`Dirty`], so nothing the input
-    ///    had outstanding is dropped.
-    ///
-    /// Seeding only the rewritten levels makes the following contraction cost
-    /// proportional to them rather than to the vtree.
-    pub(crate) fn try_with_levels_dirty(
-        eng: &crate::Engine, vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId,
-        carried: Dirty, rebuilt: &[VtreeIdx],
-    ) -> Result<Self, crate::OperationError> {
-        Self::assemble(vtree, levels, output, carried, rebuilt.iter().copied(), Some(eng))
-    }
-
-    fn assemble(
-        vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId, dirty: Dirty,
-        rebuilt: impl Iterator<Item = VtreeIdx>, eng: Option<&crate::Engine>,
-    ) -> Result<Self, crate::OperationError> {
-        let dirty = Self::prepare_worklists(&vtree, dirty, rebuilt, eng)?;
-        Ok(super::TddBuilder::from_levels(vtree, levels, None).seat(output, dirty))
-    }
-
-    /// Seed and compact reduction worklists before taking the output storage.
-    pub(super) fn prepare_worklists(
-        vtree: &Vtree, mut dirty: Dirty, rebuilt: impl Iterator<Item = VtreeIdx>,
-        eng: Option<&crate::Engine>,
-    ) -> Result<Dirty, crate::OperationError> {
-        dirty.seed_rebuilt(rebuilt, eng)?;
-        dirty.dedup_above(vtree.num_nodes());
-        Ok(dirty)
+        let builder = super::TddBuilder::from_levels(vtree, levels, None);
+        let dirty = builder.seed_worklists(Dirty::default(), None, None).expect("untracked worklists cannot be refused");
+        builder.seat(output, dirty)
     }
 
     /// Put the diagram in weighted mode: its weight-marginal levels keep their

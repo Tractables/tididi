@@ -131,9 +131,7 @@ fn spine_walk(eng: &Engine, mut f: Tdd, lits: &[Literal], disjoin: bool) -> Resu
 
     // The empty clause is false, so conjoining it gives ⊥ whatever `f` is.
     if !disjoin && clause.is_empty() {
-        let levels = diagram::try_take_levels(eng, vtree.num_nodes())?;
-        let mut out = Tdd::try_from_levels_on(eng, Arc::clone(&vtree), levels, TddNodeId { vtree: vtree.root(), local: ZERO })?;
-        out.weights = f.weights.as_ref().map(WeightStore::empty_like);
+        let out = crate::build::constant_like(eng, &f, false)?;
         diagram::return_levels(eng, diagram::PoolSlot::First, std::mem::take(&mut f.levels).into_vec());
         return Ok(out);
     }
@@ -286,17 +284,8 @@ fn rebuild_along_spine(eng: &Engine, f: &mut Tdd, clause: &[(Literal, VtreeIdx)]
     // exact for a caller that does not minimize between clauses.
     let vtree = Arc::clone(vtree);
     let carried = f.take_worklists();
-    let mut out = Tdd::try_with_levels_dirty(
-        eng,
-        vtree,
-        levels,
-        TddNodeId { vtree: out_vtree, local: out_local },
-        carried,
-        &spine_internal,
-    )?;
-    out.weights = f_weights;
-
-    Ok(out)
+    diagram::Assembly::from_levels(eng, vtree, levels, f_weights)
+        .finish_with(TddNodeId { vtree: out_vtree, local: out_local }, carried, &spine_internal)
 }
 
 /// Conjoin `clause` into `f` under `eng`'s limits. The implementation behind

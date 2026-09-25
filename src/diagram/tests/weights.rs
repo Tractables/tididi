@@ -16,7 +16,7 @@ fn a_weighted_leaf_requires_its_store() {
     f.set_weights(WeightStore::new(RationalWeights::unit(1), Arithmetic::ExactRational)).unwrap();
     eng.marginalize_levels(&mut f, &[vtree.root()]).unwrap();
     crate::test_helpers::assert_canonical(&f);
-    assert!(crate::diagram::check_levels(&vtree, &f.levels, f.output(), None).is_err());
+    assert!(crate::diagram::builder::check_levels(&vtree, &f.levels, f.output(), None).is_err());
 }
 
 #[test]

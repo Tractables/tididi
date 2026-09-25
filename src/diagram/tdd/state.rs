@@ -201,12 +201,27 @@ impl Dirty {
         }
     }
 
-    /// Seed the contraction passes with the levels an assembly rebuilt.
+    /// The worklists an assembled diagram starts with: these lists, carried
+    /// over from the diagram it was rebuilt from, plus the levels the
+    /// assembly `rebuilt` for the contraction passes, deduplicated once they
+    /// outgrow the vtree.
     ///
     /// `eng` charges the seeding to a budget and polls for cancellation as it
     /// goes; `None` is the untracked assembly, which grows through `Vec` and
     /// cannot fail.
-    pub(crate) fn seed_rebuilt(
+    pub(crate) fn seeded(
+        mut self,
+        vtree: &crate::vtree::Vtree,
+        rebuilt: impl Iterator<Item = VtreeIdx>,
+        eng: Option<&crate::Engine>,
+    ) -> Result<Self, crate::OperationError> {
+        self.seed_rebuilt(rebuilt, eng)?;
+        self.dedup_above(vtree.num_nodes());
+        Ok(self)
+    }
+
+    /// Push each of `rebuilt` onto the contraction passes' lists.
+    fn seed_rebuilt(
         &mut self,
         rebuilt: impl Iterator<Item = VtreeIdx>,
         eng: Option<&crate::Engine>,

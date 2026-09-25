@@ -153,7 +153,7 @@ impl Tdd {
 
 impl TddBuilder {
     /// Shared storage initialization for public and operation-local construction.
-    pub(super) fn from_levels(vtree: Arc<Vtree>, levels: Vec<TddLevel>, weights: Option<WeightStore>) -> Self {
+    pub(crate) fn from_levels(vtree: Arc<Vtree>, levels: Vec<TddLevel>, weights: Option<WeightStore>) -> Self {
         Self { vtree, levels, weights, interned: Vec::new() }
     }
 
@@ -369,7 +369,7 @@ impl TddBuilder {
     /// ```
     pub fn finish(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
         self.check(output)?;
-        let dirty = self.seed_worklists(None).expect("untracked worklists cannot be refused");
+        let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
         Ok(self.seat(output, dirty))
     }
 
@@ -396,14 +396,20 @@ impl TddBuilder {
             check_levels(&self.vtree, &self.levels, output, self.weights.as_ref()).is_ok(),
             "an unchecked seat was handed a diagram the checked one would refuse",
         );
-        let dirty = self.seed_worklists(None).expect("untracked worklists cannot be refused");
+        let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
         self.seat(output, dirty)
     }
 
-    /// Prepare reduction work before transferring ownership of the arenas.
-    pub(super) fn seed_worklists(&self, eng: Option<&Engine>) -> Result<super::Dirty, OperationError> {
-        Tdd::prepare_worklists(&self.vtree, Default::default(),
-            self.vtree.internal_bottomup().map(|(t, _, _)| t), eng)
+    /// Prepare reduction work before transferring ownership of the arenas:
+    /// `carried`, plus `rebuilt` for the contraction passes, or every
+    /// internal level when `rebuilt` is `None`.
+    pub(super) fn seed_worklists(
+        &self, carried: super::Dirty, rebuilt: Option<&[VtreeIdx]>, eng: Option<&Engine>,
+    ) -> Result<super::Dirty, OperationError> {
+        match rebuilt {
+            Some(rebuilt) => carried.seeded(&self.vtree, rebuilt.iter().copied(), eng),
+            None => carried.seeded(&self.vtree, self.vtree.internal_bottomup().map(|(t, _, _)| t), eng),
+        }
     }
 
     /// Transfer storage and its prepared worklists without copying the vtree handle.

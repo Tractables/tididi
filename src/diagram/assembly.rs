@@ -3,8 +3,8 @@
 use std::{ops::DerefMut, sync::Arc};
 
 use crate::{Engine, OperationError};
-use crate::vtree::Vtree;
-use super::{Tdd, TddBuilder, TddLevel, TddNodeId, WeightStore};
+use crate::vtree::{Vtree, VtreeIdx};
+use super::{Dirty, Tdd, TddBuilder, TddLevel, TddNodeId, WeightStore};
 
 /// An operation's output, returned to the level pool if construction fails.
 ///
@@ -50,7 +50,8 @@ impl<'a> Assembly<'a> {
         self.finish(output)
     }
 
-    /// Seat kernel-built storage and charge its reduction worklists.
+    /// Seat kernel-built storage and charge its reduction worklists, which
+    /// start with every internal level.
     ///
     /// # Errors
     ///
@@ -58,7 +59,30 @@ impl<'a> Assembly<'a> {
     /// the levels go back to the pool.
     #[inline]
     pub(crate) fn finish(mut self, output: TddNodeId) -> Result<Tdd, OperationError> {
-        let dirty = self.seed_worklists(Some(self.engine))?;
+        let dirty = self.seed_worklists(Dirty::default(), None, Some(self.engine))?;
+        Ok(self.builder.take().expect("unfinished assembly").seat(output, dirty))
+    }
+
+    /// [`finish`](Self::finish) with the worklists supplied by the caller
+    /// instead of every internal level.
+    ///
+    /// A level absent from a worklist is taken to be at its contraction
+    /// fixpoint ([`Dirty`]), so the caller owes two things:
+    ///
+    /// 1. Every level whose pair list this operation changed is in `rebuilt`;
+    /// 2. `carried` is the input diagram's own [`Dirty`], so nothing the input
+    ///    had outstanding is dropped.
+    ///
+    /// Seeding only the rewritten levels makes the following contraction cost
+    /// proportional to them rather than to the vtree.
+    ///
+    /// # Errors
+    ///
+    /// As [`finish`](Self::finish).
+    pub(crate) fn finish_with(
+        mut self, output: TddNodeId, carried: Dirty, rebuilt: &[VtreeIdx],
+    ) -> Result<Tdd, OperationError> {
+        let dirty = self.seed_worklists(carried, Some(rebuilt), Some(self.engine))?;
         Ok(self.builder.take().expect("unfinished assembly").seat(output, dirty))
     }
 }

@@ -216,7 +216,6 @@ pub(crate) use pool::LevelPool;
 // tdd
 pub use build_error::TddBuildError;
 pub use builder::{LevelView, TddBuilder};
-pub(crate) use builder::check_levels;
 pub use tdd::Tdd;
 pub(crate) use leaf_column::{
     find_leaf_slot_by_value, leaf_canon_map, leaf_column_vals, leaf_count, LEAF_COUNTS,

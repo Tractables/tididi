@@ -60,3 +60,16 @@ fn repeated_and_conflicting_literals_read_as_the_normalized_clause_in_both_modes
     // A variable in both polarities: the cube is false and `f` is the answer.
     assert_eq!(count(eng.or_cube(f.clone(), &[2, -2, 4][..]).unwrap()), 12u32.into());
 }
+
+#[test]
+fn empty_clause_gives_a_canonical_false() {
+    let vtree = Arc::new(Vtree::balanced(4));
+    let eng = Engine::new();
+    let f = Tdd::clause(&vtree, [1, 3]).unwrap();
+    let empty: &[i32] = &[];
+    let out = eng.and_clause(f, empty).unwrap();
+    assert!(out.is_zero());
+    assert!(out.dirty.is_empty(), "a constant has nothing left to minimize");
+    assert!(out.levels.is_canonical(out.output), "a constant is certified canonical");
+    assert_canonical(&out);
+}
