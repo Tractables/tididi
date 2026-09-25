@@ -101,7 +101,6 @@ fn render_vtree(vtree: &Vtree, tdd: Option<&Tdd>) -> String {
     // Emit leaf nodes
     for (t, var) in vtree.leaf_bottomup() {
         let i = t.idx();
-        // +1: emit 1-indexed DIMACS variable, matching the .tdd / .vtree formats.
         writeln!(dot, "    v{} [shape=box, label=\"X{}\"];", i, subscript(var.0)).unwrap();
     }
     // Emit internal nodes
@@ -208,7 +207,6 @@ fn emit_level_cluster(dot: &mut String, f: &Tdd, reachable: &[Vec<bool>], t: Vtr
 /// The three implicit nodes of a leaf level, each labelled with its variable in
 /// subscript and coloured by its label.
 fn emit_leaf_nodes(dot: &mut String, f: &Tdd, reachable: &[Vec<bool>], t: VtreeIdx) {
-    // +1: emit 1-indexed DIMACS variable, matching the .tdd / .vtree formats.
     let sub = subscript(f.vtree.leaf_var(t).0);
     // The index is a leaf-label ordinal, not a position in one array.
     #[expect(clippy::needless_range_loop)]

@@ -38,8 +38,8 @@ pub struct OperationMetrics {
     /// refusal from a soft-budget refusal: the value persists across operations.
     /// Both refusals surface as [`OperationError::OverBudget`](crate::OperationError::OverBudget).
     pub refused_reserve_bytes: Option<u64>,
-    /// Where the watched conjunction in flight stands, or where the last one
-    /// ended; `None` before the first watched one. Nothing clears it, so
+    /// Where the conjunction in flight stands, or where the last one ended,
+    /// while conjunction progress is enabled; `None` before the first. Nothing clears it, so
     /// `started_at` is what tells one conjunction from the next.
     pub conjunction: Option<ConjunctionProgress>,
 }
@@ -77,13 +77,13 @@ impl Limits {
 
     /// Whether conjunction progress is being recorded.
     #[inline]
-    pub(crate) fn watched(&self) -> bool {
+    pub(crate) fn conjunction_progress_enabled(&self) -> bool {
         self.conjunction_progress.get()
     }
 
     /// A conjunction beginning, over `levels` vtree levels. Clears whatever the
-    /// last one left, so a watcher can tell two apart by the instant alone.
-    pub(crate) fn merge_began(&self, levels: u32) {
+    /// last one left, so a caller can tell two apart by the instant alone.
+    pub(crate) fn conjunction_began(&self, levels: u32) {
         self.conjunction.set(Some(ConjunctionProgress {
             started_at: Instant::now(),
             level: 0,
@@ -92,7 +92,7 @@ impl Limits {
     }
 
     /// Record the current level while keeping the conjunction's start time.
-    pub(crate) fn merge_reached(&self, level: u32) {
+    pub(crate) fn conjunction_reached(&self, level: u32) {
         if let Some(m) = self.conjunction.get() {
             self.conjunction.set(Some(ConjunctionProgress { level, ..m }));
         }

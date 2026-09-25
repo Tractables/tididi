@@ -124,7 +124,7 @@ pub(crate) fn reject_marginal_levels(tdd: &Tdd, what: &str) -> Result<(), IoErro
     if tdd.has_marginal_level() {
         return Err(IoError::Format(format!(
             "{what}: the diagram has one or more marginal levels, which store per-node \
-             model counts rather than nodes and have no structural representation in this \
+             values rather than nodes and have no structural representation in this \
              format. Serialize or render the diagram before marginalizing it."
         )));
     }

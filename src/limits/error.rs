@@ -42,7 +42,7 @@ pub enum OperationError {
     LevelNotInVtree(crate::vtree::VtreeIdx),
     /// The operation needs structure at a level that has already been summed out.
     MarginalLevel(crate::vtree::VtreeIdx),
-    /// The installed deadline passed, or an installed schedule concluded that
+    /// The installed deadline passed, or the installed stop callback decided that
     /// the operation should stop, at one of the operation's poll points.
     Stopped,
     /// The installed cap on produced output nodes tripped: a deliberate size

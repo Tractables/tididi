@@ -255,7 +255,7 @@ pub struct Limits {
     conjunction: Cell<Option<ConjunctionProgress>>,
     memory_hooks: RefCell<MemoryHooks>,
     /// The address-space ceiling, answered once per install: it is stable for
-    /// the life of the probes, and the growth machinery asks per huge level.
+    /// the life of the memory hooks, and the growth machinery asks per huge level.
     vas_limit: Cell<Option<Option<u64>>>,
     #[cfg(test)]
     poll_stride_pin: Cell<Option<u64>>,

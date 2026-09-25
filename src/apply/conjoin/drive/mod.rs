@@ -67,16 +67,16 @@ fn sweep_levels(
     // from outside it. The level count is the only thing that costs a walk, so
     // it is taken inside the gate; past that it is one store per level and no
     // clock at all.
-    let watched = lim.watched();
-    if watched {
-        lim.merge_began(vtree.internal_bottomup().count() as u32);
+    let progress = lim.conjunction_progress_enabled();
+    if progress {
+        lim.conjunction_began(vtree.internal_bottomup().count() as u32);
     }
     let mut level_k: u32 = 0;
     let mut output_nodes = 0u64;
     for (t, left, right) in vtree.internal_bottomup() {
-        if watched {
+        if progress {
             level_k += 1;
-            lim.merge_reached(level_k);
+            lim.conjunction_reached(level_k);
         }
         // The per-level-boundary cut check: the stop axis, then the output-node
         // cap, tracked across every route independently of sparse-grid density.

@@ -52,22 +52,22 @@ impl MemoryHooks {
 
     /// Notify the host before an allocation.
     pub(crate) fn preflight_alloc(&self, bytes: u64) {
-        if let Some(probes) = &self.0 { probes.preflight_alloc(bytes); }
+        if let Some(hooks) = &self.0 { hooks.preflight_alloc(bytes); }
     }
 
     /// The host's mapped and retained bytes, or zero with no observer.
     pub(crate) fn mapped_bytes(&self) -> u64 {
-        self.0.as_ref().map_or(0, |probes| probes.mapped_bytes())
+        self.0.as_ref().map_or(0, |hooks| hooks.mapped_bytes())
     }
 
     /// The host's address-space ceiling, if bounded.
     pub(crate) fn address_space_limit(&self) -> Option<u64> {
-        self.0.as_ref().and_then(|probes| probes.address_space_limit())
+        self.0.as_ref().and_then(|hooks| hooks.address_space_limit())
     }
 
     /// Ask the host to reclaim at the start of a conjunction.
     pub(crate) fn eager_reclaim(&self) {
-        if let Some(probes) = &self.0 { probes.eager_reclaim(); }
+        if let Some(hooks) = &self.0 { hooks.eager_reclaim(); }
     }
 }
 
