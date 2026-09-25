@@ -37,11 +37,11 @@ impl ValueDomain for WeightFold {
     fn alloc_col(
         eng: &Engine,
         width: usize,
-        zero: &WeightValue,
+        store: &WeightStore,
     ) -> Result<Vec<WeightValue>, OperationError> {
         let mut v: Vec<WeightValue> = Vec::new();
         eng.limits().reserve_exact(&mut v, width)?;
-        v.resize(width, zero.clone());
+        v.resize(width, store.wzero());
         Ok(v)
     }
 
@@ -78,10 +78,6 @@ impl ValueDomain for WeightFold {
         col.len()
     }
 
-    fn zero(store: &WeightStore) -> WeightValue {
-        store.wzero()
-    }
-
     #[inline]
     fn stream_columns(cache: &StreamCache) -> &[Option<Vec<WeightValue>>] {
         cache.weighted()
@@ -100,7 +96,7 @@ impl ValueDomain for WeightFold {
             levels[at.lvl].pairs_iter_of_idx(i),
             |k| crate::value::read::read_weight(at.left, k, vtree, &cols, at.computed),
             |k| crate::value::read::read_weight(at.right, k, vtree, &cols, at.computed),
-            at.zero.clone(),
+            store.wzero(),
         )
     }
 

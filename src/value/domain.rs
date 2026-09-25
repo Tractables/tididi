@@ -30,15 +30,13 @@ impl<D: ValueDomain> Clone for FoldInput<'_, D> {
 impl<D: ValueDomain> Copy for FoldInput<'_, D> {}
 
 /// One level of the ensure walk, as [`ValueDomain::fold_node`] sees it: the
-/// level and its two children, the diagram, the columns computed so far, and
-/// the domain's zero.
+/// level and its two children, the diagram, and the columns computed so far.
 pub(crate) struct FoldScope<'a, D: ValueDomain> {
     pub(crate) lvl: usize,
     pub(crate) left: usize,
     pub(crate) right: usize,
     pub(crate) input: FoldInput<'a, D>,
     pub(crate) computed: &'a [Option<D::Col>],
-    pub(crate) zero: &'a D::Scalar,
 }
 
 /// Per-child read view of the child level's fold column, taken before the dense
@@ -92,11 +90,12 @@ pub(crate) trait ValueDomain: Sized {
     /// loop. Stored columns are borrowed; weighted leaf values are computed into an owned column.
     type ChildCol<'a>;
 
-    /// A fresh `width`-element column of `zero`s, reserved through the engine.
+    /// A fresh `width`-element column of the domain's zero, reserved through
+    /// the engine.
     fn alloc_col(
         eng: &Engine,
         width: usize,
-        zero: &Self::Scalar,
+        store: &Self::Store,
     ) -> Result<Self::Col, OperationError>;
 
     /// Store one fold result at slot `i` of a pre-sized column.
@@ -123,11 +122,6 @@ pub(crate) trait ValueDomain: Sized {
 
     /// Number of values currently stored in a column.
     fn col_len(col: &Self::Col) -> usize;
-
-    /// The additive identity, which the weighted domain must read from its
-    /// store. Resolved once per walk, not once per node: a weighted zero is a
-    /// `BigRational` clone.
-    fn zero(store: &Self::Store) -> Self::Scalar;
 
     /// This domain's already-computed child columns inside the per-apply cache.
     ///
@@ -176,14 +170,13 @@ pub(crate) trait ValueDomain: Sized {
         t: VtreeIdx,
         input: FoldInput<'_, Self>,
         computed: &[Option<Self::Col>],
-        zero: &Self::Scalar,
         mut before_node: impl FnMut(u64) -> Result<(), OperationError>,
     ) -> Result<Self::Col, OperationError> {
         let lvl = t.idx();
         let (left, right) = input.vtree.children(t);
         let level = &input.levels[lvl];
-        let mut col = Self::alloc_col(eng, level.slot_count(), zero)?;
-        let at = FoldScope { lvl, left: left.idx(), right: right.idx(), input, computed, zero };
+        let mut col = Self::alloc_col(eng, level.slot_count(), input.store)?;
+        let at = FoldScope { lvl, left: left.idx(), right: right.idx(), input, computed };
         for (i, pairs) in level.internal_inputs_iter() {
             before_node(1 + pairs.len() as u64)?;
             let value = Self::fold_node(&at, i);
@@ -209,8 +202,7 @@ pub(crate) trait ValueDomain: Sized {
         retain: Retention,
         mut before_node: impl FnMut(u64) -> Result<(), OperationError>,
     ) -> Result<(), OperationError> {
-        let FoldInput { vtree, store, .. } = input;
-        let zero = Self::zero(store);
+        let vtree = input.vtree;
         walk_bottom_up(
             vtree,
             root,
@@ -224,7 +216,7 @@ pub(crate) trait ValueDomain: Sized {
             },
             |computed, t| {
                 computed[t.idx()] = Some(Self::fold_column(
-                    eng, t, input, computed, &zero, &mut before_node,
+                    eng, t, input, computed, &mut before_node,
                 )?);
                 Ok(())
             },

@@ -224,8 +224,11 @@ fn weighted_column_alloc_charges_soft_budget() {
     let eng = Engine::new();
     let lim = eng.limits();
     lim.set_budget(Some(64));
-    let zero = WeightValue::exact(rat(0, 1));
-    let res = WeightFold::alloc_col(&eng, 4096, &zero);
+    let store = crate::diagram::WeightStore::new(
+        crate::diagram::RationalWeights::unit(1),
+        crate::diagram::Arithmetic::ExactRational,
+    );
+    let res = WeightFold::alloc_col(&eng, 4096, &store);
     assert!(
         matches!(res, Err(crate::limits::OperationError::OverBudget)),
         "weighted column allocation bypasses the apply soft budget"

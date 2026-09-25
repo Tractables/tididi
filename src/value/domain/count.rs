@@ -179,7 +179,7 @@ impl ValueDomain for IntFold {
     fn alloc_col(
         eng: &Engine,
         width: usize,
-        _zero: &Count,
+        _store: &(),
     ) -> Result<CountVec, OperationError> {
         CountVec::try_with_width(eng, width)
     }
@@ -210,11 +210,6 @@ impl ValueDomain for IntFold {
 
     fn col_len(col: &CountVec) -> usize {
         col.len()
-    }
-
-    #[inline]
-    fn zero(_store: &()) -> Count {
-        Count::Fast(0)
     }
 
     #[inline]

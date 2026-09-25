@@ -109,10 +109,9 @@ fn marginalize_level<K: MarginalDomain>(
     ensure_below::<K>(eng, tdd, left, vtree, store, computed)?;
     ensure_below::<K>(eng, tdd, right, vtree, store, computed)?;
 
-    let zero = K::zero(store);
     let col = K::fold_column(
         eng, d, FoldInput { vtree, levels: &tdd.levels, store },
-        computed, &zero, |_| Ok(()),
+        computed, |_| Ok(()),
     )?;
 
     // Marginalize the children before `d` (bottom-up), so that by the time `d` is marginal
