@@ -143,10 +143,11 @@ fast representation. The exact fold receives decoded values from its readers,
 so it handles arithmetic without knowing whether a value came from a query
 column, marginal storage, or an inline reference.
 
-`query::cache::Observations` tracks observations and schedules affected
-ancestors for both `ModelCounter` and `Evaluator`. The shared refresh walk
-uses their respective folds; counting retains its native-integer overflow
-path. Query state has no reference to its circuit: `Counter<D>` and
+`query::cache::QueryCache` holds the columns and observations of both
+`ModelCounter` and `Evaluator`, refreshing only the ancestors of changed
+observations. Each query supplies its fold, output read and false-diagram
+answer through `query::cache::CachedQuery`; counting retains its
+native-integer overflow path. Query state has no reference to its circuit: `Counter<D>` and
 `Evaluation<S, D>` store either a borrow or the owned `Tdd` alongside it.
 The borrowed aliases are `ModelCounter` and `Evaluator`; owned queries can be
 moved and stored without self-reference. Python and C use those owned forms.

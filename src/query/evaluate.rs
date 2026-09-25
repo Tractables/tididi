@@ -43,13 +43,13 @@ impl Engine {
 }
 
 /// [`evaluate`] as an instance of the shared bottom-up walk.
-pub(super) struct Evaluate<'a, S> {
+pub(crate) struct Evaluate<'a, S> {
     algebra: &'a S,
     pins: &'a [super::cache::PinState],
 }
 
 impl<'a, S> Evaluate<'a, S> {
-    pub(super) fn new(algebra: &'a S, pins: &'a [super::cache::PinState]) -> Self {
+    pub(crate) fn new(algebra: &'a S, pins: &'a [super::cache::PinState]) -> Self {
         Self { algebra, pins }
     }
 }

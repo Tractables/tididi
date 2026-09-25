@@ -7,17 +7,17 @@ use num_bigint::BigUint;
 
 use super::{leaf_seed, PinSemantics};
 use super::super::fold::{LevelFold, Side};
-use super::super::cache::{Observations, PinState, refresh_columns, BoundState};
-use crate::limits::{OperationError, PollGate};
+use super::super::cache::{BoundState, CachedQuery, PinState, QueryCache};
+use crate::limits::OperationError;
 use crate::value::{Retention, Count, CountRead, CountVec, IntFold};
 use crate::vtree::{VarId, VtreeIdx};
 
 /// The u128-primary counting fold: native arithmetic for the vast majority of
 /// nodes, spilling a node to the exact `BigUint` side table only where it
 /// overflows.
-pub(super) struct OverflowingCounts<'a> {
+pub(crate) struct OverflowingCounts<'a> {
     pins: &'a [PinState],
-    pub(super) convention: PinSemantics,
+    convention: PinSemantics,
 }
 
 impl LevelFold for OverflowingCounts<'_> {
@@ -71,6 +71,35 @@ impl LevelFold for OverflowingCounts<'_> {
         right: Side<'_, CountVec>,
     ) -> Count {
         IntFold::fold(pairs, |k| read_side(left, k), |k| read_side(right, k))
+    }
+}
+
+/// A counter's cached query is its pin semantics.
+impl CachedQuery for PinSemantics {
+    type Col = CountVec;
+    type Output = BigUint;
+    type Fold<'a> = OverflowingCounts<'a>;
+
+    fn admit(tdd: &Tdd) -> Result<(), OperationError> {
+        if tdd.levels.iter().any(|level| level.is_weight_marginal()) {
+            return Err(OperationError::IncompatibleWeights);
+        }
+        Ok(())
+    }
+
+    fn fold<'a>(&'a self, pins: &'a [PinState]) -> OverflowingCounts<'a> {
+        OverflowingCounts { pins, convention: *self }
+    }
+
+    fn false_value(&self) -> BigUint {
+        BigUint::ZERO
+    }
+
+    fn output(&self, col: &CountVec, i: usize) -> BigUint {
+        match col.get(i) {
+            CountRead::Fast(value) => BigUint::from(value),
+            CountRead::Big(value) => value.clone(),
+        }
     }
 }
 
@@ -138,19 +167,13 @@ fn read_side<'a>(side: Side<'a, CountVec>, k: EncodedChildRef) -> CountRead<'a> 
 /// ```
 pub struct Counter<D: Borrow<Tdd>> {
     tdd: D,
-    state: CountState,
+    cache: QueryCache<PinSemantics>,
 }
 
 /// A counter borrowing its circuit. Created by [`Tdd::counter`].
 pub type ModelCounter<'a> = Counter<&'a Tdd>;
 /// A counter owning its circuit. Created by [`Tdd::into_counter`].
 pub type OwnedModelCounter = Counter<Tdd>;
-
-struct CountState {
-    cols: Vec<CountVec>,
-    observations: Observations,
-    convention: PinSemantics,
-}
 
 impl Tdd {
     /// Create an unpinned counter that retains columns for repeated counts under evidence.
@@ -195,8 +218,7 @@ impl Tdd {
     /// [`Self::into_counter`] with the storage and pin semantics of [`Self::counter_with`].
     pub fn into_counter_with(self, retention: Retention, convention: PinSemantics) -> Result<OwnedModelCounter, OperationError> {
         let context = self.context().clone();
-        let slots = self.vtree.num_leaves() as usize;
-        context.run(|eng| Counter::allocate(eng, self, slots, retention, convention))
+        context.run(|eng| Counter::new(eng, self, retention, convention))
     }
 
     /// Create an unpinned counter with the chosen retention policy and pin semantics.
@@ -229,7 +251,7 @@ impl Tdd {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn counter_with(&self, retention: Retention, convention: PinSemantics) -> Result<ModelCounter<'_>, OperationError> {
-        self.vtree().context().run(|eng| ModelCounter::allocate(eng, self, self.vtree.num_leaves() as usize, retention, convention))
+        self.context().run(|eng| ModelCounter::new(eng, self, retention, convention))
     }
 }
 
@@ -262,11 +284,7 @@ pub type BoundModelCounter<'a, 'batch> = BoundCounter<'batch, &'a Tdd>;
 
 impl<D: Borrow<Tdd>> std::fmt::Debug for BoundCounter<'_, D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let counter = match &self.counter {
-            BoundState::Owned(counter) => counter,
-            BoundState::Borrowed(counter) => counter,
-        };
-        f.debug_struct("BoundModelCounter").field("counter", counter).finish_non_exhaustive()
+        f.debug_struct("BoundModelCounter").field("counter", self.counter.get()).finish_non_exhaustive()
     }
 }
 
@@ -302,7 +320,8 @@ impl<D: Borrow<Tdd>> BoundCounter<'_, D> {
     /// Returns [`OperationError::Stopped`] for an armed stop or
     /// [`OperationError::OverBudget`] when a buffer reservation is refused.
     pub fn model_count(&mut self) -> Result<BigUint, OperationError> {
-        self.counter.get_mut().count_with(self.engine)
+        let counter = self.counter.get_mut();
+        counter.cache.read(self.engine, counter.tdd.borrow())
     }
 }
 
@@ -360,7 +379,7 @@ impl Engine {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn counter_with<'a, 'batch>(&'batch self, tdd: &'a Tdd, retention: Retention, convention: PinSemantics) -> Result<BoundModelCounter<'a, 'batch>, OperationError> {
-        let counter = ModelCounter::allocate(self, tdd, tdd.vtree.num_leaves() as usize, retention, convention)?;
+        let counter = ModelCounter::new(self, tdd, retention, convention)?;
         Ok(BoundCounter { counter: BoundState::Owned(counter), engine: self })
     }
 }
@@ -368,10 +387,10 @@ impl Engine {
 impl<D: Borrow<Tdd>> std::fmt::Debug for Counter<D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ModelCounter")
-            .field("retention", &self.state.observations.retention)
-            .field("evaluated", &self.state.observations.evaluated)
-            .field("pins", &self.state.observations.pins)
-            .field("changed_since_pass", &self.state.observations.changed.len())
+            .field("retention", &self.cache.observations.retention)
+            .field("evaluated", &self.cache.observations.evaluated)
+            .field("pins", &self.cache.observations.pins)
+            .field("changed_since_pass", &self.cache.observations.changed.len())
             .finish()
     }
 }
@@ -404,19 +423,11 @@ impl<D: Borrow<Tdd>> Counter<D> {
         BoundCounter { counter: BoundState::Borrowed(self), engine }
     }
 
-    /// Allocate leaf-indexed pin slots, or zero slots for an internal unpinned query.
-    pub(super) fn allocate(eng: &Engine, tdd: D, pin_slots: usize, retention: Retention, convention: PinSemantics) -> Result<Self, OperationError> {
-        let lim = eng.limits();
-        let _op = lim.enter()?;
-        if tdd.borrow().levels.iter().any(|level| level.is_weight_marginal()) {
-            return Err(OperationError::IncompatibleWeights);
-        }
-        let mut cols = Vec::new();
-        lim.reserve_exact(&mut cols, tdd.borrow().vtree.num_nodes())?;
-        cols.resize_with(tdd.borrow().vtree.num_nodes(), CountVec::default);
-        let observations = Observations::new(eng, pin_slots, retention)?;
-        lim.check_stop()?;
-        Ok(Self { tdd, state: CountState { cols, observations, convention } })
+    /// Reserve one pin slot per vtree leaf.
+    fn new(eng: &Engine, tdd: D, retention: Retention, convention: PinSemantics) -> Result<Self, OperationError> {
+        let slots = tdd.borrow().vtree.num_leaves() as usize;
+        let cache = QueryCache::new(eng, tdd.borrow(), convention, slots, retention)?;
+        Ok(Self { tdd, cache })
     }
 
     /// Set or clear a vtree variable's pin, deferring affected counts until the next read.
@@ -447,7 +458,7 @@ impl<D: Borrow<Tdd>> Counter<D> {
     /// # Ok::<(), OperationError>(())
     /// ```
     pub fn set_pin(&mut self, var: VarId, val: Option<bool>) -> Result<(), OperationError> {
-        self.state.observations.set_pin(self.tdd.borrow(), var, val)
+        self.cache.observations.set_pin(self.tdd.borrow(), var, val)
     }
 
     /// Set observations using signed integers or named [`Literal`](crate::Literal) values.
@@ -482,7 +493,7 @@ impl<D: Borrow<Tdd>> Counter<D> {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn observe<L: crate::LiteralInput>(&mut self, literals: impl AsRef<[L]>) -> Result<(), OperationError> {
-        self.state.observations.observe(self.tdd.borrow(), literals)
+        self.cache.observations.observe(self.tdd.borrow(), literals)
     }
 
     /// Apply a group of pin changes after validating every variable.
@@ -514,7 +525,7 @@ impl<D: Borrow<Tdd>> Counter<D> {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn set_pins(&mut self, pins: &[(VarId, Option<bool>)]) -> Result<(), OperationError> {
-        self.state.observations.set_pins(self.tdd.borrow(), pins)
+        self.cache.observations.set_pins(self.tdd.borrow(), pins)
     }
 
     /// Clear every pin without allocating, deferring affected counts until the next read.
@@ -537,7 +548,7 @@ impl<D: Borrow<Tdd>> Counter<D> {
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
     pub fn clear_pins(&mut self) {
-        self.state.observations.clear_pins()
+        self.cache.observations.clear_pins()
     }
 
     /// Refresh the current pins and count under the diagram context's allocation and stop rules.
@@ -554,7 +565,7 @@ impl<D: Borrow<Tdd>> Counter<D> {
     /// reservation, or [`OperationError::Stopped`] for an armed stop.
     pub fn model_count(&mut self) -> Result<BigUint, OperationError> {
         let tdd = self.tdd.borrow();
-        tdd.context().run(|eng| self.state.count_with(eng, tdd))
+        tdd.context().run(|eng| self.cache.read(eng, tdd))
     }
 
     /// The unchanged circuit, available for read-only queries.
@@ -562,70 +573,6 @@ impl<D: Borrow<Tdd>> Counter<D> {
 
     /// Discard cached values and observations and recover the circuit owner or borrow.
     pub fn into_inner(self) -> D { self.tdd }
-
-    pub(super) fn count_with(&mut self, eng: &Engine) -> Result<BigUint, OperationError> {
-        self.state.count_with(eng, self.tdd.borrow())
-    }
-
-    pub(crate) fn into_fast_counts(self, eng: &Engine) -> Result<Vec<Vec<u128>>, OperationError> {
-        self.state.into_fast_counts(eng, self.tdd.borrow())
-    }
-}
-
-impl CountState {
-    /// Refresh pins and count under the supplied engine's limits for every entry point.
-    fn count_with(&mut self, eng: &Engine, tdd: &Tdd) -> Result<BigUint, OperationError> {
-        let lim = eng.limits();
-        let _op = lim.enter()?;
-        let result = (|| {
-            let mut gate = lim.gate();
-            let count = if tdd.is_zero() {
-                BigUint::ZERO
-            } else {
-                self.refresh(eng, tdd, &mut gate)?;
-                let out = tdd.output;
-                match self.cols[out.vtree.idx()].get(out.local.idx()) {
-                    CountRead::Fast(value) => BigUint::from(value),
-                    CountRead::Big(value) => value.clone(),
-                }
-            };
-            gate.finish()?;
-            Ok(count)
-        })();
-        if result.is_err() {
-            self.observations.invalidate();
-        }
-        result
-    }
-
-    fn refresh(&mut self, eng: &Engine, tdd: &Tdd, gate: &mut PollGate) -> Result<(), OperationError> {
-        let (tdd, cols, convention) = (tdd, &mut self.cols, self.convention);
-        self.observations.refresh(eng, tdd, gate, |pins, changed, gate| {
-            let fold = OverflowingCounts { pins, convention };
-            refresh_columns(&fold, eng, tdd, cols, changed, gate)
-        })
-    }
-
-}
-
-impl CountState {
-    /// Compute and return every fast count slot, preserving overflow sentinels.
-    ///
-    /// Only a [`Retention::All`] counter holds every slot after the pass.
-    fn into_fast_counts(mut self, eng: &Engine, tdd: &Tdd) -> Result<Vec<Vec<u128>>, OperationError> {
-        debug_assert_eq!(self.observations.retention, Retention::All, "a frontier counter frees the columns this reads");
-        let lim = eng.limits();
-        let mut gate = lim.gate();
-        self.refresh(eng, tdd, &mut gate)?;
-        let mut counts = Vec::new();
-        lim.reserve_exact(&mut counts, self.cols.len())?;
-        for column in self.cols {
-            gate.poll(1)?;
-            counts.push(column.into_parts().0);
-        }
-        gate.flush()?;
-        Ok(counts)
-    }
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@ use crate::{Engine, Tdd, OperationError, LiteralInput};
 use crate::diagram::EvalAlgebra;
 use crate::vtree::VarId;
 use crate::value::Retention;
-use super::cache::{Observations, BoundState, refresh_columns};
+use super::cache::{BoundState, CachedQuery, PinState, QueryCache};
 use super::evaluate::Evaluate;
 
 /// Evaluate a circuit repeatedly under changing observations.
@@ -50,7 +50,7 @@ use super::evaluate::Evaluate;
 /// Attached diagram weights do not override the supplied algebra.
 pub struct Evaluation<S: EvalAlgebra, D: Borrow<Tdd>> {
     tdd: D,
-    state: EvaluationState<S>,
+    cache: QueryCache<S>,
 }
 
 /// An evaluator borrowing its circuit. Created by [`Tdd::evaluator`].
@@ -58,15 +58,32 @@ pub type Evaluator<'a, S> = Evaluation<S, &'a Tdd>;
 /// An evaluator owning its circuit. Created by [`Tdd::into_evaluator`].
 pub type OwnedEvaluator<S> = Evaluation<S, Tdd>;
 
-struct EvaluationState<S: EvalAlgebra> {
-    algebra: S,
-    cols: Vec<Vec<S::Value>>,
-    observations: Observations,
+/// An evaluator's cached query is its algebra.
+impl<S: EvalAlgebra> CachedQuery for S {
+    type Col = Vec<S::Value>;
+    type Output = S::Value;
+    type Fold<'a> = Evaluate<'a, S> where S: 'a;
+
+    fn admit(tdd: &Tdd) -> Result<(), OperationError> {
+        tdd.require_structure()
+    }
+
+    fn fold<'a>(&'a self, pins: &'a [PinState]) -> Evaluate<'a, S> {
+        Evaluate::new(self, pins)
+    }
+
+    fn false_value(&self) -> S::Value {
+        self.zero()
+    }
+
+    fn output(&self, col: &Vec<S::Value>, i: usize) -> S::Value {
+        col[i].clone()
+    }
 }
 
 impl<S: EvalAlgebra, D: Borrow<Tdd>> std::fmt::Debug for Evaluation<S, D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Evaluator").field("observations", &self.state.observations).finish_non_exhaustive()
+        f.debug_struct("Evaluator").field("observations", &self.cache.observations).finish_non_exhaustive()
     }
 }
 
@@ -99,15 +116,9 @@ impl Tdd {
 
 impl<S: EvalAlgebra, D: Borrow<Tdd>> Evaluation<S, D> {
     fn new(eng: &Engine, tdd: D, algebra: S) -> Result<Self, OperationError> {
-        let lim = eng.limits();
-        let _op = lim.enter()?;
-        tdd.borrow().require_structure()?;
-        let mut cols = Vec::new();
-        lim.reserve_exact(&mut cols, tdd.borrow().vtree.num_nodes())?;
-        cols.resize_with(tdd.borrow().vtree.num_nodes(), Vec::new);
-        let observations = Observations::new(eng, tdd.borrow().vtree.num_leaves() as usize, Retention::All)?;
-        lim.check_stop()?;
-        Ok(Self { tdd, state: EvaluationState { algebra, cols, observations } })
+        let slots = tdd.borrow().vtree.num_leaves() as usize;
+        let cache = QueryCache::new(eng, tdd.borrow(), algebra, slots, Retention::All)?;
+        Ok(Self { tdd, cache })
     }
 
     /// Set or clear a variable's observation; updates take effect on the next read.
@@ -115,7 +126,7 @@ impl<S: EvalAlgebra, D: Borrow<Tdd>> Evaluation<S, D> {
     /// An absent variable returns [`OperationError::VariableNotInVtree`] without
     /// changing observations or cached values. Repeating an observation does no work.
     pub fn set_pin(&mut self, var: VarId, value: Option<bool>) -> Result<(), OperationError> {
-        self.state.observations.set_pin(self.tdd.borrow(), var, value)
+        self.cache.observations.set_pin(self.tdd.borrow(), var, value)
     }
 
     /// Observe signed integers or named literals. The last value of a variable wins.
@@ -123,24 +134,23 @@ impl<S: EvalAlgebra, D: Borrow<Tdd>> Evaluation<S, D> {
     /// All inputs are validated first. Invalid literals or absent variables
     /// return the corresponding [`OperationError`] without changing any observation.
     pub fn observe<L: LiteralInput>(&mut self, literals: impl AsRef<[L]>) -> Result<(), OperationError> {
-        self.state.observations.observe(self.tdd.borrow(), literals)
+        self.cache.observations.observe(self.tdd.borrow(), literals)
     }
 
     /// Apply observations and removals together, validating all variables first.
     ///
     /// Errors and repeated variables follow [`Self::set_pin`] and [`Self::observe`].
     pub fn set_pins(&mut self, pins: &[(VarId, Option<bool>)]) -> Result<(), OperationError> {
-        self.state.observations.set_pins(self.tdd.borrow(), pins)
+        self.cache.observations.set_pins(self.tdd.borrow(), pins)
     }
 
     /// Clear all observations, retaining allocated columns for the next read.
-    pub fn clear_pins(&mut self) { self.state.observations.clear_pins(); }
+    pub fn clear_pins(&mut self) { self.cache.observations.clear_pins(); }
 
     /// Replace the algebra, invalidate every cached value and return the previous one.
     /// Observations are retained. Evaluation remains deferred until the next read.
     pub fn replace_algebra(&mut self, algebra: S) -> S {
-        self.state.observations.invalidate();
-        std::mem::replace(&mut self.state.algebra, algebra)
+        self.cache.replace_query(algebra)
     }
 
     /// Refresh pending observations and return the circuit's value under evidence.
@@ -152,11 +162,7 @@ impl<S: EvalAlgebra, D: Borrow<Tdd>> Evaluation<S, D> {
     /// unfinished refresh. Allocations inside algebra values are not metered.
     pub fn value(&mut self) -> Result<S::Value, OperationError> {
         let tdd = self.tdd.borrow();
-        tdd.context().run(|eng| self.state.value_on(eng, tdd))
-    }
-
-    fn value_on(&mut self, eng: &Engine) -> Result<S::Value, OperationError> {
-        self.state.value_on(eng, self.tdd.borrow())
+        tdd.context().run(|eng| self.cache.read(eng, tdd))
     }
 
     /// The unchanged circuit, available for read-only queries.
@@ -186,8 +192,7 @@ pub type BoundEvaluator<'a, 'b, S> = BoundEvaluation<'b, S, &'a Tdd>;
 
 impl<S: EvalAlgebra, D: Borrow<Tdd>> std::fmt::Debug for BoundEvaluation<'_, S, D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let state = match &self.state { BoundState::Owned(value) => value, BoundState::Borrowed(value) => value };
-        f.debug_struct("BoundEvaluator").field("evaluator", state).finish_non_exhaustive()
+        f.debug_struct("BoundEvaluator").field("evaluator", self.state.get()).finish_non_exhaustive()
     }
 }
 
@@ -217,31 +222,10 @@ impl<S: EvalAlgebra, D: Borrow<Tdd>> BoundEvaluation<'_, S, D> {
     /// [`Evaluator::replace_algebra`] within this binding.
     pub fn replace_algebra(&mut self, algebra: S) -> S { self.state.get_mut().replace_algebra(algebra) }
     /// [`Evaluator::value`] under this engine's limits, including cached reads.
-    pub fn value(&mut self) -> Result<S::Value, OperationError> { self.state.get_mut().value_on(self.engine) }
-}
-
-impl<S: EvalAlgebra> EvaluationState<S> {
-    fn value_on(&mut self, eng: &Engine, tdd: &Tdd) -> Result<S::Value, OperationError> {
-        let lim = eng.limits();
-        let _op = lim.enter()?;
-        let result = (|| {
-            let mut gate = lim.gate();
-            let value = if tdd.is_zero() { self.algebra.zero() } else {
-                let (tdd, algebra, cols) = (tdd, &self.algebra, &mut self.cols);
-                self.observations.refresh(eng, tdd, &mut gate, |pins, changed, gate| {
-                    let fold = Evaluate::new(algebra, pins);
-                    refresh_columns(&fold, eng, tdd, cols, changed, gate)
-                })?;
-                let output = tdd.output();
-                self.cols[output.vtree.idx()][output.local.idx()].clone()
-            };
-            gate.finish()?;
-            Ok(value)
-        })();
-        if result.is_err() { self.observations.invalidate(); }
-        result
+    pub fn value(&mut self) -> Result<S::Value, OperationError> {
+        let evaluator = self.state.get_mut();
+        evaluator.cache.read(self.engine, evaluator.tdd.borrow())
     }
-
 }
 
 #[cfg(test)]

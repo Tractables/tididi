@@ -8,6 +8,7 @@ mod incremental;
 
 use crate::Engine;
 use crate::limits::OperationError;
+use super::cache::QueryCache;
 pub use incremental::{Counter, ModelCounter, OwnedModelCounter, BoundCounter, BoundModelCounter};
 pub use crate::value::Retention;
 
@@ -188,9 +189,22 @@ impl Engine {
     ///
     /// Returns the query's errors or [`OperationError::Stopped`] on cancellation.
     pub fn node_counts_u128(&self, tdd: &Tdd) -> Result<Vec<Vec<u128>>, OperationError> {
-        let _op = self.limits().enter()?;
-        ModelCounter::allocate(self, tdd, 0, Retention::All, PinSemantics::Cofactor)?
-            .into_fast_counts(self)
+        let lim = self.limits();
+        let _op = lim.enter()?;
+        // The shared counter fold with no pin storage, keeping every column;
+        // the fast half of each column holds the saturated counts.
+        let mut cache = QueryCache::new(self, tdd, PinSemantics::Cofactor, 0, Retention::All)?;
+        let mut gate = lim.gate();
+        cache.refresh(self, tdd, &mut gate)?;
+        let columns = cache.into_columns();
+        let mut counts = Vec::new();
+        lim.reserve_exact(&mut counts, columns.len())?;
+        for column in columns {
+            gate.poll(1)?;
+            counts.push(column.into_parts().0);
+        }
+        gate.flush()?;
+        Ok(counts)
     }
 
     /// Run [`Tdd::model_count`](crate::Tdd::model_count) using this batch's scratch and resource limits.
@@ -208,6 +222,6 @@ impl Engine {
         if tdd.is_zero() { return Ok(BigUint::ZERO); }
         // The shared counter fold with no pin storage, releasing each child
         // column once its parent has read it.
-        ModelCounter::allocate(self, tdd, 0, Retention::Frontier, PinSemantics::Cofactor)?.count_with(self)
+        QueryCache::new(self, tdd, PinSemantics::Cofactor, 0, Retention::Frontier)?.read(self, tdd)
     }
 }
