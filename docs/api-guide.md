@@ -87,7 +87,7 @@ with [`write_tdd`](crate::io::write_tdd), restores them with
 [`Vtree::to_text`](crate::Vtree::to_text) and [`Vtree::from_text`](crate::Vtree::from_text).
 
 Render Graphviz text with [`tdd_to_dot`](crate::io::tdd_to_dot) or
-[`vtree_to_dot`](crate::io::vtree_to_dot); [`Tdd::vtree_to_dot`](crate::Tdd::vtree_to_dot)
+[`vtree_to_dot`](crate::io::vtree_to_dot); [`Tdd::level_sizes_to_dot`](crate::Tdd::level_sizes_to_dot)
 annotates the vtree with circuit sizes.
 For direct traversal, follow the [custom-statistic example](crate::guide::examples::statistics).
 

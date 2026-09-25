@@ -74,11 +74,11 @@ impl Tdd {
     /// let vtree = Arc::new(Vtree::balanced(3));
     /// let f = Tdd::clause(&vtree, [1, -2])?;
     /// # tididi::test_helpers::assert_canonical(&f);
-    /// let dot = f.vtree_to_dot();
+    /// let dot = f.level_sizes_to_dot();
     /// assert!(dot.contains("fillcolor="));
     /// # Ok::<(), tididi::OperationError>(())
     /// ```
-    pub fn vtree_to_dot(&self) -> String {
+    pub fn level_sizes_to_dot(&self) -> String {
         render_vtree(self.vtree(), Some(self))
     }
 }

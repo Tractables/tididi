@@ -12,7 +12,7 @@ fn plain_and_annotated_views_use_their_own_vtree() {
         let f = Tdd::clause(&vtree, [10, -3]).unwrap();
         assert_canonical(&f);
         let plain = vtree_to_dot(&vtree);
-        let overlay = f.vtree_to_dot();
+        let overlay = f.level_sizes_to_dot();
         assert!(!plain.contains("fillcolor="));
         assert!(overlay.contains("fillcolor="));
         for label in ["X₁₀", "X₃", "X₈"] {
@@ -33,10 +33,10 @@ fn vtree_overlays_handle_constants_leaves_and_marginal_levels() {
         let vtree = Arc::new(vtree);
         for mut f in [Tdd::zero(&vtree), Tdd::one(&vtree)] {
             assert_canonical(&f);
-            assert!(f.vtree_to_dot().starts_with("graph vtree"));
+            assert!(f.level_sizes_to_dot().starts_with("graph vtree"));
             f.marginalize_levels(&[vtree.root()]).unwrap();
             assert_canonical(&f);
-            let dot = f.vtree_to_dot();
+            let dot = f.level_sizes_to_dot();
             assert!(dot.starts_with("graph vtree"));
             assert!(!dot.contains("NaN"));
         }
