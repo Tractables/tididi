@@ -99,6 +99,7 @@ fn an_armed_stop_comes_before_every_input_error() {
     assert_eq!(eng.clause(&vtree, [0]).err(), Some(Stopped));
     assert_eq!(eng.from_models(&vtree, &wide, &[0]).err(), Some(Stopped));
     assert_eq!(eng.rotate_marginal_cluster(&mut f.clone(), VtreeIdx(999), 1, &mut Vec::new()).err(), Some(Stopped));
+    assert_eq!(eng.marginalize_levels(&mut f.clone(), &[VtreeIdx(999)]).err(), Some(Stopped));
     // An unweighted diagram has no weighted value, but the stop is tested first.
     assert_eq!(eng.weighted_value(&f).err(), Some(Stopped));
 }

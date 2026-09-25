@@ -85,8 +85,8 @@ impl Engine {
 
 /// Sum out validated target subtrees and restore the marginal invariants.
 pub(crate) fn marginalize_levels(eng: &Engine, f: &mut Tdd, levels: &[VtreeIdx]) -> Result<(), OperationError> {
+    let _op = eng.limits().enter()?;
     f.check_level_indices(levels)?;
-    let _op = eng.limits().begin_operation();
     let vtree = std::sync::Arc::clone(&f.vtree);
     evaluate_levels(eng, f, levels, &vtree)?;
     restore_marginal_invariants(eng, f, levels, &vtree)
