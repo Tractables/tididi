@@ -43,6 +43,15 @@ impl<'a> CopyPlacement<'a> {
         self.assembly.replace_level(self.eng, to, view)
     }
 
+    /// [`copy_level`](Self::copy_level) onto a destination node whose children
+    /// are the source node's, swapped: every pair is read the other way round.
+    pub(super) fn copy_level_mirrored(&mut self, source: &Tdd, from: VtreeIdx, to: VtreeIdx) -> Result<(), OperationError> {
+        self.copy_level(source, from, to)?;
+        let (levels, _) = self.assembly.parts_mut();
+        levels[to.idx()].swap_sides();
+        Ok(())
+    }
+
     /// The true reference for an unconstrained child already placed bottom-up.
     #[inline]
     pub(super) fn true_node(&self, child: VtreeIdx) -> NodeIdx {
@@ -75,9 +84,12 @@ impl<'a> CopyPlacement<'a> {
     }
 
     /// Seat the chosen root reference and drop what the joins left unused.
+    ///
+    /// Copies of a valid diagram's levels joined through true nodes are valid
+    /// storage by construction, so only debug builds check them.
     pub(super) fn finish(self, local: NodeIdx) -> Result<Tdd, OperationError> {
         let output = TddNodeId { vtree: self.vtree.root(), local };
-        let mut result = self.assembly.finish_checked(output)?;
+        let mut result = self.assembly.finish_asserted(output)?;
         if self.prune {
             prune(self.eng, &mut result)?;
         }

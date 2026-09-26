@@ -58,6 +58,13 @@ impl EmbeddingPlan {
         destination.context().run(|eng| eng.embedding_plan(source, destination, map))
     }
 
+    /// [`Self::new`], accepting a destination that holds the source's shape
+    /// with the children of some nodes swapped, as [`Tdd::embed_mirrored`]
+    /// does.
+    pub fn new_mirrored(source: &Arc<Vtree>, destination: &Arc<Vtree>, map: impl Fn(VarId) -> VarId) -> Result<Self, EmbedError> {
+        destination.context().run(|eng| eng.embedding_plan_mirrored(source, destination, map))
+    }
+
     /// Source vtree allocation required by [`Self::apply`].
     pub fn source(&self) -> &Arc<Vtree> { &self.source }
 
@@ -153,15 +160,55 @@ impl Tdd {
     ) -> Result<(Tdd, Embedding), EmbedError> {
         into.context().run(|eng| eng.embed(self, into, map))
     }
+
+    /// [`embed`](Self::embed), where `into` may hold this diagram's vtree
+    /// shape **up to mirrors**: the children of any node may come in the
+    /// other order under the renaming. Such a level is copied with the two
+    /// sides of every pair exchanged, which denotes the same function over
+    /// the mirrored node — a level's nodes are classes of assignments to the
+    /// node's variables, whichever child is called left — so the result is
+    /// canonical when this diagram is, and costs what [`embed`](Self::embed)
+    /// costs. A binary relation's diagram placed with its two blocks the
+    /// other way round is its transpose's.
+    ///
+    /// # Errors
+    ///
+    /// As [`embed`](Self::embed).
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// use tididi::vtree::VarId;
+    ///
+    /// // x1 ∧ ¬x2 on (x1 x2), placed so that x1 lands on the right leaf.
+    /// let pair = Arc::new(Vtree::linear(2));
+    /// let f = Tdd::cube(&pair, [1, -2])?;
+    /// let into = Arc::new(Vtree::linear(2));
+    /// assert!(f.embed(&into, |v| VarId(3 - v.0)).is_err());
+    /// let (g, _) = f.embed_mirrored(&into, |v| VarId(3 - v.0))?;
+    /// assert!(g.equivalent(&Tdd::cube(&into, [2, -1])?)?);
+    /// # tididi::test_helpers::assert_canonical(&g);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn embed_mirrored(
+        &self,
+        into: &Arc<Vtree>,
+        map: impl Fn(VarId) -> VarId,
+    ) -> Result<(Tdd, Embedding), EmbedError> {
+        into.context().run(|eng| eng.embed_mirrored(self, into, map))
+    }
 }
 
 impl Engine {
     /// Prepare an [`EmbeddingPlan`] under this engine's limits.
     pub fn embedding_plan(&self, source: &Arc<Vtree>, destination: &Arc<Vtree>, map: impl Fn(VarId) -> VarId) -> Result<EmbeddingPlan, EmbedError> {
-        let lim = self.limits();
-        let _op = lim.enter()?;
-        let layout = Plan::build(lim, source, destination, map)?;
-        Ok(EmbeddingPlan { source: source.clone(), destination: destination.clone(), layout })
+        self.plan_embedding(source, destination, map, false)
+    }
+
+    /// Prepare an [`EmbeddingPlan`] up to mirrors, as
+    /// [`Tdd::embed_mirrored`] places, under this engine's limits.
+    pub fn embedding_plan_mirrored(&self, source: &Arc<Vtree>, destination: &Arc<Vtree>, map: impl Fn(VarId) -> VarId) -> Result<EmbeddingPlan, EmbedError> {
+        self.plan_embedding(source, destination, map, true)
     }
 
     /// [`EmbeddingPlan::apply`] under this engine's limits.
@@ -172,15 +219,17 @@ impl Engine {
         assemble(self, circuit, &plan.destination, &plan.layout)
     }
 
-    /// [`EmbeddingPlan::then`] under this engine's limits.
+    /// [`EmbeddingPlan::then`] under this engine's limits. The composition
+    /// matches up to mirrors when either plan does.
     pub fn compose_embeddings(&self, first: &EmbeddingPlan, next: &EmbeddingPlan) -> Result<EmbeddingPlan, EmbedError> {
         let _op = self.limits().enter()?;
         if !Arc::ptr_eq(&first.destination, &next.source) { return Err(OperationError::VtreeMismatch.into()); }
-        self.embedding_plan(&first.source, &next.destination, |var| {
+        let mirror = first.layout.mirror || next.layout.mirror;
+        self.plan_embedding(&first.source, &next.destination, |var| {
             let leaf = first.source.leaf_of(var).expect("source leaf");
             let intermediate = first.levels().level_of(leaf);
             next.destination.leaf_var(next.levels().level_of(intermediate))
-        })
+        }, mirror)
     }
 
     /// [`Tdd::embed`] under this batch's scratch and resource limits.
@@ -194,10 +243,49 @@ impl Engine {
         into: &Arc<Vtree>,
         map: impl Fn(VarId) -> VarId,
     ) -> Result<(Tdd, Embedding), EmbedError> {
+        self.embed_on(tdd, into, map, false)
+    }
+
+    /// [`Tdd::embed_mirrored`] under this batch's scratch and resource limits.
+    ///
+    /// # Errors
+    ///
+    /// As [`Tdd::embed`].
+    pub fn embed_mirrored(
+        &self,
+        tdd: &Tdd,
+        into: &Arc<Vtree>,
+        map: impl Fn(VarId) -> VarId,
+    ) -> Result<(Tdd, Embedding), EmbedError> {
+        self.embed_on(tdd, into, map, true)
+    }
+
+    /// Match the two vtrees, up to mirrors when `mirror` is set.
+    fn plan_embedding(
+        &self,
+        source: &Arc<Vtree>,
+        destination: &Arc<Vtree>,
+        map: impl Fn(VarId) -> VarId,
+        mirror: bool,
+    ) -> Result<EmbeddingPlan, EmbedError> {
+        let lim = self.limits();
+        let _op = lim.enter()?;
+        let layout = Plan::build(lim, source, destination, map, mirror)?;
+        Ok(EmbeddingPlan { source: source.clone(), destination: destination.clone(), layout })
+    }
+
+    /// Match the two vtrees, up to mirrors when `mirror` is set, and copy.
+    fn embed_on(
+        &self,
+        tdd: &Tdd,
+        into: &Arc<Vtree>,
+        map: impl Fn(VarId) -> VarId,
+        mirror: bool,
+    ) -> Result<(Tdd, Embedding), EmbedError> {
         let lim = self.limits();
         let _op = lim.enter()?;
         tdd.require_structure()?;
-        let plan = Plan::build(lim, tdd.vtree(), into, map)?;
+        let plan = Plan::build(lim, tdd.vtree(), into, map, mirror)?;
         let result = assemble(self, tdd, into, &plan)?;
         Ok((result, plan.embedding))
     }
@@ -212,6 +300,12 @@ struct Plan {
     covered_by: Vec<Option<VtreeIdx>>,
     /// The destination node each source node maps to.
     embedding: Embedding,
+    /// Whether children may be matched swapped.
+    mirror: bool,
+    /// Per source node: its image has its children swapped, so its level is
+    /// copied with every pair read the other way round. Empty unless
+    /// `mirror`.
+    mirrored: Vec<bool>,
 }
 
 impl Plan {
@@ -221,12 +315,15 @@ impl Plan {
     /// variables on one side only is a pass-through and the walk descends
     /// into the other side without advancing the source, which is exactly the
     /// node [`Vtree::project_to_vars`] splices out. Every other node must
-    /// correspond to the current source node. `O(nodes of into)`.
+    /// correspond to the current source node. `O(nodes of into)`; up to
+    /// mirrors, each source node's orientation is read off where the image of
+    /// one of its left child's leaves lies, `O(depth of into)` more per node.
     fn build(
         lim: &Limits,
         source: &Vtree,
         into: &Vtree,
         map: impl Fn(VarId) -> VarId,
+        mirror: bool,
     ) -> Result<Plan, EmbedError> {
         let mut mapped = Vec::new();
         lim.try_resize(&mut mapped, into.num_nodes(), false)?;
@@ -251,6 +348,21 @@ impl Plan {
             mapped[t.idx()] = mapped[left.idx()] || mapped[right.idx()];
         }
 
+        // A leaf under each source node, and whether each source node's
+        // image has its children the other way round.
+        let mut some_leaf = Vec::new();
+        let mut mirrored = Vec::new();
+        if mirror {
+            lim.try_resize(&mut some_leaf, source.num_nodes(), source.root())?;
+            lim.try_resize(&mut mirrored, source.num_nodes(), false)?;
+            for s in source.bottomup() {
+                some_leaf[s.idx()] = match source.node(s).is_leaf() {
+                    true => s,
+                    false => some_leaf[source.children(s).0.idx()],
+                };
+            }
+        }
+
         let mut covered_by = Vec::new();
         lim.try_resize(&mut covered_by, into.num_nodes(), None)?;
         let mut stack = Vec::new();
@@ -270,7 +382,11 @@ impl Plan {
                 (true, true) if embedding[s.idx()] == d => {}
                 (false, false) => {
                     let (left, right) = into.children(d);
-                    let (source_left, source_right) = source.children(s);
+                    let (mut source_left, mut source_right) = source.children(s);
+                    if mirror && lies_under(into, embedding[some_leaf[source_left.idx()].idx()], right, d) {
+                        mirrored[s.idx()] = true;
+                        std::mem::swap(&mut source_left, &mut source_right);
+                    }
                     lim.try_push(&mut stack, (left, source_left))?;
                     lim.try_push(&mut stack, (right, source_right))?;
                 }
@@ -285,7 +401,24 @@ impl Plan {
             "a completed match gives every source level an image",
         );
         gate.flush()?;
-        Ok(Plan { mapped, covered_by, embedding: Embedding { levels: embedding } })
+        Ok(Plan { mapped, covered_by, embedding: Embedding { levels: embedding }, mirror, mirrored })
+    }
+}
+
+/// Whether the ancestor path from `node` meets `target` before `stop`, for a
+/// `node` below `stop`.
+fn lies_under(into: &Vtree, mut node: VtreeIdx, target: VtreeIdx, stop: VtreeIdx) -> bool {
+    loop {
+        if node == target {
+            return true;
+        }
+        if node == stop {
+            return false;
+        }
+        match into.node(node).parent() {
+            Some(parent) => node = parent,
+            None => return false,
+        }
     }
 }
 
@@ -309,7 +442,10 @@ fn assemble(
         if !plan.mapped[t.idx()] {
             placement.join(t, placement.true_node(left), placement.true_node(right))?;
         } else if let Some(source) = plan.covered_by[t.idx()] {
-            placement.copy_level(tdd, source, t)?;
+            match plan.mirrored.get(source.idx()).copied().unwrap_or(false) {
+                true => placement.copy_level_mirrored(tdd, source, t)?,
+                false => placement.copy_level(tdd, source, t)?,
+            }
         } else {
             placement.pass_through(t, if plan.mapped[left.idx()] { ChildSide::Right } else { ChildSide::Left })?;
         }

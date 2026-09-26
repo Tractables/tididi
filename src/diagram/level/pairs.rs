@@ -1,7 +1,7 @@
 //! Reading a level: pair views, decoding, remapping, per-node pair counts, and
 //! the canonical sort a rewritten pair list is put back in.
 
-use crate::diagram::EncodedChildRef;
+use crate::diagram::{ChildSide, EncodedChildRef};
 
 use crate::diagram::marginal_ref::ChildDecoder;
 use crate::diagram::PairsIter;
@@ -223,6 +223,27 @@ impl TddLevel {
         self.pair_counts().sum()
     }
 
+    /// Exchange the two sides of every pair, in place: the level of the same
+    /// functions over this vtree node with its two children swapped.
+    ///
+    /// A level's nodes are classes of assignments to the node's variables,
+    /// and a node's pairs are the (left class, right class) products it
+    /// holds, so the classes do not depend on which child is called left and
+    /// the swapped level is canonical when this one is. Node indices do not
+    /// move. Dead arena slots are swapped too; nothing reads them.
+    pub(crate) fn swap_sides(&mut self) {
+        for node in &mut self.nodes {
+            if matches!(node.kind(), NodeKind::Inline(_)) {
+                std::mem::swap(&mut node.a, &mut node.b);
+            }
+        }
+        for pair in &mut self.pairs {
+            std::mem::swap(&mut pair.left, &mut pair.right);
+        }
+        let left = self.has_value_refs(ChildSide::Left);
+        self.set_has_value_refs(ChildSide::Left, self.has_value_refs(ChildSide::Right));
+        self.set_has_value_refs(ChildSide::Right, left);
+    }
 }
 
 /// Sorting network for 3..=8 elements: a fixed sequence of conditional swaps

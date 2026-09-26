@@ -37,16 +37,19 @@ impl<'a> Assembly<'a> {
         self.deref_mut().parts_mut()
     }
 
-    /// Validate storage using the public builder's checks, then
-    /// [`finish`](Self::finish) it.
+    /// [`finish`](Self::finish) storage whose construction established the
+    /// public builder's storage invariants, as a copy of a valid diagram's
+    /// levels does; debug builds still run the builder's checks.
     ///
     /// # Errors
     ///
-    /// A failed check, as [`OperationError::InvalidDiagram`], or a refused
-    /// worklist growth.
+    /// As [`finish`](Self::finish).
     #[inline]
-    pub(crate) fn finish_checked(self, output: TddNodeId) -> Result<Tdd, OperationError> {
-        self.check(output)?;
+    pub(crate) fn finish_asserted(self, output: TddNodeId) -> Result<Tdd, OperationError> {
+        debug_assert!(
+            self.check(output).is_ok(),
+            "a copy built storage the checked seat would refuse",
+        );
         self.finish(output)
     }
 
