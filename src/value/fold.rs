@@ -67,6 +67,31 @@ impl IntFold {
         Count::Big(Self::sum_exact(pairs, l, r))
     }
 
+    /// `Σ over pairs (left × right)` for a node whose children are both
+    /// structural, with each child's counts a raw column every value of which
+    /// fits `u64` (the `all_u64` certificate): a reference is then the index
+    /// of its count, and every product is one widening multiply that cannot
+    /// overflow. `None` when the total leaves `u128`; the caller then takes
+    /// the exact [`Self::fold`].
+    ///
+    /// Two accumulators, so consecutive pairs do not wait on one carry chain,
+    /// and no branch on a zero count: under the certificate a zero product
+    /// costs what any other does.
+    #[inline]
+    pub(crate) fn fold_structural_u64(pairs: &[ChildPair], left: &[u128], right: &[u128]) -> Option<u128> {
+        let read = |col: &[u128], side: EncodedChildRef| col[side.0 as usize] as u64 as u128;
+        let (mut t0, mut t1) = (0u128, 0u128);
+        let mut two = pairs.chunks_exact(2);
+        for p in two.by_ref() {
+            t0 = t0.checked_add(read(left, p[0].left) * read(right, p[0].right))?;
+            t1 = t1.checked_add(read(left, p[1].left) * read(right, p[1].right))?;
+        }
+        for p in two.remainder() {
+            t0 = t0.checked_add(read(left, p.left) * read(right, p.right))?;
+        }
+        t0.checked_add(t1)
+    }
+
     /// Sum products in arbitrary precision after a fast fold refuses the total.
     /// Readers supply decoded values; this fold does not know their storage layout.
     ///

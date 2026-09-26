@@ -71,6 +71,16 @@ impl LevelFold for OverflowingCounts<'_> {
         left: Side<'_, CountVec>,
         right: Side<'_, CountVec>,
     ) -> Count {
+        // Two structural children whose counts all fit `u64` read raw.
+        fn raw<'c>(side: Side<'c, CountVec>) -> Option<&'c [u128]> {
+            let col = side.col.as_count_ref();
+            (!side.view.is_marginal() && col.all_u64()).then(|| col.fast_slice())
+        }
+        if let (Some(l), Some(r)) = (raw(left), raw(right))
+            && let Some(total) = IntFold::fold_structural_u64(pairs.as_slice(), l, r)
+        {
+            return Count::from_u128(total);
+        }
         IntFold::fold(pairs, |k| read_side(left, k), |k| read_side(right, k))
     }
 }

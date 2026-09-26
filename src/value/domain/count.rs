@@ -223,6 +223,49 @@ impl ValueDomain for IntFold {
         &()
     }
 
+    /// The default column fill, with the all-`u64` fold
+    /// ([`IntFold::fold_structural_u64`]) wherever both children are
+    /// structural and certified: their references are then plain indices
+    /// into the two columns, so a node is one pass over its pairs with no
+    /// per-read decode. Any other level, and a node whose total leaves
+    /// `u128`, takes [`Self::fold_node`].
+    fn fold_column(
+        eng: &Engine,
+        t: VtreeIdx,
+        input: FoldInput<'_, IntFold>,
+        computed: &[Option<CountVec>],
+        mut before_node: impl FnMut(u64) -> Result<(), OperationError>,
+    ) -> Result<CountVec, OperationError> {
+        let FoldInput { vtree, levels, .. } = input;
+        let lvl = t.idx();
+        let (left, right) = vtree.children(t);
+        let level = &levels[lvl];
+        let mut col = CountVec::try_with_width(eng, level.slot_count())?;
+        let at = FoldScope { lvl, left: left.idx(), right: right.idx(), input, computed };
+        // A structural child's column is its `computed` one or the fixed leaf
+        // slots; a marginal child's is scanned for its certificate, which is
+        // not paid for here since it would not be read raw.
+        let raw = |c: VtreeIdx| {
+            if levels[c.idx()].count_column().is_some() {
+                return None;
+            }
+            let col = IntFold::child_view(c.idx(), vtree, &levels[c.idx()], computed, &()).col;
+            col.all_u64().then(|| col.fast_slice())
+        };
+        let raw = raw(left).zip(raw(right));
+        for (i, node) in level.nodes.iter().enumerate() {
+            let pairs = level.pairs_of(node);
+            before_node(1 + pairs.len() as u64)?;
+            let fast = raw.and_then(|(l, r)| IntFold::fold_structural_u64(pairs, l, r));
+            let value = match fast {
+                Some(total) => Count::from_u128(total),
+                None => IntFold::fold_node(&at, i),
+            };
+            col.set(eng, i, value)?;
+        }
+        Ok(col)
+    }
+
     #[inline]
     fn fold_node(at: &FoldScope<'_, IntFold>, i: usize) -> Count {
         let FoldInput { vtree, levels, .. } = at.input;

@@ -124,3 +124,31 @@ fn all_u64_certificate_excludes_overflow_sentinel() {
     let c = child(&slots);
     assert!(!c.col.all_u64(), "COUNT_OVERFLOW slot must defeat the all_u64 cert");
 }
+
+#[test]
+fn the_structural_u64_fold_is_the_exact_fold_or_refuses() {
+    use crate::value::{CountRead, IntFold};
+    let (ls, rs) = (vec![0u128, 3, u64::MAX as u128, 1], vec![7u128, 0, 2, u64::MAX as u128]);
+    let exact = |pairs: &[crate::diagram::ChildPair]| {
+        IntFold::fold(
+            pairs.iter().copied(),
+            |k| CountRead::Fast(ls[k.0 as usize]),
+            |k| CountRead::Fast(rs[k.0 as usize]),
+        )
+    };
+    // Every length from empty through an odd tail, zeros included, agrees
+    // with the exact fold while the total fits `u128`.
+    let all: Vec<_> = (0..4).flat_map(|l| (0..4).map(move |r| pair(l, r))).collect();
+    for n in 0..=all.len() {
+        let pairs = &all[..n];
+        match (IntFold::fold_structural_u64(pairs, &ls, &rs), exact(pairs)) {
+            (Some(v), Count::Fast(w)) => assert_eq!(v, w, "{n} pairs"),
+            (None, Count::Big(_)) => {}
+            (fast, slow) => panic!("{n} pairs: {fast:?} against {slow:?}"),
+        }
+    }
+    // Four products of `(2^64-1)^2` leave `u128` in either lane.
+    let big = [pair(2, 3), pair(2, 3), pair(2, 3), pair(2, 3)];
+    assert_eq!(IntFold::fold_structural_u64(&big, &ls, &rs), None);
+    assert!(matches!(exact(&big), Count::Big(_)));
+}

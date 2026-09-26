@@ -338,6 +338,15 @@ impl<'a> PairsIter<'a> {
     pub(super) fn slice(pairs: &'a [ChildPair]) -> Self {
         PairsIter(PairStorage::Slice(pairs.iter()))
     }
+
+    /// The pairs still to come, as one slice.
+    #[inline]
+    pub(crate) fn as_slice(&self) -> &[ChildPair] {
+        match &self.0 {
+            PairStorage::Inline(opt) => opt.as_slice(),
+            PairStorage::Slice(iter) => iter.as_slice(),
+        }
+    }
 }
 
 impl std::fmt::Debug for PairsIter<'_> {
