@@ -38,6 +38,11 @@ pub(crate) struct CandidateFold<'a> {
     /// g pairs reach under the current outer key, stamped with the round
     /// that summed it ([`Stamped`]).
     sums: Vec<u128>,
+    /// Per inner-g child opened this round ([`Self::open_weighted`]), the
+    /// summed counts of the inner products under the current outer key that
+    /// read it: what its sum is multiplied by. Valid exactly where `sums` is
+    /// stamped with this round.
+    weights: Vec<u128>,
     /// Per outer-g child, the count of its live product under the current
     /// outer key, stamped likewise: what a sum by inner child reads.
     outer: Vec<u128>,
@@ -93,7 +98,8 @@ impl<'a> CandidateFold<'a> {
         };
         let cols = raw(&left).zip(raw(&right)).map(|(l, r)| [l, r]);
         Ok(CandidateFold {
-            left, right, batch, cols, sums: Vec::new(), outer: Vec::new(), round: 0, fast: 0, big: BigUint::ZERO,
+            left, right, batch, cols, sums: Vec::new(), weights: Vec::new(), outer: Vec::new(), round: 0, fast: 0,
+            big: BigUint::ZERO,
         })
     }
 
@@ -139,9 +145,11 @@ impl<'a> CandidateFold<'a> {
     /// counts for `outer` outer-g children, all unstamped.
     pub(crate) fn prepare_sums(&mut self, lim: &Limits, sums: usize, outer: usize) -> Result<(), OperationError> {
         self.sums.clear();
+        self.weights.clear();
         self.outer.clear();
         self.round = 0;
         lim.try_resize(&mut self.sums, sums, 0u128)?;
+        lim.try_resize(&mut self.weights, sums, 0u128)?;
         lim.try_resize(&mut self.outer, outer, 0u128)
     }
 
@@ -190,12 +198,6 @@ impl<'a> CandidateFold<'a> {
         self.cols.expect("the grouped path reads raw columns")[side]
     }
 
-    /// Whether inner-g child `key` has a sum this round.
-    #[inline(always)]
-    pub(crate) fn has_sum(&self, key: u32) -> bool {
-        Stamped::round(self.sums[key as usize]) == self.round
-    }
-
     /// Record the summed count of inner-g child `key`'s bucket this round.
     #[inline(always)]
     pub(crate) fn set_sum(&mut self, key: u32, sum: u128) {
@@ -214,17 +216,39 @@ impl<'a> CandidateFold<'a> {
         }
     }
 
-    /// Give inner-g child `key` an empty sum this round, unless it has one.
+    /// Weigh inner-g child `key` by one more inner product's `count`,
+    /// giving it an empty sum this round when it has none; returns whether
+    /// it had none. A weight sums at most one `u64` per inner product, of
+    /// which there are fewer than `2^32`, so it stays below `2^96`.
     #[inline(always)]
-    pub(crate) fn open_sum(&mut self, key: u32) {
-        let slot = &mut self.sums[key as usize];
-        if Stamped::round(*slot) != self.round {
-            *slot = Stamped::slot(self.round, 0);
+    pub(crate) fn open_weighted(&mut self, key: u32, count: u64) -> bool {
+        let k = key as usize;
+        if Stamped::round(self.sums[k]) == self.round {
+            self.weights[k] += u128::from(count);
+            false
+        } else {
+            self.sums[k] = Stamped::slot(self.round, 0);
+            self.weights[k] = u128::from(count);
+            true
+        }
+    }
+
+    /// Add inner-g child `key`'s weight times its sum: every candidate of
+    /// the inner products that read it under the current outer key. `key`
+    /// was opened this round ([`Self::open_weighted`]).
+    #[inline(always)]
+    pub(crate) fn add_weighted(&mut self, key: u32) {
+        let k = key as usize;
+        debug_assert_eq!(Stamped::round(self.sums[k]), self.round, "a weighted key was not opened this round");
+        let (weight, sum) = (self.weights[k], self.sums[k] & Stamped::SUM);
+        match weight.checked_mul(sum) {
+            Some(v) => self.add(v),
+            None => self.big += BigUint::from(weight) * sum,
         }
     }
 
     /// Add `count` to the sum of inner-g child `key` when it has one this
-    /// round ([`Self::open_sum`]); a key nobody opened is not read.
+    /// round ([`Self::open_weighted`]); a key nobody opened is not read.
     #[inline(always)]
     pub(crate) fn add_to_open(&mut self, key: u32, count: u64) {
         let slot = &mut self.sums[key as usize];

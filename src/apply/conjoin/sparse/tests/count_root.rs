@@ -187,21 +187,31 @@ fn the_candidate_fold_spills_past_u128_exactly() {
     // A new round empties every sum: the old ones add nothing, and a key
     // summed again starts from its first term.
     fold.begin_round();
-    assert!(!fold.has_sum(1) && !fold.has_sum(2));
     assert_eq!(fold.outer_or_zero(1), 0);
     fold.add_grouped(near as u64, 1);
     fold.add_to_sum(2, 5);
     fold.add_grouped(3, 2);
     expected += BigUint::from(15u32);
-    // Only an opened key takes terms by `add_to_open`.
+    // Only an opened key takes terms by `add_to_open`, and an opened key
+    // adds its weight, summed over the products that opened it, times its
+    // sum.
     fold.begin_round();
-    fold.open_sum(0);
+    assert!(fold.open_weighted(0, near as u64));
+    assert!(!fold.open_weighted(0, near as u64));
     fold.add_to_open(0, 4);
     fold.add_to_open(1, 9);
-    assert!(fold.has_sum(0) && !fold.has_sum(1));
     fold.add_grouped(2, 0);
     fold.add_grouped(2, 1);
     expected += BigUint::from(8u32);
+    fold.add_weighted(0);
+    expected += BigUint::from(2 * near) * 4u32;
+    // A weight times a sum past `u128` spills.
+    for _ in 0..8 {
+        fold.open_weighted(1, u64::MAX);
+        fold.add_to_open(1, u64::MAX);
+    }
+    fold.add_weighted(1);
+    expected += BigUint::from(8 * near) * (8 * near);
     assert!(expected > BigUint::from(u128::MAX), "the total spills");
     assert_eq!(fold.finish(), expected);
 }

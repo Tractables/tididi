@@ -715,12 +715,15 @@ fn scatter_general_arm<const SWAPPED: bool>(
 ///   reading its outer-g child's live count (0 when it has none).
 ///
 /// An outer whose build by key walks no more than the emit walk builds by
-/// key outright. Otherwise a first walk opens the keys the emit will read
-/// and prices the build by inner child exactly, as `mark_wanted_for_outer`
-/// does for the listing arm, and the cheaper build runs; by key, it adds
-/// only to the opened keys, a read where it misses. Every sum and outer
-/// count carries the round that wrote it ([`CandidateFold::begin_round`]),
-/// so opening a key is writing it and no clear is needed.
+/// key outright, and the emit walk reads it. Otherwise one walk opens the
+/// keys the emit would read, weighs each by `Σ count(e)` over the inner
+/// products that read it, and prices the build by inner child exactly, as
+/// `mark_wanted_for_outer` does for the listing arm; the cheaper build runs
+/// and the outer adds each opened key's weight times its sum, so the emit
+/// walk is never repeated. By key, the build adds only to the opened keys,
+/// a read where it misses. Every sum and outer count carries the round that
+/// wrote it ([`CandidateFold::begin_round`]), so opening a key is writing it
+/// and no clear is needed.
 #[inline(never)]
 fn count_general_arm<const SWAPPED: bool>(
     eng: &Engine,
@@ -758,16 +761,24 @@ fn count_general_arm<const SWAPPED: bool>(
                 }
             }
             ticker.poll(by_key as u64)?;
+            for &RevEntry { other: inner1, .. } in under {
+                let products = inner.bucket(inner1 as usize);
+                for e in products {
+                    fold.add_grouped(fold.inner_count::<SWAPPED>(e.prod_idx.0), e.g_idx.0);
+                }
+                ticker.poll(products.len() as u64)?;
+            }
         } else {
-            // Open the keys the walk will read, and price summing each by
-            // its own g pairs against the build by key.
+            // Open the keys the walk reads, weigh each by the counts of the
+            // inner products that read it, and price summing each by its own
+            // g pairs against the build by key. The walk is then over: the
+            // outer's candidates are each opened key's weight times its sum.
             keys.clear();
             let mut by_inner = 0usize;
             for &RevEntry { other: inner1, .. } in under {
                 for e in inner.bucket(inner1 as usize) {
                     let key = e.g_idx.0;
-                    if !fold.has_sum(key) {
-                        fold.open_sum(key);
+                    if fold.open_weighted(key, fold.inner_count::<SWAPPED>(e.prod_idx.0)) {
                         lim.try_push(keys, key)?;
                         by_inner += g_by_inner.len(key as usize);
                     }
@@ -794,13 +805,10 @@ fn count_general_arm<const SWAPPED: bool>(
                 }
                 ticker.poll(by_key as u64)?;
             }
-        }
-        for &RevEntry { other: inner1, .. } in under {
-            let products = inner.bucket(inner1 as usize);
-            for e in products {
-                fold.add_grouped(fold.inner_count::<SWAPPED>(e.prod_idx.0), e.g_idx.0);
+            for &key in keys.iter() {
+                fold.add_weighted(key);
             }
-            ticker.poll(products.len() as u64)?;
+            ticker.poll(keys.len() as u64)?;
         }
     }
     Ok(())
