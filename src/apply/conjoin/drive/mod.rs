@@ -23,7 +23,10 @@
 //! driver runs.
 
 mod level;
-use level::{build_level_dense, count_sparse_root, counts_root, run_sparse_level, LevelBuild};
+use level::{
+    build_level_dense, count_sparse_root, count_streamed_root, counts_root, holds_back, pick_streamed,
+    run_sparse_level, LevelBuild,
+};
 
 use super::*;
 
@@ -55,6 +58,10 @@ pub(super) struct Sweep<'a, 'filter> {
 /// and streaming builds runs — and the children's grid regions are handed back
 /// to the arena as soon as the parent has read them.
 ///
+/// For a count, up to two children of a one-product root are held back
+/// unbuilt until the root: one of them may then be counted without being
+/// built ([`stream`](super::sparse::stream)), and the others are built there.
+///
 /// # Errors
 ///
 /// Propagates the first refusal: a budget or cap the level build hit, or the
@@ -78,6 +85,9 @@ fn sweep_levels(
     }
     let mut level_k: u32 = 0;
     let mut output_nodes = 0u64;
+    // Children of the root held back unbuilt, for a count that may stream
+    // one of them (see `level::holds_back`).
+    let mut held: Vec<(VtreeIdx, VtreeIdx, VtreeIdx)> = Vec::new();
     for (t, left, right) in vtree.internal_bottomup() {
         if progress {
             level_k += 1;
@@ -87,53 +97,90 @@ fn sweep_levels(
         // cap, tracked across every route independently of sparse-grid density.
         lim.level_done(output_nodes)?;
 
-        let shape = run.shape(t, left, right);
-        let (left_idx, right_idx) = (left.idx(), right.idx());
-        // Before this level's output reserve fires, so the allocator can
-        // reuse the children's slabs for it.
-        drop_dead_children(f, g, shape);
-
-        if sweep.quantified.contains(t.idx()) {
-            // Every leaf below this level is quantified, so the level is one
-            // satisfiability test per cell and no structure at all. The
-            // identity fast paths are skipped: what they would build is the
-            // structure this route exists not to build.
-            super::quantify::build_level_quantified(eng, run, f, g, shape)?;
-            output_nodes += run.levels[t.idx()].slot_count() as u64;
-            run.reclaim_child_grids(left_idx, right_idx);
+        if held.len() < 2 && holds_back(sweep, run, f, g, t, left, right) {
+            held.push((t, left, right));
             continue;
         }
-
-        // A filtered child product cannot be bypassed by an identity copy.
-        let taken = sweep.filter.is_none() && take_level_fast_path(eng, run, f, g, shape)?;
-
-        if !taken {
-            // One decision per level, taken before any of the level's storage
-            // is touched: the marginal plan and the two gates read only metadata.
-            let marginal = run.level_marginal(f, g, shape, sweep.targets);
-            let plan = plan_marginal_level(f, g, shape, run, &marginal);
-            let route = route_level(shape, &plan, &marginal, run.sparse_gate(shape));
-            route.validate(f, g, shape, &marginal, run)?;
-
-            match route {
-                Route::Sparse if counts_root(sweep, f, g, shape, &plan) => {
-                    sweep.counted = Some(count_sparse_root(eng, run, f, g, shape, vtree)?);
+        if t == vtree.root() && !held.is_empty() {
+            let c = pick_streamed(eng, run, f, g, &held)?;
+            for (i, &(h, hl, hr)) in held.iter().enumerate() {
+                if i != c {
+                    build_level(eng, run, f, g, sweep, h, hl, hr)?;
+                    output_nodes += run.levels[h.idx()].slot_count() as u64;
                 }
-                Route::Sparse => run_sparse_level(eng, run, f, g, shape, &plan)?,
-                _ => build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?,
             }
+            let (c_t, c_l, c_r) = held[c];
+            if let Some(count) = count_streamed_root(eng, run, f, g, sweep, (t, left, right), (c_t, c_l, c_r))? {
+                sweep.counted = Some(count);
+                continue;
+            }
+            build_level(eng, run, f, g, sweep, c_t, c_l, c_r)?;
+            output_nodes += run.levels[c_t.idx()].slot_count() as u64;
         }
-
-        if let Some(filter) = sweep.filter.as_deref_mut() {
-            run.products.filter_level(eng, shape, filter)?;
-        }
+        build_level(eng, run, f, g, sweep, t, left, right)?;
         output_nodes += run.levels[t.idx()].slot_count() as u64;
-        // Release this level's children's grid regions for a later level to
-        // reuse, before the next iteration's own reserve fires.
-        run.reclaim_child_grids(left_idx, right_idx);
     }
     // The root has no following level boundary at which to check its output.
     lim.level_done(output_nodes)
+}
+
+/// Build the level at `t` from its children's, by the route it is given, and
+/// release the children's grids.
+#[expect(clippy::too_many_arguments)]
+fn build_level(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    f: &mut Tdd,
+    g: &mut Tdd,
+    sweep: &mut Sweep<'_, '_>,
+    t: VtreeIdx,
+    left: VtreeIdx,
+    right: VtreeIdx,
+) -> Result<(), OperationError> {
+    let vtree = sweep.vtree;
+    let shape = run.shape(t, left, right);
+    let (left_idx, right_idx) = (left.idx(), right.idx());
+    // Before this level's output reserve fires, so the allocator can
+    // reuse the children's slabs for it.
+    drop_dead_children(f, g, shape);
+
+    if sweep.quantified.contains(t.idx()) {
+        // Every leaf below this level is quantified, so the level is one
+        // satisfiability test per cell and no structure at all. The
+        // identity fast paths are skipped: what they would build is the
+        // structure this route exists not to build.
+        super::quantify::build_level_quantified(eng, run, f, g, shape)?;
+        run.reclaim_child_grids(left_idx, right_idx);
+        return Ok(());
+    }
+
+    // A filtered child product cannot be bypassed by an identity copy.
+    let taken = sweep.filter.is_none() && take_level_fast_path(eng, run, f, g, shape)?;
+
+    if !taken {
+        // One decision per level, taken before any of the level's storage
+        // is touched: the marginal plan and the two gates read only metadata.
+        let marginal = run.level_marginal(f, g, shape, sweep.targets);
+        let plan = plan_marginal_level(f, g, shape, run, &marginal);
+        let route = route_level(shape, &plan, &marginal, run.sparse_gate(shape));
+        route.validate(f, g, shape, &marginal, run)?;
+
+        match route {
+            Route::Sparse if counts_root(sweep, f, g, shape, &plan) => {
+                sweep.counted = Some(count_sparse_root(eng, run, f, g, shape, vtree)?);
+            }
+            Route::Sparse => run_sparse_level(eng, run, f, g, shape, &plan)?,
+            _ => build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?,
+        }
+    }
+
+    if let Some(filter) = sweep.filter.as_deref_mut() {
+        run.products.filter_level(eng, shape, filter)?;
+    }
+    // Release this level's children's grid regions for a later level to
+    // reuse, before the next iteration's own reserve fires.
+    run.reclaim_child_grids(left_idx, right_idx);
+    Ok(())
 }
 
 /// Build a conjunction, emitting the levels in `targets` as marginal values,

@@ -142,6 +142,12 @@ impl Products {
         level.shrink_arrays();
     }
 
+    /// Level `t`'s product list, as the last build or
+    /// [`Self::ensure_product_list_for_child`] left it.
+    pub(super) fn list(&self, t: usize) -> &[ProductEntry] {
+        &self.product_lists[t]
+    }
+
     pub(super) fn lists(&mut self, left: usize, right: usize, out: usize) -> ProductLists<'_> {
         let [left, right, out] = self.product_lists.get_disjoint_mut([left, right, out])
             .expect("a level and its children are distinct");

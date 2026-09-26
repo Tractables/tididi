@@ -23,6 +23,7 @@ mod level;
 pub(crate) use level::{apply_sparse_level, count_sparse_level, Passthrough};
 mod fold;
 pub(crate) use fold::CandidateFold;
+pub(crate) mod stream;
 
 #[cfg(test)]
 mod tests;

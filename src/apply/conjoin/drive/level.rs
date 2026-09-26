@@ -7,6 +7,10 @@
 use crate::apply::conjoin::*;
 use crate::Engine;
 use super::Sweep;
+use crate::diagram::ChildSide;
+use crate::apply::conjoin::sparse::stream::{
+    candidate_bound, choose_pivot, count as stream_count, Built, StreamInput, StreamWidths,
+};
 
 /// One level's build decision: its shape, the route chosen for it, and the
 /// marginal plan the route was chosen on.
@@ -130,6 +134,190 @@ pub(super) fn count_sparse_root(
         run.thresholds, None, &mut fold,
     )?;
     Ok(fold.finish())
+}
+
+/// Whether the sweep holds back the level at `t` unbuilt, for the root count
+/// to stream: the sweep wants only the count of a root both operands output
+/// at with one node, `t` is a child of that root, and neither operand is
+/// constant-true over it; `t`, its children and its sibling are internal,
+/// no weight, filter or quantified subtree touches any of them, and none of
+/// the levels the stream reads built (`t`'s children and its sibling) is a
+/// target: a target at `t` only decides how `t` is built if the stream
+/// declines. Neither operand may be marginal at any of them, now or at
+/// entry (an identity fast path moves a marginal level out of its operand),
+/// nor carry counts in its references from the root or `t`: the stream reads
+/// those references as node indices. Whether the root then streams `t` is
+/// priced there, once the levels it reads are built
+/// ([`count_streamed_root`]).
+pub(super) fn holds_back(
+    sweep: &Sweep<'_, '_>,
+    run: &ApplyRun,
+    f: &Tdd,
+    g: &Tdd,
+    t: VtreeIdx,
+    left: VtreeIdx,
+    right: VtreeIdx,
+) -> bool {
+    let vtree = sweep.vtree;
+    let root = vtree.root();
+    if !sweep.count_root
+        || sweep.ws.is_some()
+        || sweep.filter.is_some()
+        || !sweep.quantified.is_empty()
+        || vtree.node(t).parent() != Some(root)
+        || f.output.vtree != root
+        || g.output.vtree != root
+        || run.f_widths[root.idx()] != 1
+        || run.g_widths[root.idx()] != 1
+    {
+        return false;
+    }
+    let (root_left, root_right) = vtree.children(root);
+    let sibling = if root_left == t { root_right } else { root_left };
+    let internal = [t, left, right, sibling].iter().all(|&x| !vtree.node(x).is_leaf());
+    let read_built = [left, right, sibling].iter().all(|&x| !sweep.targets.contains(x.idx()));
+    let untouched = [root, t, left, right, sibling].iter().all(|&x| {
+        !run.entry_marginality.either(x.idx())
+            && !f.levels[x.idx()].is_marginal()
+            && !g.levels[x.idx()].is_marginal()
+    });
+    let valued = |x: VtreeIdx| {
+        [f, g].iter().any(|d| {
+            let level = &d.levels[x.idx()];
+            level.has_value_refs(ChildSide::Left) || level.has_value_refs(ChildSide::Right)
+        })
+    };
+    let identity = |widths: &[usize], id: &[bool]| widths[t.idx()] == 1 && id[left.idx()] && id[right.idx()];
+    internal
+        && read_built
+        && untouched
+        && !valued(root)
+        && !valued(t)
+        && !identity(run.f_widths, run.f_identity)
+        && !identity(run.g_widths, run.g_identity)
+}
+
+/// The widths a streamed count reads, one operand's.
+fn stream_widths(widths: &[usize], c: VtreeIdx, o: VtreeIdx, cl: VtreeIdx, cr: VtreeIdx) -> StreamWidths {
+    StreamWidths { c: widths[c.idx()], o: widths[o.idx()], cl: widths[cl.idx()], cr: widths[cr.idx()] }
+}
+
+/// Which of the held root children the root count would stream: the one
+/// whose build would find the more candidates, by [`candidate_bound`].
+pub(super) fn pick_streamed(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    f: &Tdd,
+    g: &Tdd,
+    held: &[(VtreeIdx, VtreeIdx, VtreeIdx)],
+) -> Result<usize, OperationError> {
+    if held.len() < 2 {
+        return Ok(0);
+    }
+    let mut best = (0, 0u128);
+    for (i, &(t, left, right)) in held.iter().enumerate() {
+        for child in [left, right] {
+            run.ensure_product_list_for_child(eng, child.idx(), run.f_widths[child.idx()], run.g_widths[child.idx()])?;
+        }
+        // `o` is not read by the bound; `t` stands in for it.
+        let bound = candidate_bound(
+            eng.limits(), f.level(t), g.level(t),
+            run.products.list(left.idx()), run.products.list(right.idx()),
+            stream_widths(run.f_widths, t, t, left, right),
+            stream_widths(run.g_widths, t, t, left, right),
+        )?;
+        if i == 0 || bound > best.1 {
+            best = (i, bound);
+        }
+    }
+    Ok(best.0)
+}
+
+/// Count the root without building its held child `c`, when pricing says
+/// the stream does not outweigh the build; `None` leaves `c` for the sweep
+/// to build.
+///
+/// Every level the stream reads is built by now: `c`'s children and the
+/// root's other child. Their counts are folded as a model count of the
+/// finished diagram would fold them, and must all fit `u64`, which is also
+/// declined otherwise, as is a read level the sweep left marginal.
+pub(super) fn count_streamed_root(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    f: &Tdd,
+    g: &Tdd,
+    sweep: &Sweep<'_, '_>,
+    root: (VtreeIdx, VtreeIdx, VtreeIdx),
+    c: (VtreeIdx, VtreeIdx, VtreeIdx),
+) -> Result<Option<num_bigint::BigUint>, OperationError> {
+    use crate::value::{CountVec, FoldInput, IntFold, Retention, ValueDomain};
+    let vtree = sweep.vtree;
+    let (t, root_left, root_right) = root;
+    let (c_t, cl, cr) = c;
+    let c_left = c_t == root_left;
+    let o = if c_left { root_right } else { root_left };
+    if [o, cl, cr].iter().any(|x| run.levels[x.idx()].is_marginal()) {
+        return Ok(None);
+    }
+    for x in [o, cl, cr] {
+        run.ensure_product_list_for_child(eng, x.idx(), run.f_widths[x.idx()], run.g_widths[x.idx()])?;
+    }
+    let lim = eng.limits();
+    // Priced on the index sizes alone, before any count is folded: a root
+    // that builds `c` after all folds its own columns.
+    let read = StreamLevels { root: (t, c_left), c, o };
+    let Some(pivot) = choose_pivot(lim, &read.input(run, f, g, [&[]; 3]))? else {
+        return Ok(None);
+    };
+
+    let mut computed: Vec<Option<CountVec>> = Vec::new();
+    lim.reserve_exact(&mut computed, vtree.num_nodes())?;
+    computed.resize_with(vtree.num_nodes(), || None);
+    let levels: &[TddLevel] = run.levels;
+    let marginal = |i: usize| levels[i].is_marginal();
+    let input = FoldInput { vtree, levels, store: &() };
+    let mut gate = lim.gate();
+    for x in [o, cl, cr] {
+        IntFold::ensure(eng, x, input, &mut computed, &marginal, Retention::Frontier, |w| gate.poll(w))?;
+    }
+    gate.flush()?;
+    let column = |x: VtreeIdx| {
+        let side = IntFold::child_view(x.idx(), vtree, &levels[x.idx()], &computed, &());
+        (!side.view.is_marginal() && side.col.all_u64()).then(|| side.col.fast_slice())
+    };
+    let (Some(col_o), Some(col_cl), Some(col_cr)) = (column(o), column(cl), column(cr)) else {
+        return Ok(None);
+    };
+    stream_count(eng, &read.input(run, f, g, [col_o, col_cl, col_cr]), pivot).map(Some)
+}
+
+/// The levels a streamed root count reads: the root with whether `c` is its
+/// left child, `c` with its children, and the root's other child.
+struct StreamLevels {
+    root: (VtreeIdx, bool),
+    c: (VtreeIdx, VtreeIdx, VtreeIdx),
+    o: VtreeIdx,
+}
+
+impl StreamLevels {
+    /// The stream's input, with `counts` for `o`, `cl` and `cr` (empty for
+    /// pricing, which reads none).
+    fn input<'a>(&self, run: &'a ApplyRun, f: &'a Tdd, g: &'a Tdd, counts: [&'a [u128]; 3]) -> StreamInput<'a> {
+        let ((t, c_left), (c_t, cl, cr), o) = (self.root, self.c, self.o);
+        let built = |x: VtreeIdx, counts| Built { products: run.products.list(x.idx()), counts };
+        StreamInput {
+            f_root: f.level(t),
+            g_root: g.level(t),
+            f_c: f.level(c_t),
+            g_c: g.level(c_t),
+            c_left,
+            o: built(o, counts[0]),
+            cl: built(cl, counts[1]),
+            cr: built(cr, counts[2]),
+            f_widths: stream_widths(run.f_widths, c_t, o, cl, cr),
+            g_widths: stream_widths(run.g_widths, c_t, o, cl, cr),
+        }
+    }
 }
 
 /// Give both children a dense grid and bump-allocate this level's own,

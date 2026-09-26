@@ -300,7 +300,11 @@ impl crate::Engine {
     /// of the conjunction is one product built by the sparse route, its
     /// pairs are folded into the count as they are found instead of being
     /// stored, so the largest level of a join that ends in a count is never
-    /// held. Otherwise the conjunction is built and counted.
+    /// held. Where both operands are one node at the root, the count may
+    /// also skip one child of the root: it is summed from that child's own
+    /// children, pair by pair against the other child's counts, when that
+    /// walk is priced below building the child. Otherwise the conjunction is
+    /// built and counted.
     ///
     /// Integer counts only: with weights attached, the result is the count
     /// of the conjunction built with them, as [`Engine::model_count`] gives it.
@@ -338,8 +342,11 @@ impl crate::Engine {
         let vtree = Arc::clone(f.vtree());
         let mut mask = Vec::new();
         self.limits().try_resize(&mut mask, vtree.num_nodes(), false)?;
+        // A target at the root sums the whole conjunction into its count,
+        // which is what is returned anyway: it is dropped, so the root can be
+        // counted instead of built.
         for &t in targets {
-            mask[t.idx()] = !vtree.node(t).is_leaf();
+            mask[t.idx()] = !vtree.node(t).is_leaf() && t != vtree.root();
         }
         // The swap and the self-conjunction shortcut of `conjoin_checked`.
         if g.max_width() > f.max_width() {
