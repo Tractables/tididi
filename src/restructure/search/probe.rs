@@ -130,7 +130,7 @@ impl RotationProbe<'_> {
 /// What a caller of [`probe_moves`] adds to the shared protocol.
 ///
 /// The search supplies admission, size bounds and the decision.
-pub(super) trait ProbeRule {
+pub(in crate::restructure) trait ProbeRule {
     /// A last gate before the expensive restructure, read on the rotated vtree
     /// with the levels still untouched. `false` reverts the pointers and
     /// declines the probe. Consulted once per move of the sequence.
@@ -257,7 +257,7 @@ impl ProbeRule for Forced {
 ///
 /// [`OperationError::OverBudget`] from a refused rebuild, with the diagram at
 /// its pre-probe state.
-pub(super) fn probe_moves<R: ProbeRule>(
+pub(in crate::restructure) fn probe_moves<R: ProbeRule>(
     eng: &Engine,
     tdd: &mut Tdd,
     moves: &[RotationMove],

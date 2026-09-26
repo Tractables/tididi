@@ -112,7 +112,7 @@ identical representations.
 | `marginal` | Summing levels into values and restoring marginal invariants. |
 | [`maintain`] | Adding and removing one assignment at a time, in place. |
 | [`reduce`] | Reachability pruning, twin contraction, pair fusion and value-slot pruning. |
-| [`restructure`] | Vtree search, grafting and embedding with the corresponding diagram edits. |
+| [`restructure`] | Vtree search, grafting, embedding and moves to a given vtree, with the corresponding diagram edits. |
 | [`query`] | Counting, satisfiability, evaluation and traversal of borrowed diagrams. |
 | [`cnf`] | Clauses that define a diagram's nodes, for an external SAT solver, and the probe that asks it which nodes are impossible. |
 | [`execution`] | Shared context checkouts, scratch pools and each batch's limits. |

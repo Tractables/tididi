@@ -188,6 +188,16 @@ impl Dirty {
         *self = carried;
     }
 
+    /// Rename every entry through `map`, old level index to new, for levels
+    /// moved to other indices of another vtree.
+    pub(crate) fn remap(&mut self, map: &[VtreeIdx]) {
+        for list in &mut self.lists {
+            for entry in list.iter_mut() {
+                *entry = map[*entry as usize].0;
+            }
+        }
+    }
+
     /// Bound every list: entries are level indices, so a list longer than `n`
     /// holds duplicates, and a chain of applies or in-place edits that never
     /// drains one would otherwise grow it without bound. Dedup keeps the set

@@ -208,6 +208,19 @@ pub(crate) fn rotate_pointers(vtree: &mut Vtree, v: VtreeIdx, kind: RotationKind
     ))
 }
 
+impl Vtree {
+    /// Exchange the two children of internal node `v`.
+    ///
+    /// The bottom-up order only asks that children come before their parent,
+    /// so it holds as it is; the diagram level at `v` has to have its pairs
+    /// read the other way round to keep its meaning.
+    pub(crate) fn swap_children(&mut self, v: VtreeIdx) {
+        if let VtreeNode::Internal { left, right, .. } = &mut self.nodes[v.idx()] {
+            std::mem::swap(left, right);
+        }
+    }
+}
+
 /// Undo a rotation of `kind`, pointer surgery only: the inverse of
 /// [`rotate_pointers`] on its own [`RotationInfo`]. The bottom-up order is
 /// left as it was before the rotation, which is why this is reachable only

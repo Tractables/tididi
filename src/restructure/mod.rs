@@ -15,13 +15,62 @@ pub(crate) mod embed;
 pub(crate) mod graft;
 mod placement;
 mod splice;
+pub(crate) mod target;
 
 pub use crate::vtree::graft::Embedding;
 pub use embed::EmbeddingPlan;
+pub use target::RestructureStats;
 
 use crate::diagram::TddBuildError;
 use crate::limits::OperationError;
 use crate::vtree::{VarId, VtreeError, VtreeIdx};
+
+/// Why a diagram could not be moved onto the requested vtree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RestructureError {
+    /// The two vtrees do not have the same variables: this one is a leaf of
+    /// one of them only.
+    Variables {
+        /// The variable only one vtree has.
+        variable: VarId,
+    },
+    /// The diagram has a weight table, which the move does not carry.
+    Weighted,
+    /// A rotation at this vtree node would have expanded more pairs than the
+    /// bound allows.
+    Bound {
+        /// The node the refused rotation turns.
+        pivot: VtreeIdx,
+    },
+    /// An operation the move runs was refused: a rotation that would turn a
+    /// summed-out level, a refused allocation, or an armed stop.
+    Operation(OperationError),
+}
+
+impl std::fmt::Display for RestructureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Variables { variable } => write!(f, "variable {} is a leaf of only one of the two vtrees", variable.0),
+            Self::Weighted => write!(f, "a weighted diagram cannot be moved to another vtree"),
+            Self::Bound { pivot } => write!(f, "the rotation at vtree node {} exceeds the pair bound", pivot.idx()),
+            Self::Operation(error) => write!(f, "moving the diagram: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for RestructureError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Operation(error) => Some(error),
+            Self::Variables { .. } | Self::Weighted | Self::Bound { .. } => None,
+        }
+    }
+}
+
+impl From<OperationError> for RestructureError {
+    fn from(error: OperationError) -> Self { Self::Operation(error) }
+}
 
 /// Why a diagram could not be copied onto the requested vtree.
 #[derive(Clone, Debug, PartialEq, Eq)]

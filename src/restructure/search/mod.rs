@@ -34,6 +34,7 @@ pub use local::{
 pub use multistart::{MultistartConfig, MultistartStats};
 pub use policy::{AcceptancePolicy, Annealing, Greedy, Tabu};
 pub use probe::{RotationMove, RotationProbe};
+pub(in crate::restructure) use probe::{ProbeRule, probe_moves};
 
 use crate::diagram::Tdd;
 use crate::limits::OperationError;
