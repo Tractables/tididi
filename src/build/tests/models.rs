@@ -1,5 +1,10 @@
 use std::sync::Arc;
 
+/// A bottom-up construction of the same diagrams, which the root-down one is
+/// checked against.
+#[path = "models/bottom_up.rs"]
+mod bottom_up;
+
 use num_bigint::BigUint;
 
 use crate::diagram::Tdd;
@@ -196,17 +201,102 @@ fn a_relation_wider_than_one_word_reads_both_words() {
 
 #[test]
 fn the_radix_pass_leaves_the_order_a_comparison_sort_leaves() {
+    // Past as many rows as a wide digit has counts, the passes take wider
+    // digits, and their count changes at other widths.
     let mut rng = Lcg::new(5);
-    for num_vars in [1usize, 11, 12, 34, 63, 64] {
-        let mask = if num_vars == 64 { !0u64 } else { (1u64 << num_vars) - 1 };
-        let words: Vec<u64> =
-            (0..super::rows::RADIX_MIN_ROWS + 37).map(|_| rng.next_u64() & mask).collect();
-        let mut want = words.clone();
+    for rows in [super::rows::RADIX_MIN_ROWS + 37, (1 << super::rows::RADIX_LARGE_BITS) + 37] {
+        for num_vars in [1usize, 11, 12, 14, 15, 22, 23, 28, 29, 33, 34, 36, 37, 42, 43, 63, 64] {
+            let mask = if num_vars == 64 { !0u64 } else { (1u64 << num_vars) - 1 };
+            let words: Vec<u64> = (0..rows).map(|_| rng.next_u64() & mask).collect();
+            let mut want = words.clone();
+            want.sort_unstable();
+            let mut got = words;
+            let eng = Engine::new();
+            super::rows::Radix::default().sort(eng.limits(), &mut got, 0, num_vars).unwrap();
+            assert_eq!(got, want, "{rows} rows, {num_vars} variables");
+        }
+    }
+}
+
+#[test]
+fn a_radix_pass_over_high_bits_keeps_the_low_bits_in_order() {
+    // Positions below a value make the keys distinct and already ascending in
+    // their low bits, so sorting the value bits alone sorts the keys.
+    let mut rng = Lcg::new(11);
+    let rows = super::rows::RADIX_MIN_ROWS + 5;
+    let shift = usize::BITS - rows.leading_zeros();
+    for width in [1usize, 7, 20, 33, 64 - shift as usize] {
+        let keys: Vec<u64> = (0..rows as u64)
+            .map(|i| (rng.next_u64() & ((1u64 << width) - 1)) << shift | i)
+            .collect();
+        let mut want = keys.clone();
         want.sort_unstable();
-        let mut got = words;
+        let mut got = keys;
         let eng = Engine::new();
-        super::rows::sort_words(eng.limits(), &mut got, num_vars).unwrap();
-        assert_eq!(got, want, "{num_vars} variables");
+        super::rows::Radix::default().sort(eng.limits(), &mut got, shift as usize, width).unwrap();
+        assert_eq!(got, want, "{width} value bits");
+    }
+}
+
+#[test]
+fn a_radix_pass_leaves_the_bits_above_its_value_unread() {
+    // The split carries each value's atom above its sort key. Neither a
+    // radix pass whose digits do not divide the value nor the comparison sort
+    // of a short input may order by those bits.
+    let mut rng = Lcg::new(12);
+    for rows in [100, super::rows::RADIX_MIN_ROWS + 5, (1 << super::rows::RADIX_LARGE_BITS) + 5] {
+        let shift = usize::BITS - rows.leading_zeros();
+        for width in [1usize, 7, 12, 13, 17, 23, 25, 27, 34, 36, 37, 41] {
+            let keys: Vec<u64> = (0..rows as u64)
+                .map(|i| rng.next_u64() << (shift as usize + width) | (rng.next_u64() & ((1u64 << width) - 1)) << shift | i)
+                .collect();
+            let low = (1u64 << (shift as usize + width)) - 1;
+            let mut want = keys.clone();
+            want.sort_unstable_by_key(|&key| key & low);
+            let mut got = keys;
+            let eng = Engine::new();
+            super::rows::Radix::default().sort(eng.limits(), &mut got, shift as usize, width).unwrap();
+            assert_eq!(got, want, "{rows} rows, {width} value bits");
+        }
+    }
+}
+
+#[test]
+fn a_wide_sort_of_keys_ascending_in_their_top_digit_sorts_each_run() {
+    // Keys too wide for the radix passes, as a table sorted on its leading
+    // column but not within it lists them: ascending in their top bits, in
+    // any order below. With and without bits above the sorted ones, and
+    // with ascending low bits beneath.
+    let mut rng = Lcg::new(13);
+    let rows = 5 * super::rows::RADIX_MIN_ROWS + 3;
+    for (lo, bits, above) in [(0usize, 37usize, false), (0, 50, false), (0, 64, false), (12, 40, true), (5, 45, false)] {
+        let low = if lo + bits == 64 { !0u64 } else { (1u64 << (lo + bits)) - 1 };
+        let mut keys: Vec<u64> = (0..rows as u64)
+            .map(|i| {
+                let value = rng.next_u64() & low & !((1u64 << lo) - 1);
+                let beneath = if lo == 0 { 0 } else { i & ((1u64 << lo) - 1) };
+                let over = if above { rng.next_u64() << (lo + bits) } else { 0 };
+                over | value | beneath
+            })
+            .collect();
+        // Ascending in the top 14 sorted bits, shuffled below them.
+        let top = |key: u64| (key & low) >> (lo + bits - 14);
+        keys.sort_by_key(|&key| top(key));
+        let sorted = (lo + bits) as u32;
+        let mut want = keys.clone();
+        want.sort_by_key(|&key| key.rotate_right(sorted));
+        let mut got = keys.clone();
+        let eng = Engine::new();
+        super::rows::Radix::default().sort(eng.limits(), &mut got, lo, bits).unwrap();
+        let rotated = |v: &[u64]| v.iter().map(|&key| key.rotate_right(sorted)).collect::<Vec<u64>>();
+        assert_eq!(rotated(&got), rotated(&want), "lo {lo} bits {bits} above {above}");
+        // The same keys in any order sort the same way.
+        let mut shuffled = keys;
+        for i in (1..shuffled.len()).rev() {
+            shuffled.swap(i, (rng.next_u64() % (i as u64 + 1)) as usize);
+        }
+        super::rows::Radix::default().sort(eng.limits(), &mut shuffled, lo, bits).unwrap();
+        assert_eq!(rotated(&shuffled), rotated(&want), "shuffled: lo {lo} bits {bits} above {above}");
     }
 }
 
@@ -228,32 +318,26 @@ fn leaf_partitions_match_every_small_relation() {
 
 #[test]
 fn leaf_independence_checks_the_complete_external_assignment() {
-    let eng = Engine::new();
     // A shifted two-word encoding moves the toggled bit across word edges;
     // equal counts of zeros and ones alone do not imply equal completions.
+    let vtree = Arc::new(Vtree::balanced(128));
     for bit in [0usize, 31, 63, 64, 65, 70] {
-        let word = bit / 64;
-        let mask = 1u64 << (bit % 64);
         let mut rng = Lcg::new(317);
         for correlated in [false, true] {
-            let mut rows = Vec::new();
+            let mut table = Vec::new();
             for _ in 0..13 {
-                let mut row = [rng.next_u64(), rng.next_u64()];
-                row[word] &= !mask;
-                rows.push(row);
-                row[word] |= mask;
-                if correlated { row[1 - word] ^= 1; }
-                rows.push(row);
+                let mut row: Vec<bool> = (0..128).map(|_| rng.coin()).collect();
+                row[bit] = false;
+                table.push(row.clone());
+                row[bit] = true;
+                if correlated { row[127 - bit] ^= true; }
+                table.push(row);
             }
-            rows.sort_unstable_by_key(|r| (r[1], r[0]));
-            rows.dedup();
-            let expected = rows.iter().all(|r| {
-                let mut toggled = *r;
-                toggled[word] ^= mask;
-                rows.contains(&toggled)
-            });
-            let packed: Vec<_> = rows.into_iter().flatten().collect();
-            assert_eq!(super::independent_bit(eng.limits(), &packed, 2, word, mask).unwrap(), expected);
+            let f = Tdd::from_models(&vtree, &vars(128), &packed_rows(128, &table)).unwrap();
+            assert_canonical(&f);
+            let label = format!("bit {bit}, correlated {correlated}");
+            assert_same_shape(&f, &table_function(&vtree, &vars(128), &table), &label);
+            assert_eq!(f.model_count().unwrap(), distinct(&table).into(), "{label}");
         }
     }
 }
