@@ -338,6 +338,12 @@ fn operations_match_enumeration(case: &Case) {
     let want: Vec<bool> = tf.iter().zip(&tg).map(|(a, b)| *a || *b).collect();
     assert_truth(&diagram_truth(&disj, n), &want, n, "disjunction");
 
+    step("difference");
+    let diff = eng.and_not(f.clone(), g.clone()).expect("an unarmed engine refuses nothing");
+    assert_canonical_after_minimize(&diff);
+    let want: Vec<bool> = tf.iter().zip(&tg).map(|(a, b)| *a && !*b).collect();
+    assert_truth(&diagram_truth(&diff, n), &want, n, "difference");
+
     step("negation");
     let neg = (f.clone()).negate().unwrap();
     assert_canonical_after_minimize(&neg);

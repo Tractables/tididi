@@ -23,6 +23,8 @@ rows over a chosen list of variables.
 Combine circuits with [`and`](crate::and), [`or`](crate::or),
 [`xor`](crate::xor) and [`Tdd::negate`](crate::Tdd::negate), or use
 [`ite`](crate::ite) to choose between two branches.
+[`and_not`](crate::and_not) removes one circuit's solutions from another
+without building a complement.
 [`Tdd::and_clause`](crate::Tdd::and_clause) adds a clause to an existing
 circuit and [`Tdd::or_cube`](crate::Tdd::or_cube) adds a conjunction of
 literals to its solutions, neither building a second circuit.

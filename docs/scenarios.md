@@ -399,7 +399,7 @@ evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: 4c59d8225832ab25135f466962f35af17aeb27a6d2979bd0bff4846b082d8e04 -->
+- [Rust API overview](api-guide.md) <!-- reviewed: c9f58eaca109c09aed492a6ae7df41d5c8b7f1bcec1d1d0fd90b6cc1ef9e2740 -->
 - [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: 619c8cf6bbe3d4b720da766850817f34b4fdf92c866f3c6cd9828cd555fdcd39 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 

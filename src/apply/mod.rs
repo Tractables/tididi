@@ -1,6 +1,6 @@
 //! Combine and transform Boolean functions.
 //!
-//! Combine [`Tdd`](crate::Tdd) values with [`and`], [`or`], [`xor`] and [`ite`].
+//! Combine [`Tdd`](crate::Tdd) values with [`and`], [`or`], [`and_not`], [`xor`] and [`ite`].
 //! Each call reuses scratch from the vtree's execution context.
 //!
 //! [`Tdd::negate`](crate::Tdd::negate) complements a function.
@@ -17,6 +17,7 @@
 pub(crate) mod conjoin;
 pub(crate) mod conjoin_clause;
 pub(crate) mod disjoin;
+pub(crate) mod overlay;
 pub(crate) mod negate;
 pub(crate) mod condition;
 mod falsity;
@@ -31,6 +32,7 @@ pub(crate) use conjoin::apply_and;
 pub use conjoin::and;
 pub(crate) use disjoin::apply_or;
 pub use disjoin::{nor_many, or, or_many};
+pub use overlay::and_not;
 pub use compose::{xor, ite, and_exists, Quantification};
 pub use restrict_to_care::RestrictionOutcome;
 pub use filter_nodes::{FilterOutcome, FilterStats};

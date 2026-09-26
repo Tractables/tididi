@@ -1,15 +1,14 @@
 //! Disjunction (OR) of diagrams.
 //!
-//! Implemented by De Morgan over `negate` and `conjoin`: `f v g = !(!f ^ !g)`.
-//! Each negation fills its operand out to full structure before complementing
-//! it, and a disjunction runs three such fills, so `|` can grow a diagram
-//! where `&` would not.
+//! [`or`] overlays its two operands (see `overlay.rs`): each node is split
+//! by the other operand's nodes at its level, and no level is complemented.
 //!
-//! That is why [`or_many`] exists and why a caller with more than two operands
-//! should reach for it. Folding [`or`] over `n` operands runs `3(n - 1)`
-//! fills, two of every three on the accumulator, which is the largest diagram
-//! present. One `!(!f_1 ^ ... ^ !f_n)` runs `n + 1`, none of them on a partial
-//! disjunction, because the complement is postponed to the end.
+//! [`or_many`] and [`nor_many`] go by De Morgan over `negate` and `conjoin`
+//! instead: one `!(!f_1 ^ ... ^ !f_n)` runs `n + 1` negations, none of them on
+//! a partial disjunction, because the complement is postponed to the end.
+//! Each negation fills its operand out to full structure before complementing
+//! it, which costs the product of a level's child widths where the operand
+//! has only its own pairs.
 
 use crate::Engine;
 use crate::diagram::Tdd;
@@ -143,8 +142,11 @@ fn collect_operands(operands: impl IntoIterator<Item = Tdd>) -> Result<Vec<Tdd>,
 /// # Ok::<(), tididi::OperationError>(())
 /// ```
 ///
-/// Disjunction uses complementation and conjunction, so intermediate diagrams
-/// can be larger than either operand.
+/// No level is complemented: each node of either operand is split by the
+/// other operand's nodes at its level, and the result keeps every piece that
+/// lies in either. The work follows the operands' pairs and how finely each
+/// operand splits the other's children, which on a level both operands cover
+/// with large products can exceed either operand before minimization.
 ///
 /// # Errors
 ///
@@ -161,9 +163,9 @@ pub fn or(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
 /// Return the disjunction of any number of diagrams sharing a vtree allocation.
 ///
 /// Complements each nonfalse operand, conjoins those complements in a balanced
-/// tree, then complements the result. This avoids repeatedly complementing a
-/// running disjunction, as a fold of [`or`] would. Intermediate sizes still
-/// depend on the operands and their grouping.
+/// tree, then complements the result. Each complement fills its operand out to
+/// the whole of every level's child product, which [`or`] never builds;
+/// intermediate sizes depend on the operands and their grouping.
 ///
 /// All operands are consumed. The result is minimized. A false operand is
 /// dropped after checking weight compatibility; if every operand is false,
@@ -261,8 +263,7 @@ impl crate::Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn or(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
-        crate::apply::check_vtree(&f, &g)?;
-        disjoin_many_on(self, collect_operands([f, g])?)
+        crate::apply::overlay::overlay_on(self, crate::apply::overlay::Overlay::Or, f, g)
     }
 
     /// Run [`or_many`] using this batch's scratch and resource limits.
