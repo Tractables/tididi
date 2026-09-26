@@ -30,6 +30,7 @@ impl Drop for ForcedThresholds {
     }
 }
 
+mod counting_sort;
 mod direction;
 mod emit;
 mod flat_candidates;

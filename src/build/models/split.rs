@@ -930,8 +930,9 @@ fn split_hashed(
     let (mut low_atom, mut low_atoms) = number_hashed(lim, &mut s.slots, &s.high_keys, &mut s.low_first, |_, _| true)?;
     let merged = low_atoms as usize != lows;
     if merged {
-        lim.discard(low_atom);
-        (low_atom, low_atoms) = confirm_lows(lim, s, parent, low_width)?;
+        let by_hash = low_atom;
+        (low_atom, low_atoms) = confirm_lows(lim, s, parent, low_width, &by_hash, low_atoms)?;
+        lim.discard(by_hash);
     }
 
     // Runs of one high atom hold the same pairs, so they realize the same
@@ -999,39 +1000,58 @@ fn hash_sides<const SINGLE: bool>(
 /// Number the low values of `split_hashed` by their completion sets, listed
 /// low value by low value in rank order, each as ascending pairs of a high
 /// value's index and an atom.
+///
+/// Only the values that share their number in `by_hash` — the numbering by
+/// hash alone, `hashed` numbers — are listed. Equal sets hash alike, and
+/// values that hash alike probe to one number, so a value alone under its
+/// number has a set no other value has: its list is left empty, and it is
+/// equal to none. Every value is still read, but one whose set is its own
+/// is written to one spare place, not to its own list.
 fn confirm_lows(
     lim: &Limits,
     s: &mut Scratch,
     parent: &Values,
     low_width: usize,
+    by_hash: &[u32],
+    hashed: u32,
 ) -> Result<(Vec<u32>, u32), OperationError> {
     let n = parent.len();
     let mask = (1u64 << low_width) - 1;
     let lows = s.order.len();
+    let mut sharing = Vec::new();
+    lim.try_resize(&mut sharing, hashed as usize, 0u8)?;
+    for &id in by_hash {
+        sharing[id as usize] = sharing[id as usize].saturating_add(1);
+    }
     s.low_starts.clear();
     lim.reserve_exact(&mut s.low_starts, lows + 1)?;
     let mut at = 0u32;
-    for &slot in &s.order {
+    for (&slot, &id) in s.order.iter().zip(by_hash) {
         s.low_starts.push(at);
-        at += s.low_count[slot as usize];
+        at += if sharing[id as usize] > 1 { s.low_count[slot as usize] } else { 0 };
     }
     s.low_starts.push(at);
+    let spare = at;
     s.cursor.clear();
     lim.reserve_exact(&mut s.cursor, lows)?;
-    s.cursor.extend_from_slice(&s.low_starts[..lows]);
+    s.cursor.extend(s.low_starts.windows(2).map(|w| if w[0] == w[1] { spare } else { w[0] }));
+    lim.discard(sharing);
     s.low_keys.clear();
-    lim.try_resize(&mut s.low_keys, n, 0u64)?;
+    lim.try_resize(&mut s.low_keys, spare as usize + 1, 0u64)?;
     lim.gate().poll(n as u64)?;
     for (high, range) in runs(&s.high_starts, n).enumerate() {
         for e in range {
             let at = &mut s.cursor[s.rank[(parent.data[e] & mask) as usize] as usize];
             s.low_keys[*at as usize] = (high as u64) << 32 | parent.atom[e] as u64;
-            *at += 1;
+            *at += u32::from(*at != spare);
         }
     }
     let (starts, lists) = (&s.low_starts, &s.low_keys);
     let list = |k: u32| &lists[starts[k as usize] as usize..starts[k as usize + 1] as usize];
-    number_hashed(lim, &mut s.slots, &s.high_keys, &mut s.low_first, |a, b| list(a) == list(b))
+    number_hashed(lim, &mut s.slots, &s.high_keys, &mut s.low_first, |a, b| {
+        let (x, y) = (list(a), list(b));
+        !x.is_empty() && x == y
+    })
 }
 
 /// The triples of `split_hashed` with more than one parent atom: those of

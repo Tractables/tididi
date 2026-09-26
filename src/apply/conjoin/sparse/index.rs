@@ -156,7 +156,8 @@ impl<'a, T> GroupedView<'a, T> {
 /// by one so each names the start of its run again. `items` is walked twice,
 /// so it is an iterator that can be cloned; `item` gives each one's key and
 /// the value stored for it, and `fill` is what the entries are sized with
-/// before the scatter.
+/// before the scatter. The offsets are 32-bit, so more than `u32::MAX` items
+/// is [`OperationError::IndexOverflow`] rather than a wrapped total.
 pub(super) fn counting_sort<S, T: Copy, I>(
     lim: &Limits,
     n_keys: usize,
@@ -176,17 +177,24 @@ where
         offsets[..n_keys].copy_from_slice(counts);
     } else {
         offsets[..n_keys].fill(0);
+        // A key's count can only wrap once the items outnumber `u32::MAX`,
+        // which the item count catches where the total would not.
+        let mut seen = 0u64;
         for s in items.clone() {
             let (key, _) = item(s);
             debug_assert!(key < n_keys, "key {key} outside the {n_keys} keys sorted");
-            offsets[key] += 1;
+            offsets[key] = offsets[key].wrapping_add(1);
+            seen += 1;
+        }
+        if seen > u64::from(u32::MAX) {
+            return Err(OperationError::IndexOverflow);
         }
     }
     let mut total = 0u32;
     for slot in offsets.iter_mut().take(n_keys) {
         let count = *slot;
         *slot = total;
-        total += count;
+        total = total.checked_add(count).ok_or(OperationError::IndexOverflow)?;
     }
     offsets[n_keys] = total;
     lim.try_resize(entries, total as usize, fill)?;
