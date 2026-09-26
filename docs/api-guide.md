@@ -41,6 +41,7 @@ one assignment costs and when the edit applies.
 | Is there a solution? | [`Tdd::is_sat`](crate::Tdd::is_sat) |
 | What is one complete solution? | [`Tdd::satisfying_assignment`](crate::Tdd::satisfying_assignment) |
 | How many assignments satisfy the function? | [`Tdd::model_count`](crate::Tdd::model_count) |
+| How many assignments satisfy a conjunction, without building it? | [`Engine::and_model_count`](crate::Engine::and_model_count) |
 | How many distinct choices are possible for selected variables? | [`Tdd::projected_model_count`](crate::Tdd::projected_model_count) |
 | Which choices are forced? | [`Tdd::implied_literals`](crate::Tdd::implied_literals) |
 | Which variables affect the function? | [`Tdd::support`](crate::Tdd::support) |

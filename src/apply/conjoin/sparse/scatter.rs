@@ -19,7 +19,7 @@ fn orient<const SWAPPED: bool>(inner: u32, outer: u32) -> (u32, u32) {
 }
 
 /// Where the scatter puts the candidates it finds.
-pub(super) enum Collect<'a> {
+pub(super) enum Collect<'a, 'c> {
     /// A bucket per f parent, `par_buckets`.
     Buckets,
     /// One list of every candidate with its f parent, `par_flat`, sorted by
@@ -29,6 +29,9 @@ pub(super) enum Collect<'a> {
     /// each: every candidate is a pair of the one product the level can
     /// have, so each is written where it stays. See [`finish_direct`].
     Direct(&'a mut TddLevel),
+    /// A count, on a level with one product as for [`Collect::Direct`]:
+    /// each candidate is folded into it and not stored.
+    Fold(&'a mut CandidateFold<'c>),
 }
 
 /// The leaf arm of the scatter: one side of the join is a vtree leaf, so the
@@ -49,7 +52,7 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     pl: Sides<&[ProductEntry]>,
-    collect: Collect<'_>,
+    collect: Collect<'_, '_>,
     carrier: Option<Carrier>,
 ) -> Result<(), OperationError> {
     match carrier {
@@ -69,7 +72,7 @@ fn leaf_arm_into<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     pl: Sides<&[ProductEntry]>,
-    collect: Collect<'_>,
+    collect: Collect<'_, '_>,
     inner_product: impl Fn(u32, u32) -> Option<u32>,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
@@ -82,6 +85,11 @@ fn leaf_arm_into<const SWAPPED: bool>(
             |p1, entry| lim.try_push(par_flat, Candidate { parent: p1, entry })),
         Collect::Direct(level) => leaf_join::<SWAPPED>(lim, f_by_outer, g_by_outer, pl, inner_product,
             |_, entry| try_push_pair_into(eng, level, candidate_pair(&entry))),
+        Collect::Fold(fold) => leaf_join::<SWAPPED>(lim, f_by_outer, g_by_outer, pl, inner_product,
+            |_, entry| {
+                fold.push(candidate_pair(&entry));
+                Ok(())
+            }),
     }
 }
 
@@ -165,7 +173,7 @@ pub(super) fn scatter_join<const SWAPPED: bool>(
     shape: LevelShape,
     pl: Sides<&[ProductEntry]>,
     leaves: Sides<bool>,
-    collect: Collect<'_>,
+    collect: Collect<'_, '_>,
     carrier: Option<Carrier>,
 ) -> Result<(), OperationError> {
     let leaf_arm = carrier.is_some() || runs_leaf_arm(SWAPPED, leaves);
@@ -571,6 +579,24 @@ impl ScatterSides<'_> {
         Ok(())
     }
 
+    /// [`ScatterSides::emit_for_outer`] on a level whose candidates are
+    /// folded into a count ([`Collect::Fold`]).
+    fn emit_fold_for_outer<const SWAPPED: bool>(
+        &self,
+        fold: &mut CandidateFold<'_>,
+        outer: usize,
+        ticker: &mut crate::limits::PollGate,
+    ) -> Result<(), OperationError> {
+        let filtered = self.filtered.as_slice();
+        for &RevEntry { other: inner1, .. } in self.f_by_outer.bucket(outer) {
+            emit_candidates::<SWAPPED>(self.inner, filtered, inner1, ticker, |entry| {
+                fold.push(candidate_pair(&entry));
+                Ok(())
+            })?;
+        }
+        Ok(())
+    }
+
     /// [`ScatterSides::emit_for_outer`] on a level whose candidates go
     /// straight into the output level's pair arena ([`Collect::Direct`]).
     fn emit_direct_for_outer<const SWAPPED: bool>(
@@ -629,8 +655,13 @@ fn scatter_general_arm<const SWAPPED: bool>(
     ws: &mut SparseWorkspace,
     shape: LevelShape,
     pl: Sides<&[ProductEntry]>,
-    mut collect: Collect<'_>,
+    mut collect: Collect<'_, '_>,
 ) -> Result<(), OperationError> {
+    if let Collect::Fold(fold) = &mut collect
+        && fold.grouped()
+    {
+        return count_general_arm::<SWAPPED>(eng, ws, shape, pl, fold);
+    }
     let lim = eng.limits();
     let (pl_inner, pl_outer) = if !SWAPPED { (pl.left, pl.right) } else { (pl.right, pl.left) };
     let mut s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer)?;
@@ -661,8 +692,116 @@ fn scatter_general_arm<const SWAPPED: bool>(
             Collect::Flat => s.emit_for_outer::<SWAPPED, true>(lim, outer, &mut ticker)?,
             Collect::Buckets => s.emit_for_outer::<SWAPPED, false>(lim, outer, &mut ticker)?,
             Collect::Direct(level) => s.emit_direct_for_outer::<SWAPPED>(eng, level, outer, &mut ticker)?,
+            Collect::Fold(fold) => s.emit_fold_for_outer::<SWAPPED>(fold, outer, &mut ticker)?,
         }
         s.filtered.clear_touched();
+    }
+    Ok(())
+}
+
+/// The general arm on a counted level whose counts all fit `u64`
+/// ([`CandidateFold::grouped`]): the candidates are summed, never listed.
+///
+/// Under one outer key, the candidates of an inner product `e` are `e`
+/// against every live outer product that a g pair of `e`'s inner-g child
+/// `k` reaches, so they contribute `count(e) × S[k]`, with `S[k]` the summed
+/// counts of those outer products. The emit walk visits each `e` once and
+/// reads `S`, which is built one of two ways:
+///
+/// - by key: every g pair under the outer's live g keys adds its outer
+///   product's count to its inner-g child, as the unfiltered `filtered`
+///   build would bucket it;
+/// - by inner child: each key the walk reads sums its own g pairs, each
+///   reading its outer-g child's live count (0 when it has none).
+///
+/// An outer whose build by key walks no more than the emit walk builds by
+/// key outright. Otherwise a first walk opens the keys the emit will read
+/// and prices the build by inner child exactly, as `mark_wanted_for_outer`
+/// does for the listing arm, and the cheaper build runs; by key, it adds
+/// only to the opened keys, a read where it misses. Every sum and outer
+/// count carries the round that wrote it ([`CandidateFold::begin_round`]),
+/// so opening a key is writing it and no clear is needed.
+#[inline(never)]
+fn count_general_arm<const SWAPPED: bool>(
+    eng: &Engine,
+    ws: &mut SparseWorkspace,
+    shape: LevelShape,
+    pl: Sides<&[ProductEntry]>,
+    fold: &mut CandidateFold<'_>,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let (pl_inner, pl_outer) = if !SWAPPED { (pl.left, pl.right) } else { (pl.right, pl.left) };
+    let s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer)?;
+    let ScatterSides {
+        f_by_outer, g_by_outer, g_by_inner, outer: outer_products, inner,
+        wanted, wanted_keys: keys, outer_keys, outer_k, ..
+    } = s;
+    // The fold's stamped slots stand in for `wanted` and `outer_keys`, which
+    // are only read for their widths.
+    fold.prepare_sums(lim, wanted.stamps.len(), outer_keys.stamps.len())?;
+    let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
+    for outer in 0..outer_k {
+        let live = outer_products.bucket(outer);
+        if live.is_empty() {
+            continue;
+        }
+        let under = f_by_outer.bucket(outer);
+        let walk: usize = under.iter().map(|r| inner.len(r.other as usize)).sum();
+        let by_key: usize = live.iter().map(|e| g_by_outer.len(e.g_idx.idx())).sum();
+        fold.begin_round();
+        if by_key <= walk {
+            // The build by key costs no more than the walk that reads it.
+            for e in live {
+                let count = fold.outer_count::<SWAPPED>(e.prod_idx.0);
+                for &RevEntry { other: key, .. } in g_by_outer.bucket(e.g_idx.idx()) {
+                    fold.add_to_sum(key, count);
+                }
+            }
+            ticker.poll(by_key as u64)?;
+        } else {
+            // Open the keys the walk will read, and price summing each by
+            // its own g pairs against the build by key.
+            keys.clear();
+            let mut by_inner = 0usize;
+            for &RevEntry { other: inner1, .. } in under {
+                for e in inner.bucket(inner1 as usize) {
+                    let key = e.g_idx.0;
+                    if !fold.has_sum(key) {
+                        fold.open_sum(key);
+                        lim.try_push(keys, key)?;
+                        by_inner += g_by_inner.len(key as usize);
+                    }
+                }
+            }
+            ticker.poll(walk as u64)?;
+            if by_inner < by_key {
+                for e in live {
+                    fold.set_outer(e.g_idx.0, fold.outer_count::<SWAPPED>(e.prod_idx.0));
+                }
+                for &key in keys.iter() {
+                    let sum = g_by_inner.bucket(key as usize).iter()
+                        .map(|r| u128::from(fold.outer_or_zero(r.other)))
+                        .sum();
+                    fold.set_sum(key, sum);
+                }
+                ticker.poll(by_inner as u64)?;
+            } else {
+                for e in live {
+                    let count = fold.outer_count::<SWAPPED>(e.prod_idx.0);
+                    for &RevEntry { other: key, .. } in g_by_outer.bucket(e.g_idx.idx()) {
+                        fold.add_to_open(key, count);
+                    }
+                }
+                ticker.poll(by_key as u64)?;
+            }
+        }
+        for &RevEntry { other: inner1, .. } in under {
+            let products = inner.bucket(inner1 as usize);
+            for e in products {
+                fold.add_grouped(fold.inner_count::<SWAPPED>(e.prod_idx.0), e.g_idx.0);
+            }
+            ticker.poll(products.len() as u64)?;
+        }
     }
     Ok(())
 }

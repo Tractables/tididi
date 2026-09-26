@@ -26,7 +26,7 @@ use cell::{
 
 mod sparse;
 pub(crate) use sparse::SparseWorkspace;
-use sparse::{apply_sparse_level, Passthrough};
+use sparse::{apply_sparse_level, count_sparse_level, CandidateFold, Passthrough};
 
 // Identity/constant-true detection and the per-level identity fast paths.
 mod identity;
@@ -58,6 +58,7 @@ use output::*;
 mod quantify;
 mod drive;
 pub(crate) use drive::apply_and_fallible;
+use drive::{apply_and_core, Conjoined};
 use drive::Sweep;
 mod filter;
 
@@ -289,6 +290,75 @@ impl crate::Engine {
             self.marginalize_levels(&mut out, targets)?;
         }
         Ok(out)
+    }
+
+    /// Count the models of `f ∧ g` without keeping the conjunction.
+    ///
+    /// The result is `model_count(and_marginalizing(f, g, targets))`:
+    /// `targets` are summed out during product construction as there, which
+    /// changes how much structure is built, never the count. Where the root
+    /// of the conjunction is one product built by the sparse route, its
+    /// pairs are folded into the count as they are found instead of being
+    /// stored, so the largest level of a join that ends in a count is never
+    /// held. Otherwise the conjunction is built and counted.
+    ///
+    /// Integer counts only: with weights attached, the result is the count
+    /// of the conjunction built with them, as [`Engine::model_count`] gives it.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    ///
+    /// let engine = Engine::new();
+    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let f = engine.clause(&vtree, [1, 2])?;
+    /// let g = engine.clause(&vtree, [3, 4])?;
+    /// assert_eq!(engine.and_model_count(f, g, &[])?, 9u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Engine::and_marginalizing`] and of
+    /// [`Engine::model_count`]. Both operands are consumed on every outcome.
+    pub fn and_model_count(
+        &self,
+        mut f: Tdd,
+        mut g: Tdd,
+        targets: &[VtreeIdx],
+    ) -> Result<num_bigint::BigUint, OperationError> {
+        let _op = self.limits().enter()?;
+        crate::apply::check_vtree(&f, &g)?;
+        f.check_level_indices(targets)?;
+        if f.weights.is_some() || g.weights.is_some() {
+            let out = self.and_marginalizing(f, g, targets)?;
+            return self.model_count(&out);
+        }
+        crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
+        let vtree = Arc::clone(f.vtree());
+        let mut mask = Vec::new();
+        self.limits().try_resize(&mut mask, vtree.num_nodes(), false)?;
+        for &t in targets {
+            mask[t.idx()] = !vtree.node(t).is_leaf();
+        }
+        // The swap and the self-conjunction shortcut of `conjoin_checked`.
+        if g.max_width() > f.max_width() {
+            std::mem::swap(&mut f, &mut g);
+        }
+        if is_self_conjunction(&f, &g) {
+            let count = self.model_count(&f);
+            diagram::return_levels(self, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
+            return count;
+        }
+        let result = apply_and_core(
+            self, &mut f, &mut g, VtreeMask::new(Some(&mask)), VtreeMask::default(), None, true,
+        );
+        diagram::return_levels(self, diagram::PoolSlot::First, std::mem::take(&mut f.levels).into_vec());
+        diagram::return_levels(self, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
+        match result? {
+            Conjoined::Counted(count) => Ok(count),
+            Conjoined::Built(out) => self.model_count(&out),
+        }
     }
 }
 

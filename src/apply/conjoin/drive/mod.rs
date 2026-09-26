@@ -23,7 +23,7 @@
 //! driver runs.
 
 mod level;
-use level::{build_level_dense, run_sparse_level, LevelBuild};
+use level::{build_level_dense, count_sparse_root, counts_root, run_sparse_level, LevelBuild};
 
 use super::*;
 
@@ -39,6 +39,11 @@ pub(super) struct Sweep<'a, 'filter> {
     pub(super) quantified: VtreeMask<'a>,
     pub(super) ws: Option<&'a mut crate::diagram::WeightStore>,
     pub(super) filter: Option<&'a mut (dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool + 'filter)>,
+    /// Whether the output is wanted only for its count: then a root level
+    /// the sparse route builds as one product is counted instead, into
+    /// `counted`, and left empty.
+    pub(super) count_root: bool,
+    pub(super) counted: Option<num_bigint::BigUint>,
 }
 
 /// Walk the vtree bottom-up, building one level at a time.
@@ -111,6 +116,9 @@ fn sweep_levels(
             route.validate(f, g, shape, &marginal, run)?;
 
             match route {
+                Route::Sparse if counts_root(sweep, f, g, shape, &plan) => {
+                    sweep.counted = Some(count_sparse_root(eng, run, f, g, shape, vtree)?);
+                }
                 Route::Sparse => run_sparse_level(eng, run, f, g, shape, &plan)?,
                 _ => build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?,
             }
@@ -146,6 +154,33 @@ pub(crate) fn apply_and_fallible(
     quantified: VtreeMask<'_>,
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
 ) -> Result<Tdd, OperationError> {
+    match apply_and_core(eng, f, g, targets, quantified, filter, false)? {
+        Conjoined::Built(out) => Ok(out),
+        Conjoined::Counted(_) => unreachable!("a count is only taken when asked for"),
+    }
+}
+
+/// What [`apply_and_core`] returns: the conjunction, or only its model count
+/// when the root was counted instead of built.
+pub(crate) enum Conjoined {
+    Built(Tdd),
+    Counted(num_bigint::BigUint),
+}
+
+/// [`apply_and_fallible`], and with `count_root` free to count the output's
+/// root level instead of building it, returning the model count in place of
+/// the diagram. The root is counted only where it is one product the sparse
+/// route builds, with no weights and no filter; otherwise the diagram is
+/// built as usual and the caller counts it.
+pub(crate) fn apply_and_core(
+    eng: &Engine,
+    f: &mut Tdd,
+    g: &mut Tdd,
+    targets: VtreeMask<'_>,
+    quantified: VtreeMask<'_>,
+    filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
+    count_root: bool,
+) -> Result<Conjoined, OperationError> {
     let lim = eng.limits();
     lim.eager_reclaim();
 
@@ -177,7 +212,8 @@ pub(crate) fn apply_and_fallible(
         lim.check_stop()?;
         let levels = diagram::try_take_levels(eng, num_nodes)?;
         return diagram::Assembly::from_levels(eng, vtree, levels, ws)
-            .finish(TddNodeId { vtree: f.output.vtree, local: ZERO });
+            .finish(TddNodeId { vtree: f.output.vtree, local: ZERO })
+            .map(Conjoined::Built);
     }
 
     let mut assembly = diagram::Assembly::from_levels(
@@ -207,10 +243,11 @@ pub(crate) fn apply_and_fallible(
         ws.as_ref(),
     );
 
-    sweep_levels(
-        eng, &mut run, f, g,
-        &mut Sweep { vtree: &vtree, targets, quantified, ws: ws.as_mut(), filter },
-    )?;
+    let mut sweep = Sweep { vtree: &vtree, targets, quantified, ws: ws.as_mut(), filter, count_root, counted: None };
+    sweep_levels(eng, &mut run, f, g, &mut sweep)?;
+    if let Some(count) = sweep.counted {
+        return Ok(Conjoined::Counted(count));
+    }
 
     crate::marginal::canonicalize_weighted_leaf_refs(&canon_leaves, &vtree, run.levels, ws.as_ref());
 
@@ -222,5 +259,5 @@ pub(crate) fn apply_and_fallible(
     // bit-30 clear a bare slot; see `INLINE_VALUE_BIT` for why that polarity —
     // so a bit-30-clear ref here is never an already-inline count.
     crate::diagram::inline_small_marginal_refs(&mut out, None);
-    Ok(out)
+    Ok(Conjoined::Built(out))
 }

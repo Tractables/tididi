@@ -30,6 +30,7 @@ impl Drop for ForcedThresholds {
     }
 }
 
+mod count_root;
 mod counting_sort;
 mod direction;
 mod emit;

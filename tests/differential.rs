@@ -802,7 +802,10 @@ fn streaming_marginalization_matches_enumeration(case: &Case) {
     let mut integer = eng.and_marginalizing(left.clone(), right.clone(), &targets).unwrap();
     integer.minimize().unwrap();
     assert_canonical(&integer);
-    assert_eq!(integer.model_count().unwrap(), BigUint::from(brute_force_count(case.num_vars, &case.clauses)));
+    let count = BigUint::from(brute_force_count(case.num_vars, &case.clauses));
+    assert_eq!(integer.model_count().unwrap(), count);
+    // The same count, with the conjunction's root counted instead of kept.
+    assert_eq!(eng.and_model_count(left.clone(), right.clone(), &targets).unwrap(), count);
     let w = weighted_case(case);
     for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
         let store = WeightStore::new(RationalWeights::from_literals(&w.weights), arithmetic);

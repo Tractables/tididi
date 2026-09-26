@@ -42,8 +42,9 @@ impl Passthrough {
 /// child is put on the inner side ([`leaf_direction`]), so the leaf arm
 /// joins the level, into buckets. A pass-through side is put on the inner
 /// side too, and the leaf arm joins the level on its other child. With
-/// `direct`, the candidates go to that level's pair arena instead: see
-/// [`finish_direct`].
+/// `fixed`, the candidates go where that collector says instead, on a level
+/// with one product: the level's pair arena ([`finish_direct`]) or a count
+/// ([`count_sparse_level`]).
 #[expect(clippy::too_many_arguments)]
 fn scatter_level(
     eng: &Engine,
@@ -53,7 +54,7 @@ fn scatter_level(
     shape: LevelShape,
     pl: Sides<&[ProductEntry]>,
     thresholds: SparseThresholds,
-    direct: Option<&mut TddLevel>,
+    fixed: Option<Collect<'_, '_>>,
     passthrough: Option<Passthrough>,
 ) -> Result<bool, OperationError> {
     let lim = eng.limits();
@@ -81,18 +82,18 @@ fn scatter_level(
         }
     };
 
-    let flat = flat && direct.is_none();
+    let flat = flat && fixed.is_none();
     if flat {
         ws.par_flat.clear();
-    } else if direct.is_none() {
+    } else if fixed.is_none() {
         ensure_buckets_cleared(eng, &mut ws.par_buckets, shape.f.here)?;
     }
     lim.try_resize(&mut ws.p2_map, shape.g.here, NO_PRODUCT)?;
 
     // The general arm carries no dead-probe inner loop; the leaf arm keeps
     // the leaf fast-path shape.
-    let collect = match direct {
-        Some(level) => Collect::Direct(level),
+    let collect = match fixed {
+        Some(collect) => collect,
         None if flat => Collect::Flat,
         None => Collect::Buckets,
     };
@@ -250,7 +251,7 @@ pub(crate) fn apply_sparse_level(
     if shape.f.here == 1 && shape.g.here == 1 {
         let level = &mut levels[t_idx];
         let base = level.pairs.len();
-        scatter_level(eng, ws, f, g, shape, pl, thresholds, Some(&mut *level), passthrough)?;
+        scatter_level(eng, ws, f, g, shape, pl, thresholds, Some(Collect::Direct(&mut *level)), passthrough)?;
         finish_direct(eng, level, base, pl_output, duplicates_legal)?;
         #[cfg(debug_assertions)]
         debug_check_flushed_level(pl_output, &levels[t_idx]);
@@ -287,6 +288,34 @@ pub(crate) fn apply_sparse_level(
     Ok(())
 }
 
+
+/// Count a level where f and g have one node each, whose one product's pairs
+/// are the candidates, by folding each candidate into `fold` instead of
+/// storing it: [`apply_sparse_level`]'s direct case, with the level left
+/// empty and no product recorded.
+///
+/// # Errors
+///
+/// [`OperationError::OverBudget`] when a workspace reservation is refused.
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn count_sparse_level(
+    eng: &Engine,
+    shape: LevelShape,
+    f: &Tdd,
+    g: &Tdd,
+    levels: &[TddLevel],
+    pl: Sides<&[ProductEntry]>,
+    thresholds: SparseThresholds,
+    passthrough: Option<Passthrough>,
+    fold: &mut CandidateFold<'_>,
+) -> Result<(), OperationError> {
+    debug_assert!(shape.f.here == 1 && shape.g.here == 1, "a counted level has one product");
+    assert_no_marginal_children(shape.t.idx(), shape.left, shape.right, f, g, levels, passthrough);
+    let mut guard = WsGuard::new(eng);
+    scatter_level(eng, &mut guard, f, g, shape, pl, thresholds, Some(Collect::Fold(fold)), passthrough)?;
+    guard.scatter_clean();
+    Ok(())
+}
 
 /// Refuse a sparse apply whose joined children hold marginal levels.
 ///

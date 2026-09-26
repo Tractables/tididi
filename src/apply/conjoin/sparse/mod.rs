@@ -20,7 +20,9 @@ pub(crate) use index::SparseWorkspace;
 mod scatter;
 use scatter::*;
 mod level;
-pub(crate) use level::{apply_sparse_level, Passthrough};
+pub(crate) use level::{apply_sparse_level, count_sparse_level, Passthrough};
+mod fold;
+pub(crate) use fold::CandidateFold;
 
 #[cfg(test)]
 mod tests;

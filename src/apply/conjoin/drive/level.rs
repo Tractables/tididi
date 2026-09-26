@@ -60,6 +60,78 @@ pub(super) fn run_sparse_level(
     Ok(())
 }
 
+/// Whether [`count_sparse_root`] may take a level the sparse route was chosen
+/// for: the sweep wants only the count, the level is the root both operands
+/// output at, f and g have one node there, neither child is carried, and no
+/// weight, filter or target changes what the one product's count is.
+pub(super) fn counts_root(
+    sweep: &Sweep<'_, '_>,
+    f: &Tdd,
+    g: &Tdd,
+    shape: LevelShape,
+    plan: &MarginalPlan,
+) -> bool {
+    let t = shape.t;
+    sweep.count_root
+        && t == sweep.vtree.root()
+        && f.output.vtree == t
+        && g.output.vtree == t
+        && shape.f.here == 1
+        && shape.g.here == 1
+        && Passthrough::of(plan.sides).is_none()
+        && sweep.ws.is_none()
+        && sweep.filter.is_none()
+        && !sweep.targets.contains(t.idx())
+}
+
+/// Count the root level instead of building it: the model count of the
+/// conjunction, which is the fold of the one root product's pairs against
+/// the count columns of the two children.
+///
+/// The children's columns are folded first, over the levels built so far,
+/// as a model count of the finished diagram would fold them; the scatter
+/// then folds each candidate in where [`run_sparse_level`] would store it.
+pub(super) fn count_sparse_root(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    f: &Tdd,
+    g: &Tdd,
+    shape: LevelShape,
+    vtree: &crate::vtree::Vtree,
+) -> Result<num_bigint::BigUint, OperationError> {
+    use crate::value::{CountVec, FoldInput, IntFold, Retention, ValueDomain};
+    let LevelShape { t, left, right, f: fw, g: gw } = shape;
+    let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
+    run.ensure_product_list_for_child(eng, li, fw.left, gw.left)?;
+    run.ensure_product_list_for_child(eng, ri, fw.right, gw.right)?;
+
+    let lim = eng.limits();
+    let mut computed: Vec<Option<CountVec>> = Vec::new();
+    lim.reserve_exact(&mut computed, vtree.num_nodes())?;
+    computed.resize_with(vtree.num_nodes(), || None);
+    let levels: &[TddLevel] = run.levels;
+    let marginal = |i: usize| levels[i].is_marginal();
+    let input = FoldInput { vtree, levels, store: &() };
+    let mut gate = lim.gate();
+    for child in [left, right] {
+        IntFold::ensure(eng, child, input, &mut computed, &marginal, Retention::Frontier, |w| gate.poll(w))?;
+    }
+    gate.flush()?;
+
+    let mut fold = CandidateFold::new(
+        lim,
+        IntFold::child_view(li, vtree, &levels[li], &computed, &()),
+        IntFold::child_view(ri, vtree, &levels[ri], &computed, &()),
+    )?;
+    let lists = run.products.lists(li, ri, ti);
+    count_sparse_level(
+        eng, shape, f, g, levels,
+        Sides { left: lists.left, right: lists.right },
+        run.thresholds, None, &mut fold,
+    )?;
+    Ok(fold.finish())
+}
+
 /// Give both children a dense grid and bump-allocate this level's own,
 /// returning the base the cell build writes into.
 ///
