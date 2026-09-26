@@ -111,7 +111,7 @@ fn sweep_levels(
             route.validate(f, g, shape, &marginal, run)?;
 
             match route {
-                Route::Sparse => run_sparse_level(eng, run, f, g, shape)?,
+                Route::Sparse => run_sparse_level(eng, run, f, g, shape, &plan)?,
                 _ => build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?,
             }
         }

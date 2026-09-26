@@ -31,9 +31,11 @@ impl Drop for ForcedThresholds {
 }
 
 mod direction;
+mod emit;
 mod flat_candidates;
 mod root_gate;
 mod inner_index;
+mod passthrough;
 mod regression;
 mod reset_ws;
 mod scatter_direction_pool;

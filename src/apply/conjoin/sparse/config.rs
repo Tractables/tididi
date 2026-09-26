@@ -191,16 +191,15 @@ fn walk_and_keys(pl: &[ProductEntry], cnt_f: &[u32], deg_g: &[u32]) -> (u128, u1
 /// Projected transient cost per surviving `ParEntry`:
 ///
 /// ```text
-///   sizeof(ParEntry)             = 12   (scatter output, dedup input)
-/// + sizeof((u32, ChildPair))     = 12   (dedup output → emit_pairs)
-/// + sizeof(ChildPair)            = 8    (node build output → pairs_by_parent)
+///   sizeof(ParEntry)             = 12   (scatter output, emit input)
+/// + sizeof(ChildPair)            = 8    (emit output → the level's pairs)
 /// ```
 ///
 /// Used by `plan_chunks` to size chunks under the byte budget. A level
 /// that collected its candidates flat holds each in the sorted list at the
 /// same `ParEntry` size, so the projection is the same; what differs is
 /// that no chunk releases any of it, the list being one allocation.
-pub(super) const BYTES_PER_PAR_ENTRY: usize = 32;
+pub(super) const BYTES_PER_PAR_ENTRY: usize = 20;
 
 // Tests override the routing thresholds; production always uses the defaults.
 #[cfg(test)]

@@ -11,20 +11,20 @@ fn clearing_scratch_leaves_active_workspace_independent() {
     let eng = Engine::new();
     {
         let mut outer = eng.scratch.sparse.checkout(&eng);
-        outer.emit_pairs.reserve(256);
-        let allocation = outer.emit_pairs.as_ptr();
+        outer.par_flat.reserve(256);
+        let allocation = outer.par_flat.as_ptr();
         eng.clear_scratch();
         let mut inner = eng.scratch.sparse.checkout(&eng);
-        inner.emit_pairs.reserve(128);
-        assert_ne!(inner.emit_pairs.as_ptr(), allocation);
+        inner.par_flat.reserve(128);
+        assert_ne!(inner.par_flat.as_ptr(), allocation);
         drop(inner);
-        assert_eq!(outer.emit_pairs.as_ptr(), allocation);
+        assert_eq!(outer.par_flat.as_ptr(), allocation);
     }
-    assert!(eng.scratch.sparse.checkout(&eng).emit_pairs.capacity() >= 256);
+    assert!(eng.scratch.sparse.checkout(&eng).par_flat.capacity() >= 256);
     eng.clear_scratch();
     let ws = eng.scratch.sparse.checkout(&eng);
     assert_eq!(ws.par_buckets.capacity(), 0);
-    assert_eq!(ws.emit_pairs.capacity(), 0);
+    assert_eq!(ws.par_flat.capacity(), 0);
     assert_eq!(ws.f_by_outer.entries.capacity(), 0);
 }
 

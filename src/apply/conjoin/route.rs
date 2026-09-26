@@ -32,12 +32,14 @@ pub(super) const LEVEL_RESERVE_PAIRS_CAP: usize =
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Route {
     /// Scatter-filter-dedup over the children's live products only, never
-    /// materializing the `left_width × right_width` grid.
+    /// materializing the `left_width × right_width` grid. A marginal
+    /// pass-through side is carried across rather than joined.
     Sparse,
-    /// Exactly one marginal child and a structural output: drive the build
-    /// from the structural sibling into a reused `right_width`-row scratch and record
-    /// the survivors in a product list, leaving the level tagged sparse for
-    /// the grandparent to densify.
+    /// Exactly one marginal child that is not a pass-through — a child this
+    /// apply summed out, read through its grid — and a structural output:
+    /// drive the build from the structural sibling into a reused
+    /// `right_width`-row scratch and record the survivors in a product list,
+    /// leaving the level tagged sparse for the grandparent to densify.
     SparseMarg,
     /// A streaming marginalization target: fold `Σ left × right` per cell straight
     /// into the output column, never materializing a product node.
@@ -119,16 +121,32 @@ pub(super) fn route_level(
     // child grid the dense route would have to materialize counts as well.
     let big_grid = shape.f.here * shape.g.here > sparse.min_grid || sparse.child_grid_wins;
 
-    // A marginal child on either side rules the scatter walk out entirely, so
+    // A marginal child on either side rules the four-way scatter walk out, so
     // the density check never has to hold for a level with count payloads.
     if sparse.available && !(marginal.left_any || marginal.right_any) && big_grid && sparse.density_wins {
         return Route::Sparse;
     }
-    // Exactly one marginal child, and not a target: the marginal side is a
-    // pass-through carrier that kills no pair, so the structural sibling alone
-    // governs survival and the dense slab would be mostly dead. Targets do
-    // occur with one marginal child and are common — they fall through to the
-    // streaming fold below.
+    // Exactly one marginal child, a pass-through carrier, and not a target:
+    // the other operand is the identity there, so that side kills no pair and
+    // the level is a join on the structural sibling alone. The scatter walks
+    // the sibling's live products and carries the marginal field across,
+    // where a grid walk would visit every cell and first densify the
+    // sibling's grid — the product of the operands' widths there. No density
+    // test: the walk costs what the join finds, which a grid walk also pays.
+    let passthrough_only = match (plan.sides.left.is_passthrough(), plan.sides.right.is_passthrough()) {
+        (true, false) => !marginal.right_any,
+        (false, true) => !marginal.left_any,
+        _ => false,
+    };
+    if sparse.available && passthrough_only && !marginal.is_target && big_grid {
+        return Route::Sparse;
+    }
+    // Exactly one marginal child, not a pass-through, and not a target: a
+    // child summed out in this apply, whose values only its grid holds. It
+    // kills no pair either, so the structural sibling alone governs survival
+    // and the dense slab would be mostly dead. Targets do occur with one
+    // marginal child and are common — they fall through to the streaming
+    // fold below.
     if sparse.available && (marginal.left_any ^ marginal.right_any) && !marginal.is_target && big_grid {
         return Route::SparseMarg;
     }

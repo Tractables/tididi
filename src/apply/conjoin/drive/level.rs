@@ -18,20 +18,31 @@ pub(super) struct LevelBuild {
 }
 
 /// Run the sparse scatter pipeline for a level [`Route::Sparse`] was chosen
-/// for: build both children's product lists, scatter-filter-dedup over the
-/// live products, and record the result.
+/// for: build the joined children's product lists, scatter-filter-dedup over
+/// the live products, and record the result.
+///
+/// A pass-through side in `plan` is carried rather than joined, so it needs
+/// no product list, and the level's fields on that side are marked inline
+/// for the end-of-apply tagger, as [`Route::SparseMarg`] marks them.
 pub(super) fn run_sparse_level(
     eng: &Engine,
     run: &mut ApplyRun,
     f: &mut Tdd,
     g: &mut Tdd,
     shape: LevelShape,
+    plan: &MarginalPlan,
 ) -> Result<(), OperationError> {
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
-    // Ensure children have product lists for the scatter pipeline.
-    run.ensure_product_list_for_child(eng, li, fw.left, gw.left)?;
-    run.ensure_product_list_for_child(eng, ri, fw.right, gw.right)?;
+    let passthrough = Passthrough::of(plan.sides);
+    let carried = |side| passthrough.is_some_and(|p| p.side == side);
+    // Ensure the joined children have product lists for the scatter pipeline.
+    if !carried(ChildSide::Left) {
+        run.ensure_product_list_for_child(eng, li, fw.left, gw.left)?;
+    }
+    if !carried(ChildSide::Right) {
+        run.ensure_product_list_for_child(eng, ri, fw.right, gw.right)?;
+    }
 
     apply_sparse_level(
         eng,
@@ -39,8 +50,13 @@ pub(super) fn run_sparse_level(
         run.levels,
         run.products.lists(li, ri, ti),
         run.thresholds,
+        passthrough,
     )?;
     run.products.finish_sparse(&mut run.levels[ti], ti);
+    mark_passthrough_inlined(
+        &mut run.levels[ti],
+        Sides { left: carried(ChildSide::Left), right: carried(ChildSide::Right) },
+    );
     Ok(())
 }
 

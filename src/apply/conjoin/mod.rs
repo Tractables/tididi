@@ -26,7 +26,7 @@ use cell::{
 
 mod sparse;
 pub(crate) use sparse::SparseWorkspace;
-use sparse::apply_sparse_level;
+use sparse::{apply_sparse_level, Passthrough};
 
 // Identity/constant-true detection and the per-level identity fast paths.
 mod identity;

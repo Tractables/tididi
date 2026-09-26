@@ -69,7 +69,7 @@ pub(crate) struct SparseWorkspace {
     pub(super) outer_keys_epoch: u32,
     pub(super) outer_attached: Vec<u32>,
 
-    // ── Dedup: parent dedup ──
+    // ── Candidates, and their dedup into products ──
     pub(super) par_buckets: Vec<Vec<ParEntry>>,     // surviving candidates bucketed by f-parent
     // The flat alternative a level with many more parents than candidates
     // takes (`flat_candidates_win`): the scatter appends every candidate
@@ -77,8 +77,7 @@ pub(crate) struct SparseWorkspace {
     // parent into `par_sorted`.
     pub(super) par_flat: Vec<Candidate>,
     pub(super) par_sorted: Grouped<ParEntry>,
-    pub(super) p2_map: Vec<u32>,                    // flat lookup: p2_map[right_parent] → compacted idx, NO_PRODUCT if new
-    pub(super) p2_map_touched: Vec<u32>,            // p2 values written into p2_map this p1's emit pass, to clear
+    pub(super) p2_map: Vec<u32>,                    // flat lookup: p2_map[g_parent] → product idx, NO_PRODUCT if new
 
     // ── Scatter-direction estimator ──
     // Per-child-index pair counters for the four (operand × side) index spaces
@@ -86,9 +85,9 @@ pub(crate) struct SparseWorkspace {
     // f-by-left, f-by-right, g-by-left, g-by-right.
     pub(super) est_counts: Vec<u32>,
 
-    // ── Node build: counting-sort pairs into output nodes ──
-    pub(super) emit_pairs: Vec<(u32, ChildPair)>,   // (parent_prod_idx, pair) for all surviving pairs
-    pub(super) pairs_by_parent: Grouped<ChildPair>, // the same pairs grouped by chunk-local parent
+    // ── The emit: one f parent's products into output nodes ──
+    pub(super) pair_counts: Vec<u32>,               // per-product pair count, then write cursors
+    pub(super) single_pairs: Vec<ChildPair>,        // the pair of each one-pair product, stored inline
 }
 
 /// One entry of a reverse index: a parent of the keyed child, and the child it
@@ -273,10 +272,9 @@ impl Buffers for SparseWorkspace {
         visit(&mut self.par_flat);
         self.par_sorted.buffers(visit);
         visit(&mut self.p2_map);
-        visit(&mut self.p2_map_touched);
         visit(&mut self.est_counts);
-        visit(&mut self.emit_pairs);
-        self.pairs_by_parent.buffers(visit);
+        visit(&mut self.pair_counts);
+        visit(&mut self.single_pairs);
     }
 }
 

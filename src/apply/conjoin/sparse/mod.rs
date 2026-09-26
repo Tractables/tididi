@@ -7,7 +7,8 @@ use smallvec::SmallVec;
 
 use crate::vtree::VtreeIdx;
 use crate::Engine;
-use super::{OperationError, NO_PRODUCT, Tdd, TddLevel, ChildPair, CONJOIN_GRID, finish_node, reserve_pairs_for_emit};
+use super::{OperationError, NO_PRODUCT, Tdd, TddLevel, ChildPair, CONJOIN_GRID, finish_node, reserve_pairs_for_emit, try_push_pair_into};
+use super::cell::emit_single_pair;
 use super::products::{FNodeIdx, ProductEntry, ProductLists, ProductNodeIdx, GNodeIdx};
 
 mod config;
@@ -19,7 +20,7 @@ pub(crate) use index::SparseWorkspace;
 mod scatter;
 use scatter::*;
 mod level;
-pub(crate) use level::apply_sparse_level;
+pub(crate) use level::{apply_sparse_level, Passthrough};
 
 #[cfg(test)]
 mod tests;
