@@ -352,3 +352,69 @@ fn weighted_operands_admit_only_the_product_setting() {
     let chosen = eng.and_exists(f, g, &vars).unwrap();
     assert_same_shape(&chosen, &product, "the default choice on weighted operands");
 }
+
+/// Push `targets` through [`push_local_targets`](crate::apply::compose::push_local_targets)
+/// and report which operand changed.
+fn pushed(f: &Tdd, g: &Tdd, vars: &[VarId]) -> (bool, bool, Tdd, Tdd) {
+    let eng = Engine::new();
+    let targets: Vec<VtreeIdx> = vars.iter().map(|&v| f.vtree().leaf_of(v).unwrap()).collect();
+    let (f2, g2) = crate::apply::compose::push_local_targets(&eng, f.clone(), g.clone(), &targets).unwrap();
+    let changed = |a: &Tdd, b: &Tdd| !a.equivalent(b).unwrap();
+    (changed(f, &f2), changed(g, &g2), f2, g2)
+}
+
+/// A whole quantified subtree one operand does not mention is quantified out
+/// of the other before the product, all of it, whatever it costs.
+#[test]
+fn a_quantified_subtree_one_operand_ignores_is_pushed_whole() {
+    // Leaves 1..=8 left to right: the root splits 1..=4 from 5..=8.
+    let vtree = Arc::new(Vtree::balanced(8));
+    let f = compile_clauses(&vtree, &[vec![1, 2], vec![-3, 4]]);
+    let g = compile_clauses(&vtree, &[vec![1, 5], vec![-2, 6, 7], vec![3, -8], vec![5, -6, 8]]);
+    let vars: Vec<VarId> = (5..=8).map(VarId).collect();
+    let (f_changed, g_changed, _, g2) = pushed(&f, &g, &vars);
+    assert!(!f_changed && g_changed, "the block went into the operand that constrains it");
+    assert!(g2.equivalent(&g.clone().exists_vars(&vars).unwrap()).unwrap());
+    let eng = Engine::new();
+    for how in FUSED {
+        assert_same_shape(
+            &eng.and_exists_with(f.clone(), g.clone(), &vars, how).unwrap(),
+            &eng.and_exists_with(f.clone(), g.clone(), &vars, Quantification::Product).unwrap(),
+            "a block one operand ignores",
+        );
+    }
+}
+
+/// The low bits of a quantified block that one operand happens to be constant
+/// over — a range whose size ends in zero bits — stay in the product: the block
+/// is quantified whole after it anyway, and pushing them would only regroup
+/// the other operand's levels above them.
+#[test]
+fn low_bits_inside_a_quantified_block_stay_in_the_product() {
+    // Leaves 1..=8 left to right; 1..=4 is the block, bit 1 its highest.
+    let vtree = Arc::new(Vtree::balanced(8));
+    // `f` is "the code is below 12": it tests bits 1 and 2 and is constant
+    // over 3 and 4, the subtree the block's lower half sits in.
+    let f = compile_clauses(&vtree, &[vec![-1, -2]]);
+    // `g` relates every bit of the block to the other block.
+    let g = compile_clauses(&vtree, &[
+        vec![-1, 5], vec![1, -5], vec![-2, 6], vec![2, -6],
+        vec![-3, 7], vec![3, -7], vec![-4, 8], vec![4, -8],
+    ]);
+    let vars: Vec<VarId> = (1..=4).map(VarId).collect();
+    let (f_changed, g_changed, _, _) = pushed(&f, &g, &vars);
+    assert!(!f_changed && !g_changed, "a part of the quantified block was pushed");
+    // Quantifying a part of the block is still sound, and pushed alone it is
+    // taken: the same bits as a block of their own are pushed.
+    let low: Vec<VarId> = (3..=4).map(VarId).collect();
+    let (f_changed, g_changed, _, _) = pushed(&f, &g, &low);
+    assert!(!f_changed && g_changed, "a whole quantified subtree was kept");
+    let eng = Engine::new();
+    for how in FUSED {
+        assert_same_shape(
+            &eng.and_exists_with(f.clone(), g.clone(), &vars, how).unwrap(),
+            &eng.and_exists_with(f.clone(), g.clone(), &vars, Quantification::Product).unwrap(),
+            "low bits one operand is constant over",
+        );
+    }
+}

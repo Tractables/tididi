@@ -1,6 +1,7 @@
 //! Boolean combinations built from the shared apply and quantification kernels.
 
-use crate::limits::Transient;
+use crate::limits::{Charged, Transient};
+use crate::reduce::ReductionPlan;
 use crate::vtree::{VarId, VtreeIdx};
 use crate::{Engine, OperationError, Tdd};
 
@@ -255,10 +256,33 @@ impl Engine {
     /// [`OperationError::OutputCap`] when an installed limit refuses the work.
     pub fn and_exists_with(
         &self,
+        f: Tdd,
+        g: Tdd,
+        vars: &[VarId],
+        how: Quantification,
+    ) -> Result<Tdd, OperationError> {
+        self.and_exists_with_reduction(f, g, vars, how, ReductionPlan::default())
+    }
+
+    /// [`and_exists_with`](Self::and_exists_with) with the reduction it ends
+    /// with chosen explicitly.
+    ///
+    /// Every plan returns the same function. [`ReductionPlan::Prune`] leaves
+    /// every node reachable without establishing canonical form: it skips the
+    /// twin contraction, so the result can be larger than the minimized one,
+    /// and a later [`minimize`](Self::minimize) finishes the job. An operand
+    /// quantified before the product is minimized whatever the plan.
+    ///
+    /// # Errors
+    ///
+    /// As [`and_exists_with`](Self::and_exists_with).
+    pub fn and_exists_with_reduction(
+        &self,
         mut f: Tdd,
         mut g: Tdd,
         vars: &[VarId],
         how: Quantification,
+        plan: ReductionPlan<'_>,
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
         super::check_vtree(&f, &g)?;
@@ -284,9 +308,13 @@ impl Engine {
         } else {
             (self.and(f, g)?, false)
         };
-        let mut result = super::project::exists_targets_on(self, product, &targets, collapsed)?;
-        self.minimize(&mut result)?;
-        Ok(result)
+        if targets.is_empty() || product.is_zero() {
+            // No sweep runs to reduce the product, so it is reduced here.
+            let mut product = product;
+            self.reduce(&mut product, plan)?;
+            return Ok(product);
+        }
+        super::project::exists_targets_on(self, product, &targets, collapsed, plan)
     }
 }
 
@@ -312,13 +340,30 @@ fn quantified_subtrees(
     Ok(whole)
 }
 
-/// Quantify the targets one operand does not constrain out of the other one,
+/// Quantify out of each operand the targets the other one does not constrain,
 /// before the product.
 ///
-/// `∃ℓ.(f ∧ g) = f ∧ (∃ℓ.g)` whenever `f` is constant over `ℓ`, and
-/// symmetrically. Leaf-constancy is decided by the conjunction's own identity
-/// precompute, which reads it off the references into the leaf's level: sound,
-/// and deliberately incomplete — a missed target only stays in the product.
+/// `∃S.(f ∧ g) = (∃S.f) ∧ g` when `g` is constant over every leaf of `S` that
+/// `f` is not (there, quantifying `f` is the identity), and symmetrically. The
+/// unit is such a *covered* subtree — every leaf a target that at most one
+/// operand constrains — taken whole, so that the operand's own sweep replaces
+/// it by `⊤` and regroups only its ancestors.
+///
+/// A covered subtree that is a whole quantified subtree of its own, under a
+/// parent that is not, is always pushed: the product then never builds it,
+/// and the ancestors the push regroups are levels the quantification after
+/// the product regroups anyway. One inside a larger quantified subtree is
+/// different, because that quantification takes it for free, with the rest of
+/// the larger subtree: it is pushed only when the operand has more pairs
+/// inside it than on its ancestors, whose regroup is what the push costs. That
+/// separates a variable only one operand has, most of whose operand vanishes,
+/// from the low bits of a code the other operand happens to be constant over —
+/// a relation over a dictionary range whose size ends in zero bits constrains
+/// the variable but not those bits — whose leaf levels hold nothing, where a
+/// push would regroup every level of the operand above them. Leaf-constancy
+/// is decided by the conjunction's own identity precompute, which reads it off
+/// the references into the leaf's level: sound, and deliberately incomplete —
+/// a missed target only stays in the product.
 ///
 /// Every target stays a target. A leaf removed here leaves both operands
 /// constant over it, so quantifying it again is the identity; keeping it is
@@ -329,7 +374,7 @@ fn quantified_subtrees(
 ///
 /// A refused reservation or a component quantification's error; both operands
 /// are consumed on every outcome.
-fn push_local_targets(
+pub(super) fn push_local_targets(
     eng: &Engine,
     mut f: Tdd,
     mut g: Tdd,
@@ -339,6 +384,8 @@ fn push_local_targets(
         return Ok((f, g));
     }
     let lim = eng.limits();
+    let vtree = std::sync::Arc::clone(f.vtree());
+    let num_nodes = vtree.num_nodes();
     let mut into_f = Transient::new(lim, Vec::<VtreeIdx>::new());
     let mut into_g = Transient::new(lim, Vec::<VtreeIdx>::new());
     {
@@ -346,20 +393,105 @@ fn push_local_targets(
         let mut free_in_g = eng.scratch.apply.g_identity.checkout(eng);
         super::conjoin::init_leaf_identity(eng, &mut free_in_f, &f)?;
         super::conjoin::init_leaf_identity(eng, &mut free_in_g, &g)?;
+        // Bottom-up: whether every leaf below a node is a target, and a
+        // covered one; an operand's flag at a covered node, its constancy over
+        // all of it (a flag off a covered node is never read).
+        let mut whole = Transient::new(lim, Vec::new());
+        lim.try_resize(&mut whole, num_nodes, false)?;
+        let mut covered = Transient::new(lim, Vec::new());
+        lim.try_resize(&mut covered, num_nodes, false)?;
         for &leaf in targets {
-            // A leaf both operands are constant over needs no pass at all.
-            if free_in_f[leaf.idx()] && !free_in_g[leaf.idx()] {
-                lim.try_push(&mut into_g, leaf)?;
-            } else if free_in_g[leaf.idx()] && !free_in_f[leaf.idx()] {
+            whole[leaf.idx()] = true;
+            covered[leaf.idx()] = free_in_f[leaf.idx()] || free_in_g[leaf.idx()];
+        }
+        for (t, left, right) in vtree.internal_bottomup() {
+            let (l, r) = (left.idx(), right.idx());
+            whole[t.idx()] = whole[l] && whole[r];
+            covered[t.idx()] = covered[l] && covered[r];
+            free_in_f[t.idx()] = free_in_f[l] && free_in_f[r];
+            free_in_g[t.idx()] = free_in_g[l] && free_in_g[r];
+        }
+        // Each maximal covered subtree, and the operands it is pushed into:
+        // bit 0 for `f`, bit 1 for `g`.
+        let mut push = Transient::new(lim, Vec::new());
+        lim.try_resize(&mut push, num_nodes, 0u8)?;
+        let mut costs: [Option<Transient<'_, LevelPairs>>; 2] = [None, None];
+        for &t in vtree.bottomup_slice() {
+            let parent = vtree.node(t).parent();
+            if !covered[t.idx()] || parent.is_some_and(|p| covered[p.idx()]) {
+                continue;
+            }
+            let alone = parent.is_none_or(|p| !whole[p.idx()]);
+            for (side, free, operand) in [(0, &*free_in_f, &f), (1, &*free_in_g, &g)] {
+                if free[t.idx()] {
+                    continue;
+                }
+                let pays = alone || {
+                    if costs[side].is_none() {
+                        costs[side] = Some(Transient::new(lim, LevelPairs::of(eng, operand, &vtree)?));
+                    }
+                    let pairs = costs[side].as_ref().expect("computed above");
+                    pairs.inside[t.idx()] > pairs.above[t.idx()]
+                };
+                if pays {
+                    push[t.idx()] |= 1 << side;
+                }
+            }
+        }
+        // Top-down: a covered subtree's leaves go where it goes.
+        for (t, left, right) in vtree.internal_bottomup().rev() {
+            if covered[t.idx()] {
+                push[left.idx()] |= push[t.idx()];
+                push[right.idx()] |= push[t.idx()];
+            }
+        }
+        for &leaf in targets {
+            if push[leaf.idx()] & 1 != 0 {
                 lim.try_push(&mut into_f, leaf)?;
+            }
+            if push[leaf.idx()] & 2 != 0 {
+                lim.try_push(&mut into_g, leaf)?;
             }
         }
     }
     if !into_f.is_empty() {
-        f = super::project::exists_targets_on(eng, f, &into_f, false)?;
+        f = super::project::exists_targets_on(eng, f, &into_f, false, ReductionPlan::default())?;
     }
     if !into_g.is_empty() {
-        g = super::project::exists_targets_on(eng, g, &into_g, false)?;
+        g = super::project::exists_targets_on(eng, g, &into_g, false, ReductionPlan::default())?;
     }
     Ok((f, g))
+}
+
+/// An operand's pairs by vtree node: `inside[t]`, those of the levels in
+/// `t`'s subtree; `above[t]`, those of `t`'s proper ancestors.
+struct LevelPairs {
+    inside: Vec<u64>,
+    above: Vec<u64>,
+}
+
+impl LevelPairs {
+    /// Sum `tdd`'s live pairs level by level over `vtree`, both ways.
+    fn of(eng: &Engine, tdd: &Tdd, vtree: &crate::vtree::Vtree) -> Result<Self, OperationError> {
+        let lim = eng.limits();
+        let mut inside = Transient::new(lim, Vec::new());
+        lim.try_resize(&mut inside, vtree.num_nodes(), 0u64)?;
+        let mut above = Transient::new(lim, Vec::new());
+        lim.try_resize(&mut above, vtree.num_nodes(), 0u64)?;
+        for (t, left, right) in vtree.internal_bottomup() {
+            inside[t.idx()] = tdd.levels[t.idx()].live_pairs() as u64 + inside[left.idx()] + inside[right.idx()];
+        }
+        for (t, left, right) in vtree.internal_bottomup().rev() {
+            let here = above[t.idx()] + tdd.levels[t.idx()].live_pairs() as u64;
+            above[left.idx()] = here;
+            above[right.idx()] = here;
+        }
+        Ok(Self { inside: inside.keep(), above: above.keep() })
+    }
+}
+
+impl Charged for LevelPairs {
+    fn charged_bytes(&self) -> u64 {
+        self.inside.charged_bytes() + self.above.charged_bytes()
+    }
 }
