@@ -96,6 +96,21 @@ impl Pieces {
         &self.g_items[self.g_start[b] as usize..self.g_start[b + 1] as usize]
     }
 
+    /// Empty every list, keeping the allocations for the next level.
+    fn clear(&mut self) {
+        self.f_start.clear();
+        self.f_items.clear();
+        self.g_start.clear();
+        self.g_items.clear();
+        self.f_part.clear();
+        self.g_part.clear();
+    }
+
+    /// The four leaf pieces, indexed by [`leaf_index`].
+    fn leaves() -> [Pieces; 4] {
+        [Pieces::leaf(false, false), Pieces::leaf(false, true), Pieces::leaf(true, false), Pieces::leaf(true, true)]
+    }
+
     /// The pieces of a leaf child, from how each operand's parent level names
     /// it: `⊤` alone when both use `⊤`, else the two literals, each lying in
     /// the operand's `⊤` or in the literal itself.
@@ -139,22 +154,19 @@ fn names_one(level: &TddLevel, left: bool) -> bool {
         .is_none_or(|p| if left { p.left.0 } else { p.right.0 } == ONE_LEAF_IDX.0)
 }
 
-/// The pieces of `child`, seen from its parent level `t`: a leaf's are read
-/// off the two operands' forms at `t`, an internal child's were built by its
-/// own visit and are taken out of `built`.
-fn child_pieces(
-    vtree: &Vtree,
-    child: VtreeIdx,
-    left: bool,
-    f_level: &TddLevel,
-    g_level: &TddLevel,
-    built: &mut [Option<Pieces>],
-) -> Pieces {
+/// Which of [`Pieces::leaves`] a leaf child on `left` (else right) of the
+/// level `t` has: read off the two operands' forms at `t`.
+fn leaf_index(f_level: &TddLevel, g_level: &TddLevel, left: bool) -> usize {
+    usize::from(names_one(f_level, left)) * 2 + usize::from(names_one(g_level, left))
+}
+
+/// The pieces of an internal `child`, built by its own visit and taken out of
+/// `built`; `None` for a leaf, whose pieces are one of [`Pieces::leaves`].
+fn take_child(vtree: &Vtree, child: VtreeIdx, built: &mut [Option<Pieces>]) -> Option<Pieces> {
     if vtree.node(child).is_leaf() {
-        Pieces::leaf(names_one(f_level, left), names_one(g_level, left))
-    } else {
-        built[child.idx()].take().expect("a child level is visited before its parent")
+        return None;
     }
+    Some(built[child.idx()].take().expect("a child level is visited before its parent"))
 }
 
 /// The overlay of two structural, nonzero diagrams on one internal-rooted
@@ -168,15 +180,21 @@ fn overlay_levels(eng: &Engine, op: Overlay, f: &Tdd, g: &Tdd) -> Result<Tdd, Op
     built.resize_with(vtree.num_nodes(), || None);
     let mut scratch = Scratch::default();
     let mut out_nodes = 0u64;
+    // A level's pieces are read once, by its parent; their lists then carry
+    // the next level's, so a walk allocates about as many as the vtree is deep.
+    let leaves = Pieces::leaves();
+    let mut spare: Vec<Pieces> = Vec::new();
 
     for (t, left, right) in vtree.internal_bottomup() {
         let (fl, gl) = (&f.levels[t.idx()], &g.levels[t.idx()]);
-        let lp = child_pieces(&vtree, left, true, fl, gl, &mut built);
-        let rp = child_pieces(&vtree, right, false, fl, gl, &mut built);
+        let lo = take_child(&vtree, left, &mut built);
+        let ro = take_child(&vtree, right, &mut built);
+        let lp = lo.as_ref().unwrap_or(&leaves[leaf_index(fl, gl, true)]);
+        let rp = ro.as_ref().unwrap_or(&leaves[leaf_index(fl, gl, false)]);
         let (levels, _) = assembly.parts_mut();
         let out = &mut levels[t.idx()];
         if t == root {
-            let pairs = root_cells(eng, op, fl, gl, f.output.local, g.output.local, &lp, &rp, &mut scratch)?;
+            let pairs = root_cells(eng, op, fl, gl, f.output.local, g.output.local, lp, rp, &mut scratch)?;
             if pairs.is_empty() {
                 drop(assembly);
                 return crate::build::constant_on(eng, &vtree, false);
@@ -185,10 +203,14 @@ fn overlay_levels(eng: &Engine, op: Overlay, f: &Tdd, g: &Tdd) -> Result<Tdd, Op
             eng.limits().level_done(out_nodes + 1)?;
             return assembly.finish(TddNodeId { vtree: root, local });
         }
-        let pieces = inner_level(eng, op, fl, gl, &lp, &rp, out, &mut scratch)?;
+        let mut pieces = spare.pop().unwrap_or_default();
+        pieces.clear();
+        inner_level(eng, op, fl, gl, lp, rp, out, &mut scratch, &mut pieces)?;
         out_nodes += pieces.f_part.len() as u64;
         eng.limits().level_done(out_nodes)?;
         built[t.idx()] = Some(pieces);
+        spare.extend(lo);
+        spare.extend(ro);
     }
     unreachable!("the bottom-up walk ends at the internal root")
 }
@@ -239,8 +261,8 @@ fn index_pairs(
     Ok(())
 }
 
-/// Build one internal, non-root level of the overlay into `out` and return
-/// its pieces.
+/// Build one internal, non-root level of the overlay into `out` and its
+/// pieces into the empty `pieces`.
 ///
 /// Every node of `f` is split by `g`: its cells are grouped by the node of
 /// `g` they lie in, each group a product node and the ungrouped rest the
@@ -257,14 +279,14 @@ fn inner_level(
     rp: &Pieces,
     out: &mut TddLevel,
     s: &mut Scratch,
-) -> Result<Pieces, OperationError> {
+    pieces: &mut Pieces,
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let mut poll = lim.gate();
     let walk_g = op == Overlay::Or;
     let f_width = fl.slot_count();
     let g_width = gl.slot_count();
     index_owners(eng, gl, &mut s.owner)?;
-    let mut pieces = Pieces::default();
     lim.reserve_exact(&mut pieces.f_start, f_width + 1)?;
     pieces.f_start.push(0);
     s.products.clear();
@@ -348,7 +370,7 @@ fn inner_level(
         }
     }
     poll.flush()?;
-    Ok(pieces)
+    Ok(())
 }
 
 /// The root's one node: the cells of `f_out`, and for a disjunction the cells
