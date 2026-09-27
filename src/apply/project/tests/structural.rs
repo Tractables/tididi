@@ -578,3 +578,51 @@ fn radix_sort_is_a_stable_sort_by_key() {
         }
     }
 }
+
+/// A cell written row by row grows as it always did where its new block fits
+/// the budget beside the old one, is cut to what fits where the old rule
+/// would have grown it further, and refuses, unchanged, where not even the
+/// least growth fits: growing copies the old block into a new one before the
+/// old is freed, and the meter charges only the growth.
+#[test]
+fn a_row_cell_grows_only_where_its_new_block_fits_beside_the_old() {
+    let pair = ChildPair { left: EncodedChildRef::from_raw(0), right: EncodedChildRef::from_raw(1) };
+    let mib = 1u64 << 20;
+    // A full cell of 4M pairs (32 MiB) charged to an operation, grown as row
+    // 64 of 128: the rule asks for as many again, capped at `most` pairs.
+    let len = 4usize << 20;
+    let grow = |budget: Option<u64>, most: u64| -> (Result<(), OperationError>, usize, u64) {
+        let eng = Engine::new();
+        let _scope = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(budget));
+        let lim = eng.limits();
+        let _op = lim.begin_operation();
+        let mut out = Vec::new();
+        lim.reserve_exact(&mut out, len).unwrap();
+        out.resize(len, pair);
+        assert_eq!(out.capacity(), len);
+        let result = grow_rows(lim, &mut out, 64, 128, most);
+        (result, out.capacity(), lim.meters().in_flight_bytes)
+    };
+    let unbounded = u64::MAX;
+    // No budget, and a budget with room for both blocks: doubled.
+    assert_eq!(grow(None, unbounded).1, 2 * len);
+    assert_eq!(grow(Some(1024 * mib), unbounded).1, 2 * len);
+    // Room for the new block only if it holds 6M pairs: cut to that, where
+    // the old rule, charging the 32 MiB of growth against 48 MiB of room,
+    // doubled it.
+    let (cut, cap, in_flight) = grow(Some(32 * mib + 48 * mib), unbounded);
+    assert_eq!(cut, Ok(()));
+    assert_eq!(cap, 6 << 20);
+    assert_eq!(in_flight, 48 * mib);
+    // Room for 4.5M pairs: the new block would hold only 0.5M more, below
+    // the least growth, so the cell refuses and keeps its block and charge.
+    let (refused, cap, in_flight) = grow(Some(32 * mib + 36 * mib), unbounded);
+    assert_eq!(refused, Err(OperationError::OverBudget));
+    assert_eq!(cap, len);
+    assert_eq!(in_flight, 32 * mib);
+    // A cell 100 pairs from its most grows by those 100 where 120 more fit,
+    // though that is below the least growth.
+    let (rest, cap, _) = grow(Some(32 * mib + (len as u64 + 120) * 8), len as u64 + 100);
+    assert_eq!(rest, Ok(()));
+    assert_eq!(cap, len + 100);
+}

@@ -1207,6 +1207,14 @@ fn drain_word(
 /// Room for more of the pairs [`Row::drain`] appends: at least half again
 /// what `out` holds, and once enough rows are done, the rows still to come at
 /// the average so far, but never past `most` pairs in all.
+///
+/// Under a soft budget the new block must fit beside the old one: growing
+/// `out` allocates a block of its capacity plus the growth and copies into
+/// it before the old block is freed, and the meter charges only the growth.
+/// So the growth is cut to what the budget has left besides everything in
+/// flight and the new block's copy of the old one, and refused when not even
+/// [`GROW_ROWS_MIN_PAIRS`] more pairs (or the rest of the cell, if fewer)
+/// would fit.
 #[cold]
 #[inline(never)]
 fn grow_rows(
@@ -1218,9 +1226,23 @@ fn grow_rows(
 ) -> Result<(), OperationError> {
     let len = out.len() as u64;
     let rest = if done >= 64 { len.div_ceil(done) * (rows - done) } else { len };
-    let additional = rest.max(len / 2).min(most.saturating_sub(len)).max(1);
+    let mut additional = rest.max(len / 2).min(most.saturating_sub(len)).max(1);
+    if let Some(room) = lim.budget_headroom() {
+        let fits = (room / crate::limits::PAIR_ELEM_BYTES).saturating_sub(out.capacity() as u64);
+        if fits < additional {
+            if fits < GROW_ROWS_MIN_PAIRS.min(additional) {
+                return Err(OperationError::OverBudget);
+            }
+            additional = fits;
+        }
+    }
     lim.reserve_exact(out, usize::try_from(additional).map_err(|_| OperationError::OverBudget)?)
 }
+
+/// The least growth [`grow_rows`] cuts a growth to before it refuses: 8 MiB
+/// of pairs, so a cell near the budget does not grow by a few pairs at a
+/// time, copying itself each time.
+const GROW_ROWS_MIN_PAIRS: u64 = 1 << 20;
 
 /// The level's pairs in scan order — node by node, each node's pairs as
 /// stored — with the node holding each.
