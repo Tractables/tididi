@@ -147,6 +147,27 @@ impl<'a, T> GroupedView<'a, T> {
     pub(super) fn len(self, k: usize) -> usize {
         (self.offsets[k + 1] - self.offsets[k]) as usize
     }
+
+    /// Ask the cache for the first two lines of key `k`'s entries, for a
+    /// walk that reads them a few keys from now: its keys are random, so
+    /// each run's start is a miss the walk would otherwise wait on. A hint
+    /// only; no-op off `x86_64` and under Miri, which lacks the intrinsic.
+    #[inline(always)]
+    pub(super) fn prefetch_bucket(self, k: usize) {
+        let start = self.offsets[k] as usize;
+        #[cfg(all(target_arch = "x86_64", not(miri)))]
+        {
+            let at = self.entries.as_ptr().wrapping_add(start).cast::<i8>();
+            // Sound whatever the address: a prefetch reads nothing the
+            // program sees and never faults.
+            unsafe {
+                core::arch::x86_64::_mm_prefetch(at, core::arch::x86_64::_MM_HINT_T0);
+                core::arch::x86_64::_mm_prefetch(at.wrapping_add(64), core::arch::x86_64::_MM_HINT_T0);
+            }
+        }
+        #[cfg(not(all(target_arch = "x86_64", not(miri))))]
+        let _ = start;
+    }
 }
 
 /// Group `items` by key into `out`: a counting sort in four passes. Count

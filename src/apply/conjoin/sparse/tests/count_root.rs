@@ -222,12 +222,12 @@ fn the_candidate_fold_spills_past_u128_exactly() {
         fold.add_to_sum(lim, 2, r as u64).unwrap();
     }
     for l in 0..4u32 {
-        fold.add_grouped(fold.inner_count::<false>(l), 1);
+        fold.add_grouped::<false>(l, 1);
         expected += BigUint::from(left_counts[l as usize]) * sum;
-        fold.add_grouped(fold.inner_count::<false>(l), 2);
+        fold.add_grouped::<false>(l, 2);
         expected += BigUint::from(left_counts[l as usize]) * (right_counts[0] + right_counts[1]);
         // A key no sum was written to this round adds nothing.
-        fold.add_grouped(fold.inner_count::<false>(l), 0);
+        fold.add_grouped::<false>(l, 0);
         assert_eq!(u128::from(fold.outer_count::<false>(l)), right_counts[l as usize]);
     }
     // An outer count reads back within its round and as 0 outside it.
@@ -237,9 +237,10 @@ fn the_candidate_fold_spills_past_u128_exactly() {
     // summed again starts from its first term.
     fold.begin_round();
     assert_eq!(fold.outer_or_zero(1), 0);
-    fold.add_grouped(near as u64, 1);
+    fold.add_grouped::<false>(0, 1);
     fold.add_to_sum(lim, 2, 5).unwrap();
-    fold.add_grouped(3, 2);
+    // Left product 2 counts 3.
+    fold.add_grouped::<false>(2, 2);
     expected += BigUint::from(15u32);
     // Only an opened key takes terms by `add_to_open`, and an opened key
     // adds its weight, summed over the products that opened it, times its
@@ -249,8 +250,9 @@ fn the_candidate_fold_spills_past_u128_exactly() {
     assert!(!fold.open_weighted(lim, 0, near as u64).unwrap());
     fold.add_to_open(0, 4);
     fold.add_to_open(1, 9);
-    fold.add_grouped(2, 0);
-    fold.add_grouped(2, 1);
+    // Right product 1 counts 2, read as the inner side when swapped.
+    fold.add_grouped::<true>(1, 0);
+    fold.add_grouped::<true>(1, 1);
     expected += BigUint::from(8u32);
     assert_eq!((fold.opened_len(), fold.opened_key(0)), (1, 0));
     fold.add_weighted();

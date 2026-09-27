@@ -335,11 +335,14 @@ impl<'a> CandidateFold<'a> {
         }
     }
 
-    /// Add `count × sum(key)` when this round has opened `key`: an inner
-    /// product's candidates against a non-empty bucket.
+    /// Add inner product `prod`'s count times the sum of inner-g child `key`
+    /// when this round has opened it: the product's candidates against a
+    /// non-empty bucket. Most keys a walk tests are not opened, so the count
+    /// is read only for one that is.
     #[inline(always)]
-    pub(crate) fn add_grouped(&mut self, count: u64, key: u32) {
+    pub(crate) fn add_grouped<const SWAPPED: bool>(&mut self, prod: u32, key: u32) {
         if let Some(i) = self.round.slot(key) {
+            let count = self.inner_count::<SWAPPED>(prod);
             let sum = self.round.slots[i].sum;
             self.add_product(count, sum);
         }

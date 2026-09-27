@@ -699,6 +699,10 @@ fn scatter_general_arm<const SWAPPED: bool>(
     Ok(())
 }
 
+/// How many inner f children ahead of the one it reads a counted root's walk
+/// asks the cache for (see [`GroupedView::prefetch_bucket`]).
+const WALK_AHEAD: usize = 4;
+
 /// The general arm on a counted level whose counts all fit `u64`
 /// ([`CandidateFold::grouped`]): the candidates are summed, never listed.
 ///
@@ -761,10 +765,13 @@ fn count_general_arm<const SWAPPED: bool>(
                 }
             }
             ticker.poll(by_key as u64)?;
-            for &RevEntry { other: inner1, .. } in under {
+            for (j, &RevEntry { other: inner1, .. }) in under.iter().enumerate() {
+                if let Some(ahead) = under.get(j + WALK_AHEAD) {
+                    inner.prefetch_bucket(ahead.other as usize);
+                }
                 let products = inner.bucket(inner1 as usize);
                 for e in products {
-                    fold.add_grouped(fold.inner_count::<SWAPPED>(e.prod_idx.0), e.g_idx.0);
+                    fold.add_grouped::<SWAPPED>(e.prod_idx.0, e.g_idx.0);
                 }
                 ticker.poll(products.len() as u64)?;
             }
@@ -774,7 +781,10 @@ fn count_general_arm<const SWAPPED: bool>(
             // g pairs against the build by key. The walk is then over: the
             // outer's candidates are each opened key's weight times its sum.
             let mut by_inner = 0usize;
-            for &RevEntry { other: inner1, .. } in under {
+            for (j, &RevEntry { other: inner1, .. }) in under.iter().enumerate() {
+                if let Some(ahead) = under.get(j + WALK_AHEAD) {
+                    inner.prefetch_bucket(ahead.other as usize);
+                }
                 for e in inner.bucket(inner1 as usize) {
                     let key = e.g_idx.0;
                     if fold.open_weighted(lim, key, fold.inner_count::<SWAPPED>(e.prod_idx.0))? {
