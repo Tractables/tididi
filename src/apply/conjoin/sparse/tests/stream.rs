@@ -8,8 +8,8 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 
 use super::inner_index::{block, pack};
-use super::ForcedStream;
-use super::super::stream::Operand;
+use super::{ForcedStream, ForcedWalk};
+use super::super::stream::{Operand, Walk};
 use crate::test_helpers::assert_canonical;
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::{Engine, Tdd};
@@ -31,16 +31,27 @@ fn rows(seed: u64, n: usize, cols: usize, bits: u32) -> Vec<Vec<u64>> {
 /// either pivot.
 const CHOICES: [Option<Option<Operand>>; 4] = [None, Some(None), Some(Some(Operand::F)), Some(Some(Operand::G))];
 
-/// Count `f ∧ g` under every choice and both operand orders, checking each
-/// against `expected`; returns how many counts reached the choice.
+/// The walks a test pins: the choice's, the indirect walk, and the dense
+/// walk with either width of `V`.
+fn walks() -> Vec<Option<Walk>> {
+    vec![None, Some(Walk::Indirect), Some(Walk::Dense { wide: false }), Some(Walk::Dense { wide: true })]
+}
+
+/// Count `f ∧ g` under every choice, every walk and both operand orders,
+/// checking each against `expected`; returns how many counts reached the
+/// choice.
 fn count_every_way(eng: &Engine, f: &Tdd, g: &Tdd, targets: &[VtreeIdx], expected: &BigUint, what: &str) -> u32 {
     let before = ForcedStream::asked();
     for choice in CHOICES {
         let _pin = ForcedStream::install(choice);
-        let counted = eng.and_model_count(f.clone(), g.clone(), targets).unwrap();
-        assert_eq!(&counted, expected, "{what}, {choice:?}");
-        let swapped = eng.and_model_count(g.clone(), f.clone(), targets).unwrap();
-        assert_eq!(&swapped, expected, "{what}, {choice:?}, swapped");
+        let streams = matches!(choice, Some(Some(_)));
+        for walk in if streams { walks() } else { vec![None] } {
+            let _walk = ForcedWalk::install(walk);
+            let counted = eng.and_model_count(f.clone(), g.clone(), targets).unwrap();
+            assert_eq!(&counted, expected, "{what}, {choice:?}, {walk:?}");
+            let swapped = eng.and_model_count(g.clone(), f.clone(), targets).unwrap();
+            assert_eq!(&swapped, expected, "{what}, {choice:?}, {walk:?}, swapped");
+        }
     }
     ForcedStream::asked() - before
 }

@@ -80,6 +80,34 @@ impl Drop for ForcedStream {
     }
 }
 
+thread_local! {
+    static WALK: Cell<Option<super::stream::Walk>> = const { Cell::new(None) };
+}
+
+/// The streamed count's walk a [`ForcedWalk`] guard on this thread has
+/// installed, if any.
+pub(super) fn forced_walk() -> Option<super::stream::Walk> {
+    WALK.with(Cell::get)
+}
+
+/// A streamed count's walk pinned on this thread until the guard drops;
+/// `None` leaves it to the choice.
+pub(super) struct ForcedWalk {
+    prior: Option<super::stream::Walk>,
+}
+
+impl ForcedWalk {
+    pub(super) fn install(walk: Option<super::stream::Walk>) -> ForcedWalk {
+        ForcedWalk { prior: WALK.with(|c| c.replace(walk)) }
+    }
+}
+
+impl Drop for ForcedWalk {
+    fn drop(&mut self) {
+        WALK.with(|c| c.set(self.prior));
+    }
+}
+
 mod count_root;
 mod counting_sort;
 mod direction;

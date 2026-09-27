@@ -483,6 +483,23 @@ pub(crate) fn count(eng: &Engine, input: &StreamInput<'_>, pivot: Operand) -> Re
     let lim = eng.limits();
     let view = Oriented::new(input, pivot);
     let pricing = PairPricing::new(lim, &view, input)?;
+    match choose_walk(input) {
+        Walk::Indirect => count_indirect(eng, input, &view, &pricing),
+        Walk::Dense { wide: false } => count_dense::<u32>(eng, input, &view, &pricing),
+        Walk::Dense { wide: true } => count_dense::<u64>(eng, input, &view, &pricing),
+    }
+}
+
+/// [`count`] with `V(p, ·)` in a stamped `u128` column and every candidate
+/// found through its product's row and the `Q` pairs that own it.
+fn count_indirect(
+    eng: &Engine,
+    input: &StreamInput<'_>,
+    view: &Oriented<'_>,
+    pricing: &PairPricing,
+) -> Result<BigUint, OperationError> {
+    let lim = eng.limits();
+    let view = *view;
     let (p, q) = (view.p, view.q);
 
     // The top-down side: `P`'s root pairs by their `c` child, the live
@@ -569,6 +586,292 @@ pub(crate) fn count(eng: &Engine, input: &StreamInput<'_>, pivot: Operand) -> Re
                 }
             };
             ticker.poll(walked)?;
+        }
+    }
+    ticker.flush()?;
+    Ok(total.finish())
+}
+
+/// How a streamed count holds `V(p, ·)`.
+///
+/// Both walks find the same candidates in the same order and read, per
+/// candidate, the product's count in its level's column, the `Q` pairs that
+/// own it and one entry of `V`. What differs is that entry: the indirect
+/// walk keeps a stamped `u128` slot per `Q` node, the dense walk a plain
+/// integer, several times smaller, so far more of `V` stays in cache.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Walk {
+    /// `V` in a stamped `u128` column.
+    Indirect,
+    /// `V` in a column of `u64` (`wide`) or `u32`, emptied by walking back
+    /// over what the round wrote.
+    Dense { wide: bool },
+}
+
+/// The walk a streamed count takes: dense when `V` fits a plain integer.
+/// `V(p, q)` sums `C_o` over pairs `(p_o, q_o)` that are distinct for one
+/// `(p, q)` (a node's pairs are distinct, and `p` and `q` fix the `c` side of
+/// each), so the sum of every count at `o` bounds every entry.
+fn choose_walk(input: &StreamInput<'_>) -> Walk {
+    let o_total = input.o.products.iter()
+        .fold(0u128, |sum, e| sum.saturating_add(input.o.counts[e.prod_idx.0 as usize]));
+    let wide = if o_total <= u128::from(u32::MAX) {
+        false
+    } else if o_total <= u128::from(u64::MAX) {
+        true
+    } else {
+        return Walk::Indirect;
+    };
+    match forced_walk() {
+        Some(Walk::Indirect) => Walk::Indirect,
+        Some(Walk::Dense { wide: forced_wide }) => Walk::Dense { wide: wide || forced_wide },
+        None => Walk::Dense { wide },
+    }
+}
+
+// Tests pin the walk; production always chooses it.
+#[cfg(test)]
+use super::tests::forced_walk;
+
+#[cfg(not(test))]
+fn forced_walk() -> Option<Walk> {
+    None
+}
+
+/// An entry of the dense walk's `V` column.
+trait Weight: Copy + Default {
+    /// `c`, which the caller has bounded by the type's maximum.
+    fn from_count(c: u128) -> Self;
+    /// `self + c`, which the same bound keeps in range.
+    fn plus(self, c: Self) -> Self;
+    fn wide(self) -> u128;
+}
+
+impl Weight for u32 {
+    #[inline(always)]
+    fn from_count(c: u128) -> Self {
+        c as u32
+    }
+    #[inline(always)]
+    fn plus(self, c: Self) -> Self {
+        self + c
+    }
+    #[inline(always)]
+    fn wide(self) -> u128 {
+        u128::from(self)
+    }
+}
+
+impl Weight for u64 {
+    #[inline(always)]
+    fn from_count(c: u128) -> Self {
+        c as u64
+    }
+    #[inline(always)]
+    fn plus(self, c: Self) -> Self {
+        self + c
+    }
+    #[inline(always)]
+    fn wide(self) -> u128 {
+        u128::from(self)
+    }
+}
+
+/// How far ahead of its read the dense walk asks the cache for an entry of
+/// `V`: the walk's reads are independent, so the only limit on how many
+/// misses are in flight is how early each is asked for.
+const AHEAD: usize = 16;
+
+/// Ask the cache for `column[k]`. A hint only; no-op off `x86_64` and under
+/// Miri, which lacks the intrinsic.
+#[inline(always)]
+fn prefetch<T>(column: &[T], k: usize) {
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        let at = column.as_ptr().wrapping_add(k).cast::<i8>();
+        // Sound whatever the address: a prefetch reads nothing the program
+        // sees and never faults.
+        unsafe { core::arch::x86_64::_mm_prefetch(at, core::arch::x86_64::_MM_HINT_T0) };
+    }
+    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
+    let _ = (column, k);
+}
+
+/// One child's side of the dense walk: whatever its pairs' walks and the
+/// other side's probes read.
+struct DenseSide {
+    /// The live products by their `P` node, with their `Q` node and product
+    /// index: what a walk steps through and a marked probe opens.
+    rows: Grouped<(u32, u32)>,
+    /// `Q`'s pairs at `c` by this child, with the node and the other child.
+    owners: Grouped<(u32, u32)>,
+}
+
+impl DenseSide {
+    /// `left` says which child; `rows` whether anything reads the product
+    /// rows.
+    fn new(
+        lim: &Limits,
+        view: &Oriented<'_>,
+        built: Built<'_>,
+        left: bool,
+        p_width: usize,
+        q_width: usize,
+        rows: bool,
+    ) -> Result<Self, OperationError> {
+        let owners = grouped(lim, q_width, pairs_with_parent(view.q_c), |(node, pair)| {
+            let (this, other) = if left { (pair.left.0, pair.right.0) } else { (pair.right.0, pair.left.0) };
+            (this as usize, (node, other))
+        })?;
+        let rows = if rows { rows_by_p(lim, view, built.products, p_width)? } else { Grouped::default() };
+        Ok(DenseSide { rows, owners })
+    }
+
+    /// The live products of `P` node `p`, empty when no walk or probe reads
+    /// them (a probe that reads them always has them).
+    #[inline]
+    fn row(&self, p: u32) -> &[(u32, u32)] {
+        if self.rows.offsets.is_empty() { &[] } else { self.rows.view().bucket(p as usize) }
+    }
+}
+
+/// Add `L(p, ·)`'s candidates from one pair's walk to `total`: `this` is the
+/// walked child's `P` node, `other` the probed child's, whose probe is
+/// already open.
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn walk_pair<W: Weight>(
+    side: &DenseSide,
+    this: u32,
+    other: u32,
+    probe: &Probe,
+    this_counts: &[u128],
+    other_counts: &[u128],
+    weights: &[W],
+    total: &mut Total,
+) -> u64 {
+    let mut walked = 0u64;
+    for &(q_this, prod) in side.row(this) {
+        let c_this = this_counts[prod as usize];
+        let owners = side.owners.view().bucket(q_this as usize);
+        walked += 1 + owners.len() as u64;
+        for &(q_node, q_other) in owners {
+            let v = weights[q_node as usize].wide();
+            if v == 0 {
+                continue;
+            }
+            let Some(c_other) = probe.count(other, q_other, other_counts) else { continue };
+            total.add3(c_this, c_other, v);
+        }
+    }
+    walked
+}
+
+/// [`count`] with `V(p, ·)` in a dense column of `W`; see [`Walk`]. The sum is the same
+/// as the indirect walk's, term by term: only where the terms are read from
+/// differs.
+fn count_dense<W: Weight>(
+    eng: &Engine,
+    input: &StreamInput<'_>,
+    view: &Oriented<'_>,
+    pricing: &PairPricing,
+) -> Result<BigUint, OperationError> {
+    let lim = eng.limits();
+    let view = *view;
+    let (p, q) = (view.p, view.q);
+
+    // The top-down side, as the indirect walk has it, with each `o`
+    // product's count beside its `Q` node.
+    let p_root = grouped(lim, p.c, pairs_with_parent(view.p_root), |(_, pair)| {
+        let (at_c, at_o) = view.at_root(&pair);
+        (at_c as usize, at_o)
+    })?;
+    let q_root = grouped(lim, q.o, pairs_with_parent(view.q_root), |(_, pair)| {
+        let (at_c, at_o) = view.at_root(&pair);
+        (at_o as usize, at_c)
+    })?;
+    let col_o = input.o.counts;
+    let o_rows = grouped(
+        lim, p.o,
+        input.o.products.iter().filter(|e| col_o[e.prod_idx.0 as usize] != 0),
+        |e| {
+            let (pn, qn) = view.pq(e);
+            (pn as usize, (qn, W::from_count(col_o[e.prod_idx.0 as usize])))
+        },
+    )?;
+
+    // Which walks and probes run decides what each side builds.
+    let (mut by_left, mut by_right) = (false, false);
+    for (_, pair) in pairs_with_parent(view.p_c) {
+        match pricing.choose(pair.left.0, pair.right.0).0 {
+            Direction::ByLeft => by_left = true,
+            Direction::ByRight => by_right = true,
+        }
+    }
+    let marked = |p_width: usize, q_width: usize| p_width != 1 && q_width != 1;
+    let left = DenseSide::new(
+        lim, &view, input.cl, true, p.cl, q.cl,
+        by_left || (by_right && marked(p.cl, q.cl)),
+    )?;
+    let right = DenseSide::new(
+        lim, &view, input.cr, false, p.cr, q.cr,
+        by_right || (by_left && marked(p.cr, q.cr)),
+    )?;
+    let mut probe_cl = Probe::new(lim, &view, input.cl, p.cl, q.cl)?;
+    let mut probe_cr = Probe::new(lim, &view, input.cr, p.cr, q.cr)?;
+
+    let (col_cl, col_cr) = (input.cl.counts, input.cr.counts);
+    let mut weights: Vec<W> = Vec::new();
+    lim.try_resize(&mut weights, q.c, W::default())?;
+    let mut total = Total::default();
+    let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
+    for (p_node, node) in view.p_c.nodes.iter().enumerate() {
+        // `V(p, ·)`.
+        let (mut weighed, mut any) = (0u64, false);
+        for &p_o in p_root.view().bucket(p_node) {
+            for &(q_o, c_o) in o_rows.view().bucket(p_o as usize) {
+                let owners = q_root.view().bucket(q_o as usize);
+                for (i, &q_node) in owners.iter().enumerate() {
+                    if let Some(&ahead) = owners.get(i + AHEAD) {
+                        prefetch(&weights, ahead as usize);
+                    }
+                    let slot = &mut weights[q_node as usize];
+                    *slot = slot.plus(c_o);
+                }
+                weighed += 1 + owners.len() as u64;
+                any |= !owners.is_empty();
+            }
+        }
+        ticker.poll(weighed)?;
+        if !any {
+            continue;
+        }
+        // `L(p, ·)`, folded against `V(p, ·)` candidate by candidate.
+        for pair in view.p_c.pairs_of(node) {
+            let (p_cl, p_cr) = (pair.left.0, pair.right.0);
+            let walked = match pricing.choose(p_cl, p_cr).0 {
+                Direction::ByLeft => {
+                    let row = right.row(p_cr);
+                    probe_cr.open(row);
+                    row.len() as u64
+                        + walk_pair(&left, p_cl, p_cr, &probe_cr, col_cl, col_cr, &weights, &mut total)
+                }
+                Direction::ByRight => {
+                    let row = left.row(p_cl);
+                    probe_cl.open(row);
+                    row.len() as u64
+                        + walk_pair(&right, p_cr, p_cl, &probe_cl, col_cr, col_cl, &weights, &mut total)
+                }
+            };
+            ticker.poll(walked)?;
+        }
+        // Empty `V(p, ·)` by walking back over what the round wrote.
+        for &p_o in p_root.view().bucket(p_node) {
+            for &(q_o, _) in o_rows.view().bucket(p_o as usize) {
+                for &q_node in q_root.view().bucket(q_o as usize) {
+                    weights[q_node as usize] = W::default();
+                }
+            }
         }
     }
     ticker.flush()?;
