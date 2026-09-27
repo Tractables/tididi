@@ -60,10 +60,13 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
             continue;
         }
         let node = plevel.pairs_of_idx(n);
-        // The apply core writes a node's pairs in ascending order, so a node
-        // fused on its right side usually holds each group as one run.
+        // A node whose pairs ascend by explicit ref holds each group as one
+        // run. A wide node that does not is sorted into runs: its table
+        // would be too wide for the cache, and a probe per pair would miss.
         if node.windows(2).all(|w| explicit_ref(w[0], side) <= explicit_ref(w[1], side)) {
             group_by_runs::<D>(lim, tdd, v, side, n, node, &mut out, &mut scratch.run)?;
+        } else if node.len() >= SORT_MIN {
+            group_by_sorting::<D>(lim, tdd, v, side, n, node, &mut out, scratch)?;
         } else {
             group_by_scatter::<D>(eng, tdd, plevel, v, side, n, &mut out, scratch)?;
         }
@@ -80,12 +83,108 @@ fn explicit_ref(pair: ChildPair, side: ChildSide) -> u32 {
     }
 }
 
+/// The fewest pairs a node sorts into runs rather than hashes: from here its
+/// table, two cells of 12 bytes per pair, outgrows a core's cache.
+pub(super) const SORT_MIN: usize = 1 << 14;
+
+/// The marginal-side ref of `pair`: the side `side` names.
+#[inline(always)]
+fn marginal_ref(pair: ChildPair, side: ChildSide) -> u32 {
+    match side {
+        ChildSide::Right => pair.right.0,
+        ChildSide::Left => pair.left.0,
+    }
+}
+
+/// [`group_by_scatter`] for a wide node whose pairs do not ascend: the
+/// positions of its pairs are sorted stably by explicit-side ref, a least
+/// significant digit radix sort, so each group is a run of positions in
+/// occurrence order. A group's plan carries the position of its first pair,
+/// and the plans are put in that order, which is the order the table emits
+/// them in. Every pass reads and writes in sequence, where the table misses
+/// the cache on nearly every pair of a wide node.
+#[expect(clippy::too_many_arguments)]
+pub(super) fn group_by_sorting<D: SlotValues>(
+    lim: &Limits,
+    tdd: &Tdd,
+    v: VtreeIdx,
+    side: ChildSide,
+    n: usize,
+    node: &[ChildPair],
+    out: &mut Vec<PlanEntry<D::Value>>,
+    sc: &mut PFusionScratch,
+) -> Result<(), OperationError> {
+    const DIGIT: u32 = 11;
+    let count = node.len();
+    // A node's pairs are counted in `u32` by the level encoding.
+    let keyed = &mut sc.keyed;
+    keyed.clear();
+    lim.reserve(keyed, count)?;
+    keyed.extend(node.iter().enumerate().map(|(at, &pair)| (explicit_ref(pair, side), at as u32)));
+    let other = &mut sc.keyed_other;
+    other.clear();
+    lim.try_resize(other, count, (0u32, 0u32))?;
+    let widest = keyed.iter().map(|&(x, _)| x).max().unwrap_or(0);
+    let bits = u32::BITS - widest.leading_zeros();
+    let mut counts = [0u32; 1 << DIGIT];
+    let mut shift = 0;
+    while shift < bits {
+        counts.fill(0);
+        for &(x, _) in keyed.iter() {
+            counts[((x >> shift) as usize) & ((1 << DIGIT) - 1)] += 1;
+        }
+        // A digit every pair shares leaves the order as it is.
+        if !counts.iter().any(|&c| c as usize == count) {
+            let mut sum = 0u32;
+            for c in counts.iter_mut() {
+                let here = *c;
+                *c = sum;
+                sum += here;
+            }
+            for &item in keyed.iter() {
+                let d = ((item.0 >> shift) as usize) & ((1 << DIGIT) - 1);
+                other[counts[d] as usize] = item;
+                counts[d] += 1;
+            }
+            std::mem::swap(keyed, other);
+        }
+        // Each pass only reads the diagram, so a stop between passes leaves
+        // it as it was.
+        lim.check_stop()?;
+        shift += DIGIT;
+    }
+    let mut found: Vec<(u32, PlanEntry<D::Value>)> = Vec::new();
+    let run = &mut sc.run;
+    let mut at = 0;
+    while at < count {
+        let x_idx = keyed[at].0;
+        let end = at + keyed[at..].iter().take_while(|&&(x, _)| x == x_idx).count();
+        if end - at > 1 {
+            run.clear();
+            lim.reserve(run, end - at)?;
+            run.extend(keyed[at..end].iter().map(|&(_, pos)| marginal_ref(node[pos as usize], side)));
+            lim.try_push(&mut found, (keyed[at].1, PlanEntry {
+                node_idx: n,
+                x_idx,
+                value: D::sum_refs(tdd, v, run),
+                new_ref: u32::MAX,
+            }))?;
+        }
+        at = end;
+    }
+    // First positions are distinct, so the order is total.
+    found.sort_unstable_by_key(|&(first, _)| first);
+    lim.reserve(out, found.len())?;
+    out.extend(found.into_iter().map(|(_, plan)| plan));
+    Ok(())
+}
+
 /// [`group_by_scatter`] for a node whose pairs ascend by explicit-side ref:
 /// each group is a run of them, and the runs come in the order of their first
 /// occurrences, which is the order the table emits its groups in. No table is
 /// touched, so a wide node costs one read of its pairs.
 #[expect(clippy::too_many_arguments)]
-fn group_by_runs<D: SlotValues>(
+pub(super) fn group_by_runs<D: SlotValues>(
     lim: &Limits,
     tdd: &Tdd,
     v: VtreeIdx,
@@ -102,10 +201,7 @@ fn group_by_runs<D: SlotValues>(
         if end - at > 1 {
             run.clear();
             lim.reserve(run, end - at)?;
-            run.extend(node[at..end].iter().map(|p| match side {
-                ChildSide::Right => p.right.0,
-                ChildSide::Left => p.left.0,
-            }));
+            run.extend(node[at..end].iter().map(|&p| marginal_ref(p, side)));
             lim.try_push(out, PlanEntry {
                 node_idx: n,
                 x_idx,
@@ -129,7 +225,7 @@ fn group_by_runs<D: SlotValues>(
 /// Z-sets, so their values add — `c(L)·v1 + c(L)·v2 + … = c(L)·(v1+v2+…)`,
 /// the fusion invariant, in whichever domain `D` is.
 #[expect(clippy::too_many_arguments)]
-fn group_by_scatter<D: SlotValues>(
+pub(super) fn group_by_scatter<D: SlotValues>(
     eng: &Engine,
     tdd: &Tdd,
     plevel: &TddLevel,

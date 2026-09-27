@@ -63,6 +63,10 @@ pub(super) struct PFusionScratch {
     /// One run's marginal-side refs, for a node whose groups are runs
     /// (`pair_fusion::plan::group_by_runs`). Cleared per run.
     pub(super) run: Vec<u32>,
+    /// A wide node's pairs as (explicit-side ref, position), sorted by ref
+    /// (`pair_fusion::plan::group_by_sorting`), and the sort's other buffer.
+    pub(super) keyed: Vec<(u32, u32)>,
+    pub(super) keyed_other: Vec<(u32, u32)>,
     /// Current node's generation stamp. Bumped once per node; on u32 wrap the
     /// stamps are zeroed and it restarts at 1 (0 is the "never stamped"
     /// sentinel, so it must never equal a live generation).
@@ -75,6 +79,8 @@ impl Buffers for PFusionScratch {
         visit(&mut self.touched);
         visit(&mut Nested(&mut self.groups));
         visit(&mut self.run);
+        visit(&mut self.keyed);
+        visit(&mut self.keyed_other);
     }
 }
 

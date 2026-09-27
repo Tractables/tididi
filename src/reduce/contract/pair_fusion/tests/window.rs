@@ -185,3 +185,67 @@ fn ascending_and_shuffled_nodes_fuse_alike() {
         assert!(fused(&tdd, n), "node {n} still holds two pairs at one explicit ref");
     }
 }
+
+/// A diagram whose root holds one node of `pairs`, both children marginal:
+/// counts `3s + 1` in slot `s` on each side, so either side can be fused.
+fn both_marginal(pairs: &[(u32, u32)], slots: u32) -> Tdd {
+    use crate::diagram::{ChildPair, NodeIdx, TddLevel, TddNodeId};
+    use crate::vtree::Vtree;
+    let vtree = Arc::new(Vtree::balanced(2));
+    let root = vtree.root();
+    let (left, right) = vtree.children(root);
+    let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+    let counts: Vec<u128> = (0..slots).map(|s| u128::from(s) * 3 + 1).collect();
+    levels[left.idx()].set_counts_state(counts.clone(), None);
+    levels[right.idx()].set_counts_state(counts, None);
+    let pairs: Vec<ChildPair> = pairs.iter().map(|&(l, r)| ChildPair::new(NodeIdx(l), NodeIdx(r))).collect();
+    levels[root.idx()].push_internal_node(&pairs);
+    Tdd::from_levels_unchecked(vtree, levels, TddNodeId { vtree: root, local: NodeIdx(0) })
+}
+
+/// A wide node out of order is sorted into runs, and its plans are the
+/// table's: the same groups with the same sums, in first-occurrence order,
+/// on either side and over explicit refs of any width.
+#[test]
+fn a_wide_node_is_grouped_alike_by_sorting_and_by_the_table() {
+    use super::super::plan::{SORT_MIN, group_by_scatter, group_by_sorting};
+    use crate::diagram::ChildSide;
+    use crate::reduce::contract::scratch::PFusionScratch;
+    use crate::value::IntFold;
+    let eng = Engine::new();
+    let mut state = 0xD1B5_4A32_D192_ED03u64;
+    let mut next = move |m: u32| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state % u64::from(m)) as u32
+    };
+    let slots = 1 << 12;
+    // (pairs, distinct explicit refs, where they start): few and many
+    // groups, and refs past 2^30 as an inline-tagged side carries.
+    for (width, refs, base) in [(SORT_MIN, 40u32, 0u32), (3 * SORT_MIN + 5, 20_000, 7), (SORT_MIN + 1, 900, 1 << 30)] {
+        let pairs: Vec<(u32, u32)> = (0..width).map(|_| (base + next(refs), next(slots))).collect();
+        for side in [ChildSide::Right, ChildSide::Left] {
+            let flipped: Vec<(u32, u32)> = match side {
+                ChildSide::Right => pairs.clone(),
+                ChildSide::Left => pairs.iter().map(|&(x, m)| (m, x)).collect(),
+            };
+            let tdd = both_marginal(&flipped, slots);
+            let root = tdd.vtree.root();
+            let (left, right) = tdd.vtree.children(root);
+            let v = match side { ChildSide::Right => right, ChildSide::Left => left };
+            let level = &tdd.levels[root.idx()];
+            let mut sc = PFusionScratch::default();
+            let mut by_table = Vec::new();
+            group_by_scatter::<IntFold>(&eng, &tdd, level, v, side, 0, &mut by_table, &mut sc).expect("no limits armed");
+            let mut by_sort = Vec::new();
+            group_by_sorting::<IntFold>(eng.limits(), &tdd, v, side, 0, level.pairs_of_idx(0), &mut by_sort, &mut sc)
+                .expect("no limits armed");
+            let view = |plans: &[PlanEntry<crate::value::Count>]| -> Vec<(usize, u32, crate::value::Count)> {
+                plans.iter().map(|p| (p.node_idx, p.x_idx, p.value.clone())).collect()
+            };
+            assert!(by_table.len() > 1, "the node has groups to fuse");
+            assert_eq!(view(&by_sort), view(&by_table), "width {width}, side {side:?}");
+        }
+    }
+}
