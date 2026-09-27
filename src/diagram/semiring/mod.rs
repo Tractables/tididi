@@ -82,4 +82,14 @@ pub trait EvalAlgebra {
     fn add_assign(&self, acc: &mut Self::Value, other: &Self::Value);
     /// The semiring product of `a` and `b`.
     fn mul(&self, a: &Self::Value, b: &Self::Value) -> Self::Value;
+    /// Accumulate the product of `a` and `b` into `acc`: `acc += a × b`.
+    ///
+    /// The default is [`mul`](Self::mul) followed by
+    /// [`add_assign`](Self::add_assign). An algebra whose values own buffers
+    /// may override it to accumulate the product without forming it first;
+    /// the result must equal the default's.
+    fn mul_add(&self, acc: &mut Self::Value, a: &Self::Value, b: &Self::Value) {
+        let product = self.mul(a, b);
+        self.add_assign(acc, &product);
+    }
 }

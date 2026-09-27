@@ -181,3 +181,43 @@ fn custom_algebra_panics_propagate_and_leave_the_engine_usable() {
     assert_eq!(panic.downcast_ref::<&str>(), Some(&"caller algebra failed"));
     assert_eq!(eng.evaluate(&f, &RationalWeights::unit(8)).unwrap(), crate::test_helpers::rat(224, 1));
 }
+
+#[test]
+fn an_overriding_mul_add_is_used_and_agrees_with_the_default() {
+    // Model counts with a leaf `One` worth two: the fold's sum of products.
+    struct Counts { fused: Cell<usize> }
+    impl EvalAlgebra for Counts {
+        type Value = u128;
+        fn zero(&self) -> u128 { 0 }
+        fn leaf(&self, _: VarId, label: LeafLabel) -> u128 {
+            match label { LeafLabel::Zero => 0, LeafLabel::One => 2, _ => 1 }
+        }
+        fn add_assign(&self, a: &mut u128, b: &u128) { *a += b; }
+        fn mul(&self, a: &u128, b: &u128) -> u128 { a * b }
+        fn mul_add(&self, acc: &mut u128, a: &u128, b: &u128) {
+            self.fused.set(self.fused.get() + 1);
+            *acc += a * b;
+        }
+    }
+    struct Plain;
+    impl EvalAlgebra for Plain {
+        type Value = u128;
+        fn zero(&self) -> u128 { 0 }
+        fn leaf(&self, _: VarId, label: LeafLabel) -> u128 {
+            match label { LeafLabel::Zero => 0, LeafLabel::One => 2, _ => 1 }
+        }
+        fn add_assign(&self, a: &mut u128, b: &u128) { *a += b; }
+        fn mul(&self, a: &u128, b: &u128) -> u128 { a * b }
+    }
+    let eng = Engine::new();
+    for tree in [Vtree::balanced(8), Vtree::linear(8)] {
+        let vtree = Arc::new(tree);
+        let f = Tdd::clause(&vtree, [1, 3, -5]).unwrap() & Tdd::clause(&vtree, [-2, 6]).unwrap();
+        assert_canonical(&f);
+        let fused = Counts { fused: Cell::new(0) };
+        let value = eng.evaluate(&f, &fused).unwrap();
+        assert!(fused.fused.get() > 0, "the fold accumulates through mul_add");
+        assert_eq!(value, eng.evaluate(&f, &Plain).unwrap());
+        assert_eq!(crate::test_helpers::rat(value as i64, 1), eng.evaluate(&f, &RationalWeights::unit(8)).unwrap());
+    }
+}
