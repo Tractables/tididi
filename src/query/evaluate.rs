@@ -1,11 +1,11 @@
 //! Numeric evaluation with a supplied algebra or the diagram's attached weights.
 
 use crate::value::{Retention, FoldInput, ValueDomain, WeightFold};
-use crate::diagram::{EvalAlgebra, LeafLabel, PairsIter, Tdd, WeightStore, WeightValue};
+use crate::diagram::{ChildRef, EncodedChildRef, EvalAlgebra, LeafLabel, NodeIdx, PairsIter, Tdd, ValueRef, WeightStore, WeightValue};
 use crate::Engine;
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
-use super::fold::{fold_bottom_up, LevelFold, PairAlgebra, Side};
+use super::fold::{fold_bottom_up, LevelFold, Side};
 use crate::limits::{OperationError, PollGate};
 
 impl Engine {
@@ -117,31 +117,31 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
         )
     }
 
+    /// `Σ over pairs (left × right)`, reading both children's values in
+    /// place: `mul` borrows its operands, so a pair costs one product and
+    /// one sum and never a copy of a child's value.
     fn fold_node(
         &self,
         pairs: PairsIter<'_>,
         left: Side<'_, Vec<S::Value>>,
         right: Side<'_, Vec<S::Value>>,
     ) -> S::Value {
-        self.sum_over_pairs(pairs, left, right)
+        let mut acc = self.algebra.zero();
+        for pair in pairs {
+            let product = self.algebra.mul(child(left, pair.left), child(right, pair.right));
+            self.algebra.add_assign(&mut acc, &product);
+        }
+        acc
     }
 }
 
-impl<S: EvalAlgebra> PairAlgebra for Evaluate<'_, S> {
-    fn zero(&self) -> S::Value {
-        self.algebra.zero()
-    }
-    fn read(&self, col: &Vec<S::Value>, i: usize) -> S::Value {
-        col[i].clone()
-    }
-    fn inline(&self, _count: u32) -> S::Value {
-        unreachable!("evaluate: a marginal level's inline ref (see the precondition)")
-    }
-    fn add_assign(&self, acc: &mut S::Value, v: &S::Value) {
-        self.algebra.add_assign(acc, v);
-    }
-    fn mul(&self, a: &S::Value, b: &S::Value) -> S::Value {
-        self.algebra.mul(a, b)
+/// One side of one pair, borrowed from the child's column.
+fn child<'c, V>(side: Side<'c, Vec<V>>, r: EncodedChildRef) -> &'c V {
+    match side.view.child(r) {
+        ChildRef::Node(NodeIdx(i)) | ChildRef::Value(ValueRef::Slot(i)) => &side.col[i as usize],
+        ChildRef::Value(ValueRef::Inline(_)) => {
+            unreachable!("evaluate: a marginal level's inline ref (see the precondition)")
+        }
     }
 }
 
