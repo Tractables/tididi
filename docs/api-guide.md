@@ -130,6 +130,8 @@ the [architecture reference](crate::guide::architecture) describes the implement
 the bounded work. [`Context::run`](crate::Context::run) reuses scratch without
 installing limits. The [execution example](crate::guide::examples::execution)
 shows how to handle a refused allocation and bound repeated queries.
+[`LimitConfig::with_sparse_route`](crate::limits::LimitConfig::with_sparse_route)
+sets when a conjunction level leaves the dense grid for the sparse route.
 
 [`Context::bind`](crate::Context::bind) lets vtrees share scratch;
 [`Context::clear_scratch`](crate::Context::clear_scratch) releases idle buffers.

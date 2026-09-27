@@ -75,6 +75,31 @@ impl std::fmt::Debug for StopCallback {
     }
 }
 
+/// When a conjunction level takes the sparse route instead of the dense grid.
+///
+/// A level whose grid holds more than `min_grid` cells takes the sparse route
+/// when its live pairs, multiplied together and by `sparsity`, fall short of
+/// the grid. Lower values send more levels down the sparse route. The route
+/// changes the work, never the result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SparseRoute {
+    /// How much sparser than its grid a level must be.
+    pub sparsity: u32,
+    /// Grid cells above which a level may take the sparse route.
+    pub min_grid: usize,
+}
+
+impl SparseRoute {
+    /// The route every engine starts with.
+    pub const DEFAULT: SparseRoute = SparseRoute { sparsity: 64, min_grid: 4096 };
+}
+
+impl Default for SparseRoute {
+    fn default() -> SparseRoute {
+        SparseRoute::DEFAULT
+    }
+}
+
 /// Resource limits and callbacks to install together on an engine.
 ///
 /// Start with [`LimitConfig::none`], set the bounds needed by the application,
@@ -106,6 +131,7 @@ pub struct LimitConfig {
     stop_callback: Option<StopCallback>,
     memory_hooks: MemoryHooks,
     conjunction_progress: bool,
+    sparse_route: SparseRoute,
 }
 
 impl LimitConfig {
@@ -183,6 +209,13 @@ impl LimitConfig {
         self
     }
 
+    /// Set when conjunction levels take the sparse route.
+    #[must_use]
+    pub fn with_sparse_route(mut self, route: SparseRoute) -> LimitConfig {
+        self.sparse_route = route;
+        self
+    }
+
 
     /// The soft budget, in bytes, that one operation may grow its storage by
     /// before it fails with [`OperationError::OverBudget`]. `None` disables the
@@ -235,6 +268,13 @@ impl LimitConfig {
     pub fn conjunction_progress_enabled(&self) -> bool {
         self.conjunction_progress
     }
+
+    /// When conjunction levels take the sparse route.
+    #[must_use]
+    #[inline]
+    pub fn sparse_route(&self) -> SparseRoute {
+        self.sparse_route
+    }
 }
 
 /// Active resource limits and work measurements for one engine.
@@ -253,6 +293,7 @@ pub struct Limits {
     bounded_growth: Cell<bool>,
     conjunction_progress: Cell<bool>,
     conjunction: Cell<Option<ConjunctionProgress>>,
+    sparse_route: Cell<SparseRoute>,
     memory_hooks: RefCell<MemoryHooks>,
     /// The address-space ceiling, answered once per install: it is stable for
     /// the life of the memory hooks, and the growth machinery asks per huge level.
@@ -302,6 +343,7 @@ impl Limits {
             bounded_growth: Cell::new(false),
             conjunction_progress: Cell::new(false),
             conjunction: Cell::new(None),
+            sparse_route: Cell::new(SparseRoute::DEFAULT),
             memory_hooks: RefCell::new(MemoryHooks::NONE),
             vas_limit: Cell::new(None),
             #[cfg(test)]
@@ -316,6 +358,12 @@ impl Limits {
     }
 
 
+    /// When conjunction levels take the sparse route.
+    #[inline]
+    pub(crate) fn sparse_route(&self) -> SparseRoute {
+        self.sparse_route.get()
+    }
+
     /// Snapshot the active configuration.
     #[must_use]
     pub fn armed(&self) -> LimitConfig {
@@ -326,6 +374,7 @@ impl Limits {
             stop_callback: self.stop_callback.borrow().clone(),
             memory_hooks: self.memory_hooks.borrow().clone(),
             conjunction_progress: self.conjunction_progress.get(),
+            sparse_route: self.sparse_route.get(),
         }
     }
 
@@ -368,6 +417,7 @@ impl Limits {
         self.stop.set(set.stop);
         self.stop_callback.replace(set.stop_callback);
         self.conjunction_progress.set(set.conjunction_progress);
+        self.sparse_route.set(set.sparse_route);
         self.memory_hooks.replace(set.memory_hooks);
         self.vas_limit.set(None);
         prior

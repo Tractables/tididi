@@ -2,7 +2,7 @@
 //! through `armed`.
 //!
 //! `Limits` keeps each setting in its own cell and copies the two structs
-//! field by field, so a seventh setting can be added to `LimitConfig` and left
+//! field by field, so a new setting can be added to `LimitConfig` and left
 //! out of one of the copies. The destructuring below is what catches that: a
 //! new field makes this file stop compiling until the test names it, and the
 //! assertions then say whether the round trip carries it.
@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::limits::{LimitConfig, Limits, MemoryHooks, StopAt, StopCallback, StopDecision, StopRules};
+use crate::limits::{LimitConfig, Limits, MemoryHooks, SparseRoute, StopAt, StopCallback, StopDecision, StopRules};
 
 /// A configuration whose every field differs from the default, so a setting
 /// dropped in transit shows up as a mismatch rather than as a default that
@@ -29,7 +29,8 @@ fn distinctive() -> (LimitConfig, Arc<AtomicU32>) {
             StopDecision::Continue
         })))
         .with_memory_hooks(MemoryHooks::new(|_| {}, || 17, || Some(1 << 40), || {}))
-        .with_conjunction_progress(true);
+        .with_conjunction_progress(true)
+        .with_sparse_route(SparseRoute { sparsity: 3, min_grid: 5 });
     (config, calls)
 }
 
@@ -47,6 +48,7 @@ fn every_setting_survives_install_and_reads_back_through_armed() {
         stop_callback: _,
         memory_hooks: _,
         conjunction_progress: _,
+        sparse_route: _,
     } = &config;
 
     let lim = Limits::new();
@@ -57,6 +59,7 @@ fn every_setting_survives_install_and_reads_back_through_armed() {
     assert_eq!(back.output_node_cap(), config.output_node_cap());
     assert_eq!(back.stop_rules(), config.stop_rules());
     assert_eq!(back.conjunction_progress_enabled(), config.conjunction_progress_enabled());
+    assert_eq!(back.sparse_route(), config.sparse_route());
 
     // The callback and the hooks are closures, so they are compared by effect.
     back.stop_callback()
@@ -77,6 +80,7 @@ fn install_returns_the_whole_prior_set_and_restores_it() {
     assert_eq!(prior.output_node_cap(), first.output_node_cap());
     assert_eq!(prior.stop_rules(), first.stop_rules());
     assert_eq!(prior.conjunction_progress_enabled(), first.conjunction_progress_enabled());
+    assert_eq!(prior.sparse_route(), first.sparse_route());
     assert!(prior.stop_callback().is_some());
     assert_eq!(prior.memory_hooks().mapped_bytes(), 17);
 
@@ -87,6 +91,7 @@ fn install_returns_the_whole_prior_set_and_restores_it() {
     assert_eq!(now.stop_rules(), StopRules::NONE);
     assert!(now.stop_callback().is_none());
     assert!(!now.conjunction_progress_enabled());
+    assert_eq!(now.sparse_route(), SparseRoute::DEFAULT);
     assert_eq!(now.memory_hooks().mapped_bytes(), 0);
 
     // And putting the prior set back arms all of it again.

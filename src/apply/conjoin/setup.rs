@@ -285,7 +285,7 @@ pub(super) fn apply_and_setup<'a>(
     let vtree = &f.vtree;
     let num_nodes = vtree.num_nodes();
     let lim = eng.limits();
-    let thresholds = sparse_thresholds();
+    let thresholds = sparse_thresholds(lim);
     let min_grid = thresholds.min_grid;
 
     let ApplyWorkspace { f_widths, g_widths, f_identity, g_identity,
