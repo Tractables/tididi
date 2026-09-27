@@ -146,6 +146,11 @@ struct Scratch {
     /// How many values each low slot has. Each block's next free place in
     /// `group_single`.
     low_count: Vec<u32>,
+    /// Each low slot's run hashed beside its value count, in
+    /// `split_hashed`, where one pass updates both: side by side, a value
+    /// reaches both in one cache line. Once the lists are laid out, the
+    /// count is where the slot's next pair goes.
+    low_tally: Vec<(u64, u32)>,
     /// Each low slot's rank among the low values. Per high value, the atom
     /// of the low value whose one key it is, in `group_single`.
     rank: Vec<u32>,
@@ -158,13 +163,14 @@ impl Scratch {
     fn discard(self, lim: &Limits) {
         let Scratch { low, high, order, sort_keys, wide_keys, low_of, high_of, low_starts, high_starts,
             cursor, high_keys, low_keys, runs, low_first, high_first, wide_triples, high_hash, low_hash,
-            slots, low_count, rank, radix } = self;
+            slots, low_count, low_tally, rank, radix } = self;
         for buf in [low, high, sort_keys, high_keys, low_keys, high_hash, low_hash, slots] {
             lim.discard(buf);
         }
         for buf in [order, low_of, high_of, low_starts, high_starts, cursor, low_first, high_first, low_count, rank] {
             lim.discard(buf);
         }
+        lim.discard(low_tally);
         lim.discard(wide_keys);
         lim.discard(wide_triples);
         let RunTable { head, next, first, direct } = runs;
@@ -884,10 +890,8 @@ fn split_hashed(
     s.high_starts.clear();
     s.high_hash.clear();
     s.high.clear();
-    s.low_hash.clear();
-    lim.try_resize(&mut s.low_hash, 1 << low_width, RUN_SEED)?;
-    s.low_count.clear();
-    lim.try_resize(&mut s.low_count, 1 << low_width, 0u32)?;
+    s.low_tally.clear();
+    lim.try_resize(&mut s.low_tally, 1 << low_width, (RUN_SEED, 0u32))?;
     lim.try_push(&mut s.high_starts, 0)?;
     lim.try_push(&mut s.high, data[0] >> low_width)?;
     if single {
@@ -907,7 +911,7 @@ fn split_hashed(
 
     // The low values in ascending order, each slot's rank among them, and
     // the hashes in that order.
-    let lows = s.low_count.iter().filter(|&&count| count > 0).count();
+    let lows = s.low_tally.iter().filter(|&&(_, count)| count > 0).count();
     s.order.clear();
     lim.reserve_exact(&mut s.order, lows)?;
     s.rank.clear();
@@ -917,11 +921,11 @@ fn split_hashed(
     let mut low_data = Vec::new();
     lim.reserve_exact(&mut low_data, lows)?;
     gate.poll(1 << low_width)?;
-    for (slot, &count) in s.low_count.iter().enumerate() {
+    for (slot, &(hash, count)) in s.low_tally.iter().enumerate() {
         if count > 0 {
             s.rank[slot] = s.order.len() as u32;
             s.order.push(slot as u32);
-            s.high_keys.push(s.low_hash[slot]);
+            s.high_keys.push(hash);
             low_data.push(slot as u64);
         }
     }
@@ -990,9 +994,8 @@ fn hash_sides<const SINGLE: bool>(
         }
         let atom = if SINGLE { 0 } else { parent.atom[e] as u64 };
         hash = mix(hash, atom << 32 | low);
-        let slot = low as usize;
-        s.low_hash[slot] = mix(s.low_hash[slot], index << 32 | atom);
-        s.low_count[slot] += 1;
+        let tally = &mut s.low_tally[low as usize];
+        *tally = (mix(tally.0, index << 32 | atom), tally.1 + 1);
     }
     lim.try_push(&mut s.high_hash, hash)
 }
@@ -1028,20 +1031,22 @@ fn confirm_lows(
     let mut at = 0u32;
     for (&slot, &id) in s.order.iter().zip(by_hash) {
         s.low_starts.push(at);
-        at += if sharing[id as usize] > 1 { s.low_count[slot as usize] } else { 0 };
+        at += if sharing[id as usize] > 1 { s.low_tally[slot as usize].1 } else { 0 };
     }
     s.low_starts.push(at);
     let spare = at;
-    s.cursor.clear();
-    lim.reserve_exact(&mut s.cursor, lows)?;
-    s.cursor.extend(s.low_starts.windows(2).map(|w| if w[0] == w[1] { spare } else { w[0] }));
+    // Each slot's count becomes where its next pair goes, so a value finds
+    // its place through its own slot, not through its rank.
+    for (&slot, w) in s.order.iter().zip(s.low_starts.windows(2)) {
+        s.low_tally[slot as usize].1 = if w[0] == w[1] { spare } else { w[0] };
+    }
     lim.discard(sharing);
     s.low_keys.clear();
     lim.try_resize(&mut s.low_keys, spare as usize + 1, 0u64)?;
     lim.gate().poll(n as u64)?;
     for (high, range) in runs(&s.high_starts, n).enumerate() {
         for e in range {
-            let at = &mut s.cursor[s.rank[(parent.data[e] & mask) as usize] as usize];
+            let at = &mut s.low_tally[(parent.data[e] & mask) as usize].1;
             s.low_keys[*at as usize] = (high as u64) << 32 | parent.atom[e] as u64;
             *at += u32::from(*at != spare);
         }

@@ -798,6 +798,36 @@ fn the_top_down_pass_stores_what_the_bottom_up_pass_stored() {
     }
 }
 
+#[test]
+fn ranked_relations_whose_groups_share_degrees_store_what_the_bottom_up_pass_stored() {
+    // A group code beside a rank below the group's degree, the degrees drawn
+    // from a few: many rank values, and many group values, share their
+    // completions, and the hashed split confirms the merges it finds.
+    let mut rng = Lcg::new(0x4a2e_d0c5);
+    for round in 0..40u64 {
+        let (group_bits, rank_bits) = (6 + (rng.next_u64() % 8) as usize, 1 + (rng.next_u64() % 6) as usize);
+        let k = group_bits + rank_bits;
+        let degrees: Vec<u64> = (0..1 + rng.next_u64() % 5).map(|_| 1 + rng.next_u64() % (1 << rank_bits)).collect();
+        let mut rows = Vec::new();
+        for group in 0..1u64 << group_bits {
+            if rng.next_u64().is_multiple_of(4) {
+                continue;
+            }
+            let degree = degrees[(rng.next_u64() % degrees.len() as u64) as usize];
+            rows.extend((0..degree).map(|rank| group | rank << group_bits));
+        }
+        if rows.is_empty() {
+            continue;
+        }
+        let n = k as u32 + (rng.next_u64() % 3) as u32;
+        for (name, vtree) in vtrees(n, &mut rng) {
+            let mut pool: Vec<VarId> = (1..=n).map(VarId).collect();
+            for i in (1..pool.len()).rev() { let j = (rng.next_u64() % (i as u64 + 1)) as usize; pool.swap(i, j); }
+            check(&vtree, &pool[..k], &rows, &format!("round {round} {name} groups of {group_bits} bits, ranks of {rank_bits}"));
+        }
+    }
+}
+
 /// The variables under `t`, left to right.
 fn leaves(vtree: &Vtree, t: crate::vtree::VtreeIdx, out: &mut Vec<VarId>) {
     if vtree.node(t).is_leaf() {
