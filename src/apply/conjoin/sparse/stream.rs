@@ -350,26 +350,36 @@ impl<T: Copy + Default> Stamped<T> {
     }
 }
 
-/// How a pair's walk looks up the other child's product: in a table over
-/// one side's nodes when the other operand has one node there, and otherwise
-/// in the row of the pair's own node, marked afresh for each pair.
+/// How a pair's walk looks up the other child's product and its count: in a
+/// table over one side's nodes when the other operand has one node there,
+/// and otherwise in the row of the pair's own node, marked afresh for each
+/// pair.
+///
+/// A table holds the count itself, 0 where no product lives, so the walk
+/// reads one entry of a table as wide as a level rather than a product index
+/// and then that product's count, in a column as long as the level's
+/// products and read at random. A product whose count is 0 adds nothing
+/// either way.
 enum Probe {
-    /// `Q` has one node: the product of `p` is `table[p]`.
-    ByP(Vec<u32>),
-    /// `P` has one node: the product of `q` is `table[q]`.
-    ByQ(Vec<u32>),
-    /// The current row, marked by `Q` node.
+    /// `Q` has one node: the count of `p`'s product is `table[p]`.
+    ByP(Vec<u64>),
+    /// `P` has one node: the count of `q`'s product is `table[q]`.
+    ByQ(Vec<u64>),
+    /// The current row, marked by `Q` node with its products.
     Marked(Stamped<u32>),
 }
 
 impl Probe {
-    fn new(lim: &Limits, view: &Oriented<'_>, products: &[ProductEntry], p_width: usize, q_width: usize) -> Result<Self, OperationError> {
-        let table = |n: usize, key: &dyn Fn(u32, u32) -> u32| -> Result<Vec<u32>, OperationError> {
+    fn new(lim: &Limits, view: &Oriented<'_>, built: Built<'_>, p_width: usize, q_width: usize) -> Result<Self, OperationError> {
+        let table = |n: usize, key: &dyn Fn(u32, u32) -> u32| -> Result<Vec<u64>, OperationError> {
             let mut table = Vec::new();
-            lim.try_resize(&mut table, n, NO_PRODUCT)?;
-            for e in products {
+            lim.try_resize(&mut table, n, 0u64)?;
+            for e in built.products {
                 let (p, q) = view.pq(e);
-                table[key(p, q) as usize] = e.prod_idx.0;
+                // Every count the stream reads fits `u64` (see `Built`).
+                let count = built.counts[e.prod_idx.0 as usize];
+                debug_assert!(u64::try_from(count).is_ok());
+                table[key(p, q) as usize] = count as u64;
             }
             Ok(table)
         };
@@ -393,15 +403,17 @@ impl Probe {
         }
     }
 
-    /// The product of `(p, q)` in the opened row, if it lives.
+    /// The count of `(p, q)`'s product in the opened row, `counts` being its
+    /// level's column, if the product lives (a table's may read as absent
+    /// where its count is 0).
     #[inline(always)]
-    fn get(&self, p: u32, q: u32) -> Option<u32> {
-        let prod = match self {
+    fn count(&self, p: u32, q: u32, counts: &[u128]) -> Option<u128> {
+        let count = match self {
             Probe::ByP(table) => table[p as usize],
             Probe::ByQ(table) => table[q as usize],
-            Probe::Marked(marks) => return marks.get(q),
+            Probe::Marked(marks) => return marks.get(q).map(|prod| counts[prod as usize]),
         };
-        (prod != NO_PRODUCT).then_some(prod)
+        (count != 0).then_some(u128::from(count))
     }
 }
 
@@ -492,8 +504,8 @@ pub(crate) fn count(eng: &Engine, input: &StreamInput<'_>, pivot: Operand) -> Re
     let cr_rows = rows_by_p(lim, &view, input.cr.products, p.cr)?;
     let q_by_cl = grouped(lim, q.cl, pairs_with_parent(view.q_c), |(node, pair)| (pair.left.0 as usize, (node, pair.right.0)))?;
     let q_by_cr = grouped(lim, q.cr, pairs_with_parent(view.q_c), |(node, pair)| (pair.right.0 as usize, (node, pair.left.0)))?;
-    let mut probe_cl = Probe::new(lim, &view, input.cl.products, p.cl, q.cl)?;
-    let mut probe_cr = Probe::new(lim, &view, input.cr.products, p.cr, q.cr)?;
+    let mut probe_cl = Probe::new(lim, &view, input.cl, p.cl, q.cl)?;
+    let mut probe_cr = Probe::new(lim, &view, input.cr, p.cr, q.cr)?;
 
     let (col_o, col_cl, col_cr) = (input.o.counts, input.cl.counts, input.cr.counts);
     let mut weights: Stamped<u128> = Stamped::new(lim, q.c)?;
@@ -533,8 +545,8 @@ pub(crate) fn count(eng: &Engine, input: &StreamInput<'_>, pivot: Operand) -> Re
                         walked += 1 + owners.len() as u64;
                         for &(q_node, q_cr) in owners {
                             let Some(v) = weights.get(q_node) else { continue };
-                            let Some(prod_r) = probe_cr.get(p_cr, q_cr) else { continue };
-                            total.add3(c_l, col_cr[prod_r as usize], v);
+                            let Some(c_r) = probe_cr.count(p_cr, q_cr, col_cr) else { continue };
+                            total.add3(c_l, c_r, v);
                         }
                     }
                     walked
@@ -549,8 +561,8 @@ pub(crate) fn count(eng: &Engine, input: &StreamInput<'_>, pivot: Operand) -> Re
                         walked += 1 + owners.len() as u64;
                         for &(q_node, q_cl) in owners {
                             let Some(v) = weights.get(q_node) else { continue };
-                            let Some(prod_l) = probe_cl.get(p_cl, q_cl) else { continue };
-                            total.add3(col_cl[prod_l as usize], c_r, v);
+                            let Some(c_l) = probe_cl.count(p_cl, q_cl, col_cl) else { continue };
+                            total.add3(c_l, c_r, v);
                         }
                     }
                     walked
