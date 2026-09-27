@@ -18,7 +18,9 @@ constants. A [`VarId`](crate::vtree::VarId), used to quantify and rename,
 names a variable by the number its literals carry, without the sign.
 [`Tdd::from_models`](crate::Tdd::from_models) builds
 the canonical circuit for a whole table of assignments at once, from bit-packed
-rows over a chosen list of variables.
+rows over a chosen list of variables, and
+[`Tdd::from_cubes`](crate::Tdd::from_cubes) builds it from rows that leave some
+of those variables free, without listing the assignments they cover.
 
 Combine circuits with [`and`](crate::and), [`or`](crate::or),
 [`xor`](crate::xor) and [`Tdd::negate`](crate::Tdd::negate), or use

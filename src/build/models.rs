@@ -19,6 +19,7 @@ use crate::limits::{Charged, OperationError};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::Engine;
 
+mod cubes;
 mod rows;
 mod split;
 pub(crate) mod layout;
