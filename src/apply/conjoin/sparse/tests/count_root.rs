@@ -115,6 +115,53 @@ fn a_counted_root_is_the_count_of_the_conjunction() {
     }
 }
 
+/// The grouped path's rounds on levels wider than one word of its bit sets:
+/// 7-bit blocks give each side of the root up to 128 children, so an opened
+/// or live child's bit sits in either word, and the rounds that clear them
+/// must clear every word they set. The shapes are the ones that reach each
+/// way a round sums: by key, and by inner key or by outer key after the
+/// walk. The count matches the model count of the conjunction built in
+/// full.
+#[test]
+fn a_wide_counted_root_is_the_count_of_the_built_conjunction() {
+    let eng = Engine::new();
+    let sparse = SparseThresholds { min_grid: 1, sparsity_factor: 1, ..SparseThresholds::PRODUCTION };
+    let flat = SparseThresholds { flat_parents: 1, ..sparse };
+    let (a, b, c) = (block(1, 7), block(8, 7), block(15, 7));
+    for (seed, n) in [(0u64, 300usize), (1, 1500), (2, 4000)] {
+        let (f2, g2) = (rows(seed, n, 2, 7), rows(seed + 100, n, 2, 7));
+        let f3 = rows(seed + 200, n, 3, 7);
+        // Half of `g` shares `f`'s rows, so the three-block join is not
+        // empty.
+        let mut g3 = rows(seed + 300, n / 2, 3, 7);
+        g3.extend(f3.iter().step_by(2).cloned());
+        let joins = [
+            (pack(&[&a, &b], &f2), pack(&[&a, &c], &g2)),
+            (pack(&[&a, &b, &c], &f3), pack(&[&b, &c], &g2)),
+            (pack(&[&a, &b, &c], &f3), pack(&[&a, &c], &g2)),
+            (pack(&[&a, &b, &c], &f3), pack(&[&a, &b, &c], &g3)),
+        ];
+        for vtree in vtrees(&a, &b, &c, &[], &[]) {
+            for ((fv, fr), (gv, gr)) in &joins {
+                let f = eng.from_models(&vtree, fv, fr).unwrap();
+                let g = eng.from_models(&vtree, gv, gr).unwrap();
+                assert_canonical(&f);
+                assert_canonical(&g);
+                let built = eng.and(f.clone(), g.clone()).unwrap();
+                assert_canonical(&built);
+                let expected = eng.model_count(&built).unwrap();
+                for thresholds in [sparse, flat] {
+                    let _forced = ForcedThresholds::install(thresholds);
+                    for (l, r) in [(&f, &g), (&g, &f)] {
+                        let counted = eng.and_model_count(l.clone(), r.clone(), &[]).unwrap();
+                        assert_eq!(counted, expected, "seed {seed}, {thresholds:?}");
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The shortcuts `and_model_count` shares with the conjunction: a false
 /// operand counts zero, and `f ∧ f` counts `f`.
 #[test]
@@ -168,9 +215,11 @@ fn the_candidate_fold_spills_past_u128_exactly() {
     fold.prepare_sums(lim, 3, 2).unwrap();
     fold.begin_round();
     let sum = right_counts.iter().sum::<u128>();
-    fold.set_sum(1, sum);
+    for &r in &right_counts {
+        fold.add_to_sum(lim, 1, r as u64).unwrap();
+    }
     for &r in &right_counts[..2] {
-        fold.add_to_sum(2, r as u64);
+        fold.add_to_sum(lim, 2, r as u64).unwrap();
     }
     for l in 0..4u32 {
         fold.add_grouped(fold.inner_count::<false>(l), 1);
@@ -182,36 +231,42 @@ fn the_candidate_fold_spills_past_u128_exactly() {
         assert_eq!(u128::from(fold.outer_count::<false>(l)), right_counts[l as usize]);
     }
     // An outer count reads back within its round and as 0 outside it.
-    fold.set_outer(1, near as u64);
+    fold.set_outer(lim, 1, near as u64).unwrap();
     assert_eq!((fold.outer_or_zero(0), fold.outer_or_zero(1)), (0, near as u64));
     // A new round empties every sum: the old ones add nothing, and a key
     // summed again starts from its first term.
     fold.begin_round();
     assert_eq!(fold.outer_or_zero(1), 0);
     fold.add_grouped(near as u64, 1);
-    fold.add_to_sum(2, 5);
+    fold.add_to_sum(lim, 2, 5).unwrap();
     fold.add_grouped(3, 2);
     expected += BigUint::from(15u32);
     // Only an opened key takes terms by `add_to_open`, and an opened key
     // adds its weight, summed over the products that opened it, times its
     // sum.
     fold.begin_round();
-    assert!(fold.open_weighted(0, near as u64));
-    assert!(!fold.open_weighted(0, near as u64));
+    assert!(fold.open_weighted(lim, 0, near as u64).unwrap());
+    assert!(!fold.open_weighted(lim, 0, near as u64).unwrap());
     fold.add_to_open(0, 4);
     fold.add_to_open(1, 9);
     fold.add_grouped(2, 0);
     fold.add_grouped(2, 1);
     expected += BigUint::from(8u32);
-    fold.add_weighted(0);
+    assert_eq!((fold.opened_len(), fold.opened_key(0)), (1, 0));
+    fold.add_weighted();
     expected += BigUint::from(2 * near) * 4u32;
-    // A weight times a sum past `u128` spills.
+    // A weight times a sum past `u128` spills, and a sum set by its place
+    // in the opening order replaces what was added.
+    fold.begin_round();
     for _ in 0..8 {
-        fold.open_weighted(1, u64::MAX);
+        fold.open_weighted(lim, 1, u64::MAX).unwrap();
         fold.add_to_open(1, u64::MAX);
     }
-    fold.add_weighted(1);
-    expected += BigUint::from(8 * near) * (8 * near);
+    fold.open_weighted(lim, 2, 3).unwrap();
+    fold.add_to_open(2, 1);
+    fold.set_sum_at(1, 7);
+    fold.add_weighted();
+    expected += BigUint::from(8 * near) * (8 * near) + BigUint::from(21u32);
     assert!(expected > BigUint::from(u128::MAX), "the total spills");
     assert_eq!(fold.finish(), expected);
 }

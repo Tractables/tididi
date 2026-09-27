@@ -721,9 +721,9 @@ fn scatter_general_arm<const SWAPPED: bool>(
 /// `mark_wanted_for_outer` does for the listing arm; the cheaper build runs
 /// and the outer adds each opened key's weight times its sum, so the emit
 /// walk is never repeated. By key, the build adds only to the opened keys,
-/// a read where it misses. Every sum and outer count carries the round that
-/// wrote it ([`CandidateFold::begin_round`]), so opening a key is writing it
-/// and no clear is needed.
+/// a read where it misses. The fold keeps one round per outer key
+/// ([`CandidateFold::begin_round`]): which keys are opened and which outer-g
+/// children are live are bit sets, tested for every g pair a build walks.
 #[inline(never)]
 fn count_general_arm<const SWAPPED: bool>(
     eng: &Engine,
@@ -737,10 +737,10 @@ fn count_general_arm<const SWAPPED: bool>(
     let s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer)?;
     let ScatterSides {
         f_by_outer, g_by_outer, g_by_inner, outer: outer_products, inner,
-        wanted, wanted_keys: keys, outer_keys, outer_k, ..
+        wanted, outer_keys, outer_k, ..
     } = s;
-    // The fold's stamped slots stand in for `wanted` and `outer_keys`, which
-    // are only read for their widths.
+    // The fold's round stands in for `wanted` and `outer_keys`, which are
+    // only read for their widths.
     fold.prepare_sums(lim, wanted.stamps.len(), outer_keys.stamps.len())?;
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     for outer in 0..outer_k {
@@ -757,7 +757,7 @@ fn count_general_arm<const SWAPPED: bool>(
             for e in live {
                 let count = fold.outer_count::<SWAPPED>(e.prod_idx.0);
                 for &RevEntry { other: key, .. } in g_by_outer.bucket(e.g_idx.idx()) {
-                    fold.add_to_sum(key, count);
+                    fold.add_to_sum(lim, key, count)?;
                 }
             }
             ticker.poll(by_key as u64)?;
@@ -773,13 +773,11 @@ fn count_general_arm<const SWAPPED: bool>(
             // inner products that read it, and price summing each by its own
             // g pairs against the build by key. The walk is then over: the
             // outer's candidates are each opened key's weight times its sum.
-            keys.clear();
             let mut by_inner = 0usize;
             for &RevEntry { other: inner1, .. } in under {
                 for e in inner.bucket(inner1 as usize) {
                     let key = e.g_idx.0;
-                    if fold.open_weighted(key, fold.inner_count::<SWAPPED>(e.prod_idx.0)) {
-                        lim.try_push(keys, key)?;
+                    if fold.open_weighted(lim, key, fold.inner_count::<SWAPPED>(e.prod_idx.0))? {
                         by_inner += g_by_inner.len(key as usize);
                     }
                 }
@@ -787,13 +785,13 @@ fn count_general_arm<const SWAPPED: bool>(
             ticker.poll(walk as u64)?;
             if by_inner < by_key {
                 for e in live {
-                    fold.set_outer(e.g_idx.0, fold.outer_count::<SWAPPED>(e.prod_idx.0));
+                    fold.set_outer(lim, e.g_idx.0, fold.outer_count::<SWAPPED>(e.prod_idx.0))?;
                 }
-                for &key in keys.iter() {
-                    let sum = g_by_inner.bucket(key as usize).iter()
+                for i in 0..fold.opened_len() {
+                    let sum = g_by_inner.bucket(fold.opened_key(i) as usize).iter()
                         .map(|r| u128::from(fold.outer_or_zero(r.other)))
                         .sum();
-                    fold.set_sum(key, sum);
+                    fold.set_sum_at(i, sum);
                 }
                 ticker.poll(by_inner as u64)?;
             } else {
@@ -805,10 +803,8 @@ fn count_general_arm<const SWAPPED: bool>(
                 }
                 ticker.poll(by_key as u64)?;
             }
-            for &key in keys.iter() {
-                fold.add_weighted(key);
-            }
-            ticker.poll(keys.len() as u64)?;
+            fold.add_weighted();
+            ticker.poll(fold.opened_len() as u64)?;
         }
     }
     Ok(())
