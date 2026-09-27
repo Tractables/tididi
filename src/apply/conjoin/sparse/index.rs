@@ -45,6 +45,7 @@ pub(crate) struct SparseWorkspace {
     //   normal:  filtered[a2] = [(g_parent, right_prod)]   swapped: filtered[s2] = [(g_parent, left_prod)]
     pub(super) filtered: Vec<Vec<(u32, u32)>>,
     pub(super) filtered_touched: Vec<u32>,          // indices of `filtered` written this outer, to clear
+    pub(super) filtered_held: Vec<u64>,             // a bit per `filtered` bucket, set while it holds an entry
 
     // ── Output-sensitive join: the inner-g children the emit will read ──
     // The emit reads `filtered` only at the g children this outer's f parents
@@ -291,6 +292,7 @@ impl Buffers for SparseWorkspace {
         visit(&mut self.outer_offsets);
         visit(&mut Nested(&mut self.filtered));
         visit(&mut self.filtered_touched);
+        visit(&mut self.filtered_held);
         visit(&mut self.wanted);
         visit(&mut self.wanted_keys);
         visit(&mut self.inner_seen);

@@ -85,6 +85,7 @@ mod counting_sort;
 mod direction;
 mod emit;
 mod flat_candidates;
+mod held_bits;
 mod root_gate;
 mod inner_index;
 mod passthrough;

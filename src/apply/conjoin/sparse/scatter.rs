@@ -315,21 +315,26 @@ struct ScatterSides<'w> {
 
 /// A bucket array cleared per outer key by replaying the indices written into
 /// it, so the clear costs the touched buckets rather than the whole array.
+/// `held` has a bit per bucket, set while it holds an entry: the emit tests
+/// it before it reads the bucket, so a miss reads a bit set that stays in
+/// cache rather than a bucket header that, on a wide level, does not.
 struct TouchedBuckets<'a> {
     buckets: &'a mut Vec<Vec<(u32, u32)>>,
     touched: &'a mut Vec<u32>,
+    held: &'a mut Vec<u64>,
 }
 
 impl TouchedBuckets<'_> {
     /// Every bucket, indexed by key, for a walk that reads many of them.
-    fn as_slice(&self) -> &[Vec<(u32, u32)>] {
-        self.buckets
+    fn index(&self) -> Pushed<'_> {
+        Pushed { buckets: self.buckets, held: self.held }
     }
 
     fn push(&mut self, lim: &crate::limits::Limits, key: u32, v: (u32, u32)) -> Result<(), OperationError> {
         let bucket = &mut self.buckets[key as usize];
         if bucket.is_empty() {
             self.touched.push(key);
+            self.held[key as usize >> 6] |= 1 << (key & 63);
         }
         lim.try_push(bucket, v)
     }
@@ -337,8 +342,32 @@ impl TouchedBuckets<'_> {
     fn clear_touched(&mut self) {
         for &key in self.touched.iter() {
             self.buckets[key as usize].clear();
+            // Every bit set in this word is a touched bucket's.
+            self.held[key as usize >> 6] = 0;
         }
         self.touched.clear();
+    }
+}
+
+/// The buckets as the emit reads them ([`TouchedBuckets::index`]), with the
+/// bit per bucket that says whether it holds an entry.
+#[derive(Clone, Copy)]
+struct Pushed<'a> {
+    buckets: &'a [Vec<(u32, u32)>],
+    held: &'a [u64],
+}
+
+impl Pushed<'_> {
+    /// False only where the bucket is empty: the emit's first test, before it
+    /// reads the bucket.
+    #[inline(always)]
+    fn holds(&self, key: usize) -> bool {
+        self.held[key >> 6] >> (key & 63) & 1 != 0
+    }
+
+    #[inline(always)]
+    fn entries_at(&self, key: usize) -> &[(u32, u32)] {
+        &self.buckets[key]
     }
 }
 
@@ -403,7 +432,7 @@ fn sides<'w, const SWAPPED: bool>(
     let SparseWorkspace {
         f_by_outer, g_by_outer, g_by_inner,
         inner_offsets, outer_offsets,
-        filtered, filtered_touched, par_buckets, par_flat,
+        filtered, filtered_touched, filtered_held, par_buckets, par_flat,
         wanted, wanted_epoch, wanted_keys, inner_seen, inner_seen_epoch,
         outer_keys, outer_keys_epoch, outer_attached,
         ..
@@ -412,6 +441,10 @@ fn sides<'w, const SWAPPED: bool>(
     bucket_offsets(eng.limits(), pl_outer, outer_k, outer_offsets)?;
     ensure_buckets_cleared(eng, filtered, filtered_dim)?;
     filtered_touched.clear();
+    // A round that bailed can leave bits set; the level starts with none.
+    let held_words = filtered_dim.div_ceil(64);
+    eng.limits().try_resize(filtered_held, held_words, 0u64)?;
+    filtered_held[..held_words].fill(0);
     eng.limits().try_resize(wanted, filtered_dim, 0u32)?;
     wanted_keys.clear();
     eng.limits().try_resize(inner_seen, inner_k, 0u32)?;
@@ -423,7 +456,7 @@ fn sides<'w, const SWAPPED: bool>(
         g_by_inner: g_by_inner.view(),
         outer: GroupedView { offsets: outer_offsets, entries: pl_outer },
         inner: GroupedView { offsets: inner_offsets, entries: pl_inner },
-        filtered: TouchedBuckets { buckets: filtered, touched: filtered_touched },
+        filtered: TouchedBuckets { buckets: filtered, touched: filtered_touched, held: filtered_held },
         wanted: EpochFlags { cur: *wanted_epoch, stamps: wanted, epoch: wanted_epoch },
         wanted_keys,
         inner_seen: EpochFlags { cur: *inner_seen_epoch, stamps: inner_seen, epoch: inner_seen_epoch },
@@ -562,7 +595,7 @@ impl ScatterSides<'_> {
         outer: usize,
         ticker: &mut crate::limits::PollGate,
     ) -> Result<(), OperationError> {
-        let filtered = self.filtered.as_slice();
+        let filtered = self.filtered.index();
         for &RevEntry { parent: p1, other: inner1 } in self.f_by_outer.bucket(outer) {
             // The bucket is resolved once per f parent, outside the walk of
             // its products.
@@ -587,7 +620,7 @@ impl ScatterSides<'_> {
         outer: usize,
         ticker: &mut crate::limits::PollGate,
     ) -> Result<(), OperationError> {
-        let filtered = self.filtered.as_slice();
+        let filtered = self.filtered.index();
         for &RevEntry { other: inner1, .. } in self.f_by_outer.bucket(outer) {
             emit_candidates::<SWAPPED>(self.inner, filtered, inner1, ticker, |entry| {
                 fold.push(candidate_pair(&entry));
@@ -606,7 +639,7 @@ impl ScatterSides<'_> {
         outer: usize,
         ticker: &mut crate::limits::PollGate,
     ) -> Result<(), OperationError> {
-        let filtered = self.filtered.as_slice();
+        let filtered = self.filtered.index();
         for &RevEntry { other: inner1, .. } in self.f_by_outer.bucket(outer) {
             emit_candidates::<SWAPPED>(self.inner, filtered, inner1, ticker,
                 |entry| try_push_pair_into(eng, level, candidate_pair(&entry)))?;
@@ -621,18 +654,22 @@ impl ScatterSides<'_> {
 ///
 /// A product whose inner-g child has no live g parent under this outer finds
 /// its bucket empty, and where the two sides meet in few places most do:
-/// such a miss reads the bucket's length and moves on, and only a hit
-/// reaches the push loop and the poll.
+/// such a miss reads the bucket's bit and moves on, and only a hit reaches
+/// the push loop and the poll.
 #[inline(always)]
 fn emit_candidates<const SWAPPED: bool>(
     inner: GroupedView<'_, ProductEntry>,
-    filtered: &[Vec<(u32, u32)>],
+    filtered: Pushed<'_>,
     inner1: u32,
     ticker: &mut crate::limits::PollGate,
     mut push: impl FnMut(ParEntry) -> Result<(), OperationError>,
 ) -> Result<(), OperationError> {
     for e in inner.bucket(inner1 as usize) {
-        let fb = &filtered[e.g_idx.idx()];
+        let key = e.g_idx.idx();
+        if !filtered.holds(key) {
+            continue;
+        }
+        let fb = filtered.entries_at(key);
         if fb.is_empty() {
             continue;
         }
