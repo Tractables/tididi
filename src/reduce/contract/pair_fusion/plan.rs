@@ -4,8 +4,8 @@ use crate::Engine;
 use smallvec::SmallVec;
 use rustc_hash::FxHashMap;
 
-use crate::limits::{OperationError, Transient};
-use crate::diagram::{Tdd, TddLevel, ValueRef};
+use crate::limits::{Limits, OperationError, Transient};
+use crate::diagram::{ChildPair, Tdd, TddLevel, ValueRef};
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::ChildSide;
@@ -32,6 +32,12 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
 ) -> Result<Vec<PlanEntry<D::Value>>, OperationError> {
     let plevel = &tdd.levels[parent.idx()];
     let mut out: Vec<PlanEntry<D::Value>> = Vec::new();
+    // A level can hold billions of pairs, so the sweep tests for a stop once
+    // per stride of the nodes and pairs it reads, not once per sweep. This
+    // phase only reads, so a stop leaves the diagram as it was.
+    let lim = eng.limits();
+    let stride = lim.reduce_poll_stride();
+    let mut read = 0u64;
 
     // The grouping key is the raw explicit-side ref (opposite the marginal
     // `side`). Usually it is a dense index into the explicit child level — a
@@ -42,14 +48,74 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
     // it, so both kinds are ordinary keys and the table is sized by the node's
     // pair count.
     for n in 0..plevel.nodes.len() {
+        let pairs = plevel.pair_count_at(n);
+        read += 1 + pairs as u64;
+        if read >= stride {
+            read = 0;
+            lim.check_stop()?;
+        }
         // A group needs two pairs sharing one explicit-side ref, so a node
         // with fewer than two pairs, the common case, has nothing to group.
-        if plevel.pair_count_at(n) < 2 {
+        if pairs < 2 {
             continue;
         }
-        group_by_scatter::<D>(eng, tdd, plevel, v, side, n, &mut out, scratch)?;
+        let node = plevel.pairs_of_idx(n);
+        // The apply core writes a node's pairs in ascending order, so a node
+        // fused on its right side usually holds each group as one run.
+        if node.windows(2).all(|w| explicit_ref(w[0], side) <= explicit_ref(w[1], side)) {
+            group_by_runs::<D>(lim, tdd, v, side, n, node, &mut out, &mut scratch.run)?;
+        } else {
+            group_by_scatter::<D>(eng, tdd, plevel, v, side, n, &mut out, scratch)?;
+        }
     }
     Ok(out)
+}
+
+/// The explicit-side ref of `pair`: the side opposite the marginal `side`.
+#[inline(always)]
+fn explicit_ref(pair: ChildPair, side: ChildSide) -> u32 {
+    match side {
+        ChildSide::Right => pair.left.0,
+        ChildSide::Left => pair.right.0,
+    }
+}
+
+/// [`group_by_scatter`] for a node whose pairs ascend by explicit-side ref:
+/// each group is a run of them, and the runs come in the order of their first
+/// occurrences, which is the order the table emits its groups in. No table is
+/// touched, so a wide node costs one read of its pairs.
+#[expect(clippy::too_many_arguments)]
+fn group_by_runs<D: SlotValues>(
+    lim: &Limits,
+    tdd: &Tdd,
+    v: VtreeIdx,
+    side: ChildSide,
+    n: usize,
+    node: &[ChildPair],
+    out: &mut Vec<PlanEntry<D::Value>>,
+    run: &mut Vec<u32>,
+) -> Result<(), OperationError> {
+    let mut at = 0;
+    while at < node.len() {
+        let x_idx = explicit_ref(node[at], side);
+        let end = at + node[at..].iter().take_while(|&&p| explicit_ref(p, side) == x_idx).count();
+        if end - at > 1 {
+            run.clear();
+            lim.reserve(run, end - at)?;
+            run.extend(node[at..end].iter().map(|p| match side {
+                ChildSide::Right => p.right.0,
+                ChildSide::Left => p.left.0,
+            }));
+            lim.try_push(out, PlanEntry {
+                node_idx: n,
+                x_idx,
+                value: D::sum_refs(tdd, v, run),
+                new_ref: u32::MAX,
+            })?;
+        }
+        at = end;
+    }
+    Ok(())
 }
 
 /// Group one parent node's pairs by their explicit-side ref through the
@@ -96,8 +162,12 @@ fn group_by_scatter<D: SlotValues>(
     if sc.cells.len() < want {
         lim.try_resize(&mut sc.cells, want, GroupCell::default())?;
     }
-    let mask = sc.cells.len() - 1;
-    let hash_shift = 32 - sc.cells.len().trailing_zeros();
+    // The node probes only the first `want` cells, a window of its own size,
+    // not the whole table: after one wide node the table is as wide as it,
+    // and a narrow node hashed across all of it would miss the cache on
+    // nearly every pair. Cells past the window keep older stamps unread.
+    let mask = want - 1;
+    let hash_shift = 32 - want.trailing_zeros();
     for p in plevel.pairs_of_idx(n) {
         let (x_idx, marginal_idx) = match side {
             ChildSide::Right => (p.left.0, p.right.0),

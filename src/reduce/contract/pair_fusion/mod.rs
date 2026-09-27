@@ -30,7 +30,8 @@ pub(crate) struct PairFusionStats {
 }
 
 /// Fuse pairs only at the named boundary parents; an empty slice does no work.
-/// Allocation refusals return [`OperationError::OverBudget`].
+/// Allocation refusals return [`OperationError::OverBudget`], a fired stop
+/// rule [`OperationError::Stopped`].
 pub(crate) fn fuse_pairs_at_parents(
     eng: &Engine,
     tdd: &mut Tdd,
@@ -75,6 +76,10 @@ struct PlanEntry<V> {
 ///
 /// `Err(OperationError::OverBudget)` when an allocation is refused. The node whose
 /// Phase-3 re-encode failed is left mid-rewrite, so the diagram must be discarded.
+///
+/// `Err(OperationError::Stopped)` when a stop rule fires. The sweep tests for
+/// one once per stride of the pairs it reads or rewrites, only ever between
+/// two nodes, so the diagram stays valid: some groups are left unfused.
 pub(super) fn fuse_pairs_inner(
     eng: &Engine,
     tdd: &mut Tdd,

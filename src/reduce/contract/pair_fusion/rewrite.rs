@@ -51,10 +51,25 @@ pub(super) fn rebuild_parent_level<V>(
     // Arena slots the shrink abandons, noted in one charge below: the counter's
     // only reader is the sweep at the end, so per-node saturating adds buy nothing.
     let mut dead_acc = 0usize;
+    // A stop is tested between nodes, once per stride of the pairs rewritten.
+    // Each node is rewritten whole, and a node left unfused is only a redex
+    // left for later, so a stop leaves a valid level behind it.
+    let lim = eng.limits();
+    let stride = lim.reduce_poll_stride();
+    let mut read = 0u64;
+    let mut stopped = Ok(());
 
     let mut cursor = 0usize;
     while cursor < plans.len() {
         let n = plans[cursor].node_idx;
+        read += 1 + level.pair_count_at(n) as u64;
+        if read >= stride {
+            read = 0;
+            stopped = lim.check_stop();
+            if stopped.is_err() {
+                break;
+            }
+        }
         let plan_start = cursor;
         while cursor < plans.len() && plans[cursor].node_idx == n {
             cursor += 1;
@@ -66,7 +81,7 @@ pub(super) fn rebuild_parent_level<V>(
     // Legal only now: the rewrite is done, so no pair-arena offset is held
     // across the call (the caller obligation on `compact_pairs_if_stale`).
     level.compact_pairs_if_stale();
-    Ok(())
+    stopped
 }
 
 /// Rewrite one node's pair list in place: drop every pair whose x-side carries a

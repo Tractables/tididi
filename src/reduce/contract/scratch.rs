@@ -49,8 +49,9 @@ pub(super) struct GroupCell {
 #[derive(Default)]
 pub(super) struct PFusionScratch {
     /// The grouping table. Its length is a power of two, at least twice the
-    /// pair count of the widest node grouped so far, so a probe always finds
-    /// an unstamped cell.
+    /// pair count of the widest node grouped so far. A node probes only a
+    /// window of it: its first cells, a power of two at least twice the
+    /// node's own pair count, so a probe always finds an unstamped cell.
     pub(super) cells: Vec<GroupCell>,
     /// This node's x's in first-occurrence order. Cleared per node.
     pub(super) touched: Vec<u32>,
@@ -59,6 +60,9 @@ pub(super) struct PFusionScratch {
     /// `SmallVec` is pushed only when a node needs more distinct x-groups than
     /// any prior node.
     pub(super) groups: Vec<SmallVec<[u32; 4]>>,
+    /// One run's marginal-side refs, for a node whose groups are runs
+    /// (`pair_fusion::plan::group_by_runs`). Cleared per run.
+    pub(super) run: Vec<u32>,
     /// Current node's generation stamp. Bumped once per node; on u32 wrap the
     /// stamps are zeroed and it restarts at 1 (0 is the "never stamped"
     /// sentinel, so it must never equal a live generation).
@@ -70,6 +74,7 @@ impl Buffers for PFusionScratch {
         visit(&mut self.cells);
         visit(&mut self.touched);
         visit(&mut Nested(&mut self.groups));
+        visit(&mut self.run);
     }
 }
 
