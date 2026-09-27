@@ -282,6 +282,7 @@ impl crate::Engine {
     /// # Errors
     ///
     /// The errors of [`Engine::and`], each with both operands.
+    #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
     pub fn and_restoring(&self, f: Tdd, g: Tdd) -> Result<Tdd, AndRefused> {
         let (mut f, mut g) = (f, g);
         let _op = match self.limits().enter() {

@@ -196,6 +196,28 @@ impl<'a> MovePlacement<'a> {
         self.assembly.parts_mut().0[at.idx()].push_internal_node(&[ChildPair::new(left, right)])
     }
 
+    /// Seat the chosen root reference without the repairs of
+    /// [`finish`](Self::finish), for structural parts: a pass-through over a
+    /// leaf keeps the wrappers nothing above reads. Hands the placement back
+    /// when the result's worklists are refused.
+    #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+    pub(super) fn seat(self, local: NodeIdx) -> Result<Tdd, (OperationError, Self)> {
+        let output = TddNodeId { vtree: self.vtree.root(), local };
+        let Self { eng, vtree, assembly, prune, contract } = self;
+        assembly
+            .finish_or_return(output)
+            .map_err(|(e, assembly)| (e, Self { eng, vtree, assembly, prune, contract }))
+    }
+
+    /// Move the structural levels [`move_part`](Self::move_part) placed back
+    /// into `source`, through the same map.
+    pub(super) fn move_back(mut self, source: &mut Tdd, map: &[VtreeIdx]) {
+        let (levels, _) = self.assembly.parts_mut();
+        for (from, &to) in map.iter().enumerate() {
+            source.levels[from] = std::mem::take(&mut levels[to.idx()]);
+        }
+    }
+
     /// Check that the destination store covers every placed level's column.
     pub(super) fn check_weights(&mut self) -> Result<(), TddBuildError> {
         let (levels, weights) = self.assembly.parts_mut();

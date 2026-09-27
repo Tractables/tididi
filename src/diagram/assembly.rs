@@ -52,6 +52,7 @@ impl<'a> Assembly<'a> {
     /// [`finish`](Self::finish) that hands the assembly back, levels intact,
     /// when the worklist growth is refused.
     #[inline]
+    #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
     pub(crate) fn finish_or_return(mut self, output: TddNodeId) -> Result<Tdd, (OperationError, Self)> {
         match self.seed_worklists(Dirty::default(), None, Some(self.engine)) {
             Ok(dirty) => Ok(self.builder.take().expect("unfinished assembly").seat(output, dirty)),

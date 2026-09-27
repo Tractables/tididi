@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use super::{EmbedError, Embedding, graft::check_part_weights, placement::{CopyPlacement, MovePlacement}};
+use super::{EmbedError, EmbedRefused, Embedding, graft::check_part_weights, placement::{CopyPlacement, MovePlacement}};
 
 use crate::Engine;
 use crate::diagram::{ChildSide, LeafLabel, Tdd, WeightStore, WeightValue};
@@ -201,6 +201,67 @@ impl Engine {
         let plan = Plan::build(lim, tdd.vtree(), into, map)?;
         let result = assemble(self, tdd, into, &plan)?;
         Ok((result, plan.embedding))
+    }
+
+    /// [`Engine::embed`] that moves the diagram's levels into the result
+    /// instead of copying them, and gives the diagram back unchanged when it
+    /// is refused.
+    ///
+    /// The source's pairs are not touched: the cost is the size of `into`
+    /// plus, at each destination level with renamed variables on one side
+    /// only, the width of that populated side. Such a level over a single
+    /// variable holds a node for each of the variable's labels, and the ones
+    /// the level above does not read stay in the result, which is otherwise
+    /// the diagram [`Engine::embed`] returns; [`Engine::minimize`] removes
+    /// them. The levels move into storage the engine supplies without
+    /// charging its limits, as [`Tdd::graft_over`] does.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    /// use tididi::vtree::VarId;
+    ///
+    /// let engine = Engine::new();
+    /// let pair = Arc::new(Vtree::linear(2));
+    /// let wide = Arc::new(Vtree::linear(4));
+    /// let r = engine.clause(&pair, [1, 2])?;
+    /// let (copied, _) = engine.embed(&r, &wide, |v| VarId(v.0 + 2))?;
+    /// let (mut moved, _) = engine.embed_moving(r, &wide, |v| VarId(v.0 + 2)).map_err(|r| r.error)?;
+    /// engine.minimize(&mut moved)?;
+    /// assert!(engine.equivalent(&moved, &copied)?);
+    /// assert_eq!(engine.model_count(&moved)?, 12u32.into());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Tdd::embed`], each with the diagram as it was given.
+    #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+    pub fn embed_moving(
+        &self,
+        tdd: Tdd,
+        into: &Arc<Vtree>,
+        map: impl Fn(VarId) -> VarId,
+    ) -> Result<(Tdd, Embedding), EmbedRefused> {
+        let lim = self.limits();
+        let _op = match lim.enter() {
+            Ok(op) => op,
+            Err(e) => return Err(EmbedRefused { error: e.into(), tdd }),
+        };
+        if let Err(e) = tdd.require_structure() {
+            return Err(EmbedRefused { error: e.into(), tdd });
+        }
+        let plan = match Plan::build(lim, tdd.vtree(), into, map) {
+            Ok(plan) => plan,
+            Err(error) => return Err(EmbedRefused { error, tdd }),
+        };
+        if tdd.is_zero() {
+            return Ok((crate::build::constant_zero(self, into), plan.embedding));
+        }
+        match assemble_moving(self, tdd, into, &plan) {
+            Ok(result) => Ok((result, plan.embedding)),
+            Err((e, tdd)) => Err(EmbedRefused { error: e.into(), tdd }),
+        }
     }
 
     /// [`Tdd::embed`] for a diagram whose levels may hold weighted marginal
@@ -402,6 +463,48 @@ fn assemble(
     }
     gate.flush()?;
     Ok(placement.finish(tdd.output().local)?)
+}
+
+/// Move the levels of a structural diagram onto the destination and build
+/// what it adds, as [`assemble`] does with copies; the diagram comes back,
+/// levels in place, when the result's storage is refused.
+#[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+fn assemble_moving(
+    eng: &Engine,
+    mut tdd: Tdd,
+    into: &Arc<Vtree>,
+    plan: &Plan,
+) -> Result<Tdd, (OperationError, Tdd)> {
+    let mut placement = match MovePlacement::new(eng, into, None) {
+        Ok(placement) => placement,
+        Err(e) => return Err((e, tdd)),
+    };
+    placement.move_part(&mut tdd, &plan.embedding.levels);
+    let mut gate = eng.limits().gate();
+    let mut stopped = Ok(());
+    for t in into.bottomup() {
+        if into.node(t).is_leaf() || plan.covered_by[t.idx()].is_some() {
+            continue;
+        }
+        stopped = gate.poll(1);
+        if stopped.is_err() {
+            break;
+        }
+        let (left, right) = into.children(t);
+        if !plan.mapped[t.idx()] {
+            placement.join(t, placement.true_node(left), placement.true_node(right));
+        } else {
+            placement.pass_through(t, if plan.mapped[left.idx()] { ChildSide::Right } else { ChildSide::Left });
+        }
+    }
+    if let Err(e) = stopped.and_then(|()| gate.flush()) {
+        placement.move_back(&mut tdd, &plan.embedding.levels);
+        return Err((e, tdd));
+    }
+    placement.seat(tdd.output().local).map_err(|(e, placement)| {
+        placement.move_back(&mut tdd, &plan.embedding.levels);
+        (e, tdd)
+    })
 }
 
 /// Move a copy of the levels, marginal ones with their values, onto the

@@ -5,15 +5,8 @@
 use std::sync::Arc;
 
 use crate::limits::{LimitConfig, StopAt, StopRules};
+use crate::test_helpers::same_storage as same;
 use crate::{Engine, Tdd, Vtree};
-
-/// The same diagram, level for level, not just the same function.
-fn same(a: &Tdd, b: &Tdd) -> bool {
-    a.output == b.output
-        && a.levels.iter().zip(b.levels.iter()).all(|(x, y)| {
-            x.nodes == y.nodes && x.pairs == y.pairs && x.ranges == y.ranges
-        })
-}
 
 /// Two operands whose supports overlap on a few variables of a balanced
 /// vtree over 12, so the sweep takes identity levels from both before it

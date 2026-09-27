@@ -54,6 +54,16 @@ pub enum EmbedError {
     Operation(OperationError),
 }
 
+/// An embedding [`Engine::embed_moving`](crate::Engine::embed_moving)
+/// refused, with the diagram as it was given.
+#[derive(Debug)]
+pub struct EmbedRefused {
+    /// Why the embedding was refused.
+    pub error: EmbedError,
+    /// The diagram, unchanged.
+    pub tdd: crate::Tdd,
+}
+
 impl std::fmt::Display for EmbedError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
