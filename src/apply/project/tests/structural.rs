@@ -382,6 +382,101 @@ fn a_level_of_one_node_is_written_alike_by_rows_and_by_sorting() {
     }
 }
 
+/// A row reads back exactly the columns set since it was last read, in
+/// ascending order, and is clear afterwards: across widths on both sides of
+/// one and several summary words, with sparse rows spread over the width,
+/// dense ones, repeats, and whole words OR-ed in.
+#[test]
+fn a_row_reads_back_its_columns_in_order_however_wide() {
+    let mut rng = Lcg::new(20260927);
+    let eng = Engine::new();
+    let lim = eng.limits();
+    for words in [1u64, 2, 63, 64, 65, 4095, 4096, 4097, 9000, 70_000] {
+        let width = words * 64;
+        let mut row = Row::new(lim, words).unwrap();
+        let mut out = Vec::new();
+        for round in 0..12u32 {
+            let many = match round % 4 {
+                0 => 0,
+                1 => 1 + rng.below(8),
+                2 => 1 + rng.below(width.min(3000)),
+                _ => width.min(20_000),
+            };
+            let mut want: Vec<u32> = (0..many).map(|_| rng.below(width) as u32).collect();
+            // Repeats set a bit already set.
+            let again: Vec<u32> = want.iter().copied().filter(|_| rng.coin()).collect();
+            row.mark(&want, None);
+            row.mark(&again, None);
+            if round % 3 == 2 {
+                let mut bits = vec![0u64; words as usize];
+                for _ in 0..1 + rng.below(40) {
+                    let column = rng.below(width) as u32;
+                    bits[(column >> 6) as usize] |= 1u64 << (column & 63);
+                    want.push(column);
+                }
+                row.or_words(&bits);
+            }
+            want.sort_unstable();
+            want.dedup();
+            let left = round * 7;
+            out.clear();
+            row.drain(lim, left, &mut out, 0, 1, u64::MAX).unwrap();
+            let got: Vec<u32> = out.iter().map(|pair| pair.right.0).collect();
+            assert_eq!(got, want, "{words} words, round {round}");
+            assert!(out.iter().all(|pair| pair.left.0 == left));
+            assert!(row.words.iter().chain(&row.marks).chain(&row.tops).all(|&word| word == 0),
+                "{words} words, round {round}: the row is clear after it is read");
+        }
+    }
+}
+
+/// A level of one node whose right side stores references wide enough that
+/// its rows span several summary words is written alike by the rows and by
+/// sorting its atoms, and like the owner-set rule written out.
+#[test]
+fn a_wide_level_of_one_node_is_written_alike_by_rows_and_by_sorting() {
+    let mut rng = Lcg::new(20260928);
+    let eng = Engine::new();
+    let tree = Arc::new(Vtree::balanced(4));
+    let host = Tdd::clause(&tree, [1, -2, 3]).unwrap();
+    let parent = tree.root();
+    for (keys, cells, width, count) in [(3usize, 2u32, 1u32 << 13, 40usize), (50, 30, 1 << 19, 2000), (400, 5, 1 << 20, 6000)] {
+        let mut pairs: Vec<ChildPair> = (0..count)
+            .map(|_| ChildPair::new(
+                EncodedChildRef::from_raw(rng.below(keys as u64) as u32),
+                EncodedChildRef::from_raw(rng.below(u64::from(width)) as u32),
+            ))
+            .collect();
+        pairs.sort_unstable();
+        pairs.dedup();
+        let mut f = host.clone();
+        {
+            let level = &mut f.levels[parent.idx()];
+            level.clear();
+            level.push_node(eng.limits(), &pairs).unwrap();
+        }
+        let left = random_remap(&eng, &mut rng, keys, cells);
+        let level = &f.levels[parent.idx()];
+        let (want, _) = regroup_by_definition(level, Some(&left), None);
+        let want = want.first().map_or(&[][..], |cell| &cell[..]);
+        let mut work = Rewrite { eng: &eng, gate: eng.limits().gate(), emitted: 0 };
+
+        let mut by_rows = f.clone();
+        let plan = RowPlan::of(&mut work, &pairs, Some(&left), None).unwrap();
+        assert!(Row::tops_for(plan.words) >= 2 || width < 1 << 18, "{keys} keys over {width} columns: several top words");
+        regroup_single_rows(&mut work, &mut by_rows, parent, Some(&left), None, &plan).unwrap();
+        let written = &by_rows.levels[parent.idx()];
+        assert_eq!(written.nodes.len(), 1);
+        assert_eq!(written.pairs_of_idx(0), want, "{keys} keys over {width} columns: rows");
+
+        let owned = scan_level(&mut work, level).unwrap();
+        let buckets = bucket_pairs(&mut work, &owned, Side::Right, None).unwrap();
+        let mut by_sorting = f.clone();
+        regroup_single(&mut work, &mut by_sorting, parent, &owned, &buckets, Side::Right, &left).unwrap();
+        assert_eq!(by_sorting.levels[parent.idx()].pairs_of_idx(0), want, "{keys} keys over {width} columns: sorting");
+    }
+}
+
 /// The rows are taken when they cost no more than the atoms: always for one
 /// row of a few words, never for many empty rows over few atoms; and one row
 /// of rewritten sides is taken without counting the atoms.

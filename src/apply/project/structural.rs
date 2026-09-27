@@ -788,9 +788,9 @@ fn regroup_single(
 #[derive(Debug)]
 struct RowPlan {
     /// Whether the rows cost no more to read than the atoms the pairs expand
-    /// to: every row's words are read and cleared whether the pairs set any,
-    /// and a node of several rows first files its pairs and inverts the left
-    /// child's map.
+    /// to: a row is read back through its summary ([`Row`]), whose top words
+    /// are read whether the pairs set any, and a node of several rows first
+    /// files its pairs and inverts the left child's map.
     pays: bool,
     /// How many rows there are: the left child's cells, or one past the
     /// largest stored left reference.
@@ -850,11 +850,14 @@ impl RowPlan {
             Some(_) => (rows == 1).then_some(0),
             None => (left_min == left_max).then_some(left_min),
         };
+        // The row's words are cleared once, and every row reads its top
+        // words; the words it set are read back at no more than one per atom.
         let reads = match single {
             Some(_) => words,
             None => {
                 let inverted = left_remap.map_or(0, |map| map.items.len() as u64 + rows);
-                (rows * words).saturating_add(left_keys).saturating_add(inverted)
+                let tops = Row::tops_for(words);
+                words.saturating_add(rows.saturating_mul(tops)).saturating_add(left_keys).saturating_add(inverted)
             }
         };
         Ok(RowPlan {
@@ -876,7 +879,9 @@ impl RowPlan {
 /// whose left side expands to the row sets the bits its right side expands
 /// to, and a repeat sets a bit already set — then reads them back in
 /// ascending order, which is the canonical order within the row, and appends
-/// them to the level's arena. The rows are visited in ascending order: a
+/// them to the level's arena. A summary of the words the row set ([`Row`])
+/// takes the read-back to those words alone, so a row costs what it holds
+/// rather than the width of the right child. The rows are visited in ascending order: a
 /// rewritten left child's through the inverse of its map, the nodes each of
 /// its cells came from, with the pairs filed by left reference. The pairs of
 /// a node that several rows visit are marked once into words of their own
@@ -894,30 +899,28 @@ fn regroup_single_rows(
 ) -> Result<(), OperationError> {
     let lim = work.eng.limits();
     let pairs = tdd.levels[parent.idx()].pairs_of_idx(0);
-    let mut row = Vec::new();
-    // A row's words were counted from a `u32` column bound, so they fit.
-    lim.try_resize(&mut row, plan.words as usize, 0u64)?;
+    let mut row = Row::new(lim, plan.words)?;
     if let Some(only) = plan.single {
         // A pair whose left side expands to no cell has no atom. When every
         // left reference expands to one, the left sides are not read.
         let every_left_expands = left_remap.is_none_or(|map| map.starts.windows(2).all(|w| w[0] < w[1]));
         if every_left_expands {
             for pair in pairs {
-                let marked = mark(&mut row, std::slice::from_ref(&pair.right.0), right_remap);
+                let marked = row.mark(std::slice::from_ref(&pair.right.0), right_remap);
                 work.gate.poll(marked + 1)?;
             }
         } else {
             for pair in pairs {
                 let expands = left_remap
                     .is_none_or(|map| !map.get(ChildDecoder::structural().node(pair.left).idx()).is_empty());
-                let marked = if expands { mark(&mut row, std::slice::from_ref(&pair.right.0), right_remap) } else { 0 };
+                let marked = if expands { row.mark(std::slice::from_ref(&pair.right.0), right_remap) } else { 0 };
                 work.gate.poll(marked + 1)?;
             }
         }
-        work.gate.poll(plan.words)?;
         let level = &mut tdd.levels[parent.idx()];
         level.clear();
-        drain_row(lim, &mut row, only, &mut level.pairs, 0, 1, plan.most)?;
+        let read = row.drain(lim, only, &mut level.pairs, 0, 1, plan.most)?;
+        work.gate.poll(read)?;
     } else {
         let filed = |pair: &ChildPair| match left_remap {
             Some(_) => (ChildDecoder::structural().node(pair.left).0, pair.right.0),
@@ -944,20 +947,20 @@ fn regroup_single_rows(
             for &node in nodes {
                 let bits = dense.get(node as usize);
                 if bits.is_empty() {
-                    let marked = mark(&mut row, groups.get(node as usize), right_remap);
+                    let marked = row.mark(groups.get(node as usize), right_remap);
                     work.gate.poll(marked + 1)?;
                 } else {
-                    for (word, &bit) in row.iter_mut().zip(bits) {
-                        *word |= bit;
-                    }
+                    row.or_words(bits);
                     work.gate.poll(plan.words)?;
                 }
             }
-            work.gate.poll(plan.words)?;
-            drain_row(lim, &mut row, left, &mut level.pairs, u64::from(left), plan.rows, plan.most)?;
+            let read = row.drain(lim, left, &mut level.pairs, u64::from(left), plan.rows, plan.most)?;
+            work.gate.poll(read)?;
         }
     }
-    lim.discard(row);
+    lim.discard(row.words);
+    lim.discard(row.marks);
+    lim.discard(row.tops);
     let level = &mut tdd.levels[parent.idx()];
     debug_assert!(level.pairs.is_sorted() && level.pairs.windows(2).all(|w| w[0] != w[1]),
         "a single cell's atoms are distinct and in canonical order");
@@ -1054,37 +1057,154 @@ fn mark(row: &mut [u64], rights: &[u32], remap: Option<&Remap>) -> u64 {
     }
 }
 
-/// Append `(left, c)` to `out` for every column `c` set in `row`, in
-/// ascending order, clearing the row for the next. `out` makes room through
-/// [`grow_rows`], row `done` of `rows` being written into a cell of at most
-/// `most` pairs.
-#[inline]
-fn drain_row(
+/// One row of [`regroup_single_rows`]: its columns as bits, with a bit per
+/// word that a column was set in since the row was last read back, and a bit
+/// per word of those, so the read-back visits the words the row set and
+/// skips the rest.
+struct Row {
+    /// Bit `c` for column `c`.
+    words: Vec<u64>,
+    /// Bit `w` when word `w` may hold a column.
+    marks: Vec<u64>,
+    /// Bit `m` when word `m` of `marks` may hold a bit.
+    tops: Vec<u64>,
+    /// Whole words were OR-ed in ([`Row::or_words`]) without marking them,
+    /// so the row is read back word by word.
+    whole: bool,
+}
+
+impl Row {
+    /// A row of `words` words, all clear. A row's words were counted from a
+    /// `u32` column bound, so they fit.
+    fn new(lim: &crate::limits::Limits, words: u64) -> Result<Row, OperationError> {
+        let words = words as usize;
+        let mut row = Row { words: Vec::new(), marks: Vec::new(), tops: Vec::new(), whole: false };
+        lim.try_resize(&mut row.words, words, 0u64)?;
+        lim.try_resize(&mut row.marks, words.div_ceil(64), 0u64)?;
+        lim.try_resize(&mut row.tops, words.div_ceil(64 * 64), 0u64)?;
+        Ok(row)
+    }
+
+    /// The top words of a row of `words` words: what every read-back reads.
+    fn tops_for(words: u64) -> u64 {
+        words.div_ceil(64 * 64)
+    }
+
+    /// Set column `column`.
+    #[inline(always)]
+    fn set(&mut self, column: u32) {
+        let c = column as usize;
+        self.words[c >> 6] |= 1u64 << (c & 63);
+        self.marks[c >> 12] |= 1u64 << ((c >> 6) & 63);
+        self.tops[c >> 18] |= 1u64 << ((c >> 12) & 63);
+    }
+
+    /// Set the columns that the stored right references `rights` stand for:
+    /// the cells `remap` lists for them, or the references themselves.
+    /// Returns how many columns were set, counting a repeat.
+    #[inline]
+    fn mark(&mut self, rights: &[u32], remap: Option<&Remap>) -> u64 {
+        match remap {
+            None => {
+                for &right in rights {
+                    self.set(right);
+                }
+                rights.len() as u64
+            }
+            Some(map) => {
+                let mut marked = 0u64;
+                for &right in rights {
+                    let cells = right_cells(map, right);
+                    marked += cells.len() as u64;
+                    for &cell in cells {
+                        self.set(cell);
+                    }
+                }
+                marked
+            }
+        }
+    }
+
+    /// OR a row's worth of words in.
+    fn or_words(&mut self, bits: &[u64]) {
+        for (word, &bit) in self.words.iter_mut().zip(bits) {
+            *word |= bit;
+        }
+        self.whole = true;
+    }
+
+    /// Append `(left, c)` to `out` for every column `c` set, in ascending
+    /// order, clearing the row for the next. `out` makes room through
+    /// [`grow_rows`], row `done` of `rows` being written into a cell of at
+    /// most `most` pairs. Returns how many words were read.
+    #[inline]
+    fn drain(
+        &mut self,
+        lim: &crate::limits::Limits,
+        left: u32,
+        out: &mut Vec<ChildPair>,
+        done: u64,
+        rows: u64,
+        most: u64,
+    ) -> Result<u64, OperationError> {
+        let left = EncodedChildRef::from_raw(left);
+        if self.whole {
+            self.whole = false;
+            self.marks.fill(0);
+            self.tops.fill(0);
+            for at in 0..self.words.len() {
+                drain_word(lim, &mut self.words[at], at, left, out, done, rows, most)?;
+            }
+            return Ok(self.words.len() as u64);
+        }
+        let mut read = self.tops.len() as u64;
+        for t in 0..self.tops.len() {
+            let mut top = std::mem::take(&mut self.tops[t]);
+            while top != 0 {
+                let m = (t << 6) | top.trailing_zeros() as usize;
+                top &= top - 1;
+                let mut marks = std::mem::take(&mut self.marks[m]);
+                read += 1;
+                while marks != 0 {
+                    let at = (m << 6) | marks.trailing_zeros() as usize;
+                    marks &= marks - 1;
+                    read += 1;
+                    drain_word(lim, &mut self.words[at], at, left, out, done, rows, most)?;
+                }
+            }
+        }
+        Ok(read)
+    }
+}
+
+/// Append `(left, c)` to `out` for every column `c` set in word `at`,
+/// ascending, and clear the word.
+#[inline(always)]
+#[expect(clippy::too_many_arguments)]
+fn drain_word(
     lim: &crate::limits::Limits,
-    row: &mut [u64],
-    left: u32,
+    word: &mut u64,
+    at: usize,
+    left: EncodedChildRef,
     out: &mut Vec<ChildPair>,
     done: u64,
     rows: u64,
     most: u64,
 ) -> Result<(), OperationError> {
-    let left = EncodedChildRef::from_raw(left);
-    for (at, word) in row.iter_mut().enumerate() {
-        let mut bits = std::mem::take(word);
-        // A row has at most 2^26 words, so its columns fit a `u32`.
-        let base = (at as u32) << 6;
-        while bits != 0 {
-            if out.len() == out.capacity() {
-                grow_rows(lim, out, done, rows, most)?;
-            }
-            out.push(ChildPair { left, right: EncodedChildRef::from_raw(base | bits.trailing_zeros()) });
-            bits &= bits - 1;
+    let mut bits = std::mem::take(word);
+    // A row has at most 2^26 words, so its columns fit a `u32`.
+    let base = (at as u32) << 6;
+    while bits != 0 {
+        if out.len() == out.capacity() {
+            grow_rows(lim, out, done, rows, most)?;
         }
+        out.push(ChildPair { left, right: EncodedChildRef::from_raw(base | bits.trailing_zeros()) });
+        bits &= bits - 1;
     }
     Ok(())
 }
 
-/// Room for more of the pairs [`drain_row`] appends: at least half again
+/// Room for more of the pairs [`Row::drain`] appends: at least half again
 /// what `out` holds, and once enough rows are done, the rows still to come at
 /// the average so far, but never past `most` pairs in all.
 #[cold]
