@@ -13,7 +13,7 @@ use std::sync::Arc;
 use super::{EmbedError, EmbedRefused, Embedding, graft::check_part_weights, placement::{CopyPlacement, MovePlacement}};
 
 use crate::Engine;
-use crate::diagram::{ChildSide, LeafLabel, Tdd, WeightStore, WeightValue};
+use crate::diagram::{ChildSide, LeafLabel, NodeIdx, Tdd, WeightStore, WeightValue, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
 use crate::limits::{Limits, OperationError};
 use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
 
@@ -209,12 +209,12 @@ impl Engine {
     ///
     /// The source's pairs are not touched: the cost is the size of `into`
     /// plus, at each destination level with renamed variables on one side
-    /// only, the width of that populated side. Such a level over a single
-    /// variable holds a node for each of the variable's labels, and the ones
-    /// the level above does not read stay in the result, which is otherwise
-    /// the diagram [`Engine::embed`] returns; [`Engine::minimize`] removes
-    /// them. The levels move into storage the engine supplies without
-    /// charging its limits, as [`Tdd::graft_over`] does.
+    /// only, the width of that populated side, and the pairs of a level that
+    /// reads a single variable through such levels. The result is the
+    /// diagram [`Engine::embed`] returns, up to the numbering of its nodes and
+    /// a node for a literal of such a variable that nothing reads, which
+    /// [`Engine::minimize`] removes. The levels move into storage the engine
+    /// supplies without charging its limits, as [`Tdd::graft_over`] does.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -482,6 +482,9 @@ fn assemble_moving(
     placement.move_part(&mut tdd, &plan.embedding.levels);
     let mut gate = eng.limits().gate();
     let mut stopped = Ok(());
+    // The tops of the pass-through chains over a leaf read as `Pos`/`Neg`,
+    // whose readers are renumbered once the result stands.
+    let mut literal_tops = Vec::new();
     for t in into.bottomup() {
         if into.node(t).is_leaf() || plan.covered_by[t.idx()].is_some() {
             continue;
@@ -493,18 +496,50 @@ fn assemble_moving(
         let (left, right) = into.children(t);
         if !plan.mapped[t.idx()] {
             placement.join(t, placement.true_node(left), placement.true_node(right));
+            continue;
+        }
+        let (free_side, carried) = if plan.mapped[left.idx()] { (ChildSide::Right, left) } else { (ChildSide::Left, right) };
+        if !into.node(carried).is_leaf() {
+            placement.pass_through(t, free_side);
+        } else if let Some(top) = literal_chain(into, plan, &placement, tdd.output().local, t) {
+            placement.pass_over_leaf(t, free_side, &[POS_LEAF_IDX, NEG_LEAF_IDX]);
+            literal_tops.push(top);
         } else {
-            placement.pass_through(t, if plan.mapped[left.idx()] { ChildSide::Right } else { ChildSide::Left });
+            placement.pass_over_leaf(t, free_side, &[ONE_LEAF_IDX]);
         }
     }
     if let Err(e) = stopped.and_then(|()| gate.flush()) {
         placement.move_back(&mut tdd, &plan.embedding.levels);
         return Err((e, tdd));
     }
-    placement.seat(tdd.output().local).map_err(|(e, placement)| {
+    let mut result = placement.seat(tdd.output().local).map_err(|(e, placement)| {
         placement.move_back(&mut tdd, &plan.embedding.levels);
         (e, tdd)
-    })
+    })?;
+    // `Pos` and `Neg` are the chain's nodes 0 and 1; nothing reads `One`.
+    for top in literal_tops {
+        crate::diagram::remap_refs_into(&mut result, top, &[u32::MAX, 0, 1]);
+    }
+    Ok(result)
+}
+
+/// For a pass-through over a leaf at `t`, the top of the chain of
+/// pass-throughs it starts when the level above that chain, or the output
+/// when the chain reaches the root, names the leaf as `Pos`/`Neg`; `None`
+/// when it names it as `One`. Determinism makes the first reference the
+/// level's form.
+fn literal_chain(into: &Vtree, plan: &Plan, placement: &MovePlacement<'_>, output: NodeIdx, t: VtreeIdx) -> Option<VtreeIdx> {
+    let mut top = t;
+    loop {
+        match into.node(top).parent() {
+            Some(p) if plan.covered_by[p.idx()].is_none() => top = p,
+            Some(p) => {
+                let named = placement.first_ref(p, ChildSide::of(into, p, top))?;
+                return (named != ONE_LEAF_IDX).then_some(top);
+            }
+            None => return (output != ONE_LEAF_IDX).then_some(top),
+        }
+    }
 }
 
 /// Move a copy of the levels, marginal ones with their values, onto the

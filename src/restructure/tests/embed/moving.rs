@@ -1,9 +1,11 @@
 //! `Engine::embed_moving` builds the diagram `Engine::embed` builds, up to
-//! the leaf wrappers minimization removes, and gives its input back as it
-//! was at every point it can be refused.
+//! node numbering and unread literal nodes, deterministic before any
+//! minimization, and gives its input back as it was at every point it can
+//! be refused.
 use std::sync::Arc;
 
 use crate::limits::{LimitConfig, StopAt, StopRules};
+use crate::test_helpers::check::check_determinism;
 use crate::test_helpers::{assert_same_shape, compile_clauses, same_storage, test_cases, vtree_shapes};
 use crate::vtree::{VarId, Vtree};
 use crate::{Engine, Tdd};
@@ -14,6 +16,8 @@ fn check_against_copy(eng: &Engine, f: &Tdd, into: &Arc<Vtree>, map: impl Fn(Var
     let (copied, copied_levels) = eng.embed(f, into, map).unwrap();
     let (mut moved, moved_levels) = eng.embed_moving(f.clone(), into, map).map_err(|r| r.error).unwrap();
     assert_eq!(moved_levels.levels, copied_levels.levels, "{what}");
+    // Unminimized, the result is already a diagram every operation takes.
+    check_determinism(&moved).unwrap_or_else(|e| panic!("{what}: {e}"));
     eng.minimize(&mut moved).unwrap();
     let mut copied = copied;
     eng.minimize(&mut copied).unwrap();
@@ -130,4 +134,82 @@ fn a_structure_check_refusal_gives_the_diagram_back() {
     assert!(same_storage(&refused.tdd, &f));
     let refused = eng.embed_moving(f.clone(), &big, |v| VarId(v.0 + 100)).unwrap_err();
     assert!(same_storage(&refused.tdd, &f));
+}
+
+#[test]
+fn a_moved_diagram_minimized_under_every_stop_keeps_its_function() {
+    let eng = Engine::new();
+    let (f, big, map) = source_and_destination();
+    let (moved, _) = eng.embed_moving(f.clone(), &big, map).map_err(|r| r.error).unwrap();
+    let (copied, _) = eng.embed(&f, &big, map).unwrap();
+    let count = eng.model_count(&copied).unwrap();
+    for n in 0..2000u64 {
+        let mut g = moved.clone();
+        let outcome = {
+            let at = eng.limits().work_units() + n;
+            let stop = StopRules { unconditional: Some(StopAt::WorkUnits(at)), after_pairs: None };
+            let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(stop));
+            eng.minimize(&mut g)
+        };
+        assert_eq!(eng.model_count(&g).unwrap(), count, "stopped at {n}");
+        let mut h = g.clone();
+        eng.minimize(&mut h).unwrap();
+        assert!(eng.equivalent(&h, &copied).unwrap(), "stopped at {n}");
+        if outcome.is_ok() {
+            break;
+        }
+    }
+}
+
+#[test]
+fn moved_diagrams_negate_and_disjoin_like_copies() {
+    use crate::reduce::ReductionPlan;
+    let eng = Engine::new();
+    let mut failures = Vec::new();
+    for (small, big, positions) in [
+        (Arc::new(Vtree::linear(6)), Arc::new(Vtree::linear(12)), vec![2u32, 4, 6, 8, 10, 12]),
+        (Arc::new(Vtree::linear(3)), Arc::new(Vtree::linear(4)), vec![1, 2, 3]),
+        (Arc::new(Vtree::linear(3)), Arc::new(Vtree::linear(4)), vec![2, 3, 4]),
+        (Arc::new(Vtree::linear(2)), Arc::new(Vtree::balanced(4)), vec![1, 3]),
+        (Arc::new(Vtree::linear(2)), Arc::new(Vtree::balanced(4)), vec![2, 4]),
+        // Chains of three pass-throughs on each side of the root.
+        (Arc::new(Vtree::linear(2)), Arc::new(Vtree::balanced(8)), vec![1, 8]),
+        // A chain from the source's only leaf up to the root.
+        (Arc::new(Vtree::linear(1)), Arc::new(Vtree::linear(3)), vec![3]),
+        (Arc::new(Vtree::linear(1)), Arc::new(Vtree::balanced(4)), vec![2]),
+    ] {
+        let n = small.num_vars() as i32;
+        let mut sets: Vec<Vec<Vec<i32>>> = vec![vec![vec![n]], vec![vec![-n]], vec![]];
+        if n >= 2 {
+            sets.extend([vec![vec![1, 2]], vec![vec![-1, -2]], vec![vec![1], vec![-n]], vec![vec![1, n], vec![-1, -n]]]);
+        }
+        if n >= 3 { sets.push(vec![vec![1, 2, -3], vec![-1, 3]]); }
+        for clauses in sets {
+            let mut f = compile_clauses(&small, &clauses);
+            f.minimize().unwrap();
+            let map = |v: VarId| VarId(positions[v.idx()]);
+            let (copied, _) = eng.embed(&f, &big, map).unwrap();
+            let (moved, _) = eng.embed_moving(f.clone(), &big, map).map_err(|r| r.error).unwrap();
+            if let Err(e) = check_determinism(&moved) {
+                failures.push(format!("determinism {clauses:?} -> {positions:?}: {e}"));
+            }
+            let expect = eng.negate(copied.clone()).unwrap();
+            let got = eng.negate_with(moved.clone(), ReductionPlan::Prune).unwrap();
+            if !eng.equivalent(&got, &expect).unwrap() {
+                failures.push(format!("negate_with {clauses:?} -> {positions:?}"));
+            }
+            let got = eng.negate(moved.clone()).unwrap();
+            if !eng.equivalent(&got, &expect).unwrap() {
+                failures.push(format!("negate {clauses:?} -> {positions:?}"));
+            }
+            let c = eng.clause(&big, [1, -2]).unwrap();
+            if !eng.equivalent(&eng.and(moved.clone(), c.clone()).unwrap(), &eng.and(copied.clone(), c.clone()).unwrap()).unwrap() {
+                failures.push(format!("and {clauses:?} -> {positions:?}"));
+            }
+            if !eng.equivalent(&eng.or(moved.clone(), c.clone()).unwrap(), &eng.or(copied.clone(), c).unwrap()).unwrap() {
+                failures.push(format!("or {clauses:?} -> {positions:?}"));
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
 }

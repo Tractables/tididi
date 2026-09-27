@@ -188,6 +188,29 @@ impl<'a> MovePlacement<'a> {
         }
     }
 
+    /// Lift a leaf child through a join with a free sibling, one node per
+    /// label of `labels` in that order: the labels the level reading the
+    /// lifted references names, which determinism keeps within `{One}` or
+    /// within `{Pos, Neg}`. A node per label of the leaf would put `One` and
+    /// a literal on one level.
+    pub(super) fn pass_over_leaf(&mut self, at: VtreeIdx, free_side: ChildSide, labels: &[NodeIdx]) {
+        let (left, right) = self.vtree.children(at);
+        let one = true_node(self.vtree, if free_side == ChildSide::Left { left } else { right });
+        for &label in labels {
+            let (l, r) = if free_side == ChildSide::Left { (one, label) } else { (label, one) };
+            self.join(at, l, r);
+        }
+    }
+
+    /// The first reference the level at `at` holds on `side`, if it holds
+    /// any.
+    pub(super) fn first_ref(&self, at: VtreeIdx, side: ChildSide) -> Option<NodeIdx> {
+        let (_, mut pairs) = self.assembly.level(at).internal_inputs_iter().next()?;
+        let pair = pairs.next()?;
+        let decoder = crate::diagram::ChildDecoder::structural();
+        Some(decoder.node(if side == ChildSide::Left { pair.left } else { pair.right }))
+    }
+
     /// Add a connecting node, recording any marginal boundary it introduces.
     #[inline]
     pub(super) fn join(&mut self, at: VtreeIdx, left: NodeIdx, right: NodeIdx) -> NodeIdx {
