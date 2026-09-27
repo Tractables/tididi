@@ -85,8 +85,11 @@ fn sweep_levels(
         let shape = run.shape(t, left, right);
         let (left_idx, right_idx) = (left.idx(), right.idx());
         // Before this level's output reserve fires, so the allocator can
-        // reuse the children's slabs for it.
-        drop_dead_children(f, g, shape);
+        // reuse the children's slabs for it. A sweep that must give its
+        // operands back keeps them whole.
+        if run.kept.is_none() {
+            drop_dead_children(f, g, shape);
+        }
 
         if sweep.quantified.contains(t.idx()) {
             // Every leaf below this level is quantified, so the level is one
@@ -146,6 +149,44 @@ pub(crate) fn apply_and_fallible(
     quantified: VtreeMask<'_>,
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
 ) -> Result<Tdd, OperationError> {
+    apply_and_swept(eng, f, g, targets, quantified, filter, false)
+}
+
+/// A plain conjunction that leaves both operands as they were when it is
+/// refused: the sweep drops no operand level, and the levels the identity
+/// fast paths moved into the output are moved back. On success the operands
+/// are drained as by [`apply_and_fallible`].
+///
+/// Structural operands without weights only; a marginal level or a weight
+/// store would be rewritten on its way into the output.
+pub(crate) fn apply_and_kept(eng: &Engine, f: &mut Tdd, g: &mut Tdd) -> Result<Tdd, OperationError> {
+    debug_assert!(
+        f.weights.is_none() && g.weights.is_none()
+            && !f.levels.iter().chain(g.levels.iter()).any(|l| l.is_marginal()),
+        "a kept conjunction takes structural operands without weights",
+    );
+    apply_and_swept(eng, f, g, VtreeMask::default(), VtreeMask::default(), None, true)
+}
+
+/// Move back, latest first, the operand levels the identity fast paths moved
+/// into `levels`.
+fn give_back(levels: &mut [TddLevel], f: &mut Tdd, g: &mut Tdd, kept: &[(usize, bool)]) {
+    for &(t, from_f) in kept.iter().rev() {
+        let carrier = if from_f { &mut f.levels } else { &mut g.levels };
+        std::mem::swap(&mut levels[t], &mut carrier[t]);
+    }
+}
+
+/// [`apply_and_fallible`], and with `keep` [`apply_and_kept`].
+fn apply_and_swept(
+    eng: &Engine,
+    f: &mut Tdd,
+    g: &mut Tdd,
+    targets: VtreeMask<'_>,
+    quantified: VtreeMask<'_>,
+    filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
+    keep: bool,
+) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     lim.eager_reclaim();
 
@@ -186,6 +227,9 @@ pub(crate) fn apply_and_fallible(
     let mut scratch = eng.apply().workspace.checkout(lim);
     let (levels, ws) = assembly.parts_mut();
     let mut run = apply_and_setup(eng, f, g, targets, ws.is_some(), levels, &mut scratch)?;
+    if keep {
+        run.kept = Some(Vec::new());
+    }
 
     // `g_identity[t]` is true when `g` computes constant-true over subtree
     // `t`, so `f`'s nodes pass through unchanged (`x ∧ 1 = x`) and the
@@ -207,17 +251,32 @@ pub(crate) fn apply_and_fallible(
         ws.as_ref(),
     );
 
-    sweep_levels(
+    let swept = sweep_levels(
         eng, &mut run, f, g,
         &mut Sweep { vtree: &vtree, targets, quantified, ws: ws.as_mut(), filter },
-    )?;
+    );
+    if let Err(e) = swept {
+        if let Some(kept) = &run.kept {
+            give_back(run.levels, f, g, kept);
+        }
+        return Err(e);
+    }
 
     crate::marginal::canonicalize_weighted_leaf_refs(&canon_leaves, &vtree, run.levels, ws.as_ref());
 
     let out_local = compute_apply_output(f, g, &run, &vtree).unwrap_or(ZERO);
     let out_vtree = f.output.vtree;
+    let kept = run.kept.take();
 
-    let mut out = assembly.finish(TddNodeId { vtree: out_vtree, local: out_local })?;
+    let mut out = match assembly.finish_or_return(TddNodeId { vtree: out_vtree, local: out_local }) {
+        Ok(out) => out,
+        Err((e, mut assembly)) => {
+            if let Some(kept) = &kept {
+                give_back(assembly.parts_mut().0, f, g, kept);
+            }
+            return Err(e);
+        }
+    };
     // Apply emits self-describing marginal refs — bit-30 set is an inline count,
     // bit-30 clear a bare slot; see `INLINE_VALUE_BIT` for why that polarity —
     // so a bit-30-clear ref here is never an already-inline count.

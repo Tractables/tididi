@@ -45,9 +45,18 @@ impl<'a> Assembly<'a> {
     /// `Err(OperationError::OverBudget)` when the worklist growth is refused;
     /// the levels go back to the pool.
     #[inline]
-    pub(crate) fn finish(mut self, output: TddNodeId) -> Result<Tdd, OperationError> {
-        let dirty = self.seed_worklists(Dirty::default(), None, Some(self.engine))?;
-        Ok(self.builder.take().expect("unfinished assembly").seat(output, dirty))
+    pub(crate) fn finish(self, output: TddNodeId) -> Result<Tdd, OperationError> {
+        self.finish_or_return(output).map_err(|(e, _)| e)
+    }
+
+    /// [`finish`](Self::finish) that hands the assembly back, levels intact,
+    /// when the worklist growth is refused.
+    #[inline]
+    pub(crate) fn finish_or_return(mut self, output: TddNodeId) -> Result<Tdd, (OperationError, Self)> {
+        match self.seed_worklists(Dirty::default(), None, Some(self.engine)) {
+            Ok(dirty) => Ok(self.builder.take().expect("unfinished assembly").seat(output, dirty)),
+            Err(e) => Err((e, self)),
+        }
     }
 
     /// [`finish`](Self::finish) with the worklists supplied by the caller

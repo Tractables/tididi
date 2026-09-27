@@ -28,7 +28,7 @@ mod compose;
 mod substitute;
 
 pub(crate) use conjoin::apply_and;
-pub use conjoin::and;
+pub use conjoin::{and, AndRefused};
 pub(crate) use disjoin::apply_or;
 pub use disjoin::{nor_many, or, or_many};
 pub use compose::{xor, ite, and_exists, Quantification};
