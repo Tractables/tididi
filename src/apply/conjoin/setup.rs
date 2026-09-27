@@ -64,9 +64,12 @@ pub(super) struct ApplyRun<'a> {
     pub(super) g_pairs_scratch: &'a mut Vec<ChildPair>,
     /// The four dead-pair pre-filter masks, reused across internal levels.
     pub(super) prefilter_masks: &'a mut liveness::PrefilterMaskScratch,
-    /// For a sweep that must give its operands back when refused, the levels
-    /// the identity fast paths moved into the output, as `(level, from f)`.
-    pub(super) kept: Option<Vec<(usize, bool)>>,
+    /// The levels the identity fast paths moved into the output, as
+    /// `(level, from f)`, in the order they moved.
+    pub(super) carried: Vec<(usize, bool)>,
+    /// Whether the sweep must give its operands back when refused: it drops
+    /// no operand level, and `carried` goes back to the operands.
+    pub(super) restoring: bool,
 }
 
 /// One internal vtree level's identity: the node, its two children, and both
@@ -325,7 +328,8 @@ pub(super) fn apply_and_setup<'a>(
         f_pairs_scratch,
         g_pairs_scratch,
         prefilter_masks,
-        kept: None,
+        carried: Vec::new(),
+        restoring: false,
     })
 }
 

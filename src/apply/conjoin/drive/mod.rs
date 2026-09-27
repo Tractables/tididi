@@ -87,7 +87,7 @@ fn sweep_levels(
         // Before this level's output reserve fires, so the allocator can
         // reuse the children's slabs for it. A sweep that must give its
         // operands back keeps them whole.
-        if run.kept.is_none() {
+        if !run.restoring {
             drop_dead_children(f, g, shape);
         }
 
@@ -209,6 +209,10 @@ fn apply_and_swept(
             || !f.levels.iter().chain(g.levels.iter()).any(|l| l.is_weight_marginal()),
         "an operand has weight-marginal levels but neither carries a weight store"
     );
+    // Nothing but pairs changes hands: no weights, no summed-out level, no
+    // level quantified or filtered.
+    let plain = ws.is_none() && targets.is_empty() && quantified.is_empty() && filter.is_none()
+        && !f.has_marginal_level() && !g.has_marginal_level();
 
     // Early return for zero inputs: `x ∧ 0 = 0`.
     // Avoids allocating the output's levels and arenas for unsatisfiable operands.
@@ -227,9 +231,7 @@ fn apply_and_swept(
     let mut scratch = eng.apply().workspace.checkout(lim);
     let (levels, ws) = assembly.parts_mut();
     let mut run = apply_and_setup(eng, f, g, targets, ws.is_some(), levels, &mut scratch)?;
-    if keep {
-        run.kept = Some(Vec::new());
-    }
+    run.restoring = keep;
 
     // `g_identity[t]` is true when `g` computes constant-true over subtree
     // `t`, so `f`'s nodes pass through unchanged (`x ∧ 1 = x`) and the
@@ -256,8 +258,8 @@ fn apply_and_swept(
         &mut Sweep { vtree: &vtree, targets, quantified, ws: ws.as_mut(), filter },
     );
     if let Err(e) = swept {
-        if let Some(kept) = &run.kept {
-            give_back(run.levels, f, g, kept);
+        if run.restoring {
+            give_back(run.levels, f, g, &run.carried);
         }
         return Err(e);
     }
@@ -266,13 +268,32 @@ fn apply_and_swept(
 
     let out_local = compute_apply_output(f, g, &run, &vtree).unwrap_or(ZERO);
     let out_vtree = f.output.vtree;
-    let kept = run.kept.take();
+    let carried = std::mem::take(&mut run.carried);
+    let restoring = run.restoring;
+    let output = TddNodeId { vtree: out_vtree, local: out_local };
 
-    let mut out = match assembly.finish_or_return(TddNodeId { vtree: out_vtree, local: out_local }) {
+    // A plain conjunction changed no level it carried, and a carried level
+    // brings its whole subtree along, since the other operand is the
+    // identity under it. So the result owes contraction the levels it built
+    // and whatever the operands owed; seeding every level made the
+    // minimization after a join as long as the diagram.
+    let finished = if plain {
+        let mut owed = f.dirty.clone();
+        owed.merge_under(g.dirty.clone());
+        let mut moved = vec![false; num_nodes];
+        for &(t, _) in &carried {
+            moved[t] = true;
+        }
+        let built: Vec<VtreeIdx> = vtree.internal_bottomup().map(|(t, _, _)| t).filter(|t| !moved[t.idx()]).collect();
+        assembly.finish_with_or_return(output, owed, &built)
+    } else {
+        assembly.finish_or_return(output)
+    };
+    let mut out = match finished {
         Ok(out) => out,
         Err((e, mut assembly)) => {
-            if let Some(kept) = &kept {
-                give_back(assembly.parts_mut().0, f, g, kept);
+            if restoring {
+                give_back(assembly.parts_mut().0, f, g, &carried);
             }
             return Err(e);
         }
