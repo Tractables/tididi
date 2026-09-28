@@ -13,6 +13,36 @@ fn count(t: &Tdd) -> u64 {
 }
 
 #[test]
+fn engine_graft_refuses_an_expired_batch_and_retries_unbounded() {
+    use crate::{Context, OperationError};
+    use std::time::{Duration, Instant};
+
+    let context = Arc::new(Context::new());
+    let vtree = context.bind(Vtree::leaf(VarId(1)));
+    let part = crate::literal(&vtree, 1).unwrap();
+    assert_canonical(&part);
+    let eng = Engine::new();
+    {
+        let deadline = Instant::now() - Duration::from_secs(1);
+        let _scope = eng.limits().edit(|s| s.with_deadline(Some(deadline)));
+        for parts in [vec![part.clone()], vec![]] {
+            assert!(matches!(eng.graft(parts, &[VarId(2)]), Err(GraftError::Operation(OperationError::Stopped))));
+        }
+        // The ordinary entry still checks out an independent workspace.
+        let ordinary = Tdd::graft(vec![part.clone()], &[VarId(2)]).unwrap();
+        assert_canonical(&ordinary);
+        assert_eq!(count(&ordinary), 2);
+    }
+    let result = eng.graft(vec![part], &[VarId(2)]).unwrap();
+    assert_canonical(&result);
+    assert_eq!(count(&result), 2);
+    assert!(Arc::ptr_eq(result.context(), &context));
+    let free = eng.graft(vec![], &[VarId(7)]).unwrap();
+    assert_canonical(&free);
+    assert_eq!(count(&free), 2);
+}
+
+#[test]
 fn graft_counts_the_product_times_two_per_spine_var() {
     let a = Arc::new(Vtree::balanced_over(&[VarId(1), VarId(2)]).unwrap());
     let b = Arc::new(Vtree::linear_from_order(&[VarId(4), VarId(3)]).unwrap());
