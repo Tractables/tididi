@@ -205,14 +205,25 @@ pub(crate) fn contract_all_twins(
     Ok(())
 }
 
+/// Whether the diagram has a marginal level, read once per scratch checkout.
+fn diagram_marginal(tdd: &Tdd, scratch: &mut ContractScratch) -> bool {
+    *scratch.diagram_marginal.get_or_insert_with(|| tdd.has_marginal_level())
+}
+
 /// Sibling-pair joint fixed point at one parent. Returns whether the left and
 /// right child each fired at least once.
 ///
 /// Contracting one child dedups the parent's pairs, which can equalize the
-/// other child's contexts, so both children are scanned per iteration until
-/// neither fires. When `is_marginal_boundary`, pair fusion runs at the parent
-/// each iteration too: fusion rewrites the parent's pair lists, which can
-/// create twins at either child, and contraction can mint fusion redexes.
+/// other child's contexts, so a child is scanned again after its sibling
+/// fired. It is not scanned again after it fired itself where the diagram
+/// has no marginal level: every twin group found there merges whole, the
+/// survivor keeps its members' contexts, and no other node's contexts move,
+/// so the child has no twins left until its sibling fires. With a marginal
+/// level a group the overlap filter held back is looked at again, and both
+/// children are scanned per iteration until neither fires. When
+/// `is_marginal_boundary`, pair fusion runs at the parent each iteration
+/// too: fusion rewrites the parent's pair lists, which can create twins at
+/// either child, and contraction can mint fusion redexes.
 ///
 /// Termination: each productive contraction lowers the explicit node count,
 /// and each productive fusion keeps it and lowers the total pair count (k ≥ 2
@@ -229,18 +240,30 @@ fn joint_contract_fixpoint(
 ) -> Result<(bool, bool), OperationError> {
     let mut left_fired = false;
     let mut right_fired = false;
+    // Whether the diagram has a marginal level, and so both children are
+    // scanned every iteration. Read at the first firing, once per scratch
+    // checkout, shared with the merge plan.
+    let mut marginal: Option<bool> = None;
+    let (mut scan_left, mut scan_right) = (true, true);
     loop {
         // As in `Reduction::content_twins`: termination is argued, not
         // bounded, so the round boundary is where cancellation cuts in.
         eng.limits().check_stop()?;
+        if marginal == Some(true) {
+            (scan_left, scan_right) = (true, true);
+        }
         let mut changed = false;
-        if contract_child(eng, tdd, parent, left, scratch)? {
+        if std::mem::take(&mut scan_left) && contract_child(eng, tdd, parent, left, scratch)? {
             changed = true;
             left_fired = true;
+            marginal.get_or_insert_with(|| diagram_marginal(tdd, scratch));
+            scan_right = true;
         }
-        if contract_child(eng, tdd, parent, right, scratch)? {
+        if std::mem::take(&mut scan_right) && contract_child(eng, tdd, parent, right, scratch)? {
             changed = true;
             right_fired = true;
+            marginal.get_or_insert_with(|| diagram_marginal(tdd, scratch));
+            scan_left = true;
         }
         if is_marginal_boundary {
             // The inner form, so fusion reuses this run's already-taken
@@ -251,6 +274,7 @@ fn joint_contract_fixpoint(
             )?;
             if stats.fusion_groups > 0 {
                 changed = true;
+                (scan_left, scan_right) = (true, true);
             }
         }
         if !changed {
