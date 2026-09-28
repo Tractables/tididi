@@ -203,3 +203,104 @@ fn a_search_with_no_work_to_spend_probes_nothing() {
         assert_canonical(m);
     }
 }
+
+#[test]
+fn invalid_pivot_is_refused_without_changing_members() {
+    let mut members = pool();
+    let original = members.clone();
+    let eng = crate::Engine::new();
+    let pivot = VtreeIdx(u32::MAX);
+    let mv = PoolMove { rotation: RotationMove { pivot, kind: RotationKind::Left }, crossed: false };
+    let result = with_members(&mut members, |refs| eng.rotate_pool_if(refs, mv, usize::MAX, |_| panic!("invalid move scored")));
+    assert_eq!(result, Err(crate::OperationError::LevelNotInVtree(pivot)));
+    for (m, before) in members.iter().zip(&original) {
+        assert!(crate::test_helpers::same_storage(m, before));
+        assert_canonical(m);
+    }
+}
+
+#[test]
+fn a_stop_before_acceptance_restores_the_pool() {
+    use crate::limits::{LimitConfig, StopAt, StopRules};
+    let eng = crate::Engine::new();
+    let vtree = Arc::new(Vtree::balanced(6));
+    let original = Tdd::one(&vtree);
+    let mut f = original.clone();
+    let start = eng.limits().work_units();
+    let rules = StopRules { unconditional: Some(StopAt::WorkUnits(start + 1)), after_pairs: None };
+    let result = {
+        let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(rules));
+        let mv = PoolMove { rotation: RotationMove { pivot: vtree.root(), kind: RotationKind::Left }, crossed: false };
+        eng.rotate_pool_if(&mut [&mut f], mv, usize::MAX, |_| panic!("stopped move scored"))
+    };
+    assert_eq!(result, Err(crate::OperationError::Stopped));
+    assert!(crate::test_helpers::same_storage(&f, &original));
+    assert!(Arc::ptr_eq(f.vtree(), &vtree));
+    assert_canonical(&f);
+}
+
+#[test]
+fn search_stops_before_another_applicable_move() {
+    let eng = crate::Engine::new();
+    let vtree = Arc::new(Vtree::balanced(6));
+    let mut f = Tdd::one(&vtree);
+    let config = PoolSearchConfig { max_work_units: 1, ..PoolSearchConfig::default() };
+    let stats = eng.pool_search(&mut [&mut f], &config).unwrap();
+    assert_eq!(stats.work_units, 5, "only the first applicable probe may overshoot");
+    assert_canonical(&f);
+}
+
+#[test]
+fn every_refused_pool_reservation_restores_all_members() {
+    let eng = crate::Engine::new();
+    let original = pool();
+    let mv = PoolMove { rotation: RotationMove { pivot: original[0].vtree().root(), kind: RotationKind::Left }, crossed: true };
+    let mut granted = false;
+    for nth in 0..1000 {
+        let mut members = original.clone();
+        eng.limits().refuse_nth_reserve(nth);
+        let result = with_members(&mut members, |refs| eng.rotate_pool_if(refs, mv, usize::MAX, |_| true));
+        eng.limits().grant_every_reserve();
+        match result {
+            Err(crate::OperationError::OverBudget) => {
+                for (m, before) in members.iter().zip(&original) {
+                    assert!(crate::test_helpers::same_storage(m, before), "reservation {nth}");
+                    assert!(Arc::ptr_eq(m.vtree(), before.vtree()));
+                    assert_canonical(m);
+                }
+            }
+            Ok(true) => { granted = true; break; }
+            other => panic!("unexpected probe result at reservation {nth}: {other:?}"),
+        }
+    }
+    assert!(granted, "every finite probe eventually has enough reservations");
+}
+
+#[test]
+fn every_pool_stop_restores_all_members() {
+    use crate::limits::{LimitConfig, StopAt, StopRules};
+    let eng = crate::Engine::new();
+    let original = pool();
+    let mv = PoolMove { rotation: RotationMove { pivot: original[0].vtree().root(), kind: RotationKind::Left }, crossed: true };
+    let mut completed = false;
+    for cut in 0..5000 {
+        let mut members = original.clone();
+        let outcome = {
+            let stop = StopRules { unconditional: Some(StopAt::WorkUnits(eng.limits().work_units() + cut)), after_pairs: None };
+            let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(stop));
+            with_members(&mut members, |refs| eng.rotate_pool_if(refs, mv, usize::MAX, |_| true))
+        };
+        match outcome {
+            Ok(true) => { completed = true; break; }
+            Err(crate::OperationError::Stopped) => {
+                for (m, before) in members.iter().zip(&original) {
+                    assert!(crate::test_helpers::same_storage(m, before), "stop {cut}");
+                    assert!(Arc::ptr_eq(m.vtree(), before.vtree()));
+                    assert_canonical(m);
+                }
+            }
+            other => panic!("unexpected pool result: {other:?}"),
+        }
+    }
+    assert!(completed);
+}

@@ -124,8 +124,10 @@ impl Engine {
     /// # Errors
     ///
     /// [`OperationError::VtreeMismatch`] when the members do not share one
-    /// vtree allocation; [`OperationError::OverBudget`] from a rebuild the
-    /// byte budget refuses, with every member as it was.
+    /// vtree allocation, [`OperationError::LevelNotInVtree`] for an invalid
+    /// pivot, [`OperationError::OverBudget`] for refused storage, or
+    /// [`OperationError::Stopped`] for cancellation. An error leaves every
+    /// member as it was.
     pub fn rotate_pool_if(
         &self,
         members: &mut [&mut Tdd],
@@ -200,6 +202,9 @@ fn descend(
             }
             'pivot: for kind in [RotationKind::Left, RotationKind::Right] {
                 for &crossed in crossings {
+                    if spent() {
+                        return Ok(());
+                    }
                     let mv = PoolMove { rotation: RotationMove { pivot: v, kind }, crossed };
                     stats.probes += 1;
                     if rotate_pool_on(eng, members, mv, config.max_inner_pairs, scratch, |p| p.live_pairs_delta() < 0)? {
@@ -247,17 +252,25 @@ fn rotate_pool_on(
         return Ok(false);
     }
     let shared = shared_vtree(members)?;
+    if mv.rotation.pivot.idx() >= shared.num_nodes() {
+        return Err(OperationError::LevelNotInVtree(mv.rotation.pivot));
+    }
     if members.iter().any(|m| m.has_marginal_level()) {
         return Ok(false);
     }
     let Some((rotated, info)) = rotated_tree(&shared, mv) else { return Ok(false) };
     let lim = eng.limits();
     let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
-    let before: Vec<usize> = members.iter().map(|m| m.levels[v].live_pairs() + m.levels[w].live_pairs()).collect();
-    let mut saved: Vec<Saved<'_>> = Vec::with_capacity(members.len());
+    let mut before = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut before, members.len())?;
+    before.extend(members.iter().map(|m| m.levels[v].live_pairs() + m.levels[w].live_pairs()));
+    let mut saved = Transient::new(lim, Vec::<Saved<'_>>::new());
+    lim.reserve_exact(&mut saved, members.len())?;
+    let mut after = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut after, members.len())?;
     let mut outcome: Result<bool, OperationError> = Ok(true);
     let mut gate = lim.gate();
-    for (m, &old_pairs) in members.iter_mut().zip(&before) {
+    for (m, &old_pairs) in members.iter_mut().zip(before.iter()) {
         saved.push(Saved {
             output: m.output,
             canonical: m.levels.is_canonical(m.output),
@@ -291,20 +304,23 @@ fn rotate_pool_on(
         }
     }
     if matches!(outcome, Ok(true)) {
-        let after: Vec<usize> = members.iter().map(|m| m.levels[v].live_pairs() + m.levels[w].live_pairs()).collect();
-        outcome = Ok(accept(&PoolProbe { before: &before, after: &after }));
+        outcome = gate.finish().map(|()| {
+            after.extend(members.iter().map(|m| m.levels[v].live_pairs() + m.levels[w].live_pairs()));
+            accept(&PoolProbe { before: &before, after: &after })
+        });
     }
+
     if matches!(outcome, Ok(true)) {
         // The preimages hand their charge back as they drop; the obligations
         // taken from each member go back under what the rebuild recorded.
-        for (m, s) in members.iter_mut().zip(saved) {
+        for (m, s) in members.iter_mut().zip(saved.drain(..)) {
             m.dirty.merge_under(s.dirty);
         }
         return Ok(true);
     }
     // Put back every member the loop reached, in any order: each has its own
     // levels, and all of them go back to the one old allocation.
-    for (m, s) in members.iter_mut().zip(saved) {
+    for (m, s) in members.iter_mut().zip(saved.drain(..)) {
         if let Some((outer, inner)) = s.levels {
             let rebuilt_outer = std::mem::replace(&mut m.levels[v], outer.keep());
             let rebuilt_inner = std::mem::replace(&mut m.levels[w], inner.keep());
