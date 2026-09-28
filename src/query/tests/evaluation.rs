@@ -183,6 +183,68 @@ fn custom_algebra_panics_propagate_and_leave_the_engine_usable() {
 }
 
 #[test]
+fn an_overriding_sum_of_products_is_used_and_agrees_with_the_default() {
+    // Weighted model counts, a weight of its own per variable, so that a
+    // product taken with the wrong partner shows. The override sums the
+    // left values of the pairs that name one right child, by the value's
+    // address, and multiplies each sum once.
+    fn weight(var: VarId, label: LeafLabel) -> u128 {
+        match label {
+            LeafLabel::Zero => 0,
+            LeafLabel::Neg => 1,
+            LeafLabel::Pos => 2 + var.0 as u128,
+            LeafLabel::One => 3 + var.0 as u128,
+        }
+    }
+    struct Plain;
+    impl EvalAlgebra for Plain {
+        type Value = u128;
+        fn zero(&self) -> u128 { 0 }
+        fn leaf(&self, var: VarId, label: LeafLabel) -> u128 { weight(var, label) }
+        fn add_assign(&self, a: &mut u128, b: &u128) { *a += b; }
+        fn mul(&self, a: &u128, b: &u128) -> u128 { a * b }
+    }
+    struct Regrouped { pairs: Cell<usize>, products: Cell<usize> }
+    impl EvalAlgebra for Regrouped {
+        type Value = u128;
+        fn zero(&self) -> u128 { 0 }
+        fn leaf(&self, var: VarId, label: LeafLabel) -> u128 { weight(var, label) }
+        fn add_assign(&self, a: &mut u128, b: &u128) { *a += b; }
+        fn mul(&self, a: &u128, b: &u128) -> u128 { a * b }
+        fn sum_of_products<'v>(&self, pairs: impl ExactSizeIterator<Item = (&'v u128, &'v u128)>) -> u128 {
+            self.pairs.set(self.pairs.get() + pairs.len());
+            let mut by_right: Vec<(&u128, u128)> = Vec::new();
+            for (a, b) in pairs {
+                match by_right.iter_mut().find(|(right, _)| std::ptr::eq(*right, b)) {
+                    Some((_, sum)) => *sum += a,
+                    None => by_right.push((b, *a)),
+                }
+            }
+            self.products.set(self.products.get() + by_right.len());
+            by_right.iter().map(|&(b, sum)| sum * b).sum()
+        }
+    }
+    let eng = Engine::new();
+    let mut rng = crate::vtree::rng::Lcg::new(29);
+    let vars: Vec<VarId> = (1..=12).map(VarId).collect();
+    for tree in [Vtree::balanced(14), Vtree::linear(14), Vtree::random(14, 3)] {
+        let vtree = Arc::new(tree);
+        for round in 0..6u64 {
+            // Few values of the last variables, so that right children repeat.
+            let rows: Vec<u64> = (0..200 + 150 * round)
+                .map(|_| (rng.next_u64() & 0x3ff) | (rng.next_u64() % 3) << 10)
+                .collect();
+            let f = eng.from_models(&vtree, &vars, &rows).unwrap();
+            assert_canonical(&f);
+            let regrouped = Regrouped { pairs: Cell::new(0), products: Cell::new(0) };
+            let value = eng.evaluate(&f, &regrouped).unwrap();
+            assert!(regrouped.pairs.get() > 0, "the fold sums its products through sum_of_products");
+            assert_eq!(value, eng.evaluate(&f, &Plain).unwrap(), "round {round}");
+        }
+    }
+}
+
+#[test]
 fn an_overriding_mul_add_is_used_and_agrees_with_the_default() {
     // Model counts with a leaf `One` worth two: the fold's sum of products.
     struct Counts { fused: Cell<usize> }

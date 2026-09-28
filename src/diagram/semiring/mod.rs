@@ -92,4 +92,27 @@ pub trait EvalAlgebra {
         let product = self.mul(a, b);
         self.add_assign(acc, &product);
     }
+    /// The sum of `a × b` over `pairs`: a node's value from the values of
+    /// its pairs' children, left then right.
+    ///
+    /// The default accumulates each product with [`mul_add`](Self::mul_add)
+    /// in the order given. A node's pairs come in no meaningful order, and
+    /// an algebra whose product costs more than its sum may override this
+    /// to regroup them by distributivity, `a × b + a' × b = (a + a') × b`:
+    /// every pair that names one child borrows that child's one value, so
+    /// the values' addresses tell which pairs share a side. The result
+    /// must equal the default's.
+    fn sum_of_products<'v>(
+        &self,
+        pairs: impl ExactSizeIterator<Item = (&'v Self::Value, &'v Self::Value)>,
+    ) -> Self::Value
+    where
+        Self::Value: 'v,
+    {
+        let mut acc = self.zero();
+        for (a, b) in pairs {
+            self.mul_add(&mut acc, a, b);
+        }
+        acc
+    }
 }

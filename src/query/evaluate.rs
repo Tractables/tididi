@@ -118,18 +118,15 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
     }
 
     /// `Σ over pairs (left × right)`, reading both children's values in
-    /// place and accumulating each product with `mul_add`.
+    /// place: the algebra's `sum_of_products`, by default a `mul_add` per
+    /// pair.
     fn fold_node(
         &self,
         pairs: PairsIter<'_>,
         left: Side<'_, Vec<S::Value>>,
         right: Side<'_, Vec<S::Value>>,
     ) -> S::Value {
-        let mut acc = self.algebra.zero();
-        for pair in pairs {
-            self.algebra.mul_add(&mut acc, child(left, pair.left), child(right, pair.right));
-        }
-        acc
+        self.algebra.sum_of_products(pairs.map(|pair| (child(left, pair.left), child(right, pair.right))))
     }
 }
 
