@@ -116,7 +116,15 @@ struct ContextEntries<'a> {
     parent_level: &'a TddLevel,
     t1_side: ChildSide,
     t1_view: ChildDecoder,
+    /// Whether [`no_twin`](TwinEntries::no_twin) tests the level at all.
+    early_stop: bool,
 }
+
+/// A parent level with fewer entries than this, nodes and arena pairs
+/// together, goes straight to the fingerprints. On the networks most
+/// levels are this small, most of them repeat a sibling within a few pairs,
+/// and the test's fixed cost is not repaid by the few it clears.
+const EARLY_STOP_MIN_ENTRIES: usize = 128;
 
 impl TwinEntries for ContextEntries<'_> {
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
@@ -132,6 +140,9 @@ impl TwinEntries for ContextEntries<'_> {
     /// then needs no fingerprint. The nodes no pair names are counted on the
     /// way: two of them would be twins.
     fn no_twin(&self, lim: &Limits, scratch: &mut ContractScratch, width: usize) -> Result<bool, OperationError> {
+        if !self.early_stop {
+            return Ok(false);
+        }
         let ContractScratch { twin_local, twin_siblings, twin_named, .. } = scratch;
         let words = width.div_ceil(64);
         lim.try_resize(twin_named, words, 0u64)?;
@@ -219,10 +230,12 @@ pub(super) fn find_twin_groups(
     scratch: &mut ContractScratch,
 ) -> Result<bool, OperationError> {
     let level = &tdd.levels[t1.idx()];
+    let parent_level = &tdd.levels[parent.idx()];
     let entries = ContextEntries {
-        parent_level: &tdd.levels[parent.idx()],
+        parent_level,
         t1_side,
         t1_view: level.child_decoder(),
+        early_stop: parent_level.nodes.len() + parent_level.arena_len() >= EARLY_STOP_MIN_ENTRIES,
     };
     group_twins_by_entries(eng, &entries, level.slot_count(), scratch)
 }

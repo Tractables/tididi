@@ -75,6 +75,7 @@ fn the_twin_groups_are_the_nodes_with_equal_contexts() {
                 parent_level: &tdd.levels[root.idx()],
                 t1_side: side,
                 t1_view: tdd.levels[child.idx()].child_decoder(),
+                early_stop: true,
             };
             let width = tdd.levels[child.idx()].slot_count();
             if entries.no_twin(eng.limits(), &mut scratch, width).expect("no_twin") {
