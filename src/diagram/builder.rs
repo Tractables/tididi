@@ -1,7 +1,9 @@
 //! Assemble a diagram level by level with [`TddBuilder`].
 
-use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+
+use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::Engine;
 use crate::limits::{Limits, OperationError};
@@ -18,39 +20,68 @@ use super::{ChildDecoder, ChildRef, ValueRef, LEAF_WIDTH};
 /// Hash-cons tables for one level.
 ///
 /// Single-pair nodes, the majority, are keyed by a packed `u64` rather than
-/// by the pair list.
+/// by the pair list. Nodes with more pairs are keyed by a hash of the list,
+/// and a hit is checked against the level, which holds the lists.
 #[derive(Default)]
 struct InternTable {
     /// Single-pair nodes, keyed by `(left, right)` packed into a `u64`.
-    single: HashMap<u64, NodeIdx>,
-    /// Nodes with two or more pairs, keyed by the pair list.
-    multi: HashMap<Box<[ChildPair]>, NodeIdx>,
+    single: FxHashMap<u64, NodeIdx>,
+    /// Nodes with two or more pairs: the first under each hash of a list.
+    multi: FxHashMap<u64, NodeIdx>,
+    /// The other nodes whose lists share a hash with an earlier node's.
+    collided: FxHashMap<u64, Vec<NodeIdx>>,
+}
+
+/// The hash a pair list of two or more pairs is kept under.
+fn list_hash(pairs: &[ChildPair]) -> u64 {
+    let mut h = FxHasher::default();
+    pairs.hash(&mut h);
+    h.finish()
 }
 
 impl InternTable {
-    /// The first node indexed under this pair list.
-    fn get(&self, pairs: &[ChildPair]) -> Option<NodeIdx> {
+    /// The first node of `level` indexed under this pair list.
+    fn get(&self, level: &TddLevel, pairs: &[ChildPair]) -> Option<NodeIdx> {
         if let [pair] = pairs {
-            self.single.get(&pair.key()).copied()
-        } else {
-            self.multi.get(pairs).copied()
+            return self.single.get(&pair.key()).copied();
         }
+        let hash = list_hash(pairs);
+        let first = *self.multi.get(&hash)?;
+        if level.pairs_of_idx(first.idx()) == pairs {
+            return Some(first);
+        }
+        self.collided.get(&hash)?.iter().copied().find(|n| level.pairs_of_idx(n.idx()) == pairs)
     }
 
-    /// Index a node without replacing an earlier occurrence of its pair list,
-    /// charging the table's growth to `lim`.
+    /// Index node `index` of `level`, whose pairs are `pairs`, without
+    /// replacing an earlier occurrence of its pair list, charging the
+    /// table's growth to `lim`.
     fn insert_on(
         &mut self,
         lim: &Limits,
+        level: &TddLevel,
         pairs: &[ChildPair],
         index: NodeIdx,
     ) -> Result<(), OperationError> {
         if let [pair] = pairs {
             lim.reserve_map(&mut self.single, 1)?;
             self.single.entry(pair.key()).or_insert(index);
-        } else {
-            lim.reserve_map(&mut self.multi, 1)?;
-            self.multi.entry(pairs.into()).or_insert(index);
+            return Ok(());
+        }
+        let hash = list_hash(pairs);
+        match self.multi.get(&hash) {
+            None => {
+                lim.reserve_map(&mut self.multi, 1)?;
+                self.multi.insert(hash, index);
+            }
+            Some(&first) if first == index || level.pairs_of_idx(first.idx()) == pairs => {}
+            Some(_) => {
+                let others = self.collided.get(&hash).map_or(&[][..], Vec::as_slice);
+                if !others.iter().any(|&n| n == index || level.pairs_of_idx(n.idx()) == pairs) {
+                    lim.reserve_map(&mut self.collided, 1)?;
+                    self.collided.entry(hash).or_default().push(index);
+                }
+            }
         }
         Ok(())
     }
@@ -200,7 +231,7 @@ impl TddBuilder {
         let cached = self.interned.get_mut(t.idx()).and_then(Option::take);
         let index = self.levels[t.idx()].push_node(eng.limits(), pairs)?;
         if let Some(mut table) = cached {
-            table.insert_on(eng.limits(), pairs, index)?;
+            table.insert_on(eng.limits(), &self.levels[t.idx()], pairs, index)?;
             self.interned[t.idx()] = Some(table);
         }
         Ok(index)
@@ -242,7 +273,7 @@ impl TddBuilder {
         pairs: &[ChildPair],
     ) -> Result<NodeIdx, OperationError> {
         self.index_level(eng.limits(), t)?;
-        match self.interned[t.idx()].as_ref().and_then(|table| table.get(pairs)) {
+        match self.interned[t.idx()].as_ref().and_then(|table| table.get(&self.levels[t.idx()], pairs)) {
             Some(index) => Ok(index),
             None => self.push(eng, t, pairs),
         }
@@ -262,7 +293,7 @@ impl TddBuilder {
         let mut table = InternTable::default();
         let level = &self.levels[t.idx()];
         for (i, _) in level.internal_inputs_iter() {
-            table.insert_on(lim, level.pairs_of_idx(i), NodeIdx(i as u32))?;
+            table.insert_on(lim, level, level.pairs_of_idx(i), NodeIdx(i as u32))?;
         }
         self.interned[t.idx()] = Some(table);
         Ok(())
