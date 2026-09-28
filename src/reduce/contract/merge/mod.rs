@@ -66,12 +66,14 @@ pub(super) fn contract_twins(
     // `final_remap` is only filled in Step 2, but it is sized here for that
     // reason.
     let ContractScratch {
-        remap, merge: bufs, duplicate, group_starts, flat_groups, has_marginal_below, has_marginal_below_valid, ..
+        remap, merge: bufs, duplicate, group_starts, flat_groups, has_marginal_below, has_marginal_below_valid,
+        diagram_marginal, ..
     } = scratch;
     lim.try_resize(&mut remap.merge_target, width, 0u32)?;
     lim.try_resize(&mut remap.final_remap, width, NodeIdx(0))?;
     for i in 0..width { remap.merge_target[i] = i as u32; }
-    let mut policy = MergePolicy::decide(tdd, t1, parent);
+    let diagram_marginal = *diagram_marginal.get_or_insert_with(|| tdd.has_marginal_level());
+    let mut policy = MergePolicy::decide(tdd, t1, parent, diagram_marginal);
     remap.duplicate_redirect.clear();
     lim.try_resize(&mut remap.duplicate_redirect, width, false)?;
     bufs.clear();

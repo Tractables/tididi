@@ -248,6 +248,10 @@ pub(crate) struct ContractScratch {
     /// `merge::contract_twins`, which runs on the first merge whose plan meets
     /// a repeated pair rather than up front, since only such a plan reads it.
     pub(super) has_marginal_below_valid: bool,
+    /// Whether the diagram this checkout is working on has a marginal level,
+    /// read once per checkout by `merge::contract_twins`: without one, twin
+    /// supports are disjoint and the plan concatenates every member.
+    pub(super) diagram_marginal: Option<bool>,
 
     // ── `contract_all_twins` top-down heap ──
     /// Per-parent dedup flag: true if this parent is currently queued in the
@@ -307,5 +311,6 @@ impl PooledScratch for ContractScratch {
         // scratch out. Invalidate on checkout, not on return, so no path can read a
         // stale marginal map even if it bails before parking.
         self.has_marginal_below_valid = false;
+        self.diagram_marginal = None;
     }
 }

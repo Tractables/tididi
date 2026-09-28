@@ -163,9 +163,10 @@ fn refused_merge_reuses_buffers_without_replaying_stale_plans() {
     let allocation = scratch.merge.sel.as_ptr();
 
     // Reserves before the arena's: the redirect flags, then the planner's
-    // eight buffers (`sel`, `group_plans`, the five overlap-filter buffers and
-    // `resolve_keeps`). The tenth is the survivor's pairs.
-    eng.limits().refuse_nth_reserve(9);
+    // three buffers (`sel`, `group_plans` and `resolve_keeps`; a diagram
+    // without a marginal level has no overlap filter to reserve for). The
+    // fifth is the survivor's pairs.
+    eng.limits().refuse_nth_reserve(4);
     let result = contract_twins(&eng, &mut tdd, child, parent, ChildSide::Left, &mut scratch);
     eng.limits().grant_every_reserve();
     assert_eq!(result, Err(OperationError::OverBudget));

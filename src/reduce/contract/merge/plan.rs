@@ -34,6 +34,10 @@ pub(super) struct MergePolicy {
     pub(super) plain_level: bool,
     pub(super) parent_marginal: bool,
     pub(super) t1_scalable: bool,
+    /// No level of the diagram is marginal. Determinism (invariant 1) then
+    /// makes twin supports pairwise disjoint, the overlap filter could drop
+    /// no member, and the plan concatenates every member without it.
+    pub(super) disjoint_supports: bool,
 }
 
 impl MergePolicy {
@@ -41,7 +45,7 @@ impl MergePolicy {
     /// here. `t1_scalable` starts false: it can change the plan only where
     /// `plan_groups` meets a repeated pair, and the caller asks
     /// [`scalable`](Self::scalable) then.
-    pub(super) fn decide(tdd: &Tdd, t1: VtreeIdx, parent: VtreeIdx) -> Self {
+    pub(super) fn decide(tdd: &Tdd, t1: VtreeIdx, parent: VtreeIdx, diagram_marginal: bool) -> Self {
         // At a plain (no inlined side) level, twin members whose supports
         // overlap (share a pair) are not concat-merged: the union would hold
         // duplicate pairs, which carry a multiplicity only at marginal-flagged
@@ -56,7 +60,7 @@ impl MergePolicy {
         // sums. Under a plain parent the multiplicity has nowhere to live, so
         // they stay apart.
         let parent_marginal = tdd.levels[parent.idx()].any_value_ref_side();
-        Self { plain_level, parent_marginal, t1_scalable: false }
+        Self { plain_level, parent_marginal, t1_scalable: false, disjoint_supports: !diagram_marginal }
     }
 
     /// Whether a child side of the plain level `t1` has marginalization
@@ -101,7 +105,11 @@ pub(super) fn plan_groups(
         filtered, duplicate_members, keep_pairs_sorted, member_pairs, seen_pairs, sel, group_plans, ..
     } = bufs;
     let plain_level = policy.plain_level;
-    let t1_scalable = policy.t1_scalable;
+    // Without a marginal level no pair can repeat, and every group takes
+    // the concat-all plan below; the filter's set of pairs was most of a
+    // Boolean diagram's contraction. `concat_twin_pairs` checks the
+    // disjointness in debug builds.
+    let t1_scalable = policy.t1_scalable || policy.disjoint_supports;
     let parent_marginal = policy.parent_marginal;
     let level = &tdd.levels[t1.idx()];
     let group_bounds = |g: usize| {
