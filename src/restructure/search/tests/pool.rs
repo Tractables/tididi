@@ -304,3 +304,56 @@ fn every_pool_stop_restores_all_members() {
     }
     assert!(completed);
 }
+
+/// The descent without the refused pivots skipped: every pivot of every
+/// sweep probed, in the search's order. Returns the moves kept and probed.
+fn full_descent(eng: &crate::Engine, members: &mut [Tdd], config: &PoolSearchConfig) -> (usize, usize) {
+    for m in members.iter_mut() {
+        eng.reduce(m, crate::reduce::ReductionPlan::default()).unwrap();
+    }
+    let crossings: &[bool] = if config.crossed { &[false, true] } else { &[false] };
+    let (mut accepts, mut probes) = (0, 0);
+    for _ in 0..config.max_sweeps {
+        let internals: Vec<VtreeIdx> = members[0].vtree().internal_bottomup().map(|(v, _, _)| v).collect();
+        let mut kept = 0;
+        for v in internals {
+            'pivot: for kind in [RotationKind::Left, RotationKind::Right] {
+                for &crossed in crossings {
+                    let mv = PoolMove { rotation: RotationMove { pivot: v, kind }, crossed };
+                    probes += 1;
+                    if with_members(members, |refs| eng.rotate_pool_if(refs, mv, usize::MAX, |p| p.live_pairs_delta() < 0)).unwrap() {
+                        accepts += 1;
+                        kept += 1;
+                        break 'pivot;
+                    }
+                }
+            }
+        }
+        if kept == 0 {
+            break;
+        }
+    }
+    for m in members.iter_mut() {
+        eng.reduce(m, crate::reduce::ReductionPlan::default()).unwrap();
+    }
+    (accepts, probes)
+}
+
+#[test]
+fn skipping_refused_pivots_keeps_the_moves_of_the_full_descent() {
+    let eng = crate::Engine::new();
+    for crossed in [false, true] {
+        let config = PoolSearchConfig { max_sweeps: 6, crossed, ..PoolSearchConfig::default() };
+        let mut searched = pool();
+        let stats = with_members(&mut searched, |refs| eng.pool_search(refs, &config)).unwrap();
+        let mut full = pool();
+        let (accepts, probes) = full_descent(&eng, &mut full, &config);
+        assert_eq!(stats.accepts, accepts, "crossed {crossed}");
+        // The pool takes more than one sweep, and the later ones skip.
+        assert!(stats.sweeps > 1 && stats.probes < probes, "crossed {crossed}: {stats:?} against {probes} probes");
+        assert_eq!(searched[0].vtree().to_text(), full[0].vtree().to_text(), "crossed {crossed}");
+        for (s, f) in searched.iter().zip(&full) {
+            assert_eq!(s.pair_count(), f.pair_count(), "crossed {crossed}");
+        }
+    }
+}

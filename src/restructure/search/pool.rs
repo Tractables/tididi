@@ -191,6 +191,14 @@ fn descend(
     let crossings: &[bool] = if config.crossed { &[false, true] } else { &[false] };
     let start = eng.limits().work_units();
     let spent = || eng.limits().work_units() - start >= config.max_work_units;
+    // The pivots whose every move was probed and refused since the last kept
+    // move that could change their outcome. A probe at a pivot reads the
+    // levels of the pivot and its two children, and the children of those
+    // children; a kept move rewrites the levels of its pivot and the node it
+    // promoted, and the children of both. So it can change what is probed at
+    // those two nodes and at the pivot's parent, and nowhere else: a pivot
+    // refused before is refused again, and is not probed.
+    let mut refused = vec![false; members[0].vtree.num_nodes()];
     while stats.sweeps < config.max_sweeps && !spent() {
         stats.sweeps += 1;
         let internals: Vec<VtreeIdx> = members[0].vtree.internal_bottomup().map(|(v, _, _)| v).collect();
@@ -200,6 +208,12 @@ fn descend(
             if spent() {
                 return Ok(());
             }
+            if refused[v.idx()] {
+                continue;
+            }
+            let tree = Arc::clone(&members[0].vtree);
+            let (left, right) = tree.children(v);
+            let mut moved = false;
             'pivot: for kind in [RotationKind::Left, RotationKind::Right] {
                 for &crossed in crossings {
                     if spent() {
@@ -210,9 +224,17 @@ fn descend(
                     if rotate_pool_on(eng, members, mv, config.max_inner_pairs, scratch, |p| p.live_pairs_delta() < 0)? {
                         stats.accepts += 1;
                         kept += 1;
+                        moved = true;
                         break 'pivot;
                     }
                 }
+            }
+            if moved {
+                for t in [Some(v), Some(left), Some(right), tree.node(v).parent()].into_iter().flatten() {
+                    refused[t.idx()] = false;
+                }
+            } else {
+                refused[v.idx()] = true;
             }
         }
         if kept == 0 {
