@@ -40,10 +40,13 @@ pub(crate) fn contract_leaf_twins(eng: &Engine, tdd: &mut Tdd) -> Result<bool, O
     let n = vtree.num_nodes();
     // Every site that mutates a pair list pushes its level here, so the
     // per-call cost is O(|dirty|) instead of O(num_vtree_nodes).
-    let dirty = tdd.dirty.take(Pass::LeafContract);
+    let mut dirty = tdd.dirty.take(Pass::LeafContract);
     if dirty.is_empty() {
         return Ok(false);
     }
+    // The list may name a level more than once ([`Dirty::dedup_above`]).
+    dirty.sort_unstable();
+    dirty.dedup();
     let mut changed = false;
     for (k, &vi_raw) in dirty.iter().enumerate() {
         if vi_raw as usize >= n { continue; }

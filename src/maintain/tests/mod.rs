@@ -440,7 +440,8 @@ fn a_long_run_of_edits_keeps_the_reduction_worklists_bounded() {
             }
         }
     }
-    let bound = vtree.num_nodes();
+    // A list is deduplicated once it holds more than twice the levels.
+    let bound = 2 * vtree.num_nodes();
     for pass in [Pass::Contract, Pass::LeafContract, Pass::ContentTwin] {
         let len = f.dirty.levels(pass).len();
         assert!(len <= bound, "{pass:?} holds {len} entries over {bound} levels");

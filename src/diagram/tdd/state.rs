@@ -233,10 +233,13 @@ impl Dirty {
     /// Bound every list: entries are level indices, so a list longer than `n`
     /// holds duplicates, and a chain of applies or in-place edits that never
     /// drains one would otherwise grow it without bound. Dedup keeps the set
-    /// the list denotes, and fires at most once per `n` pushes.
+    /// the list denotes. It fires above `2n` and leaves at most `n`, so at
+    /// most once per `n` pushes; fired above `n`, a list that already named
+    /// nearly every level was sorted again on nearly every push, as the
+    /// levels a run of clause conjunctions rebuilds between two reductions.
     pub(crate) fn dedup_above(&mut self, n: usize) {
         for list in self.lists.iter_mut().chain(self.loose.as_mut()) {
-            if list.len() > n {
+            if list.len() > 2 * n {
                 list.sort_unstable();
                 list.dedup();
             }
