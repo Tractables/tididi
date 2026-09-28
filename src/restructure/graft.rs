@@ -29,7 +29,8 @@ impl Tdd {
     /// which this unweighted entry discards. Parts with computed weight columns
     /// require [`Tdd::graft_over`] and a compatible destination store. Runs on
     /// the first part's context with no limits armed, or a fresh context when
-    /// there are no parts. The result follows [`Vtree::graft`]'s context policy.
+    /// there are no parts. Use [`Engine::graft`] inside a bounded batch. The
+    /// result follows [`Vtree::graft`]'s context policy.
     ///
     /// # Errors
     ///
@@ -60,10 +61,8 @@ impl Tdd {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn graft(parts: Vec<Tdd>, spine_vars: &[VarId]) -> Result<Tdd, GraftError> {
-        let num_vars = crate::vtree::graft::graft_id_space(parts.iter().map(|t| &*t.vtree), spine_vars);
         let context = parts.first().map(|part| Arc::clone(part.context())).unwrap_or_default();
-        context.run(|eng| graft_impl(eng, parts, |_, v| v, spine_vars, num_vars, None))
-            .map(|(tdd, _)| tdd)
+        context.run(|eng| eng.graft(parts, spine_vars))
     }
 
     /// [`Tdd::graft`] for parts compiled in their own local variable spaces.
@@ -110,6 +109,23 @@ impl Tdd {
         }
         let (parts, maps): (Vec<Tdd>, Vec<Vec<VarId>>) = parts.into_iter().unzip();
         graft_impl(eng, parts, |k, local| maps[k][local.idx()], free_vars, num_vars, into)
+    }
+}
+
+impl Engine {
+    /// [`Tdd::graft`] using this batch's scratch and resource limits.
+    ///
+    /// Checks cancellation at entry, including a single part or only free
+    /// variables. Structural assembly does not poll after entry;
+    /// marginal-root cleanup runs under the engine's limits.
+    ///
+    /// # Errors
+    ///
+    /// As [`Tdd::graft`], with refused work reported as [`GraftError::Operation`].
+    pub fn graft(&self, parts: Vec<Tdd>, spine_vars: &[VarId]) -> Result<Tdd, GraftError> {
+        let num_vars = crate::vtree::graft::graft_id_space(parts.iter().map(|t| &*t.vtree), spine_vars);
+        graft_impl(self, parts, |_, v| v, spine_vars, num_vars, None)
+            .map(|(tdd, _)| tdd)
     }
 }
 
