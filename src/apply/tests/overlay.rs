@@ -263,3 +263,45 @@ fn operands_on_different_vtrees_are_refused() {
     let g = crate::literal(&b, 1).unwrap();
     assert_eq!(crate::and_not(f, g).unwrap_err(), OperationError::VtreeMismatch);
 }
+
+#[test]
+fn every_overlay_refusal_leaves_the_engine_reusable() {
+    use crate::limits::{LimitConfig, StopAt, StopRules};
+    let tree = Arc::new(Vtree::balanced(6));
+    let f = Tdd::clause(&tree, [1, -3, 5]).unwrap();
+    let g = Tdd::cube(&tree, [-2, 4]).unwrap();
+    for operation in [Engine::or, Engine::and_not] {
+        for stopping in [false, true] {
+            let eng = Engine::new();
+            let expected = operation(&eng, f.clone(), g.clone()).unwrap();
+            let mut completed = false;
+            let mut refusals = 0;
+            for cut in 0..5000 {
+                let scope = if stopping {
+                    let stop = StopRules { unconditional: Some(StopAt::WorkUnits(eng.limits().work_units() + cut)), after_pairs: None };
+                    Some(eng.limits().scope(LimitConfig::none().with_stop_rules(stop)))
+                } else {
+                    eng.limits().refuse_nth_reserve(cut as u32);
+                    None
+                };
+                let outcome = operation(&eng, f.clone(), g.clone());
+                drop(scope);
+                eng.limits().grant_every_reserve();
+                match outcome {
+                    Ok(got) => {
+                        assert_canonical(&got);
+                        assert!(got.equivalent(&expected).unwrap());
+                        completed = true;
+                        break;
+                    }
+                    Err(OperationError::OverBudget | OperationError::Stopped) => refusals += 1,
+                    other => panic!("unexpected overlay result: {other:?}"),
+                }
+                let retry = operation(&eng, f.clone(), g.clone()).unwrap();
+                assert_canonical(&retry);
+                assert!(retry.equivalent(&expected).unwrap());
+            }
+            assert!(completed && refusals > 0);
+        }
+    }
+}

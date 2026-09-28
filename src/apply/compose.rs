@@ -200,9 +200,8 @@ impl Engine {
         }
         super::prepare_weights(&mut [&mut condition, &mut then_branch, &mut else_branch])?;
         let mut condition = SharedCircuit::new(condition, 2);
-        let otherwise = self.negate(condition.take(self)?)?;
         let yes = self.and(condition.take(self)?, then_branch)?;
-        let no = self.and(otherwise, else_branch)?;
+        let no = self.and_not(else_branch, condition.take(self)?)?;
         self.or(yes, no)
     }
 
@@ -218,9 +217,11 @@ impl Engine {
         f.require_structure()?;
         g.require_structure()?;
         super::prepare_weights(&mut [&mut f, &mut g])?;
+        let mut f = SharedCircuit::new(f, 2);
         let mut g = SharedCircuit::new(g, 2);
-        let not_g = self.negate(g.take(self)?)?;
-        self.ite(f, not_g, g.take(self)?)
+        let only_f = self.and_not(f.take(self)?, g.take(self)?)?;
+        let only_g = self.and_not(g.take(self)?, f.take(self)?)?;
+        self.or(only_f, only_g)
     }
 
     /// Run [`and_exists`] using this batch's scratch and resource limits.

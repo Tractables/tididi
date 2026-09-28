@@ -62,3 +62,32 @@ fn discarded_constants_still_reject_incompatible_weights() {
         }
     }
 }
+
+#[test]
+fn overlay_compositions_keep_both_weight_arithmetics() {
+    let tree = Arc::new(Vtree::balanced(6));
+    let eng = Engine::new();
+    let a = Tdd::clause(&tree, [1, -3, 5]).unwrap();
+    let b = Tdd::cube(&tree, [-2, 4]).unwrap();
+    let c = Tdd::clause(&tree, [3, 6]).unwrap();
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+        let wa = weighted(a.clone(), 2, arithmetic);
+        let wb = weighted(b.clone(), 2, arithmetic);
+        let wc = weighted(c.clone(), 2, arithmetic);
+        let reference_or = eng.negate(eng.and(eng.negate(a.clone()).unwrap(), eng.negate(b.clone()).unwrap()).unwrap()).unwrap();
+        let reference_diff = eng.and(a.clone(), eng.negate(b.clone()).unwrap()).unwrap();
+        let pairs = [
+            (eng.or(wa.clone(), wb.clone()).unwrap(), reference_or),
+            (eng.and_not(wa.clone(), wb.clone()).unwrap(), reference_diff),
+            (eng.or_many(vec![wa.clone(), wb.clone(), wc.clone()]).unwrap(), eng.or_many(vec![a.clone(), b.clone(), c.clone()]).unwrap()),
+            (eng.xor(wa.clone(), wb.clone()).unwrap(), eng.xor(a.clone(), b.clone()).unwrap()),
+            (eng.ite(wa, wb, wc).unwrap(), eng.ite(a.clone(), b.clone(), c.clone()).unwrap()),
+        ];
+        for (got, mut reference) in pairs {
+            reference.minimize().unwrap();
+            let want = weighted(reference, 2, arithmetic);
+            assert_canonical(&got);
+            same_weight(got.weighted_value().unwrap(), want.weighted_value().unwrap());
+        }
+    }
+}

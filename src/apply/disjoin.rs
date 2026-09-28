@@ -3,16 +3,12 @@
 //! [`or`] overlays its two operands (see `overlay.rs`): each node is split
 //! by the other operand's nodes at its level, and no level is complemented.
 //!
-//! [`or_many`] and [`nor_many`] go by De Morgan over `negate` and `conjoin`
-//! instead: one `!(!f_1 ^ ... ^ !f_n)` runs `n + 1` negations, none of them on
-//! a partial disjunction, because the complement is postponed to the end.
-//! Each negation fills its operand out to full structure before complementing
-//! it, which costs the product of a level's child widths where the operand
-//! has only its own pairs.
+//! [`or_many`] folds the same operation in a balanced tree. [`nor_many`]
+//! conjoins the operands' complements, without constructing their union.
 
 use crate::Engine;
 use crate::diagram::Tdd;
-use crate::limits::OperationError;
+use crate::limits::{Charged, OperationError};
 use crate::apply::negate::negate_on;
 use crate::reduce::ReductionPlan;
 
@@ -23,15 +19,8 @@ pub(crate) fn apply_or(f: Tdd, g: Tdd) -> Tdd {
         .expect("apply_or: operation refused; use tididi::or to handle errors")
 }
 
-/// Disjoin owned operands by De Morgan with one final complement.
-///
-/// `!f_1 ^ ... ^ !f_n` is [`Engine::nor_many`]; this complements it once. When
-/// at most one operand is left once the false ones are set aside there is
-/// nothing to complement: that operand is the disjunction, and it comes back
-/// minimized without a fill.
-///
-/// The operand list is the caller's and is not charged to the engine; the
-/// complements and products built from it are.
+/// Fold owned operands through the direct disjunction, in balanced rounds.
+/// The caller's operand list is uncharged; subsequent round lists are charged.
 pub(crate) fn disjoin_many_on(eng: &Engine, operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
     let _op = eng.limits().enter()?;
     let (mut live, a_false_one) = live_operands(operands)?;
@@ -42,9 +31,7 @@ pub(crate) fn disjoin_many_on(eng: &Engine, operands: Vec<Tdd>) -> Result<Tdd, O
         eng.reduce(&mut result, ReductionPlan::default())?;
         return Ok(result);
     }
-    let mut result = negate_on(eng, fold_conjunction(eng, complements_of(eng, live)?)?)?;
-    eng.reduce(&mut result, ReductionPlan::default())?;
-    Ok(result)
+    fold_balanced(eng, live, 0, Engine::or)
 }
 
 /// Validate the operands and set the false ones aside, keeping their order.
@@ -77,34 +64,36 @@ fn complements_of(eng: &Engine, operands: Vec<Tdd>) -> Result<Vec<Tdd>, Operatio
     Ok(complements)
 }
 
-/// Conjoin a non-empty operand list as a balanced tree, minimizing each
-/// result. A chain would touch the growing conjunction once per operand and so
-/// repeatedly combine a large intermediate with a small operand.
-fn fold_conjunction(eng: &Engine, mut operands: Vec<Tdd>) -> Result<Tdd, OperationError> {
-    use crate::limits::Charged;
+/// Combine a nonempty operand list in balanced rounds. `charged_bytes`
+/// tracks the current list's allocation, zero for the caller's original list.
+fn fold_balanced(
+    eng: &Engine,
+    mut operands: Vec<Tdd>,
+    mut charged_bytes: u64,
+    combine: impl Fn(&Engine, Tdd, Tdd) -> Result<Tdd, OperationError>,
+) -> Result<Tdd, OperationError> {
     debug_assert!(!operands.is_empty());
     let lone = operands.len() == 1;
     while operands.len() > 1 {
         let mut next = Vec::new();
         eng.limits().reserve_exact(&mut next, operands.len().div_ceil(2))?;
-        let operand_bytes = operands.charged_bytes();
         let mut it = operands.into_iter();
         while let Some(a) = it.next() {
             match it.next() {
                 Some(b) => {
-                    let mut c = eng.and(a, b)?;
-                    eng.reduce(&mut c, ReductionPlan::default())?;
-                    next.push(c);
+                    next.push(combine(eng, a, b)?);
                 }
                 None => next.push(a),
             }
         }
         drop(it);
-        eng.limits().release_bytes(operand_bytes);
+        eng.limits().release_bytes(charged_bytes);
+        charged_bytes = next.charged_bytes();
         operands = next;
     }
     let mut result = operands.pop().expect("a non-empty operand list");
-    eng.limits().discard(operands);
+    drop(operands);
+    eng.limits().release_bytes(charged_bytes);
     // A round minimizes each product as it builds it, so only a lone
     // complement still owes its reduction.
     if lone {
@@ -162,10 +151,8 @@ pub fn or(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
 
 /// Return the disjunction of any number of diagrams sharing a vtree allocation.
 ///
-/// Complements each nonfalse operand, conjoins those complements in a balanced
-/// tree, then complements the result. Each complement fills its operand out to
-/// the whole of every level's child product, which [`or`] never builds;
-/// intermediate sizes depend on the operands and their grouping.
+/// Combines nonfalse operands through [`or`] in a balanced tree. No operand
+/// is complemented; intermediate sizes depend on the operands and their grouping.
 ///
 /// All operands are consumed. The result is minimized. A false operand is
 /// dropped after checking weight compatibility; if every operand is false,
@@ -201,8 +188,8 @@ pub fn or_many(operands: impl IntoIterator<Item = Tdd>) -> Result<Tdd, Operation
 
 /// The conjunction of the operands' complements, `!f_1 ^ ... ^ !f_n`.
 ///
-/// True exactly when none of the operands is true. Uses the same balanced
-/// conjunction as [`or_many`], without its final complement.
+/// True exactly when none of the operands is true. Complements each live
+/// operand and conjoins them in a balanced tree.
 ///
 /// All operands are consumed and must share a vtree. The result is minimized.
 /// A false operand is dropped, its complement being the constant true; if
@@ -235,9 +222,7 @@ pub fn nor_many(operands: impl IntoIterator<Item = Tdd>) -> Result<Tdd, Operatio
 }
 
 impl crate::Engine {
-    /// Run [`nor_many`] using this batch's scratch and resource limits:
-    /// the conjunction of the complements, which [`Self::or_many`]
-    /// complements once more.
+    /// Run [`nor_many`] using this batch's scratch and resource limits.
     ///
     /// # Errors
     ///
@@ -252,7 +237,13 @@ impl crate::Engine {
             let f = a_false_one.ok_or(OperationError::EmptyOperands)?;
             return crate::build::constant_like(self, &f, true);
         }
-        fold_conjunction(self, complements_of(self, live)?)
+        let complements = complements_of(self, live)?;
+        let bytes = complements.charged_bytes();
+        fold_balanced(self, complements, bytes, |eng, a, b| {
+            let mut result = eng.and(a, b)?;
+            eng.reduce(&mut result, ReductionPlan::default())?;
+            Ok(result)
+        })
     }
 
     /// Run [`or`] using this batch's scratch and resource limits.
