@@ -61,18 +61,6 @@ fn contract_child(
         return Ok(false);
     }
 
-    // The merge below is the only reader of `has_marginal_below`, so fill it here —
-    // on the first merge this scratch checkout attempts — instead of once per
-    // sweep. See `ContractScratch::has_marginal_below_valid` for why one fill covers
-    // the rest of the checkout.
-    if !scratch.has_marginal_below_valid {
-        super::duplicate_pair::compute_has_marginal_below_into(
-            eng.limits(),
-            tdd,
-            &mut scratch.has_marginal_below,
-        )?;
-        scratch.has_marginal_below_valid = true;
-    }
     let merged = contract_twins(eng, tdd, t1, parent, t1_side, scratch)?;
     if merged == 0 {
         // Every found group was overlap-filtered: the level is unchanged, and

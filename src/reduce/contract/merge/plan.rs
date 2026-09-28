@@ -37,13 +37,11 @@ pub(super) struct MergePolicy {
 }
 
 impl MergePolicy {
-    /// Read the level and parent flags that decide which merges are legal here.
-    pub(super) fn decide(
-        tdd: &Tdd,
-        t1: VtreeIdx,
-        parent: VtreeIdx,
-        has_marginal_below: &[bool],
-    ) -> Self {
+    /// Read the level and parent flags that decide which merges are legal
+    /// here. `t1_scalable` starts false: it can change the plan only where
+    /// `plan_groups` meets a repeated pair, and the caller asks
+    /// [`scalable`](Self::scalable) then.
+    pub(super) fn decide(tdd: &Tdd, t1: VtreeIdx, parent: VtreeIdx) -> Self {
         // At a plain (no inlined side) level, twin members whose supports
         // overlap (share a pair) are not concat-merged: the union would hold
         // duplicate pairs, which carry a multiplicity only at marginal-flagged
@@ -58,18 +56,17 @@ impl MergePolicy {
         // sums. Under a plain parent the multiplicity has nowhere to live, so
         // they stay apart.
         let parent_marginal = tdd.levels[parent.idx()].any_value_ref_side();
-        // When a child side of t1 has marginalization below it, overlapping
-        // twins concat-merge unconditionally and `compact_and_fork_down` folds
-        // the resulting duplicate pairs where it can; see the module doc of
-        // `duplicate_pair`. False unless `plain_level`.
-        let t1_scalable = if plain_level {
-            let (t1_l, t1_r) = tdd.vtree.children(t1);
-            has_marginal_below.get(t1_l.idx()).copied().unwrap_or(false)
-                || has_marginal_below.get(t1_r.idx()).copied().unwrap_or(false)
-        } else {
-            false
-        };
-        Self { plain_level, parent_marginal, t1_scalable }
+        Self { plain_level, parent_marginal, t1_scalable: false }
+    }
+
+    /// Whether a child side of the plain level `t1` has marginalization
+    /// below it. Overlapping twins there concat-merge unconditionally and
+    /// `compact_and_fork_down` folds the resulting duplicate pairs where it
+    /// can; see the module doc of `duplicate_pair`.
+    pub(super) fn scalable(tdd: &Tdd, t1: VtreeIdx, has_marginal_below: &[bool]) -> bool {
+        let (t1_l, t1_r) = tdd.vtree.children(t1);
+        has_marginal_below.get(t1_l.idx()).copied().unwrap_or(false)
+            || has_marginal_below.get(t1_r.idx()).copied().unwrap_or(false)
     }
 }
 
@@ -84,6 +81,13 @@ impl MergePolicy {
 /// The planner buffers are reserved up front, sized by the widest group and
 /// its pair mass, so a refused reservation returns before any group is
 /// planned and the loop itself pushes without checking.
+///
+/// Returns whether the overlap filter met a pair twice: across members, or
+/// within the survivor or a member. Without one, every group concatenates
+/// all its members, as the concat-all plan does, and the survivors hold no
+/// duplicate for fork-down to fold, so `t1_scalable` could not have changed
+/// the outcome. At a level with no marginalization below, determinism makes
+/// twin supports disjoint and no pair repeats.
 pub(super) fn plan_groups(
     lim: &Limits,
     tdd: &Tdd,
@@ -92,7 +96,7 @@ pub(super) fn plan_groups(
     group_starts: &[u32],
     flat_groups: &[u32],
     bufs: &mut MergeBuffers,
-) -> Result<(), OperationError> {
+) -> Result<bool, OperationError> {
     let MergeBuffers {
         filtered, duplicate_members, keep_pairs_sorted, member_pairs, seen_pairs, sel, group_plans, ..
     } = bufs;
@@ -107,6 +111,7 @@ pub(super) fn plan_groups(
     };
     lim.reserve_exact(sel, flat_groups.len())?;
     lim.reserve_exact(group_plans, group_starts.len())?;
+    let mut repeated = false;
     if plain_level && !t1_scalable {
         // The overlap filter below holds one group's members and pairs at a
         // time: `filtered` and `duplicate_members` up to the widest group,
@@ -156,7 +161,7 @@ pub(super) fn plan_groups(
         keep_pairs_sorted.clear();
         filtered.push(keep);
         for p in level.pairs_of_idx(keep as usize) {
-            seen_pairs.insert((p.left.0, p.right.0));
+            repeated |= !seen_pairs.insert((p.left.0, p.right.0));
             keep_pairs_sorted.push((p.left.0, p.right.0));
         }
         keep_pairs_sorted.sort_unstable();
@@ -168,9 +173,10 @@ pub(super) fn plan_groups(
                 overlap |= seen_pairs.contains(&lr);
                 member_pairs.push(lr);
             }
+            repeated |= overlap;
             if !overlap {
                 for &(l, r) in member_pairs.iter() {
-                    seen_pairs.insert((l, r));
+                    repeated |= !seen_pairs.insert((l, r));
                 }
                 filtered.push(idx);
             } else if parent_marginal {
@@ -224,7 +230,7 @@ pub(super) fn plan_groups(
         };
         group_plans.push(GroupPlan { action, start: sel_start as u32, end: sel.len() as u32 });
     }
-    Ok(())
+    Ok(repeated)
 }
 
 /// Reserve the commit pass's whole arena growth up front, so a refused

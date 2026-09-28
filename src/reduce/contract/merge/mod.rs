@@ -65,16 +65,33 @@ pub(super) fn contract_twins(
     // Pass B has already merged twins.
     // `final_remap` is only filled in Step 2, but it is sized here for that
     // reason.
-    let ContractScratch { remap, merge: bufs, duplicate, group_starts, flat_groups, has_marginal_below, .. } = scratch;
+    let ContractScratch {
+        remap, merge: bufs, duplicate, group_starts, flat_groups, has_marginal_below, has_marginal_below_valid, ..
+    } = scratch;
     lim.try_resize(&mut remap.merge_target, width, 0u32)?;
     lim.try_resize(&mut remap.final_remap, width, NodeIdx(0))?;
     for i in 0..width { remap.merge_target[i] = i as u32; }
-    let policy = MergePolicy::decide(tdd, t1, parent, has_marginal_below);
+    let mut policy = MergePolicy::decide(tdd, t1, parent);
     remap.duplicate_redirect.clear();
     lim.try_resize(&mut remap.duplicate_redirect, width, false)?;
     bufs.clear();
 
-    plan_groups(lim, tdd, t1, &policy, group_starts, flat_groups, bufs)?;
+    // Only a repeated pair tells the overlap filter's plan from the
+    // concat-all one, so the marginal map, a pass over every level of the
+    // diagram, is filled only then: once per scratch checkout, and never
+    // while the diagram has no marginal level below `t1`.
+    let repeated = plan_groups(lim, tdd, t1, &policy, group_starts, flat_groups, bufs)?;
+    if repeated && policy.plain_level {
+        if !*has_marginal_below_valid {
+            super::duplicate_pair::compute_has_marginal_below_into(lim, tdd, has_marginal_below)?;
+            *has_marginal_below_valid = true;
+        }
+        if MergePolicy::scalable(tdd, t1, has_marginal_below) {
+            policy.t1_scalable = true;
+            bufs.clear();
+            plan_groups(lim, tdd, t1, &policy, group_starts, flat_groups, bufs)?;
+        }
+    }
     // At most one fork-down survivor per planned group.
     lim.reserve_exact(&mut bufs.resolve_keeps, bufs.group_plans.len())?;
     reserve_transactional(eng, tdd, t1, bufs)?;

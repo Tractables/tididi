@@ -36,9 +36,9 @@ use crate::vtree::VtreeIdx;
 /// place (buffer reused across contract runs via ContractScratch), charging
 /// its growth to `lim`.
 ///
-/// O(vtree nodes), so the caller fills it lazily — on the first merge a sweep
-/// attempts, never on a sweep that finds no twins. See
-/// `ContractScratch::has_marginal_below_valid`.
+/// O(vtree nodes), so the caller fills it lazily — on the first merge of a
+/// checkout whose plan meets a repeated pair, never where twin supports are
+/// disjoint. See `ContractScratch::has_marginal_below_valid`.
 pub(super) fn compute_has_marginal_below_into(
     lim: &Limits,
     tdd: &Tdd,

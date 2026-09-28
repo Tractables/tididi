@@ -186,3 +186,33 @@ fn refused_merge_reuses_buffers_without_replaying_stale_plans() {
     tdd.minimize().unwrap();
     crate::test_helpers::assert_canonical(&tdd);
 }
+
+/// Twins of a diagram with no marginal level have disjoint supports, so
+/// their merge plan meets no repeated pair and never fills the marginal map,
+/// a pass over every level of the diagram.
+#[test]
+fn a_plain_merge_leaves_the_marginal_map_unfilled() {
+    let eng = Engine::new();
+    let vtree = std::sync::Arc::new(crate::vtree::Vtree::balanced(4));
+    let parent = vtree.root();
+    let (child, sibling) = vtree.children(parent);
+    let mut levels = take_levels(&eng, vtree.num_nodes());
+    let pos = NodeIdx(LeafLabel::Pos as u32);
+    let neg = NodeIdx(LeafLabel::Neg as u32);
+    let one = NodeIdx(LeafLabel::One as u32);
+    let a = levels[child.idx()].push_internal_node(&[ChildPair::new(pos, pos)]);
+    let b = levels[child.idx()].push_internal_node(&[ChildPair::new(neg, pos)]);
+    let s = levels[sibling.idx()].push_internal_node(&[ChildPair::new(pos, one)]);
+    let output = levels[parent.idx()].push_internal_node(&[
+        ChildPair::new(a, s), ChildPair::new(b, s),
+    ]);
+    let mut tdd = Tdd::from_levels_unchecked(
+        vtree, levels, TddNodeId { vtree: parent, local: output },
+    );
+    let mut scratch = eng.scratch.reduce.contract.checkout(&eng);
+    scratch.flat_groups = vec![0, 1];
+    scratch.group_starts = vec![0];
+    assert_eq!(contract_twins(&eng, &mut tdd, child, parent, ChildSide::Left, &mut scratch), Ok(1));
+    assert!(!scratch.has_marginal_below_valid);
+    assert_eq!(tdd.model_count().unwrap(), 4u32.into());
+}

@@ -245,8 +245,8 @@ pub(crate) struct ContractScratch {
     pub(super) has_marginal_below: Vec<bool>,
     /// Is [`has_marginal_below`](Self::has_marginal_below) filled for the diagram
     /// this checkout is working on? Cleared by checkout, set by the fill in
-    /// `sweep::contract_child`, which runs on the first merge of a sweep
-    /// rather than up front, since a sweep that finds no twins never reads it.
+    /// `merge::contract_twins`, which runs on the first merge whose plan meets
+    /// a repeated pair rather than up front, since only such a plan reads it.
     pub(super) has_marginal_below_valid: bool,
 
     // ── `contract_all_twins` top-down heap ──
