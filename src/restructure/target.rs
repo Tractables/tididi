@@ -18,14 +18,13 @@
 //! change a size. A last pass mirrors whatever orientation still differs and
 //! moves every level to its index in the target's node array.
 
-use std::collections::VecDeque;
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
 use crate::Engine;
 use crate::diagram::{Tdd, TddLevel, TddNodeId};
-use crate::limits::OperationError;
+use crate::limits::{Limits, OperationError, Transient};
 use crate::restructure::scratch::RestructureScratch;
 use crate::restructure::search::{ProbeRule, RotationMove, RotationProbe, probe_moves};
 use crate::vtree::rotate::RotationInfo;
@@ -150,13 +149,15 @@ impl Engine {
         mover.pairs = mover.tdd.pair_count();
         mover.stats.peak_pairs = mover.pairs;
         Arc::make_mut(&mut mover.tdd.vtree);
-        let mut work = vec![(mover.tdd.vtree.root(), target.root())];
+        let mut work = Transient::new(self.limits(), Vec::new());
+        self.limits().try_push(&mut work, (mover.tdd.vtree.root(), target.root()))?;
         while let Some((a, b)) = work.pop() {
             self.limits().check_stop()?;
             mover.arrange(a, b, &mut work)?;
         }
-        let Mover { stats, .. } = mover;
-        reseat(self, tdd, target, structural)?;
+        let Mover { mut stats, .. } = mover;
+        stats.mirrors += reseat(self, tdd, target, structural)?;
+        self.limits().check_stop()?;
         Ok(stats)
     }
 }
@@ -178,8 +179,7 @@ fn same_variables(source: &Vtree, target: &Vtree) -> Result<(), RestructureError
 }
 
 /// A deterministic 64-bit image of a variable, summed over a subtree to name
-/// its variable set. A collision can only make the plan wrong, never the
-/// diagram: the reseat checks the final shape exactly.
+/// its variable set. The planner checks candidate shared sets exactly.
 fn scramble(var: VarId) -> u64 {
     let mut z = u64::from(var.0).wrapping_add(0x9E37_79B9_7F4A_7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -188,44 +188,63 @@ fn scramble(var: VarId) -> u64 {
 }
 
 /// The variable-set fingerprint and leaf count of every node under `root`.
-fn fingerprints(vtree: &Vtree, root: VtreeIdx) -> FxHashMap<VtreeIdx, (u64, u32)> {
-    let mut out: FxHashMap<VtreeIdx, (u64, u32)> = FxHashMap::default();
-    let order: Vec<VtreeIdx> = vtree.subtree(root).collect();
+fn fingerprints(lim: &Limits, vtree: &Vtree, root: VtreeIdx) -> Result<FxHashMap<VtreeIdx, (u64, u32)>, OperationError> {
+    let mut out = Transient::new(lim, FxHashMap::default());
+    let mut order = Transient::new(lim, Vec::new());
+    let mut gate = lim.gate();
+    for t in vtree.subtree(root) {
+        lim.try_push(&mut order, t)?;
+        gate.poll(1)?;
+    }
+    lim.reserve_map(&mut out, order.len())?;
     for &t in order.iter().rev() {
         let entry = match vtree.node(t) {
             VtreeNode::Leaf { var, .. } => (scramble(*var), 1),
             VtreeNode::Internal { left, right, .. } => {
-                let (l, r) = (out[left], out[right]);
+                let (l, r): ((u64, u32), (u64, u32)) = (out[left], out[right]);
                 (l.0.wrapping_add(r.0), l.1 + r.1)
             }
         };
         out.insert(t, entry);
+        gate.poll(1)?;
     }
-    out
+    gate.finish()?;
+    Ok(out.keep())
 }
 
-/// The largest subtrees strictly below `root` whose fingerprint is in `shared`,
-/// in the order a left-first walk meets them.
-fn units(vtree: &Vtree, root: VtreeIdx, prints: &FxHashMap<VtreeIdx, (u64, u32)>, shared: &FxHashMap<(u64, u32), VtreeIdx>) -> Vec<VtreeIdx> {
-    let mut out = Vec::new();
-    let mut stack = vec![root];
+/// Index the proper subtrees by their variable-set fingerprint and size.
+fn index_prints(lim: &Limits, prints: &FxHashMap<VtreeIdx, (u64, u32)>, root: VtreeIdx) -> Result<FxHashMap<(u64, u32), VtreeIdx>, OperationError> {
+    let mut out = Transient::new(lim, FxHashMap::default());
+    lim.reserve_map(&mut out, prints.len())?;
+    out.extend(prints.iter().filter(|&(&t, _)| t != root).map(|(&t, &p)| (p, t)));
+    Ok(out.keep())
+}
+
+/// The maximal shared proper subtrees, in left-first order.
+fn units(lim: &Limits, vtree: &Vtree, root: VtreeIdx, prints: &FxHashMap<VtreeIdx, (u64, u32)>, shared: &FxHashMap<(u64, u32), VtreeIdx>) -> Result<Vec<VtreeIdx>, OperationError> {
+    let mut out = Transient::new(lim, Vec::new());
+    let mut stack = Transient::new(lim, Vec::new());
+    lim.try_push(&mut stack, root)?;
+    let mut gate = lim.gate();
     while let Some(t) = stack.pop() {
+        gate.poll(1)?;
         if t != root && shared.contains_key(&prints[&t]) {
-            out.push(t);
+            lim.try_push(&mut out, t)?;
             continue;
         }
         if let VtreeNode::Internal { left, right, .. } = vtree.node(t) {
-            stack.push(*right);
-            stack.push(*left);
+            lim.try_push(&mut stack, *right)?;
+            lim.try_push(&mut stack, *left)?;
         }
     }
-    out
+    gate.finish()?;
+    Ok(out.keep())
 }
 
-/// The tree above a node's units, as the set of its internal clusters: each a
-/// bitmask over unit positions, the root's all of them.
-fn clusters(vtree: &Vtree, root: VtreeIdx, bit_of: &FxHashMap<VtreeIdx, u32>) -> (Vec<u32>, FxHashMap<u32, VtreeIdx>) {
-    let mut node_of = FxHashMap::default();
+/// The compact clusters above at most seven units, and their vtree nodes.
+fn clusters(lim: &Limits, vtree: &Vtree, root: VtreeIdx, bit_of: &FxHashMap<VtreeIdx, u32>) -> Result<(Vec<u32>, FxHashMap<u32, VtreeIdx>), OperationError> {
+    let mut node_of = Transient::new(lim, FxHashMap::default());
+    lim.reserve_map(&mut node_of, bit_of.len())?;
     fn walk(vtree: &Vtree, t: VtreeIdx, bit_of: &FxHashMap<VtreeIdx, u32>, node_of: &mut FxHashMap<u32, VtreeIdx>) -> u32 {
         if let Some(&bit) = bit_of.get(&t) {
             return bit;
@@ -236,9 +255,11 @@ fn clusters(vtree: &Vtree, root: VtreeIdx, bit_of: &FxHashMap<VtreeIdx, u32>) ->
         set
     }
     walk(vtree, root, bit_of, &mut node_of);
-    let mut set: Vec<u32> = node_of.keys().copied().collect();
+    let mut set = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut set, node_of.len())?;
+    set.extend(node_of.keys().copied());
     set.sort_unstable();
-    (set, node_of)
+    Ok((set.keep(), node_of.keep()))
 }
 
 /// One rotation above the units, read without orientation: the cluster `w`,
@@ -254,20 +275,13 @@ pub(crate) struct Turn {
 /// The two children of cluster `c` in a tree given by its clusters `set`:
 /// the largest clusters or single units strictly inside it.
 pub(crate) fn children_of(set: &[u32], c: u32) -> (u32, u32) {
-    let mut inside: Vec<u32> = set.iter().copied().filter(|&d| d != c && d & c == d).collect();
-    let mut bits = c;
-    while bits != 0 {
-        let low = bits & bits.wrapping_neg();
-        inside.push(low);
-        bits &= bits - 1;
-    }
-    let maximal: Vec<u32> = inside
-        .iter()
-        .copied()
-        .filter(|&d| !inside.iter().any(|&e| e != d && e & d == d))
-        .collect();
-    debug_assert_eq!(maximal.len(), 2, "a cluster of a binary tree has two children");
-    (maximal[0], maximal[1])
+    let candidates = || set.iter().copied().filter(|&d| d != c && d & c == d)
+        .chain((0..32).map(|i| 1u32 << i).filter(|&bit| c & bit != 0));
+    let mut maximal = candidates().filter(|&d| !candidates().any(|e| e != d && e & d == d));
+    let left = maximal.next().expect("a binary cluster has two children");
+    let right = maximal.next().expect("a binary cluster has two children");
+    debug_assert!(maximal.next().is_none());
+    (left, right)
 }
 
 /// The smallest cluster of `set` strictly containing `c`.
@@ -279,114 +293,56 @@ fn parent_of(set: &[u32], c: u32) -> u32 {
         .expect("only the root has no parent")
 }
 
-/// `set` after `turn`.
-fn turned(set: &[u32], turn: Turn) -> Vec<u32> {
-    let mut out: Vec<u32> = set.iter().copied().filter(|&c| c != turn.w).collect();
-    out.push(turn.x | turn.y);
-    out.sort_unstable();
-    out
-}
-
-/// A shortest sequence of turns from `from` to `to`, two trees over the same
-/// units given by their clusters, by breadth-first search over the trees.
-pub(crate) fn shortest_turns(from: &[u32], to: &[u32]) -> Vec<Turn> {
+/// A shortest sequence over at most seven units, with charged search states.
+pub(crate) fn shortest_turns(lim: &Limits, from: &[u32], to: &[u32]) -> Result<Vec<Turn>, OperationError> {
+    type State = [u32; EXACT_ATOMS - 1];
+    debug_assert!(from.len() < EXACT_ATOMS && from.len() == to.len());
+    let len = from.len();
     let root = *from.iter().max_by_key(|c| c.count_ones()).expect("a tree has a root");
-    let mut seen: FxHashMap<Vec<u32>, Option<(Vec<u32>, Turn)>> = FxHashMap::default();
-    seen.insert(from.to_vec(), None);
-    let mut queue = VecDeque::from([from.to_vec()]);
-    while let Some(set) = queue.pop_front() {
+    let mut first: State = [0; EXACT_ATOMS - 1];
+    first[..len].copy_from_slice(from);
+    let mut seen = Transient::new(lim, FxHashMap::<State, (usize, Turn)>::default());
+    let mut queue = Transient::new(lim, Vec::new());
+    lim.reserve_map(&mut seen, 1)?;
+    seen.insert(first, (usize::MAX, Turn { w: 0, x: 0, y: 0 }));
+    lim.try_push(&mut queue, first)?;
+    let mut cursor = 0;
+    let mut gate = lim.gate();
+    while cursor < queue.len() {
+        gate.poll(1)?;
+        let state = queue[cursor];
+        let set = &state[..len];
         if set == to {
-            let mut path = Vec::new();
-            let mut at = set;
-            while let Some(Some((prev, turn))) = seen.get(&at) {
-                path.push(*turn);
-                at = prev.clone();
+            let mut path = Transient::new(lim, Vec::new());
+            let mut at = state;
+            loop {
+                let &(prev, turn) = seen.get(&at).expect("a queued state was recorded");
+                if prev == usize::MAX { break; }
+                lim.try_push(&mut path, turn)?;
+                at = queue[prev];
             }
             path.reverse();
-            return path;
+            gate.finish()?;
+            return Ok(path.keep());
         }
-        for &w in &set {
-            if w == root {
-                continue;
-            }
-            let x = parent_of(&set, w) & !w;
-            let (y0, y1) = children_of(&set, w);
-            for y in [y0, y1] {
-                let turn = Turn { w, x, y };
-                let next = turned(&set, turn);
-                if !seen.contains_key(&next) {
-                    seen.insert(next.clone(), Some((set.clone(), turn)));
-                    queue.push_back(next);
-                }
-            }
-        }
-    }
-    unreachable!("rotations connect every pair of trees over the same units")
-}
-
-/// A sequence of turns from `from` to the tree whose children are given by
-/// `split`, made one split at a time from the root down: not shortest, but
-/// linear in the units per split.
-pub(crate) fn split_turns(from: &[u32], split: &dyn Fn(u32) -> (u32, u32)) -> Vec<Turn> {
-    let mut set = from.to_vec();
-    let mut turns = Vec::new();
-    let root = *set.iter().max_by_key(|c| c.count_ones()).expect("a tree has a root");
-    let mut work = vec![root];
-    while let Some(v) = work.pop() {
-        if v.count_ones() < 2 {
-            continue;
-        }
-        let (s1, s2) = split(v);
-        make_child(&mut set, v, s1, &mut turns);
-        work.push(s1);
-        work.push(s2);
-    }
-    turns
-}
-
-/// Turn the tree `set` until cluster `v` has `s` as a child.
-fn make_child(set: &mut Vec<u32>, v: u32, s: u32, turns: &mut Vec<Turn>) {
-    let (l, r) = children_of(set, v);
-    if l == s || r == s {
-        return;
-    }
-    for (w, x) in [(l, r), (r, l)] {
-        if w.count_ones() >= 2 {
+        for (i, &w) in set.iter().enumerate() {
+            if w == root { continue; }
+            let x = parent_of(set, w) & !w;
             let (y0, y1) = children_of(set, w);
             for y in [y0, y1] {
-                if x | y == s {
-                    apply_turn(set, Turn { w, x, y }, turns);
-                    return;
+                let mut next = state;
+                next[i] = x | y;
+                next[..len].sort_unstable();
+                if !seen.contains_key(&next) {
+                    lim.reserve_map(&mut seen, 1)?;
+                    seen.insert(next, (cursor, Turn { w, x, y }));
+                    lim.try_push(&mut queue, next)?;
                 }
             }
         }
+        cursor += 1;
     }
-    let (sl, sr) = (s & l, s & r);
-    if sr == 0 || sl == 0 {
-        let (w, x) = if sr == 0 { (l, r) } else { (r, l) };
-        make_child(set, w, s, turns);
-        apply_turn(set, Turn { w, x, y: w & !s }, turns);
-        return;
-    }
-    let (w, x, sw, sx) = if sl != l { (l, r, sl, sr) } else { (r, l, sr, sl) };
-    if sx == x {
-        // One side is whole: bring the other side's part up beside it.
-        make_child(set, w, sw, turns);
-        apply_turn(set, Turn { w, x, y: sw }, turns);
-        return;
-    }
-    make_child(set, w, sw, turns);
-    let rest = w & !sw;
-    apply_turn(set, Turn { w, x, y: rest }, turns);
-    let wide = rest | x;
-    make_child(set, wide, sx, turns);
-    apply_turn(set, Turn { w: wide, x: sw, y: sx }, turns);
-}
-
-/// Record `turn` and apply it to `set`.
-fn apply_turn(set: &mut Vec<u32>, turn: Turn, turns: &mut Vec<Turn>) {
-    *set = turned(set, turn);
-    turns.push(turn);
+    unreachable!("rotations connect every pair of trees over the same units")
 }
 
 /// The move in progress: the diagram on its own vtree, and what it cost.
@@ -408,42 +364,119 @@ impl Mover<'_, '_> {
         if self.target.node(b).is_leaf() {
             return Ok(());
         }
-        let prints_a = fingerprints(&self.tdd.vtree, a);
-        let prints_b = fingerprints(self.target, b);
-        let in_b: FxHashMap<(u64, u32), VtreeIdx> =
-            prints_b.iter().filter(|&(&t, _)| t != b).map(|(&t, &p)| (p, t)).collect();
-        let in_a: FxHashMap<(u64, u32), VtreeIdx> =
-            prints_a.iter().filter(|&(&t, _)| t != a).map(|(&t, &p)| (p, t)).collect();
-        let units_a = units(&self.tdd.vtree, a, &prints_a, &in_b);
-        let units_b = units(self.target, b, &prints_b, &in_a);
-        debug_assert_eq!(units_a.len(), units_b.len(), "shared subtrees pair up");
-        let mut bit_a = FxHashMap::default();
-        let mut bit_b = FxHashMap::default();
+        let lim = self.eng.limits();
+        let prints_a = Transient::new(lim, fingerprints(lim, &self.tdd.vtree, a)?);
+        let prints_b = Transient::new(lim, fingerprints(lim, self.target, b)?);
+        let in_b = Transient::new(lim, index_prints(lim, &prints_b, b)?);
+        let units_a = Transient::new(lim, units(lim, &self.tdd.vtree, a, &prints_a, &in_b)?);
+        // Fingerprints select candidates; only equal leaf sets are shared units.
+        let mut exact = units_a.len() <= EXACT_ATOMS;
+        for &u in units_a.iter() {
+            if !exact { break; }
+            let partner = in_b[&prints_a[&u]];
+            for t in self.tdd.vtree.subtree(u) {
+                lim.check_stop()?;
+                if let VtreeNode::Leaf { var, .. } = self.tdd.vtree.node(t) {
+                    exact &= under(self.target, self.target.leaf_of(*var).expect("same variables"), partner);
+                }
+            }
+        }
+        if !exact {
+            let (left, right) = self.target.children(b);
+            let wanted = self.partition(a, left)?;
+            let (l, r) = self.tdd.vtree.children(a);
+            let other = if l == wanted { r } else { l };
+            lim.try_push(work, (wanted, left))?;
+            lim.try_push(work, (other, right))?;
+            return Ok(());
+        }
+        let mut bit_a = Transient::new(lim, FxHashMap::default());
+        let mut bit_b = Transient::new(lim, FxHashMap::default());
+        lim.reserve_map(&mut bit_a, units_a.len())?;
+        lim.reserve_map(&mut bit_b, units_a.len())?;
         for (i, &u) in units_a.iter().enumerate() {
             bit_a.insert(u, 1u32 << i);
             let partner = in_b[&prints_a[&u]];
             bit_b.insert(partner, 1u32 << i);
-            work.push((u, partner));
+            lim.try_push(work, (u, partner))?;
         }
         if units_a.len() <= 2 {
             return Ok(());
         }
-        assert!(units_a.len() <= 32, "restructure_to: more than 32 units above shared subtrees");
-        let (from, mut node_of) = clusters(&self.tdd.vtree, a, &bit_a);
-        let (to, target_node_of) = clusters(self.target, b, &bit_b);
-        let turns = if units_a.len() <= EXACT_ATOMS {
-            shortest_turns(&from, &to)
-        } else {
-            let split = |c: u32| {
-                let (l, r) = self.target.children(target_node_of[&c]);
-                (cluster_of(self.target, l, &bit_b), cluster_of(self.target, r, &bit_b))
-            };
-            split_turns(&from, &split)
-        };
-        for turn in turns {
+        let (from, node_of) = clusters(lim, &self.tdd.vtree, a, &bit_a)?;
+        let from = Transient::new(lim, from);
+        let mut node_of = Transient::new(lim, node_of);
+        let (to, target_nodes) = clusters(lim, self.target, b, &bit_b)?;
+        let to = Transient::new(lim, to);
+        lim.discard(target_nodes);
+        let turns = Transient::new(lim, shortest_turns(lim, &from, &to)?);
+        for &turn in turns.iter() {
             self.turn(turn, &mut node_of, &bit_a)?;
         }
         Ok(())
+    }
+
+    /// Group the variables below `target` into one child of `root`, without
+    /// encoding units in a fixed-width integer. Tasks replace recursion on a
+    /// long vtree; counts change only at the two levels a rotation rebuilds.
+    fn partition(&mut self, root: VtreeIdx, target: VtreeIdx) -> Result<VtreeIdx, RestructureError> {
+        #[derive(Clone, Copy)]
+        enum Task { Split(VtreeIdx), Lift(VtreeIdx, VtreeIdx), Join(VtreeIdx, VtreeIdx), Both(VtreeIdx, VtreeIdx) }
+        let lim = self.eng.limits();
+        let mut counts = Transient::new(lim, Vec::<(u32, u32)>::new());
+        lim.try_resize(&mut counts, self.tdd.vtree.num_nodes(), (0, 0))?;
+        for t in self.tdd.vtree.bottomup() {
+            lim.check_stop()?;
+            counts[t.idx()] = match self.tdd.vtree.node(t) {
+                VtreeNode::Leaf { var, .. } => (u32::from(under(self.target, self.target.leaf_of(*var).expect("same variables"), target)), 1),
+                VtreeNode::Internal { left, right, .. } => {
+                    let (l, r) = (counts[left.idx()], counts[right.idx()]);
+                    (l.0 + r.0, l.1 + r.1)
+                }
+            };
+        }
+        let mut tasks = Transient::new(lim, Vec::new());
+        lim.try_push(&mut tasks, Task::Split(root))?;
+        let wanted_child = |vtree: &Vtree, counts: &[(u32, u32)], v: VtreeIdx| {
+            let (l, r) = vtree.children(v);
+            if counts[l.idx()].0 == counts[l.idx()].1 { l } else { r }
+        };
+        while let Some(task) = tasks.pop() {
+            lim.check_stop()?;
+            let (v, w, join) = match task {
+                Task::Split(v) => {
+                    let (l, r) = self.tdd.vtree.children(v);
+                    let (lc, rc) = (counts[l.idx()], counts[r.idx()]);
+                    let all = |c: (u32, u32)| c.0 == c.1;
+                    if (all(lc) && rc.0 == 0) || (all(rc) && lc.0 == 0) { continue; }
+                    let (w, next) = if lc.0 == 0 { (r, Task::Lift(v, r)) }
+                        else if rc.0 == 0 { (l, Task::Lift(v, l)) }
+                        else if all(lc) { (r, Task::Join(v, r)) }
+                        else if all(rc) { (l, Task::Join(v, l)) }
+                        else { (l, Task::Both(v, l)) };
+                    lim.try_push(&mut tasks, next)?;
+                    lim.try_push(&mut tasks, Task::Split(w))?;
+                    continue;
+                }
+                Task::Join(v, w) => (v, w, wanted_child(&self.tdd.vtree, &counts, w)),
+                Task::Lift(v, w) | Task::Both(v, w) => {
+                    let selected = wanted_child(&self.tdd.vtree, &counts, w);
+                    let (l, r) = self.tdd.vtree.children(w);
+                    if matches!(task, Task::Both(..)) {
+                        lim.try_push(&mut tasks, Task::Join(v, w))?;
+                        lim.try_push(&mut tasks, Task::Split(w))?;
+                    }
+                    (v, w, if l == selected { r } else { l })
+                }
+            };
+            self.rotate_join(v, w, join)?;
+            for t in [w, v] {
+                let (l, r) = self.tdd.vtree.children(t);
+                let (lc, rc) = (counts[l.idx()], counts[r.idx()]);
+                counts[t.idx()] = (lc.0 + rc.0, lc.1 + rc.1);
+            }
+        }
+        Ok(wanted_child(&self.tdd.vtree, &counts, root))
     }
 
     /// Apply one unoriented turn: mirror the demoted node if its wrong child
@@ -451,27 +484,30 @@ impl Mover<'_, '_> {
     fn turn(&mut self, turn: Turn, node_of: &mut FxHashMap<u32, VtreeIdx>, bit_of: &FxHashMap<VtreeIdx, u32>) -> Result<(), RestructureError> {
         let v = node_of[&(turn.w | turn.x)];
         let w = node_of[&turn.w];
-        let (_, v_right) = self.tdd.vtree.children(v);
-        // A left rotation joins the sibling with w's left child, a right
-        // rotation with w's right child.
-        let kind = if w == v_right { RotationKind::Left } else { RotationKind::Right };
-        let (w_left, w_right) = self.tdd.vtree.children(w);
-        let joined = match kind {
-            RotationKind::Left => w_left,
-            RotationKind::Right => w_right,
-        };
-        let joined_set = match bit_of.get(&joined) {
-            Some(&bit) => bit,
-            None => node_of.iter().find(|&(_, &t)| t == joined).map(|(&c, _)| c).expect("a child is a unit or a cluster"),
-        };
-        if joined_set != turn.y {
-            self.mirror(w);
-        }
+        let (left, right) = self.tdd.vtree.children(w);
+        let set_of = |node: VtreeIdx| bit_of.get(&node).copied().unwrap_or_else(|| {
+            node_of.iter().find(|&(_, &t)| t == node).map(|(&c, _)| c).expect("a child is a unit or cluster")
+        });
+        let joined = if set_of(left) == turn.y { left } else { right };
+        self.rotate_join(v, w, joined)?;
+        node_of.remove(&turn.w);
+        node_of.insert(turn.x | turn.y, w);
+        Ok(())
+    }
+
+    /// Rotate `w` below `v`, joining `joined` with `w`'s sibling.
+    fn rotate_join(&mut self, v: VtreeIdx, w: VtreeIdx, joined: VtreeIdx) -> Result<(), RestructureError> {
+        self.eng.limits().check_stop()?;
         for level in [v, w] {
             if self.tdd.level(level).is_marginal() {
                 return Err(OperationError::MarginalLevel(level).into());
             }
         }
+        let (_, v_right) = self.tdd.vtree.children(v);
+        let kind = if w == v_right { RotationKind::Left } else { RotationKind::Right };
+        let (w_left, w_right) = self.tdd.vtree.children(w);
+        let faces = match kind { RotationKind::Left => w_left, RotationKind::Right => w_right };
+        if faces != joined { self.mirror(w); }
         let mut rule = Kept { delta: 0 };
         let moves = [RotationMove { pivot: v, kind }];
         if !probe_moves(self.eng, self.tdd, &moves, &mut rule, &mut self.scratch, self.bound)? {
@@ -480,8 +516,6 @@ impl Mover<'_, '_> {
         self.stats.rotations += 1;
         self.pairs = (self.pairs as i64 + rule.delta) as usize;
         self.stats.peak_pairs = self.stats.peak_pairs.max(self.pairs);
-        node_of.remove(&turn.w);
-        node_of.insert(turn.x | turn.y, w);
         Ok(())
     }
 
@@ -491,15 +525,6 @@ impl Mover<'_, '_> {
         self.tdd.levels[t.idx()].swap_sides();
         self.stats.mirrors += 1;
     }
-}
-
-/// The bitmask of units under node `t`.
-fn cluster_of(vtree: &Vtree, t: VtreeIdx, bit_of: &FxHashMap<VtreeIdx, u32>) -> u32 {
-    if let Some(&bit) = bit_of.get(&t) {
-        return bit;
-    }
-    let (l, r) = vtree.children(t);
-    cluster_of(vtree, l, bit_of) | cluster_of(vtree, r, bit_of)
 }
 
 /// Keep every rotation, and remember what it did to the pair count.
@@ -516,15 +541,18 @@ impl ProbeRule for Kept {
 
 /// Mirror what still faces the other way, then move every level to its node's
 /// index in `target` and seat the diagram on it.
-fn reseat(eng: &Engine, tdd: &mut Tdd, target: &Arc<Vtree>, structural: bool) -> Result<(), RestructureError> {
+fn reseat(eng: &Engine, tdd: &mut Tdd, target: &Arc<Vtree>, structural: bool) -> Result<usize, RestructureError> {
     let n = tdd.vtree.num_nodes();
     if n != target.num_nodes() {
         return Err(RestructureError::Variables { variable: VarId(0) });
     }
-    let mut map = Vec::new();
+    let mut map = Transient::new(eng.limits(), Vec::new());
     eng.limits().try_resize(&mut map, n, VtreeIdx(0))?;
-    let mut stack = vec![(tdd.vtree.root(), target.root())];
+    let mut mirrors = 0;
+    let mut stack = Transient::new(eng.limits(), Vec::new());
+    eng.limits().try_push(&mut stack, (tdd.vtree.root(), target.root()))?;
     while let Some((s, t)) = stack.pop() {
+        eng.limits().check_stop()?;
         map[s.idx()] = t;
         match (tdd.vtree.node(s), target.node(t)) {
             (VtreeNode::Leaf { var: a, .. }, VtreeNode::Leaf { var: b, .. }) if a == b => {}
@@ -535,10 +563,11 @@ fn reseat(eng: &Engine, tdd: &mut Tdd, target: &Arc<Vtree>, structural: bool) ->
                 if !under(target, target.leaf_of(some_leaf).expect("same variables"), tl) {
                     Arc::make_mut(&mut tdd.vtree).swap_children(s);
                     tdd.levels[s.idx()].swap_sides();
+                    mirrors += 1;
                     std::mem::swap(&mut sl, &mut sr);
                 }
-                stack.push((sl, tl));
-                stack.push((sr, tr));
+                eng.limits().try_push(&mut stack, (sl, tl))?;
+                eng.limits().try_push(&mut stack, (sr, tr))?;
             }
             _ => return Err(RestructureError::Variables { variable: VarId(0) }),
         }
@@ -555,7 +584,7 @@ fn reseat(eng: &Engine, tdd: &mut Tdd, target: &Arc<Vtree>, structural: bool) ->
     if structural && tdd.dirty.is_empty() {
         tdd.levels.certify(tdd.output);
     }
-    Ok(())
+    Ok(mirrors)
 }
 
 /// The variable of the leftmost leaf under `t`.

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::{Turn, children_of, shortest_turns, split_turns};
+use super::{Turn, children_of, shortest_turns};
 use crate::restructure::RestructureError;
 use crate::test_helpers::{CnfShape, assert_canonical, compile_clauses, rand_cnf};
 use crate::vtree::rng::Lcg;
@@ -175,24 +175,21 @@ fn a_rotation_at_a_summed_out_level_is_refused() {
     }
 }
 
-/// The two planners reach the target tree from every tree over five units.
+/// The exact planner reaches every tree over five units.
 #[test]
-fn both_planners_reach_every_tree_over_five_units() {
+fn the_exact_planner_reaches_every_tree_over_five_units() {
+    let eng = crate::Engine::new();
     let trees = all_trees(0b11111);
     for from in &trees {
         for to in &trees {
-            let exact = shortest_turns(from, to);
+            let exact = shortest_turns(eng.limits(), from, to).unwrap();
             assert_eq!(replay(from, &exact), *to);
-            let split = |c: u32| children_of(to, c);
-            let built = split_turns(from, &split);
-            assert_eq!(replay(from, &built), *to);
-            assert!(built.len() >= exact.len());
         }
     }
     // Neighbouring trees are one turn apart.
     let a = vec![0b011, 0b111];
     let b = vec![0b101, 0b111];
-    assert_eq!(shortest_turns(&a, &b).len(), 1);
+    assert_eq!(shortest_turns(eng.limits(), &a, &b).unwrap().len(), 1);
 }
 
 /// Every rooted binary tree over the units of `set`, as sorted cluster lists.
@@ -255,4 +252,69 @@ fn the_move_leaves_both_vtrees_untouched() {
     assert_eq!(target.to_text(), target_text);
     assert!(Arc::ptr_eq(f.vtree(), &source));
     assert_canonical(&f);
+}
+
+#[test]
+fn moves_more_than_thirty_two_independent_units() {
+    for n in [33, 40, 65] {
+        let order: Vec<_> = (1..=n).map(VarId).collect();
+        let reversed: Vec<_> = order.iter().rev().copied().collect();
+        let source = Arc::new(Vtree::linear_from_order(&order).unwrap());
+        let target = Arc::new(Vtree::linear_from_order(&reversed).unwrap());
+        check_move(&[vec![1, 2], vec![-2, n as i32]], &source, &target);
+    }
+}
+
+#[test]
+fn reseating_counts_its_mirrors() {
+    let source = Arc::new(Vtree::join(&Vtree::leaf(VarId(1)), &Vtree::leaf(VarId(2))).unwrap());
+    let target = Arc::new(Vtree::join(&Vtree::leaf(VarId(2)), &Vtree::leaf(VarId(1))).unwrap());
+    let mut f = compile_clauses(&source, &[vec![1]]);
+    let stats = f.restructure_to(&target, usize::MAX).unwrap();
+    assert_canonical(&f);
+    assert_eq!((stats.rotations, stats.mirrors), (0, 1));
+    assert_eq!(f.model_count().unwrap(), 2u32.into());
+}
+
+#[test]
+fn every_refusal_or_stop_keeps_a_move_retryable() {
+    use crate::limits::{LimitConfig, StopAt, StopRules};
+    for n in [5, 9] {
+        let source = Arc::new(Vtree::linear(n));
+        let target = Arc::new(Vtree::random(n, 17));
+        let clauses = vec![vec![1, -3], vec![2, n as i32]];
+        let original = compile_clauses(&source, &clauses);
+        for stopping in [false, true] {
+            let eng = crate::Engine::new();
+            let mut completed = false;
+            let mut refusals = 0;
+            for cut in 0..5000 {
+                let mut f = original.clone();
+                let scope = if stopping {
+                    let stop = StopRules { unconditional: Some(StopAt::WorkUnits(eng.limits().work_units() + cut)), after_pairs: None };
+                    Some(eng.limits().scope(LimitConfig::none().with_stop_rules(stop)))
+                } else {
+                    eng.limits().refuse_nth_reserve(cut as u32);
+                    None
+                };
+                let outcome = eng.restructure_to(&mut f, &target, usize::MAX);
+                drop(scope);
+                eng.limits().grant_every_reserve();
+                assert_canonical(&f);
+                let direct = compile_clauses(f.vtree(), &clauses);
+                assert!(f.equivalent(&direct).unwrap(), "n={n}, stop={stopping}, cut={cut}");
+                match outcome {
+                    Ok(_) => { completed = true; break; }
+                    Err(RestructureError::Operation(OperationError::OverBudget | OperationError::Stopped)) => {
+                        refusals += 1;
+                        eng.restructure_to(&mut f, &target, usize::MAX).unwrap();
+                        assert_canonical(&f);
+                        assert!(f.equivalent(&compile_clauses(&target, &clauses)).unwrap());
+                    }
+                    other => panic!("unexpected move result: {other:?}"),
+                }
+            }
+            assert!(completed && refusals > 0, "n={n}, stop={stopping}");
+        }
+    }
 }
