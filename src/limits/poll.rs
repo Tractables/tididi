@@ -108,6 +108,36 @@ impl Limits {
 }
 
 impl Limits {
+    /// Charge `units` of the host's own work to the work clock and test
+    /// cancellation, as an operation's poll does.
+    ///
+    /// For computation the host runs on the engine's diagrams outside its
+    /// operations, such as a count that walks a diagram itself, which a
+    /// [`StopAt::WorkUnits`] threshold should cover as it covers the
+    /// operations. The host chooses how many units its work is worth.
+    ///
+    /// ```
+    /// use tididi::Engine;
+    /// use tididi::limits::{LimitConfig, StopAt, StopRules};
+    ///
+    /// let engine = Engine::new();
+    /// let limits = engine.limits();
+    /// let start = limits.work_units();
+    /// let rules = StopRules { unconditional: Some(StopAt::WorkUnits(start + 100)), after_pairs: None };
+    /// let _scope = limits.scope(LimitConfig::none().with_stop_rules(rules));
+    /// assert!(limits.poll_host_work(60).is_ok());
+    /// assert_eq!(limits.poll_host_work(60), Err(tididi::OperationError::Stopped));
+    /// assert_eq!(limits.work_units(), start + 120);
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::Stopped`] when an installed stop rule is reached or
+    /// the stop callback decides to stop. The units are charged either way.
+    pub fn poll_host_work(&self, units: u64) -> Result<(), OperationError> {
+        self.poll_now(units)
+    }
+
     /// Test cancellation now and report it as an error.
     ///
     /// For the checks a walk makes on its own account rather than through a

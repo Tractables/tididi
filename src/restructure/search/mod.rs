@@ -14,6 +14,10 @@
 //! several searches from perturbed copies and keeps the smallest result.
 //! [`Tdd::rotate_if`] is the primitive underneath all of them: apply
 //! rotations, look at what they did, and keep or undo them.
+//! [`Engine::rotate_pool_if`](crate::Engine::rotate_pool_if) and
+//! [`Engine::pool_search`](crate::Engine::pool_search) do the same for
+//! several diagrams that share one vtree, and can also swap a node's
+//! children, which changes the order of the leaves.
 //!
 //! A changed vtree belongs to the resulting diagram. Build subsequent operands
 //! using that diagram's [`Tdd::vtree`] so they share its allocation. The search
@@ -23,6 +27,7 @@ pub(crate) mod cluster;
 pub(crate) mod local;
 mod multistart;
 mod policy;
+mod pool;
 mod probe;
 
 #[cfg(test)]
@@ -33,6 +38,7 @@ pub use local::{
 };
 pub use multistart::{MultistartConfig, MultistartStats};
 pub use policy::{AcceptancePolicy, Annealing, Greedy, Tabu};
+pub use pool::{PoolMove, PoolProbe, PoolSearchConfig, PoolSearchStats};
 pub use probe::{RotationMove, RotationProbe};
 pub(in crate::restructure) use probe::{ProbeRule, probe_moves};
 

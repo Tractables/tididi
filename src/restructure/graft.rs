@@ -188,11 +188,12 @@ fn graft_impl(
     } else {
         NodeIdx(0)
     };
+    placement.check_weights().map_err(GraftError::DestinationWeights)?;
     Ok((placement.finish(output_local)?, layout))
 }
 
 /// Require a destination interpretation for every marginal value that a part will carry across.
-fn check_part_weights(part: &Tdd, destination: Option<&WeightStore>, rename: impl Fn(VarId) -> VarId) -> Result<(), TddBuildError> {
+pub(super) fn check_part_weights(part: &Tdd, destination: Option<&WeightStore>, rename: impl Fn(VarId) -> VarId) -> Result<(), TddBuildError> {
     for (index, level) in part.levels.iter().enumerate() {
         let level_index = VtreeIdx(index as u32);
         if destination.is_none() && level.is_weight_marginal() {

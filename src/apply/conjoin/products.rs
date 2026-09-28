@@ -98,6 +98,20 @@ impl Products {
         visit(&mut self.has_pl);
     }
 
+    /// Drop the product lists beyond the last operation's levels, so that
+    /// parking the workspace costs that operation's own levels and not the
+    /// most any operation ever had. A workspace that had seen a diagram of
+    /// 86 000 levels made every later conjunction of a few levels walk all
+    /// 86 000 lists twice on its way back to the pool. A later, larger
+    /// operation grows the vector again with empty lists.
+    pub(super) fn drop_unused_lists(&mut self, lim: &crate::limits::Limits) {
+        let used = self.live_counts.len();
+        if self.product_lists.len() > used {
+            for list in self.product_lists.drain(used..) { lim.discard(list); }
+        }
+        self.has_pl.truncate(used);
+    }
+
     pub(super) fn reset(&mut self, eng: &Engine, sparse: bool, n: usize, f_widths: &[usize], g_widths: &[usize]) -> Result<(), OperationError> {
         if self.product_lists.len() < n { self.product_lists.resize_with(n, Vec::new); }
         self.has_pl.resize(n, false);

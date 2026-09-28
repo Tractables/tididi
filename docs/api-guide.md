@@ -123,6 +123,8 @@ For more specialized control:
 | Combine disjoint variable domains | [`Tdd::graft`](crate::Tdd::graft), [`Tdd::graft_over`](crate::Tdd::graft_over) |
 | Place a circuit on a larger vtree under a renaming | [`Tdd::embed`](crate::Tdd::embed); [reusable components](crate::guide::examples::composition) |
 | Move a circuit onto a given vtree over the same variables | [`Tdd::restructure_to`](crate::Tdd::restructure_to) |
+| Place a diagram with summed-out levels on a larger vtree | [`Engine::embed_over`](crate::Engine::embed_over) |
+| Conjoin or place a diagram by moving its levels, getting it back when refused | [`Engine::and_restoring`](crate::Engine::and_restoring), [`Engine::embed_moving`](crate::Engine::embed_moving) |
 | Assemble levels and pairs directly | [`TddBuilder`](crate::diagram::TddBuilder), started with [`Tdd::builder`](crate::Tdd::builder) |
 
 The [data model](crate::guide::model) explains levels, pairs and determinism;
@@ -135,6 +137,8 @@ the [architecture reference](crate::guide::architecture) describes the implement
 the bounded work. [`Context::run`](crate::Context::run) reuses scratch without
 installing limits. The [execution example](crate::guide::examples::execution)
 shows how to handle a refused allocation and bound repeated queries.
+[`LimitConfig::with_sparse_route`](crate::limits::LimitConfig::with_sparse_route)
+sets when a conjunction level leaves the dense grid for the sparse route.
 
 [`Context::bind`](crate::Context::bind) lets vtrees share scratch;
 [`Context::clear_scratch`](crate::Context::clear_scratch) releases idle buffers.

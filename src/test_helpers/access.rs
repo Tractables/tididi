@@ -1,6 +1,7 @@
 //! What a test needs from crate-private state and the library does not run:
 //! infallible fixture builders, an engine that stops at once, whole-tree
-//! vtree rotations, and re-homing a diagram at a child of its root.
+//! vtree rotations, re-homing a diagram at a child of its root, and storage
+//! equality.
 
 use num_bigint::BigUint;
 
@@ -12,6 +13,16 @@ use crate::vtree::RotationKind;
 use crate::vtree::rotate::RotationInfo;
 use crate::diagram::{ChildSide, Tdd, TddNodeId};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
+
+/// The same diagram, level for level with the same numbering, not just the
+/// same function: what an operation that gives its input back must return.
+pub(crate) fn same_storage(a: &Tdd, b: &Tdd) -> bool {
+    a.output == b.output
+        && a.levels.len() == b.levels.len()
+        && a.levels.iter().zip(b.levels.iter()).all(|(x, y)| {
+            x.nodes == y.nodes && x.pairs == y.pairs && x.ranges == y.ranges
+        })
+}
 
 /// Count-column fixture builders that expect every reservation to succeed.
 pub(crate) trait CountVecExt {

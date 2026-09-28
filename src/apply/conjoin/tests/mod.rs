@@ -6,6 +6,8 @@ mod marginal_leaf_target;
 mod marginal_level;
 mod marginal_orphan;
 mod marginal_subsumed;
+mod owed;
+mod restoring;
 mod self_conjunction;
 
 mod target_completion;

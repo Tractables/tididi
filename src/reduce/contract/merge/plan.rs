@@ -129,6 +129,7 @@ pub(super) fn plan_groups(
         lim.reserve_exact(keep_pairs_sorted, max_pairs)?;
         lim.reserve_exact(member_pairs, max_pairs)?;
         lim.reserve_set(seen_pairs, max_mass)?;
+        seen_pairs.clear();
     }
     // The per-group buffers are cleared before each group below.
     for g in 0..group_starts.len() {
@@ -151,7 +152,7 @@ pub(super) fn plan_groups(
         }
         filtered.clear();
         duplicate_members.clear();
-        seen_pairs.clear();
+        debug_assert!(seen_pairs.is_empty(), "the previous group emptied the overlap set");
         keep_pairs_sorted.clear();
         filtered.push(keep);
         for p in level.pairs_of_idx(keep as usize) {
@@ -178,6 +179,21 @@ pub(super) fn plan_groups(
                     duplicate_members.push(idx);
                 }
             }
+        }
+        // Empty the overlap set for the next group. It holds the pairs of the
+        // members kept in `filtered` and has the capacity of the largest
+        // group's pairs, and `clear` costs that capacity: after one large
+        // group, every small one would pay for it. A set much larger than this
+        // group's pairs has them removed one by one instead.
+        let mass: usize = filtered.iter().map(|&i| level.pair_count_at(i as usize)).sum();
+        if seen_pairs.capacity() > 4 * mass.max(16) {
+            for &idx in filtered.iter() {
+                for p in level.pairs_of_idx(idx as usize) {
+                    seen_pairs.remove(&(p.left.0, p.right.0));
+                }
+            }
+        } else {
+            seen_pairs.clear();
         }
         // Dups are redirected only when no two members have disjoint
         // supports; a mixed group concatenates first, and the duplicate member

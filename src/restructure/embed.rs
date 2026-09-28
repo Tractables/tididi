@@ -10,10 +10,10 @@
 
 use std::sync::Arc;
 
-use super::{EmbedError, Embedding, placement::CopyPlacement};
+use super::{EmbedError, EmbedRefused, Embedding, graft::check_part_weights, placement::{CopyPlacement, MovePlacement}};
 
 use crate::Engine;
-use crate::diagram::{ChildSide, Tdd};
+use crate::diagram::{ChildSide, LeafLabel, NodeIdx, Tdd, WeightStore, WeightValue, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
 use crate::limits::{Limits, OperationError};
 use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
 
@@ -111,7 +111,8 @@ impl Tdd {
     /// is canonical when this diagram is. The cost is the size of `into` plus
     /// the size of this diagram plus, at each destination level with renamed
     /// variables on one side only, the width of that populated side. Structural
-    /// diagrams only; any weights are dropped.
+    /// diagrams only; any weights are dropped. [`Engine::embed_over`] places a
+    /// diagram that has summed levels out.
     ///
     /// The returned [`Embedding`] says which level of the result each level of
     /// this diagram became. Runs on `into`'s execution context; use
@@ -289,6 +290,152 @@ impl Engine {
         let result = assemble(self, tdd, into, &plan)?;
         Ok((result, plan.embedding))
     }
+
+    /// [`Engine::embed`] that moves the diagram's levels into the result
+    /// instead of copying them, and gives the diagram back unchanged when it
+    /// is refused.
+    ///
+    /// The source's pairs are not touched: the cost is the size of `into`
+    /// plus, at each destination level with renamed variables on one side
+    /// only, the width of that populated side, and the pairs of a level that
+    /// reads a single variable through such levels. The result is the
+    /// diagram [`Engine::embed`] returns, up to the numbering of its nodes and
+    /// a node for a literal of such a variable that nothing reads, which
+    /// [`Engine::minimize`] removes. The levels move into storage the engine
+    /// supplies without charging its limits, as [`Tdd::graft_over`] does.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    /// use tididi::vtree::VarId;
+    ///
+    /// let engine = Engine::new();
+    /// let pair = Arc::new(Vtree::linear(2));
+    /// let wide = Arc::new(Vtree::linear(4));
+    /// let r = engine.clause(&pair, [1, 2])?;
+    /// let (copied, _) = engine.embed(&r, &wide, |v| VarId(v.0 + 2))?;
+    /// let (mut moved, _) = engine.embed_moving(r, &wide, |v| VarId(v.0 + 2)).map_err(|r| r.error)?;
+    /// engine.minimize(&mut moved)?;
+    /// assert!(engine.equivalent(&moved, &copied)?);
+    /// assert_eq!(engine.model_count(&moved)?, 12u32.into());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Tdd::embed`], each with the diagram as it was given.
+    #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+    pub fn embed_moving(
+        &self,
+        tdd: Tdd,
+        into: &Arc<Vtree>,
+        map: impl Fn(VarId) -> VarId,
+    ) -> Result<(Tdd, Embedding), EmbedRefused> {
+        let lim = self.limits();
+        let _op = match lim.enter() {
+            Ok(op) => op,
+            Err(e) => return Err(EmbedRefused { error: e.into(), tdd }),
+        };
+        if let Err(e) = tdd.require_structure() {
+            return Err(EmbedRefused { error: e.into(), tdd });
+        }
+        let plan = match Plan::build(lim, tdd.vtree(), into, map, false) {
+            Ok(plan) => plan,
+            Err(error) => return Err(EmbedRefused { error, tdd }),
+        };
+        if tdd.is_zero() {
+            return Ok((crate::build::constant_zero(self, into), plan.embedding));
+        }
+        match assemble_moving(self, tdd, into, &plan) {
+            Ok(result) => Ok((result, plan.embedding)),
+            Err((e, tdd)) => Err(EmbedRefused { error: e.into(), tdd }),
+        }
+    }
+
+    /// [`Tdd::embed`] for a diagram whose levels may hold weighted marginal
+    /// values, with `weights` as the result's store.
+    ///
+    /// A weight-marginal level ([`Tdd::marginalize_levels`] under a
+    /// [`WeightStore`]) is placed with its values, at the level `map` sends
+    /// it to. The result sums over the same assignments as the source and
+    /// over every free variable of `into`, so a variable `into` adds below
+    /// the image of a marginal level multiplies that level's values by the
+    /// variable's weight of `true`, and a level `into` adds below it holds no
+    /// values of its own. A structural diagram is placed as by
+    /// [`Tdd::embed`] and takes `weights` as its store when one is given;
+    /// a diagram with a marginal level needs one, whose table must give
+    /// each renamed variable the weights the source's gives the original.
+    ///
+    /// Copies the levels into storage the engine supplies without charging
+    /// its limits, as [`Tdd::graft_over`] does; the reduction that seats a
+    /// marginal level under a new parent runs under them.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use num_rational::BigRational;
+    /// use tididi::{Engine, Tdd, Vtree};
+    /// use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    /// use tididi::vtree::VarId;
+    ///
+    /// let third = || BigRational::new(1.into(), 3.into());
+    /// let table = |n| RationalWeights::from_literals(&vec![
+    ///     LiteralWeights { negative: third(), positive: third() }; n
+    /// ]);
+    /// let engine = Engine::new();
+    /// let small = Arc::new(Vtree::balanced(2));
+    /// let mut f = engine.clause(&small, [1, 2])?;
+    /// f.set_weights(WeightStore::new(table(2), Arithmetic::ExactRational))?;
+    /// engine.marginalize_levels(&mut f, &[small.root()])?;
+    /// let value = f.weighted_value()?.expect("weighted").into_rational();
+    ///
+    /// // On a larger vtree the free variables 2 and 4 each weigh 2/3.
+    /// let big = Arc::new(Vtree::linear(4));
+    /// let store = WeightStore::new(table(4), Arithmetic::ExactRational);
+    /// let (g, _) = engine.embed_over(&f, &big, |v| VarId(2 * v.0 - 1), Some(store))?;
+    /// let free = BigRational::new(4.into(), 9.into());
+    /// assert_eq!(g.weighted_value()?.expect("weighted").into_rational(), value * free);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Tdd::embed`], with [`OperationError::MarginalLevel`] naming
+    /// a level that holds integer counts rather than weighted values;
+    /// [`EmbedError::SourceWeights`] for a weight-marginal level without
+    /// `weights` or a table that disagrees with the source's under the
+    /// renaming; [`EmbedError::DestinationWeights`] for a table that does
+    /// not cover `into`'s variables.
+    pub fn embed_over(
+        &self,
+        tdd: &Tdd,
+        into: &Arc<Vtree>,
+        map: impl Fn(VarId) -> VarId,
+        weights: Option<WeightStore>,
+    ) -> Result<(Tdd, Embedding), EmbedError> {
+        let lim = self.limits();
+        let _op = lim.enter()?;
+        let plan = Plan::build(lim, tdd.vtree(), into, &map, false)?;
+        // Integer counts reach a parent through inline references, which
+        // do not survive a new parent; only weighted values are placed.
+        if let Some(t) = tdd.vtree().bottomup().find(|&t| tdd.level(t).is_marginal() && !tdd.level(t).is_weight_marginal()) {
+            return Err(OperationError::MarginalLevel(t).into());
+        }
+        if let Some(store) = &weights {
+            store.check_variables(into.leaf_bottomup().map(|(_, var)| var)).map_err(EmbedError::DestinationWeights)?;
+        }
+        check_part_weights(tdd, weights.as_ref(), &map).map_err(EmbedError::SourceWeights)?;
+        let result = if tdd.has_marginal_level() {
+            let store = weights.expect("a marginal level was checked to have a destination store");
+            assemble_marginal(self, tdd, into, &plan, store)?
+        } else {
+            let mut result = assemble(self, tdd, into, &plan)?;
+            if let Some(store) = weights {
+                result.set_weights(store).map_err(OperationError::from)?;
+            }
+            result
+        };
+        Ok((result, plan.embedding))
+    }
 }
 
 /// What each destination node does in the copy, and where each source level went.
@@ -451,6 +598,163 @@ fn assemble(
         }
     }
     gate.flush()?;
+    Ok(placement.finish(tdd.output().local)?)
+}
+
+/// Move the levels of a structural diagram onto the destination and build
+/// what it adds, as [`assemble`] does with copies; the diagram comes back,
+/// levels in place, when the result's storage is refused.
+#[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+fn assemble_moving(
+    eng: &Engine,
+    mut tdd: Tdd,
+    into: &Arc<Vtree>,
+    plan: &Plan,
+) -> Result<Tdd, (OperationError, Tdd)> {
+    let mut placement = match MovePlacement::new(eng, into, None) {
+        Ok(placement) => placement,
+        Err(e) => return Err((e, tdd)),
+    };
+    placement.move_part(&mut tdd, &plan.embedding.levels);
+    let mut gate = eng.limits().gate();
+    let mut stopped = Ok(());
+    // The tops of the pass-through chains over a leaf read as `Pos`/`Neg`,
+    // whose readers are renumbered once the result stands.
+    let mut literal_tops = Vec::new();
+    for t in into.bottomup() {
+        if into.node(t).is_leaf() || plan.covered_by[t.idx()].is_some() {
+            continue;
+        }
+        stopped = gate.poll(1);
+        if stopped.is_err() {
+            break;
+        }
+        let (left, right) = into.children(t);
+        if !plan.mapped[t.idx()] {
+            placement.join(t, placement.true_node(left), placement.true_node(right));
+            continue;
+        }
+        let (free_side, carried) = if plan.mapped[left.idx()] { (ChildSide::Right, left) } else { (ChildSide::Left, right) };
+        if !into.node(carried).is_leaf() {
+            placement.pass_through(t, free_side);
+        } else if let Some(top) = literal_chain(into, plan, &placement, tdd.output().local, t) {
+            placement.pass_over_leaf(t, free_side, &[POS_LEAF_IDX, NEG_LEAF_IDX]);
+            literal_tops.push(top);
+        } else {
+            placement.pass_over_leaf(t, free_side, &[ONE_LEAF_IDX]);
+        }
+    }
+    if let Err(e) = stopped.and_then(|()| gate.flush()) {
+        placement.move_back(&mut tdd, &plan.embedding.levels);
+        return Err((e, tdd));
+    }
+    let mut result = placement.seat(tdd.output().local).map_err(|(e, placement)| {
+        placement.move_back(&mut tdd, &plan.embedding.levels);
+        (e, tdd)
+    })?;
+    // `Pos` and `Neg` are the chain's nodes 0 and 1; nothing reads `One`.
+    for top in literal_tops {
+        crate::diagram::remap_refs_into(&mut result, top, &[u32::MAX, 0, 1]);
+    }
+    Ok(result)
+}
+
+/// For a pass-through over a leaf at `t`, the top of the chain of
+/// pass-throughs it starts when the level above that chain, or the output
+/// when the chain reaches the root, names the leaf as `Pos`/`Neg`; `None`
+/// when it names it as `One`. Determinism makes the first reference the
+/// level's form.
+fn literal_chain(into: &Vtree, plan: &Plan, placement: &MovePlacement<'_>, output: NodeIdx, t: VtreeIdx) -> Option<VtreeIdx> {
+    let mut top = t;
+    loop {
+        match into.node(top).parent() {
+            Some(p) if plan.covered_by[p.idx()].is_none() => top = p,
+            Some(p) => {
+                let named = placement.first_ref(p, ChildSide::of(into, p, top))?;
+                return (named != ONE_LEAF_IDX).then_some(top);
+            }
+            None => return (output != ONE_LEAF_IDX).then_some(top),
+        }
+    }
+}
+
+/// Move a copy of the levels, marginal ones with their values, onto the
+/// destination, and fill what the destination adds: a level under the image
+/// of a marginal level is marginal without values of its own, and the free
+/// variables below that image scale its values.
+fn assemble_marginal(
+    eng: &Engine,
+    tdd: &Tdd,
+    into: &Arc<Vtree>,
+    plan: &Plan,
+    weights: WeightStore,
+) -> Result<Tdd, EmbedError> {
+    if tdd.is_zero() {
+        let mut result = crate::build::constant_zero(eng, into);
+        result.weights = Some(weights.empty_like());
+        return Ok(result);
+    }
+    let mut source = tdd.clone();
+    let mut placement = MovePlacement::new(eng, into, Some(weights.empty_like()))?;
+    placement.move_part(&mut source, &plan.embedding.levels);
+    // The destination nodes strictly below the image of a marginal level,
+    // and the highest such images, whose values the free leaves scale.
+    let mut inside = vec![false; into.num_nodes()];
+    let mut boundaries = Vec::new();
+    for t in into.bottomup().rev() {
+        if into.node(t).is_leaf() {
+            continue;
+        }
+        let marginal = plan.covered_by[t.idx()].is_some_and(|s| tdd.level(s).is_marginal());
+        if marginal && !inside[t.idx()] {
+            boundaries.push(t);
+        }
+        let (left, right) = into.children(t);
+        inside[left.idx()] = inside[t.idx()] || marginal;
+        inside[right.idx()] = inside[t.idx()] || marginal;
+    }
+    let mut gate = eng.limits().gate();
+    for t in into.bottomup() {
+        if into.node(t).is_leaf() || plan.covered_by[t.idx()].is_some() {
+            continue;
+        }
+        gate.poll(1)?;
+        if inside[t.idx()] {
+            placement.subsume(t);
+            continue;
+        }
+        let (left, right) = into.children(t);
+        if !plan.mapped[t.idx()] {
+            placement.join(t, placement.true_node(left), placement.true_node(right));
+        } else {
+            placement.pass_through(t, if plan.mapped[left.idx()] { ChildSide::Right } else { ChildSide::Left });
+        }
+    }
+    gate.flush()?;
+    let mut stack = Vec::new();
+    for boundary in boundaries {
+        let mut factor: Option<WeightValue> = None;
+        stack.push(boundary);
+        while let Some(t) = stack.pop() {
+            if into.node(t).is_leaf() {
+                if !plan.mapped[t.idx()] {
+                    let free = weights.leaf_val(into.leaf_var(t), LeafLabel::One);
+                    factor = Some(match factor {
+                        None => free,
+                        Some(f) => f.mul(&free),
+                    });
+                }
+                continue;
+            }
+            let (left, right) = into.children(t);
+            stack.push(left);
+            stack.push(right);
+        }
+        if let Some(factor) = factor {
+            placement.scale(boundary, &factor);
+        }
+    }
+    placement.check_weights().map_err(EmbedError::DestinationWeights)?;
     Ok(placement.finish(tdd.output().local)?)
 }
 

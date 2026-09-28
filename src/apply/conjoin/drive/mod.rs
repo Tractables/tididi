@@ -142,7 +142,9 @@ fn build_level(
     let (left_idx, right_idx) = (left.idx(), right.idx());
     // Before this level's output reserve fires, so the allocator can
     // reuse the children's slabs for it.
-    drop_dead_children(f, g, shape);
+    if !run.restoring {
+        drop_dead_children(f, g, shape);
+    }
 
     if sweep.quantified.contains(t.idx()) {
         // Every leaf below this level is quantified, so the level is one
@@ -201,9 +203,28 @@ pub(crate) fn apply_and_fallible(
     quantified: VtreeMask<'_>,
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
 ) -> Result<Tdd, OperationError> {
-    match apply_and_core(eng, f, g, targets, quantified, filter, false)? {
-        Conjoined::Built(out) => Ok(out),
-        Conjoined::Counted(_) => unreachable!("a count is only taken when asked for"),
+    apply_and_core(eng, f, g, targets, quantified, filter, ConjoinMode::Build).map(Conjoined::diagram)
+}
+
+/// How the sweep delivers its result and handles refused operands.
+pub(crate) enum ConjoinMode {
+    Build,
+    Count,
+    Restore,
+}
+
+/// Conjoin structural, unweighted operands, returning them intact on refusal.
+pub(crate) fn apply_and_kept(eng: &Engine, f: &mut Tdd, g: &mut Tdd) -> Result<Tdd, OperationError> {
+    debug_assert!(f.weights.is_none() && g.weights.is_none() && !f.has_marginal_level() && !g.has_marginal_level());
+    apply_and_core(eng, f, g, VtreeMask::default(), VtreeMask::default(), None, ConjoinMode::Restore)
+        .map(Conjoined::diagram)
+}
+
+/// Move identity levels back to their operands, latest first.
+fn give_back(levels: &mut [TddLevel], f: &mut Tdd, g: &mut Tdd, kept: &[(usize, bool)]) {
+    for &(t, from_f) in kept.iter().rev() {
+        let carrier = if from_f { &mut f.levels } else { &mut g.levels };
+        std::mem::swap(&mut levels[t], &mut carrier[t]);
     }
 }
 
@@ -214,7 +235,16 @@ pub(crate) enum Conjoined {
     Counted(num_bigint::BigUint),
 }
 
-/// [`apply_and_fallible`], and with `count_root` free to count the output's
+impl Conjoined {
+    fn diagram(self) -> Tdd {
+        match self {
+            Self::Built(out) => out,
+            Self::Counted(_) => unreachable!("only a count request returns a count"),
+        }
+    }
+}
+
+/// [`apply_and_fallible`], with the count mode free to count the output's
 /// root level instead of building it, returning the model count in place of
 /// the diagram. The root is counted only where it is one product the sparse
 /// route builds, with no weights and no filter; otherwise the diagram is
@@ -226,8 +256,10 @@ pub(crate) fn apply_and_core(
     targets: VtreeMask<'_>,
     quantified: VtreeMask<'_>,
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
-    count_root: bool,
+    mode: ConjoinMode,
 ) -> Result<Conjoined, OperationError> {
+    let count_root = matches!(mode, ConjoinMode::Count);
+    let keep = matches!(mode, ConjoinMode::Restore);
     let lim = eng.limits();
     lim.eager_reclaim();
 
@@ -250,6 +282,10 @@ pub(crate) fn apply_and_core(
             || !f.levels.iter().chain(g.levels.iter()).any(|l| l.is_weight_marginal()),
         "an operand has weight-marginal levels but neither carries a weight store"
     );
+    // Nothing but pairs changes hands: no weights, no summed-out level, no
+    // level quantified or filtered.
+    let plain = ws.is_none() && targets.is_empty() && quantified.is_empty() && filter.is_none()
+        && !f.has_marginal_level() && !g.has_marginal_level();
 
     // Early return for zero inputs: `x ∧ 0 = 0`.
     // Avoids allocating the output's levels and arenas for unsatisfiable operands.
@@ -269,6 +305,7 @@ pub(crate) fn apply_and_core(
     let mut scratch = eng.scratch.apply.workspace.checkout(eng);
     let (levels, ws) = assembly.parts_mut();
     let mut run = apply_and_setup(eng, f, g, targets, ws.is_some(), levels, &mut scratch)?;
+    run.restoring = keep;
 
     // `g_identity[t]` is true when `g` computes constant-true over subtree
     // `t`, so `f`'s nodes pass through unchanged (`x ∧ 1 = x`) and the
@@ -291,7 +328,12 @@ pub(crate) fn apply_and_core(
     );
 
     let mut sweep = Sweep { vtree: &vtree, targets, quantified, ws: ws.as_mut(), filter, count_root, counted: None };
-    sweep_levels(eng, &mut run, f, g, &mut sweep)?;
+    if let Err(e) = sweep_levels(eng, &mut run, f, g, &mut sweep) {
+        if run.restoring {
+            give_back(run.levels, f, g, &run.carried);
+        }
+        return Err(e);
+    }
     if let Some(count) = sweep.counted {
         return Ok(Conjoined::Counted(count));
     }
@@ -300,8 +342,36 @@ pub(crate) fn apply_and_core(
 
     let out_local = compute_apply_output(f, g, &run, &vtree).unwrap_or(ZERO);
     let out_vtree = f.output.vtree;
+    let carried = std::mem::take(&mut run.carried);
+    let restoring = run.restoring;
+    let output = TddNodeId { vtree: out_vtree, local: out_local };
 
-    let mut out = assembly.finish(TddNodeId { vtree: out_vtree, local: out_local })?;
+    // A plain conjunction changed no level it carried, and a carried level
+    // brings its whole subtree along, since the other operand is the
+    // identity under it. So the result owes contraction the levels it built
+    // and whatever the operands owed; seeding every level made the
+    // minimization after a join as long as the diagram.
+    let finished = if plain {
+        let mut owed = f.dirty.clone();
+        owed.merge_under(g.dirty.clone());
+        let mut moved = vec![false; num_nodes];
+        for &(t, _) in &carried {
+            moved[t] = true;
+        }
+        let built: Vec<VtreeIdx> = vtree.internal_bottomup().map(|(t, _, _)| t).filter(|t| !moved[t.idx()]).collect();
+        assembly.finish_with_or_return(output, owed, &built)
+    } else {
+        assembly.finish_or_return(output)
+    };
+    let mut out = match finished {
+        Ok(out) => out,
+        Err((e, mut assembly)) => {
+            if restoring {
+                give_back(assembly.parts_mut().0, f, g, &carried);
+            }
+            return Err(e);
+        }
+    };
     // Apply emits self-describing marginal refs — bit-30 set is an inline count,
     // bit-30 clear a bare slot; see `INLINE_VALUE_BIT` for why that polarity —
     // so a bit-30-clear ref here is never an already-inline count.

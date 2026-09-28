@@ -2,6 +2,7 @@
 //! estimator that spends them.
 
 use super::*;
+use crate::limits::{Limits, SparseRoute};
 
 /// The thresholds one apply decides its sparse routing by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,19 +26,27 @@ pub(crate) struct SparseThresholds {
 }
 
 impl SparseThresholds {
-    /// The thresholds every apply decides by.
+    /// The thresholds an engine starts with.
     pub(crate) const PRODUCTION: SparseThresholds = SparseThresholds {
-        min_grid: 4096,
-        sparsity_factor: 64,
+        min_grid: SparseRoute::DEFAULT.min_grid,
+        sparsity_factor: SparseRoute::DEFAULT.sparsity as u128,
         chunk_bytes: 256 * 1024 * 1024,
         flat_parents: 1 << 15,
     };
 }
 
-/// The thresholds in force: [`SparseThresholds::PRODUCTION`], unless a test
-/// has installed others on this thread.
-pub(crate) fn sparse_thresholds() -> SparseThresholds {
-    forced().unwrap_or(SparseThresholds::PRODUCTION)
+/// The thresholds in force: [`SparseThresholds::PRODUCTION`] with the
+/// engine's [`SparseRoute`], unless a test has installed others on this
+/// thread.
+pub(crate) fn sparse_thresholds(lim: &Limits) -> SparseThresholds {
+    forced().unwrap_or_else(|| {
+        let route = lim.sparse_route();
+        SparseThresholds {
+            min_grid: route.min_grid,
+            sparsity_factor: u128::from(route.sparsity),
+            ..SparseThresholds::PRODUCTION
+        }
+    })
 }
 
 /// The direction estimate's verdict for one level.

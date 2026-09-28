@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::inner_index::{block, pack};
 
 use crate::diagram::Tdd;
-use crate::limits::{LimitConfig, MemoryHooks};
+use crate::limits::{LimitConfig, MemoryHooks, SparseRoute};
 use crate::vtree::{VarId, Vtree};
 use crate::Engine;
 
@@ -60,4 +60,31 @@ fn a_one_node_root_over_wide_children_never_materializes_their_grids() {
         largest < child_grid_bytes,
         "a {largest}-byte reservation: the root densified a {child_grid_bytes}-byte child grid",
     );
+}
+
+#[test]
+fn the_engine_sparse_route_decides_the_gate() {
+    let eng = Engine::new();
+    let (f, g, _vtree) = root_join(&eng);
+    let child_grid_bytes = 2000u64 * 2000 * std::mem::size_of::<u32>() as u64;
+
+    let conjoin = |route: SparseRoute| {
+        let largest = Arc::new(AtomicU64::new(0));
+        let seen = Arc::clone(&largest);
+        let hooks = MemoryHooks::new(
+            move |bytes| { seen.fetch_max(bytes, Ordering::Relaxed); },
+            || 0, || None, || {},
+        );
+        let _installed = eng.limits().scope(
+            LimitConfig::none().with_memory_hooks(hooks).with_sparse_route(route),
+        );
+        let out = eng.and(f.clone(), g.clone()).expect("an unarmed engine refuses nothing");
+        (out, largest.load(Ordering::Relaxed))
+    };
+    let (sparse, sparse_largest) = conjoin(SparseRoute::DEFAULT);
+    let (dense, dense_largest) = conjoin(SparseRoute { min_grid: usize::MAX, ..SparseRoute::DEFAULT });
+    assert!(sparse_largest < child_grid_bytes, "the default route densified a child grid");
+    assert!(dense_largest >= child_grid_bytes, "a route that never goes sparse kept the child grids sparse");
+    assert!(eng.equivalent(&sparse, &dense).unwrap(), "the route changed the conjunction");
+    assert_eq!(eng.limits().armed().sparse_route(), SparseRoute::DEFAULT, "the scope restored the route");
 }

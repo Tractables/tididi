@@ -161,7 +161,7 @@ impl TddBuilder {
         (&mut self.levels, &mut self.weights)
     }
 
-    pub(super) fn check(&self, output: TddNodeId) -> Result<(), TddBuildError> {
+    pub(crate) fn check(&self, output: TddNodeId) -> Result<(), TddBuildError> {
         check_levels(&self.vtree, &self.levels, output, self.weights.as_ref())
     }
 

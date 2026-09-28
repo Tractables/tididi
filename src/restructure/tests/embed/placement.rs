@@ -7,7 +7,7 @@ use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 
 /// `vtree`'s shape with every variable renamed through `rename`, over an id
 /// space of `num_vars`.
-fn renamed_shape(vtree: &Vtree, rename: impl Fn(VarId) -> VarId, num_vars: u32) -> Vtree {
+pub(super) fn renamed_shape(vtree: &Vtree, rename: impl Fn(VarId) -> VarId, num_vars: u32) -> Vtree {
     let mut nodes = Vec::with_capacity(vtree.num_nodes());
     let mut copy_of = vec![VtreeIdx(0); vtree.num_nodes()];
     for t in vtree.bottomup() {

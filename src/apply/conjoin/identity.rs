@@ -195,6 +195,7 @@ fn apply_identity_fast_path<const F_IS_CARRIER: bool>(
     }
 
     std::mem::swap(&mut levels[t_idx], &mut carrier_levels[t_idx]);
+    run.carried.push((t_idx, F_IS_CARRIER));
 
     // When a source-marginal child remains marginal in the output, re-resolve the
     // swapped-in carrier level's marginal refs into the output child

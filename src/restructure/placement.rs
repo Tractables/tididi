@@ -10,15 +10,48 @@ use std::sync::Arc;
 
 use crate::{Engine, OperationError};
 use crate::diagram::{
-    Assembly, ChildPair, ChildSide, LevelView, MarginalStorage, NodeIdx, Tdd, TddNodeId,
-    WeightStore, LEAF_WIDTH, ONE_LEAF_IDX, try_take_levels,
+    Assembly, ChildPair, ChildSide, LevelView, MarginalStorage, NodeIdx, Tdd, TddBuildError,
+    TddNodeId, WeightStore, WeightValue, LEAF_WIDTH, ONE_LEAF_IDX, try_take_levels,
 };
 use crate::vtree::{Vtree, VtreeIdx};
-use super::GraftError;
 
 /// Drop the nodes the joins made in `result` that nothing refers to.
 fn prune(eng: &Engine, result: &mut Tdd) -> Result<(), OperationError> {
     eng.reduce(result, crate::reduce::ReductionPlan::Prune)
+}
+
+/// The true reference for an unconstrained child already placed bottom-up.
+#[inline]
+fn true_node(vtree: &Vtree, child: VtreeIdx) -> NodeIdx {
+    if vtree.node(child).is_leaf() { ONE_LEAF_IDX } else { NodeIdx(0) }
+}
+
+/// The joins that lift every reference of one child of `at` through a free
+/// sibling: one node per slot of the carried child, at the same index.
+struct PassThrough {
+    carries: VtreeIdx,
+    carries_leaf: bool,
+    one: NodeIdx,
+    width: usize,
+    free_side: ChildSide,
+}
+
+impl PassThrough {
+    fn new(vtree: &Vtree, assembly: &Assembly<'_>, at: VtreeIdx, free_side: ChildSide) -> Self {
+        let (left, right) = vtree.children(at);
+        let (free, carries) = if free_side == ChildSide::Left { (left, right) } else { (right, left) };
+        let carries_leaf = vtree.node(carries).is_leaf();
+        let width = if carries_leaf { LEAF_WIDTH } else { assembly.level(carries).slot_count() };
+        Self { carries, carries_leaf, one: true_node(vtree, free), width, free_side }
+    }
+
+    /// The `(left, right)` children of each join, in slot order.
+    fn pairs(&self) -> impl Iterator<Item = (NodeIdx, NodeIdx)> + '_ {
+        (0..self.width).map(move |i| {
+            let child = NodeIdx(i as u32);
+            if self.free_side == ChildSide::Left { (self.one, child) } else { (child, self.one) }
+        })
+    }
 }
 
 /// Bounded structural copies into a fresh destination, under the engine's
@@ -55,23 +88,17 @@ impl<'a> CopyPlacement<'a> {
     /// The true reference for an unconstrained child already placed bottom-up.
     #[inline]
     pub(super) fn true_node(&self, child: VtreeIdx) -> NodeIdx {
-        if self.vtree.node(child).is_leaf() { ONE_LEAF_IDX } else { NodeIdx(0) }
+        true_node(self.vtree, child)
     }
 
     /// Lift all references from one child through a join with a free sibling.
     #[inline]
     pub(super) fn pass_through(&mut self, at: VtreeIdx, free_side: ChildSide) -> Result<(), OperationError> {
-        let (left, right) = self.vtree.children(at);
-        let (free, carries) = if free_side == ChildSide::Left { (left, right) } else { (right, left) };
-        let one = self.true_node(free);
-        let carries_leaf = self.vtree.node(carries).is_leaf();
-        let width = if carries_leaf { LEAF_WIDTH } else { self.assembly.level(carries).slot_count() };
+        let through = PassThrough::new(self.vtree, &self.assembly, at, free_side);
         // A leaf contributes all three implicit labels. Prune any wrappers the
         // copied parent does not use; keep their indices until then.
-        self.prune |= carries_leaf;
-        for i in 0..width {
-            let child = NodeIdx(i as u32);
-            let (left, right) = if free_side == ChildSide::Left { (one, child) } else { (child, one) };
+        self.prune |= through.carries_leaf;
+        for (left, right) in through.pairs() {
             self.join(at, left, right)?;
         }
         Ok(())
@@ -106,13 +133,17 @@ pub(super) struct MovePlacement<'a> {
     /// Whether a join sits over a marginal level, which is what leaves
     /// references to repair.
     prune: bool,
+    /// Whether a pass-through sits over a marginal level. Its nodes are told
+    /// apart by value slots alone, and slots the prune merges leave twins
+    /// behind, which a contraction after it removes.
+    contract: bool,
 }
 
 impl<'a> MovePlacement<'a> {
     pub(super) fn new(eng: &'a Engine, vtree: &'a Arc<Vtree>, weights: Option<WeightStore>) -> Result<Self, OperationError> {
         let levels = try_take_levels(eng, vtree.num_nodes())?;
         let assembly = Assembly::from_levels(eng, Arc::clone(vtree), levels, weights);
-        Ok(Self { eng, vtree, assembly, prune: false })
+        Ok(Self { eng, vtree, assembly, prune: false, contract: false })
     }
 
     /// Move every level and its weighted column through a checked placement map.
@@ -126,6 +157,62 @@ impl<'a> MovePlacement<'a> {
         }
     }
 
+    /// Make an internal level marginal with no values: a level under a
+    /// marginal parent, whose values the parent's subsume.
+    pub(super) fn subsume(&mut self, at: VtreeIdx) {
+        let (levels, weights) = self.assembly.parts_mut();
+        MarginalStorage::new(&mut levels[at.idx()], weights.as_mut(), at.idx()).install_weights(Vec::new());
+    }
+
+    /// Multiply every value of a weight-marginal level by `factor`.
+    pub(super) fn scale(&mut self, at: VtreeIdx, factor: &WeightValue) {
+        let (_, weights) = self.assembly.parts_mut();
+        if let Some(values) = weights.as_mut().and_then(|w| w.level_vals_mut(at.idx())) {
+            for value in values.iter_mut() {
+                *value = value.mul(factor);
+            }
+        }
+    }
+
+    /// The true reference for an unconstrained child already placed bottom-up.
+    #[inline]
+    pub(super) fn true_node(&self, child: VtreeIdx) -> NodeIdx {
+        true_node(self.vtree, child)
+    }
+
+    /// Lift all references from one child through a join with a free sibling.
+    pub(super) fn pass_through(&mut self, at: VtreeIdx, free_side: ChildSide) {
+        let through = PassThrough::new(self.vtree, &self.assembly, at, free_side);
+        self.prune |= through.carries_leaf;
+        self.contract |= self.assembly.level(through.carries).is_marginal();
+        for (left, right) in through.pairs() {
+            self.join(at, left, right);
+        }
+    }
+
+    /// Lift a leaf child through a join with a free sibling, one node per
+    /// label of `labels` in that order: the labels the level reading the
+    /// lifted references names, which determinism keeps within `{One}` or
+    /// within `{Pos, Neg}`. A node per label of the leaf would put `One` and
+    /// a literal on one level.
+    pub(super) fn pass_over_leaf(&mut self, at: VtreeIdx, free_side: ChildSide, labels: &[NodeIdx]) {
+        let (left, right) = self.vtree.children(at);
+        let one = true_node(self.vtree, if free_side == ChildSide::Left { left } else { right });
+        for &label in labels {
+            let (l, r) = if free_side == ChildSide::Left { (one, label) } else { (label, one) };
+            self.join(at, l, r);
+        }
+    }
+
+    /// The first reference the level at `at` holds on `side`, if it holds
+    /// any.
+    pub(super) fn first_ref(&self, at: VtreeIdx, side: ChildSide) -> Option<NodeIdx> {
+        let (_, mut pairs) = self.assembly.level(at).internal_inputs_iter().next()?;
+        let pair = pairs.next()?;
+        let decoder = crate::diagram::ChildDecoder::structural();
+        Some(decoder.node(if side == ChildSide::Left { pair.left } else { pair.right }))
+    }
+
     /// Add a connecting node, recording any marginal boundary it introduces.
     #[inline]
     pub(super) fn join(&mut self, at: VtreeIdx, left: NodeIdx, right: NodeIdx) -> NodeIdx {
@@ -134,13 +221,41 @@ impl<'a> MovePlacement<'a> {
         self.assembly.parts_mut().0[at.idx()].push_internal_node(&[ChildPair::new(left, right)])
     }
 
-    /// Seat the chosen root reference and repair the boundaries introduced here.
-    pub(super) fn finish(mut self, local: NodeIdx) -> Result<Tdd, GraftError> {
+    /// Seat the chosen root reference without the repairs of
+    /// [`finish`](Self::finish), for structural parts: a pass-through over a
+    /// leaf keeps the wrappers nothing above reads. Hands the placement back
+    /// when the result's worklists are refused.
+    #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+    pub(super) fn seat(self, local: NodeIdx) -> Result<Tdd, (OperationError, Self)> {
         let output = TddNodeId { vtree: self.vtree.root(), local };
-        let (levels, weights) = self.assembly.parts_mut();
-        if let Some(weights) = weights {
-            weights.check_levels(self.vtree, levels).map_err(GraftError::DestinationWeights)?;
+        let Self { eng, vtree, assembly, prune, contract } = self;
+        assembly
+            .finish_or_return(output)
+            .map_err(|(e, assembly)| (e, Self { eng, vtree, assembly, prune, contract }))
+    }
+
+    /// Move the structural levels [`move_part`](Self::move_part) placed back
+    /// into `source`, through the same map.
+    pub(super) fn move_back(mut self, source: &mut Tdd, map: &[VtreeIdx]) {
+        let (levels, _) = self.assembly.parts_mut();
+        for (from, &to) in map.iter().enumerate() {
+            source.levels[from] = std::mem::take(&mut levels[to.idx()]);
         }
+    }
+
+    /// Check that the destination store covers every placed level's column.
+    pub(super) fn check_weights(&mut self) -> Result<(), TddBuildError> {
+        let (levels, weights) = self.assembly.parts_mut();
+        match weights {
+            Some(weights) => weights.check_levels(self.vtree, levels),
+            None => Ok(()),
+        }
+    }
+
+    /// Seat the chosen root reference and repair the boundaries introduced
+    /// here. Call [`check_weights`](Self::check_weights) first.
+    pub(super) fn finish(self, local: NodeIdx) -> Result<Tdd, OperationError> {
+        let output = TddNodeId { vtree: self.vtree.root(), local };
         let mut result = self.assembly.finish(output)?;
         if self.prune {
             for (leaf, _) in result.vtree.leaf_bottomup() {
@@ -150,6 +265,10 @@ impl<'a> MovePlacement<'a> {
                 }
             }
             crate::diagram::inline_small_marginal_refs(&mut result, None);
+        }
+        if self.contract {
+            self.eng.reduce(&mut result, crate::reduce::ReductionPlan::Full(crate::reduce::ContentTwinPolicy::Skip))?;
+        } else if self.prune {
             prune(self.eng, &mut result)?;
         }
         Ok(result)

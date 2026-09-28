@@ -58,7 +58,7 @@ use output::*;
 mod quantify;
 mod drive;
 pub(crate) use drive::apply_and_fallible;
-use drive::{apply_and_core, Conjoined};
+use drive::{apply_and_core, Conjoined, ConjoinMode};
 use drive::Sweep;
 mod filter;
 
@@ -126,6 +126,20 @@ fn is_self_conjunction(f: &Tdd, g: &Tdd) -> bool {
         })
 }
 
+/// Make `g` the narrower operand, and say whether the two were swapped.
+///
+/// The identity fast path tests `right_width == 1` first, so the narrower side
+/// on the right takes it at more levels, and grid rows (width `right_width`)
+/// get shorter. Only the owned entries swap; `apply_and_fallible`'s callers
+/// track operands by side.
+fn narrower_right(f: &mut Tdd, g: &mut Tdd) -> bool {
+    let swap = g.max_width() > f.max_width();
+    if swap {
+        std::mem::swap(f, g);
+    }
+    swap
+}
+
 /// [`conjoin_on`] after its operand checks, summing out the levels in
 /// `targets`: for a caller that has already validated and weight-aligned the
 /// operands.
@@ -136,13 +150,7 @@ pub(crate) fn conjoin_checked(
     targets: VtreeMask<'_>,
     quantified: VtreeMask<'_>,
 ) -> Result<(Tdd, bool), OperationError> {
-    // Make `g` the narrower operand: the identity fast path tests
-    // `right_width == 1` first, so the narrower side on the right takes it at
-    // more levels, and grid rows (width `right_width`) get shorter. Only this
-    // owned entry swaps; `apply_and_fallible`'s callers track operands by side.
-    if g.max_width() > f.max_width() {
-        std::mem::swap(&mut f, &mut g);
-    }
+    narrower_right(&mut f, &mut g);
     // Self-conjunction: f ∧ f = f. The test is structural equality of every
     // explicit level, not pointer identity, and it declines on any marginal
     // level — see `is_self_conjunction`, where the soundness of both choices
@@ -219,6 +227,18 @@ pub fn and(f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
     context.run(|eng| eng.and(f, g))
 }
 
+/// A conjunction [`Engine::and_restoring`](crate::Engine::and_restoring)
+/// refused, with both operands as they were given.
+#[derive(Debug)]
+pub struct AndRefused {
+    /// Why the conjunction was refused.
+    pub error: OperationError,
+    /// The first operand, unchanged.
+    pub f: Tdd,
+    /// The second operand, unchanged.
+    pub g: Tdd,
+}
+
 impl crate::Engine {
     /// Run [`and`] using this batch's scratch and resource limits.
     ///
@@ -229,6 +249,72 @@ impl crate::Engine {
     pub fn and(&self, f: Tdd, g: Tdd) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
         conjoin_on(self, f, g, VtreeMask::default()).map(|(out, _)| out)
+    }
+
+    /// Run [`Engine::and`], giving both operands back unchanged when it is
+    /// refused.
+    ///
+    /// A caller that retries after a stop would otherwise clone both operands
+    /// before each conjunction. Here the sweep keeps the operands whole until
+    /// the result exists, which holds their storage as long as a clone would,
+    /// without the copy. Operands with a weight table or a marginal level are
+    /// cloned first.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    /// use tididi::limits::{LimitConfig, StopCallback, StopDecision};
+    ///
+    /// let engine = Engine::new();
+    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let f = engine.clause(&vtree, [1, 2])?;
+    /// let g = engine.clause(&vtree, [-2, 3])?;
+    /// let refused = {
+    ///     let stop = StopCallback::new(|_, _| StopDecision::Stop);
+    ///     let _stopped = engine.limits().scope(LimitConfig::none().with_stop_callback(Some(stop)));
+    ///     engine.and_restoring(f, g).expect_err("every poll stops")
+    /// };
+    /// assert_eq!(engine.model_count(&refused.f)?, 12u32.into());
+    /// let both = engine.and_restoring(refused.f, refused.g).map_err(|r| r.error)?;
+    /// assert_eq!(engine.model_count(&both)?, 8u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`Engine::and`], each with both operands.
+    #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+    pub fn and_restoring(&self, f: Tdd, g: Tdd) -> Result<Tdd, AndRefused> {
+        let (mut f, mut g) = (f, g);
+        let _op = match self.limits().enter() {
+            Ok(op) => op,
+            Err(error) => return Err(AndRefused { error, f, g }),
+        };
+        if let Err(error) = crate::apply::check_vtree(&f, &g) {
+            return Err(AndRefused { error, f, g });
+        }
+        let plain = |t: &Tdd| t.weights.is_none() && !t.levels.iter().any(TddLevel::is_marginal);
+        if !plain(&f) || !plain(&g) {
+            return self.and(f.clone(), g.clone()).map_err(|error| AndRefused { error, f, g });
+        }
+        let swapped = narrower_right(&mut f, &mut g);
+        if is_self_conjunction(&f, &g) {
+            diagram::return_levels(self, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
+            return Ok(f);
+        }
+        match drive::apply_and_kept(self, &mut f, &mut g) {
+            Ok(out) => {
+                diagram::return_levels(self, diagram::PoolSlot::First, std::mem::take(&mut f.levels).into_vec());
+                diagram::return_levels(self, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
+                Ok(out)
+            }
+            Err(error) => {
+                if swapped {
+                    std::mem::swap(&mut f, &mut g);
+                }
+                Err(AndRefused { error, f, g })
+            }
+        }
     }
 
     /// Conjoin two diagrams and replace selected subtrees with marginal values.
@@ -358,7 +444,7 @@ impl crate::Engine {
             return count;
         }
         let result = apply_and_core(
-            self, &mut f, &mut g, VtreeMask::new(Some(&mask)), VtreeMask::default(), None, true,
+            self, &mut f, &mut g, VtreeMask::new(Some(&mask)), VtreeMask::default(), None, ConjoinMode::Count,
         );
         diagram::return_levels(self, diagram::PoolSlot::First, std::mem::take(&mut f.levels).into_vec());
         diagram::return_levels(self, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
