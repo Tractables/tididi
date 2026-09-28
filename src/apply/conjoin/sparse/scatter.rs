@@ -319,7 +319,7 @@ struct ScatterSides<'w> {
     outer_attached: &'w mut Vec<u32>,
     /// Surviving candidates, bucketed by f parent — or, on a level that
     /// collects them flat, appended with their parent for the sort.
-    par_buckets: &'w mut Vec<Vec<ParEntry>>,
+    par_buckets: &'w mut [Vec<ParEntry>],
     par_flat: &'w mut Vec<Candidate>,
     /// How many outer keys the emit loop walks.
     outer_k: usize,
@@ -368,7 +368,7 @@ fn note_prefetch(_site: usize) {}
 /// it before it reads the bucket, so a miss reads a bit set that stays in
 /// cache rather than a bucket header that, on a wide level, does not.
 struct TouchedBuckets<'a> {
-    buckets: &'a mut Vec<Vec<(u32, u32)>>,
+    buckets: &'a mut [Vec<(u32, u32)>],
     touched: &'a mut Vec<u32>,
     held: &'a mut Vec<u64>,
 }
@@ -488,7 +488,7 @@ fn sides<'w, const SWAPPED: bool>(
     } = ws;
     bucket_offsets(eng.limits(), pl_inner, inner_k, inner_offsets)?;
     bucket_offsets(eng.limits(), pl_outer, outer_k, outer_offsets)?;
-    ensure_buckets_cleared(eng, filtered, filtered_dim)?;
+    filtered.reset(eng.limits(), filtered_dim)?;
     filtered_touched.clear();
     // A round that bailed can leave bits set; the level starts with none.
     let held_words = filtered_dim.div_ceil(64);
@@ -1122,10 +1122,10 @@ pub(super) fn emit_chunk(
     //
     // A chunked level wants the consumed bucket's memory freed anyway, before
     // the output grows further, so there it simply is not handed back. A
-    // level in one chunk hands it back, because the next apply's
-    // `ensure_buckets_cleared` only `.clear()`s (length=0, capacity retained)
-    // and that capacity saves the next apply's scatter pushes from growing
-    // the bucket again.
+    // level in one chunk hands it back, because the next level's
+    // `Rows::reset` only `.clear()`s (length=0, capacity retained) and that
+    // capacity saves the next apply's scatter pushes from growing the bucket
+    // again.
     for p1 in parents {
         let bucket = std::mem::take(&mut ws.par_buckets[p1]);
         if !bucket.is_empty() {

@@ -1,8 +1,8 @@
 //! The reusable sparse workspace: reverse indices and buckets.
 
 use super::*;
-use crate::execution::pool::{Buffers, Nested, PooledScratch, Scratch};
-use crate::limits::Limits;
+use crate::execution::pool::{Buffers, PooledScratch, Scratch};
+use crate::limits::{Charged, Limits};
 
 /// Candidate that survived the sibling liveness filter, grouped by f-parent.
 #[derive(Clone, Copy)]
@@ -43,7 +43,7 @@ pub(crate) struct SparseWorkspace {
     // each outer from the live set + the opposite-keyed g reverse index, so the
     // emit loop iterates only alive entries, with no dead probes.
     //   normal:  filtered[a2] = [(g_parent, right_prod)]   swapped: filtered[s2] = [(g_parent, left_prod)]
-    pub(super) filtered: Vec<Vec<(u32, u32)>>,
+    pub(super) filtered: Rows<(u32, u32)>,
     pub(super) filtered_touched: Vec<u32>,          // indices of `filtered` written this outer, to clear
     pub(super) filtered_held: Vec<u64>,             // a bit per `filtered` bucket, set while it holds an entry
 
@@ -71,7 +71,7 @@ pub(crate) struct SparseWorkspace {
     pub(super) outer_attached: Vec<u32>,
 
     // ── Candidates, and their dedup into products ──
-    pub(super) par_buckets: Vec<Vec<ParEntry>>,     // surviving candidates bucketed by f-parent
+    pub(super) par_buckets: Rows<ParEntry>,          // surviving candidates bucketed by f-parent
     // The flat alternative a level with many more parents than candidates
     // takes (`flat_candidates_win`): the scatter appends every candidate
     // with its parent to `par_flat`, and `sort_candidates` groups them by
@@ -355,20 +355,76 @@ fn shift_offsets_right_by_one(offsets: &mut [u32]) {
     }
 }
 
-/// Ensure `buckets` has ≥ `n` inner Vecs (growing via `resize_with`), then clear
-/// the first `n`. Buckets that already existed keep their reserved capacity —
-/// this is how the sparse workspace amortizes allocations across calls.
-pub(super) fn ensure_buckets_cleared<T>(eng: &Engine, buckets: &mut Vec<Vec<T>>, n: usize) -> Result<(), OperationError> {
-    let lim = eng.limits();
-    if buckets.len() < n {
-        let additional = n - buckets.len();
-        lim.reserve_exact(buckets, additional)?;
-        buckets.resize_with(n, Vec::new);
+/// Rows indexed by a level's child or parent, reset to each level's width.
+///
+/// Rows past the width keep their allocations for a wider level later, which
+/// is how the sparse workspace amortizes them across levels and applies. Only
+/// the open rows, those below the width, can change while it is open, so the
+/// bytes the others hold are kept as one sum and counting the allocations
+/// walks the open rows, not every row the widest level so far grew.
+pub(super) struct Rows<T> {
+    rows: Vec<Vec<T>>,
+    open: usize,
+    /// Bytes the rows at and past `open` hold.
+    closed_bytes: u64,
+}
+
+impl<T> Default for Rows<T> {
+    fn default() -> Self {
+        Rows { rows: Vec::new(), open: 0, closed_bytes: 0 }
     }
-    for b in &mut buckets[..n] {
-        b.clear();
+}
+
+fn row_bytes<T>(rows: &[Vec<T>]) -> u64 {
+    rows.iter().map(Charged::charged_bytes).sum()
+}
+
+impl<T> Rows<T> {
+    /// Open the first `n` rows, empty.
+    pub(super) fn reset(&mut self, lim: &Limits, n: usize) -> Result<(), OperationError> {
+        if self.rows.len() < n {
+            let additional = n - self.rows.len();
+            lim.reserve_exact(&mut self.rows, additional)?;
+            self.rows.resize_with(n, Vec::new);
+        }
+        if n < self.open {
+            self.closed_bytes += row_bytes(&self.rows[n..self.open]);
+        } else {
+            self.closed_bytes -= row_bytes(&self.rows[self.open..n]);
+        }
+        self.open = n;
+        for row in &mut self.rows[..n] {
+            row.clear();
+        }
+        Ok(())
     }
-    Ok(())
+}
+
+impl<T> std::ops::Deref for Rows<T> {
+    type Target = [Vec<T>];
+    #[inline]
+    fn deref(&self) -> &[Vec<T>] {
+        &self.rows[..self.open]
+    }
+}
+
+impl<T> std::ops::DerefMut for Rows<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [Vec<T>] {
+        &mut self.rows[..self.open]
+    }
+}
+
+impl<T> Charged for Rows<T> {
+    fn charged_bytes(&self) -> u64 {
+        self.rows.charged_bytes() + row_bytes(&self.rows[..self.open]) + self.closed_bytes
+    }
+}
+
+impl<T> Scratch for Rows<T> {
+    fn release(&mut self) {
+        *self = Rows::default();
+    }
 }
 
 impl Buffers for SparseWorkspace {
@@ -377,7 +433,7 @@ impl Buffers for SparseWorkspace {
         self.g_by_outer.buffers(visit);
         visit(&mut self.inner_offsets);
         visit(&mut self.outer_offsets);
-        visit(&mut Nested(&mut self.filtered));
+        visit(&mut self.filtered);
         visit(&mut self.filtered_touched);
         visit(&mut self.filtered_held);
         visit(&mut self.wanted);
@@ -386,7 +442,7 @@ impl Buffers for SparseWorkspace {
         self.g_by_inner.buffers(visit);
         visit(&mut self.outer_keys);
         visit(&mut self.outer_attached);
-        visit(&mut Nested(&mut self.par_buckets));
+        visit(&mut self.par_buckets);
         visit(&mut self.par_flat);
         self.par_sorted.buffers(visit);
         visit(&mut self.p2_map);
@@ -399,3 +455,7 @@ impl Buffers for SparseWorkspace {
 impl PooledScratch for SparseWorkspace {
     fn prepare(&mut self) {}
 }
+
+#[cfg(test)]
+#[path = "tests/rows.rs"]
+mod tests;

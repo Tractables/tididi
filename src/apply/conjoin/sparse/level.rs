@@ -87,7 +87,7 @@ fn scatter_level(
     if flat {
         ws.par_flat.clear();
     } else if fixed.is_none() {
-        ensure_buckets_cleared(eng, &mut ws.par_buckets, shape.f.here)?;
+        ws.par_buckets.reset(lim, shape.f.here)?;
     }
     lim.try_resize(&mut ws.p2_map, shape.g.here, NO_PRODUCT)?;
 
@@ -136,7 +136,7 @@ pub(super) fn leaf_direction(leaves: Sides<bool>) -> Option<bool> {
 ///
 /// Nothing else needs repair. Every other buffer is resized, filled or
 /// cleared over its live range when the next level enters (`sides`,
-/// `ensure_buckets_cleared`, `build_reverse_index`, the emit), the marking
+/// `Rows::reset`, `build_reverse_index`, the emit), the marking
 /// arrays are emptied by advancing their epoch, and `filtered`'s touched
 /// list is cleared here: a stale one would index a narrower level's buckets
 /// out of bounds.
@@ -385,7 +385,7 @@ fn assert_no_marginal_children(
 ///
 /// `par_buckets` needs no check — single-chunk mode iterated it by reference and
 /// multi-chunk mode replaced each consumed bucket, and either way the next
-/// apply's `ensure_buckets_cleared` resets the lengths.
+/// level's `Rows::reset` empties the rows it opens.
 #[cfg(debug_assertions)]
 fn debug_check_flushed_level(pl_output: &[ProductEntry], level: &TddLevel) {
     for (i, e) in pl_output.iter().enumerate() {

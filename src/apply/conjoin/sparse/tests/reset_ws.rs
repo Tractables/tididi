@@ -3,6 +3,7 @@ use std::sync::Arc;
 use super::inner_index::{block, pack};
 use super::{ForcedThresholds, SparseThresholds};
 use crate::diagram::Tdd;
+use crate::limits::Charged;
 use crate::vtree::Vtree;
 use crate::Engine;
 
@@ -23,7 +24,7 @@ fn clearing_scratch_leaves_active_workspace_independent() {
     assert!(eng.scratch.sparse.checkout(&eng).par_flat.capacity() >= 256);
     eng.clear_scratch();
     let ws = eng.scratch.sparse.checkout(&eng);
-    assert_eq!(ws.par_buckets.capacity(), 0);
+    assert_eq!(ws.par_buckets.charged_bytes(), 0);
     assert_eq!(ws.par_flat.capacity(), 0);
     assert_eq!(ws.f_by_outer.entries.capacity(), 0);
 }
