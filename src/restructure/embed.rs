@@ -616,11 +616,17 @@ fn assemble_moving(
     // owes the contraction passes what it owed in `tdd`. New pass-through
     // nodes have distinct child identities, and free levels have one node,
     // so neither introduces twins. A later child contraction queues its parents.
-    let mut carried = match tdd.dirty.clone_on(eng) {
+    let mut built = Vec::new();
+    let carried = eng.limits().reserve_exact(&mut built, into.num_nodes()).and_then(|()| tdd.dirty.clone_on(eng));
+    let mut carried = match carried {
         Ok(carried) => carried,
         Err(e) => return Err((e, tdd)),
     };
     carried.remap(&plan.embedding.levels);
+    // A moved level under a pass-through has each node named by it, and one
+    // under a moved level is named as it was; a level built here may hold a
+    // node nothing reads.
+    let loose = carried.loose().map(<[u32]>::to_vec);
     let mut placement = match MovePlacement::new(eng, into, None) {
         Ok(placement) => placement,
         Err(e) => return Err((e, tdd)),
@@ -639,6 +645,7 @@ fn assemble_moving(
         if stopped.is_err() {
             break;
         }
+        built.push(t.0);
         let (left, right) = into.children(t);
         if !plan.mapped[t.idx()] {
             placement.join(t, placement.true_node(left), placement.true_node(right));
@@ -665,6 +672,11 @@ fn assemble_moving(
     // `Pos` and `Neg` are the chain's nodes 0 and 1; nothing reads `One`.
     for top in literal_tops {
         crate::diagram::remap_refs_into(&mut result, top, &[u32::MAX, 0, 1]);
+    }
+    if let Some(mut loose) = loose {
+        loose.extend(built);
+        result.dirty.set_loose(Some(loose));
+        result.dirty.dedup_above(into.num_nodes());
     }
     Ok(result)
 }

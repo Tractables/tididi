@@ -55,7 +55,12 @@ pub(crate) enum PruneScope {
 /// `scope` says how much of the diagram has to be walked; see [`PruneScope`].
 /// A `BelowRoot` scope on a diagram that is not the shape that walk starts
 /// from — an output below the root, a leaf or marginal root level — walks the
-/// whole diagram instead.
+/// whole diagram instead. A `Whole` scope on a structural diagram that knows
+/// its loose levels ([`Dirty::loose`](crate::diagram::Dirty::loose)) walks
+/// down from the output through the levels above them and the levels that
+/// lose a node. A level the walk leaves has lost no node and has no loose
+/// level under it, so each node below it is named by a surviving node of its
+/// parent level. The prune leaves no level loose.
 ///
 /// # Errors
 ///
@@ -75,13 +80,68 @@ pub(crate) fn prune_unreachable(
             level.ranges.clear();
             level.dead_pairs = 0;
         }
+        tdd.dirty.set_loose(Some(Vec::new()));
         return Ok(());
     }
 
-    if matches!(scope, PruneScope::BelowRoot) && below_root_walk_applies(tdd) {
-        prune_below_root(eng, tdd)
+    let below_root = matches!(scope, PruneScope::BelowRoot) && below_root_walk_applies(tdd);
+    // The levels the walk must enter whatever it finds: the parents of the
+    // loose levels and every level above them.
+    let forced = match tdd.dirty.loose() {
+        Some(loose) if !below_root && below_root_walk_applies(tdd) && !tdd.has_marginal_level() => {
+            let mut forced: Transient<'_, Vec<bool>> = Transient::new(eng.limits(), Vec::new());
+            eng.limits().try_resize(&mut forced, tdd.vtree.num_nodes(), false)?;
+            for &level in loose {
+                let mut up = tdd.vtree.node(VtreeIdx(level)).parent();
+                while let Some(p) = up {
+                    if forced[p.idx()] {
+                        break;
+                    }
+                    forced[p.idx()] = true;
+                    up = tdd.vtree.node(p).parent();
+                }
+            }
+            Some(forced)
+        }
+        _ => None,
+    };
+    if below_root {
+        prune_below_root(eng, tdd, None)?;
+    } else if let Some(forced) = &forced {
+        prune_below_root(eng, tdd, Some(forced))?;
+        #[cfg(debug_assertions)]
+        debug_assert_all_reached(tdd);
     } else {
-        prune_whole(eng, tdd)
+        prune_whole(eng, tdd)?;
+    }
+    tdd.dirty.set_loose(Some(Vec::new()));
+    Ok(())
+}
+
+/// Every slot of every structural internal level is reachable from the output.
+#[cfg(debug_assertions)]
+pub(crate) fn debug_assert_all_reached(tdd: &Tdd) {
+    if tdd.is_zero() {
+        return;
+    }
+    let num_nodes = tdd.vtree.num_nodes();
+    let mut level_base = vec![0usize; num_nodes + 1];
+    for i in 0..num_nodes {
+        level_base[i + 1] = level_base[i] + tdd.reference_slot_count(VtreeIdx(i as u32));
+    }
+    let mut remap = vec![UNREACHED; level_base[num_nodes]];
+    classic_mark(tdd, &level_base, &mut remap);
+    for t in tdd.vtree.internal_bottomup().map(|(t, _, _)| t) {
+        if !tdd.is_structural_internal(t) {
+            continue;
+        }
+        let base = level_base[t.idx()];
+        let width = tdd.levels[t.idx()].slot_count();
+        assert!(
+            remap[base..base + width].iter().all(|&m| m != UNREACHED),
+            "level {} keeps a node the output does not reach",
+            t.0
+        );
     }
 }
 
@@ -431,14 +491,15 @@ impl Visit {
 }
 
 /// [`prune_unreachable`] under [`PruneScope::BelowRoot`]: walk down from the
-/// output, stopping at every level that loses no node.
-fn prune_below_root(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
+/// output, stopping at every level that loses no node. With `forced`, also
+/// entering every level it marks, whether or not it lost one.
+fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[bool]>) -> Result<(), OperationError> {
     let pool = &eng.scratch.reduce;
     let mut remap = pool.prune_remap.checkout_preserving(eng);
     let mut identity = pool.prune_identity.checkout_preserving(eng);
     let mut visits = pool.prune_visits.checkout_preserving(eng);
 
-    prune_below_root_with(eng, tdd, &mut remap, &mut identity, &mut visits)
+    prune_below_root_with(eng, tdd, &mut remap, &mut identity, &mut visits, forced)
 }
 
 /// [`prune_below_root`] with the scratch checked out.
@@ -448,6 +509,7 @@ fn prune_below_root_with(
     remap: &mut Vec<u32>,
     identity: &mut Vec<u32>,
     visits: &mut Vec<Visit>,
+    forced: Option<&[bool]>,
 ) -> Result<(), OperationError> {
     let vtree = std::sync::Arc::clone(&tdd.vtree);
     let root = tdd.output.vtree;
@@ -492,10 +554,11 @@ fn prune_below_root_with(
 
         visits[i].left = settle_child(remap, lb, lw, l_own);
         visits[i].right = settle_child(remap, rb, rw, r_own);
-        if visits[i].left.dirty {
+        let enter = |child: VtreeIdx, own: bool| own && forced.is_some_and(|f| f[child.idx()]);
+        if visits[i].left.dirty || enter(left, l_own) {
             eng.limits().try_push(visits, Visit::new(left, lb))?;
         }
-        if visits[i].right.dirty {
+        if visits[i].right.dirty || enter(right, r_own) {
             eng.limits().try_push(visits, Visit::new(right, rb))?;
         }
         i += 1;

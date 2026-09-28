@@ -104,6 +104,12 @@ const SEEDED: [Pass; 2] = [Pass::Contract, Pass::LeafContract];
 pub(crate) struct Dirty {
     /// Indexed by `Pass`; see [`Dirty::list`].
     lists: [Vec<u32>; 3],
+    /// The levels that may hold a node no node of their parent level names,
+    /// reachable or not; every other level's nodes are each named by some
+    /// node of its parent level. `None` when that is not known, which is
+    /// what every diagram starts as and what any edit makes it. A prune
+    /// leaves none, and it walks only as much as these levels need.
+    loose: Option<Vec<u32>>,
 }
 
 impl Dirty {
@@ -121,6 +127,7 @@ impl Dirty {
         level: u32,
         eng: Option<&crate::Engine>,
     ) -> Result<(), crate::OperationError> {
+        self.loose = None;
         for pass in Pass::ALL {
             match eng {
                 Some(eng) => eng.limits().try_push(self.list(pass), level)?,
@@ -185,6 +192,13 @@ impl Dirty {
         for pass in Pass::ALL {
             carried.list(pass).append(self.list(pass));
         }
+        carried.loose = match (carried.loose.take(), self.loose.take()) {
+            (Some(mut under), Some(over)) => {
+                under.extend(over);
+                Some(under)
+            }
+            _ => None,
+        };
         *self = carried;
     }
 
@@ -197,13 +211,19 @@ impl Dirty {
             eng.limits().reserve_exact(to, from.len())?;
             to.extend_from_slice(from);
         }
+        if let Some(from) = &self.loose {
+            let mut to = Vec::new();
+            eng.limits().reserve_exact(&mut to, from.len())?;
+            to.extend_from_slice(from);
+            out.loose = Some(to);
+        }
         Ok(out)
     }
 
     /// Rename every entry through `map`, old level index to new, for levels
     /// moved to other indices of another vtree.
     pub(crate) fn remap(&mut self, map: &[VtreeIdx]) {
-        for list in &mut self.lists {
+        for list in self.lists.iter_mut().chain(self.loose.as_mut()) {
             for entry in list.iter_mut() {
                 *entry = map[*entry as usize].0;
             }
@@ -215,12 +235,26 @@ impl Dirty {
     /// drains one would otherwise grow it without bound. Dedup keeps the set
     /// the list denotes, and fires at most once per `n` pushes.
     pub(crate) fn dedup_above(&mut self, n: usize) {
-        for list in &mut self.lists {
+        for list in self.lists.iter_mut().chain(self.loose.as_mut()) {
             if list.len() > n {
                 list.sort_unstable();
                 list.dedup();
             }
         }
+    }
+
+    /// The levels that may hold a node their parent level does not name, if
+    /// that is known.
+    #[inline]
+    pub(crate) fn loose(&self) -> Option<&[u32]> {
+        self.loose.as_deref()
+    }
+
+    /// Record which levels may hold a node their parent level does not name:
+    /// `None` for not known, and no level once nothing is unreachable.
+    #[inline]
+    pub(crate) fn set_loose(&mut self, levels: Option<Vec<u32>>) {
+        self.loose = levels;
     }
 
     /// The worklists an assembled diagram starts with: these lists, carried
@@ -237,6 +271,9 @@ impl Dirty {
         rebuilt: impl Iterator<Item = VtreeIdx>,
         eng: Option<&crate::Engine>,
     ) -> Result<Self, crate::OperationError> {
+        // Which levels an assembly left loose is its own to say; see
+        // `set_loose`.
+        self.loose = None;
         self.seed_rebuilt(rebuilt, eng)?;
         self.dedup_above(vtree.num_nodes());
         Ok(self)

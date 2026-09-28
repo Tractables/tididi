@@ -389,12 +389,46 @@ pub(crate) fn apply_and_core(
     let finished = if plain {
         let mut owed = f.dirty.clone();
         owed.merge_under(g.dirty.clone());
-        let mut moved = vec![false; num_nodes];
-        for &(t, _) in &carried {
-            moved[t] = true;
+        // Which operand each carried level came from: 1 for `f`, 2 for `g`,
+        // 0 for a level the conjunction built and for the leaves.
+        let mut carrier = vec![0u8; num_nodes];
+        for &(t, from_f) in &carried {
+            carrier[t] = if from_f { 1 } else { 2 };
         }
-        let built: Vec<VtreeIdx> = vtree.internal_bottomup().map(|(t, _, _)| t).filter(|t| !moved[t.idx()]).collect();
-        assembly.finish_with_or_return(output, owed, &built)
+        // A carried level is loose where its carrier had it loose. The other
+        // operand's entry there is for a level the result did not take: an
+        // operand embedded onto a wider scope has every level it gained
+        // loose, and a small factor joined to a large diagram gained the
+        // large one's levels, which made the prune after the join walk it.
+        let loose = match (f.dirty.loose(), g.dirty.loose()) {
+            (Some(lf), Some(lg)) => Some(
+                lf.iter()
+                    .filter(|&&t| carrier[t as usize] != 2)
+                    .chain(lg.iter().filter(|&&t| carrier[t as usize] != 1))
+                    .copied()
+                    .collect::<Vec<u32>>(),
+            ),
+            _ => None,
+        };
+        let built: Vec<VtreeIdx> = vtree.internal_bottomup().map(|(t, _, _)| t).filter(|t| carrier[t.idx()] == 0).collect();
+        assembly.finish_with_or_return(output, owed, &built).map(|mut out| {
+            // A level the conjunction built may hold a node nothing above
+            // names, and so may the top of a carried subtree, whose parent
+            // level it built; the carried levels below keep their carrier's.
+            if let Some(mut loose) = loose {
+                loose.extend(built.iter().map(|t| t.0));
+                loose.extend(
+                    carried
+                        .iter()
+                        .map(|&(t, _)| VtreeIdx(t as u32))
+                        .filter(|&t| vtree.node(t).parent().is_some_and(|p| carrier[p.idx()] == 0))
+                        .map(|t| t.0),
+                );
+                out.dirty.set_loose(Some(loose));
+                out.dirty.dedup_above(num_nodes);
+            }
+            out
+        })
     } else {
         assembly.finish_or_return(output)
     };

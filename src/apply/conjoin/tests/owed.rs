@@ -76,3 +76,37 @@ fn seeded_conjunctions_minimize_to_the_canonical_diagram() {
         }
     }
 }
+
+/// A clause embedded onto a wider vtree has every level it gained loose. Where
+/// the conjunction carries the other operand's level, that level is loose only
+/// if its carrier had it so, so the prune after the conjunction starts at the
+/// top of a carried subtree, not inside it, and the minimized result is still
+/// the canonical diagram.
+#[test]
+fn a_carried_level_is_loose_only_where_its_carrier_had_it() {
+    use crate::vtree::VarId;
+    let eng = Engine::new();
+    let pair = Arc::new(Vtree::balanced(2));
+    let wide = Arc::new(Vtree::balanced(8));
+    let mut small = eng.clause(&pair, [1, -2]).unwrap();
+    eng.minimize(&mut small).unwrap();
+    let (g, _) = eng.embed_moving(small, &wide, |v| VarId(v.0 + 6)).map_err(|r| r.error).unwrap();
+    let clauses = [vec![1, 2], vec![-2, 3], vec![3, -4, 5], vec![-1, 6], vec![4, -5, -6]];
+    let f = compile_clauses(&wide, &clauses);
+    assert_eq!(f.dirty.loose(), Some(&[][..]));
+    // The left half reads variables 1 to 4, which `f` constrains and `g` does
+    // not: the conjunction carries `f`'s levels there.
+    let (half, _) = wide.children(wide.root());
+    let (a, b) = wide.children(half);
+    let gained = g.dirty.loose().expect("an embedding records the levels it built").to_vec();
+    assert!(gained.contains(&a.0) && gained.contains(&b.0));
+    let mut out = eng.and(f, g).unwrap();
+    let loose = out.dirty.loose().expect("both operands' loose levels are known");
+    assert!(loose.contains(&half.0), "a carried level under a built one may be loose");
+    assert!(!loose.contains(&a.0) && !loose.contains(&b.0), "{loose:?}");
+    eng.minimize(&mut out).unwrap();
+    assert_canonical(&out);
+    let mut all = clauses.to_vec();
+    all.push(vec![7, -8]);
+    assert_same_shape(&out, &compile_clauses(&wide, &all), "embedded clause");
+}

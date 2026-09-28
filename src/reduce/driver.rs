@@ -67,6 +67,13 @@ impl<'a> Reduction<'a> {
             structural &= !level.is_marginal();
             level.shrink_arrays();
         }
+        if structural {
+            // The prune left every node reachable, and a contraction only
+            // merges twins, whose children are the same.
+            #[cfg(debug_assertions)]
+            super::prune::debug_assert_all_reached(self.tdd);
+            self.tdd.dirty.set_loose(Some(Vec::new()));
+        }
         if whole {
             // The passes above are the fixpoint of everything a worklist can
             // ask for. What the lists still hold is what the passes' own
