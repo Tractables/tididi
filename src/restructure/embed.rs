@@ -611,6 +611,20 @@ fn assemble_moving(
     into: &Arc<Vtree>,
     plan: &Plan,
 ) -> Result<Tdd, (OperationError, Tdd)> {
+    // A moved level keeps its nodes and, through the pass-throughs and the
+    // renumbered literal chains, the identities of its children's, so it
+    // owes the contraction passes what it owed in `tdd`. The levels built
+    // here are owed on top.
+    let mut built = Vec::new();
+    let carried = eng
+        .limits()
+        .reserve_exact(&mut built, into.num_nodes())
+        .and_then(|()| tdd.dirty.clone_on(eng));
+    let mut carried = match carried {
+        Ok(carried) => carried,
+        Err(e) => return Err((e, tdd)),
+    };
+    carried.remap(&plan.embedding.levels);
     let mut placement = match MovePlacement::new(eng, into, None) {
         Ok(placement) => placement,
         Err(e) => return Err((e, tdd)),
@@ -629,6 +643,7 @@ fn assemble_moving(
         if stopped.is_err() {
             break;
         }
+        built.push(t);
         let (left, right) = into.children(t);
         if !plan.mapped[t.idx()] {
             placement.join(t, placement.true_node(left), placement.true_node(right));
@@ -648,7 +663,7 @@ fn assemble_moving(
         placement.move_back(&mut tdd, &plan.embedding.levels);
         return Err((e, tdd));
     }
-    let mut result = placement.seat(tdd.output().local).map_err(|(e, placement)| {
+    let mut result = placement.seat(tdd.output().local, carried, &built).map_err(|(e, placement)| {
         placement.move_back(&mut tdd, &plan.embedding.levels);
         (e, tdd)
     })?;

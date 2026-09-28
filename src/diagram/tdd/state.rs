@@ -188,6 +188,18 @@ impl Dirty {
         *self = carried;
     }
 
+    /// Copy pending work under the operation's allocation budget.
+    pub(crate) fn clone_on(&self, eng: &crate::Engine) -> Result<Self, crate::OperationError> {
+        let mut out = Self::default();
+        for pass in Pass::ALL {
+            let from = &self.lists[pass as usize];
+            let to = out.list(pass);
+            eng.limits().reserve_exact(to, from.len())?;
+            to.extend_from_slice(from);
+        }
+        Ok(out)
+    }
+
     /// Rename every entry through `map`, old level index to new, for levels
     /// moved to other indices of another vtree.
     pub(crate) fn remap(&mut self, map: &[VtreeIdx]) {

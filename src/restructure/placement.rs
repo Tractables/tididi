@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use crate::{Engine, OperationError};
 use crate::diagram::{
-    Assembly, ChildPair, ChildSide, LevelView, MarginalStorage, NodeIdx, Tdd, TddBuildError,
+    Assembly, ChildPair, ChildSide, Dirty, LevelView, MarginalStorage, NodeIdx, Tdd, TddBuildError,
     TddNodeId, WeightStore, WeightValue, LEAF_WIDTH, ONE_LEAF_IDX, try_take_levels,
 };
 use crate::vtree::{Vtree, VtreeIdx};
@@ -223,14 +223,16 @@ impl<'a> MovePlacement<'a> {
 
     /// Seat the chosen root reference without the repairs of
     /// [`finish`](Self::finish), for structural parts: a pass-through over a
-    /// leaf keeps the wrappers nothing above reads. Hands the placement back
-    /// when the result's worklists are refused.
+    /// leaf keeps the wrappers nothing above reads. The result owes the
+    /// contraction passes `carried`, what the moved levels owed where they
+    /// came from, and the levels in `built`. Hands the placement back when
+    /// the result's worklists are refused.
     #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-    pub(super) fn seat(self, local: NodeIdx) -> Result<Tdd, (OperationError, Self)> {
+    pub(super) fn seat(self, local: NodeIdx, carried: Dirty, built: &[VtreeIdx]) -> Result<Tdd, (OperationError, Self)> {
         let output = TddNodeId { vtree: self.vtree.root(), local };
         let Self { eng, vtree, assembly, prune, contract } = self;
         assembly
-            .finish_or_return(output)
+            .finish_with_or_return(output, carried, built)
             .map_err(|(e, assembly)| (e, Self { eng, vtree, assembly, prune, contract }))
     }
 
