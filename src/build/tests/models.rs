@@ -301,6 +301,40 @@ fn a_wide_sort_of_keys_ascending_in_their_top_digit_sorts_each_run() {
 }
 
 #[test]
+fn a_sort_by_the_top_digit_leaves_the_order_of_a_stable_sort() {
+    // Past the second-level cache a sort of two or three passes places its
+    // top digit first and sorts each digit's run on its own, by passes or,
+    // for a short run, by comparison. Keys ascending in the bits below the
+    // sorted ones and in the bits above among ties, as the split's keys
+    // are; values spread over every top digit, confined to a few, and to
+    // one.
+    let mut rng = Lcg::new(17);
+    for rows in [(1usize << 18) + 37, (1 << 19) + 5] {
+        let index_bits = (usize::BITS - rows.leading_zeros()) as usize;
+        for (lo, bits) in [(0usize, 12usize), (0, 23), (0, 28), (0, 37), (0, 42), (20, 22), (7, 29), (index_bits, 37), (3, 64 - 3 - index_bits)] {
+            for spread in [bits, bits - 1, bits.saturating_sub(9).max(1), bits.saturating_sub(15).max(1)] {
+                let above = 64 - lo - bits >= index_bits;
+                let keys: Vec<u64> = (0..rows as u64)
+                    .map(|i| {
+                        let value = (rng.next_u64() & ((1u64 << spread) - 1)) << lo;
+                        let beneath = if lo == 0 { 0 } else { (i << lo) / rows as u64 };
+                        let over = if above { i << (lo + bits) } else { 0 };
+                        over | value | beneath
+                    })
+                    .collect();
+                let sorted = if lo + bits == 64 { !0u64 } else { (1u64 << (lo + bits)) - 1 };
+                let mut want = keys.clone();
+                want.sort_by_key(|&key| (key & sorted) >> lo);
+                let mut got = keys;
+                let eng = Engine::new();
+                super::rows::Radix::default().sort(eng.limits(), &mut got, lo, bits).unwrap();
+                assert!(got == want, "{rows} rows, lo {lo} bits {bits} spread {spread}");
+            }
+        }
+    }
+}
+
+#[test]
 fn leaf_partitions_match_every_small_relation() {
     // Exhaustive row sets include independence, constants and correlations.
     // Free leaves exercise carrying a lazy bit through a one-sided subtree.
