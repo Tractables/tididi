@@ -30,3 +30,17 @@ fn items_are_grouped_by_key_in_order() {
     assert_eq!(out.entries, [1, 2, 10, 20, 21]);
 }
 
+
+#[test]
+fn inline_ranges_cannot_wrap_or_reach_the_single_marker() {
+    use super::super::index::prefix_offsets;
+    for mut counts in [[u32::MAX - 1, 2], [u32::MAX - 2, 2], [u32::MAX, 1]] {
+        assert_eq!(prefix_offsets(&mut counts, true), Err(OperationError::IndexOverflow));
+    }
+    let mut counts = [1, 2, 1, u32::MAX - 4];
+    assert_eq!(prefix_offsets(&mut counts, true), Ok(u32::MAX - 2));
+    assert_eq!(counts, [u32::MAX, 0, u32::MAX, 2]);
+    let mut ordinary = [u32::MAX - 1, 1];
+    assert_eq!(prefix_offsets(&mut ordinary, false), Ok(u32::MAX));
+    assert_eq!(ordinary, [0, u32::MAX - 1]);
+}

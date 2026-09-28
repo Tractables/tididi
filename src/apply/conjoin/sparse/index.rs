@@ -212,12 +212,7 @@ where
             return Err(OperationError::IndexOverflow);
         }
     }
-    let mut total = 0u32;
-    for slot in offsets.iter_mut().take(n_keys) {
-        let count = *slot;
-        *slot = total;
-        total = total.checked_add(count).ok_or(OperationError::IndexOverflow)?;
-    }
+    let total = prefix_offsets(&mut offsets[..n_keys], false)?;
     offsets[n_keys] = total;
     lim.try_resize(entries, total as usize, fill)?;
     for s in items {
@@ -228,6 +223,24 @@ where
     }
     shift_offsets_right_by_one(&mut offsets[..=n_keys]);
     Ok(())
+}
+
+/// Replace counts with exclusive offsets. With inline singles, counts below
+/// two use the reserved marker instead of arena space; no range may end there.
+pub(super) fn prefix_offsets(counts: &mut [u32], inline_singles: bool) -> Result<u32, OperationError> {
+    let limit = u32::MAX - u32::from(inline_singles);
+    let mut total = 0u32;
+    for slot in counts {
+        let count = *slot;
+        if inline_singles && count < 2 {
+            *slot = u32::MAX;
+        } else {
+            *slot = total;
+            total = total.checked_add(count).filter(|&n| n <= limit)
+                .ok_or(OperationError::IndexOverflow)?;
+        }
+    }
+    Ok(total)
 }
 
 /// Build a reverse index from a level's pairs, keyed by one child side:

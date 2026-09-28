@@ -1010,6 +1010,9 @@ fn emit_parent(
     duplicates_legal: bool,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
+    if candidates.len() >= u32::MAX as usize {
+        return Err(OperationError::IndexOverflow);
+    }
     let SparseWorkspace { p2_map, pair_counts, single_pairs, .. } = ws;
     let first = pl_output.len();
     pair_counts.clear();
@@ -1097,16 +1100,7 @@ fn push_nodes_sorted(
     const SINGLE: u32 = u32::MAX;
     let zero = ChildPair::new(EncodedChildRef::from_raw(0), EncodedChildRef::from_raw(0));
     let base = level.pairs.len();
-    let mut total = 0u32;
-    for cursor in cursors.iter_mut() {
-        if *cursor >= 2 {
-            let start = total;
-            total += *cursor;
-            *cursor = start;
-        } else {
-            *cursor = SINGLE;
-        }
-    }
+    let total = prefix_offsets(cursors, true)?;
     reserve_pairs_for_emit(eng, level, total as usize)?;
     level.pairs.resize(base + total as usize, zero);
     singles.clear();
