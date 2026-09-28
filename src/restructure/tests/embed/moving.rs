@@ -213,3 +213,66 @@ fn moved_diagrams_negate_and_disjoin_like_copies() {
     }
     assert!(failures.is_empty(), "{failures:#?}");
 }
+
+/// Each half of the clauses compiled on the vtree `vtree` projects to its
+/// variables, minimized with `settled` and else a bare conjunction that
+/// still owes its contraction, then moved onto `vtree`. A moved half owes
+/// what its source owed and nothing for the levels its embedding built, and
+/// it, its conjunction with a unit clause and the conjunction of the two
+/// halves minimize from those worklists to the canonical diagram.
+#[test]
+fn moved_halves_conjoin_to_the_canonical_diagram() {
+    use crate::test_helpers::{CnfShape, Lcg, rand_cnf};
+    let eng = Engine::new();
+    for seed in 0..60u64 {
+        let num_vars = 6 + (seed % 5) as u32;
+        let mut rng = Lcg::new(seed);
+        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 14, width: 3 });
+        let (a, b) = clauses.split_at(clauses.len() / 2);
+        if a.is_empty() {
+            continue;
+        }
+        for (label, vtree) in vtree_shapes(num_vars) {
+            let expected = compile_clauses(&vtree, &clauses);
+            let moved = |part: &[Vec<i32>], settled: bool| -> Tdd {
+                let mut vars: Vec<u32> = part.iter().flatten().map(|l| l.unsigned_abs()).collect();
+                vars.sort_unstable();
+                vars.dedup();
+                let local = |v: u32| vars.iter().position(|&w| w == v).unwrap() as i32 + 1;
+                let small = Arc::new(
+                    vtree
+                        .project_to_vars(|v| vars.iter().position(|&w| w == v.0).map(|i| VarId(i as u32 + 1)), vars.len() as u32)
+                        .unwrap(),
+                );
+                let mut f = eng.cube(&small, std::iter::empty::<i32>()).unwrap();
+                for c in part {
+                    let c = c.iter().map(|&l| if l < 0 { -local(l.unsigned_abs()) } else { local(l.unsigned_abs()) });
+                    f = eng.and(f, eng.clause(&small, c).unwrap()).unwrap();
+                }
+                if settled {
+                    eng.minimize(&mut f).unwrap();
+                }
+                eng.embed_moving(f, &vtree, |v| VarId(vars[v.0 as usize - 1])).map_err(|r| r.error).unwrap().0
+            };
+            let alone = compile_clauses(&vtree, a);
+            // A unit clause leaves the conjunction most of the moved half's
+            // levels to carry as they are.
+            let unit = b[0][0];
+            let mut with_unit = a.to_vec();
+            with_unit.push(vec![unit]);
+            let with_unit = compile_clauses(&vtree, &with_unit);
+            for settled in [true, false] {
+                let what = format!("seed {seed}, {label}, settled {settled}");
+                let mut out = moved(a, settled);
+                eng.minimize(&mut out).unwrap();
+                assert_same_shape(&out, &alone, &format!("{what}, alone"));
+                let mut out = eng.and(moved(a, settled), eng.clause(&vtree, [unit]).unwrap()).unwrap();
+                eng.minimize(&mut out).unwrap();
+                assert_same_shape(&out, &with_unit, &format!("{what}, with a unit"));
+                let mut out = eng.and(moved(a, settled), moved(b, settled)).unwrap();
+                eng.minimize(&mut out).unwrap();
+                assert_same_shape(&out, &expected, &what);
+            }
+        }
+    }
+}

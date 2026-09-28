@@ -188,6 +188,19 @@ impl Dirty {
         *self = carried;
     }
 
+    /// These lists for the levels of a diagram whose level `t` went to
+    /// `map[t]`, charged to `eng`.
+    pub(crate) fn remapped(&self, map: &[VtreeIdx], eng: &crate::Engine) -> Result<Dirty, crate::OperationError> {
+        let mut out = Dirty::default();
+        for pass in Pass::ALL {
+            let from = &self.lists[pass as usize];
+            let to = out.list(pass);
+            eng.limits().reserve_exact(to, from.len())?;
+            to.extend(from.iter().map(|&t| map[t as usize].0));
+        }
+        Ok(out)
+    }
+
     /// Bound every list: entries are level indices, so a list longer than `n`
     /// holds duplicates, and a chain of applies or in-place edits that never
     /// drains one would otherwise grow it without bound. Dedup keeps the set

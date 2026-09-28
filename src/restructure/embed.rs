@@ -475,6 +475,16 @@ fn assemble_moving(
     into: &Arc<Vtree>,
     plan: &Plan,
 ) -> Result<Tdd, (OperationError, Tdd)> {
+    // A moved level keeps its nodes and, through the pass-throughs and the
+    // renumbered literal chains, the identities of its children's, so it
+    // owes the contraction passes what it owed in `tdd`. A level built here
+    // has no twins: a pass-through has a node per node of the level it
+    // carries, a chain over a leaf one per label, a free level one. Twins a
+    // contraction below makes reach it through that contraction.
+    let carried = match tdd.dirty.remapped(&plan.embedding.levels, eng) {
+        Ok(carried) => carried,
+        Err(e) => return Err((e, tdd)),
+    };
     let mut placement = match MovePlacement::new(eng, into, None) {
         Ok(placement) => placement,
         Err(e) => return Err((e, tdd)),
@@ -512,7 +522,7 @@ fn assemble_moving(
         placement.move_back(&mut tdd, &plan.embedding.levels);
         return Err((e, tdd));
     }
-    let mut result = placement.seat(tdd.output().local).map_err(|(e, placement)| {
+    let mut result = placement.seat(tdd.output().local, carried).map_err(|(e, placement)| {
         placement.move_back(&mut tdd, &plan.embedding.levels);
         (e, tdd)
     })?;
