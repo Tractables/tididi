@@ -818,13 +818,19 @@ fn walk_folded<W: Weight>(
     total: &mut Total,
 ) -> u64 {
     let mut walked = 0u64;
-    for &(q_this, c_this) in row {
-        let owners = owners.bucket(q_this as usize);
-        walked += 1 + owners.len() as u64;
+    for (j, &(q_this, c_this)) in row.iter().enumerate() {
+        if let Some(&(next, _)) = row.get(j + 1) {
+            owners.prefetch_bucket(next as usize);
+        }
+        let bucket = owners.bucket(q_this as usize);
+        walked += 1 + bucket.len() as u64;
         // Each term is below `2^96` and a bucket holds fewer than `2^32`, so
         // the sum stays below `2^128`.
         let mut sum = 0u128;
-        for &(q_node, k) in owners {
+        for (i, &(q_node, k)) in bucket.iter().enumerate() {
+            if let Some(&(ahead, _)) = bucket.get(i + AHEAD) {
+                prefetch(weights, ahead as usize);
+            }
             sum += weights[q_node as usize].wide() * u128::from(k);
         }
         total.add3(u128::from(c_this), u128::from(factor), sum);
@@ -892,6 +898,21 @@ fn walk_pair<W: Weight>(
     }
 }
 
+/// Ask the cache for what the weighing reads a few of `tops` from now: the
+/// `o` rows of `tops[j + 2]`, and the `Q` root pairs that own the first
+/// product of `tops[j + 1]`, whose row the last call asked for. Each is at a
+/// random place, and a run's start is a miss the walk would otherwise wait
+/// on.
+#[inline(always)]
+fn prefetch_rows<W: Copy>(tops: &[u32], j: usize, o_rows: GroupedView<'_, (u32, W)>, q_root: GroupedView<'_, u32>) {
+    if let Some(&ahead) = tops.get(j + 2) {
+        o_rows.prefetch_bucket(ahead as usize);
+    }
+    if let Some(&(q_o, _)) = tops.get(j + 1).and_then(|&next| o_rows.bucket(next as usize).first()) {
+        q_root.prefetch_bucket(q_o as usize);
+    }
+}
+
 /// [`count`] with `V(p, ·)` in a dense column of `W`; see [`Walk`]. The sum
 /// is the indirect walk's over the same candidates: only where each term's
 /// factors are read from differs, and, folded, how the terms are grouped
@@ -955,7 +976,9 @@ fn count_dense<W: Weight>(
     for (p_node, node) in view.p_c.nodes.iter().enumerate() {
         // `V(p, ·)`.
         let (mut weighed, mut any) = (0u64, false);
-        for &p_o in p_root.view().bucket(p_node) {
+        let tops = p_root.view().bucket(p_node);
+        for (j, &p_o) in tops.iter().enumerate() {
+            prefetch_rows(tops, j, o_rows.view(), q_root.view());
             for &(q_o, c_o) in o_rows.view().bucket(p_o as usize) {
                 let owners = q_root.view().bucket(q_o as usize);
                 for (i, &q_node) in owners.iter().enumerate() {
@@ -983,7 +1006,8 @@ fn count_dense<W: Weight>(
             ticker.poll(walked)?;
         }
         // Empty `V(p, ·)` by walking back over what the round wrote.
-        for &p_o in p_root.view().bucket(p_node) {
+        for (j, &p_o) in tops.iter().enumerate() {
+            prefetch_rows(tops, j, o_rows.view(), q_root.view());
             for &(q_o, _) in o_rows.view().bucket(p_o as usize) {
                 for &q_node in q_root.view().bucket(q_o as usize) {
                     weights[q_node as usize] = W::default();
