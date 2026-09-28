@@ -92,17 +92,30 @@ enum Normalized {
 /// whatever else the clause says, and the limits' errors.
 fn normalize(lim: &Limits, vtree: &Vtree, lits: &[Literal], negate: bool) -> Result<Normalized, OperationError> {
     let mut gate = lim.gate();
-    // The polarity each leaf was first seen with, indexed by vtree node.
+    // A clause of a few literals finds its repeats by scanning what it has
+    // kept; a longer one marks the polarity each leaf was first seen with,
+    // indexed by vtree node. The array costs a pass over the vtree per
+    // clause, which is most of the clause's cost where it touches few levels
+    // of a large vtree.
     let mut seen: Vec<Option<bool>> = Vec::new();
-    lim.try_resize(&mut seen, vtree.num_nodes(), None)?;
-    let mut clause = Vec::new();
+    if lits.len() > SCAN_REPEATS_UP_TO {
+        lim.try_resize(&mut seen, vtree.num_nodes(), None)?;
+    }
+    let mut clause: Vec<(Literal, VtreeIdx)> = Vec::new();
     // Every literal is resolved before a tautology is answered, so an absent
     // variable errors whatever else the clause says.
     let mut tautology = false;
     for lit in lits {
         gate.poll(1)?;
         let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
-        match seen[leaf.idx()].replace(lit.sign) {
+        let first = if seen.is_empty() {
+            // The kept literals carry their sign as the walk will, negated
+            // or not; compare the sign the caller gave.
+            clause.iter().find(|&&(_, l)| l == leaf).map(|&(k, _)| k.sign != negate)
+        } else {
+            seen[leaf.idx()].replace(lit.sign)
+        };
+        match first {
             Some(sign) => tautology |= sign != lit.sign,
             None => lim.try_push(&mut clause, (if negate { lit.negated() } else { *lit }, leaf))?,
         }
@@ -110,6 +123,10 @@ fn normalize(lim: &Limits, vtree: &Vtree, lits: &[Literal], negate: bool) -> Res
     gate.flush()?;
     Ok(if tautology { Normalized::Tautology } else { Normalized::Clause(clause) })
 }
+
+/// The longest clause whose repeated literals [`normalize`] finds by
+/// scanning the literals kept so far rather than by an array over the vtree.
+const SCAN_REPEATS_UP_TO: usize = 16;
 
 /// The shared bottom-up walk: conjoin the clause `lits` into `f`, or — with
 /// `disjoin` — disjoin the cube `lits`, by carrying the [`CubeChain`]
