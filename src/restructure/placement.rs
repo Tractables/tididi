@@ -225,14 +225,14 @@ impl<'a> MovePlacement<'a> {
     /// [`finish`](Self::finish), for structural parts: a pass-through over a
     /// leaf keeps the wrappers nothing above reads. The result owes the
     /// contraction passes `carried`, what the moved levels owed where they
-    /// came from, and the levels in `built`. Hands the placement back when
-    /// the result's worklists are refused.
+    /// came from. Newly built levels have no twins. Hands the placement back
+    /// when the result's worklists are refused.
     #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
-    pub(super) fn seat(self, local: NodeIdx, carried: Dirty, built: &[VtreeIdx]) -> Result<Tdd, (OperationError, Self)> {
+    pub(super) fn seat(self, local: NodeIdx, carried: Dirty) -> Result<Tdd, (OperationError, Self)> {
         let output = TddNodeId { vtree: self.vtree.root(), local };
         let Self { eng, vtree, assembly, prune, contract } = self;
         assembly
-            .finish_with_or_return(output, carried, built)
+            .finish_with_or_return(output, carried, &[])
             .map_err(|(e, assembly)| (e, Self { eng, vtree, assembly, prune, contract }))
     }
 

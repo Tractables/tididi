@@ -79,7 +79,8 @@ impl<'a> Assembly<'a> {
     /// A level absent from a worklist is taken to be at its contraction
     /// fixpoint ([`Dirty`]), so the caller owes two things:
     ///
-    /// 1. Every level whose pair list this operation changed is in `rebuilt`;
+    /// 1. Every changed level not known to be at its contraction fixpoint is
+    ///    in `rebuilt`;
     /// 2. `carried` is the input diagram's own [`Dirty`], so nothing the input
     ///    had outstanding is dropped.
     ///
