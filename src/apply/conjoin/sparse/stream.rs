@@ -353,23 +353,24 @@ impl<T: Copy + Default> Stamped<T> {
 /// How a pair's walk looks up the other child's product and its count: in a
 /// table over one side's nodes when the other operand has one node there,
 /// and otherwise in the row of the pair's own node, marked afresh for each
-/// pair.
+/// pair with what each of its products carries (`M`: the product's index
+/// for the indirect walk, its count for the dense walk).
 ///
 /// A table holds the count itself, 0 where no product lives, so the walk
 /// reads one entry of a table as wide as a level rather than a product index
 /// and then that product's count, in a column as long as the level's
 /// products and read at random. A product whose count is 0 adds nothing
 /// either way.
-enum Probe {
+enum Probe<M> {
     /// `Q` has one node: the count of `p`'s product is `table[p]`.
     ByP(Vec<u64>),
     /// `P` has one node: the count of `q`'s product is `table[q]`.
     ByQ(Vec<u64>),
     /// The current row, marked by `Q` node with its products.
-    Marked(Stamped<u32>),
+    Marked(Stamped<M>),
 }
 
-impl Probe {
+impl<M: Copy + Default> Probe<M> {
     fn new(lim: &Limits, view: &Oriented<'_>, built: Built<'_>, p_width: usize, q_width: usize) -> Result<Self, OperationError> {
         let table = |n: usize, key: &dyn Fn(u32, u32) -> u32| -> Result<Vec<u64>, OperationError> {
             let mut table = Vec::new();
@@ -394,24 +395,24 @@ impl Probe {
 
     /// Make `row`, the products of the pair's own node, the one probed.
     #[inline]
-    fn open(&mut self, row: &[(u32, u32)]) {
+    fn open(&mut self, row: &[(u32, M)]) {
         if let Probe::Marked(marks) = self {
             marks.begin();
-            for &(q, prod) in row {
-                marks.set(q, prod);
+            for &(q, mark) in row {
+                marks.set(q, mark);
             }
         }
     }
 
-    /// The count of `(p, q)`'s product in the opened row, `counts` being its
-    /// level's column, if the product lives (a table's may read as absent
-    /// where its count is 0).
+    /// The count of `(p, q)`'s product in the opened row, `read` taking a
+    /// mark to its count, if the product lives (a table's may read as
+    /// absent where its count is 0).
     #[inline(always)]
-    fn count(&self, p: u32, q: u32, counts: &[u128]) -> Option<u128> {
+    fn count(&self, p: u32, q: u32, read: impl Fn(M) -> u128) -> Option<u128> {
         let count = match self {
             Probe::ByP(table) => table[p as usize],
             Probe::ByQ(table) => table[q as usize],
-            Probe::Marked(marks) => return marks.get(q).map(|prod| counts[prod as usize]),
+            Probe::Marked(marks) => return marks.get(q).map(read),
         };
         (count != 0).then_some(u128::from(count))
     }
@@ -485,8 +486,8 @@ pub(crate) fn count(eng: &Engine, input: &StreamInput<'_>, pivot: Operand) -> Re
     let pricing = PairPricing::new(lim, &view, input)?;
     match choose_walk(input) {
         Walk::Indirect => count_indirect(eng, input, &view, &pricing),
-        Walk::Dense { wide: false } => count_dense::<u32>(eng, input, &view, &pricing),
-        Walk::Dense { wide: true } => count_dense::<u64>(eng, input, &view, &pricing),
+        Walk::Dense { wide: false, fold } => count_dense::<u32>(eng, input, &view, &pricing, fold),
+        Walk::Dense { wide: true, fold } => count_dense::<u64>(eng, input, &view, &pricing, fold),
     }
 }
 
@@ -521,8 +522,8 @@ fn count_indirect(
     let cr_rows = rows_by_p(lim, &view, input.cr.products, p.cr)?;
     let q_by_cl = grouped(lim, q.cl, pairs_with_parent(view.q_c), |(node, pair)| (pair.left.0 as usize, (node, pair.right.0)))?;
     let q_by_cr = grouped(lim, q.cr, pairs_with_parent(view.q_c), |(node, pair)| (pair.right.0 as usize, (node, pair.left.0)))?;
-    let mut probe_cl = Probe::new(lim, &view, input.cl, p.cl, q.cl)?;
-    let mut probe_cr = Probe::new(lim, &view, input.cr, p.cr, q.cr)?;
+    let mut probe_cl: Probe<u32> = Probe::new(lim, &view, input.cl, p.cl, q.cl)?;
+    let mut probe_cr: Probe<u32> = Probe::new(lim, &view, input.cr, p.cr, q.cr)?;
 
     let (col_o, col_cl, col_cr) = (input.o.counts, input.cl.counts, input.cr.counts);
     let mut weights: Stamped<u128> = Stamped::new(lim, q.c)?;
@@ -562,7 +563,7 @@ fn count_indirect(
                         walked += 1 + owners.len() as u64;
                         for &(q_node, q_cr) in owners {
                             let Some(v) = weights.get(q_node) else { continue };
-                            let Some(c_r) = probe_cr.count(p_cr, q_cr, col_cr) else { continue };
+                            let Some(c_r) = probe_cr.count(p_cr, q_cr, |prod| col_cr[prod as usize]) else { continue };
                             total.add3(c_l, c_r, v);
                         }
                     }
@@ -578,7 +579,7 @@ fn count_indirect(
                         walked += 1 + owners.len() as u64;
                         for &(q_node, q_cl) in owners {
                             let Some(v) = weights.get(q_node) else { continue };
-                            let Some(c_l) = probe_cl.count(p_cl, q_cl, col_cl) else { continue };
+                            let Some(c_l) = probe_cl.count(p_cl, q_cl, |prod| col_cl[prod as usize]) else { continue };
                             total.add3(c_l, c_r, v);
                         }
                     }
@@ -592,20 +593,23 @@ fn count_indirect(
     Ok(total.finish())
 }
 
-/// How a streamed count holds `V(p, ·)`.
+/// How a streamed count holds `V(p, ·)` and reads the probed child's count.
 ///
-/// Both walks find the same candidates in the same order and read, per
-/// candidate, the product's count in its level's column, the `Q` pairs that
-/// own it and one entry of `V`. What differs is that entry: the indirect
-/// walk keeps a stamped `u128` slot per `Q` node, the dense walk a plain
-/// integer, several times smaller, so far more of `V` stays in cache.
+/// Every walk finds the same candidates in the same order: per pair of `P`
+/// at `c`, the walked child's products of its node, and per product the `Q`
+/// pairs that own it. The indirect walk keeps a stamped `u128` slot of `V`
+/// per `Q` node and reads each product's count from its level's column,
+/// where the product's index points. The dense walk keeps `V` in a plain
+/// integer, several times smaller, so far more of it stays in cache, and
+/// carries each product's count in its row, so no column is read at random.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Walk {
     /// `V` in a stamped `u128` column.
     Indirect,
     /// `V` in a column of `u64` (`wide`) or `u32`, emptied by walking back
-    /// over what the round wrote.
-    Dense { wide: bool },
+    /// over what the round wrote. With `fold`, a probe that is a table is
+    /// read into the walked side's owners before the walk (see [`Owners`]).
+    Dense { wide: bool, fold: bool },
 }
 
 /// The walk a streamed count takes: dense when `V` fits a plain integer.
@@ -624,8 +628,8 @@ fn choose_walk(input: &StreamInput<'_>) -> Walk {
     };
     match forced_walk() {
         Some(Walk::Indirect) => Walk::Indirect,
-        Some(Walk::Dense { wide: forced_wide }) => Walk::Dense { wide: wide || forced_wide },
-        None => Walk::Dense { wide },
+        Some(Walk::Dense { wide: forced_wide, fold }) => Walk::Dense { wide: wide || forced_wide, fold },
+        None => Walk::Dense { wide, fold: true },
     }
 }
 
@@ -697,84 +701,207 @@ fn prefetch<T>(column: &[T], k: usize) {
     let _ = (column, k);
 }
 
+/// `Q`'s pairs at `c` by the child a walk starts from, as that walk reads
+/// them, each with the pair's node.
+///
+/// A candidate's probed count `C(p_o, q_o)`, `p_o` and `q_o` the other
+/// child's nodes in the pairs of `P` and `Q`, is a table's entry when one
+/// operand has one node there, and then it is a factor of one pair alone:
+/// `table[p_o]` when `Q` has one node, a factor of the pair of `P`, and
+/// `table[q_o]` when `P` has one, a factor of the pair of `Q`. Folded, each
+/// pair of `Q` carries its factor, 1 in the first case, and is left out
+/// where it is 0; the walk then reads no table per candidate, and sums
+/// `V · factor` over a product's owners before multiplying by the product's
+/// count and the pair of `P`'s factor. That is the same sum over the same
+/// candidates, less those whose term is 0, grouped by product.
+enum Owners {
+    /// No walk starts from this child.
+    Unread,
+    /// Each with the pair's other child, for the probe to look up.
+    Probed(Grouped<(u32, u32)>),
+    /// Each with the pair's factor of the probed count, below `2^32`.
+    Folded(Grouped<(u32, u32)>),
+}
+
+impl Owners {
+    /// The owners a walk from the left (`left`) or right child reads, the
+    /// other child's `probe` folded in where `fold` allows it: a table
+    /// whose `Q` factors all fit `u32`.
+    fn new(
+        lim: &Limits,
+        view: &Oriented<'_>,
+        left: bool,
+        q_width: usize,
+        probe: &Probe<u64>,
+        fold: bool,
+    ) -> Result<Self, OperationError> {
+        let pairs = pairs_with_parent(view.q_c).map(move |(node, pair)| {
+            let (this, other) = if left { (pair.left.0, pair.right.0) } else { (pair.right.0, pair.left.0) };
+            (this, node, other)
+        });
+        let by_q = match probe {
+            Probe::ByQ(table) if fold && table.iter().all(|&c| c <= u64::from(u32::MAX)) => Some(table.as_slice()),
+            _ => None,
+        };
+        #[cfg(test)]
+        super::tests::note_owners(match (by_q.is_some(), fold, probe) {
+            (true, _, _) => 1,
+            (false, true, Probe::ByP(_)) => 0,
+            (false, _, Probe::ByP(_)) => 2,
+            (false, _, Probe::ByQ(_)) => 3,
+            (false, _, Probe::Marked(_)) => 4,
+        });
+        if let Some(table) = by_q {
+            let live = pairs.filter(|&(_, _, other)| table[other as usize] != 0);
+            let owners = grouped(lim, q_width, live, |(this, node, other)| {
+                (this as usize, (node, table[other as usize] as u32))
+            })?;
+            Ok(Owners::Folded(owners))
+        } else if fold && matches!(probe, Probe::ByP(_)) {
+            Ok(Owners::Folded(grouped(lim, q_width, pairs, |(this, node, _)| (this as usize, (node, 1)))?))
+        } else {
+            Ok(Owners::Probed(grouped(lim, q_width, pairs, |(this, node, other)| (this as usize, (node, other)))?))
+        }
+    }
+}
+
 /// One child's side of the dense walk: whatever its pairs' walks and the
 /// other side's probes read.
 struct DenseSide {
-    /// The live products by their `P` node, with their `Q` node and product
-    /// index: what a walk steps through and a marked probe opens.
-    rows: Grouped<(u32, u32)>,
-    /// `Q`'s pairs at `c` by this child, with the node and the other child.
-    owners: Grouped<(u32, u32)>,
+    /// The products by their `P` node, with their `Q` node and their count,
+    /// those whose count is 0 left out: what a walk steps through and a
+    /// marked probe opens.
+    rows: Grouped<(u32, u64)>,
+    owners: Owners,
 }
 
 impl DenseSide {
-    /// `left` says which child; `rows` whether anything reads the product
-    /// rows.
+    /// `rows` says whether anything reads the product rows.
     fn new(
         lim: &Limits,
         view: &Oriented<'_>,
         built: Built<'_>,
-        left: bool,
         p_width: usize,
-        q_width: usize,
         rows: bool,
+        owners: Owners,
     ) -> Result<Self, OperationError> {
-        let owners = grouped(lim, q_width, pairs_with_parent(view.q_c), |(node, pair)| {
-            let (this, other) = if left { (pair.left.0, pair.right.0) } else { (pair.right.0, pair.left.0) };
-            (this as usize, (node, other))
-        })?;
-        let rows = if rows { rows_by_p(lim, view, built.products, p_width)? } else { Grouped::default() };
+        let rows = if rows {
+            let live = built.products.iter().filter(|e| built.counts[e.prod_idx.0 as usize] != 0);
+            grouped(lim, p_width, live, |e| {
+                let (p, q) = view.pq(e);
+                // Every count the stream reads fits `u64` (see `Built`).
+                (p as usize, (q, built.counts[e.prod_idx.0 as usize] as u64))
+            })?
+        } else {
+            Grouped::default()
+        };
         Ok(DenseSide { rows, owners })
     }
 
-    /// The live products of `P` node `p`, empty when no walk or probe reads
-    /// them (a probe that reads them always has them).
+    /// The products of `P` node `p`, empty when no walk or probe reads them
+    /// (a probe that reads them always has them).
     #[inline]
-    fn row(&self, p: u32) -> &[(u32, u32)] {
+    fn row(&self, p: u32) -> &[(u32, u64)] {
         if self.rows.offsets.is_empty() { &[] } else { self.rows.view().bucket(p as usize) }
     }
 }
 
-/// Add `L(p, ·)`'s candidates from one pair's walk to `total`: `this` is the
-/// walked child's `P` node, `other` the probed child's, whose probe is
-/// already open.
+/// Add a pair's candidates to `total` with the probe folded into `owners`:
+/// `row` holds the walked child's products of the pair's `P` node, `factor`
+/// is the pair's `P` factor of the probed count.
 #[inline(always)]
-#[allow(clippy::too_many_arguments)]
-fn walk_pair<W: Weight>(
-    side: &DenseSide,
-    this: u32,
-    other: u32,
-    probe: &Probe,
-    this_counts: &[u128],
-    other_counts: &[u128],
+fn walk_folded<W: Weight>(
+    row: &[(u32, u64)],
+    owners: GroupedView<'_, (u32, u32)>,
+    factor: u64,
     weights: &[W],
     total: &mut Total,
 ) -> u64 {
     let mut walked = 0u64;
-    for &(q_this, prod) in side.row(this) {
-        let c_this = this_counts[prod as usize];
-        let owners = side.owners.view().bucket(q_this as usize);
+    for &(q_this, c_this) in row {
+        let owners = owners.bucket(q_this as usize);
+        walked += 1 + owners.len() as u64;
+        // Each term is below `2^96` and a bucket holds fewer than `2^32`, so
+        // the sum stays below `2^128`.
+        let mut sum = 0u128;
+        for &(q_node, k) in owners {
+            sum += weights[q_node as usize].wide() * u128::from(k);
+        }
+        total.add3(u128::from(c_this), u128::from(factor), sum);
+    }
+    walked
+}
+
+/// Add a pair's candidates to `total` through the open `probe`: `row` holds
+/// the walked child's products of the pair's `P` node, `other` is the pair's
+/// probed child.
+#[inline(always)]
+fn walk_probed<W: Weight>(
+    row: &[(u32, u64)],
+    owners: GroupedView<'_, (u32, u32)>,
+    other: u32,
+    probe: &Probe<u64>,
+    weights: &[W],
+    total: &mut Total,
+) -> u64 {
+    let mut walked = 0u64;
+    for &(q_this, c_this) in row {
+        let owners = owners.bucket(q_this as usize);
         walked += 1 + owners.len() as u64;
         for &(q_node, q_other) in owners {
             let v = weights[q_node as usize].wide();
             if v == 0 {
                 continue;
             }
-            let Some(c_other) = probe.count(other, q_other, other_counts) else { continue };
-            total.add3(c_this, c_other, v);
+            let Some(c_other) = probe.count(other, q_other, u128::from) else { continue };
+            total.add3(u128::from(c_this), c_other, v);
         }
     }
     walked
 }
 
-/// [`count`] with `V(p, ·)` in a dense column of `W`; see [`Walk`]. The sum is the same
-/// as the indirect walk's, term by term: only where the terms are read from
-/// differs.
+/// Add `L(p, ·)`'s candidates from the pair with `this` at the walked child
+/// and `other` at the probed one to `total`, against `V(p, ·)` in `weights`.
+#[inline(always)]
+fn walk_pair<W: Weight>(
+    walked: &DenseSide,
+    probed: &DenseSide,
+    this: u32,
+    other: u32,
+    probe: &mut Probe<u64>,
+    weights: &[W],
+    total: &mut Total,
+) -> u64 {
+    match &walked.owners {
+        Owners::Folded(owners) => {
+            let factor = match probe {
+                Probe::ByP(table) => table[other as usize],
+                _ => 1,
+            };
+            if factor == 0 {
+                return 1;
+            }
+            walk_folded(walked.row(this), owners.view(), factor, weights, total)
+        }
+        Owners::Probed(owners) => {
+            let row = probed.row(other);
+            probe.open(row);
+            row.len() as u64 + walk_probed(walked.row(this), owners.view(), other, probe, weights, total)
+        }
+        Owners::Unread => unreachable!("a child a pair walks from has its owners"),
+    }
+}
+
+/// [`count`] with `V(p, ·)` in a dense column of `W`; see [`Walk`]. The sum
+/// is the indirect walk's over the same candidates: only where each term's
+/// factors are read from differs, and, folded, how the terms are grouped
+/// (see [`Owners`]).
 fn count_dense<W: Weight>(
     eng: &Engine,
     input: &StreamInput<'_>,
     view: &Oriented<'_>,
     pricing: &PairPricing,
+    fold: bool,
 ) -> Result<BigUint, OperationError> {
     let lim = eng.limits();
     let view = *view;
@@ -808,19 +935,19 @@ fn count_dense<W: Weight>(
             Direction::ByRight => by_right = true,
         }
     }
-    let marked = |p_width: usize, q_width: usize| p_width != 1 && q_width != 1;
-    let left = DenseSide::new(
-        lim, &view, input.cl, true, p.cl, q.cl,
-        by_left || (by_right && marked(p.cl, q.cl)),
-    )?;
-    let right = DenseSide::new(
-        lim, &view, input.cr, false, p.cr, q.cr,
-        by_right || (by_left && marked(p.cr, q.cr)),
-    )?;
-    let mut probe_cl = Probe::new(lim, &view, input.cl, p.cl, q.cl)?;
-    let mut probe_cr = Probe::new(lim, &view, input.cr, p.cr, q.cr)?;
+    let mut probe_cl: Probe<u64> = Probe::new(lim, &view, input.cl, p.cl, q.cl)?;
+    let mut probe_cr: Probe<u64> = Probe::new(lim, &view, input.cr, p.cr, q.cr)?;
+    let owners = |walked: bool, left: bool, q_width: usize, probe: &Probe<u64>| {
+        if walked { Owners::new(lim, &view, left, q_width, probe, fold) } else { Ok(Owners::Unread) }
+    };
+    let (left_owners, right_owners) = (owners(by_left, true, q.cl, &probe_cr)?, owners(by_right, false, q.cr, &probe_cl)?);
+    // A side's rows are read by its walks, and opened by the other side's
+    // walks when its probe is marked and not folded.
+    let opens = |owners: &Owners| matches!(owners, Owners::Probed(_));
+    let (open_cl, open_cr) = (opens(&right_owners) && matches!(probe_cl, Probe::Marked(_)), opens(&left_owners) && matches!(probe_cr, Probe::Marked(_)));
+    let left = DenseSide::new(lim, &view, input.cl, p.cl, by_left || open_cl, left_owners)?;
+    let right = DenseSide::new(lim, &view, input.cr, p.cr, by_right || open_cr, right_owners)?;
 
-    let (col_cl, col_cr) = (input.cl.counts, input.cr.counts);
     let mut weights: Vec<W> = Vec::new();
     lim.try_resize(&mut weights, q.c, W::default())?;
     let mut total = Total::default();
@@ -850,18 +977,8 @@ fn count_dense<W: Weight>(
         for pair in view.p_c.pairs_of(node) {
             let (p_cl, p_cr) = (pair.left.0, pair.right.0);
             let walked = match pricing.choose(p_cl, p_cr).0 {
-                Direction::ByLeft => {
-                    let row = right.row(p_cr);
-                    probe_cr.open(row);
-                    row.len() as u64
-                        + walk_pair(&left, p_cl, p_cr, &probe_cr, col_cl, col_cr, &weights, &mut total)
-                }
-                Direction::ByRight => {
-                    let row = left.row(p_cl);
-                    probe_cl.open(row);
-                    row.len() as u64
-                        + walk_pair(&right, p_cr, p_cl, &probe_cl, col_cr, col_cl, &weights, &mut total)
-                }
+                Direction::ByLeft => walk_pair(&left, &right, p_cl, p_cr, &mut probe_cr, &weights, &mut total),
+                Direction::ByRight => walk_pair(&right, &left, p_cr, p_cl, &mut probe_cl, &weights, &mut total),
             };
             ticker.poll(walked)?;
         }

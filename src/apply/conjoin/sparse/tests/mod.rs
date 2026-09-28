@@ -108,6 +108,27 @@ impl Drop for ForcedWalk {
     }
 }
 
+thread_local! {
+    /// How often each kind of owners a dense walk built on this thread:
+    /// folded under a table by `P`, folded under a table by `Q`, and probed
+    /// under a table by `P`, a table by `Q` and a marked row.
+    static OWNERS: Cell<[u32; 5]> = const { Cell::new([0; 5]) };
+}
+
+/// Count one dense walk's owners of kind `kind` (see [`owners_built`]).
+pub(super) fn note_owners(kind: usize) {
+    OWNERS.with(|c| {
+        let mut seen = c.get();
+        seen[kind] += 1;
+        c.set(seen);
+    });
+}
+
+/// How many owners of each kind dense walks on this thread have built.
+pub(super) fn owners_built() -> [u32; 5] {
+    OWNERS.with(Cell::get)
+}
+
 mod count_root;
 mod counting_sort;
 mod direction;

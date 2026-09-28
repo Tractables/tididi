@@ -8,9 +8,9 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 
 use super::inner_index::{block, pack};
-use super::{ForcedStream, ForcedWalk};
+use super::{owners_built, ForcedStream, ForcedWalk};
 use super::super::stream::{Operand, Walk};
-use crate::test_helpers::assert_canonical;
+use crate::test_helpers::{assert_canonical, Lcg};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::{Engine, Tdd};
 
@@ -32,9 +32,11 @@ fn rows(seed: u64, n: usize, cols: usize, bits: u32) -> Vec<Vec<u64>> {
 const CHOICES: [Option<Option<Operand>>; 4] = [None, Some(None), Some(Some(Operand::F)), Some(Some(Operand::G))];
 
 /// The walks a test pins: the choice's, the indirect walk, and the dense
-/// walk with either width of `V`.
+/// walk with either width of `V`, its table probes folded or not.
 fn walks() -> Vec<Option<Walk>> {
-    vec![None, Some(Walk::Indirect), Some(Walk::Dense { wide: false }), Some(Walk::Dense { wide: true })]
+    let dense = [false, true].into_iter()
+        .flat_map(|wide| [false, true].map(|fold| Some(Walk::Dense { wide, fold })));
+    [None, Some(Walk::Indirect)].into_iter().chain(dense).collect()
 }
 
 /// Count `f ∧ g` under every choice, every walk and both operand orders,
@@ -201,5 +203,61 @@ fn a_summed_operand_level_is_not_read_as_nodes() {
                 count_every_way(&eng, &f, &g, &[], &BigUint::from(joined), &what);
             }
         }
+    }
+}
+
+/// A vtree over `blocks` whose shape above them is drawn from `seed`: each
+/// block balanced, the blocks joined two at a time from a shrinking forest.
+fn random_over_blocks(blocks: &[Vec<VarId>], seed: u64) -> Vtree {
+    let rng = &mut Lcg::new(seed);
+    let mut forest: Vec<Vtree> = blocks.iter().map(|b| Vtree::balanced_over(b).unwrap()).collect();
+    while forest.len() > 1 {
+        let left = forest.swap_remove(rng.below(forest.len() as u64) as usize);
+        let right = forest.swap_remove(rng.below(forest.len() as u64) as usize);
+        forest.push(Vtree::join(&left, &right).unwrap());
+    }
+    forest.pop().unwrap()
+}
+
+/// Random relations over four blocks, `g` over all of them, two or three, on
+/// random vtrees over the blocks and over their variables: under every
+/// choice, every walk and both operand orders, the count of `f ∧ g` is the
+/// model count of the built conjunction.
+#[test]
+fn a_streamed_root_matches_the_built_conjunction_on_random_vtrees() {
+    let eng = Engine::new();
+    let bits = 2;
+    let blocks: Vec<Vec<VarId>> = (0..4).map(|k| block(1 + k * bits, bits)).collect();
+    let g_blocks: [&[usize]; 4] = [&[0, 1, 2, 3], &[0, 3], &[1, 2, 3], &[0, 2]];
+    let (mut streamed, before) = (0, owners_built());
+    for seed in 0..48u64 {
+        let shape = g_blocks[seed as usize % g_blocks.len()];
+        let f_rows = rows(seed + 100, 24 + seed as usize, 4, bits);
+        let mut g_rows = rows(seed + 200, 12 + seed as usize / 2, shape.len(), bits);
+        // Rows `f` shares with `g`, so the conjunction is rarely empty.
+        g_rows.extend(f_rows.iter().step_by(3).map(|r| shape.iter().map(|&k| r[k]).collect()));
+        let f_on: Vec<&[VarId]> = blocks.iter().map(Vec::as_slice).collect();
+        let g_on: Vec<&[VarId]> = shape.iter().map(|&k| blocks[k].as_slice()).collect();
+        let (fv, fr) = pack(&f_on, &f_rows);
+        let (gv, gr) = pack(&g_on, &g_rows);
+        for vtree in [random_over_blocks(&blocks, seed), Vtree::random(4 * bits, seed)] {
+            let vtree = Arc::new(vtree);
+            let f = eng.from_models(&vtree, &fv, &fr).unwrap();
+            let g = eng.from_models(&vtree, &gv, &gr).unwrap();
+            assert_canonical(&f);
+            assert_canonical(&g);
+            let built = eng.and(f.clone(), g.clone()).unwrap();
+            assert_canonical(&built);
+            let expected = eng.model_count(&built).unwrap();
+            for targets in [vec![], vec![vtree.root()]] {
+                let what = format!("seed {seed}, g over {shape:?}, targets {targets:?}");
+                streamed += count_every_way(&eng, &f, &g, &targets, &expected, &what);
+            }
+        }
+    }
+    assert!(streamed > 0, "no root count was streamed");
+    let after = owners_built();
+    for (kind, (a, b)) in after.iter().zip(before).enumerate() {
+        assert!(a > &b, "no dense walk built owners of kind {kind}");
     }
 }
