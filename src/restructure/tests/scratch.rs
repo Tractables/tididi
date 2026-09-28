@@ -1,4 +1,5 @@
 use super::*;
+use crate::diagram::NodeIdx;
 
 #[test]
 fn return_bounds_fanout_and_checkout_clears_retained_lists() {

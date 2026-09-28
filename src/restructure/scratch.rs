@@ -3,9 +3,8 @@
 use crate::limits::Limits;
 use crate::execution::pool::{Buffers, Nested, PooledScratch, Scratch};
 
-use rustc_hash::FxHashMap;
 
-use crate::diagram::{ChildPair, NodeIdx};
+use crate::diagram::ChildPair;
 
 /// Reusable scratch for `rebuild_rotated_levels`. Threaded by
 /// the rotation-search loops so the per-probe allocator churn is paid once per
@@ -17,7 +16,6 @@ use crate::diagram::{ChildPair, NodeIdx};
 /// byte meter, and what the retention policy drops is given back there.
 #[derive(Default)]
 pub(crate) struct RestructureScratch {
-    pub(super) inner_pair_to_idx: FxHashMap<ChildPair, NodeIdx>,
     // Per-v-node output pair lists; outer Vec grown with `resize_with`, inner
     // Vecs `clear()`-ed per call so their capacity survives across probes.
     pub(super) per_v_pairs: Vec<Vec<ChildPair>>,
@@ -44,7 +42,6 @@ pub(super) struct BucketScratch {
 
 impl Buffers for RestructureScratch {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
-        visit(&mut self.inner_pair_to_idx);
         visit(&mut Nested(&mut self.per_v_pairs));
         visit(&mut self.group_info);
         visit(&mut self.packed);
@@ -56,7 +53,6 @@ impl Buffers for RestructureScratch {
 
 impl PooledScratch for RestructureScratch {
     fn prepare(&mut self) {
-        self.inner_pair_to_idx.clear();
         self.group_info.clear();
         self.packed.clear();
         self.words.clear();

@@ -19,7 +19,6 @@
 
 use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, NodeIdx, Tdd, TddLevel};
 
-use rustc_hash::FxHashMap;
 
 use crate::vtree::rotate::RotationInfo;
 use crate::vtree::RotationKind;
@@ -160,12 +159,10 @@ fn rebuild_levels(
     scratch.group_info.clear();
     group_by_inner_pair(lim, &mut scratch.packed, &mut scratch.group_info, marginal_ctx)?;
 
-    scratch.inner_pair_to_idx.clear();
     let Some(inner_level) = build_inner_level(
         lim,
         &scratch.packed,
         &mut scratch.group_info,
-        &mut scratch.inner_pair_to_idx,
         &mut scratch.bucket,
         marginal_ctx,
         max_pairs,
@@ -174,10 +171,6 @@ fn rebuild_levels(
         return Ok(None);
     };
 
-    // Last read of `group_info` (both branches consumed it building the inner
-    // level); release it before the outer level's per-v pair lists and arena.
-    release_or_clear(lim, &mut scratch.group_info);
-
     // Neither level is installed until both are built; a refusal in between
     // drops the inner one and hands its charge back.
     let inner_level = Transient::new(lim, inner_level);
@@ -185,7 +178,7 @@ fn rebuild_levels(
         lim,
         old_v,
         &mut scratch.packed,
-        &scratch.inner_pair_to_idx,
+        &mut scratch.group_info,
         &mut scratch.per_v_pairs,
         dir,
         marginal_ctx,
@@ -310,6 +303,8 @@ pub(super) struct PairGroup {
     /// The `[start, end)` bounds of the cells in `triples`.
     start: u32,
     end: u32,
+    /// The inner node the pair went under, once the inner level is built.
+    node: NodeIdx,
 }
 
 /// Phase 2: dedup cells in-place within each inner-pair group of the sorted
@@ -345,7 +340,7 @@ fn group_by_inner_pair(
             }
             read += 1;
         }
-        let group = PairGroup { hash: fp_hash, inner: tri_inner(first), start: group_start, end: write as u32 };
+        let group = PairGroup { hash: fp_hash, inner: tri_inner(first), start: group_start, end: write as u32, node: NodeIdx(u32::MAX) };
         lim.try_push(group_info, group)?;
     }
     triples.truncate(write);
@@ -353,7 +348,7 @@ fn group_by_inner_pair(
 }
 
 /// Phases 3 and 4: turn the inner-pair groups into one inner level, recording
-/// each pair's node index in `inner_pair_to_idx`. Returns `Ok(None)` when bail
+/// in each group the node its pair went under. Returns `Ok(None)` when bail
 /// check 2 says the result would exceed `max_pairs`.
 ///
 /// Two shapes, chosen by `marginal_ctx`: full expansion, one node per distinct
@@ -368,7 +363,6 @@ fn build_inner_level(
     lim: &Limits,
     triples: &[u128],
     group_info: &mut [PairGroup],
-    inner_pair_to_idx: &mut FxHashMap<ChildPair, NodeIdx>,
     bucket: &mut BucketScratch,
     marginal_ctx: bool,
     max_pairs: usize,
@@ -383,8 +377,7 @@ fn build_inner_level(
             return Ok(None);
         }
         // Every group's pair gets an entry, in either shape.
-        lim.reserve_map(inner_pair_to_idx, group_info.len())?;
-        expand_every_pair(lim, &mut level, group_info, inner_pair_to_idx)?;
+        expand_every_pair(lim, &mut level, group_info)?;
     } else {
         // Phase 3: sort groups by fingerprint hash, so entries that can share a
         // node land in one bucket, then count the distinct cell lists that survive.
@@ -392,16 +385,15 @@ fn build_inner_level(
         if count_distinct_cell_lists(triples, group_info) + n_w_pairs >= max_pairs {
             return Ok(None);
         }
-        lim.reserve_map(inner_pair_to_idx, group_info.len())?;
-        cluster_by_cell_list(lim, &mut level, triples, group_info, inner_pair_to_idx, bucket)?;
+        cluster_by_cell_list(lim, &mut level, triples, group_info, bucket)?;
     }
     Ok(Some(level.keep()))
 }
 
-/// The maximal runs of equal fingerprint hash in a hash-sorted `group_info`.
-/// Two groups can share an inner node only inside one such run, so the count
-/// and the build walk the same partition.
-fn hash_buckets(group_info: &[PairGroup]) -> impl Iterator<Item = &[PairGroup]> {
+/// The bounds of the maximal runs of equal fingerprint hash in a hash-sorted
+/// `group_info`. Two groups can share an inner node only inside one such run,
+/// so the count and the build walk the same partition.
+fn hash_buckets(group_info: &[PairGroup]) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
     let mut start = 0;
     std::iter::from_fn(move || {
         let hash = group_info.get(start)?.hash;
@@ -409,7 +401,7 @@ fn hash_buckets(group_info: &[PairGroup]) -> impl Iterator<Item = &[PairGroup]> 
         while end < group_info.len() && group_info[end].hash == hash {
             end += 1;
         }
-        let bucket = &group_info[start..end];
+        let bucket = start..end;
         start = end;
         Some(bucket)
     })
@@ -424,12 +416,10 @@ fn hash_buckets(group_info: &[PairGroup]) -> impl Iterator<Item = &[PairGroup]> 
 fn expand_every_pair(
     lim: &Limits,
     inner_level: &mut TddLevel,
-    group_info: &[PairGroup],
-    inner_pair_to_idx: &mut FxHashMap<ChildPair, NodeIdx>,
+    group_info: &mut [PairGroup],
 ) -> Result<(), OperationError> {
     for g in group_info {
-        let idx = inner_level.push_node(lim, &[g.inner])?;
-        inner_pair_to_idx.insert(g.inner, idx);
+        g.node = inner_level.push_node(lim, &[g.inner])?;
     }
     Ok(())
 }
@@ -443,6 +433,7 @@ fn expand_every_pair(
 fn count_distinct_cell_lists(triples: &[u128], group_info: &[PairGroup]) -> usize {
     let mut n_fps = 0usize;
     for bucket in hash_buckets(group_info) {
+        let bucket = &group_info[bucket];
         for j in 0..bucket.len() {
             let is_new = !(0..j).any(|k| same_cells(triples, &bucket[j], &bucket[k]));
             if is_new { n_fps += 1; }
@@ -458,14 +449,16 @@ fn cluster_by_cell_list(
     lim: &Limits,
     inner_level: &mut TddLevel,
     triples: &[u128],
-    group_info: &[PairGroup],
-    inner_pair_to_idx: &mut FxHashMap<ChildPair, NodeIdx>,
+    group_info: &mut [PairGroup],
     scratch: &mut BucketScratch,
 ) -> Result<(), OperationError> {
-    for bucket in hash_buckets(group_info) {
+    let mut start = 0;
+    while start < group_info.len() {
+        let end = start + hash_buckets(&group_info[start..]).next().expect("a group is left").end;
+        let bucket = &mut group_info[start..end];
+        start = end;
         if bucket.len() == 1 {
-            let idx = inner_level.push_node(lim, &[bucket[0].inner])?;
-            inner_pair_to_idx.insert(bucket[0].inner, idx);
+            bucket[0].node = inner_level.push_node(lim, &[bucket[0].inner])?;
             continue;
         }
         let BucketScratch { done, pairs } = scratch;
@@ -473,14 +466,18 @@ fn cluster_by_cell_list(
         lim.try_resize(done, bucket.len(), false)?;
         for j in 0..bucket.len() {
             if done[j] { continue; }
+            // The node the groups matched here go under: the next one.
+            let node = NodeIdx(inner_level.nodes.len() as u32);
             pairs.clear();
             lim.try_push(pairs, bucket[j].inner)?;
             done[j] = true;
+            bucket[j].node = node;
             for k in (j + 1)..bucket.len() {
                 if done[k] { continue; }
                 if same_cells(triples, &bucket[j], &bucket[k]) {
                     lim.try_push(pairs, bucket[k].inner)?;
                     done[k] = true;
+                    bucket[k].node = node;
                 }
             }
             // No canonicalizing sort: this rotated level is queued for twin
@@ -488,9 +485,7 @@ fn cluster_by_cell_list(
             // (`find_twin_groups` sorts each signature slice before comparing),
             // so the node's pair order is free (see `ChildPair`).
             let idx = inner_level.push_node(lim, pairs)?;
-            for &p in pairs.iter() {
-                inner_pair_to_idx.insert(p, idx);
-            }
+            debug_assert_eq!(idx, node, "a pushed node is the level's last");
         }
     }
     Ok(())
@@ -509,7 +504,7 @@ fn build_outer_level(
     lim: &Limits,
     old_v_level: &TddLevel,
     triples: &mut Vec<u128>,
-    inner_pair_to_idx: &FxHashMap<ChildPair, NodeIdx>,
+    group_info: &mut Vec<PairGroup>,
     per_v_pairs: &mut Vec<Vec<ChildPair>>,
     dir: RotationKind,
     marginal_ctx: bool,
@@ -520,10 +515,12 @@ fn build_outer_level(
         per_v_pairs.resize_with(n_v, Vec::new);
     }
     for v in &mut per_v_pairs[..n_v] { v.clear(); }
-    let distributed = distribute_outer_pairs(lim, triples, inner_pair_to_idx, per_v_pairs, dir);
-    // Last read of `triples`: `per_v_pairs` now holds every outer pair. Release
-    // the 16 B/triple buffer before the arena that copies those pairs is built.
+    let distributed = distribute_outer_pairs(lim, triples, group_info, per_v_pairs, dir);
+    // Last read of `triples` and the groups: `per_v_pairs` now holds every
+    // outer pair. Release the 16 B/triple buffer before the arena that copies
+    // those pairs is built.
     release_or_clear(lim, triples);
+    release_or_clear(lim, group_info);
     distributed?;
 
     let mut outer_level = Transient::new(lim, TddLevel::new());
@@ -531,25 +528,28 @@ fn build_outer_level(
     Ok(outer_level.keep())
 }
 
-/// Turn each triple into its outer pair and file it under the old v-node it
-/// came from.
+/// Turn each triple into its outer pair, through the inner node its group
+/// went under, and file it under the old v-node it came from. A group's cells
+/// are the run of triples it bounds, so the groups are walked in the order
+/// the triples are in, which the hash sort of the Boolean build has changed:
+/// there the outer lists are sorted before they are used.
 fn distribute_outer_pairs(
     lim: &Limits,
     triples: &[u128],
-    inner_pair_to_idx: &FxHashMap<ChildPair, NodeIdx>,
+    group_info: &[PairGroup],
     per_v_pairs: &mut [Vec<ChildPair>],
     dir: RotationKind,
 ) -> Result<(), OperationError> {
-    for &p in triples {
-        let inner = tri_inner(p);
-        let src = tri_src(p);
-        let axis = tri_axis(p);
-        let inner_idx = inner_pair_to_idx[&inner];
-        let outer_pair = match dir {
-            RotationKind::Left => ChildPair::new(inner_idx, axis),
-            RotationKind::Right => ChildPair::new(axis, inner_idx),
-        };
-        lim.try_push(&mut per_v_pairs[src as usize], outer_pair)?;
+    for g in group_info {
+        for &p in &triples[g.start as usize..g.end as usize] {
+            let src = tri_src(p);
+            let axis = tri_axis(p);
+            let outer_pair = match dir {
+                RotationKind::Left => ChildPair::new(g.node, axis),
+                RotationKind::Right => ChildPair::new(axis, g.node),
+            };
+            lim.try_push(&mut per_v_pairs[src as usize], outer_pair)?;
+        }
     }
     Ok(())
 }
