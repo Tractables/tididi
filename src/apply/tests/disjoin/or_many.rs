@@ -1,4 +1,4 @@
-//! `or_many` against a fold of `or`: the same function, fewer complements.
+//! Balanced and sequential disjunctions produce the same canonical result.
 
 use std::sync::Arc;
 use crate::test_helpers::assert_canonical;
@@ -39,8 +39,7 @@ fn or_many_equals_a_fold_of_or() {
     }
 }
 
-/// The point of the operation: `3(n - 1)` complements become `n + 1`, and the
-/// result is no larger for it.
+/// Both groupings minimize their result, so their canonical sizes agree.
 #[test]
 fn or_many_is_no_larger_than_a_fold() {
     let v = vtree(4);
