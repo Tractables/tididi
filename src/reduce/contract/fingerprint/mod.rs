@@ -1,8 +1,8 @@
-use crate::diagram::{ChildDecoder, ChildSide, EncodedChildRef, Tdd, TddLevel};
+use crate::diagram::{ChildDecoder, ChildPair, ChildSide, EncodedChildRef, Tdd, TddLevel};
 use crate::Engine;
 use crate::vtree::VtreeIdx;
 
-use crate::limits::OperationError;
+use crate::limits::{Limits, OperationError};
 
 use super::scratch::{ContractScratch, EMPTY_SLOT, TwinSlot};
 
@@ -38,23 +38,36 @@ fn for_each_target_sibling(
     // not a child node), so it never joins twin grouping; the parent rewrite
     // leaves such a ref verbatim. `sibling` is passed raw: it is only hashed
     // and packed, never indexed.
-    let resolve_target = |side: EncodedChildRef| target.child(side).index().map(|c| c as u32);
     // `pairs_of` slice iteration (compiler-vectorizable).
     for (parent_i, parent_node) in parent_level.nodes.iter().enumerate() {
         let pi = parent_i as u32;
         for pair in parent_level.pairs_of(parent_node) {
-            if t1_side == ChildSide::Left {
-                if let Some(t) = resolve_target(pair.left) {
-                    f(pi, t, pair.right.0);
-                }
-            } else {
-                if let Some(t) = resolve_target(pair.right) {
-                    f(pi, t, pair.left.0);
-                }
+            let (t, sibling) = split_pair(pair, t1_side);
+            if let Some(t) = resolve_target(target, t) {
+                f(pi, t, sibling);
             }
         }
     }
 }
+
+/// A pair's side toward the child level `t1_side` names, and the raw ref of
+/// the other side.
+#[inline]
+fn split_pair(pair: &ChildPair, t1_side: ChildSide) -> (EncodedChildRef, u32) {
+    if t1_side == ChildSide::Left { (pair.left, pair.right.0) } else { (pair.right, pair.left.0) }
+}
+
+/// The cell a target-side ref names, or `None` for an inline value.
+#[inline]
+fn resolve_target(target: ChildDecoder, side: EncodedChildRef) -> Option<u32> {
+    target.child(side).index().map(|c| c as u32)
+}
+
+/// Buckets per pair in the per-node sibling bitmap of
+/// [`ContextEntries::no_twin`]: two siblings share a bucket in a node of k
+/// pairs with probability about k/32, and only then are the node's siblings
+/// sorted.
+const LOCAL_BUCKETS_PER_PAIR: usize = 16;
 
 /// The splitmix64 finalizer (Steele et al., 2014) — the shared bit-diffusion
 /// step behind every fingerprint in the contract module.
@@ -83,6 +96,12 @@ mod tests;
 pub(super) trait TwinEntries {
     /// Call `f(node, entry)` once per entry of every node.
     fn for_each(&self, f: impl FnMut(u32, u64));
+
+    /// Whether none of the `width` nodes can have a twin: no two nodes share
+    /// an entry, and at most one has none. `false` when that is not known.
+    fn no_twin(&self, _lim: &Limits, _scratch: &mut ContractScratch, _width: usize) -> Result<bool, OperationError> {
+        Ok(false)
+    }
 }
 
 /// Two 32-bit values packed into one entry, `hi` in the high half.
@@ -104,6 +123,74 @@ impl TwinEntries for ContextEntries<'_> {
         for_each_target_sibling(self.parent_level, self.t1_side, self.t1_view, |pi, target, sibling| {
             f(target, pack(pi, sibling));
         });
+    }
+
+    /// Two nodes share a context only where a parent node pairs both with
+    /// one sibling. Each parent node is tested alone, in cache, and the test
+    /// stops at the first node that repeats a sibling, where twins are
+    /// likely; a level whose parent nodes never repeat one, common on grids,
+    /// then needs no fingerprint. The nodes no pair names are counted on the
+    /// way: two of them would be twins.
+    fn no_twin(&self, lim: &Limits, scratch: &mut ContractScratch, width: usize) -> Result<bool, OperationError> {
+        let ContractScratch { twin_local, twin_siblings, twin_named, .. } = scratch;
+        let words = width.div_ceil(64);
+        lim.try_resize(twin_named, words, 0u64)?;
+        let named = &mut twin_named[..words];
+        named.fill(0);
+        let mut name = |t: u32| named[(t / 64) as usize] |= 1 << (t % 64);
+        let (level, side, view) = (self.parent_level, self.t1_side, self.t1_view);
+        for node in level.nodes.iter() {
+            let pairs = level.pairs_of(node);
+            if pairs.len() < 3 {
+                let mut last: Option<u32> = None;
+                for pair in pairs {
+                    let (t, s) = split_pair(pair, side);
+                    if let Some(t) = resolve_target(view, t) {
+                        if last == Some(s) {
+                            return Ok(false);
+                        }
+                        last = Some(s);
+                        name(t);
+                    }
+                }
+                continue;
+            }
+            // 2^k buckets of a bit, at least 64.
+            let k = (pairs.len() * LOCAL_BUCKETS_PER_PAIR).next_power_of_two().trailing_zeros();
+            let local_words = 1usize << (k - 6);
+            if twin_local.len() < local_words {
+                lim.try_resize(twin_local, local_words, 0u64)?;
+            }
+            let local = &mut twin_local[..local_words];
+            local.fill(0);
+            let bucket = |s: u32| ((s as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - k)) as usize;
+            let mut shared_bucket = false;
+            for pair in pairs {
+                let (t, s) = split_pair(pair, side);
+                if let Some(t) = resolve_target(view, t) {
+                    let b = bucket(s);
+                    let word = &mut local[b / 64];
+                    shared_bucket |= (*word >> (b % 64)) & 1 != 0;
+                    *word |= 1 << (b % 64);
+                    name(t);
+                }
+            }
+            if shared_bucket {
+                twin_siblings.clear();
+                for pair in pairs {
+                    let (t, s) = split_pair(pair, side);
+                    if resolve_target(view, t).is_some() {
+                        lim.try_push(twin_siblings, s)?;
+                    }
+                }
+                twin_siblings.sort_unstable();
+                if twin_siblings.windows(2).any(|w| w[0] == w[1]) {
+                    return Ok(false);
+                }
+            }
+        }
+        let unnamed = width - named.iter().map(|w| w.count_ones() as usize).sum::<usize>();
+        Ok(unnamed <= 1)
     }
 }
 
@@ -169,6 +256,10 @@ pub(super) fn group_twins_by_entries(
         width <= u32::MAX as usize,
         "level width {width} exceeds the u32 node-index range",
     );
+
+    if entries.no_twin(lim, scratch, width)? {
+        return Ok(false);
+    }
 
     // ── Pre-test: fingerprint-only scatter ────────────────────────────────────
     //

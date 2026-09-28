@@ -219,6 +219,12 @@ pub(crate) struct ContractScratch {
     pub(super) twin_hash_table: Vec<TwinSlot>,
     /// Per-node fingerprint, combining all context hashes (a cheap twin pre-screen).
     pub(super) fingerprints: Vec<u64>,
+    /// The per-parent-node sibling bitmap of `TwinEntries::no_twin`.
+    pub(super) twin_local: Vec<u64>,
+    /// A parent node's siblings, sorted where two share a bucket there.
+    pub(super) twin_siblings: Vec<u32>,
+    /// One bit per node: set if some pair names it.
+    pub(super) twin_named: Vec<u64>,
     /// Node indices of twin group members, stored contiguously.
     pub(super) flat_groups: Vec<u32>,
     /// Start offsets into `flat_groups` for each twin group; a node belongs to
@@ -291,6 +297,9 @@ impl Buffers for ContractScratch {
         visit(&mut self.cursors);
         visit(&mut self.twin_hash_table);
         visit(&mut self.fingerprints);
+        visit(&mut self.twin_local);
+        visit(&mut self.twin_siblings);
+        visit(&mut self.twin_named);
         visit(&mut self.flat_groups);
         visit(&mut self.group_starts);
         visit(&mut self.is_candidate);
