@@ -767,9 +767,11 @@ fn low_runs(lim: &Limits, s: &mut Scratch, keys: &[u64], low_width: usize) -> Re
     let mut gate = lim.gate();
     gate.poll(n as u64)?;
     s.low_starts.clear();
-    // A run starts at most at every key, so the starts never grow the
-    // buffer past this.
-    lim.reserve_exact(&mut s.low_starts, n)?;
+    // A run starts at most at every key, and at most at every low part
+    // from the first key's to the last's, since the keys ascend by low
+    // part, so the starts never grow the buffer past this.
+    let most = runs_between(keys[0] & mask, keys[n - 1] & mask, n);
+    lim.reserve_exact(&mut s.low_starts, most)?;
     s.low_starts.push(0);
     let (mut last, mut start, mut lone) = (keys[0] & mask, 0usize, 0usize);
     for (i, &key) in keys.iter().enumerate() {
@@ -782,6 +784,7 @@ fn low_runs(lim: &Limits, s: &mut Scratch, keys: &[u64], low_width: usize) -> Re
     }
     lone += usize::from(n - start == 1);
     let count = s.low_starts.len();
+    debug_assert!(count <= most, "the keys ascend by low part");
     let long_only = 2 * lone >= count;
     gate.poll(n as u64)?;
     s.low_hash.clear();
@@ -1140,12 +1143,15 @@ fn hash_sides<const SINGLE: bool>(
     low_width: usize,
 ) -> Result<(), OperationError> {
     let mask = (1u64 << low_width) - 1;
-    // A high value's run starts at most at every value; reserved at once,
-    // the pass never grows the buffers.
+    // A high value's run starts at most at every value, and at most at
+    // every high part from the first value's to the last's, since the
+    // values ascend by high part; reserved at once, the pass never grows
+    // the buffers.
     let n = parent.len();
-    lim.reserve_exact(&mut s.high_hash, n)?;
-    lim.reserve_exact(&mut s.high_starts, n)?;
-    lim.reserve_exact(&mut s.high, n)?;
+    let most = runs_between(parent.data[0] >> low_width, parent.data[n - 1] >> low_width, n);
+    lim.reserve_exact(&mut s.high_hash, most)?;
+    lim.reserve_exact(&mut s.high_starts, most)?;
+    lim.reserve_exact(&mut s.high, most)?;
     let mut last = parent.data[0] >> low_width;
     let (mut hash, mut index) = (RUN_SEED, 0u64);
     for (e, &value) in parent.data.iter().enumerate() {
@@ -1161,6 +1167,7 @@ fn hash_sides<const SINGLE: bool>(
         let tally = &mut s.low_tally[low as usize];
         *tally = (mix(tally.0, index << 32 | atom), tally.1 + 1);
     }
+    debug_assert!(s.high_starts.len() <= most, "the values ascend by high part");
     lim.try_push(&mut s.high_hash, hash)
 }
 
@@ -1506,6 +1513,13 @@ fn run(starts: &[u32], k: u32, n: usize) -> std::ops::Range<usize> {
 /// Every run of those starting at `starts`, the last running to `n`.
 fn runs(starts: &[u32], n: usize) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
     (0..starts.len() as u32).map(move |k| run(starts, k, n))
+}
+
+/// The most runs `n` keys sorted on a part make, that part being `first`
+/// in the first key and `last` in the last: one a key, and one a part
+/// between the two.
+fn runs_between(first: u64, last: u64, n: usize) -> usize {
+    usize::try_from(last.saturating_sub(first)).map_or(n, |span| n.min(span.saturating_add(1)))
 }
 
 /// Runs of one atom list the same keys, so they realize the same triples.

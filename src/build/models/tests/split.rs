@@ -361,3 +361,11 @@ fn hashed_runs_number_by_content_whatever_their_hashes() {
         }
     }
 }
+
+#[test]
+fn the_runs_between_two_parts_are_at_most_the_keys_and_the_parts() {
+    assert_eq!(runs_between(3, 3, 10), 1);
+    assert_eq!(runs_between(4, 9, 100), 6);
+    assert_eq!(runs_between(0, 5, 3), 3);
+    assert_eq!(runs_between(0, u64::MAX, 7), 7);
+}
