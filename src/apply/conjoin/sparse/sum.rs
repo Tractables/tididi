@@ -1,7 +1,11 @@
-//! Summing one child of a one-product root out as the root's pairs are found.
+//! Summing one child of a one-product level out as its pairs are found.
 //!
+//! A level at which each operand of a conjunction has one node is one
+//! product: the conjunction's root, or a level under it that every pair
+//! above reaches through that one node, as a join's operands reach the
+//! subtree of the variables they bind. It is called the root below.
 //! [`Engine::and_marginalizing`](crate::Engine::and_marginalizing) with one
-//! target `c`, a child of the root, can build the root in full — one pair
+//! target `c`, a child of such a root, can build the root in full — one pair
 //! `(s, n)` per candidate the scatter finds, `s` a product of the root's
 //! other child and `n` one of `c` — and then, once the sweep is over, sum `c`
 //! out and fuse the pairs that share an `s` into one pair carrying the sum of
@@ -11,6 +15,16 @@
 //! candidate adds its `n`'s count to its `s` as the scatter finds it, and the
 //! root is written from the sums, in the two-step path's order and with its
 //! references (see [`ChildSum::write_root`]).
+//!
+//! The levels are then the ones the two-step path leaves: under the root the
+//! same, with `c`'s subtree made marginal as its pass makes it; the root
+//! written as its fusion writes it; and above the root the same too, since
+//! each level there was built from the root's one node, whose number neither
+//! path changes. The exception is a conjunction that a level above the root
+//! makes false: the two-step path then skips its pass, so `c`'s subtree and
+//! the root stay as the sweep built them, where here they are summed. Both
+//! are the false diagram; they differ only in nodes the output does not
+//! reach.
 
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;

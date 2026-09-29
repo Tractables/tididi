@@ -22,9 +22,9 @@
 //! Two uses of the sweep change what the root does when the sparse route
 //! builds it as one product: a count ([`ConjoinMode::Count`]) folds the
 //! root's pairs into the count instead of storing them, and a
-//! marginalizing conjunction with one child of the root as its target
-//! ([`ConjoinMode::Sum`]) adds each pair's count into its fused pair
-//! instead (`sparse::ChildSum`).
+//! marginalizing conjunction with one target ([`ConjoinMode::Sum`]) has the
+//! target's parent, where each operand has one node, add each pair's count
+//! into its fused pair instead (`sparse::ChildSum`).
 //!
 //! A self-conjunction `f ∧ f` returns `f` from `conjoin_on` before the
 //! driver runs.
@@ -54,11 +54,11 @@ pub(super) struct Sweep<'a, 'filter> {
     /// `counted`, and left empty.
     pub(super) count_root: bool,
     pub(super) counted: Option<num_bigint::BigUint>,
-    /// The one target, a child of the root, whose counts a root the sparse
-    /// route builds as one product sums as its pairs are found
+    /// The one target, whose counts its parent sums as its pairs are found
+    /// where the sparse route builds the parent as one product
     /// ([`ConjoinMode::Sum`]).
     pub(super) sum_child: Option<VtreeIdx>,
-    /// Where the root summed `sum_child` out: the levels it made marginal,
+    /// Where the parent summed `sum_child` out: the levels it made marginal,
     /// children before parents.
     pub(super) summed: Option<Vec<VtreeIdx>>,
 }
@@ -185,7 +185,7 @@ fn build_level(
             Route::Sparse if counts_root(sweep, f, g, shape, &plan) => {
                 sweep.counted = Some(count_sparse_root(eng, run, f, g, shape, vtree)?);
             }
-            Route::Sparse => match sums_root(sweep, run, f, g, shape, &plan) {
+            Route::Sparse => match sums_root(sweep, run, shape, &plan) {
                 Some(side) => sweep.summed = sum_sparse_root(eng, run, f, g, shape, vtree, side)?,
                 None => run_sparse_level(eng, run, f, g, shape, &plan)?,
             },
@@ -228,8 +228,8 @@ pub(crate) enum ConjoinMode {
     Build,
     Count,
     Restore,
-    /// Build, and where the root is one product the sparse route builds, sum
-    /// the target given, one of its children, out as the root's pairs are
+    /// Build, and where the target given has a parent the sparse route
+    /// builds as one product, sum the target out as the parent's pairs are
     /// found, instead of building the pairs the marginalization pass would
     /// fuse. The caller's targets must be that level alone.
     Sum(VtreeIdx),
@@ -416,7 +416,7 @@ pub(crate) fn apply_and_core(
         // level on the finished diagram and marks its parent then.
         Some(installed) => {
             for d in installed {
-                let parent = vtree.node(d).parent().expect("a summed level is below the root");
+                let parent = vtree.node(d).parent().expect("a summed level has a parent");
                 out.invalidate(parent);
             }
             Ok(Conjoined::Summed(out))

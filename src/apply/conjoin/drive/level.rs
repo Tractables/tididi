@@ -138,18 +138,18 @@ pub(super) fn count_sparse_root(
 
 /// Whether [`sum_sparse_root`] may take a level the sparse route was chosen
 /// for, and if so the summed child's side of its pairs: the sweep sums out
-/// one child `c` of the root ([`Sweep::sum_child`]), the level is the root
-/// both operands output at, f and g have one node there, neither child is
-/// carried, no weight, filter or quantified subtree is in play and neither
-/// the root nor its other child is a target, `c` is internal, and no level
-/// of `c`'s subtree is marginal in the output built so far or was marginal
-/// in an operand at entry: `c` was built structural, as the two-step path
-/// finds it once the sweep is over.
+/// one child `c` of the level ([`Sweep::sum_child`]), f and g have one node
+/// there, so the level is one product (the root of the conjunction, or a
+/// level under it that every pair above reaches through that one node, as
+/// a join's operands reach the subtree of the variables they bind), neither
+/// child is carried, no weight, filter or quantified subtree is in play and
+/// neither the level nor its other child is a target, `c` is internal, and
+/// no level of `c`'s subtree is marginal in the output built so far or was
+/// marginal in an operand at entry: `c` was built structural, as the
+/// two-step path finds it once the sweep is over.
 pub(super) fn sums_root(
     sweep: &Sweep<'_, '_>,
     run: &ApplyRun,
-    f: &Tdd,
-    g: &Tdd,
     shape: LevelShape,
     plan: &MarginalPlan,
 ) -> Option<ChildSide> {
@@ -163,10 +163,7 @@ pub(super) fn sums_root(
     } else {
         return None;
     };
-    let takes = t == vtree.root()
-        && f.output.vtree == t
-        && g.output.vtree == t
-        && shape.f.here == 1
+    let takes = shape.f.here == 1
         && shape.g.here == 1
         && Passthrough::of(plan.sides).is_none()
         && sweep.ws.is_none()
@@ -179,13 +176,16 @@ pub(super) fn sums_root(
     takes.then_some(side)
 }
 
-/// Build the root with its child `c`, on `side` of the root's pairs, summed
-/// out as the scatter finds the pairs ([`ChildSum`]), instead of building
-/// every pair and fusing them once `c` is marginalized.
+/// Build the root, the one-product level [`sums_root`] took, with its child
+/// `c`, on `side` of the root's pairs, summed out as the scatter finds the
+/// pairs ([`ChildSum`]), instead of building every pair and fusing them once
+/// `c` is marginalized.
 ///
 /// `c`'s column is folded over the levels built so far, as
 /// [`Engine::marginalize_levels`](crate::Engine::marginalize_levels) folds
-/// it on the finished diagram, whose levels under the root these are; the
+/// it on the finished diagram, whose levels under the root these are (a
+/// level above the root is built from the root's one node, whose number the
+/// sum does not change); the
 /// scatter adds each candidate's count to its kept product's sum; `c` and
 /// every level under it are made marginal as that pass makes them
 /// ([`install_summed`]); and the root's one node is written from the sums

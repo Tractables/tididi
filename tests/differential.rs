@@ -919,15 +919,17 @@ fn named_levels(f: &Tdd) -> (Option<(VtreeIdx, Named)>, Vec<NamedLevel>) {
     (output, levels)
 }
 
-/// The marginalizing conjunction whose one target is a child of the root may
-/// sum the child out as the sparse route finds the root's pairs, where the
-/// conjunction built in full holds every pair until the child is summed out
-/// and its pairs fused. Either way the count is the enumerated one, and the
-/// two diagrams minimize to the same canonical diagram up to numbering, on
-/// the default route and on one that sends every level down the sparse one.
+/// The marginalizing conjunction whose one target's parent is one product,
+/// each operand one node there, may sum the target out as the sparse route
+/// finds the parent's pairs, where the conjunction built in full holds every
+/// pair until the target is summed out and its pairs fused. Either way the
+/// count is the enumerated one, and the two diagrams minimize to the same
+/// canonical diagram up to numbering, on the default route and on one that
+/// sends every level down the sparse one; a false conjunction is false
+/// either way. The targets are the internal children of the vtree's root and
+/// of the last level below it, bottom-up, at which each operand has one node.
 fn a_summed_root_is_the_two_step_diagram(case: &Case) {
     let vtree = &case.vtree;
-    let VtreeNode::Internal { left: l, right: r, .. } = *vtree.node(vtree.root()) else { return };
     let split = case.clauses.len() / 2;
     let mut left_case = borrow(case);
     let mut right_case = borrow(case);
@@ -936,7 +938,13 @@ fn a_summed_root_is_the_two_step_diagram(case: &Case) {
     let (f, g) = (compile(&left_case), compile(&right_case));
     let count = BigUint::from(brute_force_count(case.num_vars, &case.clauses));
     let routes = [SparseRoute::DEFAULT, SparseRoute { sparsity: 1, min_grid: 1 }];
-    for c in [l, r].into_iter().filter(|&c| !vtree.node(c).is_leaf()) {
+    let one = |d: &Tdd, t: VtreeIdx| !d.is_zero() && d.level(t).nodes().len() == 1;
+    let below = vtree.bottomup().rfind(|&t| t != vtree.root() && !vtree.node(t).is_leaf() && one(&f, t) && one(&g, t));
+    let children = [Some(vtree.root()), below].into_iter().flatten().filter_map(|t| match *vtree.node(t) {
+        VtreeNode::Internal { left, right, .. } => Some([left, right]),
+        _ => None,
+    });
+    for c in children.flatten().filter(|&c| !vtree.node(c).is_leaf()) {
         for route in routes {
             let context = Arc::clone(f.context());
             let (mut summed, mut two) = context.with_limits(LimitConfig::none().with_sparse_route(route), |eng| {
@@ -949,11 +957,14 @@ fn a_summed_root_is_the_two_step_diagram(case: &Case) {
             });
             assert_eq!(summed.model_count().unwrap(), count, "the summed root's count");
             assert_eq!(two.model_count().unwrap(), count, "the two-step count");
+            assert_eq!(summed.is_zero(), two.is_zero(), "one of the two is false");
             summed.minimize().unwrap();
             two.minimize().unwrap();
             assert_canonical(&summed);
             assert_canonical(&two);
-            assert_eq!(named_levels(&summed), named_levels(&two), "the summed root minimized to another diagram");
+            if !summed.is_zero() {
+                assert_eq!(named_levels(&summed), named_levels(&two), "the summed root minimized to another diagram");
+            }
         }
     }
 }

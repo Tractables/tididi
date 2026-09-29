@@ -1,11 +1,14 @@
-//! `Engine::and_marginalizing` with one target under the root sums the target
-//! out as the sparse route finds the root's pairs (`sparse::sum`), where the
+//! `Engine::and_marginalizing` with one target whose parent is one product
+//! (each operand has one node there: the root, or a level under it) sums the
+//! target out as the sparse route finds that level's pairs (`sparse::sum`),
+//! where the
 //! two-step path builds every pair, marginalizes the target once the sweep is
 //! over and fuses the pairs. The two must leave the same diagram, level for
 //! level and pair for pair: the same value slots in the same order, the same
 //! references, the same pair order, the same markers and the same
 //! re-contraction worklists. That is checked on every vtree shape, with the
-//! target on either side of the root, whichever way the scatter collects and
+//! target on either side of its parent, the parent the vtree's root or a
+//! level under it, whichever way the scatter collects and
 //! walks, for counts that sit inline, in slots, past the sums' one-word path,
 //! past `u64` and past `u128`, for roots wide enough to take every grouping
 //! pair fusion has, for a root with no pair, and beside a level an operand
@@ -40,9 +43,15 @@ fn rows(seed: u64, n: usize, cols: usize, bits: u32) -> Vec<Vec<u64>> {
 /// the state (every value slot, big ones included), the value-reference
 /// markers, the node encodings and each node's pairs in order. The arenas'
 /// dead tails are not compared: the two-step path abandons the slots its
-/// fusion shrinks and reclaims them only past a threshold.
+/// fusion shrinks and reclaims them only past a threshold. Two false
+/// diagrams are compared on their output alone.
 fn assert_identical(a: &Tdd, b: &Tdd, what: &str) {
     assert_eq!(a.output, b.output, "{what}: output");
+    if a.is_zero() {
+        // False either way: the output names no node, and the levels hold
+        // only what the sweep left unreachable (see `sparse::sum`).
+        return;
+    }
     assert_eq!(format!("{:?}", a.dirty), format!("{:?}", b.dirty), "{what}: worklists");
     assert!(a.weights.is_none() && b.weights.is_none(), "{what}: weights");
     assert_eq!(a.levels.len(), b.levels.len(), "{what}: level count");
@@ -58,23 +67,24 @@ fn assert_identical(a: &Tdd, b: &Tdd, what: &str) {
     }
 }
 
-/// What one comparison saw: whether the root summed its child out, and the
-/// root's pairs and fused groups in the conjunction built in full.
+/// What one comparison saw: whether the root summed its child out, whether
+/// that root was below the vtree's, and the root's pairs and fused groups in
+/// the conjunction built in full.
 #[derive(Clone, Copy, Default)]
 struct Seen {
     summed: bool,
+    below: bool,
     pairs: usize,
     groups: usize,
 }
 
-/// The pairs of the root of `full` and how many of its kept-side refs `side`
+/// The pairs of `full` at `t` and how many of their kept-side refs `side`
 /// leaves shared by two pairs or more: the groups pair fusion fuses.
-fn root_groups(full: &Tdd, side: ChildSide) -> (usize, usize) {
-    let root = full.vtree.root();
-    if full.is_zero() || full.output.vtree != root {
+fn root_groups(full: &Tdd, t: VtreeIdx, side: ChildSide) -> (usize, usize) {
+    if full.is_zero() {
         return (0, 0);
     }
-    let level = &full.levels[root.idx()];
+    let level = &full.levels[t.idx()];
     let mut keys: Vec<u32> = (0..level.nodes.len())
         .flat_map(|n| level.pairs_of_idx(n).iter().map(|p| match side {
             ChildSide::Right => p.left.0,
@@ -100,8 +110,9 @@ fn both_ways(eng: &Engine, f: &Tdd, g: &Tdd, c: VtreeIdx, what: &str) -> Seen {
 
     let mut full = eng.and(f.clone(), g.clone()).unwrap();
     let vtree = Arc::clone(&full.vtree);
-    let side = if vtree.children(vtree.root()).1 == c { ChildSide::Right } else { ChildSide::Left };
-    let (pairs, groups) = root_groups(&full, side);
+    let t = vtree.node(c).parent().expect("a target below the root");
+    let side = if vtree.children(t).1 == c { ChildSide::Right } else { ChildSide::Left };
+    let (pairs, groups) = root_groups(&full, t, side);
     full.minimize().unwrap();
     assert_canonical(&full);
     let count = eng.model_count(&full).unwrap();
@@ -111,13 +122,27 @@ fn both_ways(eng: &Engine, f: &Tdd, g: &Tdd, c: VtreeIdx, what: &str) -> Seen {
         assert_canonical(&d);
         assert_eq!(eng.model_count(&d).unwrap(), count, "{what}: minimized count");
     }
-    Seen { summed: did, pairs, groups }
+    Seen { summed: did, below: t != vtree.root(), pairs, groups }
 }
 
-/// The internal children of the root.
-fn internal_root_children(vtree: &Vtree) -> Vec<VtreeIdx> {
-    let (left, right) = vtree.children(vtree.root());
-    [left, right].into_iter().filter(|&c| !vtree.node(c).is_leaf()).collect()
+/// The internal children of the vtree's root and of the last level below it,
+/// bottom-up, at which `f` and `g` have one node each and a child is
+/// internal: the highest where those levels are a chain from the root, as a
+/// join's operands' are, reaching the subtree of the variables they bind.
+fn targets(vtree: &Vtree, f: &Tdd, g: &Tdd) -> Vec<VtreeIdx> {
+    let internal = |t: VtreeIdx| {
+        let (left, right) = vtree.children(t);
+        [left, right].into_iter().filter(|&c| !vtree.node(c).is_leaf()).collect::<Vec<_>>()
+    };
+    let one = |d: &Tdd, t: VtreeIdx| !d.is_zero() && d.levels[t.idx()].nodes.len() == 1;
+    let below = vtree.bottomup().rfind(|&t| {
+        t != vtree.root() && !vtree.node(t).is_leaf() && one(f, t) && one(g, t) && !internal(t).is_empty()
+    });
+    let mut out = internal(vtree.root());
+    if let Some(t) = below {
+        out.extend(internal(t));
+    }
+    out
 }
 
 /// The thresholds every comparison runs under: every level sparse,
@@ -134,11 +159,11 @@ fn threshold_sets() -> [SparseThresholds; 4] {
 }
 
 /// Every comparison of `f ∧ g`, both operand orders, under every threshold
-/// set, the first under both prefetch gates, the target each internal child
-/// of the root.
+/// set, the first under both prefetch gates, the target each of
+/// [`targets`].
 fn compare_all(eng: &Engine, f: &Tdd, g: &Tdd, what: &str, seen: &mut Vec<Seen>) {
     let vtree = Arc::clone(&f.vtree);
-    for c in internal_root_children(&vtree) {
+    for c in targets(&vtree, f, g) {
         for (t, thresholds) in threshold_sets().into_iter().enumerate() {
             let _forced = ForcedThresholds::install(thresholds);
             let gates: &[Option<bool>] = if t == 0 { &[Some(true), Some(false)] } else { &[None] };
@@ -197,7 +222,9 @@ fn vtrees(a: &[VarId], b: &[VarId], c: &[VarId], free_a: &[VarId], free_b: &[Var
 /// with 28, 60, 70 and 130 free beside `a` (and 4 beside `b`): the summed
 /// counts then sit inline and in slots on either side of the inline limit,
 /// near the top of the sums' one-word path and past it, past `u64`, and past
-/// `u128`, on whichever side of the root `a`'s subtree lands.
+/// `u128`, on whichever side of the root `a`'s subtree lands. A join of two
+/// relations over `a` and `b` alone has its root below the vtree's wherever
+/// the vtree puts `a` and `b` under one node beside `c`.
 #[test]
 fn a_summed_root_is_the_fused_root_on_joins_at_every_count_width() {
     let eng = Engine::new();
@@ -217,10 +244,13 @@ fn a_summed_root_is_the_fused_root_on_joins_at_every_count_width() {
         let mut both_g = rows(seed + 300, 50, 3, 3);
         both_g.extend(both_f.iter().step_by(3).cloned());
         let wide_g = rows(seed + 400, 40, 2, 3);
+        let mut pair_g = rows(seed + 500, 20, 2, 3);
+        pair_g.extend(path_f.iter().step_by(2).cloned());
         let joins = [
             (pack(&[&a, &b], &path_f), pack(&[&b, &c], &path_g)),
             (pack(&[&a, &b, &c], &both_f), pack(&[&a, &b, &c], &both_g)),
             (pack(&[&a, &b, &c], &both_f), pack(&[&a, &c], &wide_g)),
+            (pack(&[&a, &b], &path_f), pack(&[&a, &b], &pair_g)),
         ];
         for (free_a, free_b) in &free {
             for vtree in vtrees(&a, &b, &c, free_a, free_b) {
@@ -238,6 +268,7 @@ fn a_summed_root_is_the_fused_root_on_joins_at_every_count_width() {
     let summed: Vec<&Seen> = seen.iter().filter(|s| s.summed).collect();
     assert!(summed.len() * 4 > seen.len(), "only {} of {} roots summed", summed.len(), seen.len());
     assert!(summed.iter().any(|s| s.groups > 0), "no summed root had a pair to fuse");
+    assert!(summed.iter().any(|s| s.below && s.groups > 0), "no root below the vtree's summed a pair to fuse");
 }
 
 /// A root of tens of thousands of pairs in thousands of groups: its fusion
@@ -356,7 +387,7 @@ fn a_summed_root_beside_and_under_an_operand_marginal_level() {
             assert_canonical(&f);
             assert_canonical(&g);
             let _forced = ForcedThresholds::install(threshold_sets()[0]);
-            for c in internal_root_children(&vtree) {
+            for c in targets(&vtree, &f, &g) {
                 let seen = both_ways(&eng, &f, &g, c, &format!("seed {seed}, marginal beside or under {c:?}"));
                 let under = crate::test_helpers::under(&vtree, m, c);
                 assert!(!(under && seen.summed), "a root summed a target holding a marginal level");

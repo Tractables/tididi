@@ -362,11 +362,12 @@ impl crate::Engine {
     ///
     /// A target built as structure is summed out once the conjunction is
     /// built, and the pairs above it that then name the same node on their
-    /// other side are fused into one. With a single target, a child of the
-    /// root, on an unweighted conjunction whose root is one product the
-    /// sparse route builds, the root instead adds each pair's count into its
-    /// fused pair as the pair is found, so the pairs the fusion would remove
-    /// are never stored; the diagram is the one the other order leaves.
+    /// other side are fused into one. With a single target on an unweighted
+    /// conjunction, where each operand has one node at the target's parent
+    /// and the sparse route builds that one product, the parent instead adds
+    /// each pair's count into its fused pair as the pair is found, so the
+    /// pairs the fusion would remove are never stored; the diagram is the
+    /// one the other order leaves.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -407,12 +408,13 @@ impl crate::Engine {
         for &t in targets {
             mask[t.idx()] = !vtree.node(t).is_leaf();
         }
-        // One target under the root, on an unweighted conjunction: the root
-        // may sum it out as it is built (`ConjoinMode::Sum`).
+        // One internal target, on an unweighted conjunction: where each
+        // operand has one node at the target's parent, that level may sum
+        // the target out as it is built (`ConjoinMode::Sum`).
         let summable = match targets.split_first() {
             Some((&c, rest)) => (rest.iter().all(|&t| t == c)
                 && !vtree.node(c).is_leaf()
-                && vtree.node(c).parent() == Some(vtree.root())
+                && vtree.node(c).parent().is_some()
                 && f.weights.is_none()
                 && g.weights.is_none()
                 && !two_step_forced())
@@ -432,9 +434,11 @@ impl crate::Engine {
             Conjoined::Summed(mut out) => {
                 note_summed();
                 #[cfg(debug_assertions)]
-                crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(
-                    &out, Some(&[vtree.root()]), "and_marginalizing",
-                );
+                if let Some(parent) = targets.first().and_then(|&c| vtree.node(c).parent()) {
+                    crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(
+                        &out, Some(&[parent]), "and_marginalizing",
+                    );
+                }
                 crate::reduce::slot_prune::prune_value_slots(self, &mut out);
                 return Ok(out);
             }
