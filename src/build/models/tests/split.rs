@@ -1,3 +1,5 @@
+use rustc_hash::FxHashMap;
+
 use super::*;
 use crate::test_helpers::Lcg;
 
@@ -33,6 +35,17 @@ fn triples_of(split: &Decomposition) -> (usize, Vec<[u32; 3]>) {
             }
             assert_eq!(start, lows.len());
             (1, triples)
+        }
+        Decomposition::ByAtom { ends, pairs } => {
+            let mut triples = Vec::new();
+            let mut start = 0;
+            for (atom, &end) in ends.iter().enumerate() {
+                assert!(start < end as usize, "every atom has a pair");
+                triples.extend(pairs[start..end as usize].iter().map(|&pair| [atom as u32, (pair >> 32) as u32, pair as u32]));
+                start = end as usize;
+            }
+            assert_eq!(start, pairs.len());
+            (ends.len(), triples)
         }
     }
 }
@@ -238,6 +251,62 @@ fn runs_whose_hashes_collide_split_as_the_general_split_does() {
     }
     WEAK_HASH.with(|weak| weak.set(false));
     assert!(ran.iter().all(|&count| count > 50), "both splits run: {ran:?}");
+}
+
+/// Values of a few high values over a wide low part, most low parts under
+/// one high value only and the rest under several: low values of one key
+/// then share a few atoms, and the single-atom split reads its pairs off
+/// them. Enough that the radix sort runs, when `many`.
+fn few_highs(rng: &mut Lcg, low_width: usize, high_width: usize, many: bool) -> Values {
+    let highs: Vec<u64> = (0..1 + rng.below(6)).map(|_| rng.next_u64() & ((1u64 << high_width) - 1)).collect();
+    let shared: Vec<u64> = (0..rng.below(20)).map(|_| rng.next_u64() & ((1u64 << low_width) - 1)).collect();
+    let per_high = if many { 400 + rng.below(3000) } else { 1 + rng.below(60) };
+    let mut data = Vec::new();
+    for &high in &highs {
+        for _ in 0..per_high {
+            data.push(high << low_width | (rng.next_u64() & ((1u64 << low_width) - 1)));
+        }
+        for &low in &shared {
+            if rng.below(2) == 0 {
+                data.push(high << low_width | low);
+            }
+        }
+    }
+    data.sort_unstable();
+    data.dedup();
+    let atom = vec![0; data.len()];
+    Values { words: 1, data, atom, atoms: 1 }
+}
+
+#[test]
+fn a_single_atom_split_reads_its_pairs_off_either_side() {
+    // Few high values over many low values of one key each: the low side's
+    // first runs hold a key or two apiece, and the pairs are read off them.
+    // Either side must give the pairs the general split gives, and both are
+    // taken.
+    let lim = Limits::new();
+    let mut rng = Lcg::new(0x10_51de);
+    let mut sides = [0usize; 2];
+    for round in 0..600 {
+        let (low_width, high_width) = (20 + rng.below(30) as usize, 1 + rng.below(6) as usize);
+        let (parent, widths) = match round % 3 {
+            0 => random_parent(&mut rng, round, true),
+            _ => (few_highs(&mut rng, low_width, high_width, round % 3 == 2), (low_width, high_width)),
+        };
+        if parent.len() < 2 || parent.atoms != 1 {
+            continue;
+        }
+        let mut s = Scratch::default();
+        let want = split_parts(&lim, &mut s, &parent, widths, false).unwrap();
+        let mut copy = Values { words: 1, data: parent.data.clone(), atom: parent.atom.clone(), atoms: 1 };
+        let Some(got) = split_single(&lim, &mut s, &mut copy, widths).unwrap() else { continue };
+        sides[usize::from(single_from_low(parent.len(), &s).is_some())] += 1;
+        assert_eq!(triples_of(&got.0), triples_of(&want.0), "round {round}");
+        for (got, want) in [(&got.1, &want.1), (&got.2, &want.2)] {
+            assert_eq!((&got.data, &got.atom, got.atoms), (&want.data, &want.atom, want.atoms), "round {round}");
+        }
+    }
+    assert!(sides.iter().all(|&count| count > 50), "both sides are read: {sides:?}");
 }
 
 #[test]

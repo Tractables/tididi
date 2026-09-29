@@ -16,10 +16,6 @@
 //! a value's *low* part is its right child's value and its *high* part its
 //! left child's, and the parent values ascend by high part first.
 
-use std::hash::Hasher;
-
-use rustc_hash::{FxHashMap, FxHasher};
-
 use crate::diagram::{NodeIdx, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
 use crate::limits::{Charged, Limits, OperationError};
 use crate::vtree::{Vtree, VtreeIdx};
@@ -84,6 +80,16 @@ pub(super) enum Decomposition {
         /// The low atoms of every pair.
         lows: Vec<u32>,
     },
+    /// Atoms whose pairs are listed atom by atom: atom `a`'s pairs are
+    /// `pairs[ends[a - 1]..ends[a]]`, taking `ends[-1]` as zero, each a
+    /// high atom above a low atom, 32 bits apiece, ascending. The triples
+    /// without their parent atom, in two thirds of their space.
+    ByAtom {
+        /// Where each atom's pairs end.
+        ends: Vec<u32>,
+        /// Every pair, its high atom in the upper half.
+        pairs: Vec<u64>,
+    },
 }
 
 impl Decomposition {
@@ -92,6 +98,7 @@ impl Decomposition {
         match self {
             Decomposition::Triples { atoms, .. } => *atoms,
             Decomposition::Grouped { .. } => 1,
+            Decomposition::ByAtom { ends, .. } => ends.len(),
         }
     }
 }
@@ -143,6 +150,8 @@ struct Scratch {
     low_hash: Vec<u64>,
     /// The open-addressed table that numbers hashed runs.
     slots: Vec<u64>,
+    /// The open-addressed table that numbers runs by their packed content.
+    exact: Vec<u128>,
     /// How many values each low slot has. Each block's next free place in
     /// `group_single`.
     low_count: Vec<u32>,
@@ -163,7 +172,7 @@ impl Scratch {
     fn discard(self, lim: &Limits) {
         let Scratch { low, high, order, sort_keys, wide_keys, low_of, high_of, low_starts, high_starts,
             cursor, high_keys, low_keys, runs, low_first, high_first, wide_triples, high_hash, low_hash,
-            slots, low_count, low_tally, rank, radix } = self;
+            slots, exact, low_count, low_tally, rank, radix } = self;
         for buf in [low, high, sort_keys, high_keys, low_keys, high_hash, low_hash, slots] {
             lim.discard(buf);
         }
@@ -173,10 +182,10 @@ impl Scratch {
         lim.discard(low_tally);
         lim.discard(wide_keys);
         lim.discard(wide_triples);
-        let RunTable { head, next, first, direct } = runs;
-        lim.discard(head);
-        lim.discard(next);
-        lim.discard(first);
+        lim.discard(exact);
+        let RunTable { hashes, slots: run_slots, direct } = runs;
+        lim.discard(hashes);
+        lim.discard(run_slots);
         lim.discard(direct);
         radix.discard(lim);
     }
@@ -185,12 +194,10 @@ impl Scratch {
 /// Numbers runs of keys by their content.
 #[derive(Default)]
 struct RunTable {
-    /// The first number under each hash of a run, or under a lone key itself.
-    head: FxHashMap<u64, u32>,
-    /// The next number sharing a number's hash, or `u32::MAX`.
-    next: Vec<u32>,
-    /// Each number's first run, as `(start, length)` in the keys.
-    first: Vec<(u32, u32)>,
+    /// Each run's hash.
+    hashes: Vec<u64>,
+    /// The open-addressed table of [`number_hashed`].
+    slots: Vec<u64>,
     /// The number of each lone key, addressed by the key's two halves, when
     /// their ranges are small enough to address.
     direct: Vec<u32>,
@@ -616,40 +623,65 @@ fn split_single(
     // Keys of one low part ascend by high value, as the values did.
     s.radix.sort(lim, &mut parent.data, 0, low_width)?;
     lim.check_stop()?;
-    let (split, low_atom, low_atoms) = group_single(lim, s, &parent.data, low_width, &high_atom)?;
-    // The runs' parts are the children's values, so their buffers are
+    // One parent atom leaves the parent's atoms unread, so their buffer
+    // takes the low values' atoms.
+    let (split, low_atom, low_atoms) = group_single(lim, s, &parent.data, low_width, &high_atom, &mut parent.atom)?;
+    let low_data = low_parts(lim, &mut parent.data, &s.low_starts, mask)?;
+    // The high runs' parts are the high child's values, so their buffer is
     // handed over rather than copied.
-    let low = Values { words: 1, data: std::mem::take(&mut s.low), atom: low_atom, atoms: low_atoms };
+    let low = Values { words: 1, data: low_data, atom: low_atom, atoms: low_atoms };
     let high = Values { words: 1, data: std::mem::take(&mut s.high), atom: high_atom, atoms: high_atoms };
     Ok(Some((split, low, high)))
 }
 
+/// The low part of each run of `keys` that starts at `starts`, in order:
+/// the low child's values. Once the keys are read for the last time, a
+/// run's part moves down to its index, which is never past the run's
+/// first key, so where the runs are many their values take the keys'
+/// buffer rather than fresh memory.
+fn low_parts(lim: &Limits, keys: &mut Vec<u64>, starts: &[u32], mask: u64) -> Result<Vec<u64>, OperationError> {
+    lim.gate().poll(starts.len() as u64)?;
+    if 2 * starts.len() >= keys.len() {
+        for (j, &start) in starts.iter().enumerate() {
+            keys[j] = keys[start as usize] & mask;
+        }
+        keys.truncate(starts.len());
+        return Ok(std::mem::take(keys));
+    }
+    let mut out = Vec::new();
+    lim.reserve_exact(&mut out, starts.len())?;
+    out.extend(starts.iter().map(|&start| keys[start as usize] & mask));
+    Ok(out)
+}
+
 /// The low side of `split_single` and the node's pairs, from the keys
-/// sorted by low part. Each low value's run, part and hash go into `s`.
-/// Returns the pairs, each low value's atom, and how many low atoms there
-/// are.
+/// sorted by low part. Each low value's run and hash go into `s`, and
+/// the low values' atoms into `spare` where it holds as many. Returns the
+/// pairs, each low value's atom, and how many low atoms there are.
 ///
-/// Runs of one high atom hold the same low parts, so the first run of each
-/// lists the atom's pairs, but the keys come by low value, and each key's
-/// place among its high value's is a jump. Taken one key at a time over
-/// every high value, those jumps miss the cache. The keys are laid out by
-/// blocks of high values instead, each block where its values lie in the
-/// parent's order, which writes to few places at once, and each block then
-/// places its keys among its own values' pairs, which are close by.
+/// Runs of one atom list the same keys, so the first run of each atom on
+/// either side lists all the node's pairs, and the pairs are read off the
+/// side whose first runs hold fewer keys (see `single_from_low`): the low
+/// side where most low values have one key and share a few atoms, as under
+/// a high part of few values.
+///
+/// On the high side the keys come by low value, and each key's place among
+/// its high value's is a jump. Taken one key at a time over every high
+/// value, those jumps miss the cache. The keys are laid out by blocks of
+/// high values instead, each block where its values lie in the parent's
+/// order, which writes to few places at once, and each block then places
+/// its keys among its own values' pairs, which are close by.
 fn group_single(
     lim: &Limits,
     s: &mut Scratch,
     keys: &[u64],
     low_width: usize,
     high_atom: &[u32],
+    spare: &mut Vec<u32>,
 ) -> Result<(Decomposition, Vec<u32>, u32), OperationError> {
     let n = keys.len();
     let high_count = s.high_starts.len();
-    let bits = ((index_bits(high_count) as usize).saturating_sub(BLOCK_BITS), index_bits(n) as usize);
-    // The radix sort is done with its buffer, which is mapped wherever the
-    // sort needed it, so the keys are placed there.
-    std::mem::swap(&mut s.sort_keys, s.radix.spare());
-    let lone = place_by_block(lim, s, keys, low_width, bits)?;
+    let lone = low_runs(lim, s, keys, low_width)?;
     let low_count = s.low_starts.len();
     let low_starts = &s.low_starts;
     let same_highs = |a: u32, b: u32| {
@@ -662,13 +694,25 @@ fn group_single(
     let (low_atom, low_atoms) = if 2 * lone >= low_count {
         let high = |k: u32| (keys[k as usize] >> low_width) as usize;
         let runs = (low_starts.as_slice(), n, low_count - lone);
-        number_lone(lim, &mut s.slots, &s.low_hash, &mut s.low_first, runs, (&mut s.rank, high_count, high), same_highs)?
+        let mut ids = if spare.capacity() >= low_count { std::mem::take(spare) } else { Vec::new() };
+        ids.clear();
+        number_lone(lim, &mut s.slots, &s.low_hash, &mut s.low_first, runs, (&mut s.rank, high_count, high), same_highs, ids)?
     } else {
         number_hashed(lim, &mut s.slots, &s.low_hash, &mut s.low_first, same_highs)?
     };
 
+    if let Some(held) = single_from_low(n, s) {
+        let (ends, lows) = pairs_from_low(lim, s, keys, low_width, high_atom, held)?;
+        return Ok((Decomposition::Grouped { ends, lows }, low_atom, low_atoms));
+    }
+
     // Where each high value's low values go: the first run of each high
     // atom lists the atom's, in atom order, and the other runs none.
+    let bits = ((index_bits(high_count) as usize).saturating_sub(BLOCK_BITS), index_bits(n) as usize);
+    // The radix sort is done with its buffer, which is mapped wherever the
+    // sort needed it, so the keys are placed there.
+    std::mem::swap(&mut s.sort_keys, s.radix.spare());
+    place_by_block(lim, s, keys, low_width, bits)?;
     let merged = low_atoms as usize != low_count;
     s.cursor.clear();
     lim.reserve_exact(&mut s.cursor, high_count)?;
@@ -696,20 +740,130 @@ fn group_single(
     Ok((Decomposition::Grouped { ends, lows }, low_atom, low_atoms))
 }
 
-/// The pass of `group_single` over the keys sorted by low part: each low
-/// value's run, its start, part and hash, into `s`, and each key placed in
-/// its block of `s.sort_keys` as its high value's place in the block,
-/// `bits.0` bits of it, above its low value's index, `bits.1` bits. Block
-/// `b` holds high values `b << bits.0` on and lies where their runs do, so
-/// it has room for exactly their keys. Returns how many low values have
-/// one key.
+/// Whether `group_single` reads its pairs off the low side, once both
+/// sides are numbered, and then how many keys the low side's first runs
+/// hold. The high side reads every key twice, to lay the keys out and to
+/// gather them, and its first runs' keys once more; the low side reads its
+/// first runs' keys once, each with a lookup of its high atom that can miss
+/// the cache.
+fn single_from_low(n: usize, s: &Scratch) -> Option<usize> {
+    let held = |starts: &[u32], firsts: &[u32]| firsts.iter().map(|&k| run(starts, k, n).len()).sum::<usize>();
+    let low = held(&s.low_starts, &s.low_first);
+    (low.saturating_mul(LOW_SIDE_COST) <= n + held(&s.high_starts, &s.high_first)).then_some(low)
+}
+
+/// How many times fewer keys the low side's first runs of `group_single`
+/// must hold than the high side reads for the pairs to be read off them.
+const LOW_SIDE_COST: usize = 4;
+
+/// The passes of `group_single` over the keys sorted by low part: where
+/// each low value's run starts, into `s.low_starts`, and then the runs'
+/// hashes into `s.low_hash` — every run's, or where at least half the runs
+/// hold one key, as `number_lone` numbers them, only the longer runs'.
+/// Returns how many runs hold one key.
+fn low_runs(lim: &Limits, s: &mut Scratch, keys: &[u64], low_width: usize) -> Result<usize, OperationError> {
+    let n = keys.len();
+    let mask = (1u64 << low_width) - 1;
+    let mut gate = lim.gate();
+    gate.poll(n as u64)?;
+    s.low_starts.clear();
+    // A run starts at most at every key, so the starts never grow the
+    // buffer past this.
+    lim.reserve_exact(&mut s.low_starts, n)?;
+    s.low_starts.push(0);
+    let (mut last, mut start, mut lone) = (keys[0] & mask, 0usize, 0usize);
+    for (i, &key) in keys.iter().enumerate() {
+        let low = key & mask;
+        if low != last {
+            s.low_starts.push(i as u32);
+            lone += usize::from(i - start == 1);
+            (last, start) = (low, i);
+        }
+    }
+    lone += usize::from(n - start == 1);
+    let count = s.low_starts.len();
+    let long_only = 2 * lone >= count;
+    gate.poll(n as u64)?;
+    s.low_hash.clear();
+    lim.reserve_exact(&mut s.low_hash, if long_only { count - lone } else { count })?;
+    for range in runs(&s.low_starts, n) {
+        if !long_only || range.len() > 1 {
+            s.low_hash.push(keys[range].iter().fold(RUN_SEED, |hash, &key| mix(hash, key >> low_width)));
+        }
+    }
+    gate.flush()?;
+    Ok(lone)
+}
+
+/// The pairs of `group_single` read off the low side, `held` keys: the
+/// first run of each low atom names every high value that pairs with the
+/// atom, so their atoms are its partners. Read low atom by low atom, each
+/// high atom's partners come out ascending; a stamp per high atom drops the
+/// repeat that two of its values in one run make, and a counting sort
+/// groups the pairs by high atom. Returns where each high atom's partners
+/// end, and the partners.
+fn pairs_from_low(
+    lim: &Limits,
+    s: &mut Scratch,
+    keys: &[u64],
+    low_width: usize,
+    high_atom: &[u32],
+    held: usize,
+) -> Result<(Vec<u32>, Vec<u32>), OperationError> {
+    let n = keys.len();
+    let atoms = s.high_first.len();
+    let mut gate = lim.gate();
+    gate.poll(held as u64)?;
+    // Per high atom, the low atom it was last paired with.
+    s.cursor.clear();
+    lim.try_resize(&mut s.cursor, atoms, u32::MAX)?;
+    s.high_keys.clear();
+    lim.reserve_exact(&mut s.high_keys, held)?;
+    for (low, &k) in s.low_first.iter().enumerate() {
+        for &key in &keys[run(&s.low_starts, k, n)] {
+            let high = high_atom[(key >> low_width) as usize];
+            let last = &mut s.cursor[high as usize];
+            if *last != low as u32 {
+                *last = low as u32;
+                s.high_keys.push((high as u64) << 32 | low as u64);
+            }
+        }
+    }
+    let mut ends = Vec::new();
+    lim.try_resize(&mut ends, atoms, 0u32)?;
+    for &pair in &s.high_keys {
+        ends[(pair >> 32) as usize] += 1;
+    }
+    // Each high atom's next free place, and where its partners end.
+    let mut at = 0u32;
+    for (next, end) in s.cursor.iter_mut().zip(ends.iter_mut()) {
+        *next = at;
+        at += *end;
+        *end = at;
+    }
+    let mut lows = Vec::new();
+    lim.try_resize(&mut lows, s.high_keys.len(), 0u32)?;
+    for &pair in &s.high_keys {
+        let next = &mut s.cursor[(pair >> 32) as usize];
+        lows[*next as usize] = pair as u32;
+        *next += 1;
+    }
+    gate.flush()?;
+    Ok((ends, lows))
+}
+
+/// The layout pass of `group_single`'s high side over the keys sorted by
+/// low part: each key placed in its block of `s.sort_keys` as its high
+/// value's place in the block, `bits.0` bits of it, above its low value's
+/// index, `bits.1` bits. Block `b` holds high values `b << bits.0` on and
+/// lies where their runs do, so it has room for exactly their keys.
 fn place_by_block(
     lim: &Limits,
     s: &mut Scratch,
     keys: &[u64],
     low_width: usize,
     (shift, low_bits): (usize, usize),
-) -> Result<usize, OperationError> {
+) -> Result<(), OperationError> {
     let n = keys.len();
     let mask = (1u64 << low_width) - 1;
     let blocks = ((s.high_starts.len() - 1) >> shift) + 1;
@@ -720,30 +874,17 @@ fn place_by_block(
     let placed = &mut s.sort_keys;
     lim.try_resize(placed, n, 0u64)?;
     lim.gate().poll(n as u64)?;
-    s.low_starts.clear();
-    s.low_hash.clear();
-    s.low.clear();
-    let mut last = keys[0] & mask;
-    lim.try_push(&mut s.low_starts, 0)?;
-    lim.try_push(&mut s.low, last)?;
-    let (mut hash, mut index, mut start, mut lone) = (RUN_SEED, 0u64, 0usize, 0usize);
-    for (i, &key) in keys.iter().enumerate() {
+    let (mut last, mut index) = (keys[0] & mask, 0u64);
+    for &key in keys {
         let low = key & mask;
-        if low != last {
-            lim.try_push(&mut s.low_hash, hash)?;
-            lim.try_push(&mut s.low_starts, i as u32)?;
-            lim.try_push(&mut s.low, low)?;
-            lone += usize::from(i - start == 1);
-            (hash, index, last, start) = (RUN_SEED, index + 1, low, i);
-        }
+        index += u64::from(low != last);
+        last = low;
         let high = key >> low_width;
-        hash = mix(hash, high);
         let at = &mut next[(high >> shift) as usize];
         placed[*at as usize] = (high & in_block) << low_bits | index;
         *at += 1;
     }
-    lim.try_push(&mut s.low_hash, hash)?;
-    Ok(lone + usize::from(n - start == 1))
+    Ok(())
 }
 
 /// Write each key of `placed`, laid out by `place_by_block`, to its high
@@ -779,8 +920,9 @@ const BLOCK_BITS: usize = 9;
 
 /// Where each group of `lows` ends, the groups listed one after another,
 /// `sizes` long. When low values merged, a group can list an atom twice
-/// and out of order, so each is sorted and its repeats dropped, which moves
-/// the later groups down.
+/// and out of order, so each such group is sorted and its repeats dropped,
+/// which moves the later groups down; one that ascends strictly, as a group
+/// holding no two merged values does, is only moved.
 fn close_groups(
     lim: &Limits,
     lows: &mut Vec<u32>,
@@ -793,7 +935,9 @@ fn close_groups(
     for size in sizes {
         let end = start + size;
         if merged {
-            lows[start..end].sort_unstable();
+            if !lows[start..end].windows(2).all(|pair| pair[0] < pair[1]) {
+                lows[start..end].sort_unstable();
+            }
             for at in start..end {
                 if at == start || lows[at] != lows[kept - 1] {
                     lows[kept] = lows[at];
@@ -814,7 +958,9 @@ fn close_groups(
 /// at `runs.0`, the last running to `runs.1`, and `runs.2` of them hold
 /// more than one. A run of one key is numbered through `lone.0`, a slot
 /// for each of `lone.1` keys, addressed by `lone.2` of the key's position:
-/// the key is the run's content. Only the longer runs are hashed.
+/// the key is the run's content. Only the longer runs are hashed, and
+/// `hashes` lists theirs in order. The numbers go into `ids`, emptied.
+#[allow(clippy::too_many_arguments)]
 fn number_lone(
     lim: &Limits,
     slots: &mut Vec<u64>,
@@ -823,19 +969,22 @@ fn number_lone(
     (starts, n, long): (&[u32], usize, usize),
     (lone, keys, key): (&mut Vec<u32>, usize, impl Fn(u32) -> usize),
     same: impl Fn(u32, u32) -> bool,
+    mut ids: Vec<u32>,
 ) -> Result<(Vec<u32>, u32), OperationError> {
-    let runs = hashes.len();
+    let runs = starts.len();
+    debug_assert_eq!(hashes.len(), long);
     let bits = index_bits(2 * long).max(4);
     slots.clear();
     lim.try_resize(slots, 1 << bits, 0u64)?;
     lone.clear();
     lim.try_resize(lone, keys, u32::MAX)?;
-    let mut ids = Vec::new();
+    ids.clear();
     lim.reserve_exact(&mut ids, runs)?;
     firsts.clear();
     let mut gate = lim.gate();
     gate.poll(runs as u64)?;
-    for (k, &hash) in hashes.iter().enumerate() {
+    let mut hashed = 0;
+    for k in 0..runs {
         let range = run(starts, k as u32, n);
         let id = if range.len() == 1 {
             let slot = &mut lone[key(range.start as u32)];
@@ -845,7 +994,11 @@ fn number_lone(
             }
             *slot
         } else {
-            probe(lim, slots, bits, hash, k as u32, firsts, &same)?
+            if let Some(&ahead) = hashes.get(hashed + PROBE_AHEAD) {
+                prefetch_slot(slots, bits, ahead);
+            }
+            hashed += 1;
+            probe(lim, slots, bits, hashes[hashed - 1], k as u32, firsts, &same)?
         };
         ids.push(id);
     }
@@ -907,7 +1060,12 @@ fn split_hashed(
             && data[x.clone()].iter().zip(&data[y.clone()]).all(|(&p, &q)| (p ^ q) & mask == 0)
             && (single || atoms[x] == atoms[y])
     };
-    let (high_atom, high_atoms) = number_hashed(lim, &mut s.slots, &s.high_hash, &mut s.high_first, same_pairs)?;
+    let (high_atom, high_atoms) = if single {
+        let runs = (high_starts.as_slice(), data.as_slice(), low_width);
+        number_exact(lim, (&mut s.exact, &mut s.slots), &s.high_hash, &mut s.high_first, runs, same_pairs)?
+    } else {
+        number_hashed(lim, &mut s.slots, &s.high_hash, &mut s.high_first, same_pairs)?
+    };
 
     // The low values in ascending order, each slot's rank among them, and
     // the hashes in that order.
@@ -959,8 +1117,8 @@ fn split_hashed(
         let ends = close_groups(lim, &mut lows, sizes, merged)?;
         Decomposition::Grouped { ends, lows }
     } else {
-        let triples = by_parent_atom(lim, s, parent, low_width, &high_atom, held)?;
-        Decomposition::Triples { atoms: parent.atoms as usize, triples }
+        let (ends, pairs) = by_parent_atom(lim, s, parent, low_width, &high_atom, held)?;
+        Decomposition::ByAtom { ends, pairs }
     };
     gate.flush()?;
 
@@ -982,6 +1140,12 @@ fn hash_sides<const SINGLE: bool>(
     low_width: usize,
 ) -> Result<(), OperationError> {
     let mask = (1u64 << low_width) - 1;
+    // A high value's run starts at most at every value; reserved at once,
+    // the pass never grows the buffers.
+    let n = parent.len();
+    lim.reserve_exact(&mut s.high_hash, n)?;
+    lim.reserve_exact(&mut s.high_starts, n)?;
+    lim.reserve_exact(&mut s.high, n)?;
     let mut last = parent.data[0] >> low_width;
     let (mut hash, mut index) = (RUN_SEED, 0u64);
     for (e, &value) in parent.data.iter().enumerate() {
@@ -1008,8 +1172,8 @@ fn hash_sides<const SINGLE: bool>(
 /// hash alone, `hashed` numbers — are listed. Equal sets hash alike, and
 /// values that hash alike probe to one number, so a value alone under its
 /// number has a set no other value has: its list is left empty, and it is
-/// equal to none. Every value is still read, but one whose set is its own
-/// is written to one spare place, not to its own list.
+/// equal to none. Every value is still read, but only one whose set is
+/// listed is written, the others passing by their slot's mark.
 fn confirm_lows(
     lim: &Limits,
     s: &mut Scratch,
@@ -1047,8 +1211,10 @@ fn confirm_lows(
     for (high, range) in runs(&s.high_starts, n).enumerate() {
         for e in range {
             let at = &mut s.low_tally[(parent.data[e] & mask) as usize].1;
-            s.low_keys[*at as usize] = (high as u64) << 32 | parent.atom[e] as u64;
-            *at += u32::from(*at != spare);
+            if *at != spare {
+                s.low_keys[*at as usize] = (high as u64) << 32 | parent.atom[e] as u64;
+                *at += 1;
+            }
         }
     }
     let (starts, lists) = (&s.low_starts, &s.low_keys);
@@ -1059,9 +1225,10 @@ fn confirm_lows(
     })
 }
 
-/// The triples of `split_hashed` with more than one parent atom: those of
+/// The pairs of `split_hashed` with more than one parent atom: those of
 /// the first run of each high atom, grouped by parent atom through a
-/// counting sort, then sorted and deduplicated group by group.
+/// counting sort, then sorted and deduplicated group by group. Returns
+/// where each parent atom's pairs end, and the pairs.
 fn by_parent_atom(
     lim: &Limits,
     s: &mut Scratch,
@@ -1069,7 +1236,7 @@ fn by_parent_atom(
     low_width: usize,
     high_atom: &[u32],
     held: usize,
-) -> Result<Vec<[u32; 3]>, OperationError> {
+) -> Result<(Vec<u32>, Vec<u64>), OperationError> {
     let n = parent.len();
     let mask = (1u64 << low_width) - 1;
     let atoms = parent.atoms as usize;
@@ -1089,34 +1256,40 @@ fn by_parent_atom(
     s.low_starts.clear();
     lim.reserve_exact(&mut s.low_starts, atoms + 1)?;
     s.low_starts.extend_from_slice(&s.cursor);
-    s.sort_keys.clear();
-    lim.try_resize(&mut s.sort_keys, held, 0u64)?;
+    // The scatter below writes every place, so the radix sort's buffer,
+    // which holds nothing between sorts and is mapped wherever a sort
+    // needed it, takes the pairs when it is about as long.
+    let mut pairs = if 2 * held >= s.radix.spare().len() { std::mem::take(s.radix.spare()) } else { Vec::new() };
+    pairs.truncate(held);
+    lim.try_resize(&mut pairs, held, 0u64)?;
     for (high, range) in runs(&s.high_starts, n).enumerate() {
         if first(high) {
             let pair = (high_atom[high] as u64) << 32;
             for e in range {
                 let at = &mut s.cursor[parent.atom[e] as usize];
-                s.sort_keys[*at as usize] = pair | s.high_of[(parent.data[e] & mask) as usize] as u64;
+                pairs[*at as usize] = pair | s.high_of[(parent.data[e] & mask) as usize] as u64;
                 *at += 1;
             }
         }
     }
-    let mut triples = Vec::new();
-    lim.reserve_exact(&mut triples, held)?;
+    let mut ends = Vec::new();
+    lim.reserve_exact(&mut ends, atoms)?;
+    let mut kept = 0;
     for atom in 0..atoms {
-        let group = &mut s.sort_keys[s.low_starts[atom] as usize..s.low_starts[atom + 1] as usize];
-        if group.len() > 1 {
-            sort_small_by(group, !0);
+        let (start, end) = (s.low_starts[atom] as usize, s.low_starts[atom + 1] as usize);
+        if end - start > 1 {
+            sort_small_by(&mut pairs[start..end], !0);
         }
-        let mut last = u64::MAX;
-        for &pair in group.iter() {
-            if pair != last {
-                triples.push([atom as u32, (pair >> 32) as u32, pair as u32]);
-                last = pair;
+        for at in start..end {
+            if at == start || pairs[at] != pairs[kept - 1] {
+                pairs[kept] = pairs[at];
+                kept += 1;
             }
         }
+        ends.push(kept as u32);
     }
-    Ok(triples)
+    pairs.truncate(kept);
+    Ok((ends, pairs))
 }
 
 /// Low parts no wider than this many values' worth of bits take a slot
@@ -1178,10 +1351,107 @@ fn number_hashed(
     let mut gate = lim.gate();
     gate.poll(runs as u64)?;
     for (k, &hash) in hashes.iter().enumerate() {
+        if let Some(&ahead) = hashes.get(k + PROBE_AHEAD) {
+            prefetch_slot(slots, bits, ahead);
+        }
         ids.push(probe(lim, slots, bits, hash, k as u32, firsts, &same)?);
     }
     gate.flush()?;
     Ok((ids, firsts.len() as u32))
+}
+
+/// [`number_hashed`] for the high runs of `split_hashed` under one parent
+/// atom, which start at `runs.0` among the values `runs.1`, their low parts
+/// `runs.2` bits wide. A run of at most `EXACT_BITS / (runs.2 + 1)` values
+/// is numbered by its content itself, each low part plus one in `runs.2 +
+/// 1` bits, held in a slot of `exact` beside the run's number: equal runs,
+/// and only they, pack alike, so a match is read off the slot rather than
+/// confirmed against the first run of its number, which lies anywhere and
+/// misses the cache. A longer run is numbered through `slots` and `same`.
+/// Both tables are addressed by the runs' hashes and share the numbers.
+fn number_exact(
+    lim: &Limits,
+    (exact, slots): (&mut Vec<u128>, &mut Vec<u64>),
+    hashes: &[u64],
+    firsts: &mut Vec<u32>,
+    (starts, data, low_width): (&[u32], &[u64], usize),
+    same: impl Fn(u32, u32) -> bool,
+) -> Result<(Vec<u32>, u32), OperationError> {
+    let (n, count) = (data.len(), hashes.len());
+    let (mask, field) = ((1u64 << low_width) - 1, low_width + 1);
+    let fits = EXACT_BITS / field;
+    let short = runs(starts, n).filter(|range| range.len() <= fits).count();
+    let (exact_bits, hashed_bits) = (index_bits(2 * short).max(4), index_bits(2 * (count - short)).max(4));
+    exact.clear();
+    lim.try_resize(exact, 1 << exact_bits, 0u128)?;
+    slots.clear();
+    lim.try_resize(slots, 1 << hashed_bits, 0u64)?;
+    let mut ids = Vec::new();
+    lim.reserve_exact(&mut ids, count)?;
+    firsts.clear();
+    let mut gate = lim.gate();
+    gate.poll(n as u64)?;
+    for (k, &hash) in hashes.iter().enumerate() {
+        if let Some(&ahead) = hashes.get(k + PROBE_AHEAD) {
+            if run(starts, (k + PROBE_AHEAD) as u32, n).len() <= fits {
+                prefetch_slot(exact, exact_bits, ahead);
+            } else {
+                prefetch_slot(slots, hashed_bits, ahead);
+            }
+        }
+        let range = run(starts, k as u32, n);
+        if range.len() > fits {
+            ids.push(probe(lim, slots, hashed_bits, hash, k as u32, firsts, &same)?);
+            continue;
+        }
+        let key = data[range].iter().rev().fold(0u128, |key, &value| key << field | ((value & mask) + 1) as u128);
+        let mut at = (finish(hash) >> (64 - exact_bits)) as usize;
+        let id = loop {
+            let slot = exact[at];
+            if slot == 0 {
+                let id = firsts.len() as u32;
+                exact[at] = key | (id as u128 + 1) << EXACT_BITS;
+                lim.try_push(firsts, k as u32)?;
+                break id;
+            }
+            if slot & EXACT_MASK == key {
+                break (slot >> EXACT_BITS) as u32 - 1;
+            }
+            at = (at + 1) & (exact.len() - 1);
+        };
+        ids.push(id);
+    }
+    gate.flush()?;
+    Ok((ids, firsts.len() as u32))
+}
+
+/// Bits of an exact slot of [`number_exact`] that hold a run's content;
+/// the run's number, plus one, lies above them.
+const EXACT_BITS: usize = 96;
+
+/// The content of an exact slot of [`number_exact`].
+const EXACT_MASK: u128 = (1 << EXACT_BITS) - 1;
+
+/// Runs ahead of the probe whose slot [`number_hashed`] asks the cache
+/// for: the slots are random, so a table past the cache misses on nearly
+/// every probe, and the misses of runs this far apart are in flight at
+/// once.
+const PROBE_AHEAD: usize = 16;
+
+/// Ask the cache for the slot of [`number_hashed`]'s table, `bits` bits,
+/// that a run of `hash` probes first. A hint only; no-op off `x86_64` and
+/// under Miri, which lacks the intrinsic.
+#[inline(always)]
+fn prefetch_slot<T>(slots: &[T], bits: u32, hash: u64) {
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        let at = slots.as_ptr().wrapping_add((finish(hash) >> (64 - bits)) as usize).cast::<i8>();
+        // Sound whatever the address: a prefetch reads nothing the program
+        // sees and never faults.
+        unsafe { core::arch::x86_64::_mm_prefetch(at, core::arch::x86_64::_MM_HINT_T0) };
+    }
+    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
+    let _ = (slots, bits, hash);
 }
 
 /// The number of run `k`, of `hash`, in the table `slots` of
@@ -1444,6 +1714,46 @@ fn order_by_low(
         lim.check_stop()?;
         return Ok(Some(shift));
     }
+    let top = low_width + shift - 64;
+    if lw == 1 && top <= WIDE_TOP_BITS {
+        // Placed by the top bits of its low part first, a key holds the
+        // rest of the low part above its index in one word, so each run of
+        // one top digit sorts as words, in the cache, instead of every key
+        // sorting as a wider number.
+        let digit = top.max((n.ilog2() as usize).saturating_sub(3).min(WIDE_TOP_BITS)).min(low_width);
+        let rest = low_width - digit;
+        let (buckets, rest_mask) = (1usize << digit, (1u64 << rest) - 1);
+        let mut starts = Vec::new();
+        lim.try_resize(&mut starts, buckets + 1, 0u32)?;
+        let mut gate = lim.gate();
+        gate.poll(2 * n as u64)?;
+        for &v in &s.low {
+            starts[(v >> rest) as usize + 1] += 1;
+        }
+        for d in 1..=buckets {
+            starts[d] += starts[d - 1];
+        }
+        s.sort_keys.clear();
+        lim.try_resize(&mut s.sort_keys, n, 0u64)?;
+        let mut next = Vec::new();
+        lim.reserve_exact(&mut next, buckets)?;
+        next.extend_from_slice(&starts[..buckets]);
+        for (e, &v) in s.low.iter().enumerate() {
+            let at = &mut next[(v >> rest) as usize];
+            s.sort_keys[*at as usize] = (v & rest_mask) << shift | e as u64;
+            *at += 1;
+        }
+        for d in 0..buckets {
+            s.sort_keys[starts[d] as usize..starts[d + 1] as usize].sort_unstable();
+        }
+        gate.flush()?;
+        let mask = (1u64 << shift) - 1;
+        s.order.extend(s.sort_keys.iter().map(|&key| (key & mask) as u32));
+        lim.discard(starts);
+        lim.discard(next);
+        lim.check_stop()?;
+        return Ok(None);
+    }
     if lw == 1 {
         s.wide_keys.clear();
         lim.reserve_exact(&mut s.wide_keys, n)?;
@@ -1462,11 +1772,20 @@ fn order_by_low(
     Ok(None)
 }
 
+/// Top bits of a one-word low part at most that `order_by_low` places
+/// first when the part and an index overflow a word: as many counts as fit
+/// the cache beside the keys.
+const WIDE_TOP_BITS: usize = 16;
+
 /// Number the runs of `keys` that start at `starts`, the last running to the
 /// end, by content, in order of first appearance. Every key is an index below
 /// `bounds.0` above an index below `bounds.1`. Returns each run's number and
 /// how many distinct runs there are, and leaves in `firsts` the run where each
 /// number first appears.
+///
+/// Lone keys whose range is small enough are numbered through a slot per
+/// key. Otherwise each run is hashed and the hashes are numbered by
+/// [`number_hashed`], confirming a match against the runs themselves.
 fn number_runs(
     lim: &Limits,
     table: &mut RunTable,
@@ -1476,15 +1795,15 @@ fn number_runs(
     firsts: &mut Vec<u32>,
 ) -> Result<(Vec<u32>, u32), OperationError> {
     let n = keys.len();
-    let mut ids = Vec::new();
-    lim.reserve_exact(&mut ids, starts.len())?;
-    firsts.clear();
     let mut gate = lim.gate();
     gate.poll(n as u64)?;
     if starts.len() == n {
         // Every run is one key, which is its own content.
         let span = bounds.0.saturating_mul(bounds.1 as usize);
         if span <= (4 * n).max(DIRECT_MIN_SPAN) {
+            let mut ids = Vec::new();
+            lim.reserve_exact(&mut ids, n)?;
+            firsts.clear();
             table.direct.clear();
             lim.try_resize(&mut table.direct, span, u32::MAX)?;
             for (k, &key) in keys.iter().enumerate() {
@@ -1495,71 +1814,23 @@ fn number_runs(
                 }
                 ids.push(*slot);
             }
-        } else {
-            reset(lim, &mut table.head, n);
-            lim.reserve_map(&mut table.head, n)?;
-            for (k, &key) in keys.iter().enumerate() {
-                let next = firsts.len() as u32;
-                let id = *table.head.entry(key).or_insert(next);
-                if id == next {
-                    lim.try_push(firsts, k as u32)?;
-                }
-                ids.push(id);
-            }
+            gate.flush()?;
+            return Ok((ids, firsts.len() as u32));
         }
         gate.flush()?;
-        return Ok((ids, firsts.len() as u32));
+        return number_hashed(lim, &mut table.slots, keys, firsts, |a, b| keys[a as usize] == keys[b as usize]);
     }
-    reset(lim, &mut table.head, starts.len());
-    // Every run may be new, and reserving for all of them at once spares the
-    // table its growth steps.
-    lim.reserve_map(&mut table.head, starts.len())?;
-    table.next.clear();
-    table.first.clear();
-    for (k, &start) in starts.iter().enumerate() {
-        let end = starts.get(k + 1).map_or(n, |&e| e as usize);
-        let run = &keys[start as usize..end];
-        let mut hasher = FxHasher::default();
-        hasher.write_usize(run.len());
-        for &key in run {
-            hasher.write_u64(key);
-        }
-        let hash = hasher.finish();
-        let chain = table.head.get(&hash).copied().unwrap_or(u32::MAX);
-        let mut candidate = chain;
-        while candidate != u32::MAX {
-            let (at, len) = table.first[candidate as usize];
-            if keys[at as usize..][..len as usize] == *run {
-                break;
-            }
-            candidate = table.next[candidate as usize];
-        }
-        if candidate == u32::MAX {
-            candidate = table.first.len() as u32;
-            lim.try_push(&mut table.first, (start, run.len() as u32))?;
-            lim.try_push(&mut table.next, chain)?;
-            lim.try_push(firsts, k as u32)?;
-            table.head.insert(hash, candidate);
-        }
-        ids.push(candidate);
-    }
+    table.hashes.clear();
+    lim.reserve_exact(&mut table.hashes, starts.len())?;
+    table.hashes.extend(runs(starts, n).map(|range| keys[range].iter().fold(RUN_SEED, |hash, &key| mix(hash, key))));
     gate.flush()?;
-    Ok((ids, table.first.len() as u32))
+    let same = |a: u32, b: u32| keys[run(starts, a, n)] == keys[run(starts, b, n)];
+    number_hashed(lim, &mut table.slots, &table.hashes, firsts, same)
 }
 
 /// Address ranges this small number lone keys directly whatever the key
 /// count, which costs less than hashing them.
 const DIRECT_MIN_SPAN: usize = 1 << 12;
-
-/// Empty `map` for about `expected` entries. Clearing costs time in the
-/// capacity, so a table grown by a much larger split is dropped instead.
-fn reset(lim: &Limits, map: &mut FxHashMap<u64, u32>, expected: usize) {
-    if map.capacity() > 4 * expected + 1024 {
-        lim.discard(std::mem::take(map));
-    } else {
-        map.clear();
-    }
-}
 
 /// The distinct `[atom, high atom, low atom]` triples of the parent values,
 /// in ascending order.

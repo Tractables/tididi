@@ -327,10 +327,18 @@ impl Radix {
         let m = keys.len();
         // About `2^RUN_BITS` keys a run; the passes over every key left
         // `bits` at least `RADIX_BITS + 1` wide, so a bit is left below.
-        let digit = (m.ilog2() as usize).saturating_sub(RUN_BITS).clamp(8, RADIX_LARGE_BITS).min(bits - 1);
+        let mut digit = (m.ilog2() as usize).saturating_sub(RUN_BITS).clamp(8, RADIX_LARGE_BITS).min(bits - 1);
+        // Each pass over a run moves its keys once, and an odd number of
+        // passes once more to copy them back. A run's digits take up to
+        // `RADIX_WIDE_BITS`, since the run is in the cache and its counts
+        // are cleared once for every pass, and the top digit widens, as far
+        // as a pass over every key places, to leave the runs two of them.
+        if bits - digit > 2 * RADIX_WIDE_BITS && bits - 2 * RADIX_WIDE_BITS <= RADIX_LARGE_BITS {
+            digit = bits - 2 * RADIX_WIDE_BITS;
+        }
         let rest = bits - digit;
         let (shift, mask, buckets) = (lo + rest, (1u64 << digit) - 1, 1usize << digit);
-        let run_digit = rest.div_ceil(rest.div_ceil(RADIX_BITS));
+        let run_digit = rest.div_ceil(rest.div_ceil(RADIX_WIDE_BITS));
         let run_passes = rest.div_ceil(run_digit);
         let Radix { other, counts } = self;
         if other.len() < m {

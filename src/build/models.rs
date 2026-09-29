@@ -300,6 +300,34 @@ fn store_level(
     let ascending = |nodes: &[NodeIdx]| nodes.windows(2).all(|n| n[0] < n[1]);
     let (atoms, triples) = match split {
         Decomposition::Triples { atoms, triples } => (atoms, triples),
+        Decomposition::ByAtom { ends, pairs } => {
+            // The atoms' pairs run in child-atom order.
+            let ordered = ascending(l) && ascending(r);
+            let mut locals = Vec::new();
+            lim.reserve_exact(&mut locals, ends.len())?;
+            assembly.reserve(eng, t, ends.len(), pairs.len())?;
+            let widest = ends.iter().scan(0, |start, &end| Some(end - std::mem::replace(start, end))).max().unwrap_or(0);
+            pair_list.clear();
+            lim.reserve_exact(pair_list, widest as usize)?;
+            let mut gate = lim.gate();
+            let mut start = 0;
+            for &end in &ends {
+                let group = &pairs[start..end as usize];
+                debug_assert!(!group.is_empty(), "every atom is realized by a row");
+                gate.poll(group.len() as u64)?;
+                pair_list.clear();
+                pair_list.extend(group.iter().map(|&pair| ChildPair::new(l[(pair >> 32) as usize], r[pair as u32 as usize])));
+                if !ordered {
+                    pair_list.sort_unstable();
+                }
+                locals.push(assembly.push(eng, t, pair_list)?);
+                start = end as usize;
+            }
+            gate.flush()?;
+            lim.discard(ends);
+            lim.discard(pairs);
+            return Ok(Finished { locals });
+        }
         Decomposition::Grouped { ends, lows } => {
             // The one atom's pairs, which run in child-atom order.
             assembly.reserve(eng, t, 1, lows.len())?;
