@@ -25,6 +25,12 @@ pub(super) struct ClauseTables<'a> {
     pub(super) output_cube_pair: Option<(usize, ChildPair)>,
 }
 
+/// The largest worst case, in pairs, a spine level's arena is sized for
+/// before its first node. A clause's walk rebuilds dozens of levels, most of
+/// a few pairs each; where a both-relevant level was sized at twice its
+/// input, most of them outgrew the arena at a node and reallocated it.
+const RESERVE_WHOLE_LEVEL_UP_TO: usize = 4096;
+
 /// The child-map offsets and worst-case output pairs per input pair for a spine level.
 #[derive(Clone, Copy)]
 pub(super) struct SpineCtx {
@@ -130,19 +136,29 @@ pub(super) fn rebuild_spine_level(
     let node_cap = if compute_dt { 2 * k } else { k };
     lim.reserve(&mut level.nodes, node_cap)?;
     // Worst-case output pairs per input pair: up to 3 c_t pairs for a
-    // both-relevant node, plus 1 d_t pair when `compute_dt`. The arena is
-    // sized at up to twice the input pair count and topped up per node, so
-    // the peak never holds a whole-level worst case of 3 or 4 beside the
-    // still-live `old`. Twice covers a level with one relevant child whole:
-    // sized at the input count, such a level with `d_t` outgrew its arena
-    // near its last node and copied it, once per spine level and clause,
-    // which a long run of clauses paid as a second pass over the level.
-    // Growth near the budget keeps the input count.
+    // both-relevant node, plus 1 d_t pair when `compute_dt`. The input pairs
+    // are the arena's and at most one more per node, the pair a single-pair
+    // node stores inline, which the arena does not hold. A level whose worst
+    // case is small gets all of it at once; a larger one is sized at up to
+    // twice its input and topped up per node, so the peak never holds a
+    // whole-level worst case of 3 or 4 beside the still-live `old`. Twice
+    // covers a level with one relevant child whole: sized at the input
+    // count, such a level with `d_t` outgrew its arena near its last node
+    // and copied it, once per spine level and clause, which a long run of
+    // clauses paid as a second pass over the level. Growth near the budget
+    // keeps the input count.
+    let inputs = in_pairs.saturating_add(k);
     let pair_mult = (if both_rel { 3 } else { 1 }) + usize::from(compute_dt);
     // One more for a disjunction's cube pair, which this level may carry.
-    let level_pairs = (in_pairs as u128).saturating_mul(pair_mult as u128).saturating_add(1);
-    lim.begin_level(Some(level_pairs));
-    let first_reserve = if lim.bounded_growth() { in_pairs } else { in_pairs.saturating_mul(pair_mult.min(2)) };
+    let worst = inputs.saturating_mul(pair_mult).saturating_add(1);
+    lim.begin_level(Some(worst as u128));
+    let first_reserve = if lim.bounded_growth() {
+        inputs
+    } else if worst <= RESERVE_WHOLE_LEVEL_UP_TO {
+        worst
+    } else {
+        inputs.saturating_mul(pair_mult.min(2))
+    };
     lim.reserve(&mut level.pairs, first_reserve)?;
     let ctx = SpineCtx { left_grid_base, right_grid_base, pair_mult };
     match (left_rel, right_rel, compute_dt) {
