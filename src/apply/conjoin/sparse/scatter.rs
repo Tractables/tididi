@@ -803,7 +803,7 @@ fn scatter_general_arm<const SWAPPED: bool, const FAR: bool>(
     if let Collect::Fold(fold) = &mut collect
         && fold.grouped()
     {
-        return count_general_arm::<SWAPPED>(eng, ws, shape, pl, fold);
+        return count_arm::<SWAPPED>(eng, ws, shape, pl, fold);
     }
     let lim = eng.limits();
     let (pl_inner, pl_outer) = if !SWAPPED { (pl.left, pl.right) } else { (pl.right, pl.left) };
@@ -844,7 +844,26 @@ fn scatter_general_arm<const SWAPPED: bool, const FAR: bool>(
 
 /// How many inner f children ahead of the one it reads a counted root's walk
 /// asks the cache for (see [`GroupedView::prefetch_bucket`]).
-const WALK_AHEAD: usize = 4;
+pub(super) const WALK_AHEAD: usize = 4;
+
+/// The general arm on a counted level whose counts all fit `u64`
+/// ([`CandidateFold::grouped`]): [`count_general_arm`], with `FILTER` where
+/// the level's walks test their keys against a filter first
+/// ([`CandidateFold::filters_walks`]), decided once for the level.
+#[inline(never)]
+fn count_arm<const SWAPPED: bool>(
+    eng: &Engine,
+    ws: &mut SparseWorkspace,
+    shape: LevelShape,
+    pl: Sides<&[ProductEntry]>,
+    fold: &mut CandidateFold<'_>,
+) -> Result<(), OperationError> {
+    if fold.filters_walks::<SWAPPED>() {
+        count_general_arm::<SWAPPED, true>(eng, ws, shape, pl, fold)
+    } else {
+        count_general_arm::<SWAPPED, false>(eng, ws, shape, pl, fold)
+    }
+}
 
 /// The general arm on a counted level whose counts all fit `u64`
 /// ([`CandidateFold::grouped`]): the candidates are summed, never listed.
@@ -872,7 +891,7 @@ const WALK_AHEAD: usize = 4;
 /// ([`CandidateFold::begin_round`]): which keys are opened and which outer-g
 /// children are live are bit sets, tested for every g pair a build walks.
 #[inline(never)]
-fn count_general_arm<const SWAPPED: bool>(
+fn count_general_arm<const SWAPPED: bool, const FILTER: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     shape: LevelShape,
@@ -889,6 +908,9 @@ fn count_general_arm<const SWAPPED: bool>(
     // The fold's round stands in for `wanted` and `outer_keys`, which are
     // only read for their widths.
     fold.prepare_sums(lim, wanted.stamps.len(), outer_keys.stamps.len())?;
+    if FILTER {
+        fold.prepare_filter(lim, wanted.stamps.len())?;
+    }
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     for outer in 0..outer_k {
         let live = outer_products.bucket(outer);
@@ -908,15 +930,19 @@ fn count_general_arm<const SWAPPED: bool>(
                 }
             }
             ticker.poll(by_key as u64)?;
-            for (j, &RevEntry { other: inner1, .. }) in under.iter().enumerate() {
-                if let Some(ahead) = under.get(j + WALK_AHEAD) {
-                    inner.prefetch_bucket(ahead.other as usize);
+            if FILTER {
+                fold.walk_grouped::<SWAPPED>(under, inner, &mut ticker)?;
+            } else {
+                for (j, &RevEntry { other: inner1, .. }) in under.iter().enumerate() {
+                    if let Some(ahead) = under.get(j + WALK_AHEAD) {
+                        inner.prefetch_bucket(ahead.other as usize);
+                    }
+                    let products = inner.bucket(inner1 as usize);
+                    for e in products {
+                        fold.add_grouped::<SWAPPED>(e.prod_idx.0, e.g_idx.0);
+                    }
+                    ticker.poll(products.len() as u64)?;
                 }
-                let products = inner.bucket(inner1 as usize);
-                for e in products {
-                    fold.add_grouped::<SWAPPED>(e.prod_idx.0, e.g_idx.0);
-                }
-                ticker.poll(products.len() as u64)?;
             }
         } else {
             // Open the keys the walk reads, weigh each by the counts of the
