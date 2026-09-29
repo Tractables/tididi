@@ -59,6 +59,10 @@ pub(crate) struct ClauseScratch {
     spine_internal: Pool<Vec<VtreeIdx>>,
     /// Work stack for the post-order spine walk (node, processed?).
     dfs_stack: Pool<Vec<(VtreeIdx, bool)>>,
+    /// The `d_t` pairs of the node being rebuilt.
+    dt_pairs: Pool<Vec<ChildPair>>,
+    /// The both-relevant type-3 pairs held back while a node is rebuilt.
+    t3_buf: Pool<Vec<ChildPair>>,
 }
 
 impl Pools for ClauseScratch {
@@ -69,6 +73,8 @@ impl Pools for ClauseScratch {
         visit(&self.need_dt);
         visit(&self.spine_internal);
         visit(&self.dfs_stack);
+        visit(&self.dt_pairs);
+        visit(&self.t3_buf);
     }
 }
 
@@ -259,12 +265,14 @@ fn rebuild_along_spine(eng: &Engine, f: &mut Tdd, clause: &[(Literal, VtreeIdx)]
 
     fill_leaf_maps(clause, &level_base, &need_dt, &mut cd_map);
 
-    // Pair buffers reused across the per-level and per-node loops.
-    let mut clause_dt_pairs: Vec<ChildPair> = Vec::new();  // f × d_t pairs
+    // Pair buffers reused across the per-level and per-node loops, and from
+    // one clause to the next: a run of clauses grew a fresh pair of them,
+    // push by push, for every clause.
+    let mut clause_dt_pairs = pool.dt_pairs.checkout(eng);  // f × d_t pairs
     // "Type 3" pairs (dt_L, ct_R) of the both-relevant case have larger left
     // indices than type 1/2 pairs, so they are buffered and flushed after
     // them to keep the sorted order.
-    let mut clause_t3_buf: Vec<ChildPair> = Vec::new();
+    let mut clause_t3_buf = pool.t3_buf.checkout(eng);
 
     // Rebuild each spine internal level bottom-up. Children's maps are fully
     // written before any parent reads them. The stop axis and the output cap
