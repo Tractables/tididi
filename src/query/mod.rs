@@ -24,6 +24,7 @@
 pub(crate) mod count;
 pub(crate) mod fold;
 mod sat;
+mod product;
 mod evaluate;
 mod boolean;
 mod cache;

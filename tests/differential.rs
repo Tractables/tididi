@@ -243,7 +243,7 @@ fn step(name: &'static str) {
 fn check_case(case: &Case) {
     /// One claim of the battery, by the name a failure report gives it.
     type Claim = (&'static str, fn(&Case));
-    let claims: [Claim; 9] = [
+    let claims: [Claim; 10] = [
         ("count against enumeration", count_matches_enumeration),
         ("operation orders agree", orders_agree),
         ("operations against enumeration", operations_match_enumeration),
@@ -253,6 +253,7 @@ fn check_case(case: &Case) {
         ("streaming marginalization against enumeration", streaming_marginalization_matches_enumeration),
         ("weighted composition against enumeration", weighted_composition_matches_enumeration),
         ("a tight budget refuses", a_tight_budget_refuses_rather_than_panics),
+        ("marginal products against enumeration", marginal_products_match_enumeration),
     ];
     for (name, claim) in claims {
         step(name);
@@ -790,6 +791,51 @@ fn a_clause_naming_one_variable_twice_is_the_clause_it_spells() {
         vec![vec![3, -4], vec![4, -3], vec![-4], vec![3, 2, 1], vec![-4, -3], vec![4, -4]],
         "vtree 7\nL 0 2\nL 1 1\nL 2 3\nL 3 4\nI 4 0 1\nI 5 2 4\nI 6 3 5\n",
     ));
+}
+
+/// Two halves of the clauses, each with one drawn scope summed out: their
+/// product over the variables left, each half's count taken over the scope on
+/// its own, is what enumeration gives, and so is either half's square.
+fn marginal_products_match_enumeration(case: &Case) {
+    let split = case.clauses.len() / 2;
+    let targets = draw_marginal_targets(case);
+    let eng = Engine::new();
+    let vtree = &case.vtree;
+    let summed_out = |var: u32| {
+        let mut t = vtree.leaf_of(VarId(var)).expect("a variable of the case");
+        loop {
+            if targets.contains(&t) {
+                return true;
+            }
+            match vtree.node(t).parent() {
+                Some(p) => t = p,
+                None => return false,
+            }
+        }
+    };
+    let kept: u64 = (1..=case.num_vars).filter(|&v| !summed_out(v)).map(|v| 1u64 << (v - 1)).sum();
+    let mut halves = Vec::new();
+    for clauses in [&case.clauses[..split], &case.clauses[split..]] {
+        let mut half = borrow(case);
+        half.clauses = clauses.to_vec();
+        let mut f = compile(&half);
+        if !f.is_zero() && !targets.is_empty() {
+            eng.marginalize_levels(&mut f, &targets).unwrap();
+            assert_canonical_after_minimize(&f);
+        }
+        let mut m = vec![0u64; 1 << case.num_vars];
+        for (a, sat) in truth_table(case.num_vars, clauses).into_iter().enumerate() {
+            m[a & kept as usize] += u64::from(sat);
+        }
+        halves.push((f, m));
+    }
+    let want = |a: &[u64], b: &[u64]| -> BigUint {
+        (0..1u64 << case.num_vars).filter(|x| x & !kept == 0).map(|x| BigUint::from(a[x as usize]) * b[x as usize]).sum()
+    };
+    let ((f, mf), (g, mg)) = (&halves[0], &halves[1]);
+    assert_eq!(eng.marginal_product_count(f, g).unwrap(), want(mf, mg), "the product of the halves");
+    assert_eq!(eng.marginal_product_count(f, f).unwrap(), want(mf, mf), "the first half squared");
+    assert_eq!(eng.marginal_product_count(g, &g.clone()).unwrap(), want(mg, mg), "the second half squared");
 }
 
 /// Streaming and standalone installation preserve the independently enumerated value.
