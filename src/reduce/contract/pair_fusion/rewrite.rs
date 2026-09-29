@@ -11,6 +11,19 @@ use crate::diagram::ChildSide;
 
 use super::PlanEntry;
 
+/// The fewest plans at which a node tests "fused away" on a bitmap over the
+/// explicit-side refs instead of in `fused_x`: below it the map fits the cache
+/// and each probe is cheap. Above it the map outgrows the cache, and the probe
+/// per pair the rewrite makes misses it on nearly every pair of a wide node —
+/// where a bitmap as wide as the refs it covers stays in it.
+pub(super) const BITMAP_MIN_PLANS: usize = 1 << 12;
+
+/// The widest bitmap the test takes, in bits per plan: at 64 it is at most
+/// eight bytes per plan, below the map's own footprint of a `(u32, u32)`
+/// entry and its control byte, so it never costs more memory than the map it
+/// stands in for.
+pub(super) const BITMAP_BITS_PER_PLAN: usize = 64;
+
 /// Phase 3: rewrite the parent's pair lists in place, node by node. `plans`
 /// must hold each node's entries contiguously (Phase 1 emits them in ascending
 /// `node_idx`); only the nodes named in it are touched.
@@ -32,6 +45,20 @@ pub(super) fn rebuild_parent_level<V>(
     any_inline: bool,
     plans: &[PlanEntry<V>],
 ) -> Result<(), OperationError> {
+    rebuild_parent_level_with(eng, tdd, parent, side, any_inline, plans, BITMAP_MIN_PLANS)
+}
+
+/// [`rebuild_parent_level`] with the fewest plans at which a node tests
+/// membership on a bitmap given, so a test can run one level both ways.
+pub(super) fn rebuild_parent_level_with<V>(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    parent: VtreeIdx,
+    side: ChildSide,
+    any_inline: bool,
+    plans: &[PlanEntry<V>],
+    bitmap_min_plans: usize,
+) -> Result<(), OperationError> {
     let level = &mut tdd.levels[parent.idx()];
     // Fusion-inline may mint a fresh inline marginal-side ref (bit-30 tagged) this
     // sweep; the marker for that side must be raised or the end-of-apply tagger
@@ -48,6 +75,9 @@ pub(super) fn rebuild_parent_level<V>(
     // node can carry thousands of plans, so membership stays a hash lookup.
     // Charged as it grows and handed back when the sweep ends.
     let mut fused_x: Transient<'_, FxHashMap<u32, u32>> = Transient::new(eng.limits(), FxHashMap::default());
+    // The membership bitmap of a node with many plans (see `fuse_node_pairs`),
+    // all zero between nodes, charged as it grows and handed back at the end.
+    let mut bits: Transient<'_, Vec<u64>> = Transient::new(eng.limits(), Vec::new());
     // Arena slots the shrink abandons, noted in one charge below: the counter's
     // only reader is the sweep at the end, so per-node saturating adds buy nothing.
     let mut dead_acc = 0usize;
@@ -75,7 +105,7 @@ pub(super) fn rebuild_parent_level<V>(
             cursor += 1;
         }
         let this_plans = &plans[plan_start..cursor];
-        dead_acc += fuse_node_pairs(eng, level, n, side, this_plans, &mut fused_x)?;
+        dead_acc += fuse_node_pairs(eng, level, n, side, this_plans, &mut fused_x, &mut bits, bitmap_min_plans)?;
     }
     level.note_dead_pairs(dead_acc);
     // Legal only now: the rewrite is done, so no pair-arena offset is held
@@ -87,6 +117,15 @@ pub(super) fn rebuild_parent_level<V>(
 /// Rewrite one node's pair list in place: drop every pair whose x-side carries a
 /// plan, then append one fused pair per plan. Returns the arena slots the shrink
 /// abandoned.
+///
+/// A node with at least `bitmap_min_plans` ([`BITMAP_MIN_PLANS`]) plans whose largest planned x-ref
+/// is under [`BITMAP_BITS_PER_PLAN`] bits per plan tests each pair on a bitmap
+/// of the planned x-refs (`bits`, zero on entry and on return) instead of in
+/// `fused_x`. The bit of `x` is set exactly when `fused_x` has the key `x`, so
+/// the pairs kept, the pairs dropped and — `fused_x` still built the same way
+/// and still iterated for the appends — the node's new pair list are the ones
+/// the map gives, in the same order.
+#[expect(clippy::too_many_arguments)]
 fn fuse_node_pairs<V>(
     eng: &Engine,
     level: &mut TddLevel,
@@ -94,6 +133,8 @@ fn fuse_node_pairs<V>(
     side: ChildSide,
     this_plans: &[PlanEntry<V>],
     fused_x: &mut FxHashMap<u32, u32>,
+    bits: &mut Vec<u64>,
+    bitmap_min_plans: usize,
 ) -> Result<usize, OperationError> {
     fused_x.clear();
     // Each plan covers a distinct x_idx (Phase 1 emits one plan per
@@ -115,25 +156,58 @@ fn fuse_node_pairs<V>(
     let range = level.pair_range_at(n);
     let (start, old_len) = (range.start, range.len());
 
-    // Fused away iff the x-side index carries a plan (see `fused_x` above).
-    let is_fused = |p: ChildPair| {
-        let x_idx = match side {
-            ChildSide::Right => p.left.0,
-            ChildSide::Left => p.right.0,
-        };
-        fused_x.contains_key(&x_idx)
+    let x_of = |p: ChildPair| match side {
+        ChildSide::Right => p.left.0,
+        ChildSide::Left => p.right.0,
     };
+    // The bitmap's width in words, or `None` for the map: the largest planned
+    // x-ref bounds it, and a pair whose x-ref is past it carries no plan.
+    let words = match this_plans.len() >= bitmap_min_plans {
+        false => None,
+        true => {
+            let widest = this_plans.iter().map(|plan| plan.x_idx as usize).max().unwrap_or(0);
+            (widest / BITMAP_BITS_PER_PLAN < this_plans.len()).then_some(widest / 64 + 1)
+        }
+    };
+    if let Some(words) = words {
+        eng.limits().try_resize(bits, words, 0u64)?;
+        for plan in this_plans {
+            let x = plan.x_idx as usize;
+            bits[x >> 6] |= 1u64 << (x & 63);
+        }
+    }
 
     // Keep the un-fused pairs, compacting them onto the front of the node's
     // own range: `write` never overtakes `read` (it advances at most once
     // per read, from the same origin), so a kept pair only ever moves down
-    // onto a slot already read past.
+    // onto a slot already read past. A pair is fused away iff its x-side index
+    // carries a plan (see `fused_x` above).
     let mut write = start;
-    for read in start..start + old_len {
-        let p = level.pairs[read];
-        if !is_fused(p) {
-            level.pairs[write] = p;
-            write += 1;
+    match words {
+        None => {
+            for read in start..start + old_len {
+                let p = level.pairs[read];
+                if !fused_x.contains_key(&x_of(p)) {
+                    level.pairs[write] = p;
+                    write += 1;
+                }
+            }
+        }
+        Some(words) => {
+            let planned = &bits[..words];
+            for read in start..start + old_len {
+                let p = level.pairs[read];
+                let x = x_of(p) as usize;
+                let fused = planned.get(x >> 6).is_some_and(|w| (w >> (x & 63)) & 1 == 1);
+                if !fused {
+                    level.pairs[write] = p;
+                    write += 1;
+                }
+            }
+            // Zero again for the next node: only the planned words were set.
+            for plan in this_plans {
+                bits[plan.x_idx as usize >> 6] = 0;
+            }
         }
     }
     // Append one fused pair per plan. Every read is done, and each plan

@@ -115,24 +115,33 @@ pub(super) fn group_by_sorting<D: SlotValues>(
     sc: &mut PFusionScratch,
 ) -> Result<(), OperationError> {
     const DIGIT: u32 = 11;
+    const PASSES: usize = (u32::BITS as usize).div_ceil(DIGIT as usize);
     let count = node.len();
     // A node's pairs are counted in `u32` by the level encoding.
     let keyed = &mut sc.keyed;
     keyed.clear();
     lim.reserve(keyed, count)?;
-    keyed.extend(node.iter().enumerate().map(|(at, &pair)| (explicit_ref(pair, side), at as u32)));
+    // Every pass's digit histogram, and the widest key, in the one read that
+    // lists the keys: a histogram does not depend on the order the pass
+    // finds the keys in, so it is the count each pass would take itself.
+    let mut hist = [[0u32; 1 << DIGIT]; PASSES];
+    let mut widest = 0u32;
+    keyed.extend(node.iter().enumerate().map(|(at, &pair)| {
+        let x = explicit_ref(pair, side);
+        widest = widest.max(x);
+        for (pass, counts) in hist.iter_mut().enumerate() {
+            counts[((x >> (pass as u32 * DIGIT)) as usize) & ((1 << DIGIT) - 1)] += 1;
+        }
+        (x, at as u32)
+    }));
     let other = &mut sc.keyed_other;
     other.clear();
     lim.try_resize(other, count, (0u32, 0u32))?;
-    let widest = keyed.iter().map(|&(x, _)| x).max().unwrap_or(0);
     let bits = u32::BITS - widest.leading_zeros();
-    let mut counts = [0u32; 1 << DIGIT];
     let mut shift = 0;
+    let mut pass = 0;
     while shift < bits {
-        counts.fill(0);
-        for &(x, _) in keyed.iter() {
-            counts[((x >> shift) as usize) & ((1 << DIGIT) - 1)] += 1;
-        }
+        let counts = &mut hist[pass];
         // A digit every pair shares leaves the order as it is.
         if !counts.iter().any(|&c| c as usize == count) {
             let mut sum = 0u32;
@@ -152,6 +161,7 @@ pub(super) fn group_by_sorting<D: SlotValues>(
         // it as it was.
         lim.check_stop()?;
         shift += DIGIT;
+        pass += 1;
     }
     let mut found: Vec<(u32, PlanEntry<D::Value>)> = Vec::new();
     let run = &mut sc.run;

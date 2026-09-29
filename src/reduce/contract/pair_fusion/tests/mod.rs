@@ -5,3 +5,4 @@ mod support;
 pub(crate) use support::fuse_pairs;
 mod weighted;
 mod window;
+mod bitmap;
