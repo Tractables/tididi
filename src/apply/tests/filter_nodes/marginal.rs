@@ -14,7 +14,7 @@ use num_bigint::BigUint;
 
 use super::builder_sweep::{image, shape};
 use super::*;
-use crate::diagram::TddLevel;
+use crate::diagram::{ChildPair, EncodedChildRef, TddLevel};
 use crate::query::PinSemantics;
 
 /// Check `g` against `f` with the rejected nodes false, the variables `g`
@@ -36,6 +36,27 @@ fn check(g: &Tdd, f: &Tdd, rejected: &dyn Fn(TddNodeId) -> bool, literal: Option
         let got = if g.is_zero() { BigUint::ZERO } else { pinned_counts(g, &pins, PinSemantics::Evidence) };
         assert_eq!(got, want, "{what}: value at {pins:?}");
     }
+}
+
+/// `f` with every pair slot no node owns blanked: the diagram, without what
+/// a node's rewrites left in the arena range it abandoned. Two ways of
+/// reaching one diagram may pass through different intermediate lists, and
+/// the abandoned slots keep whatever the last of them wrote there.
+fn live(f: &Tdd) -> Tdd {
+    let mut g = f.clone();
+    for level in g.levels.iter_mut() {
+        let mut owned = vec![false; level.pairs.len()];
+        for n in 0..level.nodes.len() {
+            if level.nodes[n].kind().pairs_in_arena() {
+                for i in level.pair_range_at(n) { owned[i] = true; }
+            }
+        }
+        let blank = ChildPair::new(EncodedChildRef::from_raw(0), EncodedChildRef::from_raw(0));
+        for (pair, &owned) in level.pairs.iter_mut().zip(owned.iter()) {
+            if !owned { *pair = blank; }
+        }
+    }
+    g
 }
 
 /// The subtree to sum out after `summed`: its parent below the output, or
@@ -110,13 +131,14 @@ fn marginal_levels_are_copied_and_the_marker_carried() {
         }
         for step in 0..4 {
             let (Some(a), Some(b)) = (&steps[0][step], &steps[1][step]) else { continue };
-            if shape(a) != shape(b) { shapes_differ[step] += 1; }
-            if image(a) != image(b) { markers_differ[step] += 1; }
+            let (a, b) = (live(a), live(b));
+            if shape(&a) != shape(&b) { shapes_differ[step] += 1; }
+            if image(&a) != image(&b) { markers_differ[step] += 1; }
         }
     }
     assert!(compared >= 40, "too few operands compared: {compared}");
     // Both are right at every step, and they are the same diagram at every
-    // step. The reduction keeps the carried markers and leaves the cleared
+    // step, compared on the slots their nodes own. The reduction keeps the carried markers and leaves the cleared
     // ones clear; the next conjunction or marginalization sets them again.
     assert_eq!(shapes_differ, [0; 4]);
     assert_eq!(markers_differ, [compared, 0, 0, 0]);

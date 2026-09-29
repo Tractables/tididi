@@ -118,13 +118,18 @@ pub(super) fn rebuild_parent_level_with<V>(
 /// plan, then append one fused pair per plan. Returns the arena slots the shrink
 /// abandoned.
 ///
+/// The kept pairs stay in their order and the fused pairs follow them in plan
+/// order, the order in which the node's pairs first name each fused x-ref: a
+/// function of the node's old list alone, so a builder that sums a marginal
+/// child as it emits the node can write the same list
+/// (`sparse::sum`).
+///
 /// A node with at least `bitmap_min_plans` ([`BITMAP_MIN_PLANS`]) plans whose largest planned x-ref
 /// is under [`BITMAP_BITS_PER_PLAN`] bits per plan tests each pair on a bitmap
 /// of the planned x-refs (`bits`, zero on entry and on return) instead of in
-/// `fused_x`. The bit of `x` is set exactly when `fused_x` has the key `x`, so
-/// the pairs kept, the pairs dropped and — `fused_x` still built the same way
-/// and still iterated for the appends — the node's new pair list are the ones
-/// the map gives, in the same order.
+/// `fused_x`, which it then does not build. The bit of `x` is set exactly when
+/// a plan names `x`, so the pairs kept, the pairs dropped and the node's new
+/// pair list are the ones the map gives, in the same order.
 #[expect(clippy::too_many_arguments)]
 fn fuse_node_pairs<V>(
     eng: &Engine,
@@ -136,16 +141,6 @@ fn fuse_node_pairs<V>(
     bits: &mut Vec<u64>,
     bitmap_min_plans: usize,
 ) -> Result<usize, OperationError> {
-    fused_x.clear();
-    // Each plan covers a distinct x_idx (Phase 1 emits one plan per
-    // (node, x_idx) group), so the map holds one entry per plan — an
-    // x_idx collision here would silently drop a fused pair's count.
-    eng.limits().reserve_map(fused_x, this_plans.len())?;
-    for plan in this_plans {
-        fused_x.insert(plan.x_idx, plan.new_ref);
-    }
-    debug_assert_eq!(fused_x.len(), this_plans.len(), "plans must have distinct x_idx per node");
-
     // A plan-carrying node held ≥2 pairs (Phase 1 skips `pair_count_at < 2`),
     // so it is arena-backed, never an inline node whose single pair lives in
     // the node word.
@@ -169,11 +164,24 @@ fn fuse_node_pairs<V>(
             (widest / BITMAP_BITS_PER_PLAN < this_plans.len()).then_some(widest / 64 + 1)
         }
     };
-    if let Some(words) = words {
-        eng.limits().try_resize(bits, words, 0u64)?;
-        for plan in this_plans {
-            let x = plan.x_idx as usize;
-            bits[x >> 6] |= 1u64 << (x & 63);
+    match words {
+        Some(words) => {
+            eng.limits().try_resize(bits, words, 0u64)?;
+            for plan in this_plans {
+                let x = plan.x_idx as usize;
+                bits[x >> 6] |= 1u64 << (x & 63);
+            }
+        }
+        None => {
+            fused_x.clear();
+            // Each plan covers a distinct x_idx (Phase 1 emits one plan per
+            // (node, x_idx) group), so the map holds one entry per plan — an
+            // x_idx collision here would silently drop a fused pair's count.
+            eng.limits().reserve_map(fused_x, this_plans.len())?;
+            for plan in this_plans {
+                fused_x.insert(plan.x_idx, plan.new_ref);
+            }
+            debug_assert_eq!(fused_x.len(), this_plans.len(), "plans must have distinct x_idx per node");
         }
     }
 
@@ -210,15 +218,16 @@ fn fuse_node_pairs<V>(
             }
         }
     }
-    // Append one fused pair per plan. Every read is done, and each plan
-    // removed ≥2 pairs above, so `write + this_plans.len() ≤ start + old_len`
-    // — the appends stay inside the node's own range and cannot reach the
-    // next node's slots.
-    for (&x_idx, &r_new) in fused_x.iter() {
-        // `r_new` is the fully-encoded marginal-side ref from Phase 2 —
+    // Append one fused pair per plan, in plan order. Every read is done, and
+    // each plan removed ≥2 pairs above, so `write + this_plans.len() ≤ start +
+    // old_len` — the appends stay inside the node's own range and cannot reach
+    // the next node's slots.
+    for plan in this_plans {
+        // `new_ref` is the fully-encoded marginal-side ref from Phase 2 —
         // either a tagged inline count (bit-30 set) or a bare slot
         // index (bit-30 clear), self-describing. Write it verbatim;
         // `x_idx` is the non-marginal side.
+        let (x_idx, r_new) = (plan.x_idx, plan.new_ref);
         let fused = match side {
             ChildSide::Right => ChildPair::new(EncodedChildRef::from_raw(x_idx), EncodedChildRef::from_raw(r_new)),
             ChildSide::Left => ChildPair::new(EncodedChildRef::from_raw(r_new), EncodedChildRef::from_raw(x_idx)),
