@@ -204,7 +204,7 @@ fn the_radix_pass_leaves_the_order_a_comparison_sort_leaves() {
     // Past as many rows as a wide digit has counts, the passes take wider
     // digits, and their count changes at other widths.
     let mut rng = Lcg::new(5);
-    for rows in [super::rows::RADIX_MIN_ROWS + 37, (1 << super::rows::RADIX_LARGE_BITS) + 37] {
+    for rows in [crate::sort::RADIX_MIN_ROWS + 37, (1 << crate::sort::RADIX_LARGE_BITS) + 37] {
         for num_vars in [1usize, 11, 12, 14, 15, 22, 23, 28, 29, 33, 34, 36, 37, 42, 43, 63, 64] {
             let mask = if num_vars == 64 { !0u64 } else { (1u64 << num_vars) - 1 };
             let words: Vec<u64> = (0..rows).map(|_| rng.next_u64() & mask).collect();
@@ -212,7 +212,7 @@ fn the_radix_pass_leaves_the_order_a_comparison_sort_leaves() {
             want.sort_unstable();
             let mut got = words;
             let eng = Engine::new();
-            super::rows::Radix::default().sort(eng.limits(), &mut got, 0, num_vars).unwrap();
+            crate::sort::Radix::default().sort(eng.limits(), &mut got, 0, num_vars).unwrap();
             assert_eq!(got, want, "{rows} rows, {num_vars} variables");
         }
     }
@@ -223,7 +223,7 @@ fn a_radix_pass_over_high_bits_keeps_the_low_bits_in_order() {
     // Positions below a value make the keys distinct and already ascending in
     // their low bits, so sorting the value bits alone sorts the keys.
     let mut rng = Lcg::new(11);
-    let rows = super::rows::RADIX_MIN_ROWS + 5;
+    let rows = crate::sort::RADIX_MIN_ROWS + 5;
     let shift = usize::BITS - rows.leading_zeros();
     for width in [1usize, 7, 20, 33, 64 - shift as usize] {
         let keys: Vec<u64> = (0..rows as u64)
@@ -233,7 +233,7 @@ fn a_radix_pass_over_high_bits_keeps_the_low_bits_in_order() {
         want.sort_unstable();
         let mut got = keys;
         let eng = Engine::new();
-        super::rows::Radix::default().sort(eng.limits(), &mut got, shift as usize, width).unwrap();
+        crate::sort::Radix::default().sort(eng.limits(), &mut got, shift as usize, width).unwrap();
         assert_eq!(got, want, "{width} value bits");
     }
 }
@@ -244,7 +244,7 @@ fn a_radix_pass_leaves_the_bits_above_its_value_unread() {
     // radix pass whose digits do not divide the value nor the comparison sort
     // of a short input may order by those bits.
     let mut rng = Lcg::new(12);
-    for rows in [100, super::rows::RADIX_MIN_ROWS + 5, (1 << super::rows::RADIX_LARGE_BITS) + 5] {
+    for rows in [100, crate::sort::RADIX_MIN_ROWS + 5, (1 << crate::sort::RADIX_LARGE_BITS) + 5] {
         let shift = usize::BITS - rows.leading_zeros();
         for width in [1usize, 7, 12, 13, 17, 23, 25, 27, 34, 36, 37, 41] {
             let keys: Vec<u64> = (0..rows as u64)
@@ -255,7 +255,7 @@ fn a_radix_pass_leaves_the_bits_above_its_value_unread() {
             want.sort_unstable_by_key(|&key| key & low);
             let mut got = keys;
             let eng = Engine::new();
-            super::rows::Radix::default().sort(eng.limits(), &mut got, shift as usize, width).unwrap();
+            crate::sort::Radix::default().sort(eng.limits(), &mut got, shift as usize, width).unwrap();
             assert_eq!(got, want, "{rows} rows, {width} value bits");
         }
     }
@@ -268,7 +268,7 @@ fn a_wide_sort_of_keys_ascending_in_their_top_digit_sorts_each_run() {
     // any order below. With and without bits above the sorted ones, and
     // with ascending low bits beneath.
     let mut rng = Lcg::new(13);
-    let rows = 5 * super::rows::RADIX_MIN_ROWS + 3;
+    let rows = 5 * crate::sort::RADIX_MIN_ROWS + 3;
     for (lo, bits, above) in [(0usize, 37usize, false), (0, 50, false), (0, 64, false), (12, 40, true), (5, 45, false)] {
         let low = if lo + bits == 64 { !0u64 } else { (1u64 << (lo + bits)) - 1 };
         let mut keys: Vec<u64> = (0..rows as u64)
@@ -287,7 +287,7 @@ fn a_wide_sort_of_keys_ascending_in_their_top_digit_sorts_each_run() {
         want.sort_by_key(|&key| key.rotate_right(sorted));
         let mut got = keys.clone();
         let eng = Engine::new();
-        super::rows::Radix::default().sort(eng.limits(), &mut got, lo, bits).unwrap();
+        crate::sort::Radix::default().sort(eng.limits(), &mut got, lo, bits).unwrap();
         let rotated = |v: &[u64]| v.iter().map(|&key| key.rotate_right(sorted)).collect::<Vec<u64>>();
         assert_eq!(rotated(&got), rotated(&want), "lo {lo} bits {bits} above {above}");
         // The same keys in any order sort the same way.
@@ -295,7 +295,7 @@ fn a_wide_sort_of_keys_ascending_in_their_top_digit_sorts_each_run() {
         for i in (1..shuffled.len()).rev() {
             shuffled.swap(i, (rng.next_u64() % (i as u64 + 1)) as usize);
         }
-        super::rows::Radix::default().sort(eng.limits(), &mut shuffled, lo, bits).unwrap();
+        crate::sort::Radix::default().sort(eng.limits(), &mut shuffled, lo, bits).unwrap();
         assert_eq!(rotated(&shuffled), rotated(&want), "shuffled: lo {lo} bits {bits} above {above}");
     }
 }
@@ -327,7 +327,7 @@ fn a_sort_by_the_top_digit_leaves_the_order_of_a_stable_sort() {
                 want.sort_by_key(|&key| (key & sorted) >> lo);
                 let mut got = keys;
                 let eng = Engine::new();
-                super::rows::Radix::default().sort(eng.limits(), &mut got, lo, bits).unwrap();
+                crate::sort::Radix::default().sort(eng.limits(), &mut got, lo, bits).unwrap();
                 assert!(got == want, "{rows} rows, lo {lo} bits {bits} spread {spread}");
             }
         }

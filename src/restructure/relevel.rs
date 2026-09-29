@@ -29,6 +29,7 @@ use crate::vtree::RotationKind;
 
 use super::scratch::{BucketScratch, RestructureScratch, release_or_clear};
 use crate::limits::{Limits, OperationError, Transient};
+use crate::sort::{Radix, RADIX_MIN_ROWS};
 
 /// Pack a search triple `(inner, src, axis)` into one `u128` whose numeric order
 /// is exactly the tuple's derived lexicographic order `(inner.left,
@@ -137,7 +138,8 @@ fn rebuild_levels(
     // `pack_triple`), but a single-key integer sort instead of a four-field
     // branchy compare. After sorting, cells for each inner pair are contiguous
     // and sorted — no per-group sort needed.
-    scratch.packed.sort_unstable();
+    sort_triples(lim, &mut scratch.packed, &mut scratch.words)?;
+    release_or_clear(lim, &mut scratch.words);
 
     // `group_info` addresses `triples` with u32 offsets. The u32 width of a
     // `NodeIdx` bounds node indices, not this arena-scale offset: past 2^32
@@ -193,6 +195,60 @@ fn rebuild_levels(
         (info.v_idx, outer_level),
         (info.w_idx, inner_level.keep()),
     )))
+}
+
+/// Phase 2's sort. The four fields of a triple are node and slot indices,
+/// which between them usually fit one word: each field is cut to the bits its
+/// largest value needs, the words are radix sorted ([`Radix::sort`]) and
+/// written back in their order. Cutting a field to its width keeps the order
+/// of its values, so the order is the one sorting the `u128`s leaves.
+///
+/// # Errors
+///
+/// [`OperationError::OverBudget`] if the word buffers are refused, and
+/// [`OperationError::Stopped`] when an armed stop fires during the sort.
+fn sort_triples(lim: &Limits, packed: &mut [u128], words: &mut Vec<u64>) -> Result<(), OperationError> {
+    if packed.len() < RADIX_MIN_ROWS {
+        packed.sort_unstable();
+        return Ok(());
+    }
+    let mut any = [0u32; 4];
+    for &p in packed.iter() {
+        for (k, field) in any.iter_mut().enumerate() {
+            *field |= (p >> (96 - 32 * k)) as u32;
+        }
+    }
+    let width = any.map(|x| 32 - x.leading_zeros());
+    let bits = width.iter().sum::<u32>();
+    if bits > 64 {
+        packed.sort_unstable();
+        return Ok(());
+    }
+    // Where each field starts in the word, the first field highest.
+    let shift = [width[1] + width[2] + width[3], width[2] + width[3], width[3], 0];
+    words.clear();
+    lim.reserve(words, packed.len())?;
+    words.extend(packed.iter().map(|&p| {
+        let mut w = 0u128;
+        for (k, &at) in shift.iter().enumerate() {
+            w |= (((p >> (96 - 32 * k)) as u32) as u128) << at;
+        }
+        w as u64
+    }));
+    let mut radix = Radix::default();
+    let sorted = radix.sort(lim, words, 0, bits as usize);
+    radix.discard(lim);
+    sorted?;
+    for (p, &w) in packed.iter_mut().zip(words.iter()) {
+        let w = w as u128;
+        let mut q = 0u128;
+        for (k, (&at, &bits)) in shift.iter().zip(width.iter()).enumerate() {
+            let field = (w >> at) & ((1u128 << bits) - 1);
+            q |= field << (96 - 32 * k);
+        }
+        *p = q;
+    }
+    Ok(())
 }
 
 /// Phase 1: expand every old v-pair against the w-level into packed triples.

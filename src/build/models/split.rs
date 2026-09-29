@@ -21,7 +21,7 @@ use crate::limits::{Charged, Limits, OperationError};
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::layout::Layout;
-use super::rows::Radix;
+use crate::sort::Radix;
 
 /// The distinct values one constrained vtree node takes over the rows, and
 /// the atom each belongs to.

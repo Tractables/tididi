@@ -65,6 +65,7 @@ pub mod vtree;
 pub mod diagram;
 pub mod limits;
 pub(crate) mod value;
+mod sort;
 
 mod build;
 pub mod apply;

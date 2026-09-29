@@ -29,6 +29,8 @@ pub(crate) struct RestructureScratch {
     // integer key replaces the derived lexicographic compare over the
     // `(ChildPair, u32, NodeIdx)` tuple's four u32 fields.
     pub(super) packed: Vec<u128>,
+    // The triples cut to one word each for the radix sort, when they fit.
+    pub(super) words: Vec<u64>,
 }
 
 /// The walk over one fingerprint bucket in the clustering build of the inner
@@ -46,6 +48,7 @@ impl Buffers for RestructureScratch {
         visit(&mut Nested(&mut self.per_v_pairs));
         visit(&mut self.group_info);
         visit(&mut self.packed);
+        visit(&mut self.words);
         visit(&mut self.bucket.done);
         visit(&mut self.bucket.pairs);
     }
@@ -56,6 +59,7 @@ impl PooledScratch for RestructureScratch {
         self.inner_pair_to_idx.clear();
         self.group_info.clear();
         self.packed.clear();
+        self.words.clear();
         self.bucket.done.clear();
         self.bucket.pairs.clear();
         // Keep the outer Vec's length (bounded by `PER_V_PAIRS_RETAIN` on

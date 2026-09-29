@@ -129,7 +129,7 @@ impl Engine {
         }
 
         // The split sorts through the same buffers the rows did.
-        let mut radix = rows::Radix::default();
+        let mut radix = crate::sort::Radix::default();
         let sorted = distinct_rows(lim, &mut radix, vars.len(), &layout, rows, w)?;
         let mut plans = split::plan(lim, vtree, &layout, sorted, w, radix)?;
 

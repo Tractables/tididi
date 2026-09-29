@@ -39,7 +39,8 @@ use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::Engine;
 
 use super::layout::Layout;
-use super::rows::{words_per_row, Radix};
+use super::rows::words_per_row;
+use crate::sort::Radix;
 use super::split::{Decomposition, Plan};
 
 impl Tdd {
