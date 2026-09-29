@@ -122,6 +122,24 @@ fn seed_slot_map(
     Ok(())
 }
 
+/// [`SlotValues::seed`] of the integer domain, on a marginal level: every
+/// distinct count of `level`'s store mapped to its first slot.
+pub(crate) fn seed_count_slots(
+    lim: &Limits, level: &TddLevel, map: &mut FxHashMap<Count, u32>,
+) -> Result<(), OperationError> {
+    let counts = level.count_column().expect("pair fusion: the marginal level has no count store");
+    seed_slot_map(lim, map, counts)
+}
+
+/// [`SlotValues::push_slot`] of the integer domain, on a marginal level:
+/// append `value` to `level`'s count store and return its slot.
+pub(crate) fn push_count_slot(eng: &Engine, level: &mut TddLevel, value: Count) -> Result<u32, OperationError> {
+    let (counts, big) = level.marginal_store_mut().expect("push_slot: level is not marginal");
+    let slot = next_slot_index(counts.len())?;
+    super::append_count(eng, counts, big, value)?;
+    Ok(slot)
+}
+
 // ── SlotValues ───────────────────────────────────────────────────────────────
 
 /// The value arithmetic of one marginal store, for the passes that compute a
@@ -242,17 +260,11 @@ impl SlotValues for IntFold {
     /// Seeded with the whole store, so a value equal to an existing slot's
     /// reuses it and the store stays at one slot per value.
     fn seed(lim: &Limits, tdd: &Tdd, v: VtreeIdx, map: &mut FxHashMap<Count, u32>) -> Result<(), OperationError> {
-        let counts = tdd.levels[v.idx()].count_column().expect("pair fusion: the marginal level has no count store");
-        seed_slot_map(lim, map, counts)
+        seed_count_slots(lim, &tdd.levels[v.idx()], map)
     }
 
     fn push_slot(eng: &Engine, tdd: &mut Tdd, v: VtreeIdx, value: Count) -> Result<u32, OperationError> {
-        let (counts, big) = tdd.levels[v.idx()]
-            .marginal_store_mut()
-            .expect("push_slot: level is not marginal");
-        let slot = next_slot_index(counts.len())?;
-        super::append_count(eng, counts, big, value)?;
-        Ok(slot)
+        push_count_slot(eng, &mut tdd.levels[v.idx()], value)
     }
 
     /// An integer leaf's store is written like an internal one.

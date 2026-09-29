@@ -26,7 +26,7 @@ use cell::{
 
 mod sparse;
 pub(crate) use sparse::SparseWorkspace;
-use sparse::{apply_sparse_level, count_sparse_level, CandidateFold, Passthrough};
+use sparse::{apply_sparse_level, count_sparse_level, sum_sparse_level, CandidateFold, ChildSum, Passthrough};
 
 // Identity/constant-true detection and the per-level identity fast paths.
 mod identity;
@@ -145,11 +145,26 @@ fn narrower_right(f: &mut Tdd, g: &mut Tdd) -> bool {
 /// operands.
 pub(crate) fn conjoin_checked(
     eng: &Engine,
+    f: Tdd,
+    g: Tdd,
+    targets: VtreeMask<'_>,
+    quantified: VtreeMask<'_>,
+) -> Result<(Tdd, bool), OperationError> {
+    conjoin_checked_as(eng, f, g, targets, quantified, ConjoinMode::Build)
+        .map(|(out, nonzero)| (out.diagram(), nonzero))
+}
+
+/// [`conjoin_checked`] with the sweep run in `mode`, [`ConjoinMode::Build`]
+/// or [`ConjoinMode::Sum`]; the self-conjunction shortcut returns
+/// [`Conjoined::Built`].
+fn conjoin_checked_as(
+    eng: &Engine,
     mut f: Tdd,
     mut g: Tdd,
     targets: VtreeMask<'_>,
     quantified: VtreeMask<'_>,
-) -> Result<(Tdd, bool), OperationError> {
+    mode: ConjoinMode,
+) -> Result<(Conjoined, bool), OperationError> {
     narrower_right(&mut f, &mut g);
     // Self-conjunction: f ∧ f = f. The test is structural equality of every
     // explicit level, not pointer identity, and it declines on any marginal
@@ -158,10 +173,10 @@ pub(crate) fn conjoin_checked(
     if is_self_conjunction(&f, &g) {
         let _op = eng.limits().enter()?;
         diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
-        return Ok((f, false));
+        return Ok((Conjoined::Built(f), false));
     }
     let zero = f.is_zero() || g.is_zero();
-    let result = conjoin_recycling(eng, f, g, targets, quantified, None);
+    let result = conjoin_recycling_as(eng, f, g, targets, quantified, None, mode);
     result.map(|out| (out, !zero))
 }
 
@@ -176,6 +191,22 @@ fn conjoin_recycling(
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
 ) -> Result<Tdd, OperationError> {
     let result = apply_and_fallible(eng, &mut f, &mut g, targets, quantified, filter);
+    diagram::return_levels(eng, diagram::PoolSlot::First, std::mem::take(&mut f.levels).into_vec());
+    diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
+    result
+}
+
+/// [`conjoin_recycling`] with the sweep run in `mode`.
+fn conjoin_recycling_as(
+    eng: &Engine,
+    mut f: Tdd,
+    mut g: Tdd,
+    targets: VtreeMask<'_>,
+    quantified: VtreeMask<'_>,
+    filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
+    mode: ConjoinMode,
+) -> Result<Conjoined, OperationError> {
+    let result = apply_and_core(eng, &mut f, &mut g, targets, quantified, filter, mode);
     diagram::return_levels(eng, diagram::PoolSlot::First, std::mem::take(&mut f.levels).into_vec());
     diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
     result
@@ -329,6 +360,14 @@ impl crate::Engine {
     /// [`Tdd::marginalize_levels`] for the operations
     /// that remain valid after structure is discarded.
     ///
+    /// A target built as structure is summed out once the conjunction is
+    /// built, and the pairs above it that then name the same node on their
+    /// other side are fused into one. With a single target, a child of the
+    /// root, on an unweighted conjunction whose root is one product the
+    /// sparse route builds, the root instead adds each pair's count into its
+    /// fused pair as the pair is found, so the pairs the fusion would remove
+    /// are never stored; the diagram is the one the other order leaves.
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};
@@ -368,9 +407,39 @@ impl crate::Engine {
         for &t in targets {
             mask[t.idx()] = !vtree.node(t).is_leaf();
         }
-        let (mut out, _) = conjoin_checked(
-            self, f, g, VtreeMask::new(Some(&mask)), VtreeMask::default(),
-        )?;
+        // One target under the root, on an unweighted conjunction: the root
+        // may sum it out as it is built (`ConjoinMode::Sum`).
+        let summable = match targets.split_first() {
+            Some((&c, rest)) => (rest.iter().all(|&t| t == c)
+                && !vtree.node(c).is_leaf()
+                && vtree.node(c).parent() == Some(vtree.root())
+                && f.weights.is_none()
+                && g.weights.is_none()
+                && !two_step_forced())
+            .then_some(c),
+            None => None,
+        };
+        let mode = match summable {
+            Some(c) => ConjoinMode::Sum(c),
+            None => ConjoinMode::Build,
+        };
+        let (out, _) = conjoin_checked_as(self, f, g, VtreeMask::new(Some(&mask)), VtreeMask::default(), mode)?;
+        let mut out = match out {
+            // The root summed the target out as it found its pairs, leaving
+            // what the pass below and its pair fusion leave but for the
+            // value slots no reference names any more (see
+            // `sparse::ChildSum::write_root`).
+            Conjoined::Summed(mut out) => {
+                note_summed();
+                #[cfg(debug_assertions)]
+                crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(
+                    &out, Some(&[vtree.root()]), "and_marginalizing",
+                );
+                crate::reduce::slot_prune::prune_value_slots(self, &mut out);
+                return Ok(out);
+            }
+            other => other.diagram(),
+        };
         // Streaming can finish every target; only retained structure needs the pass.
         if !out.is_zero() && targets.iter().any(|&t| !out.level(t).is_marginal()) {
             self.marginalize_levels(&mut out, targets)?;
@@ -450,10 +519,25 @@ impl crate::Engine {
         diagram::return_levels(self, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
         match result? {
             Conjoined::Counted(count) => Ok(count),
-            Conjoined::Built(out) => self.model_count(&out),
+            Conjoined::Built(out) | Conjoined::Summed(out) => self.model_count(&out),
         }
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+// A test sends `and_marginalizing` down the two-step path to compare the
+// root that sums its child out against it, and counts the roots that did.
+#[cfg(test)]
+use tests::{note_summed, two_step_forced};
+
+#[cfg(not(test))]
+#[inline(always)]
+fn two_step_forced() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_summed() {}

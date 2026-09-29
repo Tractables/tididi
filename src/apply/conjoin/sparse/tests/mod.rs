@@ -255,6 +255,7 @@ mod regression;
 mod reset_ws;
 mod scatter_direction_pool;
 mod stream;
+mod summed;
 mod product_filter;
 mod prefetch_gate;
 mod walk_filter;

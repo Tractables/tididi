@@ -32,6 +32,10 @@ pub(super) enum Collect<'a, 'c> {
     /// A count, on a level with one product as for [`Collect::Direct`]:
     /// each candidate is folded into it and not stored.
     Fold(&'a mut CandidateFold<'c>),
+    /// Sums, on a root with one product as for [`Collect::Direct`] and one
+    /// child summed out: each candidate adds its summed-side node's count to
+    /// its kept product's sum and is not stored. See [`ChildSum`].
+    Sum(&'a mut ChildSum),
 }
 
 /// The leaf arm of the scatter: one side of the join is a vtree leaf, so the
@@ -90,6 +94,8 @@ fn leaf_arm_into<const SWAPPED: bool>(
                 fold.push(candidate_pair(&entry));
                 Ok(())
             }),
+        Collect::Sum(sum) => leaf_join::<SWAPPED>(lim, f_by_outer, g_by_outer, pl, inner_product,
+            |_, entry| sum.push(lim, candidate_pair(&entry))),
     }
 }
 
@@ -739,6 +745,36 @@ impl ScatterSides<'_> {
     }
 }
 
+impl ScatterSides<'_> {
+    /// [`ScatterSides::emit_for_outer`] on a root whose candidates are added
+    /// into sums ([`Collect::Sum`]).
+    fn emit_sum_for_outer<const SWAPPED: bool, const FAR: bool>(
+        &self,
+        lim: &crate::limits::Limits,
+        sum: &mut ChildSum,
+        outer: usize,
+        ticker: &mut crate::limits::PollGate,
+    ) -> Result<(), OperationError> {
+        let filtered = self.filtered.index();
+        if !FAR {
+            for &RevEntry { other: inner1, .. } in self.f_by_outer.bucket(outer) {
+                emit_candidates::<SWAPPED>(self.inner, filtered, inner1, ticker,
+                    |entry| sum.push(lim, candidate_pair(&entry)))?;
+            }
+            return Ok(());
+        }
+        let under = self.f_by_outer.entries_of(self.outer_k);
+        for j in self.f_by_outer.offsets[outer] as usize..self.f_by_outer.offsets[outer + 1] as usize {
+            prefetch_walk(under, j, self.inner);
+            // Noted as a walk building a one-product level, which it is.
+            note_prefetch(3);
+            emit_candidates::<SWAPPED>(self.inner, filtered, under[j].other, ticker,
+                |entry| sum.push(lim, candidate_pair(&entry)))?;
+        }
+        Ok(())
+    }
+}
+
 /// The candidates of one f parent under the current outer key: for each of
 /// its alive inner products, every alive `(p2, attached)` the `filtered`
 /// index holds for the product's inner-g child, handed to `push`.
@@ -836,6 +872,7 @@ fn scatter_general_arm<const SWAPPED: bool, const FAR: bool>(
             Collect::Buckets => s.emit_for_outer::<SWAPPED, false, FAR>(lim, outer, &mut ticker)?,
             Collect::Direct(level) => s.emit_direct_for_outer::<SWAPPED, FAR>(eng, level, outer, &mut ticker)?,
             Collect::Fold(fold) => s.emit_fold_for_outer::<SWAPPED, FAR>(fold, outer, &mut ticker)?,
+            Collect::Sum(sum) => s.emit_sum_for_outer::<SWAPPED, FAR>(lim, sum, outer, &mut ticker)?,
         }
         s.filtered.clear_touched();
     }

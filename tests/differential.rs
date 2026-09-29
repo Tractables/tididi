@@ -29,6 +29,11 @@
 //! - [`streaming_marginalization_matches_enumeration`] — the marginalizing
 //!   conjunction answers what conjoining and then summing the levels out
 //!   answers, in both arithmetics.
+//! - [`a_summed_root_is_the_two_step_diagram`] — the marginalizing
+//!   conjunction with one child of the root as its target, which may sum it
+//!   out as the root's pairs are found, minimizes to the diagram conjoining
+//!   and then summing the child out minimizes to, on the default sparse
+//!   route and on one every level takes.
 //! - [`weighted_composition_matches_enumeration`] — restriction retains the input
 //!   weights and grafting preserves weighted values through renaming and marginalization.
 //! - [`a_tight_budget_refuses_rather_than_panics`] — under a byte budget too
@@ -47,8 +52,10 @@ use std::time::{Duration, Instant};
 use num_bigint::BigUint;
 use num_rational::BigRational;
 
-use tididi::diagram::{Arithmetic, LiteralWeights, RationalWeights, SignedLog, WeightStore};
-use tididi::limits::LimitConfig;
+use tididi::diagram::{
+    Arithmetic, ChildRef, EncodedChildRef, LiteralWeights, RationalWeights, SignedLog, ValueRef, WeightStore,
+};
+use tididi::limits::{LimitConfig, SparseRoute};
 use tididi::io::{load_tdd, save_tdd};
 
 
@@ -243,7 +250,7 @@ fn step(name: &'static str) {
 fn check_case(case: &Case) {
     /// One claim of the battery, by the name a failure report gives it.
     type Claim = (&'static str, fn(&Case));
-    let claims: [Claim; 10] = [
+    let claims: [Claim; 11] = [
         ("count against enumeration", count_matches_enumeration),
         ("operation orders agree", orders_agree),
         ("operations against enumeration", operations_match_enumeration),
@@ -254,6 +261,7 @@ fn check_case(case: &Case) {
         ("weighted composition against enumeration", weighted_composition_matches_enumeration),
         ("a tight budget refuses", a_tight_budget_refuses_rather_than_panics),
         ("marginal products against enumeration", marginal_products_match_enumeration),
+        ("a summed root against the two-step diagram", a_summed_root_is_the_two_step_diagram),
     ];
     for (name, claim) in claims {
         step(name);
@@ -836,6 +844,118 @@ fn marginal_products_match_enumeration(case: &Case) {
     assert_eq!(eng.marginal_product_count(f, g).unwrap(), want(mf, mg), "the product of the halves");
     assert_eq!(eng.marginal_product_count(f, f).unwrap(), want(mf, mf), "the first half squared");
     assert_eq!(eng.marginal_product_count(g, &g.clone()).unwrap(), want(mg, mg), "the second half squared");
+}
+
+/// A pair side named without the numbering of nodes and value slots: a leaf
+/// label, the class of a structural node among its level's, or a value.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+enum Named {
+    Label(u32),
+    Class(usize),
+    Value(BigUint),
+}
+
+/// One level's nodes, each its pair list with every side named.
+type NamedLevel = Vec<Vec<(Named, Named)>>;
+
+/// A diagram up to the numbering of its nodes and value slots: its output,
+/// and per structural level its nodes' pair lists, sorted, each side named
+/// ([`Named`]). A node's class is the rank of its pair list among its
+/// level's distinct ones, so two diagrams that differ only in numbering name
+/// every side alike.
+fn named_levels(f: &Tdd) -> (Option<(VtreeIdx, Named)>, Vec<NamedLevel>) {
+    let vtree = Arc::clone(f.vtree());
+    let mut class: Vec<Vec<usize>> = vec![Vec::new(); vtree.num_nodes()];
+    let mut levels: Vec<NamedLevel> = vec![Vec::new(); vtree.num_nodes()];
+    let name = |child: VtreeIdx, side: EncodedChildRef, class: &[Vec<usize>]| -> Named {
+        let level = f.level(child);
+        if !level.is_marginal() && vtree.node(child).is_leaf() {
+            return Named::Label(side.raw());
+        }
+        match level.child_decoder().child(side) {
+            ChildRef::Node(i) => Named::Class(class[child.idx()][i.idx()]),
+            ChildRef::Value(ValueRef::Inline(v)) => Named::Value(BigUint::from(v)),
+            ChildRef::Value(ValueRef::Slot(s)) => {
+                let count = level.marginal_counts().expect("an integer marginal level")[s as usize];
+                match count {
+                    u128::MAX => Named::Value(level.marginal_counts_big().unwrap().get(s as usize).unwrap().clone()),
+                    count => Named::Value(BigUint::from(count)),
+                }
+            }
+        }
+    };
+    for (t, left, right) in vtree.internal_bottomup() {
+        let level = f.level(t);
+        if level.is_marginal() {
+            continue;
+        }
+        let lists: NamedLevel = (0..level.nodes().len())
+            .map(|i| {
+                let mut pairs: Vec<(Named, Named)> = level
+                    .pairs_of_idx(i)
+                    .iter()
+                    .map(|p| (name(left, p.left, &class), name(right, p.right, &class)))
+                    .collect();
+                pairs.sort();
+                pairs
+            })
+            .collect();
+        let mut distinct = lists.clone();
+        distinct.sort();
+        distinct.dedup();
+        class[t.idx()] = lists.iter().map(|l| distinct.binary_search(l).unwrap()).collect();
+        let mut sorted = lists;
+        sorted.sort();
+        levels[t.idx()] = sorted;
+    }
+    let output = (!f.is_zero()).then(|| {
+        let out = f.output();
+        let named = match vtree.node(out.vtree).is_leaf() {
+            true => Named::Label(out.local.0),
+            false => Named::Class(class[out.vtree.idx()][out.local.idx()]),
+        };
+        (out.vtree, named)
+    });
+    (output, levels)
+}
+
+/// The marginalizing conjunction whose one target is a child of the root may
+/// sum the child out as the sparse route finds the root's pairs, where the
+/// conjunction built in full holds every pair until the child is summed out
+/// and its pairs fused. Either way the count is the enumerated one, and the
+/// two diagrams minimize to the same canonical diagram up to numbering, on
+/// the default route and on one that sends every level down the sparse one.
+fn a_summed_root_is_the_two_step_diagram(case: &Case) {
+    let vtree = &case.vtree;
+    let VtreeNode::Internal { left: l, right: r, .. } = *vtree.node(vtree.root()) else { return };
+    let split = case.clauses.len() / 2;
+    let mut left_case = borrow(case);
+    let mut right_case = borrow(case);
+    left_case.clauses = case.clauses[..split].to_vec();
+    right_case.clauses = case.clauses[split..].to_vec();
+    let (f, g) = (compile(&left_case), compile(&right_case));
+    let count = BigUint::from(brute_force_count(case.num_vars, &case.clauses));
+    let routes = [SparseRoute::DEFAULT, SparseRoute { sparsity: 1, min_grid: 1 }];
+    for c in [l, r].into_iter().filter(|&c| !vtree.node(c).is_leaf()) {
+        for route in routes {
+            let context = Arc::clone(f.context());
+            let (mut summed, mut two) = context.with_limits(LimitConfig::none().with_sparse_route(route), |eng| {
+                let summed = eng.and_marginalizing(f.clone(), g.clone(), &[c]).unwrap();
+                let mut two = eng.and(f.clone(), g.clone()).unwrap();
+                if !two.is_zero() {
+                    eng.marginalize_levels(&mut two, &[c]).unwrap();
+                }
+                (summed, two)
+            });
+            assert_eq!(summed.model_count().unwrap(), count, "the summed root's count");
+            assert_eq!(two.model_count().unwrap(), count, "the two-step count");
+            summed.minimize().unwrap();
+            two.minimize().unwrap();
+            assert_canonical(&summed);
+            assert_canonical(&two);
+            assert_eq!(named_levels(&summed), named_levels(&two), "the summed root minimized to another diagram");
+        }
+    }
 }
 
 /// Streaming and standalone installation preserve the independently enumerated value.

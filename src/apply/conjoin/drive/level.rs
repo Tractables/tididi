@@ -136,6 +136,177 @@ pub(super) fn count_sparse_root(
     Ok(fold.finish())
 }
 
+/// Whether [`sum_sparse_root`] may take a level the sparse route was chosen
+/// for, and if so the summed child's side of its pairs: the sweep sums out
+/// one child `c` of the root ([`Sweep::sum_child`]), the level is the root
+/// both operands output at, f and g have one node there, neither child is
+/// carried, no weight, filter or quantified subtree is in play and neither
+/// the root nor its other child is a target, `c` is internal, and no level
+/// of `c`'s subtree is marginal in the output built so far or was marginal
+/// in an operand at entry: `c` was built structural, as the two-step path
+/// finds it once the sweep is over.
+pub(super) fn sums_root(
+    sweep: &Sweep<'_, '_>,
+    run: &ApplyRun,
+    f: &Tdd,
+    g: &Tdd,
+    shape: LevelShape,
+    plan: &MarginalPlan,
+) -> Option<ChildSide> {
+    let c = sweep.sum_child?;
+    let LevelShape { t, left, right, .. } = shape;
+    let vtree = sweep.vtree;
+    let (side, kept) = if c == right {
+        (ChildSide::Right, left)
+    } else if c == left {
+        (ChildSide::Left, right)
+    } else {
+        return None;
+    };
+    let takes = t == vtree.root()
+        && f.output.vtree == t
+        && g.output.vtree == t
+        && shape.f.here == 1
+        && shape.g.here == 1
+        && Passthrough::of(plan.sides).is_none()
+        && sweep.ws.is_none()
+        && sweep.filter.is_none()
+        && sweep.quantified.is_empty()
+        && !sweep.targets.contains(t.idx())
+        && !sweep.targets.contains(kept.idx())
+        && !vtree.node(c).is_leaf()
+        && vtree.subtree(c).all(|x| !run.entry_marginality.either(x.idx()) && !run.levels[x.idx()].is_marginal());
+    takes.then_some(side)
+}
+
+/// Build the root with its child `c`, on `side` of the root's pairs, summed
+/// out as the scatter finds the pairs ([`ChildSum`]), instead of building
+/// every pair and fusing them once `c` is marginalized.
+///
+/// `c`'s column is folded over the levels built so far, as
+/// [`Engine::marginalize_levels`](crate::Engine::marginalize_levels) folds
+/// it on the finished diagram, whose levels under the root these are; the
+/// scatter adds each candidate's count to its kept product's sum; `c` and
+/// every level under it are made marginal as that pass makes them
+/// ([`install_summed`]); and the root's one node is written from the sums
+/// ([`ChildSum::write_root`]). Returns the levels made marginal, children
+/// before parents, for the caller to mark for re-contraction as the pass
+/// marks them; `None` where the root has no pair, which leaves every level
+/// as the sparse route leaves it.
+pub(super) fn sum_sparse_root(
+    eng: &Engine,
+    run: &mut ApplyRun,
+    f: &Tdd,
+    g: &Tdd,
+    shape: LevelShape,
+    vtree: &crate::vtree::Vtree,
+    side: ChildSide,
+) -> Result<Option<Vec<VtreeIdx>>, OperationError> {
+    use crate::value::{CountVec, FoldInput, IntFold, Retention, ValueDomain};
+    let LevelShape { t, left, right, f: fw, g: gw } = shape;
+    let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
+    let (c, kept) = match side {
+        ChildSide::Right => (right, left),
+        ChildSide::Left => (left, right),
+    };
+    run.ensure_product_list_for_child(eng, li, fw.left, gw.left)?;
+    run.ensure_product_list_for_child(eng, ri, fw.right, gw.right)?;
+
+    let lim = eng.limits();
+    let mut computed: Vec<Option<CountVec>> = Vec::new();
+    lim.reserve_exact(&mut computed, vtree.num_nodes())?;
+    computed.resize_with(vtree.num_nodes(), || None);
+    {
+        let levels: &[TddLevel] = run.levels;
+        let marginal = |i: usize| levels[i].is_marginal();
+        let input = FoldInput { vtree, levels, store: &() };
+        let mut gate = lim.gate();
+        // `Retention::All`: the install takes every walked level's column,
+        // as the two-step pass does.
+        IntFold::ensure(eng, c, input, &mut computed, &marginal, Retention::All, |w| gate.poll(w))?;
+        gate.flush()?;
+    }
+    let col = computed[c.idx()].take().expect("the fold leaves the summed child's column");
+    let kept_width = match vtree.node(kept).is_leaf() {
+        true => crate::diagram::LEAF_WIDTH,
+        false => run.levels[kept.idx()].slot_count(),
+    };
+    let mut sum = ChildSum::new(lim, side, col, kept_width)?;
+    let lists = run.products.lists(li, ri, ti);
+    sum_sparse_level(
+        eng, shape, f, g, run.levels,
+        Sides { left: lists.left, right: lists.right },
+        run.thresholds, &mut sum,
+    )?;
+    if sum.is_empty() {
+        run.products.finish_sparse(&mut run.levels[ti], ti);
+        return Ok(None);
+    }
+    computed[c.idx()] = Some(sum.take_column());
+    let installed = install_summed(eng, run.levels, vtree, c, &mut computed)?;
+    let [root, summed] = run.levels.get_disjoint_mut([ti, c.idx()]).expect("a level and its child are distinct");
+    let base = root.pairs.len();
+    let lists = run.products.lists(li, ri, ti);
+    sum.write_root(eng, root, summed, base, lists.out)?;
+    run.products.finish_sparse(&mut run.levels[ti], ti);
+    Ok(Some(installed))
+}
+
+/// Make `c` and every level under it marginal from the columns in
+/// `computed`, children before parents, as
+/// [`Engine::marginalize_levels`](crate::Engine::marginalize_levels) does on
+/// a finished diagram, and return the levels made marginal in that order.
+///
+/// `c`'s column is deduplicated as that pass installs it, so its store holds
+/// one slot per value (invariant 10); its parent, the root, is not built
+/// yet, so no reference is remapped. A level under `c` is freed as its
+/// parent is installed, which is all the pass leaves of it either way, so it
+/// is installed as the sweep's streaming route installs one, undeduplicated.
+fn install_summed(
+    eng: &Engine,
+    levels: &mut [TddLevel],
+    vtree: &crate::vtree::Vtree,
+    c: VtreeIdx,
+    computed: &mut [Option<crate::value::CountVec>],
+) -> Result<Vec<VtreeIdx>, OperationError> {
+    use crate::marginal::transition::{cascade, free_subsumed_marginal_children, install_streamed, InstallTarget, InternalLevel, MarginalDomain};
+
+    /// The output levels, installing `c` as a finished diagram's pass
+    /// installs it and noting each level installed.
+    struct Summing<'l> {
+        levels: &'l mut [TddLevel],
+        c: VtreeIdx,
+        installed: Vec<VtreeIdx>,
+    }
+    impl InstallTarget for Summing<'_> {
+        fn levels(&self) -> &[TddLevel] {
+            self.levels
+        }
+
+        fn install<K: MarginalDomain>(&mut self, vtree: &crate::vtree::Vtree, t: InternalLevel, col: K::Col, store: &mut K::Store) {
+            let v = t.vtree_idx();
+            debug_assert!(self.installed.len() < self.installed.capacity(), "reserved for every internal level of the subtree");
+            self.installed.push(v);
+            if v != self.c {
+                install_streamed::<K>(self.levels, vtree, t, col, store);
+                return;
+            }
+            crate::diagram::assert_can_make_marginal(self.levels, vtree, v);
+            let remap = K::install(&mut self.levels[v.idx()], t, col, store);
+            debug_assert!(remap.is_some(), "the integer domain dedups the column it installs");
+            free_subsumed_marginal_children(self.levels, vtree, v, K::weight_store(store));
+        }
+    }
+
+    let internal = vtree.subtree(c).filter(|&x| !vtree.node(x).is_leaf()).count();
+    let mut installed = Vec::new();
+    eng.limits().reserve_exact(&mut installed, internal)?;
+    let mut target = Summing { levels, c, installed };
+    cascade::<crate::value::IntFold, Summing<'_>>(&mut target, vtree, c, computed, &mut ());
+    debug_assert!(target.levels[c.idx()].is_marginal(), "the cascade installs the summed child");
+    Ok(target.installed)
+}
+
 /// Whether the sweep holds back the level at `t` unbuilt, for the root count
 /// to stream: the sweep wants only the count of a root both operands output
 /// at with one node, `t` is a child of that root, and neither operand is

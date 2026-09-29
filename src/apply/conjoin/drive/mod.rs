@@ -19,13 +19,20 @@
 //!
 //! `route::route_level` makes the choice.
 //!
+//! Two uses of the sweep change what the root does when the sparse route
+//! builds it as one product: a count ([`ConjoinMode::Count`]) folds the
+//! root's pairs into the count instead of storing them, and a
+//! marginalizing conjunction with one child of the root as its target
+//! ([`ConjoinMode::Sum`]) adds each pair's count into its fused pair
+//! instead (`sparse::ChildSum`).
+//!
 //! A self-conjunction `f ∧ f` returns `f` from `conjoin_on` before the
 //! driver runs.
 
 mod level;
 use level::{
     build_level_dense, count_sparse_root, count_streamed_root, counts_root, holds_back, pick_streamed,
-    run_sparse_level, LevelBuild,
+    run_sparse_level, sum_sparse_root, sums_root, LevelBuild,
 };
 
 use super::*;
@@ -47,6 +54,13 @@ pub(super) struct Sweep<'a, 'filter> {
     /// `counted`, and left empty.
     pub(super) count_root: bool,
     pub(super) counted: Option<num_bigint::BigUint>,
+    /// The one target, a child of the root, whose counts a root the sparse
+    /// route builds as one product sums as its pairs are found
+    /// ([`ConjoinMode::Sum`]).
+    pub(super) sum_child: Option<VtreeIdx>,
+    /// Where the root summed `sum_child` out: the levels it made marginal,
+    /// children before parents.
+    pub(super) summed: Option<Vec<VtreeIdx>>,
 }
 
 /// Walk the vtree bottom-up, building one level at a time.
@@ -171,7 +185,10 @@ fn build_level(
             Route::Sparse if counts_root(sweep, f, g, shape, &plan) => {
                 sweep.counted = Some(count_sparse_root(eng, run, f, g, shape, vtree)?);
             }
-            Route::Sparse => run_sparse_level(eng, run, f, g, shape, &plan)?,
+            Route::Sparse => match sums_root(sweep, run, f, g, shape, &plan) {
+                Some(side) => sweep.summed = sum_sparse_root(eng, run, f, g, shape, vtree, side)?,
+                None => run_sparse_level(eng, run, f, g, shape, &plan)?,
+            },
             _ => build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?,
         }
     }
@@ -211,6 +228,11 @@ pub(crate) enum ConjoinMode {
     Build,
     Count,
     Restore,
+    /// Build, and where the root is one product the sparse route builds, sum
+    /// the target given, one of its children, out as the root's pairs are
+    /// found, instead of building the pairs the marginalization pass would
+    /// fuse. The caller's targets must be that level alone.
+    Sum(VtreeIdx),
 }
 
 /// Conjoin structural, unweighted operands, returning them intact on refusal.
@@ -233,12 +255,17 @@ fn give_back(levels: &mut [TddLevel], f: &mut Tdd, g: &mut Tdd, kept: &[(usize, 
 pub(crate) enum Conjoined {
     Built(Tdd),
     Counted(num_bigint::BigUint),
+    /// Built, with the root's summed child ([`ConjoinMode::Sum`]) already
+    /// marginal and the root's pairs fused: what the marginalization pass
+    /// and pair fusion leave of the conjunction [`Self::Built`] carries,
+    /// short of the slot prune.
+    Summed(Tdd),
 }
 
 impl Conjoined {
-    fn diagram(self) -> Tdd {
+    pub(super) fn diagram(self) -> Tdd {
         match self {
-            Self::Built(out) => out,
+            Self::Built(out) | Self::Summed(out) => out,
             Self::Counted(_) => unreachable!("only a count request returns a count"),
         }
     }
@@ -260,6 +287,10 @@ pub(crate) fn apply_and_core(
 ) -> Result<Conjoined, OperationError> {
     let count_root = matches!(mode, ConjoinMode::Count);
     let keep = matches!(mode, ConjoinMode::Restore);
+    let sum_child = match mode {
+        ConjoinMode::Sum(c) => Some(c),
+        _ => None,
+    };
     let lim = eng.limits();
     lim.eager_reclaim();
 
@@ -327,7 +358,10 @@ pub(crate) fn apply_and_core(
         ws.as_ref(),
     );
 
-    let mut sweep = Sweep { vtree: &vtree, targets, quantified, ws: ws.as_mut(), filter, count_root, counted: None };
+    let mut sweep = Sweep {
+        vtree: &vtree, targets, quantified, ws: ws.as_mut(), filter, count_root, counted: None,
+        sum_child, summed: None,
+    };
     if let Err(e) = sweep_levels(eng, &mut run, f, g, &mut sweep) {
         if run.restoring {
             give_back(run.levels, f, g, &run.carried);
@@ -337,6 +371,7 @@ pub(crate) fn apply_and_core(
     if let Some(count) = sweep.counted {
         return Ok(Conjoined::Counted(count));
     }
+    let summed = sweep.summed.take();
 
     crate::marginal::canonicalize_weighted_leaf_refs(&canon_leaves, &vtree, run.levels, ws.as_ref());
 
@@ -376,5 +411,16 @@ pub(crate) fn apply_and_core(
     // bit-30 clear a bare slot; see `INLINE_VALUE_BIT` for why that polarity —
     // so a bit-30-clear ref here is never an already-inline count.
     crate::diagram::inline_small_marginal_refs(&mut out, None);
-    Ok(Conjoined::Built(out))
+    match summed {
+        // The marks the marginalization pass leaves, which installs each
+        // level on the finished diagram and marks its parent then.
+        Some(installed) => {
+            for d in installed {
+                let parent = vtree.node(d).parent().expect("a summed level is below the root");
+                out.invalidate(parent);
+            }
+            Ok(Conjoined::Summed(out))
+        }
+        None => Ok(Conjoined::Built(out)),
+    }
 }

@@ -43,8 +43,9 @@ impl Passthrough {
 /// joins the level, into buckets. A pass-through side is put on the inner
 /// side too, and the leaf arm joins the level on its other child. With
 /// `fixed`, the candidates go where that collector says instead, on a level
-/// with one product: the level's pair arena ([`finish_direct`]) or a count
-/// ([`count_sparse_level`]).
+/// with one product: the level's pair arena ([`finish_direct`]), a count
+/// ([`count_sparse_level`]) or the sums of a child summed out
+/// ([`sum_sparse_level`]).
 #[expect(clippy::too_many_arguments)]
 fn scatter_level(
     eng: &Engine,
@@ -320,6 +321,30 @@ pub(crate) fn count_sparse_level(
     assert_no_marginal_children(shape.t.idx(), shape.left, shape.right, f, g, levels, passthrough);
     let mut guard = WsGuard::new(eng);
     scatter_level(eng, &mut guard, f, g, shape, pl, thresholds, Some(Collect::Fold(fold)), passthrough)?;
+    guard.scatter_clean();
+    Ok(())
+}
+
+/// Sum one child of a one-product root out as the scatter emits its
+/// candidates: each candidate adds its summed-side node's count to its kept
+/// product in `sum`, and no pair is written ([`ChildSum`]). The joined
+/// children are still structural here — the summed child is made marginal
+/// only once its counts are read — so the marginal-child refusal holds.
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn sum_sparse_level(
+    eng: &Engine,
+    shape: LevelShape,
+    f: &Tdd,
+    g: &Tdd,
+    levels: &[TddLevel],
+    pl: Sides<&[ProductEntry]>,
+    thresholds: SparseThresholds,
+    sum: &mut ChildSum,
+) -> Result<(), OperationError> {
+    debug_assert!(shape.f.here == 1 && shape.g.here == 1, "a summed level has one product");
+    assert_no_marginal_children(shape.t.idx(), shape.left, shape.right, f, g, levels, None);
+    let mut guard = WsGuard::new(eng);
+    scatter_level(eng, &mut guard, f, g, shape, pl, thresholds, Some(Collect::Sum(sum)), None)?;
     guard.scatter_clean();
     Ok(())
 }
