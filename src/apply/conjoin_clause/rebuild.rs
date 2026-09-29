@@ -131,13 +131,19 @@ pub(super) fn rebuild_spine_level(
     lim.reserve(&mut level.nodes, node_cap)?;
     // Worst-case output pairs per input pair: up to 3 c_t pairs for a
     // both-relevant node, plus 1 d_t pair when `compute_dt`. The arena is
-    // sized at the input pair count and topped up per node, so the peak never
-    // holds a whole-level worst case beside the still-live `old`.
+    // sized at up to twice the input pair count and topped up per node, so
+    // the peak never holds a whole-level worst case of 3 or 4 beside the
+    // still-live `old`. Twice covers a level with one relevant child whole:
+    // sized at the input count, such a level with `d_t` outgrew its arena
+    // near its last node and copied it, once per spine level and clause,
+    // which a long run of clauses paid as a second pass over the level.
+    // Growth near the budget keeps the input count.
     let pair_mult = (if both_rel { 3 } else { 1 }) + usize::from(compute_dt);
     // One more for a disjunction's cube pair, which this level may carry.
     let level_pairs = (in_pairs as u128).saturating_mul(pair_mult as u128).saturating_add(1);
     lim.begin_level(Some(level_pairs));
-    lim.reserve(&mut level.pairs, in_pairs)?;
+    let first_reserve = if lim.bounded_growth() { in_pairs } else { in_pairs.saturating_mul(pair_mult.min(2)) };
+    lim.reserve(&mut level.pairs, first_reserve)?;
     let ctx = SpineCtx { left_grid_base, right_grid_base, pair_mult };
     match (left_rel, right_rel, compute_dt) {
         (true, true, true) => rebuild_nodes::<true, true, true>(eng, &old, nodes, ctx, level, base, tables)?,
