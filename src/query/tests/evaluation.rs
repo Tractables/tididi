@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use super::*;
 use std::cell::Cell;
 use std::rc::Rc;
-use crate::diagram::{EvalAlgebra, LeafLabel, RationalWeights};
+use crate::diagram::{EvalAlgebra, LeafLabel, RationalWeights, LEAF_WIDTH};
 use crate::limits::{LimitConfig, StopCallback, StopDecision};
 use crate::OperationError;
 use crate::test_helpers::assert_canonical;
@@ -282,4 +282,157 @@ fn an_overriding_mul_add_is_used_and_agrees_with_the_default() {
         assert_eq!(value, eng.evaluate(&f, &Plain).unwrap());
         assert_eq!(crate::test_helpers::rat(value as i64, 1), eng.evaluate(&f, &RationalWeights::unit(8)).unwrap());
     }
+}
+
+/// Weighted model counts with a weight of its own per variable, in columns of
+/// two representations: an array for three slots (every leaf's) and a flat
+/// buffer for any other width.
+struct ColumnCounts {
+    leaves: Cell<usize>,
+    folds: Cell<usize>,
+}
+
+#[derive(Default)]
+enum CountColumn {
+    #[default]
+    Empty,
+    Leaf([u128; LEAF_WIDTH]),
+    Flat(Vec<u128>),
+}
+
+fn column_weight(var: VarId, label: LeafLabel) -> u128 {
+    match label {
+        LeafLabel::Zero => 0,
+        LeafLabel::Neg => 1,
+        LeafLabel::Pos => 2 + var.0 as u128,
+        LeafLabel::One => 3 + var.0 as u128,
+    }
+}
+
+impl CountColumn {
+    fn at(&self, slot: usize) -> u128 {
+        match self {
+            CountColumn::Leaf(v) => v[slot],
+            CountColumn::Flat(v) => v[slot],
+            CountColumn::Empty => panic!("a column read before it was written"),
+        }
+    }
+}
+
+impl crate::diagram::ColumnAlgebra for ColumnCounts {
+    type Column = CountColumn;
+    type Value = u128;
+    fn zero(&self) -> u128 { 0 }
+    fn column(&self, _: VtreeIdx, width: usize) -> CountColumn {
+        match width == LEAF_WIDTH {
+            true => CountColumn::Leaf([u128::MAX; LEAF_WIDTH]),
+            false => CountColumn::Flat(vec![u128::MAX; width]),
+        }
+    }
+    fn leaf(&self, _: VtreeIdx, var: VarId, label: LeafLabel, col: &mut CountColumn) {
+        self.leaves.set(self.leaves.get() + 1);
+        match col {
+            CountColumn::Leaf(v) => v[label as usize] = column_weight(var, label),
+            CountColumn::Flat(v) => v[label as usize] = column_weight(var, label),
+            CountColumn::Empty => panic!("an unallocated leaf column"),
+        }
+    }
+    fn fold(
+        &self,
+        _: VtreeIdx,
+        slot: usize,
+        pairs: crate::diagram::SlotPairs<'_>,
+        left: &CountColumn,
+        right: &CountColumn,
+        out: &mut CountColumn,
+    ) {
+        self.folds.set(self.folds.get() + 1);
+        let v: u128 = pairs.map(|(l, r)| left.at(l) * right.at(r)).sum();
+        match out {
+            CountColumn::Leaf(o) => o[slot] = v,
+            CountColumn::Flat(o) => o[slot] = v,
+            CountColumn::Empty => panic!("an unallocated column"),
+        }
+    }
+    fn read(&self, _: VtreeIdx, col: CountColumn, slot: usize) -> u128 { col.at(slot) }
+}
+
+struct PlainCounts;
+impl EvalAlgebra for PlainCounts {
+    type Value = u128;
+    fn zero(&self) -> u128 { 0 }
+    fn leaf(&self, var: VarId, label: LeafLabel) -> u128 { column_weight(var, label) }
+    fn add_assign(&self, a: &mut u128, b: &u128) { *a += b; }
+    fn mul(&self, a: &u128, b: &u128) -> u128 { a * b }
+}
+
+#[test]
+fn column_evaluation_agrees_with_evaluate_and_folds_every_node() {
+    let eng = Engine::new();
+    let mut rng = crate::vtree::rng::Lcg::new(31);
+    let vars: Vec<VarId> = (1..=12).map(VarId).collect();
+    for tree in [Vtree::balanced(14), Vtree::linear(14), Vtree::random(14, 5)] {
+        let vtree = Arc::new(tree);
+        for round in 0..5u64 {
+            let rows: Vec<u64> = (0..100 + 200 * round)
+                .map(|_| (rng.next_u64() & 0x3ff) | (rng.next_u64() % 3) << 10)
+                .collect();
+            let f = eng.from_models(&vtree, &vars, &rows).unwrap();
+            assert_canonical(&f);
+            let counts = ColumnCounts { leaves: Cell::new(0), folds: Cell::new(0) };
+            assert_eq!(f.evaluate_columns(&counts).unwrap(), eng.evaluate(&f, &PlainCounts).unwrap(), "round {round}");
+            assert_eq!(counts.leaves.get(), LEAF_WIDTH * vtree.num_leaves() as usize);
+            let internal: usize = (0..vtree.num_nodes())
+                .filter(|&t| !vtree.node(VtreeIdx(t as u32)).is_leaf())
+                .map(|t| f.levels()[t].slot_count())
+                .sum();
+            assert_eq!(counts.folds.get(), internal, "every internal node is folded once");
+        }
+        // The constants, and a literal whose output is a leaf level.
+        for f in [Tdd::zero(&vtree), Tdd::one(&vtree), crate::literal(&vtree, -3).unwrap(), crate::literal(&vtree, 7).unwrap()] {
+            assert_canonical(&f);
+            let counts = ColumnCounts { leaves: Cell::new(0), folds: Cell::new(0) };
+            assert_eq!(eng.evaluate_columns(&f, &counts).unwrap(), eng.evaluate(&f, &PlainCounts).unwrap());
+        }
+    }
+}
+
+#[test]
+fn column_evaluation_stops_refuses_and_rejects_marginal_levels() {
+    let eng = Engine::new();
+    eng.limits().pin_reduce_poll_stride(Some(1));
+    let f = fixture();
+    let counts = || ColumnCounts { leaves: Cell::new(0), folds: Cell::new(0) };
+    let expected = eng.evaluate(&f, &PlainCounts).unwrap();
+    let mut completed = false;
+    for cut in 0..128 {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let callback_calls = calls.clone();
+        let result = {
+            let _limit = eng.limits().scope(LimitConfig::none().with_stop_callback(Some(
+                StopCallback::new(move |_, _| {
+                    let call = callback_calls.fetch_add(1, Ordering::Relaxed);
+                    if call == cut { StopDecision::Stop } else { StopDecision::Continue }
+                }))));
+            eng.evaluate_columns(&f, &counts())
+        };
+        assert_eq!(eng.evaluate_columns(&f, &counts()).unwrap(), expected);
+        match result {
+            Ok(value) => { assert_eq!(value, expected); assert!(cut > 2); completed = true; break; }
+            Err(error) => assert_eq!(error, OperationError::Stopped),
+        }
+    }
+    assert!(completed);
+    eng.limits().pin_reduce_poll_stride(None);
+    {
+        let _limit = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
+        assert_eq!(eng.evaluate_columns(&f, &counts()), Err(OperationError::OverBudget));
+    }
+    assert_eq!(eng.evaluate_columns(&f, &counts()).unwrap(), expected);
+    let tree = Arc::new(Vtree::balanced(4));
+    let mut marginal = Tdd::clause(&tree, [1, 2]).unwrap();
+    assert_canonical(&marginal);
+    eng.marginalize_levels(&mut marginal, &[tree.root()]).unwrap();
+    assert!(matches!(eng.evaluate_columns(&marginal, &counts()), Err(OperationError::MarginalLevel(_))));
+    assert_canonical(&f);
 }

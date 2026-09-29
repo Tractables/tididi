@@ -200,7 +200,7 @@ pub(crate) use marginal_ref::{
 };
 
 // semiring
-pub use semiring::{EvalAlgebra, LiteralWeights, RationalWeights, SignedLog, WeightValue};
+pub use semiring::{ColumnAlgebra, EvalAlgebra, LiteralWeights, RationalWeights, SignedLog, SlotPairs, WeightValue};
 pub(crate) use semiring::{weight_key, WeightKey};
 pub use weights::{Arithmetic, WeightStore};
 

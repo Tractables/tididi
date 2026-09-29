@@ -82,6 +82,9 @@ Supply literal weights to [`Tdd::evaluate`](crate::Tdd::evaluate) to compute
 weighted sums, as in the [probability example](crate::guide::examples::probability).
 Implement [`EvalAlgebra`](crate::diagram::EvalAlgebra) to calculate another
 quantity, such as the [minimum configuration cost](crate::guide::examples::optimization).
+An algebra that keeps its own storage, such as fixed-width values in one flat
+buffer per level, implements [`ColumnAlgebra`](crate::diagram::ColumnAlgebra) and
+runs through [`Tdd::evaluate_columns`](crate::Tdd::evaluate_columns).
 For weights attached to the diagram, use [`Tdd::set_weights`](crate::Tdd::set_weights)
 and [`Tdd::weighted_value`](crate::Tdd::weighted_value).
 

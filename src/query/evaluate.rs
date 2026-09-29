@@ -1,7 +1,7 @@
 //! Numeric evaluation with a supplied algebra or the diagram's attached weights.
 
-use crate::value::{Retention, FoldInput, ValueDomain, WeightFold};
-use crate::diagram::{ChildRef, EncodedChildRef, EvalAlgebra, LeafLabel, NodeIdx, PairsIter, Tdd, ValueRef, WeightStore, WeightValue};
+use crate::value::{walk_bottom_up, Retention, FoldInput, ValueDomain, WeightFold};
+use crate::diagram::{ChildRef, ColumnAlgebra, EncodedChildRef, EvalAlgebra, LeafLabel, NodeIdx, PairsIter, SlotPairs, Tdd, ValueRef, WeightStore, WeightValue, LEAF_WIDTH};
 use crate::Engine;
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
@@ -36,6 +36,45 @@ impl Engine {
             cols.resize_with(tdd.vtree.num_nodes(), Vec::new);
             fold_bottom_up(&fold, self, tdd, &mut cols, Retention::Frontier, &mut gate)?;
             cols[tdd.output.vtree.idx()].swap_remove(tdd.output.local.idx())
+        };
+        gate.finish()?;
+        Ok(result)
+    }
+
+    /// Run [`Tdd::evaluate_columns`](crate::Tdd::evaluate_columns) using this batch's resource limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::MarginalLevel`] for discarded structure,
+    /// [`OperationError::Stopped`] on cancellation, or
+    /// [`OperationError::OverBudget`] if the table of columns is refused.
+    ///
+    /// The columns themselves are the algebra's, and are not charged to the
+    /// byte budget. Stops are checked at entry, at node boundaries and before
+    /// return; an individual algebra callback cannot be interrupted. Caller
+    /// algebra panics propagate as described on the diagram method.
+    pub fn evaluate_columns<A: ColumnAlgebra>(&self, tdd: &Tdd, algebra: &A) -> Result<A::Value, OperationError> {
+        let lim = self.limits();
+        let _op = lim.enter()?;
+        tdd.require_structure()?;
+        let mut gate = lim.gate();
+        let result = if tdd.is_zero() {
+            algebra.zero()
+        } else {
+            let mut cols: Vec<A::Column> = Vec::new();
+            lim.reserve_exact(&mut cols, tdd.vtree.num_nodes())?;
+            cols.resize_with(tdd.vtree.num_nodes(), A::Column::default);
+            let keep = tdd.output.vtree;
+            walk_bottom_up(
+                &tdd.vtree,
+                tdd.vtree.root(),
+                &mut cols,
+                |_, _| false,
+                |cols, t| fold_columns(algebra, tdd, cols, t, &mut gate),
+                |cols, i| cols[i] = A::Column::default(),
+                Retention::Frontier.frontier(keep),
+            )?;
+            algebra.read(keep, std::mem::take(&mut cols[keep.idx()]), tdd.output.local.idx())
         };
         gate.finish()?;
         Ok(result)
@@ -128,6 +167,33 @@ impl<S: EvalAlgebra> LevelFold for Evaluate<'_, S> {
     ) -> S::Value {
         self.algebra.sum_of_products(pairs.map(|pair| (child(left, pair.left), child(right, pair.right))))
     }
+}
+
+/// Write level `t`'s column for [`Engine::evaluate_columns`]: a leaf's three
+/// slots, or each node's fold over its children's columns.
+fn fold_columns<A: ColumnAlgebra>(
+    algebra: &A,
+    tdd: &Tdd,
+    cols: &mut [A::Column],
+    t: VtreeIdx,
+    gate: &mut PollGate,
+) -> Result<(), OperationError> {
+    gate.poll(1)?;
+    let mut out = algebra.column(t, tdd.reference_slot_count(t));
+    if tdd.vtree.node(t).is_leaf() {
+        let var = tdd.vtree.leaf_var(t);
+        for i in 0..LEAF_WIDTH {
+            algebra.leaf(t, var, LeafLabel::from_idx(i), &mut out);
+        }
+    } else {
+        let (left, right) = tdd.vtree.children(t);
+        for (i, pairs) in tdd.levels[t.idx()].internal_inputs_iter() {
+            gate.poll(pairs.len() as u64 + 1)?;
+            algebra.fold(t, i, SlotPairs(pairs), &cols[left.idx()], &cols[right.idx()], &mut out);
+        }
+    }
+    cols[t.idx()] = out;
+    Ok(())
 }
 
 /// One side of one pair, borrowed from the child's column.

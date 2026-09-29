@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::{Context, Literal, OperationError, Tdd};
 use crate::apply::RestrictionOutcome;
-use crate::diagram::{EvalAlgebra, WeightValue};
+use crate::diagram::{ColumnAlgebra, EvalAlgebra, WeightValue};
 use crate::vtree::{VarId, VtreeIdx};
 
 impl Tdd {
@@ -791,6 +791,55 @@ impl Tdd {
     pub fn evaluate<S: EvalAlgebra>(&self, algebra: &S) -> Result<S::Value, OperationError> {
         let context = Arc::clone(self.context());
         context.run(|eng| eng.evaluate(self, algebra))
+    }
+
+    /// Evaluate this diagram bottom-up into columns the algebra owns.
+    ///
+    /// The result is [`evaluate`](Self::evaluate)'s under the same laws, with
+    /// one column per vtree node: [`ColumnAlgebra::column`] makes it,
+    /// [`ColumnAlgebra::leaf`] or [`ColumnAlgebra::fold`] writes each of its
+    /// slots, and a child's column is dropped once its parent's is written.
+    /// The constant-false diagram evaluates to [`ColumnAlgebra::zero`]. The
+    /// borrowed diagram is unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::MarginalLevel`] for discarded structure, or
+    /// [`OperationError::OverBudget`] if the table of columns is refused.
+    ///
+    /// # Panics
+    ///
+    /// Panics from the caller's algebra propagate.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// use tididi::diagram::{ColumnAlgebra, LeafLabel, SlotPairs};
+    /// use tididi::vtree::{VarId, VtreeIdx};
+    ///
+    /// // The fewest true variables of any model, a column of `u32` per level.
+    /// struct FewestTrue;
+    /// impl ColumnAlgebra for FewestTrue {
+    ///     type Column = Vec<u32>;
+    ///     type Value = u32;
+    ///     fn zero(&self) -> u32 { u32::MAX }
+    ///     fn column(&self, _: VtreeIdx, width: usize) -> Vec<u32> { vec![u32::MAX; width] }
+    ///     fn leaf(&self, _: VtreeIdx, _: VarId, label: LeafLabel, col: &mut Vec<u32>) {
+    ///         col[label as usize] = u32::from(label == LeafLabel::Pos);
+    ///     }
+    ///     fn fold(&self, _: VtreeIdx, slot: usize, pairs: SlotPairs<'_>, left: &Vec<u32>, right: &Vec<u32>, out: &mut Vec<u32>) {
+    ///         out[slot] = pairs.map(|(l, r)| left[l].saturating_add(right[r])).min().unwrap_or(u32::MAX);
+    ///     }
+    ///     fn read(&self, _: VtreeIdx, col: Vec<u32>, slot: usize) -> u32 { col[slot] }
+    /// }
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2])? & tididi::literal(&vtree, 3)?;
+    /// assert_eq!(f.evaluate_columns(&FewestTrue)?, 2);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn evaluate_columns<A: ColumnAlgebra>(&self, algebra: &A) -> Result<A::Value, OperationError> {
+        let context = Arc::clone(self.context());
+        context.run(|eng| eng.evaluate_columns(self, algebra))
     }
 
     /// Evaluate this diagram using its attached weight store, if present.

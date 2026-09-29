@@ -399,7 +399,7 @@ evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: 400eaddc1d0382020f6a3b79c8b949262cc88f8b22bddeee57617b0671ae9944 -->
+- [Rust API overview](api-guide.md) <!-- reviewed: 0e494ccf0bc1a4abe378c7bfb7a7f88f1baf6339b20b0abe348c8c16bf609860 -->
 - [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: 619c8cf6bbe3d4b720da766850817f34b4fdf92c866f3c6cd9828cd555fdcd39 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 
@@ -441,7 +441,7 @@ there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: f6d0b946fd3d6d63ca4ec0e4791bd769685822897ebcc1e1fe11aa7f7ccf936b -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: 9af75d5b43a041eda595eeb501cc9d74fecd08768fb78b5921a210648f9f8777 -->
 
 ## Reusable components
 

@@ -209,7 +209,8 @@ preserve those contracts.
 
 ## Extending the implementation
 
-Callers can supply an [`EvalAlgebra`], a [`RotationObjective`], or a stopping
+Callers can supply an [`EvalAlgebra`] (or a [`ColumnAlgebra`], which owns the
+per-level storage its values live in), a [`RotationObjective`], or a stopping
 callback through [`LimitConfig`].
 
 Inside the crate, add reduction rules beside the related pass, mark affected
@@ -258,6 +259,7 @@ compiles `test_helpers` in a release build; the gate is stated under
 [`and_exists`]: crate::and_exists
 [`Arithmetic`]: crate::diagram::Arithmetic
 [`EvalAlgebra`]: crate::diagram::EvalAlgebra
+[`ColumnAlgebra`]: crate::diagram::ColumnAlgebra
 [`OperationError`]: crate::OperationError
 [`LimitConfig`]: crate::limits::LimitConfig
 [`NodeIdx`]: crate::diagram::NodeIdx
