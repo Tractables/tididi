@@ -911,3 +911,118 @@ fn large_relations_take_the_radix_paths() {
         check(vtree, &vars, &rows, &format!("large round {round} {name} n={n} k={k} m={m}"));
     }
 }
+
+/// A column of a table: `width` bits holding one of `codes` values drawn
+/// once per table (any value where `codes` is 0), or a rank counting up
+/// from 0 under the columns before it, which then repeat for a degree of
+/// rows.
+#[derive(Clone, Copy)]
+enum Column {
+    Codes { width: usize, codes: u64 },
+    Rank { width: usize },
+}
+
+impl Column {
+    fn width(self) -> usize {
+        match self {
+            Column::Codes { width, .. } | Column::Rank { width } => width,
+        }
+    }
+}
+
+/// `m` rows over `columns`, packed one column after another from bit 0:
+/// the rows a table hands the bulk build.
+fn table(columns: &[Column], m: usize, rng: &mut Lcg) -> Vec<u64> {
+    let k: usize = columns.iter().map(|c| c.width()).sum();
+    let w = k.div_ceil(64).max(1);
+    let mask = |width: usize| if width == 64 { !0 } else { (1u64 << width) - 1 };
+    let dictionaries: Vec<Vec<u64>> = columns.iter().map(|&c| match c {
+        Column::Codes { width, codes } if codes > 0 => (0..codes).map(|_| rng.wide() & mask(width)).collect(),
+        _ => Vec::new(),
+    }).collect();
+    let draw = |c: usize, rng: &mut Lcg| match columns[c] {
+        Column::Codes { width, .. } if dictionaries[c].is_empty() => rng.wide() & mask(width),
+        Column::Codes { .. } => dictionaries[c][rng.below(dictionaries[c].len() as u64) as usize],
+        Column::Rank { .. } => 0,
+    };
+    let keyed = columns.iter().position(|c| matches!(c, Column::Rank { .. }));
+    let mut out = vec![0u64; w * m];
+    let (mut key, mut rank, mut degree) = (vec![0u64; columns.len()], 0u64, 0u64);
+    for r in 0..m {
+        if let Some(at) = keyed && rank == degree {
+            for (c, value) in key.iter_mut().enumerate().take(at) { *value = draw(c, rng); }
+            (rank, degree) = (0, 1 + rng.below(mask(columns[at].width()) + 1));
+        }
+        let mut bit = 0;
+        for (c, &column) in columns.iter().enumerate() {
+            let value = match (keyed, column) {
+                (_, Column::Rank { .. }) => rank,
+                (Some(at), _) if c < at => key[c],
+                _ => draw(c, rng),
+            };
+            for j in 0..column.width() {
+                if (value >> j) & 1 == 1 { out[r * w + (bit + j) / 64] |= 1u64 << ((bit + j) % 64); }
+            }
+            bit += column.width();
+        }
+        rank += 1;
+    }
+    out
+}
+
+#[test]
+fn table_shaped_relations_store_what_the_bottom_up_pass_stored() {
+    // Few group codes beside wide measures, as under an aggregate's key; a
+    // key with a rank below its degree; rows wider than a word; and random
+    // columns. Each arrives in leaf order, as sorted words, reversed or as
+    // drawn, with repeats or without, from one row to past the sizes where
+    // the split sorts by radix and numbers by hashing.
+    use Column::{Codes, Rank};
+    let mut rng = Lcg::new(0x7ab1e);
+    for round in 0..28u64 {
+        let columns: Vec<Column> = match round % 4 {
+            0 => vec![Codes { width: 2, codes: 3 }, Codes { width: 1, codes: 2 }, Codes { width: 12, codes: 2500 },
+                Codes { width: 6, codes: 50 }, Codes { width: 20, codes: 0 }, Codes { width: 4, codes: 11 }],
+            1 => vec![Codes { width: 14 + rng.below(6) as usize, codes: 0 }, Rank { width: 1 + rng.below(3) as usize }, Codes { width: 6, codes: 50 }],
+            2 => vec![Codes { width: 20, codes: 0 }, Codes { width: 18, codes: 0 }, Codes { width: 30, codes: 0 },
+                Codes { width: 25, codes: 1 + rng.below(4000) }, Codes { width: 12 + rng.below(40) as usize, codes: 0 }],
+            _ => (0..1 + rng.below(6)).map(|_| {
+                let width = 1 + rng.below(40) as usize;
+                let codes = [0, 1 + rng.below(16), 1 + rng.below(4096)][rng.below(3) as usize];
+                Codes { width, codes }
+            }).collect(),
+        };
+        let k: usize = columns.iter().map(|c| c.width()).sum();
+        let m = match rng.below(4) { 0 => 1, 1 => 1 + rng.below(100), 2 => 1 + rng.below(3000), _ => 17000 + rng.below(30000) } as usize;
+        let w = k.div_ceil(64);
+        let mut rows = table(&columns, m, &mut rng);
+        if rng.coin() {
+            // Repeats, some next to their row and some anywhere.
+            for _ in 0..1 + m / 4 {
+                let r = rng.below((rows.len() / w) as u64) as usize;
+                let row = rows[r * w..(r + 1) * w].to_vec();
+                rows.extend_from_slice(&row);
+            }
+        }
+        let n = k as u32 + rng.below(4) as u32;
+        let shapes = vtrees(n, &mut rng);
+        for _ in 0..2 {
+            let (name, vtree) = &shapes[rng.below(shapes.len() as u64) as usize];
+            let mut vars = Vec::new();
+            leaves(vtree, vtree.root(), &mut vars);
+            vars.truncate(k);
+            if rng.below(4) == 0 { vars.reverse(); }
+            let bit = |row: &[u64], i: usize| (row[i / 64] >> (i % 64)) & 1;
+            let mut listed: Vec<&[u64]> = rows.chunks_exact(w).collect();
+            let order = rng.below(4);
+            match order {
+                0 => {}
+                1 => listed.sort_by(|a, b| (0..k).map(|i| bit(a, i).cmp(&bit(b, i))).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal)),
+                2 => listed.sort_by(|a, b| a.iter().rev().cmp(b.iter().rev())),
+                _ => listed.sort_by(|a, b| (0..k).map(|i| bit(b, i).cmp(&bit(a, i))).find(|o| o.is_ne()).unwrap_or(std::cmp::Ordering::Equal)),
+            }
+            let ordered: Vec<u64> = listed.concat();
+            check(vtree, &vars, &ordered, &format!("table round {round} {name} k={k} m={m} order {order}"));
+        }
+    }
+}
