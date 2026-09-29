@@ -276,9 +276,16 @@ pub(crate) fn apply_sparse_level(
         plan_chunks(ws.par_buckets.iter().map(Vec::len), shape.f.here, thresholds.chunk_bytes)
     };
     let is_chunked = boundaries.len() > 2;
-    for window in boundaries.windows(2) {
-        let (p1_start, p1_end) = (window[0] as usize, window[1] as usize);
-        emit_chunk(eng, ws, level, pl_output, p1_start..p1_end, flat, is_chunked, duplicates_legal)?;
+    if !flat && emits_ahead(shape.f.here) {
+        for window in boundaries.windows(2) {
+            let (p1_start, p1_end) = (window[0] as usize, window[1] as usize);
+            emit_buckets_ahead(eng, ws, level, pl_output, p1_start..p1_end, is_chunked, duplicates_legal)?;
+        }
+    } else {
+        for window in boundaries.windows(2) {
+            let (p1_start, p1_end) = (window[0] as usize, window[1] as usize);
+            emit_chunk(eng, ws, level, pl_output, p1_start..p1_end, flat, is_chunked, duplicates_legal)?;
+        }
     }
 
     #[cfg(debug_assertions)]

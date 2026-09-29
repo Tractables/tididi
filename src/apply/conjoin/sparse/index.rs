@@ -143,6 +143,14 @@ impl<'a, T> GroupedView<'a, T> {
         &self.entries[self.offsets[k] as usize..self.offsets[k + 1] as usize]
     }
 
+    /// Every entry of the first `keys` keys, in key order: the whole
+    /// grouping when `keys` is its key count. The buffers are grow-only, so
+    /// past that they may hold a wider grouping's entries.
+    #[inline]
+    pub(super) fn entries_of(self, keys: usize) -> &'a [T] {
+        &self.entries[..self.offsets[keys] as usize]
+    }
+
     /// How many entries key `k` holds.
     #[inline]
     pub(super) fn len(self, k: usize) -> usize {
@@ -155,20 +163,86 @@ impl<'a, T> GroupedView<'a, T> {
     /// only; no-op off `x86_64` and under Miri, which lacks the intrinsic.
     #[inline(always)]
     pub(super) fn prefetch_bucket(self, k: usize) {
-        let start = self.offsets[k] as usize;
-        #[cfg(all(target_arch = "x86_64", not(miri)))]
-        {
-            let at = self.entries.as_ptr().wrapping_add(start).cast::<i8>();
-            // Sound whatever the address: a prefetch reads nothing the
-            // program sees and never faults.
-            unsafe {
-                core::arch::x86_64::_mm_prefetch(at, core::arch::x86_64::_MM_HINT_T0);
-                core::arch::x86_64::_mm_prefetch(at.wrapping_add(64), core::arch::x86_64::_MM_HINT_T0);
-            }
-        }
-        #[cfg(not(all(target_arch = "x86_64", not(miri))))]
-        let _ = start;
+        let at = self.entries.as_ptr().wrapping_add(self.offsets[k] as usize).cast::<u8>();
+        prefetch_line(at);
+        prefetch_line(at.wrapping_add(64));
     }
+
+    /// Ask the cache for the lines of key `k`'s entries, up to
+    /// [`BUCKET_LINES`] and no more than the run holds: the second stage of
+    /// a walk that asks for a bucket some keys ahead. Reads key `k`'s
+    /// bounds, which the first stage asked for ([`Self::prefetch_bounds`]).
+    /// A hint only.
+    #[inline(always)]
+    pub(super) fn prefetch_run(self, k: usize) {
+        let (start, end) = (self.offsets[k] as usize, self.offsets[k + 1] as usize);
+        let at = self.entries.as_ptr().wrapping_add(start).cast::<u8>();
+        let bytes = (end - start) * std::mem::size_of::<T>();
+        let mut line = 0;
+        while line < bytes && line < BUCKET_LINES * 64 {
+            prefetch_line(at.wrapping_add(line));
+            line += 64;
+        }
+    }
+
+    /// Ask the cache for key `k`'s bounds, which [`Self::prefetch_run`]
+    /// and [`Self::bucket`] read: the first stage of a walk that asks for a
+    /// bucket some keys ahead, since forming a bucket's address is itself a
+    /// read at a random place. A hint only.
+    #[inline(always)]
+    pub(super) fn prefetch_bounds(self, k: usize) {
+        prefetch_line(self.offsets.as_ptr().wrapping_add(k).cast::<u8>());
+    }
+}
+
+/// How many cache lines of a bucket [`GroupedView::prefetch_run`] asks
+/// for: a longer run is read in order from there, which the hardware's own
+/// prefetcher follows.
+const BUCKET_LINES: usize = 4;
+
+/// Ask the cache for the line holding `at`. A hint only: a prefetch reads
+/// nothing the program sees and never faults, so any address is sound. A
+/// no-op off `x86_64` and under Miri, which lacks the intrinsic.
+#[inline(always)]
+pub(super) fn prefetch_line(at: *const u8) {
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        // Sound whatever the address: a prefetch reads nothing the program
+        // sees and never faults.
+        unsafe { core::arch::x86_64::_mm_prefetch(at.cast::<i8>(), core::arch::x86_64::_MM_HINT_T0) };
+    }
+    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
+    let _ = at;
+}
+
+/// How many f pairs ahead of the one it reads a walk through inner buckets
+/// asks the cache for a bucket's bounds ([`GroupedView::prefetch_bounds`]),
+/// and how many for the bucket's run ([`GroupedView::prefetch_run`]): the
+/// run's address is read from the bounds, so the bounds are asked for
+/// first, far enough ahead to have arrived when the run is.
+pub(super) const BOUNDS_AHEAD: usize = 16;
+pub(super) const RUN_AHEAD: usize = 8;
+
+/// The prefetches of a walk that reads, for each f pair `under[j]` in turn,
+/// the inner bucket its `other` child names: the bounds of the pair
+/// [`BOUNDS_AHEAD`] on and the run of the pair [`RUN_AHEAD`] on. `under` is
+/// a whole reverse index's entries ([`GroupedView::entries_of`]), so a walk
+/// over one key's pairs asks for the next key's first ones too.
+#[inline(always)]
+pub(super) fn prefetch_walk<T: Copy>(under: &[RevEntry], j: usize, inner: GroupedView<'_, T>) {
+    if let Some(r) = under.get(j + BOUNDS_AHEAD) {
+        inner.prefetch_bounds(r.other as usize);
+    }
+    if let Some(r) = under.get(j + RUN_AHEAD) {
+        inner.prefetch_run(r.other as usize);
+    }
+}
+
+/// Ask the cache for `slice[k]`, which need not be in bounds; see
+/// [`prefetch_line`].
+#[inline(always)]
+pub(super) fn prefetch_at<T>(slice: &[T], k: usize) {
+    prefetch_line(slice.as_ptr().wrapping_add(k).cast::<u8>());
 }
 
 /// Group `items` by key into `out`: a counting sort in four passes. Count

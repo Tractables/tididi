@@ -183,7 +183,13 @@ pub(super) fn scatter_join<const SWAPPED: bool>(
         return scatter_leaf_arm::<SWAPPED>(eng, ws, pl, collect, carrier);
     }
     build_inner_index::<SWAPPED>(eng, ws, g_level, shape)?;
-    scatter_general_arm::<SWAPPED>(eng, ws, shape, pl, collect)
+    // Decided once per level, so that no walk tests it per pair.
+    let pl_inner = if !SWAPPED { pl.left } else { pl.right };
+    if prefetching(std::mem::size_of_val(pl_inner)) {
+        scatter_general_arm::<SWAPPED, true>(eng, ws, shape, pl, collect)
+    } else {
+        scatter_general_arm::<SWAPPED, false>(eng, ws, shape, pl, collect)
+    }
 }
 
 /// Whether the join runs its leaf arm: its inner child, the left one
@@ -312,6 +318,43 @@ struct ScatterSides<'w> {
     /// How many outer keys the emit loop walks.
     outer_k: usize,
 }
+
+/// How many bytes a level's inner products (or its parents' buckets) span
+/// before its walks ask the cache for what they read ahead: below it they
+/// mostly find it in the last-level cache, and the prefetches only add
+/// instructions.
+const PREFETCH_BYTES: usize = 32 << 20;
+
+/// Whether a level whose walks read `bytes` bytes at random asks the cache
+/// for them ahead: past [`PREFETCH_BYTES`], or as a test pins it.
+#[inline(always)]
+fn prefetching(bytes: usize) -> bool {
+    forced_prefetch().unwrap_or(bytes >= PREFETCH_BYTES)
+}
+
+/// Whether a level of `parents` f parents that collected its candidates
+/// into buckets emits them with [`emit_buckets_ahead`] rather than
+/// [`emit_chunk`]: where the buckets span more than [`PREFETCH_BYTES`], at
+/// a line each at least.
+#[inline(always)]
+pub(super) fn emits_ahead(parents: usize) -> bool {
+    prefetching(parents.saturating_mul(64))
+}
+
+// Tests pin the gate and note which walks asked ahead; production always
+// sizes it.
+#[cfg(test)]
+use super::tests::{forced_prefetch, note_prefetch};
+
+#[cfg(not(test))]
+#[inline(always)]
+fn forced_prefetch() -> Option<bool> {
+    None
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_prefetch(_site: usize) {}
 
 /// A bucket array cleared per outer key by replaying the indices written into
 /// it, so the clear costs the touched buckets rather than the whole array.
@@ -589,21 +632,47 @@ impl ScatterSides<'_> {
     /// so the inner loop probes no dead cell. Each candidate goes to its f
     /// parent's bucket, or with `FLAT` to the flat list with its parent for
     /// the sort that groups them afterwards.
-    fn emit_for_outer<const SWAPPED: bool, const FLAT: bool>(
+    ///
+    /// The f pairs name their inner children and their parents at random.
+    /// With `FAR`, on a level whose inner products span more than
+    /// [`PREFETCH_BYTES`], each pair's inner run, and its parent's bucket
+    /// where the candidates go to buckets, is asked for some pairs ahead
+    /// ([`prefetch_walk`], [`prefetch_parent_bucket`]); without it the walk
+    /// is the one it always was.
+    fn emit_for_outer<const SWAPPED: bool, const FLAT: bool, const FAR: bool>(
         &mut self,
         lim: &crate::limits::Limits,
         outer: usize,
         ticker: &mut crate::limits::PollGate,
     ) -> Result<(), OperationError> {
         let filtered = self.filtered.index();
-        for &RevEntry { parent: p1, other: inner1 } in self.f_by_outer.bucket(outer) {
-            // The bucket is resolved once per f parent, outside the walk of
-            // its products.
+        if !FAR {
+            for &RevEntry { parent: p1, other: inner1 } in self.f_by_outer.bucket(outer) {
+                // The bucket is resolved once per f parent, outside the walk
+                // of its products.
+                if FLAT {
+                    let flat = &mut *self.par_flat;
+                    emit_candidates::<SWAPPED>(self.inner, filtered, inner1, ticker,
+                        |entry| lim.try_push(flat, Candidate { parent: p1, entry }))?;
+                } else {
+                    let bucket = &mut self.par_buckets[p1 as usize];
+                    emit_candidates::<SWAPPED>(self.inner, filtered, inner1, ticker,
+                        |entry| lim.try_push(bucket, entry))?;
+                }
+            }
+            return Ok(());
+        }
+        let under = self.f_by_outer.entries_of(self.outer_k);
+        for j in self.f_by_outer.offsets[outer] as usize..self.f_by_outer.offsets[outer + 1] as usize {
+            prefetch_walk(under, j, self.inner);
+            note_prefetch(usize::from(!FLAT));
+            let RevEntry { parent: p1, other: inner1 } = under[j];
             if FLAT {
                 let flat = &mut *self.par_flat;
                 emit_candidates::<SWAPPED>(self.inner, filtered, inner1, ticker,
                     |entry| lim.try_push(flat, Candidate { parent: p1, entry }))?;
             } else {
+                prefetch_parent_bucket(self.par_buckets, under, j);
                 let bucket = &mut self.par_buckets[p1 as usize];
                 emit_candidates::<SWAPPED>(self.inner, filtered, inner1, ticker,
                     |entry| lim.try_push(bucket, entry))?;
@@ -614,15 +683,27 @@ impl ScatterSides<'_> {
 
     /// [`ScatterSides::emit_for_outer`] on a level whose candidates are
     /// folded into a count ([`Collect::Fold`]).
-    fn emit_fold_for_outer<const SWAPPED: bool>(
+    fn emit_fold_for_outer<const SWAPPED: bool, const FAR: bool>(
         &self,
         fold: &mut CandidateFold<'_>,
         outer: usize,
         ticker: &mut crate::limits::PollGate,
     ) -> Result<(), OperationError> {
         let filtered = self.filtered.index();
-        for &RevEntry { other: inner1, .. } in self.f_by_outer.bucket(outer) {
-            emit_candidates::<SWAPPED>(self.inner, filtered, inner1, ticker, |entry| {
+        if !FAR {
+            for &RevEntry { other: inner1, .. } in self.f_by_outer.bucket(outer) {
+                emit_candidates::<SWAPPED>(self.inner, filtered, inner1, ticker, |entry| {
+                    fold.push(candidate_pair(&entry));
+                    Ok(())
+                })?;
+            }
+            return Ok(());
+        }
+        let under = self.f_by_outer.entries_of(self.outer_k);
+        for j in self.f_by_outer.offsets[outer] as usize..self.f_by_outer.offsets[outer + 1] as usize {
+            prefetch_walk(under, j, self.inner);
+            note_prefetch(2);
+            emit_candidates::<SWAPPED>(self.inner, filtered, under[j].other, ticker, |entry| {
                 fold.push(candidate_pair(&entry));
                 Ok(())
             })?;
@@ -632,7 +713,7 @@ impl ScatterSides<'_> {
 
     /// [`ScatterSides::emit_for_outer`] on a level whose candidates go
     /// straight into the output level's pair arena ([`Collect::Direct`]).
-    fn emit_direct_for_outer<const SWAPPED: bool>(
+    fn emit_direct_for_outer<const SWAPPED: bool, const FAR: bool>(
         &self,
         eng: &Engine,
         level: &mut TddLevel,
@@ -640,8 +721,18 @@ impl ScatterSides<'_> {
         ticker: &mut crate::limits::PollGate,
     ) -> Result<(), OperationError> {
         let filtered = self.filtered.index();
-        for &RevEntry { other: inner1, .. } in self.f_by_outer.bucket(outer) {
-            emit_candidates::<SWAPPED>(self.inner, filtered, inner1, ticker,
+        if !FAR {
+            for &RevEntry { other: inner1, .. } in self.f_by_outer.bucket(outer) {
+                emit_candidates::<SWAPPED>(self.inner, filtered, inner1, ticker,
+                    |entry| try_push_pair_into(eng, level, candidate_pair(&entry)))?;
+            }
+            return Ok(());
+        }
+        let under = self.f_by_outer.entries_of(self.outer_k);
+        for j in self.f_by_outer.offsets[outer] as usize..self.f_by_outer.offsets[outer + 1] as usize {
+            prefetch_walk(under, j, self.inner);
+            note_prefetch(3);
+            emit_candidates::<SWAPPED>(self.inner, filtered, under[j].other, ticker,
                 |entry| try_push_pair_into(eng, level, candidate_pair(&entry)))?;
         }
         Ok(())
@@ -683,11 +774,26 @@ fn emit_candidates<const SWAPPED: bool>(
     Ok(())
 }
 
+/// Ask the cache for the bucket the f pair [`BOUNDS_AHEAD`] on pushes its
+/// candidates into, and for where the pair [`RUN_AHEAD`] on writes in its
+/// own: the parents are at random, and a bucket's write position is read
+/// from its header, so the header is asked for first. A hint only.
+#[inline(always)]
+fn prefetch_parent_bucket(par_buckets: &[Vec<ParEntry>], under: &[RevEntry], j: usize) {
+    if let Some(r) = under.get(j + BOUNDS_AHEAD) {
+        prefetch_at(par_buckets, r.parent as usize);
+    }
+    if let Some(bucket) = under.get(j + RUN_AHEAD).and_then(|r| par_buckets.get(r.parent as usize)) {
+        prefetch_line(bucket.as_ptr().wrapping_add(bucket.len()).cast::<u8>());
+    }
+}
+
 /// The general arm: both children are non-leaf. Per outer key, build the
 /// filtered g index, emit against it, then clear only the buckets this outer
-/// touched.
+/// touched. `FAR` runs the listing walks that ask the cache ahead
+/// ([`ScatterSides::emit_for_outer`]).
 #[inline(never)]
-fn scatter_general_arm<const SWAPPED: bool>(
+fn scatter_general_arm<const SWAPPED: bool, const FAR: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     shape: LevelShape,
@@ -726,10 +832,10 @@ fn scatter_general_arm<const SWAPPED: bool>(
             }
         }
         match &mut collect {
-            Collect::Flat => s.emit_for_outer::<SWAPPED, true>(lim, outer, &mut ticker)?,
-            Collect::Buckets => s.emit_for_outer::<SWAPPED, false>(lim, outer, &mut ticker)?,
-            Collect::Direct(level) => s.emit_direct_for_outer::<SWAPPED>(eng, level, outer, &mut ticker)?,
-            Collect::Fold(fold) => s.emit_fold_for_outer::<SWAPPED>(fold, outer, &mut ticker)?,
+            Collect::Flat => s.emit_for_outer::<SWAPPED, true, FAR>(lim, outer, &mut ticker)?,
+            Collect::Buckets => s.emit_for_outer::<SWAPPED, false, FAR>(lim, outer, &mut ticker)?,
+            Collect::Direct(level) => s.emit_direct_for_outer::<SWAPPED, FAR>(eng, level, outer, &mut ticker)?,
+            Collect::Fold(fold) => s.emit_fold_for_outer::<SWAPPED, FAR>(fold, outer, &mut ticker)?,
         }
         s.filtered.clear_touched();
     }
@@ -958,6 +1064,39 @@ pub(super) fn emit_chunk(
     // and that capacity saves the next apply's scatter pushes from growing
     // the bucket again.
     for p1 in parents {
+        let bucket = std::mem::take(&mut ws.par_buckets[p1]);
+        if !bucket.is_empty() {
+            emit_parent(eng, ws, level, pl_output, p1, &bucket, duplicates_legal)?;
+        }
+        if !drop_consumed {
+            ws.par_buckets[p1] = bucket;
+        }
+    }
+    Ok(())
+}
+
+/// [`emit_chunk`] over buckets, on a level whose buckets span more than
+/// [`PREFETCH_BYTES`] at a line each at least ([`emits_ahead`]). Their
+/// headers are read in order and their entries at random, so each parent
+/// first asks the cache for the entries of the bucket [`RUN_AHEAD`] parents
+/// on. A hint only: the parents are emitted as [`emit_chunk`] emits them.
+#[inline(never)]
+pub(super) fn emit_buckets_ahead(
+    eng: &Engine,
+    ws: &mut SparseWorkspace,
+    level: &mut TddLevel,
+    pl_output: &mut Vec<ProductEntry>,
+    parents: std::ops::Range<usize>,
+    drop_consumed: bool,
+    duplicates_legal: bool,
+) -> Result<(), OperationError> {
+    for p1 in parents {
+        if let Some(ahead) = ws.par_buckets.get(p1 + RUN_AHEAD) {
+            let at = ahead.as_ptr().cast::<u8>();
+            prefetch_line(at);
+            prefetch_line(at.wrapping_add(64));
+            note_prefetch(4);
+        }
         let bucket = std::mem::take(&mut ws.par_buckets[p1]);
         if !bucket.is_empty() {
             emit_parent(eng, ws, level, pl_output, p1, &bucket, duplicates_legal)?;

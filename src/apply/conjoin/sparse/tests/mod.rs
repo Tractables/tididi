@@ -129,6 +129,56 @@ pub(super) fn owners_built() -> [u32; 5] {
     OWNERS.with(Cell::get)
 }
 
+thread_local! {
+    /// The prefetch gate a [`ForcedPrefetch`] guard on this thread has
+    /// installed.
+    static PREFETCH: Cell<Option<bool>> = const { Cell::new(None) };
+    /// How many f pairs on this thread had their reads asked for ahead, per
+    /// walk (see [`prefetches_run`]).
+    static PREFETCHED: Cell<[u64; 5]> = const { Cell::new([0; 5]) };
+}
+
+/// The pinned prefetch gate, if any: `Some(true)` has every scatter walk ask
+/// the cache ahead whatever its level spans, `Some(false)` none.
+pub(super) fn forced_prefetch() -> Option<bool> {
+    PREFETCH.with(Cell::get)
+}
+
+/// The scatter's prefetch gate pinned on this thread until the guard drops;
+/// `None` leaves it to the level's size.
+pub(super) struct ForcedPrefetch {
+    prior: Option<bool>,
+}
+
+impl ForcedPrefetch {
+    pub(super) fn install(gate: Option<bool>) -> ForcedPrefetch {
+        ForcedPrefetch { prior: PREFETCH.with(|c| c.replace(gate)) }
+    }
+}
+
+impl Drop for ForcedPrefetch {
+    fn drop(&mut self) {
+        PREFETCH.with(|c| c.set(self.prior));
+    }
+}
+
+/// Count one read asked for ahead at `site` (see [`prefetches_run`]).
+pub(super) fn note_prefetch(site: usize) {
+    PREFETCHED.with(|c| {
+        let mut seen = c.get();
+        seen[site] += 1;
+        c.set(seen);
+    });
+}
+
+/// How many reads the scatter on this thread asked for ahead: per f pair of
+/// a listing walk collecting flat, one collecting into buckets, a counted
+/// fold's walk and a walk writing a one-product level directly, and per
+/// parent of an emit over buckets.
+pub(super) fn prefetches_run() -> [u64; 5] {
+    PREFETCHED.with(Cell::get)
+}
+
 mod count_root;
 mod counting_sort;
 mod direction;
@@ -143,3 +193,4 @@ mod reset_ws;
 mod scatter_direction_pool;
 mod stream;
 mod product_filter;
+mod prefetch_gate;
