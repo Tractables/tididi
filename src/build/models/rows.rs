@@ -26,6 +26,8 @@ pub(super) fn distinct_rows(
     let mut packed: Vec<u64> = Vec::new();
     lim.reserve_exact(&mut packed, rows.len())?;
     let mut gate = lim.gate();
+    // Whether the one-word rows are known to ascend strictly.
+    let mut distinct = false;
     if layout.is_identity() {
         // `vars` already runs from the rightmost leaf to the leftmost, the
         // layout's bit order, so re-encoding a row is a copy and only the bits
@@ -33,9 +35,25 @@ pub(super) fn distinct_rows(
         let tail = num_vars - (w - 1) * 64;
         let tail_mask = if tail == 64 { !0u64 } else { (1u64 << tail) - 1 };
         gate.poll(rows.len() as u64)?;
-        packed.extend_from_slice(rows);
-        for row in packed.chunks_exact_mut(w) {
-            row[w - 1] &= tail_mask;
+        if let (1, Some((&first, rest))) = (w, rows.split_first()) {
+            // The pass that copies the words also sees whether they ascend
+            // strictly, as a table's rows handed over sorted and distinct
+            // do, which then need no pass to check or drop repeats.
+            let mut last = first & tail_mask;
+            let mut ascending = true;
+            packed.push(last);
+            packed.extend(rest.iter().map(|&word| {
+                let word = word & tail_mask;
+                ascending &= last < word;
+                last = word;
+                word
+            }));
+            distinct = ascending;
+        } else {
+            packed.extend_from_slice(rows);
+            for row in packed.chunks_exact_mut(w) {
+                row[w - 1] &= tail_mask;
+            }
         }
     } else if layout.is_reversed() {
         // `vars` runs left to right in leaf order and the leftmost leaf holds
@@ -100,6 +118,9 @@ pub(super) fn distinct_rows(
         // One word is the whole row, so the words sort and deduplicate where
         // they are and the detour through a permutation buys nothing.
         gate.flush()?;
+        if distinct {
+            return Ok(packed);
+        }
         // Rows handed over in order, as a sorted table often is, need no sort.
         if !packed.is_sorted() {
             // The words are bit-packed values, which a radix sort places in a
