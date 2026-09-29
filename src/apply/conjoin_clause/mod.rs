@@ -92,40 +92,55 @@ enum Normalized {
 /// whatever else the clause says, and the limits' errors.
 fn normalize(lim: &Limits, vtree: &Vtree, lits: &[Literal], negate: bool) -> Result<Normalized, OperationError> {
     let mut gate = lim.gate();
-    // A clause of a few literals finds its repeats by scanning what it has
-    // kept; a longer one marks the polarity each leaf was first seen with,
-    // indexed by vtree node. The array costs a pass over the vtree per
-    // clause, which is most of the clause's cost where it touches few levels
-    // of a large vtree.
-    let mut seen: Vec<Option<bool>> = Vec::new();
-    if lits.len() > SCAN_REPEATS_UP_TO {
-        lim.try_resize(&mut seen, vtree.num_nodes(), None)?;
-    }
-    let mut clause: Vec<(Literal, VtreeIdx)> = Vec::new();
     // Every literal is resolved before a tautology is answered, so an absent
     // variable errors whatever else the clause says.
-    let mut tautology = false;
+    let mut leaves: Vec<VtreeIdx> = Vec::new();
+    lim.reserve_exact(&mut leaves, lits.len())?;
     for lit in lits {
         gate.poll(1)?;
-        let leaf = vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?;
-        let first = if seen.is_empty() {
-            // The kept literals carry their sign as the walk will, negated
-            // or not; compare the sign the caller gave.
-            clause.iter().find(|&&(_, l)| l == leaf).map(|&(k, _)| k.sign != negate)
-        } else {
-            seen[leaf.idx()].replace(lit.sign)
-        };
-        match first {
-            Some(sign) => tautology |= sign != lit.sign,
-            None => lim.try_push(&mut clause, (if negate { lit.negated() } else { *lit }, leaf))?,
-        }
+        leaves.push(vtree.leaf_of(lit.var).ok_or(OperationError::VariableNotInVtree(lit.var))?);
     }
     gate.flush()?;
+    // A literal is kept where its leaf first occurs; a later one of the other
+    // sign makes the clause true. A clause of a few literals finds the first
+    // occurrence by scanning the literals before it, a longer one by sorting
+    // its positions by leaf. An array over the vtree, which it used before,
+    // cost a pass over the whole vtree per clause, which is most of the
+    // clause's cost where it touches few levels of a large vtree.
+    let mut first: Vec<u32> = Vec::new();
+    lim.try_resize(&mut first, lits.len(), 0)?;
+    if lits.len() <= SCAN_REPEATS_UP_TO {
+        for i in 0..lits.len() {
+            first[i] = (0..i).find(|&j| leaves[j] == leaves[i]).unwrap_or(i) as u32;
+        }
+    } else {
+        let mut order: Vec<(usize, u32)> = Vec::new();
+        lim.reserve_exact(&mut order, lits.len())?;
+        order.extend(leaves.iter().enumerate().map(|(i, leaf)| (leaf.idx(), i as u32)));
+        order.sort_unstable();
+        let mut run_start = 0;
+        for j in 0..order.len() {
+            if order[j].0 != order[run_start].0 {
+                run_start = j;
+            }
+            first[order[j].1 as usize] = order[run_start].1;
+        }
+    }
+    let mut clause: Vec<(Literal, VtreeIdx)> = Vec::new();
+    let mut tautology = false;
+    for (i, lit) in lits.iter().enumerate() {
+        let f = first[i] as usize;
+        if f == i {
+            lim.try_push(&mut clause, (if negate { lit.negated() } else { *lit }, leaves[i]))?;
+        } else {
+            tautology |= lits[f].sign != lit.sign;
+        }
+    }
     Ok(if tautology { Normalized::Tautology } else { Normalized::Clause(clause) })
 }
 
 /// The longest clause whose repeated literals [`normalize`] finds by
-/// scanning the literals kept so far rather than by an array over the vtree.
+/// scanning the literals before each rather than by sorting them.
 const SCAN_REPEATS_UP_TO: usize = 16;
 
 /// The shared bottom-up walk: conjoin the clause `lits` into `f`, or — with

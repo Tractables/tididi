@@ -62,6 +62,39 @@ fn repeated_and_conflicting_literals_read_as_the_normalized_clause_in_both_modes
 }
 
 #[test]
+fn a_long_clause_reads_its_repeats_and_conflicts_as_a_short_one_does() {
+    // Past `SCAN_REPEATS_UP_TO` literals the repeats are found by sorting.
+    let vtree = Arc::new(Vtree::balanced(24));
+    let eng = Engine::new();
+    let f = Tdd::clause(&vtree, [1, 3]).unwrap();
+    let count = |mut g: Tdd| {
+        g.minimize().unwrap();
+        assert_canonical(&g);
+        g.model_count().unwrap()
+    };
+    let distinct: Vec<i32> = (4..=22).map(|v| if v % 3 == 0 { -v } else { v }).collect();
+    assert!(distinct.len() > SCAN_REPEATS_UP_TO);
+    let mut repeated = distinct.clone();
+    repeated.extend([distinct[5], distinct[0], distinct[18], distinct[5]]);
+    repeated.rotate_left(7);
+    let mut conflicting = repeated.clone();
+    conflicting.push(-distinct[11]);
+
+    let clause = count(eng.and_clause(f.clone(), &distinct[..]).unwrap());
+    assert_eq!(clause, count(eng.and_clause(f.clone(), &repeated[..]).unwrap()));
+    assert_eq!(count(eng.and_clause(f.clone(), &conflicting[..]).unwrap()), count(f.clone()));
+
+    let cube = count(eng.or_cube(f.clone(), &distinct[..]).unwrap());
+    assert_eq!(cube, count(eng.or_cube(f.clone(), &repeated[..]).unwrap()));
+    assert_eq!(count(eng.or_cube(f.clone(), &conflicting[..]).unwrap()), count(f.clone()));
+
+    // An absent variable errors whatever else the clause says.
+    let mut absent = conflicting.clone();
+    absent.push(99);
+    assert!(matches!(eng.and_clause(f.clone(), &absent[..]), Err(OperationError::VariableNotInVtree(_))));
+}
+
+#[test]
 fn empty_clause_gives_a_canonical_false() {
     let vtree = Arc::new(Vtree::balanced(4));
     let eng = Engine::new();
