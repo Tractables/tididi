@@ -61,6 +61,21 @@ impl Radix {
     /// A key that carries its position below or above a value, as a
     /// tie-break, sorts this way in as many passes as the value is wide.
     pub(crate) fn sort(&mut self, lim: &Limits, keys: &mut Vec<u64>, lo: usize, bits: usize) -> Result<(), OperationError> {
+        let mut gate = lim.gate();
+        self.sort_polling(lim, keys, lo, bits, &mut |work| gate.poll(work))?;
+        gate.flush()
+    }
+
+    /// [`sort`](Self::sort), reporting its work to `poll` rather than to the
+    /// work clock, for a caller that charges the work in its own measure.
+    pub(crate) fn sort_polling(
+        &mut self,
+        lim: &Limits,
+        keys: &mut Vec<u64>,
+        lo: usize,
+        bits: usize,
+        poll: &mut dyn FnMut(u64) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError> {
         let m = keys.len();
         if bits == 0 {
             // Nothing lies above the ordered low bits.
@@ -74,18 +89,17 @@ impl Radix {
         if m < RADIX_MIN_ROWS {
             // Rotated, the sorted bits lead and the bits above break ties.
             let sorted = (lo + bits) as u32;
-            let mut gate = lim.gate();
-            gate.poll((m * passes) as u64)?;
+            poll((m * passes) as u64)?;
             keys.sort_unstable_by_key(|&key| key.rotate_right(sorted));
-            return gate.flush();
+            return Ok(());
         }
         if passes > RADIX_MAX_PASSES {
-            return self.sort_wide(lim, keys, lo, bits);
+            return self.sort_wide(lim, keys, lo, bits, poll);
         }
         if passes > 1 && m >= RADIX_TOP_MIN_ROWS {
-            return self.sort_by_top(lim, keys, lo, bits);
+            return self.sort_by_top(lim, keys, lo, bits, poll);
         }
-        self.sort_passes(lim, keys, lo, bits, passes)
+        self.sort_passes(lim, keys, lo, bits, passes, poll)
     }
 
     /// The passes of [`sort`](Self::sort), least significant digit first:
@@ -97,6 +111,7 @@ impl Radix {
         lo: usize,
         bits: usize,
         passes: usize,
+        poll: &mut dyn FnMut(u64) -> Result<(), OperationError>,
     ) -> Result<(), OperationError> {
         let m = keys.len();
         let digit = bits.div_ceil(passes);
@@ -118,8 +133,7 @@ impl Radix {
 
         // A pass permutes the keys without changing them, so one read counts
         // every pass's digits.
-        let mut gate = lim.gate();
-        gate.poll(m as u64)?;
+        poll(m as u64)?;
         counts.fill(0);
         for &word in keys.iter() {
             for pass in 0..passes {
@@ -127,7 +141,7 @@ impl Radix {
             }
         }
         for pass in 0..passes {
-            gate.poll(m as u64)?;
+            poll(m as u64)?;
             let shift = shift(pass);
             let counts = &mut counts[pass * buckets..][..buckets];
             if counts[((keys[0] >> shift) & mask) as usize] as usize == m {
@@ -148,7 +162,7 @@ impl Radix {
             }
             std::mem::swap(keys, &mut self.other);
         }
-        gate.flush()
+        Ok(())
     }
 
     /// [`sort`](Self::sort) for many keys and more than one pass: the top
@@ -159,7 +173,14 @@ impl Radix {
     /// the passes over tens of millions of keys wait on; a run's passes
     /// read and write a few thousand keys that stay in the cache. Both are
     /// a stable sort on the sorted bits, so the order is the passes' own.
-    fn sort_by_top(&mut self, lim: &Limits, keys: &mut Vec<u64>, lo: usize, bits: usize) -> Result<(), OperationError> {
+    fn sort_by_top(
+        &mut self,
+        lim: &Limits,
+        keys: &mut Vec<u64>,
+        lo: usize,
+        bits: usize,
+        poll: &mut dyn FnMut(u64) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError> {
         let m = keys.len();
         // About `2^RUN_BITS` keys a run; the passes over every key left
         // `bits` at least `RADIX_BITS + 1` wide, so a bit is left below.
@@ -183,8 +204,7 @@ impl Radix {
         other.truncate(m);
         lim.try_resize(counts, buckets + 1 + (run_passes << run_digit), 0u32)?;
         let (top, run_counts) = counts.split_at_mut(buckets + 1);
-        let mut gate = lim.gate();
-        gate.poll(m as u64)?;
+        poll(m as u64)?;
         top.fill(0);
         for &key in keys.iter() {
             top[((key >> shift) & mask) as usize + 1] += 1;
@@ -196,7 +216,7 @@ impl Radix {
                 *end = if d < first { 0 } else { m as u32 };
             }
         } else {
-            gate.poll(m as u64)?;
+            poll(m as u64)?;
             for d in 1..=buckets {
                 top[d] += top[d - 1];
             }
@@ -209,7 +229,7 @@ impl Radix {
         }
         // Each digit's run now ends where its count does, and its share of
         // the other buffer is free.
-        gate.poll((m * run_passes) as u64)?;
+        poll((m * run_passes) as u64)?;
         let sorted = (lo + bits) as u32;
         let mut start = 0;
         for &end in &top[..buckets] {
@@ -222,7 +242,7 @@ impl Radix {
             }
             start = end;
         }
-        gate.flush()
+        Ok(())
     }
 
     /// [`sort`](Self::sort) for sorted bits too wide for
@@ -232,7 +252,14 @@ impl Radix {
     /// not. The counting pass places nothing when the keys already ascend
     /// in that digit, as the rows of a table sorted on its leading column
     /// but not within it do; the runs are then sorted where they lie.
-    fn sort_wide(&mut self, lim: &Limits, keys: &mut Vec<u64>, lo: usize, bits: usize) -> Result<(), OperationError> {
+    fn sort_wide(
+        &mut self,
+        lim: &Limits,
+        keys: &mut Vec<u64>,
+        lo: usize,
+        bits: usize,
+        poll: &mut dyn FnMut(u64) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError> {
         let m = keys.len();
         let sorted = (lo + bits) as u32;
         // About eight keys a run, in at most 2^16 counts.
@@ -240,10 +267,9 @@ impl Radix {
         let shift = lo + bits - digit;
         let mask = (1u64 << digit) - 1;
         let top = |key: u64| ((key >> shift) & mask) as usize;
-        let mut gate = lim.gate();
-        gate.poll(m as u64)?;
+        poll(m as u64)?;
         if !keys.windows(2).all(|pair| top(pair[0]) <= top(pair[1])) {
-            gate.poll(2 * m as u64)?;
+            poll(2 * m as u64)?;
             if self.other.len() < m {
                 lim.try_resize(&mut self.other, m, 0u64)?;
             }
@@ -267,11 +293,11 @@ impl Radix {
             }
             std::mem::swap(keys, &mut self.other);
         }
-        gate.poll((m * (bits - digit).div_ceil(RADIX_BITS)) as u64)?;
+        poll((m * (bits - digit).div_ceil(RADIX_BITS)) as u64)?;
         for run in keys.chunk_by_mut(|a, b| top(*a) == top(*b)) {
             run.sort_unstable_by_key(|&key| key.rotate_right(sorted));
         }
-        gate.flush()
+        Ok(())
     }
 }
 

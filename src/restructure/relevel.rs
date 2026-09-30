@@ -196,10 +196,12 @@ fn rebuild_levels(
 /// written back in their order. Cutting a field to its width keeps the order
 /// of its values, so the order is the one sorting the `u128`s leaves.
 ///
+/// The sort is not charged to the work clock: the probe charges the pairs it
+/// rebuilds, and the pool search's work bound is set in that measure.
+///
 /// # Errors
 ///
-/// [`OperationError::OverBudget`] if the word buffers are refused, and
-/// [`OperationError::Stopped`] when an armed stop fires during the sort.
+/// [`OperationError::OverBudget`] if the word buffers are refused.
 fn sort_triples(lim: &Limits, packed: &mut [u128], words: &mut Vec<u64>) -> Result<(), OperationError> {
     if packed.len() < RADIX_MIN_ROWS {
         packed.sort_unstable();
@@ -229,7 +231,7 @@ fn sort_triples(lim: &Limits, packed: &mut [u128], words: &mut Vec<u64>) -> Resu
         w as u64
     }));
     let mut radix = Radix::default();
-    let sorted = radix.sort(lim, words, 0, bits as usize);
+    let sorted = radix.sort_polling(lim, words, 0, bits as usize, &mut |_| Ok(()));
     radix.discard(lim);
     sorted?;
     for (p, &w) in packed.iter_mut().zip(words.iter()) {
