@@ -376,7 +376,9 @@ fn build_inner_level(
         // Phase 3: sort groups by fingerprint hash, so entries that can share a
         // node land in one bucket, then count the distinct cell lists that survive.
         group_info.sort_unstable_by_key(|g| g.hash);
-        if count_distinct_cell_lists(triples, group_info) + n_w_pairs >= max_pairs {
+        // The distinct cell lists are at most the groups, so the count is
+        // needed only where the groups could reach the bound.
+        if group_info.len() + n_w_pairs >= max_pairs && count_distinct_cell_lists(triples, group_info) + n_w_pairs >= max_pairs {
             return Ok(None);
         }
         cluster_by_cell_list(lim, &mut level, triples, group_info, bucket)?;
