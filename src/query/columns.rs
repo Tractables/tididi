@@ -24,6 +24,18 @@
 //! two pairs reference keeps its code list, within a budget, to be copied
 //! wherever it recurs.
 //!
+//! The fixed order is the rows' ascending order — column 0's code, ties by
+//! column 1's, and so on — exactly when two things hold, and
+//! [`ModelColumns::ascending`] checks both. The layout: the vtree's leaves,
+//! left to right, read the listed variables as column 0's bits from the most
+//! significant down, then column 1's, and so on (unlisted variables may sit
+//! anywhere between them). And at every node, each pair's last row precedes
+//! the next pair's first row. Pairs are stored in no particular order, so
+//! the second can fail even under the layout; [`ModelColumns::sort_pairs`]
+//! puts each node's pairs in the order of their first rows, which satisfies
+//! it wherever no two pairs of one node interleave. Where both hold, rows
+//! `0..k` are the `k` least rows, written without sorting anything.
+//!
 //! Distinct rows follow from determinism. The pairs of a node denote
 //! disjoint functions, so no two pairs share a model, and a node whose
 //! function ignores the unlisted variables has its distinct models on the
@@ -169,6 +181,24 @@ impl Engine {
         }
         drop(level_touch);
 
+        // Whether the leaves, left to right, read the listed variables as
+        // column 0's bits from the most significant down, then column 1's,
+        // and so on: the layout under which the fixed order can be the rows'
+        // ascending order.
+        let mut in_order = Vec::new();
+        let mut stack = vec![vtree.root()];
+        while let Some(t) = stack.pop() {
+            match *vtree.node(t) {
+                VtreeNode::Leaf { var, .. } => in_order.extend(role[var.0 as usize]),
+                VtreeNode::Internal { left, right, .. } => stack.extend([right, left]),
+            }
+        }
+        let lexicographic = in_order
+            .iter()
+            .copied()
+            .eq(widths.iter().enumerate().flat_map(|(j, &w)| (0..w).rev().map(move |bit| (j as u32, bit))));
+        drop(in_order);
+
         let mut table = ModelColumns {
             widths,
             rows: 0,
@@ -183,6 +213,7 @@ impl Engine {
             memo: Vec::new(),
             memo_codes: 0,
             scratch: Vec::new(),
+            lexicographic,
         };
         if tdd.is_zero() {
             return Ok(table);
@@ -381,6 +412,9 @@ pub struct ModelColumns {
     memo_codes: usize,
     /// Buffers for code lists written once and dropped, reused.
     scratch: Vec<Vec<u32>>,
+    /// The leaves read the listed bits column by column, most significant
+    /// first.
+    lexicographic: bool,
 }
 
 impl ModelColumns {
@@ -448,6 +482,98 @@ impl ModelColumns {
         let mut out: Vec<&mut [u32]> = columns.iter_mut().map(|c| c.as_mut_slice()).collect();
         self.write_zeroed(0..self.rows, &mut out);
         columns
+    }
+
+    /// Whether the rows, numbered as [`write`](Self::write) numbers them,
+    /// ascend: by column 0's code, ties by column 1's, and so on. Then rows
+    /// `0..k` are the `k` least rows, so a range from row 0 is the first `k`
+    /// rows of the table sorted on its codes, column by column.
+    ///
+    /// The check is exact when the vtree's leaves, left to right, read the
+    /// listed variables as column 0's bits from the most significant down,
+    /// then column 1's, and so on, with unlisted variables anywhere between
+    /// them; under any other layout it is `false` for more than one row.
+    /// Under that layout the rows ascend exactly when, at every node, each
+    /// pair's last row precedes the next pair's first row: a node's rows are
+    /// its pairs' in storage order, and a pair's are its left child's rows,
+    /// each followed by every row of its right child. A free listed variable
+    /// writes `0` before `1`. [`sort_pairs`](Self::sort_pairs) puts each
+    /// node's pairs in the order of their first rows, which makes the rows
+    /// ascend wherever no two pairs of a node interleave.
+    ///
+    /// Linear in the nodes and pairs, times the columns.
+    pub fn ascending(&self) -> bool {
+        if self.rows <= 1 {
+            return true;
+        }
+        if !self.lexicographic {
+            return false;
+        }
+        let w = self.widths.len();
+        let (first, last) = self.extremes();
+        self.nodes.iter().filter(|node| node.kind == Kind::Pairs).all(|node| {
+            let pairs = &self.pairs[node.a as usize..(node.a + node.b) as usize];
+            pairs.windows(2).all(|p| cmp_pair_rows(w, &last, p[0], &first, p[1]).is_lt())
+        })
+    }
+
+    /// Puts each node's pairs in the order of their first rows (column 0's
+    /// code first), so that the rows ascend wherever no two pairs of one node
+    /// interleave; [`ascending`](Self::ascending) says whether they do. The
+    /// rows are the same set, numbered anew; code lists kept from earlier
+    /// writes are dropped.
+    pub fn sort_pairs(&mut self) {
+        let w = self.widths.len();
+        let mut first = vec![0u32; self.nodes.len() * w];
+        let mut last = vec![0u32; self.nodes.len() * w];
+        for n in 0..self.nodes.len() {
+            let node = self.nodes[n];
+            if node.kind == Kind::Pairs {
+                self.pairs[node.a as usize..(node.a + node.b) as usize]
+                    .sort_by(|&p, &q| cmp_pair_rows(w, &first, p, &first, q));
+            }
+            self.extreme(n, &mut first, &mut last);
+        }
+        self.bases.clear();
+        self.memo_of.fill(NONE);
+        self.memo.clear();
+        self.memo_codes = 0;
+    }
+
+    /// Each node's first and last row, `w` codes per node, the bits outside
+    /// its vtree node zero.
+    fn extremes(&self) -> (Vec<u32>, Vec<u32>) {
+        let w = self.widths.len();
+        let mut first = vec![0u32; self.nodes.len() * w];
+        let mut last = vec![0u32; self.nodes.len() * w];
+        for n in 0..self.nodes.len() {
+            self.extreme(n, &mut first, &mut last);
+        }
+        (first, last)
+    }
+
+    /// Node `n`'s first and last row, from its children's (numbered before it).
+    fn extreme(&self, n: usize, first: &mut [u32], last: &mut [u32]) {
+        let w = self.widths.len();
+        let node = self.nodes[n];
+        let at = n * w;
+        match node.kind {
+            Kind::Const => {
+                for &(j, bits) in &self.konst[node.a as usize..(node.a + node.b) as usize] {
+                    first[at + j as usize] |= bits;
+                    last[at + j as usize] |= bits;
+                }
+            }
+            Kind::Free => last[at + node.a as usize] |= 1u32 << node.b,
+            Kind::Pairs => {
+                let [l0, r0] = self.pairs[node.a as usize];
+                let [l1, r1] = self.pairs[(node.a + node.b - 1) as usize];
+                for j in 0..w {
+                    first[at + j] = first[l0 as usize * w + j] | first[r0 as usize * w + j];
+                    last[at + j] = last[l1 as usize * w + j] | last[r1 as usize * w + j];
+                }
+            }
+        }
     }
 
     /// The constants of two one-row nodes, merged by column, as a range of
@@ -732,6 +858,16 @@ impl ModelColumns {
         self.memo_of[n as usize] = at;
         Some(at)
     }
+}
+
+/// Pair `p`'s row in `a` against pair `q`'s in `b` (rows of `w` codes per
+/// node, as [`ModelColumns::extremes`] lays them out), column by column.
+fn cmp_pair_rows(w: usize, a: &[u32], p: [u32; 2], b: &[u32], q: [u32; 2]) -> std::cmp::Ordering {
+    let (pl, pr, ql, qr) = (p[0] as usize * w, p[1] as usize * w, q[0] as usize * w, q[1] as usize * w);
+    (0..w)
+        .map(|j| (a[pl + j] | a[pr + j]).cmp(&(b[ql + j] | b[qr + j])))
+        .find(|o| o.is_ne())
+        .unwrap_or(std::cmp::Ordering::Equal)
 }
 
 /// `dst[i] |= bits` over the slice.

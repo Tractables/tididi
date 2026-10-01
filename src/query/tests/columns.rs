@@ -262,3 +262,102 @@ fn write_zeroed_matches_write_on_zeroed_buffers() {
         assert_eq!(dirty, clean, "{shape}");
     }
 }
+
+/// Whether `rows` strictly ascend, column by column.
+fn strictly_ascending(rows: &[Vec<u32>]) -> bool {
+    rows.windows(2).all(|w| w[0] < w[1])
+}
+
+#[test]
+fn ascending_is_exact_on_lexicographic_layouts() {
+    // Columns read off the leaves left to right, most significant bit
+    // first: `ascending` says exactly whether the rows come out sorted,
+    // before and after `sort_pairs`, which keeps the rows and never undoes
+    // an ascending order. Any other layout reports `false` past one row.
+    let mut rng = Lcg::new(41);
+    let (mut cases, mut before, mut after) = (0, 0, 0);
+    for num_vars in [2u32, 3, 5, 7, 9] {
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            let leaves = vars_below(&vtree, vtree.root());
+            for round in 0..12 {
+                let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4, width: 3 });
+                let truth = truth_table(num_vars, &clauses);
+                let f = compile_clauses(&vtree, &clauses);
+                let listed: Vec<VarId> = leaves.iter().copied().filter(|_| rng.below(4) != 0).collect();
+                if listed.is_empty() {
+                    continue;
+                }
+                // Consecutive runs of the listed leaves, one to three columns.
+                let ncols = 1 + rng.below(listed.len().min(3) as u64) as usize;
+                let mut cuts: Vec<usize> = (1..listed.len()).collect();
+                for i in (1..cuts.len()).rev() {
+                    cuts.swap(i, rng.below(i as u64 + 1) as usize);
+                }
+                let mut cuts: Vec<usize> = cuts.into_iter().take(ncols - 1).collect();
+                cuts.sort_unstable();
+                let mut columns = Vec::new();
+                let mut from = 0;
+                for &c in cuts.iter().chain([listed.len()].iter()) {
+                    columns.push(listed[from..c].to_vec());
+                    from = c;
+                }
+                let unlisted: Vec<VarId> = (1..=num_vars).map(VarId).filter(|v| !listed.contains(v)).collect();
+                let what = format!("{num_vars} vars, {shape}, round {round}, columns {columns:?}");
+                let minimized = vtree.context().run(|e| e.exists_vars(f.clone(), &unlisted)).unwrap();
+                let pruned = vtree
+                    .context()
+                    .run(|e| e.exists_vars_with(f.clone(), &unlisted, ReductionPlan::Prune))
+                    .unwrap();
+                for (g, form) in [(&minimized, "minimized"), (&pruned, "pruned")] {
+                    let refs: Vec<&[VarId]> = columns.iter().map(Vec::as_slice).collect();
+                    let mut table = match g.model_columns(&refs) {
+                        Ok(t) => t,
+                        Err(OperationError::UnlistedLiteral(_)) => continue,
+                        Err(e) => panic!("{what}, {form}: {e}"),
+                    };
+                    let rows = rows_of(&table.to_columns());
+                    let sorted = strictly_ascending(&rows);
+                    assert_eq!(table.ascending(), sorted, "{what}, {form}: before sorting pairs");
+                    table.sort_pairs();
+                    let whole = table.to_columns();
+                    let resorted = rows_of(&whole);
+                    let set: BTreeSet<Vec<u32>> = rows.iter().cloned().collect();
+                    assert_eq!(resorted.iter().cloned().collect::<BTreeSet<_>>(), set, "{what}, {form}: rows changed");
+                    assert_eq!(table.ascending(), strictly_ascending(&resorted), "{what}, {form}: after sorting pairs");
+                    assert!(!sorted || table.ascending(), "{what}, {form}: sorting pairs undid the order");
+                    // The batches still tile the renumbered table.
+                    check(g, num_vars, &truth, &columns, &mut rng, &format!("{what}, {form}"));
+                    let mut batched: Vec<Vec<u32>> = vec![Vec::new(); columns.len()];
+                    let mut at = 0u64;
+                    while at < table.rows() {
+                        let end = (at + 1 + rng.below(5)).min(table.rows());
+                        let mut bufs: Vec<Vec<u32>> = vec![vec![u32::MAX; (end - at) as usize]; columns.len()];
+                        table.write(at..end, &mut bufs.iter_mut().map(Vec::as_mut_slice).collect::<Vec<_>>());
+                        for (b, part) in batched.iter_mut().zip(bufs) {
+                            b.extend(part);
+                        }
+                        at = end;
+                    }
+                    assert_eq!(batched, whole, "{what}, {form}: batches after sorting pairs");
+                    cases += 1;
+                    before += usize::from(sorted);
+                    after += usize::from(table.ascending());
+                    // The columns in another order, or one read least
+                    // significant bit first, is not the layout.
+                    let mut other = columns.clone();
+                    if other.len() > 1 {
+                        other.reverse();
+                    } else if other[0].len() > 1 {
+                        other[0].reverse();
+                    } else {
+                        continue;
+                    }
+                    let refs: Vec<&[VarId]> = other.iter().map(Vec::as_slice).collect();
+                    let t = g.model_columns(&refs).unwrap();
+                    assert_eq!(t.ascending(), t.rows() <= 1, "{what}, {form}: columns {other:?}");
+                }
+            }
+        }
+    }
+    assert!(cases > 0 && after > before, "sorting pairs orders some tables: {before} -> {after} of {cases}");
+}
