@@ -206,6 +206,7 @@ impl Engine {
             nodes: Vec::new(),
             pairs: Vec::new(),
             bases: std::collections::HashMap::new(),
+            cursor: std::collections::HashMap::new(),
             konst: Vec::new(),
             levels,
             touched,
@@ -402,6 +403,9 @@ pub struct ModelColumns {
     /// inside, each pair's first row in the node's order: what finds the
     /// first pair a range reaches. Written on first need.
     bases: std::collections::HashMap<u32, Box<[u64]>>,
+    /// Per node with more than [`LINEAR_PAIRS`] pairs, the last pair a
+    /// write reached and its first row: where the next write resumes.
+    cursor: std::collections::HashMap<u32, (usize, u64)>,
     /// Constant nodes' column bits, `(column, bits)`.
     konst: Vec<(u32, u32)>,
     levels: Vec<Level>,
@@ -535,6 +539,7 @@ impl ModelColumns {
             self.extreme(n, &mut first, &mut last);
         }
         self.bases.clear();
+        self.cursor.clear();
         self.memo_of.fill(NONE);
         self.memo.clear();
         self.memo_codes = 0;
@@ -750,14 +755,12 @@ impl ModelColumns {
         let (e0, e1) = ((a - start) / rep, (b - start).div_ceil(rep));
         // The first pair whose rows reach `e0`, and its first row.
         let (mut p, mut at) = match n > LINEAR_PAIRS && e0 > 0 {
-            true => {
-                let bases = self.bases_of(node);
-                let p = bases.partition_point(|&at| at <= e0) - 1;
-                (p, bases[p])
-            }
+            true => self.first_pair(node, e0),
             false => (0, 0),
         };
+        let mut reached = (p, at);
         while p < n && at < e1 {
+            reached = (p, at);
             let [l, r] = self.pairs[first + p];
             let (nl, nr) = (self.nodes[l as usize], self.nodes[r as usize]);
             let (cl, cr) = (nl.count, nr.count);
@@ -818,6 +821,31 @@ impl ModelColumns {
                 self.fill(r, ps + t * tile, rep, pa, pb, base, out);
             }
         }
+        if n > LINEAR_PAIRS {
+            self.cursor.insert(node.a, reached);
+        }
+    }
+
+    /// The first pair of `node` whose rows reach row `e0` of its order, with
+    /// that pair's first row: a short scan on from where the last write into
+    /// the node stopped, so batches written in order never need the node's
+    /// bases, else a binary search over them.
+    fn first_pair(&mut self, node: Node, e0: u64) -> (usize, u64) {
+        if let Some(&(mut p, mut at)) = self.cursor.get(&node.a) {
+            let n = node.b as usize;
+            let mut steps = 0;
+            while at <= e0 && p < n && steps <= LINEAR_PAIRS {
+                let [l, r] = self.pairs[node.a as usize + p];
+                let next = at + self.nodes[l as usize].count * self.nodes[r as usize].count;
+                if next > e0 {
+                    return (p, at);
+                }
+                (p, at, steps) = (p + 1, next, steps + 1);
+            }
+        }
+        let bases = self.bases_of(node);
+        let p = bases.partition_point(|&at| at <= e0) - 1;
+        (p, bases[p])
     }
 
     /// Each pair's first row in `node`'s order, written on first need.

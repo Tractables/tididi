@@ -361,3 +361,35 @@ fn ascending_is_exact_on_lexicographic_layouts() {
     }
     assert!(cases > 0 && after > before, "sorting pairs orders some tables: {before} -> {after} of {cases}");
 }
+
+#[test]
+fn ranges_in_any_order_match_the_whole_table() {
+    // A write resumes from where the last one stopped in each node, and
+    // falls back to a search when it starts before that point.
+    let mut rng = Lcg::new(53);
+    for num_vars in [5u32, 7, 9] {
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            for round in 0..6 {
+                let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4, width: 3 });
+                let f = compile_clauses(&vtree, &clauses);
+                let columns = random_columns(&mut rng, num_vars);
+                let listed: BTreeSet<VarId> = columns.iter().flatten().copied().collect();
+                let unlisted: Vec<VarId> = (1..=num_vars).map(VarId).filter(|v| !listed.contains(v)).collect();
+                let g = vtree.context().run(|e| e.exists_vars(f.clone(), &unlisted)).unwrap();
+                let refs: Vec<&[VarId]> = columns.iter().map(Vec::as_slice).collect();
+                let mut table = g.model_columns(&refs).unwrap();
+                let whole = table.to_columns();
+                let rows = table.rows();
+                for _ in 0..20 {
+                    let lo = rng.below(rows + 1);
+                    let hi = lo + rng.below(rows - lo + 1);
+                    let mut bufs: Vec<Vec<u32>> = vec![vec![u32::MAX; (hi - lo) as usize]; columns.len()];
+                    table.write(lo..hi, &mut bufs.iter_mut().map(Vec::as_mut_slice).collect::<Vec<_>>());
+                    for (b, w) in bufs.iter().zip(&whole) {
+                        assert_eq!(b[..], w[lo as usize..hi as usize], "{num_vars} vars, {shape}, round {round}, rows {lo}..{hi}");
+                    }
+                }
+            }
+        }
+    }
+}
