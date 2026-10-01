@@ -29,6 +29,8 @@ mod evaluate;
 mod boolean;
 mod cache;
 mod evaluator;
+mod columns;
+pub use columns::{ModelColumns, MAX_COLUMN_BITS};
 pub use evaluator::{Evaluation, Evaluator, OwnedEvaluator, BoundEvaluation, BoundEvaluator};
 
 pub use count::{Counter, ModelCounter, OwnedModelCounter, BoundCounter, BoundModelCounter, Retention, PinSemantics};

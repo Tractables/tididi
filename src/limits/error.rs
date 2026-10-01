@@ -98,6 +98,19 @@ pub enum OperationError {
     /// except that its `IncompatibleWeights` becomes
     /// [`IncompatibleWeights`](Self::IncompatibleWeights).
     InvalidDiagram(crate::diagram::TddBuildError),
+    /// A column of [`Tdd::model_columns`](crate::Tdd::model_columns) lists
+    /// more variables than a code holds.
+    ColumnTooWide {
+        /// The column's position.
+        column: usize,
+        /// The variables it lists.
+        bits: usize,
+    },
+    /// A reachable pair references a literal of a variable that
+    /// [`Tdd::model_columns`](crate::Tdd::model_columns) does not list, so
+    /// the rows could repeat. Quantify the variable out, or minimize a
+    /// diagram that ignores it.
+    UnlistedLiteral(crate::vtree::VarId),
 }
 
 impl std::fmt::Display for OperationError {
@@ -126,6 +139,12 @@ impl std::fmt::Display for OperationError {
             OperationError::InvalidDiagram(source) => write!(f, "invalid diagram: {source}"),
             OperationError::VariableNotInVtree(var) => {
                 write!(f, "variable x{} is not in the vtree", var.0)
+            }
+            OperationError::ColumnTooWide { column, bits } => {
+                write!(f, "column {column} lists {bits} variables, past the {} a code holds", crate::query::MAX_COLUMN_BITS)
+            }
+            OperationError::UnlistedLiteral(var) => {
+                write!(f, "the diagram references a literal of x{}, which no column lists", var.0)
             }
         }
     }
