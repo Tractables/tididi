@@ -2,18 +2,16 @@ use super::*;
 use crate::diagram::NodeIdx;
 
 #[test]
-fn return_bounds_fanout_and_checkout_clears_retained_lists() {
+fn checkout_clears_retained_buffers_and_keeps_their_allocation() {
     let eng = crate::Engine::new();
     let allocation;
     {
         let mut scratch = eng.scratch.restructure.checkout(&eng);
-        scratch.per_v_pairs = (0..PER_V_PAIRS_RETAIN + 1)
-            .map(|_| vec![ChildPair::new(NodeIdx(0), NodeIdx(0))])
-            .collect();
-        allocation = scratch.per_v_pairs[0].as_ptr();
+        scratch.outer_pairs = vec![ChildPair::new(NodeIdx(0), NodeIdx(0)); 16];
+        scratch.outer_ends = vec![16];
+        allocation = scratch.outer_pairs.as_ptr();
     }
     let scratch = eng.scratch.restructure.checkout(&eng);
-    assert_eq!(scratch.per_v_pairs.len(), PER_V_PAIRS_RETAIN);
-    assert!(scratch.per_v_pairs.iter().all(Vec::is_empty));
-    assert_eq!(scratch.per_v_pairs[0].as_ptr(), allocation);
+    assert!(scratch.outer_pairs.is_empty() && scratch.outer_ends.is_empty());
+    assert_eq!(scratch.outer_pairs.as_ptr(), allocation);
 }

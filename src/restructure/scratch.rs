@@ -1,7 +1,7 @@
 //! The reusable rotation-probe scratch and the engine's pool for it.
 
 use crate::limits::Limits;
-use crate::execution::pool::{Buffers, Nested, PooledScratch, Scratch};
+use crate::execution::pool::{Buffers, PooledScratch, Scratch};
 
 
 use crate::diagram::ChildPair;
@@ -16,9 +16,12 @@ use crate::diagram::ChildPair;
 /// byte meter, and what the retention policy drops is given back there.
 #[derive(Default)]
 pub(crate) struct RestructureScratch {
-    // Per-v-node output pair lists; outer Vec grown with `resize_with`, inner
-    // Vecs `clear()`-ed per call so their capacity survives across probes.
-    pub(super) per_v_pairs: Vec<Vec<ChildPair>>,
+    // The outer level's pairs filed by old v-node, node `i`'s ending at
+    // `outer_ends[i]`.
+    pub(super) outer_ends: Vec<u32>,
+    pub(super) outer_pairs: Vec<ChildPair>,
+    // The end of each axis value's cells, for a right rotation's filing.
+    pub(super) axis_ends: Vec<u32>,
     pub(super) group_info: Vec<super::relevel::PairGroup>,
     pub(super) bucket: BucketScratch,
     // Search path triples, packed one-per-u128 (see `pack_triple`). The sort in
@@ -27,7 +30,8 @@ pub(crate) struct RestructureScratch {
     // integer key replaces the derived lexicographic compare over the
     // `(ChildPair, u32, NodeIdx)` tuple's four u32 fields.
     pub(super) packed: Vec<u128>,
-    // The triples cut to one word each for the radix sort, when they fit.
+    // The triples cut to one word each for the radix sort, when they fit;
+    // later a right rotation's cells in order of their axis.
     pub(super) words: Vec<u64>,
 }
 
@@ -42,7 +46,9 @@ pub(super) struct BucketScratch {
 
 impl Buffers for RestructureScratch {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
-        visit(&mut Nested(&mut self.per_v_pairs));
+        visit(&mut self.outer_ends);
+        visit(&mut self.outer_pairs);
+        visit(&mut self.axis_ends);
         visit(&mut self.group_info);
         visit(&mut self.packed);
         visit(&mut self.words);
@@ -58,23 +64,14 @@ impl PooledScratch for RestructureScratch {
         self.words.clear();
         self.bucket.done.clear();
         self.bucket.pairs.clear();
-        // Keep the outer Vec's length (bounded by `PER_V_PAIRS_RETAIN` on
-        // return): `rebuild_rotated_levels` only `resize_with`s it upward and
-        // clears the prefix it uses, so the inner Vecs' capacities are exactly
-        // what we want to carry forward.
-        for v in &mut self.per_v_pairs {
-            v.clear();
-        }
+        self.outer_ends.clear();
+        self.outer_pairs.clear();
+        self.axis_ends.clear();
     }
 
     /// A search whose `packed` outgrew its cap releases every buffer; any
     /// other keeps each buffer the byte cap allows.
     fn retain(&mut self, lim: &Limits) {
-        if self.per_v_pairs.len() > PER_V_PAIRS_RETAIN {
-            for lists in self.per_v_pairs.drain(PER_V_PAIRS_RETAIN..) {
-                lim.discard(lists);
-            }
-        }
         if self.packed.capacity() > RESTRUCTURE_PACKED_CAP_LIMIT {
             self.release_all(lim);
         } else {
@@ -88,14 +85,6 @@ impl PooledScratch for RestructureScratch {
 /// the process; past this, the size-proportional buffers are released and the
 /// next take starts from empty.
 const RESTRUCTURE_PACKED_CAP_LIMIT: usize = 4_000_000;
-
-/// Maximum number of per-v-node pair lists carried across calls. The take-side
-/// `clear()` walks the whole outer Vec, so an unbounded one would tax every
-/// later (small) search with the widest level this engine ever saw — the pool
-/// must not turn one wide rotation into a permanent per-call O(width) sweep.
-/// Beyond this the tail is dropped; `rebuild_rotated_levels` re-grows it with
-/// `resize_with` exactly as it does on a cold scratch.
-const PER_V_PAIRS_RETAIN: usize = 1024;
 
 /// Scratch entries kept across probes. At its last read a buffer this size or
 /// smaller is only `clear()`-ed, so the next probe reuses the allocation — the
