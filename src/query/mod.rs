@@ -30,6 +30,7 @@ mod boolean;
 mod cache;
 mod evaluator;
 mod columns;
+mod ordered;
 pub use columns::{ModelColumns, MAX_COLUMN_BITS};
 pub use evaluator::{Evaluation, Evaluator, OwnedEvaluator, BoundEvaluation, BoundEvaluator};
 
