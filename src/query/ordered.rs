@@ -25,12 +25,14 @@
 //! child, and two left children may share a key value once an unlisted
 //! variable is projected — so the merge is a heap over the pairs, each a
 //! cursor into its children's streams, and a stream is kept as it is
-//! produced, since every pair that references a node reads it. Each node's
-//! least key is computed first, in one pass over the levels with key bits,
-//! so a node's pairs enter its heap at their first keys without their
-//! streams being produced; a stream is then produced only as far as a
-//! reader asks. Below the keys, a model's other bits are listed depth first
-//! from the nodes its key left pending.
+//! produced, since every pair that references a node reads it. A pair
+//! enters its node's heap at its first key, its children's first entries —
+//! or, where both children hold key bits, at the bound its left child's
+//! first entry gives, its right child read only once that bound reaches the
+//! top of the heap. So a stream is produced only as far as a reader asks,
+//! and nothing below a node no read reaches is touched. Below the keys, a
+//! model's other bits are listed depth first from the nodes its key left
+//! pending.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -66,10 +68,10 @@ impl Tdd {
     /// most significant down, then column 1's, and so on; unlisted
     /// variables may sit anywhere. Otherwise the result is `Ok(None)`.
     ///
-    /// The work is one pass over the levels that hold key variables (each
-    /// node's least key), then the models written, each through the nodes
-    /// on its path and the pairs of the nodes it opens; it does not depend
-    /// on how many models the diagram has beyond them.
+    /// The work is the models written, each through the nodes on its path
+    /// and the pairs of the nodes it opens, each pair read to its first key;
+    /// it does not depend on how many models the diagram has beyond them,
+    /// nor on the nodes no such read reaches.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -209,10 +211,11 @@ impl Engine {
             walk.gate.finish()?;
             return Ok(Some(walk.out));
         }
-        let mut streams = Streams::new(tdd, &layout, false, &mut walk.gate)?;
+        let mut streams = Streams::new(tdd, &layout, false);
         let mut at = 0usize;
         loop {
             streams.ensure(vtree.root(), root, at + 1)?;
+            walk.gate.poll(std::mem::take(&mut streams.work))?;
             let Some(&(key, rest)) = streams.of(vtree.root(), root).out.get(at) else { break };
             at += 1;
             layout.decode(key, &role, |j, bit, b| walk.set(j, bit, b));
@@ -272,10 +275,11 @@ impl Engine {
         }
         let mut gate = lim.gate();
         let root = tdd.output().local.idx() as u32;
-        let mut streams = Streams::new(tdd, &layout, true, &mut gate)?;
+        let mut streams = Streams::new(tdd, &layout, true);
         let mut cur = vec![0u32; columns.len()];
         for at in 0..usize::try_from(limit).unwrap_or(usize::MAX) {
             streams.ensure(vtree.root(), root, at + 1)?;
+            gate.poll(std::mem::take(&mut streams.work))?;
             let Some(&(key, _)) = streams.of(vtree.root(), root).out.get(at) else { break };
             layout.decode(key, &role, |j, bit, b| {
                 let c = &mut cur[j as usize];
@@ -418,62 +422,41 @@ struct Stream {
     out: Vec<(u128, u32)>,
     /// Whether the node's pairs entered the heap.
     open: bool,
-    /// Per pair, its next model's key, the pair, and the places in its
-    /// children's streams that model is read from: the least first.
-    heap: BinaryHeap<Reverse<(u128, u32, u32, u32)>>,
+    /// Per pair, its next model's key, the pair, the places in its
+    /// children's streams that model is read from, and whether the key is
+    /// only a bound (the pair's first, its right child's least key not yet
+    /// read): the least first.
+    heap: BinaryHeap<Reverse<Next>>,
 }
 
-/// Every node's stream, with each node's least key.
+/// A pair's next model in a [`Stream`]'s heap: its key, the pair, its
+/// places in the children's streams, and whether the key is only a bound.
+type Next = (u128, u32, u32, u32, bool);
+
+/// Every node's stream, produced as far as a reader asked.
 struct Streams<'a> {
     tdd: &'a Tdd,
     layout: &'a KeyLayout<'a>,
     /// Whether a stream keeps one entry per key and leaves nothing pending.
     distinct: bool,
-    /// Per vtree node with key bits, each node's least key.
-    least: Vec<Vec<u128>>,
     /// Per vtree node, the streams of the nodes read so far.
     streams: Vec<FxHashMap<u32, Stream>>,
     /// The pending lists, sharing tails.
     cells: Vec<Cell>,
+    /// Pairs entered into heaps since the caller last polled.
+    work: u64,
 }
 
 impl<'a> Streams<'a> {
-    /// The streams of `tdd`, every node's least key computed.
-    fn new(tdd: &'a Tdd, layout: &'a KeyLayout<'a>, distinct: bool, gate: &mut crate::limits::PollGate<'_>) -> Result<Streams<'a>, OperationError> {
+    /// The streams of `tdd`, none produced yet.
+    fn new(tdd: &'a Tdd, layout: &'a KeyLayout<'a>, distinct: bool) -> Streams<'a> {
         let vtree = layout.vtree;
-        let mut least: Vec<Vec<u128>> = vec![Vec::new(); vtree.num_nodes()];
-        for t in vtree.bottomup() {
-            let held = layout.held(t);
-            if held == 0 {
-                continue;
-            }
-            let here = match *vtree.node(t) {
-                VtreeNode::Leaf { var, .. } => {
-                    [LeafLabel::One, LeafLabel::Pos, LeafLabel::Neg].iter().map(|&l| layout.leaf_values(var, l)[0]).collect()
-                }
-                VtreeNode::Internal { left, right, .. } => {
-                    let level = tdd.level(t);
-                    let (hl, hr) = (layout.held(left), layout.held(right));
-                    gate.poll(level.nodes().len() as u64)?;
-                    (0..level.nodes().len())
-                        .map(|i| {
-                            level
-                                .pairs_of_idx(i)
-                                .iter()
-                                .map(|p| match (hl, hr) {
-                                    (0, _) => least[right.idx()][p.right.raw() as usize],
-                                    (_, 0) => least[left.idx()][p.left.raw() as usize],
-                                    _ => (least[left.idx()][p.left.raw() as usize] << hr) | least[right.idx()][p.right.raw() as usize],
-                                })
-                                .min()
-                                .unwrap_or(u128::MAX)
-                        })
-                        .collect()
-                }
-            };
-            least[t.idx()] = here;
-        }
-        Ok(Streams { tdd, layout, distinct, least, streams: vec![FxHashMap::default(); vtree.num_nodes()], cells: Vec::new() })
+        Streams { tdd, layout, distinct, streams: vec![FxHashMap::default(); vtree.num_nodes()], cells: Vec::new(), work: 0 }
+    }
+
+    /// Node `n`'s least key at vtree node `t`: its stream's first entry.
+    fn least(&mut self, t: VtreeIdx, n: u32) -> Result<u128, OperationError> {
+        Ok(self.entry(t, n, 0)?.map_or(u128::MAX, |(key, _)| key))
     }
 
     fn of(&self, t: VtreeIdx, n: u32) -> &Stream {
@@ -536,20 +519,33 @@ impl<'a> Streams<'a> {
         let pairs = self.tdd.level(t).pairs_of_idx(n as usize);
         if !stream.open {
             stream.open = true;
+            self.work += pairs.len() as u64;
+            // Each pair enters at its least key — where both sides hold key
+            // bits, at the bound its left child's least key gives, the right
+            // child's read only once the pair reaches the top.
             for (p, pair) in pairs.iter().enumerate() {
-                let (l, r) = (pair.left.raw() as usize, pair.right.raw() as usize);
-                let key = match (hl, hr) {
-                    (0, _) => self.least[right.idx()][r],
-                    (_, 0) => self.least[left.idx()][l],
-                    _ => (self.least[left.idx()][l] << hr) | self.least[right.idx()][r],
+                let (l, r) = (pair.left.raw(), pair.right.raw());
+                let (key, bound) = match (hl, hr) {
+                    (0, _) => (self.least(right, r)?, false),
+                    (_, 0) => (self.least(left, l)?, false),
+                    _ => (self.least(left, l)? << hr, true),
                 };
-                stream.heap.push(Reverse((key, p as u32, 0, 0)));
+                stream.heap.push(Reverse((key, p as u32, 0, 0, bound)));
             }
         }
         while stream.out.len() < count {
-            let Some(Reverse((key, p, i, j))) = stream.heap.pop() else { break };
+            let Some(Reverse((key, p, i, j, bound))) = stream.heap.pop() else { break };
             let pair = pairs[p as usize];
             let (l, r) = (pair.left.raw(), pair.right.raw());
+            if bound {
+                // The pair's first key, which every key it bounds sorts at
+                // or after: back in, unless it is the bound itself.
+                let exact = key | self.least(right, r)?;
+                if exact != key {
+                    stream.heap.push(Reverse((exact, p, i, j, false)));
+                    continue;
+                }
+            }
             // The entry, and the pair's next one.
             let (rest, next) = match (hl, hr) {
                 (0, _) => {
@@ -568,7 +564,10 @@ impl<'a> Streams<'a> {
                     let rest = self.join(lrest, rrest);
                     let next = match self.entry(right, r, j + 1)? {
                         Some((rk, _)) => Some(((lk << hr) | rk, i, j + 1)),
-                        None => self.entry(left, l, i + 1)?.map(|(lk, _)| ((lk << hr) | self.least[right.idx()][r as usize], i + 1, 0)),
+                        None => match self.entry(left, l, i + 1)? {
+                            Some((lk, _)) => Some(((lk << hr) | self.least(right, r)?, i + 1, 0)),
+                            None => None,
+                        },
                     };
                     (rest, next)
                 }
@@ -577,7 +576,7 @@ impl<'a> Streams<'a> {
                 stream.out.push((key, rest));
             }
             if let Some((k, i, j)) = next {
-                stream.heap.push(Reverse((k, p, i, j)));
+                stream.heap.push(Reverse((k, p, i, j, false)));
             }
         }
         Ok(())
