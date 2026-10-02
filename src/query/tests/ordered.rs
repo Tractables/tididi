@@ -232,8 +232,8 @@ fn the_first_keys_are_the_least_distinct_values_on_a_key_spine() {
 fn the_first_rows_are_the_least_on_any_layout_that_reads_the_keys_first() {
     // Random functions on random vtrees that read the keys first, in
     // order, every other listed variable after them and unlisted ones
-    // anywhere: ordered_models (the unlisted projected first) and
-    // ordered_keys (projecting them itself) against the sorted truth table.
+    // anywhere: `ordered_models` (the unlisted projected first) and
+    // `ordered_keys` (projecting them itself) against the sorted truth table.
     let mut rng = Lcg::new(53);
     let mut cases = 0;
     for num_vars in [2u32, 3, 5, 7, 9] {
