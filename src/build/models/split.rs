@@ -1148,14 +1148,29 @@ fn hashed_split(
     gate.poll(held as u64)?;
     let split = if parent.atoms == 1 {
         // Each group of the one parent atom lists its low parts in ascending
-        // order, and so their atoms unless low values merge.
+        // order, and so their atoms unless low values merge. A group is
+        // closed as it is written, while it is in the cache: sorted and its
+        // repeats dropped where merged values leave it out of order.
         let mut lows = Vec::new();
         lim.reserve_exact(&mut lows, held)?;
+        let mut ends = Vec::new();
+        lim.reserve_exact(&mut ends, s.high_first.len())?;
         for &k in &s.high_first {
+            let start = lows.len();
             lows.extend(data[run(&s.high_starts, k, n)].iter().map(|&value| atom_of[(value & mask) as usize]));
+            if merged && !lows[start..].windows(2).all(|pair| pair[0] < pair[1]) {
+                lows[start..].sort_unstable();
+                let mut kept = start + 1;
+                for at in start + 1..lows.len() {
+                    if lows[at] != lows[kept - 1] {
+                        lows[kept] = lows[at];
+                        kept += 1;
+                    }
+                }
+                lows.truncate(kept);
+            }
+            ends.push(lows.len() as u32);
         }
-        let sizes = s.high_first.iter().map(|&k| run(&s.high_starts, k, n).len());
-        let ends = close_groups(lim, &mut lows, sizes, merged)?;
         Decomposition::Grouped { ends, lows }
     } else {
         let (ends, pairs) = by_parent_atom(lim, s, parent, low_width, high_atom, held)?;

@@ -237,6 +237,38 @@ impl TddBuilder {
         Ok(index)
     }
 
+    /// [`push`](Self::push) for a node whose `len` pairs come from `pairs`,
+    /// written straight into the level's pair arena: a node with a pair per
+    /// row is not gathered in a list of its own first. `pairs` yields
+    /// exactly `len` pairs, at least one, in the order `push` takes them.
+    ///
+    /// # Errors
+    ///
+    /// As [`push`](Self::push).
+    pub(crate) fn push_from(
+        &mut self,
+        eng: &Engine,
+        t: VtreeIdx,
+        len: usize,
+        pairs: impl Iterator<Item = ChildPair>,
+    ) -> Result<NodeIdx, OperationError> {
+        if self.levels[t.idx()].slot_count() >= eng.limits().level_width_cap() {
+            return Err(OperationError::IndexOverflow);
+        }
+        let cached = self.interned.get_mut(t.idx()).and_then(Option::take);
+        let index = self.levels[t.idx()].push_node_from(eng.limits(), len, pairs)?;
+        let level = &self.levels[t.idx()];
+        let written = level.pairs_of_idx(index.idx());
+        if cfg!(debug_assertions) {
+            debug_assert_pairs(&self.vtree, &self.levels, t, written);
+        }
+        if let Some(mut table) = cached {
+            table.insert_on(eng.limits(), level, written, index)?;
+            self.interned[t.idx()] = Some(table);
+        }
+        Ok(index)
+    }
+
     /// Size level `t`'s arenas for `nodes` more nodes and `pairs` more pairs,
     /// charging the growth to the engine.
     ///

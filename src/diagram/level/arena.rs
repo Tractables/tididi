@@ -339,6 +339,45 @@ impl TddLevel {
         Ok(idx)
     }
 
+    /// [`push_node`](Self::push_node) for a node whose `len` pairs come from
+    /// `pairs`, written straight into the pair arena rather than gathered in
+    /// a list of their own and copied: the node over every constrained
+    /// variable of a large table has a pair per row. `pairs` yields exactly
+    /// `len` pairs, and `len` is at least one.
+    ///
+    /// # Errors
+    ///
+    /// As [`push_node`](Self::push_node).
+    pub(crate) fn push_node_from<G: ArenaGrowth>(
+        &mut self, growth: &G, len: usize, mut pairs: impl Iterator<Item = ChildPair>,
+    ) -> Result<NodeIdx, OperationError> {
+        debug_assert!(len >= 1, "a node has a pair");
+        if len == 1 {
+            let pair = pairs.next().expect("one pair");
+            debug_assert!(pairs.next().is_none(), "one pair");
+            return self.push_node(growth, &[pair]);
+        }
+        let idx = NodeIdx(self.nodes.len() as u32);
+        if self.nodes.len() == self.nodes.capacity() {
+            growth.grow(&mut self.nodes, 1)?;
+        }
+        let start = self.pairs.len();
+        if self.pairs.capacity() - start < len {
+            growth.grow(&mut self.pairs, len)?;
+        }
+        self.pairs.extend(pairs.take(len));
+        assert_eq!(self.pairs.len() - start, len, "push_node_from: the pairs number `len`");
+        let node = match self.try_encode_multi(growth, start, len) {
+            Ok(node) => node,
+            Err(refused) => {
+                self.pairs.truncate(start);
+                return Err(refused);
+            }
+        };
+        self.nodes.push(node);
+        Ok(idx)
+    }
+
     /// Add one pair to the node at `idx`, in place.
     ///
     /// The node's pairs stay contiguous: a range already at the arena's tail

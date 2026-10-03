@@ -332,6 +332,20 @@ fn store_level(
             // The one atom's pairs, which run in child-atom order.
             assembly.reserve(eng, t, 1, lows.len())?;
             lim.gate().poll(lows.len() as u64)?;
+            if ascending(l) && ascending(r) {
+                // Already in order: written into the level as they are read.
+                let highs = l.iter().zip(&ends).scan(0usize, |start, (&high, &end)| {
+                    let group = &lows[std::mem::replace(start, end as usize)..end as usize];
+                    Some(group.iter().map(move |&low| ChildPair::new(high, r[low as usize])))
+                });
+                let local = assembly.push_from(eng, t, lows.len(), highs.flatten())?;
+                let mut locals = Vec::new();
+                lim.reserve_exact(&mut locals, 1)?;
+                locals.push(local);
+                lim.discard(ends);
+                lim.discard(lows);
+                return Ok(Finished { locals });
+            }
             pair_list.clear();
             lim.reserve_exact(pair_list, lows.len())?;
             let mut start = 0;
