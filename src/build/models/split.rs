@@ -1018,9 +1018,13 @@ fn number_lone(
 /// One pass therefore hashes both sides' completion sets: a high value's
 /// as its run ends, a low value's in the slot its low part addresses, which
 /// every value of it updates. Reading the slots in order ranks the low
-/// values without a sort. Hashes that agree are confirmed against the sets
-/// themselves; a high value's is its run, and the low values' are listed,
-/// high value by high value, only when two of their hashes agree.
+/// values without a sort. A high value's hash that agrees with another is
+/// confirmed against the runs themselves. The low values are numbered by
+/// hash alone, which merges every two that share an atom, and the pairs
+/// that numbering gives are checked by counting the values their products
+/// hold (`covers_exactly`): only a collision, which makes the count exceed
+/// the parent's values, lists the low values' sets, high value by high
+/// value, to confirm them.
 ///
 /// The first run of each high atom realizes all the triples there are.
 /// With one parent atom they come out as its pairs, high atom by high
@@ -1090,25 +1094,59 @@ fn split_hashed(
             low_data.push(slot as u64);
         }
     }
-    // Numbering by hash alone finds every low value distinct only when no
-    // two hashes agree, and then no two low values share an atom.
+    // Equal sets hash alike, so the numbering by hash merges every pair of
+    // low values that shares an atom, and only a collision merges more. The
+    // split built on it is checked by counting (`covers_exactly`), and only
+    // a collision sends the low values to be confirmed against their sets.
     let (mut low_atom, mut low_atoms) = number_hashed(lim, &mut s.slots, &s.high_keys, &mut s.low_first, |_, _| true)?;
-    let merged = low_atoms as usize != lows;
-    if merged {
+    let mut merged = low_atoms as usize != lows;
+    let mut split = hashed_split(lim, s, parent, low_width, &high_atom, &low_atom, merged)?;
+    if merged && !covers_exactly(lim, &split, n, (&high_atom, high_atoms), (&low_atom, low_atoms))? {
+        discard_split(lim, split);
         let by_hash = low_atom;
         (low_atom, low_atoms) = confirm_lows(lim, s, parent, low_width, &by_hash, low_atoms)?;
         lim.discard(by_hash);
+        merged = low_atoms as usize != lows;
+        split = hashed_split(lim, s, parent, low_width, &high_atom, &low_atom, merged)?;
     }
+    gate.flush()?;
 
-    // Runs of one high atom hold the same pairs, so they realize the same
-    // triples, and the first run of each realizes them all.
+    let mut high_data = Vec::new();
+    lim.reserve_exact(&mut high_data, high_count)?;
+    high_data.extend_from_slice(&s.high);
+    let low = Values { words: 1, data: low_data, atom: low_atom, atoms: low_atoms };
+    let high = Values { words: 1, data: high_data, atom: high_atom, atoms: high_atoms };
+    Ok(Some((split, low, high)))
+}
+
+/// The node's pairs in `split_hashed` once the low values are numbered by
+/// `low_atom` (by rank), `merged` when two of them share a number: the
+/// first run of each high atom realizes all the triples there are. With one
+/// parent atom they come out as its pairs, high atom by high atom, sorted
+/// only where low values merge. Otherwise a counting sort by parent atom
+/// groups them, and each group is sorted and deduplicated. Leaves each low
+/// slot's atom in `s.high_of`.
+#[allow(clippy::too_many_arguments)]
+fn hashed_split(
+    lim: &Limits,
+    s: &mut Scratch,
+    parent: &Values,
+    low_width: usize,
+    high_atom: &[u32],
+    low_atom: &[u32],
+    merged: bool,
+) -> Result<Decomposition, OperationError> {
+    let n = parent.len();
+    let mask = (1u64 << low_width) - 1;
+    let data = &parent.data;
     let atom_of = &mut s.high_of;
     atom_of.clear();
     lim.reserve_exact(atom_of, 1 << low_width)?;
     atom_of.extend(s.rank.iter().map(|&rank| if merged { low_atom[rank as usize] } else { rank }));
     let held = s.high_first.iter().map(|&k| run(&s.high_starts, k, n).len()).sum::<usize>();
+    let mut gate = lim.gate();
     gate.poll(held as u64)?;
-    let split = if single {
+    let split = if parent.atoms == 1 {
         // Each group of the one parent atom lists its low parts in ascending
         // order, and so their atoms unless low values merge.
         let mut lows = Vec::new();
@@ -1120,17 +1158,85 @@ fn split_hashed(
         let ends = close_groups(lim, &mut lows, sizes, merged)?;
         Decomposition::Grouped { ends, lows }
     } else {
-        let (ends, pairs) = by_parent_atom(lim, s, parent, low_width, &high_atom, held)?;
+        let (ends, pairs) = by_parent_atom(lim, s, parent, low_width, high_atom, held)?;
         Decomposition::ByAtom { ends, pairs }
     };
     gate.flush()?;
+    Ok(split)
+}
 
-    let mut high_data = Vec::new();
-    lim.reserve_exact(&mut high_data, high_count)?;
-    high_data.extend_from_slice(&s.high);
-    let low = Values { words: 1, data: low_data, atom: low_atom, atoms: low_atoms };
-    let high = Values { words: 1, data: high_data, atom: high_atom, atoms: high_atoms };
-    Ok(Some((split, low, high)))
+/// Whether the pairs of `split`, built from child atoms that may merge
+/// values of different atoms, describe the parent's `n` values exactly.
+///
+/// Every parent value lies in the product of its two child atoms, and that
+/// product is among its parent atom's pairs, so the products cover the
+/// values. They are exact when they hold no other value and no value
+/// twice: when the sizes of the products, `|high atom| * |low atom|` in
+/// child values, sum to `n`. Two low values merged although some high
+/// value pairs with one and not the other leave a product with a value
+/// that is not the parent's, or one that a second parent atom's pair holds
+/// too, and the sum exceeds `n`. The sizes come from `high` and `low`, each
+/// child value's atom and the number of atoms.
+fn covers_exactly(
+    lim: &Limits,
+    split: &Decomposition,
+    n: usize,
+    high: (&[u32], u32),
+    low: (&[u32], u32),
+) -> Result<bool, OperationError> {
+    let sizes = |(atom, atoms): (&[u32], u32)| -> Result<Vec<u64>, OperationError> {
+        let mut size = Vec::new();
+        lim.try_resize(&mut size, atoms as usize, 0u64)?;
+        for &a in atom {
+            size[a as usize] += 1;
+        }
+        Ok(size)
+    };
+    let (high_size, low_size) = (sizes(high)?, sizes(low)?);
+    let mut gate = lim.gate();
+    let mut models = 0u128;
+    match split {
+        Decomposition::Grouped { ends, lows } => {
+            gate.poll(lows.len() as u64)?;
+            let mut start = 0;
+            for (h, &end) in ends.iter().enumerate() {
+                let width: u64 = lows[start..end as usize].iter().map(|&l| low_size[l as usize]).sum();
+                models += u128::from(high_size[h]) * u128::from(width);
+                start = end as usize;
+            }
+        }
+        Decomposition::ByAtom { pairs, .. } => {
+            gate.poll(pairs.len() as u64)?;
+            for &pair in pairs {
+                models += u128::from(high_size[(pair >> 32) as usize]) * u128::from(low_size[pair as u32 as usize]);
+            }
+        }
+        Decomposition::Triples { triples, .. } => {
+            gate.poll(triples.len() as u64)?;
+            for &[_, h, l] in triples {
+                models += u128::from(high_size[h as usize]) * u128::from(low_size[l as usize]);
+            }
+        }
+    }
+    gate.flush()?;
+    lim.discard(high_size);
+    lim.discard(low_size);
+    Ok(models == n as u128)
+}
+
+/// Hand back the buffers of a split that is rebuilt.
+fn discard_split(lim: &Limits, split: Decomposition) {
+    match split {
+        Decomposition::Grouped { ends, lows } => {
+            lim.discard(ends);
+            lim.discard(lows);
+        }
+        Decomposition::ByAtom { ends, pairs } => {
+            lim.discard(ends);
+            lim.discard(pairs);
+        }
+        Decomposition::Triples { triples, .. } => lim.discard(triples),
+    }
 }
 
 /// The pass of `split_hashed` over the parent's values: each high value's

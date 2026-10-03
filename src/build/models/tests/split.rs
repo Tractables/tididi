@@ -369,3 +369,27 @@ fn the_runs_between_two_parts_are_at_most_the_keys_and_the_parts() {
     assert_eq!(runs_between(0, 5, 3), 3);
     assert_eq!(runs_between(0, u64::MAX, 7), 7);
 }
+
+#[test]
+fn counting_the_products_tells_merged_low_values_from_shared_atoms() {
+    // One parent atom of the values (0, 0), (0, 1), (1, 0): high 0 pairs
+    // with lows 0 and 1, high 1 with low 0 alone. Each child value is its
+    // own atom, and the products of the pairs hold the three values once
+    // each. Lows 0 and 1 merged, as a hash collision would merge them, make
+    // the product of high 1 with the merged atom hold (1, 1) too.
+    let lim = Limits::new();
+    let exact = Decomposition::Grouped { ends: vec![2, 3], lows: vec![0, 1, 0] };
+    assert!(covers_exactly(&lim, &exact, 3, (&[0, 1], 2), (&[0, 1], 2)).unwrap());
+    let merged = Decomposition::Grouped { ends: vec![1, 2], lows: vec![0, 0] };
+    assert!(!covers_exactly(&lim, &merged, 3, (&[0, 1], 2), (&[0, 0], 1)).unwrap());
+    // Lows 0 and 1 under highs 0 and 1 alike share an atom, and so do the
+    // highs: one pair whose product is the four values.
+    let shared = Decomposition::Grouped { ends: vec![1], lows: vec![0] };
+    assert!(covers_exactly(&lim, &shared, 4, (&[0, 0], 1), (&[0, 0], 1)).unwrap());
+    // Two parent atoms, (0, 0) and (0, 1): lows 0 and 1 complete high 0 to
+    // different atoms. Merged, the pair of each parent atom claims both.
+    let atoms = Decomposition::ByAtom { ends: vec![1, 2], pairs: vec![0, 1] };
+    assert!(covers_exactly(&lim, &atoms, 2, (&[0], 1), (&[0, 1], 2)).unwrap());
+    let claimed = Decomposition::ByAtom { ends: vec![1, 2], pairs: vec![0, 0] };
+    assert!(!covers_exactly(&lim, &claimed, 2, (&[0], 1), (&[0, 0], 1)).unwrap());
+}
