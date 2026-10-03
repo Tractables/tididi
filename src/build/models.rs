@@ -19,10 +19,12 @@ use crate::limits::{Charged, OperationError};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::Engine;
 
+mod columns;
 mod cubes;
 mod rows;
 mod split;
 pub(crate) mod layout;
+pub use columns::RowSelection;
 use layout::Layout;
 use rows::{words_per_row, distinct_rows};
 use split::{Decomposition, Plan};
@@ -131,14 +133,26 @@ impl Engine {
         // The split sorts through the same buffers the rows did.
         let mut radix = crate::sort::Radix::default();
         let sorted = distinct_rows(lim, &mut radix, vars.len(), &layout, rows, w)?;
-        let mut plans = split::plan(lim, vtree, &layout, sorted, w, radix)?;
-
-        let mut assembly = Assembly::new(self, vtree)?;
-        let output = fill(self, &mut assembly, vtree, &layout, &mut plans)?;
-        // The levels are canonical as built: seat them with nothing to reduce.
-        let (levels, _) = assembly.parts_mut();
-        Ok(super::seat_canonical(self, vtree, std::mem::take(levels), output))
+        build_sorted(self, vtree, &layout, sorted, w, radix)
     }
+}
+
+/// The diagram of `sorted`, distinct rows in `layout`'s order, `w` words
+/// each, built with the radix sort's buffers `radix`.
+fn build_sorted(
+    eng: &Engine,
+    vtree: &Arc<Vtree>,
+    layout: &Layout,
+    sorted: std::borrow::Cow<'_, [u64]>,
+    w: usize,
+    radix: crate::sort::Radix,
+) -> Result<Tdd, OperationError> {
+    let mut plans = split::plan(eng.limits(), vtree, layout, sorted, w, radix)?;
+    let mut assembly = Assembly::new(eng, vtree)?;
+    let output = fill(eng, &mut assembly, vtree, layout, &mut plans)?;
+    // The levels are canonical as built: seat them with nothing to reduce.
+    let (levels, _) = assembly.parts_mut();
+    Ok(super::seat_canonical(eng, vtree, std::mem::take(levels), output))
 }
 
 /// A vtree node the pass has finished with, waiting for its parent.

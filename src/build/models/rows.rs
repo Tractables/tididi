@@ -158,10 +158,26 @@ fn owned_rows(
         }
     }
 
+    gate.flush()?;
+    sorted_distinct(lim, radix, num_vars, layout, packed, w, distinct)
+}
+
+/// Rows already in leaf order, `w` words each, sorted with their repeats
+/// dropped: `distinct` when one-word rows are known to ascend strictly.
+pub(super) fn sorted_distinct(
+    lim: &Limits,
+    radix: &mut Radix,
+    num_vars: usize,
+    layout: &Layout,
+    mut packed: Vec<u64>,
+    w: usize,
+    distinct: bool,
+) -> Result<Vec<u64>, OperationError> {
+    let n = packed.len() / w;
+    let mut gate = lim.gate();
     if w == 1 {
         // One word is the whole row, so the words sort and deduplicate where
         // they are and the detour through a permutation buys nothing.
-        gate.flush()?;
         if distinct {
             return Ok(packed);
         }
@@ -177,7 +193,7 @@ fn owned_rows(
     }
 
     // Rows handed over in strictly ascending order are sorted and distinct.
-    gate.poll(rows.len() as u64)?;
+    gate.poll(packed.len() as u64)?;
     if (1..n as u32).all(|k| compare_row(&packed, w, k - 1, k).is_lt()) {
         gate.flush()?;
         return Ok(packed);

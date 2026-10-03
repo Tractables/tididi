@@ -111,6 +111,25 @@ pub enum OperationError {
     /// the rows could repeat. Quantify the variable out, or minimize a
     /// diagram that ignores it.
     UnlistedLiteral(crate::vtree::VarId),
+    /// The columns of [`Tdd::from_columns`](crate::Tdd::from_columns) are
+    /// not one per listed column, all of one length, or its marked rows
+    /// hold a flag count other than that length.
+    RaggedColumns {
+        /// The column's position, or the column count for the flags.
+        column: usize,
+        /// The entries it holds.
+        len: usize,
+        /// The entries the first column holds.
+        expected: usize,
+    },
+    /// A row that [`Tdd::from_columns`](crate::Tdd::from_columns) lists is
+    /// past the columns' last row.
+    RowOutOfRange {
+        /// The listed row.
+        row: usize,
+        /// The rows the columns hold.
+        rows: usize,
+    },
 }
 
 impl std::fmt::Display for OperationError {
@@ -146,6 +165,10 @@ impl std::fmt::Display for OperationError {
             OperationError::UnlistedLiteral(var) => {
                 write!(f, "the diagram references a literal of x{}, which no column lists", var.0)
             }
+            OperationError::RaggedColumns { column, len, expected } => {
+                write!(f, "column {column} holds {len} entries where the first holds {expected}")
+            }
+            OperationError::RowOutOfRange { row, rows } => write!(f, "row {row} is past the {rows} rows the columns hold"),
         }
     }
 }

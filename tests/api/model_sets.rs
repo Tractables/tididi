@@ -83,3 +83,31 @@ fn a_budget_that_cannot_hold_the_rows_refuses() {
         });
     assert_eq!(refused.unwrap_err(), OperationError::OverBudget);
 }
+
+#[test]
+fn a_table_written_as_columns_reads_back_as_the_same_circuit() {
+    // The edges above as two columns of codes, and the circuit built from
+    // them, its models written out as columns again and read back, with a
+    // selection that drops one edge.
+    use tididi::diagram::RowSelection;
+    let width = 3;
+    let edges = [(0u32, 1u32), (1, 2), (2, 3), (3, 0), (0, 3), (5, 5)];
+    let vtree = Arc::new(Vtree::balanced(2 * width));
+    let (from, to) = (block(1, width), block(1 + width, width));
+    let columns: [&[VarId]; 2] = [&from, &to];
+    let sources: Vec<u32> = edges.iter().map(|e| e.0).collect();
+    let targets: Vec<u32> = edges.iter().map(|e| e.1).collect();
+
+    let f = Tdd::from_columns(&vtree, &columns, &[&sources, &targets], RowSelection::All).unwrap();
+    assert_canonical(&f);
+    let packed = Tdd::from_models(&vtree, &[from.clone(), to.clone()].concat(), &pair_rows(&edges, width)).unwrap();
+    assert!(f.equivalent(&packed).unwrap());
+
+    let table = f.model_columns(&columns).unwrap().to_columns();
+    let back = Tdd::from_columns(&vtree, &columns, &[&table[0], &table[1]], RowSelection::All).unwrap();
+    assert!(back.equivalent(&f).unwrap());
+
+    let marked = [true, true, true, false, true, true];
+    let g = Tdd::from_columns(&vtree, &columns, &[&sources, &targets], RowSelection::Marked(&marked)).unwrap();
+    assert_eq!(g.model_count().unwrap(), 5u32.into());
+}

@@ -21,6 +21,9 @@ the canonical circuit for a whole table of assignments at once, from bit-packed
 rows over a chosen list of variables, and
 [`Tdd::from_cubes`](crate::Tdd::from_cubes) builds it from rows that leave some
 of those variables free, without listing the assignments they cover.
+[`Tdd::from_columns`](crate::Tdd::from_columns) builds it from a table held as
+columns of codes, the shape [`Tdd::model_columns`](crate::Tdd::model_columns)
+writes, and a selection of its rows, without packing them first.
 
 Combine circuits with [`and`](crate::and), [`or`](crate::or),
 [`xor`](crate::xor) and [`Tdd::negate`](crate::Tdd::negate), or use
