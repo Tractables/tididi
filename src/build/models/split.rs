@@ -16,6 +16,8 @@
 //! a value's *low* part is its right child's value and its *high* part its
 //! left child's, and the parent values ascend by high part first.
 
+use std::borrow::Cow;
+
 use crate::diagram::{NodeIdx, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
 use crate::limits::{Charged, Limits, OperationError};
 use crate::vtree::{Vtree, VtreeIdx};
@@ -25,27 +27,33 @@ use crate::sort::Radix;
 
 /// The distinct values one constrained vtree node takes over the rows, and
 /// the atom each belongs to.
-struct Values {
+struct Values<'a> {
     /// Words per value, low word first.
     words: usize,
     /// The values in ascending order, `words` apiece. Bits past the node's
-    /// width are clear.
-    data: Vec<u64>,
+    /// width are clear. The root's may be the caller's rows, borrowed where
+    /// they came sorted and distinct; a split that overwrites its parent's
+    /// values copies them first.
+    data: Cow<'a, [u64]>,
     /// The atom of each value. Atoms are numbered by their smallest value.
     atom: Vec<u32>,
     /// How many atoms there are.
     atoms: u32,
 }
 
-impl Values {
+impl Values<'_> {
     fn len(&self) -> usize {
         self.atom.len()
     }
 }
 
-impl Charged for Values {
+impl Charged for Values<'_> {
     fn charged_bytes(&self) -> u64 {
-        self.data.charged_bytes() + self.atom.charged_bytes()
+        let data = match &self.data {
+            Cow::Owned(data) => data.charged_bytes(),
+            Cow::Borrowed(_) => 0,
+        };
+        data + self.atom.charged_bytes()
     }
 }
 
@@ -210,7 +218,7 @@ pub(super) fn plan(
     lim: &Limits,
     vtree: &Vtree,
     layout: &Layout,
-    sorted: Vec<u64>,
+    sorted: Cow<'_, [u64]>,
     w: usize,
     radix: Radix,
 ) -> Result<Vec<Option<Plan>>, OperationError> {
@@ -294,7 +302,7 @@ fn split(
     s: &mut Scratch,
     parent: &mut Values,
     widths: (usize, usize),
-) -> Result<(Decomposition, Values, Values), OperationError> {
+) -> Result<(Decomposition, Values<'static>, Values<'static>), OperationError> {
     let n = parent.len();
     // A value that is its own atom leaves every child value its own atom:
     // a completion names the parent atom, which only that value has.
@@ -417,7 +425,7 @@ fn split_words(
     parent: &Values,
     low_width: usize,
     key: KeyLayout,
-) -> Result<(Decomposition, Values, Values), OperationError> {
+) -> Result<(Decomposition, Values<'static>, Values<'static>), OperationError> {
     let n = parent.len();
     let distinct = parent.atoms as usize == n;
     let low_mask = (1u64 << low_width) - 1;
@@ -549,8 +557,8 @@ fn split_words(
         (low_atom, low_atoms, high_atom, high_atoms)
     };
     let split = Decomposition::Triples { atoms: parent.atoms as usize, triples };
-    let low = Values { words: 1, data: low_data, atom: low_atom, atoms: low_atoms };
-    let high = Values { words: 1, data: high_data, atom: high_atom, atoms: high_atoms };
+    let low = Values { words: 1, data: low_data.into(), atom: low_atom, atoms: low_atoms };
+    let high = Values { words: 1, data: high_data.into(), atom: high_atom, atoms: high_atoms };
     Ok((split, low, high))
 }
 
@@ -571,7 +579,7 @@ fn split_single(
     s: &mut Scratch,
     parent: &mut Values,
     (low_width, high_width): (usize, usize),
-) -> Result<Option<(Decomposition, Values, Values)>, OperationError> {
+) -> Result<Option<(Decomposition, Values<'static>, Values<'static>)>, OperationError> {
     let n = parent.len();
     let bound = n.min(1usize << high_width.min(usize::BITS as usize - 1));
     if low_width + index_bits(bound) as usize >= 64
@@ -588,7 +596,7 @@ fn split_single(
     s.high_starts.clear();
     s.high_hash.clear();
     s.high.clear();
-    let data = &mut parent.data;
+    let data = parent.data.to_mut();
     let mut last = data[0] >> low_width;
     lim.try_push(&mut s.high_starts, 0)?;
     lim.try_push(&mut s.high, last)?;
@@ -621,16 +629,16 @@ fn split_single(
     let (high_atom, high_atoms) = numbered?;
 
     // Keys of one low part ascend by high value, as the values did.
-    s.radix.sort(lim, &mut parent.data, 0, low_width)?;
+    s.radix.sort(lim, parent.data.to_mut(), 0, low_width)?;
     lim.check_stop()?;
     // One parent atom leaves the parent's atoms unread, so their buffer
     // takes the low values' atoms.
     let (split, low_atom, low_atoms) = group_single(lim, s, &parent.data, low_width, &high_atom, &mut parent.atom)?;
-    let low_data = low_parts(lim, &mut parent.data, &s.low_starts, mask)?;
+    let low_data = low_parts(lim, parent.data.to_mut(), &s.low_starts, mask)?;
     // The high runs' parts are the high child's values, so their buffer is
     // handed over rather than copied.
-    let low = Values { words: 1, data: low_data, atom: low_atom, atoms: low_atoms };
-    let high = Values { words: 1, data: std::mem::take(&mut s.high), atom: high_atom, atoms: high_atoms };
+    let low = Values { words: 1, data: low_data.into(), atom: low_atom, atoms: low_atoms };
+    let high = Values { words: 1, data: std::mem::take(&mut s.high).into(), atom: high_atom, atoms: high_atoms };
     Ok(Some((split, low, high)))
 }
 
@@ -1036,7 +1044,7 @@ fn split_hashed(
     s: &mut Scratch,
     parent: &Values,
     low_width: usize,
-) -> Result<Option<(Decomposition, Values, Values)>, OperationError> {
+) -> Result<Option<(Decomposition, Values<'static>, Values<'static>)>, OperationError> {
     let n = parent.len();
     if parent.words != 1 || low_width > 32 || 1usize << low_width > (2 * n).max(DIRECT_LOWS) {
         return Ok(None);
@@ -1068,7 +1076,7 @@ fn split_hashed(
             && (single || atoms[x] == atoms[y])
     };
     let (high_atom, high_atoms) = if single {
-        let runs = (high_starts.as_slice(), data.as_slice(), low_width);
+        let runs = (high_starts.as_slice(), &data[..], low_width);
         number_exact(lim, (&mut s.exact, &mut s.slots), &s.high_hash, &mut s.high_first, runs, same_pairs)?
     } else {
         number_hashed(lim, &mut s.slots, &s.high_hash, &mut s.high_first, same_pairs)?
@@ -1114,8 +1122,8 @@ fn split_hashed(
     let mut high_data = Vec::new();
     lim.reserve_exact(&mut high_data, high_count)?;
     high_data.extend_from_slice(&s.high);
-    let low = Values { words: 1, data: low_data, atom: low_atom, atoms: low_atoms };
-    let high = Values { words: 1, data: high_data, atom: high_atom, atoms: high_atoms };
+    let low = Values { words: 1, data: low_data.into(), atom: low_atom, atoms: low_atoms };
+    let high = Values { words: 1, data: high_data.into(), atom: high_atom, atoms: high_atoms };
     Ok(Some((split, low, high)))
 }
 
@@ -1658,7 +1666,7 @@ fn split_parts(
     parent: &Values,
     (low_width, high_width): (usize, usize),
     distinct: bool,
-) -> Result<(Decomposition, Values, Values), OperationError> {
+) -> Result<(Decomposition, Values<'static>, Values<'static>), OperationError> {
     let n = parent.len();
     let (lw, rw) = (words_for(low_width), words_for(high_width));
     runs_of_parts(lim, s, parent, low_width, high_width, distinct)?;
@@ -1692,8 +1700,8 @@ fn split_parts(
         high_data.extend_from_slice(&s.high[e as usize * rw..][..rw]);
     }
     let split = Decomposition::Triples { atoms: parent.atoms as usize, triples };
-    let low = Values { words: lw, data: low_data, atom: low_atom, atoms: low_atoms };
-    let high = Values { words: rw, data: high_data, atom: high_atom, atoms: high_atoms };
+    let low = Values { words: lw, data: low_data.into(), atom: low_atom, atoms: low_atoms };
+    let high = Values { words: rw, data: high_data.into(), atom: high_atom, atoms: high_atoms };
     Ok((split, low, high))
 }
 

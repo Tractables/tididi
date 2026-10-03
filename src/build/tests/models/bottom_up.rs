@@ -897,6 +897,61 @@ fn rows_in_leaf_order_need_no_sort_and_build_the_same_levels() {
 }
 
 #[test]
+fn rows_ascending_in_layout_order_are_read_in_place() {
+    // `vars` from the rightmost leaf to the leftmost is the layout's own bit
+    // order, so one-word rows ascending strictly and clear past the last
+    // variable are the root's values as they stand, and the split reads them
+    // in place. A round keeps that order or breaks it at a step boundary,
+    // inside a step, by a repeat or by a bit past the last variable, and must
+    // store what the same rows shuffled store, which are copied and sorted.
+    let mut rng = Lcg::new(0x0b07_70e5);
+    for round in 0..40usize {
+        let n = 14 + (rng.next_u64() % 50) as u32;
+        let vt = vtrees(n, &mut rng);
+        let (name, vtree) = &vt[round % vt.len()];
+        let mut vars = Vec::new();
+        leaves(vtree, vtree.root(), &mut vars);
+        vars.reverse();
+        let mask = (1u64 << n) - 1;
+        let m = 1 + (rng.next_u64() % 12000) as usize;
+        let mut rows: Vec<u64> = (0..m).map(|_| rng.next_u64() & mask).collect();
+        rows.sort_unstable();
+        rows.dedup();
+        let len = rows.len();
+        match round % 5 {
+            1 if len > 4097 => rows.swap(4095, 4096),
+            2 if len > 2 => {
+                let k = 1 + (rng.next_u64() as usize) % (len - 1);
+                rows[k] = rows[k - 1];
+            }
+            3 => {
+                let k = (rng.next_u64() as usize) % len;
+                rows[k] |= !0u64 << n;
+            }
+            4 if len > 2 => {
+                let k = (rng.next_u64() as usize) % (len - 1);
+                rows.swap(k, k + 1);
+            }
+            _ => {}
+        }
+        let what = format!("in place round {round} {name} n={n} m={len}");
+        check(vtree, &vars, &rows, &what);
+        let mut shuffled = rows.clone();
+        for i in (1..shuffled.len()).rev() {
+            let j = (rng.next_u64() % (i as u64 + 1)) as usize;
+            shuffled.swap(i, j);
+        }
+        let eng = Engine::new();
+        let in_place = eng.from_models(vtree, &vars, &rows).unwrap();
+        same_storage(&in_place, &eng.from_models(vtree, &vars, &shuffled).unwrap(), &what);
+        let mut distinct: Vec<u64> = rows.iter().map(|&row| row & mask).collect();
+        distinct.sort_unstable();
+        distinct.dedup();
+        assert_eq!(in_place.model_count().unwrap(), num_bigint::BigUint::from(distinct.len()), "{what}: models");
+    }
+}
+
+#[test]
 fn large_relations_take_the_radix_paths() {
     let mut rng = Lcg::new(0xbeef);
     for round in 0..12 {

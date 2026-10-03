@@ -5,7 +5,7 @@ use crate::test_helpers::Lcg;
 
 /// At most `n` parent values of `width` bits, sorted and distinct, each in
 /// one of at most `classes` atoms, which are numbered by their smallest value.
-fn parent_values(rng: &mut Lcg, width: usize, n: usize, classes: u64) -> Values {
+fn parent_values(rng: &mut Lcg, width: usize, n: usize, classes: u64) -> Values<'static> {
     let mut data: Vec<u64> = (0..n).map(|_| rng.next_u64() & ((1u64 << width) - 1)).collect();
     data.sort_unstable();
     data.dedup();
@@ -17,7 +17,7 @@ fn parent_values(rng: &mut Lcg, width: usize, n: usize, classes: u64) -> Values 
             *number.entry(rng.below(classes)).or_insert(next)
         })
         .collect();
-    Values { words: 1, data, atom, atoms: number.len() as u32 }
+    Values { words: 1, data: data.into(), atom, atoms: number.len() as u32 }
 }
 
 /// The atom count and the triples of a decomposition, whichever way it
@@ -88,7 +88,7 @@ fn a_key_without_the_index_splits_as_one_with_it() {
 /// their low parts, and whose low parts come in groups that always occur
 /// together: both sides then have values that merge into one atom. Every
 /// value lies in one atom, as at the node over every constrained variable.
-fn merging_values(rng: &mut Lcg, low_width: usize, high_width: usize) -> Values {
+fn merging_values(rng: &mut Lcg, low_width: usize, high_width: usize) -> Values<'static> {
     let groups: Vec<Vec<u64>> = (0..1 + rng.below(12))
         .map(|_| (0..1 + rng.below(3)).map(|_| rng.next_u64() & ((1u64 << low_width) - 1)).collect())
         .collect();
@@ -105,7 +105,7 @@ fn merging_values(rng: &mut Lcg, low_width: usize, high_width: usize) -> Values 
     data.sort_unstable();
     data.dedup();
     let atom = vec![0; data.len()];
-    Values { words: 1, data, atom, atoms: 1 }
+    Values { words: 1, data: data.into(), atom, atoms: 1 }
 }
 
 thread_local! {
@@ -117,7 +117,7 @@ thread_local! {
 
 /// Many distinct values of a wide or a narrow low part, enough that the
 /// radix sort runs.
-fn many_values(rng: &mut Lcg, low_width: usize, high_width: usize) -> Values {
+fn many_values(rng: &mut Lcg, low_width: usize, high_width: usize) -> Values<'static> {
     let highs = 1 + rng.below(1 << high_width.min(12));
     let spread = 1 + rng.below(1 << low_width.min(20));
     let mut data = Vec::new();
@@ -132,16 +132,16 @@ fn many_values(rng: &mut Lcg, low_width: usize, high_width: usize) -> Values {
     data.sort_unstable();
     data.dedup();
     let atom = vec![0; data.len()];
-    Values { words: 1, data, atom, atoms: 1 }
+    Values { words: 1, data: data.into(), atom, atoms: 1 }
 }
 
 /// `values` with parent atoms: each value's a function of its low part when
 /// `by_low`, else drawn at random, among `classes`, and numbered by their
 /// smallest value as atoms are.
-fn with_atoms(mut values: Values, rng: &mut Lcg, low_width: usize, classes: u64, by_low: bool) -> Values {
+fn with_atoms(mut values: Values<'static>, rng: &mut Lcg, low_width: usize, classes: u64, by_low: bool) -> Values<'static> {
     let (mut class_of_low, mut number) = (FxHashMap::default(), FxHashMap::default());
     let mut atom = Vec::new();
-    for &value in &values.data {
+    for &value in values.data.iter() {
         let class = match by_low {
             true => *class_of_low.entry(value & ((1u64 << low_width) - 1)).or_insert_with(|| rng.below(classes)),
             false => rng.below(classes),
@@ -159,7 +159,7 @@ fn with_atoms(mut values: Values, rng: &mut Lcg, low_width: usize, classes: u64,
 /// hashed split for a low part narrow enough to address. Requires the same
 /// atoms and triples of all, and returns the reference's children, low then
 /// high, and which of the others ran.
-fn check_split(lim: &Limits, parent: &Values, widths: (usize, usize), what: &str) -> (Values, Values, [bool; 2]) {
+fn check_split(lim: &Limits, parent: &Values, widths: (usize, usize), what: &str) -> (Values<'static>, Values<'static>, [bool; 2]) {
     let mut s = Scratch::default();
     let distinct = parent.atoms as usize == parent.len();
     let want = split_parts(lim, &mut s, parent, widths, distinct).unwrap();
@@ -181,7 +181,7 @@ fn check_split(lim: &Limits, parent: &Values, widths: (usize, usize), what: &str
 
 /// A random parent of one of several shapes, with widths that the hashed
 /// split addresses unless `wide`.
-fn random_parent(rng: &mut Lcg, round: usize, wide: bool) -> (Values, (usize, usize)) {
+fn random_parent(rng: &mut Lcg, round: usize, wide: bool) -> (Values<'static>, (usize, usize)) {
     let (low_width, high_width) = (1 + rng.below(10) as usize, 1 + rng.below(12) as usize);
     let (values, low_width) = match round % 4 {
         0 => {
@@ -257,7 +257,7 @@ fn runs_whose_hashes_collide_split_as_the_general_split_does() {
 /// one high value only and the rest under several: low values of one key
 /// then share a few atoms, and the single-atom split reads its pairs off
 /// them. Enough that the radix sort runs, when `many`.
-fn few_highs(rng: &mut Lcg, low_width: usize, high_width: usize, many: bool) -> Values {
+fn few_highs(rng: &mut Lcg, low_width: usize, high_width: usize, many: bool) -> Values<'static> {
     let highs: Vec<u64> = (0..1 + rng.below(6)).map(|_| rng.next_u64() & ((1u64 << high_width) - 1)).collect();
     let shared: Vec<u64> = (0..rng.below(20)).map(|_| rng.next_u64() & ((1u64 << low_width) - 1)).collect();
     let per_high = if many { 400 + rng.below(3000) } else { 1 + rng.below(60) };
@@ -275,7 +275,7 @@ fn few_highs(rng: &mut Lcg, low_width: usize, high_width: usize, many: bool) -> 
     data.sort_unstable();
     data.dedup();
     let atom = vec![0; data.len()];
-    Values { words: 1, data, atom, atoms: 1 }
+    Values { words: 1, data: data.into(), atom, atoms: 1 }
 }
 
 #[test]
@@ -317,7 +317,7 @@ fn a_key_too_wide_for_a_word_leaves_the_single_atom_split() {
     let (low_width, high_width) = (50, 14);
     for (runs, fits) in [(1usize << 13, true), ((1 << 13) + 1, false)] {
         let data: Vec<u64> = (0..runs as u64).flat_map(|h| [h << low_width | 1, h << low_width | 2]).collect();
-        let mut parent = Values { words: 1, atom: vec![0; data.len()], data, atoms: 1 };
+        let mut parent = Values { words: 1, atom: vec![0; data.len()], data: data.into(), atoms: 1 };
         let mut s = Scratch::default();
         let got = split_single(&lim, &mut s, &mut parent, (low_width, high_width)).unwrap();
         assert_eq!(got.is_some(), fits, "{runs} runs");

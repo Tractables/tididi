@@ -1,5 +1,7 @@
 //! Normalize packed rows into sorted, distinct assignments in leaf order.
 
+use std::borrow::Cow;
+
 use crate::limits::{Limits, OperationError};
 use crate::sort::Radix;
 use super::layout::Layout;
@@ -14,8 +16,49 @@ pub(super) fn words_per_row(num_vars: usize) -> usize {
 ///
 /// The order is numeric, the highest bit first, which is the order the split
 /// reads a node's values in: the rows are the values of the lowest node over
-/// every constrained variable, grouped by its right child's part.
-pub(super) fn distinct_rows(
+/// every constrained variable, grouped by its right child's part. One-word
+/// rows already in leaf order, ascending strictly and clear past the last
+/// variable are those values as they stand, and are borrowed, not copied.
+pub(super) fn distinct_rows<'a>(
+    lim: &Limits,
+    radix: &mut Radix,
+    num_vars: usize,
+    layout: &Layout,
+    rows: &'a [u64],
+    w: usize,
+) -> Result<Cow<'a, [u64]>, OperationError> {
+    if w == 1 && layout.is_identity() {
+        lim.gate().poll(rows.len() as u64)?;
+        if ascending_within(rows, num_vars) {
+            return Ok(Cow::Borrowed(rows));
+        }
+    }
+    owned_rows(lim, radix, num_vars, layout, rows, w).map(Cow::Owned)
+}
+
+/// Rows read per step of [`ascending_within`], between which it may stop
+/// early; within a step the test has no branch.
+const ASCENDING_STEP: usize = 4096;
+
+/// Whether the one-word rows ascend strictly and hold no bit at or past
+/// `num_vars`.
+fn ascending_within(rows: &[u64], num_vars: usize) -> bool {
+    let past = if num_vars >= 64 { 0 } else { !0u64 << num_vars };
+    let mut last: Option<u64> = None;
+    for step in rows.chunks(ASCENDING_STEP) {
+        let mut ok = step.iter().fold(0u64, |acc, &word| acc | word) & past == 0;
+        ok &= step.windows(2).fold(true, |acc, pair| acc & (pair[0] < pair[1]));
+        ok &= last.is_none_or(|last| last < step[0]);
+        if !ok {
+            return false;
+        }
+        last = step.last().copied();
+    }
+    true
+}
+
+/// [`distinct_rows`] into a buffer of its own.
+fn owned_rows(
     lim: &Limits,
     radix: &mut Radix,
     num_vars: usize,
