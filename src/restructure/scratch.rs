@@ -35,12 +35,13 @@ pub(crate) struct RestructureScratch {
     pub(super) words: Vec<u64>,
 }
 
-/// The walk over one fingerprint bucket in the clustering build of the inner
-/// level: which of the bucket's groups are already placed under a node, and
-/// the pairs of the node being emitted.
+/// The clustering build of the inner level: the table of the first group of
+/// each distinct cell list, and the inner pairs filed by the node they go
+/// under, node `k`'s ending at `ends[k]`.
 #[derive(Default)]
 pub(super) struct BucketScratch {
-    pub(super) done: Vec<bool>,
+    pub(super) table: Vec<u32>,
+    pub(super) ends: Vec<u32>,
     pub(super) pairs: Vec<ChildPair>,
 }
 
@@ -52,7 +53,8 @@ impl Buffers for RestructureScratch {
         visit(&mut self.group_info);
         visit(&mut self.packed);
         visit(&mut self.words);
-        visit(&mut self.bucket.done);
+        visit(&mut self.bucket.table);
+        visit(&mut self.bucket.ends);
         visit(&mut self.bucket.pairs);
     }
 }
@@ -62,7 +64,8 @@ impl PooledScratch for RestructureScratch {
         self.group_info.clear();
         self.packed.clear();
         self.words.clear();
-        self.bucket.done.clear();
+        self.bucket.table.clear();
+        self.bucket.ends.clear();
         self.bucket.pairs.clear();
         self.outer_ends.clear();
         self.outer_pairs.clear();

@@ -378,34 +378,19 @@ fn build_inner_level(
         // Every group's pair gets an entry, in either shape.
         expand_every_pair(lim, &mut level, group_info)?;
     } else {
-        // Phase 3: sort groups by fingerprint hash, so entries that can share a
-        // node land in one bucket, then count the distinct cell lists that survive.
-        group_info.sort_unstable_by_key(|g| g.hash);
-        // The distinct cell lists are at most the groups, so the count is
-        // needed only where the groups could reach the bound.
-        if group_info.len() + n_w_pairs >= max_pairs && count_distinct_cell_lists(triples, group_info) + n_w_pairs >= max_pairs {
+        // Phase 3: number the distinct cell lists in the order of their first
+        // groups, which is the number of the inner node each group goes under.
+        let nodes = number_cell_lists(lim, triples, group_info, &mut bucket.table)?;
+        if nodes + n_w_pairs >= max_pairs {
             return Ok(None);
         }
-        cluster_by_cell_list(lim, &mut level, triples, group_info, bucket)?;
+        let built = cluster_by_cell_list(lim, &mut level, group_info, nodes, bucket);
+        release_or_clear(lim, &mut bucket.table);
+        release_or_clear(lim, &mut bucket.ends);
+        release_or_clear(lim, &mut bucket.pairs);
+        built?;
     }
     Ok(Some(level.keep()))
-}
-
-/// The bounds of the maximal runs of equal fingerprint hash in a hash-sorted
-/// `group_info`. Two groups can share an inner node only inside one such run,
-/// so the count and the build walk the same partition.
-fn hash_buckets(group_info: &[PairGroup]) -> impl Iterator<Item = std::ops::Range<usize>> + '_ {
-    let mut start = 0;
-    std::iter::from_fn(move || {
-        let hash = group_info.get(start)?.hash;
-        let mut end = start + 1;
-        while end < group_info.len() && group_info[end].hash == hash {
-            end += 1;
-        }
-        let bucket = start..end;
-        start = end;
-        Some(bucket)
-    })
 }
 
 /// Marginal full-expand: sharing is suppressed, so each distinct inner pair
@@ -425,69 +410,91 @@ fn expand_every_pair(
     Ok(())
 }
 
-/// How many distinct cell lists the groups hold — the inner level's node count,
-/// needed before any node is built so bail check 2 can decline.
+/// Set each group's `node` to the number of its cell list among the distinct
+/// ones, numbered in the order of the first group that carries each, and
+/// return how many there are: the inner level's node count.
 ///
-/// The fingerprint hash only proposes a bucket; membership is decided by
-/// comparing the cell lists themselves, so a hash collision costs a wasted
-/// comparison and never a wrong share.
-fn count_distinct_cell_lists(triples: &[u128], group_info: &[PairGroup]) -> usize {
-    let mut n_fps = 0usize;
-    for bucket in hash_buckets(group_info) {
-        let bucket = &group_info[bucket];
-        for j in 0..bucket.len() {
-            let is_new = !(0..j).any(|k| same_cells(triples, &bucket[j], &bucket[k]));
-            if is_new { n_fps += 1; }
+/// An open-addressing table of the first groups, keyed by the cell lists'
+/// fingerprints, finds a group's list among the earlier ones. The
+/// fingerprint only proposes a match; membership is decided by comparing the
+/// cell lists themselves, so a collision costs a comparison and never a
+/// wrong share.
+///
+/// # Errors
+///
+/// [`OperationError::OverBudget`] if the table is refused.
+fn number_cell_lists(
+    lim: &Limits,
+    triples: &[u128],
+    group_info: &mut [PairGroup],
+    table: &mut Vec<u32>,
+) -> Result<usize, OperationError> {
+    let slots = (2 * group_info.len()).next_power_of_two().max(16);
+    let mask = slots - 1;
+    let shift = 64 - slots.trailing_zeros();
+    table.clear();
+    lim.try_resize(table, slots, u32::MAX)?;
+    let mut nodes = 0u32;
+    for j in 0..group_info.len() {
+        let hash = group_info[j].hash;
+        // A multiplicative hash's high bits, which every bit of the
+        // fingerprint reaches.
+        let mut at = (hash.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> shift) as usize;
+        loop {
+            let first = table[at];
+            if first == u32::MAX {
+                table[at] = j as u32;
+                group_info[j].node = NodeIdx(nodes);
+                nodes += 1;
+                break;
+            }
+            let other = &group_info[first as usize];
+            if other.hash == hash && same_cells(triples, other, &group_info[j]) {
+                group_info[j].node = other.node;
+                break;
+            }
+            at = (at + 1) & mask;
         }
     }
-    n_fps
+    Ok(nodes as usize)
 }
 
-/// Phase 4: emit one inner node per distinct cell list, with every group that
-/// carries that cell list pointing at it. `scratch` is what a bucket of more
-/// than one group is walked with.
+/// Phase 4: emit the inner nodes, node `k` holding the inner pairs of every
+/// group numbered `k`, in the groups' order.
 fn cluster_by_cell_list(
     lim: &Limits,
     inner_level: &mut TddLevel,
-    triples: &[u128],
-    group_info: &mut [PairGroup],
+    group_info: &[PairGroup],
+    nodes: usize,
     scratch: &mut BucketScratch,
 ) -> Result<(), OperationError> {
-    let mut start = 0;
-    while start < group_info.len() {
-        let end = start + hash_buckets(&group_info[start..]).next().expect("a group is left").end;
-        let bucket = &mut group_info[start..end];
-        start = end;
-        if bucket.len() == 1 {
-            bucket[0].node = inner_level.push_node(lim, &[bucket[0].inner])?;
-            continue;
-        }
-        let BucketScratch { done, pairs } = scratch;
-        done.clear();
-        lim.try_resize(done, bucket.len(), false)?;
-        for j in 0..bucket.len() {
-            if done[j] { continue; }
-            // The node the groups matched here go under: the next one.
-            let node = NodeIdx(inner_level.nodes.len() as u32);
-            pairs.clear();
-            lim.try_push(pairs, bucket[j].inner)?;
-            done[j] = true;
-            bucket[j].node = node;
-            for k in (j + 1)..bucket.len() {
-                if done[k] { continue; }
-                if same_cells(triples, &bucket[j], &bucket[k]) {
-                    lim.try_push(pairs, bucket[k].inner)?;
-                    done[k] = true;
-                    bucket[k].node = node;
-                }
-            }
-            // No canonicalizing sort: this rotated level is queued for twin
-            // contraction, but twin detection is order-independent
-            // (`find_twin_groups` sorts each signature slice before comparing),
-            // so the node's pair order is free (see `ChildPair`).
-            let idx = inner_level.push_node(lim, pairs)?;
-            debug_assert_eq!(idx, node, "a pushed node is the level's last");
-        }
+    let BucketScratch { ends, pairs, .. } = scratch;
+    // Each node's pair count, at the slot after the node's.
+    ends.clear();
+    lim.try_resize(ends, nodes + 1, 0)?;
+    for g in group_info {
+        ends[g.node.idx() + 1] += 1;
+    }
+    for k in 0..nodes {
+        ends[k + 1] += ends[k];
+    }
+    pairs.clear();
+    lim.try_resize(pairs, group_info.len(), ChildPair::new(NodeIdx(0), NodeIdx(0)))?;
+    for g in group_info {
+        let at = &mut ends[g.node.idx()];
+        pairs[*at as usize] = g.inner;
+        *at += 1;
+    }
+    // Each node's start moved to its end: node `k`'s pairs end at `ends[k]`.
+    // No canonicalizing sort: this rotated level is queued for twin
+    // contraction, but twin detection is order-independent
+    // (`find_twin_groups` sorts each signature slice before comparing), so the
+    // node's pair order is free (see `ChildPair`).
+    let mut begin = 0;
+    for (k, &end) in ends[..nodes].iter().enumerate() {
+        let idx = inner_level.push_node(lim, &pairs[begin as usize..end as usize])?;
+        debug_assert_eq!(idx.idx(), k, "a pushed node is the level's last");
+        begin = end;
     }
     Ok(())
 }
@@ -540,9 +547,9 @@ fn build_outer_level(
 ///
 /// In the Boolean build the groups that went under one inner node carry the
 /// same cell list, so only the first of them, the one that opened the node,
-/// is filed: the others would file the same outer pairs again. The nodes were
-/// opened in the order of their first groups, so these come in ascending order
-/// of their node. In marginal context every group has its own node and every
+/// is filed: the others would file the same outer pairs again. The nodes are
+/// numbered in the order of their first groups, so these come in ascending
+/// order of their node. In marginal context every group has its own node and every
 /// one is filed.
 fn filed_groups(group_info: &[PairGroup], marginal_ctx: bool) -> impl Iterator<Item = &PairGroup> {
     let mut opened = 0u32;
