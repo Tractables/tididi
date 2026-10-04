@@ -24,15 +24,15 @@ pub(crate) struct RestructureScratch {
     pub(super) axis_ends: Vec<u32>,
     pub(super) group_info: Vec<super::relevel::PairGroup>,
     pub(super) bucket: BucketScratch,
-    // Search path triples, packed one-per-u128 (see `pack_triple`). The sort in
-    // `rebuild_rotated_levels` is the dominant cost of the joint next-merge-cost
-    // probe on single-large-component pools; sorting a `Vec<u128>` by a single
-    // integer key replaces the derived lexicographic compare over the
-    // `(ChildPair, u32, NodeIdx)` tuple's four u32 fields.
-    pub(super) packed: Vec<u128>,
-    // The triples cut to one word each for the radix sort, when they fit;
-    // later a right rotation's cells in order of their axis.
-    pub(super) words: Vec<u64>,
+    // Search path triples, packed one per word (see `Layout`): `narrow` where
+    // the four fields fit 64 bits between them, `wide` where they do not. The
+    // sort in `rebuild_rotated_levels` is the dominant cost of a probe;
+    // sorting the words by a single integer key replaces a lexicographic
+    // compare over the four fields.
+    pub(super) narrow: Vec<u64>,
+    pub(super) wide: Vec<u128>,
+    // A right rotation's cells in order of their axis.
+    pub(super) by_axis: Vec<u64>,
 }
 
 /// The clustering build of the inner level: the table of the first group of
@@ -51,8 +51,9 @@ impl Buffers for RestructureScratch {
         visit(&mut self.outer_pairs);
         visit(&mut self.axis_ends);
         visit(&mut self.group_info);
-        visit(&mut self.packed);
-        visit(&mut self.words);
+        visit(&mut self.narrow);
+        visit(&mut self.wide);
+        visit(&mut self.by_axis);
         visit(&mut self.bucket.table);
         visit(&mut self.bucket.ends);
         visit(&mut self.bucket.pairs);
@@ -62,8 +63,9 @@ impl Buffers for RestructureScratch {
 impl PooledScratch for RestructureScratch {
     fn prepare(&mut self) {
         self.group_info.clear();
-        self.packed.clear();
-        self.words.clear();
+        self.narrow.clear();
+        self.wide.clear();
+        self.by_axis.clear();
         self.bucket.table.clear();
         self.bucket.ends.clear();
         self.bucket.pairs.clear();
@@ -72,10 +74,11 @@ impl PooledScratch for RestructureScratch {
         self.axis_ends.clear();
     }
 
-    /// A search whose `packed` outgrew its cap releases every buffer; any
+    /// A search whose triples outgrew their cap releases every buffer; any
     /// other keeps each buffer the byte cap allows.
     fn retain(&mut self, lim: &Limits) {
-        if self.packed.capacity() > RESTRUCTURE_PACKED_CAP_LIMIT {
+        let bytes = self.narrow.capacity() * size_of::<u64>() + self.wide.capacity() * size_of::<u128>();
+        if bytes > RESTRUCTURE_TRIPLES_CAP_BYTES {
             self.release_all(lim);
         } else {
             self.release_oversized(lim);
@@ -83,11 +86,11 @@ impl PooledScratch for RestructureScratch {
     }
 }
 
-/// Maximum retained `packed` capacity (4M triples × 16 B = 64 MB). A rare wide
-/// rotation search must not park its peak buffers in the pool for the rest of
-/// the process; past this, the size-proportional buffers are released and the
-/// next take starts from empty.
-const RESTRUCTURE_PACKED_CAP_LIMIT: usize = 4_000_000;
+/// Maximum retained capacity of the triples, in bytes (8M narrow triples or
+/// 4M wide ones). A rare wide rotation search must not park its peak buffers
+/// in the pool for the rest of the process; past this, the size-proportional
+/// buffers are released and the next take starts from empty.
+const RESTRUCTURE_TRIPLES_CAP_BYTES: usize = 64 << 20;
 
 /// Scratch entries kept across probes. At its last read a buffer this size or
 /// smaller is only `clear()`-ed, so the next probe reuses the allocation — the

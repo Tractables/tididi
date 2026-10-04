@@ -30,35 +30,133 @@ use super::scratch::{BucketScratch, RestructureScratch, release_or_clear};
 use crate::limits::{Limits, OperationError, Transient};
 use crate::sort::{Radix, RADIX_MIN_ROWS};
 
-/// Pack a search triple `(inner, src, axis)` into one `u128` whose numeric order
-/// is the lexicographic order `(inner.left, inner.right, axis, src)`: all four
-/// fields are `u32`, so the packing is lossless and order-preserving. The high
-/// 64 bits are the `inner` pair (its own sort key); the low 64 bits are the
-/// `(axis, src)` "cell". Sorting by this key therefore groups cells by `inner`
-/// and orders cells within a group by `(axis, src)`, which is what the group
-/// scan below relies on, as a single `u128` compare instead of a four-field
-/// branchy tuple compare. `src` is the lowest field because the triples are
-/// collected in ascending order of it, which the sort then need not place
-/// ([`sort_triples`]).
+/// Where the four fields of a packed search triple sit: `(inner.left,
+/// inner.right, axis, src)` from the highest bits down, field `k` taking
+/// `width[k]` bits from `shift[k]` up. The numeric order of the packed words
+/// is the lexicographic order of the fields, so sorting them groups the cells
+/// by their inner pair and orders a group's cells by `(axis, src)`, which is
+/// what the group scan below relies on, as one integer compare instead of a
+/// four-field branchy tuple compare. The high fields are the `inner` pair (its
+/// own sort key); the low ones are the `(axis, src)` "cell". `src` is the
+/// lowest field because the triples are collected in ascending order of it,
+/// which the sort then need not place ([`Word::sort`]).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Layout {
+    shift: [u32; 4],
+    width: [u32; 4],
+}
+
+impl Layout {
+    /// Every field at 32 bits: the layout of a [`u128`] word.
+    pub(super) const WIDE: Layout = Layout { shift: [96, 64, 32, 0], width: [32; 4] };
+
+    /// Each field at the bits that `bound`, which its values do not exceed
+    /// bit for bit, needs.
+    pub(super) fn fitted(bound: [u32; 4]) -> Self {
+        let width = bound.map(|x| 32 - x.leading_zeros());
+        Layout { shift: [width[1] + width[2] + width[3], width[2] + width[3], width[3], 0], width }
+    }
+
+    fn bits(&self) -> u32 {
+        self.width.iter().sum()
+    }
+}
+
+/// A packed search triple: a [`u64`] where the fitted fields fit it, which is
+/// the usual case, and a [`u128`] at [`Layout::WIDE`] where they do not.
+pub(super) trait Word: Copy + Ord + Default {
+    fn pack(layout: &Layout, inner: ChildPair, src: u32, axis: EncodedChildRef) -> Self;
+    /// Field `k` (0 to 3) under `layout`.
+    fn field(self, layout: &Layout, k: usize) -> u32;
+    /// The bits of the inner pair, fields 0 and 1.
+    fn inner_key(self, layout: &Layout) -> u64;
+    /// The bits of the cell, fields 2 and 3: the fingerprint and dedup key.
+    fn cell(self, layout: &Layout) -> u64;
+    /// Phase 2's sort: the triples, in ascending order of `src` as
+    /// [`collect_triples`] leaves them, into ascending order.
+    ///
+    /// The sort is not charged to the work clock: the probe charges the pairs
+    /// it rebuilds, and the pool search's work bound is set in that measure.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] if the sort's buffers are refused.
+    fn sort(lim: &Limits, layout: &Layout, triples: &mut Vec<Self>) -> Result<(), OperationError>;
+}
+
+impl Word for u64 {
+    #[inline]
+    fn pack(layout: &Layout, inner: ChildPair, src: u32, axis: EncodedChildRef) -> Self {
+        // A field of no bits may sit at bit 64, past a plain shift.
+        let at = |x: u32, k: usize| u64::from(x).checked_shl(layout.shift[k]).unwrap_or(0);
+        at(inner.left.0, 0) | at(inner.right.0, 1) | at(axis.0, 2) | u64::from(src)
+    }
+    #[inline]
+    fn field(self, layout: &Layout, k: usize) -> u32 {
+        (self.checked_shr(layout.shift[k]).unwrap_or(0) & !u64::MAX.checked_shl(layout.width[k]).unwrap_or(0)) as u32
+    }
+    #[inline]
+    fn inner_key(self, layout: &Layout) -> u64 {
+        self.checked_shr(layout.shift[1]).unwrap_or(0)
+    }
+    #[inline]
+    fn cell(self, layout: &Layout) -> u64 {
+        self & !u64::MAX.checked_shl(layout.shift[1]).unwrap_or(0)
+    }
+    /// A radix sort ([`Radix::sort`]) of the bits above `src`, or a
+    /// comparison sort below [`RADIX_MIN_ROWS`].
+    fn sort(lim: &Limits, layout: &Layout, triples: &mut Vec<Self>) -> Result<(), OperationError> {
+        if triples.len() < RADIX_MIN_ROWS {
+            triples.sort_unstable();
+            return Ok(());
+        }
+        debug_assert!(triples.windows(2).all(|w| w[0].field(layout, 3) <= w[1].field(layout, 3)), "the triples come in ascending order of their src");
+        let src = layout.width[3];
+        let mut radix = Radix::default();
+        let sorted = radix.sort_polling(lim, triples, src as usize, (layout.bits() - src) as usize, &mut |_| Ok(()));
+        radix.discard(lim);
+        sorted
+    }
+}
+
+impl Word for u128 {
+    #[inline]
+    fn pack(layout: &Layout, inner: ChildPair, src: u32, axis: EncodedChildRef) -> Self {
+        debug_assert_eq!(layout.width, Layout::WIDE.width, "a u128 triple takes the wide layout");
+        (u128::from(inner.left.0) << 96) | (u128::from(inner.right.0) << 64) | (u128::from(axis.0) << 32) | u128::from(src)
+    }
+    #[inline]
+    fn field(self, _: &Layout, k: usize) -> u32 {
+        (self >> (96 - 32 * k)) as u32
+    }
+    #[inline]
+    fn inner_key(self, _: &Layout) -> u64 {
+        (self >> 64) as u64
+    }
+    #[inline]
+    fn cell(self, _: &Layout) -> u64 {
+        self as u64
+    }
+    /// A comparison sort: the wide layout is taken only where the fields do
+    /// not fit one word between them.
+    fn sort(_: &Limits, _: &Layout, triples: &mut Vec<Self>) -> Result<(), OperationError> {
+        triples.sort_unstable();
+        Ok(())
+    }
+}
+
 #[inline]
-fn pack_triple(inner: ChildPair, src: u32, axis: EncodedChildRef) -> u128 {
-    ((inner.left.0 as u128) << 96)
-        | ((inner.right.0 as u128) << 64)
-        | ((axis.0 as u128) << 32)
-        | (src as u128)
+fn tri_inner<W: Word>(p: W, layout: &Layout) -> ChildPair {
+    ChildPair::new(EncodedChildRef::from_raw(p.field(layout, 0)), EncodedChildRef::from_raw(p.field(layout, 1)))
 }
 #[inline]
-fn tri_inner_key(p: u128) -> u64 { (p >> 64) as u64 }
-#[inline]
-fn tri_cell(p: u128) -> u64 { p as u64 } // (axis << 32) | src — the fp/dedup key
-#[inline]
-fn tri_inner(p: u128) -> ChildPair {
-    ChildPair::new(EncodedChildRef::from_raw((p >> 96) as u32), EncodedChildRef::from_raw((p >> 64) as u32))
+fn tri_src<W: Word>(p: W, layout: &Layout) -> u32 {
+    p.field(layout, 3)
 }
 #[inline]
-fn tri_src(p: u128) -> u32 { p as u32 }
-#[inline]
-fn tri_axis(p: u128) -> EncodedChildRef { EncodedChildRef::from_raw((p >> 32) as u32) }
+fn tri_axis<W: Word>(p: W, layout: &Layout) -> EncodedChildRef {
+    EncodedChildRef::from_raw(p.field(layout, 2))
+}
 
 /// Rebuild the two levels of a rotation in `dir` and return the levels the
 /// rotation replaced, or `None` if the probe was abandoned.
@@ -119,6 +217,37 @@ fn rebuild_levels(
     scratch: &mut RestructureScratch,
     max_pairs: usize,
 ) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
+    let (old_v, old_w) = (&tdd.levels[info.v_idx.idx()], &tdd.levels[info.w_idx.idx()]);
+    // The triples are packed one per word where their fields fit one: a
+    // fitted `u64` moves half the bytes of a `u128` through every phase.
+    let layout = Layout::fitted(field_bounds(old_v, old_w, dir, crossed));
+    if layout.bits() <= 64 {
+        let mut triples = std::mem::take(&mut scratch.narrow);
+        let rebuilt = rebuild_with(lim, tdd, info, dir, crossed, &layout, &mut triples, scratch, max_pairs);
+        scratch.narrow = triples;
+        rebuilt
+    } else {
+        let mut triples = std::mem::take(&mut scratch.wide);
+        let rebuilt = rebuild_with(lim, tdd, info, dir, crossed, &Layout::WIDE, &mut triples, scratch, max_pairs);
+        scratch.wide = triples;
+        rebuilt
+    }
+}
+
+/// [`rebuild_levels`] with the triples packed as `W` under `layout`, in
+/// `triples`, which is left empty.
+#[allow(clippy::too_many_arguments)]
+fn rebuild_with<W: Word>(
+    lim: &Limits,
+    tdd: &mut Tdd,
+    info: &RotationInfo,
+    dir: RotationKind,
+    crossed: bool,
+    layout: &Layout,
+    triples: &mut Vec<W>,
+    scratch: &mut RestructureScratch,
+    max_pairs: usize,
+) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
     let v_idx = info.v_idx.idx();
     let w_idx = info.w_idx.idx();
     let marginal_ctx = tdd.has_marginal_level();
@@ -129,18 +258,15 @@ fn rebuild_levels(
     // an early exit has nothing to undo.
     let (old_v, old_w) = (&tdd.levels[v_idx], &tdd.levels[w_idx]);
 
-    scratch.packed.clear();
-    if !collect_triples(lim, old_v, old_w, dir, crossed, &mut scratch.packed, max_pairs)? {
+    triples.clear();
+    if !collect_triples(lim, old_v, old_w, dir, crossed, layout, triples, max_pairs)? {
+        triples.clear();
         return Ok(None);
     }
 
-    // Phase 2: sort the packed triples. A `u128` numeric sort is order-identical
-    // to sorting the `(inner, axis, src)` tuple lexicographically (see
-    // `pack_triple`), but a single-key integer sort instead of a four-field
-    // branchy compare. After sorting, cells for each inner pair are contiguous
-    // and sorted — no per-group sort needed.
-    sort_triples(lim, &mut scratch.packed, &mut scratch.words)?;
-    release_or_clear(lim, &mut scratch.words);
+    // Phase 2: sort the packed triples. After sorting, cells for each inner
+    // pair are contiguous and sorted — no per-group sort needed.
+    W::sort(lim, layout, triples)?;
 
     // `group_info` addresses `triples` with u32 offsets. The u32 width of a
     // `NodeIdx` bounds node indices, not this arena-scale offset: past 2^32
@@ -148,7 +274,7 @@ fn rebuild_levels(
     // wrong-but-in-range cell slices, and the resulting inner-node sharing would
     // silently change the count. `write <= read <= n`, so this single check
     // covers every cast in the scan.
-    let n = scratch.packed.len();
+    let n = triples.len();
     debug_assert!(
         u32::try_from(n).is_ok(),
         "rotation restructure: {n} triples exceeds the u32 group offsets into `triples`",
@@ -159,24 +285,26 @@ fn rebuild_levels(
     // marginalization-collapsed twin primes), so cell-deduping it would drop
     // count-mass. Boolean mode dedups.
     scratch.group_info.clear();
-    group_by_inner_pair(lim, &mut scratch.packed, &mut scratch.group_info, marginal_ctx)?;
+    group_by_inner_pair(lim, triples, layout, &mut scratch.group_info, marginal_ctx)?;
 
     let Some(inner_level) = build_inner_level(
         lim,
-        &scratch.packed,
+        triples,
+        layout,
         &mut scratch.group_info,
         &mut scratch.bucket,
         marginal_ctx,
         max_pairs,
     )?
     else {
+        triples.clear();
         return Ok(None);
     };
 
     // Neither level is installed until both are built; a refusal in between
     // drops the inner one and hands its charge back.
     let inner_level = Transient::new(lim, inner_level);
-    let outer_level = build_outer_level(lim, old_v, scratch, dir, marginal_ctx)?;
+    let outer_level = build_outer_level(lim, old_v, triples, layout, scratch, dir, marginal_ctx)?;
 
     Ok(Some(tdd.replace_level_pair(
         (info.v_idx, outer_level),
@@ -184,63 +312,35 @@ fn rebuild_levels(
     )))
 }
 
-/// Phase 2's sort. The four fields of a triple are node and slot indices,
-/// which between them usually fit one word: each field is cut to the bits its
-/// largest value needs, the words are radix sorted ([`Radix::sort`]) and
-/// written back in their order. Cutting a field to its width keeps the order
-/// of its values, so the order is the one sorting the `u128`s leaves. The
-/// triples come in ascending order of `src`, the lowest field
-/// ([`collect_triples`]), so the radix sort places only the fields above it.
-///
-/// The sort is not charged to the work clock: the probe charges the pairs it
-/// rebuilds, and the pool search's work bound is set in that measure.
-///
-/// # Errors
-///
-/// [`OperationError::OverBudget`] if the word buffers are refused.
-fn sort_triples(lim: &Limits, packed: &mut [u128], words: &mut Vec<u64>) -> Result<(), OperationError> {
-    if packed.len() < RADIX_MIN_ROWS {
-        packed.sort_unstable();
-        return Ok(());
-    }
-    let mut any = [0u32; 4];
-    for &p in packed.iter() {
-        for (k, field) in any.iter_mut().enumerate() {
-            *field |= (p >> (96 - 32 * k)) as u32;
+/// Bounds on the four fields of a rotation's triples, bit for bit: every
+/// value a field takes has no bit its bound lacks. The fields are read from
+/// the two old levels' pairs, which are fewer than the triples they expand
+/// into.
+fn field_bounds(old_v_level: &TddLevel, old_w_level: &TddLevel, dir: RotationKind, crossed: bool) -> [u32; 4] {
+    let mut v_axis = 0u32;
+    for i in 0..old_v_level.nodes.len() {
+        for vp in old_v_level.pairs_iter_of_idx(i) {
+            v_axis |= match dir {
+                RotationKind::Left => vp.left.0,
+                RotationKind::Right => vp.right.0,
+            };
         }
     }
-    let width = any.map(|x| 32 - x.leading_zeros());
-    let bits = width.iter().sum::<u32>();
-    if bits > 64 {
-        packed.sort_unstable();
-        return Ok(());
-    }
-    // Where each field starts in the word, the first field highest.
-    let shift = [width[1] + width[2] + width[3], width[2] + width[3], width[3], 0];
-    words.clear();
-    lim.reserve(words, packed.len())?;
-    words.extend(packed.iter().map(|&p| {
-        let mut w = 0u128;
-        for (k, &at) in shift.iter().enumerate() {
-            w |= (((p >> (96 - 32 * k)) as u32) as u128) << at;
+    let (mut stored_left, mut stored_right) = (0u32, 0u32);
+    for i in 0..old_w_level.nodes.len() {
+        for wp in old_w_level.pairs_iter_of_idx(i) {
+            stored_left |= wp.left.0;
+            stored_right |= wp.right.0;
         }
-        w as u64
-    }));
-    let mut radix = Radix::default();
-    debug_assert!(packed.windows(2).all(|w| tri_src(w[0]) <= tri_src(w[1])), "the triples come in ascending order of their src");
-    let sorted = radix.sort_polling(lim, words, width[3] as usize, (bits - width[3]) as usize, &mut |_| Ok(()));
-    radix.discard(lim);
-    sorted?;
-    for (p, &w) in packed.iter_mut().zip(words.iter()) {
-        let w = w as u128;
-        let mut q = 0u128;
-        for (k, (&at, &bits)) in shift.iter().zip(width.iter()).enumerate() {
-            let field = (w >> at) & ((1u128 << bits) - 1);
-            q |= field << (96 - 32 * k);
-        }
-        *p = q;
     }
-    Ok(())
+    // A crossed rotation's w had its children swapped: its left side is the
+    // stored right one.
+    let (w_left, w_right) = if crossed { (stored_right, stored_left) } else { (stored_left, stored_right) };
+    let src = old_v_level.nodes.len().saturating_sub(1) as u32;
+    match dir {
+        RotationKind::Left => [v_axis, w_left, w_right, src],
+        RotationKind::Right => [w_right, v_axis, w_left, src],
+    }
 }
 
 /// Phase 1: expand every old v-pair against the w-level into packed triples.
@@ -251,13 +351,15 @@ fn sort_triples(lim: &Limits, packed: &mut [u128], words: &mut Vec<u64>) -> Resu
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] if the triple buffer's growth is refused.
-fn collect_triples(
+#[allow(clippy::too_many_arguments)]
+fn collect_triples<W: Word>(
     lim: &Limits,
     old_v_level: &TddLevel,
     old_w_level: &TddLevel,
     dir: RotationKind,
     crossed: bool,
-    triples: &mut Vec<u128>,
+    layout: &Layout,
+    triples: &mut Vec<W>,
     max_pairs: usize,
 ) -> Result<bool, OperationError> {
     for i in 0..old_v_level.nodes.len() {
@@ -281,7 +383,7 @@ fn collect_triples(
                         w_left,
                     ),
                 };
-                lim.try_push(triples, pack_triple(inner, src, axis))?;
+                lim.try_push(triples, W::pack(layout, inner, src, axis))?;
                 // Checked per triple: one `vp` whose `w_local` fans out widely
                 // can push `triples` far past `max_pairs` within one `vp`.
                 if triples.len() >= max_pairs {
@@ -313,9 +415,10 @@ pub(super) struct PairGroup {
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] if the group table's growth is refused.
-fn group_by_inner_pair(
+fn group_by_inner_pair<W: Word>(
     lim: &Limits,
-    triples: &mut Vec<u128>,
+    triples: &mut Vec<W>,
+    layout: &Layout,
     group_info: &mut Vec<PairGroup>,
     keep_cells: bool,
 ) -> Result<(), OperationError> {
@@ -324,12 +427,12 @@ fn group_by_inner_pair(
     let n = triples.len();
     while read < n {
         let first = triples[read];
-        let inner_key = tri_inner_key(first);
+        let inner_key = first.inner_key(layout);
         let group_start = write as u32;
         let mut fp_hash: u64 = 0;
         let mut prev_cell = u64::MAX;
-        while read < n && tri_inner_key(triples[read]) == inner_key {
-            let cell = tri_cell(triples[read]); // (axis << 32) | src
+        while read < n && triples[read].inner_key(layout) == inner_key {
+            let cell = triples[read].cell(layout);
             if keep_cells || cell != prev_cell {
                 triples[write] = triples[read];
                 write += 1;
@@ -339,7 +442,7 @@ fn group_by_inner_pair(
             }
             read += 1;
         }
-        let group = PairGroup { hash: fp_hash, inner: tri_inner(first), start: group_start, end: write as u32, node: NodeIdx(u32::MAX) };
+        let group = PairGroup { hash: fp_hash, inner: tri_inner(first, layout), start: group_start, end: write as u32, node: NodeIdx(u32::MAX) };
         lim.try_push(group_info, group)?;
     }
     triples.truncate(write);
@@ -358,9 +461,10 @@ fn group_by_inner_pair(
 /// [`OperationError::OverBudget`] if the pair table's growth or the level's
 /// arena is refused. The partially built level is dropped, so its charge goes
 /// back first.
-fn build_inner_level(
+fn build_inner_level<W: Word>(
     lim: &Limits,
-    triples: &[u128],
+    triples: &[W],
+    layout: &Layout,
     group_info: &mut [PairGroup],
     bucket: &mut BucketScratch,
     marginal_ctx: bool,
@@ -380,7 +484,7 @@ fn build_inner_level(
     } else {
         // Phase 3: number the distinct cell lists in the order of their first
         // groups, which is the number of the inner node each group goes under.
-        let nodes = number_cell_lists(lim, triples, group_info, &mut bucket.table)?;
+        let nodes = number_cell_lists(lim, triples, layout, group_info, &mut bucket.table)?;
         if nodes + n_w_pairs >= max_pairs {
             return Ok(None);
         }
@@ -423,9 +527,10 @@ fn expand_every_pair(
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] if the table is refused.
-fn number_cell_lists(
+fn number_cell_lists<W: Word>(
     lim: &Limits,
-    triples: &[u128],
+    triples: &[W],
+    layout: &Layout,
     group_info: &mut [PairGroup],
     table: &mut Vec<u32>,
 ) -> Result<usize, OperationError> {
@@ -449,7 +554,7 @@ fn number_cell_lists(
                 break;
             }
             let other = &group_info[first as usize];
-            if other.hash == hash && same_cells(triples, other, &group_info[j]) {
+            if other.hash == hash && same_cells(triples, layout, other, &group_info[j]) {
                 group_info[j].node = other.node;
                 break;
             }
@@ -511,21 +616,23 @@ fn cluster_by_cell_list(
 /// [`OperationError::OverBudget`] if a filing buffer or the level's arena is
 /// refused. The partially built level is dropped, so its charge goes back
 /// first.
-fn build_outer_level(
+fn build_outer_level<W: Word>(
     lim: &Limits,
     old_v_level: &TddLevel,
+    triples: &mut Vec<W>,
+    layout: &Layout,
     scratch: &mut RestructureScratch,
     dir: RotationKind,
     marginal_ctx: bool,
 ) -> Result<TddLevel, OperationError> {
     let n_v = old_v_level.nodes.len();
-    let filed = file_outer_pairs(lim, scratch, n_v, dir, marginal_ctx);
+    let filed = file_outer_pairs(lim, triples, layout, scratch, n_v, dir, marginal_ctx);
     // Last read of `triples` and the groups: the filed lists now hold every
-    // outer pair. Release the 16 B/triple buffer before the arena that copies
-    // those pairs is built.
-    release_or_clear(lim, &mut scratch.packed);
+    // outer pair. Release the triples before the arena that copies those
+    // pairs is built.
+    release_or_clear(lim, triples);
     release_or_clear(lim, &mut scratch.group_info);
-    release_or_clear(lim, &mut scratch.words);
+    release_or_clear(lim, &mut scratch.by_axis);
     release_or_clear(lim, &mut scratch.axis_ends);
     let built = filed.and_then(|()| {
         let mut outer_level = Transient::new(lim, TddLevel::new());
@@ -585,14 +692,16 @@ fn filed_groups(group_info: &[PairGroup], marginal_ctx: bool) -> impl Iterator<I
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] if a buffer is refused.
-fn file_outer_pairs(
+fn file_outer_pairs<W: Word>(
     lim: &Limits,
+    triples: &[W],
+    layout: &Layout,
     scratch: &mut RestructureScratch,
     n_v: usize,
     dir: RotationKind,
     marginal_ctx: bool,
 ) -> Result<(), OperationError> {
-    let RestructureScratch { packed: triples, group_info, words: by_axis, axis_ends, outer_ends: ends, outer_pairs: pairs, .. } = scratch;
+    let RestructureScratch { group_info, by_axis, axis_ends, outer_ends: ends, outer_pairs: pairs, .. } = scratch;
     let filed = || filed_groups(group_info, marginal_ctx).flat_map(|g| triples[g.start as usize..g.end as usize].iter().map(move |&p| (g.node, p)));
     // Each node's pair count, at the slot after the node's.
     ends.clear();
@@ -600,8 +709,8 @@ fn file_outer_pairs(
     let mut cells = 0usize;
     let mut max_axis = 0u32;
     for (_, p) in filed() {
-        ends[tri_src(p) as usize + 1] += 1;
-        max_axis = max_axis.max(tri_axis(p).0);
+        ends[tri_src(p, layout) as usize + 1] += 1;
+        max_axis = max_axis.max(tri_axis(p, layout).0);
         cells += 1;
     }
     // Each node's start; the filing below moves each to the node's end.
@@ -621,7 +730,7 @@ fn file_outer_pairs(
         axis_ends.clear();
         lim.try_resize(axis_ends, axis_range + 1, 0)?;
         for (_, p) in filed() {
-            axis_ends[tri_axis(p).0 as usize + 1] += 1;
+            axis_ends[tri_axis(p, layout).0 as usize + 1] += 1;
         }
         for a in 0..axis_range {
             axis_ends[a + 1] += axis_ends[a];
@@ -629,8 +738,8 @@ fn file_outer_pairs(
         by_axis.clear();
         lim.try_resize(by_axis, cells, 0)?;
         for (node, p) in filed() {
-            let at = &mut axis_ends[tri_axis(p).0 as usize];
-            by_axis[*at as usize] = (u64::from(tri_src(p)) << 32) | u64::from(node.0);
+            let at = &mut axis_ends[tri_axis(p, layout).0 as usize];
+            by_axis[*at as usize] = (u64::from(tri_src(p, layout)) << 32) | u64::from(node.0);
             *at += 1;
         }
         let mut begin = 0;
@@ -643,10 +752,10 @@ fn file_outer_pairs(
     } else {
         for (node, p) in filed() {
             let outer_pair = match dir {
-                RotationKind::Left => ChildPair::new(node, tri_axis(p)),
-                RotationKind::Right => ChildPair::new(tri_axis(p), node),
+                RotationKind::Left => ChildPair::new(node, tri_axis(p, layout)),
+                RotationKind::Right => ChildPair::new(tri_axis(p, layout), node),
             };
-            file(tri_src(p), outer_pair);
+            file(tri_src(p, layout), outer_pair);
         }
         if !marginal_ctx && dir == RotationKind::Right {
             let mut begin = 0;
@@ -668,14 +777,13 @@ fn file_outer_pairs(
 
 
 /// Whether two groups carry the same cell list in the deduped (packed)
-/// triples array. Two cells are equal iff their `(axis, src)` parts match —
-/// that is the low 64 bits of the packed key (`tri_cell`), so the comparison
-/// reduces to a `u64` elementwise equality over the two slices.
+/// triples array. Two cells are equal iff their `(axis, src)` parts match,
+/// the low bits of the packed word ([`Word::cell`]).
 #[inline]
-fn same_cells(triples: &[u128], a: &PairGroup, b: &PairGroup) -> bool {
+fn same_cells<W: Word>(triples: &[W], layout: &Layout, a: &PairGroup, b: &PairGroup) -> bool {
     let a = &triples[a.start as usize..a.end as usize];
     let b = &triples[b.start as usize..b.end as usize];
-    a.len() == b.len() && a.iter().zip(b.iter()).all(|(&x, &y)| tri_cell(x) == tri_cell(y))
+    a.len() == b.len() && a.iter().zip(b.iter()).all(|(&x, &y)| x.cell(layout) == y.cell(layout))
 }
 
 #[cfg(test)]
