@@ -17,7 +17,8 @@ fn clustered_groups(rng: &mut Lcg, n_v: u32, axes: &[u32]) -> (Vec<u128>, Vec<Pa
                 (src << 32) | u64::from(axis)
             })
             .collect();
-        cells.sort_unstable();
+        // In a group's order: by axis, then by src.
+        cells.sort_unstable_by_key(|&c| (c as u32, (c >> 32) as u32));
         cells.dedup();
         lists.push(cells);
     }

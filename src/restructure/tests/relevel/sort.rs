@@ -2,16 +2,18 @@ use super::*;
 use crate::vtree::rng::Lcg;
 use crate::Engine;
 
-/// Triples whose fields stay under the given widths, sorted by
-/// `sort_triples` and by a comparison sort.
+/// Triples whose fields stay under the given widths, in ascending order of
+/// their src as `collect_triples` leaves them, sorted by `sort_triples` and
+/// by a comparison sort.
 fn sorted_both_ways(rng: &mut Lcg, width: [u32; 4], n: usize) -> (Vec<u128>, Vec<u128>) {
     let field = |rng: &mut Lcg, w: u32| if w == 0 { 0 } else { (rng.next_u64() as u32) >> (32 - w) };
-    let triples: Vec<u128> = (0..n)
+    let mut triples: Vec<u128> = (0..n)
         .map(|_| {
             let f: Vec<u32> = width.iter().map(|&w| field(rng, w)).collect();
             ((f[0] as u128) << 96) | ((f[1] as u128) << 64) | ((f[2] as u128) << 32) | f[3] as u128
         })
         .collect();
+    triples.sort_by_key(|&t| tri_src(t));
     let mut want = triples.clone();
     want.sort_unstable();
     let mut got = triples;

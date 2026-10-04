@@ -31,32 +31,34 @@ use crate::limits::{Limits, OperationError, Transient};
 use crate::sort::{Radix, RADIX_MIN_ROWS};
 
 /// Pack a search triple `(inner, src, axis)` into one `u128` whose numeric order
-/// is exactly the tuple's derived lexicographic order `(inner.left,
-/// inner.right, src, axis)` — all four fields are `u32`, so the packing is
-/// lossless and order-preserving. The high 64 bits are the `inner` pair (its own
-/// sort key); the low 64 bits are the `(src, axis)` "cell". Sorting by this key
-/// therefore groups cells by `inner` and orders cells within a group by
-/// `(src, axis)` — exactly what the group scan below relies on, but as a single
-/// `u128` compare instead of a four-field branchy tuple compare.
+/// is the lexicographic order `(inner.left, inner.right, axis, src)`: all four
+/// fields are `u32`, so the packing is lossless and order-preserving. The high
+/// 64 bits are the `inner` pair (its own sort key); the low 64 bits are the
+/// `(axis, src)` "cell". Sorting by this key therefore groups cells by `inner`
+/// and orders cells within a group by `(axis, src)`, which is what the group
+/// scan below relies on, as a single `u128` compare instead of a four-field
+/// branchy tuple compare. `src` is the lowest field because the triples are
+/// collected in ascending order of it, which the sort then need not place
+/// ([`sort_triples`]).
 #[inline]
 fn pack_triple(inner: ChildPair, src: u32, axis: EncodedChildRef) -> u128 {
     ((inner.left.0 as u128) << 96)
         | ((inner.right.0 as u128) << 64)
-        | ((src as u128) << 32)
-        | (axis.0 as u128)
+        | ((axis.0 as u128) << 32)
+        | (src as u128)
 }
 #[inline]
 fn tri_inner_key(p: u128) -> u64 { (p >> 64) as u64 }
 #[inline]
-fn tri_cell(p: u128) -> u64 { p as u64 } // (src << 32) | axis — the fp/dedup key
+fn tri_cell(p: u128) -> u64 { p as u64 } // (axis << 32) | src — the fp/dedup key
 #[inline]
 fn tri_inner(p: u128) -> ChildPair {
     ChildPair::new(EncodedChildRef::from_raw((p >> 96) as u32), EncodedChildRef::from_raw((p >> 64) as u32))
 }
 #[inline]
-fn tri_src(p: u128) -> u32 { (p >> 32) as u32 }
+fn tri_src(p: u128) -> u32 { p as u32 }
 #[inline]
-fn tri_axis(p: u128) -> EncodedChildRef { EncodedChildRef::from_raw(p as u32) }
+fn tri_axis(p: u128) -> EncodedChildRef { EncodedChildRef::from_raw((p >> 32) as u32) }
 
 /// Rebuild the two levels of a rotation in `dir` and return the levels the
 /// rotation replaced, or `None` if the probe was abandoned.
@@ -133,7 +135,7 @@ fn rebuild_levels(
     }
 
     // Phase 2: sort the packed triples. A `u128` numeric sort is order-identical
-    // to sorting the `(inner, src, axis)` tuple lexicographically (see
+    // to sorting the `(inner, axis, src)` tuple lexicographically (see
     // `pack_triple`), but a single-key integer sort instead of a four-field
     // branchy compare. After sorting, cells for each inner pair are contiguous
     // and sorted — no per-group sort needed.
@@ -153,7 +155,7 @@ fn rebuild_levels(
     );
 
     // In marginal context (full expansion) the cell multiset is kept: a duplicate
-    // (src,axis) cell is a legitimate separate count-contribution (two
+    // (axis, src) cell is a legitimate separate count-contribution (two
     // marginalization-collapsed twin primes), so cell-deduping it would drop
     // count-mass. Boolean mode dedups.
     scratch.group_info.clear();
@@ -186,7 +188,9 @@ fn rebuild_levels(
 /// which between them usually fit one word: each field is cut to the bits its
 /// largest value needs, the words are radix sorted ([`Radix::sort`]) and
 /// written back in their order. Cutting a field to its width keeps the order
-/// of its values, so the order is the one sorting the `u128`s leaves.
+/// of its values, so the order is the one sorting the `u128`s leaves. The
+/// triples come in ascending order of `src`, the lowest field
+/// ([`collect_triples`]), so the radix sort places only the fields above it.
 ///
 /// The sort is not charged to the work clock: the probe charges the pairs it
 /// rebuilds, and the pool search's work bound is set in that measure.
@@ -223,7 +227,8 @@ fn sort_triples(lim: &Limits, packed: &mut [u128], words: &mut Vec<u64>) -> Resu
         w as u64
     }));
     let mut radix = Radix::default();
-    let sorted = radix.sort_polling(lim, words, 0, bits as usize, &mut |_| Ok(()));
+    debug_assert!(packed.windows(2).all(|w| tri_src(w[0]) <= tri_src(w[1])), "the triples come in ascending order of their src");
+    let sorted = radix.sort_polling(lim, words, width[3] as usize, (bits - width[3]) as usize, &mut |_| Ok(()));
     radix.discard(lim);
     sorted?;
     for (p, &w) in packed.iter_mut().zip(words.iter()) {
@@ -324,7 +329,7 @@ fn group_by_inner_pair(
         let mut fp_hash: u64 = 0;
         let mut prev_cell = u64::MAX;
         while read < n && tri_inner_key(triples[read]) == inner_key {
-            let cell = tri_cell(triples[read]); // (src << 32) | axis
+            let cell = tri_cell(triples[read]); // (axis << 32) | src
             if keep_cells || cell != prev_cell {
                 triples[write] = triples[read];
                 write += 1;
@@ -656,7 +661,7 @@ fn file_outer_pairs(
 
 
 /// Whether two groups carry the same cell list in the deduped (packed)
-/// triples array. Two cells are equal iff their `(src, axis)` parts match —
+/// triples array. Two cells are equal iff their `(axis, src)` parts match —
 /// that is the low 64 bits of the packed key (`tri_cell`), so the comparison
 /// reduces to a `u64` elementwise equality over the two slices.
 #[inline]
