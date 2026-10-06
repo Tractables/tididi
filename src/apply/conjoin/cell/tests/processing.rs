@@ -536,3 +536,46 @@ fn the_grouped_walk_emits_the_pairs_of_the_ungrouped_walk() {
     assert!(ungrouped.len() < f_pairs.len() * 70, "the fixture must kill some combinations");
     assert_eq!(walk(true), ungrouped);
 }
+
+/// `push_kept` grows the sink's buffer at the survivors that pushing each
+/// survivor in turn grows it at: after every prefix of the candidates, the
+/// two buffers hold the same pairs at the same capacity, whether a run starts
+/// with room, fills the buffer midway, or starts on a full buffer, and with
+/// dead candidates on either side at the boundary.
+#[test]
+fn push_kept_grows_where_pushing_each_survivor_would() {
+    use super::{push_kept, CollectSink, PairSink};
+    let eng = Engine::new();
+    let cands: Vec<(u32, u32)> = (0..40u32)
+        .map(|k| match k % 5 {
+            1 => (NO_PRODUCT, k),
+            3 => (k, NO_PRODUCT),
+            _ => (k, k + 100),
+        })
+        .collect();
+    let start = |cap: usize, filled: usize| {
+        let mut v: Vec<ChildPair> = Vec::with_capacity(cap);
+        v.extend((0..filled as u32).map(|k| pair(k, k)));
+        v
+    };
+    for cap in [0usize, 1, 3, 7, 8] {
+        for filled in [0usize, 1, 3] {
+            if filled > cap { continue; }
+            for n in 0..=cands.len() {
+                let mut kept = start(cap, filled);
+                push_kept(&eng, &mut CollectSink { out: &mut kept }, &cands[..n], |&(l, r)| {
+                    (l, if l == NO_PRODUCT { NO_PRODUCT } else { r })
+                })
+                .expect("an unbudgeted push succeeds");
+                let mut each = start(cap, filled);
+                for &(l, r) in &cands[..n] {
+                    if l != NO_PRODUCT && r != NO_PRODUCT {
+                        CollectSink { out: &mut each }.pair(&eng, l, r).expect("an unbudgeted push succeeds");
+                    }
+                }
+                assert_eq!(kept, each, "cap {cap}, filled {filled}, {n} candidates");
+                assert_eq!(kept.capacity(), each.capacity(), "cap {cap}, filled {filled}, {n} candidates");
+            }
+        }
+    }
+}

@@ -88,8 +88,13 @@ pub(crate) trait PairSink {
     /// (the emit impl snapshots `level.arena_len()`).
     fn begin(&mut self) -> usize;
 
-    /// One surviving (lc, rc) pair of a multi-pair cell.
+    /// One surviving (lc, rc) pair of a multi-pair cell, pushed through the
+    /// buffer's growth policy.
     fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError>;
+
+    /// The buffer [`pair`](Self::pair) pushes onto, which [`push_kept`] writes
+    /// into directly while it has spare capacity.
+    fn buf(&mut self) -> &mut Vec<ChildPair>;
 
     /// Finish a multi-pair cell.
     fn end(
@@ -132,6 +137,11 @@ impl PairSink for EmitSink<'_> {
             self.level,
             ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)),
         )
+    }
+
+    #[inline(always)]
+    fn buf(&mut self) -> &mut Vec<ChildPair> {
+        &mut self.level.pairs
     }
 
     #[inline(always)]
@@ -180,6 +190,11 @@ impl PairSink for CollectSink<'_> {
     }
 
     #[inline(always)]
+    fn buf(&mut self) -> &mut Vec<ChildPair> {
+        self.out
+    }
+
+    #[inline(always)]
     fn end(
         &mut self,
         _eng: &Engine,
@@ -189,6 +204,58 @@ impl PairSink for CollectSink<'_> {
     ) -> Result<(), OperationError> {
         Ok(())
     }
+}
+
+/// Push the surviving candidates of `items` in order: `cand` maps an item to
+/// its `(lc, rc)`, and a candidate survives when neither side is
+/// [`NO_PRODUCT`]. `cand` reads the right side only for a live left side, as
+/// a walk that tests each side before the next would, and returns
+/// `NO_PRODUCT` for it otherwise.
+///
+/// While the sink's buffer has spare capacity, candidates are written without
+/// a capacity test or a branch on survival: each is stored at the buffer's end
+/// and the length, held in a register for the run, steps past survivors only.
+/// A run holds no more candidates than the spare capacity, so no write passes
+/// it. Once the buffer is full, the next survivor goes through
+/// [`PairSink::pair`], which grows the buffer; that is the survivor at which
+/// pushing each survivor in turn would grow it, so the buffer's capacity, and
+/// every meter charged from it, changes at the same pairs as before.
+#[inline(always)]
+pub(super) fn push_kept<T, S: PairSink>(
+    eng: &Engine,
+    sink: &mut S,
+    items: &[T],
+    mut cand: impl FnMut(&T) -> (u32, u32),
+) -> Result<(), OperationError> {
+    let mut rest = items;
+    while !rest.is_empty() {
+        let v = sink.buf();
+        let room = v.capacity() - v.len();
+        if room == 0 {
+            let (lc, rc) = cand(&rest[0]);
+            rest = &rest[1..];
+            if lc != NO_PRODUCT && rc != NO_PRODUCT {
+                sink.pair(eng, lc, rc)?;
+            }
+            continue;
+        }
+        let (run, tail) = rest.split_at(room.min(rest.len()));
+        rest = tail;
+        let out = v.as_mut_ptr();
+        let mut len = v.len();
+        for item in run {
+            let (lc, rc) = cand(item);
+            // Safety: `len` starts at the buffer's length and steps at most
+            // once per item of `run`, which holds no more items than the
+            // spare capacity, so the write stays inside the allocation.
+            unsafe { out.add(len).write(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc))) };
+            len += usize::from(lc != NO_PRODUCT && rc != NO_PRODUCT);
+        }
+        // Safety: slots below `len` hold the old contents and one written
+        // pair per step.
+        unsafe { v.set_len(len) };
+    }
+    Ok(())
 }
 
 /// The one-sided product walk: one operand contributes a single pair, the other
@@ -221,26 +288,24 @@ where
     let cell_start = sink.begin();
     if ITER_F {
         // N×1: the row changes per pair, so each lookup resolves its own.
-        let p2 = &g_pairs[0];
-        for p1 in f_pairs {
-            let lc = left.get(node_idx, p1.left.0, p2.left.0);
-            if lc == NO_PRODUCT { continue; }
-            let rc = right.get(node_idx, p1.right.0, p2.right.0);
-            if rc == NO_PRODUCT { continue; }
-            sink.pair(eng, lc, rc)?;
-        }
+        let (c, d) = (g_pairs[0].left.0, g_pairs[0].right.0);
+        let node_idx = &*node_idx;
+        push_kept(eng, sink, f_pairs, |p1| {
+            let lc = left.get(node_idx, p1.left.0, c);
+            if lc == NO_PRODUCT { return (lc, lc); }
+            (lc, right.get(node_idx, p1.right.0, d))
+        })?;
     } else {
         // 1×N: one f pair fixes both child rows for the whole sweep.
         let p1 = &f_pairs[0];
         let lrow = left.row(p1.left.0);
         let rrow = right.row(p1.right.0);
-        for p2 in g_pairs {
+        let node_idx = &*node_idx;
+        push_kept(eng, sink, g_pairs, |p2| {
             let lc = left.get_in_row(node_idx, lrow, p2.left.0);
-            if lc == NO_PRODUCT { continue; }
-            let rc = right.get_in_row(node_idx, rrow, p2.right.0);
-            if rc == NO_PRODUCT { continue; }
-            sink.pair(eng, lc, rc)?;
-        }
+            if lc == NO_PRODUCT { return (lc, lc); }
+            (lc, right.get_in_row(node_idx, rrow, p2.right.0))
+        })?;
     }
     sink.end(eng, node_idx, grid_pos, cell_start)?;
     Ok(())
@@ -311,11 +376,8 @@ where
                         continue;
                     }
                     let rrow = right.row(p1.right.0);
-                    for p2 in g2 {
-                        let rc = right.get_in_row(node_idx, rrow, p2.right.0);
-                        if rc == NO_PRODUCT { continue; }
-                        sink.pair(eng, lc, rc)?;
-                    }
+                    let node_idx = &*node_idx;
+                    push_kept(eng, sink, g2, |p2| (lc, right.get_in_row(node_idx, rrow, p2.right.0)))?;
                 }
             }
         }
@@ -333,13 +395,12 @@ where
             }
             let lrow = left.row(p1.left.0);
             let rrow = right.row(p1.right.0);
-            for p2 in g_pairs {
+            let node_idx = &*node_idx;
+            push_kept(eng, sink, g_pairs, |p2| {
                 let lc = left.get_in_row(node_idx, lrow, p2.left.0);
-                if lc == NO_PRODUCT { continue; }
-                let rc = right.get_in_row(node_idx, rrow, p2.right.0);
-                if rc == NO_PRODUCT { continue; }
-                sink.pair(eng, lc, rc)?;
-            }
+                if lc == NO_PRODUCT { return (lc, lc); }
+                (lc, right.get_in_row(node_idx, rrow, p2.right.0))
+            })?;
         }
     }
     sink.end(eng, node_idx, grid_pos, cell_start)?;
