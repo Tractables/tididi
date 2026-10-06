@@ -93,8 +93,18 @@ pub(crate) trait PairSink {
     fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError>;
 
     /// The buffer [`pair`](Self::pair) pushes onto, which [`push_kept`] writes
-    /// into directly while it has spare capacity.
+    /// into directly while it has [room](Self::room).
     fn buf(&mut self) -> &mut Vec<ChildPair>;
+
+    /// How many pairs [`push_kept`] may write into [`buf`](Self::buf)
+    /// before the next one has to go through [`pair`](Self::pair): the
+    /// buffer's spare capacity, unless the sink grows its buffer on a
+    /// schedule of its own.
+    #[inline(always)]
+    fn room(&mut self) -> usize {
+        let v = self.buf();
+        v.capacity() - v.len()
+    }
 
     /// Finish a multi-pair cell.
     fn end(
@@ -142,6 +152,81 @@ impl PairSink for EmitSink<'_> {
     #[inline(always)]
     fn buf(&mut self) -> &mut Vec<ChildPair> {
         &mut self.level.pairs
+    }
+
+    #[inline(always)]
+    fn end(
+        &mut self, eng: &Engine, node_idx: &mut [u32],
+        grid_pos: usize,
+        start: usize,
+    ) -> Result<(), OperationError> {
+        emit_product_node(eng, self.level, node_idx, grid_pos, start)
+    }
+}
+
+/// [`EmitSink`] for a level whose pair arena was reserved before its row
+/// loop to hold every pair the loop writes, so the arena never grows.
+///
+/// The output-pair meter is charged from the arena's capacity as it grows.
+/// To keep the meter, and every stop rule that reads it, where the
+/// [`EmitSink`] walk would have it, this sink charges it on the schedule that
+/// walk's arena grows on: `charged` is the capacity that arena would have
+/// now, and when the arena's length reaches it the meter is charged for the
+/// next doubling ([`doubled_pairs_capacity`]) before the pair is pushed.
+///
+/// With `charged` at `usize::MAX` there is no schedule of its own, and the
+/// sink is exactly an [`EmitSink`]: the room is the arena's spare capacity
+/// and a full arena grows through [`try_push_pair_into`].
+pub(crate) struct ReservedEmitSink<'a> {
+    pub(crate) level: &'a mut TddLevel,
+    /// The pair capacity the meters have been charged for, or `usize::MAX`.
+    pub(crate) charged: usize,
+}
+
+impl PairSink for ReservedEmitSink<'_> {
+    #[inline(always)]
+    fn single(
+        &mut self, eng: &Engine, node_idx: &mut [u32],
+        grid_pos: usize,
+        lc: u32,
+        rc: u32,
+    ) -> Result<(), OperationError> {
+        EmitSink { level: &mut *self.level }.single(eng, node_idx, grid_pos, lc, rc)
+    }
+
+    #[inline(always)]
+    fn begin(&mut self) -> usize {
+        self.level.arena_len()
+    }
+
+    #[inline(always)]
+    fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
+        if self.level.pairs.len() == self.charged {
+            let grown = doubled_pairs_capacity(self.charged);
+            eng.limits().charge_output_pairs(grown - self.charged);
+            self.charged = grown;
+            super::super::note_scheduled_charge();
+            debug_assert!(
+                self.level.pairs.len() < self.level.pairs.capacity(),
+                "a reserved arena holds every pair its level writes"
+            );
+        }
+        try_push_pair_into(
+            eng,
+            self.level,
+            ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc)),
+        )
+    }
+
+    #[inline(always)]
+    fn buf(&mut self) -> &mut Vec<ChildPair> {
+        &mut self.level.pairs
+    }
+
+    #[inline(always)]
+    fn room(&mut self) -> usize {
+        let v = &self.level.pairs;
+        self.charged.min(v.capacity()) - v.len()
     }
 
     #[inline(always)]
@@ -211,51 +296,57 @@ impl PairSink for CollectSink<'_> {
 /// [`NO_PRODUCT`]. `cand` reads the right side only for a live left side, as
 /// a walk that tests each side before the next would, and returns
 /// `NO_PRODUCT` for it otherwise; so the right side alone says whether a
-/// candidate survives.
+/// candidate survives. With `kills` false no candidate can die (neither
+/// side's lookup [kills](ChildLookup::kills)), and every one is kept without
+/// a test.
 ///
-/// While the sink's buffer has spare capacity, survivors are written without
+/// While the sink has [room](PairSink::room), survivors are written without
 /// a capacity test: each is stored at the buffer's end and the length, held
 /// in a register for the run, steps past it. A dead candidate is skipped by a
 /// branch, not stored: in a counting diagram's conjunction most candidates
 /// die, as few as one in a hundred survives, and a branch that mostly goes
 /// one way costs less than a store of every candidate. A run holds no more
-/// candidates than the spare capacity, so no write passes it. Once the
-/// buffer is full, the next survivor goes through [`PairSink::pair`], which
-/// grows the buffer; that is the survivor at which pushing each survivor in
-/// turn would grow it, so the buffer's capacity, and every meter charged
-/// from it, changes at the same pairs as before.
+/// candidates than the room, so no write passes the buffer's capacity. Once
+/// the room is used up, the next survivor goes through [`PairSink::pair`],
+/// which grows the buffer; that is the survivor at which pushing each
+/// survivor in turn would grow it, so the buffer's capacity, and every meter
+/// charged from it, changes at the same pairs as before.
 #[inline(always)]
 pub(super) fn push_kept<T, S: PairSink>(
     eng: &Engine,
     sink: &mut S,
     items: &[T],
+    kills: bool,
     mut cand: impl FnMut(&T) -> (u32, u32),
 ) -> Result<(), OperationError> {
     let mut rest = items;
     while !rest.is_empty() {
-        let v = sink.buf();
-        let room = v.capacity() - v.len();
+        let room = sink.room();
         if room == 0 {
             let (lc, rc) = cand(&rest[0]);
             rest = &rest[1..];
             debug_assert!(lc != NO_PRODUCT || rc == NO_PRODUCT, "a dead left side stands for the right");
-            if rc != NO_PRODUCT {
+            debug_assert!(kills || rc != NO_PRODUCT, "a side that kills nothing answered no product");
+            if !kills || rc != NO_PRODUCT {
                 sink.pair(eng, lc, rc)?;
             }
             continue;
         }
         let (run, tail) = rest.split_at(room.min(rest.len()));
         rest = tail;
+        let v = sink.buf();
+        debug_assert!(run.len() <= v.capacity() - v.len(), "a sink's room is within its buffer's capacity");
         let out = v.as_mut_ptr();
         let mut len = v.len();
         for item in run {
             let (lc, rc) = cand(item);
             debug_assert!(lc != NO_PRODUCT || rc == NO_PRODUCT, "a dead left side stands for the right");
-            if rc != NO_PRODUCT {
+            debug_assert!(kills || rc != NO_PRODUCT, "a side that kills nothing answered no product");
+            if !kills || rc != NO_PRODUCT {
                 // Safety: `len` starts at the buffer's length and steps at
                 // most once per item of `run`, which holds no more items than
-                // the spare capacity, so the write stays inside the
-                // allocation.
+                // the sink's room, itself within the spare capacity, so the
+                // write stays inside the allocation.
                 unsafe { out.add(len).write(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc))) };
                 len += 1;
             }
@@ -295,13 +386,14 @@ where
     let n = if ITER_F { f_pairs.len() } else { g_pairs.len() };
     gate.poll(n as u64)?;
     let cell_start = sink.begin();
+    let kills = left.kills() || right.kills();
     if ITER_F {
         // N×1: the row changes per pair, so each lookup resolves its own.
         let (c, d) = (g_pairs[0].left.0, g_pairs[0].right.0);
         let node_idx = &*node_idx;
-        push_kept(eng, sink, f_pairs, |p1| {
+        push_kept(eng, sink, f_pairs, kills, |p1| {
             let lc = left.get(node_idx, p1.left.0, c);
-            if lc == NO_PRODUCT { return (lc, lc); }
+            if left.kills() && lc == NO_PRODUCT { return (lc, lc); }
             (lc, right.get(node_idx, p1.right.0, d))
         })?;
     } else {
@@ -310,9 +402,9 @@ where
         let lrow = left.row(p1.left.0);
         let rrow = right.row(p1.right.0);
         let node_idx = &*node_idx;
-        push_kept(eng, sink, g_pairs, |p2| {
+        push_kept(eng, sink, g_pairs, kills, |p2| {
             let lc = left.get_in_row(node_idx, lrow, p2.left.0);
-            if lc == NO_PRODUCT { return (lc, lc); }
+            if left.kills() && lc == NO_PRODUCT { return (lc, lc); }
             (lc, right.get_in_row(node_idx, rrow, p2.right.0))
         })?;
     }
@@ -346,7 +438,8 @@ where
     R: ChildLookup,
     S: PairSink,
 {
-    // ── N×M (implies both_multi_pair: both levels multi-pair ⟹ masks built) ──────
+    // ── N×M (implies both_multi_pair: both levels multi-pair ⟹ masks built
+    // for every side that can kill) ──────
     // The whole-cell dead test belongs to the row loop, which applies it to
     // every arm before the cell is entered; what is left here is the per-`p1`
     // form of it, which only this arm can use.
@@ -371,43 +464,49 @@ where
             let g1 = &f_pairs[g1_start..p1_idx];
             gate.poll((g1.len() * n2) as u64)?;
 
-            if ctx.sides.left.live_cols[p1_left.raw() as usize] & ctx.sides.left.reach[j] == 0 { continue; }
+            if left.kills() && ctx.sides.left.live_cols[p1_left.raw() as usize] & ctx.sides.left.reach[j] == 0 {
+                continue;
+            }
 
             let mut g2_start = 0;
             for &g2_end in g_runs {
                 let g2 = &g_pairs[g2_start..g2_end as usize];
                 g2_start = g2_end as usize;
                 let lc = left.get(node_idx, p1_left.0, g2[0].left.0);
-                if lc == NO_PRODUCT { continue; }
+                if left.kills() && lc == NO_PRODUCT { continue; }
 
                 for p1 in g1 {
-                    if ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j] == 0 {
+                    if right.kills()
+                        && ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j] == 0
+                    {
                         continue;
                     }
                     let rrow = right.row(p1.right.0);
                     let node_idx = &*node_idx;
-                    push_kept(eng, sink, g2, |p2| (lc, right.get_in_row(node_idx, rrow, p2.right.0)))?;
+                    // `lc` is live here, so only the right side can kill.
+                    push_kept(eng, sink, g2, right.kills(), |p2| (lc, right.get_in_row(node_idx, rrow, p2.right.0)))?;
                 }
             }
         }
     } else {
         // ── General N×M ───────────────────────────────────────────────
+        let kills = left.kills() || right.kills();
         for p1 in f_pairs {
             gate.poll(g_pairs.len() as u64)?;
-            if !left.passthrough()
+            if !left.passthrough() && left.kills()
                 && ctx.sides.left.live_cols[p1.left.raw() as usize] & ctx.sides.left.reach[j] == 0 {
                 continue;
             }
-            if !right.passthrough()
+            if !right.passthrough() && right.kills()
                 && ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j] == 0 {
                 continue;
             }
             let lrow = left.row(p1.left.0);
             let rrow = right.row(p1.right.0);
             let node_idx = &*node_idx;
-            push_kept(eng, sink, g_pairs, |p2| {
+            push_kept(eng, sink, g_pairs, kills, |p2| {
                 let lc = left.get_in_row(node_idx, lrow, p2.left.0);
-                if lc == NO_PRODUCT { return (lc, lc); }
+                if left.kills() && lc == NO_PRODUCT { return (lc, lc); }
                 (lc, right.get_in_row(node_idx, rrow, p2.right.0))
             })?;
         }
@@ -431,7 +530,9 @@ where
 /// liveness/reach arrays are always built when the culls read them.
 ///
 /// `ChildLookup::passthrough()` is a constant `false` on `DenseLookup`, so the
-/// plain instantiations carry no pass-through branch in the inner loops.
+/// plain instantiations carry no pass-through branch in the inner loops; and
+/// `ChildLookup::kills()` is a constant `false` on `CompleteLookup`, so a
+/// complete side carries no `NO_PRODUCT` test and no mask cull.
 ///
 /// The `g_pairs_scratch` lifetime is independent from `node_idx`: `right_level`
 /// borrows from a separate `Tdd` operand, and `pairs_view_decoded` borrows
@@ -491,9 +592,9 @@ where
         let p1 = &f_pairs[0];
         let p2 = &g_pairs[0];
         let lc = left.get(node_idx, p1.left.0, p2.left.0);
-        if lc != NO_PRODUCT {
+        if !left.kills() || lc != NO_PRODUCT {
             let rc = right.get(node_idx, p1.right.0, p2.right.0);
-            if rc != NO_PRODUCT {
+            if !right.kills() || rc != NO_PRODUCT {
                 sink.single(eng, node_idx, grid_pos, lc, rc)?;
             }
         }

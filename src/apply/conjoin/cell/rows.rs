@@ -105,8 +105,9 @@ const DEAD_SLAB_FILL_MAX_CELLS: usize = 1 << 16;
 ///
 /// `const DENSE` skips the per-row alive-mask fold on levels where it provably
 /// cannot skip anything: `ctx.both_multi_pair` false and neither side a pass-through, where
-/// `row_alive_masks` always returns `(0, u128::MAX)`. Only the plain route
-/// reaches that regime; the other three always fold.
+/// `row_alive_masks` always returns `(0, u128::MAX)`, or neither side able to
+/// [kill](ChildLookup::kills) a candidate, where no mask can clear. Only the
+/// plain routes reach those regimes; the other three always fold.
 ///
 /// `right_width` and `output_grid_base` are read from `ctx` rather than passed alongside it, so
 /// the row reset and the kernel's `grid_pos` derive from the same values by
@@ -138,8 +139,8 @@ where
     // Whether the per-column cull below can fire at all: the reach masks exist
     // only where both levels are multi-pair, a pass-through side has no grid to
     // be dead in, and `DENSE` is the regime where the masks are not folded.
-    let cull_left = !DENSE && ctx.both_multi_pair && !left.passthrough();
-    let cull_right = !DENSE && ctx.both_multi_pair && !right.passthrough();
+    let cull_left = !DENSE && ctx.both_multi_pair && !left.passthrough() && left.kills();
+    let cull_right = !DENSE && ctx.both_multi_pair && !right.passthrough() && right.kills();
 
     // One slab fill instead of `left_width` row fills. On a dense-slab action the
     // per-row resets below tile `output_grid_base .. output_grid_base + left_width*right_width` exactly once each
@@ -225,13 +226,13 @@ where
 }
 
 /// Materializing action: each surviving cell becomes a product node in the
-/// dense `left_width × right_width` output slab. Both dense routes are this
-/// action.
-struct Emit<'a> {
-    level: &'a mut TddLevel,
+/// dense `left_width × right_width` output slab, written through the sink
+/// `S`. Both dense routes are this action.
+struct Emit<S> {
+    sink: S,
 }
 
-impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for Emit<'_> {
+impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for Emit<S> {
     const DENSE_SLAB: bool = true;
 
     /// Dense slab: one grid row per f row.
@@ -253,9 +254,7 @@ impl<L: ChildLookup, R: ChildLookup> CellAction<L, R> for Emit<'_> {
             a.node_idx,
             a.left,
             a.right,
-            &mut EmitSink {
-                level: &mut *self.level,
-            },
+            &mut self.sink,
             a.gate,
         )
     }
@@ -282,7 +281,7 @@ pub(crate) fn run_level_rows_marginal(
         scratch,
         &left,
         &right,
-        &mut Emit { level },
+        &mut Emit { sink: EmitSink { level } },
     )
 }
 
@@ -408,7 +407,7 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool>(
     //   left_alive_mask  = 0u128      (the !both_multi_pair branch of `row_alive_masks`)
     //   right_alive_mask = `u128::MAX`  (the `|| !both_multi_pair` branch of `row_alive_masks`)
     // The driver passes those directly to the kernel, skipping the fold.
-    let mut action = Emit { level };
+    let mut action = Emit { sink: EmitSink { level } };
     run_level_rows::<DENSE, _, _, _>(
         eng,
         rows,
@@ -417,4 +416,63 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool>(
         &right,
         &mut action,
     )
+}
+
+/// Which plain-route child sides are [complete](super::super::products::Products::is_complete)
+/// and read by arithmetic, and how a level whose two sides both are writes
+/// its pairs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum PlainLookups {
+    /// Both sides read their grids.
+    Grid,
+    /// The left side is complete; the right reads its grid.
+    CompleteLeft,
+    /// The right side is complete; the left reads its grid.
+    CompleteRight,
+    /// Both sides are complete, so no candidate dies and the level's pairs
+    /// are known before its row loop. `charged` is the pair capacity the
+    /// meters have been charged for when the arena was reserved to hold every
+    /// pair, `usize::MAX` when it was not (see [`ReservedEmitSink`]).
+    Complete { charged: usize },
+}
+
+/// The row loop of `Route::PlainDense` and `Route::Dense` on a level with at
+/// least one [complete](super::super::products::Products::is_complete) child
+/// side: [`CompleteLookup`] on each complete side, the grid on the other.
+///
+/// With both sides complete no candidate dies and no dead-pair mask can cull,
+/// so the loop runs without the per-row mask fold (`DENSE`), with no
+/// `NO_PRODUCT` test, and writes through a [`ReservedEmitSink`]. With one
+/// side complete it is [`run_level_rows_plain::<false>`](run_level_rows_plain)
+/// with that side's lookup replaced: the fold and the culls on the grid side
+/// stay; on a level that is not `both_multi_pair` they find nothing, as on
+/// `Route::PlainDense` they would not be run.
+pub(crate) fn run_level_rows_complete(
+    eng: &Engine,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
+    level: &mut TddLevel,
+    lookups: PlainLookups,
+) -> Result<(), OperationError> {
+    let sides = rows.ctx.sides;
+    let complete = |p: &ChildPlan<'_>| CompleteLookup { stride: p.stride };
+    let grid = |p: &ChildPlan<'_>| DenseLookup { base: p.base, stride: p.stride };
+    match lookups {
+        PlainLookups::Complete { charged } => run_level_rows::<true, _, _, _>(
+            eng, rows, scratch,
+            &complete(&sides.left), &complete(&sides.right),
+            &mut Emit { sink: ReservedEmitSink { level, charged } },
+        ),
+        PlainLookups::CompleteLeft => run_level_rows::<false, _, _, _>(
+            eng, rows, scratch,
+            &complete(&sides.left), &grid(&sides.right),
+            &mut Emit { sink: EmitSink { level } },
+        ),
+        PlainLookups::CompleteRight => run_level_rows::<false, _, _, _>(
+            eng, rows, scratch,
+            &grid(&sides.left), &complete(&sides.right),
+            &mut Emit { sink: EmitSink { level } },
+        ),
+        PlainLookups::Grid => unreachable!("a level with no complete side takes the grid row loop"),
+    }
 }

@@ -605,9 +605,11 @@ pub(super) fn open_level_arenas(
 /// kernel with `MarginalLookup` sides; [`Route::Dense`] and
 /// [`Route::PlainDense`] assume no marginal child and read both child grids
 /// positionally.
+#[expect(clippy::too_many_arguments)]
 fn run_row_loop(
     eng: &Engine,
     route: Route,
+    lookups: PlainLookups,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
     level: &mut TddLevel,
@@ -615,6 +617,10 @@ fn run_row_loop(
     stream_state: &mut Option<StreamLevelState>,
 ) -> Result<(), OperationError> {
     let cell_ctx = rows.ctx;
+    if lookups != PlainLookups::Grid {
+        debug_assert!(matches!(route, Route::PlainDense | Route::Dense), "only the plain routes read a side by arithmetic");
+        return run_level_rows_complete(eng, rows, scratch, level, lookups);
+    }
 
     macro_rules! stream_rows {
         ($l:expr, $r:expr) => {
@@ -752,6 +758,9 @@ fn finish_sparse_marginal_level(
     )?;
     products.arena.free(output_grid_base, gw.here);
     products.finish_sparse(level, t.idx());
+    // The rows were built in order, so the product list numbers the live
+    // cells in cell order, as a dense emit would.
+    products.note_built(t.idx(), shape.f.here, gw.here, level.nodes.len());
     mark_passthrough_inlined(level, passthrough);
     Ok(())
 }
@@ -772,21 +781,83 @@ fn build_cell_ctx<'a>(
     plan: &MarginalPlan,
     output_grid_base: usize,
     bases: Sides<GridBase>,
-    masks: &'a crate::apply::conjoin::liveness::PrefilterMaskScratch,
+    masks: Option<&'a crate::apply::conjoin::liveness::PrefilterMaskScratch>,
     right_cols: Option<&'a RightColumns>,
 ) -> CellCtx<'a> {
-    let side = |plan: SidePlan, base: usize, stride: usize, masks: &'a liveness::PrefilterSideMasks|
-        ChildPlan { plan, base, stride: stride as u32, live_cols: &masks.live_cols, reach: &masks.reach };
+    // A level that built no masks hands the kernel empty ones, so a read of
+    // a mask it did not build is out of bounds rather than stale.
+    let side = |plan: SidePlan, base: usize, stride: usize, masks: Option<&'a liveness::PrefilterSideMasks>| ChildPlan {
+        plan, base, stride: stride as u32,
+        live_cols: masks.map_or(&[], |m| &m.live_cols),
+        reach: masks.map_or(&[], |m| &m.reach),
+    };
     CellCtx {
         output_grid_base,
         right_width: shape.g.here,
         both_multi_pair: plan.both_multi_pair,
         sides: Sides {
-            left: side(plan.sides.left, bases.left.idx(), shape.g.left, &masks.left),
-            right: side(plan.sides.right, bases.right.idx(), shape.g.right, &masks.right),
+            left: side(plan.sides.left, bases.left.idx(), shape.g.left, masks.map(|m| &m.left)),
+            right: side(plan.sides.right, bases.right.idx(), shape.g.right, masks.map(|m| &m.right)),
         },
         right_cols,
     }
+}
+
+/// How a level on `route` reads its child sides: by arithmetic on each
+/// [complete](crate::apply::conjoin::products::Products::is_complete) side
+/// of a plain route, from the grid otherwise. The pair capacity of a level
+/// with both sides complete is filled in once its arenas are open
+/// ([`reserve_complete_level`]).
+fn plain_lookups(route: Route, complete: Sides<bool>) -> PlainLookups {
+    if grid_lookups_forced() || !matches!(route, Route::PlainDense | Route::Dense) {
+        return PlainLookups::Grid;
+    }
+    match (complete.left, complete.right) {
+        (true, true) => PlainLookups::Complete { charged: usize::MAX },
+        (true, false) => PlainLookups::CompleteLeft,
+        (false, true) => PlainLookups::CompleteRight,
+        (false, false) => PlainLookups::Grid,
+    }
+}
+
+/// Reserve the arenas of a level whose two child sides are complete to
+/// exactly what its row loop writes, and return the pair capacity the
+/// output-pair meter has been charged for (see
+/// [`ReservedEmitSink`](crate::apply::conjoin::cell::ReservedEmitSink)).
+///
+/// No candidate dies on such a level, so every cell of a node of `f` with
+/// pairs and a node of `g` with pairs is one node, holding the product of
+/// their pair counts; a cell of two one-pair nodes stores its pair inline
+/// and every other cell stores its pairs in the arena. Both counts take one
+/// pass over the two operand levels' nodes.
+///
+/// Under the bounded-growth mode the arena grows as it would on the grid
+/// route, and `usize::MAX` says so. The reservations are charged to the
+/// budget like any other and refuse with [`OperationError::OverBudget`].
+fn reserve_complete_level(
+    lim: &crate::limits::Limits,
+    f_level: &TddLevel,
+    g_level: &TddLevel,
+    level: &mut TddLevel,
+) -> Result<usize, OperationError> {
+    if lim.bounded_growth() {
+        return Ok(usize::MAX);
+    }
+    let charged = level.pairs.capacity();
+    /// Pairs in all, nodes with pairs, and nodes with one pair.
+    fn census(level: &TddLevel) -> (u128, u128, u128) {
+        level.pair_counts().fold((0, 0, 0), |(pairs, live, single), k| {
+            (pairs + k as u128, live + u128::from(k > 0), single + u128::from(k == 1))
+        })
+    }
+    let (f_pairs, f_live, f_single) = census(f_level);
+    let (g_pairs, g_live, g_single) = census(g_level);
+    let fit = |n: u128| usize::try_from(n).map_err(|_| OperationError::OverBudget);
+    let nodes = fit(f_live * g_live)?;
+    let pairs = fit(f_pairs * g_pairs - f_single * g_single)?;
+    lim.reserve_exact(&mut level.nodes, nodes)?;
+    lim.reserve_exact(&mut level.pairs, pairs)?;
+    Ok(charged)
 }
 
 /// Build one level on the dense product grid: route plan, child grids, cell
@@ -817,9 +888,15 @@ pub(super) fn build_level_dense(
         right: run.products.arena.materialized(ri).expect("the right child's grid is materialized"),
     };
 
+    let mut lookups = plain_lookups(
+        route,
+        Sides { left: run.products.is_complete(li), right: run.products.is_complete(ri) },
+    );
     // Only the grid-reading dead-pair liveness masks are deferred this far: they need
     // the materialized child grids, and `both_multi_pair` implies a route that has them.
-    if both_multi_pair {
+    // With both sides complete no mask can clear, and the row loop reads none.
+    let masked = both_multi_pair && !matches!(lookups, PlainLookups::Complete { .. });
+    if masked {
         build_level_prefilter_masks(eng, run, g, shape, &plan, bases)?;
     }
 
@@ -838,9 +915,14 @@ pub(super) fn build_level_dense(
 
     let grouped = both_multi_pair && !passthrough.left && !passthrough.right;
     let right_cols = RightColumns::build(eng, g.level(t), gw.here, sides.left.view, sides.right.view, grouped);
-    let cell_ctx = build_cell_ctx(shape, &plan, output_grid_base.idx(), bases, run.prefilter_masks, right_cols.as_ref());
+    let masks = masked.then_some(&*run.prefilter_masks);
+    let cell_ctx = build_cell_ctx(shape, &plan, output_grid_base.idx(), bases, masks, right_cols.as_ref());
 
     open_level_arenas(lim, f, g, shape, level, route)?;
+    if let PlainLookups::Complete { charged } = &mut lookups {
+        *charged = reserve_complete_level(lim, f.level(t), g.level(t), level)?;
+    }
+    note_lookups(lookups);
 
     if use_sparse_marginal {
         return finish_sparse_marginal_level(
@@ -861,7 +943,7 @@ pub(super) fn build_level_dense(
     }
 
     run_row_loop(
-        eng, route,
+        eng, route, lookups,
         RowLoop {
             f_level: f.level(t), g_level: g.level(t),
             children: Sides { left: left_level, right: right_level },

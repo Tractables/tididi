@@ -82,6 +82,10 @@ pub(super) fn finalize_level(
     // Dense emit wrote `node_idx` in row-major order keyed by `nodes.len()` at
     // each emission, so live cells are strictly monotone.
     products.arena.set_dense(t_idx, output_grid_base);
+    // And so a level with a node in every cell is complete.
+    if !levels[t_idx].is_marginal() {
+        products.note_built(t_idx, shape.f.here, shape.g.here, levels[t_idx].nodes.len());
+    }
 
     levels[t_idx].shrink_arrays();
 

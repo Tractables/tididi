@@ -88,6 +88,8 @@ pub(super) struct Products {
     product_lists: Vec<Vec<ProductEntry>>,
     live_counts: Vec<usize>,
     has_pl: Vec<bool>,
+    /// Which levels are complete; see [`Self::is_complete`].
+    complete: Vec<bool>,
 }
 
 impl Products {
@@ -96,6 +98,7 @@ impl Products {
         visit(&mut crate::execution::pool::Nested(&mut self.product_lists));
         visit(&mut self.live_counts);
         visit(&mut self.has_pl);
+        visit(&mut self.complete);
     }
 
     /// Drop the product lists beyond the last operation's levels, so that
@@ -110,12 +113,14 @@ impl Products {
             for list in self.product_lists.drain(used..) { lim.discard(list); }
         }
         self.has_pl.truncate(used);
+        self.complete.truncate(used);
     }
 
     pub(super) fn reset(&mut self, eng: &Engine, sparse: bool, n: usize, f_widths: &[usize], g_widths: &[usize]) -> Result<(), OperationError> {
         if self.product_lists.len() < n { self.product_lists.resize_with(n, Vec::new); }
         self.has_pl.resize(n, false);
-        for i in 0..n { self.product_lists[i].clear(); self.has_pl[i] = false; }
+        self.complete.resize(n, false);
+        for i in 0..n { self.product_lists[i].clear(); self.has_pl[i] = false; self.complete[i] = false; }
         self.live_counts.clear();
         self.live_counts.resize(n, 0);
         self.arena.reset(eng, sparse, n, f_widths, g_widths)
@@ -142,9 +147,64 @@ impl Products {
             }
         }
         poll.flush()?;
+        if write < list.len() {
+            self.complete[t] = false;
+        }
         list.truncate(write);
         self.live_counts[t] = write;
         Ok(())
+    }
+
+    /// Whether level `t` is complete: every product `f[i] ∧ g[j]` of its
+    /// `f_width × g_width` cells is a node, numbered in cell order from 0, so
+    /// its grid, materialized or not, holds `i * g_width + j` at cell
+    /// `(i, j)`. A parent reads a complete child by arithmetic
+    /// ([`CompleteLookup`](super::child_lookup::CompleteLookup)) and no
+    /// candidate dies on it.
+    ///
+    /// Set by the builds that know it at no cost: a dense emit that
+    /// produced a node in every cell ([`Self::note_built`]), and an identity
+    /// fast path, whose carried level is the identity mapping. False until
+    /// then, and for every other level; a false reading only costs the grid
+    /// lookup.
+    pub(super) fn is_complete(&self, t: usize) -> bool {
+        self.complete[t]
+    }
+
+    /// Record that a build emitted `nodes` nodes, in cell order from node 0,
+    /// over the `f_width × g_width` cells of level `t`'s product: the level
+    /// is complete when every cell produced one.
+    pub(super) fn note_built(&mut self, t: usize, f_width: usize, g_width: usize, nodes: usize) {
+        self.complete[t] = nodes == f_width * g_width;
+        #[cfg(debug_assertions)]
+        if self.complete[t] {
+            self.debug_assert_complete(t, f_width, g_width);
+        }
+    }
+
+    /// Check a level marked complete against its stored products: every cell
+    /// of its grid, or every entry of its product list, names the node its
+    /// cell order says.
+    #[cfg(debug_assertions)]
+    fn debug_assert_complete(&self, t: usize, f_width: usize, g_width: usize) {
+        let cells = f_width * g_width;
+        if let Some(base) = self.arena.materialized(t) {
+            let grid = &self.arena.slab()[base.idx()..base.idx() + cells];
+            debug_assert!(grid.iter().enumerate().all(|(c, &n)| n as usize == c), "level {t} is not complete");
+        } else if self.has_pl[t] {
+            let list = &self.product_lists[t];
+            debug_assert_eq!(list.len(), cells, "level {t} is not complete");
+            debug_assert!(
+                list.iter().enumerate().all(|(c, e)| e.prod_idx.0 as usize == c && e.f_idx.idx() * g_width + e.g_idx.idx() == c),
+                "level {t} is not complete"
+            );
+        }
+    }
+
+    /// Record that level `t` is complete: an identity fast path carried it,
+    /// so cell `i` names node `i`.
+    pub(super) fn note_complete(&mut self, t: usize) {
+        self.complete[t] = true;
     }
 
     pub(super) fn live(&self, level: usize) -> usize { self.live_counts[level] }

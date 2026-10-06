@@ -20,8 +20,8 @@ use budget::*;
 mod cell;
 use cell::{
     RightColumns, CellCtx, ChildPlan, ColumnSlice,
-    run_level_rows_marginal, run_level_rows_marginal_sparse, run_level_rows_plain,
-    run_level_rows_stream_count, RowLoop, RowScratch,
+    run_level_rows_complete, run_level_rows_marginal, run_level_rows_marginal_sparse, run_level_rows_plain,
+    run_level_rows_stream_count, PlainLookups, RowLoop, RowScratch,
 };
 
 mod sparse;
@@ -545,3 +545,23 @@ fn two_step_forced() -> bool {
 #[cfg(not(test))]
 #[inline(always)]
 fn note_summed() {}
+
+// A test reads every child side from the grid, as the oracle for the
+// arithmetic lookups on complete children, and counts the levels that read
+// a side by arithmetic and the meter charges of their reserved arenas.
+#[cfg(test)]
+use tests::{grid_lookups_forced, note_lookups, note_scheduled_charge};
+
+#[cfg(not(test))]
+#[inline(always)]
+fn grid_lookups_forced() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_lookups(_lookups: PlainLookups) {}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_scheduled_charge() {}

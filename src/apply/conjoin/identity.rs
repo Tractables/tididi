@@ -216,6 +216,11 @@ fn apply_identity_fast_path<const F_IS_CARRIER: bool>(
     }
 
     publish_identity_level(run.products, t_idx, k_carrier);
+    // The identity operand has one node here, so the product's cells are the
+    // carrier's nodes in order: a structural carried level is complete.
+    if !levels[t_idx].is_marginal() {
+        run.products.note_complete(t_idx);
+    }
     Ok(())
 }
 

@@ -563,7 +563,7 @@ fn push_kept_grows_where_pushing_each_survivor_would() {
             if filled > cap { continue; }
             for n in 0..=cands.len() {
                 let mut kept = start(cap, filled);
-                push_kept(&eng, &mut CollectSink { out: &mut kept }, &cands[..n], |&(l, r)| {
+                push_kept(&eng, &mut CollectSink { out: &mut kept }, &cands[..n], true, |&(l, r)| {
                     (l, if l == NO_PRODUCT { NO_PRODUCT } else { r })
                 })
                 .expect("an unbudgeted push succeeds");

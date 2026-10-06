@@ -77,6 +77,16 @@ fn push_pair_grow(
     out
 }
 
+/// The capacity a full `Vec<ChildPair>` of capacity `cap` grows to when one
+/// more pair is pushed through [`try_push_pair_into`] outside bounded growth:
+/// `Vec`'s amortized doubling, with its four-element floor for 8-byte
+/// elements. [`ReservedEmitSink`](super::cell::ReservedEmitSink) charges the
+/// output-pair meter on this schedule; a unit test holds it to `Vec`'s.
+#[inline]
+pub(super) fn doubled_pairs_capacity(cap: usize) -> usize {
+    cap.saturating_mul(2).max(cap.saturating_add(1)).max(4)
+}
+
 /// Turn the pairs pushed since `pair_start` into the level's next node and
 /// say which node it is; `None` when nothing was pushed, so the product is
 /// `⊥`. A single pair is popped back off the arena and stored inline

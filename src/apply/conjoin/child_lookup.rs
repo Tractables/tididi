@@ -11,6 +11,9 @@
 //!   `&mut node_idx` the emit writes its output into.
 //! - [`MarginalLookup`] — the marginal-aware lookup of a level with a
 //!   marginal child (below).
+//! - [`CompleteLookup`] — a child level whose grid is complete: cell
+//!   `(row, col)` holds node `row * stride + col`, so the lookup is
+//!   arithmetic and never `NO_PRODUCT`.
 
 /// Flat row offset `a * stride` of child node row `a` in a child grid whose rows
 /// are `stride` columns wide.
@@ -60,6 +63,51 @@ pub(super) trait ChildLookup {
     /// instantiations keep branch-free inner loops.
     #[inline(always)]
     fn passthrough(&self) -> bool {
+        false
+    }
+
+    /// False when no lookup on this side can answer `NO_PRODUCT`: every
+    /// cell of the child's grid holds a node, so no candidate dies on this
+    /// side and no dead-pair mask can cull a row or column for it. The cell
+    /// kernel gates its `NO_PRODUCT` tests and its mask culls on this;
+    /// [`CompleteLookup`] returns a constant `false`, so those tests fold
+    /// away.
+    #[inline(always)]
+    fn kills(&self) -> bool {
+        true
+    }
+}
+
+/// A child level whose grid is complete ([`Products::is_complete`]): every
+/// cell holds a node and the nodes are numbered in cell order from 0, so
+/// cell `(row, col)` holds `row * stride + col` and the lookup reads no
+/// grid.
+///
+/// The level has `rows * stride` nodes, each a [`NodeIdx`] below
+/// `NodeIdx::MAX_LIVE`, so the arithmetic fits a `u32`.
+///
+/// [`Products::is_complete`]: super::products::Products::is_complete
+/// [`NodeIdx`]: crate::diagram::NodeIdx
+pub(super) struct CompleteLookup {
+    pub(super) stride: u32,
+}
+
+impl ChildLookup for CompleteLookup {
+    /// The row's first node.
+    type Row = u32;
+
+    #[inline(always)]
+    fn row(&self, row: u32) -> u32 {
+        row * self.stride
+    }
+
+    #[inline(always)]
+    fn get_in_row(&self, _node_idx: &[u32], row: u32, col: u32) -> u32 {
+        row + col
+    }
+
+    #[inline(always)]
+    fn kills(&self) -> bool {
         false
     }
 }
