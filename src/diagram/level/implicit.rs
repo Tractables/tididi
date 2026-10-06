@@ -203,7 +203,7 @@ impl ImplicitLevel {
         }
         let first_pairs = level.pairs_of_idx(0);
         let per_node = first_pairs.len();
-        if per_node == 0 {
+        if per_node == 0 || (1..nodes).any(|i| level.pair_count_at(i) != per_node) {
             return None;
         }
         let first = slots(&first_pairs[0]);
@@ -214,27 +214,26 @@ impl ImplicitLevel {
         let within = read_digits(per_node, offset)?;
         let across = read_digits(nodes, |i| level.pairs_of_idx(i).first().map(slots))?;
         let fitted = ImplicitLevel::assemble(nodes, per_node, first, &within, &across);
-        let mut i = 0usize;
-        let mut ok = true;
-        let mut node = 0usize;
-        let mut pairs = level.pairs_of_idx(0);
-        fitted.for_each_pair(|l, r| {
-            if !ok {
-                return;
-            }
-            if i == per_node {
-                node += 1;
-                pairs = level.pairs_of_idx(node);
-                i = 0;
-                if pairs.len() != per_node {
-                    ok = false;
-                    return;
-                }
-            }
-            ok = slots(&pairs[i]) == (l, r);
-            i += 1;
-        });
-        ok.then_some(fitted)
+        fitted.holds(|i| Some(level.pairs_of_idx(i).iter().map(slots))).then_some(fitted)
+    }
+
+    /// The child slots every pair of a node adds to its first, in their
+    /// order.
+    fn places(&self) -> Vec<(i64, i64)> {
+        let mut places = Vec::with_capacity(self.per_node);
+        each_place(&self.digits[..self.within], (0, 0), |l, r| places.push((l, r)));
+        places
+    }
+
+    /// Whether `node(i)` gives the pairs of node `i` of this description,
+    /// in their order, for every node: read node by node, up to the first
+    /// pair that differs.
+    fn holds<I: Iterator<Item = (i64, i64)>>(&self, mut node: impl FnMut(usize) -> Option<I>) -> bool {
+        let places = self.places();
+        (0..self.nodes).all(|i| {
+            let at = self.node_first(i);
+            node(i).is_some_and(|pairs| pairs.eq(places.iter().map(|p| (at.0 + p.0, at.1 + p.1))))
+        })
     }
 
     /// The description of the level of `nodes` nodes of `per_node` pairs
@@ -271,28 +270,18 @@ impl ImplicitLevel {
         left: impl Fn(i64) -> i64,
         right: impl Fn(i64) -> i64,
     ) -> Option<ImplicitLevel> {
-        let k = self.per_node;
         let mut node = |j: usize| kept(j).filter(|&i| i < self.nodes).map(|i| self.node_first(i));
-        let mut places = Vec::with_capacity(k);
-        each_place(&self.digits[..self.within], (0, 0), |l, r| places.push((l, r)));
-        let moved = |at: (i64, i64), m: usize| (left(at.0 + places[m].0), right(at.1 + places[m].1));
+        let places = self.places();
+        let moved = |at: (i64, i64), p: &(i64, i64)| (left(at.0 + p.0), right(at.1 + p.1));
         let at = node(0)?;
-        let first = moved(at, 0);
-        let within = read_digits(k, |m| {
-            let (l, r) = moved(at, m);
+        let first = moved(at, &places[0]);
+        let within = read_digits(self.per_node, |m| {
+            let (l, r) = moved(at, &places[m]);
             Some((l - first.0, r - first.1))
         })?;
-        let across = read_digits(nodes, |j| Some(moved(node(j)?, 0)))?;
-        let fitted = ImplicitLevel::assemble(nodes, k, first, &within, &across);
-        let mut fitted_places = Vec::with_capacity(k);
-        each_place(&fitted.digits[..fitted.within], (0, 0), |l, r| fitted_places.push((l, r)));
-        for j in 0..nodes {
-            let (at, to) = (node(j)?, fitted.node_first(j));
-            if !fitted_places.iter().enumerate().all(|(m, p)| moved(at, m) == (to.0 + p.0, to.1 + p.1)) {
-                return None;
-            }
-        }
-        Some(fitted)
+        let across = read_digits(nodes, |j| Some(moved(node(j)?, &places[0])))?;
+        let fitted = ImplicitLevel::assemble(nodes, self.per_node, first, &within, &across);
+        fitted.holds(|j| node(j).map(|at| places.iter().map(move |p| moved(at, p)))).then_some(fitted)
     }
 
     /// The description of the conjunction's level whose operands' levels
@@ -590,6 +579,7 @@ impl PairArena {
 
     /// Write an implicit arena's pairs into the arena and drop the
     /// description; any other arena is left as it is.
+    #[cold]
     #[track_caller]
     pub(crate) fn materialize(&mut self) {
         let Some(lazy) = self.lazy.take() else { return };
@@ -666,17 +656,25 @@ impl Deref for PairArena {
     fn deref(&self) -> &Vec<ChildPair> {
         match &self.lazy {
             None => &self.vec,
-            Some(l) => {
-                let at = Location::caller();
-                l.copy.get_or_init(|| {
-                    let mut v = Vec::with_capacity(l.len);
-                    l.described.write_pairs(&mut v);
-                    count_materialized(at, Written::Copy, v.len());
-                    pad(&mut v, l.len);
-                    v
-                })
-            }
+            Some(l) => l.copied(Location::caller()),
         }
+    }
+}
+
+impl Lazy {
+    /// The described pairs written out, padded to the arena's length; kept
+    /// out of line so that the readers of written arenas, nearly all of
+    /// them, do not carry it.
+    #[cold]
+    #[inline(never)]
+    fn copied(&self, at: &'static Location<'static>) -> &Vec<ChildPair> {
+        self.copy.get_or_init(|| {
+            let mut v = Vec::with_capacity(self.len);
+            self.described.write_pairs(&mut v);
+            count_materialized(at, Written::Copy, v.len());
+            pad(&mut v, self.len);
+            v
+        })
     }
 }
 
