@@ -433,6 +433,12 @@ where
 ///
 /// Keep input slices and lookup geometry as direct parameters so the optimizer
 /// retains their aliasing information within the pair loops.
+///
+/// Inlined into the row loop: most cells are 1×1 or a handful of pairs, and
+/// an out-of-line call would cost such a cell more than its pairs do — the
+/// arguments spilled and reloaded, the column table and the work-clock gate
+/// read back through memory at every cell.
+#[inline(always)]
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn process_cell<L, R, S>(
     eng: &Engine,
