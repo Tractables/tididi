@@ -336,25 +336,41 @@ pub(crate) fn below_root_walk_applies(tdd: &Tdd) -> bool {
 /// Returns `Err(OperationError::OverBudget)` if the marks a read takes are
 /// refused, and the stop the work polls for.
 pub(crate) fn settle_loose(eng: &Engine, tdd: &Tdd, listed: &[u32]) -> Result<Vec<u32>, OperationError> {
+    if listed.is_empty() {
+        return Ok(Vec::new());
+    }
     let lim = eng.limits();
     let vtree = &tdd.vtree;
     let mut at = vec![false; vtree.num_nodes()];
     for &t in listed {
         at[t as usize] = true;
     }
-    // Whether a level strictly under each level stays listed; `at` turns
-    // false for a listed level its parent's pairs name whole.
+    // The listed levels' parents, bottom-up, so that every level under a
+    // parent's children is settled before the parent is read.
+    let mut parents: Vec<VtreeIdx> = listed.iter().filter_map(|&t| vtree.node(VtreeIdx(t)).parent()).collect();
+    parents.sort_unstable_by_key(|&p| vtree.topo_pos(p));
+    parents.dedup();
+    // Whether a level strictly under each level stays listed: set on the
+    // levels above each one that stays, up to the first set already, whose
+    // own levels above are set.
     let mut under = vec![false; vtree.num_nodes()];
     let mut gate = lim.gate();
     let mut marks: Transient<'_, Vec<u64>> = Transient::new(lim, Vec::new());
-    for (p, left, right) in vtree.internal_bottomup() {
-        let sides = [at[left.idx()], at[right.idx()]];
-        if sides != [false; 2] && p != vtree.root() && !under[left.idx()] && !under[right.idx()] {
+    for p in parents {
+        let (left, right) = vtree.children(p);
+        if p != vtree.root() && !under[left.idx()] && !under[right.idx()] {
+            let sides = [at[left.idx()], at[right.idx()]];
             let stays = unnamed_children(lim, tdd, p, sides, &mut marks, &mut gate)?;
             at[left.idx()] = stays[0];
             at[right.idx()] = stays[1];
         }
-        under[p.idx()] = under[left.idx()] || under[right.idx()] || at[left.idx()] || at[right.idx()];
+        if at[left.idx()] || at[right.idx()] {
+            let mut up = Some(p);
+            while let Some(t) = up.filter(|t| !under[t.idx()]) {
+                under[t.idx()] = true;
+                up = vtree.node(t).parent();
+            }
+        }
     }
     gate.flush()?;
     Ok(listed.iter().copied().filter(|&t| at[t as usize]).collect())
