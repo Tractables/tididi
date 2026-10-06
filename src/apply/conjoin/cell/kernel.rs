@@ -213,14 +213,17 @@ impl PairSink for CollectSink<'_> {
 /// `NO_PRODUCT` for it otherwise; so the right side alone says whether a
 /// candidate survives.
 ///
-/// While the sink's buffer has spare capacity, candidates are written without
-/// a capacity test or a branch on survival: each is stored at the buffer's end
-/// and the length, held in a register for the run, steps past survivors only.
-/// A run holds no more candidates than the spare capacity, so no write passes
-/// it. Once the buffer is full, the next survivor goes through
-/// [`PairSink::pair`], which grows the buffer; that is the survivor at which
-/// pushing each survivor in turn would grow it, so the buffer's capacity, and
-/// every meter charged from it, changes at the same pairs as before.
+/// While the sink's buffer has spare capacity, survivors are written without
+/// a capacity test: each is stored at the buffer's end and the length, held
+/// in a register for the run, steps past it. A dead candidate is skipped by a
+/// branch, not stored: in a counting diagram's conjunction most candidates
+/// die, as few as one in a hundred survives, and a branch that mostly goes
+/// one way costs less than a store of every candidate. A run holds no more
+/// candidates than the spare capacity, so no write passes it. Once the
+/// buffer is full, the next survivor goes through [`PairSink::pair`], which
+/// grows the buffer; that is the survivor at which pushing each survivor in
+/// turn would grow it, so the buffer's capacity, and every meter charged
+/// from it, changes at the same pairs as before.
 #[inline(always)]
 pub(super) fn push_kept<T, S: PairSink>(
     eng: &Engine,
@@ -248,14 +251,17 @@ pub(super) fn push_kept<T, S: PairSink>(
         for item in run {
             let (lc, rc) = cand(item);
             debug_assert!(lc != NO_PRODUCT || rc == NO_PRODUCT, "a dead left side stands for the right");
-            // Safety: `len` starts at the buffer's length and steps at most
-            // once per item of `run`, which holds no more items than the
-            // spare capacity, so the write stays inside the allocation.
-            unsafe { out.add(len).write(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc))) };
-            len += usize::from(rc != NO_PRODUCT);
+            if rc != NO_PRODUCT {
+                // Safety: `len` starts at the buffer's length and steps at
+                // most once per item of `run`, which holds no more items than
+                // the spare capacity, so the write stays inside the
+                // allocation.
+                unsafe { out.add(len).write(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc))) };
+                len += 1;
+            }
         }
         // Safety: slots below `len` hold the old contents and one written
-        // pair per step.
+        // pair per survivor.
         unsafe { v.set_len(len) };
     }
     Ok(())
