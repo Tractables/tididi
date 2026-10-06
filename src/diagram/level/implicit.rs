@@ -213,13 +213,7 @@ impl ImplicitLevel {
         };
         let within = read_digits(per_node, offset)?;
         let across = read_digits(nodes, |i| level.pairs_of_idx(i).first().map(slots))?;
-        let mut digits: Vec<Digit> = within.iter().map(|&(radix, (l, r))| Digit { radix, left: l, right: r, node: 0 }).collect();
-        let mut period = 1usize;
-        for &(radix, (l, r)) in &across {
-            digits.push(Digit { radix, left: l, right: r, node: period as i64 });
-            period *= radix;
-        }
-        let fitted = ImplicitLevel { nodes, per_node, first, digits, within: within.len() };
+        let fitted = ImplicitLevel::assemble(nodes, per_node, first, &within, &across);
         let mut i = 0usize;
         let mut ok = true;
         let mut node = 0usize;
@@ -241,6 +235,64 @@ impl ImplicitLevel {
             i += 1;
         });
         ok.then_some(fitted)
+    }
+
+    /// The description of the level of `nodes` nodes of `per_node` pairs
+    /// whose first pair is `first`, with the place digits `within` of a
+    /// node's pairs and the digits `across` of its index, each a radix and
+    /// what one unit adds to the slots, fastest first.
+    fn assemble(
+        nodes: usize,
+        per_node: usize,
+        first: (i64, i64),
+        within: &[(usize, (i64, i64))],
+        across: &[(usize, (i64, i64))],
+    ) -> ImplicitLevel {
+        let mut digits: Vec<Digit> = within.iter().map(|&(radix, (l, r))| Digit { radix, left: l, right: r, node: 0 }).collect();
+        let mut period = 1usize;
+        for &(radix, (l, r)) in across {
+            digits.push(Digit { radix, left: l, right: r, node: period as i64 });
+            period *= radix;
+        }
+        ImplicitLevel { nodes, per_node, first, digits, within: within.len() }
+    }
+
+    /// The description of what a prune leaves of this level, when it is
+    /// one: the `nodes` nodes it keeps, the `j`th of them node `kept(j)` of
+    /// this description, each with its pairs, whose child slots `left` and
+    /// `right` move to where the prune put the children's nodes. Read off
+    /// the moved pairs and checked at every one of them, without writing
+    /// any. `None` when they are not affine in a mixed radix, or `kept`
+    /// names no node of this description.
+    pub(crate) fn pruned(
+        &self,
+        nodes: usize,
+        mut kept: impl FnMut(usize) -> Option<usize>,
+        left: impl Fn(i64) -> i64,
+        right: impl Fn(i64) -> i64,
+    ) -> Option<ImplicitLevel> {
+        let k = self.per_node;
+        let mut node = |j: usize| kept(j).filter(|&i| i < self.nodes).map(|i| self.node_first(i));
+        let mut places = Vec::with_capacity(k);
+        each_place(&self.digits[..self.within], (0, 0), |l, r| places.push((l, r)));
+        let moved = |at: (i64, i64), m: usize| (left(at.0 + places[m].0), right(at.1 + places[m].1));
+        let at = node(0)?;
+        let first = moved(at, 0);
+        let within = read_digits(k, |m| {
+            let (l, r) = moved(at, m);
+            Some((l - first.0, r - first.1))
+        })?;
+        let across = read_digits(nodes, |j| Some(moved(node(j)?, 0)))?;
+        let fitted = ImplicitLevel::assemble(nodes, k, first, &within, &across);
+        let mut fitted_places = Vec::with_capacity(k);
+        each_place(&fitted.digits[..fitted.within], (0, 0), |l, r| fitted_places.push((l, r)));
+        for j in 0..nodes {
+            let (at, to) = (node(j)?, fitted.node_first(j));
+            if !fitted_places.iter().enumerate().all(|(m, p)| moved(at, m) == (to.0 + p.0, to.1 + p.1)) {
+                return None;
+            }
+        }
+        Some(fitted)
     }
 
     /// The description of the conjunction's level whose operands' levels
@@ -316,7 +368,8 @@ impl ImplicitLevel {
     /// other side's slot is also one-to-one, the child has no twins. `false`
     /// says only that the digits do not show it.
     pub(crate) fn twin_free(&self, side: ChildSide, width: usize) -> bool {
-        let (this, other): (fn(&Digit) -> i64, fn(&Digit) -> i64) = match side {
+        type Slot = fn(&Digit) -> i64;
+        let (this, other): (Slot, Slot) = match side {
             ChildSide::Left => (|d| d.left, |d| d.right),
             ChildSide::Right => (|d| d.right, |d| d.left),
         };
@@ -384,7 +437,7 @@ fn each_place(digits: &[Digit], at: (i64, i64), mut f: impl FnMut(i64, i64)) {
 /// its radix the longest run of that step, cut to a divisor of what the
 /// digits before it leave. `None` where a place has no value or no radix
 /// fits; the caller checks every place against the digits found.
-fn read_digits(n: usize, value: impl Fn(usize) -> Option<(i64, i64)>) -> Option<Vec<(usize, (i64, i64))>> {
+fn read_digits(n: usize, mut value: impl FnMut(usize) -> Option<(i64, i64)>) -> Option<Vec<(usize, (i64, i64))>> {
     let v0 = value(0)?;
     let mut digits = Vec::new();
     let mut period = 1usize;
@@ -441,6 +494,14 @@ fn one_to_one(digits: impl Iterator<Item = (u128, u128)>) -> bool {
 /// first. [`len`](Self::len) and [`capacity`](Self::capacity) are answered
 /// without writing anything. Every write is counted, by the code that asked
 /// for it (see [`materialized`]).
+///
+/// A prune that keeps an implicit level's survivors as a description
+/// ([`redescribe`](Self::redescribe)) renumbers them from the start of the
+/// arena and leaves its length where it was: the slots past the described
+/// pairs stand for those of the nodes it dropped, which a written arena keeps
+/// until a sweep reclaims them, so that the length, the capacity and the
+/// sweeps are those of the written arena. Nothing reads those slots; written
+/// out, they hold copies of the first described pair.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct PairArena {
     vec: Vec<ChildPair>,
@@ -451,6 +512,9 @@ pub(crate) struct PairArena {
 #[derive(Clone, Debug)]
 struct Lazy {
     described: ImplicitLevel,
+    /// The arena's length: the described pairs, then the slots of pairs a
+    /// prune dropped.
+    len: usize,
     /// The capacity the arena would have.
     capacity: usize,
     /// The pairs, once a reader has asked for them.
@@ -463,7 +527,7 @@ impl PairArena {
     pub(crate) fn len(&self) -> usize {
         match &self.lazy {
             None => self.vec.len(),
-            Some(l) => l.described.arena_len(),
+            Some(l) => l.len,
         }
     }
 
@@ -495,9 +559,33 @@ impl PairArena {
     /// dropped.
     pub(crate) fn describe(&mut self, described: ImplicitLevel, capacity: usize) {
         debug_assert!(self.is_empty() && described.per_node >= 2);
-        DESCRIBED.fetch_add(described.arena_len() as u64, std::sync::atomic::Ordering::Relaxed);
+        let len = described.arena_len();
+        DESCRIBED.fetch_add(len as u64, std::sync::atomic::Ordering::Relaxed);
         self.vec = Vec::new();
-        self.lazy = Some(Box::new(Lazy { described, capacity, copy: OnceLock::new() }));
+        self.lazy = Some(Box::new(Lazy { described, len, capacity, copy: OnceLock::new() }));
+    }
+
+    /// Hold `described` in place of an implicit arena's description: what a
+    /// prune leaves of the level, its nodes renumbered from the start of the
+    /// arena. The arena keeps its length and capacity, the slots past the
+    /// described pairs standing for those the prune dropped.
+    pub(crate) fn redescribe(&mut self, described: ImplicitLevel) {
+        let lazy = self.lazy.as_mut().expect("redescribe on a written arena");
+        debug_assert!(described.per_node >= 2 && described.arena_len() <= lazy.len);
+        REDESCRIBED.fetch_add(described.arena_len() as u64, std::sync::atomic::Ordering::Relaxed);
+        lazy.described = described;
+        lazy.copy = OnceLock::new();
+    }
+
+    /// Shorten the arena to `len`, as [`Vec::truncate`] does. An implicit
+    /// arena cut no shorter than its described pairs drops the slots past
+    /// them without writing anything; any other is written first.
+    #[track_caller]
+    pub(crate) fn truncate(&mut self, len: usize) {
+        match &mut self.lazy {
+            Some(l) if len >= l.described.arena_len() => l.len = l.len.min(len),
+            _ => self.deref_mut().truncate(len),
+        }
     }
 
     /// Write an implicit arena's pairs into the arena and drop the
@@ -505,13 +593,14 @@ impl PairArena {
     #[track_caller]
     pub(crate) fn materialize(&mut self) {
         let Some(lazy) = self.lazy.take() else { return };
-        let Lazy { described, capacity, copy } = *lazy;
+        let Lazy { described, len, capacity, copy } = *lazy;
         let mut vec = Vec::with_capacity(capacity);
         match copy.into_inner() {
             Some(pairs) => vec.extend_from_slice(&pairs),
             None => {
                 described.write_pairs(&mut vec);
                 count_materialized(Location::caller(), Written::InPlace, vec.len());
+                pad(&mut vec, len);
             }
         }
         debug_assert_eq!(vec.capacity(), capacity.max(vec.len()));
@@ -533,7 +622,7 @@ impl PairArena {
     pub(crate) fn shrink_to_fit(&mut self) {
         match &mut self.lazy {
             None => self.vec.shrink_to_fit(),
-            Some(l) => l.capacity = l.described.arena_len(),
+            Some(l) => l.capacity = l.len,
         }
     }
 
@@ -550,11 +639,11 @@ impl PairArena {
                 Ok(PairArena { vec, lazy: None })
             }
             Some(l) => {
-                let len = l.described.arena_len();
+                let len = l.len;
                 lim.charge_bytes((len as u64).saturating_mul(std::mem::size_of::<ChildPair>() as u64))?;
                 Ok(PairArena {
                     vec: Vec::new(),
-                    lazy: Some(Box::new(Lazy { described: l.described.clone(), capacity: len, copy: OnceLock::new() })),
+                    lazy: Some(Box::new(Lazy { described: l.described.clone(), len, capacity: len, copy: OnceLock::new() })),
                 })
             }
         }
@@ -580,9 +669,10 @@ impl Deref for PairArena {
             Some(l) => {
                 let at = Location::caller();
                 l.copy.get_or_init(|| {
-                    let mut v = Vec::new();
+                    let mut v = Vec::with_capacity(l.len);
                     l.described.write_pairs(&mut v);
                     count_materialized(at, Written::Copy, v.len());
+                    pad(&mut v, l.len);
                     v
                 })
             }
@@ -628,6 +718,15 @@ impl crate::execution::pool::Scratch for PairArena {
     }
 }
 
+/// Fill `pairs`, an implicit arena's described pairs written out, to the
+/// arena's length `len` with copies of the first: the slots of the pairs a
+/// prune dropped, which nothing reads.
+fn pad(pairs: &mut Vec<ChildPair>, len: usize) {
+    if let Some(&first) = pairs.first() {
+        pairs.resize(len, first);
+    }
+}
+
 /// Whether an implicit arena's pairs were written as a copy for a reader or
 /// in place for a writer.
 #[derive(Clone, Copy)]
@@ -638,6 +737,10 @@ enum Written {
 
 /// The pairs arenas have held as their description, over the process.
 static DESCRIBED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The pairs a prune has kept as the description of what it left of an
+/// implicit level, over the process.
+static REDESCRIBED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// The pairs implicit arenas have had written, by the code that asked.
 static MATERIALIZED: Mutex<Vec<Materialized>> = Mutex::new(Vec::new());
@@ -683,6 +786,14 @@ pub fn materialized() -> Vec<Materialized> {
 /// levels instead of writing them, over the whole process.
 pub fn described() -> u64 {
     DESCRIBED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The pairs prunes have kept as the description of what they left of
+/// implicit levels instead of writing them, over the whole process. A level
+/// a prune shrinks, or whose children it renumbers, stays implicit when what
+/// is left is affine in a mixed radix.
+pub fn redescribed() -> u64 {
+    REDESCRIBED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl TddLevel {

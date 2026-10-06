@@ -17,7 +17,7 @@
 //! level has a block: a leaf or marginal level is never compacted, so
 //! nothing reads its marks.
 
-use crate::diagram::{EncodedChildRef, NodeIdx, NodeKind, Tdd};
+use crate::diagram::{ChildDecoder, EncodedChildRef, EncodedNode, NodeIdx, NodeKind, Tdd};
 
 use crate::Engine;
 
@@ -123,6 +123,42 @@ fn for_each_unmarked(block: &[u64], width: usize, mut f: impl FnMut(usize)) {
 fn rank(block: &[u64], s: usize) -> u32 {
     let below: u32 = block[..s >> 6].iter().map(|w| w.count_ones()).sum();
     below + (block[s >> 6] & ((1u64 << (s & 63)) - 1)).count_ones()
+}
+
+/// The marked slots of a block of marks by their rank, read by a cursor
+/// that moves forward a word at a time and starts over when asked for a
+/// rank before it: rising ranks cost a pass over the block in all.
+struct Select<'a> {
+    block: &'a [u64],
+    /// The word the cursor is at, and the marked slots before it.
+    word: usize,
+    before: usize,
+}
+
+impl<'a> Select<'a> {
+    fn new(block: &'a [u64]) -> Select<'a> {
+        Select { block, word: 0, before: 0 }
+    }
+
+    /// The marked slot of rank `j`, if there are more than `j`.
+    fn nth(&mut self, j: usize) -> Option<usize> {
+        if j < self.before {
+            (self.word, self.before) = (0, 0);
+        }
+        while let Some(&w) = self.block.get(self.word) {
+            let marked = w.count_ones() as usize;
+            if j < self.before + marked {
+                let mut w = w;
+                for _ in 0..j - self.before {
+                    w &= w - 1;
+                }
+                return Some(self.word * 64 + w.trailing_zeros() as usize);
+            }
+            self.before += marked;
+            self.word += 1;
+        }
+        None
+    }
 }
 
 /// Write into `out` the new index of each of the first `span` slots of
@@ -598,6 +634,10 @@ impl Child {
 /// nodes. `own` starts at the level's block of marks, and `marks` holds the
 /// children's. Returns whether the level lost a node.
 ///
+/// A level held as the description of its pairs stays one when what is left
+/// of it is affine ([`redescribe`]); otherwise its arena is written out for
+/// the rewrite.
+///
 /// `remap` must hold the spans of the dirty children side by side, and
 /// `identity` must be at least as long as the width of a child kept whole
 /// beside a dirty one.
@@ -615,8 +655,9 @@ fn compact_one_level(
     let t_idx = t.idx();
     let width = tdd.levels[t_idx].slot_count();
     let own = &own[..words(width)];
+    let lost = !all_marked(own, width);
 
-    if left.dirty || right.dirty {
+    let redescribed = if left.dirty || right.dirty {
         let (left_new, right_new) = remap.split_at_mut(if left.dirty { left.span } else { 0 });
         let left_remap: &[u32] = if left.dirty {
             new_indices(&marks[left.base..], left.span, left_new);
@@ -630,10 +671,18 @@ fn compact_one_level(
         } else {
             identity
         };
-        rewrite_child_refs(tdd, t, own, left_remap, right_remap);
-    }
+        let kept = redescribe(tdd, t, own, left.dirty.then_some(left_remap), right.dirty.then_some(right_remap));
+        if kept.is_none() {
+            rewrite_child_refs(tdd, t, own, left_remap, right_remap);
+        }
+        kept
+    } else if lost {
+        redescribe(tdd, t, own, None, None)
+    } else {
+        None
+    };
 
-    if all_marked(own, width) {
+    if !lost {
         return false;
     }
     // Compact the node Vec in place, O(width) with no allocation. Dropping a
@@ -641,17 +690,64 @@ fn compact_one_level(
     // dead, which is legal here because no pair offset is held across the
     // call.
     let level = &mut tdd.levels[t_idx];
-    let mut dead = 0usize;
-    for_each_unmarked(own, width, |i| dead += level.arena_pairs_at(i));
-    let mut i = 0;
-    level.nodes.retain(|_| {
-        let keep = own[i >> 6] >> (i & 63) & 1 != 0;
-        i += 1;
-        keep
-    });
+    let dead = match redescribed {
+        Some(dead) => dead,
+        None => {
+            let mut dead = 0usize;
+            for_each_unmarked(own, width, |i| dead += level.arena_pairs_at(i));
+            let mut i = 0;
+            level.nodes.retain(|_| {
+                let keep = own[i >> 6] >> (i & 63) & 1 != 0;
+                i += 1;
+                keep
+            });
+            dead
+        }
+    };
     level.note_dead_pairs(dead);
     level.compact_pairs_if_stale();
     true
+}
+
+/// Keep level `t`, held as the description of its pairs, as one through a
+/// prune: its marked nodes in their order, each with its pairs, whose child
+/// slots move through `left` and `right`, the new indices of the children
+/// that lost a node, when what is left is affine in a mixed radix
+/// ([`ImplicitLevel::pruned`](crate::diagram::ImplicitLevel)). The nodes
+/// then name the ranges of the new description, from the start of the arena,
+/// and the arena keeps its length, as a written one keeps the pairs of the
+/// nodes the prune drops until a sweep.
+///
+/// Returns the pairs of the nodes dropped, or `None`, with nothing changed,
+/// when the level is written or what is left is not affine. Checks every
+/// pair left, and writes none.
+fn redescribe(tdd: &mut Tdd, t: VtreeIdx, own: &[u64], left: Option<&[u32]>, right: Option<&[u32]>) -> Option<usize> {
+    let (lc, rc) = tdd.vtree.children(t);
+    let left = moved(tdd.levels[lc.idx()].child_decoder(), left);
+    let right = moved(tdd.levels[rc.idx()].child_decoder(), right);
+    let level = &tdd.levels[t.idx()];
+    let d = level.pairs.implicit()?;
+    let k = d.pairs_per_node();
+    let nodes: usize = own.iter().map(|w| w.count_ones() as usize).sum();
+    // Past 2^31 pairs a node's range takes the side table (`ranges`); the
+    // written arena's would too, and renumbered ones might not.
+    if nodes == 0 || level.pairs.len() >= 1 << 31 {
+        return None;
+    }
+    let mut select = Select::new(own);
+    let kept = |j: usize| {
+        let range = level.arena_range(level.nodes[select.nth(j)?].kind())?;
+        (range.len() == k && range.start.is_multiple_of(k)).then_some(range.start / k)
+    };
+    let left_of = d.pruned(nodes, kept, left, right)?;
+    let mut dead = 0usize;
+    for_each_unmarked(own, level.nodes.len(), |i| dead += level.arena_pairs_at(i));
+    let level = &mut tdd.levels[t.idx()];
+    // No more nodes than the level held: the Vec does not grow.
+    level.nodes.clear();
+    level.nodes.extend((0..nodes).map(|j| EncodedNode::multi_pair((j * k) as u32, k as u32)));
+    level.pairs.redescribe(left_of);
+    Some(dead)
 }
 
 /// Rewrite level `t`'s child references through its child levels' remaps.
@@ -686,6 +782,12 @@ fn rewrite_child_refs(
         k if k.pairs_in_arena() => level.pairs_remap_indexed(i, left_remap, right_remap, left_view, right_view),
         _ => {}
     });
+}
+
+/// Where a child slot, as a raw word, moves when the child level read
+/// through `view` is renumbered by `remap`: nowhere without one.
+fn moved(view: ChildDecoder, remap: Option<&[u32]>) -> impl Fn(i64) -> i64 + '_ {
+    move |x| remap.map_or(x, |m| i64::from(view.remap(EncodedChildRef::from_raw(x as u32), m).raw()))
 }
 
 /// Push every level prune shrank onto the contract worklists.

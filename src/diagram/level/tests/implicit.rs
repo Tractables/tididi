@@ -231,3 +231,108 @@ fn twins_are_read_off_the_digits() {
     let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
     assert!(!d.twin_free(ChildSide::Left, 2));
 }
+
+/// The `j`th digit of node `i` of `d`, counting its node digits only.
+fn node_digit(d: &ImplicitLevel, i: usize, j: usize) -> usize {
+    let g = &d.digits()[d.within() + j];
+    (i / g.node as usize) % g.radix
+}
+
+/// What a prune leaves of an affine level, read off the description and
+/// the children's new indices, is the description of the pairs written out
+/// and moved, when they have one, and nothing when they have none: the
+/// nodes a prune keeps on a diagonal of two digits, in a box, or at random,
+/// with each child's slots renumbered by their rank among a random set
+/// holding every slot the kept nodes name, as a prune renumbers a child.
+#[test]
+fn what_a_prune_leaves_is_read_off_the_description() {
+    let mut rng = Lcg::new(0x1d1e_0005);
+    let (mut fitted, mut diagonals) = (0, 0);
+    for round in 0..600 {
+        let pairs = random_affine(&mut rng, 24, 6, 2);
+        let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
+        let n = d.nodes();
+        let digits = d.digits().len() - d.within();
+        let kept: Vec<usize> = match round % 4 {
+            0 if digits >= 2 => {
+                let (a, b) = (rng.below(digits as u64) as usize, rng.below(digits as u64) as usize);
+                (0..n).filter(|&i| node_digit(&d, i, a) == node_digit(&d, i, b)).collect()
+            }
+            1 if digits >= 1 => {
+                let a = rng.below(digits as u64) as usize;
+                let at = rng.below(d.digits()[d.within() + a].radix as u64) as usize;
+                (0..n).filter(|&i| node_digit(&d, i, a) == at).collect()
+            }
+            2 => (0..n).collect(),
+            _ => (0..n).filter(|_| rng.below(3) != 0).collect(),
+        };
+        if kept.is_empty() {
+            continue;
+        }
+        // A side is renumbered, or kept as it is.
+        let mut renumber = |side: fn(&(i64, i64)) -> i64| -> Option<Vec<i64>> {
+            if rng.below(3) == 0 {
+                return None;
+            }
+            let named: Vec<i64> = kept.iter().flat_map(|&i| pairs[i].iter().map(side)).collect();
+            let top = named.iter().copied().max().unwrap() + 3;
+            let mut rank = vec![-1i64; top as usize + 1];
+            let mut next = 0;
+            for (x, r) in rank.iter_mut().enumerate() {
+                if named.contains(&(x as i64)) || rng.below(4) == 0 {
+                    *r = next;
+                    next += 1;
+                }
+            }
+            Some(rank)
+        };
+        let (left, right) = (renumber(|p| p.0), renumber(|p| p.1));
+        let moved = |rank: &Option<Vec<i64>>, x: i64| rank.as_ref().map_or(x, |r| r[x as usize]);
+        let oracle: Pairs = kept.iter().map(|&i| pairs[i].iter().map(|&(l, r)| (moved(&left, l), moved(&right, r))).collect()).collect();
+        let read = d.pruned(kept.len(), |j| kept.get(j).copied(), |x| moved(&left, x), |x| moved(&right, x));
+        assert_eq!(read, ImplicitLevel::fit(&level_of(&oracle)), "round {round}");
+        if let Some(r) = read {
+            assert_eq!(described(&r), oracle);
+            fitted += 1;
+            diagonals += usize::from(round % 4 == 0 && kept.len() < n);
+        }
+    }
+    assert!(fitted > 100 && diagonals > 10, "{fitted} fitted, {diagonals} on a diagonal");
+}
+
+/// An arena a prune kept described keeps the length and capacity the
+/// written one keeps, reads its nodes' pairs from the new description, and
+/// drops the slots past them on a sweep's truncation without writing them.
+#[test]
+fn a_redescribed_arena_keeps_the_written_length() {
+    let pairs: Pairs = (0..4).map(|i| (0..3).map(|m| (3 * i + m, i)).collect()).collect();
+    let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
+    let mut level = TddLevel::new();
+    d.write_nodes(&Limits::new(), &mut level).unwrap();
+    level.pairs.describe(d.clone(), 20);
+    // Keep nodes 1 and 3, renumbered 0 and 1.
+    let kept = [1usize, 3];
+    let left_of = d.pruned(2, |j| kept.get(j).copied(), |x| x, |x| x).unwrap();
+    level.nodes.truncate(2);
+    level.pairs.redescribe(left_of.clone());
+    assert_eq!((level.pairs.len(), level.pairs.capacity()), (12, 20));
+    assert_eq!(level.implicit(), Some(&left_of));
+    let mut buf = Vec::new();
+    for (j, &i) in kept.iter().enumerate() {
+        let want: Vec<ChildPair> = pairs[i].iter().map(|&(l, r)| pair(l, r)).collect();
+        assert_eq!(level.pairs_read(j, &mut buf), &want[..]);
+        assert_eq!(level.pairs_of_idx(j), &want[..]);
+    }
+    // Read whole, the arena has the written length.
+    assert_eq!(level.pairs.iter().count(), 12);
+    let mut swept = level.clone();
+    swept.pairs.truncate(6);
+    assert!(swept.pairs.implicit().is_some());
+    assert_eq!((swept.pairs.len(), swept.pairs.capacity()), (6, 20));
+    swept.pairs.shrink_to_fit();
+    assert_eq!(swept.pairs.capacity(), 6);
+    // Cut into the described pairs, it is written.
+    level.pairs.truncate(5);
+    assert!(level.pairs.implicit().is_none());
+    assert_eq!(level.pairs.len(), 5);
+}

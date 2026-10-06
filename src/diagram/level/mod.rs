@@ -6,7 +6,7 @@ mod implicit;
 mod marginal;
 mod pairs;
 pub use count_overflow::CountOverflow;
-pub use implicit::{described, materialized, Digit, ImplicitLevel, Materialized};
+pub use implicit::{described, materialized, redescribed, Digit, ImplicitLevel, Materialized};
 pub(crate) use implicit::PairArena;
 pub(crate) use pairs::sort_pairs;
 pub(crate) use marginal::{assert_can_make_marginal, non_marginal_child};

@@ -205,7 +205,7 @@ pub(crate) use semiring::{weight_key, WeightKey};
 pub use weights::{Arithmetic, WeightStore};
 
 // level
-pub use level::{described, materialized, CountOverflow, Digit, ImplicitLevel, Materialized, TddLevel};
+pub use level::{described, materialized, redescribed, CountOverflow, Digit, ImplicitLevel, Materialized, TddLevel};
 pub(crate) use level::{assert_can_make_marginal, sort_pairs};
 
 // pool

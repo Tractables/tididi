@@ -1,14 +1,15 @@
 //! The implicit route checked against the route that writes every level's
 //! pairs: the same nodes, the same pairs once written, the same arena
 //! capacities, the same work, and the same stops, over products of functions on disjoint variables, whose
-//! levels are complete products, and over chains of such products, whose
-//! operands are themselves implicit.
+//! levels are complete products, over chains of such products, whose
+//! operands are themselves implicit, and over such chains conditioned on a
+//! variable, whose prunes keep some of the implicit levels described.
 
 use super::*;
 use crate::Engine;
 use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::test_helpers::{assert_canonical, rand_conj_over, Lcg};
-use crate::vtree::Vtree;
+use crate::vtree::{VarId, Vtree};
 
 /// A random function of `vars`, minimized, on `vtree`, built on `eng`.
 fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
@@ -18,21 +19,27 @@ fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
 }
 
 /// The conjunction of `parts` in order, `((p0 ∧ p1) ∧ p2) ∧ …`, or of four
-/// parts as `(p0 ∧ p1) ∧ (p2 ∧ p3)` when `pairwise`, on one fresh engine,
-/// writing every level's pairs when `written` holds, under `rules`: the
-/// result and the work it took.
-fn chain(parts: &[Tdd], pairwise: bool, written: bool, rules: StopRules) -> (Result<Tdd, OperationError>, u64) {
+/// parts as `(p0 ∧ p1) ∧ (p2 ∧ p3)` when `pairwise`, then conditioned on
+/// each of `given`, a variable and its value, on one fresh engine, writing
+/// every level's pairs when `written` holds, under `rules`: the result and
+/// the work it took.
+fn chain(parts: &[Tdd], pairwise: bool, given: &[(u32, bool)], written: bool, rules: StopRules) -> (Result<Tdd, OperationError>, u64) {
     let eng = Engine::new();
     let run = || -> Result<Tdd, OperationError> {
         let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(rules));
-        if let [a, b, c, d] = parts && pairwise {
+        let mut acc = if let [a, b, c, d] = parts && pairwise {
             let left = eng.and(a.clone(), b.clone())?;
             let right = eng.and(c.clone(), d.clone())?;
-            return eng.and(left, right);
-        }
-        let mut acc = parts[0].clone();
-        for p in &parts[1..] {
-            acc = eng.and(acc, p.clone())?;
+            eng.and(left, right)?
+        } else {
+            let mut acc = parts[0].clone();
+            for p in &parts[1..] {
+                acc = eng.and(acc, p.clone())?;
+            }
+            acc
+        };
+        for &(v, value) in given {
+            acc = eng.condition_var(acc, VarId(v), value)?;
         }
         Ok(acc)
     };
@@ -45,33 +52,55 @@ fn implicit_levels(t: &Tdd) -> usize {
     t.levels.iter().filter(|l| l.pairs.implicit().is_some()).count()
 }
 
-/// Require `out` to be `oracle` node for node: the same nodes, the same
-/// pair arenas once written, each at the same capacity.
+/// Require `out` to be `oracle` node for node: the same nodes in the same
+/// order, each with the same pairs, and every pair arena of the same
+/// length, capacity and dead slots. A level whose nodes are the written
+/// ones word for word has the written arena once written; a level a prune
+/// kept described numbers its nodes' ranges from the start of the arena
+/// instead, where the written route left them where they were.
 fn same_levels(out: &Tdd, oracle: &Tdd) {
     assert_eq!(out.output, oracle.output);
+    let mut buf = Vec::new();
     for (a, b) in out.levels.iter().zip(oracle.levels.iter()) {
         assert!(b.pairs.implicit().is_none(), "the written route made a level implicit");
-        assert_eq!(a.nodes, b.nodes, "the implicit route wrote other nodes");
-        assert_eq!(a.ranges, b.ranges);
-        assert_eq!(a.pairs.capacity(), b.pairs.capacity(), "the implicit route holds another capacity");
-        if a.pairs.implicit().is_some() {
-            let mut written = a.clone();
-            written.materialize();
-            assert_eq!(&*written.pairs, &*b.pairs, "the description writes other pairs");
-            assert_eq!(written.pairs.capacity(), b.pairs.capacity(), "the written arena has another capacity");
+        assert_eq!(a.nodes.len(), b.nodes.len(), "the implicit route kept other nodes");
+        for i in 0..a.nodes.len() {
+            assert_eq!(a.pair_count_at(i), b.pair_count_at(i));
+            assert_eq!(a.pairs_read(i, &mut buf), b.pairs_of_idx(i), "a node has other pairs");
         }
-        assert_eq!(*a.pairs, *b.pairs, "a reader sees other pairs");
+        assert_eq!(a.pairs.len(), b.pairs.len(), "the implicit route holds another arena length");
+        assert_eq!(a.pairs.capacity(), b.pairs.capacity(), "the implicit route holds another capacity");
+        assert_eq!(a.dead_pairs, b.dead_pairs, "the implicit route counts other dead slots");
+        if a.nodes == b.nodes {
+            assert_eq!(a.ranges, b.ranges);
+            if a.pairs.implicit().is_some() {
+                let mut written = a.clone();
+                written.materialize();
+                assert_eq!(&*written.pairs, &*b.pairs, "the description writes other pairs");
+                assert_eq!(written.pairs.capacity(), b.pairs.capacity(), "the written arena has another capacity");
+            }
+            assert_eq!(*a.pairs, *b.pairs, "a reader sees other pairs");
+        } else {
+            assert!(a.pairs.implicit().is_some(), "a written level has other nodes");
+        }
     }
 }
 
-/// Conjoin `parts` both ways, as [`chain`] does, and require the same diagram, node for node,
-/// and the same work; then, under a stop at each output-pair floor and at
-/// each work bound up to what the chain took, the same stop at the same
-/// work. Returns the implicit levels of the result.
-fn same_both_ways(parts: &[Tdd], pairwise: bool) -> usize {
+/// The levels of `t` a prune kept described after dropping nodes: implicit,
+/// with the slots of the dropped pairs past the described ones.
+fn redescribed_levels(t: &Tdd) -> usize {
+    t.levels.iter().filter(|l| l.implicit().is_some_and(|d| l.pairs.len() > d.pairs())).count()
+}
+
+/// Conjoin `parts` both ways, and condition on `given`, as [`chain`] does,
+/// and require the same diagram, node for node, and the same work; then,
+/// under a stop at each output-pair floor and at each work bound up to what
+/// the chain took, the same stop at the same work. Returns the implicit
+/// levels of the result and the levels a prune kept described.
+fn same_both_ways(parts: &[Tdd], pairwise: bool, given: &[(u32, bool)]) -> (usize, usize) {
     let none = StopRules { unconditional: None, after_pairs: None };
-    let (oracle, oracle_work) = chain(parts, pairwise, true, none);
-    let (out, work) = chain(parts, pairwise, false, none);
+    let (oracle, oracle_work) = chain(parts, pairwise, given, true, none);
+    let (out, work) = chain(parts, pairwise, given, false, none);
     let (oracle, out) = (oracle.unwrap(), out.unwrap());
     assert_canonical(&out);
     same_levels(&out, &oracle);
@@ -80,8 +109,8 @@ fn same_both_ways(parts: &[Tdd], pairwise: bool) -> usize {
     let mut floor = 1u64;
     while floor <= 4 * total as u64 {
         let rules = StopRules { unconditional: None, after_pairs: Some((floor, StopAt::WorkUnits(0))) };
-        let (oracle, oracle_work) = chain(parts, pairwise, true, rules);
-        let (stopped, work) = chain(parts, pairwise, false, rules);
+        let (oracle, oracle_work) = chain(parts, pairwise, given, true, rules);
+        let (stopped, work) = chain(parts, pairwise, given, false, rules);
         assert_eq!(stopped.is_ok(), oracle.is_ok(), "a stop at {floor} pairs fell differently");
         assert_eq!(work, oracle_work, "a stop at {floor} pairs fell at other work");
         floor = floor * 3 / 2 + 1;
@@ -89,8 +118,8 @@ fn same_both_ways(parts: &[Tdd], pairwise: bool) -> usize {
     let mut bound = 1u64;
     while bound <= oracle_work + 1 {
         let rules = StopRules { unconditional: Some(StopAt::WorkUnits(bound)), after_pairs: None };
-        let (oracle, oracle_work) = chain(parts, pairwise, true, rules);
-        let (stopped, work) = chain(parts, pairwise, false, rules);
+        let (oracle, oracle_work) = chain(parts, pairwise, given, true, rules);
+        let (stopped, work) = chain(parts, pairwise, given, false, rules);
         assert_eq!(stopped.is_ok(), oracle.is_ok(), "a stop at {bound} units fell differently");
         assert_eq!(work, oracle_work, "a stop at {bound} units fell at other work");
         if let (Ok(a), Ok(b)) = (&stopped, &oracle) {
@@ -98,7 +127,7 @@ fn same_both_ways(parts: &[Tdd], pairwise: bool) -> usize {
         }
         bound = bound * 2 + 1;
     }
-    implicit_levels(&out)
+    (implicit_levels(&out), redescribed_levels(&out))
 }
 
 /// Random functions over the classes of the variables modulo `m`,
@@ -117,7 +146,7 @@ fn chains_over_classes(n: u32, m: u32, seed: u64, rounds: usize) -> usize {
                 function_of(&vtree, &vars, &mut rng)
             })
             .collect();
-        implicit += same_both_ways(&parts, false);
+        implicit += same_both_ways(&parts, false, &[]).0;
     }
     implicit
 }
@@ -174,17 +203,21 @@ fn affine_function(eng: &Engine, vtree: &Arc<Vtree>, m: u32, j: u32, rng: &mut L
 
 /// The functions of [`affine_function`] over every class of `m`, on a
 /// balanced vtree of `n` variables, conjoined in a chain, or pairwise for
-/// four. Returns the implicit levels of the results.
-fn chains_of_tables(n: u32, m: u32, pairwise: bool, seed: u64, rounds: usize) -> usize {
+/// four, then conditioned on `given` random variables. Returns the implicit
+/// levels of the results and the levels a prune kept described.
+fn chains_of_tables(n: u32, m: u32, pairwise: bool, given: usize, seed: u64, rounds: usize) -> (usize, usize) {
     let vtree = Arc::new(Vtree::balanced(n));
     let eng = Engine::new();
     let mut rng = Lcg::new(seed);
-    let mut implicit = 0;
+    let (mut implicit, mut kept) = (0, 0);
     for _ in 0..rounds {
         let parts: Vec<Tdd> = (0..m).map(|j| affine_function(&eng, &vtree, m, j, &mut rng)).collect();
-        implicit += same_both_ways(&parts, pairwise);
+        let given: Vec<(u32, bool)> = (0..given).map(|_| (1 + rng.below(u64::from(n)) as u32, rng.below(2) == 1)).collect();
+        let (i, k) = same_both_ways(&parts, pairwise, &given);
+        implicit += i;
+        kept += k;
     }
-    implicit
+    (implicit, kept)
 }
 
 #[test]
@@ -196,14 +229,26 @@ fn random_functions_match_the_written_route() {
 
 #[test]
 fn products_of_two_tables_match_the_written_route() {
-    assert!(chains_of_tables(16, 2, false, 0x11a7_0011, 4) > 0, "no level was implicit");
-    assert!(chains_of_tables(32, 2, false, 0x11a7_0012, 2) > 0, "no level was implicit");
+    assert!(chains_of_tables(16, 2, false, 0, 0x11a7_0011, 4).0 > 0, "no level was implicit");
+    assert!(chains_of_tables(32, 2, false, 0, 0x11a7_0012, 2).0 > 0, "no level was implicit");
 }
 
 /// A chain over four classes: from the second conjunction on, one
 /// operand's levels are implicit; pairwise, both operands' are.
 #[test]
 fn implicit_times_implicit_matches_the_written_route() {
-    assert!(chains_of_tables(32, 4, false, 0x11a7_0013, 3) > 0, "no level was implicit");
-    assert!(chains_of_tables(32, 4, true, 0x11a7_0014, 3) > 0, "no level was implicit");
+    assert!(chains_of_tables(32, 4, false, 0, 0x11a7_0013, 3).0 > 0, "no level was implicit");
+    assert!(chains_of_tables(32, 4, true, 0, 0x11a7_0014, 3).0 > 0, "no level was implicit");
+}
+
+/// Products of tables conditioned on a variable or two: the levels off the
+/// path to the variable lose the nodes no longer reached, or see their
+/// children's renumbered, and those whose survivors are affine stay
+/// described.
+#[test]
+fn conditioned_products_match_the_written_route() {
+    let (implicit, kept) = chains_of_tables(32, 2, false, 1, 0x11a7_0015, 6);
+    let (implicit2, kept2) = chains_of_tables(32, 4, true, 2, 0x11a7_0016, 4);
+    assert!(implicit + implicit2 > 0, "no level was implicit");
+    assert!(kept + kept2 > 0, "no prune kept a level described");
 }
