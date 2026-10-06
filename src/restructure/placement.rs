@@ -11,7 +11,7 @@ use std::sync::Arc;
 use crate::{Engine, OperationError};
 use crate::diagram::{
     Assembly, ChildPair, ChildSide, Dirty, LevelView, MarginalStorage, NodeIdx, Tdd, TddBuildError,
-    TddNodeId, WeightStore, WeightValue, LEAF_WIDTH, ONE_LEAF_IDX, try_take_levels,
+    TddLevel, TddNodeId, WeightStore, WeightValue, LEAF_WIDTH, ONE_LEAF_IDX, try_take_levels,
 };
 use crate::execution::pool::PoolGuard;
 use crate::vtree::{Vtree, VtreeIdx};
@@ -25,6 +25,14 @@ fn prune(eng: &Engine, result: &mut Tdd) -> Result<(), OperationError> {
 #[inline]
 fn true_node(vtree: &Vtree, child: VtreeIdx) -> NodeIdx {
     if vtree.node(child).is_leaf() { ONE_LEAF_IDX } else { NodeIdx(0) }
+}
+
+/// Make `level` the level of internal node `at` in a diagram constant true
+/// under it: one node, true on both sides. `level` is empty.
+#[inline]
+pub(crate) fn push_free_level(level: &mut TddLevel, vtree: &Vtree, at: VtreeIdx) {
+    let (left, right) = vtree.children(at);
+    level.push_internal_node(&[ChildPair::new(true_node(vtree, left), true_node(vtree, right))]);
 }
 
 /// The joins that lift every reference of one child of `at` through a free
@@ -225,6 +233,11 @@ impl<'a> MovePlacement<'a> {
     #[inline]
     pub(super) fn true_node(&self, child: VtreeIdx) -> NodeIdx {
         true_node(self.vtree, child)
+    }
+
+    /// Build the level of `at`, a node no placed variable is under.
+    pub(super) fn free(&mut self, at: VtreeIdx) {
+        push_free_level(&mut self.assembly.parts_mut().0[at.idx()], self.vtree, at);
     }
 
     /// Lift all references from one child through a join with a free sibling.

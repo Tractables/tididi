@@ -13,7 +13,7 @@ pub(crate) mod scratch;
 pub mod search;
 pub(crate) mod embed;
 pub(crate) mod graft;
-mod placement;
+pub(crate) mod placement;
 mod splice;
 pub(crate) mod target;
 

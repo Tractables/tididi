@@ -70,6 +70,12 @@ pub(super) struct ApplyRun<'a> {
     /// Whether the sweep must give its operands back when refused: it drops
     /// no operand level, and `carried` goes back to the operands.
     pub(super) restoring: bool,
+    /// Each operand's free levels: internal nodes no variable it was placed
+    /// with is under, whose levels are left empty and read as the constant
+    /// true level, one node true on both sides, they stand for. The sweep
+    /// takes the other operand's level at each, and builds one only where
+    /// both are free or the other is the constant true level too.
+    pub(super) free: Operands<VtreeMask<'a>>,
 }
 
 /// One internal vtree level's identity: the node, its two children, and both
@@ -90,7 +96,7 @@ pub(super) struct LevelShape {
 }
 
 /// One value per operand, named by the operand rather than by a child side.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub(super) struct Operands<T> {
     pub(super) f: T,
     pub(super) g: T,
@@ -214,23 +220,29 @@ impl ApplyRun<'_> {
 
 /// Snapshot both operands' per-level widths, note whether either carries a
 /// marginal level at entry, and sum the dense-route cell count
-/// `preflight_dense_budget` reads; all three in one pass over the levels.
+/// `preflight_dense_budget` reads; all three in one pass over the levels. A
+/// free level ([`ApplyRun::free`]) has the width of the level it stands for.
 ///
 /// Must run before the sweep's identity swaps steal levels, which zeroes
 /// `reference_slot_count` and clears `is_marginal`.
 fn snapshot_widths(
     f: &Tdd,
     g: &Tdd,
-    num_nodes: usize,
+    free: Operands<VtreeMask<'_>>,
     min_grid: usize,
     f_widths: &mut [usize],
     g_widths: &mut [usize],
 ) -> (u64, bool) {
+    let vtree = &f.vtree;
+    let width = |d: &Tdd, free: VtreeMask<'_>, t: VtreeIdx| match free.contains(t.idx()) && !vtree.node(t).is_leaf() {
+        true => 1,
+        false => d.reference_slot_count(t),
+    };
     let mut any_entry_marginal = false;
     let mut total_cells: u64 = 0;
-    for i in 0..num_nodes {
-        let w1 = f.reference_slot_count(VtreeIdx(i as u32));
-        let w2 = g.reference_slot_count(VtreeIdx(i as u32));
+    for i in 0..vtree.num_nodes() {
+        let w1 = width(f, free.f, VtreeIdx(i as u32));
+        let w2 = width(g, free.g, VtreeIdx(i as u32));
         f_widths[i] = w1;
         g_widths[i] = w2;
         any_entry_marginal |= f.levels[i].is_marginal() | g.levels[i].is_marginal();
@@ -279,11 +291,13 @@ fn preflight_dense_budget(lim: &crate::limits::Limits, total_cells: u64) -> Resu
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] from the dense preflight or a buffer reservation.
+#[expect(clippy::too_many_arguments)]
 pub(super) fn apply_and_setup<'a>(
     eng: &Engine,
     f: &Tdd,
     g: &Tdd,
     targets: VtreeMask<'_>,
+    free: Operands<VtreeMask<'a>>,
     weighted: bool,
     levels: &'a mut [TddLevel],
     scratch: &'a mut ApplyWorkspace,
@@ -299,7 +313,7 @@ pub(super) fn apply_and_setup<'a>(
     if f_widths.len() < num_nodes { f_widths.resize(num_nodes, 0); }
     if g_widths.len() < num_nodes { g_widths.resize(num_nodes, 0); }
     let (total_cells, any_entry_marginal) = snapshot_widths(
-        f, g, num_nodes, min_grid, f_widths, g_widths,
+        f, g, free, min_grid, f_widths, g_widths,
     );
 
     let entry_marginality = EntryMarginality::snapshot(f, g, num_nodes, any_entry_marginal);
@@ -330,6 +344,7 @@ pub(super) fn apply_and_setup<'a>(
         prefilter_masks,
         carried: Vec::new(),
         restoring: false,
+        free,
     })
 }
 

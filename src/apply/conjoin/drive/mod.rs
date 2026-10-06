@@ -175,6 +175,11 @@ fn build_level(
 
     // A filtered child product cannot be bypassed by an identity copy.
     let taken = sweep.filter.is_none() && take_level_fast_path(eng, run, f, g, shape)?;
+    debug_assert!(
+        taken || !(run.free.f.contains(t.idx()) || run.free.g.contains(t.idx())),
+        "a free level at {} takes the other operand's level",
+        t.idx(),
+    );
 
     if !taken {
         // One decision per level, taken before any of the level's storage
@@ -223,7 +228,7 @@ pub(crate) fn apply_and_fallible(
     quantified: VtreeMask<'_>,
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
 ) -> Result<Tdd, OperationError> {
-    apply_and_core(eng, f, g, targets, quantified, filter, ConjoinMode::Build).map(Conjoined::diagram)
+    apply_and_core(eng, f, g, targets, quantified, filter, ConjoinMode::Build, Operands::default()).map(Conjoined::diagram)
 }
 
 /// How the sweep delivers its result and handles refused operands.
@@ -238,10 +243,11 @@ pub(crate) enum ConjoinMode {
     Sum(VtreeIdx),
 }
 
-/// Conjoin structural, unweighted operands, returning them intact on refusal.
-pub(crate) fn apply_and_kept(eng: &Engine, f: &mut Tdd, g: &mut Tdd) -> Result<Tdd, OperationError> {
+/// Conjoin structural, unweighted operands, returning them intact on refusal,
+/// with each operand's free levels ([`ApplyRun::free`]) in `free`.
+pub(crate) fn apply_and_kept(eng: &Engine, f: &mut Tdd, g: &mut Tdd, free: Operands<VtreeMask<'_>>) -> Result<Tdd, OperationError> {
     debug_assert!(f.weights.is_none() && g.weights.is_none() && !f.has_marginal_level() && !g.has_marginal_level());
-    apply_and_core(eng, f, g, VtreeMask::default(), VtreeMask::default(), None, ConjoinMode::Restore)
+    apply_and_core(eng, f, g, VtreeMask::default(), VtreeMask::default(), None, ConjoinMode::Restore, free)
         .map(Conjoined::diagram)
 }
 
@@ -278,7 +284,9 @@ impl Conjoined {
 /// root level instead of building it, returning the model count in place of
 /// the diagram. The root is counted only where it is one product the sparse
 /// route builds, with no weights and no filter; otherwise the diagram is
-/// built as usual and the caller counts it.
+/// built as usual and the caller counts it. `free` names each operand's free
+/// levels ([`ApplyRun::free`]), which only a plain conjunction may have.
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn apply_and_core(
     eng: &Engine,
     f: &mut Tdd,
@@ -287,6 +295,7 @@ pub(crate) fn apply_and_core(
     quantified: VtreeMask<'_>,
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
     mode: ConjoinMode,
+    free: Operands<VtreeMask<'_>>,
 ) -> Result<Conjoined, OperationError> {
     let count_root = matches!(mode, ConjoinMode::Count);
     let keep = matches!(mode, ConjoinMode::Restore);
@@ -338,7 +347,11 @@ pub(crate) fn apply_and_core(
     );
     let mut scratch = eng.scratch.apply.workspace.checkout(eng);
     let (levels, ws) = assembly.parts_mut();
-    let mut run = apply_and_setup(eng, f, g, targets, ws.is_some(), levels, &mut scratch)?;
+    debug_assert!(
+        free.f.is_empty() && free.g.is_empty() || plain,
+        "only a plain conjunction reads free levels",
+    );
+    let mut run = apply_and_setup(eng, f, g, targets, free, ws.is_some(), levels, &mut scratch)?;
     run.restoring = keep;
 
     // `g_identity[t]` is true when `g` computes constant-true over subtree

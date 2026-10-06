@@ -135,6 +135,7 @@ For more specialized control:
 | Move a circuit onto a given vtree over the same variables | [`Tdd::restructure_to`](crate::Tdd::restructure_to) |
 | Place a diagram with summed-out levels on a larger vtree | [`Engine::embed_over`](crate::Engine::embed_over) |
 | Conjoin or place a diagram by moving its levels, getting it back when refused | [`Engine::and_restoring`](crate::Engine::and_restoring), [`Engine::embed_moving`](crate::Engine::embed_moving) |
+| Conjoin two diagrams placed on a larger vtree, without building the levels the placements add | [`Engine::and_onto`](crate::Engine::and_onto) |
 | Assemble levels and pairs directly | [`TddBuilder`](crate::diagram::TddBuilder), started with [`Tdd::builder`](crate::Tdd::builder) |
 
 The [data model](crate::guide::model) explains levels, pairs and determinism;

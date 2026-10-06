@@ -501,13 +501,29 @@ impl Limits {
     #[must_use = "the guard marks the operation in flight until it drops; bind it to a name"]
     pub(crate) fn begin_operation(&self) -> OperationScope<'_> {
         if self.op_depth.get() == 0 {
-            self.in_flight_bytes.set(0);
-            self.pairs_in_flight.set(0);
-            self.pairs_level_charge.set(0);
-            self.bounded_growth.set(false);
+            self.zero_operation_meters();
         }
         self.op_depth.set(self.op_depth.get() + 1);
         OperationScope { lim: self }
+    }
+
+    /// Begin the next phase of an operation that runs several operations'
+    /// work in one, as the operation the phase stands for would begin: zero
+    /// the per-operation meters unless another operation is in flight
+    /// around this one, and test the stop.
+    pub(crate) fn next_phase(&self) -> Result<(), OperationError> {
+        if self.op_depth.get() == 1 {
+            self.zero_operation_meters();
+        }
+        self.check_stop()
+    }
+
+    /// Zero the meters an operation reads from its entry.
+    fn zero_operation_meters(&self) {
+        self.in_flight_bytes.set(0);
+        self.pairs_in_flight.set(0);
+        self.pairs_level_charge.set(0);
+        self.bounded_growth.set(false);
     }
 
     /// Enter an operation and test the stop before anything else, so an armed

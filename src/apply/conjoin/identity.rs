@@ -314,6 +314,7 @@ pub(super) fn take_level_fast_path(
 ) -> Result<bool, OperationError> {
     let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
     let (left_width, right_width) = (shape.f.here, shape.g.here);
+    let free = run.free;
     let ApplyRun { levels, f_identity, g_identity, .. } = run;
     // Identity internal: g has width 1 and both children were identity,
     // so g's single node has one pair (0,0) referencing the identity nodes
@@ -352,7 +353,11 @@ pub(super) fn take_level_fast_path(
         && !(!f.levels[t_idx].is_marginal()
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
     {
-        // FP1: f is the carrier, g is the identity operand.
+        // FP1: f is the carrier, g is the identity operand. A free level
+        // carried is built first: the level it stands for.
+        if free.f.contains(t_idx) {
+            crate::restructure::placement::push_free_level(&mut f.levels[t_idx], &f.vtree, shape.t);
+        }
         apply_identity_fast_path::<true>(eng, shape, &mut f.levels, run)?;
         return Ok(true);
     }
@@ -367,6 +372,9 @@ pub(super) fn take_level_fast_path(
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
     {
         // FP2: g is the carrier, f is the identity operand.
+        if free.g.contains(t_idx) {
+            crate::restructure::placement::push_free_level(&mut g.levels[t_idx], &g.vtree, shape.t);
+        }
         apply_identity_fast_path::<false>(eng, shape, &mut g.levels, run)?;
         return Ok(true);
     }

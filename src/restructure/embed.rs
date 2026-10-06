@@ -331,25 +331,11 @@ impl Engine {
         into: &Arc<Vtree>,
         map: impl Fn(VarId) -> VarId,
     ) -> Result<(Tdd, Embedding), EmbedRefused> {
-        let lim = self.limits();
-        let _op = match lim.enter() {
+        let _op = match self.limits().enter() {
             Ok(op) => op,
             Err(e) => return Err(EmbedRefused { error: e.into(), tdd }),
         };
-        if let Err(e) = tdd.require_structure() {
-            return Err(EmbedRefused { error: e.into(), tdd });
-        }
-        let plan = match Plan::build(lim, tdd.vtree(), into, map, false) {
-            Ok(plan) => plan,
-            Err(error) => return Err(EmbedRefused { error, tdd }),
-        };
-        if tdd.is_zero() {
-            return Ok((crate::build::constant_zero(self, into), plan.embedding));
-        }
-        match assemble_moving(self, tdd, into, &plan) {
-            Ok(result) => Ok((result, plan.embedding)),
-            Err((e, tdd)) => Err(EmbedRefused { error: e.into(), tdd }),
-        }
+        place_moving(self, tdd, into, map, Free::Build).map(|(result, plan)| (result, plan.embedding))
     }
 
     /// [`Tdd::embed`] for a diagram whose levels may hold weighted marginal
@@ -440,9 +426,10 @@ impl Engine {
 
 /// What each destination node does in the copy, and where each source level went.
 #[derive(Debug)]
-struct Plan {
-    /// Whether each destination subtree contains a renamed source variable.
-    mapped: Vec<bool>,
+pub(crate) struct Plan {
+    /// Whether no renamed source variable is under each destination node:
+    /// the nodes whose levels are constant true, the free levels.
+    pub(crate) free: Vec<bool>,
     /// The source node a destination node is the image of, where there is one.
     covered_by: Vec<Option<VtreeIdx>>,
     /// The destination node each source node maps to.
@@ -472,8 +459,8 @@ impl Plan {
         map: impl Fn(VarId) -> VarId,
         mirror: bool,
     ) -> Result<Plan, EmbedError> {
-        let mut mapped = Vec::new();
-        lim.try_resize(&mut mapped, into.num_nodes(), false)?;
+        let mut free = Vec::new();
+        lim.try_resize(&mut free, into.num_nodes(), true)?;
         let mut embedding = Vec::new();
         lim.try_resize(&mut embedding, source.num_nodes(), into.root())?;
         let mut gate = lim.gate();
@@ -484,15 +471,15 @@ impl Plan {
                 variable: image,
                 num_vars: into.num_vars(),
             })?;
-            if mapped[target.idx()] {
+            if !free[target.idx()] {
                 return Err(VtreeError::OverlappingVariable(image).into());
             }
-            mapped[target.idx()] = true;
+            free[target.idx()] = false;
             embedding[leaf.idx()] = target;
         }
         for (t, left, right) in into.internal_bottomup() {
             gate.poll(1)?;
-            mapped[t.idx()] = mapped[left.idx()] || mapped[right.idx()];
+            free[t.idx()] = free[left.idx()] && free[right.idx()];
         }
 
         // A leaf under each source node, and whether each source node's
@@ -518,8 +505,8 @@ impl Plan {
             gate.poll(1)?;
             if !into.node(d).is_leaf() {
                 let (left, right) = into.children(d);
-                if !mapped[left.idx()] || !mapped[right.idx()] {
-                    let carries = if !mapped[left.idx()] { right } else { left };
+                if free[left.idx()] || free[right.idx()] {
+                    let carries = if free[left.idx()] { right } else { left };
                     lim.try_push(&mut stack, (carries, s))?;
                     continue;
                 }
@@ -548,7 +535,46 @@ impl Plan {
             "a completed match gives every source level an image",
         );
         gate.flush()?;
-        Ok(Plan { mapped, covered_by, embedding: Embedding { levels: embedding }, mirror, mirrored })
+        Ok(Plan { free, covered_by, embedding: Embedding { levels: embedding }, mirror, mirrored })
+    }
+}
+
+/// What [`place_moving`] does with the free levels, those of the destination
+/// nodes no renamed variable is under.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Free {
+    /// Build each: one node, true on both sides.
+    Build,
+    /// Leave each empty, for a conjunction that reads it as the level it
+    /// stands for and takes the other operand's level there.
+    Leave,
+}
+
+/// [`Engine::embed_moving`] under the caller's entry, with the plan it placed
+/// `tdd` by; with [`Free::Leave`], a diagram whose free levels are empty. A
+/// false diagram is the false diagram on `into`, every level empty, whatever
+/// `free` says.
+#[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+pub(crate) fn place_moving(
+    eng: &Engine,
+    tdd: Tdd,
+    into: &Arc<Vtree>,
+    map: impl Fn(VarId) -> VarId,
+    free: Free,
+) -> Result<(Tdd, Plan), EmbedRefused> {
+    if let Err(e) = tdd.require_structure() {
+        return Err(EmbedRefused { error: e.into(), tdd });
+    }
+    let plan = match Plan::build(eng.limits(), tdd.vtree(), into, map, false) {
+        Ok(plan) => plan,
+        Err(error) => return Err(EmbedRefused { error, tdd }),
+    };
+    if tdd.is_zero() {
+        return Ok((crate::build::constant_zero(eng, into), plan));
+    }
+    match assemble_moving(eng, tdd, into, &plan, free) {
+        Ok(result) => Ok((result, plan)),
+        Err((e, tdd)) => Err(EmbedRefused { error: e.into(), tdd }),
     }
 }
 
@@ -586,7 +612,7 @@ fn assemble(
         if into.node(t).is_leaf() { continue; }
         gate.poll(1)?;
         let (left, right) = into.children(t);
-        if !plan.mapped[t.idx()] {
+        if plan.free[t.idx()] {
             placement.join(t, placement.true_node(left), placement.true_node(right))?;
         } else if let Some(source) = plan.covered_by[t.idx()] {
             match plan.mirrored.get(source.idx()).copied().unwrap_or(false) {
@@ -594,7 +620,7 @@ fn assemble(
                 false => placement.copy_level(tdd, source, t)?,
             }
         } else {
-            placement.pass_through(t, if plan.mapped[left.idx()] { ChildSide::Right } else { ChildSide::Left })?;
+            placement.pass_through(t, if plan.free[left.idx()] { ChildSide::Left } else { ChildSide::Right })?;
         }
     }
     gate.flush()?;
@@ -610,6 +636,7 @@ fn assemble_moving(
     mut tdd: Tdd,
     into: &Arc<Vtree>,
     plan: &Plan,
+    free: Free,
 ) -> Result<Tdd, (OperationError, Tdd)> {
     // A moved level keeps its nodes and, through the pass-throughs and the
     // renumbered literal chains, the identities of its children's, so it
@@ -644,12 +671,14 @@ fn assemble_moving(
         if stopped.is_err() {
             break;
         }
-        let (left, right) = into.children(t);
-        if !plan.mapped[t.idx()] {
-            placement.join(t, placement.true_node(left), placement.true_node(right));
+        if plan.free[t.idx()] {
+            if free == Free::Build {
+                placement.free(t);
+            }
             continue;
         }
-        let (free_side, carried) = if plan.mapped[left.idx()] { (ChildSide::Right, left) } else { (ChildSide::Left, right) };
+        let (left, right) = into.children(t);
+        let (free_side, carried) = if plan.free[left.idx()] { (ChildSide::Left, right) } else { (ChildSide::Right, left) };
         if !into.node(carried).is_leaf() {
             placement.pass_through(t, free_side);
         } else if let Some(top) = literal_chain(into, plan, &placement, tdd.output().local, t) {
@@ -711,7 +740,7 @@ fn moved_loose(into: &Vtree, plan: &Plan, loose: &[u32], literal_tops: &[VtreeId
             let mut foot = top;
             while plan.covered_by[foot.idx()].is_none() && !into.node(foot).is_leaf() {
                 let (l, r) = into.children(foot);
-                foot = if plan.mapped[l.idx()] { l } else { r };
+                foot = if plan.free[l.idx()] { r } else { l };
             }
             let named_whole = match into.node(foot).is_leaf() {
                 true => literal_tops.binary_search(&top).is_err(),
@@ -789,10 +818,10 @@ fn assemble_marginal(
             continue;
         }
         let (left, right) = into.children(t);
-        if !plan.mapped[t.idx()] {
+        if plan.free[t.idx()] {
             placement.join(t, placement.true_node(left), placement.true_node(right));
         } else {
-            placement.pass_through(t, if plan.mapped[left.idx()] { ChildSide::Right } else { ChildSide::Left });
+            placement.pass_through(t, if plan.free[left.idx()] { ChildSide::Left } else { ChildSide::Right });
         }
     }
     gate.flush()?;
@@ -802,7 +831,7 @@ fn assemble_marginal(
         stack.push(boundary);
         while let Some(t) = stack.pop() {
             if into.node(t).is_leaf() {
-                if !plan.mapped[t.idx()] {
+                if plan.free[t.idx()] {
                     let free = weights.leaf_val(into.leaf_var(t), LeafLabel::One);
                     factor = Some(match factor {
                         None => free,
