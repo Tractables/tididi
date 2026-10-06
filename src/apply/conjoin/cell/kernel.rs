@@ -210,7 +210,8 @@ impl PairSink for CollectSink<'_> {
 /// its `(lc, rc)`, and a candidate survives when neither side is
 /// [`NO_PRODUCT`]. `cand` reads the right side only for a live left side, as
 /// a walk that tests each side before the next would, and returns
-/// `NO_PRODUCT` for it otherwise.
+/// `NO_PRODUCT` for it otherwise; so the right side alone says whether a
+/// candidate survives.
 ///
 /// While the sink's buffer has spare capacity, candidates are written without
 /// a capacity test or a branch on survival: each is stored at the buffer's end
@@ -234,7 +235,8 @@ pub(super) fn push_kept<T, S: PairSink>(
         if room == 0 {
             let (lc, rc) = cand(&rest[0]);
             rest = &rest[1..];
-            if lc != NO_PRODUCT && rc != NO_PRODUCT {
+            debug_assert!(lc != NO_PRODUCT || rc == NO_PRODUCT, "a dead left side stands for the right");
+            if rc != NO_PRODUCT {
                 sink.pair(eng, lc, rc)?;
             }
             continue;
@@ -245,11 +247,12 @@ pub(super) fn push_kept<T, S: PairSink>(
         let mut len = v.len();
         for item in run {
             let (lc, rc) = cand(item);
+            debug_assert!(lc != NO_PRODUCT || rc == NO_PRODUCT, "a dead left side stands for the right");
             // Safety: `len` starts at the buffer's length and steps at most
             // once per item of `run`, which holds no more items than the
             // spare capacity, so the write stays inside the allocation.
             unsafe { out.add(len).write(ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc))) };
-            len += usize::from(lc != NO_PRODUCT && rc != NO_PRODUCT);
+            len += usize::from(rc != NO_PRODUCT);
         }
         // Safety: slots below `len` hold the old contents and one written
         // pair per step.
