@@ -97,6 +97,9 @@ The [persistence example](crate::guide::examples::persistence) saves diagrams
 with [`write_tdd`](crate::io::write_tdd), restores them with
 [`read_tdd`](crate::io::read_tdd), and stores the vtree through
 [`Vtree::to_text`](crate::Vtree::to_text) and [`Vtree::from_text`](crate::Vtree::from_text).
+[`write_tdd_binary`](crate::io::write_tdd_binary) and
+[`read_tdd_binary`](crate::io::read_tdd_binary) are the compact binary
+counterparts, for stores where bytes and read time matter.
 
 Render Graphviz text with [`tdd_to_dot`](crate::io::tdd_to_dot) or
 [`vtree_to_dot`](crate::io::vtree_to_dot); [`Tdd::level_sizes_to_dot`](crate::Tdd::level_sizes_to_dot)

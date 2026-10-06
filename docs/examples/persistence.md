@@ -47,7 +47,10 @@ drop((destination, encryption_rule, vtree));
 
 For files, use [`save_tdd`](crate::io::save_tdd) and
 [`load_tdd`](crate::io::load_tdd). Save application variable names alongside
-them if you need those names later.
+them if you need those names later. For a store of many or large diagrams,
+[`save_tdd_binary`](crate::io::save_tdd_binary) and
+[`load_tdd_binary`](crate::io::load_tdd_binary) write the same diagram as a
+compact checksummed binary file that reads without parsing text.
 
 Save before marginalizing, and store any weights separately;
 [`write_tdd`](crate::io::write_tdd) preserves the Boolean structure.

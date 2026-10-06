@@ -23,6 +23,9 @@
 //!   set of levels out leaves the count alone.
 //! - [`text_round_trip`] — a diagram written to `.tdd` and read back is the
 //!   same diagram.
+//! - [`binary_round_trip`] — the binary format reads back the diagram the
+//!   text format reads back, node for node, and a resealed corruption of it
+//!   is refused or read as a valid diagram, never a panic.
 //! - [`weighted_counts_match_enumeration`] — exact rational weights reproduce
 //!   the weighted sum, and the log domain reproduces it to `1e-9` of the sum of
 //!   the term magnitudes, which is the scale a signed fold's accuracy is against.
@@ -56,7 +59,7 @@ use tididi::diagram::{
     Arithmetic, ChildRef, EncodedChildRef, LiteralWeights, RationalWeights, SignedLog, ValueRef, WeightStore,
 };
 use tididi::limits::{LimitConfig, SparseRoute};
-use tididi::io::{load_tdd, save_tdd};
+use tididi::io::{load_tdd, read_tdd, read_tdd_binary, save_tdd, write_tdd, write_tdd_binary};
 
 
 
@@ -250,12 +253,13 @@ fn step(name: &'static str) {
 fn check_case(case: &Case) {
     /// One claim of the battery, by the name a failure report gives it.
     type Claim = (&'static str, fn(&Case));
-    let claims: [Claim; 11] = [
+    let claims: [Claim; 12] = [
         ("count against enumeration", count_matches_enumeration),
         ("operation orders agree", orders_agree),
         ("operations against enumeration", operations_match_enumeration),
         ("marginalizing preserves the count", marginalizing_preserves_the_count),
         ("text round trip", text_round_trip),
+        ("binary round trip", binary_round_trip),
         ("weighted counts against enumeration", weighted_counts_match_enumeration),
         ("streaming marginalization against enumeration", streaming_marginalization_matches_enumeration),
         ("weighted composition against enumeration", weighted_composition_matches_enumeration),
@@ -464,6 +468,91 @@ fn text_round_trip(case: &Case) {
     assert_same_shape(&f, &back, "text round trip");
     assert_eq!(f.model_count().unwrap(), back.model_count().unwrap(), "text round trip changed the count");
     let _ = std::fs::remove_file(&path);
+}
+
+/// The binary format carries the diagram the text format carries: both read
+/// back to the same levels, node for node and pair for pair. A body byte
+/// changed under a rewritten checksum is refused or read as a diagram the
+/// builder accepted, and never panics.
+fn binary_round_trip(case: &Case) {
+    let f = compile(case);
+    let mut bytes = Vec::new();
+    write_tdd_binary(&mut bytes, &f).expect("the diagram is structural, so it is writable");
+    let back = read_tdd_binary(&mut bytes.as_slice(), &case.vtree).expect("what was just written reads back");
+    let mut text = Vec::new();
+    write_tdd(&mut text, &f).expect("the diagram is structural, so it is writable");
+    let from_text = read_tdd(&mut text.as_slice(), &case.vtree).expect("the text reads back");
+    assert_canonical(&back);
+    assert_eq!(back.output(), from_text.output(), "binary round trip: output");
+    for t in case.vtree.bottomup() {
+        let (a, b) = (back.level(t), from_text.level(t));
+        assert_eq!(a.nodes().len(), b.nodes().len(), "binary round trip: level {t:?}");
+        for i in 0..a.nodes().len() {
+            assert_eq!(a.pairs_of_idx(i), b.pairs_of_idx(i), "binary round trip: level {t:?} node {i}");
+        }
+    }
+    assert_eq!(f.model_count().unwrap(), back.model_count().unwrap(), "binary round trip changed the count");
+
+    let mut rng = Lcg::new(case.seed ^ 0xb1);
+    for _ in 0..16 {
+        let mut bad = bytes.clone();
+        let at = 24 + rng.below((bad.len() - 32) as u64) as usize;
+        bad[at] ^= 1 + rng.below(255) as u8;
+        // Reseal: the length is unchanged; rewrite the checksum.
+        let end = bad.len() - 8;
+        let sum = xxh64(&bad[..end]);
+        bad[end..].copy_from_slice(&sum.to_le_bytes());
+        if let Ok(g) = read_tdd_binary(&mut bad.as_slice(), &case.vtree) {
+            g.model_count().expect("a diagram the reader accepted counts");
+        }
+    }
+}
+
+/// `XXH64` with seed 0, the binary format's checksum, written out here so the
+/// claim does not reach into the reader for it.
+fn xxh64(data: &[u8]) -> u64 {
+    const P1: u64 = 0x9E37_79B1_85EB_CA87;
+    const P2: u64 = 0xC2B2_AE3D_27D4_EB4F;
+    const P3: u64 = 0x1656_67B1_9E37_79F9;
+    const P4: u64 = 0x85EB_CA77_C2B2_AE63;
+    const P5: u64 = 0x27D4_EB2F_1656_67C5;
+    let round = |acc: u64, input: u64| acc.wrapping_add(input.wrapping_mul(P2)).rotate_left(31).wrapping_mul(P1);
+    let word = |i: usize| u64::from_le_bytes(data[i..i + 8].try_into().unwrap());
+    let mut i = 0;
+    let mut h = if data.len() >= 32 {
+        let mut v = [P1.wrapping_add(P2), P2, 0, 0u64.wrapping_sub(P1)];
+        while i + 32 <= data.len() {
+            for (lane, acc) in v.iter_mut().enumerate() {
+                *acc = round(*acc, word(i + 8 * lane));
+            }
+            i += 32;
+        }
+        let mut h = v[0].rotate_left(1).wrapping_add(v[1].rotate_left(7)).wrapping_add(v[2].rotate_left(12)).wrapping_add(v[3].rotate_left(18));
+        for lane in v {
+            h = (h ^ round(0, lane)).wrapping_mul(P1).wrapping_add(P4);
+        }
+        h
+    } else {
+        P5
+    };
+    h = h.wrapping_add(data.len() as u64);
+    while i + 8 <= data.len() {
+        h = (h ^ round(0, word(i))).rotate_left(27).wrapping_mul(P1).wrapping_add(P4);
+        i += 8;
+    }
+    if i + 4 <= data.len() {
+        let half = u32::from_le_bytes(data[i..i + 4].try_into().unwrap());
+        h = (h ^ u64::from(half).wrapping_mul(P1)).rotate_left(23).wrapping_mul(P2).wrapping_add(P3);
+        i += 4;
+    }
+    for &byte in &data[i..] {
+        h = (h ^ u64::from(byte).wrapping_mul(P5)).rotate_left(11).wrapping_mul(P1);
+    }
+    h ^= h >> 33;
+    h = h.wrapping_mul(P2);
+    h ^= h >> 29;
+    h = h.wrapping_mul(P3);
+    h ^ (h >> 32)
 }
 
 /// Weighted counting against the weighted sum over the truth table, exactly in

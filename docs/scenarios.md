@@ -236,6 +236,8 @@ rules on that same restored vtree.
 Explain why separately reconstructed vtrees are not interchangeable domains.
 Bytes and vtree text can be stored independently. Rust demonstrates readers
 and writers; Python demonstrates strings and bytes and points to path helpers.
+Rust also points to the binary format's path helpers for stores of many or
+large diagrams; the bindings do not expose that format.
 
 C returns owned byte buffers and UTF-8 vtree text, leaving file I/O to the
 application. The tutorial restores both rules and counts their conjunction;
@@ -243,11 +245,11 @@ equivalence and malformed input are checked separately by the C consumer tests.
 
 ### Instances
 
-- [Rust walkthrough](examples/persistence.md) <!-- reviewed: 6f071aae8f7fbe2fab875aa0511aafba256ec46927ad23b179ee5133aae5b4b1 -->
-- [Rust program](../examples/persistence.rs) <!-- reviewed: f415e622866f274ee20a4433d56b95e04d94ed00e77fc7f11df1a8e2e2268671 -->
-- [Python walkthrough and program](../bindings/python/examples/05_persistence.py) <!-- reviewed: 2495a36faff122077a3e3a4135ec0f4ee83b46c86c2c05c920835b5766c85d42 -->
-- [C persistence](../bindings/c/docs/persistence.rst) <!-- reviewed: 89fc3a373f111bc21b4d2489890849bc6c8dbfd9e00b40267721c75de23c3bd0 -->
-- [C program persistence](../bindings/c/examples/persistence.c) <!-- reviewed: 3874298127872ef693e984c146532ff7c381b857fcb7825c2ef7fbe5772c649e -->
+- [Rust walkthrough](examples/persistence.md) <!-- reviewed: 2bbe87c229e3841aac8ebced04b19b37c8f73e5f78f3334c4301fde10a7da1ac -->
+- [Rust program](../examples/persistence.rs) <!-- reviewed: 9e537db00bb3d80be8cb57b3d04f2e94012b4af5e6fcf19645cb75d94f772262 -->
+- [Python walkthrough and program](../bindings/python/examples/05_persistence.py) <!-- reviewed: fdfc429df95bf755e261e8e64ea77c1c8b1f33aff50b6c5f90565b88b15f49bc -->
+- [C persistence](../bindings/c/docs/persistence.rst) <!-- reviewed: 8e370a6820cbd48a418cb57a186c7bb4f37c2ae2587b1144c8c71c6e691ade28 -->
+- [C program persistence](../bindings/c/examples/persistence.c) <!-- reviewed: 1295f0d5d374a4b2b33742847c648ba5f7ba40d79f24ed694ddc05e6201d6eb1 -->
 
 ## Vtrees
 
@@ -399,7 +401,7 @@ evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: 98cb10491a33b34383b45868d5c75e24bf24e6eef2a2dac9a85a060d8884ce76 -->
+- [Rust API overview](api-guide.md) <!-- reviewed: 8e216c41dada1157979521762b43cb97f53de034f2836851d5093b195499cd7b -->
 - [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: 619c8cf6bbe3d4b720da766850817f34b4fdf92c866f3c6cd9828cd555fdcd39 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 
