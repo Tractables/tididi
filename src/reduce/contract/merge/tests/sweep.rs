@@ -189,8 +189,8 @@ fn refused_merge_reuses_buffers_without_replaying_stale_plans() {
 }
 
 /// Twins of a diagram with no marginal level have disjoint supports, so
-/// their merge plan meets no repeated pair and never fills the marginal map,
-/// a pass over every level of the diagram.
+/// their merge plan concatenates every member and never fills the marginal
+/// map, a pass over every level of the diagram.
 #[test]
 fn a_plain_merge_leaves_the_marginal_map_unfilled() {
     let eng = Engine::new();

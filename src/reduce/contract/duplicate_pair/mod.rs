@@ -37,8 +37,8 @@ use crate::vtree::VtreeIdx;
 /// its growth to `lim`.
 ///
 /// O(vtree nodes), so the caller fills it lazily — on the first merge of a
-/// checkout whose plan meets a repeated pair, never where twin supports are
-/// disjoint. See `ContractScratch::has_marginal_below_valid`.
+/// checkout at a plain level of a diagram with a marginal level, never where
+/// twin supports are disjoint. See `ContractScratch::has_marginal_below_valid`.
 pub(super) fn compute_has_marginal_below_into(
     lim: &Limits,
     tdd: &Tdd,

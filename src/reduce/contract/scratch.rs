@@ -257,8 +257,9 @@ pub(crate) struct ContractScratch {
     pub(super) has_marginal_below: Vec<bool>,
     /// Is [`has_marginal_below`](Self::has_marginal_below) filled for the diagram
     /// this checkout is working on? Cleared by checkout, set by the fill in
-    /// `merge::contract_twins`, which runs on the first merge whose plan meets
-    /// a repeated pair rather than up front, since only such a plan reads it.
+    /// `merge::contract_twins`, which runs on the first merge at a plain
+    /// level of a diagram with a marginal level rather than up front, since
+    /// only such a merge reads it.
     pub(super) has_marginal_below_valid: bool,
     /// Whether the diagram this checkout is working on has a marginal level,
     /// read once per checkout by `merge::contract_twins`: without one, twin
