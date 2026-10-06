@@ -22,7 +22,7 @@ use crate::diagram::{EncodedChildRef, NodeIdx, NodeKind, Tdd};
 use crate::Engine;
 
 use crate::vtree::VtreeIdx;
-use crate::limits::{OperationError, Transient};
+use crate::limits::{Limits, OperationError, PollGate, Transient};
 use crate::execution::pool::{Buffers, PooledScratch, Scratch};
 
 /// The new index of a slot that did not survive, in the remap a parent
@@ -208,10 +208,11 @@ pub(crate) enum PruneScope {
 /// from — an output below the root, a leaf or marginal root level — walks the
 /// whole diagram instead. A `Whole` scope on a structural diagram that knows
 /// its loose levels ([`Dirty::loose`](crate::diagram::Dirty::loose)) walks
-/// down from the output through the levels above them and the levels that
-/// lose a node. A level the walk leaves has lost no node and has no loose
-/// level under it, so each node below it is named by a surviving node of its
-/// parent level. The prune leaves no level loose.
+/// down from the output through the levels above them, as [`settle_loose`]
+/// leaves them, and the levels that lose a node. A level the walk leaves has
+/// lost no node and has no loose level under it, so each node below it is
+/// named by a surviving node of its parent level. The prune leaves no level
+/// loose.
 ///
 /// # Errors
 ///
@@ -238,12 +239,14 @@ pub(crate) fn prune_unreachable(
 
     let below_root = matches!(scope, PruneScope::BelowRoot) && below_root_walk_applies(tdd);
     // The levels the walk must enter whatever it finds: the parents of the
-    // loose levels and every level above them.
+    // loose levels, as `settle_loose` leaves them, and every level above
+    // them.
     let forced = match tdd.dirty.loose() {
         Some(loose) if !below_root && below_root_walk_applies(tdd) && !tdd.has_marginal_level() => {
+            let loose = settle_loose(eng, tdd, loose)?;
             let mut forced: Transient<'_, Vec<bool>> = Transient::new(eng.limits(), Vec::new());
             eng.limits().try_resize(&mut forced, tdd.vtree.num_nodes(), false)?;
-            for &level in loose {
+            for &level in &loose {
                 let mut up = tdd.vtree.node(VtreeIdx(level)).parent();
                 while let Some(p) = up {
                     if forced[p.idx()] {
@@ -305,6 +308,117 @@ pub(crate) fn below_root_walk_applies(tdd: &Tdd) -> bool {
     tdd.output.vtree == root
         && !tdd.vtree.node(root).is_leaf()
         && !tdd.levels[root.idx()].is_marginal()
+}
+
+// ── Settling the loose levels ────────────────────────────────────────────────
+
+/// The levels of `listed`, loose levels of `tdd`
+/// ([`Dirty::loose`](crate::diagram::Dirty::loose)), the walk from the
+/// output has to enter the parents of: each that holds a node no pair of its
+/// parent level names, and others only where the walk enters their parent
+/// anyway, so that it enters the levels a list of exactly the first would
+/// have it enter. The list keeps its order.
+///
+/// A listed level is read, its parent level's pairs until they have named
+/// every node of it, unless its parent is the root, or a level under one of
+/// the parent's children stays listed: the walk enters such a parent
+/// whatever the list says. A level with no node is dropped, and one that
+/// cannot be read stays listed: the root, a level that is not structural
+/// internal, and one whose parent level is not. Listed siblings are read in
+/// one pass, one unit of work a pair.
+///
+/// A listed level makes the walk enter every level above it, so one listed
+/// in vain can cost a walk from the root, where reading it costs at most its
+/// parent level's pairs.
+///
+/// # Errors
+///
+/// Returns `Err(OperationError::OverBudget)` if the marks a read takes are
+/// refused, and the stop the work polls for.
+pub(crate) fn settle_loose(eng: &Engine, tdd: &Tdd, listed: &[u32]) -> Result<Vec<u32>, OperationError> {
+    let lim = eng.limits();
+    let vtree = &tdd.vtree;
+    let mut at = vec![false; vtree.num_nodes()];
+    for &t in listed {
+        at[t as usize] = true;
+    }
+    // Whether a level strictly under each level stays listed; `at` turns
+    // false for a listed level its parent's pairs name whole.
+    let mut under = vec![false; vtree.num_nodes()];
+    let mut gate = lim.gate();
+    let mut marks: Transient<'_, Vec<u64>> = Transient::new(lim, Vec::new());
+    for (p, left, right) in vtree.internal_bottomup() {
+        let sides = [at[left.idx()], at[right.idx()]];
+        if sides != [false; 2] && p != vtree.root() && !under[left.idx()] && !under[right.idx()] {
+            let stays = unnamed_children(lim, tdd, p, sides, &mut marks, &mut gate)?;
+            at[left.idx()] = stays[0];
+            at[right.idx()] = stays[1];
+        }
+        under[p.idx()] = under[left.idx()] || under[right.idx()] || at[left.idx()] || at[right.idx()];
+    }
+    gate.flush()?;
+    Ok(listed.iter().copied().filter(|&t| at[t as usize]).collect())
+}
+
+/// Which of the children of level `p` that `sides` asks for, left and right,
+/// hold a node no pair of `p` names, reading `p`'s pairs in one pass until
+/// they have named every node of each, one unit of work through `gate` a
+/// pair. A level with no node holds none, and a level that cannot be read
+/// counts as holding one: one that is not structural internal, and each
+/// child of a `p` that is not.
+fn unnamed_children(
+    lim: &Limits,
+    tdd: &Tdd,
+    p: VtreeIdx,
+    sides: [bool; 2],
+    marks: &mut Transient<'_, Vec<u64>>,
+    gate: &mut PollGate<'_>,
+) -> Result<[bool; 2], OperationError> {
+    if sides == [false; 2] || !tdd.is_structural_internal(p) {
+        return Ok(sides);
+    }
+    let (left, right) = tdd.vtree.children(p);
+    let children = [left, right];
+    // The nodes of each side not named yet, and the word its block starts at.
+    let (mut open, mut base, mut unread) = ([0usize; 2], [0usize; 2], [false; 2]);
+    marks.clear();
+    for k in 0..2 {
+        if !sides[k] {
+            continue;
+        }
+        if !tdd.is_structural_internal(children[k]) {
+            unread[k] = true;
+            continue;
+        }
+        let width = tdd.levels[children[k].idx()].slot_count();
+        base[k] = marks.len();
+        lim.try_resize(marks, base[k] + words(width), 0)?;
+        open[k] = width;
+    }
+    let views = children.map(|c| tdd.levels[c.idx()].child_decoder());
+    let level = &tdd.levels[p.idx()];
+    'read: for i in 0..level.slot_count() {
+        if open == [0; 2] {
+            break;
+        }
+        let pairs = level.pairs_of_idx(i);
+        gate.poll(pairs.len() as u64)?;
+        for pair in pairs {
+            for (k, side) in [pair.left, pair.right].into_iter().enumerate() {
+                if open[k] > 0 && let Some(s) = views[k].child(side).index() {
+                    let (word, bit) = (base[k] + (s >> 6), 1u64 << (s & 63));
+                    if marks[word] & bit == 0 {
+                        marks[word] |= bit;
+                        open[k] -= 1;
+                    }
+                }
+            }
+            if open == [0; 2] {
+                break 'read;
+            }
+        }
+    }
+    Ok([unread[0] || open[0] > 0, unread[1] || open[1] > 0])
 }
 
 /// [`prune_unreachable`] over every level: mark from the output, then compact

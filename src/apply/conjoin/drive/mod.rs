@@ -30,6 +30,7 @@
 //! driver runs.
 
 mod level;
+mod loose;
 use level::{
     build_level_dense, count_sparse_root, count_streamed_root, counts_root, holds_back, pick_streamed,
     run_sparse_level, sum_sparse_root, sums_root, LevelBuild,
@@ -37,6 +38,7 @@ use level::{
 
 use super::*;
 
+use crate::reduce::prune::settle_loose;
 use crate::Engine;
 
 /// What one sweep carries beside its [`ApplyRun`]: the vtree, the
@@ -352,6 +354,15 @@ pub(crate) fn apply_and_core(
 
     apply_leaf_levels(eng, &vtree, &mut run)?;
 
+    // The operands' loose levels as a prune would settle them, read before
+    // the sweep drops the operands' levels: an embedding lists every level
+    // it built, most of them a node for each node of the level under them,
+    // each named once.
+    let operand_loose = match (f.dirty.loose(), g.dirty.loose()) {
+        (Some(lf), Some(lg)) if plain => Some(Operands { f: settle_loose(eng, f, lf)?, g: settle_loose(eng, g, lg)? }),
+        _ => None,
+    };
+
     let canon_leaves = super::leaf_seed::seed_output_leaves(
         f, g, &vtree, run.levels,
         Operands { f: &run.f_identity[..], g: &run.g_identity[..] },
@@ -395,35 +406,20 @@ pub(crate) fn apply_and_core(
         for &(t, from_f) in &carried {
             carrier[t] = if from_f { 1 } else { 2 };
         }
-        // A carried level is loose where its carrier had it loose. The other
-        // operand's entry there is for a level the result did not take: an
-        // operand embedded onto a wider scope has every level it gained
-        // loose, and a small factor joined to a large diagram gained the
-        // large one's levels, which made the prune after the join walk it.
-        let loose = match (f.dirty.loose(), g.dirty.loose()) {
-            (Some(lf), Some(lg)) => Some(
-                lf.iter()
-                    .filter(|&&t| carrier[t as usize] != 2)
-                    .chain(lg.iter().filter(|&&t| carrier[t as usize] != 1))
-                    .copied()
-                    .collect::<Vec<u32>>(),
-            ),
-            _ => None,
-        };
+        // The result's loose levels (`loose::loose_levels`): a carried level
+        // where its carrier has it loose, and a level under one the
+        // conjunction built where the operands and the sibling's product
+        // grid do not prove it tight. The other operand's entry at a carried
+        // level is for a level the result did not take: an operand embedded
+        // onto a wider scope has every level it gained loose, and a small
+        // factor joined to a large diagram gained the large one's levels,
+        // which made the prune after the join walk it. Listing every level
+        // the conjunction built made that prune walk every one of them.
+        let loose = operand_loose
+            .map(|ops| loose::loose_levels(&vtree, &run, &carrier, Operands { f: &ops.f[..], g: &ops.g[..] }));
         let built: Vec<VtreeIdx> = vtree.internal_bottomup().map(|(t, _, _)| t).filter(|t| carrier[t.idx()] == 0).collect();
         assembly.finish_with_or_return(output, owed, &built).map(|mut out| {
-            // A level the conjunction built may hold a node nothing above
-            // names, and so may the top of a carried subtree, whose parent
-            // level it built; the carried levels below keep their carrier's.
-            if let Some(mut loose) = loose {
-                loose.extend(built.iter().map(|t| t.0));
-                loose.extend(
-                    carried
-                        .iter()
-                        .map(|&(t, _)| VtreeIdx(t as u32))
-                        .filter(|&t| vtree.node(t).parent().is_some_and(|p| carrier[p.idx()] == 0))
-                        .map(|t| t.0),
-                );
+            if let Some(loose) = loose {
                 out.dirty.set_loose(Some(loose));
                 out.dirty.dedup_above(num_nodes);
             }

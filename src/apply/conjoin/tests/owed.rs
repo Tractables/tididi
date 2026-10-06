@@ -80,8 +80,9 @@ fn seeded_conjunctions_minimize_to_the_canonical_diagram() {
 /// A clause embedded onto a wider vtree has every level it gained loose. Where
 /// the conjunction carries the other operand's level, that level is loose only
 /// if its carrier had it so, so the prune after the conjunction starts at the
-/// top of a carried subtree, not inside it, and the minimized result is still
-/// the canonical diagram.
+/// top of a carried subtree, not inside it; the top is listed where the
+/// level the conjunction built over it leaves one of its nodes unnamed. The
+/// minimized result is still the canonical diagram.
 #[test]
 fn a_carried_level_is_loose_only_where_its_carrier_had_it() {
     use crate::vtree::VarId;
@@ -102,7 +103,11 @@ fn a_carried_level_is_loose_only_where_its_carrier_had_it() {
     assert!(gained.contains(&a.0) && gained.contains(&b.0));
     let mut out = eng.and(f, g).unwrap();
     let loose = out.dirty.loose().expect("both operands' loose levels are known");
-    assert!(loose.contains(&half.0), "a carried level under a built one may be loose");
+    let root = &out.levels[wide.root().idx()];
+    let view = out.levels[half.idx()].child_decoder();
+    let named: std::collections::BTreeSet<usize> =
+        (0..root.slot_count()).flat_map(|i| root.pairs_of_idx(i)).filter_map(|p| view.child(p.left).index()).collect();
+    assert!(loose.contains(&half.0) || named.len() == out.levels[half.idx()].slot_count(), "{loose:?}");
     assert!(!loose.contains(&a.0) && !loose.contains(&b.0), "{loose:?}");
     eng.minimize(&mut out).unwrap();
     assert_canonical(&out);

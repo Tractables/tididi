@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::reduce::prune::{PruneScope, below_root_walk_applies, prune_unreachable};
+use crate::reduce::prune::{PruneScope, below_root_walk_applies, prune_unreachable, settle_loose};
 
 use crate::test_helpers::compile_clauses;
 use crate::vtree::Vtree;
@@ -147,4 +147,136 @@ fn the_walk_from_the_root_and_the_whole_walk_keep_exactly_the_reached_nodes() {
     assert!(cases > 40, "expected a corpus, got {cases} cases");
     assert!(seeded > 40, "expected the walk from the root on most cases, got {seeded}");
     assert!(wide_losses > 30, "expected losses on levels of several words, got {wide_losses}");
+}
+
+/// The internal levels below the root of `tdd` that hold a node no pair of
+/// their parent level names, in order, by a read of every level that shares
+/// nothing with the conjunction.
+fn unnamed_levels(tdd: &crate::Tdd) -> Vec<u32> {
+    let vtree = &tdd.vtree;
+    let mut out = Vec::new();
+    for (p, left, right) in vtree.internal_bottomup() {
+        if !tdd.is_structural_internal(p) {
+            continue;
+        }
+        for (c, on_left) in [(left, true), (right, false)] {
+            if !tdd.is_structural_internal(c) {
+                continue;
+            }
+            let view = tdd.levels[c.idx()].child_decoder();
+            let parent = &tdd.levels[p.idx()];
+            let named: std::collections::BTreeSet<usize> = (0..parent.slot_count())
+                .flat_map(|i| parent.pairs_of_idx(i))
+                .filter_map(|pair| view.child(if on_left { pair.left } else { pair.right }).index())
+                .collect();
+            if named.len() < tdd.levels[c.idx()].slot_count() {
+                out.push(c.0);
+            }
+        }
+    }
+    out.sort_unstable();
+    out
+}
+
+/// A diagram over a random few of the variables of `wide`, compiled on
+/// `wide` restricted to them and minimized, then placed on `wide` by
+/// `embed_moving`, which lists every level it built loose: an operand as the
+/// evidence walk makes them.
+fn placed(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg, wide: &Arc<Vtree>) -> crate::Tdd {
+    use crate::test_helpers::{CnfShape, compile_clauses_on, rand_cnf};
+    use crate::vtree::VarId;
+    let n = wide.num_vars();
+    let k = 2 + rng.below(u64::from(n) - 2) as u32;
+    let mut vars: Vec<u32> = (1..=n).collect();
+    for i in 0..k as usize {
+        let j = i + rng.below(u64::from(n) - i as u64) as usize;
+        vars.swap(i, j);
+    }
+    let mut vars = vars[..k as usize].to_vec();
+    vars.sort_unstable();
+    let local = |v: VarId| vars.binary_search(&v.0).ok().map(|i| VarId(i as u32 + 1));
+    let small = Arc::new(wide.project_to_vars(local, k).expect("k variables are kept"));
+    let mut f = compile_clauses_on(eng, &small, &rand_cnf(rng, k, CnfShape { clauses: k as usize, width: 4 }));
+    eng.minimize(&mut f).unwrap();
+    eng.embed_moving(f, wide, |v| VarId(vars[v.idx()])).map_err(|r| r.error).unwrap().0
+}
+
+/// The root of `tdd` and every level above one of `levels`: the levels the
+/// prune enters whatever it finds, with `levels` its loose levels as
+/// `settle_loose` leaves them.
+fn entered(tdd: &crate::Tdd, levels: &[u32]) -> std::collections::BTreeSet<u32> {
+    let mut out = std::collections::BTreeSet::from([tdd.vtree.root().0]);
+    for &t in levels {
+        let mut up = tdd.vtree.node(crate::vtree::VtreeIdx(t)).parent();
+        while let Some(p) = up {
+            out.insert(p.0);
+            up = tdd.vtree.node(p).parent();
+        }
+    }
+    out
+}
+
+/// Operands placed on a wider vtree are conjoined, by `and` and by
+/// `and_restoring`, and the result again with a third without a prune in
+/// between. Each result lists as loose every level that holds a node no
+/// pair of its parent level names; the prune settles the list to one that
+/// has it enter the levels a list of exactly those would; and the prune
+/// leaves the diagram the prune over the whole diagram leaves, node for
+/// node.
+#[test]
+fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
+    use crate::test_helpers::{Lcg, vtree_shapes};
+
+    let eng = &crate::Engine::new();
+    let mut rng = Lcg::new(0x9e1f_2d47);
+    let (mut cases, mut loose, mut cleared, mut settled_away) = (0usize, 0usize, 0usize, 0usize);
+    let mut check = |conj: crate::Tdd, operands: [&[u32]; 2], what: &str| {
+        if conj.is_zero() {
+            return;
+        }
+        let mut listed = conj.dirty.loose().expect("both operands' loose levels are known").to_vec();
+        listed.sort_unstable();
+        listed.dedup();
+        let unnamed = unnamed_levels(&conj);
+        for t in &unnamed {
+            assert!(listed.binary_search(t).is_ok(), "{what}: level {t} holds an unnamed node and is not listed");
+        }
+        let settled = settle_loose(eng, &conj, &listed).unwrap();
+        assert_eq!(entered(&conj, &settled), entered(&conj, &unnamed), "{what}: the levels the prune enters");
+        loose += unnamed.len();
+        settled_away += listed.len() - settled.len();
+        cleared += operands.concat().iter().filter(|&&t| {
+            let t = crate::vtree::VtreeIdx(t);
+            conj.is_structural_internal(t) && t != conj.vtree.root() && listed.binary_search(&t.0).is_err()
+        }).count();
+        let count = conj.model_count().unwrap();
+        let mut walked = conj.clone();
+        prune_unreachable(eng, &mut walked, PruneScope::Whole).unwrap();
+        let mut whole = conj;
+        whole.dirty.set_loose(None);
+        prune_unreachable(eng, &mut whole, PruneScope::Whole).unwrap();
+        assert_eq!(layout(&walked), layout(&whole), "{what}: the two prunes left different diagrams");
+        assert_eq!(walked.model_count().unwrap(), count, "{what}");
+    };
+    for (name, wide) in vtree_shapes(14) {
+        for case in 0..40 {
+            let (f, g, h) = (placed(eng, &mut rng, &wide), placed(eng, &mut rng, &wide), placed(eng, &mut rng, &wide));
+            if f.is_zero() || g.is_zero() || h.is_zero() {
+                continue;
+            }
+            let [lf, lg, lh] = [&f, &g, &h].map(|d| d.dirty.loose().expect("an embedding lists the levels it built").to_vec());
+            let what = format!("{name}, case {case}");
+            let both = eng.and(f.clone(), g.clone()).unwrap();
+            let kept = eng.and_restoring(f, g).map_err(|r| r.error).unwrap();
+            assert_eq!(layout(&both), layout(&kept), "{what}: and and and_restoring differ");
+            let lb = both.dirty.loose().unwrap().to_vec();
+            check(kept, [&lf, &lg], &format!("{what}, f and g"));
+            check(eng.and(both, h).unwrap(), [&lb, &lh], &format!("{what}, then h"));
+            cases += 1;
+        }
+    }
+    assert!(cases > 180, "expected a corpus, got {cases} cases");
+    assert!(loose > 300, "expected levels holding an unnamed node, got {loose}");
+    assert!(cleared > 2500, "expected levels an operand listed and the result does not, got {cleared}");
+    assert!(settled_away > 400, "expected listed levels the prune settles away, got {settled_away}");
 }
