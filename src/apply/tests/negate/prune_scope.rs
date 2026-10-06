@@ -110,3 +110,32 @@ fn an_operand_with_unreachable_nodes_negates_the_same_under_either_scope() {
     }
     assert!(cases > 10, "expected a corpus, got {cases} cases");
 }
+
+/// The same agreement on operands whose levels are wide enough that a level's
+/// marks take several words.
+#[test]
+fn the_seeded_prune_agrees_with_the_whole_walk_on_wide_levels() {
+    let eng = &Engine::new();
+    let mut rng = Lcg::new(0x0e4d_93a5);
+    let (mut cases, mut wide) = (0usize, 0usize);
+    for (_name, vtree) in vtree_shapes(20) {
+        for _ in 0..4 {
+            let ca = rand_cnf(&mut rng, 20, CnfShape { clauses: 32, width: 8 });
+            let cb = rand_cnf(&mut rng, 20, CnfShape { clauses: 32, width: 8 });
+            let f = compile_clauses_on(eng, &vtree, &ca);
+            let g = compile_clauses_on(eng, &vtree, &cb);
+            if f.is_zero() || g.is_zero() {
+                continue;
+            }
+            let conj = crate::and(f, g).unwrap();
+            if conj.is_zero() {
+                continue;
+            }
+            wide += usize::from(conj.levels.iter().any(|level| level.slot_count() > 64));
+            cases += 1;
+            assert_same_negation(eng, &conj);
+        }
+    }
+    assert!(cases > 10, "expected a corpus, got {cases} cases");
+    assert!(wide > 5, "expected levels of several words, got {wide}");
+}

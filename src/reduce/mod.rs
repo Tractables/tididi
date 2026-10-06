@@ -19,16 +19,8 @@ use crate::value::slots::RefSlotScratch;
 /// Every buffer one engine's reductions reuse between calls.
 #[derive(Default)]
 pub(crate) struct ReduceScratch {
-    /// `prune_unreachable`'s flat reachability/remap array.
-    prune_remap: Pool<Vec<u32>>,
-    /// `prune_unreachable`'s per-level offsets into `prune_remap`, for the
-    /// walk over the whole diagram.
-    prune_level_base: Pool<Vec<usize>>,
-    /// The levels the seeded walk of `prune_unreachable` descended into.
-    prune_visits: Pool<Vec<self::prune::Visit>>,
-    /// The ascending run the seeded walk remaps an unchanged child level
-    /// through.
-    prune_identity: Pool<Vec<u32>>,
+    /// `prune_unreachable`'s marks, new indices and walk.
+    prune: Pool<self::prune::PruneScratch>,
     /// `prune_value_slots`'s per-store slot bookkeeping.
     slot_prune_slots: Pool<RefSlotScratch>,
     /// `prune_value_slots`'s slot remap array.
@@ -39,10 +31,7 @@ pub(crate) struct ReduceScratch {
 
 impl Pools for ReduceScratch {
     fn pools(&self, visit: &mut dyn FnMut(&dyn Drain)) {
-        visit(&self.prune_remap);
-        visit(&self.prune_level_base);
-        visit(&self.prune_visits);
-        visit(&self.prune_identity);
+        visit(&self.prune);
         visit(&self.slot_prune_slots);
         visit(&self.slot_prune_remap);
         visit(&self.contract);
