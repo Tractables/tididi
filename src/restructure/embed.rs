@@ -667,14 +667,18 @@ fn assemble_moving(
         if into.node(t).is_leaf() || plan.covered_by[t.idx()].is_some() {
             continue;
         }
+        // A free level left empty costs nothing here, and a conjunction
+        // that builds it carries it as an identity level, which costs
+        // nothing there either.
+        if plan.free[t.idx()] && free == Free::Leave {
+            continue;
+        }
         stopped = gate.poll(1);
         if stopped.is_err() {
             break;
         }
         if plan.free[t.idx()] {
-            if free == Free::Build {
-                placement.free(t);
-            }
+            placement.free(t);
             continue;
         }
         let (left, right) = into.children(t);

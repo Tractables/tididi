@@ -1,7 +1,7 @@
 //! `Engine::and_onto` builds what `Engine::embed_moving` on each operand and
-//! `Engine::and_restoring` on the two build, node for node, and gives each
-//! operand back, as it was given or as it was placed, at every point it can
-//! be refused.
+//! `Engine::and_restoring` on the two build, node for node, for their work
+//! less the free levels it does not charge, and gives each operand back, as
+//! it was given or as it was placed, at every point it can be refused.
 use std::sync::Arc;
 
 use crate::limits::{LimitConfig, LimitScope, StopAt, StopRules};
@@ -29,8 +29,30 @@ fn by_embeddings(eng: &Engine, f: &Tdd, f_map: impl Map, g: &Tdd, g_map: impl Ma
     eng.and_restoring(f, g).map_err(|r| r.error).unwrap()
 }
 
+/// The levels of `into` a placement of `tdd` by `map` leaves free: the
+/// internal nodes none of its variables is under. None for a diagram on
+/// `into` already, which is not placed, or for the false diagram, which has
+/// no levels.
+fn free_levels(tdd: &Tdd, map: impl Map, into: &Arc<Vtree>) -> u64 {
+    if Arc::ptr_eq(tdd.vtree(), into) || tdd.is_zero() {
+        return 0;
+    }
+    let source = tdd.vtree();
+    let mut held = vec![false; into.num_nodes()];
+    for t in into.bottomup() {
+        held[t.idx()] = match into.node(t).is_leaf() {
+            true => source.bottomup().any(|s| source.node(s).is_leaf() && map(source.leaf_var(s)) == into.leaf_var(t)),
+            false => {
+                let (left, right) = into.children(t);
+                held[left.idx()] || held[right.idx()]
+            }
+        };
+    }
+    into.bottomup().filter(|&t| !into.node(t).is_leaf() && !held[t.idx()]).count() as u64
+}
+
 /// Check `and_onto` against the embeddings and conjunction it stands for:
-/// the same storage and worklists, for the same work.
+/// the same storage and worklists, for their work less the free levels.
 fn check(eng: &Engine, f: &Tdd, f_map: impl Map, g: &Tdd, g_map: impl Map, into: &Arc<Vtree>, what: &str) {
     let mark = eng.limits().mark();
     let expected = by_embeddings(eng, f, f_map, g, g_map, into);
@@ -40,7 +62,8 @@ fn check(eng: &Engine, f: &Tdd, f_map: impl Map, g: &Tdd, g_map: impl Map, into:
     let work = eng.limits().work_since(mark);
     assert!(same_storage(&got, &expected), "{what}: a different diagram");
     assert_eq!(format!("{:?}", got.dirty), format!("{:?}", expected.dirty), "{what}: worklists");
-    assert_eq!(work, expected_work, "{what}: work");
+    let free = free_levels(f, f_map, into) + free_levels(g, g_map, into);
+    assert_eq!(work + free, expected_work, "{what}: work");
 }
 
 /// `clauses` with every literal negated.
@@ -143,10 +166,11 @@ type Placed = (bool, bool);
 
 /// Refuse `and_onto` at each point `arm` picks in turn until it is granted:
 /// every refusal gives each operand back as it was given or as it was
-/// placed, the grant is the diagram the embeddings and conjunction make, and
-/// the old route, refused at the same points, is refused at the same
-/// phases when `same_phases`. Returns where the refusals left the operands.
-fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<LimitScope<'_>>, same_phases: bool) -> Vec<Placed> {
+/// placed, and the grant is the diagram the embeddings and conjunction make.
+/// With `no_earlier`, the embeddings and conjunction refused at the same
+/// point are refused at the same phase or an earlier one: `and_onto` charges
+/// less work. Returns where the refusals left the operands.
+fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<LimitScope<'_>>, no_earlier: bool) -> Vec<Placed> {
     let eng = Engine::new();
     let (f, g, into) = overlapping();
     let same = |v: VarId| v;
@@ -174,9 +198,6 @@ fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<LimitScope<'_>>, s
         match outcome {
             Ok(out) => {
                 assert!(same_storage(&out, &expected), "granted at {n}: a different diagram");
-                if same_phases {
-                    assert!(old.is_ok(), "granted at {n}, where the embeddings and conjunction are refused");
-                }
                 break;
             }
             Err(refused) => {
@@ -186,8 +207,10 @@ fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<LimitScope<'_>>, s
                 };
                 assert!(back(&refused.f, &f, &f_on) && back(&refused.g, &g, &g_on), "refused at {n}: an operand changed");
                 let at = (Arc::ptr_eq(refused.f.vtree(), &into), Arc::ptr_eq(refused.g.vtree(), &into));
-                if same_phases {
-                    assert_eq!(old.err(), Some(at), "refused at {n}: not where the embeddings and conjunction are");
+                if no_earlier {
+                    let old = old.err().unwrap_or_else(|| panic!("refused at {n}, where the embeddings and conjunction are not"));
+                    let phase = |(f, g): Placed| u8::from(f) + u8::from(g);
+                    assert!(phase(old) <= phase(at), "refused at {n}: before the embeddings and conjunction are");
                 }
                 seen.push(at);
             }
@@ -212,7 +235,7 @@ fn every_refused_reserve_gives_the_operands_back() {
 }
 
 #[test]
-fn every_stop_gives_the_operands_back_where_the_embeddings_and_conjunction_stop() {
+fn every_stop_gives_the_operands_back_no_earlier_than_the_embeddings_and_conjunction_stop() {
     let seen = refuse_at_every_point(
         |eng, n| {
             let at = eng.limits().work_units() + n;

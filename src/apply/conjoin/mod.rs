@@ -488,9 +488,12 @@ impl crate::Engine {
     /// Those of [`Engine::embed_moving`] and [`Engine::and_restoring`]. Each
     /// operand comes back on `into` when it was placed there before the
     /// refusal and as it was given otherwise; its [`Tdd::vtree`] tells which.
-    /// The placements and the conjunction are refused where the operations
-    /// they stand for would be: each is metered from zero, and the stop is
-    /// tested as each begins.
+    /// The placements and the conjunction are metered as the operations they
+    /// stand for are, each from zero, with the stop tested as each begins.
+    /// The work clock is charged as for the two embeddings and the
+    /// conjunction, less one unit for each level a placement leaves free:
+    /// the conjunction builds such a level only where it carries it as an
+    /// identity level, which it charges nothing.
     #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
     pub fn and_onto(
         &self,
