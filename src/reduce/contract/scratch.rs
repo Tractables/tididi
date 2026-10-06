@@ -219,10 +219,16 @@ pub(crate) struct ContractScratch {
     pub(super) twin_hash_table: Vec<TwinSlot>,
     /// Per-node fingerprint, combining all context hashes (a cheap twin pre-screen).
     pub(super) fingerprints: Vec<u64>,
-    /// The per-parent-node sibling bitmap of `TwinEntries::no_twin`.
+    /// The per-parent-node sibling table of `TwinEntries::no_twin`: each
+    /// cell a stamp in the high half and a sibling in the low one. Its
+    /// length is a power of two, at least twice the most siblings one node
+    /// has filed so far.
     pub(super) twin_local: Vec<u64>,
-    /// A parent node's siblings, sorted where two share a bucket there.
-    pub(super) twin_siblings: Vec<u32>,
+    /// The stamp of the node `twin_local` files now. Bumped once per node
+    /// and once per doubling of its table; on u32 wrap the cells are zeroed
+    /// and it restarts at 1 (0 is the stamp of a cell never written, so it
+    /// must never equal a live one).
+    pub(super) twin_generation: u32,
     /// One bit per node: set if some pair names it.
     pub(super) twin_named: Vec<u64>,
     /// Node indices of twin group members, stored contiguously.
@@ -288,8 +294,9 @@ pub(crate) struct ContractScratch {
 // on it would let the width-sized buffers grow unchecked over a run of wide
 // twin-free levels. Releasing has no behavioural consequence: every buffer is
 // filled or resized over the range it is read on, so a dropped one costs the
-// next call a reallocation; `pair_fusion.cells` regrows zeroed, which its
-// generation stamp (always at least 1) reads as never stamped.
+// next call a reallocation; `pair_fusion.cells` and `twin_local` regrow
+// zeroed, which their generation stamps (always at least 1) read as never
+// stamped.
 impl Buffers for ContractScratch {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
         visit(&mut self.counts);
@@ -298,7 +305,6 @@ impl Buffers for ContractScratch {
         visit(&mut self.twin_hash_table);
         visit(&mut self.fingerprints);
         visit(&mut self.twin_local);
-        visit(&mut self.twin_siblings);
         visit(&mut self.twin_named);
         visit(&mut self.flat_groups);
         visit(&mut self.group_starts);

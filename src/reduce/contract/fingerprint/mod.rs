@@ -63,12 +63,6 @@ fn resolve_target(target: ChildDecoder, side: EncodedChildRef) -> Option<u32> {
     target.child(side).index().map(|c| c as u32)
 }
 
-/// Buckets per pair in the per-node sibling bitmap of
-/// [`ContextEntries::no_twin`]: two siblings share a bucket in a node of k
-/// pairs with probability about k/32, and only then are the node's siblings
-/// sorted.
-const LOCAL_BUCKETS_PER_PAIR: usize = 16;
-
 /// The splitmix64 finalizer (Steele et al., 2014) — the shared bit-diffusion
 /// step behind every fingerprint in the contract module.
 ///
@@ -126,6 +120,12 @@ struct ContextEntries<'a> {
 /// and the test's fixed cost is not repaid by the few it clears.
 const EARLY_STOP_MIN_ENTRIES: usize = 128;
 
+/// The most cells a parent node's sibling table starts with. A wide node
+/// most often repeats a sibling within its first few pairs, so its table
+/// starts at a size that stays in cache and doubles only as siblings are
+/// filed, never to the node's whole pair count up front.
+const TWIN_TABLE_START_CELLS: usize = 1 << 12;
+
 impl TwinEntries for ContextEntries<'_> {
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
         for_each_target_sibling(self.parent_level, self.t1_side, self.t1_view, |pi, target, sibling| {
@@ -135,15 +135,26 @@ impl TwinEntries for ContextEntries<'_> {
 
     /// Two nodes share a context only where a parent node pairs both with
     /// one sibling. Each parent node is tested alone, in cache, and the test
-    /// stops at the first node that repeats a sibling, where twins are
-    /// likely; a level whose parent nodes never repeat one, common on grids,
-    /// then needs no fingerprint. The nodes no pair names are counted on the
-    /// way: two of them would be twins.
+    /// stops at the first sibling a node repeats, where twins are likely; a
+    /// level whose parent nodes never repeat one, common on grids, then needs
+    /// no fingerprint. The nodes no pair names are counted on the way: two
+    /// of them would be twins.
+    ///
+    /// A node of three pairs or more files its siblings in a
+    /// generation-stamped table, the first cells of `twin_local`, a power of
+    /// two at least twice the siblings filed, so a probe always ends at a
+    /// cell this node has not stamped. A cell holds its stamp in the high half
+    /// and the sibling in the low one, and finding the sibling already filed
+    /// is the repeat: a wide node whose siblings repeat stops at the first
+    /// one, after reading a few of its pairs. The table starts at most
+    /// [`TWIN_TABLE_START_CELLS`] long and doubles when half full, under a
+    /// fresh stamp the siblings read so far are filed again with, so its size
+    /// follows the pairs read, not the node's width.
     fn no_twin(&self, lim: &Limits, scratch: &mut ContractScratch, width: usize) -> Result<bool, OperationError> {
         if !self.early_stop {
             return Ok(false);
         }
-        let ContractScratch { twin_local, twin_siblings, twin_named, .. } = scratch;
+        let ContractScratch { twin_local, twin_generation, twin_named, .. } = scratch;
         let words = width.div_ceil(64);
         lim.try_resize(twin_named, words, 0u64)?;
         let named = &mut twin_named[..words];
@@ -166,42 +177,83 @@ impl TwinEntries for ContextEntries<'_> {
                 }
                 continue;
             }
-            // 2^k buckets of a bit, at least 64.
-            let k = (pairs.len() * LOCAL_BUCKETS_PER_PAIR).next_power_of_two().trailing_zeros();
-            let local_words = 1usize << (k - 6);
-            if twin_local.len() < local_words {
-                lim.try_resize(twin_local, local_words, 0u64)?;
-            }
-            let local = &mut twin_local[..local_words];
-            local.fill(0);
-            let bucket = |s: u32| ((s as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - k)) as usize;
-            let mut shared_bucket = false;
-            for pair in pairs {
+            let mut cells = (2 * pairs.len()).next_power_of_two().min(TWIN_TABLE_START_CELLS);
+            let mut stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
+            let mut filed = 0;
+            for (read, pair) in pairs.iter().enumerate() {
                 let (t, s) = split_pair(pair, side);
                 if let Some(t) = resolve_target(view, t) {
-                    let b = bucket(s);
-                    let word = &mut local[b / 64];
-                    shared_bucket |= (*word >> (b % 64)) & 1 != 0;
-                    *word |= 1 << (b % 64);
-                    name(t);
-                }
-            }
-            if shared_bucket {
-                twin_siblings.clear();
-                for pair in pairs {
-                    let (t, s) = split_pair(pair, side);
-                    if resolve_target(view, t).is_some() {
-                        lim.try_push(twin_siblings, s)?;
+                    if 2 * (filed + 1) > cells {
+                        // Half full: double under a fresh stamp and file the
+                        // siblings read so far again. They are distinct, or
+                        // the test would have stopped.
+                        cells *= 2;
+                        stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
+                        for pair in &pairs[..read] {
+                            let (t, s) = split_pair(pair, side);
+                            if resolve_target(view, t).is_some() {
+                                file_sibling(&mut twin_local[..cells], stamp, s);
+                            }
+                        }
                     }
-                }
-                twin_siblings.sort_unstable();
-                if twin_siblings.windows(2).any(|w| w[0] == w[1]) {
-                    return Ok(false);
+                    // The node's window of the table: a narrow node after a
+                    // wide one stays in cache. Cells past it keep older
+                    // stamps unread.
+                    if file_sibling(&mut twin_local[..cells], stamp, s) {
+                        return Ok(false);
+                    }
+                    filed += 1;
+                    name(t);
                 }
             }
         }
         let unnamed = width - named.iter().map(|w| w.count_ones() as usize).sum::<usize>();
         Ok(unnamed <= 1)
+    }
+}
+
+/// The next stamp of the sibling table, with `twin_local` at least `cells`
+/// long. A fresh stamp per node, or per doubling, instead of clearing its
+/// cells. On u32 wrap the stamps are zeroed and it restarts at 1: 0 is the
+/// stamp of a cell never written, so it never names a live node.
+#[inline]
+fn next_twin_stamp(
+    lim: &Limits,
+    twin_local: &mut Vec<u64>,
+    twin_generation: &mut u32,
+    cells: usize,
+) -> Result<u64, OperationError> {
+    *twin_generation = match twin_generation.checked_add(1) {
+        Some(g) => g,
+        None => {
+            twin_local.fill(0);
+            1
+        }
+    };
+    if twin_local.len() < cells {
+        lim.try_resize(twin_local, cells, 0u64)?;
+    }
+    Ok((*twin_generation as u64) << 32)
+}
+
+/// File sibling `s` under `stamp` in `local`, a power of two at least eight
+/// cells long with fewer than half of them stamped `stamp`, and say whether
+/// `s` was filed there already.
+#[inline]
+fn file_sibling(local: &mut [u64], stamp: u64, s: u32) -> bool {
+    let (mask, shift) = (local.len() - 1, 32 - local.len().trailing_zeros());
+    let filed = stamp | s as u64;
+    let mut h = (s.wrapping_mul(0x9E37_79B1) >> shift) as usize;
+    loop {
+        let cell = local[h];
+        if cell == filed {
+            return true;
+        }
+        if cell & !0xFFFF_FFFF != stamp {
+            local[h] = filed;
+            return false;
+        }
+        h = (h + 1) & mask;
     }
 }
 

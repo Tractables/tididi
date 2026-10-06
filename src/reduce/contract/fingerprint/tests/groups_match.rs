@@ -98,3 +98,80 @@ fn the_twin_groups_are_the_nodes_with_equal_contexts() {
     assert!(seen_groups > 100, "the fixtures hold twins: {seen_groups}");
     assert!(stopped_early > 20, "the search stops early on some fixtures: {stopped_early}");
 }
+
+/// The sibling table's stamp wraps to 1 only after every cell is zeroed, so
+/// a cell stamped 1 before the wrap is not read as a sibling the node filed.
+#[test]
+fn a_wrapped_stamp_reads_no_older_cell() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
+    let (v_left, v_right) = vtree.children(root);
+    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
+    let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+    for v in [v_left, v_right] {
+        for _ in 0..4 {
+            levels[v.idx()].push_internal_node(&[filler]);
+        }
+    }
+    // One parent node pairing left node i with right node i: no sibling
+    // repeats, and every node is named.
+    let pairs: Vec<ChildPair> = (0..4).map(|i| ChildPair::new(NodeIdx(i), NodeIdx(i))).collect();
+    levels[root.idx()].push_internal_node(&pairs);
+    let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
+    let entries = ContextEntries {
+        parent_level: &tdd.levels[root.idx()],
+        t1_side: ChildSide::Left,
+        t1_view: tdd.levels[v_left.idx()].child_decoder(),
+        early_stop: true,
+    };
+    // Every cell of the node's window stamped 1 and filing one of its
+    // siblings: read under the wrapped stamp, each would be a repeat.
+    let mut scratch = ContractScratch {
+        twin_local: (0..8u64).map(|i| (1 << 32) | (i % 4)).collect(),
+        twin_generation: u32::MAX,
+        ..ContractScratch::default()
+    };
+    assert!(entries.no_twin(eng.limits(), &mut scratch, 4).expect("no_twin"));
+    assert_eq!(scratch.twin_generation, 1);
+}
+
+/// A parent node wider than the sibling table's first size doubles the
+/// table as it files: distinct siblings pass the test, and a sibling filed
+/// before the table doubled is still found when a later pair repeats it.
+#[test]
+fn a_doubled_table_keeps_the_siblings_filed_before() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
+    let (v_left, v_right) = vtree.children(root);
+    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
+    let width = 3 * TWIN_TABLE_START_CELLS as u32;
+    for repeat in [false, true] {
+        let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+        for v in [v_left, v_right] {
+            for _ in 0..width {
+                levels[v.idx()].push_internal_node(&[filler]);
+            }
+        }
+        // Left node i paired with right node i: every left node is named
+        // once, beside a sibling no other pair names. The repeating fixture's
+        // last pair names right node 7 again, after the table has doubled.
+        let mut pairs: Vec<ChildPair> = (0..width).map(|i| ChildPair::new(NodeIdx(i), NodeIdx(i))).collect();
+        if repeat {
+            pairs.last_mut().expect("a pair").right = ChildPair::new(NodeIdx(0), NodeIdx(7)).right;
+        }
+        levels[root.idx()].push_internal_node(&pairs);
+        let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
+        let entries = ContextEntries {
+            parent_level: &tdd.levels[root.idx()],
+            t1_side: ChildSide::Left,
+            t1_view: tdd.levels[v_left.idx()].child_decoder(),
+            early_stop: true,
+        };
+        let mut scratch = ContractScratch::default();
+        let passed = entries.no_twin(eng.limits(), &mut scratch, width as usize).expect("no_twin");
+        assert_eq!(passed, !repeat, "repeat {repeat}");
+        assert!(scratch.twin_local.len() >= 4 * TWIN_TABLE_START_CELLS, "the table doubled: {}", scratch.twin_local.len());
+    }
+}
