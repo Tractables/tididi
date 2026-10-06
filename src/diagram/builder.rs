@@ -618,6 +618,20 @@ fn check_structural_level(
     let lvl = &levels[t.idx()];
     let (lm, rm) = (levels[left.idx()].child_decoder(), levels[right.idx()].child_decoder());
     let (lb, rb) = (bound(vtree, levels, left), bound(vtree, levels, right));
+    // Over structural children a side is a node index, and one below
+    // `MAX_LIVE` has bit 31 clear, so one comparison a side checks both
+    // rules. The loop below names the first violation where this pass finds
+    // one.
+    if !lm.is_marginal() && !rm.is_marginal() {
+        let (lb, rb) = (lb.min(NodeIdx::MAX_LIVE), rb.min(NodeIdx::MAX_LIVE));
+        let fits = |pair: &ChildPair| (pair.left.raw() as usize) < lb && (pair.right.raw() as usize) < rb;
+        if lvl.nodes.iter().all(|node| {
+            let pairs = lvl.pairs_of(node);
+            !pairs.is_empty() && pairs.iter().all(fits)
+        }) {
+            return Ok(());
+        }
+    }
     for (i, node) in lvl.nodes.iter().enumerate() {
         let node_idx = NodeIdx(i as u32);
         let pairs = lvl.pairs_of(node);
