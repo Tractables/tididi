@@ -398,11 +398,11 @@ impl TddLevel {
             lim.grow(&mut self.nodes, 1)?;
         }
         let len = pairs.len();
-        drop(std::mem::replace(&mut self.pairs, pairs));
+        drop(std::mem::replace(&mut *self.pairs, pairs));
         let node = match self.try_encode_multi(lim, 0, len) {
             Ok(node) => node,
             Err(refused) => {
-                lim.discard(std::mem::take(&mut self.pairs));
+                lim.discard(std::mem::take(&mut *self.pairs));
                 return Err(refused);
             }
         };

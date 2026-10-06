@@ -58,7 +58,7 @@ pub(super) struct CellCtx<'a> {
 
 mod columns;
 pub(super) use columns::{RightColumns, ColumnSlice};
-use columns::GROUPED_MIN_PAIRS;
+pub(super) use columns::GROUPED_MIN_PAIRS;
 mod kernel;
 pub(super) use kernel::*;
 mod rows;

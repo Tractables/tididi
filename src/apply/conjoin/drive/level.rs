@@ -896,12 +896,51 @@ pub(super) fn build_level_dense(
     // the materialized child grids, and `both_multi_pair` implies a route that has them.
     // With both sides complete no mask can clear, and the row loop reads none.
     let masked = both_multi_pair && !matches!(lookups, PlainLookups::Complete { .. });
+    // Only a level of two complete sides can take the implicit route below.
+    if !matches!(lookups, PlainLookups::Complete { .. }) {
+        f.materialize_level(t);
+        g.materialize_level(t);
+    }
     if masked {
         build_level_prefilter_masks(eng, run, g, shape, &plan, bases)?;
     }
 
     let mut stream_state: Option<StreamLevelState> =
         build_stream_state(eng, shape, run.levels, run.stream_cache, sweep)?;
+
+    let grouped = both_multi_pair && !passthrough.left && !passthrough.right;
+    // A level of two complete sides whose operand levels are affine takes
+    // the implicit route; any other reads its operands' pairs, written.
+    let composed = (matches!(lookups, PlainLookups::Complete { .. })
+        && !use_sparse_marginal
+        && stream_state.is_none()
+        && sweep.filter.is_none()
+        && !written_levels_forced())
+    .then(|| super::compose::plan(lim, f.level(t), g.level(t), shape, grouped))
+    .flatten();
+    // The arenas the implicit route opened before it found it would have to
+    // stop inside the level, or grow the arena in bounded steps, which the
+    // row loop does on the written pairs: the capacity the meter was charged
+    // for. The planned route runs only with nothing bounding memory, so the
+    // column table built after the arenas changes nothing either reads.
+    let mut opened = None;
+    if let Some(product) = composed {
+        let level = &mut run.levels[ti];
+        open_level_arenas(lim, f, g, shape, level, route)?;
+        let charged = reserve_complete_level(lim, f.level(t), g.level(t), level)?;
+        note_lookups(PlainLookups::Complete { charged });
+        let (work, meter, doublings) = super::compose::charges((fw.here, gw.here), &product, charged);
+        if charged != usize::MAX && lim.cannot_stop_within(work, meter as u64) {
+            let cells = fw.here * gw.here;
+            let slab = &mut run.products.arena.slab_mut()[output_grid_base.idx()..output_grid_base.idx() + cells];
+            super::compose::write(eng, product, &mut run.levels[ti], slab, work, (meter, doublings))?;
+            finalize_level(eng, &mut stream_state, shape, output_grid_base, passthrough, run, sweep);
+            return Ok(());
+        }
+        opened = Some(charged);
+    }
+    f.materialize_level(t);
+    g.materialize_level(t);
 
     // `t` and its two vtree children are three distinct tree nodes, so these
     // are three disjoint level slots: the streaming row loops read the child
@@ -912,17 +951,20 @@ pub(super) fn build_level_dense(
         .expect("a vtree node and its two children are distinct level indices");
     let (left_level, right_level) = (&*left_level, &*right_level);
 
-
-    let grouped = both_multi_pair && !passthrough.left && !passthrough.right;
     let right_cols = RightColumns::build(eng, g.level(t), gw.here, sides.left.view, sides.right.view, grouped);
     let masks = masked.then_some(&*run.prefilter_masks);
     let cell_ctx = build_cell_ctx(shape, &plan, output_grid_base.idx(), bases, masks, right_cols.as_ref());
 
-    open_level_arenas(lim, f, g, shape, level, route)?;
-    if let PlainLookups::Complete { charged } = &mut lookups {
-        *charged = reserve_complete_level(lim, f.level(t), g.level(t), level)?;
+    match opened {
+        Some(charged) => lookups = PlainLookups::Complete { charged },
+        None => {
+            open_level_arenas(lim, f, g, shape, level, route)?;
+            if let PlainLookups::Complete { charged } = &mut lookups {
+                *charged = reserve_complete_level(lim, f.level(t), g.level(t), level)?;
+            }
+            note_lookups(lookups);
+        }
     }
-    note_lookups(lookups);
 
     if use_sparse_marginal {
         return finish_sparse_marginal_level(

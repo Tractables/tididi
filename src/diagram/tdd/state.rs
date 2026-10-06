@@ -37,6 +37,13 @@ impl LevelStorage {
     pub(crate) fn forget(&mut self) { self.canonical_output = None; }
 
     pub(crate) fn into_vec(self) -> Vec<TddLevel> { self.levels }
+
+    /// Write level `i`'s pairs if it is implicit. The level denotes the same
+    /// nodes after, so the established canonical form stands.
+    #[track_caller]
+    pub(crate) fn materialize(&mut self, i: usize) {
+        self.levels[i].materialize();
+    }
 }
 
 impl From<Vec<TddLevel>> for LevelStorage {

@@ -413,11 +413,12 @@ fn unnamed_children(
     }
     let views = children.map(|c| tdd.levels[c.idx()].child_decoder());
     let level = &tdd.levels[p.idx()];
+    let mut buf = Vec::new();
     'read: for i in 0..level.slot_count() {
         if open == [0; 2] {
             break;
         }
-        let pairs = level.pairs_of_idx(i);
+        let pairs = level.pairs_read(i, &mut buf);
         gate.poll(pairs.len() as u64)?;
         for pair in pairs {
             for (k, side) in [pair.left, pair.right].into_iter().enumerate() {
@@ -767,6 +768,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     let left_view = tdd.levels[left.idx()].child_decoder();
     let right_view = tdd.levels[right.idx()].child_decoder();
     let level = &tdd.levels[t.idx()];
+    let mut buf = Vec::new();
     let (mut left_marks, mut right_marks) = (Marker::new(left_base), Marker::new(right_base));
     for w in 0..words(level.slot_count()) {
         // The level's own block is disjoint from its children's, so the word
@@ -775,7 +777,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
         while x != 0 {
             let i = (w << 6) + x.trailing_zeros() as usize;
             x &= x - 1;
-            for pair in level.pairs_of_idx(i) {
+            for pair in level.pairs_read(i, &mut buf) {
                 if LEFT && let Some(s) = left_view.child(pair.left).index() {
                     left_marks.mark(marks, left_base, s);
                 }

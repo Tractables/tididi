@@ -189,6 +189,25 @@ impl Limits {
         stop.unconditional.is_some_and(|at| self.reached(at, &mut now))
     }
 
+    /// Whether no stop can fire while `work` more units reach the work clock
+    /// and `pairs` more the output-pair meter, whenever the polls between
+    /// fall: no callback decides, no rule reads the time, and each rule's
+    /// threshold lies past the clock's end or its pair floor past the
+    /// meter's. A route that knows its work beforehand may then charge it in
+    /// one go and poll once.
+    pub(crate) fn cannot_stop_within(&self, work: u64, pairs: u64) -> bool {
+        if self.stop_callback.borrow().is_some() {
+            return false;
+        }
+        let end = self.work_clock.get().saturating_add(work);
+        let before = |at: StopAt| matches!(at, StopAt::WorkUnits(units) if end < units);
+        let stop = self.stop.get();
+        stop.unconditional.is_none_or(before)
+            && stop.after_pairs.is_none_or(|(floor, at)| {
+                self.pairs_in_flight.get().saturating_add(pairs) < floor || before(at)
+            })
+    }
+
     #[inline]
     fn reached(&self, at: StopAt, now: &mut Clock) -> bool {
         match at {

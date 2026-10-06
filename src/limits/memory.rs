@@ -87,6 +87,11 @@ impl MemoryHooks {
         if let Some(hooks) = &self.0 { hooks.preflight_alloc(bytes); }
     }
 
+    /// Whether no hooks are installed.
+    pub(crate) fn is_none(&self) -> bool {
+        self.0.is_none()
+    }
+
     /// The host's mapped and retained bytes, or zero with no observer.
     pub(crate) fn mapped_bytes(&self) -> u64 {
         self.0.as_ref().map_or(0, |hooks| hooks.mapped_bytes())

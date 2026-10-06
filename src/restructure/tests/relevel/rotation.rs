@@ -375,7 +375,7 @@ fn gc1_sweep_undercount_repro() {
 fn snapshot_levels(tdd: &Tdd) -> Vec<(Vec<EncodedNode>, Vec<ChildPair>, Vec<PairRange>)> {
     tdd.levels
         .iter()
-        .map(|l| (l.nodes.clone(), l.pairs.clone(), l.ranges.clone()))
+        .map(|l| (l.nodes.clone(), l.pairs.to_vec(), l.ranges.clone()))
         .collect()
 }
 
@@ -392,7 +392,7 @@ fn assert_locality(
             "rotation-locality: level {i} nodes changed (v={v_idx}, w={w_idx})",
         );
         assert_eq!(
-            level.pairs, snap[i].1,
+            *level.pairs, snap[i].1,
             "rotation-locality: level {i} pairs changed (v={v_idx}, w={w_idx})",
         );
         assert_eq!(

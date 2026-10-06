@@ -2,9 +2,12 @@
 
 mod arena;
 mod count_overflow;
+mod implicit;
 mod marginal;
 mod pairs;
 pub use count_overflow::CountOverflow;
+pub use implicit::{described, materialized, Digit, ImplicitLevel, Materialized};
+pub(crate) use implicit::PairArena;
 pub(crate) use pairs::sort_pairs;
 pub(crate) use marginal::{assert_can_make_marginal, non_marginal_child};
 
@@ -37,7 +40,7 @@ pub struct TddLevel {
     pub(crate) nodes: Vec<EncodedNode>,
     /// Arena holding the pairs of multi-pair nodes. Read it through
     /// [`pairs_of`](Self::pairs_of); single-pair nodes are not in it.
-    pub(crate) pairs: Vec<ChildPair>,
+    pub(crate) pairs: PairArena,
     /// Side table for multi-pair nodes whose arena start or length exceeds
     /// 2^31 (huge product grids). See `EncodedNode` for the encoding.
     pub(crate) ranges: Vec<PairRange>,
@@ -134,7 +137,7 @@ impl TddLevel {
     pub(crate) fn new() -> Self {
         TddLevel {
             nodes: Vec::new(),
-            pairs: Vec::new(),
+            pairs: PairArena::default(),
             ranges: Vec::new(),
             value_ref_sides: 0,
             dead_pairs: 0,
@@ -354,7 +357,7 @@ impl TddLevel {
         };
         Ok(TddLevel {
             nodes: copy(lim, &self.nodes)?,
-            pairs: copy(lim, &self.pairs)?,
+            pairs: self.pairs.try_clone_on(lim)?,
             ranges: copy(lim, &self.ranges)?,
             value_ref_sides: self.value_ref_sides,
             dead_pairs: self.dead_pairs,

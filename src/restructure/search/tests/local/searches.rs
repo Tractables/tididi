@@ -12,7 +12,7 @@ fn size_descent(tdd: &mut Tdd) -> RotationSearchStats {
 }
 
 fn level_snapshot(tdd: &Tdd) -> Vec<(Vec<crate::diagram::EncodedNode>, Vec<crate::diagram::ChildPair>)> {
-    tdd.levels.iter().map(|l| (l.nodes.clone(), l.pairs.clone())).collect()
+    tdd.levels.iter().map(|l| (l.nodes.clone(), l.pairs.to_vec())).collect()
 }
 
 /// The size search preserves the model count, never grows the diagram, and a

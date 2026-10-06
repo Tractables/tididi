@@ -237,7 +237,7 @@ impl TddLevel {
                 std::mem::swap(&mut node.a, &mut node.b);
             }
         }
-        for pair in &mut self.pairs {
+        for pair in self.pairs.iter_mut() {
             std::mem::swap(&mut pair.left, &mut pair.right);
         }
         let left = self.has_value_refs(ChildSide::Left);

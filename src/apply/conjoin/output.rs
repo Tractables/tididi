@@ -28,7 +28,7 @@ fn drop_dead_operand_level(level: &mut crate::diagram::TddLevel) {
     // `pairs` is emptied.
     if bytes <= 64 { return; }
     level.nodes = Vec::new();
-    level.pairs = Vec::new();
+    level.pairs = Default::default();
     level.ranges = Vec::new();
     // No arena left to sweep, so no garbage to remember.
     level.dead_pairs = 0;

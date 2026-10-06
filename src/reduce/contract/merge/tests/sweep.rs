@@ -108,7 +108,8 @@ fn a_shrunk_extended_parent_node_inlines_its_survivor() {
     parent.pairs = vec![
         ChildPair::new(NodeIdx(0), sibling),
         ChildPair::new(NodeIdx(1), sibling),
-    ];
+    ]
+    .into();
     parent.ranges = vec![PairRange { start: 0, len: 2 }];
     parent.nodes = vec![EncodedNode::multi_ranged(0)];
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };

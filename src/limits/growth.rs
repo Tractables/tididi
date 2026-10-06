@@ -30,6 +30,14 @@ impl Limits {
             .map(|rem| rem.saturating_sub(self.in_flight_bytes.get()))
     }
 
+    /// Whether nothing bounds this engine's memory but the allocator: no
+    /// budget and no memory hooks. No decision then depends on how much is
+    /// allocated or in what order.
+    #[inline]
+    pub(crate) fn memory_unbounded(&self) -> bool {
+        self.budget.get().is_none() && self.memory_hooks.borrow().is_none()
+    }
+
 
     /// Enter a level whose emitted pairs are bounded by `pair_bound`.
     ///
