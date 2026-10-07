@@ -253,6 +253,25 @@ pub(crate) fn fold_bottom_up<F: LevelFold, const PREPARED: bool>(
     fold_subtree::<F, PREPARED>(f, eng, tdd, tdd.vtree.root(), tdd.output.vtree, cols, retain, gate)
 }
 
+/// [`fold_bottom_up`] from the levels `held` marks, whose columns `cols`
+/// holds already: neither such a level nor any level under it is folded.
+/// A level past the end of `held` is not held.
+///
+/// # Errors
+///
+/// As [`fold_bottom_up`].
+pub(crate) fn fold_bottom_up_from<F: LevelFold>(
+    f: &F,
+    eng: &Engine,
+    tdd: &Tdd,
+    cols: &mut [F::Col],
+    held: &[bool],
+    retain: Retention,
+    gate: &mut PollGate,
+) -> Result<(), OperationError> {
+    fold_held::<F, false>(f, eng, tdd, tdd.vtree.root(), tdd.output.vtree, cols, held, retain, gate)
+}
+
 /// [`fold_bottom_up`] over the levels under `root` alone, `keep` the level
 /// exempt from the frontier's release.
 ///
@@ -270,11 +289,28 @@ pub(crate) fn fold_subtree<F: LevelFold, const PREPARED: bool>(
     retain: Retention,
     gate: &mut PollGate,
 ) -> Result<(), OperationError> {
+    fold_held::<F, PREPARED>(f, eng, tdd, root, keep, cols, &[], retain, gate)
+}
+
+/// [`fold_subtree`] from the levels `held` marks, as
+/// [`fold_bottom_up_from`] reads them.
+#[allow(clippy::too_many_arguments)]
+fn fold_held<F: LevelFold, const PREPARED: bool>(
+    f: &F,
+    eng: &Engine,
+    tdd: &Tdd,
+    root: VtreeIdx,
+    keep: VtreeIdx,
+    cols: &mut [F::Col],
+    held: &[bool],
+    retain: Retention,
+    gate: &mut PollGate,
+) -> Result<(), OperationError> {
     walk_bottom_up(
         &tdd.vtree,
         root,
         cols,
-        |_, _| false,
+        |_, i| held.get(i).copied().unwrap_or(false),
         |cols, t| {
             let width = tdd.reference_slot_count(t);
             if cols[t.idx()].width() != width {

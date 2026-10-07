@@ -112,8 +112,9 @@ fn a_conjunction_keeps_the_moved_levels_columns() {
     assert!(kept_any, "no conjunction kept a column");
 }
 
-/// A chain of conjunctions over one counted operand: the second reads the
-/// columns the first kept.
+/// A chain of conjunctions over one counted operand: the count of the second
+/// reads the columns the first kept, whether it counts its root or builds it
+/// and counts the result.
 #[test]
 fn a_chain_counts_through_kept_columns() {
     let mut rng = Lcg::new(0x000c_4a14);

@@ -110,16 +110,22 @@ fn relabelled_levels_read_product_lists() {
 /// routes' own.
 #[test]
 fn counts_and_quantified_conjunctions_agree() {
+    let mut relabelled = 0;
     for (what, f, g) in cases(8, 0xc0_4e7) {
         let eng = Engine::new();
+        let before = relabel_census();
         let count = eng.and_model_count(f.clone(), g.clone(), &[]).unwrap();
+        let after = relabel_census();
+        relabelled += after[0] + after[1] - before[0] - before[1];
         let oracle = no_relabel(|| eng.and_model_count(f.clone(), g.clone(), &[]).unwrap());
         assert_eq!(count, oracle, "{what}: count");
+        assert_eq!(count, eng.model_count(&eng.and(f.clone(), g.clone()).unwrap()).unwrap(), "{what}: built count");
         let quantified = [VarId(1), VarId(5)];
         let out = eng.and_exists(f.clone(), g.clone(), &quantified).unwrap();
         let oracle = no_relabel(|| eng.and_exists(f.clone(), g.clone(), &quantified).unwrap());
         assert!(eng.equivalent(&out, &oracle).unwrap(), "{what}: and_exists");
     }
+    assert!(relabelled > 0, "no count relabelled a level");
 }
 
 /// A conjunction refused at any work point after the route moved a level

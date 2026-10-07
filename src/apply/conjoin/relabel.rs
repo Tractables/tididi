@@ -71,7 +71,7 @@ impl<'a> SideMap<'a> {
 
 /// The one pair of `tdd`'s level `t` when the level has one node with one
 /// pair, and nothing otherwise.
-fn single_pair(tdd: &Tdd, t: usize, width: usize) -> Option<ChildPair> {
+pub(super) fn single_pair(tdd: &Tdd, t: usize, width: usize) -> Option<ChildPair> {
     if width != 1 {
         return None;
     }

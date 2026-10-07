@@ -10,9 +10,9 @@ mod prepared;
 
 use crate::Engine;
 use crate::limits::OperationError;
-use super::cache::QueryCache;
+use super::cache::{CachedQuery, QueryCache};
+use super::fold::fold_bottom_up_from;
 use incremental::CountQuery;
-use crate::value::CountVec;
 pub use incremental::{Counter, ModelCounter, OwnedModelCounter, BoundCounter, BoundModelCounter, MAX_COUNT_TABLE_VARS};
 pub use crate::value::Retention;
 
@@ -21,7 +21,7 @@ use num_bigint::BigUint;
 use std::sync::Arc;
 
 use crate::diagram::{LeafLabel, LevelCounts, Tdd};
-use crate::value::CountRead;
+use crate::value::{CountRead, CountVec};
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
 /// Whether pins count as evidence or as substitution over the unchanged vtree.
@@ -168,7 +168,8 @@ impl Engine {
     /// diagram untouched, a level under which the other operand is
     /// constant-true: [`Engine::and_model_count`] then folds only the levels
     /// it builds, and [`Engine::and`] keeps the moved levels' counts with its
-    /// result. The counts describe the levels as they are, so any operation
+    /// result, whose [`Engine::model_count`] folds only the levels above
+    /// them. The counts describe the levels as they are, so any operation
     /// that changes the diagram's levels drops them;
     /// [`Tdd::has_level_counts`](crate::Tdd::has_level_counts) says whether
     /// they are kept.
@@ -226,6 +227,43 @@ impl Engine {
         Ok(())
     }
 
+    /// [`model_count`](Self::model_count)'s fold started from the topmost
+    /// levels `counts` keeps a column for, a copy of which stands in for the
+    /// fold of each one's subtree; the output's level keeps none.
+    fn model_count_from_kept(&self, tdd: &Tdd, counts: &LevelCounts) -> Result<BigUint, OperationError> {
+        CountQuery::<CountVec>::admit(tdd)?;
+        let lim = self.limits();
+        let vtree = &tdd.vtree;
+        let n = vtree.num_nodes();
+        let mut cols: Vec<CountVec> = Vec::new();
+        lim.reserve_exact(&mut cols, n)?;
+        cols.resize_with(n, CountVec::default);
+        // Whether a level's column is in hand, and whether one above it is.
+        let mut held = Vec::new();
+        lim.try_resize(&mut held, n, false)?;
+        let mut above = Vec::new();
+        lim.try_resize(&mut above, n, false)?;
+        for (t, left, right) in vtree.internal_bottomup().rev() {
+            if !above[t.idx()]
+                && let Some(column) = counts.column(t)
+                && column.len() == tdd.reference_slot_count(t)
+            {
+                cols[t.idx()] = column.try_clone_on(self)?;
+                held[t.idx()] = true;
+                crate::apply::conjoin::note_kept_counts_read(1);
+            }
+            let covered = above[t.idx()] || held[t.idx()];
+            above[left.idx()] = covered;
+            above[right.idx()] = covered;
+        }
+        let query = CountQuery::<CountVec>::new(PinSemantics::Cofactor);
+        let mut gate = lim.gate();
+        fold_bottom_up_from(&query.fold(&[]), self, tdd, &mut cols, &held, Retention::Frontier, &mut gate)?;
+        gate.finish()?;
+        let out = tdd.output;
+        Ok(query.output(&cols[out.vtree.idx()], out.local.idx()))
+    }
+
     /// Run [`Tdd::model_count`](crate::Tdd::model_count) using this batch's scratch and resource limits.
     ///
     /// # Errors
@@ -239,13 +277,19 @@ impl Engine {
     pub fn model_count(&self, tdd: &Tdd) -> Result<BigUint, OperationError> {
         let _op = self.limits().enter()?;
         if tdd.is_zero() { return Ok(BigUint::ZERO); }
-        // Counts kept with the diagram hold the output's already.
-        if let Some(column) = tdd.levels.counts().and_then(|counts| counts.column(tdd.output.vtree)) {
-            self.limits().check_stop()?;
-            return Ok(match column.get(tdd.output.local.idx()) {
-                CountRead::Fast(value) => BigUint::from(value),
-                CountRead::Big(value) => value.clone(),
-            });
+        if let Some(counts) = tdd.levels.counts() {
+            // Counts kept with the diagram hold the output's already, or
+            // those of levels the fold can start from.
+            if let Some(column) = counts.column(tdd.output.vtree) {
+                self.limits().check_stop()?;
+                return Ok(match column.get(tdd.output.local.idx()) {
+                    CountRead::Fast(value) => BigUint::from(value),
+                    CountRead::Big(value) => value.clone(),
+                });
+            }
+            if counts.any() {
+                return self.model_count_from_kept(tdd, counts);
+            }
         }
         // The shared counter fold with no pin storage, releasing each child
         // column once its parent has read it.

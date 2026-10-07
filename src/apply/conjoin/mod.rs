@@ -38,7 +38,7 @@ use identity::take_level_fast_path;
 
 // The relabelling route, where one operand is one node with one pair.
 mod relabel;
-use relabel::take_relabel_level;
+use relabel::{single_pair, take_relabel_level};
 
 // Apply setup → `ApplyRun`.
 mod setup;
@@ -773,6 +773,9 @@ impl crate::Engine {
         for &t in targets {
             mask[t.idx()] = !vtree.node(t).is_leaf() && t != vtree.root();
         }
+        // With no target left the sweep is given none, so the routes that
+        // take only a sweep summing nothing out (the relabelling) stay open.
+        let summed = if mask.contains(&true) { VtreeMask::new(Some(&mask)) } else { VtreeMask::default() };
         // The swap and the self-conjunction shortcut of `conjoin_checked`.
         if g.max_width() > f.max_width() {
             std::mem::swap(&mut f, &mut g);
@@ -783,7 +786,7 @@ impl crate::Engine {
             return count;
         }
         let result = apply_and_core(
-            self, &mut f, &mut g, VtreeMask::new(Some(&mask)), VtreeMask::default(), None, ConjoinMode::Count,
+            self, &mut f, &mut g, summed, VtreeMask::default(), None, ConjoinMode::Count,
             Operands::default(),
         );
         diagram::return_levels(self, std::mem::take(&mut f.levels).into_vec());
@@ -885,3 +888,10 @@ use tests::note_kept_counts;
 #[cfg(not(test))]
 #[inline(always)]
 fn note_kept_counts(_levels: usize) {}
+
+/// Note for the tests' census that a count outside the conjunction read
+/// `levels` kept columns; nothing outside the tests.
+#[inline(always)]
+pub(crate) fn note_kept_counts_read(levels: usize) {
+    note_kept_counts(levels);
+}
