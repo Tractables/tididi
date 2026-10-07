@@ -17,6 +17,8 @@ pub(crate) mod embed;
 pub(crate) mod expand;
 pub(crate) mod graft;
 pub(crate) mod placement;
+mod project;
+mod tag;
 mod splice;
 pub(crate) mod target;
 
@@ -273,5 +275,52 @@ impl From<VtreeError> for ExpandError {
 }
 
 impl From<OperationError> for ExpandError {
+    fn from(error: OperationError) -> Self { Self::Operation(error) }
+}
+
+/// Why the nodes of a level could not be tagged with codes
+/// ([`Engine::tag_level`](crate::Engine::tag_level)).
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TagError {
+    /// The destination's root has no left subtree holding the level's
+    /// subtree under the renaming, as an embedding reports it.
+    Placement(EmbedError),
+    /// The code variables are not exactly the leaves of the destination
+    /// root's right subtree.
+    CodeVariables(VtreeError),
+    /// The tags or the codes do not fit the level: a tag count other than
+    /// the level's width, a tag naming no code, a code list that is not a
+    /// whole number of codes, or overlapping leaf slots tagged.
+    Tags(String),
+    /// An operation the construction runs was refused: a diagram that has
+    /// discarded the structure at a level, a level that is not in the
+    /// vtree, a refused allocation, or an armed stop.
+    Operation(OperationError),
+}
+
+impl std::fmt::Display for TagError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Placement(error) => write!(f, "tagged level: {error}"),
+            Self::CodeVariables(error) => write!(f, "code variables: {error}"),
+            Self::Tags(message) => write!(f, "tags: {message}"),
+            Self::Operation(error) => write!(f, "tagging the level: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for TagError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Placement(error) => Some(error),
+            Self::CodeVariables(error) => Some(error),
+            Self::Operation(error) => Some(error),
+            Self::Tags(_) => None,
+        }
+    }
+}
+
+impl From<OperationError> for TagError {
     fn from(error: OperationError) -> Self { Self::Operation(error) }
 }

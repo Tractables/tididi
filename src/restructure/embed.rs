@@ -429,12 +429,12 @@ pub(crate) struct Plan {
     /// the nodes whose levels are constant true, the free levels.
     pub(crate) free: Vec<bool>,
     /// The source node a destination node is the image of, where there is one.
-    covered_by: Vec<Option<VtreeIdx>>,
+    pub(crate) covered_by: Vec<Option<VtreeIdx>>,
     /// The internal destination nodes with renamed variables on one side
     /// only, each after the nodes under it.
     pass_throughs: Vec<VtreeIdx>,
     /// The destination node each source node maps to.
-    embedding: Embedding,
+    pub(crate) embedding: Embedding,
     /// Whether children may be matched swapped.
     mirror: bool,
     /// Per source node: its image has its children swapped, so its level is
@@ -530,7 +530,7 @@ impl Plan {
     ///
     /// The buffers come from the engine's [`PlanPool`], and a refused
     /// build parks them back there.
-    fn build(
+    pub(super) fn build(
         eng: &Engine,
         source: &Vtree,
         into: &Vtree,

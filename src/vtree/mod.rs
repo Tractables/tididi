@@ -38,6 +38,7 @@ mod text;
 mod topo;
 mod validate;
 
+pub(crate) use build::check_var_space;
 pub use graft::GraftLayout;
 pub use node::{Vtree, VtreeNode};
 pub use topo::RotationKind;

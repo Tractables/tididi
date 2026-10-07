@@ -36,7 +36,7 @@ fn max_num_vars(num_nodes: usize) -> u32 {
 
 /// Refuse an id space too wide for the node list to index. Every construction
 /// checks this before allocating a table indexed by variable id.
-fn check_var_space(num_vars: u32, num_nodes: usize) -> Result<(), VtreeError> {
+pub(crate) fn check_var_space(num_vars: u32, num_nodes: usize) -> Result<(), VtreeError> {
     let max_num_vars = max_num_vars(num_nodes);
     if num_vars > max_num_vars {
         return Err(VtreeError::VariableSpaceTooLarge { num_vars, max_num_vars });
