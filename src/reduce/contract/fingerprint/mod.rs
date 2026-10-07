@@ -38,15 +38,12 @@ fn for_each_target_sibling(
     // not a child node), so it never joins twin grouping; the parent rewrite
     // leaves such a ref verbatim. `sibling` is passed raw: it is only hashed
     // and packed, never indexed.
-    for (parent_i, pairs) in parent_level.internal_inputs_iter() {
-        let pi = parent_i as u32;
-        pairs.for_each(|pair| {
-            let (t, sibling) = split_pair(&pair, t1_side);
-            if let Some(t) = resolve_target(target, t) {
-                f(pi, t, sibling);
-            }
-        });
-    }
+    parent_level.for_each_node_pair(|parent_i, pair| {
+        let (t, sibling) = split_pair(&pair, t1_side);
+        if let Some(t) = resolve_target(target, t) {
+            f(parent_i as u32, t, sibling);
+        }
+    });
 }
 
 /// A pair's side toward the child level `t1_side` names, and the raw ref of
@@ -160,15 +157,23 @@ impl TwinEntries for ContextEntries<'_> {
         named.fill(0);
         let mut name = |t: u32| named[(t / 64) as usize] |= 1 << (t % 64);
         let (level, side, view) = (self.parent_level, self.t1_side, self.t1_view);
-        for (_, pairs) in level.internal_inputs_iter() {
-            // A stored node's pairs are read as a slice's, in a loop apart
-            // from the generated ones'.
-            let repeats = match pairs.as_slice() {
-                Some(stored) => repeats_sibling(lim, twin_local, twin_generation, stored.iter().copied(), side, view, &mut name)?,
-                None => repeats_sibling(lim, twin_local, twin_generation, pairs, side, view, &mut name)?,
-            };
-            if repeats {
-                return Ok(false);
+        // A stored level's nodes are read as slices of its arena, in a loop
+        // apart from an implicit level's generated pairs.
+        match level.stored() {
+            Some(stored) => {
+                for node in level.nodes() {
+                    let pairs = stored.of(node).iter().copied();
+                    if repeats_sibling(lim, twin_local, twin_generation, pairs, side, view, &mut name)? {
+                        return Ok(false);
+                    }
+                }
+            }
+            None => {
+                for (_, pairs) in level.internal_inputs_iter() {
+                    if repeats_sibling(lim, twin_local, twin_generation, pairs, side, view, &mut name)? {
+                        return Ok(false);
+                    }
+                }
             }
         }
         let unnamed = width - named.iter().map(|w| w.count_ones() as usize).sum::<usize>();
@@ -285,9 +290,7 @@ pub(super) struct ContentEntries<'a>(pub(super) &'a TddLevel);
 
 impl TwinEntries for ContentEntries<'_> {
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
-        for (i, pairs) in self.0.internal_inputs_iter() {
-            pairs.for_each(|pair| f(i as u32, pack(pair.left.0, pair.right.0)));
-        }
+        self.0.for_each_node_pair(|i, pair| f(i as u32, pack(pair.left.0, pair.right.0)));
     }
 }
 

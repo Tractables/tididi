@@ -189,10 +189,28 @@ fn expand_full_with(
 
         let mut cover = Cover::reset(eng, bits, lefts, rights, leaf)?;
         let mut poll = eng.limits().gate();
-        for node in &level.nodes {
-            for pair in level.pairs_iter_of(node) {
+        {
+            let mut mark = |pair: ChildPair| {
                 cover.mark_pair(pair);
-                poll.poll(1)?;
+                poll.poll(1)
+            };
+            // A stored level's nodes are read as slices of its arena, in a
+            // loop apart from an implicit level's generated pairs.
+            match level.stored() {
+                Some(stored) => {
+                    for node in &level.nodes {
+                        for &pair in stored.of(node) {
+                            mark(pair)?;
+                        }
+                    }
+                }
+                None => {
+                    for (_, pairs) in level.internal_inputs_iter() {
+                        for pair in pairs {
+                            mark(pair)?;
+                        }
+                    }
+                }
             }
         }
         poll.flush()?;

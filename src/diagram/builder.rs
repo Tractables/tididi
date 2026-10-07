@@ -663,10 +663,16 @@ fn check_structural_level(
     if !lm.is_marginal() && !rm.is_marginal() {
         let (lb, rb) = (lb.min(NodeIdx::MAX_LIVE), rb.min(NodeIdx::MAX_LIVE));
         let fits = |pair: &ChildPair| (pair.left.raw() as usize) < lb && (pair.right.raw() as usize) < rb;
-        if lvl.nodes.iter().all(|node| {
-            let mut pairs = lvl.pairs_iter_of(node);
-            pairs.len() != 0 && pairs.all(|pair| fits(&pair))
-        }) {
+        // A stored level's nodes are read as slices of its arena, in a loop
+        // apart from an implicit level's generated pairs.
+        let all_fit = match lvl.stored() {
+            Some(stored) => lvl.nodes.iter().all(|node| {
+                let pairs = stored.of(node);
+                !pairs.is_empty() && pairs.iter().all(fits)
+            }),
+            None => lvl.internal_inputs_iter().all(|(_, mut pairs)| pairs.len() != 0 && pairs.all(|pair| fits(&pair))),
+        };
+        if all_fit {
             return Ok(());
         }
     }

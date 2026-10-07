@@ -121,6 +121,25 @@ impl TddLevel {
         self.internal_inputs_range(0..self.nodes.len())
     }
 
+    /// Calls `f(i, pair)` with every pair of every node `i`, node by node:
+    /// a stored level's pairs read as slices of its arena, an implicit
+    /// level's generated, each in a loop of its own.
+    #[inline]
+    pub(crate) fn for_each_node_pair(&self, mut f: impl FnMut(usize, ChildPair)) {
+        match self.stored() {
+            Some(stored) => {
+                for (i, node) in self.nodes.iter().enumerate() {
+                    stored.of(node).iter().for_each(|&pair| f(i, pair));
+                }
+            }
+            None => {
+                for (i, pairs) in self.internal_inputs_iter() {
+                    pairs.for_each(|pair| f(i, pair));
+                }
+            }
+        }
+    }
+
     /// Iterate structural nodes in a valid slot range, retaining their level indices.
     /// On an implicit level each node's first pair is stepped on from the
     /// one before it ([`NodeCursor`]), which the first read makes, boxed

@@ -130,18 +130,14 @@ pub(super) fn estimate_scatter_direction(
     let (cnt_f_left, rest) = buf.split_at_mut(f.left);
     let (cnt_f_right, rest) = rest.split_at_mut(f.right);
     let (deg_g_left, deg_g_right) = rest.split_at_mut(g.left);
-    for node in f_level.nodes.iter() {
-        for pair in f_level.pairs_iter_of(node) {
-            cnt_f_left[pair.left.0 as usize] += 1;
-            cnt_f_right[pair.right.0 as usize] += 1;
-        }
-    }
-    for node in g_level.nodes.iter() {
-        for pair in g_level.pairs_iter_of(node) {
-            deg_g_left[pair.left.0 as usize] += 1;
-            deg_g_right[pair.right.0 as usize] += 1;
-        }
-    }
+    f_level.for_each_node_pair(|_, pair| {
+        cnt_f_left[pair.left.0 as usize] += 1;
+        cnt_f_right[pair.right.0 as usize] += 1;
+    });
+    g_level.for_each_node_pair(|_, pair| {
+        deg_g_left[pair.left.0 as usize] += 1;
+        deg_g_right[pair.right.0 as usize] += 1;
+    });
     // Each product list serves both directions: as the inner child's it
     // gives the walk and the bound on the build by inner-g child, as the
     // outer child's it gives the build by g key.

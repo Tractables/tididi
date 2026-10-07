@@ -913,8 +913,6 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
         }
         return;
     }
-    let mut buf = Vec::new();
-    let mut cursor = described.map(|d| (d, d.cursor()));
     let (mut left_marks, mut right_marks) = (Marker::new(left_base), Marker::new(right_base));
     let mut mark = |marks: &mut [u64], pair: ChildPair| {
         if LEFT && let Some(s) = left_view.child(pair.left).index() {
@@ -924,21 +922,39 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
             right_marks.mark(marks, right_base, s);
         }
     };
-    for w in 0..words(level.slot_count()) {
-        // The level's own block is disjoint from its children's, so the word
-        // read here is not one the loop below writes.
+    // A stored level's marked nodes are read as slices of its arena, in a
+    // loop apart from an implicit level's generated pairs.
+    let width = level.slot_count();
+    match (described, level.stored()) {
+        (Some(d), _) => {
+            let mut cursor = d.cursor();
+            for_each_marked_beside(width, base, marks, |marks, i| {
+                d.places_from(cursor.first_of(i)).for_each(|pair| mark(marks, pair));
+            });
+        }
+        (None, Some(stored)) => for_each_marked_beside(width, base, marks, |marks, i| {
+            stored.of_idx(i).iter().for_each(|&pair| mark(marks, pair));
+        }),
+        (None, None) => unreachable!("a level is stored or implicit"),
+    }
+    left_marks.finish(marks);
+    right_marks.finish(marks);
+}
+
+/// [`for_each_marked`] on the block of `width` slots at word `base` of
+/// `marks`, with `marks` passed on to `f`: each word is read before `f` runs
+/// on its slots, so that `f` may mark other blocks, a level's children's
+/// beside its own.
+#[inline(always)]
+fn for_each_marked_beside(width: usize, base: usize, marks: &mut [u64], mut f: impl FnMut(&mut [u64], usize)) {
+    for w in 0..words(width) {
         let mut x = marks[base + w];
         while x != 0 {
             let i = (w << 6) + x.trailing_zeros() as usize;
             x &= x - 1;
-            match &mut cursor {
-                Some((d, c)) => d.places_from(c.first_of(i)).for_each(|pair| mark(marks, pair)),
-                None => level.pairs_read(i, &mut buf).iter().for_each(|&pair| mark(marks, pair)),
-            }
+            f(marks, i);
         }
     }
-    left_marks.finish(marks);
-    right_marks.finish(marks);
 }
 
 /// [`mark_sides`] on one side of a level held as the description of its
