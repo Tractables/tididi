@@ -1481,7 +1481,7 @@ impl TddLevel {
     /// The pairs of node `i`: a slice of a stored level's arena, or of `buf`,
     /// which an implicit level's are generated into. Not valid on a marginal
     /// level.
-    #[inline]
+    #[inline(always)]
     pub fn pairs_read<'a>(&'a self, i: usize, buf: &'a mut Vec<ChildPair>) -> &'a [ChildPair] {
         match self.stored_of(&self.nodes[i]) {
             Some(pairs) => pairs,
