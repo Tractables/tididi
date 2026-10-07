@@ -355,7 +355,7 @@ impl ImplicitLevel {
         let stored = level.stored()?;
         let first_pairs = stored.of_idx(0);
         let per_node = first_pairs.len();
-        if per_node == 0 || (1..nodes).any(|i| level.pair_count_at(i) != per_node) {
+        if per_node == 0 {
             return None;
         }
         let first = slots(&first_pairs[0]);
@@ -366,6 +366,9 @@ impl ImplicitLevel {
         let within = read_digits(per_node, offset)?;
         let across = read_digits(nodes, |i| stored.of_idx(i).first().map(slots))?;
         let fitted = ImplicitLevel::assemble(nodes, per_node, first, &within, &across);
+        // The check reads each node's number of pairs with its pairs: a
+        // level of nodes of other numbers fits none, after the few pairs
+        // the digits are read from.
         fitted.holds(|i| Some(stored.of_idx(i).iter().map(slots))).then_some(fitted)
     }
 
