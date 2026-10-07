@@ -369,6 +369,12 @@ impl ImplicitLevel {
             Some((l - first.0, r - first.1))
         };
         let within = read_digits(per_node, offset).ok_or(None)?;
+        // Node 0's pairs against the digits read off a few of them, before
+        // the node digits are read or a description is built: a level that
+        // fits none fails here most often.
+        if !digits_hold(&within, per_node, offset) {
+            return Err(None);
+        }
         let across = read_digits(nodes, |i| stored.of_idx(i).first().map(slots)).ok_or(None)?;
         let fitted = ImplicitLevel::assemble(nodes, per_node, first, &within, &across);
         if fitted.holds(|i| Some(stored.of_idx(i).iter().map(slots))) { Ok(fitted) } else { Err(None) }
@@ -744,10 +750,7 @@ fn read_digits(n: usize, mut value: impl FnMut(usize) -> Option<(i64, i64)>) -> 
         while run < rest && value(period * run)? == (v0.0 + run as i64 * step.0, v0.1 + run as i64 * step.1) {
             run += 1;
         }
-        let mut radix = run.min(rest);
-        while radix > 1 && !rest.is_multiple_of(radix) {
-            radix -= 1;
-        }
+        let radix = divisor_at_most(rest, run);
         if radix < 2 {
             return None;
         }
@@ -755,6 +758,53 @@ fn read_digits(n: usize, mut value: impl FnMut(usize) -> Option<(i64, i64)>) -> 
         period *= radix;
     }
     Some(digits)
+}
+
+/// The largest divisor of `n` that is at most `m`, both one or more:
+/// counted down from `m` where that takes at most `√n` steps, and
+/// otherwise read off the divisors up to `√n`, each `d` of which names a
+/// second one, `n / d`, at or above it.
+fn divisor_at_most(n: usize, m: usize) -> usize {
+    if m >= n {
+        return n;
+    }
+    let root = n.isqrt();
+    let down = |from: usize| (1..=from).rev().find(|&d| n.is_multiple_of(d)).unwrap_or(1);
+    if m <= root {
+        return down(m);
+    }
+    // A divisor `n / d` in `root..=m` has `d` in `n.div_ceil(m)..=root`,
+    // and the least such `d` names the greatest; without one, the
+    // greatest divisor at most `m` is at most `root`.
+    match (n.div_ceil(m)..=root).find(|&d| n.is_multiple_of(d)) {
+        Some(d) => n / d,
+        None => down(root),
+    }
+}
+
+/// Whether `value(m)` is, at every place `m` of `0..n`, what the digits
+/// `digits` (radices of product `n` and the slots one unit of each adds,
+/// fastest first) add at that place: counted like an odometer, up to the
+/// first place that differs.
+fn digits_hold(digits: &[(usize, (i64, i64))], n: usize, mut value: impl FnMut(usize) -> Option<(i64, i64)>) -> bool {
+    let mut count = vec![0usize; digits.len()];
+    let mut at = (0i64, 0i64);
+    for m in 0..n {
+        if value(m) != Some(at) {
+            return false;
+        }
+        for (c, &(radix, (l, r))) in count.iter_mut().zip(digits) {
+            *c += 1;
+            if *c < radix {
+                at = (at.0 + l, at.1 + r);
+                break;
+            }
+            *c = 0;
+            let back = (radix - 1) as i64;
+            at = (at.0 - back * l, at.1 - back * r);
+        }
+    }
+    true
 }
 
 /// A level's pair arena: the pairs, or, on an implicit level, the

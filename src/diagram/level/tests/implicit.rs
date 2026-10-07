@@ -497,3 +497,46 @@ fn a_child_the_digits_call_twin_free_has_no_twins() {
     }
     assert!(free > 200 && twins > 200, "too few cases either way: {free} twin free, {twins} with twins");
 }
+
+/// The divisor search gives what counting down from `m` gives, at every
+/// `m` of every `n` up to 400.
+#[test]
+fn divisor_at_most_counts_down() {
+    for n in 1..=400usize {
+        for m in 1..=n + 1 {
+            let mut d = m.min(n);
+            while d > 1 && !n.is_multiple_of(d) {
+                d -= 1;
+            }
+            assert_eq!(divisor_at_most(n, m), d, "n {n}, m {m}");
+        }
+    }
+}
+
+/// Node 0's check answers as a reading of every place off its digits by
+/// division does, on affine nodes and on nodes with one pair moved.
+#[test]
+fn digits_hold_reads_every_place() {
+    let at = |digits: &[(usize, (i64, i64))], mut m: usize| {
+        digits.iter().fold((0, 0), |(l, r), &(radix, (dl, dr))| {
+            let c = (m % radix) as i64;
+            m /= radix;
+            (l + c * dl, r + c * dr)
+        })
+    };
+    let mut rng = Lcg::new(7);
+    let (mut held, mut failed) = (0, 0);
+    for _ in 0..400 {
+        let per_node = [2, 4, 6, 12, 30, 64, 90][rng.below(7) as usize];
+        let mut node = affine(&mut rng, 1, per_node).swap_remove(0);
+        if rng.below(2) == 0 {
+            node[1 + rng.below(per_node as u64 - 1) as usize].0 += 1;
+        }
+        let offset = |m: usize| Some((node[m].0 - node[0].0, node[m].1 - node[0].1));
+        let Some(within) = read_digits(per_node, offset) else { continue };
+        let every = (0..per_node).all(|m| offset(m) == Some(at(&within, m)));
+        assert_eq!(digits_hold(&within, per_node, offset), every, "{node:?}");
+        if every { held += 1 } else { failed += 1 }
+    }
+    assert!(held > 0 && failed > 0, "held {held}, failed {failed}");
+}
