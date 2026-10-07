@@ -171,3 +171,98 @@ fn a_doubled_table_keeps_the_siblings_filed_before() {
         assert!(scratch.twin_local.len() >= 4 * TWIN_TABLE_START_CELLS, "the table doubled: {}", scratch.twin_local.len());
     }
 }
+
+/// Levels whose left nodes one parent pair names each, some given a second
+/// pair or none: the radix grouping finds the groups a listing of every
+/// node's contexts gives wherever it runs, on either side, and declines a
+/// level where a node has no entry or several. A level past the width the
+/// search tries it at is grouped through `find_twin_groups`.
+#[test]
+fn single_entry_levels_are_grouped_by_sorting() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
+    let (v_left, v_right) = vtree.children(root);
+    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
+    let mut rng = Lcg::new(23);
+    let mut scratch = ContractScratch::default();
+    let (mut grouped, mut with_groups, mut declined) = (0, 0, 0);
+    for round in 0..80u32 {
+        let wide = round == 78;
+        let width = if wide { groups::SINGLE_ENTRY_MIN_WIDTH as u32 + 4321 } else { 1 + rng.below(3000) as u32 };
+        let siblings = 1 + rng.below(if round % 2 == 0 { 8 } else { 3000 }) as u32;
+        let parents = 1 + rng.below(if round % 3 == 0 { 1 } else { 20 }) as usize;
+        let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+        for (v, w) in [(v_left, width), (v_right, siblings)] {
+            for _ in 0..w {
+                levels[v.idx()].push_internal_node(&[filler]);
+            }
+        }
+        // Each left node beside one sibling in one parent node; every fifth
+        // round node 0 gets a second pair, every seventh round one node gets
+        // none.
+        let mut by_parent: Vec<Vec<ChildPair>> = vec![Vec::new(); parents];
+        let twice = round % 5 == 4 && (parents > 1 || siblings > 1);
+        let never = round % 7 == 6 && width > 1;
+        for t in 0..width {
+            if never && t == width / 2 {
+                continue;
+            }
+            let s = rng.below(siblings as u64) as u32;
+            let p = rng.below(parents as u64) as usize;
+            by_parent[p].push(ChildPair::new(NodeIdx(t), NodeIdx(s)));
+            if twice && t == 0 {
+                // Another sibling in the same parent node, or the same
+                // sibling in another.
+                let (p, s) = if siblings > 1 { (p, (s + 1) % siblings) } else { ((p + 1) % parents, s) };
+                by_parent[p].push(ChildPair::new(NodeIdx(t), NodeIdx(s)));
+            }
+        }
+        for pairs in &mut by_parent {
+            pairs.sort_unstable();
+            if !pairs.is_empty() {
+                levels[root.idx()].push_internal_node(&pairs[..]);
+            }
+        }
+        let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
+        for (child, side) in [(v_left, ChildSide::Left), (v_right, ChildSide::Right)] {
+            let want = listed_groups(&tdd.levels[root.idx()], &tdd.levels[child.idx()], side);
+            let width = tdd.levels[child.idx()].slot_count();
+            let entries = ContextEntries {
+                parent_level: &tdd.levels[root.idx()],
+                t1_side: side,
+                early_stop: true,
+            };
+            scratch.flat_groups.clear();
+            scratch.group_starts.clear();
+            let found = if wide {
+                Some(find_twin_groups(&eng, &tdd, child, root, side, &mut scratch).expect("find_twin_groups"))
+            } else {
+                groups::group_single_entries(&eng, &entries, width, &mut scratch).expect("group_single_entries")
+            };
+            let Some(found) = found else {
+                if side == ChildSide::Left {
+                    assert!(twice || never, "round {round}: a level of one entry a node was declined");
+                }
+                declined += 1;
+                continue;
+            };
+            if side == ChildSide::Left && !wide {
+                assert!(!twice && !never, "round {round}: a node with no entry or two was grouped");
+            }
+            let mut got: Vec<Vec<u32>> = Vec::new();
+            if found {
+                for (g, &start) in scratch.group_starts.iter().enumerate() {
+                    let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
+                    got.push(scratch.flat_groups[start as usize..end].to_vec());
+                }
+            }
+            assert_eq!(found, !want.is_empty(), "round {round}, {side:?}");
+            assert_eq!(got, want, "round {round}, {side:?}");
+            grouped += 1;
+            with_groups += usize::from(found);
+        }
+    }
+    assert!(grouped > 50 && with_groups > 20 && declined > 20,
+        "grouped {grouped}, with groups {with_groups}, declined {declined}");
+}

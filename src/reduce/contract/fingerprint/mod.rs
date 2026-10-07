@@ -310,6 +310,12 @@ pub(super) fn group_twins_by_entries(
     if entries.no_twin(lim, scratch, width)? {
         return Ok(false);
     }
+    // A wide level whose nodes hold one entry each groups by sorting them.
+    if width >= groups::SINGLE_ENTRY_MIN_WIDTH
+        && let Some(found) = groups::group_single_entries(eng, entries, width, scratch)?
+    {
+        return Ok(found);
+    }
 
     // ── Pre-test: fingerprint-only scatter ────────────────────────────────────
     //

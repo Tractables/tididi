@@ -255,3 +255,128 @@ fn group_by_hashed_signature(
 
     Ok(!group_starts.is_empty())
 }
+
+/// The fewest nodes a level needs before [`group_single_entries`] is tried:
+/// below it the fingerprints are cheap, and the pass that counts the entries
+/// would not repay itself.
+pub(super) const SINGLE_ENTRY_MIN_WIDTH: usize = 1 << 16;
+
+/// The bits one pass of [`group_single_entries`]' radix sort reads.
+const SINGLE_ENTRY_DIGIT_BITS: u32 = 12;
+
+/// Twin groups of a level each of whose nodes has exactly one entry, where a
+/// signature is that entry: the nodes sorted by entry with a stable
+/// least-significant-digit radix sort of `(entry, node)` packed into one word,
+/// and each run of two or more equal entries a group. Starting from the nodes
+/// in index order, a run lists its members ascending, and the groups are put
+/// in the order of their lowest members, which is what the fingerprint path
+/// gives. `None`, before a group is written, when some node has no entry or
+/// several, or an entry and a node index do not fit one word together; the
+/// caller then fingerprints.
+pub(super) fn group_single_entries(
+    eng: &Engine,
+    entries: &impl TwinEntries,
+    width: usize,
+    scratch: &mut ContractScratch,
+) -> Result<Option<bool>, OperationError> {
+    let lim = eng.limits();
+    // One entry each needs as many entries as nodes.
+    let mut total = 0usize;
+    entries.for_each(|_, _| total += 1);
+    if total != width {
+        return Ok(None);
+    }
+    let ContractScratch { fingerprints: records, entries: other, counts, twin_named, candidates, flat_groups, group_starts, .. } =
+        &mut *scratch;
+    // Each node's entry at its index. With as many entries as nodes, a node
+    // named twice leaves another unnamed.
+    lim.try_resize(records, width, 0u64)?;
+    let words = width.div_ceil(64);
+    lim.try_resize(twin_named, words, 0u64)?;
+    twin_named[..words].fill(0);
+    let mut repeated = false;
+    entries.for_each(|node, entry| {
+        let (word, bit) = ((node / 64) as usize, 1u64 << (node % 64));
+        repeated |= twin_named[word] & bit != 0;
+        twin_named[word] |= bit;
+        records[node as usize] = entry;
+    });
+    if repeated {
+        return Ok(None);
+    }
+    // The entry's halves, each cut to the bits its largest value needs, and
+    // the node index below them.
+    let (mut hi, mut lo) = (0u32, 0u32);
+    for &entry in &records[..width] {
+        hi |= (entry >> 32) as u32;
+        lo |= entry as u32;
+    }
+    let bits = |x: u32| u32::BITS - x.leading_zeros();
+    let (lo_bits, node_bits) = (bits(lo), bits(width as u32 - 1));
+    let key_bits = bits(hi) + lo_bits;
+    if key_bits + node_bits > u64::BITS {
+        return Ok(None);
+    }
+    for (node, record) in records[..width].iter_mut().enumerate() {
+        let key = ((*record >> 32) << lo_bits) | (*record & u64::from(u32::MAX));
+        *record = (key << node_bits) | node as u64;
+    }
+
+    lim.try_resize(other, width, 0u64)?;
+    lim.try_resize(counts, 1 << SINGLE_ENTRY_DIGIT_BITS, 0u32)?;
+    let (mut src, mut dst): (&mut [u64], &mut [u64]) = (&mut records[..width], &mut other[..width]);
+    let end = node_bits + key_bits;
+    let mut shift = node_bits;
+    while shift < end {
+        let digit_bits = SINGLE_ENTRY_DIGIT_BITS.min(end - shift);
+        let mask = (1u64 << digit_bits) - 1;
+        let counts = &mut counts[..1 << digit_bits];
+        counts.fill(0);
+        for &record in src.iter() {
+            counts[((record >> shift) & mask) as usize] += 1;
+        }
+        // A digit every record shares moves none of them.
+        if !counts.iter().any(|&n| n as usize == width) {
+            let mut sum = 0u32;
+            for count in counts.iter_mut() {
+                let n = *count;
+                *count = sum;
+                sum += n;
+            }
+            for &record in src.iter() {
+                let digit = ((record >> shift) & mask) as usize;
+                dst[counts[digit] as usize] = record;
+                counts[digit] += 1;
+            }
+            std::mem::swap(&mut src, &mut dst);
+        }
+        shift += digit_bits;
+    }
+    let sorted: &[u64] = src;
+
+    // The runs of two or more, by their lowest member.
+    let node_mask = (1u64 << node_bits) - 1;
+    let run_end = |start: usize| {
+        let key = sorted[start] >> node_bits;
+        start + sorted[start..].iter().take_while(|&&record| record >> node_bits == key).count()
+    };
+    candidates.clear();
+    let (mut start, mut members) = (0, 0);
+    while start < width {
+        let end = run_end(start);
+        if end - start >= 2 {
+            lim.try_push(candidates, start as u32)?;
+            members += end - start;
+        }
+        start = end;
+    }
+    candidates.sort_unstable_by_key(|&start| sorted[start as usize] & node_mask);
+    lim.reserve_exact(group_starts, candidates.len())?;
+    lim.reserve_exact(flat_groups, members)?;
+    for &start in candidates.iter() {
+        let start = start as usize;
+        group_starts.push(flat_groups.len() as u32);
+        flat_groups.extend(sorted[start..run_end(start)].iter().map(|&record| (record & node_mask) as u32));
+    }
+    Ok(Some(!group_starts.is_empty()))
+}
