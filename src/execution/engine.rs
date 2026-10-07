@@ -68,6 +68,8 @@ pub(crate) struct EngineScratch {
     pub(crate) sparse: Pool<crate::apply::conjoin::SparseWorkspace>,
     pub(crate) levels: crate::diagram::LevelPool,
     pub(crate) model_layout: Pool<crate::build::models::layout::Layout>,
+    /// The levels a placement built or changed, which its seat closes.
+    pub(crate) placed: Pool<Vec<crate::vtree::VtreeIdx>>,
 }
 
 impl Pools for EngineScratch {
@@ -80,6 +82,7 @@ impl Pools for EngineScratch {
         visit(&self.sparse);
         self.levels.pools(visit);
         visit(&self.model_layout);
+        visit(&self.placed);
     }
 }
 

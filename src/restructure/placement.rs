@@ -13,6 +13,7 @@ use crate::diagram::{
     Assembly, ChildPair, ChildSide, Dirty, LevelView, MarginalStorage, NodeIdx, Tdd, TddBuildError,
     TddNodeId, WeightStore, WeightValue, LEAF_WIDTH, ONE_LEAF_IDX, try_take_levels,
 };
+use crate::execution::pool::PoolGuard;
 use crate::vtree::{Vtree, VtreeIdx};
 
 /// Drop the nodes the joins made in `result` that nothing refers to.
@@ -56,15 +57,15 @@ impl PassThrough {
 
 /// The levels a placement built or changed, bottom-up, each once: the only
 /// ones its seat closes when every level it copied or moved was closed in
-/// its source.
-struct Changed {
-    levels: Vec<VtreeIdx>,
+/// its source. The list is the engine's, checked out for the placement.
+struct Changed<'a> {
+    levels: PoolGuard<'a, Vec<VtreeIdx>>,
     sources_closed: bool,
 }
 
-impl Changed {
-    fn new(eng: &Engine, vtree: &Vtree) -> Result<Self, OperationError> {
-        let mut levels = Vec::new();
+impl<'a> Changed<'a> {
+    fn new(eng: &'a Engine, vtree: &Vtree) -> Result<Self, OperationError> {
+        let mut levels = eng.scratch.placed.checkout(eng);
         eng.limits().reserve_exact(&mut levels, vtree.num_nodes())?;
         Ok(Self { levels, sources_closed: true })
     }
@@ -98,7 +99,7 @@ pub(super) struct CopyPlacement<'a> {
     vtree: &'a Arc<Vtree>,
     assembly: Assembly<'a>,
     prune: bool,
-    changed: Changed,
+    changed: Changed<'a>,
 }
 
 impl<'a> CopyPlacement<'a> {
@@ -179,7 +180,7 @@ pub(super) struct MovePlacement<'a> {
     /// apart by value slots alone, and slots the prune merges leave twins
     /// behind, which a contraction after it removes.
     contract: bool,
-    changed: Changed,
+    changed: Changed<'a>,
 }
 
 impl<'a> MovePlacement<'a> {
