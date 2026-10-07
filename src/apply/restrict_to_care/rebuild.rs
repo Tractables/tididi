@@ -25,6 +25,7 @@ impl Marking {
         let vtree = Arc::clone(&f.vtree);
         // A child reference names a dead node: `ZERO`, or a structural node
         // the marks did not keep. Marginal children and leaf labels never die.
+        let keep = |v: VtreeIdx, a: usize| self.keep.get(v.idx()).is_some_and(|row| row[a]);
         let dead = |cv: VtreeIdx, child: &TddLevel, side: EncodedChildRef| {
             if child.is_marginal() { return false; }
             let node = ChildDecoder::structural().node(side);
@@ -39,7 +40,7 @@ impl Marking {
             gate.poll(before as u64)?;
             let marks = &self.pair_alive;
             rewrite_level_pairs(lim, level, |i, k, count, pair| {
-                if !marks.contains(v, NodeIdx(i as u32), k, count)
+                if !(keep(v, i) || marks.contains(v, NodeIdx(i as u32), k, count))
                     || dead(left, left_level, pair.left) || dead(right, right_level, pair.right) {
                     None
                 } else {

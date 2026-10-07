@@ -22,7 +22,15 @@
 //!    children's through the two operands' pairs grouped by those children, so
 //!    the work follows the live products. The walk then descends from the root
 //!    along live pairs only and marks their `f` pairs: those are exactly the
-//!    pairs some model of `f ∧ care` uses.
+//!    pairs some model of `f ∧ care` uses. A `care` node that is `⊤` over its
+//!    level's variables (one pair of `⊤` children, how a reduced diagram holds
+//!    it) is read as `⊤`: a level where every `care` node is one is joined on
+//!    as a marginal one, never listed, and an `f` node a live product pairs
+//!    with `⊤` is kept whole with everything below it, never walked, since every
+//!    node of a diagram has a model. A care that is a projection onto some of
+//!    the variables (`∃` of the others) is `⊤` over the rest of `f`'s
+//!    variables, so the walk pays for `f`'s pairs over the projected variables
+//!    and their ancestors only.
 //! 3. If the root product is dead, `f ∧ care ≡ ⊥` → `Unsatisfiable`. If every node
 //!    and pair reachable from `f`'s root is marked → `Unchanged`. Otherwise the
 //!    unmarked pairs are dropped in place (marginal levels untouched) and the
@@ -95,6 +103,10 @@ fn restrict_prepared(eng: &Engine, f: Tdd, care: &Tdd, max_pair_visits: u64) -> 
 struct Marking {
     /// `[v.idx()][f-local]` — does this f-node survive under care?
     alive: Vec<Vec<bool>>,
+    /// `[v.idx()][f-local]` — an f-node a live product pairs with a `care`
+    /// that is `⊤` over the level's variables: the node and everything below
+    /// it survive whole, so the walk never enters it. Empty when none is.
+    keep: Vec<Vec<bool>>,
     /// Pair liveness, including nodes wider than a machine word.
     pair_alive: pairs::PairMarks,
     /// Is the root pair live, i.e. is `f ∧ care` structurally non-false?

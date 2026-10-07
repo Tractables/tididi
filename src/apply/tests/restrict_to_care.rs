@@ -663,3 +663,74 @@ fn keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
     assert!(strict > 0, "no case pruned anything");
     out
 }
+
+/// On implicit levels and on stored ones alike ([`same_as_stored`]).
+#[test]
+fn restrict_to_a_care_on_one_subtree_keeps_exactly_the_pairs_models_use() {
+    same_as_stored(care_on_one_subtree_keeps_exactly_the_pairs_models_use);
+}
+
+/// The cases of
+/// [`restrict_to_a_care_on_one_subtree_keeps_exactly_the_pairs_models_use`]:
+/// the restricted diagrams.
+fn care_on_one_subtree_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
+    // `care` reads only the variables under one vtree node, so it is `⊤` over
+    // the other subtrees: the walk keeps an `f` node it pairs with that `⊤`
+    // whole instead of walking it. Brute force as above, and the raw result
+    // is a valid diagram.
+    use crate::test_helpers::check::check_all_fast;
+    let mut out = Vec::new();
+    let mut rng = Lcg::new(0x10e5_ca7e_5eed_0002);
+    let mut cases = 0;
+    let mut strict = 0;
+    for &nvars in &[4u32, 5, 6, 7] {
+        let shapes = [Vtree::balanced(nvars), Vtree::linear(nvars), Vtree::random(nvars, u64::from(nvars) * 17 + 3)];
+        for vtree in shapes {
+            let vtree = Arc::new(vtree);
+            let lows: Vec<Vec<u32>> = vtree
+                .subtree(vtree.root())
+                .filter(|&u| u != vtree.root())
+                .map(|u| {
+                    let mut vs: Vec<u32> =
+                        vtree.subtree(u).filter(|&x| vtree.node(x).is_leaf()).map(|x| vtree.leaf_var(x).0).collect();
+                    vs.sort_unstable();
+                    vs
+                })
+                .collect();
+            for _ in 0..60 {
+                let mut f = rand_conj(&vtree, nvars, 4, 3, true, &mut rng);
+                let vars = &lows[(rng.next_u64() as usize) % lows.len()];
+                let mut c = rand_conj_over(&vtree, vars, 3, 2, false, &mut rng);
+                if rng.coin() {
+                    f.minimize().unwrap();
+                }
+                if rng.coin() {
+                    c.minimize().unwrap();
+                }
+                if f.is_zero() || count_is_zero(&c) || f.output.vtree != c.output.vtree {
+                    continue;
+                }
+                let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+                check_all_fast(&g, "restrict_to_care-one-subtree");
+                let mut used = std::collections::BTreeSet::new();
+                for mask in 0..(1u32 << nvars) {
+                    let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
+                    let cv = eval(&c, &asn);
+                    assert_eq!(eval(&g, &asn) && cv, eval(&f, &asn) && cv, "unsound at {asn:?}");
+                    if cv && eval(&f, &asn) {
+                        trace(&f, f.output.vtree, f.output.local, &asn, &mut used);
+                    }
+                }
+                assert_eq!(reachable_pairs(&g), used.len(), "the restriction kept pairs no model uses (nvars={nvars})");
+                if used.len() < reachable_pairs(&f) {
+                    strict += 1;
+                }
+                cases += 1;
+                out.push(g);
+            }
+        }
+    }
+    assert!(cases >= 300, "too few cases exercised: {cases}");
+    assert!(strict > 0, "no case pruned anything");
+    out
+}

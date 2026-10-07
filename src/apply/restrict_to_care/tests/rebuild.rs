@@ -11,6 +11,7 @@ use crate::vtree::Vtree;
 fn all_live(f: &Tdd) -> Marking {
     Marking {
         alive: f.levels.iter().map(|l| vec![true; l.nodes().len()]).collect(),
+        keep: Vec::new(),
         pair_alive: PairMarks::all(),
         root_live: true,
     }
