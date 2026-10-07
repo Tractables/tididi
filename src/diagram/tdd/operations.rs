@@ -850,10 +850,10 @@ impl Tdd {
     /// assignments to the subtree's variables that the node holds, of the
     /// product of their leaf values. There is one value per reference slot
     /// ([`reference_slot_count`](Self::reference_slot_count)): a leaf's
-    /// [`LEAF_WIDTH`](crate::diagram::LEAF_WIDTH) labels, the constant-false
-    /// one zero, or one per node of an internal level. The levels above `at`
-    /// are not folded; a caller combining the values with them reads the
-    /// pairs that name each slot. The borrowed diagram is unchanged.
+    /// `LEAF_WIDTH` labels, the constant-false one zero, or one per node of
+    /// an internal level. The levels above `at` are not folded; a caller
+    /// combining the values with them reads the pairs that name each slot.
+    /// The borrowed diagram is unchanged.
     ///
     /// # Errors
     ///
