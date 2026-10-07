@@ -456,12 +456,15 @@ fn unnamed_children(
     }
     let views = children.map(|c| tdd.levels[c.idx()].child_decoder());
     let level = &tdd.levels[p.idx()];
-    'read: for (_, pairs) in level.internal_inputs_iter() {
+    // A node's pairs are read in one fold, a stored node's as a slice; the
+    // pairs of a node past the one that names the last open node mark
+    // nothing.
+    for (_, pairs) in level.internal_inputs_iter() {
         if open == [0; 2] {
             break;
         }
         gate.poll(pairs.len() as u64)?;
-        for pair in pairs {
+        pairs.for_each(|pair| {
             for (k, side) in [pair.left, pair.right].into_iter().enumerate() {
                 if open[k] > 0 && let Some(s) = views[k].child(side).index() {
                     let (word, bit) = (base[k] + (s >> 6), 1u64 << (s & 63));
@@ -471,10 +474,7 @@ fn unnamed_children(
                     }
                 }
             }
-            if open == [0; 2] {
-                break 'read;
-            }
-        }
+        });
     }
     Ok([unread[0] || open[0] > 0, unread[1] || open[1] > 0])
 }
