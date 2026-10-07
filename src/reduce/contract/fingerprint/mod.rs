@@ -1,4 +1,4 @@
-use crate::diagram::{ChildDecoder, ChildPair, ChildSide, EncodedChildRef, Tdd, TddLevel};
+use crate::diagram::{ChildPair, ChildSide, Tdd, TddLevel};
 use crate::Engine;
 use crate::vtree::VtreeIdx;
 
@@ -24,39 +24,35 @@ fn prefetch_slot(p: *const TwinSlot, slot: usize) {
 }
 
 /// Iterate parent pairs and yield `(parent_i, target, sibling)` to `f`,
-/// where `target` is the child index at level `t1` (left or right of each pair
+/// where `target` is the node at level `t1` (left or right of each pair
 /// depending on `t1_side`) and `sibling` is the other child.
 #[inline]
 fn for_each_target_sibling(
     parent_level: &TddLevel,
     t1_side: ChildSide,
-    target: ChildDecoder,
     mut f: impl FnMut(u32, u32, u32),
 ) {
-    // `target` indexes child-width-sized scratch arrays, so it is the cell the
-    // ref names. A side carrying an inline value names no cell (it is a count,
-    // not a child node), so it never joins twin grouping; the parent rewrite
-    // leaves such a ref verbatim. `sibling` is passed raw: it is only hashed
-    // and packed, never indexed.
-    parent_level.for_each_node_pair(|parent_i, pair| {
-        let (t, sibling) = split_pair(&pair, t1_side);
-        if let Some(t) = resolve_target(target, t) {
-            f(parent_i as u32, t, sibling);
-        }
-    });
+    // `target` indexes child-width-sized scratch arrays. `sibling` is passed
+    // raw: it is only hashed and packed, never indexed. A walk per side, each
+    // its own instance, so that no pair tests the side.
+    match t1_side {
+        ChildSide::Left => parent_level.for_each_node_pair(|i, pair| {
+            let (target, sibling) = split_pair(&pair, ChildSide::Left);
+            f(i as u32, target, sibling);
+        }),
+        ChildSide::Right => parent_level.for_each_node_pair(|i, pair| {
+            let (target, sibling) = split_pair(&pair, ChildSide::Right);
+            f(i as u32, target, sibling);
+        }),
+    }
 }
 
-/// A pair's side toward the child level `t1_side` names, and the raw ref of
-/// the other side.
+/// The node a pair names on side `t1_side`, and the raw ref of the other
+/// side. The child level on that side is structural, pair fusion handling a
+/// marginal one, so the side toward it is a node index.
 #[inline]
-fn split_pair(pair: &ChildPair, t1_side: ChildSide) -> (EncodedChildRef, u32) {
-    if t1_side == ChildSide::Left { (pair.left, pair.right.0) } else { (pair.right, pair.left.0) }
-}
-
-/// The cell a target-side ref names, or `None` for an inline value.
-#[inline]
-fn resolve_target(target: ChildDecoder, side: EncodedChildRef) -> Option<u32> {
-    target.child(side).index().map(|c| c as u32)
+fn split_pair(pair: &ChildPair, t1_side: ChildSide) -> (u32, u32) {
+    if t1_side == ChildSide::Left { (pair.left.0, pair.right.0) } else { (pair.right.0, pair.left.0) }
 }
 
 /// The splitmix64 finalizer (Steele et al., 2014) — the shared bit-diffusion
@@ -105,7 +101,6 @@ fn pack(hi: u32, lo: u32) -> u64 {
 struct ContextEntries<'a> {
     parent_level: &'a TddLevel,
     t1_side: ChildSide,
-    t1_view: ChildDecoder,
     /// Whether [`no_twin`](TwinEntries::no_twin) tests the level at all.
     early_stop: bool,
 }
@@ -124,7 +119,7 @@ const TWIN_TABLE_START_CELLS: usize = 1 << 12;
 
 impl TwinEntries for ContextEntries<'_> {
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
-        for_each_target_sibling(self.parent_level, self.t1_side, self.t1_view, |pi, target, sibling| {
+        for_each_target_sibling(self.parent_level, self.t1_side, |pi, target, sibling| {
             f(target, pack(pi, sibling));
         });
     }
@@ -146,10 +141,6 @@ impl TwinEntries for ContextEntries<'_> {
     /// [`TWIN_TABLE_START_CELLS`] long and doubles when half full, under a
     /// fresh stamp the siblings read so far are filed again with, so its size
     /// follows the pairs read, not the node's width.
-    ///
-    /// Inlined into the contraction, which knows the child level's decoder,
-    /// so that a pair's side is read without testing its tag.
-    #[inline(always)]
     fn no_twin(&self, lim: &Limits, scratch: &mut ContractScratch, width: usize) -> Result<bool, OperationError> {
         if !self.early_stop {
             return Ok(false);
@@ -160,7 +151,7 @@ impl TwinEntries for ContextEntries<'_> {
         let named = &mut twin_named[..words];
         named.fill(0);
         let mut name = |t: u32| named[(t / 64) as usize] |= 1 << (t % 64);
-        let (level, side, view) = (self.parent_level, self.t1_side, self.t1_view);
+        let (level, side) = (self.parent_level, self.t1_side);
         // A stored level's nodes are read as slices of its arena, an
         // implicit level's generated into a buffer a node at a time, in one
         // loop.
@@ -175,44 +166,34 @@ impl TwinEntries for ContextEntries<'_> {
                 let mut last: Option<u32> = None;
                 for pair in pairs {
                     let (t, s) = split_pair(pair, side);
-                    if let Some(t) = resolve_target(view, t) {
-                        if last == Some(s) {
-                            return Ok(false);
-                        }
-                        last = Some(s);
-                        name(t);
+                    if last == Some(s) {
+                        return Ok(false);
                     }
+                    last = Some(s);
+                    name(t);
                 }
                 continue;
             }
             let mut cells = (2 * pairs.len()).next_power_of_two().min(TWIN_TABLE_START_CELLS);
             let mut stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
-            let mut filed = 0;
             for (read, pair) in pairs.iter().enumerate() {
                 let (t, s) = split_pair(pair, side);
-                if let Some(t) = resolve_target(view, t) {
-                    if 2 * (filed + 1) > cells {
-                        // Half full: double under a fresh stamp and file the
-                        // siblings read so far again. They are distinct, or
-                        // the test would have stopped.
-                        cells *= 2;
-                        stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
-                        for pair in &pairs[..read] {
-                            let (t, s) = split_pair(pair, side);
-                            if resolve_target(view, t).is_some() {
-                                file_sibling(&mut twin_local[..cells], stamp, s);
-                            }
-                        }
+                if 2 * (read + 1) > cells {
+                    // Half full: double under a fresh stamp and file the
+                    // siblings read so far again. They are distinct, or the
+                    // test would have stopped.
+                    cells *= 2;
+                    stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
+                    for pair in &pairs[..read] {
+                        file_sibling(&mut twin_local[..cells], stamp, split_pair(pair, side).1);
                     }
-                    // The node's window of the table: a narrow node after a
-                    // wide one stays in cache. Cells past it keep older
-                    // stamps unread.
-                    if file_sibling(&mut twin_local[..cells], stamp, s) {
-                        return Ok(false);
-                    }
-                    filed += 1;
-                    name(t);
                 }
+                // The node's window of the table: a narrow node after a wide
+                // one stays in cache. Cells past it keep older stamps unread.
+                if file_sibling(&mut twin_local[..cells], stamp, s) {
+                    return Ok(false);
+                }
+                name(t);
             }
         }
         let unnamed = width - named.iter().map(|w| w.count_ones() as usize).sum::<usize>();
@@ -286,11 +267,11 @@ pub(super) fn find_twin_groups(
     scratch: &mut ContractScratch,
 ) -> Result<bool, OperationError> {
     let level = &tdd.levels[t1.idx()];
+    debug_assert!(!level.is_marginal(), "a marginal child is left to pair fusion");
     let parent_level = &tdd.levels[parent.idx()];
     let entries = ContextEntries {
         parent_level,
         t1_side,
-        t1_view: level.child_decoder(),
         early_stop: parent_level.nodes.len() + parent_level.arena_len() >= EARLY_STOP_MIN_ENTRIES,
     };
     group_twins_by_entries(eng, &entries, level.slot_count(), scratch)

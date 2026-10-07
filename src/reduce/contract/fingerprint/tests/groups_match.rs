@@ -13,7 +13,6 @@ fn listed_groups(parent: &TddLevel, child: &TddLevel, side: ChildSide) -> Vec<Ve
     for (p, node) in parent.nodes.iter().enumerate() {
         for pair in parent.pairs_iter_of(node) {
             let (t, s) = split_pair(&pair, side);
-            let t = resolve_target(child.child_decoder(), t).expect("a node ref");
             contexts[t as usize].push((p as u32, s));
         }
     }
@@ -74,7 +73,6 @@ fn the_twin_groups_are_the_nodes_with_equal_contexts() {
             let entries = ContextEntries {
                 parent_level: &tdd.levels[root.idx()],
                 t1_side: side,
-                t1_view: tdd.levels[child.idx()].child_decoder(),
                 early_stop: true,
             };
             let width = tdd.levels[child.idx()].slot_count();
@@ -122,7 +120,6 @@ fn a_wrapped_stamp_reads_no_older_cell() {
     let entries = ContextEntries {
         parent_level: &tdd.levels[root.idx()],
         t1_side: ChildSide::Left,
-        t1_view: tdd.levels[v_left.idx()].child_decoder(),
         early_stop: true,
     };
     // Every cell of the node's window stamped 1 and filing one of its
@@ -166,7 +163,6 @@ fn a_doubled_table_keeps_the_siblings_filed_before() {
         let entries = ContextEntries {
             parent_level: &tdd.levels[root.idx()],
             t1_side: ChildSide::Left,
-            t1_view: tdd.levels[v_left.idx()].child_decoder(),
             early_stop: true,
         };
         let mut scratch = ContractScratch::default();
