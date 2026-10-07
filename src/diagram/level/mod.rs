@@ -89,24 +89,68 @@ pub struct TddLevel {
 pub(crate) enum LevelState {
     /// Nodes and pairs; `nodes`/`pairs`/`ranges` carry the level.
     Structural,
-    /// Model counts, one per node slot. `u128::MAX` marks a count at least
-    /// that large, whose exact value is the entry `big` holds for that slot.
-    Counts {
-        counts: Vec<u128>,
-        big: Option<CountOverflow>,
-        retired: u32,
-    },
+    /// Model counts, one per node slot ([`CountBox`]).
+    Counts(CountBox),
     /// Semiring weights, held in the external `WeightStore` and indexed by this
     /// level's slot. Only the slot count stays here — `slot_count()` has nowhere
     /// else to read it from, since `nodes` is cleared like the integer path.
     Weights { width: u32, retired: u32 },
 }
 
-/// `TddLevel` stays compact: the O(levels) sweeps stride over it, two cache
-/// lines a level.
+/// A count-marginal level's values, boxed, and dropped out of line: a level's
+/// drop, of a structural level nearly always, is then a test of its state,
+/// which the drop of every level and every reset of a state inline.
+#[derive(Debug)]
+pub(crate) struct CountBox(std::mem::ManuallyDrop<Box<CountState>>);
+
+impl CountBox {
+    pub(crate) fn new(state: CountState) -> Self {
+        CountBox(std::mem::ManuallyDrop::new(Box::new(state)))
+    }
+}
+
+impl Drop for CountBox {
+    #[cold]
+    #[inline(never)]
+    fn drop(&mut self) {
+        // Safety: the box is dropped here once, and never read after.
+        unsafe { std::mem::ManuallyDrop::drop(&mut self.0) }
+    }
+}
+
+impl Clone for CountBox {
+    fn clone(&self) -> Self {
+        CountBox::new(CountState::clone(self))
+    }
+}
+
+impl std::ops::Deref for CountBox {
+    type Target = CountState;
+    fn deref(&self) -> &CountState {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for CountBox {
+    fn deref_mut(&mut self) -> &mut CountState {
+        &mut self.0
+    }
+}
+
+/// A count-marginal level's values.
+#[derive(Clone, Debug)]
+pub(crate) struct CountState {
+    /// Model counts, one per node slot. `u128::MAX` marks a count at least
+    /// that large, whose exact value is the entry `big` holds for that slot.
+    pub(crate) counts: Vec<u128>,
+    pub(crate) big: Option<CountOverflow>,
+    pub(crate) retired: u32,
+}
+
+/// `TddLevel` stays compact: the O(levels) sweeps stride over it.
 const _: () = assert!(
-    std::mem::size_of::<TddLevel>() <= 128,
-    "TddLevel grew past 128 B"
+    std::mem::size_of::<TddLevel>() <= 104,
+    "TddLevel grew past 104 B"
 );
 
 impl Default for TddLevel {
@@ -191,7 +235,7 @@ impl TddLevel {
     /// arrays indexed by child references.
     pub fn slot_count(&self) -> usize {
         match &self.state {
-            LevelState::Counts { counts, .. } => counts.len(),
+            LevelState::Counts(c) => c.counts.len(),
             LevelState::Weights { width, .. } => *width as usize,
             LevelState::Structural => self.nodes.len(),
         }
@@ -220,7 +264,7 @@ impl TddLevel {
     #[inline]
     pub fn marginal_counts(&self) -> Option<&[u128]> {
         match &self.state {
-            LevelState::Counts { counts, .. } => Some(counts),
+            LevelState::Counts(c) => Some(&c.counts),
             _ => None,
         }
     }
@@ -231,7 +275,7 @@ impl TddLevel {
     #[inline]
     pub(crate) fn count_column(&self) -> Option<crate::value::CountRef<'_>> {
         match &self.state {
-            LevelState::Counts { counts, big, .. } => Some(crate::value::CountRef::new(counts, big.as_ref())),
+            LevelState::Counts(c) => Some(crate::value::CountRef::new(&c.counts, c.big.as_ref())),
             _ => None,
         }
     }
@@ -241,7 +285,10 @@ impl TddLevel {
     #[inline]
     pub(crate) fn marginal_store_mut(&mut self) -> Option<(&mut Vec<u128>, &mut Option<CountOverflow>)> {
         match &mut self.state {
-            LevelState::Counts { counts, big, .. } => Some((counts, big)),
+            LevelState::Counts(c) => {
+                let c: &mut CountState = c;
+                Some((&mut c.counts, &mut c.big))
+            }
             _ => None,
         }
     }
@@ -252,7 +299,7 @@ impl TddLevel {
     #[inline]
     pub fn marginal_counts_big(&self) -> Option<&CountOverflow> {
         match &self.state {
-            LevelState::Counts { big, .. } => big.as_ref(),
+            LevelState::Counts(c) => c.big.as_ref(),
             _ => None,
         }
     }
@@ -264,7 +311,8 @@ impl TddLevel {
     #[inline]
     pub(crate) fn retired_marginal_slots(&self) -> u32 {
         match &self.state {
-            LevelState::Counts { retired, .. } | LevelState::Weights { retired, .. } => *retired,
+            LevelState::Counts(c) => c.retired,
+            LevelState::Weights { retired, .. } => *retired,
             LevelState::Structural => 0,
         }
     }
@@ -274,9 +322,8 @@ impl TddLevel {
     #[inline]
     pub(crate) fn retire_marginal_slots(&mut self, n: u32) {
         match &mut self.state {
-            LevelState::Counts { retired, .. } | LevelState::Weights { retired, .. } => {
-                *retired = retired.saturating_add(n)
-            }
+            LevelState::Counts(c) => c.retired = c.retired.saturating_add(n),
+            LevelState::Weights { retired, .. } => *retired = retired.saturating_add(n),
             LevelState::Structural => {}
         }
     }
@@ -325,7 +372,7 @@ impl TddLevel {
     /// Count-marginal levels (already shrunk by `become_marginal`) are skipped.
     #[inline]
     pub(crate) fn shrink_arrays(&mut self) {
-        if matches!(self.state, LevelState::Counts { .. }) {
+        if matches!(self.state, LevelState::Counts(_)) {
             return;
         }
         const MIN_SHRINK_CAP: usize = 1024;
@@ -359,11 +406,11 @@ impl TddLevel {
             Ok(out)
         }
         let state = match &self.state {
-            LevelState::Counts { counts, big, retired } => LevelState::Counts {
-                counts: copy(lim, counts)?,
-                big: big.clone(),
-                retired: *retired,
-            },
+            LevelState::Counts(c) => LevelState::Counts(CountBox::new(CountState {
+                counts: copy(lim, &c.counts)?,
+                big: c.big.clone(),
+                retired: c.retired,
+            })),
             other => other.clone(),
         };
         Ok(TddLevel {

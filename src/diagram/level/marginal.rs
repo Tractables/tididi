@@ -4,7 +4,7 @@ use crate::diagram::marginal_ref::refs::{for_each_side_ref_mut, ChildSide};
 use crate::diagram::marginal_ref::{INLINE_VALUE_BIT, ValueRef};
 use crate::diagram::NodeIdx;
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
-use super::{CountOverflow, LevelState, TddLevel};
+use super::{CountBox, CountOverflow, CountState, LevelState, TddLevel};
 
 impl TddLevel {
     /// One level's share of `inline_small_marginal_refs`: for each bare slot
@@ -61,7 +61,7 @@ impl TddLevel {
     /// references (see [`ChildDecoder::child`](crate::diagram::ChildDecoder::child)).
     pub(crate) fn become_marginal(&mut self, counts: Vec<u128>, big: Option<CountOverflow>) {
         self.drop_structure();
-        self.state = LevelState::Counts { counts, big, retired: 0 };
+        self.state = LevelState::Counts(CountBox::new(CountState { counts, big, retired: 0 }));
     }
 
 
@@ -73,7 +73,7 @@ impl TddLevel {
     /// `slot_count()` reads it back, so parent marginal-side refs stay in bounds.
     pub(crate) fn become_marginal_weighted(&mut self, slots: u32) {
         debug_assert!(
-            !matches!(self.state, LevelState::Counts { .. }),
+            !matches!(self.state, LevelState::Counts(_)),
             "a level already holding counts cannot become weight-marginal"
         );
         self.drop_structure();

@@ -11,6 +11,6 @@ impl CountOverflow {
         let mut entries: Vec<(u32, BigUint)> = Vec::new();
         eng.limits().reserve_exact(&mut entries, self.entries.len())?;
         entries.extend(self.entries.iter().cloned());
-        Ok(CountOverflow { entries: Box::new(entries) })
+        Ok(CountOverflow { entries })
     }
 }

@@ -22,6 +22,6 @@ impl TddLevel {
     /// test can build a level whose shape `become_marginal` would have thrown
     /// away — including one an invariant check is supposed to reject.
     pub(crate) fn set_counts_state(&mut self, counts: Vec<u128>, big: Option<CountOverflow>) {
-        self.state = LevelState::Counts { counts, big, retired: 0 };
+        self.state = LevelState::Counts(CountBox::new(CountState { counts, big, retired: 0 }));
     }
 }
