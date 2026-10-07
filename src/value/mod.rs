@@ -146,6 +146,13 @@ impl CountVec {
         })
     }
 
+    /// A column of `fast` values, none of them the overflow sentinel.
+    pub(crate) fn from_fast(fast: Vec<u128>) -> Self {
+        debug_assert!(fast.iter().all(|&v| v != COUNT_OVERFLOW), "a fast column holds the overflow sentinel");
+        let all_u64 = certify_all_u64(&fast);
+        CountVec { fast, big: None, all_u64 }
+    }
+
     /// A copy of this column, its buffers reserved through `eng`.
     pub(crate) fn try_clone_on(&self, eng: &Engine) -> Result<Self, OperationError> {
         let mut fast: Vec<u128> = Vec::new();

@@ -284,6 +284,11 @@ impl LevelCounts {
         Ok(Self { columns })
     }
 
+    /// The columns given, one per vtree node.
+    pub(crate) fn from_columns(columns: Vec<Option<Arc<CountVec>>>) -> Self {
+        Self { columns }
+    }
+
     /// Level `t`'s column, when kept.
     pub(crate) fn column(&self, t: VtreeIdx) -> Option<&Arc<CountVec>> {
         self.columns.get(t.idx()).and_then(Option::as_ref)

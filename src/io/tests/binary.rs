@@ -4,8 +4,9 @@
 
 use std::sync::Arc;
 
-use crate::diagram::Tdd;
+use crate::diagram::{LevelCounts, Tdd};
 use crate::io::binary::{encode_levels, postorder, xxh64};
+use crate::value::{CountRead, CountVec};
 use crate::io::{read_tdd, read_tdd_binary, write_tdd, write_tdd_binary, IoError};
 use crate::test_helpers::{assert_canonical, compile_clauses, rand_cnf, test_cases, vtree_shapes, CnfShape, Lcg};
 use crate::vtree::{VarId, Vtree};
@@ -367,17 +368,99 @@ fn another_vtree_is_refused() {
     refused(&binary(&Tdd::zero(&vtree)), &Arc::new(Vtree::linear(4)), "false over another vtree");
 }
 
+/// `f` keeping its level counts.
+fn counted(f: &Tdd) -> Tdd {
+    let mut f = f.clone();
+    f.attach_level_counts().unwrap();
+    f
+}
+
+/// Every column `f` keeps against the fold over `f` as read.
+fn assert_counts_folded(f: &Tdd, what: &str) {
+    let counts = f.levels.counts().expect("kept counts");
+    let folded = f.node_counts_u128().unwrap();
+    for t in f.vtree().bottomup() {
+        let Some(column) = counts.column(t) else { continue };
+        assert_eq!(column.len(), folded[t.idx()].len(), "{what}: level {t:?} width");
+        for (i, &want) in folded[t.idx()].iter().enumerate() {
+            assert!(matches!(column.get(i), CountRead::Fast(c) if c == want), "{what}: level {t:?} node {i}");
+        }
+    }
+}
+
+/// A diagram that keeps its level counts writes version 2 and reads back
+/// keeping them, each the fold over what was read; one that keeps none
+/// writes version 1, the file it wrote before.
+#[test]
+fn level_counts_round_trip() {
+    for (num_vars, clauses) in test_cases() {
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            let what = format!("{clauses:?} on {shape}");
+            let f = compile_clauses(&vtree, &clauses);
+            let plain = binary(&f);
+            assert_eq!(plain[8..12], 1u32.to_le_bytes(), "{what}");
+            let bytes = binary(&counted(&f));
+            if f.is_zero() || vtree.internal_bottomup().next().is_none() {
+                assert_eq!(bytes, plain, "{what}: nothing to count");
+                continue;
+            }
+            assert_eq!(bytes[8..12], 2u32.to_le_bytes(), "{what}");
+            let back = read_tdd_binary(&mut bytes.as_slice(), &vtree).unwrap();
+            assert!(back.has_level_counts(), "{what}");
+            assert_same_levels(&back, &read_tdd_binary(&mut plain.as_slice(), &vtree).unwrap(), &what);
+            assert_counts_folded(&back, &what);
+            assert_eq!(back.model_count().unwrap(), f.model_count().unwrap(), "{what}: count");
+            assert_eq!(binary(&back), bytes, "{what}: rewriting what was read changes the bytes");
+        }
+    }
+}
+
+/// A count past the assignments of its level's variables is refused.
+#[test]
+fn a_count_past_its_levels_assignments_is_refused() {
+    let vtree = Arc::new(Vtree::balanced(4));
+    let f = counted(&compile_clauses(&vtree, &[vec![1, 2], vec![-3, 4]]));
+    let (left, _) = vtree.children(vtree.root());
+    let column = f.levels.counts().unwrap().column(left).unwrap();
+    let fast: Vec<u128> = (0..column.len()).map(|i| match column.get(i) {
+        CountRead::Fast(c) => c,
+        CountRead::Big(_) => unreachable!("four variables"),
+    }).collect();
+    for (bad_count, refuse) in [(4, false), (5, true)] {
+        let mut wrong = fast.clone();
+        wrong[0] = bad_count;
+        let mut counts = LevelCounts::from_columns(vec![None; vtree.num_nodes()]);
+        counts.set(left, Arc::new(CountVec::from_fast(wrong)));
+        let mut g = f.clone();
+        g.levels.keep_counts(counts);
+        let bytes = binary(&g);
+        if refuse {
+            refused(&bytes, &vtree, "five assignments of two variables");
+        } else {
+            assert!(read_tdd_binary(&mut bytes.as_slice(), &vtree).unwrap().has_level_counts());
+        }
+    }
+}
+
 /// Corrupt the body, rewrite the length and checksum, and read: whatever
-/// comes back is refused or is a diagram whose storage the builder checked.
+/// comes back is refused or is a diagram whose storage the builder checked;
+/// with and without level counts.
 #[test]
 fn resealed_corruption_is_refused_or_read_without_a_panic() {
+    for with_counts in [false, true] {
+        resealed_corruption(with_counts);
+    }
+}
+
+fn resealed_corruption(with_counts: bool) {
     let mut rng = Lcg::new(11);
     let mut read = 0;
     for case in 0..40u64 {
         let num_vars = 2 + rng.below(9) as u32;
         let vtree = Arc::new(Vtree::random(num_vars, case));
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 6, width: 3 });
-        let bytes = binary(&compile_clauses(&vtree, &clauses));
+        let f = compile_clauses(&vtree, &clauses);
+        let bytes = binary(&if with_counts { counted(&f) } else { f });
         for _ in 0..200 {
             let mut bad = bytes.clone();
             let body = 24..bad.len() - 8;

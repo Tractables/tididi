@@ -10,7 +10,8 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, EncodedNode, NodeIdx, Tdd, TddLevel, TddNodeId, LEAF_WIDTH, ZERO};
+use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, EncodedNode, LevelCounts, NodeIdx, Tdd, TddLevel, TddNodeId, LEAF_WIDTH, ZERO};
+use crate::value::{CountRead, CountVec};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
 use super::numbering::{number_reachable, OMITTED};
@@ -20,8 +21,13 @@ use super::IoError;
 /// The first eight bytes of every binary diagram file.
 const MAGIC: [u8; 8] = *b"\x89TDD\r\n\x1a\n";
 
-/// The binary format version emitted by the writer and accepted by the reader.
+/// The binary format version the writer emits for a diagram without level
+/// counts; the reader accepts it and [`COUNTS_FORMAT_VERSION`].
 const BINARY_FORMAT_VERSION: u32 = 1;
+
+/// The version of a file that also holds the level counts the diagram keeps
+/// ([`Engine::attach_level_counts`](crate::Engine::attach_level_counts)).
+const COUNTS_FORMAT_VERSION: u32 = 2;
 
 /// Written little-endian after the version; a file whose four bytes read
 /// otherwise was not written by a little-endian encoder of this format.
@@ -84,7 +90,10 @@ pub fn save_tdd_binary(f: &Tdd, path: impl AsRef<Path>) -> Result<(), IoError> {
 /// The bytes are those [`save_tdd_binary`] writes to a file. Like the text
 /// format, the binary format stores the reachable nodes only, renumbered in
 /// their level order with each node's pairs in their stored order, and no
-/// weights: a diagram carrying a weight store reads back in integer mode.
+/// weights: a diagram carrying a weight store reads back in integer mode. It
+/// stores the level counts the diagram keeps
+/// ([`Engine::attach_level_counts`](crate::Engine::attach_level_counts)),
+/// in format version 2.
 ///
 /// # Errors
 ///
@@ -135,7 +144,8 @@ pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd
 /// file stores that vtree's structure, and the reader compares it with
 /// `vtree`'s, leaf variables included, regardless of either's in-memory
 /// numbering. The result shares the supplied `Arc<Vtree>`, has no attached
-/// weights, and has the nodes, node order and pair order that
+/// weights, keeps the level counts a version 2 file holds, and has the
+/// nodes, node order and pair order that
 /// [`read_tdd`](super::read_tdd) gives for the same diagram's text; reading
 /// does not minimize.
 ///
@@ -174,7 +184,7 @@ pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd
 pub fn read_tdd_binary<R: Read>(r: &mut R, vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
     let mut bytes = vec![0u8; HEADER_BYTES];
     read_full(r, &mut bytes)?;
-    let total = check_header(&bytes)?;
+    let (total, _) = check_header(&bytes)?;
     // Grows only as bytes arrive, so a damaged length cannot size an allocation.
     r.take((total - HEADER_BYTES) as u64).read_to_end(&mut bytes)?;
     decode(&bytes, vtree)
@@ -205,8 +215,8 @@ fn truncated(have: usize, want: usize) -> IoError {
 // ── Header and checksum ─────────────────────────────────────────────────────
 
 /// Check the magic, version and byte-order mark, and return the file's whole
-/// length as the header declares it.
-fn check_header(bytes: &[u8]) -> Result<usize, IoError> {
+/// length as the header declares it, and its version.
+fn check_header(bytes: &[u8]) -> Result<(usize, u32), IoError> {
     if bytes.len() < MAGIC.len() || bytes[..MAGIC.len()] != MAGIC {
         return Err(malformed("the file does not start with the binary diagram magic bytes"));
     }
@@ -214,10 +224,10 @@ fn check_header(bytes: &[u8]) -> Result<usize, IoError> {
         return Err(truncated(bytes.len(), HEADER_BYTES + TRAILER_BYTES));
     }
     let version = u32::from_le_bytes(bytes[8..12].try_into().expect("four bytes"));
-    if version != BINARY_FORMAT_VERSION {
+    if version != BINARY_FORMAT_VERSION && version != COUNTS_FORMAT_VERSION {
         return Err(malformed(format!(
-            "the file is binary format version {version}; this reader understands version \
-             {BINARY_FORMAT_VERSION}"
+            "the file is binary format version {version}; this reader understands versions \
+             {BINARY_FORMAT_VERSION} and {COUNTS_FORMAT_VERSION}"
         )));
     }
     let mark = u32::from_le_bytes(bytes[12..16].try_into().expect("four bytes"));
@@ -232,13 +242,13 @@ fn check_header(bytes: &[u8]) -> Result<usize, IoError> {
         .ok()
         .and_then(|b| b.checked_add(HEADER_BYTES + TRAILER_BYTES))
         .ok_or_else(|| malformed(format!("body length {body} cannot be addressed")))?;
-    Ok(total)
+    Ok((total, version))
 }
 
 /// Check the header, the length and the checksum of one whole file, then
 /// parse its body.
 fn decode(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
-    let total = check_header(bytes)?;
+    let (total, version) = check_header(bytes)?;
     if bytes.len() < total {
         return Err(truncated(bytes.len(), total));
     }
@@ -257,7 +267,7 @@ fn decode(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
              {computed:#018x}"
         )));
     }
-    parse_body(&covered[HEADER_BYTES..], vtree)
+    parse_body(&covered[HEADER_BYTES..], vtree, version == COUNTS_FORMAT_VERSION)
 }
 
 /// `XXH64` with seed 0, the checksum the trailer records.
@@ -355,9 +365,14 @@ fn value_bits(v: u32) -> u32 {
 /// The whole file: header, body and checksum.
 fn encode(tdd: &Tdd) -> Vec<u8> {
     let vtree = &tdd.vtree;
+    // The counts the diagram keeps, a level's where it has no overflow slot.
+    let counts = tdd.levels.counts().filter(|_| !tdd.is_zero());
+    let column = |t: VtreeIdx| counts.and_then(|c| c.column(t)).filter(|c| (0..c.len()).all(|i| matches!(c.get(i), CountRead::Fast(_))));
+    let with_counts = vtree.internal_bottomup().any(|(t, _, _)| column(t).is_some());
+    let version = if with_counts { COUNTS_FORMAT_VERSION } else { BINARY_FORMAT_VERSION };
     let mut out = Vec::with_capacity(HEADER_BYTES + TRAILER_BYTES + 64 + tdd.pair_count() * 5);
     out.extend_from_slice(&MAGIC);
-    out.extend_from_slice(&BINARY_FORMAT_VERSION.to_le_bytes());
+    out.extend_from_slice(&version.to_le_bytes());
     out.extend_from_slice(&BYTE_ORDER_MARK.to_le_bytes());
     out.extend_from_slice(&[0; 8]);
 
@@ -373,7 +388,26 @@ fn encode(tdd: &Tdd) -> Vec<u8> {
     if tdd.is_zero() {
         push_varint(&mut out, 0);
     } else {
-        encode_levels(tdd, &order, &mut out, &mut [0; 3]);
+        let remap = encode_levels(tdd, &order, &mut out, &mut [0; 3]);
+        if with_counts {
+            // Each internal level's counts, of the nodes written, in their order.
+            for &t in &order {
+                if vtree.node(t).is_leaf() {
+                    continue;
+                }
+                let Some(c) = column(t) else {
+                    push_varint(&mut out, 0);
+                    continue;
+                };
+                push_varint(&mut out, 1);
+                for (i, &to) in remap[t.idx()].iter().enumerate() {
+                    if to != OMITTED {
+                        let CountRead::Fast(v) = c.get(i) else { unreachable!("a column with an overflow slot is not written") };
+                        push_varint128(&mut out, v);
+                    }
+                }
+            }
+        }
     }
 
     let body = (out.len() - HEADER_BYTES) as u64;
@@ -386,8 +420,9 @@ fn encode(tdd: &Tdd) -> Vec<u8> {
 /// The output and one section per internal level, children first. Unreachable
 /// nodes are dropped and the rest renumbered in level order, as the text
 /// writer does; a leaf level keeps its three implicit indices. `codes`
-/// counts the multi-pair nodes written in each node code.
-pub(super) fn encode_levels(tdd: &Tdd, order: &[VtreeIdx], out: &mut Vec<u8>, codes: &mut [u64; 3]) {
+/// counts the multi-pair nodes written in each node code. Returns each
+/// level's renumbering, [`OMITTED`] for a node not written.
+pub(super) fn encode_levels(tdd: &Tdd, order: &[VtreeIdx], out: &mut Vec<u8>, codes: &mut [u64; 3]) -> Vec<Vec<u32>> {
     let vtree = &tdd.vtree;
     let numbering = number_reachable(tdd);
     let out_local = numbering[tdd.output.vtree.idx()].local[tdd.output.local.idx()];
@@ -444,6 +479,7 @@ pub(super) fn encode_levels(tdd: &Tdd, order: &[VtreeIdx], out: &mut Vec<u8>, co
         }
         out.extend_from_slice(&stream);
     }
+    numbering.into_iter().map(|n| n.local).collect()
 }
 
 /// A node with two or more pairs, in whichever of the three node codes takes
@@ -499,7 +535,12 @@ fn write_node(bits: &mut BitWriter<'_>, pairs: &[(u32, u32)], left_bits: u32, ri
 }
 
 /// Append `v` as an unsigned `LEB128` varint: seven bits a byte, low first.
-fn push_varint(out: &mut Vec<u8>, mut v: u64) {
+fn push_varint(out: &mut Vec<u8>, v: u64) {
+    push_varint128(out, u128::from(v));
+}
+
+/// [`push_varint`] for a value up to 128 bits, a count.
+fn push_varint128(out: &mut Vec<u8>, mut v: u128) {
     while v >= 0x80 {
         out.push((v as u8) | 0x80);
         v >>= 7;
@@ -556,14 +597,21 @@ impl<'a> Body<'a> {
     /// One `LEB128` varint, refusing one longer than a `u64` holds.
     fn varint(&mut self, what: &str) -> Result<u64, IoError> {
         let start = self.at;
-        let mut v = 0u64;
-        for shift in (0..64).step_by(7) {
+        let v = self.varint_bits(what, 64)?;
+        u64::try_from(v).map_err(|_| malformed(format!("body byte {start}: {what} does not fit 64 bits")))
+    }
+
+    /// One `LEB128` varint of at most `bits` bits, 64 or 128.
+    fn varint_bits(&mut self, what: &str, bits: u32) -> Result<u128, IoError> {
+        let start = self.at;
+        let mut v = 0u128;
+        for shift in (0..bits).step_by(7) {
             let Some(&byte) = self.bytes.get(self.at) else {
                 return Err(malformed(format!("body byte {start}: {what} runs past the end of the body")));
             };
             self.at += 1;
-            let low = u64::from(byte & 0x7f);
-            if shift == 63 && low > 1 {
+            let low = u128::from(byte & 0x7f);
+            if shift + 7 > bits && low >> (bits - shift) != 0 {
                 break;
             }
             v |= low << shift;
@@ -571,7 +619,7 @@ impl<'a> Body<'a> {
                 return Ok(v);
             }
         }
-        Err(malformed(format!("body byte {start}: {what} does not fit 64 bits")))
+        Err(malformed(format!("body byte {start}: {what} does not fit {bits} bits")))
     }
 
     /// A varint that counts something, refused above `max`.
@@ -714,7 +762,7 @@ impl PairReader<'_> {
 
 /// Check the stored vtree against `vtree`, then read the levels and seat the
 /// diagram.
-fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
+fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>, with_counts: bool) -> Result<Tdd, IoError> {
     let mut body = Body { bytes, at: 0 };
     let leaves = body.varint("leaf count")?;
     let nodes = body.varint("vtree node count")?;
@@ -758,6 +806,7 @@ fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
             levels[t.idx()] = level;
         }
     }
+    let counts = if with_counts && output != 0 { Some(read_counts(&mut body, vtree, &order, &width)?) } else { None };
     if body.left() != 0 {
         return Err(malformed(format!("{} bytes follow the last record of the body", body.left())));
     }
@@ -772,9 +821,52 @@ fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
             )));
         }
     };
-    crate::diagram::TddBuilder::from_levels(Arc::clone(vtree), levels, None)
+    let mut tdd = crate::diagram::TddBuilder::from_levels(Arc::clone(vtree), levels, None)
         .finish(TddNodeId { vtree: root, local })
-        .map_err(|e| malformed(format!("the records do not form a diagram: {e}")))
+        .map_err(|e| malformed(format!("the records do not form a diagram: {e}")))?;
+    if let Some(counts) = counts {
+        tdd.levels.keep_counts(counts);
+    }
+    Ok(tdd)
+}
+
+/// The counts section of a version 2 file: per internal level in `order`,
+/// none, or one count per node of its `width`. Each count is checked to be
+/// at most the assignments of the variables under its level; the counts are
+/// otherwise kept as written.
+fn read_counts(body: &mut Body<'_>, vtree: &Vtree, order: &[VtreeIdx], width: &[usize]) -> Result<LevelCounts, IoError> {
+    let mut leaves = vec![0u32; vtree.num_nodes()];
+    let mut counts = LevelCounts::from_columns(vec![None; vtree.num_nodes()]);
+    for (k, &t) in order.iter().enumerate() {
+        let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else {
+            leaves[t.idx()] = 1;
+            continue;
+        };
+        leaves[t.idx()] = leaves[left.idx()] + leaves[right.idx()];
+        match body.varint("a level's counts marker")? {
+            0 => continue,
+            1 => {}
+            m => return Err(malformed(format!("counts marker {m} of the level of vtree node {k} in postorder is not 0 or 1"))),
+        }
+        let n = width[t.idx()];
+        if n > body.left() {
+            return Err(malformed(format!("{n} counts of the level of vtree node {k} in postorder cannot fit {} bytes", body.left())));
+        }
+        let most = 1u128.checked_shl(leaves[t.idx()]).unwrap_or(u128::MAX);
+        let mut fast = Vec::new();
+        fast.try_reserve_exact(n).map_err(|_| malformed("no memory for a level's counts"))?;
+        for _ in 0..n {
+            let c = body.varint_bits("a node's count", 128)?;
+            if c > most || c == u128::MAX {
+                return Err(malformed(format!(
+                    "a count of the level of vtree node {k} in postorder is past the {most} assignments of its variables"
+                )));
+            }
+            fast.push(c);
+        }
+        counts.set(t, Arc::new(CountVec::from_fast(fast)));
+    }
+    Ok(counts)
 }
 
 /// One internal level's section, its pair sides checked against the widths

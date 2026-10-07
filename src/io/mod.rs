@@ -61,7 +61,7 @@
 //!
 //! ```text
 //! magic        8 bytes   89 54 44 44 0D 0A 1A 0A
-//! version      u32       1
+//! version      u32       1, or 2 for a file that holds level counts
 //! byte order   u32       0x0A0B0C0D
 //! body length  u64       bytes between the header and the checksum
 //! body
@@ -98,6 +98,16 @@
 //!    `w` is 1; a leaf level has three, numbered as in the text format. A
 //!    writer uses a code only where each pair takes at least one bit, and a
 //!    reader refuses one that does not.
+//! 4. In version 2 only, the level counts the diagram keeps
+//!    ([`Engine::attach_level_counts`](crate::Engine::attach_level_counts)):
+//!    one record per internal vtree node in the same postorder, `0` for a
+//!    level written without counts, or `1` followed by one varint per node of
+//!    the level, in its order, the node's model count over the variables
+//!    under the level. A writer emits version 2 for a diagram that keeps
+//!    them, and leaves out a level with a count past `u128`. A reader checks
+//!    each count against the assignments of its level's variables and keeps
+//!    the counts with the diagram as written: the checksum guards them, but
+//!    confirming them would be the fold that computes them.
 //!
 //! Bitmaps and streams are written least significant bit first and padded
 //! with zero bits to a whole byte. Local indices are those the text format
@@ -111,8 +121,9 @@
 //! The version belongs to the file format, independently of the crate version,
 //! and each format numbers its own versions. A reader rejects an absent or
 //! unsupported version rather than guessing a layout. The current readers
-//! support version `1` of each format; later format revisions must retain
-//! readers for earlier supported versions. Adding comments does not change the
+//! support version `1` of each format, and the binary reader version `2` as
+//! well; later format revisions must retain readers for earlier supported
+//! versions. Adding comments does not change the
 //! text format's version.
 
 mod binary;
