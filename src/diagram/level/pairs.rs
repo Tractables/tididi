@@ -365,12 +365,19 @@ impl TddLevel {
     /// # Panics
     ///
     /// Panics if `idx` is not below `nodes().len()`.
+    ///
+    /// Read off the node's words without decoding it: a multi-pair node
+    /// never holds one pair, so a count of one is an inline node's, or the
+    /// sentinel of a ranged node's, whose count is in the side table.
     #[inline]
     pub fn pair_count_at(&self, idx: usize) -> usize {
-        match self.nodes[idx].kind() {
-            NodeKind::Inline(_) => 1,
-            NodeKind::Multi { len, .. } => len as usize,
-            NodeKind::MultiRanged(e) => self.ranges[e as usize].len as usize,
+        let node = &self.nodes[idx];
+        match node.held_count() {
+            1 => match node.kind() {
+                NodeKind::MultiRanged(e) => self.ranges[e as usize].len as usize,
+                _ => 1,
+            },
+            k => k as usize,
         }
     }
 
