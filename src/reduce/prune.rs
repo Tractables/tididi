@@ -17,7 +17,7 @@
 //! level has a block: a leaf or marginal level is never compacted, so
 //! nothing reads its marks.
 
-use crate::diagram::{ChildDecoder, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel, NodeIdx, NodeKind, Tdd};
+use crate::diagram::{ChildDecoder, ChildPair, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel, NodeIdx, NodeKind, Tdd};
 
 use crate::Engine;
 
@@ -893,11 +893,13 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     let left_view = tdd.levels[left.idx()].child_decoder();
     let right_view = tdd.levels[right.idx()].child_decoder();
     let level = &tdd.levels[t.idx()];
-    if let Some(d) = level.implicit()
+    let described = level.implicit();
+    if let Some(d) = described
         && !left_view.is_marginal()
         && !right_view.is_marginal()
-        && described_marks_fewer(d, LEFT, RIGHT, &marks[base..base + words(level.slot_count())])
     {
+        // A side's distinct offsets a marked node, never more marks than
+        // its pairs.
         if LEFT {
             mark_described(d, ChildSide::Left, level.slot_count(), base, left_base, marks);
         }
@@ -907,7 +909,16 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
         return;
     }
     let mut buf = Vec::new();
+    let mut cursor = described.map(|d| (d, d.cursor()));
     let (mut left_marks, mut right_marks) = (Marker::new(left_base), Marker::new(right_base));
+    let mut mark = |marks: &mut [u64], pair: ChildPair| {
+        if LEFT && let Some(s) = left_view.child(pair.left).index() {
+            left_marks.mark(marks, left_base, s);
+        }
+        if RIGHT && let Some(s) = right_view.child(pair.right).index() {
+            right_marks.mark(marks, right_base, s);
+        }
+    };
     for w in 0..words(level.slot_count()) {
         // The level's own block is disjoint from its children's, so the word
         // read here is not one the loop below writes.
@@ -915,39 +926,14 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
         while x != 0 {
             let i = (w << 6) + x.trailing_zeros() as usize;
             x &= x - 1;
-            for pair in level.pairs_read(i, &mut buf) {
-                if LEFT && let Some(s) = left_view.child(pair.left).index() {
-                    left_marks.mark(marks, left_base, s);
-                }
-                if RIGHT && let Some(s) = right_view.child(pair.right).index() {
-                    right_marks.mark(marks, right_base, s);
-                }
+            match &mut cursor {
+                Some((d, c)) => d.places_from(c.first_of(i)).for_each(|pair| mark(marks, pair)),
+                None => level.pairs_read(i, &mut buf).iter().for_each(|&pair| mark(marks, pair)),
             }
         }
     }
     left_marks.finish(marks);
     right_marks.finish(marks);
-}
-
-/// Whether [`mark_described`] marks the sides `left` and `right` of the
-/// described level `d`, whose marked nodes `own` holds, in fewer marks than
-/// its marked nodes have pairs: a side's distinct offsets for every node it
-/// starts at, every node's first slot on that side when every node is
-/// marked, else every marked node's.
-fn described_marks_fewer(d: &ImplicitLevel, left: bool, right: bool, own: &[u64]) -> bool {
-    let marked: usize = own.iter().map(|w| w.count_ones() as usize).sum();
-    let all = marked == d.nodes();
-    let cost = |side: ChildSide| {
-        let step = |g: &crate::diagram::Digit| match side {
-            ChildSide::Left => g.left,
-            ChildSide::Right => g.right,
-        };
-        let radices = |digits: &[crate::diagram::Digit]| -> usize { digits.iter().filter(|g| step(g) != 0).map(|g| g.radix).product() };
-        let (within, across) = d.digits().split_at(d.within());
-        radices(within).saturating_mul(if all { radices(across) } else { marked })
-    };
-    let marks = if left { cost(ChildSide::Left) } else { 0 }.saturating_add(if right { cost(ChildSide::Right) } else { 0 });
-    marks < marked.saturating_mul(d.pairs_per_node())
 }
 
 /// [`mark_sides`] on one side of a level held as the description of its
@@ -971,6 +957,7 @@ fn mark_described(d: &ImplicitLevel, side: ChildSide, width: usize, base: usize,
         d.each_side_first(side, |first, _| from(marks, first));
     } else {
         let mut last = None;
+        let mut cursor = d.cursor();
         for w in 0..words(width) {
             // The level's own block is disjoint from its children's, so the
             // word read here is not one the marks below write.
@@ -978,7 +965,7 @@ fn mark_described(d: &ImplicitLevel, side: ChildSide, width: usize, base: usize,
             while x != 0 {
                 let i = (w << 6) + x.trailing_zeros() as usize;
                 x &= x - 1;
-                let at = d.node_first(i);
+                let at = cursor.first_of(i);
                 let first = match side {
                     ChildSide::Left => at.0,
                     ChildSide::Right => at.1,

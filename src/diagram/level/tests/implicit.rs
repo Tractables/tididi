@@ -336,6 +336,66 @@ fn a_redescribed_arena_keeps_the_written_length() {
     assert!(cut.is_err(), "a truncation into the described pairs");
 }
 
+/// The pairs a node's [`Places`] steps through, from its first or from a
+/// place skipped to, and the first pairs a [`NodeCursor`] steps or reads
+/// off the digits, in node order or not, are the pairs read off the digits
+/// one by one: on levels of up to six place digits and six node digits,
+/// more than the odometer counts in place.
+#[test]
+fn stepped_pairs_are_the_pairs_read_off_the_digits() {
+    let mut rng = Lcg::new(0x1d1e_0007);
+    let mut long = 0;
+    for round in 0..400 {
+        let pairs = if round % 2 == 0 {
+            let digits = |rng: &mut Lcg, n: u64, radices: u64| {
+                (0..n).map(|_| (2 + rng.below(radices) as usize, step(rng))).collect::<Vec<_>>()
+            };
+            let (w, a) = (5 + rng.below(2), rng.below(7));
+            let (within, across) = (digits(&mut rng, w, 2), digits(&mut rng, a, 1));
+            affine_of(&within, &across)
+        } else {
+            let (n, k) = (1 + rng.below(40) as usize, 2 + rng.below(30) as usize);
+            affine(&mut rng, n, k)
+        };
+        let (nodes, per_node) = (pairs.len(), pairs[0].len());
+        let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
+        long += usize::from(d.within() > 4 && d.digits().len() - d.within() > 4);
+        for (i, node) in pairs.iter().enumerate() {
+            let want = || node.iter().map(|&(l, r)| pair(l, r));
+            assert!(d.places(i).eq(want()));
+            let m = rng.below(per_node as u64) as usize;
+            let mut places = d.places(i);
+            places.next();
+            assert!(places.clone().eq(want().skip(1)));
+            assert_eq!(places.nth(m), want().nth(m + 1));
+            assert!(places.eq(want().skip(m + 2)));
+        }
+        let mut cursor = d.cursor();
+        let mut i = 0;
+        for _ in 0..3 * nodes {
+            assert_eq!(cursor.first_of(i), d.node_first(i));
+            assert_eq!(d.node_first(i), pairs[i][0]);
+            i = match rng.below(4) {
+                0 => rng.below(nodes as u64) as usize,
+                1 => (i + 1 + rng.below(12) as usize).min(nodes - 1),
+                _ => (i + 1).min(nodes - 1),
+            };
+        }
+        // An implicit level's nodes read in order are the stored level's.
+        let stored = level_of(&pairs);
+        let mut level = TddLevel::new();
+        d.write_nodes(&Limits::new(), &mut level).unwrap();
+        level.pairs.describe(d.clone(), d.pairs());
+        let a = rng.below(nodes as u64) as usize;
+        let b = a + rng.below((nodes - a) as u64 + 1) as usize;
+        let read = |l: &TddLevel| -> Vec<(usize, Vec<ChildPair>)> {
+            l.internal_inputs_range(a..b).map(|(i, p)| (i, p.collect())).collect()
+        };
+        assert_eq!(read(&level), read(&stored));
+    }
+    assert!(long > 20, "the levels of more than four place digits went unchecked");
+}
+
 #[test]
 fn twins_are_read_off_the_digits() {
     // Node i holds (3i + m, m) for m < 3: every left slot named once, in its

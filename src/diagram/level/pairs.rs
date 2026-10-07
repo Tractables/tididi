@@ -102,10 +102,22 @@ impl TddLevel {
     }
 
     /// Iterate structural nodes in a valid slot range, retaining their level indices.
+    /// On an implicit level each node's first pair is stepped on from the
+    /// one before it ([`NodeCursor`](super::implicit::NodeCursor)).
     #[inline]
     pub(crate) fn internal_inputs_range(&self, range: std::ops::Range<usize>) -> impl Iterator<Item = (usize, PairsIter<'_>)> + '_ {
         let start = range.start;
-        self.nodes[range].iter().enumerate().map(move |(i, n)| (start + i, self.pairs_iter_of(n)))
+        let mut described = self.pairs.implicit().map(|d| (d, d.cursor()));
+        self.nodes[range].iter().enumerate().map(move |(i, n)| {
+            let pairs = match &mut described {
+                Some((d, cursor)) => {
+                    let node = self.multi_range(n).start / d.pairs_per_node();
+                    PairsIter::described(d.places_from(cursor.first_of(node)))
+                }
+                None => self.pairs_iter_of(n),
+            };
+            (start + i, pairs)
+        })
     }
 
     /// The pair-arena range a node of this `kind` owns, decoded from either

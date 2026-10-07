@@ -154,22 +154,41 @@ impl ImplicitLevel {
     /// The child slots of the first pair of node `node`.
     #[inline]
     pub fn node_first(&self, node: usize) -> (i64, i64) {
-        debug_assert!(node < self.nodes);
-        let mut at = self.first;
-        let mut rest = node;
-        for d in self.digits[self.within..].iter().rev() {
-            let period = d.node as usize;
-            let c = (rest / period) as i64;
-            rest %= period;
-            at = (at.0 + c * d.left, at.1 + c * d.right);
-        }
-        at
+        debug_assert!(node < self.nodes && self.counts_nodes());
+        let mut at = Odometer::new(self.first);
+        at.seat(&self.digits[self.within..], node);
+        at.at
     }
 
     /// The pairs of node `node`, in their order.
     #[inline]
     pub(crate) fn places(&self, node: usize) -> Places<'_> {
-        Places { digits: &self.digits[..self.within], at: self.node_first(node), next: 0, end: self.per_node }
+        self.places_from(self.node_first(node))
+    }
+
+    /// The pairs of the node whose first pair has the slots `first`, in
+    /// their order.
+    #[inline]
+    pub(crate) fn places_from(&self, first: (i64, i64)) -> Places<'_> {
+        Places { digits: &self.digits[..self.within], at: Odometer::new(first), next: 0, end: self.per_node }
+    }
+
+    /// A reader of the nodes' first pairs in increasing node order
+    /// ([`NodeCursor`]), at node 0.
+    pub(crate) fn cursor(&self) -> NodeCursor<'_> {
+        debug_assert!(self.counts_nodes());
+        NodeCursor { digits: &self.digits[self.within..], at: Odometer::new(self.first), node: 0 }
+    }
+
+    /// Whether the node digits count the node index in a mixed radix, each
+    /// a unit of the product of the radices before it, as the numbering of
+    /// the pairs makes them: what reading a node off them assumes.
+    fn counts_nodes(&self) -> bool {
+        self.digits[self.within..].iter().scan(1, |period, d| {
+            let counts = *period == d.node;
+            *period *= d.radix as i64;
+            Some(counts)
+        }).all(|counts| counts)
     }
 
     /// The description of the level with its two sides exchanged, as
@@ -914,13 +933,76 @@ impl crate::execution::pool::Scratch for PairArena {
     }
 }
 
+/// The digits an [`Odometer`] counts in place; a carry past them reads the
+/// place off its digits.
+const ODOMETER_COUNTERS: usize = 4;
+
+/// The slots at a place of a run of digits, fastest first, counted like an
+/// odometer: one place on, the fastest digit goes up one and carries into
+/// the next where it wraps, so a step costs an add or two, not a division
+/// a digit.
+#[derive(Clone, Debug)]
+struct Odometer {
+    /// The slots at place 0.
+    first: (i64, i64),
+    /// The slots at the place counted.
+    at: (i64, i64),
+    /// The settings of the first [`ODOMETER_COUNTERS`] digits there.
+    counts: [u32; ODOMETER_COUNTERS],
+}
+
+impl Odometer {
+    /// At place 0, the slots `first`.
+    #[inline]
+    fn new(first: (i64, i64)) -> Odometer {
+        Odometer { first, at: first, counts: [0; ODOMETER_COUNTERS] }
+    }
+
+    /// One place on, to `place`, of `digits`.
+    #[inline]
+    fn step(&mut self, digits: &[Digit], place: usize) {
+        for (j, d) in digits.iter().enumerate() {
+            if j == ODOMETER_COUNTERS {
+                self.seat(digits, place);
+                return;
+            }
+            let c = &mut self.counts[j];
+            *c += 1;
+            if *c as usize != d.radix {
+                self.at = (self.at.0 + d.left, self.at.1 + d.right);
+                return;
+            }
+            *c = 0;
+            let back = (d.radix - 1) as i64;
+            self.at = (self.at.0 - back * d.left, self.at.1 - back * d.right);
+        }
+    }
+
+    /// To `place` of `digits`, read off its digits.
+    fn seat(&mut self, digits: &[Digit], place: usize) {
+        let (mut l, mut r) = self.first;
+        let mut rest = place;
+        for (j, d) in digits.iter().enumerate() {
+            let c = rest % d.radix;
+            rest /= d.radix;
+            if j < ODOMETER_COUNTERS {
+                self.counts[j] = c as u32;
+            }
+            l += c as i64 * d.left;
+            r += c as i64 * d.right;
+        }
+        self.at = (l, r);
+    }
+}
+
 /// The pairs of one node of an implicit level, in their order, generated
-/// from its description: what [`PairsIter`](crate::diagram::PairsIter)
-/// yields on such a level.
+/// from its description by stepping its place digits ([`Odometer`]): what
+/// [`PairsIter`](crate::diagram::PairsIter) yields on such a level.
 #[derive(Clone, Debug)]
 pub(crate) struct Places<'a> {
     digits: &'a [Digit],
-    at: (i64, i64),
+    /// At place `next`, while `next < end`.
+    at: Odometer,
     next: usize,
     end: usize,
 }
@@ -933,6 +1015,40 @@ impl Places<'_> {
     }
 }
 
+/// The most nodes [`NodeCursor::first_of`] steps over: a step costs an add
+/// or two, reading a node off its digits a division a digit.
+const CURSOR_STEPS: usize = 8;
+
+/// The first pairs of an implicit level's nodes, read in increasing node
+/// order: the next node's by stepping the node digits ([`Odometer`]), a
+/// node further back or ahead off its digits.
+#[derive(Clone, Debug)]
+pub(crate) struct NodeCursor<'a> {
+    /// The node digits, fastest first.
+    digits: &'a [Digit],
+    /// At node `node`.
+    at: Odometer,
+    node: usize,
+}
+
+impl NodeCursor<'_> {
+    /// The slots of the first pair of node `i`, as
+    /// [`ImplicitLevel::node_first`] gives them: stepped on to a node at most
+    /// [`CURSOR_STEPS`] past the last, read off the digits otherwise.
+    #[inline]
+    pub(crate) fn first_of(&mut self, i: usize) -> (i64, i64) {
+        if i > self.node && i - self.node <= CURSOR_STEPS {
+            for node in self.node + 1..=i {
+                self.at.step(self.digits, node);
+            }
+        } else if i != self.node {
+            self.at.seat(self.digits, i);
+        }
+        self.node = i;
+        self.at.at
+    }
+}
+
 impl Iterator for Places<'_> {
     type Item = ChildPair;
 
@@ -941,23 +1057,23 @@ impl Iterator for Places<'_> {
         if self.next == self.end {
             return None;
         }
-        let (mut l, mut r) = self.at;
-        let mut rest = self.next;
-        for d in self.digits {
-            let c = (rest % d.radix) as i64;
-            rest /= d.radix;
-            l += c * d.left;
-            r += c * d.right;
-        }
+        let out = pair(self.at.at.0, self.at.at.1);
         self.next += 1;
-        Some(pair(l, r))
+        if self.next < self.end {
+            self.at.step(self.digits, self.next);
+        }
+        Some(out)
     }
 
-    /// Skips to the place `n` on in one step: a place's pair is its own
-    /// sum of digits, independent of the ones before it.
+    /// Skips to the place `n` on in one step, read off its digits.
     #[inline]
     fn nth(&mut self, n: usize) -> Option<ChildPair> {
-        self.next = self.next.saturating_add(n).min(self.end);
+        if n > 0 {
+            self.next = self.next.saturating_add(n).min(self.end);
+            if self.next < self.end {
+                self.at.seat(self.digits, self.next);
+            }
+        }
         self.next()
     }
 

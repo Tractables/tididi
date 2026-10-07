@@ -38,9 +38,9 @@ fn for_each_target_sibling(
     // not a child node), so it never joins twin grouping; the parent rewrite
     // leaves such a ref verbatim. `sibling` is passed raw: it is only hashed
     // and packed, never indexed.
-    for (parent_i, parent_node) in parent_level.nodes.iter().enumerate() {
+    for (parent_i, pairs) in parent_level.internal_inputs_iter() {
         let pi = parent_i as u32;
-        for pair in parent_level.pairs_iter_of(parent_node) {
+        for pair in pairs {
             let (t, sibling) = split_pair(&pair, t1_side);
             if let Some(t) = resolve_target(target, t) {
                 f(pi, t, sibling);
@@ -160,8 +160,7 @@ impl TwinEntries for ContextEntries<'_> {
         named.fill(0);
         let mut name = |t: u32| named[(t / 64) as usize] |= 1 << (t % 64);
         let (level, side, view) = (self.parent_level, self.t1_side, self.t1_view);
-        for node in level.nodes.iter() {
-            let pairs = level.pairs_iter_of(node);
+        for (_, pairs) in level.internal_inputs_iter() {
             if pairs.len() < 3 {
                 let mut last: Option<u32> = None;
                 for pair in pairs {
@@ -261,8 +260,8 @@ pub(super) struct ContentEntries<'a>(pub(super) &'a TddLevel);
 
 impl TwinEntries for ContentEntries<'_> {
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
-        for (i, node) in self.0.nodes.iter().enumerate() {
-            for pair in self.0.pairs_iter_of(node) {
+        for (i, pairs) in self.0.internal_inputs_iter() {
+            for pair in pairs {
                 f(i as u32, pack(pair.left.0, pair.right.0));
             }
         }
