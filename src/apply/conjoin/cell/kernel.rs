@@ -85,7 +85,7 @@ pub(crate) trait PairSink {
     ) -> Result<(), OperationError>;
 
     /// Start a multi-pair cell; returns the start token `end` consumes
-    /// (the emit impl snapshots `level.arena_len()`).
+    /// (the emit impl snapshots the length of its [`buf`](Self::buf)).
     fn begin(&mut self) -> usize;
 
     /// One surviving (lc, rc) pair of a multi-pair cell, pushed through the
@@ -137,7 +137,7 @@ impl PairSink for EmitSink<'_> {
 
     #[inline(always)]
     fn begin(&mut self) -> usize {
-        self.level.arena_len()
+        self.buf().len()
     }
 
     #[inline(always)]
@@ -196,18 +196,18 @@ impl PairSink for ReservedEmitSink<'_> {
 
     #[inline(always)]
     fn begin(&mut self) -> usize {
-        self.level.arena_len()
+        self.buf().len()
     }
 
     #[inline(always)]
     fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
-        if self.level.pairs.len() == self.charged {
+        if self.buf().len() == self.charged {
             let grown = doubled_pairs_capacity(self.charged);
             eng.limits().charge_output_pairs(grown - self.charged);
             self.charged = grown;
             super::super::note_scheduled_charge();
             debug_assert!(
-                self.level.pairs.len() < self.level.pairs.capacity(),
+                self.buf().len() < self.buf().capacity(),
                 "a reserved arena holds every pair its level writes"
             );
         }
@@ -225,8 +225,9 @@ impl PairSink for ReservedEmitSink<'_> {
 
     #[inline(always)]
     fn room(&mut self) -> usize {
-        let v = &self.level.pairs;
-        self.charged.min(v.capacity()) - v.len()
+        let charged = self.charged;
+        let v = self.buf();
+        charged.min(v.capacity()) - v.len()
     }
 
     #[inline(always)]

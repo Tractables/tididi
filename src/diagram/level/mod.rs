@@ -97,8 +97,8 @@ pub(crate) enum LevelState {
 
 /// `TddLevel` stays compact: the O(levels) sweeps stride over it.
 const _: () = assert!(
-    std::mem::size_of::<TddLevel>() <= 136,
-    "TddLevel grew past 136 B"
+    std::mem::size_of::<TddLevel>() <= 144,
+    "TddLevel grew past 144 B"
 );
 
 impl Default for TddLevel {

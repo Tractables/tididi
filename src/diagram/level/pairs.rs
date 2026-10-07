@@ -6,6 +6,7 @@ use crate::diagram::{ChildSide, EncodedChildRef};
 use crate::diagram::marginal_ref::ChildDecoder;
 use crate::diagram::PairsIter;
 use crate::diagram::primitives::{ChildPair, EncodedNode, NodeKind};
+use super::implicit::NodeCursor;
 use super::{ImplicitLevel, TddLevel};
 
 /// A level's pairs as the level holds them: stored in its arena, or, on an
@@ -18,6 +19,16 @@ pub enum Pairs<'a> {
     Stored(StoredPairs<'a>),
     /// The level is implicit: its pairs are those of this description.
     Implicit(&'a ImplicitLevel),
+}
+
+/// The one pair an inline node holds, as a slice of the node itself.
+#[inline(always)]
+fn inline_pair(node: &EncodedNode) -> &[ChildPair] {
+    // Safety: EncodedNode is #[repr(C)] {a: u32, b: u32}.
+    //         ChildPair is #[repr(C)] {left: EncodedChildRef(u32), right: EncodedChildRef(u32)}.
+    //         For inline nodes, a == left.0 and b == right.0 by construction.
+    //         Both types have identical {u32, u32} layout, so the cast is valid.
+    unsafe { std::slice::from_ref(&*(node as *const EncodedNode as *const ChildPair)) }
 }
 
 /// The pairs of a level that stores them: a node's pairs are a slice of the
@@ -54,11 +65,7 @@ impl<'a> StoredPairs<'a> {
         'a: 'n,
     {
         match node.kind() {
-            // Safety: EncodedNode is #[repr(C)] {a: u32, b: u32}.
-            //         ChildPair is #[repr(C)] {left: EncodedChildRef(u32), right: EncodedChildRef(u32)}.
-            //         For inline nodes, a == left.0 and b == right.0 by construction.
-            //         Both types have identical {u32, u32} layout, so the cast is valid.
-            NodeKind::Inline(_) => unsafe { std::slice::from_ref(&*(node as *const EncodedNode as *const ChildPair)) },
+            NodeKind::Inline(_) => inline_pair(node),
             NodeKind::Multi { .. } | NodeKind::MultiRanged(_) => &self.arena[self.level.multi_range(node)],
         }
     }
@@ -103,21 +110,46 @@ impl TddLevel {
 
     /// Iterate structural nodes in a valid slot range, retaining their level indices.
     /// On an implicit level each node's first pair is stepped on from the
-    /// one before it ([`NodeCursor`](super::implicit::NodeCursor)).
+    /// one before it ([`NodeCursor`]).
     #[inline]
     pub(crate) fn internal_inputs_range(&self, range: std::ops::Range<usize>) -> impl Iterator<Item = (usize, PairsIter<'_>)> + '_ {
         let start = range.start;
-        let mut described = self.pairs.implicit().map(|d| (d, d.cursor()));
+        let mut cursor = None;
         self.nodes[range].iter().enumerate().map(move |(i, n)| {
-            let pairs = match &mut described {
-                Some((d, cursor)) => {
-                    let node = self.multi_range(n).start / d.pairs_per_node();
-                    PairsIter::described(d.places_from(cursor.first_of(node)))
-                }
-                None => self.pairs_iter_of(n),
-            };
-            (start + i, pairs)
+            (start + i, self.read_node(n, |at| self.described_next(&mut cursor, at)))
         })
+    }
+
+    /// The pairs of `node`, a node of this level: its inline pair, a slice
+    /// of the stored arena, or, on an implicit level, what `described`
+    /// generates from the arena position the node's pairs start at. The
+    /// stored cases are the reads of a plain arena; an implicit level's
+    /// nodes fail the arena's bounds check ([`PairArena::slots`]).
+    ///
+    /// [`PairArena::slots`]: super::PairArena::slots
+    #[inline(always)]
+    fn read_node<'a>(&'a self, node: &EncodedNode, described: impl FnOnce(usize) -> PairsIter<'a>) -> PairsIter<'a> {
+        match node.kind() {
+            NodeKind::Inline(pair) => PairsIter::inline(pair),
+            NodeKind::Multi { .. } | NodeKind::MultiRanged(_) => {
+                let range = self.multi_range(node);
+                match self.pairs.slots(range.clone()) {
+                    Some(pairs) => PairsIter::slice(pairs),
+                    None => described(range.start),
+                }
+            }
+        }
+    }
+
+    /// The pairs of `node` as a slice: its inline pair or a slice of the
+    /// stored arena; `None` on an implicit level, whose nodes fail the
+    /// arena's bounds check.
+    #[inline(always)]
+    pub(crate) fn stored_of<'a>(&'a self, node: &'a EncodedNode) -> Option<&'a [ChildPair]> {
+        match node.kind() {
+            NodeKind::Inline(_) => Some(inline_pair(node)),
+            NodeKind::Multi { .. } | NodeKind::MultiRanged(_) => self.pairs.slots(self.multi_range(node)),
+        }
     }
 
     /// The pair-arena range a node of this `kind` owns, decoded from either
@@ -200,10 +232,7 @@ impl TddLevel {
     /// generated from the level's description.
     #[inline]
     pub fn pairs_iter_of<'a>(&'a self, node: &'a EncodedNode) -> PairsIter<'a> {
-        match self.pairs.stored() {
-            Some(arena) => PairsIter::slice(StoredPairs { level: self, arena }.of(node)),
-            None => self.described_pairs(self.multi_range(node).start),
-        }
+        self.read_node(node, |start| self.described_pairs(start))
     }
 
     /// The pairs of the node of this implicit level whose pairs the arena
@@ -213,6 +242,16 @@ impl TddLevel {
     fn described_pairs(&self, start: usize) -> PairsIter<'_> {
         let d = self.pairs.implicit().expect("an arena is stored or described");
         PairsIter::described(d.places(start / d.pairs_per_node()))
+    }
+
+    /// [`described_pairs`](Self::described_pairs) for nodes read in
+    /// increasing order, their first pairs stepped on by `cursor`, which
+    /// the first read makes.
+    #[inline(never)]
+    fn described_next<'a>(&'a self, cursor: &mut Option<NodeCursor<'a>>, start: usize) -> PairsIter<'a> {
+        let d = self.pairs.implicit().expect("an arena is stored or described");
+        let cursor = cursor.get_or_insert_with(|| d.cursor());
+        PairsIter::described(d.places_from(cursor.first_of(start / d.pairs_per_node())))
     }
 
     /// A stored multi-pair node's pairs, to change in place.

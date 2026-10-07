@@ -217,6 +217,7 @@ fn an_implicit_arena_reads_as_the_stored_one() {
 }
 
 #[test]
+#[cfg(debug_assertions)]
 #[should_panic(expected = "an implicit level's pairs are not stored")]
 fn an_implicit_arena_is_not_written_in_place() {
     let pairs: Pairs = (0..8).map(|i| (0..8).map(|m| (8 * i + m, m)).collect()).collect();
