@@ -11,6 +11,7 @@ use super::OperationError;
 use super::setup::{ApplyRun, LevelShape};
 use super::products::Products;
 use crate::value::CountRead;
+use crate::vtree::VtreeIdx;
 
 /// Compute which leaf levels are "identity" (constant-true) for a diagram operand.
 ///
@@ -41,8 +42,6 @@ pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd) -
     buf[vtree.num_leaves() as usize..num_nodes].fill(false);
     // Scan parent pairs: any reference to Pos (0) or Neg (1) means not identity.
     let mut has_any_marginal = false;
-    // An implicit level's pairs are generated here a node at a time.
-    let mut pairs_buf = Vec::new();
     for (t, left, right) in vtree.internal_bottomup() {
         if tdd.levels[t.idx()].is_marginal() { has_any_marginal = true; }
         let left_leaf = vtree.node(left).is_leaf();
@@ -53,9 +52,8 @@ pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd) -
         // and stop the node/pair scan the moment both have fallen. Every
         // suppressed iteration could only have re-assigned `false` to a flag
         // already false, so the resulting `buf` is value-identical.
-        let mut want_left = left_leaf && buf[left.idx()];
-        let mut want_right = right_leaf && buf[right.idx()];
-        if !want_left && !want_right { continue; }
+        let mut want = [left_leaf && buf[left.idx()], right_leaf && buf[right.idx()]];
+        if !want[0] && !want[1] { continue; }
         let level = &tdd.levels[t.idx()];
         // Marginal levels have no structural pairs to scan — they're handled by
         // the `has_any_marginal` block below using per-node counts (integer) or
@@ -65,26 +63,14 @@ pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd) -
         // empty `pairs`. Skip them explicitly. (Regular MC has no marginal
         // levels, so this guard is a no-op there.)
         if level.is_marginal() { continue; }
-        // A stored level's nodes are read as slices of its arena, an
-        // implicit level's generated into the buffer.
-        let stored = level.stored();
-        'nodes: for (i, node) in level.nodes.iter().enumerate() {
-            let pairs = match stored {
-                Some(stored) => stored.of(node),
-                None => level.pairs_read(i, &mut pairs_buf),
-            };
-            for pair in pairs {
-                if want_left && pair.left != ONE_LEAF_IDX.into() {
-                    buf[left.idx()] = false;
-                    want_left = false;
-                }
-                if want_right && pair.right != ONE_LEAF_IDX.into() {
-                    buf[right.idx()] = false;
-                    want_right = false;
-                }
-                // Bitwise `|`: both operands are plain locals, so no branch.
-                if !(want_left | want_right) { break 'nodes; }
-            }
+        // A stored level's nodes are read as slices of its arena; an
+        // implicit level's are generated, out of line.
+        let Some(stored) = level.stored() else {
+            refute_generated(level, &mut want, buf, [left, right]);
+            continue;
+        };
+        for node in level.nodes.iter() {
+            if refute(stored.of(node), &mut want, buf, [left, right]) { break; }
         }
     }
     // Marginal-level case: for any marginal level whose value isn't
@@ -146,6 +132,37 @@ pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd) -
         }
     }
     Ok(())
+}
+
+/// Clear the leaf-identity flag of the left or the right child that a pair
+/// of `pairs` refutes, while `want` says the flag is still true. True once
+/// neither flag is wanted.
+#[inline(always)]
+fn refute(pairs: &[ChildPair], want: &mut [bool; 2], buf: &mut [bool], children: [VtreeIdx; 2]) -> bool {
+    for pair in pairs {
+        if want[0] && pair.left != ONE_LEAF_IDX.into() {
+            buf[children[0].idx()] = false;
+            want[0] = false;
+        }
+        if want[1] && pair.right != ONE_LEAF_IDX.into() {
+            buf[children[1].idx()] = false;
+            want[1] = false;
+        }
+        // Bitwise `|`: both operands are plain locals, so no branch.
+        if !(want[0] | want[1]) { return true; }
+    }
+    false
+}
+
+/// [`refute`] over the nodes of an implicit level, each node's pairs
+/// generated into a buffer.
+#[cold]
+#[inline(never)]
+fn refute_generated(level: &TddLevel, want: &mut [bool; 2], buf: &mut [bool], children: [VtreeIdx; 2]) {
+    let mut pairs = Vec::new();
+    for i in 0..level.nodes.len() {
+        if refute(level.pairs_read(i, &mut pairs), want, buf, children) { return; }
+    }
 }
 
 /// True iff the marginal level represents the constant-true function over its
