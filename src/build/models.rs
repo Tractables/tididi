@@ -27,7 +27,7 @@ pub(crate) mod layout;
 pub use columns::RowSelection;
 use layout::Layout;
 use rows::{words_per_row, distinct_rows};
-use split::{Decomposition, Plan};
+use split::{Decomposition, Direct, Plan};
 
 impl Tdd {
     /// The canonical diagram whose models are exactly `rows`, read as
@@ -112,6 +112,38 @@ impl Engine {
         vars: &[VarId],
         rows: &[u64],
     ) -> Result<Tdd, OperationError> {
+        self.models_built(vtree, vars, rows, Direct::Off)
+    }
+
+    /// [`from_models`](Self::from_models), built two other ways; the result
+    /// is the same diagram, node for node. Where neither child of a node of
+    /// one atom is a leaf, the split writes the node's pairs as the level
+    /// stores them and the level takes the buffer, instead of writing child
+    /// atoms that the store reads back and turns into pairs. And a low part
+    /// too wide to address but of few distinct values, as a wide block of
+    /// few combinations under a near-unique one gives, is split through the
+    /// ranks of its values, found by a hash per value, instead of by a sort.
+    ///
+    /// # Errors
+    ///
+    /// As [`Tdd::from_models`].
+    pub fn from_models_direct(
+        &self,
+        vtree: &Arc<Vtree>,
+        vars: &[VarId],
+        rows: &[u64],
+    ) -> Result<Tdd, OperationError> {
+        self.models_built(vtree, vars, rows, Direct::On)
+    }
+
+    /// The build behind both entry points.
+    fn models_built(
+        &self,
+        vtree: &Arc<Vtree>,
+        vars: &[VarId],
+        rows: &[u64],
+        direct: Direct,
+    ) -> Result<Tdd, OperationError> {
         let lim = self.limits();
         let _op = lim.enter()?;
         let w = words_per_row(vars.len());
@@ -133,12 +165,13 @@ impl Engine {
         // The split sorts through the same buffers the rows did.
         let mut radix = crate::sort::Radix::default();
         let sorted = distinct_rows(lim, &mut radix, vars.len(), &layout, rows, w)?;
-        build_sorted(self, vtree, &layout, sorted, w, radix)
+        build_sorted(self, vtree, &layout, sorted, w, radix, direct)
     }
 }
 
 /// The diagram of `sorted`, distinct rows in `layout`'s order, `w` words
-/// each, built with the radix sort's buffers `radix`.
+/// each, built with the radix sort's buffers `radix`, the split writing
+/// pairs as `direct` says.
 fn build_sorted(
     eng: &Engine,
     vtree: &Arc<Vtree>,
@@ -146,8 +179,9 @@ fn build_sorted(
     sorted: std::borrow::Cow<'_, [u64]>,
     w: usize,
     radix: crate::sort::Radix,
+    direct: Direct,
 ) -> Result<Tdd, OperationError> {
-    let mut plans = split::plan(eng.limits(), vtree, layout, sorted, w, radix)?;
+    let mut plans = split::plan(eng.limits(), vtree, layout, sorted, w, radix, direct)?;
     let mut assembly = Assembly::new(eng, vtree)?;
     let output = fill(eng, &mut assembly, vtree, layout, &mut plans)?;
     // The levels are canonical as built: seat them with nothing to reduce.
@@ -314,6 +348,25 @@ fn store_level(
     let ascending = |nodes: &[NodeIdx]| nodes.windows(2).all(|n| n[0] < n[1]);
     let (atoms, triples) = match split {
         Decomposition::Triples { atoms, triples } => (atoms, triples),
+        Decomposition::Pairs { pairs } => {
+            // Neither child is a leaf, so each stored its atoms in atom
+            // order and the pairs name their nodes already.
+            debug_assert!(r.iter().enumerate().all(|(i, node)| node.idx() == i));
+            debug_assert!(l.iter().enumerate().all(|(i, node)| node.idx() == i));
+            lim.gate().poll(pairs.len() as u64)?;
+            let local = match pairs.len() {
+                1 => {
+                    let local = assembly.push(eng, t, &pairs);
+                    lim.discard(pairs);
+                    local?
+                }
+                _ => assembly.push_owned(eng, t, pairs)?,
+            };
+            let mut locals = Vec::new();
+            lim.reserve_exact(&mut locals, 1)?;
+            locals.push(local);
+            return Ok(Finished { locals });
+        }
         Decomposition::ByAtom { ends, pairs } => {
             // The atoms' pairs run in child-atom order.
             let ordered = ascending(l) && ascending(r);

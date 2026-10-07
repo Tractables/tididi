@@ -18,7 +18,7 @@
 
 use std::borrow::Cow;
 
-use crate::diagram::{NodeIdx, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
+use crate::diagram::{ChildPair, NodeIdx, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
 use crate::limits::{Charged, Limits, OperationError};
 use crate::vtree::{Vtree, VtreeIdx};
 
@@ -98,6 +98,29 @@ pub(super) enum Decomposition {
         /// Every pair, its high atom in the upper half.
         pairs: Vec<u64>,
     },
+    /// One atom, whose pairs are its node's as they will be stored: a node
+    /// of the left child above one of the right child, ascending. Written
+    /// only where neither child is a leaf, since an internal child's level
+    /// stores its atoms in atom order, so that an atom's number is its
+    /// node's index (see [`Direct`]).
+    Pairs {
+        /// The node's pairs.
+        pairs: Vec<ChildPair>,
+    },
+}
+
+/// Whether the split writes the pairs of a node of one atom as its node's
+/// pairs ([`Decomposition::Pairs`]) where it can, rather than as child atoms
+/// that the store then looks up, and splits a low part too wide to address
+/// but of few values by their ranks ([`split_sparse`]) rather than by a sort.
+/// Either way the diagram is the same, node for node.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Direct {
+    /// Child atoms, as `Grouped`, and a sort for every wide low part.
+    Off,
+    /// The node's pairs wherever neither child is a leaf, and the ranks of a
+    /// wide low part of few values.
+    On,
 }
 
 impl Decomposition {
@@ -105,7 +128,7 @@ impl Decomposition {
     pub(super) fn atoms(&self) -> usize {
         match self {
             Decomposition::Triples { atoms, .. } => *atoms,
-            Decomposition::Grouped { .. } => 1,
+            Decomposition::Grouped { .. } | Decomposition::Pairs { .. } => 1,
             Decomposition::ByAtom { ends, .. } => ends.len(),
         }
     }
@@ -173,6 +196,12 @@ struct Scratch {
     rank: Vec<u32>,
     /// The radix sort's buffers.
     radix: Radix,
+    /// Whether the split at hand writes a node of one atom as its pairs
+    /// ([`Decomposition::Pairs`]): neither child is a leaf.
+    direct: bool,
+    /// Whether a wide low part of few values splits by rank
+    /// ([`split_sparse`]).
+    sparse: bool,
 }
 
 impl Scratch {
@@ -180,7 +209,7 @@ impl Scratch {
     fn discard(self, lim: &Limits) {
         let Scratch { low, high, order, sort_keys, wide_keys, low_of, high_of, low_starts, high_starts,
             cursor, high_keys, low_keys, runs, low_first, high_first, wide_triples, high_hash, low_hash,
-            slots, exact, low_count, low_tally, rank, radix } = self;
+            slots, exact, low_count, low_tally, rank, radix, direct: _, sparse: _ } = self;
         for buf in [low, high, sort_keys, high_keys, low_keys, high_hash, low_hash, slots] {
             lim.discard(buf);
         }
@@ -221,6 +250,7 @@ pub(super) fn plan(
     sorted: Cow<'_, [u64]>,
     w: usize,
     radix: Radix,
+    direct: Direct,
 ) -> Result<Vec<Option<Plan>>, OperationError> {
     let mut plans: Vec<Option<Plan>> = Vec::new();
     lim.reserve_exact(&mut plans, vtree.num_nodes())?;
@@ -232,7 +262,7 @@ pub(super) fn plan(
     let whole = Values { words: w, data: sorted, atom, atoms: 1 };
     let mut pending = Vec::new();
     lim.try_push(&mut pending, (split_node(vtree, layout, vtree.root()), whole))?;
-    let mut scratch = Scratch { radix, ..Scratch::default() };
+    let mut scratch = Scratch { radix, sparse: direct == Direct::On, ..Scratch::default() };
     let mut planned = 0u64;
     while let Some((t, mut values)) = pending.pop() {
         lim.check_stop()?;
@@ -243,6 +273,8 @@ pub(super) fn plan(
         }
         let (high, low) = vtree.children(t);
         let widths = (layout.count[low.idx()] as usize, layout.count[high.idx()] as usize);
+        // A leaf's nodes are its literals, not its atoms' numbers.
+        scratch.direct = direct == Direct::On && !vtree.node(high).is_leaf() && !vtree.node(low).is_leaf();
         let (split, low_values, high_values) = split(lim, &mut scratch, &mut values, widths)?;
         // Each atom is a node of the result, so the output cap can refuse
         // before the build begins.
@@ -311,6 +343,9 @@ fn split(
     // addresses a table, and with one when a single atom holds them all.
     if !distinct {
         if let Some(out) = split_hashed(lim, s, parent, widths.0)? {
+            return Ok(out);
+        }
+        if let Some(out) = split_sparse(lim, s, parent, widths.0)? {
             return Ok(out);
         }
         if parent.atoms == 1
@@ -1108,14 +1143,20 @@ fn split_hashed(
     // a collision sends the low values to be confirmed against their sets.
     let (mut low_atom, mut low_atoms) = number_hashed(lim, &mut s.slots, &s.high_keys, &mut s.low_first, |_, _| true)?;
     let mut merged = low_atoms as usize != lows;
-    let mut split = hashed_split(lim, s, parent, low_width, &high_atom, &low_atom, merged)?;
-    if merged && !covers_exactly(lim, &split, n, (&high_atom, high_atoms), (&low_atom, low_atoms))? {
+    let (mut split, covered) =
+        hashed_split(lim, s, parent, low_width, (&high_atom, high_atoms), (&low_atom, low_atoms), merged)?;
+    let covered = match covered {
+        Some(covered) => covered,
+        None => !merged || covers_exactly(lim, &split, n, (&high_atom, high_atoms), (&low_atom, low_atoms))?,
+    };
+    if !covered {
         discard_split(lim, split);
         let by_hash = low_atom;
         (low_atom, low_atoms) = confirm_lows(lim, s, parent, low_width, &by_hash, low_atoms)?;
         lim.discard(by_hash);
         merged = low_atoms as usize != lows;
-        split = hashed_split(lim, s, parent, low_width, &high_atom, &low_atom, merged)?;
+        let low = (&low_atom[..], low_atoms);
+        (split, _) = hashed_split(lim, s, parent, low_width, (&high_atom, high_atoms), low, merged)?;
     }
     gate.flush()?;
 
@@ -1127,6 +1168,169 @@ fn split_hashed(
     Ok(Some((split, low, high)))
 }
 
+/// Split one-word values whose low part is too wide to address but takes
+/// few distinct values, as a wide block of few combinations does: through
+/// `split_hashed`, on the values with each low part replaced by its rank
+/// among the distinct low parts. A rank is its low part's alone and keeps
+/// the values ascending, so the split is the values' own, and the low
+/// child's values are the low parts the ranks stand for. The distinct low
+/// parts are found through a table that grows as they appear
+/// ([`Growing`]), and are ranked by a sort of their own. Only where
+/// `s.sparse` says; `None`, the values untouched, once the low parts are
+/// more than one in `SPARSE_LOWS` of the values, where hashing every value
+/// twice more costs what the sort it saves does, or where an even sample of
+/// the values repeats low parts too rarely for so few ([`sample_repeats`]),
+/// which tells most low parts that are many without the scan.
+fn split_sparse(
+    lim: &Limits,
+    s: &mut Scratch,
+    parent: &mut Values,
+    low_width: usize,
+) -> Result<Option<(Decomposition, Values<'static>, Values<'static>)>, OperationError> {
+    let n = parent.len();
+    let most = n / SPARSE_LOWS;
+    if !s.sparse || parent.words != 1 || most == 0 || low_width >= 64 {
+        return Ok(None);
+    }
+    let mask = (1u64 << low_width) - 1;
+    if !sample_repeats(lim, &mut s.slots, &parent.data, mask, most.clamp(2, SPARSE_SAMPLE), most)? {
+        return Ok(None);
+    }
+    // Each distinct low part, in order of appearance, and the table that
+    // finds it: an entry holds the low part above its number plus one.
+    let mut lows: Vec<u64> = Vec::new();
+    let mut table = Growing::new(lim, &mut s.exact, most)?;
+    let mut gate = lim.gate();
+    gate.poll(n as u64)?;
+    for (e, &value) in parent.data.iter().enumerate() {
+        let low = value & mask;
+        let mut at = (finish(low) >> (64 - table.bits)) as usize;
+        loop {
+            let entry = s.exact[at];
+            if entry == 0 {
+                if lows.len() == most {
+                    lim.discard(lows);
+                    return Ok(None);
+                }
+                s.exact[at] = u128::from(low) << 32 | (lows.len() as u128 + 1);
+                lim.try_push(&mut lows, low)?;
+                table.added(lim, &mut s.exact, (e + 1, n), |entry| (entry >> 32) as u64)?;
+                break;
+            }
+            if (entry >> 32) as u64 == low {
+                break;
+            }
+            at = (at + 1) & (s.exact.len() - 1);
+        }
+    }
+    // The low parts in ascending order, and each entry's number replaced by
+    // its low part's rank, plus one as the number was.
+    let count = lows.len();
+    let mut order = Vec::new();
+    lim.reserve_exact(&mut order, count)?;
+    order.extend(0..count as u32);
+    order.sort_unstable_by_key(|&id| lows[id as usize]);
+    let mut rank = Vec::new();
+    lim.try_resize(&mut rank, count, 0u32)?;
+    for (r, &id) in order.iter().enumerate() {
+        rank[id as usize] = r as u32;
+    }
+    for entry in s.exact.iter_mut().filter(|entry| **entry != 0) {
+        *entry = *entry >> 32 << 32 | u128::from(rank[(*entry as u32 - 1) as usize] + 1);
+    }
+    let mut ranked = Vec::new();
+    lim.reserve_exact(&mut ranked, count)?;
+    ranked.extend(order.iter().map(|&id| lows[id as usize]));
+    lim.discard(order);
+    lim.discard(rank);
+    lim.discard(lows);
+    let bits = index_bits(count).max(1) as usize;
+    let found = &s.exact;
+    let rewrite = |value: u64| {
+        let low = value & mask;
+        let mut at = (finish(low) >> (64 - found.len().trailing_zeros())) as usize;
+        loop {
+            let entry = found[at];
+            if entry != 0 && (entry >> 32) as u64 == low {
+                return (value >> low_width) << bits | u64::from(entry as u32 - 1);
+            }
+            at = (at + 1) & (found.len() - 1);
+        }
+    };
+    gate.poll(n as u64)?;
+    match &mut parent.data {
+        Cow::Owned(data) => data.iter_mut().for_each(|value| *value = rewrite(*value)),
+        Cow::Borrowed(data) => {
+            let mut owned = Vec::new();
+            lim.reserve_exact(&mut owned, n)?;
+            owned.extend(data.iter().map(|&value| rewrite(value)));
+            parent.data = Cow::Owned(owned);
+        }
+    }
+    gate.flush()?;
+    let (split, mut low, high) = split_hashed(lim, s, parent, bits)?.expect("ranks are narrow enough to address");
+    debug_assert!(low.data.iter().enumerate().all(|(r, &value)| value == r as u64), "every rank is a low value");
+    if let Cow::Owned(ranks) = std::mem::replace(&mut low.data, Cow::Owned(ranked)) {
+        lim.discard(ranks);
+    }
+    Ok(Some((split, low, high)))
+}
+
+/// Values per distinct low part, at least, for `split_sparse` to take a
+/// low part too wide to address.
+const SPARSE_LOWS: usize = 16;
+
+/// Values of an even sample `split_sparse` reads first, at most.
+const SPARSE_SAMPLE: usize = 512;
+
+/// Whether `count` of `data`'s values, at even steps, repeat a low part, the
+/// value's bits under `mask`, as often as `most` distinct low parts would
+/// make them: at least `count^2 / (4 most)` times, about half as often as
+/// `count` draws from `most` values repeat one, read through the
+/// open-addressed `table`. Low parts that are few repeat across the values,
+/// and a sample that repeats them more rarely tells that they are many at
+/// the price of a sample rather than of a scan. Skewed low parts repeat
+/// more often, and a sample that overrates them only costs the scan, which
+/// then declines.
+fn sample_repeats(
+    lim: &Limits,
+    table: &mut Vec<u64>,
+    data: &[u64],
+    mask: u64,
+    count: usize,
+    most: usize,
+) -> Result<bool, OperationError> {
+    let n = data.len() as u64;
+    let enough = (count * count).div_ceil(4 * most);
+    let mut repeats = 0;
+    let bits = index_bits(2 * count).max(4);
+    table.clear();
+    lim.try_resize(table, 1 << bits, 0u64)?;
+    let wrap = table.len() - 1;
+    for k in 0..count as u64 {
+        // A low part is below 2^63: plus one, never the empty entry.
+        let low = data[(k * n / count as u64) as usize] & mask;
+        let mut at = (finish(low) >> (64 - bits)) as usize;
+        loop {
+            match table[at] {
+                0 => {
+                    table[at] = low + 1;
+                    break;
+                }
+                held if held == low + 1 => {
+                    repeats += 1;
+                    if repeats >= enough {
+                        return Ok(true);
+                    }
+                    break;
+                }
+                _ => at = (at + 1) & wrap,
+            }
+        }
+    }
+    Ok(false)
+}
+
 /// The node's pairs in `split_hashed` once the low values are numbered by
 /// `low_atom` (by rank), `merged` when two of them share a number: the
 /// first run of each high atom realizes all the triples there are. With one
@@ -1134,16 +1338,22 @@ fn split_hashed(
 /// only where low values merge. Otherwise a counting sort by parent atom
 /// groups them, and each group is sorted and deduplicated. Leaves each low
 /// slot's atom in `s.high_of`.
+///
+/// Where the pairs are written as the node's ([`Decomposition::Pairs`])
+/// and low values merged, the pass also counts the values the pairs'
+/// products hold, as `covers_exactly` does, while each group is in the
+/// cache, and returns whether they cover the parent's values exactly.
+/// `None` otherwise: the caller checks.
 #[allow(clippy::too_many_arguments)]
 fn hashed_split(
     lim: &Limits,
     s: &mut Scratch,
     parent: &Values,
     low_width: usize,
-    high_atom: &[u32],
-    low_atom: &[u32],
+    (high_atom, high_atoms): (&[u32], u32),
+    (low_atom, low_atoms): (&[u32], u32),
     merged: bool,
-) -> Result<Decomposition, OperationError> {
+) -> Result<(Decomposition, Option<bool>), OperationError> {
     let n = parent.len();
     let mask = (1u64 << low_width) - 1;
     let data = &parent.data;
@@ -1154,6 +1364,11 @@ fn hashed_split(
     let held = s.high_first.iter().map(|&k| run(&s.high_starts, k, n).len()).sum::<usize>();
     let mut gate = lim.gate();
     gate.poll(held as u64)?;
+    if parent.atoms == 1 && s.direct {
+        let (split, covered) = direct_pairs(lim, s, parent, low_width, (high_atom, high_atoms), (low_atom, low_atoms), merged, held)?;
+        gate.flush()?;
+        return Ok((split, covered));
+    }
     let split = if parent.atoms == 1 {
         // Each group of the one parent atom lists its low parts in ascending
         // order, and so their atoms unless low values merge. A group is
@@ -1185,7 +1400,73 @@ fn hashed_split(
         Decomposition::ByAtom { ends, pairs }
     };
     gate.flush()?;
-    Ok(split)
+    Ok((split, None))
+}
+
+/// The pairs of `hashed_split` under one parent atom written as its node's,
+/// `held` of them before the merged low values' repeats go: high atom `h`
+/// is the left child's node `h`, and a low atom the right child's node of
+/// its number. Each high atom's group is closed as it is written. Where low
+/// values merged, the values the pairs' products hold are counted group by
+/// group, and whether they are the parent's `n` is returned beside the
+/// pairs.
+#[allow(clippy::too_many_arguments)]
+fn direct_pairs(
+    lim: &Limits,
+    s: &mut Scratch,
+    parent: &Values,
+    low_width: usize,
+    (high_atom, high_atoms): (&[u32], u32),
+    (low_atom, low_atoms): (&[u32], u32),
+    merged: bool,
+    held: usize,
+) -> Result<(Decomposition, Option<bool>), OperationError> {
+    let n = parent.len();
+    let mask = (1u64 << low_width) - 1;
+    let (data, atom_of) = (&parent.data, &s.high_of);
+    let (high_size, low_size) = match merged {
+        true => (atom_sizes(lim, high_atom, high_atoms)?, atom_sizes(lim, low_atom, low_atoms)?),
+        false => (Vec::new(), Vec::new()),
+    };
+    let mut pairs: Vec<ChildPair> = Vec::new();
+    lim.reserve_exact(&mut pairs, held)?;
+    let mut models = 0u128;
+    for (high, &k) in s.high_first.iter().enumerate() {
+        let start = pairs.len();
+        let left = NodeIdx(high as u32);
+        pairs.extend(data[run(&s.high_starts, k, n)].iter().map(|&value| {
+            ChildPair::new(left, NodeIdx(atom_of[(value & mask) as usize]))
+        }));
+        if merged {
+            let group = &mut pairs[start..];
+            if !group.windows(2).all(|pair| pair[0].right.0 < pair[1].right.0) {
+                group.sort_unstable_by_key(|pair| pair.right.0);
+                let mut kept = start + 1;
+                for at in start + 1..pairs.len() {
+                    if pairs[at].right.0 != pairs[kept - 1].right.0 {
+                        pairs[kept] = pairs[at];
+                        kept += 1;
+                    }
+                }
+                pairs.truncate(kept);
+            }
+            let width: u64 = pairs[start..].iter().map(|pair| low_size[pair.right.0 as usize]).sum();
+            models += u128::from(high_size[high]) * u128::from(width);
+        }
+    }
+    lim.discard(high_size);
+    lim.discard(low_size);
+    Ok((Decomposition::Pairs { pairs }, merged.then_some(models == n as u128)))
+}
+
+/// How many values each of `atoms` atoms holds, `atom` naming each value's.
+fn atom_sizes(lim: &Limits, atom: &[u32], atoms: u32) -> Result<Vec<u64>, OperationError> {
+    let mut size = Vec::new();
+    lim.try_resize(&mut size, atoms as usize, 0u64)?;
+    for &a in atom {
+        size[a as usize] += 1;
+    }
+    Ok(size)
 }
 
 /// Whether the pairs of `split`, built from child atoms that may merge
@@ -1207,15 +1488,7 @@ fn covers_exactly(
     high: (&[u32], u32),
     low: (&[u32], u32),
 ) -> Result<bool, OperationError> {
-    let sizes = |(atom, atoms): (&[u32], u32)| -> Result<Vec<u64>, OperationError> {
-        let mut size = Vec::new();
-        lim.try_resize(&mut size, atoms as usize, 0u64)?;
-        for &a in atom {
-            size[a as usize] += 1;
-        }
-        Ok(size)
-    };
-    let (high_size, low_size) = (sizes(high)?, sizes(low)?);
+    let (high_size, low_size) = (atom_sizes(lim, high.0, high.1)?, atom_sizes(lim, low.0, low.1)?);
     let mut gate = lim.gate();
     let mut models = 0u128;
     match split {
@@ -1240,6 +1513,12 @@ fn covers_exactly(
                 models += u128::from(high_size[h as usize]) * u128::from(low_size[l as usize]);
             }
         }
+        Decomposition::Pairs { pairs } => {
+            gate.poll(pairs.len() as u64)?;
+            for pair in pairs {
+                models += u128::from(high_size[pair.left.0 as usize]) * u128::from(low_size[pair.right.0 as usize]);
+            }
+        }
     }
     gate.flush()?;
     lim.discard(high_size);
@@ -1259,6 +1538,7 @@ fn discard_split(lim: &Limits, split: Decomposition) {
             lim.discard(pairs);
         }
         Decomposition::Triples { triples, .. } => lim.discard(triples),
+        Decomposition::Pairs { pairs } => lim.discard(pairs),
     }
 }
 
@@ -1494,6 +1774,93 @@ fn number_hashed(
     }
     gate.flush()?;
     Ok((ids, firsts.len() as u32))
+}
+
+/// The size of the open-addressed table of [`split_sparse`] while it
+/// fills. It starts at `GROWING_BITS` bits at most and, whenever an entry
+/// would leave it more than half full, grows to what the entries so far
+/// project over every value, at least doubling, up to the size that holds
+/// the most entries the caller takes at most half full. Where the low parts
+/// are few, the table stays in the cache, and memory for a table sized to
+/// the most it could hold is never touched. What the table finds is the
+/// same at any size.
+struct Growing {
+    /// The table's size, as bits of a hash.
+    bits: u32,
+    /// The size that holds the most entries at most half full.
+    full: u32,
+    /// The entries the table holds.
+    used: usize,
+}
+
+/// Bits a table of [`Growing`] starts at, at most: small enough to stay in
+/// the cache, large enough that a table of many entries grows in few steps.
+const GROWING_BITS: u32 = 12;
+
+impl Growing {
+    /// Empty `table` for at most `most` entries, at its first size.
+    fn new<T: Copy + Default>(lim: &Limits, table: &mut Vec<T>, most: usize) -> Result<Self, OperationError> {
+        let full = index_bits(2 * most).max(4);
+        let bits = full.min(GROWING_BITS);
+        table.clear();
+        lim.try_resize(table, 1 << bits, T::default())?;
+        Ok(Growing { bits, full, used: 0 })
+    }
+
+    /// Count an entry just placed in `table`, `seen.0` of `seen.1` values
+    /// read, and grow the table if it is now more than half full, moving
+    /// each entry to where `hash` of it puts it.
+    #[inline(always)]
+    fn added<T: Copy + Default + Eq>(
+        &mut self,
+        lim: &Limits,
+        table: &mut Vec<T>,
+        seen: (usize, usize),
+        hash: impl Fn(T) -> u64,
+    ) -> Result<(), OperationError> {
+        self.used += 1;
+        if 2 * self.used <= 1 << self.bits || self.bits >= self.full {
+            return Ok(());
+        }
+        let projected = (self.used as u128 * seen.1 as u128 / seen.0.max(1) as u128) as usize;
+        let bits = index_bits(2 * projected).clamp(self.bits + 1, self.full);
+        regrow(lim, table, bits, |entry| (finish(hash(entry)) >> (64 - bits)) as usize)?;
+        self.bits = bits;
+        Ok(())
+    }
+}
+
+/// Resize the open-addressed `table`, at most half full and its empty
+/// entries the default, to `bits` bits, placing each entry where `home`
+/// says and probing linearly. The buffer is kept, so a table that borrowed
+/// a large one grows into it.
+#[cold]
+#[inline(never)]
+fn regrow<T: Copy + Default + Eq>(
+    lim: &Limits,
+    table: &mut Vec<T>,
+    bits: u32,
+    home: impl Fn(T) -> usize,
+) -> Result<(), OperationError> {
+    let empty = T::default();
+    let mut held = Vec::new();
+    lim.reserve_exact(&mut held, table.iter().filter(|&&entry| entry != empty).count())?;
+    held.extend(table.iter().copied().filter(|&entry| entry != empty));
+    table.clear();
+    if let Err(refused) = lim.try_resize(table, 1 << bits, empty) {
+        lim.discard(held);
+        return Err(refused);
+    }
+    let mask = table.len() - 1;
+    for &entry in &held {
+        let mut at = home(entry);
+        while table[at] != empty {
+            at = (at + 1) & mask;
+        }
+        table[at] = entry;
+    }
+    lim.discard(held);
+    Ok(())
 }
 
 /// [`number_hashed`] for the high runs of `split_hashed` under one parent

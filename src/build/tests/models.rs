@@ -506,3 +506,158 @@ fn layout_cache_reuses_storage_and_does_not_retain_vtree() {
     // A context parks an engine, so its layout must not keep the vtree alive.
     assert!(weak.upgrade().is_none());
 }
+
+/// Two builds left the same levels, node for node: the same nodes in the
+/// same order, each with the same pairs, and the same output.
+fn assert_same_levels(a: &Tdd, b: &Tdd, what: &str) {
+    assert_eq!(a.output(), b.output(), "{what}: output");
+    assert_eq!(a.levels().len(), b.levels().len(), "{what}: level count");
+    for (t, (x, y)) in a.levels().iter().zip(b.levels()).enumerate() {
+        assert_eq!(x.nodes().len(), y.nodes().len(), "{what}: level {t}'s nodes");
+        for i in 0..x.nodes().len() {
+            assert_eq!(x.pairs_of_idx(i), y.pairs_of_idx(i), "{what}: level {t}, node {i}");
+        }
+    }
+}
+
+/// A table of `width` columns in one of four forms: random rows; a low part
+/// a function of the high part, so that low values merge; a product of two
+/// small sets with a few rows added, so that merged low values may or may
+/// not cover the rows; or a few high values over many low ones.
+fn merging_table(rng: &mut Lcg, width: u32, form: usize) -> Vec<Vec<bool>> {
+    let high = 1 + rng.below(u64::from(width - 1)) as u32;
+    let low = width - high;
+    let row = |h: u64, l: u64| {
+        let mut bits = code_bits(h as u32, high);
+        bits.extend(code_bits(l as u32, low));
+        bits
+    };
+    let n = 2 + rng.below(600);
+    match form {
+        0 => (0..n).map(|_| (0..width).map(|_| rng.coin()).collect()).collect(),
+        1 => {
+            let classes = 1 + rng.below(1 << low.min(6));
+            let mult = 1 + 2 * rng.below(64);
+            (0..n)
+                .map(|_| {
+                    let h = rng.below(1 << high);
+                    row(h, (h * mult % classes) & ((1 << low) - 1))
+                })
+                .collect()
+        }
+        2 => {
+            let highs: Vec<u64> = (0..1 + rng.below(12)).map(|_| rng.below(1 << high)).collect();
+            let lows: Vec<u64> = (0..1 + rng.below(12)).map(|_| rng.below(1 << low)).collect();
+            let mut table: Vec<Vec<bool>> = highs.iter().flat_map(|&h| lows.iter().map(move |&l| (h, l))).map(|(h, l)| row(h, l)).collect();
+            table.extend((0..rng.below(4)).map(|_| row(rng.below(1 << high), rng.below(1 << low))));
+            table
+        }
+        _ => {
+            let highs: Vec<u64> = (0..1 + rng.below(4)).map(|_| rng.below(1 << high)).collect();
+            (0..n).map(|_| row(highs[rng.below(highs.len() as u64) as usize], rng.below(1 << low))).collect()
+        }
+    }
+}
+
+#[test]
+fn the_direct_build_builds_the_existing_diagram_node_for_node() {
+    // The build that writes the top node's pairs as the split finds them,
+    // and hands the buffer to the level, must leave the levels the build
+    // through child atoms leaves: with low values that merge, with free
+    // variables around the constrained ones, under every vtree shape, and
+    // whether the level's arena is fresh (a fresh engine) or recycled and
+    // dropped for the buffer (an engine that built before).
+    let mut rng = Lcg::new(0xd1_2026);
+    let mut internal = 0;
+    for round in 0..400usize {
+        let width = 2 + rng.below(13) as u32;
+        let free = rng.below(3) as u32;
+        let shapes = vtree_shapes(width + free);
+        let (name, vtree) = &shapes[round % shapes.len()];
+        let mut ids: Vec<VarId> = (1..=width + free).map(VarId).collect();
+        for i in (1..ids.len()).rev() {
+            ids.swap(i, rng.below(i as u64 + 1) as usize);
+        }
+        let constrained = &ids[..width as usize];
+        let table = merging_table(&mut rng, width, round % 4);
+        let rows = packed_rows(width as usize, &table);
+        let what = format!("round {round}, {name}, {width} constrained, {free} free");
+        let want = Tdd::from_models(vtree, constrained, &rows).unwrap();
+        let eng = Engine::new();
+        for pass in ["fresh", "pooled"] {
+            let got = eng.from_models_direct(vtree, constrained, &rows).unwrap();
+            assert_canonical(&got);
+            assert_same_levels(&got, &want, &format!("{what}, {pass}"));
+        }
+        let top = want.output().vtree;
+        if !vtree.node(top).is_leaf() {
+            let (left, right) = vtree.children(top);
+            internal += usize::from(!vtree.node(left).is_leaf() && !vtree.node(right).is_leaf());
+        }
+    }
+    assert!(internal > 100, "the top node's children are internal often enough: {internal}");
+}
+
+#[test]
+fn a_wide_block_of_few_values_builds_the_existing_diagram_node_for_node() {
+    // A near-unique key over a wide block of a few combinations, as a rank
+    // relation's price over its flags: where a node's low part is that
+    // block, the direct build ranks its values rather than sorting them,
+    // and must still leave the levels the build through child atoms does.
+    let mut rng = Lcg::new(0x5b_2026);
+    for round in 0..24usize {
+        let (key, wide) = (10 + rng.below(8) as u32, 20 + rng.below(12) as u32);
+        let width = key + wide;
+        let palette: Vec<u64> = (0..1 + rng.below(6)).map(|_| rng.next_u64()).collect();
+        let rows = 1500 + rng.below(3000) as usize;
+        let table: Vec<Vec<bool>> = (0..rows)
+            .map(|_| {
+                let mut bits = code_bits(rng.below(1 << key) as u32, key);
+                let combo = palette[rng.below(palette.len() as u64) as usize];
+                bits.extend((0..wide).map(|i| (combo >> i) & 1 == 1));
+                bits
+            })
+            .collect();
+        let packed = packed_rows(width as usize, &table);
+        for (name, vtree) in vtree_shapes(width) {
+            let what = format!("round {round}, {name}, {key} key bits, {wide} wide");
+            let want = Tdd::from_models(&vtree, &vars(width), &packed).unwrap();
+            let got = Engine::new().from_models_direct(&vtree, &vars(width), &packed).unwrap();
+            assert_canonical(&got);
+            assert_same_levels(&got, &want, &what);
+        }
+    }
+}
+
+#[test]
+fn every_refusal_point_of_the_direct_build_returns_the_buffers() {
+    // As the build through child atoms: a refusal anywhere, including where
+    // the level takes the split's buffer, answers over budget and leaves
+    // the pool as it found it.
+    let vtree = Arc::new(Vtree::balanced(8));
+    let table: Vec<Vec<bool>> = (0..60u32)
+        .map(|code| {
+            let mut bits = code_bits(code % 16, 4);
+            bits.extend(code_bits(code * 7 % 5, 4));
+            bits
+        })
+        .collect();
+    let rows = packed_rows(8, &table);
+    let want = Tdd::from_models(&vtree, &vars(8), &rows).unwrap();
+    let mut refused = 0;
+    for cut in 0..60u32 {
+        let eng = Engine::new();
+        Tdd::builder(&eng, &vtree).unwrap().abandon(&eng);
+        eng.limits().refuse_nth_reserve(cut);
+        match eng.from_models_direct(&vtree, &vars(8), &rows) {
+            Ok(f) => assert_same_levels(&f, &want, &format!("cut {cut}")),
+            Err(e) => {
+                assert_eq!(e, OperationError::OverBudget, "cut {cut}");
+                assert_eq!(eng.scratch.levels.occupancy(), 1, "cut {cut} lost a level buffer");
+                refused += 1;
+            }
+        }
+        eng.limits().grant_every_reserve();
+    }
+    assert!(refused > 0, "no reservation was refused across the sweep");
+}

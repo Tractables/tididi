@@ -269,6 +269,35 @@ impl TddBuilder {
         Ok(index)
     }
 
+    /// [`push`](Self::push) for a node whose pairs, at least two, come in a
+    /// buffer charged to the engine, which the level takes as its pair arena
+    /// where it has none yet.
+    ///
+    /// # Errors
+    ///
+    /// As [`push`](Self::push).
+    pub(crate) fn push_owned(
+        &mut self,
+        eng: &Engine,
+        t: VtreeIdx,
+        pairs: Vec<ChildPair>,
+    ) -> Result<NodeIdx, OperationError> {
+        if cfg!(debug_assertions) {
+            debug_assert_pairs(&self.vtree, &self.levels, t, &pairs);
+        }
+        if self.levels[t.idx()].slot_count() >= eng.limits().level_width_cap() {
+            return Err(OperationError::IndexOverflow);
+        }
+        let cached = self.interned.get_mut(t.idx()).and_then(Option::take);
+        let index = self.levels[t.idx()].push_node_owned(eng.limits(), pairs)?;
+        if let Some(mut table) = cached {
+            let level = &self.levels[t.idx()];
+            table.insert_on(eng.limits(), level, level.pairs_of_idx(index.idx()), index)?;
+            self.interned[t.idx()] = Some(table);
+        }
+        Ok(index)
+    }
+
     /// Size level `t`'s arenas for `nodes` more nodes and `pairs` more pairs,
     /// charging the growth to the engine.
     ///

@@ -36,6 +36,12 @@ fn triples_of(split: &Decomposition) -> (usize, Vec<[u32; 3]>) {
             assert_eq!(start, lows.len());
             (1, triples)
         }
+        Decomposition::Pairs { pairs } => {
+            // The pairs name child atoms, as the nodes they will be.
+            let triples: Vec<[u32; 3]> = pairs.iter().map(|pair| [0, pair.left.raw(), pair.right.raw()]).collect();
+            assert!(triples.windows(2).all(|t| t[0] < t[1]), "the pairs ascend");
+            (1, triples)
+        }
         Decomposition::ByAtom { ends, pairs } => {
             let mut triples = Vec::new();
             let mut start = 0;
@@ -156,7 +162,8 @@ fn with_atoms(mut values: Values<'static>, rng: &mut Lcg, low_width: usize, clas
 
 /// Split `parent` through materialized parts and through every other split
 /// that takes it: the sorted single-atom split for one parent atom, and the
-/// hashed split for a low part narrow enough to address. Requires the same
+/// hashed split for a low part narrow enough to address, writing child
+/// atoms and, for one parent atom, the node's pairs. Requires the same
 /// atoms and triples of all, and returns the reference's children, low then
 /// high, and which of the others ran.
 fn check_split(lim: &Limits, parent: &Values, widths: (usize, usize), what: &str) -> (Values<'static>, Values<'static>, [bool; 2]) {
@@ -169,8 +176,14 @@ fn check_split(lim: &Limits, parent: &Values, widths: (usize, usize), what: &str
         false => None,
     };
     let hashed = split_hashed(lim, &mut s, parent, widths.0).unwrap();
+    s.direct = true;
+    let direct = split_hashed(lim, &mut s, parent, widths.0).unwrap();
+    s.direct = false;
+    if parent.atoms == 1 {
+        assert!(direct.as_ref().is_none_or(|got| matches!(got.0, Decomposition::Pairs { .. })), "{what}");
+    }
     let ran = [sorted.is_some(), hashed.is_some()];
-    for got in sorted.into_iter().chain(hashed) {
+    for got in sorted.into_iter().chain(hashed).chain(direct) {
         assert_eq!(triples_of(&got.0), triples_of(&want.0), "{what}");
         for (got, want) in [(&got.1, &want.1), (&got.2, &want.2)] {
             assert_eq!((&got.data, &got.atom, got.atoms), (&want.data, &want.atom, want.atoms), "{what}");
@@ -392,4 +405,139 @@ fn counting_the_products_tells_merged_low_values_from_shared_atoms() {
     assert!(covers_exactly(&lim, &atoms, 2, (&[0], 1), (&[0, 1], 2)).unwrap());
     let claimed = Decomposition::ByAtom { ends: vec![1, 2], pairs: vec![0, 0] };
     assert!(!covers_exactly(&lim, &claimed, 2, (&[0], 1), (&[0, 0], 1)).unwrap());
+}
+
+/// Values of many high values over a wide low part of few values, each
+/// high value taking a few of them, as a wide block of few combinations
+/// under a near-unique one gives. Every value lies in one atom.
+fn sparse_values(rng: &mut Lcg, low_width: usize, high_width: usize) -> Values<'static> {
+    let palette: Vec<u64> = (0..1 + rng.below(10)).map(|_| rng.next_u64() & ((1u64 << low_width) - 1)).collect();
+    let mut data = Vec::new();
+    for _ in 0..200 + rng.below(400) {
+        let high = rng.next_u64() & ((1u64 << high_width) - 1);
+        for _ in 0..1 + rng.below(palette.len() as u64) {
+            data.push(high << low_width | palette[rng.below(palette.len() as u64) as usize]);
+        }
+    }
+    data.sort_unstable();
+    data.dedup();
+    let atom = vec![0; data.len()];
+    Values { words: 1, data: data.into(), atom, atoms: 1 }
+}
+
+#[test]
+fn a_wide_low_part_of_few_values_splits_by_rank_as_the_general_split_does() {
+    // Ranks keep the values ascending and stand for their low parts alone,
+    // so the split through them is the values' own: with one parent atom
+    // (its pairs written as the node's) or several, over the caller's
+    // values or owned ones, and declined where the low parts are many.
+    let lim = Limits::new();
+    let mut rng = Lcg::new(0x5a_2026);
+    let (mut ran, mut declined) = (0, 0);
+    for round in 0..300 {
+        let (low_width, high_width) = (13 + rng.below(36) as usize, 9 + rng.below(8) as usize);
+        let values = match round % 3 {
+            0 => sparse_values(&mut rng, low_width, high_width),
+            1 => {
+                let values = sparse_values(&mut rng, low_width, high_width);
+                let classes = 1 + rng.below(5);
+                with_atoms(values, &mut rng, low_width, classes, round % 2 == 0)
+            }
+            _ => many_values(&mut rng, low_width, high_width),
+        };
+        let distinct = values.atoms as usize == values.len();
+        if distinct || values.len() < 2 {
+            continue;
+        }
+        let mut s = Scratch::default();
+        let want = split_parts(&lim, &mut s, &values, (low_width, high_width), distinct).unwrap();
+        let data = match round % 2 {
+            0 => Cow::Borrowed(&values.data[..]),
+            _ => Cow::Owned(values.data.to_vec()),
+        };
+        let mut copy = Values { words: 1, data, atom: values.atom.clone(), atoms: values.atoms };
+        (s.sparse, s.direct) = (true, values.atoms == 1);
+        match split_sparse(&lim, &mut s, &mut copy, low_width).unwrap() {
+            None => declined += 1,
+            Some(got) => {
+                ran += 1;
+                assert_eq!(triples_of(&got.0), triples_of(&want.0), "round {round}");
+                for (got, want) in [(&got.1, &want.1), (&got.2, &want.2)] {
+                    assert_eq!((&got.data, &got.atom, got.atoms), (&want.data, &want.atom, want.atoms), "round {round}");
+                }
+            }
+        }
+    }
+    assert!(ran > 100 && declined > 30, "ran {ran}, declined {declined}");
+}
+
+#[test]
+fn a_sample_repeats_a_low_part_where_the_low_parts_are_few() {
+    // Few low parts under many high values repeat in any even sample as
+    // often as that few would; low parts all distinct never do, whatever
+    // the sample's size, and many with repeats too rarely.
+    let lim = Limits::new();
+    let mut rng = Lcg::new(0x5e_2026);
+    let mut table = Vec::new();
+    let mask = (1u64 << 40) - 1;
+    for count in [2usize, 3, 100, SPARSE_SAMPLE] {
+        let distinct: Vec<u64> = (0..50_000u64).map(|k| k << 40 | ((k * 0x9e37_79b9) & mask)).collect();
+        let most = 50_000 / SPARSE_LOWS;
+        assert!(!sample_repeats(&lim, &mut table, &distinct, mask, count, most).unwrap(), "{count}");
+        let palette: Vec<u64> = (0..1 + count as u64 / 4).map(|_| rng.next_u64() & mask).collect();
+        let few: Vec<u64> = (0..50_000u64).map(|k| k << 40 | palette[(k % palette.len() as u64) as usize]).collect();
+        assert!(sample_repeats(&lim, &mut table, &few, mask, count, most).unwrap(), "{count}");
+        // Ten times as many low parts as `most`, drawn at random: a sample
+        // repeats some, a tenth as often as `most` would make it.
+        let many: Vec<u64> = (0..50_000u64).map(|k| k << 40 | rng.below(10 * most as u64)).collect();
+        if count == SPARSE_SAMPLE {
+            assert!(!sample_repeats(&lim, &mut table, &many, mask, count, most).unwrap(), "{count}");
+        }
+    }
+}
+
+#[test]
+fn ranks_found_through_a_table_that_grows_split_as_the_general_split_does() {
+    // Enough distinct low parts that the table of `split_sparse` grows past
+    // its first size, where they appear early and where they appear late,
+    // and one more than it takes, which it declines.
+    let lim = Limits::new();
+    let mut rng = Lcg::new(0x9a_2026);
+    let low_width = 30;
+    for (lows, late, take) in [(3_000u64, false, true), (4_000, true, true), (5_001, false, false)] {
+        let palette: Vec<u64> = (0..lows).map(|_| rng.next_u64() & ((1u64 << low_width) - 1)).collect();
+        let n = 16 * 5_000;
+        // Values of high value `h`, one low part each, a few palette entries
+        // early and the whole palette once they appear late.
+        let mut data: Vec<u64> = (0..n as u64)
+            .map(|h| {
+                let pick = match late && h < n as u64 / 2 {
+                    true => rng.below(8),
+                    false => rng.below(lows),
+                };
+                h << low_width | palette[pick as usize]
+            })
+            .collect();
+        // Every low part at least once, so the distinct count is the
+        // palette's: first, or last where they appear late.
+        let from = if late { n - palette.len() } else { 0 };
+        for (k, &low) in palette.iter().enumerate() {
+            data[from + k] = ((from + k) as u64) << low_width | low;
+        }
+        data.sort_unstable();
+        let values = Values { words: 1, data: data.into(), atom: vec![0; n], atoms: 1 };
+        let mut s = Scratch::default();
+        let want = split_parts(&lim, &mut s, &values, (low_width, 17), false).unwrap();
+        let mut copy = Values { words: 1, data: Cow::Borrowed(&values.data[..]), atom: values.atom.clone(), atoms: 1 };
+        (s.sparse, s.direct) = (true, true);
+        let got = split_sparse(&lim, &mut s, &mut copy, low_width).unwrap();
+        assert_eq!(got.is_some(), take, "{lows} low parts, late {late}");
+        if let Some(got) = got {
+            assert!(s.exact.len() > 1 << GROWING_BITS, "the table grew");
+            assert_eq!(triples_of(&got.0), triples_of(&want.0), "{lows} low parts");
+            for (got, want) in [(&got.1, &want.1), (&got.2, &want.2)] {
+                assert_eq!((&got.data, &got.atom, got.atoms), (&want.data, &want.atom, want.atoms), "{lows} low parts");
+            }
+        }
+    }
 }

@@ -131,7 +131,7 @@ impl Engine {
         lim.discard(vars);
         let mut radix = crate::sort::Radix::default();
         let sorted = sorted_distinct(lim, &mut radix, layout.position.len(), &layout, packed, w, ascending)?;
-        super::build_sorted(self, vtree, &layout, Cow::Owned(sorted), w, radix)
+        super::build_sorted(self, vtree, &layout, Cow::Owned(sorted), w, radix, super::Direct::Off)
     }
 }
 
