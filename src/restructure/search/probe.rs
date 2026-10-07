@@ -372,6 +372,12 @@ impl<'a> RotationTrial<'a> {
     /// Repair topology and release the preimage.
     fn commit(mut self) {
         self.committed = true;
+        // The levels the moves rebuilt are built stored; the accepted
+        // sequence is the operation's end, which closes them.
+        for level in &self.changed {
+            self.tdd.levels[level.idx()].close();
+        }
+        self.tdd.debug_check_implicit_levels();
         // Dropping the preimages hands their charge back, and the rebuild
         // charged the levels that replaced them, so the operation's in-flight
         // total ends up carrying the difference rather than both.

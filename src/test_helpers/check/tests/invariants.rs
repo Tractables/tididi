@@ -412,7 +412,7 @@ fn canonicity_rejects_a_duplicated_node() {
     for (t, _, _) in vtree.internal_bottomup() {
         b.replace_level(eng, t, tdd.level_view(t)).unwrap();
         if t == target {
-            let pairs: Vec<ChildPair> = tdd.level(t).pairs_of_idx(0).to_vec();
+            let pairs: Vec<ChildPair> = tdd.level(t).pairs_vec(0).to_vec();
             b.push(eng, t, &pairs).unwrap();
         }
     }
@@ -451,7 +451,7 @@ fn dropping_an_input_pair_changes_the_model_count() {
         let Some((target_level, target_node)) = vtree.internal_bottomup().find_map(|(t, _, _)| {
             let level = tdd.level(t);
             (0..level.nodes().len())
-                .find(|&i| level.pairs_of_idx(i).len() >= 2)
+                .find(|&i| level.pairs_vec(i).len() >= 2)
                 .map(|i| (t, i))
         }) else {
             continue;
@@ -464,7 +464,7 @@ fn dropping_an_input_pair_changes_the_model_count() {
                 continue;
             }
             for i in 0..tdd.level(t).nodes().len() {
-                let mut pairs = tdd.level(t).pairs_of_idx(i).to_vec();
+                let mut pairs = tdd.level(t).pairs_vec(i).to_vec();
                 if i == target_node {
                     pairs.pop();
                 }

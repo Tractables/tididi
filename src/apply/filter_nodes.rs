@@ -197,7 +197,7 @@ fn sweep<'e>(eng: &'e Engine, f: &Tdd, remap: &mut [Vec<u32>]) -> Result<(Assemb
             poll.poll(1)?;
             if remap[t.idx()][i] == DEAD { continue; }
             pairs.clear();
-            for pair in source.pairs_of_idx(i) {
+            for pair in source.pairs_iter_of_idx(i) {
                 let kept = if pair.left == ZERO.into() || pair.right == ZERO.into() {
                     None
                 } else {

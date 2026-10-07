@@ -59,12 +59,12 @@ pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd) -
         // the `has_any_marginal` block below using per-node counts (integer) or
         // the marginal-forest walk. For integer-marginal levels `nodes` is also
         // cleared so the loop below is a no-op; weight-marginal levels keep
-        // `nodes` (for `slot_count()`) but clear `pairs`, so `pairs_of` would index an
+        // `nodes` (for `slot_count()`) but clear `pairs`, so `pairs_iter_of` would index an
         // empty `pairs`. Skip them explicitly. (Regular MC has no marginal
         // levels, so this guard is a no-op there.)
         if level.is_marginal() { continue; }
         'nodes: for node in level.nodes.iter() {
-            for pair in level.pairs_of(node) {
+            for pair in level.pairs_iter_of(node) {
                 if want_left && pair.left != ONE_LEAF_IDX.into() {
                     buf[left.idx()] = false;
                     want_left = false;

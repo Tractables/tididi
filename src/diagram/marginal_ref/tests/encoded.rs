@@ -45,7 +45,7 @@ fn inline_and_arena_pairs_preserve_tagged_references() {
     let inline = level.push_internal_node(&[tagged]);
     let arena = level.push_internal_node(&[tagged, other]);
     for (node, expected) in [(inline, &[tagged][..]), (arena, &[tagged, other][..])] {
-        assert_eq!(level.pairs_of_idx(node.idx()), expected);
+        assert_eq!(level.pairs_vec(node.idx()), expected);
         assert_eq!(level.pairs_iter_of_idx(node.idx()).collect::<Vec<_>>(), expected);
     }
 }

@@ -116,7 +116,7 @@ fn an_affine_level_is_read_back_and_written_out() {
         for i in 0..nodes {
             let mut out = Vec::new();
             d.pairs_of(i, &mut out);
-            assert_eq!(out, level.pairs_of_idx(i));
+            assert_eq!(out, level.pairs_vec(i));
         }
     }
 }
@@ -161,75 +161,59 @@ fn a_product_is_the_row_loops_pairs() {
 }
 
 #[test]
-fn a_range_of_pairs_is_read_where_it_lies() {
+fn a_pair_is_read_where_it_lies() {
     let mut rng = Lcg::new(0x1d1e_0003);
     for _ in 0..100 {
         let pairs = random_affine(&mut rng, 8, 8, 2);
         let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
-        let flat: Vec<ChildPair> = pairs.iter().flatten().map(|&(l, r)| pair(l, r)).collect();
-        let a = rng.below(flat.len() as u64) as usize;
-        let b = a + rng.below((flat.len() - a) as u64 + 1) as usize;
-        let mut out = Vec::new();
-        d.write_range(a..b, &mut out);
-        assert_eq!(out, &flat[a..b]);
+        let i = rng.below(pairs.len() as u64) as usize;
+        let m = rng.below(pairs[i].len() as u64) as usize;
+        let mut places = d.places(i);
+        assert_eq!(places.len(), pairs[i].len());
+        assert_eq!(places.nth(m), Some(pair(pairs[i][m].0, pairs[i][m].1)));
+        assert_eq!(places.len(), pairs[i].len() - m - 1);
+        assert!(places.eq(pairs[i][m + 1..].iter().map(|&(l, r)| pair(l, r))));
     }
 }
 
 #[test]
-fn an_implicit_arena_reads_and_writes_as_the_written_one() {
+fn an_implicit_arena_reads_as_the_stored_one() {
     let mut rng = Lcg::new(0x1d1e_0004);
     for _ in 0..50 {
         let pairs = random_affine(&mut rng, 8, 8, 2);
-        let explicit = level_of(&pairs);
-        let d = ImplicitLevel::fit(&explicit).unwrap();
+        let stored = level_of(&pairs);
+        let d = ImplicitLevel::fit(&stored).unwrap();
         let mut level = TddLevel::new();
         d.write_nodes(&Limits::new(), &mut level).unwrap();
         level.pairs.describe(d.clone(), 3 * d.pairs());
-        assert_eq!(level.nodes, explicit.nodes);
+        assert_eq!(level.nodes, stored.nodes);
         assert_eq!(level.implicit(), Some(&d));
-        assert_eq!(level.pairs.len(), explicit.pairs.len());
+        assert_eq!(level.pairs.len(), stored.pairs.len());
         assert_eq!(level.pairs.capacity(), 3 * d.pairs());
         // A reader sees the pairs; the description stays.
-        assert_eq!(&*level.pairs, &*explicit.pairs);
-        assert!(level.pairs.implicit().is_some());
         let mut buf = Vec::new();
         for i in 0..level.nodes.len() {
-            assert_eq!(level.pairs_read(i, &mut buf), explicit.pairs_of_idx(i));
+            assert_eq!(level.pairs_read(i, &mut buf), stored.pairs_vec(i));
+            assert!(level.pairs_iter_of_idx(i).eq(stored.pairs_iter_of_idx(i)));
         }
-        // A writer gets them written, at the capacity held.
-        let mut written = level.clone();
-        written.pairs.push(pair(0, 0));
-        assert!(written.pairs.implicit().is_none());
-        assert_eq!(written.pairs.capacity(), 3 * d.pairs());
-        written.pairs.pop();
-        assert_eq!(written.pairs, explicit.pairs);
-        // Clearing keeps the capacity, written.
+        assert!(level.pairs.implicit().is_some() && level.pairs.stored().is_none());
+        // Clearing leaves an empty stored arena of the capacity held.
         level.clear();
         assert!(level.pairs.is_empty() && level.pairs.implicit().is_none());
         assert_eq!(level.pairs.capacity(), 3 * d.pairs());
     }
-    assert!(materialized().iter().any(|m| m.copied > 0 && m.reader.file().ends_with("implicit.rs")));
 }
 
 #[test]
-fn twins_are_read_off_the_digits() {
-    // Node i holds (3i + m, m) for m < 3: every left slot named once, in its
-    // own context, and every right slot named in two contexts of its own.
-    let pairs: Pairs = (0..2).map(|i| (0..3).map(|m| (3 * i + m, m)).collect()).collect();
-    let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
-    assert!(d.twin_free(ChildSide::Left, 6));
-    assert!(d.twin_free(ChildSide::Right, 3));
-    // Slots that do not cover the child: not shown.
-    assert!(!d.twin_free(ChildSide::Left, 7));
-    // Node i holds (3i + m, 0): the left slots of a node share its one
-    // context, so they are twins, and the digits must not say otherwise.
-    let pairs: Pairs = (0..2).map(|i| (0..3).map(|m| (3 * i + m, 0)).collect()).collect();
-    let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
-    assert!(!d.twin_free(ChildSide::Left, 6));
-    // Two left slots each with right slots 0 and 1 in one node: twins.
-    let pairs: Pairs = vec![vec![(0, 0), (1, 0), (0, 1), (1, 1)]];
-    let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
-    assert!(!d.twin_free(ChildSide::Left, 2));
+#[should_panic(expected = "an implicit level's pairs are not stored")]
+fn an_implicit_arena_is_not_written_in_place() {
+    let pairs: Pairs = (0..8).map(|i| (0..8).map(|m| (8 * i + m, m)).collect()).collect();
+    let stored = level_of(&pairs);
+    let d = ImplicitLevel::fit(&stored).unwrap();
+    let mut level = TddLevel::new();
+    d.write_nodes(&Limits::new(), &mut level).unwrap();
+    level.pairs.describe(d, 64);
+    level.pairs.stored_mut();
 }
 
 /// The `j`th digit of node `i` of `d`, counting its node digits only.
@@ -301,8 +285,10 @@ fn what_a_prune_leaves_is_read_off_the_description() {
 }
 
 /// An arena a prune kept described keeps the length and capacity the
-/// written one keeps, reads its nodes' pairs from the new description, and
-/// drops the slots past them on a sweep's truncation without writing them.
+/// written one keeps, reads its nodes' pairs from the new description, is
+/// copied at its length, and drops the slots past them on a sweep's
+/// truncation without writing them; no truncation cuts into the described
+/// pairs.
 #[test]
 fn a_redescribed_arena_keeps_the_written_length() {
     let pairs: Pairs = (0..4).map(|i| (0..3).map(|m| (3 * i + m, i)).collect()).collect();
@@ -321,18 +307,19 @@ fn a_redescribed_arena_keeps_the_written_length() {
     for (j, &i) in kept.iter().enumerate() {
         let want: Vec<ChildPair> = pairs[i].iter().map(|&(l, r)| pair(l, r)).collect();
         assert_eq!(level.pairs_read(j, &mut buf), &want[..]);
-        assert_eq!(level.pairs_of_idx(j), &want[..]);
+        assert_eq!(level.pairs_vec(j), &want[..]);
     }
     // Read whole, the arena has the written length.
-    assert_eq!(level.pairs.iter().count(), 12);
+    assert_eq!(level.pairs.len(), 12);
+    // A copy has its length as its capacity, as a copy of a stored arena
+    // does.
     let mut swept = level.clone();
+    assert_eq!((swept.pairs.len(), swept.pairs.capacity()), (12, 12));
     swept.pairs.truncate(6);
     assert!(swept.pairs.implicit().is_some());
-    assert_eq!((swept.pairs.len(), swept.pairs.capacity()), (6, 20));
+    assert_eq!((swept.pairs.len(), swept.pairs.capacity()), (6, 12));
     swept.pairs.shrink_to_fit();
     assert_eq!(swept.pairs.capacity(), 6);
-    // Cut into the described pairs, it is written.
-    level.pairs.truncate(5);
-    assert!(level.pairs.implicit().is_none());
-    assert_eq!(level.pairs.len(), 5);
+    let cut = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| level.pairs.truncate(5)));
+    assert!(cut.is_err(), "a truncation into the described pairs");
 }

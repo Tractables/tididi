@@ -57,7 +57,7 @@ fn reached_by_level(tdd: &crate::Tdd) -> Vec<std::collections::BTreeSet<usize>> 
         let (lv, rv) = (tdd.levels[left.idx()].child_decoder(), tdd.levels[right.idx()].child_decoder());
         let nodes: Vec<usize> = reached[t.idx()].iter().copied().collect();
         for i in nodes {
-            for pair in tdd.levels[t.idx()].pairs_of_idx(i) {
+            for pair in tdd.levels[t.idx()].pairs_vec(i) {
                 if let Some(s) = lv.child(pair.left).index() {
                     reached[left.idx()].insert(s);
                 }
@@ -80,7 +80,7 @@ fn layout(tdd: &crate::Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
         }
         out.push(
             (0..level.slot_count())
-                .map(|i| level.pairs_of_idx(i).iter().map(|p| (p.left.0, p.right.0)).collect())
+                .map(|i| level.pairs_vec(i).iter().map(|p| (p.left.0, p.right.0)).collect())
                 .collect(),
         );
     }
@@ -166,7 +166,7 @@ fn unnamed_levels(tdd: &crate::Tdd) -> Vec<u32> {
             let view = tdd.levels[c.idx()].child_decoder();
             let parent = &tdd.levels[p.idx()];
             let named: std::collections::BTreeSet<usize> = (0..parent.slot_count())
-                .flat_map(|i| parent.pairs_of_idx(i))
+                .flat_map(|i| parent.pairs_vec(i))
                 .filter_map(|pair| view.child(if on_left { pair.left } else { pair.right }).index())
                 .collect();
             if named.len() < tdd.levels[c.idx()].slot_count() {

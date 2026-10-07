@@ -515,7 +515,7 @@ fn assert_same_levels(a: &Tdd, b: &Tdd, what: &str) {
     for (t, (x, y)) in a.levels().iter().zip(b.levels()).enumerate() {
         assert_eq!(x.nodes().len(), y.nodes().len(), "{what}: level {t}'s nodes");
         for i in 0..x.nodes().len() {
-            assert_eq!(x.pairs_of_idx(i), y.pairs_of_idx(i), "{what}: level {t}, node {i}");
+            assert_eq!(x.pairs_vec(i), y.pairs_vec(i), "{what}: level {t}, node {i}");
         }
     }
 }

@@ -547,17 +547,10 @@ fn two_step_forced() -> bool {
 fn note_summed() {}
 
 // A test reads every child side from the grid, as the oracle for the
-// arithmetic lookups on complete children, or writes every level's pairs,
-// as the oracle for the implicit route, and counts the levels that read a
+// arithmetic lookups on complete children, and counts the levels that read a
 // side by arithmetic and the meter charges of their reserved arenas.
 #[cfg(test)]
-use tests::{grid_lookups_forced, note_lookups, note_scheduled_charge, written_levels_forced};
-
-#[cfg(not(test))]
-#[inline(always)]
-fn written_levels_forced() -> bool {
-    false
-}
+use tests::{grid_lookups_forced, note_lookups, note_scheduled_charge};
 
 #[cfg(not(test))]
 #[inline(always)]

@@ -93,7 +93,7 @@ pub(crate) fn normalized_levels(tdd: &Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
         let mut indexed: Vec<(usize, Vec<(u32, u32)>)> = (0..level.nodes.len())
             .map(|i| {
                 let mut pairs: Vec<(u32, u32)> = level
-                    .pairs_of_idx(i)
+                    .pairs_vec(i)
                     .iter()
                     .map(|p| {
                         (
@@ -296,6 +296,7 @@ pub fn assert_canonical(tdd: &Tdd) {
     }
     validate_vtree_structure(tdd).unwrap_or_else(|e| panic!("assert_canonical: vtree structure: {e}"));
     check_no_false_nodes(tdd).unwrap_or_else(|e| panic!("assert_canonical: no_false_nodes: {e}"));
+    crate::test_helpers::check::check_implicit_levels(tdd).unwrap_or_else(|e| panic!("assert_canonical: implicit levels: {e}"));
     marginal_family(tdd, "assert_canonical");
 }
 
@@ -379,7 +380,7 @@ pub fn support_mask(t: &Tdd) -> Vec<bool> {
             };
             let level = &mt.levels[vi];
             'scan: for ni in 0..level.nodes.len() {
-                for p in level.pairs_of(&level.nodes[ni]) {
+                for p in level.pairs_iter_of(&level.nodes[ni]) {
                     let child = match side {
                         ChildSide::Left => p.left,
                         ChildSide::Right => p.right,
@@ -440,7 +441,7 @@ pub fn support_bits(t: &Tdd) -> Vec<u64> {
         let mut need_l = lvar.is_some();
         let mut need_r = rvar.is_some();
         'scan: for ni in 0..level.nodes.len() {
-            for p in level.pairs_of(&level.nodes[ni]) {
+            for p in level.pairs_iter_of(&level.nodes[ni]) {
                 if need_l && (p.left == POS_LEAF_IDX.into() || p.left == NEG_LEAF_IDX.into()) {
                     let x = lvar.unwrap();
                     bits[x / 64] |= 1u64 << (x % 64);
@@ -536,7 +537,7 @@ fn eval_node(t: &Tdd, v: VtreeIdx, local: NodeIdx, asn: &[bool]) -> bool {
             if local == ZERO {
                 return false;
             }
-            for p in t.levels[v.idx()].pairs_of_idx(local.idx()) {
+            for p in t.levels[v.idx()].pairs_vec(local.idx()) {
                 if eval_node(t, left, ChildDecoder::structural().node(p.left), asn) && eval_node(t, right, ChildDecoder::structural().node(p.right), asn) {
                     return true;
                 }

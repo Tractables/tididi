@@ -94,6 +94,12 @@ pub(super) fn contract_twins(
     plan_groups(lim, tdd, t1, &policy, group_starts, flat_groups, bufs)?;
     // At most one fork-down survivor per planned group.
     lim.reserve_exact(&mut bufs.resolve_keeps, bufs.group_plans.len())?;
+    // The merge concatenates the groups' pairs into their survivors and
+    // compacts the level in place: an implicit t1 is built stored where its
+    // pairs lie first.
+    if !bufs.group_plans.is_empty() && tdd.levels[t1.idx()].pairs.implicit().is_some() {
+        tdd.levels[t1.idx()].store_moved(|_| true, |l| l, |r| r);
+    }
     reserve_transactional(eng, tdd, t1, bufs)?;
     let merged_members = commit_group_actions(tdd, t1, &policy, remap, bufs);
     if merged_members == 0 {

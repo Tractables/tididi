@@ -76,7 +76,7 @@ pub fn check_inline_discipline(tdd: &Tdd) -> Result<(), String> {
 /// Collect node `n`'s pairs.
 fn node_pairs_into(level: &TddLevel, n: usize, out: &mut Vec<ChildPair>) {
     out.clear();
-    out.extend_from_slice(level.pairs_of_idx(n));
+    out.extend(level.pairs_iter_of_idx(n));
 }
 
 /// Invariant 8: no boundary-parent group remains eligible for pair fusion.
@@ -107,7 +107,7 @@ pub fn check_pair_fusion_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> R
         let plevel = &tdd.levels[parent.idx()];
         for n in 0..plevel.nodes.len() {
             groups.clear();
-            for p in plevel.pairs_of_idx(n) {
+            for p in plevel.pairs_iter_of_idx(n) {
                 let (x, marginal) = match side {
                     ChildSide::Right => (p.left.0, p.right.0),
                     ChildSide::Left => (p.right.0, p.left.0),

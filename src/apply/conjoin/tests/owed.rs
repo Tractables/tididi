@@ -57,24 +57,30 @@ fn every_shape_minimizes_a_conjunction_to_the_canonical_diagram() {
     }
 }
 
+/// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn seeded_conjunctions_minimize_to_the_canonical_diagram() {
-    use crate::test_helpers::{CnfShape, Lcg, rand_cnf};
-    let eng = Engine::new();
-    for seed in 0..60u64 {
-        let num_vars = 6 + (seed % 5) as u32;
-        let mut rng = Lcg::new(seed);
-        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 14, width: 3 });
-        for (label, vtree) in vtree_shapes(num_vars) {
-            let expected = compile_clauses(&vtree, &clauses);
-            for settled in [true, false] {
-                let (f, g) = halves(&eng, &vtree, &clauses, settled);
-                let mut out = eng.and(f, g).unwrap();
-                eng.minimize(&mut out).unwrap();
-                assert_same_shape(&out, &expected, &format!("seed {seed}, {label}, settled {settled}"));
+    use crate::test_helpers::{CnfShape, Lcg, rand_cnf, same_as_stored};
+    same_as_stored(|| {
+        let eng = Engine::new();
+        let mut outs = Vec::new();
+        for seed in 0..60u64 {
+            let num_vars = 6 + (seed % 5) as u32;
+            let mut rng = Lcg::new(seed);
+            let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 14, width: 3 });
+            for (label, vtree) in vtree_shapes(num_vars) {
+                let expected = compile_clauses(&vtree, &clauses);
+                for settled in [true, false] {
+                    let (f, g) = halves(&eng, &vtree, &clauses, settled);
+                    let mut out = eng.and(f, g).unwrap();
+                    eng.minimize(&mut out).unwrap();
+                    assert_same_shape(&out, &expected, &format!("seed {seed}, {label}, settled {settled}"));
+                    outs.push(out);
+                }
             }
         }
-    }
+        outs
+    });
 }
 
 /// A clause embedded onto a wider vtree, with levels it gained listed loose.
@@ -110,7 +116,7 @@ fn a_carried_level_is_loose_only_where_its_carrier_had_it() {
     let root = &out.levels[wide.root().idx()];
     let view = out.levels[half.idx()].child_decoder();
     let named: std::collections::BTreeSet<usize> =
-        (0..root.slot_count()).flat_map(|i| root.pairs_of_idx(i)).filter_map(|p| view.child(p.left).index()).collect();
+        (0..root.slot_count()).flat_map(|i| root.pairs_vec(i)).filter_map(|p| view.child(p.left).index()).collect();
     assert!(loose.contains(&half.0) || named.len() == out.levels[half.idx()].slot_count(), "{loose:?}");
     assert!(!loose.contains(&a.0) && !loose.contains(&b.0), "{loose:?}");
     eng.minimize(&mut out).unwrap();

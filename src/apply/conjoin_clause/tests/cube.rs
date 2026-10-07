@@ -67,27 +67,33 @@ fn disjoining_a_model_keeps_every_level_a_partition() {
     }
 }
 
+/// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn a_partial_cube_matches_the_general_disjunction() {
-    for (num_vars, clauses) in small_cases() {
-        if num_vars < 2 { continue; }
-        for (shape, vtree) in sweep_shapes(num_vars) {
-            let f = compile_clauses(&vtree, &clauses);
-            // Cubes that leave at least one variable free.
-            for mask in 1..((1u64 << num_vars) - 1) {
-                for bits in (mask & 1..(1u64 << num_vars)).step_by(3) {
-                    let cube: Vec<i32> = assignment(num_vars, bits)
-                        .into_iter()
-                        .filter(|lit| mask >> (lit.unsigned_abs() - 1) & 1 == 1)
-                        .collect();
-                    let got = or_cube_minimized(&f, &cube);
-                    let want = or_with_cube_diagram(&vtree, &f, &cube);
-                    assert_canonical(&got);
-                    assert_same_shape(&got, &want, &format!("{shape}: or_cube {cube:?}"));
+    crate::test_helpers::same_as_stored(|| {
+        let mut out = Vec::new();
+        for (num_vars, clauses) in small_cases() {
+            if num_vars < 2 { continue; }
+            for (shape, vtree) in sweep_shapes(num_vars) {
+                let f = compile_clauses(&vtree, &clauses);
+                // Cubes that leave at least one variable free.
+                for mask in 1..((1u64 << num_vars) - 1) {
+                    for bits in (mask & 1..(1u64 << num_vars)).step_by(3) {
+                        let cube: Vec<i32> = assignment(num_vars, bits)
+                            .into_iter()
+                            .filter(|lit| mask >> (lit.unsigned_abs() - 1) & 1 == 1)
+                            .collect();
+                        let got = or_cube_minimized(&f, &cube);
+                        let want = or_with_cube_diagram(&vtree, &f, &cube);
+                        assert_canonical(&got);
+                        assert_same_shape(&got, &want, &format!("{shape}: or_cube {cube:?}"));
+                        out.push(got);
+                    }
                 }
             }
         }
-    }
+        out
+    });
 }
 
 #[test]

@@ -29,9 +29,16 @@ use crate::Engine;
 /// Contract: `(b.restrict_to_care(care)? ∧ care).model_count()? == (b ∧ care).model_count()?` —
 /// the exact invariant P4 relies on to restrict an accumulator to care in place.
 /// (`model_count` on a marginal diagram returns the summed count; that is precisely
-/// the semantics that must be preserved.)
+/// the semantics that must be preserved.) Runs on implicit levels and on
+/// stored ones alike ([`same_as_stored`]).
 #[test]
 fn restrict_ancestor_marginal_operand_gate() {
+    same_as_stored(ancestor_marginal_operand_gate);
+}
+
+/// The cases of [`restrict_ancestor_marginal_operand_gate`]: the restricted
+/// diagrams.
+fn ancestor_marginal_operand_gate() -> Vec<Tdd> {
     let eng = Engine::new();
     use crate::apply::RestrictionOutcome;
     use crate::vtree::{VtreeIdx, VtreeNode};
@@ -83,6 +90,9 @@ fn restrict_ancestor_marginal_operand_gate() {
     // the subtree, non-marginal V1 structure above.
     let forget_v2 = |t: &mut Tdd| {
         crate::marginal::marginalize_batch(&eng, t, &v2_targets, &vtree).expect("no wall is installed in a test");
+        // The batch is a step of `marginalize_levels`, whose end closes the
+        // levels.
+        t.close_levels();
     };
     // The production `marginalize_batch` marks the forgotten LEAF levels marginal
     // (a contiguous subtree summed out ⇒ its leaf levels carry the marginal counts),
@@ -98,6 +108,7 @@ fn restrict_ancestor_marginal_operand_gate() {
     let mut first_fail: Option<String> = None;
 
     // One soundness + non-vacuity check on a (b, care) pair.
+    let mut out = Vec::new();
     let mut check =
         |b: &Tdd, care: &Tdd, label: &str, fail: &mut usize, first_fail: &mut Option<String>| {
             assert_eq!(
@@ -105,13 +116,13 @@ fn restrict_ancestor_marginal_operand_gate() {
                 "{label}: care/b must share the global root (no graft)"
             );
             let before = (and2(b, care)).model_count().unwrap();
-            let out = (b.clone()).restrict_to_care(care.clone()).unwrap();
-            match out {
+            let outcome = (b.clone()).restrict_to_care(care.clone()).unwrap();
+            match outcome {
                 RestrictionOutcome::Shrunk(_) => shrunk += 1,
                 RestrictionOutcome::Unsatisfiable(_) => false_out += 1,
                 RestrictionOutcome::Unchanged(_) => {}
             }
-            let g = out.into_tdd();
+            let g = outcome.into_tdd();
             let after = (and2(&g, care)).model_count().unwrap();
             if before != after {
                 *fail += 1;
@@ -125,6 +136,7 @@ fn restrict_ancestor_marginal_operand_gate() {
                 reachable_pairs(&g) <= reachable_pairs(b),
                 "{label}: g larger than b"
             );
+            out.push(g);
             checked += 1;
         };
 
@@ -194,4 +206,5 @@ fn restrict_ancestor_marginal_operand_gate() {
          shape in {fail}/{checked} cases (first {first_fail:?}) — P4's down-restriction \
          invariant is UNSOUND here; STOP and coordinate the fix"
     );
+    out
 }

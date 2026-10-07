@@ -101,9 +101,17 @@ fn weighted_unit_value(eng: &Engine, vtree: &Arc<Vtree>, f: &Tdd) -> BigRational
 /// Random 3-ish-CNFs over a small variable count, as clause literal lists.
 /// Three independent routes to the same function, minimized, must agree level
 /// by level — and the weighted evaluation of the result must agree with its
-/// model count.
+/// model count. On implicit levels and on stored ones alike
+/// ([`same_as_stored`](crate::test_helpers::same_as_stored)).
 #[test]
 fn every_route_to_one_function_minimizes_to_the_same_diagram() {
+    crate::test_helpers::same_as_stored(every_route_to_one_function);
+}
+
+/// The cases of [`every_route_to_one_function_minimizes_to_the_same_diagram`]:
+/// the diagrams of every route.
+fn every_route_to_one_function() -> Vec<Tdd> {
+    let mut out = Vec::new();
     let eng = Engine::new();
     let mut checked = 0u32;
     let mut rotated = 0u32;
@@ -122,6 +130,7 @@ fn every_route_to_one_function_minimizes_to_the_same_diagram() {
                     assert_canonical(&rotated_back);
                     assert_same_shape(&folded, &rotated_back, &format!("nvars={nvars} clauses={clauses:?}: folding and the rotation round trip"));
                     rotated += 1;
+                    out.push(rotated_back);
                 }
                 let mc = folded.model_count().unwrap();
                 assert_eq!(
@@ -130,9 +139,11 @@ fn every_route_to_one_function_minimizes_to_the_same_diagram() {
                     "nvars={nvars} clauses={clauses:?}: unit weights disagree with the count"
                 );
                 checked += 1;
+                out.extend([folded, pairwise]);
             }
         }
     }
     assert!(checked >= 100, "the sweep must actually run: {checked} cases");
     assert!(rotated >= 50, "the rotation route must be exercised, not skipped: {rotated} cases");
+    out
 }

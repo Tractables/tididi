@@ -14,7 +14,7 @@ pub(super) fn shape(t: &Tdd) -> String {
         s.push_str(&format!("|L{i}"));
         for j in 0..lv.slot_count() {
             s.push_str(&format!(";{j}:"));
-            for p in lv.pairs_of_idx(j) {
+            for p in lv.pairs_vec(j) {
                 s.push_str(&format!("({},{})", p.left.0, p.right.0));
             }
         }

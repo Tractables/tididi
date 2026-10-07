@@ -184,8 +184,8 @@ pub(crate) struct PairRange {
 
 /// A stored node: 8 bytes encoding where its pairs live.
 ///
-/// A reader never decodes the words itself: [`TddLevel::pairs_of`] and
-/// [`TddLevel::pairs_iter_of`] resolve a node to its pairs.
+/// A reader never decodes the words itself: [`TddLevel::pairs_iter_of`] and
+/// [`StoredPairs::of`] resolve a node to its pairs.
 ///
 /// The two `u32` words carry a three-way encoding:
 ///
@@ -208,7 +208,7 @@ pub(crate) struct PairRange {
 ///
 /// **Inline pairs** are most of the nodes, and store their single
 /// [`ChildPair`] directly in `(a, b)`. `EncodedNode` and `ChildPair` are both
-/// `#[repr(C)]` over the same two `u32`s, so `pairs_of` hands back
+/// `#[repr(C)]` over the same two `u32`s, so [`StoredPairs::of`] hands back
 /// `&[ChildPair; 1]` by pointer cast rather than copying.
 ///
 /// **Multi-pair** nodes name a contiguous range of the level's `pairs` arena.
@@ -216,8 +216,8 @@ pub(crate) struct PairRange {
 /// fit in 31 bits; past that the node goes to the ranged form, whose `u64`
 /// start and length live in the level's side table.
 ///
-/// [`TddLevel::pairs_of`]: super::TddLevel::pairs_of
 /// [`TddLevel::pairs_iter_of`]: super::TddLevel::pairs_iter_of
+/// [`StoredPairs::of`]: super::StoredPairs::of
 #[derive(Copy, Clone, Eq, PartialEq)]
 #[repr(C)]
 pub struct EncodedNode {
@@ -314,8 +314,9 @@ impl std::fmt::Debug for EncodedNode {
 /// and [`TddLevel::internal_inputs_iter`].
 ///
 /// Yields owned [`ChildPair`]s in storage order, which carries no meaning
-/// (a node is the set of its pairs). Implements [`ExactSizeIterator`], so
-/// `len()` is the node's pair count.
+/// (a node is the set of its pairs): a stored level's from its arena, an
+/// implicit level's generated from its description. Implements
+/// [`ExactSizeIterator`], so `len()` is the node's pair count.
 ///
 /// [`TddLevel::pairs_iter_of`]: super::TddLevel::pairs_iter_of
 /// [`TddLevel::internal_inputs_iter`]: super::TddLevel::internal_inputs_iter
@@ -326,6 +327,7 @@ pub struct PairsIter<'a>(PairStorage<'a>);
 enum PairStorage<'a> {
     Inline(Option<ChildPair>),
     Slice(std::slice::Iter<'a, ChildPair>),
+    Described(super::level::Places<'a>),
 }
 
 impl<'a> PairsIter<'a> {
@@ -339,12 +341,19 @@ impl<'a> PairsIter<'a> {
         PairsIter(PairStorage::Slice(pairs.iter()))
     }
 
-    /// The pairs still to come, as one slice.
     #[inline]
-    pub(crate) fn as_slice(&self) -> &[ChildPair] {
+    pub(super) fn described(places: super::level::Places<'a>) -> Self {
+        PairsIter(PairStorage::Described(places))
+    }
+
+    /// The pairs still to come, as one slice, when they are stored; `None`
+    /// on an implicit level's node, whose pairs are generated.
+    #[inline]
+    pub(crate) fn as_slice(&self) -> Option<&[ChildPair]> {
         match &self.0 {
-            PairStorage::Inline(opt) => opt.as_slice(),
-            PairStorage::Slice(iter) => iter.as_slice(),
+            PairStorage::Inline(opt) => Some(opt.as_slice()),
+            PairStorage::Slice(iter) => Some(iter.as_slice()),
+            PairStorage::Described(_) => None,
         }
     }
 }
@@ -355,6 +364,7 @@ impl std::fmt::Debug for PairsIter<'_> {
         let remaining = match &self.0 {
             PairStorage::Inline(opt) => usize::from(opt.is_some()),
             PairStorage::Slice(iter) => iter.len(),
+            PairStorage::Described(places) => places.len(),
         };
         f.debug_struct("PairsIter").field("remaining", &remaining).finish()
     }
@@ -367,6 +377,18 @@ impl<'a> Iterator for PairsIter<'a> {
         match &mut self.0 {
             PairStorage::Inline(opt) => opt.take(),
             PairStorage::Slice(iter) => iter.next().copied(),
+            PairStorage::Described(places) => places.next(),
+        }
+    }
+
+    /// The `n`th pair from here, in one step on stored and described pairs
+    /// alike.
+    #[inline]
+    fn nth(&mut self, n: usize) -> Option<ChildPair> {
+        match &mut self.0 {
+            PairStorage::Inline(opt) => if n == 0 { opt.take() } else { *opt = None; None },
+            PairStorage::Slice(iter) => iter.nth(n).copied(),
+            PairStorage::Described(places) => places.nth(n),
         }
     }
 
@@ -376,6 +398,7 @@ impl<'a> Iterator for PairsIter<'a> {
             PairStorage::Inline(Some(_)) => 1,
             PairStorage::Inline(None) => 0,
             PairStorage::Slice(iter) => iter.len(),
+            PairStorage::Described(places) => places.len(),
         };
         (n, Some(n))
     }

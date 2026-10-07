@@ -30,12 +30,12 @@ fn a_reserved_sink_charges_where_an_emit_sink_grows() {
     for (seed, total) in [(0usize, 300usize), (4, 300), (8, 300), (64, 300), (512, 300)] {
         for unscheduled in [false, true] {
             let mut emit = TddLevel::new();
-            emit.pairs.reserve_exact(seed);
+            emit.pairs.stored_mut().reserve_exact(seed);
             let mut reserved = TddLevel::new();
-            reserved.pairs.reserve_exact(seed);
+            reserved.pairs.stored_mut().reserve_exact(seed);
             let charged = if unscheduled { usize::MAX } else { reserved.pairs.capacity() };
             if !unscheduled {
-                reserved.pairs.reserve_exact(total);
+                reserved.pairs.stored_mut().reserve_exact(total);
             }
             let mut a = EmitSink { level: &mut emit };
             let mut b = ReservedEmitSink { level: &mut reserved, charged };

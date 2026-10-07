@@ -55,15 +55,6 @@ fn contract_child(
     }
     let (parent_left, _parent_right) = tdd.vtree.children(parent);
     let t1_side = if parent_left == t1 { ChildSide::Left } else { ChildSide::Right };
-    // A parent held as the description of its pairs shows from its digits
-    // alone that the child has no twins, in most cases; then the grouping
-    // below would find none, and reading the parent's pairs would write them.
-    if let Some(d) = tdd.levels[parent.idx()].implicit()
-        && d.twin_free(t1_side, tdd.levels[t1.idx()].slot_count())
-    {
-        return Ok(false);
-    }
-
     let found = find_twin_groups(eng, tdd, t1, parent, t1_side, scratch)?;
     if !found {
         return Ok(false);

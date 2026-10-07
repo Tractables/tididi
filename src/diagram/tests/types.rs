@@ -4,7 +4,7 @@
     #[test]
     fn level_pairs_iter_of_unpacked_matches_slice() {
         // PairsIter::Slice and PairsIter::Inline branches: yield the same
-        // pairs as `pairs_of_idx` on an unpacked level.
+        // pairs as `pairs_vec` on an unpacked level.
         let mut lvl = TddLevel::new();
         // Push some multi-pair nodes and an inline pair.
         let three = vec![
@@ -15,11 +15,11 @@
         lvl.push_internal_node(&three);
         lvl.push_internal_node(&[ChildPair::new(NodeIdx(99), NodeIdx(100))]);
 
-        let from_slice: Vec<ChildPair> = lvl.pairs_of_idx(0).to_vec();
+        let from_slice: Vec<ChildPair> = lvl.pairs_vec(0).to_vec();
         let from_iter: Vec<ChildPair> = lvl.pairs_iter_of_idx(0).collect();
         assert_eq!(from_slice, from_iter);
 
-        let inline_slice: Vec<ChildPair> = lvl.pairs_of_idx(1).to_vec();
+        let inline_slice: Vec<ChildPair> = lvl.pairs_vec(1).to_vec();
         let inline_iter: Vec<ChildPair> = lvl.pairs_iter_of_idx(1).collect();
         assert_eq!(inline_slice, inline_iter);
         assert_eq!(inline_slice.len(), 1);
@@ -159,7 +159,7 @@
         eng.clear_scratch();
         let mut levels = take_levels(eng, 3);
         // A level with tiny content but huge `pairs` capacity.
-        levels[1].pairs.reserve(8_000_000);
+        levels[1].pairs.stored_mut().reserve(8_000_000);
         let bloated_cap = levels[1].pairs.capacity();
         assert!(bloated_cap >= 8_000_000, "reserve didn't grow capacity");
         // The pool retention gate (nodes ≤ 4M) passes — total node capacity is
@@ -230,7 +230,7 @@
         assert_eq!(level.slot_count(), 1);
         assert_eq!(level.pairs.len(), 2);
         assert!(level.has_multi_pair());
-        let node_pairs = level.pairs_of_idx(0);
+        let node_pairs = level.pairs_vec(0);
         assert_eq!(node_pairs.len(), 2);
         assert_eq!(node_pairs[0], pairs[0]);
         assert_eq!(node_pairs[1], pairs[1]);
@@ -589,6 +589,6 @@ mod try_from_levels {
         let pair = ChildPair::new(NodeIdx(0), NodeIdx(0));
         let index = level.push_node(eng.limits(), &[pair]).unwrap();
         assert_eq!(index, NodeIdx(0));
-        assert_eq!(level.pairs_of_idx(0), &[pair]);
+        assert_eq!(level.pairs_vec(0), &[pair]);
         assert_eq!(requests.load(Ordering::Relaxed), 0);
     }

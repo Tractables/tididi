@@ -76,8 +76,9 @@ impl LevelFold for OverflowingCounts<'_> {
             let col = side.col.as_count_ref();
             (!side.view.is_marginal() && col.all_u64()).then(|| col.fast_slice())
         }
-        if let (Some(l), Some(r)) = (raw(left), raw(right))
-            && let Some(total) = IntFold::fold_structural_u64(pairs.as_slice(), l, r)
+        // A described node's pairs take the general fold, which generates them.
+        if let (Some(l), Some(r), Some(stored)) = (raw(left), raw(right), pairs.as_slice())
+            && let Some(total) = IntFold::fold_structural_u64(stored, l, r)
         {
             return Count::from_u128(total);
         }

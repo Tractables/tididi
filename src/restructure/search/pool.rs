@@ -335,7 +335,12 @@ fn rotate_pool_on(
     if matches!(outcome, Ok(true)) {
         // The preimages hand their charge back as they drop; the obligations
         // taken from each member go back under what the rebuild recorded.
+        // The two levels each member rebuilt are built stored; the accepted
+        // move is the operation's end, which closes them.
         for (m, s) in members.iter_mut().zip(saved.drain(..)) {
+            m.levels[v].close();
+            m.levels[w].close();
+            m.debug_check_implicit_levels();
             m.dirty.merge_under(s.dirty);
         }
         return Ok(true);

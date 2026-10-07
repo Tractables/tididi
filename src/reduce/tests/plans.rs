@@ -5,7 +5,10 @@ use std::sync::Arc;
 use crate::diagram::{NEG_LEAF_IDX, POS_LEAF_IDX, Tdd};
 use crate::reduce::{ContentTwinPolicy, ContentTwinSchedule, ReductionPlan};
 use crate::test_helpers::check::marginal::check_no_orphan_slots;
-use crate::test_helpers::{assert_canonical, assert_same_shape, compile_clauses, toy};
+use crate::test_helpers::{
+    CnfShape, Lcg, assert_canonical, assert_same_shape, compile_clauses, compile_clauses_on, rand_cnf,
+    same_as_stored, toy, vtree_shapes, with_floor,
+};
 use crate::vtree::Vtree;
 use crate::Engine;
 
@@ -63,4 +66,49 @@ fn the_contract_plan_drains_its_worklist_and_a_full_plan_finishes_the_job() {
     let mut direct = compile_clauses(&vtree, &clauses);
     direct.minimize().unwrap();
     assert_same_shape(&stepwise, &direct, "contract then minimize against minimize");
+}
+
+/// The close at a plan's end changes how levels hold their pairs, not the
+/// diagram: a canonical diagram stays certified through the prune and
+/// contract plans, at the floor and at a floor of two pairs.
+#[test]
+fn the_prune_and_contract_plans_keep_a_canonical_diagram_certified() {
+    for floor in [crate::diagram::FLOOR, 2] {
+        with_floor(floor, || {
+            let vtree = Arc::new(Vtree::balanced(5));
+            let mut f = compile_clauses(&vtree, &[vec![1, 2, 3], vec![-2, 4], vec![3, -5], vec![-1, 5]]);
+            f.minimize().unwrap();
+            assert!(f.levels.is_canonical(f.output), "a minimized diagram is certified");
+            for plan in [ReductionPlan::Prune, ReductionPlan::Contract] {
+                f.reduce(plan).unwrap();
+                assert!(f.levels.is_canonical(f.output), "floor {floor}: a plan's close forgot the certificate");
+            }
+        });
+    }
+}
+
+/// The contract plan on unminimized conjunctions, on implicit levels and on
+/// stored ones alike ([`same_as_stored`]).
+#[test]
+fn the_contract_plan_leaves_the_diagram_the_stored_route_leaves() {
+    same_as_stored(|| {
+        let eng = Engine::new();
+        let mut rng = Lcg::new(0x6c0e_77a1);
+        let mut out = Vec::new();
+        for num_vars in [4u32, 6, 8] {
+            for (_name, vtree) in vtree_shapes(num_vars) {
+                for _ in 0..6 {
+                    let mut operand = || {
+                        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 5, width: 3 });
+                        compile_clauses_on(&eng, &vtree, &clauses)
+                    };
+                    let (f, g) = (operand(), operand());
+                    let mut h = eng.and(f, g).unwrap();
+                    eng.reduce(&mut h, ReductionPlan::Contract).unwrap();
+                    out.push(h);
+                }
+            }
+        }
+        out
+    });
 }

@@ -38,11 +38,10 @@ fn for_each_target_sibling(
     // not a child node), so it never joins twin grouping; the parent rewrite
     // leaves such a ref verbatim. `sibling` is passed raw: it is only hashed
     // and packed, never indexed.
-    // `pairs_of` slice iteration (compiler-vectorizable).
     for (parent_i, parent_node) in parent_level.nodes.iter().enumerate() {
         let pi = parent_i as u32;
-        for pair in parent_level.pairs_of(parent_node) {
-            let (t, sibling) = split_pair(pair, t1_side);
+        for pair in parent_level.pairs_iter_of(parent_node) {
+            let (t, sibling) = split_pair(&pair, t1_side);
             if let Some(t) = resolve_target(target, t) {
                 f(pi, t, sibling);
             }
@@ -162,11 +161,11 @@ impl TwinEntries for ContextEntries<'_> {
         let mut name = |t: u32| named[(t / 64) as usize] |= 1 << (t % 64);
         let (level, side, view) = (self.parent_level, self.t1_side, self.t1_view);
         for node in level.nodes.iter() {
-            let pairs = level.pairs_of(node);
+            let pairs = level.pairs_iter_of(node);
             if pairs.len() < 3 {
                 let mut last: Option<u32> = None;
                 for pair in pairs {
-                    let (t, s) = split_pair(pair, side);
+                    let (t, s) = split_pair(&pair, side);
                     if let Some(t) = resolve_target(view, t) {
                         if last == Some(s) {
                             return Ok(false);
@@ -180,8 +179,8 @@ impl TwinEntries for ContextEntries<'_> {
             let mut cells = (2 * pairs.len()).next_power_of_two().min(TWIN_TABLE_START_CELLS);
             let mut stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
             let mut filed = 0;
-            for (read, pair) in pairs.iter().enumerate() {
-                let (t, s) = split_pair(pair, side);
+            for (read, pair) in pairs.clone().enumerate() {
+                let (t, s) = split_pair(&pair, side);
                 if let Some(t) = resolve_target(view, t) {
                     if 2 * (filed + 1) > cells {
                         // Half full: double under a fresh stamp and file the
@@ -189,8 +188,8 @@ impl TwinEntries for ContextEntries<'_> {
                         // the test would have stopped.
                         cells *= 2;
                         stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
-                        for pair in &pairs[..read] {
-                            let (t, s) = split_pair(pair, side);
+                        for pair in pairs.clone().take(read) {
+                            let (t, s) = split_pair(&pair, side);
                             if resolve_target(view, t).is_some() {
                                 file_sibling(&mut twin_local[..cells], stamp, s);
                             }
@@ -263,7 +262,7 @@ pub(super) struct ContentEntries<'a>(pub(super) &'a TddLevel);
 impl TwinEntries for ContentEntries<'_> {
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
         for (i, node) in self.0.nodes.iter().enumerate() {
-            for pair in self.0.pairs_of(node) {
+            for pair in self.0.pairs_iter_of(node) {
                 f(i as u32, pack(pair.left.0, pair.right.0));
             }
         }

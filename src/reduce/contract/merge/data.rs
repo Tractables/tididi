@@ -106,12 +106,12 @@ pub(super) fn concat_twin_pairs(
     for &idx in group {
         let d = level.nodes[idx as usize];
         if let NodeKind::Inline(pair) = d.kind() {
-            level.pairs.push(pair);
+            level.pairs.stored_mut().push(pair);
         } else {
             // `pair_range_at` handles both normal and extended multi encodings;
             // the range is owned, so the immutable borrow ends before the extend.
             let r = level.pair_range_at(idx as usize);
-            level.pairs.extend_from_within(r);
+            level.pairs.stored_mut().extend_from_within(r);
         }
     }
     debug_assert_eq!(level.pairs.len() - new_start, total);
@@ -124,7 +124,7 @@ pub(super) fn concat_twin_pairs(
     // same pair twice), and where `allow_dups` says the caller resolves the
     // duplicates right after compaction (`duplicate_pair`).
     if cfg!(debug_assertions) && !allow_dups && !diagram_marginal && !level.any_value_ref_side() {
-        let mut chk = level.pairs[new_start..].to_vec();
+        let mut chk = level.pairs.stored_mut()[new_start..].to_vec();
         chk.sort_unstable();
         assert!(
             chk.windows(2).all(|w| w[0] != w[1]),
@@ -153,8 +153,8 @@ fn finalize_merged_node(
     new_len: usize,
 ) {
     if new_len == 1 {
-        let pair = level.pairs[new_start];
-        level.pairs.pop();
+        let pair = level.pairs.stored_mut().pop().expect("the merged pair");
+        debug_assert_eq!(level.pairs.len(), new_start);
         level.nodes[keep] = EncodedNode::inline(pair);
     } else {
         level.nodes[keep] = level.encode_multi(new_start, new_len);

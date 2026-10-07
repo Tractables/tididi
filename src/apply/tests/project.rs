@@ -115,7 +115,7 @@ fn exists_var_soundness_brute_force() {
 /// whose operands both inherit that level then reaches `apply_and` with
 /// left_width=right_width=0 and both levels marginal, which neither
 /// identity fast-path (both require k==1) handles — dense path panics at
-/// `pairs_of_idx(0)` on an empty nodes Vec.
+/// `pairs_vec(0)` on an empty nodes Vec.
 ///
 /// Fix: 0-width marginal fast-path added to `apply_and_fallible` before the
 /// debug-assertions block in `apply::conjoin`.
@@ -143,7 +143,7 @@ fn exists_var_soundness_brute_force() {
 /// counts, not pair references), matching the production dump where the
 /// 0-width level had no live parents. `apply_and` then hits A with
 /// left_width=right_width=0, both marginal: without the fix the debug assert (debug builds)
-/// or `pairs_of_idx(0)` (release) panics; with it the level passes
+/// or `pairs_vec(0)` (release) panics; with it the level passes
 /// through empty and the conjunction's count is unchanged.
 #[test]
 fn apply_and_zero_width_marginal_levels() {

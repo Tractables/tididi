@@ -55,9 +55,6 @@ thread_local! {
     /// Whether every conjunction level on this thread reads its child sides
     /// from the grid ([`grid_lookups`]).
     static GRID_LOOKUPS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// Whether every conjunction level on this thread writes its pairs
-    /// ([`written_levels`]).
-    static WRITTEN_LEVELS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The levels on this thread that read a complete child side by
     /// arithmetic: both sides, the left alone, the right alone; and the times
     /// a reserved arena charged the meter for a growth it did not make
@@ -67,10 +64,6 @@ thread_local! {
 
 pub(super) fn grid_lookups_forced() -> bool {
     GRID_LOOKUPS.with(std::cell::Cell::get)
-}
-
-pub(super) fn written_levels_forced() -> bool {
-    WRITTEN_LEVELS.with(std::cell::Cell::get)
 }
 
 pub(super) fn note_lookups(lookups: PlainLookups) {
@@ -106,19 +99,6 @@ pub(super) fn grid_lookups<R>(f: impl FnOnce() -> R) -> R {
         }
     }
     let _reset = Reset(GRID_LOOKUPS.with(|c| c.replace(true)));
-    f()
-}
-
-/// Run `f` with every conjunction level writing its pairs, none taking the
-/// implicit route: the oracle the implicit route is checked against.
-pub(super) fn written_levels<R>(f: impl FnOnce() -> R) -> R {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            WRITTEN_LEVELS.with(|c| c.set(self.0));
-        }
-    }
-    let _reset = Reset(WRITTEN_LEVELS.with(|c| c.replace(true)));
     f()
 }
 

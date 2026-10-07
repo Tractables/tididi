@@ -11,8 +11,8 @@ fn size_descent(tdd: &mut Tdd) -> RotationSearchStats {
         .expect("an unarmed engine stops nothing")
 }
 
-fn level_snapshot(tdd: &Tdd) -> Vec<(Vec<crate::diagram::EncodedNode>, Vec<crate::diagram::ChildPair>)> {
-    tdd.levels.iter().map(|l| (l.nodes.clone(), l.pairs.to_vec())).collect()
+fn level_snapshot(tdd: &Tdd) -> Vec<crate::diagram::TddLevel> {
+    tdd.levels.to_vec()
 }
 
 /// The size search preserves the model count, never grows the diagram, and a
@@ -116,7 +116,11 @@ fn reject_all_objective_leaves_tdd_untouched() {
     assert_eq!(stats.accepts, 0, "reject-all objective must accept nothing");
     assert!(stats.probes > 0, "test must actually exercise probes");
     assert_eq!(mc_before, tdd.model_count().unwrap(), "count unchanged");
-    assert_eq!(snap, level_snapshot(&tdd), "every probe must revert bit-identically");
+    let after = level_snapshot(&tdd);
+    assert_eq!(snap.len(), after.len());
+    for (a, b) in snap.iter().zip(&after) {
+        assert!(a.nodes == b.nodes && a.pairs == b.pairs, "every probe must revert bit-identically");
+    }
     assert_canonical(&tdd);
 }
 

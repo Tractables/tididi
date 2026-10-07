@@ -60,7 +60,8 @@ impl Index {
             lim.try_resize(&mut flags, width, false)?;
             lim.reserve_map(&mut owners[t.idx()], level.live_pairs())?;
             for (i, flag) in flags.iter_mut().enumerate() {
-                let pairs = level.pairs_of_idx(i);
+                let pairs = level.pairs_iter_of_idx(i);
+                let (count, first) = (pairs.len(), pairs.clone().next());
                 for p in pairs {
                     gate.poll(1)?;
                     let previous = owners[t.idx()].insert((p.left.raw(), p.right.raw()), i as u32);
@@ -69,9 +70,11 @@ impl Index {
                     any_one_mode |= left_leaf && p.left.raw() == ONE_LEAF_IDX.0;
                     any_one_mode |= right_leaf && p.right.raw() == ONE_LEAF_IDX.0;
                 }
-                *flag = pairs.len() == 1
-                    && child_is_singleton(&singleton, left, left_leaf, pairs[0].left.raw())
-                    && child_is_singleton(&singleton, right, right_leaf, pairs[0].right.raw());
+                *flag = count == 1
+                    && first.is_some_and(|first| {
+                        child_is_singleton(&singleton, left, left_leaf, first.left.raw())
+                            && child_is_singleton(&singleton, right, right_leaf, first.right.raw())
+                    });
             }
             singleton[t.idx()] = flags;
         }

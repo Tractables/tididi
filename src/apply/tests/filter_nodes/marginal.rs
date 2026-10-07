@@ -45,6 +45,10 @@ fn check(g: &Tdd, f: &Tdd, rejected: &dyn Fn(TddNodeId) -> bool, literal: Option
 fn live(f: &Tdd) -> Tdd {
     let mut g = f.clone();
     for level in g.levels.iter_mut() {
+        // An implicit arena holds no slot apart from its nodes' pairs.
+        if level.pairs.implicit().is_some() {
+            continue;
+        }
         let mut owned = vec![false; level.pairs.len()];
         for n in 0..level.nodes.len() {
             if level.nodes[n].kind().pairs_in_arena() {
@@ -52,7 +56,7 @@ fn live(f: &Tdd) -> Tdd {
             }
         }
         let blank = ChildPair::new(EncodedChildRef::from_raw(0), EncodedChildRef::from_raw(0));
-        for (pair, &owned) in level.pairs.iter_mut().zip(owned.iter()) {
+        for (pair, &owned) in level.pairs.stored_mut().iter_mut().zip(owned.iter()) {
             if !owned { *pair = blank; }
         }
     }
@@ -81,8 +85,16 @@ fn conjoin_free_literal(eng: &Engine, g: &Tdd, k: usize) -> Option<(Tdd, i32)> {
     Some((h, literal))
 }
 
+/// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn marginal_levels_are_copied_and_the_marker_carried() {
+    same_as_stored(copied_and_carried);
+}
+
+/// The cases of [`marginal_levels_are_copied_and_the_marker_carried`]: the
+/// diagram after every step, carried and cleared.
+fn copied_and_carried() -> Vec<Tdd> {
+    let mut out = Vec::new();
     // Operands on which the two differ after each step: the reduction, a
     // conjunction, summing out more, and a conjunction after that.
     let mut shapes_differ = [0usize; 4];
@@ -135,6 +147,7 @@ fn marginal_levels_are_copied_and_the_marker_carried() {
             if shape(&a) != shape(&b) { shapes_differ[step] += 1; }
             if image(&a) != image(&b) { markers_differ[step] += 1; }
         }
+        out.extend(steps.into_iter().flatten().flatten());
     }
     assert!(compared >= 40, "too few operands compared: {compared}");
     // Both are right at every step, and they are the same diagram at every
@@ -142,4 +155,5 @@ fn marginal_levels_are_copied_and_the_marker_carried() {
     // ones clear; the next conjunction or marginalization sets them again.
     assert_eq!(shapes_differ, [0; 4]);
     assert_eq!(markers_differ, [compared, 0, 0, 0]);
+    out
 }

@@ -28,7 +28,7 @@ impl Tdd {
                 if !reachable[t.idx()][i] {
                     continue;
                 }
-                for pair in level.pairs_of(node) {
+                for pair in level.pairs_iter_of(node) {
                     if pair.left != ZERO.into()
                         && let Some(s) = left_view.child(pair.left).index() {
                             reachable[left_vtree.idx()][s] = true;

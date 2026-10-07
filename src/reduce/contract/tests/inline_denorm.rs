@@ -87,7 +87,7 @@ fn twins_with_marginal_sibling_are_contracted() {
         "explicit twins with a common marginal sibling slot must contract to width 1",
     );
     // The parent must have had its duplicate pair removed (2 → 1).
-    let parent_node_pairs = tdd.levels[root.idx()].pairs_of_idx(0);
+    let parent_node_pairs = tdd.levels[root.idx()].pairs_vec(0);
     assert_eq!(
         parent_node_pairs.len(),
         1,
@@ -218,7 +218,7 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
 
     // Tagger rewrites both small-count slot refs to Inline(5) — equal raws.
     crate::diagram::inline_small_marginal_refs(&mut tdd, None);
-    for p in tdd.levels[root.idx()].pairs_of_idx(0) {
+    for p in tdd.levels[root.idx()].pairs_vec(0) {
         match ChildDecoder::marginal().value(p.right) {
             ValueRef::Inline(c) => assert_eq!(c, 5, "tagger must inline count 5"),
             other => panic!("sibling ref must be inline after tagging, got {other:?}"),
@@ -234,7 +234,7 @@ fn twins_with_equal_inline_sibling_counts_are_contracted() {
         "explicit twins sharing an EQUAL inline sibling count must contract; \
          inline raws compare by value so no canon pass is required",
     );
-    let parent_node_pairs = tdd.levels[root.idx()].pairs_of_idx(0);
+    let parent_node_pairs = tdd.levels[root.idx()].pairs_vec(0);
     assert_eq!(parent_node_pairs.len(), 1, "duplicate pair must be removed");
     match ChildDecoder::marginal().value(parent_node_pairs[0].right) {
         ValueRef::Inline(c) => assert_eq!(c, 5, "merged pair keeps the inline count"),
@@ -318,7 +318,7 @@ fn marginal_slot_twins_sum_with_overflow_promotion() {
     contract_all_twins(&eng, &mut tdd).expect("contract_all_twins");
 
     // The parent must have had its duplicate pair fused (2 → 1) by pair fusion.
-    let root_pairs = tdd.levels[root.idx()].pairs_of_idx(0);
+    let root_pairs = tdd.levels[root.idx()].pairs_vec(0);
     assert_eq!(
         root_pairs.len(),
         1,
@@ -453,7 +453,7 @@ fn p_fusion_redex_closed_within_contract_all_twins() {
     contract_all_twins(&eng, &mut tdd).expect("contract_all_twins");
 
     // The root node must have exactly one pair remaining.
-    let root_pairs = tdd.levels[root.idx()].pairs_of_idx(0);
+    let root_pairs = tdd.levels[root.idx()].pairs_vec(0);
     assert_eq!(
         root_pairs.len(),
         1,

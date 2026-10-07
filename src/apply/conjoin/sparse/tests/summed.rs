@@ -62,7 +62,7 @@ fn assert_identical(a: &Tdd, b: &Tdd, what: &str) {
         assert_eq!(x.ranges, y.ranges, "{what}: level {i} ranges");
         for n in 0..x.nodes.len() {
             assert_eq!(x.nodes[n].kind(), y.nodes[n].kind(), "{what}: level {i} node {n} encoding");
-            assert_eq!(x.pairs_of_idx(n), y.pairs_of_idx(n), "{what}: level {i} node {n} pairs");
+            assert_eq!(x.pairs_vec(n), y.pairs_vec(n), "{what}: level {i} node {n} pairs");
         }
     }
 }
@@ -86,7 +86,7 @@ fn root_groups(full: &Tdd, t: VtreeIdx, side: ChildSide) -> (usize, usize) {
     }
     let level = &full.levels[t.idx()];
     let mut keys: Vec<u32> = (0..level.nodes.len())
-        .flat_map(|n| level.pairs_of_idx(n).iter().map(|p| match side {
+        .flat_map(|n| level.pairs_iter_of_idx(n).map(|p| match side {
             ChildSide::Right => p.left.0,
             ChildSide::Left => p.right.0,
         }))

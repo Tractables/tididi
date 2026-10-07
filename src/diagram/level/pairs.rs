@@ -6,9 +6,94 @@ use crate::diagram::{ChildSide, EncodedChildRef};
 use crate::diagram::marginal_ref::ChildDecoder;
 use crate::diagram::PairsIter;
 use crate::diagram::primitives::{ChildPair, EncodedNode, NodeKind};
-use super::TddLevel;
+use super::{ImplicitLevel, TddLevel};
+
+/// A level's pairs as the level holds them: stored in its arena, or, on an
+/// implicit level, as their description. Code that reads pairs one node at a
+/// time takes [`TddLevel::pairs_iter_of_idx`], which generates an implicit
+/// level's; code that wants slices or arithmetic says which it has here.
+#[derive(Clone, Copy, Debug)]
+pub enum Pairs<'a> {
+    /// The pairs are stored.
+    Stored(StoredPairs<'a>),
+    /// The level is implicit: its pairs are those of this description.
+    Implicit(&'a ImplicitLevel),
+}
+
+/// The pairs of a level that stores them: a node's pairs are a slice of the
+/// arena, or the node itself for a single pair.
+#[derive(Clone, Copy, Debug)]
+pub struct StoredPairs<'a> {
+    level: &'a TddLevel,
+    arena: &'a [ChildPair],
+}
+
+impl<'a> StoredPairs<'a> {
+    /// The pairs of `node`, which must describe a node of this level.
+    ///
+    /// The slice borrows both the level and `node`, because an inline pair
+    /// lives in the node.
+    ///
+    /// ```compile_fail,E0597
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let diagram = Tdd::one(&vtree);
+    /// let level = diagram.level(vtree.root());
+    /// let stored = level.stored().unwrap();
+    /// let pairs;
+    /// {
+    ///     let node = level.nodes()[0];
+    ///     pairs = stored.of(&node);
+    /// }
+    /// assert!(!pairs.is_empty()); // the copied node no longer exists
+    /// ```
+    #[inline]
+    pub fn of<'n>(self, node: &'n EncodedNode) -> &'n [ChildPair]
+    where
+        'a: 'n,
+    {
+        match node.kind() {
+            // Safety: EncodedNode is #[repr(C)] {a: u32, b: u32}.
+            //         ChildPair is #[repr(C)] {left: EncodedChildRef(u32), right: EncodedChildRef(u32)}.
+            //         For inline nodes, a == left.0 and b == right.0 by construction.
+            //         Both types have identical {u32, u32} layout, so the cast is valid.
+            NodeKind::Inline(_) => unsafe { std::slice::from_ref(&*(node as *const EncodedNode as *const ChildPair)) },
+            NodeKind::Multi { .. } | NodeKind::MultiRanged(_) => &self.arena[self.level.multi_range(node)],
+        }
+    }
+
+    /// The pairs of node `idx`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `idx` is not below `nodes().len()`.
+    #[inline]
+    pub fn of_idx(self, idx: usize) -> &'a [ChildPair] {
+        self.of(&self.level.nodes[idx])
+    }
+}
 
 impl TddLevel {
+    /// The level's pairs, stored or described. Not valid on a marginal
+    /// level, whose arena is empty and reads as stored.
+    #[inline]
+    pub fn pair_view(&self) -> Pairs<'_> {
+        match self.pairs.stored() {
+            Some(arena) => Pairs::Stored(StoredPairs { level: self, arena }),
+            None => Pairs::Implicit(self.pairs.implicit().expect("an arena is stored or described")),
+        }
+    }
+
+    /// The level's pairs when it stores them; `None` on an implicit level.
+    #[inline]
+    pub fn stored(&self) -> Option<StoredPairs<'_>> {
+        match self.pair_view() {
+            Pairs::Stored(s) => Some(s),
+            Pairs::Implicit(_) => None,
+        }
+    }
+
     /// Every node as `(local index, pairs)`.
     /// The index is the node's slot in `nodes`, so it is valid for arrays
     /// sized by `slot_count()`. Empty on a marginal level.
@@ -49,71 +134,26 @@ impl TddLevel {
         self.arena_range(node.kind()).expect("multi_range on an inline node")
     }
 
-    /// The pairs of `node`, which must describe a node of this level.
-    ///
-    /// The slice borrows both the level and `node`, because an inline pair lives in the node.
-    ///
-    /// ```compile_fail,E0597
-    /// use std::sync::Arc;
-    /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(2));
-    /// let diagram = Tdd::one(&vtree);
-    /// let level = diagram.level(vtree.root());
-    /// let pairs;
-    /// {
-    ///     let node = level.nodes()[0];
-    ///     pairs = level.pairs_of(&node);
-    /// }
-    /// assert!(!pairs.is_empty()); // the copied node no longer exists
-    /// ```
-    pub fn pairs_of<'a>(&'a self, node: &'a EncodedNode) -> &'a [ChildPair] {
-        match node.kind() {
-            // Safety: EncodedNode is #[repr(C)] {a: u32, b: u32}.
-            //         ChildPair is #[repr(C)] {left: EncodedChildRef(u32), right: EncodedChildRef(u32)}.
-            //         For inline nodes, a == left.0 and b == right.0 by construction.
-            //         Both types have identical {u32, u32} layout, so the cast is valid.
-            NodeKind::Inline(_) => unsafe {
-                std::slice::from_ref(&*(node as *const EncodedNode as *const ChildPair))
-            },
-            NodeKind::Multi { .. } | NodeKind::MultiRanged(_) => &self.pairs[self.multi_range(node)],
-        }
+    /// The pairs of node `idx`, stored or generated from the level's
+    /// description; not valid on a marginal level.
+    #[inline]
+    pub fn pairs_iter_of_idx(&self, idx: usize) -> PairsIter<'_> {
+        debug_assert!(!self.is_marginal(), "pairs_iter_of_idx({idx}) called on marginal level");
+        self.pairs_iter_of(&self.nodes[idx])
     }
 
-    /// [`pairs_of`](Self::pairs_of) by node index; not valid on a marginal level.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `idx` is not below `nodes().len()`, which on a marginal level
-    /// is every `idx`.
-    pub fn pairs_of_idx(&self, idx: usize) -> &[ChildPair] {
-        // A debug_assert! rather than a check: this is a hot path, and callers
-        // route around marginal levels.
-        debug_assert!(
-            !self.is_marginal(),
-            "pairs_of_idx({idx}) called on marginal level (width={}, nodes.len()={}, pairs.len()={}). \
-             Callers must guard via is_marginal() — marginal levels store model counts, \
-             not pair structure.",
-            self.slot_count(), self.nodes.len(), self.pairs.len(),
-        );
-        self.pairs_of(&self.nodes[idx])
+    /// The pairs of node `idx`, collected: for tests and checkers, which
+    /// compare and index them.
+    #[cfg(any(test, debug_assertions, feature = "testing"))]
+    #[doc(hidden)]
+    pub fn pairs_vec(&self, idx: usize) -> Vec<ChildPair> {
+        self.pairs_iter_of_idx(idx).collect()
     }
 
-    /// [`pairs_iter_of`](Self::pairs_iter_of) by node index; not valid on a
-    /// marginal level.
-    pub(crate) fn pairs_iter_of_idx(&self, idx: usize) -> PairsIter<'_> {
-        debug_assert!(
-            !self.is_marginal(),
-            "pairs_iter_of_idx({idx}) called on marginal level",
-        );
-        let d = &self.nodes[idx];
-        self.pairs_iter_of(d)
-    }
-
-    /// Like [`pairs_of_idx`](Self::pairs_of_idx), but decodes marginal-side fields to the bare
-    /// coordinates structural use wants ([`ChildDecoder::coord`]).
-    ///
-    /// With neither child marginal this is the zero-copy `pairs_of_idx`;
-    /// otherwise it materializes a decoded copy into `scratch`.
+    /// Node `idx`'s pairs decoded to the bare coordinates structural use
+    /// wants ([`ChildDecoder::coord`]): a stored level's own slice when
+    /// neither child is marginal, else the pairs decoded or generated into
+    /// `scratch`.
     pub(crate) fn pairs_view_decoded<'a>(
         &'a self,
         idx: usize,
@@ -122,7 +162,7 @@ impl TddLevel {
         right: ChildDecoder,
     ) -> &'a [ChildPair] {
         if !left.is_marginal() && !right.is_marginal() {
-            return self.pairs_of_idx(idx);
+            return self.pairs_read(idx, scratch);
         }
         scratch.clear();
         self.decode_pairs_into(idx, scratch, left, right);
@@ -144,32 +184,38 @@ impl TddLevel {
         }
     }
 
-    /// The pairs of `node` as an iterator; the owned-item twin of
-    /// [`pairs_of`](Self::pairs_of).
+    /// The pairs of `node`, a node of this level, as an iterator: stored, or
+    /// generated from the level's description.
     #[inline]
     pub fn pairs_iter_of<'a>(&'a self, node: &'a EncodedNode) -> PairsIter<'a> {
         match node.kind() {
             NodeKind::Inline(pair) => PairsIter::inline(pair),
             NodeKind::Multi { .. } | NodeKind::MultiRanged(_) => {
                 let range = self.multi_range(node);
-                PairsIter::slice(&self.pairs[range])
+                match self.pair_view() {
+                    Pairs::Stored(s) => PairsIter::slice(&s.arena[range]),
+                    Pairs::Implicit(d) => PairsIter::described(d.places(range.start / d.pairs_per_node())),
+                }
             }
         }
     }
 
-    /// Get mutable access to a multi-pair node's pairs in the arena.
-    /// Only valid for multi-pair nodes; panics on inline nodes.
+    /// A stored multi-pair node's pairs, to change in place.
+    ///
+    /// # Panics
+    ///
+    /// Panics on an inline node or an implicit level.
     #[inline]
+    #[track_caller]
     pub(crate) fn pairs_mut(&mut self, idx: usize) -> &mut [ChildPair] {
-        debug_assert!(self.nodes[idx].kind().pairs_in_arena(),
-            "pairs_mut called on inline node");
+        debug_assert!(self.nodes[idx].kind().pairs_in_arena(), "pairs_mut called on inline node");
         let range = self.multi_range(&self.nodes[idx]);
-        &mut self.pairs[range]
+        &mut self.pairs.stored_mut()[range]
     }
 
-    /// Index-remap a multi-pair node's pairs in place: each side is rewritten
-    /// through its lookup slice and [`ChildDecoder::remap`], which leaves a
-    /// marginal side's inline values alone.
+    /// Index-remap a stored multi-pair node's pairs in place: each side is
+    /// rewritten through its lookup slice and [`ChildDecoder::remap`], which
+    /// leaves a marginal side's inline values alone.
     ///
     /// Precondition (debug-asserted): `self.nodes[idx].kind().pairs_in_arena()`; every
     /// structural coordinate looked up is within its remap slice.
@@ -182,10 +228,7 @@ impl TddLevel {
         left: ChildDecoder,
         right: ChildDecoder,
     ) {
-        debug_assert!(self.nodes[idx].kind().pairs_in_arena(),
-            "pairs_remap_indexed called on inline node");
-        let range = self.multi_range(&self.nodes[idx]);
-        for pair in &mut self.pairs[range] {
+        for pair in self.pairs_mut(idx) {
             pair.left = left.remap(pair.left, left_remap);
             pair.right = right.remap(pair.right, right_remap);
         }
@@ -223,8 +266,9 @@ impl TddLevel {
         self.pair_counts().sum()
     }
 
-    /// Exchange the two sides of every pair, in place: the level of the same
-    /// functions over this vtree node with its two children swapped.
+    /// Exchange the two sides of every pair: the level of the same functions
+    /// over this vtree node with its two children swapped. An implicit
+    /// level's description has its sides exchanged.
     ///
     /// A level's nodes are classes of assignments to the node's variables,
     /// and a node's pairs are the (left class, right class) products it
@@ -237,8 +281,12 @@ impl TddLevel {
                 std::mem::swap(&mut node.a, &mut node.b);
             }
         }
-        for pair in self.pairs.iter_mut() {
-            std::mem::swap(&mut pair.left, &mut pair.right);
+        if self.pairs.implicit().is_some() {
+            self.pairs.swap_described_sides();
+        } else {
+            for pair in self.pairs.stored_mut().iter_mut() {
+                std::mem::swap(&mut pair.left, &mut pair.right);
+            }
         }
         let left = self.has_value_refs(ChildSide::Left);
         self.set_has_value_refs(ChildSide::Left, self.has_value_refs(ChildSide::Right));

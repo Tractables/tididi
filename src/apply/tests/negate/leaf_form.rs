@@ -18,7 +18,7 @@ fn labels_at(tdd: &Tdd, t: usize, side: ChildSide) -> (bool, bool) {
         return (one, literal);
     }
     for j in 0..level.slot_count() {
-        for p in level.pairs_of_idx(j) {
+        for p in level.pairs_vec(j) {
             let label = if side == ChildSide::Left { p.left.0 } else { p.right.0 };
             one |= label == ONE_LEAF_IDX.0;
             literal |= label == POS_LEAF_IDX.0 || label == NEG_LEAF_IDX.0;
@@ -117,7 +117,7 @@ fn a_fill_on_a_one_form_level_is_emitted_as_one() {
                         continue; // no fill here
                     }
                     let fill = full.levels[ti].slot_count() - 1;
-                    for p in full.levels[ti].pairs_of_idx(fill) {
+                    for p in full.levels[ti].pairs_vec(fill) {
                         if forms[ti].0 {
                             assert_eq!(p.left.0, ONE_LEAF_IDX.0, "fill split a One on level {ti}");
                         }

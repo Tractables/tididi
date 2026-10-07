@@ -1259,7 +1259,7 @@ fn emit_parent(
     debug_assert!(
         duplicates_legal || (first_node..level.nodes.len()).all(|i| {
             let mut seen = std::collections::HashSet::new();
-            level.pairs_of_idx(i).iter().all(|p| seen.insert(*p))
+            level.pairs_iter_of_idx(i).all(|p| seen.insert(p))
         }),
         "sparse apply: duplicate pair emitted — canonicity violated"
     );
@@ -1277,7 +1277,7 @@ fn push_node_from(
     debug_assert!(pairs.len() >= 2, "a one-pair node is pushed inline");
     let start = level.pairs.len();
     reserve_pairs_for_emit(eng, level, pairs.len())?;
-    level.pairs.extend(pairs);
+    level.pairs.stored_mut().extend(pairs);
     finish_node(eng, level, start)?;
     Ok(())
 }
@@ -1304,7 +1304,8 @@ fn push_nodes_sorted(
     let base = level.pairs.len();
     let total = prefix_offsets(cursors, true)?;
     reserve_pairs_for_emit(eng, level, total as usize)?;
-    level.pairs.resize(base + total as usize, zero);
+    let arena = level.pairs.stored_mut();
+    arena.resize(base + total as usize, zero);
     singles.clear();
     eng.limits().try_resize(singles, cursors.len(), zero)?;
     for entry in candidates {
@@ -1313,7 +1314,7 @@ fn push_nodes_sorted(
         if cursor == SINGLE {
             singles[k] = candidate_pair(entry);
         } else {
-            level.pairs[base + cursor as usize] = candidate_pair(entry);
+            arena[base + cursor as usize] = candidate_pair(entry);
             cursors[k] = cursor + 1;
         }
     }
@@ -1359,7 +1360,7 @@ pub(super) fn finish_direct(
     debug_assert!(
         duplicates_legal || {
             let mut seen = std::collections::HashSet::new();
-            level.pairs_of_idx(node.idx()).iter().all(|p| seen.insert(*p))
+            level.pairs_iter_of_idx(node.idx()).all(|p| seen.insert(p))
         },
         "sparse apply: duplicate pair emitted — canonicity violated"
     );

@@ -98,7 +98,7 @@ fn fusion_sums_inline_inline_pairs() {
         _ => panic!("root must be internal"),
     };
     let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
-    let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
+    let pairs = tdd.levels[root.idx()].pairs_vec(0);
     assert_eq!(pairs.len(), 1, "fusion must collapse two pairs to one");
     let fused_raw = pairs[0].right.0;
     let fused_count = match ChildDecoder::marginal().value(EncodedChildRef::from_raw(fused_raw)) {
@@ -147,7 +147,7 @@ fn fusion_groups_by_inline_explicit_refs() {
     assert_eq!(size_before - tdd.pair_count(), 1);
     assert_eq!(marginal_slots(&tdd), slots_before, "fused count 12 must be inlined, not slotted");
     let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
-    let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
+    let pairs = tdd.levels[root.idx()].pairs_vec(0);
     assert_eq!(pairs.len(), 2, "the two pairs sharing Inline(3) fuse; the third stays");
     let fused = pairs
         .iter()
@@ -194,7 +194,7 @@ fn fusion_sums_inline_plus_slot_into_slot() {
 
     // The fused pair's marginal ref must be a SLOT (bit-30 clear).
     let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
-    let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
+    let pairs = tdd.levels[root.idx()].pairs_vec(0);
     assert_eq!(pairs.len(), 1, "fusion must collapse two pairs to one");
     let fused_raw = pairs[0].right.0;
     let fused_ref = ChildDecoder::marginal().value(EncodedChildRef::from_raw(fused_raw));
@@ -235,7 +235,7 @@ fn fusion_sums_identical_ref_occurrences() {
     assert_eq!(marginal_slots(&tdd), slots_before, "fused count 12 inlines under the default threshold");
 
     let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
-    let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
+    let pairs = tdd.levels[root.idx()].pairs_vec(0);
     assert_eq!(pairs.len(), 1, "fusion must collapse the two identical pairs to one");
     let fused_count = match ChildDecoder::marginal().value(pairs[0].right) {
         ValueRef::Inline(v) => v as u128,
@@ -270,7 +270,7 @@ fn fusion_partitions_two_independent_x_groups() {
     assert_eq!(marginal_slots(&tdd), slots_before, "sums 15 and 24 both inline under the default threshold");
 
     let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
-    let pairs = tdd.levels[root.idx()].pairs_of_idx(0);
+    let pairs = tdd.levels[root.idx()].pairs_vec(0);
     assert_eq!(pairs.len(), 2, "five pairs in two groups collapse to two fused pairs");
     // Map each surviving fused pair by its preserved x-side (left) index.
     let mut by_left: std::collections::HashMap<u32, u128> = std::collections::HashMap::new();

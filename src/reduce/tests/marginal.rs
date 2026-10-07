@@ -267,7 +267,7 @@ fn minimize_relocates_weight_store_rows_with_their_slots() {
 
     // Drop the output node's first pair, orphaning the slots only it named.
     let out = tdd.output.local;
-    let kept: Vec<ChildPair> = tdd.levels[root.idx()].pairs_of_idx(out.idx())[1..].to_vec();
+    let kept: Vec<ChildPair> = tdd.levels[root.idx()].pairs_vec(out.idx())[1..].to_vec();
     assert!(kept.len() >= 2, "setup: the output node must keep several pairs");
     tdd.levels[root.idx()].replace_node_pairs(out, &kept);
 

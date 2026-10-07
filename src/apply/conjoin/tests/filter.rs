@@ -47,7 +47,7 @@ fn filtered_truth(f: &Tdd, g: &Tdd, t: VtreeIdx, a: NodeIdx, b: NodeIdx, assignm
         crate::vtree::VtreeNode::Internal { left, right, .. } => {
             if (t.idx() + a.idx() + b.idx()).is_multiple_of(divisor) { return false; }
             let af = f.level(t); let bg = g.level(t);
-            af.pairs_of_idx(a.idx()).iter().any(|ap| bg.pairs_of_idx(b.idx()).iter().any(|bp| {
+            af.pairs_vec(a.idx()).iter().any(|ap| bg.pairs_vec(b.idx()).iter().any(|bp| {
                 let (ChildRef::Node(al), ChildRef::Node(ar)) = (af.child_decoder().child(ap.left), af.child_decoder().child(ap.right)) else { panic!("structural fixture"); };
                 let (ChildRef::Node(bl), ChildRef::Node(br)) = (bg.child_decoder().child(bp.left), bg.child_decoder().child(bp.right)) else { panic!("structural fixture"); };
                 filtered_truth(f,g,*left,al,bl,assignment,divisor) && filtered_truth(f,g,*right,ar,br,assignment,divisor)

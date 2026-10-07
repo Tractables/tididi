@@ -47,7 +47,7 @@ pub(super) fn try_push_pair_into(
     level: &mut crate::diagram::TddLevel,
     pair: crate::diagram::ChildPair,
 ) -> Result<(), OperationError> {
-    let v = &mut level.pairs;
+    let v = level.pairs.stored_mut();
     if v.len() < v.capacity() {
         v.push(pair);
         return Ok(());
@@ -185,7 +185,7 @@ pub(crate) fn reserve_pairs_for_emit(
     level: &mut crate::diagram::TddLevel,
     additional: usize,
 ) -> Result<(), OperationError> {
-    let v = &mut level.pairs;
+    let v = level.pairs.stored_mut();
     if additional <= v.capacity() - v.len() {
         return Ok(());
     }

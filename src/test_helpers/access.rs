@@ -88,7 +88,7 @@ pub(crate) fn reroot_to_child(t: &Tdd, child: ChildSide) -> Tdd {
         VtreeNode::Internal { left, right, .. } => (left, right),
         VtreeNode::Leaf { .. } => panic!("reroot_to_child: the root must be internal"),
     };
-    let pairs = t.levels[root.idx()].pairs_of_idx(t.output.local.idx());
+    let pairs = t.levels[root.idx()].pairs_vec(t.output.local.idx());
     assert_eq!(pairs.len(), 1, "reroot_to_child expects the single-region g ∧ ⊤ shape");
     let p = pairs[0];
     let (child, local) = if child == ChildSide::Left { (lc, p.left) } else { (rc, p.right) };

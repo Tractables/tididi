@@ -591,7 +591,7 @@ pub(super) fn open_level_arenas(
     let pairs_reserve =
         emit_pair_bound.min(LEVEL_RESERVE_PAIRS_CAP as u128) as usize;
     let pre_pairs_cap = level.pairs.capacity();
-    lim.reserve(&mut level.pairs, pairs_reserve)?;
+    lim.reserve(level.pairs.stored_mut(), pairs_reserve)?;
     // Output-pair meter: this bulk seed is real arena capacity the
     // emit walk will not charge again.
     lim.charge_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
@@ -856,7 +856,7 @@ fn reserve_complete_level(
     let nodes = fit(f_live * g_live)?;
     let pairs = fit(f_pairs * g_pairs - f_single * g_single)?;
     lim.reserve_exact(&mut level.nodes, nodes)?;
-    lim.reserve_exact(&mut level.pairs, pairs)?;
+    lim.reserve_exact(level.pairs.stored_mut(), pairs)?;
     Ok(charged)
 }
 
@@ -896,11 +896,6 @@ pub(super) fn build_level_dense(
     // the materialized child grids, and `both_multi_pair` implies a route that has them.
     // With both sides complete no mask can clear, and the row loop reads none.
     let masked = both_multi_pair && !matches!(lookups, PlainLookups::Complete { .. });
-    // Only a level of two complete sides can take the implicit route below.
-    if !matches!(lookups, PlainLookups::Complete { .. }) {
-        f.materialize_level(t);
-        g.materialize_level(t);
-    }
     if masked {
         build_level_prefilter_masks(eng, run, g, shape, &plan, bases)?;
     }
@@ -910,12 +905,13 @@ pub(super) fn build_level_dense(
 
     let grouped = both_multi_pair && !passthrough.left && !passthrough.right;
     // A level of two complete sides whose operand levels are affine takes
-    // the implicit route; any other reads its operands' pairs, written.
+    // the implicit route; any other reads its operands' pairs, an implicit
+    // operand's generated from its description.
     let composed = (matches!(lookups, PlainLookups::Complete { .. })
         && !use_sparse_marginal
         && stream_state.is_none()
         && sweep.filter.is_none()
-        && !written_levels_forced())
+        && !crate::diagram::stored_levels_forced())
     .then(|| super::compose::plan(lim, f.level(t), g.level(t), shape, grouped))
     .flatten();
     // The arenas the implicit route opened before it found it would have to
@@ -939,8 +935,6 @@ pub(super) fn build_level_dense(
         }
         opened = Some(charged);
     }
-    f.materialize_level(t);
-    g.materialize_level(t);
 
     // `t` and its two vtree children are three distinct tree nodes, so these
     // are three disjoint level slots: the streaming row loops read the child

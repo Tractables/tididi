@@ -140,7 +140,7 @@ impl<'a> Oriented<'a> {
 /// Every pair of a level with the index of the node holding it.
 fn pairs_with_parent(level: &TddLevel) -> impl Iterator<Item = (u32, ChildPair)> + Clone + '_ {
     level.nodes.iter().enumerate()
-        .flat_map(|(parent, node)| level.pairs_of(node).iter().map(move |&pair| (parent as u32, pair)))
+        .flat_map(|(parent, node)| level.pairs_iter_of(node).map(move |pair| (parent as u32, pair)))
 }
 
 /// A histogram of `keys` over `n` keys, counted as `u32`.
@@ -550,7 +550,7 @@ fn count_indirect(
             continue;
         }
         // `L(p, ·)`, folded against `V(p, ·)` candidate by candidate.
-        for pair in view.p_c.pairs_of(node) {
+        for pair in view.p_c.pairs_iter_of(node) {
             let (p_cl, p_cr) = (pair.left.0, pair.right.0);
             let walked = match pricing.choose(p_cl, p_cr).0 {
                 Direction::ByLeft => {
@@ -997,7 +997,7 @@ fn count_dense<W: Weight>(
             continue;
         }
         // `L(p, ·)`, folded against `V(p, ·)` candidate by candidate.
-        for pair in view.p_c.pairs_of(node) {
+        for pair in view.p_c.pairs_iter_of(node) {
             let (p_cl, p_cr) = (pair.left.0, pair.right.0);
             let walked = match pricing.choose(p_cl, p_cr).0 {
                 Direction::ByLeft => walk_pair(&left, &right, p_cl, p_cr, &mut probe_cr, &weights, &mut total),

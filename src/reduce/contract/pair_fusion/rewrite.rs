@@ -60,6 +60,11 @@ pub(super) fn rebuild_parent_level_with<V>(
     bitmap_min_plans: usize,
 ) -> Result<(), OperationError> {
     let level = &mut tdd.levels[parent.idx()];
+    // The fusion changes node lengths in place: an implicit level, one whose
+    // child became marginal, is built stored where its pairs lie first.
+    if level.pairs.implicit().is_some() {
+        level.store_moved(|_| true, |l| l, |r| r);
+    }
     // Fusion-inline may mint a fresh inline marginal-side ref (bit-30 tagged) this
     // sweep; the marker for that side must be raised or the end-of-apply tagger
     // and the apply reader misread the ref as a grid coordinate. Rewriting in place
@@ -191,12 +196,13 @@ fn fuse_node_pairs<V>(
     // onto a slot already read past. A pair is fused away iff its x-side index
     // carries a plan (see `fused_x` above).
     let mut write = start;
+    let arena = level.pairs.stored_mut();
     match words {
         None => {
             for read in start..start + old_len {
-                let p = level.pairs[read];
+                let p = arena[read];
                 if !fused_x.contains_key(&x_of(p)) {
-                    level.pairs[write] = p;
+                    arena[write] = p;
                     write += 1;
                 }
             }
@@ -204,11 +210,11 @@ fn fuse_node_pairs<V>(
         Some(words) => {
             let planned = &bits[..words];
             for read in start..start + old_len {
-                let p = level.pairs[read];
+                let p = arena[read];
                 let x = x_of(p) as usize;
                 let fused = planned.get(x >> 6).is_some_and(|w| (w >> (x & 63)) & 1 == 1);
                 if !fused {
-                    level.pairs[write] = p;
+                    arena[write] = p;
                     write += 1;
                 }
             }
@@ -233,7 +239,7 @@ fn fuse_node_pairs<V>(
             ChildSide::Left => ChildPair::new(EncodedChildRef::from_raw(r_new), EncodedChildRef::from_raw(x_idx)),
         };
         debug_assert!(write < start + old_len, "fusion must shrink the pair list");
-        level.pairs[write] = fused;
+        arena[write] = fused;
         write += 1;
     }
 

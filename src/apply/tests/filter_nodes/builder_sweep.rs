@@ -45,7 +45,7 @@ pub(super) fn replica(eng: &Engine, f: &Tdd, keep: impl Fn(TddNodeId) -> bool) -
                 continue;
             }
             pairs.clear();
-            for pair in source.pairs_of_idx(i) {
+            for pair in source.pairs_vec(i) {
                 if pair.left == ZERO.into() || pair.right == ZERO.into() {
                     stats.pairs_dropped += 1;
                     continue;

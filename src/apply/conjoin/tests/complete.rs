@@ -5,7 +5,7 @@
 use super::*;
 use crate::Engine;
 use crate::limits::{LimitConfig, StopAt, StopRules};
-use crate::test_helpers::{assert_canonical, rand_conj_over, Lcg};
+use crate::test_helpers::{assert_canonical, rand_conj_over, same_as_stored, Lcg};
 use crate::vtree::Vtree;
 
 /// A random function of `vars`, minimized, on `vtree`.
@@ -31,8 +31,8 @@ fn conjoin(f: &Tdd, g: &Tdd, grid: bool, floor: Option<u64>) -> (Result<Tdd, Ope
 
 /// Conjoin `f` and `g` both ways and require the same diagram and the same
 /// work; then, under a stop at each output-pair floor up to the result's
-/// size, the same stop at the same work.
-fn same_both_ways(f: &Tdd, g: &Tdd) {
+/// size, the same stop at the same work. Returns the conjunction.
+fn same_both_ways(f: &Tdd, g: &Tdd) -> Tdd {
     let (oracle, oracle_work) = conjoin(f, g, true, None);
     let (out, work) = conjoin(f, g, false, None);
     let (oracle, out) = (oracle.unwrap(), out.unwrap());
@@ -48,6 +48,7 @@ fn same_both_ways(f: &Tdd, g: &Tdd) {
         assert_eq!(work, oracle_work, "a stop at {floor} pairs fell at other work");
         floor = floor * 3 / 2 + 1;
     }
+    out
 }
 
 /// `f` over the odd variables and `g` over the even ones of a balanced
@@ -75,7 +76,8 @@ fn disjoint_supports_read_both_sides_by_arithmetic() {
 
 /// Shared variables under one child leave products unsatisfiable there: that
 /// child has dead cells and is read from the grid, its sibling by
-/// arithmetic, on the left at one level and on the right at another.
+/// arithmetic, on the left at one level and on the right at another. On
+/// implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn shared_variables_leave_one_side_on_the_grid() {
     let vtree = Arc::new(Vtree::balanced(16));
@@ -83,13 +85,18 @@ fn shared_variables_leave_one_side_on_the_grid() {
     // under the rightmost.
     let fv: Vec<u32> = (1..=16).filter(|v| v % 2 == 1 || *v == 2 || *v == 4).collect();
     let gv: Vec<u32> = (1..=16).filter(|v| v % 2 == 0 || *v == 13 || *v == 15).collect();
-    let mut rng = Lcg::new(0x5eed_a902);
     let before = complete_census();
-    for _ in 0..8 {
-        let f = function_of(&vtree, &fv, &mut rng);
-        let g = function_of(&vtree, &gv, &mut rng);
-        same_both_ways(&f, &g);
-    }
+    same_as_stored(|| {
+        let mut rng = Lcg::new(0x5eed_a902);
+        let mut out = Vec::new();
+        for _ in 0..8 {
+            let f = function_of(&vtree, &fv, &mut rng);
+            let g = function_of(&vtree, &gv, &mut rng);
+            let fg = same_both_ways(&f, &g);
+            out.extend([f, g, fg]);
+        }
+        out
+    });
     let census = complete_census();
     assert!(census[1] > before[1], "no level read only its left side by arithmetic");
     assert!(census[2] > before[2], "no level read only its right side by arithmetic");

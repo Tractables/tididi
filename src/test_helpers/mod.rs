@@ -40,6 +40,8 @@ mod r#gen;
 mod oracle;
 #[cfg(test)]
 mod toy;
+#[cfg(test)]
+mod implicit;
 
 #[cfg(test)]
 pub(crate) use access::*;
@@ -55,3 +57,5 @@ pub use r#gen::*;
 pub use oracle::*;
 #[cfg(test)]
 pub(crate) use toy::*;
+#[cfg(test)]
+pub(crate) use implicit::*;

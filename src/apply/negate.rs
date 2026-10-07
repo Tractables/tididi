@@ -190,8 +190,8 @@ fn expand_full_with(
         let mut cover = Cover::reset(eng, bits, lefts, rights, leaf)?;
         let mut poll = eng.limits().gate();
         for node in &level.nodes {
-            for pair in level.pairs_of(node) {
-                cover.mark_pair(*pair);
+            for pair in level.pairs_iter_of(node) {
+                cover.mark_pair(pair);
                 poll.poll(1)?;
             }
         }
@@ -497,8 +497,8 @@ fn collect_complement_pairs(
     out: &mut Vec<ChildPair>,
 ) -> Result<(), OperationError> {
     let mut cover = Cover::reset(eng, bits, basis.lefts, basis.rights, basis.form)?;
-    for pair in level.pairs_of_idx(exclude_node.idx()) {
-        cover.mark_pair(*pair);
+    for pair in level.pairs_iter_of_idx(exclude_node.idx()) {
+        cover.mark_pair(pair);
     }
     out.clear();
     cover.missing_into(eng, basis.form, out)

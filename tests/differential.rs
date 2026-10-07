@@ -488,7 +488,7 @@ fn binary_round_trip(case: &Case) {
         let (a, b) = (back.level(t), from_text.level(t));
         assert_eq!(a.nodes().len(), b.nodes().len(), "binary round trip: level {t:?}");
         for i in 0..a.nodes().len() {
-            assert_eq!(a.pairs_of_idx(i), b.pairs_of_idx(i), "binary round trip: level {t:?} node {i}");
+            assert_eq!(a.pairs_vec(i), b.pairs_vec(i), "binary round trip: level {t:?} node {i}");
         }
     }
     assert_eq!(f.model_count().unwrap(), back.model_count().unwrap(), "binary round trip changed the count");
@@ -981,7 +981,7 @@ fn named_levels(f: &Tdd) -> (Option<(VtreeIdx, Named)>, Vec<NamedLevel>) {
         let lists: NamedLevel = (0..level.nodes().len())
             .map(|i| {
                 let mut pairs: Vec<(Named, Named)> = level
-                    .pairs_of_idx(i)
+                    .pairs_vec(i)
                     .iter()
                     .map(|p| (name(left, p.left, &class), name(right, p.right, &class)))
                     .collect();

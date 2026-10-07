@@ -99,15 +99,17 @@ pub(super) fn build_level_quantified(
     slab[base..base + cells].fill(NO_PRODUCT);
 
     let mut gate = lim.gate();
+    // An implicit operand level's pairs are generated into these.
+    let (mut f_buf, mut g_buf) = (Vec::new(), Vec::new());
     for i in 0..fw.here {
-        let f_pairs = f_level.pairs_of_idx(i);
+        let f_pairs = f_level.pairs_read(i, &mut f_buf);
         if f_pairs.is_empty() {
             continue;
         }
         let row = base + i * gw.here;
         for j in 0..gw.here {
             gate.poll(1)?;
-            let g_pairs = g_level.pairs_of_idx(j);
+            let g_pairs = g_level.pairs_read(j, &mut g_buf);
             if !cell_is_satisfiable(f_pairs, g_pairs, slab, &sides, &mut gate)? {
                 continue;
             }

@@ -264,8 +264,17 @@ fn pin_reset_to_same_value_records_nothing() {
 ///   reads it as a marginal child);
 /// - one `Frontier` counter REUSED across successive pin assignments — the readout's
 ///   loop shape — agrees with a freshly constructed counter each time.
+///
+/// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
+    crate::test_helpers::same_as_stored(pinned_hybrid_on_marginalized_diagrams);
+}
+
+/// The cases of [`pinned_hybrid_matches_bigint_on_marginalized_diagrams`]:
+/// the marginalized diagrams counted.
+fn pinned_hybrid_on_marginalized_diagrams() -> Vec<Tdd> {
+    let mut out = Vec::new();
     let eng = Engine::new();
     use crate::test_helpers::marginalize_subtree;
 
@@ -378,6 +387,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
                     }
                 }
             }
+            out.push(tdd);
         }
     }
     assert!(checked > 0);
@@ -389,6 +399,7 @@ fn pinned_hybrid_matches_bigint_on_marginalized_diagrams() {
         nonzero > 0,
         "test built only UNSAT-under-pins formulas — the counting path was never exercised"
     );
+    out
 }
 
 #[test]

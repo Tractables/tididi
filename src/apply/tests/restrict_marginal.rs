@@ -18,9 +18,17 @@ use crate::Engine;
 /// The contract holds for DISJOINT multi-region marginal care. OVERLAPPING
 /// regions (`f` AND `care` marginal at the same node) have no pure-`restrict_to_care`
 /// reference — the joint count over the summed region is unrecoverable — so
-/// this guards the disjoint regime only.
+/// this guards the disjoint regime only. Runs on implicit levels and on
+/// stored ones alike ([`same_as_stored`]).
 #[test]
 fn restrict_true_marginal_care_multiregion_difftest() {
+    same_as_stored(true_marginal_care_multiregion);
+}
+
+/// The cases of [`restrict_true_marginal_care_multiregion_difftest`]: the
+/// restricted diagrams and the folds after them.
+fn true_marginal_care_multiregion() -> Vec<Tdd> {
+    let mut out = Vec::new();
     let eng = Engine::new();
     use crate::vtree::{VtreeIdx, VtreeNode};
     use std::collections::BTreeSet;
@@ -181,6 +189,10 @@ fn restrict_true_marginal_care_multiregion_difftest() {
             }
             crate::marginal::marginalize_batch(&eng, &mut prod_g, &targets, &vtree).expect("no wall is installed in a test");
             crate::marginal::marginalize_batch(&eng, &mut prod_f, &targets, &vtree).expect("no wall is installed in a test");
+            // The batch is a step of `marginalize_levels`, whose end closes
+            // the levels.
+            prod_g.close_levels();
+            prod_f.close_levels();
             // `model_count` is the query that reads out of bounds on a corrupt
             // fold structure, and the count must be invariant
             // (care∧g == care∧fm): a panic here is the bug, a mismatch a silent
@@ -195,7 +207,9 @@ fn restrict_true_marginal_care_multiregion_difftest() {
                     first_fold_fail = Some(format!("case {case}: fold count {cg} != {cf}"));
                 }
             }
+            out.extend([prod_g, prod_f]);
         }
+        out.push(g);
         checked += 1;
     }
     println!(
@@ -219,6 +233,7 @@ fn restrict_true_marginal_care_multiregion_difftest() {
         "restrict_to_care changed #(f∧care) against the TRUE multi-region marginal \
          care in {violations}/{checked} cases (first {first_violation:?})"
     );
+    out
 }
 
 /// Restrict against care that is marginal at the same regions as `f`.
@@ -229,14 +244,16 @@ fn restrict_true_marginal_care_multiregion_difftest() {
 /// so `#(· ∧ care_proj)` is a supported conjunction on both sides even though
 /// `f` is marginal over the same regions. The contract is
 /// `#(g ∧ care_proj) == #(fm ∧ care_proj)`, plus: restricting against the
-/// projection itself must produce the same subgraph.
+/// projection itself must produce the same subgraph. Returns the restricted
+/// diagrams.
 fn restrict_marginal_care_same_regions(
     seed: u64,
     nvars: u32,
     want_regions: usize,
     min_checked: usize,
-) {
+) -> Vec<Tdd> {
     use crate::vtree::{VtreeIdx, VtreeNode};
+    let mut out = Vec::new();
     let vtree = Arc::new(Vtree::balanced(nvars));
 
     let vars_under = |root: VtreeIdx| -> Vec<VarId> {
@@ -334,22 +351,26 @@ fn restrict_marginal_care_same_regions(
         if gp < fp {
             pruned += 1;
         }
+        out.extend([g, g_proj]);
         checked += 1;
     }
     assert!(checked >= min_checked, "too few cases exercised: {checked}");
     assert!(pruned > 0, "restrict_to_care never pruned a marginal diagram");
+    out
 }
 
-/// `f` and `care` marginal over one shared region.
+/// `f` and `care` marginal over one shared region, on implicit levels and
+/// on stored ones alike ([`same_as_stored`]).
 #[test]
 fn restrict_marginal_care_single_region_difftest() {
-    restrict_marginal_care_same_regions(0x9e37_79b9_7f4a_7c15, 6, 1, 50);
+    same_as_stored(|| restrict_marginal_care_same_regions(0x9e37_79b9_7f4a_7c15, 6, 1, 50));
 }
 
-/// `f` and `care` marginal over two shared disjoint regions.
+/// `f` and `care` marginal over two shared disjoint regions, on implicit
+/// levels and on stored ones alike.
 #[test]
 fn restrict_marginal_care_two_regions_difftest() {
-    restrict_marginal_care_same_regions(0xd1b5_4a32_d192_ed03, 8, 2, 30);
+    same_as_stored(|| restrict_marginal_care_same_regions(0xd1b5_4a32_d192_ed03, 8, 2, 30));
 }
 
 /// Restrict contract on a MARGINAL `f`, the production orientation the
@@ -373,9 +394,17 @@ fn restrict_marginal_care_two_regions_difftest() {
 /// (proven on the blow-up instances) needs operand structure this synthesis
 /// does not reach (a large complex `care` against a tiny marginal `f` under
 /// the in-fold vtree graft); reproducing it needs captured real operands,
-/// not synthesis. Kept as the regression guard for the sound regime.
+/// not synthesis. Kept as the regression guard for the sound regime. Runs
+/// on implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn restrict_marginal_f_difftest() {
+    same_as_stored(marginal_f);
+}
+
+/// The cases of [`restrict_marginal_f_difftest`]: the restricted diagrams
+/// and their conjunctions with the care.
+fn marginal_f() -> Vec<Tdd> {
+    let mut out = Vec::new();
     let eng = Engine::new();
     use crate::vtree::VtreeIdx;
     let nvars = 8u32;
@@ -410,6 +439,9 @@ fn restrict_marginal_f_difftest() {
             marginal_vars.iter().map(|&v| vtree.leaf_of(VarId(v)).expect("the vtree carries this variable")).collect();
         targets.sort_by_key(|vi| vtree.topo_pos(*vi));
         crate::marginal::marginalize_batch(&eng, &mut f, &targets, &vtree).expect("no wall is installed in a test");
+        // The batch is a step of `marginalize_levels`, whose end closes the
+        // levels.
+        f.close_levels();
         // care constrains only NON-marginal vars ⇒ identity at f's marginal levels,
         // so the conjoin stays legal and #(f∧care) is well-defined.
         let care = rand_conj_over(&vtree, &care_vars, 6, 3, false, &mut rng);
@@ -433,6 +465,7 @@ fn restrict_marginal_f_difftest() {
                 ));
             }
         }
+        out.extend([g, prod_f, prod_g]);
         checked += 1;
     }
     println!(
@@ -449,4 +482,5 @@ fn restrict_marginal_f_difftest() {
          cases (first {first_fail:?}) — the liveness oracle killed a non-marginal node \
          that routes into an (always-alive) marginal subtree"
     );
+    out
 }

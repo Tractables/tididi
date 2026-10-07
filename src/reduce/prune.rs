@@ -635,8 +635,8 @@ impl Child {
 /// children's. Returns whether the level lost a node.
 ///
 /// A level held as the description of its pairs stays one when what is left
-/// of it is affine ([`redescribe`]); otherwise its arena is written out for
-/// the rewrite.
+/// of it is affine ([`redescribe`]); otherwise what is left is stored
+/// ([`store_kept`]).
 ///
 /// `remap` must hold the spans of the dirty children side by side, and
 /// `identity` must be at least as long as the width of a child kept whole
@@ -671,13 +671,22 @@ fn compact_one_level(
         } else {
             identity
         };
-        let kept = redescribe(tdd, t, own, left.dirty.then_some(left_remap), right.dirty.then_some(right_remap));
+        let (lm, rm) = (left.dirty.then_some(left_remap), right.dirty.then_some(right_remap));
+        let kept = redescribe(tdd, t, own, lm, rm);
         if kept.is_none() {
-            rewrite_child_refs(tdd, t, own, left_remap, right_remap);
+            if tdd.levels[t_idx].pairs.implicit().is_some() {
+                store_kept(tdd, t, own, lm, rm);
+            } else {
+                rewrite_child_refs(tdd, t, own, left_remap, right_remap);
+            }
         }
         kept
     } else if lost {
-        redescribe(tdd, t, own, None, None)
+        let kept = redescribe(tdd, t, own, None, None);
+        if kept.is_none() && tdd.levels[t_idx].pairs.implicit().is_some() {
+            store_kept(tdd, t, own, None, None);
+        }
+        kept
     } else {
         None
     };
@@ -730,8 +739,9 @@ fn redescribe(tdd: &mut Tdd, t: VtreeIdx, own: &[u64], left: Option<&[u32]>, rig
     let k = d.pairs_per_node();
     let nodes: usize = own.iter().map(|w| w.count_ones() as usize).sum();
     // Past 2^31 pairs a node's range takes the side table (`ranges`); the
-    // written arena's would too, and renumbered ones might not.
-    if nodes == 0 || level.pairs.len() >= 1 << 31 {
+    // written arena's would too, and renumbered ones might not. What is left
+    // below the floor is stored.
+    if nodes == 0 || nodes * k < crate::diagram::floor() || level.pairs.len() >= 1 << 31 {
         return None;
     }
     let mut select = Select::new(own);
@@ -748,6 +758,19 @@ fn redescribe(tdd: &mut Tdd, t: VtreeIdx, own: &[u64], left: Option<&[u32]>, rig
     level.nodes.extend((0..nodes).map(|j| EncodedNode::multi_pair((j * k) as u32, k as u32)));
     level.pairs.redescribe(left_of);
     Some(dead)
+}
+
+/// Store the marked nodes of level `t`, held as the description of its
+/// pairs, when what is left of it is not affine: their pairs, with the child
+/// slots moved through `left` and `right`, the new indices of the children
+/// that lost a node, in the arena a stored level would hold
+/// ([`TddLevel::store_moved`]).
+fn store_kept(tdd: &mut Tdd, t: VtreeIdx, own: &[u64], left: Option<&[u32]>, right: Option<&[u32]>) {
+    let (lc, rc) = tdd.vtree.children(t);
+    let left = moved(tdd.levels[lc.idx()].child_decoder(), left);
+    let right = moved(tdd.levels[rc.idx()].child_decoder(), right);
+    let marked = |i: usize| own[i >> 6] >> (i & 63) & 1 != 0;
+    tdd.levels[t.idx()].store_moved(marked, left, right);
 }
 
 /// Rewrite level `t`'s child references through its child levels' remaps.

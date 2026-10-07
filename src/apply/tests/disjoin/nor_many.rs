@@ -4,32 +4,38 @@ use crate::{Tdd, Vtree, nor_many, or_many};
 use std::sync::Arc;
 use crate::test_helpers::assert_canonical;
 
+/// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn nor_many_is_the_conjunction_of_the_complements() {
-    use crate::test_helpers::{CnfShape, Lcg, compile_clauses_on, rand_cnf};
-    let eng = &crate::Engine::new();
-    let mut rng = Lcg::new(0x27bb_2ee6);
-    for num_vars in [3u32, 5, 7] {
-        for (_name, vtree) in crate::test_helpers::vtree_shapes(num_vars) {
-            for n in [1usize, 2, 3, 5] {
-                let operands: Vec<Tdd> = (0..n)
-                    .map(|_| {
-                        let c = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 2, width: 2 });
-                        compile_clauses_on(eng, &vtree, &c)
-                    })
-                    .collect();
-                // The reference: fold `and` over the negations, one by one.
-                let mut want = Tdd::one(&vtree);
-                for f in &operands {
-                    want = crate::and(want, eng.negate(f.clone()).unwrap()).unwrap();
+    use crate::test_helpers::{CnfShape, Lcg, compile_clauses_on, rand_cnf, same_as_stored};
+    same_as_stored(|| {
+        let eng = &crate::Engine::new();
+        let mut rng = Lcg::new(0x27bb_2ee6);
+        let mut out = Vec::new();
+        for num_vars in [3u32, 5, 7] {
+            for (_name, vtree) in crate::test_helpers::vtree_shapes(num_vars) {
+                for n in [1usize, 2, 3, 5] {
+                    let operands: Vec<Tdd> = (0..n)
+                        .map(|_| {
+                            let c = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 2, width: 2 });
+                            compile_clauses_on(eng, &vtree, &c)
+                        })
+                        .collect();
+                    // The reference: fold `and` over the negations, one by one.
+                    let mut want = Tdd::one(&vtree);
+                    for f in &operands {
+                        want = crate::and(want, eng.negate(f.clone()).unwrap()).unwrap();
+                    }
+                    eng.minimize(&mut want).unwrap();
+                    let got = nor_many(operands).unwrap();
+                    assert_canonical(&got);
+                    assert!(got.equivalent(&want).unwrap(), "nor_many disagrees with the fold");
+                    out.extend([got, want]);
                 }
-                eng.minimize(&mut want).unwrap();
-                let got = nor_many(operands).unwrap();
-                assert_canonical(&got);
-                assert!(got.equivalent(&want).unwrap(), "nor_many disagrees with the fold");
             }
         }
-    }
+        out
+    });
 }
 
 #[test]

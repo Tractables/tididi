@@ -83,11 +83,11 @@ fn plain_level_content_twins_fork_multiplicity_down() {
 
     // Root: one pair (survivor, σ).
     assert_eq!(tdd.levels[root.idx()].pair_count_at(0), 1, "root must end with 1 pair");
-    let surv = tdd.levels[root.idx()].pairs_of_idx(0)[0].left.0 as usize;
+    let surv = tdd.levels[root.idx()].pairs_vec(0)[0].left.0 as usize;
 
     // Survivor at gp: both duplicate terms remain — the multiplicity is carried
     // by the pair list itself, not set-dedup'd away.
-    let surv_pairs: Vec<_> = tdd.levels[gp.idx()].pairs_of_idx(surv).to_vec();
+    let surv_pairs: Vec<_> = tdd.levels[gp.idx()].pairs_vec(surv).to_vec();
     assert_eq!(surv_pairs.len(), 2, "gp survivor must keep both duplicate terms");
     assert_eq!(
         surv_pairs[0].left.0, surv_pairs[1].left.0,
@@ -104,7 +104,7 @@ fn plain_level_content_twins_fork_multiplicity_down() {
     let total: u128 = surv_pairs
         .iter()
         .map(|pr| {
-            let p_pair = tdd.levels[bp.idx()].pairs_of_idx(pr.left.0 as usize)[0];
+            let p_pair = tdd.levels[bp.idx()].pairs_vec(pr.left.0 as usize)[0];
             match ChildDecoder::marginal().value(p_pair.right) {
                 ValueRef::Slot(sl) => marginal_counts[sl as usize],
                 ValueRef::Inline(c) => c as u128,
@@ -212,10 +212,10 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
     let captured: Option<(usize, BigRational, bool, usize, BigRational)> =
         result.as_ref().ok().map(|_| {
             // Root: one pair (survivor, σ).
-            let surv = tdd.levels[root.idx()].pairs_of_idx(0)[0].left.0 as usize;
+            let surv = tdd.levels[root.idx()].pairs_vec(0)[0].left.0 as usize;
             // Survivor at gp: both duplicate terms (P, s) remain.
             let surv_pairs: Vec<(u32, u32)> = tdd.levels[gp.idx()]
-                .pairs_of_idx(surv)
+                .pairs_vec(surv)
                 .iter()
                 .map(|pr| (pr.left.0, pr.right.0))
                 .collect();
@@ -227,7 +227,7 @@ fn weighted_plain_level_content_twins_fork_multiplicity_down() {
                     tdd.weights().unwrap().level(m_v.idx()).expect("weight store level");
                 let mut acc = BigRational::from_integer(BigInt::from(0));
                 for &(l, _) in &surv_pairs {
-                    let p_pair = tdd.levels[bp.idx()].pairs_of_idx(l as usize)[0];
+                    let p_pair = tdd.levels[bp.idx()].pairs_vec(l as usize)[0];
                     let slot = match ChildDecoder::marginal().value(p_pair.right) {
                         ValueRef::Slot(sl) => sl as usize,
                         ValueRef::Inline(_) => unreachable!("weighted marginal ref is never inline"),
@@ -333,11 +333,11 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
     contract_all_twins(&eng, &mut tdd).expect("contract_all_twins");
 
     assert_eq!(tdd.levels[root.idx()].pair_count_at(0), 1, "root must end with 1 pair");
-    let surv = tdd.levels[root.idx()].pairs_of_idx(0)[0].left.0 as usize;
+    let surv = tdd.levels[root.idx()].pairs_vec(0)[0].left.0 as usize;
 
     // Survivor: 4 pairs — the shared (P,s) kept TWICE plus the disjoint
     // (Q,t), (R,u).
-    let surv_pairs: Vec<_> = tdd.levels[gp.idx()].pairs_of_idx(surv).to_vec();
+    let surv_pairs: Vec<_> = tdd.levels[gp.idx()].pairs_vec(surv).to_vec();
     assert_eq!(surv_pairs.len(), 4, "survivor must hold 4 pairs, got {}", surv_pairs.len());
 
     let marginal_counts = tdd.levels[m_v.idx()].marginal_counts().unwrap();
@@ -350,7 +350,7 @@ fn plain_level_partial_overlap_twins_fork_shared_pair_down() {
     // Collect the multiset of decoded counts of the survivor's left children.
     let mut counts: Vec<u128> = surv_pairs
         .iter()
-        .map(|pr| decode(tdd.levels[bp.idx()].pairs_of_idx(pr.left.0 as usize)[0].right.0))
+        .map(|pr| decode(tdd.levels[bp.idx()].pairs_vec(pr.left.0 as usize)[0].right.0))
         .collect();
     counts.sort_unstable();
     assert_eq!(
@@ -454,7 +454,7 @@ fn b4_fork_down_leaf_label_ref_no_oob() {
 
     // Survivor: one pair whose marginal ref decodes to Pos(1)·2 = 2.
     assert_eq!(tdd.levels[bp.idx()].pair_count_at(0), 1, "duplicate must collapse to 1 pair");
-    let scaled_ref = tdd.levels[bp.idx()].pairs_of_idx(0)[0].right.0;
+    let scaled_ref = tdd.levels[bp.idx()].pairs_vec(0)[0].right.0;
     let count = match ChildDecoder::marginal().value(EncodedChildRef::from_raw(scaled_ref)) {
         ValueRef::Inline(c) => c as u128,
         ValueRef::Slot(_) => panic!("leaf scale must inline, never mint a leaf slot"),
@@ -491,7 +491,7 @@ fn b4_fork_down_leaf_inline_overflow_keeps_run() {
 
     // Both terms survive, unscaled: the multiset still sums to the same count.
     assert_eq!(tdd.levels[bp.idx()].pair_count_at(0), 2, "the duplicate run must be kept");
-    for pair in tdd.levels[bp.idx()].pairs_of_idx(0) {
+    for pair in tdd.levels[bp.idx()].pairs_vec(0) {
         assert_eq!(pair.right.0, big_inline, "kept terms must be the ORIGINAL ref");
     }
     // The regression this pins: no slot was minted into the leaf store, which

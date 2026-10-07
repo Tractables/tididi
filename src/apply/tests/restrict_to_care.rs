@@ -267,13 +267,21 @@ fn restrict_differing_root_containment_difftest() {
     );
 }
 
+/// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn restrict_brute_force_randomized_multi_vtree() {
+    same_as_stored(brute_force_randomized_multi_vtree);
+}
+
+/// The cases of [`restrict_brute_force_randomized_multi_vtree`]: the
+/// restricted diagrams, raw and minimized.
+fn brute_force_randomized_multi_vtree() -> Vec<Tdd> {
     // The exhaustive-soundness sweep: random (f, c) over several vtree SIZES, each
     // case checked by the apply-free evaluator over the full truth table PLUS all
     // invariants PLUS exact determinism PLUS never-larger. Small nvars keep the
     // 2^n brute force and the O(width²·apply) determinism check cheap.
     use crate::test_helpers::check::{check_all_fast, check_determinism};
+    let mut out = Vec::new();
     let mut rng = Lcg::new(0xfeed_face_cafe_d00d);
     let mut total = 0;
     let mut shrinks = 0;
@@ -309,15 +317,25 @@ fn restrict_brute_force_randomized_multi_vtree() {
             if gp < fp {
                 shrinks += 1;
             }
+            out.extend([g, gm]);
             total += 1;
         }
     }
     assert!(total >= 200, "too few cases exercised: {total}");
     assert!(shrinks > 0, "no shrink across any vtree size — levers inert");
+    out
 }
 
+/// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn restrict_output_is_orphan_free() {
+    same_as_stored(output_is_orphan_free);
+}
+
+/// The cases of [`restrict_output_is_orphan_free`]: the restricted
+/// diagrams.
+fn output_is_orphan_free() -> Vec<Tdd> {
+    let mut out = Vec::new();
     // `reduce`/`restrict_to_care` must return an ARENA-COMPACT diagram: the rebuild is
     // demand-driven and emits a child before discovering its pair partner
     // collapsed to ZERO, which strands that child (an orphan: `reachable_pairs`
@@ -365,11 +383,13 @@ fn restrict_output_is_orphan_free() {
             if reach < reachable_pairs(&f) {
                 shrinks += 1;
             }
+            out.push(g);
             total += 1;
         }
     }
     assert!(total >= 400, "too few cases exercised: {total}");
     assert!(shrinks > 0, "no shrink across any vtree size — levers inert");
+    out
 }
 
 /// Randomized differing-root sweep with marginal-free diagrams: `care`
@@ -378,8 +398,16 @@ fn restrict_output_is_orphan_free() {
 /// apply-free truth-table oracle plus never-larger. Complements the hand-built
 /// containment cases of `restrict_differing_root_containment_difftest`; the
 /// `shrinks > 0` guard keeps the sweep from passing on an all-`Unchanged` walk.
+/// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn restrict_differing_root_randomized() {
+    same_as_stored(differing_root_randomized);
+}
+
+/// The cases of [`restrict_differing_root_randomized`]: the restricted
+/// diagrams.
+fn differing_root_randomized() -> Vec<Tdd> {
+    let out = std::cell::RefCell::new(Vec::new());
     let nvars = 6u32;
     let vtree = Arc::new(Vtree::balanced(nvars));
     // The left block of the global root: balanced(6) puts {1,2,3} under it.
@@ -399,7 +427,7 @@ fn restrict_differing_root_randomized() {
     let rehome_left = |t: &Tdd| -> Option<Tdd> {
         let mut m = t.clone();
         m.minimize().unwrap();
-        if m.is_zero() || m.levels[m.output.vtree.idx()].pairs_of_idx(m.output.local.idx()).len() != 1 {
+        if m.is_zero() || m.levels[m.output.vtree.idx()].pairs_vec(m.output.local.idx()).len() != 1 {
             return None;
         }
         Some(reroot_to_child(&m, ChildSide::Left))
@@ -418,6 +446,7 @@ fn restrict_differing_root_randomized() {
         }
         let (gp, fp) = (reachable_pairs(&g), reachable_pairs(f));
         assert!(gp <= fp, "restrict_to_care grew beyond f: {gp} > {fp}");
+        out.borrow_mut().push(g);
         gp < fp
     };
     let (mut total, mut shrinks) = (0u32, 0u32);
@@ -441,16 +470,25 @@ fn restrict_differing_root_randomized() {
     }
     assert!(total >= 100, "too few differing-root cases exercised: {total}");
     assert!(shrinks > 0, "no shrink on any differing-root case — walk inert");
+    out.into_inner()
 }
 
+/// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn restrict_raw_output_is_apply_safe() {
+    same_as_stored(raw_output_is_apply_safe);
+}
+
+/// The cases of [`restrict_raw_output_is_apply_safe`]: the raw restricted
+/// diagrams and their minimized conjunctions.
+fn raw_output_is_apply_safe() -> Vec<Tdd> {
     // The public `restrict_to_care` minimizes its output before anything
     // conjoins it, so the raw (unminimized) output is only reached from
     // inside the crate. Assert that the raw g is a valid diagram and that
     // conjoining it with another diagram and minimizing the product stays
     // valid, over random (f, care, other) across vtree sizes.
     use crate::test_helpers::check::check_all_fast;
+    let mut out = Vec::new();
     let mut rng = Lcg::new(0x0bad_f00d_1337_c0de);
     let mut conjoined = 0;
     for &nvars in &[2u32, 3, 4, 5] {
@@ -476,10 +514,12 @@ fn restrict_raw_output_is_apply_safe() {
             let mut p = apply_and(ga, ob);
             p.minimize().unwrap();
             check_all_fast(&p, "apply(restrict_to_care-raw, other)+minimize");
+            out.extend([g, p]);
             conjoined += 1;
         }
     }
     assert!(conjoined >= 100, "too few conjoin cases exercised: {conjoined}");
+    out
 }
 
 /// **A limit refused inside a restriction reaches the caller as an error.**

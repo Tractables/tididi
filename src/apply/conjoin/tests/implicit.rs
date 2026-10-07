@@ -8,7 +8,7 @@
 use super::*;
 use crate::Engine;
 use crate::limits::{LimitConfig, StopAt, StopRules};
-use crate::test_helpers::{assert_canonical, rand_conj_over, Lcg};
+use crate::test_helpers::{assert_canonical, rand_conj_over, same_levels, stored_copies, stored_levels, Lcg};
 use crate::vtree::{VarId, Vtree};
 
 /// A random function of `vars`, minimized, on `vtree`, built on `eng`.
@@ -20,11 +20,15 @@ fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
 
 /// The conjunction of `parts` in order, `((p0 ∧ p1) ∧ p2) ∧ …`, or of four
 /// parts as `(p0 ∧ p1) ∧ (p2 ∧ p3)` when `pairwise`, then conditioned on
-/// each of `given`, a variable and its value, on one fresh engine, writing
-/// every level's pairs when `written` holds, under `rules`: the result and
+/// each of `given`, a variable and its value, on one fresh engine, with
+/// every level stored when `written` holds, under `rules`: the result and
 /// the work it took.
 fn chain(parts: &[Tdd], pairwise: bool, given: &[(u32, bool)], written: bool, rules: StopRules) -> (Result<Tdd, OperationError>, u64) {
     let eng = Engine::new();
+    // The stored route conjoins the stored copies of operands a close or a
+    // product left implicit.
+    let parts: Vec<Tdd> = if written { parts.iter().map(stored_copies).collect() } else { parts.to_vec() };
+    let parts = &parts[..];
     let run = || -> Result<Tdd, OperationError> {
         let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(rules));
         let mut acc = if let [a, b, c, d] = parts && pairwise {
@@ -43,47 +47,13 @@ fn chain(parts: &[Tdd], pairwise: bool, given: &[(u32, bool)], written: bool, ru
         }
         Ok(acc)
     };
-    let out = if written { written_levels(run) } else { run() };
+    let out = if written { stored_levels(run) } else { run() };
     (out, eng.limits().work_units())
 }
 
 /// The levels of `t` that hold the description of their pairs.
 fn implicit_levels(t: &Tdd) -> usize {
     t.levels.iter().filter(|l| l.pairs.implicit().is_some()).count()
-}
-
-/// Require `out` to be `oracle` node for node: the same nodes in the same
-/// order, each with the same pairs, and every pair arena of the same
-/// length, capacity and dead slots. A level whose nodes are the written
-/// ones word for word has the written arena once written; a level a prune
-/// kept described numbers its nodes' ranges from the start of the arena
-/// instead, where the written route left them where they were.
-fn same_levels(out: &Tdd, oracle: &Tdd) {
-    assert_eq!(out.output, oracle.output);
-    let mut buf = Vec::new();
-    for (a, b) in out.levels.iter().zip(oracle.levels.iter()) {
-        assert!(b.pairs.implicit().is_none(), "the written route made a level implicit");
-        assert_eq!(a.nodes.len(), b.nodes.len(), "the implicit route kept other nodes");
-        for i in 0..a.nodes.len() {
-            assert_eq!(a.pair_count_at(i), b.pair_count_at(i));
-            assert_eq!(a.pairs_read(i, &mut buf), b.pairs_of_idx(i), "a node has other pairs");
-        }
-        assert_eq!(a.pairs.len(), b.pairs.len(), "the implicit route holds another arena length");
-        assert_eq!(a.pairs.capacity(), b.pairs.capacity(), "the implicit route holds another capacity");
-        assert_eq!(a.dead_pairs, b.dead_pairs, "the implicit route counts other dead slots");
-        if a.nodes == b.nodes {
-            assert_eq!(a.ranges, b.ranges);
-            if a.pairs.implicit().is_some() {
-                let mut written = a.clone();
-                written.materialize();
-                assert_eq!(&*written.pairs, &*b.pairs, "the description writes other pairs");
-                assert_eq!(written.pairs.capacity(), b.pairs.capacity(), "the written arena has another capacity");
-            }
-            assert_eq!(*a.pairs, *b.pairs, "a reader sees other pairs");
-        } else {
-            assert!(a.pairs.implicit().is_some(), "a written level has other nodes");
-        }
-    }
 }
 
 /// The levels of `t` a prune kept described after dropping nodes: implicit,

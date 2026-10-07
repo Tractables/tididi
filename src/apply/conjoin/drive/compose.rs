@@ -14,14 +14,15 @@
 
 use crate::apply::conjoin::cell::GROUPED_MIN_PAIRS;
 use crate::apply::conjoin::*;
-use crate::diagram::ImplicitLevel;
+use crate::diagram::{floor, ImplicitLevel};
 
 /// The description of level `t`'s output, when the implicit route can build
 /// it: the engine's memory is unbounded (so the route's skipping the row
 /// loop's scratch cannot change a later decision), both operand levels hold
 /// every node of their width with the same number of pairs, both are affine,
-/// and a grouped level's runs are digits. `grouped` says the level's N×M
-/// cells may take the grouped walk.
+/// a grouped level's runs are digits, and the product, when its nodes hold
+/// two pairs or more, holds at least the floor's pairs (`FLOOR`). `grouped`
+/// says the level's N×M cells may take the grouped walk.
 pub(super) fn plan(
     lim: &crate::limits::Limits,
     f: &TddLevel,
@@ -42,7 +43,10 @@ pub(super) fn plan(
         && df.pairs_per_node() >= GROUPED_MIN_PAIRS
         && dg.pairs_per_node() >= GROUPED_MIN_PAIRS
         && dg.pairs() <= u32::MAX as usize;
+    // A product of fewer pairs than the floor is stored: the row loop writes
+    // it.
     ImplicitLevel::product(&df, &dg, (shape.g.left, shape.g.right), grouped)
+        .filter(|p| p.pairs_per_node() < 2 || p.pairs() >= floor())
 }
 
 /// What the row loop charges a level of `product`'s shape: the work clock,

@@ -695,7 +695,7 @@ fn same_storage(a: &Tdd, b: &Tdd, what: &str) {
         let (x, y) = (&a.levels[t.idx()], &b.levels[t.idx()]);
         assert_eq!(x.nodes.len(), y.nodes.len(), "{what}: level {} width", t.idx());
         for i in 0..x.nodes.len() {
-            assert_eq!(x.pairs_of_idx(i), y.pairs_of_idx(i), "{what}: level {} node {i}", t.idx());
+            assert_eq!(x.pairs_vec(i), y.pairs_vec(i), "{what}: level {} node {i}", t.idx());
         }
     }
 }

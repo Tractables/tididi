@@ -172,9 +172,9 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
     let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
     // Arenas pre-reserved so the twin run's grand reserve and parent re-encode
     // charge nothing: only the three scratch buffers are left to be charged.
-    levels[v_left.idx()].pairs.reserve(8 * width);
+    levels[v_left.idx()].pairs.stored_mut().reserve(8 * width);
     levels[v_left.idx()].ranges.reserve(width);
-    levels[root.idx()].pairs.reserve(8 * width);
+    levels[root.idx()].pairs.stored_mut().reserve(8 * width);
     levels[root.idx()].ranges.reserve(width);
 
     let mut nodes = Vec::with_capacity(width);
@@ -247,7 +247,7 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
     );
     // The trip happened before any mutation: the level is untouched.
     assert_eq!(tdd.levels[v_left.idx()].slot_count(), width, "the budget trip must precede the merge");
-    assert_eq!(tdd.levels[root.idx()].pairs_of_idx(0).len(), width, "parent pairs untouched");
+    assert_eq!(tdd.levels[root.idx()].pairs_vec(0).len(), width, "parent pairs untouched");
 }
 
 #[test]

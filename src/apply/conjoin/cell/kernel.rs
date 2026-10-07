@@ -151,7 +151,7 @@ impl PairSink for EmitSink<'_> {
 
     #[inline(always)]
     fn buf(&mut self) -> &mut Vec<ChildPair> {
-        &mut self.level.pairs
+        self.level.pairs.stored_mut()
     }
 
     #[inline(always)]
@@ -220,7 +220,7 @@ impl PairSink for ReservedEmitSink<'_> {
 
     #[inline(always)]
     fn buf(&mut self) -> &mut Vec<ChildPair> {
-        &mut self.level.pairs
+        self.level.pairs.stored_mut()
     }
 
     #[inline(always)]

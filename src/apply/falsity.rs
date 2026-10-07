@@ -76,6 +76,11 @@ pub(super) fn rewrite_level_pairs(
     if n_nodes == 0 {
         return false;
     }
+    if level.pairs.implicit().is_some() {
+        let emptied = level.rewrite_described(true, rewrite_pair);
+        level.compact_pairs_if_stale();
+        return emptied;
+    }
 
     let mut emptied = false;
     let mut dead = 0usize;

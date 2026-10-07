@@ -3,11 +3,11 @@ use crate::diagram::*;
 use crate::test_helpers::pair;
 
 /// Every node's pair slice, in arena order — the whole of a level's
-/// observable content (`pairs_of_idx` resolves inline, normal-multi and
+/// observable content (`pairs_vec` resolves inline, normal-multi and
 /// extended nodes alike).
 fn content(level: &TddLevel) -> Vec<Vec<ChildPair>> {
     (0..level.nodes.len())
-        .map(|i| level.pairs_of_idx(i).to_vec())
+        .map(|i| level.pairs_vec(i).to_vec())
         .collect()
 }
 
@@ -25,7 +25,7 @@ fn merge_adjacent_round(level: &mut TddLevel, first: usize) {
     // Stand-in for `contract_twins`' hoisted grand reserve: the concat path
     // asserts the capacity is already there.
     let extra: usize = (first..n).map(|i| level.pair_count_at(i)).sum();
-    level.pairs.reserve(extra);
+    level.pairs.stored_mut().reserve(extra);
     let mut merge_target: Vec<u32> = (0..n as u32).collect();
     let mut keep = first;
     while keep + 1 < n {
@@ -50,7 +50,7 @@ fn contraction_garbage_is_swept_leaving_content_identical() {
     // since the encoder only goes extended past 2^31 slots: its start lives
     // in `ranges` rather than the node word. Then an inline node, which
     // owns no arena slot at all.
-    level.pairs.extend([pair(1, 7), pair(2, 7)]);
+    level.pairs.stored_mut().extend([pair(1, 7), pair(2, 7)]);
     level.ranges.push(PairRange { start: 0, len: 2 });
     level.nodes.push(EncodedNode::multi_ranged(0));
     level.push_internal_node(&[pair(3, 4)]);
@@ -128,7 +128,7 @@ fn a_shrunk_extended_parent_node_inlines_its_survivor() {
     assert_eq!(parent.ranges.len(), 1, "no range entry is added for an inlined survivor");
     assert!(matches!(parent.nodes[0].kind(), NodeKind::Inline(_)), "the sole survivor is stored inline");
     assert_eq!(
-        parent.pairs_of_idx(0),
+        parent.pairs_vec(0),
         &[ChildPair::new(NodeIdx(0), sibling)],
     );
     assert_eq!(parent.dead_pairs, 2, "the whole old range is abandoned");

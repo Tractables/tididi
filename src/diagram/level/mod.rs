@@ -6,8 +6,9 @@ mod implicit;
 mod marginal;
 mod pairs;
 pub use count_overflow::CountOverflow;
-pub use implicit::{described, materialized, redescribed, Digit, ImplicitLevel, Materialized};
-pub(crate) use implicit::PairArena;
+pub use implicit::{described, redescribed, stored_moved, Digit, ImplicitLevel, FLOOR};
+pub(crate) use implicit::{floor, stored_levels_forced, PairArena, Places};
+pub use pairs::{Pairs, StoredPairs};
 pub(crate) use pairs::sort_pairs;
 pub(crate) use marginal::{assert_can_make_marginal, non_marginal_child};
 
@@ -29,7 +30,7 @@ use super::primitives::{PairRange, ChildPair, NodeIdx, EncodedNode};
 ///   [`WeightStore::level`](crate::diagram::WeightStore::level) for this
 ///   level;
 /// - otherwise structural: [`nodes`](Self::nodes)`[i]` is node `i`, and its
-///   pairs are [`pairs_of`](Self::pairs_of) of that slot.
+///   pairs are [`pairs_iter_of_idx`](Self::pairs_iter_of_idx) of that slot.
 ///
 /// `slot_count()` is the number of node or value slots in any state.
 #[derive(Clone, Debug)]
@@ -39,7 +40,7 @@ pub struct TddLevel {
     /// [`nodes`](Self::nodes) / [`nodes_iter`](Self::nodes_iter).
     pub(crate) nodes: Vec<EncodedNode>,
     /// Arena holding the pairs of multi-pair nodes. Read it through
-    /// [`pairs_of`](Self::pairs_of); single-pair nodes are not in it.
+    /// [`pairs_iter_of`](Self::pairs_iter_of); single-pair nodes are not in it.
     pub(crate) pairs: PairArena,
     /// Side table for multi-pair nodes whose arena start or length exceeds
     /// 2^31 (huge product grids). See `EncodedNode` for the encoding.
@@ -376,7 +377,7 @@ impl TddLevel {
     /// Pop the last pair off the arena.
     #[inline]
     pub(crate) fn pop_pair(&mut self) -> Option<ChildPair> {
-        self.pairs.pop()
+        self.pairs.stored_mut().pop()
     }
 
     /// Length of the pair-arena tail starting at `start`.

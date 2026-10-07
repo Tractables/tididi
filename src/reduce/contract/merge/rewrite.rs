@@ -3,7 +3,7 @@
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::diagram::{NodeIdx, NodeKind, Tdd, TddLevel};
+use crate::diagram::{ChildPair, NodeIdx, NodeKind, Tdd, TddLevel};
 
 use super::super::scratch::MergeRemap;
 
@@ -58,6 +58,13 @@ pub(super) fn rewrite_parent(
     // per-iteration saturating add buys nothing.
     let mut dead_acc = 0usize;
     let parent_level = &mut tdd.levels[parent.idx()];
+    // An implicit parent has no inline node: its pairs are read off the
+    // description through the same filter, and the level is built and
+    // closed.
+    if parent_level.pairs.implicit().is_some() {
+        parent_level.rewrite_described(false, |_, _, _, pair| canonical_pair(pair, t1_side, remap));
+        return;
+    }
     for node_idx in 0..parent_level.nodes.len() {
         if matches!(parent_level.nodes[node_idx].kind(), NodeKind::Inline(_)) {
             remap_inline_node(parent_level, node_idx, t1_side, &remap.final_remap);
@@ -108,18 +115,23 @@ fn keep_canonical_pairs(
     let pairs = level.pairs_mut(node_idx);
     let mut write = 0;
     for read in 0..pairs.len() {
-        let field_raw = if t1_side == ChildSide::Left { pairs[read].left.0 } else { pairs[read].right.0 };
-        let field_val = NodeIdx(field_raw);
-        if remap.merge_target[field_val.idx()] == field_val.0
-            || remap.duplicate_redirect[field_val.idx()]
-        {
-            let mut pair = pairs[read];
-            let f = if t1_side == ChildSide::Left { &mut pair.left } else { &mut pair.right };
-            *f = remap.final_remap[field_val.idx()].into();
+        if let Some(pair) = canonical_pair(pairs[read], t1_side, remap) {
             pairs[write] = pair;
             write += 1;
         }
-        // else: dropped (non-canonical) pair — omitted from the compacted list.
     }
     write
+}
+
+/// A parent pair after the merge: remapped onto its T1-side ref's survivor
+/// when that ref survives the merge or was redirected as a content-equal
+/// duplicate, else `None`: the pair duplicates one naming the survivor.
+fn canonical_pair(mut pair: ChildPair, t1_side: ChildSide, remap: &MergeRemap) -> Option<ChildPair> {
+    let f = if t1_side == ChildSide::Left { &mut pair.left } else { &mut pair.right };
+    let field_val = NodeIdx(f.0);
+    if remap.merge_target[field_val.idx()] != field_val.0 && !remap.duplicate_redirect[field_val.idx()] {
+        return None;
+    }
+    *f = remap.final_remap[field_val.idx()].into();
+    Some(pair)
 }

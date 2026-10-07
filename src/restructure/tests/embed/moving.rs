@@ -219,10 +219,18 @@ fn moved_diagrams_negate_and_disjoin_like_copies() {
 /// still owes its contraction, then moved onto `vtree`. A moved half owes
 /// what its source owed, and it, its conjunction with a unit clause and the
 /// conjunction of the two halves minimize from those worklists to the
-/// canonical diagram.
+/// canonical diagram. On implicit levels and on stored ones alike
+/// ([`same_as_stored`](crate::test_helpers::same_as_stored)).
 #[test]
 fn moved_halves_conjoin_to_the_canonical_diagram() {
+    crate::test_helpers::same_as_stored(moved_halves_conjoin);
+}
+
+/// The cases of [`moved_halves_conjoin_to_the_canonical_diagram`]: the
+/// minimized diagrams.
+fn moved_halves_conjoin() -> Vec<Tdd> {
     use crate::test_helpers::{CnfShape, Lcg, rand_cnf};
+    let mut outs = Vec::new();
     let eng = Engine::new();
     for seed in 0..60u64 {
         let num_vars = 6 + (seed % 5) as u32;
@@ -266,13 +274,17 @@ fn moved_halves_conjoin_to_the_canonical_diagram() {
                 let mut out = moved(a, settled);
                 eng.minimize(&mut out).unwrap();
                 assert_same_shape(&out, &alone, &format!("{what}, alone"));
+                outs.push(out);
                 let mut out = eng.and(moved(a, settled), eng.clause(&vtree, [unit]).unwrap()).unwrap();
                 eng.minimize(&mut out).unwrap();
                 assert_same_shape(&out, &with_unit, &format!("{what}, with a unit"));
+                outs.push(out);
                 let mut out = eng.and(moved(a, settled), moved(b, settled)).unwrap();
                 eng.minimize(&mut out).unwrap();
                 assert_same_shape(&out, &expected, &what);
+                outs.push(out);
             }
         }
     }
+    outs
 }

@@ -100,7 +100,7 @@ fn validate_all_nodes_reachable(tdd: &Tdd) -> Result<(), String> {
             if !reachable[t_idx][i] {
                 continue;
             }
-            let pairs = tdd.levels[t_idx].pairs_of_idx(i);
+            let pairs = tdd.levels[t_idx].pairs_vec(i);
             for pair in pairs {
                 reachable[left.idx()][ChildDecoder::structural().node(pair.left).idx()] = true;
                 reachable[right.idx()][ChildDecoder::structural().node(pair.right).idx()] = true;

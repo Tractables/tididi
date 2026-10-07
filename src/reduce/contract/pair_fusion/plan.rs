@@ -47,6 +47,8 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
     // near 2^30. The table in `scratch` hashes the key rather than indexing by
     // it, so both kinds are ordinary keys and the table is sized by the node's
     // pair count.
+    // An implicit level's node's pairs are generated into `buf`.
+    let mut buf = Vec::new();
     for n in 0..plevel.nodes.len() {
         let pairs = plevel.pair_count_at(n);
         read += 1 + pairs as u64;
@@ -59,7 +61,7 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
         if pairs < 2 {
             continue;
         }
-        let node = plevel.pairs_of_idx(n);
+        let node = plevel.pairs_read(n, &mut buf);
         // A node whose pairs ascend by explicit ref holds each group as one
         // run. A wide node that does not is sorted into runs: its table
         // would be too wide for the cache, and a probe per pair would miss.
@@ -274,7 +276,7 @@ pub(super) fn group_by_scatter<D: SlotValues>(
     // nearly every pair. Cells past the window keep older stamps unread.
     let mask = want - 1;
     let hash_shift = 32 - want.trailing_zeros();
-    for p in plevel.pairs_of_idx(n) {
+    for p in plevel.pairs_iter_of_idx(n) {
         let (x_idx, marginal_idx) = match side {
             ChildSide::Right => (p.left.0, p.right.0),
             ChildSide::Left => (p.right.0, p.left.0),

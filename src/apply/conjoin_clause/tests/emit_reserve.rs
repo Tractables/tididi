@@ -97,9 +97,9 @@ fn a_clause_reuses_empty_input_pair_capacity() {
     let level = input.level(tree.root());
     assert!(level.pairs.is_empty());
     assert!(level.pairs.capacity() > 0);
-    let pairs = level.pairs.as_ptr();
+    let pairs = level.pairs.stored().unwrap().as_ptr();
     let result = eng.and_clause(input, &[crate::Literal::try_from(2).unwrap()]).unwrap();
     assert_canonical(&result);
     assert_eq!(result.model_count().unwrap(), 64u32.into());
-    assert_eq!(result.level(tree.root()).pairs.as_ptr(), pairs);
+    assert_eq!(result.level(tree.root()).pairs.stored().unwrap().as_ptr(), pairs);
 }

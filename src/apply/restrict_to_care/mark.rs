@@ -7,7 +7,7 @@ use crate::limits::OperationError;
 
 use crate::apply::CONJOIN_GRID;
 use crate::apply::conjoin::budget::NO_PRODUCT;
-use crate::diagram::{ChildPair, NodeIdx, Tdd, LEAF_WIDTH, ZERO};
+use crate::diagram::{NodeIdx, Tdd, LEAF_WIDTH, ZERO};
 use crate::vtree::VtreeIdx;
 
 use super::Marking;
@@ -107,7 +107,7 @@ impl Marking {
                         if let Some(fnode) = fo {
                             alive[v.idx()][fnode.idx()] = true;
                             pair_alive.mark(eng, v, fnode, k,
-                                f.levels[v.idx()].pairs_of_idx(fnode.idx()).len())?;
+                                f.levels[v.idx()].pair_count_at(fnode.idx()))?;
                         }
                     }
                 }
@@ -148,7 +148,7 @@ impl Marking {
             if !self.alive[v.idx()][l.idx()] {
                 return Ok(false);
             }
-            let pairs = f.levels[v.idx()].pairs_of_idx(l.idx());
+            let pairs = f.levels[v.idx()].pairs_iter_of_idx(l.idx());
             if !self.pair_alive.complete(v, l, pairs.len()) {
                 return Ok(false);
             }
@@ -250,10 +250,7 @@ fn spend(remaining: &mut u64) -> bool {
 /// The (left, right) child references of one operand at level `v`: its node's
 /// pairs, or the single `(⊤, ⊤)` pair when the operand is `⊤` there.
 fn refs(t: &Tdd, v: VtreeIdx, o: Ref) -> impl Iterator<Item = (Ref, Ref)> + '_ {
-    let pairs: &[ChildPair] = match o {
-        Some(l) => t.levels[v.idx()].pairs_of_idx(l.idx()),
-        None => &[],
-    };
+    let pairs = o.map(|l| t.levels[v.idx()].pairs_iter_of_idx(l.idx()));
     let top = o.is_none();
     let (left, right) = t.vtree.children(v);
     let decode = move |child: VtreeIdx, side| {
@@ -261,7 +258,8 @@ fn refs(t: &Tdd, v: VtreeIdx, o: Ref) -> impl Iterator<Item = (Ref, Ref)> + '_ {
         if decoder.is_marginal() { None } else { Some(decoder.node(side)) }
     };
     pairs
-        .iter()
+        .into_iter()
+        .flatten()
         .map(move |p| (decode(left, p.left), decode(right, p.right)))
         .chain(std::iter::once((None, None)).filter(move |_| top))
 }

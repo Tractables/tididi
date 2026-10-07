@@ -31,11 +31,11 @@ fn inline_summed_out_sides_are_probed_and_filtered_natively() {
     let g = filtered(&f, &outcome);
     let level = &g.levels[v4.idx()];
     assert_eq!(level.nodes().len(), 1, "only the live node stays on v4");
-    let pairs = level.pairs_of_idx(0);
+    let pairs = level.pairs_vec(0);
     assert_eq!(pairs.len(), 1);
     assert_eq!(ChildDecoder::marginal().child(pairs[0].right), ChildRef::Value(ValueRef::Inline(5)));
     let out = g.output();
-    assert_eq!(g.levels[out.vtree.idx()].pairs_of_idx(out.local.idx()).len(), 1, "the output drops its pair into the dead node");
+    assert_eq!(g.levels[out.vtree.idx()].pairs_vec(out.local.idx()).len(), 1, "the output drops its pair into the dead node");
 }
 
 /// Probe the boundary fixture under x3 with enumeration and return what the

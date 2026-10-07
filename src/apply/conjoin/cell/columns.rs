@@ -48,11 +48,12 @@ unsafe impl Send for ColumnSlice {}
 /// Per-level g column table: column `j`'s pair slice resolved once per level
 /// instead of once per (row, column) cell.
 ///
-/// With identity masks (no marginal child) the descriptors borrow g's own
-/// `nodes`/`pairs` and `flat` stays empty. With marginal masks g's pairs are
-/// decoded once into `flat`, whose reservation is budget-charged and released
-/// on drop; when that reservation is refused `build` returns `None` and the
-/// walkers decode per cell instead.
+/// With identity masks (no marginal child) on a stored level the descriptors
+/// borrow g's own `nodes`/`pairs` and `flat` stays empty. With marginal masks
+/// g's pairs are decoded once into `flat`, and an implicit level's generated
+/// into it; its reservation is budget-charged and released on drop. When
+/// that reservation is refused `build` returns `None` and the walkers decode
+/// per cell instead.
 ///
 /// On a level whose N×M cells can be grouped, every column of at least
 /// [`GROUPED_MIN_PAIRS`] pairs also has its runs of pairs sharing `.left`
@@ -130,13 +131,14 @@ impl<'a> RightColumns<'a> {
         if right_width > right_level.nodes.len() {
             return None;
         }
-        let identity = !left_view.is_marginal() && !right_view.is_marginal();
-
-        // Identity masks borrow g's storage directly (the per-cell view was
-        // already a zero-copy borrow — never materialize what was borrowed),
-        // so the arena and its budget charge exist only for marginal masks.
+        // Identity masks on a stored level borrow g's storage directly (the
+        // per-cell view was already a zero-copy borrow — never copy what was
+        // borrowed), so the arena and its budget charge exist only for
+        // marginal masks and for an implicit level, whose pairs are generated
+        // into it.
+        let borrowed = (!left_view.is_marginal() && !right_view.is_marginal()).then(|| right_level.stored()).flatten();
         let mut flat = Transient::new(lim, Vec::<ChildPair>::new());
-        if !identity {
+        if borrowed.is_none() {
             let mut total: usize = 0;
             for j in 0..right_width {
                 total += right_level.pair_count_at(j);
@@ -157,12 +159,12 @@ impl<'a> RightColumns<'a> {
             return None;
         }
 
-        if identity {
+        if let Some(stored) = borrowed {
             for j in 0..right_width {
                 // The one per-column resolution — the same accessor the per-cell
-                // identity fast path (`pairs_view_decoded` → `pairs_of_idx`)
+                // identity fast path (`pairs_view_decoded` → `pairs_read`)
                 // calls, hoisted out of the row loop.
-                let s = right_level.pairs_of_idx(j);
+                let s = stored.of_idx(j);
                 cols.push(ColumnSlice { ptr: s.as_ptr(), len: s.len(), run_range: (0, 0) });
             }
         } else {

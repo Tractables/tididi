@@ -3,7 +3,7 @@ use super::*;
 use rustc_hash::FxHashMap;
 
 use crate::test_helpers::check::check_determinism;
-use crate::test_helpers::{assert_canonical, assert_same_shape, assignment, compile_clauses, sweep_shapes, test_cases, vtree_shapes};
+use crate::test_helpers::{assert_canonical, assert_same_shape, assignment, compile_clauses, same_as_stored, sweep_shapes, test_cases, vtree_shapes};
 use crate::vtree::rng::Lcg;
 use crate::vtree::VarId;
 
@@ -21,8 +21,16 @@ fn rebuilt(vtree: &Arc<Vtree>, f: &Tdd, model: &[i32], insert: bool) -> Tdd {
     out
 }
 
+/// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn an_edit_and_a_rebuild_reach_the_same_diagram() {
+    same_as_stored(an_edit_and_a_rebuild);
+}
+
+/// The cases of [`an_edit_and_a_rebuild_reach_the_same_diagram`]: the
+/// edited diagrams, minimized.
+fn an_edit_and_a_rebuild() -> Vec<Tdd> {
+    let mut out = Vec::new();
     // Both routes over every assignment of every small case. `check_determinism`
     // is quadratic in the level widths, so the sweep stops at five variables.
     let mut edits = [0u32; 2];
@@ -51,12 +59,14 @@ fn an_edit_and_a_rebuild_reach_the_same_diagram() {
                     let what = if insert { "insert" } else { "remove" };
                     assert_same_shape(&got, &rebuilt(&vtree, &f, &model, insert),
                         &format!("{shape}: {what} {model:?}"));
+                    out.push(got);
                 }
             }
         }
     }
     assert!(edits[0] > 0 && edits[1] > 0,
         "the edit route was not exercised in both directions: {edits:?}");
+    out
 }
 
 #[test]

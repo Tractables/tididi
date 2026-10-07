@@ -4,7 +4,7 @@
 use crate::diagram::ChildPair;
 use crate::reduce::prune::{PruneScope, below_root_walk_applies};
 use crate::reduce::ReductionPlan;
-use crate::test_helpers::{CnfShape, Lcg, compile_clauses_on, rand_cnf, vtree_shapes};
+use crate::test_helpers::{CnfShape, Lcg, compile_clauses_on, rand_cnf, same_as_stored, vtree_shapes};
 use crate::{Engine, Tdd};
 
 use super::plan::shape;
@@ -23,8 +23,10 @@ fn negate_scoped(eng: &Engine, f: Tdd, plan: ReductionPlan<'_>, scope: PruneScop
 }
 
 /// Both scopes on the same operand, under both plans: the diagrams agree node
-/// for node and pair for pair, not merely as functions.
-fn assert_same_negation(eng: &Engine, f: &Tdd) {
+/// for node and pair for pair, not merely as functions. Returns the
+/// negations.
+fn assert_same_negation(eng: &Engine, f: &Tdd) -> Vec<Tdd> {
+    let mut out = Vec::new();
     for prune_only in [true, false] {
         let plan = || if prune_only { ReductionPlan::Prune } else { ReductionPlan::default() };
         let seeded = negate_scoped(eng, f.clone(), plan(), PruneScope::BelowRoot);
@@ -33,38 +35,45 @@ fn assert_same_negation(eng: &Engine, f: &Tdd) {
         assert_eq!(seeded.node_count(), whole.node_count());
         assert_eq!(seeded.pair_count(), whole.pair_count());
         assert_eq!(seeded.model_count().unwrap(), whole.model_count().unwrap());
+        out.extend([seeded, whole]);
     }
+    out
 }
 
+/// On implicit levels and on stored ones alike ([`same_as_stored`]).
 #[test]
 fn the_seeded_prune_leaves_the_diagram_the_whole_walk_leaves() {
-    let eng = &Engine::new();
-    let mut rng = Lcg::new(0x51ed_2b17);
-    let mut cases = 0usize;
-    for num_vars in [3u32, 5, 8] {
-        for (_name, vtree) in vtree_shapes(num_vars) {
-            for _ in 0..12 {
-                let ca = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 6, width: 3 });
-                let cb = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 3, width: 2 });
-                let f = compile_clauses_on(eng, &vtree, &ca);
-                let g = compile_clauses_on(eng, &vtree, &cb);
-                if f.is_zero() || g.is_zero() {
-                    continue;
-                }
-                // A minimized operand and an unminimized conjunction: the two
-                // shapes a Tp-compilation consumer negates.
-                let conj = crate::and(f.clone(), g).unwrap();
-                for operand in [f, conj] {
-                    if operand.is_zero() {
+    same_as_stored(|| {
+        let eng = &Engine::new();
+        let mut rng = Lcg::new(0x51ed_2b17);
+        let mut cases = 0usize;
+        let mut out = Vec::new();
+        for num_vars in [3u32, 5, 8] {
+            for (_name, vtree) in vtree_shapes(num_vars) {
+                for _ in 0..12 {
+                    let ca = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 6, width: 3 });
+                    let cb = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 3, width: 2 });
+                    let f = compile_clauses_on(eng, &vtree, &ca);
+                    let g = compile_clauses_on(eng, &vtree, &cb);
+                    if f.is_zero() || g.is_zero() {
                         continue;
                     }
-                    cases += 1;
-                    assert_same_negation(eng, &operand);
+                    // A minimized operand and an unminimized conjunction: the two
+                    // shapes a Tp-compilation consumer negates.
+                    let conj = crate::and(f.clone(), g).unwrap();
+                    for operand in [f, conj] {
+                        if operand.is_zero() {
+                            continue;
+                        }
+                        cases += 1;
+                        out.extend(assert_same_negation(eng, &operand));
+                    }
                 }
             }
         }
-    }
-    assert!(cases > 100, "expected a corpus, got {cases} cases");
+        assert!(cases > 100, "expected a corpus, got {cases} cases");
+        out
+    });
 }
 
 /// The seeded walk stops at the first level that loses nothing, which is sound
@@ -92,7 +101,7 @@ fn an_operand_with_unreachable_nodes_negates_the_same_under_either_scope() {
                     if f.levels[t].is_marginal() || f.levels[t].slot_count() == 0 {
                         continue;
                     }
-                    let pairs: Vec<ChildPair> = f.levels[t].pairs_of_idx(0).to_vec();
+                    let pairs: Vec<ChildPair> = f.levels[t].pairs_vec(0).to_vec();
                     if pairs.is_empty() {
                         continue;
                     }

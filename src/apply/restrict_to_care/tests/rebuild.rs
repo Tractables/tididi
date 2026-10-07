@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use super::*;
 use crate::apply::restrict_to_care::pairs::PairMarks;
-use crate::diagram::{TddNodeId, POS_LEAF_IDX};
+use crate::diagram::{TddNodeId, NEG_LEAF_IDX, POS_LEAF_IDX};
 use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::test_helpers::{assert_canonical, assert_same_shape};
 use crate::vtree::Vtree;
@@ -23,7 +23,7 @@ fn all_live_but_the_output_pairs(eng: &Engine, f: &Tdd) -> Marking {
         let level = &f.levels[v.idx()];
         for j in 0..level.nodes.len() {
             if (v, j) == (f.output.vtree, f.output.local.idx()) { continue; }
-            let count = level.pairs_of_idx(j).len();
+            let count = level.pairs_vec(j).len();
             for k in 0..count { pair_alive.mark(eng, v, NodeIdx(j as u32), k, count).unwrap(); }
         }
     }
@@ -167,4 +167,42 @@ fn the_node_filter_agrees_with_the_depth_first_rebuild() {
         }
     }
     assert!(compared >= 60, "too few operands compared: {compared}");
+}
+
+/// Marks that kill the `(¬x2, ·)` pairs of an implicit x-decision level:
+/// what is left of each node, its two `(x2, ·)` pairs, is built stored, the
+/// prune that follows drops the nodes below that only the dropped pairs
+/// named, and its close describes what is left again. The pairs are those
+/// the same marks leave of the level's stored copy.
+#[test]
+fn marks_on_an_implicit_level_build_what_is_left() {
+    use crate::test_helpers::{sorted_pairs, with_stored_copy, x_decision_diagram};
+    let eng = Engine::new();
+    let (implicit, v, w) = x_decision_diagram(32);
+    assert!(implicit.levels[v.idx()].implicit().is_some(), "the fixture's level is implicit");
+    let stored = with_stored_copy(&implicit, v);
+    // Every pair alive but those of `v` naming ¬x2, read off each
+    // diagram's own level.
+    let marks = |f: &Tdd| {
+        let mut pair_alive = PairMarks::new(&eng, f).unwrap();
+        for (t, _, _) in f.vtree.internal_bottomup() {
+            let level = &f.levels[t.idx()];
+            for j in 0..level.nodes.len() {
+                let count = level.pair_count_at(j);
+                for (k, p) in level.pairs_iter_of_idx(j).enumerate() {
+                    if t != v || p.left != NEG_LEAF_IDX.into() {
+                        pair_alive.mark(&eng, t, NodeIdx(j as u32), k, count).unwrap();
+                    }
+                }
+            }
+        }
+        Marking { pair_alive, ..all_live(f) }
+    };
+    let g = marks(&implicit).rebuild(&eng, implicit.clone()).unwrap();
+    let h = marks(&stored).rebuild(&eng, stored.clone()).unwrap();
+    assert_eq!(sorted_pairs(&g), sorted_pairs(&h));
+    assert_eq!(g.levels[w.idx()].nodes.len(), 64, "the prune drops what only dead pairs named");
+    let level = &g.levels[v.idx()];
+    assert_eq!(level.pair_count_at(0), 2);
+    assert!(level.implicit().is_some(), "the rest is affine and closed");
 }

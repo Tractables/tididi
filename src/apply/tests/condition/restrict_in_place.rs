@@ -36,18 +36,40 @@ fn rewrite_for_restrict_shrinks_pair_lists_in_place() {
     let level = &tdd.levels[root.idx()];
     assert_eq!(level.nodes.len(), 3, "node indices are preserved");
     assert_eq!(
-        level.pairs_of_idx(0),
+        level.pairs_vec(0),
         &[ChildPair::new(ONE_LEAF_IDX, ONE_LEAF_IDX), ChildPair::new(ONE_LEAF_IDX, NEG_LEAF_IDX)],
         "survivors compacted into the node's own range, sorted",
     );
     assert_eq!(
-        level.pairs_of_idx(1),
+        level.pairs_vec(1),
         &[ChildPair::new(ONE_LEAF_IDX, ONE_LEAF_IDX)],
         "the inline node's restricted pair stays inline",
     );
-    assert!(level.pairs_of_idx(2).is_empty(), "an all-dropped node keeps no pairs");
+    assert!(level.pairs_vec(2).is_empty(), "an all-dropped node keeps no pairs");
     assert_eq!(level.pairs.len(), arena_len_before, "no second arena, and no growth");
     assert_eq!(level.dead_pairs, 1, "the one abandoned slot is reported as dead");
+}
+
+/// Restricting an implicit x-decision level reads its description and builds
+/// what is left stored, two pairs `(⊤, ·)` a node, as restricting the
+/// level's stored copy leaves it: the same pairs, the same arena length and
+/// the same dead slots.
+#[test]
+fn restricting_an_implicit_level_builds_what_is_left() {
+    use crate::test_helpers::{sorted_pairs, with_stored_copy, x_decision_diagram};
+    for keep_positive in [true, false] {
+        let (mut implicit, v, _) = x_decision_diagram(32);
+        assert!(implicit.levels[v.idx()].implicit().is_some(), "the fixture's level is implicit");
+        let mut stored = with_stored_copy(&implicit, v);
+        let emptied = rewrite_for_restrict(&mut implicit, v, ChildSide::Left, keep_positive);
+        assert_eq!(emptied, rewrite_for_restrict(&mut stored, v, ChildSide::Left, keep_positive));
+        assert!(!emptied);
+        assert_eq!(sorted_pairs(&implicit), sorted_pairs(&stored), "keep {keep_positive}: other pairs");
+        let (level, oracle) = (&implicit.levels[v.idx()], &stored.levels[v.idx()]);
+        assert_eq!(level.pair_count_at(0), 2);
+        assert!(level.implicit().is_none(), "keep {keep_positive}: the rest is built stored");
+        assert_eq!((level.pairs.len(), level.pairs.capacity(), level.dead_pairs), (oracle.pairs.len(), oracle.pairs.capacity(), oracle.dead_pairs));
+    }
 }
 
 /// Conditioning empties every node whose pairs all belonged to the opposite

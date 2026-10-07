@@ -227,7 +227,7 @@ pub fn node_value(f: &Tdd, id: TddNodeId, rejected: &dyn Fn(TddNodeId) -> bool, 
             BigUint::ZERO
         } else {
             let (left, right) = f.vtree.children(child);
-            level.pairs_of_idx(id.local.idx()).iter()
+            level.pairs_vec(id.local.idx()).iter()
                 .map(|p| side(f, rejected, assignment, memo, left, p.left) * side(f, rejected, assignment, memo, right, p.right))
                 .sum()
         };

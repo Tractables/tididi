@@ -7,18 +7,45 @@
 //! other, each with every pair of the one with every pair of the other. Its
 //! pairs are then an affine function of the digits of a mixed radix, and
 //! [`ImplicitLevel`] holds that function: the level's nodes stay stored, its
-//! pair arena does not. [`TddLevel::materialize`] writes the arena the
-//! conjunction would have written, pair for pair and in the same order.
-
-use std::ops::{Deref, DerefMut};
-use std::panic::Location;
-use std::sync::{Mutex, OnceLock};
+//! pair arena does not, and nothing writes it out.
 
 use crate::diagram::primitives::{ChildPair, EncodedChildRef, EncodedNode};
 use crate::diagram::ChildSide;
 use crate::limits::{Charged, Limits, OperationError};
 
 use super::{LevelState, TddLevel};
+
+// A test builds every level stored, none described, as the oracle the
+// implicit levels are checked against (`test_helpers::stored_levels`), or
+// lowers the floor so that small diagrams hold implicit levels
+// (`test_helpers::with_floor`).
+#[cfg(test)]
+use crate::test_helpers::{floor as floor_here, stored_levels_forced as stored_here};
+
+#[cfg(not(test))]
+#[inline(always)]
+const fn stored_here() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+const fn floor_here() -> usize {
+    FLOOR
+}
+
+/// Whether every level is built stored: never, outside a test.
+#[inline(always)]
+pub(crate) fn stored_levels_forced() -> bool {
+    stored_here()
+}
+
+/// The fewest pairs a level holds as their description: [`FLOOR`], outside
+/// a test.
+#[inline(always)]
+pub(crate) fn floor() -> usize {
+    floor_here()
+}
 
 /// One digit of an implicit level's numbering of its pairs: its radix, and
 /// what one unit of it adds to a pair's left and right child slots and to
@@ -45,8 +72,33 @@ pub struct Digit {
 /// first: the first [`within`](Self::within) digits number the place `m`,
 /// the others the node `i`, whose index is `Σ c_d · node_d`.
 ///
-/// The slots are the raw words of the pairs' sides, which on an implicit
-/// level always name nodes of internal child levels.
+/// The slots are the raw words of the pairs' sides.
+///
+/// # Canonical form
+///
+/// A level is implicit exactly when it can be: it is structural, its `n`
+/// nodes have the same `k ≥ 2` pairs each,
+/// `n · k` is at least [`FLOOR`], and its pairs as numbered, pair `m` of
+/// node `i` at place `i · k + m`, are affine in a mixed radix. Its
+/// description is then the digits a greedy read takes off those pairs,
+/// a function of the level as numbered, so two equal levels have equal
+/// descriptions and no level that can be implicit is stored. Diagrams are
+/// canonical up to the numbering of nodes and the order of pairs, and no
+/// numbering is preferred: whether a level is implicit depends on the one
+/// it has. Below the floor a description, a box and its digits, costs more
+/// than the pairs it stands for.
+///
+/// The form holds at operation boundaries, not inside an operation. A pass
+/// that changes a level builds it stored where it lies; the seating of a
+/// diagram and the end of a prune or a full reduction close every level
+/// (`TddLevel::close`), describing again what is affine.
+///
+/// The reductions read implicit levels as they read stored ones: a level
+/// the close describes need not be reduced, since a prune-only reduction or
+/// the seating of a diagram closes levels no contraction has visited. Twin
+/// merging, leaf contraction, pair fusion and duplicate resolution find
+/// their work in the description, and the one that changes a level stores
+/// it first.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImplicitLevel {
     nodes: usize,
@@ -55,6 +107,10 @@ pub struct ImplicitLevel {
     digits: Vec<Digit>,
     within: usize,
 }
+
+/// The fewest pairs a level holds as their description; a level with fewer
+/// is stored.
+pub const FLOOR: usize = 64;
 
 impl ImplicitLevel {
     /// The level's nodes.
@@ -110,6 +166,50 @@ impl ImplicitLevel {
         at
     }
 
+    /// The pairs of node `node`, in their order.
+    #[inline]
+    pub(crate) fn places(&self, node: usize) -> Places<'_> {
+        Places { digits: &self.digits[..self.within], at: self.node_first(node), next: 0, end: self.per_node }
+    }
+
+    /// The description of the level with its two sides exchanged, as
+    /// [`TddLevel::swap_sides`] exchanges a stored level's: the same nodes,
+    /// each pair's slots swapped.
+    pub(crate) fn swapped(&self) -> ImplicitLevel {
+        let digits = self.digits.iter().map(|d| Digit { left: d.right, right: d.left, ..*d }).collect();
+        ImplicitLevel { first: (self.first.1, self.first.0), digits, ..*self }
+    }
+
+    /// The description in normal form: the digits the greedy read takes off
+    /// the pairs this one describes, which are those [`fit`](Self::fit)
+    /// reads off the level. Probes about the sum of the radices; writes no
+    /// pairs.
+    pub(crate) fn normal(&self) -> ImplicitLevel {
+        let (k, first) = (self.per_node, self.first);
+        let within = read_digits(k, |m| {
+            let (l, r) = self.at(m);
+            Some((l - first.0, r - first.1))
+        });
+        let across = read_digits(self.nodes, |i| Some(self.at(i * k)));
+        let (Some(within), Some(across)) = (within, across) else {
+            unreachable!("the pairs of a description are affine")
+        };
+        ImplicitLevel::assemble(self.nodes, k, first, &within, &across)
+    }
+
+    /// The child slots of the pair at position `p` of the level's pairs.
+    fn at(&self, p: usize) -> (i64, i64) {
+        let (mut l, mut r) = self.first;
+        let mut rest = p;
+        for d in &self.digits {
+            let c = (rest % d.radix) as i64;
+            rest /= d.radix;
+            l += c * d.left;
+            r += c * d.right;
+        }
+        (l, r)
+    }
+
     /// Append the pairs of node `node` to `out`, in their order.
     pub fn pairs_of(&self, node: usize, out: &mut Vec<ChildPair>) {
         let at = self.node_first(node);
@@ -154,40 +254,6 @@ impl ImplicitLevel {
         Ok(())
     }
 
-    /// Write the pairs, in their order, into `out`.
-    fn write_pairs(&self, out: &mut Vec<ChildPair>) {
-        out.reserve(self.pairs());
-        self.for_each_pair(|l, r| out.push(pair(l, r)));
-    }
-
-    /// Append the pairs at positions `range` of the level's pairs to `out`.
-    fn write_range(&self, range: std::ops::Range<usize>, out: &mut Vec<ChildPair>) {
-        let k = self.per_node;
-        out.reserve(range.len());
-        if range.start.is_multiple_of(k) && range.len() == k {
-            let at = self.node_first(range.start / k);
-            each_place(&self.digits[..self.within], at, |l, r| out.push(pair(l, r)));
-            return;
-        }
-        for p in range {
-            let (l, r) = self.at(p);
-            out.push(pair(l, r));
-        }
-    }
-
-    /// The child slots of the pair at position `p` of the level's pairs.
-    fn at(&self, p: usize) -> (i64, i64) {
-        let (mut l, mut r) = self.first;
-        let mut rest = p;
-        for d in &self.digits {
-            let c = (rest % d.radix) as i64;
-            rest /= d.radix;
-            l += c * d.left;
-            r += c * d.right;
-        }
-        (l, r)
-    }
-
     /// The description of `level`, when it is one: every node has the same
     /// number of pairs, a node's pairs are its first shifted by offsets all
     /// nodes share, the offsets are affine in the digits of a pair's place,
@@ -201,7 +267,8 @@ impl ImplicitLevel {
         if nodes == 0 {
             return None;
         }
-        let first_pairs = level.pairs_of_idx(0);
+        let stored = level.stored()?;
+        let first_pairs = stored.of_idx(0);
         let per_node = first_pairs.len();
         if per_node == 0 || (1..nodes).any(|i| level.pair_count_at(i) != per_node) {
             return None;
@@ -212,24 +279,77 @@ impl ImplicitLevel {
             Some((l - first.0, r - first.1))
         };
         let within = read_digits(per_node, offset)?;
-        let across = read_digits(nodes, |i| level.pairs_of_idx(i).first().map(slots))?;
+        let across = read_digits(nodes, |i| stored.of_idx(i).first().map(slots))?;
         let fitted = ImplicitLevel::assemble(nodes, per_node, first, &within, &across);
-        fitted.holds(|i| Some(level.pairs_of_idx(i).iter().map(slots))).then_some(fitted)
+        fitted.holds(|i| Some(stored.of_idx(i).iter().map(slots))).then_some(fitted)
+    }
+
+    /// Whether `f` gives distinct slots for the distinct child slots the
+    /// level's pairs name on `side`: read at every setting of the digits
+    /// that move that side's slot.
+    fn one_to_one_on(&self, side: ChildSide, f: impl Fn(i64) -> i64) -> bool {
+        let first = match side {
+            ChildSide::Left => self.first.0,
+            ChildSide::Right => self.first.1,
+        };
+        // Each moved slot with the slot it came from.
+        let mut from = rustc_hash::FxHashMap::default();
+        let mut one = true;
+        Self::each_on_side(&self.digits, side, first, |s, _| {
+            if one {
+                one = *from.entry(f(s)).or_insert(s) == s;
+            }
+        });
+        one
+    }
+
+    /// Calls `f` with every slot on `side` that one of `digits`, read from
+    /// `start`, reaches, and the node index the setting of the node digits
+    /// among them gives: every setting of the digits that move the side's
+    /// slot, those that leave it alone read at zero only.
+    fn each_on_side(digits: &[Digit], side: ChildSide, start: i64, mut f: impl FnMut(i64, usize)) {
+        let step = |d: &Digit| match side {
+            ChildSide::Left => d.left,
+            ChildSide::Right => d.right,
+        };
+        let moving: Vec<Digit> =
+            digits.iter().filter(|d| step(d) != 0).map(|d| Digit { left: step(d), right: d.node, ..*d }).collect();
+        each_place(&moving, (start, 0), |s, node| f(s, node as usize));
+    }
+
+    /// Calls `f` with the child slot on `side` of the first pair of every
+    /// node, once for every setting of the node digits that move the side's
+    /// slot, and a node that starts there: every slot on that side the
+    /// level's nodes start at.
+    pub(crate) fn each_side_first(&self, side: ChildSide, f: impl FnMut(i64, usize)) {
+        let start = match side {
+            ChildSide::Left => self.first.0,
+            ChildSide::Right => self.first.1,
+        };
+        Self::each_on_side(&self.digits[self.within..], side, start, f);
     }
 
     /// The child slots every pair of a node adds to its first, in their
     /// order.
-    fn places(&self) -> Vec<(i64, i64)> {
-        let mut places = Vec::with_capacity(self.per_node);
-        each_place(&self.digits[..self.within], (0, 0), |l, r| places.push((l, r)));
-        places
+    fn offsets(&self) -> Vec<(i64, i64)> {
+        let mut offsets = Vec::with_capacity(self.per_node);
+        each_place(&self.digits[..self.within], (0, 0), |l, r| offsets.push((l, r)));
+        offsets
+    }
+
+    /// Whether a node's pairs repeat one: whether two of the offsets every
+    /// node adds to its first pair are equal.
+    pub(crate) fn repeats_a_pair(&self) -> bool {
+        let mut offsets = self.offsets();
+        offsets.sort_unstable();
+        offsets.windows(2).any(|w| w[0] == w[1])
     }
 
     /// Whether `node(i)` gives the pairs of node `i` of this description,
     /// in their order, for every node: read node by node, up to the first
     /// pair that differs.
     fn holds<I: Iterator<Item = (i64, i64)>>(&self, mut node: impl FnMut(usize) -> Option<I>) -> bool {
-        let places = self.places();
+        let places = self.offsets();
         (0..self.nodes).all(|i| {
             let at = self.node_first(i);
             node(i).is_some_and(|pairs| pairs.eq(places.iter().map(|p| (at.0 + p.0, at.1 + p.1))))
@@ -271,7 +391,7 @@ impl ImplicitLevel {
         right: impl Fn(i64) -> i64,
     ) -> Option<ImplicitLevel> {
         let mut node = |j: usize| kept(j).filter(|&i| i < self.nodes).map(|i| self.node_first(i));
-        let places = self.places();
+        let places = self.offsets();
         let moved = |at: (i64, i64), p: &(i64, i64)| (left(at.0 + p.0), right(at.1 + p.1));
         let at = node(0)?;
         let first = moved(at, &places[0]);
@@ -313,13 +433,14 @@ impl ImplicitLevel {
         }
         digits.extend_from_slice(gn);
         digits.extend(fn_.iter().map(|d| scaled(d, g.nodes as i64)));
-        Some(ImplicitLevel {
+        let product = ImplicitLevel {
             nodes: f.nodes * g.nodes,
             per_node: f.per_node * g.per_node,
             first: (f.first.0 * sl + g.first.0, f.first.1 * sr + g.first.1),
             digits,
             within: f.within + g.within,
-        })
+        };
+        Some(product.normal())
     }
 
     /// How many of the place digits, from the fastest, number a run of a
@@ -340,38 +461,6 @@ impl ImplicitLevel {
             back += (d.radix as i64 - 1) * d.left;
         }
         Some(r)
-    }
-
-    /// Whether the child level on `side`, of `width` nodes, holds no twins
-    /// under this level, read off the digits.
-    ///
-    /// Let `A` be the digits that move the slot on `side` and `B` the others.
-    /// When the slot is a one-to-one function of the digits in `A`, and those
-    /// digits take `width` values in all, every node of the child is named,
-    /// and by the pairs of exactly one setting `a` of the digits in `A`, with
-    /// the digits in `B` free. The contexts of the node, the pairs' nodes and
-    /// slots on the other side, are then one set `S`, over the settings of
-    /// `B`, shifted by what `a` adds: two nodes are twins only when their
-    /// settings add the same, since a finite set shifted by a nonzero amount
-    /// is another set. So when what the digits in `A` add to the node and the
-    /// other side's slot is also one-to-one, the child has no twins. `false`
-    /// says only that the digits do not show it.
-    pub(crate) fn twin_free(&self, side: ChildSide, width: usize) -> bool {
-        type Slot = fn(&Digit) -> i64;
-        let (this, other): (Slot, Slot) = match side {
-            ChildSide::Left => (|d| d.left, |d| d.right),
-            ChildSide::Right => (|d| d.right, |d| d.left),
-        };
-        let moved: Vec<&Digit> = self.digits.iter().filter(|d| this(d) != 0).collect();
-        if moved.iter().map(|d| d.radix).product::<usize>() != width {
-            return false;
-        }
-        // The node and the other side's slot packed into one number: the
-        // node's index times one more than the other side's whole range.
-        let span = self.digits.iter().map(|d| (d.radix as i128 - 1) * i128::from(other(d)).abs()).sum::<i128>() + 1;
-        let place = |step: i128, d: &Digit| (step.unsigned_abs(), (d.radix - 1) as u128 * step.unsigned_abs());
-        one_to_one(moved.iter().map(|d| place(i128::from(this(d)), d)))
-            && one_to_one(moved.iter().map(|d| place(i128::from(d.node) * span + i128::from(other(d)), d)))
     }
 }
 
@@ -454,73 +543,51 @@ fn read_digits(n: usize, mut value: impl FnMut(usize) -> Option<(i64, i64)>) -> 
     Some(digits)
 }
 
-/// Whether a value that sums digits, each given by the least gap between
-/// two of its places' contributions and their span, is one-to-one: the
-/// gaps, from the least, each beyond the spans of the digits before it.
-fn one_to_one(digits: impl Iterator<Item = (u128, u128)>) -> bool {
-    let mut digits: Vec<(u128, u128)> = digits.collect();
-    digits.sort_unstable();
-    let mut reach = 0u128;
-    for (gap, span) in digits {
-        if gap <= reach {
-            return false;
-        }
-        reach += span;
-    }
-    true
-}
-
 /// A level's pair arena: the pairs, or, on an implicit level, the
-/// description of the pairs the arena would hold.
+/// description of the pairs in their place.
 ///
-/// An implicit arena is the one place the two kinds of level meet. Reading
-/// it as a vector of pairs ([`Deref`]) writes the pairs once into a copy it
-/// keeps beside the description; changing it ([`DerefMut`]) writes them into
-/// the arena itself, at the capacity the arena would have had, and drops the
-/// description. Either way the reader sees the arena the conjunction would
-/// have written, so code that does not know implicit levels reads them
-/// correctly; the code that does asks for [`implicit`](Self::implicit)
-/// first. [`len`](Self::len) and [`capacity`](Self::capacity) are answered
-/// without writing anything. Every write is counted, by the code that asked
-/// for it (see [`materialized`]).
+/// The two are told apart wherever pairs are read or changed:
+/// [`stored`](Self::stored) gives a stored arena's pairs and
+/// [`implicit`](Self::implicit) an implicit one's description, and nothing
+/// writes an implicit arena's pairs out. [`len`](Self::len) and
+/// [`capacity`](Self::capacity) are those of the arena the level would have
+/// stored, which the meters, the sweeps and the level pool read as they read
+/// a stored one's.
 ///
 /// A prune that keeps an implicit level's survivors as a description
 /// ([`redescribe`](Self::redescribe)) renumbers them from the start of the
 /// arena and leaves its length where it was: the slots past the described
-/// pairs stand for those of the nodes it dropped, which a written arena keeps
+/// pairs stand for those of the nodes it dropped, which a stored arena keeps
 /// until a sweep reclaims them, so that the length, the capacity and the
-/// sweeps are those of the written arena. Nothing reads those slots; written
-/// out, they hold copies of the first described pair.
-#[derive(Clone, Debug, Default)]
+/// sweeps are those of the stored arena. Nothing reads those slots.
+#[derive(Debug, Default)]
 pub(crate) struct PairArena {
     vec: Vec<ChildPair>,
-    lazy: Option<Box<Lazy>>,
+    described: Option<Box<Described>>,
 }
 
 /// What an implicit arena holds in place of its pairs.
-#[derive(Clone, Debug)]
-struct Lazy {
-    described: ImplicitLevel,
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Described {
+    level: ImplicitLevel,
     /// The arena's length: the described pairs, then the slots of pairs a
     /// prune dropped.
     len: usize,
     /// The capacity the arena would have.
     capacity: usize,
-    /// The pairs, once a reader has asked for them.
-    copy: OnceLock<Vec<ChildPair>>,
 }
 
 impl PairArena {
-    /// The arena's length, written or described.
+    /// The arena's length, stored or described.
     #[inline]
     pub(crate) fn len(&self) -> usize {
-        match &self.lazy {
+        match &self.described {
             None => self.vec.len(),
-            Some(l) => l.len,
+            Some(d) => d.len,
         }
     }
 
-    /// Whether the arena holds no pairs, written or described.
+    /// Whether the arena holds no pairs, stored or described.
     #[inline]
     pub(crate) fn is_empty(&self) -> bool {
         self.len() == 0
@@ -528,30 +595,65 @@ impl PairArena {
 
     /// The arena's capacity: on an implicit arena, the capacity it would
     /// have, which the level pool and the meters read as they would read the
-    /// written one's.
+    /// stored one's.
     #[inline]
     pub(crate) fn capacity(&self) -> usize {
-        match &self.lazy {
+        match &self.described {
             None => self.vec.capacity(),
-            Some(l) => l.capacity,
+            Some(d) => d.capacity,
         }
     }
 
     /// The description of the pairs, on an implicit arena.
     #[inline]
     pub(crate) fn implicit(&self) -> Option<&ImplicitLevel> {
-        self.lazy.as_deref().map(|l| &l.described)
+        self.described.as_deref().map(|d| &d.level)
+    }
+
+    /// The pairs of a stored arena; `None` on an implicit one.
+    #[inline]
+    pub(crate) fn stored(&self) -> Option<&[ChildPair]> {
+        self.described.is_none().then_some(self.vec.as_slice())
+    }
+
+    /// The pairs of a stored arena, to change or extend.
+    ///
+    /// # Panics
+    ///
+    /// Panics on an implicit arena, whose pairs are not stored: code that
+    /// changes a level's pairs in place takes an implicit level through its
+    /// description, and code that builds a level starts from a cleared one.
+    #[inline]
+    #[track_caller]
+    pub(crate) fn stored_mut(&mut self) -> &mut Vec<ChildPair> {
+        assert!(self.described.is_none(), "an implicit level's pairs are not stored");
+        &mut self.vec
     }
 
     /// Hold `described`'s pairs as their description, at the capacity the
-    /// written arena would have. The arena is empty; its allocation is
+    /// stored arena would have. The arena is empty; its allocation is
     /// dropped.
     pub(crate) fn describe(&mut self, described: ImplicitLevel, capacity: usize) {
         debug_assert!(self.is_empty() && described.per_node >= 2);
         let len = described.arena_len();
         DESCRIBED.fetch_add(len as u64, std::sync::atomic::Ordering::Relaxed);
+        #[cfg(test)]
+        crate::test_helpers::note_described();
         self.vec = Vec::new();
-        self.lazy = Some(Box::new(Lazy { described, len, capacity, copy: OnceLock::new() }));
+        self.described = Some(Box::new(Described { level: described, len, capacity }));
+    }
+
+    /// Hold a stored arena's pairs as their description `described`, keeping
+    /// the arena's length and capacity: the slots past the described pairs
+    /// stand for the dead slots a sweep would drop.
+    pub(crate) fn describe_stored(&mut self, described: ImplicitLevel) {
+        debug_assert!(self.described.is_none() && described.per_node >= 2 && described.arena_len() <= self.vec.len());
+        let (len, capacity) = (self.vec.len(), self.vec.capacity());
+        DESCRIBED.fetch_add(described.arena_len() as u64, std::sync::atomic::Ordering::Relaxed);
+        #[cfg(test)]
+        crate::test_helpers::note_described();
+        self.vec = Vec::new();
+        self.described = Some(Box::new(Described { level: described, len, capacity }));
     }
 
     /// Hold `described` in place of an implicit arena's description: what a
@@ -559,49 +661,44 @@ impl PairArena {
     /// arena. The arena keeps its length and capacity, the slots past the
     /// described pairs standing for those the prune dropped.
     pub(crate) fn redescribe(&mut self, described: ImplicitLevel) {
-        let lazy = self.lazy.as_mut().expect("redescribe on a written arena");
-        debug_assert!(described.per_node >= 2 && described.arena_len() <= lazy.len);
+        let d = self.described.as_mut().expect("redescribe on a stored arena");
+        debug_assert!(described.per_node >= 2 && described.arena_len() <= d.len);
         REDESCRIBED.fetch_add(described.arena_len() as u64, std::sync::atomic::Ordering::Relaxed);
-        lazy.described = described;
-        lazy.copy = OnceLock::new();
+        #[cfg(test)]
+        crate::test_helpers::note_described();
+        d.level = described;
+    }
+
+    /// Exchange the two sides of an implicit arena's description.
+    pub(crate) fn swap_described_sides(&mut self) {
+        let d = self.described.as_mut().expect("a stored arena swaps its pairs");
+        d.level = d.level.swapped();
     }
 
     /// Shorten the arena to `len`, as [`Vec::truncate`] does. An implicit
-    /// arena cut no shorter than its described pairs drops the slots past
-    /// them without writing anything; any other is written first.
+    /// arena drops the slots past its described pairs.
+    ///
+    /// # Panics
+    ///
+    /// Panics on an implicit arena cut shorter than its described pairs.
     #[track_caller]
     pub(crate) fn truncate(&mut self, len: usize) {
-        match &mut self.lazy {
-            Some(l) if len >= l.described.arena_len() => l.len = l.len.min(len),
-            _ => self.deref_mut().truncate(len),
-        }
-    }
-
-    /// Write an implicit arena's pairs into the arena and drop the
-    /// description; any other arena is left as it is.
-    #[cold]
-    #[track_caller]
-    pub(crate) fn materialize(&mut self) {
-        let Some(lazy) = self.lazy.take() else { return };
-        let Lazy { described, len, capacity, copy } = *lazy;
-        let mut vec = Vec::with_capacity(capacity);
-        match copy.into_inner() {
-            Some(pairs) => vec.extend_from_slice(&pairs),
-            None => {
-                described.write_pairs(&mut vec);
-                count_materialized(Location::caller(), Written::InPlace, vec.len());
-                pad(&mut vec, len);
+        match &mut self.described {
+            None => self.vec.truncate(len),
+            Some(d) => {
+                assert!(len >= d.level.arena_len(), "a truncation into an implicit level's pairs");
+                d.len = d.len.min(len);
             }
         }
-        debug_assert_eq!(vec.capacity(), capacity.max(vec.len()));
-        self.vec = vec;
     }
 
-    /// Empty the arena, keeping its capacity, as [`Vec::clear`] does.
+    /// Empty the arena, keeping its capacity, as [`Vec::clear`] does: an
+    /// implicit arena becomes an empty stored one of the capacity it would
+    /// have had.
     #[inline]
     pub(crate) fn clear(&mut self) {
-        if let Some(lazy) = self.lazy.take() {
-            self.vec = Vec::with_capacity(lazy.capacity);
+        if let Some(d) = self.described.take() {
+            self.vec = Vec::with_capacity(d.capacity);
         }
         self.vec.clear();
     }
@@ -610,32 +707,46 @@ impl PairArena {
     /// does.
     #[inline]
     pub(crate) fn shrink_to_fit(&mut self) {
-        match &mut self.lazy {
+        match &mut self.described {
             None => self.vec.shrink_to_fit(),
-            Some(l) => l.capacity = l.len,
+            Some(d) => d.capacity = d.len,
         }
     }
 
     /// A copy of the arena, reserved through `lim` as
-    /// [`TddLevel::try_clone_on`] reserves the others: a written arena is
+    /// [`TddLevel::try_clone_on`] reserves the others: a stored arena is
     /// copied at its length, an implicit one keeps its description, its
     /// length as its capacity, and has that length charged.
     pub(crate) fn try_clone_on(&self, lim: &Limits) -> Result<PairArena, OperationError> {
-        match &self.lazy {
+        match &self.described {
             None => {
                 let mut vec = Vec::new();
                 lim.reserve_exact(&mut vec, self.vec.len())?;
                 vec.extend_from_slice(&self.vec);
-                Ok(PairArena { vec, lazy: None })
+                Ok(PairArena { vec, described: None })
             }
-            Some(l) => {
-                let len = l.len;
+            Some(d) => {
+                let len = d.len;
                 lim.charge_bytes((len as u64).saturating_mul(std::mem::size_of::<ChildPair>() as u64))?;
                 Ok(PairArena {
                     vec: Vec::new(),
-                    lazy: Some(Box::new(Lazy { described: l.described.clone(), len, capacity: len, copy: OnceLock::new() })),
+                    described: Some(Box::new(Described { level: d.level.clone(), len, capacity: len })),
                 })
             }
+        }
+    }
+}
+
+impl Clone for PairArena {
+    /// A copy as [`Vec::clone`] makes one, at the arena's length: a stored
+    /// arena's pairs, or the description with its length as its capacity.
+    fn clone(&self) -> Self {
+        match &self.described {
+            None => PairArena { vec: self.vec.clone(), described: None },
+            Some(d) => PairArena {
+                vec: Vec::new(),
+                described: Some(Box::new(Described { level: d.level.clone(), len: d.len, capacity: d.len })),
+            },
         }
     }
 }
@@ -643,62 +754,21 @@ impl PairArena {
 impl From<Vec<ChildPair>> for PairArena {
     #[inline]
     fn from(vec: Vec<ChildPair>) -> Self {
-        PairArena { vec, lazy: None }
-    }
-}
-
-impl Deref for PairArena {
-    type Target = Vec<ChildPair>;
-
-    /// The pairs; on an implicit arena, a copy written on first use.
-    #[inline]
-    #[track_caller]
-    fn deref(&self) -> &Vec<ChildPair> {
-        match &self.lazy {
-            None => &self.vec,
-            Some(l) => l.copied(Location::caller()),
-        }
-    }
-}
-
-impl Lazy {
-    /// The described pairs written out, padded to the arena's length; kept
-    /// out of line so that the readers of written arenas, nearly all of
-    /// them, do not carry it.
-    #[cold]
-    #[inline(never)]
-    fn copied(&self, at: &'static Location<'static>) -> &Vec<ChildPair> {
-        self.copy.get_or_init(|| {
-            let mut v = Vec::with_capacity(self.len);
-            self.described.write_pairs(&mut v);
-            count_materialized(at, Written::Copy, v.len());
-            pad(&mut v, self.len);
-            v
-        })
-    }
-}
-
-impl DerefMut for PairArena {
-    /// The pairs to change; an implicit arena is written in place first.
-    #[inline]
-    #[track_caller]
-    fn deref_mut(&mut self) -> &mut Vec<ChildPair> {
-        if self.lazy.is_some() {
-            self.materialize();
-        }
-        &mut self.vec
+        PairArena { vec, described: None }
     }
 }
 
 impl PartialEq for PairArena {
-    /// Whether the two arenas hold the same pairs; two implicit arenas with
-    /// the same description are compared without writing either.
+    /// Whether the two arenas are the same: the same stored pairs, or the
+    /// same description at the same length. A level is implicit exactly when
+    /// its pairs as numbered can be described (see [`ImplicitLevel`]), so a
+    /// stored arena and an implicit one never hold the same level's pairs.
     fn eq(&self, other: &PairArena) -> bool {
-        self.len() == other.len()
-            && match (self.implicit(), other.implicit()) {
-                (Some(a), Some(b)) if a == b => true,
-                _ => **self == **other,
-            }
+        match (&self.described, &other.described) {
+            (None, None) => self.vec == other.vec,
+            (Some(a), Some(b)) => a.len == b.len && a.level == b.level,
+            _ => false,
+        }
     }
 }
 
@@ -716,22 +786,59 @@ impl crate::execution::pool::Scratch for PairArena {
     }
 }
 
-/// Fill `pairs`, an implicit arena's described pairs written out, to the
-/// arena's length `len` with copies of the first: the slots of the pairs a
-/// prune dropped, which nothing reads.
-fn pad(pairs: &mut Vec<ChildPair>, len: usize) {
-    if let Some(&first) = pairs.first() {
-        pairs.resize(len, first);
+/// The pairs of one node of an implicit level, in their order, generated
+/// from its description: what [`PairsIter`](crate::diagram::PairsIter)
+/// yields on such a level.
+#[derive(Clone, Debug)]
+pub(crate) struct Places<'a> {
+    digits: &'a [Digit],
+    at: (i64, i64),
+    next: usize,
+    end: usize,
+}
+
+impl Places<'_> {
+    /// The pairs still to come.
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.end - self.next
     }
 }
 
-/// Whether an implicit arena's pairs were written as a copy for a reader or
-/// in place for a writer.
-#[derive(Clone, Copy)]
-enum Written {
-    Copy,
-    InPlace,
+impl Iterator for Places<'_> {
+    type Item = ChildPair;
+
+    #[inline]
+    fn next(&mut self) -> Option<ChildPair> {
+        if self.next == self.end {
+            return None;
+        }
+        let (mut l, mut r) = self.at;
+        let mut rest = self.next;
+        for d in self.digits {
+            let c = (rest % d.radix) as i64;
+            rest /= d.radix;
+            l += c * d.left;
+            r += c * d.right;
+        }
+        self.next += 1;
+        Some(pair(l, r))
+    }
+
+    /// Skips to the place `n` on in one step: a place's pair is its own
+    /// sum of digits, independent of the ones before it.
+    #[inline]
+    fn nth(&mut self, n: usize) -> Option<ChildPair> {
+        self.next = self.next.saturating_add(n).min(self.end);
+        self.next()
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len(), Some(self.len()))
+    }
 }
+
 
 /// The pairs arenas have held as their description, over the process.
 static DESCRIBED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -740,98 +847,230 @@ static DESCRIBED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::n
 /// implicit level, over the process.
 static REDESCRIBED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// The pairs implicit arenas have had written, by the code that asked.
-static MATERIALIZED: Mutex<Vec<Materialized>> = Mutex::new(Vec::new());
+/// The pairs of implicit levels a renumbering of their children left not
+/// affine, stored moved, over the process.
+static STORED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// The pairs of implicit levels written out for code that reads or changes a
-/// level's pair arena without knowing its description, summed over the
-/// process by the place in the source that asked.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Materialized {
-    /// The code that asked for the pairs.
-    pub reader: &'static Location<'static>,
-    /// Pairs written as a copy beside the description, for a reader.
-    pub copied: u64,
-    /// Pairs written into the arena, for a writer.
-    pub in_place: u64,
+/// The pairs of implicit levels that a renumbering of their child levels
+/// left not affine as numbered, or that a change rewrote in place, which
+/// were stored, over the whole process.
+pub fn stored_moved() -> u64 {
+    STORED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-fn count_materialized(at: &'static Location<'static>, how: Written, pairs: usize) {
-    let mut all = MATERIALIZED.lock().unwrap_or_else(|e| e.into_inner());
-    let i = match all.iter().position(|m| m.reader == at) {
-        Some(i) => i,
-        None => {
-            all.push(Materialized { reader: at, copied: 0, in_place: 0 });
-            all.len() - 1
-        }
-    };
-    match how {
-        Written::Copy => all[i].copied += pairs as u64,
-        Written::InPlace => all[i].in_place += pairs as u64,
-    }
-}
-
-/// Every place in the source that has had the pairs of an implicit level
-/// written out, with how many, in the order they first asked. An implicit
-/// level holds the description of its pairs instead of the pairs; code that
-/// reads its arena without asking for the description gets them written. The
-/// count is for the whole process.
-pub fn materialized() -> Vec<Materialized> {
-    MATERIALIZED.lock().unwrap_or_else(|e| e.into_inner()).clone()
-}
-
-/// The pairs the conjunction has held as the description of implicit
-/// levels instead of writing them, over the whole process.
+/// The pairs the conjunction and the closes at the ends of operations have
+/// held as the description of implicit levels instead of storing them, over
+/// the whole process.
 pub fn described() -> u64 {
     DESCRIBED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The pairs prunes have kept as the description of what they left of
-/// implicit levels instead of writing them, over the whole process. A level
+/// implicit levels instead of storing them, over the whole process. A level
 /// a prune shrinks, or whose children it renumbers, stays implicit when what
 /// is left is affine in a mixed radix.
 pub fn redescribed() -> u64 {
     REDESCRIBED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+
+impl crate::diagram::Tdd {
+    /// The end of an operation that may have built levels stored: close every
+    /// level ([`TddLevel::close`]), so that the canonical form of implicit
+    /// levels holds when the operation returns. A debug build checks it.
+    pub(crate) fn close_levels(&mut self) {
+        self.levels.close();
+        self.debug_check_implicit_levels();
+    }
+
+    /// In a debug build, panic unless every level is in the canonical form of
+    /// implicit levels; nothing in a release build.
+    #[inline]
+    pub(crate) fn debug_check_implicit_levels(&self) {
+        #[cfg(debug_assertions)]
+        if let Err(e) = crate::test_helpers::check::check_implicit_levels(self) {
+            panic!("a level is out of canonical form at an operation's end: {e}");
+        }
+    }
+}
 impl TddLevel {
-    /// The description of the level's pairs, when the level is implicit and
-    /// its nodes are still the ones the description numbers: node `i` holds
-    /// pairs `i · k .. (i + 1) · k` of the arena, `k` the pairs of every
-    /// node. `None` on any other level.
-    ///
-    /// O(nodes): the nodes are checked against the description.
+    /// The description of the level's pairs, when the level is implicit:
+    /// node `i` holds pairs `i · k .. (i + 1) · k` of the arena, `k` the
+    /// pairs of every node. `None` on a stored level.
+    #[inline]
     pub fn implicit(&self) -> Option<&ImplicitLevel> {
         let d = self.pairs.implicit()?;
-        let k = d.per_node;
-        (self.nodes.len() == d.nodes
-            && self.nodes.iter().enumerate().all(|(i, n)| self.arena_range(n.kind()) == Some(i * k..(i + 1) * k)))
-        .then_some(d)
+        debug_assert!({
+            let k = d.per_node;
+            self.nodes.len() == d.nodes
+                && self.nodes.iter().enumerate().all(|(i, n)| self.arena_range(n.kind()) == Some(i * k..(i + 1) * k))
+        });
+        Some(d)
     }
 
-    /// The pairs of node `i`, without writing an implicit level's arena: a
-    /// slice of the arena, or of `buf`, which they are written into. The
-    /// walks that read every pair of a level once go through here, so that a
-    /// level's description does not have to be written out for them. Not
-    /// valid on a marginal level.
+    /// Move the child slots of an implicit level's pairs on `side` through
+    /// `f`, as a renumbering of the child level there moves them: the level
+    /// stays implicit when `f` is one to one on the slots its pairs name and
+    /// the moved pairs are affine as numbered, and is stored moved otherwise
+    /// ([`store_moved`](Self::store_moved)). A move that is not one to one
+    /// makes two child nodes, or a leaf's two labels, one: twins, a
+    /// duplicate pair or a fusion group the reduction that follows merges
+    /// on the stored level, and closes.
+    pub(crate) fn move_described(&mut self, side: ChildSide, f: impl Fn(i64) -> i64) {
+        let d = self.pairs.implicit().expect("move_described on a stored level");
+        let id = |x: i64| x;
+        let moved = if d.one_to_one_on(side, &f) {
+            match side {
+                ChildSide::Left => d.pruned(d.nodes, Some, &f, id),
+                ChildSide::Right => d.pruned(d.nodes, Some, id, &f),
+            }
+        } else {
+            None
+        };
+        match (moved, side) {
+            (Some(moved), _) => self.pairs.redescribe(moved),
+            (None, ChildSide::Left) => self.store_moved(|_| true, f, id),
+            (None, ChildSide::Right) => self.store_moved(|_| true, id, f),
+        }
+    }
+
+    /// Close a stored level: hold it as the description of its pairs when it
+    /// can be one (see the canonical form of [`ImplicitLevel`]), its nodes at
+    /// pairs `i · k .. (i + 1) · k`, the arena keeping its length, capacity
+    /// and dead slots, so that the meters and the sweeps read it as they
+    /// read the stored one. Nothing on an implicit level or one that cannot
+    /// be, nor on an arena past 2^31 pairs, whose nodes' ranges may take the
+    /// side table. Reads the pairs up to the first that is not affine, and
+    /// charges nothing.
+    pub(crate) fn close(&mut self) {
+        if self.pairs.implicit().is_some()
+            || self.pairs.len() < floor()
+            || self.pairs.len() >= 1 << 31
+            || stored_levels_forced()
+        {
+            return;
+        }
+        let Some(d) = ImplicitLevel::fit(self) else { return };
+        if d.per_node < 2 || d.pairs() < floor() {
+            return;
+        }
+        let k = d.per_node;
+        for (i, node) in self.nodes.iter_mut().enumerate() {
+            *node = EncodedNode::multi_pair((i * k) as u32, k as u32);
+        }
+        self.pairs.describe_stored(d);
+    }
+
+    /// Rewrite an implicit level's pairs through `rewrite_pair` and drop
+    /// those it answers `None` for, as the in-place rewrites of a stored
+    /// level's pairs do: `rewrite_pair` sees each pair with its node, its
+    /// place in the node and the node's pair count, in the description's
+    /// order. The pairs are read off the description; once one is dropped or
+    /// changed, or from the first when `sorted` says the in-place route sorts
+    /// every node's pairs and the description's are not in order, the level
+    /// is built stored as the in-place route leaves a stored level: node
+    /// `i`'s pairs at the start of its range `i · k .. (i + 1) · k`, sorted
+    /// when `sorted` says so, a node of one pair inline and a node of none
+    /// the empty placeholder, the slots it gave up dead, in an arena of the
+    /// length and capacity the description stands for. A level the rewrite
+    /// leaves as it was stays as it was. Nothing closes the level here: the
+    /// form holds at the operation's end. Answers whether a node was left
+    /// with no pairs.
+    pub(crate) fn rewrite_described(
+        &mut self,
+        sorted: bool,
+        mut rewrite_pair: impl FnMut(usize, usize, usize, ChildPair) -> Option<ChildPair>,
+    ) -> bool {
+        let d = self.pairs.implicit().expect("rewrite_described on a stored level").clone();
+        let k = d.per_node;
+        // A node's pairs are its first shifted by offsets every node shares,
+        // so they are in order at every node or at none.
+        let reorder = sorted && !d.offsets().is_sorted();
+        // Once built: the arena, and how many pairs each node keeps.
+        let mut built: Option<(Vec<ChildPair>, Vec<usize>)> = None;
+        for i in 0..d.nodes {
+            let mut kept = 0;
+            for (r, p) in d.places(i).enumerate() {
+                let np = rewrite_pair(i, r, k, p);
+                if built.is_none() && (np != Some(p) || reorder) {
+                    // Every pair before this one stood as it was.
+                    let mut vec = Vec::with_capacity(self.pairs.capacity());
+                    vec.extend((0..i).flat_map(|j| d.places(j)));
+                    vec.extend(d.places(i).take(r));
+                    kept = r;
+                    built = Some((vec, vec![k; i]));
+                }
+                if let (Some((vec, _)), Some(np)) = (built.as_mut(), np) {
+                    vec.push(np);
+                    kept += 1;
+                }
+            }
+            if let Some((vec, lens)) = built.as_mut() {
+                vec.resize((i + 1) * k, d.places(0).next().expect("a node has pairs"));
+                lens.push(kept);
+            }
+        }
+        let Some((mut vec, lens)) = built else { return false };
+        STORED.fetch_add(lens.iter().sum::<usize>() as u64, std::sync::atomic::Ordering::Relaxed);
+        let filler = vec[0];
+        vec.resize(self.pairs.len(), filler);
+        if sorted {
+            for (i, &w) in lens.iter().enumerate() {
+                super::sort_pairs(&mut vec[i * k..i * k + w]);
+            }
+        }
+        self.pairs = PairArena::from(vec);
+        let (mut dead, mut emptied) = (0, false);
+        for (i, &w) in lens.iter().enumerate() {
+            if w < k {
+                dead += self.reencode_shrunk(i, i * k, k, w);
+                emptied |= w == 0;
+            }
+        }
+        self.note_dead_pairs(dead);
+        emptied
+    }
+
+    /// Store the pairs of an implicit level's nodes `keep` names, moved
+    /// through `left` and `right`, when what a prune or a renumbering of its
+    /// child levels leaves of it is not affine as numbered: node `i` at pairs
+    /// `i · k .. (i + 1) · k` of an arena of the length and capacity the
+    /// implicit one stood for. The slots of the other nodes and those past
+    /// the described pairs hold copies of the first pair; nothing reads them.
+    pub(crate) fn store_moved(&mut self, keep: impl Fn(usize) -> bool, left: impl Fn(i64) -> i64, right: impl Fn(i64) -> i64) {
+        let d = self.pairs.implicit().expect("store_moved on a stored level");
+        let (len, capacity) = (self.pairs.len(), self.pairs.capacity());
+        let mut vec = Vec::with_capacity(capacity);
+        let fill = d.places(0).next().map(|p| pair(left(i64::from(p.left.raw())), right(i64::from(p.right.raw()))));
+        let mut stored = 0usize;
+        for i in 0..d.nodes {
+            if keep(i) {
+                vec.extend(d.places(i).map(|p| pair(left(i64::from(p.left.raw())), right(i64::from(p.right.raw())))));
+                stored += d.per_node;
+            } else if let Some(fill) = fill {
+                vec.resize(vec.len() + d.per_node, fill);
+            }
+        }
+        if let Some(fill) = fill {
+            vec.resize(len, fill);
+        }
+        STORED.fetch_add(stored as u64, std::sync::atomic::Ordering::Relaxed);
+        self.pairs = PairArena::from(vec);
+    }
+
+    /// The pairs of node `i`: a slice of a stored level's arena, or of `buf`,
+    /// which an implicit level's are generated into. Not valid on a marginal
+    /// level.
     #[inline]
     pub fn pairs_read<'a>(&'a self, i: usize, buf: &'a mut Vec<ChildPair>) -> &'a [ChildPair] {
-        let node = &self.nodes[i];
-        if let Some(d) = self.pairs.implicit()
-            && let Some(range) = self.arena_range(node.kind())
-        {
-            buf.clear();
-            d.write_range(range, buf);
-            return buf;
+        match self.pair_view() {
+            super::Pairs::Stored(s) => s.of_idx(i),
+            super::Pairs::Implicit(d) => {
+                buf.clear();
+                buf.extend(d.places(i));
+                buf
+            }
         }
-        self.pairs_of(node)
-    }
-
-    /// Write an implicit level's pairs into its arena, leaving it an ordinary
-    /// level with the arena the conjunction that made it would have written.
-    #[track_caller]
-    pub(crate) fn materialize(&mut self) {
-        self.pairs.materialize();
     }
 }
 

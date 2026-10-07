@@ -36,14 +36,16 @@ impl LevelStorage {
 
     pub(crate) fn forget(&mut self) { self.canonical_output = None; }
 
-    pub(crate) fn into_vec(self) -> Vec<TddLevel> { self.levels }
-
-    /// Write level `i`'s pairs if it is implicit. The level denotes the same
-    /// nodes after, so the established canonical form stands.
-    #[track_caller]
-    pub(crate) fn materialize(&mut self, i: usize) {
-        self.levels[i].materialize();
+    /// Close every level ([`TddLevel::close`]). A close changes how a level
+    /// holds its pairs, not the diagram, so a canonical diagram stays
+    /// certified.
+    pub(crate) fn close(&mut self) {
+        for level in &mut self.levels {
+            level.close();
+        }
     }
+
+    pub(crate) fn into_vec(self) -> Vec<TddLevel> { self.levels }
 }
 
 impl From<Vec<TddLevel>> for LevelStorage {

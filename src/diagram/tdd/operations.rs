@@ -465,7 +465,7 @@ impl Tdd {
     /// // Reject the node for x2 and x3; the output's pairs that use it go too.
     /// let (_, below) = vtree.children(vtree.root());
     /// let both = [ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)];
-    /// let outcome = f.filter_nodes(|id| id.vtree != below || f.level(below).pairs_of_idx(id.local.idx()) != both)?;
+    /// let outcome = f.filter_nodes(|id| id.vtree != below || !f.level(below).pairs_iter_of_idx(id.local.idx()).eq(both))?;
     /// let FilterOutcome::Filtered { tdd, stats } = outcome else { unreachable!("the output keeps a pair") };
     /// # tididi::test_helpers::assert_canonical(&tdd);
     /// assert!(tdd.equivalent(&and(literal(&vtree, 1)?, Tdd::clause(&vtree, [-2, -3])?)?)?);

@@ -489,14 +489,14 @@ impl<'a> Streams<'a> {
         }
         let (hl, hr) = (self.layout.held(left), self.layout.held(right));
         let level = self.tdd.level(t);
-        let pairs = level.pairs_of_idx(n as usize);
+        let pairs = level.pairs_iter_of_idx(n as usize);
         self.work += pairs.len() as u64;
         let key = match (hl, hr) {
             (0, 0) => 0,
-            (0, _) => pairs.iter().map(|pair| self.least(right, pair.right.raw())).min().unwrap_or(UNREAD),
-            (_, 0) => pairs.iter().map(|pair| self.least(left, pair.left.raw())).min().unwrap_or(UNREAD),
+            (0, _) => pairs.map(|pair| self.least(right, pair.right.raw())).min().unwrap_or(UNREAD),
+            (_, 0) => pairs.map(|pair| self.least(left, pair.left.raw())).min().unwrap_or(UNREAD),
             _ => {
-                let lead = pairs.iter().map(|pair| self.least(left, pair.left.raw())).min().unwrap_or(UNREAD);
+                let lead = pairs.clone().map(|pair| self.least(left, pair.left.raw())).min().unwrap_or(UNREAD);
                 let mut key = UNREAD;
                 if lead != UNREAD {
                     for pair in pairs {
@@ -573,7 +573,7 @@ impl<'a> Streams<'a> {
             VtreeNode::Internal { left, right, .. } => (left, right),
         };
         let (hl, hr) = (self.layout.held(left), self.layout.held(right));
-        let pairs = self.tdd.level(t).pairs_of_idx(n as usize);
+        let pairs = self.tdd.level(t).pairs_iter_of_idx(n as usize);
         if !stream.open {
             stream.open = true;
             self.work += pairs.len() as u64;
@@ -581,7 +581,7 @@ impl<'a> Streams<'a> {
             // bits, at the bound its left child's least key gives, the right
             // child's read only once the pair reaches the top.
             let entering: Vec<Reverse<Next>> = pairs
-                .iter()
+                .clone()
                 .enumerate()
                 .map(|(p, pair)| {
                     let (l, r) = (pair.left.raw(), pair.right.raw());
@@ -597,7 +597,7 @@ impl<'a> Streams<'a> {
         }
         while stream.out.len() < count {
             let Some(Reverse((key, p, i, j, bound))) = stream.heap.pop() else { break };
-            let pair = pairs[p as usize];
+            let pair = pairs.clone().nth(p as usize).expect("a pair of the node");
             let (l, r) = (pair.left.raw(), pair.right.raw());
             if bound {
                 // The pair's first key, which every key it bounds sorts at
@@ -709,8 +709,7 @@ impl Walk<'_> {
                     let pairs: Vec<(u32, u32)> = self
                         .tdd
                         .level(t)
-                        .pairs_of_idx(n as usize)
-                        .iter()
+                        .pairs_iter_of_idx(n as usize)
                         .map(|p| (p.left.raw(), p.right.raw()))
                         .collect();
                     if let [(l, r)] = pairs[..] {

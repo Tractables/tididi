@@ -84,15 +84,18 @@ fn contract_leaf_sides(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree, vi: VtreeIdx)
 fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> Result<bool, OperationError> {
     let level = &tdd.levels[parent_vi.idx()];
     if level.slot_count() == 0 { return Ok(false); }
+    if level.implicit().is_some() {
+        return try_contract_described(eng, tdd, parent_vi, side);
+    }
 
     // Singleton-pair witness pre-pass: a length-1 pair list whose label on
     // `side` is a literal cannot hold the opposite-polarity partner, so the
     // level is not contractible. O(1) per node, against `classify`'s
     // collect-and-sort per pair list.
     for i in 0..level.nodes.len() {
-        let pairs = level.pairs_of_idx(i);
-        if pairs.len() == 1 {
-            let label = if side == ChildSide::Left { pairs[0].left } else { pairs[0].right };
+        let mut pairs = level.pairs_iter_of_idx(i);
+        if pairs.len() == 1 && let Some(pair) = pairs.next() {
+            let label = if side == ChildSide::Left { pair.left } else { pair.right };
             if label == POS_LEAF_IDX.into() || label == NEG_LEAF_IDX.into() {
                 return Ok(false);
             }
@@ -107,8 +110,7 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
     let mut neg: Transient<'_, Vec<EncodedChildRef>> = Transient::new(lim, Vec::new());
     let mut any_literal = false;
     for i in 0..level.nodes.len() {
-        let pairs = level.pairs_of_idx(i);
-        match classify(lim, pairs, side, &mut pos, &mut neg)? {
+        match classify(lim, level.pairs_iter_of_idx(i), side, &mut pos, &mut neg)? {
             Class::AllContractible { has_literal } => {
                 any_literal |= has_literal;
             }
@@ -117,6 +119,34 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
     }
     if !any_literal { return Ok(false); }
 
+    rewrite_level(tdd, parent_vi, side);
+    Ok(true)
+}
+
+/// [`try_contract_leaf_twins`] on a level held as the description of its
+/// pairs. A node's pairs are its first pair shifted by the offsets every
+/// node shares, so whether a node admits the rewrite, and whether it holds a
+/// literal, depends only on its first pair's label on `side`: one node of
+/// each label is classified, off the description, about the side's distinct
+/// labels times a node's pairs, not the level's pairs. A level that admits
+/// the rewrite is built stored for it ([`rewrite_level`]).
+fn try_contract_described(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> Result<bool, OperationError> {
+    let d = tdd.levels[parent_vi.idx()].implicit().expect("an implicit level");
+    let mut labels: rustc_hash::FxHashMap<i64, usize> = rustc_hash::FxHashMap::default();
+    d.each_side_first(side, |label, node| {
+        labels.entry(label).or_insert(node);
+    });
+    let lim = eng.limits();
+    let mut pos: Transient<'_, Vec<EncodedChildRef>> = Transient::new(lim, Vec::new());
+    let mut neg: Transient<'_, Vec<EncodedChildRef>> = Transient::new(lim, Vec::new());
+    let mut any_literal = false;
+    for &node in labels.values() {
+        match classify(lim, d.places(node), side, &mut pos, &mut neg)? {
+            Class::AllContractible { has_literal } => any_literal |= has_literal,
+            Class::NotContractible => return Ok(false),
+        }
+    }
+    if !any_literal { return Ok(false); }
     rewrite_level(tdd, parent_vi, side);
     Ok(true)
 }
@@ -135,7 +165,7 @@ enum Class {
 /// `Neg` pairs; they are cleared here and grown against `lim`.
 fn classify(
     lim: &Limits,
-    pairs: &[ChildPair],
+    pairs: impl Iterator<Item = ChildPair>,
     side: ChildSide,
     pos: &mut Vec<EncodedChildRef>,
     neg: &mut Vec<EncodedChildRef>,
@@ -183,6 +213,12 @@ fn classify(
 /// unchanged, and nothing is allocated.
 fn rewrite_level(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
     tdd.rewrite_level(parent_vi, |level| {
+        // A contracted level leaves the description: an implicit one that
+        // admits the rewrite is built stored where its pairs lie, and the
+        // close at the end of the operation describes what is affine again.
+        if level.pairs.implicit().is_some() {
+            level.store_moved(|_| true, |l| l, |r| r);
+        }
         for i in 0..level.nodes.len() {
             if let NodeKind::Inline(p) = level.nodes[i].kind() {
                 // A single-pair node is labelled `One` on `side` (the singleton
@@ -200,8 +236,9 @@ fn rewrite_level(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
             let range = level.pair_range_at(i);
             let (start, old_len) = (range.start, range.len());
             let mut w = start;
+            let arena = level.pairs.stored_mut();
             for r in start..start + old_len {
-                let p = level.pairs[r];
+                let p = arena[r];
                 let label = if side == ChildSide::Left { p.left } else { p.right };
                 if label == NEG_LEAF_IDX.into() {
                     // Dropped: its matching Pos contributes the (One, partner)
@@ -221,7 +258,7 @@ fn rewrite_level(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
                     p
                 };
                 debug_assert!(w <= r, "leaf rewrite: write cursor overtook the read cursor");
-                level.pairs[w] = np;
+                arena[w] = np;
                 w += 1;
             }
             let new_len = w - start;

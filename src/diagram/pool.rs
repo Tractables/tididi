@@ -47,7 +47,7 @@ pub(crate) fn reset_level(level: &mut TddLevel) {
     }
     level.clear();
     retain(&mut level.nodes);
-    retain(&mut level.pairs);
+    retain(level.pairs.stored_mut());
     retain(&mut level.ranges);
 }
 

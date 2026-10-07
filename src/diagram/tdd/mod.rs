@@ -353,14 +353,6 @@ impl Tdd {
         &self.levels[idx.idx()]
     }
 
-    /// Write the pairs of the level at `idx` if it holds their description
-    /// ([`TddLevel::implicit`]), as the conjunction that made it would have.
-    /// The diagram denotes the same function after.
-    #[track_caller]
-    pub fn materialize_level(&mut self, idx: VtreeIdx) {
-        self.levels.materialize(idx.idx());
-    }
-
     /// The number of reference slots at `idx`, excluding encoded inline values:
     /// [`LEAF_WIDTH`] on a leaf level, else [`TddLevel::slot_count`].
     pub fn reference_slot_count(&self, idx: VtreeIdx) -> usize {

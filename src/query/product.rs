@@ -414,13 +414,13 @@ impl<'t> Level<'t> {
     }
 
     /// Every `(node, pairs)` the walk reads.
-    fn nodes(&self) -> impl Iterator<Item = (u32, &'t [crate::diagram::ChildPair])> + '_ {
+    fn nodes(&self) -> impl Iterator<Item = (u32, crate::diagram::PairsIter<'t>)> + '_ {
         let level = self.level;
         let range = match self.only {
             Some(u) => u as usize..u as usize + 1,
             None => 0..level.nodes.len(),
         };
-        range.map(move |i| (i as u32, level.pairs_of_idx(i)))
+        range.map(move |i| (i as u32, level.pairs_iter_of_idx(i)))
     }
 }
 

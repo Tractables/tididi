@@ -36,7 +36,7 @@ fn a_node_pushed_from_an_iterator_is_the_node_pushed_from_a_slice() {
             let a = from_slice.push_node(eng.limits(), &pairs[..len]).unwrap();
             let b = from_iter.push_node_from(other.limits(), len, pairs[..len].iter().copied()).unwrap();
             assert_eq!(a, b);
-            assert_eq!(from_slice.pairs_of_idx(a.idx()), from_iter.pairs_of_idx(b.idx()));
+            assert_eq!(from_slice.pairs_vec(a.idx()), from_iter.pairs_vec(b.idx()));
         }
         assert_eq!(from_slice.nodes(), from_iter.nodes());
         assert_eq!(from_slice.charged_bytes(), from_iter.charged_bytes());

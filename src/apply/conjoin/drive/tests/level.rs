@@ -12,7 +12,7 @@ use std::sync::Arc;
 fn operand(vtree: &Arc<Vtree>, pairs: usize) -> Tdd {
     let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
     let root = &mut levels[vtree.root().idx()];
-    root.pairs.extend((0..pairs).map(|_| pair(0, 0)));
+    root.pairs.stored_mut().extend((0..pairs).map(|_| pair(0, 0)));
     root.nodes.push(crate::diagram::EncodedNode::multi_pair(0, pairs as u32));
     Tdd::from_levels_unchecked(Arc::clone(vtree), levels, TddNodeId { vtree: vtree.root(), local: NodeIdx(0) })
 }

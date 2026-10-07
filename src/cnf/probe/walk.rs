@@ -194,7 +194,7 @@ impl Probe<'_> {
             for i in 0..level.nodes().len() {
                 self.gate.poll(1)?;
                 if !encoded(literals[i]) { continue; }
-                let score = level.pairs_of_idx(i).iter()
+                let score = level.pairs_iter_of_idx(i)
                     .filter(|pair| self.side_dead(left, pair.left, left_marginal) || self.side_dead(right, pair.right, right_marginal))
                     .count();
                 scores[i] = score;
@@ -208,7 +208,7 @@ impl Probe<'_> {
             for &i in &order {
                 self.gate.poll(1)?;
                 if self.dead[t.idx()][i] { continue; }
-                if scores[i] == level.pairs_of_idx(i).len() {
+                if scores[i] == level.pair_count_at(i) {
                     self.kill(t, i);
                     continue;
                 }

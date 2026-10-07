@@ -47,10 +47,11 @@ impl InternTable {
         }
         let hash = list_hash(pairs);
         let first = *self.multi.get(&hash)?;
-        if level.pairs_of_idx(first.idx()) == pairs {
+        let holds = |n: NodeIdx| level.pairs_iter_of_idx(n.idx()).eq(pairs.iter().copied());
+        if holds(first) {
             return Some(first);
         }
-        self.collided.get(&hash)?.iter().copied().find(|n| level.pairs_of_idx(n.idx()) == pairs)
+        self.collided.get(&hash)?.iter().copied().find(|&n| holds(n))
     }
 
     /// Index node `index` of `level`, whose pairs are `pairs`, without
@@ -69,15 +70,16 @@ impl InternTable {
             return Ok(());
         }
         let hash = list_hash(pairs);
+        let holds = |n: NodeIdx| level.pairs_iter_of_idx(n.idx()).eq(pairs.iter().copied());
         match self.multi.get(&hash) {
             None => {
                 lim.reserve_map(&mut self.multi, 1)?;
                 self.multi.insert(hash, index);
             }
-            Some(&first) if first == index || level.pairs_of_idx(first.idx()) == pairs => {}
+            Some(&first) if first == index || holds(first) => {}
             Some(_) => {
                 let others = self.collided.get(&hash).map_or(&[][..], Vec::as_slice);
-                if !others.iter().any(|&n| n == index || level.pairs_of_idx(n.idx()) == pairs) {
+                if !others.iter().any(|&n| n == index || holds(n)) {
                     lim.reserve_map(&mut self.collided, 1)?;
                     self.collided.entry(hash).or_default().push(index);
                 }
@@ -258,7 +260,8 @@ impl TddBuilder {
         let cached = self.interned.get_mut(t.idx()).and_then(Option::take);
         let index = self.levels[t.idx()].push_node_from(eng.limits(), len, pairs)?;
         let level = &self.levels[t.idx()];
-        let written = level.pairs_of_idx(index.idx());
+        let mut buf = Vec::new();
+        let written = level.pairs_read(index.idx(), &mut buf);
         if cfg!(debug_assertions) {
             debug_assert_pairs(&self.vtree, &self.levels, t, written);
         }
@@ -292,7 +295,8 @@ impl TddBuilder {
         let index = self.levels[t.idx()].push_node_owned(eng.limits(), pairs)?;
         if let Some(mut table) = cached {
             let level = &self.levels[t.idx()];
-            table.insert_on(eng.limits(), level, level.pairs_of_idx(index.idx()), index)?;
+            let mut buf = Vec::new();
+            table.insert_on(eng.limits(), level, level.pairs_read(index.idx(), &mut buf), index)?;
             self.interned[t.idx()] = Some(table);
         }
         Ok(index)
@@ -353,8 +357,9 @@ impl TddBuilder {
         }
         let mut table = InternTable::default();
         let level = &self.levels[t.idx()];
+        let mut buf = Vec::new();
         for (i, _) in level.internal_inputs_iter() {
-            table.insert_on(lim, level, level.pairs_of_idx(i), NodeIdx(i as u32))?;
+            table.insert_on(lim, level, level.pairs_read(i, &mut buf), NodeIdx(i as u32))?;
         }
         self.interned[t.idx()] = Some(table);
         Ok(())
@@ -504,10 +509,14 @@ impl TddBuilder {
         }
     }
 
-    /// Transfer storage and its prepared worklists without copying the vtree handle.
+    /// Transfer storage and its prepared worklists without copying the vtree
+    /// handle, every level closed (`TddLevel::close`): a diagram is seated in
+    /// the canonical form of implicit levels.
     #[inline]
     pub(super) fn seat(self, output: TddNodeId, dirty: super::Dirty) -> Tdd {
-        Tdd { vtree: self.vtree, levels: self.levels.into(), weights: self.weights, output, dirty }
+        let mut tdd = Tdd { vtree: self.vtree, levels: self.levels.into(), weights: self.weights, output, dirty };
+        tdd.close_levels();
+        tdd
     }
 
     /// Give up on the diagram, returning its levels to the engine's pool.
@@ -655,19 +664,19 @@ fn check_structural_level(
         let (lb, rb) = (lb.min(NodeIdx::MAX_LIVE), rb.min(NodeIdx::MAX_LIVE));
         let fits = |pair: &ChildPair| (pair.left.raw() as usize) < lb && (pair.right.raw() as usize) < rb;
         if lvl.nodes.iter().all(|node| {
-            let pairs = lvl.pairs_of(node);
-            !pairs.is_empty() && pairs.iter().all(fits)
+            let mut pairs = lvl.pairs_iter_of(node);
+            pairs.len() != 0 && pairs.all(|pair| fits(&pair))
         }) {
             return Ok(());
         }
     }
     for (i, node) in lvl.nodes.iter().enumerate() {
         let node_idx = NodeIdx(i as u32);
-        let pairs = lvl.pairs_of(node);
-        if pairs.is_empty() {
+        let pairs = lvl.pairs_iter_of(node);
+        if pairs.len() == 0 {
             return Err(TddBuildError::EmptyNode { level: t, node: node_idx });
         }
-        for &pair in pairs {
+        for pair in pairs {
             for (side, view, b, child) in [(pair.left, lm, lb, left), (pair.right, rm, rb, right)] {
                 if side.is_reserved() {
                     return Err(TddBuildError::ReservedBitSet { level: t, node: node_idx, pair });

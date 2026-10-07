@@ -155,7 +155,8 @@ pub(super) fn equivalence<K: ClauseSink + ?Sized>(eng: &Engine, f: &Tdd, activat
             if !reachable[t.idx()][i] { continue; }
             let y = literals[t.idx()][i];
             encoded += 1;
-            let pairs = level.pairs_of_idx(i);
+            let pairs = level.pairs_iter_of_idx(i);
+            let count = pairs.len();
             live.clear();
             for pair in pairs {
                 if pair.left == ZERO.into() || pair.right == ZERO.into() { continue; }
@@ -164,7 +165,7 @@ pub(super) fn equivalence<K: ClauseSink + ?Sized>(eng: &Engine, f: &Tdd, activat
             }
             if live.is_empty() {
                 sink.clause(&[-y]);
-            } else if pairs.len() == 1 {
+            } else if count == 1 {
                 define_and(sink, y, live[0].0, live[0].1);
             } else {
                 zs.clear();
@@ -233,7 +234,7 @@ fn erasure_certified(lim: &Limits, f: &Tdd, reachable: &[Vec<bool>]) -> Result<b
         }
         for (i, _) in level.nodes().iter().enumerate() {
             if !reachable[t.idx()][i] { continue; }
-            for pair in level.pairs_of_idx(i) {
+            for pair in level.pairs_iter_of_idx(i) {
                 if pair.left == ZERO.into() || pair.right == ZERO.into() { continue; }
                 if left_marginal && right_marginal {
                     if value_positive(f, left, pair.left) && value_positive(f, right, pair.right) {

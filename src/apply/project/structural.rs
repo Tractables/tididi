@@ -520,7 +520,9 @@ fn regroup(
         (Some(left), Some(right)) => (Side::Left, Some(left), right),
     };
     if n_nodes == 1 {
-        let plan = RowPlan::of(work, tdd.levels[parent.idx()].pairs_of_idx(0), left_remap, right_remap)?;
+        // An implicit level's one node's pairs are generated into `buf`.
+        let mut buf = Vec::new();
+        let plan = RowPlan::of(work, tdd.levels[parent.idx()].pairs_read(0, &mut buf), left_remap, right_remap)?;
         if plan.pays {
             regroup_single_rows(work, tdd, parent, left_remap, right_remap, &plan)?;
             return Ok(None);
@@ -898,7 +900,8 @@ fn regroup_single_rows(
     plan: &RowPlan,
 ) -> Result<(), OperationError> {
     let lim = work.eng.limits();
-    let pairs = tdd.levels[parent.idx()].pairs_of_idx(0);
+    let mut buf = Vec::new();
+    let pairs = tdd.levels[parent.idx()].pairs_read(0, &mut buf);
     let mut row = Row::new(lim, plan.words)?;
     if let Some(only) = plan.single {
         // A pair whose left side expands to no cell has no atom. When every
@@ -919,7 +922,7 @@ fn regroup_single_rows(
         }
         let level = &mut tdd.levels[parent.idx()];
         level.clear();
-        let read = row.drain(lim, only, &mut level.pairs, 0, 1, plan.most)?;
+        let read = row.drain(lim, only, level.pairs.stored_mut(), 0, 1, plan.most)?;
         work.gate.poll(read)?;
     } else {
         let filed = |pair: &ChildPair| match left_remap {
@@ -954,7 +957,7 @@ fn regroup_single_rows(
                     work.gate.poll(plan.words)?;
                 }
             }
-            let read = row.drain(lim, left, &mut level.pairs, u64::from(left), plan.rows, plan.most)?;
+            let read = row.drain(lim, left, level.pairs.stored_mut(), u64::from(left), plan.rows, plan.most)?;
             work.gate.poll(read)?;
         }
     }
@@ -962,13 +965,14 @@ fn regroup_single_rows(
     lim.discard(row.marks);
     lim.discard(row.tops);
     let level = &mut tdd.levels[parent.idx()];
-    debug_assert!(level.pairs.is_sorted() && level.pairs.windows(2).all(|w| w[0] != w[1]),
+    let arena = level.pairs.stored_mut();
+    debug_assert!(arena.is_sorted() && arena.windows(2).all(|w| w[0] != w[1]),
         "a single cell's atoms are distinct and in canonical order");
-    let len = level.pairs.len();
+    let len = arena.len();
     if len < 2 {
         // A cell of at most one pair is pushed the way any node is, which
         // stores a lone pair in the node itself when it fits.
-        let lone = level.pairs.pop();
+        let lone = arena.pop();
         level.push_node(lim, lone.as_slice())?;
     } else {
         let before = level.arena_capacity_bytes();
@@ -1253,7 +1257,7 @@ fn scan_level(work: &mut Rewrite<'_>, level: &TddLevel) -> Result<Vec<Owned>, Op
     for i in 0..level.nodes.len() {
         work.poll()?;
         let owner = u32::try_from(i).map_err(|_| OperationError::IndexOverflow)?;
-        for &pair in level.pairs_of_idx(i) {
+        for pair in level.pairs_iter_of_idx(i) {
             work.poll()?;
             lim.try_push(&mut owned, Owned { pair, owner })?;
         }

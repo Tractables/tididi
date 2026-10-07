@@ -33,11 +33,13 @@ fn quantified_subsets(n: u32) -> Vec<Vec<VarId>> {
 }
 
 /// Split a formula's clauses in two, compile each half, and demand the two
-/// routes agree on every subset of the variables.
-fn both_routes_agree(eng: &Engine, vtree: &Arc<Vtree>, num_vars: u32, clauses: &[Vec<i32>], what: &str) {
+/// routes agree on every subset of the variables. Returns the operands and
+/// the results.
+fn both_routes_agree(eng: &Engine, vtree: &Arc<Vtree>, num_vars: u32, clauses: &[Vec<i32>], what: &str) -> Vec<Tdd> {
     let mid = clauses.len().div_ceil(2);
     let f = compile_clauses(vtree, &clauses[..mid]);
     let g = compile_clauses(vtree, &clauses[mid..]);
+    let mut out = Vec::new();
     for vars in quantified_subsets(num_vars) {
         let product = eng
             .and_exists_with(f.clone(), g.clone(), &vars, Quantification::Product)
@@ -49,18 +51,28 @@ fn both_routes_agree(eng: &Engine, vtree: &Arc<Vtree>, num_vars: u32, clauses: &
                 .unwrap();
             assert_canonical(&fused);
             assert_same_shape(&fused, &product, &format!("{what}, quantifying {vars:?} [{how:?}]"));
+            out.push(fused);
         }
+        out.push(product);
     }
+    out.extend([f, g]);
+    out
 }
 
+/// Every route, on implicit levels and on stored ones alike
+/// ([`same_as_stored`]).
 #[test]
 fn the_two_routes_agree_on_the_fixed_corpus() {
-    let eng = Engine::new();
-    for (num_vars, clauses) in test_cases() {
-        for (shape, vtree) in vtree_shapes(num_vars) {
-            both_routes_agree(&eng, &vtree, num_vars, &clauses, shape);
+    same_as_stored(|| {
+        let eng = Engine::new();
+        let mut out = Vec::new();
+        for (num_vars, clauses) in test_cases() {
+            for (shape, vtree) in vtree_shapes(num_vars) {
+                out.extend(both_routes_agree(&eng, &vtree, num_vars, &clauses, shape));
+            }
         }
-    }
+        out
+    });
 }
 
 #[test]

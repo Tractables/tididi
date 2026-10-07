@@ -860,7 +860,7 @@ fn read_level(body: &mut Body<'_>, left_width: usize, right_width: usize) -> Res
     let mut level = TddLevel::new();
     let arena = pairs - (nodes - multi);
     level.nodes.try_reserve_exact(nodes).map_err(|_| malformed("no memory for the level's nodes"))?;
-    level.pairs.try_reserve_exact(arena).map_err(|_| malformed("no memory for the level's pairs"))?;
+    level.pairs.stored_mut().try_reserve_exact(arena).map_err(|_| malformed("no memory for the level's pairs"))?;
     if multi == 0 {
         level.nodes.extend((0..nodes).map(|_| EncodedNode::inline(reader.pair())));
     } else {
@@ -869,7 +869,7 @@ fn read_level(body: &mut Body<'_>, left_width: usize, right_width: usize) -> Res
             if bitmap[i / 8] >> (i % 8) & 1 == 1 {
                 let len = lengths.next().expect("one length per marked node") as usize;
                 let start = level.pairs.len();
-                reader.node(len, &mut level.pairs)?;
+                reader.node(len, level.pairs.stored_mut())?;
                 let node = level.encode_multi(start, len);
                 level.nodes.push(node);
             } else {

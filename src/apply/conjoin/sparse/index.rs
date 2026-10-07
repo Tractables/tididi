@@ -333,7 +333,7 @@ pub(super) fn build_reverse_index<const BY_RIGHT: bool>(
     index: &mut Grouped<RevEntry>,
 ) -> Result<(), OperationError> {
     let pairs = level.nodes.iter().enumerate()
-        .flat_map(|(parent, node)| level.pairs_of(node).iter().map(move |&pair| (parent as u32, pair)));
+        .flat_map(|(parent, node)| level.pairs_iter_of(node).map(move |pair| (parent as u32, pair)));
     counting_sort(
         eng.limits(), key_width, pairs,
         |(parent, pair)| {

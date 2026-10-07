@@ -14,12 +14,14 @@
 //! `marginal` submodule.
 
 mod canonicity;
+mod implicit;
 mod rotation;
 pub(crate) mod signature;
 mod soundness;
 mod structure;
 
 pub use canonicity::check_canonicity;
+pub use implicit::check_implicit_levels;
 pub use rotation::assert_rotation_locality;
 pub use soundness::check_determinism;
 pub use structure::{check_no_false_nodes, validate_vtree_structure};
@@ -43,6 +45,7 @@ pub fn check_all_fast(tdd: &Tdd, label: &str) {
     require(label, "vtree structure", validate_vtree_structure(tdd));
     require(label, "no_false_nodes", check_no_false_nodes(tdd));
     require(label, "canonicity", check_canonicity(tdd, 3));
+    require(label, "implicit levels", check_implicit_levels(tdd));
 }
 
 pub mod marginal;

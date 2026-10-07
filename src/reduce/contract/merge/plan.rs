@@ -160,7 +160,7 @@ pub(super) fn plan_groups(
         debug_assert!(seen_pairs.is_empty(), "the previous group emptied the overlap set");
         keep_pairs_sorted.clear();
         filtered.push(keep);
-        for p in level.pairs_of_idx(keep as usize) {
+        for p in level.pairs_iter_of_idx(keep as usize) {
             seen_pairs.insert((p.left.0, p.right.0));
             keep_pairs_sorted.push((p.left.0, p.right.0));
         }
@@ -168,7 +168,7 @@ pub(super) fn plan_groups(
         for &idx in &group[1..] {
             let mut overlap = false;
             member_pairs.clear();
-            for p in level.pairs_of_idx(idx as usize) {
+            for p in level.pairs_iter_of_idx(idx as usize) {
                 let lr = (p.left.0, p.right.0);
                 overlap |= seen_pairs.contains(&lr);
                 member_pairs.push(lr);
@@ -193,7 +193,7 @@ pub(super) fn plan_groups(
         let mass: usize = filtered.iter().map(|&i| level.pair_count_at(i as usize)).sum();
         if seen_pairs.capacity() > 4 * mass.max(16) {
             for &idx in filtered.iter() {
-                for p in level.pairs_of_idx(idx as usize) {
+                for p in level.pairs_iter_of_idx(idx as usize) {
                     seen_pairs.remove(&(p.left.0, p.right.0));
                 }
             }
@@ -269,7 +269,7 @@ pub(super) fn reserve_transactional(
     if needed_ext > 0 {
         // Immutable sizing borrow above ends here; take the mutable arena borrow.
         let level = &mut tdd.levels[t1.idx()];
-        lim.reserve_exact(&mut level.pairs, needed_pairs)?;
+        lim.reserve_exact(level.pairs.stored_mut(), needed_pairs)?;
         lim.reserve_exact(&mut level.ranges, needed_ext)?;
     }
     Ok(())

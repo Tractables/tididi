@@ -36,5 +36,7 @@ mod inputs;
 
 mod everyday;
 
+mod implicit;
+
 mod shortcuts;
 

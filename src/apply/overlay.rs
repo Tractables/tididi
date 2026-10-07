@@ -252,7 +252,7 @@ fn index_pairs(
 ) -> Result<(), OperationError> {
     held.clear();
     for n in nodes {
-        let pairs = level.pairs_of_idx(n);
+        let pairs = level.pairs_iter_of_idx(n);
         eng.limits().reserve_set(held, pairs.len())?;
         for p in pairs {
             held.insert(key(p.left.0, p.right.0));
@@ -293,7 +293,7 @@ fn inner_level(
 
     for a in 0..f_width {
         s.tagged.clear();
-        for p in fl.pairs_of_idx(a) {
+        for p in fl.pairs_iter_of_idx(a) {
             let xs = lp.of_f(p.left.0);
             let ys = rp.of_f(p.right.0);
             for &x in xs {
@@ -344,7 +344,7 @@ fn inner_level(
                 next += 1;
             }
             s.pairs.clear();
-            for p in gl.pairs_of_idx(b) {
+            for p in gl.pairs_iter_of_idx(b) {
                 let xs = lp.of_g(p.left.0);
                 let ys = rp.of_g(p.right.0);
                 for &x in xs {
@@ -402,7 +402,7 @@ fn root_cells<'s>(
     };
     index_pairs(eng, excluded, std::iter::once(excluded_out.idx()), &mut s.held)?;
     if op == Overlay::Or {
-        for p in fl.pairs_of_idx(f_out.idx()) {
+        for p in fl.pairs_iter_of_idx(f_out.idx()) {
             let xs = lp.of_f(p.left.0);
             let ys = rp.of_f(p.right.0);
             for &x in xs {
@@ -420,7 +420,7 @@ fn root_cells<'s>(
         Overlay::Or => (gl, g_out),
         Overlay::AndNot => (fl, f_out),
     };
-    for p in walked.pairs_of_idx(walked_out.idx()) {
+    for p in walked.pairs_iter_of_idx(walked_out.idx()) {
         let (xs, ys, x_part, y_part) = match op {
             Overlay::Or => (lp.of_g(p.left.0), rp.of_g(p.right.0), &lp.f_part, &rp.f_part),
             Overlay::AndNot => (lp.of_f(p.left.0), rp.of_f(p.right.0), &lp.g_part, &rp.g_part),

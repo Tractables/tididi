@@ -28,10 +28,15 @@ impl<'a> Reduction<'a> {
         let _op = self.eng.limits().enter()?;
         let whole = matches!(scope, PruneScope::Whole);
         let policy = match plan {
-            ReductionPlan::Contract => return contract_all_twins(self.eng, self.tdd),
+            ReductionPlan::Contract => {
+                contract_all_twins(self.eng, self.tdd)?;
+                self.tdd.close_levels();
+                return Ok(());
+            }
             ReductionPlan::Prune => {
                 prune_unreachable(self.eng, self.tdd, scope)?;
                 prune_value_slots(self.eng, self.tdd);
+                self.tdd.close_levels();
                 return Ok(());
             }
             ReductionPlan::Full(policy) => {
@@ -67,6 +72,7 @@ impl<'a> Reduction<'a> {
             structural &= !level.is_marginal();
             level.shrink_arrays();
         }
+        self.tdd.close_levels();
         if structural {
             // The prune left every node reachable, and a contraction only
             // merges twins, whose children are the same.
@@ -153,6 +159,7 @@ impl<'a> Reduction<'a> {
             crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(self.tdd, Some(&parents), "marginalize_levels");
         }
         prune_value_slots(self.eng, self.tdd);
+        self.tdd.close_levels();
         Ok(())
     }
 

@@ -15,7 +15,7 @@ fn with_unreachable_copies(copies: usize) -> Tdd {
     let vtree = Arc::new(Vtree::balanced(2));
     let mut tdd = Tdd::clause(&vtree, [1, 2]).unwrap();
     let root = vtree.root().idx();
-    let pairs: Vec<ChildPair> = tdd.levels[root].pairs_of_idx(tdd.output.local.idx()).to_vec();
+    let pairs: Vec<ChildPair> = tdd.levels[root].pairs_vec(tdd.output.local.idx()).to_vec();
     assert!(pairs.len() >= 2, "the fixture needs a node whose pairs live in the arena");
     for _ in 0..copies {
         tdd.levels[root].push_internal_node(&pairs);

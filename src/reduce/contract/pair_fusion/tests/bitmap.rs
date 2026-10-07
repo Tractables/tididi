@@ -59,7 +59,7 @@ fn sums(tdd: &Tdd) -> Vec<BTreeMap<u32, u128>> {
     (0..level.nodes.len())
         .map(|n| {
             let mut by_x = BTreeMap::new();
-            for p in level.pairs_of_idx(n) {
+            for p in level.pairs_vec(n) {
                 let c = match ChildDecoder::marginal().value(EncodedChildRef::from_raw(p.right.0)) {
                     ValueRef::Inline(v) => v as u128,
                     ValueRef::Slot(s) => counts[s as usize],
@@ -76,7 +76,7 @@ fn layout(tdd: &Tdd) -> (Vec<Vec<ChildPair>>, Vec<u128>) {
     let root = tdd.vtree.root();
     let (_, right) = tdd.vtree.children(root);
     let level = &tdd.levels[root.idx()];
-    let pairs = (0..level.nodes.len()).map(|n| level.pairs_of_idx(n).to_vec()).collect();
+    let pairs = (0..level.nodes.len()).map(|n| level.pairs_vec(n).to_vec()).collect();
     (pairs, tdd.levels[right.idx()].marginal_counts().unwrap().to_vec())
 }
 
@@ -122,7 +122,7 @@ fn the_bitmap_leaves_the_level_the_map_leaves() {
         assert_eq!(sums(&by_bits), before, "fusion keeps every explicit ref's summed count");
         let level = &by_bits.levels[by_bits.vtree.root().idx()];
         for n in 0..3 {
-            let mut xs: Vec<u32> = level.pairs_of_idx(n).iter().map(|p| p.left.0).collect();
+            let mut xs: Vec<u32> = level.pairs_vec(n).iter().map(|p| p.left.0).collect();
             xs.sort_unstable();
             xs.dedup();
             assert_eq!(xs.len(), level.pair_count_at(n), "node {n} holds one pair per explicit ref");

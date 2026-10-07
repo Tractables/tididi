@@ -47,7 +47,7 @@ fn restriction_of_a_wide_relation_preserves_exact_models() {
     let rows: Vec<u64> = (0..128).map(|x| x | (((x * 37 + 11) % 128) << 7)).collect();
     let f = Tdd::from_models(&tree, &vars, &rows).unwrap();
     assert_canonical(&f);
-    assert!(f.levels[f.output.vtree.idx()].pairs_of_idx(f.output.local.idx()).len() > 64);
+    assert!(f.levels[f.output.vtree.idx()].pairs_vec(f.output.local.idx()).len() > 64);
     let care_rows: Vec<_> = rows.iter().copied().step_by(3).collect();
     let c = Tdd::from_models(&tree, &vars, &care_rows).unwrap();
     assert_canonical(&c);

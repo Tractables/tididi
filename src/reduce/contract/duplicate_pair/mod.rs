@@ -94,15 +94,21 @@ pub(super) fn resolve_duplicate_pairs_in_node(
     if !has_o1_absorber(tdd, pv) {
         return Ok(false);
     }
+    // A node of a level held as the description of its pairs has the pairs
+    // of its first shifted by the offsets every node shares: it repeats a
+    // pair exactly when the description does.
+    if let Some(d) = tdd.levels[pv.idx()].implicit() && !d.repeats_a_pair() {
+        return Ok(false);
+    }
     let lim = eng.limits();
     scratch.clear();
     let DuplicateScratch { pairs, counts, out } = scratch;
-    let node_pairs = tdd.levels[pv.idx()].pairs_of_idx(idx);
+    let node_pairs = tdd.levels[pv.idx()].pairs_iter_of_idx(idx);
     if node_pairs.len() < 2 {
         return Ok(false);
     }
     lim.reserve_exact(pairs, node_pairs.len())?;
-    pairs.extend(node_pairs.iter().map(|p| (p.left.0, p.right.0)));
+    pairs.extend(node_pairs.map(|p| (p.left.0, p.right.0)));
     // Pair lists are unordered, so duplicates are grouped by a hash count in
     // O(p) rather than a sort; `out` comes back in hash order, which is allowed
     // because nothing reads a pair list positionally, and scaling distinct
@@ -114,6 +120,12 @@ pub(super) fn resolve_duplicate_pairs_in_node(
     if counts.len() == pairs.len() {
         // No duplicate pairs.
         return Ok(false);
+    }
+    // A node whose duplicates are scaled leaves the description: a level
+    // that repeats a pair is built stored where its pairs lie, and the close
+    // at the end of the operation describes what is affine again.
+    if tdd.levels[pv.idx()].pairs.implicit().is_some() {
+        tdd.levels[pv.idx()].store_moved(|_| true, |l| l, |r| r);
     }
 
     let inlined = scale_duplicate_runs(eng, tdd, pv, counts, out, pairs.len())?;

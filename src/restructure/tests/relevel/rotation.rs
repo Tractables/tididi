@@ -1,7 +1,7 @@
 use super::*;
 use crate::Engine;
 use crate::vtree::{RotationKind, Vtree};
-use crate::diagram::{EncodedNode, PairRange};
+use crate::diagram::TddLevel;
 use crate::test_helpers::{assert_canonical, compile_clauses, rotate_left, rotate_right};
 use crate::restructure::relevel::rebuild_rotated_levels;
 
@@ -60,7 +60,7 @@ fn every_reservation_of_a_rebuild_can_be_refused() {
         match result {
             Err(OperationError::OverBudget) => {
                 refused += 1;
-                assert_eq!(snapshot_levels(&tdd), before, "reservation {cut}");
+                assert!(same_content(&snapshot_levels(&tdd), &before), "reservation {cut}");
             }
             Ok(Some(_)) => completed = true,
             Ok(None) => panic!("reservation {cut}: an unbounded rebuild bailed"),
@@ -372,31 +372,33 @@ fn gc1_sweep_undercount_repro() {
 
 /// Snapshot the content of every level (nodes + pairs + ranges). Dirty-tracking
 /// state may legitimately differ post-rotation; only content is invariant.
-fn snapshot_levels(tdd: &Tdd) -> Vec<(Vec<EncodedNode>, Vec<ChildPair>, Vec<PairRange>)> {
-    tdd.levels
-        .iter()
-        .map(|l| (l.nodes.clone(), l.pairs.to_vec(), l.ranges.clone()))
-        .collect()
+fn snapshot_levels(tdd: &Tdd) -> Vec<TddLevel> {
+    tdd.levels.to_vec()
+}
+
+/// Whether two snapshots hold the same nodes, pairs and ranges.
+fn same_content(a: &[TddLevel], b: &[TddLevel]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.nodes == b.nodes && a.pairs == b.pairs && a.ranges == b.ranges)
 }
 
 fn assert_locality(
     tdd: &Tdd,
-    snap: &[(Vec<EncodedNode>, Vec<ChildPair>, Vec<PairRange>)],
+    snap: &[TddLevel],
     v_idx: usize,
     w_idx: usize,
 ) {
     for (i, level) in tdd.levels.iter().enumerate() {
         if i == v_idx || i == w_idx { continue; }
         assert_eq!(
-            level.nodes, snap[i].0,
+            level.nodes, snap[i].nodes,
             "rotation-locality: level {i} nodes changed (v={v_idx}, w={w_idx})",
         );
         assert_eq!(
-            *level.pairs, snap[i].1,
+            level.pairs, snap[i].pairs,
             "rotation-locality: level {i} pairs changed (v={v_idx}, w={w_idx})",
         );
         assert_eq!(
-            level.ranges, snap[i].2,
+            level.ranges, snap[i].ranges,
             "rotation-locality: level {i} ranges changed (v={v_idx}, w={w_idx})",
         );
     }

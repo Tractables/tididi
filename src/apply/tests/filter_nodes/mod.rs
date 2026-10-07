@@ -28,7 +28,7 @@ type Storage = Vec<(Vec<EncodedNode>, Vec<Vec<ChildPair>>, Option<Vec<u128>>, u8
 fn storage(f: &Tdd) -> Storage {
     f.levels.iter().map(|level| (
         level.nodes().to_vec(),
-        (0..level.nodes().len()).map(|i| level.pairs_of_idx(i).to_vec()).collect(),
+        (0..level.nodes().len()).map(|i| level.pairs_vec(i).to_vec()).collect(),
         level.marginal_counts().map(<[u128]>::to_vec),
         level.value_ref_sides,
     )).collect()
@@ -97,7 +97,7 @@ fn survivors_keep_their_order_and_their_pairs_order() {
     assert_eq!(remap[b.idx()], [0, DEAD, 1, 2]);
     assert_eq!(remap[a.idx()], [0, 1, 2]);
     assert_eq!(remap[root.idx()], [0]);
-    let pairs = |t: VtreeIdx, i: usize| assembly.level(t).pairs_of_idx(i).to_vec();
+    let pairs = |t: VtreeIdx, i: usize| assembly.level(t).pairs_vec(i).to_vec();
     assert_eq!(pairs(b, 1), [ChildPair::new(NEG_LEAF_IDX, POS_LEAF_IDX)]);
     assert_eq!(pairs(a, 0), [ChildPair::new(POS_LEAF_IDX, NodeIdx(0))]);
     assert_eq!(pairs(a, 1), [ChildPair::new(NEG_LEAF_IDX, NodeIdx(1))]);
@@ -136,8 +136,9 @@ fn renumbering_is_monotone_and_pair_lists_keep_their_order() {
             };
             for (i, &new) in remap[t.idx()].iter().enumerate() {
                 if new == DEAD { continue; }
-                let mut source = f.levels[t.idx()].pairs_of_idx(i).iter();
-                for pair in assembly.level(t).pairs_of_idx(new as usize) {
+                let source = f.levels[t.idx()].pairs_vec(i);
+                let mut source = source.iter();
+                for pair in assembly.level(t).pairs_vec(new as usize) {
                     let original = ChildPair::new(back(left, pair.left), back(right, pair.right));
                     assert!(source.any(|&p| p == original), "node {i} at {t:?} reordered or invented a pair");
                 }

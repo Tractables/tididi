@@ -25,7 +25,7 @@
 //!   [`TddLevel::child_decoder`].
 //! - A **structural level** stores its nodes in slots; walk them with
 //!   [`TddLevel::internal_inputs_iter`], which yields `(local index, pairs)`,
-//!   or read one node's pairs with [`TddLevel::pairs_of`].
+//!   or read one node's pairs with [`TddLevel::pairs_iter_of_idx`].
 //!   Each [`ChildPair`] indexes a node in the left child level and one in the
 //!   right child level; the node denotes the disjoint union of its pairs'
 //!   products.
@@ -205,8 +205,8 @@ pub(crate) use semiring::{weight_key, WeightKey};
 pub use weights::{Arithmetic, WeightStore};
 
 // level
-pub use level::{described, materialized, redescribed, CountOverflow, Digit, ImplicitLevel, Materialized, TddLevel};
-pub(crate) use level::{assert_can_make_marginal, sort_pairs};
+pub use level::{described, redescribed, stored_moved, CountOverflow, Digit, ImplicitLevel, Pairs, StoredPairs, TddLevel, FLOOR};
+pub(crate) use level::{assert_can_make_marginal, floor, sort_pairs, stored_levels_forced};
 
 // pool
 pub(crate) use pool::{return_levels, take_levels, try_take_levels};

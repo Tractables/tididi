@@ -137,7 +137,7 @@ fn fusion_creates_twin_both_closed_in_one_call() {
     // denotes MC(A)·(c_A+c_B) + MC(B)·(c_C+c_D) = MC(A)·2·`COUNT_SUM`, so the
     // twin merge must SUM the multiplicity into the count (duplicate redirect +
     // pair fusion fold) — a set-dedup ending at `COUNT_SUM` would halve the count.
-    let root_pairs = tdd.levels[root.idx()].pairs_of_idx(0);
+    let root_pairs = tdd.levels[root.idx()].pairs_vec(0);
     assert_eq!(
         root_pairs.len(),
         1,

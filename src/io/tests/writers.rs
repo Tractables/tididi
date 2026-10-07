@@ -136,14 +136,23 @@ fn the_writers_still_accept_an_explicit_diagram() {
 /// Randomized over small CNFs from fixed seeds, and over the two shapes the
 /// format handles specially — the unsatisfiable diagram, whose problem line
 /// carries the `ZERO` token and no records, and the tautology, whose output is
-/// a leaf's implicit `one` node.
+/// a leaf's implicit `one` node. On implicit levels and on stored ones alike
+/// ([`same_as_stored`](crate::test_helpers::same_as_stored)): the reader seats
+/// what it reads in the canonical form of implicit levels.
 #[test]
 fn writing_a_diagram_and_reading_it_back_returns_the_same_diagram() {
+    crate::test_helpers::same_as_stored(read_back);
+}
+
+/// The cases of [`writing_a_diagram_and_reading_it_back_returns_the_same_diagram`]:
+/// the diagrams read back.
+fn read_back() -> Vec<Tdd> {
     use crate::build::constant_one;
     use crate::io::{read_tdd, write_tdd};
 
     use crate::test_helpers::normalized_levels;
 
+    let mut out = Vec::new();
     let eng = Engine::new();
     let round_trip = |f: &Tdd| -> Tdd {
         let mut bytes: Vec<u8> = Vec::new();
@@ -170,6 +179,7 @@ fn writing_a_diagram_and_reading_it_back_returns_the_same_diagram() {
                     normalized_levels(&f),
                     "the round trip changed the structure"
                 );
+                out.extend([f, back]);
             }
         }
     }
@@ -181,6 +191,7 @@ fn writing_a_diagram_and_reading_it_back_returns_the_same_diagram() {
     let one_back = round_trip(&one);
     assert_canonical(&one_back);
     assert_eq!(one_back.model_count().unwrap(), one.model_count().unwrap(), "the tautology must survive");
+    out
 }
 
 /// The reader's refusals: a file that is not a diagram, and a file that is a

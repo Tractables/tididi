@@ -195,7 +195,7 @@ fn node_value(
         panic!("balanced(3) left child must be a leaf")
     };
     let mut acc = BigRational::zero();
-    for p in tdd.levels[root.idx()].pairs_of_idx(n) {
+    for p in tdd.levels[root.idx()].pairs_vec(n) {
         let xw = ws
             .leaf_val(var, LeafLabel::from_idx(p.left.0 as usize))
             .into_rational_opt()
@@ -217,7 +217,7 @@ fn assert_refs_and_width_in_sync(tdd: &Tdd, ws: &WeightStore, root: VtreeIdx, ma
          (a missed width bump mis-sizes apply buffers)",
     );
     for n in 0..tdd.levels[root.idx()].nodes.len() {
-        for p in tdd.levels[root.idx()].pairs_of_idx(n) {
+        for p in tdd.levels[root.idx()].pairs_vec(n) {
             let raw = p.right.0;
             assert!(
                 !EncodedChildRef::from_raw(raw).is_reserved(),
@@ -256,7 +256,7 @@ fn weighted_fusion_cancels_to_a_real_zero_value() {
     let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs_len, fused_val, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marginal);
-        let ps = tdd.levels[root.idx()].pairs_of_idx(0);
+        let ps = tdd.levels[root.idx()].pairs_vec(0);
         (ps.len(), marginal_value(ws, marginal, ps[0].right.0), node_value(&tdd, ws, root, marginal, 0))
     });
 
@@ -292,7 +292,7 @@ fn weighted_fusion_leaves_other_contexts_untouched() {
     let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (other_pairs, other_vals, after_other, slot0, slot1) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marginal);
-        let ps: Vec<ChildPair> = tdd.levels[root.idx()].pairs_of_idx(1).to_vec();
+        let ps: Vec<ChildPair> = tdd.levels[root.idx()].pairs_vec(1).to_vec();
         let values: Vec<BigRational> =
             ps.iter().map(|p| marginal_value(ws, marginal, p.right.0)).collect();
         let store = ws.level(marginal.idx()).expect("weighted level");
@@ -335,7 +335,7 @@ fn weighted_fusion_keeps_both_occurrences_on_an_equal_sum_collision() {
     let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs, values, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marginal);
-        let ps: Vec<ChildPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
+        let ps: Vec<ChildPair> = tdd.levels[root.idx()].pairs_vec(0).to_vec();
         let values: Vec<BigRational> =
             ps.iter().map(|p| marginal_value(ws, marginal, p.right.0)).collect();
         (ps, values, node_value(&tdd, ws, root, marginal, 0))
@@ -380,7 +380,7 @@ fn weighted_fusion_keeps_width_and_refs_in_sync() {
     let stats = fuse_pairs(&eng, &mut tdd).expect("no budget → must not over-budget");
     let (pairs_len, fused, after) = with_ws(&tdd, |ws| {
         assert_refs_and_width_in_sync(&tdd, ws, root, marginal);
-        let ps = tdd.levels[root.idx()].pairs_of_idx(0);
+        let ps = tdd.levels[root.idx()].pairs_vec(0);
         (ps.len(), marginal_value(ws, marginal, ps[0].right.0), node_value(&tdd, ws, root, marginal, 0))
     });
 
@@ -421,10 +421,10 @@ fn weighted_fusion_does_not_run_in_the_log_domain() {
     );
     tdd.weights = Some(ws);
 
-    let before: Vec<ChildPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
+    let before: Vec<ChildPair> = tdd.levels[root.idx()].pairs_vec(0).to_vec();
     let slots_before = store_len(&tdd, marginal);
     let stats = fuse_pairs(&eng, &mut tdd).expect("the log-domain gate must not error");
-    let after: Vec<ChildPair> = tdd.levels[root.idx()].pairs_of_idx(0).to_vec();
+    let after: Vec<ChildPair> = tdd.levels[root.idx()].pairs_vec(0).to_vec();
 
     assert_eq!(stats.fusion_groups, 0, "log domain must not fuse");
     assert_eq!(store_len(&tdd, marginal), slots_before, "log domain must mint nothing");

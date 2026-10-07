@@ -2,7 +2,7 @@ use super::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 use crate::limits::{LimitConfig, StopAt, StopRules};
-use crate::test_helpers::{assert_canonical, compile_clauses, rand_cnf, vtree_shapes, CnfShape, Lcg};
+use crate::test_helpers::{assert_canonical, compile_clauses, rand_cnf, same_as_stored, vtree_shapes, CnfShape, Lcg};
 use crate::vtree::{VarId, Vtree};
 
 /// The map a quantified leaf hands its parent: every label becomes ⊤.
@@ -163,7 +163,7 @@ fn regroup_by_definition(
     let mut atoms: Vec<ChildPair> = Vec::new();
     let mut owners: HashMap<ChildPair, Vec<u32>> = HashMap::new();
     for node in 0..level.nodes.len() as u32 {
-        for pair in level.pairs_of_idx(node as usize) {
+        for pair in level.pairs_vec(node as usize) {
             for &left in &expand(left, pair.left) {
                 for &right in &expand(right, pair.right) {
                     let atom = ChildPair::new(EncodedChildRef::from_raw(left), EncodedChildRef::from_raw(right));
@@ -237,7 +237,7 @@ fn regrouping_matches_the_owner_set_rule() {
                     let remap = regroup(&mut work, &mut rewritten, parent, left.as_ref(), right.as_ref()).unwrap();
                     let written = &rewritten.levels[parent.idx()];
                     let got: Vec<Vec<ChildPair>> =
-                        (0..written.nodes.len()).map(|cell| written.pairs_of_idx(cell).to_vec()).collect();
+                        (0..written.nodes.len()).map(|cell| written.pairs_vec(cell).to_vec()).collect();
                     assert_eq!(got, cells, "{shape}, level {parent:?}, fanned {fanned:?}: cells");
                     let identity: Vec<Vec<u32>> = (0..level.nodes.len() as u32).map(|node| vec![node]).collect();
                     match remap {
@@ -278,8 +278,19 @@ fn remap_with_gaps(eng: &Engine, rng: &mut Lcg, keys: usize, cells: u32) -> Rema
 /// cell, or rewritten into one cell with the right side rewritten too, so the
 /// atoms go uncounted; several rows with a left side stored, or rewritten
 /// with some pairs marked through bits of their own and some not.
+///
+/// On implicit levels and on stored ones alike ([`same_as_stored`]): the
+/// rows write the level an implicit one-node level leaves as they write the
+/// one its stored copy leaves, once closed.
 #[test]
 fn a_level_of_one_node_is_written_alike_by_rows_and_by_sorting() {
+    same_as_stored(written_alike_by_rows_and_by_sorting);
+}
+
+/// The cases of [`a_level_of_one_node_is_written_alike_by_rows_and_by_sorting`]:
+/// the diagrams the rows wrote, their levels closed.
+fn written_alike_by_rows_and_by_sorting() -> Vec<Tdd> {
+    let mut out = Vec::new();
     let mut rng = Lcg::new(20260926);
     let eng = Engine::new();
     let mut reached: HashMap<&str, usize> = HashMap::new();
@@ -295,7 +306,7 @@ fn a_level_of_one_node_is_written_alike_by_rows_and_by_sorting() {
             for &parent in vtree.bottomup_slice() {
                 let level = &f.levels[parent.idx()];
                 if vtree.node(parent).is_leaf() || level.nodes.len() != 1 { continue; }
-                let pairs = level.pairs_of_idx(0);
+                let pairs = &level.pairs_vec(0)[..];
                 let (left_child, right_child) = vtree.children(parent);
                 for fanned in [(true, false), (false, true), (true, true)] {
                     // One cell makes a rewritten left side a single row.
@@ -321,7 +332,7 @@ fn a_level_of_one_node_is_written_alike_by_rows_and_by_sorting() {
                     regroup_single_rows(&mut work, &mut by_rows, parent, left.as_ref(), right.as_ref(), &plan).unwrap();
                     let written = &by_rows.levels[parent.idx()];
                     assert_eq!(written.nodes.len(), 1, "{shape}, level {parent:?}, fanned {fanned:?}: rows");
-                    assert_eq!(written.pairs_of_idx(0), want, "{shape}, level {parent:?}, fanned {fanned:?}: rows");
+                    assert_eq!(written.pairs_vec(0), want, "{shape}, level {parent:?}, fanned {fanned:?}: rows");
 
                     let expands_nowhere = |map: &Remap| {
                         pairs.iter().any(|pair| map.get(ChildDecoder::structural().node(pair.left).idx()).is_empty())
@@ -363,8 +374,12 @@ fn a_level_of_one_node_is_written_alike_by_rows_and_by_sorting() {
                         regroup_single(&mut work, &mut by_sorting, parent, &owned, &buckets, by, stamped).unwrap();
                         let sorted = &by_sorting.levels[parent.idx()];
                         assert!(sorted.nodes == written.nodes, "{shape}, level {parent:?}, filed by {by:?}: node");
-                        assert_eq!(sorted.pairs_of_idx(0), written.pairs_of_idx(0), "{shape}, level {parent:?}, filed by {by:?}");
+                        assert_eq!(sorted.pairs_vec(0), written.pairs_vec(0), "{shape}, level {parent:?}, filed by {by:?}");
                     }
+                    for level in &mut by_rows.levels {
+                        level.close();
+                    }
+                    out.push(by_rows);
                 }
             }
         }
@@ -380,6 +395,7 @@ fn a_level_of_one_node_is_written_alike_by_rows_and_by_sorting() {
         let count = reached.get(shape).copied().unwrap_or(0);
         assert!(count > 10, "{shape}: {count} levels, of {reached:?}");
     }
+    out
 }
 
 /// A row reads back exactly the columns set since it was last read, in
@@ -467,13 +483,13 @@ fn a_wide_level_of_one_node_is_written_alike_by_rows_and_by_sorting() {
         regroup_single_rows(&mut work, &mut by_rows, parent, Some(&left), None, &plan).unwrap();
         let written = &by_rows.levels[parent.idx()];
         assert_eq!(written.nodes.len(), 1);
-        assert_eq!(written.pairs_of_idx(0), want, "{keys} keys over {width} columns: rows");
+        assert_eq!(written.pairs_vec(0), want, "{keys} keys over {width} columns: rows");
 
         let owned = scan_level(&mut work, level).unwrap();
         let buckets = bucket_pairs(&mut work, &owned, Side::Right, None).unwrap();
         let mut by_sorting = f.clone();
         regroup_single(&mut work, &mut by_sorting, parent, &owned, &buckets, Side::Right, &left).unwrap();
-        assert_eq!(by_sorting.levels[parent.idx()].pairs_of_idx(0), want, "{keys} keys over {width} columns: sorting");
+        assert_eq!(by_sorting.levels[parent.idx()].pairs_vec(0), want, "{keys} keys over {width} columns: sorting");
     }
 }
 

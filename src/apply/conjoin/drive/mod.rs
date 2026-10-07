@@ -164,8 +164,6 @@ fn build_level(
     }
 
     if sweep.quantified.contains(t.idx()) {
-        f.materialize_level(t);
-        g.materialize_level(t);
         // Every leaf below this level is quantified, so the level is one
         // satisfiability test per cell and no structure at all. The
         // identity fast paths are skipped: what they would build is the
@@ -186,10 +184,6 @@ fn build_level(
         let route = route_level(shape, &plan, &marginal, run.sparse_gate(shape));
         route.validate(f, g, shape, &marginal, run)?;
 
-        if route == Route::Sparse {
-            f.materialize_level(t);
-            g.materialize_level(t);
-        }
         match route {
             Route::Sparse if counts_root(sweep, f, g, shape, &plan) => {
                 sweep.counted = Some(count_sparse_root(eng, run, f, g, shape, vtree)?);

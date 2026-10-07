@@ -19,7 +19,7 @@ fn sums(tdd: &Tdd) -> Vec<BTreeMap<u32, u128>> {
     (0..level.nodes.len())
         .map(|n| {
             let mut by_x = BTreeMap::new();
-            for p in level.pairs_of_idx(n) {
+            for p in level.pairs_vec(n) {
                 let c = match ChildDecoder::marginal().value(EncodedChildRef::from_raw(p.right.0)) {
                     ValueRef::Inline(v) => v as u128,
                     ValueRef::Slot(s) => counts[s as usize],
@@ -34,7 +34,7 @@ fn sums(tdd: &Tdd) -> Vec<BTreeMap<u32, u128>> {
 /// Whether every root node holds one pair per explicit-side ref.
 fn fused(tdd: &Tdd, n: usize) -> bool {
     let level = &tdd.levels[tdd.vtree.root().idx()];
-    let pairs = level.pairs_of_idx(n);
+    let pairs = level.pairs_vec(n);
     let mut xs: Vec<u32> = pairs.iter().map(|p| p.left.0).collect();
     xs.sort_unstable();
     xs.dedup();
@@ -143,7 +143,7 @@ fn an_ascending_node_is_grouped_by_runs_in_first_occurrence_order() {
     assert!(fused(&tdd, 0));
     let root = tdd.vtree.root();
     let mut slot_of: Vec<(u32, u32)> = tdd.levels[root.idx()]
-        .pairs_of_idx(0)
+        .pairs_vec(0)
         .iter()
         .filter(|p| p.left.0 != 2)
         .map(|p| match ChildDecoder::marginal().value(p.right) {
@@ -239,7 +239,7 @@ fn a_wide_node_is_grouped_alike_by_sorting_and_by_the_table() {
             let mut by_table = Vec::new();
             group_by_scatter::<IntFold>(&eng, &tdd, level, v, side, 0, &mut by_table, &mut sc).expect("no limits armed");
             let mut by_sort = Vec::new();
-            group_by_sorting::<IntFold>(eng.limits(), &tdd, v, side, 0, level.pairs_of_idx(0), &mut by_sort, &mut sc)
+            group_by_sorting::<IntFold>(eng.limits(), &tdd, v, side, 0, &level.pairs_vec(0), &mut by_sort, &mut sc)
                 .expect("no limits armed");
             let view = |plans: &[PlanEntry<crate::value::Count>]| -> Vec<(usize, u32, crate::value::Count)> {
                 plans.iter().map(|p| (p.node_idx, p.x_idx, p.value.clone())).collect()

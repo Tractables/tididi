@@ -126,7 +126,8 @@ impl TddLevel {
                 old_len
             }
             1 => {
-                self.nodes[node_idx] = EncodedNode::inline(self.pairs[start]);
+                let stored = self.pairs.stored().expect("an in-place rewrite works on stored pairs");
+                self.nodes[node_idx] = EncodedNode::inline(stored[start]);
                 old_len // an inline node owns no arena slot
             }
             _ => {
@@ -281,7 +282,9 @@ impl TddLevel {
             let start = (key >> 32) as usize;
             let len = self.pair_range_at(node_idx).len();
             if start > write {
-                self.pairs.copy_within(start..start + len, write);
+                // An implicit level's nodes hold the leading ranges in order,
+                // so only a stored arena has ranges to slide.
+                self.pairs.stored_mut().copy_within(start..start + len, write);
             }
             self.set_multi_start(node_idx, write);
             write += len;
@@ -309,12 +312,19 @@ impl TddLevel {
     /// a longer list goes to the pair arena. A refused growth leaves the
     /// level's contents as they were.
     ///
+    /// An implicit level that gains a node is no longer the description's:
+    /// it is built stored, the described pairs where they lie
+    /// ([`store_moved`](Self::store_moved)), then the new node's.
+    ///
     /// # Errors
     ///
     /// `Err(OperationError::OverBudget)` when a buffer's growth is refused.
     pub(crate) fn push_node<G: ArenaGrowth>(
         &mut self, growth: &G, pairs: &[ChildPair],
     ) -> Result<NodeIdx, OperationError> {
+        if self.pairs.implicit().is_some() {
+            self.store_moved(|_| true, |l| l, |r| r);
+        }
         let idx = NodeIdx(self.nodes.len() as u32);
         if self.nodes.len() == self.nodes.capacity() {
             growth.grow(&mut self.nodes, 1)?;
@@ -322,11 +332,12 @@ impl TddLevel {
         let node = if let [pair] = pairs {
             EncodedNode::inline(*pair)
         } else {
-            let start = self.pairs.len();
-            if self.pairs.capacity() - start < pairs.len() {
-                growth.grow(&mut self.pairs, pairs.len())?;
+            let arena = self.pairs.stored_mut();
+            let start = arena.len();
+            if arena.capacity() - start < pairs.len() {
+                growth.grow(arena, pairs.len())?;
             }
-            self.pairs.extend_from_slice(pairs);
+            arena.extend_from_slice(pairs);
             match self.try_encode_multi(growth, start, pairs.len()) {
                 Ok(node) => node,
                 Err(refused) => {
@@ -361,12 +372,13 @@ impl TddLevel {
         if self.nodes.len() == self.nodes.capacity() {
             growth.grow(&mut self.nodes, 1)?;
         }
-        let start = self.pairs.len();
-        if self.pairs.capacity() - start < len {
-            growth.grow(&mut self.pairs, len)?;
+        let arena = self.pairs.stored_mut();
+        let start = arena.len();
+        if arena.capacity() - start < len {
+            growth.grow(arena, len)?;
         }
-        self.pairs.extend(pairs.take(len));
-        assert_eq!(self.pairs.len() - start, len, "push_node_from: the pairs number `len`");
+        arena.extend(pairs.take(len));
+        assert_eq!(arena.len() - start, len, "push_node_from: the pairs number `len`");
         let node = match self.try_encode_multi(growth, start, len) {
             Ok(node) => node,
             Err(refused) => {
@@ -398,11 +410,11 @@ impl TddLevel {
             lim.grow(&mut self.nodes, 1)?;
         }
         let len = pairs.len();
-        drop(std::mem::replace(&mut *self.pairs, pairs));
+        drop(std::mem::replace(self.pairs.stored_mut(), pairs));
         let node = match self.try_encode_multi(lim, 0, len) {
             Ok(node) => node,
             Err(refused) => {
-                lim.discard(std::mem::take(&mut *self.pairs));
+                lim.discard(std::mem::take(self.pairs.stored_mut()));
                 return Err(refused);
             }
         };
@@ -427,6 +439,11 @@ impl TddLevel {
     pub(crate) fn push_pair_onto_node(
         &mut self, eng: &Engine, idx: usize, pair: ChildPair,
     ) -> Result<(), OperationError> {
+        // A node that gains a pair leaves the description: an implicit level
+        // is built stored where its pairs lie first.
+        if self.pairs.implicit().is_some() {
+            self.store_moved(|_| true, |l| l, |r| r);
+        }
         let lim = eng.limits();
         let node = self.nodes[idx].kind();
         let (old_len, old_range, inline) = match node {
@@ -437,22 +454,23 @@ impl TddLevel {
             }
         };
         let len = old_len.checked_add(1).ok_or(OperationError::IndexOverflow)?;
-        let at_tail = old_range.as_ref().is_some_and(|r| r.end == self.pairs.len());
-        let start = if at_tail { old_range.as_ref().unwrap().start } else { self.pairs.len() };
+        let arena_len = self.pairs.stored_mut().len();
+        let at_tail = old_range.as_ref().is_some_and(|r| r.end == arena_len);
+        let start = if at_tail { old_range.as_ref().unwrap().start } else { arena_len };
         let ranged = start >= (1usize << 31) || len >= (1usize << 31);
         let reused = match node { NodeKind::MultiRanged(i) => Some(i as usize), _ => None };
         // Reserve and charge everything before changing any live node or pair.
-        lim.reserve(&mut self.pairs, if at_tail { 1 } else { len })?;
+        lim.reserve(self.pairs.stored_mut(), if at_tail { 1 } else { len })?;
         if ranged && reused.is_none() { lim.reserve(&mut self.ranges, 1)?; }
         if !at_tail {
             if let Some(existing) = inline {
-                self.pairs.push(existing);
+                self.pairs.stored_mut().push(existing);
             } else {
-                self.pairs.extend_from_within(old_range.unwrap());
+                self.pairs.stored_mut().extend_from_within(old_range.unwrap());
                 self.note_dead_pairs(old_len);
             }
         }
-        self.pairs.push(pair);
+        self.pairs.stored_mut().push(pair);
         self.nodes[idx] = if let Some(i) = reused {
             self.ranges[i] = PairRange { start: start as u64, len: len as u64 };
             EncodedNode::multi_ranged(i as u32)
@@ -477,13 +495,28 @@ impl TddLevel {
     ///
     /// Panics if the node does not hold `pair`; a caller reaches this through
     /// the level's own pair list.
+    ///
+    /// An implicit level's nodes have two pairs or more; the level without
+    /// the pair is built from the description and closed
+    /// ([`rewrite_described`](Self::rewrite_described)).
     pub(crate) fn remove_pair_from_node(&mut self, idx: usize, pair: ChildPair) -> bool {
-        let at = self.pairs_of_idx(idx).iter().position(|p| *p == pair)
+        if self.pairs.implicit().is_some() {
+            let mut found = false;
+            self.rewrite_described(false, |i, _, _, p| {
+                let drop = i == idx && p == pair && !found;
+                found |= drop;
+                (!drop).then_some(p)
+            });
+            assert!(found, "remove_pair_from_node: node {idx} does not hold {pair:?}");
+            return true;
+        }
+        let stored = self.stored().expect("a pair is removed from a stored level");
+        let at = stored.of_idx(idx).iter().position(|p| *p == pair)
             .unwrap_or_else(|| panic!("remove_pair_from_node: node {idx} does not hold {pair:?}"));
-        let len = self.pairs_of_idx(idx).len();
+        let len = stored.of_idx(idx).len();
         if len == 1 { return false; }
         let range = self.pair_range_at(idx);
-        self.pairs.copy_within(range.start + at + 1..range.end, range.start + at);
+        self.pairs.stored_mut().copy_within(range.start + at + 1..range.end, range.start + at);
         let dead = self.reencode_shrunk(idx, range.start, len, len - 1);
         self.note_dead_pairs(dead);
         true
@@ -498,7 +531,7 @@ impl TddLevel {
         pairs: usize,
     ) -> Result<(), OperationError> {
         lim.reserve_exact(&mut self.nodes, nodes)?;
-        lim.reserve_exact(&mut self.pairs, pairs)
+        lim.reserve_exact(self.pairs.stored_mut(), pairs)
     }
 
     /// The allocated bytes of the three structural arenas.

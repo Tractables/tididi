@@ -36,7 +36,7 @@ fn resolve_left_inline_dedup_mint_passthrough() {
 
     resolve_swapped_marginal_side(&eng, &mut levels, 0, 1, &src, ChildSide::Left).expect("within budget");
 
-    let p = &levels[0].pairs;
+    let p = levels[0].pairs.stored().unwrap();
     assert_eq!(p[0].left.0, ValueRef::inline_raw(3).unwrap(), "small count must inline");
     assert_eq!(p[1].left.0, ValueRef::slot_raw(0), "existing dst count must dedup");
     assert_eq!(p[2].left.0, ValueRef::slot_raw(1), "absent count must re-mint");
@@ -70,7 +70,7 @@ fn resolve_all_inlinable_leaves_dst_store_untouched() {
 
     resolve_swapped_marginal_side(&eng, &mut levels, 0, 1, &src, ChildSide::Left).expect("allocates nothing");
 
-    let p = &levels[0].pairs;
+    let p = levels[0].pairs.stored().unwrap();
     assert_eq!(p[0].left.0, ValueRef::inline_raw(3).unwrap());
     assert_eq!(p[1].left.0, ValueRef::inline_raw(4).unwrap());
     assert_eq!(p[2].left.0, ValueRef::inline_raw(2).unwrap());
@@ -107,7 +107,7 @@ fn resolve_right_biguint_mint_and_dedup() {
 
     resolve_swapped_marginal_side(&eng, &mut levels, 0, 1, &src, ChildSide::Right).expect("within budget");
 
-    let p = &levels[0].pairs;
+    let p = levels[0].pairs.stored().unwrap();
     assert_eq!(p[0].right.0, ValueRef::slot_raw(1), "big count must re-mint a dst slot");
     assert_eq!(p[1].right.0, ValueRef::slot_raw(1), "equal BigUint must dedup onto one slot");
     assert_eq!(

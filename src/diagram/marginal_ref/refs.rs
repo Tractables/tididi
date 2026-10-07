@@ -55,17 +55,32 @@ impl<T> Sides<T> {
 ///
 /// `ChildSide::Left` means `pair.left.0` for a multi-pair node and `node.a`
 /// for an inline one; `ChildSide::Right` means `pair.right.0` / `node.b`.
+///
+/// An implicit level has its description's slots moved by `f`
+/// ([`TddLevel::move_described`]), which keeps it implicit when the move is
+/// one to one and the moved pairs are affine, and stores them otherwise;
+/// `f` must then give the same word for the same word.
 #[inline]
 pub(crate) fn for_each_side_ref_mut(
     level: &mut TddLevel,
     side: ChildSide,
     mut f: impl FnMut(&mut u32),
 ) {
+    if level.pairs.implicit().is_some() {
+        let f = std::cell::RefCell::new(f);
+        let moved = |x: i64| {
+            let mut w = x as u32;
+            (f.borrow_mut())(&mut w);
+            i64::from(w)
+        };
+        level.move_described(side, moved);
+        return;
+    }
     for ni in 0..level.nodes.len() {
         match level.arena_range(level.nodes[ni].kind()) {
             Some(range) => match side {
-                ChildSide::Left => level.pairs[range].iter_mut().for_each(|p| f(&mut p.left.0)),
-                ChildSide::Right => level.pairs[range].iter_mut().for_each(|p| f(&mut p.right.0)),
+                ChildSide::Left => level.pairs.stored_mut()[range].iter_mut().for_each(|p| f(&mut p.left.0)),
+                ChildSide::Right => level.pairs.stored_mut()[range].iter_mut().for_each(|p| f(&mut p.right.0)),
             },
             None => {
                 let node = &mut level.nodes[ni];
@@ -83,7 +98,7 @@ pub(crate) fn for_each_side_ref_mut(
 #[inline]
 pub(crate) fn for_each_side_ref(level: &TddLevel, side: ChildSide, mut f: impl FnMut(u32)) {
     for node in &level.nodes {
-        for p in level.pairs_of(node) {
+        for p in level.pairs_iter_of(node) {
             f(match side {
                 ChildSide::Left => p.left.0,
                 ChildSide::Right => p.right.0,

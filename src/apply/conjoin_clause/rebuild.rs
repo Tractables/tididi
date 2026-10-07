@@ -72,8 +72,9 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
         // (d,d) cell is free and the union stays disjoint. Its child indices
         // are the cube chain's, unrelated to the accumulator's order, so the
         // node's pair list is re-sorted.
-        level.pairs.push(pair);
-        sort_pairs(&mut level.pairs[ct_start..]);
+        let pairs = level.pairs.stored_mut();
+        pairs.push(pair);
+        sort_pairs(&mut pairs[ct_start..]);
     }
     let ct = emit_from(eng, level, ct_start)?;
     // The parent's both-relevant pass requires the c_t index below d_t. The
@@ -81,7 +82,7 @@ pub(super) fn conjoin_node_with_clause<const LEFT: bool, const RIGHT: bool, cons
     // `pair_mult` counts.
     let dt = if DT {
         let dt_start = level.pairs.len();
-        level.pairs.extend_from_slice(tables.dt_pairs);
+        level.pairs.stored_mut().extend_from_slice(tables.dt_pairs);
         emit_from(eng, level, dt_start)?
     } else {
         NO_PRODUCT
@@ -159,7 +160,7 @@ pub(super) fn rebuild_spine_level(
     } else {
         inputs.saturating_mul(pair_mult.min(2))
     };
-    lim.reserve(&mut level.pairs, first_reserve)?;
+    lim.reserve(level.pairs.stored_mut(), first_reserve)?;
     let ctx = SpineCtx { left_grid_base, right_grid_base, pair_mult };
     match (left_rel, right_rel, compute_dt) {
         (true, true, true) => rebuild_nodes::<true, true, true>(eng, &old, nodes, ctx, level, base, tables)?,
@@ -192,8 +193,18 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     eng: &Engine, old: &TddLevel, nodes: &[EncodedNode], ctx: SpineCtx, level: &mut TddLevel,
     base: usize, tables: &mut ClauseTables<'_>,
 ) -> Result<(), OperationError> {
+    // An implicit level's node's pairs are generated into `buf`.
+    let stored = old.stored();
+    let mut buf = Vec::new();
     for (i, node) in nodes.iter().enumerate() {
-        let inputs = old.pairs_of(node);
+        let inputs: &[ChildPair] = match stored {
+            Some(s) => s.of(node),
+            None => {
+                buf.clear();
+                buf.extend(old.pairs_iter_of(node));
+                &buf
+            }
+        };
         let carries_cube = tables.output_cube_pair.is_some_and(|(s, _)| s == base + i);
         if inputs.is_empty() && !carries_cube {
             // Dead accumulator node: nothing emitted, and this is the one

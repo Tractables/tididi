@@ -245,7 +245,7 @@ impl Engine {
                 if mark == NONE {
                     continue;
                 }
-                for p in level.pairs_of_idx(i) {
+                for p in level.pairs_iter_of_idx(i) {
                     below.0[p.left.raw() as usize] = 0;
                     below.1[p.right.raw() as usize] = 0;
                 }
@@ -303,7 +303,7 @@ impl Engine {
                         *mark = id;
                         let first = table.pairs.len() as u32;
                         let mut count: u64 = 0;
-                        for p in level.pairs_of_idx(i) {
+                        for p in level.pairs_iter_of_idx(i) {
                             let (l, r) = (below.0[p.left.raw() as usize], below.1[p.right.raw() as usize]);
                             let product = table.nodes[l as usize]
                                 .count
