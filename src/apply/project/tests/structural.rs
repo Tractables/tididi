@@ -343,14 +343,16 @@ fn a_level_of_one_atom_per_pair_follows_the_owner_set_rule() {
         "levels {done}, with a shared atom {shared}, kept {kept}, of one pair a node and merged {one_pair_shared}");
 }
 
-/// A level of one node whose left child was not rewritten, written run by run
-/// of its left side, against the owner-set rule written out: the same cell;
-/// and a node whose runs are long is left to the rows.
+/// A level of one node written run by run of its left side, against the
+/// owner-set rule written out: the same cell, whether the left side was left
+/// as it is (the right one rewritten) or rewritten into cells that merge and
+/// reorder its references (the right one either way); and a node whose runs
+/// are long while its right side was rewritten is left to the rows.
 #[test]
 fn a_level_of_one_node_is_written_alike_run_by_run() {
     let mut rng = Lcg::new(0x51_6e1e);
     let eng = Engine::new();
-    let (mut by_left, mut declined) = (0usize, 0usize);
+    let (mut by_left, mut by_rewritten_left, mut declined) = (0usize, 0usize, 0usize);
     for round in 0..24u32 {
         let num_vars = 6 + round % 9;
         let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
@@ -360,33 +362,42 @@ fn a_level_of_one_node_is_written_alike_run_by_run() {
             for &parent in vtree.bottomup_slice() {
                 let level = &f.levels[parent.idx()];
                 if vtree.node(parent).is_leaf() || level.nodes().len() != 1 { continue; }
-                let right_child = vtree.children(parent).1;
-                let keys = if vtree.node(right_child).is_leaf() { LEAF_WIDTH } else { f.levels[right_child.idx()].nodes().len() };
+                let keys = |child: VtreeIdx| {
+                    if vtree.node(child).is_leaf() { LEAF_WIDTH } else { f.levels[child.idx()].nodes().len() }
+                };
+                let (left_child, right_child) = vtree.children(parent);
+                let remap = |rng: &mut Lcg, keys: usize, cells: u32| {
+                    if rng.coin() { one_cell_remap(&eng, rng, keys, cells) } else { random_remap(&eng, rng, keys, cells) }
+                };
                 for cells in [1, 3, 80, 400] {
-                    let right = if rng.coin() {
-                        one_cell_remap(&eng, &mut rng, keys, cells)
-                    } else {
-                        random_remap(&eng, &mut rng, keys, cells)
-                    };
-                    let expected = regroup_by_definition(level, None, Some(&right));
-                    let mut rewritten = f.clone();
-                    let mut work = Rewrite { eng: &eng, gate: eng.limits().gate(), emitted: 0 };
-                    if regroup_single_by_left(&mut work, &mut rewritten, parent, &right).unwrap() {
-                        let got = written(&rewritten, level, parent, None);
-                        assert_eq!(got, expected, "{shape}, level {parent:?}, {cells} cells");
-                        by_left += 1;
-                    } else {
-                        let pairs = level.pairs_vec(0);
-                        let runs = pairs.chunk_by(|a, b| a.left == b.left).count();
-                        assert!(pairs.len() > runs * BY_LEFT_PAIRS_PER_RUN || !pairs.is_sorted_by_key(|pair| pair.left),
-                            "{shape}, level {parent:?}: declined {} pairs in {runs} runs", pairs.len());
-                        declined += 1;
+                    let right = remap(&mut rng, keys(right_child), cells);
+                    let left = remap(&mut rng, keys(left_child), cells);
+                    let right_too = rng.coin().then(|| remap(&mut rng, keys(right_child), cells));
+                    for (left, right) in [(None, Some(&right)), (Some(&left), right_too.as_ref())] {
+                        let expected = regroup_by_definition(level, left, right);
+                        let mut rewritten = f.clone();
+                        let mut work = Rewrite { eng: &eng, gate: eng.limits().gate(), emitted: 0 };
+                        if regroup_single_by_left(&mut work, &mut rewritten, parent, left, right).unwrap() {
+                            let got = written(&rewritten, level, parent, None);
+                            assert_eq!(got, expected, "{shape}, level {parent:?}, {cells} cells, left rewritten {}", left.is_some());
+                            if left.is_some() { by_rewritten_left += 1 } else { by_left += 1 }
+                        } else {
+                            let pairs = level.pairs_vec(0);
+                            let runs = pairs.chunk_by(|a, b| a.left == b.left).count();
+                            assert!(
+                                (right.is_some() && pairs.len() > runs * BY_LEFT_PAIRS_PER_RUN)
+                                    || !pairs.is_sorted_by_key(|pair| pair.left)
+                                    || expected.0.is_empty(),
+                                "{shape}, level {parent:?}: declined {} pairs in {runs} runs", pairs.len());
+                            declined += 1;
+                        }
                     }
                 }
             }
         }
     }
-    assert!(by_left > 100 && declined > 0, "written run by run {by_left}, declined {declined}");
+    assert!(by_left > 100 && by_rewritten_left > 100 && declined > 0,
+        "written run by run {by_left}, with a rewritten left side {by_rewritten_left}, declined {declined}");
 }
 
 /// [`random_remap`] with about one key in six mapped to no cell.

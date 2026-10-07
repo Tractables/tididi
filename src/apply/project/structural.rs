@@ -501,9 +501,10 @@ const NONE: u32 = u32::MAX;
 /// reference are told apart by their other side alone: a cell of a rewritten
 /// child, which indexes an array stamped with the bucket it was last seen in.
 /// A level of one node has one owner and so one cell, which
-/// [`regroup_single_by_left`] writes run by run of an untouched left side,
-/// [`regroup_single_rows`] row by row, or, when its rows would cost more than
-/// the atoms, [`regroup_single`] writes without the owner bookkeeping; and a
+/// [`regroup_single_by_left`] writes run by run of its left side (an
+/// untouched one first, a rewritten one when the rows would cost more than the
+/// atoms), [`regroup_single_rows`] row by row, or [`regroup_single`] without
+/// the owner bookkeeping when neither applies; and a
 /// level each of whose pairs expands to one atom reads its owner sets off the
 /// atoms alone ([`regroup_atom_per_pair`]).
 ///
@@ -528,9 +529,7 @@ fn regroup(
         (Some(left), Some(right)) => (Side::Left, Some(left), right),
     };
     if n_nodes == 1 {
-        if let (None, Some(right)) = (left_remap, right_remap)
-            && regroup_single_by_left(work, tdd, parent, right)?
-        {
+        if left_remap.is_none() && regroup_single_by_left(work, tdd, parent, None, right_remap)? {
             return Ok(None);
         }
         // An implicit level's one node's pairs are generated into `buf`.
@@ -538,6 +537,9 @@ fn regroup(
         let plan = RowPlan::of(work, tdd.levels[parent.idx()].pairs_read(0, &mut buf), left_remap, right_remap)?;
         if plan.pays {
             regroup_single_rows(work, tdd, parent, left_remap, right_remap, &plan)?;
+            return Ok(None);
+        }
+        if left_remap.is_some() && regroup_single_by_left(work, tdd, parent, left_remap, right_remap)? {
             return Ok(None);
         }
     }
@@ -1114,23 +1116,28 @@ fn write_cell(work: &mut Rewrite<'_>, level: &mut TddLevel, pairs: &mut [ChildPa
     lim.check_output_cap(work.emitted)
 }
 
-/// The most pairs a run of [`regroup_single_by_left`] may average: a run's
-/// atoms are sorted on their own, and a node of longer runs is written as
-/// rows.
+/// The most pairs a run of [`regroup_single_by_left`] may average when its
+/// right side was rewritten: a run's atoms are then sorted on their own, and a
+/// node of longer runs is written as rows.
 const BY_LEFT_PAIRS_PER_RUN: usize = 64;
 
-/// [`regroup`] for a level of one node whose left child was not rewritten and
-/// whose pairs are stored in order of their left side, which canonical order
-/// implies: each run of one left reference expands to that reference beside
-/// the cells its right sides map to, sorted and without repeats, and the runs
-/// come out in canonical order one after another, in one pass over the
-/// pairs. `false` when the level is not of that shape, or its runs are long,
-/// before anything is written.
+/// [`regroup`] for a level of one node whose pairs are stored in order of
+/// their left side, which canonical order implies: each run of one left
+/// reference expands, cell by cell of that reference, to the cell beside the
+/// cells its right sides map to, sorted and without repeats, in one pass over
+/// the pairs. With the left side untouched the segments come out in canonical
+/// order one after another; a rewritten left side can merge or reorder its
+/// cells, and a stable sort by left cell then puts each cell's segments
+/// together, in left order, a cell made of several sorted and deduplicated on
+/// its own. `false` when the level is not of that shape, its runs are long
+/// while the right side was rewritten, or it expands to no atom, before
+/// anything is written.
 fn regroup_single_by_left(
     work: &mut Rewrite<'_>,
     tdd: &mut Tdd,
     parent: VtreeIdx,
-    right_remap: &Remap,
+    left_remap: Option<&Remap>,
+    right_remap: Option<&Remap>,
 ) -> Result<bool, OperationError> {
     let lim = work.eng.limits();
     let level = &tdd.levels[parent.idx()];
@@ -1141,25 +1148,98 @@ fn regroup_single_by_left(
     if !pairs.is_sorted_by_key(|pair| pair.left) {
         return Ok(false);
     }
-    let runs = pairs.chunk_by(|a, b| a.left == b.left).count();
-    if pairs.len() > runs.saturating_mul(BY_LEFT_PAIRS_PER_RUN) {
-        return Ok(false);
-    }
-    // A map of one cell per node is read at its item alone.
-    let one_each = right_remap.one_each();
+    let runs = match right_remap {
+        Some(_) => {
+            let runs = pairs.chunk_by(|a, b| a.left == b.left).count();
+            if pairs.len() > runs.saturating_mul(BY_LEFT_PAIRS_PER_RUN) {
+                return Ok(false);
+            }
+            runs
+        }
+        None => 0,
+    };
     let mut out: Transient<'_, Vec<ChildPair>> = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut out, pairs.len())?;
+    // Whether a left cell came before one already written, or again after
+    // another left reference's: the cells then need putting in order.
+    let (mut reordered, mut merged) = (false, false);
+    match (left_remap, right_remap) {
+        (None, Some(right)) if right.one_each() && runs == pairs.len() => {
+            // Every run one pair and every right side one cell: the level
+            // maps pair by pair, already in order.
+            out.extend(pairs.iter().map(|pair| {
+                let cell = right.items[ChildDecoder::structural().node(pair.right).idx()];
+                ChildPair::new(pair.left, EncodedChildRef::from_raw(cell))
+            }));
+            work.gate.poll(pairs.len() as u64)?;
+        }
+        (None, Some(right)) => expand_by_untouched_left(work, &mut out, pairs, right)?,
+        (Some(left), right) => {
+            (reordered, merged) = expand_by_rewritten_left(work, &mut out, pairs, left, right)?;
+        }
+        (None, None) => return Ok(false),
+    }
+    if out.is_empty() {
+        return Ok(false);
+    }
+    if reordered {
+        let widest = out.iter().map(|pair| pair.left.0).max().unwrap_or(0);
+        sort_by_key_stable(work, &mut out, u32::BITS - widest.leading_zeros(), |pair| pair.left.0)?;
+    }
+    if reordered || merged {
+        let out: &mut Vec<ChildPair> = &mut out;
+        let (mut kept, mut from) = (0, 0);
+        while from < out.len() {
+            let left = out[from].left;
+            let to = from + out[from..].iter().take_while(|pair| pair.left == left).count();
+            work.gate.poll((to - from) as u64)?;
+            let run = &mut out[from..to];
+            if !run.is_sorted() {
+                run.sort_unstable();
+            }
+            let n = dedup_sorted(run);
+            out.copy_within(from..from + n, kept);
+            kept += n;
+            from = to;
+        }
+        out.truncate(kept);
+    }
+    debug_assert!(out.is_sorted() && out.windows(2).all(|w| w[0] != w[1]),
+        "a single cell's atoms are distinct and in canonical order");
+    let level = &mut tdd.levels[parent.idx()];
+    level.clear();
+    level.push_node(lim, &out)?;
+    drop(out);
+    work.emitted += 1;
+    lim.level_done(work.emitted)?;
+    tdd.try_invalidate(work.eng, parent)?;
+    Ok(true)
+}
+
+/// [`regroup_single_by_left`]'s expansion of a level whose left side was not
+/// rewritten: each run of one left reference beside the cells its right sides
+/// map to, sorted and without repeats, the runs in canonical order one after
+/// another.
+fn expand_by_untouched_left(
+    work: &mut Rewrite<'_>,
+    out: &mut Vec<ChildPair>,
+    pairs: &[ChildPair],
+    right: &Remap,
+) -> Result<(), OperationError> {
+    let lim = work.eng.limits();
+    // A map of one cell per node is read at its item alone.
+    let one_each = right.one_each();
     for same in pairs.chunk_by(|a, b| a.left == b.left) {
         let start = out.len();
         if one_each {
             out.extend(same.iter().map(|pair| {
-                let cell = right_remap.items[ChildDecoder::structural().node(pair.right).idx()];
+                let cell = right.items[ChildDecoder::structural().node(pair.right).idx()];
                 ChildPair::new(pair.left, EncodedChildRef::from_raw(cell))
             }));
         } else {
             for pair in same {
-                for &cell in right_remap.get(ChildDecoder::structural().node(pair.right).idx()) {
-                    lim.try_push(&mut out, ChildPair::new(pair.left, EncodedChildRef::from_raw(cell)))?;
+                for &cell in right.get(ChildDecoder::structural().node(pair.right).idx()) {
+                    lim.try_push(out, ChildPair::new(pair.left, EncodedChildRef::from_raw(cell)))?;
                 }
             }
         }
@@ -1174,16 +1254,81 @@ fn regroup_single_by_left(
             out.truncate(start + kept);
         }
     }
-    debug_assert!(out.is_sorted() && out.windows(2).all(|w| w[0] != w[1]),
-        "a single cell's atoms are distinct and in canonical order");
-    let level = &mut tdd.levels[parent.idx()];
-    level.clear();
-    level.push_node(lim, &out)?;
-    drop(out);
-    work.emitted += 1;
-    lim.level_done(work.emitted)?;
-    tdd.try_invalidate(work.eng, parent)?;
-    Ok(true)
+    Ok(())
+}
+
+/// [`regroup_single_by_left`]'s expansion of a level whose left side was
+/// rewritten: each run of one left reference, cell by cell of that reference,
+/// beside the cells its right sides map to (or the right sides themselves),
+/// each segment sorted and without repeats. Returns whether a cell came
+/// before one already written, and whether one came again after another
+/// reference's: the segments then need putting together in order.
+fn expand_by_rewritten_left(
+    work: &mut Rewrite<'_>,
+    out: &mut Vec<ChildPair>,
+    pairs: &[ChildPair],
+    left_remap: &Remap,
+    right_remap: Option<&Remap>,
+) -> Result<(bool, bool), OperationError> {
+    let lim = work.eng.limits();
+    // A map of one cell per node is read at its item alone.
+    let (left_each, right_each) = (left_remap.one_each(), right_remap.is_some_and(Remap::one_each));
+    let (mut reordered, mut merged) = (false, false);
+    let mut last: Option<u32> = None;
+    for same in pairs.chunk_by(|a, b| a.left == b.left) {
+        let idx = ChildDecoder::structural().node(same[0].left).idx();
+        let lefts: &[u32] = if left_each {
+            left_remap.items.get(idx..idx + 1).unwrap_or(&[])
+        } else {
+            match left_remap.starts.get(idx + 1) {
+                Some(&end) => &left_remap.items[left_remap.starts[idx] as usize..end as usize],
+                None => &[],
+            }
+        };
+        for &cell in lefts {
+            let left = EncodedChildRef::from_raw(cell);
+            let start = out.len();
+            // A left reference of several cells writes past the first
+            // reservation.
+            if (right_remap.is_none() || right_each) && out.capacity() - out.len() < same.len() {
+                lim.reserve(out, same.len())?;
+            }
+            match right_remap {
+                None => out.extend(same.iter().map(|pair| ChildPair::new(left, pair.right))),
+                Some(map) if right_each => out.extend(same.iter().map(|pair| {
+                    let right = map.items[ChildDecoder::structural().node(pair.right).idx()];
+                    ChildPair::new(left, EncodedChildRef::from_raw(right))
+                })),
+                Some(map) => {
+                    for pair in same {
+                        for &right in map.get(ChildDecoder::structural().node(pair.right).idx()) {
+                            lim.try_push(out, ChildPair::new(left, EncodedChildRef::from_raw(right)))?;
+                        }
+                    }
+                }
+            }
+            let added = out.len() - start;
+            work.gate.poll(added as u64 + 1)?;
+            if added == 0 {
+                continue;
+            }
+            if right_remap.is_some() && added > 1 {
+                let run = &mut out[start..];
+                if !run.is_sorted() {
+                    run.sort_unstable();
+                }
+                let kept = dedup_sorted(run);
+                out.truncate(start + kept);
+            }
+            match last {
+                Some(before) if cell < before => reordered = true,
+                Some(before) if cell == before => merged = true,
+                _ => {}
+            }
+            last = Some(cell);
+        }
+    }
+    Ok((reordered, merged))
 }
 
 /// Keep the first of each run of equal items in the sorted `items`, moved to
