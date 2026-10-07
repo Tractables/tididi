@@ -844,8 +844,13 @@ fn reserve_complete_level(
         return Ok(usize::MAX);
     }
     let charged = level.pairs.capacity();
-    /// Pairs in all, nodes with pairs, and nodes with one pair.
+    /// Pairs in all, nodes with pairs, and nodes with one pair: an implicit
+    /// level's off its description, every node of which has its `k` pairs.
     fn census(level: &TddLevel) -> (u128, u128, u128) {
+        if let Some(d) = level.implicit() {
+            let (nodes, k) = (d.nodes() as u128, d.pairs_per_node() as u128);
+            return (nodes * k, if k > 0 { nodes } else { 0 }, if k == 1 { nodes } else { 0 });
+        }
         level.pair_counts().fold((0, 0, 0), |(pairs, live, single), k| {
             (pairs + k as u128, live + u128::from(k > 0), single + u128::from(k == 1))
         })
