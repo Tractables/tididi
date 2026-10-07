@@ -146,6 +146,10 @@ impl TwinEntries for ContextEntries<'_> {
     /// [`TWIN_TABLE_START_CELLS`] long and doubles when half full, under a
     /// fresh stamp the siblings read so far are filed again with, so its size
     /// follows the pairs read, not the node's width.
+    ///
+    /// Inlined into the contraction, which knows the child level's decoder,
+    /// so that a pair's side is read without testing its tag.
+    #[inline(always)]
     fn no_twin(&self, lim: &Limits, scratch: &mut ContractScratch, width: usize) -> Result<bool, OperationError> {
         if !self.early_stop {
             return Ok(false);
