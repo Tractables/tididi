@@ -20,9 +20,9 @@ use crate::diagram::{floor, ImplicitLevel};
 /// it: the engine's memory is unbounded (so the route's skipping the row
 /// loop's scratch cannot change a later decision), both operand levels hold
 /// every node of their width with the same number of pairs, both are affine,
-/// a grouped level's runs are digits, and the product, when its nodes hold
-/// two pairs or more, holds at least the floor's pairs (`FLOOR`). `grouped`
-/// says the level's N×M cells may take the grouped walk.
+/// a grouped level's runs are digits, and the product holds at least the
+/// floor's pairs (`FLOOR`). `grouped` says the level's N×M cells may take
+/// the grouped walk.
 pub(super) fn plan(
     lim: &crate::limits::Limits,
     f: &TddLevel,
@@ -30,7 +30,17 @@ pub(super) fn plan(
     shape: LevelShape,
     grouped: bool,
 ) -> Option<ImplicitLevel> {
-    if !lim.memory_unbounded() || f.nodes.len() != shape.f.here || g.nodes.len() != shape.g.here {
+    // A level that fits a description holds its arena's length in pairs or,
+    // at one pair a node, its nodes' count, so the product of the two bounds
+    // bounds the product's pairs: under the floor, the row loop writes the
+    // level, as it writes any product of fewer, and no operand is read for a
+    // fit.
+    let bound = |l: &TddLevel| l.pairs.len().max(l.nodes.len());
+    if !lim.memory_unbounded()
+        || f.nodes.len() != shape.f.here
+        || g.nodes.len() != shape.g.here
+        || bound(f).saturating_mul(bound(g)) < floor()
+    {
         return None;
     }
     // A stored operand that closing reads a fit of fits none, by the
@@ -53,7 +63,7 @@ pub(super) fn plan(
     // A product of fewer pairs than the floor is stored: the row loop writes
     // it.
     ImplicitLevel::product(&df, &dg, (shape.g.left, shape.g.right), grouped)
-        .filter(|p| p.pairs_per_node() < 2 || p.pairs() >= floor())
+        .filter(|p| p.pairs() >= floor())
 }
 
 /// What the row loop charges a level of `product`'s shape: the work clock,
