@@ -341,26 +341,38 @@ fn a_redescribed_arena_keeps_the_written_length() {
 /// place skipped to, and the first pairs a [`NodeCursor`] steps or reads
 /// off the digits, in node order or not, are the pairs read off the digits
 /// one by one: on levels of up to six place digits and six node digits,
-/// more than the odometer counts in place.
+/// more than the odometer counts in place, on nodes read in several runs,
+/// and on nodes whose fastest digit has more places than a run.
 #[test]
 fn stepped_pairs_are_the_pairs_read_off_the_digits() {
     let mut rng = Lcg::new(0x1d1e_0007);
-    let mut long = 0;
+    let (mut long, mut runs, mut wide) = (0, 0, 0);
+    let digits = |rng: &mut Lcg, n: u64, radices: u64| {
+        (0..n).map(|_| (2 + rng.below(radices) as usize, step(rng))).collect::<Vec<_>>()
+    };
     for round in 0..400 {
-        let pairs = if round % 2 == 0 {
-            let digits = |rng: &mut Lcg, n: u64, radices: u64| {
-                (0..n).map(|_| (2 + rng.below(radices) as usize, step(rng))).collect::<Vec<_>>()
-            };
-            let (w, a) = (5 + rng.below(2), rng.below(7));
-            let (within, across) = (digits(&mut rng, w, 2), digits(&mut rng, a, 1));
-            affine_of(&within, &across)
-        } else {
-            let (n, k) = (1 + rng.below(40) as usize, 2 + rng.below(30) as usize);
-            affine(&mut rng, n, k)
+        let pairs = match round % 4 {
+            0 | 2 => {
+                let (w, a) = (5 + rng.below(2), rng.below(7));
+                let (within, across) = (digits(&mut rng, w, 2), digits(&mut rng, a, 1));
+                affine_of(&within, &across)
+            }
+            1 => {
+                let (n, k) = (1 + rng.below(40) as usize, 2 + rng.below(30) as usize);
+                affine(&mut rng, n, k)
+            }
+            _ => {
+                let fastest = (RUN_PAIRS + 1 + rng.below(40) as usize, (1 + rng.below(6) as i64, rng.below(7) as i64));
+                let within = [fastest, (2 + rng.below(2) as usize, step(&mut rng))];
+                let a = rng.below(3);
+                affine_of(&within, &digits(&mut rng, a, 1))
+            }
         };
         let (nodes, per_node) = (pairs.len(), pairs[0].len());
         let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
         long += usize::from(d.within() > 4 && d.digits().len() - d.within() > 4);
+        runs += usize::from(d.run.len() < per_node);
+        wide += usize::from(d.run_digits == 0);
         for (i, node) in pairs.iter().enumerate() {
             let want = || node.iter().map(|&(l, r)| pair(l, r));
             assert!(d.places(i).eq(want()));
@@ -395,6 +407,7 @@ fn stepped_pairs_are_the_pairs_read_off_the_digits() {
         assert_eq!(read(&level), read(&stored));
     }
     assert!(long > 20, "the levels of more than four place digits went unchecked");
+    assert!(runs > 100 && wide > 50, "the nodes read in several runs went unchecked");
 }
 
 #[test]

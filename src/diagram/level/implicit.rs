@@ -99,6 +99,11 @@ pub struct Digit {
 /// merging, leaf contraction, pair fusion and duplicate resolution find
 /// their work in the description, and the one that changes a level stores
 /// it first.
+///
+/// Beside its digits a description keeps what the places of its fastest
+/// place digits add to the slots, at most [`RUN_PAIRS`] of them: a node's
+/// pairs are read in runs of these, each run's first pair stepped on from
+/// the last run's ([`Places`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImplicitLevel {
     nodes: usize,
@@ -106,13 +111,43 @@ pub struct ImplicitLevel {
     first: (i64, i64),
     digits: Vec<Digit>,
     within: usize,
+    /// What each place of the first `run_digits` digits adds to the slots,
+    /// in their order, as wrapping `u32` sums: a run of a node's pairs.
+    run: Vec<(u32, u32)>,
+    /// How many of the place digits a run counts: the most, from the
+    /// fastest, whose places are at most [`RUN_PAIRS`].
+    run_digits: usize,
 }
 
 /// The fewest pairs a level holds as their description; a level with fewer
 /// is stored.
 pub const FLOOR: usize = 64;
 
+/// The most places of a description's fastest place digits it keeps the
+/// offsets of: a node's pairs are read in runs of them.
+const RUN_PAIRS: usize = 256;
+
+/// The description of no pairs, which an empty [`Places`] refers to.
+static NO_PAIRS: ImplicitLevel =
+    ImplicitLevel { nodes: 0, per_node: 0, first: (0, 0), digits: Vec::new(), within: 0, run: Vec::new(), run_digits: 0 };
+
 impl ImplicitLevel {
+    /// The description of `nodes` nodes of `per_node` pairs whose first pair
+    /// is `first`, numbered by `digits`, the first `within` of them the
+    /// place digits, with the offsets of a run of its pairs.
+    fn new(nodes: usize, per_node: usize, first: (i64, i64), digits: Vec<Digit>, within: usize) -> ImplicitLevel {
+        let (mut run_digits, mut places) = (0, 1usize);
+        while let Some(d) = digits[..within].get(run_digits)
+            && places.saturating_mul(d.radix) <= RUN_PAIRS
+        {
+            places *= d.radix;
+            run_digits += 1;
+        }
+        let mut run = Vec::with_capacity(places);
+        each_place(&digits[..run_digits], (0, 0), |l, r| run.push((l as u32, r as u32)));
+        ImplicitLevel { nodes, per_node, first, digits, within, run, run_digits }
+    }
+
     /// The level's nodes.
     #[inline]
     pub fn nodes(&self) -> usize {
@@ -171,7 +206,13 @@ impl ImplicitLevel {
     #[inline]
     pub(crate) fn places_from(&self, first: (i64, i64)) -> Places<'_> {
         debug_assert!(self.per_node < 1 << 31);
-        Places { digits: &self.digits[..self.within], at: Odometer::new(first), next: 0, end: self.per_node as u32 }
+        Places { run: self.run.iter(), at: Odometer::new(first), run_no: 0, rest: (self.per_node - self.run.len()) as u32, level: self }
+    }
+
+    /// The place digits past a run's, which step a run's first pair on.
+    #[inline]
+    fn run_steps(&self) -> &[Digit] {
+        &self.digits[self.run_digits..self.within]
     }
 
     /// A reader of the nodes' first pairs in increasing node order
@@ -197,7 +238,7 @@ impl ImplicitLevel {
     /// each pair's slots swapped.
     pub(crate) fn swapped(&self) -> ImplicitLevel {
         let digits = self.digits.iter().map(|d| Digit { left: d.right, right: d.left, ..*d }).collect();
-        ImplicitLevel { first: (self.first.1, self.first.0), digits, ..*self }
+        ImplicitLevel::new(self.nodes, self.per_node, (self.first.1, self.first.0), digits, self.within)
     }
 
     /// The description in normal form: the digits the greedy read takes off
@@ -408,7 +449,7 @@ impl ImplicitLevel {
             digits.push(Digit { radix, left: l, right: r, node: period as i64 });
             period *= radix;
         }
-        ImplicitLevel { nodes, per_node, first, digits, within: within.len() }
+        ImplicitLevel::new(nodes, per_node, first, digits, within.len())
     }
 
     /// The description of what a prune leaves of this level, when it is
@@ -535,13 +576,13 @@ impl ImplicitLevel {
         }
         digits.extend_from_slice(gn);
         digits.extend(fn_.iter().map(|d| scaled(d, g.nodes as i64)));
-        let product = ImplicitLevel {
-            nodes: f.nodes * g.nodes,
-            per_node: f.per_node * g.per_node,
-            first: (f.first.0 * sl + g.first.0, f.first.1 * sr + g.first.1),
+        let product = ImplicitLevel::new(
+            f.nodes * g.nodes,
+            f.per_node * g.per_node,
+            (f.first.0 * sl + g.first.0, f.first.1 * sr + g.first.1),
             digits,
-            within: f.within + g.within,
-        };
+            f.within + g.within,
+        );
         Some(product.normal())
     }
 
@@ -948,11 +989,6 @@ impl crate::execution::pool::Scratch for PairArena {
 /// The digits a [`NodeCursor`]'s [`Odometer`] counts in place.
 const NODE_COUNTERS: usize = 4;
 
-/// The digits a [`Places`]' [`Odometer`] counts in place: two, so that a
-/// node's pairs read in a few words beside the slice a
-/// [`PairsIter`](crate::diagram::PairsIter) holds.
-const PLACE_COUNTERS: usize = 2;
-
 /// The slots at a place of a run of digits, fastest first, counted like an
 /// odometer: one place on, the fastest digit goes up one and carries into
 /// the next where it wraps, so a step costs an add or two, not a division
@@ -1028,30 +1064,60 @@ impl<const N: usize> Odometer<N> {
 }
 
 /// The pairs of one node of an implicit level, in their order, generated
-/// from its description by stepping its place digits ([`Odometer`]): what
-/// [`PairsIter`](crate::diagram::PairsIter) yields on such a level.
+/// from its description: what [`PairsIter`](crate::diagram::PairsIter)
+/// yields on such a level. They are read in runs, each a run's first pair
+/// plus the offsets the description keeps of its fastest place digits, and
+/// each run's first pair stepped on from the last's by the place digits
+/// past those ([`Odometer`]).
 #[derive(Clone, Debug)]
 pub(crate) struct Places<'a> {
-    /// The place digits, fastest first.
-    digits: &'a [Digit],
-    /// At place `next`, while `next < end`.
-    at: Odometer<PLACE_COUNTERS>,
-    next: u32,
-    end: u32,
+    /// The offsets of the current run still to come.
+    run: std::slice::Iter<'a, (u32, u32)>,
+    /// At the first pair of the current run, the `run_no`th of the node's.
+    at: Odometer<0>,
+    run_no: u32,
+    /// The pairs of the runs after the current one.
+    rest: u32,
+    /// The description.
+    level: &'a ImplicitLevel,
 }
 
 impl Places<'_> {
     /// No pairs: what a stored node's [`PairsIter`](crate::diagram::PairsIter)
     /// holds beside its slice.
     #[inline]
-    pub(crate) const fn empty() -> Self {
-        Places { digits: &[], at: Odometer { at: (0, 0), counts: [0; PLACE_COUNTERS] }, next: 0, end: 0 }
+    pub(crate) fn empty() -> Self {
+        Places { run: [].iter(), at: Odometer { at: (0, 0), counts: [] }, run_no: 0, rest: 0, level: &NO_PAIRS }
     }
 
     /// The pairs still to come.
     #[inline]
     pub(crate) fn len(&self) -> usize {
-        (self.end - self.next) as usize
+        self.run.len() + self.rest as usize
+    }
+
+    /// The pair at `offset` from the current run's first.
+    #[inline(always)]
+    fn shifted(&self, offset: (u32, u32)) -> ChildPair {
+        let (l, r) = self.at.at;
+        ChildPair::new(EncodedChildRef::from_raw(l.wrapping_add(offset.0)), EncodedChildRef::from_raw(r.wrapping_add(offset.1)))
+    }
+
+    /// On to the next run, of which there must be one.
+    #[inline]
+    fn next_run(&mut self) {
+        let d = self.level;
+        self.run_no += 1;
+        self.at.step(d.run_steps(), self.run_no as usize);
+        self.rest -= d.run.len() as u32;
+        self.run = d.run.iter();
+    }
+
+    /// The first pair of the next run, when there is one.
+    #[inline(never)]
+    fn first_of_next_run(&mut self) -> Option<ChildPair> {
+        self.next_run();
+        self.run.next().map(|&o| self.shifted(o))
     }
 }
 
@@ -1094,27 +1160,48 @@ impl Iterator for Places<'_> {
 
     #[inline]
     fn next(&mut self) -> Option<ChildPair> {
-        if self.next == self.end {
-            return None;
+        match self.run.next() {
+            Some(&o) => Some(self.shifted(o)),
+            None if self.rest == 0 => None,
+            None => self.first_of_next_run(),
         }
-        let (l, r) = self.at.slots();
-        self.next += 1;
-        if self.next < self.end {
-            self.at.step(self.digits, self.next as usize);
-        }
-        Some(pair(l, r))
     }
 
-    /// Skips to the place `n` on in one step, read off its digits.
+    /// Each run folded as a slice's.
+    #[inline]
+    fn fold<B, F: FnMut(B, ChildPair) -> B>(mut self, init: B, mut f: F) -> B {
+        let mut acc = init;
+        loop {
+            let run = std::mem::replace(&mut self.run, [].iter());
+            acc = run.fold(acc, |acc, &o| f(acc, self.shifted(o)));
+            if self.rest == 0 {
+                return acc;
+            }
+            self.next_run();
+        }
+    }
+
+    /// Skips to the place `n` on in one step, its run's first pair read off
+    /// the digits past a run's.
     #[inline]
     fn nth(&mut self, n: usize) -> Option<ChildPair> {
-        if n > 0 && self.next < self.end {
-            let to = (self.next as usize).saturating_add(n).min(self.end as usize);
-            if to < self.end as usize {
-                self.at.seat(self.digits, self.next as usize, to);
-            }
-            self.next = to as u32;
+        let here = self.run.len();
+        if n < here {
+            return self.run.nth(n).map(|&o| self.shifted(o));
         }
+        let skip = n - here;
+        if skip >= self.rest as usize {
+            self.run = [].iter();
+            self.rest = 0;
+            return None;
+        }
+        let d = self.level;
+        let size = d.run.len();
+        let to = self.run_no as usize + skip / size + 1;
+        self.at.seat(d.run_steps(), self.run_no as usize, to);
+        self.rest -= ((to - self.run_no as usize) * size) as u32;
+        self.run_no = to as u32;
+        self.run = d.run[skip % size..].iter();
         self.next()
     }
 
