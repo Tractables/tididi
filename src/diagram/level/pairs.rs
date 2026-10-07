@@ -381,6 +381,17 @@ impl TddLevel {
         }
     }
 
+    /// A node holding other than `k` pairs, when one does: the node the
+    /// last close found ([`uneven`](Self::uneven)) when it still does, else
+    /// the first.
+    pub(crate) fn uneven_node(&self, k: usize) -> Option<usize> {
+        let hint = self.uneven as usize;
+        if hint < self.nodes.len() && self.pair_count_at(hint) != k {
+            return Some(hint);
+        }
+        (1..self.nodes.len()).find(|&i| self.pair_count_at(i) != k)
+    }
+
     /// The pair count of every node in index order. Empty on a marginal
     /// level, which holds no nodes.
     #[inline]

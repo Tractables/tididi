@@ -66,6 +66,13 @@ pub struct TddLevel {
     /// Approximate: it only triggers the sweep, which derives liveness from
     /// `nodes`/`ranges`. Reset to 0 wherever the pair arena is replaced.
     pub(crate) dead_pairs: u32,
+    /// A node that held a different number of pairs from node 0 when
+    /// [`close`](Self::close) last read a fit of this level, or 0 for none
+    /// or one past 16 bits: the next fit reads that node's count first, and
+    /// fails at once while it still differs. A hint, read again before it is
+    /// trusted, so any value is safe and nothing that changes the level has
+    /// to update it. Sixteen bits keep the level in its size.
+    pub(crate) uneven: u16,
     /// Whether this level still denotes its functions structurally, and if not,
     /// which values it holds instead.
     pub(crate) state: LevelState,
@@ -142,6 +149,7 @@ impl TddLevel {
             ranges: Vec::new(),
             value_ref_sides: 0,
             dead_pairs: 0,
+            uneven: 0,
             state: LevelState::Structural,
         }
     }
@@ -155,6 +163,7 @@ impl TddLevel {
         self.ranges.clear();
         self.value_ref_sides = 0;
         self.dead_pairs = 0;
+        self.uneven = 0;
         self.state = LevelState::Structural;
     }
 
@@ -362,6 +371,7 @@ impl TddLevel {
             ranges: copy(lim, &self.ranges)?,
             value_ref_sides: self.value_ref_sides,
             dead_pairs: self.dead_pairs,
+            uneven: self.uneven,
             state,
         })
     }

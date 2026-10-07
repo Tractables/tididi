@@ -338,30 +338,40 @@ impl ImplicitLevel {
     /// and the first pairs affine in the digits of the node's index. Read
     /// and checked in one pass over the level's pairs.
     pub(crate) fn fit(level: &TddLevel) -> Option<ImplicitLevel> {
+        Self::fit_or_uneven(level).ok()
+    }
+
+    /// [`fit`](Self::fit), or why there is none: `Err(Some(i))` when node
+    /// `i` holds a different number of pairs from node 0, `Err(None)` for
+    /// any other reason.
+    fn fit_or_uneven(level: &TddLevel) -> Result<ImplicitLevel, Option<usize>> {
         if !matches!(level.state, LevelState::Structural) {
-            return None;
+            return Err(None);
         }
         let nodes = level.nodes.len();
         if nodes == 0 {
-            return None;
+            return Err(None);
         }
-        let stored = level.stored()?;
+        let stored = level.stored().ok_or(None)?;
         let first_pairs = stored.of_idx(0);
         let per_node = first_pairs.len();
         // The counts first: a level whose nodes hold different numbers of
         // pairs fails here, before any digit is read or stepped.
-        if per_node == 0 || (1..nodes).any(|i| level.pair_count_at(i) != per_node) {
-            return None;
+        if per_node == 0 {
+            return Err(None);
+        }
+        if let Some(i) = level.uneven_node(per_node) {
+            return Err(Some(i));
         }
         let first = slots(&first_pairs[0]);
         let offset = |m: usize| {
             let (l, r) = slots(&first_pairs[m]);
             Some((l - first.0, r - first.1))
         };
-        let within = read_digits(per_node, offset)?;
-        let across = read_digits(nodes, |i| stored.of_idx(i).first().map(slots))?;
+        let within = read_digits(per_node, offset).ok_or(None)?;
+        let across = read_digits(nodes, |i| stored.of_idx(i).first().map(slots)).ok_or(None)?;
         let fitted = ImplicitLevel::assemble(nodes, per_node, first, &within, &across);
-        fitted.holds(|i| Some(stored.of_idx(i).iter().map(slots))).then_some(fitted)
+        if fitted.holds(|i| Some(stored.of_idx(i).iter().map(slots))) { Ok(fitted) } else { Err(None) }
     }
 
     /// Whether `f` gives distinct slots for the distinct child slots the
@@ -1406,7 +1416,18 @@ impl TddLevel {
     /// most are implicit or small.
     #[inline(never)]
     fn close_stored(&mut self) {
-        let Some(d) = ImplicitLevel::fit(self) else { return };
+        // Most levels a close reads were read before, by the close at the end
+        // of the operation they came from, and fail at the node that close
+        // found.
+        let d = match ImplicitLevel::fit_or_uneven(self) {
+            Ok(d) => d,
+            Err(uneven) => {
+                if let Some(i) = uneven {
+                    self.uneven = u16::try_from(i).unwrap_or(0);
+                }
+                return;
+            }
+        };
         // A fit's nodes hold node 0's pairs each.
         debug_assert!(d.per_node >= 2 && d.pairs() >= floor());
         let k = d.per_node;
