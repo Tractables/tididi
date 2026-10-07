@@ -1342,20 +1342,38 @@ impl TddLevel {
     /// charges nothing.
     #[inline]
     pub(crate) fn close(&mut self) {
-        if self.pairs.implicit().is_none() && (floor()..1 << 31).contains(&self.pairs.len()) && !stored_levels_forced() {
+        if self.closes_by_fit() {
             self.close_stored();
         }
     }
 
-    /// [`close`](Self::close) on a stored level of a size that can be held
-    /// as a description. Kept out of line: an operation closes every level
-    /// of its result, and most are implicit or small.
+    /// Whether [`close`](Self::close) reads a fit of this level's pairs: a
+    /// stored structural level of an arena it closes, whose node 0 holds
+    /// two pairs or more and whose nodes, at that count each, hold the
+    /// floor's pairs or more. Only such a level can fit a description of
+    /// the canonical form, and one that closing left stored, as at an
+    /// operation's boundary, fits none.
+    #[inline]
+    pub(crate) fn closes_by_fit(&self) -> bool {
+        self.pairs.implicit().is_none()
+            && (floor()..1 << 31).contains(&self.pairs.len())
+            && !stored_levels_forced()
+            && matches!(self.state, LevelState::Structural)
+            && !self.nodes.is_empty()
+            && {
+                let k = self.pair_count_at(0);
+                k >= 2 && self.nodes.len().saturating_mul(k) >= floor()
+            }
+    }
+
+    /// [`close`](Self::close) on a level that [`closes_by_fit`](Self::closes_by_fit).
+    /// Kept out of line: an operation closes every level of its result, and
+    /// most are implicit or small.
     #[inline(never)]
     fn close_stored(&mut self) {
         let Some(d) = ImplicitLevel::fit(self) else { return };
-        if d.per_node < 2 || d.pairs() < floor() {
-            return;
-        }
+        // A fit's nodes hold node 0's pairs each.
+        debug_assert!(d.per_node >= 2 && d.pairs() >= floor());
         let k = d.per_node;
         for (i, node) in self.nodes.iter_mut().enumerate() {
             *node = EncodedNode::multi_pair((i * k) as u32, k as u32);

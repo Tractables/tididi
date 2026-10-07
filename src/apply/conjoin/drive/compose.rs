@@ -33,7 +33,14 @@ pub(super) fn plan(
     if !lim.memory_unbounded() || f.nodes.len() != shape.f.here || g.nodes.len() != shape.g.here {
         return None;
     }
-    let described = |l: &TddLevel| l.implicit().cloned().or_else(|| ImplicitLevel::fit(l));
+    // A stored operand that closing reads a fit of fits none, by the
+    // canonical form: only one of nodes of one pair, or of fewer pairs than
+    // the floor, is read for a fit.
+    let described = |l: &TddLevel| match l.implicit() {
+        Some(d) => Some(d.clone()),
+        None if l.closes_by_fit() => None,
+        None => ImplicitLevel::fit(l),
+    };
     let df = described(f)?;
     let dg = described(g)?;
     // The row loop groups a cell when its f row and g column both have
