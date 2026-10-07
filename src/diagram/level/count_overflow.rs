@@ -14,8 +14,8 @@ use crate::limits::OperationError;
 ///
 /// Keyed by slot index, not parallel to the fast column: a slot lands here
 /// only when its count reaches `u128::MAX`, so the cost is proportional to the
-/// overflow set and an empty `CountOverflow` owns no heap. A slot with no entry
-/// means the value fits the fast `u128` lane.
+/// overflow set and an empty `CountOverflow` owns no entry storage. A slot
+/// with no entry means the value fits the fast `u128` lane.
 ///
 /// Representation: `(slot, value)` pairs sorted by `slot`, strictly ascending,
 /// no duplicate slots. Every write path appends at a slot larger than any
@@ -23,8 +23,11 @@ use crate::limits::OperationError;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CountOverflow {
     /// Sorted by slot, strictly ascending, slots unique. Every method below
-    /// preserves that; nothing outside this module can break it.
-    entries: Vec<(u32, BigUint)>,
+    /// preserves that; nothing outside this module can break it. Boxed, so
+    /// that an `Option<CountOverflow>` is one word and a count level's state
+    /// keeps `TddLevel` within two cache lines; a level overflows rarely.
+    #[expect(clippy::box_collection, reason = "an Option of the box is one word")]
+    entries: Box<Vec<(u32, BigUint)>>,
 }
 
 impl CountOverflow {
@@ -40,7 +43,7 @@ impl CountOverflow {
     }
 
     /// True when no slot has overflowed (the common case, and the one that
-    /// owns no heap).
+    /// owns no entry storage).
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
@@ -79,7 +82,7 @@ impl CountOverflow {
         slot: usize,
         v: BigUint,
     ) -> Result<(), OperationError> {
-        eng.limits().reserve(&mut self.entries, 1)?;
+        eng.limits().reserve(&mut *self.entries, 1)?;
         self.insert(slot, v);
         Ok(())
     }
@@ -93,7 +96,7 @@ impl CountOverflow {
         eng: &Engine,
         additional: usize,
     ) -> Result<(), OperationError> {
-        eng.limits().reserve(&mut self.entries, additional)
+        eng.limits().reserve(&mut *self.entries, additional)
     }
 
     /// Remove `slot`'s value and hand it back, so no stale `BigUint` is left
@@ -132,7 +135,7 @@ impl IntoIterator for CountOverflow {
     /// order, moving each `BigUint` out. A compaction pass rekeys a table by
     /// consuming it, remapping each slot, and collecting back.
     fn into_iter(self) -> Self::IntoIter {
-        self.entries.into_iter()
+        (*self.entries).into_iter()
     }
 }
 

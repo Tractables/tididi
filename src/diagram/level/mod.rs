@@ -102,10 +102,11 @@ pub(crate) enum LevelState {
     Weights { width: u32, retired: u32 },
 }
 
-/// `TddLevel` stays compact: the O(levels) sweeps stride over it.
+/// `TddLevel` stays compact: the O(levels) sweeps stride over it, two cache
+/// lines a level.
 const _: () = assert!(
-    std::mem::size_of::<TddLevel>() <= 144,
-    "TddLevel grew past 144 B"
+    std::mem::size_of::<TddLevel>() <= 128,
+    "TddLevel grew past 128 B"
 );
 
 impl Default for TddLevel {
