@@ -41,6 +41,8 @@ pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd) -
     buf[vtree.num_leaves() as usize..num_nodes].fill(false);
     // Scan parent pairs: any reference to Pos (0) or Neg (1) means not identity.
     let mut has_any_marginal = false;
+    // An implicit level's pairs are generated here a node at a time.
+    let mut pairs_buf = Vec::new();
     for (t, left, right) in vtree.internal_bottomup() {
         if tdd.levels[t.idx()].is_marginal() { has_any_marginal = true; }
         let left_leaf = vtree.node(left).is_leaf();
@@ -64,9 +66,8 @@ pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd) -
         // levels, so this guard is a no-op there.)
         if level.is_marginal() { continue; }
         // A stored level's nodes are read as slices of its arena, an
-        // implicit level's generated into a buffer a node at a time.
+        // implicit level's generated into the buffer.
         let stored = level.stored();
-        let mut pairs_buf = Vec::new();
         'nodes: for (i, node) in level.nodes.iter().enumerate() {
             let pairs = match stored {
                 Some(stored) => stored.of(node),
