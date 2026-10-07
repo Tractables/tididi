@@ -215,6 +215,15 @@ impl ImplicitLevel {
         &self.digits[self.run_digits..self.within]
     }
 
+    /// The slots of the first pair of a node's run `run_no`, from `at`,
+    /// the previous run's. Out of line, and by value, so that a reader of
+    /// the places holds none of them in memory.
+    #[inline(never)]
+    fn run_after(&self, mut at: Odometer<0>, run_no: u32) -> Odometer<0> {
+        at.step(self.run_steps(), run_no as usize);
+        at
+    }
+
     /// A reader of the nodes' first pairs in increasing node order
     /// ([`NodeCursor`]), at node 0.
     pub(crate) fn cursor(&self) -> NodeCursor<'_> {
@@ -1104,20 +1113,13 @@ impl Places<'_> {
     }
 
     /// On to the next run, of which there must be one.
-    #[inline]
+    #[inline(always)]
     fn next_run(&mut self) {
         let d = self.level;
         self.run_no += 1;
-        self.at.step(d.run_steps(), self.run_no as usize);
+        self.at = d.run_after(self.at, self.run_no);
         self.rest -= d.run.len() as u32;
         self.run = d.run.iter();
-    }
-
-    /// The first pair of the next run, when there is one.
-    #[inline(never)]
-    fn first_of_next_run(&mut self) -> Option<ChildPair> {
-        self.next_run();
-        self.run.next().map(|&o| self.shifted(o))
     }
 }
 
@@ -1163,7 +1165,10 @@ impl Iterator for Places<'_> {
         match self.run.next() {
             Some(&o) => Some(self.shifted(o)),
             None if self.rest == 0 => None,
-            None => self.first_of_next_run(),
+            None => {
+                self.next_run();
+                self.run.next().map(|&o| self.shifted(o))
+            }
         }
     }
 
