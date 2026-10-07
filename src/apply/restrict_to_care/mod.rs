@@ -7,26 +7,29 @@
 //! The result is orphan-free but otherwise non-canonical, so a caller that
 //! needs a reduced diagram runs `minimize` on it.
 //!
-//! Algorithm — a memoized top-down walk over node pairs of `f × care`, then an
-//! in-place drop of what it marked dead:
+//! Algorithm — a top-down walk over the products of `f × care` that a model
+//! of both uses, then an in-place drop of every `f` pair it did not mark:
 //! 1. Start at `r = lca(root(f), root(care))`. An operand not rooted at `r` is
 //!    `⊤` there (`None`) and becomes its root node once the walk reaches that
 //!    vtree node. Incomparable roots cover disjoint variables, so `care` cannot
 //!    constrain `f`: `Unchanged`.
-//! 2. A pair `(v, f_node, care_node)` is *live* iff some `f`-pair × `care`-pair
-//!    has both child pairs live. A `ZERO` child is dead; a leaf is dead only for
-//!    `{Pos, Neg}`; a level that is marginal in `f` is a count (always live, no
-//!    descent); a level that is marginal in `care` is `⊤` for liveness, so `f` is
-//!    walked under `⊤` below it. Every pair is scanned (no early exit): an
-//!    `f`-pair is marked live when it is live against *some* care pair, and an
-//!    `f`-node when some pair of it is.
-//! 3. If the root pair is dead, `f ∧ care ≡ ⊥` → `Unsatisfiable`. If every node and pair
-//!    reachable from `f`'s root is live → `Unchanged`. Otherwise the dead pairs
-//!    are dropped in place (marginal levels untouched) and the orphan prune
-//!    reclaims children stranded by a collapsed partner → `Shrunk`.
+//! 2. A product `(v, f_node, care_node)` is *live* iff some `f`-pair × `care`-pair
+//!    has both child products live. A `ZERO` child is dead; a leaf is dead only
+//!    for `{Pos, Neg}`; a level that is marginal in `f` is a count (always live,
+//!    no descent); a level that is marginal in `care` is `⊤` for liveness, so
+//!    `f` is walked under `⊤` below it. Below the lower operand root, liveness
+//!    is decided bottom-up first, each level's live products joined from its
+//!    children's through the two operands' pairs grouped by those children, so
+//!    the work follows the live products. The walk then descends from the root
+//!    along live pairs only and marks their `f` pairs: those are exactly the
+//!    pairs some model of `f ∧ care` uses.
+//! 3. If the root product is dead, `f ∧ care ≡ ⊥` → `Unsatisfiable`. If every node
+//!    and pair reachable from `f`'s root is marked → `Unchanged`. Otherwise the
+//!    unmarked pairs are dropped in place (marginal levels untouched) and the
+//!    orphan prune reclaims children stranded by a collapsed partner → `Shrunk`.
 //!
-//! The walk is stack-driven and visits at most `|f| · |care|` node pairs;
-//! its discovery tables, marking rows and work stacks use the caller's limits.
+//! The walk is stack-driven; its tables, marking rows and work stacks use the
+//! caller's limits.
 
 mod mark;
 mod rebuild;

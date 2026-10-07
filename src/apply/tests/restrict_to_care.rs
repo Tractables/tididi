@@ -563,3 +563,103 @@ fn a_refused_prune_inside_a_restriction_is_an_error() {
     }
     assert!(refusals > 0, "the sweep must actually refuse something");
 }
+
+/// Whether node `l` at vtree node `v` of `t` holds under `asn`, read off the
+/// pairs alone.
+fn holds(t: &Tdd, v: crate::vtree::VtreeIdx, l: crate::diagram::NodeIdx, asn: &[bool]) -> bool {
+    use crate::diagram::{ChildDecoder, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX, ZERO};
+    use crate::vtree::VtreeNode;
+    if l == ZERO {
+        return false;
+    }
+    match *t.vtree.node(v) {
+        VtreeNode::Leaf { var, .. } => {
+            l == ONE_LEAF_IDX || (l == POS_LEAF_IDX && asn[var.idx()]) || (l == NEG_LEAF_IDX && !asn[var.idx()])
+        }
+        VtreeNode::Internal { left, right, .. } => t.levels[v.idx()].pairs_iter_of_idx(l.idx()).any(|p| {
+            holds(t, left, ChildDecoder::structural().node(p.left), asn)
+                && holds(t, right, ChildDecoder::structural().node(p.right), asn)
+        }),
+    }
+}
+
+/// Record the pair of each node `asn` passes through in `t`, from `l` at `v`.
+fn trace(
+    t: &Tdd,
+    v: crate::vtree::VtreeIdx,
+    l: crate::diagram::NodeIdx,
+    asn: &[bool],
+    used: &mut std::collections::BTreeSet<(u32, u32, usize)>,
+) {
+    use crate::diagram::ChildDecoder;
+    use crate::vtree::VtreeNode;
+    let VtreeNode::Internal { left, right, .. } = *t.vtree.node(v) else { return };
+    for (k, p) in t.levels[v.idx()].pairs_iter_of_idx(l.idx()).enumerate() {
+        let (a, b) = (ChildDecoder::structural().node(p.left), ChildDecoder::structural().node(p.right));
+        if holds(t, left, a, asn) && holds(t, right, b, asn) {
+            used.insert((v.0, l.0, k));
+            trace(t, left, a, asn, used);
+            trace(t, right, b, asn, used);
+            return;
+        }
+    }
+}
+
+/// On implicit levels and on stored ones alike ([`same_as_stored`]).
+#[test]
+fn restrict_keeps_exactly_the_pairs_models_use() {
+    same_as_stored(keeps_exactly_the_pairs_models_use);
+}
+
+/// The cases of [`restrict_keeps_exactly_the_pairs_models_use`]: the
+/// restricted diagrams.
+fn keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
+    // A pair survives the restriction exactly when some model of `f ∧ care`
+    // passes through it: the walk descends along live products only, so a
+    // product reached beside a dead sibling marks nothing. Brute force over
+    // the truth table finds the pairs those models use; the restriction keeps
+    // that many reachable pairs, no more, on balanced, linear and random
+    // vtrees.
+    let mut out = Vec::new();
+    let mut rng = Lcg::new(0x7e57_0fc0_de5e_ed01);
+    let mut cases = 0;
+    let mut strict = 0;
+    for &nvars in &[3u32, 4, 5, 6, 7] {
+        let shapes = [Vtree::balanced(nvars), Vtree::linear(nvars), Vtree::random(nvars, u64::from(nvars) * 31 + 7)];
+        for vtree in shapes {
+            let vtree = Arc::new(vtree);
+            for _ in 0..60 {
+                let mut f = rand_conj(&vtree, nvars, 4, 3, true, &mut rng);
+                let mut c = rand_conj(&vtree, nvars, 4, 3, true, &mut rng);
+                if rng.coin() {
+                    f.minimize().unwrap();
+                }
+                if rng.coin() {
+                    c.minimize().unwrap();
+                }
+                if f.is_zero() || count_is_zero(&c) || f.output.vtree != c.output.vtree {
+                    continue;
+                }
+                let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+                let mut used = std::collections::BTreeSet::new();
+                for mask in 0..(1u32 << nvars) {
+                    let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
+                    let cv = eval(&c, &asn);
+                    assert_eq!(eval(&g, &asn) && cv, eval(&f, &asn) && cv, "unsound at {asn:?}");
+                    if cv && eval(&f, &asn) {
+                        trace(&f, f.output.vtree, f.output.local, &asn, &mut used);
+                    }
+                }
+                assert_eq!(reachable_pairs(&g), used.len(), "the restriction kept pairs no model uses (nvars={nvars})");
+                if used.len() < reachable_pairs(&f) {
+                    strict += 1;
+                }
+                cases += 1;
+                out.push(g);
+            }
+        }
+    }
+    assert!(cases >= 300, "too few cases exercised: {cases}");
+    assert!(strict > 0, "no case pruned anything");
+    out
+}
