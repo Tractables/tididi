@@ -193,49 +193,29 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
     eng: &Engine, old: &TddLevel, nodes: &[EncodedNode], ctx: SpineCtx, level: &mut TddLevel,
     base: usize, tables: &mut ClauseTables<'_>,
 ) -> Result<(), OperationError> {
-    // A stored level's nodes are read as slices of its arena; an implicit
-    // level's, generated, in a loop of their own out of line.
-    let Some(stored) = old.stored() else {
-        return rebuild_generated_nodes::<LEFT, RIGHT, DT>(eng, old, nodes, ctx, level, base, tables);
-    };
-    for (i, node) in nodes.iter().enumerate() {
-        rebuild_node::<LEFT, RIGHT, DT>(eng, stored.of(node), ctx, level, base + i, tables)?;
-    }
-    Ok(())
-}
-
-/// [`rebuild_nodes`] on an accumulator level that is implicit: each node's
-/// pairs are generated into a buffer.
-#[cold]
-#[inline(never)]
-fn rebuild_generated_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
-    eng: &Engine, old: &TddLevel, nodes: &[EncodedNode], ctx: SpineCtx, level: &mut TddLevel,
-    base: usize, tables: &mut ClauseTables<'_>,
-) -> Result<(), OperationError> {
+    // An implicit level's node's pairs are generated into `buf`. The one
+    // call site keeps `conjoin_node_with_clause` inlined here.
+    let stored = old.stored();
     let mut buf = Vec::new();
     for (i, node) in nodes.iter().enumerate() {
-        buf.clear();
-        buf.extend(old.pairs_iter_of(node));
-        rebuild_node::<LEFT, RIGHT, DT>(eng, &buf, ctx, level, base + i, tables)?;
+        let inputs: &[ChildPair] = match stored {
+            Some(s) => s.of(node),
+            None => {
+                buf.clear();
+                buf.extend(old.pairs_iter_of(node));
+                &buf
+            }
+        };
+        let carries_cube = tables.output_cube_pair.is_some_and(|(s, _)| s == base + i);
+        if inputs.is_empty() && !carries_cube {
+            // Dead accumulator node: nothing emitted, and this is the one
+            // write of its map entry.
+            tables.cd_map[base + i] = [NO_PRODUCT, NO_PRODUCT];
+            continue;
+        }
+        conjoin_node_with_clause::<LEFT, RIGHT, DT>(eng, inputs, ctx, level, base + i, tables)?;
     }
     Ok(())
-}
-
-/// Conjoin accumulator node `slot` of pairs `inputs` with the clause, or
-/// record a dead node's empty products.
-#[inline(always)]
-fn rebuild_node<const LEFT: bool, const RIGHT: bool, const DT: bool>(
-    eng: &Engine, inputs: &[ChildPair], ctx: SpineCtx, level: &mut TddLevel,
-    slot: usize, tables: &mut ClauseTables<'_>,
-) -> Result<(), OperationError> {
-    let carries_cube = tables.output_cube_pair.is_some_and(|(s, _)| s == slot);
-    if inputs.is_empty() && !carries_cube {
-        // Dead accumulator node: nothing emitted, and this is the one
-        // write of its map entry.
-        tables.cd_map[slot] = [NO_PRODUCT, NO_PRODUCT];
-        return Ok(());
-    }
-    conjoin_node_with_clause::<LEFT, RIGHT, DT>(eng, inputs, ctx, level, slot, tables)
 }
 
 /// Emit the node whose pairs sit at `level.pairs[pair_start..]` and return
