@@ -317,6 +317,14 @@ impl ImplicitLevel {
         each_place(&moving, (start, 0), |s, node| f(s, node as usize));
     }
 
+    /// The child slots on `side` the pairs of a node add to its first: one
+    /// for every setting of the place digits that move the side's slot.
+    pub(crate) fn side_offsets(&self, side: ChildSide) -> Vec<i64> {
+        let mut out = Vec::new();
+        Self::each_on_side(&self.digits[..self.within], side, 0, |s, _| out.push(s));
+        out
+    }
+
     /// Calls `f` with the child slot on `side` of the first pair of every
     /// node, once for every setting of the node digits that move the side's
     /// slot, and a node that starts there: every slot on that side the
@@ -380,9 +388,10 @@ impl ImplicitLevel {
     /// one: the `nodes` nodes it keeps, the `j`th of them node `kept(j)` of
     /// this description, each with its pairs, whose child slots `left` and
     /// `right` move to where the prune put the children's nodes. Read off
-    /// the moved pairs and checked at every one of them, without writing
-    /// any. `None` when they are not affine in a mixed radix, or `kept`
-    /// names no node of this description.
+    /// the moved pairs and checked at every one of them, side by side,
+    /// without writing any ([`ImplicitLevel::holds_moved`]). `None` when
+    /// they are not affine in a mixed radix, or `kept` names no node of this
+    /// description.
     pub(crate) fn pruned(
         &self,
         nodes: usize,
@@ -401,7 +410,71 @@ impl ImplicitLevel {
         })?;
         let across = read_digits(nodes, |j| Some(moved(node(j)?, &places[0])))?;
         let fitted = ImplicitLevel::assemble(nodes, self.per_node, first, &within, &across);
-        fitted.holds(|j| node(j).map(|at| places.iter().map(move |p| moved(at, p)))).then_some(fitted)
+        // Side by side reads the places that move each side; when those are
+        // as many as a node's pairs, pair by pair reads fewer.
+        let moving = |side| self.side_offsets(side).len();
+        let holds = if moving(ChildSide::Left) + moving(ChildSide::Right) < self.per_node {
+            self.holds_moved(&fitted, ChildSide::Left, &mut node, &left)
+                && self.holds_moved(&fitted, ChildSide::Right, &mut node, &right)
+        } else {
+            fitted.holds(|j| node(j).map(|at| places.iter().map(move |p| moved(at, p))))
+        };
+        holds.then_some(fitted)
+    }
+
+    /// Whether `fitted` gives, on `side`, the child slots of the pairs of
+    /// this description's nodes `node(j)` names by their first pairs, moved
+    /// through `f`: for every node `j` of `fitted` and every place `m`,
+    /// `f(first(j) + offset(m))`, the side's slot of `node(j)`'s first pair
+    /// and of the place's offset from it.
+    ///
+    /// A place's offset on `side` depends only on the place digits that move
+    /// the side's slot, so it is checked at the places where the others are
+    /// zero, at every node, and `fitted`'s offsets are checked, once, to
+    /// depend on no other: about `nodes · Π radices` reads of the moving
+    /// digits and `per_node` of the offsets, where a pair-by-pair check
+    /// makes `nodes · per_node`.
+    fn holds_moved(
+        &self,
+        fitted: &ImplicitLevel,
+        side: ChildSide,
+        node: &mut impl FnMut(usize) -> Option<(i64, i64)>,
+        f: &impl Fn(i64) -> i64,
+    ) -> bool {
+        let of = |v: (i64, i64)| match side {
+            ChildSide::Left => v.0,
+            ChildSide::Right => v.1,
+        };
+        let step = |d: &Digit| of((d.left, d.right));
+        // Each place with the digits that leave the side alone zeroed, and
+        // the place that has them zeroed.
+        let mut period = 1usize;
+        let mut zeroed: Vec<(usize, usize)> = Vec::new();
+        let mut moving: Vec<(usize, i64)> = vec![(0, 0)];
+        for d in &self.digits[..self.within] {
+            if step(d) == 0 {
+                zeroed.push((period, d.radix));
+            } else {
+                let at_zero = moving.len();
+                for c in 1..d.radix {
+                    for t in 0..at_zero {
+                        let (m, off) = moving[t];
+                        moving.push((m + c * period, off + c as i64 * step(d)));
+                    }
+                }
+            }
+            period *= d.radix;
+        }
+        let offsets = fitted.offsets();
+        let projected = |m: usize| zeroed.iter().fold(m, |m, &(p, r)| m - (m / p % r) * p);
+        if !zeroed.is_empty() && (0..self.per_node).any(|m| of(offsets[m]) != of(offsets[projected(m)])) {
+            return false;
+        }
+        (0..fitted.nodes).all(|j| {
+            let Some(at) = node(j) else { return false };
+            let (base, to) = (of(at), of(fitted.node_first(j)));
+            moving.iter().all(|&(m, off)| f(base + off) == to + of(offsets[m]))
+        })
     }
 
     /// The description of the conjunction's level whose operands' levels

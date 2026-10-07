@@ -17,7 +17,7 @@
 //! level has a block: a leaf or marginal level is never compacted, so
 //! nothing reads its marks.
 
-use crate::diagram::{ChildDecoder, EncodedChildRef, EncodedNode, NodeIdx, NodeKind, Tdd};
+use crate::diagram::{ChildDecoder, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel, NodeIdx, NodeKind, Tdd};
 
 use crate::Engine;
 
@@ -893,6 +893,19 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     let left_view = tdd.levels[left.idx()].child_decoder();
     let right_view = tdd.levels[right.idx()].child_decoder();
     let level = &tdd.levels[t.idx()];
+    if let Some(d) = level.implicit()
+        && !left_view.is_marginal()
+        && !right_view.is_marginal()
+        && described_marks_fewer(d, LEFT, RIGHT, &marks[base..base + words(level.slot_count())])
+    {
+        if LEFT {
+            mark_described(d, ChildSide::Left, level.slot_count(), base, left_base, marks);
+        }
+        if RIGHT {
+            mark_described(d, ChildSide::Right, level.slot_count(), base, right_base, marks);
+        }
+        return;
+    }
     let mut buf = Vec::new();
     let (mut left_marks, mut right_marks) = (Marker::new(left_base), Marker::new(right_base));
     for w in 0..words(level.slot_count()) {
@@ -914,6 +927,70 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     }
     left_marks.finish(marks);
     right_marks.finish(marks);
+}
+
+/// Whether [`mark_described`] marks the sides `left` and `right` of the
+/// described level `d`, whose marked nodes `own` holds, in fewer marks than
+/// its marked nodes have pairs: a side's distinct offsets for every node it
+/// starts at, every node's first slot on that side when every node is
+/// marked, else every marked node's.
+fn described_marks_fewer(d: &ImplicitLevel, left: bool, right: bool, own: &[u64]) -> bool {
+    let marked: usize = own.iter().map(|w| w.count_ones() as usize).sum();
+    let all = marked == d.nodes();
+    let cost = |side: ChildSide| {
+        let step = |g: &crate::diagram::Digit| match side {
+            ChildSide::Left => g.left,
+            ChildSide::Right => g.right,
+        };
+        let radices = |digits: &[crate::diagram::Digit]| -> usize { digits.iter().filter(|g| step(g) != 0).map(|g| g.radix).product() };
+        let (within, across) = d.digits().split_at(d.within());
+        radices(within).saturating_mul(if all { radices(across) } else { marked })
+    };
+    let marks = if left { cost(ChildSide::Left) } else { 0 }.saturating_add(if right { cost(ChildSide::Right) } else { 0 });
+    marks < marked.saturating_mul(d.pairs_per_node())
+}
+
+/// [`mark_sides`] on one side of a level held as the description of its
+/// pairs, whose children are structural, so that a side's word is the
+/// child's slot: the slots off the digits, not off the pairs. A marked
+/// node marks its first pair's slot shifted by each of the offsets the
+/// place digits that move the side give, once for a run of marked nodes
+/// that start at one slot; with every node marked, the nodes' first slots
+/// are read off the node digits that move the side. What is marked is
+/// what the pairs would mark, read in about the side's distinct offsets a
+/// node, not its pairs.
+fn mark_described(d: &ImplicitLevel, side: ChildSide, width: usize, base: usize, side_base: usize, marks: &mut [u64]) {
+    let offsets = d.side_offsets(side);
+    let mut marker = Marker::new(side_base);
+    let mut from = |marks: &mut [u64], first: i64| {
+        for &o in &offsets {
+            marker.mark(marks, side_base, (first + o) as usize);
+        }
+    };
+    if all_marked(&marks[base..base + words(width)], width) {
+        d.each_side_first(side, |first, _| from(marks, first));
+    } else {
+        let mut last = None;
+        for w in 0..words(width) {
+            // The level's own block is disjoint from its children's, so the
+            // word read here is not one the marks below write.
+            let mut x = marks[base + w];
+            while x != 0 {
+                let i = (w << 6) + x.trailing_zeros() as usize;
+                x &= x - 1;
+                let at = d.node_first(i);
+                let first = match side {
+                    ChildSide::Left => at.0,
+                    ChildSide::Right => at.1,
+                };
+                if last != Some(first) {
+                    from(marks, first);
+                    last = Some(first);
+                }
+            }
+        }
+    }
+    marker.finish(marks);
 }
 
 // ── The seeded walk ──────────────────────────────────────────────────────────
