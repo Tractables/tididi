@@ -296,7 +296,7 @@ impl ImplicitLevel {
 
     /// Calls `f` with the child slots of every pair, in the order of the
     /// level's pairs.
-    #[inline]
+    #[cfg(test)]
     pub(crate) fn for_each_pair(&self, f: impl FnMut(i64, i64)) {
         each_place(&self.digits, self.first, f);
     }
@@ -308,13 +308,22 @@ impl ImplicitLevel {
     pub(crate) fn write_nodes(&self, lim: &Limits, level: &mut TddLevel) -> Result<(), OperationError> {
         debug_assert!(level.nodes.is_empty() && level.pairs.is_empty());
         if self.per_node == 1 {
-            let mut out = Ok(());
-            self.for_each_pair(|l, r| {
-                if out.is_ok() {
-                    out = lim.try_push(&mut level.nodes, EncodedNode::inline(pair(l, r)));
-                }
-            });
-            return out;
+            // Each node's pair stepped on from the one before ([`NodeCursor`]):
+            // in one pass where the nodes fit the reserved capacity, one at a
+            // time otherwise.
+            let mut cursor = self.cursor();
+            let mut node = move |i: usize| {
+                let (l, r) = cursor.first_of(i);
+                EncodedNode::inline(pair(l, r))
+            };
+            if level.nodes.capacity() - level.nodes.len() >= self.nodes {
+                level.nodes.extend((0..self.nodes).map(node));
+                return Ok(());
+            }
+            for i in 0..self.nodes {
+                lim.try_push(&mut level.nodes, node(i))?;
+            }
+            return Ok(());
         }
         // Where the nodes fit the reserved capacity and every range the
         // plain multi-pair word, which the conjunction's reservation makes the
