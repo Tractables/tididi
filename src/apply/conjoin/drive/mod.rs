@@ -71,6 +71,10 @@ pub(super) struct Sweep<'a, 'filter> {
     /// Where the parent summed `sum_child` out: the levels it made marginal,
     /// children before parents.
     pub(super) summed: Option<Vec<VtreeIdx>>,
+    /// The level counts each operand kept when the sweep began
+    /// ([`Engine::attach_level_counts`](crate::Engine::attach_level_counts)):
+    /// a level an identity fast path moves untouched keeps its column.
+    pub(super) kept: Operands<Option<LevelCounts>>,
 }
 
 /// Walk the vtree bottom-up, building one level at a time.
@@ -211,7 +215,7 @@ fn build_level(
 
         match route {
             Route::Sparse if counts_root(sweep, f, g, shape, &plan) => {
-                sweep.counted = Some(count_sparse_root(eng, run, f, g, shape, vtree)?);
+                sweep.counted = Some(count_sparse_root(eng, run, f, g, shape, sweep)?);
             }
             Route::Sparse => match sums_root(sweep, run, shape, &plan) {
                 Some(side) => sweep.summed = sum_sparse_root(eng, run, f, g, shape, vtree, side)?,
@@ -230,6 +234,37 @@ fn build_level(
     // Release this level's children's grid regions for a later level to
     // reuse, before the next iteration's own reserve fires.
     run.reclaim_child_grids(left_idx, right_idx);
+    Ok(())
+}
+
+/// Keep with `out` the operands' kept counts ([`Sweep::kept`]) of the levels
+/// an identity fast path moved into it untouched: such a level brings its
+/// whole subtree along, so its nodes count in `out` what they counted in
+/// their operand. A level the relabelling route moved keeps none, a subtree
+/// under it being a product.
+fn carry_kept_counts(
+    eng: &Engine,
+    out: &mut Tdd,
+    carried: &[(usize, bool)],
+    relabel_moved: &[usize],
+    kept: &Operands<Option<LevelCounts>>,
+) -> Result<(), OperationError> {
+    if kept.f.is_none() && kept.g.is_none() {
+        return Ok(());
+    }
+    let mut counts = LevelCounts::none(eng, out.vtree.num_nodes())?;
+    for &(ti, from_f) in carried {
+        let t = VtreeIdx(ti as u32);
+        let side = if from_f { kept.f.as_ref() } else { kept.g.as_ref() };
+        let Some(column) = side.and_then(|counts| counts.column(t)) else { continue };
+        let level = &out.levels[ti];
+        if !relabel_moved.contains(&ti) && !level.is_marginal() && column.len() == level.slot_count() {
+            counts.set(t, Arc::clone(column));
+        }
+    }
+    if counts.any() {
+        out.levels.keep_counts(counts);
+    }
     Ok(())
 }
 
@@ -396,11 +431,14 @@ pub(crate) fn apply_and_core(
         Operands { f: &run.f_identity[..], g: &run.g_identity[..] },
         ws.as_ref(),
     );
+    // Taken here, after the setup and before the regions or the sweep move
+    // or drop any operand level: an access that changed a level would have
+    // dropped them.
+    let kept = Operands { f: f.levels.counts().cloned(), g: g.levels.counts().cloned() };
     region::take_regions(&vtree, &mut run, f, g);
-
     let mut sweep = Sweep {
         vtree: &vtree, targets, quantified, ws: ws.as_mut(), filter, count_root, counted: None,
-        sum_child, summed: None,
+        sum_child, summed: None, kept,
     };
     if let Err(e) = sweep_levels(eng, &mut run, f, g, &mut sweep) {
         if run.restoring {
@@ -413,6 +451,7 @@ pub(crate) fn apply_and_core(
         return Ok(Conjoined::Counted(count));
     }
     let summed = sweep.summed.take();
+    let kept = Operands { f: sweep.kept.f.take(), g: sweep.kept.g.take() };
 
     crate::marginal::canonicalize_weighted_leaf_refs(&canon_leaves, &vtree, run.levels, ws.as_ref());
 
@@ -485,6 +524,8 @@ pub(crate) fn apply_and_core(
     // levels alone keeps them known closed.
     if !plain {
         crate::diagram::inline_small_marginal_refs(&mut out, None);
+    } else {
+        carry_kept_counts(eng, &mut out, &carried, &relabel_moved, &kept)?;
     }
     match summed {
         // The marks the marginalization pass leaves, which installs each

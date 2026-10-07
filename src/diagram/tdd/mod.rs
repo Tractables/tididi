@@ -12,7 +12,7 @@ mod reach;
 mod operations;
 mod state;
 
-pub(crate) use state::{Dirty, Pass};
+pub(crate) use state::{Dirty, LevelCounts, Pass};
 
 #[cfg(test)]
 mod tests;
@@ -198,6 +198,7 @@ impl Tdd {
         let mut levels = state::LevelStorage::from(levels);
         if self.levels.is_canonical(self.output) { levels.certify(self.output); }
         levels.copy_closed_from(&self.levels);
+        if let Some(counts) = self.levels.counts() { levels.keep_counts(counts.clone()); }
         Ok(Tdd {
             vtree: Arc::clone(&self.vtree),
             levels,

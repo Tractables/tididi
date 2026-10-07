@@ -146,6 +146,14 @@ impl CountVec {
         })
     }
 
+    /// A copy of this column, its buffers reserved through `eng`.
+    pub(crate) fn try_clone_on(&self, eng: &Engine) -> Result<Self, OperationError> {
+        let mut fast: Vec<u128> = Vec::new();
+        eng.limits().reserve_exact(&mut fast, self.fast.len())?;
+        fast.extend_from_slice(&self.fast);
+        Ok(CountVec { fast, big: self.big.clone(), all_u64: self.all_u64 })
+    }
+
     /// Borrow this column as a [`CountRef`], carrying the certificate rather
     /// than re-deriving it (a re-scan could disagree with the incrementally
     /// maintained flag on a column whose overflow slot was later overwritten).

@@ -876,3 +876,12 @@ fn relabel_forced_off() -> bool {
 #[cfg(not(test))]
 #[inline(always)]
 fn note_relabelled(_moved: bool) {}
+
+// A test counts the levels a count read from an operand's kept counts
+// instead of folding them.
+#[cfg(test)]
+use tests::note_kept_counts;
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_kept_counts(_levels: usize) {}

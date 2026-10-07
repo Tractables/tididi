@@ -620,6 +620,24 @@ impl Tdd {
         context.run(|eng| eng.model_count(self))
     }
 
+    /// Count every internal level's nodes once and keep the counts with the
+    /// diagram; see [`Engine::attach_level_counts`](crate::Engine::attach_level_counts).
+    ///
+    /// # Errors
+    ///
+    /// As [`Engine::attach_level_counts`](crate::Engine::attach_level_counts).
+    pub fn attach_level_counts(&mut self) -> Result<(), OperationError> {
+        let context = Arc::clone(self.context());
+        context.run(|eng| eng.attach_level_counts(self))
+    }
+
+    /// Whether the diagram keeps its levels' model counts
+    /// ([`attach_level_counts`](Self::attach_level_counts)): kept until an
+    /// operation changes its levels.
+    pub fn has_level_counts(&self) -> bool {
+        self.levels.counts().is_some()
+    }
+
     /// Count distinct assignments to `vars` that have a satisfying extension.
     ///
     /// Each assignment is counted once, even when several assignments to the

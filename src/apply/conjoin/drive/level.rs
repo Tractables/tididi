@@ -101,16 +101,19 @@ pub(super) fn counts_root(
 /// the count columns of the two children.
 ///
 /// The children's columns are folded first, over the levels built so far,
-/// as a model count of the finished diagram would fold them; the scatter
-/// then folds each candidate in where [`run_sparse_level`] would store it.
+/// as a model count of the finished diagram would fold them, from the
+/// operands' kept counts where a level was moved untouched
+/// ([`seed_kept_counts`]); the scatter then folds each candidate in where
+/// [`run_sparse_level`] would store it.
 pub(super) fn count_sparse_root(
     eng: &Engine,
     run: &mut ApplyRun,
     f: &Tdd,
     g: &Tdd,
     shape: LevelShape,
-    vtree: &crate::vtree::Vtree,
+    sweep: &Sweep<'_, '_>,
 ) -> Result<num_bigint::BigUint, OperationError> {
+    let vtree = sweep.vtree;
     use crate::value::{CountVec, FoldInput, IntFold, Retention, ValueDomain};
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
@@ -121,6 +124,7 @@ pub(super) fn count_sparse_root(
     let mut computed: Vec<Option<CountVec>> = Vec::new();
     lim.reserve_exact(&mut computed, vtree.num_nodes())?;
     computed.resize_with(vtree.num_nodes(), || None);
+    seed_kept_counts(eng, run, sweep, &mut computed, &[left, right])?;
     let levels: &[TddLevel] = run.levels;
     let marginal = |i: usize| levels[i].is_marginal();
     let input = FoldInput { vtree, levels, store: &() };
@@ -142,6 +146,59 @@ pub(super) fn count_sparse_root(
         run.thresholds, None, &mut fold,
     )?;
     Ok(fold.finish())
+}
+
+/// Seed `computed` with the operands' kept counts ([`Sweep::kept`]) for the
+/// levels under `roots` that an identity fast path moved into the output
+/// untouched, so the count's fold stops at them instead of walking their
+/// subtrees again.
+///
+/// Such a level brings its whole subtree along, the other operand being
+/// constant-true under it, so each of its nodes counts in the output what it
+/// counted in the operand. A level the relabelling route moved is not one: a
+/// subtree under it is a product. Only the topmost level of each moved
+/// subtree is seeded, and only where it and every level under it are
+/// structural and no target, so the output's levels there are the operand's
+/// as it counted them.
+fn seed_kept_counts(
+    eng: &Engine,
+    run: &ApplyRun,
+    sweep: &Sweep<'_, '_>,
+    computed: &mut [Option<crate::value::CountVec>],
+    roots: &[VtreeIdx],
+) -> Result<(), OperationError> {
+    if sweep.kept.f.is_none() && sweep.kept.g.is_none() {
+        return Ok(());
+    }
+    let vtree = sweep.vtree;
+    // The operand each level was moved from untouched: 1 for `f`, 2 for `g`.
+    let mut moved = Vec::new();
+    eng.limits().try_resize(&mut moved, vtree.num_nodes(), 0u8)?;
+    for &(t, from_f) in &run.carried {
+        moved[t] = if from_f { 1 } else { 2 };
+    }
+    for &t in &run.relabel_moved {
+        moved[t] = 0;
+    }
+    let mut seeded = 0;
+    for &(ti, from_f) in &run.carried {
+        let t = VtreeIdx(ti as u32);
+        let side = moved[ti];
+        let topmost = vtree.node(t).parent().is_none_or(|p| moved[p.idx()] != side);
+        let kept = if from_f { sweep.kept.f.as_ref() } else { sweep.kept.g.as_ref() };
+        let Some(column) = kept.and_then(|counts| counts.column(t)) else { continue };
+        if side == 0 || !topmost || computed[ti].is_some() {
+            continue;
+        }
+        let under_a_root = std::iter::successors(Some(t), |&x| vtree.node(x).parent()).any(|x| roots.contains(&x));
+        let as_counted = vtree.subtree(t).all(|x| !run.levels[x.idx()].is_marginal() && !sweep.targets.contains(x.idx()));
+        if under_a_root && as_counted && column.len() == run.levels[ti].slot_count() {
+            computed[ti] = Some(column.try_clone_on(eng)?);
+            seeded += 1;
+        }
+    }
+    super::super::note_kept_counts(seeded);
+    Ok(())
 }
 
 /// Whether [`sum_sparse_root`] may take a level the sparse route was chosen
@@ -418,8 +475,10 @@ pub(super) fn pick_streamed(
 ///
 /// Every level the stream reads is built by now: `c`'s children and the
 /// root's other child. Their counts are folded as a model count of the
-/// finished diagram would fold them, and must all fit `u64`, which is also
-/// declined otherwise, as is a read level the sweep left marginal.
+/// finished diagram would fold them, from the operands' kept counts where a
+/// level was moved untouched ([`seed_kept_counts`]), and must all fit `u64`,
+/// which is also declined otherwise, as is a read level the sweep left
+/// marginal.
 pub(super) fn count_streamed_root(
     eng: &Engine,
     run: &mut ApplyRun,
@@ -452,6 +511,7 @@ pub(super) fn count_streamed_root(
     let mut computed: Vec<Option<CountVec>> = Vec::new();
     lim.reserve_exact(&mut computed, vtree.num_nodes())?;
     computed.resize_with(vtree.num_nodes(), || None);
+    seed_kept_counts(eng, run, sweep, &mut computed, &[o, cl, cr])?;
     let levels: &[TddLevel] = run.levels;
     let marginal = |i: usize| levels[i].is_marginal();
     let input = FoldInput { vtree, levels, store: &() };

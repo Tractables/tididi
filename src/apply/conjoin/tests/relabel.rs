@@ -13,7 +13,7 @@ use crate::test_helpers::check::check_no_false_nodes_in_levels;
 use crate::vtree::{VarId, Vtree, VtreeNode};
 
 /// The variables at the leaves under `t`.
-fn vars_under(vtree: &Vtree, t: VtreeIdx) -> Vec<u32> {
+pub(super) fn vars_under(vtree: &Vtree, t: VtreeIdx) -> Vec<u32> {
     let mut stack = vec![t];
     let mut vars = Vec::new();
     while let Some(n) = stack.pop() {
@@ -27,7 +27,7 @@ fn vars_under(vtree: &Vtree, t: VtreeIdx) -> Vec<u32> {
 }
 
 /// A random function of `vars`, minimized.
-fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
+pub(super) fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
     let mut f = rand_conj_over(vtree, vars, 8, 3, false, rng);
     f.minimize().unwrap();
     f
@@ -39,7 +39,7 @@ fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
 /// every variable, where `g` kills some of `f`'s products, or over the
 /// variables outside that level, where it kills none and the levels above
 /// it are moved whole.
-fn cases(nvars: u32, seed: u64) -> Vec<(String, Tdd, Tdd)> {
+pub(super) fn cases(nvars: u32, seed: u64) -> Vec<(String, Tdd, Tdd)> {
     let mut rng = Lcg::new(seed);
     let mut out = Vec::new();
     for (shape, vtree) in vtree_shapes(nvars) {

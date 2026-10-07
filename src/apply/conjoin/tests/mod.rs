@@ -4,6 +4,7 @@ use super::identity::level_marginal_is_constant_true;
 mod complete;
 mod conjunction;
 mod implicit;
+mod kept_counts;
 mod marginal_leaf_target;
 mod marginal_level;
 mod marginal_orphan;
@@ -221,6 +222,22 @@ pub(super) fn no_relabel<R>(f: impl FnOnce() -> R) -> R {
 /// rebuilt.
 pub(super) fn relabel_census() -> [u64; 2] {
     RELABELLED.with(std::cell::Cell::get)
+}
+
+thread_local! {
+    /// The levels on this thread a count read from an operand's kept counts
+    /// ([`kept_counts_census`]).
+    static KEPT_COUNTS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn note_kept_counts(levels: usize) {
+    KEPT_COUNTS.with(|c| c.set(c.get() + levels as u64));
+}
+
+/// The levels on this thread so far a count read from an operand's kept
+/// counts instead of folding them.
+pub(super) fn kept_counts_census() -> u64 {
+    KEPT_COUNTS.with(std::cell::Cell::get)
 }
 
 thread_local! {

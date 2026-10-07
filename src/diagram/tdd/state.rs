@@ -15,8 +15,10 @@ use crate::vtree::VtreeIdx;
 use super::Tdd;
 
 use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use super::{TddLevel, TddNodeId};
+use crate::value::CountVec;
 
 /// A lazily computed property of immutable level storage.
 #[derive(Debug)]
@@ -69,6 +71,11 @@ impl Summary {
 /// levels are closed holds of its pairs. `changed` lists the levels the
 /// edits since then say they changed ([`mark_changed`](Self::mark_changed)),
 /// so that a reduction that began on closed levels closes only those.
+///
+/// The level counts ([`LevelCounts`]) are kept on the same terms: they
+/// describe the levels as they were when counted, so any mutable access, and
+/// [`forget`](Self::forget), drops them. A close changes how a level holds
+/// its pairs, not its nodes, and keeps them.
 #[derive(Clone, Default)]
 pub(crate) struct LevelStorage {
     levels: Vec<TddLevel>,
@@ -76,6 +83,9 @@ pub(crate) struct LevelStorage {
     closed: bool,
     changed: Vec<VtreeIdx>,
     summary: Summary,
+    /// Boxed: most diagrams keep none, and every move of a diagram moves
+    /// this storage.
+    counts: Option<Box<LevelCounts>>,
 }
 
 impl std::fmt::Debug for LevelStorage {
@@ -85,6 +95,7 @@ impl std::fmt::Debug for LevelStorage {
             .field("canonical_output", &self.canonical_output)
             .field("closed", &self.closed)
             .field("changed", &self.changed)
+            .field("counts", &self.counts)
             .finish()
     }
 }
@@ -120,7 +131,12 @@ impl LevelStorage {
         self.canonical_output = Some(output);
     }
 
-    pub(crate) fn forget(&mut self) { self.canonical_output = None; }
+    /// Drop the canonical certificate and the level counts, for a change
+    /// made without a mutable access to the levels (a vtree rotated in place).
+    pub(crate) fn forget(&mut self) {
+        self.canonical_output = None;
+        self.counts = None;
+    }
 
     /// A mutable access: neither the certification nor the closed form is
     /// known to hold any more.
@@ -196,6 +212,13 @@ impl LevelStorage {
     }
 
     pub(crate) fn into_vec(self) -> Vec<TddLevel> { self.levels }
+
+    /// The model counts of the levels as they are, when kept.
+    pub(crate) fn counts(&self) -> Option<&LevelCounts> { self.counts.as_deref() }
+
+    /// Keep `counts`, which must be the model counts of these levels as
+    /// they are: every column a kept one's level's node counts, in node order.
+    pub(crate) fn keep_counts(&mut self, counts: LevelCounts) { self.counts = Some(Box::new(counts)); }
 }
 
 impl From<Vec<TddLevel>> for LevelStorage {
@@ -229,6 +252,53 @@ impl<'a> IntoIterator for &'a mut LevelStorage {
     }
 }
 
+
+/// The model counts of a diagram's internal structural levels: column `t`,
+/// where kept, holds at slot `i` the model count of node `i` of level `t`
+/// over the variables under `t`.
+///
+/// Metadata beside the levels, computed by one fold
+/// ([`Engine::attach_level_counts`](crate::Engine::attach_level_counts)),
+/// so that a count can read a level's column instead of folding the subtree
+/// under it again. A conjunction moves an operand's level into its result
+/// untouched where the other operand is constant-true under it, and that
+/// level's column moves with it. Columns are shared, so the copies of a
+/// diagram and the results that carried its levels hold one column each.
+#[derive(Clone, Default)]
+pub(crate) struct LevelCounts {
+    columns: Vec<Option<Arc<CountVec>>>,
+}
+
+impl std::fmt::Debug for LevelCounts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kept = self.columns.iter().filter(|c| c.is_some()).count();
+        f.debug_struct("LevelCounts").field("levels", &self.columns.len()).field("kept", &kept).finish()
+    }
+}
+
+impl LevelCounts {
+    /// No column kept, over a vtree of `num_nodes` nodes.
+    pub(crate) fn none(eng: &crate::Engine, num_nodes: usize) -> Result<Self, crate::OperationError> {
+        let mut columns = Vec::new();
+        eng.limits().try_resize(&mut columns, num_nodes, None)?;
+        Ok(Self { columns })
+    }
+
+    /// Level `t`'s column, when kept.
+    pub(crate) fn column(&self, t: VtreeIdx) -> Option<&Arc<CountVec>> {
+        self.columns.get(t.idx()).and_then(Option::as_ref)
+    }
+
+    /// Keep `column` as level `t`'s.
+    pub(crate) fn set(&mut self, t: VtreeIdx, column: Arc<CountVec>) {
+        self.columns[t.idx()] = Some(column);
+    }
+
+    /// Whether any column is kept.
+    pub(crate) fn any(&self) -> bool {
+        self.columns.iter().any(Option::is_some)
+    }
+}
 
 /// The reduction pass a worklist belongs to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
