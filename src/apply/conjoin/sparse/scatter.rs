@@ -1238,7 +1238,8 @@ fn emit_parent(
     // The parent's pairs are appended to the level's arena under one reserve
     // and cut into nodes; the output-pair meter is charged once for the
     // growth, as the dense walk's choke point charges per growth event.
-    let pre_pairs_cap = level.pairs.capacity();
+    // The level is built here, so its arena is stored.
+    let pre_pairs_cap = level.pairs.stored_mut().capacity();
     lim.reserve(&mut level.nodes, products)?;
     let built = if products == candidates.len() {
         candidates.iter().try_for_each(|entry| emit_single_pair(eng, level, candidate_pair(entry)))
@@ -1247,7 +1248,7 @@ fn emit_parent(
     } else {
         push_nodes_sorted(eng, level, pair_counts, single_pairs, candidates, &p2_map[..], first)
     };
-    lim.charge_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
+    lim.charge_output_pairs(level.pairs.stored_mut().capacity().saturating_sub(pre_pairs_cap));
     for e in &pl_output[first..] {
         p2_map[e.g_idx.idx()] = NO_PRODUCT;
     }
@@ -1275,7 +1276,7 @@ fn push_node_from(
     pairs: impl ExactSizeIterator<Item = ChildPair>,
 ) -> Result<(), OperationError> {
     debug_assert!(pairs.len() >= 2, "a one-pair node is pushed inline");
-    let start = level.pairs.len();
+    let start = level.pairs.stored_len();
     reserve_pairs_for_emit(eng, level, pairs.len())?;
     level.pairs.stored_mut().extend(pairs);
     finish_node(eng, level, start)?;
@@ -1301,7 +1302,7 @@ fn push_nodes_sorted(
     // A product with one pair has no range; any cursor is below the total.
     const SINGLE: u32 = u32::MAX;
     let zero = ChildPair::new(EncodedChildRef::from_raw(0), EncodedChildRef::from_raw(0));
-    let base = level.pairs.len();
+    let base = level.pairs.stored_len();
     let total = prefix_offsets(cursors, true)?;
     reserve_pairs_for_emit(eng, level, total as usize)?;
     let arena = level.pairs.stored_mut();
