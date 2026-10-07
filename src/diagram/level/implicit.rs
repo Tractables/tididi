@@ -265,10 +265,16 @@ impl ImplicitLevel {
             });
             return out;
         }
+        // Where the nodes fit the reserved capacity and every range the
+        // plain multi-pair word, which the conjunction's reservation makes the
+        // usual case, they are written in one pass; otherwise one at a time.
+        let k = self.per_node;
+        if level.nodes.capacity() - level.nodes.len() >= self.nodes && self.pairs() < 1 << 31 {
+            level.nodes.extend((0..self.nodes).map(|i| EncodedNode::multi_pair((i * k) as u32, k as u32)));
+            return Ok(());
+        }
         for i in 0..self.nodes {
-            level
-                .try_push_multi_by_range(i * self.per_node, self.per_node)
-                .map_err(|()| OperationError::OverBudget)?;
+            level.try_push_multi_by_range(i * k, k).map_err(|()| OperationError::OverBudget)?;
         }
         Ok(())
     }
