@@ -301,20 +301,33 @@ impl ImplicitLevel {
     pub(crate) fn write_nodes(&self, lim: &Limits, level: &mut TddLevel) -> Result<(), OperationError> {
         debug_assert!(level.nodes.is_empty() && level.pairs.is_empty());
         if self.per_node == 1 {
-            // Each node's pair stepped on from the one before ([`NodeCursor`]):
-            // in one pass where the nodes fit the reserved capacity, one at a
-            // time otherwise.
-            let mut cursor = self.cursor();
-            let mut node = move |i: usize| {
-                let (l, r) = cursor.first_of(i);
-                EncodedNode::inline(pair(l, r))
+            // Each node's one pair: the nodes in runs of the fastest node
+            // digit's places, a run's pairs stepped on by that digit in a
+            // loop of their own and each run's first pair by the others,
+            // once a run. In one pass a run where the nodes fit the reserved
+            // capacity, one node at a time otherwise.
+            debug_assert!(self.counts_nodes());
+            let digits = &self.digits[self.within..];
+            let (fast, slow) = match digits.split_first() {
+                Some((fast, slow)) => (*fast, slow),
+                None => (Digit { radix: 1, left: 0, right: 0, node: 1 }, digits),
             };
-            if level.nodes.capacity() - level.nodes.len() >= self.nodes {
-                level.nodes.extend((0..self.nodes).map(node));
-                return Ok(());
-            }
-            for i in 0..self.nodes {
-                lim.try_push(&mut level.nodes, node(i))?;
+            let fits = level.nodes.capacity() - level.nodes.len() >= self.nodes;
+            let mut runs = Odometer::<NODE_COUNTERS>::new(self.first);
+            for (run, start) in (0..self.nodes).step_by(fast.radix).enumerate() {
+                if run > 0 {
+                    runs.step(slow, run);
+                }
+                let (l, r) = runs.slots();
+                let node = |j: i64| EncodedNode::inline(pair(l + j * fast.left, r + j * fast.right));
+                let places = 0..fast.radix.min(self.nodes - start) as i64;
+                if fits {
+                    level.nodes.extend(places.map(node));
+                } else {
+                    for j in places {
+                        lim.try_push(&mut level.nodes, node(j))?;
+                    }
+                }
             }
             return Ok(());
         }
