@@ -161,53 +161,78 @@ impl TwinEntries for ContextEntries<'_> {
         let mut name = |t: u32| named[(t / 64) as usize] |= 1 << (t % 64);
         let (level, side, view) = (self.parent_level, self.t1_side, self.t1_view);
         for (_, pairs) in level.internal_inputs_iter() {
-            if pairs.len() < 3 {
-                let mut last: Option<u32> = None;
-                for pair in pairs {
-                    let (t, s) = split_pair(&pair, side);
-                    if let Some(t) = resolve_target(view, t) {
-                        if last == Some(s) {
-                            return Ok(false);
-                        }
-                        last = Some(s);
-                        name(t);
-                    }
-                }
-                continue;
-            }
-            let mut cells = (2 * pairs.len()).next_power_of_two().min(TWIN_TABLE_START_CELLS);
-            let mut stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
-            let mut filed = 0;
-            for (read, pair) in pairs.clone().enumerate() {
-                let (t, s) = split_pair(&pair, side);
-                if let Some(t) = resolve_target(view, t) {
-                    if 2 * (filed + 1) > cells {
-                        // Half full: double under a fresh stamp and file the
-                        // siblings read so far again. They are distinct, or
-                        // the test would have stopped.
-                        cells *= 2;
-                        stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
-                        for pair in pairs.clone().take(read) {
-                            let (t, s) = split_pair(&pair, side);
-                            if resolve_target(view, t).is_some() {
-                                file_sibling(&mut twin_local[..cells], stamp, s);
-                            }
-                        }
-                    }
-                    // The node's window of the table: a narrow node after a
-                    // wide one stays in cache. Cells past it keep older
-                    // stamps unread.
-                    if file_sibling(&mut twin_local[..cells], stamp, s) {
-                        return Ok(false);
-                    }
-                    filed += 1;
-                    name(t);
-                }
+            // A stored node's pairs are read as a slice's, in a loop apart
+            // from the generated ones'.
+            let repeats = match pairs.as_slice() {
+                Some(stored) => repeats_sibling(lim, twin_local, twin_generation, stored.iter().copied(), side, view, &mut name)?,
+                None => repeats_sibling(lim, twin_local, twin_generation, pairs, side, view, &mut name)?,
+            };
+            if repeats {
+                return Ok(false);
             }
         }
         let unnamed = width - named.iter().map(|w| w.count_ones() as usize).sum::<usize>();
         Ok(unnamed <= 1)
     }
+}
+
+/// Whether a parent node whose pairs are `pairs` puts two children beside
+/// one sibling, read until the first pair that does; `name` is called on
+/// each child read before it. The test of
+/// [`no_twin`](TwinEntries::no_twin) on [`ContextEntries`], node by node.
+#[inline(always)]
+fn repeats_sibling<I: ExactSizeIterator<Item = ChildPair> + Clone>(
+    lim: &Limits,
+    twin_local: &mut Vec<u64>,
+    twin_generation: &mut u32,
+    pairs: I,
+    side: ChildSide,
+    view: ChildDecoder,
+    name: &mut impl FnMut(u32),
+) -> Result<bool, OperationError> {
+    if pairs.len() < 3 {
+        let mut last: Option<u32> = None;
+        for pair in pairs {
+            let (t, s) = split_pair(&pair, side);
+            if let Some(t) = resolve_target(view, t) {
+                if last == Some(s) {
+                    return Ok(true);
+                }
+                last = Some(s);
+                name(t);
+            }
+        }
+        return Ok(false);
+    }
+    let mut cells = (2 * pairs.len()).next_power_of_two().min(TWIN_TABLE_START_CELLS);
+    let mut stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
+    let mut filed = 0;
+    for (read, pair) in pairs.clone().enumerate() {
+        let (t, s) = split_pair(&pair, side);
+        if let Some(t) = resolve_target(view, t) {
+            if 2 * (filed + 1) > cells {
+                // Half full: double under a fresh stamp and file the
+                // siblings read so far again. They are distinct, or the
+                // test would have stopped.
+                cells *= 2;
+                stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
+                for pair in pairs.clone().take(read) {
+                    let (t, s) = split_pair(&pair, side);
+                    if resolve_target(view, t).is_some() {
+                        file_sibling(&mut twin_local[..cells], stamp, s);
+                    }
+                }
+            }
+            // The node's window of the table: a narrow node after a wide
+            // one stays in cache. Cells past it keep older stamps unread.
+            if file_sibling(&mut twin_local[..cells], stamp, s) {
+                return Ok(true);
+            }
+            filed += 1;
+            name(t);
+        }
+    }
+    Ok(false)
 }
 
 /// The next stamp of the sibling table, with `twin_local` at least `cells`
