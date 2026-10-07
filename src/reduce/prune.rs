@@ -276,6 +276,9 @@ pub(crate) fn prune_unreachable(
             level.ranges.clear();
             level.dead_pairs = 0;
         }
+        for t in 0..tdd.levels.len() {
+            tdd.levels.mark_changed(VtreeIdx(t as u32));
+        }
         tdd.dirty.set_loose(Some(Vec::new()));
         return Ok(());
     }
