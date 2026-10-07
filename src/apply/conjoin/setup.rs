@@ -38,9 +38,55 @@ impl<'a> VtreeMask<'a> {
     }
 }
 
+/// Where the free levels ([`ApplyRun::free`]) of a conjunction lie, one byte
+/// per vtree node, read where the sweep and its setup ask: which operand is
+/// free at an internal node, and whether a node lies under a free level.
+/// Empty when neither operand has a free level.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Regions<'a>(&'a [u8]);
+
+impl Regions<'_> {
+    /// `f` is free at this internal node.
+    const F_FREE: u8 = 1;
+    /// `g` is free at this internal node.
+    const G_FREE: u8 = 2;
+    /// The parent of this node is free in either operand.
+    const UNDER: u8 = 4;
+
+    #[inline]
+    fn role(self, t: usize) -> u8 {
+        self.0.get(t).copied().unwrap_or(0)
+    }
+
+    /// Whether either operand is free at `t`: the sweep does not build it.
+    #[inline]
+    pub(super) fn free_at(self, t: usize) -> bool {
+        self.role(t) & (Self::F_FREE | Self::G_FREE) != 0
+    }
+
+    /// Whether `f` is free at `t`.
+    #[inline]
+    pub(super) fn free_in_f(self, t: usize) -> bool {
+        self.role(t) & Self::F_FREE != 0
+    }
+
+    /// Whether `g` is free at `t`.
+    #[inline]
+    pub(super) fn free_in_g(self, t: usize) -> bool {
+        self.role(t) & Self::G_FREE != 0
+    }
+
+    /// Whether `t` lies under a free level, inside a region below its top:
+    /// no level reads its products.
+    #[inline]
+    pub(super) fn under_free(self, t: usize) -> bool {
+        self.role(t) & Self::UNDER != 0
+    }
+}
+
 /// Bundled result of `apply_and_setup` — the per-apply working state produced
 /// before the bottom-up level sweep.
-pub(super) struct ApplyRun<'a> {
+pub(super) struct ApplyRun<'a, 'r> {
     pub(super) levels: &'a mut [TddLevel],
     pub(super) f_widths: &'a mut Vec<usize>,
     pub(super) g_widths: &'a mut Vec<usize>,
@@ -75,7 +121,7 @@ pub(super) struct ApplyRun<'a> {
     /// true level, one node true on both sides, they stand for. The sweep
     /// takes the other operand's level at each, and builds one only where
     /// both are free or the other is the constant true level too.
-    pub(super) free: Operands<VtreeMask<'a>>,
+    pub(super) free: Regions<'r>,
 }
 
 /// One internal vtree level's identity: the node, its two children, and both
@@ -114,7 +160,7 @@ pub(super) struct OperandWidths {
     pub(super) right: usize,
 }
 
-impl ApplyRun<'_> {
+impl ApplyRun<'_, '_> {
     /// The shape of the level at `t`, read off the entry width snapshot.
     pub(super) fn shape(&self, t: VtreeIdx, left: VtreeIdx, right: VtreeIdx) -> LevelShape {
         let (t_idx, left_idx, right_idx) = (t.idx(), left.idx(), right.idx());
@@ -218,10 +264,23 @@ impl ApplyRun<'_> {
 
 }
 
+/// What [`snapshot_widths`] reads off the operands besides their widths.
+struct Snapshot {
+    /// The dense-route cell count `preflight_dense_budget` reads.
+    total_cells: u64,
+    /// Whether either operand has a marginal level at entry.
+    any_entry_marginal: bool,
+    /// Whether some internal level's grid is over the sparse gate's
+    /// `min_grid`.
+    might_use_sparse: bool,
+}
+
 /// Snapshot both operands' per-level widths, note whether either carries a
-/// marginal level at entry, and sum the dense-route cell count
-/// `preflight_dense_budget` reads; all three in one pass over the levels. A
-/// free level ([`ApplyRun::free`]) has the width of the level it stands for.
+/// marginal level at entry, sum the dense-route cell count
+/// `preflight_dense_budget` reads, and say whether any internal level's grid
+/// is over `min_grid`; all in one pass over the levels, which also fills
+/// `roles` for [`Regions`] when an operand has free levels. A free level
+/// ([`ApplyRun::free`]) has the width of the level it stands for.
 ///
 /// Must run before the sweep's identity swaps steal levels, which zeroes
 /// `reference_slot_count` and clears `is_marginal`.
@@ -232,17 +291,36 @@ fn snapshot_widths(
     min_grid: usize,
     f_widths: &mut [usize],
     g_widths: &mut [usize],
-) -> (u64, bool) {
+    roles: &mut Vec<u8>,
+) -> Snapshot {
     let vtree = &f.vtree;
-    let width = |d: &Tdd, free: VtreeMask<'_>, t: VtreeIdx| match free.contains(t.idx()) && !vtree.node(t).is_leaf() {
-        true => 1,
-        false => d.reference_slot_count(t),
-    };
+    let num_nodes = vtree.num_nodes();
+    // Nodes are stored leaves first.
+    let leaves = vtree.num_leaves() as usize;
+    roles.clear();
+    let with_regions = !(free.f.is_empty() && free.g.is_empty());
+    if with_regions {
+        roles.resize(num_nodes, 0);
+    }
     let mut any_entry_marginal = false;
+    let mut might_use_sparse = false;
     let mut total_cells: u64 = 0;
-    for i in 0..vtree.num_nodes() {
-        let w1 = width(f, free.f, VtreeIdx(i as u32));
-        let w2 = width(g, free.g, VtreeIdx(i as u32));
+    for i in 0..num_nodes {
+        let (w1, w2) = if i < leaves {
+            (LEAF_WIDTH, LEAF_WIDTH)
+        } else {
+            let (free_f, free_g) = (free.f.contains(i), free.g.contains(i));
+            if with_regions && (free_f || free_g) {
+                roles[i] |= (u8::from(free_f) * Regions::F_FREE) | (u8::from(free_g) * Regions::G_FREE);
+                let (left, right) = vtree.children(VtreeIdx(i as u32));
+                roles[left.idx()] |= Regions::UNDER;
+                roles[right.idx()] |= Regions::UNDER;
+            }
+            let w1 = if free_f { 1 } else { f.levels[i].slot_count() };
+            let w2 = if free_g { 1 } else { g.levels[i].slot_count() };
+            might_use_sparse |= w1.saturating_mul(w2) > min_grid;
+            (w1, w2)
+        };
         f_widths[i] = w1;
         g_widths[i] = w2;
         any_entry_marginal |= f.levels[i].is_marginal() | g.levels[i].is_marginal();
@@ -251,7 +329,7 @@ fn snapshot_widths(
             total_cells = total_cells.saturating_add(cells);
         }
     }
-    (total_cells, any_entry_marginal)
+    Snapshot { total_cells, any_entry_marginal, might_use_sparse }
 }
 
 /// Conservative per-cell byte factor for the apply's product grid:
@@ -286,22 +364,24 @@ fn preflight_dense_budget(lim: &crate::limits::Limits, total_cells: u64) -> Resu
 
 /// Build the [`ApplyRun`] for one conjunction: snapshot the operands, refuse
 /// if the dense cells alone exceed the budget, and take every pooled buffer
-/// the sweep needs.
+/// the sweep needs. The [`Regions`] of the operands' free levels in `free`
+/// are written to `roles`.
 ///
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] from the dense preflight or a buffer reservation.
 #[expect(clippy::too_many_arguments)]
-pub(super) fn apply_and_setup<'a>(
+pub(super) fn apply_and_setup<'a, 'r>(
     eng: &Engine,
     f: &Tdd,
     g: &Tdd,
     targets: VtreeMask<'_>,
-    free: Operands<VtreeMask<'a>>,
+    free: Operands<VtreeMask<'_>>,
     weighted: bool,
     levels: &'a mut [TddLevel],
     scratch: &'a mut ApplyWorkspace,
-) -> Result<ApplyRun<'a>, OperationError> {
+    roles: &'r mut Vec<u8>,
+) -> Result<ApplyRun<'a, 'r>, OperationError> {
     let vtree = &f.vtree;
     let num_nodes = vtree.num_nodes();
     let lim = eng.limits();
@@ -312,27 +392,23 @@ pub(super) fn apply_and_setup<'a>(
         f_pairs_scratch, g_pairs_scratch, products, stream_cache, prefilter_masks } = scratch;
     if f_widths.len() < num_nodes { f_widths.resize(num_nodes, 0); }
     if g_widths.len() < num_nodes { g_widths.resize(num_nodes, 0); }
-    let (total_cells, any_entry_marginal) = snapshot_widths(
-        f, g, free, min_grid, f_widths, g_widths,
+    let Snapshot { total_cells, any_entry_marginal, might_use_sparse } = snapshot_widths(
+        f, g, free, min_grid, f_widths, g_widths, roles,
     );
+    let free = Regions(roles);
 
     let entry_marginality = EntryMarginality::snapshot(f, g, num_nodes, any_entry_marginal);
 
     preflight_dense_budget(lim, total_cells)?;
 
-    // With no level over the threshold, all the sparse infrastructure — product
-    // lists, live counts, bump allocator — is skipped outright.
-    let might_use_sparse = vtree.internal_bottomup().any(|(t, _, _)| {
-        f_widths[t.idx()].saturating_mul(g_widths[t.idx()]) > min_grid
-    });
-
     // Streaming-marginal scratch: lazily computed child columns for
     // streaming-target levels whose children are still explicit.
     stream_cache.reset(num_nodes, (!targets.is_empty()).then_some(weighted));
-    // A level under a free level is taken whole with its region, and no
-    // level reads its products.
-    let unread = |i: usize| super::drive::under_free(vtree, free, VtreeIdx(i as u32));
-    products.reset(eng, might_use_sparse, num_nodes, f_widths, g_widths, &unread)?;
+    // With no level over the threshold, all the sparse infrastructure — product
+    // lists, live counts, bump allocator — is skipped outright. A level under
+    // a free level is taken whole with its region, and no level reads its
+    // products.
+    products.reset(eng, might_use_sparse, num_nodes, f_widths, g_widths, free)?;
 
     Ok(ApplyRun {
         levels, f_widths, g_widths,

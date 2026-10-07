@@ -40,7 +40,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 ///
 /// A leaf level is never compacted, and the root has no parent level, so
 /// neither is listed.
-pub(super) fn loose_levels(vtree: &Vtree, run: &ApplyRun<'_>, carrier: &[u8], operands: Operands<&[u32]>) -> Vec<u32> {
+pub(super) fn loose_levels(vtree: &Vtree, run: &ApplyRun<'_, '_>, carrier: &[u8], operands: Operands<&[u32]>) -> Vec<u32> {
     // Which operand has each level loose: 1 for `f`, 2 for `g`, as `carrier`.
     let mut loose_in = vec![0u8; vtree.num_nodes()];
     for &t in operands.f {

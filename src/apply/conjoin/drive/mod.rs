@@ -33,7 +33,6 @@ mod compose;
 mod level;
 mod loose;
 mod region;
-pub(super) use region::under_free;
 use level::{
     build_level_dense, count_sparse_root, count_streamed_root, counts_root, holds_back, pick_streamed,
     run_sparse_level, sum_sparse_root, sums_root, LevelBuild,
@@ -119,7 +118,7 @@ fn sweep_levels(
         lim.level_done(output_nodes)?;
         // A free level was taken with its region before the sweep; its
         // boundary is checked and its nodes counted as if it were built here.
-        if region::free_at(free, t.idx()) {
+        if free.free_at(t.idx()) {
             output_nodes += run.levels[t.idx()].slot_count() as u64;
             continue;
         }
@@ -186,7 +185,7 @@ fn build_level(
     // A filtered child product cannot be bypassed by an identity copy.
     let taken = sweep.filter.is_none() && take_level_fast_path(eng, run, f, g, shape)?;
     debug_assert!(
-        taken || !(run.free.f.contains(t.idx()) || run.free.g.contains(t.idx())),
+        taken || !run.free.free_at(t.idx()),
         "a free level at {} takes the other operand's level",
         t.idx(),
     );
@@ -336,9 +335,9 @@ pub(crate) fn apply_and_core(
         "an operand has weight-marginal levels but neither carries a weight store"
     );
     // Nothing but pairs changes hands: no weights, no summed-out level, no
-    // level quantified or filtered.
-    let plain = ws.is_none() && targets.is_empty() && quantified.is_empty() && filter.is_none()
-        && !f.has_marginal_level() && !g.has_marginal_level();
+    // level quantified or filtered, and, as the setup finds, no marginal
+    // level.
+    let unmarked = ws.is_none() && targets.is_empty() && quantified.is_empty() && filter.is_none();
 
     // Early return for zero inputs: `x ∧ 0 = 0`.
     // Avoids allocating the output's levels and arenas for unsatisfiable operands.
@@ -357,12 +356,15 @@ pub(crate) fn apply_and_core(
     );
     let mut scratch = eng.scratch.apply.workspace.checkout(eng);
     let (levels, ws) = assembly.parts_mut();
+    let mut roles = Vec::new();
+    let mut run = apply_and_setup(eng, f, g, targets, free, ws.is_some(), levels, &mut scratch, &mut roles)?;
+    run.restoring = keep;
+    let plain = unmarked && !run.entry_marginality.any();
     debug_assert!(
         free.f.is_empty() && free.g.is_empty() || plain,
         "only a plain conjunction reads free levels",
     );
-    let mut run = apply_and_setup(eng, f, g, targets, free, ws.is_some(), levels, &mut scratch)?;
-    run.restoring = keep;
+    let free = run.free;
 
     // `g_identity[t]` is true when `g` computes constant-true over subtree
     // `t`, so `f`'s nodes pass through unchanged (`x ∧ 1 = x`) and the
@@ -375,7 +377,7 @@ pub(crate) fn apply_and_core(
     // path.
     //
     // The leaves under a free level are read by no level the sweep builds.
-    let in_region = |t: VtreeIdx| region::free_at(free, t.idx());
+    let in_region = |t: VtreeIdx| free.free_at(t.idx());
     init_leaf_identity_outside(eng, run.g_identity, g, in_region)?;
     init_leaf_identity_outside(eng, run.f_identity, f, in_region)?;
 

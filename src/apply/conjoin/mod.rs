@@ -127,24 +127,37 @@ fn same_levels(f: &Tdd, g: &Tdd, free: Operands<VtreeMask<'_>>) -> bool {
     if f.levels.iter().any(|l| l.is_marginal()) || g.levels.iter().any(|l| l.is_marginal()) {
         return false;
     }
+    same_structure(f, g, free)
+}
+
+/// [`same_levels`] for operands known to have no marginal level.
+///
+/// The levels are compared from the last index down, the internal levels
+/// before the leaves, where operands that differ usually differ first.
+fn same_structure(f: &Tdd, g: &Tdd, free: Operands<VtreeMask<'_>>) -> bool {
     // `ranges` too: equal nodes+pairs with a differently-arranged `ranges` table
     // is a different function.
     let same = |l1: &TddLevel, l2: &TddLevel| l1.nodes == l2.nodes && l1.pairs == l2.pairs && l1.ranges == l2.ranges;
     let vtree = &f.vtree;
-    f.output == g.output
-        && f.levels.iter().zip(g.levels.iter()).enumerate().all(|(t, (l1, l2))| {
-            let at = VtreeIdx(t as u32);
-            let internal = !vtree.node(at).is_leaf();
-            match (internal && free.f.contains(t), internal && free.g.contains(t)) {
-                (false, false) => same(l1, l2),
-                (true, true) => true,
-                (free_f, _) => {
+    let same_at = |t: usize| {
+        let (l1, l2) = (&f.levels[t], &g.levels[t]);
+        let at = VtreeIdx(t as u32);
+        let internal = !vtree.node(at).is_leaf();
+        match (internal && free.f.contains(t), internal && free.g.contains(t)) {
+            (false, false) => same(l1, l2),
+            (true, true) => true,
+            (free_f, _) => {
+                // The level a free one stands for has one node.
+                let built = if free_f { l2 } else { l1 };
+                built.nodes.len() == 1 && {
                     let mut standing = TddLevel::new();
                     push_free_level(&mut standing, vtree, at);
-                    same(&standing, if free_f { l2 } else { l1 })
+                    same(&standing, built)
                 }
             }
-        })
+        }
+    };
+    f.output == g.output && (0..f.levels.len().min(g.levels.len())).rev().all(same_at)
 }
 
 /// Build the free levels ([`ApplyRun::free`]) of `tdd` that are still empty,
@@ -169,12 +182,14 @@ fn fill_free(tdd: &mut Tdd, free: VtreeMask<'_>) {
 /// on the right takes it at more levels, and grid rows (width `right_width`)
 /// get shorter. Only the owned entries swap; `apply_and_fallible`'s callers
 /// track operands by side.
-fn narrower_right(f: &mut Tdd, g: &mut Tdd, free: &mut Operands<VtreeMask<'_>>) -> bool {
-    let width = |d: &Tdd, free: VtreeMask<'_>| match d.max_width() {
+///
+/// `widths` holds each operand's [`Tdd::max_width`].
+fn narrower_right(f: &mut Tdd, g: &mut Tdd, free: &mut Operands<VtreeMask<'_>>, widths: Operands<usize>) -> bool {
+    let width = |d: &Tdd, free: VtreeMask<'_>, built: usize| match built {
         0 => usize::from(!free.is_empty() && d.vtree.internal_bottomup().any(|(t, _, _)| free.contains(t.idx()))),
         built => built,
     };
-    let swap = width(g, free.g) > width(f, free.f);
+    let swap = width(g, free.g, widths.g) > width(f, free.f, widths.f);
     if swap {
         std::mem::swap(f, g);
         std::mem::swap(&mut free.f, &mut free.g);
@@ -207,7 +222,8 @@ fn conjoin_checked_as(
     quantified: VtreeMask<'_>,
     mode: ConjoinMode,
 ) -> Result<(Conjoined, bool), OperationError> {
-    narrower_right(&mut f, &mut g, &mut Operands::default());
+    let widths = Operands { f: f.max_width(), g: g.max_width() };
+    narrower_right(&mut f, &mut g, &mut Operands::default(), widths);
     // Self-conjunction: f ∧ f = f. The test is structural equality of every
     // explicit level, not pointer identity, and it declines on any marginal
     // level — see `is_self_conjunction`, where the soundness of both choices
@@ -331,14 +347,18 @@ pub struct AndOntoRefused {
 /// built.
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
 fn conjoin_kept(eng: &Engine, mut f: Tdd, mut g: Tdd, mut free: Operands<VtreeMask<'_>>) -> Result<Tdd, AndRefused> {
-    let plain = |t: &Tdd| t.weights.is_none() && !t.levels.iter().any(TddLevel::is_marginal);
-    if !plain(&f) || !plain(&g) {
+    // Whether a level is marginal, and the widest level, in one pass.
+    let scan = |t: &Tdd| t.levels.iter().fold((false, 0), |(marginal, width), l| {
+        (marginal | l.is_marginal(), width.max(l.slot_count()))
+    });
+    let ((f_marginal, f_width), (g_marginal, g_width)) = (scan(&f), scan(&g));
+    if f.weights.is_some() || f_marginal || g.weights.is_some() || g_marginal {
         fill_free(&mut f, free.f);
         fill_free(&mut g, free.g);
         return eng.and(f.clone(), g.clone()).map_err(|error| AndRefused { error, f, g });
     }
-    let swapped = narrower_right(&mut f, &mut g, &mut free);
-    if same_levels(&f, &g, free) {
+    let swapped = narrower_right(&mut f, &mut g, &mut free, Operands { f: f_width, g: g_width });
+    if same_structure(&f, &g, free) {
         fill_free(&mut f, free.f);
         diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
         return Ok(f);

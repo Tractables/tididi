@@ -23,7 +23,7 @@ pub(super) fn apply_leaf_levels(
     let ApplyRun { f_widths, g_widths, products, free, .. } = run;
     for (t, _leaf_var) in vtree.leaf_bottomup() {
         // No level reads the products of a leaf inside a free region.
-        if super::drive::under_free(vtree, *free, t) {
+        if free.under_free(t.idx()) {
             continue;
         }
         let t_idx = t.idx();

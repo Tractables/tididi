@@ -68,6 +68,11 @@ impl EntryMarginality {
         }))
     }
 
+    /// Whether either operand had a marginal level at entry.
+    pub(super) fn any(&self) -> bool {
+        self.0.is_some()
+    }
+
     /// Whether either operand's level `idx` was marginal at entry.
     pub(super) fn either(&self, idx: usize) -> bool {
         self.0.as_ref().is_some_and(|operands| operands.f[idx] || operands.g[idx])

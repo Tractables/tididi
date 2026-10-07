@@ -47,18 +47,19 @@ pub(crate) fn init_leaf_identity_outside(
     let vtree = tdd.vtree();
     let num_nodes = vtree.num_nodes();
     lim.try_resize(buf, num_nodes, false)?;
-    for (t, _) in vtree.leaf_bottomup() {
-        buf[t.idx()] = true;  // assume identity until proven otherwise
-    }
-    // Internal levels: computed from children, not preset.
-    buf[vtree.num_leaves() as usize..num_nodes].fill(false);
+    // Nodes are stored leaves first. Every leaf is assumed identity until
+    // proven otherwise; internal levels are computed from children, not
+    // preset.
+    let leaves = vtree.num_leaves() as usize;
+    buf[..leaves].fill(true);
+    buf[leaves..num_nodes].fill(false);
     // Scan parent pairs: any reference to Pos (0) or Neg (1) means not identity.
     let mut has_any_marginal = false;
     for (t, left, right) in vtree.internal_bottomup() {
         if skip(t) { continue; }
         if tdd.levels[t.idx()].is_marginal() { has_any_marginal = true; }
-        let left_leaf = vtree.node(left).is_leaf();
-        let right_leaf = vtree.node(right).is_leaf();
+        let left_leaf = left.idx() < leaves;
+        let right_leaf = right.idx() < leaves;
         // The only writes this level can make are `buf[left] = false` and
         // `buf[right] = false` — monotone true→false. So once neither flag is
         // still true there is nothing left to prove: skip the level at entry,
@@ -368,7 +369,7 @@ pub(super) fn take_level_fast_path(
     {
         // FP1: f is the carrier, g is the identity operand. A free level
         // carried is built first: the level it stands for.
-        if free.f.contains(t_idx) {
+        if free.free_in_f(t_idx) {
             crate::restructure::placement::push_free_level(&mut f.levels[t_idx], &f.vtree, shape.t);
         }
         apply_identity_fast_path::<true>(eng, shape, &mut f.levels, run)?;
@@ -385,7 +386,7 @@ pub(super) fn take_level_fast_path(
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
     {
         // FP2: g is the carrier, f is the identity operand.
-        if free.g.contains(t_idx) {
+        if free.free_in_g(t_idx) {
             crate::restructure::placement::push_free_level(&mut g.levels[t_idx], &g.vtree, shape.t);
         }
         apply_identity_fast_path::<false>(eng, shape, &mut g.levels, run)?;

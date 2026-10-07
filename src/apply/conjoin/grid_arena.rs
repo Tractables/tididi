@@ -74,7 +74,7 @@ impl GridArena {
 
     pub(super) fn reset(
         &mut self, eng: &Engine, sparse: bool, n: usize, f_widths: &[usize], g_widths: &[usize],
-        unread: &dyn Fn(usize) -> bool,
+        regions: super::setup::Regions<'_>,
     ) -> Result<(), OperationError> {
         self.grids.clear();
         self.grids.resize(n, None);
@@ -87,7 +87,7 @@ impl GridArena {
             // A level no other level reads gets no grid.
             let mut cursor = 0;
             for i in 0..n {
-                if unread(i) { continue; }
+                if regions.under_free(i) { continue; }
                 self.grids[i] = Some(GridBase(cursor));
                 cursor += f_widths[i] * g_widths[i];
             }
