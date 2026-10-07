@@ -12,6 +12,7 @@ impl Tdd {
         &mut self, v: VtreeIdx, rewrite: impl FnOnce(&mut TddLevel) -> R,
     ) -> R {
         let result = rewrite(&mut self.levels[v.idx()]);
+        self.levels.mark_changed(v);
         self.invalidate(v);
         result
     }
@@ -65,6 +66,8 @@ impl Tdd {
         self.invalidate(outer.0);
         let old_inner = std::mem::replace(&mut self.levels[inner.0.idx()], inner.1);
         let old_outer = std::mem::replace(&mut self.levels[outer.0.idx()], outer.1);
+        self.levels.mark_changed(inner.0);
+        self.levels.mark_changed(outer.0);
         (old_outer, old_inner)
     }
 }

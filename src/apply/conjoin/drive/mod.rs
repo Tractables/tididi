@@ -440,8 +440,12 @@ pub(crate) fn apply_and_core(
     };
     // Apply emits self-describing marginal refs — bit-30 set is an inline count,
     // bit-30 clear a bare slot; see `INLINE_VALUE_BIT` for why that polarity —
-    // so a bit-30-clear ref here is never an already-inline count.
-    crate::diagram::inline_small_marginal_refs(&mut out, None);
+    // so a bit-30-clear ref here is never an already-inline count. A plain
+    // conjunction has no marginal level, and so no ref to inline; leaving its
+    // levels alone keeps them known closed.
+    if !plain {
+        crate::diagram::inline_small_marginal_refs(&mut out, None);
+    }
     match summed {
         // The marks the marginalization pass leaves, which installs each
         // level on the finished diagram and marks its parent then.

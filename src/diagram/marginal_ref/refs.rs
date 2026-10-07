@@ -145,6 +145,7 @@ pub(crate) fn remap_refs_into(tdd: &mut Tdd, child_v: VtreeIdx, remap: &[u32]) -
         let side = ChildSide::of(&tdd.vtree, parent, child_v);
         let view = tdd.levels[child_v.idx()].child_decoder();
         remap_side_refs(&mut tdd.levels[parent.idx()], side, view, remap);
+        tdd.levels.mark_changed(parent);
     }
     true
 }

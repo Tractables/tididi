@@ -661,6 +661,9 @@ fn compact_one_level(
     let width = tdd.levels[t_idx].slot_count();
     let own = &own[..words(width)];
     let lost = !all_marked(own, width);
+    if lost || left.dirty || right.dirty {
+        tdd.levels.mark_changed(t);
+    }
 
     let redescribed = if left.dirty || right.dirty {
         let (left_new, right_new) = remap.split_at_mut(if left.dirty { left.span } else { 0 });

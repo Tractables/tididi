@@ -257,6 +257,7 @@ fn shared_vtree(members: &[&mut Tdd]) -> Result<Arc<Vtree>, OperationError> {
 struct Saved<'a> {
     output: TddNodeId,
     canonical: bool,
+    closed: bool,
     dirty: Dirty,
     /// The levels the rebuild replaced, outer then inner.
     levels: Option<(Transient<'a, TddLevel>, Transient<'a, TddLevel>)>,
@@ -296,6 +297,7 @@ fn rotate_pool_on(
         saved.push(Saved {
             output: m.output,
             canonical: m.levels.is_canonical(m.output),
+            closed: m.levels.is_closed(),
             dirty: std::mem::take(&mut m.dirty),
             levels: None,
         });
@@ -358,6 +360,9 @@ fn rotate_pool_on(
             m.levels.certify(s.output);
         }
         m.vtree = Arc::clone(&shared);
+        if s.closed {
+            m.reinstate_closed_levels();
+        }
     }
     outcome.map(|_| false)
 }

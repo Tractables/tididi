@@ -59,6 +59,7 @@ pub(super) fn rebuild_parent_level_with<V>(
     plans: &[PlanEntry<V>],
     bitmap_min_plans: usize,
 ) -> Result<(), OperationError> {
+    tdd.levels.mark_changed(parent);
     let level = &mut tdd.levels[parent.idx()];
     // The fusion changes node lengths in place: an implicit level, one whose
     // child became marginal, is built stored where its pairs lie first.

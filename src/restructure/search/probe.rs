@@ -316,6 +316,8 @@ struct RotationTrial<'a> {
     preimages: SmallVec<[Transient<'a, TddLevel>; 2]>,
     old_output: TddNodeId,
     old_canonical: bool,
+    /// Whether every level was closed, which a rollback reinstates.
+    old_closed: bool,
     old_dirty: Option<Dirty>,
     /// Set by [`commit`](RotationTrial::commit), so the rollback in `Drop` knows
     /// there is nothing left to roll back.
@@ -327,6 +329,7 @@ impl<'a> RotationTrial<'a> {
     fn new(tdd: &'a mut Tdd, lim: &'a Limits) -> Self {
         let old_output = tdd.output;
         let old_canonical = tdd.levels.is_canonical(old_output);
+        let old_closed = tdd.levels.is_closed();
         let old_dirty = Some(std::mem::take(&mut tdd.dirty));
         RotationTrial {
             tdd,
@@ -336,6 +339,7 @@ impl<'a> RotationTrial<'a> {
             preimages: SmallVec::new(),
             old_output,
             old_canonical,
+            old_closed,
             old_dirty,
             committed: false,
         }
@@ -412,5 +416,6 @@ impl Drop for RotationTrial<'_> {
             self.tdd.dirty = dirty;
         }
         if self.old_canonical { self.tdd.levels.certify(self.old_output); }
+        if self.old_closed { self.tdd.reinstate_closed_levels(); }
     }
 }

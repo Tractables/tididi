@@ -1333,6 +1333,26 @@ impl crate::diagram::Tdd {
         self.debug_check_implicit_levels();
     }
 
+    /// [`close_levels`](Self::close_levels) after edits that mark the levels
+    /// they change, as a reduction's passes do: those levels when every
+    /// level was closed before the edits (`closed_before`), every level
+    /// otherwise.
+    pub(crate) fn close_marked_levels(&mut self, closed_before: bool) {
+        if closed_before {
+            self.levels.close_marked();
+        } else {
+            self.levels.close();
+        }
+        self.debug_check_implicit_levels();
+    }
+
+    /// Record that every level is closed again, for levels put back as they
+    /// were when every level was closed. A debug build checks it.
+    pub(crate) fn reinstate_closed_levels(&mut self) {
+        self.levels.reinstate_closed();
+        self.debug_check_implicit_levels();
+    }
+
     /// In a debug build, panic unless every level is in the canonical form of
     /// implicit levels; nothing in a release build.
     #[inline]

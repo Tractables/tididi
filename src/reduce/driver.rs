@@ -27,16 +27,19 @@ impl<'a> Reduction<'a> {
     pub(super) fn run(&mut self, plan: ReductionPlan<'_>, scope: PruneScope) -> Result<(), OperationError> {
         let _op = self.eng.limits().enter()?;
         let whole = matches!(scope, PruneScope::Whole);
+        // The passes mark the levels they change; on levels closed before
+        // they ran, those are all the end has to close.
+        let closed = self.tdd.levels.is_closed();
         let policy = match plan {
             ReductionPlan::Contract => {
                 contract_all_twins(self.eng, self.tdd)?;
-                self.tdd.close_levels();
+                self.tdd.close_marked_levels(closed);
                 return Ok(());
             }
             ReductionPlan::Prune => {
                 prune_unreachable(self.eng, self.tdd, scope)?;
                 prune_value_slots(self.eng, self.tdd);
-                self.tdd.close_levels();
+                self.tdd.close_marked_levels(closed);
                 return Ok(());
             }
             ReductionPlan::Full(policy) => {
@@ -72,7 +75,7 @@ impl<'a> Reduction<'a> {
             structural &= !level.is_marginal();
             level.shrink_arrays();
         }
-        self.tdd.close_levels();
+        self.tdd.close_marked_levels(closed);
         if structural {
             // The prune left every node reachable, and a contraction only
             // merges twins, whose children are the same.
@@ -150,6 +153,7 @@ impl<'a> Reduction<'a> {
     /// Marginalization creates pair-fusion work at the affected parents and
     /// orphans slots. Log arithmetic skips fusion because it cannot sum exactly.
     fn after_marginalize(&mut self, levels: &[VtreeIdx], vtree: &Vtree) -> Result<(), OperationError> {
+        let closed = self.tdd.levels.is_closed();
         if !self.tdd.weights().is_some_and(WeightStore::is_log) {
             let mut parents: Vec<_> = levels.iter().filter_map(|&level| vtree.node(level).parent()).collect();
             parents.sort_unstable();
@@ -159,7 +163,7 @@ impl<'a> Reduction<'a> {
             crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(self.tdd, Some(&parents), "marginalize_levels");
         }
         prune_value_slots(self.eng, self.tdd);
-        self.tdd.close_levels();
+        self.tdd.close_marked_levels(closed);
         Ok(())
     }
 

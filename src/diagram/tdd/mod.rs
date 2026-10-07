@@ -197,6 +197,7 @@ impl Tdd {
         }
         let mut levels = state::LevelStorage::from(levels);
         if self.levels.is_canonical(self.output) { levels.certify(self.output); }
+        levels.copy_closed_from(&self.levels);
         Ok(Tdd {
             vtree: Arc::clone(&self.vtree),
             levels,

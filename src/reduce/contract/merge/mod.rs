@@ -99,6 +99,7 @@ pub(super) fn contract_twins(
     // pairs lie first.
     if !bufs.group_plans.is_empty() {
         tdd.levels[t1.idx()].store_if_implicit();
+        tdd.levels.mark_changed(t1);
     }
     reserve_transactional(eng, tdd, t1, bufs)?;
     let merged_members = commit_group_actions(tdd, t1, &policy, remap, bufs);
@@ -111,6 +112,7 @@ pub(super) fn contract_twins(
     // were merged, so its pair lists and the identity of its nodes changed.
     tdd.invalidate(parent);
     tdd.invalidate_with_parent(t1);
+    tdd.levels.mark_changed(parent);
 
     build_final_remap(remap, width);
     rewrite_parent(tdd, parent, t1_side, remap);

@@ -19,10 +19,18 @@ use super::{TddLevel, TddNodeId};
 
 /// Any mutable access forgets the guarantee, including raw level indexing.
 /// The output is recorded separately because changing it need not touch levels.
+///
+/// The same holds for the closed form of the levels: `closed` says every
+/// level is closed ([`TddLevel::close`]), as the end of an operation leaves
+/// them, and any mutable access clears it. `changed` lists the levels the
+/// edits since then say they changed ([`mark_changed`](Self::mark_changed)),
+/// so that a reduction that began on closed levels closes only those.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct LevelStorage {
     levels: Vec<TddLevel>,
     canonical_output: Option<TddNodeId>,
+    closed: bool,
+    changed: Vec<VtreeIdx>,
 }
 
 impl LevelStorage {
@@ -36,6 +44,34 @@ impl LevelStorage {
 
     pub(crate) fn forget(&mut self) { self.canonical_output = None; }
 
+    /// A mutable access: neither the certification nor the closed form is
+    /// known to hold any more.
+    fn touch(&mut self) {
+        self.forget();
+        self.closed = false;
+    }
+
+    /// Whether every level is closed, and nothing has had mutable access to
+    /// the levels since.
+    pub(crate) fn is_closed(&self) -> bool { self.closed }
+
+    /// Record that an edit changed level `t`'s nodes or pairs.
+    pub(crate) fn mark_changed(&mut self, t: VtreeIdx) { self.changed.push(t); }
+
+    /// Record that every level is closed again: the levels are back as they
+    /// were when [`is_closed`](Self::is_closed) last held, as a rollback puts
+    /// them back or a renumbering moves them.
+    pub(crate) fn reinstate_closed(&mut self) {
+        self.closed = true;
+        self.changed.clear();
+    }
+
+    /// Take what `from` knows of its levels' closed form, for a copy of them.
+    pub(crate) fn copy_closed_from(&mut self, from: &LevelStorage) {
+        self.closed = from.closed;
+        self.changed.clone_from(&from.changed);
+    }
+
     /// Close every level ([`TddLevel::close`]). A close changes how a level
     /// holds its pairs, not the diagram, so a canonical diagram stays
     /// certified.
@@ -43,20 +79,40 @@ impl LevelStorage {
         for level in &mut self.levels {
             level.close();
         }
+        self.closed = true;
+        self.changed.clear();
     }
 
-    /// [`close`](Self::close) the levels in `changed` only.
+    /// [`close`](Self::close) the levels in `changed` only, every other level
+    /// being closed already.
     pub(crate) fn close_changed(&mut self, changed: &[VtreeIdx]) {
         for &t in changed {
             self.levels[t.idx()].close();
         }
+        self.closed = true;
+        self.changed.clear();
+    }
+
+    /// [`close_changed`](Self::close_changed) the levels the edits marked
+    /// changed, every other level being closed already; every level when
+    /// the edits marked as many as there are levels.
+    pub(crate) fn close_marked(&mut self) {
+        if self.changed.len() >= self.levels.len() {
+            return self.close();
+        }
+        let Self { levels, changed, .. } = self;
+        for &t in changed.iter() {
+            levels[t.idx()].close();
+        }
+        self.closed = true;
+        self.changed.clear();
     }
 
     pub(crate) fn into_vec(self) -> Vec<TddLevel> { self.levels }
 }
 
 impl From<Vec<TddLevel>> for LevelStorage {
-    fn from(levels: Vec<TddLevel>) -> Self { Self { levels, canonical_output: None } }
+    fn from(levels: Vec<TddLevel>) -> Self { Self { levels, ..Self::default() } }
 }
 
 impl Deref for LevelStorage {
@@ -66,7 +122,7 @@ impl Deref for LevelStorage {
 
 impl DerefMut for LevelStorage {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.forget();
+        self.touch();
         &mut self.levels
     }
 }
@@ -81,7 +137,7 @@ impl<'a> IntoIterator for &'a mut LevelStorage {
     type Item = &'a mut TddLevel;
     type IntoIter = std::slice::IterMut<'a, TddLevel>;
     fn into_iter(self) -> Self::IntoIter {
-        self.forget();
+        self.touch();
         self.levels.iter_mut()
     }
 }
