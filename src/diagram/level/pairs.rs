@@ -215,7 +215,9 @@ impl TddLevel {
     /// Node `idx`'s pairs decoded to the bare coordinates structural use
     /// wants ([`ChildDecoder::coord`]): a stored level's own slice when
     /// neither child is marginal, else the pairs decoded or generated into
-    /// `scratch`.
+    /// `scratch`. The stored read inlines where it is called; the decode is
+    /// out of line.
+    #[inline]
     pub(crate) fn pairs_view_decoded<'a>(
         &'a self,
         idx: usize,
@@ -226,6 +228,19 @@ impl TddLevel {
         if !left.is_marginal() && !right.is_marginal() {
             return self.pairs_read(idx, scratch);
         }
+        self.pairs_decoded(idx, scratch, left, right)
+    }
+
+    /// [`pairs_view_decoded`](Self::pairs_view_decoded) with a marginal
+    /// child: the pairs decoded into `scratch`.
+    #[inline(never)]
+    fn pairs_decoded<'a>(
+        &'a self,
+        idx: usize,
+        scratch: &'a mut Vec<ChildPair>,
+        left: ChildDecoder,
+        right: ChildDecoder,
+    ) -> &'a [ChildPair] {
         scratch.clear();
         self.decode_pairs_into(idx, scratch, left, right);
         scratch.as_slice()
