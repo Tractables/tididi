@@ -580,7 +580,13 @@ where
         Some(cols) => cols.get(j),
         None => right_level.pairs_view_decoded(j, g_pairs_scratch, ctx.sides.left.plan.view, ctx.sides.right.plan.view),
     };
-    if g_pairs.is_empty() { return Ok(()); }
+    // A dead column's cell holds no product. Its row was reset to that
+    // already, except where every live cell is written and no row is reset
+    // ([`run_level_rows`](super::rows::run_level_rows)).
+    if g_pairs.is_empty() {
+        node_idx[row_base + j] = NO_PRODUCT;
+        return Ok(());
+    }
 
     // `row_base` is the row's flat slab offset, already computed by the row loop
     // (`ctx.output_grid_base + grid_row * ctx.right_width`) for its `NO_PRODUCT` reset — reuse it instead of

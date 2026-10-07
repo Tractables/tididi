@@ -150,14 +150,20 @@ where
     // disjoint slabs). Above the size gate the per-row form stays: interleaving
     // the reset with the row's cell work is what keeps the active row L1-resident
     // on a large grid.
-    let slab_fill = A::DENSE_SLAB && left_width.saturating_mul(right_width) <= DEAD_SLAB_FILL_MAX_CELLS;
+    //
+    // Where neither side can kill a candidate, a dense-slab action writes a
+    // node at every cell of a live row and a live column, so only a dead row
+    // is reset, and a dead column's cell is reset by the cell
+    // ([`process_cell`]): no cell is written twice.
+    let every_cell = A::DENSE_SLAB && DENSE && !left.kills() && !right.kills();
+    let slab_fill = A::DENSE_SLAB && !every_cell && left_width.saturating_mul(right_width) <= DEAD_SLAB_FILL_MAX_CELLS;
     if slab_fill {
         node_idx[ctx.output_grid_base..ctx.output_grid_base + left_width * right_width].fill(NO_PRODUCT);
     }
 
     for i in 0..left_width {
         let row_base = ctx.output_grid_base + action.grid_row(i) * right_width;
-        if !slab_fill {
+        if !slab_fill && !every_cell {
             node_idx[row_base..row_base + right_width].fill(NO_PRODUCT);
         }
 
@@ -165,6 +171,9 @@ where
             left_level_t.pairs_view_decoded(i, f_pairs_scratch, ctx.sides.left.plan.view, ctx.sides.right.plan.view);
         // Empty pairs means dead (zero-containing) node — skip this row.
         if f_pairs.is_empty() {
+            if every_cell {
+                node_idx[row_base..row_base + right_width].fill(NO_PRODUCT);
+            }
             continue;
         }
 
