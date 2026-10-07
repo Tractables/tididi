@@ -80,13 +80,16 @@ impl TopoOrder {
 
     /// The order as it stands for a freshly built tree whose node list is
     /// already in bottom-up layout: position is index.
-    pub(super) fn identity(nodes: &[VtreeNode]) -> Self {
-        let all = || (0..nodes.len() as u32).map(VtreeIdx);
+    /// The leaves are the first `num_leaves` nodes, as the reindex lays
+    /// them out, so each list is a range of indices.
+    pub(super) fn identity(nodes: &[VtreeNode], num_leaves: u32) -> Self {
+        let n = nodes.len() as u32;
+        debug_assert!(nodes.iter().enumerate().all(|(i, t)| t.is_leaf() == (i < num_leaves as usize)));
         TopoOrder {
-            order: all().collect(),
-            pos: (0..nodes.len() as u32).collect(),
-            internal: all().filter(|t| !nodes[t.idx()].is_leaf()).collect(),
-            leaves: all().filter(|t| nodes[t.idx()].is_leaf()).collect(),
+            order: (0..n).map(VtreeIdx).collect(),
+            pos: (0..n).collect(),
+            internal: (num_leaves..n).map(VtreeIdx).collect(),
+            leaves: (0..num_leaves).map(VtreeIdx).collect(),
         }
     }
 

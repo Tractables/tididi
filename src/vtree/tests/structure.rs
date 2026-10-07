@@ -633,6 +633,33 @@ fn overlapping_variable_error_formats_the_full_id_range() {
     }
 }
 
+/// The reindex lays the leaves out first and the internal nodes after them,
+/// each group from the deepest level up and left to right within a level,
+/// whatever order the list came in.
+#[test]
+fn from_nodes_numbers_leaves_then_internals_from_the_deepest_level() {
+    let leaf = |v: u32| VtreeNode::Leaf { var: VarId(v), parent: None };
+    let internal = |l: u32, r: u32| VtreeNode::Internal { left: VtreeIdx(l), right: VtreeIdx(r), parent: None };
+    // The root over leaf 1 and (leaves 2 and 3, then leaf 4), listed out of order.
+    let nodes = vec![internal(3, 5), leaf(4), internal(4, 6), leaf(2), leaf(1), leaf(3), internal(0, 1)];
+    let (vtree, old_to_new) = Vtree::from_nodes_with_map(nodes, VtreeIdx(2), 4).unwrap();
+    let at = |p: u32| Some(VtreeIdx(p));
+    let expected = vec![
+        VtreeNode::Leaf { var: VarId(2), parent: at(4) },
+        VtreeNode::Leaf { var: VarId(3), parent: at(4) },
+        VtreeNode::Leaf { var: VarId(4), parent: at(5) },
+        VtreeNode::Leaf { var: VarId(1), parent: at(6) },
+        VtreeNode::Internal { left: VtreeIdx(0), right: VtreeIdx(1), parent: at(5) },
+        VtreeNode::Internal { left: VtreeIdx(4), right: VtreeIdx(2), parent: at(6) },
+        VtreeNode::Internal { left: VtreeIdx(3), right: VtreeIdx(5), parent: None },
+    ];
+    assert_eq!(vtree.nodes, expected);
+    assert_eq!(old_to_new, [4, 2, 6, 0, 3, 1, 5].map(VtreeIdx));
+    assert_eq!((vtree.root(), vtree.num_leaves()), (VtreeIdx(6), 4));
+    assert_eq!(vtree.topo.internal(), [4, 5, 6].map(VtreeIdx));
+    assert_eq!(vtree.topo.leaves(), [0, 1, 2, 3].map(VtreeIdx));
+}
+
 /// Parent links are derived from the child links: a construction may leave
 /// them unset or stale, as a splice that rewires a child pointer does.
 #[test]

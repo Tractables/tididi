@@ -314,14 +314,14 @@ impl Vtree {
     ) -> Result<(Self, Vec<VtreeIdx>), VtreeError> {
         check_node_list(&old_nodes, root, num_vars)?;
         let mut var_to_leaf = vec![VtreeIdx(0); num_vars as usize];
-        let levels = levels_from_root(root, &old_nodes);
+        let (order, starts) = levels_from_root(root, &old_nodes);
         let (new_nodes, old_to_new, actual_leaf_count) =
-            relabel_leaves_then_internals(&levels, &old_nodes, &mut var_to_leaf);
+            relabel_leaves_then_internals((&order, &starts), &old_nodes, &mut var_to_leaf);
 
         let new_root = old_to_new[root.idx()];
         // After the reindex, the node array is laid out so that idx ==
         // bottom-up topological position, so the identity order is correct.
-        let topo = crate::vtree::topo::TopoOrder::identity(&new_nodes);
+        let topo = crate::vtree::topo::TopoOrder::identity(&new_nodes, actual_leaf_count);
         let vtree = Vtree {
             context: std::sync::Arc::new(crate::Context::new()),
             nodes: new_nodes,
@@ -458,75 +458,74 @@ fn check_node_list(nodes: &[VtreeNode], root: VtreeIdx, num_vars: u32) -> Result
     Ok(())
 }
 
-/// The nodes reachable from `root`, grouped by depth, walked breadth-first from the root.
-fn levels_from_root(root: VtreeIdx, old_nodes: &[VtreeNode]) -> Vec<Vec<VtreeIdx>> {
-    use std::collections::VecDeque;
-
-    let mut levels: Vec<Vec<VtreeIdx>> = Vec::new();
-    let mut queue = VecDeque::new();
-    queue.push_back(root);
-    while !queue.is_empty() {
-        let level_size = queue.len();
-        let mut level = Vec::with_capacity(level_size);
-        for _ in 0..level_size {
-            let idx = queue.pop_front().unwrap();
-            level.push(idx);
-            if let VtreeNode::Internal { left, right, .. } = &old_nodes[idx.idx()] {
-                queue.push_back(*left);
-                queue.push_back(*right);
+/// The nodes reachable from `root` in breadth-first order from the root, and
+/// where each depth starts in that order (one entry per depth, then the end).
+/// The order is its own queue: a level is the run of nodes the level before
+/// it appended, so the walk allocates two lists however deep the tree is.
+fn levels_from_root(root: VtreeIdx, old_nodes: &[VtreeNode]) -> (Vec<VtreeIdx>, Vec<usize>) {
+    let mut order = Vec::with_capacity(old_nodes.len());
+    let mut starts = vec![0];
+    order.push(root);
+    let mut at = 0;
+    while at < order.len() {
+        let end = order.len();
+        while at < end {
+            if let VtreeNode::Internal { left, right, .. } = &old_nodes[order[at].idx()] {
+                order.push(*left);
+                order.push(*right);
             }
+            at += 1;
         }
-        levels.push(level);
+        starts.push(end);
     }
-    levels
+    (order, starts)
 }
 
-/// Rebuild the node list in two bottom-up passes: all leaves first, then all
-/// internals. This puts leaves at `0..num_leaves` and internals above them
-/// while preserving `child.idx() < parent.idx()` for every edge. Returns the
-/// new nodes, the `old_to_new` permutation, and the leaf count.
+/// Rebuild the node list with the leaves first, then the internal nodes,
+/// each group in bottom-up level order and left to right within a level.
+/// This puts leaves at `0..num_leaves` and internals above them while
+/// preserving `child.idx() < parent.idx()` for every edge. Returns the new
+/// nodes, the `old_to_new` permutation, and the leaf count.
+///
+/// The tree is binary over every node, so it has one leaf more than it has
+/// internal nodes, and one walk up the levels places both groups: a node's
+/// children sit a level below it and are placed before it.
 fn relabel_leaves_then_internals(
-    levels: &[Vec<VtreeIdx>],
+    (order, starts): (&[VtreeIdx], &[usize]),
     old_nodes: &[VtreeNode],
     var_to_leaf: &mut [VtreeIdx],
 ) -> (Vec<VtreeNode>, Vec<VtreeIdx>, u32) {
     let n = old_nodes.len();
+    let num_leaves = n.div_ceil(2) as u32;
     let mut old_to_new = vec![VtreeIdx(0); n];
-    let mut new_nodes = Vec::with_capacity(n);
-
-    // Pass 1: all leaves, bottom-up
-    for level in levels.iter().rev() {
+    let mut new_nodes = vec![VtreeNode::Leaf { var: VarId(0), parent: None }; n];
+    let (mut next_leaf, mut next_internal) = (0, num_leaves);
+    for level in starts.windows(2).rev().map(|w| &order[w[0]..w[1]]) {
         for &old_idx in level {
-            if let VtreeNode::Leaf { var, .. } = &old_nodes[old_idx.idx()] {
-                let new_idx = VtreeIdx(new_nodes.len() as u32);
-                old_to_new[old_idx.idx()] = new_idx;
-                new_nodes.push(VtreeNode::Leaf {
-                    var: *var,
-                    parent: None,
-                });
-                var_to_leaf[var.idx()] = new_idx;
+            match old_nodes[old_idx.idx()] {
+                VtreeNode::Leaf { var, .. } => {
+                    let new_idx = VtreeIdx(next_leaf);
+                    next_leaf += 1;
+                    old_to_new[old_idx.idx()] = new_idx;
+                    new_nodes[new_idx.idx()] = VtreeNode::Leaf { var, parent: None };
+                    var_to_leaf[var.idx()] = new_idx;
+                }
+                VtreeNode::Internal { left, right, .. } => {
+                    let (new_left, new_right) = (old_to_new[left.idx()], old_to_new[right.idx()]);
+                    let new_idx = VtreeIdx(next_internal);
+                    next_internal += 1;
+                    old_to_new[old_idx.idx()] = new_idx;
+                    new_nodes[new_idx.idx()] = VtreeNode::Internal {
+                        left: new_left,
+                        right: new_right,
+                        parent: None,
+                    };
+                    set_parent(&mut new_nodes, new_left, new_idx);
+                    set_parent(&mut new_nodes, new_right, new_idx);
+                }
             }
         }
     }
-    let actual_leaf_count = new_nodes.len() as u32;
-
-    // Pass 2: all internals, bottom-up (children already have lower indices)
-    for level in levels.iter().rev() {
-        for &old_idx in level {
-            if let VtreeNode::Internal { left, right, .. } = &old_nodes[old_idx.idx()] {
-                let new_left = old_to_new[left.idx()];
-                let new_right = old_to_new[right.idx()];
-                let new_idx = VtreeIdx(new_nodes.len() as u32);
-                old_to_new[old_idx.idx()] = new_idx;
-                new_nodes.push(VtreeNode::Internal {
-                    left: new_left,
-                    right: new_right,
-                    parent: None,
-                });
-                set_parent(&mut new_nodes, new_left, new_idx);
-                set_parent(&mut new_nodes, new_right, new_idx);
-            }
-        }
-    }
-    (new_nodes, old_to_new, actual_leaf_count)
+    debug_assert_eq!((next_leaf, next_internal as usize), (num_leaves, n));
+    (new_nodes, old_to_new, num_leaves)
 }
