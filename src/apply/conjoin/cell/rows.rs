@@ -88,6 +88,10 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
     /// therefore must re-fill that one row between rows.
     const DENSE_SLAB: bool;
 
+    /// Whether the level has one column, which the action was built for: the
+    /// row loop then knows its width without reading it.
+    const ONE_COLUMN: bool = false;
+
     /// Output grid row for f row `i`. Drives both the per-row `NO_PRODUCT` reset and
     /// the kernel's `grid_pos` (through `CellArgs::row_base`), so the two can
     /// never drift.
@@ -135,7 +139,8 @@ where
     // so an expired deadline cuts within a fraction of a level rather than
     // waiting for the next vtree-level boundary (20+ s on the widest levels).
     let mut poll = lim.gate_with(super::super::budget::DENSE_CELL_POLL_STRIDE);
-    let right_width = ctx.right_width;
+    debug_assert!(!A::ONE_COLUMN || ctx.right_width == 1, "a one-column action runs on a level of one column");
+    let right_width = if A::ONE_COLUMN { 1 } else { ctx.right_width };
     // Whether the per-column cull below can fire at all: the reach masks exist
     // only where both levels are multi-pair, a pass-through side has no grid to
     // be dead in, and `DENSE` is the regime where the masks are not folded.
@@ -260,6 +265,41 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for Emit<S> {
             a.ctx,
             a.right_level_t,
             a.g_pairs_scratch,
+            a.node_idx,
+            a.left,
+            a.right,
+            &mut self.sink,
+            a.gate,
+        )
+    }
+}
+
+/// [`Emit`] on a level whose g side is one node of one pair, `g`: every cell
+/// is that column's, and its pairs are known before the row loop, which
+/// then reads no column.
+struct EmitBesideOne<S> {
+    sink: S,
+    g: [ChildPair; 1],
+}
+
+impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for EmitBesideOne<S> {
+    const DENSE_SLAB: bool = true;
+    const ONE_COLUMN: bool = true;
+
+    #[inline(always)]
+    fn grid_row(&self, i: usize) -> usize {
+        i
+    }
+
+    #[inline(always)]
+    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
+        cell_pairs::<_, _, _>(
+            eng,
+            a.j,
+            a.row_base + a.j,
+            a.f_pairs,
+            &self.g,
+            a.ctx,
             a.node_idx,
             a.left,
             a.right,
@@ -451,7 +491,9 @@ pub(crate) enum PlainLookups {
 ///
 /// With both sides complete no candidate dies and no dead-pair mask can cull,
 /// so the loop runs without the per-row mask fold (`DENSE`), with no
-/// `NO_PRODUCT` test, and writes through a [`ReservedEmitSink`]. With one
+/// `NO_PRODUCT` test, and writes through a [`ReservedEmitSink`]; where the g
+/// side is one node of one pair, every cell reads that pair
+/// ([`EmitBesideOne`]) and no column is read. With one
 /// side complete it is [`run_level_rows_plain::<false>`](run_level_rows_plain)
 /// with that side's lookup replaced: the fold and the culls on the grid side
 /// stay; on a level that is not `both_multi_pair` they find nothing, as on
@@ -467,11 +509,18 @@ pub(crate) fn run_level_rows_complete(
     let complete = |p: &ChildPlan<'_>| CompleteLookup { stride: p.stride };
     let grid = |p: &ChildPlan<'_>| DenseLookup { base: p.base, stride: p.stride };
     match lookups {
-        PlainLookups::Complete { charged } => run_level_rows::<true, _, _, _>(
-            eng, rows, scratch,
-            &complete(&sides.left), &complete(&sides.right),
-            &mut Emit { sink: ReservedEmitSink { level, charged } },
-        ),
+        PlainLookups::Complete { charged } => match lone_pair(rows, &mut *scratch.g_pairs) {
+            Some(g) => run_level_rows::<true, _, _, _>(
+                eng, rows, scratch,
+                &complete(&sides.left), &complete(&sides.right),
+                &mut EmitBesideOne { sink: ReservedEmitSink { level, charged }, g: [g] },
+            ),
+            None => run_level_rows::<true, _, _, _>(
+                eng, rows, scratch,
+                &complete(&sides.left), &complete(&sides.right),
+                &mut Emit { sink: ReservedEmitSink { level, charged } },
+            ),
+        },
         PlainLookups::CompleteLeft => run_level_rows::<false, _, _, _>(
             eng, rows, scratch,
             &complete(&sides.left), &grid(&sides.right),
@@ -483,5 +532,20 @@ pub(crate) fn run_level_rows_complete(
             &mut Emit { sink: EmitSink { level } },
         ),
         PlainLookups::Grid => unreachable!("a level with no complete side takes the grid row loop"),
+    }
+}
+
+/// The one pair of a level's g side, where it has one node and that node
+/// one pair: the pair every cell of the level reads as its column's.
+fn lone_pair(rows: RowLoop<'_>, scratch: &mut Vec<ChildPair>) -> Option<ChildPair> {
+    if rows.ctx.right_width != 1 {
+        return None;
+    }
+    match column_pairs(rows.ctx, rows.g_level, 0, scratch) {
+        &[pair] => {
+            super::super::note_lone_pair();
+            Some(pair)
+        }
+        _ => None,
     }
 }

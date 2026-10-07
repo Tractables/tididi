@@ -102,6 +102,25 @@ fn shared_variables_leave_one_side_on_the_grid() {
     assert!(census[2] > before[2], "no level read only its right side by arithmetic");
 }
 
+/// `g` over the leftmost quarter of the variables is one node of one pair
+/// on every level outside it, and a level of two complete sides there reads
+/// that pair in every cell, both ways round.
+#[test]
+fn a_lone_g_pair_is_read_in_every_cell() {
+    let vtree = Arc::new(Vtree::balanced(16));
+    let all: Vec<u32> = (1..=16).collect();
+    let mut rng = Lcg::new(0x5eed_a904);
+    let before = complete_census();
+    for _ in 0..6 {
+        let f = function_of(&vtree, &all, &mut rng);
+        let g = function_of(&vtree, &[1, 2, 3, 4], &mut rng);
+        same_both_ways(&f, &g);
+        same_both_ways(&g, &f);
+    }
+    let census = complete_census();
+    assert!(census[4] > before[4], "no level read a lone g pair in every cell");
+}
+
 /// The grid route stands in for the arithmetic one only in tests: the
 /// census counts no level while it is forced.
 #[test]

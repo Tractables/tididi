@@ -56,10 +56,11 @@ thread_local! {
     /// from the grid ([`grid_lookups`]).
     static GRID_LOOKUPS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The levels on this thread that read a complete child side by
-    /// arithmetic: both sides, the left alone, the right alone; and the times
-    /// a reserved arena charged the meter for a growth it did not make
-    /// ([`complete_census`]).
-    static COMPLETE: std::cell::Cell<[u64; 4]> = const { std::cell::Cell::new([0; 4]) };
+    /// arithmetic: both sides, the left alone, the right alone; the times a
+    /// reserved arena charged the meter for a growth it did not make; and
+    /// the levels of two complete sides that read a lone g pair in every
+    /// cell ([`complete_census`]).
+    static COMPLETE: std::cell::Cell<[u64; 5]> = const { std::cell::Cell::new([0; 5]) };
 }
 
 pub(super) fn grid_lookups_forced() -> bool {
@@ -78,6 +79,10 @@ pub(super) fn note_lookups(lookups: PlainLookups) {
 
 pub(super) fn note_scheduled_charge() {
     count_complete(3);
+}
+
+pub(super) fn note_lone_pair() {
+    count_complete(4);
 }
 
 fn count_complete(kind: usize) {
@@ -104,8 +109,9 @@ pub(super) fn grid_lookups<R>(f: impl FnOnce() -> R) -> R {
 
 /// The levels on this thread so far that read a complete child side by
 /// arithmetic: with both sides complete, the left alone, the right alone;
-/// and the times a reserved arena charged the meter for a growth it did not
-/// make.
-pub(super) fn complete_census() -> [u64; 4] {
+/// the times a reserved arena charged the meter for a growth it did not
+/// make; and the levels of two complete sides that read a lone g pair in
+/// every cell.
+pub(super) fn complete_census() -> [u64; 5] {
     COMPLETE.with(std::cell::Cell::get)
 }

@@ -570,16 +570,7 @@ where
     R: ChildLookup,
     S: PairSink,
 {
-    // Column `j`'s pairs. Everything about resolving them — masks, encoding,
-    // range — depends only on `j` and the level, so it was hoisted into the
-    // per-level [`RightColumns`] table and this is two loads. `None` is the
-    // fallback for the levels the table declines (marginal-encoded g, or an
-    // arena the budget rejected): re-derive per cell, as before, and walk an
-    // N×M cell ungrouped.
-    let g_pairs = match ctx.right_cols {
-        Some(cols) => cols.get(j),
-        None => right_level.pairs_view_decoded(j, g_pairs_scratch, ctx.sides.left.plan.view, ctx.sides.right.plan.view),
-    };
+    let g_pairs = column_pairs(ctx, right_level, j, g_pairs_scratch);
     // A dead column's cell holds no product. Its row was reset to that
     // already, except where every live cell is written and no row is reset
     // ([`run_level_rows`](super::rows::run_level_rows)).
@@ -587,12 +578,56 @@ where
         node_idx[row_base + j] = NO_PRODUCT;
         return Ok(());
     }
-
     // `row_base` is the row's flat slab offset, already computed by the row loop
     // (`ctx.output_grid_base + grid_row * ctx.right_width`) for its `NO_PRODUCT` reset — reuse it instead of
     // re-deriving the same product per cell.
-    let grid_pos = row_base + j;
+    cell_pairs(eng, j, row_base + j, f_pairs, g_pairs, ctx, node_idx, left, right, sink, gate)
+}
 
+/// Column `j`'s pairs: the g node's, read from the per-level
+/// [`RightColumns`] table where there is one, else decoded into `scratch`.
+///
+/// Everything about resolving them (masks, encoding, range) depends only on
+/// `j` and the level, so the table holds it and this is two loads. `None`
+/// is the fallback for the levels the table declines (marginal-encoded g,
+/// or an arena the budget rejected): re-derive per cell, and walk an N×M
+/// cell ungrouped.
+#[inline(always)]
+pub(crate) fn column_pairs<'a>(
+    ctx: &'a CellCtx<'_>,
+    right_level: &'a TddLevel,
+    j: usize,
+    scratch: &'a mut Vec<ChildPair>,
+) -> &'a [ChildPair] {
+    match ctx.right_cols {
+        Some(cols) => cols.get(j),
+        None => right_level.pairs_view_decoded(j, scratch, ctx.sides.left.plan.view, ctx.sides.right.plan.view),
+    }
+}
+
+/// The product walk of one live cell, `f_pairs` against `g_pairs`, both
+/// nonempty, written at `grid_pos`: the arms of [`process_cell`], which
+/// reads column `j`'s pairs for it.
+#[inline(always)]
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn cell_pairs<L, R, S>(
+    eng: &Engine,
+    j: usize,
+    grid_pos: usize,
+    f_pairs: &[ChildPair],
+    g_pairs: &[ChildPair],
+    ctx: &CellCtx<'_>,
+    node_idx: &mut [u32],
+    left: &L,
+    right: &R,
+    sink: &mut S,
+    gate: &mut PollGate,
+) -> Result<(), OperationError>
+where
+    L: ChildLookup,
+    R: ChildLookup,
+    S: PairSink,
+{
     if f_pairs.len() == 1 && g_pairs.len() == 1 {
         // ── 1×1 ──────────────────────────────────────────────────────────
         gate.poll(1)?;

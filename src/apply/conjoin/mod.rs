@@ -548,9 +548,10 @@ fn note_summed() {}
 
 // A test reads every child side from the grid, as the oracle for the
 // arithmetic lookups on complete children, and counts the levels that read a
-// side by arithmetic and the meter charges of their reserved arenas.
+// side by arithmetic, the meter charges of their reserved arenas, and the
+// levels that read a lone g pair in every cell.
 #[cfg(test)]
-use tests::{grid_lookups_forced, note_lookups, note_scheduled_charge};
+use tests::{grid_lookups_forced, note_lone_pair, note_lookups, note_scheduled_charge};
 
 #[cfg(not(test))]
 #[inline(always)]
@@ -565,3 +566,7 @@ fn note_lookups(_lookups: PlainLookups) {}
 #[cfg(not(test))]
 #[inline(always)]
 fn note_scheduled_charge() {}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_lone_pair() {}
