@@ -6,6 +6,7 @@
 //! diagram of a function from the classes to the codes, built from the
 //! level's subtree and the codes alone.
 
+use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
@@ -14,7 +15,7 @@ use super::{EmbedError, TagError};
 
 use crate::Engine;
 use crate::diagram::{ChildPair, LevelView, NodeIdx, Tdd, TddNodeId, Assembly, LEAF_WIDTH, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
-use crate::limits::OperationError;
+use crate::limits::{Limits, OperationError};
 use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
 
 impl Engine {
@@ -35,8 +36,11 @@ impl Engine {
     /// the tagged assignments to the codes, whatever the codes; two nodes
     /// may share one. The levels under `at` are copied, a cube is built for
     /// each code a tag names, and the result is minimized, which merges the
-    /// nodes that share a code. The cost is the size of the subtree's levels
-    /// plus the codes named times the code variables, and the minimization.
+    /// nodes that share a code. A cube is built from the top of the code
+    /// subtree down, and stops at each node whose leaves read a part of the
+    /// code that an earlier cube read there: it shares that cube's node. The
+    /// cost is the size of the subtree's levels, plus a step per node of the
+    /// cubes and per node they share, and the minimization.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -179,17 +183,24 @@ impl Engine {
                 assembly.replace_level(self, d, view)?;
             }
         }
-        // The cube of each code named, its levels shared where codes agree.
-        let internal: Vec<VtreeIdx> = into.internal_bottomup().filter(|&(t, _, _)| under(into, t, right)).map(|(t, _, _)| t).collect();
+        // The cube of each code named, built from the top of the code subtree
+        // down to the first node whose leaves read a part of the code that an
+        // earlier cube read there too: that node is the earlier cube's.
         let mut cube = Vec::new();
         lim.try_resize(&mut cube, num_codes, None)?;
-        let mut node_at = Vec::new();
-        lim.try_resize(&mut node_at, into.num_nodes(), NodeIdx(0))?;
+        let named = {
+            let mut seen = Vec::new();
+            lim.try_resize(&mut seen, num_codes, false)?;
+            tags.iter().flatten().filter(|&&k| !std::mem::replace(&mut seen[k as usize], true)).count()
+        };
+        let mut memo = Memos::new(lim, into, right, &leaf_bit, named)?;
+        let mut stack = Vec::new();
+        let mut built = Vec::new();
         for &k in tags.iter().flatten() {
             if cube[k as usize].is_some() {
                 continue;
             }
-            gate.poll(code_vars.len() as u64 + 1)?;
+            gate.poll(1)?;
             let code = &codes[k as usize * words..(k as usize + 1) * words];
             let literal = |t: VtreeIdx| {
                 let i = leaf_bit[t.idx()];
@@ -198,18 +209,37 @@ impl Engine {
                     false => NEG_LEAF_IDX,
                 }
             };
-            let top = match into.node(right).is_leaf() {
-                true => literal(right),
-                false => {
-                    for &t in &internal {
-                        let (l, r) = into.children(t);
-                        let side = |c: VtreeIdx| if into.node(c).is_leaf() { literal(c) } else { node_at[c.idx()] };
-                        node_at[t.idx()] = assembly.intern(self, t, &[ChildPair::new(side(l), side(r))])?;
+            lim.try_push(&mut stack, Step::Enter(right))?;
+            while let Some(step) = stack.pop() {
+                match step {
+                    Step::Enter(t) if into.node(t).is_leaf() => lim.try_push(&mut built, literal(t))?,
+                    Step::Enter(t) => match memo.find(lim, t, code)? {
+                        Ok(n) => lim.try_push(&mut built, n)?,
+                        Err(slot) => {
+                            let (l, r) = into.children(t);
+                            lim.try_push(&mut stack, Step::Exit(t, slot))?;
+                            lim.try_push(&mut stack, Step::Enter(r))?;
+                            lim.try_push(&mut stack, Step::Enter(l))?;
+                        }
+                    },
+                    Step::Exit(t, slot) => {
+                        gate.poll(1)?;
+                        let r = built.pop().expect("the right child's node");
+                        let l = built.pop().expect("the left child's node");
+                        let pair = [ChildPair::new(l, r)];
+                        // A sub-code not seen at `t` has children no node of
+                        // `t` has yet, so it is pushed; a level too wide to key
+                        // has no memo and interns instead.
+                        let n = match memo.keyed(t) {
+                            true => assembly.push(self, t, &pair)?,
+                            false => assembly.intern(self, t, &pair)?,
+                        };
+                        memo.fill(t, slot, n);
+                        lim.try_push(&mut built, n)?;
                     }
-                    node_at[right.idx()]
                 }
-            };
-            cube[k as usize] = Some(top);
+            }
+            cube[k as usize] = Some(built.pop().expect("the cube's top node"));
         }
         // The root: each tagged node beside its code's cube.
         let mut pairs = Vec::new();
@@ -223,6 +253,147 @@ impl Engine {
         let mut result = assembly.finish(TddNodeId { vtree: into.root(), local: root })?;
         self.minimize(&mut result)?;
         Ok(result)
+    }
+}
+
+/// A step of the walk that builds one cube: enter a node, or come back to
+/// one whose children are built, with the slot its node goes in.
+#[derive(Clone, Copy)]
+enum Step {
+    Enter(VtreeIdx),
+    Exit(VtreeIdx, usize),
+}
+
+/// The widest part of a code a node is looked up by.
+const KEY_BITS: usize = 128;
+
+/// The widest part of a code looked up in an array, one slot per value.
+const DIRECT_BITS: usize = 16;
+
+/// No node built yet.
+const UNBUILT: NodeIdx = NodeIdx(u32::MAX);
+
+/// The cube nodes built so far at each internal node of the code subtree,
+/// by the part of the code its leaves read.
+struct Memos {
+    /// Per vtree node, the code bits its leaves read, as runs of
+    /// `(first bit, length)` in increasing order.
+    runs: Vec<Vec<(usize, usize)>>,
+    memo: Vec<Memo>,
+    /// The nodes the hashed memos name, by the slot their key holds.
+    built: Vec<NodeIdx>,
+}
+
+#[derive(Clone)]
+enum Memo {
+    /// Wider than [`KEY_BITS`]: every node is interned.
+    Unkeyed,
+    /// One slot per value of the part, [`UNBUILT`] where none is yet.
+    Direct(Vec<NodeIdx>),
+    /// A slot of [`Memos::built`] per part seen.
+    Hashed(FxHashMap<u128, u32>),
+}
+
+impl Memos {
+    /// The memos of the internal nodes under `right`, whose leaves `t` read
+    /// bit `leaf_bit[t]` of a code, for a build of `named` cubes.
+    fn new(lim: &Limits, into: &Vtree, right: VtreeIdx, leaf_bit: &[usize], named: usize) -> Result<Self, OperationError> {
+        let mut runs: Vec<Vec<(usize, usize)>> = Vec::new();
+        lim.try_resize(&mut runs, into.num_nodes(), Vec::new())?;
+        let mut memo = Vec::new();
+        lim.try_resize(&mut memo, into.num_nodes(), Memo::Unkeyed)?;
+        // The bits under each node, merged from its children's bottom-up.
+        let mut bits: Vec<Vec<usize>> = Vec::new();
+        lim.try_resize(&mut bits, into.num_nodes(), Vec::new())?;
+        for (t, l, r) in into.internal_bottomup() {
+            if !under(into, t, right) {
+                continue;
+            }
+            let side = |c: VtreeIdx, bits: &mut Vec<Vec<usize>>| match into.node(c).is_leaf() {
+                true => vec![leaf_bit[c.idx()]],
+                false => std::mem::take(&mut bits[c.idx()]),
+            };
+            let mut mine = side(l, &mut bits);
+            mine.extend(side(r, &mut bits));
+            mine.sort_unstable();
+            let width = mine.len();
+            for &b in &mine {
+                match runs[t.idx()].last_mut() {
+                    Some((first, len)) if *first + *len == b => *len += 1,
+                    _ => lim.try_push(&mut runs[t.idx()], (b, 1))?,
+                }
+            }
+            // An array is at most a few slots per cube.
+            memo[t.idx()] = match width {
+                w if w <= DIRECT_BITS && 1usize << w <= 8 * named + 64 => {
+                    let mut slots = Vec::new();
+                    lim.try_resize(&mut slots, 1usize << w, UNBUILT)?;
+                    Memo::Direct(slots)
+                }
+                w if w <= KEY_BITS => Memo::Hashed(FxHashMap::default()),
+                _ => Memo::Unkeyed,
+            };
+            bits[t.idx()] = mine;
+        }
+        Ok(Self { runs, memo, built: Vec::new() })
+    }
+
+    /// Whether the nodes of `t` are looked up by the part of the code.
+    fn keyed(&self, t: VtreeIdx) -> bool {
+        !matches!(self.memo[t.idx()], Memo::Unkeyed)
+    }
+
+    /// The part of `code` that `t`'s leaves read, packed low bit first.
+    fn key(&self, t: VtreeIdx, code: &[u64]) -> u128 {
+        let mut key = 0u128;
+        let mut at = 0;
+        for &(first, len) in &self.runs[t.idx()] {
+            let (mut b, mut left) = (first, len);
+            while left > 0 {
+                let take = (64 - b % 64).min(left);
+                let piece = code[b / 64] >> (b % 64) & u64::MAX >> (64 - take);
+                key |= u128::from(piece) << at;
+                (at, b, left) = (at + take, b + take, left - take);
+            }
+        }
+        key
+    }
+
+    /// The node of `t` built for the part of `code` it reads, or the slot
+    /// to [`fill`](Self::fill) with the node about to be built for it.
+    fn find(&mut self, lim: &Limits, t: VtreeIdx, code: &[u64]) -> Result<Result<NodeIdx, usize>, OperationError> {
+        if !self.keyed(t) {
+            return Ok(Err(0));
+        }
+        let key = self.key(t, code);
+        match &mut self.memo[t.idx()] {
+            Memo::Unkeyed => unreachable!("keyed above"),
+            Memo::Direct(slots) => Ok(match slots[key as usize] {
+                UNBUILT => Err(key as usize),
+                n => Ok(n),
+            }),
+            Memo::Hashed(map) => {
+                lim.reserve_map(map, 1)?;
+                match map.entry(key) {
+                    Entry::Occupied(e) => Ok(Ok(self.built[*e.get() as usize])),
+                    Entry::Vacant(e) => {
+                        let slot = self.built.len();
+                        e.insert(slot as u32);
+                        lim.try_push(&mut self.built, UNBUILT)?;
+                        Ok(Err(slot))
+                    }
+                }
+            }
+        }
+    }
+
+    /// Record `n` as the node of `t` in the slot [`find`](Self::find) gave.
+    fn fill(&mut self, t: VtreeIdx, slot: usize, n: NodeIdx) {
+        match &mut self.memo[t.idx()] {
+            Memo::Unkeyed => {}
+            Memo::Direct(slots) => slots[slot] = n,
+            Memo::Hashed(_) => self.built[slot] = n,
+        }
     }
 }
 
