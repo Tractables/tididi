@@ -368,11 +368,15 @@ impl<'a> Iterator for PairsIter<'a> {
         }
     }
 
-    /// The stored pairs folded as a slice's, then the generated ones.
+    /// The stored pairs folded as a slice's, then the generated ones, out
+    /// of line: where a level is stored, the fold is the slice's loop alone.
     #[inline]
     fn fold<B, F: FnMut(B, ChildPair) -> B>(self, init: B, mut f: F) -> B {
         let acc = self.stored.copied().fold(init, &mut f);
-        self.described.fold(acc, f)
+        if self.described.len() == 0 {
+            return acc;
+        }
+        fold_described(self.described, acc, f)
     }
 
     /// The `n`th pair from here, in one step on stored and described pairs
@@ -394,3 +398,10 @@ impl<'a> Iterator for PairsIter<'a> {
 }
 
 impl<'a> ExactSizeIterator for PairsIter<'a> {}
+
+/// The fold of an implicit level's node's pairs, kept out of the caller's
+/// loop over stored ones.
+#[inline(never)]
+fn fold_described<B, F: FnMut(B, ChildPair) -> B>(places: super::level::Places<'_>, init: B, f: F) -> B {
+    places.fold(init, f)
+}
