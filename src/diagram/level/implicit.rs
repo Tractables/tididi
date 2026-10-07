@@ -432,12 +432,14 @@ impl ImplicitLevel {
     /// Whether `node(i)` gives the pairs of node `i` of this description,
     /// in their order, for every node: read node by node, up to the first
     /// pair that differs.
-    fn holds<I: Iterator<Item = (i64, i64)>>(&self, mut node: impl FnMut(usize) -> Option<I>) -> bool {
+    fn holds<I: ExactSizeIterator<Item = (i64, i64)>>(&self, mut node: impl FnMut(usize) -> Option<I>) -> bool {
         let places = self.offsets();
         let mut cursor = self.cursor();
         (0..self.nodes).all(|i| {
             let at = cursor.first_of(i);
-            node(i).is_some_and(|pairs| pairs.eq(places.iter().map(|p| (at.0 + p.0, at.1 + p.1))))
+            node(i).is_some_and(|pairs| {
+                pairs.len() == places.len() && pairs.zip(&places).all(|(s, p)| s == (at.0 + p.0, at.1 + p.1))
+            })
         })
     }
 
@@ -1149,10 +1151,23 @@ pub(crate) struct NodeCursor<'a> {
 
 impl NodeCursor<'_> {
     /// The slots of the first pair of node `i`, as
-    /// [`ImplicitLevel::node_first`] gives them: stepped on to a node at most
-    /// [`CURSOR_STEPS`] past the last, read off the digits otherwise.
-    #[inline]
+    /// [`ImplicitLevel::node_first`] gives them: the next node's stepped on
+    /// to in the caller, any other's out of line ([`first_of_far`](Self::first_of_far)).
+    #[inline(always)]
     pub(crate) fn first_of(&mut self, i: usize) -> (i64, i64) {
+        if i == self.node + 1 {
+            self.at.step(self.digits, i);
+            self.node = i;
+        } else if i != self.node {
+            self.first_of_far(i);
+        }
+        self.at.slots()
+    }
+
+    /// On to node `i`, neither this node nor the next: stepped on to a node
+    /// at most [`CURSOR_STEPS`] past this one, read off the digits otherwise.
+    #[inline(never)]
+    fn first_of_far(&mut self, i: usize) {
         if i > self.node && i - self.node <= CURSOR_STEPS {
             for node in self.node + 1..=i {
                 self.at.step(self.digits, node);
@@ -1161,7 +1176,6 @@ impl NodeCursor<'_> {
             self.at.seat(self.digits, self.node, i);
         }
         self.node = i;
-        self.at.slots()
     }
 }
 
