@@ -158,7 +158,8 @@ impl TwinEntries for ContextEntries<'_> {
         let mut name = |t: u32| named[(t / 64) as usize] |= 1 << (t % 64);
         let (level, side, view) = (self.parent_level, self.t1_side, self.t1_view);
         // A stored level's nodes are read as slices of its arena, in a loop
-        // apart from an implicit level's generated pairs.
+        // apart from an implicit level's generated pairs, which is out of
+        // line ([`described_repeats`]).
         match level.stored() {
             Some(stored) => {
                 for node in level.nodes() {
@@ -169,16 +170,36 @@ impl TwinEntries for ContextEntries<'_> {
                 }
             }
             None => {
-                for (_, pairs) in level.internal_inputs_iter() {
-                    if repeats_sibling(lim, twin_local, twin_generation, pairs, side, view, &mut name)? {
-                        return Ok(false);
-                    }
+                if described_repeats(lim, twin_local, twin_generation, level, side, view, &mut name)? {
+                    return Ok(false);
                 }
             }
         }
         let unnamed = width - named.iter().map(|w| w.count_ones() as usize).sum::<usize>();
         Ok(unnamed <= 1)
     }
+}
+
+/// [`repeats_sibling`] at each node of an implicit parent level, read off
+/// its description: whether some node puts two children beside one
+/// sibling. Out of line, so that the stored levels' loop in
+/// [`no_twin`](TwinEntries::no_twin) is compiled alone.
+#[inline(never)]
+fn described_repeats(
+    lim: &Limits,
+    twin_local: &mut Vec<u64>,
+    twin_generation: &mut u32,
+    level: &TddLevel,
+    side: ChildSide,
+    view: ChildDecoder,
+    name: &mut impl FnMut(u32),
+) -> Result<bool, OperationError> {
+    for (_, pairs) in level.internal_inputs_iter() {
+        if repeats_sibling(lim, twin_local, twin_generation, pairs, side, view, name)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether a parent node whose pairs are `pairs` puts two children beside

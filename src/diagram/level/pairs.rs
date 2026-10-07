@@ -123,20 +123,29 @@ impl TddLevel {
 
     /// Calls `f(i, pair)` with every pair of every node `i`, node by node:
     /// a stored level's pairs read as slices of its arena, an implicit
-    /// level's generated, each in a loop of its own.
+    /// level's generated, each in a loop of its own. The implicit level's
+    /// loop is out of line, so that `f` is called from one place in the
+    /// stored level's and inlines there.
     #[inline]
     pub(crate) fn for_each_node_pair(&self, mut f: impl FnMut(usize, ChildPair)) {
         match self.stored() {
             Some(stored) => {
                 for (i, node) in self.nodes.iter().enumerate() {
-                    stored.of(node).iter().for_each(|&pair| f(i, pair));
+                    for &pair in stored.of(node) {
+                        f(i, pair);
+                    }
                 }
             }
-            None => {
-                for (i, pairs) in self.internal_inputs_iter() {
-                    pairs.for_each(|pair| f(i, pair));
-                }
-            }
+            None => self.for_each_described_pair(&mut f),
+        }
+    }
+
+    /// [`for_each_node_pair`](Self::for_each_node_pair) on an implicit
+    /// level.
+    #[inline(never)]
+    fn for_each_described_pair(&self, f: &mut impl FnMut(usize, ChildPair)) {
+        for (i, pairs) in self.internal_inputs_iter() {
+            pairs.for_each(|pair| f(i, pair));
         }
     }
 

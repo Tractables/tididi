@@ -933,9 +933,18 @@ impl PairArena {
     /// have had.
     #[inline]
     pub(crate) fn clear(&mut self) {
-        match self.described.take() {
+        match &self.described {
             None => self.stored.clear(),
-            Some(d) => self.stored = Vec::with_capacity(d.capacity),
+            Some(_) => self.clear_described(),
+        }
+    }
+
+    /// [`clear`](Self::clear) on an implicit arena, out of line so that a
+    /// stored one's inlines where it is called.
+    #[inline(never)]
+    fn clear_described(&mut self) {
+        if let Some(d) = self.described.take() {
+            self.stored = Vec::with_capacity(d.capacity);
         }
     }
 
@@ -973,7 +982,20 @@ impl PairArena {
 impl Clone for PairArena {
     /// A copy as [`Vec::clone`] makes one, at the arena's length: a stored
     /// arena's pairs, or the description with its length as its capacity.
+    #[inline]
     fn clone(&self) -> Self {
+        match &self.described {
+            None => PairArena { stored: self.stored.clone(), described: None },
+            Some(_) => self.clone_described(),
+        }
+    }
+}
+
+impl PairArena {
+    /// [`clone`](Clone::clone) on an implicit arena, out of line so that a
+    /// stored one's inlines where it is called.
+    #[inline(never)]
+    fn clone_described(&self) -> PairArena {
         let described = self.described.as_ref().map(|d| Box::new(Described { level: d.level.clone(), len: d.len, capacity: d.len }));
         PairArena { stored: self.stored.clone(), described }
     }
