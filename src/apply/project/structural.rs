@@ -1377,7 +1377,12 @@ fn sort_by_key_stable<T: Copy>(
 /// Replace level `parent`'s nodes with `new_nodes` (one run of pairs per new
 /// cell), sorting each pair list canonically, and mark the level dirty for
 /// contraction.
+///
+/// Each cell is held to the output cap as it is written, and cancellation is
+/// tested through the gate: a test per cell reads the clock under a deadline,
+/// which on a level of millions of cells costs more than writing them.
 fn write_level(work: &mut Rewrite<'_>, tdd: &mut Tdd, parent: VtreeIdx, new_nodes: &mut Runs<ChildPair>) -> Result<(), OperationError> {
+    let lim = work.eng.limits();
     let level = &mut tdd.levels[parent.idx()];
     level.clear();
     for cell in 0..new_nodes.len() {
@@ -1385,10 +1390,11 @@ fn write_level(work: &mut Rewrite<'_>, tdd: &mut Tdd, parent: VtreeIdx, new_node
         let pairs = new_nodes.get_mut(cell);
         sort_pairs(pairs);
         debug_assert!(pairs.windows(2).all(|w| w[0] != w[1]), "a regrouped cell repeats a pair");
-        level.push_node(work.eng.limits(), pairs)?;
+        level.push_node(lim, pairs)?;
         work.emitted += 1;
-        work.eng.limits().level_done(work.emitted)?;
+        lim.check_output_cap(work.emitted)?;
     }
+    lim.level_done(work.emitted)?;
     tdd.try_invalidate(work.eng, parent)?;
     Ok(())
 }
