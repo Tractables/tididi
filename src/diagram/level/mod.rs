@@ -380,10 +380,11 @@ impl TddLevel {
         self.pairs.stored_mut().pop()
     }
 
-    /// Length of the pair-arena tail starting at `start`.
+    /// Length of the pair-arena tail starting at `start`, on a level being
+    /// built, whose pairs are stored.
     #[inline]
     pub(crate) fn pair_tail_len(&self, start: usize) -> usize {
-        self.pairs.len() - start
+        self.pairs.stored_len() - start
     }
 
 }

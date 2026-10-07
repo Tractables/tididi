@@ -825,6 +825,14 @@ impl PairArena {
         }
     }
 
+    /// The length of a stored arena, which a level being built extends.
+    /// Not valid on an implicit arena (a debug build panics).
+    #[inline]
+    pub(crate) fn stored_len(&self) -> usize {
+        debug_assert!(self.described.is_none(), "an implicit level's pairs are not stored");
+        self.stored.len()
+    }
+
     /// The stored pairs at `range`, which must be a node's: `None` on an
     /// implicit arena, whose vector of pairs is empty, so that the bounds
     /// check of a stored node's read is the only test it takes. A node of
