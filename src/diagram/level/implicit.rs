@@ -535,6 +535,52 @@ impl ImplicitLevel {
         }
         Some(r)
     }
+
+    /// Whether the child level on `side`, of `width` nodes, holds no twins
+    /// under this level, read off the digits.
+    ///
+    /// Let `A` be the digits that move the slot on `side` and `B` the others.
+    /// When the slot is a one-to-one function of the digits in `A`, and those
+    /// digits take `width` values in all, every node of the child is named,
+    /// and by the pairs of exactly one setting `a` of the digits in `A`, with
+    /// the digits in `B` free. The contexts of the node, the pairs' nodes and
+    /// slots on the other side, are then one set `S`, over the settings of
+    /// `B`, shifted by what `a` adds: two nodes are twins only when their
+    /// settings add the same, since a finite set shifted by a nonzero amount
+    /// is another set. So when what the digits in `A` add to the node and the
+    /// other side's slot is also one-to-one, the child has no twins. `false`
+    /// says only that the digits do not show it.
+    pub(crate) fn twin_free(&self, side: ChildSide, width: usize) -> bool {
+        let flip = side == ChildSide::Right;
+        let this = |d: &Digit| if flip { d.right } else { d.left };
+        let other = |d: &Digit| if flip { d.left } else { d.right };
+        let moved: Vec<&Digit> = self.digits.iter().filter(|d| this(d) != 0).collect();
+        if moved.iter().map(|d| d.radix).product::<usize>() != width {
+            return false;
+        }
+        // The node and the other side's slot packed into one number: the
+        // node's index times one more than the other side's whole range.
+        let span = self.digits.iter().map(|d| (d.radix as i128 - 1) * i128::from(other(d)).abs()).sum::<i128>() + 1;
+        let place = |step: i128, d: &Digit| (step.unsigned_abs(), (d.radix - 1) as u128 * step.unsigned_abs());
+        one_to_one(moved.iter().map(|d| place(i128::from(this(d)), d)))
+            && one_to_one(moved.iter().map(|d| place(i128::from(d.node) * span + i128::from(other(d)), d)))
+    }
+}
+
+/// Whether a value that sums digits, each given by the least gap between
+/// two of its places' contributions and their span, is one-to-one: the
+/// gaps, from the least, each beyond the spans of the digits before it.
+fn one_to_one(digits: impl Iterator<Item = (u128, u128)>) -> bool {
+    let mut digits: Vec<(u128, u128)> = digits.collect();
+    digits.sort_unstable();
+    let mut reach = 0u128;
+    for (gap, span) in digits {
+        if gap <= reach {
+            return false;
+        }
+        reach += span;
+    }
+    true
 }
 
 /// The child slots of a pair, as raw words.

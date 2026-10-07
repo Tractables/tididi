@@ -37,9 +37,20 @@ fn affine(rng: &mut Lcg, nodes: usize, per_node: usize) -> Pairs {
         }
         out
     }
-    let step = |rng: &mut Lcg| (rng.below(7) as i64, rng.below(7) as i64);
-    let within: Vec<(usize, (i64, i64))> = factors(rng, per_node).into_iter().map(|r| (r, step(rng))).collect();
-    let across: Vec<(usize, (i64, i64))> = factors(rng, nodes).into_iter().map(|r| (r, step(rng))).collect();
+    let within = factors(rng, per_node).into_iter().map(|r| (r, step(rng))).collect::<Vec<_>>();
+    let across = factors(rng, nodes).into_iter().map(|r| (r, step(rng))).collect::<Vec<_>>();
+    affine_of(&within, &across)
+}
+
+/// A random step on each side.
+fn step(rng: &mut Lcg) -> (i64, i64) {
+    (rng.below(7) as i64, rng.below(7) as i64)
+}
+
+/// The level whose pairs `within` and `across`, digits of a radix and a
+/// step each, fastest first, number from the slots 0: pair `m` of node `i`
+/// at the digits of `m` in `within` plus those of `i` in `across`.
+fn affine_of(within: &[(usize, (i64, i64))], across: &[(usize, (i64, i64))]) -> Pairs {
     let value = |digits: &[(usize, (i64, i64))], mut n: usize| {
         digits.iter().fold((0, 0), |(l, r), &(radix, (dl, dr))| {
             let c = (n % radix) as i64;
@@ -47,11 +58,12 @@ fn affine(rng: &mut Lcg, nodes: usize, per_node: usize) -> Pairs {
             (l + c * dl, r + c * dr)
         })
     };
+    let (nodes, per_node) = (across.iter().map(|d| d.0).product(), within.iter().map(|d| d.0).product());
     (0..nodes)
         .map(|i| {
-            let (fl, fr) = value(&across, i);
+            let (fl, fr) = value(across, i);
             (0..per_node).map(|m| {
-                let (l, r) = value(&within, m);
+                let (l, r) = value(within, m);
                 (fl + l, fr + r)
             }).collect()
         })
@@ -322,4 +334,91 @@ fn a_redescribed_arena_keeps_the_written_length() {
     assert_eq!(swept.pairs.capacity(), 6);
     let cut = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| level.pairs.truncate(5)));
     assert!(cut.is_err(), "a truncation into the described pairs");
+}
+
+#[test]
+fn twins_are_read_off_the_digits() {
+    // Node i holds (3i + m, m) for m < 3: every left slot named once, in its
+    // own context, and every right slot named in two contexts of its own.
+    let pairs: Pairs = (0..2).map(|i| (0..3).map(|m| (3 * i + m, m)).collect()).collect();
+    let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
+    assert!(d.twin_free(ChildSide::Left, 6));
+    assert!(d.twin_free(ChildSide::Right, 3));
+    // Slots that do not cover the child: not shown.
+    assert!(!d.twin_free(ChildSide::Left, 7));
+    // Node i holds (3i + m, 0): the left slots of a node share its one
+    // context, so they are twins, and the digits must not say otherwise.
+    let pairs: Pairs = (0..2).map(|i| (0..3).map(|m| (3 * i + m, 0)).collect()).collect();
+    let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
+    assert!(!d.twin_free(ChildSide::Left, 6));
+    // Two left slots each with right slots 0 and 1 in one node: twins.
+    let pairs: Pairs = vec![vec![(0, 0), (1, 0), (0, 1), (1, 1)]];
+    let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
+    assert!(!d.twin_free(ChildSide::Left, 2));
+}
+
+/// Where the digits say a child has no twins, it has none: every slot of
+/// the child is named, and no two share the multiset of their contexts,
+/// the pairs' nodes with their slots on the other side. On levels whose
+/// slots on one side count a random subset of the digits in a mixed radix,
+/// so that they cover the child, and whose other side steps at random.
+#[test]
+fn a_child_the_digits_call_twin_free_has_no_twins() {
+    let mut rng = Lcg::new(0x1d1e_0008);
+    let (mut free, mut twins) = (0, 0);
+    for _ in 0..2000 {
+        let radices = |rng: &mut Lcg| -> Vec<usize> { (0..rng.below(4)).map(|_| 2 + rng.below(3) as usize).collect() };
+        let (within, across) = (radices(&mut rng), radices(&mut rng));
+        if within.is_empty() {
+            continue;
+        }
+        // The counted side's steps: each chosen digit, in a random order, the
+        // product of the radices of those before it.
+        let mut steps: Vec<(i64, i64)> = Vec::new();
+        let mut width = 1usize;
+        let mut order: Vec<usize> = (0..within.len() + across.len()).collect();
+        for j in (1..order.len()).rev() {
+            order.swap(j, rng.below(j as u64 + 1) as usize);
+        }
+        steps.resize(order.len(), (0, 0));
+        for j in order {
+            let radix = if j < within.len() { within[j] } else { across[j - within.len()] };
+            let counted = if rng.below(3) > 0 {
+                let s = width as i64;
+                width *= radix;
+                s
+            } else {
+                0
+            };
+            steps[j] = (counted, rng.below(5) as i64);
+        }
+        let digits = |radices: &[usize], steps: &[(i64, i64)]| radices.iter().copied().zip(steps.iter().copied()).collect::<Vec<_>>();
+        let pairs = affine_of(&digits(&within, &steps[..within.len()]), &digits(&across, &steps[within.len()..]));
+        let flip = rng.below(2) == 1;
+        let pairs: Pairs = if flip { pairs.iter().map(|p| p.iter().map(|&(l, r)| (r, l)).collect()).collect() } else { pairs };
+        let side = if flip { ChildSide::Right } else { ChildSide::Left };
+        let Some(d) = ImplicitLevel::fit(&level_of(&pairs)) else { continue };
+        let mut contexts = vec![Vec::new(); width];
+        for (i, node) in pairs.iter().enumerate() {
+            for &(l, r) in node {
+                let (t, other) = if flip { (r, l) } else { (l, r) };
+                contexts[t as usize].push((i, other));
+            }
+        }
+        for c in &mut contexts {
+            c.sort_unstable();
+        }
+        let no_twins = contexts.iter().all(|c| !c.is_empty()) && {
+            let mut sorted = contexts.clone();
+            sorted.sort();
+            sorted.windows(2).all(|w| w[0] != w[1])
+        };
+        if d.twin_free(side, width) {
+            assert!(no_twins, "twins under a level the digits call twin free: {pairs:?}");
+            free += 1;
+        } else if !no_twins {
+            twins += 1;
+        }
+    }
+    assert!(free > 200 && twins > 200, "too few cases either way: {free} twin free, {twins} with twins");
 }
