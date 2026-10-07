@@ -172,35 +172,48 @@ fn group_width_two(lim: &Limits, scratch: &mut ContractScratch) -> Result<bool, 
     Ok(found)
 }
 
-/// General case: bucket candidates by their additive fingerprint, verify exact
-/// signature equality within a bucket, then build contiguous groups. Unmarked
-/// nodes keep their own representative without entering the table.
+/// General case: bucket the candidates by their additive fingerprint, verify
+/// exact signature equality within a bucket, then build contiguous groups.
+///
+/// A node that is no candidate has a fingerprint no other node shares, so it
+/// is a group of its own and never a member: only the candidates are hashed
+/// and grouped, in ascending index order, which gives the groups and their
+/// order that grouping every node would.
 fn group_by_hashed_signature(
     eng: &Engine,
     child_width: usize,
     scratch: &mut ContractScratch,
 ) -> Result<bool, OperationError> {
     let lim = eng.limits();
-    // General case: open-addressing hash table keyed by pre-computed additive
-    // fingerprints. O(n) expected time — no sorting needed. Within each
-    // bucket we verify actual signature equality (guards against hash collisions).
-    //
-    // Two passes: (1) map each node to its representative via hash table,
-    // (2) build contiguous groups via counting sort.
-    // Pass 1: map each node to its representative via hash table.
-    // cursors[i] = representative of node i (i itself if first with this signature).
-    let ContractScratch { fingerprints, twin_hash_table, entries, counts, cursors, is_candidate, .. } = &mut *scratch;
+    // The candidates in ascending order, and their fingerprints moved to the
+    // front of `fingerprints` in that order (a candidate's index is at least
+    // its rank, so the forward move reads each fingerprint before any write
+    // reaches it).
+    let ContractScratch { fingerprints, twin_hash_table, entries, counts, cursors, is_candidate, candidates, .. } =
+        &mut *scratch;
+    candidates.clear();
+    let wanted = is_candidate[..child_width].iter().filter(|&&c| c).count();
+    lim.reserve_exact(candidates, wanted)?;
+    candidates.extend((0..child_width as u32).filter(|&i| is_candidate[i as usize]));
+    let n = candidates.len();
+    for (rank, &node) in candidates.iter().enumerate() {
+        fingerprints[rank] = fingerprints[node as usize];
+    }
+
+    // Pass 1: map each candidate to its representative via the hash table.
+    // cursors[k] = the rank of candidate k's representative (k itself if it
+    // is the first with its signature).
     let sig_offsets: &[u32] = counts;
-    let signature = |j: usize| &entries[sig_offsets[j] as usize..sig_offsets[j + 1] as usize];
-    probe_fingerprints(lim, twin_hash_table, &fingerprints[..child_width], Some(&is_candidate[..child_width]), |i, occupant| {
+    let signature = |j: u32| &entries[sig_offsets[j as usize] as usize..sig_offsets[j as usize + 1] as usize];
+    probe_fingerprints(lim, twin_hash_table, &fingerprints[..n], None, |k, occupant| {
         match occupant {
-            Some(j) if signature(i) == signature(j) => {
-                cursors[i] = j as u32;
+            Some(j) if signature(candidates[k]) == signature(candidates[j]) => {
+                cursors[k] = j as u32;
                 true
             }
             Some(_) => false,
             None => {
-                cursors[i] = i as u32;
+                cursors[k] = k as u32;
                 true
             }
         }
@@ -209,35 +222,36 @@ fn group_by_hashed_signature(
     // Pass 2: build contiguous groups via counting sort. O(n).
     // Repurpose fingerprints[] as per-rep member count (additive fingerprints
     // are no longer needed after hash table construction).
-    scratch.fingerprints[..child_width].fill(0);
-    for i in 0..child_width {
-        scratch.fingerprints[scratch.cursors[i] as usize] += 1;
+    let ContractScratch { fingerprints, cursors, candidates, flat_groups, group_starts, .. } = &mut *scratch;
+    fingerprints[..n].fill(0);
+    for &rep in &cursors[..n] {
+        fingerprints[rep as usize] += 1;
     }
     // Assign group offsets for reps with ≥2 members; store write cursor.
     // `pos` counts group members, so it never exceeds `child_width` (each
     // node joins at most one group) — the `as u32` narrowings below are
     // exact by the level-width invariant asserted in `find_twin_groups`.
     let mut pos = 0usize;
-    for i in 0..child_width {
-        if scratch.cursors[i] as usize == i && scratch.fingerprints[i] >= 2 {
-            lim.try_push(&mut scratch.group_starts, pos as u32)?;
-            let cnt = scratch.fingerprints[i] as usize;
-            scratch.fingerprints[i] = pos as u64;
+    for k in 0..n {
+        if cursors[k] as usize == k && fingerprints[k] >= 2 {
+            lim.try_push(group_starts, pos as u32)?;
+            let cnt = fingerprints[k] as usize;
+            fingerprints[k] = pos as u64;
             pos += cnt;
         } else {
-            scratch.fingerprints[i] = u64::MAX;
+            fingerprints[k] = u64::MAX;
         }
     }
     // Scatter-write members into flat_groups.
-    lim.try_resize(&mut scratch.flat_groups, pos, 0)?;
-    for i in 0..child_width {
-        let rep = scratch.cursors[i] as usize;
-        let cursor = scratch.fingerprints[rep];
+    lim.try_resize(flat_groups, pos, 0)?;
+    for k in 0..n {
+        let rep = cursors[k] as usize;
+        let cursor = fingerprints[rep];
         if cursor != u64::MAX {
-            scratch.flat_groups[cursor as usize] = i as u32;
-            scratch.fingerprints[rep] = cursor + 1;
+            flat_groups[cursor as usize] = candidates[k];
+            fingerprints[rep] = cursor + 1;
         }
     }
 
-    Ok(!scratch.group_starts.is_empty())
+    Ok(!group_starts.is_empty())
 }

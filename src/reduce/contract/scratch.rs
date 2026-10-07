@@ -213,7 +213,8 @@ pub(crate) struct ContractScratch {
     /// Flat signature buffer: packed (parent_idx, sibling_idx) entries per node.
     pub(super) entries: Vec<u64>,
     /// Write cursor into `entries` for each node during signature fill, then
-    /// reused by the grouping pass as node i's twin representative.
+    /// reused by the grouping pass as each candidate's representative,
+    /// indexed by the candidate's rank in `candidates`.
     pub(super) cursors: Vec<u32>,
     /// Open-addressing hash table for twin grouping; see [`TwinSlot`].
     pub(super) twin_hash_table: Vec<TwinSlot>,
@@ -241,6 +242,9 @@ pub(crate) struct ContractScratch {
     /// materialized in `build_twin_groups_after_collision`; the unique-fingerprint
     /// majority is provably twin-free and skipped.
     pub(super) is_candidate: Vec<bool>,
+    /// The candidates' node indices in ascending order, which the grouping
+    /// pass hashes and groups alone.
+    pub(super) candidates: Vec<u32>,
     /// Per-node "signature slice needs sorting" flag, set during the Pass-2
     /// entry scatter when a written entry compares below its slice predecessor.
     /// Slices arrive from the scatter in parent-index-major order and are
@@ -310,6 +314,7 @@ impl Buffers for ContractScratch {
         visit(&mut self.flat_groups);
         visit(&mut self.group_starts);
         visit(&mut self.is_candidate);
+        visit(&mut self.candidates);
         visit(&mut self.slice_unsorted);
         self.remap.buffers(visit);
         visit(&mut self.has_marginal_below);
