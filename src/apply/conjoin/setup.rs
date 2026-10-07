@@ -329,7 +329,10 @@ pub(super) fn apply_and_setup<'a>(
     // Streaming-marginal scratch: lazily computed child columns for
     // streaming-target levels whose children are still explicit.
     stream_cache.reset(num_nodes, (!targets.is_empty()).then_some(weighted));
-    products.reset(eng, might_use_sparse, num_nodes, f_widths, g_widths)?;
+    // A level under a free level is taken whole with its region, and no
+    // level reads its products.
+    let unread = |i: usize| super::drive::under_free(vtree, free, VtreeIdx(i as u32));
+    products.reset(eng, might_use_sparse, num_nodes, f_widths, g_widths, &unread)?;
 
     Ok(ApplyRun {
         levels, f_widths, g_widths,

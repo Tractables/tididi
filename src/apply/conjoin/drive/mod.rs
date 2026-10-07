@@ -32,6 +32,8 @@
 mod compose;
 mod level;
 mod loose;
+mod region;
+pub(super) use region::under_free;
 use level::{
     build_level_dense, count_sparse_root, count_streamed_root, counts_root, holds_back, pick_streamed,
     run_sparse_level, sum_sparse_root, sums_root, LevelBuild,
@@ -39,6 +41,7 @@ use level::{
 
 use super::*;
 
+use super::identity::init_leaf_identity_outside;
 use crate::reduce::prune::settle_loose;
 use crate::Engine;
 
@@ -97,6 +100,7 @@ fn sweep_levels(
     // it is taken inside the gate; past that it is one store per level and no
     // clock at all.
     let progress = lim.conjunction_progress_enabled();
+    let free = run.free;
     if progress {
         lim.conjunction_began(vtree.internal_bottomup().count() as u32);
     }
@@ -113,6 +117,12 @@ fn sweep_levels(
         // The per-level-boundary cut check: the stop axis, then the output-node
         // cap, tracked across every route independently of sparse-grid density.
         lim.level_done(output_nodes)?;
+        // A free level was taken with its region before the sweep; its
+        // boundary is checked and its nodes counted as if it were built here.
+        if region::free_at(free, t.idx()) {
+            output_nodes += run.levels[t.idx()].slot_count() as u64;
+            continue;
+        }
 
         if held.len() < 2 && holds_back(sweep, run, f, g, t, left, right) {
             held.push((t, left, right));
@@ -363,8 +373,11 @@ pub(crate) fn apply_and_core(
     // both children identity, which the sweep accretes as it goes up. The
     // predicate is incomplete; a miss only sends a small grid down the dense
     // path.
-    init_leaf_identity(eng, run.g_identity, g)?;
-    init_leaf_identity(eng, run.f_identity, f)?;
+    //
+    // The leaves under a free level are read by no level the sweep builds.
+    let in_region = |t: VtreeIdx| region::free_at(free, t.idx());
+    init_leaf_identity_outside(eng, run.g_identity, g, in_region)?;
+    init_leaf_identity_outside(eng, run.f_identity, f, in_region)?;
 
     apply_leaf_levels(eng, &vtree, &mut run)?;
 
@@ -380,6 +393,7 @@ pub(crate) fn apply_and_core(
         Operands { f: &run.f_identity[..], g: &run.g_identity[..] },
         ws.as_ref(),
     );
+    region::take_regions(&vtree, &mut run, f, g);
 
     let mut sweep = Sweep {
         vtree: &vtree, targets, quantified, ws: ws.as_mut(), filter, count_root, counted: None,
@@ -388,6 +402,7 @@ pub(crate) fn apply_and_core(
     if let Err(e) = sweep_levels(eng, &mut run, f, g, &mut sweep) {
         if run.restoring {
             give_back(run.levels, f, g, &run.carried);
+            region::give_back_regions(&vtree, run.levels, free, f, g);
         }
         return Err(e);
     }
@@ -418,6 +433,7 @@ pub(crate) fn apply_and_core(
         for &(t, from_f) in &carried {
             carrier[t] = if from_f { 1 } else { 2 };
         }
+        region::mark_carriers(&vtree, free, &mut carrier);
         // The result's loose levels (`loose::loose_levels`): a carried level
         // where its carrier has it loose, and a level under one the
         // conjunction built where the operands and the sibling's product
@@ -447,6 +463,7 @@ pub(crate) fn apply_and_core(
         Err((e, mut assembly)) => {
             if restoring {
                 give_back(assembly.parts_mut().0, f, g, &carried);
+                region::give_back_regions(&vtree, assembly.parts_mut().0, free, f, g);
             }
             return Err(e);
         }

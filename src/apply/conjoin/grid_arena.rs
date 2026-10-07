@@ -72,7 +72,10 @@ pub(super) struct GridArena {
 
 impl GridArena {
 
-    pub(super) fn reset(&mut self, eng: &Engine, sparse: bool, n: usize, f_widths: &[usize], g_widths: &[usize]) -> Result<(), OperationError> {
+    pub(super) fn reset(
+        &mut self, eng: &Engine, sparse: bool, n: usize, f_widths: &[usize], g_widths: &[usize],
+        unread: &dyn Fn(usize) -> bool,
+    ) -> Result<(), OperationError> {
         self.grids.clear();
         self.grids.resize(n, None);
         let mut bump = self.bump.take().unwrap_or_default();
@@ -81,8 +84,10 @@ impl GridArena {
         if sparse {
             self.bump = Some(bump);
         } else {
+            // A level no other level reads gets no grid.
             let mut cursor = 0;
             for i in 0..n {
+                if unread(i) { continue; }
                 self.grids[i] = Some(GridBase(cursor));
                 cursor += f_widths[i] * g_widths[i];
             }

@@ -6,12 +6,12 @@
 //! (`take_level_fast_path`).
 
 use crate::Engine;
+use crate::vtree::VtreeIdx;
 use crate::diagram::{self, *};
 use super::OperationError;
 use super::setup::{ApplyRun, LevelShape};
 use super::products::Products;
 use crate::value::CountRead;
-use crate::vtree::VtreeIdx;
 
 /// Compute which leaf levels are "identity" (constant-true) for a diagram operand.
 ///
@@ -31,6 +31,18 @@ use crate::vtree::VtreeIdx;
 /// subtree, and every leaf below it is marked non-identity; a leaf flag left
 /// true there would let `take_level_fast_path` drop the operand's content.
 pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd) -> Result<(), OperationError> {
+    init_leaf_identity_outside(eng, buf, tdd, |_| false)
+}
+
+/// [`init_leaf_identity`] for the leaves whose parent `skip` does not name:
+/// the parents' pairs are scanned only there, and the flag of a leaf under a
+/// skipped parent is left true unread.
+pub(crate) fn init_leaf_identity_outside(
+    eng: &Engine,
+    buf: &mut Vec<bool>,
+    tdd: &Tdd,
+    skip: impl Fn(VtreeIdx) -> bool,
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let vtree = tdd.vtree();
     let num_nodes = vtree.num_nodes();
@@ -43,6 +55,7 @@ pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd) -
     // Scan parent pairs: any reference to Pos (0) or Neg (1) means not identity.
     let mut has_any_marginal = false;
     for (t, left, right) in vtree.internal_bottomup() {
+        if skip(t) { continue; }
         if tdd.levels[t.idx()].is_marginal() { has_any_marginal = true; }
         let left_leaf = vtree.node(left).is_leaf();
         let right_leaf = vtree.node(right).is_leaf();
@@ -253,7 +266,7 @@ fn apply_identity_fast_path<const F_IS_CARRIER: bool>(
 /// Record an identity-built level of `width` nodes in the product store: its
 /// live count when the arena bumps, else its grid, whose cell `i` names node
 /// `i`.
-fn publish_identity_level(products: &mut Products, t_idx: usize, width: usize) {
+pub(super) fn publish_identity_level(products: &mut Products, t_idx: usize, width: usize) {
     if products.arena.is_bump() {
         products.record_live(t_idx, width);
         return;

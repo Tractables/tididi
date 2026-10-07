@@ -11,7 +11,8 @@ use super::{CONJOIN_GRID, NO_PRODUCT};
 /// Fill grid entries at leaf vtree levels from the static `CONJOIN_GRID` table.
 ///
 /// At leaf levels the conjunction is a constant 3×3 truth table (Pos, Neg, One),
-/// so we just copy from `CONJOIN_GRID` into `node_idx`. When the arena bumps,
+/// so we just copy from `CONJOIN_GRID` into `node_idx`; a leaf under a free
+/// level ([`ApplyRun::free`]) has no grid. When the arena bumps,
 /// grid space is allocated as we go and live counts are recorded for parent
 /// density checks; otherwise the grid offsets are pre-computed.
 pub(super) fn apply_leaf_levels(
@@ -19,8 +20,12 @@ pub(super) fn apply_leaf_levels(
     vtree: &crate::vtree::Vtree,
     run: &mut ApplyRun,
 ) -> Result<(), OperationError> {
-    let ApplyRun { f_widths, g_widths, products, .. } = run;
+    let ApplyRun { f_widths, g_widths, products, free, .. } = run;
     for (t, _leaf_var) in vtree.leaf_bottomup() {
+        // No level reads the products of a leaf inside a free region.
+        if super::drive::under_free(vtree, *free, t) {
+            continue;
+        }
         let t_idx = t.idx();
         let left_width = f_widths[t_idx];
         let right_width = g_widths[t_idx];
