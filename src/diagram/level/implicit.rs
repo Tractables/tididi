@@ -1451,6 +1451,24 @@ impl TddLevel {
         emptied
     }
 
+    /// Build an implicit level stored where its pairs lie, before a pass
+    /// changes it in place ([`store_moved`](Self::store_moved), keeping
+    /// every node and moving nothing); nothing on a stored level. The store
+    /// is out of line: most levels a pass changes are stored.
+    #[inline]
+    pub(crate) fn store_if_implicit(&mut self) {
+        if self.pairs.implicit().is_some() {
+            self.store_described();
+        }
+    }
+
+    /// [`store_if_implicit`](Self::store_if_implicit) on an implicit level.
+    #[cold]
+    #[inline(never)]
+    fn store_described(&mut self) {
+        self.store_moved(|_| true, |l| l, |r| r);
+    }
+
     /// Store the pairs of an implicit level's nodes `keep` names, moved
     /// through `left` and `right`, when what a prune or a renumbering of its
     /// child levels leaves of it is not affine as numbered: node `i` at pairs

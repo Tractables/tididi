@@ -97,8 +97,8 @@ pub(super) fn contract_twins(
     // The merge concatenates the groups' pairs into their survivors and
     // compacts the level in place: an implicit t1 is built stored where its
     // pairs lie first.
-    if !bufs.group_plans.is_empty() && tdd.levels[t1.idx()].pairs.implicit().is_some() {
-        tdd.levels[t1.idx()].store_moved(|_| true, |l| l, |r| r);
+    if !bufs.group_plans.is_empty() {
+        tdd.levels[t1.idx()].store_if_implicit();
     }
     reserve_transactional(eng, tdd, t1, bufs)?;
     let merged_members = commit_group_actions(tdd, t1, &policy, remap, bufs);

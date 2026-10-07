@@ -322,9 +322,7 @@ impl TddLevel {
     pub(crate) fn push_node<G: ArenaGrowth>(
         &mut self, growth: &G, pairs: &[ChildPair],
     ) -> Result<NodeIdx, OperationError> {
-        if self.pairs.implicit().is_some() {
-            self.store_moved(|_| true, |l| l, |r| r);
-        }
+        self.store_if_implicit();
         let idx = NodeIdx(self.nodes.len() as u32);
         if self.nodes.len() == self.nodes.capacity() {
             growth.grow(&mut self.nodes, 1)?;
@@ -441,9 +439,7 @@ impl TddLevel {
     ) -> Result<(), OperationError> {
         // A node that gains a pair leaves the description: an implicit level
         // is built stored where its pairs lie first.
-        if self.pairs.implicit().is_some() {
-            self.store_moved(|_| true, |l| l, |r| r);
-        }
+        self.store_if_implicit();
         let lim = eng.limits();
         let node = self.nodes[idx].kind();
         let (old_len, old_range, inline) = match node {

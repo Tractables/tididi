@@ -124,9 +124,7 @@ pub(super) fn resolve_duplicate_pairs_in_node(
     // A node whose duplicates are scaled leaves the description: a level
     // that repeats a pair is built stored where its pairs lie, and the close
     // at the end of the operation describes what is affine again.
-    if tdd.levels[pv.idx()].pairs.implicit().is_some() {
-        tdd.levels[pv.idx()].store_moved(|_| true, |l| l, |r| r);
-    }
+    tdd.levels[pv.idx()].store_if_implicit();
 
     let inlined = scale_duplicate_runs(eng, tdd, pv, counts, out, pairs.len())?;
     debug_assert!(out.len() <= pairs.len());

@@ -62,9 +62,7 @@ pub(super) fn rebuild_parent_level_with<V>(
     let level = &mut tdd.levels[parent.idx()];
     // The fusion changes node lengths in place: an implicit level, one whose
     // child became marginal, is built stored where its pairs lie first.
-    if level.pairs.implicit().is_some() {
-        level.store_moved(|_| true, |l| l, |r| r);
-    }
+    level.store_if_implicit();
     // Fusion-inline may mint a fresh inline marginal-side ref (bit-30 tagged) this
     // sweep; the marker for that side must be raised or the end-of-apply tagger
     // and the apply reader misread the ref as a grid coordinate. Rewriting in place

@@ -62,9 +62,7 @@ pub(crate) fn describe(level: &mut TddLevel) {
 /// for, with the same dead slots.
 pub(crate) fn stored_copy(level: &TddLevel) -> TddLevel {
     let mut copy = level.clone();
-    if copy.pairs.implicit().is_some() {
-        copy.store_moved(|_| true, |l| l, |r| r);
-    }
+    copy.store_if_implicit();
     copy
 }
 

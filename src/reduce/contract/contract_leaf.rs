@@ -216,9 +216,7 @@ fn rewrite_level(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
         // A contracted level leaves the description: an implicit one that
         // admits the rewrite is built stored where its pairs lie, and the
         // close at the end of the operation describes what is affine again.
-        if level.pairs.implicit().is_some() {
-            level.store_moved(|_| true, |l| l, |r| r);
-        }
+        level.store_if_implicit();
         for i in 0..level.nodes.len() {
             if let NodeKind::Inline(p) = level.nodes[i].kind() {
                 // A single-pair node is labelled `One` on `side` (the singleton
