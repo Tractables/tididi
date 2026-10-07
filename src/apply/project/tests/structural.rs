@@ -2,7 +2,7 @@ use super::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 use crate::limits::{LimitConfig, StopAt, StopRules};
-use crate::test_helpers::{assert_canonical, compile_clauses, rand_cnf, same_as_stored, vtree_shapes, CnfShape, Lcg};
+use crate::test_helpers::{assert_canonical, compile_clauses, or_of_cubes, rand_cnf, same_as_stored, vtree_shapes, CnfShape, Lcg};
 use crate::vtree::{VarId, Vtree};
 
 /// The map a quantified leaf hands its parent: every label becomes ⊤.
@@ -254,6 +254,139 @@ fn regrouping_matches_the_owner_set_rule() {
         }
     }
     assert!(single > 100 && several > 1000, "levels of one node {single}, of several {several}");
+}
+
+/// A fan-out of one cell for each of `keys` child nodes, drawn below `cells`.
+fn one_cell_remap(eng: &Engine, rng: &mut Lcg, keys: usize, cells: u32) -> Remap {
+    let entries: Vec<(u32, u32)> = (0..keys as u32).map(|key| (key, rng.below(u64::from(cells)) as u32)).collect();
+    Runs::pack(eng.limits(), keys, &entries, 0u32).unwrap()
+}
+
+/// What a regroup wrote at `parent`, cell by cell, and its map node by node,
+/// the identity when there is none.
+fn written(f: &Tdd, before: &TddLevel, parent: VtreeIdx, remap: Option<Remap>) -> (Vec<Vec<ChildPair>>, Vec<Vec<u32>>) {
+    let level = &f.levels[parent.idx()];
+    let cells = (0..level.nodes().len()).map(|cell| level.pairs_vec(cell)).collect();
+    let fan_out = (0..before.nodes().len())
+        .map(|node| match &remap {
+            Some(remap) => remap.get(node).to_vec(),
+            None => vec![node as u32],
+        })
+        .collect();
+    (cells, fan_out)
+}
+
+/// A level each of whose pairs expands to one atom, against the owner-set
+/// rule written out: maps of one cell per node into a few cells, so that
+/// atoms of several owners are common, or into many, so that the partition
+/// is often kept; on every internal level of several nodes of random
+/// diagrams, either child or both rewritten. The diagrams are random CNFs
+/// and sparse sets of models, whose levels often hold one pair per node.
+#[test]
+fn a_level_of_one_atom_per_pair_follows_the_owner_set_rule() {
+    let mut rng = Lcg::new(0x0a70_b1e5);
+    let eng = Engine::new();
+    let (mut done, mut shared, mut kept, mut one_pair_shared) = (0usize, 0usize, 0usize, 0usize);
+    for round in 0..24u32 {
+        let num_vars = 6 + round % 9;
+        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
+        // About three models a variable, drawn once for every vtree.
+        let rows: Vec<bool> = (0..1u64 << num_vars).map(|_| rng.below(1 << num_vars) < 3 * u64::from(num_vars)).collect();
+        let vars: Vec<VarId> = (1..=num_vars).map(VarId).collect();
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            for f in [compile_clauses(&vtree, &clauses), or_of_cubes(&vtree, &vars, |row| rows[row])] {
+                if f.is_zero() { continue; }
+                let keys = |child: VtreeIdx| {
+                    if vtree.node(child).is_leaf() { LEAF_WIDTH } else { f.levels[child.idx()].nodes().len() }
+                };
+                for &parent in vtree.bottomup_slice() {
+                    let level = &f.levels[parent.idx()];
+                    if vtree.node(parent).is_leaf() || level.nodes().len() < 2 { continue; }
+                    let (left_child, right_child) = vtree.children(parent);
+                    for fanned in [(true, false), (false, true), (true, true)] {
+                        let mut cells = |keys: usize| match rng.below(3) {
+                            0 => 1 + rng.below(3) as u32,
+                            1 => 1 + keys as u32 / 2,
+                            _ => 4 * keys as u32,
+                        };
+                        let (left_cells, right_cells) = (cells(keys(left_child)), cells(keys(right_child)));
+                        let left = fanned.0.then(|| one_cell_remap(&eng, &mut rng, keys(left_child), left_cells));
+                        let right = fanned.1.then(|| one_cell_remap(&eng, &mut rng, keys(right_child), right_cells));
+                        let expected = regroup_by_definition(level, left.as_ref(), right.as_ref());
+
+                        let mut rewritten = f.clone();
+                        let mut work = Rewrite { eng: &eng, gate: eng.limits().gate(), emitted: 0 };
+                        let OneAtom::Done(remap) =
+                            regroup_atom_per_pair(&mut work, &mut rewritten, parent, left.as_ref(), right.as_ref()).unwrap()
+                        else {
+                            panic!("{shape}, level {parent:?}, fanned {fanned:?}: declined");
+                        };
+                        let unchanged = remap.is_none();
+                        let got = written(&rewritten, level, parent, remap);
+                        assert_eq!(got.0, expected.0, "{shape}, level {parent:?}, fanned {fanned:?}: cells");
+                        assert_eq!(got.1, expected.1, "{shape}, level {parent:?}, fanned {fanned:?}: fan-out");
+                        let identity: Vec<Vec<u32>> = (0..level.nodes().len() as u32).map(|node| vec![node]).collect();
+                        assert_eq!(unchanged, expected.1 == identity, "{shape}, level {parent:?}: a map exactly when the partition changed");
+                        done += 1;
+                        let merged = expected.1.iter().any(|cells| cells.len() > 1)
+                            || expected.0.len() < level.nodes().len();
+                        shared += usize::from(merged);
+                        kept += usize::from(unchanged);
+                        let one_pair = (0..level.nodes().len()).all(|node| level.pair_count_at(node) == 1);
+                        one_pair_shared += usize::from(one_pair && merged);
+                    }
+                }
+            }
+        }
+    }
+    assert!(done > 1000 && shared > 100 && kept > 100 && one_pair_shared > 50,
+        "levels {done}, with a shared atom {shared}, kept {kept}, of one pair a node and merged {one_pair_shared}");
+}
+
+/// A level of one node whose left child was not rewritten, written run by run
+/// of its left side, against the owner-set rule written out: the same cell;
+/// and a node whose runs are long is left to the rows.
+#[test]
+fn a_level_of_one_node_is_written_alike_run_by_run() {
+    let mut rng = Lcg::new(0x51_6e1e);
+    let eng = Engine::new();
+    let (mut by_left, mut declined) = (0usize, 0usize);
+    for round in 0..24u32 {
+        let num_vars = 6 + round % 9;
+        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            let f = compile_clauses(&vtree, &clauses);
+            if f.is_zero() { continue; }
+            for &parent in vtree.bottomup_slice() {
+                let level = &f.levels[parent.idx()];
+                if vtree.node(parent).is_leaf() || level.nodes().len() != 1 { continue; }
+                let right_child = vtree.children(parent).1;
+                let keys = if vtree.node(right_child).is_leaf() { LEAF_WIDTH } else { f.levels[right_child.idx()].nodes().len() };
+                for cells in [1, 3, 80, 400] {
+                    let right = if rng.coin() {
+                        one_cell_remap(&eng, &mut rng, keys, cells)
+                    } else {
+                        random_remap(&eng, &mut rng, keys, cells)
+                    };
+                    let expected = regroup_by_definition(level, None, Some(&right));
+                    let mut rewritten = f.clone();
+                    let mut work = Rewrite { eng: &eng, gate: eng.limits().gate(), emitted: 0 };
+                    if regroup_single_by_left(&mut work, &mut rewritten, parent, &right).unwrap() {
+                        let got = written(&rewritten, level, parent, None);
+                        assert_eq!(got, expected, "{shape}, level {parent:?}, {cells} cells");
+                        by_left += 1;
+                    } else {
+                        let pairs = level.pairs_vec(0);
+                        let runs = pairs.chunk_by(|a, b| a.left == b.left).count();
+                        assert!(pairs.len() > runs * BY_LEFT_PAIRS_PER_RUN || !pairs.is_sorted_by_key(|pair| pair.left),
+                            "{shape}, level {parent:?}: declined {} pairs in {runs} runs", pairs.len());
+                        declined += 1;
+                    }
+                }
+            }
+        }
+    }
+    assert!(by_left > 100 && declined > 0, "written run by run {by_left}, declined {declined}");
 }
 
 /// [`random_remap`] with about one key in six mapped to no cell.
@@ -575,13 +708,15 @@ fn a_map_inverted_lists_the_keys_holding_each_item() {
 }
 
 /// The radix sort against the standard stable sort, across lengths on both
-/// sides of the insertion-sort cutoff and key widths from none to all 32 bits.
+/// sides of the insertion-sort cutoff and of the length that takes wider
+/// digits, and key widths from none to all 32 bits.
 #[test]
 fn radix_sort_is_a_stable_sort_by_key() {
     let mut rng = Lcg::new(7);
     let eng = Engine::new();
     let mut work = Rewrite { eng: &eng, gate: eng.limits().gate(), emitted: 0 };
-    for len in [0usize, 1, 2, RADIX_MIN - 1, RADIX_MIN, 1000, 5000] {
+    let wide = 1usize << crate::sort::RADIX_LARGE_BITS;
+    for len in [0usize, 1, 2, RADIX_MIN - 1, RADIX_MIN, 1000, 5000, wide - 1, wide + 3] {
         for bits in [0u32, 1, 5, 11, 12, 23, 32] {
             let mask = if bits == 32 { u32::MAX } else { (1u32 << bits) - 1 };
             let mut items: Vec<(u32, u32)> = (0..len as u32)
