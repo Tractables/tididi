@@ -13,9 +13,10 @@
 //! - sparse, when the level's grid, or a child grid the dense build would
 //!   have to materialize, is over the sparse gate's `min_grid` and the live
 //!   products are sparse in it: scatter, filter and dedup over live products
-//!   only, in the engine-owned `sparse::SparseWorkspace`. A level with
-//!   exactly one marginal child that is not a target takes the sparse-marginal
-//!   variant;
+//!   only, in the engine-owned `sparse::SparseWorkspace`, or one `f` node at
+//!   a time by lookups where those are priced linear in the level's pairs
+//!   (`sparse::probe`). A level with exactly one marginal child that is not a
+//!   target takes the sparse-marginal variant;
 //! - streaming, when the level is a streaming marginalization target: each
 //!   cell folds to a value and no product node is built;
 //! - dense, otherwise: the full grid is walked and written to the grid arena,
@@ -215,7 +216,7 @@ fn build_level(
             Route::Sparse => match sums_root(sweep, run, shape, &plan) {
                 Some(side) => sweep.summed = sum_sparse_root(eng, run, f, g, shape, vtree, side)?,
                 None => {
-                    run_sparse_level(eng, run, f, g, shape, &plan)?;
+                    run_sparse_level(eng, run, f, g, shape, &plan, sweep.filter.is_some())?;
                     run.products.note_sparse_built(t.idx(), shape.f.here, shape.g.here);
                 }
             },

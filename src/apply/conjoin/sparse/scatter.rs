@@ -264,7 +264,7 @@ fn build_inner_index<const SWAPPED: bool>(
 /// row by row, the identity fill, the sparse emit by f parent, the
 /// sparse-marginal rows in order. A list that is not leaves entries
 /// unconsumed, which the check at the end catches.
-fn bucket_offsets(
+pub(super) fn bucket_offsets(
     lim: &crate::limits::Limits,
     list: &[ProductEntry],
     width: usize,
@@ -1190,7 +1190,9 @@ fn candidate_pair(entry: &ParEntry) -> ChildPair {
 /// order a stable sort of the candidates by product would give. `p2_map`
 /// maps a g parent to its product while the parent is emitted and is
 /// restored to `NO_PRODUCT` before returning; a bail leaves entries behind,
-/// which `WsGuard` repairs.
+/// which `WsGuard` repairs. A parent with one candidate, as each node of an
+/// operand that holds one node per value of a shared block has at that
+/// block's levels, skips the map.
 ///
 /// A parent whose candidates all name one g parent, or all distinct ones,
 /// has its pairs in node order already, and they are copied into `level` as
@@ -1202,7 +1204,7 @@ fn candidate_pair(entry: &ParEntry) -> ChildPair {
 /// of an operand, or of the output so far, is marginal, so pair lists are
 /// multisets feeding a sum. Read only by the debug duplicate check below.
 #[inline]
-fn emit_parent(
+pub(super) fn emit_parent(
     eng: &Engine,
     ws: &mut SparseWorkspace,
     level: &mut TddLevel,
@@ -1217,6 +1219,16 @@ fn emit_parent(
     }
     let SparseWorkspace { p2_map, pair_counts, single_pairs, .. } = ws;
     let first = pl_output.len();
+    if let [entry] = candidates {
+        // One candidate is one product of one pair: no `g` parent to group
+        // by, so the map is neither read nor written.
+        lim.try_push(pl_output, ProductEntry {
+            f_idx: FNodeIdx(p1 as u32),
+            g_idx: GNodeIdx(entry.g_parent),
+            prod_idx: ProductNodeIdx(first as u32),
+        })?;
+        return emit_single_pair(eng, level, candidate_pair(entry));
+    }
     pair_counts.clear();
     for entry in candidates {
         let slot = p2_map[entry.g_parent as usize];

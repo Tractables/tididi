@@ -36,6 +36,7 @@ pub(super) fn run_sparse_level(
     g: &mut Tdd,
     shape: LevelShape,
     plan: &MarginalPlan,
+    filtered: bool,
 ) -> Result<(), OperationError> {
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
@@ -49,11 +50,17 @@ pub(super) fn run_sparse_level(
         run.ensure_product_list_for_child(eng, ri, fw.right, gw.right)?;
     }
 
+    let identity = Sides {
+        left: Operands { f: run.f_identity[li], g: run.g_identity[li] },
+        right: Operands { f: run.f_identity[ri], g: run.g_identity[ri] },
+    };
+    let (lists, cells) = run.products.lists_with_cells(li, ri, ti, Sides { left: gw.left, right: gw.right }, identity, filtered);
     apply_sparse_level(
         eng,
         shape, f, g,
         run.levels,
-        run.products.lists(li, ri, ti),
+        lists,
+        cells,
         run.thresholds,
         passthrough,
     )?;

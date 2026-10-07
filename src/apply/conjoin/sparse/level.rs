@@ -211,6 +211,7 @@ pub(crate) fn apply_sparse_level(
     g: &Tdd,
     levels: &mut [TddLevel],
     lists: ProductLists<'_>,
+    cells: Sides<CellLookup<'_>>,
     thresholds: SparseThresholds,
     passthrough: Option<Passthrough>,
 ) -> Result<(), OperationError> {
@@ -258,6 +259,27 @@ pub(crate) fn apply_sparse_level(
         debug_check_flushed_level(pl_output, &levels[t_idx]);
         guard.scatter_clean();
         return Ok(());
+    }
+
+    // A level of many products, each found by a lookup or two, is walked by
+    // `f` node instead of scattered (`probe_level`). It joins both children,
+    // so a pass-through side, and a leaf, which the leaf arm already reads by
+    // lookup, stay with the scatter; and its pair table holds a `g` pair once,
+    // so it is withheld where pair lists may be multisets.
+    let joined = passthrough.is_none()
+        && !f.vtree.node(shape.left).is_leaf()
+        && !f.vtree.node(shape.right).is_leaf();
+    if joined {
+        let multisets = f.levels.iter().any(|l| l.is_marginal())
+            || g.levels.iter().any(|l| l.is_marginal())
+            || levels.iter().any(|l| l.is_marginal());
+        let level = &mut levels[t_idx];
+        if probe_level(eng, ws, f, g, shape, level, pl, pl_output, cells, !multisets, duplicates_legal)? {
+            #[cfg(debug_assertions)]
+            debug_check_flushed_level(pl_output, &levels[t_idx]);
+            guard.scatter_clean();
+            return Ok(());
+        }
     }
 
     let flat = scatter_level(eng, ws, f, g, shape, pl, thresholds, None, passthrough)?;

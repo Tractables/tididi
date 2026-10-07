@@ -11,6 +11,7 @@ mod marginal_subsumed;
 mod one_sided;
 mod owed;
 mod relabel;
+mod probe;
 mod restoring;
 mod self_conjunction;
 
@@ -220,4 +221,72 @@ pub(super) fn no_relabel<R>(f: impl FnOnce() -> R) -> R {
 /// rebuilt.
 pub(super) fn relabel_census() -> [u64; 2] {
     RELABELLED.with(std::cell::Cell::get)
+}
+
+thread_local! {
+    /// Whether the probe join is closed on this thread ([`no_probe`]).
+    static NO_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Whether the probe join takes every level it is admissible on, whatever
+    /// it prices at ([`always_probe`]).
+    static ALWAYS_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The levels on this thread each probe built: by left, by right, by
+    /// pair ([`probe_census`]).
+    static PROBED: std::cell::Cell<[u64; 3]> = const { std::cell::Cell::new([0; 3]) };
+    /// Whether the probe by pair hashes `g`'s pairs however few cells a
+    /// dense map of them would take ([`hashed_pairs`]).
+    static HASHED_PAIRS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(super) fn pairs_hashed_forced() -> bool {
+    HASHED_PAIRS.with(std::cell::Cell::get)
+}
+
+/// Run `f` with the probe by pair hashing `g`'s pairs on every level.
+pub(super) fn hashed_pairs<R>(f: impl FnOnce() -> R) -> R {
+    with_flag(&HASHED_PAIRS, f)
+}
+
+pub(super) fn probe_forced_off() -> bool {
+    NO_PROBE.with(std::cell::Cell::get)
+}
+
+pub(super) fn probe_forced() -> bool {
+    ALWAYS_PROBE.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_probe(probe: super::sparse::probe::Probe) {
+    use super::sparse::probe::Probe;
+    PROBED.with(|c| {
+        let mut census = c.get();
+        census[match probe { Probe::Left => 0, Probe::Right => 1, Probe::Pairs => 2 }] += 1;
+        c.set(census);
+    });
+}
+
+/// Run `f` with `flag` set on this thread, restored on the way out.
+fn with_flag<R>(flag: &'static std::thread::LocalKey<std::cell::Cell<bool>>, f: impl FnOnce() -> R) -> R {
+    struct Reset(&'static std::thread::LocalKey<std::cell::Cell<bool>>, bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            self.0.with(|c| c.set(self.1));
+        }
+    }
+    let _reset = Reset(flag, flag.with(|c| c.replace(true)));
+    f()
+}
+
+/// Run `f` with the probe join closed, every level it would take going to
+/// the scatter: the oracle it is checked against.
+pub(super) fn no_probe<R>(f: impl FnOnce() -> R) -> R {
+    with_flag(&NO_PROBE, f)
+}
+
+/// Run `f` with the probe join taking every level it is admissible on.
+pub(super) fn always_probe<R>(f: impl FnOnce() -> R) -> R {
+    with_flag(&ALWAYS_PROBE, f)
+}
+
+/// The levels on this thread so far each probe built.
+pub(super) fn probe_census() -> [u64; 3] {
+    PROBED.with(std::cell::Cell::get)
 }

@@ -89,6 +89,9 @@ pub(crate) struct SparseWorkspace {
     // ── The emit: one f parent's products into output nodes ──
     pub(super) pair_counts: Vec<u32>,               // per-product pair count, then write cursors
     pub(super) single_pairs: Vec<ChildPair>,        // the pair of each one-pair product, stored inline
+
+    // ── The probe join (`probe_level`) ──
+    pub(super) probe: super::probe::ProbeBuffers,
 }
 
 /// One entry of a reverse index: a parent of the keyed child, and the child it
@@ -448,6 +451,7 @@ impl Buffers for SparseWorkspace {
         visit(&mut self.est_counts);
         visit(&mut self.pair_counts);
         visit(&mut self.single_pairs);
+        self.probe.buffers(visit);
     }
 }
 

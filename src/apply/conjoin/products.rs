@@ -8,6 +8,8 @@ use crate::{Engine, OperationError};
 use crate::diagram::TddLevel;
 use super::grid_arena::GridArena;
 use super::setup::Operands;
+use super::sparse::CellLookup;
+use crate::diagram::Sides;
 
 /// Index of a node in `f.levels[t].nodes`. Distinct from `GNodeIdx` and
 /// `ProductNodeIdx` so that construction-site swaps are caught at compile time.
@@ -252,6 +254,47 @@ impl Products {
         let [left, right, out] = self.product_lists.get_disjoint_mut([left, right, out])
             .expect("a level and its children are distinct");
         ProductLists { left, right, out }
+    }
+
+    /// [`Self::lists`], with each child's cells read one at a time where
+    /// the child allows it ([`CellLookup`]): by arithmetic where an operand
+    /// is constant-true over it or it is complete, from its grid, and
+    /// otherwise only through its list. A sweep under a filter reads no
+    /// identity: the filter may have dropped products the identity names,
+    /// and its lists and grids are what is left.
+    pub(super) fn lists_with_cells(
+        &mut self,
+        left: usize, right: usize, out: usize,
+        g_widths: Sides<usize>,
+        identity: Sides<Operands<bool>>,
+        filtered: bool,
+    ) -> (ProductLists<'_>, Sides<CellLookup<'_>>) {
+        let cells = |c: usize, g_width: usize, id: Operands<bool>| {
+            if filtered {
+                match self.arena.materialized(c) {
+                    Some(base) => CellLookup::Grid { cells: &self.arena.slab()[base.idx()..], g_width },
+                    None => CellLookup::List,
+                }
+            } else if id.g {
+                CellLookup::GIdentity
+            } else if id.f {
+                CellLookup::FIdentity
+            } else if self.complete[c] {
+                CellLookup::Complete { g_width }
+            } else if let Some(base) = self.arena.materialized(c) {
+                let cells = &self.arena.slab()[base.idx()..];
+                CellLookup::Grid { cells, g_width }
+            } else {
+                CellLookup::List
+            }
+        };
+        let lookups = Sides {
+            left: cells(left, g_widths.left, identity.left),
+            right: cells(right, g_widths.right, identity.right),
+        };
+        let [left, right, out] = self.product_lists.get_disjoint_mut([left, right, out])
+            .expect("a level and its children are distinct");
+        (ProductLists { left, right, out }, lookups)
     }
 
     pub(super) fn row_buffers(&mut self, t: usize) -> (&mut [u32], &mut Vec<ProductEntry>) {
