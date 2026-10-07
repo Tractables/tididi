@@ -845,17 +845,14 @@ fn reserve_complete_level(
     }
     let charged = level.pairs.capacity();
     /// Pairs in all, nodes with pairs, and nodes with one pair: an implicit
-    /// level's off its description, every node of which has its `k` pairs.
-    /// A level's counts fit `u64`: fewer than `2^32` nodes of fewer than
-    /// `2^32` pairs each.
+    /// level's off its description, every node of which has its `k` pairs,
+    /// and a stored one's off its nodes ([`TddLevel::pair_census`]).
     fn census(level: &TddLevel) -> (u128, u128, u128) {
         if let Some(d) = level.implicit() {
             let (nodes, k) = (d.nodes() as u128, d.pairs_per_node() as u128);
             return (nodes * k, if k > 0 { nodes } else { 0 }, if k == 1 { nodes } else { 0 });
         }
-        let (pairs, live, single) = level.pair_counts().fold((0u64, 0u64, 0u64), |(pairs, live, single), k| {
-            (pairs + k as u64, live + u64::from(k > 0), single + u64::from(k == 1))
-        });
+        let (pairs, live, single) = level.pair_census();
         (u128::from(pairs), u128::from(live), u128::from(single))
     }
     let (f_pairs, f_live, f_single) = census(f_level);

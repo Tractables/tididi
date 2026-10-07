@@ -282,8 +282,9 @@ impl EncodedNode {
 
     /// Decode the two words into the case they encode.
     ///
-    /// This is the only reader of the bit layout; everything else matches on
-    /// what comes back, so a new case has to be handled at every site.
+    /// This and [`held_count`](Self::held_count) are the only readers of the
+    /// bit layout; everything else matches on what comes back, so a new case
+    /// has to be handled at every site.
     pub(crate) fn kind(&self) -> NodeKind {
         if self.a & MULTI_BIT == 0 {
             NodeKind::Inline(ChildPair::new(
@@ -295,6 +296,15 @@ impl EncodedNode {
         } else {
             NodeKind::Multi { start: self.a & !MULTI_BIT, len: self.b }
         }
+    }
+
+    /// The node's pair count as its words hold it, read without a branch,
+    /// and whether the node is ranged: a ranged node's count is in the
+    /// level's side table, and the count read here is its sentinel.
+    #[inline(always)]
+    pub(crate) fn held_count(&self) -> (u32, bool) {
+        let multi = self.a & MULTI_BIT != 0;
+        (if multi { self.b } else { 1 }, multi & (self.b == RANGE_SENTINEL))
     }
 }
 

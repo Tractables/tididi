@@ -362,9 +362,39 @@ impl TddLevel {
         (0..self.nodes.len()).map(|i| self.pair_count_at(i))
     }
 
+    /// The pairs of this level's nodes, the nodes with pairs, and the nodes
+    /// with one pair; nothing on a marginal level, which holds no nodes.
+    ///
+    /// Each node's count is read off its words without a branch
+    /// ([`EncodedNode::held_count`]), and a ranged node's, read there as
+    /// one pair, is put right from the side table after the pass, on a
+    /// level that has one. The counts fit `u64`: fewer than `2^32` nodes of
+    /// fewer than `2^32` pairs each.
+    pub(crate) fn pair_census(&self) -> (u64, u64, u64) {
+        let (mut pairs, mut live, mut single, mut ranged) = (0u64, 0u64, 0u64, false);
+        for node in &self.nodes {
+            let (k, is_ranged) = node.held_count();
+            pairs += u64::from(k);
+            live += u64::from(k != 0);
+            single += u64::from(k == 1);
+            ranged |= is_ranged;
+        }
+        if ranged {
+            for node in &self.nodes {
+                if let NodeKind::MultiRanged(e) = node.kind() {
+                    let k = self.ranges[e as usize].len;
+                    pairs = pairs - 1 + k;
+                    live = live - 1 + u64::from(k != 0);
+                    single = single - 1 + u64::from(k == 1);
+                }
+            }
+        }
+        (pairs, live, single)
+    }
+
     /// The pairs held by this level's live nodes.
     pub(crate) fn live_pairs(&self) -> usize {
-        self.pair_counts().sum()
+        self.pair_census().0 as usize
     }
 
     /// Exchange the two sides of every pair: the level of the same functions
