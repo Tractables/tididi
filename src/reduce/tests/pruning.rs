@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::reduce::prune::{PruneScope, below_root_walk_applies, prune_unreachable, settle_loose};
+use crate::reduce::prune::{PruneScope, Select, below_root_walk_applies, prune_unreachable, settle_loose};
 
 use crate::test_helpers::compile_clauses;
 use crate::vtree::Vtree;
@@ -333,4 +333,36 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     assert!(loose > 300, "expected levels holding an unnamed node, got {loose}");
     assert!(cleared > 300, "expected levels an operand listed and the result does not, got {cleared}");
     assert!(settled_away > 400, "expected listed levels the prune settles away, got {settled_away}");
+}
+
+/// The rank select gives the marked slot of every rank, read in rising
+/// order, again, and out of order, over blocks of no marks, every mark and
+/// random marks, and nothing past the last mark.
+#[test]
+fn the_rank_select_reads_every_marked_slot() {
+    let mut x = 0x9e37_79b9_7f4a_7c15u64;
+    let mut next = || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    let mut blocks = vec![vec![0u64; 3], vec![u64::MAX; 3], vec![1u64 << 63, 0, 1]];
+    for _ in 0..20 {
+        let words = 1 + (next() % 5) as usize;
+        blocks.push((0..words).map(|_| next() & next()).collect());
+    }
+    for block in &blocks {
+        let slots: Vec<usize> = (0..block.len() * 64).filter(|&s| block[s >> 6] >> (s & 63) & 1 != 0).collect();
+        let mut select = Select::new(block);
+        for (j, &s) in slots.iter().enumerate() {
+            assert_eq!(select.nth(j), Some(s));
+            assert_eq!(select.nth(j), Some(s), "the same rank again");
+        }
+        assert_eq!(select.nth(slots.len()), None);
+        for _ in 0..50 {
+            let j = (next() % (slots.len() as u64 + 2)) as usize;
+            assert_eq!(select.nth(j), slots.get(j).copied(), "rank {j} out of order");
+        }
+    }
 }

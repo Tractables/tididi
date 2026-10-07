@@ -126,36 +126,43 @@ fn rank(block: &[u64], s: usize) -> u32 {
 }
 
 /// The marked slots of a block of marks by their rank, read by a cursor
-/// that moves forward a word at a time and starts over when asked for a
-/// rank before it: rising ranks cost a pass over the block in all.
-struct Select<'a> {
+/// that moves forward a word at a time, and within its word a mark at a
+/// time, and starts over when asked for a rank before it: rising ranks
+/// cost a pass over the block and a step per mark in all.
+pub(super) struct Select<'a> {
     block: &'a [u64],
     /// The word the cursor is at, and the marked slots before it.
     word: usize,
     before: usize,
+    /// The word's marks the cursor has not passed, and how many it has.
+    left: u64,
+    passed: usize,
 }
 
 impl<'a> Select<'a> {
-    fn new(block: &'a [u64]) -> Select<'a> {
-        Select { block, word: 0, before: 0 }
+    pub(super) fn new(block: &'a [u64]) -> Select<'a> {
+        Select { block, word: 0, before: 0, left: block.first().copied().unwrap_or(0), passed: 0 }
     }
 
     /// The marked slot of rank `j`, if there are more than `j`.
-    fn nth(&mut self, j: usize) -> Option<usize> {
+    pub(super) fn nth(&mut self, j: usize) -> Option<usize> {
         if j < self.before {
-            (self.word, self.before) = (0, 0);
+            *self = Select::new(self.block);
+        } else if j < self.before + self.passed {
+            (self.left, self.passed) = (self.block[self.word], 0);
         }
         while let Some(&w) = self.block.get(self.word) {
             let marked = w.count_ones() as usize;
             if j < self.before + marked {
-                let mut w = w;
-                for _ in 0..j - self.before {
-                    w &= w - 1;
+                while self.before + self.passed < j {
+                    self.left &= self.left - 1;
+                    self.passed += 1;
                 }
-                return Some(self.word * 64 + w.trailing_zeros() as usize);
+                return Some(self.word * 64 + self.left.trailing_zeros() as usize);
             }
             self.before += marked;
             self.word += 1;
+            (self.left, self.passed) = (self.block.get(self.word).copied().unwrap_or(0), 0);
         }
         None
     }
