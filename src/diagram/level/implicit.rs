@@ -831,6 +831,14 @@ impl PairArena {
         }
     }
 
+    /// The length of the vector of stored pairs: a stored arena's length,
+    /// and zero on an implicit one, whose vector is empty.
+    #[inline]
+    pub(crate) fn stored_vec_len(&self) -> usize {
+        debug_assert!(self.described.is_none() || self.stored.is_empty(), "an implicit arena stores no pairs");
+        self.stored.len()
+    }
+
     /// The length of a stored arena, which a level being built extends.
     /// Not valid on an implicit arena (a debug build panics).
     #[inline]
@@ -1381,8 +1389,9 @@ impl TddLevel {
     /// operation's boundary, fits none.
     #[inline]
     pub(crate) fn closes_by_fit(&self) -> bool {
-        self.pairs.implicit().is_none()
-            && (floor()..1 << 31).contains(&self.pairs.len())
+        // An implicit arena's vector is empty, below any floor: the one test
+        // that most levels, small or implicit, take.
+        (floor()..1 << 31).contains(&self.pairs.stored_vec_len())
             && !stored_levels_forced()
             && matches!(self.state, LevelState::Structural)
             && !self.nodes.is_empty()
