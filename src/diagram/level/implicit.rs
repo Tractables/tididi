@@ -101,9 +101,9 @@ pub struct Digit {
 /// it first.
 ///
 /// Beside its digits a description keeps what the places of its fastest
-/// place digits add to the slots, at most [`RUN_PAIRS`] of them: a node's
+/// place digits add to the slots, at most `RUN_PAIRS` of them: a node's
 /// pairs are read in runs of these, each run's first pair stepped on from
-/// the last run's ([`Places`]).
+/// the last run's.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImplicitLevel {
     nodes: usize,
