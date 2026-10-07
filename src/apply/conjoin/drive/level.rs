@@ -551,6 +551,8 @@ fn materialize_children_and_grid(
 /// A streaming route folds counts and writes neither arena, so it reserves
 /// nothing and arms no growth mode. Called exactly once per level on every
 /// route, so a previous level's near-cap decision cannot leak into this one.
+/// Inlined at both of [`build_level_dense`]'s sites, each a level's one call.
+#[inline(always)]
 pub(super) fn open_level_arenas(
     lim: &crate::limits::Limits,
     f: &Tdd,
@@ -834,6 +836,9 @@ fn plain_lookups(route: Route, complete: Sides<bool>) -> PlainLookups {
 /// Under the bounded-growth mode the arena grows as it would on the grid
 /// route, and `usize::MAX` says so. The reservations are charged to the
 /// budget like any other and refuse with [`OperationError::OverBudget`].
+/// Inlined at both of [`build_level_dense`]'s sites, as its count of each
+/// operand level is.
+#[inline(always)]
 fn reserve_complete_level(
     lim: &crate::limits::Limits,
     f_level: &TddLevel,
@@ -847,6 +852,7 @@ fn reserve_complete_level(
     /// Pairs in all, nodes with pairs, and nodes with one pair: an implicit
     /// level's off its description, every node of which has its `k` pairs,
     /// and a stored one's off its nodes ([`TddLevel::pair_census`]).
+    #[inline(always)]
     fn census(level: &TddLevel) -> (u128, u128, u128) {
         if let Some(d) = level.implicit() {
             let (nodes, k) = (d.nodes() as u128, d.pairs_per_node() as u128);
@@ -924,87 +930,90 @@ pub(super) fn build_level_dense(
     // row loop does on the written pairs: the capacity the meter was charged
     // for. The planned route runs only with nothing bounding memory, so the
     // column table built after the arenas changes nothing either reads.
+    // Both routes end in the one per-level tail below the block.
     let mut opened = None;
-    if let Some(product) = composed {
-        let level = &mut run.levels[ti];
-        open_level_arenas(lim, f, g, shape, level, route)?;
-        let charged = reserve_complete_level(lim, f.level(t), g.level(t), level)?;
-        note_lookups(PlainLookups::Complete { charged });
-        let (work, meter, doublings) = super::compose::charges((fw.here, gw.here), &product, charged);
-        if charged != usize::MAX && lim.cannot_stop_within(work, meter as u64) {
-            let cells = fw.here * gw.here;
-            let slab = &mut run.products.arena.slab_mut()[output_grid_base.idx()..output_grid_base.idx() + cells];
-            super::compose::write(eng, product, &mut run.levels[ti], slab, work, (meter, doublings))?;
-            finalize_level(eng, &mut stream_state, shape, output_grid_base, passthrough, run, sweep);
-            return Ok(());
-        }
-        opened = Some(charged);
-    }
-
-    // `t` and its two vtree children are three distinct tree nodes, so these
-    // are three disjoint level slots: the streaming row loops read the child
-    // columns in place while the output level is exclusively borrowed. The
-    // split's borrow must end before the per-level tail retakes `levels`.
-    let [level, left_level, right_level] = run.levels
-        .get_disjoint_mut([ti, li, ri])
-        .expect("a vtree node and its two children are distinct level indices");
-    let (left_level, right_level) = (&*left_level, &*right_level);
-
-    let right_cols = RightColumns::build(eng, g.level(t), gw.here, sides.left.view, sides.right.view, grouped);
-    let masks = masked.then_some(&*run.prefilter_masks);
-    let cell_ctx = build_cell_ctx(shape, &plan, output_grid_base.idx(), bases, masks, right_cols.as_ref());
-
-    match opened {
-        Some(charged) => lookups = PlainLookups::Complete { charged },
-        None => {
+    'routes: {
+        if let Some(product) = composed {
+            let level = &mut run.levels[ti];
             open_level_arenas(lim, f, g, shape, level, route)?;
-            if let PlainLookups::Complete { charged } = &mut lookups {
-                *charged = reserve_complete_level(lim, f.level(t), g.level(t), level)?;
+            let charged = reserve_complete_level(lim, f.level(t), g.level(t), level)?;
+            note_lookups(PlainLookups::Complete { charged });
+            let (work, meter, doublings) = super::compose::charges((fw.here, gw.here), &product, charged);
+            if charged != usize::MAX && lim.cannot_stop_within(work, meter as u64) {
+                let cells = fw.here * gw.here;
+                let slab = &mut run.products.arena.slab_mut()[output_grid_base.idx()..output_grid_base.idx() + cells];
+                super::compose::write(eng, product, &mut run.levels[ti], slab, work, (meter, doublings))?;
+                break 'routes;
             }
-            note_lookups(lookups);
+            opened = Some(charged);
         }
-    }
 
-    if use_sparse_marginal {
-        return finish_sparse_marginal_level(
-            eng, shape,
+        // `t` and its two vtree children are three distinct tree nodes, so these
+        // are three disjoint level slots: the streaming row loops read the child
+        // columns in place while the output level is exclusively borrowed. The
+        // split's borrow ends with the block, before the per-level tail retakes
+        // `levels`.
+        let [level, left_level, right_level] = run.levels
+            .get_disjoint_mut([ti, li, ri])
+            .expect("a vtree node and its two children are distinct level indices");
+        let (left_level, right_level) = (&*left_level, &*right_level);
+
+        let right_cols = RightColumns::build(eng, g.level(t), gw.here, sides.left.view, sides.right.view, grouped);
+        let masks = masked.then_some(&*run.prefilter_masks);
+        let cell_ctx = build_cell_ctx(shape, &plan, output_grid_base.idx(), bases, masks, right_cols.as_ref());
+
+        match opened {
+            Some(charged) => lookups = PlainLookups::Complete { charged },
+            None => {
+                open_level_arenas(lim, f, g, shape, level, route)?;
+                if let PlainLookups::Complete { charged } = &mut lookups {
+                    *charged = reserve_complete_level(lim, f.level(t), g.level(t), level)?;
+                }
+                note_lookups(lookups);
+            }
+        }
+
+        if use_sparse_marginal {
+            return finish_sparse_marginal_level(
+                eng, shape,
+                RowLoop {
+                    f_level: f.level(t), g_level: g.level(t),
+                    children: Sides { left: left_level, right: right_level },
+                    ctx: &cell_ctx, f_width: fw.here,
+                },
+                output_grid_base, level,
+                SparseMargScratch {
+                    f_pairs: run.f_pairs_scratch,
+                    g_pairs: run.g_pairs_scratch,
+                    products: run.products,
+                },
+                passthrough,
+            );
+        }
+
+        run_row_loop(
+            eng, route, lookups,
             RowLoop {
                 f_level: f.level(t), g_level: g.level(t),
                 children: Sides { left: left_level, right: right_level },
                 ctx: &cell_ctx, f_width: fw.here,
             },
-            output_grid_base, level,
-            SparseMargScratch {
+            RowScratch {
                 f_pairs: run.f_pairs_scratch,
                 g_pairs: run.g_pairs_scratch,
-                products: run.products,
+                node_idx: run.products.arena.slab_mut(),
             },
-            passthrough,
-        );
+            level,
+            StreamEnv {
+                left_idx: li,
+                right_idx: ri,
+                vtree: sweep.vtree,
+                cache: run.stream_cache,
+                ws: sweep.ws.as_deref(),
+            },
+            &mut stream_state,
+        )?;
     }
-
-    run_row_loop(
-        eng, route, lookups,
-        RowLoop {
-            f_level: f.level(t), g_level: g.level(t),
-            children: Sides { left: left_level, right: right_level },
-            ctx: &cell_ctx, f_width: fw.here,
-        },
-        RowScratch {
-            f_pairs: run.f_pairs_scratch,
-            g_pairs: run.g_pairs_scratch,
-            node_idx: run.products.arena.slab_mut(),
-        },
-        level,
-        StreamEnv {
-            left_idx: li,
-            right_idx: ri,
-            vtree: sweep.vtree,
-            cache: run.stream_cache,
-            ws: sweep.ws.as_deref(),
-        },
-        &mut stream_state,
-    )?;
 
     // Per-level tail: stream commit, live_counts, grid tag, shrink,
     // pass-through flags. See `finalize_level`.
