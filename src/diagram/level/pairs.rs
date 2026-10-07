@@ -396,20 +396,19 @@ impl TddLevel {
     /// Each node's count is read off its words without a branch
     /// ([`EncodedNode::held_count`]), and a ranged node's, read there as
     /// one pair, is put right from the side table after the pass, on a
-    /// level that has one. The counts fit `u64`: fewer than `2^32` nodes of
+    /// level that has one: the pass itself does not look for them. The counts fit `u64`: fewer than `2^32` nodes of
     /// fewer than `2^32` pairs each. Inlined, so that a caller that reads
     /// only the pairs counts nothing else.
     #[inline(always)]
     pub(crate) fn pair_census(&self) -> (u64, u64, u64) {
-        let (mut pairs, mut live, mut single, mut ranged) = (0u64, 0u64, 0u64, false);
+        let (mut pairs, mut live, mut single) = (0u64, 0u64, 0u64);
         for node in &self.nodes {
-            let (k, is_ranged) = node.held_count();
+            let k = node.held_count();
             pairs += u64::from(k);
             live += u64::from(k != 0);
             single += u64::from(k == 1);
-            ranged |= is_ranged;
         }
-        if ranged {
+        if !self.ranges.is_empty() {
             for node in &self.nodes {
                 if let NodeKind::MultiRanged(e) = node.kind() {
                     let k = self.ranges[e as usize].len;

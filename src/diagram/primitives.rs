@@ -298,13 +298,12 @@ impl EncodedNode {
         }
     }
 
-    /// The node's pair count as its words hold it, read without a branch,
-    /// and whether the node is ranged: a ranged node's count is in the
-    /// level's side table, and the count read here is its sentinel.
+    /// The node's pair count as its words hold it, read without a branch:
+    /// a ranged node's count is in the level's side table, and the count
+    /// read here is its sentinel, one.
     #[inline(always)]
-    pub(crate) fn held_count(&self) -> (u32, bool) {
-        let multi = self.a & MULTI_BIT != 0;
-        (if multi { self.b } else { 1 }, multi & (self.b == RANGE_SENTINEL))
+    pub(crate) fn held_count(&self) -> u32 {
+        if self.a & MULTI_BIT != 0 { self.b } else { 1 }
     }
 }
 
