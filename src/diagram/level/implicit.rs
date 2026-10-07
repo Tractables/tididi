@@ -633,15 +633,24 @@ fn read_digits(n: usize, mut value: impl FnMut(usize) -> Option<(i64, i64)>) -> 
 /// pairs stand for those of the nodes it dropped, which a stored arena keeps
 /// until a sweep reclaims them, so that the length, the capacity and the
 /// sweeps are those of the stored arena. Nothing reads those slots.
-#[derive(Debug, Default)]
-pub(crate) struct PairArena {
-    vec: Vec<ChildPair>,
-    described: Option<Box<Described>>,
+///
+/// The description is boxed: an arena takes the room of a vector of pairs.
+#[derive(Debug)]
+pub(crate) enum PairArena {
+    Stored(Vec<ChildPair>),
+    Described(Box<Described>),
+}
+
+impl Default for PairArena {
+    #[inline]
+    fn default() -> Self {
+        PairArena::Stored(Vec::new())
+    }
 }
 
 /// What an implicit arena holds in place of its pairs.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Described {
+pub(crate) struct Described {
     level: ImplicitLevel,
     /// The arena's length: the described pairs, then the slots of pairs a
     /// prune dropped.
@@ -654,9 +663,9 @@ impl PairArena {
     /// The arena's length, stored or described.
     #[inline]
     pub(crate) fn len(&self) -> usize {
-        match &self.described {
-            None => self.vec.len(),
-            Some(d) => d.len,
+        match self {
+            PairArena::Stored(vec) => vec.len(),
+            PairArena::Described(d) => d.len,
         }
     }
 
@@ -671,22 +680,28 @@ impl PairArena {
     /// stored one's.
     #[inline]
     pub(crate) fn capacity(&self) -> usize {
-        match &self.described {
-            None => self.vec.capacity(),
-            Some(d) => d.capacity,
+        match self {
+            PairArena::Stored(vec) => vec.capacity(),
+            PairArena::Described(d) => d.capacity,
         }
     }
 
     /// The description of the pairs, on an implicit arena.
     #[inline]
     pub(crate) fn implicit(&self) -> Option<&ImplicitLevel> {
-        self.described.as_deref().map(|d| &d.level)
+        match self {
+            PairArena::Stored(_) => None,
+            PairArena::Described(d) => Some(&d.level),
+        }
     }
 
     /// The pairs of a stored arena; `None` on an implicit one.
     #[inline]
     pub(crate) fn stored(&self) -> Option<&[ChildPair]> {
-        self.described.is_none().then_some(self.vec.as_slice())
+        match self {
+            PairArena::Stored(vec) => Some(vec.as_slice()),
+            PairArena::Described(_) => None,
+        }
     }
 
     /// The pairs of a stored arena, to change or extend.
@@ -699,8 +714,10 @@ impl PairArena {
     #[inline]
     #[track_caller]
     pub(crate) fn stored_mut(&mut self) -> &mut Vec<ChildPair> {
-        assert!(self.described.is_none(), "an implicit level's pairs are not stored");
-        &mut self.vec
+        match self {
+            PairArena::Stored(vec) => vec,
+            PairArena::Described(_) => panic!("an implicit level's pairs are not stored"),
+        }
     }
 
     /// Hold `described`'s pairs as their description, at the capacity the
@@ -712,21 +729,19 @@ impl PairArena {
         DESCRIBED.fetch_add(len as u64, std::sync::atomic::Ordering::Relaxed);
         #[cfg(test)]
         crate::test_helpers::note_described();
-        self.vec = Vec::new();
-        self.described = Some(Box::new(Described { level: described, len, capacity }));
+        *self = PairArena::Described(Box::new(Described { level: described, len, capacity }));
     }
 
     /// Hold a stored arena's pairs as their description `described`, keeping
     /// the arena's length and capacity: the slots past the described pairs
     /// stand for the dead slots a sweep would drop.
     pub(crate) fn describe_stored(&mut self, described: ImplicitLevel) {
-        debug_assert!(self.described.is_none() && described.per_node >= 2 && described.arena_len() <= self.vec.len());
-        let (len, capacity) = (self.vec.len(), self.vec.capacity());
+        debug_assert!(self.stored().is_some() && described.per_node >= 2 && described.arena_len() <= self.len());
+        let (len, capacity) = (self.len(), self.capacity());
         DESCRIBED.fetch_add(described.arena_len() as u64, std::sync::atomic::Ordering::Relaxed);
         #[cfg(test)]
         crate::test_helpers::note_described();
-        self.vec = Vec::new();
-        self.described = Some(Box::new(Described { level: described, len, capacity }));
+        *self = PairArena::Described(Box::new(Described { level: described, len, capacity }));
     }
 
     /// Hold `described` in place of an implicit arena's description: what a
@@ -734,7 +749,7 @@ impl PairArena {
     /// arena. The arena keeps its length and capacity, the slots past the
     /// described pairs standing for those the prune dropped.
     pub(crate) fn redescribe(&mut self, described: ImplicitLevel) {
-        let d = self.described.as_mut().expect("redescribe on a stored arena");
+        let PairArena::Described(d) = self else { panic!("redescribe on a stored arena") };
         debug_assert!(described.per_node >= 2 && described.arena_len() <= d.len);
         REDESCRIBED.fetch_add(described.arena_len() as u64, std::sync::atomic::Ordering::Relaxed);
         #[cfg(test)]
@@ -744,7 +759,7 @@ impl PairArena {
 
     /// Exchange the two sides of an implicit arena's description.
     pub(crate) fn swap_described_sides(&mut self) {
-        let d = self.described.as_mut().expect("a stored arena swaps its pairs");
+        let PairArena::Described(d) = self else { panic!("a stored arena swaps its pairs") };
         d.level = d.level.swapped();
     }
 
@@ -756,9 +771,9 @@ impl PairArena {
     /// Panics on an implicit arena cut shorter than its described pairs.
     #[track_caller]
     pub(crate) fn truncate(&mut self, len: usize) {
-        match &mut self.described {
-            None => self.vec.truncate(len),
-            Some(d) => {
+        match self {
+            PairArena::Stored(vec) => vec.truncate(len),
+            PairArena::Described(d) => {
                 assert!(len >= d.level.arena_len(), "a truncation into an implicit level's pairs");
                 d.len = d.len.min(len);
             }
@@ -770,19 +785,19 @@ impl PairArena {
     /// have had.
     #[inline]
     pub(crate) fn clear(&mut self) {
-        if let Some(d) = self.described.take() {
-            self.vec = Vec::with_capacity(d.capacity);
+        match self {
+            PairArena::Stored(vec) => vec.clear(),
+            PairArena::Described(d) => *self = PairArena::Stored(Vec::with_capacity(d.capacity)),
         }
-        self.vec.clear();
     }
 
     /// Drop the capacity past the arena's length, as [`Vec::shrink_to_fit`]
     /// does.
     #[inline]
     pub(crate) fn shrink_to_fit(&mut self) {
-        match &mut self.described {
-            None => self.vec.shrink_to_fit(),
-            Some(d) => d.capacity = d.len,
+        match self {
+            PairArena::Stored(vec) => vec.shrink_to_fit(),
+            PairArena::Described(d) => d.capacity = d.len,
         }
     }
 
@@ -791,20 +806,17 @@ impl PairArena {
     /// copied at its length, an implicit one keeps its description, its
     /// length as its capacity, and has that length charged.
     pub(crate) fn try_clone_on(&self, lim: &Limits) -> Result<PairArena, OperationError> {
-        match &self.described {
-            None => {
+        match self {
+            PairArena::Stored(pairs) => {
                 let mut vec = Vec::new();
-                lim.reserve_exact(&mut vec, self.vec.len())?;
-                vec.extend_from_slice(&self.vec);
-                Ok(PairArena { vec, described: None })
+                lim.reserve_exact(&mut vec, pairs.len())?;
+                vec.extend_from_slice(pairs);
+                Ok(PairArena::Stored(vec))
             }
-            Some(d) => {
+            PairArena::Described(d) => {
                 let len = d.len;
                 lim.charge_bytes((len as u64).saturating_mul(std::mem::size_of::<ChildPair>() as u64))?;
-                Ok(PairArena {
-                    vec: Vec::new(),
-                    described: Some(Box::new(Described { level: d.level.clone(), len, capacity: len })),
-                })
+                Ok(PairArena::Described(Box::new(Described { level: d.level.clone(), len, capacity: len })))
             }
         }
     }
@@ -814,12 +826,9 @@ impl Clone for PairArena {
     /// A copy as [`Vec::clone`] makes one, at the arena's length: a stored
     /// arena's pairs, or the description with its length as its capacity.
     fn clone(&self) -> Self {
-        match &self.described {
-            None => PairArena { vec: self.vec.clone(), described: None },
-            Some(d) => PairArena {
-                vec: Vec::new(),
-                described: Some(Box::new(Described { level: d.level.clone(), len: d.len, capacity: d.len })),
-            },
+        match self {
+            PairArena::Stored(vec) => PairArena::Stored(vec.clone()),
+            PairArena::Described(d) => PairArena::Described(Box::new(Described { level: d.level.clone(), len: d.len, capacity: d.len })),
         }
     }
 }
@@ -827,7 +836,7 @@ impl Clone for PairArena {
 impl From<Vec<ChildPair>> for PairArena {
     #[inline]
     fn from(vec: Vec<ChildPair>) -> Self {
-        PairArena { vec, described: None }
+        PairArena::Stored(vec)
     }
 }
 
@@ -837,9 +846,9 @@ impl PartialEq for PairArena {
     /// its pairs as numbered can be described (see [`ImplicitLevel`]), so a
     /// stored arena and an implicit one never hold the same level's pairs.
     fn eq(&self, other: &PairArena) -> bool {
-        match (&self.described, &other.described) {
-            (None, None) => self.vec == other.vec,
-            (Some(a), Some(b)) => a.len == b.len && a.level == b.level,
+        match (self, other) {
+            (PairArena::Stored(a), PairArena::Stored(b)) => a == b,
+            (PairArena::Described(a), PairArena::Described(b)) => a.len == b.len && a.level == b.level,
             _ => false,
         }
     }
