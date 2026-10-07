@@ -369,7 +369,9 @@ impl TddLevel {
     /// ([`EncodedNode::held_count`]), and a ranged node's, read there as
     /// one pair, is put right from the side table after the pass, on a
     /// level that has one. The counts fit `u64`: fewer than `2^32` nodes of
-    /// fewer than `2^32` pairs each.
+    /// fewer than `2^32` pairs each. Inlined, so that a caller that reads
+    /// only the pairs counts nothing else.
+    #[inline(always)]
     pub(crate) fn pair_census(&self) -> (u64, u64, u64) {
         let (mut pairs, mut live, mut single, mut ranged) = (0u64, 0u64, 0u64, false);
         for node in &self.nodes {
@@ -392,9 +394,15 @@ impl TddLevel {
         (pairs, live, single)
     }
 
-    /// The pairs held by this level's live nodes.
+    /// The pairs held by this level's live nodes: an implicit level's off
+    /// its description, every node of which holds its `k` pairs, a stored
+    /// one's off its nodes ([`pair_census`](Self::pair_census)).
+    #[inline]
     pub(crate) fn live_pairs(&self) -> usize {
-        self.pair_census().0 as usize
+        match self.implicit() {
+            Some(d) => d.pairs(),
+            None => self.pair_census().0 as usize,
+        }
     }
 
     /// Exchange the two sides of every pair: the level of the same functions
