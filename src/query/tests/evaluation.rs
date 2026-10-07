@@ -436,3 +436,101 @@ fn column_evaluation_stops_refuses_and_rejects_marginal_levels() {
     assert!(matches!(eng.evaluate_columns(&marginal, &counts()), Err(OperationError::MarginalLevel(_))));
     assert_canonical(&f);
 }
+
+/// Whether `slot` of level `t` holds the assignment `x` to the variables
+/// under `t` (bit `v - 1` of `x` is variable `v`): a leaf by its label, a
+/// node by any of its pairs.
+fn holds(f: &Tdd, t: VtreeIdx, slot: u32, x: u64) -> bool {
+    let vtree = f.vtree();
+    if vtree.node(t).is_leaf() {
+        let value = x >> (vtree.leaf_var(t).0 - 1) & 1 == 1;
+        return match LeafLabel::from_idx(slot as usize) {
+            LeafLabel::Zero => false,
+            LeafLabel::Neg => !value,
+            LeafLabel::Pos => value,
+            LeafLabel::One => true,
+        };
+    }
+    let (l, r) = vtree.children(t);
+    f.level(t).pairs_iter_of_idx(slot as usize).any(|p| holds(f, l, p.left.raw(), x) && holds(f, r, p.right.raw(), x))
+}
+
+/// The variables under `t`.
+fn under(vtree: &Vtree, t: VtreeIdx) -> Vec<VarId> {
+    match vtree.node(t).is_leaf() {
+        true => vec![vtree.leaf_var(t)],
+        false => {
+            let (l, r) = vtree.children(t);
+            let mut vars = under(vtree, l);
+            vars.extend(under(vtree, r));
+            vars
+        }
+    }
+}
+
+#[test]
+fn evaluating_at_a_level_values_each_node_over_its_subtree() {
+    let eng = Engine::new();
+    let mut rng = crate::vtree::rng::Lcg::new(7);
+    let vars: Vec<VarId> = (1..=9).map(VarId).collect();
+    for tree in [Vtree::balanced(9), Vtree::linear(9), Vtree::random(9, 3), Vtree::random(9, 11)] {
+        let vtree = Arc::new(tree);
+        for round in 0..4u64 {
+            let rows: Vec<u64> = (0..20 + 40 * round).map(|_| rng.next_u64() & 0x1ff).collect();
+            let f = eng.from_models(&vtree, &vars, &rows).unwrap();
+            assert_canonical(&f);
+            for t in (0..vtree.num_nodes()).map(|t| VtreeIdx(t as u32)) {
+                let values = f.evaluate_at(t, &PlainCounts).unwrap();
+                assert_eq!(values.len(), f.reference_slot_count(t));
+                // Each slot against the sum over the subtree's assignments
+                // it holds.
+                let below = under(&vtree, t);
+                for (slot, &value) in values.iter().enumerate() {
+                    let mut expected = 0u128;
+                    for bits in 0..1u64 << below.len() {
+                        let x = below.iter().enumerate().fold(0u64, |x, (i, v)| x | (bits >> i & 1) << (v.0 - 1));
+                        if holds(&f, t, slot as u32, x) {
+                            expected += below.iter().map(|&v| PlainCounts.leaf(v, if x >> (v.0 - 1) & 1 == 1 { LeafLabel::Pos } else { LeafLabel::Neg })).product::<u128>();
+                        }
+                    }
+                    assert_eq!(value, expected, "round {round}, level {}, slot {slot}", t.idx());
+                }
+                // The columns agree slot for slot.
+                let counts = ColumnCounts { leaves: Cell::new(0), folds: Cell::new(0) };
+                let column = eng.evaluate_columns_at(&f, t, &counts).unwrap();
+                for (slot, &value) in values.iter().enumerate() {
+                    assert_eq!(column.at(slot), value, "round {round}, level {}, slot {slot}", t.idx());
+                }
+                assert_eq!(counts.leaves.get(), LEAF_WIDTH * below.len(), "only the subtree's leaves are seeded");
+            }
+            // The root's children, combined by the output's pairs, are the
+            // whole evaluation.
+            if !f.is_zero() {
+                let (l, r) = vtree.children(vtree.root());
+                let (lefts, rights) = (f.evaluate_at(l, &PlainCounts).unwrap(), f.evaluate_at(r, &PlainCounts).unwrap());
+                let output = f.level(vtree.root()).pairs_iter_of_idx(f.output().local.idx());
+                let total: u128 = output.map(|p| lefts[p.left.raw() as usize] * rights[p.right.raw() as usize]).sum();
+                assert_eq!(total, eng.evaluate(&f, &PlainCounts).unwrap(), "round {round}");
+            }
+        }
+    }
+}
+
+#[test]
+fn evaluating_at_a_level_refuses_a_foreign_level_and_marginal_structure() {
+    let eng = Engine::new();
+    let tree = Arc::new(Vtree::balanced(4));
+    let f = Tdd::clause(&tree, [1, 2]).unwrap();
+    assert_canonical(&f);
+    let outside = VtreeIdx(tree.num_nodes() as u32);
+    assert_eq!(f.evaluate_at(outside, &PlainCounts), Err(OperationError::LevelNotInVtree(outside)));
+    let counts = ColumnCounts { leaves: Cell::new(0), folds: Cell::new(0) };
+    assert!(matches!(f.evaluate_columns_at(outside, &counts), Err(OperationError::LevelNotInVtree(_))));
+    // The constant false: its internal levels have no slot.
+    let zero = Tdd::zero(&tree);
+    assert!(zero.evaluate_at(tree.root(), &PlainCounts).unwrap().is_empty());
+    let mut marginal = f.clone();
+    eng.marginalize_levels(&mut marginal, &[tree.root()]).unwrap();
+    assert!(matches!(eng.evaluate_at(&marginal, tree.root(), &PlainCounts), Err(OperationError::MarginalLevel(_))));
+    assert!(matches!(eng.evaluate_columns_at(&marginal, tree.root(), &counts), Err(OperationError::MarginalLevel(_))));
+}

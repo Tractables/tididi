@@ -5,7 +5,7 @@ use crate::diagram::{ChildRef, ColumnAlgebra, EncodedChildRef, EvalAlgebra, Leaf
 use crate::Engine;
 use crate::vtree::{VarId, VtreeIdx, VtreeNode};
 
-use super::fold::{fold_bottom_up, LevelFold, Side};
+use super::fold::{fold_bottom_up, fold_subtree, LevelFold, Side};
 use crate::limits::{OperationError, PollGate};
 
 impl Engine {
@@ -76,6 +76,63 @@ impl Engine {
             )?;
             algebra.read(keep, std::mem::take(&mut cols[keep.idx()]), tdd.output.local.idx())
         };
+        gate.finish()?;
+        Ok(result)
+    }
+
+    /// Run [`Tdd::evaluate_at`](crate::Tdd::evaluate_at) using this batch's scratch and resource limits.
+    ///
+    /// # Errors
+    ///
+    /// As [`evaluate`](Self::evaluate), and
+    /// [`OperationError::LevelNotInVtree`] for an `at` outside the diagram's
+    /// vtree.
+    pub fn evaluate_at<S: EvalAlgebra>(&self, tdd: &Tdd, at: VtreeIdx, algebra: &S) -> Result<Vec<S::Value>, OperationError> {
+        let lim = self.limits();
+        let _op = lim.enter()?;
+        if at.idx() >= tdd.vtree.num_nodes() {
+            return Err(OperationError::LevelNotInVtree(at));
+        }
+        tdd.require_structure()?;
+        let mut gate = lim.gate();
+        let fold = Evaluate::new(algebra, &[]);
+        let mut cols = Vec::new();
+        lim.reserve_exact(&mut cols, tdd.vtree.num_nodes())?;
+        cols.resize_with(tdd.vtree.num_nodes(), Vec::new);
+        fold_subtree::<_, false>(&fold, self, tdd, at, at, &mut cols, Retention::Frontier, &mut gate)?;
+        let result = std::mem::take(&mut cols[at.idx()]);
+        gate.finish()?;
+        Ok(result)
+    }
+
+    /// Run [`Tdd::evaluate_columns_at`](crate::Tdd::evaluate_columns_at) using this batch's resource limits.
+    ///
+    /// # Errors
+    ///
+    /// As [`evaluate_columns`](Self::evaluate_columns), and
+    /// [`OperationError::LevelNotInVtree`] for an `at` outside the diagram's
+    /// vtree.
+    pub fn evaluate_columns_at<A: ColumnAlgebra>(&self, tdd: &Tdd, at: VtreeIdx, algebra: &A) -> Result<A::Column, OperationError> {
+        let lim = self.limits();
+        let _op = lim.enter()?;
+        if at.idx() >= tdd.vtree.num_nodes() {
+            return Err(OperationError::LevelNotInVtree(at));
+        }
+        tdd.require_structure()?;
+        let mut gate = lim.gate();
+        let mut cols: Vec<A::Column> = Vec::new();
+        lim.reserve_exact(&mut cols, tdd.vtree.num_nodes())?;
+        cols.resize_with(tdd.vtree.num_nodes(), A::Column::default);
+        walk_bottom_up(
+            &tdd.vtree,
+            at,
+            &mut cols,
+            |_, _| false,
+            |cols, t| fold_columns(algebra, tdd, cols, t, &mut gate),
+            |cols, i| cols[i] = A::Column::default(),
+            Retention::Frontier.frontier(at),
+        )?;
+        let result = std::mem::take(&mut cols[at.idx()]);
         gate.finish()?;
         Ok(result)
     }

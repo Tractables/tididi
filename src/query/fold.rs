@@ -216,9 +216,29 @@ pub(crate) fn fold_bottom_up<F: LevelFold, const PREPARED: bool>(
     retain: Retention,
     gate: &mut PollGate,
 ) -> Result<(), OperationError> {
+    fold_subtree::<F, PREPARED>(f, eng, tdd, tdd.vtree.root(), tdd.output.vtree, cols, retain, gate)
+}
+
+/// [`fold_bottom_up`] over the levels under `root` alone, `keep` the level
+/// exempt from the frontier's release.
+///
+/// # Errors
+///
+/// As [`fold_bottom_up`].
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fold_subtree<F: LevelFold, const PREPARED: bool>(
+    f: &F,
+    eng: &Engine,
+    tdd: &Tdd,
+    root: VtreeIdx,
+    keep: VtreeIdx,
+    cols: &mut [F::Col],
+    retain: Retention,
+    gate: &mut PollGate,
+) -> Result<(), OperationError> {
     walk_bottom_up(
         &tdd.vtree,
-        tdd.vtree.root(),
+        root,
         cols,
         |_, _| false,
         |cols, t| {
@@ -229,6 +249,6 @@ pub(crate) fn fold_bottom_up<F: LevelFold, const PREPARED: bool>(
             fold_level::<_, PREPARED>(f, eng, tdd, cols, t, gate)
         },
         |cols, i| f.release(eng, &mut cols[i]),
-        retain.frontier(tdd.output.vtree),
+        retain.frontier(keep),
     )
 }

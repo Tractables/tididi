@@ -842,6 +842,117 @@ impl Tdd {
         context.run(|eng| eng.evaluate_columns(self, algebra))
     }
 
+    /// Evaluate every node of the level at vtree node `at` over the
+    /// variables of `at`'s subtree, and nothing above it.
+    ///
+    /// Slot `i` of the result is [`evaluate`](Self::evaluate)'s value for
+    /// node `i` of the level as if it were the output: the sum, over the
+    /// assignments to the subtree's variables that the node holds, of the
+    /// product of their leaf values. There is one value per reference slot
+    /// ([`reference_slot_count`](Self::reference_slot_count)): a leaf's
+    /// [`LEAF_WIDTH`](crate::diagram::LEAF_WIDTH) labels, the constant-false
+    /// one zero, or one per node of an internal level. The levels above `at`
+    /// are not folded; a caller combining the values with them reads the
+    /// pairs that name each slot. The borrowed diagram is unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::LevelNotInVtree`] for an `at` that is not a
+    /// node of the diagram's vtree, [`OperationError::MarginalLevel`] for
+    /// discarded structure, or [`OperationError::OverBudget`] if a buffer
+    /// allocation is refused.
+    ///
+    /// # Panics
+    ///
+    /// Panics from the caller's algebra propagate.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// use tididi::diagram::{EvalAlgebra, LeafLabel};
+    /// use tididi::vtree::VarId;
+    ///
+    /// struct Count;
+    /// impl EvalAlgebra for Count {
+    ///     type Value = u64;
+    ///     fn zero(&self) -> u64 { 0 }
+    ///     fn leaf(&self, _: VarId, label: LeafLabel) -> u64 { if label == LeafLabel::One { 2 } else { 1 } }
+    ///     fn add_assign(&self, acc: &mut u64, other: &u64) { *acc += other; }
+    ///     fn mul(&self, a: &u64, b: &u64) -> u64 { a * b }
+    /// }
+    ///
+    /// // (x1 ∨ x2) ∧ x3 on ((x1 x2) x3): the left child's nodes split the
+    /// // assignments of x1, x2 by what they leave of the function.
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2])? & tididi::literal(&vtree, 3)?;
+    /// let (left, right) = vtree.children(vtree.root());
+    /// let lefts = f.evaluate_at(left, &Count)?;
+    /// let rights = f.evaluate_at(right, &Count)?;
+    /// // The output's pairs combine them into the model count.
+    /// let output = f.level(vtree.root()).pairs_iter_of_idx(f.output().local.idx());
+    /// let count: u64 = output.map(|p| lefts[p.left.raw() as usize] * rights[p.right.raw() as usize]).sum();
+    /// assert_eq!(count, f.evaluate(&Count)?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn evaluate_at<S: EvalAlgebra>(&self, at: VtreeIdx, algebra: &S) -> Result<Vec<S::Value>, OperationError> {
+        let context = Arc::clone(self.context());
+        context.run(|eng| eng.evaluate_at(self, at, algebra))
+    }
+
+    /// [`evaluate_at`](Self::evaluate_at) into a column the algebra owns:
+    /// the level's column as [`evaluate_columns`](Self::evaluate_columns)
+    /// writes it, under the same laws, with the levels under `at` folded and
+    /// none above it. The borrowed diagram is unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::LevelNotInVtree`] for an `at` that is not a
+    /// node of the diagram's vtree, [`OperationError::MarginalLevel`] for
+    /// discarded structure, or [`OperationError::OverBudget`] if the table
+    /// of columns is refused.
+    ///
+    /// # Panics
+    ///
+    /// Panics from the caller's algebra propagate.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// use tididi::diagram::{ColumnAlgebra, LeafLabel, SlotPairs};
+    /// use tididi::vtree::{VarId, VtreeIdx};
+    ///
+    /// struct Counts;
+    /// impl ColumnAlgebra for Counts {
+    ///     type Column = Vec<u128>;
+    ///     type Value = u128;
+    ///     fn zero(&self) -> u128 { 0 }
+    ///     fn column(&self, _: VtreeIdx, width: usize) -> Vec<u128> { vec![0; width] }
+    ///     fn leaf(&self, _: VtreeIdx, _: VarId, label: LeafLabel, col: &mut Vec<u128>) {
+    ///         col[label as usize] = if label == LeafLabel::One { 2 } else { 1 };
+    ///     }
+    ///     fn fold(&self, _: VtreeIdx, slot: usize, pairs: SlotPairs<'_>, left: &Vec<u128>, right: &Vec<u128>, out: &mut Vec<u128>) {
+    ///         out[slot] = pairs.map(|(l, r)| left[l] * right[r]).sum();
+    ///     }
+    ///     fn read(&self, _: VtreeIdx, col: Vec<u128>, slot: usize) -> u128 { col[slot] }
+    /// }
+    ///
+    /// // (x1 ∨ x2) ∧ x3 on ((x1 x2) x3): the children's columns, combined
+    /// // through the output's pairs, give the model count.
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, 2])? & tididi::literal(&vtree, 3)?;
+    /// let (left, right) = vtree.children(vtree.root());
+    /// let lefts = f.evaluate_columns_at(left, &Counts)?;
+    /// let rights = f.evaluate_columns_at(right, &Counts)?;
+    /// let output = f.level(vtree.root()).pairs_iter_of_idx(f.output().local.idx());
+    /// let count: u128 = output.map(|p| lefts[p.left.raw() as usize] * rights[p.right.raw() as usize]).sum();
+    /// assert_eq!(count, f.evaluate_columns(&Counts)?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn evaluate_columns_at<A: ColumnAlgebra>(&self, at: VtreeIdx, algebra: &A) -> Result<A::Column, OperationError> {
+        let context = Arc::clone(self.context());
+        context.run(|eng| eng.evaluate_columns_at(self, at, algebra))
+    }
+
     /// Evaluate this diagram using its attached weight store, if present.
     ///
     /// Structural levels are folded from literal weights; weighted marginal levels
