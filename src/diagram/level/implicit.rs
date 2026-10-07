@@ -1042,13 +1042,6 @@ impl Charged for PairArena {
     }
 }
 
-impl crate::execution::pool::Scratch for PairArena {
-    #[inline]
-    fn release(&mut self) {
-        *self = PairArena::default();
-    }
-}
-
 /// The digits a [`NodeCursor`]'s [`Odometer`] counts in place.
 const NODE_COUNTERS: usize = 4;
 

@@ -102,11 +102,13 @@ struct LevelBuffer {
 }
 
 impl Buffers for LevelBuffer {
+    /// A parked level was reset ([`reset_level`]), which leaves its arena
+    /// stored, so its pairs are the vector of a stored arena.
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
         visit(&mut self.levels);
         for level in &mut self.levels {
             visit(&mut level.nodes);
-            visit(&mut level.pairs);
+            visit(level.pairs.stored_mut());
             visit(&mut level.ranges);
         }
     }
