@@ -17,10 +17,11 @@ fn level_of(pairs: &Pairs) -> TddLevel {
     level
 }
 
-/// The pairs `d` describes, node by node.
+/// The pairs `d` describes, node by node: every setting of its digits,
+/// from the first pair.
 fn described(d: &ImplicitLevel) -> Pairs {
     let mut all = Vec::new();
-    d.for_each_pair(|l, r| all.push((l, r)));
+    each_place(&d.digits, d.first, |l, r| all.push((l, r)));
     all.chunks(d.pairs_per_node()).map(<[_]>::to_vec).collect()
 }
 

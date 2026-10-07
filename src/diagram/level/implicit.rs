@@ -294,13 +294,6 @@ impl ImplicitLevel {
         if self.per_node >= 2 { self.pairs() } else { 0 }
     }
 
-    /// Calls `f` with the child slots of every pair, in the order of the
-    /// level's pairs.
-    #[cfg(test)]
-    pub(crate) fn for_each_pair(&self, f: impl FnMut(i64, i64)) {
-        each_place(&self.digits, self.first, f);
-    }
-
     /// Write the level's nodes into `level`, whose nodes and pairs are empty,
     /// as the conjunction's row loop writes them: node `i` holds its pair
     /// inline when it has one, else the arena range of pairs `i · k ..
