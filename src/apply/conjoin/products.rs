@@ -7,6 +7,7 @@
 use crate::{Engine, OperationError};
 use crate::diagram::TddLevel;
 use super::grid_arena::GridArena;
+use super::setup::Operands;
 
 /// Index of a node in `f.levels[t].nodes`. Distinct from `GNodeIdx` and
 /// `ProductNodeIdx` so that construction-site swaps are caught at compile time.
@@ -80,6 +81,24 @@ fn fill_identity_product_list(
     } else {
         Ok(false)
     }
+}
+
+/// Fill `pl` with the products of a complete level that has no grid: every
+/// cell `(i, j)` of its `f_width × g_width` is node `i * g_width + j`.
+fn fill_complete_product_list(
+    eng: &Engine,
+    f_width: usize,
+    g_width: usize,
+    pl: &mut Vec<ProductEntry>,
+) -> Result<(), OperationError> {
+    eng.limits().reserve(pl, f_width * g_width)?;
+    for i in 0..f_width as u32 {
+        for j in 0..g_width as u32 {
+            let prod = i * g_width as u32 + j;
+            pl.push(ProductEntry { f_idx: FNodeIdx(i), g_idx: GNodeIdx(j), prod_idx: ProductNodeIdx(prod) });
+        }
+    }
+    Ok(())
 }
 
 #[derive(Default)]
@@ -247,8 +266,103 @@ impl Products {
             self.product_lists[t].iter().find(|entry| entry.f_idx.0 == f && entry.g_idx.0 == g)?.prod_idx.0
         } else if g_identity { f }
         else if f_identity { g }
+        else if self.complete[t] { f * g_width as u32 + g }
         else { panic!("product level {t} has neither stored products nor an identity operand") };
         (value != super::NO_PRODUCT).then_some(super::NodeIdx(value))
+    }
+
+    /// Child level `c`'s products along one node of the narrow operand, as a
+    /// map from the carrier's node index to the product's node, `NO_PRODUCT`
+    /// where the product is false: with `carrier_f`, cell `(i, fixed)` for
+    /// each node `i` of `f`; without, cell `(fixed, j)` for each node `j` of
+    /// `g`.
+    ///
+    /// Returns `false` without touching `out` when the map is the identity,
+    /// which is what a complete level, or one an operand is constant-true
+    /// over, gives when the narrow operand has one node there; `out` is
+    /// filled otherwise.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] when the map's growth is refused.
+    #[expect(clippy::too_many_arguments)]
+    pub(super) fn column(
+        &self,
+        eng: &Engine,
+        c: usize, f_width: usize, g_width: usize,
+        carrier_f: bool, fixed: u32,
+        identity: Operands<bool>,
+        out: &mut Vec<u32>,
+    ) -> Result<bool, OperationError> {
+        let (width, narrow) = if carrier_f { (f_width, g_width) } else { (g_width, f_width) };
+        let cell = |k: usize| if carrier_f { (k, fixed as usize) } else { (fixed as usize, k) };
+        let lim = eng.limits();
+        out.clear();
+        if self.complete[c] || identity.f || identity.g {
+            // A complete level holds cell `(i, j)` at `i * g_width + j`, and so
+            // does a level one operand is constant-true over: its one node is
+            // at index 0 and the products are the other operand's nodes.
+            if narrow == 1 { return Ok(false); }
+            lim.reserve(out, width)?;
+            out.extend((0..width).map(|k| { let (i, j) = cell(k); (i * g_width + j) as u32 }));
+        } else if let Some(base) = self.arena.materialized(c) {
+            let slab = &self.arena.slab()[base.idx()..base.idx() + f_width * g_width];
+            lim.reserve(out, width)?;
+            out.extend((0..width).map(|k| { let (i, j) = cell(k); slab[i * g_width + j] }));
+        } else if self.has_pl[c] {
+            lim.try_resize(out, width, super::NO_PRODUCT)?;
+            for e in &self.product_lists[c] {
+                let (k, other) = if carrier_f { (e.f_idx.idx(), e.g_idx.0) } else { (e.g_idx.idx(), e.f_idx.0) };
+                if other == fixed { out[k] = e.prod_idx.0; }
+            }
+        } else {
+            panic!("product level {c} has neither stored products nor an identity operand");
+        }
+        Ok(true)
+    }
+
+    /// Publish a level built by relabelling the carrier's nodes: `map` holds
+    /// the output node of each carrier node, or `NO_PRODUCT` where the
+    /// product is false, and the narrow operand has one node at the level.
+    /// Writes the level's grid where it has one and its product list
+    /// otherwise, and marks it complete when no product is false, since the
+    /// nodes are then numbered in cell order.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`] when the product list's growth is refused.
+    pub(super) fn publish_relabelled(
+        &mut self, eng: &Engine, t: usize, carrier_f: bool, map: &[u32], nodes: usize,
+    ) -> Result<(), OperationError> {
+        if let Some(base) = self.arena.materialized(t) {
+            self.arena.slab_mut()[base.idx()..base.idx() + map.len()].copy_from_slice(map);
+        } else {
+            let list = &mut self.product_lists[t];
+            list.clear();
+            eng.limits().reserve(list, nodes)?;
+            for (k, &prod) in map.iter().enumerate() {
+                if prod == super::NO_PRODUCT { continue; }
+                let (i, j) = if carrier_f { (k as u32, 0) } else { (0, k as u32) };
+                list.push(ProductEntry { f_idx: FNodeIdx(i), g_idx: GNodeIdx(j), prod_idx: ProductNodeIdx(prod) });
+            }
+            self.has_pl[t] = true;
+        }
+        self.live_counts[t] = nodes;
+        self.complete[t] = nodes == map.len();
+        Ok(())
+    }
+
+    /// Mark a level the sparse route built complete when it is: a node in
+    /// every cell, numbered in cell order. The scatter emits the products of
+    /// each `f` node together, in node order, so a level whose `g` operand
+    /// has one node there is complete whenever no product died.
+    pub(super) fn note_sparse_built(&mut self, t: usize, f_width: usize, g_width: usize) {
+        let list = &self.product_lists[t];
+        self.complete[t] = self.has_pl[t]
+            && list.len() == f_width * g_width
+            && list.iter().enumerate().all(|(c, e)| {
+                e.prod_idx.0 as usize == c && e.f_idx.idx() * g_width + e.g_idx.idx() == c
+            });
     }
 
     pub(super) fn reclaim_children(&mut self, children: [(usize, usize); 2]) {
@@ -257,8 +371,9 @@ impl Products {
 
     /// Build level `ci`'s product list if it is not built yet: from the
     /// identity mapping when an operand is constant-true, by scanning the
-    /// level's grid otherwise. Used on both the sparse and dense paths of the
-    /// level loop.
+    /// level's grid when it has one, and in cell order when it has neither
+    /// but is complete, as a level the relabelling route carried is. Used on
+    /// both the sparse and dense paths of the level loop.
     pub(super) fn ensure_product_list_for_child(
         &mut self,
         eng: &Engine,
@@ -268,7 +383,11 @@ impl Products {
         if self.has_pl[ci] { return Ok(()); }
         let list = &mut self.product_lists[ci];
         if !fill_identity_product_list(eng, f_width, g_width, g_identity, f_identity, list)? {
-            self.arena.scan_product_list(eng, ci, f_width, g_width, list)?;
+            if self.arena.materialized(ci).is_none() && self.complete[ci] {
+                fill_complete_product_list(eng, f_width, g_width, list)?;
+            } else {
+                self.arena.scan_product_list(eng, ci, f_width, g_width, list)?;
+            }
         }
         self.has_pl[ci] = true;
         Ok(())
@@ -278,7 +397,8 @@ impl Products {
     /// if not already built, then grid it.
     ///
     /// This is the dense path, so the child is known to be ungridded — the
-    /// identity mapping is the only way to build its product list.
+    /// identity mapping, or the cell order of a complete child, is the only
+    /// way to build its product list.
     pub(super) fn materialize_dense_child(
         &mut self,
         eng: &Engine,
@@ -287,8 +407,8 @@ impl Products {
         g_width: usize,
         g_identity: bool, f_identity: bool,
     ) -> Result<(), OperationError> {
-        cheap_assert!(self.has_pl[idx] || g_identity || f_identity,
-            "an ungridded child on the dense path has an identity operand");
+        cheap_assert!(self.has_pl[idx] || g_identity || f_identity || self.complete[idx],
+            "an ungridded child on the dense path has an identity operand or is complete");
         self.ensure_product_list_for_child(eng, idx, f_width, g_width, g_identity, f_identity)?;
         self.arena.ensure_grid(eng, idx, f_width, g_width, &self.product_lists[idx])
     }

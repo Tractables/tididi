@@ -13,6 +13,10 @@ pub(crate) struct ApplyScratch {
     pub(crate) marginal_stack: Pool<Vec<crate::vtree::VtreeIdx>>,
     pub(crate) cell_pairs: Pool<Vec<ChildPair>>,
     pub(crate) right_cols: Pool<Vec<ColumnSlice>>,
+    /// The side maps of a relabelled level and the map it writes.
+    pub(crate) relabel_left: Pool<Vec<u32>>,
+    pub(crate) relabel_right: Pool<Vec<u32>>,
+    pub(crate) relabel_map: Pool<Vec<u32>>,
 }
 
 impl Pools for ApplyScratch {
@@ -24,6 +28,9 @@ impl Pools for ApplyScratch {
         visit(&self.marginal_stack);
         visit(&self.cell_pairs);
         visit(&self.right_cols);
+        visit(&self.relabel_left);
+        visit(&self.relabel_right);
+        visit(&self.relabel_map);
     }
 }
 

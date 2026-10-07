@@ -10,6 +10,7 @@ mod marginal_orphan;
 mod marginal_subsumed;
 mod one_sided;
 mod owed;
+mod relabel;
 mod restoring;
 mod self_conjunction;
 
@@ -180,4 +181,43 @@ pub(crate) fn apply_and_fallible(
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
 ) -> Result<Tdd, OperationError> {
     apply_and_core(eng, f, g, targets, quantified, filter, ConjoinMode::Build, Operands::default()).map(Conjoined::diagram)
+}
+
+thread_local! {
+    /// Whether the relabelling route is closed on this thread ([`no_relabel`]).
+    static NO_RELABEL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The levels on this thread the relabelling route took: moved whole,
+    /// and rebuilt ([`relabel_census`]).
+    static RELABELLED: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
+}
+
+pub(super) fn relabel_forced_off() -> bool {
+    NO_RELABEL.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_relabelled(moved: bool) {
+    RELABELLED.with(|c| {
+        let mut census = c.get();
+        census[usize::from(!moved)] += 1;
+        c.set(census);
+    });
+}
+
+/// Run `f` with the relabelling route closed, every level it would take
+/// going to the general routes: the oracle it is checked against.
+pub(super) fn no_relabel<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            NO_RELABEL.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(NO_RELABEL.with(|c| c.replace(true)));
+    f()
+}
+
+/// The levels on this thread so far the relabelling route moved whole and
+/// rebuilt.
+pub(super) fn relabel_census() -> [u64; 2] {
+    RELABELLED.with(std::cell::Cell::get)
 }

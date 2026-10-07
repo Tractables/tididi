@@ -150,19 +150,22 @@ fn shared_variables_leave_one_side_on_the_grid() {
 
 /// `g` over the leftmost quarter of the variables is one node of one pair
 /// on every level outside it, and a level of two complete sides there reads
-/// that pair in every cell, both ways round.
+/// that pair in every cell, both ways round. The relabelling route, which
+/// takes such a level first wherever it may, is closed here.
 #[test]
 fn a_lone_g_pair_is_read_in_every_cell() {
     let vtree = Arc::new(Vtree::balanced(16));
     let all: Vec<u32> = (1..=16).collect();
     let mut rng = Lcg::new(0x5eed_a904);
     let before = complete_census();
-    for _ in 0..6 {
-        let f = function_of(&vtree, &all, &mut rng);
-        let g = function_of(&vtree, &[1, 2, 3, 4], &mut rng);
-        same_both_ways(&f, &g);
-        same_both_ways(&g, &f);
-    }
+    no_relabel(|| {
+        for _ in 0..6 {
+            let f = function_of(&vtree, &all, &mut rng);
+            let g = function_of(&vtree, &[1, 2, 3, 4], &mut rng);
+            same_both_ways(&f, &g);
+            same_both_ways(&g, &f);
+        }
+    });
     let census = complete_census();
     assert!(census[4] > before[4], "no level read a lone g pair in every cell");
 }

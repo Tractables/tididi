@@ -6,6 +6,10 @@
 //!
 //! - identity fast path, when one operand is constant-true over the subtree:
 //!   the other operand's level is moved into the output;
+//! - relabelling, when one operand is one node with one pair: the other
+//!   operand's pairs are carried through the children's products, and its
+//!   level moved into the output when no product renumbers or dies
+//!   (`relabel`);
 //! - sparse, when the level's grid, or a child grid the dense build would
 //!   have to materialize, is over the sparse gate's `min_grid` and the live
 //!   products are sparse in it: scatter, filter and dedup over live products
@@ -186,8 +190,10 @@ fn build_level(
         return Ok(());
     }
 
-    // A filtered child product cannot be bypassed by an identity copy.
-    let taken = sweep.filter.is_none() && take_level_fast_path(eng, run, f, g, shape)?;
+    // A filtered child product cannot be bypassed by an identity copy, nor
+    // by a relabelling, which reads no filter.
+    let taken = sweep.filter.is_none()
+        && (take_level_fast_path(eng, run, f, g, shape)? || take_relabel_level(eng, run, f, g, shape, sweep)?);
     debug_assert!(
         taken || !run.cone.free_at(t.idx()),
         "a free level at {} takes the other operand's level",
@@ -208,7 +214,10 @@ fn build_level(
             }
             Route::Sparse => match sums_root(sweep, run, shape, &plan) {
                 Some(side) => sweep.summed = sum_sparse_root(eng, run, f, g, shape, vtree, side)?,
-                None => run_sparse_level(eng, run, f, g, shape, &plan)?,
+                None => {
+                    run_sparse_level(eng, run, f, g, shape, &plan)?;
+                    run.products.note_sparse_built(t.idx(), shape.f.here, shape.g.here);
+                }
             },
             _ => build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?,
         }
@@ -409,14 +418,17 @@ pub(crate) fn apply_and_core(
     let out_local = compute_apply_output(f, g, &run, &vtree).unwrap_or(ZERO);
     let out_vtree = f.output.vtree;
     let carried = std::mem::take(&mut run.carried);
+    let relabel_moved = std::mem::take(&mut run.relabel_moved);
     let restoring = run.restoring;
     let output = TddNodeId { vtree: out_vtree, local: out_local };
 
-    // A plain conjunction changed no level it carried, and a carried level
-    // brings its whole subtree along, since the other operand is the
-    // identity under it. So the result owes contraction the levels it built
-    // and whatever the operands owed; seeding every level made the
-    // minimization after a join as long as the diagram.
+    // A plain conjunction changed no level an identity fast path carried,
+    // and such a level brings its whole subtree along, since the other
+    // operand is the identity under it. So the result owes contraction the
+    // levels it built and whatever the operands owed; seeding every level
+    // made the minimization after a join as long as the diagram. A level the
+    // relabelling route moved is its carrier's, but some subtree under it is
+    // a product, so it is owed as built.
     let finished = if plain {
         // Which operand each level the sweep carried came from: 1 for `f`,
         // 2 for `g`, 0 for a level the conjunction built and for every
@@ -424,6 +436,9 @@ pub(crate) fn apply_and_core(
         let mut carrier = vec![0u8; num_nodes];
         for &(t, from_f) in &carried {
             carrier[t] = if from_f { 1 } else { 2 };
+        }
+        for &t in &relabel_moved {
+            carrier[t] = 0;
         }
         // The result's loose levels (`loose::loose_levels`): a carried level
         // where its carrier has it loose, and a level under one the

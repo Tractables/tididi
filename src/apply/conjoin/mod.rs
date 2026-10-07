@@ -36,6 +36,10 @@ mod identity;
 pub(crate) use identity::init_leaf_identity;
 use identity::take_level_fast_path;
 
+// The relabelling route, where one operand is one node with one pair.
+mod relabel;
+use relabel::take_relabel_level;
+
 // Apply setup → `ApplyRun`.
 mod setup;
 use setup::{apply_and_setup, ApplyRun, LevelShape, Operands};
@@ -856,3 +860,19 @@ use tests::note_pairs_grown;
 #[cfg(not(test))]
 #[inline(always)]
 fn note_pairs_grown() {}
+
+// A test sends every level past the relabelling route, as the oracle the
+// route is checked against, and counts the levels it took: moved whole, and
+// rebuilt.
+#[cfg(test)]
+use tests::{note_relabelled, relabel_forced_off};
+
+#[cfg(not(test))]
+#[inline(always)]
+fn relabel_forced_off() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_relabelled(_moved: bool) {}

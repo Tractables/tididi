@@ -1,0 +1,168 @@
+//! The relabelling route against the general routes it replaces: the same
+//! diagram, the same count and the same quantified diagram, on every vtree
+//! shape, with one operand's support under each subtree in turn, on both
+//! product-store layouts; and operands handed back on a refusal.
+
+use std::sync::Arc;
+
+use super::*;
+use crate::Engine;
+use crate::limits::{LimitConfig, SparseRoute, StopAt, StopRules};
+use crate::test_helpers::{assert_canonical, assert_same_shape, rand_conj_over, same_storage, vtree_shapes, Lcg};
+use crate::test_helpers::check::check_no_false_nodes_in_levels;
+use crate::vtree::{VarId, Vtree, VtreeNode};
+
+/// The variables at the leaves under `t`.
+fn vars_under(vtree: &Vtree, t: VtreeIdx) -> Vec<u32> {
+    let mut stack = vec![t];
+    let mut vars = Vec::new();
+    while let Some(n) = stack.pop() {
+        match vtree.node(n) {
+            VtreeNode::Leaf { var, .. } => vars.push(var.0),
+            VtreeNode::Internal { left, right, .. } => stack.extend([*left, *right]),
+        }
+    }
+    vars.sort_unstable();
+    vars
+}
+
+/// A random function of `vars`, minimized.
+fn function_of(vtree: &Arc<Vtree>, vars: &[u32], rng: &mut Lcg) -> Tdd {
+    let mut f = rand_conj_over(vtree, vars, 8, 3, false, rng);
+    f.minimize().unwrap();
+    f
+}
+
+/// Pairs of a function `g` over the variables under each internal level
+/// below the root, which is then one node with one pair on every level
+/// above that one, the levels the route takes; and a function `f` over
+/// every variable, where `g` kills some of `f`'s products, or over the
+/// variables outside that level, where it kills none and the levels above
+/// it are moved whole.
+fn cases(nvars: u32, seed: u64) -> Vec<(String, Tdd, Tdd)> {
+    let mut rng = Lcg::new(seed);
+    let mut out = Vec::new();
+    for (shape, vtree) in vtree_shapes(nvars) {
+        let all: Vec<u32> = (1..=nvars).collect();
+        for (t, _, _) in vtree.internal_bottomup() {
+            if t == vtree.root() {
+                continue;
+            }
+            let under = vars_under(&vtree, t);
+            let outside: Vec<u32> = all.iter().copied().filter(|v| !under.contains(v)).collect();
+            let g = function_of(&vtree, &under, &mut rng);
+            let f = function_of(&vtree, &all, &mut rng);
+            out.push((format!("{shape}, f over all, g under {t:?}"), f, g.clone()));
+            let f = function_of(&vtree, &outside, &mut rng);
+            out.push((format!("{shape}, f outside, g under {t:?}"), f, g));
+        }
+    }
+    out
+}
+
+/// Conjoin both ways round, with the route open and closed, and require the
+/// same diagram, with no false node, canonical once minimized; under `route`
+/// when given.
+fn same_as_general_routes_with(what: &str, f: &Tdd, g: &Tdd, route: Option<SparseRoute>) {
+    for (a, b) in [(f, g), (g, f)] {
+        let eng = Engine::new();
+        let _scope = route.map(|r| eng.limits().scope(LimitConfig::none().with_sparse_route(r)));
+        let mut out = eng.and(a.clone(), b.clone()).unwrap();
+        let oracle = no_relabel(|| eng.and(a.clone(), b.clone()).unwrap());
+        check_no_false_nodes_in_levels(&out).unwrap_or_else(|e| panic!("{what}: {e}"));
+        assert_same_shape(&out, &oracle, what);
+        eng.minimize(&mut out).unwrap();
+        assert_canonical(&out);
+    }
+}
+
+fn same_as_general_routes(what: &str, f: &Tdd, g: &Tdd) {
+    same_as_general_routes_with(what, f, g, None);
+}
+
+#[test]
+fn relabelled_levels_are_the_general_routes_levels() {
+    let before = relabel_census();
+    for (what, f, g) in cases(9, 0x7e1a_be11) {
+        same_as_general_routes(&what, &f, &g);
+    }
+    let census = relabel_census();
+    assert!(census[0] > before[0], "no level was moved whole");
+    assert!(census[1] > before[1], "no level was rebuilt");
+}
+
+/// With the sparse gate at its floor the product store claims grids level by
+/// level, and a level the sparse route builds keeps a product list and no
+/// grid: the route reads its children from lists, and its parents read the
+/// complete levels it moved, which hold neither, by their cell order.
+#[test]
+fn relabelled_levels_read_product_lists() {
+    let before = relabel_census();
+    for (what, f, g) in cases(9, 0x11_57ed) {
+        same_as_general_routes_with(&what, &f, &g, Some(SparseRoute { sparsity: 1, min_grid: 0 }));
+    }
+    let census = relabel_census();
+    assert!(census[0] > before[0] && census[1] > before[1], "the route never ran on product lists");
+}
+
+/// The count of a conjunction whose root a relabelled level feeds, and the
+/// conjunction that quantifies a variable on the way, are the general
+/// routes' own.
+#[test]
+fn counts_and_quantified_conjunctions_agree() {
+    for (what, f, g) in cases(8, 0xc0_4e7) {
+        let eng = Engine::new();
+        let count = eng.and_model_count(f.clone(), g.clone(), &[]).unwrap();
+        let oracle = no_relabel(|| eng.and_model_count(f.clone(), g.clone(), &[]).unwrap());
+        assert_eq!(count, oracle, "{what}: count");
+        let quantified = [VarId(1), VarId(5)];
+        let out = eng.and_exists(f.clone(), g.clone(), &quantified).unwrap();
+        let oracle = no_relabel(|| eng.and_exists(f.clone(), g.clone(), &quantified).unwrap());
+        assert!(eng.equivalent(&out, &oracle).unwrap(), "{what}: and_exists");
+    }
+}
+
+/// A conjunction refused at any work point after the route moved a level
+/// gives both operands back as they were.
+#[test]
+fn a_refused_conjunction_gives_moved_levels_back() {
+    let vtree = Arc::new(Vtree::balanced(12));
+    let eng = Engine::new();
+    let u = vtree.internal_bottomup().map(|(t, _, _)| t).find(|&t| vars_under(&vtree, t).len() == 3).expect("a level over three variables");
+    let under = vars_under(&vtree, u);
+    let outside: Vec<i32> = (1..=12).filter(|v| !under.contains(v)).map(|v| v as i32).collect();
+    let conj = |clauses: &[Vec<i32>]| {
+        let mut f = eng.cube(&vtree, std::iter::empty::<i32>()).unwrap();
+        for c in clauses {
+            f = eng.and(f, eng.clause(&vtree, c.iter().copied()).unwrap()).unwrap();
+        }
+        eng.minimize(&mut f).unwrap();
+        f
+    };
+    let f = conj(&outside.chunks(3).map(|c| vec![c[0], -c[1], c[2]]).collect::<Vec<_>>());
+    let (a, b, c) = (under[0] as i32, under[1] as i32, under[2] as i32);
+    let g = conj(&[vec![a, b], vec![-b, c]]);
+    let expected = eng.and(f.clone(), g.clone()).unwrap();
+    let before = relabel_census();
+    let mut refusals = 0;
+    for n in 0.. {
+        let start = eng.limits().work_units();
+        let rules = StopRules { unconditional: Some(StopAt::WorkUnits(start + n)), after_pairs: None };
+        let scope = eng.limits().scope(LimitConfig::none().with_stop_rules(rules));
+        let outcome = eng.and_restoring(f.clone(), g.clone());
+        drop(scope);
+        match outcome {
+            Ok(out) => {
+                assert!(eng.equivalent(&out, &expected).unwrap(), "granted at {n}: a different function");
+                break;
+            }
+            Err(refused) => {
+                assert!(same_storage(&refused.f, &f) && same_storage(&refused.g, &g), "refused at {n}: an operand changed");
+                refusals += 1;
+            }
+        }
+        assert!(n < 10_000, "never granted");
+    }
+    assert!(refusals > 0, "never refused");
+    assert!(relabel_census()[0] > before[0], "no level was moved whole");
+}

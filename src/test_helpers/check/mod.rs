@@ -24,7 +24,7 @@ pub use canonicity::check_canonicity;
 pub use implicit::check_implicit_levels;
 pub use rotation::assert_rotation_locality;
 pub use soundness::check_determinism;
-pub use structure::{check_no_false_nodes, validate_vtree_structure};
+pub use structure::{check_no_false_nodes, check_no_false_nodes_in_levels, validate_vtree_structure};
 
 use crate::diagram::Tdd;
 

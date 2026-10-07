@@ -144,9 +144,13 @@ pub(super) struct ApplyRun<'a, 'r> {
     pub(super) g_pairs_scratch: &'a mut Vec<ChildPair>,
     /// The four dead-pair pre-filter masks, reused across internal levels.
     pub(super) prefilter_masks: &'a mut liveness::PrefilterMaskScratch,
-    /// The levels the identity fast paths moved into the output, as
-    /// `(level, from f)`, in the order they moved.
+    /// The levels the identity fast paths and the relabelling route moved
+    /// into the output, as `(level, from f)`, in the order they moved.
     pub(super) carried: Vec<(usize, bool)>,
+    /// Those of `carried` the relabelling route moved: the level is its
+    /// carrier's, but a subtree under it is not, so the output owes it as a
+    /// level it built.
+    pub(super) relabel_moved: Vec<usize>,
     /// Whether the sweep must give its operands back when refused: it drops
     /// no operand level, and `carried` goes back to the operands.
     pub(super) restoring: bool,
@@ -543,6 +547,7 @@ pub(super) fn apply_and_setup<'a, 'r: 'a>(
         g_pairs_scratch,
         prefilter_masks,
         carried: Vec::new(),
+        relabel_moved: Vec::new(),
         restoring: false,
         cone,
     })
