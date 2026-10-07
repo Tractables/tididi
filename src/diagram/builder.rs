@@ -512,8 +512,9 @@ impl TddBuilder {
     /// Transfer storage and its prepared worklists without copying the vtree
     /// handle, every level closed (`TddLevel::close`), or the levels in
     /// `changed` when the operation names those it built or changed: a
-    /// diagram is seated in the canonical form of implicit levels.
-    #[inline]
+    /// diagram is seated in the canonical form of implicit levels. Inlined,
+    /// so that the diagram is built where its caller returns it.
+    #[inline(always)]
     pub(super) fn seat(self, output: TddNodeId, dirty: super::Dirty, changed: Option<&[VtreeIdx]>) -> Tdd {
         let mut tdd = Tdd { vtree: self.vtree, levels: self.levels.into(), weights: self.weights, output, dirty };
         match changed {
