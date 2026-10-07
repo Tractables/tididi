@@ -312,11 +312,27 @@ impl Vtree {
         root: VtreeIdx,
         num_vars: u32,
     ) -> Result<(Self, Vec<VtreeIdx>), VtreeError> {
-        check_node_list(&old_nodes, root, num_vars)?;
-        let mut var_to_leaf = vec![VtreeIdx(0); num_vars as usize];
-        let (order, starts) = levels_from_root(root, &old_nodes);
-        let (new_nodes, old_to_new, actual_leaf_count) =
-            relabel_leaves_then_internals((&order, &starts), &old_nodes, &mut var_to_leaf);
+        // The walk from the root checks the list as it goes; where it
+        // refuses one, the full check, which reads the whole list, names what
+        // is wrong. Both refuse the same lists.
+        let n = old_nodes.len();
+        let walked = if n > 0 && root.idx() < n && check_var_space(num_vars, n).is_ok() {
+            let mut var_to_leaf = vec![VtreeIdx(0); num_vars as usize];
+            let mut old_to_new = vec![VtreeIdx(0); n];
+            levels_from_root(root, &old_nodes, (&mut var_to_leaf, &mut old_to_new))
+                .map(|levels| (levels, var_to_leaf, old_to_new))
+        } else {
+            None
+        };
+        let Some(((order, starts), mut var_to_leaf, mut old_to_new)) = walked else {
+            check_node_list(&old_nodes, root, num_vars)?;
+            return Err(VtreeError::Invalid("the links are not one tree".to_string()));
+        };
+        let (new_nodes, actual_leaf_count) = relabel_leaves_then_internals(
+            (&order, &starts),
+            &old_nodes,
+            (&mut var_to_leaf, &mut old_to_new),
+        );
 
         let new_root = old_to_new[root.idx()];
         // After the reindex, the node array is laid out so that idx ==
@@ -460,38 +476,69 @@ fn check_node_list(nodes: &[VtreeNode], root: VtreeIdx, num_vars: u32) -> Result
     Ok(())
 }
 
+/// An entry of `var_to_leaf` or `old_to_new` the walk from the root has
+/// reached, until the reindex writes it.
+const REACHED: VtreeIdx = VtreeIdx(u32::MAX);
+
 /// The nodes reachable from `root` in breadth-first order from the root, and
 /// where each depth starts in that order (one entry per depth, then the end).
 /// The order is its own queue: a level is the run of nodes the level before
 /// it appended, so the walk allocates two lists however deep the tree is.
-fn levels_from_root(root: VtreeIdx, old_nodes: &[VtreeNode]) -> (Vec<VtreeIdx>, Vec<usize>) {
-    let mut order = Vec::with_capacity(old_nodes.len());
+///
+/// The walk is also the check of the list, `root` a node of it: `None`
+/// unless every child link names a node, the links reach every node exactly
+/// once, and every leaf carries its own variable in `1..=num_vars`, where
+/// `num_vars` is `var_to_leaf`'s length and the list is `old_to_new`'s. Both
+/// come in zeroed; the walk marks what it reaches with [`REACHED`], and the
+/// reindex writes every entry so marked.
+fn levels_from_root(
+    root: VtreeIdx,
+    old_nodes: &[VtreeNode],
+    (var_to_leaf, old_to_new): (&mut [VtreeIdx], &mut [VtreeIdx]),
+) -> Option<(Vec<VtreeIdx>, Vec<usize>)> {
+    let n = old_nodes.len();
+    let mut order = Vec::with_capacity(n);
     // A start per depth and the end: a binary tree of `n` nodes is at most
     // `(n + 1) / 2` levels deep, one internal node and one leaf per level
     // but the last.
-    let mut starts = Vec::with_capacity(old_nodes.len().div_ceil(2) + 1);
+    let mut starts = Vec::with_capacity(n.div_ceil(2) + 1);
     starts.push(0);
     order.push(root);
+    old_to_new[root.idx()] = REACHED;
     let mut at = 0;
     while at < order.len() {
         let end = order.len();
         while at < end {
-            if let VtreeNode::Internal { left, right, .. } = &old_nodes[order[at].idx()] {
-                order.push(*left);
-                order.push(*right);
+            match old_nodes[order[at].idx()] {
+                VtreeNode::Internal { left, right, .. } => {
+                    for child in [left, right] {
+                        let entry = old_to_new.get_mut(child.idx())?;
+                        if std::mem::replace(entry, REACHED) == REACHED {
+                            return None;
+                        }
+                        order.push(child);
+                    }
+                }
+                VtreeNode::Leaf { var, .. } => {
+                    let entry = var_to_leaf.get_mut((var.0 as usize).checked_sub(1)?)?;
+                    if std::mem::replace(entry, REACHED) == REACHED {
+                        return None;
+                    }
+                }
             }
             at += 1;
         }
         starts.push(end);
     }
-    (order, starts)
+    (order.len() == n).then_some((order, starts))
 }
 
 /// Rebuild the node list with the leaves first, then the internal nodes,
 /// each group in bottom-up level order and left to right within a level.
 /// This puts leaves at `0..num_leaves` and internals above them while
 /// preserving `child.idx() < parent.idx()` for every edge. Returns the new
-/// nodes, the `old_to_new` permutation, and the leaf count.
+/// nodes and the leaf count, and writes the `old_to_new` permutation and the
+/// leaves' entries of `var_to_leaf`.
 ///
 /// The tree is binary over every node, so it has one leaf more than it has
 /// internal nodes, and one walk up the levels places both groups: a node's
@@ -499,11 +546,10 @@ fn levels_from_root(root: VtreeIdx, old_nodes: &[VtreeNode]) -> (Vec<VtreeIdx>, 
 fn relabel_leaves_then_internals(
     (order, starts): (&[VtreeIdx], &[usize]),
     old_nodes: &[VtreeNode],
-    var_to_leaf: &mut [VtreeIdx],
-) -> (Vec<VtreeNode>, Vec<VtreeIdx>, u32) {
+    (var_to_leaf, old_to_new): (&mut [VtreeIdx], &mut [VtreeIdx]),
+) -> (Vec<VtreeNode>, u32) {
     let n = old_nodes.len();
     let num_leaves = n.div_ceil(2) as u32;
-    let mut old_to_new = vec![VtreeIdx(0); n];
     let mut new_nodes = vec![VtreeNode::Leaf { var: VarId(0), parent: None }; n];
     let (mut next_leaf, mut next_internal) = (0, num_leaves);
     for level in starts.windows(2).rev().map(|w| &order[w[0]..w[1]]) {
@@ -533,5 +579,5 @@ fn relabel_leaves_then_internals(
         }
     }
     debug_assert_eq!((next_leaf, next_internal as usize), (num_leaves, n));
-    (new_nodes, old_to_new, num_leaves)
+    (new_nodes, num_leaves)
 }

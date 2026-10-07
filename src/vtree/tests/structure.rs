@@ -660,6 +660,35 @@ fn from_nodes_numbers_leaves_then_internals_from_the_deepest_level() {
     assert_eq!(vtree.topo.leaves(), [0, 1, 2, 3].map(VtreeIdx));
 }
 
+/// The reindex checks the list as it walks it from the root; a list it
+/// refuses is refused with the error the full check names, whatever part of
+/// the list is wrong.
+#[test]
+fn from_nodes_refuses_each_malformed_list_with_its_error() {
+    let leaf = |v: u32| VtreeNode::Leaf { var: VarId(v), parent: None };
+    let internal = |l: u32, r: u32| VtreeNode::Internal { left: VtreeIdx(l), right: VtreeIdx(r), parent: None };
+    let invalid = |message: &str| VtreeError::Invalid(message.to_string());
+    let cases = vec![
+        (vec![], 0, 1, invalid("a vtree needs at least one node")),
+        (vec![leaf(1)], 1, 1, invalid("root 1 is not a node index")),
+        (vec![leaf(1), internal(0, 3)], 1, 1, invalid("child 3 is not a node index")),
+        (vec![leaf(0), leaf(2), internal(0, 1)], 2, 2, invalid("leaf variable 0 is outside the variables 1 to 2")),
+        (vec![leaf(1), leaf(3), internal(0, 1)], 2, 2, invalid("leaf variable 3 is outside the variables 1 to 2")),
+        (vec![leaf(2), leaf(2), internal(0, 1)], 2, 2, VtreeError::OverlappingVariable(VarId(2))),
+        (vec![leaf(1), internal(0, 0)], 1, 1, invalid("node 0 is reached twice, so the links are not a tree")),
+        (vec![leaf(1), leaf(2), internal(0, 2)], 2, 2, invalid("node 2 is reached twice, so the links are not a tree")),
+        (vec![leaf(1), leaf(2), leaf(3), internal(0, 1)], 3, 3, invalid("1 of the 4 nodes are unreachable from the root")),
+    ];
+    for (nodes, root, num_vars, expected) in cases {
+        let got = Vtree::from_nodes_with_map(nodes.clone(), VtreeIdx(root), num_vars).err();
+        assert_eq!(got, Some(expected), "{nodes:?} from {root} over {num_vars}");
+    }
+    assert!(matches!(
+        Vtree::from_nodes_with_map(vec![leaf(1)], VtreeIdx(0), u32::MAX),
+        Err(VtreeError::VariableSpaceTooLarge { num_vars: u32::MAX, .. }),
+    ));
+}
+
 /// Parent links are derived from the child links: a construction may leave
 /// them unset or stale, as a splice that rewires a child pointer does.
 #[test]
