@@ -1325,6 +1325,14 @@ impl crate::diagram::Tdd {
         self.debug_check_implicit_levels();
     }
 
+    /// [`close_levels`](Self::close_levels) at the end of an operation that
+    /// names the levels it built or changed, `changed`: every other level is
+    /// as the end of an earlier operation left it, closed already.
+    pub(crate) fn close_changed_levels(&mut self, changed: &[crate::vtree::VtreeIdx]) {
+        self.levels.close_changed(changed);
+        self.debug_check_implicit_levels();
+    }
+
     /// In a debug build, panic unless every level is in the canonical form of
     /// implicit levels; nothing in a release build.
     #[inline]

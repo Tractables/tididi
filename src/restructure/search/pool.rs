@@ -338,9 +338,7 @@ fn rotate_pool_on(
         // The two levels each member rebuilt are built stored; the accepted
         // move is the operation's end, which closes them.
         for (m, s) in members.iter_mut().zip(saved.drain(..)) {
-            m.levels[v].close();
-            m.levels[w].close();
-            m.debug_check_implicit_levels();
+            m.close_changed_levels(&[info.v_idx, info.w_idx]);
             m.dirty.merge_under(s.dirty);
         }
         return Ok(true);

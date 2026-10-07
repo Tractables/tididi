@@ -70,7 +70,7 @@ impl<'a> Assembly<'a> {
     #[inline]
     #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
     pub(crate) fn finish_or_return(self, output: TddNodeId) -> Result<Tdd, (OperationError, Self)> {
-        self.seed_or_return(output, Dirty::default(), None)
+        self.seed_or_return(output, Dirty::default(), None, None)
     }
 
     /// [`finish`](Self::finish) with the worklists supplied by the caller
@@ -85,34 +85,38 @@ impl<'a> Assembly<'a> {
     ///    had outstanding is dropped.
     ///
     /// Seeding only the rewritten levels makes the following contraction cost
-    /// proportional to them rather than to the vtree.
+    /// proportional to them rather than to the vtree. `changed`, when given,
+    /// holds every level the operation built or changed, the only ones the
+    /// seat closes (`TddLevel::close`); every other level has to be as the
+    /// end of an earlier operation left it. `None` closes every level.
     ///
     /// # Errors
     ///
     /// As [`finish`](Self::finish).
     pub(crate) fn finish_with(
-        self, output: TddNodeId, carried: Dirty, rebuilt: &[VtreeIdx],
+        self, output: TddNodeId, carried: Dirty, rebuilt: &[VtreeIdx], changed: Option<&[VtreeIdx]>,
     ) -> Result<Tdd, OperationError> {
-        self.finish_with_or_return(output, carried, rebuilt).map_err(|(e, _)| e)
+        self.finish_with_or_return(output, carried, rebuilt, changed).map_err(|(e, _)| e)
     }
 
     /// [`finish_with`](Self::finish_with) that hands the assembly back,
     /// levels intact, when the worklist growth is refused.
     #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
     pub(crate) fn finish_with_or_return(
-        self, output: TddNodeId, carried: Dirty, rebuilt: &[VtreeIdx],
+        self, output: TddNodeId, carried: Dirty, rebuilt: &[VtreeIdx], changed: Option<&[VtreeIdx]>,
     ) -> Result<Tdd, (OperationError, Self)> {
-        self.seed_or_return(output, carried, Some(rebuilt))
+        self.seed_or_return(output, carried, Some(rebuilt), changed)
     }
 
     /// Seed the worklists, `rebuilt` or every internal level on top of
-    /// `carried`, and seat the result; the assembly back when refused.
+    /// `carried`, and seat the result, closing `changed` or every level; the
+    /// assembly back when refused.
     #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
     fn seed_or_return(
-        mut self, output: TddNodeId, carried: Dirty, rebuilt: Option<&[VtreeIdx]>,
+        mut self, output: TddNodeId, carried: Dirty, rebuilt: Option<&[VtreeIdx]>, changed: Option<&[VtreeIdx]>,
     ) -> Result<Tdd, (OperationError, Self)> {
         match self.seed_worklists(carried, rebuilt, Some(self.engine)) {
-            Ok(dirty) => Ok(self.builder.take().expect("unfinished assembly").seat(output, dirty)),
+            Ok(dirty) => Ok(self.builder.take().expect("unfinished assembly").seat(output, dirty, changed)),
             Err(e) => Err((e, self)),
         }
     }

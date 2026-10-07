@@ -320,11 +320,12 @@ fn rebuild_along_spine(eng: &Engine, f: &mut Tdd, clause: &[(Literal, VtreeIdx)]
     // Contract seed: this clause's spine, which is ancestor-closed, so an
     // off-spine level and its whole subtree are the accumulator's own bytes;
     // whatever the accumulator still owed is carried over, which keeps this
-    // exact for a caller that does not minimize between clauses.
+    // exact for a caller that does not minimize between clauses. The spine
+    // is also all the walk changed, and so all the seat closes.
     let vtree = Arc::clone(vtree);
     let carried = f.take_worklists();
     diagram::Assembly::from_levels(eng, vtree, levels, f_weights)
-        .finish_with(TddNodeId { vtree: out_vtree, local: out_local }, carried, &spine_internal)
+        .finish_with(TddNodeId { vtree: out_vtree, local: out_local }, carried, &spine_internal, Some(&spine_internal[..]))
 }
 
 /// Conjoin `clause` into `f` under `eng`'s limits. The implementation behind

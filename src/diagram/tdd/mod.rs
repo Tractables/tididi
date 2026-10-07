@@ -247,7 +247,7 @@ impl Tdd {
     pub(crate) fn from_levels_unchecked(vtree: Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Self {
         let builder = super::TddBuilder::from_levels(vtree, levels, None);
         let dirty = builder.seed_worklists(Dirty::default(), None, None).expect("untracked worklists cannot be refused");
-        builder.seat(output, dirty)
+        builder.seat(output, dirty, None)
     }
 
     /// Put the diagram in weighted mode: its weight-marginal levels keep their

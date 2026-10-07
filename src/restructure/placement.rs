@@ -232,7 +232,7 @@ impl<'a> MovePlacement<'a> {
         let output = TddNodeId { vtree: self.vtree.root(), local };
         let Self { eng, vtree, assembly, prune, contract } = self;
         assembly
-            .finish_with_or_return(output, carried, &[])
+            .finish_with_or_return(output, carried, &[], None)
             .map_err(|(e, assembly)| (e, Self { eng, vtree, assembly, prune, contract }))
     }
 

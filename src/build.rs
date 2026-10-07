@@ -84,7 +84,7 @@ fn cube_levels(
 /// and the output is certified so the next reduction returns at once.
 pub(crate) fn seat_canonical(eng: &Engine, vtree: &Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Tdd {
     let mut tdd = Assembly::from_levels(eng, Arc::clone(vtree), levels, None)
-        .finish_with(output, Dirty::default(), &[])
+        .finish_with(output, Dirty::default(), &[], None)
         .expect("seeding no worklist cannot be refused");
     tdd.levels.certify(output);
     tdd

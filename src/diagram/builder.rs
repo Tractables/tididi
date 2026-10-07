@@ -467,7 +467,7 @@ impl TddBuilder {
     pub fn finish(self, output: TddNodeId) -> Result<Tdd, TddBuildError> {
         self.check(output)?;
         let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
-        Ok(self.seat(output, dirty))
+        Ok(self.seat(output, dirty, None))
     }
 
     /// Finish without the storage validation performed by [`finish`](Self::finish).
@@ -494,7 +494,7 @@ impl TddBuilder {
             "an unchecked seat was handed a diagram the checked one would refuse",
         );
         let dirty = self.seed_worklists(Default::default(), None, None).expect("untracked worklists cannot be refused");
-        self.seat(output, dirty)
+        self.seat(output, dirty, None)
     }
 
     /// Prepare reduction work before transferring ownership of the arenas:
@@ -510,12 +510,16 @@ impl TddBuilder {
     }
 
     /// Transfer storage and its prepared worklists without copying the vtree
-    /// handle, every level closed (`TddLevel::close`): a diagram is seated in
-    /// the canonical form of implicit levels.
+    /// handle, every level closed (`TddLevel::close`), or the levels in
+    /// `changed` when the operation names those it built or changed: a
+    /// diagram is seated in the canonical form of implicit levels.
     #[inline]
-    pub(super) fn seat(self, output: TddNodeId, dirty: super::Dirty) -> Tdd {
+    pub(super) fn seat(self, output: TddNodeId, dirty: super::Dirty, changed: Option<&[VtreeIdx]>) -> Tdd {
         let mut tdd = Tdd { vtree: self.vtree, levels: self.levels.into(), weights: self.weights, output, dirty };
-        tdd.close_levels();
+        match changed {
+            Some(changed) => tdd.close_changed_levels(changed),
+            None => tdd.close_levels(),
+        }
         tdd
     }
 

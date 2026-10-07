@@ -45,6 +45,13 @@ impl LevelStorage {
         }
     }
 
+    /// [`close`](Self::close) the levels in `changed` only.
+    pub(crate) fn close_changed(&mut self, changed: &[VtreeIdx]) {
+        for &t in changed {
+            self.levels[t.idx()].close();
+        }
+    }
+
     pub(crate) fn into_vec(self) -> Vec<TddLevel> { self.levels }
 }
 
