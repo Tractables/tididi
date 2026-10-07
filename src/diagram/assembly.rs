@@ -37,20 +37,21 @@ impl<'a> Assembly<'a> {
         self.deref_mut().parts_mut()
     }
 
-    /// [`finish`](Self::finish) storage whose construction established the
-    /// public builder's storage invariants, as a copy of a valid diagram's
-    /// levels does; debug builds still run the builder's checks.
+    /// [`finish_changed`](Self::finish_changed) storage whose construction
+    /// established the public builder's storage invariants, as a copy of a
+    /// valid diagram's levels does; debug builds still run the builder's
+    /// checks.
     ///
     /// # Errors
     ///
     /// As [`finish`](Self::finish).
     #[inline]
-    pub(crate) fn finish_asserted(self, output: TddNodeId) -> Result<Tdd, OperationError> {
+    pub(crate) fn finish_asserted(self, output: TddNodeId, changed: Option<&[VtreeIdx]>) -> Result<Tdd, OperationError> {
         debug_assert!(
             self.check(output).is_ok(),
             "a copy built storage the checked seat would refuse",
         );
-        self.finish(output)
+        self.finish_changed(output, changed)
     }
 
     /// Seat kernel-built storage and charge its reduction worklists, which
@@ -62,7 +63,18 @@ impl<'a> Assembly<'a> {
     /// the levels go back to the pool.
     #[inline]
     pub(crate) fn finish(self, output: TddNodeId) -> Result<Tdd, OperationError> {
-        self.finish_or_return(output).map_err(|(e, _)| e)
+        self.finish_changed(output, None)
+    }
+
+    /// [`finish`](Self::finish) closing only `changed` when it is given, as
+    /// [`finish_with`](Self::finish_with) does.
+    ///
+    /// # Errors
+    ///
+    /// As [`finish`](Self::finish).
+    #[inline]
+    pub(crate) fn finish_changed(self, output: TddNodeId, changed: Option<&[VtreeIdx]>) -> Result<Tdd, OperationError> {
+        self.seed_or_return(output, Dirty::default(), None, changed).map_err(|(e, _)| e)
     }
 
     /// [`finish`](Self::finish) that hands the assembly back, levels intact,

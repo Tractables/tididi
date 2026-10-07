@@ -54,6 +54,43 @@ impl PassThrough {
     }
 }
 
+/// The levels a placement built or changed, bottom-up, each once: the only
+/// ones its seat closes when every level it copied or moved was closed in
+/// its source.
+struct Changed {
+    levels: Vec<VtreeIdx>,
+    sources_closed: bool,
+}
+
+impl Changed {
+    fn new(eng: &Engine, vtree: &Vtree) -> Result<Self, OperationError> {
+        let mut levels = Vec::new();
+        eng.limits().reserve_exact(&mut levels, vtree.num_nodes())?;
+        Ok(Self { levels, sources_closed: true })
+    }
+
+    /// Record level `t`, built or changed in place; a placement works a
+    /// level at a time, so a repeat follows its first record.
+    #[inline]
+    fn push(&mut self, t: VtreeIdx) {
+        if self.levels.last() != Some(&t) {
+            self.levels.push(t);
+        }
+    }
+
+    /// Record a level taken from `source` unchanged.
+    #[inline]
+    fn take_from(&mut self, source: &Tdd) {
+        self.sources_closed &= source.levels.is_closed();
+    }
+
+    /// What the seat closes: the recorded levels, or every level when one
+    /// taken unchanged was not known closed.
+    fn to_close(&self) -> Option<&[VtreeIdx]> {
+        self.sources_closed.then_some(&self.levels[..])
+    }
+}
+
 /// Bounded structural copies into a fresh destination, under the engine's
 /// limits.
 pub(super) struct CopyPlacement<'a> {
@@ -61,11 +98,13 @@ pub(super) struct CopyPlacement<'a> {
     vtree: &'a Arc<Vtree>,
     assembly: Assembly<'a>,
     prune: bool,
+    changed: Changed,
 }
 
 impl<'a> CopyPlacement<'a> {
     pub(super) fn new(eng: &'a Engine, vtree: &'a Arc<Vtree>) -> Result<Self, OperationError> {
-        Ok(Self { eng, vtree, assembly: Assembly::new(eng, vtree)?, prune: false })
+        let changed = Changed::new(eng, vtree)?;
+        Ok(Self { eng, vtree, assembly: Assembly::new(eng, vtree)?, prune: false, changed })
     }
 
     /// Copy a structural level without its source's weight configuration.
@@ -73,6 +112,7 @@ impl<'a> CopyPlacement<'a> {
     pub(super) fn copy_level(&mut self, source: &Tdd, from: VtreeIdx, to: VtreeIdx) -> Result<(), OperationError> {
         let view = LevelView::unweighted(source.level(from))
             .expect("embedding requires structural levels");
+        self.changed.take_from(source);
         self.assembly.replace_level(self.eng, to, view)
     }
 
@@ -82,6 +122,7 @@ impl<'a> CopyPlacement<'a> {
         self.copy_level(source, from, to)?;
         let (levels, _) = self.assembly.parts_mut();
         levels[to.idx()].swap_sides();
+        self.changed.push(to);
         Ok(())
     }
 
@@ -107,6 +148,7 @@ impl<'a> CopyPlacement<'a> {
     /// Add a connecting node.
     #[inline]
     pub(super) fn join(&mut self, at: VtreeIdx, left: NodeIdx, right: NodeIdx) -> Result<NodeIdx, OperationError> {
+        self.changed.push(at);
         self.assembly.push(self.eng, at, &[ChildPair::new(left, right)])
     }
 
@@ -116,7 +158,7 @@ impl<'a> CopyPlacement<'a> {
     /// storage by construction, so only debug builds check them.
     pub(super) fn finish(self, local: NodeIdx) -> Result<Tdd, OperationError> {
         let output = TddNodeId { vtree: self.vtree.root(), local };
-        let mut result = self.assembly.finish_asserted(output)?;
+        let mut result = self.assembly.finish_asserted(output, self.changed.to_close())?;
         if self.prune {
             prune(self.eng, &mut result)?;
         }
@@ -137,19 +179,22 @@ pub(super) struct MovePlacement<'a> {
     /// apart by value slots alone, and slots the prune merges leave twins
     /// behind, which a contraction after it removes.
     contract: bool,
+    changed: Changed,
 }
 
 impl<'a> MovePlacement<'a> {
     pub(super) fn new(eng: &'a Engine, vtree: &'a Arc<Vtree>, weights: Option<WeightStore>) -> Result<Self, OperationError> {
+        let changed = Changed::new(eng, vtree)?;
         let levels = try_take_levels(eng, vtree.num_nodes())?;
         let assembly = Assembly::from_levels(eng, Arc::clone(vtree), levels, weights);
-        Ok(Self { eng, vtree, assembly, prune: false, contract: false })
+        Ok(Self { eng, vtree, assembly, prune: false, contract: false, changed })
     }
 
     /// Move every level and its weighted column through a checked placement map.
     /// The caller has checked that stored values retain their interpretation.
     pub(super) fn move_part(&mut self, source: &mut Tdd, map: &[VtreeIdx]) {
         debug_assert_eq!(source.vtree().num_nodes(), map.len());
+        self.changed.take_from(source);
         let (levels, weights) = self.assembly.parts_mut();
         for (from, &to) in map.iter().enumerate() {
             MarginalStorage::new(&mut levels[to.idx()], weights.as_mut(), to.idx())
@@ -160,6 +205,7 @@ impl<'a> MovePlacement<'a> {
     /// Make an internal level marginal with no values: a level under a
     /// marginal parent, whose values the parent's subsume.
     pub(super) fn subsume(&mut self, at: VtreeIdx) {
+        self.changed.push(at);
         let (levels, weights) = self.assembly.parts_mut();
         MarginalStorage::new(&mut levels[at.idx()], weights.as_mut(), at.idx()).install_weights(Vec::new());
     }
@@ -218,6 +264,7 @@ impl<'a> MovePlacement<'a> {
     pub(super) fn join(&mut self, at: VtreeIdx, left: NodeIdx, right: NodeIdx) -> NodeIdx {
         let (l, r) = self.vtree.children(at);
         self.prune |= self.assembly.level(l).is_marginal() || self.assembly.level(r).is_marginal();
+        self.changed.push(at);
         self.assembly.parts_mut().0[at.idx()].push_internal_node(&[ChildPair::new(left, right)])
     }
 
@@ -230,10 +277,11 @@ impl<'a> MovePlacement<'a> {
     #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
     pub(super) fn seat(self, local: NodeIdx, carried: Dirty) -> Result<Tdd, (OperationError, Self)> {
         let output = TddNodeId { vtree: self.vtree.root(), local };
-        let Self { eng, vtree, assembly, prune, contract } = self;
-        assembly
-            .finish_with_or_return(output, carried, &[], None)
-            .map_err(|(e, assembly)| (e, Self { eng, vtree, assembly, prune, contract }))
+        let Self { eng, vtree, assembly, prune, contract, changed } = self;
+        match assembly.finish_with_or_return(output, carried, &[], changed.to_close()) {
+            Ok(tdd) => Ok(tdd),
+            Err((e, assembly)) => Err((e, Self { eng, vtree, assembly, prune, contract, changed })),
+        }
     }
 
     /// Move the structural levels [`move_part`](Self::move_part) placed back
@@ -258,7 +306,7 @@ impl<'a> MovePlacement<'a> {
     /// here. Call [`check_weights`](Self::check_weights) first.
     pub(super) fn finish(self, local: NodeIdx) -> Result<Tdd, OperationError> {
         let output = TddNodeId { vtree: self.vtree.root(), local };
-        let mut result = self.assembly.finish(output)?;
+        let mut result = self.assembly.finish_changed(output, self.changed.to_close())?;
         if self.prune {
             for (leaf, _) in result.vtree.leaf_bottomup() {
                 if result.levels[leaf.idx()].is_weight_marginal() {

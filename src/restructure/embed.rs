@@ -668,8 +668,12 @@ fn assemble_moving(
         (e, tdd)
     })?;
     // `Pos` and `Neg` are the chain's nodes 0 and 1; nothing reads `One`.
+    let closed = result.levels.is_closed();
     for &top in &literal_tops {
         crate::diagram::remap_refs_into(&mut result, top, &[u32::MAX, 0, 1]);
+    }
+    if !literal_tops.is_empty() {
+        result.close_marked_levels(closed);
     }
     if let Some(mut loose) = loose {
         loose.sort_unstable();
