@@ -155,9 +155,9 @@ impl ImplicitLevel {
     #[inline]
     pub fn node_first(&self, node: usize) -> (i64, i64) {
         debug_assert!(node < self.nodes && self.counts_nodes());
-        let mut at = Odometer::new(self.first);
-        at.seat(&self.digits[self.within..], node);
-        at.at
+        let mut at = Odometer::<0>::new(self.first);
+        at.seat(&self.digits[self.within..], 0, node);
+        at.slots()
     }
 
     /// The pairs of node `node`, in their order.
@@ -170,7 +170,8 @@ impl ImplicitLevel {
     /// their order.
     #[inline]
     pub(crate) fn places_from(&self, first: (i64, i64)) -> Places<'_> {
-        Places { digits: &self.digits[..self.within], at: Odometer::new(first), next: 0, end: self.per_node }
+        debug_assert!(self.per_node < 1 << 31);
+        Places { level: self, at: Odometer::new(first), next: 0, end: self.per_node as u32 }
     }
 
     /// A reader of the nodes' first pairs in increasing node order
@@ -944,65 +945,85 @@ impl crate::execution::pool::Scratch for PairArena {
     }
 }
 
-/// The digits an [`Odometer`] counts in place; a carry past them reads the
-/// place off its digits.
-const ODOMETER_COUNTERS: usize = 4;
+/// The digits a [`NodeCursor`]'s [`Odometer`] counts in place.
+const NODE_COUNTERS: usize = 4;
+
+/// The digits a [`Places`]' [`Odometer`] counts in place: two, so that a
+/// node's pairs read in the room of a slice and a few words, which keeps
+/// [`PairsIter`](crate::diagram::PairsIter) small where it is passed.
+const PLACE_COUNTERS: usize = 2;
 
 /// The slots at a place of a run of digits, fastest first, counted like an
 /// odometer: one place on, the fastest digit goes up one and carries into
 /// the next where it wraps, so a step costs an add or two, not a division
-/// a digit.
-#[derive(Clone, Debug)]
-struct Odometer {
-    /// The slots at place 0.
-    first: (i64, i64),
+/// a digit. The settings of the first `N` digits are counted in place; a
+/// carry past them reads the next digits' settings off the place.
+///
+/// The slots are summed in `u32`, wrapping: a place's slots are child slots,
+/// which fit in one, so the wrapping sums are the slots.
+#[derive(Clone, Copy, Debug)]
+struct Odometer<const N: usize> {
     /// The slots at the place counted.
-    at: (i64, i64),
-    /// The settings of the first [`ODOMETER_COUNTERS`] digits there.
-    counts: [u32; ODOMETER_COUNTERS],
+    at: (u32, u32),
+    /// The settings of the first `N` digits there.
+    counts: [u32; N],
 }
 
-impl Odometer {
+impl<const N: usize> Odometer<N> {
     /// At place 0, the slots `first`.
     #[inline]
-    fn new(first: (i64, i64)) -> Odometer {
-        Odometer { first, at: first, counts: [0; ODOMETER_COUNTERS] }
+    fn new(first: (i64, i64)) -> Self {
+        Odometer { at: (first.0 as u32, first.1 as u32), counts: [0; N] }
+    }
+
+    /// The slots at the place counted.
+    #[inline]
+    fn slots(&self) -> (i64, i64) {
+        (i64::from(self.at.0), i64::from(self.at.1))
+    }
+
+    /// Add `times` units of digit `d` to the slots.
+    #[inline]
+    fn add(&mut self, d: &Digit, times: i64) {
+        self.at = (self.at.0.wrapping_add((times * d.left) as u32), self.at.1.wrapping_add((times * d.right) as u32));
     }
 
     /// One place on, to `place`, of `digits`.
     #[inline]
     fn step(&mut self, digits: &[Digit], place: usize) {
+        let mut period = 1;
         for (j, d) in digits.iter().enumerate() {
-            if j == ODOMETER_COUNTERS {
-                self.seat(digits, place);
+            let wrapped = match self.counts.get_mut(j) {
+                Some(c) => {
+                    *c += 1;
+                    let wrapped = *c as usize == d.radix;
+                    if wrapped {
+                        *c = 0;
+                    }
+                    wrapped
+                }
+                None => (place / period).is_multiple_of(d.radix),
+            };
+            if !wrapped {
+                self.add(d, 1);
                 return;
             }
-            let c = &mut self.counts[j];
-            *c += 1;
-            if *c as usize != d.radix {
-                self.at = (self.at.0 + d.left, self.at.1 + d.right);
-                return;
-            }
-            *c = 0;
-            let back = (d.radix - 1) as i64;
-            self.at = (self.at.0 - back * d.left, self.at.1 - back * d.right);
+            self.add(d, 1 - d.radix as i64);
+            period *= d.radix;
         }
     }
 
-    /// To `place` of `digits`, read off its digits.
-    fn seat(&mut self, digits: &[Digit], place: usize) {
-        let (mut l, mut r) = self.first;
-        let mut rest = place;
+    /// From place `from` to place `to` of `digits`, read off its digits.
+    fn seat(&mut self, digits: &[Digit], from: usize, to: usize) {
+        let (mut a, mut b) = (from, to);
         for (j, d) in digits.iter().enumerate() {
-            let c = rest % d.radix;
-            rest /= d.radix;
-            if j < ODOMETER_COUNTERS {
-                self.counts[j] = c as u32;
+            let (was, is) = (a % d.radix, b % d.radix);
+            (a, b) = (a / d.radix, b / d.radix);
+            if let Some(c) = self.counts.get_mut(j) {
+                *c = is as u32;
             }
-            l += c as i64 * d.left;
-            r += c as i64 * d.right;
+            self.add(d, is as i64 - was as i64);
         }
-        self.at = (l, r);
     }
 }
 
@@ -1011,18 +1032,20 @@ impl Odometer {
 /// [`PairsIter`](crate::diagram::PairsIter) yields on such a level.
 #[derive(Clone, Debug)]
 pub(crate) struct Places<'a> {
-    digits: &'a [Digit],
+    /// The description, whose first [`within`](ImplicitLevel::within)
+    /// digits are the place digits.
+    level: &'a ImplicitLevel,
     /// At place `next`, while `next < end`.
-    at: Odometer,
-    next: usize,
-    end: usize,
+    at: Odometer<PLACE_COUNTERS>,
+    next: u32,
+    end: u32,
 }
 
 impl Places<'_> {
     /// The pairs still to come.
     #[inline]
     pub(crate) fn len(&self) -> usize {
-        self.end - self.next
+        (self.end - self.next) as usize
     }
 }
 
@@ -1038,7 +1061,7 @@ pub(crate) struct NodeCursor<'a> {
     /// The node digits, fastest first.
     digits: &'a [Digit],
     /// At node `node`.
-    at: Odometer,
+    at: Odometer<NODE_COUNTERS>,
     node: usize,
 }
 
@@ -1053,10 +1076,10 @@ impl NodeCursor<'_> {
                 self.at.step(self.digits, node);
             }
         } else if i != self.node {
-            self.at.seat(self.digits, i);
+            self.at.seat(self.digits, self.node, i);
         }
         self.node = i;
-        self.at.at
+        self.at.slots()
     }
 }
 
@@ -1068,22 +1091,25 @@ impl Iterator for Places<'_> {
         if self.next == self.end {
             return None;
         }
-        let out = pair(self.at.at.0, self.at.at.1);
+        let (l, r) = self.at.slots();
         self.next += 1;
         if self.next < self.end {
-            self.at.step(self.digits, self.next);
+            let level = self.level;
+            self.at.step(&level.digits[..level.within], self.next as usize);
         }
-        Some(out)
+        Some(pair(l, r))
     }
 
     /// Skips to the place `n` on in one step, read off its digits.
     #[inline]
     fn nth(&mut self, n: usize) -> Option<ChildPair> {
-        if n > 0 {
-            self.next = self.next.saturating_add(n).min(self.end);
-            if self.next < self.end {
-                self.at.seat(self.digits, self.next);
+        if n > 0 && self.next < self.end {
+            let to = (self.next as usize).saturating_add(n).min(self.end as usize);
+            if to < self.end as usize {
+                let level = self.level;
+                self.at.seat(&level.digits[..level.within], self.next as usize, to);
             }
+            self.next = to as u32;
         }
         self.next()
     }
@@ -1093,7 +1119,6 @@ impl Iterator for Places<'_> {
         (self.len(), Some(self.len()))
     }
 }
-
 
 /// The pairs arenas have held as their description, over the process.
 static DESCRIBED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

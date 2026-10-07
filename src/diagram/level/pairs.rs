@@ -21,6 +21,19 @@ pub enum Pairs<'a> {
     Implicit(&'a ImplicitLevel),
 }
 
+/// Where a node of an implicit level begins: the description, and the
+/// slots of the node's first pair. The readers kept out of line return
+/// this, and the node's [`PairsIter`] is made from it where the pairs are
+/// read ([`described_iter`]): no call writes the iterator, so it can stay
+/// in registers there, on stored levels too.
+type NodeStart<'a> = (&'a ImplicitLevel, (u32, u32));
+
+/// The pairs of the node that begins at `start`.
+#[inline(always)]
+fn described_iter((d, (l, r)): NodeStart<'_>) -> PairsIter<'_> {
+    PairsIter::described(d.places_from((i64::from(l), i64::from(r))))
+}
+
 /// The one pair an inline node holds, as a slice of the node itself.
 #[inline(always)]
 fn inline_pair(node: &EncodedNode) -> &[ChildPair] {
@@ -110,13 +123,18 @@ impl TddLevel {
 
     /// Iterate structural nodes in a valid slot range, retaining their level indices.
     /// On an implicit level each node's first pair is stepped on from the
-    /// one before it ([`NodeCursor`]).
+    /// one before it ([`NodeCursor`]), which the first read makes, boxed
+    /// ([`described_cursor`](Self::described_cursor)).
     #[inline]
     pub(crate) fn internal_inputs_range(&self, range: std::ops::Range<usize>) -> impl Iterator<Item = (usize, PairsIter<'_>)> + '_ {
         let start = range.start;
         let mut cursor = None;
         self.nodes[range].iter().enumerate().map(move |(i, n)| {
-            (start + i, self.read_node(n, |at| self.described_next(&mut cursor, at)))
+            let pairs = self.read_node(n, |at| {
+                let cursor = cursor.get_or_insert_with(|| self.described_cursor());
+                described_iter(self.described_next(cursor, at))
+            });
+            (start + i, pairs)
         })
     }
 
@@ -232,26 +250,40 @@ impl TddLevel {
     /// generated from the level's description.
     #[inline]
     pub fn pairs_iter_of<'a>(&'a self, node: &'a EncodedNode) -> PairsIter<'a> {
-        self.read_node(node, |start| self.described_pairs(start))
+        self.read_node(node, |start| described_iter(self.described_pairs(start)))
     }
 
-    /// The pairs of the node of this implicit level whose pairs the arena
-    /// it stands for holds from `start`. Kept out of line, so that the
-    /// stored levels' read inlines where it is called.
+    /// This implicit level's description.
+    fn described(&self) -> &ImplicitLevel {
+        self.pairs.implicit().expect("an arena is stored or described")
+    }
+
+    /// Where the pairs of the node of this implicit level whose pairs the
+    /// arena it stands for holds from `start` begin ([`described_iter`]).
+    /// Kept out of line, so that the stored levels' read inlines where it
+    /// is called.
     #[inline(never)]
-    fn described_pairs(&self, start: usize) -> PairsIter<'_> {
-        let d = self.pairs.implicit().expect("an arena is stored or described");
-        PairsIter::described(d.places(start / d.pairs_per_node()))
+    fn described_pairs(&self, start: usize) -> NodeStart<'_> {
+        let d = self.described();
+        let (l, r) = d.node_first(start / d.pairs_per_node());
+        (d, (l as u32, r as u32))
     }
 
     /// [`described_pairs`](Self::described_pairs) for nodes read in
-    /// increasing order, their first pairs stepped on by `cursor`, which
-    /// the first read makes.
+    /// increasing order, their first pairs stepped on by `cursor`.
     #[inline(never)]
-    fn described_next<'a>(&'a self, cursor: &mut Option<NodeCursor<'a>>, start: usize) -> PairsIter<'a> {
-        let d = self.pairs.implicit().expect("an arena is stored or described");
-        let cursor = cursor.get_or_insert_with(|| d.cursor());
-        PairsIter::described(d.places_from(cursor.first_of(start / d.pairs_per_node())))
+    fn described_next<'a>(&'a self, cursor: &mut NodeCursor<'a>, start: usize) -> NodeStart<'a> {
+        let d = self.described();
+        let (l, r) = cursor.first_of(start / d.pairs_per_node());
+        (d, (l as u32, r as u32))
+    }
+
+    /// A [`NodeCursor`] on this implicit level, at node 0. Boxed: a reader
+    /// is passed its address, and an iterator that held it in place would
+    /// stay in memory where it is read, on stored levels too.
+    #[inline(never)]
+    fn described_cursor(&self) -> Box<NodeCursor<'_>> {
+        Box::new(self.described().cursor())
     }
 
     /// A stored multi-pair node's pairs, to change in place.
