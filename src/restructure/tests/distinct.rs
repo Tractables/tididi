@@ -6,22 +6,9 @@ use crate::test_helpers::{assert_canonical, compile_clauses, eval, random_diagra
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::{Engine, Tdd};
 
-/// The vtree nodes a count may be keyed on: the children and grandchildren
-/// of the root.
+/// Every vtree node a count may be keyed on: all but the root.
 fn keys(vtree: &Vtree) -> Vec<VtreeIdx> {
-    let mut out = Vec::new();
-    if vtree.node(vtree.root()).is_leaf() {
-        return out;
-    }
-    let (l, r) = vtree.children(vtree.root());
-    for c in [l, r] {
-        out.push(c);
-        if !vtree.node(c).is_leaf() {
-            let (cl, cr) = vtree.children(c);
-            out.extend([cl, cr]);
-        }
-    }
-    out
+    vtree.bottomup().filter(|&t| t != vtree.root()).collect()
 }
 
 fn vars_under(vtree: &Vtree, t: VtreeIdx) -> Vec<VarId> {
@@ -109,12 +96,14 @@ fn false_counts_nothing_and_zero_is_true() {
 }
 
 #[test]
-fn a_key_too_deep_or_at_the_root_is_refused() {
+fn the_root_is_refused_as_a_key() {
     let eng = Engine::new();
     let vtree = Arc::new(Vtree::linear(4));
     let f = compile_clauses(&vtree, &[vec![1, 2, 3, 4]]);
-    assert!(matches!(eng.at_least_distinct(&f, vtree.root(), 1), Err(DistinctError::Placement { .. })));
-    // x4 sits three levels down a linear vtree of four variables.
+    assert!(matches!(eng.at_least_distinct(&f, vtree.root(), 1), Err(DistinctError::Root)));
+    // x4 sits three levels down a linear vtree of four variables: a key
+    // there reads the levels on its path only.
     let deep = vtree.leaf_of(VarId(4)).unwrap();
-    assert!(matches!(eng.at_least_distinct(&f, deep, 1), Err(DistinctError::Placement { .. })));
+    let g = eng.project_to_subtree(&f, deep).unwrap();
+    assert_eq!(eng.model_count(&g).unwrap(), 2u32.into());
 }

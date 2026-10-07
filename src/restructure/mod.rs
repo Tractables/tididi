@@ -331,12 +331,8 @@ impl From<OperationError> for TagError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DistinctError {
-    /// The key subtree is the root, or its parent is neither the root nor a
-    /// child of the root, so the count is not a sum over one level's pairs.
-    Placement {
-        /// The key subtree's root.
-        key: VtreeIdx,
-    },
+    /// The key is the vtree's root, which has no sibling to count.
+    Root,
     /// An operation the pass runs was refused: a key that is not in the
     /// vtree, a diagram that has discarded the structure at a level, a
     /// refused allocation, or an armed stop.
@@ -346,9 +342,7 @@ pub enum DistinctError {
 impl std::fmt::Display for DistinctError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Placement { key } => {
-                write!(f, "vtree node {} is not a child or a grandchild of the root", key.idx())
-            }
+            Self::Root => write!(f, "the key is the vtree's root, which has no sibling to count"),
             Self::Operation(error) => write!(f, "counting distinct values: {error}"),
         }
     }
@@ -358,7 +352,7 @@ impl std::error::Error for DistinctError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Operation(error) => Some(error),
-            Self::Placement { .. } => None,
+            Self::Root => None,
         }
     }
 }

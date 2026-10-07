@@ -1,28 +1,30 @@
 //! Count, per assignment to one subtree, the distinct assignments of its
-//! sibling: the projection onto a subtree near the root and the
-//! distinct-count threshold, each a pass over two levels.
+//! sibling: the projection onto a subtree and the distinct-count threshold,
+//! each read off the levels on one root-to-node path.
 //!
-//! Let `key` be a vtree node whose parent `p` is the root or a child of the
-//! root, `s` its sibling and, where `p` is not the root, `d` the root's other
-//! child. A diagram `f` is the disjoint union of the products its output's
-//! pairs name, so `∃d. f` is the disjoint union of the nodes of `p`'s level
-//! that the output reaches. Each such node is the disjoint union of its
-//! pairs' products `κ × σ`, `κ` a node of `key`'s level and `σ` one of `s`'s,
-//! and an assignment `k` to `key`'s variables lies in at most one `κ`, since
-//! the nodes of a level are disjoint. So the assignments `s` with
+//! Every model of a diagram `f` passes through exactly one node of each
+//! level, and every node a pair names is satisfiable, so `∃` of the
+//! variables outside a vtree node `p`'s subtree is the disjoint union of
+//! the nodes of `p`'s level that the output reaches. Let `key` be a child of
+//! `p` and `s` its sibling. Each reached node is the disjoint union of its
+//! pairs' products `κ × σ`, `κ` a node of `key`'s level and `σ` one of
+//! `s`'s, and an assignment `k` to `key`'s variables lies in at most one
+//! `κ`, since the nodes of a level are disjoint. So, with `d` the
+//! variables outside `p`'s subtree, the assignments `s` with
 //! `∃d. f(k, s, d)` are the disjoint union of the `σ` paired with `k`'s `κ`
-//! in those nodes, and
+//! in the reached nodes, and
 //!
 //! ```text
 //! #{s : ∃d. f(k, s, d)} = Σ |σ|   over the pairs (κ, σ) of the reached nodes.
 //! ```
 //!
-//! One bottom-up pass over `s`'s subtree gives every `|σ|`, capped at `m`,
+//! One walk down the levels from the root to `p` finds the reached nodes,
+//! one bottom-up pass over `s`'s subtree gives every `|σ|`, capped at `m`,
 //! and one pass over the reached pairs sums them per `κ`. The keys with at
-//! least `m` are the union of the `κ` whose sum reaches `m`: one node holding
-//! all their pairs, over the levels below `key` copied. With `m = 1` this is
-//! `∃` of every variable outside `key`'s subtree, read off as a node map: no
-//! level above `key`'s is regrouped.
+//! least `m` are the union of the `κ` whose sum reaches `m`: one node
+//! holding all their pairs, over the levels below `key` copied. With
+//! `m = 1` this is `∃` of every variable outside `key`'s subtree, a node
+//! map: no level is regrouped, and no level off the path is read.
 
 use std::sync::Arc;
 
@@ -39,21 +41,20 @@ use crate::vtree::{Vtree, VtreeIdx};
 impl Engine {
     /// The assignments `k` to the variables under `key` with at least `m`
     /// distinct assignments `s` to the variables under `key`'s sibling such
-    /// that `∃d. f(k, s, d)`, where `d` are the variables under the root's
-    /// other child when `key`'s parent is not the root (and none when it
-    /// is): `[#{s : ∃d. f(k, s, d)} ≥ m]`, as a diagram on a vtree of
-    /// `key`'s subtree, with the same variable ids.
+    /// that `∃d. f(k, s, d)`, `d` every variable outside the subtree of
+    /// `key`'s parent: `[#{s : ∃d. f(k, s, d)} ≥ m]`, as a diagram on a
+    /// vtree of `key`'s subtree, with the same variable ids.
     ///
-    /// `key`'s parent must be the root or a child of the root, which is what
-    /// makes the count a sum over one level's pairs (see the module doc).
-    /// Lay a vtree out for it as `((key, counted), dropped)` or
-    /// `(key, counted)`. `m = 0` is true and `m = 1` is the projection onto
+    /// `key` may be any node but the root. Lay a vtree out for it with the
+    /// key and the counted variables as two siblings, the variables to drop
+    /// anywhere outside them: `((key, counted), dropped)` reads two levels
+    /// above the key. `m = 0` is true and `m = 1` is the projection onto
     /// `key`'s variables, [`project_to_subtree`](Self::project_to_subtree).
     ///
-    /// The cost is the size of the sibling's subtree, the pairs of the
-    /// output and of the nodes of the parent's level it reaches, a copy of
-    /// the levels under `key`, and the minimization of the result; the
-    /// levels of `d`'s subtree are never read.
+    /// The cost is the pairs of the nodes the output reaches on the levels
+    /// from the root down to `key`'s parent, the size of the sibling's
+    /// subtree, a copy of the levels under `key`, and the minimization of
+    /// the result; no level off that path is read.
     ///
     /// ```
     /// use std::sync::Arc;
@@ -79,12 +80,11 @@ impl Engine {
     ///
     /// # Errors
     ///
-    /// [`DistinctError::Placement`] when `key` is the root or its parent is
-    /// not the root or a child of it; [`DistinctError::Operation`] with
-    /// [`OperationError::LevelNotInVtree`] for a `key` that is not a node of
-    /// the diagram's vtree, [`OperationError::MarginalLevel`] for a diagram
-    /// that has discarded the structure at a level, and for a refused
-    /// allocation or an armed stop.
+    /// [`DistinctError::Root`] when `key` is the root, which has no sibling;
+    /// [`DistinctError::Operation`] with [`OperationError::LevelNotInVtree`]
+    /// for a `key` that is not a node of the diagram's vtree,
+    /// [`OperationError::MarginalLevel`] for a diagram that has discarded the
+    /// structure at a level, and for a refused allocation or an armed stop.
     pub fn at_least_distinct(&self, tdd: &Tdd, key: VtreeIdx, m: u64) -> Result<Tdd, DistinctError> {
         let lim = self.limits();
         let _op = lim.enter()?;
@@ -94,11 +94,8 @@ impl Engine {
             return Err(OperationError::LevelNotInVtree(key).into());
         }
         let Some(parent) = vtree.node(key).parent() else {
-            return Err(DistinctError::Placement { key });
+            return Err(DistinctError::Root);
         };
-        if vtree.node(parent).parent().is_some_and(|g| vtree.node(g).parent().is_some()) {
-            return Err(DistinctError::Placement { key });
-        }
         let counted = vtree.sibling(key);
         let mut gate = lim.gate();
 
@@ -139,26 +136,32 @@ impl Engine {
         // `|σ|` for every node of the sibling's level, capped at `m`.
         let size = capped_counts(self, tdd, counted, m)?;
 
-        // The nodes of the parent's level the output reaches.
-        let root = vtree.root();
+        // The nodes of the parent's level the output reaches, level by
+        // level down the path from the root.
         let structural = ChildDecoder::structural();
-        let output = tdd.output().local;
-        let mut reached = Vec::new();
-        if parent == root {
-            reached.push(output);
-        } else {
-            let parent_left = vtree.children(root).0 == parent;
+        let mut path = vec![parent];
+        while let Some(up) = vtree.node(*path.last().expect("not empty")).parent() {
+            path.push(up);
+        }
+        let mut reached = vec![tdd.output().local];
+        for step in path.windows(2).rev() {
+            let (below, above) = (step[0], step[1]);
+            let left = vtree.children(above).0 == below;
             let mut seen = Vec::new();
-            lim.try_resize(&mut seen, tdd.level(parent).nodes().len(), false)?;
-            let pairs = tdd.level(root).pairs_iter_of_idx(output.idx());
-            gate.poll(pairs.len() as u64)?;
-            for pair in pairs {
-                let n = structural.node(if parent_left { pair.left } else { pair.right });
-                if !seen[n.idx()] {
-                    seen[n.idx()] = true;
-                    lim.try_push(&mut reached, n)?;
+            lim.try_resize(&mut seen, tdd.level(below).nodes().len(), false)?;
+            let mut next = Vec::new();
+            for &n in &reached {
+                let pairs = tdd.level(above).pairs_iter_of_idx(n.idx());
+                gate.poll(pairs.len() as u64)?;
+                for pair in pairs {
+                    let c = structural.node(if left { pair.left } else { pair.right });
+                    if !seen[c.idx()] {
+                        seen[c.idx()] = true;
+                        lim.try_push(&mut next, c)?;
+                    }
                 }
             }
+            reached = next;
         }
 
         // Each node of `key`'s level, its sum over the reached pairs.
@@ -230,15 +233,13 @@ impl Engine {
     /// vtree of that subtree with the same variable ids:
     /// [`at_least_distinct`](Self::at_least_distinct) with `m = 1`.
     ///
-    /// `key` must be a child of the root or a grandchild. The nodes of
-    /// `key`'s level that the output reaches, through its parent's level
-    /// when `key` is a grandchild, are the projection's classes; their
-    /// union is the result, so no level above `key`'s is regrouped.
+    /// The union of the nodes of `key`'s level that the output reaches is
+    /// the projection, so no level is regrouped: the cost is the reached
+    /// pairs on the levels above `key` and a copy of the levels below it.
     ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Vtree};
-    /// use tididi::vtree::VarId;
     ///
     /// // (x1 ∨ x2) ∧ (x3 ∨ x4) on ((x1 x2) (x3 x4)), onto x1 and x2.
     /// let engine = Engine::new();
