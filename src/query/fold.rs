@@ -11,7 +11,7 @@
 //! fold marginalization writes its levels with.
 
 use crate::value::{walk_bottom_up, Retention};
-use crate::diagram::{EncodedChildRef, ChildRef, LeafLabel, PairsIter, ChildDecoder, Tdd, ValueRef, LEAF_WIDTH};
+use crate::diagram::{EncodedChildRef, ChildRef, LeafLabel, PairsIter, ChildDecoder, Tdd, TddLevel, ValueRef, LEAF_WIDTH};
 use crate::Engine;
 use crate::limits::PollGate;
 use crate::limits::OperationError;
@@ -79,6 +79,22 @@ pub(crate) trait LevelFold {
         &self, _eng: &Engine, _tdd: &Tdd, _cols: &mut [Self::Col],
         _t: VtreeIdx, _gate: &mut PollGate,
     ) -> Result<bool, OperationError> { Ok(false) }
+
+    /// Fill the slots `range` of internal level `level`'s column in one pass,
+    /// where this fold has one faster than a [`fold_node`](Self::fold_node)
+    /// per node; returns the first slot it did not fill, which
+    /// [`fold_level`] then folds by `fold_node` before asking again. The
+    /// default fills none.
+    fn fill_nodes(
+        &self,
+        _level: &TddLevel,
+        _left: Side<'_, Self::Col>,
+        _right: Side<'_, Self::Col>,
+        _col: &mut Self::Col,
+        range: std::ops::Range<usize>,
+    ) -> usize {
+        range.start
+    }
 
     /// Fold node `i` of an internal level: `Σ over pairs (left × right)`.
     fn fold_node(
@@ -178,16 +194,34 @@ pub(crate) fn fold_level<F: LevelFold, const PREPARED: bool>(
         if F::NODE_WORK {
             gate.poll((end - start) as u64)?;
         }
-        for (i, pairs) in level.internal_inputs_range(start..end) {
-            if !F::NODE_WORK {
-                gate.poll(pairs.len() as u64 + 1)?;
-            }
-            let v = f.fold_node(
-                pairs,
+        let mut next = start;
+        while next < end {
+            // The fold's own pass over as many nodes as it takes, the column
+            // taken out of `cols` so the children's stay readable beside it.
+            let mut col = std::mem::take(&mut cols[ti]);
+            let filled = f.fill_nodes(
+                level,
                 Side { col: &cols[left_idx], view: left_view },
                 Side { col: &cols[right_idx], view: right_view },
+                &mut col,
+                next..end,
             );
-            f.set(eng, &mut cols[ti], i, v)?;
+            cols[ti] = col;
+            // One node by `fold_node`: where the pass stopped, or every node
+            // when it takes none.
+            let to = if filled == next { end } else { filled.saturating_add(1).min(end) };
+            for (i, pairs) in level.internal_inputs_range(filled..to) {
+                if !F::NODE_WORK {
+                    gate.poll(pairs.len() as u64 + 1)?;
+                }
+                let v = f.fold_node(
+                    pairs,
+                    Side { col: &cols[left_idx], view: left_view },
+                    Side { col: &cols[right_idx], view: right_view },
+                );
+                f.set(eng, &mut cols[ti], i, v)?;
+            }
+            next = to;
         }
     }
     Ok(())

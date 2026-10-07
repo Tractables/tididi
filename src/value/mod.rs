@@ -187,6 +187,35 @@ impl CountVec {
         Ok(())
     }
 
+    /// Fill the slots `range` with `fold(i)` while it gives a value that fits
+    /// the fast lane, returning the first slot it did not fill (`range.end`
+    /// when it filled them all). Fills nothing on a column with an overflow
+    /// slot, whose side table a fast write would leave stale; the caller then
+    /// stores each value with [`Self::set`].
+    #[inline]
+    pub(crate) fn fill_fast(&mut self, range: std::ops::Range<usize>, mut fold: impl FnMut(usize) -> Option<u128>) -> usize {
+        if self.big.is_some() {
+            return range.start;
+        }
+        let mut all_u64 = self.all_u64;
+        let fast = &mut self.fast[range.clone()];
+        let mut filled = range.end;
+        for (slot, i) in fast.iter_mut().zip(range.clone()) {
+            match fold(i) {
+                Some(v) if v != COUNT_OVERFLOW => {
+                    *slot = v;
+                    all_u64 &= v <= u64::MAX as u128;
+                }
+                _ => {
+                    filled = i;
+                    break;
+                }
+            }
+        }
+        self.all_u64 = all_u64;
+        filled
+    }
+
     /// Append one value, growing by amortized doubling. A `Big` append records
     /// one side-table entry under the new slot's index; a `Fast` append leaves
     /// the side table untouched.

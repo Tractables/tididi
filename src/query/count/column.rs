@@ -1,7 +1,7 @@
 //! Query-owned counts, widening a column only when a value needs it.
 
 use crate::{Engine, OperationError};
-use crate::diagram::{ChildPair, LEAF_WIDTH};
+use crate::diagram::{ChildPair, TddLevel, LEAF_WIDTH};
 use crate::limits::Charged;
 use crate::value::{Count, CountRead, CountVec, IntFold};
 use crate::query::fold::Column;
@@ -15,6 +15,13 @@ pub(crate) trait CountColumn: Column + Charged + Sized {
     fn get(&self, i: usize) -> CountRead<'_>;
     fn set(&mut self, eng: &Engine, i: usize, value: Count) -> Result<(), OperationError>;
     fn fold_structural(pairs: impl Iterator<Item = ChildPair>, left: &Self, right: &Self) -> Option<u128>;
+    /// Fill the slots `range` of `col`, an internal level's column whose
+    /// children `left` and `right` are both structural, in one pass while
+    /// each total fits the fast storage; returns the first slot it did not
+    /// fill, `range.end` when it filled them all. The default fills none.
+    fn fill_structural(_level: &TddLevel, _left: &Self, _right: &Self, _col: &mut Self, range: std::ops::Range<usize>) -> usize {
+        range.start
+    }
 }
 
 impl Column for CountVec {
@@ -39,6 +46,13 @@ impl CountColumn for CountVec {
                 |k| left.fast_slice()[k.raw() as usize] as u64 as u128,
                 |k| right.fast_slice()[k.raw() as usize] as u64 as u128)
         } else { None }
+    }
+
+    fn fill_structural(level: &TddLevel, left: &Self, right: &Self, col: &mut Self, range: std::ops::Range<usize>) -> usize {
+        let (left, right) = (left.as_count_ref(), right.as_count_ref());
+        if left.all_u64() && right.all_u64() {
+            IntFold::fill_structural_u64(level, left.fast_slice(), right.fast_slice(), col, range)
+        } else { range.start }
     }
 }
 
@@ -116,6 +130,14 @@ impl CountColumn for QueryCounts {
             }
             (Self::Wide(l), Self::Wide(r)) => CountVec::fold_structural(pairs, l, r),
             _ => None,
+        }
+    }
+
+    fn fill_structural(level: &TddLevel, left: &Self, right: &Self, col: &mut Self, range: std::ops::Range<usize>) -> usize {
+        match (left, right, col) {
+            (Self::Narrow(l), Self::Narrow(r), Self::Narrow(c)) => IntFold::fill_structural_narrow(level, l, r, c, range),
+            (Self::Wide(l), Self::Wide(r), Self::Wide(c)) => CountVec::fill_structural(level, l, r, c, range),
+            _ => range.start,
         }
     }
 }

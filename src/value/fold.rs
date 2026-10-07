@@ -8,7 +8,27 @@ use crate::diagram::ChildPair;
 use crate::diagram::WeightValue;
 use crate::vtree::{Vtree, VtreeIdx};
 
-use super::{Count, CountRead};
+use super::{Count, CountRead, CountVec};
+use crate::diagram::TddLevel;
+
+/// How many nodes ahead of the one it sums [`IntFold::fill_structural_u64`]
+/// asks the cache for the child counts a node reads.
+const NODES_AHEAD: usize = 8;
+
+/// Ask the cache for the line holding `column[k]`, which need not be in
+/// bounds: a prefetch reads nothing the program sees and never faults. A
+/// no-op off `x86_64` and under Miri, which lacks the intrinsic.
+#[inline(always)]
+fn prefetch_at<T>(column: &[T], k: usize) {
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        let at = column.as_ptr().wrapping_add(k).cast::<i8>();
+        // Sound whatever the address, as above.
+        unsafe { core::arch::x86_64::_mm_prefetch(at, core::arch::x86_64::_MM_HINT_T0) };
+    }
+    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
+    let _ = (column, k);
+}
 
 /// Integer model counts: u128 fast path overflowing into exact `BigUint`.
 pub(crate) struct IntFold;
@@ -79,6 +99,10 @@ impl IntFold {
     /// costs what any other does.
     #[inline]
     pub(crate) fn fold_structural_u64(pairs: &[ChildPair], left: &[u128], right: &[u128]) -> Option<u128> {
+        // Many diagrams hold most of their nodes with one pair.
+        if let [p] = pairs {
+            return Some((left[p.left.0 as usize] as u64 as u128) * (right[p.right.0 as usize] as u64 as u128));
+        }
         Self::fold_structural_by(pairs.iter().copied(),
             |side| left[side.0 as usize] as u64 as u128,
             |side| right[side.0 as usize] as u64 as u128)
@@ -100,6 +124,70 @@ impl IntFold {
             }
         }
         t0.checked_add(t1)
+    }
+
+    /// Fold the nodes `range` of a structural level both of whose children
+    /// are structural with every count fitting `u64` (`left` and `right`
+    /// their raw columns, as [`Self::fold_structural_u64`] reads them) into
+    /// `col`, while each total fits the fast lane; returns the first node it
+    /// did not fill, `range.end` when it filled them all. Fills none of an
+    /// implicit level's nodes, whose pairs the general fold generates.
+    ///
+    /// The child counts the node [`NODES_AHEAD`] on reads are requested from
+    /// the cache while the current one is summed: the reads of a level are
+    /// independent, and a wide child's column is read at random.
+    pub(crate) fn fill_structural_u64(
+        level: &TddLevel,
+        left: &[u128],
+        right: &[u128],
+        col: &mut CountVec,
+        range: std::ops::Range<usize>,
+    ) -> usize {
+        let Some(stored) = level.stored() else {
+            return range.start;
+        };
+        col.fill_fast(range, |i| {
+            if let Some(ahead) = stored.nodes().get(i + NODES_AHEAD) {
+                for p in stored.of(ahead).iter().take(2) {
+                    prefetch_at(left, p.left.0 as usize);
+                    prefetch_at(right, p.right.0 as usize);
+                }
+            }
+            Self::fold_structural_u64(stored.of_idx(i), left, right)
+        })
+    }
+
+    /// [`Self::fill_structural_u64`] into a column of `u64` counts whose
+    /// children's columns are `u64` too: fills the nodes `range` while each
+    /// total fits `u64`, and returns the first node it did not fill.
+    pub(crate) fn fill_structural_narrow(
+        level: &TddLevel,
+        left: &[u64],
+        right: &[u64],
+        col: &mut [u64],
+        range: std::ops::Range<usize>,
+    ) -> usize {
+        let Some(stored) = level.stored() else {
+            return range.start;
+        };
+        for i in range.clone() {
+            if let Some(ahead) = stored.nodes().get(i + NODES_AHEAD) {
+                for p in stored.of(ahead).iter().take(2) {
+                    prefetch_at(left, p.left.0 as usize);
+                    prefetch_at(right, p.right.0 as usize);
+                }
+            }
+            let total = match stored.of_idx(i) {
+                [p] => Some(left[p.left.0 as usize] as u128 * right[p.right.0 as usize] as u128),
+                pairs => Self::fold_structural_by(pairs.iter().copied(),
+                    |k| left[k.0 as usize] as u128, |k| right[k.0 as usize] as u128),
+            };
+            match total {
+                Some(total) if total <= u64::MAX as u128 => col[i] = total as u64,
+                _ => return i,
+            }
+        }
+        range.end
     }
 
     /// Sum products in arbitrary precision after a fast fold refuses the total.

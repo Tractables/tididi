@@ -10,6 +10,10 @@ pub(crate) type StreamChildCounts<'a> = StreamChild<'a, IntFold>;
 // ── Integer payload (model counts) ──────────────────────────────────────────
 
 
+/// The nodes [`IntFold::fold_column`] charges and fills at once where both
+/// children read raw.
+const FILL_RUN: usize = 256;
+
 /// Read one child count for the all-`u64` fold. `MARGINAL`
 /// is whether the child's view decodes marginal-side references, lifted to a const so the per-pair branch
 /// folds away at compile time:
@@ -255,15 +259,30 @@ impl ValueDomain for IntFold {
         let raw = raw(left).zip(raw(right));
         // A described level's nodes take the general fold, which generates
         // their pairs.
-        let stored = level.stored();
-        for i in 0..level.slot_count() {
-            before_node(1 + level.pair_count_at(i) as u64)?;
-            let fast = raw.zip(stored).and_then(|((l, r), s)| IntFold::fold_structural_u64(s.of_idx(i), l, r));
-            let value = match fast {
-                Some(total) => Count::from_u128(total),
-                None => IntFold::fold_node(&at, i),
+        let raw = raw.filter(|_| level.stored().is_some());
+        let n = level.slot_count();
+        let mut next = 0;
+        while next < n {
+            // Each run of nodes is charged before it is summed, as each node
+            // would be.
+            let end = match raw {
+                Some(_) => next.saturating_add(FILL_RUN).min(n),
+                None => next + 1,
             };
-            col.set(eng, i, value)?;
+            let work: u64 = (next..end).map(|i| 1 + level.pair_count_at(i) as u64).sum();
+            before_node(work)?;
+            while next < end {
+                let filled = match raw {
+                    Some((l, r)) => IntFold::fill_structural_u64(level, l, r, &mut col, next..end),
+                    None => next,
+                };
+                if filled < end {
+                    // A total the fast lane refuses, or no raw children.
+                    col.set(eng, filled, IntFold::fold_node(&at, filled))?;
+                }
+                next = filled + 1;
+            }
+            next = end;
         }
         Ok(col)
     }

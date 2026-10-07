@@ -4,7 +4,7 @@ use crate::Engine;
 use std::borrow::Borrow;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use crate::diagram::{ChildRef, EncodedChildRef, LeafLabel, NodeIdx, PairsIter, Tdd, ValueRef};
+use crate::diagram::{ChildRef, EncodedChildRef, LeafLabel, NodeIdx, PairsIter, Tdd, TddLevel, ValueRef};
 use num_bigint::BigUint;
 
 use super::{leaf_seed, PinSemantics};
@@ -75,6 +75,23 @@ impl<C: CountColumn> LevelFold for OverflowingCounts<'_, C> {
         t: VtreeIdx, gate: &mut crate::limits::PollGate,
     ) -> Result<bool, OperationError> {
         if C::PREPARED_READS { self.prepared.fold_level(eng, tdd, cols, t, self.pins, gate) } else { Ok(false) }
+    }
+
+    /// Two structural children: every node by the column's own fill
+    /// ([`CountColumn::fill_structural`]), which reads the children's
+    /// counts raw while they fit its fast storage.
+    fn fill_nodes(
+        &self,
+        level: &TddLevel,
+        left: Side<'_, C>,
+        right: Side<'_, C>,
+        col: &mut C,
+        range: std::ops::Range<usize>,
+    ) -> usize {
+        if left.view.is_marginal() || right.view.is_marginal() {
+            return range.start;
+        }
+        C::fill_structural(level, left.col, right.col, col, range)
     }
 
     /// The shared two-pass integer fold, with this query's child readers.
