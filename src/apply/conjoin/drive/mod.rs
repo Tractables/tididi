@@ -355,9 +355,7 @@ pub(crate) fn apply_and_core(
     apply_leaf_levels(eng, &vtree, &mut run)?;
 
     // The operands' loose levels as a prune would settle them, read before
-    // the sweep drops the operands' levels: an embedding lists every level
-    // it built, most of them a node for each node of the level under them,
-    // each named once.
+    // the sweep drops the operands' levels.
     let operand_loose = match (f.dirty.loose(), g.dirty.loose()) {
         (Some(lf), Some(lg)) if plain => Some(Operands { f: settle_loose(eng, f, lf)?, g: settle_loose(eng, g, lg)? }),
         _ => None,

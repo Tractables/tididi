@@ -178,12 +178,9 @@ fn unnamed_levels(tdd: &crate::Tdd) -> Vec<u32> {
     out
 }
 
-/// A diagram over a random few of the variables of `wide`, compiled on
-/// `wide` restricted to them and minimized, then placed on `wide` by
-/// `embed_moving`, which lists every level it built loose: an operand as the
-/// evidence walk makes them.
-fn placed(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg, wide: &Arc<Vtree>) -> crate::Tdd {
-    use crate::test_helpers::{CnfShape, compile_clauses_on, rand_cnf};
+/// A random few of the variables of `wide`, sorted, and `wide` restricted to
+/// them, which numbers them from 1 in that order.
+fn restricted(rng: &mut crate::test_helpers::Lcg, wide: &Arc<Vtree>) -> (Vec<u32>, Arc<Vtree>) {
     use crate::vtree::VarId;
     let n = wide.num_vars();
     let k = 2 + rng.below(u64::from(n) - 2) as u32;
@@ -196,9 +193,61 @@ fn placed(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg, wide: &Arc<Vt
     vars.sort_unstable();
     let local = |v: VarId| vars.binary_search(&v.0).ok().map(|i| VarId(i as u32 + 1));
     let small = Arc::new(wide.project_to_vars(local, k).expect("k variables are kept"));
+    (vars, small)
+}
+
+/// A diagram over a random few of the variables of `wide`, compiled on
+/// `wide` restricted to them and minimized, then placed on `wide` by
+/// `embed_moving`: an operand as the evidence walk makes them.
+fn placed(eng: &crate::Engine, rng: &mut crate::test_helpers::Lcg, wide: &Arc<Vtree>) -> crate::Tdd {
+    use crate::test_helpers::{CnfShape, compile_clauses_on, rand_cnf};
+    use crate::vtree::VarId;
+    let (vars, small) = restricted(rng, wide);
+    let k = vars.len() as u32;
     let mut f = compile_clauses_on(eng, &small, &rand_cnf(rng, k, CnfShape { clauses: k as usize, width: 4 }));
     eng.minimize(&mut f).unwrap();
     eng.embed_moving(f, wide, |v| VarId(vars[v.idx()])).map_err(|r| r.error).unwrap().0
+}
+
+/// An embedding lists every level of its result that holds a node no pair
+/// of its parent level names, where the source has such levels of its own:
+/// the conjunction of two diagrams on a few of the variables, not pruned,
+/// placed on the whole vtree. The pass-through chains the embedding builds
+/// carry the looseness of the level at their foot up to their top.
+#[test]
+fn an_embedding_lists_the_levels_holding_an_unnamed_node() {
+    use crate::test_helpers::{CnfShape, Lcg, compile_clauses_on, rand_cnf, vtree_shapes};
+    use crate::vtree::VarId;
+
+    let eng = &crate::Engine::new();
+    let mut rng = Lcg::new(0x51ab_e70f);
+    let (mut cases, mut carried) = (0usize, 0usize);
+    for (name, wide) in vtree_shapes(14) {
+        for case in 0..40 {
+            let (vars, small) = restricted(&mut rng, &wide);
+            let k = vars.len() as u32;
+            let [mut f, mut g] = [(); 2].map(|()| compile_clauses_on(eng, &small, &rand_cnf(&mut rng, k, CnfShape { clauses: k as usize, width: 3 })));
+            eng.minimize(&mut f).unwrap();
+            eng.minimize(&mut g).unwrap();
+            let source = eng.and(f, g).unwrap();
+            if source.is_zero() {
+                continue;
+            }
+            let what = format!("{name}, case {case}");
+            let unnamed_source = unnamed_levels(&source);
+            let count = source.model_count().unwrap();
+            let (moved, _) = eng.embed_moving(source, &wide, |v| VarId(vars[v.idx()])).map_err(|r| r.error).unwrap();
+            let listed = moved.dirty.loose().expect("the source's loose levels are known");
+            for t in unnamed_levels(&moved) {
+                assert!(listed.contains(&t), "{what}: level {t} holds an unnamed node and is not listed");
+            }
+            assert_eq!(moved.model_count().unwrap(), count << (wide.num_vars() - k), "{what}");
+            carried += unnamed_source.len();
+            cases += 1;
+        }
+    }
+    assert!(cases > 150, "expected a corpus, got {cases} cases");
+    assert!(carried > 50, "expected sources with levels holding an unnamed node, got {carried}");
 }
 
 /// The root of `tdd` and every level above one of `levels`: the levels the
@@ -264,8 +313,13 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
             if f.is_zero() || g.is_zero() || h.is_zero() {
                 continue;
             }
-            let [lf, lg, lh] = [&f, &g, &h].map(|d| d.dirty.loose().expect("an embedding lists the levels it built").to_vec());
+            let [lf, lg, lh] = [&f, &g, &h].map(|d| d.dirty.loose().expect("an embedding knows its loose levels").to_vec());
             let what = format!("{name}, case {case}");
+            for (d, listed) in [(&f, &lf), (&g, &lg), (&h, &lh)] {
+                for t in unnamed_levels(d) {
+                    assert!(listed.contains(&t), "{what}: the embedding leaves level {t} with an unnamed node unlisted");
+                }
+            }
             let both = eng.and(f.clone(), g.clone()).unwrap();
             let kept = eng.and_restoring(f, g).map_err(|r| r.error).unwrap();
             assert_eq!(layout(&both), layout(&kept), "{what}: and and and_restoring differ");
@@ -277,6 +331,6 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     }
     assert!(cases > 180, "expected a corpus, got {cases} cases");
     assert!(loose > 300, "expected levels holding an unnamed node, got {loose}");
-    assert!(cleared > 2500, "expected levels an operand listed and the result does not, got {cleared}");
+    assert!(cleared > 300, "expected levels an operand listed and the result does not, got {cleared}");
     assert!(settled_away > 400, "expected listed levels the prune settles away, got {settled_away}");
 }

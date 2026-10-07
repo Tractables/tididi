@@ -616,16 +616,15 @@ fn assemble_moving(
     // owes the contraction passes what it owed in `tdd`. New pass-through
     // nodes have distinct child identities, and free levels have one node,
     // so neither introduces twins. A later child contraction queues its parents.
-    let mut built = Vec::new();
-    let carried = eng.limits().reserve_exact(&mut built, into.num_nodes()).and_then(|()| tdd.dirty.clone_on(eng));
+    let mut listed = Vec::new();
+    let carried = eng.limits().reserve_exact(&mut listed, into.num_nodes()).and_then(|()| tdd.dirty.clone_on(eng));
     let mut carried = match carried {
         Ok(carried) => carried,
         Err(e) => return Err((e, tdd)),
     };
     carried.remap(&plan.embedding.levels);
-    // A moved level under a pass-through has each node named by it, and one
-    // under a moved level is named as it was; a level built here may hold a
-    // node nothing reads.
+    // The images of the levels that may hold a node no pair of their parent
+    // level names, from which `moved_loose` lists the result's.
     let loose = carried.loose().map(<[u32]>::to_vec);
     let mut placement = match MovePlacement::new(eng, into, None) {
         Ok(placement) => placement,
@@ -645,7 +644,6 @@ fn assemble_moving(
         if stopped.is_err() {
             break;
         }
-        built.push(t.0);
         let (left, right) = into.children(t);
         if !plan.mapped[t.idx()] {
             placement.join(t, placement.true_node(left), placement.true_node(right));
@@ -670,15 +668,56 @@ fn assemble_moving(
         (e, tdd)
     })?;
     // `Pos` and `Neg` are the chain's nodes 0 and 1; nothing reads `One`.
-    for top in literal_tops {
+    for &top in &literal_tops {
         crate::diagram::remap_refs_into(&mut result, top, &[u32::MAX, 0, 1]);
     }
     if let Some(mut loose) = loose {
-        loose.extend(built);
-        result.dirty.set_loose(Some(loose));
-        result.dirty.dedup_above(into.num_nodes());
+        loose.sort_unstable();
+        literal_tops.sort_unstable();
+        moved_loose(into, plan, &loose, &literal_tops, &mut listed);
+        result.dirty.set_loose(Some(listed));
     }
     Ok(result)
+}
+
+/// The levels of [`assemble_moving`]'s result that may hold a node no pair
+/// of their parent level names, pushed to `out` bottom-up, given `loose`,
+/// the images of the source's such levels, and `literal_tops`, the tops of
+/// the pass-through chains that read a leaf as `Pos` and `Neg`, both sorted.
+///
+/// Only a level whose parent is the image of a source level can hold one. A
+/// level built under a built level is named whole: a pass-through has a
+/// node for each slot of the level it carries, and the single node of a
+/// level with no source variable is the true node every node of its parent
+/// names, of which there is one at least, as on every level of a diagram
+/// that is not false. Under an image, an image is named as its source level
+/// was, and the top of a pass-through chain as the level at the chain's
+/// foot, whose slots the chain carries one for one; a chain over a leaf
+/// holds `One`, which the image reads, or `Pos` and `Neg`, of which it may
+/// read one.
+fn moved_loose(into: &Vtree, plan: &Plan, loose: &[u32], literal_tops: &[VtreeIdx], out: &mut Vec<u32>) {
+    for (p, left, right) in into.internal_bottomup() {
+        if plan.covered_by[p.idx()].is_none() {
+            continue;
+        }
+        for top in [left, right] {
+            if into.node(top).is_leaf() {
+                continue;
+            }
+            let mut foot = top;
+            while plan.covered_by[foot.idx()].is_none() && !into.node(foot).is_leaf() {
+                let (l, r) = into.children(foot);
+                foot = if plan.mapped[l.idx()] { l } else { r };
+            }
+            let named_whole = match into.node(foot).is_leaf() {
+                true => literal_tops.binary_search(&top).is_err(),
+                false => loose.binary_search(&foot.0).is_err(),
+            };
+            if !named_whole {
+                out.push(top.0);
+            }
+        }
+    }
 }
 
 /// For a pass-through over a leaf at `t`, the top of the chain of

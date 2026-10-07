@@ -77,8 +77,8 @@ fn seeded_conjunctions_minimize_to_the_canonical_diagram() {
     }
 }
 
-/// A clause embedded onto a wider vtree has every level it gained loose. Where
-/// the conjunction carries the other operand's level, that level is loose only
+/// A clause embedded onto a wider vtree, with levels it gained listed loose.
+/// Where the conjunction carries the other operand's level, that level is loose only
 /// if its carrier had it so, so the prune after the conjunction starts at the
 /// top of a carried subtree, not inside it; the top is listed where the
 /// level the conjunction built over it leaves one of its nodes unnamed. The
@@ -99,8 +99,12 @@ fn a_carried_level_is_loose_only_where_its_carrier_had_it() {
     // not: the conjunction carries `f`'s levels there.
     let (half, _) = wide.children(wide.root());
     let (a, b) = wide.children(half);
-    let gained = g.dirty.loose().expect("an embedding records the levels it built").to_vec();
-    assert!(gained.contains(&a.0) && gained.contains(&b.0));
+    // `g` has one node on each of those levels, named by its parent; listed
+    // all the same, as a list may, they are settled away.
+    let mut g = g;
+    let mut listed = g.dirty.loose().expect("an embedding knows its loose levels").to_vec();
+    listed.extend([a.0, b.0]);
+    g.dirty.set_loose(Some(listed));
     let mut out = eng.and(f, g).unwrap();
     let loose = out.dirty.loose().expect("both operands' loose levels are known");
     let root = &out.levels[wide.root().idx()];
