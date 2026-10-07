@@ -456,11 +456,10 @@ fn unnamed_children(
     }
     let views = children.map(|c| tdd.levels[c.idx()].child_decoder());
     let level = &tdd.levels[p.idx()];
-    'read: for i in 0..level.slot_count() {
+    'read: for (_, pairs) in level.internal_inputs_iter() {
         if open == [0; 2] {
             break;
         }
-        let pairs = level.pairs_iter_of_idx(i);
         gate.poll(pairs.len() as u64)?;
         for pair in pairs {
             for (k, side) in [pair.left, pair.right].into_iter().enumerate() {
