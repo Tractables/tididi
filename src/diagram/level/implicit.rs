@@ -377,8 +377,9 @@ impl ImplicitLevel {
     /// pair that differs.
     fn holds<I: Iterator<Item = (i64, i64)>>(&self, mut node: impl FnMut(usize) -> Option<I>) -> bool {
         let places = self.offsets();
+        let mut cursor = self.cursor();
         (0..self.nodes).all(|i| {
-            let at = self.node_first(i);
+            let at = cursor.first_of(i);
             node(i).is_some_and(|pairs| pairs.eq(places.iter().map(|p| (at.0 + p.0, at.1 + p.1))))
         })
     }
@@ -418,7 +419,8 @@ impl ImplicitLevel {
         left: impl Fn(i64) -> i64,
         right: impl Fn(i64) -> i64,
     ) -> Option<ImplicitLevel> {
-        let mut node = |j: usize| kept(j).filter(|&i| i < self.nodes).map(|i| self.node_first(i));
+        let mut cursor = self.cursor();
+        let mut node = |j: usize| kept(j).filter(|&i| i < self.nodes).map(|i| cursor.first_of(i));
         let places = self.offsets();
         let moved = |at: (i64, i64), p: &(i64, i64)| (left(at.0 + p.0), right(at.1 + p.1));
         let at = node(0)?;
@@ -489,9 +491,10 @@ impl ImplicitLevel {
         if !zeroed.is_empty() && (0..self.per_node).any(|m| of(offsets[m]) != of(offsets[projected(m)])) {
             return false;
         }
+        let mut cursor = fitted.cursor();
         (0..fitted.nodes).all(|j| {
             let Some(at) = node(j) else { return false };
-            let (base, to) = (of(at), of(fitted.node_first(j)));
+            let (base, to) = (of(at), of(cursor.first_of(j)));
             moving.iter().all(|&(m, off)| f(base + off) == to + of(offsets[m]))
         })
     }
@@ -1307,14 +1310,20 @@ impl TddLevel {
     /// level.
     #[inline]
     pub fn pairs_read<'a>(&'a self, i: usize, buf: &'a mut Vec<ChildPair>) -> &'a [ChildPair] {
-        match self.pair_view() {
-            super::Pairs::Stored(s) => s.of_idx(i),
-            super::Pairs::Implicit(d) => {
-                buf.clear();
-                buf.extend(d.places(i));
-                buf
-            }
+        match self.stored() {
+            Some(s) => s.of_idx(i),
+            None => self.described_read(i, buf),
         }
+    }
+
+    /// [`pairs_read`](Self::pairs_read) on an implicit level, out of line
+    /// so that the stored levels' read inlines where it is called.
+    #[inline(never)]
+    fn described_read<'a>(&'a self, i: usize, buf: &'a mut Vec<ChildPair>) -> &'a [ChildPair] {
+        let d = self.pairs.implicit().expect("an arena is stored or described");
+        buf.clear();
+        buf.extend(d.places(i));
+        buf
     }
 }
 

@@ -40,12 +40,12 @@ fn for_each_target_sibling(
     // and packed, never indexed.
     for (parent_i, pairs) in parent_level.internal_inputs_iter() {
         let pi = parent_i as u32;
-        for pair in pairs {
+        pairs.for_each(|pair| {
             let (t, sibling) = split_pair(&pair, t1_side);
             if let Some(t) = resolve_target(target, t) {
                 f(pi, t, sibling);
             }
-        }
+        });
     }
 }
 
@@ -261,9 +261,7 @@ pub(super) struct ContentEntries<'a>(pub(super) &'a TddLevel);
 impl TwinEntries for ContentEntries<'_> {
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
         for (i, pairs) in self.0.internal_inputs_iter() {
-            for pair in pairs {
-                f(i as u32, pack(pair.left.0, pair.right.0));
-            }
+            pairs.for_each(|pair| f(i as u32, pack(pair.left.0, pair.right.0)));
         }
     }
 }

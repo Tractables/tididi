@@ -276,12 +276,12 @@ where
         // A key's count can only wrap once the items outnumber `u32::MAX`,
         // which the item count catches where the total would not.
         let mut seen = 0u64;
-        for s in items.clone() {
+        items.clone().for_each(|s| {
             let (key, _) = item(s);
             debug_assert!(key < n_keys, "key {key} outside the {n_keys} keys sorted");
             offsets[key] = offsets[key].wrapping_add(1);
             seen += 1;
-        }
+        });
         if seen > u64::from(u32::MAX) {
             return Err(OperationError::IndexOverflow);
         }
@@ -289,12 +289,12 @@ where
     let total = prefix_offsets(&mut offsets[..n_keys], false)?;
     offsets[n_keys] = total;
     lim.try_resize(entries, total as usize, fill)?;
-    for s in items {
+    items.for_each(|s| {
         let (key, value) = item(s);
         let slot = offsets[key] as usize;
         entries[slot] = value;
         offsets[key] += 1;
-    }
+    });
     shift_offsets_right_by_one(&mut offsets[..=n_keys]);
     Ok(())
 }

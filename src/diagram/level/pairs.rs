@@ -191,25 +191,28 @@ impl TddLevel {
         left: ChildDecoder,
         right: ChildDecoder,
     ) {
-        for p in self.pairs_iter_of_idx(idx) {
+        self.pairs_iter_of_idx(idx).for_each(|p| {
             out.push(ChildPair::new(EncodedChildRef::from_raw(left.coord(p.left)), EncodedChildRef::from_raw(right.coord(p.right))));
-        }
+        });
     }
 
     /// The pairs of `node`, a node of this level, as an iterator: stored, or
     /// generated from the level's description.
     #[inline]
     pub fn pairs_iter_of<'a>(&'a self, node: &'a EncodedNode) -> PairsIter<'a> {
-        match node.kind() {
-            NodeKind::Inline(pair) => PairsIter::inline(pair),
-            NodeKind::Multi { .. } | NodeKind::MultiRanged(_) => {
-                let range = self.multi_range(node);
-                match self.pair_view() {
-                    Pairs::Stored(s) => PairsIter::slice(&s.arena[range]),
-                    Pairs::Implicit(d) => PairsIter::described(d.places(range.start / d.pairs_per_node())),
-                }
-            }
+        match self.pairs.stored() {
+            Some(arena) => PairsIter::slice(StoredPairs { level: self, arena }.of(node)),
+            None => self.described_pairs(self.multi_range(node).start),
         }
+    }
+
+    /// The pairs of the node of this implicit level whose pairs the arena
+    /// it stands for holds from `start`. Kept out of line, so that the
+    /// stored levels' read inlines where it is called.
+    #[inline(never)]
+    fn described_pairs(&self, start: usize) -> PairsIter<'_> {
+        let d = self.pairs.implicit().expect("an arena is stored or described");
+        PairsIter::described(d.places(start / d.pairs_per_node()))
     }
 
     /// A stored multi-pair node's pairs, to change in place.
