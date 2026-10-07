@@ -1222,14 +1222,18 @@ impl TddLevel {
     /// be, nor on an arena past 2^31 pairs, whose nodes' ranges may take the
     /// side table. Reads the pairs up to the first that is not affine, and
     /// charges nothing.
+    #[inline]
     pub(crate) fn close(&mut self) {
-        if self.pairs.implicit().is_some()
-            || self.pairs.len() < floor()
-            || self.pairs.len() >= 1 << 31
-            || stored_levels_forced()
-        {
-            return;
+        if self.pairs.implicit().is_none() && (floor()..1 << 31).contains(&self.pairs.len()) && !stored_levels_forced() {
+            self.close_stored();
         }
+    }
+
+    /// [`close`](Self::close) on a stored level of a size that can be held
+    /// as a description. Kept out of line: an operation closes every level
+    /// of its result, and most are implicit or small.
+    #[inline(never)]
+    fn close_stored(&mut self) {
         let Some(d) = ImplicitLevel::fit(self) else { return };
         if d.per_node < 2 || d.pairs() < floor() {
             return;
