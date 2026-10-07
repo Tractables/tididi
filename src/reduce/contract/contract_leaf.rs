@@ -84,17 +84,17 @@ fn contract_leaf_sides(eng: &Engine, tdd: &mut Tdd, vtree: &Vtree, vi: VtreeIdx)
 fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> Result<bool, OperationError> {
     let level = &tdd.levels[parent_vi.idx()];
     if level.slot_count() == 0 { return Ok(false); }
-    if level.implicit().is_some() {
+    // A stored level's nodes are read as slices of its arena.
+    let Some(stored) = level.stored() else {
         return try_contract_described(eng, tdd, parent_vi, side);
-    }
+    };
 
     // Singleton-pair witness pre-pass: a length-1 pair list whose label on
     // `side` is a literal cannot hold the opposite-polarity partner, so the
     // level is not contractible. O(1) per node, against `classify`'s
     // collect-and-sort per pair list.
     for i in 0..level.nodes.len() {
-        let mut pairs = level.pairs_iter_of_idx(i);
-        if pairs.len() == 1 && let Some(pair) = pairs.next() {
+        if let [pair] = stored.of_idx(i) {
             let label = if side == ChildSide::Left { pair.left } else { pair.right };
             if label == POS_LEAF_IDX.into() || label == NEG_LEAF_IDX.into() {
                 return Ok(false);
@@ -110,7 +110,7 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
     let mut neg: Transient<'_, Vec<EncodedChildRef>> = Transient::new(lim, Vec::new());
     let mut any_literal = false;
     for i in 0..level.nodes.len() {
-        match classify(lim, level.pairs_iter_of_idx(i), side, &mut pos, &mut neg)? {
+        match classify(lim, stored.of_idx(i).iter().copied(), side, &mut pos, &mut neg)? {
             Class::AllContractible { has_literal } => {
                 any_literal |= has_literal;
             }

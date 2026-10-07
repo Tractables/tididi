@@ -157,108 +157,63 @@ impl TwinEntries for ContextEntries<'_> {
         named.fill(0);
         let mut name = |t: u32| named[(t / 64) as usize] |= 1 << (t % 64);
         let (level, side, view) = (self.parent_level, self.t1_side, self.t1_view);
-        // A stored level's nodes are read as slices of its arena, in a loop
-        // apart from an implicit level's generated pairs, which is out of
-        // line ([`described_repeats`]).
-        match level.stored() {
-            Some(stored) => {
-                for node in level.nodes() {
-                    let pairs = stored.of(node).iter().copied();
-                    if repeats_sibling(lim, twin_local, twin_generation, pairs, side, view, &mut name)? {
-                        return Ok(false);
+        // A stored level's nodes are read as slices of its arena, an
+        // implicit level's generated into a buffer a node at a time, in one
+        // loop.
+        let stored = level.stored();
+        let mut buf = Vec::new();
+        for (i, node) in level.nodes().iter().enumerate() {
+            let pairs = match stored {
+                Some(stored) => stored.of(node),
+                None => level.pairs_read(i, &mut buf),
+            };
+            if pairs.len() < 3 {
+                let mut last: Option<u32> = None;
+                for pair in pairs {
+                    let (t, s) = split_pair(pair, side);
+                    if let Some(t) = resolve_target(view, t) {
+                        if last == Some(s) {
+                            return Ok(false);
+                        }
+                        last = Some(s);
+                        name(t);
                     }
                 }
+                continue;
             }
-            None => {
-                if described_repeats(lim, twin_local, twin_generation, level, side, view, &mut name)? {
-                    return Ok(false);
+            let mut cells = (2 * pairs.len()).next_power_of_two().min(TWIN_TABLE_START_CELLS);
+            let mut stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
+            let mut filed = 0;
+            for (read, pair) in pairs.iter().enumerate() {
+                let (t, s) = split_pair(pair, side);
+                if let Some(t) = resolve_target(view, t) {
+                    if 2 * (filed + 1) > cells {
+                        // Half full: double under a fresh stamp and file the
+                        // siblings read so far again. They are distinct, or
+                        // the test would have stopped.
+                        cells *= 2;
+                        stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
+                        for pair in &pairs[..read] {
+                            let (t, s) = split_pair(pair, side);
+                            if resolve_target(view, t).is_some() {
+                                file_sibling(&mut twin_local[..cells], stamp, s);
+                            }
+                        }
+                    }
+                    // The node's window of the table: a narrow node after a
+                    // wide one stays in cache. Cells past it keep older
+                    // stamps unread.
+                    if file_sibling(&mut twin_local[..cells], stamp, s) {
+                        return Ok(false);
+                    }
+                    filed += 1;
+                    name(t);
                 }
             }
         }
         let unnamed = width - named.iter().map(|w| w.count_ones() as usize).sum::<usize>();
         Ok(unnamed <= 1)
     }
-}
-
-/// [`repeats_sibling`] at each node of an implicit parent level, read off
-/// its description: whether some node puts two children beside one
-/// sibling. Out of line, so that the stored levels' loop in
-/// [`no_twin`](TwinEntries::no_twin) is compiled alone.
-#[inline(never)]
-fn described_repeats(
-    lim: &Limits,
-    twin_local: &mut Vec<u64>,
-    twin_generation: &mut u32,
-    level: &TddLevel,
-    side: ChildSide,
-    view: ChildDecoder,
-    name: &mut impl FnMut(u32),
-) -> Result<bool, OperationError> {
-    for (_, pairs) in level.internal_inputs_iter() {
-        if repeats_sibling(lim, twin_local, twin_generation, pairs, side, view, name)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// Whether a parent node whose pairs are `pairs` puts two children beside
-/// one sibling, read until the first pair that does; `name` is called on
-/// each child read before it. The test of
-/// [`no_twin`](TwinEntries::no_twin) on [`ContextEntries`], node by node.
-#[inline(always)]
-fn repeats_sibling<I: ExactSizeIterator<Item = ChildPair> + Clone>(
-    lim: &Limits,
-    twin_local: &mut Vec<u64>,
-    twin_generation: &mut u32,
-    pairs: I,
-    side: ChildSide,
-    view: ChildDecoder,
-    name: &mut impl FnMut(u32),
-) -> Result<bool, OperationError> {
-    if pairs.len() < 3 {
-        let mut last: Option<u32> = None;
-        for pair in pairs {
-            let (t, s) = split_pair(&pair, side);
-            if let Some(t) = resolve_target(view, t) {
-                if last == Some(s) {
-                    return Ok(true);
-                }
-                last = Some(s);
-                name(t);
-            }
-        }
-        return Ok(false);
-    }
-    let mut cells = (2 * pairs.len()).next_power_of_two().min(TWIN_TABLE_START_CELLS);
-    let mut stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
-    let mut filed = 0;
-    for (read, pair) in pairs.clone().enumerate() {
-        let (t, s) = split_pair(&pair, side);
-        if let Some(t) = resolve_target(view, t) {
-            if 2 * (filed + 1) > cells {
-                // Half full: double under a fresh stamp and file the
-                // siblings read so far again. They are distinct, or the
-                // test would have stopped.
-                cells *= 2;
-                stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
-                for pair in pairs.clone().take(read) {
-                    let (t, s) = split_pair(&pair, side);
-                    if resolve_target(view, t).is_some() {
-                        file_sibling(&mut twin_local[..cells], stamp, s);
-                    }
-                }
-            }
-            // The node's window of the table: a narrow node after a wide
-            // one stays in cache. Cells past it keep older stamps unread.
-            if file_sibling(&mut twin_local[..cells], stamp, s) {
-                return Ok(true);
-            }
-            filed += 1;
-            name(t);
-        }
-    }
-    Ok(false)
 }
 
 /// The next stamp of the sibling table, with `twin_local` at least `cells`

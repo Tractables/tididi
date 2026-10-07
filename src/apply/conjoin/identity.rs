@@ -59,12 +59,20 @@ pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd) -
         // the `has_any_marginal` block below using per-node counts (integer) or
         // the marginal-forest walk. For integer-marginal levels `nodes` is also
         // cleared so the loop below is a no-op; weight-marginal levels keep
-        // `nodes` (for `slot_count()`) but clear `pairs`, so `pairs_iter_of` would index an
+        // `nodes` (for `slot_count()`) but clear `pairs`, so `pairs_read` would index an
         // empty `pairs`. Skip them explicitly. (Regular MC has no marginal
         // levels, so this guard is a no-op there.)
         if level.is_marginal() { continue; }
-        'nodes: for node in level.nodes.iter() {
-            for pair in level.pairs_iter_of(node) {
+        // A stored level's nodes are read as slices of its arena, an
+        // implicit level's generated into a buffer a node at a time.
+        let stored = level.stored();
+        let mut pairs_buf = Vec::new();
+        'nodes: for (i, node) in level.nodes.iter().enumerate() {
+            let pairs = match stored {
+                Some(stored) => stored.of(node),
+                None => level.pairs_read(i, &mut pairs_buf),
+            };
+            for pair in pairs {
                 if want_left && pair.left != ONE_LEAF_IDX.into() {
                     buf[left.idx()] = false;
                     want_left = false;
