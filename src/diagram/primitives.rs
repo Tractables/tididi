@@ -321,54 +321,40 @@ impl std::fmt::Debug for EncodedNode {
 /// [`TddLevel::pairs_iter_of`]: super::TddLevel::pairs_iter_of
 /// [`TddLevel::internal_inputs_iter`]: super::TddLevel::internal_inputs_iter
 #[derive(Clone)]
-pub struct PairsIter<'a>(PairStorage<'a>);
-
-/// An inline node's one pair, a stored node's slice of the arena, or an
-/// implicit level's node's pairs generated from its description.
-#[derive(Clone)]
-enum PairStorage<'a> {
-    Inline(Option<ChildPair>),
-    Slice(std::slice::Iter<'a, ChildPair>),
-    Described(super::level::Places<'a>),
+pub struct PairsIter<'a> {
+    /// A stored node's pairs still to come, an inline node's one pair
+    /// among them; empty on an implicit level's node. Read first, so that a
+    /// stored node's pairs are read as a slice's.
+    stored: std::slice::Iter<'a, ChildPair>,
+    /// An implicit level's node's pairs still to come, generated from its
+    /// description; empty on a stored node.
+    described: super::level::Places<'a>,
 }
 
 impl<'a> PairsIter<'a> {
     #[inline]
-    pub(super) fn inline(pair: ChildPair) -> Self {
-        PairsIter(PairStorage::Inline(Some(pair)))
-    }
-
-    #[inline]
     pub(super) fn slice(pairs: &'a [ChildPair]) -> Self {
-        PairsIter(PairStorage::Slice(pairs.iter()))
+        PairsIter { stored: pairs.iter(), described: super::level::Places::empty() }
     }
 
     #[inline]
     pub(super) fn described(places: super::level::Places<'a>) -> Self {
-        PairsIter(PairStorage::Described(places))
+        PairsIter { stored: [].iter(), described: places }
     }
 
     /// The pairs still to come, as one slice, when they are stored; `None`
-    /// on an implicit level's node, whose pairs are generated.
+    /// on an implicit level's node, whose pairs are generated, while any
+    /// are to come.
     #[inline]
     pub(crate) fn as_slice(&self) -> Option<&[ChildPair]> {
-        match &self.0 {
-            PairStorage::Inline(pair) => Some(pair.as_slice()),
-            PairStorage::Slice(iter) => Some(iter.as_slice()),
-            PairStorage::Described(_) => None,
-        }
+        (self.described.len() == 0).then_some(self.stored.as_slice())
     }
 }
 
 impl std::fmt::Debug for PairsIter<'_> {
     /// How many pairs are still to come, which is all an iterator's state is.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let remaining = match &self.0 {
-            PairStorage::Inline(pair) => usize::from(pair.is_some()),
-            PairStorage::Slice(iter) => iter.len(),
-            PairStorage::Described(places) => places.len(),
-        };
-        f.debug_struct("PairsIter").field("remaining", &remaining).finish()
+        f.debug_struct("PairsIter").field("remaining", &self.len()).finish()
     }
 }
 
@@ -376,42 +362,33 @@ impl<'a> Iterator for PairsIter<'a> {
     type Item = ChildPair;
     #[inline]
     fn next(&mut self) -> Option<ChildPair> {
-        match &mut self.0 {
-            PairStorage::Inline(pair) => pair.take(),
-            PairStorage::Slice(iter) => iter.next().copied(),
-            PairStorage::Described(places) => places.next(),
+        match self.stored.next() {
+            Some(&pair) => Some(pair),
+            None => self.described.next(),
         }
     }
 
-    /// The pairs folded by the storage's own loop: one dispatch for the
-    /// node, not one a pair.
+    /// The stored pairs folded as a slice's, then the generated ones.
     #[inline]
-    fn fold<B, F: FnMut(B, ChildPair) -> B>(self, init: B, f: F) -> B {
-        match self.0 {
-            PairStorage::Inline(pair) => pair.into_iter().fold(init, f),
-            PairStorage::Slice(iter) => iter.copied().fold(init, f),
-            PairStorage::Described(places) => places.fold(init, f),
-        }
+    fn fold<B, F: FnMut(B, ChildPair) -> B>(self, init: B, mut f: F) -> B {
+        let acc = self.stored.copied().fold(init, &mut f);
+        self.described.fold(acc, f)
     }
 
     /// The `n`th pair from here, in one step on stored and described pairs
     /// alike.
     #[inline]
     fn nth(&mut self, n: usize) -> Option<ChildPair> {
-        match &mut self.0 {
-            PairStorage::Inline(pair) => pair.take().filter(|_| n == 0),
-            PairStorage::Slice(iter) => iter.nth(n).copied(),
-            PairStorage::Described(places) => places.nth(n),
+        let stored = self.stored.len();
+        match self.stored.nth(n) {
+            Some(&pair) => Some(pair),
+            None => self.described.nth(n - stored),
         }
     }
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let n = match &self.0 {
-            PairStorage::Inline(pair) => usize::from(pair.is_some()),
-            PairStorage::Slice(iter) => iter.len(),
-            PairStorage::Described(places) => places.len(),
-        };
+        let n = self.stored.len() + self.described.len();
         (n, Some(n))
     }
 }

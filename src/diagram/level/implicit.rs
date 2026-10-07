@@ -171,7 +171,7 @@ impl ImplicitLevel {
     #[inline]
     pub(crate) fn places_from(&self, first: (i64, i64)) -> Places<'_> {
         debug_assert!(self.per_node < 1 << 31);
-        Places { level: self, at: Odometer::new(first), next: 0, end: self.per_node as u32 }
+        Places { digits: &self.digits[..self.within], at: Odometer::new(first), next: 0, end: self.per_node as u32 }
     }
 
     /// A reader of the nodes' first pairs in increasing node order
@@ -949,8 +949,8 @@ impl crate::execution::pool::Scratch for PairArena {
 const NODE_COUNTERS: usize = 4;
 
 /// The digits a [`Places`]' [`Odometer`] counts in place: two, so that a
-/// node's pairs read in the room of a slice and a few words, which keeps
-/// [`PairsIter`](crate::diagram::PairsIter) small where it is passed.
+/// node's pairs read in a few words beside the slice a
+/// [`PairsIter`](crate::diagram::PairsIter) holds.
 const PLACE_COUNTERS: usize = 2;
 
 /// The slots at a place of a run of digits, fastest first, counted like an
@@ -1032,9 +1032,8 @@ impl<const N: usize> Odometer<N> {
 /// [`PairsIter`](crate::diagram::PairsIter) yields on such a level.
 #[derive(Clone, Debug)]
 pub(crate) struct Places<'a> {
-    /// The description, whose first [`within`](ImplicitLevel::within)
-    /// digits are the place digits.
-    level: &'a ImplicitLevel,
+    /// The place digits, fastest first.
+    digits: &'a [Digit],
     /// At place `next`, while `next < end`.
     at: Odometer<PLACE_COUNTERS>,
     next: u32,
@@ -1042,6 +1041,13 @@ pub(crate) struct Places<'a> {
 }
 
 impl Places<'_> {
+    /// No pairs: what a stored node's [`PairsIter`](crate::diagram::PairsIter)
+    /// holds beside its slice.
+    #[inline]
+    pub(crate) const fn empty() -> Self {
+        Places { digits: &[], at: Odometer { at: (0, 0), counts: [0; PLACE_COUNTERS] }, next: 0, end: 0 }
+    }
+
     /// The pairs still to come.
     #[inline]
     pub(crate) fn len(&self) -> usize {
@@ -1094,8 +1100,7 @@ impl Iterator for Places<'_> {
         let (l, r) = self.at.slots();
         self.next += 1;
         if self.next < self.end {
-            let level = self.level;
-            self.at.step(&level.digits[..level.within], self.next as usize);
+            self.at.step(self.digits, self.next as usize);
         }
         Some(pair(l, r))
     }
@@ -1106,8 +1111,7 @@ impl Iterator for Places<'_> {
         if n > 0 && self.next < self.end {
             let to = (self.next as usize).saturating_add(n).min(self.end as usize);
             if to < self.end as usize {
-                let level = self.level;
-                self.at.seat(&level.digits[..level.within], self.next as usize, to);
+                self.at.seat(self.digits, self.next as usize, to);
             }
             self.next = to as u32;
         }

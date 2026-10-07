@@ -3,8 +3,8 @@
 
     #[test]
     fn level_pairs_iter_of_unpacked_matches_slice() {
-        // PairsIter::Slice and PairsIter::Inline branches: yield the same
-        // pairs as `pairs_vec` on an unpacked level.
+        // A multi-pair node's slice and an inline node's one pair yield the
+        // same pairs as `pairs_vec` on an unpacked level.
         let mut lvl = TddLevel::new();
         // Push some multi-pair nodes and an inline pair.
         let three = vec![

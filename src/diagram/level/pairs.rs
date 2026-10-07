@@ -146,9 +146,9 @@ impl TddLevel {
     ///
     /// [`PairArena::slots`]: super::PairArena::slots
     #[inline(always)]
-    fn read_node<'a>(&'a self, node: &EncodedNode, described: impl FnOnce(usize) -> PairsIter<'a>) -> PairsIter<'a> {
+    fn read_node<'a>(&'a self, node: &'a EncodedNode, described: impl FnOnce(usize) -> PairsIter<'a>) -> PairsIter<'a> {
         match node.kind() {
-            NodeKind::Inline(pair) => PairsIter::inline(pair),
+            NodeKind::Inline(_) => PairsIter::slice(inline_pair(node)),
             NodeKind::Multi { .. } | NodeKind::MultiRanged(_) => {
                 let range = self.multi_range(node);
                 match self.pairs.slots(range.clone()) {
