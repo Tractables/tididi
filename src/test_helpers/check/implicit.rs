@@ -1,5 +1,6 @@
 //! The canonical form of implicit levels.
 
+use crate::diagram::LevelState;
 use crate::diagram::{floor, stored_levels_forced, ImplicitLevel, Tdd};
 
 /// Every implicit level is in the canonical form of [`ImplicitLevel`]: a
@@ -12,6 +13,9 @@ use crate::diagram::{floor, stored_levels_forced, ImplicitLevel, Tdd};
 /// which [`check_canonicity`](super::check_canonicity) decides through the
 /// level's pairs.
 ///
+/// A structural level's kept live pairs (`HeldPairs`), where it keeps them,
+/// are its pairs.
+///
 /// Holds at operation boundaries, not inside an operation, where a pass may
 /// hold a level it changed stored until the operation closes it. Under the
 /// stored route a test forces, where nothing closes, only the implicit
@@ -19,6 +23,12 @@ use crate::diagram::{floor, stored_levels_forced, ImplicitLevel, Tdd};
 pub fn check_implicit_levels(tdd: &Tdd) -> Result<(), String> {
     let forced = stored_levels_forced();
     for (t, level) in tdd.levels.iter().enumerate() {
+        if let LevelState::Structural(held) = &level.state
+            && let Some(n) = held.get()
+            && n as usize != level.live_pairs()
+        {
+            return Err(format!("level {t}: keeps {n} live pairs of {}", level.live_pairs()));
+        }
         match level.implicit() {
             Some(d) => {
                 if level.is_marginal() {

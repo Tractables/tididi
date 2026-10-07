@@ -14,6 +14,7 @@ pub(crate) use marginal::{assert_can_make_marginal, non_marginal_child};
 
 use super::marginal_ref::{ChildDecoder, ChildSide};
 use super::primitives::{PairRange, ChildPair, NodeIdx, EncodedNode};
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 /// The diagram storage associated with one vtree node.
 ///
@@ -87,14 +88,62 @@ pub struct TddLevel {
 /// the slot count stays here.
 #[derive(Clone, Debug)]
 pub(crate) enum LevelState {
-    /// Nodes and pairs; `nodes`/`pairs`/`ranges` carry the level.
-    Structural,
+    /// Nodes and pairs; `nodes`/`pairs`/`ranges` carry the level. With the
+    /// live pairs a closed diagram read off it ([`HeldPairs`]).
+    Structural(HeldPairs),
     /// Model counts, one per node slot ([`CountBox`]).
     Counts(CountBox),
     /// Semiring weights, held in the external `WeightStore` and indexed by this
     /// level's slot. Only the slot count stays here — `slot_count()` has nowhere
     /// else to read it from, since `nodes` is cleared like the integer path.
     Weights { width: u32, retired: u32 },
+}
+
+impl LevelState {
+    /// A structural level's state, its live pairs not read.
+    pub(crate) fn structural() -> Self {
+        LevelState::Structural(HeldPairs::unknown())
+    }
+}
+
+/// The live pairs of a structural level, kept once a closed diagram read
+/// them ([`Tdd::pair_count`](crate::Tdd::pair_count)), so that the count
+/// reads each level a diagram's last operation left as it was once. Not a
+/// hint: trusted while the diagram is closed. A level starts with it
+/// unknown, and the closes that end an operation forget it on every level
+/// the operation changed ([`forget_held_pairs`](TddLevel::forget_held_pairs)),
+/// those being the levels whose pairs a closed diagram may hold changed. A
+/// debug build checks it against the level's pairs at every close. Atomic,
+/// so that a level is shared as a plain one is.
+#[derive(Debug)]
+pub(crate) struct HeldPairs(AtomicU64);
+
+/// [`HeldPairs`] not read.
+const UNKNOWN_PAIRS: u64 = u64::MAX;
+
+impl HeldPairs {
+    pub(crate) const fn unknown() -> Self {
+        HeldPairs(AtomicU64::new(UNKNOWN_PAIRS))
+    }
+
+    /// The pairs kept, if read.
+    #[inline]
+    pub(crate) fn get(&self) -> Option<u64> {
+        let n = self.0.load(Relaxed);
+        (n != UNKNOWN_PAIRS).then_some(n)
+    }
+
+    /// Keep `n` pairs; a count of `u64::MAX` reads as unknown.
+    #[inline]
+    pub(crate) fn set(&self, n: u64) {
+        self.0.store(n, Relaxed);
+    }
+}
+
+impl Clone for HeldPairs {
+    fn clone(&self) -> Self {
+        HeldPairs(AtomicU64::new(self.0.load(Relaxed)))
+    }
 }
 
 /// A count-marginal level's values, boxed, and dropped out of line: a level's
@@ -195,7 +244,7 @@ impl TddLevel {
             value_ref_sides: 0,
             dead_pairs: 0,
             uneven: 0,
-            state: LevelState::Structural,
+            state: LevelState::structural(),
         }
     }
 
@@ -209,7 +258,7 @@ impl TddLevel {
         self.value_ref_sides = 0;
         self.dead_pairs = 0;
         self.uneven = 0;
-        self.state = LevelState::Structural;
+        self.state = LevelState::structural();
     }
 
     /// Release the structural arenas and zero the counters that describe them.
@@ -237,7 +286,7 @@ impl TddLevel {
         match &self.state {
             LevelState::Counts(c) => c.counts.len(),
             LevelState::Weights { width, .. } => *width as usize,
-            LevelState::Structural => self.nodes.len(),
+            LevelState::Structural(_) => self.nodes.len(),
         }
     }
 
@@ -313,7 +362,7 @@ impl TddLevel {
         match &self.state {
             LevelState::Counts(c) => c.retired,
             LevelState::Weights { retired, .. } => *retired,
-            LevelState::Structural => 0,
+            LevelState::Structural(_) => 0,
         }
     }
 
@@ -324,7 +373,7 @@ impl TddLevel {
         match &mut self.state {
             LevelState::Counts(c) => c.retired = c.retired.saturating_add(n),
             LevelState::Weights { retired, .. } => *retired = retired.saturating_add(n),
-            LevelState::Structural => {}
+            LevelState::Structural(_) => {}
         }
     }
 
@@ -354,7 +403,7 @@ impl TddLevel {
     /// True if this level has dropped its structure for per-node values,
     /// under either arithmetic.
     pub fn is_marginal(&self) -> bool {
-        !matches!(self.state, LevelState::Structural)
+        !matches!(self.state, LevelState::Structural(_))
     }
 
     /// True if this level is marginal with its per-node values held in an

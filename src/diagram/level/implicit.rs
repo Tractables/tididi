@@ -358,7 +358,7 @@ impl ImplicitLevel {
     /// `i` holds a different number of pairs from node 0, `Err(None)` for
     /// any other reason.
     fn fit_or_uneven(level: &TddLevel) -> Result<ImplicitLevel, Option<usize>> {
-        if !matches!(level.state, LevelState::Structural) {
+        if !matches!(level.state, LevelState::Structural(_)) {
             return Err(None);
         }
         let nodes = level.nodes.len();
@@ -1487,7 +1487,7 @@ impl TddLevel {
         // that most levels, small or implicit, take.
         (floor()..1 << 31).contains(&self.pairs.stored_vec_len())
             && !stored_levels_forced()
-            && matches!(self.state, LevelState::Structural)
+            && matches!(self.state, LevelState::Structural(_))
             && !self.nodes.is_empty()
             && {
                 let k = self.pair_count_at(0);

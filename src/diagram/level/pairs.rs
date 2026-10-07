@@ -7,7 +7,7 @@ use crate::diagram::marginal_ref::ChildDecoder;
 use crate::diagram::PairsIter;
 use crate::diagram::primitives::{ChildPair, EncodedNode, NodeKind};
 use super::implicit::NodeCursor;
-use super::{ImplicitLevel, TddLevel};
+use super::{ImplicitLevel, LevelState, TddLevel};
 
 /// A level's pairs as the level holds them: stored in its arena, or, on an
 /// implicit level, as their description. Code that reads pairs one node at a
@@ -438,6 +438,40 @@ impl TddLevel {
         match self.implicit() {
             Some(d) => d.pairs(),
             None => self.pair_census().0 as usize,
+        }
+    }
+
+    /// [`live_pairs`](Self::live_pairs) on a level of a closed diagram: a
+    /// stored structural level's off the count kept once read
+    /// ([`HeldPairs`](super::HeldPairs)), read and kept here otherwise.
+    #[inline]
+    pub(crate) fn live_pairs_closed(&self) -> usize {
+        if let Some(d) = self.implicit() {
+            return d.pairs();
+        }
+        let LevelState::Structural(held) = &self.state else {
+            return self.pair_census().0 as usize;
+        };
+        match held.get() {
+            Some(n) => n as usize,
+            None => self.read_held_pairs(held),
+        }
+    }
+
+    /// The census [`live_pairs_closed`](Self::live_pairs_closed) keeps, out
+    /// of line.
+    #[inline(never)]
+    fn read_held_pairs(&self, held: &super::HeldPairs) -> usize {
+        let n = self.pair_census().0;
+        held.set(n);
+        n as usize
+    }
+
+    /// Forget the live pairs kept on this level: an operation changed it.
+    #[inline]
+    pub(crate) fn forget_held_pairs(&mut self) {
+        if let LevelState::Structural(held) = &mut self.state {
+            *held = super::HeldPairs::unknown();
         }
     }
 

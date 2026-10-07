@@ -399,6 +399,10 @@ impl Tdd {
     /// Total number of pairs over all stored nodes — the size of the diagram.
     /// A marginal level holds no pairs and contributes nothing.
     ///
+    /// On a diagram as an operation returned it, a level's count is read
+    /// once and kept, until an operation changes the level: counting again
+    /// reads each level, not its nodes.
+    ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::Tdd;
@@ -417,7 +421,11 @@ impl Tdd {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn pair_count(&self) -> usize {
-        self.levels.iter().map(TddLevel::live_pairs).sum()
+        if self.levels.is_closed() {
+            self.levels.iter().map(TddLevel::live_pairs_closed).sum()
+        } else {
+            self.levels.iter().map(TddLevel::live_pairs).sum()
+        }
     }
 
     /// Whether the diagram has at most `cap` input pairs.

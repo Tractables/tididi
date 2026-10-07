@@ -22,7 +22,9 @@ use super::{TddLevel, TddNodeId};
 ///
 /// The same holds for the closed form of the levels: `closed` says every
 /// level is closed ([`TddLevel::close`]), as the end of an operation leaves
-/// them, and any mutable access clears it. `changed` lists the levels the
+/// them, and any mutable access clears it. A close forgets the live pairs
+/// kept on each level it closes, so that what a level keeps while the
+/// levels are closed holds of its pairs. `changed` lists the levels the
 /// edits since then say they changed ([`mark_changed`](Self::mark_changed)),
 /// so that a reduction that began on closed levels closes only those.
 #[derive(Clone, Debug, Default)]
@@ -78,6 +80,7 @@ impl LevelStorage {
     pub(crate) fn close(&mut self) {
         for level in &mut self.levels {
             level.close();
+            level.forget_held_pairs();
         }
         self.closed = true;
         self.changed.clear();
@@ -88,6 +91,7 @@ impl LevelStorage {
     pub(crate) fn close_changed(&mut self, changed: &[VtreeIdx]) {
         for &t in changed {
             self.levels[t.idx()].close();
+            self.levels[t.idx()].forget_held_pairs();
         }
         self.closed = true;
         self.changed.clear();
@@ -103,6 +107,7 @@ impl LevelStorage {
         let Self { levels, changed, .. } = self;
         for &t in changed.iter() {
             levels[t.idx()].close();
+            levels[t.idx()].forget_held_pairs();
         }
         self.closed = true;
         self.changed.clear();
