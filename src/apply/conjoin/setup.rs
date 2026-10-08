@@ -302,29 +302,37 @@ fn snapshot_widths(
     if with_regions {
         roles.resize(num_nodes, 0);
     }
-    let mut any_entry_marginal = false;
+    let (f_levels, g_levels) = (&f.levels[..num_nodes], &g.levels[..num_nodes]);
+    // The leaves, a constant width each.
+    f_widths[..leaves].fill(LEAF_WIDTH);
+    g_widths[..leaves].fill(LEAF_WIDTH);
+    let mut any_entry_marginal = f_levels[..leaves].iter().zip(&g_levels[..leaves])
+        .fold(false, |any, (fl, gl)| any | fl.is_marginal() | gl.is_marginal());
+    let leaf_cells = (LEAF_WIDTH * LEAF_WIDTH) as u64;
+    // The cells are summed saturating, which no order of the terms changes.
+    let mut total_cells = match leaf_cells <= min_grid as u64 {
+        true => (leaves as u64).saturating_mul(leaf_cells),
+        false => 0,
+    };
+    // The internal nodes.
     let mut might_use_sparse = false;
-    let mut total_cells: u64 = 0;
-    for i in 0..num_nodes {
-        let (w1, w2) = if i < leaves {
-            (LEAF_WIDTH, LEAF_WIDTH)
-        } else {
-            let (free_f, free_g) = (free.f.contains(i), free.g.contains(i));
-            if with_regions && (free_f || free_g) {
-                roles[i] |= (u8::from(free_f) * Regions::F_FREE) | (u8::from(free_g) * Regions::G_FREE);
-                let (left, right) = vtree.children(VtreeIdx(i as u32));
-                roles[left.idx()] |= Regions::UNDER;
-                roles[right.idx()] |= Regions::UNDER;
-            }
-            let w1 = if free_f { 1 } else { f.levels[i].slot_count() };
-            let w2 = if free_g { 1 } else { g.levels[i].slot_count() };
-            might_use_sparse |= w1.saturating_mul(w2) > min_grid;
-            (w1, w2)
-        };
-        f_widths[i] = w1;
-        g_widths[i] = w2;
-        any_entry_marginal |= f.levels[i].is_marginal() | g.levels[i].is_marginal();
+    let internal = f_widths[leaves..num_nodes].iter_mut().zip(&mut g_widths[leaves..num_nodes])
+        .zip(f_levels[leaves..].iter().zip(&g_levels[leaves..]));
+    for (i, ((fw, gw), (fl, gl))) in (leaves..).zip(internal) {
+        let (free_f, free_g) = (free.f.contains(i), free.g.contains(i));
+        if with_regions && (free_f || free_g) {
+            roles[i] |= (u8::from(free_f) * Regions::F_FREE) | (u8::from(free_g) * Regions::G_FREE);
+            let (left, right) = vtree.children(VtreeIdx(i as u32));
+            roles[left.idx()] |= Regions::UNDER;
+            roles[right.idx()] |= Regions::UNDER;
+        }
+        let w1 = if free_f { 1 } else { fl.slot_count() };
+        let w2 = if free_g { 1 } else { gl.slot_count() };
+        *fw = w1;
+        *gw = w2;
+        any_entry_marginal |= fl.is_marginal() | gl.is_marginal();
         let cells = (w1 as u64).saturating_mul(w2 as u64);
+        might_use_sparse |= cells > min_grid as u64;
         if cells <= min_grid as u64 {
             total_cells = total_cells.saturating_add(cells);
         }
