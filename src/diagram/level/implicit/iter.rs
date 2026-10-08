@@ -49,6 +49,22 @@ impl ImplicitLevel {
         NodeCursor { digits: &self.digits[self.within..], at: Odometer::new(self.first), node: 0 }
     }
 
+    /// Append the pairs of node `node` to `out`, in their order.
+    pub fn pairs_of(&self, node: usize, out: &mut Vec<ChildPair>) {
+        self.places(node).write_into(out);
+    }
+
+    /// Append the pairs of nodes `0..nodes` to `buf`, node by node in
+    /// their order: the first `nodes · k` pairs the description generates.
+    pub(crate) fn pairs_of_first(&self, nodes: usize, buf: &mut Vec<ChildPair>) {
+        debug_assert!(nodes <= self.nodes);
+        buf.reserve(nodes * self.per_node);
+        let mut cursor = self.cursor();
+        for i in 0..nodes {
+            self.places_from(cursor.first_of(i)).write_into(buf);
+        }
+    }
+
     /// The word of node `i` of a level whose nodes this description
     /// implies: its pair inline at one pair a node, else the range of pairs
     /// `i · k .. (i + 1) · k`.

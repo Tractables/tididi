@@ -2,7 +2,6 @@
 //! the conjunction's row loop multiplies levels, and written out again.
 
 use super::*;
-use crate::limits::Limits;
 use crate::test_helpers::Lcg;
 
 /// The pairs of a level, node by node, as child slots.
@@ -131,6 +130,52 @@ fn an_affine_level_is_read_back_and_written_out() {
             let mut out = Vec::new();
             d.pairs_of(i, &mut out);
             assert_eq!(out, level.pairs_vec(i));
+        }
+    }
+}
+
+/// Slice reads replace scratch on implicit levels, append reads retain its
+/// prefix, and a stored read borrows its arena without touching scratch.
+#[test]
+fn pair_buffers_agree_across_stored_and_implicit_levels() {
+    for k in [1, 2, 63, 64, 65, 257] {
+        let pairs = affine_of(&[(k, (1, 2))], &[(3, (1000, 2000))]);
+        let stored = level_of(&pairs);
+        let mut implicit = TddLevel::new();
+        let d = ImplicitLevel::fit(&stored).unwrap();
+        implicit.pairs.describe(d.clone(), d.arena_len(), d.nodes());
+        let prefix = pair(99, 101);
+        let mut scratch = vec![prefix];
+        for i in [2, 0, 1, 2] {
+            let expected = stored.pairs_vec(i);
+            assert_eq!(stored.pairs_read(i, &mut scratch), expected);
+            assert_eq!(scratch, [prefix]);
+            assert_eq!(implicit.pairs_read(i, &mut scratch), expected);
+            assert_eq!(scratch, expected);
+            scratch.clear();
+            scratch.push(prefix);
+            d.pairs_of(i, &mut scratch);
+            assert_eq!(scratch[0], prefix);
+            assert_eq!(scratch[1..], expected);
+            scratch.truncate(1);
+        }
+    }
+}
+
+/// Bounds do not depend on storage or on debug assertions being enabled.
+#[test]
+fn pair_slice_reads_reject_indices_past_the_level() {
+    for k in [1, 2, 65] {
+        let stored = level_of(&affine_of(&[(k, (1, 2))], &[(3, (1000, 2000))]));
+        let mut implicit = TddLevel::new();
+        let d = ImplicitLevel::fit(&stored).unwrap();
+        implicit.pairs.describe(d.clone(), d.arena_len(), d.nodes());
+        for level in [&stored, &implicit] {
+            for i in [3, usize::MAX] {
+                assert!(std::panic::catch_unwind(|| {
+                    level.pairs_read(i, &mut Vec::new());
+                }).is_err());
+            }
         }
     }
 }

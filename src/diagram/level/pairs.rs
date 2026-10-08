@@ -254,6 +254,34 @@ impl TddLevel {
         Inputs { level: self, stored, at, implied, cursor: None }
     }
 
+    /// The pairs of node `i`: a slice of a stored level's arena, or of `buf`,
+    /// which an implicit level's are generated into. Not valid on a marginal
+    /// level.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `i` is not below [`nodes`](Self::nodes)`().len()`.
+    #[inline(always)]
+    #[track_caller]
+    pub fn pairs_read<'a>(&'a self, i: usize, buf: &'a mut Vec<ChildPair>) -> &'a [ChildPair] {
+        match self.nodes.stored().get(i).and_then(|node| self.stored_of(node)) {
+            Some(pairs) => pairs,
+            None => self.described_read(i, buf),
+        }
+    }
+
+    /// [`pairs_read`](Self::pairs_read) on an implicit level, out of line
+    /// so that the stored levels' read inlines where it is called.
+    #[inline(never)]
+    #[track_caller]
+    fn described_read<'a>(&'a self, i: usize, buf: &'a mut Vec<ChildPair>) -> &'a [ChildPair] {
+        let d = self.described();
+        assert!(i < d.nodes(), "node {i} of a level of {} nodes", d.nodes());
+        buf.clear();
+        d.places(i).write_into(buf);
+        buf
+    }
+
     /// The pairs of `node`, a node of this level: its inline pair, a slice
     /// of the stored arena, or, on an implicit level, what `described`
     /// generates from the arena position the node's pairs start at. The

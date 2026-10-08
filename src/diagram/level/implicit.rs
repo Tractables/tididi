@@ -247,24 +247,6 @@ impl ImplicitLevel {
         (l, r)
     }
 
-    /// Append the pairs of node `node` to `out`, in their order.
-    pub fn pairs_of(&self, node: usize, out: &mut Vec<ChildPair>) {
-        let at = self.node_first(node);
-        out.reserve(self.per_node);
-        each_place(&self.digits[..self.within], at, |l, r| out.push(pair(l, r)));
-    }
-
-    /// Append the pairs of nodes `0..nodes` to `buf`, node by node in
-    /// their order: the first `nodes · k` pairs the description generates.
-    pub(crate) fn pairs_of_first(&self, nodes: usize, buf: &mut Vec<ChildPair>) {
-        debug_assert!(nodes <= self.nodes);
-        buf.reserve(nodes * self.per_node);
-        let mut cursor = self.cursor();
-        for i in 0..nodes {
-            self.places_from(cursor.first_of(i)).write_into(buf);
-        }
-    }
-
     /// The length of the pair arena the level stands for: its pairs, or none
     /// when every node has one pair and holds it inline.
     #[inline]
@@ -832,7 +814,6 @@ pub fn described() -> u64 {
 pub fn redescribed() -> u64 {
     REDESCRIBED.load(std::sync::atomic::Ordering::Relaxed)
 }
-
 
 #[cfg(test)]
 #[path = "tests/implicit.rs"]

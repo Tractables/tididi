@@ -319,25 +319,4 @@ impl TddLevel {
         pairs.resize(len, fill);
         self.pairs = PairArena::from(pairs);
     }
-
-    /// The pairs of node `i`: a slice of a stored level's arena, or of `buf`,
-    /// which an implicit level's are generated into. Not valid on a marginal
-    /// level.
-    #[inline(always)]
-    pub fn pairs_read<'a>(&'a self, i: usize, buf: &'a mut Vec<ChildPair>) -> &'a [ChildPair] {
-        match self.nodes.stored().get(i).and_then(|node| self.stored_of(node)) {
-            Some(pairs) => pairs,
-            None => self.described_read(i, buf),
-        }
-    }
-
-    /// [`pairs_read`](Self::pairs_read) on an implicit level, out of line
-    /// so that the stored levels' read inlines where it is called.
-    #[inline(never)]
-    fn described_read<'a>(&'a self, i: usize, buf: &'a mut Vec<ChildPair>) -> &'a [ChildPair] {
-        let d = self.pairs.implicit().expect("an arena is stored or described");
-        buf.clear();
-        buf.extend(d.places(i));
-        buf
-    }
 }
