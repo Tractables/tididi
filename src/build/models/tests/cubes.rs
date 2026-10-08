@@ -54,6 +54,14 @@ fn check(vtree: &Arc<Vtree>, vars: &[VarId], cubes: &[Cube], what: &str) {
     assert_canonical(&built);
     assert_same_shape(&built, &oracle, what);
     assert_eq!(built.model_count().unwrap(), oracle.model_count().unwrap(), "{what}");
+    // Both store each level's nodes by their least pairs, so the levels
+    // are the same node for node.
+    for (t, (x, y)) in built.levels().iter().zip(oracle.levels()).enumerate() {
+        assert_eq!(x.nodes().len(), y.nodes().len(), "{what}: level {t}'s nodes");
+        for i in 0..x.nodes().len() {
+            assert_eq!(x.pairs_vec(i), y.pairs_vec(i), "{what}: level {t}, node {i}");
+        }
+    }
 }
 
 /// A cube over `width` variables that fixes each with probability `fix`
