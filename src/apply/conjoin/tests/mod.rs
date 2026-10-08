@@ -191,6 +191,8 @@ thread_local! {
     /// The levels on this thread the relabelling route took: moved whole,
     /// and rebuilt ([`relabel_census`]).
     static RELABELLED: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
+    /// Those of them that read through a marginal child ([`read_through_census`]).
+    static READ_THROUGH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 pub(super) fn relabel_forced_off() -> bool {
@@ -222,6 +224,16 @@ pub(super) fn no_relabel<R>(f: impl FnOnce() -> R) -> R {
 /// rebuilt.
 pub(super) fn relabel_census() -> [u64; 2] {
     RELABELLED.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_read_through() {
+    READ_THROUGH.with(|c| c.set(c.get() + 1));
+}
+
+/// The levels on this thread so far the relabelling route took that read
+/// through a marginal child.
+pub(super) fn read_through_census() -> u64 {
+    READ_THROUGH.with(std::cell::Cell::get)
 }
 
 thread_local! {

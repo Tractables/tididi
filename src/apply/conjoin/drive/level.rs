@@ -383,8 +383,9 @@ fn install_summed(
 /// entry (an identity fast path moves a marginal level out of its operand),
 /// nor carry counts in its references from the root or `t`: the stream reads
 /// those references as node indices. Nor is a level the relabelling route
-/// takes held back (one operand one node with one pair there, in a sweep
-/// with no target): it builds `t` in one pass over the other operand's
+/// takes held back (one operand one node with one pair there, `t` no target
+/// and not a one-product parent of one): it builds `t` in one pass over the
+/// other operand's
 /// pairs, with no more products than those pairs, which a stream over `t`'s
 /// candidates does not beat. Whether the root then streams `t` is priced
 /// there, once the levels it reads are built ([`count_streamed_root`]).
@@ -427,7 +428,8 @@ pub(super) fn holds_back(
         })
     };
     let identity = |widths: &[usize], id: &[bool]| widths[t.idx()] == 1 && id[left.idx()] && id[right.idx()];
-    let relabels = sweep.targets.is_empty()
+    let relabels = !sweep.targets.contains(t.idx())
+        && !super::super::relabel::fuses_target_child(sweep, t, run.f_widths[t.idx()], run.g_widths[t.idx()])
         && (single_pair(f, t.idx(), run.f_widths[t.idx()]).is_some()
             || single_pair(g, t.idx(), run.g_widths[t.idx()]).is_some());
     internal

@@ -86,11 +86,16 @@ pub(super) fn single_pair(tdd: &Tdd, t: usize, width: usize) -> Option<ChildPair
 /// with one pair there, and say whether it did.
 ///
 /// Declines, leaving everything as it was, on any level the general routes
-/// must see: a marginal level or child on either operand or the output, a
-/// weighted sweep, and a root the count mode counts instead of building. It
-/// takes no level of a sweep that sums levels out (`and_marginalizing`),
-/// which then builds every level the way its two-step oracle does, pair for
-/// pair. The caller has already excluded a filtered or quantified sweep.
+/// must see: a marginal level on either operand, a marginal child other
+/// than one the output carries from the carrier, a target, a weighted
+/// sweep, a one-product level with a target child ([`fuses_target_child`]),
+/// and a root the count mode counts instead of building. So in a sweep that
+/// sums levels out (`and_marginalizing`) it takes the levels beside and
+/// above the targets: each is structure whose children's products are one
+/// node per live cell, as in a plain conjunction. And on an operand an
+/// earlier sum left marginal levels in, it reads through each one the other
+/// operand is constant-true over, whose counts the output keeps as they
+/// are. The caller has already excluded a filtered or quantified sweep.
 ///
 /// # Errors
 ///
@@ -109,8 +114,8 @@ pub(super) fn take_relabel_level(
     let ti = t.idx();
     if relabel_forced_off()
         || sweep.ws.is_some()
-        || !sweep.targets.is_empty()
-        || sweep.sum_child.is_some()
+        || sweep.targets.contains(ti)
+        || fuses_target_child(sweep, t, shape.f.here, shape.g.here)
         || (sweep.count_root && t == sweep.vtree.root())
         || f.levels[ti].is_marginal()
         || g.levels[ti].is_marginal()
@@ -118,7 +123,7 @@ pub(super) fn take_relabel_level(
         return Ok(false);
     }
     let marginal = run.level_marginal(f, g, shape, sweep.targets);
-    if marginal.is_target || marginal.left_any || marginal.right_any {
+    if marginal.is_target {
         return Ok(false);
     }
     let (carrier_f, one) = match (single_pair(g, ti, shape.g.here), single_pair(f, ti, shape.f.here)) {
@@ -126,6 +131,18 @@ pub(super) fn take_relabel_level(
         (None, Some(pair)) => (false, pair),
         (None, None) => return Ok(false),
     };
+    // A marginal child is read through only where the output's level there
+    // is the carrier's own, which an identity fast path moved because the
+    // narrow operand is constant-true over it: each carrier reference to
+    // it, a slot or an inline count, is then its own product, as the
+    // general routes pass that side through.
+    let carried = |c: VtreeIdx| run.carried.iter().any(|&(x, from_f)| x == c.idx() && from_f == carrier_f);
+    if (marginal.left_any && !carried(left)) || (marginal.right_any && !carried(right)) {
+        return Ok(false);
+    }
+    if marginal.left_any || marginal.right_any {
+        note_read_through();
+    }
 
     let vtree = sweep.vtree;
     let pools = &eng.scratch.apply;
@@ -163,6 +180,20 @@ pub(super) fn take_relabel_level(
     run.products.publish_relabelled(eng, ti, carrier_f, &map, nodes)?;
     note_relabelled(false);
     Ok(true)
+}
+
+/// Whether `t` is a level of one node in each operand (`f_here`, `g_here`)
+/// with a target child: the one product a [`ConjoinMode::Sum`] sweep may sum
+/// that child out of as it finds the pairs (`sums_root`), and whose pairs
+/// the two-step path fuses once the child is marginal. The relabelling route
+/// leaves it to the general routes in every mode, so the two paths build it
+/// alike, pair for pair; one node in each operand, it has nothing to save.
+pub(super) fn fuses_target_child(sweep: &Sweep<'_, '_>, t: VtreeIdx, f_here: usize, g_here: usize) -> bool {
+    if f_here != 1 || g_here != 1 || sweep.targets.is_empty() {
+        return false;
+    }
+    let (left, right) = sweep.vtree.children(t);
+    sweep.targets.contains(left.idx()) || sweep.targets.contains(right.idx())
 }
 
 /// Write the carrier level's nodes into `level`, each pair carried through

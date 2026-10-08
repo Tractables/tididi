@@ -773,8 +773,8 @@ impl crate::Engine {
         for &t in targets {
             mask[t.idx()] = !vtree.node(t).is_leaf() && t != vtree.root();
         }
-        // With no target left the sweep is given none, so the routes that
-        // take only a sweep summing nothing out (the relabelling) stay open.
+        // With no target left the sweep is given none, so no route reads a
+        // set mask that names nothing as one that sums levels out.
         let summed = if mask.contains(&true) { VtreeMask::new(Some(&mask)) } else { VtreeMask::default() };
         // The swap and the self-conjunction shortcut of `conjoin_checked`.
         if g.max_width() > f.max_width() {
@@ -866,9 +866,9 @@ fn note_pairs_grown() {}
 
 // A test sends every level past the relabelling route, as the oracle the
 // route is checked against, and counts the levels it took: moved whole, and
-// rebuilt.
+// rebuilt; and those of them that read through a marginal child.
 #[cfg(test)]
-use tests::{note_relabelled, relabel_forced_off};
+use tests::{note_read_through, note_relabelled, relabel_forced_off};
 
 #[cfg(not(test))]
 #[inline(always)]
@@ -879,6 +879,10 @@ fn relabel_forced_off() -> bool {
 #[cfg(not(test))]
 #[inline(always)]
 fn note_relabelled(_moved: bool) {}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_read_through() {}
 
 // A test counts the levels a count read from an operand's kept counts
 // instead of folding them.

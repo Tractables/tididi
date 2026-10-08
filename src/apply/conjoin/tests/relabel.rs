@@ -128,6 +128,76 @@ fn counts_and_quantified_conjunctions_agree() {
     assert!(relabelled > 0, "no count relabelled a level");
 }
 
+/// A conjunction that sums a subtree out, alone or beside its sibling, is
+/// the general routes' own level for level, and so is its count: the
+/// relabelling route takes the levels over the targets' parents and beside
+/// them.
+#[test]
+fn marginalizing_conjunctions_agree() {
+    let mut relabelled = 0;
+    for (what, f, g) in cases(8, 0x3a_291) {
+        let vtree = Arc::clone(f.vtree());
+        for (t, _, _) in vtree.internal_bottomup() {
+            if t == vtree.root() {
+                continue;
+            }
+            for targets in [vec![t], vec![t, vtree.sibling(t)]] {
+                let eng = Engine::new();
+                let before = relabel_census();
+                let out = eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap();
+                let after = relabel_census();
+                relabelled += after[0] + after[1] - before[0] - before[1];
+                let oracle = no_relabel(|| eng.and_marginalizing(f.clone(), g.clone(), &targets).unwrap());
+                let what = format!("{what}, targets {targets:?}");
+                assert_same_shape(&out, &oracle, &what);
+                let count = eng.model_count(&out).unwrap();
+                assert_eq!(count, eng.model_count(&oracle).unwrap(), "{what}: count");
+                let plain = eng.and(f.clone(), g.clone()).unwrap();
+                assert_eq!(count, eng.model_count(&plain).unwrap(), "{what}: plain count");
+                let counted = eng.and_model_count(f.clone(), g.clone(), &targets).unwrap();
+                assert_eq!(counted, count, "{what}: and_model_count");
+                let oracle = no_relabel(|| eng.and_model_count(f.clone(), g.clone(), &targets).unwrap());
+                assert_eq!(counted, oracle, "{what}: and_model_count oracle");
+            }
+        }
+    }
+    assert!(relabelled > 0, "no marginalizing conjunction relabelled a level");
+}
+
+/// An operand an earlier sum left a marginal level in is read through that
+/// level where the other operand is constant-true over it: the general
+/// routes' diagram and count, and the count of the conjunction unsummed.
+#[test]
+fn a_summed_operand_is_read_through_its_marginal_level() {
+    let mut read_through = 0;
+    for (what, f, g) in cases(8, 0x5e_77) {
+        let vtree = Arc::clone(f.vtree());
+        let support = crate::test_helpers::support_mask(&g);
+        let eng = Engine::new();
+        let whole = eng.model_count(&eng.and(f.clone(), g.clone()).unwrap()).unwrap();
+        for (t, _, _) in vtree.internal_bottomup() {
+            if t == vtree.root() || vars_under(&vtree, t).iter().any(|&v| support[v as usize - 1]) {
+                continue;
+            }
+            let mut summed = f.clone();
+            eng.marginalize_levels(&mut summed, &[t]).unwrap();
+            if !summed.level(t).is_marginal() {
+                continue;
+            }
+            let what = format!("{what}, {t:?} summed");
+            let before = read_through_census();
+            let out = eng.and_marginalizing(summed.clone(), g.clone(), &[]).unwrap();
+            read_through += read_through_census() - before;
+            let oracle = no_relabel(|| eng.and_marginalizing(summed.clone(), g.clone(), &[]).unwrap());
+            assert_same_shape(&out, &oracle, &what);
+            assert_eq!(eng.model_count(&out).unwrap(), whole, "{what}: count");
+            let counted = eng.and_model_count(summed.clone(), g.clone(), &[]).unwrap();
+            assert_eq!(counted, whole, "{what}: and_model_count");
+        }
+    }
+    assert!(read_through > 0, "no conjunction read through a marginal level");
+}
+
 /// A conjunction refused at any work point after the route moved a level
 /// gives both operands back as they were.
 #[test]
