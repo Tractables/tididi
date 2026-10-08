@@ -432,6 +432,9 @@ pub(crate) struct Plan {
     pub(crate) free: Vec<bool>,
     /// The source node a destination node is the image of, where there is one.
     covered_by: Vec<Option<VtreeIdx>>,
+    /// The internal destination nodes with renamed variables on one side
+    /// only, each after the nodes under it.
+    pass_throughs: Vec<VtreeIdx>,
     /// The destination node each source node maps to.
     embedding: Embedding,
     /// Whether children may be matched swapped.
@@ -509,7 +512,14 @@ impl Plan {
 
         let mut covered_by = Vec::new();
         lim.try_resize(&mut covered_by, into.num_nodes(), None)?;
-        let mut plan = Plan { free, covered_by, embedding: Embedding { levels: embedding }, mirror, mirrored };
+        let mut plan = Plan {
+            free,
+            covered_by,
+            pass_throughs: Vec::new(),
+            embedding: Embedding { levels: embedding },
+            mirror,
+            mirrored,
+        };
         let mut visited = 0;
         let matched = plan.match_down(lim, source, into, &some_leaf, &mut visited);
         gate.poll_each(visited)?;
@@ -533,7 +543,7 @@ impl Plan {
         some_leaf: &[VtreeIdx],
         visited: &mut u64,
     ) -> Result<(), EmbedError> {
-        let Plan { free, covered_by, embedding: Embedding { levels: embedding }, mirror, mirrored } = self;
+        let Plan { free, covered_by, pass_throughs, embedding: Embedding { levels: embedding }, mirror, mirrored } = self;
         // An image pushes one entry more than it pops and a leaf one fewer,
         // so the stack holds one entry at most for each source leaf.
         let mut stack = Vec::new();
@@ -546,6 +556,7 @@ impl Plan {
                 if free[left.idx()] || free[right.idx()] {
                     let carries = if free[left.idx()] { right } else { left };
                     lim.try_push(&mut stack, (carries, s))?;
+                    lim.try_push(pass_throughs, d)?;
                     continue;
                 }
             }
@@ -567,6 +578,8 @@ impl Plan {
             embedding[s.idx()] = d;
             covered_by[d.idx()] = Some(s);
         }
+        // Visited top-down, a node comes before the nodes under it.
+        pass_throughs.reverse();
         Ok(())
     }
 }
@@ -695,16 +708,15 @@ fn assemble_moving(
     // The tops of the pass-through chains over a leaf read as `Pos`/`Neg`,
     // whose readers are renumbered once the result stands.
     let mut literal_tops = Vec::new();
-    for t in into.bottomup() {
-        if into.node(t).is_leaf() || plan.covered_by[t.idx()].is_some() {
-            continue;
-        }
-        // A free level left empty costs nothing here, and a conjunction
-        // that builds it carries it as an identity level, which costs
-        // nothing there either.
-        if plan.free[t.idx()] && free == Free::Leave {
-            continue;
-        }
+    // The free levels when they are built, then the pass-throughs, each
+    // after the levels under it. A free level left empty costs nothing
+    // here, and a conjunction that builds it carries it as an identity
+    // level, which costs nothing there either.
+    let built: &[VtreeIdx] = match free {
+        Free::Build => into.internal_bottomup_slice(),
+        Free::Leave => &[],
+    };
+    for &t in built.iter().filter(|t| plan.free[t.idx()]).chain(&plan.pass_throughs) {
         stopped = gate.poll(1);
         if stopped.is_err() {
             break;
