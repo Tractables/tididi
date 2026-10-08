@@ -10,12 +10,13 @@
 //! pass can repair.
 //!
 //! The atoms are computed from the root down (see `split`), each node from
-//! its parent's distinct values, and the nodes are then stored bottom-up.
+//! its parent's distinct values, and the nodes are then stored bottom-up,
+//! each level's in the order of their least pairs (see `pair_key`).
 
 use std::sync::Arc;
 
 use crate::diagram::{Assembly, ChildPair, NodeIdx, Tdd, TddNodeId, ONE_LEAF_IDX};
-use crate::limits::{Charged, OperationError};
+use crate::limits::{Charged, Limits, OperationError};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::Engine;
 
@@ -45,7 +46,10 @@ impl Tdd {
     ///
     /// The result is canonical for `vtree`, so no
     /// [`minimize`](Self::minimize) step follows it, unlike a diagram
-    /// assembled through [`TddBuilder`](crate::diagram::TddBuilder).
+    /// assembled through [`TddBuilder`](crate::diagram::TddBuilder). Each
+    /// level numbers its nodes by their least pair, the right child's node
+    /// compared first: the order in which a build level by level that meets
+    /// each right node with each left node in turn first meets them.
     ///
     /// Construction sorts the packed rows, then walks the vtree from the root
     /// down, splitting each node's distinct values into its children's, and
@@ -117,12 +121,13 @@ impl Engine {
 
     /// [`from_models`](Self::from_models), built two other ways; the result
     /// is the same diagram, node for node. Where neither child of a node of
-    /// one atom is a leaf, the split writes the node's pairs as the level
-    /// stores them and the level takes the buffer, instead of writing child
-    /// atoms that the store reads back and turns into pairs. And a low part
-    /// too wide to address but of few distinct values, as a wide block of
-    /// few combinations under a near-unique one gives, is split through the
-    /// ranks of its values, found by a hash per value, instead of by a sort.
+    /// one atom is a leaf, the split writes the node's pairs as pairs of
+    /// child atoms, which are the pairs the level stores where each child
+    /// stored its atoms in atom order, and the level takes the buffer. And
+    /// a low part too wide to address but of few distinct values, as a wide
+    /// block of few combinations under a near-unique one gives, is split
+    /// through the ranks of its values, found by a hash per value, instead
+    /// of by a sort.
     ///
     /// # Errors
     ///
@@ -302,7 +307,8 @@ fn below(state: &[Option<Finished>], t: VtreeIdx) -> &Finished {
 }
 
 /// An internal node whose constrained variables all sit under one child: its
-/// atoms are that child's, each paired with the free side's true node.
+/// atoms are that child's, each paired with the free side's true node, and
+/// stored in the order of the child's nodes.
 fn carry_child(
     eng: &Engine,
     assembly: &mut Assembly<'_>,
@@ -311,25 +317,68 @@ fn carry_child(
     t: VtreeIdx,
     constrained: VtreeIdx,
 ) -> Result<Finished, OperationError> {
+    let lim = eng.limits();
     let (left, _) = vtree.children(t);
     let free_local = true_node(state, vtree.sibling(constrained));
     let from = below(state, constrained);
     let mut locals = Vec::new();
-    eng.limits().reserve_exact(&mut locals, from.locals.len())?;
+    lim.try_resize(&mut locals, from.locals.len(), NodeIdx(0))?;
     assembly.reserve(eng, t, from.locals.len(), 0)?;
-    for &child in &from.locals {
+    let order = stored_order(lim, from.locals.iter().map(|&child| u64::from(child.0)))?;
+    for atom in in_order(&order, from.locals.len()) {
+        let child = from.locals[atom];
         let pair = if constrained == left {
             ChildPair::new(child, free_local)
         } else {
             ChildPair::new(free_local, child)
         };
-        locals.push(assembly.push(eng, t, &[pair])?);
+        locals[atom] = assembly.push(eng, t, &[pair])?;
     }
+    lim.discard(order);
     Ok(Finished { locals })
 }
 
-/// Store one node per atom of a node constrained on both sides, and record
-/// where each landed.
+/// The key a level's nodes are stored by: a pair's right node above its
+/// left. The nodes ascend by their least pair so keyed, which is the order
+/// in which a build level by level that meets each right node with each
+/// left node in turn first meets them, so that the values of a variable
+/// are numbered alike here and in a diagram so built.
+#[inline]
+fn pair_key(pair: ChildPair) -> u64 {
+    u64::from(pair.right.0) << 32 | u64::from(pair.left.0)
+}
+
+/// The atoms in the order their nodes are stored: ascending by `keys`,
+/// one distinct key an atom. Empty where the keys ascend already, so that
+/// the atoms are stored in their own order.
+fn stored_order(lim: &Limits, keys: impl ExactSizeIterator<Item = u64> + Clone) -> Result<Vec<u32>, OperationError> {
+    let mut previous = None;
+    if keys.clone().all(|key| previous.replace(key).is_none_or(|last| last < key)) {
+        return Ok(Vec::new());
+    }
+    let mut keyed: Vec<u128> = Vec::new();
+    lim.reserve_exact(&mut keyed, keys.len())?;
+    keyed.extend(keys.enumerate().map(|(atom, key)| u128::from(key) << 32 | atom as u128));
+    keyed.sort_unstable();
+    let mut order = Vec::new();
+    let reserved = lim.reserve_exact(&mut order, keyed.len());
+    if reserved.is_ok() {
+        order.extend(keyed.iter().map(|&k| k as u32));
+    }
+    lim.discard(keyed);
+    reserved.map(|()| order)
+}
+
+/// The atoms below `atoms` in the order `order` from [`stored_order`]
+/// gives: their own where it is empty.
+fn in_order(order: &[u32], atoms: usize) -> impl Iterator<Item = usize> + '_ {
+    let own = if order.is_empty() { 0..atoms } else { 0..0 };
+    order.iter().map(|&atom| atom as usize).chain(own)
+}
+
+/// Store one node per atom of a node constrained on both sides, in the
+/// order of their least pairs (see [`pair_key`]), and record where each
+/// landed.
 #[allow(clippy::too_many_arguments)]
 fn store_level(
     eng: &Engine,
@@ -343,17 +392,29 @@ fn store_level(
     let lim = eng.limits();
     let (left, right) = vtree.children(t);
     let (l, r) = (&below(state, left).locals, &below(state, right).locals);
-    // A child whose nodes are not in atom order, as a leaf's literals are
-    // not, reorders the pairs.
+    // A child whose nodes are not in atom order, as a leaf's literals and
+    // a level stored in the order of its pairs need not be, reorders the
+    // pairs.
     let ascending = |nodes: &[NodeIdx]| nodes.windows(2).all(|n| n[0] < n[1]);
+    let one = |local: NodeIdx| -> Result<Finished, OperationError> {
+        let mut locals = Vec::new();
+        lim.reserve_exact(&mut locals, 1)?;
+        locals.push(local);
+        Ok(Finished { locals })
+    };
     let (atoms, triples) = match split {
         Decomposition::Triples { atoms, triples } => (atoms, triples),
-        Decomposition::Pairs { pairs } => {
-            // Neither child is a leaf, so each stored its atoms in atom
-            // order and the pairs name their nodes already.
-            debug_assert!(r.iter().enumerate().all(|(i, node)| node.idx() == i));
-            debug_assert!(l.iter().enumerate().all(|(i, node)| node.idx() == i));
+        Decomposition::Pairs { mut pairs } => {
+            // Neither child is a leaf, and the pairs name their atoms: where
+            // each child stored its atoms in atom order, their nodes.
             lim.gate().poll(pairs.len() as u64)?;
+            let in_atom_order = |nodes: &[NodeIdx]| nodes.iter().enumerate().all(|(i, node)| node.idx() == i);
+            if !(in_atom_order(l) && in_atom_order(r)) {
+                for pair in pairs.iter_mut() {
+                    *pair = ChildPair::new(l[pair.left.0 as usize], r[pair.right.0 as usize]);
+                }
+                pairs.sort_unstable();
+            }
             let local = match pairs.len() {
                 1 => {
                     let local = assembly.push(eng, t, &pairs);
@@ -362,107 +423,116 @@ fn store_level(
                 }
                 _ => assembly.push_owned(eng, t, pairs)?,
             };
-            let mut locals = Vec::new();
-            lim.reserve_exact(&mut locals, 1)?;
-            locals.push(local);
-            return Ok(Finished { locals });
+            return one(local);
         }
         Decomposition::ByAtom { ends, pairs } => {
             // The atoms' pairs run in child-atom order.
             let ordered = ascending(l) && ascending(r);
             let mut locals = Vec::new();
-            lim.reserve_exact(&mut locals, ends.len())?;
+            lim.try_resize(&mut locals, ends.len(), NodeIdx(0))?;
             assembly.reserve(eng, t, ends.len(), pairs.len())?;
             let widest = ends.iter().scan(0, |start, &end| Some(end - std::mem::replace(start, end))).max().unwrap_or(0);
+            let group = |atom: usize| &pairs[if atom == 0 { 0 } else { ends[atom - 1] as usize }..ends[atom] as usize];
+            let node_pair = |pair: u64| ChildPair::new(l[(pair >> 32) as usize], r[pair as u32 as usize]);
+            let least = (0..ends.len()).map(|atom| group(atom).iter().map(|&pair| pair_key(node_pair(pair))).min().unwrap_or(0));
+            let order = stored_order(lim, least)?;
             pair_list.clear();
             lim.reserve_exact(pair_list, widest as usize)?;
             let mut gate = lim.gate();
-            let mut start = 0;
-            for &end in &ends {
-                let group = &pairs[start..end as usize];
+            for atom in in_order(&order, ends.len()) {
+                let group = group(atom);
                 debug_assert!(!group.is_empty(), "every atom is realized by a row");
                 gate.poll(group.len() as u64)?;
                 pair_list.clear();
-                pair_list.extend(group.iter().map(|&pair| ChildPair::new(l[(pair >> 32) as usize], r[pair as u32 as usize])));
+                pair_list.extend(group.iter().map(|&pair| node_pair(pair)));
                 if !ordered {
                     pair_list.sort_unstable();
                 }
-                locals.push(assembly.push(eng, t, pair_list)?);
-                start = end as usize;
+                locals[atom] = assembly.push(eng, t, pair_list)?;
             }
             gate.flush()?;
+            lim.discard(order);
             lim.discard(ends);
             lim.discard(pairs);
             return Ok(Finished { locals });
         }
         Decomposition::Grouped { ends, lows } => {
-            // The one atom's pairs, which run in child-atom order.
+            // The one atom's pairs, which run in child-atom order: each high
+            // atom's in turn, in the order of the high atoms' nodes, and
+            // each of those in the order of the low atoms' nodes.
             assembly.reserve(eng, t, 1, lows.len())?;
             lim.gate().poll(lows.len() as u64)?;
+            let group = |high: usize| &lows[if high == 0 { 0 } else { ends[high - 1] as usize }..ends[high] as usize];
             if ascending(l) && ascending(r) {
                 // Already in order: written into the level as they are read.
-                let highs = l.iter().zip(&ends).scan(0usize, |start, (&high, &end)| {
-                    let group = &lows[std::mem::replace(start, end as usize)..end as usize];
-                    Some(group.iter().map(move |&low| ChildPair::new(high, r[low as usize])))
-                });
-                let local = assembly.push_from(eng, t, lows.len(), highs.flatten())?;
-                let mut locals = Vec::new();
-                lim.reserve_exact(&mut locals, 1)?;
-                locals.push(local);
+                let highs = l.iter().enumerate().flat_map(|(high, &node)| group(high).iter().map(move |&low| ChildPair::new(node, r[low as usize])));
+                let local = assembly.push_from(eng, t, lows.len(), highs)?;
                 lim.discard(ends);
                 lim.discard(lows);
-                return Ok(Finished { locals });
+                return one(local);
             }
+            let order = stored_order(lim, l.iter().map(|&node| u64::from(node.0)))?;
             pair_list.clear();
             lim.reserve_exact(pair_list, lows.len())?;
-            let mut start = 0;
-            for (&high, &end) in l.iter().zip(&ends) {
-                pair_list.extend(lows[start..end as usize].iter().map(|&low| ChildPair::new(high, r[low as usize])));
-                start = end as usize;
+            let low_ordered = ascending(r);
+            for high in in_order(&order, l.len()) {
+                let start = pair_list.len();
+                pair_list.extend(group(high).iter().map(|&low| ChildPair::new(l[high], r[low as usize])));
+                if !low_ordered {
+                    pair_list[start..].sort_unstable();
+                }
             }
-            if !(ascending(l) && ascending(r)) {
-                pair_list.sort_unstable();
-            }
-            let mut locals = Vec::new();
-            lim.reserve_exact(&mut locals, 1)?;
-            locals.push(assembly.push(eng, t, pair_list)?);
+            let local = assembly.push(eng, t, pair_list)?;
+            lim.discard(order);
             lim.discard(ends);
             lim.discard(lows);
-            return Ok(Finished { locals });
+            return one(local);
         }
     };
     let mut locals = Vec::new();
-    lim.reserve_exact(&mut locals, atoms)?;
+    lim.try_resize(&mut locals, atoms, NodeIdx(0))?;
     assembly.reserve(eng, t, atoms, triples.len())?;
     let mut gate = lim.gate();
     if atoms == triples.len() {
         // Each atom has one pair, which needs neither sorting nor merging.
-        for &[atom, a, b] in &triples {
+        let node_pair = |&[_, a, b]: &[u32; 3]| ChildPair::new(l[a as usize], r[b as usize]);
+        let order = stored_order(lim, triples.iter().map(|triple| pair_key(node_pair(triple))))?;
+        for atom in in_order(&order, atoms) {
             gate.poll(1)?;
-            debug_assert_eq!(atom as usize, locals.len());
-            let pair = ChildPair::new(l[a as usize], r[b as usize]);
-            locals.push(assembly.push(eng, t, &[pair])?);
+            debug_assert_eq!(triples[atom][0] as usize, atom);
+            locals[atom] = assembly.push(eng, t, &[node_pair(&triples[atom])])?;
         }
+        lim.discard(order);
     } else {
-        // The triples run in child-atom order.
+        // The triples run in child-atom order, atom by atom.
         let ordered = ascending(l) && ascending(r);
         pair_list.clear();
         lim.reserve_exact(pair_list, triples.len())?;
         pair_list.extend(triples.iter().map(|&[_, a, b]| ChildPair::new(l[a as usize], r[b as usize])));
-        let mut at = 0usize;
-        for atom in 0..atoms {
-            let start = at;
-            while at < triples.len() && triples[at][0] as usize == atom {
-                at += 1;
+        let mut starts = Vec::new();
+        lim.reserve_exact(&mut starts, atoms + 1)?;
+        starts.push(0u32);
+        for (at, w) in triples.windows(2).enumerate() {
+            if w[0][0] != w[1][0] {
+                starts.push(at as u32 + 1);
             }
-            debug_assert!(at > start, "every atom is realized by a row");
-            gate.poll((at - start) as u64)?;
-            let pairs = &mut pair_list[start..at];
+        }
+        starts.push(triples.len() as u32);
+        debug_assert_eq!(starts.len(), atoms + 1, "every atom is realized by a row");
+        let range = |atom: usize| starts[atom] as usize..starts[atom + 1] as usize;
+        let least = (0..atoms).map(|atom| pair_list[range(atom)].iter().map(|&pair| pair_key(pair)).min().unwrap_or(0));
+        let order = stored_order(lim, least)?;
+        for atom in in_order(&order, atoms) {
+            let range = range(atom);
+            gate.poll(range.len() as u64)?;
+            let pairs = &mut pair_list[range];
             if !ordered {
                 pairs.sort_unstable();
             }
-            locals.push(assembly.push(eng, t, pairs)?);
+            locals[atom] = assembly.push(eng, t, pairs)?;
         }
+        lim.discard(order);
+        lim.discard(starts);
     }
     gate.flush()?;
     lim.discard(triples);

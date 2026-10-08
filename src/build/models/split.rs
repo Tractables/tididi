@@ -98,11 +98,11 @@ pub(super) enum Decomposition {
         /// Every pair, its high atom in the upper half.
         pairs: Vec<u64>,
     },
-    /// One atom, whose pairs are its node's as they will be stored: a node
-    /// of the left child above one of the right child, ascending. Written
-    /// only where neither child is a leaf, since an internal child's level
-    /// stores its atoms in atom order, so that an atom's number is its
-    /// node's index (see [`Direct`]).
+    /// One atom, whose pairs name child atoms as the node's pairs name
+    /// nodes: an atom of the left child above one of the right child,
+    /// ascending. Written only where neither child is a leaf; they are the
+    /// node's pairs where each child stored its atoms in atom order, and
+    /// the store looks the atoms up otherwise (see [`Direct`]).
     Pairs {
         /// The node's pairs.
         pairs: Vec<ChildPair>,

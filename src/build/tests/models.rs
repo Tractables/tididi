@@ -661,3 +661,54 @@ fn every_refusal_point_of_the_direct_build_returns_the_buffers() {
     }
     assert!(refused > 0, "no reservation was refused across the sweep");
 }
+
+/// Each internal level's nodes ascend by their least pair, the right
+/// child's node compared first.
+fn assert_numbered_by_least_pairs(f: &Tdd, what: &str) {
+    for (t, _, _) in f.vtree().internal_bottomup() {
+        let level = f.level(t);
+        let least: Vec<(u32, u32)> = (0..level.slot_count())
+            .map(|i| level.pairs_iter_of_idx(i).map(|p| (p.right.raw(), p.left.raw())).min().expect("a node has pairs"))
+            .collect();
+        assert!(least.windows(2).all(|k| k[0] < k[1]), "{what}: level {} numbered {least:?}", t.idx());
+    }
+}
+
+#[test]
+fn a_level_numbers_its_nodes_as_a_build_level_by_level_meets_them() {
+    // A build level by level meets each node of the right child with each
+    // node of the left in turn and numbers a node where it meets its first
+    // pair. The build from models stores its nodes in that order, so that
+    // its levels meet such a build's in a conjunction with the values of
+    // their variables numbered alike. A complete table: a value of four
+    // one-hot copies that is a function of two others, every row of its
+    // parents present.
+    let one_hot = |v: usize| (0..4).map(move |k| k == v);
+    let table: Vec<Vec<bool>> = (0..16)
+        .map(|row| one_hot(row % 4).chain(one_hot(row / 4)).chain(one_hot((row % 4 + 3 * (row / 4)) % 4)).collect())
+        .collect();
+    let rows = packed_rows(12, &table);
+    for (name, vtree) in vtree_shapes(12) {
+        let f = Tdd::from_models(&vtree, &vars(12), &rows).unwrap();
+        assert_canonical(&f);
+        assert_eq!(f.model_count().unwrap(), BigUint::from(16u32), "{name}");
+        assert_numbered_by_least_pairs(&f, name);
+        let direct = Engine::new().from_models_direct(&vtree, &vars(12), &rows).unwrap();
+        assert_same_levels(&direct, &f, name);
+    }
+    // Tables of every form, with free variables around them.
+    let mut rng = Lcg::new(0x1e_2026);
+    for round in 0..300usize {
+        let width = 2 + rng.below(13) as u32;
+        let free = rng.below(3) as u32;
+        let shapes = vtree_shapes(width + free);
+        let (name, vtree) = &shapes[round % shapes.len()];
+        let mut ids: Vec<VarId> = (1..=width + free).map(VarId).collect();
+        for i in (1..ids.len()).rev() {
+            ids.swap(i, rng.below(i as u64 + 1) as usize);
+        }
+        let table = merging_table(&mut rng, width, round % 4);
+        let f = Tdd::from_models(vtree, &ids[..width as usize], &packed_rows(width as usize, &table)).unwrap();
+        assert_numbered_by_least_pairs(&f, &format!("round {round}, {name}"));
+    }
+}

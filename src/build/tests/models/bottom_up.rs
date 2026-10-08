@@ -411,16 +411,19 @@ fn carry_child(
     let (left, _) = vtree.children(t);
     let free_local = true_node(state, vtree.sibling(constrained));
     let from = state[constrained.idx()].take().expect("a child is finished before its parent");
-    let mut locals = Vec::new();
-    eng.limits().reserve_exact(&mut locals, from.locals.len())?;
+    let mut locals = vec![NodeIdx(0); from.locals.len()];
     assembly.reserve(eng, t, from.locals.len(), 0)?;
-    for &child in &from.locals {
+    // In the order of the child's nodes.
+    let mut order: Vec<usize> = (0..from.locals.len()).collect();
+    order.sort_by_key(|&atom| from.locals[atom]);
+    for atom in order {
+        let child = from.locals[atom];
         let pair = if constrained == left {
             ChildPair::new(child, free_local)
         } else {
             ChildPair::new(free_local, child)
         };
-        locals.push(assembly.push(eng, t, &[pair])?);
+        locals[atom] = assembly.push(eng, t, &[pair])?;
     }
     Ok(Finished { atoms: from.atoms, locals })
 }
@@ -621,7 +624,8 @@ fn same_completions(
     })
 }
 
-/// Store one node per atom, and record where each landed.
+/// Store one node per atom, in the order of their least pairs, the right
+/// child's node compared first, and record where each landed.
 #[allow(clippy::too_many_arguments)]
 fn store_level(
     eng: &Engine,
@@ -635,25 +639,8 @@ fn store_level(
     w: usize,
 ) -> Result<Finished, OperationError> {
     let lim = eng.limits();
-    let mut locals = Vec::new();
-    lim.reserve_exact(&mut locals, atoms.count)?;
     let (left, right) = vtree.children(t);
     let (under_left, under_right) = (below(state, left), below(state, right));
-    if atoms.count == scratch.run_atoms.len() {
-        // Each value run introduced a new atom, in encounter order. Its
-        // single child pair needs neither sorting nor deduplication.
-        assembly.reserve(eng, t, atoms.count, atoms.count)?;
-        let mut gate = lim.gate();
-        for &(row, atom) in &scratch.run_atoms {
-            gate.poll(1)?;
-            debug_assert_eq!(atom as usize, locals.len());
-            let l = under_left.locals[under_left.atom_of(row as usize, sorted, w)];
-            let r = under_right.locals[under_right.atom_of(row as usize, sorted, w)];
-            locals.push(assembly.push(eng, t, &[ChildPair::new(l, r)])?);
-        }
-        gate.flush()?;
-        return Ok(Finished { atoms: AtomOfRow::PerRow(atoms.of_row), locals });
-    }
     scratch.pairs.clear();
     lim.reserve_exact(&mut scratch.pairs, scratch.run_atoms.len())?;
     let mut gate = lim.gate();
@@ -670,18 +657,20 @@ fn store_level(
     scratch.pairs.sort_unstable();
     scratch.pairs.dedup();
 
+    // Each atom's pairs, and the atoms by their least pair, right node first.
+    let mut by_atom: Vec<Vec<ChildPair>> = vec![Vec::new(); atoms.count];
+    for &packed in &scratch.pairs {
+        let pair = ChildPair::new(NodeIdx((packed >> 32) as u32), NodeIdx(packed as u32));
+        by_atom[(packed >> 64) as usize].push(pair);
+    }
+    let least = |pairs: &[ChildPair]| pairs.iter().map(|p| (p.right, p.left)).min().expect("every atom is realized by a row");
+    let mut order: Vec<usize> = (0..atoms.count).collect();
+    order.sort_by_key(|&atom| least(&by_atom[atom]));
+
     assembly.reserve(eng, t, atoms.count, scratch.pairs.len())?;
-    let mut at = 0usize;
-    for a in 0..atoms.count {
-        scratch.pair_list.clear();
-        while at < scratch.pairs.len() && (scratch.pairs[at] >> 64) as usize == a {
-            let packed = scratch.pairs[at] as u64;
-            let pair = ChildPair::new(NodeIdx((packed >> 32) as u32), NodeIdx(packed as u32));
-            lim.try_push(&mut scratch.pair_list, pair)?;
-            at += 1;
-        }
-        debug_assert!(!scratch.pair_list.is_empty(), "every atom is realized by a row");
-        locals.push(assembly.push(eng, t, &scratch.pair_list)?);
+    let mut locals = vec![NodeIdx(0); atoms.count];
+    for atom in order {
+        locals[atom] = assembly.push(eng, t, &by_atom[atom])?;
     }
     Ok(Finished { atoms: AtomOfRow::PerRow(atoms.of_row), locals })
 }
