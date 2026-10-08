@@ -729,8 +729,12 @@ fn compact_one_level(
     let dead = match redescribed {
         Some(dead) => dead,
         None => {
+            // A node drops arena pairs only where the arena holds some: on
+            // a level of inline nodes alone nothing is read.
             let mut dead = 0usize;
-            for_each_unmarked(own, width, |i| dead += level.arena_pairs_at(i));
+            if !level.pairs.is_empty() {
+                for_each_unmarked(own, width, |i| dead += level.arena_pairs_at(i));
+            }
             keep_marked(&mut level.nodes, own);
             dead
         }
