@@ -148,3 +148,24 @@ fn a_cube_keeps_the_nodes_it_does_not_cut() {
     assert!(got.level(right).nodes().len() <= before);
     agrees(&f, &Tdd::cube(&vtree, [1, -2]).unwrap(), &got, 8, "kept");
 }
+
+/// A filter on a column whose nodes hold one code each: every node of the
+/// column's block is decided by where it lies, so the kept ones are `f`'s
+/// own and no product is appended there.
+#[test]
+fn a_node_inside_the_filter_is_kept_whole() {
+    let eng = Engine::new();
+    // Two blocks of three variables, one row per code of the first: the
+    // codes of the second block are each the first's plus one.
+    let vtree = Arc::new(Vtree::balanced(6));
+    let rows: Vec<(u32, u32)> = (0..8).map(|c| (c, (c + 1) % 8)).collect();
+    let vars: Vec<VarId> = (1..=6).map(VarId).collect();
+    let f = or_of_cubes(&vtree, &vars, |m| rows.iter().any(|&(a, b)| m == (a | (b << 3)) as usize));
+    let (left, _) = vtree.children(vtree.root());
+    let before = f.level(left).nodes().len();
+    // The first block's codes 0..=4: a set over its variables alone.
+    let set = or_of_cubes(&vtree, &vars[..3], |m| m <= 4);
+    let got = eng.and_in_place(f.clone(), &set).unwrap();
+    agrees(&f, &set, &got, 6, "kept whole");
+    assert!(got.level(left).nodes().len() <= before, "no product was appended under the filter's block");
+}

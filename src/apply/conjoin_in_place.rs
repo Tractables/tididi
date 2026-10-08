@@ -39,6 +39,17 @@
 //! The work is the pairs of `g`'s spine levels in `f`, the products below the
 //! levels where `g` branches, and the prune: never the levels where `g` is
 //! true, unless a dropped pair leaves their nodes to the prune.
+//!
+//! Below a branching level a node of `f` is often decided without its
+//! product: where it lies inside one node of `g`, the product is `f`'s node
+//! there and false at every other, and where it meets no node of `g`, false
+//! (`Products::inside`). One memoized pass over `f`'s nodes below finds
+//! where each lies: a pair of `f` lies inside the node of `g` holding the
+//! pair of the nodes its sides lie in, since `g`'s nodes at a level are
+//! disjoint. A filter on a column whose nodes hold one code each then reads
+//! each node once and rebuilds none.
+
+use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
@@ -125,6 +136,12 @@ struct Products<'a> {
     top: &'a [Option<u32>],
     /// Per level, the product of `(a, b)` keyed `a << 32 | b`.
     memo: Vec<FxHashMap<u64, u32>>,
+    /// Per level, `g`'s node holding each pair, by the pair's key; built
+    /// on the level's first read.
+    g_pairs: Vec<Option<FxHashMap<u64, u32>>>,
+    /// Per level, where each original node of `f` lies among `g`'s nodes
+    /// there ([`Products::inside`]); sized on the level's first read.
+    inside: Vec<Vec<u32>>,
     /// The levels a product was appended to.
     grown: Vec<bool>,
     /// The pairs read, for the stop and the work clock.
@@ -145,6 +162,13 @@ impl Products<'_> {
         let key = (u64::from(a) << 32) | u64::from(b);
         if let Some(&done) = self.memo[t.idx()].get(&key) {
             return Ok(done);
+        }
+        // Where `f`'s node lies inside one node of `g`, the product is `f`'s
+        // node there and false at every other; where it meets none, false.
+        match self.inside(t, a)? {
+            x if x == b => return Ok(a),
+            UNKNOWN => {}
+            _ => return Ok(DEAD),
         }
         let (l, r) = self.vtree.children(t);
         let fa: smallvec::SmallVec<[ChildPair; 8]> = self.f.levels[t.idx()].pairs_iter_of_idx(a as usize).collect();
@@ -180,6 +204,123 @@ impl Products<'_> {
         };
         self.memo[t.idx()].insert(key, done);
         Ok(done)
+    }
+
+    /// Where original node `a` of `f` at internal level `t` lies among
+    /// `g`'s nodes there: the one holding it whole, [`OUTSIDE`] where it
+    /// meets none, [`UNKNOWN`] where it meets some but no one holds it. One
+    /// pass over `f`'s nodes below, memoized: a pair of `a` lies in `g`'s
+    /// node holding the pair of the nodes its sides lie in, since `g`'s
+    /// nodes at a level are disjoint; a leaf side is its label, which the
+    /// label itself and `⊤` hold.
+    fn inside(&mut self, t: VtreeIdx, a: u32) -> Result<u32, OperationError> {
+        if let Some(x) = self.top[t.idx()] {
+            return Ok(x);
+        }
+        let width = self.f.levels[t.idx()].node_count();
+        if self.inside[t.idx()].is_empty() {
+            self.lim.try_resize(&mut self.inside[t.idx()], width, UNSET)?;
+        }
+        match self.inside[t.idx()].get(a as usize) {
+            Some(&x) if x != UNSET => return Ok(x),
+            Some(_) => {}
+            None => return Ok(UNKNOWN),
+        }
+        if self.g_pairs[t.idx()].is_none() {
+            let level = self.g.level(t);
+            let mut map = FxHashMap::default();
+            for i in 0..level.node_count() {
+                for p in level.pairs_iter_of_idx(i) {
+                    map.insert(p.key(), i as u32);
+                }
+            }
+            self.g_pairs[t.idx()] = Some(map);
+        }
+        let (l, r) = self.vtree.children(t);
+        let pairs: smallvec::SmallVec<[ChildPair; 8]> = self.f.levels[t.idx()].pairs_iter_of_idx(a as usize).collect();
+        self.work += pairs.len() as u64;
+        let mut verdict = UNSET;
+        for p in &pairs {
+            let (sl, sr) = (self.side(l, p.left.raw())?, self.side(r, p.right.raw())?);
+            let here = self.pair_inside(t, sl, sr);
+            verdict = match verdict {
+                UNSET => here,
+                x if x == here => x,
+                _ => UNKNOWN,
+            };
+            if verdict == UNKNOWN {
+                break;
+            }
+        }
+        self.inside[t.idx()][a as usize] = verdict;
+        Ok(verdict)
+    }
+
+    /// The side `x` of a pair whose child is level `s`, as
+    /// [`pair_inside`](Self::pair_inside) reads it.
+    fn side(&mut self, s: VtreeIdx, x: u32) -> Result<Side, OperationError> {
+        Ok(match self.vtree.node(s).is_leaf() {
+            true => Side::Label(x),
+            false => Side::Node(self.inside(s, x)?),
+        })
+    }
+
+    /// Where the pair of sides `sl`, `sr` at level `t` lies among `g`'s
+    /// nodes there, as [`inside`](Self::inside) says of a node.
+    fn pair_inside(&self, t: VtreeIdx, sl: Side, sr: Side) -> u32 {
+        let (Some(wl), Some(wr)) = (sl.within(), sr.within()) else { return OUTSIDE };
+        let (Some(pl), Some(pr)) = (sl.partly(), sr.partly()) else { return UNKNOWN };
+        let map = self.g_pairs[t.idx()].as_ref().expect("built by inside");
+        let at = |x: u32, y: u32| map.get(&ChildPair::new(NodeIdx(x), NodeIdx(y)).key()).copied();
+        for &x in wl.iter().flatten() {
+            for &y in wr.iter().flatten() {
+                if let Some(node) = at(x, y) {
+                    return node;
+                }
+            }
+        }
+        let meets = wl.iter().chain(&pl).flatten().any(|&x| wr.iter().chain(&pr).flatten().any(|&y| at(x, y).is_some()));
+        match meets {
+            true => UNKNOWN,
+            false => OUTSIDE,
+        }
+    }
+}
+
+/// [`Products::inside`]'s answers beside `g`'s node indices.
+const UNSET: u32 = u32::MAX;
+const OUTSIDE: u32 = u32::MAX - 1;
+const UNKNOWN: u32 = u32::MAX - 2;
+
+/// A side of `f`'s pair, as [`Products::pair_inside`] matches it with
+/// `g`'s pairs: a leaf label, or where an internal node lies.
+#[derive(Clone, Copy)]
+enum Side {
+    Label(u32),
+    Node(u32),
+}
+
+impl Side {
+    /// `g`'s sides that hold this side whole; `None` where it lies outside
+    /// every node of `g`'s level.
+    fn within(self) -> Option<[Option<u32>; 2]> {
+        match self {
+            Side::Label(x) if x == ONE_LEAF_IDX.0 => Some([Some(ONE_LEAF_IDX.0), None]),
+            Side::Label(x) => Some([Some(x), Some(ONE_LEAF_IDX.0)]),
+            Side::Node(OUTSIDE) => None,
+            Side::Node(x) => Some([(x != UNKNOWN).then_some(x), None]),
+        }
+    }
+
+    /// `g`'s sides that meet this side without holding it; `None` where
+    /// that is not known (an internal node that no one node holds).
+    fn partly(self) -> Option<[Option<u32>; 2]> {
+        match self {
+            Side::Label(x) if x == ONE_LEAF_IDX.0 => Some([Some(POS_LEAF_IDX.0), Some(NEG_LEAF_IDX.0)]),
+            Side::Label(_) => Some([None, None]),
+            Side::Node(UNKNOWN) => None,
+            Side::Node(_) => Some([None, None]),
+        }
     }
 }
 
@@ -303,7 +444,7 @@ pub(crate) fn and_in_place_on(eng: &Engine, mut f: Tdd, g: &Tdd, prune: bool) ->
     if g.is_zero() || f.is_zero() {
         return crate::build::constant_like(eng, &f, false);
     }
-    let vtree = std::sync::Arc::clone(f.vtree());
+    let vtree = Arc::clone(f.vtree());
     let n = vtree.num_nodes();
     let top = true_nodes(g);
     let root = vtree.root();
@@ -357,6 +498,8 @@ pub(crate) fn and_in_place_on(eng: &Engine, mut f: Tdd, g: &Tdd, prune: bool) ->
             g,
             top: &top,
             memo: (0..n).map(|_| FxHashMap::default()).collect(),
+            g_pairs: (0..n).map(|_| None).collect(),
+            inside: (0..n).map(|_| Vec::new()).collect(),
             grown: vec![false; n],
             work: 0,
         };
