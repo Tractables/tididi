@@ -33,6 +33,7 @@ impl<C: CountColumn> LevelFold for OverflowingCounts<'_, C> {
     type Value = Count;
     type Col = C;
 
+    #[inline(always)]
     fn alloc(&self, eng: &Engine, width: usize) -> Result<C, OperationError> {
         C::try_with_width(eng, width)
     }

@@ -11,7 +11,6 @@ use crate::Engine;
 use crate::limits::OperationError;
 use super::cache::QueryCache;
 use incremental::CountQuery;
-use column::QueryCounts;
 use crate::value::CountVec;
 pub use incremental::{Counter, ModelCounter, OwnedModelCounter, BoundCounter, BoundModelCounter, MAX_COUNT_TABLE_VARS};
 pub use crate::value::Retention;
@@ -169,6 +168,6 @@ impl Engine {
         if tdd.is_zero() { return Ok(BigUint::ZERO); }
         // The shared counter fold with no pin storage, releasing each child
         // column once its parent has read it.
-        QueryCache::new(self, tdd, CountQuery::<QueryCounts>::new(PinSemantics::Cofactor), 0, Retention::Frontier)?.read(self, tdd)
+        QueryCache::new(self, tdd, CountQuery::<CountVec>::new(PinSemantics::Cofactor), 0, Retention::Frontier)?.read(self, tdd)
     }
 }

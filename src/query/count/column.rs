@@ -62,6 +62,7 @@ impl Column for QueryCounts {
 }
 
 impl CountColumn for QueryCounts {
+    #[inline(always)]
     fn try_with_width(eng: &Engine, width: usize) -> Result<Self, OperationError> {
         let mut v = if width <= LEAF_WIDTH {
             SmallVec::new()
@@ -78,6 +79,7 @@ impl CountColumn for QueryCounts {
         match self { Self::Narrow(v) => CountRead::Fast(v[i] as u128), Self::Wide(v) => v.get(i) }
     }
 
+    #[inline]
     fn set(&mut self, eng: &Engine, i: usize, value: Count) -> Result<(), OperationError> {
         match self {
             Self::Wide(v) => v.set(eng, i, value),
@@ -86,12 +88,7 @@ impl CountColumn for QueryCounts {
                     v[i] = x as u64;
                     return Ok(());
                 }
-                // Finish promotion before replacing any existing values.
-                let mut wide = CountVec::try_with_width(eng, v.len())?;
-                for (j, &x) in v.iter().enumerate() { wide.set(eng, j, Count::Fast(x as u128))?; }
-                wide.set(eng, i, value)?;
-                eng.limits().discard(std::mem::replace(self, Self::Wide(wide)));
-                Ok(())
+                self.promote_and_set(eng, i, value)
             }
         }
     }
@@ -114,6 +111,20 @@ impl CountColumn for QueryCounts {
             (Self::Wide(l), Self::Wide(r)) => CountVec::fold_structural(pairs, l, r),
             _ => None,
         }
+    }
+}
+
+impl QueryCounts {
+    /// Finish promotion before replacing any existing values.
+    #[cold]
+    #[inline(never)]
+    fn promote_and_set(&mut self, eng: &Engine, i: usize, value: Count) -> Result<(), OperationError> {
+        let Self::Narrow(v) = self else { unreachable!("only narrow columns promote"); };
+        let mut wide = CountVec::try_with_width(eng, v.len())?;
+        for (j, &x) in v.iter().enumerate() { wide.set(eng, j, Count::Fast(x as u128))?; }
+        wide.set(eng, i, value)?;
+        eng.limits().discard(std::mem::replace(self, Self::Wide(wide)));
+        Ok(())
     }
 }
 

@@ -31,20 +31,22 @@ pub(super) fn propagate_false_nodes(tdd: &mut Tdd) {
         let [parent, left_level, right_level] = tdd.levels
             .get_disjoint_mut([vi.idx(), left.idx(), right.idx()])
             .expect("a parent and its children are distinct levels");
-        // An implicit level's nodes hold the description's pairs each, one
-        // or more.
-        let has_empty = |structural: bool, level: &TddLevel| {
-            structural && level.pairs.implicit().is_none() && (0..level.nodes().len()).any(|i| empty_node(level, i))
+        // Only stored structural nodes can have empty pair lists.
+        let stored = |structural: bool, level: &TddLevel| {
+            structural && level.pairs.implicit().is_none()
         };
+        let left_nodes = if stored(left_structural, left_level) { left_level.nodes.stored() } else { &[] };
+        let right_nodes = if stored(right_structural, right_level) { right_level.nodes.stored() } else { &[] };
         if parent.nodes().is_empty()
-            || !(has_empty(left_structural, left_level) || has_empty(right_structural, right_level))
+            || !(left_nodes.iter().any(|node| empty_node_word(left_level, node))
+                || right_nodes.iter().any(|node| empty_node_word(right_level, node)))
         { continue; }
-        let dead = |structural: bool, level: &TddLevel, child: EncodedChildRef| {
+        let dead = |nodes: &[EncodedNode], level: &TddLevel, child: EncodedChildRef| {
             child == ZERO.into()
-                || (structural && empty_node(level, ChildDecoder::structural().node(child).idx()))
+                || (!nodes.is_empty() && empty_node_word(level, &nodes[ChildDecoder::structural().node(child).idx()]))
         };
         rewrite_level_pairs(parent, |_, _, _, pair| {
-            if dead(left_structural, left_level, pair.left) || dead(right_structural, right_level, pair.right) {
+            if dead(left_nodes, left_level, pair.left) || dead(right_nodes, right_level, pair.right) {
                 None
             } else {
                 Some(pair)
@@ -59,8 +61,24 @@ pub(super) fn propagate_false_nodes(tdd: &mut Tdd) {
 }
 
 /// Whether node `i` owns no pairs.
+#[inline(always)]
 pub(super) fn empty_node(level: &TddLevel, i: usize) -> bool {
-    level.pair_count_at(i) == 0
+    empty_node_word(level, &level.node(i))
+}
+
+#[inline(always)]
+fn empty_node_word(level: &TddLevel, node: &EncodedNode) -> bool {
+    match node.kind() {
+        NodeKind::Inline(_) => false,
+        NodeKind::Multi { len, .. } => len == 0,
+        NodeKind::MultiRanged(i) => empty_ranged_node(level, i as usize),
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn empty_ranged_node(level: &TddLevel, i: usize) -> bool {
+    level.ranges[i].len == 0
 }
 
 /// Rewrite a level's pair lists in place through `rewrite_pair`, which sees
@@ -70,6 +88,7 @@ pub(super) fn empty_node(level: &TddLevel, i: usize) -> bool {
 ///
 /// Both of conditioning's rewrites and the care restriction's are this pass
 /// under a different predicate.
+#[inline(always)]
 pub(super) fn rewrite_level_pairs(
     level: &mut TddLevel,
     mut rewrite_pair: impl FnMut(usize, usize, usize, ChildPair) -> Option<ChildPair>,
@@ -130,3 +149,7 @@ pub(super) fn rewrite_level_pairs(
     level.compact_pairs_if_stale();
     emptied
 }
+
+#[cfg(test)]
+#[path = "tests/falsity.rs"]
+mod tests;
