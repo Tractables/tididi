@@ -106,8 +106,10 @@
 //!    under the level. A writer emits version 2 for a diagram that keeps
 //!    them, and leaves out a level with a count past `u128`. A reader checks
 //!    each count against the assignments of its level's variables and keeps
-//!    the counts with the diagram as written: the checksum guards them, but
-//!    confirming them would be the fold that computes them.
+//!    the counts with the diagram as written, trusted: confirming them would
+//!    be the fold that computes them, and the checksum catches a damaged
+//!    file but not one written with wrong counts, whose counts a model count
+//!    of the diagram then returns.
 //!
 //! Bitmaps and streams are written least significant bit first and padded
 //! with zero bits to a whole byte. Local indices are those the text format

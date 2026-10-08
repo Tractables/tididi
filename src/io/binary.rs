@@ -155,6 +155,8 @@ pub fn load_tdd_binary(path: impl AsRef<Path>, vtree: &Arc<Vtree>) -> Result<Tdd
 /// level. As for the text format, the reader validates the encoding, not
 /// semantic determinism; it relies on determinism only to refuse more than
 /// one pair in a level over two one-node levels, whose pairs take no bits.
+/// The level counts of a version 2 file are bounded, not recomputed, and are
+/// trusted from there on ([format](crate::io#binary-format)).
 ///
 /// # Errors
 ///
