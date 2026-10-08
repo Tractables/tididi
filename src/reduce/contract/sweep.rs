@@ -150,8 +150,9 @@ pub(crate) fn contract_all_twins(
         return Err(e);
     }
     // The unit of work is the parent: a level whose pairs were mutated is a
-    // parent whose children's contexts may have moved.
-    let mut heap: BinaryHeap<(u32, u32)> = BinaryHeap::new();
+    // parent whose children's contexts may have moved. Every dirty parent
+    // may go in at once.
+    let mut heap: BinaryHeap<(u32, u32)> = BinaryHeap::with_capacity(dirty_parents.len());
     for &dp in &dirty_parents {
         push_parent(tdd, &mut scratch, &mut heap, num_nodes, dp as usize);
     }
