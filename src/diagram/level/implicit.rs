@@ -217,9 +217,26 @@ impl ImplicitLevel {
 
     /// The description in normal form: the digits the greedy read takes off
     /// the pairs this one describes, which are those [`fit`](Self::fit)
-    /// reads off the level. Probes about the sum of the radices; writes no
-    /// pairs.
+    /// reads off the level. Reads the digits only, no pair.
+    ///
+    /// The greedy read ([`read_digits`]) takes a digit's step off the first
+    /// place past the digits before it and runs it as far as the places stay
+    /// on its line. Past a digit of these the next place is the next digit's
+    /// unit, on the line exactly when that digit's step is the run's places
+    /// times the step, and then every setting of it is; so the run ends at a
+    /// boundary of these digits, the first whose step is off the line, and
+    /// the greedy digits are these with each digit on the line merged into
+    /// the one before it ([`merged`]).
     pub(crate) fn normal(&self) -> ImplicitLevel {
+        let (within, across) = self.digits.split_at(self.within);
+        ImplicitLevel::assemble(self.nodes, self.per_node, self.first, &merged(within), &merged(across))
+    }
+
+    /// [`normal`](Self::normal) as the greedy read takes it off the pairs
+    /// this describes, read at about the sum of the radices: what the
+    /// checkers compare a description with.
+    #[cfg(any(test, debug_assertions, feature = "testing"))]
+    pub(crate) fn read_normal(&self) -> ImplicitLevel {
         let (k, first) = (self.per_node, self.first);
         let within = read_digits(k, |m| {
             let (l, r) = self.at(m);
@@ -233,6 +250,7 @@ impl ImplicitLevel {
     }
 
     /// The child slots of the pair at position `p` of the level's pairs.
+    #[cfg(any(test, debug_assertions, feature = "testing"))]
     fn at(&self, p: usize) -> (i64, i64) {
         let (mut l, mut r) = self.first;
         let mut rest = p;
@@ -821,6 +839,26 @@ fn each_place(digits: &[Digit], at: (i64, i64), mut f: impl FnMut(i64, i64)) {
             j += 1;
         }
     }
+}
+
+/// `digits` as radices and steps, fastest first, each one whose step is the
+/// places of the digits merged before it times their step merged into them:
+/// the digits a greedy read ([`read_digits`]) takes off the places they
+/// number ([`ImplicitLevel::normal`]).
+fn merged(digits: &[Digit]) -> Vec<(usize, (i64, i64))> {
+    let mut out: Vec<(usize, (i64, i64))> = Vec::with_capacity(digits.len());
+    for d in digits {
+        if let Some((radix, (l, r))) = out.last_mut() {
+            let places = i64::try_from(*radix).ok();
+            let on_line = |s: i64, t: i64| places.and_then(|p| p.checked_mul(s)) == Some(t);
+            if on_line(*l, d.left) && on_line(*r, d.right) {
+                *radix *= d.radix;
+                continue;
+            }
+        }
+        out.push((d.radix, (d.left, d.right)));
+    }
+    out
 }
 
 /// The digits of `value` over `0..n`, if it is affine in some mixed radix:

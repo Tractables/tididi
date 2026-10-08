@@ -935,6 +935,47 @@ fn a_level_is_folded_in_runs_from_any_node() {
     assert!(tabled > 10 && led > 10 && several > 10, "{tabled} tabled, {led} led, {several} of several pairs a node");
 }
 
+/// A description's normal form, its digits each merged into the one before
+/// it where its step is on that one's line, is the greedy read of the pairs
+/// it describes: over digits of random radices whose steps are on the line
+/// of the digits before them or not, zero steps among them.
+#[test]
+fn the_normal_form_merges_the_digits_on_a_line() {
+    let mut rng = Lcg::new(0x1d1e_0501);
+    let mut merges = 0;
+    for round in 0..2000 {
+        let digits = |rng: &mut Lcg, n: u64| {
+            let mut out: Vec<(usize, (i64, i64))> = Vec::new();
+            let mut line: Option<(usize, (i64, i64))> = None;
+            for _ in 0..n {
+                let radix = 2 + rng.below(4) as usize;
+                let step = match (line, rng.below(3)) {
+                    (Some((places, (l, r))), 0) => (places as i64 * l, places as i64 * r),
+                    (Some((places, (l, _))), 1) => (places as i64 * l, rng.below(3) as i64),
+                    _ => (rng.below(5) as i64 - 1, rng.below(5) as i64 - 1),
+                };
+                line = match line {
+                    Some((places, s)) if step == (places as i64 * s.0, places as i64 * s.1) => Some((places * radix, s)),
+                    _ => Some((radix, step)),
+                };
+                out.push((radix, step));
+            }
+            out
+        };
+        let (w, a) = (rng.below(4), rng.below(5));
+        let within = digits(&mut rng, w);
+        let across = digits(&mut rng, a);
+        let (k, n) = (within.iter().map(|d| d.0).product(), across.iter().map(|d| d.0).product());
+        let first = (20 + rng.below(9) as i64, 20 + rng.below(9) as i64);
+        let d = ImplicitLevel::assemble(n, k, first, &within, &across);
+        let normal = d.normal();
+        assert_eq!(normal, d.read_normal(), "round {round}: {d:?}");
+        assert_eq!(normal.normal(), normal);
+        merges += usize::from(normal.digits().len() < d.digits().len());
+    }
+    assert!(merges > 500, "{merges} descriptions had digits to merge");
+}
+
 #[test]
 fn twins_are_read_off_the_digits() {
     // Node i holds (3i + m, m) for m < 3: every left slot named once, in its

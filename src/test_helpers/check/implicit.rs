@@ -52,7 +52,7 @@ pub fn check_implicit_levels(tdd: &Tdd) -> Result<(), String> {
                         d.pairs()
                     ));
                 }
-                let normal = d.normal();
+                let normal = d.read_normal();
                 if &normal != d {
                     return Err(format!("level {t}: a description not in normal form: {d:?}, normal {normal:?}"));
                 }
