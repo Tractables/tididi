@@ -779,9 +779,16 @@ impl Tdd {
     /// leaves the conditional probability undefined. Zero values alone do not
     /// establish unsatisfiability: weights can be zero or cancel.
     ///
+    /// A level a marginalization summed out is read through
+    /// [`EvalAlgebra::count`]: each stored count `n` is `count(n)`, which is
+    /// what the summed structure evaluates to wherever the algebra values the
+    /// summed variables as the identity (*Marginal levels* on
+    /// [`EvalAlgebra`]).
+    ///
     /// # Errors
     ///
-    /// Returns [`OperationError::MarginalLevel`] for discarded structure, or
+    /// Returns [`OperationError::MarginalLevel`] for a marginal level the
+    /// algebra values no count of, or one summed under weights, or
     /// [`OperationError::OverBudget`] if a buffer allocation is refused.
     ///
     /// # Panics
@@ -818,11 +825,13 @@ impl Tdd {
     /// [`ColumnAlgebra::leaf`] or [`ColumnAlgebra::fold`] writes each of its
     /// slots, and a child's column is dropped once its parent's is written.
     /// The constant-false diagram evaluates to [`ColumnAlgebra::zero`]. The
-    /// borrowed diagram is unchanged.
+    /// borrowed diagram is unchanged. A marginal level's slots are written by
+    /// [`ColumnAlgebra::count`], as [`evaluate`](Self::evaluate) reads them.
     ///
     /// # Errors
     ///
-    /// Returns [`OperationError::MarginalLevel`] for discarded structure, or
+    /// Returns [`OperationError::MarginalLevel`] for a marginal level the
+    /// algebra values no count of, or one summed under weights, or
     /// [`OperationError::OverBudget`] if the table of columns is refused.
     ///
     /// # Panics
@@ -870,15 +879,18 @@ impl Tdd {
     /// ([`reference_slot_count`](Self::reference_slot_count)): a leaf's
     /// `LEAF_WIDTH` labels, the constant-false one zero, or one per node of
     /// an internal level. The levels above `at` are not folded; a caller
-    /// combining the values with them reads the pairs that name each slot.
-    /// The borrowed diagram is unchanged.
+    /// combining the values with them reads the pairs that name each slot,
+    /// and values a count a pair carries inline itself. A marginal level is
+    /// read as [`evaluate`](Self::evaluate) reads it. The borrowed diagram is
+    /// unchanged.
     ///
     /// # Errors
     ///
     /// Returns [`OperationError::LevelNotInVtree`] for an `at` that is not a
-    /// node of the diagram's vtree, [`OperationError::MarginalLevel`] for
-    /// discarded structure, or [`OperationError::OverBudget`] if a buffer
-    /// allocation is refused.
+    /// node of the diagram's vtree, [`OperationError::MarginalLevel`] for a
+    /// marginal level the algebra values no count of, or one summed under
+    /// weights, or [`OperationError::OverBudget`] if a buffer allocation is
+    /// refused.
     ///
     /// # Panics
     ///
@@ -920,14 +932,16 @@ impl Tdd {
     /// [`evaluate_at`](Self::evaluate_at) into a column the algebra owns:
     /// the level's column as [`evaluate_columns`](Self::evaluate_columns)
     /// writes it, under the same laws, with the levels under `at` folded and
-    /// none above it. The borrowed diagram is unchanged.
+    /// none above it, and no slot for the counts `at`'s parent carries
+    /// inline. The borrowed diagram is unchanged.
     ///
     /// # Errors
     ///
     /// Returns [`OperationError::LevelNotInVtree`] for an `at` that is not a
-    /// node of the diagram's vtree, [`OperationError::MarginalLevel`] for
-    /// discarded structure, or [`OperationError::OverBudget`] if the table
-    /// of columns is refused.
+    /// node of the diagram's vtree, [`OperationError::MarginalLevel`] for a
+    /// marginal level the algebra values no count of, or one summed under
+    /// weights, or [`OperationError::OverBudget`] if the table of columns is
+    /// refused.
     ///
     /// # Panics
     ///

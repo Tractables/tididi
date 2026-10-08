@@ -26,6 +26,7 @@ mod traverse;
 mod weighted_limits;
 
 mod evaluation;
+mod marginal_evaluation;
 mod counter_limits;
 mod pin_domain;
 

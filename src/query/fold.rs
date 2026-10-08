@@ -295,7 +295,7 @@ pub(crate) fn fold_subtree<F: LevelFold, const PREPARED: bool>(
 /// [`fold_subtree`] from the levels `held` marks, as
 /// [`fold_bottom_up_from`] reads them.
 #[allow(clippy::too_many_arguments)]
-fn fold_held<F: LevelFold, const PREPARED: bool>(
+pub(crate) fn fold_held<F: LevelFold, const PREPARED: bool>(
     f: &F,
     eng: &Engine,
     tdd: &Tdd,
