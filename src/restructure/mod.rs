@@ -333,6 +333,10 @@ impl From<OperationError> for TagError {
 pub enum DistinctError {
     /// The key is the vtree's root, which has no sibling to count.
     Root,
+    /// The result's vtree cannot keep the diagram's variable ids: with
+    /// [`VtreeError::VariableSpaceTooLarge`], the id space is wider than a
+    /// vtree of the key's subtree may declare.
+    Vtree(VtreeError),
     /// An operation the pass runs was refused: a key that is not in the
     /// vtree, a diagram that has discarded the structure at a level, a
     /// refused allocation, or an armed stop.
@@ -343,6 +347,7 @@ impl std::fmt::Display for DistinctError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Root => write!(f, "the key is the vtree's root, which has no sibling to count"),
+            Self::Vtree(error) => write!(f, "the result's vtree: {error}"),
             Self::Operation(error) => write!(f, "counting distinct values: {error}"),
         }
     }
@@ -352,6 +357,7 @@ impl std::error::Error for DistinctError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Operation(error) => Some(error),
+            Self::Vtree(error) => Some(error),
             Self::Root => None,
         }
     }

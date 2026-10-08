@@ -81,6 +81,10 @@ impl Engine {
     /// # Errors
     ///
     /// [`DistinctError::Root`] when `key` is the root, which has no sibling;
+    /// [`DistinctError::Vtree`] with
+    /// [`VtreeError::VariableSpaceTooLarge`](crate::vtree::VtreeError::VariableSpaceTooLarge)
+    /// when the diagram's variable ids are too wide for a vtree of `key`'s
+    /// subtree to declare;
     /// [`DistinctError::Operation`] with [`OperationError::LevelNotInVtree`]
     /// for a `key` that is not a node of the diagram's vtree,
     /// [`OperationError::MarginalLevel`] for a diagram that has discarded the
@@ -102,6 +106,9 @@ impl Engine {
         // The result's vtree: `key`'s subtree, its ids kept, and the image
         // there of each node of that subtree.
         let below = subtree(vtree, key);
+        // The result keeps the diagram's ids on a vtree of the subtree's
+        // nodes, which may be too few to declare them.
+        crate::vtree::check_var_space(vtree.num_vars(), below.len()).map_err(DistinctError::Vtree)?;
         let mut keep = Vec::new();
         lim.try_resize(&mut keep, vtree.num_vars() as usize + 1, false)?;
         for &t in &below {
