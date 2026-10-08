@@ -5,6 +5,7 @@
 //! occurs.
 
 mod incremental;
+mod column;
 
 use crate::Engine;
 use crate::limits::OperationError;
@@ -144,7 +145,7 @@ impl Engine {
         lim.reserve_exact(&mut counts, columns.len())?;
         for column in columns {
             gate.poll(1)?;
-            counts.push(column.into_parts().0);
+            counts.push(column.into_parts(self)?.0);
         }
         gate.flush()?;
         Ok(counts)

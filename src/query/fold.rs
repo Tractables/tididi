@@ -10,7 +10,7 @@
 //! attached weights through the value domains in `value` (`ValueDomain`), the
 //! fold marginalization writes its levels with.
 
-use crate::value::{walk_bottom_up, CountVec, Retention};
+use crate::value::{walk_bottom_up, Retention};
 use crate::diagram::{EncodedChildRef, ChildRef, LeafLabel, PairsIter, ChildDecoder, Tdd, ValueRef, LEAF_WIDTH};
 use crate::Engine;
 use crate::limits::PollGate;
@@ -38,12 +38,6 @@ pub(crate) trait Column: Default {
 }
 
 impl<T> Column for Vec<T> {
-    fn width(&self) -> usize {
-        self.len()
-    }
-}
-
-impl Column for CountVec {
     fn width(&self) -> usize {
         self.len()
     }

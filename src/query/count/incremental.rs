@@ -10,8 +10,9 @@ use super::{leaf_seed, PinSemantics};
 use super::super::fold::{LevelFold, Side};
 use super::super::cache::{BoundState, CachedQuery, PinState, QueryCache};
 use crate::limits::OperationError;
-use crate::value::{Retention, Count, CountRead, CountVec, IntFold};
+use crate::value::{Retention, Count, CountRead, IntFold};
 use crate::vtree::{VarId, VtreeIdx};
+use super::column::QueryCounts;
 
 /// The most variables [`ModelCounter::count_table`] lists: its table holds
 /// one count per assignment of them.
@@ -28,17 +29,17 @@ pub(crate) struct OverflowingCounts<'a> {
 impl LevelFold for OverflowingCounts<'_> {
     const NODE_WORK: bool = true;
     type Value = Count;
-    type Col = CountVec;
+    type Col = QueryCounts;
 
-    fn alloc(&self, eng: &Engine, width: usize) -> Result<CountVec, OperationError> {
-        CountVec::try_with_width(eng, width)
+    fn alloc(&self, eng: &Engine, width: usize) -> Result<QueryCounts, OperationError> {
+        QueryCounts::try_with_width(eng, width)
     }
 
     fn release(&self, eng: &Engine, col: &mut Self::Col) {
         eng.limits().discard(std::mem::take(col));
     }
 
-    fn set(&self, eng: &Engine, col: &mut CountVec, i: usize, v: Count) -> Result<(), OperationError> {
+    fn set(&self, eng: &Engine, col: &mut QueryCounts, i: usize, v: Count) -> Result<(), OperationError> {
         col.set(eng, i, v)
     }
 
@@ -54,7 +55,7 @@ impl LevelFold for OverflowingCounts<'_> {
         eng: &Engine,
         tdd: &Tdd,
         t: VtreeIdx,
-        col: &mut CountVec,
+        col: &mut QueryCounts,
     ) -> Result<(), OperationError> {
         let level = &tdd.levels[t.idx()];
         let values = crate::diagram::MarginalValues::read(level, None, t.idx()).expect("marginal count column");
@@ -72,17 +73,12 @@ impl LevelFold for OverflowingCounts<'_> {
     fn fold_node(
         &self,
         pairs: PairsIter<'_>,
-        left: Side<'_, CountVec>,
-        right: Side<'_, CountVec>,
+        left: Side<'_, QueryCounts>,
+        right: Side<'_, QueryCounts>,
     ) -> Count {
-        // Two structural children whose counts all fit `u64` read raw.
-        fn raw<'c>(side: Side<'c, CountVec>) -> Option<&'c [u128]> {
-            let col = side.col.as_count_ref();
-            (!side.view.is_marginal() && col.all_u64()).then(|| col.fast_slice())
-        }
-        // A described node's pairs take the general fold, which generates them.
-        if let (Some(l), Some(r), Some(stored)) = (raw(left), raw(right), pairs.as_slice())
-            && let Some(total) = IntFold::fold_structural_u64(stored, l, r)
+        if !left.view.is_marginal() && !right.view.is_marginal()
+            && let Some(stored) = pairs.as_slice()
+            && let Some(total) = QueryCounts::fold_structural(stored, left.col, right.col)
         {
             return Count::from_u128(total);
         }
@@ -92,7 +88,7 @@ impl LevelFold for OverflowingCounts<'_> {
 
 /// A counter's cached query is its pin semantics.
 impl CachedQuery for PinSemantics {
-    type Col = CountVec;
+    type Col = QueryCounts;
     type Output = BigUint;
     type Fold<'a> = OverflowingCounts<'a>;
 
@@ -111,7 +107,7 @@ impl CachedQuery for PinSemantics {
         BigUint::ZERO
     }
 
-    fn output(&self, col: &CountVec, i: usize) -> BigUint {
+    fn output(&self, col: &QueryCounts, i: usize) -> BigUint {
         match col.get(i) {
             CountRead::Fast(value) => BigUint::from(value),
             CountRead::Big(value) => value.clone(),
@@ -123,10 +119,10 @@ impl CachedQuery for PinSemantics {
 ///
 /// The sentinel ⟺ big-slot invariant, the exact-max promotion, and the
 /// stale-overflow clear on recompute (a node may stop overflowing when pins
-/// change) are all owned by [`CountVec::set`] / [`Count::from_u128`].
+/// change) are all owned by [`QueryCounts::set`] / [`Count::from_u128`].
 #[inline]
-fn read_side<'a>(side: Side<'a, CountVec>, k: EncodedChildRef) -> CountRead<'a> {
-    side.col.as_count_ref().read(side.view, k)
+fn read_side<'a>(side: Side<'a, QueryCounts>, k: EncodedChildRef) -> CountRead<'a> {
+    side.col.read(side.view, k)
 }
 
 /// Count repeatedly under changing observations without modifying the diagram.
