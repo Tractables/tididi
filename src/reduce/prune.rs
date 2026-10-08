@@ -234,6 +234,9 @@ pub(crate) struct PruneScratch {
     identity: Vec<u32>,
     /// The levels the seeded walk descended into.
     visits: Vec<Visit>,
+    /// [`settle_loose`]'s flags per level and the parents it reads.
+    settle_flags: Vec<[bool; 2]>,
+    settle_parents: Vec<VtreeIdx>,
 }
 
 impl Buffers for PruneScratch {
@@ -243,6 +246,8 @@ impl Buffers for PruneScratch {
         visit(&mut self.remap);
         visit(&mut self.identity);
         visit(&mut self.visits);
+        visit(&mut self.settle_flags);
+        visit(&mut self.settle_parents);
     }
 }
 
@@ -253,6 +258,8 @@ impl PooledScratch for PruneScratch {
         self.remap.clear();
         self.identity.clear();
         self.visits.clear();
+        self.settle_flags.clear();
+        self.settle_parents.clear();
     }
 }
 
@@ -428,23 +435,28 @@ pub(crate) fn settle_loose(eng: &Engine, tdd: &Tdd, listed: &[u32]) -> Result<Ve
     // stays, up to the first set already, whose own levels above are set.
     const AT: usize = 0;
     const UNDER: usize = 1;
-    let mut flags = vec![[false; 2]; vtree.num_nodes()];
+    // The prune's scratch, which a prune checks out after this returns: a
+    // read clears the blocks of marks it takes, as the walk does.
+    let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
+    let PruneScratch { marks, settle_flags: flags, settle_parents: parents, .. } = &mut *scratch;
+    flags.clear();
+    lim.try_resize(flags, vtree.num_nodes(), [false; 2])?;
     for &t in listed {
         flags[t as usize][AT] = true;
     }
     // The listed levels' parents, bottom-up, so that every level under a
     // parent's children is settled before the parent is read.
-    let mut parents: Vec<VtreeIdx> = Vec::with_capacity(listed.len());
+    parents.clear();
+    lim.reserve(parents, listed.len())?;
     parents.extend(listed.iter().filter_map(|&t| vtree.node(VtreeIdx(t)).parent()));
     parents.sort_unstable_by_key(|&p| vtree.topo_pos(p));
     parents.dedup();
     let mut gate = lim.gate();
-    let mut marks: Transient<'_, Vec<u64>> = Transient::new(lim, Vec::new());
-    for p in parents {
+    for &p in parents.iter() {
         let (left, right) = vtree.children(p);
         if p != vtree.root() && !flags[left.idx()][UNDER] && !flags[right.idx()][UNDER] {
             let sides = [flags[left.idx()][AT], flags[right.idx()][AT]];
-            let stays = unnamed_children(lim, tdd, p, sides, &mut marks, &mut gate)?;
+            let stays = unnamed_children(lim, tdd, p, sides, marks, &mut gate)?;
             flags[left.idx()][AT] = stays[0];
             flags[right.idx()][AT] = stays[1];
         }
@@ -471,7 +483,7 @@ fn unnamed_children(
     tdd: &Tdd,
     p: VtreeIdx,
     sides: [bool; 2],
-    marks: &mut Transient<'_, Vec<u64>>,
+    marks: &mut Vec<u64>,
     gate: &mut PollGate<'_>,
 ) -> Result<[bool; 2], OperationError> {
     if sides == [false; 2] || !tdd.is_structural_internal(p) {
@@ -481,7 +493,7 @@ fn unnamed_children(
     let children = [left, right];
     // The nodes of each side not named yet, and the word its block starts at.
     let (mut open, mut base, mut unread) = ([0usize; 2], [0usize; 2], [false; 2]);
-    marks.clear();
+    let mut used = 0;
     for k in 0..2 {
         if !sides[k] {
             continue;
@@ -491,8 +503,12 @@ fn unnamed_children(
             continue;
         }
         let width = tdd.levels[children[k].idx()].slot_count();
-        base[k] = marks.len();
-        lim.try_resize(marks, base[k] + words(width), 0)?;
+        base[k] = used;
+        used += words(width);
+        if marks.len() < used {
+            lim.try_resize(marks, used, 0)?;
+        }
+        marks[base[k]..used].fill(0);
         open[k] = width;
     }
     let views = children.map(|c| tdd.levels[c.idx()].child_decoder());
