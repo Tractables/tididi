@@ -92,7 +92,9 @@ pub(super) struct MarginalPlan {
     /// How each child side is read.
     pub(crate) sides: Sides<SidePlan>,
     /// True when both operands have multi-pair nodes at this level, so the
-    /// dead-pair pre-filter applies and its masks are worth building.
+    /// dead-pair pre-filter applies. Its masks are built where the level's
+    /// grid is also large enough to pay for them
+    /// (`liveness::MASK_MIN_CELLS`).
     pub(crate) both_multi_pair: bool,
 }
 
@@ -220,7 +222,7 @@ pub(super) fn plan_marginal_level(
     // A pass-through side has no product grid to filter against, so it is
     // treated as alive throughout. The liveness masks, which read the child
     // grids, are built by `build_level_prefilter_masks` once the grids exist and
-    // only when `both_multi_pair` holds.
+    // only when `both_multi_pair` holds and the grid has `MASK_MIN_CELLS` cells.
 
     MarginalPlan { sides, both_multi_pair }
 }

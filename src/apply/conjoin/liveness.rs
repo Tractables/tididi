@@ -17,9 +17,16 @@ use crate::Engine;
 use super::{OperationError, NO_PRODUCT, TddLevel, ChildPair};
 use crate::diagram::Sides;
 
+/// The fewest cells a product grid of two multi-pair levels has for its
+/// level to build the masks. Under it they cost more than they save: on such
+/// a level, typically two nodes a side, the masks scan both child grids to
+/// cull under a tenth of its cells, where on a grid of 8 to 63 cells they
+/// cull about half.
+pub(super) const MASK_MIN_CELLS: usize = 8;
+
 /// One child side's two dead-pair pre-filter masks.
 ///
-/// They are rebuilt from scratch at every `both_multi_pair` level ([`build_live_cols_bitmask`]
+/// They are rebuilt from scratch at every masked level ([`build_live_cols_bitmask`]
 /// and [`build_reach_masks`] both `clear()` then resize-with-`0`, so no pooled
 /// content can survive into a later level).
 #[derive(Debug, Default)]

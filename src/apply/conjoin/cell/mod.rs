@@ -43,8 +43,12 @@ pub(super) struct CellCtx<'a> {
     pub(crate) output_grid_base: usize,
     /// Number of g nodes at this level (column count of the product grid).
     pub(crate) right_width: usize,
-    /// True when both operands have multi-pair nodes (dead-pair pre-filter active).
-    pub(crate) both_multi_pair: bool,
+    /// Whether the level built its dead-pair masks, each side's `live_cols`
+    /// and `reach`: both operand levels multi-pair, a side read from a grid,
+    /// and a grid of `liveness::MASK_MIN_CELLS` cells or more. The row skip,
+    /// the column culls and the N×M arm's per-pair culls read the masks only
+    /// where it holds.
+    pub(crate) masked: bool,
     /// The two child sides. The kernel reaches them as `.left` / `.right`
     /// only — never by a runtime `Side`, which would put a branch in the walk.
     pub(crate) sides: Sides<ChildPlan<'a>>,

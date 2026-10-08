@@ -13,28 +13,28 @@ use crate::limits::PollGate;
 
 /// Fold the per-row alive-column masks for one decoded f row.
 ///
-/// left: pass-through ⇒ always alive (`MAX`); `!both_multi_pair` ⇒ masks unused (`0`);
+/// left: pass-through ⇒ always alive (`MAX`); `!masked` ⇒ masks unused (`0`);
 /// else the OR of the side's `live_cols` over the row's left refs. right mirrors
-/// (`MAX` when pass-through OR `!both_multi_pair`). Returns `None` when the row is
-/// provably dead under `both_multi_pair` (every cell in it would be culled) — the caller
+/// (`MAX` when pass-through OR `!masked`). Returns `None` when the row is
+/// provably dead under the masks (every cell in it would be culled) — the caller
 /// skips the whole row.
 #[inline(always)]
 pub(crate) fn row_alive_masks(ctx: &CellCtx<'_>, f_pairs: &[ChildPair]) -> Option<(u128, u128)> {
     let left_alive_mask: u128 = if ctx.sides.left.plan.is_passthrough() {
         u128::MAX // pass-through side: no grid; always alive
-    } else if !ctx.both_multi_pair {
+    } else if !ctx.masked {
         0u128
     } else {
         f_pairs.iter().fold(0u128, |acc, p1| acc | ctx.sides.left.live_cols[p1.left.raw() as usize])
     };
-    if ctx.both_multi_pair && left_alive_mask == 0 { return None; }
+    if ctx.masked && left_alive_mask == 0 { return None; }
 
-    let right_alive_mask: u128 = if ctx.sides.right.plan.is_passthrough() || !ctx.both_multi_pair {
+    let right_alive_mask: u128 = if ctx.sides.right.plan.is_passthrough() || !ctx.masked {
         u128::MAX
     } else {
         f_pairs.iter().fold(0u128, |acc, p1| acc | ctx.sides.right.live_cols[p1.right.raw() as usize])
     };
-    if ctx.both_multi_pair && right_alive_mask == 0 { return None; }
+    if ctx.masked && right_alive_mask == 0 { return None; }
 
     Some((left_alive_mask, right_alive_mask))
 }
@@ -439,8 +439,9 @@ where
     R: ChildLookup,
     S: PairSink,
 {
-    // ── N×M (implies both_multi_pair: both levels multi-pair ⟹ masks built
-    // for every side that can kill) ──────
+    // ── N×M (both levels multi-pair; masks built for every side that can
+    // kill where `ctx.masked`, the level's grid big enough to pay for them)
+    // ──────
     // The whole-cell dead test belongs to the row loop, which applies it to
     // every arm before the cell is entered; what is left here is the per-`p1`
     // form of it, which only this arm can use.
@@ -465,7 +466,7 @@ where
             let g1 = &f_pairs[g1_start..p1_idx];
             gate.poll((g1.len() * n2) as u64)?;
 
-            if left.kills() && ctx.sides.left.live_cols[p1_left.raw() as usize] & ctx.sides.left.reach[j] == 0 {
+            if ctx.masked && left.kills() && ctx.sides.left.live_cols[p1_left.raw() as usize] & ctx.sides.left.reach[j] == 0 {
                 continue;
             }
 
@@ -477,7 +478,7 @@ where
                 if left.kills() && lc == NO_PRODUCT { continue; }
 
                 for p1 in g1 {
-                    if right.kills()
+                    if ctx.masked && right.kills()
                         && ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j] == 0
                     {
                         continue;
@@ -494,11 +495,11 @@ where
         let kills = left.kills() || right.kills();
         for p1 in f_pairs {
             gate.poll(g_pairs.len() as u64)?;
-            if !left.passthrough() && left.kills()
+            if ctx.masked && !left.passthrough() && left.kills()
                 && ctx.sides.left.live_cols[p1.left.raw() as usize] & ctx.sides.left.reach[j] == 0 {
                 continue;
             }
-            if !right.passthrough() && right.kills()
+            if ctx.masked && !right.passthrough() && right.kills()
                 && ctx.sides.right.live_cols[p1.right.raw() as usize] & ctx.sides.right.reach[j] == 0 {
                 continue;
             }
@@ -526,9 +527,9 @@ where
 /// Arms: 1×1 (single-pair fast path via `sink.single`), N×1 / 1×N (one side
 /// single — [`cell_one_sided`], one loop in both directions), N×M (reach-mask
 /// culls, grouped by shared `.left` on a long f row against a column the
-/// column table grouped). A cell in the N×M arm implies `ctx.both_multi_pair` (both sides
-/// having >1 pairs means both levels have multi-pair nodes), so the
-/// liveness/reach arrays are always built when the culls read them.
+/// column table grouped). A cell in the N×M arm has both levels multi-pair
+/// (both sides having >1 pairs); its culls read the liveness/reach arrays
+/// only where the level built them (`ctx.masked`).
 ///
 /// `ChildLookup::passthrough()` is a constant `false` on `DenseLookup`, so the
 /// plain instantiations carry no pass-through branch in the inner loops; and

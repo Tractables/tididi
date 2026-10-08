@@ -108,7 +108,7 @@ const DEAD_SLAB_FILL_MAX_CELLS: usize = 1 << 16;
 /// The one row/cell loop of the dense product build.
 ///
 /// `const DENSE` skips the per-row alive-mask fold on levels where it provably
-/// cannot skip anything: `ctx.both_multi_pair` false and neither side a pass-through, where
+/// cannot skip anything: `ctx.masked` false and neither side a pass-through, where
 /// `row_alive_masks` always returns `(0, u128::MAX)`, or neither side able to
 /// [kill](ChildLookup::kills) a candidate, where no mask can clear. Only the
 /// plain routes reach those regimes; the other three always fold.
@@ -142,10 +142,10 @@ where
     debug_assert!(!A::ONE_COLUMN || ctx.right_width == 1, "a one-column action runs on a level of one column");
     let right_width = if A::ONE_COLUMN { 1 } else { ctx.right_width };
     // Whether the per-column cull below can fire at all: the reach masks exist
-    // only where both levels are multi-pair, a pass-through side has no grid to
-    // be dead in, and `DENSE` is the regime where the masks are not folded.
-    let cull_left = !DENSE && ctx.both_multi_pair && !left.passthrough() && left.kills();
-    let cull_right = !DENSE && ctx.both_multi_pair && !right.passthrough() && right.kills();
+    // only on a masked level, a pass-through side has no grid to be dead in,
+    // and `DENSE` is the regime where the masks are not folded.
+    let cull_left = !DENSE && ctx.masked && !left.passthrough() && left.kills();
+    let cull_right = !DENSE && ctx.masked && !right.passthrough() && right.kills();
 
     // One slab fill instead of `left_width` row fills. On a dense-slab action the
     // per-row resets below tile `output_grid_base .. output_grid_base + left_width*right_width` exactly once each
@@ -443,9 +443,9 @@ pub(crate) fn run_level_rows_marginal_sparse(
 /// Runs the emit kernel with positional grid lookups on both sides (no
 /// pass-through, no mask decode — the caller guarantees no marginal child).
 ///
-/// `DENSE = true` asserts two level-invariant facts, `cell_ctx.both_multi_pair
-/// == false` and no pass-through side, so the inner loop carries no branch on
-/// them; `DENSE = false` keeps the `both_multi_pair` row-skip checks.
+/// `DENSE = true` asserts two level-invariant facts, `cell_ctx.masked ==
+/// false` and no pass-through side, so the inner loop carries no branch on
+/// them; `DENSE = false` keeps the masked row-skip checks.
 ///
 /// Never streams: streaming levels take the collapse-at-source walker
 /// ([`run_level_rows_stream_count`]) unconditionally — there is no post-cell
@@ -459,9 +459,9 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool>(
 ) -> Result<(), OperationError> {
     let left = DenseLookup { base: rows.ctx.sides.left.base, stride: rows.ctx.sides.left.stride };
     let right = DenseLookup { base: rows.ctx.sides.right.base, stride: rows.ctx.sides.right.stride };
-    // When `DENSE`, the alive masks are constants (both_multi_pair is false, no pass-through):
-    //   left_alive_mask  = 0u128      (the !both_multi_pair branch of `row_alive_masks`)
-    //   right_alive_mask = `u128::MAX`  (the `|| !both_multi_pair` branch of `row_alive_masks`)
+    // When `DENSE`, the alive masks are constants (no masks, no pass-through):
+    //   left_alive_mask  = 0u128      (the !masked branch of `row_alive_masks`)
+    //   right_alive_mask = `u128::MAX`  (the `|| !masked` branch of `row_alive_masks`)
     // The driver passes those directly to the kernel, skipping the fold.
     let mut action = Emit { sink: EmitSink { level } };
     run_level_rows::<DENSE, _, _, _>(
@@ -503,7 +503,7 @@ pub(crate) enum PlainLookups {
 /// ([`EmitBesideOne`]) and no column is read. With one
 /// side complete it is [`run_level_rows_plain::<false>`](run_level_rows_plain)
 /// with that side's lookup replaced: the fold and the culls on the grid side
-/// stay; on a level that is not `both_multi_pair` they find nothing, as on
+/// stay; on a level that built no masks they find nothing, as on
 /// `Route::PlainDense` they would not be run.
 pub(crate) fn run_level_rows_complete(
     eng: &Engine,

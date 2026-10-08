@@ -804,7 +804,7 @@ fn build_cell_ctx<'a>(
     CellCtx {
         output_grid_base,
         right_width: shape.g.here,
-        both_multi_pair: plan.both_multi_pair,
+        masked: masks.is_some(),
         sides: Sides {
             left: side(plan.sides.left, bases.left.idx(), shape.g.left, masks.map(|m| &m.left)),
             right: side(plan.sides.right, bases.right.idx(), shape.g.right, masks.map(|m| &m.right)),
@@ -930,8 +930,11 @@ pub(super) fn build_level_dense(
     );
     // Only the grid-reading dead-pair liveness masks are deferred this far: they need
     // the materialized child grids, and `both_multi_pair` implies a route that has them.
-    // With both sides complete no mask can clear, and the row loop reads none.
-    let masked = both_multi_pair && !matches!(lookups, PlainLookups::Complete { .. });
+    // With both sides complete no mask can clear, and the row loop reads none; on a
+    // grid of fewer than `MASK_MIN_CELLS` cells they cost more than they cull.
+    let masked = both_multi_pair
+        && !matches!(lookups, PlainLookups::Complete { .. })
+        && fw.here.saturating_mul(gw.here) >= liveness::MASK_MIN_CELLS;
     if masked {
         build_level_prefilter_masks(eng, run, g, shape, &plan, bases)?;
     }

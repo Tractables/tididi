@@ -190,7 +190,7 @@ fn collect_sink_respects_soft_budget() {
     };
     let ctx = CellCtx {
         output_grid_base: 0, right_width: 1,
-        both_multi_pair: false,
+        masked: false,
         sides: Sides { left: side, right: side },
         right_cols: None,
     };
@@ -301,7 +301,7 @@ fn the_work_clock_counts_the_pairs_a_level_walks_not_its_cells() {
     };
     let ctx = CellCtx {
         output_grid_base: 0, right_width: 1,
-        both_multi_pair: false,
+        masked: false,
         sides: Sides { left: side, right: side },
         right_cols: None,
     };
@@ -373,7 +373,7 @@ fn the_per_cell_column_fallback_walks_what_the_table_would_have() {
     let walk = |right_cols| {
         let ctx = CellCtx {
             output_grid_base: 0, right_width,
-            both_multi_pair: true,
+            masked: true,
             sides: Sides { left: side(lm), right: side(rm) },
             right_cols,
         };
@@ -516,7 +516,7 @@ fn the_grouped_walk_emits_the_pairs_of_the_ungrouped_walk() {
         assert_eq!(cols.runs(0).is_some(), grouped);
         let ctx = CellCtx {
             output_grid_base: 0, right_width: 2,
-            both_multi_pair: true,
+            masked: true,
             sides: Sides { left: side, right: side },
             right_cols: Some(&cols),
         };
