@@ -223,14 +223,16 @@ impl Engine {
             gate.poll(1)?;
             let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else { continue };
             let level = tdd.level(t);
-            let (here, below) = split_three(&mut gid, t.idx(), left.idx(), right.idx());
+            let [here, left_map, right_map] = gid
+                .get_disjoint_mut([t.idx(), left.idx(), right.idx()])
+                .expect("three distinct vtree nodes in range");
             for (i, &mark) in here.iter().enumerate() {
                 if mark == NONE {
                     continue;
                 }
                 for p in level.pairs_iter_of_idx(i) {
-                    below.0[p.left.raw() as usize] = 0;
-                    below.1[p.right.raw() as usize] = 0;
+                    left_map[p.left.raw() as usize] = 0;
+                    right_map[p.right.raw() as usize] = 0;
                 }
             }
         }
@@ -277,7 +279,9 @@ impl Engine {
                 }
                 VtreeNode::Internal { left, right, .. } => {
                     let level = tdd.level(t);
-                    let (here, below) = split_three(&mut gid, t.idx(), left.idx(), right.idx());
+                    let [here, left_map, right_map] = gid
+                        .get_disjoint_mut([t.idx(), left.idx(), right.idx()])
+                        .expect("three distinct vtree nodes in range");
                     for (i, mark) in here.iter_mut().enumerate() {
                         if *mark == NONE {
                             continue;
@@ -287,7 +291,7 @@ impl Engine {
                         let first = table.pairs.len() as u32;
                         let mut count: u64 = 0;
                         for p in level.pairs_iter_of_idx(i) {
-                            let (l, r) = (below.0[p.left.raw() as usize], below.1[p.right.raw() as usize]);
+                            let (l, r) = (left_map[p.left.raw() as usize], right_map[p.right.raw() as usize]);
                             let product = table.nodes[l as usize]
                                 .count
                                 .checked_mul(table.nodes[r as usize].count)
@@ -939,22 +943,6 @@ fn merge_masks(a: &[(u32, u32)], b: &[(u32, u32)]) -> Vec<(u32, u32)> {
         }
     }
     out
-}
-
-/// Three distinct entries of `maps`, the first shared and the other two
-/// mutable.
-fn split_three(maps: &mut [Vec<u32>], here: usize, left: usize, right: usize) -> (&mut [u32], (&mut [u32], &mut [u32])) {
-    assert!(here != left && here != right && left != right, "three distinct vtree nodes");
-    assert!(here < maps.len() && left < maps.len() && right < maps.len(), "indices in range");
-    let ptr = maps.as_mut_ptr();
-    // Safety: the three indices are distinct and in range, so the borrows
-    // do not alias.
-    unsafe {
-        let h = &mut *ptr.add(here);
-        let l = &mut *ptr.add(left);
-        let r = &mut *ptr.add(right);
-        (h.as_mut_slice(), (l.as_mut_slice(), r.as_mut_slice()))
-    }
 }
 
 #[cfg(test)]
