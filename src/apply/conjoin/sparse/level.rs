@@ -296,15 +296,24 @@ pub(crate) fn apply_sparse_level(
         && !f.vtree.node(shape.left).is_leaf()
         && !f.vtree.node(shape.right).is_leaf();
     if joined {
-        let multisets = f.levels.iter().any(|l| l.is_marginal())
-            || g.levels.iter().any(|l| l.is_marginal())
-            || levels.iter().any(|l| l.is_marginal());
-        let level = &mut levels[t_idx];
+        // Whether any level of the operands or of the output is marginal,
+        // a scan of every level: read only where the probe would run, past
+        // its size gate, so that a diagram of many levels does not pay a
+        // scan on each of its small ones. The level being built is split
+        // out of the scan, and read on its own.
+        let (below, rest) = levels.split_at_mut(t_idx);
+        let (level, above) = rest.split_first_mut().expect("the level is one of the levels");
+        let here = level.is_marginal();
+        let multisets = || {
+            here || f.levels.iter().any(|l| l.is_marginal())
+                || g.levels.iter().any(|l| l.is_marginal())
+                || below.iter().chain(above.iter()).any(|l| l.is_marginal())
+        };
         let listed = Sides {
             left: complete.is_none_or(|c| c.side != ChildSide::Left),
             right: complete.is_none_or(|c| c.side != ChildSide::Right),
         };
-        if probe_level(eng, ws, f, g, shape, level, pl, listed, pl_output, cells, !multisets, duplicates_legal)? {
+        if probe_level(eng, ws, f, g, shape, level, pl, listed, pl_output, cells, multisets, duplicates_legal)? {
             #[cfg(debug_assertions)]
             debug_check_flushed_level(pl_output, &levels[t_idx]);
             guard.scatter_clean();

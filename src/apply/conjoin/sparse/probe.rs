@@ -212,8 +212,9 @@ const PLAN_SAMPLE_PAIRS: u64 = 1 << 14;
 /// pairs of evenly spaced nodes, scaled up. A sample only decides a route;
 /// any route builds the same level.
 ///
-/// `pairs_ok` admits [`Probe::Pairs`], whose table holds each `g` pair once:
-/// it is withheld where pair lists may be multisets. A child `listed` does
+/// [`Probe::Pairs`], whose table holds each `g` pair once, is withheld where
+/// pair lists may be multisets, which `multisets` tells, read only on a
+/// level past the size gate (it may scan the diagram). A child `listed` does
 /// not name has no product list (a complete child read by arithmetic): no
 /// probe walks through it, and [`Probe::Pairs`], which walks through both,
 /// is withheld.
@@ -227,19 +228,23 @@ fn plan(
     pl: Sides<&[ProductEntry]>,
     listed: Sides<bool>,
     cells: Sides<CellLookup<'_>>,
-    pairs_ok: bool,
+    multisets: impl FnOnce() -> bool,
 ) -> Result<Option<(Probe, u64)>, OperationError> {
     let lim = eng.limits();
     let by_left = listed.left && cells.right.direct();
     let by_right = listed.right && cells.left.direct();
-    let pairs_ok = pairs_ok && listed.left && listed.right;
-    if !(by_left || by_right || pairs_ok) {
+    let both_listed = listed.left && listed.right;
+    if !(by_left || by_right || both_listed) {
         return Ok(None);
     }
     let f_pairs = f_level.live_pairs() as u64;
     let g_pairs = count_pairs(lim, g_level, Sides { left: shape.g.left, right: shape.g.right },
         &mut pb.g_by_left, &mut pb.g_by_right)?;
     if f_pairs + g_pairs < PROBE_MIN_PAIRS && !probe_forced() {
+        return Ok(None);
+    }
+    let pairs_ok = both_listed && !multisets();
+    if !(by_left || by_right || pairs_ok) {
         return Ok(None);
     }
     // An unlisted side's offsets are left empty: no option reading them is open.
@@ -315,7 +320,7 @@ pub(super) fn probe_level(
     listed: Sides<bool>,
     pl_output: &mut Vec<ProductEntry>,
     cells: Sides<CellLookup<'_>>,
-    pairs_ok: bool,
+    multisets: impl FnOnce() -> bool,
     duplicates_legal: bool,
 ) -> Result<bool, OperationError> {
     if probe_forced_off() {
@@ -328,7 +333,7 @@ pub(super) fn probe_level(
     // the pool that will release it.
     let mut pb = std::mem::take(&mut ws.probe);
     let result = (|| {
-        let Some((probe, level_pairs)) = plan(eng, &mut pb, f_level, g_level, shape, pl, listed, cells, pairs_ok)? else {
+        let Some((probe, level_pairs)) = plan(eng, &mut pb, f_level, g_level, shape, pl, listed, cells, multisets)? else {
             return Ok(false);
         };
         note_probe(probe);
