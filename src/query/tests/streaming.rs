@@ -26,7 +26,7 @@ fn streaming_fold_count_matches_materialized_randomized() {
     // lowest levels whose children are leaves, marginal lookups above them.
     // Count-identity is the regression arbiter for the streaming fold; it must hold
     // by construction.
-    use crate::apply::conjoin::apply_and_fallible;
+    use crate::apply::conjoin::tests::apply_and_fallible;
     let mut rng = Lcg::new(0x0bad_c0de_1337_f00d);
     let mut checked = 0u32;
     let mut nonzero = 0u32;
@@ -97,7 +97,7 @@ fn streaming_fold_weighted_matches_materialized_randomized() {
     let eng = Engine::new();
 
     use crate::diagram::WeightStore;
-    use crate::apply::conjoin::apply_and_fallible;
+    use crate::apply::conjoin::tests::apply_and_fallible;
     use crate::diagram::{LiteralWeights, RationalWeights};
     use crate::diagram::Arithmetic;
     use crate::test_helpers::{exact_weight, rat};

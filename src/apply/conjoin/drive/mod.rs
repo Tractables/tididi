@@ -219,27 +219,6 @@ fn build_level(
     Ok(())
 }
 
-/// Build a conjunction, emitting the levels in `targets` as marginal values,
-/// collapsing every subtree `quantified` names instead of building it, and
-/// dropping the intermediate products `filter` rejects.
-///
-/// The sweep consumes operand levels as it proceeds. An error leaves both
-/// operands partially drained; retrying requires copies taken before the call.
-/// No swap to the narrower operand here: callers of this borrowed path keep
-/// per-operand bookkeeping by side, and `conjoin_on` swaps. The result's
-/// marginal references are tagged before return. Allocation, cancellation and
-/// output-cap failures return [`OperationError`].
-pub(crate) fn apply_and_fallible(
-    eng: &Engine,
-    f: &mut Tdd,
-    g: &mut Tdd,
-    targets: VtreeMask<'_>,
-    quantified: VtreeMask<'_>,
-    filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
-) -> Result<Tdd, OperationError> {
-    apply_and_core(eng, f, g, targets, quantified, filter, ConjoinMode::Build, Operands::default()).map(Conjoined::diagram)
-}
-
 /// How the sweep delivers its result and handles refused operands.
 pub(crate) enum ConjoinMode {
     Build,
@@ -289,12 +268,22 @@ impl Conjoined {
     }
 }
 
-/// [`apply_and_fallible`], with the count mode free to count the output's
-/// root level instead of building it, returning the model count in place of
-/// the diagram. The root is counted only where it is one product the sparse
-/// route builds, with no weights and no filter; otherwise the diagram is
-/// built as usual and the caller counts it. `free` names each operand's free
-/// levels ([`ApplyRun::free`]), which only a plain conjunction may have.
+/// Build a conjunction, emitting the levels in `targets` as marginal values,
+/// collapsing every subtree `quantified` names instead of building it, and
+/// dropping the intermediate products `filter` rejects.
+///
+/// The sweep consumes operand levels as it proceeds. An error leaves both
+/// operands partially drained; retrying requires copies taken before the call.
+/// No swap to the narrower operand here: callers of this borrowed path keep
+/// per-operand bookkeeping by side, and `conjoin_on` swaps. The result's
+/// marginal references are tagged before return. Allocation, cancellation and
+/// output-cap failures return [`OperationError`].
+///
+/// Count mode may return the model count instead of building the root, when
+/// it is one product on the sparse route with no weights and no filter.
+/// Otherwise the diagram is built and the caller counts it. `free` names
+/// each operand's free levels ([`ApplyRun::free`]), which only a plain
+/// conjunction may have.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn apply_and_core(
     eng: &Engine,

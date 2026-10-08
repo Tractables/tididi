@@ -115,3 +115,15 @@ pub(super) fn grid_lookups<R>(f: impl FnOnce() -> R) -> R {
 pub(super) fn complete_census() -> [u64; 5] {
     COMPLETE.with(std::cell::Cell::get)
 }
+
+/// Borrowed build-mode entry for tests of the sweep's consumption contract.
+pub(crate) fn apply_and_fallible(
+    eng: &Engine,
+    f: &mut Tdd,
+    g: &mut Tdd,
+    targets: VtreeMask<'_>,
+    quantified: VtreeMask<'_>,
+    filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
+) -> Result<Tdd, OperationError> {
+    apply_and_core(eng, f, g, targets, quantified, filter, ConjoinMode::Build, Operands::default()).map(Conjoined::diagram)
+}

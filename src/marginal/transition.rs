@@ -126,7 +126,7 @@ impl MarginalDomain for IntFold {
     /// Make every marginal-side slot reference this pass persisted self-describing,
     /// once, at the pass's chokepoint.
     ///
-    /// This path does not go through `apply_and_fallible`, so the end-of-apply
+    /// This path does not run the conjunction sweep, so the end-of-apply
     /// tagger never runs on it, and canon's no-duplicate early return leaves
     /// untouched boundary references raw. The snapshot is what keeps the sweep
     /// off children that a prior pass marginalized: those already carry inline

@@ -60,7 +60,6 @@ mod output;
 use output::*;
 mod quantify;
 mod drive;
-pub(crate) use drive::apply_and_fallible;
 use drive::{apply_and_core, Conjoined, ConjoinMode};
 use drive::Sweep;
 mod filter;
@@ -94,7 +93,7 @@ pub(crate) fn conjoin_on(
     quantified: VtreeMask<'_>,
 ) -> Result<(Tdd, bool), OperationError> {
     // Checked before the swap and the self-conjunction shortcut, both of which
-    // can return without ever reaching `apply_and_fallible`.
+    // can return without ever reaching the conjunction sweep.
     crate::apply::check_vtree(&f, &g)?;
     crate::apply::prepare_weights(&mut [&mut f, &mut g])?;
     conjoin_checked(eng, f, g, VtreeMask::default(), quantified)
@@ -180,7 +179,7 @@ fn fill_free(tdd: &mut Tdd, free: VtreeMask<'_>) {
 ///
 /// The identity fast path tests `right_width == 1` first, so the narrower side
 /// on the right takes it at more levels, and grid rows (width `right_width`)
-/// get shorter. Only the owned entries swap; `apply_and_fallible`'s callers
+/// get shorter. Only the owned entries swap; borrowed callers
 /// track operands by side.
 ///
 /// `widths` holds each operand's [`Tdd::max_width`].
@@ -242,16 +241,14 @@ fn conjoin_checked_as(
 /// to the pool whatever the outcome.
 fn conjoin_recycling(
     eng: &Engine,
-    mut f: Tdd,
-    mut g: Tdd,
+    f: Tdd,
+    g: Tdd,
     targets: VtreeMask<'_>,
     quantified: VtreeMask<'_>,
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
 ) -> Result<Tdd, OperationError> {
-    let result = apply_and_fallible(eng, &mut f, &mut g, targets, quantified, filter);
-    diagram::return_levels(eng, std::mem::take(&mut f.levels).into_vec());
-    diagram::return_levels(eng, std::mem::take(&mut g.levels).into_vec());
-    result
+    conjoin_recycling_as(eng, f, g, targets, quantified, filter, ConjoinMode::Build)
+        .map(Conjoined::diagram)
 }
 
 /// [`conjoin_recycling`] with the sweep run in `mode`.
@@ -733,7 +730,7 @@ impl crate::Engine {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 // A test sends `and_marginalizing` down the two-step path to compare the
 // root that sums its child out against it, and counts the roots that did.
