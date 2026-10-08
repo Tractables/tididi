@@ -57,7 +57,7 @@ pub(super) fn mark_passthrough_inlined(level: &mut TddLevel, passthrough: Sides<
 /// and the pass-through inline-emit flags.
 pub(super) fn finalize_level(
     eng: &Engine,
-    stream_state: &mut Option<StreamLevelState>,
+    stream_state: Option<StreamLevelState>,
     shape: LevelShape,
     output_grid_base: GridBase,
     passthrough: Sides<bool>,
@@ -69,7 +69,7 @@ pub(super) fn finalize_level(
     let ApplyRun { levels, products, .. } = run;
     // Commit streaming-marginal emit: convert the level to `marginal_counts`,
     // before the `levels[t_idx]` reborrows below.
-    if let Some(st) = stream_state.take() {
+    if let Some(st) = stream_state {
         commit_stream_state(st, t, sweep.vtree, levels, sweep.ws.as_deref_mut());
     }
 

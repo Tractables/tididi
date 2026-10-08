@@ -579,3 +579,15 @@ fn push_kept_grows_where_pushing_each_survivor_would() {
         }
     }
 }
+
+/// [`mark_dead`] writes `NO_PRODUCT` to every cell of the run it is given and
+/// to nothing around it, at every length its small-run stores cover and past.
+#[test]
+fn mark_dead_resets_exactly_its_run() {
+    for n in 0..=20usize {
+        let mut cells = vec![7u32; n + 2];
+        mark_dead(&mut cells[1..=n]);
+        assert_eq!((cells[0], cells[n + 1]), (7, 7), "run of {n}: a neighbour was written");
+        assert!(cells[1..=n].iter().all(|&c| c == NO_PRODUCT), "run of {n}: a cell was left");
+    }
+}

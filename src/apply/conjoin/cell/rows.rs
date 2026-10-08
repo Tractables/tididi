@@ -105,6 +105,31 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
 /// row to keep the current row cache-local. Both paths write the same values.
 const DEAD_SLAB_FILL_MAX_CELLS: usize = 1 << 16;
 
+/// Reset `cells` to `NO_PRODUCT`.
+///
+/// Most product grids have a few cells, and a `fill` of a length the compiler
+/// cannot see is a call to `memset`. Up to eight cells are written here as
+/// two four-cell stores that overlap, or three single stores below four
+/// cells; a longer run is a `fill`.
+#[inline]
+pub(super) fn mark_dead(cells: &mut [u32]) {
+    const DEAD: [u32; 4] = [NO_PRODUCT; 4];
+    let n = cells.len();
+    match n {
+        0 => {}
+        1..=3 => {
+            cells[0] = NO_PRODUCT;
+            cells[n / 2] = NO_PRODUCT;
+            cells[n - 1] = NO_PRODUCT;
+        }
+        4..=8 => {
+            cells[..4].copy_from_slice(&DEAD);
+            cells[n - 4..].copy_from_slice(&DEAD);
+        }
+        _ => cells.fill(NO_PRODUCT),
+    }
+}
+
 /// The one row/cell loop of the dense product build.
 ///
 /// `const DENSE` skips the per-row alive-mask fold on levels where it provably
@@ -163,7 +188,7 @@ where
     let every_cell = A::DENSE_SLAB && DENSE && !left.kills() && !right.kills();
     let slab_fill = A::DENSE_SLAB && !every_cell && left_width.saturating_mul(right_width) <= DEAD_SLAB_FILL_MAX_CELLS;
     if slab_fill {
-        node_idx[ctx.output_grid_base..ctx.output_grid_base + left_width * right_width].fill(NO_PRODUCT);
+        mark_dead(&mut node_idx[ctx.output_grid_base..ctx.output_grid_base + left_width * right_width]);
     }
 
     // An implicit f level's rows are read in order off its description.
@@ -171,7 +196,7 @@ where
     for i in 0..left_width {
         let row_base = ctx.output_grid_base + action.grid_row(i) * right_width;
         if !slab_fill && !every_cell {
-            node_idx[row_base..row_base + right_width].fill(NO_PRODUCT);
+            mark_dead(&mut node_idx[row_base..row_base + right_width]);
         }
 
         let f_pairs = left_level_t.pairs_view_decoded_next(
@@ -184,7 +209,7 @@ where
         // Empty pairs means dead (zero-containing) node — skip this row.
         if f_pairs.is_empty() {
             if every_cell {
-                node_idx[row_base..row_base + right_width].fill(NO_PRODUCT);
+                mark_dead(&mut node_idx[row_base..row_base + right_width]);
             }
             continue;
         }

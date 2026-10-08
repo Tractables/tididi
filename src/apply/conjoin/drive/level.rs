@@ -1047,7 +1047,7 @@ pub(super) fn build_level_dense(
 
     // Per-level tail: stream commit, live_counts, grid tag, shrink,
     // pass-through flags. See `finalize_level`.
-    finalize_level(eng, &mut stream_state, shape, output_grid_base, passthrough, run, sweep);
+    finalize_level(eng, stream_state, shape, output_grid_base, passthrough, run, sweep);
     Ok(())
 }
 

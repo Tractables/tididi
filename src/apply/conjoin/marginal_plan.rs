@@ -130,15 +130,16 @@ fn carrier(
     // child's own marginality is not tested here: its snapshot predates the
     // mid-loop cascade, and reads stale-false in the cells where the child
     // marginalizes mid-loop.
-    let inlined = |f: &Tdd| f.levels[t_idx].has_value_refs(side);
-    let left_ref = f.levels[child_idx].is_marginal()
-        || entry.was_marginal(Carrier::F, child_idx) || inlined(f);
-    if g_identity[child_idx] && left_ref {
+    // (1) is one read and (2) up to three, so (1) is tested first.
+    let marginal_ref = |op: &Tdd, carrier: Carrier| {
+        op.levels[child_idx].is_marginal()
+            || entry.was_marginal(carrier, child_idx)
+            || op.levels[t_idx].has_value_refs(side)
+    };
+    if g_identity[child_idx] && marginal_ref(f, Carrier::F) {
         return Some(Carrier::F);
     }
-    let right_ref = g.levels[child_idx].is_marginal()
-        || entry.was_marginal(Carrier::G, child_idx) || inlined(g);
-    if f_identity[child_idx] && right_ref {
+    if f_identity[child_idx] && marginal_ref(g, Carrier::G) {
         return Some(Carrier::G);
     }
     None
