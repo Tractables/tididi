@@ -4,7 +4,7 @@ use num_rational::BigRational;
 use num_traits::{One, Zero};
 
 use super::EvalAlgebra;
-use crate::diagram::LeafLabel;
+use crate::diagram::{LeafLabel, TddBuildError};
 use crate::vtree::VarId;
 
 // ── Exact rational weighted model counting ────────────────────────────────────
@@ -124,6 +124,47 @@ impl RationalWeights {
             w_neg: vec![BigRational::one(); num_vars],
         }
     }
+
+    /// This table restated in another variable numbering: variable
+    /// `VarId(i + 1)` of the result has the weights of `local_to_global[i]`
+    /// here.
+    ///
+    /// Use it for a diagram compiled over some of the variables in a compact
+    /// numbering of its own, such as one component of a formula. The result
+    /// covers `local_to_global.len()` variables and owns its entries; a
+    /// variable may appear more than once.
+    ///
+    /// ```
+    /// use num_rational::BigRational;
+    /// use tididi::diagram::{LiteralWeights, RationalWeights, TddBuildError};
+    /// use tididi::vtree::VarId;
+    /// let w = |n: i32| BigRational::from_integer(n.into());
+    /// let global = RationalWeights::from_literals(&[
+    ///     LiteralWeights { negative: w(1), positive: w(2) },
+    ///     LiteralWeights { negative: w(3), positive: w(4) },
+    ///     LiteralWeights { negative: w(5), positive: w(6) },
+    /// ]);
+    /// // A component over variables 3 and 1, numbered 1 and 2 within it.
+    /// let local = global.restated(&[VarId(3), VarId(1)])?;
+    /// assert_eq!(local.pos_weight(VarId(1)), &w(6));
+    /// assert_eq!(local.neg_weight(VarId(2)), &w(1));
+    /// assert_eq!(global.restated(&[VarId(4)]), Err(TddBuildError::MissingVariableWeight(VarId(4))));
+    /// # Ok::<(), TddBuildError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`TddBuildError::MissingVariableWeight`] for a variable this table does
+    /// not cover, or for `VarId(0)`, which names no variable.
+    pub fn restated(&self, local_to_global: &[VarId]) -> Result<Self, TddBuildError> {
+        if let Some(&var) = local_to_global.iter().find(|var| var.0 == 0 || var.idx() >= self.num_vars()) {
+            return Err(TddBuildError::MissingVariableWeight(var));
+        }
+        Ok(RationalWeights {
+            w_pos: local_to_global.iter().map(|&var| self.w_pos[var.idx()].clone()).collect(),
+            w_neg: local_to_global.iter().map(|&var| self.w_neg[var.idx()].clone()).collect(),
+        })
+    }
 }
 
 impl EvalAlgebra for RationalWeights {
@@ -147,3 +188,7 @@ impl EvalAlgebra for RationalWeights {
     #[inline]
     fn mul(&self, a: &BigRational, b: &BigRational) -> BigRational { a * b }
 }
+
+#[cfg(test)]
+#[path = "tests/rational.rs"]
+mod tests;
