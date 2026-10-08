@@ -189,6 +189,38 @@ fn a_pair_is_read_where_it_lies() {
     }
 }
 
+/// A level of one pair a node writes the nodes its description gives,
+/// inline, whether they fit the capacity reserved or go one at a time:
+/// node digits of short and long runs, more digits past a run than the
+/// odometer counts, a fastest digit of more places than a run holds, and
+/// steps of either sign.
+#[test]
+fn a_one_pair_level_writes_the_nodes_it_describes() {
+    let mut rng = Lcg::new(0x1d1e_0031);
+    let shapes: [&[usize]; 9] =
+        [&[64], &[300], &[600, 3], &[257, 2], &[2; 14], &[3, 5, 7], &[5, 100], &[2, 2, 3, 4, 2, 3, 5], &[16, 16, 2]];
+    for radices in shapes {
+        for _ in 0..4 {
+            let across: Vec<(usize, (i64, i64))> =
+                radices.iter().map(|&r| (r, (rng.below(9) as i64 - 4, rng.below(9) as i64 - 4))).collect();
+            // The first pair as far from 0 as the steps down reach.
+            let low = |side: fn((i64, i64)) -> i64| -> i64 {
+                -across.iter().map(|&(r, s)| (r as i64 - 1) * side(s).min(0)).sum::<i64>()
+            };
+            let first = (low(|s| s.0), low(|s| s.1));
+            let n = radices.iter().product();
+            let d = ImplicitLevel::assemble(n, 1, first, &[], &across);
+            let want: Vec<EncodedNode> = described(&d).iter().map(|p| EncodedNode::inline(pair(p[0].0, p[0].1))).collect();
+            for reserved in [0, n] {
+                let mut level = TddLevel::new();
+                level.nodes.reserve_exact(reserved);
+                d.write_nodes(&Limits::new(), &mut level).unwrap();
+                assert_eq!(level.nodes, want, "{across:?}, {reserved} reserved");
+            }
+        }
+    }
+}
+
 #[test]
 fn an_implicit_arena_reads_as_the_stored_one() {
     let mut rng = Lcg::new(0x1d1e_0004);

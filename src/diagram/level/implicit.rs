@@ -301,32 +301,58 @@ impl ImplicitLevel {
     pub(crate) fn write_nodes(&self, lim: &Limits, level: &mut TddLevel) -> Result<(), OperationError> {
         debug_assert!(level.nodes.is_empty() && level.pairs.is_empty());
         if self.per_node == 1 {
-            // Each node's one pair: the nodes in runs of the fastest node
-            // digit's places, a run's pairs stepped on by that digit in a
-            // loop of their own and each run's first pair by the others,
-            // once a run. In one pass a run where the nodes fit the reserved
+            // Each node's one pair: the nodes in runs of the places of the
+            // fastest node digits, the most whose places are at most
+            // `RUN_PAIRS` and at least the fastest. A run's pairs are its
+            // first pair plus the offsets of those places, read once, and
+            // each run's first pair is stepped on from the last's by the
+            // node digits past them. A fastest digit of more places than
+            // `RUN_PAIRS` is read in pieces of `RUN_PAIRS` places, each
+            // piece's first pair as many units of it on from the last's. A
+            // piece goes in one pass where the nodes fit the reserved
             // capacity, one node at a time otherwise.
             debug_assert!(self.counts_nodes());
-            let digits = &self.digits[self.within..];
-            let (fast, slow) = match digits.split_first() {
-                Some((fast, slow)) => (*fast, slow),
-                None => (Digit { radix: 1, left: 0, right: 0, node: 1 }, digits),
+            let one = [Digit { radix: 1, left: 0, right: 0, node: 1 }];
+            let digits = match &self.digits[self.within..] {
+                [] => &one[..],
+                digits => digits,
             };
+            let (mut run_digits, mut places) = (1, digits[0].radix);
+            while let Some(d) = digits.get(run_digits)
+                && places.saturating_mul(d.radix) <= RUN_PAIRS
+            {
+                places *= d.radix;
+                run_digits += 1;
+            }
+            let piece = places.min(RUN_PAIRS);
+            let lead = [Digit { radix: piece, ..digits[0] }];
+            let mut offsets = Vec::with_capacity(piece);
+            each_place(if places > piece { &lead } else { &digits[..run_digits] }, (0, 0), |l, r| {
+                offsets.push((l as u32, r as u32));
+            });
+            let leap = ((piece as i64 * digits[0].left) as u32, (piece as i64 * digits[0].right) as u32);
             let fits = level.nodes.capacity() - level.nodes.len() >= self.nodes;
             let mut runs = Odometer::<NODE_COUNTERS>::new(self.first);
-            for (run, start) in (0..self.nodes).step_by(fast.radix).enumerate() {
+            for (run, start) in (0..self.nodes).step_by(places).enumerate() {
                 if run > 0 {
-                    runs.step(slow, run);
+                    runs.step(&digits[run_digits..], run);
                 }
-                let (l, r) = runs.slots();
-                let node = |j: i64| EncodedNode::inline(pair(l + j * fast.left, r + j * fast.right));
-                let places = 0..fast.radix.min(self.nodes - start) as i64;
-                if fits {
-                    level.nodes.extend(places.map(node));
-                } else {
-                    for j in places {
-                        lim.try_push(&mut level.nodes, node(j))?;
+                let end = self.nodes.min(start + places);
+                let mut at = runs.at;
+                for from in (start..end).step_by(piece) {
+                    let node = move |&(l, r): &(u32, u32)| {
+                        let (l, r) = (EncodedChildRef::from_raw(at.0.wrapping_add(l)), EncodedChildRef::from_raw(at.1.wrapping_add(r)));
+                        EncodedNode::inline(ChildPair::new(l, r))
+                    };
+                    let shifted = offsets[..piece.min(end - from)].iter().map(node);
+                    if fits {
+                        level.nodes.extend(shifted);
+                    } else {
+                        for n in shifted {
+                            lim.try_push(&mut level.nodes, n)?;
+                        }
                     }
+                    at = (at.0.wrapping_add(leap.0), at.1.wrapping_add(leap.1));
                 }
             }
             return Ok(());
