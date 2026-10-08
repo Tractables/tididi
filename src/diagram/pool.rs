@@ -64,10 +64,14 @@ pub(crate) fn reset_level(level: &mut TddLevel) -> u64 {
 /// constructors and tests; an operation takes its levels through
 /// [`try_take_levels`]. Every level is empty: a pooled entry was reset by
 /// `return_levels` before it was parked, and a level added here is fresh.
+///
+/// An array grows as a `Vec` does, to twice its capacity at least, so that
+/// the arrays of a run whose vtrees grow a few nodes at a time are not
+/// reallocated at every take.
 pub(crate) fn take_levels(eng: &Engine, num_nodes: usize) -> Vec<TddLevel> {
     let mut levels = take_level_array(eng, num_nodes);
     if levels.len() < num_nodes {
-        levels.reserve_exact(num_nodes - levels.len());
+        levels.reserve(num_nodes - levels.len());
         levels.resize_with(num_nodes, TddLevel::new);
     }
     levels
@@ -83,7 +87,7 @@ pub(crate) fn try_take_levels(eng: &Engine, num_nodes: usize) -> Result<Vec<TddL
     let mut levels = take_level_array(eng, num_nodes);
     let missing = num_nodes - levels.len();
     if missing > 0 {
-        eng.limits().reserve_exact(&mut levels, missing)?;
+        eng.limits().reserve(&mut levels, missing)?;
         levels.resize_with(num_nodes, TddLevel::new);
     }
     Ok(levels)
