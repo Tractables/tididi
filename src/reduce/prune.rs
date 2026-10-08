@@ -657,8 +657,11 @@ fn compact_levels(
 struct Child {
     /// The word its block of marks starts at; unused when it kept every slot.
     base: usize,
-    /// The slots its block covers, a whole number of words: its width
-    /// rounded up, the room its new indices take.
+    /// The slots its new indices are written for, the room they take: its
+    /// width before the prune at least. The walk below the root has the
+    /// width at hand; the walk over the whole diagram, which reads it off
+    /// its block's offsets once the child is compacted, rounds it up to
+    /// whole words.
     span: usize,
     /// It lost a slot, so the parent rewrites its references through the new
     /// indices of the survivors; otherwise through the identity run.
@@ -1204,9 +1207,7 @@ fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[bool]>) -> Res
 /// in turn.
 fn settle_child(marks: &[u64], base: Option<usize>, width: usize) -> Child {
     match base {
-        Some(base) if !all_marked(&marks[base..base + words(width)], width) => {
-            Child::at(base, words(width) * 64, true)
-        }
+        Some(base) if !all_marked(&marks[base..base + words(width)], width) => Child::at(base, width, true),
         _ => Child::KEPT,
     }
 }
