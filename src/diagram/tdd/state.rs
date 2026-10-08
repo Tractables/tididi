@@ -15,7 +15,49 @@ use crate::vtree::VtreeIdx;
 use super::Tdd;
 
 use std::ops::{Deref, DerefMut};
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use super::{TddLevel, TddNodeId};
+
+/// A lazily computed property of immutable level storage.
+#[derive(Debug)]
+struct CachedSize(AtomicUsize);
+
+impl Default for CachedSize {
+    fn default() -> Self { Self(AtomicUsize::new(usize::MAX)) }
+}
+
+impl Clone for CachedSize {
+    fn clone(&self) -> Self { Self(AtomicUsize::new(self.0.load(Relaxed))) }
+}
+
+impl CachedSize {
+    fn read(&self, compute: impl FnOnce() -> usize) -> usize {
+        let held = self.0.load(Relaxed);
+        if held != usize::MAX { return held; }
+        let value = compute();
+        self.0.store(value, Relaxed);
+        value
+    }
+
+    fn forget(&mut self) { *self.0.get_mut() = usize::MAX; }
+}
+
+#[derive(Clone, Debug, Default)]
+struct Summary {
+    nodes: CachedSize,
+    width: CachedSize,
+    pairs: CachedSize,
+    marginal: CachedSize,
+}
+
+impl Summary {
+    fn forget(&mut self) {
+        self.nodes.forget();
+        self.width.forget();
+        self.pairs.forget();
+        self.marginal.forget();
+    }
+}
 
 /// Any mutable access forgets the guarantee, including raw level indexing.
 /// The output is recorded separately because changing it need not touch levels.
@@ -27,15 +69,49 @@ use super::{TddLevel, TddNodeId};
 /// levels are closed holds of its pairs. `changed` lists the levels the
 /// edits since then say they changed ([`mark_changed`](Self::mark_changed)),
 /// so that a reduction that began on closed levels closes only those.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub(crate) struct LevelStorage {
     levels: Vec<TddLevel>,
     canonical_output: Option<TddNodeId>,
     closed: bool,
     changed: Vec<VtreeIdx>,
+    summary: Summary,
+}
+
+impl std::fmt::Debug for LevelStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LevelStorage")
+            .field("levels", &self.levels)
+            .field("canonical_output", &self.canonical_output)
+            .field("closed", &self.closed)
+            .field("changed", &self.changed)
+            .finish()
+    }
 }
 
 impl LevelStorage {
+    pub(crate) fn first_marginal(&self) -> Option<VtreeIdx> {
+        let i = self.summary.marginal.read(|| {
+            self.levels.iter().position(TddLevel::is_marginal).unwrap_or(self.levels.len())
+        });
+        (i < self.levels.len()).then_some(VtreeIdx(i as u32))
+    }
+
+    pub(crate) fn node_count(&self) -> usize {
+        self.summary.nodes.read(|| self.levels.iter().map(TddLevel::slot_count).sum())
+    }
+
+    pub(crate) fn max_width(&self) -> usize {
+        self.summary.width.read(|| self.levels.iter().map(TddLevel::slot_count).max().unwrap_or(0))
+    }
+
+    pub(crate) fn pair_count(&self) -> usize {
+        self.summary.pairs.read(|| {
+            if self.closed { self.levels.iter().map(TddLevel::live_pairs_closed).sum() }
+            else { self.levels.iter().map(TddLevel::live_pairs).sum() }
+        })
+    }
+
     pub(crate) fn is_canonical(&self, output: TddNodeId) -> bool {
         self.canonical_output == Some(output)
     }
@@ -49,6 +125,7 @@ impl LevelStorage {
     /// A mutable access: neither the certification nor the closed form is
     /// known to hold any more.
     fn touch(&mut self) {
+        self.summary.forget();
         self.forget();
         self.closed = false;
     }
@@ -64,12 +141,14 @@ impl LevelStorage {
     /// were when [`is_closed`](Self::is_closed) last held, as a rollback puts
     /// them back or a renumbering moves them.
     pub(crate) fn reinstate_closed(&mut self) {
+        self.summary.forget();
         self.closed = true;
         self.changed.clear();
     }
 
     /// Take what `from` knows of its levels' closed form, for a copy of them.
     pub(crate) fn copy_closed_from(&mut self, from: &LevelStorage) {
+        self.summary.forget();
         self.closed = from.closed;
         self.changed.clone_from(&from.changed);
     }
@@ -78,6 +157,7 @@ impl LevelStorage {
     /// holds its pairs, not the diagram, so a canonical diagram stays
     /// certified.
     pub(crate) fn close(&mut self) {
+        self.summary.forget();
         for level in &mut self.levels {
             level.close();
             level.forget_held_pairs();
@@ -89,6 +169,7 @@ impl LevelStorage {
     /// [`close`](Self::close) the levels in `changed` only, every other level
     /// being closed already.
     pub(crate) fn close_changed(&mut self, changed: &[VtreeIdx]) {
+        self.summary.forget();
         for &t in changed {
             self.levels[t.idx()].close();
             self.levels[t.idx()].forget_held_pairs();
@@ -101,6 +182,7 @@ impl LevelStorage {
     /// changed, every other level being closed already; every level when
     /// the edits marked as many as there are levels.
     pub(crate) fn close_marked(&mut self) {
+        self.summary.forget();
         if self.changed.len() >= self.levels.len() {
             return self.close();
         }
