@@ -446,10 +446,12 @@ pub(crate) fn apply_and_core(
         // which made the prune after the join walk it. Listing every level
         // the conjunction built made that prune walk every one of them.
         let loose = operand_loose
-            .map(|ops| loose::loose_levels(&vtree, &run, &carrier, Operands { f: &ops.f[..], g: &ops.g[..] }));
+            .map(|ops| loose::loose_levels(&vtree, &run, &carrier, ops));
         // The levels it built are also all it changed, and so all the seat
         // closes: a carried level is as the operand's end left it.
-        let built: Vec<VtreeIdx> = vtree.internal_bottomup().map(|(t, _, _)| t).filter(|t| carrier[t.idx()] == 0).collect();
+        let internal = vtree.internal_bottomup_slice();
+        let mut built: Vec<VtreeIdx> = Vec::with_capacity(internal.len());
+        built.extend(internal.iter().copied().filter(|t| carrier[t.idx()] == 0));
         assembly.finish_with_or_return(output, owed, &built, Some(&built[..])).map(|mut out| {
             if let Some(loose) = loose {
                 out.dirty.set_loose(Some(loose));
