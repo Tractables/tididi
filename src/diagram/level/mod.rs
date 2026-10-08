@@ -385,10 +385,12 @@ impl TddLevel {
         }
     }
 
-    /// True if any node has more than one pair. O(width).
+    /// True if any node has more than one pair. O(width), and O(1) on a
+    /// level whose arena is empty, whose nodes then hold one pair or none.
     #[inline]
     pub(crate) fn has_multi_pair(&self) -> bool {
-        self.nodes.iter().any(|n| n.kind().pairs_in_arena() && self.multi_range(n).len() >= 2)
+        !self.pairs.is_empty()
+            && self.nodes.iter().any(|n| n.kind().pairs_in_arena() && self.multi_range(n).len() >= 2)
     }
 
     /// How to read the pair sides of a parent that point at this level.
