@@ -82,11 +82,19 @@ fn cube_levels(
 
 /// Seat levels that are canonical as built: no level owes a contraction pass,
 /// and the output is certified so the next reduction returns at once.
+///
+/// Every node a builder writes is the child of a node it wrote above it, so
+/// no level is loose ([`Dirty::loose`](crate::diagram::Dirty::loose)): a
+/// conjunction of two built diagrams then knows its own loose levels, and the
+/// prune after it walks only down to them.
 pub(crate) fn seat_canonical(eng: &Engine, vtree: &Arc<Vtree>, levels: Vec<TddLevel>, output: TddNodeId) -> Tdd {
     let mut tdd = Assembly::from_levels(eng, Arc::clone(vtree), levels, None)
         .finish_with(output, Dirty::default(), &[], None)
         .expect("seeding no worklist cannot be refused");
     tdd.levels.certify(output);
+    tdd.dirty.set_loose(Some(Vec::new()));
+    #[cfg(debug_assertions)]
+    crate::reduce::prune::debug_assert_all_reached(&tdd);
     tdd
 }
 

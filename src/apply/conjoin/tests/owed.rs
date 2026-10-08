@@ -125,3 +125,47 @@ fn a_carried_level_is_loose_only_where_its_carrier_had_it() {
     all.push(vec![7, -8]);
     assert_same_shape(&out, &compile_clauses(&wide, &all), "embedded clause");
 }
+
+/// A diagram built from its models has no loose level, so a conjunction of
+/// two such diagrams knows its own loose levels, and the prune after it,
+/// which walks down only to them, leaves as many nodes as a prune of the
+/// whole diagram.
+#[test]
+fn built_operands_give_their_conjunction_its_loose_levels() {
+    use crate::reduce::ReductionPlan;
+    use crate::test_helpers::Lcg;
+    use crate::vtree::VarId;
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x0001_005e_ed10);
+    let mut known = 0;
+    for num_vars in [6u32, 8] {
+        let half = num_vars / 2;
+        // The two operands share two variables in the middle.
+        let fv: Vec<VarId> = (1..=half + 1).map(VarId).collect();
+        let gv: Vec<VarId> = (half..=num_vars).map(VarId).collect();
+        for (label, vtree) in vtree_shapes(num_vars) {
+            for round in 0..4 {
+                let mut rows = |width: usize| -> Vec<u64> { (0..1u64 << width).filter(|_| rng.below(3) != 0).collect() };
+                let (f_rows, g_rows) = (rows(fv.len()), rows(gv.len()));
+                let f = eng.from_models(&vtree, &fv, &f_rows).unwrap();
+                let g = eng.from_models(&vtree, &gv, &g_rows).unwrap();
+                assert_eq!(f.dirty.loose(), Some(&[][..]), "{label}");
+                assert_eq!(g.dirty.loose(), Some(&[][..]), "{label}");
+                let out = eng.and(f, g).unwrap();
+                if out.is_zero() {
+                    continue;
+                }
+                assert!(out.dirty.loose().is_some(), "{label}, round {round}: the conjunction knows its loose levels");
+                known += 1;
+                let mut walked = out.clone();
+                let mut whole = out;
+                whole.dirty.set_loose(None);
+                eng.reduce(&mut walked, ReductionPlan::Prune).unwrap();
+                eng.reduce(&mut whole, ReductionPlan::Prune).unwrap();
+                assert_eq!(walked.node_count(), whole.node_count(), "{label}, round {round}");
+                assert_eq!(walked.model_count().unwrap(), whole.model_count().unwrap(), "{label}, round {round}");
+            }
+        }
+    }
+    assert!(known > 0, "every conjunction was false");
+}
