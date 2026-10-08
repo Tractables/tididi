@@ -16,6 +16,7 @@
 
 pub(crate) mod conjoin;
 pub(crate) mod conjoin_clause;
+mod conjoin_in_place;
 pub(crate) mod disjoin;
 pub(crate) mod overlay;
 pub(crate) mod negate;
