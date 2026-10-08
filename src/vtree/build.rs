@@ -316,38 +316,113 @@ impl Vtree {
         // refuses one, the full check, which reads the whole list, names what
         // is wrong. Both refuse the same lists.
         let n = old_nodes.len();
-        let walked = if n > 0 && root.idx() < n && check_var_space(num_vars, n).is_ok() {
-            let mut var_to_leaf = vec![VtreeIdx(0); num_vars as usize];
-            let mut old_to_new = vec![VtreeIdx(0); n];
-            levels_from_root(root, &old_nodes, (&mut var_to_leaf, &mut old_to_new))
-                .map(|levels| (levels, var_to_leaf, old_to_new))
+        let shape = |t: VtreeIdx| match old_nodes[t.idx()] {
+            VtreeNode::Leaf { var, .. } => Shape::Leaf(var),
+            VtreeNode::Internal { left, right, .. } => Shape::Internal(left, right),
+        };
+        let reindexed = if n > 0 && root.idx() < n && check_var_space(num_vars, n).is_ok() {
+            reindex(root, n, num_vars, shape)
         } else {
             None
         };
-        let Some(((order, starts), mut var_to_leaf, mut old_to_new)) = walked else {
+        let Some(reindexed) = reindexed else {
             check_node_list(&old_nodes, root, num_vars)?;
             return Err(VtreeError::Invalid("the links are not one tree".to_string()));
         };
-        let (new_nodes, actual_leaf_count) = relabel_leaves_then_internals(
-            (&order, &starts),
-            &old_nodes,
-            (&mut var_to_leaf, &mut old_to_new),
-        );
+        Ok(reindexed)
+    }
 
-        let new_root = old_to_new[root.idx()];
-        // After the reindex, the node array is laid out so that idx ==
-        // bottom-up topological position, so the identity order is correct.
-        let topo = crate::vtree::topo::TopoOrder::identity(&new_nodes, actual_leaf_count);
-        let vtree = Vtree {
-            context: std::sync::Arc::new(crate::Context::new()),
-            nodes: new_nodes,
-            root: new_root,
-            var_to_leaf,
-            leaf_count: actual_leaf_count,
-            topo,
+    /// The vtree whose leaves carry `vars` left to right, with its internal
+    /// nodes placed by `depths`: `depths[i]` is the depth of the node that
+    /// joins leaf `i`'s side to leaf `i + 1`'s, the lowest common ancestor of
+    /// the two leaves. The root is the node of least depth, the leftmost of
+    /// those tied, and each side of it is built the same way from the leaves
+    /// and depths on that side.
+    ///
+    /// Depths read from a tree that holds these leaves among others, in its
+    /// left-to-right order, give that tree's projection onto them: its shape
+    /// on these leaves with every node that joins none of them dropped. Equal
+    /// depths throughout give [`Vtree::linear_from_order`]'s right-linear
+    /// tree. Every list of depths makes a tree, so the construction has
+    /// nothing to check but the variables, and no node list to read.
+    /// `num_vars` sizes the id space, as for [`Vtree::from_nodes`].
+    ///
+    /// # Errors
+    ///
+    /// [`VtreeError::Invalid`] if `vars` is empty, if `depths` does not hold
+    /// one depth fewer than `vars` holds leaves, or if a variable is outside
+    /// `1..=num_vars`; [`VtreeError::OverlappingVariable`] if two leaves
+    /// carry one variable; [`VtreeError::VariableSpaceTooLarge`] as for
+    /// [`Vtree::from_nodes`].
+    ///
+    /// ```
+    /// use tididi::vtree::{VarId, Vtree, VtreeError};
+    ///
+    /// // Leaves 1 and 2 meet below the root, which joins them to leaf 3.
+    /// let vars = [VarId(1), VarId(2), VarId(3)];
+    /// let vtree = Vtree::from_in_order(&vars, &[4, 2], 3)?;
+    /// let (left, right) = vtree.children(vtree.root());
+    /// assert_eq!(vtree.leaf_var(right), VarId(3));
+    /// let (a, b) = vtree.children(left);
+    /// assert_eq!((vtree.leaf_var(a), vtree.leaf_var(b)), (VarId(1), VarId(2)));
+    ///
+    /// // A depth for each pair of neighbours, no more and no fewer.
+    /// assert!(matches!(Vtree::from_in_order(&vars, &[1], 3), Err(VtreeError::Invalid(_))));
+    /// # Ok::<(), tididi::vtree::VtreeError>(())
+    /// ```
+    pub fn from_in_order(vars: &[VarId], depths: &[u32], num_vars: u32) -> Result<Self, VtreeError> {
+        let k = vars.len();
+        if k == 0 {
+            return Err(VtreeError::Invalid("a vtree needs at least one variable".to_string()));
+        }
+        if depths.len() + 1 != k {
+            return Err(VtreeError::Invalid(format!(
+                "{k} leaves take {} depths, not {}",
+                k - 1,
+                depths.len()
+            )));
+        }
+        let n = 2 * k - 1;
+        check_var_space(num_vars, n)?;
+        // The nodes in left-to-right order: leaf i is node 2i, the node
+        // between leaves i and i + 1 is node 2i + 1, and that node's children
+        // are kids[2i] and kids[2i + 1]. The nodes whose right side is still
+        // open are kept on `open`, depths ascending from the root; a node
+        // takes as its left side those of them deeper than it.
+        let mut kids = vec![VtreeIdx(0); n - 1];
+        let mut open: Vec<usize> = Vec::with_capacity(k);
+        for (i, &depth) in depths.iter().enumerate() {
+            let mut side = VtreeIdx(2 * i as u32);
+            while let Some(&top) = open.last() {
+                if depths[top] <= depth {
+                    break;
+                }
+                open.pop();
+                kids[2 * top + 1] = side;
+                side = VtreeIdx(2 * top as u32 + 1);
+            }
+            kids[2 * i] = side;
+            open.push(i);
+        }
+        let mut root = VtreeIdx(2 * (k - 1) as u32);
+        while let Some(top) = open.pop() {
+            kids[2 * top + 1] = root;
+            root = VtreeIdx(2 * top as u32 + 1);
+        }
+        let shape = |t: VtreeIdx| {
+            let t = t.idx();
+            if t.is_multiple_of(2) { Shape::Leaf(vars[t / 2]) } else { Shape::Internal(kids[t - 1], kids[t]) }
         };
-        debug_assert_eq!(vtree.validate(), Ok(()));
-        Ok((vtree, old_to_new))
+        match reindex(root, n, num_vars, shape) {
+            Some((vtree, _)) => Ok(vtree),
+            None => {
+                let mut variables = vec![false; num_vars as usize];
+                for &var in vars {
+                    check_leaf_var(var, &mut variables)?;
+                }
+                unreachable!("a tree built from depths is one tree, so only its variables can be refused")
+            }
+        }
     }
 
     /// Construct a vtree from a raw node list and root index, reindexing
@@ -424,17 +499,7 @@ fn check_node_list(nodes: &[VtreeNode], root: VtreeIdx, num_vars: u32) -> Result
     let mut variables = vec![false; num_vars as usize];
     for node in nodes {
         match *node {
-            VtreeNode::Leaf { var, .. } => {
-                if var.0 == 0 || var.0 > num_vars {
-                    return Err(VtreeError::Invalid(format!(
-                        "leaf variable {} is outside the variables 1 to {num_vars}",
-                        var.0
-                    )));
-                }
-                if std::mem::replace(&mut variables[var.idx()], true) {
-                    return Err(VtreeError::OverlappingVariable(var));
-                }
-            }
+            VtreeNode::Leaf { var, .. } => check_leaf_var(var, &mut variables)?,
             VtreeNode::Internal { left, right, .. } => {
                 for child in [left, right] {
                     if child.idx() >= n {
@@ -476,27 +541,76 @@ fn check_node_list(nodes: &[VtreeNode], root: VtreeIdx, num_vars: u32) -> Result
     Ok(())
 }
 
+/// Refuse a leaf's variable outside the id space `1..=variables.len()`, or
+/// one an earlier leaf carries; `variables` marks the variables seen.
+fn check_leaf_var(var: VarId, variables: &mut [bool]) -> Result<(), VtreeError> {
+    let num_vars = variables.len();
+    if var.0 == 0 || var.0 as usize > num_vars {
+        return Err(VtreeError::Invalid(format!(
+            "leaf variable {} is outside the variables 1 to {num_vars}",
+            var.0
+        )));
+    }
+    if std::mem::replace(&mut variables[var.idx()], true) {
+        return Err(VtreeError::OverlappingVariable(var));
+    }
+    Ok(())
+}
+
 /// An entry of `var_to_leaf` or `old_to_new` the walk from the root has
 /// reached, until the reindex writes it.
 const REACHED: VtreeIdx = VtreeIdx(u32::MAX);
+
+/// A node as the reindex reads it, from whatever list or rule describes the
+/// tree: a leaf's variable, or an internal node's two children.
+#[derive(Clone, Copy)]
+enum Shape {
+    Leaf(VarId),
+    Internal(VtreeIdx, VtreeIdx),
+}
+
+/// The tree of `n` nodes that `shape` describes from `root`, reindexed
+/// bottom-up (see [`Vtree::from_nodes_with_map`]), with the `old_to_new`
+/// permutation; `None` where it is not one tree whose leaves carry distinct
+/// variables in `1..=num_vars`. `root` names one of the `n` nodes, and
+/// `num_vars` has passed [`check_var_space`].
+fn reindex(root: VtreeIdx, n: usize, num_vars: u32, shape: impl Fn(VtreeIdx) -> Shape) -> Option<(Vtree, Vec<VtreeIdx>)> {
+    let mut var_to_leaf = vec![VtreeIdx(0); num_vars as usize];
+    let mut old_to_new = vec![VtreeIdx(0); n];
+    let (order, starts) = levels_from_root(root, n, &shape, (&mut var_to_leaf, &mut old_to_new))?;
+    let (nodes, leaf_count) = relabel_leaves_then_internals((&order, &starts), n, &shape, (&mut var_to_leaf, &mut old_to_new));
+    // After the reindex, the node array is laid out so that idx ==
+    // bottom-up topological position, so the identity order is correct.
+    let topo = crate::vtree::topo::TopoOrder::identity(&nodes, leaf_count);
+    let vtree = Vtree {
+        context: std::sync::Arc::new(crate::Context::new()),
+        nodes,
+        root: old_to_new[root.idx()],
+        var_to_leaf,
+        leaf_count,
+        topo,
+    };
+    debug_assert_eq!(vtree.validate(), Ok(()));
+    Some((vtree, old_to_new))
+}
 
 /// The nodes reachable from `root` in breadth-first order from the root, and
 /// where each depth starts in that order (one entry per depth, then the end).
 /// The order is its own queue: a level is the run of nodes the level before
 /// it appended, so the walk allocates two lists however deep the tree is.
 ///
-/// The walk is also the check of the list, `root` a node of it: `None`
-/// unless every child link names a node, the links reach every node exactly
-/// once, and every leaf carries its own variable in `1..=num_vars`, where
-/// `num_vars` is `var_to_leaf`'s length and the list is `old_to_new`'s. Both
-/// come in zeroed; the walk marks what it reaches with [`REACHED`], and the
-/// reindex writes every entry so marked.
+/// The walk is also the check of the `n` nodes `shape` describes, `root` one
+/// of them: `None` unless every child link names one, the links reach every
+/// node exactly once, and every leaf carries its own variable in
+/// `1..=num_vars`, where `num_vars` is `var_to_leaf`'s length and `n` is
+/// `old_to_new`'s. Both come in zeroed; the walk marks what it reaches with
+/// [`REACHED`], and the reindex writes every entry so marked.
 fn levels_from_root(
     root: VtreeIdx,
-    old_nodes: &[VtreeNode],
+    n: usize,
+    shape: impl Fn(VtreeIdx) -> Shape,
     (var_to_leaf, old_to_new): (&mut [VtreeIdx], &mut [VtreeIdx]),
 ) -> Option<(Vec<VtreeIdx>, Vec<usize>)> {
-    let n = old_nodes.len();
     let mut order = Vec::with_capacity(n);
     // A start per depth and the end: a binary tree of `n` nodes is at most
     // `(n + 1) / 2` levels deep, one internal node and one leaf per level
@@ -509,8 +623,8 @@ fn levels_from_root(
     while at < order.len() {
         let end = order.len();
         while at < end {
-            match old_nodes[order[at].idx()] {
-                VtreeNode::Internal { left, right, .. } => {
+            match shape(order[at]) {
+                Shape::Internal(left, right) => {
                     for child in [left, right] {
                         let entry = old_to_new.get_mut(child.idx())?;
                         if std::mem::replace(entry, REACHED) == REACHED {
@@ -519,7 +633,7 @@ fn levels_from_root(
                         order.push(child);
                     }
                 }
-                VtreeNode::Leaf { var, .. } => {
+                Shape::Leaf(var) => {
                     let entry = var_to_leaf.get_mut((var.0 as usize).checked_sub(1)?)?;
                     if std::mem::replace(entry, REACHED) == REACHED {
                         return None;
@@ -545,24 +659,24 @@ fn levels_from_root(
 /// children sit a level below it and are placed before it.
 fn relabel_leaves_then_internals(
     (order, starts): (&[VtreeIdx], &[usize]),
-    old_nodes: &[VtreeNode],
+    n: usize,
+    shape: impl Fn(VtreeIdx) -> Shape,
     (var_to_leaf, old_to_new): (&mut [VtreeIdx], &mut [VtreeIdx]),
 ) -> (Vec<VtreeNode>, u32) {
-    let n = old_nodes.len();
     let num_leaves = n.div_ceil(2) as u32;
     let mut new_nodes = vec![VtreeNode::Leaf { var: VarId(0), parent: None }; n];
     let (mut next_leaf, mut next_internal) = (0, num_leaves);
     for level in starts.windows(2).rev().map(|w| &order[w[0]..w[1]]) {
         for &old_idx in level {
-            match old_nodes[old_idx.idx()] {
-                VtreeNode::Leaf { var, .. } => {
+            match shape(old_idx) {
+                Shape::Leaf(var) => {
                     let new_idx = VtreeIdx(next_leaf);
                     next_leaf += 1;
                     old_to_new[old_idx.idx()] = new_idx;
                     new_nodes[new_idx.idx()] = VtreeNode::Leaf { var, parent: None };
                     var_to_leaf[var.idx()] = new_idx;
                 }
-                VtreeNode::Internal { left, right, .. } => {
+                Shape::Internal(left, right) => {
                     let (new_left, new_right) = (old_to_new[left.idx()], old_to_new[right.idx()]);
                     let new_idx = VtreeIdx(next_internal);
                     next_internal += 1;

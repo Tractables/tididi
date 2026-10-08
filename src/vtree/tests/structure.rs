@@ -660,6 +660,112 @@ fn from_nodes_numbers_leaves_then_internals_from_the_deepest_level() {
     assert_eq!(vtree.topo.leaves(), [0, 1, 2, 3].map(VtreeIdx));
 }
 
+/// The leaves of `vtree` left to right.
+fn leaves_in_order(vtree: &Vtree) -> Vec<VtreeIdx> {
+    let (mut leaves, mut stack) = (Vec::new(), vec![vtree.root()]);
+    while let Some(t) = stack.pop() {
+        if vtree.node(t).is_leaf() {
+            leaves.push(t);
+        } else {
+            let (l, r) = vtree.children(t);
+            stack.push(r);
+            stack.push(l);
+        }
+    }
+    leaves
+}
+
+/// The depth in `vtree` of the lowest common ancestor of each two leaves
+/// next to each other in `leaves`.
+fn ancestor_depths(vtree: &Vtree, leaves: &[VtreeIdx]) -> Vec<u32> {
+    let depth = |mut t: VtreeIdx| {
+        let mut d = 0;
+        while let Some(p) = vtree.node(t).parent() {
+            t = p;
+            d += 1;
+        }
+        d
+    };
+    leaves.windows(2).map(|w| depth(vtree.lca(w[0], w[1]))).collect()
+}
+
+/// Built from a subset of a tree's leaves in order and the depths of their
+/// neighbours' lowest common ancestors there, the tree is the projection
+/// `project_to_vars` makes of it, node for node, on random trees and
+/// subsets of every size; from all the leaves, it is the tree itself.
+#[test]
+fn from_in_order_with_ancestor_depths_is_the_projection() {
+    for seed in 0..40u64 {
+        let n = 1 + (seed % 20) as u32 * 4;
+        let vtree = Vtree::random(n, seed);
+        let in_order = leaves_in_order(&vtree);
+        let mut rng = crate::vtree::rng::Lcg::new(seed ^ 0x5bd1_e995);
+        for _ in 0..8 {
+            // Local ids in variable order, as a projection numbers them.
+            let (mut local, mut kept) = (vec![None; n as usize + 1], 0);
+            for v in 1..=n {
+                if rng.coin() {
+                    kept += 1;
+                    local[v as usize] = Some(VarId(kept));
+                }
+            }
+            if kept == 0 {
+                continue;
+            }
+            let expected = vtree.project_to_vars(|v| local[v.0 as usize], kept).unwrap();
+            let leaves: Vec<VtreeIdx> = in_order.iter().copied().filter(|&t| local[vtree.leaf_var(t).0 as usize].is_some()).collect();
+            let vars: Vec<VarId> = leaves.iter().map(|&t| local[vtree.leaf_var(t).0 as usize].unwrap()).collect();
+            let got = Vtree::from_in_order(&vars, &ancestor_depths(&vtree, &leaves), kept).unwrap();
+            assert_eq!(got.nodes, expected.nodes, "seed {seed}, vars {vars:?}");
+            assert_eq!((got.root, got.leaf_count, &got.var_to_leaf), (expected.root, expected.leaf_count, &expected.var_to_leaf));
+            assert_eq!(got.validate(), Ok(()));
+        }
+        let vars: Vec<VarId> = in_order.iter().map(|&t| vtree.leaf_var(t)).collect();
+        let whole = Vtree::from_in_order(&vars, &ancestor_depths(&vtree, &in_order), n).unwrap();
+        assert_eq!(whole.nodes, vtree.nodes, "seed {seed}");
+    }
+}
+
+/// Equal depths put the leftmost node highest: the right-linear tree. A
+/// lone leaf takes no depth.
+#[test]
+fn from_in_order_with_equal_depths_is_right_linear() {
+    let vars = [3, 1, 4, 2].map(VarId);
+    let linear = Vtree::linear_from_order(&vars).unwrap();
+    let got = Vtree::from_in_order(&vars, &[7, 7, 7], 4).unwrap();
+    assert_eq!(got.nodes, linear.nodes);
+    let leaf = Vtree::from_in_order(&[VarId(2)], &[], 2).unwrap();
+    assert_eq!((leaf.num_nodes(), leaf.num_leaves(), leaf.num_vars()), (1, 1, 2));
+}
+
+/// Every list of depths makes a tree; only the variables and the number of
+/// depths are refused.
+#[test]
+fn from_in_order_refuses_only_bad_variables_and_depth_counts() {
+    let invalid = |message: &str| VtreeError::Invalid(message.to_string());
+    let cases: Vec<(Vec<u32>, Vec<u32>, u32, VtreeError)> = vec![
+        (vec![], vec![], 1, invalid("a vtree needs at least one variable")),
+        (vec![1, 2], vec![], 2, invalid("2 leaves take 1 depths, not 0")),
+        (vec![1, 2], vec![0, 0], 2, invalid("2 leaves take 1 depths, not 2")),
+        (vec![1, 0], vec![0], 2, invalid("leaf variable 0 is outside the variables 1 to 2")),
+        (vec![1, 3], vec![0], 2, invalid("leaf variable 3 is outside the variables 1 to 2")),
+        (vec![2, 1, 2], vec![5, 1], 2, VtreeError::OverlappingVariable(VarId(2))),
+    ];
+    for (vars, depths, num_vars, expected) in cases {
+        let vars: Vec<VarId> = vars.into_iter().map(VarId).collect();
+        assert_eq!(Vtree::from_in_order(&vars, &depths, num_vars).err(), Some(expected), "{vars:?} {depths:?}");
+    }
+    assert!(matches!(
+        Vtree::from_in_order(&[VarId(1)], &[], u32::MAX),
+        Err(VtreeError::VariableSpaceTooLarge { num_vars: u32::MAX, .. }),
+    ));
+    // Depths in any order make a tree over the leaves.
+    for depths in [[0, 1, 2], [2, 1, 0], [1, 0, 1], [0, 2, 0], [5, 5, 1]] {
+        let got = Vtree::from_in_order(&[1, 2, 3, 4].map(VarId), &depths, 4).unwrap();
+        assert_eq!((got.num_leaves(), got.validate()), (4, Ok(())), "{depths:?}");
+    }
+}
+
 /// The reindex checks the list as it walks it from the root; a list it
 /// refuses is refused with the error the full check names, whatever part of
 /// the list is wrong.
