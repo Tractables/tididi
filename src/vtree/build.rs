@@ -434,7 +434,9 @@ fn check_node_list(nodes: &[VtreeNode], root: VtreeIdx, num_vars: u32) -> Result
     let mut seen = vec![false; n];
     seen[root.idx()] = true;
     let mut reached = 1usize;
-    let mut stack = vec![root];
+    // The stack holds fewer nodes than the list: sized once, it never grows.
+    let mut stack = Vec::with_capacity(n);
+    stack.push(root);
     while let Some(idx) = stack.pop() {
         if let VtreeNode::Internal { left, right, .. } = nodes[idx.idx()] {
             for child in [left, right] {
@@ -464,7 +466,11 @@ fn check_node_list(nodes: &[VtreeNode], root: VtreeIdx, num_vars: u32) -> Result
 /// it appended, so the walk allocates two lists however deep the tree is.
 fn levels_from_root(root: VtreeIdx, old_nodes: &[VtreeNode]) -> (Vec<VtreeIdx>, Vec<usize>) {
     let mut order = Vec::with_capacity(old_nodes.len());
-    let mut starts = vec![0];
+    // A start per depth and the end: a binary tree of `n` nodes is at most
+    // `(n + 1) / 2` levels deep, one internal node and one leaf per level
+    // but the last.
+    let mut starts = Vec::with_capacity(old_nodes.len().div_ceil(2) + 1);
+    starts.push(0);
     order.push(root);
     let mut at = 0;
     while at < order.len() {
