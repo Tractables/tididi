@@ -12,6 +12,42 @@ use std::time::Instant;
 /// whole level's node width rather than one product pair.
 pub(super) const REDUCE_POLL_STRIDE: u64 = 1 << 14;
 
+/// Polls a cancellation test may answer from the last clock reading before it
+/// reads the clock again, under a wall-clock threshold.
+///
+/// A clock read is a system call on a host whose clock source has no
+/// user-space path (HPET), and a caller that runs many small operations under
+/// one deadline polls at least once in each, so reading on every poll would
+/// make the deadline cost a share of the work. A test between two reads
+/// compares the threshold with the last reading, which is earlier than the
+/// true instant: a stop can land late, never early, and once a reading has
+/// passed the threshold every later test stops. The bound on how late is
+/// [`CLOCK_POLL_WORK`]'s.
+pub(super) const CLOCK_POLLS: u32 = 64;
+
+/// Work units after which a cancellation test reads the clock whatever
+/// [`CLOCK_POLLS`] says: a poll of the conjunction's sparse scatter (one per
+/// 2^20 units) or dense cells (2^16) reads it every time, as before, and a
+/// walk polling every [`REDUCE_POLL_STRIDE`] every fourth poll. So a stop is
+/// late by at most the time of one such span of work, or of [`CLOCK_POLLS`]
+/// polls that between them charged less.
+pub(super) const CLOCK_POLL_WORK: u64 = 1 << 16;
+
+/// The last clock reading a cancellation test took, and how many more tests
+/// may answer from it ([`CLOCK_POLLS`], [`CLOCK_POLL_WORK`]).
+#[derive(Clone, Copy, Debug)]
+pub(super) struct ClockReading {
+    pub(super) at: Option<Instant>,
+    pub(super) polls_left: u32,
+    pub(super) work_at: u64,
+}
+
+impl ClockReading {
+    /// No reading: the next test reads the clock. What installing a
+    /// configuration leaves, so a deadline already past stops the first poll.
+    pub(super) const NONE: ClockReading = ClockReading { at: None, polls_left: 0, work_at: 0 };
+}
+
 /// The accumulator an in-operation loop polls through: one poll per `stride`
 /// units of work, amortizing the check. The stop axis is the only
 /// mid-level cut.
@@ -182,8 +218,11 @@ impl Limits {
     ///
     /// Read the clock at most once, only for a reached pair floor with a time
     /// threshold, an unconditional deadline, or a callback that needs it.
-    /// Work-unit-only rules avoid a clock read on each poll, and a poll below
-    /// every work-unit threshold reads neither the rules nor the callback.
+    /// Work-unit-only rules avoid a clock read on each poll, a poll below
+    /// every work-unit threshold reads neither the rules nor the callback,
+    /// and a time threshold reads the clock once per [`CLOCK_POLLS`] tests or
+    /// [`CLOCK_POLL_WORK`] work units, answering the tests between from the
+    /// last reading.
     #[inline(always)]
     pub(crate) fn should_stop(&self) -> bool {
         if self.quiet.get().holds(self.work_clock.get(), self.pairs_in_flight.get()) {
@@ -201,9 +240,10 @@ impl Limits {
         if !stop.armed() && callback.is_none() {
             return false;
         }
-        let mut now = Clock::unread();
+        let mut now = Clock::unread(self);
         let stop = match callback {
-            Some(decide) => match decide.decide(&self.meters(), now.read()) {
+            // A callback sees the instant it is asked at, every poll.
+            Some(decide) => match decide.decide(&self.meters(), now.read_fresh()) {
                 StopDecision::Stop => return true,
                 StopDecision::Continue => stop,
                 StopDecision::ReplaceRules(next) => {
@@ -247,7 +287,7 @@ impl Limits {
     }
 
     #[inline]
-    fn reached(&self, at: StopAt, now: &mut Clock) -> bool {
+    fn reached(&self, at: StopAt, now: &mut Clock<'_>) -> bool {
         match at {
             StopAt::Time(t) => now.read() >= t,
             StopAt::WorkUnits(units) => self.work_clock.get() >= units,
@@ -255,20 +295,54 @@ impl Limits {
     }
 }
 
-/// The instant one cancellation test runs at, read from the host on first use
-/// and not at all when no threshold is a wall-clock one.
-struct Clock(Option<Instant>);
+/// The instant one cancellation test runs at, taken on first use and not at
+/// all when no threshold is a wall-clock one: the clock read afresh, or the
+/// last reading while [`CLOCK_POLLS`] and [`CLOCK_POLL_WORK`] allow.
+struct Clock<'a> {
+    lim: &'a Limits,
+    at: Option<Instant>,
+}
 
-impl Clock {
+impl<'a> Clock<'a> {
     /// A clock the host has not been asked for yet.
     #[inline]
-    fn unread() -> Clock {
-        Clock(None)
+    fn unread(lim: &'a Limits) -> Clock<'a> {
+        Clock { lim, at: None }
     }
 
-    /// The instant this test runs at. Every rule in one test sees the same one.
+    /// The instant this test runs at, or the last reading if it may stand in.
+    /// Every rule in one test sees the same one.
     #[inline]
     fn read(&mut self) -> Instant {
-        *self.0.get_or_insert_with(Instant::now)
+        let lim = self.lim;
+        *self.at.get_or_insert_with(|| {
+            let last = lim.clock.get();
+            match last.at {
+                Some(at) if last.polls_left > 0
+                    && lim.work_clock.get().saturating_sub(last.work_at) < CLOCK_POLL_WORK =>
+                {
+                    lim.clock.set(ClockReading { polls_left: last.polls_left - 1, ..last });
+                    at
+                }
+                _ => lim.read_clock(),
+            }
+        })
+    }
+
+    /// The instant this test runs at, read from the host.
+    #[inline]
+    fn read_fresh(&mut self) -> Instant {
+        let lim = self.lim;
+        *self.at.get_or_insert_with(|| lim.read_clock())
+    }
+}
+
+impl Limits {
+    /// Read the clock and keep the reading for the tests that follow.
+    #[cold]
+    fn read_clock(&self) -> Instant {
+        let at = Instant::now();
+        self.clock.set(ClockReading { at: Some(at), polls_left: CLOCK_POLLS - 1, work_at: self.work_clock.get() });
+        at
     }
 }

@@ -1,7 +1,9 @@
 //! The work clock's two paths off a gate: the explicit flush and the drop.
 
 use super::*;
+use crate::limits::poll::{ClockReading, CLOCK_POLLS, CLOCK_POLL_WORK};
 use crate::limits::OperationError;
+use std::time::{Duration, Instant};
 
 /// A gate that ends a level holding less than one stride still charges what it
 /// holds. Five production gates never flushed before the drop existed, and the
@@ -99,4 +101,72 @@ fn poll_each_charges_and_stops_as_single_polls_do() {
             }
         }
     }
+}
+
+/// A deadline already past when it is installed stops the first poll, and
+/// every poll after it: installing reads the clock afresh, and a reading past
+/// the deadline answers every test it stands in for.
+#[test]
+fn a_spent_deadline_stops_every_poll_from_the_first() {
+    let lim = Limits::new();
+    let _prior = lim.install(LimitConfig::none().with_deadline(Some(Instant::now() - Duration::from_secs(1))));
+    for _ in 0..3 * CLOCK_POLLS {
+        assert!(lim.should_stop());
+    }
+}
+
+/// Between two clock readings a test answers from the last one, which is
+/// earlier than the true instant: a deadline passed since is seen at most
+/// [`CLOCK_POLLS`] tests late, or at the first test after
+/// [`CLOCK_POLL_WORK`] units of work.
+#[test]
+fn a_test_between_readings_answers_from_the_last_one() {
+    let deadline = Instant::now();
+    let before = deadline - Duration::from_secs(1);
+    let lim = Limits::new();
+    let _prior = lim.install(LimitConfig::none().with_deadline(Some(deadline)));
+    // A reading taken before the deadline, with three tests left on it.
+    lim.clock.set(ClockReading { at: Some(before), polls_left: 3, work_at: lim.work_units() });
+    for _ in 0..3 {
+        assert!(!lim.should_stop(), "answered from a reading before the deadline");
+    }
+    assert!(lim.should_stop(), "the fourth test reads the clock");
+    assert!(lim.should_stop(), "and the reading past the deadline stands");
+
+    // The work rule: a span of work as long as one dense poll's reads it.
+    let lim = Limits::new();
+    let _prior = lim.install(LimitConfig::none().with_deadline(Some(deadline)));
+    lim.clock.set(ClockReading { at: Some(before), polls_left: CLOCK_POLLS, work_at: lim.work_units() });
+    lim.charge_work(CLOCK_POLL_WORK - 1);
+    assert!(!lim.should_stop());
+    lim.charge_work(1);
+    assert!(lim.should_stop(), "a span of CLOCK_POLL_WORK units reads the clock");
+
+    // Without a deadline nothing is read and nothing counted down.
+    let lim = Limits::new();
+    for _ in 0..3 * CLOCK_POLLS {
+        assert!(!lim.should_stop());
+    }
+    assert!(lim.clock.get().at.is_none());
+}
+
+/// A stop callback is asked with the instant it is asked at, every poll: the
+/// readings are amortized for the thresholds only.
+#[test]
+fn a_callback_sees_a_fresh_instant_every_poll() {
+    use std::sync::{Arc, Mutex};
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let log = Arc::clone(&seen);
+    let lim = Limits::new();
+    let _prior = lim.install(LimitConfig::none().with_stop_callback(Some(StopCallback::new(move |_, now| {
+        log.lock().unwrap().push(now);
+        StopDecision::Continue
+    }))));
+    let start = Instant::now();
+    for _ in 0..4 {
+        assert!(!lim.should_stop());
+    }
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 4);
+    assert!(seen.iter().all(|&t| t >= start));
 }

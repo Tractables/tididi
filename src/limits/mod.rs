@@ -176,6 +176,13 @@ impl LimitConfig {
     /// The deadline replaces any unconditional bound, an earlier deadline or a
     /// bound on the work clock alike; [`Self::with_deadline_at_most`] keeps the
     /// bound already set and stops at whichever comes first.
+    ///
+    /// A poll reads the clock when 64 polls have passed since the last
+    /// reading, or 2^16 units of work have been charged since it, and
+    /// otherwise answers from that reading: a stop lands late by at most one
+    /// such span, never early. A deadline already past when the
+    /// configuration is installed stops the first poll, and a stop callback
+    /// sees a fresh instant at every poll.
     #[must_use]
     pub fn with_deadline(mut self, deadline: Option<Instant>) -> LimitConfig {
         self.stop.unconditional = deadline.map(StopAt::Time);
@@ -340,6 +347,8 @@ pub struct Limits {
     pairs_level_charge: Cell<u64>,
     work_clock: Cell<u64>,
     stop: Cell<StopRules>,
+    /// The last clock reading a cancellation test took ([`poll::CLOCK_POLLS`]).
+    clock: Cell<poll::ClockReading>,
     stop_callback: RefCell<Option<StopCallback>>,
     /// The readings under which `stop` and `stop_callback` cannot stop an
     /// operation, kept with them wherever either is set.
@@ -395,6 +404,7 @@ impl Limits {
             pairs_level_charge: Cell::new(0),
             work_clock: Cell::new(0),
             stop: Cell::new(StopRules::NONE),
+            clock: Cell::new(poll::ClockReading::NONE),
             stop_callback: RefCell::new(None),
             quiet: Cell::new(Quiet::NONE),
             output_node_cap: Cell::new(None),
@@ -475,6 +485,7 @@ impl Limits {
         self.output_node_cap.set(set.output_node_cap);
         self.stop.set(set.stop);
         self.quiet.set(Quiet::of(set.stop, set.stop_callback.is_some()));
+        self.clock.set(poll::ClockReading::NONE);
         self.stop_callback.replace(set.stop_callback);
         self.conjunction_progress.set(set.conjunction_progress);
         self.sparse_route.set(set.sparse_route);
