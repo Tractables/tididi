@@ -232,6 +232,11 @@ pub(super) fn exists_leaves_structural(
         // and skips the pass.
         eng.reduce(&mut tdd, ReductionPlan::Prune)?;
     }
+    // The levels that may hold a node their parent level does not name
+    // (`Dirty::loose`), where that is known: none after the prune. The sweep
+    // adds none, so the prune after it walks only as far as these and the
+    // levels that lose a node.
+    let loose = tdd.dirty.loose().map(<[u32]>::to_vec);
     let vtree = std::sync::Arc::clone(&tdd.vtree);
     let role = roles(&mut work, &vtree, targets)?;
     check_levels_are_rewritable(&mut work, &tdd, &vtree, &role)?;
@@ -279,6 +284,17 @@ pub(super) fn exists_leaves_structural(
         lim.level_done(work.emitted)?;
     }
     work.gate.flush()?;
+    // No level holds a node its parent level does not name that did not
+    // before. A level the sweep left alone is named through every pair that
+    // named it: such a pair is expanded over the cells its other side became,
+    // at least one, as every node has a pair and every pair a cell. A
+    // regrouped level's cells are each in the map of an old node, and the
+    // level above expands every reference to that node over them. A
+    // quantified level's one node is in the map of every old node, or is the
+    // one node the level held, or, under another quantified level, is the
+    // node that level's `⊤` pair names (index 0 of an internal child). The
+    // root's other nodes are dropped by the walk from the output.
+    tdd.dirty.set_loose(loose);
     eng.reduce(&mut tdd, reduction)?;
     Ok(tdd)
 }

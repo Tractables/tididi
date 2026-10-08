@@ -134,6 +134,42 @@ fn quantifying_an_unreduced_product_matches_quantifying_a_reduced_one() {
     assert_eq!(from_product.model_count().unwrap(), from_reduced.model_count().unwrap());
 }
 
+/// The sweep adds no level holding a node its parent level does not name, so
+/// the prune after it walks down from the output only where a level lost a
+/// node. What it leaves has as many nodes as a prune of the whole diagram
+/// leaves, and minimizes to what the full reduction gives.
+#[test]
+fn the_prune_after_the_sweep_drops_what_a_whole_prune_drops() {
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x0001_005e_5ee9);
+    for nvars in [6u32, 9] {
+        for (name, tree) in vtree_shapes(nvars) {
+            for _ in 0..6 {
+                let clauses = rand_cnf(&mut rng, nvars, CnfShape { clauses: 2 * nvars as usize, width: 3 });
+                let f = compile_clauses(&tree, &clauses);
+                let leaves: Vec<VtreeIdx> = (1..=nvars)
+                    .filter(|_| rng.below(3) == 0)
+                    .map(|v| tree.leaf_of(VarId(v)).unwrap())
+                    .collect();
+                if leaves.is_empty() || leaves.len() == nvars as usize {
+                    continue;
+                }
+                let canonical = exists_leaves_structural(&eng, f.clone(), &leaves, false, ReductionPlan::default()).unwrap();
+                let pruned = exists_leaves_structural(&eng, f, &leaves, false, ReductionPlan::Prune).unwrap();
+                let mut whole = pruned.clone();
+                whole.dirty.set_loose(None);
+                eng.reduce(&mut whole, ReductionPlan::Prune).unwrap();
+                assert_eq!(pruned.node_count(), whole.node_count(), "{name}: {clauses:?} without {leaves:?}");
+                let mut minimized = pruned;
+                minimized.minimize().unwrap();
+                assert_canonical(&minimized);
+                assert_eq!(minimized.node_count(), canonical.node_count(), "{name}: {clauses:?} without {leaves:?}");
+                assert_eq!(minimized.pair_count(), canonical.pair_count(), "{name}: {clauses:?} without {leaves:?}");
+            }
+        }
+    }
+}
+
 /// A fan-out for each of `keys` child nodes: a nonempty ascending set of the
 /// cells below `cells`, drawn at random.
 fn random_remap(eng: &Engine, rng: &mut Lcg, keys: usize, cells: u32) -> Remap {
