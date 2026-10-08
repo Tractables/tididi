@@ -17,7 +17,7 @@
 //! level has a block: a leaf or marginal level is never compacted, so
 //! nothing reads its marks.
 
-use crate::diagram::{ChildDecoder, ChildPair, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel, NodeIdx, NodeKind, StoreRoom, Tdd};
+use crate::diagram::{ChildDecoder, ChildKept, ChildPair, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel, NodeIdx, NodeKind, StoreRoom, Tdd};
 
 use crate::Engine;
 
@@ -877,7 +877,9 @@ fn plan_level(
         return Ok(None);
     }
     let (lm, rm) = child_remaps(marks, remap, left, right);
-    Ok(Some(match kept_described(lim, tdd, t, own, lm, rm)? {
+    // The nodes a child that lost one kept, as its marks count them.
+    let kept_of = |c: Child| c.dirty.then(|| marks[c.base..c.base + words(c.span)].iter().map(|w| w.count_ones() as usize).sum());
+    Ok(Some(match kept_described(lim, tdd, t, own, (lm, kept_of(left)), (rm, kept_of(right)))? {
         Some((d, dead)) => Kept::Described(d, dead),
         None => Kept::Stored(level.store_room(lim)?),
     }))
@@ -910,16 +912,24 @@ pub(super) fn keep_marked(nodes: &mut Vec<EncodedNode>, own: &[u64]) {
 
 /// What a prune leaves of level `t`, held as the description of its pairs,
 /// as one: its marked nodes in their order, each with its pairs, whose
-/// child slots move through `left` and `right`, the new indices of the
-/// children that lost a node, when what is left is affine in a mixed radix
-/// ([`ImplicitLevel::pruned`](crate::diagram::ImplicitLevel)). The new
-/// description implies the nodes left, their ranges from the start of the
-/// arena, and the arena keeps its length, as a written one keeps the pairs
-/// of the nodes the prune drops until a sweep.
+/// child slots move through `left.0` and `right.0`, the new indices of the
+/// children that lost a node (`left.1` and `right.1` the nodes each kept),
+/// when what is left is affine in a mixed radix. The new description
+/// implies the nodes left, their ranges from the start of the arena, and
+/// the arena keeps its length, as a written one keeps the pairs of the
+/// nodes the prune drops until a sweep.
+///
+/// Where each side is one no drop of nodes bends, its slot moved by no node
+/// digit or renumbered in the order of the pairs' positions, or the prune
+/// keeps a box of the description and renumbers each child it shrinks in an
+/// order the box's digits count, the new description is derived from the
+/// old one, a pair of neither read ([`ImplicitLevel::kept_any`],
+/// [`ImplicitLevel::kept_box`]); otherwise it is read off the moved pairs
+/// and checked at every one of them
+/// ([`ImplicitLevel::pruned`](crate::diagram::ImplicitLevel)).
 ///
 /// Returns the description with the pairs of the nodes dropped, or `None`
-/// when what is left is not affine, or below the floor. Checks every pair
-/// left, and writes none.
+/// when what is left is not affine, or below the floor. Writes no pair.
 ///
 /// # Errors
 ///
@@ -930,12 +940,10 @@ fn kept_described(
     tdd: &Tdd,
     t: VtreeIdx,
     own: &[u64],
-    left: Option<&[u32]>,
-    right: Option<&[u32]>,
+    left: (Option<&[u32]>, Option<usize>),
+    right: (Option<&[u32]>, Option<usize>),
 ) -> Result<Option<(ImplicitLevel, usize)>, OperationError> {
     let (lc, rc) = tdd.vtree.children(t);
-    let left = moved(tdd.levels[lc.idx()].child_decoder(), left);
-    let right = moved(tdd.levels[rc.idx()].child_decoder(), right);
     let level = &tdd.levels[t.idx()];
     let d = level.pairs.implicit().expect("a description is kept as one");
     let k = d.pairs_per_node();
@@ -949,8 +957,33 @@ fn kept_described(
     // Below 2^31 pairs the description implies the nodes, node `i` of the
     // description being node `i` of the level.
     debug_assert!(level.implied_by().is_some());
-    let mut select = Select::new(own);
-    let Some(left_of) = d.pruned(lim, nodes, |j| select.nth(j), || marked(own), left, right)? else { return Ok(None) };
+    // A child's slots are its node indices unless it is marginal, whose
+    // renumbering moves value slots; the derivation reads node indices.
+    let kept = |c: VtreeIdx, n: Option<usize>| match n {
+        None => Some(ChildKept::Whole),
+        Some(n) => (!tdd.levels[c.idx()].child_decoder().is_marginal()).then_some(ChildKept::Renumbered(n)),
+    };
+    let derived = match (kept(lc, left.1), kept(rc, right.1)) {
+        (Some(l), Some(r)) => d.kept_any(nodes, l, r).or_else(|| d.kept_box(own, nodes, l, r)),
+        _ => None,
+    };
+    let fitted = || {
+        let left = moved(tdd.levels[lc.idx()].child_decoder(), left.0);
+        let right = moved(tdd.levels[rc.idx()].child_decoder(), right.0);
+        let mut select = Select::new(own);
+        d.pruned(lim, nodes, |j| select.nth(j), || marked(own), left, right)
+    };
+    #[cfg(debug_assertions)]
+    if derived.is_some() && let Ok(fit) = fitted() {
+        assert!(fit == derived, "a derived description differs from the fitted one");
+    }
+    let left_of = match derived {
+        Some(derived) => derived,
+        None => match fitted()? {
+            Some(fit) => fit,
+            None => return Ok(None),
+        },
+    };
     // Each node the prune drops held its `k` pairs in the arena, or, at
     // one pair a node, its pair inline.
     let dead = if k >= 2 { (d.nodes() - nodes) * k } else { 0 };

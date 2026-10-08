@@ -19,7 +19,9 @@ use super::{LevelState, TddLevel};
 mod storage;
 mod iter;
 mod close;
+mod kept;
 pub(crate) use close::StoreRoom;
+pub(crate) use kept::ChildKept;
 pub(crate) use storage::{kept_capacity, PairArena};
 pub(crate) use iter::{NodeCursor, Places};
 

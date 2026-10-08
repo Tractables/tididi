@@ -504,6 +504,214 @@ fn what_a_prune_leaves_is_read_off_the_description() {
     assert!(fitted > 100 && diagonals > 10, "{fitted} fitted, {diagonals} on a diagonal");
 }
 
+/// What a prune keeps of a box of an affine level, each child kept whole or
+/// renumbered onto exactly the slots the kept pairs name, is derived from
+/// the description as the fit of the pairs written out and moved gives it;
+/// on a kept set that is no box, or a child that kept a slot no kept pair
+/// names, the derivation gives nothing, and never another description. At
+/// one pair a node and more, the nodes kept in a box of random ranges of
+/// the node digits, at random, or all.
+#[test]
+fn what_a_prune_keeps_of_a_box_is_derived_from_the_description() {
+    let mut rng = Lcg::new(0x1d1e_0006);
+    let (mut derived, mut renumbered, mut one_pair) = (0, 0, 0);
+    for round in 0..1500 {
+        let pairs = random_affine(&mut rng, 36, 4, 1);
+        let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
+        let n = d.nodes();
+        let node_digits = &d.digits()[d.within()..];
+        let in_box = round % 3 != 1;
+        let kept: Vec<usize> = match round % 3 {
+            0 => {
+                let ranges: Vec<(usize, usize)> = node_digits.iter().map(|g| {
+                    let a = rng.below(g.radix as u64) as usize;
+                    (a, a + rng.below((g.radix - a) as u64) as usize)
+                }).collect();
+                (0..n).filter(|&i| ranges.iter().enumerate().all(|(j, &(a, b))| (a..=b).contains(&node_digit(&d, i, j)))).collect()
+            }
+            1 => (0..n).filter(|_| rng.below(4) != 0).collect(),
+            _ => (0..n).collect(),
+        };
+        if kept.is_empty() {
+            continue;
+        }
+        let mut own = vec![0u64; n.div_ceil(64)];
+        for &i in &kept {
+            own[i >> 6] |= 1 << (i & 63);
+        }
+        // A side is kept whole, renumbered onto the slots the kept pairs
+        // name, or renumbered onto those and one more, a slot another
+        // reference keeps.
+        let mut child = |side: fn(&(i64, i64)) -> i64| -> (ChildKept, Option<Vec<i64>>, bool) {
+            let how = rng.below(5);
+            if how < 2 {
+                return (ChildKept::Whole, None, false);
+            }
+            let named: std::collections::BTreeSet<i64> = kept.iter().flat_map(|&i| pairs[i].iter().map(side)).collect();
+            let top = named.iter().copied().max().unwrap() + 2;
+            let extra = (how == 4).then(|| (0..=top).find(|x| !named.contains(x)).unwrap());
+            let mut rank = vec![-1i64; top as usize + 1];
+            let mut next = 0;
+            for (x, r) in rank.iter_mut().enumerate() {
+                if named.contains(&(x as i64)) || extra == Some(x as i64) {
+                    *r = next;
+                    next += 1;
+                }
+            }
+            (ChildKept::Renumbered(next as usize), Some(rank), extra.is_some())
+        };
+        let ((lk, left, l_extra), (rk, right, r_extra)) = (child(|p| p.0), child(|p| p.1));
+        let moved = |rank: &Option<Vec<i64>>, x: i64| rank.as_ref().map_or(x, |r| r[x as usize]);
+        let oracle: Pairs = kept.iter().map(|&i| pairs[i].iter().map(|&(l, r)| (moved(&left, l), moved(&right, r))).collect()).collect();
+        let fitted = ImplicitLevel::fit(&level_of(&oracle));
+        let got = d.kept_box(&own, kept.len(), lk, rk);
+        if let Some(g) = &got {
+            assert_eq!(got, fitted, "round {round}: a derived description differs from the fit");
+            assert_eq!(described(g), oracle);
+            derived += 1;
+            renumbered += usize::from(lk != ChildKept::Whole || rk != ChildKept::Whole);
+            one_pair += usize::from(d.pairs_per_node() == 1);
+        }
+        // A box with both children whole is always derived; a child that
+        // kept a slot no kept pair names never is.
+        if in_box && lk == ChildKept::Whole && rk == ChildKept::Whole {
+            assert!(got.is_some(), "round {round}: a box of whole children was not derived");
+        }
+        if l_extra || r_extra {
+            assert!(got.is_none(), "round {round}: derived past a slot another reference keeps");
+        }
+    }
+    assert!(derived > 300 && renumbered > 100 && one_pair > 50, "{derived} derived, {renumbered} renumbered, {one_pair} at one pair a node");
+}
+
+/// What a prune keeps of any nodes of an affine level is derived from the
+/// description, as the fit of the pairs written out and moved gives it,
+/// where each side is one no drop bends: moved by no node digit, or
+/// renumbered onto exactly the slots the kept pairs name with its slot
+/// strictly monotone in the pair's position; and nothing is derived past a
+/// slot a child keeps that no kept pair names.
+#[test]
+fn what_a_prune_keeps_of_any_nodes_is_derived_where_no_drop_bends_a_side() {
+    fn factors(rng: &mut Lcg, mut n: usize) -> Vec<usize> {
+        let mut out = Vec::new();
+        while n > 1 {
+            let divisors: Vec<usize> = (2..=n).filter(|d| n.is_multiple_of(*d)).collect();
+            let d = divisors[rng.below(divisors.len() as u64) as usize];
+            out.push(d);
+            n /= d;
+        }
+        out
+    }
+    let mut rng = Lcg::new(0x1d1e_0007);
+    let (mut derived, mut bent) = (0, 0);
+    for round in 0..2000 {
+        let (n, k) = (2 + rng.below(35) as usize, 1 + rng.below(4) as usize);
+        let (within, across) = (factors(&mut rng, k), factors(&mut rng, n));
+        // The left slot rising or falling with the position, or at random;
+        // the right moved by no node digit, or at random.
+        let monotone = rng.below(3) != 0;
+        let (sign, scale) = (if rng.below(2) == 0 { 1 } else { -1 }, 1 + rng.below(3) as i64);
+        let constant = rng.below(3) != 0;
+        let mut unit = 1i64;
+        let mut digit = |radix: usize, node: bool, rng: &mut Lcg| {
+            let l = if monotone { sign * scale * unit } else { rng.below(7) as i64 - 3 };
+            let r = if constant && node { 0 } else { rng.below(7) as i64 - 3 };
+            unit *= radix as i64;
+            (radix, (l, r))
+        };
+        let within: Vec<_> = within.into_iter().map(|r| digit(r, false, &mut rng)).collect();
+        let across: Vec<_> = across.into_iter().map(|r| digit(r, true, &mut rng)).collect();
+        let raw = affine_of(&within, &across);
+        let low = |side: fn(&(i64, i64)) -> i64| raw.iter().flatten().map(side).min().unwrap();
+        let (bl, br) = (low(|p| p.0), low(|p| p.1));
+        let pairs: Pairs = raw.iter().map(|node| node.iter().map(|&(l, r)| (l - bl, r - br)).collect()).collect();
+        let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
+        let kept: Vec<usize> = (0..n).filter(|_| rng.below(4) != 0).collect();
+        if kept.is_empty() {
+            continue;
+        }
+        let mut child = |side: fn(&(i64, i64)) -> i64| -> (ChildKept, Option<Vec<i64>>, bool) {
+            let how = rng.below(6);
+            if how < 2 {
+                return (ChildKept::Whole, None, false);
+            }
+            let named: std::collections::BTreeSet<i64> = kept.iter().flat_map(|&i| pairs[i].iter().map(side)).collect();
+            let top = named.iter().copied().max().unwrap() + 2;
+            let extra = (how == 5).then(|| (0..=top).find(|x| !named.contains(x)).unwrap());
+            let mut rank = vec![-1i64; top as usize + 1];
+            let mut next = 0;
+            for (x, r) in rank.iter_mut().enumerate() {
+                if named.contains(&(x as i64)) || extra == Some(x as i64) {
+                    *r = next;
+                    next += 1;
+                }
+            }
+            (ChildKept::Renumbered(next as usize), Some(rank), extra.is_some())
+        };
+        let ((lk, left, l_extra), (rk, right, r_extra)) = (child(|p| p.0), child(|p| p.1));
+        let moved = |rank: &Option<Vec<i64>>, x: i64| rank.as_ref().map_or(x, |r| r[x as usize]);
+        let oracle: Pairs = kept.iter().map(|&i| pairs[i].iter().map(|&(l, r)| (moved(&left, l), moved(&right, r))).collect()).collect();
+        let got = d.kept_any(kept.len(), lk, rk);
+        if let Some(got) = &got {
+            assert_eq!(Some(got), ImplicitLevel::fit(&level_of(&oracle)).as_ref(), "round {round}: a derived description differs from the fit");
+            assert_eq!(&described(got), &oracle);
+            derived += 1;
+            bent += usize::from(kept.len() < n && lk != ChildKept::Whole && d.digits()[d.within()..].iter().any(|g| g.left != 0));
+        }
+        // A renumbered constant side needs its place digits one to one; at
+        // one pair a node it has none.
+        if monotone && lk != ChildKept::Whole && !l_extra && constant && (rk == ChildKept::Whole || k == 1 && !r_extra) {
+            assert!(got.is_some(), "round {round}: a rising side and a constant one were not derived");
+        }
+        if l_extra && d.digits()[d.within()..].iter().any(|g| g.left != 0) || r_extra && d.digits()[d.within()..].iter().any(|g| g.right != 0) {
+            assert!(got.is_none(), "round {round}: derived past a slot another reference keeps");
+        }
+    }
+    assert!(derived > 400 && bent > 100, "{derived} derived, {bent} past dropped nodes on a moving side");
+}
+
+/// The derivation reads a box whose nodes are not consecutive, a run of
+/// nodes a slower digit's step apart, and refuses one node missing from
+/// any run; a renumbered side whose digits name a slot twice is refused,
+/// one whose steps fall counts down.
+#[test]
+fn a_kept_box_is_read_in_runs() {
+    // Nodes 0..24 numbered by digits of radices 2, 3, 4; one pair a node,
+    // what a unit of each adds to the slots (1, 0), (0, 1) and (2, 5).
+    let pairs = affine_of(&[], &[(2, (1, 0)), (3, (0, 1)), (4, (2, 5))]);
+    let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
+    let box_of = |a: [std::ops::RangeInclusive<usize>; 3]| -> Vec<usize> {
+        (0..24).filter(|&i| a[0].contains(&(i % 2)) && a[1].contains(&(i / 2 % 3)) && a[2].contains(&(i / 6))).collect()
+    };
+    let own_of = |kept: &[usize]| vec![kept.iter().fold(0u64, |w, &i| w | 1 << i)];
+    let kept = box_of([0..=1, 1..=2, 1..=3]);
+    let got = d.kept_box(&own_of(&kept), kept.len(), ChildKept::Whole, ChildKept::Whole).unwrap();
+    let oracle: Pairs = kept.iter().map(|&i| pairs[i].clone()).collect();
+    assert_eq!(described(&got), oracle);
+    // A node missing from the last run.
+    let mut holed = kept.clone();
+    holed.pop();
+    assert_eq!(d.kept_box(&own_of(&holed), holed.len(), ChildKept::Whole, ChildKept::Whole), None);
+    // As many nodes as the box, one of them outside it.
+    let mut shifted = holed.clone();
+    shifted.push(0);
+    shifted.sort_unstable();
+    assert_eq!(d.kept_box(&own_of(&shifted), shifted.len(), ChildKept::Whole, ChildKept::Whole), None);
+    // The left slots a + 2·b over a of radix 3 and b of radix 2 name slot 2
+    // twice, five slots in all: refused, by the count or by the steps.
+    let twice = affine_of(&[], &[(3, (1, 0)), (2, (2, 1))]);
+    let d2 = ImplicitLevel::fit(&level_of(&twice)).unwrap();
+    for named in [5, 6] {
+        assert_eq!(d2.kept_box(&[0b11_1111], 6, ChildKept::Renumbered(named), ChildKept::Whole), None);
+    }
+    // A falling step counts down: the slots 9 - 3·a over a = 0..2 are
+    // renumbered 2, 1, 0.
+    let pairs = affine_of(&[], &[(3, (-3, 1))]).into_iter().map(|n| n.into_iter().map(|(l, r)| (l + 9, r)).collect()).collect::<Pairs>();
+    let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
+    let got = d.kept_box(&[0b111], 3, ChildKept::Renumbered(3), ChildKept::Whole).unwrap();
+    assert_eq!(described(&got), vec![vec![(2, 0)], vec![(1, 1)], vec![(0, 2)]]);
+}
+
 /// An arena a prune kept described keeps the length and capacity the
 /// written one keeps, reads its nodes' pairs from the new description, is
 /// copied at its length, and drops the slots past them on a sweep's
