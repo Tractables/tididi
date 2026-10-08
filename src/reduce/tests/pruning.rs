@@ -523,3 +523,42 @@ fn a_prune_refused_the_room_of_an_implicit_level_changes_nothing() {
         }
     });
 }
+
+/// A prune that drops node 0 of an implicit level, and with it the nodes
+/// of the level below that only node 0 names, and leaves too few pairs to
+/// describe stores what is left. The slots of the dropped nodes in the
+/// stored arena hold node 0's pair as described: moved through the
+/// renumbering of the level below, it would name a node the prune dropped.
+/// Both walks, against the prune of the level's stored copy.
+#[test]
+fn a_prune_that_drops_node_0_of_an_implicit_level_names_no_dropped_node() {
+    use crate::diagram::{ChildPair, NodeIdx, TddNodeId, NEG_LEAF_IDX, POS_LEAF_IDX};
+    use crate::test_helpers::{sorted_pairs, with_stored_copy, x_decision_diagram};
+    for below_root in [false, true] {
+        let scope = || if below_root { PruneScope::BelowRoot } else { PruneScope::Whole };
+        // 96 pairs at v. The output is a second root node, which names nodes
+        // 1 ..= 15 only: 60 pairs, fewer than the floor, and too few dropped
+        // for the arena to be swept. The first still names every node, as
+        // the walk from the root requires.
+        let (mut implicit, v, w) = x_decision_diagram(24);
+        assert!(implicit.levels[v.idx()].implicit().is_some(), "the fixture's level is implicit");
+        let r = implicit.vtree.root();
+        let pairs: Vec<ChildPair> = (1..=15).map(|i| ChildPair::new(POS_LEAF_IDX, NodeIdx(i))).collect();
+        implicit.levels[r.idx()].push_internal_node(&pairs);
+        implicit.output = TddNodeId { vtree: r, local: NodeIdx(1) };
+        let mut stored = with_stored_copy(&implicit, v);
+        let eng = crate::Engine::new();
+        prune_unreachable(&eng, &mut implicit, scope()).unwrap();
+        prune_unreachable(&eng, &mut stored, scope()).unwrap();
+        assert_eq!(sorted_pairs(&implicit), sorted_pairs(&stored));
+        assert_eq!(implicit.model_count().unwrap(), stored.model_count().unwrap());
+        let (level, below) = (&implicit.levels[v.idx()], implicit.levels[w.idx()].nodes().len());
+        assert_eq!((level.nodes().len(), below), (15, 60));
+        let arena = level.pairs.stored().expect("what is left is stored");
+        assert_eq!(arena.len(), 96, "the arena keeps its length");
+        for p in arena {
+            assert!([POS_LEAF_IDX.0, NEG_LEAF_IDX.0].contains(&p.left.raw()), "a pair names a leaf label on the left");
+            assert!((p.right.raw() as usize) < below, "a pair names a node the prune dropped");
+        }
+    }
+}
