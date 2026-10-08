@@ -51,6 +51,7 @@ one assignment costs and when the edit applies.
 | How many assignments satisfy a conjunction, without building it? | [`Engine::and_model_count`](crate::Engine::and_model_count) |
 | What is the sum of two summed-out diagrams' products of counts, or one's sum of squares? | [`Engine::marginal_product_count`](crate::Engine::marginal_product_count) |
 | How many distinct choices are possible for selected variables? | [`Tdd::projected_model_count`](crate::Tdd::projected_model_count) |
+| Which assignments to one subtree's variables extend to at least `m` distinct assignments of its sibling's? | [`Engine::at_least_distinct`](crate::Engine::at_least_distinct) |
 | Which choices are forced? | [`Tdd::implied_literals`](crate::Tdd::implied_literals) |
 | Which variables affect the function? | [`Tdd::support`](crate::Tdd::support) |
 | Do two functions agree? Does one imply the other? | [`Tdd::equivalent`](crate::Tdd::equivalent), [`Tdd::implies`](crate::Tdd::implies) |
@@ -77,6 +78,10 @@ function and documents how that affects counting.
 [`Tdd::exists_vars`](crate::Tdd::exists_vars) eliminates variables by keeping
 assignments that have a satisfying extension; [`and_exists`](crate::and_exists)
 combines this with conjunction.
+[`Tdd::project_to_vars`](crate::Tdd::project_to_vars) also drops the eliminated
+variables from the vtree, the inverse of an embedding, and
+[`Engine::project_to_subtree`](crate::Engine::project_to_subtree) keeps one
+subtree's variables, reading only the levels above it.
 [`Tdd::rename_vars`](crate::Tdd::rename_vars) renames variables simultaneously,
 while [`Tdd::substitute`](crate::Tdd::substitute) replaces them with functions.
 The [reachability example](crate::guide::examples::reachability) uses
@@ -91,6 +96,12 @@ quantity, such as the [minimum configuration cost](crate::guide::examples::optim
 An algebra that keeps its own storage, such as fixed-width values in one flat
 buffer per level, implements [`ColumnAlgebra`](crate::diagram::ColumnAlgebra) and
 runs through [`Tdd::evaluate_columns`](crate::Tdd::evaluate_columns).
+[`Tdd::evaluate_at`](crate::Tdd::evaluate_at) and
+[`Tdd::evaluate_columns_at`](crate::Tdd::evaluate_columns_at) give the values of
+one level's nodes over the subtree under it. An algebra that values counts
+([`EvalAlgebra::count`](crate::diagram::EvalAlgebra::count)) also evaluates a
+diagram whose levels were summed out, such as
+[`Engine::and_marginalizing`](crate::Engine::and_marginalizing)'s result.
 For weights attached to the diagram, use [`Tdd::set_weights`](crate::Tdd::set_weights)
 and [`Tdd::weighted_value`](crate::Tdd::weighted_value).
 
@@ -103,6 +114,9 @@ with [`write_tdd`](crate::io::write_tdd), restores them with
 [`write_tdd_binary`](crate::io::write_tdd_binary) and
 [`read_tdd_binary`](crate::io::read_tdd_binary) are the compact binary
 counterparts, for stores where bytes and read time matter.
+[`Tdd::attach_level_counts`](crate::Tdd::attach_level_counts) keeps every
+level's model counts with a diagram, so later counts, counts of its
+conjunctions and the binary format reuse them.
 
 Render Graphviz text with [`tdd_to_dot`](crate::io::tdd_to_dot) or
 [`vtree_to_dot`](crate::io::vtree_to_dot); [`Tdd::level_sizes_to_dot`](crate::Tdd::level_sizes_to_dot)
@@ -141,6 +155,8 @@ For more specialized control:
 | Place a diagram with summed-out levels on a larger vtree | [`Engine::embed_over`](crate::Engine::embed_over) |
 | Conjoin or place a diagram by moving its levels, getting it back when refused | [`Engine::and_restoring`](crate::Engine::and_restoring), [`Engine::embed_moving`](crate::Engine::embed_moving) |
 | Conjoin two diagrams placed on a larger vtree, without building the levels the placements add | [`Engine::and_onto`](crate::Engine::and_onto) |
+| Place or conjoin where the larger vtree holds a subtree with its children swapped | [`Engine::embed_moving_mirrored`](crate::Engine::embed_moving_mirrored), [`Engine::and_onto_mirrored`](crate::Engine::and_onto_mirrored) |
+| Pair each node of a level with a code on variables of its own | [`Engine::tag_level`](crate::Engine::tag_level) |
 | Assemble levels and pairs directly | [`TddBuilder`](crate::diagram::TddBuilder), started with [`Tdd::builder`](crate::Tdd::builder) |
 
 The [data model](crate::guide::model) explains levels, pairs and determinism;
