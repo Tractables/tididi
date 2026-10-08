@@ -8,7 +8,6 @@ use std::sync::Arc;
 
 use crate::Engine;
 use crate::diagram::{ChildPair, ImplicitLevel, NodeIdx, Tdd, TddLevel, TddNodeId, FLOOR, NEG_LEAF_IDX, POS_LEAF_IDX};
-use crate::limits::Limits;
 use crate::vtree::{Vtree, VtreeIdx};
 
 /// A diagram over the right-linear vtree of four variables, `r = (x1, v)`,
@@ -50,11 +49,10 @@ pub(crate) fn x_decision_diagram(n: usize) -> (Tdd, VtreeIdx, VtreeIdx) {
 pub(crate) fn describe(level: &mut TddLevel) {
     let d = ImplicitLevel::fit(level).expect("an affine level");
     let capacity = level.pairs.capacity();
-    level.nodes.clear();
+    let node_capacity = level.nodes.imply();
     level.ranges.clear();
     level.pairs.clear();
-    d.write_nodes(&Limits::new(), level).unwrap();
-    level.pairs.describe(d, capacity);
+    level.pairs.describe(d, capacity, node_capacity);
 }
 
 /// The stored copy of `level`: its pairs written where its nodes' ranges
@@ -155,9 +153,9 @@ pub(crate) fn same_levels(out: &Tdd, oracle: &Tdd) {
     for (a, b) in out.levels.iter().zip(oracle.levels.iter()) {
         assert!(b.pairs.implicit().is_none(), "the stored route made a level implicit");
         assert_eq!(a.is_marginal(), b.is_marginal());
-        assert_eq!(a.nodes.len(), b.nodes.len(), "the implicit route kept other nodes");
+        assert_eq!(a.nodes().len(), b.nodes().len(), "the implicit route kept other nodes");
         if !a.is_marginal() {
-            for i in 0..a.nodes.len() {
+            for i in 0..a.nodes().len() {
                 assert_eq!(a.pair_count_at(i), b.pair_count_at(i));
                 assert_eq!(a.pairs_read(i, &mut buf), b.pairs_vec(i), "a node has other pairs");
             }
@@ -225,7 +223,7 @@ pub(crate) fn sorted_pairs(tdd: &Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
             if level.is_marginal() {
                 return Vec::new();
             }
-            (0..level.nodes.len())
+            (0..level.nodes().len())
                 .map(|i| {
                     let mut pairs: Vec<(u32, u32)> = level.pairs_iter_of_idx(i).map(|p| (p.left.raw(), p.right.raw())).collect();
                     pairs.sort_unstable();

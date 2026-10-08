@@ -174,7 +174,7 @@ fn refute(pairs: &[ChildPair], want: &mut [bool; 2], buf: &mut [bool], children:
 #[inline(never)]
 fn refute_generated(level: &TddLevel, want: &mut [bool; 2], buf: &mut [bool], children: [VtreeIdx; 2]) {
     let mut pairs = Vec::new();
-    for i in 0..level.nodes.len() {
+    for i in 0..level.nodes().len() {
         if refute(level.pairs_read(i, &mut pairs), want, buf, children) { return; }
     }
 }

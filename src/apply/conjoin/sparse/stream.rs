@@ -137,12 +137,6 @@ impl<'a> Oriented<'a> {
     }
 }
 
-/// Every pair of a level with the index of the node holding it.
-fn pairs_with_parent(level: &TddLevel) -> impl Iterator<Item = (u32, ChildPair)> + Clone + '_ {
-    (0..level.nodes().len())
-        .flat_map(|parent| level.pairs_iter_of_idx(parent).map(move |pair| (parent as u32, pair)))
-}
-
 /// A histogram of `keys` over `n` keys, counted as `u32`.
 fn histogram(lim: &Limits, n: usize, keys: impl Iterator<Item = u32>) -> Result<Vec<u32>, OperationError> {
     let mut counts = Vec::new();
@@ -200,8 +194,8 @@ struct PairPricing {
 
 impl PairPricing {
     fn new(lim: &Limits, view: &Oriented<'_>, input: &StreamInput<'_>) -> Result<Self, OperationError> {
-        let q_by_cl = histogram(lim, view.q.cl, pairs_with_parent(view.q_c).map(|(_, pair)| pair.left.0))?;
-        let q_by_cr = histogram(lim, view.q.cr, pairs_with_parent(view.q_c).map(|(_, pair)| pair.right.0))?;
+        let q_by_cl = histogram(lim, view.q.cl, view.q_c.pairs_with_parent().map(|(_, pair)| pair.left.0))?;
+        let q_by_cr = histogram(lim, view.q.cr, view.q_c.pairs_with_parent().map(|(_, pair)| pair.right.0))?;
         let (cl_len, cl_reach) = row_weights(lim, view, input.cl.products, view.p.cl, &q_by_cl)?;
         let (cr_len, cr_reach) = row_weights(lim, view, input.cr.products, view.p.cr, &q_by_cr)?;
         Ok(PairPricing {
@@ -231,13 +225,13 @@ pub(crate) fn price(lim: &Limits, input: &StreamInput<'_>, pivot: Operand) -> Re
     let view = Oriented::new(input, pivot);
     // The weighing: each root pair of `P` walks the live products of its
     // `o`-side child into `Q`'s root pairs by their `o`-side child.
-    let q_by_o = histogram(lim, view.q.o, pairs_with_parent(view.q_root).map(|(_, pair)| view.at_root(&pair).1))?;
+    let q_by_o = histogram(lim, view.q.o, view.q_root.pairs_with_parent().map(|(_, pair)| view.at_root(&pair).1))?;
     let (_, o_reach) = row_weights(lim, &view, input.o.products, view.p.o, &q_by_o)?;
-    let weigh = pairs_with_parent(view.p_root)
+    let weigh = view.p_root.pairs_with_parent()
         .map(|(_, pair)| 1 + u128::from(o_reach[view.at_root(&pair).1 as usize]))
         .sum();
     let pricing = PairPricing::new(lim, &view, input)?;
-    let walk = pairs_with_parent(view.p_c)
+    let walk = view.p_c.pairs_with_parent()
         .map(|(_, pair)| pricing.choose(pair.left.0, pair.right.0).1)
         .sum();
     Ok(StreamCost { pivot, weigh, walk })
@@ -300,7 +294,7 @@ pub(crate) fn candidate_bound(
     let walk = |operand: Operand, on_left: bool| {
         let (level, widths) = match operand { Operand::F => (f, f_widths), Operand::G => (g, g_widths) };
         let (width, products) = if on_left { (widths.cl, left) } else { (widths.cr, right) };
-        let side = pairs_with_parent(level).map(|(_, pair)| if on_left { pair.left.0 } else { pair.right.0 });
+        let side = level.pairs_with_parent().map(|(_, pair)| if on_left { pair.left.0 } else { pair.right.0 });
         let counts = histogram(lim, width, side)?;
         let node = |e: &ProductEntry| match operand { Operand::F => e.f_idx.0, Operand::G => e.g_idx.0 };
         Ok::<u128, OperationError>(products.iter().map(|e| u128::from(counts[node(e) as usize])).sum())
@@ -506,11 +500,11 @@ fn count_indirect(
     // The top-down side: `P`'s root pairs by their `c` child, the live
     // products of `o` by their `P` node, and `Q`'s root pairs by their `o`
     // child.
-    let p_root = grouped(lim, p.c, pairs_with_parent(view.p_root), |(_, pair)| {
+    let p_root = grouped(lim, p.c, view.p_root.pairs_with_parent(), |(_, pair)| {
         let (at_c, at_o) = view.at_root(&pair);
         (at_c as usize, at_o)
     })?;
-    let q_root = grouped(lim, q.o, pairs_with_parent(view.q_root), |(_, pair)| {
+    let q_root = grouped(lim, q.o, view.q_root.pairs_with_parent(), |(_, pair)| {
         let (at_c, at_o) = view.at_root(&pair);
         (at_o as usize, at_c)
     })?;
@@ -520,8 +514,8 @@ fn count_indirect(
     // child.
     let cl_rows = rows_by_p(lim, &view, input.cl.products, p.cl)?;
     let cr_rows = rows_by_p(lim, &view, input.cr.products, p.cr)?;
-    let q_by_cl = grouped(lim, q.cl, pairs_with_parent(view.q_c), |(node, pair)| (pair.left.0 as usize, (node, pair.right.0)))?;
-    let q_by_cr = grouped(lim, q.cr, pairs_with_parent(view.q_c), |(node, pair)| (pair.right.0 as usize, (node, pair.left.0)))?;
+    let q_by_cl = grouped(lim, q.cl, view.q_c.pairs_with_parent(), |(node, pair)| (pair.left.0 as usize, (node, pair.right.0)))?;
+    let q_by_cr = grouped(lim, q.cr, view.q_c.pairs_with_parent(), |(node, pair)| (pair.right.0 as usize, (node, pair.left.0)))?;
     let mut probe_cl: Probe<u32> = Probe::new(lim, &view, input.cl, p.cl, q.cl)?;
     let mut probe_cr: Probe<u32> = Probe::new(lim, &view, input.cr, p.cr, q.cr)?;
 
@@ -735,7 +729,7 @@ impl Owners {
         probe: &Probe<u64>,
         fold: bool,
     ) -> Result<Self, OperationError> {
-        let pairs = pairs_with_parent(view.q_c).map(move |(node, pair)| {
+        let pairs = view.q_c.pairs_with_parent().map(move |(node, pair)| {
             let (this, other) = if left { (pair.left.0, pair.right.0) } else { (pair.right.0, pair.left.0) };
             (this, node, other)
         });
@@ -930,11 +924,11 @@ fn count_dense<W: Weight>(
 
     // The top-down side, as the indirect walk has it, with each `o`
     // product's count beside its `Q` node.
-    let p_root = grouped(lim, p.c, pairs_with_parent(view.p_root), |(_, pair)| {
+    let p_root = grouped(lim, p.c, view.p_root.pairs_with_parent(), |(_, pair)| {
         let (at_c, at_o) = view.at_root(&pair);
         (at_c as usize, at_o)
     })?;
-    let q_root = grouped(lim, q.o, pairs_with_parent(view.q_root), |(_, pair)| {
+    let q_root = grouped(lim, q.o, view.q_root.pairs_with_parent(), |(_, pair)| {
         let (at_c, at_o) = view.at_root(&pair);
         (at_o as usize, at_c)
     })?;
@@ -950,7 +944,7 @@ fn count_dense<W: Weight>(
 
     // Which walks and probes run decides what each side builds.
     let (mut by_left, mut by_right) = (false, false);
-    for (_, pair) in pairs_with_parent(view.p_c) {
+    for (_, pair) in view.p_c.pairs_with_parent() {
         match pricing.choose(pair.left.0, pair.right.0).0 {
             Direction::ByLeft => by_left = true,
             Direction::ByRight => by_right = true,

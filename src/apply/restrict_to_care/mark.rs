@@ -270,7 +270,7 @@ fn mark_rows<T: Clone>(eng: &Engine, f: &Tdd, value: T) -> Result<Vec<Vec<T>>, O
     eng.limits().reserve_exact(&mut rows, f.levels.len())?;
     for level in &f.levels {
         let mut row = Vec::new();
-        eng.limits().try_resize(&mut row, level.nodes.len(), value.clone())?;
+        eng.limits().try_resize(&mut row, level.nodes().len(), value.clone())?;
         rows.push(row);
     }
     Ok(rows)

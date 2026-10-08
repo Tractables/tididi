@@ -21,7 +21,7 @@ pub(super) fn drop_dead_children(f: &mut Tdd, g: &mut Tdd, shape: LevelShape) {
 fn drop_dead_operand_level(level: &mut crate::diagram::TddLevel) {
     // Arenas that together fit one `Vec` minimum allocation return no slab the
     // output reserve could use; exact capacities, so the test never misfires.
-    let bytes = level.nodes.capacity() * std::mem::size_of::<EncodedNode>()
+    let bytes = level.node_capacity() * std::mem::size_of::<EncodedNode>()
         + level.pairs.capacity() * std::mem::size_of::<ChildPair>()
         + level.ranges.capacity() * std::mem::size_of::<crate::diagram::PairRange>();
     // `dead_pairs` counts garbage in `pairs`, so it is zeroed only where
@@ -84,7 +84,7 @@ pub(super) fn finalize_level(
     products.arena.set_dense(t_idx, output_grid_base);
     // And so a level with a node in every cell is complete.
     if !levels[t_idx].is_marginal() {
-        products.note_built(t_idx, shape.f.here, shape.g.here, levels[t_idx].nodes.len());
+        products.note_built(t_idx, shape.f.here, shape.g.here, levels[t_idx].nodes().len());
     }
 
     levels[t_idx].shrink_arrays();

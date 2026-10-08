@@ -21,7 +21,7 @@ impl PairMarks {
         eng.limits().reserve_exact(&mut small, f.levels.len())?;
         for level in &f.levels {
             let mut row = Vec::new();
-            eng.limits().try_resize(&mut row, level.nodes.len(), 0)?;
+            eng.limits().try_resize(&mut row, level.nodes().len(), 0)?;
             small.push(row);
         }
         Ok(Self { small, wide: FxHashMap::default(), all: false })

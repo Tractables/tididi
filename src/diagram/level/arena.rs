@@ -230,10 +230,10 @@ impl TddLevel {
     fn index_live_ranges(&mut self) -> Vec<u64> {
         let mut order: Vec<u64> = Vec::new();
         debug_assert!(
-            self.nodes.len() <= u32::MAX as usize,
+            self.nodes().len() <= u32::MAX as usize,
             "index_live_ranges: node index must fit the packed key's low half"
         );
-        for i in 0..self.nodes.len() {
+        for i in 0..self.nodes().len() {
             // Only a multi-pair node owns an arena slot; an inline node owns
             // none.
             let node = self.node(i);
@@ -281,12 +281,12 @@ impl TddLevel {
             let node_idx = key as u32 as usize;
             let start = (key >> 32) as usize;
             let len = self.pair_range_at(node_idx).len();
+            // An implicit level's nodes hold the leading ranges in order, so
+            // only a stored arena has ranges to slide, and nodes to repoint.
             if start > write {
-                // An implicit level's nodes hold the leading ranges in order,
-                // so only a stored arena has ranges to slide.
                 self.pairs.stored_mut().copy_within(start..start + len, write);
+                self.set_multi_start(node_idx, write);
             }
-            self.set_multi_start(node_idx, write);
             write += len;
         }
         self.pairs.truncate(write);
@@ -323,8 +323,8 @@ impl TddLevel {
         &mut self, growth: &G, pairs: &[ChildPair],
     ) -> Result<NodeIdx, OperationError> {
         self.store_if_implicit();
-        let idx = NodeIdx(self.nodes.len() as u32);
-        if self.nodes.len() == self.nodes.capacity() {
+        let idx = NodeIdx(self.nodes().len() as u32);
+        if self.nodes().len() == self.node_capacity() {
             growth.grow(self.nodes.stored_mut(), 1)?;
         }
         let node = if let [pair] = pairs {
@@ -366,8 +366,8 @@ impl TddLevel {
             debug_assert!(pairs.next().is_none(), "one pair");
             return self.push_node(growth, &[pair]);
         }
-        let idx = NodeIdx(self.nodes.len() as u32);
-        if self.nodes.len() == self.nodes.capacity() {
+        let idx = NodeIdx(self.nodes().len() as u32);
+        if self.nodes().len() == self.node_capacity() {
             growth.grow(self.nodes.stored_mut(), 1)?;
         }
         let arena = self.pairs.stored_mut();
@@ -403,8 +403,8 @@ impl TddLevel {
             lim.discard(pairs);
             return pushed;
         }
-        let idx = NodeIdx(self.nodes.len() as u32);
-        if self.nodes.len() == self.nodes.capacity() {
+        let idx = NodeIdx(self.nodes().len() as u32);
+        if self.nodes().len() == self.node_capacity() {
             lim.grow(self.nodes.stored_mut(), 1)?;
         }
         let len = pairs.len();
@@ -530,14 +530,16 @@ impl TddLevel {
         lim.reserve_exact(self.pairs.stored_mut(), pairs)
     }
 
-    /// The allocated bytes of the three structural arenas.
+    /// The allocated bytes of the three structural arenas: on an implicit
+    /// level, those its arenas would have.
     pub(crate) fn arena_capacity_bytes(&self) -> u64 {
-        self.nodes.charged_bytes() + self.pairs.charged_bytes() + self.ranges.charged_bytes()
+        let nodes = (self.node_capacity() as u64).saturating_mul(std::mem::size_of::<EncodedNode>() as u64);
+        nodes + self.pairs.charged_bytes() + self.ranges.charged_bytes()
     }
 
     /// Push a multi-pair node (fallible). Pairs are assumed already in `self.pairs`.
     ///
-    /// The new node's index is `self.nodes.len()` before the call; it is not
+    /// The new node's index is `self.nodes().len()` before the call; it is not
     /// returned, since the caller records it before the push can fail.
     ///
     /// The store with spare capacity and operands under 31 bits is inlined;
@@ -563,7 +565,7 @@ impl TddLevel {
             pair_len >= 2,
             "try_push_multi_by_range: pair_len=1 aliases multi_ranged encoding"
         );
-        if self.nodes.len() < self.nodes.capacity()
+        if self.nodes().len() < self.node_capacity()
             && pair_start < (1usize << 31)
             && pair_len < (1usize << 31)
         {

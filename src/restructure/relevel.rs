@@ -318,7 +318,7 @@ fn rebuild_with<W: Word>(
 /// into.
 fn field_bounds(old_v_level: &TddLevel, old_w_level: &TddLevel, dir: RotationKind, crossed: bool) -> [u32; 4] {
     let mut v_axis = 0u32;
-    for i in 0..old_v_level.nodes.len() {
+    for i in 0..old_v_level.nodes().len() {
         for vp in old_v_level.pairs_iter_of_idx(i) {
             v_axis |= match dir {
                 RotationKind::Left => vp.left.0,
@@ -327,7 +327,7 @@ fn field_bounds(old_v_level: &TddLevel, old_w_level: &TddLevel, dir: RotationKin
         }
     }
     let (mut stored_left, mut stored_right) = (0u32, 0u32);
-    for i in 0..old_w_level.nodes.len() {
+    for i in 0..old_w_level.nodes().len() {
         for wp in old_w_level.pairs_iter_of_idx(i) {
             stored_left |= wp.left.0;
             stored_right |= wp.right.0;
@@ -336,7 +336,7 @@ fn field_bounds(old_v_level: &TddLevel, old_w_level: &TddLevel, dir: RotationKin
     // A crossed rotation's w had its children swapped: its left side is the
     // stored right one.
     let (w_left, w_right) = if crossed { (stored_right, stored_left) } else { (stored_left, stored_right) };
-    let src = old_v_level.nodes.len().saturating_sub(1) as u32;
+    let src = old_v_level.nodes().len().saturating_sub(1) as u32;
     match dir {
         RotationKind::Left => [v_axis, w_left, w_right, src],
         RotationKind::Right => [w_right, v_axis, w_left, src],
@@ -362,7 +362,7 @@ fn collect_triples<W: Word>(
     triples: &mut Vec<W>,
     max_pairs: usize,
 ) -> Result<bool, OperationError> {
-    for i in 0..old_v_level.nodes.len() {
+    for i in 0..old_v_level.nodes().len() {
         let src = i as u32;
         for vp in old_v_level.pairs_iter_of_idx(i) {
             let (w_local, v_axis) = match dir {
@@ -625,7 +625,7 @@ fn build_outer_level<W: Word>(
     dir: RotationKind,
     marginal_ctx: bool,
 ) -> Result<TddLevel, OperationError> {
-    let n_v = old_v_level.nodes.len();
+    let n_v = old_v_level.nodes().len();
     let filed = file_outer_pairs(lim, triples, layout, scratch, n_v, dir, marginal_ctx);
     // Last read of `triples` and the groups: the filed lists now hold every
     // outer pair. Release the triples before the arena that copies those

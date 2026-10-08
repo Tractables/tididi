@@ -32,9 +32,9 @@ pub(super) fn propagate_false_nodes(tdd: &mut Tdd) {
             .get_disjoint_mut([vi.idx(), left.idx(), right.idx()])
             .expect("a parent and its children are distinct levels");
         let has_empty = |structural: bool, level: &TddLevel| {
-            structural && (0..level.nodes.len()).any(|i| empty_node(level, i))
+            structural && (0..level.nodes().len()).any(|i| empty_node(level, i))
         };
-        if parent.nodes.is_empty()
+        if parent.nodes().is_empty()
             || !(has_empty(left_structural, left_level) || has_empty(right_structural, right_level))
         { continue; }
         let dead = |structural: bool, level: &TddLevel, child: EncodedChildRef| {
@@ -72,7 +72,7 @@ pub(super) fn rewrite_level_pairs(
     level: &mut TddLevel,
     mut rewrite_pair: impl FnMut(usize, usize, usize, ChildPair) -> Option<ChildPair>,
 ) -> bool {
-    let n_nodes = level.nodes.len();
+    let n_nodes = level.nodes().len();
     if n_nodes == 0 {
         return false;
     }

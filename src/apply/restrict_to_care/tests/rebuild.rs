@@ -10,7 +10,7 @@ use crate::vtree::Vtree;
 /// Keep every node and pair of a structural fixture.
 fn all_live(f: &Tdd) -> Marking {
     Marking {
-        alive: f.levels.iter().map(|l| vec![true; l.nodes.len()]).collect(),
+        alive: f.levels.iter().map(|l| vec![true; l.nodes().len()]).collect(),
         pair_alive: PairMarks::all(),
         root_live: true,
     }
@@ -21,7 +21,7 @@ fn all_live_but_the_output_pairs(eng: &Engine, f: &Tdd) -> Marking {
     let mut pair_alive = PairMarks::new(eng, f).unwrap();
     for (v, _, _) in f.vtree.internal_bottomup() {
         let level = &f.levels[v.idx()];
-        for j in 0..level.nodes.len() {
+        for j in 0..level.nodes().len() {
             if (v, j) == (f.output.vtree, f.output.local.idx()) { continue; }
             let count = level.pairs_vec(j).len();
             for k in 0..count { pair_alive.mark(eng, v, NodeIdx(j as u32), k, count).unwrap(); }
@@ -187,7 +187,7 @@ fn marks_on_an_implicit_level_build_what_is_left() {
         let mut pair_alive = PairMarks::new(&eng, f).unwrap();
         for (t, _, _) in f.vtree.internal_bottomup() {
             let level = &f.levels[t.idx()];
-            for j in 0..level.nodes.len() {
+            for j in 0..level.nodes().len() {
                 let count = level.pair_count_at(j);
                 for (k, p) in level.pairs_iter_of_idx(j).enumerate() {
                     if t != v || p.left != NEG_LEAF_IDX.into() {
@@ -201,7 +201,7 @@ fn marks_on_an_implicit_level_build_what_is_left() {
     let g = marks(&implicit).rebuild(&eng, implicit.clone()).unwrap();
     let h = marks(&stored).rebuild(&eng, stored.clone()).unwrap();
     assert_eq!(sorted_pairs(&g), sorted_pairs(&h));
-    assert_eq!(g.levels[w.idx()].nodes.len(), 64, "the prune drops what only dead pairs named");
+    assert_eq!(g.levels[w.idx()].nodes().len(), 64, "the prune drops what only dead pairs named");
     let level = &g.levels[v.idx()];
     assert_eq!(level.pair_count_at(0), 2);
     assert!(level.implicit().is_some(), "the rest is affine and closed");

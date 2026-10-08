@@ -171,7 +171,7 @@ fn finalize_merged_node(
 /// is what makes its range unreferenced (whether the merge copied the content to
 /// the survivor's tail range, or a duplicate redirect left the pair list untouched).
 pub(super) fn compact_explicit_level(level: &mut TddLevel, merge_target: &[u32]) {
-    let n = level.nodes.len();
+    let n = level.nodes().len();
     let mut write = 0usize;
     // Accumulated and noted once after the walk: the counter's only reader
     // (`compact_pairs_if_stale`) runs later, so per-drop adds bought nothing.

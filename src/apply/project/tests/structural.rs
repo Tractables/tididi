@@ -162,7 +162,7 @@ fn regroup_by_definition(
     };
     let mut atoms: Vec<ChildPair> = Vec::new();
     let mut owners: HashMap<ChildPair, Vec<u32>> = HashMap::new();
-    for node in 0..level.nodes.len() as u32 {
+    for node in 0..level.nodes().len() as u32 {
         for pair in level.pairs_vec(node as usize) {
             for &left in &expand(left, pair.left) {
                 for &right in &expand(right, pair.right) {
@@ -191,7 +191,7 @@ fn regroup_by_definition(
         cells[cell].push(*atom);
     }
     for cell in &mut cells { cell.sort(); }
-    let remap = (0..level.nodes.len() as u32)
+    let remap = (0..level.nodes().len() as u32)
         .map(|node| (0..sets.len() as u32).filter(|&cell| sets[cell as usize].contains(&node)).collect())
         .collect();
     (cells, remap)
@@ -214,11 +214,11 @@ fn regrouping_matches_the_owner_set_rule() {
             let f = compile_clauses(&vtree, &clauses);
             if f.is_zero() { continue; }
             let keys = |child: VtreeIdx| {
-                if vtree.node(child).is_leaf() { LEAF_WIDTH } else { f.levels[child.idx()].nodes.len() }
+                if vtree.node(child).is_leaf() { LEAF_WIDTH } else { f.levels[child.idx()].nodes().len() }
             };
             for &parent in vtree.bottomup_slice() {
                 let level = &f.levels[parent.idx()];
-                if vtree.node(parent).is_leaf() || level.nodes.is_empty() { continue; }
+                if vtree.node(parent).is_leaf() || level.nodes().is_empty() { continue; }
                 let (left_child, right_child) = vtree.children(parent);
                 for fanned in [(true, false), (false, true), (true, true)] {
                     // Few cells make owner sets collide; many make a level of
@@ -237,18 +237,18 @@ fn regrouping_matches_the_owner_set_rule() {
                     let remap = regroup(&mut work, &mut rewritten, parent, left.as_ref(), right.as_ref()).unwrap();
                     let written = &rewritten.levels[parent.idx()];
                     let got: Vec<Vec<ChildPair>> =
-                        (0..written.nodes.len()).map(|cell| written.pairs_vec(cell).to_vec()).collect();
+                        (0..written.nodes().len()).map(|cell| written.pairs_vec(cell).to_vec()).collect();
                     assert_eq!(got, cells, "{shape}, level {parent:?}, fanned {fanned:?}: cells");
-                    let identity: Vec<Vec<u32>> = (0..level.nodes.len() as u32).map(|node| vec![node]).collect();
+                    let identity: Vec<Vec<u32>> = (0..level.nodes().len() as u32).map(|node| vec![node]).collect();
                     match remap {
                         Some(remap) => {
-                            let got: Vec<Vec<u32>> = (0..level.nodes.len()).map(|node| remap.get(node).to_vec()).collect();
+                            let got: Vec<Vec<u32>> = (0..level.nodes().len()).map(|node| remap.get(node).to_vec()).collect();
                             assert_eq!(got, fan_out, "{shape}, level {parent:?}, fanned {fanned:?}: fan-out");
                             assert_ne!(fan_out, identity, "{shape}, level {parent:?}: an unchanged level returns no map");
                         }
                         None => assert_eq!(fan_out, identity, "{shape}, level {parent:?}, fanned {fanned:?}: no map"),
                     }
-                    if level.nodes.len() == 1 { single += 1 } else { several += 1 }
+                    if level.nodes().len() == 1 { single += 1 } else { several += 1 }
                 }
             }
         }
@@ -301,11 +301,11 @@ fn written_alike_by_rows_and_by_sorting() -> Vec<Tdd> {
             let f = compile_clauses(&vtree, &clauses);
             if f.is_zero() { continue; }
             let keys = |child: VtreeIdx| {
-                if vtree.node(child).is_leaf() { LEAF_WIDTH } else { f.levels[child.idx()].nodes.len() }
+                if vtree.node(child).is_leaf() { LEAF_WIDTH } else { f.levels[child.idx()].nodes().len() }
             };
             for &parent in vtree.bottomup_slice() {
                 let level = &f.levels[parent.idx()];
-                if vtree.node(parent).is_leaf() || level.nodes.len() != 1 { continue; }
+                if vtree.node(parent).is_leaf() || level.nodes().len() != 1 { continue; }
                 let pairs = &level.pairs_vec(0)[..];
                 let (left_child, right_child) = vtree.children(parent);
                 for fanned in [(true, false), (false, true), (true, true)] {
@@ -331,7 +331,7 @@ fn written_alike_by_rows_and_by_sorting() -> Vec<Tdd> {
                     let plan = RowPlan::of(&mut work, pairs, left.as_ref(), right.as_ref()).unwrap();
                     regroup_single_rows(&mut work, &mut by_rows, parent, left.as_ref(), right.as_ref(), &plan).unwrap();
                     let written = &by_rows.levels[parent.idx()];
-                    assert_eq!(written.nodes.len(), 1, "{shape}, level {parent:?}, fanned {fanned:?}: rows");
+                    assert_eq!(written.nodes().len(), 1, "{shape}, level {parent:?}, fanned {fanned:?}: rows");
                     assert_eq!(written.pairs_vec(0), want, "{shape}, level {parent:?}, fanned {fanned:?}: rows");
 
                     let expands_nowhere = |map: &Remap| {
@@ -482,7 +482,7 @@ fn a_wide_level_of_one_node_is_written_alike_by_rows_and_by_sorting() {
         assert!(Row::tops_for(plan.words) >= 2 || width < 1 << 18, "{keys} keys over {width} columns: several top words");
         regroup_single_rows(&mut work, &mut by_rows, parent, Some(&left), None, &plan).unwrap();
         let written = &by_rows.levels[parent.idx()];
-        assert_eq!(written.nodes.len(), 1);
+        assert_eq!(written.nodes().len(), 1);
         assert_eq!(written.pairs_vec(0), want, "{keys} keys over {width} columns: rows");
 
         let owned = scan_level(&mut work, level).unwrap();

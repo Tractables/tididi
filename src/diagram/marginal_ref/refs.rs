@@ -76,7 +76,7 @@ pub(crate) fn for_each_side_ref_mut(
         level.move_described(side, moved);
         return;
     }
-    for ni in 0..level.nodes.len() {
+    for ni in 0..level.nodes().len() {
         match level.arena_range(level.node(ni).kind()) {
             Some(range) => match side {
                 ChildSide::Left => level.pairs.stored_mut()[range].iter_mut().for_each(|p| f(&mut p.left.0)),

@@ -105,7 +105,7 @@ pub fn check_pair_fusion_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> R
             continue;
         }
         let plevel = &tdd.levels[parent.idx()];
-        for n in 0..plevel.nodes.len() {
+        for n in 0..plevel.nodes().len() {
             groups.clear();
             for p in plevel.pairs_iter_of_idx(n) {
                 let (x, marginal) = match side {
@@ -159,7 +159,7 @@ pub fn check_twin_canonicality(tdd: &Tdd) -> Result<(), String> {
     for parent in crate::reduce::contract::content_twin::content_twin_scan_levels(tdd) {
         let plevel = &tdd.levels[parent.idx()];
         let mut key_to_node: FxHashMap<Vec<(u32, u32)>, usize> = FxHashMap::default();
-        for n in 0..plevel.nodes.len() {
+        for n in 0..plevel.nodes().len() {
             node_pairs_into(plevel, n, &mut pairs_buf);
             let mut key: Vec<(u32, u32)> =
                 pairs_buf.iter().map(|p| (p.left.0, p.right.0)).collect();

@@ -332,8 +332,7 @@ pub(super) fn build_reverse_index<const BY_RIGHT: bool>(
     counts: Option<&[u32]>,
     index: &mut Grouped<RevEntry>,
 ) -> Result<(), OperationError> {
-    let pairs = (0..level.nodes().len())
-        .flat_map(|parent| level.pairs_iter_of_idx(parent).map(move |pair| (parent as u32, pair)));
+    let pairs = level.pairs_with_parent();
     counting_sort(
         eng.limits(), key_width, pairs,
         |(parent, pair)| {

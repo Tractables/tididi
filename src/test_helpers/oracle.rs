@@ -90,7 +90,7 @@ pub(crate) fn normalized_levels(tdd: &Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
         }
         let left_marginal = tdd.levels[left.idx()].is_marginal();
         let right_marginal = tdd.levels[right.idx()].is_marginal();
-        let mut indexed: Vec<(usize, Vec<(u32, u32)>)> = (0..level.nodes.len())
+        let mut indexed: Vec<(usize, Vec<(u32, u32)>)> = (0..level.nodes().len())
             .map(|i| {
                 let mut pairs: Vec<(u32, u32)> = level
                     .pairs_vec(i)
@@ -107,7 +107,7 @@ pub(crate) fn normalized_levels(tdd: &Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
             })
             .collect();
         indexed.sort_by(|a, b| a.1.cmp(&b.1));
-        remap[t.idx()] = vec![0; level.nodes.len()];
+        remap[t.idx()] = vec![0; level.nodes().len()];
         for (new_i, (old_i, pairs)) in indexed.into_iter().enumerate() {
             remap[t.idx()][old_i] = new_i as u32;
             out[t.idx()].push(pairs);
@@ -379,7 +379,7 @@ pub fn support_mask(t: &Tdd) -> Vec<bool> {
                 continue;
             };
             let level = &mt.levels[vi];
-            'scan: for ni in 0..level.nodes.len() {
+            'scan: for ni in 0..level.nodes().len() {
                 for p in level.pairs_iter_of(&level.node(ni)) {
                     let child = match side {
                         ChildSide::Left => p.left,
@@ -440,7 +440,7 @@ pub fn support_bits(t: &Tdd) -> Vec<u64> {
         let level = &t.levels[vi];
         let mut need_l = lvar.is_some();
         let mut need_r = rvar.is_some();
-        'scan: for ni in 0..level.nodes.len() {
+        'scan: for ni in 0..level.nodes().len() {
             for p in level.pairs_iter_of(&level.node(ni)) {
                 if need_l && (p.left == POS_LEAF_IDX.into() || p.left == NEG_LEAF_IDX.into()) {
                     let x = lvar.unwrap();
@@ -476,7 +476,7 @@ pub(crate) fn reachable_pairs(t: &Tdd) -> usize {
             continue;
         }
         let level = &t.levels[vi];
-        for i in 0..level.nodes.len() {
+        for i in 0..level.nodes().len() {
             if reach[vi][i] {
                 n += level.pair_count_at(i);
             }

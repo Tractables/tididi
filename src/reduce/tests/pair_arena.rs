@@ -25,7 +25,7 @@ fn with_unreachable_copies(copies: usize) -> Tdd {
 
 /// The arena slots the level's live nodes own.
 fn live_pairs(level: &TddLevel) -> usize {
-    (0..level.nodes.len()).map(|i| level.arena_pairs_at(i)).sum()
+    (0..level.nodes().len()).map(|i| level.arena_pairs_at(i)).sum()
 }
 
 #[test]
@@ -36,7 +36,7 @@ fn prune_counts_the_dropped_nodes_pair_ranges_as_dead() {
     let per_node = tdd.levels[root].arena_pairs_at(0);
     prune_unreachable(&eng, &mut tdd, PruneScope::Whole).unwrap();
     assert_canonical(&tdd);
-    assert_eq!(tdd.levels[root].nodes.len(), 1);
+    assert_eq!(tdd.levels[root].nodes().len(), 1);
     // Below the sweep threshold the slack stays, and is on record.
     assert_eq!(tdd.levels[root].dead_pairs as usize, 10 * per_node);
     assert_eq!(tdd.levels[root].pairs.len(), 11 * per_node);
@@ -53,7 +53,7 @@ fn prune_sweeps_the_arena_once_most_of_it_is_dead() {
     prune_unreachable(&eng, &mut tdd, PruneScope::Whole).unwrap();
     assert_canonical(&tdd);
     let level = &tdd.levels[root];
-    assert_eq!(level.nodes.len(), 1);
+    assert_eq!(level.nodes().len(), 1);
     assert_eq!(level.pairs.len(), live_pairs(level), "the sweep leaves no dead slot in the arena");
     assert_eq!(level.dead_pairs, 0);
     assert_eq!(tdd.model_count().unwrap(), 3u32.into());
@@ -66,7 +66,7 @@ fn prune_of_the_constant_false_diagram_frees_every_arena() {
     tdd.output.local = ZERO;
     prune_unreachable(&eng, &mut tdd, PruneScope::Whole).unwrap();
     for level in &tdd.levels {
-        assert!(level.nodes.is_empty());
+        assert!(level.nodes().is_empty());
         assert!(level.pairs.is_empty());
         assert!(level.ranges.is_empty());
         assert_eq!(level.dead_pairs, 0);

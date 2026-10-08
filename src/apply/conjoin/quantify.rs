@@ -113,7 +113,7 @@ pub(super) fn build_level_quantified(
             if !cell_is_satisfiable(f_pairs, g_pairs, slab, &sides, &mut gate)? {
                 continue;
             }
-            if level.nodes.is_empty() {
+            if level.nodes().is_empty() {
                 // The one node this level ever holds, minted on the first live
                 // cell so a level with none stays empty and reads as `⊥`.
                 level.push_node(eng.limits(), &[TRUE_PAIR])?;

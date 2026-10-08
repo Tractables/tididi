@@ -149,7 +149,7 @@ fn same_structure(f: &Tdd, g: &Tdd, free: Operands<VtreeMask<'_>>) -> bool {
             (free_f, _) => {
                 // The level a free one stands for has one node.
                 let built = if free_f { l2 } else { l1 };
-                built.nodes.len() == 1 && {
+                built.nodes().len() == 1 && {
                     let mut standing = TddLevel::new();
                     push_free_level(&mut standing, vtree, at);
                     same(&standing, built)

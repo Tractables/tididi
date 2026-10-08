@@ -58,9 +58,9 @@ fn assert_identical(a: &Tdd, b: &Tdd, what: &str) {
     for (i, (x, y)) in a.levels.iter().zip(b.levels.iter()).enumerate() {
         assert_eq!(format!("{:?}", x.state), format!("{:?}", y.state), "{what}: level {i} state");
         assert_eq!(x.value_ref_sides, y.value_ref_sides, "{what}: level {i} markers");
-        assert_eq!(x.nodes.len(), y.nodes.len(), "{what}: level {i} width");
+        assert_eq!(x.nodes().len(), y.nodes().len(), "{what}: level {i} width");
         assert_eq!(x.ranges, y.ranges, "{what}: level {i} ranges");
-        for n in 0..x.nodes.len() {
+        for n in 0..x.nodes().len() {
             assert_eq!(x.node(n).kind(), y.node(n).kind(), "{what}: level {i} node {n} encoding");
             assert_eq!(x.pairs_vec(n), y.pairs_vec(n), "{what}: level {i} node {n} pairs");
         }
@@ -85,7 +85,7 @@ fn root_groups(full: &Tdd, t: VtreeIdx, side: ChildSide) -> (usize, usize) {
         return (0, 0);
     }
     let level = &full.levels[t.idx()];
-    let mut keys: Vec<u32> = (0..level.nodes.len())
+    let mut keys: Vec<u32> = (0..level.nodes().len())
         .flat_map(|n| level.pairs_iter_of_idx(n).map(|p| match side {
             ChildSide::Right => p.left.0,
             ChildSide::Left => p.right.0,
@@ -134,7 +134,7 @@ fn targets(vtree: &Vtree, f: &Tdd, g: &Tdd) -> Vec<VtreeIdx> {
         let (left, right) = vtree.children(t);
         [left, right].into_iter().filter(|&c| !vtree.node(c).is_leaf()).collect::<Vec<_>>()
     };
-    let one = |d: &Tdd, t: VtreeIdx| !d.is_zero() && d.levels[t.idx()].nodes.len() == 1;
+    let one = |d: &Tdd, t: VtreeIdx| !d.is_zero() && d.levels[t.idx()].nodes().len() == 1;
     let below = vtree.bottomup().rfind(|&t| {
         t != vtree.root() && !vtree.node(t).is_leaf() && one(f, t) && one(g, t) && !internal(t).is_empty()
     });

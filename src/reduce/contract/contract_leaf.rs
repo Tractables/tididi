@@ -93,7 +93,7 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
     // `side` is a literal cannot hold the opposite-polarity partner, so the
     // level is not contractible. O(1) per node, against `classify`'s
     // collect-and-sort per pair list.
-    for i in 0..level.nodes.len() {
+    for i in 0..level.nodes().len() {
         if let [pair] = stored.of_idx(i) {
             let label = if side == ChildSide::Left { pair.left } else { pair.right };
             if label == POS_LEAF_IDX.into() || label == NEG_LEAF_IDX.into() {
@@ -109,7 +109,7 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
     let mut pos: Transient<'_, Vec<EncodedChildRef>> = Transient::new(lim, Vec::new());
     let mut neg: Transient<'_, Vec<EncodedChildRef>> = Transient::new(lim, Vec::new());
     let mut any_literal = false;
-    for i in 0..level.nodes.len() {
+    for i in 0..level.nodes().len() {
         match classify(lim, stored.of_idx(i).iter().copied(), side, &mut pos, &mut neg)? {
             Class::AllContractible { has_literal } => {
                 any_literal |= has_literal;
@@ -217,7 +217,7 @@ fn rewrite_level(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
         // admits the rewrite is built stored where its pairs lie, and the
         // close at the end of the operation describes what is affine again.
         level.store_if_implicit();
-        for i in 0..level.nodes.len() {
+        for i in 0..level.nodes().len() {
             if let NodeKind::Inline(p) = level.node(i).kind() {
                 // A single-pair node is labelled `One` on `side` (the singleton
                 // pre-pass in `try_contract_leaf_twins` aborted the level on a

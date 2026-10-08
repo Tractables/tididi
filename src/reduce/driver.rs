@@ -112,10 +112,10 @@ impl<'a> Reduction<'a> {
     /// a scan ran.
     fn scan_if_due(&mut self, schedule: &mut ContentTwinSchedule) -> Result<bool, OperationError> {
         if !self.tdd.has_marginal_level() { return Ok(false); }
-        let before: u64 = self.tdd.levels.iter().map(|l| l.nodes.len() as u64).sum();
+        let before: u64 = self.tdd.levels.iter().map(|l| l.nodes().len() as u64).sum();
         if self.tdd.weights.is_some() || before <= CONTENT_SCAN_MAX_NODES || before >= schedule.next_scan_at_nodes {
             self.content_twins()?;
-            let after: u64 = self.tdd.levels.iter().map(|l| l.nodes.len() as u64).sum();
+            let after: u64 = self.tdd.levels.iter().map(|l| l.nodes().len() as u64).sum();
             schedule.next_scan_at_nodes = if after > CONTENT_SCAN_MAX_NODES { before.saturating_mul(4) } else { 0 };
             return Ok(true);
         }

@@ -133,7 +133,7 @@ fn ask(eng: &Engine, f: &Tdd, mut keep: impl FnMut(TddNodeId) -> bool) -> Result
     remap.resize_with(f.levels.len(), Vec::new);
     for (t, _, _) in f.vtree.internal_bottomup() {
         let level = &f.levels[t.idx()];
-        if !level.is_marginal() { lim.try_resize(&mut remap[t.idx()], level.nodes.len(), 0)?; }
+        if !level.is_marginal() { lim.try_resize(&mut remap[t.idx()], level.nodes().len(), 0)?; }
     }
     let mut poll = lim.gate();
     let mut rejected = false;
@@ -193,7 +193,7 @@ fn sweep<'e>(eng: &'e Engine, f: &Tdd, remap: &mut [Vec<u32>]) -> Result<(Assemb
                 (new != DEAD).then(|| NodeIdx(new).into())
             }
         };
-        for i in 0..source.nodes.len() {
+        for i in 0..source.nodes().len() {
             poll.poll(1)?;
             if remap[t.idx()][i] == DEAD { continue; }
             pairs.clear();

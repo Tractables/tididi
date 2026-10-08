@@ -43,7 +43,7 @@ fn marginal_shaped_level() -> (TddLevel, usize) {
         pair(2, ValueRef::inline_raw(2).expect("test inline count must fit inline encoding")),
     ]);
     lvl.push_internal_node(&[pair(5, 0), pair(6, 2)]);
-    let right_width = lvl.nodes.len();
+    let right_width = lvl.nodes().len();
     (lvl, right_width)
 }
 
@@ -407,9 +407,9 @@ fn columns_reuse_descriptors_after_the_source_level_is_dropped() {
         let (mut level, _) = marginal_shaped_level();
         if iteration % 2 == 0 { level.push_internal_node(&[pair(2, 3)]); }
         let decoder = if iteration % 3 == 0 { ChildDecoder::marginal() } else { ChildDecoder::structural() };
-        let columns = RightColumns::build(&eng, &level, level.nodes.len(), ChildDecoder::structural(), decoder, false).unwrap();
+        let columns = RightColumns::build(&eng, &level, level.nodes().len(), ChildDecoder::structural(), decoder, false).unwrap();
         let mut scratch = Vec::new();
-        for j in 0..level.nodes.len() {
+        for j in 0..level.nodes().len() {
             assert_eq!(columns.get(j), level.pairs_view_decoded(j, &mut scratch, ChildDecoder::structural(), decoder));
         }
         drop(columns);

@@ -9,8 +9,10 @@
 //! of a mixed radix (an [`ImplicitLevel`] or a level that fits one), every
 //! cell is live and the level's pairs are the product description
 //! [`ImplicitLevel::product`] gives, in the row loop's order. This route
-//! writes the nodes the row loop would, charges the work clock and the meters
-//! what the row loop would, and keeps the pairs as their description.
+//! charges the work clock and the meters what the row loop would. A level of
+//! two pairs a node or more is kept as the description of its pairs, which
+//! implies its nodes; a level of one pair a node is written as the row loop
+//! would write it.
 
 use crate::apply::conjoin::cell::GROUPED_MIN_PAIRS;
 use crate::apply::conjoin::*;
@@ -35,10 +37,10 @@ pub(super) fn plan(
     // bounds the product's pairs: under the floor, the row loop writes the
     // level, as it writes any product of fewer, and no operand is read for a
     // fit.
-    let bound = |l: &TddLevel| l.pairs.len().max(l.nodes.len());
+    let bound = |l: &TddLevel| l.pairs.len().max(l.nodes().len());
     if !lim.memory_unbounded()
-        || f.nodes.len() != shape.f.here
-        || g.nodes.len() != shape.g.here
+        || f.nodes().len() != shape.f.here
+        || g.nodes().len() != shape.g.here
         || bound(f).saturating_mul(bound(g)) < floor()
     {
         return None;
@@ -100,14 +102,25 @@ pub(super) fn write(
     for (c, cell) in cells.iter_mut().enumerate() {
         *cell = c as u32;
     }
-    product.write_nodes(lim, level)?;
+    // A description of two pairs a node or more holds the level, and implies
+    // its nodes where their words fit; the node arena the row loop reserved,
+    // one node a cell, is dropped, its capacity kept as the one it would
+    // have.
+    let described = product.pairs_per_node() >= 2;
+    let node_capacity = if described && product.implies_nodes() {
+        debug_assert!(level.node_capacity() >= product.nodes());
+        level.nodes.imply().max(product.nodes())
+    } else {
+        product.write_nodes(lim, level)?;
+        0
+    };
     lim.charge_output_pairs(meter.0);
     for _ in 0..meter.1 {
         super::super::note_scheduled_charge();
     }
-    if product.pairs_per_node() >= 2 {
+    if described {
         let capacity = level.pairs.capacity();
-        level.pairs.describe(product, capacity);
+        level.pairs.describe(product, capacity, node_capacity);
     }
     lim.charge_work(work);
     lim.check_stop()

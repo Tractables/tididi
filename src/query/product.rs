@@ -348,7 +348,7 @@ fn constants<'a, V: Arith>(
                 Side::At(i) => vals[i as usize].clone(),
                 Side::Inline(k) => Some(V::small(u128::from(k))),
             };
-            lim.reserve_exact(&mut out, level.nodes.len())?;
+            lim.reserve_exact(&mut out, level.nodes().len())?;
             for (_, pairs) in level.internal_inputs_iter() {
                 gate.poll(pairs.len() as u64 + 1)?;
                 let mut acc = V::default();
@@ -418,7 +418,7 @@ impl<'t> Level<'t> {
         let level = self.level;
         let range = match self.only {
             Some(u) => u as usize..u as usize + 1,
-            None => 0..level.nodes.len(),
+            None => 0..level.nodes().len(),
         };
         range.map(move |i| (i as u32, level.pairs_iter_of_idx(i)))
     }
@@ -581,7 +581,7 @@ fn diag<'a, V: Arith>(
     gate: &mut PollGate,
 ) -> Result<Transient<'a, Vec<V>>, Halt> {
     let mut d = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut d, level.level.nodes.len())?;
+    lim.reserve_exact(&mut d, level.level.nodes().len())?;
     for (_, pairs) in level.nodes() {
         gate.poll(pairs.len() as u64 + 1)?;
         let mut acc = V::default();
@@ -722,7 +722,7 @@ fn combine<'a, V: Arith>(
     if let (Form::Factor(al, bl), Form::Factor(ar, br)) = (fl, fr) {
         let side_sums = |level: &Level<'_>, a: &[V], b: &[V], gate: &mut PollGate| -> Result<Transient<'a, Vec<V>>, Halt> {
             let mut out = Transient::new(lim, Vec::new());
-            lim.try_resize(&mut out, level.level.nodes.len(), V::default())?;
+            lim.try_resize(&mut out, level.level.nodes().len(), V::default())?;
             for (u, pairs) in level.nodes() {
                 gate.poll(pairs.len() as u64 + 1)?;
                 let mut acc = V::default();

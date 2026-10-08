@@ -36,11 +36,11 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
     }
 
     for (t, _var) in vtree.leaf_bottomup() {
-        if !tdd.level(t).nodes.is_empty() {
+        if !tdd.level(t).nodes().is_empty() {
             return Err(format!(
                 "vtree leaf {:?} has non-empty nodes vec (len {}) — \
                  leaf levels should be implicit",
-                t, tdd.level(t).nodes.len()
+                t, tdd.level(t).nodes().len()
             ));
         }
     }
@@ -92,7 +92,7 @@ pub fn check_no_false_nodes(tdd: &Tdd) -> Result<(), String> {
 
     if tdd.output.local == ZERO {
         for (t_idx, level) in tdd.levels.iter().enumerate() {
-            if !level.nodes.is_empty() {
+            if !level.nodes().is_empty() {
                 return Err(format!(
                     "UNSAT TDD (ZERO output) has non-empty level at vtree index {} \
                      (width {}) — expected empty after minimize",

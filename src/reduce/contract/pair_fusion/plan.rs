@@ -49,7 +49,7 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
     // pair count.
     // An implicit level's node's pairs are generated into `buf`.
     let mut buf = Vec::new();
-    for n in 0..plevel.nodes.len() {
+    for n in 0..plevel.nodes().len() {
         let pairs = plevel.pair_count_at(n);
         read += 1 + pairs as u64;
         if read >= stride {

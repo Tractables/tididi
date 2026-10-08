@@ -90,7 +90,7 @@ impl Engine {
         lim.try_resize(&mut uses, vtree.num_nodes(), Vec::new())?;
         for t in vtree.bottomup() {
             gate.poll(1)?;
-            let width = if vtree.node(t).is_leaf() { 3 } else { f.level(t).nodes.len() };
+            let width = if vtree.node(t).is_leaf() { 3 } else { f.level(t).nodes().len() };
             lim.try_resize(&mut uses[t.idx()], width, 0)?;
             if let VtreeNode::Internal { left, right, .. } = *vtree.node(t) {
                 for node in f.level(t).nodes() {
@@ -139,7 +139,7 @@ impl Engine {
                 }
                 VtreeNode::Internal { left, right, .. } => {
                     let level = f.level(t);
-                    lim.reserve_exact(&mut columns[t.idx()], level.nodes.len())?;
+                    lim.reserve_exact(&mut columns[t.idx()], level.nodes().len())?;
                     for (i, node) in level.nodes().iter().enumerate() {
                         // One disjunction per node: a fold of `or` over the
                         // pairs would complement the growing sum at each step.

@@ -39,8 +39,9 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 /// `slot_count()` is the number of node or value slots in any state.
 #[derive(Clone, Debug)]
 pub struct TddLevel {
-    /// The nodes, indexed by [`NodeIdx`](super::NodeIdx). Empty on leaf and marginal
-    /// levels. Read through [`node`](Self::node) and
+    /// The stored nodes, indexed by [`NodeIdx`](super::NodeIdx). Empty on
+    /// leaf and marginal levels, and on an implicit level, whose description
+    /// implies them. Read through [`node`](Self::node) and
     /// [`nodes`](Self::nodes).
     pub(crate) nodes: NodeArena,
     /// Arena holding the pairs of multi-pair nodes. Read it through
@@ -251,10 +252,15 @@ impl TddLevel {
         }
     }
 
-    /// Reset to empty (as [`new`](Self::new)), keeping buffer capacity.
+    /// Reset to empty (as [`new`](Self::new)), keeping buffer capacity: on
+    /// a level whose nodes are implied, the capacity their arena would have,
+    /// as an implicit arena becomes a stored one of its capacity.
     ///
     /// The marginal state and the inline markers reset with the arenas.
     pub(crate) fn clear(&mut self) {
+        if self.implied_by().is_some() {
+            self.nodes = NodeArena::from(Vec::with_capacity(self.pairs.node_capacity()));
+        }
         self.nodes.clear();
         self.pairs.clear();
         self.ranges.clear();
@@ -289,7 +295,7 @@ impl TddLevel {
         match &self.state {
             LevelState::Counts(c) => c.counts.len(),
             LevelState::Weights { width, .. } => *width as usize,
-            LevelState::Structural(_) => self.nodes.len(),
+            LevelState::Structural(_) => self.node_count(),
         }
     }
 
@@ -422,8 +428,8 @@ impl TddLevel {
         let should_shrink = |cap: usize, len: usize| -> bool {
             cap >= MIN_SHRINK_CAP && (cap as u64) * 8 > SHRINK_RATIO_EIGHTHS * (len as u64)
         };
-        if should_shrink(self.nodes.capacity(), self.nodes.len()) {
-            self.nodes.shrink_to_fit();
+        if should_shrink(self.node_capacity(), self.node_count()) {
+            self.shrink_nodes();
         }
         if should_shrink(self.pairs.capacity(), self.pairs.len()) {
             self.pairs.shrink_to_fit();
@@ -454,6 +460,10 @@ impl TddLevel {
             })),
             other => other.clone(),
         };
+        // Implied nodes are charged as stored ones copied at their count.
+        if let Some(d) = self.implied_by() {
+            lim.charge_bytes((d.nodes() as u64).saturating_mul(std::mem::size_of::<super::primitives::EncodedNode>() as u64))?;
+        }
         Ok(TddLevel {
             nodes: NodeArena::from(copy(lim, self.nodes.stored())?),
             pairs: self.pairs.try_clone_on(lim)?,

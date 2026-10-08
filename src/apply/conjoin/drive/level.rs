@@ -763,7 +763,7 @@ fn finish_sparse_marginal_level(
     products.finish_sparse(level, t.idx());
     // The rows were built in order, so the product list numbers the live
     // cells in cell order, as a dense emit would.
-    products.note_built(t.idx(), shape.f.here, gw.here, level.nodes.len());
+    products.note_built(t.idx(), shape.f.here, gw.here, level.nodes().len());
     mark_passthrough_inlined(level, passthrough);
     Ok(())
 }

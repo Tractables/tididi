@@ -392,6 +392,6 @@ fn debug_check_flushed_level(pl_output: &[ProductEntry], level: &TddLevel) {
         debug_assert_eq!(e.prod_idx.0 as usize, i,
             "pl_output[{}].prod_idx = {} but expected {}", i, e.prod_idx.0, i);
     }
-    debug_assert!(level.nodes.len() == pl_output.len(),
-        "level.nodes.len() {} != pl_output.len() {}", level.nodes.len(), pl_output.len());
+    debug_assert!(level.nodes().len() == pl_output.len(),
+        "level.nodes().len() {} != pl_output.len() {}", level.nodes().len(), pl_output.len());
 }

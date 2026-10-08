@@ -773,10 +773,10 @@ pub(super) fn keep_marked(nodes: &mut Vec<EncodedNode>, own: &[u64]) {
 /// prune: its marked nodes in their order, each with its pairs, whose child
 /// slots move through `left` and `right`, the new indices of the children
 /// that lost a node, when what is left is affine in a mixed radix
-/// ([`ImplicitLevel::pruned`](crate::diagram::ImplicitLevel)). The nodes
-/// then name the ranges of the new description, from the start of the arena,
-/// and the arena keeps its length, as a written one keeps the pairs of the
-/// nodes the prune drops until a sweep.
+/// ([`ImplicitLevel::pruned`](crate::diagram::ImplicitLevel)). The new
+/// description implies the nodes left, their ranges from the start of the
+/// arena, and the arena keeps its length, as a written one keeps the pairs
+/// of the nodes the prune drops until a sweep.
 ///
 /// Returns the pairs of the nodes dropped, or `None`, with nothing changed,
 /// when the level is written or what is left is not affine. Checks every
@@ -795,19 +795,15 @@ fn redescribe(tdd: &mut Tdd, t: VtreeIdx, own: &[u64], left: Option<&[u32]>, rig
     if nodes == 0 || nodes * k < crate::diagram::floor() || level.pairs.len() >= 1 << 31 {
         return None;
     }
+    // Below 2^31 pairs the description implies the nodes, node `i` of the
+    // description being node `i` of the level.
+    debug_assert!(level.implied_by().is_some());
     let mut select = Select::new(own);
-    let kept = |j: usize| {
-        let range = level.arena_range(level.node(select.nth(j)?).kind())?;
-        (range.len() == k && range.start.is_multiple_of(k)).then_some(range.start / k)
-    };
-    let left_of = d.pruned(nodes, kept, left, right)?;
+    let left_of = d.pruned(nodes, |j| select.nth(j), left, right)?;
     let mut dead = 0usize;
-    for_each_unmarked(own, level.nodes.len(), |i| dead += level.arena_pairs_at(i));
-    let level = &mut tdd.levels[t.idx()];
-    // No more nodes than the level held: the Vec does not grow.
-    level.nodes.clear();
-    level.nodes.stored_mut().extend((0..nodes).map(|j| EncodedNode::multi_pair((j * k) as u32, k as u32)));
-    level.pairs.redescribe(left_of);
+    for_each_unmarked(own, level.nodes().len(), |i| dead += level.arena_pairs_at(i));
+    // The new description implies the nodes left.
+    tdd.levels[t.idx()].pairs.redescribe(left_of);
     Some(dead)
 }
 

@@ -194,9 +194,9 @@ fn expand_full_with(
         // loop.
         let stored = level.stored();
         let mut buf = Vec::new();
-        for (i, node) in level.nodes().iter().enumerate() {
+        for i in 0..level.node_count() {
             let pairs = match stored {
-                Some(stored) => stored.of(&node),
+                Some(stored) => stored.of_idx(i),
                 None => level.pairs_read(i, &mut buf),
             };
             for &pair in pairs {

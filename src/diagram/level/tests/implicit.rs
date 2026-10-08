@@ -254,15 +254,16 @@ fn an_implicit_arena_reads_as_the_stored_one() {
         let stored = level_of(&pairs);
         let d = ImplicitLevel::fit(&stored).unwrap();
         let mut level = TddLevel::new();
-        d.write_nodes(&Limits::new(), &mut level).unwrap();
-        level.pairs.describe(d.clone(), 3 * d.pairs());
-        assert_eq!(level.nodes, stored.nodes);
+        level.pairs.describe(d.clone(), 3 * d.pairs(), d.nodes());
+        // The description implies the nodes the stored level holds.
+        assert!(level.nodes.stored().is_empty());
+        assert!(level.nodes().iter().eq(stored.nodes().iter()));
         assert_eq!(level.implicit(), Some(&d));
         assert_eq!(level.pairs.len(), stored.pairs.len());
         assert_eq!(level.pairs.capacity(), 3 * d.pairs());
         // A reader sees the pairs; the description stays.
         let mut buf = Vec::new();
-        for i in 0..level.nodes.len() {
+        for i in 0..level.nodes().len() {
             assert_eq!(level.pairs_read(i, &mut buf), stored.pairs_vec(i));
             assert!(level.pairs_iter_of_idx(i).eq(stored.pairs_iter_of_idx(i)));
         }
@@ -282,8 +283,7 @@ fn an_implicit_arena_is_not_written_in_place() {
     let stored = level_of(&pairs);
     let d = ImplicitLevel::fit(&stored).unwrap();
     let mut level = TddLevel::new();
-    d.write_nodes(&Limits::new(), &mut level).unwrap();
-    level.pairs.describe(d, 64);
+    level.pairs.describe(d.clone(), 64, d.nodes());
     level.pairs.stored_mut();
 }
 
@@ -365,12 +365,10 @@ fn a_redescribed_arena_keeps_the_written_length() {
     let pairs: Pairs = (0..4).map(|i| (0..3).map(|m| (3 * i + m, i)).collect()).collect();
     let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
     let mut level = TddLevel::new();
-    d.write_nodes(&Limits::new(), &mut level).unwrap();
-    level.pairs.describe(d.clone(), 20);
+    level.pairs.describe(d.clone(), 20, d.nodes());
     // Keep nodes 1 and 3, renumbered 0 and 1.
     let kept = [1usize, 3];
     let left_of = d.pruned(2, |j| kept.get(j).copied(), |x| x, |x| x).unwrap();
-    level.nodes.stored_mut().truncate(2);
     level.pairs.redescribe(left_of.clone());
     assert_eq!((level.pairs.len(), level.pairs.capacity()), (12, 20));
     assert_eq!(level.implicit(), Some(&left_of));
@@ -455,8 +453,7 @@ fn stepped_pairs_are_the_pairs_read_off_the_digits() {
         // An implicit level's nodes read in order are the stored level's.
         let stored = level_of(&pairs);
         let mut level = TddLevel::new();
-        d.write_nodes(&Limits::new(), &mut level).unwrap();
-        level.pairs.describe(d.clone(), d.pairs());
+        level.pairs.describe(d.clone(), d.pairs(), d.nodes());
         let a = rng.below(nodes as u64) as usize;
         let b = a + rng.below((nodes - a) as u64 + 1) as usize;
         let read = |l: &TddLevel| -> Vec<(usize, Vec<ChildPair>)> {

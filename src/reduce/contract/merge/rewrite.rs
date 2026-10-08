@@ -65,7 +65,7 @@ pub(super) fn rewrite_parent(
         parent_level.rewrite_described(false, |_, _, _, pair| canonical_pair(pair, t1_side, remap));
         return;
     }
-    for node_idx in 0..parent_level.nodes.len() {
+    for node_idx in 0..parent_level.nodes().len() {
         if matches!(parent_level.node(node_idx).kind(), NodeKind::Inline(_)) {
             remap_inline_node(parent_level, node_idx, t1_side, &remap.final_remap);
         } else if parent_level.node(node_idx).kind().pairs_in_arena() {

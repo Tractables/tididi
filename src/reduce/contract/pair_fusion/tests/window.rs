@@ -16,7 +16,7 @@ fn sums(tdd: &Tdd) -> Vec<BTreeMap<u32, u128>> {
     let (_, right) = tdd.vtree.children(root);
     let counts = tdd.levels[right.idx()].marginal_counts().unwrap();
     let level = &tdd.levels[root.idx()];
-    (0..level.nodes.len())
+    (0..level.nodes().len())
         .map(|n| {
             let mut by_x = BTreeMap::new();
             for p in level.pairs_vec(n) {

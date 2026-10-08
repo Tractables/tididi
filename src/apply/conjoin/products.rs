@@ -220,7 +220,7 @@ impl Products {
     pub(super) fn record_live(&mut self, level: usize, count: usize) { self.live_counts[level] = count; }
 
     pub(super) fn finish_sparse(&mut self, level: &mut TddLevel, t: usize) {
-        self.live_counts[t] = level.nodes.len();
+        self.live_counts[t] = level.nodes().len();
         self.has_pl[t] = true;
         level.shrink_arrays();
     }

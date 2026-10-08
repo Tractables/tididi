@@ -9,6 +9,10 @@ use crate::diagram::{floor, stored_levels_forced, ImplicitLevel, Tdd};
 /// pairs. No stored structural level can be implicit: none of [`FLOOR`](crate::diagram::FLOOR) or
 /// more pairs, below 2^31, fits a description of two or more pairs a node.
 ///
+/// An implicit level stores no node where its description implies them
+/// (`ImplicitLevel::implies_nodes`), and stores every node's word where
+/// it does not.
+///
 /// The reduction properties of an implicit level are those of every level,
 /// which [`check_canonicity`](super::check_canonicity) decides through the
 /// level's pairs.
@@ -39,6 +43,13 @@ pub fn check_implicit_levels(tdd: &Tdd) -> Result<(), String> {
                         "level {t}: an implicit level of {} nodes of {} pairs",
                         d.nodes(),
                         d.pairs_per_node()
+                    ));
+                }
+                let stored = level.nodes.stored().len();
+                if d.implies_nodes() != (stored == 0) {
+                    return Err(format!(
+                        "level {t}: an implicit level of {} pairs stores {stored} nodes",
+                        d.pairs()
                     ));
                 }
                 let normal = d.normal();

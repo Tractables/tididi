@@ -128,7 +128,7 @@ impl<'a> RightColumns<'a> {
         // `right_width` is the width cached before the sweep; resolving every
         // column reads `nodes[j]` for all of `0..right_width`, so decline if
         // the level holds fewer nodes than that.
-        if right_width > right_level.nodes.len() {
+        if right_width > right_level.nodes().len() {
             return None;
         }
         // Identity masks on a stored level borrow g's storage directly (the

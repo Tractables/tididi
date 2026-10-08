@@ -61,12 +61,12 @@ pub(super) fn loose_levels(vtree: &Vtree, run: &ApplyRun<'_, '_>, carrier: &[u8]
             loose.extend([left, right].into_iter().filter(|&c| internal(c) && loose_in[c.idx()] & by != 0).map(|c| c.0));
             continue;
         }
-        let built = !run.levels[p.idx()].nodes.is_empty();
+        let built = !run.levels[p.idx()].nodes().is_empty();
         let tight_in = |c: VtreeIdx, by: u8, widths: &[usize]| {
             loose_in[c.idx()] & by == 0 || (widths[c.idx()] == 1 && built)
         };
         let kills_none = |s: VtreeIdx| match internal(s) {
-            true => run.levels[s.idx()].nodes.len() == run.f_widths[s.idx()] * run.g_widths[s.idx()],
+            true => run.levels[s.idx()].nodes().len() == run.f_widths[s.idx()] * run.g_widths[s.idx()],
             false => run.f_identity[s.idx()] || run.g_identity[s.idx()],
         };
         for (c, s) in [(left, right), (right, left)] {

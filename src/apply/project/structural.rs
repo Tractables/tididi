@@ -375,7 +375,7 @@ fn free_subtree_level(
     if vtree.node(level).is_leaf() {
         return if wanted { Ok(Some(Runs::all_to_first(lim, LEAF_WIDTH, 0u32)?)) } else { Ok(None) };
     }
-    let n_nodes = tdd.levels[level.idx()].nodes.len();
+    let n_nodes = tdd.levels[level.idx()].nodes().len();
     let store = &mut tdd.levels[level.idx()];
     store.clear();
     store.push_node(work.eng.limits(), &[TRUE_PAIR])?;
@@ -509,7 +509,7 @@ fn regroup(
     left_remap: Option<&Remap>,
     right_remap: Option<&Remap>,
 ) -> Result<Option<Remap>, OperationError> {
-    let n_nodes = tdd.levels[parent.idx()].nodes.len();
+    let n_nodes = tdd.levels[parent.idx()].nodes().len();
     if n_nodes == 0 { return Ok(None); }
     // The pairs are filed by a side left as it is, when there is one: only a
     // rewritten side names the dense cells the stamp is indexed by.
@@ -1254,7 +1254,7 @@ fn scan_level(work: &mut Rewrite<'_>, level: &TddLevel) -> Result<Vec<Owned>, Op
     let lim = work.eng.limits();
     let mut owned = Vec::new();
     lim.reserve_exact(&mut owned, level.live_pairs())?;
-    for i in 0..level.nodes.len() {
+    for i in 0..level.nodes().len() {
         work.poll()?;
         let owner = u32::try_from(i).map_err(|_| OperationError::IndexOverflow)?;
         for pair in level.pairs_iter_of_idx(i) {

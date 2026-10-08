@@ -159,7 +159,7 @@ impl TddLevel {
     /// The index is the node's slot in `nodes`, so it is valid for arrays
     /// sized by `slot_count()`. Empty on a marginal level.
     pub fn internal_inputs_iter(&self) -> impl Iterator<Item = (usize, PairsIter<'_>)> + '_ {
-        self.internal_inputs_range(0..self.nodes.len())
+        self.internal_inputs_range(0..self.nodes().len())
     }
 
     /// Calls `f(i, pair)` with every pair of every node `i`, node by node:
@@ -170,9 +170,9 @@ impl TddLevel {
     pub(crate) fn for_each_node_pair(&self, mut f: impl FnMut(usize, ChildPair)) {
         let stored = self.stored();
         let mut buf = Vec::new();
-        for (i, node) in self.nodes().iter().enumerate() {
+        for i in 0..self.node_count() {
             let pairs = match stored {
-                Some(stored) => stored.of(&node),
+                Some(stored) => stored.of_idx(i),
                 None => self.pairs_read(i, &mut buf),
             };
             for &pair in pairs {
@@ -181,20 +181,39 @@ impl TddLevel {
         }
     }
 
+    /// Every pair of the level with the index of the node holding it, in
+    /// node order: a stored level's read off its arenas as slices, an
+    /// implicit level's generated from its description a node at a time.
+    #[inline]
+    pub(crate) fn pairs_with_parent(&self) -> impl Iterator<Item = (u32, ChildPair)> + Clone + '_ {
+        let stored = self.nodes.stored().iter().enumerate()
+            .flat_map(move |(i, node)| self.pairs_iter_of(node).map(move |pair| (i as u32, pair)));
+        let implied = self.implied_by().map_or(0..0, |d| 0..d.nodes())
+            .flat_map(move |i| described_iter(self.implied_start(i)).map(move |pair| (i as u32, pair)));
+        stored.chain(implied)
+    }
+
     /// Iterate structural nodes in a valid slot range, retaining their level indices.
     /// On an implicit level each node's first pair is stepped on from the
     /// one before it ([`NodeCursor`]), which the first read makes, boxed
     /// ([`described_cursor`](Self::described_cursor)).
     #[inline]
     pub(crate) fn internal_inputs_range(&self, range: std::ops::Range<usize>) -> impl Iterator<Item = (usize, PairsIter<'_>)> + '_ {
-        let start = range.start;
+        assert!(range.end <= self.node_count(), "nodes {range:?} of a level of {} nodes", self.node_count());
+        let stored = self.nodes.stored();
         let mut cursor = None;
-        self.nodes.stored()[range].iter().enumerate().map(move |(i, n)| {
-            let pairs = self.read_node(n, |at| {
-                let cursor = cursor.get_or_insert_with(|| self.described_cursor());
-                described_iter(self.described_next(cursor, at))
-            });
-            (start + i, pairs)
+        range.map(move |i| {
+            let pairs = match stored.get(i) {
+                Some(n) => self.read_node(n, |at| {
+                    let cursor = cursor.get_or_insert_with(|| self.described_cursor());
+                    described_iter(self.described_next(cursor, at))
+                }),
+                None => {
+                    let cursor = cursor.get_or_insert_with(|| self.described_cursor());
+                    described_iter(self.implied_next(cursor, i))
+                }
+            };
+            (i, pairs)
         })
     }
 
@@ -261,7 +280,10 @@ impl TddLevel {
     #[inline]
     pub fn pairs_iter_of_idx(&self, idx: usize) -> PairsIter<'_> {
         debug_assert!(!self.is_marginal(), "pairs_iter_of_idx({idx}) called on marginal level");
-        self.pairs_iter_of(&self.nodes.stored()[idx])
+        match self.nodes.stored().get(idx) {
+            Some(node) => self.pairs_iter_of(node),
+            None => described_iter(self.implied_start(idx)),
+        }
     }
 
     /// The pairs of node `idx`, collected: for tests and checkers, which
@@ -353,6 +375,32 @@ impl TddLevel {
         (d, (l as u32, r as u32))
     }
 
+    /// Where the pairs of node `i` begin, on a level whose nodes its
+    /// description implies ([`described_iter`]). Out of line, as
+    /// [`described_pairs`](Self::described_pairs) is.
+    ///
+    /// # Panics
+    ///
+    /// Panics unless the level implies its nodes and `i` is one of them.
+    #[inline(never)]
+    #[track_caller]
+    fn implied_start(&self, i: usize) -> NodeStart<'_> {
+        let Some(d) = self.implied_by().filter(|d| i < d.nodes()) else {
+            panic!("node {i} of a level of {} nodes", self.node_count());
+        };
+        let (l, r) = d.node_first(i);
+        (d, (l as u32, r as u32))
+    }
+
+    /// [`implied_start`](Self::implied_start) for nodes read in increasing
+    /// order, their first pairs stepped on by `cursor`; `i` is one of the
+    /// level's nodes.
+    #[inline(never)]
+    fn implied_next<'a>(&'a self, cursor: &mut NodeCursor<'a>, i: usize) -> NodeStart<'a> {
+        let (l, r) = cursor.first_of(i);
+        (self.described(), (l as u32, r as u32))
+    }
+
     /// A [`NodeCursor`] on this implicit level, at node 0. Boxed: a reader
     /// is passed its address, and an iterator that held it in place would
     /// stay in memory where it is read, on stored levels too.
@@ -427,17 +475,17 @@ impl TddLevel {
     /// the first.
     pub(crate) fn uneven_node(&self, k: usize) -> Option<usize> {
         let hint = self.uneven as usize;
-        if hint < self.nodes.len() && self.pair_count_at(hint) != k {
+        if hint < self.nodes().len() && self.pair_count_at(hint) != k {
             return Some(hint);
         }
-        (1..self.nodes.len()).find(|&i| self.pair_count_at(i) != k)
+        (1..self.nodes().len()).find(|&i| self.pair_count_at(i) != k)
     }
 
     /// The pair count of every node in index order. Empty on a marginal
     /// level, which holds no nodes.
     #[inline]
     pub(crate) fn pair_counts(&self) -> impl Iterator<Item = usize> + '_ {
-        (0..self.nodes.len()).map(|i| self.pair_count_at(i))
+        (0..self.nodes().len()).map(|i| self.pair_count_at(i))
     }
 
     /// The pairs of this level's nodes, the nodes with pairs, and the nodes
@@ -451,6 +499,7 @@ impl TddLevel {
     /// only the pairs counts nothing else.
     #[inline(always)]
     pub(crate) fn pair_census(&self) -> (u64, u64, u64) {
+        debug_assert!(self.implied_by().is_none(), "the census of a level whose nodes are implied");
         let (mut pairs, mut live, mut single) = (0u64, 0u64, 0u64);
         for node in self.nodes.stored() {
             let k = node.held_count();

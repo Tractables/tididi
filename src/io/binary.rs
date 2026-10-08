@@ -771,7 +771,7 @@ fn parse_body(bytes: &[u8], vtree: &Arc<Vtree>) -> Result<Tdd, IoError> {
                 IoError::Format(m) => IoError::Format(format!("{m} (the level of vtree node {k} in postorder)")),
                 other => other,
             })?;
-            width[t.idx()] = level.nodes.len();
+            width[t.idx()] = level.nodes().len();
             levels[t.idx()] = level;
         }
     }

@@ -149,7 +149,7 @@ fn a_moved_diagram_leaves_its_level_array_in_the_pool() {
     assert_eq!(eng.scratch.levels.occupancy(), 1);
     let taken = crate::diagram::take_levels(&eng, source_levels);
     assert_eq!(eng.scratch.levels.occupancy(), 0);
-    assert!(taken.iter().all(|level| level.nodes.is_empty() && level.pairs.is_empty()));
+    assert!(taken.iter().all(|level| level.nodes().is_empty() && level.pairs.is_empty()));
 }
 
 #[test]

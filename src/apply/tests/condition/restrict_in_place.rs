@@ -34,7 +34,7 @@ fn rewrite_for_restrict_shrinks_pair_lists_in_place() {
     rewrite_for_restrict(&mut tdd, root, ChildSide::Left, true);
 
     let level = &tdd.levels[root.idx()];
-    assert_eq!(level.nodes.len(), 3, "node indices are preserved");
+    assert_eq!(level.nodes().len(), 3, "node indices are preserved");
     assert_eq!(
         level.pairs_vec(0),
         &[ChildPair::new(ONE_LEAF_IDX, ONE_LEAF_IDX), ChildPair::new(ONE_LEAF_IDX, NEG_LEAF_IDX)],

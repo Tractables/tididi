@@ -122,7 +122,7 @@ pub(super) fn equivalence<K: ClauseSink + ?Sized>(eng: &Engine, f: &Tdd, activat
     }
     // Every node's variable, before any definition.
     for (t, _, _) in vtree.internal_bottomup() {
-        for (i, _) in f.levels[t.idx()].nodes().iter().enumerate() {
+        for i in 0..f.levels[t.idx()].nodes().len() {
             if reachable[t.idx()][i] { literals[t.idx()][i] = check_literal(sink.fresh_var())?; }
         }
     }
@@ -143,7 +143,7 @@ pub(super) fn equivalence<K: ClauseSink + ?Sized>(eng: &Engine, f: &Tdd, activat
         }
         let level = &f.levels[t.idx()];
         let (left_marginal, right_marginal) = (f.levels[left.idx()].is_marginal(), f.levels[right.idx()].is_marginal());
-        for (i, _) in level.nodes().iter().enumerate() {
+        for i in 0..level.nodes().len() {
             if i % NODE_POLL_STRIDE == 0 {
                 let at = EncodePoint::Node { level: t, slot: i };
                 if sink.poll(at).is_break() {

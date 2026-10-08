@@ -541,7 +541,7 @@ fn bound(vtree: &Vtree, levels: &[TddLevel], t: VtreeIdx) -> usize {
     } else if vtree.node(t).is_leaf() {
         LEAF_WIDTH
     } else {
-        lvl.nodes.len()
+        lvl.nodes().len()
     }
 }
 
@@ -621,7 +621,7 @@ pub(crate) fn check_levels(
 fn check_leaf_levels(vtree: &Vtree, levels: &[TddLevel]) -> Result<(), TddBuildError> {
     for (leaf, _var) in vtree.leaf_bottomup() {
         let lvl = &levels[leaf.idx()];
-        let stores_structure = !lvl.nodes.is_empty() || !lvl.pairs.is_empty();
+        let stores_structure = !lvl.nodes().is_empty() || !lvl.pairs.is_empty();
         if stores_structure || (!lvl.is_marginal() && lvl.slot_count() != 0) {
             return Err(TddBuildError::NonEmptyLeafLevel(leaf));
         }

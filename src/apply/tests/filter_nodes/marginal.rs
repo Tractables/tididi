@@ -50,7 +50,7 @@ fn live(f: &Tdd) -> Tdd {
             continue;
         }
         let mut owned = vec![false; level.pairs.len()];
-        for n in 0..level.nodes.len() {
+        for n in 0..level.nodes().len() {
             if level.node(n).kind().pairs_in_arena() {
                 for i in level.pair_range_at(n) { owned[i] = true; }
             }

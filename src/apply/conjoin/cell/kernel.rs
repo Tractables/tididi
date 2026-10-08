@@ -130,7 +130,7 @@ impl PairSink for EmitSink<'_> {
         rc: u32,
     ) -> Result<(), OperationError> {
         let pair = ChildPair::new(EncodedChildRef::from_raw(lc), EncodedChildRef::from_raw(rc));
-        let nid = self.level.nodes.len() as u32;
+        let nid = self.level.nodes().len() as u32;
         node_idx[grid_pos] = nid;
         emit_single_pair(eng, self.level, pair)
     }

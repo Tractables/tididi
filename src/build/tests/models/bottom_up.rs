@@ -682,8 +682,8 @@ fn same_storage(a: &Tdd, b: &Tdd, what: &str) {
     assert_eq!(a.output, b.output, "{what}: output");
     for (t, _, _) in a.vtree.internal_bottomup() {
         let (x, y) = (&a.levels[t.idx()], &b.levels[t.idx()]);
-        assert_eq!(x.nodes.len(), y.nodes.len(), "{what}: level {} width", t.idx());
-        for i in 0..x.nodes.len() {
+        assert_eq!(x.nodes().len(), y.nodes().len(), "{what}: level {} width", t.idx());
+        for i in 0..x.nodes().len() {
             assert_eq!(x.pairs_vec(i), y.pairs_vec(i), "{what}: level {} node {i}", t.idx());
         }
     }

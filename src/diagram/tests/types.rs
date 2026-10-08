@@ -70,7 +70,7 @@
         let levels = take_levels(eng, 5);
         assert_eq!(levels.len(), 5);
         for level in &levels {
-            assert_eq!(level.nodes.len(), 0);
+            assert_eq!(level.nodes().len(), 0);
             assert!(level.pairs.is_empty());
             assert!(!level.has_multi_pair());
         }
@@ -103,7 +103,7 @@
         let levels2 = take_levels(eng, 3);
         assert_eq!(levels2.len(), 3);
         for level in &levels2 {
-            assert_eq!(level.nodes.len(), 0);
+            assert_eq!(level.nodes().len(), 0);
             assert!(level.pairs.is_empty());
         }
     }
@@ -123,7 +123,7 @@
         let levels2 = take_levels(eng, 3);
         assert_eq!(levels2.len(), 3);
         for level in &levels2 {
-            assert_eq!(level.nodes.len(), 0);
+            assert_eq!(level.nodes().len(), 0);
             assert!(level.pairs.is_empty());
         }
 
@@ -132,7 +132,7 @@
         let levels3 = take_levels(eng, 6);
         assert_eq!(levels3.len(), 6);
         for level in &levels3 {
-            assert_eq!(level.nodes.len(), 0);
+            assert_eq!(level.nodes().len(), 0);
             assert!(level.pairs.is_empty());
         }
     }
@@ -210,14 +210,14 @@
         let dummy = ChildPair::new(NodeIdx(0), NodeIdx(0));
         levels[0].push_internal_node(&[dummy]);
         levels[1].push_internal_node(&[dummy, dummy]);
-        assert_eq!(levels[0].nodes.len(), 1);
+        assert_eq!(levels[0].nodes().len(), 1);
         assert!(levels[1].has_multi_pair());
         // Reset and verify clean
         for level in &mut levels {
             reset_level(level);
         }
         for level in &levels {
-            assert_eq!(level.nodes.len(), 0);
+            assert_eq!(level.nodes().len(), 0);
             assert!(level.pairs.is_empty());
             assert!(!level.has_multi_pair());
         }
@@ -280,7 +280,7 @@
         return_levels(eng, levels);
         let levels2 = take_levels(eng, 2);
         for level in &levels2 {
-            assert_eq!(level.nodes.len(), 0);
+            assert_eq!(level.nodes().len(), 0);
             assert!(level.pairs.is_empty());
             assert!(!level.has_multi_pair());
         }
@@ -432,7 +432,7 @@
             reset_level(level);
         }
         assert_eq!(levels[0].ranges.len(), 0);
-        assert_eq!(levels[0].nodes.len(), 0);
+        assert_eq!(levels[0].nodes().len(), 0);
         assert!(!levels[0].has_multi_pair());
     }
 

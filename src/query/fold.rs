@@ -172,8 +172,8 @@ pub(crate) fn fold_level<F: LevelFold>(
     let right_view = tdd.levels[right_idx].child_decoder();
     let level = &tdd.levels[ti];
     let batch = if F::NODE_WORK { eng.limits().reduce_poll_stride().clamp(1, 256) as usize } else { usize::MAX };
-    for start in (0..level.nodes.len()).step_by(batch) {
-        let end = start.saturating_add(batch).min(level.nodes.len());
+    for start in (0..level.nodes().len()).step_by(batch) {
+        let end = start.saturating_add(batch).min(level.nodes().len());
         if F::NODE_WORK {
             gate.poll((end - start) as u64)?;
         }

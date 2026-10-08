@@ -216,7 +216,7 @@ fn assert_refs_and_width_in_sync(tdd: &Tdd, ws: &WeightStore, root: VtreeIdx, ma
         "weight-marginal level width must track the WeightStore length \
          (a missed width bump mis-sizes apply buffers)",
     );
-    for n in 0..tdd.levels[root.idx()].nodes.len() {
+    for n in 0..tdd.levels[root.idx()].nodes().len() {
         for p in tdd.levels[root.idx()].pairs_vec(n) {
             let raw = p.right.0;
             assert!(

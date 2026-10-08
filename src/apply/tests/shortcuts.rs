@@ -77,7 +77,7 @@ fn with_unreachable_twin(mut f: Tdd) -> Tdd {
     let mut checked = f.clone();
     checked.minimize().unwrap();
     assert_canonical(&checked);
-    assert!(checked.level(root).nodes.len() < f.level(root).nodes.len());
+    assert!(checked.level(root).nodes().len() < f.level(root).nodes().len());
     f
 }
 

@@ -157,9 +157,9 @@ impl TwinEntries for ContextEntries<'_> {
         // loop.
         let stored = level.stored();
         let mut buf = Vec::new();
-        for (i, node) in level.nodes().iter().enumerate() {
+        for i in 0..level.node_count() {
             let pairs = match stored {
-                Some(stored) => stored.of(&node),
+                Some(stored) => stored.of_idx(i),
                 None => level.pairs_read(i, &mut buf),
             };
             if pairs.len() < 3 {
@@ -272,7 +272,7 @@ pub(super) fn find_twin_groups(
     let entries = ContextEntries {
         parent_level,
         t1_side,
-        early_stop: parent_level.nodes.len() + parent_level.arena_len() >= EARLY_STOP_MIN_ENTRIES,
+        early_stop: parent_level.nodes().len() + parent_level.arena_len() >= EARLY_STOP_MIN_ENTRIES,
     };
     group_twins_by_entries(eng, &entries, level.slot_count(), scratch)
 }

@@ -1234,7 +1234,7 @@ fn emit_parent(
         }
     }
     let products = pl_output.len() - first;
-    let first_node = level.nodes.len();
+    let first_node = level.nodes().len();
     // The parent's pairs are appended to the level's arena under one reserve
     // and cut into nodes; the output-pair meter is charged once for the
     // growth, as the dense walk's choke point charges per growth event.
@@ -1258,7 +1258,7 @@ fn emit_parent(
     // Boolean diagram is an upstream canonicity violation. Once any level
     // is marginal, duplicates are legal (`duplicates_legal`).
     debug_assert!(
-        duplicates_legal || (first_node..level.nodes.len()).all(|i| {
+        duplicates_legal || (first_node..level.nodes().len()).all(|i| {
             let mut seen = std::collections::HashSet::new();
             level.pairs_iter_of_idx(i).all(|p| seen.insert(p))
         }),

@@ -103,7 +103,7 @@ pub(crate) fn finish_node(
     if pair_count == 0 {
         return Ok(None);
     }
-    let node = NodeIdx(level.nodes.len() as u32);
+    let node = NodeIdx(level.nodes().len() as u32);
     if pair_count == 1 {
         let pair = level.pop_pair().expect("the tail holds one pair");
         emit_single_pair(eng, level, pair)?;

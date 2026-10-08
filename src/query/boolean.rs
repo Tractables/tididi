@@ -202,7 +202,7 @@ fn same_minimized(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<bool, OperationError
                 let mut intern = FxHashMap::<Vec<ChildPair>, u32>::default();
                 for (diagram, side) in [f, g].into_iter().zip(&mut keys) {
                     let level = diagram.level(t);
-                    lim.reserve_exact(&mut side[t.idx()], level.nodes.len())?;
+                    lim.reserve_exact(&mut side[t.idx()], level.nodes().len())?;
                     for node in level.nodes() {
                         let mut signature = Vec::new();
                         for pair in level.pairs_iter_of(&node) {
