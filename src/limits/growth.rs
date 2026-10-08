@@ -19,6 +19,20 @@ pub(crate) const DENSE_GROWTH_DECISION_THRESHOLD: u128 = 128 * 1024 * 1024;
 /// Bytes per pair in the level arena, used to estimate allocation growth.
 pub(crate) const PAIR_ELEM_BYTES: u64 = std::mem::size_of::<crate::diagram::ChildPair>() as u64;
 
+/// The capacity `Vec::try_reserve` grows an empty `Vec<T>` of capacity
+/// `capacity` to when asked for `additional` elements past it: twice the
+/// capacity or what is asked, whichever is more, and at least the smallest
+/// capacity `Vec` allocates for `T`. A test holds it to `Vec`'s own growth.
+#[inline(always)]
+pub(crate) fn amortized_capacity<T>(capacity: usize, additional: usize) -> usize {
+    let least = match std::mem::size_of::<T>() {
+        1 => 8,
+        size if size <= 1024 => 4,
+        _ => 1,
+    };
+    capacity.saturating_mul(2).max(additional).max(least)
+}
+
 impl Limits {
     /// Remaining soft-budget headroom: `budget − in flight`, saturating, or
     /// `None` when no soft budget is armed. A single reserve of at most this
@@ -159,7 +173,19 @@ impl Limits {
         if additional > v.capacity() - v.len() {
             self.preflight_alloc(grab_bytes);
         }
-        let grown = if EXACT { v.try_reserve_exact(additional) } else { v.try_reserve(additional) };
+        let grown = if v.is_empty() && additional > v.capacity() {
+            // An empty buffer that must grow has nothing to keep: drop its
+            // block and allocate the capacity the reserve would have grown
+            // it to, rather than have the allocator copy the old block. A
+            // recycled arena is cleared, and this is its first growth.
+            let target = if EXACT { additional } else { amortized_capacity::<T>(pre_cap, additional) };
+            *v = Vec::new();
+            v.try_reserve_exact(target)
+        } else if EXACT {
+            v.try_reserve_exact(additional)
+        } else {
+            v.try_reserve(additional)
+        };
         grown.map_err(|_| self.note_refused(grab_bytes))?;
         self.charge_bytes((v.capacity().saturating_sub(pre_cap) as u64).saturating_mul(elem))
     }
