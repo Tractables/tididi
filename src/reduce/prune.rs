@@ -28,7 +28,7 @@ use crate::execution::pool::{Buffers, PooledScratch, Scratch};
 /// The new index of a slot that did not survive, in the remap a parent
 /// rewrites its references through. Every survivor's index is below the
 /// level's width, and a level of `u32::MAX` nodes cannot be allocated.
-const UNREACHED: u32 = u32::MAX;
+pub(super) const UNREACHED: u32 = u32::MAX;
 
 /// The words a block of marks for `width` slots takes.
 #[inline]
@@ -170,14 +170,28 @@ impl<'a> Select<'a> {
 
 /// Write into `out` the new index of each of the first `span` slots of
 /// `block`: its rank among the marked ones, or [`UNREACHED`].
-fn new_indices(block: &[u64], span: usize, out: &mut [u32]) {
+///
+/// A word at a time: a word of marked slots numbers its 64 slots in a run, a
+/// word of none leaves them unreached, and only a mixed word is read a slot
+/// at a time.
+pub(super) fn new_indices(block: &[u64], span: usize, out: &mut [u32]) {
     let mut next = 0u32;
-    for (s, slot) in out[..span].iter_mut().enumerate() {
-        if block[s >> 6] >> (s & 63) & 1 != 0 {
-            *slot = next;
-            next += 1;
+    for (word, slots) in block.iter().zip(out[..span].chunks_mut(64)) {
+        let full = if slots.len() == 64 { u64::MAX } else { (1u64 << slots.len()) - 1 };
+        let word = word & full;
+        if word == full {
+            for (slot, index) in slots.iter_mut().zip(next..) {
+                *slot = index;
+            }
+            next += slots.len() as u32;
+        } else if word == 0 {
+            slots.fill(UNREACHED);
         } else {
-            *slot = UNREACHED;
+            for (b, slot) in slots.iter_mut().enumerate() {
+                let marked = (word >> b & 1) as u32;
+                *slot = if marked != 0 { next } else { UNREACHED };
+                next += marked;
+            }
         }
     }
 }
@@ -715,18 +729,38 @@ fn compact_one_level(
         None => {
             let mut dead = 0usize;
             for_each_unmarked(own, width, |i| dead += level.arena_pairs_at(i));
-            let mut i = 0;
-            level.nodes.retain(|_| {
-                let keep = own[i >> 6] >> (i & 63) & 1 != 0;
-                i += 1;
-                keep
-            });
+            keep_marked(&mut level.nodes, own);
             dead
         }
     };
     level.note_dead_pairs(dead);
     level.compact_pairs_if_stale();
     true
+}
+
+/// Keep the nodes whose slots `own` marks, in their order, in place. A word
+/// at a time: the nodes of a word of marked slots move as one run, and only
+/// a mixed word's are read a mark at a time.
+pub(super) fn keep_marked(nodes: &mut Vec<EncodedNode>, own: &[u64]) {
+    let width = nodes.len();
+    let mut write = 0usize;
+    for (w, &word) in own[..words(width)].iter().enumerate() {
+        let base = w << 6;
+        let n = (width - base).min(64);
+        let full = if n == 64 { u64::MAX } else { (1u64 << n) - 1 };
+        let mut x = word & full;
+        if x == full {
+            nodes.copy_within(base..base + n, write);
+            write += n;
+            continue;
+        }
+        while x != 0 {
+            nodes[write] = nodes[base + x.trailing_zeros() as usize];
+            write += 1;
+            x &= x - 1;
+        }
+    }
+    nodes.truncate(write);
 }
 
 /// Keep level `t`, held as the description of its pairs, as one through a

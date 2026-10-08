@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::reduce::prune::{PruneScope, Select, below_root_walk_applies, prune_unreachable, settle_loose};
+use crate::reduce::prune::{PruneScope, Select, below_root_walk_applies, keep_marked, new_indices, prune_unreachable, settle_loose, UNREACHED};
 
 use crate::test_helpers::compile_clauses;
 use crate::vtree::Vtree;
@@ -363,6 +363,42 @@ fn the_rank_select_reads_every_marked_slot() {
         for _ in 0..50 {
             let j = (next() % (slots.len() as u64 + 2)) as usize;
             assert_eq!(select.nth(j), slots.get(j).copied(), "rank {j} out of order");
+        }
+    }
+}
+
+#[test]
+fn the_word_passes_number_and_keep_every_marked_slot() {
+    use crate::diagram::{ChildPair, EncodedChildRef, EncodedNode};
+    let mut x = 0x2545_f491_4f6c_dd1du64;
+    let mut next = || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    let mut blocks = vec![vec![0u64; 3], vec![u64::MAX; 3], vec![u64::MAX, 0, 1 << 5], vec![1u64 << 63, u64::MAX, 0]];
+    for _ in 0..30 {
+        let words = 1 + (next() % 5) as usize;
+        blocks.push((0..words).map(|_| match next() % 4 { 0 => 0, 1 => u64::MAX, _ => next() & next() }).collect());
+    }
+    for block in &blocks {
+        let marked = |s: usize| block[s >> 6] >> (s & 63) & 1 != 0;
+        for span in [block.len() * 64, block.len() * 64 - 1, block.len() * 64 - 63, 1] {
+            let mut want = Vec::new();
+            let mut rank = 0u32;
+            for s in 0..span {
+                want.push(if marked(s) { rank += 1; rank - 1 } else { UNREACHED });
+            }
+            let mut got = vec![7u32; span];
+            new_indices(block, span, &mut got);
+            assert_eq!(got, want, "span {span} of {block:x?}");
+
+            let node = |i: usize| EncodedNode::inline(ChildPair::new(EncodedChildRef::from_raw(i as u32), EncodedChildRef::from_raw(1)));
+            let mut nodes: Vec<EncodedNode> = (0..span).map(node).collect();
+            keep_marked(&mut nodes, block);
+            let kept: Vec<EncodedNode> = (0..span).filter(|&s| marked(s)).map(node).collect();
+            assert_eq!(nodes, kept, "span {span} of {block:x?}");
         }
     }
 }
