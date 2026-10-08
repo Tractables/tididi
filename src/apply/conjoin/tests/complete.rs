@@ -53,10 +53,7 @@ fn same_both_ways(f: &Tdd, g: &Tdd) -> Tdd {
 
 /// `f` over the odd variables and `g` over the even ones of a balanced
 /// vtree: every product of two of their nodes is satisfiable, so every level
-/// over two internal children reads both by arithmetic. Its arena is seeded
-/// at the product of the operands' arena pairs, which leaves out what a
-/// one-pair node, stored inline, contributes to a cell with a multi-pair
-/// one, so it outgrows the seed and its meter follows the schedule.
+/// over two internal children reads both by arithmetic.
 #[test]
 fn disjoint_supports_read_both_sides_by_arithmetic() {
     let vtree = Arc::new(Vtree::balanced(16));
@@ -71,7 +68,56 @@ fn disjoint_supports_read_both_sides_by_arithmetic() {
     }
     let census = complete_census();
     assert!(census[0] > before[0], "no level read both sides by arithmetic");
+}
+
+/// `x_a ↔ x_b` for each pair of `pairs`: on a balanced vtree with every `a`
+/// left of the root and every `b` right of it, the root holds one pair for
+/// each assignment of the `a`s.
+fn equalities(vtree: &Arc<Vtree>, pairs: &[(i32, i32)]) -> Tdd {
+    let eng = Engine::new();
+    let mut f = Tdd::one(vtree);
+    for &(a, b) in pairs {
+        f = eng.and(f, Tdd::clause(vtree, [-a, b]).unwrap()).unwrap();
+        f = eng.and(f, Tdd::clause(vtree, [a, -b]).unwrap()).unwrap();
+    }
+    f
+}
+
+/// Two roots of 128 pairs each, over disjoint supports, make a root of
+/// 16,384 pairs, past the cap on a level's seeded arena: the arithmetic
+/// route's arena, reserved whole, charges the meter on the schedule the
+/// grid route's arena grows by.
+#[test]
+fn an_arena_past_the_seed_cap_charges_on_the_schedule() {
+    let vtree = Arc::new(Vtree::balanced(64));
+    let f = equalities(&vtree, &[(1, 33), (3, 35), (5, 37), (7, 39), (9, 41), (11, 43), (13, 45)]);
+    let g = equalities(&vtree, &[(2, 34), (4, 36), (6, 38), (8, 40), (10, 42), (12, 44), (14, 46)]);
+    let root = vtree.root().idx();
+    assert_eq!((f.levels[root].live_pairs(), g.levels[root].live_pairs()), (128, 128));
+    let before = complete_census();
+    let fg = same_both_ways(&f, &g);
+    assert_eq!(fg.levels[root].live_pairs(), 128 * 128);
+    let census = complete_census();
     assert!(census[3] > before[3], "no reserved arena outgrew its seed, so the meter's schedule went unchecked");
+}
+
+/// A level of one-pair nodes holds its pairs inline, none in its arena: a
+/// product with it is seeded at its pairs all the same, and no level of a
+/// conjunction under the seed's cap grows its arena. `g` over the leftmost
+/// quarter is one node of one pair on every level outside it.
+#[test]
+fn a_level_of_one_pair_nodes_seeds_its_products_arena() {
+    let vtree = Arc::new(Vtree::balanced(16));
+    let all: Vec<u32> = (1..=16).collect();
+    let mut rng = Lcg::new(0x5eed_a905);
+    let before = pairs_grown();
+    for _ in 0..6 {
+        let f = function_of(&vtree, &all, &mut rng);
+        let g = function_of(&vtree, &[1, 2, 3, 4], &mut rng);
+        same_both_ways(&f, &g);
+        same_both_ways(&g, &f);
+    }
+    assert_eq!(pairs_grown(), before, "a level's arena outgrew its seed");
 }
 
 /// Shared variables under one child leave products unsatisfiable there: that

@@ -771,3 +771,11 @@ fn note_scheduled_charge() {}
 #[cfg(not(test))]
 #[inline(always)]
 fn note_lone_pair() {}
+
+// A test counts the times a level's pairs arena outgrew its capacity.
+#[cfg(test)]
+use tests::note_pairs_grown;
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_pairs_grown() {}

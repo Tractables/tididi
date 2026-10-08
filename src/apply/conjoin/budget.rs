@@ -64,6 +64,7 @@ fn push_pair_grow(
     v: &mut Vec<crate::diagram::ChildPair>,
     pair: crate::diagram::ChildPair,
 ) -> Result<(), OperationError> {
+    super::note_pairs_grown();
     let lim = eng.limits();
     let pre_cap = v.capacity();
     if lim.bounded_growth() {

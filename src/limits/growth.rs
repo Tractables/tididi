@@ -69,7 +69,8 @@ impl Limits {
     /// near-cap decision can never leak into the next one.
     ///
     /// `pair_bound` must be an upper bound for the actual output: the dense walk passes
-    /// `|f.pairs| × |g.pairs|` (every product pair emits at most once), the
+    /// `|f.pairs| × |g.pairs|` less the cells of two one-pair nodes, whose
+    /// pair is held inline (every product pair emits at most once), the
     /// clause conjunction its own per-level worst case.
     #[inline]
     pub(crate) fn begin_level(&self, pair_bound: Option<u128>) {

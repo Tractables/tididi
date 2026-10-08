@@ -580,12 +580,19 @@ pub(super) fn open_level_arenas(
         .max(left_width.max(right_width));
     lim.reserve(level.nodes.stored_mut(), nodes_reserve)?;
 
-    // The one per-level emit-pair bound: every product pair emits at most
-    // once, so `|f.pairs| × |g.pairs|` bounds this level's emit. Used
-    // twice — once to pick the growth mode, once to size the pairs
-    // arena — computed once so the two can never disagree.
-    let emit_pair_bound = (f.level(t).pairs.len() as u128)
-        .saturating_mul(g.level(t).pairs.len() as u128);
+    // The one per-level emit-pair bound. Every product pair emits at most
+    // once, and a product node of one pair is held inline, not in the
+    // arena: the cell of two one-pair nodes writes none there. An operand
+    // level holds `a` pairs in its arena, its multi-pair nodes', and the
+    // pairs of at most `n` one-pair nodes inline, so this level's arena
+    // takes at most `(af + nf)(ag + ng) - nf·ng = af·(ag + ng) + nf·ag`
+    // pairs. A bound of the arenas alone, `af·ag`, was zero against a level
+    // of one-pair nodes, which seeded nothing and left the arena to double
+    // from empty. Used twice — once to pick the growth mode, once to size
+    // the pairs arena — computed once so the two can never disagree.
+    let pairs = |l: &TddLevel| (l.pairs.len() as u128, l.node_count() as u128);
+    let ((af, nf), (ag, ng)) = (pairs(f.level(t)), pairs(g.level(t)));
+    let emit_pair_bound = af.saturating_mul(ag.saturating_add(ng)).saturating_add(nf.saturating_mul(ag));
     lim.begin_level(Some(emit_pair_bound));
     // Seed `level.pairs` at that bound instead of letting it double from
     // empty on every level; the emit's own `try_push_pair_into` choke

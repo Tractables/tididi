@@ -93,6 +93,22 @@ fn count_complete(kind: usize) {
     });
 }
 
+thread_local! {
+    /// The times a level's pairs arena outgrew its capacity on this thread
+    /// ([`pairs_grown`]).
+    static GROWN: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn note_pairs_grown() {
+    GROWN.with(|n| n.set(n.get() + 1));
+}
+
+/// The times a level's pairs arena outgrew its capacity on this thread so
+/// far.
+pub(super) fn pairs_grown() -> u64 {
+    GROWN.with(std::cell::Cell::get)
+}
+
 /// Run `f` with every conjunction level reading its child sides from the
 /// grid, as if no child were complete: the oracle the arithmetic lookups are
 /// checked against.
