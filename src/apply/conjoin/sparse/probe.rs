@@ -238,7 +238,7 @@ fn plan(
     if !(by_left || by_right || pairs_ok) {
         return Ok(None);
     }
-    let f_pairs: u64 = (0..f_level.nodes().len()).map(|i| f_level.pair_count_at(i) as u64).sum();
+    let f_pairs = f_level.live_pairs() as u64;
     let g_pairs = count_pairs(lim, g_level, Sides { left: shape.g.left, right: shape.g.right },
         &mut pb.g_by_left, &mut pb.g_by_right)?;
     if f_pairs + g_pairs < PROBE_MIN_PAIRS && !probe_forced() {
@@ -371,10 +371,10 @@ fn walk_one_side<const SWAPPED: bool>(
     let index = pb.index.view();
     let candidates = &mut pb.candidates;
     let mut gate = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
-    for i in 0..shape.f.here {
+    for (i, pairs) in f_level.internal_inputs_range(0..shape.f.here) {
         candidates.clear();
         let mut work = 0u64;
-        for pair in f_level.pairs_iter_of_idx(i) {
+        for pair in pairs {
             let (a, b) = if !SWAPPED { (pair.left.raw(), pair.right.raw()) } else { (pair.right.raw(), pair.left.raw()) };
             let bucket = &list[offsets[a as usize] as usize..offsets[a as usize + 1] as usize];
             for e in bucket {
@@ -504,10 +504,10 @@ fn walk_both(
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let mut gate = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
-    for i in 0..f_level.nodes().len() {
+    for (i, pairs) in f_level.internal_inputs_iter() {
         candidates.clear();
         let mut work = 0u64;
-        for pair in f_level.pairs_iter_of_idx(i) {
+        for pair in pairs {
             let (a, b) = (pair.left.raw() as usize, pair.right.raw() as usize);
             let lefts = &pl.left[lo[a] as usize..lo[a + 1] as usize];
             let rights = &pl.right[ro[b] as usize..ro[b + 1] as usize];

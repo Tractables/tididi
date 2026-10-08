@@ -1,7 +1,7 @@
 //! The weighted arm of the streaming fold.
 
 use super::*;
-use crate::diagram::{ChildPair, ChildDecoder, EncodedChildRef, LeafLabel, TddLevel, WeightStore, WeightValue};
+use crate::diagram::{ChildPair, ChildDecoder, EncodedChildRef, LeafLabel, PairsIter, TddLevel, WeightStore, WeightValue};
 use crate::vtree::{Vtree, VtreeNode};
 use crate::value::{WeightFold};
 
@@ -156,10 +156,10 @@ impl ValueDomain for WeightFold {
     }
 
     #[inline]
-    fn fold_node(at: &FoldScope<'_, WeightFold>, i: usize) -> WeightValue {
+    fn fold_node(at: &FoldScope<'_, WeightFold>, pairs: PairsIter<'_>) -> WeightValue {
         let FoldInput { vtree, levels, store } = at.input;
         WeightFold::fold(
-            levels[at.lvl].pairs_iter_of_idx(i),
+            pairs,
             |k| read_weight(at.left, k, vtree, store, levels, at.computed),
             |k| read_weight(at.right, k, vtree, store, levels, at.computed),
             store.wzero(),

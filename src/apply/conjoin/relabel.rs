@@ -228,10 +228,11 @@ fn relabel_level(
     level.reserve_on(lim, width, carrier.pairs.len() + 1)?;
     lim.charge_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
     let mut gate = lim.gate_with(APPLY_POLL_STRIDE);
-    // An implicit carrier's pairs are generated into `buf` a node at a time.
-    let mut buf = Vec::new();
+    // An implicit carrier's pairs are generated into `buf` a node at a
+    // time, each node's first pair stepped on from the last's.
+    let (mut buf, mut cursor) = (Vec::new(), None);
     for i in 0..width {
-        let pairs = carrier.pairs_read(i, &mut buf);
+        let pairs = carrier.pairs_read_next(&mut cursor, i, &mut buf);
         gate.poll(pairs.len() as u64)?;
         let out = level.pairs.stored_mut();
         let start = out.len();

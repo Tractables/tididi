@@ -446,8 +446,8 @@ pub(crate) fn referenced_marginal_slots<'a>(
 ) -> &'a [u32] {
     scratch.clear();
     let RefSlotScratch { referenced, seen } = scratch;
-    for n in 0..plevel.nodes().len() {
-        for p in plevel.pairs_iter_of_idx(n) {
+    for (_, pairs) in plevel.internal_inputs_iter() {
+        for p in pairs {
             let raw = match side {
                 ChildSide::Right => p.right.0,
                 ChildSide::Left => p.left.0,

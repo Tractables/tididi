@@ -1,7 +1,7 @@
 //! The integer arm of the streaming fold.
 
 use super::*;
-use crate::diagram::{EncodedChildRef, ChildPair, ChildDecoder, ValueRef, TddLevel, WeightStore};
+use crate::diagram::{EncodedChildRef, ChildPair, ChildDecoder, PairsIter, ValueRef, TddLevel, WeightStore};
 use crate::value::{Count, CountRead, CountRef, CountVec, IntFold};
 use crate::diagram::{LEAF_COUNTS, LeafLabel, leaf_count};
 
@@ -245,7 +245,7 @@ impl ValueDomain for IntFold {
         let (left, right) = vtree.children(t);
         let level = &levels[lvl];
         let mut col = CountVec::try_with_width(eng, level.slot_count())?;
-        let at = FoldScope { lvl, left: left.idx(), right: right.idx(), input, computed };
+        let at = FoldScope { left: left.idx(), right: right.idx(), input, computed };
         // A structural child's column is its `computed` one or the fixed leaf
         // slots; a marginal child's is scanned for its certificate, which is
         // not paid for here since it would not be read raw.
@@ -256,29 +256,29 @@ impl ValueDomain for IntFold {
             let col = IntFold::child_view(c.idx(), vtree, &levels[c.idx()], computed, &()).col;
             col.all_u64().then(|| col.fast_slice())
         };
-        let raw = raw(left).zip(raw(right));
         // A described level's nodes take the general fold, which generates
-        // their pairs.
-        let raw = raw.filter(|_| level.stored().is_some());
+        // their pairs, as does a level without raw children: every node in
+        // node order, each charged before it is summed.
+        let Some((l, r)) = raw(left).zip(raw(right)).filter(|_| level.stored().is_some()) else {
+            for (i, pairs) in level.internal_inputs_iter() {
+                before_node(1 + pairs.len() as u64)?;
+                col.set(eng, i, IntFold::fold_node(&at, pairs))?;
+            }
+            return Ok(col);
+        };
         let n = level.slot_count();
         let mut next = 0;
         while next < n {
             // Each run of nodes is charged before it is summed, as each node
             // would be.
-            let end = match raw {
-                Some(_) => next.saturating_add(FILL_RUN).min(n),
-                None => next + 1,
-            };
+            let end = next.saturating_add(FILL_RUN).min(n);
             let work: u64 = (next..end).map(|i| 1 + level.pair_count_at(i) as u64).sum();
             before_node(work)?;
             while next < end {
-                let filled = match raw {
-                    Some((l, r)) => IntFold::fill_structural_u64(level, l, r, &mut col, next..end),
-                    None => next,
-                };
+                let filled = IntFold::fill_structural_u64(level, l, r, &mut col, next..end);
                 if filled < end {
-                    // A total the fast lane refuses, or no raw children.
-                    col.set(eng, filled, IntFold::fold_node(&at, filled))?;
+                    // A total the fast lane refuses.
+                    col.set(eng, filled, IntFold::fold_node(&at, level.pairs_iter_of_idx(filled)))?;
                 }
                 next = filled + 1;
             }
@@ -288,10 +288,10 @@ impl ValueDomain for IntFold {
     }
 
     #[inline]
-    fn fold_node(at: &FoldScope<'_, IntFold>, i: usize) -> Count {
+    fn fold_node(at: &FoldScope<'_, IntFold>, pairs: PairsIter<'_>) -> Count {
         let FoldInput { vtree, levels, .. } = at.input;
         IntFold::fold(
-            levels[at.lvl].pairs_iter_of_idx(i),
+            pairs,
             |k| read_level_count(at.left, k, vtree, levels, at.computed),
             |k| read_level_count(at.right, k, vtree, levels, at.computed),
         )

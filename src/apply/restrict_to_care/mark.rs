@@ -459,8 +459,8 @@ impl<'a> Walk<'a> {
             let n = level.nodes().len();
             let mut row = Vec::new();
             eng.limits().try_resize(&mut row, n, false)?;
-            for (a, slot) in row.iter_mut().enumerate() {
-                *slot = level.pairs_iter_of_idx(a).any(|p| self.f_sat(lc, p.left) && self.f_sat(rc, p.right));
+            for (slot, (_, mut pairs)) in row.iter_mut().zip(level.internal_inputs_iter()) {
+                *slot = pairs.any(|p| self.f_sat(lc, p.left) && self.f_sat(rc, p.right));
             }
             self.sat[u.idx()] = row;
             if care.levels[u.idx()].is_marginal() || self.care_flat[u.idx()] {

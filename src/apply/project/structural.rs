@@ -845,10 +845,11 @@ fn regroup_atom_per_pair(
     let (mut left_max, mut right_max) = (0u32, 0u32);
     {
         let (atoms, starts): (&mut Vec<ChildPair>, &mut Vec<u32>) = (&mut atoms, &mut starts);
-        // An implicit level's pairs are generated into `buf` a node at a time.
-        let mut buf = Vec::new();
+        // An implicit level's pairs are generated into `buf` a node at a
+        // time, each node's first pair stepped on from the last's.
+        let (mut buf, mut cursor) = (Vec::new(), None);
         for i in 0..n {
-            let pairs = level.pairs_read(i, &mut buf);
+            let pairs = level.pairs_read_next(&mut cursor, i, &mut buf);
             if pairs.is_empty() {
                 return Ok(OneAtom::Declined);
             }

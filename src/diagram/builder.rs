@@ -357,9 +357,9 @@ impl TddBuilder {
         }
         let mut table = InternTable::default();
         let level = &self.levels[t.idx()];
-        let mut buf = Vec::new();
-        for (i, _) in level.internal_inputs_iter() {
-            table.insert_on(lim, level, level.pairs_read(i, &mut buf), NodeIdx(i as u32))?;
+        let (mut buf, mut cursor) = (Vec::new(), None);
+        for i in 0..level.nodes().len() {
+            table.insert_on(lim, level, level.pairs_read_next(&mut cursor, i, &mut buf), NodeIdx(i as u32))?;
         }
         self.interned[t.idx()] = Some(table);
         Ok(())

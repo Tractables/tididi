@@ -6,7 +6,7 @@
 //! built inside an apply. Both folds are written once against [`ValueDomain`] and reserve columns
 //! through the engine, returning allocation refusals as operation errors.
 
-use crate::diagram::{ChildDecoder, ChildPair, TddLevel, WeightStore};
+use crate::diagram::{ChildDecoder, ChildPair, PairsIter, TddLevel, WeightStore};
 use crate::Engine;
 
 use crate::limits::OperationError;
@@ -30,9 +30,8 @@ impl<D: ValueDomain> Clone for FoldInput<'_, D> {
 impl<D: ValueDomain> Copy for FoldInput<'_, D> {}
 
 /// One level of the ensure walk, as [`ValueDomain::fold_node`] sees it: the
-/// level and its two children, the diagram, and the columns computed so far.
+/// level's two children, the diagram, and the columns computed so far.
 pub(crate) struct FoldScope<'a, D: ValueDomain> {
-    pub(crate) lvl: usize,
     pub(crate) left: usize,
     pub(crate) right: usize,
     pub(crate) input: FoldInput<'a, D>,
@@ -135,13 +134,16 @@ pub(crate) trait ValueDomain: Sized {
     /// where a store is attached.
     fn store_of(ws: Option<&WeightStore>) -> &Self::Store;
 
-    /// Fold node `i` of the scope's level: `Σ over its pairs (left × right)`,
-    /// with this domain's child readers resolving each `u32` ref against the
-    /// levels and the columns computed so far.
+    /// Fold a node of the scope's level, whose pairs are `pairs`:
+    /// `Σ over its pairs (left × right)`, with this domain's child readers
+    /// resolving each `u32` ref against the levels and the columns computed
+    /// so far. The caller reads the pairs, in node order where it folds
+    /// every node, so that an implicit level's are stepped on from the last
+    /// node's rather than read off the digits.
     ///
     /// Impls carry `#[inline]`: the ensure walk's per-node loop calls this once
     /// per node, and must not gain a call there.
-    fn fold_node(at: &FoldScope<'_, Self>, i: usize) -> Self::Scalar;
+    fn fold_node(at: &FoldScope<'_, Self>, pairs: PairsIter<'_>) -> Self::Scalar;
 
     /// Open a read view of child level `level_idx`'s column. `level` is `levels[level_idx]`,
     /// handed in already split off from the output level's `&mut` borrow.
@@ -175,10 +177,10 @@ pub(crate) trait ValueDomain: Sized {
         let (left, right) = input.vtree.children(t);
         let level = &input.levels[lvl];
         let mut col = Self::alloc_col(eng, level.slot_count(), input.store)?;
-        let at = FoldScope { lvl, left: left.idx(), right: right.idx(), input, computed };
+        let at = FoldScope { left: left.idx(), right: right.idx(), input, computed };
         for (i, pairs) in level.internal_inputs_iter() {
             before_node(1 + pairs.len() as u64)?;
-            let value = Self::fold_node(&at, i);
+            let value = Self::fold_node(&at, pairs);
             Self::set_col(eng, &mut col, i, value)?;
         }
         Ok(col)
