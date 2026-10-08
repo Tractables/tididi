@@ -5,7 +5,7 @@ use crate::diagram::{ChildSide, EncodedChildRef};
 
 use crate::diagram::marginal_ref::ChildDecoder;
 use crate::diagram::PairsIter;
-use crate::diagram::primitives::{ChildPair, EncodedNode, NodeKind, MULTI_BIT};
+use crate::diagram::primitives::{ChildPair, EncodedNode, NodeKind};
 use super::implicit::NodeCursor;
 use super::{ImplicitLevel, LevelState, TddLevel};
 
@@ -170,39 +170,6 @@ impl<'a> StoredPairs<'a> {
     #[inline]
     pub fn nodes(self) -> &'a [EncodedNode] {
         self.level.nodes.stored()
-    }
-
-    /// Every node's pair, node `i`'s at `i`, when each node holds exactly
-    /// one: the pairs as the nodes hold them inline, without a copy. `None`
-    /// when a node holds none or several.
-    ///
-    /// One read of every node decides; a reader that compares many nodes'
-    /// pairs takes them here at once rather than through
-    /// [`of`](Self::of) a node at a time.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Tdd, Vtree};
-    /// let vtree = Arc::new(Vtree::balanced(2));
-    /// let diagram = Tdd::one(&vtree);
-    /// let level = diagram.level(vtree.root());
-    /// let stored = level.stored().unwrap();
-    /// let pairs = stored.inline_pairs().unwrap();
-    /// assert_eq!(pairs.len(), level.nodes().len());
-    /// assert_eq!(pairs[0], stored.of_idx(0)[0]);
-    /// ```
-    #[inline]
-    pub fn inline_pairs(self) -> Option<&'a [ChildPair]> {
-        let nodes = self.nodes();
-        // A node holds one pair exactly when it holds it inline: a single
-        // pair is never stored in the arena.
-        if nodes.iter().fold(0, |words, node| words | node.a) & MULTI_BIT != 0 {
-            return None;
-        }
-        // Safety: as in `inline_pair`, `EncodedNode` and `ChildPair` are both
-        // `#[repr(C)]` over two `u32`s, and an inline node's words are its
-        // pair's sides; every node here is inline.
-        Some(unsafe { std::slice::from_raw_parts(nodes.as_ptr().cast::<ChildPair>(), nodes.len()) })
     }
 }
 

@@ -138,7 +138,6 @@ For more specialized control:
 | Conjoin or place a diagram by moving its levels, getting it back when refused | [`Engine::and_restoring`](crate::Engine::and_restoring), [`Engine::embed_moving`](crate::Engine::embed_moving) |
 | Conjoin two diagrams placed on a larger vtree, without building the levels the placements add | [`Engine::and_onto`](crate::Engine::and_onto) |
 | Assemble levels and pairs directly | [`TddBuilder`](crate::diagram::TddBuilder), started with [`Tdd::builder`](crate::Tdd::builder) |
-| Read a stored level whose nodes hold one pair each as one slice of pairs | [`StoredPairs::inline_pairs`](crate::diagram::StoredPairs::inline_pairs), from [`TddLevel::stored`](crate::diagram::TddLevel::stored) |
 
 The [data model](crate::guide::model) explains levels, pairs and determinism;
 the [architecture reference](crate::guide::architecture) describes the implementation.
