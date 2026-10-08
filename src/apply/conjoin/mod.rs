@@ -776,6 +776,21 @@ fn note_scheduled_charge() {}
 #[inline(always)]
 fn note_lone_pair() {}
 
+// A test builds no dead-pair masks with one multi-pair operand, as the oracle
+// for those masks, and counts the levels that build them.
+#[cfg(test)]
+use tests::{note_one_sided_masks, one_sided_masks_forced_off};
+
+#[cfg(not(test))]
+#[inline(always)]
+fn one_sided_masks_forced_off() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_one_sided_masks() {}
+
 // A test counts the times a level's pairs arena outgrew its capacity.
 #[cfg(test)]
 use tests::note_pairs_grown;

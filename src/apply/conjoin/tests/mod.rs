@@ -8,6 +8,7 @@ mod marginal_leaf_target;
 mod marginal_level;
 mod marginal_orphan;
 mod marginal_subsumed;
+mod one_sided;
 mod owed;
 mod restoring;
 mod self_conjunction;
@@ -107,6 +108,43 @@ pub(super) fn note_pairs_grown() {
 /// far.
 pub(super) fn pairs_grown() -> u64 {
     GROWN.with(std::cell::Cell::get)
+}
+
+thread_local! {
+    /// Whether no level on this thread builds the dead-pair masks with one
+    /// multi-pair operand ([`one_sided_masks_off`]).
+    static ONE_SIDED_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The levels on this thread that built the masks with one multi-pair
+    /// operand ([`one_sided_masked_levels`]).
+    static ONE_SIDED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn one_sided_masks_forced_off() -> bool {
+    ONE_SIDED_OFF.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_one_sided_masks() {
+    ONE_SIDED.with(|n| n.set(n.get() + 1));
+}
+
+/// Run `f` with no level building the dead-pair masks with one multi-pair
+/// operand, each such level on the row loop without masks: the oracle the
+/// one-sided masks are checked against.
+pub(super) fn one_sided_masks_off<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ONE_SIDED_OFF.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(ONE_SIDED_OFF.with(|c| c.replace(true)));
+    f()
+}
+
+/// The levels on this thread so far that built the dead-pair masks with one
+/// multi-pair operand.
+pub(super) fn one_sided_masked_levels() -> u64 {
+    ONE_SIDED.with(std::cell::Cell::get)
 }
 
 /// Run `f` with every conjunction level reading its child sides from the

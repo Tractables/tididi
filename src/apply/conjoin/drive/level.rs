@@ -910,7 +910,7 @@ pub(super) fn build_level_dense(
     let LevelBuild { shape, route, plan } = level;
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
-    let MarginalPlan { sides, both_multi_pair } = plan;
+    let MarginalPlan { sides, both_multi_pair, one_sided_masks } = plan;
     let passthrough = Sides { left: sides.left.is_passthrough(), right: sides.right.is_passthrough() };
     let use_sparse_marginal = route == Route::SparseMarg;
     // Materialize any sparse child grid and bump-allocate this level's own.
@@ -929,13 +929,21 @@ pub(super) fn build_level_dense(
         Sides { left: run.products.is_complete(li), right: run.products.is_complete(ri) },
     );
     // Only the grid-reading dead-pair liveness masks are deferred this far: they need
-    // the materialized child grids, and `both_multi_pair` implies a route that has them.
+    // the materialized child grids, and either flag implies a route that has them.
     // With both sides complete no mask can clear, and the row loop reads none; on a
-    // grid of fewer than `MASK_MIN_CELLS` cells they cost more than they cull.
-    let masked = both_multi_pair
-        && !matches!(lookups, PlainLookups::Complete { .. })
-        && fw.here.saturating_mul(gw.here) >= liveness::MASK_MIN_CELLS;
+    // grid of fewer than `MASK_MIN_CELLS` cells they cost more than they cull. With
+    // one multi-pair operand they are built for the row loop over two grids only: a
+    // level with a complete side keeps the loop it had.
+    let masked = !matches!(lookups, PlainLookups::Complete { .. })
+        && if both_multi_pair {
+            fw.here.saturating_mul(gw.here) >= liveness::MASK_MIN_CELLS
+        } else {
+            one_sided_masks && route == Route::Dense && lookups == PlainLookups::Grid
+        };
     if masked {
+        if !both_multi_pair {
+            super::super::note_one_sided_masks();
+        }
         build_level_prefilter_masks(eng, run, g, shape, &plan, bases)?;
     }
 

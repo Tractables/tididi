@@ -45,7 +45,9 @@ pub(super) struct CellCtx<'a> {
     pub(crate) right_width: usize,
     /// Whether the level built its dead-pair masks, each side's `live_cols`
     /// and `reach`: both operand levels multi-pair, a side read from a grid,
-    /// and a grid of `liveness::MASK_MIN_CELLS` cells or more. The row skip,
+    /// and a grid of `liveness::MASK_MIN_CELLS` cells or more; or one
+    /// multi-pair operand level on the row loop over two grids, where
+    /// `MarginalPlan::one_sided_masks` admits the level. The row skip,
     /// the column culls and the N×M arm's per-pair culls read the masks only
     /// where it holds.
     pub(crate) masked: bool,

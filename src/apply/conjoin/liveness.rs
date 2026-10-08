@@ -2,7 +2,10 @@
 //!
 //! The both-multi-pair conjunction path (multi-pair on both sides) scans all (p1, p2) input
 //! pairs of the two operand nodes. Most pairs resolve to `NO_PRODUCT` child conjunctions,
-//! so we precompute per-level liveness masks for O(1) skip decisions.
+//! so we precompute per-level liveness masks for O(1) skip decisions. A level with one
+//! multi-pair operand builds them too where its grid is large
+//! ([`one_sided_masks_pay`]): there a cell has one pair on a side, and the masks cull the
+//! cells whose every candidate is dead on one side.
 //!
 //! Columns are mapped to u128 mask bits through a power-of-two bucket: bit
 //! index = `col >> shift`, with `shift` chosen by [`bucket_shift`] so at most
@@ -23,6 +26,26 @@ use crate::diagram::Sides;
 /// cull under a tenth of its cells, where on a grid of 8 to 63 cells they
 /// cull about half.
 pub(super) const MASK_MIN_CELLS: usize = 8;
+
+/// The fewest cells a product grid of a level with one multi-pair operand
+/// has for its level to build the masks. A culled cell there skips one pair
+/// on a side, against several on a level of two multi-pair operands, and a
+/// cell that survives pays both column tests. On grids of 64 cells or more
+/// such levels typically have about two cells in three with every candidate
+/// dead on one side; on grids of 16 to 63 cells the culls do not pay for the
+/// tests.
+pub(super) const ONE_SIDED_MASK_MIN_CELLS: usize = 64;
+
+/// Whether a level with one multi-pair operand builds the masks: a grid of
+/// `cells` cells, at least [`ONE_SIDED_MASK_MIN_CELLS`], over children whose
+/// g widths `child_g_widths` take bit-exact masks ([`bucket_shift`] 0). A
+/// wider child's bucketed mask culls a cell only where its whole bucket is
+/// dead, which nothing has measured on these levels.
+pub(super) fn one_sided_masks_pay(cells: usize, child_g_widths: Sides<usize>) -> bool {
+    cells >= ONE_SIDED_MASK_MIN_CELLS
+        && bucket_shift(child_g_widths.left) == 0
+        && bucket_shift(child_g_widths.right) == 0
+}
 
 /// One child side's two dead-pair pre-filter masks.
 ///

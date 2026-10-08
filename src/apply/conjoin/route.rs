@@ -53,9 +53,10 @@ pub(super) enum Route {
     /// No marginal child, no streaming, no dead-pair masks and no pass-through side:
     /// the dense grid with positional child lookups.
     PlainDense,
-    /// No marginal child and no pass-through side, but both operands
-    /// multi-pair at this level: the dense grid with positional child lookups
-    /// and the dead-pair liveness masks.
+    /// No marginal child and no pass-through side, but a level the dead-pair
+    /// liveness masks apply to, both operands multi-pair or one of them on a
+    /// large grid ([`MarginalPlan::one_sided_masks`]): the dense grid with
+    /// positional child lookups and the masks.
     Dense,
 }
 
@@ -164,7 +165,7 @@ pub(super) fn route_level(
     {
         return Route::MarginalChild;
     }
-    if plan.both_multi_pair {
+    if plan.both_multi_pair || plan.one_sided_masks {
         return Route::Dense;
     }
     Route::PlainDense

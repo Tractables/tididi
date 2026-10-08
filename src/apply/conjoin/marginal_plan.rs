@@ -6,7 +6,7 @@
 use crate::diagram::{ChildDecoder, ChildSide, Sides, Tdd, TddLevel};
 use super::OperationError;
 use crate::Engine;
-use super::liveness::{bucket_shift, build_live_cols_bitmask, build_reach_masks, PrefilterSideMasks};
+use super::liveness::{bucket_shift, build_live_cols_bitmask, build_reach_masks, one_sided_masks_pay, PrefilterSideMasks};
 use super::setup::{ApplyRun, LevelShape, Operands};
 use super::route::LevelMarg;
 
@@ -96,6 +96,11 @@ pub(super) struct MarginalPlan {
     /// grid is also large enough to pay for them
     /// (`liveness::MASK_MIN_CELLS`).
     pub(crate) both_multi_pair: bool,
+    /// True when exactly one operand has multi-pair nodes at this level and
+    /// its grid is one the masks pay on (`liveness::one_sided_masks_pay`):
+    /// the pre-filter applies there too, on the row loop that reads both
+    /// sides from their grids.
+    pub(crate) one_sided_masks: bool,
 }
 
 /// Whether one child side is a pass-through carrier, and which operand carries it.
@@ -186,8 +191,9 @@ fn debug_assert_no_marginal_products(
 /// dead-pair pre-filter applies.
 ///
 /// This half reads no grid, so the caller can pick the route before
-/// materializing any child grid. The liveness masks the `both_multi_pair` flag enables are
-/// filled separately by `build_level_prefilter_masks`, which does read the grids.
+/// materializing any child grid. The liveness masks the `both_multi_pair` and
+/// `one_sided_masks` flags enable are filled separately by
+/// `build_level_prefilter_masks`, which does read the grids.
 ///
 /// A child is marginal in `marginal`'s wider sense, in the output or in
 /// either operand: an identity shortcut can move a marginal child from an
@@ -219,13 +225,22 @@ pub(super) fn plan_marginal_level(
     // ── dead-pair pre-filter (per-level setup) ────────────────
     // Masks are bit-exact for child widths ≤ 128 and bucketed (shift > 0,
     // sound-with-false-positives) above — see liveness.rs.
-    let both_multi_pair = f.level(t).has_multi_pair() && g.level(t).has_multi_pair();
+    // g's level is scanned only where one of the two flags can hold.
+    let one_sided_fits = one_sided_masks_pay(
+        shape.f.here.saturating_mul(shape.g.here),
+        Sides { left: shape.g.left, right: shape.g.right },
+    );
+    let f_multi = f.level(t).has_multi_pair();
+    let g_multi = (f_multi || one_sided_fits) && g.level(t).has_multi_pair();
+    let both_multi_pair = f_multi && g_multi;
+    let one_sided_masks = one_sided_fits && f_multi != g_multi && !super::one_sided_masks_forced_off();
     // A pass-through side has no product grid to filter against, so it is
     // treated as alive throughout. The liveness masks, which read the child
-    // grids, are built by `build_level_prefilter_masks` once the grids exist and
-    // only when `both_multi_pair` holds and the grid has `MASK_MIN_CELLS` cells.
+    // grids, are built by `build_level_prefilter_masks` once the grids exist:
+    // where `both_multi_pair` holds and the grid has `MASK_MIN_CELLS` cells,
+    // and where `one_sided_masks` holds on the grid row loop.
 
-    MarginalPlan { sides, both_multi_pair }
+    MarginalPlan { sides, both_multi_pair, one_sided_masks }
 }
 
 /// One child side's materialized product grid, as the liveness masks read it.
@@ -245,7 +260,8 @@ pub(super) struct ChildGrid {
 ///
 /// This is the grid-reading half of the marginal plan: it fills the side's
 /// liveness scratch (`live_cols`, `reach`) by scanning the materialized child
-/// grid through `node_idx`. Call only when [`MarginalPlan::both_multi_pair`] holds and after
+/// grid through `node_idx`. Call only on a level that builds its masks
+/// ([`MarginalPlan::both_multi_pair`] or [`MarginalPlan::one_sided_masks`]) and after
 /// the child grid exists. Masks are bit-exact for child widths ≤ 128 and
 /// bucketed (shift > 0, sound-with-false-positives) above — see liveness.rs.
 ///
