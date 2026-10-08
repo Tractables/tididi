@@ -235,6 +235,9 @@ impl Products {
         self.complete[t] = true;
     }
 
+    /// Whether level `t` has its product list.
+    pub(super) fn has_list(&self, t: usize) -> bool { self.has_pl[t] }
+
     pub(super) fn live(&self, level: usize) -> usize { self.live_counts[level] }
     pub(super) fn record_live(&mut self, level: usize, count: usize) { self.live_counts[level] = count; }
 

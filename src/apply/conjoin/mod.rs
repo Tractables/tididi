@@ -29,7 +29,7 @@ use cell::{
 
 mod sparse;
 pub(crate) use sparse::SparseWorkspace;
-use sparse::{apply_sparse_level, count_sparse_level, sum_sparse_level, CandidateFold, ChildSum, Passthrough};
+use sparse::{apply_sparse_level, count_sparse_level, sum_sparse_level, CandidateFold, ChildSum, Complete, Passthrough};
 
 // Identity/constant-true detection and the per-level identity fast paths.
 mod identity;
@@ -888,6 +888,26 @@ fn note_read_through() {}
 #[cfg(not(test))]
 #[inline(always)]
 fn note_written_pairs(_pairs: &[ChildPair]) {}
+
+// A test lists every child a sparse level joins, the oracle the arithmetic
+// reads of a complete child are checked against, and counts the levels that
+// read one.
+#[cfg(test)]
+use tests::{complete_sides_listed, note_complete_side, note_summed_complete_root};
+
+#[cfg(not(test))]
+#[inline(always)]
+fn complete_sides_listed() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_complete_side(_side: crate::diagram::ChildSide) {}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_summed_complete_root() {}
 
 // A test counts the levels a count read from an operand's kept counts
 // instead of folding them.

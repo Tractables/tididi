@@ -32,6 +32,19 @@ impl Passthrough {
     }
 }
 
+/// The child side of a sparse level read by arithmetic, without its product
+/// list: a complete child, whose cell `(i, j)` is node `i * g_width + j`.
+/// Its list would name every cell of its grid, where the level joins only
+/// the cells its parents' pairs meet; the scatter's leaf arm reads it as it
+/// reads a leaf, and the probe through the other child.
+#[derive(Clone, Copy)]
+pub(crate) struct Complete {
+    /// The child read by arithmetic.
+    pub(crate) side: ChildSide,
+    /// `g`'s width at that child.
+    pub(crate) g_width: usize,
+}
+
 /// Run the scatter for one level: choose which side to iterate and how the
 /// candidates are collected, then join. Returns whether the candidates were
 /// collected flat, which is where the emit reads them from.
@@ -40,8 +53,9 @@ impl Passthrough {
 /// `estimate_scatter_direction`, and its emit-step count decides between a
 /// bucket per f parent and the flat list (`flat_candidates_win`). A leaf
 /// child is put on the inner side ([`leaf_direction`]), so the leaf arm
-/// joins the level, into buckets. A pass-through side is put on the inner
-/// side too, and the leaf arm joins the level on its other child. With
+/// joins the level, into buckets. A pass-through side, or a `complete` side,
+/// is put on the inner side too, and the leaf arm joins the level on its
+/// other child. With
 /// `fixed`, the candidates go where that collector says instead, on a level
 /// with one product: the level's pair arena ([`finish_direct`]), a count
 /// ([`count_sparse_level`]) or the sums of a child summed out
@@ -57,6 +71,7 @@ fn scatter_level(
     thresholds: SparseThresholds,
     fixed: Option<Collect<'_, '_>>,
     passthrough: Option<Passthrough>,
+    complete: Option<Complete>,
 ) -> Result<bool, OperationError> {
     let lim = eng.limits();
     let t_idx = shape.t.idx();
@@ -64,10 +79,17 @@ fn scatter_level(
         left: f.vtree.node(shape.left).is_leaf(),
         right: f.vtree.node(shape.right).is_leaf(),
     };
-    let (swap_direction, flat) = match (passthrough, leaf_direction(leaves)) {
-        // The leaf arm reads the pass-through side where it reads a leaf,
-        // on the inner side: the left child unswapped, the right one swapped.
-        (Some(p), _) => (p.side == ChildSide::Right, false),
+    let inner = match (passthrough, complete) {
+        (Some(p), _) => Some((p.side, Inner::Carried(p.carrier))),
+        (None, Some(c)) => Some((c.side, Inner::Complete { g_width: c.g_width })),
+        (None, None) => None,
+    };
+    debug_assert!(complete.is_none() || passthrough.is_none(), "a level reads one side without its list");
+    let (swap_direction, flat) = match (inner, leaf_direction(leaves)) {
+        // The leaf arm reads the pass-through side, or the complete one,
+        // where it reads a leaf, on the inner side: the left child
+        // unswapped, the right one swapped.
+        (Some((side, _)), _) => (side == ChildSide::Right, false),
         (None, Some(swapped)) => (swapped, false),
         (None, None) => {
             // The estimator sums what each direction walks around the emit.
@@ -98,11 +120,11 @@ fn scatter_level(
         None if flat => Collect::Flat,
         None => Collect::Buckets,
     };
-    let carrier = passthrough.map(|p| p.carrier);
+    let inner = inner.map(|(_, inner)| inner);
     if !swap_direction {
-        scatter_join::<false>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, collect, carrier)?;
+        scatter_join::<false>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, collect, inner)?;
     } else {
-        scatter_join::<true>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, collect, carrier)?;
+        scatter_join::<true>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, collect, inner)?;
     }
     if flat {
         sort_candidates(eng, ws, shape.f.here)?;
@@ -184,6 +206,8 @@ impl std::ops::DerefMut for WsGuard<'_> {
 ///
 /// With `passthrough`, that side is carried rather than joined: its product
 /// list is not read, and the output pairs hold the carrier's field there.
+/// With `complete`, that side is joined by arithmetic, and its product list,
+/// which the caller did not build, is not read either.
 ///
 /// Steps:
 ///   scatter: fused scatter-filter by the outer child
@@ -214,6 +238,7 @@ pub(crate) fn apply_sparse_level(
     cells: Sides<CellLookup<'_>>,
     thresholds: SparseThresholds,
     passthrough: Option<Passthrough>,
+    complete: Option<Complete>,
 ) -> Result<(), OperationError> {
     let t_idx = shape.t.idx();
     let ProductLists { left, right, out: pl_output } = lists;
@@ -253,7 +278,7 @@ pub(crate) fn apply_sparse_level(
     if shape.f.here == 1 && shape.g.here == 1 {
         let level = &mut levels[t_idx];
         let base = level.pairs.len();
-        scatter_level(eng, ws, f, g, shape, pl, thresholds, Some(Collect::Direct(&mut *level)), passthrough)?;
+        scatter_level(eng, ws, f, g, shape, pl, thresholds, Some(Collect::Direct(&mut *level)), passthrough, complete)?;
         finish_direct(eng, level, base, pl_output, duplicates_legal)?;
         #[cfg(debug_assertions)]
         debug_check_flushed_level(pl_output, &levels[t_idx]);
@@ -265,7 +290,8 @@ pub(crate) fn apply_sparse_level(
     // `f` node instead of scattered (`probe_level`). It joins both children,
     // so a pass-through side, and a leaf, which the leaf arm already reads by
     // lookup, stay with the scatter; and its pair table holds a `g` pair once,
-    // so it is withheld where pair lists may be multisets.
+    // so it is withheld where pair lists may be multisets. A complete side
+    // has no list to walk through: the probe reads it only directly.
     let joined = passthrough.is_none()
         && !f.vtree.node(shape.left).is_leaf()
         && !f.vtree.node(shape.right).is_leaf();
@@ -274,7 +300,11 @@ pub(crate) fn apply_sparse_level(
             || g.levels.iter().any(|l| l.is_marginal())
             || levels.iter().any(|l| l.is_marginal());
         let level = &mut levels[t_idx];
-        if probe_level(eng, ws, f, g, shape, level, pl, pl_output, cells, !multisets, duplicates_legal)? {
+        let listed = Sides {
+            left: complete.is_none_or(|c| c.side != ChildSide::Left),
+            right: complete.is_none_or(|c| c.side != ChildSide::Right),
+        };
+        if probe_level(eng, ws, f, g, shape, level, pl, listed, pl_output, cells, !multisets, duplicates_legal)? {
             #[cfg(debug_assertions)]
             debug_check_flushed_level(pl_output, &levels[t_idx]);
             guard.scatter_clean();
@@ -282,7 +312,7 @@ pub(crate) fn apply_sparse_level(
         }
     }
 
-    let flat = scatter_level(eng, ws, f, g, shape, pl, thresholds, None, passthrough)?;
+    let flat = scatter_level(eng, ws, f, g, shape, pl, thresholds, None, passthrough, complete)?;
 
     // `plan_chunks` greedy-packs f-parent indices into emit chunks under the
     // sparse chunk budget (`usize::MAX` disables). A level that fits in one
@@ -342,7 +372,7 @@ pub(crate) fn count_sparse_level(
     debug_assert!(shape.f.here == 1 && shape.g.here == 1, "a counted level has one product");
     assert_no_marginal_children(shape.t.idx(), shape.left, shape.right, f, g, levels, passthrough);
     let mut guard = WsGuard::new(eng);
-    scatter_level(eng, &mut guard, f, g, shape, pl, thresholds, Some(Collect::Fold(fold)), passthrough)?;
+    scatter_level(eng, &mut guard, f, g, shape, pl, thresholds, Some(Collect::Fold(fold)), passthrough, None)?;
     guard.scatter_clean();
     Ok(())
 }
@@ -351,7 +381,9 @@ pub(crate) fn count_sparse_level(
 /// candidates: each candidate adds its summed-side node's count to its kept
 /// product in `sum`, and no pair is written ([`ChildSum`]). The joined
 /// children are still structural here — the summed child is made marginal
-/// only once its counts are read — so the marginal-child refusal holds.
+/// only once its counts are read — so the marginal-child refusal holds. A
+/// `complete` side is read by arithmetic, as [`apply_sparse_level`] reads
+/// it, so the candidates come in the order the two-step path's level has.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn sum_sparse_level(
     eng: &Engine,
@@ -361,12 +393,13 @@ pub(crate) fn sum_sparse_level(
     levels: &[TddLevel],
     pl: Sides<&[ProductEntry]>,
     thresholds: SparseThresholds,
+    complete: Option<Complete>,
     sum: &mut ChildSum,
 ) -> Result<(), OperationError> {
     debug_assert!(shape.f.here == 1 && shape.g.here == 1, "a summed level has one product");
     assert_no_marginal_children(shape.t.idx(), shape.left, shape.right, f, g, levels, None);
     let mut guard = WsGuard::new(eng);
-    scatter_level(eng, &mut guard, f, g, shape, pl, thresholds, Some(Collect::Sum(sum)), None)?;
+    scatter_level(eng, &mut guard, f, g, shape, pl, thresholds, Some(Collect::Sum(sum)), None, complete)?;
     guard.scatter_clean();
     Ok(())
 }

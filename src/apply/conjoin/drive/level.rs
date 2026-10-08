@@ -28,7 +28,9 @@ pub(super) struct LevelBuild {
 ///
 /// A pass-through side in `plan` is carried rather than joined, so it needs
 /// no product list, and the level's fields on that side are marked inline
-/// for the end-of-apply tagger, as [`Route::SparseMarg`] marks them.
+/// for the end-of-apply tagger, as [`Route::SparseMarg`] marks them. A
+/// complete child is joined by arithmetic ([`complete_side`]), and needs no
+/// product list either.
 pub(super) fn run_sparse_level(
     eng: &Engine,
     run: &mut ApplyRun,
@@ -42,11 +44,13 @@ pub(super) fn run_sparse_level(
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
     let passthrough = Passthrough::of(plan.sides);
     let carried = |side| passthrough.is_some_and(|p| p.side == side);
+    let complete = complete_side(run, &f.vtree, shape, passthrough, filtered);
+    let unlisted = |side| carried(side) || complete.is_some_and(|c| c.side == side);
     // Ensure the joined children have product lists for the scatter pipeline.
-    if !carried(ChildSide::Left) {
+    if !unlisted(ChildSide::Left) {
         run.ensure_product_list_for_child(eng, li, fw.left, gw.left)?;
     }
-    if !carried(ChildSide::Right) {
+    if !unlisted(ChildSide::Right) {
         run.ensure_product_list_for_child(eng, ri, fw.right, gw.right)?;
     }
 
@@ -63,6 +67,7 @@ pub(super) fn run_sparse_level(
         cells,
         run.thresholds,
         passthrough,
+        complete,
     )?;
     run.products.finish_sparse(&mut run.levels[ti], ti);
     mark_passthrough_inlined(
@@ -70,6 +75,51 @@ pub(super) fn run_sparse_level(
         Sides { left: carried(ChildSide::Left), right: carried(ChildSide::Right) },
     );
     Ok(())
+}
+
+/// The child a sparse level joins by arithmetic rather than through its
+/// product list ([`Complete`]): an internal child that is complete and has no
+/// list yet, whose list would name every cell of its grid where the level
+/// meets only the cells its operands' pairs name. None under a filter, which
+/// may have dropped a cell the arithmetic names; beside a pass-through side
+/// or a leaf child, which take the leaf arm's inner side themselves; or where
+/// an operand is constant-true over the child, whose list is no wider than
+/// the other operand's level there. Of two such children, the one with the
+/// wider grid is read by arithmetic and the other listed. The one-product
+/// root a sum takes ([`sum_sparse_root`]) reads it the same way.
+pub(super) fn complete_side(
+    run: &ApplyRun,
+    vtree: &crate::vtree::Vtree,
+    shape: LevelShape,
+    passthrough: Option<Passthrough>,
+    filtered: bool,
+) -> Option<Complete> {
+    let LevelShape { left, right, f: fw, g: gw, .. } = shape;
+    if filtered
+        || passthrough.is_some()
+        || vtree.node(left).is_leaf()
+        || vtree.node(right).is_leaf()
+        || complete_sides_listed()
+    {
+        return None;
+    }
+    let open = |c: VtreeIdx| {
+        let i = c.idx();
+        run.products.is_complete(i) && !run.products.has_list(i) && !run.f_identity[i] && !run.g_identity[i]
+    };
+    let cells = |f_width: usize, g_width: usize| f_width as u128 * g_width as u128;
+    let side = match (open(left), open(right)) {
+        (true, true) if cells(fw.left, gw.left) >= cells(fw.right, gw.right) => ChildSide::Left,
+        (true, false) => ChildSide::Left,
+        (_, true) => ChildSide::Right,
+        (false, false) => return None,
+    };
+    let g_width = match side {
+        ChildSide::Left => gw.left,
+        ChildSide::Right => gw.right,
+    };
+    note_complete_side(side);
+    Some(Complete { side, g_width })
 }
 
 /// Whether [`count_sparse_root`] may take a level the sparse route was chosen
@@ -274,8 +324,18 @@ pub(super) fn sum_sparse_root(
         ChildSide::Right => (right, left),
         ChildSide::Left => (left, right),
     };
-    run.ensure_product_list_for_child(eng, li, fw.left, gw.left)?;
-    run.ensure_product_list_for_child(eng, ri, fw.right, gw.right)?;
+    // A complete child is read by arithmetic, as the two-step path's
+    // level reads it, so the candidates come in the order its pairs have.
+    let complete = complete_side(run, vtree, shape, None, false);
+    if complete.is_none_or(|c| c.side != ChildSide::Left) {
+        run.ensure_product_list_for_child(eng, li, fw.left, gw.left)?;
+    }
+    if complete.is_none_or(|c| c.side != ChildSide::Right) {
+        run.ensure_product_list_for_child(eng, ri, fw.right, gw.right)?;
+    }
+    if complete.is_some() {
+        note_summed_complete_root();
+    }
 
     let lim = eng.limits();
     let mut computed: Vec<Option<CountVec>> = Vec::new();
@@ -301,7 +361,7 @@ pub(super) fn sum_sparse_root(
     sum_sparse_level(
         eng, shape, f, g, run.levels,
         Sides { left: lists.left, right: lists.right },
-        run.thresholds, &mut sum,
+        run.thresholds, complete, &mut sum,
     )?;
     if sum.is_empty() {
         run.products.finish_sparse(&mut run.levels[ti], ti);

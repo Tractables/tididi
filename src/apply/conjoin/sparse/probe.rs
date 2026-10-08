@@ -215,7 +215,10 @@ const PLAN_SAMPLE_PAIRS: u64 = 1 << 14;
 /// any route builds the same level.
 ///
 /// `pairs_ok` admits [`Probe::Pairs`], whose table holds each `g` pair once:
-/// it is withheld where pair lists may be multisets.
+/// it is withheld where pair lists may be multisets. A child `listed` does
+/// not name has no product list (a complete child read by arithmetic): no
+/// probe walks through it, and [`Probe::Pairs`], which walks through both,
+/// is withheld.
 #[expect(clippy::too_many_arguments)]
 fn plan(
     eng: &Engine,
@@ -224,12 +227,14 @@ fn plan(
     g_level: &TddLevel,
     shape: LevelShape,
     pl: Sides<&[ProductEntry]>,
+    listed: Sides<bool>,
     cells: Sides<CellLookup<'_>>,
     pairs_ok: bool,
 ) -> Result<Option<(Probe, u64)>, OperationError> {
     let lim = eng.limits();
-    let by_left = cells.right.direct();
-    let by_right = cells.left.direct();
+    let by_left = listed.left && cells.right.direct();
+    let by_right = listed.right && cells.left.direct();
+    let pairs_ok = pairs_ok && listed.left && listed.right;
     if !(by_left || by_right || pairs_ok) {
         return Ok(None);
     }
@@ -239,8 +244,15 @@ fn plan(
     if f_pairs + g_pairs < PROBE_MIN_PAIRS && !probe_forced() {
         return Ok(None);
     }
-    bucket_offsets(lim, pl.left, shape.f.left, &mut pb.left_offsets)?;
-    bucket_offsets(lim, pl.right, shape.f.right, &mut pb.right_offsets)?;
+    // An unlisted side's offsets are left empty: no option reading them is open.
+    pb.left_offsets.clear();
+    pb.right_offsets.clear();
+    if listed.left {
+        bucket_offsets(lim, pl.left, shape.f.left, &mut pb.left_offsets)?;
+    }
+    if listed.right {
+        bucket_offsets(lim, pl.right, shape.f.right, &mut pb.right_offsets)?;
+    }
     let (lo, ro) = (&pb.left_offsets, &pb.right_offsets);
     let walk = |list: &[ProductEntry], offsets: &[u32], by_g: &[u32], a: usize| -> u64 {
         list[offsets[a] as usize..offsets[a + 1] as usize].iter().map(|e| u64::from(by_g[e.g_idx.idx()]) + 1).sum()
@@ -257,9 +269,11 @@ fn plan(
             if by_right {
                 right += walk(pl.right, ro, &pb.g_by_right, b);
             }
-            let n_left = u64::from(lo[a + 1] - lo[a]);
-            let n_right = u64::from(ro[b + 1] - ro[b]);
-            both = both.saturating_add(n_left * n_right + 1);
+            if pairs_ok {
+                let n_left = u64::from(lo[a + 1] - lo[a]);
+                let n_right = u64::from(ro[b + 1] - ro[b]);
+                both = both.saturating_add(n_left * n_right + 1);
+            }
         }
     }
     let scale = |cost: u64| cost.saturating_mul(f_pairs) / sampled.max(1);
@@ -280,7 +294,8 @@ fn plan(
 ///
 /// The children must be internal and joined (no pass-through side), and the
 /// level must have more than one `f` or `g` node: one of each is the
-/// scatter's direct case.
+/// scatter's direct case. A child `listed` does not name has no product
+/// list and is read only directly.
 ///
 /// # Errors
 ///
@@ -296,6 +311,7 @@ pub(super) fn probe_level(
     shape: LevelShape,
     level: &mut TddLevel,
     pl: Sides<&[ProductEntry]>,
+    listed: Sides<bool>,
     pl_output: &mut Vec<ProductEntry>,
     cells: Sides<CellLookup<'_>>,
     pairs_ok: bool,
@@ -311,7 +327,7 @@ pub(super) fn probe_level(
     // the pool that will release it.
     let mut pb = std::mem::take(&mut ws.probe);
     let result = (|| {
-        let Some((probe, level_pairs)) = plan(eng, &mut pb, f_level, g_level, shape, pl, cells, pairs_ok)? else {
+        let Some((probe, level_pairs)) = plan(eng, &mut pb, f_level, g_level, shape, pl, listed, cells, pairs_ok)? else {
             return Ok(false);
         };
         note_probe(probe);

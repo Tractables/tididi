@@ -272,6 +272,52 @@ pub(super) fn kept_counts_census() -> u64 {
 }
 
 thread_local! {
+    /// Whether every sparse level on this thread lists each child it joins
+    /// ([`list_complete_sides`]).
+    static LIST_COMPLETE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The sparse levels on this thread that joined their left child, and
+    /// their right one, by arithmetic ([`complete_side_census`]).
+    static COMPLETE_SIDES: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
+    /// The one-product roots on this thread that a sum took with a child
+    /// read by arithmetic ([`summed_complete_roots`]).
+    static SUMMED_COMPLETE_ROOTS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn complete_sides_listed() -> bool {
+    LIST_COMPLETE.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_complete_side(side: crate::diagram::ChildSide) {
+    COMPLETE_SIDES.with(|c| {
+        let mut census = c.get();
+        census[usize::from(side == crate::diagram::ChildSide::Right)] += 1;
+        c.set(census);
+    });
+}
+
+pub(super) fn note_summed_complete_root() {
+    SUMMED_COMPLETE_ROOTS.with(|c| c.set(c.get() + 1));
+}
+
+/// Run `f` with every sparse level listing each child it joins, a complete
+/// one too: the oracle the arithmetic reads are checked against.
+pub(super) fn list_complete_sides<R>(f: impl FnOnce() -> R) -> R {
+    with_flag(&LIST_COMPLETE, f)
+}
+
+/// The sparse levels on this thread so far that joined their left child,
+/// and their right one, by arithmetic.
+pub(super) fn complete_side_census() -> [u64; 2] {
+    COMPLETE_SIDES.with(std::cell::Cell::get)
+}
+
+/// The one-product roots on this thread so far that a sum took with a
+/// child read by arithmetic.
+pub(super) fn summed_complete_roots() -> u64 {
+    SUMMED_COMPLETE_ROOTS.with(std::cell::Cell::get)
+}
+
+thread_local! {
     /// Whether the probe join is closed on this thread ([`no_probe`]).
     static NO_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// Whether the probe join takes every level it is admissible on, whatever

@@ -38,13 +38,26 @@ pub(super) enum Collect<'a, 'c> {
     Sum(&'a mut ChildSum),
 }
 
+/// Where the leaf arm reads the inner side's product from when the inner
+/// child is no vtree leaf: the child is joined on its fields alone, and kills
+/// no candidate.
+#[derive(Clone, Copy)]
+pub(super) enum Inner {
+    /// A marginal pass-through side: the carrier's field.
+    Carried(Carrier),
+    /// A complete child (`Products::is_complete`):
+    /// cell `(i, j)` is node `i * g_width + j`, `g_width` being `g`'s width
+    /// there.
+    Complete { g_width: usize },
+}
+
 /// The leaf arm of the scatter: one side of the join is a vtree leaf, so the
 /// leaf-side product comes straight from the conjunction table and the walk
 /// stays selective by iterating the non-leaf product list.
 ///
-/// A marginal pass-through side takes the leaf side's place: with `carrier`,
-/// the inner side's product is the carrier's field there, and every
-/// candidate survives on it.
+/// A marginal pass-through side, or a complete child, takes the leaf side's
+/// place ([`Inner`]): the inner side's product is the carrier's field there,
+/// or the complete child's cell, and every candidate survives on it.
 // The level's steps are kept out of line from one another. Each runs once per
 // level (or, for the chunk steps, once per chunk), so the call costs nothing
 // against what it then does, and holding them apart means a change inside one
@@ -57,15 +70,18 @@ fn scatter_leaf_arm<const SWAPPED: bool>(
     ws: &mut SparseWorkspace,
     pl: Sides<&[ProductEntry]>,
     collect: Collect<'_, '_>,
-    carrier: Option<Carrier>,
+    inner: Option<Inner>,
 ) -> Result<(), OperationError> {
-    match carrier {
+    match inner {
         None => leaf_arm_into::<SWAPPED>(eng, ws, pl, collect, |f_label, g_label| {
             let grid_prod = CONJOIN_GRID[f_label as usize][g_label as usize];
             (grid_prod != NO_PRODUCT).then_some(grid_prod)
         }),
-        Some(Carrier::F) => leaf_arm_into::<SWAPPED>(eng, ws, pl, collect, |f_field, _| Some(f_field)),
-        Some(Carrier::G) => leaf_arm_into::<SWAPPED>(eng, ws, pl, collect, |_, g_field| Some(g_field)),
+        Some(Inner::Carried(Carrier::F)) => leaf_arm_into::<SWAPPED>(eng, ws, pl, collect, |f_field, _| Some(f_field)),
+        Some(Inner::Carried(Carrier::G)) => leaf_arm_into::<SWAPPED>(eng, ws, pl, collect, |_, g_field| Some(g_field)),
+        Some(Inner::Complete { g_width }) => leaf_arm_into::<SWAPPED>(eng, ws, pl, collect, move |f_node, g_node| {
+            Some((f_node as usize * g_width + g_node as usize) as u32)
+        }),
     }
 }
 
@@ -113,9 +129,10 @@ fn leaf_join<const SWAPPED: bool>(
 ) -> Result<(), OperationError> {
     // ── Leaf arm ──
     // Iterate the non-leaf product list; the leaf-side product comes from
-    // `CONJOIN_GRID`, or is the carried field. g_by_outer's inner child is
-    // the leaf label or the carried field here (normal: a2 with left the
-    // inner side; swapped: s2 with right the inner side).
+    // `CONJOIN_GRID`, or is the carried field or the complete child's cell.
+    // g_by_outer's inner child is the leaf label, the carried field or the
+    // complete child's node here (normal: a2 with left the inner side;
+    // swapped: s2 with right the inner side).
     //
     // Amortized cancellation/deadline poll — same rationale/soundness
     // as the general arm below; bail lands where `try_push` recovers.
@@ -152,9 +169,9 @@ fn leaf_join<const SWAPPED: bool>(
 /// **Leaf arm** (the inner child is a leaf, see [`runs_leaf_arm`]): iterate
 /// the non-leaf product list; `CONJOIN_GRID` supplies the leaf-side product.
 /// The `g_by_outer` keying is the same as the general arm's (normal → by
-/// right, swapped → by left), so the front-end is shared. With `carrier`,
-/// the inner side is a marginal pass-through instead, and its product is the
-/// carrier's field.
+/// right, swapped → by left), so the front-end is shared. With `inner`, the
+/// inner side is a marginal pass-through or a complete child instead, and
+/// its product is the carrier's field or the child's cell ([`Inner`]).
 ///
 /// **General arm** (both children non-leaf), per outer key:
 ///   1. Build `filtered`: bucket the g parents under the outer's live g keys
@@ -165,11 +182,11 @@ fn leaf_join<const SWAPPED: bool>(
 ///      push the precomputed alive `(p2, product)` entries — zero dead probes.
 ///   3. Clear only the `filtered` buckets touched this outer.
 ///
-/// The direction puts a leaf child, and a pass-through side, on the inner
-/// side (`leaf_direction`), so the general arm sees only levels with two
-/// joined non-leaf children, which are the levels the direction estimate ran
-/// for: its counts start the general arm's index builds. `collect` says
-/// where the candidates go.
+/// The direction puts a leaf child, a pass-through side and a complete
+/// child read by arithmetic on the inner side (`leaf_direction`), so the
+/// general arm sees only levels with two joined, listed non-leaf children,
+/// which are the levels the direction estimate ran for: its counts start the
+/// general arm's index builds. `collect` says where the candidates go.
 #[expect(clippy::too_many_arguments)]
 pub(super) fn scatter_join<const SWAPPED: bool>(
     eng: &Engine,
@@ -180,13 +197,13 @@ pub(super) fn scatter_join<const SWAPPED: bool>(
     pl: Sides<&[ProductEntry]>,
     leaves: Sides<bool>,
     collect: Collect<'_, '_>,
-    carrier: Option<Carrier>,
+    inner: Option<Inner>,
 ) -> Result<(), OperationError> {
-    let leaf_arm = carrier.is_some() || runs_leaf_arm(SWAPPED, leaves);
+    let leaf_arm = inner.is_some() || runs_leaf_arm(SWAPPED, leaves);
     debug_assert!(leaf_arm || !(leaves.left || leaves.right), "a leaf child must be the inner side");
     build_scatter_indexes::<SWAPPED>(eng, ws, f_level, g_level, shape, !leaf_arm)?;
     if leaf_arm {
-        return scatter_leaf_arm::<SWAPPED>(eng, ws, pl, collect, carrier);
+        return scatter_leaf_arm::<SWAPPED>(eng, ws, pl, collect, inner);
     }
     build_inner_index::<SWAPPED>(eng, ws, g_level, shape)?;
     // Decided once per level, so that no walk tests it per pair.
