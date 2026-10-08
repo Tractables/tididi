@@ -72,8 +72,8 @@ impl Engine {
     /// literals, which overlap; [`TagError::Operation`] with
     /// [`OperationError::LevelNotInVtree`] for an `at` that is not a node of
     /// `tdd`'s vtree, [`OperationError::MarginalLevel`] for a diagram that has
-    /// discarded the structure at a level, and for a refused allocation or an
-    /// armed stop.
+    /// discarded the structure at a level under `at` (one beside or above it
+    /// is not read), and for a refused allocation or an armed stop.
     #[allow(clippy::too_many_arguments)]
     pub fn tag_level(
         &self,
@@ -87,10 +87,14 @@ impl Engine {
     ) -> Result<Tdd, TagError> {
         let lim = self.limits();
         let _op = lim.enter()?;
-        tdd.require_structure()?;
         let source = tdd.vtree();
         if at.idx() >= source.num_nodes() {
             return Err(OperationError::LevelNotInVtree(at).into());
+        }
+        // Only the levels under `at` are read: a level summed out beside
+        // or above it keeps no structure this copies.
+        for s in source.bottomup().filter(|&s| under(source, s, at)) {
+            tdd.require_structure_at(s)?;
         }
         if into.node(into.root()).is_leaf() {
             return Err(TagError::Placement(EmbedError::NotIsomorphic { source: at }));

@@ -99,6 +99,33 @@ fn unreduced_diagrams_tag_to_canonical_ones() {
 }
 
 #[test]
+fn a_level_summed_beside_the_tagged_one_is_not_read() {
+    let eng = Engine::new();
+    for (num_vars, clauses) in test_cases().into_iter().filter(|(n, _)| (4..=8).contains(n)) {
+        for (_, vtree) in vtree_shapes(num_vars) {
+            let (left, right) = vtree.children(vtree.root());
+            if vtree.node(left).is_leaf() || vtree.node(right).is_leaf() {
+                continue;
+            }
+            let mut f = compile_clauses(&vtree, &clauses);
+            if f.is_zero() {
+                continue;
+            }
+            eng.marginalize_levels(&mut f, &[right]).unwrap();
+            assert!(f.level(right).is_marginal());
+            check(&f, left, &cycling(&f, left));
+            // A summed level under the tagged one is refused.
+            let (into, local, code) = destination(&f, vtree.root());
+            let tags = vec![Some(0); f.level(vtree.root()).nodes().len()];
+            assert!(matches!(
+                eng.tag_level(&f, vtree.root(), &into, |v| local[v.idx()].unwrap(), &tags, &code, &CODES),
+                Err(TagError::Operation(OperationError::MarginalLevel(level))) if under(&vtree, level, right),
+            ));
+        }
+    }
+}
+
+#[test]
 fn a_leaf_level_tags_its_literals() {
     let vtree = Arc::new(Vtree::balanced(2));
     let f = compile_clauses(&vtree, &[vec![1, 2]]);
