@@ -1,7 +1,7 @@
 //! Pair iteration and node numbering for mixed-radix descriptions.
 
 use crate::limits::OperationError;
-use super::{ChildPair, EncodedChildRef, EncodedNode, Digit, ImplicitLevel, TddLevel, NO_PAIRS, RUN_PAIRS, each_place, inline_at};
+use super::{ChildPair, EncodedChildRef, EncodedNode, Digit, ImplicitLevel, TddLevel, NO_PAIRS, RUN_PAIRS, each_place, inline_at, run_of};
 
 impl ImplicitLevel {
     /// The child slots of the first pair of node `node`.
@@ -46,7 +46,7 @@ impl ImplicitLevel {
     /// ([`NodeCursor`]), at node 0.
     pub(crate) fn cursor(&self) -> NodeCursor<'_> {
         debug_assert!(self.counts_nodes());
-        NodeCursor { digits: &self.digits[self.within..], at: Odometer::new(self.first), node: 0 }
+        NodeCursor::new(&self.digits[self.within..], self.first)
     }
 
     /// Append the pairs of node `node` to `out`, in their order.
@@ -125,13 +125,10 @@ impl ImplicitLevel {
             [] => &one[..],
             digits => digits,
         };
-        let (mut run_digits, mut places) = (1, digits[0].radix);
-        while let Some(d) = digits.get(run_digits)
-            && places.saturating_mul(d.radix) <= RUN_PAIRS
-        {
-            places *= d.radix;
-            run_digits += 1;
-        }
+        let (run_digits, places) = match run_of(digits) {
+            (0, _) => (1, digits[0].radix),
+            run => run,
+        };
         let piece = places.min(RUN_PAIRS);
         let lead = [Digit { radix: piece, ..digits[0] }];
         let mut offsets = Vec::with_capacity(piece);
@@ -363,43 +360,110 @@ impl Places<'_> {
 }
 
 /// The first pairs of an implicit level's nodes, read in increasing node
-/// order: the next node's by stepping the node digits ([`Odometer`]), a
-/// node further back or ahead off its digits.
+/// order, in runs: a run is the places of the fastest node digits, the
+/// most whose places are at most `RUN_PAIRS` and at least the fastest, and
+/// a node's first pair is its run's plus what its place in the run adds,
+/// read off a table of the run's places. Where the fastest digit alone has
+/// more places, a run is that digit's places, read in stretches of
+/// `RUN_PAIRS` off a table of its units. A run's first pair is stepped on
+/// from the last's by the node digits past the run's ([`Odometer`]), one
+/// further ahead by adding the distance to their settings, one behind read
+/// off its digits.
+///
+/// The table is held in place, so that the cursor owns no memory of its
+/// own: a reader that holds one drops it with nothing to free.
 #[derive(Clone, Debug)]
 pub(crate) struct NodeCursor<'a> {
-    /// The node digits, fastest first.
-    digits: &'a [Digit],
-    /// At node `node`.
-    at: Odometer<NODE_COUNTERS>,
-    node: usize,
+    /// The node digits past a run's, fastest first.
+    slow: &'a [Digit],
+    /// At the first pair of run `run`, a run being `cycle` nodes.
+    runs: Odometer<NODE_COUNTERS>,
+    run: usize,
+    pub(super) cycle: usize,
+    /// The nodes of a stretch: a run's, or `RUN_PAIRS` of a lead digit's.
+    pub(super) span: usize,
+    /// What a unit of a lead digit adds; nothing in a tabled run.
+    unit: (u32, u32),
+    /// The current stretch: its first node, its nodes and its first pair.
+    start: usize,
+    places: usize,
+    base: (u32, u32),
+    /// What each place of a stretch adds to its first pair.
+    offsets: [(u32, u32); RUN_PAIRS],
 }
 
-impl NodeCursor<'_> {
-    /// The slots of the first pair of node `i`, as
-    /// [`ImplicitLevel::node_first`] gives them: the next node's stepped on
-    /// to in the caller, any other's out of line ([`first_of_far`](Self::first_of_far)).
-    #[inline(always)]
-    pub(crate) fn first_of(&mut self, i: usize) -> (i64, i64) {
-        if i == self.node + 1 {
-            self.at.step_counted(self.digits, i);
-            self.node = i;
-        } else if i != self.node {
-            self.first_of_far(i);
-        }
-        self.at.slots()
+const _: () = assert!(RUN_PAIRS.is_power_of_two(), "a stretch's place is masked into the table");
+
+impl<'a> NodeCursor<'a> {
+    /// At node 0 of the nodes `digits` count, whose first pair is `first`.
+    fn new(digits: &'a [Digit], first: (i64, i64)) -> Self {
+        let mut offsets = [(0, 0); RUN_PAIRS];
+        let (run_digits, cycle, span, unit) = match (run_of(digits), digits.first()) {
+            ((0, _), Some(d)) => {
+                let unit = (d.left as u32, d.right as u32);
+                for (k, o) in offsets.iter_mut().enumerate() {
+                    *o = ((k as u32).wrapping_mul(unit.0), (k as u32).wrapping_mul(unit.1));
+                }
+                (1, d.radix, RUN_PAIRS, unit)
+            }
+            ((run_digits, places), _) => {
+                let mut k = 0;
+                each_place(&digits[..run_digits], (0, 0), |l, r| {
+                    offsets[k] = (l as u32, r as u32);
+                    k += 1;
+                });
+                (run_digits, places, places, (0, 0))
+            }
+        };
+        let runs = Odometer::new(first);
+        let base = runs.at;
+        NodeCursor { slow: &digits[run_digits..], runs, run: 0, cycle, span, unit, start: 0, places: span.min(cycle), base, offsets }
     }
 
-    /// On to node `i`, neither this node nor the next: a node ahead by
+    /// The slots of the first pair of node `i`, as
+    /// [`ImplicitLevel::node_first`] gives them: a node of the current
+    /// stretch in the caller, any other's stretch out of line
+    /// ([`seek`](Self::seek)).
+    #[inline(always)]
+    pub(crate) fn first_of(&mut self, i: usize) -> (i64, i64) {
+        let k = i.wrapping_sub(self.start);
+        if k < self.places { self.place(k) } else { self.seek(i) }
+    }
+
+    /// The first pair of place `k` of the current stretch, `k` under its
+    /// places, which are at most `RUN_PAIRS`: masked, the table is read
+    /// without a bound check.
+    #[inline(always)]
+    fn place(&self, k: usize) -> (i64, i64) {
+        let (a, b) = self.offsets[k & (RUN_PAIRS - 1)];
+        (i64::from(self.base.0.wrapping_add(a)), i64::from(self.base.1.wrapping_add(b)))
+    }
+
+    /// On to the stretch of node `i`, which is not the current one, and
+    /// `i`'s first pair: the next run stepped on to, one further ahead by
     /// adding the distance to the digits' settings, which costs a division
-    /// a digit its carry reaches; one behind read off its digits.
+    /// a digit its carry reaches, and one behind read off its digits.
     #[inline(never)]
-    fn first_of_far(&mut self, i: usize) {
-        if i > self.node && self.digits.len() <= NODE_COUNTERS {
-            self.at.advance(self.digits, i - self.node);
-        } else {
-            self.at.seat(self.digits, self.node, i);
+    fn seek(&mut self, i: usize) -> (i64, i64) {
+        let run = i / self.cycle;
+        if run != self.run {
+            if run == self.run + 1 {
+                self.runs.step_counted(self.slow, run);
+            } else if run > self.run && self.slow.len() <= NODE_COUNTERS {
+                self.runs.advance(self.slow, run - self.run);
+            } else {
+                self.runs.seat(self.slow, self.run, run);
+            }
+            self.run = run;
         }
-        self.node = i;
+        let within = i - run * self.cycle;
+        let skip = within - within % self.span;
+        self.start = run * self.cycle + skip;
+        self.places = self.span.min(self.cycle - skip);
+        let (l, r) = self.runs.at;
+        let skip = skip as u32;
+        self.base = (l.wrapping_add(skip.wrapping_mul(self.unit.0)), r.wrapping_add(skip.wrapping_mul(self.unit.1)));
+        self.place(i - self.start)
     }
 }
 

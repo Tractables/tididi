@@ -148,13 +148,7 @@ impl ImplicitLevel {
     /// is `first`, numbered by `digits`, the first `within` of them the
     /// place digits, with the offsets of a run of its pairs.
     fn new(nodes: usize, per_node: usize, first: (i64, i64), digits: Vec<Digit>, within: usize) -> ImplicitLevel {
-        let (mut run_digits, mut places) = (0, 1usize);
-        while let Some(d) = digits[..within].get(run_digits)
-            && places.saturating_mul(d.radix) <= RUN_PAIRS
-        {
-            places *= d.radix;
-            run_digits += 1;
-        }
+        let (run_digits, places) = run_of(&digits[..within]);
         let mut run = Vec::with_capacity(places);
         each_place(&digits[..run_digits], (0, 0), |l, r| run.push((l as u32, r as u32)));
         ImplicitLevel { nodes, per_node, first, digits, within, run, run_digits }
@@ -670,6 +664,19 @@ fn pair(l: i64, r: i64) -> ChildPair {
 fn inline_at(at: (u32, u32), offset: (u32, u32)) -> EncodedNode {
     let (l, r) = (EncodedChildRef::from_raw(at.0.wrapping_add(offset.0)), EncodedChildRef::from_raw(at.1.wrapping_add(offset.1)));
     EncodedNode::inline(ChildPair::new(l, r))
+}
+
+/// The most of the fastest of `digits` whose places are at most
+/// `RUN_PAIRS`, and their places: a run of them.
+fn run_of(digits: &[Digit]) -> (usize, usize) {
+    let (mut run_digits, mut places) = (0, 1usize);
+    while let Some(d) = digits.get(run_digits)
+        && places.saturating_mul(d.radix) <= RUN_PAIRS
+    {
+        places *= d.radix;
+        run_digits += 1;
+    }
+    (run_digits, places)
 }
 
 /// Calls `f` at every place of `digits`, counted like an odometer from the

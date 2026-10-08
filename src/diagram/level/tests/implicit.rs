@@ -591,6 +591,42 @@ fn stepped_pairs_are_the_pairs_read_off_the_digits() {
     assert!(runs > 100 && wide > 50, "the nodes read in several runs went unchecked");
 }
 
+/// A [`NodeCursor`] on a level of more nodes than a run reads the first
+/// pairs off the digits, in node order, ahead in jumps and back: runs of
+/// the fastest node digits read off a table, and a fastest digit of more
+/// places than a run read as one unit of it times the place.
+#[test]
+fn a_cursor_reads_the_first_pairs_in_runs() {
+    let mut rng = Lcg::new(0x1d1e_0316);
+    let (mut tabled, mut led) = (0, 0);
+    for round in 0..40 {
+        let across: Vec<(usize, (i64, i64))> = if round % 2 == 0 {
+            (0..9 + rng.below(2)).map(|_| (2 + rng.below(2) as usize, step(&mut rng))).collect()
+        } else {
+            let lead = (RUN_PAIRS + 1 + rng.below(40) as usize, (1 + rng.below(6) as i64, rng.below(7) as i64));
+            std::iter::once(lead).chain((0..1 + rng.below(2)).map(|_| (2 + rng.below(2) as usize, step(&mut rng)))).collect()
+        };
+        let within: Vec<(usize, (i64, i64))> = (0..rng.below(2)).map(|_| (2, (1, 1))).collect();
+        let pairs = affine_of(&within, &across);
+        let nodes = pairs.len();
+        let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
+        let mut cursor = d.cursor();
+        assert!(cursor.cycle < nodes, "round {round}: one run holds every node");
+        tabled += usize::from(cursor.span == cursor.cycle);
+        led += usize::from(cursor.span < cursor.cycle);
+        let mut i = 0;
+        for _ in 0..2 * nodes {
+            assert_eq!(cursor.first_of(i), (pairs[i][0].0, pairs[i][0].1), "round {round}, node {i}");
+            i = match rng.below(8) {
+                0 => rng.below(nodes as u64) as usize,
+                1 | 2 => (i + 1 + rng.below(3 * cursor.cycle as u64) as usize).min(nodes - 1),
+                _ => (i + 1) % nodes,
+            };
+        }
+    }
+    assert!(tabled > 10 && led > 10, "{tabled} cursors in tabled runs, {led} with a lead digit");
+}
+
 #[test]
 fn twins_are_read_off_the_digits() {
     // Node i holds (3i + m, m) for m < 3: every left slot named once, in its
