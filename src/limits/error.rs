@@ -130,6 +130,13 @@ pub enum OperationError {
         /// The rows the columns hold.
         rows: usize,
     },
+    /// [`ModelCounter::count_table`](crate::query::ModelCounter::count_table)
+    /// was given more variables than its table may list, one count for each
+    /// of their assignments.
+    TableTooWide {
+        /// The variables listed.
+        vars: usize,
+    },
 }
 
 impl std::fmt::Display for OperationError {
@@ -169,6 +176,9 @@ impl std::fmt::Display for OperationError {
                 write!(f, "column {column} holds {len} entries where the first holds {expected}")
             }
             OperationError::RowOutOfRange { row, rows } => write!(f, "row {row} is past the {rows} rows the columns hold"),
+            OperationError::TableTooWide { vars } => {
+                write!(f, "a count table over {vars} variables is past the {} it may list", crate::query::MAX_COUNT_TABLE_VARS)
+            }
         }
     }
 }

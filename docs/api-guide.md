@@ -61,6 +61,8 @@ state between calls to [`observe`](crate::query::ModelCounter::observe);
 when the counter needs to own it.
 The [configuration example](crate::guide::examples::configurations) uses this
 for a user's changing selections.
+[`count_table`](crate::query::ModelCounter::count_table) lists the count under
+each assignment of a few variables, on top of the current observations.
 
 ## Condition, quantify and rename
 

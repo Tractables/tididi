@@ -13,6 +13,10 @@ use crate::limits::OperationError;
 use crate::value::{Retention, Count, CountRead, CountVec, IntFold};
 use crate::vtree::{VarId, VtreeIdx};
 
+/// The most variables [`ModelCounter::count_table`] lists: its table holds
+/// one count per assignment of them.
+pub const MAX_COUNT_TABLE_VARS: usize = 30;
+
 /// The u128-primary counting fold: native arithmetic for the vast majority of
 /// nodes, spilling a node to the exact `BigUint` side table only where it
 /// overflows.
@@ -335,6 +339,18 @@ impl<D: Borrow<Tdd>> BoundCounter<'_, D> {
         let counter = self.counter.get_mut();
         counter.cache.read(self.engine, counter.tdd.borrow())
     }
+
+    /// Count every assignment of `vars` with [`ModelCounter::count_table`]
+    /// semantics under the borrowed engine's limits.
+    ///
+    /// Each count is charged to the byte budget as a read of its own.
+    ///
+    /// # Errors
+    ///
+    /// As [`ModelCounter::count_table`].
+    pub fn count_table(&mut self, vars: &[VarId]) -> Result<Vec<BigUint>, OperationError> {
+        self.counter.get_mut().count_table_on(self.engine, vars)
+    }
 }
 
 impl Engine {
@@ -578,6 +594,93 @@ impl<D: Borrow<Tdd>> Counter<D> {
     pub fn model_count(&mut self) -> Result<BigUint, OperationError> {
         let tdd = self.tdd.borrow();
         tdd.context().run(|eng| self.cache.read(eng, tdd))
+    }
+
+    /// Count once for every assignment of `vars`, under the other pins.
+    ///
+    /// Entry `a` of the table is the count with each `vars[k]` pinned to bit
+    /// `k` of `a`, so the table has `2^vars.len()` entries, and an empty list
+    /// gives the one count [`model_count`](Self::model_count) would. Pins on
+    /// other variables apply to every entry. Consecutive assignments differ
+    /// in the bits a binary increment changes, and only those pins change
+    /// between counts, so with [`Retention::All`] each count refreshes only
+    /// their ancestors. Afterwards the listed variables have the pins they
+    /// had before, also after an error, and the next read refreshes them.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use num_bigint::BigUint;
+    /// use tididi::{Tdd, Vtree};
+    /// use tididi::vtree::VarId;
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = Tdd::clause(&vtree, [1, -2, 3])?;
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// let mut counter = f.counter()?;
+    /// // Entry 2 has variable 1 false and variable 2 true: only x3 is left.
+    /// let table = counter.count_table(&[VarId(1), VarId(2)])?;
+    /// assert_eq!(table, [2u32, 2, 1, 2].map(BigUint::from));
+    /// counter.observe([3])?;
+    /// assert_eq!(counter.count_table(&[VarId(1), VarId(2)])?, [1u32; 4].map(BigUint::from));
+    /// assert_eq!(counter.model_count()?, 4u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::TableTooWide`] for more than [`MAX_COUNT_TABLE_VARS`]
+    /// variables, [`OperationError::DuplicateVariable`] for a variable listed
+    /// twice, and the variable errors of [`Self::set_pin`]; these are checked
+    /// before anything is counted. [`OperationError::OverBudget`] for a
+    /// refused reservation, the table's included, or
+    /// [`OperationError::Stopped`] for an armed stop.
+    pub fn count_table(&mut self, vars: &[VarId]) -> Result<Vec<BigUint>, OperationError> {
+        let context = Arc::clone(self.tdd.borrow().context());
+        context.run(|eng| self.count_table_on(eng, vars))
+    }
+
+    /// [`Self::count_table`] under `eng`'s limits.
+    ///
+    /// The checks and the table's reservation are one operation, and each
+    /// count is a read of its own, as [`Self::model_count`] would make it.
+    fn count_table_on(&mut self, eng: &Engine, vars: &[VarId]) -> Result<Vec<BigUint>, OperationError> {
+        let lim = eng.limits();
+        let tdd = self.tdd.borrow();
+        let mut before = [(VarId(0), None); MAX_COUNT_TABLE_VARS];
+        let mut table = Vec::new();
+        {
+            let _op = lim.enter()?;
+            if vars.len() > MAX_COUNT_TABLE_VARS {
+                return Err(OperationError::TableTooWide { vars: vars.len() });
+            }
+            if let Some(k) = (1..vars.len()).find(|&k| vars[..k].contains(&vars[k])) {
+                return Err(OperationError::DuplicateVariable(vars[k]));
+            }
+            let observations = &self.cache.observations;
+            for (pin, &var) in before.iter_mut().zip(vars) {
+                let leaf = observations.validate_pin(tdd, var)?;
+                *pin = (var, observations.pins[leaf.idx()].value);
+            }
+            lim.try_resize(&mut table, 1usize << vars.len(), BigUint::ZERO)?;
+        }
+        let before = &before[..vars.len()];
+        let mut pins = [(VarId(0), None); MAX_COUNT_TABLE_VARS];
+        let pins = &mut pins[..vars.len()];
+        pins.copy_from_slice(before);
+        let counted = (|| {
+            for (assignment, count) in table.iter_mut().enumerate() {
+                // The first assignment sets every pin, and each later one the
+                // bits its increment carries through.
+                let changed = if assignment == 0 { vars.len() } else { assignment.trailing_zeros() as usize + 1 };
+                for (bit, (_, value)) in pins[..changed].iter_mut().enumerate() {
+                    *value = Some((assignment >> bit) & 1 == 1);
+                }
+                self.cache.observations.set_pins(tdd, &pins[..changed])?;
+                *count = self.cache.read(eng, tdd)?;
+            }
+            Ok(())
+        })();
+        self.cache.observations.set_pins(tdd, before).expect("the listed variables were validated");
+        counted.map(|()| table)
     }
 
     /// The unchanged circuit, available for read-only queries.

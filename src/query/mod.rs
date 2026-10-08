@@ -35,7 +35,7 @@ mod ordered;
 pub use columns::{ModelColumns, MAX_COLUMN_BITS};
 pub use evaluator::{Evaluation, Evaluator, OwnedEvaluator, BoundEvaluation, BoundEvaluator};
 
-pub use count::{Counter, ModelCounter, OwnedModelCounter, BoundCounter, BoundModelCounter, Retention, PinSemantics};
+pub use count::{Counter, ModelCounter, OwnedModelCounter, BoundCounter, BoundModelCounter, Retention, PinSemantics, MAX_COUNT_TABLE_VARS};
 
 #[cfg(test)]
 mod tests;

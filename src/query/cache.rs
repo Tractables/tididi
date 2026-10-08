@@ -69,7 +69,7 @@ impl Observations {
     }
 
     /// Resolve a variable to its structural leaf without changing counter state.
-    fn validate_pin(&self, tdd: &Tdd, var: VarId) -> Result<VtreeIdx, OperationError> {
+    pub(crate) fn validate_pin(&self, tdd: &Tdd, var: VarId) -> Result<VtreeIdx, OperationError> {
         let leaf = tdd.vtree.leaf_of(var).ok_or(OperationError::VariableNotInVtree(var))?;
         // An implicit integer leaf can remain below a marginal parent.
         for level in std::iter::once(leaf).chain(tdd.vtree.node(leaf).parent()) {

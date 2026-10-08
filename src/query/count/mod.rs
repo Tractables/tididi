@@ -9,7 +9,7 @@ mod incremental;
 use crate::Engine;
 use crate::limits::OperationError;
 use super::cache::QueryCache;
-pub use incremental::{Counter, ModelCounter, OwnedModelCounter, BoundCounter, BoundModelCounter};
+pub use incremental::{Counter, ModelCounter, OwnedModelCounter, BoundCounter, BoundModelCounter, MAX_COUNT_TABLE_VARS};
 pub use crate::value::Retention;
 
 use num_bigint::BigUint;
