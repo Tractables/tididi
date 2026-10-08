@@ -87,6 +87,15 @@ fn contract_child(
     }
     let (parent_left, _parent_right) = tdd.vtree.children(parent);
     let t1_side = if parent_left == t1 { ChildSide::Left } else { ChildSide::Right };
+    let side = t1_side as usize;
+    let width = tdd.levels[t1.idx()].slot_count();
+    // The search reads the nodes `reach` names. Charged before a parent's
+    // description can answer for it, so a described level meters the work
+    // its written form does.
+    scratch.searched += match reach {
+        Reach::Listed => scratch.reach[side].len(),
+        Reach::Whole => width,
+    } as u64;
     // A parent held as the description of its pairs shows from its digits
     // alone that the child has no twins, in most cases; then the grouping
     // below would find none, and need not read the parent's pairs.
@@ -96,8 +105,6 @@ fn contract_child(
         return Ok(false);
     }
 
-    let side = t1_side as usize;
-    let width = tdd.levels[t1.idx()].slot_count();
     let found = match reach {
         Reach::Listed if !screens(&tdd.levels[parent.idx()]) || 2 * scratch.reach[side].len() <= width => {
             note_listed_search();
@@ -341,6 +348,14 @@ pub(crate) fn contract_all_twins(
         if right_fired {
             push_parent(tdd, &mut scratch, &mut heap, num_nodes, right.idx());
         }
+        // The children's searches read their nodes, which the poll above,
+        // metered by the parent, does not see. Charged once the fired
+        // children are on the heap, so a stop here hands every pending
+        // parent back.
+        if let Err(e) = poll.poll(std::mem::take(&mut scratch.searched)) {
+            restore_pending_dirty(tdd, &mut scratch, None, &heap);
+            return Err(e);
+        }
     }
 
     Ok(())
@@ -471,8 +486,9 @@ fn joint_contract_fixpoint(
     let (mut scan_left, mut scan_right) = (true, true);
     loop {
         // As in `Reduction::content_twins`: termination is argued, not
-        // bounded, so the round boundary is where cancellation cuts in.
-        eng.limits().check_stop()?;
+        // bounded, so the round boundary is where cancellation cuts in, with
+        // the last round's searches charged first.
+        eng.limits().poll_host_work(std::mem::take(&mut scratch.searched))?;
         let mut changed = false;
         if std::mem::take(&mut scan_left) && contract_child(eng, tdd, parent, left, Reach::Whole, scratch)? {
             changed = true;

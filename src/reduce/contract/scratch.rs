@@ -280,6 +280,9 @@ pub(crate) struct ContractScratch {
     /// read once per checkout by `merge::contract_twins`: without one, twin
     /// supports are disjoint and the plan concatenates every member.
     pub(super) diagram_marginal: Option<bool>,
+    /// The nodes the twin searches read since the sweep last charged them to
+    /// the work clock: `contract_child` adds, `contract_all_twins` charges.
+    pub(super) searched: u64,
 
     // ── `contract_all_twins` top-down heap ──
     /// Per-parent dedup flag: true if this parent is currently queued in the
@@ -364,5 +367,6 @@ impl PooledScratch for ContractScratch {
         // stale marginal map even if it bails before parking.
         self.has_marginal_below_valid = false;
         self.diagram_marginal = None;
+        self.searched = 0;
     }
 }

@@ -3,6 +3,7 @@
 use crate::diagram::Tdd;
 use crate::Engine;
 use crate::limits::OperationError;
+use crate::limits::PollGate;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use crate::value::{FoldInput, IntFold, Retention};
@@ -35,10 +36,12 @@ pub(crate) fn marginalize_batch(
 /// Marginalize every target in order, then sum out the leaf targets.
 ///
 /// The deadline is polled between targets, metered in nodes of the target
-/// level, which the fold, the dedup and the parent remap all scale with. A cut
-/// falls between targets, never inside one, and the domain's end sweep still
-/// runs over the prefix before the error is returned, so the diagram left
-/// behind is the one a pass over that prefix would have produced.
+/// level, which the fold, the dedup and the parent remap all scale with, and
+/// inside a target's fold, metered in the nodes and pairs it reads below the
+/// target. A cut inside a fold falls before anything is installed, so either
+/// way the target is done whole or not at all, and the domain's end sweep
+/// still runs over the prefix before the error is returned, so the diagram
+/// left behind is the one a pass over that prefix would have produced.
 ///
 /// Leaf targets come last: the integer end sweep keys off the pass-entry
 /// snapshot, so a leaf flipped marginal earlier would have its side
@@ -66,7 +69,7 @@ pub(super) fn marginalize_targets<K: MarginalDomain>(
             cut = Some(e);
             break;
         }
-        if let Err(e) = marginalize_level::<K>(eng, tdd, d, vtree, store, &mut computed) {
+        if let Err(e) = marginalize_level::<K>(eng, tdd, d, vtree, store, &mut computed, &mut poll) {
             cut = Some(e);
             break;
         }
@@ -94,6 +97,7 @@ fn marginalize_level<K: MarginalDomain>(
     vtree: &Vtree,
     store: &mut K::Store,
     computed: &mut [Option<K::Col>],
+    poll: &mut PollGate<'_>,
 ) -> Result<(), OperationError> {
     let level = &tdd.levels[d.idx()];
     // A leaf target is summed out at the end of the pass instead.
@@ -110,7 +114,7 @@ fn marginalize_level<K: MarginalDomain>(
         computed,
         &marginal,
         Retention::All,
-        |_| Ok(()),
+        |units| poll.poll(units),
     )?;
     cascade::<K, Tdd>(tdd, vtree, d, computed, store);
     Ok(())

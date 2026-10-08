@@ -141,6 +141,12 @@ impl<'a> CopyPlacement<'a> {
         true_node(self.vtree, child)
     }
 
+    /// The slots placed at `at` so far.
+    #[inline]
+    pub(super) fn slot_count(&self, at: VtreeIdx) -> usize {
+        self.assembly.level(at).slot_count()
+    }
+
     /// Lift all references from one child through a join with a free sibling.
     #[inline]
     pub(super) fn pass_through(&mut self, at: VtreeIdx, free_side: ChildSide) -> Result<(), OperationError> {

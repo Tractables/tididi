@@ -804,6 +804,9 @@ fn assemble(
         } else {
             placement.pass_through(t, if plan.free[left.idx()] { ChildSide::Left } else { ChildSide::Right })?;
         }
+        // The level just built is the work: a large diagram's copy, charged
+        // one unit a level, would go a whole embedding without a test.
+        gate.poll(placement.slot_count(t) as u64)?;
     }
     gate.flush()?;
     Ok(placement.finish(tdd.output().local)?)

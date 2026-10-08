@@ -99,9 +99,17 @@ fn an_expired_wall_cuts_the_forget_batch() {
 fn a_cut_batch_leaves_a_readable_diagram() {
     let (mut tdd, vtree, targets) = two_target_tdd();
     let before = tdd.model_count().unwrap();
-    // One past the first target's metered work (`width + 1`), so the first tick
-    // does not poll and the second does.
-    let stride = tdd.levels[targets[0].idx()].slot_count() as u64 + 2;
+    // One past the first target's metered work (its tick, `width + 1`, and
+    // what its fold reads below it), so nothing polls inside the first target
+    // and the second target's tick does.
+    let first = {
+        let eng = Engine::new();
+        let start = eng.limits().work_units();
+        let mut alone = tdd.clone();
+        marginalize_batch(&eng, &mut alone, &targets[..1], &vtree).unwrap();
+        eng.limits().work_units() - start
+    };
+    let stride = first + 1;
 
     let r = deadline_probe(Some(stride), |eng| marginalize_batch(eng, &mut tdd, &targets, &vtree));
 
