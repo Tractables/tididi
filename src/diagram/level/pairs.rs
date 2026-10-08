@@ -84,7 +84,8 @@ impl<'a> Inputs<'a> {
 impl<'a> Iterator for Inputs<'a> {
     type Item = (usize, PairsIter<'a>);
 
-    #[inline]
+    /// Inlined where the level is read, as a stored node's read is.
+    #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
         match self.stored.next() {
             Some(node) => {

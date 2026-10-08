@@ -158,13 +158,10 @@ pub(super) fn build_reach_masks(
     let lim = eng.limits();
     reach.clear();
     lim.try_resize(reach, k_level, 0u128)?;
-    // Indexes `reach` and `level.nodes` at the same position.
-    #[expect(clippy::needless_range_loop)]
-    for j in 0..k_level {
-        let node = &level.node(j);
-        for p in level.pairs_iter_of(node) {
-            reach[j] |= 1u128 << (pair_side(&p) >> shift);
-        }
+    // Node `j`'s pairs set `reach[j]`: a stored level's read as slices, an
+    // implicit one's off its description in order.
+    for ((_, pairs), mask) in level.internal_inputs_range(0..k_level).zip(reach.iter_mut()) {
+        *mask = pairs.fold(0u128, |m, p| m | 1u128 << (pair_side(&p) >> shift));
     }
     Ok(())
 }

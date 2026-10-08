@@ -203,44 +203,30 @@ fn rebuild_nodes<const LEFT: bool, const RIGHT: bool, const DT: bool>(
 ) -> Result<(), OperationError> {
     // An implicit level's node's pairs are generated into `buf`: a stored
     // node's off its range, and the nodes the description implies, which
-    // follow none that is stored, in order off the description.
+    // follow none that is stored, in order off the description. The one
+    // call site keeps `conjoin_node_with_clause` inlined here.
     let stored = old.stored();
-    let mut buf = Vec::new();
-    for (i, node) in nodes.iter().enumerate() {
-        let inputs: &[ChildPair] = match stored {
-            Some(s) => s.of(node),
-            None => {
+    let (mut buf, mut cursor) = (Vec::new(), None);
+    for i in 0..ctx.nodes {
+        let inputs: &[ChildPair] = match (nodes.get(i), stored) {
+            (Some(node), Some(s)) => s.of(node),
+            (Some(node), None) => {
                 buf.clear();
                 buf.extend(old.pairs_iter_of(node));
                 &buf
             }
+            (None, _) => old.described_read_next(&mut cursor, i, &mut buf),
         };
-        rebuild_node::<LEFT, RIGHT, DT>(eng, inputs, i, ctx, level, base, tables)?;
-    }
-    let mut cursor = None;
-    for i in nodes.len()..ctx.nodes {
-        let inputs = old.described_read_next(&mut cursor, i, &mut buf);
-        rebuild_node::<LEFT, RIGHT, DT>(eng, inputs, i, ctx, level, base, tables)?;
+        let carries_cube = tables.output_cube_pair.is_some_and(|(s, _)| s == base + i);
+        if inputs.is_empty() && !carries_cube {
+            // Dead accumulator node: nothing emitted, and this is the one
+            // write of its map entry.
+            tables.cd_map[base + i] = [NO_PRODUCT, NO_PRODUCT];
+            continue;
+        }
+        conjoin_node_with_clause::<LEFT, RIGHT, DT>(eng, inputs, ctx, level, base + i, tables)?;
     }
     Ok(())
-}
-
-/// Rebuild accumulator node `i` of pairs `inputs`, as
-/// [`rebuild_nodes`] reads them; inlined into its loops, so that
-/// `conjoin_node_with_clause` is inlined there.
-#[inline(always)]
-fn rebuild_node<const LEFT: bool, const RIGHT: bool, const DT: bool>(
-    eng: &Engine, inputs: &[ChildPair], i: usize, ctx: SpineCtx, level: &mut TddLevel,
-    base: usize, tables: &mut ClauseTables<'_>,
-) -> Result<(), OperationError> {
-    let carries_cube = tables.output_cube_pair.is_some_and(|(s, _)| s == base + i);
-    if inputs.is_empty() && !carries_cube {
-        // Dead accumulator node: nothing emitted, and this is the one write
-        // of its map entry.
-        tables.cd_map[base + i] = [NO_PRODUCT, NO_PRODUCT];
-        return Ok(());
-    }
-    conjoin_node_with_clause::<LEFT, RIGHT, DT>(eng, inputs, ctx, level, base + i, tables)
 }
 
 /// Emit the node whose pairs sit at `level.pairs[pair_start..]` and return
