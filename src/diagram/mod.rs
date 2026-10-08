@@ -206,7 +206,10 @@ pub use weights::{Arithmetic, WeightStore};
 
 // level
 pub use level::{described, redescribed, stored_moved, CountOverflow, Digit, ImplicitLevel, Pairs, StoredPairs, TddLevel, FLOOR};
-pub(crate) use level::{assert_can_make_marginal, floor, sort_pairs, stored_levels_forced, LevelState};
+pub(crate) use level::{assert_can_make_marginal, floor, sort_pairs, stored_levels_forced};
+// The invariant checks read a level's state; they compile where `test_helpers` does.
+#[cfg(any(test, debug_assertions, feature = "testing"))]
+pub(crate) use level::LevelState;
 
 // pool
 pub(crate) use pool::{return_levels, take_levels, try_take_levels};
