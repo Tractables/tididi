@@ -401,7 +401,7 @@ evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: 3332d38601fcb68785af6e65e039b141018f560b3a4a242cd9828b2d0a29f74a -->
+- [Rust API overview](api-guide.md) <!-- reviewed: 9b055120400598c8374f8150dc52e96b2eaafbe2d5be79d8d80c0985d18aac90 -->
 - [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: 619c8cf6bbe3d4b720da766850817f34b4fdf92c866f3c6cd9828cd555fdcd39 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 

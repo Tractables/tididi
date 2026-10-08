@@ -172,9 +172,62 @@ impl LimitConfig {
 
     /// Set a deadline independently of output size, preserving the other stop rules
     /// and callback. [`Self::without_stop_rules`] clears all cancellation settings.
+    ///
+    /// The deadline replaces any unconditional bound, an earlier deadline or a
+    /// bound on the work clock alike; [`Self::with_deadline_at_most`] keeps the
+    /// bound already set and stops at whichever comes first.
     #[must_use]
     pub fn with_deadline(mut self, deadline: Option<Instant>) -> LimitConfig {
         self.stop.unconditional = deadline.map(StopAt::Time);
+        self
+    }
+
+    /// Stop no later than `deadline`, keeping every bound already set.
+    ///
+    /// An unconditional deadline that falls earlier is kept, and a later one
+    /// is moved up to `deadline`. An unconditional bound on the work clock is
+    /// kept too, and the deadline is added through the stop callback: the
+    /// callback installed in its place stops once `deadline` has passed and
+    /// otherwise asks the callback set before, if any. The size-conditional
+    /// bound and the other limits are unchanged.
+    ///
+    /// Use it to give one stage a share of the time while honoring whatever
+    /// the caller armed around it, as with [`Limits::edit`]:
+    ///
+    /// ```
+    /// use std::time::{Duration, Instant};
+    /// use tididi::Engine;
+    /// use tididi::limits::{LimitConfig, StopAt};
+    ///
+    /// let engine = Engine::new();
+    /// let run_ends = Instant::now() + Duration::from_secs(60);
+    /// let _run = engine.limits().scope(LimitConfig::none().with_deadline(Some(run_ends)));
+    /// {
+    ///     // A stage asking for more time than the run has left keeps the run's deadline.
+    ///     let _stage = engine.limits().edit(|config| config.with_deadline_at_most(run_ends + Duration::from_secs(5)));
+    ///     assert_eq!(engine.limits().armed().stop_rules().unconditional, Some(StopAt::Time(run_ends)));
+    /// }
+    /// let stage_ends = run_ends - Duration::from_secs(30);
+    /// let _stage = engine.limits().edit(|config| config.with_deadline_at_most(stage_ends));
+    /// assert_eq!(engine.limits().armed().stop_rules().unconditional, Some(StopAt::Time(stage_ends)));
+    /// ```
+    #[must_use]
+    pub fn with_deadline_at_most(mut self, deadline: Instant) -> LimitConfig {
+        match self.stop.unconditional {
+            Some(StopAt::Time(earlier)) => self.stop.unconditional = Some(StopAt::Time(earlier.min(deadline))),
+            None => self.stop.unconditional = Some(StopAt::Time(deadline)),
+            Some(StopAt::WorkUnits(_)) => {
+                // One unconditional slot holds one clock, so the wall rides the callback.
+                let previous = self.stop_callback.take();
+                self.stop_callback = Some(StopCallback::new(move |meters, now| {
+                    if now >= deadline {
+                        StopDecision::Stop
+                    } else {
+                        previous.as_ref().map_or(StopDecision::Continue, |callback| callback.decide(meters, now))
+                    }
+                }));
+            }
+        }
         self
     }
 
