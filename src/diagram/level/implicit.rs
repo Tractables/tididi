@@ -294,6 +294,17 @@ impl ImplicitLevel {
         each_place(&self.digits[..self.within], at, |l, r| out.push(pair(l, r)));
     }
 
+    /// Append the pairs of nodes `0..nodes` to `buf`, node by node in
+    /// their order: the first `nodes · k` pairs the description generates.
+    pub(crate) fn pairs_of_first(&self, nodes: usize, buf: &mut Vec<ChildPair>) {
+        debug_assert!(nodes <= self.nodes);
+        buf.reserve(nodes * self.per_node);
+        let mut cursor = self.cursor();
+        for i in 0..nodes {
+            self.places_from(cursor.first_of(i)).write_into(buf);
+        }
+    }
+
     /// The length of the pair arena the level stands for: its pairs, or none
     /// when every node has one pair and holds it inline.
     #[inline]
@@ -594,15 +605,18 @@ impl ImplicitLevel {
     /// The description of what a prune leaves of this level, when it is
     /// one: the `nodes` nodes it keeps, the `j`th of them node `kept(j)` of
     /// this description, each with its pairs, whose child slots `left` and
-    /// `right` move to where the prune put the children's nodes. Read off
-    /// the moved pairs and checked at every one of them, side by side,
-    /// without writing any ([`ImplicitLevel::holds_moved`]). `None` when
-    /// they are not affine in a mixed radix, or `kept` names no node of this
-    /// description.
-    pub(crate) fn pruned(
+    /// `right` move to where the prune put the children's nodes. `kept` is
+    /// read at the few ranks that read the digits, and `in_order` gives
+    /// every node kept, in their order, for the check, which steps from
+    /// each to the next. Read off the moved pairs and checked at every one
+    /// of them, side by side, without writing any
+    /// ([`ImplicitLevel::holds_moved`]). `None` when they are not affine in
+    /// a mixed radix, or `kept` names no node of this description.
+    pub(crate) fn pruned<K: Iterator<Item = usize>>(
         &self,
         nodes: usize,
         mut kept: impl FnMut(usize) -> Option<usize>,
+        in_order: impl Fn() -> K,
         left: impl Fn(i64) -> i64,
         right: impl Fn(i64) -> i64,
     ) -> Option<ImplicitLevel> {
@@ -618,13 +632,20 @@ impl ImplicitLevel {
         })?;
         let across = read_digits(nodes, |j| Some(moved(node(j)?, &places[0])))?;
         let fitted = ImplicitLevel::assemble(nodes, self.per_node, first, &within, &across);
+        // The check reads the nodes kept in turn, the `j`th when asked for
+        // rank `j`, which it asks for in order.
+        let in_turn = || {
+            let (mut cursor, mut kept) = (self.cursor(), in_order());
+            move |_: usize| kept.next().filter(|&i| i < self.nodes).map(|i| cursor.first_of(i))
+        };
         // Side by side reads the places that move each side; when those are
         // as many as a node's pairs, pair by pair reads fewer.
         let moving = |side| self.side_offsets(side).len();
         let holds = if moving(ChildSide::Left) + moving(ChildSide::Right) < self.per_node {
-            self.holds_moved(&fitted, ChildSide::Left, &mut node, &left)
-                && self.holds_moved(&fitted, ChildSide::Right, &mut node, &right)
+            self.holds_moved(&fitted, ChildSide::Left, &mut in_turn(), &left)
+                && self.holds_moved(&fitted, ChildSide::Right, &mut in_turn(), &right)
         } else {
+            let mut node = in_turn();
             fitted.holds(|j| node(j).map(|at| places.iter().map(move |p| moved(at, p))))
         };
         holds.then_some(fitted)
@@ -1235,8 +1256,10 @@ impl Charged for PairArena {
     }
 }
 
-/// The digits a [`NodeCursor`]'s [`Odometer`] counts in place.
-const NODE_COUNTERS: usize = 4;
+/// The digits a [`NodeCursor`]'s [`Odometer`] counts in place: every node
+/// digit of a level, whose nodes are numbered in `u32` and whose radices
+/// are two or more.
+const NODE_COUNTERS: usize = 32;
 
 /// The slots at a place of a run of digits, fastest first, counted like an
 /// odometer: one place on, the fastest digit goes up one and carries into
@@ -1273,6 +1296,27 @@ impl<const N: usize> Odometer<N> {
         self.at = (self.at.0.wrapping_add((times * d.left) as u32), self.at.1.wrapping_add((times * d.right) as u32));
     }
 
+    /// One place on, to `place`, of `digits`, where the fastest digit is
+    /// counted in place: the step that carries nowhere inlined, any other
+    /// out of line.
+    #[inline(always)]
+    fn step_counted(&mut self, digits: &[Digit], place: usize) {
+        if let (Some(c), Some(d)) = (self.counts.first_mut(), digits.first())
+            && (*c as usize) + 1 < d.radix
+        {
+            *c += 1;
+            self.add(d, 1);
+            return;
+        }
+        self.step_carrying(digits, place);
+    }
+
+    /// [`step`](Self::step), out of line.
+    #[inline(never)]
+    fn step_carrying(&mut self, digits: &[Digit], place: usize) {
+        self.step(digits, place);
+    }
+
     /// One place on, to `place`, of `digits`.
     #[inline]
     fn step(&mut self, digits: &[Digit], place: usize) {
@@ -1298,16 +1342,38 @@ impl<const N: usize> Odometer<N> {
         }
     }
 
-    /// From place `from` to place `to` of `digits`, read off its digits.
+    /// From place `from` to place `to` of `digits`, read off its digits:
+    /// a digit counted in place has its setting at `from` there.
     fn seat(&mut self, digits: &[Digit], from: usize, to: usize) {
-        let (mut a, mut b) = (from, to);
+        let (mut b, mut period) = (to, 1usize);
         for (j, d) in digits.iter().enumerate() {
-            let (was, is) = (a % d.radix, b % d.radix);
-            (a, b) = (a / d.radix, b / d.radix);
-            if let Some(c) = self.counts.get_mut(j) {
-                *c = is as u32;
-            }
+            let is = b % d.radix;
+            b /= d.radix;
+            let was = match self.counts.get_mut(j) {
+                Some(c) => std::mem::replace(c, is as u32) as usize,
+                None => from / period % d.radix,
+            };
             self.add(d, is as i64 - was as i64);
+            period = period.wrapping_mul(d.radix);
+        }
+    }
+
+    /// `by` places on, of `digits`, every one of them counted in place:
+    /// `by` added to the settings with its carries, the digits past the
+    /// last one a carry reaches left as they are.
+    fn advance(&mut self, digits: &[Digit], by: usize) {
+        debug_assert!(digits.len() <= N, "a digit not counted in place");
+        let mut carry = by;
+        for (c, d) in self.counts.iter_mut().zip(digits) {
+            if carry == 0 {
+                return;
+            }
+            let sum = *c as usize + carry;
+            let is = sum % d.radix;
+            carry = sum / d.radix;
+            let times = is as i64 - i64::from(*c);
+            *c = is as u32;
+            self.at = (self.at.0.wrapping_add((times * d.left) as u32), self.at.1.wrapping_add((times * d.right) as u32));
         }
     }
 }
@@ -1352,6 +1418,24 @@ impl Places<'_> {
         ChildPair::new(EncodedChildRef::from_raw(l.wrapping_add(offset.0)), EncodedChildRef::from_raw(r.wrapping_add(offset.1)))
     }
 
+    /// Appends the pairs still to come to `buf`, room made for them at
+    /// once and each run written as a slice's map.
+    #[inline]
+    pub(crate) fn write_into(mut self, buf: &mut Vec<ChildPair>) {
+        buf.reserve(self.len());
+        loop {
+            let run = std::mem::replace(&mut self.run, [].iter());
+            let (l, r) = self.at.at;
+            buf.extend(run.map(|&(a, b)| {
+                ChildPair::new(EncodedChildRef::from_raw(l.wrapping_add(a)), EncodedChildRef::from_raw(r.wrapping_add(b)))
+            }));
+            if self.rest == 0 {
+                return;
+            }
+            self.next_run();
+        }
+    }
+
     /// On to the next run, of which there must be one.
     #[inline(always)]
     fn next_run(&mut self) {
@@ -1362,10 +1446,6 @@ impl Places<'_> {
         self.run = d.run.iter();
     }
 }
-
-/// The most nodes [`NodeCursor::first_of`] steps over: a step costs an add
-/// or two, reading a node off its digits a division a digit.
-const CURSOR_STEPS: usize = 8;
 
 /// The first pairs of an implicit level's nodes, read in increasing node
 /// order: the next node's by stepping the node digits ([`Odometer`]), a
@@ -1386,7 +1466,7 @@ impl NodeCursor<'_> {
     #[inline(always)]
     pub(crate) fn first_of(&mut self, i: usize) -> (i64, i64) {
         if i == self.node + 1 {
-            self.at.step(self.digits, i);
+            self.at.step_counted(self.digits, i);
             self.node = i;
         } else if i != self.node {
             self.first_of_far(i);
@@ -1394,15 +1474,14 @@ impl NodeCursor<'_> {
         self.at.slots()
     }
 
-    /// On to node `i`, neither this node nor the next: stepped on to a node
-    /// at most [`CURSOR_STEPS`] past this one, read off the digits otherwise.
+    /// On to node `i`, neither this node nor the next: a node ahead by
+    /// adding the distance to the digits' settings, which costs a division
+    /// a digit its carry reaches; one behind read off its digits.
     #[inline(never)]
     fn first_of_far(&mut self, i: usize) {
-        if i > self.node && i - self.node <= CURSOR_STEPS {
-            for node in self.node + 1..=i {
-                self.at.step(self.digits, node);
-            }
-        } else if i != self.node {
+        if i > self.node && self.digits.len() <= NODE_COUNTERS {
+            self.at.advance(self.digits, i - self.node);
+        } else {
             self.at.seat(self.digits, self.node, i);
         }
         self.node = i;
@@ -1580,8 +1659,8 @@ impl TddLevel {
         let id = |x: i64| x;
         let moved = if d.one_to_one_on(side, &f) {
             match side {
-                ChildSide::Left => d.pruned(d.nodes, Some, &f, id),
-                ChildSide::Right => d.pruned(d.nodes, Some, id, &f),
+                ChildSide::Left => d.pruned(d.nodes, Some, || 0..d.nodes, &f, id),
+                ChildSide::Right => d.pruned(d.nodes, Some, || 0..d.nodes, id, &f),
             }
         } else {
             None

@@ -1,7 +1,7 @@
 //! The per-level table of resolved g column slices.
 
 use super::*;
-use crate::diagram::{decoded, ChildDecoder};
+use crate::diagram::{decoded, ChildDecoder, Pairs};
 use crate::limits::Transient;
 
 /// Pairs a g column and an f row both need before the N×M walk groups their
@@ -169,14 +169,29 @@ impl<'a> RightColumns<'a> {
                 cols.push(ColumnSlice { ptr: s.as_ptr(), len: s.len(), run_range: (0, 0) });
             }
         } else {
-            // Pass 1: decode every column into the arena, recording only
-            // lengths — the arena's base is not final until it is full. The
-            // nodes are read in order, an implicit level's off its
-            // description.
-            for (_, pairs) in right_level.internal_inputs_range(0..right_width) {
-                let before = flat.len();
-                pairs.for_each(|p| flat.push(decoded(p, left_view, right_view)));
-                cols.push(ColumnSlice { ptr: std::ptr::null(), len: flat.len() - before, run_range: (0, 0) });
+            // Pass 1: every column's pairs into the arena, recording only
+            // lengths — the arena's base is not final until it is full: a
+            // stored level's slices, and an implicit level's nodes, `k`
+            // pairs each, generated in order off its description. Then
+            // decoded in place under a marginal view.
+            match right_level.pair_view() {
+                Pairs::Implicit(d) => {
+                    d.pairs_of_first(right_width, &mut flat);
+                    let column = ColumnSlice { ptr: std::ptr::null(), len: d.pairs_per_node(), run_range: (0, 0) };
+                    cols.extend(std::iter::repeat_n(column, right_width));
+                }
+                Pairs::Stored(stored) => {
+                    for j in 0..right_width {
+                        let pairs = stored.of_idx(j);
+                        flat.extend_from_slice(pairs);
+                        cols.push(ColumnSlice { ptr: std::ptr::null(), len: pairs.len(), run_range: (0, 0) });
+                    }
+                }
+            }
+            if left_view.is_marginal() || right_view.is_marginal() {
+                for p in flat.iter_mut() {
+                    *p = decoded(*p, left_view, right_view);
+                }
             }
             // Pass 2: point each descriptor at its subrange of the finished
             // arena. The lengths sum to `flat.len()` by construction, so the

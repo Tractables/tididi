@@ -93,13 +93,35 @@ fn all_marked(block: &[u64], width: usize) -> bool {
 
 /// Call `f` with the index of every marked slot of `block`, ascending.
 #[inline(always)]
-fn for_each_marked(block: &[u64], mut f: impl FnMut(usize)) {
-    for (w, &word) in block.iter().enumerate() {
-        let mut x = word;
-        while x != 0 {
-            f((w << 6) + x.trailing_zeros() as usize);
-            x &= x - 1;
+fn for_each_marked(block: &[u64], f: impl FnMut(usize)) {
+    marked(block).for_each(f);
+}
+
+/// The index of every marked slot of `block`, ascending.
+fn marked(block: &[u64]) -> Marked<'_> {
+    Marked { block, word: 0, left: block.first().copied().unwrap_or(0) }
+}
+
+/// The marked slots of a block, ascending ([`marked`]).
+struct Marked<'a> {
+    block: &'a [u64],
+    /// The word read, and its marks not yet given.
+    word: usize,
+    left: u64,
+}
+
+impl Iterator for Marked<'_> {
+    type Item = usize;
+
+    #[inline]
+    fn next(&mut self) -> Option<usize> {
+        while self.left == 0 {
+            self.word += 1;
+            self.left = *self.block.get(self.word)?;
         }
+        let bit = self.left.trailing_zeros() as usize;
+        self.left &= self.left - 1;
+        Some((self.word << 6) + bit)
     }
 }
 
@@ -799,7 +821,7 @@ fn redescribe(tdd: &mut Tdd, t: VtreeIdx, own: &[u64], left: Option<&[u32]>, rig
     // description being node `i` of the level.
     debug_assert!(level.implied_by().is_some());
     let mut select = Select::new(own);
-    let left_of = d.pruned(nodes, |j| select.nth(j), left, right)?;
+    let left_of = d.pruned(nodes, |j| select.nth(j), || marked(own), left, right)?;
     // Each node the prune drops held its `k` pairs in the arena, or, at
     // one pair a node, its pair inline.
     let dead = if k >= 2 { (d.nodes() - nodes) * k } else { 0 };
@@ -948,12 +970,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     {
         // A side's distinct offsets a marked node, never more marks than
         // its pairs.
-        if LEFT {
-            mark_described(d, ChildSide::Left, level.slot_count(), base, left_base, marks);
-        }
-        if RIGHT {
-            mark_described(d, ChildSide::Right, level.slot_count(), base, right_base, marks);
-        }
+        mark_described::<LEFT, RIGHT>(d, level.slot_count(), base, left_base, right_base, marks);
         return;
     }
     let (mut left_marks, mut right_marks) = (Marker::new(left_base), Marker::new(right_base));
@@ -1000,48 +1017,80 @@ fn for_each_marked_beside(width: usize, base: usize, marks: &mut [u64], mut f: i
     }
 }
 
-/// [`mark_sides`] on one side of a level held as the description of its
-/// pairs, whose children are structural, so that a side's word is the
-/// child's slot: the slots off the digits, not off the pairs. A marked
-/// node marks its first pair's slot shifted by each of the offsets the
-/// place digits that move the side give, once for a run of marked nodes
-/// that start at one slot; with every node marked, the nodes' first slots
-/// are read off the node digits that move the side. What is marked is
-/// what the pairs would mark, read in about the side's distinct offsets a
-/// node, not its pairs.
-fn mark_described(d: &ImplicitLevel, side: ChildSide, width: usize, base: usize, side_base: usize, marks: &mut [u64]) {
-    let offsets = d.side_offsets(side);
-    let mut marker = Marker::new(side_base);
-    let mut from = |marks: &mut [u64], first: i64| {
-        for &o in &offsets {
-            marker.mark(marks, side_base, (first + o) as usize);
+/// [`mark_sides`] on a level held as the description of its pairs, whose
+/// children are structural, so that a side's word is the child's slot: the
+/// slots off the digits, not off the pairs, the left child's at block
+/// `left_base` when `LEFT` and the right child's at `right_base` when
+/// `RIGHT`. A marked node marks its first pair's slot on a side shifted by
+/// each of the offsets the place digits that move the side give, once for
+/// a run of marked nodes that start at one slot there, both sides off one
+/// pass over the marked nodes; with every node marked, the nodes' first
+/// slots on a side are read off the node digits that move the side. What
+/// is marked is what the pairs would mark, read in about the side's
+/// distinct offsets a node, not its pairs.
+fn mark_described<const LEFT: bool, const RIGHT: bool>(
+    d: &ImplicitLevel,
+    width: usize,
+    base: usize,
+    left_base: usize,
+    right_base: usize,
+    marks: &mut [u64],
+) {
+    /// The marks of one side: its offsets, where its block starts, and the
+    /// slot the last marked node started at there.
+    struct Side {
+        offsets: Vec<i64>,
+        base: usize,
+        marker: Marker,
+        last: Option<i64>,
+    }
+    impl Side {
+        fn new(d: &ImplicitLevel, side: ChildSide, on: bool, base: usize) -> Side {
+            let offsets = if on { d.side_offsets(side) } else { Vec::new() };
+            Side { offsets, base, marker: Marker::new(base), last: None }
         }
-    };
-    if all_marked(&marks[base..base + words(width)], width) {
-        d.each_side_first(side, |first, _| from(marks, first));
-    } else {
-        let mut last = None;
-        let mut cursor = d.cursor();
-        for w in 0..words(width) {
-            // The level's own block is disjoint from its children's, so the
-            // word read here is not one the marks below write.
-            let mut x = marks[base + w];
-            while x != 0 {
-                let i = (w << 6) + x.trailing_zeros() as usize;
-                x &= x - 1;
-                let at = cursor.first_of(i);
-                let first = match side {
-                    ChildSide::Left => at.0,
-                    ChildSide::Right => at.1,
-                };
-                if last != Some(first) {
-                    from(marks, first);
-                    last = Some(first);
-                }
+
+        /// Mark the slots of a node that starts at slot `first`.
+        #[inline(always)]
+        fn mark(&mut self, marks: &mut [u64], first: i64) {
+            for &o in &self.offsets {
+                self.marker.mark(marks, self.base, (first + o) as usize);
+            }
+        }
+
+        /// [`mark`](Self::mark), once for a run of nodes that start at one
+        /// slot.
+        #[inline(always)]
+        fn mark_new(&mut self, marks: &mut [u64], first: i64) {
+            if self.last != Some(first) {
+                self.mark(marks, first);
+                self.last = Some(first);
             }
         }
     }
-    marker.finish(marks);
+    let mut left = Side::new(d, ChildSide::Left, LEFT, left_base);
+    let mut right = Side::new(d, ChildSide::Right, RIGHT, right_base);
+    if all_marked(&marks[base..base + words(width)], width) {
+        if LEFT {
+            d.each_side_first(ChildSide::Left, |first, _| left.mark(marks, first));
+        }
+        if RIGHT {
+            d.each_side_first(ChildSide::Right, |first, _| right.mark(marks, first));
+        }
+    } else {
+        let mut cursor = d.cursor();
+        for_each_marked_beside(width, base, marks, |marks, i| {
+            let (l, r) = cursor.first_of(i);
+            if LEFT {
+                left.mark_new(marks, l);
+            }
+            if RIGHT {
+                right.mark_new(marks, r);
+            }
+        });
+    }
+    left.marker.finish(marks);
+    right.marker.finish(marks);
 }
 
 // ── The seeded walk ──────────────────────────────────────────────────────────

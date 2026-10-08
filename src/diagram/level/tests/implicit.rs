@@ -417,7 +417,7 @@ fn what_a_prune_leaves_is_read_off_the_description() {
         let (left, right) = (renumber(|p| p.0), renumber(|p| p.1));
         let moved = |rank: &Option<Vec<i64>>, x: i64| rank.as_ref().map_or(x, |r| r[x as usize]);
         let oracle: Pairs = kept.iter().map(|&i| pairs[i].iter().map(|&(l, r)| (moved(&left, l), moved(&right, r))).collect()).collect();
-        let read = d.pruned(kept.len(), |j| kept.get(j).copied(), |x| moved(&left, x), |x| moved(&right, x));
+        let read = d.pruned(kept.len(), |j| kept.get(j).copied(), || kept.iter().copied(), |x| moved(&left, x), |x| moved(&right, x));
         assert_eq!(read, ImplicitLevel::fit(&level_of(&oracle)), "round {round}");
         if let Some(r) = read {
             assert_eq!(described(&r), oracle);
@@ -441,7 +441,7 @@ fn a_redescribed_arena_keeps_the_written_length() {
     level.pairs.describe(d.clone(), 20, d.nodes());
     // Keep nodes 1 and 3, renumbered 0 and 1.
     let kept = [1usize, 3];
-    let left_of = d.pruned(2, |j| kept.get(j).copied(), |x| x, |x| x).unwrap();
+    let left_of = d.pruned(2, |j| kept.get(j).copied(), || kept.iter().copied(), |x| x, |x| x).unwrap();
     level.pairs.redescribe(left_of.clone());
     assert_eq!((level.pairs.len(), level.pairs.capacity()), (12, 20));
     assert_eq!(level.implicit(), Some(&left_of));
@@ -509,6 +509,9 @@ fn stepped_pairs_are_the_pairs_read_off_the_digits() {
             let mut places = d.places(i);
             places.next();
             assert!(places.clone().eq(want().skip(1)));
+            let mut written = vec![pair(0, 0)];
+            places.clone().write_into(&mut written);
+            assert!(written[1..].iter().copied().eq(want().skip(1)));
             assert_eq!(places.nth(m), want().nth(m + 1));
             assert!(places.eq(want().skip(m + 2)));
         }
@@ -523,6 +526,10 @@ fn stepped_pairs_are_the_pairs_read_off_the_digits() {
                 _ => (i + 1).min(nodes - 1),
             };
         }
+        let first = rng.below(nodes as u64 + 1) as usize;
+        let mut flat = Vec::new();
+        d.pairs_of_first(first, &mut flat);
+        assert!(flat.into_iter().eq(pairs[..first].iter().flatten().map(|&(l, r)| pair(l, r))));
         // An implicit level's nodes read in order are the stored level's.
         let stored = level_of(&pairs);
         let mut level = TddLevel::new();

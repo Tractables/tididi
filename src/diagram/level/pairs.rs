@@ -454,8 +454,9 @@ impl TddLevel {
 
     /// [`implied_start`](Self::implied_start) for nodes read in increasing
     /// order, their first pairs stepped on by `cursor`; `i` is one of the
-    /// level's nodes.
-    #[inline(never)]
+    /// level's nodes. Inlined: [`Inputs`] reads implied nodes out of line
+    /// already.
+    #[inline]
     fn implied_next<'a>(&'a self, cursor: &mut NodeCursor<'a>, i: usize) -> NodeStart<'a> {
         let (l, r) = cursor.first_of(i);
         (self.described(), (l as u32, r as u32))
@@ -474,8 +475,9 @@ impl TddLevel {
         buf: &'b mut Vec<ChildPair>,
     ) -> &'b [ChildPair] {
         let cursor = cursor.get_or_insert_with(|| self.described_cursor());
+        let first = cursor.first_of(i);
         buf.clear();
-        buf.extend(described_iter(self.implied_next(cursor, i)));
+        self.described().places_from(first).write_into(buf);
         buf
     }
 
