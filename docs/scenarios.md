@@ -380,7 +380,7 @@ owns the circuit until finish; unlike Python, freeing the handle ends all checks
 
 ### Instances
 
-- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: 1116a7398d1a9e6cac977ad5273f0e5c4d0aaa325c10954588e49a2e7d30a868 -->
+- [Rust circuit documentation](../src/diagram/tdd/mod.rs) <!-- reviewed: 0652a0c619408fb71884a054b4384280d532778148630f0103053f929e44c224 -->
 - [Python ownership guide](../bindings/python/docs/ownership.rst) <!-- reviewed: 49e98fe18f2ea5b0d769f3b2301737e040ae22238e00b4dd9ac5296e493e94a0 -->
 - [C ownership](../bindings/c/docs/ownership.rst) <!-- reviewed: 6fa3921cd9c76acae60b9bb7d58e71544dd85f15c8a54c55815cf910628e80c4 -->
 
@@ -401,7 +401,7 @@ evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: 567a51ee589a9d3d26c9cfc8a02bca1afc83ce02d97fa257ad62d8608793cfa6 -->
+- [Rust API overview](api-guide.md) <!-- reviewed: 3332d38601fcb68785af6e65e039b141018f560b3a4a242cd9828b2d0a29f74a -->
 - [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: 619c8cf6bbe3d4b720da766850817f34b4fdf92c866f3c6cd9828cd555fdcd39 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 

@@ -332,20 +332,19 @@ impl Vtree {
         Ok(reindexed)
     }
 
-    /// The vtree whose leaves carry `vars` left to right, with its internal
-    /// nodes placed by `depths`: `depths[i]` is the depth of the node that
-    /// joins leaf `i`'s side to leaf `i + 1`'s, the lowest common ancestor of
-    /// the two leaves. The root is the node of least depth, the leftmost of
-    /// those tied, and each side of it is built the same way from the leaves
-    /// and depths on that side.
+    /// Build a vtree with leaves `vars` in left-to-right order, using the
+    /// depths of adjacent leaves' lowest common ancestors to choose its shape.
+    /// There must be one depth per adjacent pair: `depths.len() == vars.len() - 1`.
     ///
-    /// Depths read from a tree that holds these leaves among others, in its
-    /// left-to-right order, give that tree's projection onto them: its shape
-    /// on these leaves with every node that joins none of them dropped. Equal
-    /// depths throughout give [`Vtree::linear_from_order`]'s right-linear
-    /// tree. Every list of depths makes a tree, so the construction has
-    /// nothing to check but the variables, and no node list to read.
-    /// `num_vars` sizes the id space, as for [`Vtree::from_nodes`].
+    /// The smallest depth chooses the root split; ties choose the leftmost
+    /// split. Each side is built by the same rule. Only depth comparisons
+    /// matter, so any depth values are accepted; equal depths produce
+    /// [`Vtree::linear_from_order`]'s right-linear tree.
+    ///
+    /// To project an existing tree onto selected leaves, pass those leaves
+    /// in left-to-right order and their adjacent lowest-common-ancestor
+    /// depths in the original tree. `num_vars` sizes the variable id space,
+    /// as for [`Vtree::from_nodes`].
     ///
     /// # Errors
     ///
@@ -435,8 +434,8 @@ impl Vtree {
     /// the id space — wider than the leaf set is what makes
     /// [`num_leaves`](Vtree::num_leaves) differ from [`num_vars`](Vtree::num_vars).
     ///
-    /// The list is checked before it is read, so no caller can build a vtree
-    /// that [`Vtree::validate`] would reject.
+    /// Construction validates the child links and variables; every returned
+    /// tree passes [`Vtree::validate`].
     ///
     /// # Errors
     ///
@@ -479,14 +478,9 @@ impl Vtree {
     }
 }
 
-/// The check [`Vtree::from_nodes`] runs before it reads the list: every index
-/// names a node, the links reach every node exactly once from `root`, and every
-/// variable sits on one leaf, inside the id space.
-///
-/// It cannot be [`Vtree::validate`] on the result. The reindex walks the child
-/// links to build the vtree at all, so a list with a cycle or a doubly-parented
-/// node loops or indexes out of bounds there — before any vtree exists to
-/// validate.
+/// Diagnose a node list rejected by the combined validation and reindexing
+/// walk. The full scan preserves error precedence: variable and child-index
+/// errors in list order, then repeated or unreachable nodes.
 fn check_node_list(nodes: &[VtreeNode], root: VtreeIdx, num_vars: u32) -> Result<(), VtreeError> {
     let n = nodes.len();
     if n == 0 {
