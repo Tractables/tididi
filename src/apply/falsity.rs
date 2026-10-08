@@ -109,6 +109,24 @@ fn empty_ranged_node(level: &TddLevel, i: usize) -> bool {
 pub(super) fn rewrite_level_pairs(
     lim: &Limits,
     level: &mut TddLevel,
+    rewrite_pair: impl FnMut(usize, usize, usize, ChildPair) -> Option<ChildPair>,
+) -> Result<bool, OperationError> {
+    rewrite_live_level_pairs(lim, level, |_| true, rewrite_pair)
+}
+
+/// [`rewrite_level_pairs`] where `node_live` names the nodes that may keep a
+/// pair: every other node is emptied without its pairs being read. The care
+/// restriction drops most of what it drops as whole nodes nothing live
+/// reaches, so the pass reads the pairs of the nodes it keeps.
+///
+/// # Errors
+///
+/// As [`rewrite_level_pairs`].
+#[inline(always)]
+pub(super) fn rewrite_live_level_pairs(
+    lim: &Limits,
+    level: &mut TddLevel,
+    mut node_live: impl FnMut(usize) -> bool,
     mut rewrite_pair: impl FnMut(usize, usize, usize, ChildPair) -> Option<ChildPair>,
 ) -> Result<bool, OperationError> {
     let n_nodes = level.nodes().len();
@@ -116,7 +134,11 @@ pub(super) fn rewrite_level_pairs(
         return Ok(false);
     }
     if level.pairs.implicit().is_some() {
-        let emptied = level.rewrite_described(lim, true, rewrite_pair)?;
+        // A described level is rewritten as a whole: a node's liveness is
+        // asked once per pair.
+        let emptied = level.rewrite_described(lim, true, |i, k, count, pair| {
+            if node_live(i) { rewrite_pair(i, k, count, pair) } else { None }
+        })?;
         level.compact_pairs_if_stale();
         return Ok(emptied);
     }
@@ -124,9 +146,10 @@ pub(super) fn rewrite_level_pairs(
     let mut emptied = false;
     let mut dead = 0usize;
     for i in 0..n_nodes {
+        let live = node_live(i);
         if let NodeKind::Inline(p) = level.node(i).kind() {
             // The single pair lives in the node's own two words, not the arena.
-            match rewrite_pair(i, 0, 1, p) {
+            match if live { rewrite_pair(i, 0, 1, p) } else { None } {
                 Some(np) => {
                     level.nodes.stored_mut()[i] = EncodedNode::inline(np);
                 }
@@ -143,16 +166,18 @@ pub(super) fn rewrite_level_pairs(
 
         let range = level.pair_range_at(i);
         let (start, old_len) = (range.start, range.len());
-        let pairs = level.pairs_mut(i);
         let mut w = 0usize;
-        for r in 0..old_len {
-            if let Some(np) = rewrite_pair(i, r, old_len, pairs[r]) {
-                // `w <= r`, so this write is at or below a slot already read.
-                pairs[w] = np;
-                w += 1;
+        if live {
+            let pairs = level.pairs_mut(i);
+            for r in 0..old_len {
+                if let Some(np) = rewrite_pair(i, r, old_len, pairs[r]) {
+                    // `w <= r`, so this write is at or below a slot already read.
+                    pairs[w] = np;
+                    w += 1;
+                }
             }
+            sort_pairs(&mut pairs[..w]);
         }
-        sort_pairs(&mut pairs[..w]);
         if w < old_len {
             // As in the inline arm, an emptied node computes false, and the
             // falsity sweep drops what still names it.

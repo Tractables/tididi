@@ -7,7 +7,7 @@ use crate::limits::OperationError;
 use crate::reduce::ReductionPlan;
 use crate::diagram::{ChildDecoder, EncodedChildRef, NodeIdx, Tdd, TddLevel, ZERO};
 use crate::vtree::VtreeIdx;
-use crate::apply::falsity::{propagate_false_nodes, rewrite_level_pairs};
+use crate::apply::falsity::{propagate_false_nodes, rewrite_live_level_pairs};
 
 use super::Marking;
 use super::pairs::PairRow;
@@ -50,7 +50,9 @@ impl Marking {
             let mut row: Option<(usize, bool, PairRow<'_>)> = None;
             let alive = &self.alive[v.idx()];
             let mut kept_one = false;
-            rewrite_level_pairs(lim, level, |i, k, count, pair| {
+            // A node the marks did not keep alive has no kept or marked pair:
+            // it is emptied unread, and the prune drops it.
+            rewrite_live_level_pairs(lim, level, |i| alive[i], |i, k, count, pair| {
                 let (kept, marked) = match row {
                     Some((at, kept, marked)) if at == i => (kept, marked),
                     _ => {
