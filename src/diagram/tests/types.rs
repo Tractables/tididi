@@ -26,6 +26,30 @@
     }
 
     #[test]
+    fn inline_pairs_are_the_nodes_pairs_when_every_node_holds_one() {
+        // Every node inline: node i's pair at i, the same as `of_idx`.
+        let mut lvl = TddLevel::new();
+        for i in 0..5u32 {
+            lvl.push_internal_node(&[ChildPair::new(NodeIdx(i), NodeIdx(10 - i))]);
+        }
+        let stored = lvl.stored().unwrap();
+        let pairs = stored.inline_pairs().unwrap();
+        assert_eq!(pairs.len(), 5);
+        for (i, pair) in pairs.iter().enumerate() {
+            assert_eq!(std::slice::from_ref(pair), stored.of_idx(i));
+        }
+        // A node with several pairs, or with none, leaves no such slice.
+        let mut multi = lvl.clone();
+        multi.push_internal_node(&[ChildPair::new(NodeIdx(1), NodeIdx(2)), ChildPair::new(NodeIdx(3), NodeIdx(4))]);
+        assert!(multi.stored().unwrap().inline_pairs().is_none());
+        let mut empty = lvl.clone();
+        empty.push_internal_node(&[]);
+        assert!(empty.stored().unwrap().inline_pairs().is_none());
+        // A level with no nodes has every node's pair: none.
+        assert_eq!(TddLevel::new().stored().unwrap().inline_pairs(), Some(&[][..]));
+    }
+
+    #[test]
     fn level_pairs_iter_of_idx_size_hint() {
         // ExactSizeIterator: `size_hint` correctly reports the count for all
         // four variants.
