@@ -1,11 +1,42 @@
 //! Query-owned counts, widening a column only when a value needs it.
 
 use crate::{Engine, OperationError};
-use crate::diagram::{ChildDecoder, ChildPair, ChildRef, CountOverflow, EncodedChildRef, NodeIdx, ValueRef, LEAF_WIDTH};
+use crate::diagram::{ChildPair, LEAF_WIDTH};
 use crate::limits::Charged;
 use crate::value::{Count, CountRead, CountVec, IntFold};
 use crate::query::fold::Column;
 use smallvec::SmallVec;
+
+/// Storage operations used by the shared exact counting fold.
+pub(crate) trait CountColumn: Column + Charged + Sized {
+    fn try_with_width(eng: &Engine, width: usize) -> Result<Self, OperationError>;
+    fn get(&self, i: usize) -> CountRead<'_>;
+    fn set(&mut self, eng: &Engine, i: usize, value: Count) -> Result<(), OperationError>;
+    fn fold_structural(pairs: &[ChildPair], left: &Self, right: &Self) -> Option<u128>;
+}
+
+impl Column for CountVec {
+    fn width(&self) -> usize { self.len() }
+}
+
+impl CountColumn for CountVec {
+    fn try_with_width(eng: &Engine, width: usize) -> Result<Self, OperationError> {
+        CountVec::try_with_width(eng, width)
+    }
+
+    fn get(&self, i: usize) -> CountRead<'_> { CountVec::get(self, i) }
+
+    fn set(&mut self, eng: &Engine, i: usize, value: Count) -> Result<(), OperationError> {
+        CountVec::set(self, eng, i, value)
+    }
+
+    fn fold_structural(pairs: &[ChildPair], left: &Self, right: &Self) -> Option<u128> {
+        let (left, right) = (left.as_count_ref(), right.as_count_ref());
+        if left.all_u64() && right.all_u64() {
+            IntFold::fold_structural_u64(pairs, left.fast_slice(), right.fast_slice())
+        } else { None }
+    }
+}
 
 /// Counts fit in u64 until a column widens; leaf-sized columns stay inline.
 /// Wide columns share the exact overflow representation used by marginal stores.
@@ -30,8 +61,8 @@ impl Column for QueryCounts {
     }
 }
 
-impl QueryCounts {
-    pub(crate) fn try_with_width(eng: &Engine, width: usize) -> Result<Self, OperationError> {
+impl CountColumn for QueryCounts {
+    fn try_with_width(eng: &Engine, width: usize) -> Result<Self, OperationError> {
         let mut v = if width <= LEAF_WIDTH {
             SmallVec::new()
         } else {
@@ -43,18 +74,11 @@ impl QueryCounts {
         Ok(Self::Narrow(v))
     }
 
-    pub(crate) fn get(&self, i: usize) -> CountRead<'_> {
+    fn get(&self, i: usize) -> CountRead<'_> {
         match self { Self::Narrow(v) => CountRead::Fast(v[i] as u128), Self::Wide(v) => v.get(i) }
     }
 
-    pub(crate) fn read(&self, view: ChildDecoder, r: EncodedChildRef) -> CountRead<'_> {
-        match view.child(r) {
-            ChildRef::Value(ValueRef::Inline(c)) => CountRead::Fast(c as u128),
-            ChildRef::Node(NodeIdx(i)) | ChildRef::Value(ValueRef::Slot(i)) => self.get(i as usize),
-        }
-    }
-
-    pub(crate) fn set(&mut self, eng: &Engine, i: usize, value: Count) -> Result<(), OperationError> {
+    fn set(&mut self, eng: &Engine, i: usize, value: Count) -> Result<(), OperationError> {
         match self {
             Self::Wide(v) => v.set(eng, i, value),
             Self::Narrow(v) => {
@@ -72,20 +96,7 @@ impl QueryCounts {
         }
     }
 
-    pub(crate) fn into_parts(self, eng: &Engine) -> Result<(Vec<u128>, Option<CountOverflow>), OperationError> {
-        match self {
-            Self::Wide(v) => Ok(v.into_parts()),
-            Self::Narrow(v) => {
-                let mut wide = Vec::new();
-                eng.limits().reserve_exact(&mut wide, v.len())?;
-                wide.extend(v.iter().map(|&x| x as u128));
-                eng.limits().discard(v);
-                Ok((wide, None))
-            }
-        }
-    }
-
-    pub(crate) fn fold_structural(pairs: &[ChildPair], left: &Self, right: &Self) -> Option<u128> {
+    fn fold_structural(pairs: &[ChildPair], left: &Self, right: &Self) -> Option<u128> {
         match (left, right) {
             (Self::Narrow(l), Self::Narrow(r)) => {
                 let (l, r) = (l.as_slice(), r.as_slice());
@@ -100,9 +111,7 @@ impl QueryCounts {
                 let (l, r) = (l.as_count_ref().fast_slice(), r.as_slice());
                 IntFold::fold_structural_by(pairs, |k| l[k.raw() as usize] as u64 as u128, |k| r[k.raw() as usize] as u128)
             }
-            (Self::Wide(l), Self::Wide(r)) if l.as_count_ref().all_u64() && r.as_count_ref().all_u64() => {
-                IntFold::fold_structural_u64(pairs, l.as_count_ref().fast_slice(), r.as_count_ref().fast_slice())
-            }
+            (Self::Wide(l), Self::Wide(r)) => CountVec::fold_structural(pairs, l, r),
             _ => None,
         }
     }
