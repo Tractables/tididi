@@ -250,7 +250,7 @@ impl TddLevel {
     /// level is implicit and stores no node.
     #[inline]
     pub(crate) fn implied_by(&self) -> Option<&ImplicitLevel> {
-        if self.nodes.stored.is_empty() { self.pairs.implicit() } else { None }
+        self.pairs.implicit().filter(|_| self.nodes.stored.is_empty())
     }
 
     /// Drop the node arena's capacity past its nodes, as

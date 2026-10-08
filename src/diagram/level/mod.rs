@@ -258,7 +258,7 @@ impl TddLevel {
     ///
     /// The marginal state and the inline markers reset with the arenas.
     pub(crate) fn clear(&mut self) {
-        self.nodes = self.take_nodes();
+        self.clear_nodes();
         self.pairs.clear();
         self.ranges.clear();
         self.value_ref_sides = 0;
@@ -268,16 +268,21 @@ impl TddLevel {
     }
 
     /// The node arena emptied, for a level built in this one's place, of
-    /// the capacity it has: on a level whose nodes are implied, a new one of
-    /// the capacity it would have, the description still implying the
-    /// level's nodes.
+    /// the capacity it has ([`clear_nodes`](Self::clear_nodes)).
     pub(crate) fn take_nodes(&mut self) -> NodeArena {
-        if self.implied_by().is_some() {
-            return NodeArena::from(Vec::with_capacity(self.pairs.node_capacity()));
+        self.clear_nodes();
+        std::mem::take(&mut self.nodes)
+    }
+
+    /// Empty the node arena in place, keeping its capacity: on a level whose
+    /// nodes are implied, an arena of the capacity it would have, the
+    /// description still implying the level's nodes.
+    #[inline]
+    fn clear_nodes(&mut self) {
+        match self.implied_by() {
+            Some(_) => self.nodes = NodeArena::from(Vec::with_capacity(self.pairs.node_capacity())),
+            None => self.nodes.stored_mut().clear(),
         }
-        let mut nodes = std::mem::take(&mut self.nodes);
-        nodes.clear();
-        nodes
     }
 
     /// Release the structural arenas and zero the counters that describe them.
