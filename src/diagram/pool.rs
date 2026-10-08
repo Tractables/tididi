@@ -1,7 +1,7 @@
 //! Recycling pool for `Vec<TddLevel>` allocations, owned by the engine.
 
 use crate::Engine;
-use crate::limits::Limits;
+use crate::limits::{Charged, Limits};
 use crate::execution::pool::{Buffers, Drain, Pool, Pools, PooledScratch, Scratch};
 
 use super::level::TddLevel;
@@ -33,7 +33,8 @@ impl Pools for LevelPool {
 /// Trim oversized individual arenas before applying the engine's shared ceiling.
 pub(crate) const MAX_LEVEL_ARENA_BYTES: usize = 32 * 1024 * 1024;
 
-/// Reset one recycled level to empty state.
+/// Reset one recycled level to empty state, and return the bytes its arenas
+/// keep: what [`LevelBuffer`] lists for it.
 ///
 /// Beyond clearing content, also enforces the per-arena capacity cap
 /// (`MAX_LEVEL_ARENA_BYTES`): any arena (`nodes`/`pairs`/`ranges`) whose
@@ -41,14 +42,20 @@ pub(crate) const MAX_LEVEL_ARENA_BYTES: usize = 32 * 1024 * 1024;
 ///
 /// Runs on the return path, so everything parked is already in this state.
 #[inline]
-pub(crate) fn reset_level(level: &mut TddLevel) {
-    fn retain<T>(arena: &mut Vec<T>) {
-        if arena.capacity() * std::mem::size_of::<T>() > MAX_LEVEL_ARENA_BYTES { *arena = Vec::new(); }
+pub(crate) fn reset_level(level: &mut TddLevel) -> u64 {
+    // A kept arena is at most `MAX_LEVEL_ARENA_BYTES`, so the sum of three
+    // does not overflow.
+    #[inline(always)]
+    fn retain<T>(arena: &mut Vec<T>) -> u64 {
+        let bytes = arena.capacity() * std::mem::size_of::<T>();
+        if bytes > MAX_LEVEL_ARENA_BYTES {
+            *arena = Vec::new();
+            return 0;
+        }
+        bytes as u64
     }
     level.clear();
-    retain(&mut level.nodes);
-    retain(level.pairs.stored_mut());
-    retain(&mut level.ranges);
+    retain(&mut level.nodes) + retain(level.pairs.stored_mut()) + retain(&mut level.ranges)
 }
 
 /// Take `num_nodes` empty levels from the pool, growing the array through
@@ -116,9 +123,11 @@ impl Buffers for LevelBuffer {
 
 impl PooledScratch for LevelBuffer {
     fn prepare(&mut self) {}
-    /// Levels follow their own per-arena cap, [`MAX_LEVEL_ARENA_BYTES`].
-    fn retain(&mut self, _lim: &Limits) {
-        for level in &mut self.levels { reset_level(level); }
+    /// Levels follow their own per-arena cap, [`MAX_LEVEL_ARENA_BYTES`]; the
+    /// bytes kept are counted as each level is reset, in one walk.
+    fn retain(&mut self, _lim: &Limits) -> usize {
+        let arenas = self.levels.iter_mut().fold(0u64, |bytes, level| bytes.saturating_add(reset_level(level)));
+        usize::try_from(arenas.saturating_add(self.levels.charged_bytes())).unwrap_or(usize::MAX)
     }
 }
 

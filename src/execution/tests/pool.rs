@@ -16,10 +16,11 @@ impl PooledScratch for WorkingSet {
         self.valid = false;
     }
 
-    fn retain(&mut self, _lim: &crate::limits::Limits) {
+    fn retain(&mut self, _lim: &crate::limits::Limits) -> usize {
         if self.values.capacity() > 16 {
             self.values = Vec::new();
         }
+        self.retained_bytes()
     }
 }
 
@@ -158,7 +159,7 @@ impl Buffers for Capacity {
 }
 impl PooledScratch for Capacity {
     fn prepare(&mut self) {}
-    fn retain(&mut self, _: &crate::limits::Limits) {}
+    fn retain(&mut self, _: &crate::limits::Limits) -> usize { self.0 }
 }
 
 #[test]

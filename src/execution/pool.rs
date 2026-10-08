@@ -55,12 +55,13 @@ impl<T: Default> Pool<T> {
 }
 
 impl<T: PooledScratch> Pool<T> {
-    /// Retire a working set and admit it against the engine's shared ceiling.
+    /// Retire a working set and admit what it keeps against the engine's
+    /// shared ceiling.
     #[inline]
     pub(crate) fn put(&self, eng: &Engine, mut value: T) {
         self.drain(eng);
-        value.retain(eng.limits());
-        let bytes = value.retained_bytes();
+        let bytes = value.retain(eng.limits());
+        debug_assert_eq!(bytes, value.retained_bytes(), "a retention policy returns the bytes it keeps");
         if eng.scratch.ledger.admit(bytes) {
             self.bytes.set(bytes);
             self.value.set(Some(value));
@@ -138,9 +139,13 @@ pub(crate) trait Buffers {
         usize::try_from(bytes).unwrap_or(usize::MAX)
     }
 
-    /// Apply [`release_if_oversized`] to each buffer on its own.
-    fn release_oversized(&mut self, lim: &Limits) {
-        self.buffers(&mut |buf| release_if_oversized(lim, buf));
+    /// Apply [`release_if_oversized`] to each buffer on its own, and return
+    /// the bytes kept: [`retained_bytes`](Self::retained_bytes) after the
+    /// release, counted in the same walk.
+    fn release_oversized(&mut self, lim: &Limits) -> usize {
+        let mut kept = 0u64;
+        self.buffers(&mut |buf| kept = kept.saturating_add(release_if_oversized(lim, buf)));
+        usize::try_from(kept).unwrap_or(usize::MAX)
     }
 
     /// Release every buffer, giving the freed bytes back to `lim`.
@@ -157,10 +162,12 @@ pub(crate) trait PooledScratch: Default + Buffers {
     /// Invalidate previous results before the working set is used again.
     fn prepare(&mut self);
     /// Release allocations that exceed this working set's retention policy,
-    /// giving the freed bytes back to `lim`. Each buffer is judged alone unless
-    /// the working set needs a rule of its own.
-    fn retain(&mut self, lim: &Limits) {
-        self.release_oversized(lim);
+    /// giving the freed bytes back to `lim`, and return the bytes it keeps,
+    /// [`Buffers::retained_bytes`] after the release, for the pool to admit.
+    /// Each buffer is judged alone unless the working set needs a rule of its
+    /// own.
+    fn retain(&mut self, lim: &Limits) -> usize {
+        self.release_oversized(lim)
     }
 }
 
@@ -284,17 +291,20 @@ impl<B: Charged> Scratch for Nested<'_, B> {
 }
 
 /// Drop `buf`'s allocation, leaving it empty, if what it retains exceeds
-/// [`SCRATCH_RETAIN_BYTES`], and give the freed bytes back to `lim`.
+/// [`SCRATCH_RETAIN_BYTES`], and give the freed bytes back to `lim`. Returns
+/// the bytes `buf` keeps: none when released, its charge otherwise.
 ///
 /// The rule a parked working set's buffers are kept by: [`Buffers::release_oversized`]
 /// applies it to each buffer a working set lists.
 #[inline]
-pub(crate) fn release_if_oversized<B: Scratch + ?Sized>(lim: &Limits, buf: &mut B) {
+pub(crate) fn release_if_oversized<B: Scratch + ?Sized>(lim: &Limits, buf: &mut B) -> u64 {
     let bytes = buf.charged_bytes();
     if bytes > SCRATCH_RETAIN_BYTES as u64 {
         buf.release();
         lim.release_bytes(bytes);
+        return 0;
     }
+    bytes
 }
 
 #[cfg(test)]

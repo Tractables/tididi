@@ -54,13 +54,13 @@ impl crate::execution::pool::PooledScratch for MarkBuffer {
 
     /// Replay the log so the parked buffer is all false, then apply the
     /// retention cap to both arrays.
-    fn retain(&mut self, lim: &crate::limits::Limits) {
+    fn retain(&mut self, lim: &crate::limits::Limits) -> usize {
         use crate::execution::pool::Buffers;
         for &t in &self.set {
             self.flags[t.idx()] = false;
         }
         self.set.clear();
-        self.release_oversized(lim);
+        self.release_oversized(lim)
     }
 }
 

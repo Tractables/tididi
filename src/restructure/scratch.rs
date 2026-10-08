@@ -76,12 +76,13 @@ impl PooledScratch for RestructureScratch {
 
     /// A search whose triples outgrew their cap releases every buffer; any
     /// other keeps each buffer the byte cap allows.
-    fn retain(&mut self, lim: &Limits) {
+    fn retain(&mut self, lim: &Limits) -> usize {
         let bytes = self.narrow.capacity() * size_of::<u64>() + self.wide.capacity() * size_of::<u128>();
         if bytes > RESTRUCTURE_TRIPLES_CAP_BYTES {
             self.release_all(lim);
+            0
         } else {
-            self.release_oversized(lim);
+            self.release_oversized(lim)
         }
     }
 }

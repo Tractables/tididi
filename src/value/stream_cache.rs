@@ -95,8 +95,8 @@ impl Buffers for StreamCache {
 
 impl PooledScratch for StreamCache {
     fn prepare(&mut self) {}
-    fn retain(&mut self, lim: &crate::limits::Limits) {
+    fn retain(&mut self, lim: &crate::limits::Limits) -> usize {
         self.discard_columns();
-        self.release_oversized(lim);
+        self.release_oversized(lim)
     }
 }

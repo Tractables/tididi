@@ -105,11 +105,14 @@ impl crate::execution::pool::PooledScratch for Layout {
     fn prepare(&mut self) {}
     /// The buffers describe one placement together, so they are kept or
     /// released together: released past the byte cap or once the vtree is gone.
-    fn retain(&mut self, lim: &Limits) {
+    fn retain(&mut self, lim: &Limits) -> usize {
         use crate::execution::pool::Buffers;
-        if self.retained_bytes() > crate::execution::pool::SCRATCH_RETAIN_BYTES || self.vtree.strong_count() == 0 {
+        let bytes = self.retained_bytes();
+        if bytes > crate::execution::pool::SCRATCH_RETAIN_BYTES || self.vtree.strong_count() == 0 {
             self.release_all(lim);
             *self = Self::default();
+            return 0;
         }
+        bytes
     }
 }
