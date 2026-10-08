@@ -401,39 +401,41 @@ pub(crate) fn settle_loose(eng: &Engine, tdd: &Tdd, listed: &[u32]) -> Result<Ve
     }
     let lim = eng.limits();
     let vtree = &tdd.vtree;
-    let mut at = vec![false; vtree.num_nodes()];
+    // Per level, whether it stays listed (`AT`) and whether a level strictly
+    // under it stays listed (`UNDER`): set on the levels above each one that
+    // stays, up to the first set already, whose own levels above are set.
+    const AT: usize = 0;
+    const UNDER: usize = 1;
+    let mut flags = vec![[false; 2]; vtree.num_nodes()];
     for &t in listed {
-        at[t as usize] = true;
+        flags[t as usize][AT] = true;
     }
     // The listed levels' parents, bottom-up, so that every level under a
     // parent's children is settled before the parent is read.
-    let mut parents: Vec<VtreeIdx> = listed.iter().filter_map(|&t| vtree.node(VtreeIdx(t)).parent()).collect();
+    let mut parents: Vec<VtreeIdx> = Vec::with_capacity(listed.len());
+    parents.extend(listed.iter().filter_map(|&t| vtree.node(VtreeIdx(t)).parent()));
     parents.sort_unstable_by_key(|&p| vtree.topo_pos(p));
     parents.dedup();
-    // Whether a level strictly under each level stays listed: set on the
-    // levels above each one that stays, up to the first set already, whose
-    // own levels above are set.
-    let mut under = vec![false; vtree.num_nodes()];
     let mut gate = lim.gate();
     let mut marks: Transient<'_, Vec<u64>> = Transient::new(lim, Vec::new());
     for p in parents {
         let (left, right) = vtree.children(p);
-        if p != vtree.root() && !under[left.idx()] && !under[right.idx()] {
-            let sides = [at[left.idx()], at[right.idx()]];
+        if p != vtree.root() && !flags[left.idx()][UNDER] && !flags[right.idx()][UNDER] {
+            let sides = [flags[left.idx()][AT], flags[right.idx()][AT]];
             let stays = unnamed_children(lim, tdd, p, sides, &mut marks, &mut gate)?;
-            at[left.idx()] = stays[0];
-            at[right.idx()] = stays[1];
+            flags[left.idx()][AT] = stays[0];
+            flags[right.idx()][AT] = stays[1];
         }
-        if at[left.idx()] || at[right.idx()] {
+        if flags[left.idx()][AT] || flags[right.idx()][AT] {
             let mut up = Some(p);
-            while let Some(t) = up.filter(|t| !under[t.idx()]) {
-                under[t.idx()] = true;
+            while let Some(t) = up.filter(|t| !flags[t.idx()][UNDER]) {
+                flags[t.idx()][UNDER] = true;
                 up = vtree.node(t).parent();
             }
         }
     }
     gate.flush()?;
-    Ok(listed.iter().copied().filter(|&t| at[t as usize]).collect())
+    Ok(listed.iter().copied().filter(|&t| flags[t as usize][AT]).collect())
 }
 
 /// Which of the children of level `p` that `sides` asks for, left and right,
