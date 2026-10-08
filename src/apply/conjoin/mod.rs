@@ -545,7 +545,11 @@ impl crate::Engine {
             fill_free(&mut g, free.g);
             return Err(AndOntoRefused { error: error.into(), f, g });
         }
-        conjoin_kept(self, f, g, free).map_err(|r| AndOntoRefused { error: r.error.into(), f: r.f, g: r.g })
+        let conjoined = conjoin_kept(self, f, g, free).map_err(|r| AndOntoRefused { error: r.error.into(), f: r.f, g: r.g });
+        for plan in [f_plan, g_plan].into_iter().flatten() {
+            plan.recycle(self);
+        }
+        conjoined
     }
 
     /// Conjoin two diagrams and replace selected subtrees with marginal values.
