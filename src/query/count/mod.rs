@@ -10,6 +10,7 @@ mod column;
 use crate::Engine;
 use crate::limits::OperationError;
 use super::cache::QueryCache;
+use incremental::CountQuery;
 pub use incremental::{Counter, ModelCounter, OwnedModelCounter, BoundCounter, BoundModelCounter, MAX_COUNT_TABLE_VARS};
 pub use crate::value::Retention;
 
@@ -137,7 +138,7 @@ impl Engine {
         let _op = lim.enter()?;
         // The shared counter fold with no pin storage, keeping every column;
         // the fast half of each column holds the saturated counts.
-        let mut cache = QueryCache::new(self, tdd, PinSemantics::Cofactor, 0, Retention::All)?;
+        let mut cache = QueryCache::new(self, tdd, CountQuery::<true>(PinSemantics::Cofactor), 0, Retention::All)?;
         let mut gate = lim.gate();
         cache.refresh(self, tdd, &mut gate)?;
         let columns = cache.into_columns();
@@ -166,6 +167,6 @@ impl Engine {
         if tdd.is_zero() { return Ok(BigUint::ZERO); }
         // The shared counter fold with no pin storage, releasing each child
         // column once its parent has read it.
-        QueryCache::new(self, tdd, PinSemantics::Cofactor, 0, Retention::Frontier)?.read(self, tdd)
+        QueryCache::new(self, tdd, CountQuery::<false>(PinSemantics::Cofactor), 0, Retention::Frontier)?.read(self, tdd)
     }
 }

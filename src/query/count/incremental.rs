@@ -10,7 +10,7 @@ use super::{leaf_seed, PinSemantics};
 use super::super::fold::{LevelFold, Side};
 use super::super::cache::{BoundState, CachedQuery, PinState, QueryCache};
 use crate::limits::OperationError;
-use crate::value::{Retention, Count, CountRead, IntFold};
+use crate::value::{Retention, Count, CountRead, CountVec, IntFold};
 use crate::vtree::{VarId, VtreeIdx};
 use super::column::QueryCounts;
 
@@ -21,18 +21,22 @@ pub const MAX_COUNT_TABLE_VARS: usize = 30;
 /// The u128-primary counting fold: native arithmetic for the vast majority of
 /// nodes, spilling a node to the exact `BigUint` side table only where it
 /// overflows.
-pub(crate) struct OverflowingCounts<'a> {
+pub(crate) struct OverflowingCounts<'a, const EXPORT_U128: bool> {
     pins: &'a [PinState],
     convention: PinSemantics,
 }
 
-impl LevelFold for OverflowingCounts<'_> {
+impl<const EXPORT_U128: bool> LevelFold for OverflowingCounts<'_, EXPORT_U128> {
     const NODE_WORK: bool = true;
     type Value = Count;
     type Col = QueryCounts;
 
     fn alloc(&self, eng: &Engine, width: usize) -> Result<QueryCounts, OperationError> {
-        QueryCounts::try_with_width(eng, width)
+        if EXPORT_U128 {
+            Ok(QueryCounts::Wide(CountVec::try_with_width(eng, width)?))
+        } else {
+            QueryCounts::try_with_width(eng, width)
+        }
     }
 
     fn release(&self, eng: &Engine, col: &mut Self::Col) {
@@ -86,11 +90,13 @@ impl LevelFold for OverflowingCounts<'_> {
     }
 }
 
-/// A counter's cached query is its pin semantics.
-impl CachedQuery for PinSemantics {
+/// Exported columns start in their destination format; retained counts begin narrow.
+pub(super) struct CountQuery<const EXPORT_U128: bool>(pub(super) PinSemantics);
+
+impl<const EXPORT_U128: bool> CachedQuery for CountQuery<EXPORT_U128> {
     type Col = QueryCounts;
     type Output = BigUint;
-    type Fold<'a> = OverflowingCounts<'a>;
+    type Fold<'a> = OverflowingCounts<'a, EXPORT_U128>;
 
     fn admit(tdd: &Tdd) -> Result<(), OperationError> {
         if tdd.levels.iter().any(|level| level.is_weight_marginal()) {
@@ -99,8 +105,8 @@ impl CachedQuery for PinSemantics {
         Ok(())
     }
 
-    fn fold<'a>(&'a self, pins: &'a [PinState]) -> OverflowingCounts<'a> {
-        OverflowingCounts { pins, convention: *self }
+    fn fold<'a>(&'a self, pins: &'a [PinState]) -> OverflowingCounts<'a, EXPORT_U128> {
+        OverflowingCounts { pins, convention: self.0 }
     }
 
     fn false_value(&self) -> BigUint {
@@ -179,7 +185,7 @@ fn read_side<'a>(side: Side<'a, QueryCounts>, k: EncodedChildRef) -> CountRead<'
 /// ```
 pub struct Counter<D: Borrow<Tdd>> {
     tdd: D,
-    cache: QueryCache<PinSemantics>,
+    cache: QueryCache<CountQuery<false>>,
 }
 
 /// A counter borrowing its circuit. Created by [`Tdd::counter`].
@@ -450,7 +456,7 @@ impl<D: Borrow<Tdd>> Counter<D> {
     /// Reserve one pin slot per vtree leaf.
     fn new(eng: &Engine, tdd: D, retention: Retention, convention: PinSemantics) -> Result<Self, OperationError> {
         let slots = tdd.borrow().vtree.num_leaves() as usize;
-        let cache = QueryCache::new(eng, tdd.borrow(), convention, slots, retention)?;
+        let cache = QueryCache::new(eng, tdd.borrow(), CountQuery::<false>(convention), slots, retention)?;
         Ok(Self { tdd, cache })
     }
 
