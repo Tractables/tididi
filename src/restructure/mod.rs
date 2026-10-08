@@ -6,12 +6,15 @@
 //! sequence at a time under the caller's own decision.
 //! [`Tdd::graft`](crate::Tdd::graft) joins diagrams over disjoint variables on
 //! a grafted vtree. [`Tdd::embed`](crate::Tdd::embed) copies one diagram onto a
-//! larger vtree under a renaming of its variables.
+//! larger vtree under a renaming of its variables, and
+//! [`Tdd::expand_variables`](crate::Tdd::expand_variables) expands each of its
+//! variables into a class of new ones.
 
 pub(crate) mod relevel;
 pub(crate) mod scratch;
 pub mod search;
 pub(crate) mod embed;
+pub(crate) mod expand;
 pub(crate) mod graft;
 pub(crate) mod placement;
 mod splice;
@@ -19,6 +22,7 @@ pub(crate) mod target;
 
 pub use crate::vtree::graft::Embedding;
 pub use embed::EmbeddingPlan;
+pub use expand::VariableExpansion;
 pub use target::RestructureStats;
 
 use crate::diagram::TddBuildError;
@@ -210,5 +214,64 @@ impl From<VtreeError> for GraftError {
 }
 
 impl From<OperationError> for GraftError {
+    fn from(error: OperationError) -> Self { Self::Operation(error) }
+}
+
+/// Why a diagram could not be expanded as [`Tdd::expand_variables`](crate::Tdd::expand_variables) asks.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ExpandError {
+    /// The expanded variables cannot form a vtree: one is named twice, or
+    /// their id space is too wide for the result.
+    Vtree(VtreeError),
+    /// A variable of the diagram's vtree has no class, or an empty one.
+    MissingClass {
+        /// The variable without a class.
+        variable: VarId,
+    },
+    /// A variable the diagram's vtree does not carry has a nonempty class.
+    ClassWithoutLeaf {
+        /// The variable the class was given for.
+        variable: VarId,
+    },
+    /// An expanded variable is outside the expansion's id space.
+    VariableOutOfRange {
+        /// The expanded variable.
+        variable: VarId,
+        /// The largest variable id the id space holds.
+        num_vars: u32,
+    },
+    /// An operation the expansion runs was refused: a diagram that has summed
+    /// out a level, a refused allocation, or an armed stop.
+    Operation(OperationError),
+}
+
+impl std::fmt::Display for ExpandError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Vtree(error) => write!(f, "expanded vtree: {error}"),
+            Self::MissingClass { variable } => write!(f, "variable {} of the diagram has no class", variable.0),
+            Self::ClassWithoutLeaf { variable } => write!(f, "variable {} has a class but is not a leaf of the diagram's vtree", variable.0),
+            Self::VariableOutOfRange { variable, num_vars } => write!(f, "expanded variable {} is outside the variables 1 to {num_vars}", variable.0),
+            Self::Operation(error) => write!(f, "expanding the diagram: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for ExpandError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Vtree(error) => Some(error),
+            Self::Operation(error) => Some(error),
+            Self::MissingClass { .. } | Self::ClassWithoutLeaf { .. } | Self::VariableOutOfRange { .. } => None,
+        }
+    }
+}
+
+impl From<VtreeError> for ExpandError {
+    fn from(error: VtreeError) -> Self { Self::Vtree(error) }
+}
+
+impl From<OperationError> for ExpandError {
     fn from(error: OperationError) -> Self { Self::Operation(error) }
 }

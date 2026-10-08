@@ -28,6 +28,7 @@
 //! format; serialization preserves shape and variable labels, not node indices.
 
 mod build;
+mod expand;
 pub(crate) mod graft;
 mod node;
 mod project;
