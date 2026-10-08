@@ -761,7 +761,7 @@ fn assemble_moving(
     if let Some(mut loose) = loose {
         loose.sort_unstable();
         literal_tops.sort_unstable();
-        moved_loose(into, plan, &loose, &literal_tops, &mut listed);
+        moved_loose(tdd.vtree(), into, plan, &loose, &literal_tops, &mut listed);
         result.dirty.set_loose(Some(listed));
     }
     Ok(result)
@@ -771,6 +771,9 @@ fn assemble_moving(
 /// of their parent level names, pushed to `out` bottom-up, given `loose`,
 /// the images of the source's such levels, and `literal_tops`, the tops of
 /// the pass-through chains that read a leaf as `Pos` and `Neg`, both sorted.
+/// `source` is the vtree the levels were moved from; the walk visits the
+/// images of its internal nodes and the chains under them, not the levels
+/// built with no source variable under them.
 ///
 /// Only a level whose parent is the image of a source level can hold one. A
 /// level built under a built level is named whole: a pass-through has a
@@ -782,11 +785,10 @@ fn assemble_moving(
 /// foot, whose slots the chain carries one for one; a chain over a leaf
 /// holds `One`, which the image reads, or `Pos` and `Neg`, of which it may
 /// read one.
-fn moved_loose(into: &Vtree, plan: &Plan, loose: &[u32], literal_tops: &[VtreeIdx], out: &mut Vec<u32>) {
-    for (p, left, right) in into.internal_bottomup() {
-        if plan.covered_by[p.idx()].is_none() {
-            continue;
-        }
+fn moved_loose(source: &Vtree, into: &Vtree, plan: &Plan, loose: &[u32], literal_tops: &[VtreeIdx], out: &mut Vec<u32>) {
+    for &s in source.internal_bottomup_slice() {
+        let p = plan.embedding.levels[s.idx()];
+        let (left, right) = into.children(p);
         for top in [left, right] {
             if into.node(top).is_leaf() {
                 continue;
