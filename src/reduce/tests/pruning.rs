@@ -402,3 +402,76 @@ fn the_word_passes_number_and_keep_every_marked_slot() {
         }
     }
 }
+
+/// A prune that drops the first node of a level held as the description of
+/// its pairs, together with the nodes below that only that node names, and
+/// stores what is left of the level, moves the pairs of the nodes it keeps
+/// through the new indices of the level below and no pair of a node it
+/// drops: the children of a dropped node may be gone and have no new index.
+///
+/// Over the right-linear vtree `r = (x1, v)`, `v = (x2, w)`, `w = (x3, x4)`,
+/// `w` holds the four minterms of `x3` and `x4`, and `v` two nodes, node `i`
+/// holding `(x2, 2i)` and `(¬x2, 2i + 1)`, held as their description under a
+/// floor of four pairs. The root names node 1 alone, so the prune drops node
+/// 0 of `v` and the two nodes of `w` that only node 0 names, and the node
+/// left at `v`, below the floor, is stored. The renumbering of `w` has no
+/// index for the child of the description's first pair: a slot moved through
+/// it would hold the reserved word it answers for a dropped node. The same
+/// diagram built stored, pruned the same way, is the oracle.
+#[test]
+fn a_prune_that_stores_an_implicit_level_moves_no_pair_of_a_dropped_node() {
+    use crate::diagram::{ChildPair, NodeIdx, TddNodeId, NEG_LEAF_IDX, POS_LEAF_IDX};
+    use crate::test_helpers::{assert_canonical, describe, same_levels, with_floor};
+
+    let vtree = Arc::new(Vtree::linear(4));
+    let r = vtree.root();
+    let (_, v) = vtree.children(r);
+    let (_, w) = vtree.children(v);
+    assert!(!vtree.node(w).is_leaf() && vtree.node(vtree.children(w).0).is_leaf());
+    let eng = &crate::Engine::new();
+    let build = |implicit: bool| {
+        let mut tdd = crate::build::constant_one(eng, &vtree);
+        let literal = [POS_LEAF_IDX, NEG_LEAF_IDX];
+        let below = &mut tdd.levels[w.idx()];
+        below.clear();
+        for m in 0..4 {
+            below.push_internal_node(&[ChildPair::new(literal[m / 2], literal[m % 2])]);
+        }
+        let level = &mut tdd.levels[v.idx()];
+        level.clear();
+        for i in 0..2 {
+            level.push_internal_node(&[ChildPair::new(POS_LEAF_IDX, NodeIdx(2 * i)), ChildPair::new(NEG_LEAF_IDX, NodeIdx(2 * i + 1))]);
+        }
+        if implicit {
+            describe(level);
+        }
+        let root = &mut tdd.levels[r.idx()];
+        root.clear();
+        root.push_internal_node(&[ChildPair::new(POS_LEAF_IDX, NodeIdx(1))]);
+        tdd.output = TddNodeId { vtree: r, local: NodeIdx(0) };
+        tdd
+    };
+    with_floor(4, || {
+        let mut implicit = build(true);
+        assert!(implicit.levels[v.idx()].implicit().is_some(), "the level of two nodes is implicit");
+        let mut stored = build(false);
+
+        prune_unreachable(eng, &mut implicit, PruneScope::Whole).unwrap();
+        prune_unreachable(eng, &mut stored, PruneScope::Whole).unwrap();
+
+        assert_eq!(implicit.levels[w.idx()].slot_count(), 2, "the nodes only the first names are dropped");
+        let level = &implicit.levels[v.idx()];
+        assert_eq!(level.slot_count(), 1, "the first node is dropped");
+        assert!(level.implicit().is_none(), "what is left, below the floor, is stored");
+        let arena = level.pairs.stored().expect("the level is stored");
+        assert!(
+            arena.iter().all(|p| !p.left.is_reserved() && !p.right.is_reserved()),
+            "a slot holds a pair moved through a renumbering that has no index for it: {arena:?}"
+        );
+        let renumbered = [ChildPair::new(POS_LEAF_IDX, NodeIdx(0)), ChildPair::new(NEG_LEAF_IDX, NodeIdx(1))];
+        assert_eq!(stored.levels[v.idx()].pairs_vec(0), renumbered, "the oracle's node names the nodes left below");
+        same_levels(&implicit, &stored);
+        assert_canonical(&implicit);
+        assert_canonical(&stored);
+    });
+}
