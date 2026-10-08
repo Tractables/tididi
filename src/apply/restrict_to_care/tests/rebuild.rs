@@ -144,7 +144,7 @@ fn the_node_filter_agrees_with_the_depth_first_rebuild() {
                 let mut marks = Marking::trivial(&eng, &f, true).unwrap();
                 for (i, level) in f.levels.iter().enumerate() {
                     if level.is_marginal() { continue; }
-                    for (j, _) in level.nodes.iter().enumerate() {
+                    for (j, _) in level.nodes().iter().enumerate() {
                         if !keep(TddNodeId { vtree: VtreeIdx(i as u32), local: NodeIdx(j as u32) }) {
                             marks.alive[i][j] = false;
                         }

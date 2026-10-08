@@ -15,7 +15,7 @@ fn the_falsity_sweep_builds_what_is_left_of_an_implicit_level() {
     assert!(implicit.levels[v.idx()].implicit().is_some(), "the fixture's level is implicit");
     let below = &mut implicit.levels[w.idx()];
     for j in (1..below.nodes.len()).step_by(2) {
-        below.nodes[j] = below.encode_multi(0, 0);
+        below.nodes.stored_mut()[j] = below.encode_multi(0, 0);
     }
     let mut stored = with_stored_copy(&implicit, v);
     propagate_false_nodes(&mut implicit);

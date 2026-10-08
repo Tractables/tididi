@@ -52,7 +52,7 @@ fn contraction_garbage_is_swept_leaving_content_identical() {
     // owns no arena slot at all.
     level.pairs.stored_mut().extend([pair(1, 7), pair(2, 7)]);
     level.ranges.push(PairRange { start: 0, len: 2 });
-    level.nodes.push(EncodedNode::multi_ranged(0));
+    level.nodes.stored_mut().push(EncodedNode::multi_ranged(0));
     level.push_internal_node(&[pair(3, 4)]);
     let first_multi = level.nodes.len();
     for i in 0..n {
@@ -111,7 +111,7 @@ fn a_shrunk_extended_parent_node_inlines_its_survivor() {
     ]
     .into();
     parent.ranges = vec![PairRange { start: 0, len: 2 }];
-    parent.nodes = vec![EncodedNode::multi_ranged(0)];
+    parent.nodes = vec![EncodedNode::multi_ranged(0)].into();
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
 
@@ -126,7 +126,7 @@ fn a_shrunk_extended_parent_node_inlines_its_survivor() {
 
     let parent = &tdd.levels[root.idx()];
     assert_eq!(parent.ranges.len(), 1, "no range entry is added for an inlined survivor");
-    assert!(matches!(parent.nodes[0].kind(), NodeKind::Inline(_)), "the sole survivor is stored inline");
+    assert!(matches!(parent.node(0).kind(), NodeKind::Inline(_)), "the sole survivor is stored inline");
     assert_eq!(
         parent.pairs_vec(0),
         &[ChildPair::new(NodeIdx(0), sibling)],

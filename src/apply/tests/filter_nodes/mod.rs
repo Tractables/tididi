@@ -27,7 +27,7 @@ type Storage = Vec<(Vec<EncodedNode>, Vec<Vec<ChildPair>>, Option<Vec<u128>>, u8
 
 fn storage(f: &Tdd) -> Storage {
     f.levels.iter().map(|level| (
-        level.nodes().to_vec(),
+        level.nodes().iter().collect(),
         (0..level.nodes().len()).map(|i| level.pairs_vec(i).to_vec()).collect(),
         level.marginal_counts().map(<[u128]>::to_vec),
         level.value_ref_sides,

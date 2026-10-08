@@ -71,8 +71,8 @@ fn first_not_full(tdd: &Tdd) -> Option<(usize, usize, usize)> {
                 seen[(l - lefts.start) as usize * rights.len() + (r - rights.start) as usize] = true;
             }
         };
-        for node in &level.nodes {
-            for pair in level.pairs_iter_of(node) {
+        for node in level.nodes() {
+            for pair in level.pairs_iter_of(&node) {
                 let (l, r) = (pair.left.0, pair.right.0);
                 let l_one = left_leaf && l == crate::diagram::ONE_LEAF_IDX.0;
                 let r_one = right_leaf && r == crate::diagram::ONE_LEAF_IDX.0;

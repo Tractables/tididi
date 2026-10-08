@@ -182,7 +182,7 @@ fn collect_sink_respects_soft_budget() {
     // g level: a single inline node → exactly one decoded pair for j = 0,
     // putting an N-pair f_pairs into the N×1 arm.
     let mut g = TddLevel::new();
-    g.nodes.push(EncodedNode::inline(ChildPair::new(NodeIdx(2), NodeIdx(3))));
+    g.nodes.stored_mut().push(EncodedNode::inline(ChildPair::new(NodeIdx(2), NodeIdx(3))));
 
     let side = ChildPlan {
         plan: SidePlan { carrier: None, view: ChildDecoder::structural() },

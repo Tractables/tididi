@@ -149,7 +149,7 @@ fn fuse_node_pairs<V>(
     // so it is arena-backed, never an inline node whose single pair lives in
     // the node word.
     debug_assert!(
-        level.nodes[n].kind().pairs_in_arena(),
+        level.node(n).kind().pairs_in_arena(),
         "rebuild_parent_level: node {n} carries a plan but owns no arena range",
     );
     let range = level.pair_range_at(n);

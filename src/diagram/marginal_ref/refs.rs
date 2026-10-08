@@ -77,13 +77,13 @@ pub(crate) fn for_each_side_ref_mut(
         return;
     }
     for ni in 0..level.nodes.len() {
-        match level.arena_range(level.nodes[ni].kind()) {
+        match level.arena_range(level.node(ni).kind()) {
             Some(range) => match side {
                 ChildSide::Left => level.pairs.stored_mut()[range].iter_mut().for_each(|p| f(&mut p.left.0)),
                 ChildSide::Right => level.pairs.stored_mut()[range].iter_mut().for_each(|p| f(&mut p.right.0)),
             },
             None => {
-                let node = &mut level.nodes[ni];
+                let node = &mut level.nodes.stored_mut()[ni];
                 f(match side {
                     ChildSide::Left => &mut node.a,
                     ChildSide::Right => &mut node.b,
@@ -97,8 +97,8 @@ pub(crate) fn for_each_side_ref_mut(
 /// in the same order.
 #[inline]
 pub(crate) fn for_each_side_ref(level: &TddLevel, side: ChildSide, mut f: impl FnMut(u32)) {
-    for node in &level.nodes {
-        for p in level.pairs_iter_of(node) {
+    for node in level.nodes() {
+        for p in level.pairs_iter_of(&node) {
             f(match side {
                 ChildSide::Left => p.left.0,
                 ChildSide::Right => p.right.0,

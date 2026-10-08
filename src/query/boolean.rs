@@ -203,9 +203,9 @@ fn same_minimized(eng: &Engine, f: &Tdd, g: &Tdd) -> Result<bool, OperationError
                 for (diagram, side) in [f, g].into_iter().zip(&mut keys) {
                     let level = diagram.level(t);
                     lim.reserve_exact(&mut side[t.idx()], level.nodes.len())?;
-                    for node in &level.nodes {
+                    for node in level.nodes() {
                         let mut signature = Vec::new();
-                        for pair in level.pairs_iter_of(node) {
+                        for pair in level.pairs_iter_of(&node) {
                             gate.poll(1)?;
                             let a = side[left.idx()][pair.left.raw() as usize];
                             let b = side[right.idx()][pair.right.raw() as usize];
@@ -289,8 +289,8 @@ pub(super) fn visit_leaf_labels(
         if work == 0 { continue; }
         let mut labels = [LeafLabels::default(); 2];
         let level = &f.levels[t.idx()];
-        for node in level.nodes.iter() {
-            for pair in level.pairs_iter_of(node) {
+        for node in level.nodes().iter() {
+            for pair in level.pairs_iter_of(&node) {
                 poll(work)?;
                 if vars[0].is_some() { labels[0].insert(pair.left); }
                 if vars[1].is_some() { labels[1].insert(pair.right); }

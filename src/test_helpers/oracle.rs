@@ -380,7 +380,7 @@ pub fn support_mask(t: &Tdd) -> Vec<bool> {
             };
             let level = &mt.levels[vi];
             'scan: for ni in 0..level.nodes.len() {
-                for p in level.pairs_iter_of(&level.nodes[ni]) {
+                for p in level.pairs_iter_of(&level.node(ni)) {
                     let child = match side {
                         ChildSide::Left => p.left,
                         ChildSide::Right => p.right,
@@ -441,7 +441,7 @@ pub fn support_bits(t: &Tdd) -> Vec<u64> {
         let mut need_l = lvar.is_some();
         let mut need_r = rvar.is_some();
         'scan: for ni in 0..level.nodes.len() {
-            for p in level.pairs_iter_of(&level.nodes[ni]) {
+            for p in level.pairs_iter_of(&level.node(ni)) {
                 if need_l && (p.left == POS_LEAF_IDX.into() || p.left == NEG_LEAF_IDX.into()) {
                     let x = lvar.unwrap();
                     bits[x / 64] |= 1u64 << (x % 64);

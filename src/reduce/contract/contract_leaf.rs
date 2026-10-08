@@ -218,7 +218,7 @@ fn rewrite_level(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
         // close at the end of the operation describes what is affine again.
         level.store_if_implicit();
         for i in 0..level.nodes.len() {
-            if let NodeKind::Inline(p) = level.nodes[i].kind() {
+            if let NodeKind::Inline(p) = level.node(i).kind() {
                 // A single-pair node is labelled `One` on `side` (the singleton
                 // pre-pass in `try_contract_leaf_twins` aborted the level on a
                 // lone literal), and `One` pairs are copied verbatim.

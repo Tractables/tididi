@@ -83,7 +83,7 @@ pub(crate) fn init_leaf_identity_outside(
             refute_generated(level, &mut want, buf, [left, right]);
             continue;
         };
-        for node in level.nodes.iter() {
+        for node in stored.nodes() {
             if refute(stored.of(node), &mut want, buf, [left, right]) { break; }
         }
     }

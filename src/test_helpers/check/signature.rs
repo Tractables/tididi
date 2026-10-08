@@ -107,10 +107,10 @@ pub(crate) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
         }
         let left_view = tdd.level(left).child_decoder();
         let right_view = tdd.level(right).child_decoder();
-        for (i, node) in level.nodes.iter().enumerate() {
+        for (i, node) in level.nodes().iter().enumerate() {
             let mut total = 0u64;
             let mut any = false;
-            for pair in level.pairs_iter_of(node) {
+            for pair in level.pairs_iter_of(&node) {
                 any = true;
                 let l = side_signature(left_view.child(pair.left), &signatures[left.idx()]);
                 let r = side_signature(right_view.child(pair.right), &signatures[right.idx()]);

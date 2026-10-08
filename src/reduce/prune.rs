@@ -735,7 +735,7 @@ fn compact_one_level(
             if !level.pairs.is_empty() {
                 for_each_unmarked(own, width, |i| dead += level.arena_pairs_at(i));
             }
-            keep_marked(&mut level.nodes, own);
+            keep_marked(level.nodes.stored_mut(), own);
             dead
         }
     };
@@ -797,7 +797,7 @@ fn redescribe(tdd: &mut Tdd, t: VtreeIdx, own: &[u64], left: Option<&[u32]>, rig
     }
     let mut select = Select::new(own);
     let kept = |j: usize| {
-        let range = level.arena_range(level.nodes[select.nth(j)?].kind())?;
+        let range = level.arena_range(level.node(select.nth(j)?).kind())?;
         (range.len() == k && range.start.is_multiple_of(k)).then_some(range.start / k)
     };
     let left_of = d.pruned(nodes, kept, left, right)?;
@@ -806,7 +806,7 @@ fn redescribe(tdd: &mut Tdd, t: VtreeIdx, own: &[u64], left: Option<&[u32]>, rig
     let level = &mut tdd.levels[t.idx()];
     // No more nodes than the level held: the Vec does not grow.
     level.nodes.clear();
-    level.nodes.extend((0..nodes).map(|j| EncodedNode::multi_pair((j * k) as u32, k as u32)));
+    level.nodes.stored_mut().extend((0..nodes).map(|j| EncodedNode::multi_pair((j * k) as u32, k as u32)));
     level.pairs.redescribe(left_of);
     Some(dead)
 }
@@ -847,9 +847,9 @@ fn rewrite_child_refs(
     let left_view = tdd.levels[left.idx()].child_decoder();
     let right_view = tdd.levels[right.idx()].child_decoder();
     let level = &mut tdd.levels[t_idx];
-    for_each_marked(own, |i| match level.nodes[i].kind() {
+    for_each_marked(own, |i| match level.node(i).kind() {
         NodeKind::Inline(_) => {
-            let node = &mut level.nodes[i];
+            let node = &mut level.nodes.stored_mut()[i];
             node.a = left_view.remap(EncodedChildRef::from_raw(node.a), left_remap).0;
             node.b = right_view.remap(EncodedChildRef::from_raw(node.b), right_remap).0;
         }

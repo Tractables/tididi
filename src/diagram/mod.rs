@@ -205,7 +205,7 @@ pub(crate) use semiring::{weight_key, WeightKey};
 pub use weights::{Arithmetic, WeightStore};
 
 // level
-pub use level::{described, redescribed, stored_moved, CountOverflow, Digit, ImplicitLevel, Pairs, StoredPairs, TddLevel, FLOOR};
+pub use level::{described, redescribed, stored_moved, CountOverflow, Digit, ImplicitLevel, Nodes, NodesIter, Pairs, StoredPairs, TddLevel, FLOOR};
 pub(crate) use level::{assert_can_make_marginal, floor, sort_pairs, stored_levels_forced};
 // The invariant checks read a level's state; they compile where `test_helpers` does.
 #[cfg(any(test, debug_assertions, feature = "testing"))]

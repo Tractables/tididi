@@ -35,7 +35,7 @@ impl Engine {
         // An edited count-marginal diagram may still hold structural nodes
         // over zero-count values, so it is walked.
         if f.dirty.is_empty() || f.weights.is_some() || !f.has_marginal_level() {
-            return Ok(out_level.pairs_iter_of(&out_level.nodes[out_i]).next().is_some());
+            return Ok(out_level.pairs_iter_of(&out_level.node(out_i)).next().is_some());
         }
         is_sat_structural(self, f)
     }

@@ -24,11 +24,11 @@ impl Tdd {
             let left_view = self.levels[left_vtree.idx()].child_decoder();
             let right_view = self.levels[right_vtree.idx()].child_decoder();
             let level = self.level(t);
-            for (i, node) in level.nodes.iter().enumerate() {
+            for (i, node) in level.nodes().iter().enumerate() {
                 if !reachable[t.idx()][i] {
                     continue;
                 }
-                for pair in level.pairs_iter_of(node) {
+                for pair in level.pairs_iter_of(&node) {
                     if pair.left != ZERO.into()
                         && let Some(s) = left_view.child(pair.left).index() {
                             reachable[left_vtree.idx()][s] = true;

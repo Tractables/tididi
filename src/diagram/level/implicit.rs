@@ -304,14 +304,15 @@ impl ImplicitLevel {
             // In one pass a run where the nodes fit the reserved capacity,
             // one node at a time otherwise.
             let fits = level.nodes.capacity() - level.nodes.len() >= self.nodes;
+            let stored = level.nodes.stored_mut();
             return self.node_runs(|_, offsets, at| {
                 let nodes = offsets.iter().map(|&o| inline_at(at, o));
                 if fits {
-                    level.nodes.extend(nodes);
+                    stored.extend(nodes);
                     return Ok(());
                 }
                 for node in nodes {
-                    lim.try_push(&mut level.nodes, node)?;
+                    lim.try_push(stored, node)?;
                 }
                 Ok(())
             });
@@ -321,7 +322,7 @@ impl ImplicitLevel {
         // usual case, they are written in one pass; otherwise one at a time.
         let k = self.per_node;
         if level.nodes.capacity() - level.nodes.len() >= self.nodes && self.pairs() < 1 << 31 {
-            level.nodes.extend((0..self.nodes).map(|i| EncodedNode::multi_pair((i * k) as u32, k as u32)));
+            level.nodes.stored_mut().extend((0..self.nodes).map(|i| EncodedNode::multi_pair((i * k) as u32, k as u32)));
             return Ok(());
         }
         for i in 0..self.nodes {
@@ -455,7 +456,7 @@ impl ImplicitLevel {
         // A level of one pair a node, its pairs inline, compares its nodes'
         // words in runs; any other, or one where they differ, reads them
         // node by node.
-        if (per_node == 1 && fitted.holds_inline(&level.nodes)) || fitted.holds(|i| Some(stored.of_idx(i).iter().map(slots))) {
+        if (per_node == 1 && fitted.holds_inline(level.nodes.stored())) || fitted.holds(|i| Some(stored.of_idx(i).iter().map(slots))) {
             Ok(fitted)
         } else {
             Err(None)
@@ -1506,7 +1507,7 @@ impl TddLevel {
         debug_assert!({
             let k = d.per_node;
             self.nodes.len() == d.nodes
-                && self.nodes.iter().enumerate().all(|(i, n)| self.arena_range(n.kind()) == Some(i * k..(i + 1) * k))
+                && self.nodes().iter().enumerate().all(|(i, n)| self.arena_range(n.kind()) == Some(i * k..(i + 1) * k))
         });
         Some(d)
     }
@@ -1592,7 +1593,7 @@ impl TddLevel {
         // A fit's nodes hold node 0's pairs each.
         debug_assert!(d.per_node >= 2 && d.pairs() >= floor());
         let k = d.per_node;
-        for (i, node) in self.nodes.iter_mut().enumerate() {
+        for (i, node) in self.nodes.stored_mut().iter_mut().enumerate() {
             *node = EncodedNode::multi_pair((i * k) as u32, k as u32);
         }
         self.pairs.describe_stored(d);
@@ -1718,7 +1719,7 @@ impl TddLevel {
     /// level.
     #[inline(always)]
     pub fn pairs_read<'a>(&'a self, i: usize, buf: &'a mut Vec<ChildPair>) -> &'a [ChildPair] {
-        match self.stored_of(&self.nodes[i]) {
+        match self.stored_of(&self.nodes.stored()[i]) {
             Some(pairs) => pairs,
             None => self.described_read(i, buf),
         }

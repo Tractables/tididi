@@ -1,6 +1,7 @@
 //! Setters that stage a level in a shape no operation produces.
 
 use super::*;
+use crate::diagram::NodeIdx;
 
 impl TddLevel {
     /// Give the node at `at` a new pair list, keeping its index.
@@ -14,8 +15,8 @@ impl TddLevel {
     /// abandoned pair range.
     pub(crate) fn replace_node_pairs(&mut self, at: NodeIdx, input_pairs: &[ChildPair]) {
         let fresh = self.push_internal_node(input_pairs);
-        self.nodes[at.idx()] = self.nodes[fresh.idx()];
-        self.nodes.pop();
+        self.nodes.stored_mut()[at.idx()] = self.node(fresh.idx());
+        self.nodes.stored_mut().pop();
     }
 
     /// Put this level into its counts state without touching the arenas, so a

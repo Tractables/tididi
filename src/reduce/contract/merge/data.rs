@@ -104,7 +104,7 @@ pub(super) fn concat_twin_pairs(
         "concat_twin_pairs: hoisted grand reserve under-sized pairs capacity"
     );
     for &idx in group {
-        let d = level.nodes[idx as usize];
+        let d = level.node(idx as usize);
         if let NodeKind::Inline(pair) = d.kind() {
             level.pairs.stored_mut().push(pair);
         } else {
@@ -139,7 +139,7 @@ pub(super) fn concat_twin_pairs(
     level.note_dead_pairs(abandoned);
 }
 
-/// Finalize node at `level.nodes[keep]` from a merged pair sequence already
+/// Finalize node at `level.node(keep)` from a merged pair sequence already
 /// written to `level.pairs[new_start..new_start + new_len]`.
 ///
 /// A single pair is popped off the arena again and stored inline; a longer
@@ -155,9 +155,9 @@ fn finalize_merged_node(
     if new_len == 1 {
         let pair = level.pairs.stored_mut().pop().expect("the merged pair");
         debug_assert_eq!(level.pairs.len(), new_start);
-        level.nodes[keep] = EncodedNode::inline(pair);
+        level.nodes.stored_mut()[keep] = EncodedNode::inline(pair);
     } else {
-        level.nodes[keep] = level.encode_multi(new_start, new_len);
+        level.nodes.stored_mut()[keep] = level.encode_multi(new_start, new_len);
     }
 }
 
@@ -181,7 +181,7 @@ pub(super) fn compact_explicit_level(level: &mut TddLevel, merge_target: &[u32])
     for read in 0..n {
         if merge_target[read] == read as u32 {
             if write < read {
-                level.nodes.swap(write, read);
+                level.nodes.stored_mut().swap(write, read);
             }
             write += 1;
         } else {
@@ -190,7 +190,7 @@ pub(super) fn compact_explicit_level(level: &mut TddLevel, merge_target: &[u32])
             dead_acc += level.arena_pairs_at(read);
         }
     }
-    level.nodes.truncate(write);
+    level.nodes.stored_mut().truncate(write);
     level.note_dead_pairs(dead_acc);
 }
 

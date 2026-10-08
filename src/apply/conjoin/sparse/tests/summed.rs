@@ -61,7 +61,7 @@ fn assert_identical(a: &Tdd, b: &Tdd, what: &str) {
         assert_eq!(x.nodes.len(), y.nodes.len(), "{what}: level {i} width");
         assert_eq!(x.ranges, y.ranges, "{what}: level {i} ranges");
         for n in 0..x.nodes.len() {
-            assert_eq!(x.nodes[n].kind(), y.nodes[n].kind(), "{what}: level {i} node {n} encoding");
+            assert_eq!(x.node(n).kind(), y.node(n).kind(), "{what}: level {i} node {n} encoding");
             assert_eq!(x.pairs_vec(n), y.pairs_vec(n), "{what}: level {i} node {n} pairs");
         }
     }

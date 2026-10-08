@@ -60,7 +60,7 @@ pub(crate) fn emit_product_node(
 /// budget-charged.
 #[inline(always)]
 pub(in crate::apply::conjoin) fn emit_single_pair(eng: &Engine, level: &mut TddLevel, pair: ChildPair) -> Result<(), OperationError> {
-    eng.limits().try_push(&mut level.nodes, EncodedNode::inline(pair))
+    eng.limits().try_push(level.nodes.stored_mut(), EncodedNode::inline(pair))
 }
 
 // ============================== Pair sinks ==============================

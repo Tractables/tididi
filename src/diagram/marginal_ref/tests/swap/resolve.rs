@@ -42,7 +42,7 @@ fn resolve_left_inline_dedup_mint_passthrough() {
     assert_eq!(p[2].left.0, ValueRef::slot_raw(1), "absent count must re-mint");
     assert_eq!(p[3].left.0, ValueRef::inline_raw(2).unwrap(), "inline ref must pass through");
     assert_eq!(p[4].left.0, (1 << 31) | 5, "ZERO sentinel must pass through");
-    assert_eq!(levels[0].nodes[1].a, ValueRef::slot_raw(0), "inline-node ref must remap too");
+    assert_eq!(levels[0].node(1).a, ValueRef::slot_raw(0), "inline-node ref must remap too");
     assert_eq!(
         levels[1].marginal_counts(),
         Some(&[WIDE, WIDER][..]),
@@ -75,7 +75,7 @@ fn resolve_all_inlinable_leaves_dst_store_untouched() {
     assert_eq!(p[1].left.0, ValueRef::inline_raw(4).unwrap());
     assert_eq!(p[2].left.0, ValueRef::inline_raw(2).unwrap());
     assert_eq!(p[3].left.0, (1 << 31) | 5);
-    assert_eq!(levels[0].nodes[1].a, ValueRef::inline_raw(1).unwrap());
+    assert_eq!(levels[0].node(1).a, ValueRef::inline_raw(1).unwrap());
     assert_eq!(
         levels[1].marginal_counts(),
         Some(&[WIDE][..]),

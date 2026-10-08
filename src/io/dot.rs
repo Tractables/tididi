@@ -259,7 +259,7 @@ fn emit_pair_edges(dot: &mut String, f: &Tdd, reachable: &[Vec<bool>]) {
             if !reachable[t.idx()][i] {
                 continue;
             }
-            for (p, pair) in level.pairs_iter_of(slot).enumerate() {
+            for (p, pair) in level.pairs_iter_of(&slot).enumerate() {
                 let l = index(left_view.child(pair.left));
                 let r = index(right_view.child(pair.right));
                 writeln!(dot, "    v{}_n{}_p{} [shape=point, width=0.08];", t.0, i, p).unwrap();

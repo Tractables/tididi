@@ -89,11 +89,11 @@ impl TddLevel {
     pub(crate) fn set_pair_len(&mut self, node_idx: usize, new_len: u32) {
         assert!(new_len >= 2, "set_pair_len: new_len=1 aliases multi_ranged; convert to inline");
         debug_assert!(new_len & MULTI_BIT == 0);
-        match self.nodes[node_idx].kind() {
+        match self.node(node_idx).kind() {
             // Shrinking stays ranged even if new_len now fits in u31 — the
             // ranges slot is already allocated, and callers don't rely on form.
             NodeKind::MultiRanged(idx) => self.ranges[idx as usize].len = new_len as u64,
-            NodeKind::Multi { .. } => self.nodes[node_idx].b = new_len,
+            NodeKind::Multi { .. } => self.nodes.stored_mut()[node_idx].b = new_len,
             NodeKind::Inline(_) => panic!("set_pair_len on an inline node"),
         }
     }
@@ -122,12 +122,12 @@ impl TddLevel {
         debug_assert!(new_len < old_len, "reencode_shrunk: not a shrink");
         match new_len {
             0 => {
-                self.nodes[node_idx] = self.encode_multi(0, 0);
+                self.nodes.stored_mut()[node_idx] = self.encode_multi(0, 0);
                 old_len
             }
             1 => {
                 let stored = self.pairs.stored().expect("an in-place rewrite works on stored pairs");
-                self.nodes[node_idx] = EncodedNode::inline(stored[start]);
+                self.nodes.stored_mut()[node_idx] = EncodedNode::inline(stored[start]);
                 old_len // an inline node owns no arena slot
             }
             _ => {
@@ -146,11 +146,11 @@ impl TddLevel {
     /// node stays ranged (its `ranges` slot is already allocated).
     #[inline]
     fn set_multi_start(&mut self, node_idx: usize, new_start: usize) {
-        match self.nodes[node_idx].kind() {
+        match self.node(node_idx).kind() {
             NodeKind::MultiRanged(idx) => self.ranges[idx as usize].start = new_start as u64,
             NodeKind::Multi { .. } => {
                 debug_assert!(new_start < (1usize << 31), "set_multi_start: start overflows the packed encoding");
-                self.nodes[node_idx].a = (new_start as u32) | MULTI_BIT;
+                self.nodes.stored_mut()[node_idx].a = (new_start as u32) | MULTI_BIT;
             }
             other => panic!("set_multi_start on {other:?}"),
         }
@@ -172,7 +172,7 @@ impl TddLevel {
     /// an inline node (it owns no arena slot).
     #[inline]
     pub(crate) fn arena_pairs_at(&self, idx: usize) -> usize {
-        if self.nodes[idx].kind().pairs_in_arena() { self.pair_range_at(idx).len() } else { 0 }
+        if self.node(idx).kind().pairs_in_arena() { self.pair_range_at(idx).len() } else { 0 }
     }
 
     /// Pairs-arena compaction trigger. A sweep runs only when the dead-slot
@@ -236,7 +236,7 @@ impl TddLevel {
         for i in 0..self.nodes.len() {
             // Only a multi-pair node owns an arena slot; an inline node owns
             // none.
-            let node = self.nodes[i];
+            let node = self.node(i);
             if !node.kind().pairs_in_arena() {
                 continue;
             }
@@ -325,7 +325,7 @@ impl TddLevel {
         self.store_if_implicit();
         let idx = NodeIdx(self.nodes.len() as u32);
         if self.nodes.len() == self.nodes.capacity() {
-            growth.grow(&mut self.nodes, 1)?;
+            growth.grow(self.nodes.stored_mut(), 1)?;
         }
         let node = if let [pair] = pairs {
             EncodedNode::inline(*pair)
@@ -344,7 +344,7 @@ impl TddLevel {
                 }
             }
         };
-        self.nodes.push(node);
+        self.nodes.stored_mut().push(node);
         Ok(idx)
     }
 
@@ -368,7 +368,7 @@ impl TddLevel {
         }
         let idx = NodeIdx(self.nodes.len() as u32);
         if self.nodes.len() == self.nodes.capacity() {
-            growth.grow(&mut self.nodes, 1)?;
+            growth.grow(self.nodes.stored_mut(), 1)?;
         }
         let arena = self.pairs.stored_mut();
         let start = arena.len();
@@ -384,7 +384,7 @@ impl TddLevel {
                 return Err(refused);
             }
         };
-        self.nodes.push(node);
+        self.nodes.stored_mut().push(node);
         Ok(idx)
     }
 
@@ -405,7 +405,7 @@ impl TddLevel {
         }
         let idx = NodeIdx(self.nodes.len() as u32);
         if self.nodes.len() == self.nodes.capacity() {
-            lim.grow(&mut self.nodes, 1)?;
+            lim.grow(self.nodes.stored_mut(), 1)?;
         }
         let len = pairs.len();
         drop(std::mem::replace(self.pairs.stored_mut(), pairs));
@@ -416,7 +416,7 @@ impl TddLevel {
                 return Err(refused);
             }
         };
-        self.nodes.push(node);
+        self.nodes.stored_mut().push(node);
         Ok(idx)
     }
 
@@ -441,7 +441,7 @@ impl TddLevel {
         // is built stored where its pairs lie first.
         self.store_if_implicit();
         let lim = eng.limits();
-        let node = self.nodes[idx].kind();
+        let node = self.node(idx).kind();
         let (old_len, old_range, inline) = match node {
             NodeKind::Inline(existing) => (1, None, Some(existing)),
             NodeKind::Multi { .. } | NodeKind::MultiRanged(_) => {
@@ -467,7 +467,7 @@ impl TddLevel {
             }
         }
         self.pairs.stored_mut().push(pair);
-        self.nodes[idx] = if let Some(i) = reused {
+        self.nodes.stored_mut()[idx] = if let Some(i) = reused {
             self.ranges[i] = PairRange { start: start as u64, len: len as u64 };
             EncodedNode::multi_ranged(i as u32)
         } else if ranged {
@@ -526,7 +526,7 @@ impl TddLevel {
         nodes: usize,
         pairs: usize,
     ) -> Result<(), OperationError> {
-        lim.reserve_exact(&mut self.nodes, nodes)?;
+        lim.reserve_exact(self.nodes.stored_mut(), nodes)?;
         lim.reserve_exact(self.pairs.stored_mut(), pairs)
     }
 
@@ -571,6 +571,7 @@ impl TddLevel {
             // to reserve or refuse; both operands fit, so the encoding is the
             // pure normal-multi word.
             self.nodes
+                .stored_mut()
                 .push(EncodedNode::multi_pair(pair_start as u32, pair_len as u32));
             return Ok(());
         }
@@ -588,8 +589,8 @@ impl TddLevel {
         pair_len: usize,
     ) -> Result<(), ()> {
         let data = self.try_encode_multi(&Untracked, pair_start, pair_len).map_err(|_| ())?;
-        Untracked.grow(&mut self.nodes, 1).map_err(|_| ())?;
-        self.nodes.push(data);
+        Untracked.grow(self.nodes.stored_mut(), 1).map_err(|_| ())?;
+        self.nodes.stored_mut().push(data);
         Ok(())
     }
 }

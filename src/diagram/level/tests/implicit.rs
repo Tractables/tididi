@@ -213,9 +213,9 @@ fn a_one_pair_level_writes_the_nodes_it_describes() {
             let want: Vec<EncodedNode> = described(&d).iter().map(|p| EncodedNode::inline(pair(p[0].0, p[0].1))).collect();
             for reserved in [0, n] {
                 let mut level = TddLevel::new();
-                level.nodes.reserve_exact(reserved);
+                level.nodes.stored_mut().reserve_exact(reserved);
                 d.write_nodes(&Limits::new(), &mut level).unwrap();
-                assert_eq!(level.nodes, want, "{across:?}, {reserved} reserved");
+                assert_eq!(level.nodes.stored(), &want[..], "{across:?}, {reserved} reserved");
             }
         }
     }
@@ -235,7 +235,7 @@ fn a_one_pair_level_fits_by_its_words() {
             let level = level_of(&pairs);
             let d = ImplicitLevel::fit(&level).expect("an affine level fits");
             assert_eq!(described(&d), pairs);
-            assert!(d.holds_inline(&level.nodes));
+            assert!(d.holds_inline(level.nodes.stored()));
             let mut moved = pairs.clone();
             let i = rng.below(pairs.len() as u64) as usize;
             moved[i][0].0 += 1 + rng.below(3) as i64;
@@ -370,7 +370,7 @@ fn a_redescribed_arena_keeps_the_written_length() {
     // Keep nodes 1 and 3, renumbered 0 and 1.
     let kept = [1usize, 3];
     let left_of = d.pruned(2, |j| kept.get(j).copied(), |x| x, |x| x).unwrap();
-    level.nodes.truncate(2);
+    level.nodes.stored_mut().truncate(2);
     level.pairs.redescribe(left_of.clone());
     assert_eq!((level.pairs.len(), level.pairs.capacity()), (12, 20));
     assert_eq!(level.implicit(), Some(&left_of));

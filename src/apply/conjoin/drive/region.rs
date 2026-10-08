@@ -113,8 +113,8 @@ fn constant_true(vtree: &Vtree, d: &Tdd, free: Regions<'_>, is_f: bool, t: Vtree
                 stack.push(child);
                 continue;
             }
-            for node in level.nodes.iter() {
-                for pair in level.pairs_iter_of(node) {
+            for node in level.nodes().iter() {
+                for pair in level.pairs_iter_of(&node) {
                     let read = if side { pair.right } else { pair.left };
                     if read != ONE_LEAF_IDX.into() {
                         return false;

@@ -4,16 +4,19 @@ mod arena;
 mod count_overflow;
 mod implicit;
 mod marginal;
+mod nodes;
 mod pairs;
 pub use count_overflow::CountOverflow;
 pub use implicit::{described, redescribed, stored_moved, Digit, ImplicitLevel, FLOOR};
 pub(crate) use implicit::{floor, stored_levels_forced, PairArena, Places};
+pub use nodes::{Nodes, NodesIter};
+pub(crate) use nodes::NodeArena;
 pub use pairs::{Pairs, StoredPairs};
 pub(crate) use pairs::sort_pairs;
 pub(crate) use marginal::{assert_can_make_marginal, non_marginal_child};
 
 use super::marginal_ref::{ChildDecoder, ChildSide};
-use super::primitives::{PairRange, ChildPair, NodeIdx, EncodedNode};
+use super::primitives::{PairRange, ChildPair};
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 /// The diagram storage associated with one vtree node.
@@ -30,16 +33,16 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 ///   and value `i` is entry `i` of the diagram's
 ///   [`WeightStore::level`](crate::diagram::WeightStore::level) for this
 ///   level;
-/// - otherwise structural: [`nodes`](Self::nodes)`[i]` is node `i`, and its
+/// - otherwise structural: [`node`](Self::node)`(i)` is node `i`, and its
 ///   pairs are [`pairs_iter_of_idx`](Self::pairs_iter_of_idx) of that slot.
 ///
 /// `slot_count()` is the number of node or value slots in any state.
 #[derive(Clone, Debug)]
 pub struct TddLevel {
-    /// The stored nodes, indexed by [`NodeIdx`]. Empty on leaf and
-    /// marginal levels. Read from outside the crate through
-    /// [`nodes`](Self::nodes) / [`nodes_iter`](Self::nodes_iter).
-    pub(crate) nodes: Vec<EncodedNode>,
+    /// The nodes, indexed by [`NodeIdx`](super::NodeIdx). Empty on leaf and marginal
+    /// levels. Read through [`node`](Self::node) and
+    /// [`nodes`](Self::nodes).
+    pub(crate) nodes: NodeArena,
     /// Arena holding the pairs of multi-pair nodes. Read it through
     /// [`pairs_iter_of`](Self::pairs_iter_of); single-pair nodes are not in it.
     pub(crate) pairs: PairArena,
@@ -238,7 +241,7 @@ impl TddLevel {
     /// for building a structural level with [`push_internal_node`](Self::push_internal_node).
     pub(crate) fn new() -> Self {
         TddLevel {
-            nodes: Vec::new(),
+            nodes: NodeArena::default(),
             pairs: PairArena::default(),
             ranges: Vec::new(),
             value_ref_sides: 0,
@@ -290,21 +293,8 @@ impl TddLevel {
         }
     }
 
-    /// The nodes of a structural level, in index order, so node `i` is
-    /// `nodes()[i]`. Empty on a leaf or marginal level, which store no nodes.
-    #[inline]
-    pub fn nodes(&self) -> &[EncodedNode] {
-        &self.nodes
-    }
-
-    /// [`nodes`](Self::nodes) paired with each slot's index.
-    #[inline]
-    pub(crate) fn nodes_iter(&self) -> impl Iterator<Item = (NodeIdx, &EncodedNode)> {
-        self.nodes.iter().enumerate().map(|(i, n)| (NodeIdx(i as u32), n))
-    }
-
     /// The model count of each node of a marginal level, indexed by
-    /// [`NodeIdx`]; `None` on any other level, and on a weight-marginal one
+    /// [`NodeIdx`](super::NodeIdx); `None` on any other level, and on a weight-marginal one
     /// (whose values live in the [`WeightStore`](crate::diagram::WeightStore)).
     ///
     /// A value of `u128::MAX` means the count is at least that large. Read
@@ -390,7 +380,7 @@ impl TddLevel {
     #[inline]
     pub(crate) fn has_multi_pair(&self) -> bool {
         !self.pairs.is_empty()
-            && self.nodes.iter().any(|n| n.kind().pairs_in_arena() && self.multi_range(n).len() >= 2)
+            && self.nodes().iter().any(|n| n.kind().pairs_in_arena() && self.multi_range(&n).len() >= 2)
     }
 
     /// How to read the pair sides of a parent that point at this level.
@@ -465,7 +455,7 @@ impl TddLevel {
             other => other.clone(),
         };
         Ok(TddLevel {
-            nodes: copy(lim, &self.nodes)?,
+            nodes: NodeArena::from(copy(lim, self.nodes.stored())?),
             pairs: self.pairs.try_clone_on(lim)?,
             ranges: copy(lim, &self.ranges)?,
             value_ref_sides: self.value_ref_sides,

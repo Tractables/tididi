@@ -67,14 +67,14 @@ fn moving_preserves_level_allocations_and_relocates_weight_columns() {
     eng.marginalize_levels(&mut circuit, &[inner]).unwrap();
     assert_canonical(&circuit);
     let root = source.root();
-    let nodes = circuit.level(root).nodes().as_ptr();
+    let nodes = circuit.level(root).nodes.stored().as_ptr();
     let column = circuit.weights().unwrap().level(inner.idx()).unwrap().as_ptr();
     let value = circuit.weighted_value().unwrap().unwrap();
     let (placed, map) = Tdd::graft_over(&eng,
         vec![(circuit, vec![VarId(4), VarId(2), VarId(5)])], &[VarId(1)], 5,
         Some(WeightStore::new(RationalWeights::unit(5), Arithmetic::ExactRational))).unwrap();
     assert_canonical(&placed);
-    assert_eq!(placed.level(map.part(0).level_of(root)).nodes().as_ptr(), nodes);
+    assert_eq!(placed.level(map.part(0).level_of(root)).nodes.stored().as_ptr(), nodes);
     assert_eq!(placed.weights().unwrap().level(map.part(0).level_of(inner).idx()).unwrap().as_ptr(), column);
     assert_eq!(placed.weighted_value().unwrap().unwrap().as_rational().into_owned(), value.as_rational().into_owned() * num_bigint::BigInt::from(2));
 }

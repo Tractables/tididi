@@ -671,7 +671,7 @@ fn check_structural_level(
         // A stored level's nodes are read as slices of its arena, in a loop
         // apart from an implicit level's generated pairs.
         let all_fit = match lvl.stored() {
-            Some(stored) => lvl.nodes.iter().all(|node| {
+            Some(stored) => stored.nodes().iter().all(|node| {
                 let pairs = stored.of(node);
                 !pairs.is_empty() && pairs.iter().all(fits)
             }),
@@ -681,9 +681,9 @@ fn check_structural_level(
             return Ok(());
         }
     }
-    for (i, node) in lvl.nodes.iter().enumerate() {
+    for (i, node) in lvl.nodes().iter().enumerate() {
         let node_idx = NodeIdx(i as u32);
-        let pairs = lvl.pairs_iter_of(node);
+        let pairs = lvl.pairs_iter_of(&node);
         if pairs.len() == 0 {
             return Err(TddBuildError::EmptyNode { level: t, node: node_idx });
         }

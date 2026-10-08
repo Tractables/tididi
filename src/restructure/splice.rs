@@ -38,7 +38,7 @@ impl Tdd {
             "splice_subtree: the right diagram has width {} at the merge point",
             other.levels[t.idx()].slot_count(),
         );
-        let sole_pair = |level: &TddLevel| match level.nodes()[0].kind() {
+        let sole_pair = |level: &TddLevel| match level.node(0).kind() {
             NodeKind::Inline(pair) => pair,
             other => panic!("splice_subtree: the merge point holds {other:?}"),
         };

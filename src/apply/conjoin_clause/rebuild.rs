@@ -122,12 +122,12 @@ pub(super) fn rebuild_spine_level(
     // Tiny levels keep their input descriptors on the stack so the output can reuse the node arena.
     let mut inline_nodes = [EncodedNode { a: 0, b: 0 }; 4];
     let nodes = if k <= inline_nodes.len() {
-        inline_nodes[..k].copy_from_slice(&old.nodes);
+        inline_nodes[..k].copy_from_slice(old.nodes.stored());
         level.nodes = std::mem::take(&mut old.nodes);
         level.nodes.clear();
         &inline_nodes[..k]
     } else {
-        old.nodes.as_slice()
+        old.nodes.stored()
     };
     // An empty input pair arena has no borrowed pairs and can retain emission capacity.
     if old.pairs.is_empty() {
@@ -135,7 +135,7 @@ pub(super) fn rebuild_spine_level(
     }
     // At most a c_t and a d_t node per accumulator node.
     let node_cap = if compute_dt { 2 * k } else { k };
-    lim.reserve(&mut level.nodes, node_cap)?;
+    lim.reserve(level.nodes.stored_mut(), node_cap)?;
     // Worst-case output pairs per input pair: up to 3 c_t pairs for a
     // both-relevant node, plus 1 d_t pair when `compute_dt`. The input pairs
     // are the arena's and at most one more per node, the pair a single-pair

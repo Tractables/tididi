@@ -93,8 +93,8 @@ impl Engine {
             let width = if vtree.node(t).is_leaf() { 3 } else { f.level(t).nodes.len() };
             lim.try_resize(&mut uses[t.idx()], width, 0)?;
             if let VtreeNode::Internal { left, right, .. } = *vtree.node(t) {
-                for node in &f.level(t).nodes {
-                    for pair in f.level(t).pairs_iter_of(node) {
+                for node in f.level(t).nodes() {
+                    for pair in f.level(t).pairs_iter_of(&node) {
                         gate.poll(1)?;
                         uses[left.idx()][pair.left.raw() as usize] += 1;
                         uses[right.idx()][pair.right.raw() as usize] += 1;
@@ -140,12 +140,12 @@ impl Engine {
                 VtreeNode::Internal { left, right, .. } => {
                     let level = f.level(t);
                     lim.reserve_exact(&mut columns[t.idx()], level.nodes.len())?;
-                    for (i, node) in level.nodes.iter().enumerate() {
+                    for (i, node) in level.nodes().iter().enumerate() {
                         // One disjunction per node: a fold of `or` over the
                         // pairs would complement the growing sum at each step.
                         let mut terms = Vec::new();
                         terms.try_reserve(level.pair_count_at(i)).map_err(|_| OperationError::OverBudget)?;
-                        for pair in level.pairs_iter_of(node) {
+                        for pair in level.pairs_iter_of(&node) {
                             gate.poll(1)?;
                             let a =
                                 columns[left.idx()][pair.left.raw() as usize].take(self)?;

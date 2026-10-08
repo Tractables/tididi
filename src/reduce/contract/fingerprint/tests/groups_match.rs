@@ -10,8 +10,8 @@ use std::sync::Arc;
 /// contexts: members ascending, groups by their lowest member.
 fn listed_groups(parent: &TddLevel, child: &TddLevel, side: ChildSide) -> Vec<Vec<u32>> {
     let mut contexts: Vec<Vec<(u32, u32)>> = vec![Vec::new(); child.slot_count()];
-    for (p, node) in parent.nodes.iter().enumerate() {
-        for pair in parent.pairs_iter_of(node) {
+    for (p, node) in parent.nodes().iter().enumerate() {
+        for pair in parent.pairs_iter_of(&node) {
             let (t, s) = split_pair(&pair, side);
             contexts[t as usize].push((p as u32, s));
         }

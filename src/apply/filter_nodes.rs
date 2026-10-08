@@ -140,7 +140,7 @@ fn ask(eng: &Engine, f: &Tdd, mut keep: impl FnMut(TddNodeId) -> bool) -> Result
     for (t, _, _) in f.vtree.internal_bottomup() {
         let level = &f.levels[t.idx()];
         if level.is_marginal() { continue; }
-        for (i, _) in level.nodes.iter().enumerate() {
+        for (i, _) in level.nodes().iter().enumerate() {
             poll.poll(1)?;
             if !keep(TddNodeId { vtree: t, local: NodeIdx(i as u32) }) {
                 remap[t.idx()][i] = DEAD;

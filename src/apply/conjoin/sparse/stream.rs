@@ -139,8 +139,8 @@ impl<'a> Oriented<'a> {
 
 /// Every pair of a level with the index of the node holding it.
 fn pairs_with_parent(level: &TddLevel) -> impl Iterator<Item = (u32, ChildPair)> + Clone + '_ {
-    level.nodes.iter().enumerate()
-        .flat_map(|(parent, node)| level.pairs_iter_of(node).map(move |pair| (parent as u32, pair)))
+    (0..level.nodes().len())
+        .flat_map(|parent| level.pairs_iter_of_idx(parent).map(move |pair| (parent as u32, pair)))
 }
 
 /// A histogram of `keys` over `n` keys, counted as `u32`.
@@ -529,7 +529,7 @@ fn count_indirect(
     let mut weights: Stamped<u128> = Stamped::new(lim, q.c)?;
     let mut total = Total::default();
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
-    for (p_node, node) in view.p_c.nodes.iter().enumerate() {
+    for (p_node, node) in view.p_c.nodes().iter().enumerate() {
         // `V(p, ·)`.
         weights.begin();
         let (mut weighed, mut any) = (0u64, false);
@@ -550,7 +550,7 @@ fn count_indirect(
             continue;
         }
         // `L(p, ·)`, folded against `V(p, ·)` candidate by candidate.
-        for pair in view.p_c.pairs_iter_of(node) {
+        for pair in view.p_c.pairs_iter_of(&node) {
             let (p_cl, p_cr) = (pair.left.0, pair.right.0);
             let walked = match pricing.choose(p_cl, p_cr).0 {
                 Direction::ByLeft => {
@@ -973,7 +973,7 @@ fn count_dense<W: Weight>(
     lim.try_resize(&mut weights, q.c, W::default())?;
     let mut total = Total::default();
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
-    for (p_node, node) in view.p_c.nodes.iter().enumerate() {
+    for (p_node, node) in view.p_c.nodes().iter().enumerate() {
         // `V(p, ·)`.
         let (mut weighed, mut any) = (0u64, false);
         let tops = p_root.view().bucket(p_node);
@@ -997,7 +997,7 @@ fn count_dense<W: Weight>(
             continue;
         }
         // `L(p, ·)`, folded against `V(p, ·)` candidate by candidate.
-        for pair in view.p_c.pairs_iter_of(node) {
+        for pair in view.p_c.pairs_iter_of(&node) {
             let (p_cl, p_cr) = (pair.left.0, pair.right.0);
             let walked = match pricing.choose(p_cl, p_cr).0 {
                 Direction::ByLeft => walk_pair(&left, &right, p_cl, p_cr, &mut probe_cr, &weights, &mut total),

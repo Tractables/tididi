@@ -159,7 +159,7 @@ impl TwinEntries for ContextEntries<'_> {
         let mut buf = Vec::new();
         for (i, node) in level.nodes().iter().enumerate() {
             let pairs = match stored {
-                Some(stored) => stored.of(node),
+                Some(stored) => stored.of(&node),
                 None => level.pairs_read(i, &mut buf),
             };
             if pairs.len() < 3 {

@@ -67,7 +67,7 @@ impl<'a> StoredPairs<'a> {
     /// let stored = level.stored().unwrap();
     /// let pairs;
     /// {
-    ///     let node = level.nodes()[0];
+    ///     let node = level.node(0);
     ///     pairs = stored.of(&node);
     /// }
     /// assert!(!pairs.is_empty()); // the copied node no longer exists
@@ -90,7 +90,15 @@ impl<'a> StoredPairs<'a> {
     /// Panics if `idx` is not below `nodes().len()`.
     #[inline]
     pub fn of_idx(self, idx: usize) -> &'a [ChildPair] {
-        self.of(&self.level.nodes[idx])
+        self.of(&self.nodes()[idx])
+    }
+
+    /// The level's nodes, in index order: a level that stores its pairs
+    /// stores its nodes, and a reader of its pairs as slices reads them
+    /// here.
+    #[inline]
+    pub fn nodes(self) -> &'a [EncodedNode] {
+        self.level.nodes.stored()
     }
 
     /// Every node's pair, node `i`'s at `i`, when each node holds exactly
@@ -114,7 +122,7 @@ impl<'a> StoredPairs<'a> {
     /// ```
     #[inline]
     pub fn inline_pairs(self) -> Option<&'a [ChildPair]> {
-        let nodes = &self.level.nodes[..];
+        let nodes = self.nodes();
         // A node holds one pair exactly when it holds it inline: a single
         // pair is never stored in the arena.
         if nodes.iter().fold(0, |words, node| words | node.a) & MULTI_BIT != 0 {
@@ -162,9 +170,9 @@ impl TddLevel {
     pub(crate) fn for_each_node_pair(&self, mut f: impl FnMut(usize, ChildPair)) {
         let stored = self.stored();
         let mut buf = Vec::new();
-        for (i, node) in self.nodes.iter().enumerate() {
+        for (i, node) in self.nodes().iter().enumerate() {
             let pairs = match stored {
-                Some(stored) => stored.of(node),
+                Some(stored) => stored.of(&node),
                 None => self.pairs_read(i, &mut buf),
             };
             for &pair in pairs {
@@ -181,7 +189,7 @@ impl TddLevel {
     pub(crate) fn internal_inputs_range(&self, range: std::ops::Range<usize>) -> impl Iterator<Item = (usize, PairsIter<'_>)> + '_ {
         let start = range.start;
         let mut cursor = None;
-        self.nodes[range].iter().enumerate().map(move |(i, n)| {
+        self.nodes.stored()[range].iter().enumerate().map(move |(i, n)| {
             let pairs = self.read_node(n, |at| {
                 let cursor = cursor.get_or_insert_with(|| self.described_cursor());
                 described_iter(self.described_next(cursor, at))
@@ -253,7 +261,7 @@ impl TddLevel {
     #[inline]
     pub fn pairs_iter_of_idx(&self, idx: usize) -> PairsIter<'_> {
         debug_assert!(!self.is_marginal(), "pairs_iter_of_idx({idx}) called on marginal level");
-        self.pairs_iter_of(&self.nodes[idx])
+        self.pairs_iter_of(&self.nodes.stored()[idx])
     }
 
     /// The pairs of node `idx`, collected: for tests and checkers, which
@@ -361,8 +369,8 @@ impl TddLevel {
     #[inline]
     #[track_caller]
     pub(crate) fn pairs_mut(&mut self, idx: usize) -> &mut [ChildPair] {
-        debug_assert!(self.nodes[idx].kind().pairs_in_arena(), "pairs_mut called on inline node");
-        let range = self.multi_range(&self.nodes[idx]);
+        debug_assert!(self.node(idx).kind().pairs_in_arena(), "pairs_mut called on inline node");
+        let range = self.multi_range(&self.node(idx));
         &mut self.pairs.stored_mut()[range]
     }
 
@@ -370,7 +378,7 @@ impl TddLevel {
     /// rewritten through its lookup slice and [`ChildDecoder::remap`], which
     /// leaves a marginal side's inline values alone.
     ///
-    /// Precondition (debug-asserted): `self.nodes[idx].kind().pairs_in_arena()`; every
+    /// Precondition (debug-asserted): `self.node(idx).kind().pairs_in_arena()`; every
     /// structural coordinate looked up is within its remap slice.
     #[inline]
     pub(crate) fn pairs_remap_indexed(
@@ -390,7 +398,7 @@ impl TddLevel {
     /// [`multi_range`](Self::multi_range) of the node at `idx`.
     #[inline]
     pub(crate) fn pair_range_at(&self, idx: usize) -> std::ops::Range<usize> {
-        self.multi_range(&self.nodes[idx])
+        self.multi_range(&self.node(idx))
     }
 
     /// Number of pairs of the node at `idx`.
@@ -404,7 +412,7 @@ impl TddLevel {
     /// sentinel of a ranged node's, whose count is in the side table.
     #[inline]
     pub fn pair_count_at(&self, idx: usize) -> usize {
-        let node = &self.nodes[idx];
+        let node = &self.node(idx);
         match node.held_count() {
             1 => match node.kind() {
                 NodeKind::MultiRanged(e) => self.ranges[e as usize].len as usize,
@@ -444,14 +452,14 @@ impl TddLevel {
     #[inline(always)]
     pub(crate) fn pair_census(&self) -> (u64, u64, u64) {
         let (mut pairs, mut live, mut single) = (0u64, 0u64, 0u64);
-        for node in &self.nodes {
+        for node in self.nodes.stored() {
             let k = node.held_count();
             pairs += u64::from(k);
             live += u64::from(k != 0);
             single += u64::from(k == 1);
         }
         if !self.ranges.is_empty() {
-            for node in &self.nodes {
+            for node in self.nodes.stored() {
                 if let NodeKind::MultiRanged(e) = node.kind() {
                     let k = self.ranges[e as usize].len;
                     pairs = pairs - 1 + k;
@@ -518,7 +526,7 @@ impl TddLevel {
     /// the swapped level is canonical when this one is. Node indices do not
     /// move. Dead arena slots are swapped too; nothing reads them.
     pub(crate) fn swap_sides(&mut self) {
-        for node in &mut self.nodes {
+        for node in self.nodes.stored_mut() {
             if matches!(node.kind(), NodeKind::Inline(_)) {
                 std::mem::swap(&mut node.a, &mut node.b);
             }

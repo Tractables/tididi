@@ -61,7 +61,7 @@ pub(crate) fn reset_level(level: &mut TddLevel) -> u64 {
         bytes as u64
     }
     level.clear();
-    retain(&mut level.nodes) + retain(level.pairs.stored_mut()) + retain(&mut level.ranges)
+    retain(level.nodes.stored_mut()) + retain(level.pairs.stored_mut()) + retain(&mut level.ranges)
 }
 
 /// Take `num_nodes` empty levels from the pool, growing the array through
@@ -131,7 +131,7 @@ impl Buffers for LevelBuffer {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
         visit(&mut self.levels);
         for level in &mut self.levels {
-            visit(&mut level.nodes);
+            visit(level.nodes.stored_mut());
             visit(level.pairs.stored_mut());
             visit(&mut level.ranges);
         }

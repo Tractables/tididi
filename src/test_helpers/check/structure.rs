@@ -51,8 +51,8 @@ pub fn validate_vtree_structure(tdd: &Tdd) -> Result<(), String> {
         let left_view = tdd.level(left).child_decoder();
         let right_view = tdd.level(right).child_decoder();
 
-        for (i, node) in level.nodes.iter().enumerate() {
-            for (j, pair) in level.pairs_iter_of(node).enumerate() {
+        for (i, node) in level.nodes().iter().enumerate() {
+            for (j, pair) in level.pairs_iter_of(&node).enumerate() {
                 // An inline marginal ref carries its value in the reference
                 // itself and indexes nothing, so only the two indexing forms
                 // have a width to be in bounds of.
@@ -120,8 +120,8 @@ pub fn check_no_false_nodes_in_levels(tdd: &Tdd) -> Result<(), String> {
             continue;
         }
         let level = tdd.level(t);
-        for (i, node) in level.nodes.iter().enumerate() {
-            if level.pairs_iter_of(node).next().is_none() {
+        for (i, node) in level.nodes().iter().enumerate() {
+            if level.pairs_iter_of(&node).next().is_none() {
                 return Err(format!(
                     "vtree {:?} node {}: Internal with empty inputs — no real node \
                      should compute constant-false (use the `ZERO` sentinel instead)",

@@ -1240,7 +1240,7 @@ fn emit_parent(
     // growth, as the dense walk's choke point charges per growth event.
     // The level is built here, so its arena is stored.
     let pre_pairs_cap = level.pairs.stored_mut().capacity();
-    lim.reserve(&mut level.nodes, products)?;
+    lim.reserve(level.nodes.stored_mut(), products)?;
     let built = if products == candidates.len() {
         candidates.iter().try_for_each(|entry| emit_single_pair(eng, level, candidate_pair(entry)))
     } else if products == 1 {
@@ -1349,7 +1349,7 @@ pub(super) fn finish_direct(
     if level.pair_tail_len(base) == 0 {
         return Ok(());
     }
-    lim.reserve(&mut level.nodes, 1)?;
+    lim.reserve(level.nodes.stored_mut(), 1)?;
     let node = finish_node(eng, level, base)?.expect("the scatter wrote a pair");
     let idx = pl_output.len() as u32;
     debug_assert_eq!(node.0, idx, "the level's one product is its first node");

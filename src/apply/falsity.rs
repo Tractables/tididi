@@ -85,17 +85,17 @@ pub(super) fn rewrite_level_pairs(
     let mut emptied = false;
     let mut dead = 0usize;
     for i in 0..n_nodes {
-        if let NodeKind::Inline(p) = level.nodes[i].kind() {
+        if let NodeKind::Inline(p) = level.node(i).kind() {
             // The single pair lives in the node's own two words, not the arena.
             match rewrite_pair(i, 0, 1, p) {
                 Some(np) => {
-                    level.nodes[i] = EncodedNode::inline(np);
+                    level.nodes.stored_mut()[i] = EncodedNode::inline(np);
                 }
                 None => {
                     // Emptied: the slot holds no pair, which `propagate_false_nodes`
                     // reads as the node computing false and drops every reference to.
                     let empty = level.encode_multi(0, 0);
-                    level.nodes[i] = empty;
+                    level.nodes.stored_mut()[i] = empty;
                     emptied = true;
                 }
             }

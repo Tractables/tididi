@@ -578,7 +578,7 @@ pub(super) fn open_level_arenas(
         .saturating_mul(right_width)
         .min(LEVEL_RESERVE_NODES_CAP)
         .max(left_width.max(right_width));
-    lim.reserve(&mut level.nodes, nodes_reserve)?;
+    lim.reserve(level.nodes.stored_mut(), nodes_reserve)?;
 
     // The one per-level emit-pair bound: every product pair emits at most
     // once, so `|f.pairs| × |g.pairs|` bounds this level's emit. Used
@@ -884,7 +884,7 @@ fn reserve_complete_level(
     let fit = |n: u128| usize::try_from(n).map_err(|_| OperationError::OverBudget);
     let nodes = fit(f_live * g_live)?;
     let pairs = fit(f_pairs * g_pairs - f_single * g_single)?;
-    lim.reserve_exact(&mut level.nodes, nodes)?;
+    lim.reserve_exact(level.nodes.stored_mut(), nodes)?;
     lim.reserve_exact(level.pairs.stored_mut(), pairs)?;
     Ok(charged)
 }

@@ -198,7 +198,7 @@ fn write_back_resolved_pairs(
         level.set_has_value_refs(ChildSide::Right, true);
     }
     debug_assert!(
-        !matches!(level.nodes[idx].kind(), NodeKind::Inline(_)),
+        !matches!(level.node(idx).kind(), NodeKind::Inline(_)),
         "inline single-pair node cannot hold duplicates"
     );
     let start = level.pair_range_at(idx).start;

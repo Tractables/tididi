@@ -256,9 +256,9 @@ impl ValueDomain for IntFold {
         // A described level's nodes take the general fold, which generates
         // their pairs.
         let stored = level.stored();
-        for (i, node) in level.nodes.iter().enumerate() {
+        for (i, node) in level.nodes().iter().enumerate() {
             before_node(1 + level.pair_count_at(i) as u64)?;
-            let fast = raw.zip(stored).and_then(|((l, r), s)| IntFold::fold_structural_u64(s.of(node), l, r));
+            let fast = raw.zip(stored).and_then(|((l, r), s)| IntFold::fold_structural_u64(s.of(&node), l, r));
             let value = match fast {
                 Some(total) => Count::from_u128(total),
                 None => IntFold::fold_node(&at, i),

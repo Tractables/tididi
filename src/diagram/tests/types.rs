@@ -353,7 +353,7 @@
         }
         let mut level = TddLevel::new();
         let ranged = level.encode_multi(1usize << 31, 4);
-        level.nodes.extend([inline(1, 2), EncodedNode::multi_pair(0, 2), ranged, EncodedNode::multi_pair(2, 0)]);
+        level.nodes.stored_mut().extend([inline(1, 2), EncodedNode::multi_pair(0, 2), ranged, EncodedNode::multi_pair(2, 0)]);
         assert_eq!(level.pair_census(), (1 + 2 + 4, 3, 1));
     }
 
@@ -364,7 +364,7 @@
         let mut level = TddLevel::new();
         let huge_start = 1usize << 31;
         let data = level.encode_multi(huge_start, 3);
-        level.nodes.push(data);
+        level.nodes.stored_mut().push(data);
         assert!(
             matches!(data.kind(), NodeKind::MultiRanged(_)),
             "huge-start node should promote to ranged, got {:?}", data.kind()
@@ -382,7 +382,7 @@
         let mut level = TddLevel::new();
         let huge_len = 1usize << 31;
         let data = level.encode_multi(0, huge_len);
-        level.nodes.push(data);
+        level.nodes.stored_mut().push(data);
         assert!(
             matches!(data.kind(), NodeKind::MultiRanged(_)),
             "huge-len node should be ranged, got {:?} — mis-reading it as a leaf is \
@@ -397,7 +397,7 @@
         // 8-byte encoding handles them.
         let mut level = TddLevel::new();
         let data = level.encode_multi(100, 5);
-        level.nodes.push(data);
+        level.nodes.stored_mut().push(data);
         assert!(
             matches!(data.kind(), NodeKind::Multi { .. }),
             "small multi should stay in packed form, got {:?}", data.kind()
@@ -412,10 +412,10 @@
         // not the node's b field (which is the ranged-form sentinel).
         let mut level = TddLevel::new();
         let data = level.encode_multi(0, 1 << 31);
-        level.nodes.push(data);
+        level.nodes.stored_mut().push(data);
         level.set_pair_len(0, 100);
         assert!(
-            matches!(level.nodes[0].kind(), NodeKind::MultiRanged(_)),
+            matches!(level.node(0).kind(), NodeKind::MultiRanged(_)),
             "still ranged after shrink"
         );
         assert_eq!(level.pair_range_at(0).len(), 100);
@@ -425,7 +425,7 @@
     fn test_reset_levels_clears_ext() {
         let mut level = TddLevel::new();
         let data = level.encode_multi(1 << 31, 3);
-        level.nodes.push(data);
+        level.nodes.stored_mut().push(data);
         assert_eq!(level.ranges.len(), 1);
         let mut levels = vec![level];
         for level in &mut levels {
@@ -581,7 +581,7 @@ mod try_from_levels {
         let root = vtree.root();
         // Staged by hand: the encoder debug-asserts against a reserved side.
         let bad = ChildPair::new(POS_LEAF_IDX, ZERO);
-        levels[root.idx()].nodes.push(EncodedNode { a: bad.left.raw(), b: bad.right.raw() });
+        levels[root.idx()].nodes.stored_mut().push(EncodedNode { a: bad.left.raw(), b: bad.right.raw() });
         let node = NodeIdx(0);
         let out = TddNodeId { vtree: root, local: node };
         assert_eq!(
@@ -685,7 +685,7 @@ mod try_from_levels {
         let hooks = MemoryHooks::new(move |_| { observed.fetch_add(1, Ordering::Relaxed); }, || 0, || None, || {});
         let eng = Engine::new();
         let mut level = TddLevel::new();
-        level.nodes.reserve(1);
+        level.nodes.stored_mut().reserve(1);
         let _scope = eng.limits().scope(LimitConfig::none().with_memory_hooks(hooks));
         let pair = ChildPair::new(NodeIdx(0), NodeIdx(0));
         let index = level.push_node(eng.limits(), &[pair]).unwrap();

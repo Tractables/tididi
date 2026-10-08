@@ -72,8 +72,8 @@ fn conditioning_polls_while_reading_an_assignment() {
 /// Retain an unreachable twin at the root to exercise identity-result canonicity.
 fn with_unreachable_twin(mut f: Tdd) -> Tdd {
     let root = f.output().vtree;
-    let node = f.levels[root.idx()].nodes[f.output().local.idx()];
-    f.levels[root.idx()].nodes.push(node);
+    let node = f.levels[root.idx()].node(f.output().local.idx());
+    f.levels[root.idx()].nodes.stored_mut().push(node);
     let mut checked = f.clone();
     checked.minimize().unwrap();
     assert_canonical(&checked);
@@ -89,12 +89,12 @@ fn empty_substitution_and_renaming_preserve_storage_without_reserving() {
     for rename in [false, true] {
         let input = f.clone();
         let root = input.output().vtree;
-        let ptr = input.level(root).nodes.as_ptr();
+        let ptr = input.level(root).nodes.stored().as_ptr();
         let result = {
             let _scope = eng.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
             if rename { eng.rename_vars(input, &[]) } else { eng.substitute(input, &[]) }
         }.unwrap();
-        assert_eq!(result.level(root).nodes.as_ptr(), ptr);
+        assert_eq!(result.level(root).nodes.stored().as_ptr(), ptr);
         assert_eq!(result.level(root).nodes, f.level(root).nodes);
         assert!(eng.equivalent(&result, &f).unwrap());
     }

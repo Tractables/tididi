@@ -859,10 +859,10 @@ fn read_level(body: &mut Body<'_>, left_width: usize, right_width: usize) -> Res
     let mut reader = PairReader { bytes: stream, at: 0, left_bits, right_bits, left_max: 0, right_max: 0 };
     let mut level = TddLevel::new();
     let arena = pairs - (nodes - multi);
-    level.nodes.try_reserve_exact(nodes).map_err(|_| malformed("no memory for the level's nodes"))?;
+    level.nodes.stored_mut().try_reserve_exact(nodes).map_err(|_| malformed("no memory for the level's nodes"))?;
     level.pairs.stored_mut().try_reserve_exact(arena).map_err(|_| malformed("no memory for the level's pairs"))?;
     if multi == 0 {
-        level.nodes.extend((0..nodes).map(|_| EncodedNode::inline(reader.pair())));
+        level.nodes.stored_mut().extend((0..nodes).map(|_| EncodedNode::inline(reader.pair())));
     } else {
         let mut lengths = lengths.into_iter();
         for i in 0..nodes {
@@ -871,9 +871,9 @@ fn read_level(body: &mut Body<'_>, left_width: usize, right_width: usize) -> Res
                 let start = level.pairs.len();
                 reader.node(len, level.pairs.stored_mut())?;
                 let node = level.encode_multi(start, len);
-                level.nodes.push(node);
+                level.nodes.stored_mut().push(node);
             } else {
-                level.nodes.push(EncodedNode::inline(reader.pair()));
+                level.nodes.stored_mut().push(EncodedNode::inline(reader.pair()));
             }
         }
     }

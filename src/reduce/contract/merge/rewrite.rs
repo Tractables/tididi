@@ -66,9 +66,9 @@ pub(super) fn rewrite_parent(
         return;
     }
     for node_idx in 0..parent_level.nodes.len() {
-        if matches!(parent_level.nodes[node_idx].kind(), NodeKind::Inline(_)) {
+        if matches!(parent_level.node(node_idx).kind(), NodeKind::Inline(_)) {
             remap_inline_node(parent_level, node_idx, t1_side, &remap.final_remap);
-        } else if parent_level.nodes[node_idx].kind().pairs_in_arena() {
+        } else if parent_level.node(node_idx).kind().pairs_in_arena() {
             let range = parent_level.pair_range_at(node_idx);
             let new_len = keep_canonical_pairs(parent_level, node_idx, t1_side, remap);
             if new_len < range.len() {
@@ -88,7 +88,7 @@ fn remap_inline_node(
     t1_side: ChildSide,
     final_remap: &[NodeIdx],
 ) {
-    let node = &mut level.nodes[node_idx];
+    let node = &mut level.nodes.stored_mut()[node_idx];
     let tv_old = if t1_side == ChildSide::Left { node.a } else { node.b };
     let tv_new = final_remap[tv_old as usize].0;
     if t1_side == ChildSide::Left {
