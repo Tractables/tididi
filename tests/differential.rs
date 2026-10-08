@@ -42,6 +42,19 @@
 //! - [`a_tight_budget_refuses_rather_than_panics`] — under a byte budget too
 //!   small for the work, every entry point returns or refuses, and the engine
 //!   still answers correctly once the budget is lifted.
+//! - [`projections_match_enumeration`] — projection onto a set of variables,
+//!   onto a subtree, and the distinct-count threshold under a subtree each
+//!   answer the quantified truth table.
+//! - [`marginal_evaluations_match_enumeration`] — an algebra that values
+//!   counts evaluates a diagram with levels summed out, by values and by
+//!   columns, to the enumerated count, and the values at the root's children
+//!   combine through the output's pairs into it.
+//! - [`level_counts_match_enumeration`] — counts kept with a diagram answer
+//!   its count and its conjunction's, after the binary format carried them
+//!   too, and a resealed corruption of them never panics.
+//! - [`mirrored_placements_match_enumeration`] — a diagram copied or moved
+//!   onto its vtree with children swapped at random nodes, and two diagrams
+//!   conjoined onto it, answer the truth table they had.
 //!
 //! Every claim runs through [`check_case`], so a failure found by the loop is
 //! reproduced by writing its printed case down as a `Case::literal` and calling
@@ -56,7 +69,8 @@ use num_bigint::BigUint;
 use num_rational::BigRational;
 
 use tididi::diagram::{
-    Arithmetic, ChildRef, EncodedChildRef, LiteralWeights, RationalWeights, SignedLog, ValueRef, WeightStore,
+    Arithmetic, ChildRef, ColumnAlgebra, EncodedChildRef, EvalAlgebra, LeafLabel, LiteralWeights, RationalWeights,
+    SignedLog, SlotPairs, ValueRef, WeightStore,
 };
 use tididi::limits::{LimitConfig, SparseRoute};
 use tididi::io::{load_tdd, read_tdd, read_tdd_binary, save_tdd, write_tdd, write_tdd_binary};
@@ -253,7 +267,7 @@ fn step(name: &'static str) {
 fn check_case(case: &Case) {
     /// One claim of the battery, by the name a failure report gives it.
     type Claim = (&'static str, fn(&Case));
-    let claims: [Claim; 12] = [
+    let claims: [Claim; 16] = [
         ("count against enumeration", count_matches_enumeration),
         ("operation orders agree", orders_agree),
         ("operations against enumeration", operations_match_enumeration),
@@ -266,6 +280,10 @@ fn check_case(case: &Case) {
         ("a tight budget refuses", a_tight_budget_refuses_rather_than_panics),
         ("marginal products against enumeration", marginal_products_match_enumeration),
         ("a summed root against the two-step diagram", a_summed_root_is_the_two_step_diagram),
+        ("projections against enumeration", projections_match_enumeration),
+        ("marginal evaluations against enumeration", marginal_evaluations_match_enumeration),
+        ("level counts against enumeration", level_counts_match_enumeration),
+        ("mirrored placements against enumeration", mirrored_placements_match_enumeration),
     ];
     for (name, claim) in claims {
         step(name);
@@ -345,6 +363,14 @@ fn operations_match_enumeration(case: &Case) {
     let want: Vec<bool> = tf.iter().zip(&tg).map(|(a, b)| *a && *b).collect();
     assert_truth(&diagram_truth(&conj, n), &want, n, "conjunction");
 
+    step("conjunction on the sparse route");
+    let context = Arc::clone(f.context());
+    let sparse = context.with_limits(LimitConfig::none().with_sparse_route(EVERY_LEVEL_SPARSE), |eng| {
+        eng.and(f.clone(), g.clone()).expect("an unarmed engine refuses nothing")
+    });
+    assert_canonical_after_minimize(&sparse);
+    assert_truth(&diagram_truth(&sparse, n), &want, n, "conjunction on the sparse route");
+
     step("disjunction");
     let disj = eng.or(f.clone(), g.clone()).expect("an unarmed engine refuses nothing");
     assert_canonical_after_minimize(&disj);
@@ -390,7 +416,19 @@ fn operations_match_enumeration(case: &Case) {
     step("restriction");
     assert_restrict_ok(&f, &g, n);
     assert_restrict_ok(&g, &f, n);
+
+    // A care that is a projection is true across whole subtrees of the
+    // variables it was projected off.
+    step("restriction to a projection");
+    let mut rng = Lcg::new(case.seed ^ 0xca4e);
+    let dropped: Vec<VarId> = (1..=n).filter(|_| rng.coin()).map(VarId).collect();
+    let care = g.clone().exists_vars(&dropped).unwrap();
+    assert_restrict_ok(&f, &care, n);
 }
+
+/// A sparse route every level takes: the sparse conjunction's own arms run on
+/// diagrams too small to reach them by default.
+const EVERY_LEVEL_SPARSE: SparseRoute = SparseRoute { sparsity: 1, min_grid: 1 };
 
 /// Borrow a case's vtree and variable count into a fresh case over other
 /// clauses, so the halves of `operations_match_enumeration` compile the same
@@ -805,6 +843,290 @@ fn differential() {
         start.elapsed().as_secs_f64()
     );
     assert!(iterations > 0, "the budget was too short to draw a single case");
+}
+
+// ── Projections, marginal evaluations, kept counts and mirrored placements ──
+
+/// The variables under vtree node `t`, as a mask over truth-table bits
+/// (variable `v` is bit `v - 1`).
+fn vars_under(vtree: &Vtree, t: VtreeIdx) -> u32 {
+    match *vtree.node(t) {
+        VtreeNode::Internal { left, right, .. } => vars_under(vtree, left) | vars_under(vtree, right),
+        _ => 1 << (vtree.leaf_var(t).0 - 1),
+    }
+}
+
+/// `∃` of every variable outside `keep` (a variable mask) over a truth table.
+fn exists_outside(tf: &[bool], keep: u32) -> Vec<bool> {
+    let mut seen = vec![false; tf.len()];
+    for (mask, &t) in tf.iter().enumerate() {
+        if t {
+            seen[mask & keep as usize] = true;
+        }
+    }
+    (0..tf.len()).map(|mask| seen[mask & keep as usize]).collect()
+}
+
+/// Projection onto drawn sets of variables, keeping their ids; projection onto
+/// each subtree; and for each node but the root and each threshold `m` up to
+/// three, the assignments under the node with at least `m` distinct
+/// assignments under its sibling that extend to a model.
+fn projections_match_enumeration(case: &Case) {
+    let n = case.num_vars;
+    let vtree = &case.vtree;
+    let eng = Engine::new();
+    let f = compile(case);
+    let tf = diagram_truth(&f, n);
+
+    let mut rng = Lcg::new(case.seed ^ 0x9e0_7ec7);
+    for _ in 0..3 {
+        let keep = (rng.next_u64() as u32 & ((1 << n) - 1)) | (1 << rng.below(u64::from(n)));
+        step("projection onto variables");
+        let p = f.project_to_vars(|v| ((keep >> (v.0 - 1)) & 1 == 1).then_some(v), n).unwrap();
+        assert_canonical(&p);
+        assert_eq!(p.vtree().num_leaves(), keep.count_ones(), "the projection's leaves");
+        assert_truth(&diagram_truth(&p, n), &exists_outside(&tf, keep), n, "projection onto variables");
+    }
+
+    for key in vtree.bottomup() {
+        let Some(parent) = vtree.node(key).parent() else { continue };
+        let (k, s) = (vars_under(vtree, key), vars_under(vtree, vtree.sibling(key)));
+        step("projection onto a subtree");
+        let p = eng.project_to_subtree(&f, key).unwrap();
+        assert_canonical(&p);
+        assert_truth(&diagram_truth(&p, n), &exists_outside(&tf, k), n, "projection onto a subtree");
+
+        // The distinct sibling assignments per assignment under the key.
+        let mut seen = vec![false; tf.len()];
+        let mut distinct = vec![0u64; tf.len()];
+        for (mask, &t) in tf.iter().enumerate() {
+            let ks = mask & (k | s) as usize;
+            if t && !seen[ks] {
+                seen[ks] = true;
+                distinct[mask & k as usize] += 1;
+            }
+        }
+        for m in 0..=3 {
+            step("distinct values under a sibling");
+            let at_least = eng.at_least_distinct(&f, key, m).unwrap();
+            assert_canonical(&at_least);
+            let want: Vec<bool> = (0..tf.len()).map(|mask| distinct[mask & k as usize] >= m).collect();
+            assert_truth(
+                &diagram_truth(&at_least, n),
+                &want,
+                n,
+                &format!("at least {m} distinct under the sibling of {key:?} (parent {parent:?})"),
+            );
+        }
+    }
+}
+
+/// Model counts by values, with the count hook a marginal level needs:
+/// `Pos` and `Neg` one, `One` two.
+struct Count;
+
+impl EvalAlgebra for Count {
+    type Value = u128;
+    fn zero(&self) -> u128 {
+        0
+    }
+    fn leaf(&self, _: VarId, label: LeafLabel) -> u128 {
+        if label == LeafLabel::One { 2 } else { 1 }
+    }
+    fn add_assign(&self, acc: &mut u128, other: &u128) {
+        *acc += other;
+    }
+    fn mul(&self, a: &u128, b: &u128) -> u128 {
+        a * b
+    }
+    fn count(&self, n: &BigUint) -> Option<u128> {
+        u128::try_from(n).ok()
+    }
+}
+
+/// The same counts by columns, one flat buffer per level.
+struct Counts;
+
+impl ColumnAlgebra for Counts {
+    type Column = Vec<u128>;
+    type Value = u128;
+    fn zero(&self) -> u128 {
+        0
+    }
+    fn column(&self, _: VtreeIdx, width: usize) -> Vec<u128> {
+        vec![0; width]
+    }
+    fn leaf(&self, _: VtreeIdx, _: VarId, label: LeafLabel, col: &mut Vec<u128>) {
+        col[label as usize] = if label == LeafLabel::One { 2 } else { 1 };
+    }
+    fn fold(&self, _: VtreeIdx, slot: usize, pairs: SlotPairs<'_>, left: &Vec<u128>, right: &Vec<u128>, out: &mut Vec<u128>) {
+        out[slot] = pairs.map(|(l, r)| left[l] * right[r]).sum();
+    }
+    fn read(&self, _: VtreeIdx, col: Vec<u128>, slot: usize) -> u128 {
+        col[slot]
+    }
+    fn count(&self, _: VtreeIdx, slot: usize, n: &BigUint, col: &mut Vec<u128>) -> bool {
+        u128::try_from(n).map(|n| col[slot] = n).is_ok()
+    }
+}
+
+/// Evaluate by values and by columns: the compiled diagram, the values at the
+/// root's children combined through the output's pairs, the diagram with a
+/// drawn set of levels summed out, and the halves' conjunction summing the
+/// same levels out as it is built, on the default sparse route and on one
+/// every level takes.
+fn marginal_evaluations_match_enumeration(case: &Case) {
+    let count = u128::from(brute_force_count(case.num_vars, &case.clauses));
+    let vtree = &case.vtree;
+    let eng = Engine::new();
+    let f = compile(case);
+    step("evaluation of the compiled diagram");
+    assert_eq!(f.evaluate(&Count).unwrap(), count, "evaluation by values");
+    assert_eq!(f.evaluate_columns(&Counts).unwrap(), count, "evaluation by columns");
+
+    let out = f.output();
+    if !f.is_zero() && !vtree.node(out.vtree).is_leaf() {
+        step("evaluation at the output's children");
+        let (left, right) = vtree.children(out.vtree);
+        let (lv, rv) = (f.evaluate_at(left, &Count).unwrap(), f.evaluate_at(right, &Count).unwrap());
+        let (lc, rc) = (f.evaluate_columns_at(left, &Counts).unwrap(), f.evaluate_columns_at(right, &Counts).unwrap());
+        let pairs = || f.level(out.vtree).pairs_iter_of_idx(out.local.idx());
+        let by_values: u128 = pairs().map(|p| lv[p.left.raw() as usize] * rv[p.right.raw() as usize]).sum();
+        let by_columns: u128 = pairs().map(|p| lc[p.left.raw() as usize] * rc[p.right.raw() as usize]).sum();
+        assert_eq!(by_values, count, "values at the output's children");
+        assert_eq!(by_columns, count, "columns at the output's children");
+    }
+
+    let targets = draw_marginal_targets(case);
+    if targets.is_empty() {
+        return;
+    }
+    if !f.is_zero() {
+        step("evaluation with levels summed out");
+        let mut summed = f.clone();
+        eng.marginalize_levels(&mut summed, &targets).unwrap();
+        assert_canonical_after_minimize(&summed);
+        assert_eq!(summed.evaluate(&Count).unwrap(), count, "evaluation by values, levels summed out");
+        assert_eq!(summed.evaluate_columns(&Counts).unwrap(), count, "evaluation by columns, levels summed out");
+    }
+
+    step("evaluation of a marginalizing conjunction");
+    let split = case.clauses.len().div_ceil(2);
+    let (mut head, mut tail) = (borrow(case), borrow(case));
+    head.clauses = case.clauses[..split].to_vec();
+    tail.clauses = case.clauses[split..].to_vec();
+    let (g, h) = (compile(&head), compile(&tail));
+    for route in [SparseRoute::DEFAULT, EVERY_LEVEL_SPARSE] {
+        let context = Arc::clone(g.context());
+        let summed = context.with_limits(LimitConfig::none().with_sparse_route(route), |eng| {
+            eng.and_marginalizing(g.clone(), h.clone(), &targets).unwrap()
+        });
+        assert_canonical_after_minimize(&summed);
+        assert_eq!(summed.evaluate(&Count).unwrap(), count, "a marginalizing conjunction by values");
+        assert_eq!(summed.evaluate_columns(&Counts).unwrap(), count, "a marginalizing conjunction by columns");
+    }
+}
+
+/// Counts kept with each half: the half's count, the halves' conjunction
+/// counted without being built and built, and both again after the binary
+/// format carried the counts; a body byte of that file changed under a
+/// rewritten checksum is refused or read as a diagram that counts, never a
+/// panic.
+fn level_counts_match_enumeration(case: &Case) {
+    let n = case.num_vars;
+    let split = case.clauses.len().div_ceil(2);
+    let (mut head, mut tail) = (borrow(case), borrow(case));
+    head.clauses = case.clauses[..split].to_vec();
+    tail.clauses = case.clauses[split..].to_vec();
+    let (head_count, count) = (
+        BigUint::from(brute_force_count(n, &head.clauses)),
+        BigUint::from(brute_force_count(n, &case.clauses)),
+    );
+    let eng = Engine::new();
+    let (mut f, g) = (compile(&head), compile(&tail));
+    step("keeping level counts");
+    f.attach_level_counts().unwrap();
+    assert_eq!(f.model_count().unwrap(), head_count, "a kept count");
+    assert_eq!(eng.and_model_count(f.clone(), g.clone(), &[]).unwrap(), count, "a conjunction counted over kept counts");
+    let both = eng.and(f.clone(), g.clone()).unwrap();
+    assert_canonical_after_minimize(&both);
+    assert_eq!(both.model_count().unwrap(), count, "a conjunction carrying kept counts");
+
+    step("kept counts through the binary format");
+    let mut bytes = Vec::new();
+    write_tdd_binary(&mut bytes, &f).expect("the diagram is structural, so it is writable");
+    let back = read_tdd_binary(&mut bytes.as_slice(), &case.vtree).expect("what was just written reads back");
+    assert_canonical(&back);
+    // The false diagram and one without an internal level have no counts to
+    // write, and these counts all fit the format's 128 bits.
+    if !f.is_zero() && !case.vtree.node(case.vtree.root()).is_leaf() {
+        assert!(back.has_level_counts(), "the counts were carried");
+    }
+    assert_eq!(back.model_count().unwrap(), head_count, "a count read back");
+    assert_eq!(eng.and_model_count(back, g.clone(), &[]).unwrap(), count, "a conjunction counted over counts read back");
+
+    step("corrupted kept counts");
+    let mut rng = Lcg::new(case.seed ^ 0xc0);
+    for _ in 0..16 {
+        let mut bad = bytes.clone();
+        let at = 24 + rng.below((bad.len() - 32) as u64) as usize;
+        bad[at] ^= 1 + rng.below(255) as u8;
+        let end = bad.len() - 8;
+        let sum = xxh64(&bad[..end]);
+        bad[end..].copy_from_slice(&sum.to_le_bytes());
+        if let Ok(read) = read_tdd_binary(&mut bad.as_slice(), &case.vtree) {
+            read.model_count().expect("a diagram the reader accepted counts");
+            let _ = eng.and_model_count(read, g.clone(), &[]);
+        }
+    }
+}
+
+/// `t`'s subtree with the children of each internal node swapped on a coin.
+fn mirrored(vtree: &Vtree, t: VtreeIdx, rng: &mut Lcg) -> Vtree {
+    match *vtree.node(t) {
+        VtreeNode::Internal { left, right, .. } => {
+            let (l, r) = (mirrored(vtree, left, rng), mirrored(vtree, right, rng));
+            if rng.coin() { Vtree::join(&r, &l) } else { Vtree::join(&l, &r) }.expect("disjoint subtrees")
+        }
+        _ => Vtree::leaf(vtree.leaf_var(t)),
+    }
+}
+
+/// The compiled diagram copied and moved onto a mirror of its vtree, and the
+/// halves conjoined onto it, each against the truth table.
+fn mirrored_placements_match_enumeration(case: &Case) {
+    let n = case.num_vars;
+    let eng = Engine::new();
+    let mut rng = Lcg::new(case.seed ^ 0x3177_0e5d);
+    let mirror = Arc::new(mirrored(&case.vtree, case.vtree.root(), &mut rng));
+    let f = compile(case);
+    let tf = diagram_truth(&f, n);
+
+    step("a copy onto a mirror");
+    let (copied, _) = eng.embed_mirrored(&f, &mirror, |v| v).unwrap();
+    assert_canonical_after_minimize(&copied);
+    assert_truth(&diagram_truth(&copied, n), &tf, n, "a copy onto a mirror");
+
+    step("a move onto a mirror");
+    let (mut moved, _) = eng.embed_moving_mirrored(f, &mirror, |v| v).map_err(|r| r.error).unwrap();
+    assert_truth(&diagram_truth(&moved, n), &tf, n, "a move onto a mirror");
+    moved.minimize().unwrap();
+    assert_canonical(&moved);
+    let mut copied = copied;
+    copied.minimize().unwrap();
+    assert_same_shape(&moved, &copied, "a move against a copy onto a mirror");
+
+    step("a conjunction onto a mirror");
+    let split = case.clauses.len().div_ceil(2);
+    let (mut head, mut tail) = (borrow(case), borrow(case));
+    head.clauses = case.clauses[..split].to_vec();
+    tail.clauses = case.clauses[split..].to_vec();
+    let both = eng
+        .and_onto_mirrored(compile(&head), |v| v, compile(&tail), |v| v, &mirror)
+        .map_err(|r| r.error)
+        .unwrap();
+    assert_canonical_after_minimize(&both);
+    assert_truth(&diagram_truth(&both, n), &tf, n, "a conjunction onto a mirror");
 }
 
 // ── Regression cases ────────────────────────────────────────────────────────
