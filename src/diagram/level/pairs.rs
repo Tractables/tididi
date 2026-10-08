@@ -6,7 +6,7 @@ use crate::diagram::{ChildSide, EncodedChildRef};
 use crate::diagram::marginal_ref::ChildDecoder;
 use crate::diagram::PairsIter;
 use crate::diagram::primitives::{ChildPair, EncodedNode, NodeKind};
-use super::implicit::NodeCursor;
+use super::implicit::{LevelPairs, NodeCursor};
 use super::{ImplicitLevel, LevelState, TddLevel};
 
 /// A level's pairs as the level holds them: stored in its arena, or, on an
@@ -201,40 +201,36 @@ impl TddLevel {
         self.internal_inputs_range(0..self.nodes().len())
     }
 
-    /// Calls `f(i, pair)` with every pair of every node `i`, node by node:
+    /// Calls `f(i, pair)` with every pair of every node `i`, in node order:
     /// a stored level's pairs read as slices of its arena, an implicit
-    /// level's generated into a buffer a node at a time
-    /// ([`described_read_next`](Self::described_read_next)). One loop calls
-    /// `f`, so that it inlines there.
+    /// level's generated from its description a run of nodes at a time
+    /// ([`ImplicitLevel::fold_pairs`]).
     #[inline]
     pub(crate) fn for_each_node_pair(&self, mut f: impl FnMut(usize, ChildPair)) {
-        let stored = self.stored();
-        let (mut buf, mut cursor) = (Vec::new(), None);
-        for i in 0..self.node_count() {
-            let pairs = match stored {
-                Some(stored) => stored.of_idx(i),
-                None => self.described_read_next(&mut cursor, i, &mut buf),
-            };
-            for &pair in pairs {
-                f(i, pair);
+        match (self.pairs.implicit(), self.stored()) {
+            (Some(d), _) => d.fold_pairs(0, (), |(), i, pair| f(i, pair)),
+            (None, Some(stored)) => {
+                for (i, node) in stored.nodes().iter().enumerate() {
+                    for &pair in stored.of(node) {
+                        f(i, pair);
+                    }
+                }
             }
+            (None, None) => unreachable!("an arena is stored or described"),
         }
     }
 
     /// Every pair of the level with the index of the node holding it, in
     /// node order: a stored level's read off its arenas as slices, an
-    /// implicit level's generated from its description a node at a time,
-    /// each node's first pair stepped on from the one before it.
+    /// implicit level's generated from its description ([`LevelPairs`]),
+    /// folded a run of nodes at a time.
     #[inline]
     pub(crate) fn pairs_with_parent(&self) -> impl Iterator<Item = (u32, ChildPair)> + Clone + '_ {
-        let stored = self.nodes.stored().iter().enumerate()
+        let nodes = self.stored().map_or(&[][..], |stored| stored.nodes());
+        let stored = nodes.iter().enumerate()
             .flat_map(move |(i, node)| self.pairs_iter_of(node).map(move |pair| (i as u32, pair)));
-        let mut cursor = None;
-        let implied = self.implied_by().map_or(0..0, |d| 0..d.nodes()).flat_map(move |i| {
-            let cursor = cursor.get_or_insert_with(|| self.described_cursor());
-            described_iter(self.implied_next(cursor, i)).map(move |pair| (i as u32, pair))
-        });
-        stored.chain(implied)
+        let described = self.pairs.implicit().map_or_else(LevelPairs::empty, LevelPairs::new);
+        stored.chain(described)
     }
 
     /// Iterate structural nodes in a valid slot range, retaining their level indices.
@@ -267,6 +263,26 @@ impl TddLevel {
         match self.nodes.stored().get(i).and_then(|node| self.stored_of(node)) {
             Some(pairs) => pairs,
             None => self.described_read(i, buf),
+        }
+    }
+
+    /// [`pairs_read`](Self::pairs_read) for nodes read in increasing
+    /// order, as a pass over the level reads them: an implicit level's
+    /// pairs generated into `buf`, each node's first pair stepped on by
+    /// `cursor` ([`described_read_next`](Self::described_read_next)).
+    #[inline(always)]
+    pub(crate) fn pairs_read_next<'a, 'b>(
+        &'a self,
+        cursor: &mut Option<Box<NodeCursor<'a>>>,
+        i: usize,
+        buf: &'b mut Vec<ChildPair>,
+    ) -> &'b [ChildPair]
+    where
+        'a: 'b,
+    {
+        match self.nodes.stored().get(i).and_then(|node| self.stored_of(node)) {
+            Some(pairs) => pairs,
+            None => self.described_read_next(cursor, i, buf),
         }
     }
 
@@ -395,10 +411,7 @@ impl TddLevel {
         'a: 'b,
     {
         if !left.is_marginal() && !right.is_marginal() {
-            return match self.nodes.stored().get(idx).and_then(|node| self.stored_of(node)) {
-                Some(pairs) => pairs,
-                None => self.described_read_next(cursor, idx, scratch),
-            };
+            return self.pairs_read_next(cursor, idx, scratch);
         }
         self.pairs_decoded(idx, scratch, left, right)
     }

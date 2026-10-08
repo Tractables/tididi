@@ -865,6 +865,76 @@ fn a_cursor_reads_the_first_pairs_in_runs() {
     assert!(tabled > 10 && led > 10, "{tabled} cursors in tabled runs, {led} with a lead digit");
 }
 
+/// A pass over every pair of an implicit level reads them in runs of nodes
+/// ([`ImplicitLevel::fold_pairs`], [`LevelPairs`]): the pairs and their
+/// nodes are the stored level's, from any node, after any pairs read one at
+/// a time, at one pair a node in runs of a table and of a lead digit wider
+/// than a run, and at several node by node.
+#[test]
+fn a_level_is_folded_in_runs_from_any_node() {
+    let mut rng = Lcg::new(0x1d1e_0412);
+    let (mut tabled, mut led, mut several) = (0, 0, 0);
+    for round in 0..120 {
+        let across: Vec<(usize, (i64, i64))> = match round % 3 {
+            0 => (0..1 + rng.below(10)).map(|_| (2 + rng.below(2) as usize, step(&mut rng))).collect(),
+            1 => {
+                let lead = (RUN_PAIRS + 1 + rng.below(300) as usize, (1 + rng.below(6) as i64, rng.below(7) as i64));
+                std::iter::once(lead).chain((0..rng.below(3)).map(|_| (2 + rng.below(2) as usize, step(&mut rng)))).collect()
+            }
+            _ => (0..1 + rng.below(5)).map(|_| (2 + rng.below(3) as usize, step(&mut rng))).collect(),
+        };
+        let within: Vec<(usize, (i64, i64))> = match round % 3 {
+            2 => (0..1 + rng.below(3)).map(|_| (2 + rng.below(3) as usize, step(&mut rng))).collect(),
+            _ => Vec::new(),
+        };
+        let pairs = affine_of(&within, &across);
+        let nodes = pairs.len();
+        let d = ImplicitLevel::fit(&level_of(&pairs)).unwrap();
+        if d.pairs_per_node() == 1 {
+            let cursor = d.cursor();
+            tabled += usize::from(cursor.cycle < nodes && cursor.span == cursor.cycle);
+            led += usize::from(cursor.span < cursor.cycle);
+        } else {
+            several += 1;
+        }
+        let want: Vec<(u32, ChildPair)> = pairs.iter().enumerate()
+            .flat_map(|(i, node)| node.iter().map(move |&(l, r)| (i as u32, pair(l, r))))
+            .collect();
+        // From any node.
+        let from = rng.below(nodes as u64 + 1) as usize;
+        let folded = d.fold_pairs(from, Vec::new(), |mut v, i, p| {
+            v.push((i as u32, p));
+            v
+        });
+        let skip = from * d.pairs_per_node();
+        assert_eq!(folded, want[skip..], "round {round}: the fold from node {from}");
+        // After any pairs read one at a time.
+        let mut read = LevelPairs::new(&d);
+        let t = rng.below(want.len() as u64 + 1) as usize;
+        let first: Vec<_> = read.by_ref().take(t).collect();
+        assert_eq!(first, want[..t], "round {round}: the first {t} pairs read one at a time");
+        assert_eq!(read.len(), want.len() - t);
+        assert_eq!(read.clone().fold(Vec::new(), |mut v, p| {
+            v.push(p);
+            v
+        }), want[t..], "round {round}: the fold after {t} pairs");
+        assert!(read.eq(want[t..].iter().copied()));
+        // A level that describes them reads as the stored level.
+        let stored = level_of(&pairs);
+        let mut level = TddLevel::new();
+        level.pairs.describe(d.clone(), d.pairs(), d.nodes());
+        assert!(level.pairs_with_parent().eq(stored.pairs_with_parent()));
+        let each = |l: &TddLevel| {
+            let mut v = Vec::new();
+            l.for_each_node_pair(|i, p| v.push((i as u32, p)));
+            v
+        };
+        assert_eq!(each(&level), want);
+        assert_eq!(each(&stored), want);
+    }
+    assert!(tabled > 10 && led > 10 && several > 10, "{tabled} tabled, {led} led, {several} of several pairs a node");
+}
+
 #[test]
 fn twins_are_read_off_the_digits() {
     // Node i holds (3i + m, m) for m < 3: every left slot named once, in its

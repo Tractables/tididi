@@ -151,6 +151,40 @@ impl ImplicitLevel {
         Ok(())
     }
 
+    /// Folds the pairs of nodes `from..` in their order, each with its node:
+    /// at one pair a node a run of nodes at a time
+    /// ([`node_runs`](Self::node_runs)), a pair a step; else node by node,
+    /// each node's pairs in runs ([`Places`]) and its first pair stepped on
+    /// from the last node's ([`NodeCursor`]). What a pass over every pair of
+    /// the level reads, with no call a node.
+    #[inline]
+    pub(crate) fn fold_pairs<B>(&self, from: usize, init: B, mut f: impl FnMut(B, usize, ChildPair) -> B) -> B {
+        if from >= self.nodes {
+            return init;
+        }
+        if self.per_node == 1 {
+            let mut acc = Some(init);
+            let _ = self.node_runs::<std::convert::Infallible>(|start, offsets, at| {
+                if start + offsets.len() > from {
+                    let skip = from.saturating_sub(start);
+                    let mut a = acc.take().expect("the fold's value between runs");
+                    for (j, &o) in offsets[skip..].iter().enumerate() {
+                        a = f(a, start + skip + j, pair_at(at, o));
+                    }
+                    acc = Some(a);
+                }
+                Ok(())
+            });
+            return acc.expect("the fold's value after the runs");
+        }
+        let mut cursor = self.cursor();
+        let mut acc = init;
+        for i in from..self.nodes {
+            acc = self.places_from(cursor.first_of(i)).fold(acc, |a, pair| f(a, i, pair));
+        }
+        acc
+    }
+
     /// Whether `nodes` are the nodes of this description of one pair a node,
     /// each holding its pair inline: compared word for word in runs
     /// ([`node_runs`](Self::node_runs)), a run at a time, where every slot
@@ -167,6 +201,81 @@ impl ImplicitLevel {
     }
 
 }
+
+/// The pair at `offset` from the slots `at`, summed wrapping, as a run's
+/// pairs are.
+#[inline(always)]
+fn pair_at(at: (u32, u32), offset: (u32, u32)) -> ChildPair {
+    ChildPair::new(EncodedChildRef::from_raw(at.0.wrapping_add(offset.0)), EncodedChildRef::from_raw(at.1.wrapping_add(offset.1)))
+}
+
+/// The pairs of an implicit level in their order, each with the index of
+/// its node: what [`TddLevel::pairs_with_parent`] reads off such a level.
+/// Read a pair at a time, a node's pairs are its [`Places`], its first pair
+/// stepped on from the last node's by a [`NodeCursor`] the first read
+/// makes; folded, as a pass over every pair reads them, the rest are read a
+/// run of nodes at a time ([`ImplicitLevel::fold_pairs`]).
+#[derive(Clone, Debug)]
+pub(crate) struct LevelPairs<'a> {
+    level: &'a ImplicitLevel,
+    /// The node whose pairs `places` holds the rest of.
+    node: u32,
+    places: Places<'a>,
+    /// The node after it.
+    next: usize,
+    cursor: Option<Box<NodeCursor<'a>>>,
+}
+
+impl<'a> LevelPairs<'a> {
+    /// The pairs `level` describes, from node 0.
+    #[inline]
+    pub(crate) fn new(level: &'a ImplicitLevel) -> Self {
+        LevelPairs { level, node: 0, places: Places::empty(), next: 0, cursor: None }
+    }
+
+    /// No pairs: what a stored level reads beside its arena.
+    #[inline]
+    pub(crate) fn empty() -> Self {
+        LevelPairs::new(&NO_PAIRS)
+    }
+}
+
+impl Iterator for LevelPairs<'_> {
+    type Item = (u32, ChildPair);
+
+    #[inline]
+    fn next(&mut self) -> Option<(u32, ChildPair)> {
+        loop {
+            if let Some(pair) = self.places.next() {
+                return Some((self.node, pair));
+            }
+            let level = self.level;
+            if self.next >= level.nodes {
+                return None;
+            }
+            let first = self.cursor.get_or_insert_with(|| Box::new(level.cursor())).first_of(self.next);
+            self.places = level.places_from(first);
+            self.node = self.next as u32;
+            self.next += 1;
+        }
+    }
+
+    /// The current node's pairs, then the rest a run of nodes at a time.
+    #[inline]
+    fn fold<B, F: FnMut(B, (u32, ChildPair)) -> B>(self, init: B, mut f: F) -> B {
+        let node = self.node;
+        let acc = self.places.fold(init, |acc, pair| f(acc, (node, pair)));
+        self.level.fold_pairs(self.next, acc, |acc, i, pair| f(acc, (i as u32, pair)))
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.places.len() + (self.level.nodes - self.next) * self.level.per_node;
+        (n, Some(n))
+    }
+}
+
+impl ExactSizeIterator for LevelPairs<'_> {}
 
 /// The digits a [`NodeCursor`]'s [`Odometer`] counts in place: every node
 /// digit of a level, whose nodes are numbered in `u32` and whose radices
