@@ -198,6 +198,61 @@ fn a_summed_operand_is_read_through_its_marginal_level() {
     assert!(read_through > 0, "no conjunction read through a marginal level");
 }
 
+/// A level of one node the route wrote in its carrier's order, each run of
+/// one left reference with its right sides out of order where the map of
+/// the right side is not monotone, then quantified on a variable under its
+/// left side, the right side untouched: the same function as quantifying
+/// the minimized conjunction, canonical once minimized.
+///
+/// The quantification never leaves such a cell's order to the sort of its
+/// runs alone, which
+/// `a_level_of_one_node_with_unsorted_runs_is_written_in_order` reaches by
+/// a direct call: the sweep starts from a pruned diagram, where the one
+/// node at the level names every node of its left child, so a map of the
+/// left side that changed anything merges two of them, shares a cell
+/// between two or permutes the cells, and each of those sorts every cell.
+#[test]
+fn a_relabelled_level_quantified_on_its_left_side_agrees() {
+    let (mut levels, mut quantified) = (0usize, 0usize);
+    let relabelled = relabel_census();
+    for (nvars, seed) in [(8, 0x0f2_e2e), (10, 0x0f2_e2f), (12, 0x0f2_e30), (12, 0x0f2_e31)] {
+        for (what, f, g) in cases(nvars, seed) {
+            for (a, b) in [(&f, &g), (&g, &f)] {
+                let eng = Engine::new();
+                let out = eng.and(a.clone(), b.clone()).unwrap();
+                let mut minimized = out.clone();
+                eng.minimize(&mut minimized).unwrap();
+                let vtree = Arc::clone(out.vtree());
+                for (t, left, _) in vtree.internal_bottomup() {
+                    let level = &out.levels[t.idx()];
+                    if level.nodes().len() != 1 {
+                        continue;
+                    }
+                    let pairs = level.pairs_vec(0);
+                    if !pairs.is_sorted_by_key(|pair| pair.left) || pairs.windows(2).all(|w| w[0] < w[1]) {
+                        continue;
+                    }
+                    levels += 1;
+                    for v in vars_under(&vtree, left) {
+                        let got = eng.exists_vars(out.clone(), &[VarId(v)]).unwrap();
+                        let oracle = eng.exists_vars(minimized.clone(), &[VarId(v)]).unwrap();
+                        let what = format!("{what}, {t:?}, ∃{v}");
+                        assert!(eng.equivalent(&got, &oracle).unwrap(), "{what}");
+                        let mut got = got;
+                        eng.minimize(&mut got).unwrap();
+                        assert_canonical(&got);
+                        assert_same_shape(&got, &oracle, &what);
+                        quantified += 1;
+                    }
+                }
+            }
+        }
+    }
+    let rebuilt = relabel_census()[1] - relabelled[1];
+    assert!(rebuilt > 0 && levels > 10 && quantified > 20,
+        "rebuilt {rebuilt}, levels with unsorted runs {levels}, quantified {quantified}");
+}
+
 /// A conjunction refused at any work point after the route moved a level
 /// gives both operands back as they were.
 #[test]

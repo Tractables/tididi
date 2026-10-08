@@ -1191,7 +1191,12 @@ fn regroup_single_by_left(
         }
         (None, Some(right)) => expand_by_untouched_left(work, &mut out, pairs, right)?,
         (Some(left), right) => {
-            (reordered, merged) = expand_by_rewritten_left(work, &mut out, pairs, left, right)?;
+            let (cell_reordered, cell_merged, stored_unsorted) =
+                expand_by_rewritten_left(work, &mut out, pairs, left, right)?;
+            (reordered, merged) = (cell_reordered, cell_merged);
+            if stored_unsorted && !reordered && !merged {
+                note_unsorted_right_run();
+            }
         }
         (None, None) => return Ok(false),
     }
@@ -1275,21 +1280,23 @@ fn expand_by_untouched_left(
 
 /// [`regroup_single_by_left`]'s expansion of a level whose left side was
 /// rewritten: each run of one left reference, cell by cell of that reference,
-/// beside the cells its right sides map to (or the right sides themselves),
-/// each segment sorted and without repeats. Returns whether a cell came
-/// before one already written, and whether one came again after another
-/// reference's: the segments then need putting together in order.
+/// beside the cells its right sides map to (or the right sides themselves,
+/// in whatever order the run stores them), each segment sorted and without
+/// repeats. Returns whether a cell came before one already written, and
+/// whether one came again after another reference's: the segments then need
+/// putting together in order; and whether a segment of right sides as the
+/// level stored them was out of order, which only this pass then sorts.
 fn expand_by_rewritten_left(
     work: &mut Rewrite<'_>,
     out: &mut Vec<ChildPair>,
     pairs: &[ChildPair],
     left_remap: &Remap,
     right_remap: Option<&Remap>,
-) -> Result<(bool, bool), OperationError> {
+) -> Result<(bool, bool, bool), OperationError> {
     let lim = work.eng.limits();
     // A map of one cell per node is read at its item alone.
     let (left_each, right_each) = (left_remap.one_each(), right_remap.is_some_and(Remap::one_each));
-    let (mut reordered, mut merged) = (false, false);
+    let (mut reordered, mut merged, mut stored_unsorted) = (false, false, false);
     let mut last: Option<u32> = None;
     for same in pairs.chunk_by(|a, b| a.left == b.left) {
         let idx = ChildDecoder::structural().node(same[0].left).idx();
@@ -1328,13 +1335,20 @@ fn expand_by_rewritten_left(
             if added == 0 {
                 continue;
             }
-            if right_remap.is_some() && added > 1 {
+            // The segment's right sides come in the order the level stores
+            // them, which no invariant sorts (a conjunction's relabelling
+            // route writes a node's pairs in its carrier's order, through a
+            // map of the right side that need not be monotone), or through a
+            // map that can reorder and repeat them: sorted and without
+            // repeats unless it is so already, which one pass tells.
+            if added > 1 {
                 let run = &mut out[start..];
-                if !run.is_sorted() {
+                if !run.windows(2).all(|w| w[0] < w[1]) {
+                    stored_unsorted |= right_remap.is_none();
                     run.sort_unstable();
+                    let kept = dedup_sorted(run);
+                    out.truncate(start + kept);
                 }
-                let kept = dedup_sorted(run);
-                out.truncate(start + kept);
             }
             match last {
                 Some(before) if cell < before => reordered = true,
@@ -1344,7 +1358,7 @@ fn expand_by_rewritten_left(
             last = Some(cell);
         }
     }
-    Ok((reordered, merged))
+    Ok((reordered, merged, stored_unsorted))
 }
 
 /// Keep the first of each run of equal items in the sorted `items`, moved to
@@ -2064,6 +2078,15 @@ impl Rewrite<'_> {
         self.gate.poll(1)
     }
 }
+
+// A test counts the cells [`regroup_single_by_left`] put in order only by
+// sorting a run of right sides as the level stored them.
+#[cfg(test)]
+use tests::note_unsorted_right_run;
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_unsorted_right_run() {}
 
 #[cfg(test)]
 #[path = "tests/structural.rs"]

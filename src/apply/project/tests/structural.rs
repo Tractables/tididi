@@ -5,6 +5,25 @@ use crate::limits::{LimitConfig, StopAt, StopRules};
 use crate::test_helpers::{assert_canonical, compile_clauses, or_of_cubes, rand_cnf, same_as_stored, vtree_shapes, CnfShape, Lcg};
 use crate::vtree::{VarId, Vtree};
 
+thread_local! {
+    /// The cells on this thread [`regroup_single_by_left`] wrote with a
+    /// rewritten left side and the right side as the level stored it, whose
+    /// order only the sort of a run's right sides made canonical
+    /// ([`unsorted_right_runs`]).
+    static UNSORTED_RIGHT_RUNS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn note_unsorted_right_run() {
+    UNSORTED_RIGHT_RUNS.with(|n| n.set(n.get() + 1));
+}
+
+/// How many cells of one node on this thread a quantification wrote in
+/// canonical order from a run of right sides the level stored out of order,
+/// with no other step that would have sorted them.
+fn unsorted_right_runs() -> u64 {
+    UNSORTED_RIGHT_RUNS.with(std::cell::Cell::get)
+}
+
 /// The map a quantified leaf hands its parent: every label becomes ⊤.
 fn freed_leaf(eng: &Engine) -> Remap {
     Runs::all_to_first(eng.limits(), crate::diagram::LEAF_WIDTH, 0u32).unwrap()
@@ -434,6 +453,99 @@ fn a_level_of_one_node_is_written_alike_run_by_run() {
     }
     assert!(by_left > 100 && by_rewritten_left > 100 && declined > 0,
         "written run by run {by_left}, with a rewritten left side {by_rewritten_left}, declined {declined}");
+}
+
+/// A fan-out of one cell for each of `keys` child nodes, the cells rising
+/// in the order the runs of `pairs` name the keys by their left sides, the
+/// keys no run names after them, and some cells skipped: a map that neither
+/// merges nor reorders the runs' cells. A leaf's labels are not stored in
+/// the order of their keys.
+fn rising_remap(eng: &Engine, rng: &mut Lcg, keys: usize, pairs: &[ChildPair]) -> Remap {
+    let named: Vec<usize> =
+        pairs.chunk_by(|a, b| a.left == b.left).map(|run| ChildDecoder::structural().node(run[0].left).idx()).collect();
+    let mut cells = vec![None; keys];
+    let mut cell = 0u32;
+    for key in named.iter().copied().chain(0..keys) {
+        if cells[key].is_none() {
+            cell += rng.below(2) as u32;
+            cells[key] = Some(cell);
+            cell += 1;
+        }
+    }
+    let entries: Vec<(u32, u32)> = cells.iter().enumerate().map(|(key, cell)| (key as u32, cell.unwrap())).collect();
+    Runs::pack(eng.limits(), keys, &entries, 0u32).unwrap()
+}
+
+/// A level of one node whose runs of one left reference store their right
+/// sides out of order, as a conjunction can leave them (the relabelling
+/// route where its map of the right side is not monotone, and the compiler's
+/// own levels at times), written run by run with the left side rewritten and
+/// the right one as it is: the owner-set rule's one cell, in canonical
+/// order. Under a map that merges or reorders the left cells the pass sorts
+/// them anyway; under one whose cells rise along the runs only the sort of
+/// each run's right sides puts the cell in order, which
+/// `unsorted_right_runs` counts.
+#[test]
+fn a_level_of_one_node_with_unsorted_runs_is_written_in_order() {
+    let mut rng = Lcg::new(0x0f2_5011);
+    let eng = Engine::new();
+    let (mut levels, mut in_order_by_runs) = (0usize, 0u64);
+    for round in 0..48u32 {
+        let num_vars = 6 + round % 9;
+        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 4 + round as usize, width: 4 });
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            let f = compile_clauses(&vtree, &clauses);
+            if f.is_zero() { continue; }
+            for &parent in vtree.bottomup_slice() {
+                if vtree.node(parent).is_leaf() || f.levels[parent.idx()].nodes().len() != 1 { continue; }
+                let mut pairs = f.levels[parent.idx()].pairs_vec(0);
+                // A node not stored in order of its left side is the other
+                // regroups' to write.
+                if !pairs.is_sorted_by_key(|pair| pair.left)
+                    || !pairs.chunk_by(|a, b| a.left == b.left).any(|run| run.len() > 1)
+                {
+                    continue;
+                }
+                // Descending, which a stored run can be already: no invariant
+                // sorts a node's pairs.
+                for run in pairs.chunk_by_mut(|a, b| a.left == b.left) {
+                    run.sort_unstable_by(|a, b| b.cmp(a));
+                }
+                let mut stored = f.clone();
+                {
+                    let level = &mut stored.levels[parent.idx()];
+                    level.clear();
+                    level.push_node(eng.limits(), &pairs).unwrap();
+                }
+                let level = &stored.levels[parent.idx()];
+                let (left_child, _) = vtree.children(parent);
+                let keys = if vtree.node(left_child).is_leaf() { LEAF_WIDTH } else { f.levels[left_child.idx()].nodes().len() };
+                let maps = [
+                    ("rising", rising_remap(&eng, &mut rng, keys, &pairs)),
+                    ("one cell", one_cell_remap(&eng, &mut rng, keys, 3)),
+                    ("fanned", random_remap(&eng, &mut rng, keys, 80)),
+                ];
+                for (what, left) in &maps {
+                    let expected = regroup_by_definition(level, Some(left), None);
+                    let mut rewritten = stored.clone();
+                    let mut work = Rewrite { eng: &eng, gate: eng.limits().gate(), emitted: 0 };
+                    let before = unsorted_right_runs();
+                    assert!(regroup_single_by_left(&mut work, &mut rewritten, parent, Some(left), None).unwrap(),
+                        "{shape}, level {parent:?}, {what}: declined");
+                    let got = written(&rewritten, level, parent, None);
+                    assert_eq!(got, expected, "{shape}, level {parent:?}, {what} map");
+                    let by_runs = unsorted_right_runs() - before;
+                    if *what == "rising" {
+                        assert_eq!(by_runs, 1, "{shape}, level {parent:?}: a rising map leaves the order to the runs");
+                    }
+                    in_order_by_runs += by_runs;
+                }
+                levels += 1;
+            }
+        }
+    }
+    assert!(levels > 80 && in_order_by_runs >= levels as u64,
+        "levels {levels}, put in order by the runs alone {in_order_by_runs}");
 }
 
 /// [`random_remap`] with about one key in six mapped to no cell.
