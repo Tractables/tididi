@@ -334,7 +334,48 @@ impl Engine {
             Ok(op) => op,
             Err(e) => return Err(EmbedRefused { error: e.into(), tdd }),
         };
-        place_moving(self, tdd, into, map, Free::Build).map(|(result, plan)| (result, plan.into_embedding(self)))
+        place_moving(self, tdd, into, map, Free::Build, false).map(|(result, plan)| (result, plan.into_embedding(self)))
+    }
+
+    /// [`Engine::embed_moving`], where `into` may hold the diagram's vtree
+    /// shape up to mirrors, as [`Engine::embed_mirrored`] places it: a level
+    /// whose image has its children the other way round is moved and then
+    /// has the two sides of every pair exchanged in place, which costs its
+    /// pairs. The result is the diagram [`Engine::embed_mirrored`] returns,
+    /// up to what [`Engine::embed_moving`] differs by.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Vtree};
+    /// use tididi::vtree::VarId;
+    ///
+    /// // x1 ∧ ¬x2 on (x1 x2), placed so that x1 lands on the right leaf.
+    /// let engine = Engine::new();
+    /// let pair = Arc::new(Vtree::linear(2));
+    /// let f = engine.cube(&pair, [1, -2])?;
+    /// let into = Arc::new(Vtree::linear(2));
+    /// let (copied, _) = engine.embed_mirrored(&f, &into, |v| VarId(3 - v.0))?;
+    /// let (moved, _) = engine.embed_moving_mirrored(f, &into, |v| VarId(3 - v.0)).map_err(|r| r.error)?;
+    /// assert!(engine.equivalent(&moved, &copied)?);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Those of [`Engine::embed_mirrored`], each with the diagram as it was
+    /// given.
+    #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
+    pub fn embed_moving_mirrored(
+        &self,
+        tdd: Tdd,
+        into: &Arc<Vtree>,
+        map: impl Fn(VarId) -> VarId,
+    ) -> Result<(Tdd, Embedding), EmbedRefused> {
+        let _op = match self.limits().enter() {
+            Ok(op) => op,
+            Err(e) => return Err(EmbedRefused { error: e.into(), tdd }),
+        };
+        place_moving(self, tdd, into, map, Free::Build, true).map(|(result, plan)| (result, plan.into_embedding(self)))
     }
 
     /// [`Tdd::embed`] for a diagram whose levels may hold weighted marginal
@@ -440,7 +481,7 @@ pub(crate) struct Plan {
     /// Per source node: its image has its children swapped, so its level is
     /// copied with every pair read the other way round. Empty unless
     /// `mirror`.
-    mirrored: Vec<bool>,
+    pub(crate) mirrored: Vec<bool>,
     /// The build's own scratch, held to go back to the engine with the rest:
     /// a leaf under each source node, read where `mirror` is set, and the
     /// match's stack.
@@ -692,7 +733,8 @@ pub(crate) enum Free {
 /// [`Engine::embed_moving`] under the caller's entry, with the plan it placed
 /// `tdd` by; with [`Free::Leave`], a diagram whose free levels are empty. A
 /// false diagram is the false diagram on `into`, every level empty, whatever
-/// `free` says.
+/// `free` says. With `mirror`, `into` may hold the source's shape up to
+/// mirrors ([`Engine::embed_moving_mirrored`]).
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]
 pub(crate) fn place_moving(
     eng: &Engine,
@@ -700,11 +742,12 @@ pub(crate) fn place_moving(
     into: &Arc<Vtree>,
     map: impl Fn(VarId) -> VarId,
     free: Free,
+    mirror: bool,
 ) -> Result<(Tdd, Plan), EmbedRefused> {
     if let Err(e) = tdd.require_structure() {
         return Err(EmbedRefused { error: e.into(), tdd });
     }
-    let plan = match Plan::build(eng, tdd.vtree(), into, map, false) {
+    let plan = match Plan::build(eng, tdd.vtree(), into, map, mirror) {
         Ok(plan) => plan,
         Err(error) => return Err(EmbedRefused { error, tdd }),
     };
@@ -797,11 +840,25 @@ fn assemble_moving(
         Err(e) => return Err((e, tdd)),
     };
     placement.move_part(&mut tdd, &plan.embedding.levels);
+    // A mirrored image reads its pairs the other way round, before anything
+    // reads its sides (`literal_chain`). A refusal undoes it by the same
+    // call, so anything that reorders a mirrored level's pairs belongs on
+    // the seated result, past the last refusal.
+    placement.mirror(plan);
     let mut gate = eng.limits().gate();
     let mut stopped = Ok(());
     // The tops of the pass-through chains over a leaf read as `Pos`/`Neg`,
     // whose readers are renumbered once the result stands.
     let mut literal_tops = Vec::new();
+    // A mirrored image was changed in place by `placement.mirror`, and its
+    // seat closes it.
+    if !plan.mirrored.is_empty() {
+        for &t in into.internal_bottomup_slice() {
+            if plan.covered_by[t.idx()].is_some_and(|s| plan.mirrored[s.idx()]) {
+                placement.changed_at(t);
+            }
+        }
+    }
     // The free levels when they are built, then the pass-throughs, each
     // after the levels under it. A free level left empty costs nothing
     // here, and a conjunction that builds it carries it as an identity
@@ -831,12 +888,14 @@ fn assemble_moving(
         }
     }
     if let Err(e) = stopped.and_then(|()| gate.flush()) {
+        placement.mirror(plan);
         placement.move_back(&mut tdd, &plan.embedding.levels);
         return Err((e, tdd));
     }
     let mut result = match placement.seat(tdd.output().local, carried) {
         Ok(result) => result,
-        Err((e, placement)) => {
+        Err((e, mut placement)) => {
+            placement.mirror(plan);
             placement.move_back(&mut tdd, &plan.embedding.levels);
             return Err((e, tdd));
         }

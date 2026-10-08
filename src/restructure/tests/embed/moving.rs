@@ -24,6 +24,71 @@ fn check_against_copy(eng: &Engine, f: &Tdd, into: &Arc<Vtree>, map: impl Fn(Var
     assert_same_shape(&moved, &copied, what);
 }
 
+/// [`check_against_copy`] up to mirrors: `embed_moving_mirrored` against
+/// `embed_mirrored`.
+fn check_mirrored_against_copy(eng: &Engine, f: &Tdd, into: &Arc<Vtree>, map: impl Fn(VarId) -> VarId + Copy, what: &str) {
+    let (copied, copied_levels) = eng.embed_mirrored(f, into, map).unwrap();
+    let (mut moved, moved_levels) = eng.embed_moving_mirrored(f.clone(), into, map).map_err(|r| r.error).unwrap();
+    assert_eq!(moved_levels.levels, copied_levels.levels, "{what}");
+    check_determinism(&moved).unwrap_or_else(|e| panic!("{what}: {e}"));
+    eng.minimize(&mut moved).unwrap();
+    let mut copied = copied;
+    eng.minimize(&mut copied).unwrap();
+    assert_same_shape(&moved, &copied, what);
+}
+
+/// Which children of a source node a mirrored destination swaps, by pick.
+fn swapped(pick: u32) -> impl Fn(crate::vtree::VtreeIdx) -> bool {
+    move |t| match pick {
+        0 => t.0.is_multiple_of(2),
+        1 => !t.0.is_multiple_of(2),
+        2 => true,
+        _ => false,
+    }
+}
+
+#[test]
+fn every_shape_moves_mirrored_to_the_diagram_embed_mirrored_copies() {
+    let eng = Engine::new();
+    for (num_vars, clauses) in test_cases() {
+        if num_vars > 4 {
+            continue;
+        }
+        let shift = num_vars;
+        let rename = move |v: VarId| VarId(v.0 + shift);
+        let free: Vec<VarId> = (1..=num_vars).map(VarId).collect();
+        let free = Vtree::balanced_over(&free).unwrap();
+        for (label, small) in vtree_shapes(num_vars) {
+            let mut f = compile_clauses(&small, &clauses);
+            f.minimize().unwrap();
+            for pick in 0..4 {
+                let image = super::mirror::mirrored_shape(&small, rename, swapped(pick), 2 * num_vars);
+                let beside = Arc::new(Vtree::join(&image, &free).unwrap());
+                check_mirrored_against_copy(&eng, &f, &beside, rename, &format!("{label}, pick {pick}"));
+                let under = Arc::new(Vtree::join(&free, &image).unwrap());
+                check_mirrored_against_copy(&eng, &f, &under, rename, &format!("{label}, pick {pick}, right"));
+            }
+        }
+    }
+}
+
+#[test]
+fn leaves_spread_along_a_mirrored_spine_move_to_the_diagram_embed_mirrored_copies() {
+    // Pass-throughs over leaves under mirrored images: the literal chains
+    // read their parents' sides once the sides are exchanged.
+    let eng = Engine::new();
+    let small = Arc::new(Vtree::linear(4));
+    let positions = [2u32, 4, 7, 9];
+    for pick in 0..4 {
+        let big = Arc::new(super::mirror::mirrored_shape(&Vtree::linear(10), |v| v, swapped(pick), 10));
+        for clauses in [vec![vec![1, 2], vec![-3, 4]], vec![vec![1, -4], vec![2, 3, 4]], vec![vec![4]], vec![vec![1], vec![-2]]] {
+            let mut f = compile_clauses(&small, &clauses);
+            f.minimize().unwrap();
+            check_mirrored_against_copy(&eng, &f, &big, |v| VarId(positions[v.idx()]), &format!("spine, pick {pick}"));
+        }
+    }
+}
+
 #[test]
 fn every_shape_moves_to_the_diagram_embed_copies() {
     let eng = Engine::new();
@@ -81,14 +146,28 @@ fn source_and_destination() -> (Tdd, Arc<Vtree>, impl Fn(VarId) -> VarId + Copy)
 
 /// Refuse the embedding at each point `arm` picks in turn, checking that
 /// every refusal hands the diagram back unchanged, until one is granted.
-fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<crate::limits::LimitScope<'_>>) -> usize {
+///
+/// With `mirror`, onto the destination with some children swapped, by
+/// `embed_moving_mirrored`.
+fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<crate::limits::LimitScope<'_>>, mirror: bool) -> usize {
     let eng = Engine::new();
     let (f, big, map) = source_and_destination();
-    let (expected, _) = eng.embed(&f, &big, map).unwrap();
+    let big = match mirror {
+        true => Arc::new(super::mirror::mirrored_shape(&big, |v| v, |t| t.0.is_multiple_of(3), big.num_vars())),
+        false => big,
+    };
+    assert_eq!(eng.embed(&f, &big, map).is_err(), mirror, "the destination mirrors an image");
+    let (expected, _) = match mirror {
+        true => eng.embed_mirrored(&f, &big, map).unwrap(),
+        false => eng.embed(&f, &big, map).unwrap(),
+    };
     let mut refusals = 0;
     for n in 0.. {
         let scope = arm(&eng, n);
-        let outcome = eng.embed_moving(f.clone(), &big, map);
+        let outcome = match mirror {
+            true => eng.embed_moving_mirrored(f.clone(), &big, map),
+            false => eng.embed_moving(f.clone(), &big, map),
+        };
         drop(scope);
         eng.limits().grant_every_reserve();
         match outcome {
@@ -108,21 +187,31 @@ fn refuse_at_every_point(arm: impl Fn(&Engine, u64) -> Option<crate::limits::Lim
 
 #[test]
 fn every_refused_reserve_gives_the_diagram_back() {
-    let refusals = refuse_at_every_point(|eng, n| {
-        eng.limits().refuse_nth_reserve(n as u32);
-        None
-    });
-    assert!(refusals >= 2, "only {refusals} refusal points");
+    for mirror in [false, true] {
+        let refusals = refuse_at_every_point(
+            |eng, n| {
+                eng.limits().refuse_nth_reserve(n as u32);
+                None
+            },
+            mirror,
+        );
+        assert!(refusals >= 2, "only {refusals} refusal points, mirror {mirror}");
+    }
 }
 
 #[test]
 fn every_stop_gives_the_diagram_back() {
-    let refusals = refuse_at_every_point(|eng, n| {
-        let at = eng.limits().work_units() + n;
-        let stop = StopRules { unconditional: Some(StopAt::WorkUnits(at)), after_pairs: None };
-        Some(eng.limits().scope(LimitConfig::none().with_stop_rules(stop)))
-    });
-    assert!(refusals >= 1, "no stop point");
+    for mirror in [false, true] {
+        let refusals = refuse_at_every_point(
+            |eng, n| {
+                let at = eng.limits().work_units() + n;
+                let stop = StopRules { unconditional: Some(StopAt::WorkUnits(at)), after_pairs: None };
+                Some(eng.limits().scope(LimitConfig::none().with_stop_rules(stop)))
+            },
+            mirror,
+        );
+        assert!(refusals >= 1, "no stop point, mirror {mirror}");
+    }
 }
 
 #[test]

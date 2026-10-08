@@ -211,6 +211,28 @@ impl<'a> MovePlacement<'a> {
         }
     }
 
+    /// Exchange the two sides of every pair of each moved level `plan`
+    /// mirrors ([`TddLevel::swap_sides`]): the level of the same functions
+    /// over its image, whose children are the source node's swapped. Its own
+    /// inverse, so a refused placement undoes it before
+    /// [`move_back`](Self::move_back).
+    ///
+    /// [`TddLevel::swap_sides`]: crate::diagram::TddLevel
+    pub(super) fn mirror(&mut self, plan: &crate::restructure::embed::Plan) {
+        let (levels, _) = self.assembly.parts_mut();
+        for (s, &mirrored) in plan.mirrored.iter().enumerate() {
+            if mirrored {
+                levels[plan.embedding.levels[s].idx()].swap_sides();
+            }
+        }
+    }
+
+    /// Record level `at`, changed in place by [`mirror`](Self::mirror), for
+    /// the seat to close; called bottom-up with the levels built.
+    pub(super) fn changed_at(&mut self, at: VtreeIdx) {
+        self.changed.push(at);
+    }
+
     /// Make an internal level marginal with no values: a level under a
     /// marginal parent, whose values the parent's subsume.
     pub(super) fn subsume(&mut self, at: VtreeIdx) {

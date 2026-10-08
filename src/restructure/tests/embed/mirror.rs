@@ -7,7 +7,7 @@ use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 
 /// `vtree`'s shape with every variable renamed through `rename` and the two
 /// children of every node `swap` names exchanged.
-fn mirrored_shape(
+pub(super) fn mirrored_shape(
     vtree: &Vtree,
     rename: impl Fn(VarId) -> VarId,
     swap: impl Fn(VtreeIdx) -> bool,

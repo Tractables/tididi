@@ -43,7 +43,7 @@ fn the_cone_is_the_levels_no_free_level_is_over() {
     let mut regions = 0;
     for (shape, into) in vtree_shapes(8) {
         let place = |d: &Tdd| {
-            place_moving(&eng, d.clone(), &into, |v| v, Free::Leave)
+            place_moving(&eng, d.clone(), &into, |v| v, Free::Leave, false)
                 .unwrap_or_else(|_| panic!("{shape}: not placed"))
         };
         let a = over(&into, &[1, 2, 3], &[vec![1, -2], vec![2, 3]]);
