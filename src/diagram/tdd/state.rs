@@ -170,6 +170,15 @@ impl Pass {
 /// rounds from inside itself and takes nothing from an assembly.
 const SEEDED: [Pass; 2] = [Pass::Contract, Pass::LeafContract];
 
+/// The room `pass`'s list is given for an assembly that rebuilt `rebuilt`
+/// levels and the reduction after it: a seed of each rebuilt level on a
+/// seeded pass's list, and on every list the prune's invalidation of each,
+/// which is all it adds when it compacts rebuilt levels only. A list with
+/// that room takes the seeds and the prune's pushes without growing.
+fn room(pass: Pass, rebuilt: usize) -> usize {
+    if SEEDED.contains(&pass) { rebuilt.saturating_mul(2) } else { rebuilt }
+}
+
 /// One worklist per reduction pass: the vtree levels that pass still has to
 /// revisit. Not serialized, and never part of the function the diagram
 /// denotes.
@@ -241,6 +250,16 @@ impl Dirty {
         self.list(pass).extend(levels);
     }
 
+    /// Room in every list for `n` more levels, for a rewrite about to
+    /// invalidate up to `n` levels one at a time, which then grows each list
+    /// once at most. Untracked, as [`Tdd::invalidate`]'s pushes are.
+    #[inline]
+    pub(crate) fn reserve_all(&mut self, n: usize) {
+        for list in &mut self.lists {
+            list.reserve(n);
+        }
+    }
+
     /// Empty `pass`'s list. The content-twin fixpoint drives its own rounds
     /// through its list, so it starts each round from a known set rather than
     /// from whatever ran before it.
@@ -279,16 +298,17 @@ impl Dirty {
         *self = carried;
     }
 
-    /// `under`'s lists with `over`'s after them, each allocated once: the
-    /// lists a copy of `over` holds once a copy of `under` is merged under
-    /// it with [`merge_under`](Self::merge_under). The loose levels are left
-    /// unknown, as seeding an assembly leaves them.
-    pub(crate) fn stacked(under: &Dirty, over: &Dirty) -> Dirty {
+    /// `under`'s lists with `over`'s after them, each allocated once, with
+    /// the [`room`] an assembly that rebuilt `rebuilt` levels and the
+    /// reduction after it take: the lists a copy of `over` holds once a copy
+    /// of `under` is merged under it with [`merge_under`](Self::merge_under).
+    /// The loose levels are left unknown, as seeding an assembly leaves them.
+    pub(crate) fn stacked(under: &Dirty, over: &Dirty, rebuilt: usize) -> Dirty {
         let mut out = Dirty::default();
         for pass in Pass::ALL {
             let (under, over) = (&under.lists[pass as usize], &over.lists[pass as usize]);
             let list = out.list(pass);
-            list.reserve_exact(under.len() + over.len());
+            list.reserve_exact(under.len() + over.len() + room(pass, rebuilt));
             list.extend_from_slice(under);
             list.extend_from_slice(over);
         }
@@ -391,11 +411,14 @@ impl Dirty {
         };
         let lim = eng.limits();
         let mut gate = lim.gate();
+        // Room for the reduction after the assembly too, so that its prune's
+        // invalidations do not grow the lists again.
         let minimum = rebuilt.size_hint().0;
         for pass in SEEDED {
             let list = self.list(pass);
-            if minimum > list.capacity() - list.len() {
-                lim.reserve(list, minimum)?;
+            let want = room(pass, minimum);
+            if want > list.capacity() - list.len() {
+                lim.reserve(list, want)?;
             }
         }
         for t in rebuilt {

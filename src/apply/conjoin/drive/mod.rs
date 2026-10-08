@@ -416,7 +416,6 @@ pub(crate) fn apply_and_core(
     // and whatever the operands owed; seeding every level made the
     // minimization after a join as long as the diagram.
     let finished = if plain {
-        let owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty);
         // Which operand each carried level came from: 1 for `f`, 2 for `g`,
         // 0 for a level the conjunction built and for the leaves.
         let mut carrier = vec![0u8; num_nodes];
@@ -440,6 +439,7 @@ pub(crate) fn apply_and_core(
         let internal = vtree.internal_bottomup_slice();
         let mut built: Vec<VtreeIdx> = Vec::with_capacity(internal.len());
         built.extend(internal.iter().copied().filter(|t| carrier[t.idx()] == 0));
+        let owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, built.len());
         assembly.finish_with_or_return(output, owed, &built, Some(&built[..])).map(|mut out| {
             if let Some(loose) = loose {
                 out.dirty.set_loose(Some(loose));

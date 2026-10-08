@@ -1202,10 +1202,17 @@ fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[bool]>) -> Res
 
     // Compaction, bottom-up: a level was pushed after its parent, so the walk
     // order reversed puts every level after its own children.
+    // The first level compacted makes room in the worklists for every level
+    // still to come, so that each list grows once however many are pushed.
     let marks: &[u64] = marks;
+    let mut room = false;
     for k in (0..visits.len()).rev() {
         let v = visits[k];
         if compact_one_level(tdd, v.level, &marks[v.base..], marks, remap, identity, v.left, v.right) {
+            if !room {
+                tdd.dirty.reserve_all(k + 1);
+                room = true;
+            }
             tdd.invalidate(v.level);
         }
     }
