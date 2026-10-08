@@ -130,6 +130,15 @@ pub(super) fn mark_dead(cells: &mut [u32]) {
     }
 }
 
+/// [`mark_dead`] behind a call, for the row loop over a level with a
+/// complete side. Inlined there, the reset left that loop short of registers
+/// and its work counter went to the stack at every poll; the loop over two
+/// grids keeps it inlined, where a call would cost more than the stores.
+#[inline(never)]
+fn mark_dead_out_of_line(cells: &mut [u32]) {
+    mark_dead(cells);
+}
+
 /// The one row/cell loop of the dense product build.
 ///
 /// `const DENSE` skips the per-row alive-mask fold on levels where it provably
@@ -187,8 +196,12 @@ where
     // ([`process_cell`]): no cell is written twice.
     let every_cell = A::DENSE_SLAB && DENSE && !left.kills() && !right.kills();
     let slab_fill = A::DENSE_SLAB && !every_cell && left_width.saturating_mul(right_width) <= DEAD_SLAB_FILL_MAX_CELLS;
+    // A side that cannot kill is a complete one ([`mark_dead_out_of_line`]).
+    let reset = |cells: &mut [u32]| {
+        if left.kills() && right.kills() { mark_dead(cells) } else { mark_dead_out_of_line(cells) }
+    };
     if slab_fill {
-        mark_dead(&mut node_idx[ctx.output_grid_base..ctx.output_grid_base + left_width * right_width]);
+        reset(&mut node_idx[ctx.output_grid_base..ctx.output_grid_base + left_width * right_width]);
     }
 
     // An implicit f level's rows are read in order off its description.
@@ -196,7 +209,7 @@ where
     for i in 0..left_width {
         let row_base = ctx.output_grid_base + action.grid_row(i) * right_width;
         if !slab_fill && !every_cell {
-            mark_dead(&mut node_idx[row_base..row_base + right_width]);
+            reset(&mut node_idx[row_base..row_base + right_width]);
         }
 
         let f_pairs = left_level_t.pairs_view_decoded_next(
@@ -209,7 +222,7 @@ where
         // Empty pairs means dead (zero-containing) node — skip this row.
         if f_pairs.is_empty() {
             if every_cell {
-                mark_dead(&mut node_idx[row_base..row_base + right_width]);
+                reset(&mut node_idx[row_base..row_base + right_width]);
             }
             continue;
         }
