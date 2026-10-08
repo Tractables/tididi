@@ -64,3 +64,39 @@ fn finish_tests_the_stop_without_adding_work() {
     assert!(matches!(lim.gate_with(1000).finish(), Err(OperationError::Stopped)));
     assert_eq!(lim.work_units(), before + 7);
 }
+
+/// `poll_each` is that many polls of one unit: the same charges at the same
+/// points, the same stop, the same residue for the drop.
+#[test]
+fn poll_each_charges_and_stops_as_single_polls_do() {
+    fn run(stride: u64, held: u64, units: u64, stop_at: u64, each: bool) -> (Result<(), OperationError>, u64, u64) {
+        let lim = Limits::new();
+        let _prior = lim.install(
+            LimitConfig::none().with_stop_rules(StopRules::default().after_pairs(0, StopAt::WorkUnits(stop_at))),
+        );
+        let mut gate = lim.gate_with(stride);
+        let mut result = gate.poll(held);
+        if result.is_ok() {
+            result = match each {
+                true => gate.poll_each(units),
+                false => (0..units).try_for_each(|_| gate.poll(1)),
+            };
+        }
+        let charged = lim.work_units();
+        drop(gate);
+        (result, charged, lim.work_units())
+    }
+    for stride in [0, 1, 4, 7] {
+        for held in [0, 2, 5] {
+            for units in [0, 1, 3, 4, 10, 29] {
+                for stop_at in [1, 6, 9, 20, 1000] {
+                    assert_eq!(
+                        run(stride, held, units, stop_at, true),
+                        run(stride, held, units, stop_at, false),
+                        "stride {stride}, held {held}, units {units}, stop at {stop_at}",
+                    );
+                }
+            }
+        }
+    }
+}

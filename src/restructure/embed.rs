@@ -452,6 +452,10 @@ impl Plan {
     /// correspond to the current source node. `O(nodes of into)`; up to
     /// mirrors, each source node's orientation is read off where the image of
     /// one of its left child's leaves lies, `O(depth of into)` more per node.
+    ///
+    /// The work clock is charged one unit for each source leaf, one for each
+    /// internal node of `into`, and one for each node the match visits, the
+    /// one it fails at included.
     fn build(
         lim: &Limits,
         source: &Vtree,
@@ -476,11 +480,17 @@ impl Plan {
             }
             free[target.idx()] = false;
             embedding[leaf.idx()] = target;
+            // The image's ancestors have a renamed variable under them, up to
+            // the one where an earlier image's path joins.
+            let mut node = target;
+            while let Some(parent) = into.node(node).parent()
+                && free[parent.idx()]
+            {
+                free[parent.idx()] = false;
+                node = parent;
+            }
         }
-        for (t, left, right) in into.internal_bottomup() {
-            gate.poll(1)?;
-            free[t.idx()] = free[left.idx()] && free[right.idx()];
-        }
+        gate.poll_each(into.internal_bottomup_slice().len() as u64)?;
 
         // A leaf under each source node, and whether each source node's
         // image has its children the other way round.
@@ -499,10 +509,38 @@ impl Plan {
 
         let mut covered_by = Vec::new();
         lim.try_resize(&mut covered_by, into.num_nodes(), None)?;
+        let mut plan = Plan { free, covered_by, embedding: Embedding { levels: embedding }, mirror, mirrored };
+        let mut visited = 0;
+        let matched = plan.match_down(lim, source, into, &some_leaf, &mut visited);
+        gate.poll_each(visited)?;
+        matched?;
+        debug_assert_eq!(
+            plan.covered_by.iter().filter(|source| source.is_some()).count(),
+            source.num_nodes(),
+            "a completed match gives every source level an image",
+        );
+        gate.flush()?;
+        Ok(plan)
+    }
+
+    /// The top-down match of [`build`](Self::build), once the free nodes
+    /// are marked, counting in `visited` the nodes it visits.
+    fn match_down(
+        &mut self,
+        lim: &Limits,
+        source: &Vtree,
+        into: &Vtree,
+        some_leaf: &[VtreeIdx],
+        visited: &mut u64,
+    ) -> Result<(), EmbedError> {
+        let Plan { free, covered_by, embedding: Embedding { levels: embedding }, mirror, mirrored } = self;
+        // An image pushes one entry more than it pops and a leaf one fewer,
+        // so the stack holds one entry at most for each source leaf.
         let mut stack = Vec::new();
+        lim.reserve_exact(&mut stack, source.num_nodes() / 2 + 1)?;
         lim.try_push(&mut stack, (into.root(), source.root()))?;
         while let Some((d, s)) = stack.pop() {
-            gate.poll(1)?;
+            *visited += 1;
             if !into.node(d).is_leaf() {
                 let (left, right) = into.children(d);
                 if free[left.idx()] || free[right.idx()] {
@@ -517,7 +555,7 @@ impl Plan {
                 (false, false) => {
                     let (left, right) = into.children(d);
                     let (mut source_left, mut source_right) = source.children(s);
-                    if mirror && lies_under(into, embedding[some_leaf[source_left.idx()].idx()], right, d) {
+                    if *mirror && lies_under(into, embedding[some_leaf[source_left.idx()].idx()], right, d) {
                         mirrored[s.idx()] = true;
                         std::mem::swap(&mut source_left, &mut source_right);
                     }
@@ -529,13 +567,7 @@ impl Plan {
             embedding[s.idx()] = d;
             covered_by[d.idx()] = Some(s);
         }
-        debug_assert_eq!(
-            covered_by.iter().filter(|source| source.is_some()).count(),
-            source.num_nodes(),
-            "a completed match gives every source level an image",
-        );
-        gate.flush()?;
-        Ok(Plan { free, covered_by, embedding: Embedding { levels: embedding }, mirror, mirrored })
+        Ok(())
     }
 }
 

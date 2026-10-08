@@ -58,6 +58,30 @@ impl PollGate<'_> {
         self.lim.poll_now(done)
     }
 
+    /// Add `units` units as that many polls of one unit would: the clock is
+    /// charged and cancellation tested at the same points, each time the gate
+    /// comes due. For a loop that charges one unit an item and whose items
+    /// have no other effect on the limits, so it can charge them all in one
+    /// call, before or after the loop.
+    #[inline]
+    pub(crate) fn poll_each(&mut self, units: u64) -> Result<(), OperationError> {
+        let step = self.stride.max(1);
+        let due = step - self.work.min(step);
+        if units < due {
+            self.work += units;
+            return Ok(());
+        }
+        self.work = 0;
+        self.lim.poll_now(step)?;
+        let mut left = units - due;
+        while left >= step {
+            self.lim.poll_now(step)?;
+            left -= step;
+        }
+        self.work = left;
+        Ok(())
+    }
+
     /// Charge whatever the gate still holds and test cancellation now.
     ///
     /// A gate that spans a whole level ends it holding less than one stride,
