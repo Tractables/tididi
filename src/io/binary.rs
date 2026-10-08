@@ -13,6 +13,8 @@ use std::sync::Arc;
 use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, EncodedNode, NodeIdx, Tdd, TddLevel, TddNodeId, LEAF_WIDTH, ZERO};
 use crate::vtree::{Vtree, VtreeIdx, VtreeNode};
 
+use super::numbering::{number_reachable, OMITTED};
+
 use super::IoError;
 
 /// The first eight bytes of every binary diagram file.
@@ -387,44 +389,25 @@ fn encode(tdd: &Tdd) -> Vec<u8> {
 /// counts the multi-pair nodes written in each node code.
 pub(super) fn encode_levels(tdd: &Tdd, order: &[VtreeIdx], out: &mut Vec<u8>, codes: &mut [u64; 3]) {
     let vtree = &tdd.vtree;
-    let reachable = tdd.reachable_nodes();
-    let mut remap: Vec<Vec<u32>> = vec![Vec::new(); vtree.num_nodes()];
-    let mut width = vec![LEAF_WIDTH; vtree.num_nodes()];
-    for &t in order {
-        if vtree.node(t).is_leaf() {
-            remap[t.idx()] = (0..LEAF_WIDTH as u32).collect();
-            continue;
-        }
-        let reach = &reachable[t.idx()];
-        let mut map = vec![u32::MAX; reach.len()];
-        let mut next = 0u32;
-        for (i, slot) in map.iter_mut().enumerate() {
-            if reach[i] {
-                *slot = next;
-                next += 1;
-            }
-        }
-        width[t.idx()] = next as usize;
-        remap[t.idx()] = map;
-    }
-    let out_local = remap[tdd.output.vtree.idx()][tdd.output.local.idx()];
-    debug_assert_ne!(out_local, u32::MAX, "the output is reachable");
+    let numbering = number_reachable(tdd);
+    let out_local = numbering[tdd.output.vtree.idx()].local[tdd.output.local.idx()];
+    debug_assert_ne!(out_local, OMITTED, "the output is reachable");
     push_varint(out, u64::from(out_local) + 1);
 
     let structural = ChildDecoder::structural();
     for &t in order {
         let VtreeNode::Internal { left, right, .. } = *vtree.node(t) else { continue };
         let level = tdd.level(t);
-        let reach = &reachable[t.idx()];
-        let live = || level.internal_inputs_iter().filter(|(i, _)| reach[*i]);
+        let local = &numbering[t.idx()].local;
+        let live = || level.internal_inputs_iter().filter(|(i, _)| local[*i] != OMITTED);
         let (mut nodes, mut multi, mut pairs) = (0u64, 0u64, 0u64);
         for (_, node_pairs) in live() {
             nodes += 1;
             multi += u64::from(node_pairs.len() > 1);
             pairs += node_pairs.len() as u64;
         }
-        let (left_map, right_map) = (&remap[left.idx()], &remap[right.idx()]);
-        let (left_bits, right_bits) = (index_bits(width[left.idx()]), index_bits(width[right.idx()]));
+        let (left_map, right_map) = (&numbering[left.idx()].local, &numbering[right.idx()].local);
+        let (left_bits, right_bits) = (index_bits(numbering[left.idx()].width), index_bits(numbering[right.idx()].width));
         let mut stream = Vec::new();
         let mut bits = BitWriter::new(&mut stream);
         let mut mapped: Vec<(u32, u32)> = Vec::new();

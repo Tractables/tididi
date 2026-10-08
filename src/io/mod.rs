@@ -116,6 +116,7 @@
 //! text format's version.
 
 mod binary;
+mod numbering;
 mod dot;
 mod read;
 mod write;

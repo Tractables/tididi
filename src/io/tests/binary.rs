@@ -428,3 +428,54 @@ fn a_marginal_diagram_is_not_written() {
     assert!(matches!(crate::io::save_tdd_binary(&f, &path), Err(IoError::Format(_))));
     assert!(!path.exists());
 }
+
+#[test]
+fn both_writers_preserve_node_and_pair_order_when_compacting_gaps() {
+    use crate::diagram::{ChildPair, NodeIdx, TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
+    let eng = crate::Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = vtree.root();
+    let (left, right) = vtree.children(root);
+    let mut builder = Tdd::builder(&eng, &vtree).unwrap();
+    // Reach nodes 1 and 3 on the left, node 1 on the right and root node 1.
+    // The root reads its left nodes in the reverse of their stored order.
+    let dead_left = builder.push(&eng, left, &[ChildPair::new(NEG_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
+    let first = builder.push(&eng, left, &[ChildPair::new(POS_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
+    builder.push(&eng, left, &[ChildPair::new(NEG_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
+    let last = builder.push(&eng, left, &[ChildPair::new(POS_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
+    let dead_right = builder.push(&eng, right, &[ChildPair::new(NEG_LEAF_IDX, NEG_LEAF_IDX)]).unwrap();
+    let kept_right = builder.push(&eng, right, &[ChildPair::new(ONE_LEAF_IDX, POS_LEAF_IDX)]).unwrap();
+    builder.push(&eng, root, &[ChildPair::new(dead_left, dead_right)]).unwrap();
+    let output = builder.push(&eng, root, &[ChildPair::new(last, kept_right), ChildPair::new(first, kept_right)]).unwrap();
+    let f = builder.finish(TddNodeId { vtree: root, local: output }).unwrap();
+    let bytes = binary(&f);
+    let written = text(&f);
+    let records: Vec<&str> = std::str::from_utf8(&written).unwrap().lines().filter(|line| line.starts_with("I ")).collect();
+    let (ll, lr) = vtree.children(left);
+    let (rl, rr) = vtree.children(right);
+    assert_eq!(records, vec![
+        format!("I {} {} {} 1 1", vtree.topo_pos(left), vtree.topo_pos(ll), vtree.topo_pos(lr)),
+        format!("I {} {} {} 1 2", vtree.topo_pos(left), vtree.topo_pos(ll), vtree.topo_pos(lr)),
+        format!("I {} {} {} 0 1", vtree.topo_pos(right), vtree.topo_pos(rl), vtree.topo_pos(rr)),
+        format!("I {} {} {} 1 0 0 0", vtree.topo_pos(root), vtree.topo_pos(left), vtree.topo_pos(right)),
+    ]);
+    for mut back in [
+        read_tdd(&mut written.as_slice(), &vtree).unwrap(),
+        read_tdd_binary(&mut bytes.as_slice(), &vtree).unwrap(),
+    ] {
+        assert_eq!(back.output().local, NodeIdx(0));
+        assert_eq!(back.level(left).slot_count(), 2);
+        assert_eq!(back.level(right).slot_count(), 1);
+        assert_eq!(back.level(root).pairs_vec(0), vec![ChildPair::new(NodeIdx(1), NodeIdx(0)), ChildPair::new(NodeIdx(0), NodeIdx(0))]);
+        assert_eq!(back.model_count().unwrap(), 4u32.into());
+        assert_eq!(binary(&back), bytes);
+        assert_eq!(text(&back), written);
+        // The fixture deliberately retains unreachable nodes and a fusion;
+        // serialization preserves pair order, while minimization removes them.
+        back.minimize().unwrap();
+        assert_canonical(&back);
+    }
+    let mut canonical = f;
+    canonical.minimize().unwrap();
+    assert_canonical(&canonical);
+}

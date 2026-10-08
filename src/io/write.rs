@@ -6,9 +6,9 @@ use std::io::{BufWriter, Seek, Write};
 use std::path::Path;
 
 use crate::diagram::Tdd;
-use crate::vtree::VtreeIdx;
 
 use super::{IoError, TDD_FORMAT_VERSION};
+use super::numbering::{number_reachable, LevelNumbering, OMITTED};
 
 /// Write a diagram to a file in `.tdd` text format, creating or truncating
 /// the file.
@@ -112,10 +112,9 @@ pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
         return Ok(());
     }
 
-    let reachable = tdd.reachable_nodes();
-    let remap = local_index_remap(tdd, &reachable);
-    let out_local = remap[tdd.output.vtree.idx()][tdd.output.local.idx()];
-    debug_assert_ne!(out_local, u32::MAX, "output node must be reachable");
+    let numbering = number_reachable(tdd);
+    let out_local = numbering[tdd.output.vtree.idx()].local[tdd.output.local.idx()];
+    debug_assert_ne!(out_local, OMITTED, "output node must be reachable");
 
     push_problem_line(&mut buf, tdd, Some(out_local));
     w.write_all(&buf)?;
@@ -133,7 +132,7 @@ pub fn write_tdd<W: Write>(w: &mut W, tdd: &Tdd) -> Result<(), IoError> {
     w.write_all(&buf)?;
     buf.clear();
 
-    write_internal_lines(w, tdd, &reachable, &remap, &mut buf)
+    write_internal_lines(w, tdd, &numbering, &mut buf)
 }
 
 /// A compact record reference travels with the data; the full specification is in rustdoc.
@@ -184,49 +183,21 @@ fn push_problem_line(buf: &mut Vec<u8>, tdd: &Tdd, out_local: Option<u32>) {
     buf.push(b'\n');
 }
 
-/// Per vtree node, the map from a node's index in the level to the local index
-/// the file gives it. Unreachable nodes are dropped (`u32::MAX`), so internal
-/// levels compact; leaf levels keep the identity map, since a reader
-/// reconstructs all three implicit nodes regardless.
-fn local_index_remap(tdd: &Tdd, reachable: &[Vec<bool>]) -> Vec<Vec<u32>> {
-    let vtree = &tdd.vtree;
-    let mut remap: Vec<Vec<u32>> = Vec::with_capacity(vtree.num_nodes());
-    for (vi, reach) in reachable.iter().enumerate() {
-        let mut map = vec![u32::MAX; reach.len()];
-        if vtree.node(VtreeIdx(vi as u32)).is_leaf() {
-            for (j, slot) in map.iter_mut().enumerate() {
-                *slot = j as u32;
-            }
-        } else {
-            let mut next = 0u32;
-            for (i, _) in tdd.level(VtreeIdx(vi as u32)).internal_inputs_iter() {
-                if reach[i] {
-                    map[i] = next;
-                    next += 1;
-                }
-            }
-        }
-        remap.push(map);
-    }
-    remap
-}
-
 /// The `I` lines: one per reachable internal node, its pairs written through
-/// `remap` so the reader's sequential local indices line up. Flushed to `w` in
+/// `numbering` so the reader's sequential local indices line up. Flushed to `w` in
 /// buffer-sized chunks rather than held in one allocation.
 fn write_internal_lines<W: Write>(
     w: &mut W,
     tdd: &Tdd,
-    reachable: &[Vec<bool>],
-    remap: &[Vec<u32>],
+    numbering: &[LevelNumbering],
     buf: &mut Vec<u8>,
 ) -> Result<(), IoError> {
     for (t, left_vtree, right_vtree) in tdd.vtree.internal_bottomup() {
-        let reach = &reachable[t.idx()];
-        let left_remap = &remap[left_vtree.idx()];
-        let right_remap = &remap[right_vtree.idx()];
+        let local = &numbering[t.idx()].local;
+        let left_remap = &numbering[left_vtree.idx()].local;
+        let right_remap = &numbering[right_vtree.idx()].local;
         for (i, pairs) in tdd.level(t).internal_inputs_iter() {
-            if !reach[i] {
+            if local[i] == OMITTED {
                 continue;
             }
             buf.extend_from_slice(b"I ");
