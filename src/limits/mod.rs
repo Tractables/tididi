@@ -350,6 +350,9 @@ pub struct Limits {
     conjunction: Cell<Option<ConjunctionProgress>>,
     sparse_route: Cell<SparseRoute>,
     memory_hooks: RefCell<MemoryHooks>,
+    /// Whether `memory_hooks` holds hooks, set with it: a reservation with
+    /// none reads this flag and leaves the `RefCell` alone.
+    hooked: Cell<bool>,
     /// The address-space ceiling, answered once per install: it is stable for
     /// the life of the memory hooks, and the growth machinery asks per huge level.
     vas_limit: Cell<Option<Option<u64>>>,
@@ -400,6 +403,7 @@ impl Limits {
             conjunction: Cell::new(None),
             sparse_route: Cell::new(SparseRoute::DEFAULT),
             memory_hooks: RefCell::new(MemoryHooks::NONE),
+            hooked: Cell::new(false),
             vas_limit: Cell::new(None),
             #[cfg(test)]
             poll_stride_pin: Cell::new(None),
@@ -474,6 +478,7 @@ impl Limits {
         self.stop_callback.replace(set.stop_callback);
         self.conjunction_progress.set(set.conjunction_progress);
         self.sparse_route.set(set.sparse_route);
+        self.hooked.set(!set.memory_hooks.is_none());
         self.memory_hooks.replace(set.memory_hooks);
         self.vas_limit.set(None);
         prior

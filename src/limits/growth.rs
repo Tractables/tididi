@@ -49,7 +49,7 @@ impl Limits {
     /// allocated or in what order.
     #[inline]
     pub(crate) fn memory_unbounded(&self) -> bool {
-        self.budget.get().is_none() && self.memory_hooks.borrow().is_none()
+        self.budget.get().is_none() && !self.hooked.get()
     }
 
 
@@ -123,8 +123,14 @@ impl Limits {
 
 
     /// Pre-allocation release notice for a growth of `request_bytes`.
+    ///
+    /// The hooks are cloned out of their cell before the call, so a hook may
+    /// install limits on this engine.
     #[inline]
     pub(crate) fn preflight_alloc(&self, request_bytes: u64) {
+        if !self.hooked.get() {
+            return;
+        }
         let mem = self.memory_hooks.borrow().clone();
         mem.preflight_alloc(request_bytes);
     }
@@ -132,6 +138,9 @@ impl Limits {
     /// Once-per-operation eager-reclaim nudge.
     #[inline]
     pub(crate) fn eager_reclaim(&self) {
+        if !self.hooked.get() {
+            return;
+        }
         let mem = self.memory_hooks.borrow().clone();
         mem.eager_reclaim();
     }

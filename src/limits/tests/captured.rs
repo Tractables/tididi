@@ -44,6 +44,34 @@ fn captured_memory_probes_and_reentrant_installation_release_the_callback_borrow
     });
 }
 
+/// Hooks a scope installs are reached by the reservation notice and the
+/// reclaim nudge, and count as a bound on memory, until the scope drops.
+#[test]
+fn installed_memory_hooks_are_reached_until_their_scope_drops() {
+    let engine = Engine::new();
+    let calls = Arc::new(AtomicU64::new(0));
+    let (notices, reclaims) = (Arc::clone(&calls), Arc::clone(&calls));
+    let hooks = MemoryHooks::new(
+        move |_| { notices.fetch_add(1, Ordering::Relaxed); },
+        || 0,
+        || None,
+        move || { reclaims.fetch_add(100, Ordering::Relaxed); },
+    );
+    let lim = engine.limits();
+    assert!(lim.memory_unbounded());
+    {
+        let _hooks = lim.scope(LimitConfig::none().with_memory_hooks(hooks));
+        assert!(!lim.memory_unbounded());
+        lim.preflight_alloc(8);
+        lim.eager_reclaim();
+        assert_eq!(calls.load(Ordering::Relaxed), 101);
+    }
+    assert!(lim.memory_unbounded());
+    lim.preflight_alloc(8);
+    lim.eager_reclaim();
+    assert_eq!(calls.load(Ordering::Relaxed), 101, "no hook is reached once the scope has dropped");
+}
+
 #[test]
 fn a_schedule_can_replace_its_own_installation() {
     thread_local! { static ENGINE: Engine = Engine::new(); }
