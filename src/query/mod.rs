@@ -29,6 +29,7 @@ mod evaluate;
 mod boolean;
 mod cache;
 mod evaluator;
+mod column_layout;
 mod columns;
 mod ordered;
 pub use columns::{ModelColumns, MAX_COLUMN_BITS};

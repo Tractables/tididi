@@ -307,3 +307,18 @@ fn the_first_rows_are_the_least_on_any_layout_that_reads_the_keys_first() {
     }
     assert!(cases > 2000, "{cases} cases");
 }
+
+#[test]
+fn ordered_queries_accept_128_key_bits_and_decline_more() {
+    let vtree = Arc::new(Vtree::linear(129));
+    let f = Tdd::one(&vtree);
+    crate::test_helpers::assert_canonical(&f);
+    let bits: Vec<VarId> = (1..=129).map(VarId).collect();
+    let columns: Vec<&[VarId]> = bits.chunks(32).collect();
+    let directions = [false; 5];
+    let keys = &columns[..4];
+    assert_eq!(f.ordered_keys(keys, &directions[..4], 1).unwrap(), Some(vec![vec![0]; 4]));
+    assert_eq!(f.ordered_models(&columns, &directions, 4, 1).unwrap(), Some(vec![vec![0]; 5]));
+    assert_eq!(f.ordered_keys(&columns, &directions, 1).unwrap(), None);
+    assert_eq!(f.ordered_models(&columns, &directions, 5, 1).unwrap(), None);
+}

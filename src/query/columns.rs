@@ -131,25 +131,8 @@ impl Engine {
         let vtree = Arc::clone(tdd.vtree());
         let num_nodes = vtree.num_nodes();
 
-        // Each listed variable's column and bit.
-        let mut role: Vec<Option<(u32, u32)>> = vec![None; vtree.num_vars() as usize + 1];
-        let mut widths = Vec::with_capacity(columns.len());
-        for (j, vars) in columns.iter().enumerate() {
-            if vars.len() > MAX_COLUMN_BITS {
-                return Err(OperationError::ColumnTooWide { column: j, bits: vars.len() });
-            }
-            widths.push(vars.len() as u32);
-            for (i, &v) in vars.iter().enumerate() {
-                if vtree.leaf_of(v).is_none() {
-                    return Err(OperationError::VariableNotInVtree(v));
-                }
-                let slot = &mut role[v.0 as usize];
-                if slot.is_some() {
-                    return Err(OperationError::DuplicateVariable(v));
-                }
-                *slot = Some((j as u32, (vars.len() - 1 - i) as u32));
-            }
-        }
+        let role = super::column_layout::roles(&vtree, columns)?;
+        let widths: Vec<u32> = columns.iter().map(|vars| vars.len() as u32).collect();
 
         // Per vtree node, the bits of each column its variables own.
         let mut level_touch: Vec<Vec<(u32, u32)>> = vec![Vec::new(); num_nodes];

@@ -393,3 +393,45 @@ fn ranges_in_any_order_match_the_whole_table() {
         }
     }
 }
+
+#[test]
+fn column_queries_agree_on_layout_errors_and_error_order() {
+    let vtree = Arc::new(Vtree::linear(33));
+    let f = Tdd::one(&vtree);
+    assert_canonical(&f);
+    let too_wide: Vec<VarId> = (1..=33).map(VarId).collect();
+    let cases: Vec<(Vec<&[VarId]>, OperationError)> = vec![
+        (vec![&[VarId(0)]], OperationError::VariableNotInVtree(VarId(0))),
+        (vec![&[VarId(34)]], OperationError::VariableNotInVtree(VarId(34))),
+        (vec![&[VarId(1), VarId(1)]], OperationError::DuplicateVariable(VarId(1))),
+        (vec![&[VarId(2)], &[], &[VarId(2)]], OperationError::DuplicateVariable(VarId(2))),
+        (vec![&too_wide], OperationError::ColumnTooWide { column: 0, bits: 33 }),
+        // The first column's error wins over a later column's width error.
+        (vec![&[VarId(0)], &too_wide], OperationError::VariableNotInVtree(VarId(0))),
+    ];
+    for (columns, error) in cases {
+        let descending = vec![false; columns.len()];
+        assert_eq!(f.model_columns(&columns).unwrap_err(), error);
+        // Even a zero-row request validates its columns.
+        assert_eq!(f.ordered_models(&columns, &descending, columns.len(), 0).unwrap_err(), error);
+        assert_eq!(f.ordered_keys(&columns, &descending, 0).unwrap_err(), error);
+    }
+}
+
+#[test]
+fn column_queries_agree_on_empty_and_full_width_columns() {
+    let vtree = Arc::new(Vtree::linear(32));
+    let f = Tdd::one(&vtree);
+    assert_canonical(&f);
+    let bits: Vec<VarId> = (1..=32).map(VarId).collect();
+    let columns: &[&[VarId]] = &[&[], &bits, &[]];
+    let mut table = f.model_columns(columns).unwrap();
+    assert_eq!(table.rows(), 1u64 << 32);
+    assert_eq!(table.column_bits().collect::<Vec<_>>(), vec![0, 32, 0]);
+    let mut last = vec![vec![0; 2]; 3];
+    table.write((1u64 << 32) - 2..1u64 << 32, &mut last.iter_mut().map(Vec::as_mut_slice).collect::<Vec<_>>());
+    assert_eq!(last, vec![vec![0, 0], vec![u32::MAX - 1, u32::MAX], vec![0, 0]]);
+    let first = vec![vec![0, 0], vec![u32::MAX, u32::MAX - 1], vec![0, 0]];
+    assert_eq!(f.ordered_models(columns, &[false, true, false], 3, 2).unwrap(), Some(first.clone()));
+    assert_eq!(f.ordered_keys(columns, &[false, true, false], 2).unwrap(), Some(first));
+}

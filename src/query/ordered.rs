@@ -46,7 +46,7 @@ use crate::limits::OperationError;
 use crate::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
 use crate::Engine;
 
-use super::columns::MAX_COLUMN_BITS;
+use super::column_layout::roles;
 
 impl Tdd {
     /// The first `limit` models of this diagram in the order of its first
@@ -67,7 +67,8 @@ impl Tdd {
     /// The layout it needs: the vtree's leaves, left to right, read the key
     /// columns' variables before any other listed one, column 0's from the
     /// most significant down, then column 1's, and so on; unlisted
-    /// variables may sit anywhere. Otherwise the result is `Ok(None)`.
+    /// variables may sit anywhere. At most 128 key bits are supported.
+    /// Otherwise the result is `Ok(None)`.
     ///
     /// The work is the models written, each through the nodes on its path,
     /// and the pairs of the nodes it opens, each pair's left child read to
@@ -296,28 +297,6 @@ impl Engine {
         gate.finish()?;
         Ok(Some(out))
     }
-}
-
-/// Each variable's column and bit (`0` the least significant) in
-/// `columns`.
-fn roles(vtree: &Vtree, columns: &[&[VarId]]) -> Result<Vec<Option<(u32, u32)>>, OperationError> {
-    let mut role: Vec<Option<(u32, u32)>> = vec![None; vtree.num_vars() as usize + 1];
-    for (j, vars) in columns.iter().enumerate() {
-        if vars.len() > MAX_COLUMN_BITS {
-            return Err(OperationError::ColumnTooWide { column: j, bits: vars.len() });
-        }
-        for (i, &v) in vars.iter().enumerate() {
-            if vtree.leaf_of(v).is_none() {
-                return Err(OperationError::VariableNotInVtree(v));
-            }
-            let slot = &mut role[v.0 as usize];
-            if slot.is_some() {
-                return Err(OperationError::DuplicateVariable(v));
-            }
-            *slot = Some((j as u32, (vars.len() - 1 - i) as u32));
-        }
-    }
-    Ok(role)
 }
 
 /// The most key bits the walk orders on: a stream's keys are one `u128`.
