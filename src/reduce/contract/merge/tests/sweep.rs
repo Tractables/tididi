@@ -110,7 +110,7 @@ fn a_shrunk_extended_parent_node_inlines_its_survivor() {
         ChildPair::new(NodeIdx(1), sibling),
     ]
     .into();
-    parent.ranges = vec![PairRange { start: 0, len: 2 }];
+    parent.ranges = vec![PairRange { start: 0, len: 2 }].into();
     parent.nodes = vec![EncodedNode::multi_ranged(0)].into();
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);

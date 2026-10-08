@@ -270,7 +270,7 @@ pub(super) fn reserve_transactional(
         // Immutable sizing borrow above ends here; take the mutable arena borrow.
         let level = &mut tdd.levels[t1.idx()];
         lim.reserve_exact(level.pairs.stored_mut(), needed_pairs)?;
-        lim.reserve_exact(&mut level.ranges, needed_ext)?;
+        level.ranges.reserve_exact(lim, needed_ext)?;
     }
     Ok(())
 }

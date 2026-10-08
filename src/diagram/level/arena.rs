@@ -14,9 +14,11 @@ pub(crate) trait ArenaGrowth {
     ///
     /// `Err(OperationError::OverBudget)` when the growth is refused.
     fn grow<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError>;
+    fn charge(&self, bytes: u64) -> Result<(), OperationError>;
 }
 
 impl ArenaGrowth for Limits {
+    fn charge(&self, bytes: u64) -> Result<(), OperationError> { self.charge_bytes(bytes) }
     #[inline]
     fn grow<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
         self.reserve(v, additional)
@@ -28,6 +30,7 @@ impl ArenaGrowth for Limits {
 pub(crate) struct Untracked;
 
 impl ArenaGrowth for Untracked {
+    fn charge(&self, _bytes: u64) -> Result<(), OperationError> { Ok(()) }
     #[inline]
     fn grow<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
         v.try_reserve(additional).map_err(|_| OperationError::OverBudget)
@@ -70,7 +73,7 @@ impl TddLevel {
             let range_idx = self.ranges.len();
             debug_assert!(range_idx < (1usize << 31), "too many ranged nodes in a single level");
             if self.ranges.len() == self.ranges.capacity() {
-                growth.grow(&mut self.ranges, 1)?;
+                self.ranges.grow(growth, 1)?;
             }
             self.ranges.push(PairRange { start: pair_start as u64, len: pair_len as u64 });
             Ok(EncodedNode::multi_ranged(range_idx as u32))
@@ -470,7 +473,7 @@ impl TddLevel {
         let reused = match node { NodeKind::MultiRanged(i) => Some(i as usize), _ => None };
         // Reserve and charge everything before changing any live node or pair.
         lim.reserve(self.pairs.stored_mut(), if at_tail { 1 } else { len })?;
-        if ranged && reused.is_none() { lim.reserve(&mut self.ranges, 1)?; }
+        if ranged && reused.is_none() { self.ranges.grow(lim, 1)?; }
         if !at_tail {
             if let Some(existing) = inline {
                 self.pairs.stored_mut().push(existing);

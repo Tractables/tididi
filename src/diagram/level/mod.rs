@@ -1,6 +1,8 @@
 //! The `TddLevel` structure, its state predicates, and its size accessors.
 
 mod arena;
+mod ranges;
+use ranges::RangeTable;
 mod count_overflow;
 mod implicit;
 mod marginal;
@@ -16,7 +18,7 @@ pub(crate) use pairs::{decoded, sort_pairs};
 pub(crate) use marginal::{assert_can_make_marginal, non_marginal_child};
 
 use super::marginal_ref::{ChildDecoder, ChildSide};
-use super::primitives::{PairRange, ChildPair, EncodedNode};
+use super::primitives::{ChildPair, EncodedNode};
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 /// The diagram storage associated with one vtree node.
@@ -49,7 +51,7 @@ pub struct TddLevel {
     pub(crate) pairs: PairArena,
     /// Side table for multi-pair nodes whose arena start or length exceeds
     /// 2^31 (huge product grids). See `EncodedNode` for the encoding.
-    pub(crate) ranges: Vec<PairRange>,
+    pub(crate) ranges: RangeTable,
     /// Which of this level's pair sides hold value references into a marginal
     /// child that have been through `inline_small_marginal_refs`: bit 0 the
     /// left side, bit 1 the right. A side toward a structural child, or one
@@ -202,8 +204,8 @@ pub(crate) struct CountState {
 
 /// `TddLevel` stays compact: the O(levels) sweeps stride over it.
 const _: () = assert!(
-    std::mem::size_of::<TddLevel>() <= 104,
-    "TddLevel grew past 104 B"
+    std::mem::size_of::<TddLevel>() <= 88,
+    "TddLevel grew past 88 B"
 );
 
 impl Default for TddLevel {
@@ -244,7 +246,7 @@ impl TddLevel {
         TddLevel {
             nodes: NodeArena::default(),
             pairs: PairArena::default(),
-            ranges: Vec::new(),
+            ranges: RangeTable::default(),
             value_ref_sides: 0,
             dead_pairs: 0,
             uneven: 0,
@@ -502,7 +504,7 @@ impl TddLevel {
         Ok(TddLevel {
             nodes: NodeArena::from(copy(lim, self.nodes.stored())?),
             pairs: self.pairs.try_clone_on(lim)?,
-            ranges: copy(lim, &self.ranges)?,
+            ranges: self.ranges.try_clone_on(lim)?,
             value_ref_sides: self.value_ref_sides,
             dead_pairs: self.dead_pairs,
             uneven: self.uneven,

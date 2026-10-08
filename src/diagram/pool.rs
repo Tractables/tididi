@@ -65,7 +65,7 @@ pub(crate) fn reset_level(level: &mut TddLevel) -> u64 {
         bytes as u64
     }
     level.clear_keeping(MAX_LEVEL_ARENA_BYTES);
-    retain(level.nodes.stored_mut()) + retain(level.pairs.stored_mut()) + retain(&mut level.ranges)
+    retain(level.nodes.stored_mut()) + retain(level.pairs.stored_mut()) + level.ranges.retain(MAX_LEVEL_ARENA_BYTES)
 }
 
 /// Take `num_nodes` empty levels from the pool, growing the array through
