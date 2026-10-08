@@ -1,7 +1,8 @@
 //! `Engine::and_restoring` gives both operands back as they were at every
 //! point the conjunction can be refused: before the sweep, between levels
 //! after identity levels have moved into the output, and when the result's
-//! worklists are seeded.
+//! worklists are seeded. The table of the level counts the result keeps is
+//! not such a point: refused, the result keeps none.
 use std::sync::Arc;
 
 use crate::limits::{LimitConfig, StopAt, StopRules};
@@ -71,6 +72,51 @@ fn every_stop_gives_the_operands_back() {
         let stop = StopRules { unconditional: Some(StopAt::WorkUnits(at)), after_pairs: None };
         Some(eng.limits().scope(LimitConfig::none().with_stop_rules(stop)))
     });
+}
+
+/// Operands keeping their level counts, the conjunction refused at each
+/// reserve in turn: each refusal gives both back unchanged, and the last
+/// reserve, the table of the counts the result keeps for the levels it
+/// moved from them, is granted without it, the result keeping no counts.
+#[test]
+fn a_refused_count_table_keeps_the_operands_and_drops_the_counts() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(12));
+    let (mut f, mut g) = operands(&eng, &vtree);
+    eng.attach_level_counts(&mut f).unwrap();
+    eng.attach_level_counts(&mut g).unwrap();
+    let expected = eng.and(f.clone(), g.clone()).unwrap();
+    let count = eng.model_count(&expected).unwrap();
+    for (a, b) in [(&f, &g), (&g, &f)] {
+        let granted = eng.and_restoring(a.clone(), b.clone()).map_err(|r| r.error).unwrap();
+        assert!(granted.has_level_counts(), "the conjunction kept no counts: nothing to refuse");
+        let (mut refusals, mut dropped) = (0, 0);
+        for n in 0.. {
+            eng.limits().refuse_nth_reserve(n);
+            let outcome = eng.and_restoring(a.clone(), b.clone());
+            let fired = !eng.limits().refusal_pending();
+            eng.limits().grant_every_reserve();
+            match outcome {
+                Ok(out) => {
+                    assert!(eng.equivalent(&out, &expected).unwrap(), "granted at {n}: a different function");
+                    assert_eq!(eng.model_count(&out).unwrap(), count, "granted at {n}: count");
+                    dropped += usize::from(!out.has_level_counts());
+                }
+                Err(refused) => {
+                    // Their levels as given; a moved level dropped its
+                    // operand's counts, a cache, on the way out.
+                    assert!(same(&refused.f, a) && same(&refused.g, b), "refused at {n}: an operand changed");
+                    refusals += 1;
+                }
+            }
+            if !fired {
+                break;
+            }
+            assert!(n < 10_000, "never past the last reserve");
+        }
+        assert!(refusals > 3, "only {refusals} refusal points");
+        assert_eq!(dropped, 1, "the count table's refusal kept the counts, or another one dropped them");
+    }
 }
 
 #[test]

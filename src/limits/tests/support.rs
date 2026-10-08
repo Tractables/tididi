@@ -15,6 +15,13 @@ impl Limits {
         self.refuse_after.set(None);
     }
 
+    /// Whether the armed injection is still waiting: fewer reserves were
+    /// asked for since [`refuse_nth_reserve`](Self::refuse_nth_reserve) than
+    /// it grants before its refusal.
+    pub(crate) fn refusal_pending(&self) -> bool {
+        self.refuse_after.get().is_some()
+    }
+
     /// Pin the post-conjunction walks' poll stride, returning the prior pin.
     pub(crate) fn pin_reduce_poll_stride(&self, stride: Option<u64>) -> Option<u64> {
         self.poll_stride_pin.replace(stride)

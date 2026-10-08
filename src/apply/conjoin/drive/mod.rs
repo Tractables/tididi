@@ -242,17 +242,22 @@ fn build_level(
 /// whole subtree along, so its nodes count in `out` what they counted in
 /// their operand. A level the relabelling route moved keeps none, a subtree
 /// under it being a product.
+///
+/// Infallible: this runs once `out` holds the levels the sweep moved out of
+/// the operands, where a refusal could no longer give a restoring caller
+/// its operands back whole. The counts are a cache, so where the budget
+/// refuses their table `out` keeps none and a count folds its levels.
 fn carry_kept_counts(
     eng: &Engine,
     out: &mut Tdd,
     carried: &[(usize, bool)],
     relabel_moved: &[usize],
     kept: &Operands<Option<LevelCounts>>,
-) -> Result<(), OperationError> {
+) {
     if kept.f.is_none() && kept.g.is_none() {
-        return Ok(());
+        return;
     }
-    let mut counts = LevelCounts::none(eng, out.vtree.num_nodes())?;
+    let Ok(mut counts) = LevelCounts::none(eng, out.vtree.num_nodes()) else { return };
     for &(ti, from_f) in carried {
         let t = VtreeIdx(ti as u32);
         let side = if from_f { kept.f.as_ref() } else { kept.g.as_ref() };
@@ -265,7 +270,6 @@ fn carry_kept_counts(
     if counts.any() {
         out.levels.keep_counts(counts);
     }
-    Ok(())
 }
 
 /// How the sweep delivers its result and handles refused operands.
@@ -525,7 +529,7 @@ pub(crate) fn apply_and_core(
     if !plain {
         crate::diagram::inline_small_marginal_refs(&mut out, None);
     } else {
-        carry_kept_counts(eng, &mut out, &carried, &relabel_moved, &kept)?;
+        carry_kept_counts(eng, &mut out, &carried, &relabel_moved, &kept);
     }
     match summed {
         // The marks the marginalization pass leaves, which installs each
