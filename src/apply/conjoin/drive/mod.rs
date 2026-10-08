@@ -416,8 +416,7 @@ pub(crate) fn apply_and_core(
     // and whatever the operands owed; seeding every level made the
     // minimization after a join as long as the diagram.
     let finished = if plain {
-        let mut owed = f.dirty.clone();
-        owed.merge_under(g.dirty.clone());
+        let owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty);
         // Which operand each carried level came from: 1 for `f`, 2 for `g`,
         // 0 for a level the conjunction built and for the leaves.
         let mut carrier = vec![0u8; num_nodes];

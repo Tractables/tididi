@@ -41,7 +41,8 @@ use crate::vtree::{Vtree, VtreeIdx};
 /// A leaf level is never compacted, and the root has no parent level, so
 /// neither is listed.
 ///
-/// The list is written into the allocation of the larger operand list.
+/// The list is written into the allocation of the larger operand list, grown
+/// once to the most it can hold.
 pub(super) fn loose_levels(vtree: &Vtree, run: &ApplyRun<'_, '_>, carrier: &[u8], operands: Operands<Vec<u32>>) -> Vec<u32> {
     // Which operand has each level loose: 1 for `f`, 2 for `g`, as `carrier`.
     let mut loose_in = vec![0u8; vtree.num_nodes()];
@@ -55,6 +56,8 @@ pub(super) fn loose_levels(vtree: &Vtree, run: &ApplyRun<'_, '_>, carrier: &[u8]
     let Operands { f: f_list, g: g_list } = operands;
     let mut loose = if f_list.capacity() >= g_list.capacity() { f_list } else { g_list };
     loose.clear();
+    // Each level below the root is listed once at most, from its parent.
+    loose.reserve(vtree.internal_bottomup_slice().len().saturating_sub(1));
     for (p, left, right) in vtree.internal_bottomup() {
         if carrier[p.idx()] != 0 {
             let by = carrier[p.idx()];

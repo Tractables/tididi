@@ -279,6 +279,22 @@ impl Dirty {
         *self = carried;
     }
 
+    /// `under`'s lists with `over`'s after them, each allocated once: the
+    /// lists a copy of `over` holds once a copy of `under` is merged under
+    /// it with [`merge_under`](Self::merge_under). The loose levels are left
+    /// unknown, as seeding an assembly leaves them.
+    pub(crate) fn stacked(under: &Dirty, over: &Dirty) -> Dirty {
+        let mut out = Dirty::default();
+        for pass in Pass::ALL {
+            let (under, over) = (&under.lists[pass as usize], &over.lists[pass as usize]);
+            let list = out.list(pass);
+            list.reserve_exact(under.len() + over.len());
+            list.extend_from_slice(under);
+            list.extend_from_slice(over);
+        }
+        out
+    }
+
     /// Copy pending work under the operation's allocation budget.
     pub(crate) fn clone_on(&self, eng: &crate::Engine) -> Result<Self, crate::OperationError> {
         let mut out = Self::default();
