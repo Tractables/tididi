@@ -301,61 +301,20 @@ impl ImplicitLevel {
     pub(crate) fn write_nodes(&self, lim: &Limits, level: &mut TddLevel) -> Result<(), OperationError> {
         debug_assert!(level.nodes.is_empty() && level.pairs.is_empty());
         if self.per_node == 1 {
-            // Each node's one pair: the nodes in runs of the places of the
-            // fastest node digits, the most whose places are at most
-            // `RUN_PAIRS` and at least the fastest. A run's pairs are its
-            // first pair plus the offsets of those places, read once, and
-            // each run's first pair is stepped on from the last's by the
-            // node digits past them. A fastest digit of more places than
-            // `RUN_PAIRS` is read in pieces of `RUN_PAIRS` places, each
-            // piece's first pair as many units of it on from the last's. A
-            // piece goes in one pass where the nodes fit the reserved
-            // capacity, one node at a time otherwise.
-            debug_assert!(self.counts_nodes());
-            let one = [Digit { radix: 1, left: 0, right: 0, node: 1 }];
-            let digits = match &self.digits[self.within..] {
-                [] => &one[..],
-                digits => digits,
-            };
-            let (mut run_digits, mut places) = (1, digits[0].radix);
-            while let Some(d) = digits.get(run_digits)
-                && places.saturating_mul(d.radix) <= RUN_PAIRS
-            {
-                places *= d.radix;
-                run_digits += 1;
-            }
-            let piece = places.min(RUN_PAIRS);
-            let lead = [Digit { radix: piece, ..digits[0] }];
-            let mut offsets = Vec::with_capacity(piece);
-            each_place(if places > piece { &lead } else { &digits[..run_digits] }, (0, 0), |l, r| {
-                offsets.push((l as u32, r as u32));
-            });
-            let leap = ((piece as i64 * digits[0].left) as u32, (piece as i64 * digits[0].right) as u32);
+            // In one pass a run where the nodes fit the reserved capacity,
+            // one node at a time otherwise.
             let fits = level.nodes.capacity() - level.nodes.len() >= self.nodes;
-            let mut runs = Odometer::<NODE_COUNTERS>::new(self.first);
-            for (run, start) in (0..self.nodes).step_by(places).enumerate() {
-                if run > 0 {
-                    runs.step(&digits[run_digits..], run);
+            return self.node_runs(|_, offsets, at| {
+                let nodes = offsets.iter().map(|&o| inline_at(at, o));
+                if fits {
+                    level.nodes.extend(nodes);
+                    return Ok(());
                 }
-                let end = self.nodes.min(start + places);
-                let mut at = runs.at;
-                for from in (start..end).step_by(piece) {
-                    let node = move |&(l, r): &(u32, u32)| {
-                        let (l, r) = (EncodedChildRef::from_raw(at.0.wrapping_add(l)), EncodedChildRef::from_raw(at.1.wrapping_add(r)));
-                        EncodedNode::inline(ChildPair::new(l, r))
-                    };
-                    let shifted = offsets[..piece.min(end - from)].iter().map(node);
-                    if fits {
-                        level.nodes.extend(shifted);
-                    } else {
-                        for n in shifted {
-                            lim.try_push(&mut level.nodes, n)?;
-                        }
-                    }
-                    at = (at.0.wrapping_add(leap.0), at.1.wrapping_add(leap.1));
+                for node in nodes {
+                    lim.try_push(&mut level.nodes, node)?;
                 }
-            }
-            return Ok(());
+                Ok(())
+            });
         }
         // Where the nodes fit the reserved capacity and every range the
         // plain multi-pair word, which the conjunction's reservation makes the
@@ -369,6 +328,83 @@ impl ImplicitLevel {
             level.try_push_multi_by_range(i * k, k).map_err(|()| OperationError::OverBudget)?;
         }
         Ok(())
+    }
+
+    /// The nodes of a description of one pair a node, in runs: `run(from,
+    /// offsets, at)` for consecutive pieces of them, in order, nodes `from ..
+    /// from + offsets.len()` holding the pairs `at` plus `offsets`, wrapping;
+    /// up to the first `Err`, which it returns.
+    ///
+    /// A run counts the places of the fastest node digits, the most whose
+    /// places are at most `RUN_PAIRS` and at least the fastest; the offsets
+    /// of those places are read once, and each run's first pair is stepped
+    /// on from the last's by the node digits past them. A fastest digit of
+    /// more places than `RUN_PAIRS` is read in pieces of `RUN_PAIRS` places,
+    /// each piece's first pair as many units of it on from the last's.
+    fn node_runs<E>(&self, mut run: impl FnMut(usize, &[(u32, u32)], (u32, u32)) -> Result<(), E>) -> Result<(), E> {
+        debug_assert!(self.per_node == 1 && self.counts_nodes());
+        let one = [Digit { radix: 1, left: 0, right: 0, node: 1 }];
+        let digits = match &self.digits[self.within..] {
+            [] => &one[..],
+            digits => digits,
+        };
+        let (mut run_digits, mut places) = (1, digits[0].radix);
+        while let Some(d) = digits.get(run_digits)
+            && places.saturating_mul(d.radix) <= RUN_PAIRS
+        {
+            places *= d.radix;
+            run_digits += 1;
+        }
+        let piece = places.min(RUN_PAIRS);
+        let lead = [Digit { radix: piece, ..digits[0] }];
+        let mut offsets = Vec::with_capacity(piece);
+        each_place(if places > piece { &lead } else { &digits[..run_digits] }, (0, 0), |l, r| {
+            offsets.push((l as u32, r as u32));
+        });
+        let leap = ((piece as i64 * digits[0].left) as u32, (piece as i64 * digits[0].right) as u32);
+        let mut runs = Odometer::<NODE_COUNTERS>::new(self.first);
+        for (r, start) in (0..self.nodes).step_by(places).enumerate() {
+            if r > 0 {
+                runs.step(&digits[run_digits..], r);
+            }
+            let end = self.nodes.min(start + places);
+            let mut at = runs.at;
+            for from in (start..end).step_by(piece) {
+                run(from, &offsets[..piece.min(end - from)], at)?;
+                at = (at.0.wrapping_add(leap.0), at.1.wrapping_add(leap.1));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether `nodes` are the nodes of this description of one pair a node,
+    /// each holding its pair inline: compared word for word in runs
+    /// ([`node_runs`](Self::node_runs)), a run at a time, where every slot
+    /// the digits reach fits a stored side, so that the wrapping sums are
+    /// the slots and no multi-pair word matches one.
+    fn holds_inline(&self, nodes: &[EncodedNode]) -> bool {
+        nodes.len() == self.nodes
+            && self.slots_fit_sides()
+            && self.node_runs(|from, offsets, at| {
+                let run = &nodes[from..from + offsets.len()];
+                let same = run.iter().zip(offsets).fold(true, |same, (n, &o)| same & (*n == inline_at(at, o)));
+                if same { Ok(()) } else { Err(()) }
+            }).is_ok()
+    }
+
+    /// Whether every slot the digits reach from the first pair, at any
+    /// setting of them, is one a stored side can hold: from 0 to below
+    /// bit 31.
+    fn slots_fit_sides(&self) -> bool {
+        let fits = |first: i64, step: fn(&Digit) -> i64| {
+            let (mut low, mut high) = (i128::from(first), i128::from(first));
+            for d in &self.digits {
+                let span = (d.radix as i128 - 1) * i128::from(step(d));
+                if span < 0 { low += span } else { high += span }
+            }
+            low >= 0 && high < 1 << 31
+        };
+        fits(self.first.0, |d| d.left) && fits(self.first.1, |d| d.right)
     }
 
     /// The description of `level`, when it is one: every node has the same
@@ -416,7 +452,14 @@ impl ImplicitLevel {
         }
         let across = read_digits(nodes, |i| stored.of_idx(i).first().map(slots)).ok_or(None)?;
         let fitted = ImplicitLevel::assemble(nodes, per_node, first, &within, &across);
-        if fitted.holds(|i| Some(stored.of_idx(i).iter().map(slots))) { Ok(fitted) } else { Err(None) }
+        // A level of one pair a node, its pairs inline, compares its nodes'
+        // words in runs; any other, or one where they differ, reads them
+        // node by node.
+        if (per_node == 1 && fitted.holds_inline(&level.nodes)) || fitted.holds(|i| Some(stored.of_idx(i).iter().map(slots))) {
+            Ok(fitted)
+        } else {
+            Err(None)
+        }
     }
 
     /// Whether `f` gives distinct slots for the distinct child slots the
@@ -734,6 +777,14 @@ fn slots(p: &ChildPair) -> (i64, i64) {
 fn pair(l: i64, r: i64) -> ChildPair {
     debug_assert!((0..=i64::from(u32::MAX)).contains(&l) && (0..=i64::from(u32::MAX)).contains(&r));
     ChildPair::new(EncodedChildRef::from_raw(l as u32), EncodedChildRef::from_raw(r as u32))
+}
+
+/// The node holding inline the pair at `offset` from the slots `at`,
+/// wrapping.
+#[inline(always)]
+fn inline_at(at: (u32, u32), offset: (u32, u32)) -> EncodedNode {
+    let (l, r) = (EncodedChildRef::from_raw(at.0.wrapping_add(offset.0)), EncodedChildRef::from_raw(at.1.wrapping_add(offset.1)));
+    EncodedNode::inline(ChildPair::new(l, r))
 }
 
 /// Calls `f` at every place of `digits`, counted like an odometer from the

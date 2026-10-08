@@ -221,6 +221,31 @@ fn a_one_pair_level_writes_the_nodes_it_describes() {
     }
 }
 
+/// A level of one pair a node, its pairs inline, fits the description of
+/// its pairs, its words compared in runs; with one node's pair moved it
+/// fits only a description of its pairs.
+#[test]
+fn a_one_pair_level_fits_by_its_words() {
+    let mut rng = Lcg::new(0x1d1e_0032);
+    for radices in [&[64][..], &[300], &[257, 2], &[2; 9], &[3, 5, 7], &[5, 100], &[16, 16, 2]] {
+        for _ in 0..4 {
+            let across: Vec<(usize, (i64, i64))> =
+                radices.iter().map(|&r| (r, (1 + rng.below(5) as i64, rng.below(5) as i64))).collect();
+            let pairs = affine_of(&[], &across);
+            let level = level_of(&pairs);
+            let d = ImplicitLevel::fit(&level).expect("an affine level fits");
+            assert_eq!(described(&d), pairs);
+            assert!(d.holds_inline(&level.nodes));
+            let mut moved = pairs.clone();
+            let i = rng.below(pairs.len() as u64) as usize;
+            moved[i][0].0 += 1 + rng.below(3) as i64;
+            if let Some(d) = ImplicitLevel::fit(&level_of(&moved)) {
+                assert_eq!(described(&d), moved, "node {i} moved");
+            }
+        }
+    }
+}
+
 #[test]
 fn an_implicit_arena_reads_as_the_stored_one() {
     let mut rng = Lcg::new(0x1d1e_0004);
