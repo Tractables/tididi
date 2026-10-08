@@ -383,8 +383,10 @@ impl<'a> Cover<'a> {
     }
 
     /// Mark the cells `pair` covers, a leaf side's `One` standing for both
-    /// cells of that leaf's `{Pos, Neg}` couple.
-    #[inline]
+    /// cells of that leaf's `{Pos, Neg}` couple. Inlined into the walk over
+    /// a level's pairs, which calls it once a pair: out of line, the call
+    /// cost as much as the marking.
+    #[inline(always)]
     fn mark_pair(&mut self, pair: ChildPair) {
         let (l, r) = (pair.left.0, pair.right.0);
         let l_one = self.leaf.left_one && l == ONE_LEAF_IDX.0;
@@ -406,7 +408,7 @@ impl<'a> Cover<'a> {
     }
 
     /// Mark cell `(l, r)`; a cell outside the basis is not one to cover.
-    #[inline]
+    #[inline(always)]
     fn mark(&mut self, l: u32, r: u32) {
         if !self.lefts.contains(l) || !self.rights.contains(r) {
             return;
