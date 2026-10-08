@@ -188,13 +188,11 @@ fn count_pairs(
     lim.try_resize(by_left, widths.left, 0)?;
     lim.try_resize(by_right, widths.right, 0)?;
     let mut total = 0u64;
-    for (_, pairs) in level.internal_inputs_iter() {
-        total += pairs.len() as u64;
-        for pair in pairs {
-            by_left[pair.left.raw() as usize] += 1;
-            by_right[pair.right.raw() as usize] += 1;
-        }
-    }
+    level.for_each_node_pair(|_, pair| {
+        total += 1;
+        by_left[pair.left.raw() as usize] += 1;
+        by_right[pair.right.raw() as usize] += 1;
+    });
     if total > u64::from(u32::MAX) {
         return Err(OperationError::IndexOverflow);
     }
@@ -259,8 +257,11 @@ fn plan(
     };
     let stride = (f_pairs / PLAN_SAMPLE_PAIRS).max(1) as usize;
     let (mut sampled, mut left, mut right, mut both) = (0u64, 0u64, 0u64, 0u64);
+    // An implicit level's sampled nodes are read in order, each first pair
+    // stepped on from the last's.
+    let mut cursor = None;
     for i in (0..f_level.nodes().len()).step_by(stride) {
-        for pair in f_level.pairs_iter_of_idx(i) {
+        for pair in f_level.pairs_iter_next(&mut cursor, i) {
             let (a, b) = (pair.left.raw() as usize, pair.right.raw() as usize);
             sampled += 1;
             if by_left {
@@ -371,7 +372,7 @@ fn walk_one_side<const SWAPPED: bool>(
     let index = pb.index.view();
     let candidates = &mut pb.candidates;
     let mut gate = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
-    for (i, pairs) in f_level.internal_inputs_range(0..shape.f.here) {
+    f_level.try_for_each_node::<OperationError>(0..shape.f.here, |i, pairs| {
         candidates.clear();
         let mut work = 0u64;
         for pair in pairs {
@@ -395,7 +396,8 @@ fn walk_one_side<const SWAPPED: bool>(
         if !candidates.is_empty() {
             emit_parent(eng, ws, level, pl_output, i, candidates, duplicates_legal)?;
         }
-    }
+        Ok(())
+    })?;
     gate.flush()
 }
 
@@ -504,7 +506,7 @@ fn walk_both(
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let mut gate = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
-    for (i, pairs) in f_level.internal_inputs_iter() {
+    f_level.try_for_each_node::<OperationError>(0..f_level.nodes().len(), |i, pairs| {
         candidates.clear();
         let mut work = 0u64;
         for pair in pairs {
@@ -525,7 +527,8 @@ fn walk_both(
         if !candidates.is_empty() {
             emit_parent(eng, ws, level, pl_output, i, candidates, duplicates_legal)?;
         }
-    }
+        Ok(())
+    })?;
     gate.flush()
 }
 

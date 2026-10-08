@@ -202,21 +202,49 @@ impl TddLevel {
     }
 
     /// Calls `f(i, pair)` with every pair of every node `i`, in node order:
-    /// a stored level's pairs read as slices of its arena, an implicit
-    /// level's generated from its description a run of nodes at a time
-    /// ([`ImplicitLevel::fold_pairs`]).
+    /// a stored level's pairs read as slices of its arena, in a loop here,
+    /// an implicit level's generated from its description a run of nodes
+    /// at a time, out of line ([`ImplicitLevel::fold_pairs`]).
     #[inline]
     pub(crate) fn for_each_node_pair(&self, mut f: impl FnMut(usize, ChildPair)) {
-        match (self.pairs.implicit(), self.stored()) {
-            (Some(d), _) => d.fold_pairs(0, (), |(), i, pair| f(i, pair)),
-            (None, Some(stored)) => {
+        match self.stored() {
+            Some(stored) => {
                 for (i, node) in stored.nodes().iter().enumerate() {
                     for &pair in stored.of(node) {
                         f(i, pair);
                     }
                 }
             }
-            (None, None) => unreachable!("an arena is stored or described"),
+            None => self.described().fold_pairs(0, (), |(), i, pair| f(i, pair)),
+        }
+    }
+
+    /// Calls `f(i, pairs)` with every node `i` of `range` and its pairs, in
+    /// node order, up to the first `Err`, which it returns: a stored level's
+    /// pairs as slices of its arena, in a loop here; an implicit level's
+    /// generated a run of nodes at a time, out of line
+    /// ([`ImplicitLevel::try_node_pairs`]). What a pass over the nodes reads
+    /// where it takes each node's pairs as a slice, with no call a node.
+    /// Not valid on a marginal level.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `range` ends past the level's nodes.
+    #[inline]
+    pub(crate) fn try_for_each_node<E>(
+        &self,
+        range: std::ops::Range<usize>,
+        mut f: impl FnMut(usize, &[ChildPair]) -> Result<(), E>,
+    ) -> Result<(), E> {
+        match self.stored() {
+            Some(stored) => {
+                let start = range.start;
+                for (j, node) in stored.nodes()[range].iter().enumerate() {
+                    f(start + j, stored.of(node))?;
+                }
+                Ok(())
+            }
+            None => self.described().try_node_pairs(range, &mut f),
         }
     }
 
@@ -365,6 +393,36 @@ impl TddLevel {
             Some(node) => self.pairs_iter_of(node),
             None => described_iter(self.implied_start(idx)),
         }
+    }
+
+    /// [`pairs_iter_of_idx`](Self::pairs_iter_of_idx) for nodes read in
+    /// increasing order, any skipped: an implicit level's node's first pair
+    /// stepped on by `cursor`, which the first read makes, from the last
+    /// node read ([`NodeCursor`]), rather than read off the digits.
+    #[inline]
+    pub(crate) fn pairs_iter_next<'a>(&'a self, cursor: &mut Option<Box<NodeCursor<'a>>>, idx: usize) -> PairsIter<'a> {
+        match self.nodes.stored().get(idx) {
+            Some(node) => self.read_node(node, |at| {
+                let cursor = cursor.get_or_insert_with(|| self.described_cursor());
+                described_iter(self.described_next(cursor, at))
+            }),
+            None => self.implied_iter_next(cursor, idx),
+        }
+    }
+
+    /// [`pairs_iter_next`](Self::pairs_iter_next) of an implied node, out
+    /// of line, so that the stored levels' read inlines where it is called.
+    #[inline(never)]
+    #[track_caller]
+    fn implied_iter_next<'a>(&'a self, cursor: &mut Option<Box<NodeCursor<'a>>>, idx: usize) -> PairsIter<'a> {
+        let Some(d) = self.implied_by().filter(|d| idx < d.nodes()) else {
+            panic!("node {idx} of a level of {} nodes", self.node_count());
+        };
+        let cursor = cursor.get_or_insert_with(|| self.described_cursor());
+        described_iter((d, {
+            let (l, r) = cursor.first_of(idx);
+            (l as u32, r as u32)
+        }))
     }
 
     /// The pairs of node `idx`, collected: for tests and checkers, which

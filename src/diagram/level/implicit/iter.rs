@@ -118,8 +118,23 @@ impl ImplicitLevel {
     /// on from the last's by the node digits past them. A fastest digit of
     /// more places than `RUN_PAIRS` is read in pieces of `RUN_PAIRS` places,
     /// each piece's first pair as many units of it on from the last's.
-    pub(super) fn node_runs<E>(&self, mut run: impl FnMut(usize, &[(u32, u32)], (u32, u32)) -> Result<(), E>) -> Result<(), E> {
-        debug_assert!(self.per_node == 1 && self.counts_nodes());
+    pub(super) fn node_runs<E>(&self, run: impl FnMut(usize, &[(u32, u32)], (u32, u32)) -> Result<(), E>) -> Result<(), E> {
+        self.node_runs_in(0..self.nodes, run)
+    }
+
+    /// [`node_runs`](Self::node_runs) over the pieces that hold a node of
+    /// `nodes`, in order: the first run's first pair read off the digits,
+    /// the pieces before `nodes` skipped, and none read past it. A piece
+    /// may hold nodes on either side of `nodes`, which the caller skips.
+    pub(super) fn node_runs_in<E>(
+        &self,
+        nodes: std::ops::Range<usize>,
+        mut run: impl FnMut(usize, &[(u32, u32)], (u32, u32)) -> Result<(), E>,
+    ) -> Result<(), E> {
+        debug_assert!(self.per_node == 1 && self.counts_nodes() && nodes.end <= self.nodes);
+        if nodes.is_empty() {
+            return Ok(());
+        }
         let one = [Digit { radix: 1, left: 0, right: 0, node: 1 }];
         let digits = match &self.digits[self.within..] {
             [] => &one[..],
@@ -137,13 +152,22 @@ impl ImplicitLevel {
         });
         let leap = ((piece as i64 * digits[0].left) as u32, (piece as i64 * digits[0].right) as u32);
         let mut runs = Odometer::<NODE_COUNTERS>::new(self.first);
-        for (r, start) in (0..self.nodes).step_by(places).enumerate() {
-            if r > 0 {
+        let first = nodes.start / places;
+        runs.seat(&digits[run_digits..], 0, first);
+        for r in first.. {
+            let start = r * places;
+            if start >= nodes.end {
+                break;
+            }
+            if r > first {
                 runs.step(&digits[run_digits..], r);
             }
             let end = self.nodes.min(start + places);
+            // The pieces before the first node wanted, skipped.
+            let skip = nodes.start.saturating_sub(start) / piece;
             let mut at = runs.at;
-            for from in (start..end).step_by(piece) {
+            at = (at.0.wrapping_add((skip as u32).wrapping_mul(leap.0)), at.1.wrapping_add((skip as u32).wrapping_mul(leap.1)));
+            for from in (start + skip * piece..end.min(nodes.end)).step_by(piece) {
                 run(from, &offsets[..piece.min(end - from)], at)?;
                 at = (at.0.wrapping_add(leap.0), at.1.wrapping_add(leap.1));
             }
@@ -156,23 +180,23 @@ impl ImplicitLevel {
     /// ([`node_runs`](Self::node_runs)), a pair a step; else node by node,
     /// each node's pairs in runs ([`Places`]) and its first pair stepped on
     /// from the last node's ([`NodeCursor`]). What a pass over every pair of
-    /// the level reads, with no call a node.
-    #[inline]
+    /// the level reads, with no call a node. Out of line, `f` inlined here,
+    /// so that a caller that also reads stored levels keeps its own loop
+    /// small.
+    #[inline(never)]
     pub(crate) fn fold_pairs<B>(&self, from: usize, init: B, mut f: impl FnMut(B, usize, ChildPair) -> B) -> B {
         if from >= self.nodes {
             return init;
         }
         if self.per_node == 1 {
             let mut acc = Some(init);
-            let _ = self.node_runs::<std::convert::Infallible>(|start, offsets, at| {
-                if start + offsets.len() > from {
-                    let skip = from.saturating_sub(start);
-                    let mut a = acc.take().expect("the fold's value between runs");
-                    for (j, &o) in offsets[skip..].iter().enumerate() {
-                        a = f(a, start + skip + j, pair_at(at, o));
-                    }
-                    acc = Some(a);
+            let _ = self.node_runs_in::<std::convert::Infallible>(from..self.nodes, |start, offsets, at| {
+                let skip = from.saturating_sub(start);
+                let mut a = acc.take().expect("the fold's value between runs");
+                for (j, &o) in offsets[skip..].iter().enumerate() {
+                    a = f(a, start + skip + j, pair_at(at, o));
                 }
+                acc = Some(a);
                 Ok(())
             });
             return acc.expect("the fold's value after the runs");
@@ -183,6 +207,41 @@ impl ImplicitLevel {
             acc = self.places_from(cursor.first_of(i)).fold(acc, |a, pair| f(a, i, pair));
         }
         acc
+    }
+
+    /// Calls `f(i, pairs)` with every node `i` of `nodes` and its pairs, in
+    /// order, up to the first `Err`, which it returns: at one pair a node a
+    /// run of nodes' pairs written at a time
+    /// ([`node_runs_in`](Self::node_runs_in)), each node's a slice of them;
+    /// at several each node's written from its first pair, stepped on from
+    /// the last node's ([`NodeCursor`]). Out of line, `f` inlined here, as
+    /// [`fold_pairs`](Self::fold_pairs) is.
+    #[inline(never)]
+    pub(crate) fn try_node_pairs<E>(
+        &self,
+        nodes: std::ops::Range<usize>,
+        f: &mut impl FnMut(usize, &[ChildPair]) -> Result<(), E>,
+    ) -> Result<(), E> {
+        assert!(nodes.end <= self.nodes, "nodes {nodes:?} of a description of {} nodes", self.nodes);
+        let mut buf: Vec<ChildPair> = Vec::new();
+        if self.per_node == 1 {
+            return self.node_runs_in(nodes.clone(), |start, offsets, at| {
+                let (lo, hi) = (nodes.start.max(start), nodes.end.min(start + offsets.len()));
+                buf.clear();
+                buf.extend(offsets[lo - start..hi - start].iter().map(|&o| pair_at(at, o)));
+                for (j, pair) in buf.chunks_exact(1).enumerate() {
+                    f(lo + j, pair)?;
+                }
+                Ok(())
+            });
+        }
+        let mut cursor = self.cursor();
+        for i in nodes {
+            buf.clear();
+            self.places_from(cursor.first_of(i)).write_into(&mut buf);
+            f(i, &buf)?;
+        }
+        Ok(())
     }
 
     /// Whether `nodes` are the nodes of this description of one pair a node,

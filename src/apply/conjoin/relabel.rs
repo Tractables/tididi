@@ -228,11 +228,8 @@ fn relabel_level(
     level.reserve_on(lim, width, carrier.pairs.len() + 1)?;
     lim.charge_output_pairs(level.pairs.capacity().saturating_sub(pre_pairs_cap));
     let mut gate = lim.gate_with(APPLY_POLL_STRIDE);
-    // An implicit carrier's pairs are generated into `buf` a node at a
-    // time, each node's first pair stepped on from the last's.
-    let (mut buf, mut cursor) = (Vec::new(), None);
-    for i in 0..width {
-        let pairs = carrier.pairs_read_next(&mut cursor, i, &mut buf);
+    // An implicit carrier's pairs are generated a run of nodes at a time.
+    carrier.try_for_each_node::<OperationError>(0..width, |_, pairs| {
         gate.poll(pairs.len() as u64)?;
         let out = level.pairs.stored_mut();
         let start = out.len();
@@ -251,7 +248,7 @@ fn relabel_level(
         note_written_pairs(&out[start..]);
         if survivors == 0 {
             map.push(NO_PRODUCT);
-            continue;
+            return Ok(());
         }
         map.push(level.nodes.stored().len() as u32);
         if survivors == 1 {
@@ -260,7 +257,8 @@ fn relabel_level(
         } else {
             level.try_push_multi_by_range(start, survivors).map_err(|()| OperationError::OverBudget)?;
         }
-    }
+        Ok(())
+    })?;
     gate.flush()?;
     level.shrink_arrays();
     lim.level_settled(level.pairs.len() as u64);

@@ -866,10 +866,11 @@ fn a_cursor_reads_the_first_pairs_in_runs() {
 }
 
 /// A pass over every pair of an implicit level reads them in runs of nodes
-/// ([`ImplicitLevel::fold_pairs`], [`LevelPairs`]): the pairs and their
-/// nodes are the stored level's, from any node, after any pairs read one at
-/// a time, at one pair a node in runs of a table and of a lead digit wider
-/// than a run, and at several node by node.
+/// ([`ImplicitLevel::fold_pairs`], [`LevelPairs`],
+/// [`ImplicitLevel::try_node_pairs`]): the pairs and their nodes are the
+/// stored level's, from any node, after any pairs read one at a time, over
+/// any range of nodes up to an error, at one pair a node in runs of a
+/// table and of a lead digit wider than a run, and at several node by node.
 #[test]
 fn a_level_is_folded_in_runs_from_any_node() {
     let mut rng = Lcg::new(0x1d1e_0412);
@@ -931,6 +932,24 @@ fn a_level_is_folded_in_runs_from_any_node() {
         };
         assert_eq!(each(&level), want);
         assert_eq!(each(&stored), want);
+        // Each node of a range with its pairs as a slice, up to an error.
+        let a = rng.below(nodes as u64 + 1) as usize;
+        let b = a + rng.below((nodes - a) as u64 + 1) as usize;
+        let stop = (rng.below(3) == 0).then(|| a + rng.below((b - a) as u64 + 1) as usize);
+        let slices = |l: &TddLevel| {
+            let mut v = Vec::new();
+            let r = l.try_for_each_node(a..b, |i, pairs| {
+                if Some(i) == stop {
+                    return Err(i);
+                }
+                v.push((i, pairs.to_vec()));
+                Ok(())
+            });
+            (v, r)
+        };
+        let (got, end) = slices(&level);
+        assert_eq!(end, stop.filter(|&i| i < b).map_or(Ok(()), Err), "round {round}: the pass over {a}..{b} ends");
+        assert_eq!((got, end), slices(&stored), "round {round}: the nodes {a}..{b}");
     }
     assert!(tabled > 10 && led > 10 && several > 10, "{tabled} tabled, {led} led, {several} of several pairs a node");
 }
