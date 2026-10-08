@@ -219,29 +219,43 @@ impl ApplyRun<'_, '_> {
     /// the former is over the size floor and sparse against its live products
     /// — so that the dense route's setup alone loses to the scatter walk,
     /// however small this level's own grid is.
+    ///
+    /// Each test runs only where `route_level` reads its answer, and is false
+    /// elsewhere: the child grids' where the routes are available and this
+    /// level's own grid is at most `min_grid`, and only past a child built
+    /// sparse; the density test where the grid is big. Most levels are small
+    /// over dense children and run neither.
     pub(super) fn sparse_gate(&self, shape: LevelShape) -> SparseGate {
         let LevelShape { left, right, f, g, .. } = shape;
-        let max_left = (f.left * g.left) as u128;
-        let max_right = (f.right * g.right) as u128;
-        let live_l = self.products.live(left.idx()) as u128;
-        let live_r = self.products.live(right.idx()) as u128;
+        let (max_left, max_right) = (f.left * g.left, f.right * g.right);
+        let live = |child: VtreeIdx| self.products.live(child.idx()) as u128;
         let factor = self.thresholds.sparsity_factor;
         let min_grid = self.thresholds.min_grid;
         let ungridded = |child: VtreeIdx| self.products.arena.is_sparse(child.idx());
-        let wide_and_sparse = |child: VtreeIdx, max: u128, live: u128| {
-            ungridded(child) && max > min_grid as u128 && factor * live < max
+        let child_grids = || {
+            let wide_and_sparse = |child: VtreeIdx, max: usize| {
+                ungridded(child) && max > min_grid && factor * live(child) < max as u128
+            };
+            if !(wide_and_sparse(left, max_left) || wide_and_sparse(right, max_right)) {
+                return false;
+            }
+            let split = |child: VtreeIdx, max: usize| {
+                if ungridded(child) { (max as u128, 0) } else { (0, max as u128) }
+            };
+            let ((fill_l, scan_l), (fill_r, scan_r)) = (split(left, max_left), split(right, max_right));
+            fill_l + fill_r > scan_l + scan_r
         };
-        let split = |child: VtreeIdx, max: u128| if ungridded(child) { (max, 0) } else { (0, max) };
-        let (fill_l, scan_l) = split(left, max_left);
-        let (fill_r, scan_r) = split(right, max_right);
+        let available = self.products.arena.is_bump();
+        let own_grid = f.here * g.here > min_grid;
+        let child_grid_wins = available && !own_grid && child_grids();
         SparseGate {
-            available: self.products.arena.is_bump(),
-            density_wins: max_left > 0
+            available,
+            density_wins: available
+                && (own_grid || child_grid_wins)
+                && max_left > 0
                 && max_right > 0
-                && factor * live_l * live_r < max_left * max_right,
-            child_grid_wins: (wide_and_sparse(left, max_left, live_l)
-                || wide_and_sparse(right, max_right, live_r))
-                && fill_l + fill_r > scan_l + scan_r,
+                && factor * live(left) * live(right) < max_left as u128 * max_right as u128,
+            child_grid_wins,
             min_grid,
         }
     }

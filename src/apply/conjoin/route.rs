@@ -88,12 +88,16 @@ pub(super) struct SparseGate {
     /// routes need. Fixed for the whole apply.
     pub(super) available: bool,
     /// The online density check: the children's live product counts are small
-    /// enough against their maxima that scattering wins.
+    /// enough against their maxima that scattering wins. Taken only where
+    /// the routes are available and the grid is big, and false elsewhere,
+    /// where `route_level` does not read it.
     pub(super) density_wins: bool,
     /// The child grids the dense route would have to fill outweigh the child
     /// grids the sparse route would have to scan, and one of the former is
     /// over `min_grid` and sparse against its live products: reason enough
-    /// to scatter whatever this level's own grid is.
+    /// to scatter whatever this level's own grid is. Taken only where the
+    /// routes are available and this level's own grid is at most
+    /// `min_grid`, and false elsewhere, where it decides nothing.
     pub(super) child_grid_wins: bool,
     /// Grids at or below this many cells are not worth either sparse route's
     /// setup, whatever the density says.
