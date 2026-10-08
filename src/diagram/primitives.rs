@@ -301,9 +301,15 @@ impl EncodedNode {
     /// The node's pair count as its words hold it, read without a branch:
     /// a ranged node's count is in the level's side table, and the count
     /// read here is its sentinel, one.
+    ///
+    /// The multi bit is spread into a mask, all ones on a multi-pair node
+    /// and zero on an inline one, rather than tested: a loop over a level's
+    /// nodes then reads both words of every node and vectorizes, where the
+    /// test compiled to a branch per node.
     #[inline(always)]
     pub(crate) fn held_count(&self) -> u32 {
-        if self.a & MULTI_BIT != 0 { self.b } else { 1 }
+        let multi = ((self.a as i32) >> 31) as u32;
+        (self.b.wrapping_sub(1) & multi).wrapping_add(1)
     }
 }
 

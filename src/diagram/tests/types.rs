@@ -281,6 +281,28 @@
     }
 
     #[test]
+    fn held_count_reads_what_kind_decodes() {
+        // An inline node holds one pair, a multi-pair node its length (an
+        // empty placeholder none), a ranged node its sentinel, one; and the
+        // census of a level adds the side table's lengths over that.
+        let inline = |l: u32, r: u32| EncodedNode::inline(ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)));
+        let multi_lens = [0u32, 2, 3, 1000, (1 << 31) - 1];
+        let mut nodes = vec![inline(0, 0), inline(7, 3), inline((1 << 31) - 1, (1 << 31) - 1), EncodedNode::multi_ranged(0)];
+        nodes.extend(multi_lens.iter().map(|&len| EncodedNode::multi_pair(5, len)));
+        for node in &nodes {
+            let want = match node.kind() {
+                NodeKind::Inline(_) | NodeKind::MultiRanged(_) => 1,
+                NodeKind::Multi { len, .. } => len,
+            };
+            assert_eq!(node.held_count(), want, "{node:?}");
+        }
+        let mut level = TddLevel::new();
+        let ranged = level.encode_multi(1usize << 31, 4);
+        level.nodes.extend([inline(1, 2), EncodedNode::multi_pair(0, 2), ranged, EncodedNode::multi_pair(2, 0)]);
+        assert_eq!(level.pair_census(), (1 + 2 + 4, 3, 1));
+    }
+
+    #[test]
     fn test_encode_multi_promotes_to_ranged_on_huge_start() {
         // A pair_start at 2^31 triggers the ranged encoding even though
         // pair_len is small. Verifies the side-table round-trips the stored values.
