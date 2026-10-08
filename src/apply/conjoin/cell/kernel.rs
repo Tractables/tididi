@@ -590,8 +590,9 @@ where
 /// Everything about resolving them (masks, encoding, range) depends only on
 /// `j` and the level, so the table holds it and this is two loads. `None`
 /// is the fallback for the levels the table declines (marginal-encoded g,
-/// or an arena the budget rejected): re-derive per cell, and walk an N×M
-/// cell ungrouped.
+/// or an arena the budget rejected) and for the levels that do not build
+/// one, whose rows read their columns too few times again: re-derive per
+/// cell, and walk an N×M cell ungrouped.
 #[inline(always)]
 pub(crate) fn column_pairs<'a>(
     ctx: &'a CellCtx<'_>,

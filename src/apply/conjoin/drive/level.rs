@@ -8,6 +8,7 @@ use crate::apply::conjoin::*;
 use crate::Engine;
 use super::Sweep;
 use crate::diagram::ChildSide;
+use crate::apply::conjoin::cell::GROUPED_MIN_PAIRS;
 use crate::apply::conjoin::sparse::stream::{
     candidate_bound, choose_pivot, count as stream_count, Built, StreamInput, StreamWidths,
 };
@@ -775,9 +776,9 @@ fn finish_sparse_marginal_level(
 /// indexes the table instead of re-deriving column j's slice on every row. On
 /// identity-mask levels the descriptors are zero-copy borrows of g's own
 /// storage; on marginal-mask levels they point into a decode arena the table owns
-/// and budget-charges. `None` — marginal-encoded g, or the budget refusing the
-/// arena — falls back to the per-cell derivation, never worse than doing it per
-/// cell.
+/// and budget-charges. `None` — marginal-encoded g, the budget refusing the
+/// arena, or a level whose rows read its columns too few times again
+/// ([`column_table_pays`]) — falls back to the per-cell derivation.
 fn build_cell_ctx<'a>(
     shape: LevelShape,
     plan: &MarginalPlan,
@@ -803,6 +804,23 @@ fn build_cell_ctx<'a>(
         },
         right_cols,
     }
+}
+
+/// The column reads past each column's first that a level's cells must make
+/// before the column table ([`RightColumns`]) costs less than resolving a
+/// column at every cell that reads it.
+const COLUMN_TABLE_MIN_REREADS: usize = 32;
+
+/// Whether a level builds its column table: where its rows read the columns
+/// again often enough to pay for it, and wherever a cell could take the
+/// grouped walk, which reads the table's runs. That walk needs a row and a
+/// column of [`GROUPED_MIN_PAIRS`] pairs, which only an operand level of
+/// that many pairs can hold, so a level without the table writes its pairs
+/// in the order it would with one.
+#[inline(always)]
+fn column_table_pays(f_level: &TddLevel, g_level: &TddLevel, f_width: usize, g_width: usize, grouped: bool) -> bool {
+    let groups = grouped && f_level.pairs.len() >= GROUPED_MIN_PAIRS && g_level.pairs.len() >= GROUPED_MIN_PAIRS;
+    groups || f_width.saturating_sub(1).saturating_mul(g_width) >= COLUMN_TABLE_MIN_REREADS
 }
 
 /// How a level on `route` reads its child sides: by arithmetic on each
@@ -958,7 +976,9 @@ pub(super) fn build_level_dense(
             .expect("a vtree node and its two children are distinct level indices");
         let (left_level, right_level) = (&*left_level, &*right_level);
 
-        let right_cols = RightColumns::build(eng, g.level(t), gw.here, sides.left.view, sides.right.view, grouped);
+        let right_cols = column_table_pays(f.level(t), g.level(t), fw.here, gw.here, grouped)
+            .then(|| RightColumns::build(eng, g.level(t), gw.here, sides.left.view, sides.right.view, grouped))
+            .flatten();
         let masks = masked.then_some(&*run.prefilter_masks);
         let cell_ctx = build_cell_ctx(shape, &plan, output_grid_base.idx(), bases, masks, right_cols.as_ref());
 
