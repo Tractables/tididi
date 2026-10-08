@@ -26,7 +26,7 @@ const MAGIC: [u8; 8] = *b"\x89TDD\r\n\x1a\n";
 const BINARY_FORMAT_VERSION: u32 = 1;
 
 /// The version of a file that also holds the level counts the diagram keeps
-/// ([`Engine::attach_level_counts`](crate::Engine::attach_level_counts)).
+/// ([`Tdd::attach_level_counts`](crate::Tdd::attach_level_counts)).
 const COUNTS_FORMAT_VERSION: u32 = 2;
 
 /// Written little-endian after the version; a file whose four bytes read
@@ -92,8 +92,11 @@ pub fn save_tdd_binary(f: &Tdd, path: impl AsRef<Path>) -> Result<(), IoError> {
 /// their level order with each node's pairs in their stored order, and no
 /// weights: a diagram carrying a weight store reads back in integer mode. It
 /// stores the level counts the diagram keeps
-/// ([`Engine::attach_level_counts`](crate::Engine::attach_level_counts)),
-/// in format version 2.
+/// ([`Tdd::attach_level_counts`](crate::Tdd::attach_level_counts)), each
+/// internal level's where every one of them fits 128 bits, in format
+/// version 2; a diagram with none to store, such as the false diagram or one
+/// over a single variable, is written in version 1 and reads back without
+/// them.
 ///
 /// # Errors
 ///

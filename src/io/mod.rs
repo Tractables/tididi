@@ -99,7 +99,7 @@
 //!    writer uses a code only where each pair takes at least one bit, and a
 //!    reader refuses one that does not.
 //! 4. In version 2 only, the level counts the diagram keeps
-//!    ([`Engine::attach_level_counts`](crate::Engine::attach_level_counts)):
+//!    ([`Tdd::attach_level_counts`](crate::Tdd::attach_level_counts)):
 //!    one record per internal vtree node in the same postorder, `0` for a
 //!    level written without counts, or `1` followed by one varint per node of
 //!    the level, in its order, the node's model count over the variables

@@ -157,54 +157,16 @@ impl Engine {
         Ok(counts)
     }
 
-    /// Count every internal level's nodes once and keep the counts with the
-    /// diagram, so that later counts read them instead of folding the levels
-    /// again.
-    ///
-    /// Level `t`'s counts are those [`Engine::model_count`] folds on its way
-    /// to the output: node `i`'s model count over the variables under `t`.
-    /// Once kept, [`Engine::model_count`] reads the output's count, and a
-    /// conjunction carries the counts of every level it moves from this
-    /// diagram untouched, a level under which the other operand is
-    /// constant-true: [`Engine::and_model_count`] then folds only the levels
-    /// it builds, and [`Engine::and`] keeps the moved levels' counts with its
-    /// result, whose [`Engine::model_count`] folds only the levels above
-    /// them. The counts describe the levels as they are, so any operation
-    /// that changes the diagram's levels drops them;
-    /// [`Tdd::has_level_counts`](crate::Tdd::has_level_counts) says whether
-    /// they are kept.
-    ///
-    /// The fold is the model count's, keeping each level's column instead of
-    /// releasing it: one `u128` per node of every internal structural level,
-    /// with an exact side table for counts that do not fit. A marginal level
-    /// stores its counts already and keeps no column.
-    ///
-    /// ```
-    /// use std::sync::Arc;
-    /// use tididi::{Engine, Vtree};
-    /// use tididi::vtree::VarId;
-    ///
-    /// let engine = Engine::new();
-    /// let vtree = Arc::new(Vtree::balanced(4));
-    /// let mut f = engine.clause(&vtree, [1, 2])?;
-    /// let g = engine.clause(&vtree, [3, 4])?;
-    /// engine.attach_level_counts(&mut f)?;
-    /// assert!(f.has_level_counts());
-    /// assert_eq!(engine.model_count(&f)?, 12u32.into());
-    /// assert_eq!(engine.and_model_count(f.clone(), g, &[])?, 9u32.into());
-    /// // A change to the levels drops the counts.
-    /// let f1 = f.condition_var(VarId(1), false)?;
-    /// assert!(!f1.has_level_counts());
-    /// assert_eq!(engine.model_count(&f1)?, 8u32.into());
-    /// # Ok::<(), tididi::OperationError>(())
-    /// ```
+    /// Run [`Tdd::attach_level_counts`](crate::Tdd::attach_level_counts)
+    /// using this batch's scratch and resource limits.
     ///
     /// # Errors
     ///
-    /// Returns [`OperationError::IncompatibleWeights`] for weighted marginal
-    /// levels, [`OperationError::OverBudget`] when a column's allocation is
-    /// refused, and [`OperationError::Stopped`] on cancellation. On error the
-    /// diagram keeps whatever counts it kept before.
+    /// As [`Tdd::attach_level_counts`](crate::Tdd::attach_level_counts):
+    /// [`OperationError::IncompatibleWeights`] for weighted marginal levels,
+    /// [`OperationError::OverBudget`] when a column's allocation is refused,
+    /// and [`OperationError::Stopped`] on cancellation. On error the diagram
+    /// keeps whatever counts it kept before.
     pub fn attach_level_counts(&self, tdd: &mut Tdd) -> Result<(), OperationError> {
         let lim = self.limits();
         let _op = lim.enter()?;

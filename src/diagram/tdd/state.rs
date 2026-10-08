@@ -258,7 +258,7 @@ impl<'a> IntoIterator for &'a mut LevelStorage {
 /// over the variables under `t`.
 ///
 /// Metadata beside the levels, computed by one fold
-/// ([`Engine::attach_level_counts`](crate::Engine::attach_level_counts)),
+/// ([`Tdd::attach_level_counts`](crate::Tdd::attach_level_counts)),
 /// so that a count can read a level's column instead of folding the subtree
 /// under it again. A conjunction moves an operand's level into its result
 /// untouched where the other operand is constant-true under it, and that

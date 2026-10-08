@@ -621,11 +621,59 @@ impl Tdd {
     }
 
     /// Count every internal level's nodes once and keep the counts with the
-    /// diagram; see [`Engine::attach_level_counts`](crate::Engine::attach_level_counts).
+    /// diagram, so that later counts read them instead of folding the levels
+    /// again.
+    ///
+    /// Level `t`'s counts are those [`model_count`](Self::model_count) folds
+    /// on its way to the output: node `i`'s model count over the variables
+    /// under `t`. Once kept, [`model_count`](Self::model_count) reads the
+    /// output's count, and a conjunction carries the counts of every level
+    /// it moves from this diagram untouched, a level under which the other
+    /// operand is constant-true:
+    /// [`Engine::and_model_count`](crate::Engine::and_model_count) then
+    /// folds only the levels it builds, and a conjunction keeps the moved
+    /// levels' counts with its result, whose
+    /// [`model_count`](Self::model_count) folds only the levels above them.
+    /// The counts describe the levels as they are, so any operation that
+    /// changes the diagram's levels drops them;
+    /// [`has_level_counts`](Self::has_level_counts) says whether they are
+    /// kept. [`save_tdd_binary`](crate::io::save_tdd_binary) writes each
+    /// level's that fit 128 bits, and the binary reader keeps them.
+    ///
+    /// The fold is the model count's, keeping each level's column instead of
+    /// releasing it: one `u128` per node of every internal structural level,
+    /// with an exact side table for counts that do not fit. A marginal level
+    /// stores its counts already and keeps no column.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, Tdd, Vtree};
+    /// use tididi::vtree::VarId;
+    ///
+    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let mut f = Tdd::clause(&vtree, [1, 2])?;
+    /// let g = Tdd::clause(&vtree, [3, 4])?;
+    /// f.attach_level_counts()?;
+    /// assert!(f.has_level_counts());
+    /// assert_eq!(f.model_count()?, 12u32.into());
+    /// let engine = Engine::new();
+    /// assert_eq!(engine.and_model_count(f.clone(), g, &[])?, 9u32.into());
+    /// // A change to the levels drops the counts.
+    /// let f1 = f.condition_var(VarId(1), false)?;
+    /// assert!(!f1.has_level_counts());
+    /// assert_eq!(f1.model_count()?, 8u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
     ///
     /// # Errors
     ///
-    /// As [`Engine::attach_level_counts`](crate::Engine::attach_level_counts).
+    /// Returns [`OperationError::IncompatibleWeights`] for weighted marginal
+    /// levels, [`OperationError::OverBudget`] when a column's allocation is
+    /// refused, and [`OperationError::Stopped`] on cancellation. On error the
+    /// diagram keeps whatever counts it kept before. Runs on this diagram's
+    /// execution context; use
+    /// [`Engine::attach_level_counts`](crate::Engine::attach_level_counts)
+    /// inside a batch with resource limits.
     pub fn attach_level_counts(&mut self) -> Result<(), OperationError> {
         let context = Arc::clone(self.context());
         context.run(|eng| eng.attach_level_counts(self))
@@ -634,6 +682,18 @@ impl Tdd {
     /// Whether the diagram keeps its levels' model counts
     /// ([`attach_level_counts`](Self::attach_level_counts)): kept until an
     /// operation changes its levels.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    ///
+    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let mut f = Tdd::clause(&vtree, [1, 2])?;
+    /// assert!(!f.has_level_counts());
+    /// f.attach_level_counts()?;
+    /// assert!(f.has_level_counts());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
     pub fn has_level_counts(&self) -> bool {
         self.levels.counts().is_some()
     }
