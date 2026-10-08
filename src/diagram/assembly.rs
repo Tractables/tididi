@@ -148,7 +148,7 @@ impl Drop for Assembly<'_> {
         let Some(builder) = self.builder.as_mut() else { return };
         let (levels, _) = builder.parts_mut();
         if !levels.is_empty() && !std::thread::panicking() {
-            super::return_levels(self.engine, super::PoolSlot::First, std::mem::take(levels));
+            super::return_levels(self.engine, std::mem::take(levels));
         }
     }
 }

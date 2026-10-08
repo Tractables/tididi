@@ -84,7 +84,7 @@
         // The allocator-only take does not consult the budget.
         let levels = take_levels(eng, 3);
         assert_eq!(levels.len(), 3);
-        return_levels(eng, PoolSlot::First, levels);
+        return_levels(eng, levels);
         eng.limits().grant_every_reserve();
         // A parked array long enough for the request grows nothing.
         eng.limits().refuse_nth_reserve(0);
@@ -99,7 +99,7 @@
         // Take fresh, return, take again — should reuse
         let levels = take_levels(eng, 3);
         assert_eq!(levels.len(), 3);
-        return_levels(eng, PoolSlot::First, levels);
+        return_levels(eng, levels);
         let levels2 = take_levels(eng, 3);
         assert_eq!(levels2.len(), 3);
         for level in &levels2 {
@@ -111,7 +111,7 @@
     #[test]
     fn test_pool_size_mismatch_resizes() {
         let eng = &Engine::new();
-        // A parked entry of the wrong length is RESIZED to the request, not
+        // A parked entry near the request in length is resized to it, not
         // discarded — that is what keeps the arenas warm when components of
         // different variable counts alternate. Both directions, and every level
         // handed out is still empty (the reset barrier is not skipped).
@@ -119,7 +119,7 @@
 
         // Shrink: return a Vec of size 5, then request size 3.
         let levels = take_levels(eng, 5);
-        return_levels(eng, PoolSlot::First, levels);
+        return_levels(eng, levels);
         let levels2 = take_levels(eng, 3);
         assert_eq!(levels2.len(), 3);
         for level in &levels2 {
@@ -128,7 +128,7 @@
         }
 
         // Grow: return that size-3 Vec, then request size 6.
-        return_levels(eng, PoolSlot::First, levels2);
+        return_levels(eng, levels2);
         let levels3 = take_levels(eng, 6);
         assert_eq!(levels3.len(), 6);
         for level in &levels3 {
@@ -140,51 +140,66 @@
     #[test]
     fn test_pool2_roundtrip() {
         let eng = &Engine::new();
-        // Test secondary pool
-        let levels = take_levels(eng, 4);
-        return_levels(eng, PoolSlot::Second, levels);
-        let levels2 = take_levels(eng, 4);
-        assert_eq!(levels2.len(), 4);
-    }
-
-    #[test]
-    fn a_take_uses_the_parked_array_with_more_of_its_levels() {
-        let eng = &Engine::new();
-        let short = take_levels(eng, 2);
-        let mut long = take_levels(eng, 5);
-        long[3].nodes.reserve(64);
-        let marked = long[3].nodes.capacity();
-        return_levels(eng, PoolSlot::First, short);
-        return_levels(eng, PoolSlot::Second, long);
-        // Four levels wanted: the second slot's array holds all four.
-        let taken = take_levels(eng, 4);
-        assert_eq!(taken.len(), 4);
-        assert_eq!(taken[3].nodes.capacity(), marked, "the longer array was taken");
-        assert_eq!(eng.scratch.levels.occupancy(), 1);
-        // Two wanted from two arrays that both hold two: the primary's.
-        return_levels(eng, PoolSlot::Second, taken);
-        let taken = take_levels(eng, 2);
-        assert_eq!(eng.scratch.levels.occupancy(), 1);
-        return_levels(eng, PoolSlot::First, taken);
-        let taken = take_levels(eng, 4);
-        assert_eq!(taken[3].nodes.capacity(), marked, "the secondary held the longer array");
-    }
-
-    #[test]
-    fn a_vacant_return_fills_the_vacant_slot() {
-        let eng = &Engine::new();
-        let first = take_levels(eng, 3);
-        return_levels(eng, PoolSlot::Vacant, first);
-        assert_eq!(eng.scratch.levels.occupancy(), 1, "an empty pool takes it in the first slot");
-        let second = take_levels(eng, 3);
-        let other = take_levels(eng, 3);
-        return_levels(eng, PoolSlot::First, second);
-        return_levels(eng, PoolSlot::Vacant, other);
-        assert_eq!(eng.scratch.levels.occupancy(), 2, "the second slot was vacant");
-        let third = take_levels(eng, 3);
-        assert_eq!(eng.scratch.levels.occupancy(), 1);
-        return_levels(eng, PoolSlot::Vacant, third);
+        // Two returns fill both slots, and both arrays come back.
+        let first = take_levels(eng, 4);
+        let second = take_levels(eng, 4);
+        return_levels(eng, first);
+        return_levels(eng, second);
         assert_eq!(eng.scratch.levels.occupancy(), 2);
+        assert_eq!(take_levels(eng, 4).len(), 4);
+        assert_eq!(take_levels(eng, 4).len(), 4);
+        assert_eq!(eng.scratch.levels.occupancy(), 0);
+    }
+
+    /// `n` fresh levels whose first level's pair arena has room for `16 * n`
+    /// pairs, which [`mark`] reads back to tell the arrays apart.
+    fn marked(eng: &Engine, n: usize) -> Vec<TddLevel> {
+        let mut levels = take_levels(eng, n);
+        levels[0].pairs.stored_mut().reserve_exact(16 * n);
+        levels
+    }
+
+    /// The `n` of the array [`marked`] made.
+    fn mark(levels: &[TddLevel]) -> usize {
+        levels[0].pairs.capacity() / 16
+    }
+
+    #[test]
+    fn a_take_uses_the_parked_array_nearest_in_length() {
+        let eng = &Engine::new();
+        let [three, nine] = [3, 9].map(|n| marked(eng, n));
+        return_levels(eng, three);
+        return_levels(eng, nine);
+        // Four wanted: the three-level array is one away, the nine-level one five.
+        let taken = take_levels(eng, 4);
+        assert_eq!((taken.len(), mark(&taken)), (4, 3));
+        return_levels(eng, taken);
+        // Eight wanted: the nine-level array, cut down.
+        let taken = take_levels(eng, 8);
+        assert_eq!((taken.len(), mark(&taken)), (8, 9));
+        return_levels(eng, taken);
+        // Two wanted: each parked array is two levels away or more, as far as
+        // an empty one, so the take is fresh and both stay parked.
+        let taken = take_levels(eng, 2);
+        assert_eq!((taken.len(), taken[0].pairs.capacity()), (2, 0));
+        assert_eq!(eng.scratch.levels.occupancy(), 2);
+    }
+
+    #[test]
+    fn a_return_keeps_the_two_longest_arrays() {
+        let eng = &Engine::new();
+        let [three, five, four, six, other_three] = [3, 5, 4, 6, 3].map(|n| marked(eng, n));
+        return_levels(eng, three);
+        return_levels(eng, five);
+        assert_eq!(eng.scratch.levels.occupancy(), 2, "the two vacant slots take the first two");
+        // A longer array replaces the shorter parked one; one no longer than
+        // either parked array is dropped.
+        return_levels(eng, four);
+        return_levels(eng, six);
+        return_levels(eng, other_three);
+        assert_eq!(mark(&take_levels(eng, 6)), 6);
+        assert_eq!(mark(&take_levels(eng, 5)), 5);
+        assert_eq!(eng.scratch.levels.occupancy(), 0);
     }
 
     #[test]
@@ -231,7 +246,7 @@
         // by the time it is parked, not merely by the time it is handed out:
         // otherwise the bytes sit in the pool for the whole gap until some
         // later consumer asks for levels of this length.
-        return_levels(eng, PoolSlot::First, levels);
+        return_levels(eng, levels);
         // Take the recycled Vec back — same length, so the pool hands back the
         // very entry it parked, trimmed.
         let levels2 = take_levels(eng, 3);
@@ -262,7 +277,7 @@
         let dummy = ChildPair::new(NodeIdx(0), NodeIdx(0));
         levels[0].push_internal_node(&[dummy]);
         levels[1].push_internal_node(&[dummy, dummy]);
-        return_levels(eng, PoolSlot::First, levels);
+        return_levels(eng, levels);
         let levels2 = take_levels(eng, 2);
         for level in &levels2 {
             assert_eq!(level.nodes.len(), 0);

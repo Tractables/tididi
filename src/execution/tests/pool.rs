@@ -207,14 +207,14 @@ fn nested_return_replaces_its_claim_and_unwind_leaves_other_pools_usable() {
 #[test]
 fn recycled_levels_and_scratch_use_the_same_allowance() {
     use crate::execution::pool::ENGINE_RETAIN_BYTES;
-    use crate::diagram::{take_levels, return_levels, PoolSlot};
+    use crate::diagram::{take_levels, return_levels};
     let eng = crate::Engine::new();
     let blocker = Pool::<Capacity>::default();
     blocker.put(&eng, Capacity(ENGINE_RETAIN_BYTES));
-    return_levels(&eng, PoolSlot::First, take_levels(&eng, 3));
+    return_levels(&eng, take_levels(&eng, 3));
     assert_eq!(eng.scratch.levels.occupancy(), 0);
     blocker.drain(&eng);
-    return_levels(&eng, PoolSlot::First, take_levels(&eng, 3));
+    return_levels(&eng, take_levels(&eng, 3));
     assert_eq!(eng.scratch.levels.occupancy(), 1);
     assert!(eng.scratch.ledger.bytes() > 0);
     eng.clear_scratch();

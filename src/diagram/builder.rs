@@ -11,7 +11,7 @@ use crate::vtree::{Vtree, VtreeIdx};
 
 use super::build_error::TddBuildError;
 use super::level::TddLevel;
-use super::pool::{return_levels, try_take_levels, PoolSlot};
+use super::pool::{return_levels, try_take_levels};
 use super::primitives::{ChildPair, EncodedChildRef, NodeIdx, TddNodeId};
 use super::tdd::Tdd;
 use super::weights::WeightStore;
@@ -526,7 +526,7 @@ impl TddBuilder {
 
     /// Give up on the diagram, returning its levels to the engine's pool.
     pub fn abandon(mut self, eng: &Engine) {
-        return_levels(eng, PoolSlot::First, std::mem::take(&mut self.levels));
+        return_levels(eng, std::mem::take(&mut self.levels));
     }
 
 }

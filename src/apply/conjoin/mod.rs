@@ -230,7 +230,7 @@ fn conjoin_checked_as(
     // is stated.
     if is_self_conjunction(&f, &g) {
         let _op = eng.limits().enter()?;
-        diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
+        diagram::return_levels(eng, std::mem::take(&mut g.levels).into_vec());
         return Ok((Conjoined::Built(f), false));
     }
     let zero = f.is_zero() || g.is_zero();
@@ -249,8 +249,8 @@ fn conjoin_recycling(
     filter: Option<&mut dyn FnMut(VtreeIdx, NodeIdx, NodeIdx) -> bool>,
 ) -> Result<Tdd, OperationError> {
     let result = apply_and_fallible(eng, &mut f, &mut g, targets, quantified, filter);
-    diagram::return_levels(eng, diagram::PoolSlot::First, std::mem::take(&mut f.levels).into_vec());
-    diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
+    diagram::return_levels(eng, std::mem::take(&mut f.levels).into_vec());
+    diagram::return_levels(eng, std::mem::take(&mut g.levels).into_vec());
     result
 }
 
@@ -265,8 +265,8 @@ fn conjoin_recycling_as(
     mode: ConjoinMode,
 ) -> Result<Conjoined, OperationError> {
     let result = apply_and_core(eng, &mut f, &mut g, targets, quantified, filter, mode, Operands::default());
-    diagram::return_levels(eng, diagram::PoolSlot::First, std::mem::take(&mut f.levels).into_vec());
-    diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
+    diagram::return_levels(eng, std::mem::take(&mut f.levels).into_vec());
+    diagram::return_levels(eng, std::mem::take(&mut g.levels).into_vec());
     result
 }
 
@@ -360,13 +360,13 @@ fn conjoin_kept(eng: &Engine, mut f: Tdd, mut g: Tdd, mut free: Operands<VtreeMa
     let swapped = narrower_right(&mut f, &mut g, &mut free, Operands { f: f_width, g: g_width });
     if same_structure(&f, &g, free) {
         fill_free(&mut f, free.f);
-        diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
+        diagram::return_levels(eng, std::mem::take(&mut g.levels).into_vec());
         return Ok(f);
     }
     match drive::apply_and_kept(eng, &mut f, &mut g, free) {
         Ok(out) => {
-            diagram::return_levels(eng, diagram::PoolSlot::First, std::mem::take(&mut f.levels).into_vec());
-            diagram::return_levels(eng, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
+            diagram::return_levels(eng, std::mem::take(&mut f.levels).into_vec());
+            diagram::return_levels(eng, std::mem::take(&mut g.levels).into_vec());
             Ok(out)
         }
         Err(error) => {
@@ -716,15 +716,15 @@ impl crate::Engine {
         }
         if is_self_conjunction(&f, &g) {
             let count = self.model_count(&f);
-            diagram::return_levels(self, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
+            diagram::return_levels(self, std::mem::take(&mut g.levels).into_vec());
             return count;
         }
         let result = apply_and_core(
             self, &mut f, &mut g, VtreeMask::new(Some(&mask)), VtreeMask::default(), None, ConjoinMode::Count,
             Operands::default(),
         );
-        diagram::return_levels(self, diagram::PoolSlot::First, std::mem::take(&mut f.levels).into_vec());
-        diagram::return_levels(self, diagram::PoolSlot::Second, std::mem::take(&mut g.levels).into_vec());
+        diagram::return_levels(self, std::mem::take(&mut f.levels).into_vec());
+        diagram::return_levels(self, std::mem::take(&mut g.levels).into_vec());
         match result? {
             Conjoined::Counted(count) => Ok(count),
             Conjoined::Built(out) | Conjoined::Summed(out) => self.model_count(&out),

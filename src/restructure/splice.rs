@@ -1,7 +1,7 @@
 //! Splice one diagram's subtree into another on the same vtree.
 
 use crate::Engine;
-use crate::diagram::{return_levels, ChildPair, NodeKind, PoolSlot, Tdd, TddLevel};
+use crate::diagram::{return_levels, ChildPair, NodeKind, Tdd, TddLevel};
 use crate::vtree::VtreeIdx;
 
 impl Tdd {
@@ -53,7 +53,7 @@ impl Tdd {
         self.levels[t.idx()].clear();
         self.levels[t.idx()].push_internal_node(&[ChildPair::new(left_ptr, right_ptr)]);
 
-        return_levels(eng, PoolSlot::First, std::mem::take(&mut other.levels).into_vec());
+        return_levels(eng, std::mem::take(&mut other.levels).into_vec());
 
         if let Some(rw) = other.detach_weights() {
             match self.detach_weights() {

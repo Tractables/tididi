@@ -9,8 +9,13 @@ use super::level::TddLevel;
 /// The engine's two recycled level arrays.
 ///
 /// Two slots because a conjunction consumes two operands and one slot would
-/// drop the second's arenas. `take_levels` takes the array with the most
-/// levels it can use, the primary on a tie.
+/// drop the second's arenas. A take uses the parked array nearest in length
+/// to the levels it wants, and a fresh array when every parked one is as
+/// far from that as an empty one: cutting a long array down to a short take
+/// drops levels a later long take would use. A return keeps the two longest
+/// arrays: it parks an array in a vacant slot or in place of a shorter
+/// parked one, and drops an array no longer than either parked one as it
+/// is, without resetting levels that would not be kept.
 #[derive(Default)]
 pub(crate) struct LevelPool {
     primary: Pool<LevelBuffer>,
@@ -93,18 +98,16 @@ pub(crate) fn try_take_levels(eng: &Engine, num_nodes: usize) -> Result<Vec<TddL
     Ok(levels)
 }
 
-/// The parked level array with the most of the `num_nodes` levels wanted,
-/// the primary's on a tie, cut down to at most `num_nodes` levels.
+/// The parked level array nearest `num_nodes` levels in length, the
+/// primary's on a tie, cut down to at most `num_nodes` levels; an empty
+/// array when every parked one is `num_nodes` levels away or more.
 fn take_level_array(eng: &Engine, num_nodes: usize) -> Vec<TddLevel> {
     let pool = &eng.scratch.levels;
-    let usable = |slot: &Pool<LevelBuffer>| match slot.occupied() {
-        true => slot.parked(|parked| parked.levels.len().min(num_nodes)),
-        false => None,
-    };
-    let slot = match (usable(&pool.primary), usable(&pool.secondary)) {
-        (Some(first), Some(second)) if second > first => &pool.secondary,
-        (Some(_), _) => &pool.primary,
-        (None, _) => &pool.secondary,
+    let gap = |slot: &Pool<LevelBuffer>| slot.parked(|parked| parked.levels.len().abs_diff(num_nodes));
+    let slot = match (gap(&pool.primary), gap(&pool.secondary)) {
+        (first, Some(second)) if second < num_nodes && first.is_none_or(|first| second < first) => &pool.secondary,
+        (Some(first), _) if first < num_nodes => &pool.primary,
+        _ => return Vec::new(),
     };
     let mut levels = slot.take(eng).levels;
     if levels.len() > num_nodes {
@@ -145,32 +148,23 @@ impl PooledScratch for LevelBuffer {
     }
 }
 
-/// Which of the two pool slots a level array goes back to.
-///
-/// A conjunction consumes two operands; returning both to one slot would drop
-/// the second's arenas, so the caller says which is which. [`take_levels`]
-/// prefers [`PoolSlot::First`] on a tie. A slot that is occupied drops what
-/// it held.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum PoolSlot {
-    /// The first operand's slot — where most callers fetch from.
-    First,
-    /// The second operand's slot.
-    Second,
-    /// The first slot if it is vacant, the second otherwise: for an array
-    /// returned between the takes of one operation, which should not drop
-    /// an array parked for a later take.
-    Vacant,
-}
-
-/// Return a `Vec<TddLevel>` to one of the pool slots for reuse.
-pub(crate) fn return_levels(eng: &Engine, slot: PoolSlot, levels: Vec<TddLevel>) {
+/// Return a `Vec<TddLevel>` to the pool for reuse: to a vacant slot, the
+/// primary first, or in place of the shorter parked array, the primary's on
+/// a tie, when it is longer. An array no longer than either parked one is
+/// dropped as it is.
+pub(crate) fn return_levels(eng: &Engine, levels: Vec<TddLevel>) {
     let pool = &eng.scratch.levels;
-    let cell = match slot {
-        PoolSlot::First => &pool.primary,
-        PoolSlot::Second => &pool.secondary,
-        PoolSlot::Vacant if !pool.primary.occupied() => &pool.primary,
-        PoolSlot::Vacant => &pool.secondary,
+    let len = |slot: &Pool<LevelBuffer>| slot.parked(|parked| parked.levels.len());
+    let cell = match (len(&pool.primary), len(&pool.secondary)) {
+        (None, _) => &pool.primary,
+        (_, None) => &pool.secondary,
+        (Some(first), Some(second)) => {
+            let (cell, shorter) = if second < first { (&pool.secondary, second) } else { (&pool.primary, first) };
+            if levels.len() <= shorter {
+                return;
+            }
+            cell
+        }
     };
     cell.put(eng, LevelBuffer { levels })
 }

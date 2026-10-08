@@ -169,7 +169,7 @@ fn spine_walk(eng: &Engine, mut f: Tdd, lits: &[Literal], disjoin: bool) -> Resu
     // The empty clause is false, so conjoining it gives ⊥ whatever `f` is.
     if !disjoin && clause.is_empty() {
         let out = crate::build::constant_like(eng, &f, false)?;
-        diagram::return_levels(eng, diagram::PoolSlot::First, std::mem::take(&mut f.levels).into_vec());
+        diagram::return_levels(eng, std::mem::take(&mut f.levels).into_vec());
         return Ok(out);
     }
 
