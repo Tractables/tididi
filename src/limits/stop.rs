@@ -74,6 +74,49 @@ impl StopRules {
     }
 }
 
+/// The meter readings under which no stop can fire: while the work clock is
+/// below `work`, and the output-pair meter below `pairs` or the clock below
+/// `pairs_work`, the rules it was taken from cannot stop an operation.
+///
+/// A wall-clock threshold or a stop callback can fire at any reading, so its
+/// bound is zero; a rule that is not armed bounds nothing. Testing these
+/// three numbers is what lets a poll that cannot stop skip the rules and the
+/// callback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Quiet {
+    work: u64,
+    pairs: u64,
+    pairs_work: u64,
+}
+
+impl Quiet {
+    /// Nothing armed: no reading stops.
+    pub(crate) const NONE: Quiet = Quiet { work: u64::MAX, pairs: u64::MAX, pairs_work: u64::MAX };
+
+    /// The bounds of `rules`, with a stop callback installed or not.
+    pub(crate) fn of(rules: StopRules, callback: bool) -> Quiet {
+        if callback {
+            return Quiet { work: 0, pairs: 0, pairs_work: 0 };
+        }
+        let units = |at: StopAt| match at {
+            StopAt::WorkUnits(units) => units,
+            StopAt::Time(_) => 0,
+        };
+        let (pairs, pairs_work) = match rules.after_pairs {
+            Some((floor, at)) => (floor, units(at)),
+            None => (u64::MAX, u64::MAX),
+        };
+        Quiet { work: rules.unconditional.map_or(u64::MAX, units), pairs, pairs_work }
+    }
+
+    /// Whether no stop can fire at these readings of the work clock and the
+    /// output-pair meter.
+    #[inline(always)]
+    pub(crate) fn holds(self, work: u64, pairs: u64) -> bool {
+        work < self.work && (pairs < self.pairs || work < self.pairs_work)
+    }
+}
+
 /// What a stop callback ([`LimitConfig::with_stop_callback`](crate::limits::LimitConfig::with_stop_callback)) concludes when an
 /// in-operation poll asks it.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

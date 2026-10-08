@@ -237,3 +237,56 @@ fn a_mark_measures_the_work_run_since_it_was_taken() {
 
     assert_eq!(StopAt::WorkUnits(20).time(), None, "no rate converts a work stop to an instant");
 }
+
+/// **A poll the quiet bounds let through is one the rules would not stop.**
+///
+/// `should_stop` answers from three numbers kept with the rules wherever they
+/// are set, and asks the rules and the callback only past them. Over every
+/// kind of threshold, on both sides of each, it answers as the full test does.
+#[test]
+fn the_quiet_bounds_answer_as_the_rules_do() {
+    let thresholds = [
+        None,
+        Some(StopAt::WorkUnits(0)),
+        Some(StopAt::WorkUnits(50)),
+        Some(StopAt::WorkUnits(100)),
+        Some(spent()),
+        Some(unspent()),
+    ];
+    let floors = [0u64, 10, 20];
+    let mut sets = Vec::new();
+    for &unconditional in &thresholds {
+        sets.push(StopRules { unconditional, after_pairs: None });
+        for &floor in &floors {
+            for at in thresholds.iter().flatten() {
+                sets.push(StopRules { unconditional, after_pairs: Some((floor, *at)) });
+            }
+        }
+    }
+    let mut stops = 0;
+    for rules in sets {
+        for callback in [false, true] {
+            for work in [0u64, 49, 50, 99, 100, 150] {
+                for pairs in [0u64, 9, 10, 19, 20, 30] {
+                    let lim = Limits::new();
+                    let decide = callback.then(|| crate::limits::StopCallback::new(|_, _| StopDecision::Continue));
+                    let _prior = lim.install(LimitConfig::none().with_stop_rules(rules).with_stop_callback(decide));
+                    lim.charge_work(work);
+                    lim.charge_output_pairs(pairs as usize);
+                    let full = lim.should_stop_now();
+                    assert_eq!(lim.should_stop(), full, "{rules:?} callback {callback} at {work} units, {pairs} pairs");
+                    stops += usize::from(full);
+                }
+            }
+        }
+    }
+    assert!(stops > 0, "some readings stop");
+    // Once the rules are taken down, nothing stops at any reading.
+    let lim = Limits::new();
+    let prior = lim.install(LimitConfig::none().with_stop_rules(StopRules { unconditional: Some(StopAt::WorkUnits(0)), after_pairs: None }));
+    assert!(lim.should_stop());
+    let _ = lim.install(prior);
+    lim.charge_work(1 << 40);
+    lim.charge_output_pairs(1 << 40);
+    assert!(!lim.should_stop());
+}

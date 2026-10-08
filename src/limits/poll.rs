@@ -1,6 +1,6 @@
 //! Cooperative cancellation and amortized work accounting.
 
-use super::{OperationError, Limits, StopDecision, StopAt};
+use super::{OperationError, Limits, Quiet, StopDecision, StopAt};
 use std::time::Instant;
 
 /// Amortization stride for the post-conjunction walks' [`PollGate`]: one poll
@@ -158,9 +158,20 @@ impl Limits {
     ///
     /// Read the clock at most once, only for a reached pair floor with a time
     /// threshold, an unconditional deadline, or a callback that needs it.
-    /// Work-unit-only rules avoid a clock read on each poll.
-    #[inline]
+    /// Work-unit-only rules avoid a clock read on each poll, and a poll below
+    /// every work-unit threshold reads neither the rules nor the callback.
+    #[inline(always)]
     pub(crate) fn should_stop(&self) -> bool {
+        if self.quiet.get().holds(self.work_clock.get(), self.pairs_in_flight.get()) {
+            return false;
+        }
+        self.should_stop_now()
+    }
+
+    /// [`should_stop`](Self::should_stop) past its quiet bounds.
+    #[cold]
+    #[inline(never)]
+    pub(super) fn should_stop_now(&self) -> bool {
         let stop = self.stop.get();
         let callback = self.stop_callback.borrow().clone();
         if !stop.armed() && callback.is_none() {
@@ -173,6 +184,9 @@ impl Limits {
                 StopDecision::Continue => stop,
                 StopDecision::ReplaceRules(next) => {
                     self.stop.set(next);
+                    // The callback may have installed another configuration
+                    // while it decided; the bounds follow whichever is in place.
+                    self.quiet.set(Quiet::of(next, self.stop_callback.borrow().is_some()));
                     next
                 }
             },

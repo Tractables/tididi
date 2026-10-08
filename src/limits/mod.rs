@@ -25,6 +25,7 @@ pub use error::OperationError;
 pub use memory::MemoryHooks;
 pub use meters::{OperationMetrics, ConjunctionProgress};
 pub use stop::{StopDecision, StopRules, StopAt};
+use stop::Quiet;
 
 pub(crate) use growth::PAIR_ELEM_BYTES;
 pub(crate) use growth::{Charged, Transient};
@@ -287,6 +288,9 @@ pub struct Limits {
     work_clock: Cell<u64>,
     stop: Cell<StopRules>,
     stop_callback: RefCell<Option<StopCallback>>,
+    /// The readings under which `stop` and `stop_callback` cannot stop an
+    /// operation, kept with them wherever either is set.
+    quiet: Cell<Quiet>,
     output_node_cap: Cell<Option<u64>>,
     bounded_growth: Cell<bool>,
     conjunction_progress: Cell<bool>,
@@ -336,6 +340,7 @@ impl Limits {
             work_clock: Cell::new(0),
             stop: Cell::new(StopRules::NONE),
             stop_callback: RefCell::new(None),
+            quiet: Cell::new(Quiet::NONE),
             output_node_cap: Cell::new(None),
             bounded_growth: Cell::new(false),
             conjunction_progress: Cell::new(false),
@@ -412,6 +417,7 @@ impl Limits {
         self.budget.set(set.memory_budget_bytes);
         self.output_node_cap.set(set.output_node_cap);
         self.stop.set(set.stop);
+        self.quiet.set(Quiet::of(set.stop, set.stop_callback.is_some()));
         self.stop_callback.replace(set.stop_callback);
         self.conjunction_progress.set(set.conjunction_progress);
         self.sparse_route.set(set.sparse_route);
