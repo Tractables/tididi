@@ -252,6 +252,17 @@ pub(crate) struct ContractScratch {
     /// the flagged minority.
     pub(super) slice_unsorted: Vec<bool>,
 
+    /// The listed nodes' entries of `fingerprint::find_listed_twin_groups`,
+    /// each under the node's rank in the list.
+    pub(super) listed_entries: Vec<(u32, u64)>,
+    /// One bit per node of a level, for a listed search.
+    pub(super) listed_bits: Vec<u64>,
+    /// Per word of `listed_bits`, the listed nodes before it.
+    pub(super) listed_ranks: Vec<u32>,
+    /// One bit per node of the level a list is gathered for
+    /// (`fingerprint::named_by`).
+    pub(super) reach_bits: Vec<u64>,
+
     // ── `contract_twins` buffers ──
     /// Twin survivor selection and compacted node indices.
     pub(super) remap: MergeRemap,
@@ -275,6 +286,17 @@ pub(crate) struct ContractScratch {
     /// top-down heap (`contract_all_twins`). Reset when the parent is
     /// popped so the all-false invariant holds on entry/exit.
     pub(super) needs_check: Vec<bool>,
+    /// Per vtree node: the level was on the worklist when the sweep began, so
+    /// its children are searched whole. Filled per sweep, read only where
+    /// the diagram has no marginal level (see `fingerprint::listed`).
+    pub(super) search_whole: Vec<bool>,
+    /// Per vtree node: the nodes of that level a contraction at it has
+    /// changed in this sweep (its survivors), in the level's current
+    /// numbering, ascending. Cleared per sweep.
+    pub(super) changed: Vec<Vec<u32>>,
+    /// Per child side of the parent the sweep is at: the nodes its next
+    /// search lists, where that search does not read the whole level.
+    pub(super) reach: [Vec<u32>; 2],
 
     // ── Same-left pair fusion buffers ──
     /// Generation-stamped grouping table reused by
@@ -316,9 +338,18 @@ impl Buffers for ContractScratch {
         visit(&mut self.is_candidate);
         visit(&mut self.candidates);
         visit(&mut self.slice_unsorted);
+        visit(&mut self.listed_entries);
+        visit(&mut self.listed_bits);
+        visit(&mut self.listed_ranks);
+        visit(&mut self.reach_bits);
         self.remap.buffers(visit);
         visit(&mut self.has_marginal_below);
         visit(&mut self.needs_check);
+        visit(&mut self.search_whole);
+        visit(&mut Nested(&mut self.changed));
+        for reach in &mut self.reach {
+            visit(reach);
+        }
         self.pair_fusion.buffers(visit);
         visit(&mut self.boundaries);
         self.merge.buffers(visit);

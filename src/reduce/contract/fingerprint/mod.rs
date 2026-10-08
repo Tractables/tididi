@@ -72,6 +72,9 @@ pub(super) fn mix64(mut x: u64) -> u64 {
 }
 
 mod groups;
+mod listed;
+
+pub(super) use listed::{find_listed_twin_groups, named_by, pair_mass};
 
 #[cfg(test)]
 mod tests;
@@ -110,6 +113,12 @@ struct ContextEntries<'a> {
 /// levels are this small, most of them repeat a sibling within a few pairs,
 /// and the test's fixed cost is not repaid by the few it clears.
 const EARLY_STOP_MIN_ENTRIES: usize = 128;
+
+/// Whether a search of a whole child level under `parent_level` screens it
+/// ([`TwinEntries::no_twin`]) before any fingerprint.
+pub(super) fn screens(parent_level: &TddLevel) -> bool {
+    parent_level.nodes().len() + parent_level.arena_len() >= EARLY_STOP_MIN_ENTRIES
+}
 
 /// The most cells a parent node's sibling table starts with. A wide node
 /// most often repeats a sibling within its first few pairs, so its table
@@ -272,7 +281,7 @@ pub(super) fn find_twin_groups(
     let entries = ContextEntries {
         parent_level,
         t1_side,
-        early_stop: parent_level.nodes().len() + parent_level.arena_len() >= EARLY_STOP_MIN_ENTRIES,
+        early_stop: screens(parent_level),
     };
     group_twins_by_entries(eng, &entries, level.slot_count(), scratch)
 }

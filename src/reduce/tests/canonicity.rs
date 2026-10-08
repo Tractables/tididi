@@ -31,7 +31,7 @@ use crate::restructure::relevel::rebuild_rotated_levels;
 use crate::vtree::RotationKind;
 use crate::restructure::scratch::RestructureScratch;
 use crate::test_helpers::{assert_canonical, assert_same_shape, compile_clauses_pairwise, exact_weight, rand_cnf, rotate_left, rotate_right, CnfShape, Lcg};
-use crate::vtree::Vtree;
+use crate::vtree::{VarId, Vtree};
 use crate::diagram::{Arithmetic, WeightStore};
 
 /// Route 1: fold the clauses left to right into one accumulator.
@@ -146,4 +146,33 @@ fn every_route_to_one_function() -> Vec<Tdd> {
     assert!(checked >= 100, "the sweep must actually run: {checked} cases");
     assert!(rotated >= 50, "the rotation route must be exercised, not skipped: {rotated} cases");
     out
+}
+
+/// Quantification rewrites the levels above the quantified leaves and puts
+/// only those on the contraction worklist, so contraction reaches the levels
+/// below them through the contractions above, and searches them by list
+/// (checked against whole searches in debug builds). Quantifying a set at
+/// once out of the folded diagram and one variable at a time out of the
+/// pairwise one must end on the same canonical diagram.
+#[test]
+fn listed_twin_searches_reach_the_canonical_diagram() {
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x5eed_1157_ed00_0001);
+    let before = crate::reduce::contract::tests::listed_searches();
+    for &nvars in &[6u32, 8, 10] {
+        let vtree = Arc::new(Vtree::balanced(nvars));
+        for _ in 0..16 {
+            let clauses = rand_cnf(&mut rng, nvars, CnfShape { clauses: 2 * nvars as usize, width: 3 });
+            let quantified: Vec<VarId> = (1..=nvars).filter(|_| rng.below(3) == 0).map(VarId).collect();
+            let at_once = eng.exists_vars(build_by_folding(&eng, &vtree, &clauses), &quantified).unwrap();
+            let mut one_at_a_time = compile_clauses_pairwise(&vtree, &clauses);
+            for &x in &quantified {
+                one_at_a_time = eng.exists_var(one_at_a_time, x).unwrap();
+            }
+            assert_canonical(&at_once);
+            assert_same_shape(&at_once, &one_at_a_time, &format!("nvars={nvars} clauses={clauses:?} quantified={quantified:?}"));
+        }
+    }
+    let listed = crate::reduce::contract::tests::listed_searches() - before;
+    assert!(listed > 0, "no contraction was searched by list");
 }

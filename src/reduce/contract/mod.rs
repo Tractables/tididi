@@ -17,4 +17,4 @@ pub(crate) mod pair_fusion; // same-structural-side pair fusion
 pub(crate) use sweep::contract_all_twins;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
