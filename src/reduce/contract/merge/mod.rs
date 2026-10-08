@@ -91,16 +91,19 @@ pub(super) fn contract_twins(
         }
         policy.t1_scalable = MergePolicy::scalable(tdd, t1, has_marginal_below);
     }
-    plan_groups(lim, tdd, t1, &policy, group_starts, flat_groups, bufs)?;
-    // At most one fork-down survivor per planned group.
-    lim.reserve_exact(&mut bufs.resolve_keeps, bufs.group_plans.len())?;
     // The merge concatenates the groups' pairs into their survivors and
-    // compacts the level in place: an implicit t1 is built stored where its
-    // pairs lie first.
-    if !bufs.group_plans.is_empty() {
+    // compacts the level in place, so an implicit t1 is built stored where
+    // its pairs lie first. It is built before the plan, which reads every
+    // member's pairs by index, twice where the overlap filter runs: a stored
+    // node's pairs are read off its words, an implicit level's generated
+    // from its description one node at a time.
+    if !group_starts.is_empty() {
         tdd.levels[t1.idx()].store_if_implicit(lim)?;
         tdd.levels.mark_changed(t1);
     }
+    plan_groups(lim, tdd, t1, &policy, group_starts, flat_groups, bufs)?;
+    // At most one fork-down survivor per planned group.
+    lim.reserve_exact(&mut bufs.resolve_keeps, bufs.group_plans.len())?;
     reserve_transactional(eng, tdd, t1, bufs)?;
     // An implicit parent is rewritten from its description and built stored
     // where a pair changes: its room is had before the merge changes

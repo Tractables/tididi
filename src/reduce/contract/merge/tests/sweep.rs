@@ -219,3 +219,62 @@ fn a_plain_merge_leaves_the_marginal_map_unfilled() {
     assert!(!scratch.has_marginal_below_valid);
     assert_eq!(tdd.model_count().unwrap(), 4u32.into());
 }
+
+/// Twins of an implicit level merge as those of its stored copy do
+/// ([`same_as_stored`](crate::test_helpers::same_as_stored)). The diagram
+/// has a marginal level, so the plan runs the overlap filter, which reads
+/// every member's pairs; the merged level is stored.
+#[test]
+fn twins_of_an_implicit_level_merge_as_its_stored_copys_do() {
+    crate::test_helpers::same_as_stored(twins_of_a_level_of_cubes);
+}
+
+/// The diagrams of [`twins_of_an_implicit_level_merge_as_its_stored_copys_do`]:
+/// its diagram after the twins of its level of cubes merge, closed, and
+/// after a reduction.
+fn twins_of_a_level_of_cubes() -> Vec<Tdd> {
+    let eng = Engine::new();
+    let vtree = std::sync::Arc::new(crate::vtree::Vtree::balanced(4));
+    let parent = vtree.root();
+    let (child, sibling) = vtree.children(parent);
+    let literal = [NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::Neg as u32)];
+    let one = NodeIdx(LeafLabel::One as u32);
+    let mut levels = take_levels(&eng, vtree.num_nodes());
+    // The four cubes over the child's two variables, a pair a node: an
+    // affine level, which a low floor holds as its description.
+    for m in 0..4 {
+        levels[child.idx()].push_internal_node(&[ChildPair::new(literal[m / 2], literal[m % 2])]);
+    }
+    let s0 = levels[sibling.idx()].push_internal_node(&[ChildPair::new(literal[0], one)]);
+    let s1 = levels[sibling.idx()].push_internal_node(&[ChildPair::new(literal[1], one)]);
+    // Cubes 0 and 3 are paired with `s0` only, 1 and 2 with `s1` only: two
+    // twin groups, in a parent no description fits.
+    let output = levels[parent.idx()].push_internal_node(&[
+        ChildPair::new(NodeIdx(0), s0), ChildPair::new(NodeIdx(1), s1),
+        ChildPair::new(NodeIdx(2), s1), ChildPair::new(NodeIdx(3), s0),
+    ]);
+    let mut tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: parent, local: output });
+    let stored = crate::test_helpers::stored_levels_forced();
+    assert_eq!(tdd.levels[child.idx()].implicit().is_none(), stored, "the level of cubes is implicit unless forced stored");
+    // Too wide to fit a reference, so the sibling's nodes stay slots.
+    assert_can_make_marginal(&tdd.levels, &vtree, sibling);
+    tdd.levels[sibling.idx()].become_marginal(vec![(1u128 << 40) + 2, (1u128 << 40) + 3], None);
+    crate::diagram::inline_small_marginal_refs(&mut tdd, None);
+    let before = tdd.model_count().unwrap();
+
+    let mut scratch = eng.scratch.reduce.contract.checkout(&eng);
+    scratch.flat_groups = vec![0, 3, 1, 2];
+    scratch.group_starts = vec![0, 2];
+    assert_eq!(contract_twins(&eng, &mut tdd, child, parent, ChildSide::Left, &mut scratch), Ok(2));
+    assert!(scratch.has_marginal_below_valid, "the plan read the marginal map, then filtered");
+    drop(scratch);
+    assert!(tdd.levels[child.idx()].implicit().is_none(), "the merged level is stored");
+    assert_eq!(tdd.model_count().unwrap(), before);
+    // Closed as the end of a reduction closes the levels it changed.
+    let mut merged = tdd.clone();
+    merged.close_levels();
+    tdd.minimize().unwrap();
+    crate::test_helpers::assert_canonical(&tdd);
+    assert_eq!(tdd.model_count().unwrap(), before);
+    vec![merged, tdd]
+}
