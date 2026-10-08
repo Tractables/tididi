@@ -142,7 +142,8 @@ pub(crate) fn stored_levels<R>(f: impl FnOnce() -> R) -> R {
 
 /// Require `out` to be `oracle` node for node: the same nodes in the same
 /// order, each with the same pairs, every pair arena of the same length,
-/// capacity and dead slots, and `oracle` stored throughout. A level whose
+/// capacity and dead slots, every node arena of the same capacity, stored
+/// or implied, and `oracle` stored throughout. A level whose
 /// nodes are the oracle's word for word has its arena once written; a
 /// level a prune or a close described numbers its nodes' ranges from the
 /// start of the arena instead, where the stored route left them where they
@@ -150,7 +151,7 @@ pub(crate) fn stored_levels<R>(f: impl FnOnce() -> R) -> R {
 pub(crate) fn same_levels(out: &Tdd, oracle: &Tdd) {
     assert_eq!(out.output, oracle.output);
     let mut buf = Vec::new();
-    for (a, b) in out.levels.iter().zip(oracle.levels.iter()) {
+    for (t, (a, b)) in out.levels.iter().zip(oracle.levels.iter()).enumerate() {
         assert!(b.pairs.implicit().is_none(), "the stored route made a level implicit");
         assert_eq!(a.is_marginal(), b.is_marginal());
         assert_eq!(a.nodes().len(), b.nodes().len(), "the implicit route kept other nodes");
@@ -163,6 +164,13 @@ pub(crate) fn same_levels(out: &Tdd, oracle: &Tdd) {
         assert_eq!(a.pairs.len(), b.pairs.len(), "the implicit route holds another arena length");
         assert_eq!(a.pairs.capacity(), b.pairs.capacity(), "the implicit route holds another capacity");
         assert_eq!(a.dead_pairs, b.dead_pairs, "the implicit route counts other dead slots");
+        assert_eq!(
+            a.node_capacity(),
+            b.node_capacity(),
+            "level {t}: the implicit route holds another node capacity, {} nodes, {:?} pairs a node",
+            b.nodes().len(),
+            a.implicit().map(|d| d.pairs_per_node())
+        );
         if a.nodes == b.nodes {
             // Node for node the same ranges: the description stands for the
             // stored arena's pairs where they lie. A level built stored from
@@ -176,7 +184,7 @@ pub(crate) fn same_levels(out: &Tdd, oracle: &Tdd) {
 }
 
 /// The floor [`same_as_stored`] runs its operation under: every affine
-/// level of two pairs a node or more is implicit.
+/// level of two pairs or more is implicit.
 pub(crate) const LOW_FLOOR: usize = 2;
 
 /// Run `op` with the floor lowered to [`LOW_FLOOR`], so that the small

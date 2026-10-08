@@ -10,6 +10,7 @@
 //! pairs) the words are stored beside the description.
 
 use crate::diagram::primitives::{EncodedNode, NodeIdx};
+use super::implicit::NodeCursor;
 use super::{ImplicitLevel, TddLevel};
 
 /// The stored nodes of a level, indexed by [`NodeIdx`]: every node of a
@@ -101,7 +102,7 @@ impl<'a> Nodes<'a> {
     pub fn iter(self) -> NodesIter<'a> {
         let level = self.level;
         let implied = level.implied_by().map_or(0..0, |d| 0..d.nodes());
-        NodesIter { stored: level.nodes.stored.iter(), implied, level }
+        NodesIter { stored: level.nodes.stored.iter(), implied, level, cursor: None }
     }
 }
 
@@ -124,14 +125,17 @@ pub struct NodesIter<'a> {
     /// The implied nodes still to come; empty on a stored level.
     implied: std::ops::Range<usize>,
     level: &'a TddLevel,
+    /// The implied nodes' first pairs, at one pair a node, stepped on from
+    /// node to node.
+    cursor: Option<Box<NodeCursor<'a>>>,
 }
 
 impl NodesIter<'_> {
     /// The implied node `i`, out of line, so that a stored level's read
     /// inlines where it is called.
     #[inline(never)]
-    fn implied(&self, i: usize) -> EncodedNode {
-        self.level.implied_node(i)
+    fn implied(&mut self, i: usize) -> EncodedNode {
+        self.level.implied_by().expect("an implicit level").node_word_next(&mut self.cursor, i)
     }
 }
 
@@ -154,8 +158,9 @@ impl Iterator for NodesIter<'_> {
         if self.implied.is_empty() {
             return acc;
         }
-        let level = self.level;
-        self.implied.fold(acc, |acc, i| f(acc, level.implied_node(i)))
+        let d = self.level.implied_by().expect("an implicit level");
+        let mut cursor = self.cursor;
+        self.implied.fold(acc, |acc, i| f(acc, d.node_word_next(&mut cursor, i)))
     }
 
     #[inline]

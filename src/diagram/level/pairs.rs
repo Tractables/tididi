@@ -34,6 +34,13 @@ fn described_iter((d, (l, r)): NodeStart<'_>) -> PairsIter<'_> {
     PairsIter::described(d.places_from((i64::from(l), i64::from(r))))
 }
 
+/// `pair` with each side decoded to the bare coordinate structural use
+/// wants ([`ChildDecoder::coord`]).
+#[inline(always)]
+pub(crate) fn decoded(pair: ChildPair, left: ChildDecoder, right: ChildDecoder) -> ChildPair {
+    ChildPair::new(EncodedChildRef::from_raw(left.coord(pair.left)), EncodedChildRef::from_raw(right.coord(pair.right)))
+}
+
 /// The one pair an inline node holds, as a slice of the node itself.
 #[inline(always)]
 fn inline_pair(node: &EncodedNode) -> &[ChildPair] {
@@ -43,6 +50,70 @@ fn inline_pair(node: &EncodedNode) -> &[ChildPair] {
     //         Both types have identical {u32, u32} layout, so the cast is valid.
     unsafe { std::slice::from_ref(&*(node as *const EncodedNode as *const ChildPair)) }
 }
+
+/// The nodes of a level with their pairs, in index order, as
+/// [`TddLevel::internal_inputs_range`] reads them: a stored level's off its
+/// node arena, as slices of its pairs, in a read that inlines where it is
+/// called; an implicit level's off its description, out of line, each
+/// node's first pair stepped on from the one before it.
+struct Inputs<'a> {
+    level: &'a TddLevel,
+    /// The stored nodes still to come; empty on a level whose nodes are
+    /// implied.
+    stored: std::slice::Iter<'a, EncodedNode>,
+    /// The index of the next stored node.
+    at: usize,
+    /// The implied nodes still to come; empty on a level that stores its
+    /// nodes.
+    implied: std::ops::Range<usize>,
+    /// The first pairs of an implicit level's nodes, made by the first read
+    /// ([`TddLevel::described_cursor`]).
+    cursor: Option<Box<NodeCursor<'a>>>,
+}
+
+impl<'a> Inputs<'a> {
+    /// The pairs of implied node `i`, out of line.
+    #[inline(never)]
+    fn implied(&mut self, i: usize) -> PairsIter<'a> {
+        let level = self.level;
+        let cursor = self.cursor.get_or_insert_with(|| level.described_cursor());
+        described_iter(level.implied_next(cursor, i))
+    }
+}
+
+impl<'a> Iterator for Inputs<'a> {
+    type Item = (usize, PairsIter<'a>);
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.stored.next() {
+            Some(node) => {
+                let i = self.at;
+                self.at += 1;
+                let (level, cursor) = (self.level, &mut self.cursor);
+                // A stored node of an implicit level, past 2^31 pairs, names
+                // its range of the pairs the description generates.
+                let pairs = level.read_node(node, |at| {
+                    let cursor = cursor.get_or_insert_with(|| level.described_cursor());
+                    described_iter(level.described_next(cursor, at))
+                });
+                Some((i, pairs))
+            }
+            None => {
+                let i = self.implied.next()?;
+                Some((i, self.implied(i)))
+            }
+        }
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let n = self.stored.len() + self.implied.len();
+        (n, Some(n))
+    }
+}
+
+impl ExactSizeIterator for Inputs<'_> {}
 
 /// The pairs of a level that stores them: a node's pairs are a slice of the
 /// arena, or the node itself for a single pair.
@@ -164,16 +235,17 @@ impl TddLevel {
 
     /// Calls `f(i, pair)` with every pair of every node `i`, node by node:
     /// a stored level's pairs read as slices of its arena, an implicit
-    /// level's generated into a buffer a node at a time. One loop calls
+    /// level's generated into a buffer a node at a time
+    /// ([`described_read_next`](Self::described_read_next)). One loop calls
     /// `f`, so that it inlines there.
     #[inline]
     pub(crate) fn for_each_node_pair(&self, mut f: impl FnMut(usize, ChildPair)) {
         let stored = self.stored();
-        let mut buf = Vec::new();
+        let (mut buf, mut cursor) = (Vec::new(), None);
         for i in 0..self.node_count() {
             let pairs = match stored {
                 Some(stored) => stored.of_idx(i),
-                None => self.pairs_read(i, &mut buf),
+                None => self.described_read_next(&mut cursor, i, &mut buf),
             };
             for &pair in pairs {
                 f(i, pair);
@@ -183,13 +255,17 @@ impl TddLevel {
 
     /// Every pair of the level with the index of the node holding it, in
     /// node order: a stored level's read off its arenas as slices, an
-    /// implicit level's generated from its description a node at a time.
+    /// implicit level's generated from its description a node at a time,
+    /// each node's first pair stepped on from the one before it.
     #[inline]
     pub(crate) fn pairs_with_parent(&self) -> impl Iterator<Item = (u32, ChildPair)> + Clone + '_ {
         let stored = self.nodes.stored().iter().enumerate()
             .flat_map(move |(i, node)| self.pairs_iter_of(node).map(move |pair| (i as u32, pair)));
-        let implied = self.implied_by().map_or(0..0, |d| 0..d.nodes())
-            .flat_map(move |i| described_iter(self.implied_start(i)).map(move |pair| (i as u32, pair)));
+        let mut cursor = None;
+        let implied = self.implied_by().map_or(0..0, |d| 0..d.nodes()).flat_map(move |i| {
+            let cursor = cursor.get_or_insert_with(|| self.described_cursor());
+            described_iter(self.implied_next(cursor, i)).map(move |pair| (i as u32, pair))
+        });
         stored.chain(implied)
     }
 
@@ -199,22 +275,15 @@ impl TddLevel {
     /// ([`described_cursor`](Self::described_cursor)).
     #[inline]
     pub(crate) fn internal_inputs_range(&self, range: std::ops::Range<usize>) -> impl Iterator<Item = (usize, PairsIter<'_>)> + '_ {
-        assert!(range.end <= self.node_count(), "nodes {range:?} of a level of {} nodes", self.node_count());
-        let stored = self.nodes.stored();
-        let mut cursor = None;
-        range.map(move |i| {
-            let pairs = match stored.get(i) {
-                Some(n) => self.read_node(n, |at| {
-                    let cursor = cursor.get_or_insert_with(|| self.described_cursor());
-                    described_iter(self.described_next(cursor, at))
-                }),
-                None => {
-                    let cursor = cursor.get_or_insert_with(|| self.described_cursor());
-                    described_iter(self.implied_next(cursor, i))
-                }
-            };
-            (i, pairs)
-        })
+        let (at, stored) = (range.start, self.nodes.stored());
+        // A level stores its nodes, or its description implies every one.
+        let (stored, implied) = if stored.is_empty() {
+            assert!(range.end <= self.node_count(), "nodes {range:?} of a level of {} nodes", self.node_count());
+            ([].iter(), range)
+        } else {
+            (stored[range].iter(), 0..0)
+        };
+        Inputs { level: self, stored, at, implied, cursor: None }
     }
 
     /// The pairs of `node`, a node of this level: its inline pair, a slice
@@ -313,6 +382,31 @@ impl TddLevel {
         self.pairs_decoded(idx, scratch, left, right)
     }
 
+    /// [`pairs_view_decoded`](Self::pairs_view_decoded) for nodes read in
+    /// increasing order: an implicit level's pairs generated off its
+    /// description, each node's first pair stepped on by `cursor`
+    /// ([`described_read_next`](Self::described_read_next)).
+    #[inline]
+    pub(crate) fn pairs_view_decoded_next<'a, 'b>(
+        &'a self,
+        cursor: &mut Option<Box<NodeCursor<'a>>>,
+        idx: usize,
+        scratch: &'b mut Vec<ChildPair>,
+        left: ChildDecoder,
+        right: ChildDecoder,
+    ) -> &'b [ChildPair]
+    where
+        'a: 'b,
+    {
+        if !left.is_marginal() && !right.is_marginal() {
+            return match self.nodes.stored().get(idx).and_then(|node| self.stored_of(node)) {
+                Some(pairs) => pairs,
+                None => self.described_read_next(cursor, idx, scratch),
+            };
+        }
+        self.pairs_decoded(idx, scratch, left, right)
+    }
+
     /// [`pairs_view_decoded`](Self::pairs_view_decoded) with a marginal
     /// child: the pairs decoded into `scratch`.
     #[inline(never)]
@@ -338,9 +432,7 @@ impl TddLevel {
         left: ChildDecoder,
         right: ChildDecoder,
     ) {
-        self.pairs_iter_of_idx(idx).for_each(|p| {
-            out.push(ChildPair::new(EncodedChildRef::from_raw(left.coord(p.left)), EncodedChildRef::from_raw(right.coord(p.right))));
-        });
+        self.pairs_iter_of_idx(idx).for_each(|p| out.push(decoded(p, left, right)));
     }
 
     /// The pairs of `node`, a node of this level, as an iterator: stored, or
@@ -399,6 +491,24 @@ impl TddLevel {
     fn implied_next<'a>(&'a self, cursor: &mut NodeCursor<'a>, i: usize) -> NodeStart<'a> {
         let (l, r) = cursor.first_of(i);
         (self.described(), (l as u32, r as u32))
+    }
+
+    /// The pairs of node `i` of an implicit level, for nodes read in
+    /// increasing order: generated into `buf` from the node's first pair,
+    /// stepped on by `cursor`, which the first read makes
+    /// ([`described_cursor`](Self::described_cursor)). Out of line, so that
+    /// a loop over a stored level's slices stays small.
+    #[inline(never)]
+    pub(crate) fn described_read_next<'a, 'b>(
+        &'a self,
+        cursor: &mut Option<Box<NodeCursor<'a>>>,
+        i: usize,
+        buf: &'b mut Vec<ChildPair>,
+    ) -> &'b [ChildPair] {
+        let cursor = cursor.get_or_insert_with(|| self.described_cursor());
+        buf.clear();
+        buf.extend(described_iter(self.implied_next(cursor, i)));
+        buf
     }
 
     /// A [`NodeCursor`] on this implicit level, at node 0. Boxed: a reader
@@ -460,7 +570,29 @@ impl TddLevel {
     /// sentinel of a ranged node's, whose count is in the side table.
     #[inline]
     pub fn pair_count_at(&self, idx: usize) -> usize {
-        let node = &self.node(idx);
+        match self.nodes.stored().get(idx) {
+            Some(node) => self.held_pairs(node),
+            None => self.implied_pair_count(idx),
+        }
+    }
+
+    /// [`pair_count_at`](Self::pair_count_at) of a node its level's
+    /// description implies: the description's count, without the node's
+    /// word. Out of line, so that a stored level's read inlines where it is
+    /// called.
+    #[inline(never)]
+    #[track_caller]
+    fn implied_pair_count(&self, idx: usize) -> usize {
+        match self.implied_by() {
+            Some(d) if idx < d.nodes() => d.pairs_per_node(),
+            _ => panic!("node {idx} of a level of {} nodes", self.node_count()),
+        }
+    }
+
+    /// The number of pairs of `node`, a node of this level, read off its
+    /// words as [`pair_count_at`](Self::pair_count_at) reads them.
+    #[inline]
+    fn held_pairs(&self, node: &EncodedNode) -> usize {
         match node.held_count() {
             1 => match node.kind() {
                 NodeKind::MultiRanged(e) => self.ranges[e as usize].len as usize,
@@ -470,15 +602,16 @@ impl TddLevel {
         }
     }
 
-    /// A node holding other than `k` pairs, when one does: the node the
-    /// last close found ([`uneven`](Self::uneven)) when it still does, else
-    /// the first.
+    /// A node of this stored level holding other than `k` pairs, when one
+    /// does: the node the last close found ([`uneven`](Self::uneven)) when
+    /// it still does, else the first.
     pub(crate) fn uneven_node(&self, k: usize) -> Option<usize> {
+        let nodes = self.nodes.stored();
         let hint = self.uneven as usize;
-        if hint < self.nodes().len() && self.pair_count_at(hint) != k {
+        if nodes.get(hint).is_some_and(|n| self.held_pairs(n) != k) {
             return Some(hint);
         }
-        (1..self.nodes().len()).find(|&i| self.pair_count_at(i) != k)
+        nodes.iter().skip(1).position(|n| self.held_pairs(n) != k).map(|i| i + 1)
     }
 
     /// The pair count of every node in index order. Empty on a marginal

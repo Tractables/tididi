@@ -78,7 +78,7 @@ pub struct Digit {
 /// # Canonical form
 ///
 /// A level is implicit exactly when it can be: it is structural, its `n`
-/// nodes have the same `k ≥ 2` pairs each,
+/// nodes have the same `k ≥ 1` pairs each,
 /// `n · k` is at least [`FLOOR`], and its pairs as numbered, pair `m` of
 /// node `i` at place `i · k + m`, are affine in a mixed radix. Its
 /// description is then the digits a greedy read takes off those pairs,
@@ -90,9 +90,10 @@ pub struct Digit {
 /// than the pairs it stands for.
 ///
 /// An implicit level stores neither its pairs nor its nodes: node `i` is
-/// implied by the description, the range of pairs `i · k .. (i + 1) · k`
-/// ([`TddLevel::node`]). Past 2^31 pairs, where a range takes the side
-/// table, the nodes' words are stored beside the description.
+/// implied by the description ([`TddLevel::node`]), holding its one pair
+/// inline at one pair a node, else the range of pairs `i · k .. (i + 1) ·
+/// k`. Past 2^31 pairs, where a range takes the side table, the nodes'
+/// words are stored beside the description.
 ///
 /// The form holds at operation boundaries, not inside an operation. A pass
 /// that changes a level builds it stored where it lies; the seating of a
@@ -323,37 +324,28 @@ impl ImplicitLevel {
         }
     }
 
-    /// Write the level's nodes into `level`, whose nodes and pairs are empty,
-    /// as the conjunction's row loop writes them: node `i` holds its pair
-    /// inline when it has one, else the arena range of pairs `i · k ..
-    /// (i + 1) · k`. The arena itself is not written.
-    pub(crate) fn write_nodes(&self, lim: &Limits, level: &mut TddLevel) -> Result<(), OperationError> {
-        debug_assert!(level.nodes().is_empty() && level.pairs.is_empty());
-        if self.per_node == 1 {
-            // In one pass a run where the nodes fit the reserved capacity,
-            // one node at a time otherwise.
-            let fits = level.node_capacity() - level.nodes().len() >= self.nodes;
-            let stored = level.nodes.stored_mut();
-            return self.node_runs(|_, offsets, at| {
-                let nodes = offsets.iter().map(|&o| inline_at(at, o));
-                if fits {
-                    stored.extend(nodes);
-                    return Ok(());
-                }
-                for node in nodes {
-                    lim.try_push(stored, node)?;
-                }
-                Ok(())
-            });
-        }
-        // Where the nodes fit the reserved capacity and every range the
-        // plain multi-pair word, which the conjunction's reservation makes the
-        // usual case, they are written in one pass; otherwise one at a time.
+    /// [`node_word`](Self::node_word) for nodes read in increasing order:
+    /// at one pair a node their pairs stepped on by `cursor`, which the
+    /// first read makes, boxed, so that a reader that holds it stays small.
+    #[inline]
+    pub(crate) fn node_word_next<'a>(&'a self, cursor: &mut Option<Box<NodeCursor<'a>>>, i: usize) -> EncodedNode {
         let k = self.per_node;
-        if level.node_capacity() - level.nodes().len() >= self.nodes && self.pairs() < 1 << 31 {
-            level.nodes.stored_mut().extend((0..self.nodes).map(|i| EncodedNode::multi_pair((i * k) as u32, k as u32)));
-            return Ok(());
+        if k == 1 {
+            let (l, r) = cursor.get_or_insert_with(|| Box::new(self.cursor())).first_of(i);
+            inline_at((l as u32, r as u32), (0, 0))
+        } else {
+            EncodedNode::multi_pair((i * k) as u32, k as u32)
         }
+    }
+
+    /// Write the nodes of a level this describes whose nodes it does not
+    /// imply, past 2^31 pairs, into `level`, whose nodes and pairs are
+    /// empty, as the conjunction's row loop writes them: node `i` the arena
+    /// range of pairs `i · k .. (i + 1) · k`, in the side table where the
+    /// plain word does not hold it. The arena itself is not written.
+    pub(crate) fn write_nodes(&self, level: &mut TddLevel) -> Result<(), OperationError> {
+        debug_assert!(level.nodes().is_empty() && level.pairs.is_empty() && !self.implies_nodes());
+        let k = self.per_node;
         for i in 0..self.nodes {
             level.try_push_multi_by_range(i * k, k).map_err(|()| OperationError::OverBudget)?;
         }
@@ -461,11 +453,15 @@ impl ImplicitLevel {
         let first_pairs = stored.of_idx(0);
         let per_node = first_pairs.len();
         // The counts first: a level whose nodes hold different numbers of
-        // pairs fails here, before any digit is read or stepped.
+        // pairs fails here, before any digit is read or stepped. Where node 0
+        // holds one pair and the arena none, no node holds more, and one of
+        // none fails the compare of the words below.
         if per_node == 0 {
             return Err(None);
         }
-        if let Some(i) = level.uneven_node(per_node) {
+        if (per_node >= 2 || level.pairs.stored_vec_len() != 0)
+            && let Some(i) = level.uneven_node(per_node)
+        {
             return Err(Some(i));
         }
         let first = slots(&first_pairs[0]);
@@ -1051,7 +1047,8 @@ impl PairArena {
     /// The stored pairs at `range`, which must be a node's: `None` on an
     /// implicit arena, whose vector of pairs is empty, so that the bounds
     /// check of a stored node's read is the only test it takes. A node of
-    /// an implicit level has two pairs or more.
+    /// an implicit level of one pair a node holds it inline and is read off
+    /// its word.
     #[inline(always)]
     pub(crate) fn slots(&self, range: std::ops::Range<usize>) -> Option<&[ChildPair]> {
         self.stored.get(range)
@@ -1075,7 +1072,7 @@ impl PairArena {
     /// level's node arena where the description implies its nodes. The
     /// arena is empty; its allocation is dropped.
     pub(crate) fn describe(&mut self, described: ImplicitLevel, capacity: usize, node_capacity: usize) {
-        debug_assert!(self.is_empty() && described.per_node >= 2);
+        debug_assert!(self.is_empty() && described.per_node >= 1);
         let len = described.arena_len();
         DESCRIBED.fetch_add(len as u64, std::sync::atomic::Ordering::Relaxed);
         #[cfg(test)]
@@ -1089,7 +1086,7 @@ impl PairArena {
     /// stand for the dead slots a sweep would drop. `node_capacity` is as
     /// for [`describe`](Self::describe).
     pub(crate) fn describe_stored(&mut self, described: ImplicitLevel, node_capacity: usize) {
-        debug_assert!(self.stored().is_some() && described.per_node >= 2 && described.arena_len() <= self.len());
+        debug_assert!(self.stored().is_some() && described.per_node >= 1 && described.arena_len() <= self.len());
         let (len, capacity) = (self.len(), self.capacity());
         DESCRIBED.fetch_add(described.arena_len() as u64, std::sync::atomic::Ordering::Relaxed);
         #[cfg(test)]
@@ -1104,7 +1101,7 @@ impl PairArena {
     /// described pairs standing for those the prune dropped.
     pub(crate) fn redescribe(&mut self, described: ImplicitLevel) {
         let d = self.described.as_mut().expect("redescribe on a stored arena");
-        debug_assert!(described.per_node >= 2 && described.arena_len() <= d.len);
+        debug_assert!(described.per_node >= 1 && described.arena_len() <= d.len);
         REDESCRIBED.fetch_add(described.arena_len() as u64, std::sync::atomic::Ordering::Relaxed);
         #[cfg(test)]
         crate::test_helpers::note_described();
@@ -1597,13 +1594,13 @@ impl TddLevel {
     }
 
     /// Close a stored level: hold it as the description of its pairs when it
-    /// can be one (see the canonical form of [`ImplicitLevel`]), its nodes at
-    /// pairs `i · k .. (i + 1) · k`, the arena keeping its length, capacity
-    /// and dead slots, so that the meters and the sweeps read it as they
-    /// read the stored one. Nothing on an implicit level or one that cannot
-    /// be, nor on an arena past 2^31 pairs, whose nodes' ranges may take the
-    /// side table. Reads the pairs up to the first that is not affine, and
-    /// charges nothing.
+    /// can be one (see the canonical form of [`ImplicitLevel`]), its nodes
+    /// implied, the arena keeping its length, capacity and dead slots and
+    /// the node arena its capacity, so that the meters and the sweeps read
+    /// it as they read the stored one. Nothing on an implicit level or one
+    /// that cannot be, nor on an arena past 2^31 pairs, whose nodes' ranges
+    /// may take the side table. Reads the pairs up to the first that is not
+    /// affine, and charges nothing.
     #[inline]
     pub(crate) fn close(&mut self) {
         if self.closes_by_fit() {
@@ -1613,21 +1610,25 @@ impl TddLevel {
 
     /// Whether [`close`](Self::close) reads a fit of this level's pairs: a
     /// stored structural level of an arena it closes, whose node 0 holds
-    /// two pairs or more and whose nodes, at that count each, hold the
+    /// one pair or more and whose nodes, at that count each, hold the
     /// floor's pairs or more. Only such a level can fit a description of
     /// the canonical form, and one that closing left stored, as at an
     /// operation's boundary, fits none.
     #[inline]
     pub(crate) fn closes_by_fit(&self) -> bool {
-        // An implicit arena's vector is empty, below any floor: the one test
-        // that most levels, small or implicit, take.
-        (floor()..1 << 31).contains(&self.pairs.stored_vec_len())
+        // An implicit level's vectors are empty, below any floor: the one
+        // test that most levels, small or implicit, take. A level of one
+        // pair a node holds its pairs in its nodes.
+        let (pairs, nodes) = (self.pairs.stored_vec_len(), self.nodes.stored().len());
+        (pairs >= floor() || nodes >= floor())
+            && pairs < 1 << 31
+            && nodes != 0
+            && self.pairs.implicit().is_none()
             && !stored_levels_forced()
             && matches!(self.state, LevelState::Structural(_))
-            && !self.nodes().is_empty()
             && {
                 let k = self.pair_count_at(0);
-                k >= 2 && self.nodes().len().saturating_mul(k) >= floor()
+                k >= 1 && nodes.saturating_mul(k) >= floor()
             }
     }
 
@@ -1650,7 +1651,7 @@ impl TddLevel {
         };
         // A fit's nodes hold node 0's pairs each, in an arena below 2^31
         // pairs, so the description implies them.
-        debug_assert!(d.per_node >= 2 && d.pairs() >= floor() && d.implies_nodes());
+        debug_assert!(d.per_node >= 1 && d.pairs() >= floor() && d.implies_nodes());
         let node_capacity = self.nodes.imply();
         self.pairs.describe_stored(d, node_capacity);
     }
@@ -1705,8 +1706,16 @@ impl TddLevel {
             }
         }
         let Some((mut vec, lens)) = built else { return false };
-        self.store_implied_nodes();
         STORED.fetch_add(lens.iter().sum::<usize>() as u64, std::sync::atomic::Ordering::Relaxed);
+        if k == 1 {
+            // Every node held its pair inline, and holds what is left of it
+            // inline, or the empty placeholder; the arena stays empty.
+            let empty = self.encode_multi(0, 0);
+            let words = vec.iter().zip(&lens).map(|(&p, &w)| if w == 1 { EncodedNode::inline(p) } else { empty });
+            self.store_inline_nodes(words, vec[0]);
+            return lens.contains(&0);
+        }
+        self.store_implied_nodes();
         let filler = vec[0];
         vec.resize(self.pairs.len(), filler);
         if sorted {
@@ -1748,14 +1757,36 @@ impl TddLevel {
     /// through `left` and `right`, when what a prune or a renumbering of its
     /// child levels leaves of it is not affine as numbered: node `i` at pairs
     /// `i · k .. (i + 1) · k` of an arena of the length and capacity the
-    /// implicit one stood for. The slots of the other nodes and those past
-    /// the described pairs hold copies of the first pair; nothing reads them.
+    /// implicit one stood for, or, at one pair a node, holding its pair
+    /// inline. The slots of the other nodes and those past the described
+    /// pairs hold copies of the first pair as described, not moved, since
+    /// its children may be gone; nothing reads them.
     pub(crate) fn store_moved(&mut self, keep: impl Fn(usize) -> bool, left: impl Fn(i64) -> i64, right: impl Fn(i64) -> i64) {
+        let d = self.pairs.implicit().expect("store_moved on a stored level");
+        let fill = d.places(0).next();
+        if d.per_node == 1 {
+            // Each node holds its moved pair inline, those `keep` does not
+            // name the first; the arena holds no pair.
+            let fill = fill.expect("a node has its pair");
+            let (mut cursor, mut stored) = (d.cursor(), 0usize);
+            let words: Vec<EncodedNode> = (0..d.nodes)
+                .map(|i| {
+                    if !keep(i) {
+                        return EncodedNode::inline(fill);
+                    }
+                    stored += 1;
+                    let (l, r) = cursor.first_of(i);
+                    EncodedNode::inline(pair(left(l), right(r)))
+                })
+                .collect();
+            STORED.fetch_add(stored as u64, std::sync::atomic::Ordering::Relaxed);
+            self.store_inline_nodes(words.into_iter(), fill);
+            return;
+        }
         self.store_implied_nodes();
         let d = self.pairs.implicit().expect("store_moved on a stored level");
         let (len, capacity) = (self.pairs.len(), self.pairs.capacity());
         let mut vec = Vec::with_capacity(capacity);
-        let fill = d.places(0).next().map(|p| pair(left(i64::from(p.left.raw())), right(i64::from(p.right.raw()))));
         let mut stored = 0usize;
         for i in 0..d.nodes {
             if keep(i) {
@@ -1770,6 +1801,21 @@ impl TddLevel {
         }
         STORED.fetch_add(stored as u64, std::sync::atomic::Ordering::Relaxed);
         self.pairs = PairArena::from(vec);
+    }
+
+    /// Store `words` as the nodes of an implicit level of one pair a node,
+    /// at the capacity its node arena would have, and its pair arena as the
+    /// stored one it stands for, of its length and capacity, its slots
+    /// copies of `fill`: nothing reads them.
+    fn store_inline_nodes(&mut self, words: impl ExactSizeIterator<Item = EncodedNode>, fill: ChildPair) {
+        debug_assert!(self.implied_by().is_some_and(|d| d.per_node == 1));
+        let (len, capacity) = (self.pairs.len(), self.pairs.capacity());
+        let mut nodes = Vec::with_capacity(self.node_capacity().max(words.len()));
+        nodes.extend(words);
+        self.nodes = super::NodeArena::from(nodes);
+        let mut pairs = Vec::with_capacity(capacity);
+        pairs.resize(len, fill);
+        self.pairs = PairArena::from(pairs);
     }
 
     /// The pairs of node `i`: a slice of a stored level's arena, or of `buf`,

@@ -58,9 +58,8 @@ pub(super) fn rewrite_parent(
     // per-iteration saturating add buys nothing.
     let mut dead_acc = 0usize;
     let parent_level = &mut tdd.levels[parent.idx()];
-    // An implicit parent has no inline node: its pairs are read off the
-    // description through the same filter, and the level is built and
-    // closed.
+    // An implicit parent's pairs are read off the description through the
+    // same filter, and the level is built stored where one changes.
     if parent_level.pairs.implicit().is_some() {
         parent_level.rewrite_described(false, |_, _, _, pair| canonical_pair(pair, t1_side, remap));
         return;

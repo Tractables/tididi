@@ -9,10 +9,8 @@
 //! of a mixed radix (an [`ImplicitLevel`] or a level that fits one), every
 //! cell is live and the level's pairs are the product description
 //! [`ImplicitLevel::product`] gives, in the row loop's order. This route
-//! charges the work clock and the meters what the row loop would. A level of
-//! two pairs a node or more is kept as the description of its pairs, which
-//! implies its nodes; a level of one pair a node is written as the row loop
-//! would write it.
+//! charges the work clock and the meters what the row loop would, and keeps
+//! the level as the description of its pairs, which implies its nodes.
 
 use crate::apply::conjoin::cell::GROUPED_MIN_PAIRS;
 use crate::apply::conjoin::*;
@@ -102,26 +100,22 @@ pub(super) fn write(
     for (c, cell) in cells.iter_mut().enumerate() {
         *cell = c as u32;
     }
-    // A description of two pairs a node or more holds the level, and implies
-    // its nodes where their words fit; the node arena the row loop reserved,
-    // one node a cell, is dropped, its capacity kept as the one it would
-    // have.
-    let described = product.pairs_per_node() >= 2;
-    let node_capacity = if described && product.implies_nodes() {
+    // The description holds the level, and implies its nodes where their
+    // words fit: the node arena the row loop reserved, one node a cell, is
+    // dropped, its capacity kept as the one it would have.
+    let node_capacity = if product.implies_nodes() {
         debug_assert!(level.node_capacity() >= product.nodes());
         level.nodes.imply().max(product.nodes())
     } else {
-        product.write_nodes(lim, level)?;
+        product.write_nodes(level)?;
         0
     };
     lim.charge_output_pairs(meter.0);
     for _ in 0..meter.1 {
         super::super::note_scheduled_charge();
     }
-    if described {
-        let capacity = level.pairs.capacity();
-        level.pairs.describe(product, capacity, node_capacity);
-    }
+    let capacity = level.pairs.capacity();
+    level.pairs.describe(product, capacity, node_capacity);
     lim.charge_work(work);
     lim.check_stop()
 }

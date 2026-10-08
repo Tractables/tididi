@@ -193,11 +193,12 @@ fn sweep<'e>(eng: &'e Engine, f: &Tdd, remap: &mut [Vec<u32>]) -> Result<(Assemb
                 (new != DEAD).then(|| NodeIdx(new).into())
             }
         };
-        for i in 0..source.nodes().len() {
+        // The nodes in order, an implicit level's off its description.
+        for (i, source_pairs) in source.internal_inputs_iter() {
             poll.poll(1)?;
             if remap[t.idx()][i] == DEAD { continue; }
             pairs.clear();
-            for pair in source.pairs_iter_of_idx(i) {
+            for pair in source_pairs {
                 let kept = if pair.left == ZERO.into() || pair.right == ZERO.into() {
                     None
                 } else {

@@ -31,8 +31,10 @@ pub(super) fn propagate_false_nodes(tdd: &mut Tdd) {
         let [parent, left_level, right_level] = tdd.levels
             .get_disjoint_mut([vi.idx(), left.idx(), right.idx()])
             .expect("a parent and its children are distinct levels");
+        // An implicit level's nodes hold the description's pairs each, one
+        // or more.
         let has_empty = |structural: bool, level: &TddLevel| {
-            structural && (0..level.nodes().len()).any(|i| empty_node(level, i))
+            structural && level.pairs.implicit().is_none() && (0..level.nodes().len()).any(|i| empty_node(level, i))
         };
         if parent.nodes().is_empty()
             || !(has_empty(left_structural, left_level) || has_empty(right_structural, right_level))

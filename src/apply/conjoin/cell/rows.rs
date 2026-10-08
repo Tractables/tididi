@@ -166,14 +166,21 @@ where
         node_idx[ctx.output_grid_base..ctx.output_grid_base + left_width * right_width].fill(NO_PRODUCT);
     }
 
+    // An implicit f level's rows are read in order off its description.
+    let mut f_cursor = None;
     for i in 0..left_width {
         let row_base = ctx.output_grid_base + action.grid_row(i) * right_width;
         if !slab_fill && !every_cell {
             node_idx[row_base..row_base + right_width].fill(NO_PRODUCT);
         }
 
-        let f_pairs =
-            left_level_t.pairs_view_decoded(i, f_pairs_scratch, ctx.sides.left.plan.view, ctx.sides.right.plan.view);
+        let f_pairs = left_level_t.pairs_view_decoded_next(
+            &mut f_cursor,
+            i,
+            f_pairs_scratch,
+            ctx.sides.left.plan.view,
+            ctx.sides.right.plan.view,
+        );
         // Empty pairs means dead (zero-containing) node — skip this row.
         if f_pairs.is_empty() {
             if every_cell {

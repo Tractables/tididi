@@ -1254,10 +1254,11 @@ fn scan_level(work: &mut Rewrite<'_>, level: &TddLevel) -> Result<Vec<Owned>, Op
     let lim = work.eng.limits();
     let mut owned = Vec::new();
     lim.reserve_exact(&mut owned, level.live_pairs())?;
-    for i in 0..level.nodes().len() {
+    // The nodes in order, an implicit level's off its description.
+    for (i, pairs) in level.internal_inputs_iter() {
         work.poll()?;
         let owner = u32::try_from(i).map_err(|_| OperationError::IndexOverflow)?;
-        for pair in level.pairs_iter_of_idx(i) {
+        for pair in pairs {
             work.poll()?;
             lim.try_push(&mut owned, Owned { pair, owner })?;
         }

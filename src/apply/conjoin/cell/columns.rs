@@ -1,7 +1,7 @@
 //! The per-level table of resolved g column slices.
 
 use super::*;
-use crate::diagram::ChildDecoder;
+use crate::diagram::{decoded, ChildDecoder};
 use crate::limits::Transient;
 
 /// Pairs a g column and an f row both need before the N×M walk groups their
@@ -139,10 +139,11 @@ impl<'a> RightColumns<'a> {
         let borrowed = (!left_view.is_marginal() && !right_view.is_marginal()).then(|| right_level.stored()).flatten();
         let mut flat = Transient::new(lim, Vec::<ChildPair>::new());
         if borrowed.is_none() {
-            let mut total: usize = 0;
-            for j in 0..right_width {
-                total += right_level.pair_count_at(j);
-            }
+            // An implicit level's nodes hold the description's pairs each.
+            let total: usize = match right_level.implicit() {
+                Some(d) => right_width * d.pairs_per_node(),
+                None => (0..right_width).map(|j| right_level.pair_count_at(j)).sum(),
+            };
             if total > u32::MAX as usize {
                 return None;
             }
@@ -169,10 +170,12 @@ impl<'a> RightColumns<'a> {
             }
         } else {
             // Pass 1: decode every column into the arena, recording only
-            // lengths — the arena's base is not final until it is full.
-            for j in 0..right_width {
+            // lengths — the arena's base is not final until it is full. The
+            // nodes are read in order, an implicit level's off its
+            // description.
+            for (_, pairs) in right_level.internal_inputs_range(0..right_width) {
                 let before = flat.len();
-                right_level.decode_pairs_into(j, &mut flat, left_view, right_view);
+                pairs.for_each(|p| flat.push(decoded(p, left_view, right_view)));
                 cols.push(ColumnSlice { ptr: std::ptr::null(), len: flat.len() - before, run_range: (0, 0) });
             }
             // Pass 2: point each descriptor at its subrange of the finished

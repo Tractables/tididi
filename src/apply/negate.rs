@@ -193,11 +193,11 @@ fn expand_full_with(
         // implicit level's generated into a buffer a node at a time, in one
         // loop.
         let stored = level.stored();
-        let mut buf = Vec::new();
+        let (mut buf, mut cursor) = (Vec::new(), None);
         for i in 0..level.node_count() {
             let pairs = match stored {
                 Some(stored) => stored.of_idx(i),
-                None => level.pairs_read(i, &mut buf),
+                None => level.described_read_next(&mut cursor, i, &mut buf),
             };
             for &pair in pairs {
                 cover.mark_pair(pair);

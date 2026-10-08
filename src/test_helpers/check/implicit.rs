@@ -4,10 +4,10 @@ use crate::diagram::LevelState;
 use crate::diagram::{floor, stored_levels_forced, ImplicitLevel, Tdd};
 
 /// Every implicit level is in the canonical form of [`ImplicitLevel`]: a
-/// structural level whose nodes hold two or more pairs each, [`FLOOR`](crate::diagram::FLOOR) or
+/// structural level whose nodes hold the same pairs each, [`FLOOR`](crate::diagram::FLOOR) or
 /// more in all, described in normal form, by the digits a fit reads off its
 /// pairs. No stored structural level can be implicit: none of [`FLOOR`](crate::diagram::FLOOR) or
-/// more pairs, below 2^31, fits a description of two or more pairs a node.
+/// more pairs, its arena below 2^31, fits a description.
 ///
 /// An implicit level stores no node where its description implies them
 /// (`ImplicitLevel::implies_nodes`), and stores every node's word where
@@ -38,7 +38,7 @@ pub fn check_implicit_levels(tdd: &Tdd) -> Result<(), String> {
                 if level.is_marginal() {
                     return Err(format!("level {t}: a marginal level is implicit"));
                 }
-                if d.pairs_per_node() < 2 || d.pairs() < floor() {
+                if d.pairs_per_node() < 1 || d.pairs() < floor() {
                     return Err(format!(
                         "level {t}: an implicit level of {} nodes of {} pairs",
                         d.nodes(),
@@ -60,9 +60,9 @@ pub fn check_implicit_levels(tdd: &Tdd) -> Result<(), String> {
             None if forced => {}
             None => {
                 let len = level.pairs.len();
-                if (floor()..1 << 31).contains(&len)
+                if len < 1 << 31
+                    && (len >= floor() || level.nodes().len() >= floor())
                     && let Some(d) = ImplicitLevel::fit(level)
-                    && d.pairs_per_node() >= 2
                     && d.pairs() >= floor()
                 {
                     return Err(format!(

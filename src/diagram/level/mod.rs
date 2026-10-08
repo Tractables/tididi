@@ -12,7 +12,7 @@ pub(crate) use implicit::{floor, stored_levels_forced, PairArena, Places};
 pub use nodes::{Nodes, NodesIter};
 pub(crate) use nodes::NodeArena;
 pub use pairs::{Pairs, StoredPairs};
-pub(crate) use pairs::sort_pairs;
+pub(crate) use pairs::{decoded, sort_pairs};
 pub(crate) use marginal::{assert_can_make_marginal, non_marginal_child};
 
 use super::marginal_ref::{ChildDecoder, ChildSide};
@@ -258,16 +258,26 @@ impl TddLevel {
     ///
     /// The marginal state and the inline markers reset with the arenas.
     pub(crate) fn clear(&mut self) {
-        if self.implied_by().is_some() {
-            self.nodes = NodeArena::from(Vec::with_capacity(self.pairs.node_capacity()));
-        }
-        self.nodes.clear();
+        self.nodes = self.take_nodes();
         self.pairs.clear();
         self.ranges.clear();
         self.value_ref_sides = 0;
         self.dead_pairs = 0;
         self.uneven = 0;
         self.state = LevelState::structural();
+    }
+
+    /// The node arena emptied, for a level built in this one's place, of
+    /// the capacity it has: on a level whose nodes are implied, a new one of
+    /// the capacity it would have, the description still implying the
+    /// level's nodes.
+    pub(crate) fn take_nodes(&mut self) -> NodeArena {
+        if self.implied_by().is_some() {
+            return NodeArena::from(Vec::with_capacity(self.pairs.node_capacity()));
+        }
+        let mut nodes = std::mem::take(&mut self.nodes);
+        nodes.clear();
+        nodes
     }
 
     /// Release the structural arenas and zero the counters that describe them.
@@ -381,12 +391,18 @@ impl TddLevel {
         }
     }
 
-    /// True if any node has more than one pair. O(width), and O(1) on a
-    /// level whose arena is empty, whose nodes then hold one pair or none.
+    /// True if any node has more than one pair. O(width), and O(1) on an
+    /// implicit level, whose nodes have the same pairs each, and on a level
+    /// whose arena is empty, whose nodes then hold one pair or none.
     #[inline]
     pub(crate) fn has_multi_pair(&self) -> bool {
-        !self.pairs.is_empty()
-            && self.nodes().iter().any(|n| n.kind().pairs_in_arena() && self.multi_range(&n).len() >= 2)
+        match self.pairs.implicit() {
+            Some(d) => d.pairs_per_node() >= 2,
+            None => {
+                !self.pairs.is_empty()
+                    && self.nodes.stored().iter().any(|n| n.kind().pairs_in_arena() && self.multi_range(n).len() >= 2)
+            }
+        }
     }
 
     /// How to read the pair sides of a parent that point at this level.

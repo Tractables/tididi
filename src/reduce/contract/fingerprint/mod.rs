@@ -156,11 +156,11 @@ impl TwinEntries for ContextEntries<'_> {
         // implicit level's generated into a buffer a node at a time, in one
         // loop.
         let stored = level.stored();
-        let mut buf = Vec::new();
+        let (mut buf, mut cursor) = (Vec::new(), None);
         for i in 0..level.node_count() {
             let pairs = match stored {
                 Some(stored) => stored.of_idx(i),
-                None => level.pairs_read(i, &mut buf),
+                None => level.described_read_next(&mut cursor, i, &mut buf),
             };
             if pairs.len() < 3 {
                 let mut last: Option<u32> = None;

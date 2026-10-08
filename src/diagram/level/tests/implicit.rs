@@ -189,13 +189,13 @@ fn a_pair_is_read_where_it_lies() {
     }
 }
 
-/// A level of one pair a node writes the nodes its description gives,
-/// inline, whether they fit the capacity reserved or go one at a time:
+/// A level of one pair a node implies the nodes its description gives,
+/// inline, read in order, folded or one at a time, and stores them back:
 /// node digits of short and long runs, more digits past a run than the
 /// odometer counts, a fastest digit of more places than a run holds, and
 /// steps of either sign.
 #[test]
-fn a_one_pair_level_writes_the_nodes_it_describes() {
+fn a_one_pair_level_implies_the_nodes_it_describes() {
     let mut rng = Lcg::new(0x1d1e_0031);
     let shapes: [&[usize]; 9] =
         [&[64], &[300], &[600, 3], &[257, 2], &[2; 14], &[3, 5, 7], &[5, 100], &[2, 2, 3, 4, 2, 3, 5], &[16, 16, 2]];
@@ -211,14 +211,87 @@ fn a_one_pair_level_writes_the_nodes_it_describes() {
             let n = radices.iter().product();
             let d = ImplicitLevel::assemble(n, 1, first, &[], &across);
             let want: Vec<EncodedNode> = described(&d).iter().map(|p| EncodedNode::inline(pair(p[0].0, p[0].1))).collect();
-            for reserved in [0, n] {
-                let mut level = TddLevel::new();
-                level.nodes.stored_mut().reserve_exact(reserved);
-                d.write_nodes(&Limits::new(), &mut level).unwrap();
-                assert_eq!(level.nodes.stored(), &want[..], "{across:?}, {reserved} reserved");
+            let mut level = TddLevel::new();
+            level.pairs.describe(d.clone(), 0, n);
+            assert!(level.nodes.stored().is_empty() && level.pairs.is_empty());
+            assert!(level.nodes().iter().eq(want.iter().copied()), "{across:?}");
+            let mut folded = Vec::new();
+            level.nodes().iter().for_each(|node| folded.push(node));
+            assert_eq!(folded, want, "{across:?}, folded");
+            for _ in 0..8 {
+                let i = rng.below(n as u64) as usize;
+                assert_eq!(level.node(i), want[i]);
+                assert_eq!(level.nodes().iter().nth(i), Some(want[i]));
             }
+            assert!(!level.has_multi_pair());
+            level.store_if_implicit();
+            assert_eq!(level.nodes.stored(), &want[..], "{across:?}, stored");
+            assert!(level.pairs.implicit().is_none() && level.pairs.is_empty());
         }
     }
+}
+
+/// An affine stored level of one pair a node closes to the description of
+/// its pairs, its nodes implied and its arenas' lengths and capacities
+/// kept, and built stored again it holds the words it held.
+#[test]
+fn a_one_pair_level_closes_and_is_stored_back() {
+    let mut rng = Lcg::new(0x1d1e_0033);
+    for radices in [&[64][..], &[300], &[257, 2], &[2; 9], &[16, 16, 2]] {
+        let across: Vec<(usize, (i64, i64))> =
+            radices.iter().map(|&r| (r, (1 + rng.below(5) as i64, rng.below(5) as i64))).collect();
+        let stored = level_of(&affine_of(&[], &across));
+        let mut level = stored.clone();
+        // A clone holds its own capacities, which closing keeps.
+        let held = (level.pairs.len(), level.pairs.capacity(), level.node_capacity());
+        level.close();
+        let d = level.implicit().expect("an affine level of one pair a node closes").clone();
+        assert_eq!((d.pairs_per_node(), d.nodes()), (1, stored.nodes().len()));
+        assert!(level.nodes.stored().is_empty());
+        assert!(level.nodes().iter().eq(stored.nodes().iter()));
+        assert_eq!((level.pairs.len(), level.pairs.capacity(), level.node_capacity()), held);
+        level.store_if_implicit();
+        assert_eq!(level.nodes.stored(), stored.nodes.stored());
+        assert_eq!((level.pairs.len(), level.pairs.capacity(), level.node_capacity()), held);
+    }
+}
+
+/// A rewrite of an implicit level of one pair a node builds it stored as
+/// the in-place rewrite leaves a stored one: a node whose pair changed holds
+/// the new pair inline, one whose pair was dropped the empty placeholder,
+/// and the arena no pair; a node's only pair is not removed.
+#[test]
+fn a_one_pair_level_is_rewritten_inline() {
+    let pairs = affine_of(&[], &[(16, (1, 0)), (8, (0, 1))]);
+    let mut level = level_of(&pairs);
+    level.close();
+    assert!(level.implicit().is_some());
+    let only = level.pairs_vec(3)[0];
+    assert!(!level.remove_pair_from_node(3, only));
+    assert!(level.implicit().is_some(), "a node's only pair stays");
+    let moved = |p: ChildPair| pair(i64::from(p.left.raw()) + 1000, i64::from(p.right.raw()));
+    let emptied = level.rewrite_described(true, |i, _, _, p| match i % 5 {
+        0 => None,
+        1 => Some(moved(p)),
+        _ => Some(p),
+    });
+    assert!(emptied);
+    let empty = level.encode_multi(0, 0);
+    let want: Vec<EncodedNode> = pairs
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            let p = pair(p[0].0, p[0].1);
+            match i % 5 {
+                0 => empty,
+                1 => EncodedNode::inline(moved(p)),
+                _ => EncodedNode::inline(p),
+            }
+        })
+        .collect();
+    assert!(level.pairs.implicit().is_none());
+    assert_eq!(level.nodes.stored(), &want[..]);
+    assert!(level.pairs.is_empty() && level.dead_pairs == 0);
 }
 
 /// A level of one pair a node, its pairs inline, fits the description of

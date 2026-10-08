@@ -285,7 +285,7 @@ pub(crate) fn prune_unreachable(
     // `ZERO` sentinel: the entire diagram computes ⊥ (UNSAT). No nodes are reachable.
     if tdd.is_zero() {
         for level in &mut tdd.levels {
-            level.nodes.clear();
+            level.nodes = level.take_nodes();
             level.pairs.clear();
             level.ranges.clear();
             level.dead_pairs = 0;
@@ -800,8 +800,9 @@ fn redescribe(tdd: &mut Tdd, t: VtreeIdx, own: &[u64], left: Option<&[u32]>, rig
     debug_assert!(level.implied_by().is_some());
     let mut select = Select::new(own);
     let left_of = d.pruned(nodes, |j| select.nth(j), left, right)?;
-    let mut dead = 0usize;
-    for_each_unmarked(own, level.nodes().len(), |i| dead += level.arena_pairs_at(i));
+    // Each node the prune drops held its `k` pairs in the arena, or, at
+    // one pair a node, its pair inline.
+    let dead = if k >= 2 { (d.nodes() - nodes) * k } else { 0 };
     // The new description implies the nodes left.
     tdd.levels[t.idx()].pairs.redescribe(left_of);
     Some(dead)

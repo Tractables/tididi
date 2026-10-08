@@ -51,9 +51,29 @@ fn chain(parts: &[Tdd], pairwise: bool, given: &[(u32, bool)], written: bool, ru
     (out, eng.limits().work_units())
 }
 
-/// The levels of `t` that hold the description of their pairs.
-fn implicit_levels(t: &Tdd) -> usize {
-    t.levels.iter().filter(|l| l.pairs.implicit().is_some()).count()
+/// What the implicit route left described: the levels that hold the
+/// description of their pairs, those of them of one pair a node, which hold
+/// none in an arena, and the levels a prune kept described.
+#[derive(Clone, Copy, Debug, Default)]
+struct Described {
+    implicit: usize,
+    one_pair: usize,
+    kept: usize,
+}
+
+impl std::ops::AddAssign for Described {
+    fn add_assign(&mut self, o: Described) {
+        self.implicit += o.implicit;
+        self.one_pair += o.one_pair;
+        self.kept += o.kept;
+    }
+}
+
+/// The levels of `t` that hold the description of their pairs, and those of
+/// them of one pair a node.
+fn implicit_levels(t: &Tdd) -> (usize, usize) {
+    let described = t.levels.iter().filter_map(|l| l.pairs.implicit());
+    (described.clone().count(), described.filter(|d| d.pairs_per_node() == 1).count())
 }
 
 /// The levels of `t` a prune kept described after dropping nodes: implicit,
@@ -65,9 +85,9 @@ fn redescribed_levels(t: &Tdd) -> usize {
 /// Conjoin `parts` both ways, and condition on `given`, as [`chain`] does,
 /// and require the same diagram, node for node, and the same work; then,
 /// under a stop at each output-pair floor and at each work bound up to what
-/// the chain took, the same stop at the same work. Returns the implicit
-/// levels of the result and the levels a prune kept described.
-fn same_both_ways(parts: &[Tdd], pairwise: bool, given: &[(u32, bool)]) -> (usize, usize) {
+/// the chain took, the same stop at the same work. Returns what the result
+/// holds described.
+fn same_both_ways(parts: &[Tdd], pairwise: bool, given: &[(u32, bool)]) -> Described {
     let none = StopRules { unconditional: None, after_pairs: None };
     let (oracle, oracle_work) = chain(parts, pairwise, given, true, none);
     let (out, work) = chain(parts, pairwise, given, false, none);
@@ -97,7 +117,8 @@ fn same_both_ways(parts: &[Tdd], pairwise: bool, given: &[(u32, bool)]) -> (usiz
         }
         bound = bound * 2 + 1;
     }
-    (implicit_levels(&out), redescribed_levels(&out))
+    let (implicit, one_pair) = implicit_levels(&out);
+    Described { implicit, one_pair, kept: redescribed_levels(&out) }
 }
 
 /// Random functions over the classes of the variables modulo `m`,
@@ -116,7 +137,7 @@ fn chains_over_classes(n: u32, m: u32, seed: u64, rounds: usize) -> usize {
                 function_of(&vtree, &vars, &mut rng)
             })
             .collect();
-        implicit += same_both_ways(&parts, false, &[]).0;
+        implicit += same_both_ways(&parts, false, &[]).implicit;
     }
     implicit
 }
@@ -173,21 +194,19 @@ fn affine_function(eng: &Engine, vtree: &Arc<Vtree>, m: u32, j: u32, rng: &mut L
 
 /// The functions of [`affine_function`] over every class of `m`, on a
 /// balanced vtree of `n` variables, conjoined in a chain, or pairwise for
-/// four, then conditioned on `given` random variables. Returns the implicit
-/// levels of the results and the levels a prune kept described.
-fn chains_of_tables(n: u32, m: u32, pairwise: bool, given: usize, seed: u64, rounds: usize) -> (usize, usize) {
+/// four, then conditioned on `given` random variables. Returns what the
+/// results hold described.
+fn chains_of_tables(n: u32, m: u32, pairwise: bool, given: usize, seed: u64, rounds: usize) -> Described {
     let vtree = Arc::new(Vtree::balanced(n));
     let eng = Engine::new();
     let mut rng = Lcg::new(seed);
-    let (mut implicit, mut kept) = (0, 0);
+    let mut described = Described::default();
     for _ in 0..rounds {
         let parts: Vec<Tdd> = (0..m).map(|j| affine_function(&eng, &vtree, m, j, &mut rng)).collect();
         let given: Vec<(u32, bool)> = (0..given).map(|_| (1 + rng.below(u64::from(n)) as u32, rng.below(2) == 1)).collect();
-        let (i, k) = same_both_ways(&parts, pairwise, &given);
-        implicit += i;
-        kept += k;
+        described += same_both_ways(&parts, pairwise, &given);
     }
-    (implicit, kept)
+    described
 }
 
 #[test]
@@ -199,16 +218,21 @@ fn random_functions_match_the_written_route() {
 
 #[test]
 fn products_of_two_tables_match_the_written_route() {
-    assert!(chains_of_tables(16, 2, false, 0, 0x11a7_0011, 4).0 > 0, "no level was implicit");
-    assert!(chains_of_tables(32, 2, false, 0, 0x11a7_0012, 2).0 > 0, "no level was implicit");
+    assert!(chains_of_tables(16, 2, false, 0, 0x11a7_0011, 4).implicit > 0, "no level was implicit");
+    assert!(chains_of_tables(32, 2, false, 0, 0x11a7_0012, 2).implicit > 0, "no level was implicit");
 }
 
 /// A chain over four classes: from the second conjunction on, one
-/// operand's levels are implicit; pairwise, both operands' are.
+/// operand's levels are implicit; pairwise, both operands' are. The
+/// levels over eight variables are products of levels of one pair a node,
+/// of 256 nodes of one pair: described, their nodes implied.
 #[test]
 fn implicit_times_implicit_matches_the_written_route() {
-    assert!(chains_of_tables(32, 4, false, 0, 0x11a7_0013, 3).0 > 0, "no level was implicit");
-    assert!(chains_of_tables(32, 4, true, 0, 0x11a7_0014, 3).0 > 0, "no level was implicit");
+    for (pairwise, seed) in [(false, 0x11a7_0013), (true, 0x11a7_0014)] {
+        let described = chains_of_tables(32, 4, pairwise, 0, seed, 3);
+        assert!(described.implicit > 0, "no level was implicit");
+        assert!(described.one_pair > 0, "no level of one pair a node was implicit");
+    }
 }
 
 /// Products of tables conditioned on a variable or two: the levels off the
@@ -217,8 +241,8 @@ fn implicit_times_implicit_matches_the_written_route() {
 /// described.
 #[test]
 fn conditioned_products_match_the_written_route() {
-    let (implicit, kept) = chains_of_tables(32, 2, false, 1, 0x11a7_0015, 6);
-    let (implicit2, kept2) = chains_of_tables(32, 4, true, 2, 0x11a7_0016, 4);
-    assert!(implicit + implicit2 > 0, "no level was implicit");
-    assert!(kept + kept2 > 0, "no prune kept a level described");
+    let mut described = chains_of_tables(32, 2, false, 1, 0x11a7_0015, 6);
+    described += chains_of_tables(32, 4, true, 2, 0x11a7_0016, 4);
+    assert!(described.implicit > 0, "no level was implicit");
+    assert!(described.kept > 0, "no prune kept a level described");
 }

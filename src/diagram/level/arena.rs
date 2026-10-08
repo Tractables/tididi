@@ -202,6 +202,16 @@ impl TddLevel {
         {
             return false;
         }
+        // Nodes a description implies hold the leading ranges, in order: the
+        // live pairs are the described ones, and the sweep leaves them where
+        // they are.
+        if let Some(d) = self.implied_by() {
+            let live = d.arena_len();
+            self.pairs.truncate(live);
+            self.dead_pairs = 0;
+            self.shrink_arrays();
+            return true;
+        }
 
         let order = self.index_live_ranges();
         let ok = self.live_ranges_are_disjoint(&order);
@@ -323,9 +333,10 @@ impl TddLevel {
         &mut self, growth: &G, pairs: &[ChildPair],
     ) -> Result<NodeIdx, OperationError> {
         self.store_if_implicit();
-        let idx = NodeIdx(self.nodes().len() as u32);
-        if self.nodes().len() == self.node_capacity() {
-            growth.grow(self.nodes.stored_mut(), 1)?;
+        let nodes = self.nodes.stored_mut();
+        let idx = NodeIdx(nodes.len() as u32);
+        if nodes.len() == nodes.capacity() {
+            growth.grow(nodes, 1)?;
         }
         let node = if let [pair] = pairs {
             EncodedNode::inline(*pair)
@@ -366,9 +377,10 @@ impl TddLevel {
             debug_assert!(pairs.next().is_none(), "one pair");
             return self.push_node(growth, &[pair]);
         }
-        let idx = NodeIdx(self.nodes().len() as u32);
-        if self.nodes().len() == self.node_capacity() {
-            growth.grow(self.nodes.stored_mut(), 1)?;
+        let nodes = self.nodes.stored_mut();
+        let idx = NodeIdx(nodes.len() as u32);
+        if nodes.len() == nodes.capacity() {
+            growth.grow(nodes, 1)?;
         }
         let arena = self.pairs.stored_mut();
         let start = arena.len();
@@ -403,9 +415,10 @@ impl TddLevel {
             lim.discard(pairs);
             return pushed;
         }
-        let idx = NodeIdx(self.nodes().len() as u32);
-        if self.nodes().len() == self.node_capacity() {
-            lim.grow(self.nodes.stored_mut(), 1)?;
+        let nodes = self.nodes.stored_mut();
+        let idx = NodeIdx(nodes.len() as u32);
+        if nodes.len() == nodes.capacity() {
+            lim.grow(nodes, 1)?;
         }
         let len = pairs.len();
         drop(std::mem::replace(self.pairs.stored_mut(), pairs));
@@ -492,11 +505,16 @@ impl TddLevel {
     /// Panics if the node does not hold `pair`; a caller reaches this through
     /// the level's own pair list.
     ///
-    /// An implicit level's nodes have two pairs or more; the level without
+    /// On an implicit level of two pairs a node or more, the level without
     /// the pair is built from the description and closed
-    /// ([`rewrite_described`](Self::rewrite_described)).
+    /// ([`rewrite_described`](Self::rewrite_described)); one of one pair a
+    /// node is left as it is.
     pub(crate) fn remove_pair_from_node(&mut self, idx: usize, pair: ChildPair) -> bool {
-        if self.pairs.implicit().is_some() {
+        if let Some(d) = self.pairs.implicit() {
+            if d.pairs_per_node() == 1 {
+                assert!(self.pairs_iter_of_idx(idx).any(|p| p == pair), "remove_pair_from_node: node {idx} does not hold {pair:?}");
+                return false;
+            }
             let mut found = false;
             self.rewrite_described(false, |i, _, _, p| {
                 let drop = i == idx && p == pair && !found;
@@ -565,16 +583,15 @@ impl TddLevel {
             pair_len >= 2,
             "try_push_multi_by_range: pair_len=1 aliases multi_ranged encoding"
         );
-        if self.nodes().len() < self.node_capacity()
+        let nodes = self.nodes.stored_mut();
+        if nodes.len() < nodes.capacity()
             && pair_start < (1usize << 31)
             && pair_len < (1usize << 31)
         {
             // Spare capacity: `Vec::push` cannot reallocate, so there is nothing
             // to reserve or refuse; both operands fit, so the encoding is the
             // pure normal-multi word.
-            self.nodes
-                .stored_mut()
-                .push(EncodedNode::multi_pair(pair_start as u32, pair_len as u32));
+            nodes.push(EncodedNode::multi_pair(pair_start as u32, pair_len as u32));
             return Ok(());
         }
         self.push_multi_by_range_slow(pair_start, pair_len)
