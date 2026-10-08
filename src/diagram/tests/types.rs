@@ -148,6 +148,46 @@
     }
 
     #[test]
+    fn a_take_uses_the_parked_array_with_more_of_its_levels() {
+        let eng = &Engine::new();
+        let short = take_levels(eng, 2);
+        let mut long = take_levels(eng, 5);
+        long[3].nodes.reserve(64);
+        let marked = long[3].nodes.capacity();
+        return_levels(eng, PoolSlot::First, short);
+        return_levels(eng, PoolSlot::Second, long);
+        // Four levels wanted: the second slot's array holds all four.
+        let taken = take_levels(eng, 4);
+        assert_eq!(taken.len(), 4);
+        assert_eq!(taken[3].nodes.capacity(), marked, "the longer array was taken");
+        assert_eq!(eng.scratch.levels.occupancy(), 1);
+        // Two wanted from two arrays that both hold two: the primary's.
+        return_levels(eng, PoolSlot::Second, taken);
+        let taken = take_levels(eng, 2);
+        assert_eq!(eng.scratch.levels.occupancy(), 1);
+        return_levels(eng, PoolSlot::First, taken);
+        let taken = take_levels(eng, 4);
+        assert_eq!(taken[3].nodes.capacity(), marked, "the secondary held the longer array");
+    }
+
+    #[test]
+    fn a_vacant_return_fills_the_vacant_slot() {
+        let eng = &Engine::new();
+        let first = take_levels(eng, 3);
+        return_levels(eng, PoolSlot::Vacant, first);
+        assert_eq!(eng.scratch.levels.occupancy(), 1, "an empty pool takes it in the first slot");
+        let second = take_levels(eng, 3);
+        let other = take_levels(eng, 3);
+        return_levels(eng, PoolSlot::First, second);
+        return_levels(eng, PoolSlot::Vacant, other);
+        assert_eq!(eng.scratch.levels.occupancy(), 2, "the second slot was vacant");
+        let third = take_levels(eng, 3);
+        assert_eq!(eng.scratch.levels.occupancy(), 1);
+        return_levels(eng, PoolSlot::Vacant, third);
+        assert_eq!(eng.scratch.levels.occupancy(), 2);
+    }
+
+    #[test]
     fn test_reset_levels_clears_state() {
         let eng = &Engine::new();
         let mut levels = take_levels(eng, 2);

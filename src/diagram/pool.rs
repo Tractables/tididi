@@ -9,7 +9,8 @@ use super::level::TddLevel;
 /// The engine's two recycled level arrays.
 ///
 /// Two slots because a conjunction consumes two operands and one slot would
-/// drop the second's arenas. `take_levels` prefers the primary.
+/// drop the second's arenas. `take_levels` takes the array with the most
+/// levels it can use, the primary on a tie.
 #[derive(Default)]
 pub(crate) struct LevelPool {
     primary: Pool<LevelBuffer>,
@@ -88,11 +89,20 @@ pub(crate) fn try_take_levels(eng: &Engine, num_nodes: usize) -> Result<Vec<TddL
     Ok(levels)
 }
 
-/// The first parked level array, cut down to at most `num_nodes` levels.
+/// The parked level array with the most of the `num_nodes` levels wanted,
+/// the primary's on a tie, cut down to at most `num_nodes` levels.
 fn take_level_array(eng: &Engine, num_nodes: usize) -> Vec<TddLevel> {
     let pool = &eng.scratch.levels;
-    let mut levels = if pool.primary.occupied() { pool.primary.take(eng) }
-        else { pool.secondary.take(eng) }.levels;
+    let usable = |slot: &Pool<LevelBuffer>| match slot.occupied() {
+        true => slot.parked(|parked| parked.levels.len().min(num_nodes)),
+        false => None,
+    };
+    let slot = match (usable(&pool.primary), usable(&pool.secondary)) {
+        (Some(first), Some(second)) if second > first => &pool.secondary,
+        (Some(_), _) => &pool.primary,
+        (None, _) => &pool.secondary,
+    };
+    let mut levels = slot.take(eng).levels;
     if levels.len() > num_nodes {
         levels.truncate(num_nodes);
         if levels.capacity().saturating_mul(std::mem::size_of::<TddLevel>()) > MAX_LEVEL_ARENA_BYTES {
@@ -135,13 +145,18 @@ impl PooledScratch for LevelBuffer {
 ///
 /// A conjunction consumes two operands; returning both to one slot would drop
 /// the second's arenas, so the caller says which is which. [`take_levels`]
-/// prefers [`PoolSlot::First`].
+/// prefers [`PoolSlot::First`] on a tie. A slot that is occupied drops what
+/// it held.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum PoolSlot {
     /// The first operand's slot — where most callers fetch from.
     First,
     /// The second operand's slot.
     Second,
+    /// The first slot if it is vacant, the second otherwise: for an array
+    /// returned between the takes of one operation, which should not drop
+    /// an array parked for a later take.
+    Vacant,
 }
 
 /// Return a `Vec<TddLevel>` to one of the pool slots for reuse.
@@ -150,6 +165,8 @@ pub(crate) fn return_levels(eng: &Engine, slot: PoolSlot, levels: Vec<TddLevel>)
     let cell = match slot {
         PoolSlot::First => &pool.primary,
         PoolSlot::Second => &pool.secondary,
+        PoolSlot::Vacant if !pool.primary.occupied() => &pool.primary,
+        PoolSlot::Vacant => &pool.secondary,
     };
     cell.put(eng, LevelBuffer { levels })
 }

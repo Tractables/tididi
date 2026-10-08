@@ -100,7 +100,10 @@ impl<'a> MarginalStorage<'a> {
         }
     }
 
-    /// Move the source's structure and optional weighted payload to this level.
+    /// Move the source's structure and optional weighted payload to this
+    /// level. The source is left with what this level held, an empty level
+    /// with its arenas where the destination was taken from the pool, so
+    /// that they go back to it with the source's levels.
     pub(crate) fn move_from(&mut self, source: &mut TddLevel, weights: Option<&mut WeightStore>, index: usize) {
         if source.is_weight_marginal()
             && let (Some(destination), Some(weights)) = (self.weights.as_mut(), weights)
@@ -108,7 +111,7 @@ impl<'a> MarginalStorage<'a> {
         {
             destination.set_level(self.index, values);
         }
-        *self.level = std::mem::take(source);
+        std::mem::swap(self.level, source);
     }
 
     pub(crate) fn push_weight(&mut self, eng: &crate::Engine, value: WeightValue) -> Result<u32, crate::OperationError> {

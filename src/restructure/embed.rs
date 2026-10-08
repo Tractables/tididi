@@ -13,7 +13,7 @@ use std::sync::Arc;
 use super::{EmbedError, EmbedRefused, Embedding, graft::check_part_weights, placement::{CopyPlacement, MovePlacement}};
 
 use crate::Engine;
-use crate::diagram::{ChildSide, LeafLabel, NodeIdx, Tdd, WeightStore, WeightValue, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
+use crate::diagram::{return_levels, ChildSide, LeafLabel, NodeIdx, PoolSlot, Tdd, WeightStore, WeightValue, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
 use crate::limits::{Limits, OperationError};
 use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
 
@@ -696,10 +696,16 @@ fn assemble_moving(
         placement.move_back(&mut tdd, &plan.embedding.levels);
         return Err((e, tdd));
     }
-    let mut result = placement.seat(tdd.output().local, carried).map_err(|(e, placement)| {
-        placement.move_back(&mut tdd, &plan.embedding.levels);
-        (e, tdd)
-    })?;
+    let mut result = match placement.seat(tdd.output().local, carried) {
+        Ok(result) => result,
+        Err((e, placement)) => {
+            placement.move_back(&mut tdd, &plan.embedding.levels);
+            return Err((e, tdd));
+        }
+    };
+    // Every level of `tdd` is now one the placement took from the pool,
+    // empty: they go back for the takes that follow.
+    return_levels(eng, PoolSlot::Vacant, std::mem::take(&mut tdd.levels).into_vec());
     // `Pos` and `Neg` are the chain's nodes 0 and 1; nothing reads `One`.
     let closed = result.levels.is_closed();
     for &top in &literal_tops {

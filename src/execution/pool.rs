@@ -38,6 +38,15 @@ impl<T> Pool<T> {
     /// Whether this slot contains a parked value.
     pub(crate) fn occupied(&self) -> bool { self.bytes.get() != 0 }
 
+    /// Read the parked value, if any, leaving it parked.
+    #[inline]
+    pub(crate) fn parked<R>(&self, read: impl FnOnce(&T) -> R) -> Option<R> {
+        let value = self.value.take();
+        let out = value.as_ref().map(read);
+        self.value.set(value);
+        out
+    }
+
     /// Remove the parked value, if any, and its claim on the engine's allowance.
     #[inline]
     fn unpark(&self, eng: &Engine) -> Option<T> {

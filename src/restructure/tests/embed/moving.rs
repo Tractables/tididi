@@ -137,6 +137,22 @@ fn a_structure_check_refusal_gives_the_diagram_back() {
 }
 
 #[test]
+fn a_moved_diagram_leaves_its_level_array_in_the_pool() {
+    let eng = Engine::new();
+    let (f, big, map) = source_and_destination();
+    let source_levels = f.vtree().num_nodes();
+    assert_eq!(eng.scratch.levels.occupancy(), 0);
+    let (moved, _) = eng.embed_moving(f, &big, map).map_err(|r| r.error).unwrap();
+    // The result holds the array the placement took; the source's, holding
+    // the empty levels its own were swapped for, waits for the next take.
+    assert_eq!(moved.vtree().num_nodes(), big.num_nodes());
+    assert_eq!(eng.scratch.levels.occupancy(), 1);
+    let taken = crate::diagram::take_levels(&eng, source_levels);
+    assert_eq!(eng.scratch.levels.occupancy(), 0);
+    assert!(taken.iter().all(|level| level.nodes.is_empty() && level.pairs.is_empty()));
+}
+
+#[test]
 fn a_moved_diagram_minimized_under_every_stop_keeps_its_function() {
     let eng = Engine::new();
     let (f, big, map) = source_and_destination();
