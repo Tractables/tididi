@@ -177,14 +177,20 @@ fn refute(pairs: &[ChildPair], want: &mut [bool; 2], buf: &mut [bool], children:
     false
 }
 
-/// [`refute`] over the nodes of an implicit level, each node's pairs
-/// generated into a buffer.
+/// [`refute`] over the pairs of an implicit level, read off its
+/// description: a side's slots are all the one leaf exactly when the first
+/// pair's is and no digit moves it, every digit having two places or more.
 #[cold]
 #[inline(never)]
 fn refute_generated(level: &TddLevel, want: &mut [bool; 2], buf: &mut [bool], children: [VtreeIdx; 2]) {
-    let (mut pairs, mut cursor) = (Vec::new(), None);
-    for i in 0..level.nodes().len() {
-        if refute(level.described_read_next(&mut cursor, i, &mut pairs), want, buf, children) { return; }
+    let d = level.implicit().expect("a level stored or described");
+    let one = i64::from(ONE_LEAF_IDX.0);
+    let sides = [(d.first().0, d.digits().iter().all(|g| g.left == 0)), (d.first().1, d.digits().iter().all(|g| g.right == 0))];
+    for (s, (first, still)) in sides.into_iter().enumerate() {
+        if want[s] && d.pairs() > 0 && !(first == one && still) {
+            buf[children[s].idx()] = false;
+            want[s] = false;
+        }
     }
 }
 
