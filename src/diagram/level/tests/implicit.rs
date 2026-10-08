@@ -2,6 +2,7 @@
 //! the conjunction's row loop multiplies levels, and written out again.
 
 use super::*;
+use crate::limits::Limits;
 use crate::test_helpers::Lcg;
 
 /// The pairs of a level, node by node, as child slots.

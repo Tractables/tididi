@@ -1,0 +1,447 @@
+//! Pair iteration and node numbering for mixed-radix descriptions.
+
+use crate::limits::OperationError;
+use super::{ChildPair, EncodedChildRef, EncodedNode, Digit, ImplicitLevel, TddLevel, NO_PAIRS, RUN_PAIRS, each_place, inline_at};
+
+impl ImplicitLevel {
+    /// The child slots of the first pair of node `node`.
+    #[inline]
+    pub fn node_first(&self, node: usize) -> (i64, i64) {
+        debug_assert!(node < self.nodes && self.counts_nodes());
+        let mut at = Odometer::<0>::new(self.first);
+        at.seat(&self.digits[self.within..], 0, node);
+        at.slots()
+    }
+
+    /// The pairs of node `node`, in their order.
+    #[inline]
+    pub(crate) fn places(&self, node: usize) -> Places<'_> {
+        self.places_from(self.node_first(node))
+    }
+
+    /// The pairs of the node whose first pair has the slots `first`, in
+    /// their order.
+    #[inline]
+    pub(crate) fn places_from(&self, first: (i64, i64)) -> Places<'_> {
+        debug_assert!(self.per_node < 1 << 31);
+        Places { run: self.run.iter(), at: Odometer::new(first), run_no: 0, rest: (self.per_node - self.run.len()) as u32, level: self }
+    }
+
+    /// The place digits past a run's, which step a run's first pair on.
+    #[inline]
+    fn run_steps(&self) -> &[Digit] {
+        &self.digits[self.run_digits..self.within]
+    }
+
+    /// The slots of the first pair of a node's run `run_no`, from `at`,
+    /// the previous run's. Out of line, and by value, so that a reader of
+    /// the places holds none of them in memory.
+    #[inline(never)]
+    fn run_after(&self, mut at: Odometer<0>, run_no: u32) -> Odometer<0> {
+        at.step(self.run_steps(), run_no as usize);
+        at
+    }
+
+    /// A reader of the nodes' first pairs in increasing node order
+    /// ([`NodeCursor`]), at node 0.
+    pub(crate) fn cursor(&self) -> NodeCursor<'_> {
+        debug_assert!(self.counts_nodes());
+        NodeCursor { digits: &self.digits[self.within..], at: Odometer::new(self.first), node: 0 }
+    }
+
+    /// The word of node `i` of a level whose nodes this description
+    /// implies: its pair inline at one pair a node, else the range of pairs
+    /// `i · k .. (i + 1) · k`.
+    #[inline]
+    pub(crate) fn node_word(&self, i: usize) -> EncodedNode {
+        let k = self.per_node;
+        if k == 1 {
+            let (l, r) = self.node_first(i);
+            inline_at((l as u32, r as u32), (0, 0))
+        } else {
+            EncodedNode::multi_pair((i * k) as u32, k as u32)
+        }
+    }
+
+    /// [`node_word`](Self::node_word) for nodes read in increasing order:
+    /// at one pair a node their pairs stepped on by `cursor`, which the
+    /// first read makes, boxed, so that a reader that holds it stays small.
+    #[inline]
+    pub(crate) fn node_word_next<'a>(&'a self, cursor: &mut Option<Box<NodeCursor<'a>>>, i: usize) -> EncodedNode {
+        let k = self.per_node;
+        if k == 1 {
+            let (l, r) = cursor.get_or_insert_with(|| Box::new(self.cursor())).first_of(i);
+            inline_at((l as u32, r as u32), (0, 0))
+        } else {
+            EncodedNode::multi_pair((i * k) as u32, k as u32)
+        }
+    }
+
+    /// Write the nodes of a level this describes whose nodes it does not
+    /// imply, past 2^31 pairs, into `level`, whose nodes and pairs are
+    /// empty, as the conjunction's row loop writes them: node `i` the arena
+    /// range of pairs `i · k .. (i + 1) · k`, in the side table where the
+    /// plain word does not hold it. The arena itself is not written.
+    pub(crate) fn write_nodes(&self, level: &mut TddLevel) -> Result<(), OperationError> {
+        debug_assert!(level.nodes().is_empty() && level.pairs.is_empty() && !self.implies_nodes());
+        let k = self.per_node;
+        for i in 0..self.nodes {
+            level.try_push_multi_by_range(i * k, k).map_err(|()| OperationError::OverBudget)?;
+        }
+        Ok(())
+    }
+
+    /// The nodes of a description of one pair a node, in runs: `run(from,
+    /// offsets, at)` for consecutive pieces of them, in order, nodes `from ..
+    /// from + offsets.len()` holding the pairs `at` plus `offsets`, wrapping;
+    /// up to the first `Err`, which it returns.
+    ///
+    /// A run counts the places of the fastest node digits, the most whose
+    /// places are at most `RUN_PAIRS` and at least the fastest; the offsets
+    /// of those places are read once, and each run's first pair is stepped
+    /// on from the last's by the node digits past them. A fastest digit of
+    /// more places than `RUN_PAIRS` is read in pieces of `RUN_PAIRS` places,
+    /// each piece's first pair as many units of it on from the last's.
+    pub(super) fn node_runs<E>(&self, mut run: impl FnMut(usize, &[(u32, u32)], (u32, u32)) -> Result<(), E>) -> Result<(), E> {
+        debug_assert!(self.per_node == 1 && self.counts_nodes());
+        let one = [Digit { radix: 1, left: 0, right: 0, node: 1 }];
+        let digits = match &self.digits[self.within..] {
+            [] => &one[..],
+            digits => digits,
+        };
+        let (mut run_digits, mut places) = (1, digits[0].radix);
+        while let Some(d) = digits.get(run_digits)
+            && places.saturating_mul(d.radix) <= RUN_PAIRS
+        {
+            places *= d.radix;
+            run_digits += 1;
+        }
+        let piece = places.min(RUN_PAIRS);
+        let lead = [Digit { radix: piece, ..digits[0] }];
+        let mut offsets = Vec::with_capacity(piece);
+        each_place(if places > piece { &lead } else { &digits[..run_digits] }, (0, 0), |l, r| {
+            offsets.push((l as u32, r as u32));
+        });
+        let leap = ((piece as i64 * digits[0].left) as u32, (piece as i64 * digits[0].right) as u32);
+        let mut runs = Odometer::<NODE_COUNTERS>::new(self.first);
+        for (r, start) in (0..self.nodes).step_by(places).enumerate() {
+            if r > 0 {
+                runs.step(&digits[run_digits..], r);
+            }
+            let end = self.nodes.min(start + places);
+            let mut at = runs.at;
+            for from in (start..end).step_by(piece) {
+                run(from, &offsets[..piece.min(end - from)], at)?;
+                at = (at.0.wrapping_add(leap.0), at.1.wrapping_add(leap.1));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether `nodes` are the nodes of this description of one pair a node,
+    /// each holding its pair inline: compared word for word in runs
+    /// ([`node_runs`](Self::node_runs)), a run at a time, where every slot
+    /// the digits reach fits a stored side, so that the wrapping sums are
+    /// the slots and no multi-pair word matches one.
+    pub(super) fn holds_inline(&self, nodes: &[EncodedNode]) -> bool {
+        nodes.len() == self.nodes
+            && self.slots_fit_sides()
+            && self.node_runs(|from, offsets, at| {
+                let run = &nodes[from..from + offsets.len()];
+                let same = run.iter().zip(offsets).fold(true, |same, (n, &o)| same & (*n == inline_at(at, o)));
+                if same { Ok(()) } else { Err(()) }
+            }).is_ok()
+    }
+
+}
+
+/// The digits a [`NodeCursor`]'s [`Odometer`] counts in place: every node
+/// digit of a level, whose nodes are numbered in `u32` and whose radices
+/// are two or more.
+const NODE_COUNTERS: usize = 32;
+
+/// The slots at a place of a run of digits, fastest first, counted like an
+/// odometer: one place on, the fastest digit goes up one and carries into
+/// the next where it wraps, so a step costs an add or two, not a division
+/// a digit. The settings of the first `N` digits are counted in place; a
+/// carry past them reads the next digits' settings off the place.
+///
+/// The slots are summed in `u32`, wrapping: a place's slots are child slots,
+/// which fit in one, so the wrapping sums are the slots.
+#[derive(Clone, Copy, Debug)]
+struct Odometer<const N: usize> {
+    /// The slots at the place counted.
+    at: (u32, u32),
+    /// The settings of the first `N` digits there.
+    counts: [u32; N],
+}
+
+impl<const N: usize> Odometer<N> {
+    /// At place 0, the slots `first`.
+    #[inline]
+    fn new(first: (i64, i64)) -> Self {
+        Odometer { at: (first.0 as u32, first.1 as u32), counts: [0; N] }
+    }
+
+    /// The slots at the place counted.
+    #[inline]
+    fn slots(&self) -> (i64, i64) {
+        (i64::from(self.at.0), i64::from(self.at.1))
+    }
+
+    /// Add `times` units of digit `d` to the slots.
+    #[inline]
+    fn add(&mut self, d: &Digit, times: i64) {
+        self.at = (self.at.0.wrapping_add((times * d.left) as u32), self.at.1.wrapping_add((times * d.right) as u32));
+    }
+
+    /// One place on, to `place`, of `digits`, where the fastest digit is
+    /// counted in place: the step that carries nowhere inlined, any other
+    /// out of line.
+    #[inline(always)]
+    fn step_counted(&mut self, digits: &[Digit], place: usize) {
+        if let (Some(c), Some(d)) = (self.counts.first_mut(), digits.first())
+            && (*c as usize) + 1 < d.radix
+        {
+            *c += 1;
+            self.add(d, 1);
+            return;
+        }
+        self.step_carrying(digits, place);
+    }
+
+    /// [`step`](Self::step), out of line.
+    #[inline(never)]
+    fn step_carrying(&mut self, digits: &[Digit], place: usize) {
+        self.step(digits, place);
+    }
+
+    /// One place on, to `place`, of `digits`.
+    #[inline]
+    fn step(&mut self, digits: &[Digit], place: usize) {
+        let mut period = 1;
+        for (j, d) in digits.iter().enumerate() {
+            let wrapped = match self.counts.get_mut(j) {
+                Some(c) => {
+                    *c += 1;
+                    let wrapped = *c as usize == d.radix;
+                    if wrapped {
+                        *c = 0;
+                    }
+                    wrapped
+                }
+                None => (place / period).is_multiple_of(d.radix),
+            };
+            if !wrapped {
+                self.add(d, 1);
+                return;
+            }
+            self.add(d, 1 - d.radix as i64);
+            period *= d.radix;
+        }
+    }
+
+    /// From place `from` to place `to` of `digits`, read off its digits:
+    /// a digit counted in place has its setting at `from` there.
+    fn seat(&mut self, digits: &[Digit], from: usize, to: usize) {
+        let (mut b, mut period) = (to, 1usize);
+        for (j, d) in digits.iter().enumerate() {
+            let is = b % d.radix;
+            b /= d.radix;
+            let was = match self.counts.get_mut(j) {
+                Some(c) => std::mem::replace(c, is as u32) as usize,
+                None => from / period % d.radix,
+            };
+            self.add(d, is as i64 - was as i64);
+            period = period.wrapping_mul(d.radix);
+        }
+    }
+
+    /// `by` places on, of `digits`, every one of them counted in place:
+    /// `by` added to the settings with its carries, the digits past the
+    /// last one a carry reaches left as they are.
+    fn advance(&mut self, digits: &[Digit], by: usize) {
+        debug_assert!(digits.len() <= N, "a digit not counted in place");
+        let mut carry = by;
+        for (c, d) in self.counts.iter_mut().zip(digits) {
+            if carry == 0 {
+                return;
+            }
+            let sum = *c as usize + carry;
+            let is = sum % d.radix;
+            carry = sum / d.radix;
+            let times = is as i64 - i64::from(*c);
+            *c = is as u32;
+            self.at = (self.at.0.wrapping_add((times * d.left) as u32), self.at.1.wrapping_add((times * d.right) as u32));
+        }
+    }
+}
+
+/// The pairs of one node of an implicit level, in their order, generated
+/// from its description: what [`PairsIter`](crate::diagram::PairsIter)
+/// yields on such a level. They are read in runs, each a run's first pair
+/// plus the offsets the description keeps of its fastest place digits, and
+/// each run's first pair stepped on from the last's by the place digits
+/// past those ([`Odometer`]).
+#[derive(Clone, Debug)]
+pub(crate) struct Places<'a> {
+    /// The offsets of the current run still to come.
+    run: std::slice::Iter<'a, (u32, u32)>,
+    /// At the first pair of the current run, the `run_no`th of the node's.
+    at: Odometer<0>,
+    run_no: u32,
+    /// The pairs of the runs after the current one.
+    rest: u32,
+    /// The description.
+    level: &'a ImplicitLevel,
+}
+
+impl Places<'_> {
+    /// No pairs: what a stored node's [`PairsIter`](crate::diagram::PairsIter)
+    /// holds beside its slice.
+    #[inline]
+    pub(crate) fn empty() -> Self {
+        Places { run: [].iter(), at: Odometer { at: (0, 0), counts: [] }, run_no: 0, rest: 0, level: &NO_PAIRS }
+    }
+
+    /// The pairs still to come.
+    #[inline]
+    pub(crate) fn len(&self) -> usize {
+        self.run.len() + self.rest as usize
+    }
+
+    /// The pair at `offset` from the current run's first.
+    #[inline(always)]
+    fn shifted(&self, offset: (u32, u32)) -> ChildPair {
+        let (l, r) = self.at.at;
+        ChildPair::new(EncodedChildRef::from_raw(l.wrapping_add(offset.0)), EncodedChildRef::from_raw(r.wrapping_add(offset.1)))
+    }
+
+    /// Appends the pairs still to come to `buf`, room made for them at
+    /// once and each run written as a slice's map.
+    #[inline]
+    pub(crate) fn write_into(mut self, buf: &mut Vec<ChildPair>) {
+        buf.reserve(self.len());
+        loop {
+            let run = std::mem::replace(&mut self.run, [].iter());
+            let (l, r) = self.at.at;
+            buf.extend(run.map(|&(a, b)| {
+                ChildPair::new(EncodedChildRef::from_raw(l.wrapping_add(a)), EncodedChildRef::from_raw(r.wrapping_add(b)))
+            }));
+            if self.rest == 0 {
+                return;
+            }
+            self.next_run();
+        }
+    }
+
+    /// On to the next run, of which there must be one.
+    #[inline(always)]
+    fn next_run(&mut self) {
+        let d = self.level;
+        self.run_no += 1;
+        self.at = d.run_after(self.at, self.run_no);
+        self.rest -= d.run.len() as u32;
+        self.run = d.run.iter();
+    }
+}
+
+/// The first pairs of an implicit level's nodes, read in increasing node
+/// order: the next node's by stepping the node digits ([`Odometer`]), a
+/// node further back or ahead off its digits.
+#[derive(Clone, Debug)]
+pub(crate) struct NodeCursor<'a> {
+    /// The node digits, fastest first.
+    digits: &'a [Digit],
+    /// At node `node`.
+    at: Odometer<NODE_COUNTERS>,
+    node: usize,
+}
+
+impl NodeCursor<'_> {
+    /// The slots of the first pair of node `i`, as
+    /// [`ImplicitLevel::node_first`] gives them: the next node's stepped on
+    /// to in the caller, any other's out of line ([`first_of_far`](Self::first_of_far)).
+    #[inline(always)]
+    pub(crate) fn first_of(&mut self, i: usize) -> (i64, i64) {
+        if i == self.node + 1 {
+            self.at.step_counted(self.digits, i);
+            self.node = i;
+        } else if i != self.node {
+            self.first_of_far(i);
+        }
+        self.at.slots()
+    }
+
+    /// On to node `i`, neither this node nor the next: a node ahead by
+    /// adding the distance to the digits' settings, which costs a division
+    /// a digit its carry reaches; one behind read off its digits.
+    #[inline(never)]
+    fn first_of_far(&mut self, i: usize) {
+        if i > self.node && self.digits.len() <= NODE_COUNTERS {
+            self.at.advance(self.digits, i - self.node);
+        } else {
+            self.at.seat(self.digits, self.node, i);
+        }
+        self.node = i;
+    }
+}
+
+impl Iterator for Places<'_> {
+    type Item = ChildPair;
+
+    #[inline]
+    fn next(&mut self) -> Option<ChildPair> {
+        match self.run.next() {
+            Some(&o) => Some(self.shifted(o)),
+            None if self.rest == 0 => None,
+            None => {
+                self.next_run();
+                self.run.next().map(|&o| self.shifted(o))
+            }
+        }
+    }
+
+    /// Each run folded as a slice's.
+    #[inline]
+    fn fold<B, F: FnMut(B, ChildPair) -> B>(mut self, init: B, mut f: F) -> B {
+        let mut acc = init;
+        loop {
+            let run = std::mem::replace(&mut self.run, [].iter());
+            acc = run.fold(acc, |acc, &o| f(acc, self.shifted(o)));
+            if self.rest == 0 {
+                return acc;
+            }
+            self.next_run();
+        }
+    }
+
+    /// Skips to the place `n` on in one step, its run's first pair read off
+    /// the digits past a run's.
+    #[inline]
+    fn nth(&mut self, n: usize) -> Option<ChildPair> {
+        let here = self.run.len();
+        if n < here {
+            return self.run.nth(n).map(|&o| self.shifted(o));
+        }
+        let skip = n - here;
+        if skip >= self.rest as usize {
+            self.run = [].iter();
+            self.rest = 0;
+            return None;
+        }
+        let d = self.level;
+        let size = d.run.len();
+        let to = self.run_no as usize + skip / size + 1;
+        self.at.seat(d.run_steps(), self.run_no as usize, to);
+        self.rest -= ((to - self.run_no as usize) * size) as u32;
+        self.run_no = to as u32;
+        self.run = d.run[skip % size..].iter();
+        self.next()
+    }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.len(), Some(self.len()))
+    }
+}
