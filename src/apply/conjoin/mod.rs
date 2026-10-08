@@ -866,9 +866,10 @@ fn note_pairs_grown() {}
 
 // A test sends every level past the relabelling route, as the oracle the
 // route is checked against, and counts the levels it took: moved whole, and
-// rebuilt; and those of them that read through a marginal child.
+// rebuilt; those of them that read through a marginal child; and the nodes
+// it wrote holding a pair twice.
 #[cfg(test)]
-use tests::{note_read_through, note_relabelled, relabel_forced_off};
+use tests::{note_read_through, note_relabelled, note_written_pairs, relabel_forced_off};
 
 #[cfg(not(test))]
 #[inline(always)]
@@ -883,6 +884,10 @@ fn note_relabelled(_moved: bool) {}
 #[cfg(not(test))]
 #[inline(always)]
 fn note_read_through() {}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_written_pairs(_pairs: &[ChildPair]) {}
 
 // A test counts the levels a count read from an operand's kept counts
 // instead of folding them.

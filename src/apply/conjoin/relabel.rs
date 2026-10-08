@@ -10,7 +10,8 @@
 //! each, where the general routes join the two operands' pairs on their
 //! children. Distinct carrier pairs stay distinct, since the products of the
 //! distinct nodes of one child level are distinct nodes, so the level needs
-//! no deduplication either.
+//! no deduplication either; beside a subtree a quantifying conjunction
+//! collapsed they need not, which [`take_relabel_level`] explains.
 //!
 //! Where neither side renumbers anything — each child's products are the
 //! carrier's nodes in order, as when the child is complete and the narrow
@@ -95,7 +96,15 @@ pub(super) fn single_pair(tdd: &Tdd, t: usize, width: usize) -> Option<ChildPair
 /// node per live cell, as in a plain conjunction. And on an operand an
 /// earlier sum left marginal levels in, it reads through each one the other
 /// operand is constant-true over, whose counts the output keeps as they
-/// are. The caller has already excluded a filtered or quantified sweep.
+/// are. The caller has already excluded a filtered sweep, and only that: a
+/// sweep that quantifies ([`Quantification::FusedSubtrees`]) reaches the
+/// route on every level outside the subtrees it collapses. At the parent of
+/// one, the collapsed child's products are one `⊤` for every satisfiable
+/// cell, so two carrier pairs can meet in one and the level holds that pair
+/// twice; the quantification that follows the sweep regroups every such
+/// parent, which merges them, as it merges the general routes' pairs there.
+///
+/// [`Quantification::FusedSubtrees`]: crate::Quantification::FusedSubtrees
 ///
 /// # Errors
 ///
@@ -238,6 +247,7 @@ fn relabel_level(
             out.push(ChildPair::new(NodeIdx(l), NodeIdx(r)));
         }
         let survivors = out.len() - start;
+        note_written_pairs(&out[start..]);
         if survivors == 0 {
             map.push(NO_PRODUCT);
             continue;

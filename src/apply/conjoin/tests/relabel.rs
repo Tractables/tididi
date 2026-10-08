@@ -253,6 +253,44 @@ fn a_relabelled_level_quantified_on_its_left_side_agrees() {
         "rebuilt {rebuilt}, levels with unsorted runs {levels}, quantified {quantified}");
 }
 
+/// A conjunction that quantifies every variable under a subtree with
+/// [`Quantification::FusedSubtrees`] collapses that subtree, whose products
+/// are then one `⊤` for every satisfiable cell: the route writes the level
+/// above with two carrier pairs meeting in one, which the quantification's
+/// regroup of that level merges. The result is the general routes' own and
+/// the quantified product's, and some level so written held a pair twice.
+#[test]
+fn a_quantifying_conjunction_relabels_above_a_collapsed_subtree() {
+    use crate::Quantification;
+    let (relabelled, repeated) = (relabel_census(), repeated_pair_census());
+    for (what, f, g) in cases(8, 0x5_7b7e) {
+        let vtree = Arc::clone(f.vtree());
+        for (s, _, _) in vtree.internal_bottomup() {
+            if s == vtree.root() {
+                continue;
+            }
+            let vars: Vec<VarId> = vars_under(&vtree, s).into_iter().map(VarId).collect();
+            for (a, b) in [(&f, &g), (&g, &f)] {
+                let eng = Engine::new();
+                let what = format!("{what}, quantifying under {s:?}");
+                let out = eng.and_exists_with(a.clone(), b.clone(), &vars, Quantification::FusedSubtrees).unwrap();
+                let oracle = no_relabel(|| {
+                    eng.and_exists_with(a.clone(), b.clone(), &vars, Quantification::FusedSubtrees).unwrap()
+                });
+                assert_canonical(&out);
+                assert_same_shape(&out, &oracle, &what);
+                let product = eng.and_exists_with(a.clone(), b.clone(), &vars, Quantification::Product).unwrap();
+                assert_same_shape(&out, &product, &format!("{what}, against the product"));
+                assert_eq!(eng.model_count(&out).unwrap(), eng.model_count(&product).unwrap(), "{what}: count");
+            }
+        }
+    }
+    let rebuilt = relabel_census()[1] - relabelled[1];
+    let repeated = repeated_pair_census() - repeated;
+    assert!(rebuilt > 0, "the route rebuilt no level");
+    assert!(repeated > 0, "no relabelled node held a pair twice");
+}
+
 /// A conjunction refused at any work point after the route moved a level
 /// gives both operands back as they were.
 #[test]

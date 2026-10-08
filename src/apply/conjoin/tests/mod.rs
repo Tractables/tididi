@@ -193,6 +193,9 @@ thread_local! {
     static RELABELLED: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
     /// Those of them that read through a marginal child ([`read_through_census`]).
     static READ_THROUGH: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// The nodes the route wrote on this thread holding a pair twice
+    /// ([`repeated_pair_census`]).
+    static REPEATED_PAIRS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 pub(super) fn relabel_forced_off() -> bool {
@@ -234,6 +237,22 @@ pub(super) fn note_read_through() {
 /// through a marginal child.
 pub(super) fn read_through_census() -> u64 {
     READ_THROUGH.with(std::cell::Cell::get)
+}
+
+/// Note the pairs the route just wrote for one node, `pairs`, when two of
+/// them are one pair.
+pub(super) fn note_written_pairs(pairs: &[ChildPair]) {
+    let mut sorted = pairs.to_vec();
+    sorted.sort_unstable();
+    if sorted.windows(2).any(|w| w[0] == w[1]) {
+        REPEATED_PAIRS.with(|c| c.set(c.get() + 1));
+    }
+}
+
+/// The nodes on this thread so far the relabelling route wrote with a pair
+/// twice.
+pub(super) fn repeated_pair_census() -> u64 {
+    REPEATED_PAIRS.with(std::cell::Cell::get)
 }
 
 thread_local! {
