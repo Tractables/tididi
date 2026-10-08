@@ -2,17 +2,39 @@
 //! and the output's marginal leaves seeded from the operands.
 
 use crate::{Engine, OperationError};
-use crate::diagram::{Tdd, TddLevel, WeightStore};
+use crate::diagram::{Tdd, TddLevel, WeightStore, LEAF_WIDTH};
 use crate::vtree::Vtree;
 use super::setup::Operands;
 use super::setup::ApplyRun;
 use super::{CONJOIN_GRID, NO_PRODUCT};
 
+/// `CONJOIN_GRID` row by row: the product grid of every leaf level.
+const LEAF_GRID: [u32; LEAF_WIDTH * LEAF_WIDTH] = {
+    let mut grid = [0; LEAF_WIDTH * LEAF_WIDTH];
+    let mut k = 0;
+    while k < grid.len() {
+        grid[k] = CONJOIN_GRID[k / LEAF_WIDTH][k % LEAF_WIDTH];
+        k += 1;
+    }
+    grid
+};
+
+/// The cells of [`LEAF_GRID`] that hold a product.
+const LEAF_LIVE: usize = {
+    let mut live = 0;
+    let mut k = 0;
+    while k < LEAF_GRID.len() {
+        if LEAF_GRID[k] != NO_PRODUCT { live += 1; }
+        k += 1;
+    }
+    live
+};
+
 /// Fill grid entries at leaf vtree levels from the static `CONJOIN_GRID` table.
 ///
 /// At leaf levels the conjunction is a constant 3×3 truth table (Pos, Neg, One),
-/// so we just copy from `CONJOIN_GRID` into `node_idx`; a leaf under a free
-/// level ([`ApplyRun::free`]) has no grid. When the arena bumps,
+/// so we just copy it, as [`LEAF_GRID`], into the level's grid; a leaf under a
+/// free level ([`ApplyRun::free`]) has no grid. When the arena bumps,
 /// grid space is allocated as we go and live counts are recorded for parent
 /// density checks; otherwise the grid offsets are pre-computed.
 pub(super) fn apply_leaf_levels(
@@ -27,21 +49,12 @@ pub(super) fn apply_leaf_levels(
             continue;
         }
         let t_idx = t.idx();
-        let left_width = f_widths[t_idx];
-        let right_width = g_widths[t_idx];
-        let base = products.arena.alloc(eng, t_idx, left_width * right_width)?;
+        debug_assert!(f_widths[t_idx] == LEAF_WIDTH && g_widths[t_idx] == LEAF_WIDTH, "a leaf level has the leaf width");
+        let base = products.arena.alloc(eng, t_idx, LEAF_GRID.len())?;
         products.arena.set_dense(t_idx, base);
-        let output_grid_base = base.idx();
-        let slab = products.arena.slab_mut();
-        let mut count = 0usize;
-        for i in 0..left_width {
-            for j in 0..right_width {
-                let val = CONJOIN_GRID[i][j];
-                slab[output_grid_base + i * right_width + j] = val;
-                if val != NO_PRODUCT { count += 1; }
-            }
-        }
-        if products.arena.is_bump() { products.record_live(t_idx, count); }
+        let at = base.idx();
+        products.arena.slab_mut()[at..at + LEAF_GRID.len()].copy_from_slice(&LEAF_GRID);
+        if products.arena.is_bump() { products.record_live(t_idx, LEAF_LIVE); }
     }
     Ok(())
 }
