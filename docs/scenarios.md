@@ -93,7 +93,7 @@ It omits the witness, replacement observation and minimization demonstrations.
 
 ### Instances
 
-- [Rust walkthrough](examples/configurations.md) <!-- reviewed: 3d2f49ea5b1910c45d050759f5a07e88c735e16e72aa53ce705dbfa68fbf7b02 -->
+- [Rust walkthrough](examples/configurations.md) <!-- reviewed: cd236b754b5ac82eefcf9ccb698d43e0185e0063ff7100d2caed0afa447cedb9 -->
 - [Rust program](../examples/configurations.rs) <!-- reviewed: 79ec2d3fa05da95e1360b51129c1de3d8090c146a1a6aead105ef16c08c11dd4 -->
 - [Python walkthrough and program](../bindings/python/examples/01_configurations.py) <!-- reviewed: 6a369c0d5f4dd63db5fe776ae2f5699ac0d370d32925b2a9bc6a9e9c6ae67006 -->
 - [C configurations](../bindings/c/docs/configurations.rst) <!-- reviewed: ac03abce92815601a4e6410435e1724f471e5ffcd9be87a436fae77a9fd2e392 -->

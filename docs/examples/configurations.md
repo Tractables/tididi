@@ -163,7 +163,7 @@ Output:
 ```text
 One valid configuration:
   local backups: true
-  remote backups: true
+  remote backups: false
   encryption: true
   notifications: false
 ```
