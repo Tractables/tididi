@@ -128,7 +128,7 @@ impl Engine {
         let mut plans = plan(lim, &mut scratch, vtree, &layout, root)?;
         scratch.discard(lim);
         let mut assembly = Assembly::new(self, vtree)?;
-        let output = super::fill(self, &mut assembly, vtree, &layout, &mut plans)?;
+        let output = super::emit::fill(self, &mut assembly, vtree, &layout, &mut plans)?;
         // The levels are canonical as built: seat them with nothing to reduce.
         let (levels, _) = assembly.parts_mut();
         Ok(crate::build::seat_canonical(self, vtree, std::mem::take(levels), output))
