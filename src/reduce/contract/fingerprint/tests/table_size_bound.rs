@@ -18,3 +18,25 @@ fn table_is_strictly_larger_than_its_occupancy_bound() {
     assert_eq!(twin_table_size(9), 16);
     assert_eq!(twin_table_size((1 << 20) + 1), 1 << 21);
 }
+
+/// Unmarked nodes keep their own representative and cannot intercept a
+/// marked node's probe, even when their fingerprints happen to agree.
+#[test]
+fn grouping_only_probes_marked_candidates() {
+    use super::probe_fingerprints;
+    let engine = crate::Engine::new();
+    let fingerprints = [0; 100];
+    let mut marked = [false; 100];
+    marked[31] = true;
+    marked[99] = true;
+    let mut table = Vec::new();
+    let mut representatives = Vec::new();
+    probe_fingerprints(engine.limits(), &mut table, &fingerprints, Some(&marked), |i, occupant| {
+        representatives.push(occupant.unwrap_or(i));
+        true
+    }).unwrap();
+    for (i, &representative) in representatives.iter().enumerate() {
+        assert_eq!(representative, if i == 99 { 31 } else { i });
+    }
+    assert_eq!(table.len(), twin_table_size(2));
+}

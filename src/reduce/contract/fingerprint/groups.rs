@@ -21,8 +21,9 @@ pub(super) fn build_twin_groups_after_collision(
 ) -> Result<bool, OperationError> {
     // Only candidates get a materialized signature: equal signatures force
     // equal fingerprints, so a node with a unique fingerprint has no twin, and
-    // skipping it keeps count 0, an empty signature range, and a hash slot of
-    // its own. A false-positive fingerprint match is separated by the exact
+    // skipping it keeps count 0, an empty signature range, and its own
+    // representative without a hash slot. A false-positive fingerprint match
+    // is separated by the exact
     // signature compare in Pass 1.
     materialize_candidate_signatures(eng, entries, child_width, scratch)?;
 
@@ -171,8 +172,9 @@ fn group_width_two(lim: &Limits, scratch: &mut ContractScratch) -> Result<bool, 
     Ok(found)
 }
 
-/// General case: bucket nodes by their additive fingerprint, verify exact
-/// signature equality within a bucket, then build contiguous groups.
+/// General case: bucket candidates by their additive fingerprint, verify exact
+/// signature equality within a bucket, then build contiguous groups. Unmarked
+/// nodes keep their own representative without entering the table.
 fn group_by_hashed_signature(
     eng: &Engine,
     child_width: usize,
@@ -187,10 +189,10 @@ fn group_by_hashed_signature(
     // (2) build contiguous groups via counting sort.
     // Pass 1: map each node to its representative via hash table.
     // cursors[i] = representative of node i (i itself if first with this signature).
-    let ContractScratch { fingerprints, twin_hash_table, entries, counts, cursors, .. } = &mut *scratch;
+    let ContractScratch { fingerprints, twin_hash_table, entries, counts, cursors, is_candidate, .. } = &mut *scratch;
     let sig_offsets: &[u32] = counts;
     let signature = |j: usize| &entries[sig_offsets[j] as usize..sig_offsets[j + 1] as usize];
-    probe_fingerprints(lim, twin_hash_table, &fingerprints[..child_width], |i, occupant| {
+    probe_fingerprints(lim, twin_hash_table, &fingerprints[..child_width], Some(&is_candidate[..child_width]), |i, occupant| {
         match occupant {
             Some(j) if signature(i) == signature(j) => {
                 cursors[i] = j as u32;

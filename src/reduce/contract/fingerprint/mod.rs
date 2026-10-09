@@ -375,7 +375,7 @@ fn mark_candidates(
     lim.try_resize(is_candidate, width, false)?;
     is_candidate[..width].fill(false);
     let mut found = false;
-    probe_fingerprints(lim, twin_hash_table, &fingerprints[..width], |i, occupant| {
+    probe_fingerprints(lim, twin_hash_table, &fingerprints[..width], None, |i, occupant| {
         if let Some(occ) = occupant {
             // Idempotent stores: re-flagging an already-flagged node is a
             // redundant write, not a miscount, so the probe needs no guards.
@@ -391,7 +391,7 @@ fn mark_candidates(
 /// How many fingerprints ahead the probe loop prefetches.
 const PF_DIST: usize = 8;
 
-/// Insert `fingerprints` one by one into the open-addressing twin table `ht`,
+/// Insert eligible `fingerprints` one by one into the open-addressing twin table `ht`,
 /// sized and cleared here for that occupancy, probing linearly from each
 /// fingerprint's home slot. For fingerprint `i` the probe calls
 /// `visit(i, Some(j))` at every occupant `j` with the same fingerprint, in
@@ -399,6 +399,9 @@ const PF_DIST: usize = 8;
 /// slot it inserts `i` and calls `visit(i, None)`, whose result is ignored.
 /// The table stores the fingerprint beside the occupant index, so each probe
 /// is one random load. Both twin-grouping passes run on this loop.
+///
+/// When `candidates` is supplied, unmarked nodes call `visit(i, None)` without
+/// probing or occupying a slot. The table is sized for the marked nodes alone.
 ///
 /// # Errors
 ///
@@ -408,15 +411,22 @@ fn probe_fingerprints(
     lim: &crate::limits::Limits,
     ht: &mut Vec<TwinSlot>,
     fingerprints: &[u64],
+    candidates: Option<&[bool]>,
     mut visit: impl FnMut(usize, Option<usize>) -> bool,
 ) -> Result<(), OperationError> {
     let width = fingerprints.len();
-    // One insert at most per fingerprint ⇒ occupancy ≤ width.
-    let table_size = twin_table_size(width);
+    debug_assert!(candidates.is_none_or(|c| c.len() == width));
+    // One insert at most per eligible fingerprint.
+    let occupancy = candidates.map_or(width, |c| c.iter().filter(|&&marked| marked).count());
+    let table_size = twin_table_size(occupancy);
     let mask = table_size - 1;
     lim.try_resize(ht, table_size, EMPTY_SLOT)?;
     ht[..table_size].fill(EMPTY_SLOT);
     for i in 0..width {
+        if candidates.is_some_and(|c| !c[i]) {
+            visit(i, None);
+            continue;
+        }
         // Prefetch the slot that iteration `i + PF_DIST` will first probe:
         // `fingerprints` is read sequentially, so that slot's address is known
         // ahead of time, and the probe is a random access into a table that
@@ -424,7 +434,7 @@ fn probe_fingerprints(
         // iteration because the insert below writes through `ht`; `as_ptr`
         // is a field read and the prefetch is a hint, so nothing here is a
         // real load.
-        if i + PF_DIST < width {
+        if i + PF_DIST < width && candidates.is_none_or(|c| c[i + PF_DIST]) {
             prefetch_slot(ht.as_ptr(), (fingerprints[i + PF_DIST] as usize) & mask);
         }
         let fp = fingerprints[i];
