@@ -121,6 +121,10 @@ pub(super) fn take_relabel_level(
 ) -> Result<bool, OperationError> {
     let (t, left, right) = (shape.t, shape.left, shape.right);
     let ti = t.idx();
+    // Neither operand one node here: no level is cheaper to turn away.
+    if shape.f.here != 1 && shape.g.here != 1 {
+        return Ok(false);
+    }
     if relabel_forced_off()
         || sweep.ws.is_some()
         || sweep.targets.contains(ti)
@@ -131,15 +135,16 @@ pub(super) fn take_relabel_level(
     {
         return Ok(false);
     }
-    let marginal = run.level_marginal(f, g, shape, sweep.targets);
-    if marginal.is_target {
-        return Ok(false);
-    }
+    // The one-pair test before the marginal state, which reads three levels.
     let (carrier_f, one) = match (single_pair(g, ti, shape.g.here), single_pair(f, ti, shape.f.here)) {
         (Some(pair), _) => (true, pair),
         (None, Some(pair)) => (false, pair),
         (None, None) => return Ok(false),
     };
+    let marginal = run.level_marginal(f, g, shape, sweep.targets);
+    if marginal.is_target {
+        return Ok(false);
+    }
     // A marginal child is read through only where the output's level there
     // is the carrier's own, which an identity fast path moved because the
     // narrow operand is constant-true over it: each carrier reference to
