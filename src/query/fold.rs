@@ -145,7 +145,7 @@ pub(crate) trait PairAlgebra: LevelFold {
 /// The children's columns must already be complete — the walk order is the
 /// caller's to keep. Integer folds charge node slots in bounded batches; other
 /// algebras charge pair visits at node boundaries.
-pub(crate) fn fold_level<F: LevelFold>(
+pub(crate) fn fold_level<F: LevelFold, const PREPARED: bool>(
     f: &F,
     eng: &Engine,
     tdd: &Tdd,
@@ -166,7 +166,7 @@ pub(crate) fn fold_level<F: LevelFold>(
     if tdd.levels[ti].is_marginal() {
         return f.marginal_column(eng, tdd, t, &mut cols[ti]);
     }
-    if f.prepared_level(eng, tdd, cols, t, gate)? { return Ok(()); }
+    if PREPARED && f.prepared_level(eng, tdd, cols, t, gate)? { return Ok(()); }
     let (left, right) = tdd.vtree.children(t);
     let (left_idx, right_idx) = (left.idx(), right.idx());
     let left_view = tdd.levels[left_idx].child_decoder();
@@ -208,7 +208,7 @@ pub(crate) fn fold_level<F: LevelFold>(
 /// # Errors
 ///
 /// Propagates allocation refusals and the armed stop at amortized node boundaries.
-pub(crate) fn fold_bottom_up<F: LevelFold>(
+pub(crate) fn fold_bottom_up<F: LevelFold, const PREPARED: bool>(
     f: &F,
     eng: &Engine,
     tdd: &Tdd,
@@ -226,7 +226,7 @@ pub(crate) fn fold_bottom_up<F: LevelFold>(
             if cols[t.idx()].width() != width {
                 cols[t.idx()] = f.alloc(eng, width)?;
             }
-            fold_level(f, eng, tdd, cols, t, gate)
+            fold_level::<_, PREPARED>(f, eng, tdd, cols, t, gate)
         },
         |cols, i| f.release(eng, &mut cols[i]),
         retain.frontier(tdd.output.vtree),

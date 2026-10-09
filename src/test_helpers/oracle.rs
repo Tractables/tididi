@@ -155,7 +155,7 @@ fn count_big(tdd: &Tdd, pins: &[Option<bool>], convention: PinSemantics) -> Vec<
     let eng = Engine::new();
     let fold = BigCounts { pins, convention };
     let mut cols: Vec<Vec<BigUint>> = vec![Vec::new(); tdd.vtree.num_nodes()];
-    fold_bottom_up(&fold, &eng, tdd, &mut cols, Retention::All, &mut eng.limits().gate())
+    fold_bottom_up::<_, false>(&fold, &eng, tdd, &mut cols, Retention::All, &mut eng.limits().gate())
         .expect("query fold: allocation refused");
     cols
 }

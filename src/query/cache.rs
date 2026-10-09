@@ -147,6 +147,8 @@ pub(crate) trait CachedQuery {
 
     /// Refuse a diagram this query cannot read.
     fn admit(tdd: &Tdd) -> Result<(), OperationError>;
+    /// Select the prepared reader once per refresh, outside the level walk.
+    fn uses_prepared_reads(&self) -> bool { false }
     /// The fold under the current pins.
     fn fold<'a>(&'a self, pins: &'a [PinState]) -> Self::Fold<'a>;
     /// The answer for the constant-false diagram, which has no output column.
@@ -206,20 +208,28 @@ impl<Q: CachedQuery> QueryCache<Q> {
     /// The cache is marked invalid before the fold runs user arithmetic, so an
     /// error or unwinding cannot leave partly refreshed columns as cached answers.
     pub(super) fn refresh(&mut self, eng: &Engine, tdd: &Tdd, gate: &mut PollGate) -> Result<(), OperationError> {
+        if self.observations.evaluated && self.observations.changed.is_empty() { return Ok(()); }
+        if self.query.uses_prepared_reads() {
+            self.refresh_with::<true>(eng, tdd, gate)
+        } else {
+            self.refresh_with::<false>(eng, tdd, gate)
+        }
+    }
+
+    fn refresh_with<const PREPARED: bool>(&mut self, eng: &Engine, tdd: &Tdd, gate: &mut PollGate) -> Result<(), OperationError> {
         let observations = &mut self.observations;
-        if observations.evaluated && observations.changed.is_empty() { return Ok(()); }
         let incremental = observations.evaluated && observations.retention == Retention::All;
         observations.evaluated = false;
         if incremental {
             observations.add_ancestors(eng, tdd, gate)?;
             let fold = self.query.fold(&observations.pins);
-            for &level in &observations.changed { fold_level(&fold, eng, tdd, &mut self.cols, level, gate)?; }
+            for &level in &observations.changed { fold_level::<_, PREPARED>(&fold, eng, tdd, &mut self.cols, level, gate)?; }
         } else {
             let retention = observations.retention;
             if retention == Retention::Frontier {
                 for col in self.cols.iter_mut() { *col = Q::Col::default(); }
             }
-            fold_bottom_up(&self.query.fold(&observations.pins), eng, tdd, &mut self.cols, retention, gate)?;
+            fold_bottom_up::<_, PREPARED>(&self.query.fold(&observations.pins), eng, tdd, &mut self.cols, retention, gate)?;
         }
         observations.clear_changed();
         observations.evaluated = true;

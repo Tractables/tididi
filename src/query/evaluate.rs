@@ -34,7 +34,7 @@ impl Engine {
             let mut cols = Vec::new();
             lim.reserve_exact(&mut cols, tdd.vtree.num_nodes())?;
             cols.resize_with(tdd.vtree.num_nodes(), Vec::new);
-            fold_bottom_up(&fold, self, tdd, &mut cols, Retention::Frontier, &mut gate)?;
+            fold_bottom_up::<_, false>(&fold, self, tdd, &mut cols, Retention::Frontier, &mut gate)?;
             cols[tdd.output.vtree.idx()].swap_remove(tdd.output.local.idx())
         };
         gate.finish()?;

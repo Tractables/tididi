@@ -99,10 +99,14 @@ impl<C: CountColumn> LevelFold for OverflowingCounts<'_, C> {
 }
 
 /// Exported columns start in their destination format; retained counts begin narrow.
-pub(super) struct CountQuery<C>(PinSemantics, PhantomData<C>, Prepared);
+pub(super) struct CountQuery<C> {
+    convention: PinSemantics,
+    column: PhantomData<C>,
+    prepared: Prepared,
+}
 
 impl<C> CountQuery<C> {
-    pub(super) fn new(convention: PinSemantics) -> Self { Self(convention, PhantomData, Prepared::default()) }
+    pub(super) fn new(convention: PinSemantics) -> Self { Self { convention, column: PhantomData, prepared: Prepared::default() } }
 }
 
 impl<C: CountColumn> CachedQuery for CountQuery<C> {
@@ -117,8 +121,10 @@ impl<C: CountColumn> CachedQuery for CountQuery<C> {
         Ok(())
     }
 
+    fn uses_prepared_reads(&self) -> bool { C::PREPARED_READS && !self.prepared.levels.is_empty() }
+
     fn fold<'a>(&'a self, pins: &'a [PinState]) -> OverflowingCounts<'a, C> {
-        OverflowingCounts { pins, prepared: &self.2, convention: self.0, column: PhantomData }
+        OverflowingCounts { pins, prepared: &self.prepared, convention: self.convention, column: PhantomData }
     }
 
     fn false_value(&self) -> BigUint {
@@ -126,7 +132,7 @@ impl<C: CountColumn> CachedQuery for CountQuery<C> {
     }
 
     fn output(&self, col: &C, i: usize) -> BigUint {
-        let i = if C::PREPARED_READS { self.2.output.unwrap_or(i) } else { i };
+        let i = if C::PREPARED_READS { self.prepared.output.unwrap_or(i) } else { i };
         match col.get(i) {
             CountRead::Fast(value) => BigUint::from(value),
             CountRead::Big(value) => value.clone(),
@@ -515,10 +521,10 @@ impl<D: Borrow<Tdd>> Counter<D> {
     fn prepare_with(&mut self, eng: &Engine) -> Result<(), OperationError> {
         let _op = eng.limits().enter()?;
         eng.limits().check_stop()?;
-        if self.cache.query().2.ready { return Ok(()); }
+        if self.cache.query().prepared.ready { return Ok(()); }
         let prepared = Prepared::new(eng, self.tdd.borrow())?;
-        let convention = self.cache.query().0;
-        self.cache.replace_query(CountQuery(convention, PhantomData, prepared));
+        let convention = self.cache.query().convention;
+        self.cache.replace_query(CountQuery { convention, column: PhantomData, prepared });
         Ok(())
     }
 
