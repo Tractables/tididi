@@ -87,9 +87,10 @@ enum Products {
 }
 
 /// The live pairs of nodes at one level, each with its live pairs of pairs.
+/// A product is found by its position in `products`, from `f`'s node's
+/// run there ([`Listed::position`]): no table keyed by the pair, so the
+/// walk's lookups and its marks of what it has visited are arrays.
 struct Listed {
-    /// `pack(a, b)` → the position of `(a, b)` in `products`.
-    index: FxHashMap<u64, u32>,
     /// Every live `(a, b)`, ascending.
     products: Vec<(u32, u32)>,
     /// `products[offsets[a]..offsets[a + 1]]`: those of `f` node `a`.
@@ -101,8 +102,20 @@ struct Listed {
 }
 
 impl Listed {
+    /// The position of product `(a, b)` in `products`, where it is live:
+    /// a search in `f` node `a`'s run, which is short.
+    fn position(&self, a: u32, b: u32) -> Option<u32> {
+        let (lo, hi) = (self.offsets[a as usize] as usize, self.offsets[a as usize + 1] as usize);
+        let run = &self.products[lo..hi];
+        let at = match run.len() {
+            0..=8 => run.iter().position(|e| e.1 == b)?,
+            _ => run.binary_search_by_key(&b, |e| e.1).ok()?,
+        };
+        Some((lo + at) as u32)
+    }
+
     fn contains(&self, a: u32, b: u32) -> bool {
-        self.index.contains_key(&pack(a, b))
+        self.position(a, b).is_some()
     }
 
     /// The products of `f` node `a`, by ascending `care` node.
@@ -112,15 +125,16 @@ impl Listed {
 
     /// The live pairs of pairs of `(a, b)`; empty when it is dead.
     fn combos_of(&self, a: u32, b: u32) -> &[(u32, u32)] {
-        match self.index.get(&pack(a, b)) {
-            Some(&p) => &self.combos[self.starts[p as usize] as usize..self.starts[p as usize + 1] as usize],
+        match self.position(a, b) {
+            Some(p) => self.combos_at(p),
             None => &[],
         }
     }
-}
 
-fn pack(a: u32, b: u32) -> u64 {
-    (u64::from(a) << 32) | u64::from(b)
+    /// The live pairs of pairs of the product at position `p`.
+    fn combos_at(&self, p: u32) -> &[(u32, u32)] {
+        &self.combos[self.starts[p as usize] as usize..self.starts[p as usize + 1] as usize]
+    }
 }
 
 /// What a level's child on one side is, for joining the level's pairs on it.
@@ -955,14 +969,12 @@ impl<'a> Walk<'a> {
     fn descend(&mut self, seeds: Vec<(VtreeIdx, Key)>) -> Result<(), Halt> {
         let (eng, f, care) = (self.eng, self.f, self.care);
         let vtree = &f.vtree;
-        let mut seen: Vec<FxHashSet<Key>> = Vec::new();
-        eng.limits().reserve_exact(&mut seen, vtree.num_nodes())?;
-        seen.resize_with(vtree.num_nodes(), FxHashSet::default);
+        let mut seen = Seen::new(eng, vtree.num_nodes())?;
         let mut stack = Vec::new();
         for (v, k) in seeds {
             if let (Some(a), None) = k {
                 self.keep_node(v, a);
-            } else if visit(eng, &mut seen[v.idx()], k)? {
+            } else if seen.first(eng, &self.products[v.idx()], v, k)? {
                 eng.limits().try_push(&mut stack, (v, k))?;
             }
         }
@@ -1012,7 +1024,7 @@ impl<'a> Walk<'a> {
                     match self.child(cv, x, y) {
                         Child::Pair((Some(a), None)) => self.keep_node(cv, a),
                         Child::Pair(k) => {
-                            if visit(eng, &mut seen[cv.idx()], k)? {
+                            if seen.first(eng, &self.products[cv.idx()], cv, k)? {
                                 eng.limits().try_push(&mut stack, (cv, k))?;
                             }
                         }
@@ -1070,10 +1082,40 @@ fn care_tops(eng: &Engine, care: &Tdd) -> Result<(Vec<Vec<bool>>, Vec<bool>), Op
     Ok((top, flat))
 }
 
-/// Insert `k` into `seen`; true iff it was new.
-fn visit(eng: &Engine, seen: &mut FxHashSet<Key>, k: Key) -> Result<bool, OperationError> {
-    if seen.len() == seen.capacity() { eng.limits().reserve_set(seen, 1)?; }
-    Ok(seen.insert(k))
+/// The products [`Walk::descend`] has reached, per level: a mark per
+/// position of a listed level's products ([`Listed::position`]), sized on
+/// the level's first visit, and a set of the products of any other level.
+struct Seen {
+    listed: Vec<Vec<bool>>,
+    other: Vec<FxHashSet<Key>>,
+}
+
+impl Seen {
+    fn new(eng: &Engine, levels: usize) -> Result<Seen, OperationError> {
+        let (mut listed, mut other) = (Vec::new(), Vec::new());
+        eng.limits().reserve_exact(&mut listed, levels)?;
+        eng.limits().reserve_exact(&mut other, levels)?;
+        listed.resize_with(levels, Vec::new);
+        other.resize_with(levels, FxHashSet::default);
+        Ok(Seen { listed, other })
+    }
+
+    /// Record product `k` at level `v`, whose products are `products`;
+    /// true iff it was new.
+    fn first(&mut self, eng: &Engine, products: &Products, v: VtreeIdx, k: Key) -> Result<bool, OperationError> {
+        if let (Products::Listed(l), (Some(a), Some(b))) = (products, k)
+            && let Some(p) = l.position(a.0, b.0)
+        {
+            let marks = &mut self.listed[v.idx()];
+            if marks.is_empty() {
+                eng.limits().try_resize(marks, l.products.len(), false)?;
+            }
+            return Ok(!std::mem::replace(&mut marks[p as usize], true));
+        }
+        let seen = &mut self.other[v.idx()];
+        if seen.len() == seen.capacity() { eng.limits().reserve_set(seen, 1)?; }
+        Ok(seen.insert(k))
+    }
 }
 
 /// `f`'s or `care`'s pairs at level `u` grouped by their child on side `s`
@@ -1151,8 +1193,7 @@ fn leaf_live() -> Listed {
     for x in 0..LEAF_WIDTH {
         offsets[x + 1] += offsets[x];
     }
-    let index = products.iter().enumerate().map(|(p, &(x, y))| (pack(x, y), p as u32)).collect();
-    Listed { index, products, offsets, starts: Vec::new(), combos: Vec::new() }
+    Listed { products, offsets, starts: Vec::new(), combos: Vec::new() }
 }
 
 /// The listing of a level of `nodes` `f` nodes from its live `(a, b, f pair,
@@ -1177,12 +1218,7 @@ fn listed(eng: &Engine, nodes: usize, found: &[(u32, u32, u32, u32)]) -> Result<
     for k in 0..nodes {
         offsets[k + 1] += offsets[k];
     }
-    let mut index = FxHashMap::default();
-    lim.reserve_map(&mut index, products.len())?;
-    for (p, &(a, b)) in products.iter().enumerate() {
-        index.insert(pack(a, b), p as u32);
-    }
-    Ok(Listed { index, products, offsets, starts, combos })
+    Ok(Listed { products, offsets, starts, combos })
 }
 
 /// Side `s` of a pair: `0` the left, `1` the right.
