@@ -10,7 +10,7 @@ mod nodes;
 mod pairs;
 pub use count_overflow::CountOverflow;
 pub use implicit::{described, redescribed, stored_moved, Digit, ImplicitLevel, FLOOR};
-pub(crate) use implicit::{floor, kept_capacity, stored_levels_forced, ChildKept, PairArena, Places, StoreRoom};
+pub(crate) use implicit::{floor, kept_capacity, stored_levels_forced, ChildKept, NodeChunks, PairArena, Places, StoreRoom};
 pub use nodes::{Nodes, NodesIter};
 pub(crate) use nodes::NodeArena;
 pub use pairs::{Pairs, StoredPairs};

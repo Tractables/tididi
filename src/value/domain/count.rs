@@ -256,10 +256,10 @@ impl ValueDomain for IntFold {
             let col = IntFold::child_view(c.idx(), vtree, &levels[c.idx()], computed, &()).col;
             col.all_u64().then(|| col.fast_slice())
         };
-        // A described level's nodes take the general fold, which generates
-        // their pairs, as does a level without raw children: every node in
-        // node order, each charged before it is summed.
-        let Some((l, r)) = raw(left).zip(raw(right)).filter(|_| level.stored().is_some()) else {
+        // A level without raw children takes the general fold: every node in
+        // node order, each charged before it is summed. A described level's
+        // nodes are summed off their generated pairs, as a stored level's are.
+        let Some((l, r)) = raw(left).zip(raw(right)) else {
             for (i, pairs) in level.internal_inputs_iter() {
                 before_node(1 + pairs.len() as u64)?;
                 col.set(eng, i, IntFold::fold_node(&at, pairs))?;

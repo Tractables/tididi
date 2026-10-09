@@ -9,7 +9,7 @@ use crate::diagram::WeightValue;
 use crate::vtree::{Vtree, VtreeIdx};
 
 use super::{Count, CountRead, CountVec};
-use crate::diagram::TddLevel;
+use crate::diagram::{NodeChunks, Pairs, TddLevel};
 
 /// How many nodes ahead of the one it sums [`IntFold::fill_structural_u64`]
 /// asks the cache for the child counts a node reads.
@@ -130,8 +130,9 @@ impl IntFold {
     /// are structural with every count fitting `u64` (`left` and `right`
     /// their raw columns, as [`Self::fold_structural_u64`] reads them) into
     /// `col`, while each total fits the fast lane; returns the first node it
-    /// did not fill, `range.end` when it filled them all. Fills none of an
-    /// implicit level's nodes, whose pairs the general fold generates.
+    /// did not fill, `range.end` when it filled them all. An implicit
+    /// level's nodes are summed off their pairs generated a run of nodes at
+    /// a time ([`Self::fill_described_u64`]).
     ///
     /// The child counts the node [`NODES_AHEAD`] on reads are requested from
     /// the cache while the current one is summed: the reads of a level are
@@ -144,7 +145,7 @@ impl IntFold {
         range: std::ops::Range<usize>,
     ) -> usize {
         let Some(stored) = level.stored() else {
-            return range.start;
+            return Self::fill_described_u64(level, left, right, col, range);
         };
         col.fill_fast(range, |i| {
             if let Some(ahead) = stored.nodes().get(i + NODES_AHEAD) {
@@ -159,7 +160,9 @@ impl IntFold {
 
     /// [`Self::fill_structural_u64`] into a column of `u64` counts whose
     /// children's columns are `u64` too: fills the nodes `range` while each
-    /// total fits `u64`, and returns the first node it did not fill.
+    /// total fits `u64`, and returns the first node it did not fill. An
+    /// implicit level's nodes are summed off their generated pairs
+    /// ([`Self::fill_described_narrow`]).
     pub(crate) fn fill_structural_narrow(
         level: &TddLevel,
         left: &[u64],
@@ -168,7 +171,7 @@ impl IntFold {
         range: std::ops::Range<usize>,
     ) -> usize {
         let Some(stored) = level.stored() else {
-            return range.start;
+            return Self::fill_described_narrow(level, left, right, col, range);
         };
         for i in range.clone() {
             if let Some(ahead) = stored.nodes().get(i + NODES_AHEAD) {
@@ -185,6 +188,70 @@ impl IntFold {
             match total {
                 Some(total) if total <= u64::MAX as u128 => col[i] = total as u64,
                 _ => return i,
+            }
+        }
+        range.end
+    }
+
+    /// [`Self::fill_structural_narrow`] on an implicit level, its pairs
+    /// generated a run of nodes at a time as [`Self::fill_described_u64`]
+    /// generates them.
+    #[inline(never)]
+    fn fill_described_narrow(
+        level: &TddLevel,
+        left: &[u64],
+        right: &[u64],
+        col: &mut [u64],
+        range: std::ops::Range<usize>,
+    ) -> usize {
+        let Pairs::Implicit(d) = level.pair_view() else {
+            return range.start;
+        };
+        let k = d.pairs_per_node();
+        if k == 0 {
+            return range.start;
+        }
+        let mut chunks = NodeChunks::new(d, range.clone());
+        let mut buf = Vec::new();
+        while let Some(start) = chunks.fill(&mut buf) {
+            for i in start..start + buf.len() / k {
+                let pairs = buf[(i - start) * k..][..k].iter().copied();
+                match Self::fold_structural_by(pairs, |x| left[x.0 as usize] as u128, |x| right[x.0 as usize] as u128) {
+                    Some(total) if total <= u64::MAX as u128 => col[i] = total as u64,
+                    _ => return i,
+                }
+            }
+        }
+        range.end
+    }
+
+    /// [`Self::fill_structural_u64`] on an implicit level: the pairs of the
+    /// nodes `range` generated off the level's description a run of nodes
+    /// at a time ([`NodeChunks`]), `k` a node, and each node summed as a
+    /// stored node's pairs are. Out of line, so that the stored levels'
+    /// fill stays small where it is called.
+    #[inline(never)]
+    fn fill_described_u64(
+        level: &TddLevel,
+        left: &[u128],
+        right: &[u128],
+        col: &mut CountVec,
+        range: std::ops::Range<usize>,
+    ) -> usize {
+        let Pairs::Implicit(d) = level.pair_view() else {
+            return range.start;
+        };
+        let k = d.pairs_per_node();
+        if k == 0 {
+            return range.start;
+        }
+        let mut chunks = NodeChunks::new(d, range.clone());
+        let mut buf = Vec::new();
+        while let Some(start) = chunks.fill(&mut buf) {
+            let end = start + buf.len() / k;
+            let filled = col.fill_fast(start..end, |i| Self::fold_structural_u64(&buf[(i - start) * k..][..k], left, right));
+            if filled < end {
+                return filled;
             }
         }
         range.end

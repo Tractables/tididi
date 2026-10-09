@@ -266,3 +266,69 @@ fn saturated_node_counts_include_the_exact_u128_maximum() {
         assert_eq!(f.model_count().unwrap(), exact);
     }
 }
+
+/// The diagram over the right-linear vtree of four variables, `r = (x1, v)`,
+/// `v = (x2, w)`, `w = (x3, x4)`, whose level at `v` holds node `i` as `k`
+/// pairs, pair `m` the `(x2, k·i + m)` and `(¬x2, k·i + m)` in turn, over
+/// `k·n` nodes of `w`'s level of 1, 2 and 4 models in turn, and whose
+/// root's one node holds `(x1, i)` for every node `i` of `v`'s; both
+/// levels are held as the description of their pairs. Returns the diagram
+/// and `v`.
+fn counted_levels(n: usize, k: usize) -> (Tdd, VtreeIdx) {
+    use crate::diagram::{ChildPair, NodeIdx, TddNodeId, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
+    let vtree = Arc::new(Vtree::linear(4));
+    let mut tdd = constant_one(&Engine::new(), &vtree);
+    let r = vtree.root();
+    let (_, v) = vtree.children(r);
+    let (_, w) = vtree.children(v);
+    let below = &mut tdd.levels[w.idx()];
+    below.clear();
+    let shapes = [(POS_LEAF_IDX, POS_LEAF_IDX), (POS_LEAF_IDX, ONE_LEAF_IDX), (ONE_LEAF_IDX, ONE_LEAF_IDX)];
+    for j in 0..k * n {
+        let (a, b) = shapes[j % 3];
+        below.push_internal_node(&[ChildPair::new(a, b)]);
+    }
+    let level = &mut tdd.levels[v.idx()];
+    level.clear();
+    for i in 0..n {
+        let label = |m: usize| if m.is_multiple_of(2) { POS_LEAF_IDX } else { NEG_LEAF_IDX };
+        let pairs: Vec<ChildPair> = (0..k).map(|m| ChildPair::new(label(m), NodeIdx((k * i + m) as u32))).collect();
+        level.push_internal_node(&pairs);
+    }
+    crate::test_helpers::describe(level);
+    let root = &mut tdd.levels[r.idx()];
+    root.clear();
+    let pairs: Vec<ChildPair> = (0..n).map(|i| ChildPair::new(POS_LEAF_IDX, NodeIdx(i as u32))).collect();
+    root.push_internal_node(&pairs);
+    crate::test_helpers::describe(root);
+    tdd.output = TddNodeId { vtree: r, local: NodeIdx(0) };
+    (tdd, v)
+}
+
+/// A count sums an implicit level's nodes off the pairs it generates a run
+/// of nodes at a time: every node's count, the model count, the counts kept
+/// with the diagram and a counted conjunction are those of the level's
+/// stored copy and of the full-precision oracle, for one pair a node and
+/// for several, on levels of several runs and of several fills. Each level
+/// holds the floor's pairs or more, as an implicit level does.
+#[test]
+fn an_implicit_level_counts_as_its_stored_copy() {
+    let eng = Engine::new();
+    for (n, k) in [(64, 1), (300, 1), (64, 2), (70, 4)] {
+        let (implicit, v) = counted_levels(n, k);
+        assert!(implicit.levels[v.idx()].implicit().is_some(), "the fixture's level is implicit");
+        let stored = crate::test_helpers::stored_copies(&implicit);
+        let oracle = node_counts(&stored);
+        let want = oracle[implicit.output.vtree.idx()][0].clone();
+        let column: Vec<BigUint> = eng.node_counts_u128(&implicit).unwrap()[v.idx()].iter().map(|&c| BigUint::from(c)).collect();
+        assert_eq!(column, oracle[v.idx()], "n {n}, k {k}: v's node counts");
+        assert_eq!(eng.model_count(&implicit).unwrap(), want, "n {n}, k {k}");
+        let mut kept = implicit.clone();
+        eng.attach_level_counts(&mut kept).unwrap();
+        assert_eq!(eng.model_count(&kept).unwrap(), want, "n {n}, k {k}: the kept counts");
+        let one = constant_one(&eng, &implicit.vtree);
+        assert_eq!(eng.and_model_count(implicit.clone(), one.clone(), &[]).unwrap(), want, "n {n}, k {k}: a counted conjunction");
+        let written = crate::test_helpers::stored_levels(|| eng.and_model_count(stored, one, &[]).unwrap());
+        assert_eq!(written, want, "n {n}, k {k}: the stored copy's");
+    }
+}
