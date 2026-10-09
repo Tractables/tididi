@@ -58,8 +58,8 @@ fn note_listed_search() {}
 
 /// Contract one child level `t1` (with parent `parent`) if it has twins,
 /// searching the nodes `reach` names. Returns `Ok(true)` iff a productive
-/// contraction fired, and then adds its survivors to `scratch.changed` of
-/// `t1` where the sweep lists.
+/// contraction fired, and then adds its survivors to the list
+/// `scratch.listing` keeps of `t1` where the sweep lists.
 #[inline]
 fn contract_child(
     eng: &Engine,
@@ -167,11 +167,12 @@ fn check_listed_search(
 /// sweep has changed at `t1` for one survivor per group found, the most the
 /// merge plans.
 fn reserve_survivors(eng: &Engine, t1: VtreeIdx, scratch: &mut ContractScratch) -> Result<(), OperationError> {
-    let ContractScratch { group_starts, changed, .. } = scratch;
-    match changed.get_mut(t1.idx()) {
-        Some(list) => eng.limits().reserve(list, group_starts.len()),
-        None => Ok(()),
+    let ContractScratch { group_starts, listing, .. } = scratch;
+    if !listing.active() {
+        return Ok(());
     }
+    let list = listing.list_mut(eng.limits(), t1.idx())?;
+    eng.limits().reserve(list, group_starts.len())
 }
 
 /// After a contraction at `t1`, where the sweep lists: add its survivors,
@@ -179,10 +180,11 @@ fn reserve_survivors(eng: &Engine, t1: VtreeIdx, scratch: &mut ContractScratch) 
 /// whose earlier entries are renumbered, in the room [`reserve_survivors`]
 /// had.
 fn note_survivors(t1: VtreeIdx, scratch: &mut ContractScratch) {
-    let ContractScratch { remap, merge, changed, .. } = scratch;
-    let Some(list) = changed.get_mut(t1.idx()) else {
+    let ContractScratch { remap, merge, listing, .. } = scratch;
+    if !listing.active() {
         return;
-    };
+    }
+    let list = listing.listed_mut(t1.idx());
     for node in list.iter_mut() {
         *node = remap.final_remap[*node as usize].0;
     }
@@ -273,7 +275,7 @@ pub(crate) fn contract_all_twins(
     // has them searched whole.
     let listed = !diagram_marginal(tdd, &mut scratch);
     if !listed {
-        scratch.changed.clear();
+        scratch.listing.stop();
     } else if let Err(e) = start_listing(eng, &mut scratch, num_nodes, &dirty_parents) {
         tdd.dirty.restore(Pass::Contract, dirty_parents);
         return Err(e);
@@ -316,7 +318,7 @@ pub(crate) fn contract_all_twins(
 
         let is_marginal_boundary = tdd.levels[left.idx()].is_marginal()
             || tdd.levels[right.idx()].is_marginal();
-        let reach = if !listed || scratch.search_whole[p_idx] {
+        let reach = if !listed || scratch.listing.whole(p_idx) {
             Reach::Whole
         } else {
             match list_changed_children(eng, tdd, parent, &mut scratch) {
@@ -367,25 +369,16 @@ fn diagram_marginal(tdd: &Tdd, scratch: &mut ContractScratch) -> bool {
 }
 
 /// Set up the listed searches of one sweep: the parents on the worklist are
-/// searched whole, and no level has changed yet.
+/// searched whole, and no level has changed yet. In time independent of the
+/// vtree's size, past the first sweep over a diagram of its size
+/// ([`Listing`](super::scratch::Listing)).
 fn start_listing(
     eng: &Engine,
     scratch: &mut ContractScratch,
     num_nodes: usize,
     dirty_parents: &[u32],
 ) -> Result<(), OperationError> {
-    let lim = eng.limits();
-    lim.try_resize(&mut scratch.search_whole, num_nodes, false)?;
-    scratch.search_whole[..num_nodes].fill(false);
-    for &p in dirty_parents {
-        if let Some(whole) = scratch.search_whole.get_mut(p as usize) {
-            *whole = true;
-        }
-    }
-    lim.try_resize(&mut scratch.changed, num_nodes, Vec::new())?;
-    for list in &mut scratch.changed[..num_nodes] {
-        list.clear();
-    }
+    scratch.listing.start(eng.limits(), num_nodes, dirty_parents)?;
     for reach in &mut scratch.reach {
         reach.clear();
     }
@@ -409,13 +402,13 @@ fn list_changed_children(
     scratch: &mut ContractScratch,
 ) -> Result<Reach, OperationError> {
     let (left, right) = tdd.vtree.children(parent);
-    let changed = std::mem::take(&mut scratch.changed[parent.idx()]);
+    let changed = scratch.listing.take(parent.idx());
     // Nodes and arena together bound the parent's pairs from above.
     let level = &tdd.levels[parent.idx()];
     if level.nodes().len() >= LISTED_WHOLE_MIN_WIDTH
         && LISTED_MAX_PAIR_SHARE * pair_mass(tdd, parent, &changed) > level.nodes().len() + level.arena_len()
     {
-        scratch.changed[parent.idx()] = changed;
+        scratch.listing.put(parent.idx(), changed);
         return Ok(Reach::Whole);
     }
     let mut listed = Ok(());
@@ -426,7 +419,7 @@ fn list_changed_children(
             listed = named_by(eng.limits(), tdd, t1, parent, side, &changed, reach_bits, &mut reach[side as usize]);
         }
     }
-    scratch.changed[parent.idx()] = changed;
+    scratch.listing.put(parent.idx(), changed);
     listed.map(|()| Reach::Listed)
 }
 

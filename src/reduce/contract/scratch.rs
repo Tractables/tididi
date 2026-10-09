@@ -289,14 +289,11 @@ pub(crate) struct ContractScratch {
     /// top-down heap (`contract_all_twins`). Reset when the parent is
     /// popped so the all-false invariant holds on entry/exit.
     pub(super) needs_check: Vec<bool>,
-    /// Per vtree node: the level was on the worklist when the sweep began, so
-    /// its children are searched whole. Filled per sweep, read only where
-    /// the diagram has no marginal level (see `fingerprint::listed`).
-    pub(super) search_whole: Vec<bool>,
-    /// Per vtree node: the nodes of that level a contraction at it has
-    /// changed in this sweep (its survivors), in the level's current
-    /// numbering, ascending. Cleared per sweep.
-    pub(super) changed: Vec<Vec<u32>>,
+    /// The listed searches' state over one sweep: which parents were on the
+    /// worklist when it began, and the nodes a contraction changed at each
+    /// level. Read only where the diagram has no marginal level (see
+    /// `fingerprint::listed`).
+    pub(super) listing: Listing,
     /// Per child side of the parent the sweep is at: the nodes its next
     /// search lists, where that search does not read the whole level.
     pub(super) reach: [Vec<u32>; 2],
@@ -348,8 +345,7 @@ impl Buffers for ContractScratch {
         self.remap.buffers(visit);
         visit(&mut self.has_marginal_below);
         visit(&mut self.needs_check);
-        visit(&mut self.search_whole);
-        visit(&mut Nested(&mut self.changed));
+        self.listing.buffers(visit);
         for reach in &mut self.reach {
             visit(reach);
         }
@@ -357,6 +353,153 @@ impl Buffers for ContractScratch {
         visit(&mut self.boundaries);
         self.merge.buffers(visit);
         self.duplicate.buffers(visit);
+    }
+}
+
+/// What the listed searches of one contraction sweep keep per level: whether
+/// the parent was on the worklist when the sweep began, so that its children
+/// are searched whole, and the nodes a contraction at the level has changed
+/// in the sweep (its survivors), in the level's current numbering,
+/// ascending.
+///
+/// Each entry is stamped with the sweep that wrote it and read as unset
+/// under any other, so a sweep starts in time independent of the vtree's
+/// size, and the lists are held only for the levels a sweep changed: a
+/// diagram of many levels whose contractions each touch a few pays for
+/// those few.
+#[derive(Default)]
+pub(super) struct Listing {
+    /// The current sweep, from 1; 0 stamps nothing.
+    pub(super) sweep: u32,
+    /// Whether the current sweep lists: false where the diagram has a
+    /// marginal level, and none is kept.
+    active: bool,
+    /// Per vtree node: the sweep at whose start it was on the worklist.
+    pub(super) whole: Vec<u32>,
+    /// Per vtree node: the sweep that gave it a list, and the list's index
+    /// in `lists`.
+    pub(super) at: Vec<(u32, u32)>,
+    /// The levels' lists, the first `used` this sweep's; the rest are kept
+    /// for their capacity.
+    lists: Vec<Vec<u32>>,
+    used: usize,
+}
+
+impl Listing {
+    /// Start a listing sweep over a diagram of `num_nodes` vtree nodes,
+    /// whose worklist is `dirty`.
+    pub(super) fn start(
+        &mut self,
+        lim: &crate::limits::Limits,
+        num_nodes: usize,
+        dirty: &[u32],
+    ) -> Result<(), crate::limits::OperationError> {
+        self.active = false;
+        lim.try_resize(&mut self.whole, num_nodes, 0)?;
+        lim.try_resize(&mut self.at, num_nodes, (0, 0))?;
+        self.sweep = self.sweep.wrapping_add(1);
+        if self.sweep == 0 {
+            self.whole.fill(0);
+            self.at.fill((0, 0));
+            self.sweep = 1;
+        }
+        let used = self.used.min(self.lists.len());
+        for list in &mut self.lists[..used] {
+            list.clear();
+        }
+        self.used = 0;
+        for &p in dirty {
+            if let Some(whole) = self.whole.get_mut(p as usize) {
+                *whole = self.sweep;
+            }
+        }
+        self.active = true;
+        Ok(())
+    }
+
+    /// Start a sweep that does not list: one of a diagram with a marginal
+    /// level.
+    pub(super) fn stop(&mut self) {
+        self.active = false;
+    }
+
+    /// Whether the current sweep lists.
+    #[inline]
+    pub(super) fn active(&self) -> bool {
+        self.active
+    }
+
+    /// Whether parent `p` was on the worklist when the current sweep began.
+    #[inline]
+    pub(super) fn whole(&self, p: usize) -> bool {
+        self.whole.get(p) == Some(&self.sweep)
+    }
+
+    /// The index in `lists` of level `t`'s list, if the current sweep gave
+    /// it one.
+    #[inline]
+    fn slot(&self, t: usize) -> Option<usize> {
+        self.at.get(t).filter(|&&(sweep, _)| sweep == self.sweep).map(|&(_, i)| i as usize)
+    }
+
+    /// Level `t`'s list, taken out to be given back by
+    /// [`put`](Self::put): empty, and no allocation, where the sweep has
+    /// changed no node of it.
+    pub(super) fn take(&mut self, t: usize) -> Vec<u32> {
+        match self.slot(t) {
+            Some(i) => std::mem::take(&mut self.lists[i]),
+            None => Vec::new(),
+        }
+    }
+
+    /// Give back the list [`take`](Self::take) took of level `t`.
+    pub(super) fn put(&mut self, t: usize, list: Vec<u32>) {
+        if let Some(i) = self.slot(t) {
+            self.lists[i] = list;
+        }
+    }
+
+    /// Level `t`'s list, given an empty one where the sweep has changed no
+    /// node of it yet. Only in a listing sweep, at a vtree node of its
+    /// diagram.
+    pub(super) fn list_mut(
+        &mut self,
+        lim: &crate::limits::Limits,
+        t: usize,
+    ) -> Result<&mut Vec<u32>, crate::limits::OperationError> {
+        debug_assert!(self.active && t < self.at.len(), "level {t} listed outside a listing sweep");
+        if let Some(i) = self.slot(t) {
+            return Ok(&mut self.lists[i]);
+        }
+        if self.used == self.lists.len() {
+            lim.try_push(&mut self.lists, Vec::new())?;
+        }
+        let i = self.used;
+        self.used += 1;
+        self.at[t] = (self.sweep, i as u32);
+        Ok(&mut self.lists[i])
+    }
+
+    /// Level `t`'s list, which [`list_mut`](Self::list_mut) gave it in the
+    /// current sweep.
+    ///
+    /// # Panics
+    ///
+    /// Where the current sweep gave `t` no list.
+    pub(super) fn listed_mut(&mut self, t: usize) -> &mut Vec<u32> {
+        let i = self.slot(t).expect("a level's list is had before its merge");
+        &mut self.lists[i]
+    }
+}
+
+/// Released like any other buffer: a released `at` or `whole` regrows
+/// unstamped, and a released `lists` past `used` is clamped at the next
+/// start.
+impl Buffers for Listing {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.whole);
+        visit(&mut self.at);
+        visit(&mut Nested(&mut self.lists));
     }
 }
 
