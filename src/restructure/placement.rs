@@ -211,9 +211,12 @@ impl<'a> MovePlacement<'a> {
         debug_assert_eq!(source.vtree().num_nodes(), map.len());
         self.changed.take_from(source);
         let (levels, weights) = self.assembly.parts_mut();
+        // One mutable access to the source's levels for the whole move: each
+        // access forgets what the storage knows of them.
+        let source_levels = &mut source.levels[..];
         for (from, &to) in map.iter().enumerate() {
             MarginalStorage::new(&mut levels[to.idx()], weights.as_mut(), to.idx())
-                .move_from(&mut source.levels[from], source.weights.as_mut(), from);
+                .move_from(&mut source_levels[from], source.weights.as_mut(), from);
         }
     }
 
@@ -330,8 +333,9 @@ impl<'a> MovePlacement<'a> {
     /// into `source`, through the same map.
     pub(super) fn move_back(mut self, source: &mut Tdd, map: &[VtreeIdx]) {
         let (levels, _) = self.assembly.parts_mut();
+        let source_levels = &mut source.levels[..];
         for (from, &to) in map.iter().enumerate() {
-            source.levels[from] = std::mem::take(&mut levels[to.idx()]);
+            source_levels[from] = std::mem::take(&mut levels[to.idx()]);
         }
     }
 
