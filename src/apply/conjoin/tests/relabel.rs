@@ -335,3 +335,34 @@ fn a_refused_conjunction_gives_moved_levels_back() {
     assert!(refusals > 0, "never refused");
     assert!(relabel_census()[0] > before[0], "no level was moved whole");
 }
+
+/// A child of the root that an earlier sum left marginal with one value,
+/// a count too large to sit inline and so in a slot of its own, under a root
+/// of one node in both operands: the count that holds root children back
+/// reads it as no relabelling candidate, since the slot is a value and not a
+/// node, and counts the conjunction as the unsummed one counts.
+#[test]
+fn a_summed_root_child_of_one_value_is_counted() {
+    let eng = Engine::new();
+    let wide: Vec<VarId> = (1..=32).map(VarId).collect();
+    let left = Vtree::balanced_over(&wide).unwrap();
+    let right = Vtree::balanced_over(&[VarId(33), VarId(34)]).unwrap();
+    let vtree = Arc::new(Vtree::join(&left, &right).unwrap());
+    let (child, _) = vtree.children(vtree.root());
+    // `f` is (x1 ∨ … ∨ x32) ∧ (x33 ∨ x34), its left child summed out to its
+    // one count, 2^32 − 1, as the conjunction of its two clauses is built;
+    // `g` is x33 ⊕ x34, constant true over that child.
+    let clause = |lits: &[i32]| Tdd::clause(&vtree, lits.iter().copied()).unwrap();
+    let all: Vec<i32> = (1..=32).collect();
+    let g = eng.and(clause(&[33, 34]), clause(&[-33, -34])).unwrap();
+    let whole = eng.model_count(&eng.and(eng.and(clause(&all), clause(&[33, 34])).unwrap(), g.clone()).unwrap()).unwrap();
+    assert_eq!(whole, ((1u64 << 33) - 2).into());
+    let summed = eng.and_marginalizing(clause(&all), clause(&[33, 34]), &[child]).unwrap();
+    assert_canonical(&summed);
+    assert!(summed.level(child).is_marginal(), "the child is summed");
+    assert_eq!(summed.level(child).marginal_counts(), Some([(1u128 << 32) - 1].as_slice()), "one count, in a slot");
+    assert_eq!(summed.level(vtree.root()).nodes().len(), 1);
+    assert_eq!(g.level(vtree.root()).nodes().len(), 1);
+    assert_eq!(eng.and_model_count(summed.clone(), g.clone(), &[]).unwrap(), whole);
+    assert_eq!(eng.and_model_count(g, summed, &[]).unwrap(), whole);
+}

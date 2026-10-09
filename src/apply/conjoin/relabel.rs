@@ -71,13 +71,15 @@ impl<'a> SideMap<'a> {
 }
 
 /// The one pair of `tdd`'s level `t` when the level has one node with one
-/// pair, and nothing otherwise.
+/// pair, and nothing otherwise: nothing on a level of other than one slot
+/// (`width`), on a marginal level, whose one slot is a value and no node,
+/// or on a level that holds no node.
 pub(super) fn single_pair(tdd: &Tdd, t: usize, width: usize) -> Option<ChildPair> {
     if width != 1 {
         return None;
     }
     let level = &tdd.levels[t];
-    if level.pair_count_at(0) != 1 {
+    if level.is_marginal() || level.nodes().len() != 1 || level.pair_count_at(0) != 1 {
         return None;
     }
     level.pairs_iter_of_idx(0).next()
