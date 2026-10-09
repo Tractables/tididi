@@ -421,3 +421,37 @@ fn interrupted_pin_refresh_recomputes_before_the_next_read() {
     counter.set_pin(crate::vtree::VarId(1), None).unwrap();
     assert_eq!(counter.model_count().unwrap(), 12u32.into());
 }
+
+#[test]
+fn repeated_pin_updates_cross_integer_storage_boundaries() {
+    let eng = Engine::new();
+    for tree in [Vtree::balanced(132), Vtree::linear(132)] {
+        let tree = Arc::new(tree);
+        for exclude_all_false in [false, true] {
+            let f = if exclude_all_false { eng.clause(&tree, 1..=132).unwrap() }
+                else { eng.one(&tree) };
+            crate::test_helpers::assert_canonical(&f);
+            for retention in [Retention::All, Retention::Frontier] {
+                let mut counter = eng.counter_with(&f, retention, PinSemantics::Evidence).unwrap();
+                for var in 1..=132 { counter.set_pin(VarId(var), Some(false)).unwrap(); }
+                let expected = |free: usize| {
+                    (BigUint::from(1u32) << free) - BigUint::from(u32::from(exclude_all_false))
+                };
+                assert_eq!(counter.model_count().unwrap(), expected(0));
+                // Reuse promoted columns after returning to small values and zero.
+                for _ in 0..3 {
+                    for var in 1..=132 {
+                        counter.set_pin(VarId(var), None).unwrap();
+                        assert_eq!(counter.model_count().unwrap(), expected(var as usize));
+                    }
+                    for var in 1..=132 {
+                        counter.set_pin(VarId(var), Some(false)).unwrap();
+                        assert_eq!(counter.model_count().unwrap(), expected((132 - var) as usize));
+                    }
+                }
+                counter.set_pin(VarId(1), Some(true)).unwrap();
+                assert_eq!(counter.model_count().unwrap(), BigUint::from(1u32));
+            }
+        }
+    }
+}
