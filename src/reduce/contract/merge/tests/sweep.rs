@@ -1,6 +1,7 @@
 use super::*;
 use crate::diagram::*;
 use crate::test_helpers::pair;
+use crate::limits::Limits;
 
 /// Every node's pair slice, in arena order — the whole of a level's
 /// observable content (`pairs_vec` resolves inline, normal-multi and
@@ -122,7 +123,7 @@ fn a_shrunk_extended_parent_node_inlines_its_survivor() {
         final_remap: vec![NodeIdx(0), NodeIdx(0)],
     };
 
-    rewrite_parent(&mut tdd, root, ChildSide::Left, &remap);
+    rewrite_parent(&Limits::new(), &mut tdd, root, ChildSide::Left, &remap, None);
 
     let parent = &tdd.levels[root.idx()];
     assert_eq!(parent.ranges.len(), 1, "no range entry is added for an inlined survivor");

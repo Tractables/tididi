@@ -1,5 +1,6 @@
 use super::*;
 use crate::vtree::Vtree;
+use crate::limits::Limits;
 
 /// Restriction compacts each node's pair list inside the arena range that
 /// node already owns — the level is never rebuilt into a second arena.
@@ -31,7 +32,7 @@ fn rewrite_for_restrict_shrinks_pair_lists_in_place() {
     level.push_internal_node(&[ChildPair::new(NEG_LEAF_IDX, ONE_LEAF_IDX)]);
     let arena_len_before = level.pairs.len();
 
-    rewrite_for_restrict(&mut tdd, root, ChildSide::Left, true);
+    rewrite_for_restrict(&Limits::new(), &mut tdd, root, ChildSide::Left, true).unwrap();
 
     let level = &tdd.levels[root.idx()];
     assert_eq!(level.nodes().len(), 3, "node indices are preserved");
@@ -61,8 +62,9 @@ fn restricting_an_implicit_level_builds_what_is_left() {
         let (mut implicit, v, _) = x_decision_diagram(32);
         assert!(implicit.levels[v.idx()].implicit().is_some(), "the fixture's level is implicit");
         let mut stored = with_stored_copy(&implicit, v);
-        let emptied = rewrite_for_restrict(&mut implicit, v, ChildSide::Left, keep_positive);
-        assert_eq!(emptied, rewrite_for_restrict(&mut stored, v, ChildSide::Left, keep_positive));
+        let lim = Limits::new();
+        let emptied = rewrite_for_restrict(&lim, &mut implicit, v, ChildSide::Left, keep_positive).unwrap();
+        assert_eq!(emptied, rewrite_for_restrict(&lim, &mut stored, v, ChildSide::Left, keep_positive).unwrap());
         assert!(!emptied);
         assert_eq!(sorted_pairs(&implicit), sorted_pairs(&stored), "keep {keep_positive}: other pairs");
         let (level, oracle) = (&implicit.levels[v.idx()], &stored.levels[v.idx()]);

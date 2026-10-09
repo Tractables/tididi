@@ -63,3 +63,25 @@ fn an_empty_buffer_grows_to_the_capacity_vec_would_give_it() {
     // Wider than the 1 KiB past which `Vec` allocates one element at least.
     check::<[[u64; 32]; 5]>();
 }
+
+/// What `charge_as_reserved` gives and charges, with nothing allocated, is
+/// what `reserve_exact` gives an empty buffer of that capacity and charges
+/// for it.
+#[test]
+fn a_charge_as_reserved_is_an_exact_reserve_without_the_buffer() {
+    use crate::diagram::ChildPair;
+    for capacity in [0usize, 1, 7, 100] {
+        for additional in [0usize, 1, 7, 50, 3000] {
+            let by_reserve = Limits::new();
+            let _op = by_reserve.begin_operation();
+            let mut v: Vec<ChildPair> = Vec::with_capacity(capacity);
+            let before = v.capacity();
+            by_reserve.reserve_exact(&mut v, additional).unwrap();
+            let by_charge = Limits::new();
+            let _op = by_charge.begin_operation();
+            let grown = by_charge.charge_as_reserved::<ChildPair>(before, additional).unwrap();
+            assert_eq!(grown, v.capacity(), "{capacity} {additional}");
+            assert_eq!(in_flight(&by_charge), in_flight(&by_reserve), "{capacity} {additional}");
+        }
+    }
+}

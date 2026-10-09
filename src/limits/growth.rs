@@ -162,10 +162,11 @@ impl Limits {
     /// `EXACT` picks the `Vec` method and, with it, the size the preflight and
     /// the refusal report: exactly `additional` for the exact form, and the
     /// doubled estimate `capacity().max(additional)` for the doubling form,
-    /// whose actual grab is up to twice the current capacity.
+    /// whose actual grab is up to twice the current capacity. `CHARGE` off
+    /// leaves the growth uncharged, for room the meters already count.
     ///
     #[inline(always)]
-    fn reserve_impl<T, const EXACT: bool>(
+    fn reserve_impl<T, const EXACT: bool, const CHARGE: bool>(
         &self,
         v: &mut Vec<T>,
         additional: usize,
@@ -197,20 +198,46 @@ impl Limits {
             v.try_reserve(additional)
         };
         grown.map_err(|_| self.note_refused(grab_bytes))?;
+        if !CHARGE {
+            return Ok(());
+        }
         self.charge_bytes((v.capacity().saturating_sub(pre_cap) as u64).saturating_mul(elem))
     }
 
     /// Tracked `try_reserve_exact`. Preferred for known-size grows.
     #[inline(always)]
     pub(crate) fn reserve_exact<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
-        self.reserve_impl::<T, true>(v, additional)
+        self.reserve_impl::<T, true, true>(v, additional)
+    }
+
+    /// [`reserve_exact`](Self::reserve_exact) of room the meters already
+    /// count, and so not charged again: the arenas a level held as the
+    /// description of its pairs is stored in, whose capacities the meters
+    /// read, and the budget was charged for, as if they were allocated. The
+    /// allocator is asked as `reserve_exact` asks it, and its refusal is
+    /// recorded and answered alike.
+    #[inline]
+    pub(crate) fn reserve_counted_exact<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
+        self.reserve_impl::<T, true, false>(v, additional)
+    }
+
+    /// The capacity [`reserve_exact`](Self::reserve_exact) gives an empty
+    /// buffer of `T` of capacity `capacity` asked for `additional`
+    /// elements, with the growth charged as it charges it and nothing
+    /// allocated: the capacity of an arena that a description of a level
+    /// stands for, which the meters read as they read a stored one's.
+    #[inline]
+    pub(crate) fn charge_as_reserved<T>(&self, capacity: usize, additional: usize) -> Result<usize, OperationError> {
+        let grown = capacity.max(additional);
+        self.charge_bytes(((grown - capacity) as u64).saturating_mul(std::mem::size_of::<T>() as u64))?;
+        Ok(grown)
     }
 
     /// Tracked `try_reserve`, with `Vec`'s doubling growth. Use when the caller
     /// is amortizing many small pushes.
     #[inline(always)]
     pub(crate) fn reserve<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
-        self.reserve_impl::<T, false>(v, additional)
+        self.reserve_impl::<T, false, true>(v, additional)
     }
 
     /// Reserve hash-table entries, charging their capacity and control-byte estimate.

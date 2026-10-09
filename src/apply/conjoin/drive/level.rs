@@ -848,15 +848,9 @@ fn plain_lookups(route: Route, complete: Sides<bool>) -> PlainLookups {
 }
 
 /// Reserve the arenas of a level whose two child sides are complete to
-/// exactly what its row loop writes, and return the pair capacity the
-/// output-pair meter has been charged for (see
+/// exactly what its row loop writes ([`complete_level_size`]), and return
+/// the pair capacity the output-pair meter has been charged for (see
 /// [`ReservedEmitSink`](crate::apply::conjoin::cell::ReservedEmitSink)).
-///
-/// No candidate dies on such a level, so every cell of a node of `f` with
-/// pairs and a node of `g` with pairs is one node, holding the product of
-/// their pair counts; a cell of two one-pair nodes stores its pair inline
-/// and every other cell stores its pairs in the arena. Both counts take one
-/// pass over the two operand levels' nodes.
 ///
 /// Under the bounded-growth mode the arena grows as it would on the grid
 /// route, and `usize::MAX` says so. The reservations are charged to the
@@ -874,6 +868,23 @@ fn reserve_complete_level(
         return Ok(usize::MAX);
     }
     let charged = level.pairs.capacity();
+    let (nodes, pairs) = complete_level_size(f_level, g_level)?;
+    lim.reserve_exact(level.nodes.stored_mut(), nodes)?;
+    lim.reserve_exact(level.pairs.stored_mut(), pairs)?;
+    Ok(charged)
+}
+
+/// The nodes and the arena pairs of a level whose two child sides are
+/// complete, as its row loop writes it.
+///
+/// No candidate dies on such a level, so every cell of a node of `f` with
+/// pairs and a node of `g` with pairs is one node, holding the product of
+/// their pair counts; a cell of two one-pair nodes stores its pair inline
+/// and every other cell stores its pairs in the arena. Both counts take one
+/// pass over the two operand levels' nodes, or none on an implicit one.
+/// A count past `usize` refuses with [`OperationError::OverBudget`].
+#[inline(always)]
+fn complete_level_size(f_level: &TddLevel, g_level: &TddLevel) -> Result<(usize, usize), OperationError> {
     /// Pairs in all, nodes with pairs, and nodes with one pair: an implicit
     /// level's off its description, every node of which has its `k` pairs,
     /// and a stored one's off its nodes ([`TddLevel::pair_census`]).
@@ -889,11 +900,7 @@ fn reserve_complete_level(
     let (f_pairs, f_live, f_single) = census(f_level);
     let (g_pairs, g_live, g_single) = census(g_level);
     let fit = |n: u128| usize::try_from(n).map_err(|_| OperationError::OverBudget);
-    let nodes = fit(f_live * g_live)?;
-    let pairs = fit(f_pairs * g_pairs - f_single * g_single)?;
-    lim.reserve_exact(level.nodes.stored_mut(), nodes)?;
-    lim.reserve_exact(level.pairs.stored_mut(), pairs)?;
-    Ok(charged)
+    Ok((fit(f_live * g_live)?, fit(f_pairs * g_pairs - f_single * g_single)?))
 }
 
 /// Build one level on the dense product grid: route plan, child grids, cell
@@ -972,16 +979,21 @@ pub(super) fn build_level_dense(
         if let Some(product) = composed {
             let level = &mut run.levels[ti];
             open_level_arenas(lim, f, g, shape, level, route)?;
-            let charged = reserve_complete_level(lim, f.level(t), g.level(t), level)?;
+            // The capacity the reservation of the level's arenas starts
+            // from, which the meter is charged from. The description is
+            // written without the reservation, which it would drop: its
+            // capacities are charged as reserved and not allocated.
+            let charged = if lim.bounded_growth() { usize::MAX } else { level.pairs.capacity() };
             note_lookups(PlainLookups::Complete { charged });
             let (work, meter, doublings) = super::compose::charges((fw.here, gw.here), &product, charged);
             if charged != usize::MAX && lim.cannot_stop_within(work, meter as u64) {
+                let size = complete_level_size(f.level(t), g.level(t))?;
                 let cells = fw.here * gw.here;
                 let slab = &mut run.products.arena.slab_mut()[output_grid_base.idx()..output_grid_base.idx() + cells];
-                super::compose::write(eng, product, &mut run.levels[ti], slab, work, (meter, doublings))?;
+                super::compose::write(eng, product, &mut run.levels[ti], size, slab, work, (meter, doublings))?;
                 break 'routes;
             }
-            opened = Some(charged);
+            opened = Some(reserve_complete_level(lim, f.level(t), g.level(t), level)?);
         }
 
         // `t` and its two vtree children are three distinct tree nodes, so these

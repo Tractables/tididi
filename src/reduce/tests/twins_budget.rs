@@ -330,3 +330,95 @@ fn a_full_reduction_of_a_marginal_diagram_refuses_cleanly_at_every_reserve() {
     }
     assert!(refusals > 0, "the sweep must actually refuse something");
 }
+
+/// Over the right-linear vtree `r = (x1, v)`, `v = (x2, w)`, `w = (x3, x4)`:
+/// `w` holds the four minterms of `x3` and `x4`, and `v` two nodes, node `i`
+/// holding `(x2, 2i)` and `(x2, 2i + 1)`, so that the two nodes of `w` each
+/// names are twins; `v` is held as its description when `implicit` says so
+/// (under a floor of four pairs). The root's one node holds `(x1, 0)` and
+/// `(¬x1, 1)`. The contract worklist is seeded at `v`. Returns the diagram
+/// and `v`.
+fn twins_under_a_described_parent(eng: &Engine, implicit: bool) -> (Tdd, VtreeIdx) {
+    use crate::diagram::{NEG_LEAF_IDX, POS_LEAF_IDX};
+
+    let vtree = Arc::new(Vtree::linear(4));
+    let r = vtree.root();
+    let (_, v) = vtree.children(r);
+    let (_, w) = vtree.children(v);
+    assert!(!vtree.node(w).is_leaf() && vtree.node(vtree.children(w).0).is_leaf());
+    let mut tdd = crate::build::constant_one(eng, &vtree);
+    let literal = [POS_LEAF_IDX, NEG_LEAF_IDX];
+    let below = &mut tdd.levels[w.idx()];
+    below.clear();
+    for m in 0..4 {
+        below.push_internal_node(&[ChildPair::new(literal[m / 2], literal[m % 2])]);
+    }
+    let level = &mut tdd.levels[v.idx()];
+    level.clear();
+    for i in 0..2 {
+        level.push_internal_node(&[ChildPair::new(POS_LEAF_IDX, NodeIdx(2 * i)), ChildPair::new(POS_LEAF_IDX, NodeIdx(2 * i + 1))]);
+    }
+    if implicit {
+        crate::test_helpers::describe(level);
+    }
+    let root = &mut tdd.levels[r.idx()];
+    root.clear();
+    root.push_internal_node(&[ChildPair::new(POS_LEAF_IDX, NodeIdx(0)), ChildPair::new(NEG_LEAF_IDX, NodeIdx(1))]);
+    tdd.output = TddNodeId { vtree: r, local: NodeIdx(0) };
+    tdd.seed_contract_worklist([v.0]);
+    (tdd, v)
+}
+
+/// A merge under a parent held as the description of its pairs has the
+/// room the parent is built stored in before it changes anything: every
+/// reservation the contraction makes, refused in turn, is an error that
+/// leaves the diagram as it was, and once granted the merge leaves the
+/// levels the same contraction of the stored diagram leaves. Two are those
+/// the stored diagram's contraction does not make: the room's two arenas.
+#[test]
+fn a_merge_refused_the_room_of_an_implicit_parent_changes_nothing() {
+    use crate::test_helpers::{same_levels, stored_levels, with_floor};
+
+    with_floor(4, || {
+        let refusals = |implicit: bool| {
+            let oracle = stored_levels(|| {
+                let mut oracle = twins_under_a_described_parent(&Engine::new(), false).0;
+                Engine::new().reduce(&mut oracle, ReductionPlan::Contract).unwrap();
+                oracle
+            });
+            let mut refused = 0;
+            loop {
+                // A fresh engine each time: a pooled scratch grown by an
+                // earlier contraction would skip a reservation.
+                let eng = Engine::new();
+                let (mut tdd, v) = twins_under_a_described_parent(&eng, implicit);
+                assert_eq!(tdd.levels[v.idx()].implicit().is_some(), implicit);
+                let count = tdd.model_count().unwrap();
+                let before = tdd.clone();
+                eng.limits().refuse_nth_reserve(refused);
+                let res = eng.reduce(&mut tdd, ReductionPlan::Contract);
+                eng.limits().grant_every_reserve();
+                match res {
+                    Ok(()) => {
+                        assert_eq!(tdd.levels[v.idx()].slot_count(), 2);
+                        assert_eq!(tdd.model_count().unwrap(), count);
+                        same_levels(&tdd, &oracle);
+                        return refused;
+                    }
+                    Err(e) => {
+                        assert_eq!(e, OperationError::OverBudget, "reserve {refused}");
+                        assert_eq!(tdd.model_count().unwrap(), count, "reserve {refused}");
+                        assert_eq!(tdd.levels[v.idx()].implicit(), before.levels[v.idx()].implicit(), "reserve {refused}");
+                        for (t, (a, b)) in tdd.levels.iter().zip(before.levels.iter()).enumerate() {
+                            assert_eq!(a.slot_count(), b.slot_count(), "level {t} at reserve {refused}");
+                        }
+                    }
+                }
+                refused += 1;
+            }
+        };
+        let stored = refusals(false);
+        assert!(stored > 0, "the contraction reserves");
+        assert_eq!(refusals(true), stored + 2);
+    });
+}

@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use crate::build::constant_like;
 use crate::diagram::ChildSide;
-use crate::limits::OperationError;
+use crate::limits::{Limits, OperationError};
 use crate::reduce::ReductionPlan;
 use crate::diagram::{ChildPair, Tdd, ZERO};
 use super::falsity::{propagate_false_nodes, rewrite_level_pairs};
@@ -69,9 +69,9 @@ fn condition_targets(
     for &(leaf, keep_positive) in targets.iter() {
         let (parent, right) = route(leaf);
         let side = if right { ChildSide::Right } else { ChildSide::Left };
-        emptied |= rewrite_for_restrict(&mut tdd, parent, side, keep_positive);
+        emptied |= rewrite_for_restrict(eng.limits(), &mut tdd, parent, side, keep_positive)?;
     }
-    if emptied { propagate_false_nodes(&mut tdd); }
+    if emptied { propagate_false_nodes(eng.limits(), &mut tdd)?; }
 
     // Set the false sentinel before pruning, so its empty nodes are unreachable.
     if !eng.is_sat(&tdd)? { tdd.output.local = ZERO; }
@@ -119,13 +119,20 @@ fn condition_leaf_output(eng: &Engine, t: &Tdd, keep_positive: bool) -> Result<T
 /// fit in the prefix of the arena range it already owns and node indices are
 /// preserved. Abandoned range tails are reported through `note_dead_pairs`
 /// and reclaimed by the arena's own amortized sweep.
-fn rewrite_for_restrict(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, keep_positive: bool) -> bool {
+///
+/// # Errors
+///
+/// `Err(OperationError::OverBudget)` when the room an implicit parent is
+/// rewritten in is refused ([`rewrite_level_pairs`]).
+fn rewrite_for_restrict(
+    lim: &Limits, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide, keep_positive: bool,
+) -> Result<bool, OperationError> {
     // Restriction of one pair: `None` = dropped (the pair belongs to the
     // opposite cofactor), `Some` = kept, with the target side fixed to One when
     // it named the conditioned leaf. `One`, and any reference to an internal
     // child, is carried through as-is.
-    if tdd.levels[parent_vi.idx()].nodes().is_empty() { return false; }
-    tdd.rewrite_level(parent_vi, |level| rewrite_level_pairs(level, |_, _, _, p: ChildPair| {
+    if tdd.levels[parent_vi.idx()].nodes().is_empty() { return Ok(false); }
+    tdd.rewrite_level(parent_vi, |level| rewrite_level_pairs(lim, level, |_, _, _, p: ChildPair| {
         let label = if side == ChildSide::Left { p.left } else { p.right };
         if label != POS_LEAF_IDX.into() && label != NEG_LEAF_IDX.into() {
             return Some(p);

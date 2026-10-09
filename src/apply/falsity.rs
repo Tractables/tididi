@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use crate::diagram::{sort_pairs, ChildDecoder, ChildPair, EncodedChildRef, EncodedNode, NodeKind, Tdd, TddLevel, ZERO};
+use crate::limits::{Limits, OperationError};
 
 /// Propagate falsity upward after pairs were dropped in place, so that no
 /// node left in the diagram computes ⊥.
@@ -21,7 +22,13 @@ use crate::diagram::{sort_pairs, ChildDecoder, ChildPair, EncodedChildRef, Encod
 ///
 /// Marginal levels are passed over: their structure is summed out, so they hold
 /// no node that a dropped pair could have emptied.
-pub(super) fn propagate_false_nodes(tdd: &mut Tdd) {
+///
+/// # Errors
+///
+/// `Err(OperationError::OverBudget)` when the room an implicit level is
+/// rewritten in is refused ([`rewrite_level_pairs`]); the diagram is then
+/// partly swept, and the caller drops it.
+pub(super) fn propagate_false_nodes(lim: &Limits, tdd: &mut Tdd) -> Result<(), OperationError> {
     let vtree = Arc::clone(&tdd.vtree);
     for (vi, left, right) in vtree.internal_bottomup() {
         if tdd.levels[vi.idx()].is_marginal() { continue; }
@@ -45,19 +52,20 @@ pub(super) fn propagate_false_nodes(tdd: &mut Tdd) {
             child == ZERO.into()
                 || (!nodes.is_empty() && empty_node_word(level, &nodes[ChildDecoder::structural().node(child).idx()]))
         };
-        rewrite_level_pairs(parent, |_, _, _, pair| {
+        rewrite_level_pairs(lim, parent, |_, _, _, pair| {
             if dead(left_nodes, left_level, pair.left) || dead(right_nodes, right_level, pair.right) {
                 None
             } else {
                 Some(pair)
             }
-        });
+        })?;
         tdd.invalidate(vi);
     }
     let output = tdd.output;
     if empty_node(&tdd.levels[output.vtree.idx()], output.local.idx()) {
         tdd.output.local = ZERO;
     }
+    Ok(())
 }
 
 /// Whether node `i` owns no pairs.
@@ -88,19 +96,29 @@ fn empty_ranged_node(level: &TddLevel, i: usize) -> bool {
 ///
 /// Both of conditioning's rewrites and the care restriction's are this pass
 /// under a different predicate.
+///
+/// An implicit level is rewritten from its description and built stored
+/// where a pair changes ([`TddLevel::rewrite_described`]), in room taken
+/// from `lim`.
+///
+/// # Errors
+///
+/// `Err(OperationError::OverBudget)` when that room is refused; the level
+/// is then as it was.
 #[inline(always)]
 pub(super) fn rewrite_level_pairs(
+    lim: &Limits,
     level: &mut TddLevel,
     mut rewrite_pair: impl FnMut(usize, usize, usize, ChildPair) -> Option<ChildPair>,
-) -> bool {
+) -> Result<bool, OperationError> {
     let n_nodes = level.nodes().len();
     if n_nodes == 0 {
-        return false;
+        return Ok(false);
     }
     if level.pairs.implicit().is_some() {
-        let emptied = level.rewrite_described(true, rewrite_pair);
+        let emptied = level.rewrite_described(lim, true, rewrite_pair)?;
         level.compact_pairs_if_stale();
-        return emptied;
+        return Ok(emptied);
     }
 
     let mut emptied = false;
@@ -147,7 +165,7 @@ pub(super) fn rewrite_level_pairs(
     // The sweep's precondition holds: every node kept a prefix of its own
     // range, so live ranges stay pairwise disjoint.
     level.compact_pairs_if_stale();
-    emptied
+    Ok(emptied)
 }
 
 #[cfg(test)]

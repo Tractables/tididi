@@ -403,58 +403,68 @@ fn the_word_passes_number_and_keep_every_marked_slot() {
     }
 }
 
-/// A prune that drops the first node of a level held as the description of
-/// its pairs, together with the nodes below that only that node names, and
-/// stores what is left of the level, moves the pairs of the nodes it keeps
-/// through the new indices of the level below and no pair of a node it
-/// drops: the children of a dropped node may be gone and have no new index.
-///
-/// Over the right-linear vtree `r = (x1, v)`, `v = (x2, w)`, `w = (x3, x4)`,
+/// Over the right-linear vtree `r = (x1, v)`, `v = (x2, w)`, `w = (x3, x4)`:
 /// `w` holds the four minterms of `x3` and `x4`, and `v` two nodes, node `i`
-/// holding `(x2, 2i)` and `(¬x2, 2i + 1)`, held as their description under a
-/// floor of four pairs. The root names node 1 alone, so the prune drops node
-/// 0 of `v` and the two nodes of `w` that only node 0 names, and the node
-/// left at `v`, below the floor, is stored. The renumbering of `w` has no
-/// index for the child of the description's first pair: a slot moved through
-/// it would hold the reserved word it answers for a dropped node. The same
-/// diagram built stored, pruned the same way, is the oracle.
-#[test]
-fn a_prune_that_stores_an_implicit_level_moves_no_pair_of_a_dropped_node() {
+/// holding `(x2, 2i)` and `(¬x2, 2i + 1)`, held as their description when
+/// `implicit` says so (under a floor of four pairs). The output, node 0 of
+/// the root's level, names node 1 alone; with `named`, a second node of the
+/// root's level names node 0, so that every node below the root is named,
+/// as the walk below the root requires. Returns the diagram, `v` and `w`.
+fn two_decisions(eng: &crate::Engine, implicit: bool, named: bool) -> (crate::diagram::Tdd, crate::vtree::VtreeIdx, crate::vtree::VtreeIdx) {
     use crate::diagram::{ChildPair, NodeIdx, TddNodeId, NEG_LEAF_IDX, POS_LEAF_IDX};
-    use crate::test_helpers::{assert_canonical, describe, same_levels, with_floor};
 
     let vtree = Arc::new(Vtree::linear(4));
     let r = vtree.root();
     let (_, v) = vtree.children(r);
     let (_, w) = vtree.children(v);
     assert!(!vtree.node(w).is_leaf() && vtree.node(vtree.children(w).0).is_leaf());
+    let mut tdd = crate::build::constant_one(eng, &vtree);
+    let literal = [POS_LEAF_IDX, NEG_LEAF_IDX];
+    let below = &mut tdd.levels[w.idx()];
+    below.clear();
+    for m in 0..4 {
+        below.push_internal_node(&[ChildPair::new(literal[m / 2], literal[m % 2])]);
+    }
+    let level = &mut tdd.levels[v.idx()];
+    level.clear();
+    for i in 0..2 {
+        level.push_internal_node(&[ChildPair::new(POS_LEAF_IDX, NodeIdx(2 * i)), ChildPair::new(NEG_LEAF_IDX, NodeIdx(2 * i + 1))]);
+    }
+    if implicit {
+        crate::test_helpers::describe(level);
+    }
+    let root = &mut tdd.levels[r.idx()];
+    root.clear();
+    root.push_internal_node(&[ChildPair::new(POS_LEAF_IDX, NodeIdx(1))]);
+    if named {
+        root.push_internal_node(&[ChildPair::new(POS_LEAF_IDX, NodeIdx(0))]);
+    }
+    tdd.output = TddNodeId { vtree: r, local: NodeIdx(0) };
+    (tdd, v, w)
+}
+
+/// A prune that drops the first node of a level held as the description of
+/// its pairs, together with the nodes below that only that node names, and
+/// stores what is left of the level, moves the pairs of the nodes it keeps
+/// through the new indices of the level below and no pair of a node it
+/// drops: the children of a dropped node may be gone and have no new index.
+///
+/// On [`two_decisions`] the prune drops node 0 of `v` and the two nodes of
+/// `w` that only node 0 names, and the node left at `v`, below the floor,
+/// is stored. The renumbering of `w` has no index for the child of the
+/// description's first pair: a slot moved through it would hold the
+/// reserved word it answers for a dropped node. The same diagram built
+/// stored, pruned the same way, is the oracle.
+#[test]
+fn a_prune_that_stores_an_implicit_level_moves_no_pair_of_a_dropped_node() {
+    use crate::diagram::{ChildPair, NodeIdx, NEG_LEAF_IDX, POS_LEAF_IDX};
+    use crate::test_helpers::{assert_canonical, same_levels, with_floor};
+
     let eng = &crate::Engine::new();
-    let build = |implicit: bool| {
-        let mut tdd = crate::build::constant_one(eng, &vtree);
-        let literal = [POS_LEAF_IDX, NEG_LEAF_IDX];
-        let below = &mut tdd.levels[w.idx()];
-        below.clear();
-        for m in 0..4 {
-            below.push_internal_node(&[ChildPair::new(literal[m / 2], literal[m % 2])]);
-        }
-        let level = &mut tdd.levels[v.idx()];
-        level.clear();
-        for i in 0..2 {
-            level.push_internal_node(&[ChildPair::new(POS_LEAF_IDX, NodeIdx(2 * i)), ChildPair::new(NEG_LEAF_IDX, NodeIdx(2 * i + 1))]);
-        }
-        if implicit {
-            describe(level);
-        }
-        let root = &mut tdd.levels[r.idx()];
-        root.clear();
-        root.push_internal_node(&[ChildPair::new(POS_LEAF_IDX, NodeIdx(1))]);
-        tdd.output = TddNodeId { vtree: r, local: NodeIdx(0) };
-        tdd
-    };
     with_floor(4, || {
-        let mut implicit = build(true);
+        let (mut implicit, v, w) = two_decisions(eng, true, false);
         assert!(implicit.levels[v.idx()].implicit().is_some(), "the level of two nodes is implicit");
-        let mut stored = build(false);
+        let (mut stored, _, _) = two_decisions(eng, false, false);
 
         prune_unreachable(eng, &mut implicit, PruneScope::Whole).unwrap();
         prune_unreachable(eng, &mut stored, PruneScope::Whole).unwrap();
@@ -473,5 +483,43 @@ fn a_prune_that_stores_an_implicit_level_moves_no_pair_of_a_dropped_node() {
         same_levels(&implicit, &stored);
         assert_canonical(&implicit);
         assert_canonical(&stored);
+    });
+}
+
+/// The room a prune stores an implicit level in is reserved before the
+/// prune changes any level, by the walk over the whole diagram and by the
+/// walk below the root: every reservation the prune makes, refused in turn,
+/// is an error that leaves the diagram as it was. Three are those the same
+/// prune of the stored diagram does not make: the offsets the marks read on
+/// the right of the implicit level, and the room's two arenas.
+#[test]
+fn a_prune_refused_the_room_of_an_implicit_level_changes_nothing() {
+    use crate::test_helpers::{same_levels, with_floor};
+
+    with_floor(4, || {
+        let refusals = |below: bool, implicit: bool| {
+            let (oracle, _, _) = two_decisions(&crate::Engine::new(), false, below);
+            let mut refused = 0;
+            loop {
+                // A fresh engine each time: a pooled scratch grown by an
+                // earlier prune would skip a reservation.
+                let eng = &crate::Engine::new();
+                let (mut tdd, v, _) = two_decisions(eng, implicit, below);
+                let d = tdd.levels[v.idx()].implicit().cloned();
+                eng.limits().refuse_nth_reserve(refused);
+                let scope = if below { PruneScope::BelowRoot } else { PruneScope::Whole };
+                let pruned = prune_unreachable(eng, &mut tdd, scope);
+                eng.limits().grant_every_reserve();
+                if pruned.is_ok() {
+                    return refused;
+                }
+                assert_eq!(tdd.levels[v.idx()].implicit().cloned(), d, "reserve {refused}");
+                same_levels(&tdd, &oracle);
+                refused += 1;
+            }
+        };
+        for below in [false, true] {
+            assert_eq!(refusals(below, true), refusals(below, false) + 3, "below the root: {below}");
+        }
     });
 }

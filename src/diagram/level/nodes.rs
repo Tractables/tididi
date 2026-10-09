@@ -265,14 +265,4 @@ impl TddLevel {
             None => self.nodes.shrink_to_fit(),
         }
     }
-
-    /// Store the words of the nodes the level's description implies, at the
-    /// capacity the arena would have, before the level is stored: nothing
-    /// on a level that stores its nodes.
-    pub(crate) fn store_implied_nodes(&mut self) {
-        let Some(d) = self.implied_by() else { return };
-        let mut stored = Vec::with_capacity(self.pairs.node_capacity().max(d.nodes()));
-        stored.extend(self.nodes().iter());
-        self.nodes = NodeArena::from(stored);
-    }
 }

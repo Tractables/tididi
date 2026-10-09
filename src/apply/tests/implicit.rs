@@ -18,8 +18,9 @@ fn the_falsity_sweep_builds_what_is_left_of_an_implicit_level() {
         below.nodes.stored_mut()[j] = below.encode_multi(0, 0);
     }
     let mut stored = with_stored_copy(&implicit, v);
-    propagate_false_nodes(&mut implicit);
-    propagate_false_nodes(&mut stored);
+    let lim = crate::limits::Limits::new();
+    propagate_false_nodes(&lim, &mut implicit).unwrap();
+    propagate_false_nodes(&lim, &mut stored).unwrap();
     assert_eq!(sorted_pairs(&implicit), sorted_pairs(&stored));
     let (level, oracle) = (&implicit.levels[v.idx()], &stored.levels[v.idx()]);
     assert_eq!(level.pair_count_at(0), 2);

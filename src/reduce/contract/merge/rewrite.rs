@@ -3,7 +3,8 @@
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::diagram::{ChildPair, NodeIdx, NodeKind, Tdd, TddLevel};
+use crate::diagram::{ChildPair, NodeIdx, NodeKind, StoreRoom, Tdd, TddLevel};
+use crate::limits::Limits;
 
 use super::super::scratch::MergeRemap;
 
@@ -46,12 +47,15 @@ pub(super) fn build_final_remap(remap: &mut MergeRemap, width: usize) {
 /// `merge_target` / `final_remap` index directly.
 ///
 /// Infallible: every allocation it could need was reserved before the pass
-/// mutated anything (`reserve_transactional`).
+/// mutated anything (`reserve_transactional`, and `room`, an implicit
+/// parent's, through `lim`).
 pub(super) fn rewrite_parent(
+    lim: &Limits,
     tdd: &mut Tdd,
     parent: VtreeIdx,
     t1_side: ChildSide,
     remap: &MergeRemap,
+    room: Option<StoreRoom>,
 ) {
     // Arena garbage from the whole rewrite, accumulated and noted in one charge
     // below: the only reader (`compact_pairs_if_stale`) runs after the loop, so a
@@ -61,7 +65,10 @@ pub(super) fn rewrite_parent(
     // An implicit parent's pairs are read off the description through the
     // same filter, and the level is built stored where one changes.
     if parent_level.pairs.implicit().is_some() {
-        parent_level.rewrite_described(false, |_, _, _, pair| canonical_pair(pair, t1_side, remap));
+        debug_assert!(room.is_some(), "an implicit parent's room is reserved");
+        parent_level
+            .rewrite_described_in(lim, room, false, |_, _, _, pair| canonical_pair(pair, t1_side, remap))
+            .expect("an implicit parent is rewritten in its room");
         return;
     }
     for node_idx in 0..parent_level.nodes().len() {

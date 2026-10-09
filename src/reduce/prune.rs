@@ -17,7 +17,7 @@
 //! level has a block: a leaf or marginal level is never compacted, so
 //! nothing reads its marks.
 
-use crate::diagram::{ChildDecoder, ChildPair, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel, NodeIdx, NodeKind, Tdd};
+use crate::diagram::{ChildDecoder, ChildPair, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel, NodeIdx, NodeKind, StoreRoom, Tdd};
 
 use crate::Engine;
 
@@ -608,7 +608,13 @@ fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     eng.limits().try_resize(remap, remap_need, UNREACHED)?;
     identity_upto(eng, identity, identity_need)?;
 
-    compact_levels(tdd, &vtree, level_base, &level_dirty, &marks[..total], remap, identity);
+    let child = |c: VtreeIdx| Child::at(level_base[c.idx()], span(level_base, c), level_dirty[c.idx()]);
+    let order = vtree.bottomup_slice().iter().filter(|&&t| tdd.is_structural_internal(t)).map(|&t| {
+        let (left, right) = vtree.children(t);
+        (t, level_base[t.idx()], child(left), child(right))
+    });
+    let plans = plan_levels(eng.limits(), tdd, order, &marks[..total], remap)?;
+    compact_levels(tdd, &vtree, level_base, &level_dirty, &marks[..total], remap, identity, plans);
     seed_dirty_levels(tdd, &level_dirty);
 
     let out = tdd.output;
@@ -635,6 +641,7 @@ fn span(level_base: &[usize], t: VtreeIdx) -> usize {
 /// Pass 2 (bottom-up): compact every level that lost a node and rewrite the
 /// references into it. `level_base` says where each level's block of marks
 /// starts, and `level_dirty` whether it lost a node.
+#[expect(clippy::too_many_arguments)]
 fn compact_levels(
     tdd: &mut Tdd,
     vtree: &crate::vtree::Vtree,
@@ -643,6 +650,7 @@ fn compact_levels(
     marks: &[u64],
     remap: &mut [u32],
     identity: &[u32],
+    mut plans: Plans,
 ) {
     // Bottom-up topological order, so a level's children are compacted
     // before it rewrites its references into them; raw indices do not encode
@@ -663,7 +671,8 @@ fn compact_levels(
         let (left, right) = vtree.children(t);
         let child = |c: VtreeIdx| Child::at(level_base[c.idx()], span(level_base, c), level_dirty[c.idx()]);
         let (l, r) = (child(left), child(right));
-        compact_one_level(tdd, t, &marks[level_base[t.idx()]..], marks, remap, identity, l, r);
+        let plan = plans.take(t);
+        compact_one_level(tdd, t, &marks[level_base[t.idx()]..], marks, remap, identity, l, r, plan);
     }
 }
 
@@ -699,9 +708,10 @@ impl Child {
 /// nodes. `own` starts at the level's block of marks, and `marks` holds the
 /// children's. Returns whether the level lost a node.
 ///
-/// A level held as the description of its pairs stays one when what is left
-/// of it is affine ([`redescribe`]); otherwise what is left is stored
-/// ([`store_kept`]).
+/// A level held as the description of its pairs is kept as `plan`, decided
+/// before the compaction changed any level ([`plan_levels`]): as the
+/// description of what is left of it, when that is affine, or stored in the
+/// room reserved for it ([`store_kept`]).
 ///
 /// `remap` must hold the spans of the dirty children side by side, and
 /// `identity` must be at least as long as the width of a child kept whole
@@ -716,6 +726,7 @@ fn compact_one_level(
     identity: &[u32],
     left: Child,
     right: Child,
+    plan: Option<Kept>,
 ) -> bool {
     let t_idx = t.idx();
     let width = tdd.levels[t_idx].slot_count();
@@ -724,39 +735,24 @@ fn compact_one_level(
     if lost || left.dirty || right.dirty {
         tdd.levels.mark_changed(t);
     }
+    debug_assert_eq!(plan.is_some(), tdd.levels[t_idx].pairs.implicit().is_some() && (lost || left.dirty || right.dirty));
 
-    let redescribed = if left.dirty || right.dirty {
-        let (left_new, right_new) = remap.split_at_mut(if left.dirty { left.span } else { 0 });
-        let left_remap: &[u32] = if left.dirty {
-            new_indices(&marks[left.base..], left.span, left_new);
-            left_new
-        } else {
-            identity
-        };
-        let right_remap: &[u32] = if right.dirty {
-            new_indices(&marks[right.base..], right.span, right_new);
-            &right_new[..right.span]
-        } else {
-            identity
-        };
-        let (lm, rm) = (left.dirty.then_some(left_remap), right.dirty.then_some(right_remap));
-        let kept = redescribe(tdd, t, own, lm, rm);
-        if kept.is_none() {
-            if tdd.levels[t_idx].pairs.implicit().is_some() {
-                store_kept(tdd, t, own, lm, rm);
-            } else {
-                rewrite_child_refs(tdd, t, own, left_remap, right_remap);
-            }
+    let redescribed = match plan {
+        Some(Kept::Described(d, dead)) => {
+            tdd.levels[t_idx].pairs.redescribe(d);
+            Some(dead)
         }
-        kept
-    } else if lost {
-        let kept = redescribe(tdd, t, own, None, None);
-        if kept.is_none() && tdd.levels[t_idx].pairs.implicit().is_some() {
-            store_kept(tdd, t, own, None, None);
+        Some(Kept::Stored(room)) => {
+            let (lm, rm) = child_remaps(marks, remap, left, right);
+            store_kept(tdd, t, room, own, lm, rm);
+            None
         }
-        kept
-    } else {
-        None
+        None if left.dirty || right.dirty => {
+            let (lm, rm) = child_remaps(marks, remap, left, right);
+            rewrite_child_refs(tdd, t, own, lm.unwrap_or(identity), rm.unwrap_or(identity));
+            None
+        }
+        None => None,
     };
 
     if !lost {
@@ -785,6 +781,108 @@ fn compact_one_level(
     true
 }
 
+/// The new indices of the children that lost a slot, `left` and `right`,
+/// built from their marks into `remap`, side by side: `None` for a child
+/// that kept every slot.
+fn child_remaps<'r>(marks: &[u64], remap: &'r mut [u32], left: Child, right: Child) -> (Option<&'r [u32]>, Option<&'r [u32]>) {
+    let (left_new, right_new) = remap.split_at_mut(if left.dirty { left.span } else { 0 });
+    let left_remap = if left.dirty {
+        new_indices(&marks[left.base..], left.span, left_new);
+        Some(&*left_new)
+    } else {
+        None
+    };
+    let right_remap = if right.dirty {
+        new_indices(&marks[right.base..], right.span, right_new);
+        Some(&right_new[..right.span])
+    } else {
+        None
+    };
+    (left_remap, right_remap)
+}
+
+/// What the compaction does with a level held as the description of its
+/// pairs that it changes, decided before it changes any level.
+enum Kept {
+    /// What is left is affine: held as this description, with the pairs of
+    /// the nodes dropped.
+    Described(ImplicitLevel, usize),
+    /// What is left is not affine: stored, in this room.
+    Stored(StoreRoom),
+}
+
+/// The [`Kept`] of the levels a compaction changes that are held as
+/// descriptions, in the compaction's order.
+struct Plans(std::iter::Peekable<std::vec::IntoIter<(VtreeIdx, Kept)>>);
+
+impl Plans {
+    /// The plan of level `t`, the next level the compaction reaches, if it
+    /// has one.
+    fn take(&mut self, t: VtreeIdx) -> Option<Kept> {
+        self.0.next_if(|(v, _)| *v == t).map(|(_, kept)| kept)
+    }
+}
+
+/// Decide, for every level in `order` (each with the word its block of
+/// marks starts at and its children, in the order the compaction reaches
+/// them), what the compaction does with it when it is held as the
+/// description of its pairs and the compaction changes it: kept as the
+/// description of what is left ([`ImplicitLevel::pruned`]), or stored in a
+/// room reserved here ([`TddLevel::store_room`]). The compaction rewrites
+/// levels in place and cannot stop partway, so whatever it would allocate
+/// for such a level is had first; a refusal leaves the diagram as it was.
+///
+/// [`TddLevel::store_room`]: crate::diagram::TddLevel
+///
+/// # Errors
+///
+/// `Err(OperationError::OverBudget)` when the reading of a description or
+/// a room is refused.
+fn plan_levels(
+    lim: &Limits,
+    tdd: &Tdd,
+    order: impl Iterator<Item = (VtreeIdx, usize, Child, Child)>,
+    marks: &[u64],
+    remap: &mut [u32],
+) -> Result<Plans, OperationError> {
+    let mut plans = Vec::new();
+    for (t, base, left, right) in order {
+        if let Some(kept) = plan_level(lim, tdd, t, &marks[base..], marks, remap, left, right)? {
+            plans.push((t, kept));
+        }
+    }
+    Ok(Plans(plans.into_iter().peekable()))
+}
+
+/// [`plan_levels`] for level `t`, whose block of marks starts `own`:
+/// `None` when it is stored, or the compaction leaves it as it is.
+#[expect(clippy::too_many_arguments)]
+fn plan_level(
+    lim: &Limits,
+    tdd: &Tdd,
+    t: VtreeIdx,
+    own: &[u64],
+    marks: &[u64],
+    remap: &mut [u32],
+    left: Child,
+    right: Child,
+) -> Result<Option<Kept>, OperationError> {
+    let level = &tdd.levels[t.idx()];
+    if level.pairs.implicit().is_none() {
+        return Ok(None);
+    }
+    let width = level.slot_count();
+    let own = &own[..words(width)];
+    if all_marked(own, width) && !left.dirty && !right.dirty {
+        return Ok(None);
+    }
+    let (lm, rm) = child_remaps(marks, remap, left, right);
+    Ok(Some(match kept_described(lim, tdd, t, own, lm, rm)? {
+        Some((d, dead)) => Kept::Described(d, dead),
+        None => Kept::Stored(level.store_room(lim)?),
+    }))
+}
+
 /// Keep the nodes whose slots `own` marks, in their order, in place. A word
 /// at a time: the nodes of a word of marked slots move as one run, and only
 /// a mixed word's are read a mark at a time.
@@ -810,56 +908,68 @@ pub(super) fn keep_marked(nodes: &mut Vec<EncodedNode>, own: &[u64]) {
     nodes.truncate(write);
 }
 
-/// Keep level `t`, held as the description of its pairs, as one through a
-/// prune: its marked nodes in their order, each with its pairs, whose child
-/// slots move through `left` and `right`, the new indices of the children
-/// that lost a node, when what is left is affine in a mixed radix
+/// What a prune leaves of level `t`, held as the description of its pairs,
+/// as one: its marked nodes in their order, each with its pairs, whose
+/// child slots move through `left` and `right`, the new indices of the
+/// children that lost a node, when what is left is affine in a mixed radix
 /// ([`ImplicitLevel::pruned`](crate::diagram::ImplicitLevel)). The new
 /// description implies the nodes left, their ranges from the start of the
 /// arena, and the arena keeps its length, as a written one keeps the pairs
 /// of the nodes the prune drops until a sweep.
 ///
-/// Returns the pairs of the nodes dropped, or `None`, with nothing changed,
-/// when the level is written or what is left is not affine. Checks every
-/// pair left, and writes none.
-fn redescribe(tdd: &mut Tdd, t: VtreeIdx, own: &[u64], left: Option<&[u32]>, right: Option<&[u32]>) -> Option<usize> {
+/// Returns the description with the pairs of the nodes dropped, or `None`
+/// when what is left is not affine, or below the floor. Checks every pair
+/// left, and writes none.
+///
+/// # Errors
+///
+/// `Err(OperationError::OverBudget)` when the offsets the check reads are
+/// refused.
+fn kept_described(
+    lim: &Limits,
+    tdd: &Tdd,
+    t: VtreeIdx,
+    own: &[u64],
+    left: Option<&[u32]>,
+    right: Option<&[u32]>,
+) -> Result<Option<(ImplicitLevel, usize)>, OperationError> {
     let (lc, rc) = tdd.vtree.children(t);
     let left = moved(tdd.levels[lc.idx()].child_decoder(), left);
     let right = moved(tdd.levels[rc.idx()].child_decoder(), right);
     let level = &tdd.levels[t.idx()];
-    let d = level.pairs.implicit()?;
+    let d = level.pairs.implicit().expect("a description is kept as one");
     let k = d.pairs_per_node();
     let nodes: usize = own.iter().map(|w| w.count_ones() as usize).sum();
     // Past 2^31 pairs a node's range takes the side table (`ranges`); the
     // written arena's would too, and renumbered ones might not. What is left
     // below the floor is stored.
     if nodes == 0 || nodes * k < crate::diagram::floor() || level.pairs.len() >= 1 << 31 {
-        return None;
+        return Ok(None);
     }
     // Below 2^31 pairs the description implies the nodes, node `i` of the
     // description being node `i` of the level.
     debug_assert!(level.implied_by().is_some());
     let mut select = Select::new(own);
-    let left_of = d.pruned(nodes, |j| select.nth(j), || marked(own), left, right)?;
+    let Some(left_of) = d.pruned(lim, nodes, |j| select.nth(j), || marked(own), left, right)? else { return Ok(None) };
     // Each node the prune drops held its `k` pairs in the arena, or, at
     // one pair a node, its pair inline.
     let dead = if k >= 2 { (d.nodes() - nodes) * k } else { 0 };
-    // The new description implies the nodes left.
-    tdd.levels[t.idx()].pairs.redescribe(left_of);
-    Some(dead)
+    Ok(Some((left_of, dead)))
 }
 
 /// Store the marked nodes of level `t`, held as the description of its
-/// pairs, when what is left of it is not affine: their pairs, with the child
-/// slots moved through `left` and `right`, the new indices of the children
-/// that lost a node, in the arena a stored level would hold
-/// ([`TddLevel::store_moved`]).
-fn store_kept(tdd: &mut Tdd, t: VtreeIdx, own: &[u64], left: Option<&[u32]>, right: Option<&[u32]>) {
+/// pairs, in `room`, reserved for it, when what is left of it is not
+/// affine: their pairs, with the child slots moved through `left` and
+/// `right`, the new indices of the children that lost a node, in the arena
+/// a stored level would hold ([`TddLevel::store_moved`]).
+///
+/// [`TddLevel::store_moved`]: crate::diagram::TddLevel
+fn store_kept(tdd: &mut Tdd, t: VtreeIdx, room: StoreRoom, own: &[u64], left: Option<&[u32]>, right: Option<&[u32]>) {
     let (lc, rc) = tdd.vtree.children(t);
     let left = moved(tdd.levels[lc.idx()].child_decoder(), left);
     let right = moved(tdd.levels[rc.idx()].child_decoder(), right);
     let marked = |i: usize| own[i >> 6] >> (i & 63) & 1 != 0;
-    tdd.levels[t.idx()].store_moved(marked, left, right);
+    tdd.levels[t.idx()].store_moved(room, marked, left, right);
 }
 
 /// Rewrite level `t`'s child references through its child levels' remaps.
@@ -1219,14 +1329,18 @@ fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[bool]>) -> Res
     eng.limits().try_resize(remap, remap_need, UNREACHED)?;
 
     // Compaction, bottom-up: a level was pushed after its parent, so the walk
-    // order reversed puts every level after its own children.
+    // order reversed puts every level after its own children. What it does
+    // with the levels held as descriptions is decided first.
+    let marks: &[u64] = marks;
+    let order = visits.iter().rev().map(|v| (v.level, v.base, v.left, v.right));
+    let mut plans = plan_levels(eng.limits(), tdd, order, marks, remap)?;
     // The first level compacted makes room in the worklists for every level
     // still to come, so that each list grows once however many are pushed.
-    let marks: &[u64] = marks;
     let mut room = false;
     for k in (0..visits.len()).rev() {
         let v = visits[k];
-        if compact_one_level(tdd, v.level, &marks[v.base..], marks, remap, identity, v.left, v.right) {
+        let plan = plans.take(v.level);
+        if compact_one_level(tdd, v.level, &marks[v.base..], marks, remap, identity, v.left, v.right, plan) {
             if !room {
                 tdd.dirty.reserve_all(k + 1);
                 room = true;

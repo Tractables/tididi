@@ -14,7 +14,7 @@
 
 use crate::apply::conjoin::cell::GROUPED_MIN_PAIRS;
 use crate::apply::conjoin::*;
-use crate::diagram::{floor, ImplicitLevel};
+use crate::diagram::{floor, ChildPair, EncodedNode, ImplicitLevel};
 
 /// The description of level `t`'s output, when the implicit route can build
 /// it: the engine's memory is unbounded (so the route's skipping the row
@@ -83,30 +83,41 @@ pub(super) fn charges(nodes: (usize, usize), product: &ImplicitLevel, charged: u
 }
 
 /// Write the level `product` describes into `level`, whose arenas are open
-/// and reserved as the row loop's, and its cells into the output slab
-/// `cells`: node `c` at cell `c`. The work clock and the output-pair meter
-/// are charged as the row loop charges them; the caller has made sure no
-/// stop can fire on the way ([`Limits::cannot_stop_within`]).
+/// as the row loop's and empty, and its cells into the output slab `cells`:
+/// node `c` at cell `c`. `size` is the nodes and arena pairs the row loop
+/// would reserve the arenas for ([`complete_level_size`](super::level)):
+/// the description is given the capacities that reservation would give,
+/// charged as it would charge them, and holds no allocation of them. The
+/// work clock and the output-pair meter are charged as the row loop charges
+/// them; the caller has made sure no stop can fire on the way
+/// ([`Limits::cannot_stop_within`]).
+///
+/// [`Limits::cannot_stop_within`]: crate::limits::Limits::cannot_stop_within
 pub(super) fn write(
     eng: &Engine,
     product: ImplicitLevel,
     level: &mut TddLevel,
+    size: (usize, usize),
     cells: &mut [u32],
     work: u64,
     meter: (usize, u32),
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     debug_assert_eq!(cells.len(), product.nodes());
+    debug_assert!(level.nodes().is_empty() && level.pairs.is_empty());
     for (c, cell) in cells.iter_mut().enumerate() {
         *cell = c as u32;
     }
+    let (nodes, pairs) = size;
     // The description holds the level, and implies its nodes where their
-    // words fit: the node arena the row loop reserved, one node a cell, is
-    // dropped, its capacity kept as the one it would have.
+    // words fit: the node arena the level opened, one node a cell, is
+    // dropped, its capacity kept as the one the reservation would give it.
+    // Past that the nodes' words are stored, in an arena reserved for them.
     let node_capacity = if product.implies_nodes() {
-        debug_assert!(level.node_capacity() >= product.nodes());
-        level.nodes.imply().max(product.nodes())
+        let held = level.nodes.imply();
+        lim.charge_as_reserved::<EncodedNode>(held, nodes)?.max(product.nodes())
     } else {
+        lim.reserve_exact(level.nodes.stored_mut(), nodes)?;
         product.write_nodes(level)?;
         0
     };
@@ -114,7 +125,7 @@ pub(super) fn write(
     for _ in 0..meter.1 {
         super::super::note_scheduled_charge();
     }
-    let capacity = level.pairs.capacity();
+    let capacity = lim.charge_as_reserved::<ChildPair>(level.pairs.capacity(), pairs)?;
     level.pairs.describe(product, capacity, node_capacity);
     lim.charge_work(work);
     lim.check_stop()

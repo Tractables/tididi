@@ -38,20 +38,20 @@ impl Marking {
             let before = level.live_pairs();
             gate.poll(before as u64)?;
             let marks = &self.pair_alive;
-            rewrite_level_pairs(level, |i, k, count, pair| {
+            rewrite_level_pairs(lim, level, |i, k, count, pair| {
                 if !marks.contains(v, NodeIdx(i as u32), k, count)
                     || dead(left, left_level, pair.left) || dead(right, right_level, pair.right) {
                     None
                 } else {
                     Some(pair)
                 }
-            });
+            })?;
             if level.live_pairs() != before {
                 f.try_invalidate(eng, v)?;
             }
         }
         gate.flush()?;
-        propagate_false_nodes(&mut f);
+        propagate_false_nodes(lim, &mut f)?;
         // The nodes the dropped pairs no longer name are unreachable now.
         eng.reduce(&mut f, ReductionPlan::Prune)?;
         Ok(f)

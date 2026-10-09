@@ -60,7 +60,7 @@ pub(crate) fn describe(level: &mut TddLevel) {
 /// for, with the same dead slots.
 pub(crate) fn stored_copy(level: &TddLevel) -> TddLevel {
     let mut copy = level.clone();
-    copy.store_if_implicit();
+    copy.store_if_implicit(&crate::limits::Limits::new()).expect("the allocator gives a stored copy room");
     copy
 }
 

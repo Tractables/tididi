@@ -2,6 +2,7 @@
 //! the conjunction's row loop multiplies levels, and written out again.
 
 use super::*;
+use crate::limits::Limits;
 use crate::test_helpers::Lcg;
 
 /// The pairs of a level, node by node, as child slots.
@@ -270,7 +271,7 @@ fn a_one_pair_level_implies_the_nodes_it_describes() {
                 assert_eq!(level.nodes().iter().nth(i), Some(want[i]));
             }
             assert!(!level.has_multi_pair());
-            level.store_if_implicit();
+            level.store_if_implicit(&Limits::new()).unwrap();
             assert_eq!(level.nodes.stored(), &want[..], "{across:?}, stored");
             assert!(level.pairs.implicit().is_none() && level.pairs.is_empty());
         }
@@ -296,7 +297,7 @@ fn a_one_pair_level_closes_and_is_stored_back() {
         assert!(level.nodes.stored().is_empty());
         assert!(level.nodes().iter().eq(stored.nodes().iter()));
         assert_eq!((level.pairs.len(), level.pairs.capacity(), level.node_capacity()), held);
-        level.store_if_implicit();
+        level.store_if_implicit(&Limits::new()).unwrap();
         assert_eq!(level.nodes.stored(), stored.nodes.stored());
         assert_eq!((level.pairs.len(), level.pairs.capacity(), level.node_capacity()), held);
     }
@@ -313,14 +314,15 @@ fn a_one_pair_level_is_rewritten_inline() {
     level.close();
     assert!(level.implicit().is_some());
     let only = level.pairs_vec(3)[0];
-    assert!(!level.remove_pair_from_node(3, only));
+    let lim = Limits::new();
+    assert!(!level.remove_pair_from_node(&lim, 3, only).unwrap());
     assert!(level.implicit().is_some(), "a node's only pair stays");
     let moved = |p: ChildPair| pair(i64::from(p.left.raw()) + 1000, i64::from(p.right.raw()));
-    let emptied = level.rewrite_described(true, |i, _, _, p| match i % 5 {
+    let emptied = level.rewrite_described(&lim, true, |i, _, _, p| match i % 5 {
         0 => None,
         1 => Some(moved(p)),
         _ => Some(p),
-    });
+    }).unwrap();
     assert!(emptied);
     let empty = level.encode_multi(0, 0);
     let want: Vec<EncodedNode> = pairs
@@ -491,7 +493,7 @@ fn what_a_prune_leaves_is_read_off_the_description() {
         let (left, right) = (renumber(|p| p.0), renumber(|p| p.1));
         let moved = |rank: &Option<Vec<i64>>, x: i64| rank.as_ref().map_or(x, |r| r[x as usize]);
         let oracle: Pairs = kept.iter().map(|&i| pairs[i].iter().map(|&(l, r)| (moved(&left, l), moved(&right, r))).collect()).collect();
-        let read = d.pruned(kept.len(), |j| kept.get(j).copied(), || kept.iter().copied(), |x| moved(&left, x), |x| moved(&right, x));
+        let read = d.pruned(&Limits::new(), kept.len(), |j| kept.get(j).copied(), || kept.iter().copied(), |x| moved(&left, x), |x| moved(&right, x)).unwrap();
         assert_eq!(read, ImplicitLevel::fit(&level_of(&oracle)), "round {round}");
         if let Some(r) = read {
             assert_eq!(described(&r), oracle);
@@ -515,7 +517,7 @@ fn a_redescribed_arena_keeps_the_written_length() {
     level.pairs.describe(d.clone(), 20, d.nodes());
     // Keep nodes 1 and 3, renumbered 0 and 1.
     let kept = [1usize, 3];
-    let left_of = d.pruned(2, |j| kept.get(j).copied(), || kept.iter().copied(), |x| x, |x| x).unwrap();
+    let left_of = d.pruned(&Limits::new(), 2, |j| kept.get(j).copied(), || kept.iter().copied(), |x| x, |x| x).unwrap().unwrap();
     level.pairs.redescribe(left_of.clone());
     assert_eq!((level.pairs.len(), level.pairs.capacity()), (12, 20));
     assert_eq!(level.implicit(), Some(&left_of));
@@ -802,4 +804,120 @@ fn the_offsets_of_a_node_of_billions_of_pairs_are_counted_and_reserved() {
     let mut out = Vec::new();
     assert_eq!(d.side_offsets(ChildSide::Left, &lim, &mut out), Err(crate::limits::OperationError::OverBudget));
     assert_eq!(out.capacity(), 0);
+}
+
+/// The pairs of `level`, node by node, as child slots, read whatever its
+/// form.
+fn pairs_of(level: &TddLevel) -> Pairs {
+    (0..level.nodes().len())
+        .map(|i| level.pairs_vec(i).iter().map(|p| (i64::from(p.left.raw()), i64::from(p.right.raw()))).collect())
+        .collect()
+}
+
+/// A level held as the description of its pairs is built stored in room
+/// reserved before any of it is written: a refused node or pair arena
+/// leaves the level described as it was, and the granted room holds the
+/// stored level. The room is not charged, before a refusal or after: the
+/// meters count the capacities the description stands for already.
+#[test]
+fn a_refused_room_leaves_the_description() {
+    let pairs = affine_of(&[(4, (1, 0))], &[(16, (4, 0)), (8, (0, 1))]);
+    let stored = level_of(&pairs);
+    let mut level = stored.clone();
+    level.close();
+    let d = level.implicit().expect("an affine level closes").clone();
+    let held = (level.pairs.len(), level.pairs.capacity(), level.node_capacity());
+    for n in 0..2 {
+        let lim = Limits::new();
+        lim.refuse_nth_reserve(n);
+        assert_eq!(level.store_if_implicit(&lim), Err(OperationError::OverBudget), "reserve {n}");
+        assert_eq!(level.implicit(), Some(&d), "reserve {n}");
+        assert_eq!((level.pairs.len(), level.pairs.capacity(), level.node_capacity()), held);
+        assert_eq!(lim.meters().in_flight_bytes, 0, "reserve {n}");
+    }
+    let lim = Limits::new();
+    level.store_if_implicit(&lim).unwrap();
+    assert_eq!(lim.meters().in_flight_bytes, 0);
+    assert!(level.implicit().is_none());
+    assert_eq!(pairs_of(&level), pairs);
+    assert!(level.nodes().iter().eq(stored.nodes().iter()));
+    assert_eq!((level.pairs.len(), level.pairs.capacity(), level.node_capacity()), held);
+}
+
+/// A rewrite that changes a pair of a level held as the description of its
+/// pairs, refused the room the level is built stored in, leaves it as it
+/// was; one that changes nothing asks for no room.
+#[test]
+fn a_refused_rewrite_leaves_the_description() {
+    let pairs = affine_of(&[(4, (1, 0))], &[(16, (4, 0)), (8, (0, 1))]);
+    let mut level = level_of(&pairs);
+    level.close();
+    let d = level.implicit().expect("an affine level closes").clone();
+    let lim = Limits::new();
+    lim.refuse_nth_reserve(0);
+    assert_eq!(level.rewrite_described(&lim, true, |_, _, _, p| Some(p)), Ok(false), "an identity rewrite");
+    assert_eq!(level.implicit(), Some(&d));
+    assert_eq!(level.rewrite_described(&lim, true, |i, r, _, p| (i != 5 || r != 2).then_some(p)), Err(OperationError::OverBudget));
+    assert_eq!(level.implicit(), Some(&d));
+    lim.refuse_nth_reserve(0);
+    let dropped = level.pairs_vec(7)[1];
+    assert_eq!(level.remove_pair_from_node(&lim, 7, dropped), Err(OperationError::OverBudget));
+    assert_eq!(level.implicit(), Some(&d));
+    assert_eq!(lim.meters().in_flight_bytes, 0);
+    assert_eq!(level.remove_pair_from_node(&lim, 7, dropped), Ok(true));
+    let mut want = pairs.clone();
+    want[7].remove(1);
+    assert_eq!(pairs_of(&level), want);
+}
+
+/// The lists a description is checked with, a node's offsets and the
+/// slots a move reads, are reserved: a refusal is an error and leaves the
+/// level as it was. Where the place digits show a node's pairs distinct,
+/// no list is made.
+#[test]
+fn the_lists_a_description_is_checked_with_are_reserved() {
+    let lim = Limits::new();
+    // Offsets 0, 1, 1, 2 on the left: a node repeats a pair.
+    let repeating = ImplicitLevel::assemble(4, 4, (0, 0), &[(2, (1, 0)), (2, (1, 0))], &[(4, (3, 0))]);
+    lim.refuse_nth_reserve(0);
+    assert_eq!(repeating.repeats_a_pair(&lim), Err(OperationError::OverBudget));
+    assert_eq!(repeating.repeats_a_pair(&lim), Ok(true));
+    let distinct = ImplicitLevel::assemble(4, 4, (0, 0), &[(2, (1, 0)), (2, (2, 0))], &[(4, (4, 0))]);
+    lim.refuse_nth_reserve(0);
+    assert_eq!(distinct.repeats_a_pair(&lim), Ok(false));
+    assert_eq!(lim.reserve_exact(&mut Vec::<u8>::new(), 1), Err(OperationError::OverBudget), "nothing was listed");
+    lim.refuse_nth_reserve(0);
+    assert_eq!(distinct.pruned(&lim, 2, |j| (j < 2).then_some(j), || 0..2, |x| x, |x| x), Err(OperationError::OverBudget));
+    lim.grant_every_reserve();
+
+    // A move one to one and affine keeps the description; one that is not
+    // stores the level. Every reservation either takes, refused, is an
+    // error that leaves the level as it was.
+    let pairs = affine_of(&[(4, (1, 0))], &[(16, (4, 0)), (8, (0, 1))]);
+    for (name, f) in [("one to one", (|x: i64| 2 * x) as fn(i64) -> i64), ("merging", |x: i64| x / 2)] {
+        let mut level = level_of(&pairs);
+        level.close();
+        let d = level.implicit().expect("an affine level closes").clone();
+        let mut refused = 0;
+        loop {
+            let lim = Limits::new();
+            lim.refuse_nth_reserve(refused);
+            let mut moved = level.clone();
+            match moved.move_described(&lim, ChildSide::Left, f) {
+                Err(e) => {
+                    assert_eq!(e, OperationError::OverBudget);
+                    assert_eq!(moved.implicit(), Some(&d), "{name}, reserve {refused}");
+                    assert_eq!(lim.meters().in_flight_bytes, 0, "{name}, reserve {refused}");
+                    refused += 1;
+                }
+                Ok(()) => {
+                    let want: Pairs = pairs.iter().map(|node| node.iter().map(|&(l, r)| (f(l), r)).collect()).collect();
+                    assert_eq!(pairs_of(&moved), want, "{name}");
+                    assert_eq!(moved.implicit().is_some(), name == "one to one");
+                    break;
+                }
+            }
+        }
+        assert!(refused >= 2, "{name}: {refused} reservations");
+    }
 }

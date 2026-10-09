@@ -98,10 +98,17 @@ pub(super) fn contract_twins(
     // compacts the level in place: an implicit t1 is built stored where its
     // pairs lie first.
     if !bufs.group_plans.is_empty() {
-        tdd.levels[t1.idx()].store_if_implicit();
+        tdd.levels[t1.idx()].store_if_implicit(lim)?;
         tdd.levels.mark_changed(t1);
     }
     reserve_transactional(eng, tdd, t1, bufs)?;
+    // An implicit parent is rewritten from its description and built stored
+    // where a pair changes: its room is had before the merge changes
+    // anything.
+    let parent_room = match tdd.levels[parent.idx()].pairs.implicit() {
+        Some(_) if !bufs.group_plans.is_empty() => Some(tdd.levels[parent.idx()].store_room(lim)?),
+        _ => None,
+    };
     let merged_members = commit_group_actions(tdd, t1, &policy, remap, bufs);
     if merged_members == 0 {
         // Nothing merged: level untouched, no compaction or parent rewrite
@@ -115,7 +122,7 @@ pub(super) fn contract_twins(
     tdd.levels.mark_changed(parent);
 
     build_final_remap(remap, width);
-    rewrite_parent(tdd, parent, t1_side, remap);
+    rewrite_parent(lim, tdd, parent, t1_side, remap, parent_room);
     compact_and_fork_down(eng, tdd, t1, &bufs.resolve_keeps, remap, duplicate)?;
 
     // Reclaim the parent's shrunk pair lists; legal only now that the rewrite

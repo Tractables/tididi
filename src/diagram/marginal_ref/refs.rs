@@ -60,6 +60,13 @@ impl<T> Sides<T> {
 /// ([`TddLevel::move_described`]), which keeps it implicit when the move is
 /// one to one and the moved pairs are affine, and stores them otherwise;
 /// `f` must then give the same word for the same word.
+///
+/// # Panics
+///
+/// Panics where the allocator refuses what the move of an implicit level
+/// reads or the room it is stored in. The passes that call this rewrite
+/// levels in place and do not stop partway, so the move is asked of the
+/// allocator alone, as their other buffers are, and not of the budget.
 #[inline]
 pub(crate) fn for_each_side_ref_mut(
     level: &mut TddLevel,
@@ -73,7 +80,7 @@ pub(crate) fn for_each_side_ref_mut(
             (f.borrow_mut())(&mut w);
             i64::from(w)
         };
-        level.move_described(side, moved);
+        level.move_described(&crate::limits::Limits::new(), side, moved).expect("out of memory moving an implicit level's slots");
         return;
     }
     for ni in 0..level.nodes().len() {

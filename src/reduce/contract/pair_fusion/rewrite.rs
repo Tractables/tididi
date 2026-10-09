@@ -59,11 +59,11 @@ pub(super) fn rebuild_parent_level_with<V>(
     plans: &[PlanEntry<V>],
     bitmap_min_plans: usize,
 ) -> Result<(), OperationError> {
-    tdd.levels.mark_changed(parent);
-    let level = &mut tdd.levels[parent.idx()];
     // The fusion changes node lengths in place: an implicit level, one whose
     // child became marginal, is built stored where its pairs lie first.
-    level.store_if_implicit();
+    tdd.levels[parent.idx()].store_if_implicit(eng.limits())?;
+    tdd.levels.mark_changed(parent);
+    let level = &mut tdd.levels[parent.idx()];
     // Fusion-inline may mint a fresh inline marginal-side ref (bit-30 tagged) this
     // sweep; the marker for that side must be raised or the end-of-apply tagger
     // and the apply reader misread the ref as a grid coordinate. Rewriting in place

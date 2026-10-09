@@ -119,7 +119,7 @@ fn try_contract_leaf_twins(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, sid
     }
     if !any_literal { return Ok(false); }
 
-    rewrite_level(tdd, parent_vi, side);
+    rewrite_level(lim, tdd, parent_vi, side)?;
     Ok(true)
 }
 
@@ -147,7 +147,7 @@ fn try_contract_described(eng: &Engine, tdd: &mut Tdd, parent_vi: VtreeIdx, side
         }
     }
     if !any_literal { return Ok(false); }
-    rewrite_level(tdd, parent_vi, side);
+    rewrite_level(lim, tdd, parent_vi, side)?;
     Ok(true)
 }
 
@@ -210,13 +210,19 @@ fn classify(
 /// index advances at most once per read and never overtakes it; ranges at a
 /// level are pairwise disjoint (`compact_pairs_if_stale` verifies this before
 /// sliding), so a cursor never reaches another node's pairs. Node indices are
-/// unchanged, and nothing is allocated.
-fn rewrite_level(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
+/// unchanged, and nothing is allocated but the room an implicit level is
+/// stored in, through `lim`, before the rewrite starts.
+///
+/// # Errors
+///
+/// `Err(OperationError::OverBudget)` when that room is refused; the level is
+/// then as it was.
+fn rewrite_level(lim: &Limits, tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) -> Result<(), OperationError> {
+    // A contracted level leaves the description: an implicit one that
+    // admits the rewrite is built stored where its pairs lie, and the close
+    // at the end of the operation describes what is affine again.
+    tdd.levels[parent_vi.idx()].store_if_implicit(lim)?;
     tdd.rewrite_level(parent_vi, |level| {
-        // A contracted level leaves the description: an implicit one that
-        // admits the rewrite is built stored where its pairs lie, and the
-        // close at the end of the operation describes what is affine again.
-        level.store_if_implicit();
         for i in 0..level.nodes().len() {
             if let NodeKind::Inline(p) = level.node(i).kind() {
                 // A single-pair node is labelled `One` on `side` (the singleton
@@ -282,4 +288,5 @@ fn rewrite_level(tdd: &mut Tdd, parent_vi: VtreeIdx, side: ChildSide) {
         // level's compaction threshold; no pair-arena offset is held across it.
         level.compact_pairs_if_stale();
     });
+    Ok(())
 }

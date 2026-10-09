@@ -15,6 +15,15 @@ pub(crate) trait ArenaGrowth {
     /// `Err(OperationError::OverBudget)` when the growth is refused.
     fn grow<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError>;
     fn charge(&self, bytes: u64) -> Result<(), OperationError>;
+
+    /// Make room for exactly `additional` more elements in `v`, room the
+    /// meters already count ([`Limits::reserve_counted_exact`]): the arenas
+    /// a level held as the description of its pairs is stored in.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when the allocator refuses it.
+    fn counted_room<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError>;
 }
 
 impl ArenaGrowth for Limits {
@@ -22,6 +31,11 @@ impl ArenaGrowth for Limits {
     #[inline]
     fn grow<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
         self.reserve(v, additional)
+    }
+
+    #[inline]
+    fn counted_room<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
+        self.reserve_counted_exact(v, additional)
     }
 }
 
@@ -34,6 +48,11 @@ impl ArenaGrowth for Untracked {
     #[inline]
     fn grow<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
         v.try_reserve(additional).map_err(|_| OperationError::OverBudget)
+    }
+
+    #[inline]
+    fn counted_room<T>(&self, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
+        v.try_reserve_exact(additional).map_err(|_| OperationError::OverBudget)
     }
 }
 
@@ -335,7 +354,7 @@ impl TddLevel {
     pub(crate) fn push_node<G: ArenaGrowth>(
         &mut self, growth: &G, pairs: &[ChildPair],
     ) -> Result<NodeIdx, OperationError> {
-        self.store_if_implicit();
+        self.store_if_implicit(growth)?;
         let nodes = self.nodes.stored_mut();
         let idx = NodeIdx(nodes.len() as u32);
         if nodes.len() == nodes.capacity() {
@@ -455,8 +474,8 @@ impl TddLevel {
     ) -> Result<(), OperationError> {
         // A node that gains a pair leaves the description: an implicit level
         // is built stored where its pairs lie first.
-        self.store_if_implicit();
         let lim = eng.limits();
+        self.store_if_implicit(lim)?;
         let node = self.node(idx).kind();
         let (old_len, old_range, inline) = match node {
             NodeKind::Inline(existing) => (1, None, Some(existing)),
@@ -510,33 +529,38 @@ impl TddLevel {
     ///
     /// On an implicit level of two pairs a node or more, the level without
     /// the pair is built from the description and closed
-    /// ([`rewrite_described`](Self::rewrite_described)); one of one pair a
-    /// node is left as it is.
-    pub(crate) fn remove_pair_from_node(&mut self, idx: usize, pair: ChildPair) -> bool {
+    /// ([`rewrite_described`](Self::rewrite_described)), its room taken from
+    /// `lim`; one of one pair a node is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when the room of an implicit level
+    /// is refused; the level is then as it was.
+    pub(crate) fn remove_pair_from_node(&mut self, lim: &Limits, idx: usize, pair: ChildPair) -> Result<bool, OperationError> {
         if let Some(d) = self.pairs.implicit() {
             if d.pairs_per_node() == 1 {
                 assert!(self.pairs_iter_of_idx(idx).any(|p| p == pair), "remove_pair_from_node: node {idx} does not hold {pair:?}");
-                return false;
+                return Ok(false);
             }
             let mut found = false;
-            self.rewrite_described(false, |i, _, _, p| {
+            self.rewrite_described(lim, false, |i, _, _, p| {
                 let drop = i == idx && p == pair && !found;
                 found |= drop;
                 (!drop).then_some(p)
-            });
+            })?;
             assert!(found, "remove_pair_from_node: node {idx} does not hold {pair:?}");
-            return true;
+            return Ok(true);
         }
         let stored = self.stored().expect("a pair is removed from a stored level");
         let at = stored.of_idx(idx).iter().position(|p| *p == pair)
             .unwrap_or_else(|| panic!("remove_pair_from_node: node {idx} does not hold {pair:?}"));
         let len = stored.of_idx(idx).len();
-        if len == 1 { return false; }
+        if len == 1 { return Ok(false); }
         let range = self.pair_range_at(idx);
         self.pairs.stored_mut().copy_within(range.start + at + 1..range.end, range.start + at);
         let dead = self.reencode_shrunk(idx, range.start, len, len - 1);
         self.note_dead_pairs(dead);
-        true
+        Ok(true)
     }
 
     /// Size the arenas for `nodes` more nodes and `pairs` more pairs, charging

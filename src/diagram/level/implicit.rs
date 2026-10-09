@@ -12,13 +12,14 @@
 
 use crate::diagram::primitives::{ChildPair, EncodedChildRef, EncodedNode};
 use crate::diagram::ChildSide;
-use crate::limits::{Limits, OperationError};
+use crate::limits::{Limits, OperationError, Transient};
 
 use super::{LevelState, TddLevel};
 
 mod storage;
 mod iter;
 mod close;
+pub(crate) use close::StoreRoom;
 pub(crate) use storage::{kept_capacity, PairArena};
 pub(crate) use iter::{NodeCursor, Places};
 
@@ -322,10 +323,21 @@ impl ImplicitLevel {
         }
         let across = read_digits(nodes, |i| stored.of_idx(i).first().map(slots)).ok_or(None)?;
         let fitted = ImplicitLevel::assemble(nodes, per_node, first, &within, &across);
+        // Node 0's pairs are what the place digits give at every place, so
+        // the pairs of the node whose first pair is `at` are node 0's
+        // shifted by `at` less node 0's first: read off them, not off a list
+        // of the offsets, which takes twice the room of the node's pairs.
+        let shifted = |at: (i64, i64)| {
+            let by = (at.0 - first.0, at.1 - first.1);
+            first_pairs.iter().map(move |p| {
+                let (l, r) = slots(p);
+                (by.0 + l, by.1 + r)
+            })
+        };
         // A level of one pair a node, its pairs inline, compares its nodes'
         // words in runs; any other, or one where they differ, reads them
         // node by node.
-        if (per_node == 1 && fitted.holds_inline(level.nodes.stored())) || fitted.holds(|i| Some(stored.of_idx(i).iter().map(slots))) {
+        if (per_node == 1 && fitted.holds_inline(level.nodes.stored())) || fitted.holds(shifted, |i| Some(stored.of_idx(i).iter().map(slots))) {
             Ok(fitted)
         } else {
             Err(None)
@@ -334,21 +346,35 @@ impl ImplicitLevel {
 
     /// Whether `f` gives distinct slots for the distinct child slots the
     /// level's pairs name on `side`: read at every setting of the digits
-    /// that move that side's slot.
-    fn one_to_one_on(&self, side: ChildSide, f: impl Fn(i64) -> i64) -> bool {
+    /// that move that side's slot, each moved slot held with the slot it
+    /// came from, up to the first two that `f` moves to one, in a table
+    /// grown through `lim`.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when the table's growth is refused:
+    /// it holds up to as many slots as the child level has on that side.
+    fn one_to_one_on(&self, lim: &Limits, side: ChildSide, f: impl Fn(i64) -> i64) -> Result<bool, OperationError> {
         let first = match side {
             ChildSide::Left => self.first.0,
             ChildSide::Right => self.first.1,
         };
-        // Each moved slot with the slot it came from.
-        let mut from = rustc_hash::FxHashMap::default();
-        let mut one = true;
+        let mut from = Transient::new(lim, rustc_hash::FxHashMap::default());
+        let (mut one, mut refused) = (true, Ok(()));
         Self::each_on_side(&self.digits, side, first, |s, _| {
-            if one {
-                one = *from.entry(f(s)).or_insert(s) == s;
+            if !one || refused.is_err() {
+                return;
             }
+            if from.len() == from.capacity() {
+                let room = from.len().max(16);
+                refused = lim.reserve_map(&mut from, room);
+                if refused.is_err() {
+                    return;
+                }
+            }
+            one = *from.entry(f(s)).or_insert(s) == s;
         });
-        one
+        refused.map(|()| one)
     }
 
     /// Calls `f` with every slot on `side` that one of `digits`, read from
@@ -407,32 +433,72 @@ impl ImplicitLevel {
     }
 
     /// The child slots every pair of a node adds to its first, in their
-    /// order.
-    fn offsets(&self) -> Vec<(i64, i64)> {
-        let mut offsets = Vec::with_capacity(self.per_node);
+    /// order, in a list reserved through `lim` and charged while it is
+    /// held.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when the list is refused: it takes
+    /// sixteen bytes a pair of a node, which may have billions.
+    fn offsets<'l>(&self, lim: &'l Limits) -> Result<Transient<'l, Vec<(i64, i64)>>, OperationError> {
+        let mut offsets = Transient::new(lim, Vec::new());
+        lim.reserve_exact(&mut offsets, self.per_node)?;
         each_place(&self.digits[..self.within], (0, 0), |l, r| offsets.push((l, r)));
-        offsets
+        Ok(offsets)
     }
 
     /// Whether a node's pairs repeat one: whether two of the offsets every
-    /// node adds to its first pair are equal.
-    pub(crate) fn repeats_a_pair(&self) -> bool {
-        let mut offsets = self.offsets();
+    /// node adds to its first pair are equal. Where the place digits show
+    /// the offsets distinct ([`places_distinct`](Self::places_distinct)),
+    /// none are listed; otherwise they are listed, through `lim`, and
+    /// sorted.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when the list is refused.
+    pub(crate) fn repeats_a_pair(&self, lim: &Limits) -> Result<bool, OperationError> {
+        if self.places_distinct() {
+            return Ok(false);
+        }
+        let mut offsets = self.offsets(lim)?;
         offsets.sort_unstable();
-        offsets.windows(2).any(|w| w[0] == w[1])
+        Ok(offsets.windows(2).any(|w| w[0] == w[1]))
+    }
+
+    /// Whether the place digits show that a node's pairs are distinct: the
+    /// two slots of a step packed into one number, the right one's times
+    /// one more than twice the left steps' whole range, which is one to one
+    /// on the offsets, and the packed steps each beyond what the smaller
+    /// ones reach ([`one_to_one`]). `false` says only that the digits do
+    /// not show it, and where the packed numbers do not fit.
+    fn places_distinct(&self) -> bool {
+        let place = &self.digits[..self.within];
+        let packed = || -> Option<Vec<(u128, u128)>> {
+            let reach = place.iter().try_fold(0i128, |reach, d| {
+                reach.checked_add((d.radix as i128 - 1).checked_mul(i128::from(d.left).abs())?)
+            })?;
+            let scale = reach.checked_mul(2)?.checked_add(1)?;
+            place.iter().map(|d| {
+                let gap = scale.checked_mul(i128::from(d.right))?.checked_add(i128::from(d.left))?.unsigned_abs();
+                Some((gap, gap.checked_mul((d.radix - 1) as u128)?))
+            }).collect()
+        };
+        packed().is_some_and(|steps| one_to_one(steps.into_iter()))
     }
 
     /// Whether `node(i)` gives the pairs of node `i` of this description,
     /// in their order, for every node: read node by node, up to the first
-    /// pair that differs.
-    fn holds<I: ExactSizeIterator<Item = (i64, i64)>>(&self, mut node: impl FnMut(usize) -> Option<I>) -> bool {
-        let places = self.offsets();
+    /// pair that differs. `slots(at)` gives the description's pairs of the
+    /// node whose first pair is `at`, a node's pairs in all.
+    fn holds<I, P>(&self, mut slots: impl FnMut((i64, i64)) -> P, mut node: impl FnMut(usize) -> Option<I>) -> bool
+    where
+        I: ExactSizeIterator<Item = (i64, i64)>,
+        P: Iterator<Item = (i64, i64)>,
+    {
         let mut cursor = self.cursor();
         (0..self.nodes).all(|i| {
             let at = cursor.first_of(i);
-            node(i).is_some_and(|pairs| {
-                pairs.len() == places.len() && pairs.zip(&places).all(|(s, p)| s == (at.0 + p.0, at.1 + p.1))
-            })
+            node(i).is_some_and(|pairs| pairs.len() == self.per_node && pairs.zip(slots(at)).all(|(s, p)| s == p))
         })
     }
 
@@ -466,25 +532,35 @@ impl ImplicitLevel {
     /// of them, side by side, without writing any
     /// ([`ImplicitLevel::holds_moved`]). `None` when they are not affine in
     /// a mixed radix, or `kept` names no node of this description.
+    ///
+    /// The offsets of a node's pairs from its first, this description's and
+    /// the moved one's, are listed through `lim`, sixteen bytes a pair of a
+    /// node each.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when a list is refused.
     pub(crate) fn pruned<K: Iterator<Item = usize>>(
         &self,
+        lim: &Limits,
         nodes: usize,
         mut kept: impl FnMut(usize) -> Option<usize>,
         in_order: impl Fn() -> K,
         left: impl Fn(i64) -> i64,
         right: impl Fn(i64) -> i64,
-    ) -> Option<ImplicitLevel> {
+    ) -> Result<Option<ImplicitLevel>, OperationError> {
         let mut cursor = self.cursor();
         let mut node = |j: usize| kept(j).filter(|&i| i < self.nodes).map(|i| cursor.first_of(i));
-        let places = self.offsets();
+        let places = self.offsets(lim)?;
         let moved = |at: (i64, i64), p: &(i64, i64)| (left(at.0 + p.0), right(at.1 + p.1));
-        let at = node(0)?;
+        let Some(at) = node(0) else { return Ok(None) };
         let first = moved(at, &places[0]);
         let within = read_digits(self.per_node, |m| {
             let (l, r) = moved(at, &places[m]);
             Some((l - first.0, r - first.1))
-        })?;
-        let across = read_digits(nodes, |j| Some(moved(node(j)?, &places[0])))?;
+        });
+        let Some(within) = within else { return Ok(None) };
+        let Some(across) = read_digits(nodes, |j| Some(moved(node(j)?, &places[0]))) else { return Ok(None) };
         let fitted = ImplicitLevel::assemble(nodes, self.per_node, first, &within, &across);
         // The check reads the nodes kept in turn, the `j`th when asked for
         // rank `j`, which it asks for in order.
@@ -496,13 +572,15 @@ impl ImplicitLevel {
         // as many as a node's pairs, pair by pair reads fewer.
         let moving = |side| self.side_offset_count(side);
         let holds = if moving(ChildSide::Left) + moving(ChildSide::Right) < self.per_node {
-            self.holds_moved(&fitted, ChildSide::Left, &mut in_turn(), &left)
-                && self.holds_moved(&fitted, ChildSide::Right, &mut in_turn(), &right)
+            self.holds_moved(lim, &fitted, ChildSide::Left, &mut in_turn(), &left)?
+                && self.holds_moved(lim, &fitted, ChildSide::Right, &mut in_turn(), &right)?
         } else {
+            let offsets = fitted.offsets(lim)?;
+            let shifted = |at: (i64, i64)| offsets.iter().map(move |p| (at.0 + p.0, at.1 + p.1));
             let mut node = in_turn();
-            fitted.holds(|j| node(j).map(|at| places.iter().map(move |p| moved(at, p))))
+            fitted.holds(shifted, |j| node(j).map(|at| places.iter().map(move |p| moved(at, p))))
         };
-        holds.then_some(fitted)
+        Ok(holds.then_some(fitted))
     }
 
     /// Whether `fitted` gives, on `side`, the child slots of the pairs of
@@ -516,14 +594,21 @@ impl ImplicitLevel {
     /// zero, at every node, and `fitted`'s offsets are checked, once, to
     /// depend on no other: about `nodes · Π radices` reads of the moving
     /// digits and `per_node` of the offsets, where a pair-by-pair check
-    /// makes `nodes · per_node`.
+    /// makes `nodes · per_node`. The places that move the side, with their
+    /// offsets, and `fitted`'s offsets are listed through `lim`.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when a list is refused: each may
+    /// take sixteen bytes a pair of a node.
     fn holds_moved(
         &self,
+        lim: &Limits,
         fitted: &ImplicitLevel,
         side: ChildSide,
         node: &mut impl FnMut(usize) -> Option<(i64, i64)>,
         f: &impl Fn(i64) -> i64,
-    ) -> bool {
+    ) -> Result<bool, OperationError> {
         let of = |v: (i64, i64)| match side {
             ChildSide::Left => v.0,
             ChildSide::Right => v.1,
@@ -533,7 +618,9 @@ impl ImplicitLevel {
         // the place that has them zeroed.
         let mut period = 1usize;
         let mut zeroed: Vec<(usize, usize)> = Vec::new();
-        let mut moving: Vec<(usize, i64)> = vec![(0, 0)];
+        let mut moving: Transient<'_, Vec<(usize, i64)>> = Transient::new(lim, Vec::new());
+        lim.reserve_exact(&mut moving, self.side_offset_count(side))?;
+        moving.push((0, 0));
         for d in &self.digits[..self.within] {
             if step(d) == 0 {
                 zeroed.push((period, d.radix));
@@ -548,17 +635,17 @@ impl ImplicitLevel {
             }
             period *= d.radix;
         }
-        let offsets = fitted.offsets();
+        let offsets = fitted.offsets(lim)?;
         let projected = |m: usize| zeroed.iter().fold(m, |m, &(p, r)| m - (m / p % r) * p);
         if !zeroed.is_empty() && (0..self.per_node).any(|m| of(offsets[m]) != of(offsets[projected(m)])) {
-            return false;
+            return Ok(false);
         }
         let mut cursor = fitted.cursor();
-        (0..fitted.nodes).all(|j| {
+        Ok((0..fitted.nodes).all(|j| {
             let Some(at) = node(j) else { return false };
             let (base, to) = (of(at), of(cursor.first_of(j)));
             moving.iter().all(|&(m, off)| f(base + off) == to + of(offsets[m]))
-        })
+        }))
     }
 
     /// The description of the conjunction's level whose operands' levels
