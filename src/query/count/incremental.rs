@@ -252,8 +252,9 @@ impl Tdd {
     /// [`Retention::Frontier`] frees child columns after their parent is computed.
     /// [`PinSemantics`] controls how observed variables contribute to counts.
     /// Pin storage is proportional to the vtree's size, including for sparse
-    /// variable IDs. Value columns are allocated on the first count, and
-    /// pin changes require no further allocation.
+    /// variable IDs. Value columns are allocated on the first count and reused
+    /// while retained. Refreshing counts can allocate when a column widens or
+    /// a count overflows.
     ///
     /// # Errors
     ///
