@@ -272,7 +272,9 @@ impl TddLevel {
     /// Every pair of the level with the index of the node holding it, in
     /// node order: a stored level's read off its arenas as slices, an
     /// implicit level's generated from its description ([`LevelPairs`]),
-    /// folded a run of nodes at a time.
+    /// folded a chunk of nodes at a time. Read it by folding (`for_each`,
+    /// `fold`, `sum`, an adapter over them): a `for` loop steps the chain of
+    /// the two a pair at a time, out of line.
     #[inline]
     pub(crate) fn pairs_with_parent(&self) -> impl Iterator<Item = (u32, ChildPair)> + Clone + '_ {
         let nodes = self.stored().map_or(&[][..], |stored| stored.nodes());

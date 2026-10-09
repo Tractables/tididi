@@ -141,9 +141,7 @@ impl<'a> Oriented<'a> {
 fn histogram(lim: &Limits, n: usize, keys: impl Iterator<Item = u32>) -> Result<Vec<u32>, OperationError> {
     let mut counts = Vec::new();
     lim.try_resize(&mut counts, n, 0u32)?;
-    for k in keys {
-        counts[k as usize] += 1;
-    }
+    keys.for_each(|k| counts[k as usize] += 1);
     Ok(counts)
 }
 
@@ -944,12 +942,10 @@ fn count_dense<W: Weight>(
 
     // Which walks and probes run decides what each side builds.
     let (mut by_left, mut by_right) = (false, false);
-    for (_, pair) in view.p_c.pairs_with_parent() {
-        match pricing.choose(pair.left.0, pair.right.0).0 {
-            Direction::ByLeft => by_left = true,
-            Direction::ByRight => by_right = true,
-        }
-    }
+    view.p_c.pairs_with_parent().for_each(|(_, pair)| match pricing.choose(pair.left.0, pair.right.0).0 {
+        Direction::ByLeft => by_left = true,
+        Direction::ByRight => by_right = true,
+    });
     let mut probe_cl: Probe<u64> = Probe::new(lim, &view, input.cl, p.cl, q.cl)?;
     let mut probe_cr: Probe<u64> = Probe::new(lim, &view, input.cr, p.cr, q.cr)?;
     let owners = |walked: bool, left: bool, q_width: usize, probe: &Probe<u64>| {
