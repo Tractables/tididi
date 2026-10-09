@@ -139,6 +139,39 @@ fn mark_dead_out_of_line(cells: &mut [u32]) {
     mark_dead(cells);
 }
 
+/// The rows of an implicit level of `width` nodes, as a row loop reads
+/// them, into `rows`: every pair the description generates for them, in
+/// node order, `k` a node, decoded as the views `left` and `right` read
+/// them; returns `k`. One pass over the description in place of a read a
+/// row, into the loop's own decode buffer, which the rows of an implicit
+/// level leave unused. `None` on a level that stores its pairs, whose rows
+/// are slices of its arena, and where the budget refuses the buffer's
+/// growth: each row is then generated as it is read.
+#[inline(never)]
+fn described_rows(
+    lim: &crate::limits::Limits,
+    level: &TddLevel,
+    width: usize,
+    left: crate::diagram::ChildDecoder,
+    right: crate::diagram::ChildDecoder,
+    rows: &mut Vec<ChildPair>,
+) -> Option<usize> {
+    let d = level.implicit()?;
+    let k = d.pairs_per_node();
+    if width > d.nodes() {
+        return None;
+    }
+    rows.clear();
+    lim.reserve(rows, width.checked_mul(k)?).ok()?;
+    d.pairs_of_first(width, rows);
+    if left.is_marginal() || right.is_marginal() {
+        for p in rows.iter_mut() {
+            *p = crate::diagram::decoded(*p, left, right);
+        }
+    }
+    Some(k)
+}
+
 /// The one row/cell loop of the dense product build.
 ///
 /// `const DENSE` skips the per-row alive-mask fold on levels where it provably
@@ -204,21 +237,20 @@ where
         reset(&mut node_idx[ctx.output_grid_base..ctx.output_grid_base + left_width * right_width]);
     }
 
-    // An implicit f level's rows are read in order off its description.
-    let mut f_cursor = None;
+    // An implicit f level's rows generated before the loop reads them; a
+    // stored level's rows are slices of its arena.
+    let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
+    let f_described = described_rows(lim, left_level_t, left_width, left_view, right_view, f_pairs_scratch);
     for i in 0..left_width {
         let row_base = ctx.output_grid_base + action.grid_row(i) * right_width;
         if !slab_fill && !every_cell {
             reset(&mut node_idx[row_base..row_base + right_width]);
         }
 
-        let f_pairs = left_level_t.pairs_view_decoded_next(
-            &mut f_cursor,
-            i,
-            f_pairs_scratch,
-            ctx.sides.left.plan.view,
-            ctx.sides.right.plan.view,
-        );
+        let f_pairs = match f_described {
+            Some(k) => &f_pairs_scratch[i * k..(i + 1) * k],
+            None => left_level_t.pairs_view_decoded(i, f_pairs_scratch, left_view, right_view),
+        };
         // Empty pairs means dead (zero-containing) node — skip this row.
         if f_pairs.is_empty() {
             if every_cell {

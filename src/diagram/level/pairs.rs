@@ -475,28 +475,6 @@ impl TddLevel {
         self.pairs_decoded(idx, scratch, left, right)
     }
 
-    /// [`pairs_view_decoded`](Self::pairs_view_decoded) for nodes read in
-    /// increasing order: an implicit level's pairs generated off its
-    /// description, each node's first pair stepped on by `cursor`
-    /// ([`described_read_next`](Self::described_read_next)).
-    #[inline]
-    pub(crate) fn pairs_view_decoded_next<'a, 'b>(
-        &'a self,
-        cursor: &mut Option<Box<NodeCursor<'a>>>,
-        idx: usize,
-        scratch: &'b mut Vec<ChildPair>,
-        left: ChildDecoder,
-        right: ChildDecoder,
-    ) -> &'b [ChildPair]
-    where
-        'a: 'b,
-    {
-        if !left.is_marginal() && !right.is_marginal() {
-            return self.pairs_read_next(cursor, idx, scratch);
-        }
-        self.pairs_decoded(idx, scratch, left, right)
-    }
-
     /// [`pairs_view_decoded`](Self::pairs_view_decoded) with a marginal
     /// child: the pairs decoded into `scratch`.
     #[inline(never)]
