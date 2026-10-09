@@ -23,7 +23,7 @@ mod kept;
 pub(crate) use close::StoreRoom;
 pub(crate) use kept::ChildKept;
 pub(crate) use storage::{kept_capacity, PairArena};
-pub(crate) use iter::{LevelPairs, NodeCursor, Places};
+pub(crate) use iter::{LevelPairs, NodeChunks, NodeCursor, Places};
 
 // A test builds every level stored, none described, as the oracle the
 // implicit levels are checked against (`test_helpers::stored_levels`), or

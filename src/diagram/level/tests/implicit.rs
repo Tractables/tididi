@@ -865,12 +865,12 @@ fn a_cursor_reads_the_first_pairs_in_runs() {
     assert!(tabled > 10 && led > 10, "{tabled} cursors in tabled runs, {led} with a lead digit");
 }
 
-/// A pass over every pair of an implicit level reads them in runs of nodes
-/// ([`ImplicitLevel::fold_pairs`], [`LevelPairs`],
-/// [`ImplicitLevel::try_node_pairs`]): the pairs and their nodes are the
+/// A pass over every pair of an implicit level reads them a chunk of nodes
+/// at a time ([`NodeChunks`], [`LevelPairs`],
+/// [`TddLevel::try_for_each_node`]): the pairs and their nodes are the
 /// stored level's, from any node, after any pairs read one at a time, over
 /// any range of nodes up to an error, at one pair a node in runs of a
-/// table and of a lead digit wider than a run, and at several node by node.
+/// table and of a lead digit wider than a run, and at several.
 #[test]
 fn a_level_is_folded_in_runs_from_any_node() {
     let mut rng = Lcg::new(0x1d1e_0412);
@@ -901,14 +901,17 @@ fn a_level_is_folded_in_runs_from_any_node() {
         let want: Vec<(u32, ChildPair)> = pairs.iter().enumerate()
             .flat_map(|(i, node)| node.iter().map(move |&(l, r)| (i as u32, pair(l, r))))
             .collect();
-        // From any node.
+        // From any node, a chunk at a time.
         let from = rng.below(nodes as u64 + 1) as usize;
-        let folded = d.fold_pairs(from, Vec::new(), |mut v, i, p| {
-            v.push((i as u32, p));
-            v
-        });
-        let skip = from * d.pairs_per_node();
-        assert_eq!(folded, want[skip..], "round {round}: the fold from node {from}");
+        let (mut chunks, mut buf, mut written) = (NodeChunks::new(&d, from..nodes), Vec::new(), Vec::new());
+        let k = d.pairs_per_node();
+        while let Some(start) = chunks.fill(&mut buf) {
+            assert!(!buf.is_empty() && buf.len() % k == 0, "round {round}: a chunk of whole nodes");
+            assert_eq!(start, from + written.len() / k, "round {round}: chunks in order");
+            written.extend(buf.chunks_exact(k).enumerate().flat_map(|(j, ps)| ps.iter().map(move |&p| ((start + j) as u32, p))));
+        }
+        let skip = from * k;
+        assert_eq!(written, want[skip..], "round {round}: the chunks from node {from}");
         // After any pairs read one at a time.
         let mut read = LevelPairs::new(&d);
         let t = rng.below(want.len() as u64 + 1) as usize;

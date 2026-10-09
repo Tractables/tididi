@@ -175,75 +175,6 @@ impl ImplicitLevel {
         Ok(())
     }
 
-    /// Folds the pairs of nodes `from..` in their order, each with its node:
-    /// at one pair a node a run of nodes at a time
-    /// ([`node_runs`](Self::node_runs)), a pair a step; else node by node,
-    /// each node's pairs in runs ([`Places`]) and its first pair stepped on
-    /// from the last node's ([`NodeCursor`]). What a pass over every pair of
-    /// the level reads, with no call a node. Out of line, `f` inlined here,
-    /// so that a caller that also reads stored levels keeps its own loop
-    /// small.
-    #[inline(never)]
-    pub(crate) fn fold_pairs<B>(&self, from: usize, init: B, mut f: impl FnMut(B, usize, ChildPair) -> B) -> B {
-        if from >= self.nodes {
-            return init;
-        }
-        if self.per_node == 1 {
-            let mut acc = Some(init);
-            let _ = self.node_runs_in::<std::convert::Infallible>(from..self.nodes, |start, offsets, at| {
-                let skip = from.saturating_sub(start);
-                let mut a = acc.take().expect("the fold's value between runs");
-                for (j, &o) in offsets[skip..].iter().enumerate() {
-                    a = f(a, start + skip + j, pair_at(at, o));
-                }
-                acc = Some(a);
-                Ok(())
-            });
-            return acc.expect("the fold's value after the runs");
-        }
-        let mut cursor = self.cursor();
-        let mut acc = init;
-        for i in from..self.nodes {
-            acc = self.places_from(cursor.first_of(i)).fold(acc, |a, pair| f(a, i, pair));
-        }
-        acc
-    }
-
-    /// Calls `f(i, pairs)` with every node `i` of `nodes` and its pairs, in
-    /// order, up to the first `Err`, which it returns: at one pair a node a
-    /// run of nodes' pairs written at a time
-    /// ([`node_runs_in`](Self::node_runs_in)), each node's a slice of them;
-    /// at several each node's written from its first pair, stepped on from
-    /// the last node's ([`NodeCursor`]). Out of line, `f` inlined here, as
-    /// [`fold_pairs`](Self::fold_pairs) is.
-    #[inline(never)]
-    pub(crate) fn try_node_pairs<E>(
-        &self,
-        nodes: std::ops::Range<usize>,
-        f: &mut impl FnMut(usize, &[ChildPair]) -> Result<(), E>,
-    ) -> Result<(), E> {
-        assert!(nodes.end <= self.nodes, "nodes {nodes:?} of a description of {} nodes", self.nodes);
-        let mut buf: Vec<ChildPair> = Vec::new();
-        if self.per_node == 1 {
-            return self.node_runs_in(nodes.clone(), |start, offsets, at| {
-                let (lo, hi) = (nodes.start.max(start), nodes.end.min(start + offsets.len()));
-                buf.clear();
-                buf.extend(offsets[lo - start..hi - start].iter().map(|&o| pair_at(at, o)));
-                for (j, pair) in buf.chunks_exact(1).enumerate() {
-                    f(lo + j, pair)?;
-                }
-                Ok(())
-            });
-        }
-        let mut cursor = self.cursor();
-        for i in nodes {
-            buf.clear();
-            self.places_from(cursor.first_of(i)).write_into(&mut buf);
-            f(i, &buf)?;
-        }
-        Ok(())
-    }
-
     /// Whether `nodes` are the nodes of this description of one pair a node,
     /// each holding its pair inline: compared word for word in runs
     /// ([`node_runs`](Self::node_runs)), a run at a time, where every slot
@@ -261,6 +192,73 @@ impl ImplicitLevel {
 
 }
 
+/// The most pairs [`NodeChunks::fill`] writes at a time, unless a node
+/// holds more: a buffer that stays in a core's cache. Small under test, so
+/// that the tests' levels take several chunks.
+const CHUNK_PAIRS: usize = if cfg!(test) { 1 << 5 } else { 1 << 13 };
+
+/// The pairs of a range of the nodes a description implies, written into a
+/// buffer a chunk of nodes at a time, in their order, each node's first
+/// pair stepped on from the last node's ([`NodeCursor`]).
+///
+/// What a pass over the nodes reads where it calls its own code on every
+/// pair: that code stays in the pass, which loops over each chunk, and only
+/// the generation is out of line ([`fill`](Self::fill)). Nothing the pass
+/// holds is handed to it, so a pass that also reads stored levels keeps its
+/// loop over them as tight as it would be without this reader.
+pub(crate) struct NodeChunks<'a> {
+    level: &'a ImplicitLevel,
+    /// The next node to write, and the end of the range.
+    next: usize,
+    end: usize,
+    cursor: Option<Box<NodeCursor<'a>>>,
+}
+
+impl<'a> NodeChunks<'a> {
+    /// The pairs of nodes `nodes` of `level`, a description whose nodes
+    /// are counted by its node digits, as one a level holds is.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `nodes` ends past the description's nodes.
+    #[inline]
+    pub(crate) fn new(level: &'a ImplicitLevel, nodes: std::ops::Range<usize>) -> Self {
+        assert!(nodes.end <= level.nodes, "nodes {nodes:?} of a description of {} nodes", level.nodes);
+        NodeChunks { level, next: nodes.start, end: nodes.end, cursor: None }
+    }
+
+    /// Write the pairs of the next chunk of nodes into `buf`, cleared
+    /// first, node after node, each node's `k` pairs in their order, and
+    /// return the chunk's first node; `None`, `buf` untouched, once every
+    /// node of the range is written. A chunk is at least one node and at
+    /// most [`CHUNK_PAIRS`] pairs otherwise.
+    #[inline(never)]
+    pub(crate) fn fill(&mut self, buf: &mut Vec<ChildPair>) -> Option<usize> {
+        let level = self.level;
+        let k = level.per_node;
+        if self.next >= self.end || k == 0 {
+            return None;
+        }
+        let start = self.next;
+        let end = self.end.min(start + (CHUNK_PAIRS / k).max(1));
+        let cursor = self.cursor.get_or_insert_with(|| Box::new(level.cursor()));
+        buf.clear();
+        if k == 1 {
+            buf.extend((start..end).map(|i| {
+                let (l, r) = cursor.first_of(i);
+                pair_at((l as u32, r as u32), (0, 0))
+            }));
+        } else {
+            buf.reserve((end - start) * k);
+            for i in start..end {
+                level.places_from(cursor.first_of(i)).write_into(buf);
+            }
+        }
+        self.next = end;
+        Some(start)
+    }
+}
+
 /// The pair at `offset` from the slots `at`, summed wrapping, as a run's
 /// pairs are.
 #[inline(always)]
@@ -272,8 +270,9 @@ fn pair_at(at: (u32, u32), offset: (u32, u32)) -> ChildPair {
 /// its node: what [`TddLevel::pairs_with_parent`] reads off such a level.
 /// Read a pair at a time, a node's pairs are its [`Places`], its first pair
 /// stepped on from the last node's by a [`NodeCursor`] the first read
-/// makes; folded, as a pass over every pair reads them, the rest are read a
-/// run of nodes at a time ([`ImplicitLevel::fold_pairs`]).
+/// makes; folded, as a pass over every pair reads them, the rest are
+/// written a chunk of nodes at a time ([`NodeChunks`]) and folded where the
+/// fold is called.
 #[derive(Clone, Debug)]
 pub(crate) struct LevelPairs<'a> {
     level: &'a ImplicitLevel,
@@ -319,12 +318,24 @@ impl Iterator for LevelPairs<'_> {
         }
     }
 
-    /// The current node's pairs, then the rest a run of nodes at a time.
+    /// The current node's pairs, then the rest a chunk of nodes at a time
+    /// ([`NodeChunks`]), `f` called here.
     #[inline]
     fn fold<B, F: FnMut(B, (u32, ChildPair)) -> B>(self, init: B, mut f: F) -> B {
         let node = self.node;
-        let acc = self.places.fold(init, |acc, pair| f(acc, (node, pair)));
-        self.level.fold_pairs(self.next, acc, |acc, i, pair| f(acc, (i as u32, pair)))
+        let mut acc = self.places.fold(init, |acc, pair| f(acc, (node, pair)));
+        let level = self.level;
+        let k = level.per_node;
+        let (mut chunks, mut buf) = (NodeChunks::new(level, self.next.min(level.nodes)..level.nodes), Vec::new());
+        while let Some(start) = chunks.fill(&mut buf) {
+            for (j, pairs) in buf.chunks_exact(k).enumerate() {
+                let i = (start + j) as u32;
+                for &pair in pairs {
+                    acc = f(acc, (i, pair));
+                }
+            }
+        }
+        acc
     }
 
     #[inline]

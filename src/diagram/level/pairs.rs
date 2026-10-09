@@ -6,7 +6,7 @@ use crate::diagram::{ChildSide, EncodedChildRef};
 use crate::diagram::marginal_ref::ChildDecoder;
 use crate::diagram::PairsIter;
 use crate::diagram::primitives::{ChildPair, EncodedNode, NodeKind};
-use super::implicit::{LevelPairs, NodeCursor};
+use super::implicit::{LevelPairs, NodeChunks, NodeCursor};
 use super::{ImplicitLevel, LevelState, TddLevel};
 
 /// A level's pairs as the level holds them: stored in its arena, or, on an
@@ -202,9 +202,9 @@ impl TddLevel {
     }
 
     /// Calls `f(i, pair)` with every pair of every node `i`, in node order:
-    /// a stored level's pairs read as slices of its arena, in a loop here,
-    /// an implicit level's generated from its description a run of nodes
-    /// at a time, out of line ([`ImplicitLevel::fold_pairs`]).
+    /// a stored level's pairs read as slices of its arena, an implicit
+    /// level's generated from its description a chunk of nodes at a time,
+    /// out of line ([`NodeChunks`]); `f` is called in a loop here either way.
     #[inline]
     pub(crate) fn for_each_node_pair(&self, mut f: impl FnMut(usize, ChildPair)) {
         match self.stored() {
@@ -215,17 +215,28 @@ impl TddLevel {
                     }
                 }
             }
-            None => self.described().fold_pairs(0, (), |(), i, pair| f(i, pair)),
+            None => {
+                let d = self.described();
+                let k = d.pairs_per_node();
+                let (mut chunks, mut buf) = (NodeChunks::new(d, 0..d.nodes()), Vec::new());
+                while let Some(start) = chunks.fill(&mut buf) {
+                    for (j, pairs) in buf.chunks_exact(k).enumerate() {
+                        for &pair in pairs {
+                            f(start + j, pair);
+                        }
+                    }
+                }
+            }
         }
     }
 
     /// Calls `f(i, pairs)` with every node `i` of `range` and its pairs, in
     /// node order, up to the first `Err`, which it returns: a stored level's
-    /// pairs as slices of its arena, in a loop here; an implicit level's
-    /// generated a run of nodes at a time, out of line
-    /// ([`ImplicitLevel::try_node_pairs`]). What a pass over the nodes reads
-    /// where it takes each node's pairs as a slice, with no call a node.
-    /// Not valid on a marginal level.
+    /// pairs as slices of its arena; an implicit level's generated a chunk
+    /// of nodes at a time, out of line ([`NodeChunks`]); `f` is called in a
+    /// loop here either way. What a pass over the nodes reads where it takes
+    /// each node's pairs as a slice, with no call a node. Not valid on a
+    /// marginal level.
     ///
     /// # Panics
     ///
@@ -244,7 +255,17 @@ impl TddLevel {
                 }
                 Ok(())
             }
-            None => self.described().try_node_pairs(range, &mut f),
+            None => {
+                let d = self.described();
+                let k = d.pairs_per_node();
+                let (mut chunks, mut buf) = (NodeChunks::new(d, range), Vec::new());
+                while let Some(start) = chunks.fill(&mut buf) {
+                    for (j, pairs) in buf.chunks_exact(k).enumerate() {
+                        f(start + j, pairs)?;
+                    }
+                }
+                Ok(())
+            }
         }
     }
 
