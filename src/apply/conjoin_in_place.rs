@@ -48,7 +48,16 @@
 //! pair of the nodes its sides lie in, since `g`'s nodes at a level are
 //! disjoint. A filter on a column whose nodes hold one code each then reads
 //! each node once and rebuilds none.
+//!
+//! A product of two wide nodes (a set of many codes is one node of many
+//! pairs) finds the pairs of `g`'s node it can meet by their sides instead
+//! of trying each against each: a side of `f`'s pair that lies inside one
+//! node of `g` meets only the pairs of `g`'s node on that node, and where
+//! both sides do, at most one pair. That index is built once per node of
+//! `g`, so a level of many nodes of `f` under one wide node of `g` costs
+//! its nodes and the pairs they meet, not their product with `g`'s.
 
+use std::rc::Rc;
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
@@ -146,6 +155,11 @@ struct Products<'a> {
     grown: Vec<bool>,
     /// The pairs read, for the stop and the work clock.
     work: u64,
+    /// Past this many pairs of pairs a product finds `g`'s pairs by their
+    /// sides ([`GRID_PAIRS`]).
+    grid: usize,
+    /// `g`'s nodes so indexed, by level and node.
+    sides: FxHashMap<(u32, u32), Rc<GSides>>,
 }
 
 impl Products<'_> {
@@ -172,13 +186,38 @@ impl Products<'_> {
         }
         let (l, r) = self.vtree.children(t);
         let fa: smallvec::SmallVec<[ChildPair; 8]> = self.f.levels[t.idx()].pairs_iter_of_idx(a as usize).collect();
-        let gb: smallvec::SmallVec<[ChildPair; 8]> = self.g.level(t).pairs_iter_of_idx(b as usize).collect();
-        self.work += (fa.len() * gb.len()) as u64;
+        // Past a few pairs of pairs, `b`'s pairs are found by their sides:
+        // a side of `a`'s pair that lies inside one node of `g` meets no
+        // other node there, so only `b`'s pairs on that node can give a
+        // product, and every other would come back false. The index is
+        // built once per node of `g`, which meets many of `f`'s.
+        let wide = fa.len() * self.g.level(t).pair_count_at(b as usize) > self.grid;
+        let sides = match wide {
+            true => Some(self.sides_of(t, b)?),
+            false => None,
+        };
+        let few: smallvec::SmallVec<[ChildPair; 8]> = match wide {
+            true => smallvec::SmallVec::new(),
+            false => self.g.level(t).pairs_iter_of_idx(b as usize).collect(),
+        };
+        let gb: &[ChildPair] = match &sides {
+            Some(by) => &by.pairs,
+            None => &few,
+        };
         let mut out: smallvec::SmallVec<[ChildPair; 8]> = smallvec::SmallVec::new();
         let mut same = true;
         for pa in &fa {
             let mut hits = 0;
-            for pb in &gb {
+            let cands: smallvec::SmallVec<[u32; 8]> = match &sides {
+                Some(by) => match self.meeting(l, r, pa, by)? {
+                    Some(js) => js.iter().copied().collect(),
+                    None => (0..gb.len() as u32).collect(),
+                },
+                None => (0..gb.len() as u32).collect(),
+            };
+            self.work += cands.len() as u64;
+            for &j in &cands {
+                let pb = &gb[j as usize];
                 let cl = self.product(l, pa.left.raw(), pb.left.raw())?;
                 if cl == DEAD {
                     continue;
@@ -204,6 +243,46 @@ impl Products<'_> {
         };
         self.memo[t.idx()].insert(key, done);
         Ok(done)
+    }
+
+    /// `g`'s node `b` at level `t` indexed by its pairs' sides, built on its
+    /// first wide product.
+    fn sides_of(&mut self, t: VtreeIdx, b: u32) -> Result<Rc<GSides>, OperationError> {
+        if let Some(by) = self.sides.get(&(t.0, b)) {
+            return Ok(Rc::clone(by));
+        }
+        let g = self.g;
+        let by = Rc::new(GSides::new(self.lim, g.level(t).pairs_iter_of_idx(b as usize))?);
+        self.lim.reserve_map(&mut self.sides, 1)?;
+        self.sides.insert((t.0, b), Rc::clone(&by));
+        Ok(by)
+    }
+
+    /// The pairs of `g`'s node, indexed by their sides in `by`, that `f`'s
+    /// pair `pa` (at a level with children `l`, `r`) can meet. A side of
+    /// `pa` at an internal child that lies inside one node of `g` there
+    /// meets no other node of that level, and one that lies outside every
+    /// node meets none: so the pair on both sides' nodes where both lie
+    /// inside one (at most one pair, as a node's pairs differ), those on
+    /// the one side's node where one does, none where one lies outside, and
+    /// `None`, every pair, where neither side says.
+    fn meeting<'b>(&mut self, l: VtreeIdx, r: VtreeIdx, pa: &ChildPair, by: &'b GSides) -> Result<Option<&'b [u32]>, OperationError> {
+        let mut at = [UNKNOWN; 2];
+        for (s, child, x) in [(0, l, pa.left.raw()), (1, r, pa.right.raw())] {
+            if self.vtree.node(child).is_leaf() {
+                continue;
+            }
+            match self.inside(child, x)? {
+                OUTSIDE => return Ok(Some(&[])),
+                y => at[s] = y,
+            }
+        }
+        Ok(match at {
+            [UNKNOWN, UNKNOWN] => None,
+            [y, UNKNOWN] => Some(by.on(0, y)),
+            [UNKNOWN, z] => Some(by.on(1, z)),
+            [y, z] => Some(by.both(y, z)),
+        })
     }
 
     /// Where original node `a` of `f` at internal level `t` lies among
@@ -284,6 +363,61 @@ impl Products<'_> {
             true => UNKNOWN,
             false => OUTSIDE,
         }
+    }
+}
+
+/// A product of two nodes with more pairs of pairs than this finds `g`'s
+/// pairs by their sides ([`GSides`], [`Products::meeting`]) instead of
+/// trying each against each.
+const GRID_PAIRS: usize = 64;
+
+/// A node of `g`: its pairs, and their indices by their left side, by
+/// their right side and by both, each in ascending order of its key.
+struct GSides {
+    pairs: Vec<ChildPair>,
+    keys: [Vec<u32>; 2],
+    by_side: [Vec<u32>; 2],
+    both: Vec<u64>,
+    by_both: Vec<u32>,
+}
+
+impl GSides {
+    fn new(lim: &Limits, gb: impl Iterator<Item = ChildPair>) -> Result<GSides, OperationError> {
+        let mut pairs = Vec::new();
+        for p in gb {
+            lim.try_push(&mut pairs, p)?;
+        }
+        let n = pairs.len();
+        let order = |key: &dyn Fn(&ChildPair) -> u64| -> Result<(Vec<u64>, Vec<u32>), OperationError> {
+            let mut by: Vec<(u64, u32)> = Vec::new();
+            lim.reserve_exact(&mut by, n)?;
+            by.extend(pairs.iter().enumerate().map(|(j, p)| (key(p), j as u32)));
+            by.sort_unstable();
+            Ok(by.into_iter().unzip())
+        };
+        let (kl, pl) = order(&|p| u64::from(p.left.raw()))?;
+        let (kr, pr) = order(&|p| u64::from(p.right.raw()))?;
+        let (both, by_both) = order(&|p| p.key())?;
+        let narrow = |k: Vec<u64>| k.into_iter().map(|x| x as u32).collect();
+        Ok(GSides { keys: [narrow(kl), narrow(kr)], by_side: [pl, pr], both, by_both, pairs })
+    }
+
+    /// The pair whose sides are `g`'s nodes `y` (left) and `z` (right), if
+    /// there is one.
+    fn both(&self, y: u32, z: u32) -> &[u32] {
+        let key = (u64::from(y) << 32) | u64::from(z);
+        match self.both.binary_search(&key) {
+            Ok(i) => &self.by_both[i..i + 1],
+            Err(_) => &[],
+        }
+    }
+
+    /// The pairs whose side `s` (`0` left, `1` right) is `g`'s node `y`.
+    fn on(&self, s: usize, y: u32) -> &[u32] {
+        let keys = &self.keys[s];
+        let lo = keys.partition_point(|&k| k < y);
+        let hi = lo + keys[lo..].partition_point(|&k| k == y);
+        &self.by_side[s][lo..hi]
     }
 }
 
@@ -432,7 +566,14 @@ fn prune_under(lim: &Limits, f: &mut Tdd, vtree: &Vtree, t: VtreeIdx, to: &mut [
 }
 
 /// The implementation behind [`Engine::and_in_place`].
-pub(crate) fn and_in_place_on(eng: &Engine, mut f: Tdd, g: &Tdd, prune: bool) -> Result<Tdd, OperationError> {
+pub(crate) fn and_in_place_on(eng: &Engine, f: Tdd, g: &Tdd, prune: bool) -> Result<Tdd, OperationError> {
+    and_in_place_grid(eng, f, g, prune, GRID_PAIRS)
+}
+
+/// [`and_in_place_on`] with the products' threshold for finding `g`'s pairs
+/// by their sides: `0` always, `usize::MAX` never (each pair against each),
+/// which the tests compare.
+pub(crate) fn and_in_place_grid(eng: &Engine, mut f: Tdd, g: &Tdd, prune: bool, grid: usize) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let _op = lim.enter()?;
     super::check_vtree(&f, g)?;
@@ -502,6 +643,8 @@ pub(crate) fn and_in_place_on(eng: &Engine, mut f: Tdd, g: &Tdd, prune: bool) ->
             inside: (0..n).map(|_| Vec::new()).collect(),
             grown: vec![false; n],
             work: 0,
+            grid,
+            sides: FxHashMap::default(),
         };
         for t in vtree.bottomup() {
             let Role::Branch(b) = role[t.idx()] else { continue };
@@ -716,3 +859,4 @@ impl Engine {
         and_in_place_on(self, f, &cube, true)
     }
 }
+

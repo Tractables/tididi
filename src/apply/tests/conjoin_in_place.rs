@@ -1,6 +1,7 @@
 //! `and_in_place` and `and_cube` against the conjunction they stand for.
 
 use super::*;
+use crate::apply::conjoin_in_place::and_in_place_grid;
 use crate::diagram::Literal;
 use crate::test_helpers::check::{check_all_fast, check_determinism, check_no_false_nodes};
 use crate::vtree::VtreeIdx;
@@ -55,6 +56,22 @@ fn agrees(f: &Tdd, g: &Tdd, got: &Tdd, nvars: u32, label: &str) {
     }
     check_no_false_nodes(got).unwrap_or_else(|e| panic!("{label}: {e}"));
     check_determinism(got).unwrap_or_else(|e| panic!("{label}: {e}"));
+    let mut minimized = got.clone();
+    minimized.minimize().unwrap();
+    check_all_fast(&minimized, label);
+}
+
+/// [`agrees`] without its determinism check. That check conjoins every two
+/// nodes of a level as diagrams rooted there, and on these twelve-variable
+/// operands `Engine::and` panics on such a pair of `from_models`' own
+/// diagrams (the product lookup at a level with no stored products), so it
+/// says nothing about what this module builds.
+fn agrees_wide(f: &Tdd, g: &Tdd, got: &Tdd, nvars: u32, label: &str) {
+    for mask in 0..1u32 << nvars {
+        let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
+        assert_eq!(eval(got, &asn), eval(f, &asn) && eval(g, &asn), "{label}: models differ at {asn:?}");
+    }
+    check_no_false_nodes(got).unwrap_or_else(|e| panic!("{label}: {e}"));
     let mut minimized = got.clone();
     minimized.minimize().unwrap();
     check_all_fast(&minimized, label);
@@ -169,3 +186,37 @@ fn a_node_inside_the_filter_is_kept_whole() {
     agrees(&f, &set, &got, 6, "kept whole");
     assert!(got.level(left).nodes().len() <= before, "no product was appended under the filter's block");
 }
+
+/// Wide nodes in both operands: a product of two nodes of many pairs finds
+/// `g`'s pairs by their sides, where a side of `f`'s pair lies inside one
+/// node of `g`, instead of trying each pair against each; the result is
+/// still the conjunction, with `g` a set of codes over every variable and
+/// over the variables under the root's left child.
+#[test]
+fn wide_products_find_the_pairs_they_meet_by_their_sides() {
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x51de_5eed_2026_1009);
+    let nvars = 12u32;
+    let vars: Vec<VarId> = (1..=nvars).map(VarId).collect();
+    for (shape, vtree) in vtree_shapes(nvars) {
+        let (left, _) = vtree.children(vtree.root());
+        let low = vars_under(&vtree, left);
+        for round in 0..3 {
+            let f = Tdd::from_models(&vtree, &vars, &(0..700).map(|_| rng.below(1 << nvars)).collect::<Vec<_>>()).unwrap();
+            let all = Tdd::from_models(&vtree, &vars, &(0..400).map(|_| rng.below(1 << nvars)).collect::<Vec<_>>()).unwrap();
+            let codes: Vec<u64> = (0..1 + (1u64 << low.len()) / 3).map(|_| rng.below(1 << low.len())).collect();
+            let on_left = or_of_cubes(&vtree, &low, |m| codes.contains(&(m as u64)));
+            for (name, g) in [("all", &all), ("left", &on_left)] {
+                // Each pair against each, by the sides always, and the default.
+                for grid in [usize::MAX, 0, 64] {
+                    for prune in [true, false] {
+                        let label = format!("{shape} round {round} {name} grid {grid} prune {prune}");
+                        let got = and_in_place_grid(&eng, f.clone(), g, prune, grid).unwrap();
+                        agrees_wide(&f, g, &got, nvars, &label);
+                    }
+                }
+            }
+        }
+    }
+}
+
