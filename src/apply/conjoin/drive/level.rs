@@ -9,6 +9,7 @@ use crate::Engine;
 use super::Sweep;
 use crate::diagram::ChildSide;
 use crate::apply::conjoin::cell::GROUPED_MIN_PAIRS;
+use crate::apply::conjoin::price::{built_pairs, price_sparse_level};
 use crate::apply::conjoin::sparse::stream::{
     candidate_bound, choose_pivot, count as stream_count, Built, StreamInput, StreamWidths,
 };
@@ -54,6 +55,10 @@ pub(super) fn run_sparse_level(
         run.ensure_product_list_for_child(eng, ri, fw.right, gw.right)?;
     }
 
+    // Priced with its children's lists in hand, before the scatter claims
+    // anything: a level that cannot fit is refused here, named.
+    let priced = price_sparse_level(eng.limits(), run, f, g, shape, passthrough, complete, filtered)?;
+
     let identity = Sides {
         left: Operands { f: run.f_identity[li], g: run.g_identity[li] },
         right: Operands { f: run.f_identity[ri], g: run.g_identity[ri] },
@@ -69,6 +74,11 @@ pub(super) fn run_sparse_level(
         passthrough,
         complete,
     )?;
+    debug_assert!(
+        priced.is_none_or(|p| p.admits(built_pairs(&run.levels[ti]))),
+        "level {ti} holds {} pairs where its count found {priced:?}",
+        built_pairs(&run.levels[ti]),
+    );
     run.products.finish_sparse(&mut run.levels[ti], ti);
     mark_passthrough_inlined(
         &mut run.levels[ti],

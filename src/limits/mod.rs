@@ -23,7 +23,7 @@ use std::time::Instant;
 
 pub use error::OperationError;
 pub use memory::MemoryHooks;
-pub use meters::{OperationMetrics, ConjunctionProgress};
+pub use meters::{OperationMetrics, ConjunctionProgress, LevelRefusal};
 pub use stop::{StopDecision, StopRules, StopAt};
 use stop::Quiet;
 
@@ -378,6 +378,8 @@ pub struct Limits {
     /// An allocator refusal and a soft-budget refusal both arrive as
     /// [`OperationError::OverBudget`]; the size tells a caller which it was.
     refused_bytes: Cell<Option<u64>>,
+    /// The level the operation in flight refused before building it.
+    refused_level: Cell<Option<LevelRefusal>>,
 }
 
 /// A work-clock reading to compare with [`Limits::work_since`].
@@ -423,6 +425,7 @@ impl Limits {
             #[cfg(test)]
             width_cap_pin: Cell::new(None),
             refused_bytes: Cell::new(None),
+            refused_level: Cell::new(None),
         }
     }
 
@@ -556,6 +559,7 @@ impl Limits {
             pairs_in_flight: self.pairs_in_flight.get(),
             work_units: self.work_clock.get(),
             refused_reserve_bytes: self.refused_bytes.get(),
+            refused_level: self.refused_level.get(),
             conjunction: self.conjunction.get(),
         }
     }
@@ -599,6 +603,7 @@ impl Limits {
         self.pairs_in_flight.set(0);
         self.pairs_level_charge.set(0);
         self.bounded_growth.set(false);
+        self.refused_level.set(None);
     }
 
     /// Enter an operation and test the stop before anything else, so an armed

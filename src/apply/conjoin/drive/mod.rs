@@ -46,6 +46,7 @@ use level::{
 use super::*;
 
 use super::identity::init_leaf_identity_over;
+use super::price::{built_pairs, price_dense_level};
 use crate::reduce::prune::settle_loose;
 use crate::Engine;
 
@@ -224,7 +225,20 @@ fn build_level(
                     run.products.note_sparse_built(t.idx(), shape.f.here, shape.g.here);
                 }
             },
-            _ => build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?,
+            // Claims no grid of its own: the parent that densifies its
+            // product list prices that grid.
+            Route::SparseMarg => build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?,
+            _ => {
+                // Priced before its grid is claimed: a level that cannot fit
+                // is refused here, named, rather than grown into the budget.
+                let priced = price_dense_level(eng.limits(), run, f, g, shape, route, sweep.filter.is_some())?;
+                build_level_dense(eng, run, f, g, LevelBuild { shape, route, plan }, sweep)?;
+                debug_assert!(
+                    priced.is_none_or(|p| p.admits(built_pairs(&run.levels[t.idx()]))),
+                    "level {} holds {} pairs where its count found {priced:?}",
+                    t.idx(), built_pairs(&run.levels[t.idx()]),
+                );
+            }
         }
     }
 

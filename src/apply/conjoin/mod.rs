@@ -58,6 +58,7 @@ pub(crate) use setup::VtreeMask;
 mod route;
 use route::*;
 mod grid_arena;
+mod price;
 mod products;
 pub(in crate::apply::conjoin) use grid_arena::GridBase;
 mod output;

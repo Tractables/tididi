@@ -1,6 +1,7 @@
 //! Progress and resource measurements for running operations.
 
 use super::Limits;
+use crate::vtree::VtreeIdx;
 use std::time::Instant;
 
 /// Progress recorded when [`LimitConfig::with_conjunction_progress`](crate::limits::LimitConfig::with_conjunction_progress)
@@ -15,6 +16,74 @@ pub struct ConjunctionProgress {
     pub level: u32,
     /// How many levels it walks in all.
     pub levels: u32,
+}
+
+/// A conjunction level refused before any of its storage was claimed: the
+/// fewest bytes building it would take are more than the bytes left.
+///
+/// A conjunction builds its levels bottom-up, and each level's output holds
+/// one pair for every pair of `f` and every pair of `g` there whose left
+/// children and right children both have a satisfiable conjunction. Once a
+/// level's children are built, that count, or a lower bound on it, is read off
+/// the operands' pairs and the children's live products in one linear pass,
+/// and a level whose dense route would claim its whole product grid is priced
+/// by the grid. A level found to need more than the memory left is refused
+/// there, with [`OperationError::OverBudget`](crate::OperationError::OverBudget),
+/// rather than after it has grown into the budget. A level of operands that
+/// depend on disjoint variables under it, where every product of a node of
+/// `f` and a node of `g` is satisfiable, is the common case: its output is
+/// the product of the two widths.
+///
+/// Only an engine with a byte budget or memory hooks
+/// ([`LimitConfig`](crate::limits::LimitConfig)) prices levels; the bytes left
+/// are the budget less what the operation holds, or, with no budget, the
+/// address space the hooks report as free.
+///
+/// ```
+/// use std::sync::Arc;
+/// use tididi::limits::LimitConfig;
+/// use tididi::vtree::{VarId, Vtree};
+/// use tididi::{Engine, OperationError, Tdd};
+///
+/// // `z` selects a code `k`; `f` makes `x` equal it and `g` makes `y` equal
+/// // it, each over seven bits. Under the node joining `x` and `y`, `f`'s 128
+/// // nodes vary only in `x` and `g`'s only in `y`, so all 128 × 128 of their
+/// // products are satisfiable: the level holds 16 384 pairs, 128 KiB.
+/// let bits = |base: u32| (base..base + 7).map(VarId).collect::<Vec<_>>();
+/// let (x, y, z) = (bits(1), bits(8), bits(15));
+/// let xy = Vtree::join(&Vtree::balanced_over(&x)?, &Vtree::balanced_over(&y)?)?;
+/// let vtree = Arc::new(Vtree::join(&xy, &Vtree::balanced_over(&z)?)?);
+/// let equal = |other: &[VarId]| {
+///     let vars: Vec<VarId> = z.iter().chain(other).copied().collect();
+///     let rows: Vec<u64> = (0..128u64).map(|k| k | k << 7).collect();
+///     Tdd::from_models(&vtree, &vars, &rows)
+/// };
+/// let (f, g) = (equal(&x)?, equal(&y)?);
+///
+/// let engine = Engine::new();
+/// let budget = LimitConfig::none().with_memory_budget_bytes(Some(64 * 1024));
+/// let refused = engine.limits().scope(budget);
+/// assert_eq!(engine.and(f.clone(), g.clone()).err(), Some(OperationError::OverBudget));
+/// let level = engine.limits().meters().refused_level.expect("the level was priced");
+/// assert_eq!(level.level, xy_root(&vtree));
+/// assert!(level.needed_bytes > level.headroom_bytes);
+/// drop(refused);
+///
+/// // Without the budget the conjunction is built: `x = y = z`.
+/// let h = engine.and(f, g)?;
+/// assert_eq!(h.model_count()?, 128u32.into());
+/// # fn xy_root(vtree: &Vtree) -> tididi::vtree::VtreeIdx { vtree.children(vtree.root()).0 }
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct LevelRefusal {
+    /// The vtree node whose level was refused.
+    pub level: VtreeIdx,
+    /// The fewest bytes building the level would claim.
+    pub needed_bytes: u64,
+    /// The bytes left when the level was priced.
+    pub headroom_bytes: u64,
 }
 
 /// Work and resource measurements returned by [`Limits::meters`](crate::limits::Limits::meters).
@@ -42,6 +111,13 @@ pub struct OperationMetrics {
     /// while conjunction progress is enabled; `None` before the first. Nothing clears it, so
     /// `started_at` is what tells one conjunction from the next.
     pub conjunction: Option<ConjunctionProgress>,
+    /// The conjunction level the operation in flight, or the last one,
+    /// refused before building it ([`LevelRefusal`]); `None` when it refused
+    /// none. Zeroed when an operation starts, so after an
+    /// [`OperationError::OverBudget`](crate::OperationError::OverBudget) it
+    /// tells a level priced out of the budget from a growth the budget
+    /// refused on the way.
+    pub refused_level: Option<LevelRefusal>,
 }
 
 impl Limits {
@@ -89,6 +165,14 @@ impl Limits {
             level: 0,
             levels,
         }));
+    }
+
+    /// Refuse the conjunction level at `level`, priced before it was built
+    /// at `needed_bytes` against `headroom_bytes`, and say so in the meters.
+    #[cold]
+    pub(crate) fn refuse_level(&self, level: VtreeIdx, needed_bytes: u64, headroom_bytes: u64) -> crate::OperationError {
+        self.refused_level.set(Some(LevelRefusal { level, needed_bytes, headroom_bytes }));
+        crate::OperationError::OverBudget
     }
 
     /// Record the current level while keeping the conjunction's start time.
