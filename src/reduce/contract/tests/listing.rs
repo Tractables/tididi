@@ -14,7 +14,6 @@ fn a_listing_sweep_reads_only_its_own_entries() {
     let lim = Limits::new();
     let mut listing = Listing::default();
     listing.start(&lim, 10, &[3, 7]).unwrap();
-    assert!(listing.active());
     assert!(listing.whole(3) && listing.whole(7) && !listing.whole(4) && !listing.whole(12));
     listing.list_mut(&lim, 5).unwrap().extend([1, 2]);
     listing.list_mut(&lim, 5).unwrap().push(4);
@@ -32,8 +31,6 @@ fn a_listing_sweep_reads_only_its_own_entries() {
     assert!(listing.take(5).is_empty() && listing.take(9).is_empty());
     listing.list_mut(&lim, 9).unwrap().push(6);
     assert_eq!(listing.take(9), [6]);
-    listing.stop();
-    assert!(!listing.active());
 
     // A stamp that wraps unsets every level before it is used again.
     listing.sweep = u32::MAX;

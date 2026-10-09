@@ -371,9 +371,6 @@ impl Buffers for ContractScratch {
 pub(super) struct Listing {
     /// The current sweep, from 1; 0 stamps nothing.
     pub(super) sweep: u32,
-    /// Whether the current sweep lists: false where the diagram has a
-    /// marginal level, and none is kept.
-    active: bool,
     /// Per vtree node: the sweep at whose start it was on the worklist.
     pub(super) whole: Vec<u32>,
     /// Per vtree node: the sweep that gave it a list, and the list's index
@@ -386,15 +383,15 @@ pub(super) struct Listing {
 }
 
 impl Listing {
-    /// Start a listing sweep over a diagram of `num_nodes` vtree nodes,
-    /// whose worklist is `dirty`.
+    /// Start a sweep over a diagram of `num_nodes` vtree nodes, whose
+    /// worklist is `dirty`: in time independent of `num_nodes` past the first
+    /// sweep over a diagram that large.
     pub(super) fn start(
         &mut self,
         lim: &crate::limits::Limits,
         num_nodes: usize,
         dirty: &[u32],
     ) -> Result<(), crate::limits::OperationError> {
-        self.active = false;
         lim.try_resize(&mut self.whole, num_nodes, 0)?;
         lim.try_resize(&mut self.at, num_nodes, (0, 0))?;
         self.sweep = self.sweep.wrapping_add(1);
@@ -413,20 +410,7 @@ impl Listing {
                 *whole = self.sweep;
             }
         }
-        self.active = true;
         Ok(())
-    }
-
-    /// Start a sweep that does not list: one of a diagram with a marginal
-    /// level.
-    pub(super) fn stop(&mut self) {
-        self.active = false;
-    }
-
-    /// Whether the current sweep lists.
-    #[inline]
-    pub(super) fn active(&self) -> bool {
-        self.active
     }
 
     /// Whether parent `p` was on the worklist when the current sweep began.
@@ -460,14 +444,14 @@ impl Listing {
     }
 
     /// Level `t`'s list, given an empty one where the sweep has changed no
-    /// node of it yet. Only in a listing sweep, at a vtree node of its
-    /// diagram.
+    /// node of it yet. Only at a vtree node of the diagram the sweep was
+    /// started over.
     pub(super) fn list_mut(
         &mut self,
         lim: &crate::limits::Limits,
         t: usize,
     ) -> Result<&mut Vec<u32>, crate::limits::OperationError> {
-        debug_assert!(self.active && t < self.at.len(), "level {t} listed outside a listing sweep");
+        debug_assert!(self.sweep != 0 && t < self.at.len(), "level {t} listed outside the sweep's diagram");
         if let Some(i) = self.slot(t) {
             return Ok(&mut self.lists[i]);
         }

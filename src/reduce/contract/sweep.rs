@@ -123,17 +123,24 @@ fn contract_child(
         return Ok(false);
     }
 
-    // The list of `t1` the sweep keeps has its room for the survivors before
-    // the merge changes anything, so a refused reservation leaves the
-    // diagram as it was.
-    reserve_survivors(eng, t1, scratch)?;
+    // Where the sweep lists, the list of `t1` it keeps has its room for the
+    // survivors before the merge changes anything, so a refused reservation
+    // leaves the diagram as it was. Whether the diagram has a marginal level
+    // is read at the first merge, once per checkout, as the merge plan reads
+    // it.
+    let lists = !diagram_marginal(tdd, scratch);
+    if lists {
+        reserve_survivors(eng, t1, scratch)?;
+    }
     let merged = contract_twins(eng, tdd, t1, parent, t1_side, scratch)?;
     if merged == 0 {
         // Every found group was overlap-filtered: the level is unchanged, and
         // reporting progress would spin the sibling-pair loop.
         return Ok(false);
     }
-    note_survivors(t1, scratch);
+    if lists {
+        note_survivors(t1, scratch);
+    }
     Ok(true)
 }
 
@@ -168,9 +175,6 @@ fn check_listed_search(
 /// merge plans.
 fn reserve_survivors(eng: &Engine, t1: VtreeIdx, scratch: &mut ContractScratch) -> Result<(), OperationError> {
     let ContractScratch { group_starts, listing, .. } = scratch;
-    if !listing.active() {
-        return Ok(());
-    }
     let list = listing.list_mut(eng.limits(), t1.idx())?;
     eng.limits().reserve(list, group_starts.len())
 }
@@ -181,9 +185,6 @@ fn reserve_survivors(eng: &Engine, t1: VtreeIdx, scratch: &mut ContractScratch) 
 /// had.
 fn note_survivors(t1: VtreeIdx, scratch: &mut ContractScratch) {
     let ContractScratch { remap, merge, listing, .. } = scratch;
-    if !listing.active() {
-        return;
-    }
     let list = listing.listed_mut(t1.idx());
     for node in list.iter_mut() {
         *node = remap.final_remap[*node as usize].0;
@@ -272,11 +273,10 @@ pub(crate) fn contract_all_twins(
     // Without a marginal level a parent the sweep reaches only through a
     // contraction above it has its children searched at the nodes that
     // contraction changed (`fingerprint::listed`); a parent on the worklist
-    // has them searched whole.
-    let listed = !diagram_marginal(tdd, &mut scratch);
-    if !listed {
-        scratch.listing.stop();
-    } else if let Err(e) = start_listing(eng, &mut scratch, num_nodes, &dirty_parents) {
+    // has them searched whole. Whether the diagram has a marginal level is
+    // read only once a contraction fired, which is what puts a parent off
+    // the worklist on the heap: a sweep that merges nothing never reads it.
+    if let Err(e) = start_listing(eng, &mut scratch, num_nodes, &dirty_parents) {
         tdd.dirty.restore(Pass::Contract, dirty_parents);
         return Err(e);
     }
@@ -318,7 +318,7 @@ pub(crate) fn contract_all_twins(
 
         let is_marginal_boundary = tdd.levels[left.idx()].is_marginal()
             || tdd.levels[right.idx()].is_marginal();
-        let reach = if !listed || scratch.listing.whole(p_idx) {
+        let reach = if scratch.listing.whole(p_idx) || diagram_marginal(tdd, &mut scratch) {
             Reach::Whole
         } else {
             match list_changed_children(eng, tdd, parent, &mut scratch) {
@@ -440,7 +440,10 @@ fn list_changed_children(
 ///
 /// With a marginal level a group the overlap filter held back is looked at
 /// again, and both children are searched whole per iteration until neither
-/// fires. When `is_marginal_boundary`, pair fusion runs at the parent each
+/// fires. The first round is the one above either way, and whether the
+/// diagram has a marginal level is read only once it fired, so that a
+/// parent whose children have no twin costs no scan of the diagram's
+/// levels. When `is_marginal_boundary`, pair fusion runs at the parent each
 /// iteration too: fusion rewrites the parent's pair lists, which can create
 /// twins at either child, and contraction can mint fusion redexes.
 ///
@@ -459,23 +462,34 @@ fn joint_contract_fixpoint(
     reach: Reach,
     scratch: &mut ContractScratch,
 ) -> Result<(bool, bool), OperationError> {
-    if !diagram_marginal(tdd, scratch) {
-        // The one round's cancellation point, as each round's below.
+    let mut left_fired = false;
+    let mut right_fired = false;
+    if !is_marginal_boundary {
+        // The first round: each child searched once, at the nodes `reach`
+        // names. Without a marginal level it is the whole fixpoint; with one
+        // (`reach` is then `Whole`), a round that fires nothing is the
+        // fixpoint too, so whether the diagram has one is read only once a
+        // child fired, once per checkout.
         eng.limits().check_stop()?;
-        let left_fired = contract_child(eng, tdd, parent, left, reach, scratch);
-        let right_fired = left_fired.and_then(|_| contract_child(eng, tdd, parent, right, reach, scratch));
+        let left_once = contract_child(eng, tdd, parent, left, reach, scratch);
+        let right_once = left_once.and_then(|_| contract_child(eng, tdd, parent, right, reach, scratch));
         for list in &mut scratch.reach {
             list.clear();
         }
-        let fired = (left_fired?, right_fired?);
-        #[cfg(debug_assertions)]
-        for child in [left, right] {
-            debug_assert_no_twins(eng, tdd, parent, child, scratch)?;
+        (left_fired, right_fired) = (left_once?, right_once?);
+        if !(left_fired || right_fired) || !diagram_marginal(tdd, scratch) {
+            #[cfg(debug_assertions)]
+            if !diagram_marginal(tdd, scratch) {
+                for child in [left, right] {
+                    debug_assert_no_twins(eng, tdd, parent, child, scratch)?;
+                }
+            }
+            return Ok((left_fired, right_fired));
         }
-        return Ok(fired);
+        debug_assert_eq!(reach, Reach::Whole, "a diagram with a marginal level is searched whole");
     }
-    let mut left_fired = false;
-    let mut right_fired = false;
+    // A child fired in a diagram with a marginal level, or the parent borders
+    // one: rounds of whole searches until neither child fires.
     let (mut scan_left, mut scan_right) = (true, true);
     loop {
         // As in `Reduction::content_twins`: termination is argued, not
