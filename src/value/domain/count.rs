@@ -258,12 +258,13 @@ impl ValueDomain for IntFold {
         };
         // A level without raw children takes the general fold: every node in
         // node order, each charged before it is summed. A described level's
-        // nodes are summed off their generated pairs, as a stored level's are.
+        // nodes are summed off their generated pairs, as a stored level's are,
+        // generated a chunk of nodes at a time.
         let Some((l, r)) = raw(left).zip(raw(right)) else {
-            for (i, pairs) in level.internal_inputs_iter() {
+            level.try_for_each_node(0..level.nodes().len(), |i, pairs| {
                 before_node(1 + pairs.len() as u64)?;
-                col.set(eng, i, IntFold::fold_node(&at, pairs))?;
-            }
+                col.set(eng, i, IntFold::fold_node(&at, PairsIter::slice(pairs)))
+            })?;
             return Ok(col);
         };
         let n = level.slot_count();

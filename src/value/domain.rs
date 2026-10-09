@@ -178,11 +178,12 @@ pub(crate) trait ValueDomain: Sized {
         let level = &input.levels[lvl];
         let mut col = Self::alloc_col(eng, level.slot_count(), input.store)?;
         let at = FoldScope { left: left.idx(), right: right.idx(), input, computed };
-        for (i, pairs) in level.internal_inputs_iter() {
+        // An implicit level's nodes generated a chunk at a time.
+        level.try_for_each_node(0..level.nodes().len(), |i, pairs| {
             before_node(1 + pairs.len() as u64)?;
-            let value = Self::fold_node(&at, pairs);
-            Self::set_col(eng, &mut col, i, value)?;
-        }
+            let value = Self::fold_node(&at, PairsIter::slice(pairs));
+            Self::set_col(eng, &mut col, i, value)
+        })?;
         Ok(col)
     }
 

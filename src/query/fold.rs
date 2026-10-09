@@ -208,19 +208,20 @@ pub(crate) fn fold_level<F: LevelFold, const PREPARED: bool>(
             );
             cols[ti] = col;
             // One node by `fold_node`: where the pass stopped, or every node
-            // when it takes none.
+            // when it takes none; an implicit level's nodes generated a chunk
+            // at a time, not one call a node.
             let to = if filled == next { end } else { filled.saturating_add(1).min(end) };
-            for (i, pairs) in level.internal_inputs_range(filled..to) {
+            level.try_for_each_node(filled..to, |i, pairs| {
                 if !F::NODE_WORK {
                     gate.poll(pairs.len() as u64 + 1)?;
                 }
                 let v = f.fold_node(
-                    pairs,
+                    PairsIter::slice(pairs),
                     Side { col: &cols[left_idx], view: left_view },
                     Side { col: &cols[right_idx], view: right_view },
                 );
-                f.set(eng, &mut cols[ti], i, v)?;
-            }
+                f.set(eng, &mut cols[ti], i, v)
+            })?;
             next = to;
         }
     }

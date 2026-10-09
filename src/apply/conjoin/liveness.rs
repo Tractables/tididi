@@ -218,18 +218,14 @@ pub(super) fn build_reach_masks(
 ) -> Result<(), OperationError> {
     reach.clear();
     eng.limits().reserve_exact(reach, k_level)?;
-    let mask = |pairs: &[ChildPair]| pairs.iter().fold(0u128, |m, p| m | 1u128 << (pair_side(p) >> shift));
     // Node `j`'s pairs set `reach[j]`: a stored level's read as slices of its
-    // arena, an implicit one's generated off its description a node at a
-    // time, in order. Through an iterator of `(node, pairs)` the walk was a
-    // call a node, about fifty instructions each.
-    match level.stored() {
-        Some(stored) => reach.extend(stored.nodes()[..k_level].iter().map(|node| mask(stored.of(node)))),
-        None => {
-            let (mut cursor, mut buf) = (None, Vec::new());
-            reach.extend((0..k_level).map(|i| mask(level.described_read_next(&mut cursor, i, &mut buf))));
-        }
-    }
+    // arena, an implicit one's generated a chunk of nodes at a time, in
+    // order. Through an iterator of `(node, pairs)` the walk was a call a
+    // node, about fifty instructions each.
+    level.try_for_each_node::<std::convert::Infallible>(0..k_level, |_, pairs| {
+        reach.push(pairs.iter().fold(0u128, |m, p| m | 1u128 << (pair_side(p) >> shift)));
+        Ok(())
+    }).unwrap_or_else(|never| match never {});
     Ok(())
 }
 

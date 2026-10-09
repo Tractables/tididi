@@ -426,10 +426,13 @@ fn fold_columns<A: ColumnAlgebra>(
             counts: tables.get(c.idx()).map_or(&[][..], Vec::as_slice),
         };
         let (on_left, on_right) = (slots(left), slots(right));
-        for (i, pairs) in level.internal_inputs_iter() {
+        // An implicit level's nodes generated a chunk at a time.
+        level.try_for_each_node(0..level.nodes().len(), |i, pairs| {
             gate.poll(pairs.len() as u64 + 1)?;
-            algebra.fold(t, i, SlotPairs::new(pairs, on_left, on_right), &cols[left.idx()], &cols[right.idx()], &mut out);
-        }
+            let pairs = SlotPairs::new(PairsIter::slice(pairs), on_left, on_right);
+            algebra.fold(t, i, pairs, &cols[left.idx()], &cols[right.idx()], &mut out);
+            Ok::<(), OperationError>(())
+        })?;
         if !tables.is_empty() {
             tables[left.idx()] = Vec::new();
             tables[right.idx()] = Vec::new();

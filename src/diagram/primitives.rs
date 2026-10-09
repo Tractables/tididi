@@ -347,8 +347,9 @@ pub struct PairsIter<'a> {
 }
 
 impl<'a> PairsIter<'a> {
+    /// The pairs of a node read as a slice.
     #[inline]
-    pub(super) fn slice(pairs: &'a [ChildPair]) -> Self {
+    pub(crate) fn slice(pairs: &'a [ChildPair]) -> Self {
         PairsIter { stored: pairs.iter(), described: super::level::Places::empty() }
     }
 
