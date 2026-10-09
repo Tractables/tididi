@@ -8,7 +8,7 @@ mod nodes;
 mod pairs;
 pub use count_overflow::CountOverflow;
 pub use implicit::{described, redescribed, stored_moved, Digit, ImplicitLevel, FLOOR};
-pub(crate) use implicit::{floor, stored_levels_forced, PairArena, Places};
+pub(crate) use implicit::{floor, kept_capacity, stored_levels_forced, PairArena, Places};
 pub use nodes::{Nodes, NodesIter};
 pub(crate) use nodes::NodeArena;
 pub use pairs::{Pairs, StoredPairs};
@@ -16,7 +16,7 @@ pub(crate) use pairs::{decoded, sort_pairs};
 pub(crate) use marginal::{assert_can_make_marginal, non_marginal_child};
 
 use super::marginal_ref::{ChildDecoder, ChildSide};
-use super::primitives::{PairRange, ChildPair};
+use super::primitives::{PairRange, ChildPair, EncodedNode};
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 /// The diagram storage associated with one vtree node.
@@ -254,12 +254,21 @@ impl TddLevel {
 
     /// Reset to empty (as [`new`](Self::new)), keeping buffer capacity: on
     /// a level whose nodes are implied, the capacity their arena would have,
-    /// as an implicit arena becomes a stored one of its capacity.
+    /// as an implicit arena becomes a stored one of its capacity, where the
+    /// allocator grants them.
     ///
     /// The marginal state and the inline markers reset with the arenas.
     pub(crate) fn clear(&mut self) {
-        self.clear_nodes();
-        self.pairs.clear();
+        self.clear_keeping(usize::MAX);
+    }
+
+    /// [`clear`](Self::clear), where a node or pair arena that a description
+    /// stood for is given its capacity only up to `max_bytes`
+    /// ([`PairArena::clear_keeping`]); stored arenas keep theirs, which the
+    /// pool caps ([`crate::diagram::pool`]).
+    pub(crate) fn clear_keeping(&mut self, max_bytes: usize) {
+        self.clear_nodes(max_bytes / std::mem::size_of::<EncodedNode>());
+        self.pairs.clear_keeping(max_bytes / std::mem::size_of::<ChildPair>());
         self.ranges.clear();
         self.value_ref_sides = 0;
         self.dead_pairs = 0;
@@ -270,17 +279,18 @@ impl TddLevel {
     /// The node arena emptied, for a level built in this one's place, of
     /// the capacity it has ([`clear_nodes`](Self::clear_nodes)).
     pub(crate) fn take_nodes(&mut self) -> NodeArena {
-        self.clear_nodes();
+        self.clear_nodes(usize::MAX);
         std::mem::take(&mut self.nodes)
     }
 
     /// Empty the node arena in place, keeping its capacity: on a level whose
-    /// nodes are implied, an arena of the capacity it would have, the
-    /// description still implying the level's nodes.
+    /// nodes are implied, an arena of the capacity it would have, up to
+    /// `max` nodes and where the allocator grants it ([`kept_capacity`]),
+    /// the description still implying the level's nodes.
     #[inline]
-    fn clear_nodes(&mut self) {
+    fn clear_nodes(&mut self, max: usize) {
         match self.implied_by() {
-            Some(_) => self.nodes = NodeArena::from(Vec::with_capacity(self.pairs.node_capacity())),
+            Some(_) => self.nodes = NodeArena::from(kept_capacity(self.pairs.node_capacity(), max)),
             None => self.nodes.stored_mut().clear(),
         }
     }
@@ -293,7 +303,7 @@ impl TddLevel {
     fn drop_structure(&mut self) {
         self.nodes.clear();
         self.nodes.shrink_to_fit();
-        self.pairs.clear();
+        self.pairs.clear_keeping(0);
         self.pairs.shrink_to_fit();
         self.ranges.clear();
         self.ranges.shrink_to_fit();

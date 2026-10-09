@@ -213,21 +213,30 @@ impl PairArena {
 
     /// Empty the arena, keeping its capacity, as [`Vec::clear`] does: an
     /// implicit arena becomes an empty stored one of the capacity it would
-    /// have had.
+    /// have had, where the allocator grants it ([`kept_capacity`]).
     #[inline]
     pub(crate) fn clear(&mut self) {
+        self.clear_keeping(usize::MAX);
+    }
+
+    /// [`clear`](Self::clear), where an implicit arena that stood for more
+    /// than `max` pairs is given no capacity, rather than one allocated to
+    /// be dropped. A stored arena keeps its capacity, whatever it is: the
+    /// caller that caps it checks the capacity anyway.
+    #[inline]
+    pub(crate) fn clear_keeping(&mut self, max: usize) {
         match &self.described {
             None => self.stored.clear(),
-            Some(_) => self.clear_described(),
+            Some(_) => self.clear_described(max),
         }
     }
 
-    /// [`clear`](Self::clear) on an implicit arena, out of line so that a
-    /// stored one's inlines where it is called.
+    /// [`clear_keeping`](Self::clear_keeping) on an implicit arena, out of
+    /// line so that a stored one's inlines where it is called.
     #[inline(never)]
-    fn clear_described(&mut self) {
+    fn clear_described(&mut self, max: usize) {
         if let Some(d) = self.described.take() {
-            self.stored = Vec::with_capacity(d.capacity);
+            self.stored = kept_capacity(d.capacity, max);
         }
     }
 
@@ -285,6 +294,24 @@ impl PairArena {
         let described = self.described.as_ref().map(|d| Box::new(Described { level: d.level.clone(), len: d.len, capacity: d.len, node_capacity: d.level.nodes }));
         PairArena { stored: self.stored.clone(), described }
     }
+}
+
+/// An empty vector of the `capacity` an arena held as a description would
+/// have had, for the stored arena a clear makes of it: none past `max`, and
+/// none where the allocator refuses it. The capacity is the stored route's,
+/// so that the meters read the same; no element is written into it, and
+/// the level built in it grows its arena through the engine as any other.
+/// Not [`Vec::with_capacity`], whose refusal aborts the process: the
+/// capacity is what a row loop's doublings or a complete level's
+/// reservation reached, which an address-space limit can refuse once the
+/// stored pairs it held are gone.
+pub(crate) fn kept_capacity<T>(capacity: usize, max: usize) -> Vec<T> {
+    let mut v = Vec::new();
+    if capacity <= max {
+        // Refused, the arena stays empty.
+        let _ = v.try_reserve_exact(capacity);
+    }
+    v
 }
 
 impl From<Vec<ChildPair>> for PairArena {

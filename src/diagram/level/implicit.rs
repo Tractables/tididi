@@ -12,13 +12,14 @@
 
 use crate::diagram::primitives::{ChildPair, EncodedChildRef, EncodedNode};
 use crate::diagram::ChildSide;
+use crate::limits::{Limits, OperationError};
 
 use super::{LevelState, TddLevel};
 
 mod storage;
 mod iter;
 mod close;
-pub(crate) use storage::PairArena;
+pub(crate) use storage::{kept_capacity, PairArena};
 pub(crate) use iter::{NodeCursor, Places};
 
 // A test builds every level stored, none described, as the oracle the
@@ -355,21 +356,42 @@ impl ImplicitLevel {
     /// among them gives: every setting of the digits that move the side's
     /// slot, those that leave it alone read at zero only.
     fn each_on_side(digits: &[Digit], side: ChildSide, start: i64, mut f: impl FnMut(i64, usize)) {
-        let step = |d: &Digit| match side {
-            ChildSide::Left => d.left,
-            ChildSide::Right => d.right,
-        };
+        let step = |d: &Digit| Self::step(d, side);
         let moving: Vec<Digit> =
             digits.iter().filter(|d| step(d) != 0).map(|d| Digit { left: step(d), right: d.node, ..*d }).collect();
         each_place(&moving, (start, 0), |s, node| f(s, node as usize));
     }
 
+    /// What a step of digit `d` adds to the child slot on `side`.
+    #[inline(always)]
+    fn step(d: &Digit, side: ChildSide) -> i64 {
+        match side {
+            ChildSide::Left => d.left,
+            ChildSide::Right => d.right,
+        }
+    }
+
     /// The child slots on `side` the pairs of a node add to its first: one
-    /// for every setting of the place digits that move the side's slot.
-    pub(crate) fn side_offsets(&self, side: ChildSide) -> Vec<i64> {
-        let mut out = Vec::new();
+    /// for every setting of the place digits that move the side's slot,
+    /// written to `out`, empty, its room reserved through `lim`.
+    ///
+    /// A node of an implicit level may have billions of pairs, and as many
+    /// offsets on a side: the room is reserved before the first is written.
+    ///
+    /// # Errors
+    ///
+    /// `Err(OperationError::OverBudget)` when the room is refused.
+    pub(crate) fn side_offsets(&self, side: ChildSide, lim: &Limits, out: &mut Vec<i64>) -> Result<(), OperationError> {
+        lim.reserve_exact(out, self.side_offset_count(side))?;
         Self::each_on_side(&self.digits[..self.within], side, 0, |s, _| out.push(s));
-        out
+        Ok(())
+    }
+
+    /// How many offsets [`side_offsets`](Self::side_offsets) gives on
+    /// `side`: the product of the radices of the place digits that move the
+    /// side's slot, at most a node's pairs.
+    pub(crate) fn side_offset_count(&self, side: ChildSide) -> usize {
+        self.digits[..self.within].iter().filter(|d| Self::step(d, side) != 0).map(|d| d.radix).product()
     }
 
     /// Calls `f` with the child slot on `side` of the first pair of every
@@ -472,7 +494,7 @@ impl ImplicitLevel {
         };
         // Side by side reads the places that move each side; when those are
         // as many as a node's pairs, pair by pair reads fewer.
-        let moving = |side| self.side_offsets(side).len();
+        let moving = |side| self.side_offset_count(side);
         let holds = if moving(ChildSide::Left) + moving(ChildSide::Right) < self.per_node {
             self.holds_moved(&fitted, ChildSide::Left, &mut in_turn(), &left)
                 && self.holds_moved(&fitted, ChildSide::Right, &mut in_turn(), &right)

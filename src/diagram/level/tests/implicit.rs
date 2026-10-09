@@ -394,6 +394,34 @@ fn an_implicit_arena_reads_as_the_stored_one() {
     }
 }
 
+/// A level held as a description stands for arenas of a capacity it does
+/// not allocate. Cleared where the allocator refuses that capacity, it
+/// leaves empty arenas, not an abort, and the level pool, which keeps no
+/// arena past its cap, gives it none.
+#[test]
+fn an_implicit_arena_past_the_allocator_clears_to_an_empty_one() {
+    let pairs: Pairs = (0..8).map(|i| (0..8).map(|m| (8 * i + m, m)).collect()).collect();
+    let stored = level_of(&pairs);
+    let d = ImplicitLevel::fit(&stored).unwrap();
+    // More bytes than an allocation may have: `Vec::with_capacity` panics
+    // on it, as it aborts on an address-space limit's refusal.
+    let huge = isize::MAX as usize / std::mem::size_of::<ChildPair>() + 1;
+    for pooled in [false, true] {
+        let mut level = TddLevel::new();
+        level.pairs.describe(d.clone(), huge, huge);
+        assert_eq!((level.pairs.capacity(), level.node_capacity()), (huge, huge));
+        let kept = match pooled {
+            true => crate::diagram::pool::reset_level(&mut level),
+            false => {
+                level.clear();
+                0
+            }
+        };
+        assert!(level.pairs.is_empty() && level.pairs.implicit().is_none() && level.nodes().is_empty());
+        assert_eq!((level.pairs.capacity(), level.node_capacity(), kept), (0, 0, 0));
+    }
+}
+
 #[test]
 #[cfg(debug_assertions)]
 #[should_panic(expected = "an implicit level's pairs are not stored")]
@@ -755,4 +783,23 @@ fn digits_hold_reads_every_place() {
         if every { held += 1 } else { failed += 1 }
     }
     assert!(held > 0 && failed > 0, "held {held}, failed {failed}");
+}
+
+/// A node of 2^31 pairs, each a slot further on the left and all at one
+/// slot on the right, has as many offsets on the left: they are counted
+/// without being written, and refused room is an error, not an abort.
+#[test]
+fn the_offsets_of_a_node_of_billions_of_pairs_are_counted_and_reserved() {
+    let pairs = 1usize << 31;
+    let d = ImplicitLevel::assemble(1, pairs, (0, 0), &[(pairs, (1, 0))], &[]);
+    assert_eq!(d.side_offset_count(ChildSide::Left), pairs);
+    assert_eq!(d.side_offset_count(ChildSide::Right), 1);
+    let lim = crate::limits::Limits::new();
+    let mut out = Vec::new();
+    d.side_offsets(ChildSide::Right, &lim, &mut out).expect("one offset");
+    assert_eq!(out, [0]);
+    lim.refuse_nth_reserve(0);
+    let mut out = Vec::new();
+    assert_eq!(d.side_offsets(ChildSide::Left, &lim, &mut out), Err(crate::limits::OperationError::OverBudget));
+    assert_eq!(out.capacity(), 0);
 }

@@ -44,7 +44,11 @@ pub(crate) const MAX_LEVEL_ARENA_BYTES: usize = 32 * 1024 * 1024;
 ///
 /// Beyond clearing content, also enforces the per-arena capacity cap
 /// (`MAX_LEVEL_ARENA_BYTES`): any arena (`nodes`/`pairs`/`ranges`) whose
-/// `.capacity()` exceeds the cap is replaced with a fresh empty `Vec`.
+/// `.capacity()` exceeds the cap is replaced with a fresh empty `Vec`. An
+/// implicit level's arenas, which hold no allocation, are given the
+/// capacity they stand for only below the cap
+/// ([`TddLevel::clear_keeping`]): the capacity of a level of billions of
+/// pairs would be allocated only to be dropped.
 ///
 /// Runs on the return path, so everything parked is already in this state.
 #[inline]
@@ -60,7 +64,7 @@ pub(crate) fn reset_level(level: &mut TddLevel) -> u64 {
         }
         bytes as u64
     }
-    level.clear();
+    level.clear_keeping(MAX_LEVEL_ARENA_BYTES);
     retain(level.nodes.stored_mut()) + retain(level.pairs.stored_mut()) + retain(&mut level.ranges)
 }
 

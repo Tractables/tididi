@@ -374,7 +374,7 @@ pub(crate) fn debug_assert_all_reached(tdd: &Tdd) {
         level_base[i + 1] = level_base[i] + words(tdd.reference_slot_count(VtreeIdx(i as u32)));
     }
     let mut marks = vec![0u64; level_base[num_nodes]];
-    classic_mark(tdd, &level_base, &mut marks);
+    classic_mark(&Limits::new(), tdd, &level_base, &mut marks).expect("unbounded limits refuse no offsets");
     for t in tdd.vtree.internal_bottomup().map(|(t, _, _)| t) {
         if !tdd.is_structural_internal(t) {
             continue;
@@ -575,7 +575,7 @@ fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
         marks.resize(total, 0);
     }
     // ── Pass 1 (top-down): mark reachable nodes ──────────────────────────
-    classic_mark(tdd, level_base, &mut marks[..total]);
+    classic_mark(eng.limits(), tdd, level_base, &mut marks[..total])?;
 
     // `level_dirty[t]` records whether level `t` lost a node; charged for
     // this prune and handed back with it.
@@ -922,11 +922,14 @@ fn seed_dirty_levels(tdd: &mut Tdd, level_dirty: &[bool]) {
 /// root first (raw indices do not follow topological order on a rotated
 /// vtree). `marks` must be clear and `level_base`-indexed, in words, with a
 /// block for every structural internal level.
-fn classic_mark(tdd: &Tdd, level_base: &[usize], marks: &mut [u64]) {
+///
+/// Returns `Err(OperationError::OverBudget)` if the offsets an implicit
+/// level's nodes are read in are refused ([`mark_described`]).
+fn classic_mark(lim: &Limits, tdd: &Tdd, level_base: &[usize], marks: &mut [u64]) -> Result<(), OperationError> {
     let vtree = &tdd.vtree;
     // An output on a leaf or marginal level has no structural level under it.
     if !tdd.is_structural_internal(tdd.output.vtree) {
-        return;
+        return Ok(());
     }
     mark(marks, level_base[tdd.output.vtree.idx()], tdd.output.local.idx());
     let block = |c: VtreeIdx| tdd.is_structural_internal(c).then(|| level_base[c.idx()]);
@@ -939,8 +942,9 @@ fn classic_mark(tdd: &Tdd, level_base: &[usize], marks: &mut [u64]) {
             continue;
         }
         let (left, right) = vtree.children(t);
-        mark_children_of_level(tdd, t, level_base[t.idx()], block(left), block(right), marks);
+        mark_children_of_level(lim, tdd, t, level_base[t.idx()], block(left), block(right), marks)?;
     }
+    Ok(())
 }
 
 /// Mark every child slot the marked nodes of level `t` name. `base` is the
@@ -951,19 +955,23 @@ fn classic_mark(tdd: &Tdd, level_base: &[usize], marks: &mut [u64]) {
 /// A side of a marginal child may be an inline count rather than a slot; such a
 /// side names no child slot, so the decoder answers `None` for it and only real
 /// slots are marked. A structural side is its own slot.
+///
+/// Returns `Err(OperationError::OverBudget)` if the offsets an implicit
+/// level's nodes are read in are refused ([`mark_described`]).
 fn mark_children_of_level(
+    lim: &Limits,
     tdd: &Tdd,
     t: VtreeIdx,
     base: usize,
     left: Option<usize>,
     right: Option<usize>,
     marks: &mut [u64],
-) {
+) -> Result<(), OperationError> {
     match (left, right) {
-        (Some(l), Some(r)) => mark_sides::<true, true>(tdd, t, base, l, r, marks),
-        (Some(l), None) => mark_sides::<true, false>(tdd, t, base, l, 0, marks),
-        (None, Some(r)) => mark_sides::<false, true>(tdd, t, base, 0, r, marks),
-        (None, None) => {}
+        (Some(l), Some(r)) => mark_sides::<true, true>(lim, tdd, t, base, l, r, marks),
+        (Some(l), None) => mark_sides::<true, false>(lim, tdd, t, base, l, 0, marks),
+        (None, Some(r)) => mark_sides::<false, true>(lim, tdd, t, base, 0, r, marks),
+        (None, None) => Ok(()),
     }
 }
 
@@ -971,13 +979,14 @@ fn mark_children_of_level(
 /// `left_base` when `LEFT`, and the right child's at `right_base` when
 /// `RIGHT`.
 fn mark_sides<const LEFT: bool, const RIGHT: bool>(
+    lim: &Limits,
     tdd: &Tdd,
     t: VtreeIdx,
     base: usize,
     left_base: usize,
     right_base: usize,
     marks: &mut [u64],
-) {
+) -> Result<(), OperationError> {
     let (left, right) = tdd.vtree.children(t);
     let left_view = tdd.levels[left.idx()].child_decoder();
     let right_view = tdd.levels[right.idx()].child_decoder();
@@ -989,8 +998,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     {
         // A side's distinct offsets a marked node, never more marks than
         // its pairs.
-        mark_described::<LEFT, RIGHT>(d, level.slot_count(), base, left_base, right_base, marks);
-        return;
+        return mark_described::<LEFT, RIGHT>(lim, d, level.slot_count(), base, left_base, right_base, marks);
     }
     let (mut left_marks, mut right_marks) = (Marker::new(left_base), Marker::new(right_base));
     let mut mark = |marks: &mut [u64], pair: ChildPair| {
@@ -1018,6 +1026,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     }
     left_marks.finish(marks);
     right_marks.finish(marks);
+    Ok(())
 }
 
 /// [`for_each_marked`] on the block of `width` slots at word `base` of
@@ -1047,32 +1056,40 @@ fn for_each_marked_beside(width: usize, base: usize, marks: &mut [u64], mut f: i
 /// slots on a side are read off the node digits that move the side. What
 /// is marked is what the pairs would mark, read in about the side's
 /// distinct offsets a node, not its pairs.
+///
+/// Returns `Err(OperationError::OverBudget)` if the offsets of a side,
+/// which a node of billions of pairs has billions of, are refused.
 fn mark_described<const LEFT: bool, const RIGHT: bool>(
+    lim: &Limits,
     d: &ImplicitLevel,
     width: usize,
     base: usize,
     left_base: usize,
     right_base: usize,
     marks: &mut [u64],
-) {
-    /// The marks of one side: its offsets, where its block starts, and the
-    /// slot the last marked node started at there.
-    struct Side {
-        offsets: Vec<i64>,
+) -> Result<(), OperationError> {
+    /// The marks of one side: its offsets, charged while they are read,
+    /// where its block starts, and the slot the last marked node started
+    /// at there.
+    struct Side<'l> {
+        offsets: Transient<'l, Vec<i64>>,
         base: usize,
         marker: Marker,
         last: Option<i64>,
     }
-    impl Side {
-        fn new(d: &ImplicitLevel, side: ChildSide, on: bool, base: usize) -> Side {
-            let offsets = if on { d.side_offsets(side) } else { Vec::new() };
-            Side { offsets, base, marker: Marker::new(base), last: None }
+    impl<'l> Side<'l> {
+        fn new(lim: &'l Limits, d: &ImplicitLevel, side: ChildSide, on: bool, base: usize) -> Result<Side<'l>, OperationError> {
+            let mut offsets = Transient::new(lim, Vec::new());
+            if on {
+                d.side_offsets(side, lim, &mut offsets)?;
+            }
+            Ok(Side { offsets, base, marker: Marker::new(base), last: None })
         }
 
         /// Mark the slots of a node that starts at slot `first`.
         #[inline(always)]
         fn mark(&mut self, marks: &mut [u64], first: i64) {
-            for &o in &self.offsets {
+            for &o in self.offsets.iter() {
                 self.marker.mark(marks, self.base, (first + o) as usize);
             }
         }
@@ -1087,8 +1104,8 @@ fn mark_described<const LEFT: bool, const RIGHT: bool>(
             }
         }
     }
-    let mut left = Side::new(d, ChildSide::Left, LEFT, left_base);
-    let mut right = Side::new(d, ChildSide::Right, RIGHT, right_base);
+    let mut left = Side::new(lim, d, ChildSide::Left, LEFT, left_base)?;
+    let mut right = Side::new(lim, d, ChildSide::Right, RIGHT, right_base)?;
     if all_marked(&marks[base..base + words(width)], width) {
         if LEFT {
             d.each_side_first(ChildSide::Left, |first, _| left.mark(marks, first));
@@ -1110,6 +1127,7 @@ fn mark_described<const LEFT: bool, const RIGHT: bool>(
     }
     left.marker.finish(marks);
     right.marker.finish(marks);
+    Ok(())
 }
 
 // ── The seeded walk ──────────────────────────────────────────────────────────
@@ -1183,7 +1201,7 @@ fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[bool]>) -> Res
         };
         let (lb, rb) = (block(left, lw)?, block(right, rw)?);
 
-        mark_children_of_level(tdd, t, visits[i].base, lb, rb, marks);
+        mark_children_of_level(eng.limits(), tdd, t, visits[i].base, lb, rb, marks)?;
 
         let (lc, rc) = (settle_child(marks, lb, lw), settle_child(marks, rb, rw));
         visits[i].left = lc;
