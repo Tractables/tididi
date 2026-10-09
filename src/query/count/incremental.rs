@@ -14,6 +14,7 @@ use crate::limits::OperationError;
 use crate::value::{Retention, Count, CountRead, IntFold};
 use crate::vtree::{VarId, VtreeIdx};
 use super::column::{CountColumn, QueryCounts};
+use super::prepared::Prepared;
 
 /// The most variables [`ModelCounter::count_table`] lists: its table holds
 /// one count per assignment of them.
@@ -24,6 +25,7 @@ pub const MAX_COUNT_TABLE_VARS: usize = 30;
 /// overflows.
 pub(crate) struct OverflowingCounts<'a, C> {
     pins: &'a [PinState],
+    prepared: &'a Prepared,
     convention: PinSemantics,
     column: PhantomData<C>,
 }
@@ -68,6 +70,13 @@ impl<C: CountColumn> LevelFold for OverflowingCounts<'_, C> {
         Ok(())
     }
 
+    fn prepared_level(
+        &self, eng: &Engine, tdd: &Tdd, cols: &mut [C],
+        t: VtreeIdx, gate: &mut crate::limits::PollGate,
+    ) -> Result<bool, OperationError> {
+        if C::PREPARED_READS { self.prepared.fold_level(eng, tdd, cols, t, self.pins, gate) } else { Ok(false) }
+    }
+
     /// The shared two-pass integer fold, with this query's child readers.
     ///
     /// Reading a child is the only thing that differs from any other integer
@@ -81,7 +90,7 @@ impl<C: CountColumn> LevelFold for OverflowingCounts<'_, C> {
     ) -> Count {
         if !left.view.is_marginal() && !right.view.is_marginal()
             && let Some(stored) = pairs.as_slice()
-            && let Some(total) = C::fold_structural(stored, left.col, right.col)
+            && let Some(total) = C::fold_structural(stored.iter().copied(), left.col, right.col)
         {
             return Count::from_u128(total);
         }
@@ -90,10 +99,10 @@ impl<C: CountColumn> LevelFold for OverflowingCounts<'_, C> {
 }
 
 /// Exported columns start in their destination format; retained counts begin narrow.
-pub(super) struct CountQuery<C>(PinSemantics, PhantomData<C>);
+pub(super) struct CountQuery<C>(PinSemantics, PhantomData<C>, Prepared);
 
 impl<C> CountQuery<C> {
-    pub(super) fn new(convention: PinSemantics) -> Self { Self(convention, PhantomData) }
+    pub(super) fn new(convention: PinSemantics) -> Self { Self(convention, PhantomData, Prepared::default()) }
 }
 
 impl<C: CountColumn> CachedQuery for CountQuery<C> {
@@ -109,7 +118,7 @@ impl<C: CountColumn> CachedQuery for CountQuery<C> {
     }
 
     fn fold<'a>(&'a self, pins: &'a [PinState]) -> OverflowingCounts<'a, C> {
-        OverflowingCounts { pins, convention: self.0, column: PhantomData }
+        OverflowingCounts { pins, prepared: &self.2, convention: self.0, column: PhantomData }
     }
 
     fn false_value(&self) -> BigUint {
@@ -117,6 +126,7 @@ impl<C: CountColumn> CachedQuery for CountQuery<C> {
     }
 
     fn output(&self, col: &C, i: usize) -> BigUint {
+        let i = if C::PREPARED_READS { self.2.output.unwrap_or(i) } else { i };
         match col.get(i) {
             CountRead::Fast(value) => BigUint::from(value),
             CountRead::Big(value) => value.clone(),
@@ -314,6 +324,11 @@ impl<D: Borrow<Tdd>> std::fmt::Debug for BoundCounter<'_, D> {
 }
 
 impl<D: Borrow<Tdd>> BoundCounter<'_, D> {
+    /// Prepare compact reads with [`Counter::prepare`] semantics under this engine's limits.
+    pub fn prepare(&mut self) -> Result<(), OperationError> {
+        self.counter.get_mut().prepare_with(self.engine)
+    }
+
     /// Set or clear a pin with the validation and deferred refresh of [`ModelCounter::set_pin`].
     pub fn set_pin(&mut self, var: VarId, val: Option<bool>) -> Result<(), OperationError> {
         self.counter.get_mut().set_pin(var, val)
@@ -458,6 +473,53 @@ impl<D: Borrow<Tdd>> Counter<D> {
     /// ```
     pub fn bind<'batch>(&'batch mut self, engine: &'batch Engine) -> BoundCounter<'batch, D> {
         BoundCounter { counter: BoundState::Borrowed(self), engine }
+    }
+
+    /// Prepare compact read storage for repeated counts under changing observations.
+    ///
+    /// Preparation scans stored structural levels and retains an additional compact
+    /// copy of sufficiently large levels. Its narrower references and cached
+    /// implications can reduce subsequent refresh work. The original circuit stays
+    /// available through [`Self::circuit`]; preparation therefore increases total
+    /// retained memory and is intended for long-lived counters, not a single count.
+    /// Small, implicit and marginal levels keep their ordinary readers.
+    ///
+    /// Pins are preserved and cached counts are invalidated on success. Repeating
+    /// preparation is a no-op apart from checking the current limits. Dropping the
+    /// counter or calling [`Self::into_inner`] releases the prepared storage.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::OverBudget`] for a refused buffer reservation or
+    /// [`OperationError::Stopped`] for an armed stop. A refusal preserves the
+    /// existing pins, cached values and preparation. Bind the counter to an engine
+    /// with [`Self::bind`] to use that engine's limits for preparation.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(4));
+    /// let f = Tdd::clause(&vtree, [1, -2])?;
+    /// # tididi::test_helpers::assert_canonical(&f);
+    /// let mut counter = f.counter()?;
+    /// counter.prepare()?;
+    /// counter.observe([-1])?;
+    /// assert_eq!(counter.model_count()?, 4u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn prepare(&mut self) -> Result<(), OperationError> {
+        let context = Arc::clone(self.tdd.borrow().context());
+        context.run(|eng| self.prepare_with(eng))
+    }
+
+    fn prepare_with(&mut self, eng: &Engine) -> Result<(), OperationError> {
+        let _op = eng.limits().enter()?;
+        eng.limits().check_stop()?;
+        if self.cache.query().2.ready { return Ok(()); }
+        let prepared = Prepared::new(eng, self.tdd.borrow())?;
+        let convention = self.cache.query().0;
+        self.cache.replace_query(CountQuery(convention, PhantomData, prepared));
+        Ok(())
     }
 
     /// Reserve one pin slot per vtree leaf.

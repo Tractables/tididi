@@ -79,7 +79,7 @@ impl IntFold {
     /// costs what any other does.
     #[inline]
     pub(crate) fn fold_structural_u64(pairs: &[ChildPair], left: &[u128], right: &[u128]) -> Option<u128> {
-        Self::fold_structural_by(pairs,
+        Self::fold_structural_by(pairs.iter().copied(),
             |side| left[side.0 as usize] as u64 as u128,
             |side| right[side.0 as usize] as u64 as u128)
     }
@@ -88,18 +88,16 @@ impl IntFold {
     /// Readers return values at most `u64::MAX`, so their product fits u128.
     #[inline]
     pub(crate) fn fold_structural_by(
-        pairs: &[ChildPair],
+        mut pairs: impl Iterator<Item = ChildPair>,
         left: impl Fn(EncodedChildRef) -> u128,
         right: impl Fn(EncodedChildRef) -> u128,
     ) -> Option<u128> {
         let (mut t0, mut t1) = (0u128, 0u128);
-        let mut two = pairs.chunks_exact(2);
-        for p in two.by_ref() {
-            t0 = t0.checked_add(left(p[0].left) * right(p[0].right))?;
-            t1 = t1.checked_add(left(p[1].left) * right(p[1].right))?;
-        }
-        for p in two.remainder() {
+        while let Some(p) = pairs.next() {
             t0 = t0.checked_add(left(p.left) * right(p.right))?;
+            if let Some(p) = pairs.next() {
+                t1 = t1.checked_add(left(p.left) * right(p.right))?;
+            }
         }
         t0.checked_add(t1)
     }

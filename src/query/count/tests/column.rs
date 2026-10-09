@@ -55,8 +55,8 @@ fn mixed_column_widths_use_exact_widening_products() {
     let pair = crate::test_helpers::pair(0, 0);
     let expected = (u64::MAX as u128) * (u64::MAX as u128);
     for (left, right) in [(&narrow, &narrow), (&narrow, &wide), (&wide, &narrow), (&wide, &wide)] {
-        assert_eq!(QueryCounts::fold_structural(&[pair], left, right), Some(expected));
-        assert_eq!(QueryCounts::fold_structural(&[pair, pair], left, right), None);
+        assert_eq!(QueryCounts::fold_structural([pair].into_iter(), left, right), Some(expected));
+        assert_eq!(QueryCounts::fold_structural([pair, pair].into_iter(), left, right), None);
     }
 }
 

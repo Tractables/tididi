@@ -74,6 +74,12 @@ pub(crate) trait LevelFold {
     /// the answer for its whole subtree.
     fn marginal_column(&self, eng: &Engine, tdd: &Tdd, t: VtreeIdx, col: &mut Self::Col) -> Result<(), OperationError>;
 
+    /// Fill a prepared internal column when this query has a private read plan.
+    fn prepared_level(
+        &self, _eng: &Engine, _tdd: &Tdd, _cols: &mut [Self::Col],
+        _t: VtreeIdx, _gate: &mut PollGate,
+    ) -> Result<bool, OperationError> { Ok(false) }
+
     /// Fold node `i` of an internal level: `Σ over pairs (left × right)`.
     fn fold_node(
         &self,
@@ -160,6 +166,7 @@ pub(crate) fn fold_level<F: LevelFold>(
     if tdd.levels[ti].is_marginal() {
         return f.marginal_column(eng, tdd, t, &mut cols[ti]);
     }
+    if f.prepared_level(eng, tdd, cols, t, gate)? { return Ok(()); }
     let (left, right) = tdd.vtree.children(t);
     let (left_idx, right_idx) = (left.idx(), right.idx());
     let left_view = tdd.levels[left_idx].child_decoder();

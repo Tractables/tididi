@@ -9,10 +9,12 @@ use smallvec::SmallVec;
 
 /// Storage operations used by the shared exact counting fold.
 pub(crate) trait CountColumn: Column + Charged + Sized {
+    /// Only retained counters can install a compact read plan.
+    const PREPARED_READS: bool = false;
     fn try_with_width(eng: &Engine, width: usize) -> Result<Self, OperationError>;
     fn get(&self, i: usize) -> CountRead<'_>;
     fn set(&mut self, eng: &Engine, i: usize, value: Count) -> Result<(), OperationError>;
-    fn fold_structural(pairs: &[ChildPair], left: &Self, right: &Self) -> Option<u128>;
+    fn fold_structural(pairs: impl Iterator<Item = ChildPair>, left: &Self, right: &Self) -> Option<u128>;
 }
 
 impl Column for CountVec {
@@ -30,10 +32,12 @@ impl CountColumn for CountVec {
         CountVec::set(self, eng, i, value)
     }
 
-    fn fold_structural(pairs: &[ChildPair], left: &Self, right: &Self) -> Option<u128> {
+    fn fold_structural(pairs: impl Iterator<Item = ChildPair>, left: &Self, right: &Self) -> Option<u128> {
         let (left, right) = (left.as_count_ref(), right.as_count_ref());
         if left.all_u64() && right.all_u64() {
-            IntFold::fold_structural_u64(pairs, left.fast_slice(), right.fast_slice())
+            IntFold::fold_structural_by(pairs,
+                |k| left.fast_slice()[k.raw() as usize] as u64 as u128,
+                |k| right.fast_slice()[k.raw() as usize] as u64 as u128)
         } else { None }
     }
 }
@@ -62,6 +66,8 @@ impl Column for QueryCounts {
 }
 
 impl CountColumn for QueryCounts {
+    const PREPARED_READS: bool = true;
+
     #[inline(always)]
     fn try_with_width(eng: &Engine, width: usize) -> Result<Self, OperationError> {
         let mut v = if width <= LEAF_WIDTH {
@@ -93,7 +99,7 @@ impl CountColumn for QueryCounts {
         }
     }
 
-    fn fold_structural(pairs: &[ChildPair], left: &Self, right: &Self) -> Option<u128> {
+    fn fold_structural(pairs: impl Iterator<Item = ChildPair>, left: &Self, right: &Self) -> Option<u128> {
         match (left, right) {
             (Self::Narrow(l), Self::Narrow(r)) => {
                 let (l, r) = (l.as_slice(), r.as_slice());

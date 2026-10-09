@@ -6,6 +6,7 @@
 
 mod incremental;
 mod column;
+mod prepared;
 
 use crate::Engine;
 use crate::limits::OperationError;

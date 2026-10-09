@@ -63,6 +63,7 @@ The [configuration example](crate::guide::examples::configurations) uses this
 for a user's changing selections.
 [`count_table`](crate::query::ModelCounter::count_table) lists the count under
 each assignment of a few variables, on top of the current observations.
+[`Counter::prepare`](crate::query::Counter::prepare) builds compact storage for repeated counts.
 
 ## Condition, quantify and rename
 

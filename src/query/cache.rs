@@ -226,6 +226,8 @@ impl<Q: CachedQuery> QueryCache<Q> {
         Ok(())
     }
 
+    pub(super) fn query(&self) -> &Q { &self.query }
+
     /// Swap in a new query, invalidating every cached column; observations stay.
     pub(super) fn replace_query(&mut self, query: Q) -> Q {
         self.observations.invalidate();
