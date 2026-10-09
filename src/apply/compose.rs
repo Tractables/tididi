@@ -102,6 +102,12 @@ pub enum Quantification {
     /// operand, before the product. The default: it is the rewrite that can
     /// remove a variable from the problem rather than from the answer, and it
     /// costs one pass over an operand that is about to be conjoined anyway.
+    ///
+    /// An operand with more than sixteen times the other's pairs is not
+    /// quantified before the product: the product reaches only the part
+    /// of it that the smaller operand leads to, and quantifying after the
+    /// product sweeps only that part, where a pass over the large operand
+    /// would sweep all of it. The smaller operand is still quantified first.
     #[default]
     Fused,
     /// [`Fused`](Quantification::Fused), and additionally do not build a vtree
@@ -366,6 +372,17 @@ fn quantified_subtrees(
 /// the references into the leaf's level: sound, and deliberately incomplete —
 /// a missed target only stays in the product.
 ///
+/// Nothing is pushed into an operand with more than [`PUSH_RATIO`] times the
+/// other's pairs ([`far_larger`]). A push sweeps the whole operand it goes
+/// into, and the argument above — the ancestors it regroups are levels the
+/// quantification after the product regroups anyway — assumes the product is
+/// about as large as that operand. Beside a far smaller operand it is not: the
+/// product reaches only the cells the smaller operand's pairs lead to, and the
+/// quantification after it sweeps only those, so the push would pay a pass
+/// over the large operand to remove variables from cells the product never
+/// builds. The smaller operand is still pushed into: its pass is the cheap
+/// one, and it shrinks the product.
+///
 /// Every target stays a target. A leaf removed here leaves both operands
 /// constant over it, so quantifying it again is the identity; keeping it is
 /// what holds each subtree's target set down-closed, and a subtree that is not
@@ -417,6 +434,7 @@ pub(super) fn push_local_targets(
         let mut push = Transient::new(lim, Vec::new());
         lim.try_resize(&mut push, num_nodes, 0u8)?;
         let mut costs: [Option<Transient<'_, LevelPairs>>; 2] = [None, None];
+        let large = far_larger(&f, &g);
         for &t in vtree.bottomup_slice() {
             let parent = vtree.node(t).parent();
             if !covered[t.idx()] || parent.is_some_and(|p| covered[p.idx()]) {
@@ -424,7 +442,7 @@ pub(super) fn push_local_targets(
             }
             let alone = parent.is_none_or(|p| !whole[p.idx()]);
             for (side, free, operand) in [(0, &*free_in_f, &f), (1, &*free_in_g, &g)] {
-                if free[t.idx()] {
+                if free[t.idx()] || large == Some(side) {
                     continue;
                 }
                 let pays = alone || {
@@ -462,6 +480,40 @@ pub(super) fn push_local_targets(
         g = super::project::exists_targets_on(eng, g, &into_g, false, ReductionPlan::default())?;
     }
     Ok((f, g))
+}
+
+/// How many times the other operand's pairs an operand of
+/// [`Quantification::Fused`] may hold and still be quantified before the
+/// product ([`push_local_targets`]).
+const PUSH_RATIO: usize = 16;
+
+/// The pair count of each of `tdd`'s nodes, level by level.
+fn pair_stream(tdd: &Tdd) -> impl Iterator<Item = usize> + '_ {
+    tdd.levels.iter().flat_map(crate::diagram::TddLevel::pair_counts)
+}
+
+/// Which operand, `0` for `f` and `1` for `g`, holds more than
+/// [`PUSH_RATIO`] times the other's pairs, if either does.
+///
+/// The two are read node by node, always from the one read less far in
+/// pairs, until one is read whole: that one is the smaller, its count is
+/// exact, and the other is then read only as far as the bound. The cost is a
+/// small multiple of the smaller operand's size, never a pass over a large
+/// one.
+fn far_larger(f: &Tdd, g: &Tdd) -> Option<usize> {
+    let mut sides = [pair_stream(f), pair_stream(g)];
+    let mut sums = [0usize; 2];
+    loop {
+        let side = usize::from(sums[1] < sums[0]);
+        match sides[side].next() {
+            Some(k) => sums[side] += k,
+            None => {
+                let other = if side == 0 { g } else { f };
+                let bound = sums[side].saturating_mul(PUSH_RATIO);
+                return (!other.pair_count_at_most(bound)).then_some(1 - side);
+            }
+        }
+    }
 }
 
 /// An operand's pairs by vtree node: `inside[t]`, those of the levels in

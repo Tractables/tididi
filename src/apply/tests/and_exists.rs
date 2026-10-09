@@ -397,6 +397,56 @@ fn a_quantified_subtree_one_operand_ignores_is_pushed_whole() {
     }
 }
 
+/// An operand with more than sixteen times the other's pairs is not
+/// quantified before the product, even over a whole quantified subtree of its
+/// own: the product reaches only what the small operand leads to, and is
+/// quantified after. The smaller operand is still quantified first, and an
+/// operand of comparable size is, as before.
+#[test]
+fn a_far_larger_operand_is_left_to_the_product() {
+    // Leaves 1..=16 left to right: the root splits 1..=8 from 9..=16, the
+    // quantified subtree.
+    let vtree = Arc::new(Vtree::balanced(16));
+    let vars: Vec<VarId> = (9..=16).map(VarId).collect();
+    // `f` equates bits 1..=7 with 9..=15, one root pair per code, and is free
+    // over 8 and 16.
+    let equal = |pairs: &[(i32, i32)]| -> Vec<Vec<i32>> {
+        pairs.iter().flat_map(|&(a, b)| [vec![-a, b], vec![a, -b]]).collect()
+    };
+    let f = compile_clauses(&vtree, &equal(&[(1, 9), (2, 10), (3, 11), (4, 12), (5, 13), (6, 14), (7, 15)]));
+    // Small, and free over the quantified subtree.
+    let free = compile_clauses(&vtree, &[vec![1], vec![-2]]);
+    // Small, and the only one to constrain 16.
+    let tail = compile_clauses(&vtree, &[vec![1], vec![-16]]);
+    // Within sixteen times `f`'s size, and free over the quantified subtree.
+    let near = compile_clauses(&vtree, &equal(&[(1, 5), (2, 6), (3, 7), (4, 8)]));
+    let pairs = |t: &Tdd| t.pair_count();
+    for small in [&free, &tail] {
+        assert!(pairs(&f) > 16 * pairs(small), "{} pairs against {}", pairs(&f), pairs(small));
+    }
+    assert!(pairs(&f) <= 16 * pairs(&near), "{} pairs against {}", pairs(&f), pairs(&near));
+    let (f_changed, g_changed, _, _) = pushed(&f, &free, &vars);
+    assert!(!f_changed && !g_changed, "the far larger operand was quantified first");
+    let (f_changed, g_changed, _, tail2) = pushed(&f, &tail, &vars);
+    assert!(!f_changed && g_changed, "the smaller operand was not quantified first");
+    assert!(tail2.equivalent(&tail.clone().exists_vars(&vars).unwrap()).unwrap());
+    // The guard reads sizes, not sides.
+    let (g_changed, f_changed, _, _) = pushed(&free, &f, &vars);
+    assert!(!f_changed && !g_changed, "the far larger operand was quantified first, on the right");
+    let (f_changed, g_changed, _, _) = pushed(&f, &near, &vars);
+    assert!(f_changed && !g_changed, "an operand of comparable size was not quantified first");
+    let eng = Engine::new();
+    for (g, what) in [(&free, "beside a small operand"), (&tail, "beside a small operand it shares nothing with"), (&near, "beside a comparable operand")] {
+        for how in FUSED {
+            assert_same_shape(
+                &eng.and_exists_with(f.clone(), g.clone(), &vars, how).unwrap(),
+                &eng.and_exists_with(f.clone(), g.clone(), &vars, Quantification::Product).unwrap(),
+                what,
+            );
+        }
+    }
+}
+
 /// The low bits of a quantified block that one operand happens to be constant
 /// over — a range whose size ends in zero bits — stay in the product: the block
 /// is quantified whole after it anyway, and pushing them would only regroup
