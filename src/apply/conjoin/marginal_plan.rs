@@ -282,7 +282,7 @@ pub(super) fn build_side_masks<const RIGHT: bool>(
         return Ok(());
     }
     let shift = bucket_shift(g_child_width);
-    build_live_cols_bitmask(eng, f_child_width, g_child_width, base, node_idx, &mut out.live_cols, shift)?;
+    build_live_cols_bitmask(eng, f_child_width, g_child_width, base, node_idx, out, shift)?;
     let view = plan.view;
     build_reach_masks(eng, right_level, right_width, &mut out.reach,
         |p| view.coord(if RIGHT { p.right } else { p.left }) as usize, shift)

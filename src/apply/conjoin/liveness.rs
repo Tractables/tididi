@@ -50,20 +50,24 @@ pub(super) fn one_sided_masks_pay(cells: usize, child_g_widths: Sides<usize>) ->
 /// One child side's two dead-pair pre-filter masks.
 ///
 /// They are rebuilt from scratch at every masked level ([`build_live_cols_bitmask`]
-/// and [`build_reach_masks`] both `clear()` then resize-with-`0`, so no pooled
-/// content can survive into a later level).
+/// and [`build_reach_masks`] both `clear()` and then write every entry, so no
+/// pooled content can survive into a later level).
 #[derive(Debug, Default)]
 pub(crate) struct PrefilterSideMasks {
     /// Per-f-row live-column bitmasks for this child.
     pub(super) live_cols: Vec<u128>,
     /// Per-g-node reach bitmasks for g's references to this child.
     pub(super) reach: Vec<u128>,
+    /// The child grid's cells as bits, which [`build_live_cols_bitmask`]
+    /// cuts the rows' masks out of ([`alive_bits`]).
+    bits: Vec<u64>,
 }
 
 impl PrefilterSideMasks {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
         visit(&mut self.live_cols);
         visit(&mut self.reach);
+        visit(&mut self.bits);
     }
 }
 
@@ -95,62 +99,89 @@ pub(super) fn bucket_shift(side_width: usize) -> u32 {
 
 /// Per-row live-column-bucket mask. `live_cols[a]` has bit `b >> shift` set
 /// iff `node_idx[base + a*side_width + b] != NO_PRODUCT` for some `b` in that bucket.
+///
+/// A bit-exact side (`shift` 0) reads its grid once as one bit a cell
+/// ([`alive_bits`]) and cuts each row's mask out of those bits, a few
+/// instructions a row whatever its width. Read a cell at a time, with a
+/// compare and a shift each, the scan cost about twelve instructions a cell
+/// and as much as the culls saved on the levels of one multi-pair operand,
+/// whose child grids typically have rows of 2 to 40 cells.
 pub(super) fn build_live_cols_bitmask(
     eng: &Engine,
     k1_side: usize,
     side_width: usize,
     base: usize,
     node_idx: &[u32],
-    live_cols: &mut Vec<u128>,
+    out: &mut PrefilterSideMasks,
     shift: u32,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     debug_assert!(side_width == 0 || (side_width - 1) >> shift < 128);
+    let PrefilterSideMasks { live_cols, bits, .. } = out;
     live_cols.clear();
-    lim.try_resize(live_cols, k1_side, 0u128)?;
+    lim.reserve_exact(live_cols, k1_side)?;
     if side_width == 0 {
+        live_cols.extend(std::iter::repeat_n(0, k1_side));
         return Ok(());
     }
-    // The rows in order, and one dispatch for the whole grid rather than one
-    // per row: `shift` is a property of the side's width.
     let grid = &node_idx[base..base + k1_side * side_width];
-    let rows = grid.chunks_exact(side_width);
-    if shift == 0 {
-        for (slot, row) in live_cols[..k1_side].iter_mut().zip(rows) {
-            *slot = row_mask_exact(row);
-        }
+    if shift != 0 {
+        live_cols.extend(grid.chunks_exact(side_width).map(|row| row_mask_bucketed(row, shift)));
+        return Ok(());
+    }
+    alive_bits(lim, grid, bits)?;
+    let bits = &bits[..];
+    // Row `a`'s cells are bits `a * side_width ..` of the grid's: one window
+    // of 64 bits on a side of 64 columns or fewer, two on a wider one.
+    let low = |n: usize| if n >= 64 { u64::MAX } else { (1u64 << n) - 1 };
+    if side_width <= 64 {
+        let keep = low(side_width);
+        live_cols.extend((0..k1_side).map(|a| u128::from(bits_from(bits, a * side_width) & keep)));
     } else {
-        for (slot, row) in live_cols[..k1_side].iter_mut().zip(rows) {
-            *slot = row_mask_bucketed(row, shift);
-        }
+        let keep = low(side_width - 64);
+        live_cols.extend((0..k1_side).map(|a| {
+            let at = a * side_width;
+            u128::from(bits_from(bits, at)) | u128::from(bits_from(bits, at + 64) & keep) << 64
+        }));
     }
     Ok(())
 }
 
-/// The bit-exact mask of a row: bit `b` set iff column `b` is alive.
-///
-/// One column is one compare and one 64-bit shift-or, in the two halves the
-/// mask's 128 bits divide into, so a row pays no 128-bit shift and nothing
-/// that scales with the mask rather than the row. This is the width every
-/// level at or under the mask's 128 columns takes.
-#[inline]
-fn row_mask_exact(row: &[u32]) -> u128 {
-    debug_assert!(row.len() <= 128);
-    fn half(part: &[u32]) -> u64 {
-        let mut bits = 0u64;
-        for (b, &v) in part.iter().enumerate() {
-            bits |= u64::from(v != NO_PRODUCT) << b;
-        }
-        bits
+/// One bit a cell of `grid` into `bits`, set where the cell holds a
+/// product: 64 cells a word, the first in the lowest bit, and a zero word
+/// after the last, so that [`bits_from`] reads past no end.
+fn alive_bits(lim: &crate::limits::Limits, grid: &[u32], bits: &mut Vec<u64>) -> Result<(), OperationError> {
+    bits.clear();
+    lim.reserve_exact(bits, grid.len() / 64 + 2)?;
+    let words = grid.chunks_exact(64);
+    let tail = words.remainder();
+    bits.extend(words.map(|cells| alive_word(cells.try_into().expect("a chunk of 64 cells"))));
+    if !tail.is_empty() {
+        bits.push(tail.iter().rev().fold(0, |word, &v| word << 1 | u64::from(v != NO_PRODUCT)));
     }
-    // Most sides are narrower than the low half, and there are as many rows as
-    // the child has nodes, so the half that is always empty on those is worth
-    // not assembling.
-    if row.len() <= 64 {
-        return u128::from(half(row));
+    bits.push(0);
+    Ok(())
+}
+
+/// The 64 cells of one word of [`alive_bits`], in two halves of 32. Of a
+/// fixed length, each half unrolls into vector compares without a branch,
+/// four cells to a baseline x86-64 vector and each cell's bit taken from a
+/// constant; one fold into a 64-bit word took twice the instructions.
+#[inline(always)]
+fn alive_word(cells: &[u32; 64]) -> u64 {
+    let mut word = 0u64;
+    for (k, half) in cells.chunks_exact(32).enumerate() {
+        let bits = half.iter().enumerate().fold(0u32, |bits, (b, &v)| bits | u32::from(v != NO_PRODUCT) << b);
+        word |= u64::from(bits) << (32 * k);
     }
-    let (low, high) = row.split_at(64);
-    u128::from(half(low)) | (u128::from(half(high)) << 64)
+    word
+}
+
+/// The 64 bits of `bits` from bit `at` on.
+#[inline(always)]
+fn bits_from(bits: &[u64], at: usize) -> u64 {
+    let (word, offset) = (at >> 6, at & 63);
+    ((u128::from(bits[word + 1]) << 64 | u128::from(bits[word])) >> offset) as u64
 }
 
 /// The bucketed mask of a row, for a side wider than the 128 mask bits: bit
@@ -185,13 +216,19 @@ pub(super) fn build_reach_masks(
     pair_side: impl Fn(&ChildPair) -> usize,
     shift: u32,
 ) -> Result<(), OperationError> {
-    let lim = eng.limits();
     reach.clear();
-    lim.try_resize(reach, k_level, 0u128)?;
-    // Node `j`'s pairs set `reach[j]`: a stored level's read as slices, an
-    // implicit one's off its description in order.
-    for ((_, pairs), mask) in level.internal_inputs_range(0..k_level).zip(reach.iter_mut()) {
-        *mask = pairs.fold(0u128, |m, p| m | 1u128 << (pair_side(&p) >> shift));
+    eng.limits().reserve_exact(reach, k_level)?;
+    let mask = |pairs: &[ChildPair]| pairs.iter().fold(0u128, |m, p| m | 1u128 << (pair_side(p) >> shift));
+    // Node `j`'s pairs set `reach[j]`: a stored level's read as slices of its
+    // arena, an implicit one's generated off its description a node at a
+    // time, in order. Through an iterator of `(node, pairs)` the walk was a
+    // call a node, about fifty instructions each.
+    match level.stored() {
+        Some(stored) => reach.extend(stored.nodes()[..k_level].iter().map(|node| mask(stored.of(node)))),
+        None => {
+            let (mut cursor, mut buf) = (None, Vec::new());
+            reach.extend((0..k_level).map(|i| mask(level.described_read_next(&mut cursor, i, &mut buf))));
+        }
     }
     Ok(())
 }
