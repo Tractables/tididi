@@ -248,3 +248,49 @@ fn every_stop_gives_the_operands_back_no_earlier_than_the_embeddings_and_conjunc
         assert!(seen.contains(&phase), "no stop with the operands at {phase:?}");
     }
 }
+
+/// Every output-node cap refuses `and_onto` where it refuses the embeddings
+/// and conjunction it stands for, after their work less the free levels:
+/// the conjunction counts the nodes of the levels it takes from an operand's
+/// free regions as if it had carried them in their places.
+#[test]
+fn every_output_cap_refuses_onto_where_it_refuses_the_embeddings_and_conjunction() {
+    let eng = Engine::new();
+    for (f, g, into) in [overlapping(), {
+        let (f, g, into) = overlapping();
+        (g, f, into)
+    }] {
+        let same = |v: VarId| v;
+        let free = free_levels(&f, same, &into) + free_levels(&g, same, &into);
+        let mut refused = 0;
+        for cap in 0.. {
+            let scope = eng.limits().scope(LimitConfig::none().with_output_node_cap(Some(cap)));
+            let mark = eng.limits().mark();
+            let (f_on, g_on) = (placed(&eng, f.clone(), same, &into), placed(&eng, g.clone(), same, &into));
+            let expected = eng.and_restoring(f_on, g_on);
+            let expected_work = eng.limits().work_since(mark);
+            let mark = eng.limits().mark();
+            let got = eng.and_onto(f.clone(), same, g.clone(), same, &into);
+            let work = eng.limits().work_since(mark);
+            drop(scope);
+            match (got, expected) {
+                (Ok(got), Ok(expected)) => {
+                    assert!(same_storage(&got, &expected), "cap {cap}: a different diagram");
+                    break;
+                }
+                (Err(got), Err(expected)) => {
+                    assert_eq!(got.error, expected.error.into(), "cap {cap}");
+                    assert_eq!(work + free, expected_work, "cap {cap}: work");
+                    refused += 1;
+                }
+                (got, expected) => panic!(
+                    "cap {cap}: and_onto refused {}, the embeddings and conjunction {}",
+                    got.is_err(),
+                    expected.is_err(),
+                ),
+            }
+            assert!(cap < 100_000, "never granted");
+        }
+        assert!(refused > 0, "no cap refused");
+    }
+}

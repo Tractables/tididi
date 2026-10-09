@@ -116,23 +116,21 @@ impl Products {
         self.complete.truncate(used);
     }
 
-    /// Clear the products of a conjunction over `n` levels, every level but
-    /// those under a free level of `regions`: levels no other level reads,
-    /// whose entries are left as they are and never read.
+    /// Clear the products of a conjunction over `n` levels at the levels of
+    /// `cone`; a level under a free level is read by no other level, and its
+    /// entries are left as they are and never read.
     pub(super) fn reset(
         &mut self, eng: &Engine, sparse: bool, n: usize, f_widths: &[usize], g_widths: &[usize],
-        regions: super::setup::Regions<'_>,
+        cone: super::setup::Cone<'_>,
     ) -> Result<(), OperationError> {
         if self.product_lists.len() < n { self.product_lists.resize_with(n, Vec::new); }
         self.has_pl.resize(n, false);
         self.complete.resize(n, false);
-        for i in 0..n {
-            if regions.under_free(i) { continue; }
-            self.product_lists[i].clear(); self.has_pl[i] = false; self.complete[i] = false;
-        }
-        self.live_counts.clear();
         self.live_counts.resize(n, 0);
-        self.arena.reset(eng, sparse, n, f_widths, g_widths, regions)
+        for i in cone.nodes() {
+            self.product_lists[i].clear(); self.has_pl[i] = false; self.complete[i] = false; self.live_counts[i] = 0;
+        }
+        self.arena.reset(eng, sparse, n, f_widths, g_widths, cone)
     }
 
     pub(super) fn filter_level(

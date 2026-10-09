@@ -31,32 +31,41 @@ use crate::value::CountRead;
 /// subtree, and every leaf below it is marked non-identity; a leaf flag left
 /// true there would let `take_level_fast_path` drop the operand's content.
 pub(crate) fn init_leaf_identity(eng: &Engine, buf: &mut Vec<bool>, tdd: &Tdd) -> Result<(), OperationError> {
-    init_leaf_identity_outside(eng, buf, tdd, |_| false)
+    let vtree = tdd.vtree();
+    init_leaf_identity_over(eng, buf, tdd, vtree.internal_bottomup_slice(), &[], vtree.leaf_bottomup_slice())
 }
 
-/// [`init_leaf_identity`] for the leaves whose parent `skip` does not name:
-/// the parents' pairs are scanned only there, and the flag of a leaf under a
-/// skipped parent is left true unread.
-pub(crate) fn init_leaf_identity_outside(
+/// [`init_leaf_identity`] over the levels a conjunction visits
+/// ([`Cone`](super::setup::Cone)): the flags of `leaves` are set and then
+/// refuted by the pairs of `scanned`, whose children they are, and the flags
+/// of `scanned` and `unscanned` are cleared. Every other flag is left as it
+/// was, unread.
+pub(super) fn init_leaf_identity_over(
     eng: &Engine,
     buf: &mut Vec<bool>,
     tdd: &Tdd,
-    skip: impl Fn(VtreeIdx) -> bool,
+    scanned: &[VtreeIdx],
+    unscanned: &[VtreeIdx],
+    leaves: &[VtreeIdx],
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let vtree = tdd.vtree();
     let num_nodes = vtree.num_nodes();
     lim.try_resize(buf, num_nodes, false)?;
-    // Nodes are stored leaves first. Every leaf is assumed identity until
-    // proven otherwise; internal levels are computed from children, not
-    // preset.
+    // Every leaf is assumed identity until proven otherwise; internal levels
+    // are computed from children, not preset.
+    for &t in leaves {
+        buf[t.idx()] = true;
+    }
+    for &t in scanned.iter().chain(unscanned) {
+        buf[t.idx()] = false;
+    }
+    // Nodes are stored leaves first.
     let leaves = vtree.num_leaves() as usize;
-    buf[..leaves].fill(true);
-    buf[leaves..num_nodes].fill(false);
     // Scan parent pairs: any reference to Pos (0) or Neg (1) means not identity.
     let mut has_any_marginal = false;
-    for (t, left, right) in vtree.internal_bottomup() {
-        if skip(t) { continue; }
+    for &t in scanned {
+        let (left, right) = vtree.children(t);
         if tdd.levels[t.idx()].is_marginal() { has_any_marginal = true; }
         let left_leaf = left.idx() < leaves;
         let right_leaf = right.idx() < leaves;
@@ -328,7 +337,7 @@ pub(super) fn take_level_fast_path(
 ) -> Result<bool, OperationError> {
     let (t_idx, left_idx, right_idx) = (shape.t.idx(), shape.left.idx(), shape.right.idx());
     let (left_width, right_width) = (shape.f.here, shape.g.here);
-    let free = run.free;
+    let cone = run.cone;
     let ApplyRun { levels, f_identity, g_identity, .. } = run;
     // Identity internal: g has width 1 and both children were identity,
     // so g's single node has one pair (0,0) referencing the identity nodes
@@ -369,7 +378,7 @@ pub(super) fn take_level_fast_path(
     {
         // FP1: f is the carrier, g is the identity operand. A free level
         // carried is built first: the level it stands for.
-        if free.free_in_f(t_idx) {
+        if cone.free_in_f(t_idx) {
             crate::restructure::placement::push_free_level(&mut f.levels[t_idx], &f.vtree, shape.t);
         }
         apply_identity_fast_path::<true>(eng, shape, &mut f.levels, run)?;
@@ -386,7 +395,7 @@ pub(super) fn take_level_fast_path(
             && (levels[left_idx].is_marginal() || levels[right_idx].is_marginal()))
     {
         // FP2: g is the carrier, f is the identity operand.
-        if free.free_in_g(t_idx) {
+        if cone.free_in_g(t_idx) {
             crate::restructure::placement::push_free_level(&mut g.levels[t_idx], &g.vtree, shape.t);
         }
         apply_identity_fast_path::<false>(eng, shape, &mut g.levels, run)?;

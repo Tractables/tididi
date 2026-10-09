@@ -3,7 +3,7 @@
 
 use crate::{Engine, OperationError};
 use crate::diagram::{Tdd, TddLevel, WeightStore, LEAF_WIDTH};
-use crate::vtree::Vtree;
+use crate::vtree::VtreeIdx;
 use super::setup::Operands;
 use super::setup::ApplyRun;
 use super::{CONJOIN_GRID, NO_PRODUCT};
@@ -34,20 +34,15 @@ const LEAF_LIVE: usize = {
 ///
 /// At leaf levels the conjunction is a constant 3×3 truth table (Pos, Neg, One),
 /// so we just copy it, as [`LEAF_GRID`], into the level's grid; a leaf under a
-/// free level ([`ApplyRun::free`]) has no grid. When the arena bumps,
+/// free level ([`ApplyRun::cone`]) has no grid. When the arena bumps,
 /// grid space is allocated as we go and live counts are recorded for parent
 /// density checks; otherwise the grid offsets are pre-computed.
 pub(super) fn apply_leaf_levels(
     eng: &Engine,
-    vtree: &crate::vtree::Vtree,
     run: &mut ApplyRun,
 ) -> Result<(), OperationError> {
-    let ApplyRun { f_widths, g_widths, products, free, .. } = run;
-    for (t, _leaf_var) in vtree.leaf_bottomup() {
-        // No level reads the products of a leaf inside a free region.
-        if free.under_free(t.idx()) {
-            continue;
-        }
+    let ApplyRun { f_widths, g_widths, products, cone, .. } = run;
+    for &t in cone.leaves {
         let t_idx = t.idx();
         debug_assert!(f_widths[t_idx] == LEAF_WIDTH && g_widths[t_idx] == LEAF_WIDTH, "a leaf level has the leaf width");
         let base = products.arena.alloc(eng, t_idx, LEAF_GRID.len())?;
@@ -59,9 +54,11 @@ pub(super) fn apply_leaf_levels(
     Ok(())
 }
 
-/// Mark the output's marginal vtree leaves, which the bottom-up loop never
-/// visits as a level of its own, and collect the weight-marginal leaves whose
-/// refs still have to be canonicalized once the output's pairs are final.
+/// Mark the output's marginal vtree leaves among `leaves`, the leaves the
+/// conjunction visits ([`Cone::leaves`](super::setup::Cone::leaves)), which
+/// the bottom-up loop never visits as a level of its own, and collect the
+/// weight-marginal leaves whose refs still have to be canonicalized once the
+/// output's pairs are final. No leaf under a free level is marginal.
 ///
 /// A marginalized leaf variable is private to one operand, so the other is the
 /// identity there and the parent's marginal-child dispatch carries the refs
@@ -72,7 +69,7 @@ pub(super) fn apply_leaf_levels(
 pub(crate) fn seed_output_leaves(
     f: &Tdd,
     g: &Tdd,
-    vtree: &Vtree,
+    leaves: &[VtreeIdx],
     levels: &mut [TddLevel],
     identity: Operands<&[bool]>,
     ws: Option<&WeightStore>,
@@ -92,7 +89,7 @@ pub(crate) fn seed_output_leaves(
     // weight-marginal each canon class is closed under conjunction, so nothing
     // is recorded.
     let mut canon_leaves: Vec<usize> = Vec::new();
-    for (leaf, _) in vtree.leaf_bottomup() {
+    for &leaf in leaves {
         let left_idx = leaf.idx();
         let left_m = f.levels[left_idx].is_marginal();
         let right_m = g.levels[left_idx].is_marginal();

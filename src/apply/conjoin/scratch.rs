@@ -39,6 +39,7 @@ pub(crate) struct ApplyWorkspace {
     pub(super) products: products::Products,
     pub(super) stream_cache: StreamCache,
     pub(super) prefilter_masks: liveness::PrefilterMaskScratch,
+    pub(super) cone: super::setup::ConeLists,
 }
 
 impl Buffers for ApplyWorkspace {
@@ -52,6 +53,7 @@ impl Buffers for ApplyWorkspace {
         self.products.buffers(visit);
         self.stream_cache.buffers(visit);
         self.prefilter_masks.buffers(visit);
+        self.cone.buffers(visit);
     }
 }
 

@@ -110,7 +110,7 @@ fn is_self_conjunction(f: &Tdd, g: &Tdd) -> bool {
     same_levels(f, g, Operands::default())
 }
 
-/// [`is_self_conjunction`] for operands with free levels ([`ApplyRun::free`]):
+/// [`is_self_conjunction`] for operands with free levels ([`ApplyRun::cone`]):
 /// a free level compares as the level it stands for.
 fn same_levels(f: &Tdd, g: &Tdd, free: Operands<VtreeMask<'_>>) -> bool {
     // The shortcut lets `f ∧ g` return `f.clone()` when the operands are the
@@ -159,7 +159,7 @@ fn same_structure(f: &Tdd, g: &Tdd, free: Operands<VtreeMask<'_>>) -> bool {
     f.output == g.output && (0..f.levels.len().min(g.levels.len())).rev().all(same_at)
 }
 
-/// Build the free levels ([`ApplyRun::free`]) of `tdd` that are still empty,
+/// Build the free levels ([`ApplyRun::cone`]) of `tdd` that are still empty,
 /// so that it is the diagram they stand for.
 fn fill_free(tdd: &mut Tdd, free: VtreeMask<'_>) {
     if free.is_empty() {
@@ -174,7 +174,7 @@ fn fill_free(tdd: &mut Tdd, free: VtreeMask<'_>) {
 }
 
 /// Make `g` the narrower operand, and say whether the two were swapped; the
-/// free levels in `free` ([`ApplyRun::free`]) follow their operands and are
+/// free levels in `free` ([`ApplyRun::cone`]) follow their operands and are
 /// one node wide.
 ///
 /// The identity fast path tests `right_width == 1` first, so the narrower side
@@ -339,7 +339,7 @@ pub struct AndOntoRefused {
 }
 
 /// [`Engine::and_restoring`](crate::Engine::and_restoring) after its entry
-/// and vtree check, for operands whose free levels ([`ApplyRun::free`]) are
+/// and vtree check, for operands whose free levels ([`ApplyRun::cone`]) are
 /// in `free`: refused, both come back as they were given, every free level
 /// built.
 #[expect(clippy::result_large_err, reason = "the refusal hands back what it was given")]

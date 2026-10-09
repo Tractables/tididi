@@ -40,7 +40,7 @@ use level::{
 
 use super::*;
 
-use super::identity::init_leaf_identity_outside;
+use super::identity::init_leaf_identity_over;
 use crate::reduce::prune::settle_loose;
 use crate::Engine;
 
@@ -84,7 +84,7 @@ pub(super) struct Sweep<'a, 'filter> {
 /// # Errors
 ///
 /// Propagates the first refusal: a budget or cap the level build hit, or the
-/// armed stop, polled at every level boundary.
+/// armed stop, polled at the boundary of every level it builds.
 fn sweep_levels(
     eng: &Engine,
     run: &mut ApplyRun,
@@ -99,29 +99,30 @@ fn sweep_levels(
     // it is taken inside the gate; past that it is one store per level and no
     // clock at all.
     let progress = lim.conjunction_progress_enabled();
-    let free = run.free;
+    let cone = run.cone;
+    let internal = vtree.internal_bottomup_slice();
     if progress {
-        lim.conjunction_began(vtree.internal_bottomup().count() as u32);
+        lim.conjunction_began(internal.len() as u32);
     }
-    let mut level_k: u32 = 0;
+    // The nodes of the levels built so far; the free levels were taken with
+    // their regions before the sweep, and their nodes are counted as if they
+    // were built in their places bottom-up.
     let mut output_nodes = 0u64;
     // Children of the root held back unbuilt, for a count that may stream
     // one of them (see `level::holds_back`).
     let mut held: Vec<(VtreeIdx, VtreeIdx, VtreeIdx)> = Vec::new();
-    for (t, left, right) in vtree.internal_bottomup() {
+    for (k, &t) in cone.built.iter().enumerate() {
+        let (left, right) = vtree.children(t);
         if progress {
-            level_k += 1;
-            lim.conjunction_reached(level_k);
+            // The level's place among all internal levels, from 1.
+            let place = internal.partition_point(|&s| vtree.topo_pos(s) < vtree.topo_pos(t)) + 1;
+            lim.conjunction_reached(place as u32);
         }
         // The per-level-boundary cut check: the stop axis, then the output-node
         // cap, tracked across every route independently of sparse-grid density.
-        lim.level_done(output_nodes)?;
-        // A free level was taken with its region before the sweep; its
-        // boundary is checked and its nodes counted as if it were built here.
-        if free.free_at(t.idx()) {
-            output_nodes += run.levels[t.idx()].slot_count() as u64;
-            continue;
-        }
+        // A free level has no work, so the check at the next level built
+        // stands for the checks at the free levels before it.
+        lim.level_done(output_nodes + cone.free_before(k))?;
 
         if held.len() < 2 && holds_back(sweep, run, f, g, t, left, right) {
             held.push((t, left, right));
@@ -146,8 +147,11 @@ fn sweep_levels(
         build_level(eng, run, f, g, sweep, t, left, right)?;
         output_nodes += run.levels[t.idx()].slot_count() as u64;
     }
+    if progress {
+        lim.conjunction_reached(internal.len() as u32);
+    }
     // The root has no following level boundary at which to check its output.
-    lim.level_done(output_nodes)
+    lim.level_done(output_nodes + cone.free_nodes)
 }
 
 /// Build the level at `t` from its children's, by the route it is given, and
@@ -185,7 +189,7 @@ fn build_level(
     // A filtered child product cannot be bypassed by an identity copy.
     let taken = sweep.filter.is_none() && take_level_fast_path(eng, run, f, g, shape)?;
     debug_assert!(
-        taken || !run.free.free_at(t.idx()),
+        taken || !run.cone.free_at(t.idx()),
         "a free level at {} takes the other operand's level",
         t.idx(),
     );
@@ -232,7 +236,7 @@ pub(crate) enum ConjoinMode {
 }
 
 /// Conjoin structural, unweighted operands, returning them intact on refusal,
-/// with each operand's free levels ([`ApplyRun::free`]) in `free`.
+/// with each operand's free levels ([`ApplyRun::cone`]) in `free`.
 pub(crate) fn apply_and_kept(eng: &Engine, f: &mut Tdd, g: &mut Tdd, free: Operands<VtreeMask<'_>>) -> Result<Tdd, OperationError> {
     debug_assert!(f.weights.is_none() && g.weights.is_none() && !f.has_marginal_level() && !g.has_marginal_level());
     apply_and_core(eng, f, g, VtreeMask::default(), VtreeMask::default(), None, ConjoinMode::Restore, free)
@@ -282,7 +286,7 @@ impl Conjoined {
 /// Count mode may return the model count instead of building the root, when
 /// it is one product on the sparse route with no weights and no filter.
 /// Otherwise the diagram is built and the caller counts it. `free` names
-/// each operand's free levels ([`ApplyRun::free`]), which only a plain
+/// each operand's free levels ([`ApplyRun::cone`]), which only a plain
 /// conjunction may have.
 #[expect(clippy::too_many_arguments)]
 pub(crate) fn apply_and_core(
@@ -345,15 +349,14 @@ pub(crate) fn apply_and_core(
     );
     let mut scratch = eng.scratch.apply.workspace.checkout(eng);
     let (levels, ws) = assembly.parts_mut();
-    let mut roles = Vec::new();
-    let mut run = apply_and_setup(eng, f, g, targets, free, ws.is_some(), levels, &mut scratch, &mut roles)?;
+    let mut run = apply_and_setup(eng, &vtree, f, g, targets, free, ws.is_some(), levels, &mut scratch)?;
     run.restoring = keep;
     let plain = unmarked && !run.entry_marginality.any();
     debug_assert!(
         free.f.is_empty() && free.g.is_empty() || plain,
         "only a plain conjunction reads free levels",
     );
-    let free = run.free;
+    let cone = run.cone;
 
     // `g_identity[t]` is true when `g` computes constant-true over subtree
     // `t`, so `f`'s nodes pass through unchanged (`x ∧ 1 = x`) and the
@@ -365,12 +368,11 @@ pub(crate) fn apply_and_core(
     // predicate is incomplete; a miss only sends a small grid down the dense
     // path.
     //
-    // The leaves under a free level are read by no level the sweep builds.
-    let in_region = |t: VtreeIdx| free.free_at(t.idx());
-    init_leaf_identity_outside(eng, run.g_identity, g, in_region)?;
-    init_leaf_identity_outside(eng, run.f_identity, f, in_region)?;
+    // The levels under a free level are read by no level the sweep builds.
+    init_leaf_identity_over(eng, run.g_identity, g, cone.built, cone.tops, cone.leaves)?;
+    init_leaf_identity_over(eng, run.f_identity, f, cone.built, cone.tops, cone.leaves)?;
 
-    apply_leaf_levels(eng, &vtree, &mut run)?;
+    apply_leaf_levels(eng, &mut run)?;
 
     // The operands' loose levels as a prune would settle them, read before
     // the sweep drops the operands' levels.
@@ -380,7 +382,7 @@ pub(crate) fn apply_and_core(
     };
 
     let canon_leaves = super::leaf_seed::seed_output_leaves(
-        f, g, &vtree, run.levels,
+        f, g, cone.leaves, run.levels,
         Operands { f: &run.f_identity[..], g: &run.g_identity[..] },
         ws.as_ref(),
     );
@@ -393,7 +395,7 @@ pub(crate) fn apply_and_core(
     if let Err(e) = sweep_levels(eng, &mut run, f, g, &mut sweep) {
         if run.restoring {
             give_back(run.levels, f, g, &run.carried);
-            region::give_back_regions(&vtree, run.levels, free, f, g);
+            region::give_back_regions(run.levels, cone, f, g);
         }
         return Err(e);
     }
@@ -416,13 +418,13 @@ pub(crate) fn apply_and_core(
     // and whatever the operands owed; seeding every level made the
     // minimization after a join as long as the diagram.
     let finished = if plain {
-        // Which operand each carried level came from: 1 for `f`, 2 for `g`,
-        // 0 for a level the conjunction built and for the leaves.
+        // Which operand each level the sweep carried came from: 1 for `f`,
+        // 2 for `g`, 0 for a level the conjunction built and for every
+        // level outside the cone.
         let mut carrier = vec![0u8; num_nodes];
         for &(t, from_f) in &carried {
             carrier[t] = if from_f { 1 } else { 2 };
         }
-        region::mark_carriers(&vtree, free, &mut carrier);
         // The result's loose levels (`loose::loose_levels`): a carried level
         // where its carrier has it loose, and a level under one the
         // conjunction built where the operands and the sibling's product
@@ -435,10 +437,10 @@ pub(crate) fn apply_and_core(
         let loose = operand_loose
             .map(|ops| loose::loose_levels(&vtree, &run, &carrier, ops));
         // The levels it built are also all it changed, and so all the seat
-        // closes: a carried level is as the operand's end left it.
-        let internal = vtree.internal_bottomup_slice();
-        let mut built: Vec<VtreeIdx> = Vec::with_capacity(internal.len());
-        built.extend(internal.iter().copied().filter(|t| carrier[t.idx()] == 0));
+        // closes: a carried level, and a free one, is as the operand's end
+        // left it.
+        let mut built: Vec<VtreeIdx> = Vec::with_capacity(cone.built.len());
+        built.extend(cone.built.iter().copied().filter(|t| carrier[t.idx()] == 0));
         let owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, built.len());
         assembly.finish_with_or_return(output, owed, &built, Some(&built[..])).map(|mut out| {
             if let Some(loose) = loose {
@@ -455,7 +457,7 @@ pub(crate) fn apply_and_core(
         Err((e, mut assembly)) => {
             if restoring {
                 give_back(assembly.parts_mut().0, f, g, &carried);
-                region::give_back_regions(&vtree, assembly.parts_mut().0, free, f, g);
+                region::give_back_regions(assembly.parts_mut().0, cone, f, g);
             }
             return Err(e);
         }

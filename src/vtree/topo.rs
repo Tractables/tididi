@@ -220,6 +220,12 @@ impl Vtree {
         self.topo.internal()
     }
 
+    /// The leaves in bottom-up order as a slice — the nodes
+    /// [`Vtree::leaf_bottomup`] yields, without their variables.
+    pub(crate) fn leaf_bottomup_slice(&self) -> &[VtreeIdx] {
+        self.topo.leaves()
+    }
+
     /// Repair the bottom-up order after one rotation; see
     /// [`TopoOrder::fixup_after_rotate`] for the cost.
     pub(super) fn fixup_topo_after_rotate(&mut self, info: &rotate::RotationInfo, kind: RotationKind) {

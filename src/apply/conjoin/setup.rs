@@ -1,9 +1,10 @@
-//! Apply setup: the width and marginal-entry snapshot, the sparse and budget
-//! pre-scan, and the grid and product-list allocation, bundled into `ApplyRun`
-//! by `apply_and_setup` for the driver to sweep with.
+//! Apply setup: the levels a conjunction visits, their width and
+//! marginal-entry snapshot, the sparse and budget pre-scan, and the grid and
+//! product-list allocation, bundled into `ApplyRun` by `apply_and_setup` for
+//! the driver to sweep with.
 
 use crate::Engine;
-use crate::vtree::VtreeIdx;
+use crate::vtree::{Vtree, VtreeIdx};
 use crate::diagram::*;
 use super::{liveness, OperationError};
 use super::products::Products;
@@ -38,49 +39,82 @@ impl<'a> VtreeMask<'a> {
     }
 }
 
-/// Where the free levels ([`ApplyRun::free`]) of a conjunction lie, one byte
-/// per vtree node, read where the sweep and its setup ask: which operand is
-/// free at an internal node, and whether a node lies under a free level.
-/// Empty when neither operand has a free level.
-#[derive(Clone, Copy, Default)]
-pub(super) struct Regions<'a>(&'a [u8]);
+/// The levels a conjunction visits: every level but those under a free
+/// level ([`ApplyRun::cone`]), which the result takes whole with its region
+/// and no other level reads. With no free level that is every level, read
+/// off the vtree; otherwise the setup lists them in one pass over the
+/// internal levels, which also counts the nodes of the free levels.
+#[derive(Clone, Copy)]
+pub(super) struct Cone<'a> {
+    /// The internal levels no operand is free at, bottom-up: the levels the
+    /// sweep builds or carries as identity levels.
+    pub(super) built: &'a [VtreeIdx],
+    /// For each level of `built`, the node count of the free levels before it
+    /// bottom-up; empty when no level is free.
+    free_before: &'a [u64],
+    /// The free levels whose parent is not free, the tops of the regions.
+    pub(super) tops: &'a [VtreeIdx],
+    /// Every free internal level, its region's top included, bottom-up.
+    pub(super) free: &'a [VtreeIdx],
+    /// The leaves under no free level.
+    pub(super) leaves: &'a [VtreeIdx],
+    /// The node count of the free levels, as the result holds them.
+    pub(super) free_nodes: u64,
+    /// Each operand's free levels.
+    masks: Operands<VtreeMask<'a>>,
+}
 
-impl Regions<'_> {
-    /// `f` is free at this internal node.
-    const F_FREE: u8 = 1;
-    /// `g` is free at this internal node.
-    const G_FREE: u8 = 2;
-    /// The parent of this node is free in either operand.
-    const UNDER: u8 = 4;
-
-    #[inline]
-    fn role(self, t: usize) -> u8 {
-        self.0.get(t).copied().unwrap_or(0)
-    }
-
+impl Cone<'_> {
     /// Whether either operand is free at `t`: the sweep does not build it.
     #[inline]
     pub(super) fn free_at(self, t: usize) -> bool {
-        self.role(t) & (Self::F_FREE | Self::G_FREE) != 0
+        self.masks.f.contains(t) || self.masks.g.contains(t)
     }
 
     /// Whether `f` is free at `t`.
     #[inline]
     pub(super) fn free_in_f(self, t: usize) -> bool {
-        self.role(t) & Self::F_FREE != 0
+        self.masks.f.contains(t)
     }
 
     /// Whether `g` is free at `t`.
     #[inline]
     pub(super) fn free_in_g(self, t: usize) -> bool {
-        self.role(t) & Self::G_FREE != 0
+        self.masks.g.contains(t)
     }
 
-    /// Whether `t` lies under a free level, inside a region below its top:
-    /// no level reads its products.
+    /// The node count of the free levels before the `k`-th level of `built`
+    /// bottom-up.
     #[inline]
-    pub(super) fn under_free(self, t: usize) -> bool {
-        self.role(t) & Self::UNDER != 0
+    pub(super) fn free_before(self, k: usize) -> u64 {
+        self.free_before.get(k).copied().unwrap_or(0)
+    }
+
+    /// Every level the conjunction visits: the leaves, the built levels and
+    /// the tops.
+    pub(super) fn nodes(self) -> impl Iterator<Item = usize> {
+        self.leaves.iter().chain(self.built).chain(self.tops).map(|t| t.idx())
+    }
+}
+
+/// The lists a [`Cone`] reads when some level is free, kept between
+/// conjunctions in the [`ApplyWorkspace`].
+#[derive(Default)]
+pub(super) struct ConeLists {
+    built: Vec<VtreeIdx>,
+    free_before: Vec<u64>,
+    tops: Vec<VtreeIdx>,
+    free: Vec<VtreeIdx>,
+    leaves: Vec<VtreeIdx>,
+}
+
+impl ConeLists {
+    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
+        visit(&mut self.built);
+        visit(&mut self.free_before);
+        visit(&mut self.tops);
+        visit(&mut self.free);
+        visit(&mut self.leaves);
     }
 }
 
@@ -118,10 +152,11 @@ pub(super) struct ApplyRun<'a, 'r> {
     pub(super) restoring: bool,
     /// Each operand's free levels: internal nodes no variable it was placed
     /// with is under, whose levels are left empty and read as the constant
-    /// true level, one node true on both sides, they stand for. The sweep
-    /// takes the other operand's level at each, and builds one only where
-    /// both are free or the other is the constant true level too.
-    pub(super) free: Regions<'r>,
+    /// true level, one node true on both sides, they stand for. The result
+    /// takes the other operand's level at each, a free level where both are
+    /// free, before the sweep; the conjunction visits only the levels of the
+    /// cone, which no free level is over.
+    pub(super) cone: Cone<'r>,
 }
 
 /// One internal vtree level's identity: the node, its two children, and both
@@ -278,7 +313,7 @@ impl ApplyRun<'_, '_> {
 
 }
 
-/// What [`snapshot_widths`] reads off the operands besides their widths.
+/// What [`survey`] reads off the operands besides their widths.
 struct Snapshot {
     /// The dense-route cell count `preflight_dense_budget` reads.
     total_cells: u64,
@@ -289,69 +324,135 @@ struct Snapshot {
     might_use_sparse: bool,
 }
 
-/// Snapshot both operands' per-level widths, note whether either carries a
-/// marginal level at entry, sum the dense-route cell count
-/// `preflight_dense_budget` reads, and say whether any internal level's grid
-/// is over `min_grid`; all in one pass over the levels, which also fills
-/// `roles` for [`Regions`] when an operand has free levels. A free level
-/// ([`ApplyRun::free`]) has the width of the level it stands for.
+/// Find the levels a conjunction visits ([`Cone`]), listing them in
+/// `lists` when some level is free, and snapshot both operands' widths
+/// there; note whether either operand carries a marginal level at entry,
+/// sum the dense-route cell count `preflight_dense_budget` reads, and say
+/// whether any internal level's grid is over `min_grid`: all in one pass
+/// over the internal levels.
+///
+/// A free level has width 1 in its operand, so its cells are the nodes of
+/// the level the result takes there: the other operand's, or one node where
+/// both are free. Only an operand with no marginal level is given free
+/// levels ([`apply_and_kept`](super::drive::apply_and_kept)), and a free
+/// level is empty, so no leaf under a free level is read for marginality.
 ///
 /// Must run before the sweep's identity swaps steal levels, which zeroes
 /// `reference_slot_count` and clears `is_marginal`.
-fn snapshot_widths(
+///
+/// # Errors
+///
+/// [`OperationError::OverBudget`] when a list cannot grow.
+#[expect(clippy::too_many_arguments)]
+fn survey<'r>(
+    eng: &Engine,
+    vtree: &'r Vtree,
     f: &Tdd,
     g: &Tdd,
-    free: Operands<VtreeMask<'_>>,
+    masks: Operands<VtreeMask<'r>>,
     min_grid: usize,
     f_widths: &mut [usize],
     g_widths: &mut [usize],
-    roles: &mut Vec<u8>,
-) -> Snapshot {
-    let vtree = &f.vtree;
-    let num_nodes = vtree.num_nodes();
-    // Nodes are stored leaves first.
-    let leaves = vtree.num_leaves() as usize;
-    roles.clear();
-    let with_regions = !(free.f.is_empty() && free.g.is_empty());
-    if with_regions {
-        roles.resize(num_nodes, 0);
-    }
-    let (f_levels, g_levels) = (&f.levels[..num_nodes], &g.levels[..num_nodes]);
-    // The leaves, a constant width each.
-    f_widths[..leaves].fill(LEAF_WIDTH);
-    g_widths[..leaves].fill(LEAF_WIDTH);
-    let mut any_entry_marginal = f_levels[..leaves].iter().zip(&g_levels[..leaves])
-        .fold(false, |any, (fl, gl)| any | fl.is_marginal() | gl.is_marginal());
+    lists: &'r mut ConeLists,
+) -> Result<(Snapshot, Cone<'r>), OperationError> {
+    let internal = vtree.internal_bottomup_slice();
     let leaf_cells = (LEAF_WIDTH * LEAF_WIDTH) as u64;
     // The cells are summed saturating, which no order of the terms changes.
     let mut total_cells = match leaf_cells <= min_grid as u64 {
-        true => (leaves as u64).saturating_mul(leaf_cells),
+        true => u64::from(vtree.num_leaves()).saturating_mul(leaf_cells),
         false => 0,
     };
-    // The internal nodes.
     let mut might_use_sparse = false;
-    let internal = f_widths[leaves..num_nodes].iter_mut().zip(&mut g_widths[leaves..num_nodes])
-        .zip(f_levels[leaves..].iter().zip(&g_levels[leaves..]));
-    for (i, ((fw, gw), (fl, gl))) in (leaves..).zip(internal) {
-        let (free_f, free_g) = (free.f.contains(i), free.g.contains(i));
-        if with_regions && (free_f || free_g) {
-            roles[i] |= (u8::from(free_f) * Regions::F_FREE) | (u8::from(free_g) * Regions::G_FREE);
-            let (left, right) = vtree.children(VtreeIdx(i as u32));
-            roles[left.idx()] |= Regions::UNDER;
-            roles[right.idx()] |= Regions::UNDER;
-        }
-        let w1 = if free_f { 1 } else { fl.slot_count() };
-        let w2 = if free_g { 1 } else { gl.slot_count() };
-        *fw = w1;
-        *gw = w2;
-        any_entry_marginal |= fl.is_marginal() | gl.is_marginal();
+    let mut any_entry_marginal = false;
+    let mut cells = |w1: usize, w2: usize| {
         let cells = (w1 as u64).saturating_mul(w2 as u64);
         might_use_sparse |= cells > min_grid as u64;
         if cells <= min_grid as u64 {
             total_cells = total_cells.saturating_add(cells);
         }
+        cells
+    };
+    // A level no operand is free at, and a leaf, read off both operands.
+    let mut level = |t: VtreeIdx, f_widths: &mut [usize], g_widths: &mut [usize]| {
+        let (fl, gl) = (&f.levels[t.idx()], &g.levels[t.idx()]);
+        any_entry_marginal |= fl.is_marginal() | gl.is_marginal();
+        let (w1, w2) = match vtree.node(t).is_leaf() {
+            true => (LEAF_WIDTH, LEAF_WIDTH),
+            false => (fl.slot_count(), gl.slot_count()),
+        };
+        f_widths[t.idx()] = w1;
+        g_widths[t.idx()] = w2;
+        (w1, w2)
+    };
+    if masks.f.is_empty() && masks.g.is_empty() {
+        let leaves = vtree.leaf_bottomup_slice();
+        for &t in leaves {
+            level(t, f_widths, g_widths);
+        }
+        for &t in internal {
+            let (w1, w2) = level(t, f_widths, g_widths);
+            cells(w1, w2);
+        }
+        let cone = Cone { built: internal, free_before: &[], tops: &[], free: &[], leaves, free_nodes: 0, masks };
+        let snapshot = Snapshot { total_cells, any_entry_marginal, might_use_sparse };
+        return Ok((snapshot, cone));
     }
-    Snapshot { total_cells, any_entry_marginal, might_use_sparse }
+    let lim = eng.limits();
+    let ConeLists { built, free_before, tops, free, leaves } = lists;
+    built.clear();
+    free_before.clear();
+    tops.clear();
+    free.clear();
+    leaves.clear();
+    lim.reserve(built, internal.len())?;
+    lim.reserve(free_before, internal.len())?;
+    lim.reserve(tops, internal.len())?;
+    lim.reserve(free, internal.len())?;
+    lim.reserve(leaves, vtree.num_leaves() as usize)?;
+    let free_at = |t: VtreeIdx| masks.f.contains(t.idx()) || masks.g.contains(t.idx());
+    let mut free_nodes = 0u64;
+    for &t in internal {
+        let at = t.idx();
+        let (free_f, free_g) = (masks.f.contains(at), masks.g.contains(at));
+        if free_f || free_g {
+            debug_assert!(
+                !f.levels[at].is_marginal() && !g.levels[at].is_marginal(),
+                "an operand with a free level has a marginal level at {at}",
+            );
+            let w1 = if free_f { 1 } else { f.levels[at].slot_count() };
+            let w2 = if free_g { 1 } else { g.levels[at].slot_count() };
+            f_widths[at] = w1;
+            g_widths[at] = w2;
+            free_nodes = free_nodes.saturating_add(cells(w1, w2));
+            free.push(t);
+            continue;
+        }
+        let (w1, w2) = level(t, f_widths, g_widths);
+        cells(w1, w2);
+        built.push(t);
+        free_before.push(free_nodes);
+        let (left, right) = vtree.children(t);
+        for child in [left, right] {
+            if vtree.node(child).is_leaf() {
+                level(child, f_widths, g_widths);
+                leaves.push(child);
+            } else if free_at(child) {
+                tops.push(child);
+            }
+        }
+    }
+    // A free root is the top of its region, under no built level; a leaf
+    // root is the one level.
+    let root = vtree.root();
+    if vtree.node(root).is_leaf() {
+        level(root, f_widths, g_widths);
+        leaves.push(root);
+    } else if free_at(root) {
+        tops.push(root);
+    }
+    let cone = Cone { built, free_before, tops, free, leaves, free_nodes, masks };
+    let snapshot = Snapshot { total_cells, any_entry_marginal, might_use_sparse };
+    Ok((snapshot, cone))
 }
 
 /// Conservative per-cell byte factor for the apply's product grid:
@@ -384,40 +485,38 @@ fn preflight_dense_budget(lim: &crate::limits::Limits, total_cells: u64) -> Resu
     Ok(())
 }
 
-/// Build the [`ApplyRun`] for one conjunction: snapshot the operands, refuse
-/// if the dense cells alone exceed the budget, and take every pooled buffer
-/// the sweep needs. The [`Regions`] of the operands' free levels in `free`
-/// are written to `roles`.
+/// Build the [`ApplyRun`] for one conjunction: find the levels it visits
+/// and snapshot the operands there, refuse if the dense cells alone exceed
+/// the budget, and take every pooled buffer the sweep needs. Each operand's
+/// free levels are in `free`.
 ///
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] from the dense preflight or a buffer reservation.
 #[expect(clippy::too_many_arguments)]
-pub(super) fn apply_and_setup<'a, 'r>(
+pub(super) fn apply_and_setup<'a, 'r: 'a>(
     eng: &Engine,
+    vtree: &'r Vtree,
     f: &Tdd,
     g: &Tdd,
     targets: VtreeMask<'_>,
-    free: Operands<VtreeMask<'_>>,
+    free: Operands<VtreeMask<'r>>,
     weighted: bool,
     levels: &'a mut [TddLevel],
-    scratch: &'a mut ApplyWorkspace,
-    roles: &'r mut Vec<u8>,
+    scratch: &'r mut ApplyWorkspace,
 ) -> Result<ApplyRun<'a, 'r>, OperationError> {
-    let vtree = &f.vtree;
     let num_nodes = vtree.num_nodes();
     let lim = eng.limits();
     let thresholds = sparse_thresholds(lim);
     let min_grid = thresholds.min_grid;
 
     let ApplyWorkspace { f_widths, g_widths, f_identity, g_identity,
-        f_pairs_scratch, g_pairs_scratch, products, stream_cache, prefilter_masks } = scratch;
+        f_pairs_scratch, g_pairs_scratch, products, stream_cache, prefilter_masks, cone } = scratch;
     if f_widths.len() < num_nodes { f_widths.resize(num_nodes, 0); }
     if g_widths.len() < num_nodes { g_widths.resize(num_nodes, 0); }
-    let Snapshot { total_cells, any_entry_marginal, might_use_sparse } = snapshot_widths(
-        f, g, free, min_grid, f_widths, g_widths, roles,
-    );
-    let free = Regions(roles);
+    let (Snapshot { total_cells, any_entry_marginal, might_use_sparse }, cone) = survey(
+        eng, vtree, f, g, free, min_grid, f_widths, g_widths, cone,
+    )?;
 
     let entry_marginality = EntryMarginality::snapshot(f, g, num_nodes, any_entry_marginal);
 
@@ -430,7 +529,7 @@ pub(super) fn apply_and_setup<'a, 'r>(
     // lists, live counts, bump allocator — is skipped outright. A level under
     // a free level is taken whole with its region, and no level reads its
     // products.
-    products.reset(eng, might_use_sparse, num_nodes, f_widths, g_widths, free)?;
+    products.reset(eng, might_use_sparse, num_nodes, f_widths, g_widths, cone)?;
 
     Ok(ApplyRun {
         levels, f_widths, g_widths,
@@ -445,7 +544,7 @@ pub(super) fn apply_and_setup<'a, 'r>(
         prefilter_masks,
         carried: Vec::new(),
         restoring: false,
-        free,
+        cone,
     })
 }
 

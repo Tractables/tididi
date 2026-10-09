@@ -74,20 +74,22 @@ impl GridArena {
 
     pub(super) fn reset(
         &mut self, eng: &Engine, sparse: bool, n: usize, f_widths: &[usize], g_widths: &[usize],
-        regions: super::setup::Regions<'_>,
+        cone: super::setup::Cone<'_>,
     ) -> Result<(), OperationError> {
-        self.grids.clear();
+        // A level outside `cone` is read by no other level, and its entry is
+        // never read.
         self.grids.resize(n, None);
         let mut bump = self.bump.take().unwrap_or_default();
         bump.end = 0;
         bump.free.clear();
         if sparse {
+            for i in cone.nodes() {
+                self.grids[i] = None;
+            }
             self.bump = Some(bump);
         } else {
-            // A level no other level reads gets no grid.
             let mut cursor = 0;
-            for i in 0..n {
-                if regions.under_free(i) { continue; }
+            for i in cone.nodes() {
                 self.grids[i] = Some(GridBase(cursor));
                 cursor += f_widths[i] * g_widths[i];
             }
