@@ -158,6 +158,7 @@ For more specialized control:
 | Conjoin a local constraint, such as a cube or a set of codes over a few variables, into a large diagram's own levels, keeping the nodes it does not cut | [`Engine::and_in_place`](crate::Engine::and_in_place), [`Engine::and_in_place_loose`](crate::Engine::and_in_place_loose), [`Engine::and_cube`](crate::Engine::and_cube) |
 | Place or conjoin where the larger vtree holds a subtree with its children swapped | [`Engine::embed_moving_mirrored`](crate::Engine::embed_moving_mirrored), [`Engine::and_onto_mirrored`](crate::Engine::and_onto_mirrored) |
 | Pair each node of a level with a code on variables of its own | [`Engine::tag_level`](crate::Engine::tag_level) |
+| Number each level's nodes in the order a walk down from the output first reaches them, for passes that read levels in order | [`Tdd::renumber_top_down`](crate::Tdd::renumber_top_down) |
 | Assemble levels and pairs directly | [`TddBuilder`](crate::diagram::TddBuilder), started with [`Tdd::builder`](crate::Tdd::builder) |
 
 The [data model](crate::guide::model) explains levels, pairs and determinism;

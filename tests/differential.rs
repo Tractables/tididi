@@ -55,6 +55,11 @@
 //! - [`mirrored_placements_match_enumeration`] — a diagram copied or moved
 //!   onto its vtree with children swapped at random nodes, and two diagrams
 //!   conjoined onto it, answer the truth table they had.
+//! - [`renumbering_keeps_the_diagram`] — numbering each level's nodes in the
+//!   order a walk down from the output reaches them keeps the function, the
+//!   nodes and the pairs of a canonical diagram and of an unreduced
+//!   conjunction; the result conjoins as its operand does, and the binary
+//!   format carries it node for node.
 //!
 //! Every claim runs through [`check_case`], so a failure found by the loop is
 //! reproduced by writing its printed case down as a `Case::literal` and calling
@@ -267,7 +272,7 @@ fn step(name: &'static str) {
 fn check_case(case: &Case) {
     /// One claim of the battery, by the name a failure report gives it.
     type Claim = (&'static str, fn(&Case));
-    let claims: [Claim; 16] = [
+    let claims: [Claim; 17] = [
         ("count against enumeration", count_matches_enumeration),
         ("operation orders agree", orders_agree),
         ("operations against enumeration", operations_match_enumeration),
@@ -284,6 +289,7 @@ fn check_case(case: &Case) {
         ("marginal evaluations against enumeration", marginal_evaluations_match_enumeration),
         ("level counts against enumeration", level_counts_match_enumeration),
         ("mirrored placements against enumeration", mirrored_placements_match_enumeration),
+        ("renumbering keeps the diagram", renumbering_keeps_the_diagram),
     ];
     for (name, claim) in claims {
         step(name);
@@ -553,6 +559,57 @@ fn binary_round_trip(case: &Case) {
         bad[end..].copy_from_slice(&sum.to_le_bytes());
         if let Ok(g) = read_tdd_binary(&mut bad.as_slice(), &case.vtree) {
             g.model_count().expect("a diagram the reader accepted counts");
+        }
+    }
+}
+
+/// Numbering each level's nodes top-down changes the numbers and nothing
+/// else. The canonical diagram stays canonical, with its nodes, its pairs and
+/// its count; an unreduced conjunction, which may keep nodes its output does
+/// not reach, keeps its function and minimizes to the conjunction's canonical
+/// diagram; renumbered operands conjoin to the function the operands do; and
+/// the binary format reads a renumbered diagram back node for node.
+fn renumbering_keeps_the_diagram(case: &Case) {
+    let n = case.num_vars;
+    let eng = Engine::new();
+    let f = compile(case);
+    let want = diagram_truth(&f, n);
+    let g = eng.renumber_top_down(&f).expect("an unarmed engine refuses nothing");
+    assert_canonical(&g);
+    assert_eq!((g.node_count(), g.pair_count()), (f.node_count(), f.pair_count()), "renumbering changed the size");
+    assert_same_shape(&g, &f, "renumbering");
+    assert_truth(&diagram_truth(&g, n), &want, n, "renumbered");
+    assert_eq!(g.model_count().unwrap(), f.model_count().unwrap(), "renumbering changed the count");
+
+    step("renumbering an unreduced conjunction");
+    let split = case.clauses.len().div_ceil(2);
+    let a = compile(&Case { clauses: case.clauses[..split].to_vec(), vtree_kind: String::new(), ..borrow(case) });
+    let b = compile(&Case { clauses: case.clauses[split..].to_vec(), vtree_kind: String::new(), ..borrow(case) });
+    let conj = eng.and(a.clone(), b.clone()).expect("an unarmed engine refuses nothing");
+    let r = eng.renumber_top_down(&conj).expect("an unarmed engine refuses nothing");
+    assert_eq!((r.node_count(), r.pair_count()), (conj.node_count(), conj.pair_count()), "renumbering changed the size");
+    assert_truth(&diagram_truth(&r, n), &diagram_truth(&conj, n), n, "renumbered conjunction");
+    let mut minimized = r.clone();
+    minimized.minimize().unwrap();
+    assert_same_shape(&minimized, &f, "renumbered conjunction, minimized");
+
+    step("conjoining renumbered operands");
+    let (ra, rb) = (eng.renumber_top_down(&a).unwrap(), eng.renumber_top_down(&b).unwrap());
+    let both = eng.and(ra, rb).expect("an unarmed engine refuses nothing");
+    assert_canonical_after_minimize(&both);
+    assert_truth(&diagram_truth(&both, n), &want, n, "conjunction of renumbered operands");
+
+    step("the binary round trip of a renumbered diagram");
+    let mut bytes = Vec::new();
+    write_tdd_binary(&mut bytes, &g).expect("the diagram is structural, so it is writable");
+    let back = read_tdd_binary(&mut bytes.as_slice(), &case.vtree).expect("what was just written reads back");
+    assert_canonical(&back);
+    assert_eq!(back.output(), g.output(), "renumbered binary round trip: output");
+    for t in case.vtree.bottomup() {
+        let (x, y) = (back.level(t), g.level(t));
+        assert_eq!(x.nodes().len(), y.nodes().len(), "renumbered binary round trip: level {t:?}");
+        for i in 0..x.nodes().len() {
+            assert_eq!(x.pairs_vec(i), y.pairs_vec(i), "renumbered binary round trip: level {t:?} node {i}");
         }
     }
 }

@@ -10,6 +10,7 @@
 mod edit;
 mod reach;
 mod operations;
+mod renumber;
 mod state;
 
 pub(crate) use state::{Dirty, LevelCounts, Pass};
