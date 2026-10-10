@@ -734,3 +734,115 @@ fn care_on_one_subtree_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
     assert!(strict > 0, "no case pruned anything");
     out
 }
+
+/// `care` moved down from the root to `u`, one child at a time: `None` where
+/// a node on the way holds more than one pair (`care` reads a variable off
+/// the path, which it does not when it reads only `u`'s).
+fn rooted_at(care: &Tdd, u: crate::vtree::VtreeIdx) -> Option<Tdd> {
+    let mut t = care.clone();
+    while t.output.vtree != u {
+        let at = t.output.vtree;
+        if t.levels[at.idx()].pairs_vec(t.output.local.idx()).len() != 1 {
+            return None;
+        }
+        let (left, _) = t.vtree.children(at);
+        let side = if t.vtree.lca(u, left) == left { ChildSide::Left } else { ChildSide::Right };
+        t = reroot_to_child(&t, side);
+    }
+    Some(t)
+}
+
+/// On implicit levels and on stored ones alike ([`same_as_stored`]).
+#[test]
+fn restrict_to_a_care_rooted_lower_keeps_exactly_the_pairs_models_use() {
+    same_as_stored(care_rooted_lower_keeps_exactly_the_pairs_models_use);
+}
+
+/// The cases of
+/// [`restrict_to_a_care_rooted_lower_keeps_exactly_the_pairs_models_use`]:
+/// the restricted diagrams.
+fn care_rooted_lower_keeps_exactly_the_pairs_models_use() -> Vec<Tdd> {
+    // `care` reads only the variables under a node `u` below the root and is
+    // rooted there, as a semi-join's care sits under its target: the walk
+    // decides the levels from the root down to `u`'s parent by one pass up
+    // and one down that path, and below it as usual. One level or several;
+    // brute force as above, and the raw result is a valid diagram.
+    let mut out = Vec::new();
+    let mut rng = Lcg::new(0x10e5_ca7e_5eed_0003);
+    let (mut cases, mut strict, mut deep) = (0, 0, 0);
+    for &nvars in &[4u32, 5, 6, 7] {
+        let shapes = [Vtree::linear(nvars), Vtree::balanced(nvars), Vtree::random(nvars, u64::from(nvars) * 13 + 5)];
+        for vtree in shapes {
+            let vtree = Arc::new(vtree);
+            let lows: Vec<crate::vtree::VtreeIdx> =
+                vtree.subtree(vtree.root()).filter(|&u| u != vtree.root() && !vtree.node(u).is_leaf()).collect();
+            if lows.is_empty() {
+                continue;
+            }
+            for _ in 0..80 {
+                let u = lows[(rng.next_u64() as usize) % lows.len()];
+                let vars: Vec<u32> = vtree.subtree(u).filter(|&x| vtree.node(x).is_leaf()).map(|x| vtree.leaf_var(x).0).collect();
+                let mut c = rand_conj_over(&vtree, &vars, 3, 2, false, &mut rng);
+                c.minimize().unwrap();
+                if count_is_zero(&c) {
+                    continue;
+                }
+                let Some(c) = rooted_at(&c, u) else { continue };
+                let mut f = rand_conj(&vtree, nvars, 4, 3, true, &mut rng);
+                if rng.coin() {
+                    f.minimize().unwrap();
+                }
+                if f.is_zero() || f.output.vtree != vtree.root() {
+                    continue;
+                }
+                let g = (f.clone()).restrict_to_care(c.clone()).unwrap().into_tdd();
+                assert_canonical(&g);
+                let mut used = std::collections::BTreeSet::new();
+                for mask in 0..(1u32 << nvars) {
+                    let asn: Vec<bool> = (0..nvars).map(|i| (mask >> i) & 1 == 1).collect();
+                    let cv = eval(&c, &asn);
+                    assert_eq!(eval(&g, &asn) && cv, eval(&f, &asn) && cv, "unsound at {asn:?}");
+                    if cv && eval(&f, &asn) {
+                        trace(&f, f.output.vtree, f.output.local, &asn, &mut used);
+                    }
+                }
+                assert_eq!(reachable_pairs(&g), used.len(), "the restriction kept pairs no model uses (nvars={nvars})");
+                if used.len() < reachable_pairs(&f) {
+                    strict += 1;
+                }
+                if vtree.node(u).parent() != Some(vtree.root()) {
+                    deep += 1;
+                }
+                cases += 1;
+                out.push(g);
+            }
+        }
+    }
+    assert!(cases >= 300, "too few cases exercised: {cases}");
+    assert!(deep >= 100, "too few cares rooted more than one level down: {deep}");
+    assert!(strict > 0, "no case pruned anything");
+    out
+}
+
+/// The walk's two ways to its marks and its joins of a spine and by the
+/// products of both children or of one, each taken by the cases above: a
+/// care rooted at or under the operand with one node a level down to what
+/// it reads is marked off the listings without the descent from the root,
+/// any other by the descent, and every way keeps exactly the pairs models
+/// use.
+#[test]
+fn restrict_marks_off_the_listings_where_each_node_has_one_product() {
+    use crate::test_helpers::restrict_paths;
+    let before = restrict_paths();
+    keeps_exactly_the_pairs_models_use();
+    care_on_one_subtree_keeps_exactly_the_pairs_models_use();
+    care_rooted_lower_keeps_exactly_the_pairs_models_use();
+    let after = restrict_paths();
+    let [listings, descents, spines, paired, keyed] = [0, 1, 2, 3, 4].map(|k| after[k] - before[k]);
+    eprintln!("restrict paths: {listings} listings, {descents} descents, {spines} spines, {paired} paired, {keyed} keyed");
+    assert!(listings >= 100, "too few walks marked off the listings: {listings}");
+    assert!(descents >= 100, "too few walks marked by the descent: {descents}");
+    assert!(spines >= 100, "too few levels joined as a spine: {spines}");
+    assert!(paired >= 10, "too few levels joined by both children's products: {paired}");
+    assert!(keyed >= 100, "too few levels joined by one child's products: {keyed}");
+}

@@ -10,6 +10,7 @@ use crate::vtree::VtreeIdx;
 use crate::apply::falsity::{propagate_false_nodes, rewrite_level_pairs};
 
 use super::Marking;
+use super::pairs::PairRow;
 
 impl Marking {
     /// Drop every pair the marks call dead, then every pair naming a node left
@@ -31,6 +32,12 @@ impl Marking {
             let node = ChildDecoder::structural().node(side);
             node == ZERO || (!vtree.node(cv).is_leaf() && !self.alive[cv.idx()][node.idx()])
         };
+        // Whether a node the marks keep alive lost every pair. A pair that
+        // stays names live nodes only, so where none did, every node left
+        // empty is one no pair names any more and the falsity sweep would
+        // find nothing to drop. The walk's marks never leave one (a live
+        // product keeps a live pair, whose children are live products).
+        let mut lost = false;
         for (v, left, right) in vtree.internal_bottomup() {
             if f.levels[v.idx()].is_marginal() { continue; }
             let [level, left_level, right_level] = f.levels
@@ -39,20 +46,39 @@ impl Marking {
             let before = level.live_pairs();
             gate.poll(before as u64)?;
             let marks = &self.pair_alive;
+            // The node whose marks `row` holds: one look-up a node, not a pair.
+            let mut row: Option<(usize, bool, PairRow<'_>)> = None;
+            let alive = &self.alive[v.idx()];
+            let mut kept_one = false;
             rewrite_level_pairs(lim, level, |i, k, count, pair| {
-                if !(keep(v, i) || marks.contains(v, NodeIdx(i as u32), k, count))
+                let (kept, marked) = match row {
+                    Some((at, kept, marked)) if at == i => (kept, marked),
+                    _ => {
+                        let entry = (i, keep(v, i), marks.row(v, NodeIdx(i as u32), count));
+                        row = Some(entry);
+                        (entry.1, entry.2)
+                    }
+                };
+                let out = if !(kept || marked.contains(k))
                     || dead(left, left_level, pair.left) || dead(right, right_level, pair.right) {
                     None
                 } else {
                     Some(pair)
+                };
+                kept_one = (k > 0 && kept_one) || out.is_some();
+                if k + 1 == count && !kept_one && alive[i] {
+                    lost = true;
                 }
+                out
             })?;
             if level.live_pairs() != before {
                 f.try_invalidate(eng, v)?;
             }
         }
         gate.flush()?;
-        propagate_false_nodes(lim, &mut f)?;
+        if lost {
+            propagate_false_nodes(lim, &mut f)?;
+        }
         // The nodes the dropped pairs no longer name are unreachable now.
         eng.reduce(&mut f, ReductionPlan::Prune)?;
         Ok(f)

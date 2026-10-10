@@ -12,10 +12,10 @@ fn pair_marks_union_contexts_across_word_boundaries() {
     let (v, node) = (f.output.vtree, f.output.local);
     for count in [1, 63, 64, 65, 127, 128, 129, 1025] {
         let mut marks = PairMarks::new(&eng, &f).unwrap();
-        for k in (0..count).step_by(2) { marks.mark(&eng, v, node, k, count).unwrap(); }
-        for k in 0..count { assert_eq!(marks.contains(v, node, k, count), k % 2 == 0); }
+        for k in (0..count).step_by(2) { marks.mark_many(&eng, v, node, count, [k as u32]).unwrap(); }
+        for k in 0..count { assert_eq!(marks.row(v, node, count).contains(k), k % 2 == 0); }
         assert_eq!(marks.complete(v, node, count), count == 1);
-        for k in (1..count).step_by(2) { marks.mark(&eng, v, node, k, count).unwrap(); }
+        for k in (1..count).step_by(2) { marks.mark_many(&eng, v, node, count, [k as u32]).unwrap(); }
         assert!(marks.complete(v, node, count));
     }
 }
@@ -30,12 +30,12 @@ fn wide_marks_recover_after_allocation_refusal() {
     for nth in 0..2 {
         let mut marks = PairMarks::new(&eng, &f).unwrap();
         eng.limits().refuse_nth_reserve(nth);
-        assert_eq!(marks.mark(&eng, v, node, 64, 65), Err(OperationError::OverBudget));
+        assert_eq!(marks.mark_many(&eng, v, node, 65, [64]), Err(OperationError::OverBudget));
         eng.limits().grant_every_reserve();
-        assert!(!marks.contains(v, node, 64, 65));
-        marks.mark(&eng, v, node, 64, 65).unwrap();
-        assert!(marks.contains(v, node, 64, 65));
-        assert!(!marks.contains(v, node, 0, 65));
+        assert!(!marks.row(v, node, 65).contains(64));
+        marks.mark_many(&eng, v, node, 65, [64]).unwrap();
+        assert!(marks.row(v, node, 65).contains(64));
+        assert!(!marks.row(v, node, 65).contains(0));
     }
 }
 

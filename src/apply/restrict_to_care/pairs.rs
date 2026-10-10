@@ -32,34 +32,42 @@ impl PairMarks {
         Self { small: Vec::new(), wide: FxHashMap::default(), all: true }
     }
 
-    /// Mark one pair as live in at least one care context.
-    pub(super) fn mark(&mut self, eng: &Engine, v: VtreeIdx, node: NodeIdx,
-                      pair: usize, count: usize) -> Result<(), OperationError> {
+    /// Mark pairs `pairs` of one node live in at least one care context,
+    /// with one look-up of a wide node's row for all of them.
+    pub(super) fn mark_many(&mut self, eng: &Engine, v: VtreeIdx, node: NodeIdx,
+                           count: usize, pairs: impl IntoIterator<Item = u32>) -> Result<(), OperationError> {
         if self.all { return Ok(()); }
         if count <= 64 {
-            self.small[v.idx()][node.idx()] |= 1 << pair;
-        } else {
-            let key = (v, node);
-            if !self.wide.contains_key(&key) {
-                let mut words = Vec::new();
-                eng.limits().try_resize(&mut words, count.div_ceil(64), 0)?;
-                if self.wide.len() == self.wide.capacity() {
-                    eng.limits().reserve_map(&mut self.wide, 1)?;
-                }
-                self.wide.insert(key, words);
+            let word = &mut self.small[v.idx()][node.idx()];
+            for k in pairs {
+                *word |= 1 << k;
             }
-            self.wide.get_mut(&key).expect("the mark row exists")[pair / 64] |= 1 << (pair % 64);
+            return Ok(());
+        }
+        let key = (v, node);
+        if !self.wide.contains_key(&key) {
+            let mut words = Vec::new();
+            eng.limits().try_resize(&mut words, count.div_ceil(64), 0)?;
+            if self.wide.len() == self.wide.capacity() {
+                eng.limits().reserve_map(&mut self.wide, 1)?;
+            }
+            self.wide.insert(key, words);
+        }
+        let words = self.wide.get_mut(&key).expect("the mark row exists");
+        for k in pairs {
+            words[k as usize / 64] |= 1 << (k % 64);
         }
         Ok(())
     }
 
-    /// Whether a source pair survived any care context.
-    pub(super) fn contains(&self, v: VtreeIdx, node: NodeIdx, pair: usize, count: usize) -> bool {
-        if self.all { return true; }
-        if count <= 64 {
-            self.small[v.idx()][node.idx()] & (1 << pair) != 0
+    /// One node's marks, looked up once for a pass over its pairs.
+    pub(super) fn row(&self, v: VtreeIdx, node: NodeIdx, count: usize) -> PairRow<'_> {
+        if self.all {
+            PairRow::All
+        } else if count <= 64 {
+            PairRow::Word(self.small[v.idx()][node.idx()])
         } else {
-            self.wide.get(&(v, node)).is_some_and(|words| words[pair / 64] & (1 << (pair % 64)) != 0)
+            self.wide.get(&(v, node)).map_or(PairRow::Word(0), |words| PairRow::Words(words))
         }
     }
 
@@ -71,6 +79,26 @@ impl PairMarks {
         } else {
             self.wide.get(&(v, node)).is_some_and(|words|
                 words.iter().map(|w| w.count_ones() as usize).sum::<usize>() == count)
+        }
+    }
+}
+
+/// One node's pair marks ([`PairMarks::row`]).
+#[derive(Clone, Copy)]
+pub(super) enum PairRow<'a> {
+    All,
+    Word(u64),
+    Words(&'a [u64]),
+}
+
+impl PairRow<'_> {
+    /// Whether pair `k` of the node is marked.
+    #[inline]
+    pub(super) fn contains(self, k: usize) -> bool {
+        match self {
+            PairRow::All => true,
+            PairRow::Word(w) => k < 64 && w & (1 << k) != 0,
+            PairRow::Words(words) => words[k / 64] & (1 << (k % 64)) != 0,
         }
     }
 }

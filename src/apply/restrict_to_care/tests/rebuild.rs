@@ -25,7 +25,7 @@ fn all_live_but_the_output_pairs(eng: &Engine, f: &Tdd) -> Marking {
         for j in 0..level.nodes().len() {
             if (v, j) == (f.output.vtree, f.output.local.idx()) { continue; }
             let count = level.pairs_vec(j).len();
-            for k in 0..count { pair_alive.mark(eng, v, NodeIdx(j as u32), k, count).unwrap(); }
+            for k in 0..count { pair_alive.mark_many(eng, v, NodeIdx(j as u32), count, [k as u32]).unwrap(); }
         }
     }
     Marking { pair_alive, ..all_live(f) }
@@ -192,7 +192,7 @@ fn marks_on_an_implicit_level_build_what_is_left() {
                 let count = level.pair_count_at(j);
                 for (k, p) in level.pairs_iter_of_idx(j).enumerate() {
                     if t != v || p.left != NEG_LEAF_IDX.into() {
-                        pair_alive.mark(&eng, t, NodeIdx(j as u32), k, count).unwrap();
+                        pair_alive.mark_many(&eng, t, NodeIdx(j as u32), count, [k as u32]).unwrap();
                     }
                 }
             }

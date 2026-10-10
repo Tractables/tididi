@@ -18,8 +18,9 @@
 //!   with unreachable nodes or summed-out levels, and `node_value`, which
 //!   evaluates one node of them.
 //! - `access` — the infallible `CountVecExt` fixture builders,
-//!   `stopping_engine`, the whole-tree `rotate_left` / `rotate_right`, and
-//!   `reroot_to_child`.
+//!   `stopping_engine`, the whole-tree `rotate_left` / `rotate_right`,
+//!   `reroot_to_child`, and `restrict_paths`, the ways the care
+//!   restriction's walk took on this thread.
 //!
 //! The canonicity oracle has a test of its own:
 //! `reduce::tests::canonicity::every_route_to_one_function_minimizes_to_the_same_diagram`
