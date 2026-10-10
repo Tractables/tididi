@@ -881,13 +881,17 @@ fn assemble_moving(
         }
         let (left, right) = into.children(t);
         let (free_side, carried) = if plan.free[left.idx()] { (ChildSide::Left, right) } else { (ChildSide::Right, left) };
-        if !into.node(carried).is_leaf() {
-            placement.pass_through(t, free_side);
+        // A refused join is undone with the placement below.
+        stopped = if !into.node(carried).is_leaf() {
+            placement.pass_through(t, free_side)
         } else if let Some(top) = literal_chain(into, plan, &placement, tdd.output().local, t) {
-            placement.pass_over_leaf(t, free_side, &[POS_LEAF_IDX, NEG_LEAF_IDX]);
             literal_tops.push(top);
+            placement.pass_over_leaf(t, free_side, &[POS_LEAF_IDX, NEG_LEAF_IDX])
         } else {
-            placement.pass_over_leaf(t, free_side, &[ONE_LEAF_IDX]);
+            placement.pass_over_leaf(t, free_side, &[ONE_LEAF_IDX])
+        };
+        if stopped.is_err() {
+            break;
         }
     }
     if let Err(e) = stopped.and_then(|()| gate.flush()) {
@@ -1035,9 +1039,9 @@ fn assemble_marginal(
         }
         let (left, right) = into.children(t);
         if plan.free[t.idx()] {
-            placement.join(t, placement.true_node(left), placement.true_node(right));
+            placement.join(t, placement.true_node(left), placement.true_node(right))?;
         } else {
-            placement.pass_through(t, if plan.free[left.idx()] { ChildSide::Left } else { ChildSide::Right });
+            placement.pass_through(t, if plan.free[left.idx()] { ChildSide::Left } else { ChildSide::Right })?;
         }
     }
     gate.flush()?;

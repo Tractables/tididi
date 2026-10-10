@@ -194,7 +194,7 @@ fn graft_impl(
     for (j, &chain_idx) in layout.chain_internals.iter().enumerate() {
         let left = if j == 0 { piece_ref(0) } else { NodeIdx(0) };
         let right = piece_ref(j + 1);
-        placement.join(chain_idx, left, right);
+        placement.join(chain_idx, left, right)?;
     }
 
     // The output is the last chain join when there is one; otherwise the sole

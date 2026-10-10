@@ -272,27 +272,30 @@ impl<'a> MovePlacement<'a> {
     }
 
     /// Lift all references from one child through a join with a free sibling.
-    pub(super) fn pass_through(&mut self, at: VtreeIdx, free_side: ChildSide) {
+    /// Hands back a join's refusal.
+    pub(super) fn pass_through(&mut self, at: VtreeIdx, free_side: ChildSide) -> Result<(), OperationError> {
         let through = PassThrough::new(self.vtree, &self.assembly, at, free_side);
         self.prune |= through.carries_leaf;
         self.contract |= self.assembly.level(through.carries).is_marginal();
         for (left, right) in through.pairs() {
-            self.join(at, left, right);
+            self.join(at, left, right)?;
         }
+        Ok(())
     }
 
     /// Lift a leaf child through a join with a free sibling, one node per
     /// label of `labels` in that order: the labels the level reading the
     /// lifted references names, which determinism keeps within `{One}` or
     /// within `{Pos, Neg}`. A node per label of the leaf would put `One` and
-    /// a literal on one level.
-    pub(super) fn pass_over_leaf(&mut self, at: VtreeIdx, free_side: ChildSide, labels: &[NodeIdx]) {
+    /// a literal on one level. Hands back a join's refusal.
+    pub(super) fn pass_over_leaf(&mut self, at: VtreeIdx, free_side: ChildSide, labels: &[NodeIdx]) -> Result<(), OperationError> {
         let (left, right) = self.vtree.children(at);
         let one = true_node(self.vtree, if free_side == ChildSide::Left { left } else { right });
         for &label in labels {
             let (l, r) = if free_side == ChildSide::Left { (one, label) } else { (label, one) };
-            self.join(at, l, r);
+            self.join(at, l, r)?;
         }
+        Ok(())
     }
 
     /// The first reference the level at `at` holds on `side`, if it holds
@@ -305,12 +308,14 @@ impl<'a> MovePlacement<'a> {
     }
 
     /// Add a connecting node, recording any marginal boundary it introduces.
+    /// Its storage grows through the engine's limits; a refusal is handed
+    /// back, for the caller to undo the placement.
     #[inline]
-    pub(super) fn join(&mut self, at: VtreeIdx, left: NodeIdx, right: NodeIdx) -> NodeIdx {
+    pub(super) fn join(&mut self, at: VtreeIdx, left: NodeIdx, right: NodeIdx) -> Result<NodeIdx, OperationError> {
         let (l, r) = self.vtree.children(at);
         self.prune |= self.assembly.level(l).is_marginal() || self.assembly.level(r).is_marginal();
         self.changed.push(at);
-        self.assembly.parts_mut().0[at.idx()].push_internal_node(&[ChildPair::new(left, right)])
+        self.assembly.parts_mut().0[at.idx()].push_node(self.eng.limits(), &[ChildPair::new(left, right)])
     }
 
     /// Seat the chosen root reference without the repairs of
