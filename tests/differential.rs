@@ -341,9 +341,9 @@ fn orders_agree(case: &Case) {
     assert_same_shape(&left, &by_clause, "clause fold against clause-at-a-time");
 }
 
-/// Conjunction, disjunction, negation, conditioning, projection and
-/// restriction, each against the truth table of the function it claims to
-/// compute.
+/// Conjunction (also in place), disjunction, negation, conditioning,
+/// projection and restriction, each against the truth table of the function
+/// it claims to compute.
 fn operations_match_enumeration(case: &Case) {
     let n = case.num_vars;
     let eng = Engine::new();
@@ -370,6 +370,17 @@ fn operations_match_enumeration(case: &Case) {
     });
     assert_canonical_after_minimize(&sparse);
     assert_truth(&diagram_truth(&sparse, n), &want, n, "conjunction on the sparse route");
+
+    // The conjunction written into an operand's own levels, both ways round:
+    // the same function, and once minimized the same canonical diagram.
+    step("conjunction in place");
+    for (big, small) in [(&f, &g), (&g, &f)] {
+        let kept = eng.and_in_place(big.clone(), small).expect("an unarmed engine refuses nothing");
+        assert_truth(&diagram_truth(&kept, n), &want, n, "conjunction in place");
+        assert_canonical_after_minimize(&kept);
+        let loose = eng.and_in_place_loose(big.clone(), small).expect("an unarmed engine refuses nothing");
+        assert_truth(&diagram_truth(&loose, n), &want, n, "conjunction in place, unpruned");
+    }
 
     step("disjunction");
     let disj = eng.or(f.clone(), g.clone()).expect("an unarmed engine refuses nothing");
