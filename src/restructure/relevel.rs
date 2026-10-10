@@ -190,45 +190,43 @@ pub(crate) fn rebuild_rotated_levels(
     scratch: &mut RestructureScratch,
     max_pairs: usize,
 ) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
-    rebuild_levels(lim, tdd, info, dir, false, scratch, max_pairs)
+    let marginal = tdd.has_marginal_level();
+    rebuild_levels(lim, tdd, info, dir, false, marginal, scratch, max_pairs)
 }
 
-/// [`rebuild_rotated_levels`] for a rotation whose promoted node had its two
-/// children swapped first ([`swap_children`](crate::vtree::rotate::swap_children)):
+/// [`rebuild_rotated_levels`], given whether `tdd` has a marginal level
+/// (`marginal`). A caller that rebuilds many diagrams knows that once:
+/// each rebuild forgets what the diagram knows of its levels, and asking
+/// again reads every level.
+///
+/// Where `crossed`, the rotation's promoted node had its two children
+/// swapped first ([`swap_children`](crate::vtree::rotate::swap_children)):
 /// the old w-level is read with its sides exchanged, so the grouping the
 /// rotation makes pairs the other grandchild with `v`'s other child.
-pub(crate) fn rebuild_crossed_levels(
-    lim: &Limits,
-    tdd: &mut Tdd,
-    info: &RotationInfo,
-    dir: RotationKind,
-    scratch: &mut RestructureScratch,
-    max_pairs: usize,
-) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
-    rebuild_levels(lim, tdd, info, dir, true, scratch, max_pairs)
-}
-
-fn rebuild_levels(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn rebuild_levels(
     lim: &Limits,
     tdd: &mut Tdd,
     info: &RotationInfo,
     dir: RotationKind,
     crossed: bool,
+    marginal: bool,
     scratch: &mut RestructureScratch,
     max_pairs: usize,
 ) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
+    debug_assert_eq!(marginal, tdd.has_marginal_level());
     let (old_v, old_w) = (&tdd.levels[info.v_idx.idx()], &tdd.levels[info.w_idx.idx()]);
     // The triples are packed one per word where their fields fit one: a
     // fitted `u64` moves half the bytes of a `u128` through every phase.
     let layout = Layout::fitted(field_bounds(old_v, old_w, dir, crossed));
     if layout.bits() <= 64 {
         let mut triples = std::mem::take(&mut scratch.narrow);
-        let rebuilt = rebuild_with(lim, tdd, info, dir, crossed, &layout, &mut triples, scratch, max_pairs);
+        let rebuilt = rebuild_with(lim, tdd, info, dir, crossed, marginal, &layout, &mut triples, scratch, max_pairs);
         scratch.narrow = triples;
         rebuilt
     } else {
         let mut triples = std::mem::take(&mut scratch.wide);
-        let rebuilt = rebuild_with(lim, tdd, info, dir, crossed, &Layout::WIDE, &mut triples, scratch, max_pairs);
+        let rebuilt = rebuild_with(lim, tdd, info, dir, crossed, marginal, &Layout::WIDE, &mut triples, scratch, max_pairs);
         scratch.wide = triples;
         rebuilt
     }
@@ -243,6 +241,7 @@ fn rebuild_with<W: Word>(
     info: &RotationInfo,
     dir: RotationKind,
     crossed: bool,
+    marginal_ctx: bool,
     layout: &Layout,
     triples: &mut Vec<W>,
     scratch: &mut RestructureScratch,
@@ -250,7 +249,6 @@ fn rebuild_with<W: Word>(
 ) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
     let v_idx = info.v_idx.idx();
     let w_idx = info.w_idx.idx();
-    let marginal_ctx = tdd.has_marginal_level();
     // The group table indexes `triples` with `u32` offsets; `collect_triples`
     // gives up once the count reaches `max_pairs`.
     let max_pairs = max_pairs.min(u32::MAX as usize);

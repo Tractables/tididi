@@ -20,7 +20,7 @@ use std::sync::Arc;
 use crate::Engine;
 use crate::diagram::{Dirty, Tdd, TddLevel, TddNodeId};
 use crate::limits::{OperationError, Transient};
-use crate::restructure::relevel::{rebuild_crossed_levels, rebuild_rotated_levels};
+use crate::restructure::relevel::rebuild_levels;
 use crate::restructure::scratch::RestructureScratch;
 use crate::vtree::rotate::{RotationInfo, rotate_pointers};
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
@@ -137,7 +137,8 @@ impl Engine {
     ) -> Result<bool, OperationError> {
         let _op = self.limits().enter()?;
         let mut scratch = self.scratch.restructure.checkout(self);
-        rotate_pool_on(self, members, mv, bound, &mut scratch, accept)
+        let marginal = members.iter().any(|m| m.has_marginal_level());
+        rotate_pool_on(self, members, mv, bound, marginal, &mut scratch, accept)
     }
 
     /// A greedy descent over the members' shared vtree: at every internal
@@ -199,6 +200,13 @@ fn descend(
     // those two nodes and at the pivot's parent, and nowhere else: a pivot
     // refused before is refused again, and is not probed.
     let mut refused = vec![false; members[0].vtree.num_nodes()];
+    // Asked once: a probe rebuilds every member's two levels and so forgets
+    // what each member knows of its levels, and asking at every probe read
+    // every level of every member again, most of a search over many small
+    // members. A rotation rebuilds structural levels as structural levels,
+    // and a refused one puts the old levels back, so the answer holds for
+    // the whole search.
+    let marginal = members.iter().any(|m| m.has_marginal_level());
     while stats.sweeps < config.max_sweeps && !spent() {
         stats.sweeps += 1;
         let internals: Vec<VtreeIdx> = members[0].vtree.internal_bottomup().map(|(v, _, _)| v).collect();
@@ -221,7 +229,8 @@ fn descend(
                     }
                     let mv = PoolMove { rotation: RotationMove { pivot: v, kind }, crossed };
                     stats.probes += 1;
-                    if rotate_pool_on(eng, members, mv, config.max_inner_pairs, scratch, |p| p.live_pairs_delta() < 0)? {
+                    if rotate_pool_on(eng, members, mv, config.max_inner_pairs, marginal, scratch, |p| p.live_pairs_delta() < 0)? {
+                        debug_assert_eq!(members.iter().any(|m| m.has_marginal_level()), marginal);
                         stats.accepts += 1;
                         kept += 1;
                         moved = true;
@@ -263,11 +272,14 @@ struct Saved<'a> {
     levels: Option<(Transient<'a, TddLevel>, Transient<'a, TddLevel>)>,
 }
 
+/// [`Engine::rotate_pool_if`], given whether some member has a marginal
+/// level (`marginal`), which abandons the move.
 fn rotate_pool_on(
     eng: &Engine,
     members: &mut [&mut Tdd],
     mv: PoolMove,
     bound: usize,
+    marginal: bool,
     scratch: &mut RestructureScratch,
     accept: impl FnOnce(&PoolProbe<'_>) -> bool,
 ) -> Result<bool, OperationError> {
@@ -278,7 +290,7 @@ fn rotate_pool_on(
     if mv.rotation.pivot.idx() >= shared.num_nodes() {
         return Err(OperationError::LevelNotInVtree(mv.rotation.pivot));
     }
-    if members.iter().any(|m| m.has_marginal_level()) {
+    if marginal {
         return Ok(false);
     }
     let Some((rotated, info)) = rotated_tree(&shared, mv) else { return Ok(false) };
@@ -303,11 +315,8 @@ fn rotate_pool_on(
         });
         m.levels.forget();
         m.vtree = Arc::clone(&rotated);
-        let rebuilt = if mv.crossed {
-            rebuild_crossed_levels(lim, m, &info, mv.rotation.kind, scratch, bound)
-        } else {
-            rebuild_rotated_levels(lim, m, &info, mv.rotation.kind, scratch, bound)
-        };
+        // No member has a marginal level here.
+        let rebuilt = rebuild_levels(lim, m, &info, mv.rotation.kind, mv.crossed, false, scratch, bound);
         match rebuilt {
             Ok(Some((outer, inner))) => {
                 saved.last_mut().expect("pushed above").levels = Some((Transient::new(lim, outer), Transient::new(lim, inner)));
