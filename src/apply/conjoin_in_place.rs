@@ -15,10 +15,10 @@
 //!   through the children's results: a pair whose child came out false is
 //!   dropped, and a node left with none is false in turn;
 //! - where `g` branches (a node of two pairs or more, or a literal leaf), the
-//!   products of `f`'s nodes there with `g`'s node are built top-down, each
-//!   product of a pair `(a, b)` on a level once, appended to `f`'s level, or
-//!   `a` itself where the product leaves it as it was, and a literal leaf's
-//!   labels are mapped through the literal.
+//!   products of `f`'s nodes there with `g`'s node are found from the levels
+//!   under it up, each appended to `f`'s level, or `a` itself where the
+//!   product leaves `f`'s node `a` as it was, and a literal leaf's labels are
+//!   mapped through the literal.
 //!
 //! Every node of `f` at a level of `g`'s spine meets `g`'s one node there
 //! because each of `f`'s nodes is named from its parent level, all of whose
@@ -40,22 +40,30 @@
 //! levels where `g` branches, and the prune: never the levels where `g` is
 //! true, unless a dropped pair leaves their nodes to the prune.
 //!
-//! Below a branching level a node of `f` is often decided without its
-//! product: where it lies inside one node of `g`, the product is `f`'s node
-//! there and false at every other, and where it meets no node of `g`, false
-//! (`Products::inside`). One memoized pass over `f`'s nodes below finds
-//! where each lies: a pair of `f` lies inside the node of `g` holding the
-//! pair of the nodes its sides lie in, since `g`'s nodes at a level are
-//! disjoint. A filter on a column whose nodes hold one code each then reads
-//! each node once and rebuilds none.
+//! The products below a branching level are found in one pass over its
+//! levels, children before parents ([`block_products`]), that leaves each
+//! node of `f` there with its products with every node of `g` it meets: a
+//! list of `(g's node, product)`, short, since `g`'s nodes at a level are
+//! disjoint. A pair `(l, r)` of `f` meets `g`'s pair `(bl, br)` exactly
+//! where `l` meets `bl` and `r` meets `br`, and the product is the pair of
+//! those products; so each pair of `f` is read once, its sides' lists are
+//! crossed, and each combination is looked up among `g`'s pairs at the
+//! level, a table keyed by the pair. The hits are grouped by `g`'s node: a
+//! node of `f` whose pairs all came back whole in one node of `g` lies
+//! inside it and is its own product there, no node added (a filter on a
+//! column whose nodes hold one code each rebuilds none); any other group is
+//! a node of the product pairs, appended to `f`'s level. A level where `g`
+//! has only its true node is not read: its nodes are their own products
+//! there. The work is the pairs of `f` under the branching level, a few
+//! array reads and a table probe each, with nothing memoized per pair of
+//! nodes; the products no node at the branching level reaches are made too,
+//! and the prune removes them.
 //!
-//! A product of two wide nodes (a set of many codes is one node of many
-//! pairs) finds the pairs of `g`'s node it can meet by their sides instead
-//! of trying each against each: a side of `f`'s pair that lies inside one
-//! node of `g` meets only the pairs of `g`'s node on that node, and where
-//! both sides do, at most one pair. That index is built once per node of
-//! `g`, so a level of many nodes of `f` under one wide node of `g` costs
-//! its nodes and the pairs they meet, not their product with `g`'s.
+//! The tests compare the same products found top-down, one memoized
+//! product per pair of nodes reached from the branching level
+//! (`Products`), which decides a node of `f` lying inside one node of `g`
+//! without its product (`Products::inside`) and finds the pairs of a wide
+//! node of `g` that a product can meet by their sides (`GSides`).
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -458,6 +466,249 @@ impl Side {
     }
 }
 
+/// How [`block_products`] reads the nodes of `f` at one level under a
+/// branching level: what each one's products with `g`'s nodes there are.
+enum Split {
+    /// `g`'s only node at the level is its true node: every node of `f`
+    /// lies in it whole, and its product there is itself.
+    Whole(u32),
+    /// A leaf level: a label's products are labels ([`label_pieces`]).
+    Leaf,
+    /// Per original node `x` of `f`, its products with the nodes of `g` it
+    /// meets, `(g's node, product)`, at `pieces[start[x]..start[x + 1]]`:
+    /// none where it meets no node of `g`.
+    Listed { start: Vec<u32>, pieces: Vec<(u32, u32)> },
+}
+
+/// The products of `f`'s leaf label `x` with each of `g`'s labels at a leaf
+/// level, `(g's label, product)`: with `⊤` the label itself, and with a
+/// literal the literal, where `x` is `⊤` or that literal.
+#[inline]
+fn label_pieces(x: u32, buf: &mut [(u32, u32); 3]) -> usize {
+    buf[0] = (ONE_LEAF_IDX.0, x);
+    match x == ONE_LEAF_IDX.0 {
+        true => {
+            buf[1] = (POS_LEAF_IDX.0, POS_LEAF_IDX.0);
+            buf[2] = (NEG_LEAF_IDX.0, NEG_LEAF_IDX.0);
+            3
+        }
+        false => {
+            buf[1] = (x, x);
+            2
+        }
+    }
+}
+
+/// The products of `f`'s node (or label) `x` at a level split as `split`
+/// with the nodes of `g` it meets there.
+#[inline]
+fn pieces_of<'s>(split: &'s Split, x: u32, buf: &'s mut [(u32, u32); 3]) -> &'s [(u32, u32)] {
+    match split {
+        Split::Whole(top) => {
+            buf[0] = (*top, x);
+            &buf[..1]
+        }
+        Split::Leaf => {
+            let n = label_pieces(x, buf);
+            &buf[..n]
+        }
+        Split::Listed { start, pieces } => &pieces[start[x as usize] as usize..start[x as usize + 1] as usize],
+    }
+}
+
+/// One level's split as [`block_products`] reads it: each node's products
+/// with `g`'s nodes, and the nodes those products add to the level.
+struct Settle {
+    /// The level's nodes before any product is added: a product made here
+    /// is `width` plus its rank among those made.
+    width: u32,
+    /// The node being read's pairs' products, `(g's node, the pair's
+    /// position, the product pair, whether it is the pair itself)`.
+    hits: Vec<(u32, u32, ChildPair, bool)>,
+    start: Vec<u32>,
+    pieces: Vec<(u32, u32)>,
+    /// The products made, their pairs back to back, at
+    /// `made[made_at[k]..made_at[k + 1]]`.
+    made: Vec<ChildPair>,
+    made_at: Vec<u32>,
+}
+
+impl Settle {
+    /// Node `a`'s products, from its `n` pairs' hits: per node of `g` its
+    /// pairs hit, `a` itself where each of its pairs met that node in one
+    /// pair and came back whole, else a node of the products' pairs; the
+    /// nodes before `a` that no pair named (none in a stored level) meet
+    /// nothing.
+    fn node(&mut self, lim: &Limits, a: usize, n: u32) -> Result<(), OperationError> {
+        while self.start.len() < a + 1 {
+            lim.try_push(&mut self.start, self.pieces.len() as u32)?;
+        }
+        // Stable: within a node of `g` the pairs stay in their order.
+        self.hits.sort_by_key(|h| h.0);
+        let mut i = 0;
+        while i < self.hits.len() {
+            let b = self.hits[i].0;
+            let k = i + self.hits[i..].iter().take_while(|h| h.0 == b).count();
+            let group = &self.hits[i..k];
+            let whole = group.len() == n as usize && group.iter().enumerate().all(|(q, h)| h.1 == q as u32 && h.3);
+            let product = match whole {
+                true => a as u32,
+                false => {
+                    let at = self.made.len();
+                    lim.reserve_exact(&mut self.made, group.len())?;
+                    self.made.extend(group.iter().map(|h| h.2));
+                    crate::diagram::sort_pairs(&mut self.made[at..]);
+                    lim.try_push(&mut self.made_at, self.made.len() as u32)?;
+                    self.width + (self.made_at.len() - 2) as u32
+                }
+            };
+            lim.try_push(&mut self.pieces, (b, product))?;
+            i = k;
+        }
+        self.hits.clear();
+        lim.try_push(&mut self.start, self.pieces.len() as u32)
+    }
+}
+
+/// [`Products::product`] of every node of `f` at branching level `t` with
+/// `g`'s node `b` there, as `to` maps them, found bottom-up: one pass over
+/// the levels under `t`, children before parents, reads each pair of `f`
+/// once against its children's products and finds the pairs of `g` they
+/// meet in a table of `g`'s pairs at the level, so that each node of `f`
+/// comes out with its products with every node of `g` it meets (`g`'s nodes
+/// at a level are disjoint). A node that each of its pairs carries whole
+/// into one node of `g` is its own product there, and no node is added for
+/// it; a level where `g` has only its true node is not read, its nodes
+/// their own products. The work is the pairs of `f` under `t`, each a few
+/// array reads and a table probe per product of its sides, against a
+/// memoized product per pair of nodes. Each product made is appended to
+/// `f`'s level, and `grown` marks the level.
+#[allow(clippy::too_many_arguments)]
+fn block_products(
+    lim: &Limits,
+    vtree: &Vtree,
+    f: &mut Tdd,
+    g: &Tdd,
+    top: &[Option<u32>],
+    t: VtreeIdx,
+    b: u32,
+    grown: &mut [bool],
+) -> Result<Vec<u32>, OperationError> {
+    let whole = |u: VtreeIdx| top[u.idx()].filter(|_| g.level(u).node_count() == 1);
+    // The internal levels under `t`, parents first; the descent ends where
+    // `g` has only its true node.
+    let mut order = vec![t];
+    let mut at = 0;
+    while at < order.len() {
+        let u = order[at];
+        at += 1;
+        if u != t && whole(u).is_some() {
+            continue;
+        }
+        let (l, r) = vtree.children(u);
+        order.extend([l, r].into_iter().filter(|c| !vtree.node(*c).is_leaf()));
+    }
+    let mut split: Vec<Option<Split>> = (0..vtree.num_nodes()).map(|_| None).collect();
+    let mut gate = lim.gate();
+    let mut hits = Vec::new();
+    let mut to = Vec::new();
+    for &u in order.iter().rev() {
+        if u != t
+            && let Some(top) = whole(u)
+        {
+            split[u.idx()] = Some(Split::Whole(top));
+            continue;
+        }
+        let (l, r) = vtree.children(u);
+        let side = |split: &mut [Option<Split>], c: VtreeIdx| match vtree.node(c).is_leaf() {
+            true => Split::Leaf,
+            false => split[c.idx()].take().expect("a level's children are split before it"),
+        };
+        let (sl, sr) = (side(&mut split, l), side(&mut split, r));
+        // `g`'s pairs at `u` by their sides; at `t`, `b`'s alone.
+        let gl = g.level(u);
+        let mut table: FxHashMap<u64, u32> = FxHashMap::default();
+        lim.reserve_map(&mut table, gl.live_pairs())?;
+        for i in 0..gl.node_count() {
+            if u == t && i as u32 != b {
+                continue;
+            }
+            for p in gl.pairs_iter_of_idx(i) {
+                table.insert(p.key(), i as u32);
+            }
+        }
+        let level = &f.levels[u.idx()];
+        let width = level.node_count();
+        let mut st = Settle { width: width as u32, hits: std::mem::take(&mut hits), start: Vec::new(), pieces: Vec::new(), made: Vec::new(), made_at: Vec::new() };
+        lim.reserve_exact(&mut st.start, width + 1)?;
+        lim.try_push(&mut st.made_at, 0)?;
+        let mut refused = None;
+        let mut cur: Option<usize> = None;
+        let mut read = 0u32;
+        let mut work = 0u64;
+        let (mut lb, mut rb) = ([(0u32, 0u32); 3], [(0u32, 0u32); 3]);
+        level.for_each_node_pair(|x, p| {
+            if refused.is_some() {
+                return;
+            }
+            if cur != Some(x) {
+                if let Some(a) = cur
+                    && let Err(e) = st.node(lim, a, read)
+                {
+                    refused = Some(e);
+                    return;
+                }
+                cur = Some(x);
+                read = 0;
+            }
+            let (pl, pr) = (p.left.raw(), p.right.raw());
+            for &(bl, cl) in pieces_of(&sl, pl, &mut lb) {
+                for &(br, cr) in pieces_of(&sr, pr, &mut rb) {
+                    if let Some(&bn) = table.get(&((u64::from(bl) << 32) | u64::from(br)))
+                        && let Err(e) = lim.try_push(&mut st.hits, (bn, read, ChildPair::new(NodeIdx(cl), NodeIdx(cr)), cl == pl && cr == pr))
+                    {
+                        refused = Some(e);
+                        return;
+                    }
+                }
+            }
+            read += 1;
+            work += 1;
+        });
+        if let Some(e) = refused {
+            return Err(e);
+        }
+        if let Some(a) = cur {
+            st.node(lim, a, read)?;
+        }
+        while st.start.len() < width + 1 {
+            lim.try_push(&mut st.start, st.pieces.len() as u32)?;
+        }
+        gate.poll(work)?;
+        drop((sl, sr));
+        let made = st.made_at.len() - 1;
+        for k in 0..made {
+            let pairs = &st.made[st.made_at[k] as usize..st.made_at[k + 1] as usize];
+            let idx = f.levels[u.idx()].push_node(lim, pairs)?;
+            debug_assert_eq!(idx.0 as usize, width + k, "a product is numbered as its rank among those made");
+        }
+        grown[u.idx()] |= made > 0;
+        hits = std::mem::take(&mut st.hits);
+        match u == t {
+            true => {
+                lim.reserve_exact(&mut to, width)?;
+                to.extend((0..width).map(|x| match st.start[x] < st.start[x + 1] {
+                    true => st.pieces[st.start[x] as usize].1,
+                    false => DEAD,
+                }));
+            }
+            false => split[u.idx()] = Some(Split::Listed { start: st.start, pieces: st.pieces }),
+        }
+    }
+    gate.flush()?;
+    Ok(to)
+}
+
 /// The nodes of branching level `t` and of the levels under it that no node
 /// `to` names reaches, removed, and `to` renumbered through what is left.
 /// `t`'s products stand beside the nodes they replace, which overlap them,
@@ -565,15 +816,18 @@ fn prune_under(lim: &Limits, f: &mut Tdd, vtree: &Vtree, t: VtreeIdx, to: &mut [
     Ok(())
 }
 
-/// The implementation behind [`Engine::and_in_place`].
+/// The implementation behind [`Engine::and_in_place`]: the products below
+/// each branching level found bottom-up ([`block_products`]).
 pub(crate) fn and_in_place_on(eng: &Engine, f: Tdd, g: &Tdd, prune: bool) -> Result<Tdd, OperationError> {
-    and_in_place_grid(eng, f, g, prune, GRID_PAIRS)
+    and_in_place_way(eng, f, g, prune, None)
 }
 
-/// [`and_in_place_on`] with the products' threshold for finding `g`'s pairs
-/// by their sides: `0` always, `usize::MAX` never (each pair against each),
-/// which the tests compare.
-pub(crate) fn and_in_place_grid(eng: &Engine, mut f: Tdd, g: &Tdd, prune: bool, grid: usize) -> Result<Tdd, OperationError> {
+/// [`and_in_place_on`], the products below each branching level found
+/// bottom-up ([`block_products`]) without `grid`; with it, top-down
+/// instead, one memoized product per pair of nodes ([`Products`]), `grid`
+/// their threshold for finding `g`'s pairs by their sides: `0` always,
+/// `usize::MAX` never (each pair against each). The tests compare the two.
+pub(crate) fn and_in_place_way(eng: &Engine, mut f: Tdd, g: &Tdd, prune: bool, grid: Option<usize>) -> Result<Tdd, OperationError> {
     let lim = eng.limits();
     let _op = lim.enter()?;
     super::check_vtree(&f, g)?;
@@ -643,7 +897,7 @@ pub(crate) fn and_in_place_grid(eng: &Engine, mut f: Tdd, g: &Tdd, prune: bool, 
             inside: (0..n).map(|_| Vec::new()).collect(),
             grown: vec![false; n],
             work: 0,
-            grid,
+            grid: grid.unwrap_or(GRID_PAIRS),
             sides: FxHashMap::default(),
         };
         for t in vtree.bottomup() {
@@ -652,13 +906,19 @@ pub(crate) fn and_in_place_grid(eng: &Engine, mut f: Tdd, g: &Tdd, prune: bool, 
                 moved[t.idx()] = Moved::To([ONE_LEAF_IDX, POS_LEAF_IDX, NEG_LEAF_IDX].iter().map(|a| leaf_product(a.0, b)).collect());
                 continue;
             }
-            let width = products.f.levels[t.idx()].node_count() as u32;
-            let mut to = Vec::new();
-            lim.reserve_exact(&mut to, width as usize)?;
-            for x in 0..width {
-                to.push(products.product(t, x, b)?);
-                gate.poll(std::mem::take(&mut products.work))?;
-            }
+            let to = match grid {
+                None => block_products(lim, &vtree, products.f, g, &top, t, b, &mut products.grown)?,
+                Some(_) => {
+                    let width = products.f.levels[t.idx()].node_count() as u32;
+                    let mut to = Vec::new();
+                    lim.reserve_exact(&mut to, width as usize)?;
+                    for x in 0..width {
+                        to.push(products.product(t, x, b)?);
+                        gate.poll(std::mem::take(&mut products.work))?;
+                    }
+                    to
+                }
+            };
             moved[t.idx()] = Moved::To(to);
             if let Some(loose) = loose.as_mut() {
                 loose.push(t.0);
@@ -762,10 +1022,11 @@ impl Engine {
     /// and a large `f`: below the levels where `g` has one node of one pair,
     /// `f`'s pairs are rewritten in place, a pair whose child became false
     /// dropped; where `g` branches, the products with `f`'s nodes there are
-    /// built from the top down and appended to `f`'s levels; and the
-    /// levels under them where `g` is true are not read at all. Any `g` on
-    /// `f`'s vtree gives the conjunction; one that branches near the root
-    /// gives it at the cost of building most of the product beside `f`.
+    /// found in one pass up the levels under it, each pair of `f` there read
+    /// once against a table of `g`'s pairs, and appended to `f`'s levels;
+    /// and the levels under them where `g` is true are not read at all. Any
+    /// `g` on `f`'s vtree gives the conjunction; one that branches near the
+    /// root gives it at the cost of building most of the product beside `f`.
     ///
     /// The result is pruned of every node it no longer reaches, so its pairs
     /// are a subset of `f`'s and the products', but it may hold twins:
