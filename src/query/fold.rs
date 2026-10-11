@@ -120,10 +120,6 @@ pub(crate) trait PairAlgebra: LevelFold {
     fn add_assign(&self, acc: &mut Self::Value, v: &Self::Value);
     /// The semiring `×`.
     fn mul(&self, a: &Self::Value, b: &Self::Value) -> Self::Value;
-    /// True once `acc` can no longer change, so the pair loop may stop early.
-    fn short_circuit(&self, _acc: &Self::Value) -> bool {
-        false
-    }
 
     /// The pair loop itself. `fold_node` delegates here.
     fn sum_over_pairs(
@@ -138,9 +134,6 @@ pub(crate) trait PairAlgebra: LevelFold {
             let r = self.child_value(right, pair.right);
             let product = self.mul(&l, &r);
             self.add_assign(&mut acc, &product);
-            if self.short_circuit(&acc) {
-                break;
-            }
         }
         acc
     }

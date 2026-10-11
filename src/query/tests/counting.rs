@@ -95,19 +95,16 @@ fn test_node_counts_basic() {
 
 // --- Overflow tests ---
 
-/// Differential invariant underpinning conditioning's false-output canonicalization:
-/// `is_sat_structural(t)` must agree with `t.model_count()? != 0` for every diagram,
-/// including non-canonical ⊥ (structurally-false output node that still carries pairs).
-/// The canonicalization relies on this equivalence to collapse a dead diagram to ZERO
-/// without ever changing a live count. Covers SAT, plain UNSAT, and a multi-conjoin
-/// UNSAT that produces an in-range (non-root-stale) false output.
+/// Conditioning collapses a false result to ZERO on `is_sat`'s answer, so on
+/// compiled diagrams it must agree with `t.model_count()? != 0`. Covers SAT,
+/// plain UNSAT, a multi-conjoin UNSAT, and a marginal level.
 #[test]
 fn test_output_is_satisfiable_agrees_with_model_count() {
     let eng = &crate::Engine::new();
     let check = |t: &Tdd, what: &str| {
-        let sat = is_sat_structural(eng, t).unwrap();
+        let sat = eng.is_sat(t).unwrap();
         let nonzero = t.model_count().unwrap() != BigUint::ZERO;
-        assert_eq!(sat, nonzero, "is_sat_structural disagrees with model_count>0 for {what}");
+        assert_eq!(sat, nonzero, "is_sat disagrees with model_count>0 for {what}");
     };
 
     // SAT: tautology, single literal, satisfiable conjunction.
@@ -144,9 +141,7 @@ fn test_output_is_satisfiable_agrees_with_model_count() {
         check(&acc, "chained conjoin → UNSAT");
     }
 
-    // Marginal level: its column comes from the summed counts (it reads no child
-    // column at all), and its own parent reads it as a marginal child. Covers the
-    // walk's column-release rule on both sides of a marginal level.
+    // A marginal level under the output.
     {
         let v = Arc::new(Vtree::balanced(4));
         let marginal_root = (0..v.num_nodes())

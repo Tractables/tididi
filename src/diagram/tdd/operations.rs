@@ -762,16 +762,15 @@ impl Tdd {
     /// when its weighted value is zero.
     /// Use [`satisfying_assignment`](Self::satisfying_assignment) to obtain a model.
     ///
-    /// A structural diagram, or one [minimized](Self::minimize) since its last
-    /// edit, answers from its output level in constant time; a diagram with
-    /// count-marginal levels that has been edited since is walked bottom-up.
+    /// Summed-out variables are satisfiable whatever their counts: a
+    /// [marginalized](Self::marginalize_levels) diagram is satisfiable when the
+    /// function over its remaining variables is. Answers from the output node
+    /// in constant time.
     ///
     /// # Errors
     ///
     /// Returns [`OperationError::IncompatibleWeights`] when the output level
-    /// holds weighted values: a zero weight does not establish
-    /// unsatisfiability. A walk can report [`OperationError::OverBudget`] or
-    /// [`OperationError::Stopped`].
+    /// holds weighted values, and [`OperationError::Stopped`] on cancellation.
     ///
     /// ```
     /// use std::sync::Arc;

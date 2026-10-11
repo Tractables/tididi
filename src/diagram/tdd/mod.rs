@@ -334,9 +334,8 @@ impl Tdd {
 
     /// Whether the output is the [`ZERO`] sentinel for the constant-false function.
     ///
-    /// For a structural diagram this decides unsatisfiability without minimization.
-    /// A zero marginal value need not have been collapsed to the sentinel; use
-    /// [`Engine::is_sat`](crate::Engine::is_sat) to require structural input.
+    /// This decides unsatisfiability without minimization, reading summed-out
+    /// variables as [`Tdd::is_sat`] does.
     pub fn is_zero(&self) -> bool {
         self.output.local == ZERO
     }

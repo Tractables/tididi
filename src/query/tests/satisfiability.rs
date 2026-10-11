@@ -77,7 +77,7 @@ fn checked_satisfiability_returns_refusals_without_changing_the_input() {
     assert_canonical(&f);
 }
 
-/// Leave reduction pending so satisfiability must inspect the marginal children.
+/// A count-marginal diagram with its reduction still pending.
 fn edited_marginal_fixture(engine: &Engine) -> Tdd {
     let tree = Arc::new(Vtree::balanced(8));
     let mut g = engine.clause(&tree, [1, 5]).unwrap();
@@ -96,35 +96,8 @@ fn edited_marginal_fixture(engine: &Engine) -> Tdd {
     f
 }
 
-/// A structural output above count-marginal levels answers in constant time
-/// once the diagram is reduced; an edited one is walked, and the walk polls.
-#[test]
-fn checked_satisfiability_walks_an_edited_marginal_diagram_under_limits() {
-    use crate::limits::{StopAt, StopRules};
-    let engine = Engine::new();
-    let mut f = edited_marginal_fixture(&engine);
-    for stride in [None, Some(1)] {
-        engine.limits().pin_reduce_poll_stride(stride);
-        let stop_at = engine.limits().work_units() + 2;
-        let _scope = engine.limits().scope(LimitConfig::none().with_stop_rules(StopRules {
-            unconditional: Some(StopAt::WorkUnits(stop_at)), ..StopRules::default()
-        }));
-        assert_eq!(engine.is_sat(&f), Err(OperationError::Stopped), "stride {stride:?}");
-    }
-    assert_eq!(engine.is_sat(&f), Ok(true));
-    f.minimize().unwrap();
-    assert!(f.dirty.is_empty());
-    assert_canonical(&f);
-    let before = engine.limits().work_units();
-    assert_eq!(engine.is_sat(&f), Ok(true));
-    assert_eq!(engine.limits().work_units(), before);
-}
-
-/// Weighted values never stand for an unsatisfiable function, so a structural
-/// output above weight-marginal levels answers without a walk, edited or not.
-#[test]
-fn checked_satisfiability_reads_the_output_above_weighted_levels() {
-    let engine = Engine::new();
+/// A weight-marginal diagram with its reduction still pending.
+fn edited_weighted_fixture(engine: &Engine) -> Tdd {
     let tree = Arc::new(Vtree::balanced(4));
     let mut g = engine.clause(&tree, [1, 3]).unwrap();
     assert_canonical(&g);
@@ -136,45 +109,38 @@ fn checked_satisfiability_reads_the_output_above_weighted_levels() {
     engine.marginalize_levels(&mut g, &[left]).unwrap();
     let f = engine.and(g, engine.literal(&tree, 4).unwrap()).unwrap();
     assert!(f.has_marginal_level() && !f.dirty.is_empty());
-    let before = engine.limits().work_units();
-    assert_eq!(engine.is_sat(&f), Ok(true));
-    assert_eq!(engine.limits().work_units(), before);
+    f
 }
 
-/// The column headers fitting does not make their Boolean storage free.
+/// A structural output above marginal levels answers from the output node,
+/// edited or not, without doing any work.
 #[test]
-fn satisfiability_charges_columns_and_recovers_from_refusal() {
+fn checked_satisfiability_reads_the_output_above_marginal_levels() {
     let engine = Engine::new();
-    let mut f = edited_marginal_fixture(&engine);
-    let before = format!("{f:?}");
-    let headers = (f.vtree().num_nodes() * std::mem::size_of::<Vec<bool>>()) as u64;
-    {
-        let _scope = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(headers)));
-        assert_eq!(engine.is_sat(&f), Err(OperationError::OverBudget));
-    }
-    // The query fits below the cost of keeping every column at once.
-    let all_slots: usize = f.vtree().bottomup().map(|t| f.reference_slot_count(t)).sum();
-    {
-        let _scope = engine.limits().scope(LimitConfig::none()
-            .with_memory_budget_bytes(Some(headers + all_slots as u64 - 1)));
-        assert_eq!(engine.is_sat(&f), Ok(true));
-    }
-    assert_eq!(format!("{f:?}"), before);
-    let mut completed = false;
-    let mut refusals = 0;
-    for cut in 0..128 {
-        engine.limits().refuse_nth_reserve(cut);
-        let result = engine.is_sat(&f);
-        engine.limits().grant_every_reserve();
-        assert_eq!(format!("{f:?}"), before);
-        assert_eq!(engine.is_sat(&f), Ok(true));
-        match result {
-            Err(OperationError::OverBudget) => refusals += 1,
-            Ok(true) => { completed = true; break; }
-            other => panic!("reservation {cut}: {other:?}"),
+    for mut f in [edited_marginal_fixture(&engine), edited_weighted_fixture(&engine)] {
+        for _ in 0..2 {
+            let before = engine.limits().work_units();
+            assert_eq!(engine.is_sat(&f), Ok(true));
+            assert_eq!(engine.limits().work_units(), before);
+            f.minimize().unwrap();
+            assert_canonical(&f);
         }
     }
-    assert!(completed && refusals > 1, "column allocations must be fallible too");
-    f.minimize().unwrap();
-    assert_canonical(&f);
+}
+
+/// Satisfiability reads summed-out variables as satisfiable whatever their
+/// counts, so a hand-written zero count does not make a diagram unsatisfiable.
+#[test]
+fn checked_satisfiability_does_not_read_counts() {
+    use crate::diagram::{ChildPair, TddNodeId, POS_LEAF_IDX};
+    use crate::test_helpers::{inline_side, sum_out_leaf};
+    let engine = Engine::new();
+    let tree = Arc::new(Vtree::balanced(2));
+    let root = tree.root();
+    let mut builder = Tdd::builder(&engine, &tree).unwrap();
+    sum_out_leaf(&engine, &tree, &mut builder, tree.children(root).1);
+    let out = builder.push(&engine, root, &[ChildPair::new(POS_LEAF_IDX, inline_side(0))]).unwrap();
+    let f = builder.finish(TddNodeId { vtree: root, local: out }).unwrap();
+    assert_eq!(engine.is_sat(&f), Ok(true));
+    assert_eq!(engine.model_count(&f).unwrap(), 0u32.into());
 }

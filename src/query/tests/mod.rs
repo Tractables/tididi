@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::test_helpers::{node_counts, pinned_counts};
-use super::sat::is_sat_structural;
 use crate::Engine;
 use crate::apply::conjoin::apply_and;
 use crate::apply::conjoin::tests::apply_and_fallible;
