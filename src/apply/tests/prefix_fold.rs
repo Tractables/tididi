@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use crate::apply::{FoldCodes, FoldMonoid, PrefixFoldError};
+use crate::apply::{FoldCodes, FoldMonoid, FoldRange, PrefixFoldError};
 use crate::test_helpers::{assert_canonical, eval, Lcg};
 use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
 use crate::{Engine, OperationError, Tdd};
@@ -21,6 +21,35 @@ impl FoldMonoid for Max {
     type Value = u64;
     fn value(&self, code: u64) -> u64 { code }
     fn combine(&self, a: &u64, b: &u64) -> u64 { *a.max(b) }
+}
+
+/// How many models, read by the number each node holds.
+struct Count;
+impl FoldMonoid for Count {
+    type Value = u64;
+    fn value(&self, _: u64) -> u64 { 1 }
+    fn combine(&self, a: &u64, b: &u64) -> u64 { a + b }
+    fn count(&self, n: u128) -> Option<u64> { u64::try_from(n).ok() }
+}
+
+/// How many models, read model by model: [`Count`] without its count.
+struct Ones;
+impl FoldMonoid for Ones {
+    type Value = u64;
+    fn value(&self, _: u64) -> u64 { 1 }
+    fn combine(&self, a: &u64, b: &u64) -> u64 { a + b }
+}
+
+const RANGES: [FoldRange; 4] = [FoldRange::AtMost, FoldRange::Below, FoldRange::AtLeast, FoldRange::Above];
+
+/// Whether order `e2` is in `range` of a point at `e`.
+fn in_range(range: FoldRange, e2: u64, e: u64) -> bool {
+    match range {
+        FoldRange::AtMost => e2 <= e,
+        FoldRange::Below => e2 < e,
+        FoldRange::AtLeast => e2 >= e,
+        FoldRange::Above => e2 > e,
+    }
 }
 
 fn leaf(v: u32) -> Vtree { Vtree::leaf(VarId(v)) }
@@ -113,18 +142,18 @@ impl Blocks {
 }
 
 /// The fold of each point by enumeration: per `(k, e)` of `points`, the
-/// values of every `(k, e', v)` of `values` with `e' ≤ e` (`<` if strict).
+/// values of every `(k, e', v)` of `values` with `e'` in `range` of `e`.
 fn expected<M: FoldMonoid<Value = u64>>(
     points: &BTreeSet<(u64, u64)>,
     values: &BTreeSet<(u64, u64, u64)>,
-    strict: bool,
+    range: FoldRange,
     monoid: &M,
 ) -> BTreeMap<(u64, u64), u64> {
     let mut out = BTreeMap::new();
     for &(k, e) in points {
         let mut acc: Option<u64> = None;
         for &(k2, e2, v) in values {
-            if k2 == k && (e2 < e || !strict && e2 == e) {
+            if k2 == k && in_range(range, e2, e) {
                 let x = monoid.value(v);
                 acc = Some(acc.map_or(x, |a| monoid.combine(&a, &x)));
             }
@@ -146,7 +175,7 @@ fn check<M: FoldMonoid<Value = u64>>(
     shape: Shape,
     points: &BTreeSet<(u64, u64)>,
     values: &BTreeSet<(u64, u64, u64)>,
-    strict: bool,
+    range: FoldRange,
     raw: bool,
     monoid: &M,
     what: &str,
@@ -178,9 +207,9 @@ fn check<M: FoldMonoid<Value = u64>>(
         *given.borrow_mut() = rank.clone();
         coded(&into, &code_vars, folds.iter().map(|f| rank[f]).collect())
     };
-    let got = eng.prefix_fold(&a, &b, &order, &value_vars, strict, monoid, coding).unwrap();
+    let got = eng.prefix_fold(&a, &b, &order, &value_vars, range, monoid, coding).unwrap();
     assert_canonical(&got);
-    let want = expected(points, values, strict, monoid);
+    let want = expected(points, values, range, monoid);
     let rank = given.into_inner();
     assert_eq!(rank.len(), want.values().collect::<BTreeSet<_>>().len(), "{what}: the folds coded");
     // Every assignment of `into`.
@@ -239,10 +268,14 @@ fn folds_agree_with_enumeration() {
             for seed in 1..=4u64 {
                 let mut rng = Lcg::new(seed * 1000 + u64::from(nk * 100 + m * 10 + nv));
                 let (points, values) = random(&mut rng, &blocks, 3 + seed % 3);
-                for (strict, raw) in [(false, false), (true, false), (false, true), (true, true)] {
-                    let what = format!("{shape:?} k{nk} e{m} v{nv} seed {seed} strict {strict} raw {raw}");
-                    check(&blocks, shape, &points, &values, strict, raw, &Sum, &format!("sum {what}"));
-                    check(&blocks, shape, &points, &values, strict, raw, &Max, &format!("max {what}"));
+                for range in RANGES {
+                    for raw in [false, true] {
+                        let what = format!("{shape:?} k{nk} e{m} v{nv} seed {seed} {range:?} raw {raw}");
+                        check(&blocks, shape, &points, &values, range, raw, &Sum, &format!("sum {what}"));
+                        check(&blocks, shape, &points, &values, range, raw, &Max, &format!("max {what}"));
+                        check(&blocks, shape, &points, &values, range, raw, &Count, &format!("count {what}"));
+                        check(&blocks, shape, &points, &values, range, raw, &Ones, &format!("ones {what}"));
+                    }
                 }
             }
         }
@@ -256,13 +289,20 @@ fn points_before_every_value_are_left_out_and_points_after_carry_the_fold() {
     let blocks = Blocks::new(1, 3, 2, 6);
     let points: BTreeSet<(u64, u64)> = (0..2).flat_map(|k| (0..8).map(move |e| (k, e))).collect();
     let values: BTreeSet<(u64, u64, u64)> = [(0, 2, 1), (0, 5, 3)].into_iter().collect();
-    for strict in [false, true] {
-        let want = expected(&points, &values, strict, &Max);
-        // Orders 0 and 1 (and 2 when strict) have nothing before them; key 1 nothing at all.
-        let first = if strict { 3 } else { 2 };
-        assert_eq!(want.keys().copied().collect::<Vec<_>>(), (first..8).map(|e| (0, e)).collect::<Vec<_>>());
+    for range in RANGES {
+        let want = expected(&points, &values, range, &Max);
+        // Up the orders, 0 and 1 (and 2 when strict) have nothing before
+        // them; down them, 6 and 7 (and 5 when strict) nothing after; key 1
+        // nothing at all.
+        let kept = match range {
+            FoldRange::AtMost => 2..8,
+            FoldRange::Below => 3..8,
+            FoldRange::AtLeast => 0..6,
+            FoldRange::Above => 0..5,
+        };
+        assert_eq!(want.keys().copied().collect::<Vec<_>>(), kept.map(|e| (0, e)).collect::<Vec<_>>());
         for shape in SHAPES {
-            check(&blocks, shape, &points, &values, strict, false, &Max, &format!("{shape:?} strict {strict}"));
+            check(&blocks, shape, &points, &values, range, false, &Max, &format!("{shape:?} {range:?}"));
         }
     }
 }
@@ -274,13 +314,89 @@ fn values_at_one_order_are_folded_together() {
     let blocks = Blocks::new(1, 3, 2, 6);
     let points: BTreeSet<(u64, u64)> = (0..8).map(|e| (0, e)).collect();
     let values: BTreeSet<(u64, u64, u64)> = [(0, 1, 1), (0, 1, 2), (0, 4, 3)].into_iter().collect();
-    let want = expected(&points, &values, false, &Sum);
+    let want = expected(&points, &values, FoldRange::AtMost, &Sum);
     assert_eq!(want[&(0, 1)], 4 + 7);
     assert_eq!(want[&(0, 4)], 4 + 7 + 10);
+    // From the top down, order 1 counts its two values and order 4's.
+    assert_eq!(expected(&points, &values, FoldRange::AtLeast, &Count)[&(0, 1)], 3);
+    assert_eq!(expected(&points, &values, FoldRange::Above, &Count)[&(0, 1)], 1);
     for shape in SHAPES {
-        for strict in [false, true] {
-            check(&blocks, shape, &points, &values, strict, false, &Sum, &format!("{shape:?} strict {strict}"));
+        for range in RANGES {
+            check(&blocks, shape, &points, &values, range, false, &Sum, &format!("{shape:?} {range:?}"));
+            check(&blocks, shape, &points, &values, range, false, &Count, &format!("count {shape:?} {range:?}"));
         }
+    }
+}
+
+/// A rank: per point, how many values of its key lie above it, ties left
+/// out, each value a row told apart by a block of 70 variables no code can
+/// read. The counted fold reads how many rows each node holds.
+#[test]
+fn a_count_reads_a_value_block_wider_than_a_code() {
+    let (nk, m, nv) = (2u32, 4u32, 70u32);
+    let keys: Vec<u32> = (1..=nk).collect();
+    let order: Vec<u32> = (nk + 1..=nk + m).collect();
+    let rows_block: Vec<u32> = (nk + m + 1..=nk + m + nv).collect();
+    let codes: Vec<u32> = (nk + m + 1..=nk + m + 6).collect();
+    let eng = Engine::new();
+    for shape in SHAPES {
+        let vtree = Arc::new(around(shape, &keys, chain(&order, balanced(&rows_block))));
+        let into = Arc::new(around(shape, &keys, chain(&order, balanced(&codes))));
+        let lit = |v: u32, on: bool| if on { v as i32 } else { -(v as i32) };
+        // Row `r`'s bit `i`: a bijection of `r` over the first 64, `r` itself
+        // over the rest.
+        let bit = |r: u64, i: u32| match i < 64 {
+            true => r.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> i & 1 == 1,
+            false => r >> (i - 64) & 1 == 1,
+        };
+        // The cube of key `k`, order `e` and, where given, row `r`.
+        let cube = |vt: &Arc<Vtree>, k: u64, e: u64, r: Option<u64>| -> Tdd {
+            let mut lits: Vec<i32> = (0..nk).map(|i| lit(keys[i as usize], k >> i & 1 == 1)).collect();
+            lits.extend((0..m).map(|i| lit(order[i as usize], e >> (m - 1 - i) & 1 == 1)));
+            if let Some(r) = r {
+                lits.extend((0..nv).map(|i| lit(rows_block[i as usize], bit(r, i))));
+            }
+            eng.cube(vt, lits).unwrap()
+        };
+        let mut rng = Lcg::new(5);
+        let mut points = BTreeSet::new();
+        let mut values: Vec<(u64, u64, u64)> = Vec::new();
+        for k in 0..4u64 {
+            for e in 0..16u64 {
+                if rng.below(2) == 0 {
+                    points.insert((k, e));
+                }
+                for r in 0..rng.below(3) {
+                    values.push((k, e, k * 1000 + e * 10 + r));
+                }
+            }
+        }
+        let a = points.iter().fold(eng.zero(&vtree), |f, &(k, e)| eng.or(f, cube(&vtree, k, e, None)).unwrap());
+        let b = values.iter().fold(eng.zero(&vtree), |f, &(k, e, r)| eng.or(f, cube(&vtree, k, e, Some(r))).unwrap());
+        assert_eq!(b.model_count().unwrap(), (values.len() as u64).into());
+        let order_vars: Vec<VarId> = order.iter().map(|&v| VarId(v)).collect();
+        let value_vars: Vec<VarId> = rows_block.iter().map(|&v| VarId(v)).collect();
+        let code_vars: Vec<VarId> = codes.iter().map(|&v| VarId(v)).collect();
+        for range in RANGES {
+            let got = eng
+                .prefix_fold(&a, &b, &order_vars, &value_vars, range, &Count, |n: &[u64]| coded(&into, &code_vars, n.to_vec()))
+                .unwrap();
+            assert_canonical(&got);
+            let mut want = eng.zero(&into);
+            for &(k, e) in &points {
+                let n = values.iter().filter(|&&(k2, e2, _)| k2 == k && in_range(range, e2, e)).count() as u64;
+                if n > 0 {
+                    let mut lits: Vec<i32> = (0..nk).map(|i| lit(keys[i as usize], k >> i & 1 == 1)).collect();
+                    lits.extend((0..m).map(|i| lit(order[i as usize], e >> (m - 1 - i) & 1 == 1)));
+                    lits.extend((0..6).map(|i| lit(codes[i as usize], n >> i & 1 == 1)));
+                    want = eng.or(want, eng.cube(&into, lits).unwrap()).unwrap();
+                }
+            }
+            assert!(eng.equivalent(&got, &want).unwrap(), "{shape:?} {range:?}");
+        }
+        // Read by its codes, the block is too wide.
+        let ones = eng.prefix_fold(&a, &b, &order_vars, &value_vars, FoldRange::Above, &Ones, |n: &[u64]| coded(&into, &code_vars, n.to_vec()));
+        assert!(matches!(ones, Err(PrefixFoldError::Layout(_))));
     }
 }
 
@@ -293,14 +409,18 @@ fn an_empty_operand_folds_to_false() {
     let none = eng.from_models(&vtree, &blocks.all_vars(), &[]).unwrap();
     let (order, value_vars, code_vars) = (Blocks::vars(&blocks.order), Blocks::vars(&blocks.values), Blocks::vars(&blocks.codes));
     for (a, b) in [(&none, &some), (&some, &none)] {
-        let got = eng.prefix_fold(a, b, &order, &value_vars, false, &Max, |f: &[u64]| coded(&into, &code_vars, f.to_vec())).unwrap();
-        assert!(got.is_zero());
-        assert!(Arc::ptr_eq(got.vtree(), &into));
+        for range in RANGES {
+            let got = eng.prefix_fold(a, b, &order, &value_vars, range, &Max, |f: &[u64]| coded(&into, &code_vars, f.to_vec())).unwrap();
+            assert!(got.is_zero());
+            assert!(Arc::ptr_eq(got.vtree(), &into));
+            let got = eng.prefix_fold(a, b, &order, &value_vars, range, &Count, |f: &[u64]| coded(&into, &code_vars, f.to_vec())).unwrap();
+            assert!(got.is_zero());
+        }
     }
     // A point with no value at its key: false too, and no fold is coded.
     let other = eng.from_models(&vtree, &blocks.all_vars(), &[blocks.row(0, 2, 1)]).unwrap();
     let got = eng
-        .prefix_fold(&some, &other, &order, &value_vars, false, &Max, |f: &[u64]| {
+        .prefix_fold(&some, &other, &order, &value_vars, FoldRange::AtMost, &Max, |f: &[u64]| {
             assert!(f.is_empty());
             coded(&into, &code_vars, Vec::new())
         })
@@ -311,9 +431,16 @@ fn an_empty_operand_folds_to_false() {
 /// The walk's work, counted by the engine's clock, grows with the points
 /// times the order's width and with the operands' sizes, not with the
 /// self-join of the values on the key, which grows with the square of the
-/// points per key.
+/// points per key: up the orders and down them, a sum and a count.
 #[test]
 fn work_grows_with_the_points_not_with_the_self_join() {
+    for range in [FoldRange::AtMost, FoldRange::Above] {
+        work_against_the_self_join(range, &Sum);
+        work_against_the_self_join(range, &Count);
+    }
+}
+
+fn work_against_the_self_join<M: FoldMonoid<Value = u64>>(range: FoldRange, monoid: &M) {
     let blocks = Blocks::new(2, 10, 4, 16);
     let (vtree, into) = blocks.vtrees(Shape::Left);
     let (order, value_vars, code_vars) = (Blocks::vars(&blocks.order), Blocks::vars(&blocks.values), Blocks::vars(&blocks.codes));
@@ -337,20 +464,25 @@ fn work_grows_with_the_points_not_with_the_self_join() {
         let a = eng.from_models(&vtree, &all[..12], &a_rows).unwrap();
         let b = eng.from_models(&vtree, &all, &b_rows).unwrap();
         let mark = eng.limits().mark();
-        let got = eng.prefix_fold(&a, &b, &order, &value_vars, false, &Sum, |f: &[u64]| coded(&into, &code_vars, f.to_vec())).unwrap();
+        let got = eng.prefix_fold(&a, &b, &order, &value_vars, range, monoid, |f: &[u64]| coded(&into, &code_vars, f.to_vec())).unwrap();
         let work = eng.limits().work_since(mark);
         assert_canonical(&got);
-        // Each point keeps its running sum.
-        assert_eq!(got.model_count().unwrap(), (4 * per_key).into());
+        // Each point keeps its running fold, but the last of its key past
+        // which none lies.
+        let kept = match range {
+            FoldRange::AtMost | FoldRange::AtLeast => 4 * per_key,
+            FoldRange::Below | FoldRange::Above => 4 * (per_key - 1),
+        };
+        assert_eq!(got.model_count().unwrap(), kept.into());
         let bound = a.pair_count() + b.pair_count() + (4 * per_key) as usize * blocks.order.len();
         let self_join = 4 * per_key * (per_key + 1) / 2;
         ratios.push((per_key, work as f64 / bound as f64, work as f64 / self_join as f64));
     }
     let least = ratios.iter().map(|r| r.1).fold(f64::INFINITY, f64::min);
     let most = ratios.iter().map(|r| r.1).fold(0.0, f64::max);
-    assert!(most <= 2.0 * least && most <= 16.0, "work per unit of the bound: {ratios:?}");
+    assert!(most <= 2.0 * least && most <= 16.0, "{range:?}: work per unit of the bound: {ratios:?}");
     // Against the self-join, the work falls as the points per key grow.
-    assert!(ratios.last().unwrap().2 * 4.0 < ratios[0].2, "work per pair of the self-join: {ratios:?}");
+    assert!(ratios.last().unwrap().2 * 4.0 < ratios[0].2, "{range:?}: work per pair of the self-join: {ratios:?}");
 }
 
 /// Above the chain the walk conjoins the two diagrams on the key: its
@@ -386,7 +518,7 @@ fn work_grows_with_the_keys_not_with_their_pairs() {
             let a = eng.from_models(&vtree, &all[..14], &a_rows).unwrap();
             let b = eng.from_models(&vtree, &all, &b_rows).unwrap();
             let mark = eng.limits().mark();
-            let got = eng.prefix_fold(&a, &b, &order, &value_vars, false, &Max, |f: &[u64]| coded(&into, &code_vars, f.to_vec())).unwrap();
+            let got = eng.prefix_fold(&a, &b, &order, &value_vars, FoldRange::AtMost, &Max, |f: &[u64]| coded(&into, &code_vars, f.to_vec())).unwrap();
             let work = eng.limits().work_since(mark);
             assert_canonical(&got);
             assert_eq!(got.model_count().unwrap(), (3 * keys).into());
@@ -407,7 +539,7 @@ fn layouts_the_fold_cannot_read_are_refused() {
     let f = eng.from_models(&vtree, &blocks.all_vars(), &[blocks.row(1, 2, 1)]).unwrap();
     let (order, value_vars, code_vars) = (Blocks::vars(&blocks.order), Blocks::vars(&blocks.values), Blocks::vars(&blocks.codes));
     let run = |order: &[VarId], value_vars: &[VarId], into: &Arc<Vtree>, code_vars: &[VarId]| {
-        eng.prefix_fold(&f, &f, order, value_vars, false, &Max, |f: &[u64]| coded(into, code_vars, f.to_vec()))
+        eng.prefix_fold(&f, &f, order, value_vars, FoldRange::AtMost, &Max, |f: &[u64]| coded(into, code_vars, f.to_vec()))
     };
     let layout = |r: Result<Tdd, PrefixFoldError>| matches!(r, Err(PrefixFoldError::Layout(_)));
     // The order out of the chain's order, a key variable as the order, the
@@ -443,7 +575,7 @@ fn codes_that_do_not_fit_are_refused() {
     let f = eng.from_models(&vtree, &blocks.all_vars(), &rows).unwrap();
     let (order, value_vars, code_vars) = (Blocks::vars(&blocks.order), Blocks::vars(&blocks.values), Blocks::vars(&blocks.codes));
     let run = |codes: &dyn Fn(&[u64]) -> Vec<u64>| {
-        eng.prefix_fold(&f, &f, &order, &value_vars, false, &Sum, |f: &[u64]| coded(&into, &code_vars, codes(f)))
+        eng.prefix_fold(&f, &f, &order, &value_vars, FoldRange::AtMost, &Sum, |f: &[u64]| coded(&into, &code_vars, codes(f)))
     };
     // Sums 10, 17 and 4: one too few codes, or one past three bits.
     assert!(matches!(run(&|f| f[1..].to_vec()), Err(PrefixFoldError::Codes(_))));
@@ -472,7 +604,7 @@ fn the_code_block_is_as_wide_as_the_folds_need() {
         let codes = folds.iter().map(|f| sorted.binary_search(f).unwrap() as u64).collect();
         coded(&narrow.vtrees(Shape::Left).1, &Blocks::vars(&narrow.codes), codes)
     };
-    let got = eng.prefix_fold(&f, &f, &order, &value_vars, false, &Sum, coding).unwrap();
+    let got = eng.prefix_fold(&f, &f, &order, &value_vars, FoldRange::AtMost, &Sum, coding).unwrap();
     assert_canonical(&got);
     // Sums 10, 17 and 4 at (0, 0), (0, 1) and (1, 3): ranks 1, 2 and 0.
     let narrow = Blocks::new(1, 2, 2, 2);
@@ -490,7 +622,7 @@ fn operands_the_fold_cannot_read_are_refused() {
     let f = eng.from_models(&vtree, &blocks.all_vars(), &rows).unwrap();
     let g = eng.from_models(&twin, &blocks.all_vars(), &rows).unwrap();
     let (order, value_vars, code_vars) = (Blocks::vars(&blocks.order), Blocks::vars(&blocks.values), Blocks::vars(&blocks.codes));
-    let run = |a: &Tdd, b: &Tdd| eng.prefix_fold(a, b, &order, &value_vars, false, &Max, |f: &[u64]| coded(&into, &code_vars, f.to_vec()));
+    let run = |a: &Tdd, b: &Tdd| eng.prefix_fold(a, b, &order, &value_vars, FoldRange::AtMost, &Max, |f: &[u64]| coded(&into, &code_vars, f.to_vec()));
     assert!(matches!(run(&f, &g), Err(PrefixFoldError::Operation(OperationError::VtreeMismatch))));
     // The value subtree's level summed out.
     let mut summed = f.clone();

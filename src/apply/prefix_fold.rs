@@ -2,8 +2,9 @@
 //!
 //! [`Engine::prefix_fold`] pairs each point of one function with the fold
 //! of the values a second function holds at the point's key, at every order
-//! up to the point's: a running sum or a running maximum, computed by one
-//! walk down both diagrams rather than by joining the second with itself.
+//! up to the point's (or from it on, [`FoldRange`]): a running sum, a
+//! running maximum or a rank, computed by one walk down both diagrams
+//! rather than by joining the second with itself.
 
 use std::sync::Arc;
 
@@ -12,7 +13,10 @@ use rustc_hash::FxHashMap;
 use crate::Engine;
 use crate::apply::CONJOIN_GRID;
 use crate::apply::conjoin::budget::NO_PRODUCT;
-use crate::diagram::{Assembly, ChildPair, NodeIdx, Tdd, TddNodeId, LEAF_WIDTH, NEG_LEAF_IDX, ONE_LEAF_IDX, POS_LEAF_IDX};
+use crate::diagram::{
+    Assembly, ChildPair, ColumnAlgebra, LeafLabel, NodeIdx, SlotPairs, Tdd, TddNodeId, LEAF_WIDTH, NEG_LEAF_IDX, ONE_LEAF_IDX,
+    POS_LEAF_IDX,
+};
 use crate::limits::{Limits, OperationError, PollGate};
 use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
 
@@ -21,7 +25,7 @@ use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
 /// is commutative and associative, so the fold of a set of models does not
 /// depend on the order it is taken in.
 ///
-/// No identity is needed: a point whose prefix holds no model is left out
+/// No identity is needed: a point whose range holds no model is left out
 /// of the result, so the fold of an empty set is never formed.
 ///
 /// ```
@@ -35,6 +39,17 @@ use crate::vtree::{VarId, Vtree, VtreeError, VtreeIdx};
 ///     fn combine(&self, a: &u64, b: &u64) -> u64 { *a.max(b) }
 /// }
 /// assert_eq!(Max.combine(&Max.value(3), &Max.value(5)), 5);
+///
+/// /// How many models: every model is worth one, so the fold reads only
+/// /// how many each node of the value block holds ([`count`](FoldMonoid::count)).
+/// struct Count;
+/// impl FoldMonoid for Count {
+///     type Value = u128;
+///     fn value(&self, _: u64) -> u128 { 1 }
+///     fn combine(&self, a: &u128, b: &u128) -> u128 { a + b }
+///     fn count(&self, n: u128) -> Option<u128> { Some(n) }
+/// }
+/// assert_eq!(Count.count(3), Some(Count.combine(&Count.value(4), &Count.combine(&Count.value(0), &Count.value(7)))));
 /// ```
 pub trait FoldMonoid {
     /// A value, or the fold of several. Equal folds share one code.
@@ -44,6 +59,53 @@ pub trait FoldMonoid {
     fn value(&self, code: u64) -> Self::Value;
     /// `a ⊕ b`.
     fn combine(&self, a: &Self::Value, b: &Self::Value) -> Self::Value;
+    /// The fold of any `n ≥ 1` models, where every model of the value block
+    /// has one value (a count of models); `None`, the default, where a
+    /// model's value depends on its code. A monoid returns `Some` for every
+    /// `n` or for none.
+    ///
+    /// Where it returns `Some`, the fold reads the value block by the number
+    /// of models each of its nodes holds, through one model count of the
+    /// value subtree, and never reads a code: the block may then hold up to
+    /// 127 variables, where a block read by its codes holds at most 64.
+    fn count(&self, n: u128) -> Option<Self::Value> {
+        let _ = n;
+        None
+    }
+}
+
+/// Which orders each point's fold reads ([`Engine::prefix_fold`]): at a
+/// point of order `e`, the values at the orders `e'` that stand so to `e`.
+///
+/// ```
+/// use tididi::apply::FoldRange;
+///
+/// // A rank counts the values above a point; a running total those up to it.
+/// assert_ne!(FoldRange::Above, FoldRange::AtMost);
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FoldRange {
+    /// `e' ≤ e`: a running fold up to the point, its own order in.
+    AtMost,
+    /// `e' < e`: the orders before the point's.
+    Below,
+    /// `e' ≥ e`: a running fold from the top order down to the point, its
+    /// own order in.
+    AtLeast,
+    /// `e' > e`: the orders after the point's, as a rank counts them.
+    Above,
+}
+
+impl FoldRange {
+    /// Whether the fold runs from the top order down.
+    fn descending(self) -> bool {
+        matches!(self, Self::AtLeast | Self::Above)
+    }
+
+    /// Whether the point's own order is left out.
+    fn strict(self) -> bool {
+        matches!(self, Self::Below | Self::Above)
+    }
 }
 
 /// How a prefix fold codes its folds ([`Engine::prefix_fold`]): the vtree
@@ -66,7 +128,9 @@ pub struct FoldCodes {
 #[non_exhaustive]
 pub enum PrefixFoldError {
     /// The blocks do not lie on the vtrees as the fold reads them: a block
-    /// is empty or wider than 64 variables, the order block's leaves are not
+    /// is empty, the order block, the code block or a value block read by
+    /// its codes is wider than 64 variables, a value block read by its
+    /// counts ([`FoldMonoid::count`]) wider than 127, the order block's leaves are not
     /// the left children of a right-linear chain whose last right child
     /// holds exactly the value block, or the coding's `into` is not the
     /// vtree with that value subtree replaced by one whose leaves are exactly
@@ -114,7 +178,8 @@ const NONE: u32 = u32::MAX;
 
 impl Engine {
     /// Each point of `points` with the fold of the values `values` holds at
-    /// its key up to its order: a running sum or a running maximum.
+    /// its key up to its order, or from it on: a running sum, a running
+    /// maximum, or a rank.
     ///
     /// `points` and `values` share one vtree, whose variables fall in three
     /// blocks. The order block `order` is read as an unsigned number `e`,
@@ -123,13 +188,16 @@ impl Engine {
     /// variable is the key `k`. A point is an assignment `(k, e)` that some
     /// model of `points` extends. Its fold is
     ///
-    /// `F(k, e) = ⊕ { monoid.value(v) : values(k, e', v) and e' ≤ e }`,
+    /// `F(k, e) = ⊕ { monoid.value(v) : values(k, e', v) and e' ~ e }`,
     ///
-    /// with `e' < e` under `strict`: every model of `values` at key `k` and
-    /// an order up to `e` is folded in, several at one `e'` included. A point
-    /// whose prefix holds no model of `values` is left out; a point at an
-    /// order where `values` holds none carries the fold of the orders before
-    /// it.
+    /// where `~` is `range`'s comparison, `≤`, `<`, `≥` or `>`
+    /// ([`FoldRange`]): every model of `values` at key `k` and an order in
+    /// the range is folded in, several at one `e'` included. A point whose
+    /// range holds no model of `values` is left out; a point at an order
+    /// where `values` holds none carries the fold of the orders past it.
+    /// Where `monoid` counts ([`FoldMonoid::count`]), the value block is
+    /// read by how many models each node holds, not by their codes, so
+    /// `F(k, e)` is `count(n)` for the `n` models in range.
     ///
     /// `coding` is called once with the distinct folds, in an unspecified
     /// order (none where no point keeps a fold), and returns how they are
@@ -156,13 +224,14 @@ impl Engine {
     /// order, so the chain takes at most `n · order.len()` states for `n`
     /// points, each reading the pairs of its nodes. Before the walk, one pass
     /// over `values` in `t`'s subtree folds each node's models, reading every
-    /// model of each node at the value subtree's root. After it, a cube is
-    /// built per code and the result is minimized.
+    /// model of each node at the value subtree's root (for a count, one
+    /// model count of the subtree reads how many it holds). After it, a cube
+    /// is built per code and the result is minimized.
     ///
     /// ```
     /// use std::sync::Arc;
     /// use tididi::{Engine, Tdd, Vtree};
-    /// use tididi::apply::{FoldCodes, FoldMonoid};
+    /// use tididi::apply::{FoldCodes, FoldMonoid, FoldRange};
     /// use tididi::vtree::VarId;
     ///
     /// /// A running total: a model of the value block is its number.
@@ -196,7 +265,7 @@ impl Engine {
     ///     code_vars: vec![VarId(4), VarId(5), VarId(6)],
     ///     codes: totals.to_vec(),
     /// };
-    /// let totals = engine.prefix_fold(&open, &sales, &order, &amount, false, &Sum, coding)?;
+    /// let totals = engine.prefix_fold(&open, &sales, &order, &amount, FoldRange::AtMost, &Sum, coding)?;
     ///
     /// // Store 0 runs 2, 2, 5, 5. Store 1 has no sale up to day 0, then 1
     /// // on day 1 and on day 2, which sells nothing.
@@ -204,13 +273,35 @@ impl Engine {
     /// let rows = [row(0, 0, 2), row(0, 1, 2), row(0, 2, 5), row(0, 3, 5), row(1, 1, 1), row(1, 2, 1)];
     /// assert!(engine.equivalent(&totals, &Tdd::from_models(&into, &out, &rows)?)?);
     /// # tididi::test_helpers::assert_canonical(&totals);
+    ///
+    /// // How many sales each open day has after it, from the top day down:
+    /// // a count, which reads how many models a node holds, not their codes.
+    /// struct Count;
+    /// impl FoldMonoid for Count {
+    ///     type Value = u64;
+    ///     fn value(&self, _: u64) -> u64 { 1 }
+    ///     fn combine(&self, a: &u64, b: &u64) -> u64 { a + b }
+    ///     fn count(&self, n: u128) -> Option<u64> { u64::try_from(n).ok() }
+    /// }
+    /// let coding = |counts: &[u64]| FoldCodes {
+    ///     into: into.clone(),
+    ///     code_vars: vec![VarId(4), VarId(5), VarId(6)],
+    ///     codes: counts.to_vec(),
+    /// };
+    /// let after = engine.prefix_fold(&open, &sales, &order, &amount, FoldRange::Above, &Count, coding)?;
+    /// // Store 0 sells after days 0 and 1 (on day 2), not after day 2 or 3;
+    /// // store 1 twice after day 0, once after days 1 and 2.
+    /// let rows = [row(0, 0, 1), row(0, 1, 1), row(1, 0, 2), row(1, 1, 1), row(1, 2, 1)];
+    /// assert!(engine.equivalent(&after, &Tdd::from_models(&into, &out, &rows)?)?);
+    /// # tididi::test_helpers::assert_canonical(&after);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// # Errors
     ///
-    /// [`PrefixFoldError::Layout`] when a block is empty or holds more than
-    /// 64 variables, an order variable is not the left child of the chain's
+    /// [`PrefixFoldError::Layout`] when a block is empty, the order or code
+    /// block or a value block read by its codes holds more than 64
+    /// variables, a counted value block more than 127, an order variable is not the left child of the chain's
     /// next node, the value subtree's leaves are not exactly `value_vars`, or
     /// the coding's `into` differs from the vtree outside the value subtree
     /// or has other leaves than its code variables in its place (checked once
@@ -230,7 +321,7 @@ impl Engine {
         values: &Tdd,
         order: &[VarId],
         value_vars: &[VarId],
-        strict: bool,
+        range: FoldRange,
         monoid: &M,
         coding: impl FnOnce(&[M::Value]) -> FoldCodes,
     ) -> Result<Tdd, PrefixFoldError> {
@@ -238,7 +329,8 @@ impl Engine {
         let _op = lim.enter()?;
         crate::apply::check_vtree(points, values)?;
         let vtree = points.vtree();
-        let layout = Layout::new(lim, vtree, order, value_vars)?;
+        let counted = monoid.count(1).is_some();
+        let layout = Layout::new(lim, vtree, order, value_vars, counted)?;
         points.require_structure()?;
         values.require_structure()?;
         if points.is_zero() || values.is_zero() {
@@ -246,13 +338,19 @@ impl Engine {
             Coding::new(lim, vtree, layout.value_root, &into, &code_vars, &codes, 0)?;
             return Ok(crate::build::constant_zero(self, &into));
         }
+        // A count reads how many models each node of the value root holds.
+        let counts = match counted {
+            true => Some(self.evaluate_columns_at(values, layout.value_root, &ModelCounts)?),
+            false => None,
+        };
         let mut fold = Fold {
             lim,
             gate: lim.gate(),
             monoid,
             ops: [points, values],
             layout: &layout,
-            strict,
+            range,
+            counts,
             vals: Vec::new(),
             val_ids: FxHashMap::default(),
             totals: Vec::new(),
@@ -296,23 +394,51 @@ struct Coding {
     code_bit: Vec<u8>,
 }
 
-/// A block's refusal: empty, or past 64 variables.
-fn check_block(name: &str, block: &[VarId]) -> Result<(), PrefixFoldError> {
+/// A block's refusal: empty, or past `most` variables.
+fn check_block(name: &str, block: &[VarId], most: usize) -> Result<(), PrefixFoldError> {
     if block.is_empty() {
         return Err(PrefixFoldError::Layout(format!("the {name} block is empty")));
     }
-    if block.len() > 64 {
-        return Err(PrefixFoldError::Layout(format!("the {name} block has {} variables, more than 64", block.len())));
+    if block.len() > most {
+        return Err(PrefixFoldError::Layout(format!("the {name} block has {} variables, more than {most}", block.len())));
     }
     Ok(())
 }
 
+/// Model counts in `u128`, one column per level: exact on a subtree of at
+/// most 127 variables, whose nodes hold at most `2^127` models each.
+struct ModelCounts;
+
+impl ColumnAlgebra for ModelCounts {
+    type Column = Vec<u128>;
+    type Value = u128;
+
+    fn zero(&self) -> u128 {
+        0
+    }
+
+    fn column(&self, _: VtreeIdx, width: usize) -> Vec<u128> {
+        vec![0; width]
+    }
+
+    fn leaf(&self, _: VtreeIdx, _: VarId, label: LeafLabel, col: &mut Vec<u128>) {
+        col[label as usize] = if label == LeafLabel::One { 2 } else { 1 };
+    }
+
+    fn fold(&self, _: VtreeIdx, slot: usize, pairs: SlotPairs<'_>, left: &Vec<u128>, right: &Vec<u128>, out: &mut Vec<u128>) {
+        out[slot] = pairs.map(|(l, r)| left[l] * right[r]).sum();
+    }
+
+    fn read(&self, _: VtreeIdx, col: Vec<u128>, slot: usize) -> u128 {
+        col[slot]
+    }
+}
+
 impl Layout {
-    fn new(lim: &Limits, vtree: &Vtree, order: &[VarId], value_vars: &[VarId]) -> Result<Self, PrefixFoldError> {
+    fn new(lim: &Limits, vtree: &Vtree, order: &[VarId], value_vars: &[VarId], counted: bool) -> Result<Self, PrefixFoldError> {
         let layout = |message: String| PrefixFoldError::Layout(message);
-        for (name, block) in [("order", order), ("value", value_vars)] {
-            check_block(name, block)?;
-        }
+        check_block("order", order, 64)?;
+        check_block("value", value_vars, if counted { 127 } else { 64 })?;
         // Each variable once in the order and value blocks.
         let mut role: FxHashMap<VarId, u8> = FxHashMap::default();
         lim.reserve_map(&mut role, order.len() + value_vars.len())?;
@@ -398,7 +524,7 @@ impl Coding {
         folds: usize,
     ) -> Result<Self, PrefixFoldError> {
         let layout = |message: String| PrefixFoldError::Layout(message);
-        check_block("code", code_vars)?;
+        check_block("code", code_vars, 64)?;
         let mut code_role: FxHashMap<VarId, u8> = FxHashMap::default();
         lim.reserve_map(&mut code_role, code_vars.len())?;
         for (i, &v) in code_vars.iter().enumerate() {
@@ -599,7 +725,9 @@ struct Fold<'a, M: FoldMonoid> {
     /// `points` and `values`.
     ops: [&'a Tdd; 2],
     layout: &'a Layout,
-    strict: bool,
+    range: FoldRange,
+    /// Under a count, the number of models of each node at the value root.
+    counts: Option<Vec<u128>>,
     /// Every value met, once.
     vals: Vec<M::Value>,
     val_ids: FxHashMap<M::Value, u32>,
@@ -652,8 +780,9 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
     }
 
     /// `totals`: at the value root each node's models, read off its
-    /// subtree; up the chain each node's pairs, a ⊤ literal's twice.
-    fn total(&mut self) -> Result<(), OperationError> {
+    /// subtree (under a count, how many it holds); up the chain each node's
+    /// pairs, a ⊤ literal's twice.
+    fn total(&mut self) -> Result<(), PrefixFoldError> {
         let values: &'a Tdd = self.ops[1];
         let vtree = values.vtree();
         let root = self.layout.value_root;
@@ -666,7 +795,17 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
         let mut memo: FxHashMap<(u32, u32), std::rc::Rc<Vec<u64>>> = FxHashMap::default();
         let mut at_root = Vec::new();
         self.lim.reserve(&mut at_root, width)?;
-        for n in 0..width as u32 {
+        if let Some(counts) = self.counts.take() {
+            for n in 0..width {
+                self.gate.poll(1)?;
+                let Some(v) = counts.get(n).and_then(|&c| self.monoid.count(c)) else {
+                    return Err(PrefixFoldError::Codes("the monoid counts one model but not every number".to_string()));
+                };
+                let id = self.intern(v)?;
+                at_root.push(id);
+            }
+        }
+        for n in (at_root.len() as u32)..width as u32 {
             let codes = self.models(root, n, &mut memo)?;
             let mut acc: Option<M::Value> = None;
             for &c in codes.iter() {
@@ -1155,21 +1294,25 @@ impl<'a, M: FoldMonoid> Fold<'a, M> {
                 }
             }
             let start = self.levels[at].moves.len();
+            let descending = self.range.descending();
             for (bit, lit) in [(0, NEG_LEAF_IDX.0), (1, POS_LEAF_IDX.0)] {
                 if halves[0][bit].is_empty() {
                     continue;
                 }
-                let passed = match bit {
-                    0 => state[2],
-                    _ => {
-                        let below = self.fold_of(j + 1, &halves[1][0])?;
-                        self.plus(state[2], below)?
+                // The values this bit passes: those whose order is below the
+                // point's from here (a 0 where the point has a 1), or above
+                // it from the top down (a 1 where the point has a 0).
+                let passed = match (bit, descending) {
+                    (1, false) | (0, true) => {
+                        let past = self.fold_of(j + 1, &halves[1][1 - bit])?;
+                        self.plus(state[2], past)?
                     }
+                    _ => state[2],
                 };
                 self.gate.poll(1)?;
                 let next = match last {
                     true => {
-                        let fold = match self.strict {
+                        let fold = match self.range.strict() {
                             true => passed,
                             false => {
                                 let here = self.fold_of(j + 1, &halves[1][bit])?;

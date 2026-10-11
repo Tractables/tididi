@@ -159,7 +159,7 @@ For more specialized control:
 | Conjoin a diagram with a large one, or sum their conjunction under an algebra, reading the large one only through an index of its pairs, so that the work follows what the small one meets | [`PairIndex`](crate::diagram::PairIndex), [`Engine::and_indexed`](crate::Engine::and_indexed), [`Engine::sum_indexed`](crate::Engine::sum_indexed) |
 | Place or conjoin where the larger vtree holds a subtree with its children swapped | [`Engine::embed_moving_mirrored`](crate::Engine::embed_moving_mirrored), [`Engine::and_onto_mirrored`](crate::Engine::and_onto_mirrored) |
 | Pair each node of a level with a code on variables of its own | [`Engine::tag_level`](crate::Engine::tag_level) |
-| Pair each point with a running sum or maximum of the values another diagram holds at its key, up to its order | [`Engine::prefix_fold`](crate::Engine::prefix_fold), [`FoldMonoid`](crate::apply::FoldMonoid) |
+| Pair each point with a running sum, maximum or count of the values another diagram holds at its key, up to its order or from it on | [`Engine::prefix_fold`](crate::Engine::prefix_fold), [`FoldMonoid`](crate::apply::FoldMonoid), [`FoldRange`](crate::apply::FoldRange) |
 | Number each level's nodes in the order a walk down from the output first reaches them, for passes that read levels in order | [`Tdd::renumber_top_down`](crate::Tdd::renumber_top_down) |
 | Assemble levels and pairs directly | [`TddBuilder`](crate::diagram::TddBuilder), started with [`Tdd::builder`](crate::Tdd::builder) |
 

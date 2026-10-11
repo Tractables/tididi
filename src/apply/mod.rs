@@ -10,8 +10,8 @@
 //! [`Tdd::rename_vars`](crate::Tdd::rename_vars) handles swaps and renames,
 //! and [`and_exists`] constructs an existential conjunction.
 //! [`Engine::prefix_fold`](crate::Engine::prefix_fold) pairs each point of one
-//! function with a running fold of the values another holds, through a
-//! [`FoldMonoid`].
+//! function with a running fold of the values another holds, up to the
+//! point's order or from it on ([`FoldRange`]), through a [`FoldMonoid`].
 //!
 //! These operations return errors; the `&`, `|` and `!` operators panic on refusal.
 //! Use [`Context::with_limits`](crate::Context::with_limits) for a bounded batch.
@@ -42,7 +42,7 @@ pub use overlay::and_not;
 pub use compose::{xor, ite, and_exists, Quantification};
 pub use restrict_to_care::RestrictionOutcome;
 pub use filter_nodes::{FilterOutcome, FilterStats};
-pub use prefix_fold::{FoldCodes, FoldMonoid, PrefixFoldError};
+pub use prefix_fold::{FoldCodes, FoldMonoid, FoldRange, PrefixFoldError};
 
 #[cfg(test)]
 mod tests;
