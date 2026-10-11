@@ -1,5 +1,6 @@
-//! The weighted-marginal value type: its two exact representations, its
-//! bounded-precision log-domain alternative, and the dedup key over both.
+//! The weighted-marginal value type: its two exact representations, its two
+//! bounded-precision alternatives (signed log domain and scaled float), and
+//! the dedup key over them.
 
 use std::borrow::Cow;
 
@@ -144,9 +145,195 @@ fn ln_bigint_abs(n: &num_bigint::BigInt) -> f64 {
     m.ln() + (shift as f64) * std::f64::consts::LN_2
 }
 
+// ── Bounded-precision scaled float (weighted marginal path) ─────────────────────
+
+/// A signed value held as an `f64` mantissa and a binary exponent of its own:
+/// `mantissa · 2^exponent`.
+///
+/// Used by [`Arithmetic::ScaledFloat`](crate::diagram::Arithmetic::ScaledFloat).
+/// The mantissa's magnitude lies in `[0.5, 1)`, or the value is zero with
+/// mantissa `0.0` and exponent `0`, so each number has one representation.
+/// As with [`SignedLog`], the separate exponent permits magnitudes far beyond
+/// the range of an `f64`, and the mantissa's sign permits negative literal
+/// weights. A product costs one `f64` multiplication and a sum one `f64`
+/// addition, where a [`SignedLog`] sum costs an `exp` and a `ln_1p`; each
+/// operation rounds once, to the mantissa's 53 bits.
+///
+/// Arithmetic has bounded precision. In particular, cancellation of nearly
+/// equal values can cause large relative error; use exact rational arithmetic
+/// when the result must be exact.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScaledFloat {
+    mantissa: f64,
+    exponent: i64,
+}
+
+/// `2^k` for `-1022 <= k <= 1023`.
+#[inline]
+fn pow2(k: i64) -> f64 {
+    debug_assert!((-1022..=1023).contains(&k));
+    f64::from_bits(((1023 + k) as u64) << 52)
+}
+
+/// A nonzero normal `f64` as a mantissa of magnitude in `[0.5, 1)` and the
+/// power of two it stands under.
+#[inline]
+fn frexp_normal(x: f64) -> (f64, i64) {
+    const EXPONENT: u64 = 0x7ff << 52;
+    let bits = x.to_bits();
+    let e = ((bits & EXPONENT) >> 52) as i64;
+    debug_assert!(e != 0 && e != 0x7ff, "frexp_normal of a zero, subnormal or non-finite float");
+    (f64::from_bits(bits & !EXPONENT | 1022 << 52), e - 1022)
+}
+
+/// A nonzero `BigUint` as a float of its leading 64 bits and the power of two
+/// they stand under.
+fn top_bits(n: &num_bigint::BigUint) -> (f64, i64) {
+    let shift = n.bits().saturating_sub(64);
+    ((n >> shift).to_u64().expect("64 bits fit a u64") as f64, shift as i64)
+}
+
+impl ScaledFloat {
+    /// The additive identity.
+    pub const ZERO: ScaledFloat = ScaledFloat { mantissa: 0.0, exponent: 0 };
+
+    /// Whether this value is zero.
+    #[inline]
+    #[must_use]
+    pub fn is_zero(&self) -> bool {
+        self.mantissa == 0.0
+    }
+
+    /// The finite float `x`, exactly.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `x` is infinite or NaN.
+    #[must_use]
+    pub fn from_f64(x: f64) -> ScaledFloat {
+        assert!(x.is_finite(), "ScaledFloat::from_f64 of a non-finite float");
+        if x == 0.0 {
+            return ScaledFloat::ZERO;
+        }
+        if x.abs() < f64::MIN_POSITIVE {
+            // Subnormal: scale into the normal range first, exactly.
+            let (mantissa, e) = frexp_normal(x * pow2(64));
+            return ScaledFloat { mantissa, exponent: e - 64 };
+        }
+        let (mantissa, exponent) = frexp_normal(x);
+        ScaledFloat { mantissa, exponent }
+    }
+
+    /// Convert an exact `BigRational`, whatever its magnitude: the quotient of
+    /// the leading 64 bits of its numerator and denominator, so an integer
+    /// ratio within 53 bits converts correctly rounded.
+    #[must_use]
+    pub fn from_rational(r: &BigRational) -> ScaledFloat {
+        use num_bigint::Sign;
+        if r.numer().is_zero() {
+            return ScaledFloat::ZERO;
+        }
+        let (n, n_shift) = top_bits(r.numer().magnitude());
+        let (d, d_shift) = top_bits(r.denom().magnitude());
+        let mut v = ScaledFloat::from_f64(n / d);
+        v.exponent += n_shift - d_shift;
+        if r.numer().sign() == Sign::Minus {
+            v.mantissa = -v.mantissa;
+        }
+        v
+    }
+
+    /// The mantissa: magnitude in `[0.5, 1)`, or `0.0` for zero.
+    #[inline]
+    #[must_use]
+    pub fn mantissa(&self) -> f64 {
+        self.mantissa
+    }
+
+    /// The power of two the mantissa stands under (`0` for zero).
+    #[inline]
+    #[must_use]
+    pub fn exponent(&self) -> i64 {
+        self.exponent
+    }
+
+    /// Product: the mantissas multiply and the exponents add.
+    #[inline]
+    #[must_use]
+    pub fn mul(&self, o: &ScaledFloat) -> ScaledFloat {
+        let m = self.mantissa * o.mantissa;
+        if m == 0.0 {
+            return ScaledFloat::ZERO;
+        }
+        // Both magnitudes lie in [0.5, 1), so the product's lies in [0.25, 1):
+        // at most one doubling, which is exact, brings it back.
+        let exponent = self.exponent + o.exponent;
+        if m.abs() < 0.5 {
+            ScaledFloat { mantissa: m * 2.0, exponent: exponent - 1 }
+        } else {
+            ScaledFloat { mantissa: m, exponent }
+        }
+    }
+
+    /// Accumulate: `self += o`, on the larger exponent.
+    #[inline]
+    pub fn add_assign(&mut self, o: &ScaledFloat) {
+        if o.is_zero() {
+            return;
+        }
+        if self.is_zero() {
+            *self = *o;
+            return;
+        }
+        let (hi, lo) = if self.exponent >= o.exponent { (*self, *o) } else { (*o, *self) };
+        let d = hi.exponent - lo.exponent;
+        if d > 64 {
+            // The smaller term is below 2^-64 of the larger, under half its
+            // last place: the rounded sum is the larger term.
+            *self = hi;
+            return;
+        }
+        // Scaling by 2^-d keeps the smaller mantissa normal (at least 2^-65),
+        // so it is exact, and the sum rounds once. Both terms are multiples
+        // of 2^-117, so a sum that does not cancel is normal.
+        let m = hi.mantissa + lo.mantissa * pow2(-d);
+        if m == 0.0 {
+            *self = ScaledFloat::ZERO;
+            return;
+        }
+        let (mantissa, e) = frexp_normal(m);
+        *self = ScaledFloat { mantissa, exponent: hi.exponent + e };
+    }
+
+    /// The nearest `f64`: zero below the least positive one, infinite above
+    /// the largest.
+    #[must_use]
+    pub fn to_f64(&self) -> f64 {
+        if self.is_zero() || self.exponent < -1100 {
+            return 0.0 * self.mantissa.signum();
+        }
+        if self.exponent > 1024 {
+            return f64::INFINITY * self.mantissa.signum();
+        }
+        // Two normal scales, the first exact, so the result rounds once.
+        let half = self.exponent / 2;
+        self.mantissa * pow2(half) * pow2(self.exponent - half)
+    }
+
+    /// log10 of |value| (`-∞` for zero), whatever the magnitude.
+    #[must_use]
+    pub fn log10_abs(&self) -> f64 {
+        if self.is_zero() {
+            return f64::NEG_INFINITY;
+        }
+        self.mantissa.abs().log10() + self.exponent as f64 * std::f64::consts::LOG10_2
+    }
+}
+
 /// The value of a weighted marginalization: exact, or bounded-precision
-/// `SignedLog` under `Arithmetic::SignedLog`. The two modes never mix in one
-/// run; mixed-mode ops panic.
+/// `SignedLog` under `Arithmetic::SignedLog` or `ScaledFloat` under
+/// `Arithmetic::ScaledFloat`. The modes never mix in one run; mixed-mode ops
+/// panic.
 ///
 /// # The exact domain has two representations
 ///
@@ -183,6 +370,9 @@ pub enum WeightValue {
     /// Bounded-precision signed log-domain value.
     #[non_exhaustive]
     Log(SignedLog),
+    /// Bounded-precision scaled float.
+    #[non_exhaustive]
+    Scaled(ScaledFloat),
 }
 
 /// The small form of an exact rational, if it has one: `Some(n)` iff `r` is
@@ -263,13 +453,13 @@ impl WeightValue {
     ///
     /// # Panics
     ///
-    /// Panics on a `Log` value — the log domain carries no exact rational.
+    /// Panics on a `Log` or `Scaled` value — neither carries an exact rational.
     #[must_use]
     pub fn as_rational(&self) -> Cow<'_, BigRational> {
         match self {
             WeightValue::ExactSmall(n) => Cow::Owned(rational_of_small(*n)),
             WeightValue::Exact(r) => Cow::Borrowed(r),
-            WeightValue::Log(_) => panic!("WeightValue::as_rational: value is in log mode"),
+            WeightValue::Log(_) | WeightValue::Scaled(_) => panic!("WeightValue::as_rational: value is bounded-precision"),
         }
     }
 
@@ -290,28 +480,51 @@ impl WeightValue {
         }
     }
 
+    /// A scaled-float value.
+    pub fn scaled(s: ScaledFloat) -> WeightValue {
+        WeightValue::Scaled(s)
+    }
+
+    /// The scaled-float value inside, if this is one.
+    pub fn as_scaled(&self) -> Option<&ScaledFloat> {
+        match self {
+            WeightValue::Scaled(s) => Some(s),
+            _ => None,
+        }
+    }
+
+    /// The arithmetic this value belongs to.
+    pub(crate) fn arithmetic(&self) -> crate::diagram::Arithmetic {
+        use crate::diagram::Arithmetic;
+        match self {
+            WeightValue::ExactSmall(_) | WeightValue::Exact(_) => Arithmetic::ExactRational,
+            WeightValue::Log(_) => Arithmetic::SignedLog,
+            WeightValue::Scaled(_) => Arithmetic::ScaledFloat,
+        }
+    }
+
     /// Consume an exact value into a `BigRational` (moves the big payload out
     /// rather than cloning it).
     ///
     /// # Panics
     ///
-    /// Panics on a `Log` value — the log domain carries no exact rational.
+    /// Panics on a `Log` or `Scaled` value — neither carries an exact rational.
     #[must_use]
     pub fn into_rational(self) -> BigRational {
         match self {
             WeightValue::ExactSmall(n) => rational_of_small(n),
             WeightValue::Exact(r) => r,
-            WeightValue::Log(_) => panic!("WeightValue::into_rational: value is in log mode"),
+            WeightValue::Log(_) | WeightValue::Scaled(_) => panic!("WeightValue::into_rational: value is bounded-precision"),
         }
     }
 
     /// `Some(exact rational)` for either exact representation, `None` for a
-    /// `Log` value — for callers that treat log mode as "not my domain" rather
-    /// than as a bug.
+    /// `Log` or `Scaled` value — for callers that treat a bounded-precision
+    /// mode as "not my domain" rather than as a bug.
     #[must_use]
     pub fn into_rational_opt(self) -> Option<BigRational> {
         match self {
-            WeightValue::Log(_) => None,
+            WeightValue::Log(_) | WeightValue::Scaled(_) => None,
             v => Some(v.into_rational()),
         }
     }
@@ -325,6 +538,7 @@ impl WeightValue {
             WeightValue::ExactSmall(n) => *n == 0,
             WeightValue::Exact(r) => r.numer().is_zero(),
             WeightValue::Log(s) => s.is_zero(),
+            WeightValue::Scaled(s) => s.is_zero(),
         }
     }
 
@@ -339,11 +553,12 @@ impl WeightValue {
     /// Product. Two small operands multiply in `i128` (no allocation); on
     /// overflow, a mixed-width pair, or a fractional operand the same product
     /// is taken in arbitrary precision by `exact_mul` and re-canonicalized.
-    /// Log*Log adds logs. Mixed modes panic.
+    /// Log*Log adds logs; Scaled*Scaled multiplies mantissas. Mixed modes
+    /// panic.
     ///
     /// # Panics
     ///
-    /// Panics if `self` and `o` mix an exact and a `Log` value.
+    /// Panics if `self` and `o` belong to different arithmetics.
     #[inline]
     #[must_use]
     pub fn mul(&self, o: &WeightValue) -> WeightValue {
@@ -356,8 +571,9 @@ impl WeightValue {
                 // Overflow — spill to the arbitrary-precision path below.
             }
             (WeightValue::Log(a), WeightValue::Log(b)) => return WeightValue::Log(a.mul(b)),
-            (WeightValue::Log(_), _) | (_, WeightValue::Log(_)) => {
-                panic!("WeightValue::mul: mixed Exact/Log modes")
+            (WeightValue::Scaled(a), WeightValue::Scaled(b)) => return WeightValue::Scaled(a.mul(b)),
+            (WeightValue::Log(_) | WeightValue::Scaled(_), _) | (_, WeightValue::Log(_) | WeightValue::Scaled(_)) => {
+                panic!("WeightValue::mul: mixed arithmetics")
             }
             // Mixed width or fractional — arbitrary-precision path below.
             _ => {}
@@ -374,7 +590,7 @@ impl WeightValue {
     ///
     /// # Panics
     ///
-    /// Panics if `self` and `o` mix an exact and a `Log` value.
+    /// Panics if `self` and `o` belong to different arithmetics.
     #[inline]
     pub fn add_assign(&mut self, o: &WeightValue) {
         match (&mut *self, o) {
@@ -390,8 +606,12 @@ impl WeightValue {
                 a.add_assign(b);
                 return;
             }
-            (WeightValue::Log(_), _) | (_, WeightValue::Log(_)) => {
-                panic!("WeightValue::add_assign: mixed Exact/Log modes")
+            (WeightValue::Scaled(a), WeightValue::Scaled(b)) => {
+                a.add_assign(b);
+                return;
+            }
+            (WeightValue::Log(_) | WeightValue::Scaled(_), _) | (_, WeightValue::Log(_) | WeightValue::Scaled(_)) => {
+                panic!("WeightValue::add_assign: mixed arithmetics")
             }
             // Mixed width, or both already big — arbitrary-precision path below.
             _ => {}
@@ -402,7 +622,8 @@ impl WeightValue {
     }
 
     /// Multiply `self` by the exact rational `r`, converted to `self`'s own
-    /// arithmetic first: exact for an exact value, log domain for a log value.
+    /// arithmetic first: exact for an exact value, log domain for a log value,
+    /// scaled float for a scaled one.
     ///
     /// ```
     /// use num_rational::BigRational;
@@ -414,10 +635,10 @@ impl WeightValue {
     #[inline]
     #[must_use]
     pub fn mul_rational(&self, r: &BigRational) -> WeightValue {
-        let scale = if matches!(self, WeightValue::Log(_)) {
-            WeightValue::Log(SignedLog::from_rational(r))
-        } else {
-            WeightValue::exact(r.clone())
+        let scale = match self {
+            WeightValue::Log(_) => WeightValue::Log(SignedLog::from_rational(r)),
+            WeightValue::Scaled(_) => WeightValue::Scaled(ScaledFloat::from_rational(r)),
+            _ => WeightValue::exact(r.clone()),
         };
         self.mul(&scale)
     }
@@ -425,7 +646,8 @@ impl WeightValue {
 
 /// Hashable dedup key for a `WeightValue` (used by the weighted intern table and
 /// by slot-prune's value merge). The Log mantissa is keyed on `f64::to_bits` so
-/// bit-identical logs collapse.
+/// bit-identical logs collapse; a scaled float, whose representation is
+/// unique, on its mantissa's bits and its exponent.
 ///
 /// The two exact key variants are sound to derive `Eq`/`Hash` over *because* of
 /// [`WeightValue`]'s canonicalization invariant: an i128-representable value is
@@ -439,6 +661,8 @@ pub(crate) enum WeightKey {
     Exact(BigRational),
     /// Key for a log value: `(ln_abs.to_bits(), sign)`.
     Log(u64, i8),
+    /// Key for a scaled float: `(mantissa.to_bits(), exponent)`.
+    Scaled(u64, i64),
 }
 
 /// Build a `WeightKey` for interning/dedup. This is the choke point where every
@@ -452,11 +676,12 @@ pub(crate) fn weight_key(v: &WeightValue) -> WeightKey {
             WeightKey::Exact(r.clone())
         }
         WeightValue::Log(s) => WeightKey::Log(s.ln_abs.to_bits(), s.sign),
+        WeightValue::Scaled(s) => WeightKey::Scaled(s.mantissa.to_bits(), s.exponent),
     }
 }
 
 /// Whether `a` and `b` would share one [`WeightKey`]: the same exact value,
-/// or bit-identical logs. For a comparison, this is
+/// bit-identical logs, or the same scaled float. For a comparison, this is
 /// `weight_key(a) == weight_key(b)` without building either key, which
 /// clones a big rational.
 pub(crate) fn same_value(a: &WeightValue, b: &WeightValue) -> bool {
@@ -469,6 +694,9 @@ pub(crate) fn same_value(a: &WeightValue, b: &WeightValue) -> bool {
         }
         (WeightValue::Log(x), WeightValue::Log(y)) => {
             x.ln_abs.to_bits() == y.ln_abs.to_bits() && x.sign == y.sign
+        }
+        (WeightValue::Scaled(x), WeightValue::Scaled(y)) => {
+            x.mantissa.to_bits() == y.mantissa.to_bits() && x.exponent == y.exponent
         }
         // The canonical form puts every i128-representable value in the small
         // variant, so a small and a big value are never equal.

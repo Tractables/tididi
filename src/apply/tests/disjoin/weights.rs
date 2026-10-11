@@ -2,14 +2,14 @@ use std::sync::Arc;
 use crate::{Engine, OperationError, Tdd, Vtree};
 use crate::diagram::{Arithmetic, WeightValue};
 use crate::apply::tests::weights::weighted;
-use crate::test_helpers::assert_canonical;
+use crate::test_helpers::{assert_canonical, bounded_log10};
 
 fn same_weight(a: Option<WeightValue>, b: Option<WeightValue>) {
     let (a, b) = (a.expect("weights retained"), b.expect("reference is weighted"));
-    match (a.as_log(), b.as_log()) {
-        (Some(a), Some(b)) => {
+    match (bounded_log10(&a), bounded_log10(&b)) {
+        (Some(la), Some(lb)) => {
             assert_eq!(a.is_zero(), b.is_zero());
-            if !a.is_zero() { assert!((a.log10_abs() - b.log10_abs()).abs() < 1e-12); }
+            if !a.is_zero() { assert!((la - lb).abs() < 1e-12); }
         }
         (None, None) => assert_eq!(a.as_rational(), b.as_rational()),
         _ => panic!("arithmetic changed"),
@@ -20,7 +20,7 @@ fn same_weight(a: Option<WeightValue>, b: Option<WeightValue>) {
 fn constant_operands_keep_the_weight_contract() {
     let vtree = Arc::new(Vtree::balanced(3));
     let eng = Engine::new();
-    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         for reverse in [false, true] {
             let zero = weighted(Tdd::zero(&vtree), 2, arithmetic);
             let f = Tdd::cube(&vtree, [1]).unwrap();
@@ -50,7 +50,7 @@ fn constant_operands_keep_the_weight_contract() {
 fn discarded_constants_still_reject_incompatible_weights() {
     let vtree = Arc::new(Vtree::balanced(3));
     let eng = Engine::new();
-    for (n, arithmetic) in [(3, Arithmetic::ExactRational), (2, Arithmetic::SignedLog)] {
+    for (n, arithmetic) in [(3, Arithmetic::ExactRational), (2, Arithmetic::SignedLog), (2, Arithmetic::ScaledFloat)] {
         for all_false in [false, true] {
             let first = weighted(Tdd::zero(&vtree), 2, Arithmetic::ExactRational);
             let second = if all_false { Tdd::zero(&vtree) } else { Tdd::cube(&vtree, [1]).unwrap() };
@@ -70,7 +70,7 @@ fn overlay_compositions_keep_both_weight_arithmetics() {
     let a = Tdd::clause(&tree, [1, -3, 5]).unwrap();
     let b = Tdd::cube(&tree, [-2, 4]).unwrap();
     let c = Tdd::clause(&tree, [3, 6]).unwrap();
-    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         let wa = weighted(a.clone(), 2, arithmetic);
         let wb = weighted(b.clone(), 2, arithmetic);
         let wc = weighted(c.clone(), 2, arithmetic);

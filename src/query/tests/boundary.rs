@@ -67,7 +67,7 @@ fn weighted_leaf_outputs_cannot_decide_structural_satisfiability() {
     let eng = Engine::new();
     let tree = Arc::new(Vtree::balanced(1));
     for weight in [rat(0, 1), rat(1, 2)] {
-        for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+        for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
             let mut f = eng.literal(&tree, 1).unwrap();
             assert_canonical(&f);
             f.set_weights(WeightStore::new(RationalWeights::from_literals(&[

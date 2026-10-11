@@ -82,12 +82,12 @@ fn node_pairs_into(level: &TddLevel, n: usize, out: &mut Vec<ChildPair>) {
 /// Invariant 8: no boundary-parent group remains eligible for pair fusion.
 /// `filter` restricts the check to the named parent levels.
 ///
-/// Signed-log arithmetic disables fusion. An exact weighted leaf permits it
+/// Bounded-precision arithmetic disables fusion. An exact weighted leaf permits it
 /// only when the whole group's sum is already in its pinned column. A parent
 /// with two marginal children is exempt because a sweep on one side can
 /// recreate a group on the other.
 pub fn check_pair_fusion_saturation(tdd: &Tdd, filter: Option<&[VtreeIdx]>) -> Result<(), String> {
-    if tdd.weights().is_some_and(|ws| ws.is_log()) {
+    if tdd.weights().is_some_and(|ws| ws.is_bounded()) {
         return Ok(());
     }
     let mut groups: FxHashMap<u32, Vec<u32>> = FxHashMap::default();
@@ -448,7 +448,7 @@ pub fn check_leaf_columns_pinned(tdd: &Tdd) -> Result<(), String> {
             // smallest slot of its value class; anything else means some site
             // minted a leaf-side ref without running
             // `canonicalize_leaf_refs_at_parent`.
-            if !ws.is_log()
+            if !ws.is_bounded()
                 && let Some(col) = ws.level(i)
             {
                 let canon = leaf_canon_map(col);

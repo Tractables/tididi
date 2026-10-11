@@ -52,8 +52,8 @@ fn scale_leaf_marginal_label(raw: u32, k: u32) -> Option<u32> {
 /// already occur in the pinned column. For equal literal weights,
 /// `2 · Pos = w⁺ + w⁻ = One`.
 ///
-/// Exact domain only: in log mode `weight_key` equality compares `f64` bit
-/// patterns, so a hit would be a rounding coincidence, and we decline.
+/// Exact domain only: in a bounded mode `weight_key` equality compares `f64`
+/// bit patterns, so a hit would be a rounding coincidence, and we decline.
 fn scale_weight_leaf_by_lookup(
     ws: &crate::diagram::WeightStore,
     cv: VtreeIdx,
@@ -63,7 +63,7 @@ fn scale_weight_leaf_by_lookup(
     use crate::diagram::find_leaf_slot_by_value;
     debug_assert!(k >= 2);
     let side = EncodedChildRef::from_raw(raw);
-    if side.is_reserved() || ws.is_log() {
+    if side.is_reserved() || ws.is_bounded() {
         return None;
     }
     let ValueRef::Slot(slot) = ChildDecoder::marginal().value(side) else {

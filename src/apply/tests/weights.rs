@@ -1,6 +1,7 @@
 use super::*;
 use crate::apply::RestrictionOutcome;
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use crate::test_helpers::bounded_log10;
 use crate::limits::{LimitConfig, OperationError};
 
 
@@ -16,7 +17,7 @@ pub(in crate::apply) fn weighted(mut f: Tdd, n: i64, arithmetic: Arithmetic) -> 
 fn incompatible_weights_are_rejected_before_shortcuts_and_allocations() {
     let tree = Arc::new(Vtree::balanced(4));
     let eng = Engine::new();
-    for (n, arithmetic) in [(2, Arithmetic::ExactRational), (1, Arithmetic::SignedLog)] {
+    for (n, arithmetic) in [(2, Arithmetic::ExactRational), (1, Arithmetic::SignedLog), (1, Arithmetic::ScaledFloat)] {
         for (a, b) in [
             (Tdd::one(&tree), Tdd::one(&tree)),
             (Tdd::zero(&tree), Tdd::one(&tree)),
@@ -67,7 +68,7 @@ fn integer_marginal_values_cannot_inherit_weights() {
 fn structural_operands_inherit_weights_in_either_order() {
     let tree = Arc::new(Vtree::balanced(2));
     let eng = Engine::new();
-    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         for (a, b, and_value, or_value) in [
             (Tdd::one(&tree), Tdd::one(&tree), 16, 16),
             (Tdd::one(&tree), Tdd::clause(&tree, [1]).unwrap(), 8, 16),
@@ -84,9 +85,9 @@ fn structural_operands_inherit_weights_in_either_order() {
                     result.minimize().unwrap();
                     assert_canonical(&result);
                     let value = eng.weighted_value(&result).unwrap().unwrap();
-                    if let Some(log) = value.as_log() {
-                        if expected == 0 { assert!(log.is_zero()); }
-                        else { assert!((log.log10_abs() - (expected as f64).log10()).abs() < 1e-12); }
+                    if let Some(log) = bounded_log10(&value) {
+                        if expected == 0 { assert_eq!(log, f64::NEG_INFINITY); }
+                        else { assert!((log - (expected as f64).log10()).abs() < 1e-12); }
                     } else {
                         assert_eq!(exact_weight(&value), rat(expected, 1));
                     }
@@ -143,13 +144,13 @@ fn projecting_a_leaf_output_preserves_weights() {
 fn an_empty_clause_preserves_the_accumulators_weights() {
     let tree = Arc::new(Vtree::balanced(2));
     let eng = Engine::new();
-    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         let f = weighted(Tdd::one(&tree), 2, arithmetic);
         let result = eng.and_clause(f, &[] as &[crate::Literal]).unwrap();
         assert_canonical(&result);
         assert!(result.is_zero());
         let value = eng.weighted_value(&result).unwrap().expect("the false result retains weights");
-        if let Some(log) = value.as_log() { assert!(log.is_zero()); }
+        if let Some(log) = bounded_log10(&value) { assert_eq!(log, f64::NEG_INFINITY); }
         else { assert_eq!(exact_weight(&value), rat(0, 1)); }
     }
 }
@@ -158,7 +159,7 @@ fn an_empty_clause_preserves_the_accumulators_weights() {
 fn every_care_restriction_outcome_preserves_the_input_weights() {
     let tree = Arc::new(Vtree::balanced(2));
     let eng = Engine::new();
-    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         for (f, care, expected) in [
             (Tdd::clause(&tree, [1]).unwrap(), Tdd::one(&tree), 8),
             (Tdd::clause(&tree, [1, 2]).unwrap(), Tdd::clause(&tree, [1]).unwrap(), 8),
@@ -171,9 +172,9 @@ fn every_care_restriction_outcome_preserves_the_input_weights() {
             result.minimize().unwrap();
             assert_canonical(&result);
             let value = eng.weighted_value(&result).unwrap().expect("restriction preserves weights");
-            if let Some(log) = value.as_log() {
-                if expected == 0 { assert!(log.is_zero()); }
-                else { assert!((log.log10_abs() - (expected as f64).log10()).abs() < 1e-12); }
+            if let Some(log) = bounded_log10(&value) {
+                if expected == 0 { assert_eq!(log, f64::NEG_INFINITY); }
+                else { assert!((log - (expected as f64).log10()).abs() < 1e-12); }
             } else { assert_eq!(exact_weight(&value), rat(expected, 1)); }
         }
     }
@@ -201,7 +202,7 @@ fn a_care_rebuild_keeps_the_stores_of_marginal_levels() {
 fn ite_inherits_weights_from_every_nonempty_operand_subset() {
     let tree = Arc::new(Vtree::balanced(3));
     let eng = Engine::new();
-    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         for subset in 0..8 {
             let operands = [1, 2, 3].map(|literal| eng.literal(&tree, literal).unwrap());
             let [condition, yes, no] = operands.into_iter().enumerate().map(|(i, f)| {
@@ -220,8 +221,8 @@ fn ite_inherits_weights_from_every_nonempty_operand_subset() {
             } else {
                 assert_eq!(result.weights().unwrap().arithmetic(), arithmetic);
                 let value = eng.weighted_value(&result).unwrap().unwrap();
-                if let Some(log) = value.as_log() {
-                    assert!((log.log10_abs() - 32f64.log10()).abs() < 1e-12);
+                if let Some(log) = bounded_log10(&value) {
+                    assert!((log - 32f64.log10()).abs() < 1e-12);
                 } else { assert_eq!(exact_weight(&value), rat(32, 1)); }
             }
         }

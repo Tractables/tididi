@@ -93,6 +93,16 @@ pub fn rat(n: i64, d: i64) -> BigRational {
     BigRational::new(n.into(), d.into())
 }
 
+/// log10 of |v| for a bounded-precision value (`-inf` for zero), `None` for an
+/// exact one.
+pub fn bounded_log10(v: &WeightValue) -> Option<f64> {
+    match v {
+        WeightValue::Log(s) => Some(if s.is_zero() { f64::NEG_INFINITY } else { s.log10_abs() }),
+        WeightValue::Scaled(s) => Some(s.log10_abs()),
+        _ => None,
+    }
+}
+
 /// The value an exact [`WeightValue`] carries, in whichever representation it is
 /// in. Panics on a logarithmic one, which has no exact rational.
 pub fn exact_weight(v: &WeightValue) -> BigRational {

@@ -15,7 +15,7 @@ fn weighted_fixture(arithmetic: Arithmetic) -> Tdd {
 /// Refused scratch reservations are values, and a later read can still succeed.
 #[test]
 fn weighted_reads_recover_from_budget_and_allocator_refusals() {
-    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         let engine = Engine::new();
         let f = weighted_fixture(arithmetic);
         {
@@ -28,8 +28,8 @@ fn weighted_reads_recover_from_budget_and_allocator_refusals() {
             engine.limits().grant_every_reserve();
         }
         let value = engine.weighted_value(&f).unwrap().unwrap();
-        if let Some(log) = value.as_log() {
-            assert!((log.log10_abs() - 224f64.log10()).abs() < 1e-12);
+        if let Some(log) = crate::test_helpers::bounded_log10(&value) {
+            assert!((log - 224f64.log10()).abs() < 1e-12);
         } else {
             assert_eq!(value.as_rational().as_ref(), &crate::test_helpers::rat(224, 1));
         }
@@ -40,7 +40,7 @@ fn weighted_reads_recover_from_budget_and_allocator_refusals() {
 /// A work stop interrupts a fold and leaves the diagram readable after the limit is removed.
 #[test]
 fn weighted_reads_stop_during_the_fold() {
-    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         let engine = Engine::new();
         engine.limits().pin_reduce_poll_stride(Some(1));
         let f = weighted_fixture(arithmetic);

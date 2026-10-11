@@ -4,7 +4,7 @@ use crate::restructure::GraftError;
 use crate::diagram::TddBuildError;
 use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
 
-use crate::test_helpers::{assert_canonical, rat};
+use crate::test_helpers::{assert_canonical, bounded_log10, rat};
 use crate::vtree::{VarId, Vtree};
 
 /// A uniform table over a fixed variable space.
@@ -32,7 +32,7 @@ fn graft_rejects_weighted_marginals_without_a_destination() {
 
 #[test]
 fn graft_rejects_changed_weights_after_marginalization() {
-    for (weight, arithmetic) in [(3, Arithmetic::ExactRational), (2, Arithmetic::SignedLog)] {
+    for (weight, arithmetic) in [(3, Arithmetic::ExactRational), (2, Arithmetic::SignedLog), (2, Arithmetic::ScaledFloat)] {
         assert_eq!(Tdd::graft_over(&Engine::new(), vec![(marginal_part(), vec![VarId(1), VarId(2)])], &[], 2, Some(store(2, weight, arithmetic))).unwrap_err(), GraftError::PartWeights { part: 0, source: TddBuildError::IncompatibleWeights });
     }
 }
@@ -116,7 +116,7 @@ fn graft_reweights_a_structural_part_in_the_destination() {
 fn graft_preserves_renamed_marginal_roots_in_both_arithmetics() {
     let local = Arc::new(Vtree::balanced(2));
     let eng = Engine::new();
-    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         let weights = [
             LiteralWeights { negative: rat(2, 1), positive: rat(3, 1) },
             LiteralWeights { negative: rat(5, 1), positive: rat(7, 1) },
@@ -133,7 +133,7 @@ fn graft_preserves_renamed_marginal_roots_in_both_arithmetics() {
         assert_canonical(&result);
         let value = result.weighted_value().unwrap().unwrap();
         // Clause weight: 5 * 12 - 2 * 5 = 50; the free variable contributes 24.
-        if let Some(log) = value.as_log() { assert!((log.log10_abs() - 1200f64.log10()).abs() < 1e-12); }
+        if let Some(log) = bounded_log10(&value) { assert!((log - 1200f64.log10()).abs() < 1e-12); }
         else { assert_eq!(value.as_rational().into_owned(), rat(1200, 1)); }
     }
 }
@@ -152,7 +152,7 @@ fn graft_boundary_cleanup_observes_the_engine_budget() {
 fn graft_canonicalizes_equal_weight_slots_of_a_marginal_leaf_root() {
     let eng = Engine::new();
     let tree = Arc::new(Vtree::leaf(VarId(1)));
-    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         let mut f = Tdd::clause(&tree, [-1]).unwrap();
         f.set_weights(WeightStore::new(RationalWeights::unit(1), arithmetic)).unwrap();
         eng.marginalize_levels(&mut f, &[tree.root()]).unwrap();
@@ -163,7 +163,7 @@ fn graft_canonicalizes_equal_weight_slots_of_a_marginal_leaf_root() {
         result.minimize().unwrap();
         assert_canonical(&result);
         let value = result.weighted_value().unwrap().unwrap();
-        if let Some(log) = value.as_log() { assert!((log.log10_abs() - 2f64.log10()).abs() < 1e-12); }
+        if let Some(log) = bounded_log10(&value) { assert!((log - 2f64.log10()).abs() < 1e-12); }
         else { assert_eq!(value.as_rational().into_owned(), rat(2, 1)); }
     }
 }

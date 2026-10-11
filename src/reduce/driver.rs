@@ -189,10 +189,11 @@ impl<'a> Reduction<'a> {
     }
 
     /// Marginalization creates pair-fusion work at the affected parents and
-    /// orphans slots. Log arithmetic skips fusion because it cannot sum exactly.
+    /// orphans slots. Bounded-precision arithmetic skips fusion because it
+    /// cannot sum exactly.
     fn after_marginalize(&mut self, levels: &[VtreeIdx], vtree: &Vtree) -> Result<(), OperationError> {
         let closed = self.tdd.levels.is_closed();
-        if !self.tdd.weights().is_some_and(WeightStore::is_log) {
+        if !self.tdd.weights().is_some_and(WeightStore::is_bounded) {
             let mut parents: Vec<_> = levels.iter().filter_map(|&level| vtree.node(level).parent()).collect();
             parents.sort_unstable();
             parents.dedup();

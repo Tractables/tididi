@@ -137,8 +137,8 @@ pub(crate) fn eval_all_signatures(tdd: &Tdd, pos_val: &[u64], neg_val: &[u64]) -
 /// form, or the sign and bit pattern of a log-domain magnitude — mixed into the
 /// field.
 ///
-/// Equal values always reach the same fingerprint; two equal log-domain values
-/// reached by different roundings fingerprint apart, which can only hide a
+/// Equal values always reach the same fingerprint; two equal bounded-precision
+/// values reached by different roundings fingerprint apart, which can only hide a
 /// collision, never invent one.
 ///
 /// The result is never zero, so a fingerprinted slot is distinguishable from
@@ -163,6 +163,11 @@ pub(super) fn weight_mod_p(value: &WeightValue) -> u64 {
             if l.sign != 0 {
                 l.ln_abs.to_bits().hash(&mut hasher);
             }
+        }
+        WeightValue::Scaled(f) => {
+            3u8.hash(&mut hasher);
+            f.mantissa().to_bits().hash(&mut hasher);
+            f.exponent().hash(&mut hasher);
         }
     }
     // FxHash mixes weakly in its high bits; one splitmix round spreads the

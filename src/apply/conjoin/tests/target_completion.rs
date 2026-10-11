@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use crate::{Engine, Tdd};
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore, WeightValue};
 
 
 use crate::test_helpers::{assert_canonical, rat};
@@ -13,7 +13,7 @@ fn requested_targets_are_completed_after_identity_and_self_conjunction() {
         let tree = Arc::new(tree);
         let (left, _) = tree.children(tree.root());
         let leaf = tree.leaf_of(VarId(1)).unwrap();
-        for arithmetic in [None, Some(Arithmetic::ExactRational), Some(Arithmetic::SignedLog)] {
+        for arithmetic in [None, Some(Arithmetic::ExactRational), Some(Arithmetic::SignedLog), Some(Arithmetic::ScaledFloat)] {
             let mut f = eng.clause(&tree, [1, 2]).unwrap();
             let mut disjoint = eng.clause(&tree, [3, 4]).unwrap();
             if let Some(arithmetic) = arithmetic {
@@ -40,9 +40,12 @@ fn requested_targets_are_completed_after_identity_and_self_conjunction() {
                         let b = eng.weighted_value(&expected).unwrap().unwrap();
                         if arithmetic == Some(Arithmetic::ExactRational) { assert_eq!(a.into_rational(), b.into_rational()); }
                         else {
-                            let a = a.as_log().unwrap();
-                            let b = b.as_log().unwrap();
-                            assert!((f64::from(a.sign) * a.ln_abs.exp() - f64::from(b.sign) * b.ln_abs.exp()).abs() < 1e-12);
+                            let signed = |v: &WeightValue| match v {
+                                WeightValue::Log(s) => f64::from(s.sign) * s.ln_abs.exp(),
+                                WeightValue::Scaled(s) => s.to_f64(),
+                                _ => panic!("expected a bounded-precision value"),
+                            };
+                            assert!((signed(&a) - signed(&b)).abs() < 1e-12);
                         }
                     } else { assert_eq!(actual.model_count().unwrap(), expected.model_count().unwrap()); }
                     actual.minimize().unwrap();

@@ -128,7 +128,7 @@ fn canonicalize_leaf_refs_at_parent(plevel: &mut TddLevel, side: ChildSide, valu
 /// [`canonicalize_leaf_refs_at_parent`] moves each leaf-side ref of a structural
 /// parent onto its class's smallest slot (Neg→Pos when w⁺ = w⁻, Pos→One when
 /// w⁻ = 0, Neg→One when w⁺ = 0), the weighted form of the integer arm's
-/// Pos/Neg→`Inline(1)` twin merge. The log domain skips it: its key equality is
+/// Pos/Neg→`Inline(1)` twin merge. A bounded domain skips it: its key equality is
 /// `f64` bit equality, not value equality.
 ///
 /// # Soundness
@@ -169,7 +169,7 @@ pub(crate) fn marginalize_leaf_weighted(
     if let Some((parent, side)) = structural_parent(&tdd.levels, vtree, leaf) {
         tdd.rewrite_level(parent, |plevel| {
             // Exact domain only; see the doc above.
-            if !ws.is_log() {
+            if !ws.is_bounded() {
                 canonicalize_leaf_refs_at_parent(plevel, side, &values);
             }
         });
@@ -190,9 +190,9 @@ pub(crate) fn canonicalize_weighted_leaf_refs(
     levels: &mut [TddLevel],
     ws: Option<&WeightStore>,
 ) {
-    // Exact domain only: the log domain's key equality is `f64` bit
+    // Exact domain only: a bounded domain's key equality is `f64` bit
     // equality, not value equality.
-    let Some(ws) = ws.filter(|w| !w.is_log()) else { return };
+    let Some(ws) = ws.filter(|w| !w.is_bounded()) else { return };
     // The structural operand contributes leaf-side refs that never passed
     // through the canon map, and the grid carries them into the output
     // unchanged wherever the marginal side reads `One`; moving them onto the

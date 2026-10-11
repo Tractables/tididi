@@ -279,14 +279,14 @@ impl SlotValues for IntFold {
 /// weighted factor. Building `k` as a same-mode `WeightValue` keeps the scale a
 /// same-variant `WeightValue::mul`.
 pub(crate) fn scaled_weight(ws: &WeightStore, v: &WeightValue, k: u32) -> WeightValue {
-    use crate::diagram::SignedLog;
+    use crate::diagram::{Arithmetic, ScaledFloat, SignedLog};
     use num_bigint::BigInt;
     use num_rational::BigRational;
-    let k_w = if ws.is_log() {
-        WeightValue::Log(SignedLog::from_rational(&BigRational::from_integer(BigInt::from(k))))
-    } else {
+    let k_w = match ws.arithmetic() {
+        Arithmetic::SignedLog => WeightValue::Log(SignedLog::from_rational(&BigRational::from_integer(BigInt::from(k)))),
+        Arithmetic::ScaledFloat => WeightValue::Scaled(ScaledFloat::from_f64(f64::from(k))),
         // A `u32` multiplicity is always in the small exact representation.
-        WeightValue::ExactSmall(i128::from(k))
+        Arithmetic::ExactRational => WeightValue::ExactSmall(i128::from(k)),
     };
     v.mul(&k_w)
 }
@@ -308,7 +308,7 @@ impl SlotValues for WeightFold {
     /// measures, so a negative literal weight is not an obstacle; the parent's
     /// contribution `Σᵢ W(x)·W(mᵢ) = W(x)·Σᵢ W(mᵢ)` then follows from
     /// distributivity in ℚ. The reasoning is exact-domain only; the caller
-    /// declines in the log domain.
+    /// declines in a bounded-precision domain.
     fn sum_refs(tdd: &Tdd, v: VtreeIdx, refs: &[u32]) -> WeightValue {
         let ws = tdd.weight_store();
         let values = ws.level(v.idx());
@@ -377,8 +377,8 @@ impl SlotValues for WeightFold {
     fn leaf_ref(tdd: &Tdd, v: VtreeIdx, value: &WeightValue) -> Option<u32> {
         let ws = tdd.weight_store();
         debug_assert!(
-            !ws.is_log(),
-            "leaf lookup reached in the log domain (the fusion gate must exclude it)"
+            !ws.is_bounded(),
+            "leaf lookup reached in a bounded-precision domain (the fusion gate must exclude it)"
         );
         crate::diagram::find_leaf_slot_by_value(ws, v.idx(), value).map(ValueRef::slot_raw)
     }

@@ -4,9 +4,9 @@ use std::sync::Arc;
 
 use num_rational::BigRational;
 
-use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, TddBuildError, WeightStore};
+use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, TddBuildError, WeightStore, WeightValue};
 use crate::restructure::EmbedError;
-use crate::test_helpers::assert_canonical;
+use crate::test_helpers::{assert_canonical, bounded_log10};
 use crate::vtree::{VarId, Vtree};
 use crate::{Engine, OperationError, Tdd};
 
@@ -94,27 +94,37 @@ fn a_summed_out_level_keeps_its_value_scaled_by_the_free_variables_below_it() {
 }
 
 #[test]
-fn log_domain_values_are_placed_like_exact_ones() {
-    let (small, f, structural) = summed_pair(Arithmetic::SignedLog, rat(1, 3), rat(1, 2));
-    let big = Arc::new(Vtree::balanced(8));
-    let engine = Engine::new();
-    let store = || WeightStore::new(table(8, rat(1, 3), rat(1, 2)), Arithmetic::SignedLog);
-    let (g, levels) = engine.embed_over(&f, &big, spread, Some(store())).unwrap();
-    assert_canonical(&g);
-    let (left, _) = small.children(small.root());
-    let (mut h, _) = engine.embed(&structural, &big, spread).unwrap();
-    h.set_weights(store()).unwrap();
-    engine.marginalize_levels(&mut h, &[levels.level_of(left)]).unwrap();
-    let value = |t: &Tdd| *t.weighted_value().unwrap().expect("weighted").as_log().expect("log domain");
-    let (vg, vh) = (value(&g), value(&h));
-    assert_eq!(vg.sign, vh.sign);
-    assert!((vg.ln_abs - vh.ln_abs).abs() < 1e-12, "{} against {}", vg.ln_abs, vh.ln_abs);
-    // Exact: (3/4 · 3/4) of a unit table scaled to the weights: check against
-    // the exact run of the same construction.
-    let (_, exact, _) = summed_pair(Arithmetic::ExactRational, rat(1, 3), rat(1, 2));
-    let expected = self::exact(&exact) * rat(625, 1296);
-    let expected = expected.numer().to_string().parse::<f64>().unwrap() / expected.denom().to_string().parse::<f64>().unwrap();
-    assert!((vg.ln_abs.exp() - expected).abs() < 1e-12);
+fn bounded_values_are_placed_like_exact_ones() {
+    for arithmetic in [Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
+        let (small, f, structural) = summed_pair(arithmetic, rat(1, 3), rat(1, 2));
+        let big = Arc::new(Vtree::balanced(8));
+        let engine = Engine::new();
+        let store = || WeightStore::new(table(8, rat(1, 3), rat(1, 2)), arithmetic);
+        let (g, levels) = engine.embed_over(&f, &big, spread, Some(store())).unwrap();
+        assert_canonical(&g);
+        let (left, _) = small.children(small.root());
+        let (mut h, _) = engine.embed(&structural, &big, spread).unwrap();
+        h.set_weights(store()).unwrap();
+        engine.marginalize_levels(&mut h, &[levels.level_of(left)]).unwrap();
+        let value = |t: &Tdd| {
+            let v = t.weighted_value().unwrap().expect("weighted");
+            let sign = match &v {
+                WeightValue::Log(s) => f64::from(s.sign),
+                WeightValue::Scaled(s) => s.mantissa().signum(),
+                _ => panic!("expected a bounded-precision value"),
+            };
+            (sign, bounded_log10(&v).expect("bounded") * std::f64::consts::LN_10)
+        };
+        let (vg, vh) = (value(&g), value(&h));
+        assert_eq!(vg.0, vh.0);
+        assert!((vg.1 - vh.1).abs() < 1e-12, "{} against {}", vg.1, vh.1);
+        // Exact: (3/4 · 3/4) of a unit table scaled to the weights: check against
+        // the exact run of the same construction.
+        let (_, exact, _) = summed_pair(Arithmetic::ExactRational, rat(1, 3), rat(1, 2));
+        let expected = self::exact(&exact) * rat(625, 1296);
+        let expected = expected.numer().to_string().parse::<f64>().unwrap() / expected.denom().to_string().parse::<f64>().unwrap();
+        assert!((vg.1.exp() - expected).abs() < 1e-12);
+    }
 }
 
 #[test]
@@ -207,11 +217,13 @@ fn weighted_values_need_a_destination_store_that_agrees_with_the_source() {
         engine.embed_over(&f, &big, spread, Some(other)).unwrap_err(),
         EmbedError::SourceWeights(TddBuildError::IncompatibleWeights),
     );
-    let log = WeightStore::new(table(8, rat(1, 3), rat(1, 2)), Arithmetic::SignedLog);
-    assert_eq!(
-        engine.embed_over(&f, &big, spread, Some(log)).unwrap_err(),
-        EmbedError::SourceWeights(TddBuildError::IncompatibleWeights),
-    );
+    for arithmetic in [Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
+        let bounded = WeightStore::new(table(8, rat(1, 3), rat(1, 2)), arithmetic);
+        assert_eq!(
+            engine.embed_over(&f, &big, spread, Some(bounded)).unwrap_err(),
+            EmbedError::SourceWeights(TddBuildError::IncompatibleWeights),
+        );
+    }
     let short = WeightStore::new(table(6, rat(1, 3), rat(1, 2)), Arithmetic::ExactRational);
     assert_eq!(
         engine.embed_over(&f, &big, spread, Some(short)).unwrap_err(),

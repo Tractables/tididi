@@ -97,7 +97,7 @@ fn a_weighted_level_cannot_be_copied_without_its_store() {
 
 #[test]
 fn subsumed_empty_columns_remain_valid_in_both_arithmetics() {
-    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         let eng = Engine::new();
         let vtree = Arc::new(Vtree::balanced(8));
         let mut f = Tdd::clause(&vtree, [1, 2]).unwrap();
@@ -139,7 +139,7 @@ fn a_weight_table_must_cover_the_vtree() {
 
 #[test]
 fn copied_pinned_leaf_columns_are_checked_in_both_arithmetics() {
-    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         let eng = Engine::new();
         let tree = Arc::new(Vtree::balanced(2));
         let mut f = Tdd::clause(&tree, [1]).unwrap();

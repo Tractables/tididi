@@ -5,13 +5,14 @@
 //! [`Tdd::evaluate`](crate::Tdd::evaluate).
 //!
 //! Marginalized diagrams store weighted results as [`WeightValue`], using
-//! exact rationals or the bounded-precision [`SignedLog`] representation.
+//! exact rationals or the bounded-precision [`SignedLog`] and [`ScaledFloat`]
+//! representations.
 
 mod rational;
 mod weight;
 
 pub use rational::{LiteralWeights, RationalWeights};
-pub use weight::{SignedLog, WeightValue};
+pub use weight::{ScaledFloat, SignedLog, WeightValue};
 pub(crate) use weight::{same_value, weight_key, WeightKey};
 
 use num_bigint::BigUint;

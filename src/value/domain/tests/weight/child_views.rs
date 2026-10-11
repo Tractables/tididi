@@ -6,7 +6,7 @@ use crate::vtree::VarId;
 fn marginal_child_view_borrows_the_stored_column() {
     let tree = Vtree::balanced(2);
     let root = tree.root().idx();
-    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         let mut store = WeightStore::new(RationalWeights::unit(2), arithmetic);
         let values = vec![store.leaf_val(VarId(1), LeafLabel::One); 64];
         store.set_level(root, values);
@@ -23,7 +23,7 @@ fn marginal_child_view_borrows_the_stored_column() {
 fn structural_child_view_borrows_scratch_even_when_the_store_has_a_column() {
     let tree = Vtree::balanced(2);
     let root = tree.root().idx();
-    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog] {
+    for arithmetic in [Arithmetic::ExactRational, Arithmetic::SignedLog, Arithmetic::ScaledFloat] {
         let mut store = WeightStore::new(RationalWeights::unit(2), arithmetic);
         store.set_level(root, vec![store.wzero()]);
         let level = TddLevel::new();

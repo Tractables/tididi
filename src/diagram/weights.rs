@@ -5,22 +5,22 @@
 //! than in `TddLevel`, whose size a static assert holds down. The integer
 //! count store (`marginal_counts` / `marginal_counts_big`) stays `None` in
 //! weighted mode. The per-node payload is a [`WeightValue`] (exact `BigRational`
-//! or bounded-precision `SignedLog`); leaf base values come from the store's
+//! or bounded-precision `SignedLog` or `ScaledFloat`); leaf base values come from the store's
 //! [`RationalWeights`], converted to the active mode by `WeightStore::leaf_val`.
 
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use crate::diagram::{EvalAlgebra, RationalWeights, SignedLog, WeightValue};
+use crate::diagram::{EvalAlgebra, RationalWeights, ScaledFloat, SignedLog, WeightValue};
 use crate::diagram::LeafLabel;
 use crate::vtree::VarId;
 
 /// The numeric representation a weighted marginalization's values use: exact
-/// `BigRational`, or
-/// the bounded-precision `SignedLog` domain, whose every operation is O(1)
-/// `f64` work. The two never mix within one store; a caller decides once per
-/// weighted run and passes it once to [`WeightStore::new`].
+/// `BigRational`, or one of two bounded-precision forms whose every operation
+/// is O(1) `f64` work: the `SignedLog` domain, or the cheaper `ScaledFloat`.
+/// They never mix within one store; a caller decides once per weighted run
+/// and passes it once to [`WeightStore::new`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Arithmetic {
@@ -28,15 +28,17 @@ pub enum Arithmetic {
     ExactRational,
     /// Bounded-precision signed log domain.
     SignedLog,
+    /// Bounded-precision `f64` mantissa with a binary exponent of its own.
+    ScaledFloat,
 }
 
 /// Fixed literal weights and the values computed when structure is marginalized.
 ///
 /// Attach a store with [`Tdd::set_weights`](crate::Tdd::set_weights), then query
 /// it with [`Tdd::weighted_value`](crate::Tdd::weighted_value).
-/// Choose [`Arithmetic::ExactRational`] for exact results or
-/// [`Arithmetic::SignedLog`] for bounded precision over a wider numeric range
-/// than ordinary floating-point weights.
+/// Choose [`Arithmetic::ExactRational`] for exact results, or
+/// [`Arithmetic::ScaledFloat`] or [`Arithmetic::SignedLog`] for bounded
+/// precision over a wider numeric range than ordinary floating-point weights.
 ///
 /// The literal table is shared by derived stores. Once structure has been
 /// replaced by values, those levels cannot be evaluated under new weights.
@@ -138,7 +140,7 @@ impl WeightStore {
             if values.len() != level.slot_count() {
                 return Err(TddBuildError::InvalidWeightColumn { level: t, reason: "does not match the level's slot count" });
             }
-            if values.iter().any(|v| matches!(v, WeightValue::Log(_)) != self.is_log()) {
+            if values.iter().any(|v| v.arithmetic() != self.arithmetic()) {
                 return Err(TddBuildError::InvalidWeightColumn { level: t, reason: "uses a different arithmetic" });
             }
         }
@@ -185,33 +187,34 @@ impl WeightStore {
         }
     }
 
-    /// True in the bounded-precision log domain.
+    /// True in a bounded-precision arithmetic: there value equality is not
+    /// key equality, and addition depends on its order.
     #[inline]
-    pub(crate) fn is_log(&self) -> bool {
-        self.config.arithmetic == Arithmetic::SignedLog
+    pub(crate) fn is_bounded(&self) -> bool {
+        self.config.arithmetic != Arithmetic::ExactRational
     }
 
     /// The additive identity in the active mode.
     #[inline]
     pub(crate) fn wzero(&self) -> WeightValue {
-        if self.is_log() {
-            WeightValue::Log(SignedLog::zero())
-        } else {
+        match self.config.arithmetic {
+            Arithmetic::SignedLog => WeightValue::Log(SignedLog::zero()),
+            Arithmetic::ScaledFloat => WeightValue::Scaled(ScaledFloat::ZERO),
             // The canonical exact zero: 0 always fits the small representation.
-            WeightValue::ExactSmall(0)
+            Arithmetic::ExactRational => WeightValue::ExactSmall(0),
         }
     }
 
     /// Leaf base value for `(var, label)` in the active mode. The exact parsed
-    /// weight from [`RationalWeights`] is authoritative; in log mode it is
-    /// converted to `SignedLog` exactly once here (per leaf read).
+    /// weight from [`RationalWeights`] is authoritative; in a bounded mode it
+    /// is converted exactly once here (per leaf read).
     #[inline]
     pub(crate) fn leaf_val(&self, var: VarId, label: LeafLabel) -> WeightValue {
         let r = self.config.algebra.leaf(var, label);
-        if self.is_log() {
-            WeightValue::Log(SignedLog::from_rational(&r))
-        } else {
-            WeightValue::exact(r)
+        match self.config.arithmetic {
+            Arithmetic::SignedLog => WeightValue::Log(SignedLog::from_rational(&r)),
+            Arithmetic::ScaledFloat => WeightValue::Scaled(ScaledFloat::from_rational(&r)),
+            Arithmetic::ExactRational => WeightValue::exact(r),
         }
     }
 

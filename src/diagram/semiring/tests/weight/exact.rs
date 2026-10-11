@@ -56,7 +56,7 @@ fn assert_canonical_variant(v: &WeightValue) {
             "value {r} fits an i128 but is parked in WeightValue::Exact — it would intern \
              under a different WeightKey than its own small form"
         ),
-        WeightValue::Log(_) => panic!("expected an exact WeightValue"),
+        WeightValue::Log(_) | WeightValue::Scaled(_) => panic!("expected an exact WeightValue"),
     }
 }
 
@@ -330,7 +330,7 @@ fn randomized_op_sequence_matches_a_pure_bigrational_reference() {
                     saw_frac += 1;
                 }
             }
-            WeightValue::Log(_) => unreachable!(),
+            WeightValue::Log(_) | WeightValue::Scaled(_) => unreachable!(),
         }
     }
 
