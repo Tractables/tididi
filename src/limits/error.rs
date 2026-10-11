@@ -40,6 +40,11 @@ pub enum OperationError {
     IndexOverflow,
     /// The operands do not share the same vtree allocation.
     VtreeMismatch,
+    /// A [`PairIndex`](crate::diagram::PairIndex) was built from another
+    /// diagram than the operand it is read with, or from that diagram
+    /// before it changed. Building the index again from the operand is
+    /// what answers it.
+    IndexMismatch,
     /// The operands use different literal weights or arithmetic, or mix weights with stored integer counts.
     IncompatibleWeights,
     /// A target level index is outside the operand's vtree.
@@ -144,6 +149,7 @@ impl std::fmt::Display for OperationError {
         match self {
             OperationError::InvalidLiteral(literal) => write!(f, "{literal} is not a literal; use a nonzero signed integer"),
             OperationError::VtreeMismatch => f.write_str("operands must share the same vtree allocation"),
+            OperationError::IndexMismatch => f.write_str("the pair index was built from another diagram than its operand"),
             OperationError::IncompatibleWeights => f.write_str("operands require compatible literal weights and arithmetic; stored integer counts cannot be reweighted"),
             OperationError::LevelNotInVtree(level) => write!(f, "level {} is outside the vtree", level.idx()),
             OperationError::MarginalLevel(level) => write!(f, "operation requires structural data at marginal level {}", level.idx()),

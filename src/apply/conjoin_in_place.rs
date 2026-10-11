@@ -85,7 +85,7 @@ const DEAD: u32 = u32::MAX;
 /// The true node of `g` at each level, `None` where `g` has none: a leaf's
 /// constant label, and an internal level's node of one pair whose sides are
 /// the children's true nodes.
-fn true_nodes(g: &Tdd) -> Vec<Option<u32>> {
+pub(super) fn true_nodes(g: &Tdd) -> Vec<Option<u32>> {
     let vtree = g.vtree();
     let mut top = vec![None; vtree.num_nodes()];
     for t in vtree.bottomup() {

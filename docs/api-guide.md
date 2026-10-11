@@ -156,6 +156,7 @@ For more specialized control:
 | Conjoin or place a diagram by moving its levels, getting it back when refused | [`Engine::and_restoring`](crate::Engine::and_restoring), [`Engine::embed_moving`](crate::Engine::embed_moving) |
 | Conjoin two diagrams placed on a larger vtree, without building the levels the placements add | [`Engine::and_onto`](crate::Engine::and_onto) |
 | Conjoin a local constraint, such as a cube or a set of codes over a few variables, into a large diagram's own levels, keeping the nodes it does not cut | [`Engine::and_in_place`](crate::Engine::and_in_place), [`Engine::and_in_place_loose`](crate::Engine::and_in_place_loose), [`Engine::and_cube`](crate::Engine::and_cube) |
+| Conjoin a diagram with a large one, or sum their conjunction under an algebra, reading the large one only through an index of its pairs, so that the work follows what the small one meets | [`PairIndex`](crate::diagram::PairIndex), [`Engine::and_indexed`](crate::Engine::and_indexed), [`Engine::sum_indexed`](crate::Engine::sum_indexed) |
 | Place or conjoin where the larger vtree holds a subtree with its children swapped | [`Engine::embed_moving_mirrored`](crate::Engine::embed_moving_mirrored), [`Engine::and_onto_mirrored`](crate::Engine::and_onto_mirrored) |
 | Pair each node of a level with a code on variables of its own | [`Engine::tag_level`](crate::Engine::tag_level) |
 | Number each level's nodes in the order a walk down from the output first reaches them, for passes that read levels in order | [`Tdd::renumber_top_down`](crate::Tdd::renumber_top_down) |

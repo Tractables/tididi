@@ -176,6 +176,7 @@ mod build_error;
 mod leaf_column;
 mod builder;
 mod level;
+mod pair_index;
 mod pool;
 mod semiring;
 mod tdd;
@@ -218,6 +219,7 @@ pub(crate) use pool::LevelPool;
 // tdd
 pub use build_error::TddBuildError;
 pub use builder::{LevelView, TddBuilder};
+pub use pair_index::PairIndex;
 pub use tdd::Tdd;
 pub use crate::build::models::RowSelection;
 pub(crate) use leaf_column::{

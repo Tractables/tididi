@@ -74,7 +74,7 @@ use num_bigint::BigUint;
 use num_rational::BigRational;
 
 use tididi::diagram::{
-    Arithmetic, ChildRef, ColumnAlgebra, EncodedChildRef, EvalAlgebra, LeafLabel, LiteralWeights, RationalWeights,
+    Arithmetic, ChildRef, ColumnAlgebra, EncodedChildRef, EvalAlgebra, LeafLabel, LiteralWeights, PairIndex, RationalWeights,
     SignedLog, SlotPairs, ValueRef, WeightStore,
 };
 use tididi::limits::{LimitConfig, SparseRoute};
@@ -386,6 +386,16 @@ fn operations_match_enumeration(case: &Case) {
         assert_canonical_after_minimize(&kept);
         let loose = eng.and_in_place_loose(big.clone(), small).expect("an unarmed engine refuses nothing");
         assert_truth(&diagram_truth(&loose, n), &want, n, "conjunction in place, unpruned");
+    }
+
+    // The conjunction read through an index of one operand's pairs, both
+    // ways round.
+    step("conjunction through a pair index");
+    for (small, big) in [(&f, &g), (&g, &f)] {
+        let index = PairIndex::new(big).expect("an unarmed engine refuses nothing");
+        let met = eng.and_indexed(small, big, &index).expect("an unarmed engine refuses nothing");
+        assert_truth(&diagram_truth(&met, n), &want, n, "conjunction through a pair index");
+        assert_canonical_after_minimize(&met);
     }
 
     step("disjunction");
