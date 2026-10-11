@@ -51,6 +51,10 @@ pub enum OperationError {
     LevelNotInVtree(crate::vtree::VtreeIdx),
     /// The operation needs structure at a level that has already been summed out.
     MarginalLevel(crate::vtree::VtreeIdx),
+    /// The sum ([`add`](crate::add)) of two diagrams with no summed-out level
+    /// that share a model: the sum counts that model twice, and only a
+    /// summed-out level holds a count above one.
+    SharedModel,
     /// The installed deadline passed, or the installed stop callback decided that
     /// the operation should stop, at one of the operation's poll points.
     Stopped,
@@ -153,6 +157,7 @@ impl std::fmt::Display for OperationError {
             OperationError::IncompatibleWeights => f.write_str("operands require compatible literal weights and arithmetic; stored integer counts cannot be reweighted"),
             OperationError::LevelNotInVtree(level) => write!(f, "level {} is outside the vtree", level.idx()),
             OperationError::MarginalLevel(level) => write!(f, "operation requires structural data at marginal level {}", level.idx()),
+            OperationError::SharedModel => f.write_str("the operands share a model, whose count of two needs a summed-out level to hold it"),
             OperationError::OverBudget => f.write_str("memory allocation refused by the byte budget or the allocator"),
             OperationError::IndexOverflow => f.write_str("an intermediate structure outgrew the 32-bit index that addresses it"),
             OperationError::Stopped => f.write_str("operation stopped"),

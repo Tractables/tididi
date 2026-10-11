@@ -21,6 +21,10 @@
 //!   function's truth table.
 //! - [`marginalizing_preserves_the_count`] — summing a random downward-closed
 //!   set of levels out leaves the count alone.
+//! - [`sums_match_enumeration`] — the formula's halves, each with the same
+//!   levels summed out, add to a diagram that counts every assignment of the
+//!   variables left as the halves together do; with nothing summed out the
+//!   sum is their disjunction, or refused where they share a model.
 //! - [`text_round_trip`] — a diagram written to `.tdd` and read back is the
 //!   same diagram.
 //! - [`binary_round_trip`] — the binary format reads back the diagram the
@@ -87,7 +91,7 @@ use tididi::test_helpers::{
     compile_clauses_pairwise, eval, rand_cnf, truth_table, weighted_sum, CnfShape, Lcg,
 };
 use tididi::vtree::{VarId, Vtree, VtreeIdx, VtreeNode};
-use tididi::{Engine, Tdd};
+use tididi::{Engine, OperationError, Tdd};
 
 // ── The case ────────────────────────────────────────────────────────────────
 
@@ -272,11 +276,12 @@ fn step(name: &'static str) {
 fn check_case(case: &Case) {
     /// One claim of the battery, by the name a failure report gives it.
     type Claim = (&'static str, fn(&Case));
-    let claims: [Claim; 17] = [
+    let claims: [Claim; 18] = [
         ("count against enumeration", count_matches_enumeration),
         ("operation orders agree", orders_agree),
         ("operations against enumeration", operations_match_enumeration),
         ("marginalizing preserves the count", marginalizing_preserves_the_count),
+        ("sums against enumeration", sums_match_enumeration),
         ("text round trip", text_round_trip),
         ("binary round trip", binary_round_trip),
         ("weighted counts against enumeration", weighted_counts_match_enumeration),
@@ -490,6 +495,57 @@ fn marginalizing_preserves_the_count(case: &Case) {
         f.is_zero() || f.has_marginal_level(),
         "marginalizing left no marginal level"
     );
+}
+
+/// The formula's halves, each with the drawn levels summed out, add to a
+/// diagram whose count under each assignment of the variables left is the
+/// halves' count of its extensions, together. With nothing summed out the sum
+/// is the halves' disjunction where they share no model, and refused where
+/// they share one.
+fn sums_match_enumeration(case: &Case) {
+    let n = case.num_vars;
+    let eng = Engine::new();
+    let split = case.clauses.len().div_ceil(2);
+    step("compiling the halves for a sum");
+    let mut f = compile(&Case { clauses: case.clauses[..split].to_vec(), ..borrow(case) });
+    let mut g = compile(&Case { clauses: case.clauses[split..].to_vec(), ..borrow(case) });
+    let (tf, tg) = (diagram_truth(&f, n), diagram_truth(&g, n));
+    let targets = draw_marginal_targets(case);
+    if targets.is_empty() {
+        step("a sum with nothing summed out");
+        let shared = tf.iter().zip(&tg).any(|(a, b)| *a && *b);
+        match eng.add(f, g) {
+            Err(OperationError::SharedModel) => assert!(shared, "a sum refused with no shared model"),
+            Ok(sum) => {
+                assert!(!shared, "a sum of operands sharing a model");
+                assert_canonical_after_minimize(&sum);
+                let want: Vec<bool> = tf.iter().zip(&tg).map(|(a, b)| *a || *b).collect();
+                assert_truth(&diagram_truth(&sum, n), &want, n, "a sum with nothing summed out");
+            }
+            Err(e) => panic!("a sum with nothing summed out: {e}"),
+        }
+        return;
+    }
+    step("a sum with levels summed out");
+    for d in [&mut f, &mut g] {
+        eng.marginalize_levels(d, &targets).expect("an unarmed engine refuses nothing");
+    }
+    let sum = eng.add(f, g).expect("an unarmed engine refuses nothing");
+    assert_canonical(&sum);
+    let hidden = targets.iter().fold(0u32, |m, &t| m | vars_under(&case.vtree, t));
+    let mut want: std::collections::BTreeMap<u32, u64> = std::collections::BTreeMap::new();
+    for mask in 0..(1u32 << n) {
+        *want.entry(mask & !hidden).or_default() += u64::from(tf[mask as usize]) + u64::from(tg[mask as usize]);
+    }
+    let mut counter = sum.counter().unwrap();
+    for (left, count) in want {
+        let observed: Vec<i32> = (0..n)
+            .filter(|i| hidden >> i & 1 == 0)
+            .map(|i| if left >> i & 1 == 1 { i as i32 + 1 } else { -(i as i32 + 1) })
+            .collect();
+        counter.observe(&observed).unwrap();
+        assert_eq!(counter.model_count().unwrap(), BigUint::from(count), "a sum at {:?}", assignment(left, n));
+    }
 }
 
 /// A downward-closed set of internal levels, in bottom-up order, drawn from

@@ -92,6 +92,6 @@ pub use vtree::Vtree;
 pub use limits::OperationError;
 pub use execution::{Context, Engine};
 
-pub use apply::{and, and_not, nor_many, or, or_many, xor, ite, and_exists, Quantification};
+pub use apply::{add, and, and_not, nor_many, or, or_many, xor, ite, and_exists, Quantification};
 
 pub use build::literal;

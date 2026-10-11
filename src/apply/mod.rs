@@ -1,6 +1,7 @@
 //! Combine and transform Boolean functions.
 //!
 //! Combine [`Tdd`](crate::Tdd) values with [`and`], [`or`], [`and_not`], [`xor`] and [`ite`].
+//! [`add`] sums two count diagrams, such as those with summed-out levels.
 //! Each call reuses scratch from the vtree's execution context.
 //!
 //! [`Tdd::negate`](crate::Tdd::negate) complements a function.
@@ -17,6 +18,7 @@
 //! Use [`Context::with_limits`](crate::Context::with_limits) for a bounded batch.
 //! The [API overview](crate::guide::api) connects circuit operations with worked examples.
 
+mod add;
 pub(crate) mod conjoin;
 pub(crate) mod conjoin_clause;
 mod conjoin_in_place;
@@ -34,6 +36,7 @@ mod compose;
 mod substitute;
 mod prefix_fold;
 
+pub use add::add;
 pub(crate) use conjoin::apply_and;
 pub use conjoin::{and, AndOntoRefused, AndRefused};
 pub(crate) use disjoin::apply_or;

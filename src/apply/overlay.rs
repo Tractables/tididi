@@ -51,10 +51,14 @@ pub(crate) enum Overlay {
     Or,
     /// `f ∧ ¬g`.
     AndNot,
+    /// `f ∨ g` where `f ∧ g` is false: a shared model is refused with
+    /// [`OperationError::SharedModel`], the sum `f + g` of two structural
+    /// operands ([`add`](crate::add)).
+    Add,
 }
 
 /// A piece with no component in one of the operands.
-const ABSENT: u32 = u32::MAX;
+pub(super) const ABSENT: u32 = u32::MAX;
 
 /// A key for a pair of child references, for the per-level lookups.
 #[inline]
@@ -66,38 +70,38 @@ fn key(l: u32, r: u32) -> u64 {
 /// the pieces of each operand node, and which operand nodes each output node
 /// is a piece of.
 #[derive(Default)]
-struct Pieces {
+pub(super) struct Pieces {
     /// `f_items[f_start[a]..f_start[a + 1]]` are the pieces of `f`'s node `a`.
-    f_start: Vec<u32>,
+    pub(super) f_start: Vec<u32>,
     /// The output nodes, grouped by the `f` node they are pieces of.
-    f_items: Vec<u32>,
+    pub(super) f_items: Vec<u32>,
     /// As `f_start`, for `g`'s nodes; empty when the overlay never walks `g`.
-    g_start: Vec<u32>,
+    pub(super) g_start: Vec<u32>,
     /// As `f_items`, for `g`'s nodes.
-    g_items: Vec<u32>,
+    pub(super) g_items: Vec<u32>,
     /// Output node to the `f` node it lies in, or [`ABSENT`].
-    f_part: Vec<u32>,
+    pub(super) f_part: Vec<u32>,
     /// Output node to the `g` node it lies in, or [`ABSENT`].
-    g_part: Vec<u32>,
+    pub(super) g_part: Vec<u32>,
 }
 
 impl Pieces {
     /// The pieces of `f`'s node `a`.
     #[inline]
-    fn of_f(&self, a: u32) -> &[u32] {
+    pub(super) fn of_f(&self, a: u32) -> &[u32] {
         let a = a as usize;
         &self.f_items[self.f_start[a] as usize..self.f_start[a + 1] as usize]
     }
 
     /// The pieces of `g`'s node `b`.
     #[inline]
-    fn of_g(&self, b: u32) -> &[u32] {
+    pub(super) fn of_g(&self, b: u32) -> &[u32] {
         let b = b as usize;
         &self.g_items[self.g_start[b] as usize..self.g_start[b + 1] as usize]
     }
 
     /// Empty every list, keeping the allocations for the next level.
-    fn clear(&mut self) {
+    pub(super) fn clear(&mut self) {
         self.f_start.clear();
         self.f_items.clear();
         self.g_start.clear();
@@ -107,7 +111,7 @@ impl Pieces {
     }
 
     /// The four leaf pieces, indexed by [`leaf_index`].
-    fn leaves() -> [Pieces; 4] {
+    pub(super) fn leaves() -> [Pieces; 4] {
         [Pieces::leaf(false, false), Pieces::leaf(false, true), Pieces::leaf(true, false), Pieces::leaf(true, true)]
     }
 
@@ -156,7 +160,7 @@ fn names_one(level: &TddLevel, left: bool) -> bool {
 
 /// Which of [`Pieces::leaves`] a leaf child on `left` (else right) of the
 /// level `t` has: read off the two operands' forms at `t`.
-fn leaf_index(f_level: &TddLevel, g_level: &TddLevel, left: bool) -> usize {
+pub(super) fn leaf_index(f_level: &TddLevel, g_level: &TddLevel, left: bool) -> usize {
     usize::from(names_one(f_level, left)) * 2 + usize::from(names_one(g_level, left))
 }
 
@@ -217,7 +221,7 @@ fn overlay_levels(eng: &Engine, op: Overlay, f: &Tdd, g: &Tdd) -> Result<Tdd, Op
 
 /// Buffers one overlay reuses from level to level.
 #[derive(Default)]
-struct Scratch {
+pub(super) struct Scratch {
     /// One operand node's cells, each tagged with the other operand's node it
     /// lies in.
     tagged: Vec<(u32, u32, u32)>,
@@ -270,7 +274,7 @@ fn index_pairs(
 /// holds, as `g`'s residues; the cells both hold are the products already
 /// built.
 #[allow(clippy::too_many_arguments)]
-fn inner_level(
+pub(super) fn inner_level(
     eng: &Engine,
     op: Overlay,
     fl: &TddLevel,
@@ -283,7 +287,7 @@ fn inner_level(
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let mut poll = lim.gate();
-    let walk_g = op == Overlay::Or;
+    let walk_g = op != Overlay::AndNot;
     let f_width = fl.slot_count();
     let g_width = gl.slot_count();
     index_owners(eng, gl, &mut s.owner)?;
@@ -375,7 +379,13 @@ fn inner_level(
 
 /// The root's one node: the cells of `f_out`, and for a disjunction the cells
 /// of `g_out` outside `f_out`; for a difference, the cells of `f_out` outside
-/// `g_out`. Returned sorted, in `s.pairs`, and empty when the result is false.
+/// `g_out`. A sum is the disjunction, refusing a cell of `g_out` inside
+/// `f_out`. Returned sorted, in `s.pairs`, and empty when the result is false.
+///
+/// # Errors
+///
+/// [`OperationError::SharedModel`] for a sum whose operands share a cell.
+/// Allocation refusals and installed limits propagate.
 #[allow(clippy::too_many_arguments)]
 fn root_cells<'s>(
     eng: &Engine,
@@ -393,15 +403,15 @@ fn root_cells<'s>(
     s.pairs.clear();
     // The operand whose pairs a cell is tested against.
     let excluded = match op {
-        Overlay::Or => fl,
+        Overlay::Or | Overlay::Add => fl,
         Overlay::AndNot => gl,
     };
     let excluded_out = match op {
-        Overlay::Or => f_out,
+        Overlay::Or | Overlay::Add => f_out,
         Overlay::AndNot => g_out,
     };
     index_pairs(eng, excluded, std::iter::once(excluded_out.idx()), &mut s.held)?;
-    if op == Overlay::Or {
+    if op != Overlay::AndNot {
         for p in fl.pairs_iter_of_idx(f_out.idx()) {
             let xs = lp.of_f(p.left.0);
             let ys = rp.of_f(p.right.0);
@@ -417,12 +427,12 @@ fn root_cells<'s>(
     // is kept when its components in the other operand are not a pair of that
     // operand's output.
     let (walked, walked_out) = match op {
-        Overlay::Or => (gl, g_out),
+        Overlay::Or | Overlay::Add => (gl, g_out),
         Overlay::AndNot => (fl, f_out),
     };
     for p in walked.pairs_iter_of_idx(walked_out.idx()) {
         let (xs, ys, x_part, y_part) = match op {
-            Overlay::Or => (lp.of_g(p.left.0), rp.of_g(p.right.0), &lp.f_part, &rp.f_part),
+            Overlay::Or | Overlay::Add => (lp.of_g(p.left.0), rp.of_g(p.right.0), &lp.f_part, &rp.f_part),
             Overlay::AndNot => (lp.of_f(p.left.0), rp.of_f(p.right.0), &lp.g_part, &rp.g_part),
         };
         for &x in xs {
@@ -430,6 +440,10 @@ fn root_cells<'s>(
             for &y in ys {
                 let cy = y_part[y as usize];
                 if cx != ABSENT && cy != ABSENT && s.held.contains(&key(cx, cy)) {
+                    // A cell of both operands: a model `f + g` counts twice.
+                    if op == Overlay::Add {
+                        return Err(OperationError::SharedModel);
+                    }
                     continue;
                 }
                 lim.try_push(&mut s.pairs, ChildPair::new(EncodedChildRef::from_raw(x), EncodedChildRef::from_raw(y)))?;
@@ -452,13 +466,16 @@ fn leaf_truth(local: NodeIdx) -> (bool, bool) {
     }
 }
 
-/// The overlay on a one-variable vtree, whose root is a leaf.
+/// The overlay on a one-variable vtree, whose root is a leaf; a sum whose
+/// operands share a literal is [`OperationError::SharedModel`].
 fn overlay_leaf_root(eng: &Engine, op: Overlay, f: &Tdd, g: &Tdd) -> Result<Tdd, OperationError> {
     let (fp, fn_) = leaf_truth(f.output.local);
     let (gp, gn) = leaf_truth(g.output.local);
     let (p, n) = match op {
         Overlay::Or => (fp || gp, fn_ || gn),
         Overlay::AndNot => (fp && !gp, fn_ && !gn),
+        Overlay::Add if (fp && gp) || (fn_ && gn) => return Err(OperationError::SharedModel),
+        Overlay::Add => (fp || gp, fn_ || gn),
     };
     let local = match (p, n) {
         (true, true) => ONE_LEAF_IDX,
@@ -471,7 +488,8 @@ fn overlay_leaf_root(eng: &Engine, op: Overlay, f: &Tdd, g: &Tdd) -> Result<Tdd,
         .finish(TddNodeId { vtree: f.vtree.root(), local })
 }
 
-/// `f ∨ g` or `f ∧ ¬g` of two owned operands on one vtree, minimized.
+/// `f ∨ g`, `f ∧ ¬g` or the sum `f + g` (a disjunction refusing a shared
+/// model) of two owned operands on one vtree, minimized.
 ///
 /// Validates both operands, aligns their weights, and returns the result with
 /// them. A false operand short-cuts: the other one, or false.
@@ -484,7 +502,7 @@ pub(crate) fn overlay_on(eng: &Engine, op: Overlay, mut f: Tdd, mut g: Tdd) -> R
     let weights = f.weights.take();
     let mut result = match (f.is_zero(), g.is_zero(), op) {
         (true, _, Overlay::AndNot) => crate::build::constant_on(eng, &f.vtree, false)?,
-        (true, _, Overlay::Or) => g,
+        (true, _, Overlay::Or | Overlay::Add) => g,
         (false, true, _) => f,
         (false, false, _) if f.vtree.node(f.vtree.root()).is_leaf() => overlay_leaf_root(eng, op, &f, &g)?,
         (false, false, _) => overlay_levels(eng, op, &f, &g)?,

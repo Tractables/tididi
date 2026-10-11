@@ -30,6 +30,9 @@ Combine circuits with [`and`](crate::and), [`or`](crate::or),
 [`ite`](crate::ite) to choose between two branches.
 [`and_not`](crate::and_not) removes one circuit's solutions from another
 without building a complement.
+[`add`](crate::add) adds two circuits' counts, such as two with the same
+levels summed out by [`Tdd::marginalize_levels`](crate::Tdd::marginalize_levels),
+so a solution of both counts twice.
 [`Tdd::and_clause`](crate::Tdd::and_clause) adds a clause to an existing
 circuit and [`Tdd::or_cube`](crate::Tdd::or_cube) adds a conjunction of
 literals to its solutions, neither building a second circuit.
