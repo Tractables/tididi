@@ -1,4 +1,5 @@
 use crate::execution::pool::{Buffers, Nested, PooledScratch, Scratch};
+use crate::limits::Limits;
 
 use smallvec::SmallVec;
 
@@ -58,7 +59,8 @@ pub(super) struct PFusionScratch {
     /// Per-group occurrence multiset of marginal-side refs (no dedup). Index i holds
     /// the group for `touched[i]`. Reused across nodes via `clear()`; a fresh
     /// `SmallVec` is pushed only when a node needs more distinct x-groups than
-    /// any prior node.
+    /// any prior node since the set was last parked, which keeps only the
+    /// last node's.
     pub(super) groups: Vec<SmallVec<[u32; 4]>>,
     /// One run's marginal-side refs, for a node whose groups are runs
     /// (`pair_fusion::plan::group_by_runs`). Cleared per run.
@@ -81,6 +83,17 @@ impl Buffers for PFusionScratch {
         visit(&mut self.run);
         visit(&mut self.keyed);
         visit(&mut self.keyed_other);
+    }
+}
+
+impl PFusionScratch {
+    /// Drop the groups past the last node's, handing their charge back to
+    /// `lim`.
+    fn shed(&mut self, lim: &Limits) {
+        let kept = self.touched.len().min(self.groups.len());
+        for group in self.groups.drain(kept..) {
+            lim.discard(group);
+        }
     }
 }
 
@@ -474,6 +487,15 @@ impl Listing {
         let i = self.slot(t).expect("a level's list is had before its merge");
         &mut self.lists[i]
     }
+
+    /// Drop the lists past the current sweep's, handing their charge back
+    /// to `lim`.
+    fn shed(&mut self, lim: &Limits) {
+        let used = self.used.min(self.lists.len());
+        for list in self.lists.drain(used..) {
+            lim.discard(list);
+        }
+    }
 }
 
 /// Released like any other buffer: a released `at` or `whole` regrows
@@ -495,5 +517,16 @@ impl PooledScratch for ContractScratch {
         self.has_marginal_below_valid = false;
         self.diagram_marginal = None;
         self.searched = 0;
+    }
+
+    /// Shed the inner lists the last call left unused before the walk that
+    /// prices the set: that walk reads every inner list of `listing.lists`
+    /// and `pair_fusion.groups`, so lists kept from one wide sweep would
+    /// make every later return, however small its call, as slow as that
+    /// sweep. Shed, a return costs what its call filed.
+    fn retain(&mut self, lim: &Limits) -> usize {
+        self.listing.shed(lim);
+        self.pair_fusion.shed(lim);
+        self.release_oversized(lim)
     }
 }
