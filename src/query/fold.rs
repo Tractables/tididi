@@ -11,7 +11,9 @@
 //! fold marginalization writes its levels with.
 
 use crate::value::{walk_bottom_up, Retention};
-use crate::diagram::{EncodedChildRef, ChildRef, LeafLabel, PairsIter, ChildDecoder, Tdd, TddLevel, ValueRef, LEAF_WIDTH};
+use crate::diagram::{LeafLabel, PairsIter, ChildDecoder, Tdd, TddLevel, LEAF_WIDTH};
+#[cfg(any(test, feature = "testing"))]
+use crate::diagram::{EncodedChildRef, ChildRef, ValueRef};
 use crate::Engine;
 use crate::limits::PollGate;
 use crate::limits::OperationError;
@@ -108,7 +110,9 @@ pub(crate) trait LevelFold {
 /// The generic `Σ over pairs (left × right)`, for a fold whose arithmetic is
 /// one pass of ordinary semiring operations. A fold that needs the pair list
 /// twice — the u128 count that re-reads it exactly on overflow — writes its own
-/// [`LevelFold::fold_node`] instead of implementing this.
+/// [`LevelFold::fold_node`] instead of implementing this. Only the test
+/// oracles fold this way, so it is compiled with them.
+#[cfg(any(test, feature = "testing"))]
 pub(crate) trait PairAlgebra: LevelFold {
     /// The additive identity.
     fn zero(&self) -> Self::Value;
