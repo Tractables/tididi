@@ -246,8 +246,47 @@ fn search_stops_before_another_applicable_move() {
     let mut f = Tdd::one(&vtree);
     let config = PoolSearchConfig { max_work_units: 1, ..PoolSearchConfig::default() };
     let stats = eng.pool_search(&mut [&mut f], &config).unwrap();
-    assert_eq!(stats.work_units, 5, "only the first applicable probe may overshoot");
+    // The move, and the one member's two levels of a pair each, read and
+    // not rebuilt: the move does not lower the pairs, so it is not kept.
+    assert_eq!(stats.work_units, super::PROBE_UNITS + 3, "only the first applicable probe may overshoot");
     assert_canonical(&f);
+}
+
+#[test]
+fn a_declined_move_rebuilds_no_member_whose_levels_keep_their_size() {
+    let eng = crate::Engine::new();
+    let vtree = Arc::new(Vtree::balanced(VARS));
+    let mut original = vec![Tdd::one(&vtree), Tdd::one(&vtree), compile_clauses(&vtree, &[vec![-4]])];
+    for m in &mut original {
+        m.minimize().unwrap();
+    }
+    let mv = PoolMove { rotation: RotationMove { pivot: vtree.root(), kind: RotationKind::Left }, crossed: false };
+    let mut members = original.clone();
+    let start = eng.limits().work_units();
+    assert!(!with_members(&mut members, |refs| eng.rotate_pool_if(refs, mv, usize::MAX, |p| {
+        assert_eq!(p.before(), p.after());
+        false
+    })).unwrap());
+    // Each member's two levels at the root and its right child hold a pair
+    // each: read, charged, and left alone.
+    let copy = super::PROBE_UNITS + vtree.num_nodes() as u64;
+    assert_eq!(eng.limits().work_units() - start, copy + 3 * 3);
+    for (m, before) in members.iter().zip(&original) {
+        assert!(crate::test_helpers::same_storage(m, before));
+        assert!(Arc::ptr_eq(m.vtree(), &vtree));
+        assert_canonical(m);
+    }
+    // Kept, every member is rebuilt onto the rotated tree.
+    let tables: Vec<Vec<bool>> = original.iter().map(truth_table).collect();
+    assert!(with_members(&mut members, |refs| eng.rotate_pool_if(refs, mv, usize::MAX, |_| true)).unwrap());
+    let rotated = Arc::clone(members[0].vtree());
+    assert!(!rotated.same_tree(&vtree));
+    for (m, table) in members.iter_mut().zip(&tables) {
+        assert!(Arc::ptr_eq(m.vtree(), &rotated));
+        m.minimize().unwrap();
+        assert_canonical(m);
+        assert_eq!(&truth_table(m), table);
+    }
 }
 
 #[test]
