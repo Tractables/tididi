@@ -208,7 +208,44 @@ impl Tdd {
             weights: self.weights.clone(),
         })
     }
+}
 
+impl crate::Engine {
+    /// A copy of `f`, as `Clone` makes it, with every level's storage
+    /// reserved through this engine's limits: a copy that the byte budget
+    /// does not cover, or that the allocator cannot serve, comes back as
+    /// [`OperationError::OverBudget`](crate::OperationError::OverBudget)
+    /// instead of aborting the process. Operations consume their operands,
+    /// so a caller that keeps a diagram and hands copies of it to them
+    /// takes the copies here where memory may run short. A copy is not
+    /// tested against the stop rules and charges no work.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Engine, OperationError, Vtree};
+    /// use tididi::limits::LimitConfig;
+    ///
+    /// let engine = Engine::new();
+    /// let vtree = Arc::new(Vtree::balanced(3));
+    /// let f = engine.clause(&vtree, [1, 2])?;
+    /// let g = engine.try_clone(&f)?;
+    /// assert!(engine.equivalent(&f, &g)?);
+    /// let _refused = engine.limits().scope(LimitConfig::none().with_memory_budget_bytes(Some(0)));
+    /// assert_eq!(engine.try_clone(&f).err(), Some(OperationError::OverBudget));
+    /// # Ok::<(), OperationError>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`OperationError::OverBudget`](crate::OperationError::OverBudget)
+    /// where the copy is refused.
+    pub fn try_clone(&self, f: &Tdd) -> Result<Tdd, crate::limits::OperationError> {
+        let _op = self.limits().begin_operation();
+        f.try_clone_on(self)
+    }
+}
+
+impl Tdd {
     /// Replace the vtree allocation without rebuilding any diagram level.
     ///
     /// This can reunite diagrams whose independent subtrees share a vtree that

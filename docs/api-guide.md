@@ -176,6 +176,9 @@ the [architecture reference](crate::guide::architecture) describes the implement
 the bounded work. [`Context::run`](crate::Context::run) reuses scratch without
 installing limits. The [execution example](crate::guide::examples::execution)
 shows how to handle a refused allocation and bound repeated queries.
+[`Engine::try_clone`](crate::Engine::try_clone) copies a diagram under the
+same limits, so that a copy the allocator cannot serve is refused rather
+than aborting the process.
 [`LimitConfig::with_sparse_route`](crate::limits::LimitConfig::with_sparse_route)
 sets when a conjunction level leaves the dense grid for the sparse route.
 [`LimitConfig::with_deadline_at_most`](crate::limits::LimitConfig::with_deadline_at_most)
