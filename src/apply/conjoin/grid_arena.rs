@@ -181,6 +181,15 @@ impl GridArena {
         }
         let base = bump.end;
         bump.end += cells;
+        // The frontier grows a level at a time, so the slab is reserved
+        // with doubling. Reserved exactly, it was reallocated at every level
+        // that missed the free list, and the allocator copied the whole slab
+        // each time: tens of copies of a slab of hundreds of megabytes on a
+        // large network.
+        let missing = bump.end.saturating_sub(self.cells.len());
+        if missing > 0 {
+            eng.limits().reserve(&mut self.cells, missing)?;
+        }
         try_resize_dead(eng, &mut self.cells, bump.end)?;
         Ok(GridBase(base))
     }
