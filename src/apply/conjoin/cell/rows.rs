@@ -41,8 +41,11 @@ pub(crate) struct RowScratch<'a> {
     pub(crate) f_pairs: &'a mut Vec<ChildPair>,
     /// Decode buffer for the current cell's `g` pairs.
     pub(crate) g_pairs: &'a mut Vec<ChildPair>,
-    /// The product-grid slab.
-    pub(crate) node_idx: &'a mut [u32],
+    /// The product-grid slab, which the row loop extends over the rows of a
+    /// grid claimed past its end ([`GridArena::claim`]).
+    ///
+    /// [`GridArena::claim`]: super::super::grid_arena::GridArena::claim
+    pub(crate) node_idx: &'a mut Vec<u32>,
 }
 
 /// Everything one cell of the row loop needs, bundled and passed by value.
@@ -104,6 +107,22 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
 /// Fill small product grids once before traversal; reset larger grids row by
 /// row to keep the current row cache-local. Both paths write the same values.
 const DEAD_SLAB_FILL_MAX_CELLS: usize = 1 << 16;
+
+/// Extend `slab` to `end` cells, `NO_PRODUCT`-filled, and say whether all
+/// of `start..end` was new: the cells of a grid claimed past the slab's end
+/// are first written here, a row as the row loop reaches it, into capacity
+/// the claim reserved. A range the slab already reached into holds whatever
+/// an earlier grid left there.
+#[inline(always)]
+fn extend_slab(slab: &mut Vec<u32>, start: usize, end: usize) -> bool {
+    let len = slab.len();
+    if len >= end {
+        return false;
+    }
+    debug_assert!(slab.capacity() >= end, "a grid's claim reserves its cells");
+    slab.resize(end, NO_PRODUCT);
+    len <= start
+}
 
 /// Reset `cells` to `NO_PRODUCT`.
 ///
@@ -200,7 +219,7 @@ where
     let RowLoop { f_level: left_level_t, g_level: right_level_t, ctx, f_width: left_width, .. } = rows;
     // Named once, ahead of the row loop, so the loop body indexes locals rather
     // than reaching back through the bundle at every cell.
-    let RowScratch { f_pairs: f_pairs_scratch, g_pairs: g_pairs_scratch, node_idx } = scratch;
+    let RowScratch { f_pairs: f_pairs_scratch, g_pairs: g_pairs_scratch, node_idx: slab } = scratch;
     let lim = eng.limits();
     // Amortized wall-deadline/cancel poll: one read per ~65k cell iterations
     // so an expired deadline cuts within a fraction of a level rather than
@@ -234,7 +253,10 @@ where
         if left.kills() && right.kills() { mark_dead(cells) } else { mark_dead_out_of_line(cells) }
     };
     if slab_fill {
-        reset(&mut node_idx[ctx.output_grid_base..ctx.output_grid_base + left_width * right_width]);
+        let end = ctx.output_grid_base + left_width * right_width;
+        if !extend_slab(slab, ctx.output_grid_base, end) {
+            reset(&mut slab[ctx.output_grid_base..end]);
+        }
     }
 
     // An implicit f level's rows generated before the loop reads them; a
@@ -243,7 +265,10 @@ where
     let f_described = described_rows(lim, left_level_t, left_width, left_view, right_view, f_pairs_scratch);
     for i in 0..left_width {
         let row_base = ctx.output_grid_base + action.grid_row(i) * right_width;
-        if !slab_fill && !every_cell {
+        // A row the slab is extended over is `NO_PRODUCT` already.
+        let fresh = extend_slab(slab, row_base, row_base + right_width);
+        let node_idx = &mut slab[..];
+        if !slab_fill && !every_cell && !fresh {
             reset(&mut node_idx[row_base..row_base + right_width]);
         }
 
@@ -253,7 +278,7 @@ where
         };
         // Empty pairs means dead (zero-containing) node — skip this row.
         if f_pairs.is_empty() {
-            if every_cell {
+            if every_cell && !fresh {
                 reset(&mut node_idx[row_base..row_base + right_width]);
             }
             continue;
