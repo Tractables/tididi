@@ -271,26 +271,27 @@ impl Limits {
     /// Fallible `push`: reserve one slot before the push so allocation failure
     /// returns `Err(OverBudget)` instead of aborting the process.
     ///
-    /// The `len < capacity` fast path stores the element and nothing else; the
-    /// reserve-and-account body lives in [`Limits::push_grow`], `#[inline(never)]`,
-    /// so the push loop keeps `len`, `capacity` and the base pointer in registers.
+    /// A full vector grows in [`Limits::push_room`], `#[inline(never)]`, so the
+    /// push loop keeps `len`, `capacity` and the base pointer in registers. The
+    /// element is not handed to it: an element passed by value to a call is
+    /// written to the stack field by field and read back in wider words, a
+    /// load the store buffer cannot forward, and that stall would be paid on
+    /// every push, not only on the growth.
     #[inline(always)]
     pub(crate) fn try_push<T>(&self, v: &mut Vec<T>, x: T) -> Result<(), OperationError> {
-        if v.len() < v.capacity() {
-            v.push(x);
-            return Ok(());
+        if v.len() == v.capacity() {
+            self.push_room(v)?;
         }
-        self.push_grow(v, x)
+        v.push(x);
+        Ok(())
     }
 
     /// Growth arm of [`Limits::try_push`]. Reached only when `len == capacity`,
     /// once per doubling event, so the out-of-line call amortizes to nothing.
     #[cold]
     #[inline(never)]
-    fn push_grow<T>(&self, v: &mut Vec<T>, x: T) -> Result<(), OperationError> {
-        self.reserve(v, 1)?;
-        v.push(x);
-        Ok(())
+    fn push_room<T>(&self, v: &mut Vec<T>) -> Result<(), OperationError> {
+        self.reserve(v, 1)
     }
 
     /// Fallible analogue of `Vec::resize` for grow-only callers. No-op when
