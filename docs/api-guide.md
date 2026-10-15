@@ -138,7 +138,9 @@ and says which operations already return minimized results;
 [`Engine::rotation_search_with`](crate::Engine::rotation_search_with) runs the
 same search under another acceptance policy, and
 [`Engine::rotation_multistart`](crate::Engine::rotation_multistart) restarts it
-from perturbed copies.
+from perturbed copies. [`Engine::pool_search`](crate::Engine::pool_search)
+searches the one vtree that several diagrams share, keeping a rotation when
+it lowers their total storage.
 
 For more specialized control:
 
