@@ -530,10 +530,10 @@ fn unnamed_children(
 /// Mark in `marks` the nodes of `level`'s children that its pairs name, on
 /// the left side with `LEFT` and on the right with `RIGHT`, each side's
 /// block at its byte of `base`, and count down `open` once for each node
-/// marked the first time; node by node, up to the first one past which no
-/// side read has a node open. Both children are structural internal, so a
-/// side is the index of the node it names. One unit of work through `gate`
-/// a pair.
+/// marked the first time; node by node, each node's pairs read as a slice,
+/// up to the first node past which no side read has a node open. Both
+/// children are structural internal, so a side is the index of the node it
+/// names. One unit of work through `gate` a pair.
 ///
 /// A mark is a byte, and marking stores a constant: the count reads the
 /// byte, but no mark depends on one read before it, so pairs that name
@@ -555,21 +555,26 @@ fn mark_named<const LEFT: bool, const RIGHT: bool>(
         open[k] -= (*m == 0) as usize;
         *m = 1;
     };
-    for (_, pairs) in level.internal_inputs_iter() {
+    // `Err(None)` stops the read once every node read for is named.
+    let read = level.try_for_each_node(0..level.nodes().len(), |_, pairs| {
         if (!LEFT || open[0] == 0) && (!RIGHT || open[1] == 0) {
-            break;
+            return Err(None);
         }
-        gate.poll(pairs.len() as u64)?;
-        pairs.for_each(|pair| {
+        gate.poll(pairs.len() as u64).map_err(Some)?;
+        for pair in pairs {
             if LEFT {
                 mark(0, pair.left.0, open);
             }
             if RIGHT {
                 mark(1, pair.right.0, open);
             }
-        });
+        }
+        Ok(())
+    });
+    match read {
+        Ok(()) | Err(None) => Ok(()),
+        Err(Some(e)) => Err(e),
     }
-    Ok(())
 }
 
 /// [`prune_unreachable`] over every level: mark from the output, then compact
