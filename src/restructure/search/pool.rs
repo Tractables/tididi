@@ -19,8 +19,8 @@ use std::sync::Arc;
 
 use crate::Engine;
 use crate::diagram::{Dirty, Tdd, TddLevel, TddNodeId};
-use crate::limits::{Limits, OperationError, PollGate, Transient};
-use crate::restructure::relevel::rebuild_levels;
+use crate::limits::{Charged, Limits, OperationError, Transient};
+use crate::restructure::relevel::{Prepared, finish_levels, prepare_levels, rebuild_levels};
 use crate::restructure::scratch::RestructureScratch;
 use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
@@ -125,11 +125,13 @@ impl Engine {
     /// apply at its pivot, a member with summed-out levels, or a member whose
     /// rebuild would pass `bound` pairs abandons the move and returns
     /// `Ok(false)` without calling `accept`. An empty pool keeps nothing.
-    /// The copy of the tree charges its nodes to the work clock, and each
-    /// member the pairs of its two old and two new levels and the fixed cost
-    /// of a rebuild; a member whose two levels hold a pair each, or none,
-    /// holds as many after the move and is rebuilt only once the move is
-    /// kept.
+    /// The members are only read until `accept` keeps the move: each
+    /// member's rebuild is prepared first, which gives the pairs its two
+    /// levels would hold, and the levels are written from it once the move is
+    /// kept. The copy of the tree charges its nodes to the work clock, and
+    /// each member the pairs of its two old and two new levels and the fixed
+    /// cost of a rebuild; a member whose two levels hold a pair each, or
+    /// none, holds as many after the move and is not prepared.
     ///
     /// The members should be canonical: a rebuilt level is then
     /// interchangeable with the one it replaced. A kept move can leave twins
@@ -259,12 +261,11 @@ fn descend(
     // those two nodes and at the pivot's parent, and nowhere else: a pivot
     // refused before is refused again, and is not probed.
     let mut refused = vec![false; tree.num_nodes()];
-    // Asked once: a probe rebuilds every member's two levels and so forgets
-    // what each member knows of its levels, and asking at every probe read
-    // every level of every member again, most of a search over many small
-    // members. A rotation rebuilds structural levels as structural levels,
-    // and a refused one puts the old levels back, so the answer holds for
-    // the whole search.
+    // Asked once: a kept move rebuilds every member's two levels and so
+    // forgets what each member knows of its levels, and asking at every
+    // probe read every level of every member again, most of a search over
+    // many small members. A rotation rebuilds structural levels as
+    // structural levels, so the answer holds for the whole search.
     let marginal = members.iter().any(|m| m.has_marginal_level());
     while stats.sweeps < config.max_sweeps && !spent() {
         stats.sweeps += 1;
@@ -394,22 +395,20 @@ struct Saved<'a> {
 }
 
 /// Member `i`'s two levels at the move `info` describes rebuilt within
-/// `bound`, what it needs to be put back saved, and the pairs of its old
-/// levels, `old_pairs`, and of its new ones charged with
-/// [`REBUILD_UNITS`]: the new levels' pairs, or `None` where the rebuild
+/// `bound`, from `prepared` where the probe prepared them, and what it needs
+/// to be put back saved: the new levels' pairs, or `None` where the rebuild
 /// would pass `bound`.
 #[allow(clippy::too_many_arguments)]
 fn rebuild_member<'a>(
     lim: &'a Limits,
     i: usize,
     m: &mut Tdd,
-    old_pairs: usize,
     info: &RotationInfo,
     mv: PoolMove,
     bound: usize,
+    prepared: Option<&mut Prepared>,
     saved: &mut Vec<(usize, Saved<'a>)>,
     scratch: &mut RestructureScratch,
-    gate: &mut PollGate<'_>,
 ) -> Result<Option<usize>, OperationError> {
     saved.push((i, Saved {
         output: m.output,
@@ -420,22 +419,42 @@ fn rebuild_member<'a>(
     }));
     m.levels.forget();
     // No member has a marginal level here.
-    let Some((outer, inner)) = rebuild_levels(lim, m, info, mv.rotation.kind, mv.crossed, false, scratch, bound)? else {
+    let rebuilt = match prepared {
+        Some(prepared) => finish_levels(lim, m, info, mv.rotation.kind, false, scratch, prepared).map(Some),
+        None => rebuild_levels(lim, m, info, mv.rotation.kind, mv.crossed, false, scratch, bound),
+    };
+    let Some((outer, inner)) = rebuilt? else {
         return Ok(None);
     };
     saved.last_mut().expect("pushed above").1.levels = Some((Transient::new(lim, outer), Transient::new(lim, inner)));
-    let new_pairs = m.levels[info.v_idx.idx()].live_pairs() + m.levels[info.w_idx.idx()].live_pairs();
-    gate.poll((old_pairs + new_pairs) as u64 + REBUILD_UNITS)?;
-    Ok(Some(new_pairs))
+    Ok(Some(m.levels[info.v_idx.idx()].live_pairs() + m.levels[info.w_idx.idx()].live_pairs()))
 }
 
-/// The members' two levels at the move `info` describes rebuilt, the change
-/// shown to `accept`, and kept for all members or for none; `extra` units
+/// The rebuilds a probe prepared, one for each member but those it left
+/// out, charged with their buffers.
+#[derive(Default)]
+struct PreparedMembers(Vec<Option<Prepared>>);
+
+impl Charged for PreparedMembers {
+    fn charged_bytes(&self) -> u64 {
+        self.0.iter().flatten().fold(self.0.charged_bytes(), |bytes, p| bytes + p.charged_bytes())
+    }
+}
+
+/// The members' two levels at the move `info` describes prepared, the change
+/// shown to `accept`, and if kept, rebuilt for all members; `extra` units
 /// charged for the move itself. The members' tree is the caller's: a kept
 /// move leaves their levels on the tree `info` was taken from and their
-/// pointers on the old one. A member whose two levels hold one pair each,
-/// or none, holds as many after the move, and is rebuilt only once the move
-/// is kept, under a bound that cannot abandon its rebuild.
+/// pointers on the old one.
+///
+/// Each member's levels are only read until the move is kept. The probe
+/// prepares each member's rebuild ([`prepare_levels`]), which gives the pairs
+/// its two levels would hold, and writes the levels from it once the move is
+/// kept ([`finish_levels`]). A member whose two levels hold one pair each, or
+/// none, holds as many after the move and is not prepared; a kept move
+/// rebuilds it. The charge of a member is the pairs of its two old and two
+/// new levels and [`REBUILD_UNITS`], taken when it is prepared, or for a
+/// member not prepared, by its rebuild once the move is kept.
 #[allow(clippy::too_many_arguments)]
 fn probe(
     eng: &Engine,
@@ -458,50 +477,54 @@ fn probe(
     lim.reserve_exact(&mut before, members.len())?;
     let mut after = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut after, members.len())?;
+    // Each member's prepared rebuild, held until the move is decided; a
+    // member prepared was charged its rebuild.
+    let mut prepared = Transient::new(lim, PreparedMembers::default());
+    lim.reserve_exact(&mut prepared.0, members.len())?;
+    for m in members.iter() {
+        let (outer, inner) = (m.levels[v].live_pairs(), m.levels[w].live_pairs());
+        let old = outer + inner;
+        before.push(old);
+        if defer && outer <= 1 && inner == outer {
+            gate.poll(old as u64 + 1)?;
+            after.push(old);
+            prepared.0.push(None);
+            continue;
+        }
+        prepared.0.push(Some(Prepared::default()));
+        let slot = prepared.0.last_mut().and_then(Option::as_mut).expect("pushed above");
+        let Some(new) = prepare_levels(lim, m, &info, mv.rotation.kind, mv.crossed, false, scratch, slot, bound)? else {
+            return Ok(false);
+        };
+        gate.poll((old + new) as u64 + REBUILD_UNITS)?;
+        after.push(new);
+    }
+    // The gate's residue charged and the stop tested before `accept`
+    // decides.
+    gate.flush()?;
+    lim.check_stop()?;
+    if !accept(&PoolProbe { before: &before, after: &after }) {
+        return Ok(false);
+    }
+
+    // Kept: every member rebuilt, each put back if a later one is refused.
     let mut saved = Transient::new(lim, Vec::<(usize, Saved<'_>)>::new());
     lim.reserve_exact(&mut saved, members.len())?;
     let mut outcome: Result<bool, OperationError> = Ok(true);
     for (i, m) in members.iter_mut().enumerate() {
-        let (outer, inner) = (m.levels[v].live_pairs(), m.levels[w].live_pairs());
-        before.push(outer + inner);
-        let rebuilt = if defer && outer <= 1 && inner == outer {
-            gate.poll((outer + inner) as u64 + 1).map(|()| Some(outer + inner))
-        } else {
-            rebuild_member(lim, i, m, outer + inner, &info, mv, bound, &mut saved, scratch, &mut gate)
+        let rebuilt = rebuild_member(lim, i, m, &info, mv, bound, prepared.0[i].as_mut(), &mut saved, scratch);
+        debug_assert!(!matches!(rebuilt, Ok(None)), "a rebuild passes the bound its preparation passed");
+        outcome = match rebuilt {
+            Ok(Some(pairs)) => {
+                debug_assert_eq!(pairs, after[i], "a rebuild leaves the pairs its preparation gave");
+                if prepared.0[i].is_some() { Ok(true) } else { gate.poll((before[i] + pairs) as u64 + REBUILD_UNITS).map(|()| true) }
+            }
+            other => other.map(|_| false),
         };
-        match rebuilt {
-            Ok(Some(pairs)) => after.push(pairs),
-            other => {
-                outcome = other.map(|_| false);
-                break;
-            }
+        if !matches!(outcome, Ok(true)) {
+            break;
         }
     }
-    if matches!(outcome, Ok(true)) {
-        // The gate's residue charged and the stop tested before `accept`
-        // decides.
-        outcome = gate.flush().and_then(|()| lim.check_stop()).map(|()| accept(&PoolProbe { before: &before, after: &after }));
-    }
-    if matches!(outcome, Ok(true)) && defer {
-        // The members left for a kept move: those the first pass did not
-        // save, in index order.
-        let first = saved.len();
-        let mut next = 0;
-        for (i, m) in members.iter_mut().enumerate() {
-            if next < first && saved[next].0 == i {
-                next += 1;
-                continue;
-            }
-            match rebuild_member(lim, i, m, before[i], &info, mv, bound, &mut saved, scratch, &mut gate) {
-                Ok(Some(pairs)) => debug_assert_eq!(pairs, before[i], "a level of one pair rebuilds into one"),
-                other => {
-                    outcome = other.map(|_| false);
-                    break;
-                }
-            }
-        }
-    }
-
     if matches!(outcome, Ok(true)) {
         // The preimages hand their charge back as they drop; the obligations
         // taken from each member go back under what the rebuild recorded.
@@ -514,8 +537,8 @@ fn probe(
         }
         return Ok(true);
     }
-    // Put back every member a pass reached, in any order: each has its own
-    // levels.
+    // Put back every member the rebuild reached, in any order: each has its
+    // own levels.
     for (i, s) in saved.drain(..) {
         let m = &mut members[i];
         if let Some((outer, inner)) = s.levels {
@@ -533,7 +556,7 @@ fn probe(
             m.reinstate_closed_levels();
         }
     }
-    outcome.map(|_| false)
+    outcome
 }
 
 #[cfg(test)]

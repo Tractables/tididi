@@ -5,6 +5,7 @@ use crate::execution::pool::{Buffers, PooledScratch, Scratch};
 
 
 use crate::diagram::ChildPair;
+use super::relevel::Prepared;
 
 /// Reusable scratch for `rebuild_rotated_levels`. Threaded by
 /// the rotation-search loops so the per-probe allocator churn is paid once per
@@ -22,15 +23,12 @@ pub(crate) struct RestructureScratch {
     pub(super) outer_pairs: Vec<ChildPair>,
     // The end of each axis value's cells, for a right rotation's filing.
     pub(super) axis_ends: Vec<u32>,
-    pub(super) group_info: Vec<super::relevel::PairGroup>,
     pub(super) bucket: BucketScratch,
-    // Search path triples, packed one per word (see `Layout`): `narrow` where
-    // the four fields fit 64 bits between them, `wide` where they do not. The
-    // sort in `rebuild_rotated_levels` is the dominant cost of a probe;
-    // sorting the words by a single integer key replaces a lexicographic
-    // compare over the four fields.
-    pub(super) narrow: Vec<u64>,
-    pub(super) wide: Vec<u128>,
+    // The rebuild's triples and their groups (see `Layout`). The sort in
+    // `rebuild_rotated_levels` is the dominant cost of a probe; sorting the
+    // packed words by a single integer key replaces a lexicographic compare
+    // over the four fields.
+    pub(super) prepared: Prepared,
     // A right rotation's cells in order of their axis.
     pub(super) by_axis: Vec<u64>,
 }
@@ -50,9 +48,7 @@ impl Buffers for RestructureScratch {
         visit(&mut self.outer_ends);
         visit(&mut self.outer_pairs);
         visit(&mut self.axis_ends);
-        visit(&mut self.group_info);
-        visit(&mut self.narrow);
-        visit(&mut self.wide);
+        self.prepared.buffers(visit);
         visit(&mut self.by_axis);
         visit(&mut self.bucket.table);
         visit(&mut self.bucket.ends);
@@ -62,9 +58,7 @@ impl Buffers for RestructureScratch {
 
 impl PooledScratch for RestructureScratch {
     fn prepare(&mut self) {
-        self.group_info.clear();
-        self.narrow.clear();
-        self.wide.clear();
+        self.prepared.clear();
         self.by_axis.clear();
         self.bucket.table.clear();
         self.bucket.ends.clear();
@@ -77,8 +71,7 @@ impl PooledScratch for RestructureScratch {
     /// A search whose triples outgrew their cap releases every buffer; any
     /// other keeps each buffer the byte cap allows.
     fn retain(&mut self, lim: &Limits) -> usize {
-        let bytes = self.narrow.capacity() * size_of::<u64>() + self.wide.capacity() * size_of::<u128>();
-        if bytes > RESTRUCTURE_TRIPLES_CAP_BYTES {
+        if self.prepared.triple_bytes() > RESTRUCTURE_TRIPLES_CAP_BYTES {
             self.release_all(lim);
             0
         } else {

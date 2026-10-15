@@ -98,9 +98,76 @@ fn a_declined_move_leaves_every_member_exactly_as_it_was() {
             assert_eq!(m.pair_count(), o.pair_count(), "{mv:?}");
             assert_eq!(m.node_count(), o.node_count(), "{mv:?}");
             assert!(m.equivalent(o).unwrap(), "{mv:?}");
+            assert!(crate::test_helpers::same_storage(m, o), "{mv:?}");
             assert_canonical(m);
         }
     }
+}
+
+/// The pairs a probe shows `accept` are the pairs the kept move's rebuilt
+/// levels hold: the probe counts them without building the levels.
+#[test]
+fn a_kept_move_rebuilds_the_pairs_its_probe_counted() {
+    let original = pool();
+    let eng = crate::Engine::new();
+    let mut kept = 0;
+    for mv in moves(original[0].vtree()) {
+        let (left, right) = original[0].vtree().children(mv.rotation.pivot);
+        let promoted = match mv.rotation.kind {
+            RotationKind::Left => right,
+            RotationKind::Right => left,
+        };
+        let mut members = original.clone();
+        let mut counted = Vec::new();
+        let accept = |p: &super::PoolProbe<'_>| {
+            counted = p.after().to_vec();
+            true
+        };
+        if !with_members(&mut members, |refs| eng.rotate_pool_if(refs, mv, usize::MAX, accept)).unwrap() {
+            continue;
+        }
+        kept += 1;
+        for (m, &pairs) in members.iter().zip(&counted) {
+            let levels = m.levels();
+            assert_eq!(levels[mv.rotation.pivot.idx()].live_pairs() + levels[promoted.idx()].live_pairs(), pairs, "{mv:?}");
+        }
+    }
+    assert!(kept > 0);
+}
+
+/// A bound the count of a member's levels would pass abandons the move
+/// before `accept` is asked; a move counted within the bound is rebuilt
+/// within it.
+#[test]
+fn a_bound_abandons_a_move_before_it_is_asked_or_not_at_all() {
+    let original = pool();
+    let tables: Vec<Vec<bool>> = original.iter().map(truth_table).collect();
+    let eng = crate::Engine::new();
+    let (mut abandoned, mut kept) = (0, 0);
+    for bound in [0, 1, 2, 3, 4, 6, 8, 12, 16, 24, 32] {
+        for mv in moves(original[0].vtree()) {
+            let mut members = original.clone();
+            let mut asked = false;
+            let outcome = with_members(&mut members, |refs| eng.rotate_pool_if(refs, mv, bound, |_| {
+                asked = true;
+                true
+            })).unwrap();
+            assert_eq!(outcome, asked, "bound {bound}, {mv:?}");
+            if outcome {
+                kept += 1;
+                for (m, table) in members.iter_mut().zip(&tables) {
+                    m.minimize().unwrap();
+                    assert_eq!(&truth_table(m), table, "bound {bound}, {mv:?}");
+                }
+            } else {
+                abandoned += 1;
+                for (m, o) in members.iter().zip(&original) {
+                    assert!(crate::test_helpers::same_storage(m, o), "bound {bound}, {mv:?}");
+                }
+            }
+        }
+    }
+    assert!(abandoned > 0 && kept > 0, "{abandoned} abandoned, {kept} kept");
 }
 
 #[test]
