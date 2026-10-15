@@ -124,6 +124,16 @@ fn extend_slab(slab: &mut Vec<u32>, start: usize, end: usize) -> bool {
     len <= start
 }
 
+/// The columns of `reach` (at most 64) whose reach meets `mask`, as the
+/// bits of a word from the first.
+#[inline(always)]
+fn reaching(mask: u128, reach: &[u128]) -> u64 {
+    debug_assert!(reach.len() <= 64);
+    // From the last column down, a shift by one in place of a shift by the
+    // column's index.
+    reach.iter().rev().fold(0, |live, &r| live << 1 | u64::from(mask & r != 0))
+}
+
 /// Reset `cells` to `NO_PRODUCT`.
 ///
 /// Most product grids have a few cells, and a `fill` of a length the compiler
@@ -296,20 +306,7 @@ where
         };
 
 
-        for j in 0..right_width {
-            // The cell's own dead-cell test, taken before the cell is entered.
-            // A column whose g node reaches no live child of this row cannot
-            // produce anything, whatever arm the cell would have taken, so the
-            // cheapest place to find that out is here — ahead of the column's
-            // pair slice, the empty test and the arm dispatch. Both sides read
-            // the row's mask, which is the union over the row's references, so
-            // a clear intersection proves every cell of the column dead.
-            if cull_left && left_alive_mask & ctx.sides.left.reach[j] == 0 {
-                continue;
-            }
-            if cull_right && right_alive_mask & ctx.sides.right.reach[j] == 0 {
-                continue;
-            }
+        let mut cell = |j: usize| {
             action.cell(
                 eng,
                 CellArgs {
@@ -325,7 +322,44 @@ where
                     node_idx: &mut *node_idx,
                     gate: &mut poll,
                 },
-            )?;
+            )
+        };
+        if cull_left || cull_right {
+            // The cell's own dead-cell test, taken before the cell is entered.
+            // A column whose g node reaches no live child of this row cannot
+            // produce anything, whatever arm the cell would have taken, so the
+            // cheapest place to find that out is here — ahead of the column's
+            // pair slice, the empty test and the arm dispatch. Both sides read
+            // the row's mask, which is the union over the row's references, so
+            // a clear intersection proves every cell of the column dead.
+            //
+            // The tests run 64 columns at a time into a word of live columns,
+            // and the cells are entered in column order from its bits. Tested
+            // ahead of each cell, most of a row's columns failing them, the
+            // loop reloaded the context's reach slices at every column, the
+            // cell's stores being able to change them as far as the compiler
+            // knew, and branched on every test.
+            let mut j0 = 0;
+            while j0 < right_width {
+                let n = (right_width - j0).min(64);
+                let mut live = u64::MAX >> (64 - n);
+                if cull_left {
+                    live &= reaching(left_alive_mask, &ctx.sides.left.reach[j0..j0 + n]);
+                }
+                if cull_right && live != 0 {
+                    live &= reaching(right_alive_mask, &ctx.sides.right.reach[j0..j0 + n]);
+                }
+                while live != 0 {
+                    let j = j0 + live.trailing_zeros() as usize;
+                    live &= live - 1;
+                    cell(j)?;
+                }
+                j0 += n;
+            }
+        } else {
+            for j in 0..right_width {
+                cell(j)?;
+            }
         }
         // One `poll(right_width)` per row instead of one per cell: the gate only
         // meters accumulated work, so the same total is booked either way. A row
