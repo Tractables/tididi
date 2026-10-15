@@ -349,9 +349,12 @@ pub(super) fn counting_sort<S, T: Copy>(
     lim.try_resize(entries, total as usize, fill)?;
     items.each(|s| {
         let (key, value) = item(s);
-        let slot = offsets[key] as usize;
-        entries[slot] = value;
-        offsets[key] += 1;
+        let slot = offsets[key];
+        entries[slot as usize] = value;
+        // The cursor is stored, not stepped in place: stepped, it would be
+        // read again after the entry's store, which for all the compiler
+        // knows could have changed it.
+        offsets[key] = slot + 1;
     });
     shift_offsets_right_by_one(&mut offsets[..=n_keys]);
     Ok(())
