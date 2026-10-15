@@ -80,7 +80,8 @@ fn a_leaf_child_is_joined_by_the_leaf_arm() {
     for (left, right) in [(true, false), (false, true), (true, true)] {
         let leaves = Sides { left, right };
         let swapped = leaf_direction(leaves).expect("a leaf child sets the direction");
-        assert!(runs_leaf_arm(swapped, leaves), "leaf children {left}/{right}: the leaf arm must run");
+        let inner_is_leaf = if swapped { right } else { left };
+        assert!(inner_is_leaf, "leaf children {left}/{right}: the leaf must be the inner side");
     }
     assert_eq!(
         leaf_direction(Sides { left: false, right: false }), None,

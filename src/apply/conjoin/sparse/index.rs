@@ -78,7 +78,10 @@ pub(crate) struct SparseWorkspace {
     // parent into `par_sorted`.
     pub(super) par_flat: Vec<Candidate>,
     pub(super) par_sorted: Grouped<ParEntry>,
-    pub(super) p2_map: Vec<u32>,                    // flat lookup: p2_map[g_parent] → product idx, NO_PRODUCT if new
+    // The candidates of one f node, for the walks that find a node's
+    // candidates all at once and emit it before the next (the leaf arm and
+    // the probe).
+    pub(super) node_candidates: Vec<ParEntry>,
 
     // ── Scatter-direction estimator ──
     // Per-child-index pair counters for the four (operand × side) index spaces
@@ -87,11 +90,34 @@ pub(crate) struct SparseWorkspace {
     pub(super) est_counts: Vec<u32>,
 
     // ── The emit: one f parent's products into output nodes ──
-    pub(super) pair_counts: Vec<u32>,               // per-product pair count, then write cursors
-    pub(super) single_pairs: Vec<ChildPair>,        // the pair of each one-pair product, stored inline
+    pub(super) emit: EmitScratch,
 
     // ── The probe join (`probe_level`) ──
     pub(super) probe: super::probe::ProbeBuffers,
+}
+
+/// What the emit ([`emit_parent`](super::scatter::emit_parent)) writes as
+/// it turns one f parent's candidates into nodes, apart from the buffers
+/// the candidates are read from, so that a walk can hold those while it
+/// emits.
+#[derive(Default)]
+pub(crate) struct EmitScratch {
+    /// `p2_map[g_parent]`: the product the parent's candidates under that
+    /// `g` parent make, `NO_PRODUCT` for none yet. All `NO_PRODUCT` between
+    /// parents: the emit restores the entries it wrote.
+    pub(super) p2_map: Vec<u32>,
+    /// Per product, its pair count, then its write cursor.
+    pub(super) pair_counts: Vec<u32>,
+    /// The pair of each one-pair product, stored inline.
+    pub(super) single_pairs: Vec<ChildPair>,
+}
+
+impl Buffers for EmitScratch {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.p2_map);
+        visit(&mut self.pair_counts);
+        visit(&mut self.single_pairs);
+    }
 }
 
 /// One entry of a reverse index: a parent of the keyed child, and the child it
@@ -248,27 +274,56 @@ pub(super) fn prefetch_at<T>(slice: &[T], k: usize) {
     prefetch_line(slice.as_ptr().wrapping_add(k).cast::<u8>());
 }
 
+/// What a counting sort groups: items it reads twice, once to count their
+/// keys and once to place them, in the same order both times.
+pub(super) trait SortItems {
+    type Item;
+    /// Hand every item to `f`, in order.
+    fn each(&self, f: impl FnMut(Self::Item));
+}
+
+/// An iterator is read by a clone of it for each pass.
+impl<I: Iterator + Clone> SortItems for I {
+    type Item = I::Item;
+    #[inline(always)]
+    fn each(&self, f: impl FnMut(I::Item)) {
+        self.clone().for_each(f);
+    }
+}
+
+/// A level's pairs, each with the index of the node holding it, read in
+/// loops over its nodes ([`TddLevel::for_each_node_pair`]): a stored node's
+/// pairs as a slice, an implicit level's generated from its description.
+/// The fold of [`TddLevel::pairs_with_parent`] makes a call out of line for
+/// each node, and these loops make none.
+pub(super) struct NodePairs<'a>(pub(super) &'a TddLevel);
+
+impl SortItems for NodePairs<'_> {
+    type Item = (u32, ChildPair);
+    #[inline(always)]
+    fn each(&self, mut f: impl FnMut((u32, ChildPair))) {
+        self.0.for_each_node_pair(|i, pair| f((i as u32, pair)));
+    }
+}
+
 /// Group `items` by key into `out`: a counting sort in four passes. Count
 /// each key — or take `counts`, the histogram when the caller already has
 /// one — turn the counts into exclusive prefix sums, scatter every item
 /// through its key's offset as the write cursor, then shift the offsets back
-/// by one so each names the start of its run again. `items` is walked twice,
-/// so it is an iterator that can be cloned; `item` gives each one's key and
-/// the value stored for it, and `fill` is what the entries are sized with
-/// before the scatter. The offsets are 32-bit, so more than `u32::MAX` items
-/// is [`OperationError::IndexOverflow`] rather than a wrapped total.
-pub(super) fn counting_sort<S, T: Copy, I>(
+/// by one so each names the start of its run again. `items` is read twice
+/// ([`SortItems`]); `item` gives each one's key and the value stored for it,
+/// and `fill` is what the entries are sized with before the scatter. The
+/// offsets are 32-bit, so more than `u32::MAX` items is
+/// [`OperationError::IndexOverflow`] rather than a wrapped total.
+pub(super) fn counting_sort<S, T: Copy>(
     lim: &Limits,
     n_keys: usize,
-    items: I,
+    items: impl SortItems<Item = S>,
     item: impl Fn(S) -> (usize, T),
     counts: Option<&[u32]>,
     fill: T,
     out: &mut Grouped<T>,
-) -> Result<(), OperationError>
-where
-    I: Iterator<Item = S> + Clone,
-{
+) -> Result<(), OperationError> {
     let Grouped { offsets, entries } = out;
     lim.try_resize(offsets, n_keys + 1, 0)?;
     offsets[n_keys] = 0;
@@ -279,7 +334,7 @@ where
         // A key's count can only wrap once the items outnumber `u32::MAX`,
         // which the item count catches where the total would not.
         let mut seen = 0u64;
-        items.clone().for_each(|s| {
+        items.each(|s| {
             let (key, _) = item(s);
             debug_assert!(key < n_keys, "key {key} outside the {n_keys} keys sorted");
             offsets[key] = offsets[key].wrapping_add(1);
@@ -292,7 +347,7 @@ where
     let total = prefix_offsets(&mut offsets[..n_keys], false)?;
     offsets[n_keys] = total;
     lim.try_resize(entries, total as usize, fill)?;
-    items.for_each(|s| {
+    items.each(|s| {
         let (key, value) = item(s);
         let slot = offsets[key] as usize;
         entries[slot] = value;
@@ -335,9 +390,8 @@ pub(super) fn build_reverse_index<const BY_RIGHT: bool>(
     counts: Option<&[u32]>,
     index: &mut Grouped<RevEntry>,
 ) -> Result<(), OperationError> {
-    let pairs = level.pairs_with_parent();
     counting_sort(
-        eng.limits(), key_width, pairs,
+        eng.limits(), key_width, NodePairs(level),
         |(parent, pair)| {
             let (key, other) = if BY_RIGHT { (pair.right.0, pair.left.0) } else { (pair.left.0, pair.right.0) };
             (key as usize, RevEntry { parent, other })
@@ -447,10 +501,9 @@ impl Buffers for SparseWorkspace {
         visit(&mut self.par_buckets);
         visit(&mut self.par_flat);
         self.par_sorted.buffers(visit);
-        visit(&mut self.p2_map);
+        visit(&mut self.node_candidates);
         visit(&mut self.est_counts);
-        visit(&mut self.pair_counts);
-        visit(&mut self.single_pairs);
+        self.emit.buffers(visit);
         self.probe.buffers(visit);
     }
 }

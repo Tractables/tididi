@@ -34,10 +34,10 @@ fn unwinding_discards_partially_filled_sparse_workspace() {
     let eng = Engine::new();
     let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut ws = eng.scratch.sparse.checkout(&eng);
-        ws.p2_map.push(42);
+        ws.emit.p2_map.push(42);
         panic!("interrupt scatter");
     }));
-    assert!(eng.scratch.sparse.checkout(&eng).p2_map.is_empty());
+    assert!(eng.scratch.sparse.checkout(&eng).emit.p2_map.is_empty());
 }
 
 /// `f(a, b, c)` and `g(a, b)` on `((a b) c)`, keyed so that every internal

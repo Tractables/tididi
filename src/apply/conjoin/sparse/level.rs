@@ -45,21 +45,21 @@ pub(crate) struct Complete {
     pub(crate) g_width: usize,
 }
 
-/// Run the scatter for one level: choose which side to iterate and how the
-/// candidates are collected, then join. Returns whether the candidates were
-/// collected flat, which is where the emit reads them from.
+/// Join one level into `collect`: choose the arm and its direction, then
+/// join.
 ///
-/// With both children non-leaf the direction comes from
-/// `estimate_scatter_direction`, and its emit-step count decides between a
-/// bucket per f parent and the flat list (`flat_candidates_win`). A leaf
-/// child is put on the inner side ([`leaf_direction`]), so the leaf arm
-/// joins the level, into buckets. A pass-through side, or a `complete` side,
-/// is put on the inner side too, and the leaf arm joins the level on its
-/// other child. With
-/// `fixed`, the candidates go where that collector says instead, on a level
-/// with one product: the level's pair arena ([`finish_direct`]), a count
-/// ([`count_sparse_level`]) or the sums of a child summed out
-/// ([`sum_sparse_level`]).
+/// A leaf child is put on the inner side ([`leaf_direction`]) and the leaf
+/// arm joins the level; so it does with a pass-through side, or a
+/// `complete` side, which it reads where it reads a leaf. With both
+/// children non-leaf and listed, the general arm joins the level in the
+/// direction `estimate_scatter_direction` picks. Into the level's nodes
+/// ([`Collect::Nodes`]) the leaf arm emits each f parent as its walk ends,
+/// while the general arm holds the candidates in a bucket per f parent or in
+/// the flat list, as its emit-step count decides (`flat_candidates_win`),
+/// and emits them once its scatter is done ([`emit_held`]). On a level with
+/// one product the candidates go where `collect` says instead: the level's
+/// pair arena ([`finish_direct`]), a count ([`count_sparse_level`]) or the
+/// sums of a child summed out ([`sum_sparse_level`]).
 #[expect(clippy::too_many_arguments)]
 fn scatter_level(
     eng: &Engine,
@@ -69,12 +69,13 @@ fn scatter_level(
     shape: LevelShape,
     pl: Sides<&[ProductEntry]>,
     thresholds: SparseThresholds,
-    fixed: Option<Collect<'_, '_>>,
+    collect: Collect<'_, '_>,
     passthrough: Option<Passthrough>,
     complete: Option<Complete>,
-) -> Result<bool, OperationError> {
+) -> Result<(), OperationError> {
     let lim = eng.limits();
     let t_idx = shape.t.idx();
+    let (f_level, g_level) = (&f.levels[t_idx], &g.levels[t_idx]);
     let leaves = Sides {
         left: f.vtree.node(shape.left).is_leaf(),
         right: f.vtree.node(shape.right).is_leaf(),
@@ -85,54 +86,89 @@ fn scatter_level(
         (None, None) => None,
     };
     debug_assert!(complete.is_none() || passthrough.is_none(), "a level reads one side without its list");
-    let (swap_direction, flat) = match (inner, leaf_direction(leaves)) {
-        // The leaf arm reads the pass-through side, or the complete one,
-        // where it reads a leaf, on the inner side: the left child
-        // unswapped, the right one swapped.
-        (Some((side, _)), _) => (side == ChildSide::Right, false),
-        (None, Some(swapped)) => (swapped, false),
-        (None, None) => {
-            // The estimator sums what each direction walks around the emit.
-            // Do not substitute a plain grid-size proxy — it ignores
-            // selectivity and mispicks on wide×wide segment conjoins.
-            let choice = estimate_scatter_direction(
-                eng,
-                &mut ws.est_counts,
-                &f.levels[t_idx], &g.levels[t_idx], pl.left, pl.right,
-                shape,
-            )?;
-            (choice.swapped, flat_candidates_win(thresholds, shape.f.here, choice.emit_steps))
+    lim.try_resize(&mut ws.emit.p2_map, shape.g.here, NO_PRODUCT)?;
+
+    // The leaf arm reads the pass-through side, or the complete one, where
+    // it reads a leaf, on the inner side: the left child unswapped, the
+    // right one swapped.
+    let leaf_side = match inner {
+        Some((side, _)) => Some(side == ChildSide::Right),
+        None => leaf_direction(leaves),
+    };
+    if let Some(swapped) = leaf_side {
+        let inner = inner.map(|(_, inner)| inner);
+        return if !swapped {
+            scatter_leaf_arm::<false>(eng, ws, f_level, g_level, shape, pl, collect, inner)
+        } else {
+            scatter_leaf_arm::<true>(eng, ws, f_level, g_level, shape, pl, collect, inner)
+        };
+    }
+
+    // The estimator sums what each direction walks around the emit. Do not
+    // substitute a plain grid-size proxy — it ignores selectivity and
+    // mispicks on wide×wide segment conjoins.
+    let choice = estimate_scatter_direction(eng, &mut ws.est_counts, f_level, g_level, pl.left, pl.right, shape)?;
+    let join = |ws: &mut SparseWorkspace, collect: Collect<'_, '_>| {
+        if !choice.swapped {
+            scatter_join::<false>(eng, ws, f_level, g_level, shape, pl, collect)
+        } else {
+            scatter_join::<true>(eng, ws, f_level, g_level, shape, pl, collect)
         }
     };
-
-    let flat = flat && fixed.is_none();
+    let Collect::Nodes(emit) = collect else {
+        return join(ws, collect);
+    };
+    let flat = flat_candidates_win(thresholds, shape.f.here, choice.emit_steps);
     if flat {
         ws.par_flat.clear();
-    } else if fixed.is_none() {
-        ws.par_buckets.reset(lim, shape.f.here)?;
-    }
-    lim.try_resize(&mut ws.p2_map, shape.g.here, NO_PRODUCT)?;
-
-    // The general arm carries no dead-probe inner loop; the leaf arm keeps
-    // the leaf fast-path shape.
-    let collect = match fixed {
-        Some(collect) => collect,
-        None if flat => Collect::Flat,
-        None => Collect::Buckets,
-    };
-    let inner = inner.map(|(_, inner)| inner);
-    if !swap_direction {
-        scatter_join::<false>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, collect, inner)?;
-    } else {
-        scatter_join::<true>(eng, ws, &f.levels[t_idx], &g.levels[t_idx], shape, pl, leaves, collect, inner)?;
-    }
-    if flat {
+        join(ws, Collect::Flat)?;
         sort_candidates(eng, ws, shape.f.here)?;
         // Sorted, the flat list is dead; its capacity stays for the next
         // level and the retention cap decides its fate at checkout's end.
         ws.par_flat.clear();
+    } else {
+        ws.par_buckets.reset(lim, shape.f.here)?;
+        join(ws, Collect::Buckets)?;
     }
-    Ok(flat)
+    emit_held(eng, ws, emit, shape.f.here, flat, thresholds)
+}
+
+/// Emit the nodes of a level whose candidates the general arm holds for
+/// its `parents` f parents, in the sorted flat list with `flat` and in the
+/// buckets otherwise.
+///
+/// `plan_chunks` greedy-packs f-parent indices into emit chunks under the
+/// sparse chunk budget (`usize::MAX` disables). A level that fits in one
+/// chunk is emitted once with `drop_consumed=false`, preserving
+/// cross-apply par_buckets capacity reuse. Wider levels split into several
+/// chunks with `drop_consumed=true`, releasing each `par_buckets[p1]` once
+/// it is emitted, before the output grows further. The product list grows
+/// across chunks, so `prod_idx` stays sequential over the level.
+fn emit_held(
+    eng: &Engine,
+    ws: &mut SparseWorkspace,
+    emit: Emit<'_>,
+    parents: usize,
+    flat: bool,
+    thresholds: SparseThresholds,
+) -> Result<(), OperationError> {
+    let Emit { level, out, duplicates_legal } = emit;
+    let boundaries = if flat {
+        plan_chunks(ws.par_sorted.offsets.windows(2).map(|w| (w[1] - w[0]) as usize), parents, thresholds.chunk_bytes)
+    } else {
+        plan_chunks(ws.par_buckets.iter().map(Vec::len), parents, thresholds.chunk_bytes)
+    };
+    let is_chunked = boundaries.len() > 2;
+    let ahead = !flat && emits_ahead(parents);
+    for window in boundaries.windows(2) {
+        let chunk = window[0] as usize..window[1] as usize;
+        if ahead {
+            emit_buckets_ahead(eng, ws, level, out, chunk, is_chunked, duplicates_legal)?;
+        } else {
+            emit_chunk(eng, ws, level, out, chunk, flat, is_chunked, duplicates_legal)?;
+        }
+    }
+    Ok(())
 }
 
 /// The join direction on a level with a leaf child, `None` when neither child
@@ -140,7 +176,7 @@ fn scatter_level(
 ///
 /// The leaf goes on the inner side, the left child unswapped and the right
 /// one swapped, where the leaf arm reads its products from `CONJOIN_GRID`
-/// (see [`runs_leaf_arm`]). With two leaf children the left one is inner.
+/// ([`scatter_leaf_arm`]). With two leaf children the left one is inner.
 pub(super) fn leaf_direction(leaves: Sides<bool>) -> Option<bool> {
     (leaves.left || leaves.right).then_some(!leaves.left)
 }
@@ -181,7 +217,7 @@ impl<'a> WsGuard<'a> {
 impl Drop for WsGuard<'_> {
     fn drop(&mut self) {
         if self.repair {
-            self.ws.p2_map.fill(NO_PRODUCT);
+            self.ws.emit.p2_map.fill(NO_PRODUCT);
             self.ws.filtered_touched.clear();
         }
     }
@@ -210,19 +246,23 @@ impl std::ops::DerefMut for WsGuard<'_> {
 /// which the caller did not build, is not read either.
 ///
 /// Steps:
-///   scatter: fused scatter-filter by the outer child
-///   emit:    per f parent, dedup its candidates' g parents into products via
-///            `p2_map[g_parent]` and write each product's node into the level
+///   join: the candidates of each f parent, by the leaf arm's walk of f's
+///         nodes or the general arm's scatter by the outer child
+///   emit: per f parent, dedup its candidates' g parents into products via
+///         `p2_map[g_parent]` and write each product's node into the level
 ///
 /// A level where f and g have one node each has no emit step: its one
-/// product's pairs are the candidates, and the scatter writes them into the
+/// product's pairs are the candidates, and the join writes them into the
 /// level.
 ///
-/// The emit is chunked by f-parent index range when the projected transient
-/// exceeds `thresholds.chunk_bytes`; each chunk's `par_buckets` rows are
-/// then dropped as they are emitted, so the output grows in their space. A
-/// level whose candidates were collected flat holds them in one sorted list
-/// the chunks read in place, so chunking bounds only what the output grows by.
+/// The leaf arm emits each f parent as soon as its walk ends, so it holds
+/// one parent's candidates at a time. The general arm holds them all, and
+/// its emit is chunked by f-parent index range when the projected
+/// transient exceeds `thresholds.chunk_bytes`; each chunk's `par_buckets`
+/// rows are then dropped as they are emitted, so the output grows in their
+/// space. A level whose candidates were collected flat holds them in one
+/// sorted list the chunks read in place, so chunking bounds only what the
+/// output grows by.
 ///
 /// # Errors
 ///
@@ -278,7 +318,7 @@ pub(crate) fn apply_sparse_level(
     if shape.f.here == 1 && shape.g.here == 1 {
         let level = &mut levels[t_idx];
         let base = level.pairs.len();
-        scatter_level(eng, ws, f, g, shape, pl, thresholds, Some(Collect::Direct(&mut *level)), passthrough, complete)?;
+        scatter_level(eng, ws, f, g, shape, pl, thresholds, Collect::Direct(&mut *level), passthrough, complete)?;
         finish_direct(eng, level, base, pl_output, duplicates_legal)?;
         #[cfg(debug_assertions)]
         debug_check_flushed_level(pl_output, &levels[t_idx]);
@@ -321,34 +361,8 @@ pub(crate) fn apply_sparse_level(
         }
     }
 
-    let flat = scatter_level(eng, ws, f, g, shape, pl, thresholds, None, passthrough, complete)?;
-
-    // `plan_chunks` greedy-packs f-parent indices into emit chunks under the
-    // sparse chunk budget (`usize::MAX` disables). A level that fits in one
-    // chunk is emitted once with `drop_consumed=false`, preserving
-    // cross-apply par_buckets capacity reuse. Wider levels split into
-    // several chunks with `drop_consumed=true`, releasing each
-    // `par_buckets[p1]` once it is emitted, before the output grows further.
-    // `pl_output` grows across chunks, so `prod_idx` stays sequential over
-    // the level.
-    let level = &mut levels[t_idx];
-    let boundaries = if flat {
-        plan_chunks(ws.par_sorted.offsets.windows(2).map(|w| (w[1] - w[0]) as usize), shape.f.here, thresholds.chunk_bytes)
-    } else {
-        plan_chunks(ws.par_buckets.iter().map(Vec::len), shape.f.here, thresholds.chunk_bytes)
-    };
-    let is_chunked = boundaries.len() > 2;
-    if !flat && emits_ahead(shape.f.here) {
-        for window in boundaries.windows(2) {
-            let (p1_start, p1_end) = (window[0] as usize, window[1] as usize);
-            emit_buckets_ahead(eng, ws, level, pl_output, p1_start..p1_end, is_chunked, duplicates_legal)?;
-        }
-    } else {
-        for window in boundaries.windows(2) {
-            let (p1_start, p1_end) = (window[0] as usize, window[1] as usize);
-            emit_chunk(eng, ws, level, pl_output, p1_start..p1_end, flat, is_chunked, duplicates_legal)?;
-        }
-    }
+    let emit = Emit { level: &mut levels[t_idx], out: pl_output, duplicates_legal };
+    scatter_level(eng, ws, f, g, shape, pl, thresholds, Collect::Nodes(emit), passthrough, complete)?;
 
     #[cfg(debug_assertions)]
     debug_check_flushed_level(pl_output, &levels[t_idx]);
@@ -381,7 +395,7 @@ pub(crate) fn count_sparse_level(
     debug_assert!(shape.f.here == 1 && shape.g.here == 1, "a counted level has one product");
     assert_no_marginal_children(shape.t.idx(), shape.left, shape.right, f, g, levels, passthrough);
     let mut guard = WsGuard::new(eng);
-    scatter_level(eng, &mut guard, f, g, shape, pl, thresholds, Some(Collect::Fold(fold)), passthrough, None)?;
+    scatter_level(eng, &mut guard, f, g, shape, pl, thresholds, Collect::Fold(fold), passthrough, None)?;
     guard.scatter_clean();
     Ok(())
 }
@@ -408,7 +422,7 @@ pub(crate) fn sum_sparse_level(
     debug_assert!(shape.f.here == 1 && shape.g.here == 1, "a summed level has one product");
     assert_no_marginal_children(shape.t.idx(), shape.left, shape.right, f, g, levels, None);
     let mut guard = WsGuard::new(eng);
-    scatter_level(eng, &mut guard, f, g, shape, pl, thresholds, Some(Collect::Sum(sum)), None, complete)?;
+    scatter_level(eng, &mut guard, f, g, shape, pl, thresholds, Collect::Sum(sum), None, complete)?;
     guard.scatter_clean();
     Ok(())
 }

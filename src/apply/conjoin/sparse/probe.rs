@@ -146,8 +146,6 @@ pub(crate) struct ProbeBuffers {
     /// no pair is, whenever `dense_clean`.
     dense: Vec<u32>,
     dense_clean: bool,
-    /// One `f` node's candidates.
-    candidates: Vec<ParEntry>,
 }
 
 impl Buffers for ProbeBuffers {
@@ -159,7 +157,6 @@ impl Buffers for ProbeBuffers {
         self.index.buffers(visit);
         visit(&mut self.table);
         visit(&mut self.dense);
-        visit(&mut self.candidates);
     }
 }
 
@@ -339,7 +336,7 @@ pub(super) fn probe_level(
         note_probe(probe);
         // The emit looks each candidate's `g` parent up here; it leaves the
         // map as it found it, all `NO_PRODUCT`.
-        eng.limits().try_resize(&mut ws.p2_map, shape.g.here, NO_PRODUCT)?;
+        eng.limits().try_resize(&mut ws.emit.p2_map, shape.g.here, NO_PRODUCT)?;
         match probe {
             Probe::Left => walk_one_side::<false>(eng, ws, &mut pb, f_level, g_level, shape, level, pl, pl_output, cells.right, duplicates_legal)?,
             Probe::Right => walk_one_side::<true>(eng, ws, &mut pb, f_level, g_level, shape, level, pl, pl_output, cells.left, duplicates_legal)?,
@@ -375,7 +372,7 @@ fn walk_one_side<const SWAPPED: bool>(
     };
     build_reverse_index::<SWAPPED>(eng, g_level, key_width, Some(&counts[..key_width]), &mut pb.index)?;
     let index = pb.index.view();
-    let candidates = &mut pb.candidates;
+    let SparseWorkspace { node_candidates: candidates, emit, .. } = ws;
     let mut gate = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     f_level.try_for_each_node::<OperationError>(0..shape.f.here, |i, pairs| {
         candidates.clear();
@@ -399,7 +396,7 @@ fn walk_one_side<const SWAPPED: bool>(
         }
         gate.poll(work + 1)?;
         if !candidates.is_empty() {
-            emit_parent(eng, ws, level, pl_output, i, candidates, duplicates_legal)?;
+            emit_parent(eng, emit, level, pl_output, i, candidates, duplicates_legal)?;
         }
         Ok(())
     })?;
@@ -446,7 +443,7 @@ fn walk_pairs(
             }
         }
         let dense = &pb.dense;
-        walk_both(eng, ws, f_level, level, pl, pl_output, (&pb.left_offsets, &pb.right_offsets), &mut pb.candidates, duplicates_legal,
+        walk_both(eng, ws, f_level, level, pl, pl_output, (&pb.left_offsets, &pb.right_offsets), duplicates_legal,
             #[inline(always)]
             |c, d| dense[c as usize * width + d as usize])?;
         for (_, pairs) in g_level.internal_inputs_iter() {
@@ -475,7 +472,7 @@ fn walk_pairs(
         }
     }
     let table = &pb.table;
-    walk_both(eng, ws, f_level, level, pl, pl_output, (&pb.left_offsets, &pb.right_offsets), &mut pb.candidates, duplicates_legal,
+    walk_both(eng, ws, f_level, level, pl, pl_output, (&pb.left_offsets, &pb.right_offsets), duplicates_legal,
         #[inline(always)]
         |c, d| {
             let key = pair_key(c, d);
@@ -505,11 +502,11 @@ fn walk_both(
     pl: Sides<&[ProductEntry]>,
     pl_output: &mut Vec<ProductEntry>,
     (lo, ro): (&[u32], &[u32]),
-    candidates: &mut Vec<ParEntry>,
     duplicates_legal: bool,
     find: impl Fn(u32, u32) -> u32,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
+    let SparseWorkspace { node_candidates: candidates, emit, .. } = ws;
     let mut gate = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     f_level.try_for_each_node::<OperationError>(0..f_level.nodes().len(), |i, pairs| {
         candidates.clear();
@@ -530,7 +527,7 @@ fn walk_both(
         }
         gate.poll(work)?;
         if !candidates.is_empty() {
-            emit_parent(eng, ws, level, pl_output, i, candidates, duplicates_legal)?;
+            emit_parent(eng, emit, level, pl_output, i, candidates, duplicates_legal)?;
         }
         Ok(())
     })?;
