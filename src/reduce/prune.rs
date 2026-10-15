@@ -15,7 +15,8 @@
 //! of its survivors, which its parent's compaction builds from the level's
 //! bits and rewrites its references through. Only a structural internal
 //! level has a block: a leaf or marginal level is never compacted, so
-//! nothing reads its marks.
+//! nothing reads its marks. The read that settles a loose level
+//! ([`settle_loose`]) marks a byte per slot instead, one level at a time.
 
 use crate::diagram::{ChildDecoder, ChildKept, ChildPair, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel, NodeIdx, NodeKind, StoreRoom, Tdd, TddLevel};
 
@@ -237,6 +238,8 @@ pub(crate) struct PruneScratch {
     /// [`settle_loose`]'s flags per level and the parents it reads.
     settle_flags: Vec<[bool; 2]>,
     settle_parents: Vec<VtreeIdx>,
+    /// The marks a [`settle_loose`] read sets, one byte per slot.
+    settle_marks: Vec<u8>,
 }
 
 impl Buffers for PruneScratch {
@@ -248,6 +251,7 @@ impl Buffers for PruneScratch {
         visit(&mut self.visits);
         visit(&mut self.settle_flags);
         visit(&mut self.settle_parents);
+        visit(&mut self.settle_marks);
     }
 }
 
@@ -260,6 +264,7 @@ impl PooledScratch for PruneScratch {
         self.visits.clear();
         self.settle_flags.clear();
         self.settle_parents.clear();
+        self.settle_marks.clear();
     }
 }
 
@@ -436,9 +441,9 @@ pub(crate) fn settle_loose(eng: &Engine, tdd: &Tdd, listed: &[u32]) -> Result<Ve
     const AT: usize = 0;
     const UNDER: usize = 1;
     // The prune's scratch, which a prune checks out after this returns: a
-    // read clears the blocks of marks it takes, as the walk does.
+    // read clears the block of marks it takes.
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
-    let PruneScratch { marks, settle_flags: flags, settle_parents: parents, .. } = &mut *scratch;
+    let PruneScratch { settle_marks: marks, settle_flags: flags, settle_parents: parents, .. } = &mut *scratch;
     flags.clear();
     lim.try_resize(flags, vtree.num_nodes(), [false; 2])?;
     for &t in listed {
@@ -483,7 +488,7 @@ fn unnamed_children(
     tdd: &Tdd,
     p: VtreeIdx,
     sides: [bool; 2],
-    marks: &mut Vec<u64>,
+    marks: &mut Vec<u8>,
     gate: &mut PollGate<'_>,
 ) -> Result<[bool; 2], OperationError> {
     if sides == [false; 2] || !tdd.is_structural_internal(p) {
@@ -491,7 +496,7 @@ fn unnamed_children(
     }
     let (left, right) = tdd.vtree.children(p);
     let children = [left, right];
-    // The nodes of each side not named yet, and the word its block starts at.
+    // The nodes of each side not named yet, and the byte its block starts at.
     let (mut open, mut base, mut unread) = ([0usize; 2], [0usize; 2], [false; 2]);
     let mut used = 0;
     for k in 0..2 {
@@ -504,7 +509,7 @@ fn unnamed_children(
         }
         let width = tdd.levels[children[k].idx()].slot_count();
         base[k] = used;
-        used += words(width);
+        used += width;
         if marks.len() < used {
             lim.try_resize(marks, used, 0)?;
         }
@@ -524,28 +529,31 @@ fn unnamed_children(
 
 /// Mark in `marks` the nodes of `level`'s children that its pairs name, on
 /// the left side with `LEFT` and on the right with `RIGHT`, each side's
-/// block at its word of `base`, and count down `open` once for each node
+/// block at its byte of `base`, and count down `open` once for each node
 /// marked the first time; node by node, up to the first one past which no
 /// side read has a node open. Both children are structural internal, so a
 /// side is the index of the node it names. One unit of work through `gate`
 /// a pair.
 ///
-/// The marks are set and counted without a branch on whether a node was
-/// named already: a child of a level read to its end, as a tight one mostly
-/// is, is named by many of its pairs, and the test would decide every one.
+/// A mark is a byte, and marking stores a constant: the count reads the
+/// byte, but no mark depends on one read before it, so pairs that name
+/// the same node, or nodes a word apart, do not wait on each other's
+/// stores as a bit set in a shared word would. No branch tests whether a
+/// node was named already: a child of a level read to its end, as a tight
+/// one mostly is, is named by many of its pairs, and the test would decide
+/// every one.
 #[inline(always)]
 fn mark_named<const LEFT: bool, const RIGHT: bool>(
     level: &TddLevel,
     open: &mut [usize; 2],
     base: [usize; 2],
-    marks: &mut [u64],
+    marks: &mut [u8],
     gate: &mut PollGate<'_>,
 ) -> Result<(), OperationError> {
     let mut mark = |k: usize, s: u32, open: &mut [usize; 2]| {
-        let word = &mut marks[base[k] + (s as usize >> 6)];
-        let bit = 1u64 << (s & 63);
-        open[k] -= (*word & bit == 0) as usize;
-        *word |= bit;
+        let m = &mut marks[base[k] + s as usize];
+        open[k] -= (*m == 0) as usize;
+        *m = 1;
     };
     for (_, pairs) in level.internal_inputs_iter() {
         if (!LEFT || open[0] == 0) && (!RIGHT || open[1] == 0) {
