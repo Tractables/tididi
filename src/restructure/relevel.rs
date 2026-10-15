@@ -27,7 +27,8 @@ use crate::vtree::RotationKind;
 // deduping; the argument is the module doc's "Marginal context" section.
 
 use super::scratch::{BucketScratch, RestructureScratch, release_or_clear};
-use crate::limits::{Limits, OperationError, Transient};
+use crate::execution::pool::Scratch;
+use crate::limits::{Charged, Limits, OperationError, Transient};
 use crate::sort::{Radix, RADIX_MIN_ROWS};
 
 /// Where the four fields of a packed search triple sit: `(inner.left,
@@ -40,7 +41,7 @@ use crate::sort::{Radix, RADIX_MIN_ROWS};
 /// own sort key); the low ones are the `(axis, src)` "cell". `src` is the
 /// lowest field because the triples are collected in ascending order of it,
 /// which the sort then need not place ([`Word::sort`]).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub(super) struct Layout {
     shift: [u32; 4],
     width: [u32; 4],
@@ -214,52 +215,240 @@ pub(crate) fn rebuild_levels(
     scratch: &mut RestructureScratch,
     max_pairs: usize,
 ) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
-    debug_assert_eq!(marginal, tdd.has_marginal_level());
-    let (old_v, old_w) = (&tdd.levels[info.v_idx.idx()], &tdd.levels[info.w_idx.idx()]);
-    // The triples are packed one per word where their fields fit one: a
-    // fitted `u64` moves half the bytes of a `u128` through every phase.
-    let layout = Layout::fitted(field_bounds(old_v, old_w, dir, crossed));
-    if layout.bits() <= 64 {
-        let mut triples = std::mem::take(&mut scratch.narrow);
-        let rebuilt = rebuild_with(lim, tdd, info, dir, crossed, marginal, &layout, &mut triples, scratch, max_pairs);
-        scratch.narrow = triples;
-        rebuilt
-    } else {
-        let mut triples = std::mem::take(&mut scratch.wide);
-        let rebuilt = rebuild_with(lim, tdd, info, dir, crossed, marginal, &Layout::WIDE, &mut triples, scratch, max_pairs);
-        scratch.wide = triples;
-        rebuilt
+    let mut prepared = std::mem::take(&mut scratch.prepared);
+    let rebuilt = match prepare_levels(lim, tdd, info, dir, crossed, marginal, scratch, &mut prepared, max_pairs) {
+        Ok(Some(_)) => finish_levels(lim, tdd, info, dir, marginal, scratch, &mut prepared).map(Some),
+        other => other.map(|_| None),
+    };
+    scratch.prepared = prepared;
+    rebuilt
+}
+
+/// A rotation's rebuild up to the writing of its two levels: the triples
+/// expanded, sorted and grouped by their inner pair, and the inner level's
+/// nodes numbered. [`prepare_levels`] fills one from a diagram and
+/// [`finish_levels`] writes the diagram's two levels from it, so a caller
+/// that rotates several diagrams can prepare them all, decide from the pairs
+/// each would hold, and write only the levels it keeps.
+#[derive(Default)]
+pub(crate) struct Prepared {
+    // The triples, packed one per word under `layout`: in `narrow` where its
+    // fields fit 64 bits between them, in `wide` where they do not. A fitted
+    // `u64` moves half the bytes of a `u128` through every phase.
+    narrow: Vec<u64>,
+    wide: Vec<u128>,
+    layout: Layout,
+    groups: Vec<PairGroup>,
+    // The inner level's nodes.
+    nodes: usize,
+}
+
+impl Charged for Prepared {
+    fn charged_bytes(&self) -> u64 {
+        self.narrow.charged_bytes() + self.wide.charged_bytes() + self.groups.charged_bytes()
     }
 }
 
-/// [`rebuild_levels`] with the triples packed as `W` under `layout`, in
-/// `triples`, which is left empty.
+impl Prepared {
+    /// Every buffer, for the scratch pool's accounting.
+    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.narrow);
+        visit(&mut self.wide);
+        visit(&mut self.groups);
+    }
+
+    /// Empty, the capacity kept.
+    pub(super) fn clear(&mut self) {
+        self.narrow.clear();
+        self.wide.clear();
+        self.groups.clear();
+    }
+
+    /// The bytes the triples hold.
+    pub(super) fn triple_bytes(&self) -> usize {
+        self.narrow.capacity() * size_of::<u64>() + self.wide.capacity() * size_of::<u128>()
+    }
+}
+
+/// Prepare the rebuild of the two levels of a rotation in `dir` into
+/// `prepared`: the pairs the two new levels will hold, or `None` where the
+/// rebuild would pass `max_pairs` or is abandoned. The diagram is only read;
+/// `prepared` is left empty unless the result is `Some`.
+///
+/// The inner level holds one pair per distinct inner pair. The outer level
+/// holds, in the Boolean rebuild, one pair per cell of each distinct cell
+/// list, and in marginal context every cell.
+///
+/// # Errors
+///
+/// [`OperationError::OverBudget`] when a buffer the rebuild needs is refused.
 #[allow(clippy::too_many_arguments)]
-fn rebuild_with<W: Word>(
+pub(crate) fn prepare_levels(
     lim: &Limits,
-    tdd: &mut Tdd,
+    tdd: &Tdd,
     info: &RotationInfo,
+    dir: RotationKind,
+    crossed: bool,
+    marginal: bool,
+    scratch: &mut RestructureScratch,
+    prepared: &mut Prepared,
+    max_pairs: usize,
+) -> Result<Option<usize>, OperationError> {
+    debug_assert_eq!(marginal, tdd.has_marginal_level());
+    let (old_v, old_w) = (&tdd.levels[info.v_idx.idx()], &tdd.levels[info.w_idx.idx()]);
+    // The group table indexes the triples with `u32` offsets;
+    // `collect_triples` gives up once the count reaches `max_pairs`.
+    let max_pairs = max_pairs.min(u32::MAX as usize);
+    let fitted = Layout::fitted(field_bounds(old_v, old_w, dir, crossed));
+    let Prepared { narrow, wide, layout, groups, nodes } = prepared;
+    let table = &mut scratch.bucket.table;
+    let counted = if fitted.bits() <= 64 {
+        *layout = fitted;
+        prepare_with(lim, old_v, old_w, dir, crossed, marginal, layout, narrow, groups, table, max_pairs)
+    } else {
+        *layout = Layout::WIDE;
+        prepare_with(lim, old_v, old_w, dir, crossed, marginal, layout, wide, groups, table, max_pairs)
+    };
+    match counted {
+        Ok(Some((inner_nodes, pairs))) => {
+            *nodes = inner_nodes;
+            Ok(Some(pairs))
+        }
+        other => {
+            prepared.clear();
+            other.map(|_| None)
+        }
+    }
+}
+
+/// [`prepare_levels`] with the triples packed as `W` under `layout`: the
+/// inner level's nodes and the pairs of the two new levels.
+#[allow(clippy::too_many_arguments)]
+fn prepare_with<W: Word>(
+    lim: &Limits,
+    old_v: &TddLevel,
+    old_w: &TddLevel,
     dir: RotationKind,
     crossed: bool,
     marginal_ctx: bool,
     layout: &Layout,
     triples: &mut Vec<W>,
-    scratch: &mut RestructureScratch,
+    groups: &mut Vec<PairGroup>,
+    table: &mut Vec<u32>,
     max_pairs: usize,
-) -> Result<Option<(TddLevel, TddLevel)>, OperationError> {
-    let v_idx = info.v_idx.idx();
-    let w_idx = info.w_idx.idx();
-    // The group table indexes `triples` with `u32` offsets; `collect_triples`
-    // gives up once the count reaches `max_pairs`.
-    let max_pairs = max_pairs.min(u32::MAX as usize);
-    // Read in place: nothing leaves the diagram until both new levels exist, so
-    // an early exit has nothing to undo.
-    let (old_v, old_w) = (&tdd.levels[v_idx], &tdd.levels[w_idx]);
+) -> Result<Option<(usize, usize)>, OperationError> {
+    if !group_triples(lim, old_v, old_w, dir, crossed, marginal_ctx, layout, triples, groups, max_pairs)? {
+        return Ok(None);
+    }
+    // One group per distinct inner pair, so this is the new inner level's
+    // pair count.
+    let inner_pairs = groups.len();
+    let nodes = if marginal_ctx {
+        // Sharing is suppressed: each distinct inner pair is a node of its own.
+        inner_pairs
+    } else {
+        // Phase 3: number the distinct cell lists in the order of their first
+        // groups, which is the number of the inner node each group goes under.
+        let nodes = number_cell_lists(lim, triples, layout, groups, table);
+        release_or_clear(lim, table);
+        nodes?
+    };
+    // Bail check 2: the inner level's nodes and pairs.
+    if nodes + inner_pairs >= max_pairs {
+        return Ok(None);
+    }
+    let outer_pairs: usize = filed_groups(groups, marginal_ctx).map(|g| (g.end - g.start) as usize).sum();
+    Ok(Some((nodes, inner_pairs + outer_pairs)))
+}
 
+/// Write the two levels of the rotation `prepared` was prepared for
+/// ([`prepare_levels`]) into `tdd`, which must not have changed since, and
+/// return the levels they replace, outer then inner. `prepared` is left
+/// empty.
+///
+/// # Errors
+///
+/// [`OperationError::OverBudget`] when a level's arena or a filing buffer is
+/// refused; the diagram is then as it was.
+pub(crate) fn finish_levels(
+    lim: &Limits,
+    tdd: &mut Tdd,
+    info: &RotationInfo,
+    dir: RotationKind,
+    marginal: bool,
+    scratch: &mut RestructureScratch,
+    prepared: &mut Prepared,
+) -> Result<(TddLevel, TddLevel), OperationError> {
+    let Prepared { narrow, wide, layout, groups, nodes } = prepared;
+    let built = if layout.bits() <= 64 {
+        finish_with(lim, &tdd.levels[info.v_idx.idx()], dir, marginal, layout, narrow, groups, *nodes, scratch)
+    } else {
+        finish_with(lim, &tdd.levels[info.v_idx.idx()], dir, marginal, layout, wide, groups, *nodes, scratch)
+    };
+    let (outer, inner) = built?;
+    Ok(tdd.replace_level_pair((info.v_idx, outer), (info.w_idx, inner)))
+}
+
+/// The two new levels of [`finish_levels`], outer then inner, from the
+/// triples packed as `W` under `layout`, which are released with `groups`.
+#[allow(clippy::too_many_arguments)]
+fn finish_with<W: Word>(
+    lim: &Limits,
+    old_v: &TddLevel,
+    dir: RotationKind,
+    marginal_ctx: bool,
+    layout: &Layout,
+    triples: &mut Vec<W>,
+    groups: &mut Vec<PairGroup>,
+    nodes: usize,
+    scratch: &mut RestructureScratch,
+) -> Result<(TddLevel, TddLevel), OperationError> {
+    let mut inner = Transient::new(lim, TddLevel::new());
+    let built = if marginal_ctx {
+        expand_every_pair(lim, &mut inner, groups)
+    } else {
+        // Phase 4: the inner nodes, each the inner pairs of its groups.
+        let built = cluster_by_cell_list(lim, &mut inner, groups, nodes, &mut scratch.bucket);
+        release_or_clear(lim, &mut scratch.bucket.ends);
+        release_or_clear(lim, &mut scratch.bucket.pairs);
+        built
+    };
+    if let Err(e) = built {
+        release_or_clear(lim, triples);
+        release_or_clear(lim, groups);
+        return Err(e);
+    }
+    // Neither level is installed until both are built; a refusal in between
+    // drops the inner one and hands its charge back.
+    let outer = build_outer_level(lim, old_v, triples, groups, layout, scratch, dir, marginal_ctx)?;
+    Ok((outer, inner.keep()))
+}
+
+/// Phases 1 and 2: every old v-pair expanded against the w-level into packed
+/// triples, sorted, and grouped by their inner pair into `group_info`.
+/// Returns `false`, `triples` left empty, where bail check 1 gives up.
+///
+/// # Errors
+///
+/// [`OperationError::OverBudget`] if the triples, the sort's buffers or the
+/// group table are refused.
+#[allow(clippy::too_many_arguments)]
+fn group_triples<W: Word>(
+    lim: &Limits,
+    old_v: &TddLevel,
+    old_w: &TddLevel,
+    dir: RotationKind,
+    crossed: bool,
+    marginal_ctx: bool,
+    layout: &Layout,
+    triples: &mut Vec<W>,
+    group_info: &mut Vec<PairGroup>,
+    max_pairs: usize,
+) -> Result<bool, OperationError> {
     triples.clear();
     if !collect_triples(lim, old_v, old_w, dir, crossed, layout, triples, max_pairs)? {
         triples.clear();
-        return Ok(None);
+        return Ok(false);
     }
 
     // Phase 2: sort the packed triples. After sorting, cells for each inner
@@ -282,32 +471,9 @@ fn rebuild_with<W: Word>(
     // (axis, src) cell is a legitimate separate count-contribution (two
     // marginalization-collapsed twin primes), so cell-deduping it would drop
     // count-mass. Boolean mode dedups.
-    scratch.group_info.clear();
-    group_by_inner_pair(lim, triples, layout, &mut scratch.group_info, marginal_ctx)?;
-
-    let Some(inner_level) = build_inner_level(
-        lim,
-        triples,
-        layout,
-        &mut scratch.group_info,
-        &mut scratch.bucket,
-        marginal_ctx,
-        max_pairs,
-    )?
-    else {
-        triples.clear();
-        return Ok(None);
-    };
-
-    // Neither level is installed until both are built; a refusal in between
-    // drops the inner one and hands its charge back.
-    let inner_level = Transient::new(lim, inner_level);
-    let outer_level = build_outer_level(lim, old_v, triples, layout, scratch, dir, marginal_ctx)?;
-
-    Ok(Some(tdd.replace_level_pair(
-        (info.v_idx, outer_level),
-        (info.w_idx, inner_level.keep()),
-    )))
+    group_info.clear();
+    group_by_inner_pair(lim, triples, layout, group_info, marginal_ctx)?;
+    Ok(true)
 }
 
 /// Bounds on the four fields of a rotation's triples, bit for bit: every
@@ -447,54 +613,6 @@ fn group_by_inner_pair<W: Word>(
     Ok(())
 }
 
-/// Phases 3 and 4: turn the inner-pair groups into one inner level, recording
-/// in each group the node its pair went under. Returns `Ok(None)` when bail
-/// check 2 says the result would exceed `max_pairs`.
-///
-/// Two shapes, chosen by `marginal_ctx`: full expansion, one node per distinct
-/// inner pair, or cell-list clustering, one node per distinct cell list.
-///
-/// # Errors
-///
-/// [`OperationError::OverBudget`] if the pair table's growth or the level's
-/// arena is refused. The partially built level is dropped, so its charge goes
-/// back first.
-fn build_inner_level<W: Word>(
-    lim: &Limits,
-    triples: &[W],
-    layout: &Layout,
-    group_info: &mut [PairGroup],
-    bucket: &mut BucketScratch,
-    marginal_ctx: bool,
-    max_pairs: usize,
-) -> Result<Option<TddLevel>, OperationError> {
-    // One group per distinct inner pair, so this is the new inner level's
-    // pair count, which bail check 2 adds to its node count.
-    let n_w_pairs = group_info.len();
-    let mut level = Transient::new(lim, TddLevel::new());
-    if marginal_ctx {
-        // Bail check 2 (full-expand): one inner node per distinct inner pair.
-        if group_info.len() + n_w_pairs >= max_pairs {
-            return Ok(None);
-        }
-        // Every group's pair gets an entry, in either shape.
-        expand_every_pair(lim, &mut level, group_info)?;
-    } else {
-        // Phase 3: number the distinct cell lists in the order of their first
-        // groups, which is the number of the inner node each group goes under.
-        let nodes = number_cell_lists(lim, triples, layout, group_info, &mut bucket.table)?;
-        if nodes + n_w_pairs >= max_pairs {
-            return Ok(None);
-        }
-        let built = cluster_by_cell_list(lim, &mut level, group_info, nodes, bucket);
-        release_or_clear(lim, &mut bucket.table);
-        release_or_clear(lim, &mut bucket.ends);
-        release_or_clear(lim, &mut bucket.pairs);
-        built?;
-    }
-    Ok(Some(level.keep()))
-}
-
 /// Marginal full-expand: sharing is suppressed, so each distinct inner pair
 /// becomes its own node and no two pairs merge under one.
 ///
@@ -614,22 +732,24 @@ fn cluster_by_cell_list(
 /// [`OperationError::OverBudget`] if a filing buffer or the level's arena is
 /// refused. The partially built level is dropped, so its charge goes back
 /// first.
+#[allow(clippy::too_many_arguments)]
 fn build_outer_level<W: Word>(
     lim: &Limits,
     old_v_level: &TddLevel,
     triples: &mut Vec<W>,
+    groups: &mut Vec<PairGroup>,
     layout: &Layout,
     scratch: &mut RestructureScratch,
     dir: RotationKind,
     marginal_ctx: bool,
 ) -> Result<TddLevel, OperationError> {
     let n_v = old_v_level.nodes().len();
-    let filed = file_outer_pairs(lim, triples, layout, scratch, n_v, dir, marginal_ctx);
+    let filed = file_outer_pairs(lim, triples, groups, layout, scratch, n_v, dir, marginal_ctx);
     // Last read of `triples` and the groups: the filed lists now hold every
     // outer pair. Release the triples before the arena that copies those
     // pairs is built.
     release_or_clear(lim, triples);
-    release_or_clear(lim, &mut scratch.group_info);
+    release_or_clear(lim, groups);
     release_or_clear(lim, &mut scratch.by_axis);
     release_or_clear(lim, &mut scratch.axis_ends);
     let built = filed.and_then(|()| {
@@ -690,17 +810,19 @@ fn filed_groups(group_info: &[PairGroup], marginal_ctx: bool) -> impl Iterator<I
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] if a buffer is refused.
+#[allow(clippy::too_many_arguments)]
 fn file_outer_pairs<W: Word>(
     lim: &Limits,
     triples: &[W],
+    groups: &[PairGroup],
     layout: &Layout,
     scratch: &mut RestructureScratch,
     n_v: usize,
     dir: RotationKind,
     marginal_ctx: bool,
 ) -> Result<(), OperationError> {
-    let RestructureScratch { group_info, by_axis, axis_ends, outer_ends: ends, outer_pairs: pairs, .. } = scratch;
-    let filed = || filed_groups(group_info, marginal_ctx).flat_map(|g| triples[g.start as usize..g.end as usize].iter().map(move |&p| (g.node, p)));
+    let RestructureScratch { by_axis, axis_ends, outer_ends: ends, outer_pairs: pairs, .. } = scratch;
+    let filed = || filed_groups(groups, marginal_ctx).flat_map(|g| triples[g.start as usize..g.end as usize].iter().map(move |&p| (g.node, p)));
     // Each node's pair count, at the slot after the node's.
     ends.clear();
     lim.try_resize(ends, n_v + 1, 0)?;

@@ -71,8 +71,8 @@ fn sorted_and_deduplicated(triples: &[u128], groups: &[PairGroup], n_v: usize, d
 /// The outer lists `file_outer_pairs` files from `triples` under `layout`.
 fn filed<W: Word>(triples: &[W], layout: &Layout, groups: &[PairGroup], n_v: usize, dir: RotationKind) -> Vec<Vec<ChildPair>> {
     let eng = Engine::new();
-    let mut scratch = RestructureScratch { group_info: groups.to_vec(), ..Default::default() };
-    file_outer_pairs(eng.limits(), triples, layout, &mut scratch, n_v, dir, false).unwrap();
+    let mut scratch = RestructureScratch::default();
+    file_outer_pairs(eng.limits(), triples, groups, layout, &mut scratch, n_v, dir, false).unwrap();
     let mut begin = 0;
     let mut lists = Vec::new();
     for &end in &scratch.outer_ends[..n_v] {
