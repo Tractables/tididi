@@ -17,7 +17,7 @@
 //! level has a block: a leaf or marginal level is never compacted, so
 //! nothing reads its marks.
 
-use crate::diagram::{ChildDecoder, ChildKept, ChildPair, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel, NodeIdx, NodeKind, StoreRoom, Tdd};
+use crate::diagram::{ChildDecoder, ChildKept, ChildPair, ChildSide, EncodedChildRef, EncodedNode, ImplicitLevel, NodeIdx, NodeKind, StoreRoom, Tdd, TddLevel};
 
 use crate::Engine;
 
@@ -511,29 +511,57 @@ fn unnamed_children(
         marks[base[k]..used].fill(0);
         open[k] = width;
     }
-    let views = children.map(|c| tdd.levels[c.idx()].child_decoder());
     let level = &tdd.levels[p.idx()];
-    // A node's pairs are read in one fold, a stored node's as a slice; the
-    // pairs of a node past the one that names the last open node mark
-    // nothing.
+    let marks = &mut marks[..used];
+    match open.map(|n| n > 0) {
+        [true, true] => mark_named::<true, true>(level, &mut open, base, marks, gate)?,
+        [true, false] => mark_named::<true, false>(level, &mut open, base, marks, gate)?,
+        [false, true] => mark_named::<false, true>(level, &mut open, base, marks, gate)?,
+        [false, false] => {}
+    }
+    Ok([unread[0] || open[0] > 0, unread[1] || open[1] > 0])
+}
+
+/// Mark in `marks` the nodes of `level`'s children that its pairs name, on
+/// the left side with `LEFT` and on the right with `RIGHT`, each side's
+/// block at its word of `base`, and count down `open` once for each node
+/// marked the first time; node by node, up to the first one past which no
+/// side read has a node open. Both children are structural internal, so a
+/// side is the index of the node it names. One unit of work through `gate`
+/// a pair.
+///
+/// The marks are set and counted without a branch on whether a node was
+/// named already: a child of a level read to its end, as a tight one mostly
+/// is, is named by many of its pairs, and the test would decide every one.
+#[inline(always)]
+fn mark_named<const LEFT: bool, const RIGHT: bool>(
+    level: &TddLevel,
+    open: &mut [usize; 2],
+    base: [usize; 2],
+    marks: &mut [u64],
+    gate: &mut PollGate<'_>,
+) -> Result<(), OperationError> {
+    let mut mark = |k: usize, s: u32, open: &mut [usize; 2]| {
+        let word = &mut marks[base[k] + (s as usize >> 6)];
+        let bit = 1u64 << (s & 63);
+        open[k] -= (*word & bit == 0) as usize;
+        *word |= bit;
+    };
     for (_, pairs) in level.internal_inputs_iter() {
-        if open == [0; 2] {
+        if (!LEFT || open[0] == 0) && (!RIGHT || open[1] == 0) {
             break;
         }
         gate.poll(pairs.len() as u64)?;
         pairs.for_each(|pair| {
-            for (k, side) in [pair.left, pair.right].into_iter().enumerate() {
-                if open[k] > 0 && let Some(s) = views[k].child(side).index() {
-                    let (word, bit) = (base[k] + (s >> 6), 1u64 << (s & 63));
-                    if marks[word] & bit == 0 {
-                        marks[word] |= bit;
-                        open[k] -= 1;
-                    }
-                }
+            if LEFT {
+                mark(0, pair.left.0, open);
+            }
+            if RIGHT {
+                mark(1, pair.right.0, open);
             }
         });
     }
-    Ok([unread[0] || open[0] > 0, unread[1] || open[1] > 0])
+    Ok(())
 }
 
 /// [`prune_unreachable`] over every level: mark from the output, then compact
