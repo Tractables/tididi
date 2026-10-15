@@ -78,7 +78,10 @@ pub(crate) struct SparseWorkspace {
     // parent into `par_sorted`.
     pub(super) par_flat: Vec<Candidate>,
     pub(super) par_sorted: Grouped<ParEntry>,
-    pub(super) p2_map: Vec<u32>,                    // flat lookup: p2_map[g_parent] → product idx, NO_PRODUCT if new
+    // The candidates of one f node, for the walks that find a node's
+    // candidates all at once and emit it before the next (the leaf arm and
+    // the probe).
+    pub(super) node_candidates: Vec<ParEntry>,
 
     // ── Scatter-direction estimator ──
     // Per-child-index pair counters for the four (operand × side) index spaces
@@ -87,11 +90,34 @@ pub(crate) struct SparseWorkspace {
     pub(super) est_counts: Vec<u32>,
 
     // ── The emit: one f parent's products into output nodes ──
-    pub(super) pair_counts: Vec<u32>,               // per-product pair count, then write cursors
-    pub(super) single_pairs: Vec<ChildPair>,        // the pair of each one-pair product, stored inline
+    pub(super) emit: EmitScratch,
 
     // ── The probe join (`probe_level`) ──
     pub(super) probe: super::probe::ProbeBuffers,
+}
+
+/// What the emit ([`emit_parent`](super::scatter::emit_parent)) writes as
+/// it turns one f parent's candidates into nodes, apart from the buffers
+/// the candidates are read from, so that a walk can hold those while it
+/// emits.
+#[derive(Default)]
+pub(crate) struct EmitScratch {
+    /// `p2_map[g_parent]`: the product the parent's candidates under that
+    /// `g` parent make, `NO_PRODUCT` for none yet. All `NO_PRODUCT` between
+    /// parents: the emit restores the entries it wrote.
+    pub(super) p2_map: Vec<u32>,
+    /// Per product, its pair count, then its write cursor.
+    pub(super) pair_counts: Vec<u32>,
+    /// The pair of each one-pair product, stored inline.
+    pub(super) single_pairs: Vec<ChildPair>,
+}
+
+impl Buffers for EmitScratch {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.p2_map);
+        visit(&mut self.pair_counts);
+        visit(&mut self.single_pairs);
+    }
 }
 
 /// One entry of a reverse index: a parent of the keyed child, and the child it
@@ -447,10 +473,9 @@ impl Buffers for SparseWorkspace {
         visit(&mut self.par_buckets);
         visit(&mut self.par_flat);
         self.par_sorted.buffers(visit);
-        visit(&mut self.p2_map);
+        visit(&mut self.node_candidates);
         visit(&mut self.est_counts);
-        visit(&mut self.pair_counts);
-        visit(&mut self.single_pairs);
+        self.emit.buffers(visit);
         self.probe.buffers(visit);
     }
 }

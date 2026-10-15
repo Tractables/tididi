@@ -6,7 +6,6 @@ use super::*;
 use crate::apply::conjoin::marginal_plan::Carrier;
 use crate::apply::conjoin::setup::LevelShape;
 use crate::diagram::Sides;
-use crate::limits::Limits;
 
 use crate::Engine;
 
@@ -20,10 +19,17 @@ fn orient<const SWAPPED: bool>(inner: u32, outer: u32) -> (u32, u32) {
 
 /// Where the scatter puts the candidates it finds.
 pub(super) enum Collect<'a, 'c> {
-    /// A bucket per f parent, `par_buckets`.
+    /// The level's nodes, each f parent's candidates turned into its
+    /// products' nodes by the emit ([`emit_parent`]). The leaf arm emits each
+    /// parent as its walk ends; the general arm holds the candidates in
+    /// [`Collect::Buckets`] or [`Collect::Flat`] until its scatter is done.
+    Nodes(Emit<'a>),
+    /// A bucket per f parent, `par_buckets`: where the general arm holds a
+    /// level's candidates for the emit.
     Buckets,
     /// One list of every candidate with its f parent, `par_flat`, sorted by
-    /// parent once the scatter is done.
+    /// parent once the scatter is done: the general arm's other way of
+    /// holding them.
     Flat,
     /// The output level's pair arena, on a level where f and g have one node
     /// each: every candidate is a pair of the one product the level can
@@ -36,6 +42,14 @@ pub(super) enum Collect<'a, 'c> {
     /// child summed out: each candidate adds its summed-side node's count to
     /// its kept product's sum and is not stored. See [`ChildSum`].
     Sum(&'a mut ChildSum),
+}
+
+/// The level the emit writes: its nodes, its product list, and whether its
+/// pair lists may repeat a pair (see [`emit_parent`]).
+pub(super) struct Emit<'a> {
+    pub(super) level: &'a mut TddLevel,
+    pub(super) out: &'a mut Vec<ProductEntry>,
+    pub(super) duplicates_legal: bool,
 }
 
 /// Where the leaf arm reads the inner side's product from when the inner
@@ -51,13 +65,27 @@ pub(super) enum Inner {
     Complete { g_width: usize },
 }
 
-/// The leaf arm of the scatter: one side of the join is a vtree leaf, so the
-/// leaf-side product comes straight from the conjunction table and the walk
-/// stays selective by iterating the non-leaf product list.
+/// The leaf arm: the level's inner child is joined on its fields alone, so
+/// a candidate is an f pair, a live product of its outer child and a g pair
+/// under that product's g node, the inner product read from the two pairs'
+/// inner fields. The inner child is a vtree leaf, whose products are the
+/// conjunction table's, a marginal pass-through side, whose product is the
+/// carrier's field ([`Inner::Carried`]), or a complete child read by
+/// arithmetic ([`Inner::Complete`]); either way it kills no candidate the
+/// table does not.
 ///
-/// A marginal pass-through side, or a complete child, takes the leaf side's
-/// place ([`Inner`]): the inner side's product is the carrier's field there,
-/// or the complete child's cell, and every candidate survives on it.
+/// f's nodes are walked in order: each pair through the outer child's live
+/// products of its outer child, from the product list by f index
+/// ([`bucket_offsets`]), and each product through the g pairs under its g
+/// node, from g's reverse index by the outer child. A node's candidates are
+/// all found when its walk ends, so they go to `collect` a node at a time,
+/// and only g is indexed: f's pairs are read once, in place. The candidates
+/// are those a join by outer product finds, and the clock is charged the
+/// same, the g pairs under each product once per f pair that meets it.
+///
+/// `collect` is the level's nodes ([`Collect::Nodes`]), each f parent
+/// emitted as its walk ends, or, on a level with one product, its pair
+/// arena, a count or sums.
 // The level's steps are kept out of line from one another. Each runs once per
 // level (or, for the chunk steps, once per chunk), so the call costs nothing
 // against what it then does, and holding them apart means a change inside one
@@ -65,115 +93,139 @@ pub(super) enum Inner {
 // a measurement of one step then says what it means, instead of moving a step
 // the change never touched.
 #[inline(never)]
-fn scatter_leaf_arm<const SWAPPED: bool>(
+#[expect(clippy::too_many_arguments)]
+pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
+    f_level: &TddLevel,
+    g_level: &TddLevel,
+    shape: LevelShape,
     pl: Sides<&[ProductEntry]>,
     collect: Collect<'_, '_>,
     inner: Option<Inner>,
 ) -> Result<(), OperationError> {
+    let (f_outer, g_outer, pl_outer) = if !SWAPPED {
+        (shape.f.right, shape.g.right, pl.right)
+    } else {
+        (shape.f.left, shape.g.left, pl.left)
+    };
+    // g's reverse index by the outer child: normally the right child,
+    // entries `(p2, a2)`; swapped the left one, entries `(p2, s2)`.
+    if !SWAPPED {
+        build_reverse_index::<true>(eng, g_level, g_outer, None, &mut ws.g_by_outer)?;
+    } else {
+        build_reverse_index::<false>(eng, g_level, g_outer, None, &mut ws.g_by_outer)?;
+    }
+    bucket_offsets(eng.limits(), pl_outer, f_outer, &mut ws.outer_offsets)?;
     match inner {
-        None => leaf_arm_into::<SWAPPED>(eng, ws, pl, collect, |f_label, g_label| {
-            let grid_prod = CONJOIN_GRID[f_label as usize][g_label as usize];
-            (grid_prod != NO_PRODUCT).then_some(grid_prod)
+        None => leaf_walk::<SWAPPED>(eng, ws, f_level, shape, pl_outer, collect, |f_label, g_label| {
+            CONJOIN_GRID[f_label as usize][g_label as usize]
         }),
-        Some(Inner::Carried(Carrier::F)) => leaf_arm_into::<SWAPPED>(eng, ws, pl, collect, |f_field, _| Some(f_field)),
-        Some(Inner::Carried(Carrier::G)) => leaf_arm_into::<SWAPPED>(eng, ws, pl, collect, |_, g_field| Some(g_field)),
-        Some(Inner::Complete { g_width }) => leaf_arm_into::<SWAPPED>(eng, ws, pl, collect, move |f_node, g_node| {
-            Some((f_node as usize * g_width + g_node as usize) as u32)
+        Some(Inner::Carried(Carrier::F)) => leaf_walk::<SWAPPED>(eng, ws, f_level, shape, pl_outer, collect, |f_field, _| f_field),
+        Some(Inner::Carried(Carrier::G)) => leaf_walk::<SWAPPED>(eng, ws, f_level, shape, pl_outer, collect, |_, g_field| g_field),
+        Some(Inner::Complete { g_width }) => leaf_walk::<SWAPPED>(eng, ws, f_level, shape, pl_outer, collect, move |f_node, g_node| {
+            (f_node as usize * g_width + g_node as usize) as u32
         }),
     }
 }
 
-/// [`scatter_leaf_arm`] with the inner side's product given by
-/// `inner_product` of the f and g fields there, into `collect`.
+/// [`scatter_leaf_arm`]'s walk, with the inner side's product given by
+/// `inner_product` of the f and g fields there, `NO_PRODUCT` where it is
+/// false, into `collect`.
 #[inline(always)]
-fn leaf_arm_into<const SWAPPED: bool>(
+fn leaf_walk<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
-    pl: Sides<&[ProductEntry]>,
+    f_level: &TddLevel,
+    shape: LevelShape,
+    pl_outer: &[ProductEntry],
     collect: Collect<'_, '_>,
-    inner_product: impl Fn(u32, u32) -> Option<u32>,
+    inner_product: impl Fn(u32, u32) -> u32,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
-    let SparseWorkspace { f_by_outer, g_by_outer, par_buckets, par_flat, .. } = ws;
-    let (f_by_outer, g_by_outer) = (f_by_outer.view(), g_by_outer.view());
+    let SparseWorkspace { g_by_outer, outer_offsets, node_candidates, emit, .. } = ws;
+    let walk = LeafWalk {
+        g_by_outer: g_by_outer.view(),
+        outer: GroupedView { offsets: outer_offsets, entries: pl_outer },
+        inner_product,
+    };
+    // Amortized cancellation/deadline poll; the sparse join has no other
+    // mid-level break, and the bail lands where `try_push`'s recovery
+    // already covers it.
+    let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
+    let nodes = 0..shape.f.here;
     match collect {
-        Collect::Buckets => leaf_join::<SWAPPED>(lim, f_by_outer, g_by_outer, pl, inner_product,
-            |p1, entry| lim.try_push(&mut par_buckets[p1 as usize], entry)),
-        Collect::Flat => leaf_join::<SWAPPED>(lim, f_by_outer, g_by_outer, pl, inner_product,
-            |p1, entry| lim.try_push(par_flat, Candidate { parent: p1, entry })),
-        Collect::Direct(level) => leaf_join::<SWAPPED>(lim, f_by_outer, g_by_outer, pl, inner_product,
-            |_, entry| try_push_pair_into(eng, level, candidate_pair(&entry))),
-        Collect::Fold(fold) => leaf_join::<SWAPPED>(lim, f_by_outer, g_by_outer, pl, inner_product,
-            |_, entry| {
+        Collect::Nodes(Emit { level, out, duplicates_legal }) => f_level.try_for_each_node(nodes, |p1, pairs| {
+            node_candidates.clear();
+            walk.node::<SWAPPED>(pairs, &mut ticker, |entry| lim.try_push(node_candidates, entry))?;
+            if node_candidates.is_empty() {
+                return Ok(());
+            }
+            emit_parent(eng, emit, level, out, p1, node_candidates, duplicates_legal)
+        }),
+        Collect::Direct(level) => f_level.try_for_each_node(nodes, |_, pairs| {
+            walk.node::<SWAPPED>(pairs, &mut ticker, |entry| try_push_pair_into(eng, level, candidate_pair(&entry)))
+        }),
+        Collect::Fold(fold) => f_level.try_for_each_node(nodes, |_, pairs| {
+            walk.node::<SWAPPED>(pairs, &mut ticker, |entry| {
                 fold.push(candidate_pair(&entry));
                 Ok(())
-            }),
-        Collect::Sum(sum) => leaf_join::<SWAPPED>(lim, f_by_outer, g_by_outer, pl, inner_product,
-            |_, entry| sum.push(lim, candidate_pair(&entry))),
+            })
+        }),
+        Collect::Sum(sum) => f_level.try_for_each_node(nodes, |_, pairs| {
+            walk.node::<SWAPPED>(pairs, &mut ticker, |entry| sum.push(lim, candidate_pair(&entry)))
+        }),
+        Collect::Buckets | Collect::Flat => unreachable!("the leaf arm hands each node's candidates on as it walks"),
     }
 }
 
-/// The leaf arm's walk: iterate the outer child's product list; the inner
-/// side's product comes from `inner_product`, and each candidate is handed
-/// to `push` with its f parent.
-#[inline(always)]
-fn leaf_join<const SWAPPED: bool>(
-    lim: &Limits,
-    f_by_outer: GroupedView<'_, RevEntry>,
-    g_by_outer: GroupedView<'_, RevEntry>,
-    pl: Sides<&[ProductEntry]>,
-    inner_product: impl Fn(u32, u32) -> Option<u32>,
-    mut push: impl FnMut(u32, ParEntry) -> Result<(), OperationError>,
-) -> Result<(), OperationError> {
-    // ── Leaf arm ──
-    // Iterate the non-leaf product list; the leaf-side product comes from
-    // `CONJOIN_GRID`, or is the carried field or the complete child's cell.
-    // g_by_outer's inner child is the leaf label, the carried field or the
-    // complete child's node here (normal: a2 with left the inner side;
-    // swapped: s2 with right the inner side).
-    //
-    // Amortized cancellation/deadline poll — same rationale/soundness
-    // as the general arm below; bail lands where `try_push` recovers.
-    let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
-    let pl_outer = if !SWAPPED { pl.right } else { pl.left };
-    for &ProductEntry { f_idx: FNodeIdx(outer1), g_idx: GNodeIdx(outer2), prod_idx: ProductNodeIdx(outer_prod) } in pl_outer {
-        let f_under_outer = f_by_outer.bucket(outer1 as usize);
-        if f_under_outer.is_empty() { continue; }
-        for &RevEntry { parent: g_parent, other: inner2 } in g_by_outer.bucket(outer2 as usize) {
-            for &RevEntry { parent: p1, other: inner1 } in f_under_outer {
-                // The inner side's product comes from its fields, the
-                // product list gives the other side's.
-                if let Some(inner_prod) = inner_product(inner1, inner2) {
-                    let (left_prod, right_prod) = orient::<SWAPPED>(inner_prod, outer_prod);
-                    push(p1, ParEntry { g_parent, left_prod, right_prod })?;
+/// What [`leaf_walk`] reads for each f pair: the outer child's live
+/// products by f index, g's pairs by outer child, and the inner product.
+struct LeafWalk<'a, P> {
+    g_by_outer: GroupedView<'a, RevEntry>,
+    outer: GroupedView<'a, ProductEntry>,
+    inner_product: P,
+}
+
+impl<P: Fn(u32, u32) -> u32> LeafWalk<'_, P> {
+    /// Hand every candidate of the f node holding `pairs` to `push`, in the
+    /// order of its pairs, the products they meet and the g pairs under each.
+    #[inline(always)]
+    fn node<const SWAPPED: bool>(
+        &self,
+        pairs: &[ChildPair],
+        ticker: &mut crate::limits::PollGate,
+        mut push: impl FnMut(ParEntry) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError> {
+        for pair in pairs {
+            let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
+            for e in self.outer.bucket(outer1 as usize) {
+                let under = self.g_by_outer.bucket(e.g_idx.idx());
+                for &RevEntry { parent: g_parent, other: inner2 } in under {
+                    let inner_prod = (self.inner_product)(inner1, inner2);
+                    if inner_prod != NO_PRODUCT {
+                        let (left_prod, right_prod) = orient::<SWAPPED>(inner_prod, e.prod_idx.0);
+                        push(ParEntry { g_parent, left_prod, right_prod })?;
+                    }
                 }
+                ticker.poll(under.len() as u64)?;
             }
-            ticker.poll(f_under_outer.len() as u64)?;
         }
+        Ok(())
     }
-    Ok(())
 }
 
-/// The scatter: the four-way join of f/g parent and child/sibling product
-/// lists. `SWAPPED = false` outer-loops
-/// by right sibling s1; `SWAPPED = true` by left child a1 (every difference is a
-/// pure left↔right role rename; the `if SWAPPED` branches fold at compile time).
-/// A filtered per-outer g index makes the emit walk only alive `(p2, product)`
-/// entries. The emitted ParEntry *set* into `par_buckets` is order-free — sound
-/// because pair lists are order-independent.
+/// The general arm of the scatter, on a level whose children are both
+/// internal and joined through their product lists: the four-way join of
+/// f/g parent and child/sibling product lists. `SWAPPED = false`
+/// outer-loops by right sibling s1; `SWAPPED = true` by left child a1 (every
+/// difference is a pure left↔right role rename; the `if SWAPPED` branches
+/// fold at compile time). A filtered per-outer g index makes the emit walk
+/// only alive `(p2, product)` entries. The emitted ParEntry *set* into
+/// `par_buckets` is order-free — sound because pair lists are
+/// order-independent.
 ///
-/// Two arms behind a shared front-end (the two reverse-index builds):
-///
-/// **Leaf arm** (the inner child is a leaf, see [`runs_leaf_arm`]): iterate
-/// the non-leaf product list; `CONJOIN_GRID` supplies the leaf-side product.
-/// The `g_by_outer` keying is the same as the general arm's (normal → by
-/// right, swapped → by left), so the front-end is shared. With `inner`, the
-/// inner side is a marginal pass-through or a complete child instead, and
-/// its product is the carrier's field or the child's cell ([`Inner`]).
-///
-/// **General arm** (both children non-leaf), per outer key:
+/// Per outer key:
 ///   1. Build `filtered`: bucket the g parents under the outer's live g keys
 ///      by the join's inner-g child, attaching the live product — from
 ///      whichever g index is the cheaper to walk, and only for the children
@@ -182,12 +234,12 @@ fn leaf_join<const SWAPPED: bool>(
 ///      push the precomputed alive `(p2, product)` entries — zero dead probes.
 ///   3. Clear only the `filtered` buckets touched this outer.
 ///
-/// The direction puts a leaf child, a pass-through side and a complete
-/// child read by arithmetic on the inner side (`leaf_direction`), so the
-/// general arm sees only levels with two joined, listed non-leaf children,
-/// which are the levels the direction estimate ran for: its counts start the
-/// general arm's index builds. `collect` says where the candidates go.
-#[expect(clippy::too_many_arguments)]
+/// A leaf child, a pass-through side and a complete child read by
+/// arithmetic go to the leaf arm ([`scatter_leaf_arm`]), so this arm sees
+/// only the levels the direction estimate ran for: its counts start the
+/// index builds. `collect` says where the candidates go; the level's nodes
+/// are not one of the places, since this arm finds a parent's candidates
+/// under many outer keys.
 pub(super) fn scatter_join<const SWAPPED: bool>(
     eng: &Engine,
     ws: &mut SparseWorkspace,
@@ -195,16 +247,9 @@ pub(super) fn scatter_join<const SWAPPED: bool>(
     g_level: &TddLevel,
     shape: LevelShape,
     pl: Sides<&[ProductEntry]>,
-    leaves: Sides<bool>,
     collect: Collect<'_, '_>,
-    inner: Option<Inner>,
 ) -> Result<(), OperationError> {
-    let leaf_arm = inner.is_some() || runs_leaf_arm(SWAPPED, leaves);
-    debug_assert!(leaf_arm || !(leaves.left || leaves.right), "a leaf child must be the inner side");
-    build_scatter_indexes::<SWAPPED>(eng, ws, f_level, g_level, shape, !leaf_arm)?;
-    if leaf_arm {
-        return scatter_leaf_arm::<SWAPPED>(eng, ws, pl, collect, inner);
-    }
+    build_scatter_indexes::<SWAPPED>(eng, ws, f_level, g_level, shape)?;
     build_inner_index::<SWAPPED>(eng, ws, g_level, shape)?;
     // Decided once per level, so that no walk tests it per pair.
     let pl_inner = if !SWAPPED { pl.left } else { pl.right };
@@ -215,22 +260,13 @@ pub(super) fn scatter_join<const SWAPPED: bool>(
     }
 }
 
-/// Whether the join runs its leaf arm: its inner child, the left one
-/// unswapped and the right one swapped, is a leaf.
-pub(super) fn runs_leaf_arm(swapped: bool, leaves: Sides<bool>) -> bool {
-    if !swapped { leaves.left } else { leaves.right }
-}
-
-/// Build the two reverse indexes both arms read.
+/// Build the two reverse indexes the general arm reads, from the direction
+/// estimate's counts.
 ///
 /// f is keyed by the outer-loop dimension (normal → right sibling `s1`,
-/// swapped → left child `a1`). g is keyed by the general arm's filtering axis
-/// — which is also exactly the keying the leaf arm wants, since that groups g
-/// by the non-leaf outer child, so one build serves both arms: normal → by
-/// right `s2`, entries `(p2, a2)`; swapped → by left `a2`, entries `(p2, s2)`.
-///
-/// With `counted`, the direction estimate has run for this level and its
-/// counts start each build.
+/// swapped → left child `a1`), and g by the general arm's filtering axis:
+/// normal → by right `s2`, entries `(p2, a2)`; swapped → by left `a2`,
+/// entries `(p2, s2)`.
 #[inline(never)]
 fn build_scatter_indexes<const SWAPPED: bool>(
     eng: &Engine,
@@ -238,18 +274,17 @@ fn build_scatter_indexes<const SWAPPED: bool>(
     f_level: &TddLevel,
     g_level: &TddLevel,
     shape: LevelShape,
-    counted: bool,
 ) -> Result<(), OperationError> {
     let SparseWorkspace { est_counts, f_by_outer, g_by_outer, .. } = ws;
-    let counts = counted.then(|| EstCounts::of(est_counts, shape));
+    let counts = EstCounts::of(est_counts, shape);
     // Keyed by the outer dimension: the right sibling normally, the left child
     // when swapped.
     if !SWAPPED {
-        build_reverse_index::<true>(eng, f_level, shape.f.right, counts.as_ref().map(|c| c.f_right), f_by_outer)?;
-        build_reverse_index::<true>(eng, g_level, shape.g.right, counts.as_ref().map(|c| c.g_right), g_by_outer)?;
+        build_reverse_index::<true>(eng, f_level, shape.f.right, Some(counts.f_right), f_by_outer)?;
+        build_reverse_index::<true>(eng, g_level, shape.g.right, Some(counts.g_right), g_by_outer)?;
     } else {
-        build_reverse_index::<false>(eng, f_level, shape.f.left, counts.as_ref().map(|c| c.f_left), f_by_outer)?;
-        build_reverse_index::<false>(eng, g_level, shape.g.left, counts.as_ref().map(|c| c.g_left), g_by_outer)?;
+        build_reverse_index::<false>(eng, f_level, shape.f.left, Some(counts.f_left), f_by_outer)?;
+        build_reverse_index::<false>(eng, g_level, shape.g.left, Some(counts.g_left), g_by_outer)?;
     }
     Ok(())
 }
@@ -890,6 +925,7 @@ fn scatter_general_arm<const SWAPPED: bool, const FAR: bool>(
             Collect::Direct(level) => s.emit_direct_for_outer::<SWAPPED, FAR>(eng, level, outer, &mut ticker)?,
             Collect::Fold(fold) => s.emit_fold_for_outer::<SWAPPED, FAR>(fold, outer, &mut ticker)?,
             Collect::Sum(sum) => s.emit_sum_for_outer::<SWAPPED, FAR>(lim, sum, outer, &mut ticker)?,
+            Collect::Nodes(_) => unreachable!("the general arm holds a level's candidates for the emit"),
         }
         s.filtered.clear_touched();
     }
@@ -1115,41 +1151,31 @@ pub(super) fn emit_chunk(
     drop_consumed: bool,
     duplicates_legal: bool,
 ) -> Result<(), OperationError> {
+    let SparseWorkspace { par_sorted, par_buckets, emit, .. } = ws;
     if flat {
-        // The sorted list is moved out for the walk for the reason a bucket
-        // is below, and handed back whatever the walk found: a level's
-        // worth of candidates is worth keeping warm.
-        let sorted = std::mem::take(&mut ws.par_sorted);
-        let mut walked = Ok(());
+        let sorted = par_sorted.view();
         for p1 in parents {
-            let candidates = sorted.view().bucket(p1);
-            if candidates.is_empty() { continue; }
-            walked = emit_parent(eng, ws, level, pl_output, p1, candidates, duplicates_legal);
-            if walked.is_err() { break; }
+            let candidates = sorted.bucket(p1);
+            if !candidates.is_empty() {
+                emit_parent(eng, emit, level, pl_output, p1, candidates, duplicates_legal)?;
+            }
         }
-        ws.par_sorted = sorted;
-        return walked;
+        return Ok(());
     }
 
-    // Each bucket is moved out for its walk rather than borrowed in place: the
-    // emit writes `ws.p2_map` and `ws.pair_counts`, which an outstanding
-    // borrow of `ws.par_buckets` conflicts with, and indexing the bucket per
-    // entry to work around that re-reads its pointer and length for every
-    // candidate.
-    //
-    // A chunked level wants the consumed bucket's memory freed anyway, before
-    // the output grows further, so there it simply is not handed back. A
-    // level in one chunk hands it back, because the next level's
-    // `Rows::reset` only `.clear()`s (length=0, capacity retained) and that
-    // capacity saves the next apply's scatter pushes from growing the bucket
-    // again.
+    // A chunked level wants each consumed bucket's memory freed before the
+    // output grows further, so there it is taken and dropped. A level in
+    // one chunk keeps it, because the next level's `Rows::reset` only
+    // `.clear()`s (length=0, capacity retained) and that capacity saves the
+    // next apply's scatter pushes from growing the bucket again.
     for p1 in parents {
-        let bucket = std::mem::take(&mut ws.par_buckets[p1]);
-        if !bucket.is_empty() {
-            emit_parent(eng, ws, level, pl_output, p1, &bucket, duplicates_legal)?;
-        }
-        if !drop_consumed {
-            ws.par_buckets[p1] = bucket;
+        if drop_consumed {
+            let bucket = std::mem::take(&mut par_buckets[p1]);
+            if !bucket.is_empty() {
+                emit_parent(eng, emit, level, pl_output, p1, &bucket, duplicates_legal)?;
+            }
+        } else if !par_buckets[p1].is_empty() {
+            emit_parent(eng, emit, level, pl_output, p1, &par_buckets[p1], duplicates_legal)?;
         }
     }
     Ok(())
@@ -1170,19 +1196,21 @@ pub(super) fn emit_buckets_ahead(
     drop_consumed: bool,
     duplicates_legal: bool,
 ) -> Result<(), OperationError> {
+    let SparseWorkspace { par_buckets, emit, .. } = ws;
     for p1 in parents {
-        if let Some(ahead) = ws.par_buckets.get(p1 + RUN_AHEAD) {
+        if let Some(ahead) = par_buckets.get(p1 + RUN_AHEAD) {
             let at = ahead.as_ptr().cast::<u8>();
             prefetch_line(at);
             prefetch_line(at.wrapping_add(64));
             note_prefetch(4);
         }
-        let bucket = std::mem::take(&mut ws.par_buckets[p1]);
-        if !bucket.is_empty() {
-            emit_parent(eng, ws, level, pl_output, p1, &bucket, duplicates_legal)?;
-        }
-        if !drop_consumed {
-            ws.par_buckets[p1] = bucket;
+        if drop_consumed {
+            let bucket = std::mem::take(&mut par_buckets[p1]);
+            if !bucket.is_empty() {
+                emit_parent(eng, emit, level, pl_output, p1, &bucket, duplicates_legal)?;
+            }
+        } else if !par_buckets[p1].is_empty() {
+            emit_parent(eng, emit, level, pl_output, p1, &par_buckets[p1], duplicates_legal)?;
         }
     }
     Ok(())
@@ -1223,7 +1251,7 @@ fn candidate_pair(entry: &ParEntry) -> ChildPair {
 #[inline]
 pub(super) fn emit_parent(
     eng: &Engine,
-    ws: &mut SparseWorkspace,
+    emit: &mut EmitScratch,
     level: &mut TddLevel,
     pl_output: &mut Vec<ProductEntry>,
     p1: usize,
@@ -1234,7 +1262,7 @@ pub(super) fn emit_parent(
     if candidates.len() >= u32::MAX as usize {
         return Err(OperationError::IndexOverflow);
     }
-    let SparseWorkspace { p2_map, pair_counts, single_pairs, .. } = ws;
+    let EmitScratch { p2_map, pair_counts, single_pairs } = emit;
     let first = pl_output.len();
     if let [entry] = candidates {
         // One candidate is one product of one pair: no `g` parent to group
