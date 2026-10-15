@@ -34,6 +34,9 @@ use super::{OperationError, NO_PRODUCT};
 use super::budget::try_resize_dead;
 use super::products::{ProductEntry, FNodeIdx, GNodeIdx, ProductNodeIdx};
 
+/// Bytes per slab cell.
+const CELL_BYTES: u64 = std::mem::size_of::<u32>() as u64;
+
 /// Offset of a level's grid within the arena's flat slab.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct GridBase(usize);
@@ -211,14 +214,23 @@ impl GridArena {
         }
         let base = bump.end;
         bump.end += cells;
-        // The frontier grows a level at a time, so the slab is reserved
-        // with doubling. Reserved exactly, it was reallocated at every level
-        // that missed the free list, and the allocator copied the whole slab
-        // each time: tens of copies of a slab of hundreds of megabytes on a
-        // large network.
-        let missing = bump.end.saturating_sub(self.cells.len());
-        if missing > 0 {
-            eng.limits().reserve(&mut self.cells, missing)?;
+        // The frontier grows a level at a time, so the slab doubles.
+        // Reserved exactly, it was reallocated at every level that missed the
+        // free list, and the allocator copied the whole slab each time: tens
+        // of copies of a slab of hundreds of megabytes on a large network.
+        // Doubling maps a block twice the slab's size while the old one is
+        // still mapped, so it is taken only when that block fits in half the
+        // memory headroom. Nearer the cap the slab grows exactly: a doubled
+        // block there can be refused where the frontier itself fits, and its
+        // spare capacity would hold address space the apply needs elsewhere.
+        let cap = self.cells.capacity();
+        if bump.end > cap {
+            let lim = eng.limits();
+            let doubled = cap.saturating_mul(2).max(bump.end);
+            let fits = (doubled as u64).saturating_mul(CELL_BYTES) <= lim.headroom() / 2;
+            let target = if fits { doubled } else { bump.end };
+            let additional = target - self.cells.len();
+            lim.reserve_exact(&mut self.cells, additional)?;
         }
         Ok(GridBase(base))
     }
@@ -319,3 +331,7 @@ impl GridArena {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "tests/grid_arena.rs"]
+mod tests;
