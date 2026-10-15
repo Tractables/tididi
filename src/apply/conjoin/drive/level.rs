@@ -675,7 +675,7 @@ fn materialize_children_and_grid(
     // until its parent needs a dense view. Only a bump arena uses that route;
     // a preplanned arena already owns the full slab.
     let cells = if use_sparse_marginal { gw.here } else { fw.here * gw.here };
-    let base = run.products.arena.alloc(eng, ti, cells)?;
+    let base = run.products.arena.claim(eng, ti, cells)?;
     if use_sparse_marginal {
         run.products.arena.set_sparse(ti);
     } else {
@@ -1135,6 +1135,7 @@ pub(super) fn build_level_dense(
             if charged != usize::MAX && lim.cannot_stop_within(work, meter as u64) {
                 let size = complete_level_size(f.level(t), g.level(t))?;
                 let cells = fw.here * gw.here;
+                run.products.arena.fill_to(eng, output_grid_base.idx() + cells)?;
                 let slab = &mut run.products.arena.slab_mut()[output_grid_base.idx()..output_grid_base.idx() + cells];
                 super::compose::write(eng, product, &mut run.levels[ti], size, slab, work, (meter, doublings))?;
                 break 'routes;
@@ -1197,7 +1198,7 @@ pub(super) fn build_level_dense(
             RowScratch {
                 f_pairs: run.f_pairs_scratch,
                 g_pairs: run.g_pairs_scratch,
-                node_idx: run.products.arena.slab_mut(),
+                node_idx: run.products.arena.slab_vec(),
             },
             level,
             StreamEnv {

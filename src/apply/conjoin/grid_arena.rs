@@ -143,12 +143,38 @@ impl GridArena {
         self.grids[t] = None;
     }
 
-    /// Claim `cells` of slab for level `t`.
+    /// Claim `cells` of slab for level `t`, `NO_PRODUCT`-filled where the
+    /// frontier grew.
+    pub(super) fn alloc(
+        &mut self,
+        eng: &Engine,
+        t: usize,
+        cells: usize,
+    ) -> Result<GridBase, OperationError> {
+        let base = self.claim(eng, t, cells)?;
+        let end = self.bump.as_ref().map_or(0, |b| b.end);
+        try_resize_dead(eng, &mut self.cells, end)?;
+        Ok(base)
+    }
+
+    /// Claim `cells` of slab for level `t`, for a producer that writes its
+    /// grid through the row loop ([`run_level_rows`]), and leave the cells
+    /// past the slab's end unwritten: the row loop extends the slab over
+    /// each row as it reaches it, which writes the row's cells once.
+    ///
+    /// The capacity is reserved here, so the extension never reallocates.
+    /// A grid claimed whole and filled whole was written twice, once by the
+    /// fill and once by its row, and an operation stopped inside a wide
+    /// level paid for the whole grid, every page of it new, when its rows
+    /// had reached a few: a level of 24579 by 24579 cells, 2.4 GB, cost the
+    /// stopped operations that reached it most of their time.
     ///
     /// Pre-planned, that is a lookup: the base was decided at setup. Bumping,
     /// a freed region is reused when one fits (best-fit, to curb
     /// fragmentation) and the frontier grows only on a miss.
-    pub(super) fn alloc(
+    ///
+    /// [`run_level_rows`]: super::cell::rows::run_level_rows
+    pub(super) fn claim(
         &mut self,
         eng: &Engine,
         t: usize,
@@ -157,6 +183,10 @@ impl GridArena {
         let Some(bump) = &mut self.bump else {
             return Ok(self.grids[t].expect("a pre-planned layout grids every level"));
         };
+        // A grid claimed before is written out by the time the next level
+        // claims, its level being built in between; this keeps every freed
+        // region inside the slab whatever happens between two claims.
+        try_resize_dead(eng, &mut self.cells, bump.end)?;
         if cells == 0 {
             // Zero-width grid: never read or freed meaningfully; hand
             // out the cursor without growing.
@@ -190,8 +220,19 @@ impl GridArena {
         if missing > 0 {
             eng.limits().reserve(&mut self.cells, missing)?;
         }
-        try_resize_dead(eng, &mut self.cells, bump.end)?;
         Ok(GridBase(base))
+    }
+
+    /// Write out level grids claimed by [`claim`](Self::claim) up to `end`,
+    /// for a producer that writes its grid other than through the row loop.
+    pub(super) fn fill_to(&mut self, eng: &Engine, end: usize) -> Result<(), OperationError> {
+        try_resize_dead(eng, &mut self.cells, end)
+    }
+
+    /// The slab itself, for the row loop, which extends it over a grid
+    /// claimed by [`claim`](Self::claim) a row at a time.
+    pub(super) fn slab_vec(&mut self) -> &mut Vec<u32> {
+        &mut self.cells
     }
 
     /// Return a consumed region, coalescing with physically adjacent free

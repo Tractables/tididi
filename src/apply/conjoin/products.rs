@@ -300,8 +300,8 @@ impl Products {
         (ProductLists { left, right, out }, lookups)
     }
 
-    pub(super) fn row_buffers(&mut self, t: usize) -> (&mut [u32], &mut Vec<ProductEntry>) {
-        (self.arena.slab_mut(), &mut self.product_lists[t])
+    pub(super) fn row_buffers(&mut self, t: usize) -> (&mut Vec<u32>, &mut Vec<ProductEntry>) {
+        (self.arena.slab_vec(), &mut self.product_lists[t])
     }
 
     /// Resolve a completed product without exposing its representation to the caller.
