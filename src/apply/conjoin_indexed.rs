@@ -406,7 +406,7 @@ impl Walk<'_> {
     fn plan(&mut self, top: VtreeIdx, roots: Vec<u32>, by_f: bool) -> Result<Plan, OperationError> {
         let order = self.order(top)?;
         let reach = self.reach(&order, top, roots)?;
-        let tops = true_nodes(self.f);
+        let tops = true_nodes(self.lim, self.f)?;
         let mut levels: Vec<Option<Level>> = Vec::new();
         self.lim.reserve_exact(&mut levels, self.vtree.num_nodes())?;
         levels.resize_with(self.vtree.num_nodes(), || None);
