@@ -277,3 +277,69 @@ fn bottom_up_products_are_the_top_down_products() {
         }
     }
 }
+
+/// Every reservation `and_in_place` asks for, refused in turn, comes back
+/// as [`OverBudget`](crate::OperationError::OverBudget), pruned and loose,
+/// with `g` a set of codes and a cube; granted, the result is the
+/// conjunction.
+#[test]
+fn every_refused_reservation_comes_back_as_a_refusal() {
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x5e1f_f00d_2026_1014);
+    let nvars = 10u32;
+    let vars: Vec<VarId> = (1..=nvars).map(VarId).collect();
+    for (shape, vtree) in vtree_shapes(nvars) {
+        let f = Tdd::from_models(&vtree, &vars, &(0..300).map(|_| rng.below(1 << nvars)).collect::<Vec<_>>()).unwrap();
+        // A set that is neither false nor true, so that the operation runs.
+        let set = loop {
+            let set = block_set(&vtree, 2, &mut rng);
+            if !set.is_zero() && !eng.equivalent(&set, &Tdd::one(&vtree)).unwrap() {
+                break set;
+            }
+        };
+        let cube = Tdd::cube(&vtree, random_cube(nvars, &mut rng)).unwrap();
+        for (name, g) in [("set", &set), ("cube", &cube)] {
+            let want = eng.and(f.clone(), g.clone()).unwrap();
+            for prune in [true, false] {
+                let label = format!("{shape} {name} prune {prune}");
+                let mut refusals = 0;
+                for n in 0.. {
+                    eng.limits().refuse_nth_reserve(n);
+                    let got = and_in_place_on(&eng, f.clone(), g, prune);
+                    let fired = !eng.limits().refusal_pending();
+                    eng.limits().grant_every_reserve();
+                    match got {
+                        Ok(mut got) => {
+                            got.minimize().unwrap();
+                            assert!(eng.equivalent(&got, &want).unwrap(), "{label}: granted at {n}, a different function");
+                        }
+                        Err(crate::OperationError::OverBudget) => refusals += 1,
+                        Err(e) => panic!("{label}: refused at {n} with {e}"),
+                    }
+                    if !fired {
+                        break;
+                    }
+                    assert!(n < 100_000, "{label}: never past the last reservation");
+                }
+                assert!(refusals > 5, "{label}: only {refusals} refusal points");
+            }
+        }
+    }
+}
+
+/// The scratch `and_in_place` holds per vtree node is charged to the byte
+/// budget, as the apply's is: a budget below it refuses the operation.
+#[test]
+fn the_scratch_per_vtree_node_is_charged() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(400));
+    let f = eng.clause(&vtree, [1, 2, 300]).unwrap();
+    let cube = eng.cube(&vtree, [-1, 3]).unwrap();
+    let nodes = vtree.num_nodes() as u64;
+    let got = eng.and_in_place_loose(f.clone(), &cube).unwrap();
+    let charged = eng.limits().meters().in_flight_bytes;
+    assert!(charged >= nodes * std::mem::size_of::<Vec<u32>>() as u64, "{charged} bytes charged over {nodes} vtree nodes");
+    assert!(eng.equivalent(&got, &eng.and(f.clone(), cube.clone()).unwrap()).unwrap());
+    let _budget = eng.limits().scope(crate::limits::LimitConfig::none().with_memory_budget_bytes(Some(nodes * 8)));
+    assert_eq!(eng.and_in_place_loose(f, &cube).err(), Some(crate::OperationError::OverBudget));
+}
