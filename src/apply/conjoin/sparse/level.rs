@@ -286,6 +286,7 @@ pub(crate) fn apply_sparse_level(
 
     assert_no_marginal_children(t_idx, shape.left, shape.right, f, g, levels, passthrough);
 
+    seed_output(eng, &f.levels[t_idx], &g.levels[t_idx], &mut levels[t_idx], pl_output)?;
     let mut guard = WsGuard::new(eng);
     let ws = &mut *guard;
 
@@ -371,6 +372,38 @@ pub(crate) fn apply_sparse_level(
     Ok(())
 }
 
+
+/// Reserve the level's pair and node arenas and its product list at the
+/// sizes of the larger operand's level there, where the budget leaves three
+/// times that, so that the emit writes into them without the copies of
+/// growth by doubling. A level that holds more grows from there. Seeding
+/// at the two operands' sizes together was no faster and left its slack
+/// with the result, a third more peak memory on some programs. The pair
+/// arena's seed is charged to the output-pair meter, as
+/// `open_level_arenas` charges the dense route's.
+fn seed_output(
+    eng: &Engine,
+    f: &TddLevel,
+    g: &TddLevel,
+    level: &mut TddLevel,
+    products: &mut Vec<ProductEntry>,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let pairs = f.pairs.len().max(g.pairs.len());
+    let nodes = f.node_count().max(g.node_count());
+    let bytes = (pairs * std::mem::size_of::<ChildPair>()
+        + nodes * (std::mem::size_of::<crate::diagram::EncodedNode>() + std::mem::size_of::<ProductEntry>())) as u64;
+    if bytes.saturating_mul(3) >= lim.headroom() {
+        return Ok(());
+    }
+    let arena = level.pairs.stored_mut();
+    let before = arena.capacity();
+    lim.reserve_exact(arena, pairs.saturating_sub(arena.len()))?;
+    lim.charge_output_pairs(arena.capacity() - before);
+    let stored = level.nodes.stored_mut();
+    lim.reserve_exact(stored, nodes.saturating_sub(stored.len()))?;
+    lim.reserve_exact(products, nodes.saturating_sub(products.len()))
+}
 
 /// Count a level where f and g have one node each, whose one product's pairs
 /// are the candidates, by folding each candidate into `fold` instead of
