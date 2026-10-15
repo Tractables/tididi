@@ -1235,9 +1235,10 @@ fn candidate_pair(entry: &ParEntry) -> ChildPair {
 /// order a stable sort of the candidates by product would give. `p2_map`
 /// maps a g parent to its product while the parent is emitted and is
 /// restored to `NO_PRODUCT` before returning; a bail leaves entries behind,
-/// which `WsGuard` repairs. A parent with one candidate, as each node of an
-/// operand that holds one node per value of a shared block has at that
-/// block's levels, skips the map.
+/// which `WsGuard` repairs. A parent whose candidates all name one g
+/// parent has one product and skips the map, as a parent with one
+/// candidate does: each node of an operand that holds one node per value
+/// of a shared block, at that block's levels.
 ///
 /// A parent whose candidates all name one g parent, or all distinct ones,
 /// has its pairs in node order already, and they are copied into `level` as
@@ -1274,20 +1275,31 @@ pub(super) fn emit_parent(
         })?;
         return emit_single_pair(eng, level, candidate_pair(entry));
     }
-    pair_counts.clear();
-    for entry in candidates {
-        let slot = p2_map[entry.g_parent as usize];
-        if slot == NO_PRODUCT {
-            let idx = pl_output.len() as u32;
-            p2_map[entry.g_parent as usize] = idx;
-            lim.try_push(pl_output, ProductEntry {
-                f_idx: FNodeIdx(p1 as u32),
-                g_idx: GNodeIdx(entry.g_parent),
-                prod_idx: ProductNodeIdx(idx),
-            })?;
-            lim.try_push(pair_counts, 1)?;
-        } else {
-            pair_counts[slot as usize - first] += 1;
+    // Candidates of one g parent are the pairs of one product.
+    let g_parent = candidates[0].g_parent;
+    let one_product = candidates.iter().all(|entry| entry.g_parent == g_parent);
+    if one_product {
+        lim.try_push(pl_output, ProductEntry {
+            f_idx: FNodeIdx(p1 as u32),
+            g_idx: GNodeIdx(g_parent),
+            prod_idx: ProductNodeIdx(first as u32),
+        })?;
+    } else {
+        pair_counts.clear();
+        for entry in candidates {
+            let slot = p2_map[entry.g_parent as usize];
+            if slot == NO_PRODUCT {
+                let idx = pl_output.len() as u32;
+                p2_map[entry.g_parent as usize] = idx;
+                lim.try_push(pl_output, ProductEntry {
+                    f_idx: FNodeIdx(p1 as u32),
+                    g_idx: GNodeIdx(entry.g_parent),
+                    prod_idx: ProductNodeIdx(idx),
+                })?;
+                lim.try_push(pair_counts, 1)?;
+            } else {
+                pair_counts[slot as usize - first] += 1;
+            }
         }
     }
     let products = pl_output.len() - first;
@@ -1306,8 +1318,10 @@ pub(super) fn emit_parent(
         push_nodes_sorted(eng, level, pair_counts, single_pairs, candidates, &p2_map[..], first)
     };
     lim.charge_output_pairs(level.pairs.stored_mut().capacity().saturating_sub(pre_pairs_cap));
-    for e in &pl_output[first..] {
-        p2_map[e.g_idx.idx()] = NO_PRODUCT;
+    if !one_product {
+        for e in &pl_output[first..] {
+            p2_map[e.g_idx.idx()] = NO_PRODUCT;
+        }
     }
     built?;
     // No sort and no dedup: pair lists are order-free, and canonical child
