@@ -74,8 +74,8 @@ pub(super) fn grid_lookups_forced() -> bool {
 pub(super) fn note_lookups(lookups: PlainLookups) {
     let kind = match lookups {
         PlainLookups::Complete { .. } => 0,
-        PlainLookups::CompleteLeft => 1,
-        PlainLookups::CompleteRight => 2,
+        PlainLookups::CompleteLeft { .. } => 1,
+        PlainLookups::CompleteRight { .. } => 2,
         PlainLookups::Grid => return,
     };
     count_complete(kind);
