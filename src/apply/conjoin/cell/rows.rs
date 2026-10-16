@@ -610,10 +610,13 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool>(
 pub(crate) enum PlainLookups {
     /// Both sides read their grids.
     Grid,
-    /// The left side is complete; the right reads its grid.
-    CompleteLeft,
-    /// The right side is complete; the left reads its grid.
-    CompleteRight,
+    /// The left side is complete; the right reads its grid. `charged` as in
+    /// [`PlainLookups::Complete`], for an arena reserved for every pair the
+    /// level would write if none died.
+    CompleteLeft { charged: usize },
+    /// The right side is complete; the left reads its grid. `charged` as in
+    /// [`PlainLookups::CompleteLeft`].
+    CompleteRight { charged: usize },
     /// Both sides are complete, so no candidate dies and the level's pairs
     /// are known before its row loop. `charged` is the pair capacity the
     /// meters have been charged for when the arena was reserved to hold every
@@ -633,7 +636,9 @@ pub(crate) enum PlainLookups {
 /// side complete it is [`run_level_rows_plain::<false>`](run_level_rows_plain)
 /// with that side's lookup replaced: the fold and the culls on the grid side
 /// stay; on a level that built no masks they find nothing, as on
-/// `Route::PlainDense` they would not be run.
+/// `Route::PlainDense` they would not be run. It writes through a
+/// [`ReservedEmitSink`] too, its arena reserved for every pair the level
+/// would write if none died.
 pub(crate) fn run_level_rows_complete(
     eng: &Engine,
     rows: RowLoop<'_>,
@@ -657,15 +662,15 @@ pub(crate) fn run_level_rows_complete(
                 &mut Emit { sink: ReservedEmitSink { level, charged } },
             ),
         },
-        PlainLookups::CompleteLeft => run_level_rows::<false, _, _, _>(
+        PlainLookups::CompleteLeft { charged } => run_level_rows::<false, _, _, _>(
             eng, rows, scratch,
             &complete(&sides.left), &grid(&sides.right),
-            &mut Emit { sink: EmitSink { level } },
+            &mut Emit { sink: ReservedEmitSink { level, charged } },
         ),
-        PlainLookups::CompleteRight => run_level_rows::<false, _, _, _>(
+        PlainLookups::CompleteRight { charged } => run_level_rows::<false, _, _, _>(
             eng, rows, scratch,
             &grid(&sides.left), &complete(&sides.right),
-            &mut Emit { sink: EmitSink { level } },
+            &mut Emit { sink: ReservedEmitSink { level, charged } },
         ),
         PlainLookups::Grid => unreachable!("a level with no complete side takes the grid row loop"),
     }

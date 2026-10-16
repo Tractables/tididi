@@ -979,7 +979,7 @@ fn column_table_pays(f_level: &TddLevel, g_level: &TddLevel, f_width: usize, g_w
 /// How a level on `route` reads its child sides: by arithmetic on each
 /// [complete](crate::apply::conjoin::products::Products::is_complete) side
 /// of a plain route, from the grid otherwise. The pair capacity of a level
-/// with both sides complete is filled in once its arenas are open
+/// with a complete side is filled in once its arenas are open
 /// ([`reserve_complete_level`]).
 fn plain_lookups(route: Route, complete: Sides<bool>) -> PlainLookups {
     if grid_lookups_forced() || !matches!(route, Route::PlainDense | Route::Dense) {
@@ -987,16 +987,24 @@ fn plain_lookups(route: Route, complete: Sides<bool>) -> PlainLookups {
     }
     match (complete.left, complete.right) {
         (true, true) => PlainLookups::Complete { charged: usize::MAX },
-        (true, false) => PlainLookups::CompleteLeft,
-        (false, true) => PlainLookups::CompleteRight,
+        (true, false) => PlainLookups::CompleteLeft { charged: usize::MAX },
+        (false, true) => PlainLookups::CompleteRight { charged: usize::MAX },
         (false, false) => PlainLookups::Grid,
     }
 }
 
-/// Reserve the arenas of a level whose two child sides are complete to
-/// exactly what its row loop writes ([`complete_level_size`]), and return
-/// the pair capacity the output-pair meter has been charged for (see
+/// Reserve the arenas of a level with a complete child side to what its
+/// row loop writes where no candidate dies ([`complete_level_size`]), and
+/// return the pair capacity the output-pair meter has been charged for (see
 /// [`ReservedEmitSink`](crate::apply::conjoin::cell::ReservedEmitSink)).
+///
+/// With both sides complete that is exactly what the level writes. With one
+/// side complete a pair dies only on the other side, and the count bounds
+/// the level from above, within one to four times what it wrote on the
+/// bit-blasted circuits: the arena never grows. Grown by doubling from the
+/// seed of [`open_level_arenas`] instead, the large levels of an evidence
+/// walk spent a fifth of its time in the copies and page faults of the
+/// growth.
 ///
 /// Under the bounded-growth mode the arena grows as it would on the grid
 /// route, and `usize::MAX` says so. The reservations are charged to the
@@ -1163,7 +1171,10 @@ pub(super) fn build_level_dense(
             Some(charged) => lookups = PlainLookups::Complete { charged },
             None => {
                 open_level_arenas(lim, f, g, shape, level, route)?;
-                if let PlainLookups::Complete { charged } = &mut lookups {
+                if let PlainLookups::Complete { charged }
+                | PlainLookups::CompleteLeft { charged }
+                | PlainLookups::CompleteRight { charged } = &mut lookups
+                {
                     *charged = reserve_complete_level(lim, f.level(t), g.level(t), level)?;
                 }
                 note_lookups(lookups);

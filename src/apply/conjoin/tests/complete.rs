@@ -104,6 +104,33 @@ fn an_arena_past_the_seed_cap_charges_on_the_schedule() {
     assert!(census[3] > before[3], "no reserved arena outgrew its seed, so the meter's schedule went unchecked");
 }
 
+/// A level with one complete side past the cap on a level's seeded arena:
+/// its arena, reserved for every pair the level would write if none died,
+/// never grows, and charges the meter on the schedule the grid route's
+/// arena grows by. `x13 ↔ x45` in `f` and `x16 ↔ x45` in `g` leave half of
+/// the root's sub products unsatisfiable, so the root reads its right side
+/// from the grid and its left by arithmetic.
+#[test]
+fn a_level_with_one_complete_side_past_the_seed_cap_never_grows() {
+    let vtree = Arc::new(Vtree::balanced(64));
+    let f = equalities(&vtree, &[(1, 33), (3, 35), (5, 37), (7, 39), (9, 41), (11, 43), (13, 45)]);
+    let g = equalities(&vtree, &[(2, 34), (4, 36), (6, 38), (8, 40), (10, 42), (12, 44), (14, 46), (16, 45)]);
+    let root = vtree.root().idx();
+    assert_eq!((f.levels[root].live_pairs(), g.levels[root].live_pairs()), (128, 256));
+    let before = complete_census();
+    let fg = same_both_ways(&f, &g);
+    assert_eq!(fg.levels[root].live_pairs(), 128 * 128);
+    let census = complete_census();
+    assert!(census[1] > before[1], "no level read its left side alone by arithmetic");
+    assert!(census[3] > before[3], "no reserved arena outgrew its seed, so the meter's schedule went unchecked");
+    let grown = pairs_grown();
+    conjoin(&f, &g, true, None).0.unwrap();
+    assert!(pairs_grown() > grown, "the grid route's arena did not outgrow its seed");
+    let grown = pairs_grown();
+    conjoin(&f, &g, false, None).0.unwrap();
+    assert_eq!(pairs_grown(), grown, "a level's arena outgrew its reservation");
+}
+
 /// A level of one-pair nodes holds its pairs inline, none in its arena: a
 /// product with it is seeded at its pairs all the same, and no level of a
 /// conjunction under the seed's cap grows its arena. `g` over the leftmost
