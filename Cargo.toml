@@ -8,7 +8,7 @@ license = "Apache-2.0"
 repository = "https://github.com/Tractables/tididi"
 documentation = "https://docs.rs/tididi/0.1.0/tididi/"
 readme = "README.md"
-keywords = ["decision-diagram", "model-counting", "knowledge-compilation", "bdd", "wmc"]
+keywords = ["decision-diagram", "model-counting", "compilation", "bdd", "wmc"]
 categories = ["science", "algorithms", "data-structures"]
 exclude = ["bindings/", ".github/", ".gitignore", "CLAUDE.md", "AGENTS.md", "rust-toolchain.toml"]
 
