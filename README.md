@@ -129,3 +129,8 @@ Apache License, Version 2.0 ([LICENSE](./LICENSE)).
 [architecture reference]: https://tractables.github.io/tididi/tididi/guide/architecture/index.html
 
 [minimum configuration cost]: https://tractables.github.io/tididi/tididi/guide/examples/optimization/index.html
+
+## Acknowledgements
+
+This material is based upon work supported by the Defense Advanced Research
+Projects Agency (DARPA) under Agreement No. HR0011269E224.
