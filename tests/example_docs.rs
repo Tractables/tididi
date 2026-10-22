@@ -77,15 +77,16 @@ fn readme_example_matches_the_tested_crate_example() {
 /// `src/guide.rs` declares them, in the same order.
 #[test]
 fn crate_front_page_lists_every_walkthrough() {
-    let guide = include_str!("../src/guide.rs");
-    let (_, table) = guide.split_once("walkthroughs! {\n").expect("walkthroughs table");
-    let (table, _) = table.split_once("\n}").expect("closed walkthroughs table");
-    let expected = table.lines().map(|line| {
-        let (name, rest) = line.trim().split_once(" => (\"").expect("walkthrough entry");
-        let (title, rest) = rest.split_once("\", \"").expect("walkthrough title");
-        let description = rest.strip_suffix("\"),").expect("walkthrough description");
-        format!("[{title}](guide::examples::{name}) — {description}")
-    }).collect::<Vec<_>>();
+    // Line by line, so a Windows checkout's CRLF endings do not matter.
+    let expected = include_str!("../src/guide.rs").lines()
+        .skip_while(|line| *line != "walkthroughs! {").skip(1)
+        .take_while(|line| *line != "}")
+        .map(|line| {
+            let (name, rest) = line.trim().split_once(" => (\"").expect("walkthrough entry");
+            let (title, rest) = rest.split_once("\", \"").expect("walkthrough title");
+            let description = rest.strip_suffix("\"),").expect("walkthrough description");
+            format!("[{title}](guide::examples::{name}) — {description}")
+        }).collect::<Vec<_>>();
     let listed = include_str!("../src/lib.rs").lines()
         .filter_map(|line| line.strip_prefix("//! "))
         .filter_map(|line| line.split_once(". [").filter(|(n, _)| n.parse::<usize>().is_ok()))
