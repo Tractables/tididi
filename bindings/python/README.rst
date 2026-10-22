@@ -5,12 +5,12 @@
    :width: 400px
    :align: center
 
-|crates| |ci| |rust-docs| |python-docs| |c-docs| |arxiv| |license|
+|ci| |python-docs| |arxiv| |license|
 
 tididi for Python
 =================
 
-**Tree Decision Diagrams for Python, Rust and C.**
+**Tree Decision Diagrams for Python.**
 
 tididi represents Boolean functions as circuits called **Tree Decision Diagrams
 (TDDs)**, so you can work with their satisfying assignments without listing
@@ -129,21 +129,12 @@ Projects Agency (DARPA) under Agreement No. HR0011269E224.
 .. _minimum configuration cost: https://tractables.github.io/tididi/python/tutorials/08_minimum_cost.html
 .. _API reference: https://tractables.github.io/tididi/python/api.html
 
-.. |crates| image:: https://img.shields.io/crates/v/tididi.svg
-   :target: https://crates.io/crates/tididi
-   :alt: crates.io
 .. |ci| image:: https://github.com/Tractables/tididi/actions/workflows/rust.yml/badge.svg
    :target: https://github.com/Tractables/tididi/actions/workflows/rust.yml
    :alt: CI
-.. |rust-docs| image:: https://img.shields.io/badge/docs-Rust-blue
-   :target: https://tractables.github.io/tididi/tididi/
-   :alt: Rust guide
 .. |python-docs| image:: https://img.shields.io/badge/docs-Python-blue
    :target: https://tractables.github.io/tididi/python/
    :alt: Python guide
-.. |c-docs| image:: https://img.shields.io/badge/docs-C-blue
-   :target: https://tractables.github.io/tididi/c/
-   :alt: C guide
 .. |arxiv| image:: https://img.shields.io/badge/arXiv-2604.05537-b31b1b.svg
    :target: https://arxiv.org/abs/2604.05537
    :alt: arXiv

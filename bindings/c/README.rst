@@ -5,12 +5,12 @@
    :width: 400px
    :align: center
 
-|crates| |ci| |rust-docs| |python-docs| |c-docs| |arxiv| |license|
+|ci| |c-docs| |arxiv| |license|
 
 tididi for C and C++
 ====================
 
-**Tree Decision Diagrams for C, C++, Rust and Python.**
+**Tree Decision Diagrams for C and C++.**
 
 tididi represents Boolean functions as circuits called **Tree Decision Diagrams
 (TDDs)**, so you can work with their satisfying assignments without listing
@@ -147,18 +147,9 @@ Projects Agency (DARPA) under Agreement No. HR0011269E224.
 .. _public header: https://github.com/Tractables/tididi/blob/main/bindings/c/include/tididi.h
 .. _example.h: https://github.com/Tractables/tididi/blob/main/bindings/c/examples/example.h
 
-.. |crates| image:: https://img.shields.io/crates/v/tididi.svg
-   :target: https://crates.io/crates/tididi
-   :alt: crates.io
 .. |ci| image:: https://github.com/Tractables/tididi/actions/workflows/rust.yml/badge.svg
    :target: https://github.com/Tractables/tididi/actions/workflows/rust.yml
    :alt: CI
-.. |rust-docs| image:: https://img.shields.io/badge/docs-Rust-blue
-   :target: https://tractables.github.io/tididi/tididi/
-   :alt: Rust guide
-.. |python-docs| image:: https://img.shields.io/badge/docs-Python-blue
-   :target: https://tractables.github.io/tididi/python/
-   :alt: Python guide
 .. |c-docs| image:: https://img.shields.io/badge/docs-C-blue
    :target: https://tractables.github.io/tididi/c/
    :alt: C guide

@@ -30,10 +30,11 @@ variable, so leave the counting universe to the counting lesson.
 Rust uses `Tdd`, `!` and `clone()`; Python uses `Circuit`, `~` and `copy()`.
 Rust's checked calls return `Result`; Python operators raise exceptions.
 Keep installation instructions specific to the language and publication state.
-The three READMEs share one shape and present the whole project: the same
-badges, every language's guide, the capabilities with links to that language's
-lessons, the applications built on tididi (tididi-cnf, tddlog), the citation
-and the acknowledgement. Only the install, example and lesson links differ.
+The three READMEs share one shape: badges, the capabilities with links to
+that language's lessons, the applications built on tididi (tididi-cnf, tddlog),
+the citation and the acknowledgement. The root README's badges cover every
+language and the crate; a binding README's badges cover only that binding
+(CI, its guide, its package index once published, the paper, the license).
 The binding READMEs use absolute links, since a package index shows them.
 
 C uses opaque handles, output slots initialized to NULL, and explicit error and
@@ -42,14 +43,14 @@ and freeing without changing their ownership rules.
 
 ### Instances
 
-- [Rust README](../README.md) <!-- reviewed: 6c5ab4ec2049e41d11455416b3ab96d3a21a94a0819ea34e9038fa96eaaf41dd -->
-- [Rust crate introduction](../src/lib.rs) <!-- reviewed: d2dd3cb53efb666fdb38a3c39448d8acaa600b9ee4b68574539a141203e5ca10 -->
-- [Python README](../bindings/python/README.rst) <!-- reviewed: 562e065a88bcbf8605ae4d4de52ee7bd716f1d11fbfb5e37830af09148aff4b2 -->
-- [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: c2c12c85e78992eb24aa16cf01729695be7fa8eaeafc534643fd2a077409bb22 -->
-- [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: bf3a1ec7b50ee3e753285f0e849442806a7bdec9cbf8092631694cd627650d52 -->
-- [C program first_circuit](../bindings/c/examples/first_circuit.c) <!-- reviewed: e1b814b29f5b9e0c0bd29e0b9a4269d46ad5b1ba82aa9f122318ea7314aa01a4 -->
-- [C example](../bindings/c/examples/example.h) <!-- reviewed: 6a9f9b7f08e21cf5776c843f6236785a5dbd022fe39b229e3922d171e93c1175 -->
-- [C README](../bindings/c/README.rst) <!-- reviewed: 6bee2f862ba69cf4d313b15e9a6e56a0ae186f274467acb7b92bc5dbdc62d880 -->
+- [Rust README](../README.md) <!-- reviewed: 78e39ef30c55707ab94f53d5873eb60afe006462289aae19df83604c7a7a6d5e -->
+- [Rust crate introduction](../src/lib.rs) <!-- reviewed: 9c6d4525b438add32d8315703404756c48698d803cc270d487a3efaa962cf6dc -->
+- [Python README](../bindings/python/README.rst) <!-- reviewed: 5a9e6e6b390f41c8567fc52c0e332fe8f4a03a645d35814acb8a6f9b9d74245b -->
+- [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: ef879ba1c16f15b49bb7371afaa84237984e64b32379169047ed695416141f2c -->
+- [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: 3f9d83106392450313b05d80dc88c34d9c558e95b37fa7e305cb8f56ed921812 -->
+- [C program first_circuit](../bindings/c/examples/first_circuit.c) <!-- reviewed: 7ae2ec914afe811f30f7dff4b2b515d67271f135e608c04063774e6ee49fb412 -->
+- [C example](../bindings/c/examples/example.h) <!-- reviewed: dcb3f10129630d4d01bf5de2c2aa8e57cb304321e77838ae9842aa8bee450c25 -->
+- [C README](../bindings/c/README.rst) <!-- reviewed: 3109228dd103a257b716e84610a6b62642aa9e7330cbf4a5e4bd485d423d8bd4 -->
 
 ## Reading order
 
