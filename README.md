@@ -48,8 +48,7 @@ networks, and discrete probabilistic programs.
 
 ## Getting started
 
-With `tididi = "0.1"` in your dependencies, this example builds `(x ∧ y) ∨ z`
-and counts its satisfying assignments:
+This example builds `(x ∧ y) ∨ z` and counts its satisfying assignments:
 
 ```rust
 use std::sync::Arc;
