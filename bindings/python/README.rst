@@ -5,7 +5,7 @@
    :width: 400px
    :align: center
 
-|ci| |python-docs| |arxiv| |license|
+|pypi| |ci| |python-docs| |arxiv| |license|
 
 tididi for Python
 =================
@@ -25,13 +25,13 @@ efficiently under Boolean operations; in practice they can be much smaller.
 Install
 -------
 
-The package is not on PyPI yet. Build it from a checkout, with Rust and
-Python 3.10 or later installed:
-
 .. code-block:: sh
 
-   git clone https://github.com/Tractables/tididi
-   python -m pip install ./tididi/bindings/python
+   pip install tididi
+
+Wheels cover Python 3.10 and later on Linux (x86-64 and ARM64), macOS and
+Windows. Elsewhere pip builds the package from source, which needs a Rust
+toolchain.
 
 Getting started
 ---------------
@@ -129,6 +129,9 @@ Projects Agency (DARPA) under Agreement No. HR0011269E224.
 .. _minimum configuration cost: https://tractables.github.io/tididi/python/tutorials/08_minimum_cost.html
 .. _API reference: https://tractables.github.io/tididi/python/api.html
 
+.. |pypi| image:: https://img.shields.io/pypi/v/tididi.svg
+   :target: https://pypi.org/project/tididi/
+   :alt: PyPI
 .. |ci| image:: https://github.com/Tractables/tididi/actions/workflows/rust.yml/badge.svg
    :target: https://github.com/Tractables/tididi/actions/workflows/rust.yml
    :alt: CI

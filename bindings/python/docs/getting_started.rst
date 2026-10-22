@@ -3,13 +3,13 @@
 A first circuit
 ===================
 
-From a source checkout, install the Python package with Rust available:
+Install the package from PyPI:
 
 .. code-block:: console
 
-   python -m pip install ./bindings/python
+   python -m pip install tididi
 
-Once installed, ordinary use needs only Python. A vtree groups the variables
+A vtree groups the variables
 that your circuits will share. Here we have three Boolean variables and the
 function ``(x ∧ y) ∨ z``:
 

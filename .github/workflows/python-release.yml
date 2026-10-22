@@ -1,7 +1,8 @@
 name: Python release
 
 # Builds the Python wheels and source archive, tests them, and on request
-# publishes them to PyPI through trusted publishing (no stored token).
+# publishes them to PyPI with the PYPI_API_TOKEN secret, or through trusted
+# publishing when that secret is not set.
 on:
   workflow_dispatch:
     inputs:
@@ -87,3 +88,5 @@ jobs:
         python -m pip install twine
         python -m twine check --strict dist/*
     - uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        password: ${{ secrets.PYPI_API_TOKEN }}

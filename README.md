@@ -7,6 +7,8 @@
 <p align="center">
   <a href="https://crates.io/crates/tididi"><img
      src="https://img.shields.io/crates/v/tididi.svg" alt="crates.io"></a>
+  <a href="https://pypi.org/project/tididi/"><img
+     src="https://img.shields.io/pypi/v/tididi.svg" alt="PyPI"></a>
   <a href="https://github.com/Tractables/tididi/actions/workflows/rust.yml"><img
      src="https://github.com/Tractables/tididi/actions/workflows/rust.yml/badge.svg" alt="CI"></a>
   <a href="https://tractables.github.io/tididi/tididi/"><img
@@ -35,9 +37,8 @@ efficiently under Boolean operations; in practice they can be much smaller.
 
 - **Rust:** `cargo add tididi`. See the [Rust guide] and the
   [crate on crates.io](https://crates.io/crates/tididi).
-- **Python:** build the package from a checkout with `pip install ./bindings/python`
-  (needs a Rust toolchain). See the [Python guide] and the
-  [Python README](bindings/python/README.rst).
+- **Python:** `pip install tididi`. See the [Python guide] and the
+  [package on PyPI](https://pypi.org/project/tididi/).
 - **C and C++:** build and install the CMake package. See the [C guide] and the
   [C README](bindings/c/README.rst).
 

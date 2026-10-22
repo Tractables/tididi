@@ -45,10 +45,10 @@ and freeing without changing their ownership rules.
 
 ### Instances
 
-- [Rust README](../README.md) <!-- reviewed: 062bc2d0b91661849902bf4b423f7a98e2c82a49d6c31f0de4ce05f24e66be49 -->
+- [Rust README](../README.md) <!-- reviewed: 6dc9a260bce1b70995ebdeab288607ec1d208282755f25615cff46fc36768bdb -->
 - [Rust crate introduction](../src/lib.rs) <!-- reviewed: 8c2acd8c1e05963c8e7db621499445753246fe151d3bae6286df4886496b828c -->
-- [Python README](../bindings/python/README.rst) <!-- reviewed: 03d874902ab09327414f902f721753b0bc020282f7114c85a1504d384bd038a8 -->
-- [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: 141be949a3815d0ae6b4c9578c28043011fbcdbfbcf3e711ba4b4f958d415bf1 -->
+- [Python README](../bindings/python/README.rst) <!-- reviewed: 4070d3d21f1255b0274b735d1a88db0dca8d7705b63cbc4d0d76f38122b5b583 -->
+- [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: d7539c9ad970763cfe1fe067bb2ec852b5799d0b8ed86c182bf00846b022f0d2 -->
 - [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: 9f54a4da5545bffa0df09d373a2f14973a174603b8a1e8c09a306cd577699083 -->
 - [C program first_circuit](../bindings/c/examples/first_circuit.c) <!-- reviewed: 11795daa8cc7959dd2dd6deaf25939cf13dd4850779f30cc5e1810d7552a0b89 -->
 - [C example](../bindings/c/examples/example.h) <!-- reviewed: f6cf4d81d58a7025959bf5d5db77dace478f5058e75d6eac63470b759d8e022b -->
