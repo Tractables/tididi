@@ -1,17 +1,19 @@
 // scenario: docs/scenarios.md#first-circuit
 
-//! Represent Boolean functions with Tree Decision Diagrams.
+//! Tree Decision Diagrams for Rust.
 //!
-//! A [`Vtree`] groups the variables and a [`Tdd`] owns a function on that vtree.
-//! Combine diagrams with [`and`] and [`or`], then reuse the result for
-//! model counting, Boolean queries, or evaluation under different literal weights.
-//! For a fixed vtree, a minimized diagram is canonical: equivalent functions
-//! have the same diagram.
+//! tididi represents Boolean functions as circuits called Tree Decision
+//! Diagrams (TDDs), so you can work with their satisfying assignments without
+//! listing them. Build a circuit once, then combine it with other circuits or
+//! query it as your inputs change. Like binary decision diagrams, minimized
+//! TDDs are canonical and combine efficiently under Boolean operations; in
+//! practice they can be much smaller. The same library is available from
+//! [Python](https://tractables.github.io/tididi/python/) and
+//! [C](https://tractables.github.io/tididi/c/).
 //!
 //! # A first function
 //!
-//! For `(x ∧ y) ∨ z`, four assignments have `z` true and one more has both
-//! `x` and `y` true while `z` is false:
+//! This example builds `(x ∧ y) ∨ z` and counts its satisfying assignments:
 //!
 //! ```
 //! use std::sync::Arc;
@@ -33,22 +35,42 @@
 //! Satisfying assignments: 5
 //! ```
 //!
-//! Integer literals are signed and one-based. Reuse the same `Arc<Vtree>` for
-//! operands you will combine.
-//! Queries borrow diagrams; transformations taking `Tdd` consume them, so clone
-//! an operand first if it must be kept.
+//! Four assignments have `z` true, and one more has `z` false with `x` and `y`
+//! true.
 //!
-//! # Applications
+//! A [`Vtree`] is a binary tree that groups the variables; diagrams you
+//! combine must share the same `Arc<Vtree>`. Literals are signed variable
+//! numbers: `1` is `x` and `-2` is `¬y`. Boolean operations consume their
+//! operands, so clone an operand first to keep it; queries such as
+//! [`Tdd::model_count`] borrow the diagram.
 //!
-//! The [configuration example](guide::examples::configurations) builds constraints,
-//! counts solutions, and narrows the choices after an observation.
-//! The [reachability example](guide::examples::reachability) combines Boolean
-//! operations, quantification, and renaming to explore a transition system.
-//! The [probability example](guide::examples::probability) evaluates events under
-//! changing weights to answer conditional-probability queries.
+//! # Worked examples
 //!
-//! The [guide] holds the API overview, further worked examples, the
-//! data model and the architecture reference.
+//! The [worked examples](guide::examples) cover what the library does:
+//!
+//! - **Build and transform functions** by combining circuits, fixing variables
+//!   and quantifying them out: the
+//!   [reachability example](guide::examples::reachability) explores a
+//!   transition system.
+//! - **Find and count solutions**, and test equivalence or implication: the
+//!   [configuration example](guide::examples::configurations) counts a backup
+//!   application's valid configurations as a user changes their choices.
+//! - **Evaluate weighted models** such as probabilities, changing the weights
+//!   without rebuilding the circuit: the
+//!   [probability example](guide::examples::probability) answers a
+//!   conditional-probability query, and custom algebras compute other
+//!   quantities, such as a [minimum configuration cost](guide::examples::optimization).
+//!
+//! The [full list](guide::examples) also covers tables, saving and loading,
+//! variable grouping, reusable components, simplification under assumptions,
+//! resource limits and circuit statistics.
+//!
+//! # Reference
+//!
+//! The [API overview](guide::api) finds the operation for a task, and each
+//! item below gives its contract. The [data model](guide::model) explains the
+//! representation; contributors can start with the
+//! [architecture reference](guide::architecture).
 
 // Guards the public-release doc surface: an undocumented public item warns.
 #![warn(missing_docs)]
