@@ -1,9 +1,12 @@
 name: Python release
 
-# Builds the Python wheels and source archive, tests them, and on request
-# publishes them to PyPI with the PYPI_API_TOKEN secret, or through trusted
-# publishing when that secret is not set.
+# Builds the Python wheels and source archive from a published release, or by
+# hand from a branch, and tests them. A published release uploads them to PyPI,
+# as does a manual run with `publish`; the upload uses the PYPI_API_TOKEN
+# secret, or trusted publishing when that secret is not set.
 on:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       publish:
@@ -73,7 +76,7 @@ jobs:
         path: dist/*.tar.gz
 
   publish:
-    if: inputs.publish
+    if: github.event_name == 'release' || inputs.publish
     needs: [wheels, sdist]
     runs-on: ubuntu-latest
     permissions:

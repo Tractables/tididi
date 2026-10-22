@@ -113,6 +113,10 @@ jobs:
 
   miri:
     runs-on: ubuntu-latest
+    # Miri takes about an hour; a newer push to the same branch replaces it.
+    concurrency:
+      group: miri-${{ github.ref }}
+      cancel-in-progress: true
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@nightly
