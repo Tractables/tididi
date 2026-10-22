@@ -36,6 +36,8 @@ the citation and the acknowledgement. The root README's badges cover every
 language and the crate; a binding README's badges cover only that binding
 (CI, its guide, its package index once published, the paper, the license).
 The binding READMEs use absolute links, since a package index shows them.
+The Rust crate introduction lists every worked example in guide order, as the
+Python and C guide indexes do; a test keeps the list in step with `src/guide.rs`.
 
 C uses opaque handles, output slots initialized to NULL, and explicit error and
 cleanup functions. Its shared example helper wraps checking, copying, counting
@@ -43,14 +45,14 @@ and freeing without changing their ownership rules.
 
 ### Instances
 
-- [Rust README](../README.md) <!-- reviewed: 78e39ef30c55707ab94f53d5873eb60afe006462289aae19df83604c7a7a6d5e -->
-- [Rust crate introduction](../src/lib.rs) <!-- reviewed: d9755f27e9a7c7ec022f64b2f60d3dd5100a4a163eba74e0988dc5fdb7559f12 -->
-- [Python README](../bindings/python/README.rst) <!-- reviewed: 5a9e6e6b390f41c8567fc52c0e332fe8f4a03a645d35814acb8a6f9b9d74245b -->
-- [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: ef879ba1c16f15b49bb7371afaa84237984e64b32379169047ed695416141f2c -->
-- [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: 3f9d83106392450313b05d80dc88c34d9c558e95b37fa7e305cb8f56ed921812 -->
-- [C program first_circuit](../bindings/c/examples/first_circuit.c) <!-- reviewed: 7ae2ec914afe811f30f7dff4b2b515d67271f135e608c04063774e6ee49fb412 -->
-- [C example](../bindings/c/examples/example.h) <!-- reviewed: dcb3f10129630d4d01bf5de2c2aa8e57cb304321e77838ae9842aa8bee450c25 -->
-- [C README](../bindings/c/README.rst) <!-- reviewed: 3109228dd103a257b716e84610a6b62642aa9e7330cbf4a5e4bd485d423d8bd4 -->
+- [Rust README](../README.md) <!-- reviewed: 062bc2d0b91661849902bf4b423f7a98e2c82a49d6c31f0de4ce05f24e66be49 -->
+- [Rust crate introduction](../src/lib.rs) <!-- reviewed: 8c2acd8c1e05963c8e7db621499445753246fe151d3bae6286df4886496b828c -->
+- [Python README](../bindings/python/README.rst) <!-- reviewed: 03d874902ab09327414f902f721753b0bc020282f7114c85a1504d384bd038a8 -->
+- [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: 141be949a3815d0ae6b4c9578c28043011fbcdbfbcf3e711ba4b4f958d415bf1 -->
+- [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: 9f54a4da5545bffa0df09d373a2f14973a174603b8a1e8c09a306cd577699083 -->
+- [C program first_circuit](../bindings/c/examples/first_circuit.c) <!-- reviewed: 11795daa8cc7959dd2dd6deaf25939cf13dd4850779f30cc5e1810d7552a0b89 -->
+- [C example](../bindings/c/examples/example.h) <!-- reviewed: f6cf4d81d58a7025959bf5d5db77dace478f5058e75d6eac63470b759d8e022b -->
+- [C README](../bindings/c/README.rst) <!-- reviewed: eec88e855759bb94f7a61994d5a3cf727d952aee2288a9058b43d257c1284ac5 -->
 
 ## Reading order
 

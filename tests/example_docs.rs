@@ -73,6 +73,27 @@ fn readme_example_matches_the_tested_crate_example() {
     assert_eq!(normalized(example), normalized(&visible), "README must match the executed doctest");
 }
 
+/// The crate front page lists the walkthroughs as the `walkthroughs!` table in
+/// `src/guide.rs` declares them, in the same order.
+#[test]
+fn crate_front_page_lists_every_walkthrough() {
+    let guide = include_str!("../src/guide.rs");
+    let (_, table) = guide.split_once("walkthroughs! {\n").expect("walkthroughs table");
+    let (table, _) = table.split_once("\n}").expect("closed walkthroughs table");
+    let expected = table.lines().map(|line| {
+        let (name, rest) = line.trim().split_once(" => (\"").expect("walkthrough entry");
+        let (title, rest) = rest.split_once("\", \"").expect("walkthrough title");
+        let description = rest.strip_suffix("\"),").expect("walkthrough description");
+        format!("[{title}](guide::examples::{name}) — {description}")
+    }).collect::<Vec<_>>();
+    let listed = include_str!("../src/lib.rs").lines()
+        .filter_map(|line| line.strip_prefix("//! "))
+        .filter_map(|line| line.split_once(". [").filter(|(n, _)| n.parse::<usize>().is_ok()))
+        .map(|(_, item)| format!("[{item}"))
+        .collect::<Vec<_>>();
+    assert_eq!(listed, expected, "src/lib.rs must list every walkthrough in guide order");
+}
+
 /// Keep links within the documentation version rustdoc is rendering. The
 /// rendered pages are checked for the versioned example and figure links by
 /// `tests/rendered_docs.py`.

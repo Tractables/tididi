@@ -46,24 +46,23 @@
 //!
 //! # Worked examples
 //!
-//! The [worked examples](guide::examples) cover what the library does:
+//! The [worked examples](guide::examples) build up from basic circuit
+//! operations to custom calculations. Each solves one problem, shows its
+//! output and links a program you can run:
 //!
-//! - **Build and transform functions** by combining circuits, fixing variables
-//!   and quantifying them out: the
-//!   [reachability example](guide::examples::reachability) explores a
-//!   transition system.
-//! - **Find and count solutions**, and test equivalence or implication: the
-//!   [configuration example](guide::examples::configurations) counts a backup
-//!   application's valid configurations as a user changes their choices.
-//! - **Evaluate weighted models** such as probabilities, changing the weights
-//!   without rebuilding the circuit: the
-//!   [probability example](guide::examples::probability) answers a
-//!   conditional-probability query, and custom algebras compute other
-//!   quantities, such as a [minimum configuration cost](guide::examples::optimization).
-//!
-//! The [full list](guide::examples) also covers tables, saving and loading,
-//! variable grouping, reusable components, simplification under assumptions,
-//! resource limits and circuit statistics.
+//! 1. [Configurations](guide::examples::configurations) — Build rules, count solutions, and update a user's choices.
+//! 2. [What are we counting?](guide::examples::counting) — Distinguish observations, substitution, and projection.
+//! 3. [Probabilities](guide::examples::probability) — Evaluate events under changing probabilities.
+//! 4. [Reachability](guide::examples::reachability) — Explore the states reachable through a transition system.
+//! 5. [Tables and updates](guide::examples::tables) — Build a circuit from rows and maintain it as the table changes.
+//! 6. [Saving and loading](guide::examples::persistence) — Save circuits and restore them for later use.
+//! 7. [Variable grouping](guide::examples::vtrees) — Compare circuit sizes under different vtrees.
+//! 8. [Reusable components](guide::examples::composition) — Place a compiled circuit in a larger model and connect its copies.
+//! 9. [Simplify under assumptions](guide::examples::care) — Reduce a circuit where a care set is guaranteed to hold.
+//! 10. [Execution limits](guide::examples::execution) — Bound work and release retained scratch buffers.
+//! 11. [Minimum costs](guide::examples::optimization) — Define a custom evaluation algebra.
+//! 12. [Keep values instead of structure](guide::examples::marginalization) — Preserve counts or fixed weighted values while discarding a subtree.
+//! 13. [Circuit statistics](guide::examples::statistics) — Traverse nodes and pairs for a custom measurement.
 //!
 //! # Reference
 //!
