@@ -36,6 +36,16 @@ sums such as probabilities, and change the weights without rebuilding the
 circuit, as in the [probability example]. Custom algebras compute other
 quantities, such as a [minimum configuration cost].
 
+## Applications built on tididi
+
+[tididi-cnf](https://github.com/Tractables/tididi-cnf) compiles CNF formulas
+into TDDs for model counting, weighted model counting and projected model
+counting.
+
+[tddlog](https://github.com/Tractables/tddlog) performs exact probabilistic
+inference for higher-level languages: ProbLog programs, Bayesian and Markov
+networks, and discrete probabilistic programs.
+
 ## Getting started
 
 With `tididi = "0.1"` in your dependencies, this example builds `(x ∧ y) ∨ z`

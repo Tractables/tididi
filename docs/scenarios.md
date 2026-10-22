@@ -30,6 +30,7 @@ variable, so leave the counting universe to the counting lesson.
 Rust uses `Tdd`, `!` and `clone()`; Python uses `Circuit`, `~` and `copy()`.
 Rust's checked calls return `Result`; Python operators raise exceptions.
 Keep installation instructions specific to the language and publication state.
+The Rust README also links the downstream applications tididi-cnf and tddlog.
 
 C uses opaque handles, output slots initialized to NULL, and explicit error and
 cleanup functions. Its shared example helper wraps checking, copying, counting
@@ -37,14 +38,14 @@ and freeing without changing their ownership rules.
 
 ### Instances
 
-- [Rust README](../README.md) <!-- reviewed: 4f0836c78aeb2b917a8dce34f3ffe4402332d75813660c5245999fc97352e21b -->
-- [Rust crate introduction](../src/lib.rs) <!-- reviewed: eacf41da82ffb2a61e06369db71c912b71b0ded561b448ae6737c4ba4fe773b0 -->
-- [Python README](../bindings/python/README.rst) <!-- reviewed: 6714307975bc74825c81c3dc7d3ee5638e78b39fad471e1727573258639f2c27 -->
-- [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: 0d6e875e0ebc28587475b21d7ca150a0d47eb638136e2cab30ddeb7f7a639c4b -->
-- [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: e1463a69fbdff00995be7201f1f5972cb3cd4c54f43651125a4460eddc9d9474 -->
-- [C program first_circuit](../bindings/c/examples/first_circuit.c) <!-- reviewed: 8c48e840824952569b8a5c34c26a077c2763c75f5ef799438d2912bd6198e47f -->
-- [C example](../bindings/c/examples/example.h) <!-- reviewed: d0dcdeac33d37f5dad8a623a68d812ba68490a7195091ed98e142ced38871e28 -->
-- [C README](../bindings/c/README.rst) <!-- reviewed: b274e94a0064a45d285913a834a23d3fba37a8e2aedbfedee1ffbb866eaace76 -->
+- [Rust README](../README.md) <!-- reviewed: a6b19f942f54388d6a2d5b0447b252a87b45b746768756095a3800ba34e22505 -->
+- [Rust crate introduction](../src/lib.rs) <!-- reviewed: 025c31cb4d706478979289fa6682ec541a4895e15a2c6508569d4201333d733e -->
+- [Python README](../bindings/python/README.rst) <!-- reviewed: 9a3addc70879f9b0a2a311025f88c624ca79ff89294162d068bc6c45c2e4e39c -->
+- [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: 26181d1ee4c75de6c30ce15c381ce0404e16108bf512da194b6296ee3153e10a -->
+- [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: f2b68a1251b26fc64c0bcb5b8994194029c66f5d933fdbee4622218c9af4453e -->
+- [C program first_circuit](../bindings/c/examples/first_circuit.c) <!-- reviewed: 9ba6747bd760b563b779dcdbaba4ca38669d966b5ac40a148104f41c0df37506 -->
+- [C example](../bindings/c/examples/example.h) <!-- reviewed: 2f6f786314943fa427e556ea714014af22f67c7e3f9d6f5a5b690961292cda93 -->
+- [C README](../bindings/c/README.rst) <!-- reviewed: 66c5689c7747e4f590de97accb9865bcb33cb7d7016cf75b0d8d0257a7ebcef5 -->
 
 ## Reading order
 
