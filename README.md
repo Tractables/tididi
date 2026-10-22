@@ -10,28 +10,36 @@
   <a href="https://github.com/Tractables/tididi/actions/workflows/rust.yml"><img
      src="https://github.com/Tractables/tididi/actions/workflows/rust.yml/badge.svg" alt="CI"></a>
   <a href="https://tractables.github.io/tididi/tididi/"><img
-     src="https://img.shields.io/badge/docs-main-blue" alt="Documentation"></a>
+     src="https://img.shields.io/badge/docs-Rust-blue" alt="Rust guide"></a>
   <a href="https://tractables.github.io/tididi/python/"><img
-     src="https://img.shields.io/badge/guide-Python-blue" alt="Python guide"></a>
+     src="https://img.shields.io/badge/docs-Python-blue" alt="Python guide"></a>
   <a href="https://tractables.github.io/tididi/c/"><img
-     src="https://img.shields.io/badge/guide-C-blue" alt="C guide"></a>
+     src="https://img.shields.io/badge/docs-C-blue" alt="C guide"></a>
   <a href="https://arxiv.org/abs/2604.05537"><img
      src="https://img.shields.io/badge/arXiv-2604.05537-b31b1b.svg" alt="arXiv"></a>
   <a href="LICENSE"><img
      src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
 </p>
 
-tididi is a Rust library for **Tree Decision Diagrams (TDDs)**. A TDD represents
-a Boolean function as a circuit, so you can work with its satisfying assignments
-without listing them. Build a circuit once, then combine it with other circuits
-or query it as your inputs change.
+**Tree Decision Diagrams for Rust, Python and C.**
+
+tididi represents Boolean functions as circuits called **Tree Decision Diagrams
+(TDDs)**, so you can work with their satisfying assignments without listing
+them. Build a circuit once, then combine it with other circuits or query it as
+your inputs change. One Rust implementation serves all three languages.
 
 Like binary decision diagrams, minimized TDDs are canonical and combine
 efficiently under Boolean operations; in practice they can be much smaller.
 
-From Python, start with the [Python guide](https://tractables.github.io/tididi/python/)
-([installation](bindings/python/README.rst)); from C or C++, with the
-[C guide](https://tractables.github.io/tididi/c/) ([build instructions](bindings/c/README.rst)).
+## Install
+
+- **Rust:** `cargo add tididi`. See the [Rust guide] and the
+  [crate on crates.io](https://crates.io/crates/tididi).
+- **Python:** build the package from a checkout with `pip install ./bindings/python`
+  (needs a Rust toolchain). See the [Python guide] and the
+  [Python README](bindings/python/README.rst).
+- **C and C++:** build and install the CMake package. See the [C guide] and the
+  [C README](bindings/c/README.rst).
 
 ## Getting started
 
@@ -56,6 +64,9 @@ Satisfying assignments: 5
 ```
 
 Four assignments have `z` true, and one more has `z` false with `x` and `y` true.
+The [Python](https://tractables.github.io/tididi/python/getting_started.html)
+and [C](https://tractables.github.io/tididi/c/getting_started.html) guides
+start with the same circuit.
 
 A **vtree** is a binary tree that groups the variables; circuits you combine
 must share the same `Arc<Vtree>`. Literals are signed variable numbers: `1` is
@@ -84,10 +95,11 @@ representation. Contributors can start with the [architecture reference].
 
 - [tididi-cnf](https://github.com/Tractables/tididi-cnf) compiles CNF formulas
   into TDDs for model counting, weighted model counting and projected model
-  counting.
+  counting, from Rust, Python or C.
 - [tddlog](https://github.com/Tractables/tddlog) performs exact probabilistic
   inference for higher-level languages: ProbLog programs, Bayesian and Markov
-  networks, and discrete probabilistic programs.
+  networks, and discrete probabilistic programs. It has Python, C and
+  WebAssembly bindings and [runs in the browser](https://tractables.github.io/tddlog/).
 
 ## Citing
 
@@ -99,6 +111,9 @@ which introduced TDDs.
 This material is based upon work supported by the Defense Advanced Research
 Projects Agency (DARPA) under Agreement No. HR0011269E224.
 
+[Rust guide]: https://tractables.github.io/tididi/tididi/
+[Python guide]: https://tractables.github.io/tididi/python/
+[C guide]: https://tractables.github.io/tididi/c/
 [configuration example]: https://tractables.github.io/tididi/tididi/guide/examples/configurations/index.html
 [reachability example]: https://tractables.github.io/tididi/tididi/guide/examples/reachability/index.html
 [probability example]: https://tractables.github.io/tididi/tididi/guide/examples/probability/index.html
