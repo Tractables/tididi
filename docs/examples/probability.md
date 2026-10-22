@@ -10,10 +10,9 @@ The Boolean event is **wet = rain ∨ sprinkler**: either cause makes the grass
 wet. We assume independent inputs. A third variable, wind, stays free; its
 probability should not affect the answer.
 
-Run the complete program with `cargo run --example probability`.
-The external crate `num-rational` provides exact fractions; `num-traits`
-provides numeric operations such as `one()`. In a separate application, add `num-rational = "0.4"` and `num-traits = "0.2"`
-alongside `tididi` to use the exact arithmetic shown here.
+Run the complete program with `cargo run --example probability`. Its exact
+fractions come from `num-rational = "0.4"` and `num-traits = "0.2"`; add both
+alongside `tididi` in your own application.
 
 ## Build the events
 
