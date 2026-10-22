@@ -33,32 +33,6 @@ From Python, start with the [Python guide](https://tractables.github.io/tididi/p
 ([installation](bindings/python/README.rst)); from C or C++, with the
 [C guide](https://tractables.github.io/tididi/c/) ([build instructions](bindings/c/README.rst)).
 
-## Working with circuits
-
-**Build and transform Boolean functions.** Combine circuits with Boolean
-operations, fix variables to chosen values, or eliminate variables by
-quantification. The [reachability example] explores a transition system this
-way.
-
-**Find solutions and count possibilities.** Check satisfiability, find a
-solution, count solutions exactly, or test equivalence and implication. The
-[configuration example] counts the valid configurations of a backup application
-and updates the count as a user changes their choices.
-
-**Evaluate weighted models.** Assign weights to literals to compute weighted
-sums such as probabilities, and change the weights without rebuilding the
-circuit, as in the [probability example]. Custom algebras compute other
-quantities, such as a [minimum configuration cost].
-
-## Applications built on tididi
-
-- [tididi-cnf](https://github.com/Tractables/tididi-cnf) compiles CNF formulas
-  into TDDs for model counting, weighted model counting and projected model
-  counting.
-- [tddlog](https://github.com/Tractables/tddlog) performs exact probabilistic
-  inference for higher-level languages: ProbLog programs, Bayesian and Markov
-  networks, and discrete probabilistic programs.
-
 ## Getting started
 
 This example builds `(x ∧ y) ∨ z` and counts its satisfying assignments:
@@ -88,10 +62,32 @@ must share the same `Arc<Vtree>`. Literals are signed variable numbers: `1` is
 `x` and `-2` is `¬y`. Boolean operations consume their operands, so clone an
 operand first to keep it; queries such as `model_count` borrow the circuit.
 
-The [worked examples] continue with tables, saving and loading, variable
-grouping and resource limits. The [API overview] finds the operation for a task,
-the [API reference] gives its contract, and the [data model] explains the
+The worked examples cover what the library does:
+
+- **Build and transform functions** by combining circuits, fixing variables
+  and quantifying them out: the [reachability example] explores a transition
+  system.
+- **Find and count solutions**, and test equivalence or implication: the
+  [configuration example] counts a backup application's valid configurations
+  as a user changes their choices.
+- **Evaluate weighted models** such as probabilities, changing the weights
+  without rebuilding the circuit: the [probability example] answers a
+  conditional-probability query, and custom algebras compute other quantities,
+  such as a [minimum configuration cost].
+
+Further [worked examples] cover tables, saving and loading, variable grouping
+and resource limits. The [API overview] finds the operation for a task, the
+[API reference] gives its contract, and the [data model] explains the
 representation. Contributors can start with the [architecture reference].
+
+## Applications built on tididi
+
+- [tididi-cnf](https://github.com/Tractables/tididi-cnf) compiles CNF formulas
+  into TDDs for model counting, weighted model counting and projected model
+  counting.
+- [tddlog](https://github.com/Tractables/tddlog) performs exact probabilistic
+  inference for higher-level languages: ProbLog programs, Bayesian and Markov
+  networks, and discrete probabilistic programs.
 
 ## Citing
 
