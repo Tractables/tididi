@@ -23,12 +23,14 @@ automatically discovered, so a new page cannot silently omit its scenario.
 Introduce circuits as Boolean functions that can be combined and queried
 without enumerating assignments. Build `(x ∧ y) ∨ z` on a balanced vtree over
 variables 1, 2 and 3, then count: four models have z true and one more has
-x and y true, giving 5. Its complement has 3 models. Explain the vtree and
-counting universe where they first appear, then explicit copies for reuse.
+x and y true, giving 5. Its complement has 3 models. Explain the vtree where
+it first appears, then explicit copies for reuse. The example uses every
+variable, so leave the counting universe to the counting lesson.
 
 Rust uses `Tdd`, `!` and `clone()`; Python uses `Circuit`, `~` and `copy()`.
 Rust's checked calls return `Result`; Python operators raise exceptions.
 Keep installation instructions specific to the language and publication state.
+The Rust README also links the downstream applications tididi-cnf and tddlog.
 
 C uses opaque handles, output slots initialized to NULL, and explicit error and
 cleanup functions. Its shared example helper wraps checking, copying, counting
@@ -36,14 +38,14 @@ and freeing without changing their ownership rules.
 
 ### Instances
 
-- [Rust README](../README.md) <!-- reviewed: 66ad28fee52e5ee0b3b1ec482458d39ef9e25207ead435867743942c1885474a -->
-- [Rust crate introduction](../src/lib.rs) <!-- reviewed: 73ea6799948cda4653f6b6e2f39d92c611b091e9d8aa0d1b1b57c7514a513af5 -->
-- [Python README](../bindings/python/README.rst) <!-- reviewed: 42cb63be6010d5beef49526d85187050c634956301696846c96e5d5f4708357b -->
-- [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: c6ead730e1436ba112d8bc518610d932e3f72180e516b274c1daff51c24f651a -->
-- [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: fbcc2bf0db46b0e1845f76c8fe9f00f3675645dc41f8b80beb905da887ecac25 -->
-- [C program first_circuit](../bindings/c/examples/first_circuit.c) <!-- reviewed: 3039126c0a5c738421a4eedf9848b5401d3e1657eefa9f2ec8e19f7e794a3894 -->
-- [C example](../bindings/c/examples/example.h) <!-- reviewed: 1019207b1a680a883f8df2e9b09bb850465a9a4f8b0fd345169d89200f299a70 -->
-- [C README](../bindings/c/README.rst) <!-- reviewed: c2505b3c85690814ce3c911401bb3554ffff1a9ec08b4bff9cd813e029a7b987 -->
+- [Rust README](../README.md) <!-- reviewed: a6b19f942f54388d6a2d5b0447b252a87b45b746768756095a3800ba34e22505 -->
+- [Rust crate introduction](../src/lib.rs) <!-- reviewed: 025c31cb4d706478979289fa6682ec541a4895e15a2c6508569d4201333d733e -->
+- [Python README](../bindings/python/README.rst) <!-- reviewed: 9a3addc70879f9b0a2a311025f88c624ca79ff89294162d068bc6c45c2e4e39c -->
+- [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: 26181d1ee4c75de6c30ce15c381ce0404e16108bf512da194b6296ee3153e10a -->
+- [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: f2b68a1251b26fc64c0bcb5b8994194029c66f5d933fdbee4622218c9af4453e -->
+- [C program first_circuit](../bindings/c/examples/first_circuit.c) <!-- reviewed: 9ba6747bd760b563b779dcdbaba4ca38669d966b5ac40a148104f41c0df37506 -->
+- [C example](../bindings/c/examples/example.h) <!-- reviewed: 2f6f786314943fa427e556ea714014af22f67c7e3f9d6f5a5b690961292cda93 -->
+- [C README](../bindings/c/README.rst) <!-- reviewed: 66c5689c7747e4f590de97accb9865bcb33cb7d7016cf75b0d8d0257a7ebcef5 -->
 
 ## Reading order
 
@@ -150,7 +152,7 @@ comparison to keep arithmetic and allocation details out of the narrative.
 
 ### Instances
 
-- [Rust walkthrough](examples/probability.md) <!-- reviewed: cd36add9507b1bdce74931d33c3fa02e2520ad9611c61832c481e2099842cb9b -->
+- [Rust walkthrough](examples/probability.md) <!-- reviewed: 0d8eb2819f61efca7968516673bcbac38765011ad70f471d7ea2334650df0931 -->
 - [Rust program](../examples/probability.rs) <!-- reviewed: d8e5ecbbb0908c05c2de3229b1bcf6c352346d7eee9089bd51826ae0127a8132 -->
 - [Python walkthrough and program](../bindings/python/examples/02_probability.py) <!-- reviewed: 2cb09a4d22d3c587ca0055ee88a9b3d6b72bb5c5a8f049485a9c77d0a47e26a0 -->
 - [C probability](../bindings/c/docs/probability.rst) <!-- reviewed: 70407f3617cf030796406fe1a00da39d51e104f851b1401f59c6106075ab888c -->
@@ -401,7 +403,7 @@ evaluation has its own rational-string interface.
 
 ### Instances
 
-- [Rust API overview](api-guide.md) <!-- reviewed: ace170eea5efe230fd02769e04571460f7be14e0ed23ccedecc7ba55662e9208 -->
+- [Rust API overview](api-guide.md) <!-- reviewed: 6e605fd502f5e7e7904bb6d9b79cd34e12baca93fe98dd05b2ad458efd5d758b -->
 - [Python API reference](../bindings/python/docs/api.rst) <!-- reviewed: 619c8cf6bbe3d4b720da766850817f34b4fdf92c866f3c6cd9828cd555fdcd39 -->
 - [C api](../bindings/c/docs/api.rst) <!-- reviewed: a4cc0ac9db6cd02097704bc1e4d3dd2fed3acb087decd2073142fbaf614ea9cc -->
 
@@ -420,7 +422,7 @@ invariants and marginal levels; Python concentrates on using shared vtrees.
 
 ### Instances
 
-- [Rust data model](tdd.md) <!-- reviewed: 18e89ce1fbc9df16446520cf22f37e8752b56068d9f7f1045d083408f06630dc -->
+- [Rust data model](tdd.md) <!-- reviewed: ae7ed18ead63721c3499c2ca05e740beaf0ada9b5eb1a23a2c5cb86981d87d2d -->
 - [Python data model](../bindings/python/docs/representation.rst) <!-- reviewed: ed52b71f88c82caf64b54c6227acbe5de4215ce34886e327f1b102cdd338b20c -->
 - [Shared decomposition figure](tdd-basics.svg) <!-- reviewed: 5f2ab1677522a6a53385289841534c2a0096087bc65c8ce7f6c51d3be0e83c12 -->
 

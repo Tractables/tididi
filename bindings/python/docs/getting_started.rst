@@ -25,8 +25,7 @@ function ``(x ∧ y) ∨ z``:
    5
 
 There are four assignments with ``z`` true and one more with both ``x`` and
-``y`` true while ``z`` is false. All variables in the vtree participate in
-counting, including ones a function leaves free.
+``y`` true while ``z`` is false.
 
 Use ``&``, ``|``, ``^``, and ``~`` for conjunction, disjunction, exclusive-or,
 and negation. Parenthesize compound expressions. Python's ``and``, ``or``, and

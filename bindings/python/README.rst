@@ -28,9 +28,8 @@ Boolean operations consume their circuit operands. Use ``a.copy() & b.copy()``
 to retain both inputs. Queries such as ``model_count()`` leave a circuit usable;
 reusing a consumed circuit raises ``ConsumedCircuitError``.
 
-The `Python guide <https://tractables.github.io/tididi/python/>`_ introduces
-configuration rules, probabilities, reachability, tables, and advanced evaluation.
-Application tutorials include executed output and downloadable Python and notebook versions.
+The `Python guide <https://tractables.github.io/tididi/python/>`_ continues with
+configuration rules, probabilities, reachability, tables, and custom evaluation.
 
 Build from source
 -----------------

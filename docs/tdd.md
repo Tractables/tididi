@@ -4,8 +4,7 @@
 
 A Tree Decision Diagram represents a Boolean function by decomposing it along
 a vtree. Its nodes describe sets of satisfying assignments, which can be
-counted or evaluated under weights. The [API overview] connects this
-representation to library operations.
+counted or evaluated under weights.
 
 ## Start with the vtree
 
@@ -42,13 +41,10 @@ the disjunction of those two conjunctions.
 ## Why the counts add up
 
 In a structural TDD, a given pair of child nodes belongs to at most one node
-at its parent level. Distinct pairs may share either child, but not both.
-A leaf level always offers `x`, `¬x` and `true`; the rule at a leaf is that
-the level as a whole refers either to `true` or to the literals, never both.
-The rule is level-global, not per-parent: two parent nodes at the same level
-may not disagree, because `x ∧ true` is not `⊥` and the two would overlap.
-Together these syntactic rules make the functions of distinct nodes at a
-level disjoint.
+at its parent level. A leaf level offers `x`, `¬x` and `true`, and its parent
+level refers either to `true` or to the literals, never both, because `x` and
+`true` overlap. These rules make the functions of distinct nodes at a level
+disjoint.
 
 The factors in a pair use disjoint variable sets, and the pairs of a node
 describe disjoint assignments. Counting therefore multiplies the two child
@@ -92,7 +88,6 @@ indices, so array order is not a traversal order.
 [`TddBuilder`] checks storage when assembling a diagram by hand; its author
 must also establish the determinism contract documented on that type.
 
-[API overview]: crate::guide::api
 [the TDD paper, Section 5]: https://arxiv.org/html/2604.05537v1#S5
 [`Vtree`]: crate::Vtree
 [`Tdd`]: crate::Tdd
