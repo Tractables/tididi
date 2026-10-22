@@ -15,6 +15,8 @@ python3 tests/rendered_docs.py target/doc
 python3 tests/package_examples.py --self-test
 python3 scripts/check_scenarios.py
 python3 -m unittest discover -s tests -p test_scenarios.py
+python3 -m unittest discover -s tests -p test_release.py
+python3 scripts/check_release.py
 ```
 
 The README snippet matches the tested crate example; `docs/` is compiled into
