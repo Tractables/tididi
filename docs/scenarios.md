@@ -49,7 +49,7 @@ and freeing without changing their ownership rules.
 - [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: bf3a1ec7b50ee3e753285f0e849442806a7bdec9cbf8092631694cd627650d52 -->
 - [C program first_circuit](../bindings/c/examples/first_circuit.c) <!-- reviewed: e1b814b29f5b9e0c0bd29e0b9a4269d46ad5b1ba82aa9f122318ea7314aa01a4 -->
 - [C example](../bindings/c/examples/example.h) <!-- reviewed: 6a9f9b7f08e21cf5776c843f6236785a5dbd022fe39b229e3922d171e93c1175 -->
-- [C README](../bindings/c/README.rst) <!-- reviewed: a5dc82a5ac2ba816ff56b1c3656a5aa0bf76d83e36916c7715ecf568ffe18286 -->
+- [C README](../bindings/c/README.rst) <!-- reviewed: 6bee2f862ba69cf4d313b15e9a6e56a0ae186f274467acb7b92bc5dbdc62d880 -->
 
 ## Reading order
 

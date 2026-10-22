@@ -112,8 +112,10 @@ Applications built on tididi
 Develop
 -------
 
-To check the generated header, test a separate installed consumer, and build
-the HTML guide with captured program output:
+Using the library needs no Python, but working on it does: a Python script
+drives the checks, and the guide is built with Sphinx. To check the generated
+header, test a separate installed consumer, and build the HTML guide with
+captured program output:
 
 .. code-block:: sh
 
