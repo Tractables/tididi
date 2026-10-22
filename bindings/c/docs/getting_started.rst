@@ -3,7 +3,9 @@
 Your first circuit
 ==================
 
-Build the C package using the commands in the `package README
+Download a prebuilt package from a `GitHub release
+<https://github.com/Tractables/tididi/releases>`_, or build one with the
+commands in the `package README
 <https://github.com/Tractables/tididi/blob/main/bindings/c/README.rst>`_.
 Your application's CMake file needs only:
 

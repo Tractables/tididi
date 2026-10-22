@@ -45,14 +45,14 @@ and freeing without changing their ownership rules.
 
 ### Instances
 
-- [Rust README](../README.md) <!-- reviewed: 6dc9a260bce1b70995ebdeab288607ec1d208282755f25615cff46fc36768bdb -->
+- [Rust README](../README.md) <!-- reviewed: f6d54afd414308e2e51e601d0822b4b3e0edc28e922aae51da664e2e11fd158f -->
 - [Rust crate introduction](../src/lib.rs) <!-- reviewed: 8c2acd8c1e05963c8e7db621499445753246fe151d3bae6286df4886496b828c -->
 - [Python README](../bindings/python/README.rst) <!-- reviewed: 4070d3d21f1255b0274b735d1a88db0dca8d7705b63cbc4d0d76f38122b5b583 -->
 - [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: d7539c9ad970763cfe1fe067bb2ec852b5799d0b8ed86c182bf00846b022f0d2 -->
-- [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: 9f54a4da5545bffa0df09d373a2f14973a174603b8a1e8c09a306cd577699083 -->
+- [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: dd6304e665a252626b5b8982ed3022514f794cd1d90dbabd8ac6129359787868 -->
 - [C program first_circuit](../bindings/c/examples/first_circuit.c) <!-- reviewed: 11795daa8cc7959dd2dd6deaf25939cf13dd4850779f30cc5e1810d7552a0b89 -->
 - [C example](../bindings/c/examples/example.h) <!-- reviewed: f6cf4d81d58a7025959bf5d5db77dace478f5058e75d6eac63470b759d8e022b -->
-- [C README](../bindings/c/README.rst) <!-- reviewed: eec88e855759bb94f7a61994d5a3cf727d952aee2288a9058b43d257c1284ac5 -->
+- [C README](../bindings/c/README.rst) <!-- reviewed: a6106ef27739920f9e22ad0bb6b79c4893155084e4df4ca27269bfcefcb06ce0 -->
 
 ## Reading order
 

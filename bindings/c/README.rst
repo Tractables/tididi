@@ -26,8 +26,13 @@ efficiently under Boolean operations; in practice they can be much smaller.
 Install
 -------
 
-Build and install the CMake package from a checkout, with Rust, CMake and a
-C/C++ compiler installed:
+Each `GitHub release <https://github.com/Tractables/tididi/releases>`_ has a
+prebuilt package for Linux (x86-64 and ARM64), macOS (ARM64 and x86-64) and
+Windows. Unpack it anywhere; it needs no Rust toolchain. The Linux packages
+need glibc 2.34 or later (Ubuntu 22.04, Debian 12, RHEL 9 and newer).
+
+To build and install the package from a checkout instead, with Rust, CMake and
+a C/C++ compiler installed:
 
 .. code-block:: sh
 
@@ -40,9 +45,8 @@ C/C++ compiler installed:
 
 An application then needs only ``find_package(tididi CONFIG REQUIRED)`` and
 ``target_link_libraries(your_program PRIVATE tididi::tididi)``, with
-``CMAKE_PREFIX_PATH`` set to the installation prefix. The installed library
-needs no Rust toolchain at runtime. On Windows, keep ``tididi_c.dll`` beside
-your executable or on ``PATH``.
+``CMAKE_PREFIX_PATH`` set to the unpacked or installed package. On Windows,
+keep ``tididi_c.dll`` beside your executable or on ``PATH``.
 
 Getting started
 ---------------

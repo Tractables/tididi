@@ -39,8 +39,9 @@ efficiently under Boolean operations; in practice they can be much smaller.
   [crate on crates.io](https://crates.io/crates/tididi).
 - **Python:** `pip install tididi`. See the [Python guide] and the
   [package on PyPI](https://pypi.org/project/tididi/).
-- **C and C++:** build and install the CMake package. See the [C guide] and the
-  [C README](bindings/c/README.rst).
+- **C and C++:** download a prebuilt package from a
+  [GitHub release](https://github.com/Tractables/tididi/releases) or build the
+  CMake package. See the [C guide] and the [C README](bindings/c/README.rst).
 
 ## Getting started
 
