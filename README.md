@@ -4,8 +4,22 @@
   <img src="docs/logo.svg" alt="tididi" width="400">
 </p>
 
-[![Rust](https://github.com/Tractables/tididi/actions/workflows/rust.yml/badge.svg)](https://github.com/Tractables/tididi/actions/workflows/rust.yml)
-[![Documentation](https://img.shields.io/badge/docs-main-blue)](https://tractables.github.io/tididi/tididi/)
+<p align="center">
+  <a href="https://crates.io/crates/tididi"><img
+     src="https://img.shields.io/crates/v/tididi.svg" alt="crates.io"></a>
+  <a href="https://github.com/Tractables/tididi/actions/workflows/rust.yml"><img
+     src="https://github.com/Tractables/tididi/actions/workflows/rust.yml/badge.svg" alt="CI"></a>
+  <a href="https://tractables.github.io/tididi/tididi/"><img
+     src="https://img.shields.io/badge/docs-main-blue" alt="Documentation"></a>
+  <a href="https://tractables.github.io/tididi/python/"><img
+     src="https://img.shields.io/badge/guide-Python-blue" alt="Python guide"></a>
+  <a href="https://tractables.github.io/tididi/c/"><img
+     src="https://img.shields.io/badge/guide-C-blue" alt="C guide"></a>
+  <a href="https://arxiv.org/abs/2604.05537"><img
+     src="https://img.shields.io/badge/arXiv-2604.05537-b31b1b.svg" alt="arXiv"></a>
+  <a href="LICENSE"><img
+     src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
+</p>
 
 tididi is a Rust library for **Tree Decision Diagrams (TDDs)**. A TDD represents
 a Boolean function as a circuit, so you can work with its satisfying assignments
