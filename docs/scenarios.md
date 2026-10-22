@@ -433,6 +433,11 @@ invariants and marginal levels; Python concentrates on using shared vtrees.
 
 ## Architecture
 
+Write it as a tour for a new contributor: how one diagram is stored, the
+steps of one conjunction, then reduction, memory, marginal levels, queries and
+placement. Introduce each term where it is first needed and say why each
+mechanism exists; the glossary at the end is for reference.
+
 Explain the Rust implementation through storage ownership, level arenas,
 child-reference decoding, reduction passes, scratch and limits. Include unfinished
 output ownership, intermediate product storage, coordinated marginal payloads,
@@ -450,7 +455,7 @@ there is no separate Python implementation to describe.
 
 ### Instances
 
-- [Rust architecture reference](architecture.md) <!-- reviewed: 2f0af6b87a20dd062472d23ce7fa6c67699eee62f8f969cad2bf9edd31e8359e -->
+- [Rust architecture reference](architecture.md) <!-- reviewed: 4615e183b6f973b4f7b4c010a5069f10e8dabf5223758f4c385b0ccae76f46d4 -->
 
 ## Reusable components
 
