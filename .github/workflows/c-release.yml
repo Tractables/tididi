@@ -1,0 +1,85 @@
+name: C release
+
+# Builds the C package from a release tag on each platform, tests the installed
+# package, and attaches one archive per platform to that release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and attach to, such as v0.1.0"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            platform: linux-x86_64
+          - os: ubuntu-22.04-arm
+            platform: linux-aarch64
+          - os: macos-latest
+            platform: macos-arm64
+          - os: macos-15-intel
+            platform: macos-x86_64
+          - os: windows-latest
+            platform: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ env.RELEASE_TAG }}
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+    - name: Install Rust if the runner lacks it
+      run: |
+        command -v rustup || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain none
+        echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+    - name: Build and test the installed package
+      run: python bindings/c/check.py
+    - name: Archive the package
+      env:
+        NAME: tididi-c-${{ env.RELEASE_TAG }}-${{ matrix.platform }}
+        FORMAT: ${{ runner.os == 'Windows' && 'zip' || 'gztar' }}
+      run: |
+        mv bindings/c/build/package "$NAME"
+        python -c "import os, shutil; shutil.make_archive(os.environ['NAME'], os.environ['FORMAT'], '.', os.environ['NAME'])"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: c-${{ matrix.platform }}
+        path: |
+          tididi-c-*.tar.gz
+          tididi-c-*.zip
+
+  attach:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        path: dist
+        merge-multiple: true
+    - name: Attach the archives to the release
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      # No --clobber: rerunning this job must not replace published archives.
+      run: |
+        cd dist
+        sha256sum tididi-c-* > "tididi-c-${RELEASE_TAG}-SHA256SUMS"
+        gh release upload "$RELEASE_TAG" tididi-c-*
