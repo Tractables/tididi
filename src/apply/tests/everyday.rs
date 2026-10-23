@@ -344,6 +344,7 @@ fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
     assert_eq!(eng.implies(&marginal, &x).unwrap_err(), error);
     assert_eq!(eng.support(&marginal).unwrap_err(), error);
     assert_eq!(eng.satisfying_assignment(&marginal).unwrap_err(), error);
+    assert_eq!(eng.satisfying_assignments(&marginal, 4).unwrap_err(), error);
     assert_eq!(eng.rename_vars(marginal.clone(), &[]).unwrap_err(), error);
     assert_eq!(
         eng.substitute(x.clone(), &[(VarId(1), &marginal)])
@@ -396,6 +397,9 @@ fn exercise(eng: &Engine, op: usize, f: &Tdd, g: &Tdd) -> Result<(), OperationEr
         4 => {
             eng.satisfying_assignment(f)?;
         }
+        10 => {
+            eng.satisfying_assignments(f, 4)?;
+        }
         5 => {
             eng.ite(f.clone(), g.clone(), g.clone())?;
         }
@@ -425,7 +429,7 @@ fn every_new_operation_recovers_from_reservation_refusals_and_work_stops() {
     let tree = Arc::new(Vtree::balanced(2));
     let f = Tdd::clause(&tree, [1, 2]).unwrap();
     let g = crate::literal(&tree, 2).unwrap();
-    for op in 0..10 {
+    for op in 0..11 {
         let eng = Engine::new();
         {
             let _scope = eng
@@ -504,6 +508,8 @@ fn witness_walk_handles_deep_vtrees_without_recursion() {
     assert_eq!(model.len(), 8192);
     assert!(model[..8191].iter().all(|lit| !lit.sign));
     assert_eq!(model[8191], Literal::pos(VarId(8192)));
+    let listed = eng.satisfying_assignments(&f, 1).unwrap();
+    assert_eq!(listed, vec![model]);
 }
 
 #[test]

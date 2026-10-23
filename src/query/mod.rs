@@ -2,8 +2,9 @@
 //!
 //! Start with [`Tdd::is_sat`](crate::Tdd::is_sat) to test for a solution,
 //! [`Tdd::model_count`](crate::Tdd::model_count) for an exact
-//! count or [`Tdd::satisfying_assignment`](crate::Tdd::satisfying_assignment)
-//! for a witness. These queries borrow the diagram and accept nonminimal structural inputs.
+//! count, [`Tdd::satisfying_assignment`](crate::Tdd::satisfying_assignment)
+//! for a witness, or [`Tdd::satisfying_assignments`](crate::Tdd::satisfying_assignments)
+//! for a bounded list of models. These queries borrow the diagram and accept nonminimal structural inputs.
 //! [`ModelCounter`] retains counts and [`Evaluator`] retains algebra values for repeated evidence updates.
 //!
 //! [`Tdd::equivalent`](crate::Tdd::equivalent) compares Boolean functions;

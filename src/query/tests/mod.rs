@@ -32,5 +32,6 @@ mod pin_domain;
 mod leaf_labels;
 
 mod satisfiability;
+mod assignments;
 
 mod owned;

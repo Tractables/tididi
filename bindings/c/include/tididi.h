@@ -60,6 +60,11 @@ typedef enum TididiErrorCode {
 } TididiErrorCode;
 
 /**
+ * An owned table of complete assignments: `width` signed literals per row, packed in row-major order.
+ */
+typedef struct TididiAssignments TididiAssignments;
+
+/**
  * An owned byte buffer. Read its data/length and free it with tididi_bytes_free.
  */
 typedef struct TididiBytes TididiBytes;
@@ -502,6 +507,36 @@ struct TididiError *tididi_implied_literals(const struct TididiCircuit *value,
 struct TididiError *tididi_satisfying_assignment(const struct TididiCircuit *value,
                                                  struct TididiLiterals **out,
                                                  const struct TididiLimits *config);
+
+/**
+ * Return complete satisfying assignments, at most `limit` of them. The first row matches
+ * tididi_satisfying_assignment when the circuit is satisfiable and `limit` is at least one.
+ * Unsatisfiable circuits and a `limit` of zero return an empty table. Borrows the circuit.
+ */
+struct TididiError *tididi_satisfying_assignments(const struct TididiCircuit *value,
+                                                  size_t limit,
+                                                  struct TididiAssignments **out,
+                                                  const struct TididiLimits *config);
+
+/**
+ * Return the number of assignments in a live, nonnull table.
+ */
+size_t tididi_assignments_len(const struct TididiAssignments *value);
+
+/**
+ * Return the number of literals in each assignment of a live, nonnull table.
+ */
+size_t tididi_assignments_width(const struct TididiAssignments *value);
+
+/**
+ * Borrow the packed signed-literal array. Do not write to or free it separately.
+ */
+const int64_t *tididi_assignments_data(const struct TididiAssignments *value);
+
+/**
+ * Free an assignment table; NULL is accepted.
+ */
+void tididi_assignments_free(struct TididiAssignments *value);
 
 /**
  * Return the function's support as positive variable IDs in a literal list. Borrows the circuit.

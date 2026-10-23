@@ -103,6 +103,12 @@ static void queries(void) {
         CHECK(found == 1);
     }
     ok(tididi_satisfying_assignment(f, &witness, NULL)); CHECK(tididi_literals_len(witness) == 3);
+    TididiAssignments *models = NULL;
+    ok(tididi_satisfying_assignments(f, 16, &models, NULL));
+    CHECK(tididi_assignments_len(models) == 6 && tididi_assignments_width(models) == 3);
+    CHECK(memcmp(tididi_assignments_data(models), tididi_literals_data(witness), 3 * sizeof(int64_t)) == 0);
+    TididiAssignments *none = NULL;
+    ok(tididi_satisfying_assignments(f, 0, &none, NULL)); CHECK(tididi_assignments_len(none) == 0);
     TididiCircuit *selected = NULL;
     ok(tididi_cube(v, tididi_literals_data(witness), tididi_literals_len(witness), &selected, NULL));
     bool yes = false; ok(tididi_implies(selected, f, &yes, NULL)); CHECK(yes);
@@ -110,6 +116,7 @@ static void queries(void) {
     ok(tididi_projected_model_count(f, vars, 2, &n, NULL)); CHECK(n==3);
     TididiCircuit *projected = NULL; ok(tididi_exists(f, vars, 2, &projected, NULL)); CHECK(count(projected)==8);
     tididi_literals_free(support); tididi_literals_free(forced); tididi_literals_free(witness);
+    tididi_assignments_free(models); tididi_assignments_free(none);
     ok(tididi_circuit_free(f)); ok(tididi_circuit_free(impossible)); ok(tididi_circuit_free(selected)); ok(tididi_circuit_free(projected)); tididi_vtree_free(v);
 }
 static void big_counts_and_rows(void) {

@@ -41,6 +41,7 @@ clone.
 |---|---|
 | Is there a solution? | [`Tdd::is_sat`](crate::Tdd::is_sat) |
 | What is one complete solution? | [`Tdd::satisfying_assignment`](crate::Tdd::satisfying_assignment) |
+| What are the first complete solutions? | [`Tdd::satisfying_assignments`](crate::Tdd::satisfying_assignments) |
 | How many assignments satisfy the function? | [`Tdd::model_count`](crate::Tdd::model_count) |
 | How many satisfy a conjunction, without building it? | [`Engine::and_model_count`](crate::Engine::and_model_count) |
 | What is the sum of two marginalized diagrams' products of counts? | [`Engine::marginal_product_count`](crate::Engine::marginal_product_count) |

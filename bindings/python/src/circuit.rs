@@ -207,6 +207,16 @@ impl PyCircuit {
         operations::run(py, f.vtree(), domain::config(limits)?, |e| e.satisfying_assignment(f)).map(|ls| ls.map(|ls| ls.into_iter().map(PyLiteral).collect()))
     }
 
+    /// Complete satisfying assignments, at most ``limit`` of them. The first is
+    /// ``satisfying_assignment()`` when the circuit is satisfiable and ``limit`` is at least one.
+    /// An unsatisfiable circuit, or a ``limit`` of zero, returns an empty list.
+    #[pyo3(signature = (limit, *, limits=None))]
+    fn satisfying_assignments(&self, py: Python<'_>, limit: usize, limits: Option<&PyLimits>) -> PyResult<Vec<Vec<PyLiteral>>> {
+        let f = self.get()?;
+        operations::run(py, f.vtree(), domain::config(limits)?, |e| e.satisfying_assignments(f, limit))
+            .map(|models| models.into_iter().map(|model| model.into_iter().map(PyLiteral).collect()).collect())
+    }
+
     /// Exact weighted sum as fractions.Fraction. Supply {variable: (negative, positive)}
     /// weights, each an int or Fraction, for every vtree variable. Borrows the circuit.
     #[pyo3(signature = (weights, *, limits=None))]

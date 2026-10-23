@@ -75,6 +75,43 @@ pub unsafe extern "C" fn tididi_satisfying_assignment(value: *const TididiCircui
     boundary(|| { let out = unsafe { vacant(out)? }; let f = unsafe { borrow(value)? };
         *out = literal_list(run(f.vtree(), unsafe { limits(config)? }, |e| e.satisfying_assignment(&f))?.unwrap_or_default()); Ok(()) })
 }
+/// An owned table of complete assignments: `width` signed literals per row, packed in row-major order.
+pub struct TididiAssignments { literals: Vec<i64>, width: usize }
+/// Return complete satisfying assignments, at most `limit` of them. The first row matches
+/// tididi_satisfying_assignment when the circuit is satisfiable and `limit` is at least one.
+/// Unsatisfiable circuits and a `limit` of zero return an empty table. Borrows the circuit.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tididi_satisfying_assignments(value: *const TididiCircuit, limit: usize, out: *mut *mut TididiAssignments, config: *const TididiLimits) -> *mut TididiError {
+    boundary(|| {
+        let out = unsafe { vacant(out)? };
+        let f = unsafe { borrow(value)? };
+        let models = run(f.vtree(), unsafe { limits(config)? }, |e| e.satisfying_assignments(&f, limit))?;
+        let width = models.first().map(|model| model.len()).unwrap_or(0);
+        let mut literals = Vec::new();
+        for model in models {
+            literals.extend(model.into_iter().map(|l| i64::from(l.var.0) * if l.sign { 1 } else { -1 }));
+        }
+        *out = Box::into_raw(Box::new(TididiAssignments { literals, width }));
+        Ok(())
+    })
+}
+/// Return the number of assignments in a live, nonnull table.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tididi_assignments_len(value: *const TididiAssignments) -> usize {
+    let table = unsafe { &*value };
+    if table.width == 0 { 0 } else { table.literals.len() / table.width }
+}
+/// Return the number of literals in each assignment of a live, nonnull table.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tididi_assignments_width(value: *const TididiAssignments) -> usize { unsafe { (*value).width } }
+/// Borrow the packed signed-literal array. Do not write to or free it separately.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tididi_assignments_data(value: *const TididiAssignments) -> *const i64 { unsafe { (*value).literals.as_ptr() } }
+/// Free an assignment table; NULL is accepted.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tididi_assignments_free(value: *mut TididiAssignments) {
+    if !value.is_null() { drop(unsafe { Box::from_raw(value) }); }
+}
 /// Return the function's support as positive variable IDs in a literal list. Borrows the circuit.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_support(value: *const TididiCircuit, out: *mut *mut TididiLiterals, config: *const TididiLimits) -> *mut TididiError {

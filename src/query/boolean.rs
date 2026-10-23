@@ -135,49 +135,183 @@ impl Engine {
     /// on cancellation. Allocation refusals return
     /// [`OperationError::OverBudget`].
     pub fn satisfying_assignment(&self, f: &Tdd) -> Result<Option<Vec<Literal>>, OperationError> {
-        let lim = self.limits();
-        let _op = lim.enter()?;
-        f.require_structure()?;
-        if f.is_zero() {
-            return Ok(None);
-        }
-        let mut pending = Vec::new();
-        let mut result = Vec::new();
-        lim.try_push(&mut pending, f.output())?;
-        let mut gate = lim.gate();
-        while let Some(id) = pending.pop() {
+        Ok(satisfying_assignments_on(self, f, 1)?.pop())
+    }
+
+    /// Run [`Tdd::satisfying_assignments`](crate::Tdd::satisfying_assignments) using this batch's scratch and resource limits.
+    ///
+    /// # Errors
+    ///
+    /// As [`Tdd::satisfying_assignments`](crate::Tdd::satisfying_assignments).
+    pub fn satisfying_assignments(&self, f: &Tdd, limit: usize) -> Result<Vec<Vec<Literal>>, OperationError> {
+        satisfying_assignments_on(self, f, limit)
+    }
+}
+
+/// One node of the assignment walk: a leaf polarity cursor, or an internal pair cursor.
+struct AssignmentFrame {
+    id: TddNodeId,
+    parent: Option<usize>,
+    start: usize,
+    left_end: usize,
+    next: usize,
+    /// `0` starts the next pair or polarity; `1` runs the left child; `3` runs the right child.
+    phase: u8,
+    pairs: Vec<ChildPair>,
+}
+
+fn leaf_signs(local: NodeIdx) -> &'static [bool] {
+    if local == POS_LEAF_IDX {
+        &[true]
+    } else if local == NEG_LEAF_IDX {
+        &[false]
+    } else if local == ONE_LEAF_IDX {
+        &[false, true]
+    } else {
+        &[]
+    }
+}
+
+fn push_assignment_frame(
+    stack: &mut Vec<AssignmentFrame>,
+    lim: &crate::limits::Limits,
+    f: &Tdd,
+    id: TddNodeId,
+    parent: Option<usize>,
+    start: usize,
+    gate: &mut crate::limits::PollGate<'_>,
+) -> Result<(), OperationError> {
+    let mut pairs = Vec::new();
+    if let VtreeNode::Internal { .. } = *f.vtree().node(id.vtree) {
+        for pair in f.level(id.vtree).pairs_iter_of_idx(id.local.idx()) {
             gate.poll(1)?;
-            match *f.vtree().node(id.vtree) {
-                VtreeNode::Leaf { var, .. } => {
-                    lim.try_push(&mut result, Literal::new(var, id.local == POS_LEAF_IDX))?
+            lim.try_push(&mut pairs, pair)?;
+        }
+    }
+    lim.try_push(stack, AssignmentFrame {
+        id,
+        parent,
+        start,
+        left_end: start,
+        next: 0,
+        phase: 0,
+        pairs,
+    })
+}
+
+fn finish_exhausted(stack: &mut Vec<AssignmentFrame>, current: &mut Vec<Literal>) {
+    let parent = stack.last().expect("an exhausted frame is on the stack").parent;
+    let start = stack.last().expect("an exhausted frame is on the stack").start;
+    stack.pop();
+    current.truncate(start);
+    if let Some(p) = parent {
+        if stack[p].phase == 1 {
+            stack[p].next += 1;
+            stack[p].phase = 0;
+            current.truncate(stack[p].start);
+        } else if stack[p].phase == 3 {
+            stack[p].phase = 1;
+            current.truncate(stack[p].left_end);
+        }
+    }
+}
+
+fn record_assignment(
+    lim: &crate::limits::Limits,
+    current: &[Literal],
+    results: &mut Vec<Vec<Literal>>,
+) -> Result<(), OperationError> {
+    let mut model = Vec::new();
+    for &lit in current {
+        lim.try_push(&mut model, lit)?;
+    }
+    model.sort_unstable_by_key(|lit| lit.var);
+    lim.try_push(results, model)
+}
+
+/// Depth-first models of `f`, at most `limit` of them, in the same order as
+/// [`Engine::satisfying_assignment`].
+fn satisfying_assignments_on(
+    eng: &Engine,
+    f: &Tdd,
+    limit: usize,
+) -> Result<Vec<Vec<Literal>>, OperationError> {
+    let lim = eng.limits();
+    let _op = lim.enter()?;
+    f.require_structure()?;
+    if f.is_zero() || limit == 0 {
+        return Ok(Vec::new());
+    }
+    let mut results = Vec::new();
+    let mut current = Vec::new();
+    let mut stack = Vec::new();
+    let mut gate = lim.gate();
+    push_assignment_frame(&mut stack, lim, f, f.output(), None, 0, &mut gate)?;
+    while !stack.is_empty() && results.len() < limit {
+        gate.poll(1)?;
+        let top = stack.len() - 1;
+        match *f.vtree().node(stack[top].id.vtree) {
+            VtreeNode::Leaf { var, .. } => {
+                let signs = leaf_signs(stack[top].id.local);
+                if stack[top].next >= signs.len() {
+                    finish_exhausted(&mut stack, &mut current);
+                    continue;
                 }
-                VtreeNode::Internal { left, right, .. } => {
-                    let level = f.level(id.vtree);
-                    let pair = level
-                        .pairs_iter_of_idx(id.local.idx())
-                        .next()
-                        .expect("structural node is satisfiable");
-                    lim.try_push(
-                        &mut pending,
-                        TddNodeId {
-                            vtree: right,
-                            local: NodeIdx(pair.right.raw()),
-                        },
-                    )?;
-                    lim.try_push(
-                        &mut pending,
-                        TddNodeId {
-                            vtree: left,
-                            local: NodeIdx(pair.left.raw()),
-                        },
-                    )?;
+                current.truncate(stack[top].start);
+                lim.try_push(&mut current, Literal::new(var, signs[stack[top].next]))?;
+                stack[top].next += 1;
+                let mut i = top;
+                loop {
+                    if i == 0 {
+                        record_assignment(lim, &current, &mut results)?;
+                        break;
+                    }
+                    let p = stack[i].parent.expect("a non-root frame has a parent");
+                    if stack[p].phase == 1 {
+                        stack[p].left_end = current.len();
+                        stack[p].phase = 3;
+                        let pair = stack[p].pairs[stack[p].next];
+                        let VtreeNode::Internal { right, .. } = *f.vtree().node(stack[p].id.vtree) else {
+                            unreachable!("an internal frame holds an internal vtree node");
+                        };
+                        push_assignment_frame(
+                            &mut stack,
+                            lim,
+                            f,
+                            TddNodeId { vtree: right, local: NodeIdx(pair.right.raw()) },
+                            Some(p),
+                            current.len(),
+                            &mut gate,
+                        )?;
+                        break;
+                    }
+                    i = p;
                 }
             }
+            VtreeNode::Internal { left, .. } => {
+                if stack[top].phase != 0 {
+                    unreachable!("an internal frame is on top only when starting a pair");
+                }
+                if stack[top].next >= stack[top].pairs.len() {
+                    finish_exhausted(&mut stack, &mut current);
+                    continue;
+                }
+                let pair = stack[top].pairs[stack[top].next];
+                stack[top].phase = 1;
+                push_assignment_frame(
+                    &mut stack,
+                    lim,
+                    f,
+                    TddNodeId { vtree: left, local: NodeIdx(pair.left.raw()) },
+                    Some(top),
+                    current.len(),
+                    &mut gate,
+                )?;
+            }
         }
-        result.sort_unstable_by_key(|lit| lit.var);
-        gate.flush()?;
-        Ok(Some(result))
     }
+    gate.flush()?;
+    Ok(results)
 }
 
 /// Exact interning of bottom-up signatures; hash collisions still compare full keys.

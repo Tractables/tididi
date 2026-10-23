@@ -99,12 +99,17 @@ def test_queries_and_transformations_against_truth_table():
     witness = f.satisfying_assignment()
     assert set(x.variable for x in witness) == {1, 2, 3, 4}
     assert td.cube(v, witness).implies(f)
+    listed = f.satisfying_assignments(16)
+    assert len(listed) == 8
+    assert listed[0] == witness
+    assert f.satisfying_assignments(0) == []
     assert f.copy().exists([1, 2, 3]).model_count() == 16
     assert f.copy().condition([2]).model_count() == 8
     assert f.copy().rename({1: 2, 2: 1}).rename({1: 2, 2: 1}).equivalent(f)
     assert f.copy().minimize().equivalent(f)
     impossible = td.zero(v)
     assert impossible.satisfying_assignment() is None
+    assert impossible.satisfying_assignments(4) == []
     assert set(map(int, impossible.implied_literals())) == {1, -1, 2, -2, 3, -3, 4, -4}
 
 

@@ -797,6 +797,8 @@ impl Tdd {
     ///
     /// The walk and temporary space are linear in the vtree size. Sorting the
     /// returned literals takes O(n log n) for n variables.
+    /// [`satisfying_assignments`](Self::satisfying_assignments) continues the
+    /// same walk for more than one model.
     ///
     /// # Errors
     ///
@@ -816,6 +818,35 @@ impl Tdd {
     pub fn satisfying_assignment(&self) -> Result<Option<Vec<Literal>>, OperationError> {
         let context = Arc::clone(self.context());
         context.run(|eng| eng.satisfying_assignment(self))
+    }
+
+    /// Return complete satisfying assignments, at most `limit` of them.
+    ///
+    /// Each assignment contains one literal per vtree variable, sorted by identifier,
+    /// including free variables. The walk is the one
+    /// [`satisfying_assignment`](Self::satisfying_assignment) uses: the first
+    /// result is that witness when the function is satisfiable and `limit` is
+    /// at least one. A false function, or a `limit` of zero, returns an empty
+    /// list after the same structure check. The diagram is borrowed and unchanged;
+    /// attached weights are ignored.
+    ///
+    /// # Errors
+    ///
+    /// As [`satisfying_assignment`](Self::satisfying_assignment).
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
+    /// let models = f.satisfying_assignments(8)?;
+    /// assert_eq!(models.len(), 3);
+    /// assert_eq!(models[0], f.satisfying_assignment()?.unwrap());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn satisfying_assignments(&self, limit: usize) -> Result<Vec<Vec<Literal>>, OperationError> {
+        let context = Arc::clone(self.context());
+        context.run(|eng| eng.satisfying_assignments(self, limit))
     }
 
     /// Evaluate this structural diagram in a caller-supplied algebra.

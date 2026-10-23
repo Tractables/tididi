@@ -329,6 +329,21 @@ fn count_matches_enumeration(case: &Case) {
         case.num_vars,
         "compiled diagram",
     );
+    let truth = truth_table(case.num_vars, &case.clauses);
+    let models = f.satisfying_assignments(1 << case.num_vars).unwrap();
+    assert_eq!(models.len(), truth.iter().filter(|hit| **hit).count(), "listed models disagree with the count");
+    if let Some(first) = f.satisfying_assignment().unwrap() {
+        assert_eq!(models[0], first, "the first listed model is not the witness");
+    } else {
+        assert!(models.is_empty());
+    }
+    let mut seen = vec![false; 1 << case.num_vars];
+    for model in &models {
+        let row = model.iter().fold(0usize, |a, lit| a | ((lit.sign as usize) << lit.var.idx()));
+        assert!(truth[row], "listed a model outside the truth table");
+        assert!(!seen[row], "listed a model twice");
+        seen[row] = true;
+    }
 }
 
 /// One clause set reached three ways: a left fold of conjunctions, a pairwise
