@@ -57,6 +57,8 @@ def test_preflight_errors_do_not_consume_other_operands():
     with pytest.raises(ValueError):
         a.exists([4])
     with pytest.raises(ValueError):
+        a.forall([4])
+    with pytest.raises(ValueError):
         a.rename({1: 9})
     with pytest.raises(ValueError):
         a.condition([1, 4])
@@ -116,7 +118,9 @@ def test_composition_and_fused_projection():
     assert chosen.equivalent(expected)
     assert (a.copy() ^ b.copy()).model_count() == 4
     fused = td.and_exists(a.copy(), b.copy(), [1])
-    assert fused.equivalent((a & b).exists([1]))
+    assert fused.equivalent((a.copy() & b.copy()).exists([1]))
+    assert (a.copy() | b.copy()).forall([1]).equivalent(b.copy())
+    assert (a | b).forall([1, 2]).equivalent(td.zero(v))
     union = td.or_many(td.literal(v, i) for i in [1, 2, 3])
     assert union.model_count() == 7
 
@@ -331,6 +335,7 @@ def test_vtree_constructors_report_oversized_variable_spaces_as_value_errors(bui
 @pytest.mark.parametrize("transform", [lambda f, **kw: f.negate(**kw),
                                       lambda f, **kw: f.condition([1], **kw),
                                       lambda f, **kw: f.exists([1], **kw),
+                                      lambda f, **kw: f.forall([1], **kw),
                                       lambda f, **kw: f.rename({1: 2}, **kw),
                                       lambda f, **kw: f.minimize(**kw),
                                       lambda f, **kw: f.update(insert=[[1]], **kw)])

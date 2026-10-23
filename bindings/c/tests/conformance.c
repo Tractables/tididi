@@ -90,6 +90,7 @@ int main(int argc, char **argv) {
             } else if (!strcmp(op, "negate")) ok(tididi_negate(left, &f, NULL));
             else if (!strcmp(op, "condition")) { int64_t literal = b; ok(tididi_condition(left, &literal, 1, &f, NULL)); }
             else if (!strcmp(op, "exists")) { uint32_t var = (uint32_t)b; ok(tididi_exists(left, &var, 1, &f, NULL)); }
+            else if (!strcmp(op, "forall")) { uint32_t var = (uint32_t)b; ok(tididi_forall(left, &var, 1, &f, NULL)); }
             else if (!strcmp(op, "swap") || !strcmp(op, "rename")) {
                 uint32_t from[] = {(uint32_t)b, (uint32_t)c}, to[] = {(uint32_t)c, (uint32_t)b};
                 ok(tididi_rename(left, from, to, !strcmp(op, "swap") ? 2 : 1, &f, NULL));

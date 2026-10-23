@@ -315,6 +315,43 @@ impl Tdd {
         context.run(|eng| eng.exists_vars(self, vars))
     }
 
+    /// Remove dependence on variables by requiring both values of each one.
+    ///
+    /// An assignment to the remaining variables satisfies the result when every
+    /// extension to the quantified variables satisfies this function. The result
+    /// is the complement of [`exists_vars`](Self::exists_vars) applied to the
+    /// complement.
+    ///
+    /// Consumes the diagram on success and error, retaining its vtree and weights.
+    /// A repeated variable is quantified once. An empty slice returns the operand
+    /// unchanged; a nonempty request returns a minimized result. The quantified
+    /// variables remain free in the unchanged vtree, so divide the result's full
+    /// model count by `2^k` to count over the remaining variables, where `k` is
+    /// the number of distinct quantified variables.
+    ///
+    /// # Errors
+    ///
+    /// Every variable is validated before quantification. Returns
+    /// [`OperationError::VariableNotInVtree`] for an absent variable,
+    /// [`OperationError::MarginalLevel`] if any level has discarded its
+    /// structure, or [`OperationError::OverBudget`] if an allocation is refused.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{Tdd, Vtree};
+    /// use tididi::vtree::VarId;
+    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// // x1 ∨ x2 holds for both values of x1 exactly when x2 holds.
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
+    /// let g = f.forall_vars(&[VarId(1)])?;
+    /// assert!(g.equivalent(&Tdd::cube(&vtree, [2])?)?);
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn forall_vars(self, vars: &[VarId]) -> Result<Tdd, OperationError> {
+        let context = Arc::clone(self.context());
+        context.run(|eng| eng.forall_vars(self, vars))
+    }
+
     /// Rename variable occurrences simultaneously within the existing vtree.
     ///
     /// Each `(source, target)` names a pair of [`VarId`]s. Omitted sources keep their

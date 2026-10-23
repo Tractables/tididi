@@ -535,3 +535,67 @@ fn projection_crosses_a_marginalized_level() {
     let projected = f.exists_var(VarId(1)).unwrap();
     assert!(!projected.is_zero());
 }
+
+/// Universal quantification against the truth table on every vtree shape: an
+/// assignment satisfies the result when every value of the quantified
+/// variables, with the others kept, satisfies the operand.
+#[test]
+fn universal_quantification_matches_the_truth_table_on_every_vtree_shape() {
+    let mut rng = Lcg::new(20261023);
+    for round in 0..12u32 {
+        let num_vars = 3 + round % 4;
+        // Few clauses keep the operand dense, so most results are not constant.
+        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 3, width: 3 });
+        let quantified: Vec<VarId> = (1..=num_vars).filter(|v| v % 2 == round % 2).map(VarId).collect();
+        let mask: usize = quantified.iter().map(|v| 1 << v.idx()).sum();
+        let truth = truth_table(num_vars, &clauses);
+        let expected: Vec<bool> = (0..truth.len())
+            .map(|row| (0..truth.len()).filter(|other| other & !mask == row & !mask).all(|other| truth[other]))
+            .collect();
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            let f = compile_clauses(&vtree, &clauses);
+            let g = f.forall_vars(&quantified).unwrap();
+            assert_canonical(&g);
+            for (row, &holds) in expected.iter().enumerate() {
+                let asn: Vec<bool> = (0..num_vars).map(|i| row >> i & 1 == 1).collect();
+                assert_eq!(eval(&g, &asn), holds, "{shape}: ∀{quantified:?} of {clauses:?} at row {row:#b}");
+            }
+        }
+    }
+}
+
+#[test]
+fn universal_quantification_validates_before_it_rewrites() {
+    use crate::OperationError;
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(3));
+    let f = Tdd::clause(&vtree, [1, 2]).unwrap();
+    assert_eq!(eng.forall_vars(f.clone(), &[VarId(1), VarId(8)]).unwrap_err(), OperationError::VariableNotInVtree(VarId(8)));
+    assert_eq!(eng.forall_vars(Tdd::zero(&vtree), &[VarId(8)]).unwrap_err(), OperationError::VariableNotInVtree(VarId(8)));
+    assert!(eng.forall_vars(Tdd::zero(&vtree), &[VarId(1)]).unwrap().is_zero());
+    assert!(eng.equivalent(&eng.forall_vars(Tdd::one(&vtree), &[VarId(1)]).unwrap(), &Tdd::one(&vtree)).unwrap());
+    let once = eng.forall_vars(f.clone(), &[VarId(1)]).unwrap();
+    let repeated = eng.forall_vars(f.clone(), &[VarId(1), VarId(1)]).unwrap();
+    assert!(eng.equivalent(&once, &repeated).unwrap());
+    assert!(eng.equivalent(&once, &Tdd::cube(&vtree, [2]).unwrap()).unwrap());
+    // Complement needs every level, unlike existential quantification; an
+    // empty request returns the operand before that check.
+    let mut marginal = f;
+    let leaf = vtree.leaf_of(VarId(3)).unwrap();
+    eng.marginalize_levels(&mut marginal, &[leaf]).unwrap();
+    assert_eq!(eng.forall_vars(marginal.clone(), &[VarId(1)]).unwrap_err(), OperationError::MarginalLevel(leaf));
+    assert!(eng.forall_vars(marginal, &[]).is_ok());
+}
+
+#[test]
+fn universal_quantification_keeps_the_weight_store() {
+    use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
+    use num_rational::BigRational;
+
+    let vtree = Arc::new(Vtree::balanced(2));
+    let weight = |positive: i32| LiteralWeights { negative: BigRational::from_integer(1.into()), positive: BigRational::from_integer(positive.into()) };
+    let mut f = Tdd::clause(&vtree, [1, 2]).unwrap();
+    f.set_weights(WeightStore::new(RationalWeights::from_literals(&[weight(2), weight(3)]), Arithmetic::ExactRational)).unwrap();
+    let g = f.forall_vars(&[VarId(1)]).unwrap();
+    assert!(g.weights().is_some(), "universal quantification dropped the weight store");
+}

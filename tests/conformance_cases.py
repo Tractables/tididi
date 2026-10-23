@@ -38,6 +38,9 @@ def generate():
             elif op == "exists":
                 bit = 1 << (b - 1)
                 truth = sum((at(a, x & ~bit) | at(a, x | bit)) << x for x in range(1 << n))
+            elif op == "forall":
+                bit = 1 << (b - 1)
+                truth = sum((at(a, x & ~bit) & at(a, x | bit)) << x for x in range(1 << n))
             elif op in {"swap", "rename"}:
                 source, target = 1 << (b - 1), 1 << (c - 1)
                 def mapped(x):
@@ -74,6 +77,12 @@ def generate():
             elif op in {"negate", "minimize", "roundtrip"}: b = c = 0
             elif op != "ite": c = 0
             emit(op, a, b, c)
+        # Operations added later draw after the trace, so its rows keep their numbers.
+        # A disjunction of nonconstant rows is dense enough that most universal
+        # quantifications of it are not constant.
+        varying = [i for i, t in enumerate(tables) if t not in (0, full)]
+        for _ in range(12):
+            emit("forall", emit("or", rng.choice(varying), rng.choice(varying)), rng.randint(1, n))
     return "\n".join(lines) + "\n"
 
 
