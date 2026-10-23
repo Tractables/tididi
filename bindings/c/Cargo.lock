@@ -408,7 +408,7 @@ dependencies = [
 
 [[package]]
 name = "tididi"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "itoa",
  "num-bigint",
@@ -420,7 +420,7 @@ dependencies = [
 
 [[package]]
 name = "tididi-c"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "cbindgen",
  "num-rational",

@@ -129,7 +129,7 @@ Minimum with remote backups: Some(3)
 Minimum without encryption: None
 ```
 
-The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/optimization.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.1/examples/optimization.rs)
 also checks both price scenarios by enumerating the sixteen assignments.
 For evaluation by weighted sums instead of minima, see the
 [probability walkthrough](crate::guide::examples::probability).

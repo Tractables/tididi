@@ -153,5 +153,5 @@ Reevaluation needs discarded structure: true
 
 Keep structure for changing weights, recovering assignments, or observing the
 variables you would otherwise discard. Marginalize a subtree when retaining its
-contribution is sufficient. The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/marginalization.rs)
+contribution is sufficient. The [complete program](https://github.com/Tractables/tididi/blob/v0.1.1/examples/marginalization.rs)
 compares both representations.

@@ -97,5 +97,5 @@ two variables is free, so the model count is 2 × 2 × 2 = 8. The four stored
 pairs describe those eight assignments.
 
 Adapt the same traversal for a histogram of node sizes or a per-level report.
-The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/statistics.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.1/examples/statistics.rs)
 includes the runnable entry point.

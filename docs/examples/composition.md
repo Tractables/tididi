@@ -139,5 +139,5 @@ Server B now has one choice, while server A's two variables remain free.
 [`EmbeddingPlan::then`](crate::restructure::EmbeddingPlan::then) composes
 placements when a component is nested inside a larger system.
 
-The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/composition.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.1/examples/composition.rs)
 builds and connects both server models.

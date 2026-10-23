@@ -6,7 +6,7 @@ abstract: "A Rust library for Tree Decision Diagrams: canonical vtree-shaped dec
 license: Apache-2.0
 repository-code: "https://github.com/Tractables/tididi"
 url: "https://tractables.github.io/tididi/tididi/"
-version: 0.1.0
+version: 0.1.1
 authors:
   - family-names: "Capelli"
     given-names: "Florent"

@@ -277,5 +277,5 @@ a memory-budget error.
 Continue with [minimum costs](crate::guide::examples::optimization),
 [probabilities](crate::guide::examples::probability), or
 [execution limits](crate::guide::examples::execution).
-The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/configurations.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.1/examples/configurations.rs)
 contains all the queries above.

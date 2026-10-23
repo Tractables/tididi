@@ -102,5 +102,5 @@ when you want the exact valid configurations under an assumption; use
 [`condition`](crate::Tdd::condition) to substitute specific variable values,
 as in the [counting tutorial](crate::guide::examples::counting).
 
-The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/care.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.1/examples/care.rs)
 compares the circuits both inside and outside the care set.

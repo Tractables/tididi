@@ -121,5 +121,5 @@ P(wet and no rain) = 1/25
 P(wet) = 16/25
 ```
 
-The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/probability.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.1/examples/probability.rs)
 includes both the changing priors and observations.

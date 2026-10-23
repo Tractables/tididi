@@ -104,5 +104,5 @@ Equivalent to the original rules: true
 ```
 
 See [`read_tdd`](crate::io::read_tdd) for format requirements and the
-[complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/persistence.rs)
+[complete program](https://github.com/Tractables/tididi/blob/v0.1.1/examples/persistence.rs)
 for the runnable example.

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(tididi_c VERSION 0.1.0 LANGUAGES C CXX)
+project(tididi_c VERSION 0.1.1 LANGUAGES C CXX)
 include(GNUInstallDirs)
 find_program(CARGO cargo REQUIRED)
 set(RUST_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/cargo/release")

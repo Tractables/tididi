@@ -108,5 +108,5 @@ the number of distinct destination choices, and
 [`exists_vars`](crate::Tdd::exists_vars) when you need the rule itself for further
 composition, as in the [reachability example](crate::guide::examples::reachability).
 
-The [complete program](https://github.com/Tractables/tididi/blob/v0.1.0/examples/counting.rs)
+The [complete program](https://github.com/Tractables/tididi/blob/v0.1.1/examples/counting.rs)
 contains these queries.
