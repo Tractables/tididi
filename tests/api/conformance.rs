@@ -32,6 +32,7 @@ fn shared_behavioral_traces() {
             "negate" => copy(a).negate().unwrap(),
             "condition" => copy(a).condition([b]).unwrap(),
             "exists" => copy(a).exists_var(VarId(b as u32)).unwrap(),
+            "forall" => copy(a).forall_var(VarId(b as u32)).unwrap(),
             "swap" => copy(a).rename_vars(&[(VarId(b as u32), VarId(c as u32)), (VarId(c as u32), VarId(b as u32))]).unwrap(),
             "rename" => copy(a).rename_vars(&[(VarId(b as u32), VarId(c as u32))]).unwrap(),
             "minimize" => { let mut f = copy(a); f.minimize().unwrap(); f },

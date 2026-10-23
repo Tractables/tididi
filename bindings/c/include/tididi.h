@@ -358,6 +358,15 @@ struct TididiError *tididi_exists(struct TididiCircuit *value,
                                   const struct TididiLimits *config);
 
 /**
+ * Universally quantify variables, consuming the circuit. They remain free in the vtree's counting universe.
+ */
+struct TididiError *tididi_forall(struct TididiCircuit *value,
+                                  const uint32_t *vars,
+                                  size_t len,
+                                  struct TididiCircuit **out,
+                                  const struct TididiLimits *config);
+
+/**
  * Conjoin then quantify in one call, consuming both inputs. Equivalent to and followed by exists.
  */
 struct TididiError *tididi_and_exists(struct TididiCircuit *left,

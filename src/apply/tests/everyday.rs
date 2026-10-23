@@ -236,6 +236,41 @@ fn every_quantification_entry_point_matches_enumeration() {
 }
 
 #[test]
+fn every_universal_quantification_entry_point_matches_enumeration() {
+    let eng = Engine::new();
+    for tree in [Vtree::balanced(3), Vtree::linear(3), Vtree::reverse_linear(3)] {
+        let tree = Arc::new(tree);
+        for bits in [0u16, 255, 42, 150] {
+            let f = function(&tree, bits, false);
+            assert_canonical(&f);
+            for vars in [vec![], vec![VarId(1)], vec![VarId(1), VarId(3), VarId(1)]] {
+                let mut results = vec![
+                    (f).clone().forall_vars(&vars).unwrap(),
+                    eng.forall_vars(f.clone(), &vars).unwrap(),
+                ];
+                if vars.len() == 1 {
+                    results.push((f).clone().forall_var(vars[0]).unwrap());
+                    results.push(eng.forall_var(f.clone(), vars[0]).unwrap());
+                }
+                for result in results {
+                    assert_canonical(&result);
+                    assert!(Arc::ptr_eq(result.vtree(), &tree));
+                    for row in 0..8 {
+                        let expected = (0..8).all(|witness| {
+                            let agrees = (0..3).all(|v| {
+                                vars.contains(&VarId(v + 1)) || row & (1 << v) == witness & (1 << v)
+                            });
+                            !agrees || bits & (1 << witness) != 0
+                        });
+                        assert_eq!(eval(&result, &assignment(row, 3)), expected, "shape bits {bits} row {row}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn sparse_ids_and_single_leaf_diagrams_work() {
     let eng = Engine::new();
     for tree in [
@@ -331,7 +366,12 @@ fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
             OperationError::DuplicateVariable(VarId(1))
         );
         assert_eq!(
-            eng.and_exists(f, x.clone(), &[VarId(10)])
+            eng.and_exists(f.clone(), x.clone(), &[VarId(10)])
+                .unwrap_err(),
+            OperationError::VariableNotInVtree(VarId(10))
+        );
+        assert_eq!(
+            eng.forall_vars(f, &[VarId(10)])
                 .unwrap_err(),
             OperationError::VariableNotInVtree(VarId(10))
         );
@@ -344,6 +384,7 @@ fn invalid_maps_and_marginal_inputs_are_rejected_even_for_constants() {
     assert_eq!(eng.implies(&marginal, &x).unwrap_err(), error);
     assert_eq!(eng.support(&marginal).unwrap_err(), error);
     assert_eq!(eng.satisfying_assignment(&marginal).unwrap_err(), error);
+    assert_eq!(eng.forall_var(marginal.clone(), VarId(1)).unwrap_err(), error);
     assert_eq!(eng.rename_vars(marginal.clone(), &[]).unwrap_err(), error);
     assert_eq!(
         eng.substitute(x.clone(), &[(VarId(1), &marginal)])
@@ -415,6 +456,9 @@ fn exercise(eng: &Engine, op: usize, f: &Tdd, g: &Tdd) -> Result<(), OperationEr
         9 => {
             eng.rename_vars(f.clone(), &[(VarId(1), VarId(2))])?;
         }
+        10 => {
+            eng.forall_vars(f.clone(), &[VarId(1)])?;
+        }
         _ => unreachable!(),
     }
     Ok(())
@@ -425,7 +469,7 @@ fn every_new_operation_recovers_from_reservation_refusals_and_work_stops() {
     let tree = Arc::new(Vtree::balanced(2));
     let f = Tdd::clause(&tree, [1, 2]).unwrap();
     let g = crate::literal(&tree, 2).unwrap();
-    for op in 0..10 {
+    for op in 0..11 {
         let eng = Engine::new();
         {
             let _scope = eng
@@ -482,7 +526,7 @@ fn composed_operations_propagate_output_caps() {
     let tree = Arc::new(Vtree::balanced(4));
     let f = Tdd::clause(&tree, [1, 3]).unwrap();
     let g = Tdd::clause(&tree, [2, 4]).unwrap();
-    for op in [0, 5, 6, 7, 8, 9] {
+    for op in [0, 5, 6, 7, 8, 9, 10] {
         let eng = Engine::new();
         let _scope = eng
             .limits()

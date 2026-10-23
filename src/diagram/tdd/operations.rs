@@ -315,6 +315,77 @@ impl Tdd {
         context.run(|eng| eng.exists_vars(self, vars))
     }
 
+    /// Universally quantify one variable.
+    ///
+    /// The result holds whenever both values of `var` satisfy this function.
+    /// Consumes the diagram, retaining its weights and vtree, and minimizes a
+    /// nonfalse result. A false operand remains false. The quantified variable
+    /// becomes free, so divide the full-vtree model count by two to count assignments
+    /// to the remaining variables. [`forall_vars`](Self::forall_vars) accepts a batch.
+    ///
+    /// Complement is part of the rewrite, so every level must be structural.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperationError::VariableNotInVtree`] for an absent variable,
+    /// [`OperationError::MarginalLevel`] if any level has discarded its
+    /// structure, or [`OperationError::OverBudget`] if an allocation is refused.
+    /// The operand is also consumed on error.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{literal, Tdd, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
+    /// let g = f.forall_var(tididi::vtree::VarId(1))?;
+    /// assert!(g.equivalent(&literal(&vtree, 2)?)?);
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn forall_var(self, var: VarId) -> Result<Tdd, OperationError> {
+        let context = Arc::clone(self.context());
+        context.run(|eng| eng.forall_var(self, var))
+    }
+
+    /// Remove dependence on variables by requiring both values of each one.
+    ///
+    /// An assignment to the remaining variables satisfies the result when every
+    /// extension to the quantified variables satisfies this function.
+    ///
+    /// Consumes the diagram on success and error, retaining its vtree and weights.
+    /// A repeated variable is quantified once. An empty slice returns the operand
+    /// unchanged; a nonempty request minimizes a nonfalse operand. A false operand
+    /// remains false.
+    ///
+    /// The quantified variables remain free in the unchanged vtree. Divide the
+    /// result's full model count by `2^k` to count over the remaining variables,
+    /// where `k` is the number of distinct quantified variables.
+    ///
+    /// Complement is part of the rewrite, so every level must be structural.
+    ///
+    /// # Errors
+    ///
+    /// Every variable is validated before quantification. Returns
+    /// [`OperationError::VariableNotInVtree`] for an absent variable,
+    /// [`OperationError::MarginalLevel`] if any level has discarded its
+    /// structure, or [`OperationError::OverBudget`] if an allocation is refused.
+    ///
+    /// ```
+    /// use std::sync::Arc;
+    /// use tididi::{literal, Tdd, Vtree};
+    /// let vtree = Arc::new(Vtree::balanced(2));
+    /// use tididi::vtree::VarId;
+    /// let f = Tdd::clause(&vtree, [1, 2])?;
+    /// let projected = f.forall_vars(&[VarId(1)])?;
+    /// assert!(projected.equivalent(&literal(&vtree, 2)?)?);
+    /// let remaining_count = projected.model_count()? >> 1usize;
+    /// assert_eq!(remaining_count, 1u32.into());
+    /// # Ok::<(), tididi::OperationError>(())
+    /// ```
+    pub fn forall_vars(self, vars: &[VarId]) -> Result<Tdd, OperationError> {
+        let context = Arc::clone(self.context());
+        context.run(|eng| eng.forall_vars(self, vars))
+    }
+
     /// Rename variable occurrences simultaneously within the existing vtree.
     ///
     /// Each `(source, target)` names a pair of [`VarId`]s. Omitted sources keep their

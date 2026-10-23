@@ -3,13 +3,8 @@ use tididi::{Engine, Tdd};
 
 use super::support::*;
 
-/// Universal abstraction expressed through the existing public Boolean operations.
 fn forall(engine: &Engine, diagram: Tdd, var: VarId) -> Tdd {
-    let negated = engine.negate(diagram).unwrap();
-    let projected = engine
-        .exists_vars(negated, &[var])
-        .unwrap();
-    engine.negate(projected).unwrap()
+    engine.forall_var(diagram, var).unwrap()
 }
 
 #[test]

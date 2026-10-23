@@ -6,7 +6,8 @@
 //!
 //! [`Tdd::negate`](crate::Tdd::negate) complements a function.
 //! [`Tdd::condition`](crate::Tdd::condition) fixes an assignment;
-//! [`Tdd::exists_vars`](crate::Tdd::exists_vars) quantifies variables;
+//! [`Tdd::exists_vars`](crate::Tdd::exists_vars) and
+//! [`Tdd::forall_vars`](crate::Tdd::forall_vars) quantify variables;
 //! [`Tdd::substitute`](crate::Tdd::substitute) replaces them with functions.
 //! [`Tdd::rename_vars`](crate::Tdd::rename_vars) handles swaps and renames,
 //! and [`and_exists`] constructs an existential conjunction.

@@ -40,7 +40,10 @@ fn ffi_transformation_results_satisfy_diagram_invariants() {
         let mut projected = std::ptr::null_mut();
         assert!(tididi_exists(result, [1].as_ptr(), 1, &mut projected, std::ptr::null()).is_null());
         tididi::test_helpers::assert_canonical(&borrow(projected).unwrap());
-        for handle in [a, b, result, projected] { assert!(tididi_circuit_free(handle).is_null()); }
+        let mut universal = std::ptr::null_mut();
+        assert!(tididi_forall(projected, [1].as_ptr(), 1, &mut universal, std::ptr::null()).is_null());
+        tididi::test_helpers::assert_canonical(&borrow(universal).unwrap());
+        for handle in [a, b, result, projected, universal] { assert!(tididi_circuit_free(handle).is_null()); }
         tididi_vtree_free(vtree);
     }
 }

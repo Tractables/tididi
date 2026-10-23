@@ -22,6 +22,8 @@ fn shortcut(eng: &Engine, tree: &Arc<Vtree>, f: Tdd, case: usize) -> Result<Tdd,
         14 => eng.and(f, eng.zero(tree)),
         15 => eng.and(eng.zero(tree), f),
         16 => eng.and(eng.zero(tree), eng.zero(tree)),
+        17 => eng.forall_var(eng.zero(tree), VarId(1)),
+        18 => eng.forall_vars(f, &[]),
         _ => unreachable!(),
     }
 }
@@ -32,7 +34,7 @@ fn constant_and_empty_transforms_honor_entry_stops_and_recover() {
         let tree = Arc::new(Vtree::balanced(n));
         let f = crate::literal(&tree, 1).unwrap();
         assert_canonical(&f);
-        for case in 0..17 {
+        for case in 0..19 {
             let eng = Engine::new();
             let expected = shortcut(&eng, &tree, f.clone(), case).unwrap();
             {

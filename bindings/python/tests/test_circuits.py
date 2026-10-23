@@ -100,6 +100,9 @@ def test_queries_and_transformations_against_truth_table():
     assert set(x.variable for x in witness) == {1, 2, 3, 4}
     assert td.cube(v, witness).implies(f)
     assert f.copy().exists([1, 2, 3]).model_count() == 16
+    remaining = f.copy().forall([1])
+    assert remaining.equivalent(td.literal(v, 2) & td.literal(v, 3))
+    assert remaining.model_count() == 4
     assert f.copy().condition([2]).model_count() == 8
     assert f.copy().rename({1: 2, 2: 1}).rename({1: 2, 2: 1}).equivalent(f)
     assert f.copy().minimize().equivalent(f)
@@ -331,6 +334,7 @@ def test_vtree_constructors_report_oversized_variable_spaces_as_value_errors(bui
 @pytest.mark.parametrize("transform", [lambda f, **kw: f.negate(**kw),
                                       lambda f, **kw: f.condition([1], **kw),
                                       lambda f, **kw: f.exists([1], **kw),
+                                      lambda f, **kw: f.forall([1], **kw),
                                       lambda f, **kw: f.rename({1: 2}, **kw),
                                       lambda f, **kw: f.minimize(**kw),
                                       lambda f, **kw: f.update(insert=[[1]], **kw)])

@@ -443,6 +443,13 @@ fn operations_match_enumeration(case: &Case) {
             .map(|mask| tf[(mask | (1 << x)) as usize] || tf[(mask & !(1 << x)) as usize])
             .collect();
         assert_truth(&diagram_truth(&p, n), &want, n, "projection");
+        step("universal projection");
+        let u = (f).clone().forall_var(VarId(x + 1)).unwrap();
+        assert_canonical_after_minimize(&u);
+        let want: Vec<bool> = (0..(1u32 << n))
+            .map(|mask| tf[(mask | (1 << x)) as usize] && tf[(mask & !(1 << x)) as usize])
+            .collect();
+        assert_truth(&diagram_truth(&u, n), &want, n, "universal projection");
     }
 
     step("restriction");

@@ -38,6 +38,9 @@ def generate():
             elif op == "exists":
                 bit = 1 << (b - 1)
                 truth = sum((at(a, x & ~bit) | at(a, x | bit)) << x for x in range(1 << n))
+            elif op == "forall":
+                bit = 1 << (b - 1)
+                truth = sum((at(a, x & ~bit) & at(a, x | bit)) << x for x in range(1 << n))
             elif op in {"swap", "rename"}:
                 source, target = 1 << (b - 1), 1 << (c - 1)
                 def mapped(x):
@@ -63,13 +66,14 @@ def generate():
         if n > 1:
             emit("rename", parity, 1, 2)
             emit("swap", parity, 1, 2)
-        ops = ["and", "or", "xor", "negate", "ite", "condition", "exists", "minimize", "roundtrip"]
+        ops = ["and", "or", "xor", "negate", "ite", "condition", "exists", "forall", "minimize", "roundtrip"]
         if n > 1: ops += ["swap", "rename"]
         for _ in range(77):
             op = rng.choice(ops)
             a, b, c = [rng.randrange(len(tables)) for _ in range(3)]
             if op == "condition": b, c = rng.choice([-1, 1]) * rng.randint(1, n), 0
             elif op == "exists": b, c = rng.randint(1, n), 0
+            elif op == "forall": b, c = rng.randint(1, n), 0
             elif op in {"swap", "rename"}: b, c = rng.sample(range(1, n + 1), 2)
             elif op in {"negate", "minimize", "roundtrip"}: b = c = 0
             elif op != "ite": c = 0

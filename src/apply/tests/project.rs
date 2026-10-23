@@ -1,4 +1,4 @@
-//! Existential projection.
+//! Existential and universal projection.
 //!
 //! Fixtures come from `crate::test_helpers`, re-exported by the parent.
 
@@ -534,4 +534,107 @@ fn projection_crosses_a_marginalized_level() {
     f.marginalize_levels(&[leaf]).unwrap();
     let projected = f.exists_var(VarId(1)).unwrap();
     assert!(!projected.is_zero());
+}
+
+#[test]
+fn forall_var_of_a_literal_is_false() {
+    let vtree = Arc::new(Vtree::balanced(1));
+    let tdd = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true)]));
+    let result = tdd.forall_var(VarId(1)).unwrap();
+    assert_canonical(&result);
+    assert!(result.is_zero());
+}
+
+#[test]
+fn forall_var_of_constant_one_is_one() {
+    let eng = &crate::Engine::new();
+    let vtree = Arc::new(Vtree::balanced(3));
+    let tdd = constant_one(eng, &vtree);
+    let result = tdd.clone().forall_var(VarId(1)).unwrap();
+    assert_canonical(&result);
+    assert!(result.equivalent(&tdd).unwrap());
+}
+
+#[test]
+fn forall_var_of_constant_zero_is_zero() {
+    let eng = &crate::Engine::new();
+    let vtree = Arc::new(Vtree::balanced(3));
+    let tdd = constant_zero(eng, &vtree);
+    let result = tdd.forall_var(VarId(1)).unwrap();
+    assert_canonical(&result);
+    assert!(result.is_zero());
+}
+
+#[test]
+fn forall_clause_keeps_the_other_literal() {
+    let vtree = Arc::new(Vtree::balanced(2));
+    let f = Tdd::clause(&vtree, [1, 2]).unwrap();
+    assert_canonical(&f);
+    let g = f.forall_vars(&[VarId(1)]).unwrap();
+    assert_canonical(&g);
+    assert!(g.equivalent(&crate::literal(&vtree, 2).unwrap()).unwrap());
+}
+
+#[test]
+fn forall_matches_the_dual_of_exists_on_random_formulas() {
+    use crate::test_helpers::{compile_clauses, rand_cnf, vtree_shapes, CnfShape, Lcg};
+    let mut rng = Lcg::new(0x6a11_f0a1);
+    for round in 0..8 {
+        let num_vars = 4 + round % 3;
+        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 6, width: 3 });
+        let vars: Vec<VarId> = (1..=num_vars).filter(|v| v % 2 == 0).map(VarId).collect();
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            let f = compile_clauses(&vtree, &clauses);
+            let eng = crate::Engine::new();
+            let expected = {
+                let negated = eng.negate(f.clone()).unwrap();
+                let projected = eng.exists_vars(negated, &vars).unwrap();
+                eng.negate(projected).unwrap()
+            };
+            let result = f.forall_vars(&vars).unwrap();
+            assert_canonical(&result);
+            assert!(
+                result.equivalent(&expected).unwrap(),
+                "{shape}: forall {clauses:?} over {vars:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_empty_forall_returns_the_operand() {
+    let vtree = Arc::new(Vtree::balanced(3));
+    let f = Tdd::clause(&vtree, [1, 2]).unwrap();
+    assert_canonical(&f);
+    let g = f.clone().forall_vars(&[]).unwrap();
+    assert_canonical(&g);
+    assert!(g.equivalent(&f).unwrap());
+}
+
+/// Complement is part of the rewrite, so a marginalized level anywhere refuses
+/// the request, including a leaf far from the quantified variable.
+#[test]
+fn forall_refuses_a_marginalized_level() {
+    let vtree = Arc::new(Vtree::balanced(8));
+    let mut f = Tdd::clause(&vtree, [1, 2]).unwrap();
+    f.minimize().unwrap();
+    let leaf = vtree.leaf_of(VarId(8)).unwrap();
+    f.marginalize_levels(&[leaf]).unwrap();
+    assert_eq!(
+        f.forall_var(VarId(1)).unwrap_err(),
+        crate::OperationError::MarginalLevel(leaf)
+    );
+}
+
+#[test]
+fn forall_with_prune_agrees_with_the_minimized_result() {
+    use crate::reduce::ReductionPlan;
+    let vtree = Arc::new(Vtree::balanced(3));
+    let f = Tdd::clause(&vtree, [1, 2]).unwrap() & Tdd::clause(&vtree, [-1, 3]).unwrap();
+    assert_canonical(&f);
+    let eng = crate::Engine::new();
+    let minimized = eng.forall_vars(f.clone(), &[VarId(1)]).unwrap();
+    assert_canonical(&minimized);
+    let pruned = eng.forall_vars_with(f, &[VarId(1)], ReductionPlan::Prune).unwrap();
+    assert!(pruned.equivalent(&minimized).unwrap());
 }

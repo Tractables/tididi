@@ -97,6 +97,29 @@ fn projection_rejects_a_rewritten_ancestors_marginal_grandchild() {
 }
 
 #[test]
+fn universal_projection_rejects_an_absent_variable() {
+    let tree = Arc::new(Vtree::balanced(2));
+    let eng = Engine::new();
+    let f = Tdd::clause(&tree, [1, 2]).unwrap();
+    assert_canonical(&f);
+    assert_eq!(
+        eng.forall_var(f, VarId(3)).unwrap_err(),
+        OperationError::VariableNotInVtree(VarId(3))
+    );
+}
+
+#[test]
+fn universal_projection_rejects_a_marginal_target_leaf() {
+    let tree = Arc::new(Vtree::balanced(2));
+    let eng = Engine::new();
+    let mut f = Tdd::clause(&tree, [1, 2]).unwrap();
+    let leaf = tree.leaf_of(VarId(1)).unwrap();
+    eng.marginalize_levels(&mut f, &[leaf]).unwrap();
+    assert_canonical(&f);
+    assert_eq!(eng.forall_var(f, VarId(1)).unwrap_err(), OperationError::MarginalLevel(leaf));
+}
+
+#[test]
 fn a_clause_rejects_a_marginal_spine() {
     let tree = Arc::new(Vtree::balanced(4));
     let eng = Engine::new();

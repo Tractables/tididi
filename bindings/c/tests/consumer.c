@@ -42,6 +42,7 @@ static void ownership(void) {
     failure(tididi_condition(f, invalid_assignment, sizeof(invalid_assignment) / sizeof(*invalid_assignment), &bad, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
     uint32_t absent = 4;
     failure(tididi_exists(f, &absent, 1, &bad, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
+    failure(tididi_forall(f, &absent, 1, &bad, NULL), TIDIDI_ERROR_CODE_INVALID_ARGUMENT);
     CHECK(count(f) == 2);
     TididiLimits limit = tididi_limits_default(); limit.timeout_seconds = 0;
     failure(tididi_and(f, copy, &bad, &limit), TIDIDI_ERROR_CODE_RESOURCE_LIMIT);
@@ -108,9 +109,13 @@ static void queries(void) {
     bool yes = false; ok(tididi_implies(selected, f, &yes, NULL)); CHECK(yes);
     uint32_t vars[] = {1,2}; uint64_t n=0;
     ok(tididi_projected_model_count(f, vars, 2, &n, NULL)); CHECK(n==3);
+    TididiCircuit *held = NULL; ok(tididi_copy(f, &held));
     TididiCircuit *projected = NULL; ok(tididi_exists(f, vars, 2, &projected, NULL)); CHECK(count(projected)==8);
+    TididiCircuit *universal = NULL; uint32_t one_var[] = {1};
+    ok(tididi_forall(held, one_var, 1, &universal, NULL)); CHECK(count(universal)==4);
     tididi_literals_free(support); tididi_literals_free(forced); tididi_literals_free(witness);
-    ok(tididi_circuit_free(f)); ok(tididi_circuit_free(impossible)); ok(tididi_circuit_free(selected)); ok(tididi_circuit_free(projected)); tididi_vtree_free(v);
+    ok(tididi_circuit_free(f)); ok(tididi_circuit_free(impossible)); ok(tididi_circuit_free(selected));
+    ok(tididi_circuit_free(projected)); ok(tididi_circuit_free(held)); ok(tididi_circuit_free(universal)); tididi_vtree_free(v);
 }
 static void big_counts_and_rows(void) {
     TididiVtree *v = NULL; TididiCircuit *f = NULL;

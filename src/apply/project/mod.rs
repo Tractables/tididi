@@ -1,10 +1,14 @@
-//! Existential quantification of variables from a diagram.
+//! Existential and universal quantification of variables from a diagram.
 //!
 //! `∃X.T` is one bottom-up regroup of the levels above X's leaves, rewritten in
 //! place. It never calls apply or negate, so it is sound when a level elsewhere
 //! is marginal, and it costs one pass over those levels rather than a product
 //! of two full diagrams — one pass for the whole request, not one per
 //! variable.
+//!
+//! `∀X.T` is the dual `¬∃X.¬T`: complement, existentially quantify, complement.
+//! Complement needs every level to be structural, so a universal request is
+//! refused when a required level has discarded its structure.
 
 use crate::Engine;
 
@@ -107,4 +111,66 @@ impl crate::Engine {
     pub fn exists_vars_with(&self, f: Tdd, vars: &[VarId], plan: ReductionPlan<'_>) -> Result<Tdd, OperationError> {
         exists_vars_on(self, f, vars, plan)
     }
+
+    /// Run [`Tdd::forall_var`](crate::Tdd::forall_var) using this batch's scratch and resource limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns the linked operation's errors; cancellation, allocation refusal and
+    /// the output-node cap return [`OperationError::Stopped`],
+    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
+    pub fn forall_var(&self, f: Tdd, x: VarId) -> Result<Tdd, OperationError> {
+        forall_vars_on(self, f, &[x], ReductionPlan::default())
+    }
+
+    /// Run [`Tdd::forall_vars`](crate::Tdd::forall_vars) using this batch's scratch and resource limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns the linked operation's errors; cancellation, allocation refusal and
+    /// the output-node cap return [`OperationError::Stopped`],
+    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
+    pub fn forall_vars(&self, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
+        forall_vars_on(self, f, vars, ReductionPlan::default())
+    }
+
+    /// [`forall_vars`](Self::forall_vars) with the reduction it ends with
+    /// chosen explicitly.
+    ///
+    /// Every plan returns the same function. [`ReductionPlan::Prune`] leaves
+    /// every node reachable without establishing canonical form: it skips the
+    /// twin contraction, so the result can be larger than the minimized one,
+    /// and a later [`minimize`](Self::minimize) finishes the job. An empty
+    /// `vars` and a false `f` return without running the plan.
+    ///
+    /// # Errors
+    ///
+    /// As [`forall_vars`](Self::forall_vars).
+    pub fn forall_vars_with(&self, f: Tdd, vars: &[VarId], plan: ReductionPlan<'_>) -> Result<Tdd, OperationError> {
+        forall_vars_on(self, f, vars, plan)
+    }
+}
+
+/// Universally quantify every variable in `vars` out of `f` in one request,
+/// ending with `reduction`.
+///
+/// `∀X.T` is `¬∃X.¬T`. Variables are validated before any rewrite. An empty
+/// `vars` returns `f` unchanged. A false `f` stays false.
+fn forall_vars_on(
+    eng: &Engine,
+    f: Tdd,
+    vars: &[VarId],
+    reduction: ReductionPlan<'_>,
+) -> Result<Tdd, OperationError> {
+    let _op = eng.limits().enter()?;
+    let targets = quantification_targets(eng, f.vtree(), vars)?;
+    if targets.is_empty() {
+        return Ok(f);
+    }
+    if f.is_zero() {
+        return Ok(f);
+    }
+    let negated = eng.negate(f)?;
+    let projected = exists_targets_on(eng, negated, &targets, false, ReductionPlan::default())?;
+    eng.negate_with(projected, reduction)
 }

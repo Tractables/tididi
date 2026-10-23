@@ -140,6 +140,20 @@ fn projecting_a_leaf_output_preserves_weights() {
 }
 
 #[test]
+fn universally_projecting_a_leaf_output_preserves_weights() {
+    let tree = Arc::new(Vtree::balanced(1));
+    let eng = Engine::new();
+    let f = weighted(Tdd::one(&tree), 2, Arithmetic::ExactRational);
+    let result = eng.forall_var(f.clone(), VarId(1)).unwrap();
+    assert_canonical(&result);
+    assert_eq!(exact_weight(&eng.weighted_value(&result).unwrap().unwrap()), rat(4, 1));
+    let mut marginal = f;
+    eng.marginalize_levels(&mut marginal, &[tree.root()]).unwrap();
+    assert_canonical(&marginal);
+    assert_eq!(eng.forall_var(marginal, VarId(1)).unwrap_err(), OperationError::MarginalLevel(tree.root()));
+}
+
+#[test]
 fn an_empty_clause_preserves_the_accumulators_weights() {
     let tree = Arc::new(Vtree::balanced(2));
     let eng = Engine::new();

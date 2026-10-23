@@ -65,7 +65,8 @@ substitution and projection. Conjoin an observation to keep the assignments
 consistent with it; [`Tdd::condition`](crate::Tdd::condition) substitutes its
 values into the function instead.
 
-[`Tdd::exists_vars`](crate::Tdd::exists_vars) eliminates variables, and
+[`Tdd::exists_vars`](crate::Tdd::exists_vars) eliminates variables,
+[`Tdd::forall_vars`](crate::Tdd::forall_vars) requires every value of them, and
 [`and_exists`](crate::and_exists) conjoins and eliminates in one operation.
 [`Tdd::project_to_vars`](crate::Tdd::project_to_vars) also removes the
 eliminated variables from the vtree, and

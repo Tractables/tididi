@@ -106,6 +106,16 @@ impl PyCircuit {
         self.transform(py, limits, move |e, f| e.exists_vars(f, &vars))
     }
 
+    /// Universally quantify variables, consuming this circuit.
+    /// The result holds when every value of those variables satisfies this circuit.
+    /// Quantified variables remain free in the vtree.
+    #[pyo3(signature = (variables, *, limits=None))]
+    fn forall(&mut self, py: Python<'_>, variables: Vec<u32>, limits: Option<&PyLimits>) -> PyResult<Self> {
+        let vars = domain::variable_ids(&variables)?;
+        domain::check_variables(self.get()?.vtree(), vars.iter().copied())?;
+        self.transform(py, limits, move |e, f| e.forall_vars(f, &vars))
+    }
+
     /// Simultaneously rename variables using a dict {source: target}, consuming this circuit.
     /// Swaps and cycles are simultaneous; several sources may map to the same target.
     /// The vtree and its counting universe stay unchanged.
