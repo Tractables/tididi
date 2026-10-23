@@ -55,14 +55,9 @@ Output:
 
    Satisfying assignments: 5
 
-Four assignments have ``z`` true, and one more has ``z`` false with ``x`` and
-``y`` true.
-
-A **vtree** is a binary tree that groups the variables; circuits you combine
-must share the same vtree. Literals are signed variable numbers: ``1`` is ``x``
-and ``-2`` is ``¬y``. Boolean operations consume their operands, so use
-``a.copy() & b.copy()`` to keep both; queries such as ``model_count()`` leave a
-circuit usable, and reusing a consumed circuit raises ``ConsumedCircuitError``.
+The model count is the number of satisfying assignments: four have ``z`` true,
+and one more has ``z`` false with ``x`` and ``y`` true. A **vtree** is a binary
+tree that groups the variables; circuits you combine must share the same vtree.
 
 The tutorials in the `Python guide`_ cover what the library does, with executed
 output and downloadable scripts and notebooks:

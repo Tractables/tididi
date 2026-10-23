@@ -24,8 +24,10 @@ Introduce circuits as Boolean functions that can be combined and queried
 without enumerating assignments. Build `(x ∧ y) ∨ z` on a balanced vtree over
 variables 1, 2 and 3, then count: four models have z true and one more has
 x and y true, giving 5. Its complement has 3 models. Explain the vtree where
-it first appears, then explicit copies for reuse. The example uses every
-variable, so leave the counting universe to the counting lesson.
+it first appears, then explicit copies for reuse. The READMEs' example reuses
+no circuit, so they leave copies to the guides; the C README still says to free
+every handle. The example uses every variable, so leave the counting universe
+to the counting lesson.
 
 Rust uses `Tdd`, `!` and `clone()`; Python uses `Circuit`, `~` and `copy()`.
 Rust's checked calls return `Result`; Python operators raise exceptions.
@@ -45,14 +47,14 @@ and freeing without changing their ownership rules.
 
 ### Instances
 
-- [Rust README](../README.md) <!-- reviewed: 16b4b02d1d729a5652a73f1fdfd77fe52d61198280a5b08840890f4db9659b25 -->
-- [Rust crate introduction](../src/lib.rs) <!-- reviewed: 3cfb67271212dabcc10ff34a10a4a9022be347a50d0e82b6943f53e08081ede6 -->
-- [Python README](../bindings/python/README.rst) <!-- reviewed: 2b8c6d99457aaad1c5ebb977b3eb68be2743d3550394d23a278681f54d80bea8 -->
-- [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: c7a4626602944b6e39f45c17d18c437825f97c58dd95b856b1387ca60b8cf048 -->
-- [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: a23b0144fd5462f3478b0ef7c4b7535d24b9f10fd58d356fa7cab4b56810d52f -->
-- [C program first_circuit](../bindings/c/examples/first_circuit.c) <!-- reviewed: 400a89f1018fcfad5c7c2f6a9dee81fbfa61d0b5bfc187ffdeb2fd39bcf62207 -->
-- [C example](../bindings/c/examples/example.h) <!-- reviewed: 7528eef4b82c74f7c130215afa8af5bb66c07cdd586bc50090d50a1cf9859ffc -->
-- [C README](../bindings/c/README.rst) <!-- reviewed: 96574ea19a1cd883d5d80e8e1ea371eed0740932b0df36859bd12cc4b36417de -->
+- [Rust README](../README.md) <!-- reviewed: a71303635c235b54d3cb8f242e13af1acb6b083e53d423cb8b0e6f3c7bcfb567 -->
+- [Rust crate introduction](../src/lib.rs) <!-- reviewed: 402ca1ce163ee32e662e7563baa60ee8260bd101ecade73eb0cccd1dc2013a2e -->
+- [Python README](../bindings/python/README.rst) <!-- reviewed: 657718e42d5960d398cd75714f721bc11155e8b13c8c767aecc68fdf96335fdd -->
+- [Python getting started](../bindings/python/docs/getting_started.rst) <!-- reviewed: ddd5e7b2357bf35a2ede868b429fd409ef8541bc9da20883e14ab8b3f99e11a7 -->
+- [C getting started](../bindings/c/docs/getting_started.rst) <!-- reviewed: bb58b033976cfacb2ff6a6eb7b0d6c036b10eccd99b02ba5a7dc5f54bb40b4c9 -->
+- [C program first_circuit](../bindings/c/examples/first_circuit.c) <!-- reviewed: 26adca5729ad94236c7449ca71a7fd30fe2613413900c40242da81fec1b933a9 -->
+- [C example](../bindings/c/examples/example.h) <!-- reviewed: 81a1e707291fc8f1458b2de7b58215ba5627cbb509abe9e51720ff9f440e7c69 -->
+- [C README](../bindings/c/README.rst) <!-- reviewed: b4e28a3f6b783b62baab42caf5794597e5c82607cba229be0c94bad94de47b20 -->
 
 ## Reading order
 

@@ -74,15 +74,12 @@ Output:
 
    Satisfying assignments: 5
 
-Four assignments have ``z`` true, and one more has ``z`` false with ``x`` and
-``y`` true.
-
-A **vtree** is a binary tree that groups the variables; circuits you combine
-must share the same vtree. Literals are signed variable numbers: ``1`` is ``x``
-and ``-2`` is ``¬y``. Operations consume their circuit operands, so
-``tididi_copy`` a circuit first to keep it, and free every handle with
-``tididi_circuit_free`` or ``tididi_vtree_free``. A final ``NULL`` argument
-means no operation limits.
+The model count is the number of satisfying assignments: four have ``z`` true,
+and one more has ``z`` false with ``x`` and ``y`` true. A **vtree** is a binary
+tree that groups the variables; circuits you combine must share the same vtree.
+Free every circuit handle, including consumed operands, with
+``tididi_circuit_free``, and the vtree with ``tididi_vtree_free``. A final
+``NULL`` argument means no operation limits.
 
 The chapters of the `C guide`_ cover what the library does, with compiled
 programs and their captured output:

@@ -62,12 +62,10 @@ Output:
 Satisfying assignments: 5
 ```
 
-Four assignments have `z` true, and one more has `z` false with `x` and `y` true.
-
-A **vtree** is a binary tree that groups the variables; circuits you combine
-must share the same `Arc<Vtree>`. Literals are signed variable numbers: `1` is
-`x` and `-2` is `¬y`. Boolean operations consume their operands, so clone an
-operand first to keep it; queries such as `model_count` borrow the circuit.
+The model count is the number of satisfying assignments: four have `z` true,
+and one more has `z` false with `x` and `y` true. A **vtree** is a binary tree
+that groups the variables; circuits you combine must share the same
+`Arc<Vtree>`.
 
 The worked examples cover what the library does:
 
