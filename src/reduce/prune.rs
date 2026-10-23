@@ -280,10 +280,11 @@ pub(crate) enum PruneScope {
     /// its children's slots is named by one of its own surviving nodes, and so
     /// on down. The walk stops at such a level and never looks below it.
     ///
-    /// `expand_full` establishes the condition for the diagram a negation
-    /// complements: it leaves every structural level covering the whole
-    /// `lefts x rights` basis of its children, so every child slot is named by
-    /// some pair of the level above.
+    /// A negation establishes the condition: `expand_full` leaves every
+    /// structural level below the root covering the whole `lefts x rights`
+    /// basis of its children, and the old output and its complement together
+    /// cover the root's, so every child slot is named by some pair of the
+    /// level above.
     BelowRoot,
 }
 

@@ -1,9 +1,9 @@
 //! Negation: make-full transformation and complement operation.
 //!
 //! A diagram is **t-full** at vtree level `t` if the disjunction of all t-nodes
-//! equals the constant-true function. A diagram is **full** if t-full at every level.
-//! `expand_full` materializes the fill nodes explicitly; `negate` complements
-//! the full diagram at its root.
+//! equals the constant-true function. `expand_full` materializes the fill nodes
+//! that make every level below the root t-full; `negate` then complements the
+//! output at the root, whose cells the root's children now span.
 
 use crate::diagram::{Assembly, ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, NEG_LEAF_IDX, NodeIdx, ONE_LEAF_IDX, POS_LEAF_IDX, Tdd, TddLevel, TddNodeId};
 
@@ -61,9 +61,11 @@ impl Engine {
         let _op = self.limits().enter()?;
         let canonical = f.levels.is_canonical(f.output);
         let mut result = negate_on(self, f)?;
-        // `expand_full` left every level covering its children's whole basis,
-        // so every node is named from the level above and the only nodes the
-        // complement can have orphaned are below the root cells it dropped.
+        // `expand_full` left every level below the root covering its
+        // children's whole basis, and the old output and its complement cover
+        // the root's, so every node is named from the level above and the only
+        // nodes the complement can have orphaned are below the root cells it
+        // dropped.
         // The complement of a canonical operand has no twins to contract.
         let full = matches!(plan, crate::reduce::ReductionPlan::Full(_));
         if canonical && (full || matches!(plan, crate::reduce::ReductionPlan::Prune)) {
@@ -84,20 +86,16 @@ pub(crate) fn negate_on(eng: &Engine, mut tdd: Tdd) -> Result<Tdd, OperationErro
     let mut result = if tdd.is_zero() {
         crate::build::constant_on(eng, &tdd.vtree, true)?
     } else {
-        let root_form = expand_full(eng, &mut tdd)?;
-        complement_full_at_root(eng, tdd, root_form)?
+        expand_full(eng, &mut tdd)?;
+        complement_full_at_root(eng, tdd)?
     };
     result.weights = weights;
     Ok(result)
 }
 
-/// Complement a full diagram at its root: collect the root-level pairs not in
-/// the output node and drop the dead ones.
-fn complement_full_at_root(
-    eng: &Engine,
-    full_tdd: Tdd,
-    root_form: LeafForm,
-) -> Result<Tdd, OperationError> {
+/// Complement at the root a diagram full below it: collect the root-level
+/// pairs not in the output node and drop the dead ones.
+fn complement_full_at_root(eng: &Engine, full_tdd: Tdd) -> Result<Tdd, OperationError> {
     let vtree = Arc::clone(&full_tdd.vtree);
     let root = vtree.root();
     let root_idx = root.idx();
@@ -119,23 +117,29 @@ fn complement_full_at_root(
         // - Leaf children: 2 (the disjoint set {Pos, Neg})
         // - Internal children: stored width (includes any fill node)
         let (left, right) = vtree.children(root);
-        let basis = Basis {
-            lefts: ChildBasis::of(&vtree, levels, left),
-            rights: ChildBasis::of(&vtree, levels, right),
-            form: root_form,
-        };
+        let left_is_leaf = vtree.node(left).is_leaf();
+        let right_is_leaf = vtree.node(right).is_leaf();
 
         let scratch = &eng.scratch.negate;
         let mut bits = scratch.cover.checkout_preserving(eng);
         let mut neg_pairs = scratch.cells.checkout_preserving(eng);
-        collect_complement_pairs(
-            eng, &levels[root_idx], out_local, basis, &mut bits, &mut neg_pairs,
+        let mut cover = Cover::reset(
+            eng,
+            &mut bits,
+            ChildBasis::of(&vtree, levels, left),
+            ChildBasis::of(&vtree, levels, right),
+            LeafForm { left_one: left_is_leaf, right_one: right_is_leaf },
         )?;
+        for pair in levels[root_idx].pairs_iter_of_idx(out_local.idx()) {
+            cover.mark_pair(pair);
+        }
+        // The other root nodes are dropped with the old output, so the
+        // complement takes the leaf form the output uses.
+        neg_pairs.clear();
+        cover.missing_into(eng, cover.one_seen, &mut neg_pairs)?;
 
         // Drop the pairs whose child computes the Zero function (an internal
         // node with no pairs), which a fill node of `expand_full` can be.
-        let left_is_leaf = vtree.node(left).is_leaf();
-        let right_is_leaf = vtree.node(right).is_leaf();
         neg_pairs.retain(|pair| {
             let left_alive = left_is_leaf
                 || !empty_node(&levels[left.idx()], ChildDecoder::structural().node(pair.left).idx());
@@ -156,16 +160,17 @@ fn complement_full_at_root(
 
 // ── `expand_full`: explicit fill-node materialization ────────────────────────────
 
-/// Make a structural diagram full by materializing fill nodes explicitly at
-/// every level. Returns the leaf form of the root's level, which the
-/// complement above it emits in.
+/// Make every level of a structural diagram below the root full by
+/// materializing fill nodes explicitly. The root is left alone: a fill there
+/// would be the complement of its nodes, which the negation computes from the
+/// output node alone.
 ///
 /// One bottom-up pass per level marks the cells of `lefts x rights` that the
 /// level's nodes cover, in a bitmap held in engine scratch, and the fill node
 /// is read off the zero bits. The walk also records, per leaf child, whether
 /// the level refers to it as `One` or as `Pos`/`Neg`, and the fill is emitted
 /// in that same form.
-pub(crate) fn expand_full(eng: &Engine, tdd: &mut Tdd) -> Result<LeafForm, OperationError> {
+pub(crate) fn expand_full(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     let scratch = &eng.scratch.negate;
     let mut bits = scratch.cover.checkout_preserving(eng);
     let mut cells = scratch.cells.checkout_preserving(eng);
@@ -179,11 +184,10 @@ fn expand_full_with(
     tdd: &mut Tdd,
     bits: &mut Vec<u64>,
     cells: &mut Vec<ChildPair>,
-) -> Result<LeafForm, OperationError> {
+) -> Result<(), OperationError> {
     let vtree = tdd.vtree.clone();
-    let root_idx = vtree.root().idx();
-    let mut root_form = LeafForm::LITERAL;
-    for (t, left, right) in vtree.internal_bottomup() {
+    let root = vtree.root();
+    for (t, left, right) in vtree.internal_bottomup().filter(|&(t, _, _)| t != root) {
         // Read bottom-up: a child's basis includes the fill node its own visit
         // added.
         let lefts = ChildBasis::of(&vtree, &tdd.levels, left);
@@ -214,9 +218,6 @@ fn expand_full_with(
         poll.flush()?;
         // The walk has seen every reference, so this is the level's form.
         let form = cover.one_seen;
-        if t.idx() == root_idx {
-            root_form = form;
-        }
 
         // Covered every basis cell => already full; nothing to add.
         if !cover.is_full() {
@@ -228,7 +229,7 @@ fn expand_full_with(
         }
         eng.limits().check_stop()?;
     }
-    Ok(root_form)
+    Ok(())
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
@@ -318,7 +319,7 @@ impl ChildBasis {
 /// complement at the root are emitted in the same form, which is what keeps the
 /// level's labels on one side of that line.
 #[derive(Copy, Clone, Default)]
-pub(crate) struct LeafForm {
+struct LeafForm {
     /// The left child is a leaf the level refers to as `One`.
     left_one: bool,
     /// The right child is a leaf the level refers to as `One`.
@@ -329,15 +330,6 @@ impl LeafForm {
     /// Neither side is in `One` form: what a level with no leaf-side `One`
     /// reference uses, and what an empty level defaults to.
     const LITERAL: LeafForm = LeafForm { left_one: false, right_one: false };
-}
-
-/// One level's cross-product basis together with the leaf form it names its
-/// leaf children in: what the complement at the root needs to read and write.
-#[derive(Copy, Clone)]
-struct Basis {
-    lefts: ChildBasis,
-    rights: ChildBasis,
-    form: LeafForm,
 }
 
 /// A bitmap over one level's `lefts x rights` basis: cell `(l, r)` is bit
@@ -502,24 +494,6 @@ impl<'a> Cover<'a> {
         }
         poll.flush()
     }
-}
-
-/// Collect into `out` the cells of `lefts x rights` that are not pairs of
-/// `exclude_node`, in the root level's leaf form.
-fn collect_complement_pairs(
-    eng: &Engine,
-    level: &TddLevel,
-    exclude_node: NodeIdx,
-    basis: Basis,
-    bits: &mut Vec<u64>,
-    out: &mut Vec<ChildPair>,
-) -> Result<(), OperationError> {
-    let mut cover = Cover::reset(eng, bits, basis.lefts, basis.rights, basis.form)?;
-    for pair in level.pairs_iter_of_idx(exclude_node.idx()) {
-        cover.mark_pair(pair);
-    }
-    out.clear();
-    cover.missing_into(eng, basis.form, out)
 }
 
 #[cfg(test)]

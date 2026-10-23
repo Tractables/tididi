@@ -51,15 +51,15 @@ fn expand_full_preserves_determinism() {
 
 // ── Randomized sweeps ────────────────────────────────────────────────────
 
-/// Every internal structural level of `tdd` covers every cell of its
-/// `lefts × rights` basis. Returns the first level that does not.
+/// Every internal structural level of `tdd` below the root covers every cell
+/// of its `lefts × rights` basis. Returns the first level that does not.
 ///
 /// A leaf-side `One` covers both cells of that leaf's `{Pos, Neg}` couple, as
 /// it does for the cover `expand_full` builds; a level left in `One` form is
 /// full when the couples it names are.
 fn first_not_full(tdd: &Tdd) -> Option<(usize, usize, usize)> {
     let vtree = Arc::clone(tdd.vtree());
-    for (t, left, right) in vtree.internal_bottomup() {
+    for (t, left, right) in vtree.internal_bottomup().filter(|&(t, _, _)| t != vtree.root()) {
         let lefts = ChildBasis::of(&vtree, &tdd.levels, left);
         let rights = ChildBasis::of(&vtree, &tdd.levels, right);
         let left_leaf = vtree.node(left).is_leaf();
@@ -102,7 +102,7 @@ fn first_not_full(tdd: &Tdd) -> Option<(usize, usize, usize)> {
 }
 
 #[test]
-fn expand_full_fills_every_level_on_random_formulas() {
+fn expand_full_fills_every_level_below_the_root_on_random_formulas() {
     use crate::test_helpers::{compile_clauses_on, rand_cnf, CnfShape, Lcg};
     let eng = &crate::Engine::new();
     let mut rng = Lcg::new(0x9e37_79b9);
