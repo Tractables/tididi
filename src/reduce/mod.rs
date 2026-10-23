@@ -117,6 +117,13 @@ impl Engine {
     ) -> Result<(), OperationError> {
         driver::Reduction::new(self, f).run(plan, scope)
     }
+
+    /// End a negation of a canonical operand: prune below the root and
+    /// certify the result canonical, with no contraction. `shrink` trims the
+    /// level arrays as a full reduction does.
+    pub(crate) fn certify_complement(&self, f: &mut Tdd, shrink: bool) -> Result<(), OperationError> {
+        driver::Reduction::new(self, f).certify_complement(shrink)
+    }
 }
 
 #[cfg(test)]

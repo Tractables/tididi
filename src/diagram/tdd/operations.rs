@@ -51,7 +51,9 @@ impl Tdd {
     /// [`ReductionPlan::Prune`](crate::reduce::ReductionPlan::Prune) removes
     /// unreachable storage without establishing canonical form. It can avoid
     /// redundant work when a later step minimizes the result, but the larger
-    /// intermediate diagram may make that step more expensive.
+    /// intermediate diagram may make that step more expensive. The complement
+    /// of a diagram minimized and unchanged since is minimized once pruned, so
+    /// for such an operand both plans return the minimized result.
     ///
     /// # Errors
     ///

@@ -121,9 +121,8 @@ pub(super) fn disjoin_cube_by_complement(eng: &Engine, f: Tdd, clause: &[(Litera
     let not_f = negate_on(eng, f)?;
     let mut rest = conjoin_normalized(eng, not_f, clause)?;
     eng.reduce(&mut rest, ReductionPlan::default())?;
-    let mut out = negate_on(eng, rest)?;
-    eng.reduce(&mut out, ReductionPlan::default())?;
-    Ok(out)
+    // `rest` is minimized, so its complement needs only a prune.
+    eng.negate(rest)
 }
 
 #[cfg(test)]

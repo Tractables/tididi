@@ -59,11 +59,18 @@ impl Engine {
         plan: crate::reduce::ReductionPlan<'_>,
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
+        let canonical = f.levels.is_canonical(f.output);
         let mut result = negate_on(self, f)?;
         // `expand_full` left every level covering its children's whole basis,
         // so every node is named from the level above and the only nodes the
         // complement can have orphaned are below the root cells it dropped.
-        self.reduce_scoped(&mut result, plan, crate::reduce::prune::PruneScope::BelowRoot)?;
+        // The complement of a canonical operand has no twins to contract.
+        let full = matches!(plan, crate::reduce::ReductionPlan::Full(_));
+        if canonical && (full || matches!(plan, crate::reduce::ReductionPlan::Prune)) {
+            self.certify_complement(&mut result, full)?;
+        } else {
+            self.reduce_scoped(&mut result, plan, crate::reduce::prune::PruneScope::BelowRoot)?;
+        }
         Ok(result)
     }
 }

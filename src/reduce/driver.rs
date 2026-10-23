@@ -98,6 +98,37 @@ impl<'a> Reduction<'a> {
         Ok(())
     }
 
+    /// Prune a negation of a canonical diagram and certify the result, with no
+    /// contraction.
+    ///
+    /// Negation completes every level with the cells no node covers, the
+    /// class whose residual is false, and complements at the root, so the
+    /// levels below the root keep their nodes. Complement maps residuals
+    /// one to one: two nodes with equal residuals after it had equal
+    /// residuals before, which a canonical operand rules out, inner and leaf
+    /// twins alike. The one class per level whose residual was true dies at
+    /// the root and is all the prune removes. `shrink` trims the level
+    /// arrays as a full reduction does.
+    pub(super) fn certify_complement(&mut self, shrink: bool) -> Result<(), OperationError> {
+        let _op = self.eng.limits().enter()?;
+        let closed = self.tdd.levels.is_closed();
+        prune_unreachable(self.eng, self.tdd, PruneScope::BelowRoot)?;
+        #[cfg(debug_assertions)]
+        super::prune::debug_assert_all_reached(self.tdd);
+        if shrink {
+            for level in &mut self.tdd.levels {
+                level.shrink_arrays();
+            }
+        }
+        self.tdd.close_marked_levels(closed);
+        self.tdd.dirty.set_loose(Some(Vec::new()));
+        for pass in [Pass::Contract, Pass::LeafContract, Pass::ContentTwin] {
+            self.tdd.dirty.clear(pass);
+        }
+        self.tdd.levels.certify(self.tdd.output);
+        Ok(())
+    }
+
     /// Leaf rewrites can create inner twins; clean passes drain empty worklists.
     fn contract(&mut self) -> Result<(), OperationError> {
         contract_all_twins(self.eng, self.tdd)?;
