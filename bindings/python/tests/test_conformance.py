@@ -33,6 +33,7 @@ def test_shared_behavioral_traces():
         elif op == "negate": f = ~copy(a)
         elif op == "condition": f = copy(a).condition([b])
         elif op == "exists": f = copy(a).exists([b])
+        elif op == "forall": f = copy(a).forall([b])
         elif op == "swap": f = copy(a).rename({b: c, c: b})
         elif op == "rename": f = copy(a).rename({b: c})
         elif op == "minimize": f = copy(a).minimize()

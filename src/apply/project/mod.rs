@@ -4,10 +4,12 @@
 //! place. It never calls apply or negate, so it is sound when a level elsewhere
 //! is marginal, and it costs one pass over those levels rather than a product
 //! of two full diagrams — one pass for the whole request, not one per
-//! variable.
+//! variable. `∀X.T` is `¬∃X.¬T`; its two complements need every level
+//! structural.
 
 use crate::Engine;
 
+use crate::apply::negate::negate_on;
 use crate::limits::OperationError;
 use crate::diagram::Tdd;
 use crate::reduce::ReductionPlan;
@@ -28,6 +30,20 @@ pub(crate) fn exists_vars_on(
     // shortcut: the same request is refused whatever the operand happens to be.
     let targets = quantification_targets(eng, f.vtree(), vars)?;
     exists_targets_on(eng, f, &targets, false, reduction)
+}
+
+/// Universally quantify every variable in `vars` out of `f` as `¬∃X.¬f`.
+/// The complement needs every level structural.
+pub(crate) fn forall_vars_on(eng: &Engine, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
+    let _op = eng.limits().enter()?;
+    let targets = quantification_targets(eng, f.vtree(), vars)?;
+    if targets.is_empty() {
+        return Ok(f);
+    }
+    // Minimizing the projection keeps the second make-full pass small.
+    let complement = negate_on(eng, f)?;
+    let projected = exists_targets_on(eng, complement, &targets, false, ReductionPlan::default())?;
+    eng.negate(projected)
 }
 
 /// Validate the entire request and retain each leaf once.
@@ -106,5 +122,16 @@ impl crate::Engine {
     /// As [`exists_vars`](Self::exists_vars).
     pub fn exists_vars_with(&self, f: Tdd, vars: &[VarId], plan: ReductionPlan<'_>) -> Result<Tdd, OperationError> {
         exists_vars_on(self, f, vars, plan)
+    }
+
+    /// Run [`Tdd::forall_vars`](crate::Tdd::forall_vars) using this batch's scratch and resource limits.
+    ///
+    /// # Errors
+    ///
+    /// Returns the linked operation's errors; cancellation, allocation refusal and
+    /// the output-node cap return [`OperationError::Stopped`],
+    /// [`OperationError::OverBudget`] and [`OperationError::OutputCap`], respectively.
+    pub fn forall_vars(&self, f: Tdd, vars: &[VarId]) -> Result<Tdd, OperationError> {
+        forall_vars_on(self, f, vars)
     }
 }

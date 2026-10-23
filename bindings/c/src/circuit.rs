@@ -146,6 +146,12 @@ pub unsafe extern "C" fn tididi_exists(value: *mut TididiCircuit, vars: *const u
     boundary(|| { let out = unsafe { vacant(out)? }; let vars = variables(unsafe { array(vars, len)? })?;
         *out = circuit(unsafe { unary(value, limits(config)?, |v| check_variables(v, vars.iter().copied()), |e, f| e.exists_vars(f, &vars))? }); Ok(()) })
 }
+/// Universally quantify variables, consuming the circuit: the result holds where every value of them satisfies it. They remain free in the vtree's counting universe.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn tididi_forall(value: *mut TididiCircuit, vars: *const u32, len: usize, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
+    boundary(|| { let out = unsafe { vacant(out)? }; let vars = variables(unsafe { array(vars, len)? })?;
+        *out = circuit(unsafe { unary(value, limits(config)?, |v| check_variables(v, vars.iter().copied()), |e, f| e.forall_vars(f, &vars))? }); Ok(()) })
+}
 /// Conjoin then quantify in one call, consuming both inputs. Equivalent to and followed by exists.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn tididi_and_exists(left: *mut TididiCircuit, right: *mut TididiCircuit, vars: *const u32, len: usize, out: *mut *mut TididiCircuit, config: *const TididiLimits) -> *mut TididiError {
