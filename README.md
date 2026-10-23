@@ -19,8 +19,6 @@
      src="https://img.shields.io/badge/docs-C-blue" alt="C guide"></a>
   <a href="https://arxiv.org/abs/2604.05537"><img
      src="https://img.shields.io/badge/arXiv-2604.05537-b31b1b.svg" alt="arXiv"></a>
-  <a href="LICENSE"><img
-     src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
 </p>
 
 **Tree Decision Diagrams for Rust, Python and C.**
@@ -39,9 +37,8 @@ efficiently under Boolean operations; in practice they can be much smaller.
   [crate on crates.io](https://crates.io/crates/tididi).
 - **Python:** `pip install tididi`. See the [Python guide] and the
   [package on PyPI](https://pypi.org/project/tididi/).
-- **C and C++:** download a prebuilt package from a
-  [GitHub release](https://github.com/Tractables/tididi/releases) or build the
-  CMake package. See the [C guide] and the [C README](bindings/c/README.rst).
+- **C and C++:** [prebuilt packages](https://github.com/Tractables/tididi/releases)
+  or a CMake build. See the [C guide] and the [C README](bindings/c/README.rst).
 
 ## Getting started
 
@@ -66,9 +63,6 @@ Satisfying assignments: 5
 ```
 
 Four assignments have `z` true, and one more has `z` false with `x` and `y` true.
-The [Python](https://tractables.github.io/tididi/python/getting_started.html)
-and [C](https://tractables.github.io/tididi/c/getting_started.html) guides
-start with the same circuit.
 
 A **vtree** is a binary tree that groups the variables; circuits you combine
 must share the same `Arc<Vtree>`. Literals are signed variable numbers: `1` is
@@ -99,9 +93,8 @@ representation. Contributors can start with the [architecture reference].
   into TDDs for model counting, weighted model counting and projected model
   counting, from Rust, Python or C.
 - [tddlog](https://github.com/Tractables/tddlog) performs exact probabilistic
-  inference for higher-level languages: ProbLog programs, Bayesian and Markov
-  networks, and discrete probabilistic programs. It has Python, C and
-  WebAssembly bindings and [runs in the browser](https://tractables.github.io/tddlog/).
+  inference for ProbLog, Bayesian networks and probabilistic programs, also
+  [in the browser](https://tractables.github.io/tddlog/).
 
 ## Citing
 

@@ -5,7 +5,7 @@
    :width: 400px
    :align: center
 
-|ci| |c-docs| |arxiv| |license|
+|ci| |c-docs| |arxiv|
 
 tididi for C and C++
 ====================
@@ -109,9 +109,8 @@ Applications built on tididi
   into TDDs for model counting, weighted model counting and projected model
   counting, from Rust, Python or C.
 - `tddlog <https://github.com/Tractables/tddlog>`_ performs exact probabilistic
-  inference for higher-level languages: ProbLog programs, Bayesian and Markov
-  networks, and discrete probabilistic programs. It has Python, C and
-  WebAssembly bindings and `runs in the browser <https://tractables.github.io/tddlog/>`_.
+  inference for ProbLog, Bayesian networks and probabilistic programs, also
+  `in the browser <https://tractables.github.io/tddlog/>`_.
 
 Develop
 -------
@@ -160,6 +159,3 @@ Projects Agency (DARPA) under Agreement No. HR0011269E224.
 .. |arxiv| image:: https://img.shields.io/badge/arXiv-2604.05537-b31b1b.svg
    :target: https://arxiv.org/abs/2604.05537
    :alt: arXiv
-.. |license| image:: https://img.shields.io/badge/license-Apache--2.0-blue.svg
-   :target: https://github.com/Tractables/tididi/blob/main/LICENSE
-   :alt: License: Apache-2.0
