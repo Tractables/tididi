@@ -7,7 +7,7 @@ import re
 import sys
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 RECORD = Path("docs/scenarios.md")
 REFERENCE = re.compile(
     r"^(?:<!-- |\.\. |// |# )scenario: docs/scenarios\.md#([a-z0-9-]+)(?: -->)?$",
@@ -151,7 +151,7 @@ def check(root, review=None):
         if stale:
             errors.append(f"{RECORD}#{name}: review needed for {', '.join(stale)}. "
                           f"Update the scenario and check all its instances, then run "
-                          f"python3 scripts/check_scenarios.py --review {name}")
+                          f"python3 .github/scripts/check_scenarios.py --review {name}")
     return errors
 
 

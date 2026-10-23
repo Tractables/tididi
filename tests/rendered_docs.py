@@ -9,7 +9,7 @@ import sys
 import runpy
 
 
-BUNDLER = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/prepare_docs.py"))
+BUNDLER = runpy.run_path(str(Path(__file__).resolve().parents[1] / ".github/scripts/prepare_docs.py"))
 
 
 class Page(HTMLParser):
@@ -62,7 +62,7 @@ def check(root, source, bundled=True):
             if not url.path.startswith(prefix):
                 errors.append(f"{origin.relative_to(root)}: asset must use release tag {tag}: {href}")
             elif bundled:
-                errors.append(f"{origin.relative_to(root)}: unbundled asset {href}; run scripts/prepare_docs.py")
+                errors.append(f"{origin.relative_to(root)}: unbundled asset {href}; run .github/scripts/prepare_docs.py")
             return
         elif url.scheme or url.netloc:
             return

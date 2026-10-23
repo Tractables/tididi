@@ -58,6 +58,6 @@ if __name__ == "__main__":
     parser.add_argument("--release-tag", default="")
     args = parser.parse_args()
     try:
-        print(f"Release metadata agrees: {check(Path(__file__).resolve().parents[1], args.release_tag)}")
+        print(f"Release metadata agrees: {check(Path(__file__).resolve().parents[2], args.release_tag)}")
     except ValueError as error:
         parser.exit(1, f"{error}\n")

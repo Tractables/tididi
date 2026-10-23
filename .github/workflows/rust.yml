@@ -22,7 +22,7 @@ jobs:
     - name: Check shared teaching scenarios
       run: |
         python3 -m unittest discover -s tests -p test_scenarios.py
-        python3 scripts/check_scenarios.py
+        python3 .github/scripts/check_scenarios.py
 
   build:
     strategy:
@@ -66,7 +66,7 @@ jobs:
       run: |
         python3 tests/rendered_docs.py --self-test
         python3 tests/rendered_docs.py target/doc --unbundled
-        python3 scripts/prepare_docs.py target/doc --release-tag "$RELEASE_TAG"
+        python3 .github/scripts/prepare_docs.py target/doc --release-tag "$RELEASE_TAG"
         python3 tests/rendered_docs.py target/doc
     - name: Save Rust documentation
       if: runner.os == 'Linux' && github.event_name != 'pull_request'

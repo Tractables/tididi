@@ -6,7 +6,7 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CHECKER = runpy.run_path(str(ROOT / "scripts/check_scenarios.py"))
+CHECKER = runpy.run_path(str(ROOT / ".github/scripts/check_scenarios.py"))
 check = CHECKER["check"]
 
 

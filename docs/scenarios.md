@@ -6,7 +6,7 @@ Hidden `scenario:` comments in those files point back here.
 
 When editing an instance, update its scenario as needed and review every listed
 instance. Keep language-specific code and explanations natural; record intentional
-differences here. Run `python3 scripts/check_scenarios.py --review <scenario-id>`
+differences here. Run `python3 .github/scripts/check_scenarios.py --review <scenario-id>`
 after that review, then run the checker without arguments. It records content
 fingerprints in hidden comments below; a change to an instance or its scenario
 requires review again. It checks links and review freshness, not semantic truth;

@@ -2,7 +2,7 @@
 """Bundle matching example programs and images with rendered rustdoc.
 
 Run after cargo doc --no-deps:
-    python3 scripts/prepare_docs.py target/doc
+    python3 .github/scripts/prepare_docs.py target/doc
 """
 
 import argparse
@@ -128,7 +128,7 @@ code {{ font: 14px/1.6 ui-monospace, monospace; }}
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[2])
     parser.add_argument("preview", type=Path, nargs="?", default=Path("target/doc"))
     parser.add_argument("--release-tag", help="Check that the release tag matches Cargo.toml.")
     args = parser.parse_args()

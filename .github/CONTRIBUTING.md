@@ -10,13 +10,13 @@ cargo clippy --release --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 python3 tests/rendered_docs.py --self-test
 python3 tests/rendered_docs.py target/doc --unbundled
-python3 scripts/prepare_docs.py target/doc
+python3 .github/scripts/prepare_docs.py target/doc
 python3 tests/rendered_docs.py target/doc
 python3 tests/package_examples.py --self-test
-python3 scripts/check_scenarios.py
+python3 .github/scripts/check_scenarios.py
 python3 -m unittest discover -s tests -p test_scenarios.py
 python3 -m unittest discover -s tests -p test_release.py
-python3 scripts/check_release.py
+python3 .github/scripts/check_release.py
 ```
 
 The README snippet matches the tested crate example; `docs/` is compiled into
@@ -43,16 +43,16 @@ standalone consumer of the crate archive.
 ## Shared teaching scenarios
 
 Hidden `scenario:` comments link teaching material to its script and complete
-instance list in [docs/scenarios.md](docs/scenarios.md). When changing a lesson,
+instance list in [docs/scenarios.md](../docs/scenarios.md). When changing a lesson,
 update that script as needed and review its Rust, Python, C and figure instances.
-Then run `python3 scripts/check_scenarios.py --review <scenario-id>` to record
+Then run `python3 .github/scripts/check_scenarios.py --review <scenario-id>` to record
 that review. CI rejects missing links, unregistered lessons and stale reviews;
 it does not establish semantic agreement. Keep running the example checks.
 
 ## Python bindings
 
 The independent package in `bindings/python` calls this crate through its public
-API. Its [README](bindings/python/README.rst) gives the build and test commands.
+API. Its [README](../bindings/python/README.rst) gives the build and test commands.
 Sphinx Gallery executes the narrative scripts in `bindings/python/examples` to
 produce the tutorials and their output; edit those scripts, not generated pages.
 Keep Python signatures in `tididi/__init__.pyi` aligned with the extension.
@@ -62,7 +62,7 @@ CI tests wheels on Linux, macOS, and Windows, and checks a source-archive instal
 
 `bindings/c` calls the public Rust API through an opaque-handle interface. Run
 `python bindings/c/check.py --docs` to verify the generated header, C/C++ consumers,
-installed CMake package and executable guide. Its [README](bindings/c/README.rst)
+installed CMake package and executable guide. Its [README](../bindings/c/README.rst)
 lists prerequisites. Edit function contracts in `bindings/c/src`; the header and
 API reference are generated from them. Tutorials include the compiled C sources
 and captured output. CI checks Linux, macOS and Windows.
@@ -77,7 +77,7 @@ and captured output. CI checks Linux, macOS and Windows.
   process-wide state or native dependencies. Consumers need no Cargo features;
   `testing` exposes the generators and oracles in `test_helpers` and keeps its
   invariant checkers in a release build, as stated in the
-  [architecture reference](docs/architecture.md#invariants).
+  [architecture reference](../docs/architecture.md#invariants).
 - Return errors for invalid input and refused work. Named operations are
   checked; do not add panicking twins or `try_` aliases.
 - Put each operation's contract on its default entry point. Batch methods
@@ -98,7 +98,7 @@ and captured output. CI checks Linux, macOS and Windows.
 - Commit messages must be suitable for publication: no tool footers, session
   links or machine-specific details.
 
-[Architecture](docs/architecture.md) documents module responsibilities and
+[Architecture](../docs/architecture.md) documents module responsibilities and
 the representation invariants; add a row to its module table for a new public
 module, and reference its invariants from code rather than restating them.
 
