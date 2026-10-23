@@ -8,10 +8,18 @@ if(WIN32)
 else()
   set(RUST_LIBRARY "${RUST_OUTPUT}/${CMAKE_SHARED_LIBRARY_PREFIX}tididi_c${CMAKE_SHARED_LIBRARY_SUFFIX}")
 endif()
+set(TIDIDI_BIN_DIR "${CMAKE_CURRENT_BINARY_DIR}/bin")
+set(COPY_DLL)
+if(WIN32)
+  set(COPY_DLL
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${TIDIDI_BIN_DIR}"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${RUST_LIBRARY}" "${TIDIDI_BIN_DIR}")
+endif()
 add_custom_target(tididi_native ALL
   COMMAND "${CMAKE_COMMAND}" -E env CARGO_BUILD_JOBS=8 "${CARGO}" build --release --locked
           --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.toml"
           --target-dir "${CMAKE_CURRENT_BINARY_DIR}/cargo"
+  ${COPY_DLL}
   BYPRODUCTS "${RUST_LIBRARY}" VERBATIM)
 add_library(tididi::tididi SHARED IMPORTED GLOBAL)
 set_target_properties(tididi::tididi PROPERTIES IMPORTED_LOCATION "${RUST_LIBRARY}"
@@ -28,9 +36,9 @@ add_dependencies(tididi::tididi tididi_native)
 
 option(TIDIDI_BUILD_TESTS "Build C and C++ consumer tests" ON)
 option(TIDIDI_BUILD_EXAMPLES "Build executable C tutorials" ON)
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/bin")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${TIDIDI_BIN_DIR}")
 foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
-  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${config} "${CMAKE_CURRENT_BINARY_DIR}/bin")
+  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${config} "${TIDIDI_BIN_DIR}")
 endforeach()
 function(tididi_consumer name source)
   add_executable(${name} "${source}")
@@ -42,10 +50,6 @@ function(tididi_consumer name source)
   else()
     target_compile_options(${name} PRIVATE -Wall -Wextra -Werror)
     target_link_libraries(${name} PRIVATE m)
-  endif()
-  if(WIN32)
-    add_custom_command(TARGET ${name} POST_BUILD
-      COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${RUST_LIBRARY}" "$<TARGET_FILE_DIR:${name}>")
   endif()
 endfunction()
 if(TIDIDI_BUILD_TESTS)
