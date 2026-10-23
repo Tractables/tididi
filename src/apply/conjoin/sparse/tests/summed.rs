@@ -19,25 +19,12 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 
 use super::inner_index::{block, pack};
-use super::{ForcedPrefetch, ForcedThresholds, SparseThresholds};
+use super::{rows, ForcedPrefetch, ForcedThresholds, SparseThresholds};
 use crate::apply::conjoin::tests::{summed_roots, two_step};
 use crate::diagram::{ChildSide, Tdd};
 use crate::test_helpers::{assert_canonical, compile_clauses, rand_cnf, vtree_shapes, CnfShape, Lcg};
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::Engine;
-
-/// `n` rows of values below `2^bits` in each of `cols` columns, from a fixed
-/// seed.
-fn rows(seed: u64, n: usize, cols: usize, bits: u32) -> Vec<Vec<u64>> {
-    let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
-    let mut next = move || {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        state
-    };
-    (0..n).map(|_| (0..cols).map(|_| next() % (1u64 << bits)).collect()).collect()
-}
 
 /// The two diagrams are the same object: output, worklists, and per level
 /// the state (every value slot, big ones included), the value-reference

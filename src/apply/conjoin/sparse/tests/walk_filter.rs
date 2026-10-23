@@ -9,48 +9,10 @@
 //! every key passes, so every test is the exact one, with a level switched
 //! to the unfiltered walk after a few keys and never, and with the levels
 //! whose count column is under a size walked unfiltered.
-use std::sync::Arc;
-
 use super::inner_index::{block, pack};
-use super::{walks_run, FilterPin, ForcedFilter, ForcedThresholds, SparseThresholds};
+use super::{random_rows, vtrees, walks_run, FilterPin, ForcedFilter, ForcedThresholds, SparseThresholds};
 use crate::test_helpers::assert_canonical;
-use crate::vtree::{VarId, Vtree};
 use crate::Engine;
-
-/// `n` rows over `cols` columns of values below `2^bits`, from a fixed
-/// seed; with `skew`, the first column takes one of four values in three
-/// rows of four, so a few keys carry most of the rows.
-fn rows(seed: u64, n: usize, cols: usize, bits: u32, skew: bool) -> Vec<Vec<u64>> {
-    let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
-    let mut next = move || {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        state
-    };
-    (0..n)
-        .map(|_| {
-            let mut row: Vec<u64> = (0..cols).map(|_| next() % (1u64 << bits)).collect();
-            if skew && next() % 4 != 0 {
-                row[0] = next() % 4;
-            }
-            row
-        })
-        .collect()
-}
-
-/// The vtrees the joins run on: the three blocks paired every way under the
-/// root, each block a balanced subtree.
-fn vtrees(a: &[VarId], b: &[VarId], c: &[VarId]) -> Vec<Arc<Vtree>> {
-    let bal = |x: &[VarId]| Vtree::balanced_over(x).unwrap();
-    let join = |l: &Vtree, r: &Vtree| Vtree::join(l, r).unwrap();
-    let (x, y, z) = (bal(a), bal(b), bal(c));
-    vec![
-        Arc::new(join(&join(&x, &y), &z)),
-        Arc::new(join(&x, &join(&y, &z))),
-        Arc::new(join(&join(&x, &z), &y)),
-    ]
-}
 
 #[test]
 fn a_filtered_walk_counts_what_the_unfiltered_walk_counts() {
@@ -69,10 +31,10 @@ fn a_filtered_walk_counts_what_the_unfiltered_walk_counts() {
     ];
     let before = walks_run();
     for (seed, n, skew) in [(0u64, 400usize, false), (1, 1500, false), (2, 3000, true), (3, 6000, true)] {
-        let f3 = rows(seed + 200, n, 3, 7, skew);
-        let mut g3 = rows(seed + 300, n / 2, 3, 7, skew);
+        let f3 = random_rows(seed + 200, n, &[7; 3], skew);
+        let mut g3 = random_rows(seed + 300, n / 2, &[7; 3], skew);
         g3.extend(f3.iter().step_by(2).cloned());
-        let (f2, g2) = (rows(seed, n, 2, 7, skew), rows(seed + 100, n, 2, 7, skew));
+        let (f2, g2) = (random_rows(seed, n, &[7; 2], skew), random_rows(seed + 100, n, &[7; 2], skew));
         let joins = [
             (pack(&[&a, &b], &f2), pack(&[&a, &c], &g2)),
             (pack(&[&a, &b], &f2), pack(&[&b, &c], &g2)),

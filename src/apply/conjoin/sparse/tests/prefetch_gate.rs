@@ -12,45 +12,10 @@
 use std::sync::Arc;
 
 use super::inner_index::{block, pack};
-use super::{prefetches_run, ForcedPrefetch, ForcedThresholds, SparseThresholds, BYTES_PER_PAR_ENTRY};
+use super::{prefetches_run, random_rows, vtrees, ForcedPrefetch, ForcedThresholds, SparseThresholds, BYTES_PER_PAR_ENTRY};
 use crate::test_helpers::{assert_canonical, assert_same_shape};
-use crate::vtree::{VarId, Vtree};
+use crate::vtree::Vtree;
 use crate::Engine;
-
-/// `n` rows over `cols` columns of values below `2^bits`, from a fixed
-/// seed; with `skew`, the first column takes one of four values in three
-/// rows of four, so a few keys carry most of the rows.
-fn rows(seed: u64, n: usize, cols: usize, bits: u32, skew: bool) -> Vec<Vec<u64>> {
-    let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
-    let mut next = move || {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        state
-    };
-    (0..n)
-        .map(|_| {
-            let mut row: Vec<u64> = (0..cols).map(|_| next() % (1u64 << bits)).collect();
-            if skew && next() % 4 != 0 {
-                row[0] = next() % 4;
-            }
-            row
-        })
-        .collect()
-}
-
-/// The vtrees the joins run on: the three blocks paired every way under the
-/// root, each block a balanced subtree.
-fn vtrees(a: &[VarId], b: &[VarId], c: &[VarId]) -> Vec<Arc<Vtree>> {
-    let bal = |x: &[VarId]| Vtree::balanced_over(x).unwrap();
-    let join = |l: &Vtree, r: &Vtree| Vtree::join(l, r).unwrap();
-    let (x, y, z) = (bal(a), bal(b), bal(c));
-    vec![
-        Arc::new(join(&join(&x, &y), &z)),
-        Arc::new(join(&x, &join(&y, &z))),
-        Arc::new(join(&join(&x, &z), &y)),
-    ]
-}
 
 #[test]
 fn a_walk_that_prefetches_returns_what_the_walk_without_returns() {
@@ -66,10 +31,10 @@ fn a_walk_that_prefetches_returns_what_the_walk_without_returns() {
     let (a, b, c) = (block(1, 7), block(8, 7), block(15, 7));
     let before = prefetches_run();
     for (seed, n, skew) in [(0u64, 300usize, false), (1, 1200, false), (2, 2500, true)] {
-        let f3 = rows(seed + 200, n, 3, 7, skew);
-        let mut g3 = rows(seed + 300, n / 2, 3, 7, skew);
+        let f3 = random_rows(seed + 200, n, &[7; 3], skew);
+        let mut g3 = random_rows(seed + 300, n / 2, &[7; 3], skew);
         g3.extend(f3.iter().step_by(2).cloned());
-        let (f2, g2) = (rows(seed, n, 2, 7, skew), rows(seed + 100, n, 2, 7, skew));
+        let (f2, g2) = (random_rows(seed, n, &[7; 2], skew), random_rows(seed + 100, n, &[7; 2], skew));
         // Every key `x` pairs with one `y` and a `z` of its own, and `g`
         // holds the same `(x, y)` rows for most keys: more f parents than
         // candidates at the level over `x` and `y`.
@@ -130,8 +95,8 @@ fn a_walk_that_prefetches_returns_what_the_walk_without_returns() {
         Arc::new(Vtree::join(&side, &Vtree::join(&y, &z).unwrap()).unwrap()),
     ];
     for (seed, n, skew) in [(4u64, 400usize, false), (5, 1500, true)] {
-        let (f2, g2) = (rows(seed, n, 2, 7, skew), rows(seed + 100, n, 2, 7, skew));
-        let f3 = rows(seed + 200, n, 3, 7, skew);
+        let (f2, g2) = (random_rows(seed, n, &[7; 2], skew), random_rows(seed + 100, n, &[7; 2], skew));
+        let f3 = random_rows(seed + 200, n, &[7; 3], skew);
         let joins = [
             (pack(&[&a, &b], &f2), pack(&[&b, &c], &g2)),
             (pack(&[&a, &b, &c], &f3), pack(&[&a, &c], &g2)),

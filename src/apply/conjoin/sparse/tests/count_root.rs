@@ -10,37 +10,20 @@ use std::sync::Arc;
 use num_bigint::BigUint;
 
 use super::inner_index::{block, pack};
-use super::{ForcedThresholds, SparseThresholds};
+use super::{paired, rows, ForcedThresholds, SparseThresholds};
 use crate::test_helpers::assert_canonical;
 use crate::vtree::{VarId, Vtree, VtreeIdx};
 use crate::Engine;
-
-/// `n` rows of values below `2^bits` in each of `cols` columns, from a fixed
-/// seed.
-fn rows(seed: u64, n: usize, cols: usize, bits: u32) -> Vec<Vec<u64>> {
-    let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
-    let mut next = move || {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        state
-    };
-    (0..n).map(|_| (0..cols).map(|_| next() % (1u64 << bits)).collect()).collect()
-}
 
 /// The vtrees the join runs on: each of the three blocks under its own
 /// subtree, `a` and `b` beside `free_a` and `free_b` unconstrained variables,
 /// paired every way under the root.
 fn vtrees(a: &[VarId], b: &[VarId], c: &[VarId], free_a: &[VarId], free_b: &[VarId]) -> Vec<Arc<Vtree>> {
     let bal = |x: &[VarId]| Vtree::balanced_over(x).unwrap();
-    let join = |l: &Vtree, r: &Vtree| Vtree::join(l, r).unwrap();
-    let side = |x: &[VarId], free: &[VarId]| if free.is_empty() { bal(x) } else { join(&bal(x), &bal(free)) };
-    let (x, y, z) = (side(a, free_a), side(b, free_b), bal(c));
-    vec![
-        Arc::new(join(&join(&x, &y), &z)),
-        Arc::new(join(&x, &join(&y, &z))),
-        Arc::new(join(&join(&x, &z), &y)),
-    ]
+    let side = |x: &[VarId], free: &[VarId]| {
+        if free.is_empty() { bal(x) } else { Vtree::join(&bal(x), &bal(free)).unwrap() }
+    };
+    paired(&side(a, free_a), &side(b, free_b), &bal(c))
 }
 
 /// The target sets the counts are taken under: none, each child of the

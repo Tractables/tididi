@@ -4,38 +4,10 @@
 //! the sparse route must build the dense grid's nodes: its conjunction,
 //! projection, marginal and count are the dense route's, on every vtree,
 //! both collections and both operand orders.
-use std::sync::Arc;
-
 use super::inner_index::{block, pack};
-use super::{ForcedThresholds, SparseThresholds};
+use super::{rows, vtrees, ForcedThresholds, SparseThresholds};
 use crate::test_helpers::{assert_canonical, assert_same_shape};
-use crate::vtree::{VarId, Vtree};
 use crate::Engine;
-
-/// `n` rows of values below `2^bits` in each of `cols` columns, from a fixed
-/// seed.
-fn rows(seed: u64, n: usize, cols: usize, bits: u32) -> Vec<Vec<u64>> {
-    let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
-    let mut next = move || {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        state
-    };
-    (0..n).map(|_| (0..cols).map(|_| next() % (1u64 << bits)).collect()).collect()
-}
-
-/// The vtrees the join runs on: every way of pairing two of the three
-/// blocks under the root, each block a balanced subtree.
-fn vtrees(a: &[VarId], b: &[VarId], c: &[VarId]) -> Vec<Arc<Vtree>> {
-    let bal = |x: &[VarId]| Vtree::balanced_over(x).unwrap();
-    let join = |l: &Vtree, r: &Vtree| Vtree::join(l, r).unwrap();
-    vec![
-        Arc::new(join(&join(&bal(a), &bal(b)), &bal(c))),
-        Arc::new(join(&bal(a), &join(&bal(b), &bal(c)))),
-        Arc::new(join(&join(&bal(a), &bal(c)), &bal(b))),
-    ]
-}
 
 #[test]
 fn the_bit_per_bucket_keeps_every_candidate_of_a_wide_level() {

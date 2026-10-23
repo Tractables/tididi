@@ -1,6 +1,9 @@
 use super::*;
 
 use std::cell::Cell;
+use std::sync::Arc;
+
+use crate::vtree::{VarId, Vtree};
 
 thread_local! {
     /// The thresholds a [`ForcedThresholds`] guard on this thread has installed.
@@ -240,6 +243,48 @@ pub(super) fn note_walk(kind: usize) {
 /// walked without the filter, their count column too narrow.
 pub(super) fn walks_run() -> [u64; 5] {
     WALKS.with(Cell::get)
+}
+
+/// `n` rows of values below `2^bits[i]` in column `i`, from a fixed seed. With
+/// `skew`, three rows in four instead start with a value below 4.
+fn random_rows(seed: u64, n: usize, bits: &[u32], skew: bool) -> Vec<Vec<u64>> {
+    let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    (0..n)
+        .map(|_| {
+            let mut row: Vec<u64> = bits.iter().map(|&b| next() % (1u64 << b)).collect();
+            if skew && next() % 4 != 0 {
+                row[0] = next() % 4;
+            }
+            row
+        })
+        .collect()
+}
+
+/// `n` rows of `cols` values below `2^bits`, from a fixed seed.
+fn rows(seed: u64, n: usize, cols: usize, bits: u32) -> Vec<Vec<u64>> {
+    random_rows(seed, n, &vec![bits; cols], false)
+}
+
+/// The vtrees the joins run on: three subtrees paired every way under the root.
+fn paired(x: &Vtree, y: &Vtree, z: &Vtree) -> Vec<Arc<Vtree>> {
+    let join = |l: &Vtree, r: &Vtree| Vtree::join(l, r).unwrap();
+    vec![
+        Arc::new(join(&join(x, y), z)),
+        Arc::new(join(x, &join(y, z))),
+        Arc::new(join(&join(x, z), y)),
+    ]
+}
+
+/// [`paired`] over three blocks, each a balanced subtree.
+fn vtrees(a: &[VarId], b: &[VarId], c: &[VarId]) -> Vec<Arc<Vtree>> {
+    let bal = |x: &[VarId]| Vtree::balanced_over(x).unwrap();
+    paired(&bal(a), &bal(b), &bal(c))
 }
 
 mod count_root;
