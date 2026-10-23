@@ -32,12 +32,10 @@ directly. Vtree node indices stay fixed when the vtree is rotated, so array
 order is not a traversal order; walk levels with [`Vtree::bottomup`] to visit
 children before parents.
 
-A *marginal level* is one whose structure has been summed out
-([`Tdd::marginalize_levels`]): it stores a value per node instead of pairs,
-and a reference into it may carry a small value inline instead of an index.
-Code outside the `diagram` module therefore never reads reference bits itself;
-it decodes them through [`ChildDecoder`]. Marginal levels have their own
-section below.
+A *marginal level* stores a value per node instead of pairs, and a reference
+into it may carry that value inline, so code outside the `diagram` module
+decodes references through [`ChildDecoder`]; see
+[Marginal levels](#marginal-levels).
 
 Vtree constructors and grafts all finish through one checked constructor,
 which derives parent links and returns the node permutation that grafting uses
@@ -290,10 +288,11 @@ or allocation point.
 
 ## Constraints
 
-The crate is pure Rust, with no build script. It reads no environment variables
-and owns no threads or process-wide state. Its one optional feature, `testing`,
-compiles `test_helpers` in a release build, as described under
-[Testing](#testing).
+The crate is pure Rust, with no build script or native dependencies. It reads
+no environment variables and owns no threads or process-wide state. Consumers
+need no Cargo features; the one optional feature, `testing`, exposes the
+generators and oracles in `test_helpers` and keeps its invariant checkers in a
+release build, as described under [Testing](#testing).
 
 ## Glossary
 

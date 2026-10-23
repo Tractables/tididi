@@ -73,11 +73,8 @@ and captured output. CI checks Linux, macOS and Windows.
 - Tests that build diagrams must call `test_helpers::assert_canonical`:
   a correct query result alone does not establish a valid representation.
 - Keep algorithms single-threaded. Callers control parallelism, limits and
-  memory probes; the library reads no environment variables and has no
-  process-wide state or native dependencies. Consumers need no Cargo features;
-  `testing` exposes the generators and oracles in `test_helpers` and keeps its
-  invariant checkers in a release build, as stated in the
-  [architecture reference](../docs/architecture.md#invariants).
+  memory probes; keep the crate within the architecture reference's
+  [constraints](../docs/architecture.md#constraints).
 - Return errors for invalid input and refused work. Named operations are
   checked; do not add panicking twins or `try_` aliases.
 - Put each operation's contract on its default entry point. Batch methods

@@ -23,6 +23,12 @@ jobs:
       run: |
         python3 -m unittest discover -s tests -p test_scenarios.py
         python3 .github/scripts/check_scenarios.py
+    - name: Check release metadata
+      env:
+        RELEASE_TAG: ${{ github.event.release.tag_name }}
+      run: |
+        python3 -m unittest discover -s tests -p test_release.py
+        python3 .github/scripts/check_release.py --release-tag "$RELEASE_TAG"
 
   build:
     strategy:
