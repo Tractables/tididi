@@ -16,16 +16,19 @@
 //! Y(s₁, a₂) = #{ g pair (a₂, s₂) : (s₁, s₂) live }
 //! ```
 //!
-//! `X` is one walk over the left child's live products, each stepping
-//! through `f`'s pairs over its `f` node, and `Y` one walk over the right
-//! child's; grouping by `f`'s left child and `g`'s right child instead is the
-//! mirror image. The table is as wide as `f` at one child times `g` at the
-//! other, which is small exactly where a level is dangerous: where `f`'s
-//! nodes differ only on one side and `g`'s only on the other, every product
-//! of a node of `f` and a node of `g` is live and the level holds the product
-//! of the two widths. Where both tables are wide, or the table would take
-//! more than half the memory left, the count falls back to a floor: with `A` the combinations live on the left, `B` those live on the
-//! right and `U` all of them, at least `|A| + |B| − |U|` are live on both.
+//! `Y` is one walk over the right child's live products, each stepping
+//! through `g`'s pairs over its `g` node, into a table with a row for each
+//! `s₁`; each pair `(a₁, s₁)` of `f` then adds the cells of its row at the
+//! `a₂` that `a₁` meets live, which is `X` summed against `Y`. Grouping by
+//! `f`'s left child and `g`'s right child instead is the mirror image. The
+//! table is as wide as `f` at one child times `g` at the other, which is
+//! small exactly where a level is dangerous: where `f`'s nodes differ only
+//! on one side and `g`'s only on the other, every product of a node of `f`
+//! and a node of `g` is live and the level holds the product of the two
+//! widths. Where both tables are wide, or the table would take more than
+//! half the memory left, the count falls back to a floor: with `A` the
+//! combinations live on the left, `B` those live on the right and `U` all
+//! of them, at least `|A| + |B| − |U|` are live on both.
 //! A side every product of which is live (a complete child, or a side the
 //! level carries) kills no combination, and the count is then the other
 //! side's `|A|`. Each side's live combinations are also a ceiling on the
@@ -380,16 +383,16 @@ fn level_pairs(
     let inputs = pf + pg + a.f_steps.max(a.g_steps) + b.f_steps.max(b.g_steps);
     let cost = |(cells, steps): (u128, u128)| cells + steps;
     let (mirror, chosen) = if cost(by_left) < cost(by_right) { (true, by_left) } else { (false, by_right) };
-    // `X` and `Y`, one `u64` a cell each.
-    let scratch = chosen.0.saturating_mul(16);
+    // `Y`, one `u32` a cell.
+    let scratch = chosen.0.saturating_mul(4);
     let spare = lim.and_then(headroom).is_some_and(|h| scratch > u128::from(h / 2));
     if spare || cost(chosen) > 8 * inputs + SPARE_STEPS {
         let floor = (a.live + b.live).saturating_sub(all);
         return Ok(Some(Pairs { count: floor, exact: false }));
     }
     let count = match mirror {
-        false => cross(lim, f_level, g_level, (&left, &hf_l), (&right, &hg_r), Child::Left)?,
-        true => cross(lim, f_level, g_level, (&right, &hf_r), (&left, &hg_l), Child::Right)?,
+        false => cross(lim, f_level, g_level, &left, (&right, &hg_r), Child::Left)?,
+        true => cross(lim, f_level, g_level, &right, (&left, &hg_l), Child::Right)?,
     };
     debug_assert!(
         count <= a.live.min(b.live) && count >= (a.live + b.live).saturating_sub(all),
@@ -399,37 +402,63 @@ fn level_pairs(
 }
 
 /// The exact count, grouped by f's child opposite `first` and g's child on
-/// `first`'s side: `X` walks `first`'s live products through f's pairs over
-/// each product's `f` node, `Y` walks `second`'s through g's pairs over each
-/// product's `g` node, and the count is `Σ X · Y` over the table.
+/// `first`'s side: `Y` walks `second`'s live products through g's pairs over
+/// each product's `g` node into the table, a row for each f node at the
+/// second child, and each f pair then adds, along its row, the cells of the
+/// g nodes its node at `first`'s child meets live there: `Σ X · Y`, with
+/// one row read for each f pair and neither `X`'s table, f's pairs grouped
+/// nor a pass over the cells.
 fn cross(
     lim: Option<&Limits>,
     f_level: &TddLevel,
     g_level: &TddLevel,
-    (first, hf): (&Side<'_>, &[u32]),
+    first: &Side<'_>,
     (second, hg): (&Side<'_>, &[u32]),
     first_child: Child,
 ) -> Result<u128, OperationError> {
-    // Rows are f's nodes at the second child, columns g's at the first.
+    // Rows are f's nodes at the second child, columns g's at the first. A
+    // cell counts g pairs over one g node, which a `u32` holds.
     let columns = first.g_width;
     let cells = second.f_width * columns;
-    let (f_starts, f_others) = grouped(lim, f_level, first_child, hf)?;
-    let (g_starts, g_others) = grouped(lim, g_level, first_child.other(), hg)?;
-    let mut x = Column::new(lim, cells, 0u64)?;
-    let mut y = Column::new(lim, cells, 0u64)?;
-    first.live.each(|i, j| {
-        let (from, to) = (f_starts[i as usize] as usize, f_starts[i as usize + 1] as usize);
-        for &row in &f_others[from..to] {
-            x[row as usize * columns + j as usize] += 1;
-        }
+    let mut y = Column::new(lim, cells, 0u32)?;
+    {
+        let (g_starts, g_others) = grouped(lim, g_level, first_child.other(), hg)?;
+        second.live.each(|i, j| {
+            let (from, to) = (g_starts[j as usize] as usize, g_starts[j as usize + 1] as usize);
+            let row = &mut y[i as usize * columns..(i as usize + 1) * columns];
+            for &column in &g_others[from..to] {
+                row[column as usize] += 1;
+            }
+        });
+    }
+    let (starts, partners) = by_f_node(lim, first)?;
+    let second_child = first_child.other();
+    let mut count = 0u128;
+    f_level.pairs_with_parent().for_each(|(_, pair)| {
+        let (node, row) = (first_child.of(pair) as usize, second_child.of(pair) as usize);
+        let row = &y[row * columns..(row + 1) * columns];
+        let met = &partners[starts[node] as usize..starts[node + 1] as usize];
+        count += met.iter().map(|&j| u128::from(row[j as usize])).sum::<u128>();
     });
-    second.live.each(|i, j| {
-        let (from, to) = (g_starts[j as usize] as usize, g_starts[j as usize + 1] as usize);
-        for &column in &g_others[from..to] {
-            y[i as usize * columns + column as usize] += 1;
-        }
+    Ok(count)
+}
+
+/// A side's live products by their `f` node: node `i` meets the `g` nodes
+/// `partners[starts[i]..starts[i + 1]]`.
+fn by_f_node<'a>(lim: Option<&'a Limits>, side: &Side<'_>) -> Result<(Column<'a, u32>, Column<'a, u32>), OperationError> {
+    let mut starts = Column::new(lim, side.f_width + 1, 0u32)?;
+    side.live.each(|i, _| starts[i as usize + 1] += 1);
+    for i in 0..side.f_width {
+        starts[i + 1] += starts[i];
+    }
+    let mut partners = Column::new(lim, starts[side.f_width] as usize, 0u32)?;
+    let mut fill = Column::new(lim, side.f_width, 0u32)?;
+    fill.copy_from_slice(&starts[..side.f_width]);
+    side.live.each(|i, j| {
+        partners[fill[i as usize] as usize] = j;
+        fill[i as usize] += 1;
     });
-    Ok(x.iter().zip(y.iter()).map(|(&a, &b)| u128::from(a) * u128::from(b)).sum())
+    Ok((starts, partners))
 }
 
 /// Price a level a dense route builds, before it claims its grid: the grid
