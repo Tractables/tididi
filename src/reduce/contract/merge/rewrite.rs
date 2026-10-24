@@ -70,18 +70,37 @@ pub(super) fn rewrite_parent(
             .expect("an implicit parent is rewritten in its room");
         return;
     }
+    // Where the arena holds the ranges in node order, each node's kept pairs
+    // move down to a write cursor as they are rewritten, which leaves the
+    // arena with no dead pairs and the parent no sweep to run; otherwise
+    // each node shrinks in place and its tail is left dead.
+    let slide = parent_level.ranges_in_node_order();
+    let mut cursor = 0usize;
     for node_idx in 0..parent_level.nodes().len() {
-        if matches!(parent_level.node(node_idx).kind(), NodeKind::Inline(_)) {
+        let kind = parent_level.node(node_idx).kind();
+        let Some(range) = parent_level.arena_range(kind) else {
             remap_inline_node(parent_level, node_idx, t1_side, &remap.final_remap);
-        } else if parent_level.node(node_idx).kind().pairs_in_arena() {
-            let range = parent_level.pair_range_at(node_idx);
+            continue;
+        };
+        if slide {
+            let new_len = move_canonical_pairs(parent_level, range, cursor, t1_side, remap);
+            parent_level.reencode_moved(node_idx, cursor, new_len);
+            if new_len >= 2 {
+                cursor += new_len;
+            }
+        } else {
             let new_len = keep_canonical_pairs(parent_level, node_idx, t1_side, remap);
             if new_len < range.len() {
                 dead_acc += parent_level.reencode_shrunk(node_idx, range.start, range.len(), new_len);
             }
         }
     }
-    parent_level.note_dead_pairs(dead_acc);
+    if slide {
+        parent_level.pairs.stored_mut().truncate(cursor);
+        parent_level.dead_pairs = 0;
+    } else {
+        parent_level.note_dead_pairs(dead_acc);
+    }
 }
 
 /// Point an inline node's single pair at the survivor of its T1-side twin
@@ -126,6 +145,28 @@ fn keep_canonical_pairs(
         }
     }
     write
+}
+
+/// [`keep_canonical_pairs`] for a node whose pairs `range` are moved down to
+/// `to`, at most `range.start`: its kept pairs are written from `to` on.
+/// Returns how many pairs are left.
+fn move_canonical_pairs(
+    level: &mut TddLevel,
+    range: std::ops::Range<usize>,
+    to: usize,
+    t1_side: ChildSide,
+    remap: &MergeRemap,
+) -> usize {
+    debug_assert!(to <= range.start, "the write cursor stays behind the reads");
+    let pairs = level.pairs.stored_mut();
+    let mut write = to;
+    for read in range {
+        if let Some(pair) = canonical_pair(pairs[read], t1_side, remap) {
+            pairs[write] = pair;
+            write += 1;
+        }
+    }
+    write - to
 }
 
 /// A parent pair after the merge: remapped onto its T1-side ref's survivor

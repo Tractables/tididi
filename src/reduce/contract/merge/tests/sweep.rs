@@ -137,7 +137,66 @@ fn a_shrunk_extended_parent_node_inlines_its_survivor() {
         parent.pairs_vec(0),
         &[ChildPair::new(NodeIdx(0), sibling)],
     );
-    assert_eq!(parent.dead_pairs, 2, "the whole old range is abandoned");
+    assert_eq!(parent.pairs.len(), 0, "an inline survivor keeps no arena slot");
+    assert_eq!(parent.dead_pairs, 0, "the rewrite leaves no dead pairs");
+}
+
+/// The parent of the merged level `[0, 0, 2, 3, 3]` (twins {0, 1} and {3, 4}),
+/// its nodes' pairs placed by `place` (`(start, pairs)` per node, `None` for
+/// an inline node) in an arena of `len` slots, rewritten.
+fn rewritten_parent(len: usize, place: &[(Option<usize>, Vec<ChildPair>)]) -> TddLevel {
+    let vtree = std::sync::Arc::new(crate::vtree::Vtree::balanced(2));
+    let root = vtree.root();
+    let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+    let parent = &mut levels[root.idx()];
+    let mut arena = vec![ChildPair::new(NodeIdx(9), NodeIdx(9)); len];
+    let mut nodes = Vec::new();
+    for (start, pairs) in place {
+        match start {
+            Some(start) => {
+                arena[*start..*start + pairs.len()].copy_from_slice(pairs);
+                nodes.push(EncodedNode::multi_pair(*start as u32, pairs.len() as u32));
+            }
+            None => nodes.push(EncodedNode::inline(pairs[0])),
+        }
+    }
+    parent.pairs = arena.into();
+    parent.nodes = nodes.into();
+    let output = TddNodeId { vtree: root, local: NodeIdx(0) };
+    let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
+    let remap = MergeRemap {
+        merge_target: vec![0, 0, 2, 3, 3],
+        duplicate_redirect: vec![false; 5],
+        final_remap: [0, 0, 1, 2, 2].map(NodeIdx).to_vec(),
+    };
+    rewrite_parent(&Limits::new(), &mut tdd, root, ChildSide::Left, &remap, None);
+    tdd.levels[root.idx()].clone()
+}
+
+/// A parent whose ranges are in node order has its kept pairs moved down as
+/// they are rewritten: the arena is left with the live pairs only, in node
+/// order, gaps and dropped pairs gone. Out of node order, each node shrinks
+/// in place and its tail is counted dead.
+#[test]
+fn a_parent_in_node_order_is_rewritten_without_dead_pairs() {
+    let p = |l: u32, r: u32| ChildPair::new(NodeIdx(l), NodeIdx(r));
+    let place = [
+        (Some(0), vec![p(0, 10), p(1, 10), p(2, 11)]),
+        (None, vec![p(2, 10)]),
+        (Some(4), vec![p(0, 12), p(1, 12), p(3, 13), p(4, 13)]),
+    ];
+    let parent = rewritten_parent(8, &place);
+    assert_eq!(content(&parent), vec![vec![p(0, 10), p(1, 11)], vec![p(1, 10)], vec![p(0, 12), p(2, 13)]]);
+    assert_eq!(parent.pairs.len(), 4, "only the live pairs are left");
+    assert_eq!(parent.pair_range_at(2).start, 2, "the arena is in node order");
+    assert_eq!(parent.dead_pairs, 0);
+
+    // Node 0's range after node 1's: shrunk in place.
+    let place = [(Some(2), vec![p(0, 10), p(1, 10), p(2, 11)]), (Some(0), vec![p(3, 12), p(4, 12)])];
+    let parent = rewritten_parent(5, &place);
+    assert_eq!(content(&parent), vec![vec![p(0, 10), p(1, 11)], vec![p(2, 12)]]);
+    assert_eq!(parent.pairs.len(), 5, "the arena is not moved");
+    assert_eq!(parent.dead_pairs, 3, "node 0's tail and node 1's whole range are dead");
 }
 
 /// A refused arena reservation retains merge capacity, and retry clears its plans.
@@ -314,13 +373,15 @@ fn the_rebuild_unions_groups_and_leaves_no_dead_arena() {
     let before: Vec<Vec<ChildPair>> = content(&level);
     // Groups {0, 3, 6} concat, {1, 4} concat, {2, 5} a content-equal
     // redirect of 5 onto 2.
-    let mut bufs = MergeBuffers::default();
-    bufs.sel = vec![0, 3, 6, 1, 4, 2, 5];
-    bufs.group_plans = vec![
-        GroupPlan { action: GroupAction::Concat, start: 0, end: 3 },
-        GroupPlan { action: GroupAction::Concat, start: 3, end: 5 },
-        GroupPlan { action: GroupAction::DupRedirect, start: 5, end: 7 },
-    ];
+    let bufs = MergeBuffers {
+        sel: vec![0, 3, 6, 1, 4, 2, 5],
+        group_plans: vec![
+            GroupPlan { action: GroupAction::Concat, start: 0, end: 3 },
+            GroupPlan { action: GroupAction::Concat, start: 3, end: 5 },
+            GroupPlan { action: GroupAction::DupRedirect, start: 5, end: 7 },
+        ],
+        ..Default::default()
+    };
     let remap = MergeRemap {
         merge_target: vec![0, 1, 2, 0, 1, 2, 0],
         duplicate_redirect: vec![false, false, false, false, false, true, false],

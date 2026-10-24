@@ -159,6 +159,48 @@ impl TddLevel {
         }
     }
 
+    /// Re-encode a multi-pair node after an in-place pass in node order
+    /// moved its kept pairs to `[start, start + len)`, `start` at most its
+    /// old start ([`ranges_in_node_order`](Self::ranges_in_node_order)):
+    /// the moved range (`len >= 2`), the sole survivor inline (`len == 1`),
+    /// or the empty placeholder (`len == 0`), as
+    /// [`reencode_shrunk`](Self::reencode_shrunk) leaves them. Allocates
+    /// nothing; a node in the ranged encoding keeps its `ranges` entry.
+    #[inline]
+    pub(crate) fn reencode_moved(&mut self, node_idx: usize, start: usize, len: usize) {
+        match len {
+            0 => self.nodes.stored_mut()[node_idx] = self.encode_multi(0, 0),
+            1 => {
+                let stored = self.pairs.stored().expect("an in-place rewrite works on stored pairs");
+                self.nodes.stored_mut()[node_idx] = EncodedNode::inline(stored[start]);
+            }
+            _ => {
+                self.set_multi_start(node_idx, start);
+                self.set_pair_len(node_idx, len as u32);
+            }
+        }
+    }
+
+    /// Whether every nonempty pair range of the level starts at or past the
+    /// end of the one before it in node order. A pass that rewrites the
+    /// nodes in order can then move each node's kept pairs down to a write
+    /// cursor, which never overtakes a range not yet read, and leave the
+    /// arena with no dead pairs ([`reencode_moved`](Self::reencode_moved)).
+    pub(crate) fn ranges_in_node_order(&self) -> bool {
+        let mut end = 0usize;
+        for i in 0..self.nodes().len() {
+            if let Some(range) = self.arena_range(self.node(i).kind())
+                && !range.is_empty()
+            {
+                if range.start < end {
+                    return false;
+                }
+                end = range.end;
+            }
+        }
+        true
+    }
+
     /// Rewrite a multi-pair node's arena start, handling both encodings.
     /// Companion of [`set_pair_len`](Self::set_pair_len); only the pairs-arena
     /// sweep needs it, and only ever to *lower* a start.
