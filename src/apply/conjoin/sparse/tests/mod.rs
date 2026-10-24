@@ -304,3 +304,4 @@ mod summed;
 mod product_filter;
 mod prefetch_gate;
 mod walk_filter;
+mod walks;

@@ -403,6 +403,32 @@ pub(super) fn build_reverse_index<const BY_RIGHT: bool>(
     )
 }
 
+/// The runs [`build_labelled_index`] cuts each outer child's entries into.
+pub(super) const LABEL_RUNS: usize = 3;
+
+/// Build a reverse index of a level whose other child is a vtree leaf, keyed
+/// by the keyed child and then by the leaf label, Pos, One, Neg: the keyed
+/// child `k`'s entries with label run `r` are bucket `LABEL_RUNS * k + r`,
+/// in the order [`build_reverse_index`] would give them. A literal meets the
+/// One run and its own, which are next to each other.
+pub(super) fn build_labelled_index<const BY_RIGHT: bool>(
+    eng: &Engine,
+    level: &TddLevel,
+    key_width: usize,
+    index: &mut Grouped<RevEntry>,
+) -> Result<(), OperationError> {
+    // The run of each label, One, Pos, Neg in label order.
+    const RUN: [usize; 3] = [1, 0, 2];
+    counting_sort(
+        eng.limits(), LABEL_RUNS * key_width, NodePairs(level),
+        |(parent, pair)| {
+            let (key, other) = if BY_RIGHT { (pair.right.0, pair.left.0) } else { (pair.left.0, pair.right.0) };
+            (LABEL_RUNS * key as usize + RUN[other as usize], RevEntry { parent, other })
+        },
+        None, RevEntry { parent: 0, other: 0 }, index,
+    )
+}
+
 /// After a counting-sort fill pass leaves each `offsets[i]` pointing one-past
 /// the end of bucket `i`, shift the slice right by one so every `offsets[i]`
 /// is restored to the start of its bucket (and `offsets[0] = 0`).

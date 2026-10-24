@@ -110,45 +110,52 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
         (shape.f.left, shape.g.left, pl.left)
     };
     // g's reverse index by the outer child: normally the right child,
-    // entries `(p2, a2)`; swapped the left one, entries `(p2, s2)`.
-    if !SWAPPED {
-        build_reverse_index::<true>(eng, g_level, g_outer, None, &mut ws.g_by_outer)?;
-    } else {
-        build_reverse_index::<false>(eng, g_level, g_outer, None, &mut ws.g_by_outer)?;
+    // entries `(p2, a2)`; swapped the left one, entries `(p2, s2)`. Under a
+    // vtree leaf the entries of one outer child are grouped by their leaf
+    // label as well, so that an f pair reads only the labels its own meets.
+    let labelled = inner.is_none();
+    match (labelled, SWAPPED) {
+        (false, false) => build_reverse_index::<true>(eng, g_level, g_outer, None, &mut ws.g_by_outer)?,
+        (false, true) => build_reverse_index::<false>(eng, g_level, g_outer, None, &mut ws.g_by_outer)?,
+        (true, false) => build_labelled_index::<true>(eng, g_level, g_outer, &mut ws.g_by_outer)?,
+        (true, true) => build_labelled_index::<false>(eng, g_level, g_outer, &mut ws.g_by_outer)?,
     }
     bucket_offsets(eng.limits(), pl_outer, f_outer, &mut ws.outer_offsets)?;
     match inner {
-        None => leaf_walk::<SWAPPED>(eng, ws, f_level, shape, pl_outer, collect, |f_label, g_label| {
-            CONJOIN_GRID[f_label as usize][g_label as usize]
-        }),
-        Some(Inner::Carried(Carrier::F)) => leaf_walk::<SWAPPED>(eng, ws, f_level, shape, pl_outer, collect, |f_field, _| f_field),
-        Some(Inner::Carried(Carrier::G)) => leaf_walk::<SWAPPED>(eng, ws, f_level, shape, pl_outer, collect, |_, g_field| g_field),
-        Some(Inner::Complete { g_width }) => leaf_walk::<SWAPPED>(eng, ws, f_level, shape, pl_outer, collect, move |f_node, g_node| {
-            (f_node as usize * g_width + g_node as usize) as u32
-        }),
+        None => leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
+            |g_by_outer, outer| LabelWalk { g_by_outer, outer }),
+        Some(Inner::Carried(Carrier::F)) => leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
+            plain_walk(|f_field: u32, _: u32| f_field)),
+        Some(Inner::Carried(Carrier::G)) => leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
+            plain_walk(|_: u32, g_field: u32| g_field)),
+        Some(Inner::Complete { g_width }) => leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
+            plain_walk(move |f_node: u32, g_node: u32| (f_node as usize * g_width + g_node as usize) as u32)),
     }
 }
 
-/// [`scatter_leaf_arm`]'s walk, with the inner side's product given by
-/// `inner_product` of the f and g fields there, `NO_PRODUCT` where it is
-/// false, into `collect`.
+/// A [`LeafWalk`] with `inner_product`, for [`leaf_walk`] to make.
+fn plain_walk<'a, P: Fn(u32, u32) -> u32>(
+    inner_product: P,
+) -> impl FnOnce(GroupedView<'a, RevEntry>, GroupedView<'a, ProductEntry>) -> LeafWalk<'a, P> {
+    move |g_by_outer, outer| LeafWalk { g_by_outer, outer, inner_product }
+}
+
+/// [`scatter_leaf_arm`]'s walk of f's nodes, each node's pairs read by the
+/// walk `walk` makes of g's reverse index and the outer child's products,
+/// into `collect`.
 #[inline(always)]
-fn leaf_walk<const SWAPPED: bool>(
+fn leaf_walk<'w, const SWAPPED: bool, W: NodeWalk>(
     eng: &Engine,
-    ws: &mut SparseWorkspace,
+    ws: &'w mut SparseWorkspace,
     f_level: &TddLevel,
     shape: LevelShape,
-    pl_outer: &[ProductEntry],
+    pl_outer: &'w [ProductEntry],
     collect: Collect<'_, '_>,
-    inner_product: impl Fn(u32, u32) -> u32,
+    walk: impl FnOnce(GroupedView<'w, RevEntry>, GroupedView<'w, ProductEntry>) -> W,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let SparseWorkspace { g_by_outer, outer_offsets, node_candidates, emit, .. } = ws;
-    let walk = LeafWalk {
-        g_by_outer: g_by_outer.view(),
-        outer: GroupedView { offsets: outer_offsets, entries: pl_outer },
-        inner_product,
-    };
+    let walk = walk(g_by_outer.view(), GroupedView { offsets: outer_offsets, entries: pl_outer });
     // Amortized cancellation/deadline poll; the sparse join has no other
     // mid-level break, and the bail lands where `try_push`'s recovery
     // already covers it.
@@ -179,6 +186,18 @@ fn leaf_walk<const SWAPPED: bool>(
     }
 }
 
+/// How [`leaf_walk`] finds the candidates of one f node.
+trait NodeWalk {
+    /// Hand every candidate of the f node holding `pairs` to `push`, in the
+    /// order of its pairs, the products they meet and the g pairs under each.
+    fn node<const SWAPPED: bool>(
+        &self,
+        pairs: &[ChildPair],
+        ticker: &mut crate::limits::PollGate,
+        push: impl FnMut(ParEntry) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError>;
+}
+
 /// What [`leaf_walk`] reads for each f pair: the outer child's live
 /// products by f index, g's pairs by outer child, and the inner product.
 struct LeafWalk<'a, P> {
@@ -187,9 +206,52 @@ struct LeafWalk<'a, P> {
     inner_product: P,
 }
 
-impl<P: Fn(u32, u32) -> u32> LeafWalk<'_, P> {
-    /// Hand every candidate of the f node holding `pairs` to `push`, in the
-    /// order of its pairs, the products they meet and the g pairs under each.
+/// [`LeafWalk`] where the inner child is a vtree leaf: g's pairs are grouped
+/// by outer child and, within it, by leaf label ([`build_labelled_index`]),
+/// so an f pair reads only the g pairs whose label its own label meets. Its
+/// inner product is its own label where that is a literal and the g pair's
+/// otherwise.
+struct LabelWalk<'a> {
+    g_by_outer: GroupedView<'a, RevEntry>,
+    outer: GroupedView<'a, ProductEntry>,
+}
+
+impl NodeWalk for LabelWalk<'_> {
+    #[inline(always)]
+    fn node<const SWAPPED: bool>(
+        &self,
+        pairs: &[ChildPair],
+        ticker: &mut crate::limits::PollGate,
+        mut push: impl FnMut(ParEntry) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError> {
+        const ONE: u32 = crate::diagram::ONE_LEAF_IDX.0;
+        const POS: u32 = crate::diagram::POS_LEAF_IDX.0;
+        const NEG: u32 = crate::diagram::NEG_LEAF_IDX.0;
+        let offsets = self.g_by_outer.offsets;
+        for pair in pairs {
+            let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
+            // The runs of one outer child are Pos, One, Neg: a positive
+            // literal meets the first two, a negative one the last two, One
+            // all three.
+            let first = usize::from(inner1 == NEG);
+            let last = 3 - usize::from(inner1 == POS);
+            for e in self.outer.bucket(outer1 as usize) {
+                let at = LABEL_RUNS * e.g_idx.idx();
+                let under = &self.g_by_outer.entries[offsets[at + first] as usize..offsets[at + last] as usize];
+                for &RevEntry { parent: g_parent, other: inner2 } in under {
+                    let inner_prod = if inner1 == ONE { inner2 } else { inner1 };
+                    let (left_prod, right_prod) = orient::<SWAPPED>(inner_prod, e.prod_idx.0);
+                    push(ParEntry { g_parent, left_prod, right_prod })?;
+                }
+                // Charged as the walk of every label under the product was.
+                ticker.poll(u64::from(offsets[at + LABEL_RUNS] - offsets[at]))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl<P: Fn(u32, u32) -> u32> NodeWalk for LeafWalk<'_, P> {
     #[inline(always)]
     fn node<const SWAPPED: bool>(
         &self,
