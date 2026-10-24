@@ -939,8 +939,8 @@ enum WordNote {
     Complete,
     /// A cell walked in the grouped order.
     Grouped,
-    /// A level that entered only its live cells.
-    LiveCells,
+    /// A row read by vectors.
+    Row,
 }
 
 // A test counts the times a level's pairs arena grew.

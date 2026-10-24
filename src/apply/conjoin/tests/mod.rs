@@ -230,8 +230,7 @@ thread_local! {
     static WORD_CELLS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
     /// The levels on this thread read by g-pair vectors, those of two grids
     /// and those with a complete side, their cells walked in the grouped
-    /// order, and those levels that entered only their live cells
-    /// ([`word_cells_levels`]).
+    /// order, and their rows read by vectors ([`word_cells_levels`]).
     static WORD_CELLS_LEVELS: std::cell::Cell<[u64; 4]> = const { std::cell::Cell::new([0; 4]) };
 }
 
@@ -276,7 +275,7 @@ pub(super) fn word_cells_off<R>(f: impl FnOnce() -> R) -> R {
 
 /// The levels on this thread so far read by g-pair vectors, those of two
 /// grids and those with a complete side, their cells walked in the grouped
-/// order, and those levels that entered only their live cells.
+/// order, and their rows read by vectors.
 pub(super) fn word_cells_levels() -> [u64; 4] {
     WORD_CELLS_LEVELS.with(std::cell::Cell::get)
 }
