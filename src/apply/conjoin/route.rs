@@ -90,30 +90,32 @@ pub(super) struct SparseGate {
     pub(super) available: bool,
     /// The online density check: the children's live product counts are small
     /// enough against their maxima that scattering wins. Taken only where
-    /// the routes are available and the grid is big, and false elsewhere,
-    /// where `route_level` does not read it.
+    /// the routes are available and the level is big or `child_grid_wins`
+    /// holds, and false elsewhere, where `route_level` does not read it.
     pub(super) density_wins: bool,
     /// The child grids the dense route would have to fill outweigh the child
     /// grids the sparse route would have to scan, and one of the former is
     /// over `min_grid` and sparse against its live products: reason enough
     /// to scatter whatever this level's own grid is. Taken only where the
-    /// routes are available and this level's own grid is at most
-    /// `min_grid`, and false elsewhere, where it decides nothing.
+    /// routes are available and the level is not [big](SparseGate::big),
+    /// and false elsewhere, where it decides nothing.
     pub(super) child_grid_wins: bool,
-    /// Grids at or below this many cells are not worth either sparse route's
-    /// setup, whatever the density says.
-    pub(super) min_grid: usize,
+    /// The level's grid, or the combinations of its operands' pairs, is over
+    /// `min_grid`. The dense route walks every combination of a cell's two
+    /// nodes' pairs, so a level of few cells over long pair lists is as big
+    /// as its combinations; at or below the floor on both counts neither
+    /// sparse route's setup pays, whatever the density says.
+    pub(super) big: bool,
 }
 
 /// Pick this level's [`Route`].
 ///
-/// Pure: it reads the level's shape, its marginal plan and the two gates, and
-/// touches no storage. Order matters — the sparse routes are checked first
+/// Pure: it reads the level's marginal plan and the two gates, and touches
+/// no storage. Order matters — the sparse routes are checked first
 /// because they avoid materializing the grid the dense routes need, and
 /// streaming is checked before the marginal-child dense build because a
 /// streaming target has no downstream structure to build.
 pub(super) fn route_level(
-    shape: LevelShape,
     plan: &MarginalPlan,
     marginal: &LevelMarg,
     sparse: SparseGate,
@@ -121,10 +123,12 @@ pub(super) fn route_level(
     // The dense routes write this level's grid and, before it, the grid of
     // any child the sparse pipeline left as a product list; the sparse routes
     // walk the live products and write none of the three. A level with a
-    // small grid of its own can sit over wide, sparse children — an operand's
-    // root does, with one node each side and the whole diagram below — so a
-    // child grid the dense route would have to materialize counts as well.
-    let big_grid = shape.f.here * shape.g.here > sparse.min_grid || sparse.child_grid_wins;
+    // small grid of its own can sit over long pair lists and wide, sparse
+    // children — an operand's root does, with one node each side and the
+    // whole diagram below — so the combinations of its pairs
+    // ([`SparseGate::big`]) and a child grid the dense route would have to
+    // materialize count as well.
+    let big_grid = sparse.big || sparse.child_grid_wins;
 
     // A marginal child on either side rules the four-way scatter walk out, so
     // the density check never has to hold for a level with count payloads.

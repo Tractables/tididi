@@ -866,6 +866,14 @@ use tests::note_pairs_grown;
 #[inline(always)]
 fn note_pairs_grown() {}
 
+// A test lists the route each level took.
+#[cfg(test)]
+use tests::note_route;
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_route(_t: VtreeIdx, _route: Route) {}
+
 // A test sends every level past the relabelling route, as the oracle the
 // route is checked against, and counts the levels it took: moved whole, and
 // rebuilt; those of them that read through a marginal child; and the nodes

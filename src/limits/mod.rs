@@ -77,15 +77,17 @@ impl std::fmt::Debug for StopCallback {
 
 /// When a conjunction level takes the sparse route instead of the dense grid.
 ///
-/// A level whose grid holds more than `min_grid` cells takes the sparse route
-/// when its live pairs, multiplied together and by `sparsity`, fall short of
-/// the grid. Lower values send more levels down the sparse route. The route
+/// A level whose grid holds more than `min_grid` cells, or whose operands'
+/// pairs make more than `min_grid` combinations, takes the sparse route when
+/// its live pairs, multiplied together and by `sparsity`, fall short of the
+/// grid. Lower values send more levels down the sparse route. The route
 /// changes the work, never the result.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SparseRoute {
     /// How much sparser than its grid a level must be.
     pub sparsity: u32,
-    /// Grid cells above which a level may take the sparse route.
+    /// Grid cells, or operand pair combinations, above which a level may
+    /// take the sparse route.
     pub min_grid: usize,
 }
 

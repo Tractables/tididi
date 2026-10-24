@@ -114,6 +114,35 @@ pub(super) fn pairs_grown() -> u64 {
 }
 
 thread_local! {
+    /// The route each level built on this thread took, in build order, while
+    /// [`routes_taken`] lists them.
+    static ROUTES: std::cell::RefCell<Option<Vec<(VtreeIdx, Route)>>> = const { std::cell::RefCell::new(None) };
+}
+
+pub(super) fn note_route(t: VtreeIdx, route: Route) {
+    ROUTES.with(|r| {
+        if let Some(routes) = r.borrow_mut().as_mut() {
+            routes.push((t, route));
+        }
+    });
+}
+
+/// Run `f` and list the route each level it built took, in build order.
+pub(super) fn routes_taken<R>(f: impl FnOnce() -> R) -> (R, Vec<(VtreeIdx, Route)>) {
+    struct Reset(Option<Vec<(VtreeIdx, Route)>>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ROUTES.with(|r| *r.borrow_mut() = self.0.take());
+        }
+    }
+    let reset = Reset(ROUTES.with(|r| r.replace(Some(Vec::new()))));
+    let out = f();
+    let routes = ROUTES.with(|r| r.borrow_mut().take()).unwrap_or_default();
+    drop(reset);
+    (out, routes)
+}
+
+thread_local! {
     /// Whether no level on this thread builds the dead-pair masks with one
     /// multi-pair operand ([`one_sided_masks_off`]).
     static ONE_SIDED_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };

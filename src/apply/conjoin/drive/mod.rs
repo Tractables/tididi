@@ -10,13 +10,14 @@
 //!   operand's pairs are carried through the children's products, and its
 //!   level moved into the output when no product renumbers or dies
 //!   (`relabel`);
-//! - sparse, when the level's grid, or a child grid the dense build would
-//!   have to materialize, is over the sparse gate's `min_grid` and the live
-//!   products are sparse in it: scatter, filter and dedup over live products
-//!   only, in the engine-owned `sparse::SparseWorkspace`, or one `f` node at
-//!   a time by lookups where those are priced linear in the level's pairs
-//!   (`sparse::probe`). A level with exactly one marginal child that is not a
-//!   target takes the sparse-marginal variant;
+//! - sparse, when the level's grid, the combinations of its operands' pairs,
+//!   or a child grid the dense build would have to materialize, is over the
+//!   sparse gate's `min_grid` and the live products are sparse in it:
+//!   scatter, filter and dedup over live products only, in the engine-owned
+//!   `sparse::SparseWorkspace`, or one `f` node at a time by lookups where
+//!   those are priced linear in the level's pairs (`sparse::probe`). A
+//!   level with exactly one marginal child that is not a target takes the
+//!   sparse-marginal variant;
 //! - streaming, when the level is a streaming marginalization target: each
 //!   cell folds to a value and no product node is built;
 //! - dense, otherwise: the full grid is walked and written to the grid arena,
@@ -211,8 +212,9 @@ fn build_level(
         // is touched: the marginal plan and the two gates read only metadata.
         let marginal = run.level_marginal(f, g, shape, sweep.targets);
         let plan = plan_marginal_level(f, g, shape, run, &marginal);
-        let route = route_level(shape, &plan, &marginal, run.sparse_gate(shape));
+        let route = route_level(&plan, &marginal, run.sparse_gate(shape, f.level(t), g.level(t)));
         route.validate(f, g, shape, &marginal, run)?;
+        note_route(t, route);
 
         match route {
             Route::Sparse if counts_root(sweep, f, g, shape, &plan) => {

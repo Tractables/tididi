@@ -13,6 +13,7 @@ use crate::value::StreamCache;
 use super::marginal_plan::EntryMarginality;
 use super::sparse::{sparse_thresholds, SparseThresholds};
 use super::route::{LevelMarg, SparseGate};
+use super::price::combinations_bound;
 
 /// A set of vtree nodes handed to the sweep: the levels it sums out, or the
 /// subtrees it collapses. A membership array, or nothing.
@@ -259,12 +260,19 @@ impl ApplyRun<'_, '_> {
     /// — so that the dense route's setup alone loses to the scatter walk,
     /// however small this level's own grid is.
     ///
+    /// A level is big when its grid has more than `min_grid` cells or its
+    /// operands' pairs more than `min_grid` combinations
+    /// ([`combinations_bound`]): the dense route walks every combination of
+    /// a cell's two nodes' pairs, so an operand's root, one node over a long
+    /// pair list, can cost the dense walk billions of combinations in a grid
+    /// of one cell.
+    ///
     /// Each test runs only where `route_level` reads its answer, and is false
     /// elsewhere: the child grids' where the routes are available and this
-    /// level's own grid is at most `min_grid`, and only past a child built
-    /// sparse; the density test where the grid is big. Most levels are small
-    /// over dense children and run neither.
-    pub(super) fn sparse_gate(&self, shape: LevelShape) -> SparseGate {
+    /// level is not big, and only past a child built sparse; the density
+    /// test where the level is big. Most levels are small over dense children
+    /// and run neither.
+    pub(super) fn sparse_gate(&self, shape: LevelShape, f_level: &TddLevel, g_level: &TddLevel) -> SparseGate {
         let LevelShape { left, right, f, g, .. } = shape;
         let (max_left, max_right) = (f.left * g.left, f.right * g.right);
         let live = |child: VtreeIdx| self.products.live(child.idx()) as u128;
@@ -285,17 +293,17 @@ impl ApplyRun<'_, '_> {
             fill_l + fill_r > scan_l + scan_r
         };
         let available = self.products.arena.is_bump();
-        let own_grid = f.here * g.here > min_grid;
-        let child_grid_wins = available && !own_grid && child_grids();
+        let big = f.here * g.here > min_grid || combinations_bound(f_level, g_level) > min_grid as u128;
+        let child_grid_wins = available && !big && child_grids();
         SparseGate {
             available,
             density_wins: available
-                && (own_grid || child_grid_wins)
+                && (big || child_grid_wins)
                 && max_left > 0
                 && max_right > 0
                 && factor * live(left) * live(right) < max_left as u128 * max_right as u128,
             child_grid_wins,
-            min_grid,
+            big,
         }
     }
 
@@ -337,8 +345,8 @@ struct Snapshot {
 /// `lists` when some level is free, and snapshot both operands' widths
 /// there; note whether either operand carries a marginal level at entry,
 /// sum the dense-route cell count `preflight_dense_budget` reads, and say
-/// whether any internal level's grid is over `min_grid`: all in one pass
-/// over the internal levels.
+/// whether any internal level's grid, or the combinations of its operands'
+/// pairs, is over `min_grid`: all in one pass over the internal levels.
 ///
 /// A free level has width 1 in its operand, so its cells are the nodes of
 /// the level the result takes there: the other operand's, or one node where
@@ -373,9 +381,9 @@ fn survey<'r>(
     };
     let mut might_use_sparse = false;
     let mut any_entry_marginal = false;
-    let mut cells = |w1: usize, w2: usize| {
+    let mut cells = |w1: usize, w2: usize, combinations: u128| {
         let cells = (w1 as u64).saturating_mul(w2 as u64);
-        might_use_sparse |= cells > min_grid as u64;
+        might_use_sparse |= cells > min_grid as u64 || combinations > min_grid as u128;
         if cells <= min_grid as u64 {
             total_cells = total_cells.saturating_add(cells);
         }
@@ -400,7 +408,7 @@ fn survey<'r>(
         }
         for &t in internal {
             let (w1, w2) = level(t, f_widths, g_widths);
-            cells(w1, w2);
+            cells(w1, w2, combinations_bound(&f.levels[t.idx()], &g.levels[t.idx()]));
         }
         let cone = Cone { built: internal, free_before: &[], tops: &[], free: &[], leaves, free_nodes: 0, masks };
         let snapshot = Snapshot { total_cells, any_entry_marginal, might_use_sparse };
@@ -432,12 +440,12 @@ fn survey<'r>(
             let w2 = if free_g { 1 } else { g.levels[at].slot_count() };
             f_widths[at] = w1;
             g_widths[at] = w2;
-            free_nodes = free_nodes.saturating_add(cells(w1, w2));
+            free_nodes = free_nodes.saturating_add(cells(w1, w2, 0));
             free.push(t);
             continue;
         }
         let (w1, w2) = level(t, f_widths, g_widths);
-        cells(w1, w2);
+        cells(w1, w2, combinations_bound(&f.levels[at], &g.levels[at]));
         built.push(t);
         free_before.push(free_nodes);
         let (left, right) = vtree.children(t);
