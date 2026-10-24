@@ -53,6 +53,15 @@ impl Sparse {
         Sparse { eng: Engine::new(), thresholds: SparseThresholds { collected_pairs, ..self.thresholds } }
     }
 
+    /// The same thresholds with every f node of the general arm walked by
+    /// outer key and every routed lookup pipelined, on a fresh engine.
+    fn by_outer(&self) -> Sparse {
+        Sparse {
+            eng: Engine::new(),
+            thresholds: SparseThresholds { by_outer_pairs: 1, pipelined_bytes: 0, ..self.thresholds },
+        }
+    }
+
     /// `Engine::and` under these thresholds, summing out the levels in
     /// `targets`.
     fn and(&self, f: Tdd, g: Tdd, targets: Option<&[bool]>) -> Tdd {
@@ -179,13 +188,15 @@ fn all_test_cases_sparse() {
     }
 }
 
-/// Every f node handing its candidates to the emit as one list must agree
-/// with every f node writing them to the level's pair arena.
+/// Every f node handing its candidates to the emit as one list, and every
+/// general-arm f node walked by outer key, must agree with every f node
+/// writing them to the level's pair arena.
 #[test]
 fn collected_equivalence_all_cases() {
     let sparse = Sparse::always();
     let collected = sparse.collecting(1);
     let arena = sparse.collecting(usize::MAX);
+    let by_outer = arena.by_outer();
     for (num_vars, clauses) in test_cases() {
         let expected = BigUint::from(brute_force_count(num_vars, &clauses));
         for vtree in [Vtree::balanced(num_vars), Vtree::linear(num_vars)] {
@@ -195,6 +206,8 @@ fn collected_equivalence_all_cases() {
             assert_eq!(listed.model_count().unwrap(), expected, "collected: n={num_vars} clauses={clauses:?}");
             assert_eq!(written.model_count().unwrap(), expected, "arena: n={num_vars} clauses={clauses:?}");
             assert_eq!(normalized_levels(&listed), normalized_levels(&written), "n={num_vars} clauses={clauses:?}");
+            let walked = by_outer.compile(&vtree, &clauses);
+            assert_eq!(normalized_levels(&walked), normalized_levels(&written), "by outer: n={num_vars} clauses={clauses:?}");
         }
     }
 }
@@ -208,9 +221,11 @@ fn collected_wide_formula() {
     let vtree = Arc::new(Vtree::balanced(14));
     let listed = sparse.collecting(1).compile(&vtree, &clauses);
     let written = sparse.collecting(usize::MAX).compile(&vtree, &clauses);
+    let walked = sparse.by_outer().compile(&vtree, &clauses);
     assert_eq!(listed.model_count().unwrap(), expected);
     assert_eq!(written.model_count().unwrap(), expected);
     assert_eq!(normalized_levels(&listed), normalized_levels(&written));
+    assert_eq!(normalized_levels(&walked), normalized_levels(&written));
 }
 
 /// Alternating narrow and wide compiles on one thread reuse the sparse

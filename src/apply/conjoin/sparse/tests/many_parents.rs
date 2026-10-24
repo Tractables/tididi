@@ -1,7 +1,8 @@
 //! A level with an f parent per key, each holding one pair, against one g
 //! parent: each f parent hands the emit at most one candidate, and the
 //! output must be the dense grid's whether the walk writes the candidates
-//! to the level's pair arena or hands them to the emit as one list.
+//! to the level's pair arena, hands them to the emit as one list, or holds
+//! them in a row per parent walked by outer key.
 use std::sync::Arc;
 
 use num_bigint::BigUint;
@@ -57,10 +58,13 @@ fn a_level_of_many_parents_agrees_with_the_dense_grid() {
     let from_arena = keyed_join(&eng, &vtree, sparse);
     let from_list = keyed_join(&eng, &vtree, collected);
     let from_dense = keyed_join(&eng, &vtree, dense);
+    let by_outer = SparseThresholds { by_outer_pairs: 1, pipelined_bytes: 0, ..sparse };
+    let from_rows = keyed_join(&eng, &vtree, by_outer);
     // Twelve keys, of which two (4 and 9) have no `g` row.
-    for out in [&from_arena, &from_list, &from_dense] {
+    for out in [&from_arena, &from_list, &from_rows, &from_dense] {
         assert_eq!(out.model_count().unwrap(), BigUint::from(10u32));
     }
     assert!(from_arena.equivalent(&from_dense).unwrap());
     assert!(from_list.equivalent(&from_dense).unwrap());
+    assert!(from_rows.equivalent(&from_dense).unwrap());
 }

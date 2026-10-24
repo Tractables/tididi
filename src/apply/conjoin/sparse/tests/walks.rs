@@ -1,10 +1,11 @@
 //! The sparse route's walks against the grid: random operands over random
 //! subsets of the variables, so that leaves hold One as well as literals, on
 //! every vtree shape, conjoined with every level forced onto the sparse route
-//! (its walks asking the cache ahead or not, and its walks of f's nodes
-//! handing every node's candidates to the emit as a list or only those of
-//! large nodes) and with none. All give the same levels, the same minimized
-//! diagram and the same count.
+//! (its walks asking the cache ahead or not, its walks of f's nodes handing
+//! every node's candidates to the emit as a list or only those of large
+//! nodes, the general arm walking every node, or every node of two pairs or
+//! more, by outer key, and its routed lookups pipelined) and with none. All
+//! give the same levels, the same minimized diagram and the same count.
 
 use std::sync::Arc;
 
@@ -21,6 +22,14 @@ const ALWAYS: SparseThresholds = SparseThresholds { min_grid: 1, sparsity_factor
 /// [`ALWAYS`], with every f node a walk of f's nodes visits handing its
 /// candidates to the emit as a list.
 const ALWAYS_COLLECTED: SparseThresholds = SparseThresholds { collected_pairs: 1, ..ALWAYS };
+
+/// [`ALWAYS`], with every f node of the general arm walked by outer key and
+/// every routed lookup pipelined.
+const ALWAYS_BY_OUTER: SparseThresholds = SparseThresholds { by_outer_pairs: 1, pipelined_bytes: 0, ..ALWAYS };
+
+/// [`ALWAYS`], with the general arm's f nodes of two pairs or more walked
+/// by outer key and the others' lookups pipelined.
+const ALWAYS_MIXED: SparseThresholds = SparseThresholds { by_outer_pairs: 2, pipelined_bytes: 0, ..ALWAYS_COLLECTED };
 
 /// No level takes it.
 const NEVER: SparseThresholds = SparseThresholds { min_grid: usize::MAX, ..SparseThresholds::PRODUCTION };
@@ -63,9 +72,19 @@ fn same_as_grid(eng: &Engine, what: &str, f: &Tdd, g: &Tdd) {
         let dense = and_under(eng, NEVER, a, b);
         let mut minimized = dense.clone();
         eng.minimize(&mut minimized).unwrap();
-        for (gate, always) in [(Some(false), ALWAYS), (Some(true), ALWAYS), (Some(false), ALWAYS_COLLECTED)] {
+        let thresholds = [
+            (Some(false), ALWAYS),
+            (Some(true), ALWAYS),
+            (Some(false), ALWAYS_COLLECTED),
+            (Some(false), ALWAYS_BY_OUTER),
+            (Some(false), ALWAYS_MIXED),
+        ];
+        for (gate, always) in thresholds {
             let _pinned = ForcedPrefetch::install(gate);
-            let how = format!("gate {gate:?}, collected from {} pairs", always.collected_pairs);
+            let how = format!(
+                "gate {gate:?}, collected from {} pairs, by outer from {} pairs, pipelined from {} bytes",
+                always.collected_pairs, always.by_outer_pairs, always.pipelined_bytes,
+            );
             let sparse = and_under(eng, always, a, b);
             assert_eq!(normalized_levels(&sparse), normalized_levels(&dense), "{what}, {how}: levels");
             let mut sparse = sparse;

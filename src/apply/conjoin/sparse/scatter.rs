@@ -38,15 +38,26 @@ pub(super) enum Collect<'a, 'c> {
 }
 
 /// The level the emit writes: its nodes, its product list, whether its
-/// pair lists may repeat a pair (see [`emit_parent`]), and the pairs from
-/// which an f node walked in order collects its candidates for
-/// [`emit_parent`] ([`SparseThresholds::collected_pairs`]).
+/// pair lists may repeat a pair (see [`emit_parent`]), and the thresholds
+/// the walk of f's nodes reads (from [`SparseThresholds::collected_pairs`]
+/// on).
 pub(super) struct Emit<'a> {
     pub(super) level: &'a mut TddLevel,
     pub(super) out: &'a mut Vec<ProductEntry>,
     pub(super) duplicates_legal: bool,
-    pub(super) collected_pairs: usize,
+    pub(super) thresholds: SparseThresholds,
 }
+
+/// The f nodes [`scatter_routed`] walked by outer key: each node's row of
+/// `rows`, [`NO_ROW`] for a node walked in order.
+#[derive(Clone, Copy)]
+struct ByOuter<'a> {
+    row_of: &'a [u32],
+    rows: &'a [Vec<ParEntry>],
+}
+
+/// No row of [`ByOuter`]: a node index never reaches `u32::MAX`.
+const NO_ROW: u32 = u32::MAX;
 
 /// Where the leaf arm reads the inner side's product from when the inner
 /// child is no vtree leaf: the child is joined on its fields alone, and kills
@@ -194,7 +205,7 @@ fn leaf_walk<'w, const SWAPPED: bool, W: NodeWalk>(
         owned: &owned[..*owned_len],
         outer: GroupedView { offsets: outer_offsets, entries: pl_outer },
     });
-    walk_nodes::<SWAPPED, W>(eng, &walk, f_level, Walked::All(shape.f.here), collect, node_candidates, node_owners, emit)
+    walk_nodes::<SWAPPED, W>(eng, &walk, f_level, Walked::All(shape.f.here), collect, None, node_candidates, node_owners, emit)
 }
 
 /// The f nodes a walk of f's nodes visits: all of the level's, or those
@@ -244,7 +255,8 @@ fn try_for_each_walked<E>(
 /// Walk f's nodes in order, each node's candidates found by `walk`, into
 /// `collect`: into the level's nodes, each node emitted as its walk ends
 /// ([`emit_walked`]), or, on a level with one product, its pair arena, a
-/// count or sums.
+/// count or sums. Into the level's nodes, a node `by_outer` holds a row for
+/// is emitted from its row instead.
 #[inline(always)]
 #[expect(clippy::too_many_arguments)]
 fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
@@ -253,6 +265,7 @@ fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
     f_level: &TddLevel,
     nodes: Walked<'_>,
     collect: Collect<'_, '_>,
+    by_outer: Option<ByOuter<'_>>,
     node_candidates: &mut Vec<ParEntry>,
     node_owners: &mut Vec<u32>,
     emit: &mut EmitScratch,
@@ -268,8 +281,18 @@ fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
         // them. A node of many pairs collects its candidates for
         // `emit_parent` instead, which would otherwise read them back off
         // the arena.
-        Collect::Nodes(Emit { level, out, duplicates_legal, collected_pairs }) => try_for_each_walked(f_level, nodes, |p1, pairs| {
-            if pairs.len() >= collected_pairs {
+        Collect::Nodes(Emit { level, out, duplicates_legal, thresholds }) => try_for_each_walked(f_level, nodes, |p1, pairs| {
+            if let Some(ByOuter { row_of, rows }) = by_outer {
+                let row = row_of[p1];
+                if row != NO_ROW {
+                    let candidates = &rows[row as usize];
+                    if candidates.is_empty() {
+                        return Ok(());
+                    }
+                    return emit_parent(eng, emit, level, out, p1, candidates, duplicates_legal);
+                }
+            }
+            if pairs.len() >= thresholds.collected_pairs {
                 node_candidates.clear();
                 walk.node::<SWAPPED>(pairs, &mut ticker, |entry| lim.try_push(node_candidates, entry))?;
                 if node_candidates.is_empty() {
@@ -455,9 +478,91 @@ impl<P: Fn(u32, u32) -> u32> NodeWalk for LeafWalk<'_, P> {
 /// product of its inner child, the routes its outer child's `filtered`
 /// index holds for the product's inner-g child ([`Routes`]). The candidates
 /// and the clock's charges are the general arm's; only their order differs.
+///
+/// With `pipelined`, on route tables too large for the cache, a node's
+/// lookups go in groups of [`LOOK_GROUP`]: the walk asks for each lookup's
+/// first slot as it finds the lookup, probes the group's slots once it is
+/// full, asking for each hit's run, and only then reads the runs. Each
+/// lookup would otherwise wait on a miss of its own before the next one
+/// starts. The candidates come in the same order either way.
 struct RoutedWalk<'a> {
     inner: GroupedView<'a, ProductEntry>,
     routes: RoutesView<'a>,
+    pipelined: bool,
+}
+
+/// One lookup of a pipelined [`RoutedWalk`]: the outer's table, the key
+/// and the inner product it was found for.
+#[derive(Clone, Copy, Default)]
+struct Lookup {
+    segment: Segment,
+    key: u32,
+    prod: u32,
+}
+
+/// The lookups a pipelined [`RoutedWalk`] asks the cache for at once:
+/// about as many misses as a core keeps in flight.
+const LOOK_GROUP: usize = 16;
+
+impl RoutedWalk<'_> {
+    /// The pipelined walk of one node's pairs ([`RoutedWalk`]).
+    #[inline(always)]
+    fn node_pipelined<const SWAPPED: bool>(
+        &self,
+        pairs: &[ChildPair],
+        ticker: &mut crate::limits::PollGate,
+        push: &mut impl FnMut(ParEntry) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError> {
+        let mut group = [Lookup::default(); LOOK_GROUP];
+        let mut n = 0;
+        for pair in pairs {
+            let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
+            let segment = self.routes.segments[outer1 as usize];
+            if segment.bits == 0 {
+                continue;
+            }
+            for e in self.inner.bucket(inner1 as usize) {
+                let key = e.g_idx.0;
+                prefetch_at(self.routes.slots, segment.base as usize + route_slot(key, segment.bits));
+                group[n] = Lookup { segment, key, prod: e.prod_idx.0 };
+                n += 1;
+                if n == LOOK_GROUP {
+                    self.read_group::<SWAPPED>(&group, ticker, push)?;
+                    n = 0;
+                }
+            }
+        }
+        self.read_group::<SWAPPED>(&group[..n], ticker, push)
+    }
+
+    /// Probe each of `group`'s slots, asking for each hit's run, then hand
+    /// every hit's candidates to `push`, in lookup order.
+    #[inline(always)]
+    fn read_group<const SWAPPED: bool>(
+        &self,
+        group: &[Lookup],
+        ticker: &mut crate::limits::PollGate,
+        push: &mut impl FnMut(ParEntry) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError> {
+        let mut hits = [(RouteSlot::EMPTY, 0u32); LOOK_GROUP];
+        let mut m = 0;
+        for l in group {
+            if let Some(slot) = self.routes.slot(l.segment, l.key) {
+                prefetch_at(self.routes.entries, slot.start as usize);
+                hits[m] = (slot, l.prod);
+                m += 1;
+            }
+        }
+        for &(slot, inner_prod) in &hits[..m] {
+            let under = &self.routes.entries[slot.start as usize..(slot.start + slot.len) as usize];
+            for &(g_parent, attached) in under {
+                let (left_prod, right_prod) = orient::<SWAPPED>(inner_prod, attached);
+                push(ParEntry { g_parent, left_prod, right_prod })?;
+            }
+            ticker.poll(under.len() as u64)?;
+        }
+        Ok(())
+    }
 }
 
 impl NodeWalk for RoutedWalk<'_> {
@@ -468,6 +573,9 @@ impl NodeWalk for RoutedWalk<'_> {
         ticker: &mut crate::limits::PollGate,
         mut push: impl FnMut(ParEntry) -> Result<(), OperationError>,
     ) -> Result<(), OperationError> {
+        if self.pipelined {
+            return self.node_pipelined::<SWAPPED>(pairs, ticker, &mut push);
+        }
         for pair in pairs {
             let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
             let segment = self.routes.segments[outer1 as usize];
@@ -495,7 +603,15 @@ impl NodeWalk for RoutedWalk<'_> {
 /// `filtered` index is built as [`scatter_general_arm`] builds it and kept
 /// in [`Routes`], and f's nodes are then walked in order ([`RoutedWalk`]),
 /// each emitted into `emit` as its walk ends. No candidate is held past its
-/// node.
+/// node, except a big node's.
+///
+/// A node of [`SparseThresholds::by_outer_pairs`] pairs or more is walked
+/// by outer key instead, as each outer's `filtered` is built and before it
+/// is cleared: its pairs under the outer read the index while it is in
+/// cache, where the walk in pair order would read a different outer's
+/// routes at almost every pair. Its candidates are held in a row of its
+/// own until the walk of f's nodes reaches it and emits them. An outer
+/// holding no pair of a smaller node gets no route.
 #[inline(never)]
 pub(super) fn scatter_routed<const SWAPPED: bool>(
     eng: &Engine,
@@ -510,42 +626,123 @@ pub(super) fn scatter_routed<const SWAPPED: bool>(
     build_inner_index::<SWAPPED>(eng, ws, g_level, shape)?;
     let lim = eng.limits();
     let (pl_inner, pl_outer) = if !SWAPPED { (pl.left, pl.right) } else { (pl.right, pl.left) };
-    let marked = {
-        let mut s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer)?;
-        s.routes.reset(lim, s.outer_k)?;
-        // The f pairs under an outer with a route: the pairs the general
-        // arm would walk.
-        let mut routed_pairs = 0usize;
-        for outer in 0..s.outer_k {
-            if s.outer.bucket(outer).is_empty() || s.f_pairs_under(outer) == 0 {
-                continue;
-            }
-            s.build_for_outer(lim, outer)?;
-            if !s.filtered.touched.is_empty() {
-                routed_pairs += s.f_pairs_under(outer);
-            }
-            s.routes.seal(lim, outer, s.filtered.touched, s.filtered.buckets)?;
-            s.filtered.clear_touched();
-        }
-        // Where those are few of f's pairs, only the nodes holding one are
-        // walked, as the general arm walks only them.
-        let marked = routed_pairs < s.f_by_outer.offsets[s.outer_k] as usize / MARKED_SHARE;
-        if marked {
-            s.routes.mark_parents(lim, shape.f.here, s.f_by_outer)?;
-        }
-        marked
-    };
-    let SparseWorkspace { routes, inner_offsets, node_candidates, node_owners, emit: scratch, .. } = ws;
+    let f_pairs = ws.f_by_outer.offsets[if !SWAPPED { shape.f.right } else { shape.f.left }] as usize;
+    // The big nodes' rows are taken out of the workspace while `sides`
+    // borrows it.
+    let mut row_of = std::mem::take(&mut ws.by_outer_row);
+    let mut rows = std::mem::take(&mut ws.by_outer);
+    let built = rows_by_outer(lim, f_level, shape.f.here, f_pairs, emit.thresholds.by_outer_pairs, &mut row_of)
+        .and_then(|big| {
+            rows.reset(lim, big)?;
+            let mut s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer)?;
+            let marked = route_level::<SWAPPED>(lim, &mut s, (big > 0).then_some(&row_of[..]), &mut rows, shape.f.here)?;
+            Ok((big, marked))
+        });
+    ws.by_outer_row = row_of;
+    ws.by_outer = rows;
+    let (big, marked) = built?;
+    let SparseWorkspace { routes, inner_offsets, node_candidates, node_owners, emit: scratch, by_outer_row, by_outer, .. } = ws;
     let walk = RoutedWalk {
         inner: GroupedView { offsets: inner_offsets, entries: pl_inner },
         routes: RoutesView { segments: &routes.segments, slots: &routes.slots, entries: &routes.entries },
+        pipelined: std::mem::size_of_val(&routes.slots[..]) + std::mem::size_of_val(&routes.entries[..])
+            >= emit.thresholds.pipelined_bytes,
     };
     let nodes = if marked {
         Walked::Marked { bits: &routes.walked, nodes: shape.f.here }
     } else {
         Walked::All(shape.f.here)
     };
-    walk_nodes::<SWAPPED, _>(eng, &walk, f_level, nodes, Collect::Nodes(emit), node_candidates, node_owners, scratch)
+    let by_outer = (big > 0).then_some(ByOuter { row_of: &by_outer_row[..], rows: &by_outer[..] });
+    walk_nodes::<SWAPPED, _>(eng, &walk, f_level, nodes, Collect::Nodes(emit), by_outer, node_candidates, node_owners, scratch)
+}
+
+/// Give each of `f_level`'s `nodes` of at least `min_pairs` pairs a row in
+/// `row_of`, in node order, and every other node [`NO_ROW`]; the rows
+/// given. None where the level's `pairs` are fewer than `min_pairs`.
+fn rows_by_outer(
+    lim: &crate::limits::Limits,
+    f_level: &TddLevel,
+    nodes: usize,
+    pairs: usize,
+    min_pairs: usize,
+    row_of: &mut Vec<u32>,
+) -> Result<usize, OperationError> {
+    if pairs < min_pairs {
+        return Ok(0);
+    }
+    row_of.clear();
+    lim.try_resize(row_of, nodes, NO_ROW)?;
+    let mut rows = 0;
+    for (p1, row) in row_of.iter_mut().enumerate() {
+        if f_level.pair_count_at(p1) >= min_pairs {
+            *row = rows as u32;
+            rows += 1;
+        }
+    }
+    Ok(rows)
+}
+
+/// Build every outer key's `filtered` index and keep it in the level's
+/// routes, walking the f pairs under the outer of each node `row_of` gives
+/// a row into that row of `rows` while the index is in cache. Whether the
+/// walk of f's nodes visits only the nodes holding a pair under an outer
+/// with a route ([`MARKED_SHARE`]), and if so their bits, a big node with
+/// candidates among them.
+fn route_level<const SWAPPED: bool>(
+    lim: &crate::limits::Limits,
+    s: &mut ScatterSides<'_>,
+    row_of: Option<&[u32]>,
+    rows: &mut Rows<ParEntry>,
+    nodes: usize,
+) -> Result<bool, OperationError> {
+    s.routes.reset(lim, s.outer_k)?;
+    let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
+    // The f pairs of nodes walked in order under an outer with a route:
+    // the pairs the general arm would walk for them.
+    let mut routed_pairs = 0usize;
+    for outer in 0..s.outer_k {
+        if s.outer.bucket(outer).is_empty() || s.f_pairs_under(outer) == 0 {
+            continue;
+        }
+        s.build_for_outer(lim, outer)?;
+        let mut in_order = s.f_pairs_under(outer);
+        if let Some(row_of) = row_of.filter(|_| !s.filtered.touched.is_empty()) {
+            let (inner, filtered) = (s.inner, s.filtered.index());
+            in_order = 0;
+            for &RevEntry { parent, other: inner1 } in s.f_by_outer.bucket(outer) {
+                let row = row_of[parent as usize];
+                if row == NO_ROW {
+                    in_order += 1;
+                    continue;
+                }
+                let row = &mut rows[row as usize];
+                emit_candidates::<SWAPPED>(inner, filtered, inner1, &mut ticker, |entry| lim.try_push(row, entry))?;
+            }
+        }
+        if in_order > 0 {
+            if !s.filtered.touched.is_empty() {
+                routed_pairs += in_order;
+            }
+            s.routes.seal(lim, outer, s.filtered.touched, s.filtered.buckets)?;
+        }
+        s.filtered.clear_touched();
+    }
+    // Where those are few of f's pairs, only the nodes holding one are
+    // walked, as the general arm walks only them, and the big nodes with a
+    // candidate.
+    let marked = routed_pairs < s.f_by_outer.offsets[s.outer_k] as usize / MARKED_SHARE;
+    if marked {
+        s.routes.mark_parents(lim, nodes, s.f_by_outer)?;
+        if let Some(row_of) = row_of {
+            for (p1, &row) in row_of.iter().enumerate() {
+                if row != NO_ROW && !rows[row as usize].is_empty() {
+                    s.routes.walked[p1 >> 6] |= 1 << (p1 & 63);
+                }
+            }
+        }
+    }
+    Ok(marked)
 }
 
 /// [`scatter_routed`] walks only the f nodes holding a pair under an outer

@@ -76,6 +76,11 @@ pub(crate) struct SparseWorkspace {
 
     // ── The general arm's walk of f's nodes: every outer's `filtered` kept ──
     pub(super) routes: Routes,
+    // The f nodes a general-arm level walks by outer key
+    // (`SparseThresholds::by_outer_pairs`): each one's row of `by_outer`,
+    // `NO_ROW` for the others, and the rows of their candidates.
+    pub(super) by_outer_row: Vec<u32>,
+    pub(super) by_outer: Rows<ParEntry>,
 
     // ── Candidates, and their dedup into products ──
     // The candidates of one f node, for the walks that find a node's
@@ -268,16 +273,26 @@ impl<'a> RoutesView<'a> {
     /// where it has none.
     #[inline(always)]
     pub(super) fn find(self, segment: Segment, key: u32) -> &'a [(u32, u32)] {
+        match self.slot(segment, key) {
+            Some(slot) => &self.entries[slot.start as usize..(slot.start + slot.len) as usize],
+            None => &[],
+        }
+    }
+
+    /// The slot of inner-g child `key` under the outer of `segment`, if it
+    /// has one.
+    #[inline(always)]
+    pub(super) fn slot(self, segment: Segment, key: u32) -> Option<RouteSlot> {
         let size = 1usize << segment.bits;
         let table = &self.slots[segment.base as usize..segment.base as usize + size];
         let mut at = route_slot(key, segment.bits);
         loop {
             let slot = table[at];
             if slot.key == key {
-                return &self.entries[slot.start as usize..(slot.start + slot.len) as usize];
+                return Some(slot);
             }
             if slot.key == u32::MAX {
-                return &[];
+                return None;
             }
             at = (at + 1) & (size - 1);
         }
@@ -812,6 +827,8 @@ impl Buffers for SparseWorkspace {
         visit(&mut self.outer_keys);
         visit(&mut self.outer_attached);
         self.routes.buffers(visit);
+        visit(&mut self.by_outer_row);
+        visit(&mut self.by_outer);
         visit(&mut self.node_candidates);
         visit(&mut self.node_owners);
         visit(&mut self.est_counts);
