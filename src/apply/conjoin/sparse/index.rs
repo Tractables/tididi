@@ -88,6 +88,10 @@ pub(crate) struct SparseWorkspace {
     // candidates all at once and emit it before the next (the leaf arm and
     // the probe).
     pub(super) node_candidates: Vec<ParEntry>,
+    // The g parents of one f node's candidates, in candidate order, for the
+    // leaf arm's walk that writes the candidates' pairs straight into the
+    // level (`emit_walked`).
+    pub(super) node_owners: Vec<u32>,
 
     // ── Scatter-direction estimator ──
     // Per-child-index pair counters for the four (operand × side) index spaces
@@ -607,6 +611,7 @@ impl Buffers for SparseWorkspace {
         visit(&mut self.par_flat);
         self.par_sorted.buffers(visit);
         visit(&mut self.node_candidates);
+        visit(&mut self.node_owners);
         visit(&mut self.est_counts);
         self.emit.buffers(visit);
         self.probe.buffers(visit);

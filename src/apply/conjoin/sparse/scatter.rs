@@ -188,7 +188,7 @@ fn leaf_walk<'w, const SWAPPED: bool, W: NodeWalk>(
     walk: impl FnOnce(WalkParts<'w>) -> W,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
-    let SparseWorkspace { g_by_outer, owners, outer_offsets, node_candidates, emit, .. } = ws;
+    let SparseWorkspace { g_by_outer, owners, outer_offsets, node_candidates, node_owners, emit, .. } = ws;
     let walk = walk(WalkParts {
         g_by_outer: g_by_outer.view(),
         owners,
@@ -204,13 +204,17 @@ fn leaf_walk<'w, const SWAPPED: bool, W: NodeWalk>(
             // A walk whose reads span more than the cache asks for them some
             // nodes ahead, when f's nodes can be read ahead by index.
             let stored = f_level.stored().filter(|_| walk.spans().is_some_and(leaf_prefetching));
+            // Each candidate's pair goes straight to the level's pair arena
+            // and its g parent beside it; `emit_walked` makes the node's
+            // products of them.
             let mut each = |p1: usize, pairs: &[ChildPair]| {
-                node_candidates.clear();
-                walk.node::<SWAPPED>(pairs, &mut ticker, |entry| lim.try_push(node_candidates, entry))?;
-                if node_candidates.is_empty() {
-                    return Ok(());
-                }
-                emit_parent(eng, emit, level, out, p1, node_candidates, duplicates_legal)
+                let base = level.pairs.stored_len();
+                node_owners.clear();
+                walk.node::<SWAPPED>(pairs, &mut ticker, |entry| {
+                    try_push_pair_into(eng, level, candidate_pair(&entry))?;
+                    lim.try_push(node_owners, entry.g_parent)
+                })?;
+                emit_walked(eng, emit, level, out, p1, base, node_owners, node_candidates, duplicates_legal)
             };
             match stored {
                 None => f_level.try_for_each_node(nodes, each),
@@ -1576,6 +1580,70 @@ pub(super) fn emit_parent(
         "sparse apply: duplicate pair emitted — canonicity violated"
     );
     Ok(())
+}
+
+/// Make f parent `p1`'s products of the candidates a walk wrote into
+/// `level`'s pair arena from `base` on, the g parent of each in `owners`:
+/// the nodes and product list [`emit_parent`] makes of the same candidates.
+/// One candidate is its product's inline node, and candidates of one g
+/// parent are one node whose pairs stay where they were written; otherwise
+/// the candidates are read back off the arena for [`emit_parent`], into
+/// `candidates`.
+#[expect(clippy::too_many_arguments)]
+#[inline(always)]
+fn emit_walked(
+    eng: &Engine,
+    emit: &mut EmitScratch,
+    level: &mut TddLevel,
+    pl_output: &mut Vec<ProductEntry>,
+    p1: usize,
+    base: usize,
+    owners: &[u32],
+    candidates: &mut Vec<ParEntry>,
+    duplicates_legal: bool,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let Some(&g_parent) = owners.first() else {
+        return Ok(());
+    };
+    let product = ProductEntry {
+        f_idx: FNodeIdx(p1 as u32),
+        g_idx: GNodeIdx(g_parent),
+        prod_idx: ProductNodeIdx(pl_output.len() as u32),
+    };
+    if owners.len() == 1 {
+        lim.try_push(pl_output, product)?;
+        let pair = level.pop_pair().expect("the walk wrote the candidate's pair");
+        return emit_single_pair(eng, level, pair);
+    }
+    if owners.iter().all(|&g| g == g_parent) {
+        lim.try_push(pl_output, product)?;
+        lim.reserve(level.nodes.stored_mut(), 1)?;
+        let node = finish_node(eng, level, base)?.expect("the walk wrote the candidates' pairs");
+        // As in `emit_parent`: canonical children make a node's pairs
+        // distinct unless pair lists are multisets.
+        debug_assert!(
+            duplicates_legal || {
+                let mut seen = std::collections::HashSet::new();
+                level.pairs_iter_of_idx(node.idx()).all(|p| seen.insert(p))
+            },
+            "sparse apply: duplicate pair emitted — canonicity violated"
+        );
+        return Ok(());
+    }
+    if owners.len() >= u32::MAX as usize {
+        return Err(OperationError::IndexOverflow);
+    }
+    candidates.clear();
+    lim.reserve(candidates, owners.len())?;
+    let arena = level.pairs.stored_mut();
+    candidates.extend(owners.iter().zip(&arena[base..]).map(|(&g_parent, pair)| ParEntry {
+        g_parent,
+        left_prod: pair.left.raw(),
+        right_prod: pair.right.raw(),
+    }));
+    arena.truncate(base);
+    emit_parent(eng, emit, level, pl_output, p1, candidates, duplicates_legal)
 }
 
 /// Push one node holding every pair of `pairs`, at least two, written
