@@ -194,12 +194,8 @@ impl TwinEntries for ContextEntries<'_> {
     /// repeated siblings by comparing every two. A wider one files its
     /// siblings in a stamped table that notes repeats, for as long as the
     /// table finds most of the pairs it files private; past that the wider
-    /// nodes add every context. A level narrower than [`PRIVATE_MIN_WIDTH`]
-    /// is not marked: its fingerprints and probes stay in cache.
+    /// nodes add every context.
     fn scatter_shared(&self, lim: &Limits, scratch: &mut ContractScratch, width: usize) -> Result<Option<usize>, OperationError> {
-        if width < PRIVATE_MIN_WIDTH {
-            return Ok(None);
-        }
         let ContractScratch { shared_local, shared_generation, twin_named, fingerprints, candidates, shared_parents, .. } =
             scratch;
         let words = width.div_ceil(64);
@@ -579,7 +575,9 @@ pub(super) fn group_twins_by_entries(
         return Ok(found);
     }
     let verify = entries.owner_keyed();
-    if verify && let Some(shared) = entries.scatter_shared(lim, scratch, width)? {
+    // A level narrower than `PRIVATE_MIN_WIDTH` is not marked: its
+    // fingerprints and their table stay in cache.
+    if verify && width >= PRIVATE_MIN_WIDTH && let Some(shared) = entries.scatter_shared(lim, scratch, width)? {
         // Only nodes without a private context are fingerprinted and probed.
         let found = if shared < 2 || !mark_shared_candidates(eng, scratch, width)? {
             Some(false)
