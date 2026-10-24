@@ -22,6 +22,44 @@ pub(super) struct RebuiltArenas {
 /// see [`TddLevel::encode_multi`].
 const PACKED_LIMIT: usize = 1 << 31;
 
+/// How many members ahead of the one the rebuild copies it asks the cache
+/// for a member's node word, and how many for the member's pairs: the
+/// members of a level's groups are scattered over it, and the pairs'
+/// address is read from the word, so each copy would wait on two misses in
+/// turn.
+const NODE_AHEAD: usize = 16;
+const PAIRS_AHEAD: usize = 8;
+
+/// Ask the cache for the line holding `at`. A hint only: a prefetch reads
+/// nothing the program sees and never faults, so any address is sound. A
+/// no-op off `x86_64` and under Miri, which lacks the intrinsic.
+#[inline(always)]
+fn prefetch_line<T>(at: *const T) {
+    #[cfg(all(target_arch = "x86_64", not(miri)))]
+    {
+        // Sound whatever the address: a prefetch reads nothing the program
+        // sees and never faults.
+        unsafe { core::arch::x86_64::_mm_prefetch(at.cast::<i8>(), core::arch::x86_64::_MM_HINT_T0) };
+    }
+    #[cfg(not(all(target_arch = "x86_64", not(miri))))]
+    let _ = at;
+}
+
+/// Ask the cache for the node word of the member [`NODE_AHEAD`] places
+/// after `sel[k]`, and for the first pairs of the one [`PAIRS_AHEAD`]
+/// after it, whose word an earlier call asked for.
+#[inline(always)]
+fn prefetch_members(sel: &[u32], k: usize, nodes: &[EncodedNode], old: &[ChildPair]) {
+    if let Some(&m) = sel.get(k + NODE_AHEAD) {
+        prefetch_line(nodes.as_ptr().wrapping_add(m as usize));
+    }
+    if let Some(&m) = sel.get(k + PAIRS_AHEAD)
+        && let Some(NodeKind::Multi { start, .. }) = nodes.get(m as usize).map(|n| n.kind())
+    {
+        prefetch_line(old.as_ptr().wrapping_add(start as usize));
+    }
+}
+
 /// Whether node `i` is merged away into a survivor.
 #[inline]
 fn absorbed(bits: &[u64], i: usize) -> bool {
@@ -191,8 +229,9 @@ pub(super) fn rebuild_level(
                 fresh.extend_from_slice(&old[run.clone()]);
                 run = run.end..run.end;
                 let start = fresh.len();
-                let members = &bufs.sel[p.start as usize..p.end as usize];
-                for &m in members {
+                for k in p.start as usize..p.end as usize {
+                    prefetch_members(&bufs.sel, k, nodes, old);
+                    let m = bufs.sel[k];
                     debug_assert!(m as usize >= read, "a group's survivor is its lowest member");
                     let member = nodes[m as usize];
                     match member.kind() {
