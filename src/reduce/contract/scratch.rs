@@ -52,13 +52,15 @@ pub(super) struct PFusionScratch {
     /// window of it: its first cells, a power of two at least twice the
     /// node's own pair count, so a probe always finds an unstamped cell.
     pub(super) cells: Vec<GroupCell>,
-    /// This node's x's in first-occurrence order. Cleared per node.
+    /// This node's x's in first-occurrence order, in its first entries.
+    /// These three are at least as long as the widest node grouped so far,
+    /// and each node writes over the entries of the one before.
     pub(super) touched: Vec<u32>,
     /// Per slot, first the number of this node's pairs at `touched[i]`, then
     /// the end of that group in `grouped` (`u32::MAX` for a group of one,
-    /// which cannot fuse). Cleared per node.
+    /// which cannot fuse).
     pub(super) group_ends: Vec<u32>,
-    /// Each pair's slot, in the node's pair order. Cleared per node.
+    /// Each pair's slot, in the node's pair order.
     pub(super) pair_slots: Vec<u32>,
     /// The marginal-side refs of the groups of two or more pairs, group after
     /// group in slot order, each in pair order: the occurrence multiset, no

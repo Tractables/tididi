@@ -261,11 +261,7 @@ pub(super) fn group_by_scatter<D: SlotValues>(
         }
     };
     let generation = sc.generation;
-    sc.touched.clear();
-    sc.group_ends.clear();
-    sc.pair_slots.clear();
     let pairs = node.len();
-    lim.reserve(&mut sc.pair_slots, pairs)?;
     // At least two cells per pair, so the table is never more than half full
     // and a probe always ends at an unstamped cell. Grown on demand and
     // fallibly — an OOM here becomes OverBudget, not a process abort. New
@@ -274,46 +270,64 @@ pub(super) fn group_by_scatter<D: SlotValues>(
     if sc.cells.len() < want {
         lim.try_resize(&mut sc.cells, want, GroupCell::default())?;
     }
+    // The per-pair and per-group buffers hold at least the widest node's
+    // pair count and are written by index, a node's entries over the last
+    // node's: a slice's base and length stay in registers through the loop,
+    // where a push reloads its vector's length after every store to the
+    // table, which might alias it.
+    for buf in [&mut sc.touched, &mut sc.group_ends, &mut sc.pair_slots] {
+        if buf.len() < pairs {
+            lim.try_resize(buf, pairs, 0)?;
+        }
+    }
     // The node probes only the first `want` cells, a window of its own size,
     // not the whole table: after one wide node the table is as wide as it,
     // and a narrow node hashed across all of it would miss the cache on
     // nearly every pair. Cells past the window keep older stamps unread.
     let mask = want - 1;
     let hash_shift = 32 - want.trailing_zeros();
+    let cells = &mut sc.cells[..want];
+    let touched = &mut sc.touched[..pairs];
+    let group_ends = &mut sc.group_ends[..pairs];
+    let pair_slots = &mut sc.pair_slots[..pairs];
     // First pass: each pair's slot, and each slot's pair count.
+    let mut groups = 0usize;
     let mut repeated = false;
-    for &p in node {
+    for (&p, pair_slot) in node.iter().zip(pair_slots.iter_mut()) {
         let x_idx = explicit_ref(p, side);
         // Fibonacci hashing into the table, then linear probing.
         let mut h = (x_idx.wrapping_mul(0x9E37_79B1) >> hash_shift) as usize;
         let slot = loop {
-            let cell = sc.cells[h];
+            let cell = cells[h];
             if cell.stamp != generation {
                 // First occurrence of this x for this node: open a group.
-                let slot = sc.touched.len();
-                sc.cells[h] = GroupCell { stamp: generation, key: x_idx, slot: slot as u32 };
-                lim.try_push(&mut sc.touched, x_idx)?;
-                lim.try_push(&mut sc.group_ends, 1)?;
+                let slot = groups;
+                cells[h] = GroupCell { stamp: generation, key: x_idx, slot: slot as u32 };
+                touched[slot] = x_idx;
+                group_ends[slot] = 1;
+                groups += 1;
                 break slot;
             }
             if cell.key == x_idx {
                 let slot = cell.slot as usize;
-                sc.group_ends[slot] += 1;
+                group_ends[slot] += 1;
                 repeated = true;
                 break slot;
             }
             h = (h + 1) & mask;
         };
-        sc.pair_slots.push(slot as u32);
+        *pair_slot = slot as u32;
     }
     // Most nodes name each explicit ref once: nothing to fuse.
     if !repeated {
         return Ok(());
     }
+    let touched = &touched[..groups];
+    let group_ends = &mut group_ends[..groups];
     // Lay the groups of two or more out in slot order: a slot's entry
     // becomes its group's write cursor, and after the second pass its end.
     let mut total = 0u32;
-    for entry in sc.group_ends.iter_mut() {
+    for entry in group_ends.iter_mut() {
         let count = *entry;
         *entry = if count > 1 {
             total += count;
@@ -323,8 +337,8 @@ pub(super) fn group_by_scatter<D: SlotValues>(
         };
     }
     lim.try_resize(&mut sc.grouped, total as usize, 0)?;
-    for (&p, &slot) in node.iter().zip(&sc.pair_slots) {
-        let at = &mut sc.group_ends[slot as usize];
+    for (&p, &slot) in node.iter().zip(pair_slots.iter()) {
+        let at = &mut group_ends[slot as usize];
         if *at != u32::MAX {
             sc.grouped[*at as usize] = marginal_ref(p, side);
             *at += 1;
@@ -333,7 +347,7 @@ pub(super) fn group_by_scatter<D: SlotValues>(
     // Emit in first-occurrence (touched) order. slot i ↔ touched[i]; each
     // group starts where the one before it in slot order ended.
     let mut begin = 0usize;
-    for (&x_idx, &end) in sc.touched.iter().zip(&sc.group_ends) {
+    for (&x_idx, &end) in touched.iter().zip(group_ends.iter()) {
         if end == u32::MAX {
             // A single pair at this x cannot fuse.
             continue;
