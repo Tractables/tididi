@@ -457,11 +457,7 @@ impl Charged for PreparedMembers {
 /// member not prepared, by its rebuild once the move is kept.
 ///
 /// Where `accept` keeps exactly the moves that lower the members' total
-/// (`shrinks`), each member is scored first ([`score_levels`]), which is
-/// never above the pairs its preparation gives and almost always equal to
-/// them, and charged as if prepared. A move whose scores do not lower the
-/// total is refused unprepared; the others are prepared as above, and
-/// charged what their pairs exceed their scores.
+/// (`shrinks`), [`probe_scored`] decides instead, from scores.
 #[allow(clippy::too_many_arguments)]
 fn probe(
     eng: &Engine,
@@ -474,8 +470,10 @@ fn probe(
     shrinks: bool,
     accept: impl FnOnce(&PoolProbe<'_>) -> bool,
 ) -> Result<bool, OperationError> {
+    if shrinks {
+        return probe_scored(eng, members, info, mv, bound, extra, scratch);
+    }
     let lim = eng.limits();
-    let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
     // A level of one pair rebuilds into one of one pair, two pairs for the
     // two levels, which a bound above two lets through.
     let defer = bound > 2;
@@ -490,7 +488,7 @@ fn probe(
     let mut prepared = Transient::new(lim, PreparedMembers::default());
     lim.reserve_exact(&mut prepared.0, members.len())?;
     for m in members.iter() {
-        let (outer, inner) = (m.levels[v].live_pairs(), m.levels[w].live_pairs());
+        let (outer, inner) = (m.levels[info.v_idx.idx()].live_pairs(), m.levels[info.w_idx.idx()].live_pairs());
         let old = outer + inner;
         before.push(old);
         if defer && outer <= 1 && inner == outer {
@@ -500,37 +498,12 @@ fn probe(
             continue;
         }
         prepared.0.push(Some(Prepared::default()));
-        let new = if shrinks {
-            score_levels(lim, m, &info, mv.rotation.kind, mv.crossed, &mut scratch.score, bound)?
-        } else {
-            let slot = prepared.0.last_mut().and_then(Option::as_mut).expect("pushed above");
-            prepare_levels(lim, m, &info, mv.rotation.kind, mv.crossed, false, scratch, slot, bound)?
-        };
-        let Some(new) = new else {
+        let slot = prepared.0.last_mut().and_then(Option::as_mut).expect("pushed above");
+        let Some(new) = prepare_levels(lim, m, &info, mv.rotation.kind, mv.crossed, false, scratch, slot, bound)? else {
             return Ok(false);
         };
         gate.poll((old + new) as u64 + REBUILD_UNITS)?;
         after.push(new);
-    }
-    if shrinks {
-        // A score is at most the pairs: a total no lower than before is a
-        // move `accept` refuses.
-        if after.iter().sum::<usize>() >= before.iter().sum::<usize>() {
-            #[cfg(debug_assertions)]
-            debug_check_scores(lim, members, &info, mv, bound, &after, scratch)?;
-            gate.flush()?;
-            lim.check_stop()?;
-            return Ok(false);
-        }
-        for (i, m) in members.iter().enumerate() {
-            let Some(slot) = prepared.0[i].as_mut() else { continue };
-            let Some(new) = prepare_levels(lim, m, &info, mv.rotation.kind, mv.crossed, false, scratch, slot, bound)? else {
-                return Ok(false);
-            };
-            debug_assert!(new >= after[i], "a score is at most the pairs: {} > {new}", after[i]);
-            gate.poll(new.saturating_sub(after[i]) as u64)?;
-            after[i] = new;
-        }
     }
     // The gate's residue charged and the stop tested before `accept`
     // decides.
@@ -539,7 +512,6 @@ fn probe(
     if !accept(&PoolProbe { before: &before, after: &after }) {
         return Ok(false);
     }
-
     // Kept: every member rebuilt, each put back if a later one is refused.
     let mut saved = Transient::new(lim, Vec::<(usize, Saved<'_>)>::new());
     lim.reserve_exact(&mut saved, members.len())?;
@@ -558,6 +530,110 @@ fn probe(
             break;
         }
     }
+    settle(lim, members, &info, &mut saved, outcome)
+}
+
+/// [`probe`] for a move kept exactly when it lowers the members' total.
+///
+/// Each member is scored ([`score_levels`]), which is never above the pairs
+/// its rebuild holds and almost always equal to them, and charged as if
+/// prepared. A move whose scores do not lower the total is refused, the
+/// members only read. Otherwise every member is rebuilt in turn, charged
+/// what its pairs exceed its score, and the move kept if their pairs lower
+/// the total after all; if not, or if a rebuild passes `bound` or fails,
+/// every member is put back. So the scores decide, and no member's
+/// rebuild waits for the others'.
+fn probe_scored(
+    eng: &Engine,
+    members: &mut [&mut Tdd],
+    info: RotationInfo,
+    mv: PoolMove,
+    bound: usize,
+    extra: u64,
+    scratch: &mut RestructureScratch,
+) -> Result<bool, OperationError> {
+    let lim = eng.limits();
+    let defer = bound > 2;
+    let mut gate = lim.gate();
+    gate.poll(extra)?;
+    let mut before = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut before, members.len())?;
+    let mut after = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut after, members.len())?;
+    // Whether each member was scored; one that was not is charged by its
+    // rebuild.
+    let mut scored = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut scored, members.len())?;
+    for m in members.iter() {
+        let (outer, inner) = (m.levels[info.v_idx.idx()].live_pairs(), m.levels[info.w_idx.idx()].live_pairs());
+        let old = outer + inner;
+        before.push(old);
+        if defer && outer <= 1 && inner == outer {
+            gate.poll(old as u64 + 1)?;
+            after.push(old);
+            scored.push(false);
+            continue;
+        }
+        let Some(new) = score_levels(lim, m, &info, mv.rotation.kind, mv.crossed, &mut scratch.score, bound)? else {
+            return Ok(false);
+        };
+        gate.poll((old + new) as u64 + REBUILD_UNITS)?;
+        after.push(new);
+        scored.push(true);
+    }
+    // A score is at most the pairs: a total no lower than before is a move
+    // the search refuses.
+    if after.iter().sum::<usize>() >= before.iter().sum::<usize>() {
+        #[cfg(debug_assertions)]
+        debug_check_scores(lim, members, &info, mv, bound, &after, scratch)?;
+        gate.flush()?;
+        lim.check_stop()?;
+        return Ok(false);
+    }
+    let mut saved = Transient::new(lim, Vec::<(usize, Saved<'_>)>::new());
+    lim.reserve_exact(&mut saved, members.len())?;
+    let mut outcome: Result<bool, OperationError> = Ok(true);
+    for (i, m) in members.iter_mut().enumerate() {
+        let rebuilt = rebuild_member(lim, i, m, &info, mv, bound, None, &mut saved, scratch);
+        outcome = match rebuilt {
+            Ok(Some(pairs)) => {
+                let charge = if scored[i] {
+                    debug_assert!(pairs >= after[i], "a score is at most the pairs: {} > {pairs}", after[i]);
+                    pairs.saturating_sub(after[i]) as u64
+                } else {
+                    (before[i] + pairs) as u64 + REBUILD_UNITS
+                };
+                after[i] = pairs;
+                gate.poll(charge).map(|()| true)
+            }
+            other => other.map(|_| false),
+        };
+        if !matches!(outcome, Ok(true)) {
+            break;
+        }
+    }
+    // The gate's residue charged and the stop tested before the move is
+    // kept.
+    let outcome = outcome.and_then(|kept| {
+        gate.flush()?;
+        lim.check_stop()?;
+        Ok(kept && after.iter().sum::<usize>() < before.iter().sum::<usize>())
+    });
+    settle(lim, members, &info, &mut saved, outcome)
+}
+
+/// The end of a probe's rebuilds, `saved` holding what each member rebuilt
+/// needs to be put back: where `outcome` keeps the move, every member's two
+/// rebuilt levels closed and its obligations merged back; otherwise every
+/// member rebuilt put back as it was. Returns `outcome`.
+fn settle<'a>(
+    lim: &'a Limits,
+    members: &mut [&mut Tdd],
+    info: &RotationInfo,
+    saved: &mut Vec<(usize, Saved<'a>)>,
+    outcome: Result<bool, OperationError>,
+) -> Result<bool, OperationError> {
+    let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
     if matches!(outcome, Ok(true)) {
         // The preimages hand their charge back as they drop; the obligations
         // taken from each member go back under what the rebuild recorded.

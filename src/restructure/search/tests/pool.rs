@@ -411,6 +411,80 @@ fn every_pool_stop_restores_all_members() {
     assert!(completed);
 }
 
+/// Every member after a pool search that `outcome` ended: its function, on
+/// the vtree every member shares. A search that fails keeps the moves it
+/// kept, and the probe under way puts back every member it rebuilt.
+fn assert_search_kept_every_function(members: &mut [Tdd], tables: &[Vec<bool>], label: &str) {
+    let first = Arc::clone(members[0].vtree());
+    for (m, table) in members.iter_mut().zip(tables) {
+        assert!(Arc::ptr_eq(m.vtree(), &first), "{label}");
+        m.minimize().unwrap();
+        assert_canonical(m);
+        assert_eq!(&truth_table(m), table, "{label}");
+    }
+}
+
+#[test]
+fn every_stop_in_a_pool_search_keeps_every_function() {
+    use crate::limits::{LimitConfig, StopAt, StopRules};
+    let eng = crate::Engine::new();
+    let original = pool();
+    let tables: Vec<Vec<bool>> = original.iter().map(truth_table).collect();
+    let config = PoolSearchConfig { max_sweeps: 6, ..PoolSearchConfig::default() };
+    let (mut stopped, mut cut) = (0, 0);
+    loop {
+        let mut members = original.clone();
+        let outcome = {
+            let stop = StopRules { unconditional: Some(StopAt::WorkUnits(eng.limits().work_units() + cut)), after_pairs: None };
+            let _scope = eng.limits().scope(LimitConfig::none().with_stop_rules(stop));
+            with_members(&mut members, |refs| eng.pool_search(refs, &config))
+        };
+        let done = match outcome {
+            Ok(_) => true,
+            Err(crate::OperationError::Stopped) => {
+                stopped += 1;
+                false
+            }
+            other => panic!("unexpected pool search result at stop {cut}: {other:?}"),
+        };
+        assert_search_kept_every_function(&mut members, &tables, &format!("stop {cut}"));
+        if done {
+            break;
+        }
+        cut += 1 + cut / 32;
+    }
+    assert!(stopped > 0);
+}
+
+#[test]
+fn every_refused_reservation_in_a_pool_search_keeps_every_function() {
+    let eng = crate::Engine::new();
+    let original = pool();
+    let tables: Vec<Vec<bool>> = original.iter().map(truth_table).collect();
+    let config = PoolSearchConfig { max_sweeps: 6, ..PoolSearchConfig::default() };
+    let (mut refused, mut nth) = (0, 0);
+    loop {
+        let mut members = original.clone();
+        eng.limits().refuse_nth_reserve(nth);
+        let outcome = with_members(&mut members, |refs| eng.pool_search(refs, &config));
+        eng.limits().grant_every_reserve();
+        let done = match outcome {
+            Ok(_) => true,
+            Err(crate::OperationError::OverBudget) => {
+                refused += 1;
+                false
+            }
+            other => panic!("unexpected pool search result at reservation {nth}: {other:?}"),
+        };
+        assert_search_kept_every_function(&mut members, &tables, &format!("reservation {nth}"));
+        if done {
+            break;
+        }
+        nth += 1 + nth / 32;
+    }
+    assert!(refused > 0);
+}
+
 /// The descent without the refused pivots skipped: every pivot of every
 /// sweep probed, in the search's order. Returns the moves kept and probed.
 fn full_descent(eng: &crate::Engine, members: &mut [Tdd], config: &PoolSearchConfig) -> (usize, usize) {
