@@ -169,7 +169,8 @@ impl WordScratch {
 /// one), at most one in [`MASKED_LIVE_SHARE`] of its candidates is live,
 /// and building and ANDing its vectors costs under a quarter of them; a
 /// level without, where the vectors cost less than the row loop by
-/// [`WORDS_COST`] and [`WALK_COST`].
+/// [`WORDS_COST`] and [`WALK_COST`], the sampled rows that would walk
+/// their cells ([`LIVE_SHARE`]) priced as the row loop.
 pub(crate) fn words_pay(
     eng: &Engine,
     rows: RowLoop<'_>,
@@ -225,19 +226,40 @@ pub(crate) fn words_pay(
         return live * MASKED_LIVE_SHARE < candidates && (build + 2 * reads + fp as u128) * 4 < candidates;
     }
     let live_cells = s.live_cells as u128 * cells / s.cells.max(1) as u128;
-    let walk = [cells, candidates, live].iter().zip(WALK_COST).map(|(x, c)| x * c).sum::<u128>();
-    let vectors = [build, reads, live_cells, live, cells].iter().zip(WORDS_COST).map(|(x, c)| x * c).sum::<u128>();
+    let walked = s.walked;
+    let (w_cells, w_candidates) = (walked.cells as u128 * cells / s.cells.max(1) as u128, walked.candidates as u128 * candidates / s.candidates as u128);
+    let w_live = walked.live as u128 * candidates / s.candidates as u128;
+    let w_live_cells = walked.live_cells as u128 * cells / s.cells.max(1) as u128;
+    let walk_cost = |cells: u128, candidates: u128, live: u128| {
+        [cells, candidates, live].iter().zip(WALK_COST).map(|(x, c)| x * c).sum::<u128>()
+    };
+    let walk = walk_cost(cells, candidates, live);
+    let rest = [build, reads, live_cells - w_live_cells.min(live_cells), live - w_live.min(live), cells - w_cells.min(cells)];
+    let vectors = rest.iter().zip(WORDS_COST).map(|(x, c)| x * c).sum::<u128>() + walk_cost(w_cells, w_candidates, w_live);
     vectors < walk
 }
 
 /// A level's sampled cells ([`sample_cells`]): the candidates they hold,
 /// the live ones (estimated in a cell whose candidates were sampled) and
-/// those in grouped cells; the cells, and the live ones among them.
+/// those in grouped cells; the cells, and the live ones among them; and
+/// the same of the sampled f nodes whose sampled cells hold more than one
+/// in [`LIVE_SHARE`] live candidates, whose rows would walk their cells.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct CellSample {
     pub(crate) candidates: u64,
     pub(crate) live: u64,
     pub(crate) grouped: u64,
+    pub(crate) cells: u64,
+    pub(crate) live_cells: u64,
+    pub(crate) walked: SampledRows,
+}
+
+/// The sampled cells of the sampled f nodes whose rows would walk them
+/// ([`CellSample::walked`]).
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SampledRows {
+    pub(crate) candidates: u64,
+    pub(crate) live: u64,
     pub(crate) cells: u64,
     pub(crate) live_cells: u64,
 }
@@ -291,6 +313,7 @@ fn sample_cells<L: ChildLookup, R: ChildLookup>(
     for i in spread(f_width, SAMPLE_NODES) {
         let pairs = f_level.pairs_view_decoded(i, &mut w.g_flat, lv, rv);
         let n1 = pairs.len() as u64;
+        let row = SampledRows { candidates: s.candidates, live: s.live, cells: s.cells, live_cells: s.live_cells };
         let mut f_picked = 0;
         for k in spread(pairs.len(), SAMPLE_CELL) {
             picks[f_picked] = k;
@@ -326,6 +349,14 @@ fn sample_cells<L: ChildLookup, R: ChildLookup>(
             }
             s.live += found * held / (s1 * s2) as u64;
             s.live_cells += u64::from(found > 0);
+        }
+        let (candidates, live) = (s.candidates - row.candidates, s.live - row.live);
+        if live * LIVE_SHARE > candidates {
+            let w = &mut s.walked;
+            w.candidates += candidates;
+            w.live += live;
+            w.cells += s.cells - row.cells;
+            w.live_cells += s.live_cells - row.live_cells;
         }
     }
     Ok(s)
