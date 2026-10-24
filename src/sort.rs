@@ -38,6 +38,13 @@ pub(crate) struct Radix {
     counts: Vec<u32>,
 }
 
+impl crate::execution::pool::Buffers for Radix {
+    fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
+        visit(&mut self.other);
+        visit(&mut self.counts);
+    }
+}
+
 impl Radix {
     /// Drop the buffers and hand their charge back.
     pub(crate) fn discard(self, lim: &Limits) {

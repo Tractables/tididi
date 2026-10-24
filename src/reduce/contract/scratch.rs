@@ -267,6 +267,8 @@ pub(crate) struct ContractScratch {
     /// The parent nodes too wide to group on the stack, each its pair count
     /// above its index, refined after the narrower ones.
     pub(super) refine_wide: Vec<u64>,
+    /// The radix sort's buffers for `refine_keys`.
+    pub(super) refine_radix: crate::sort::Radix,
     /// Node indices of twin group members, stored contiguously.
     pub(super) flat_groups: Vec<u32>,
     /// Start offsets into `flat_groups` for each twin group; a node belongs to
@@ -375,6 +377,7 @@ impl Buffers for ContractScratch {
         visit(&mut self.refine_keys);
         visit(&mut self.refine_runs);
         visit(&mut self.refine_wide);
+        self.refine_radix.buffers(visit);
         visit(&mut self.flat_groups);
         visit(&mut self.group_starts);
         visit(&mut self.is_candidate);

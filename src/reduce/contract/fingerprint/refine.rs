@@ -5,6 +5,7 @@ use crate::diagram::{ChildPair, ChildSide, TddLevel};
 use crate::limits::{Limits, OperationError};
 
 use super::super::scratch::ContractScratch;
+use crate::sort::Radix;
 use super::{mix64, pack, split_pair};
 
 /// The class of a node known to have no twin.
@@ -46,8 +47,8 @@ pub(super) fn refine_context_groups(
     width: usize,
 ) -> Result<bool, OperationError> {
     let ContractScratch {
-        twin_class, twin_named, twin_alone, class_size, class_pos, refine_keys, refine_runs, refine_wide, flat_groups,
-        group_starts, ..
+        twin_class, twin_named, twin_alone, class_size, class_pos, refine_keys, refine_runs, refine_wide, refine_radix,
+        flat_groups, group_starts, ..
     } = scratch;
     flat_groups.clear();
     group_starts.clear();
@@ -86,7 +87,7 @@ pub(super) fn refine_context_groups(
             2 => part.split_two(pairs, side),
             n if n <= SMALL_PAIRS => part.split_small(pairs, side),
             n if stored.is_some() => lim.try_push(refine_wide, ((n.min(u32::MAX as usize) as u64) << 32) | i as u64)?,
-            _ => part.split_wide(lim, pairs, side, refine_keys, refine_runs)?,
+            _ => part.split_wide(lim, pairs, side, refine_keys, refine_runs, refine_radix)?,
         }
     }
     if let Some(stored) = stored {
@@ -95,7 +96,7 @@ pub(super) fn refine_context_groups(
             if part.twinable == 0 {
                 break;
             }
-            part.split_wide(lim, stored.of_idx(w as u32 as usize), side, refine_keys, refine_runs)?;
+            part.split_wide(lim, stored.of_idx(w as u32 as usize), side, refine_keys, refine_runs, refine_radix)?;
         }
     }
     debug_assert_eq!(
@@ -347,36 +348,47 @@ impl Partition<'_> {
         side: ChildSide,
         keys: &mut Vec<u64>,
         runs: &mut Vec<(u64, u32, u32)>,
+        radix: &mut Radix,
     ) -> Result<(), OperationError> {
         keys.clear();
         lim.reserve_exact(keys, pairs.len())?;
+        // Each pair a key of its sibling's bits and its node's above them,
+        // so that the sort places only the bits there are.
+        let mut top = 0u32;
         for pair in pairs {
             let (t, s) = split_pair(pair, side);
             if self.can_twin(self.of(t)) {
                 keys.push(pack(t, s));
+                top |= s;
             }
         }
         if keys.is_empty() {
             return Ok(());
         }
+        let sb = u32::BITS - top.leading_zeros();
+        let tb = u32::BITS - (self.class.len() as u32 - 1).leading_zeros();
+        let low = (1u64 << sb) - 1;
+        for key in keys.iter_mut() {
+            *key = ((*key >> 32) << sb) | (*key & low);
+        }
         if !keys.is_sorted() {
-            keys.sort_unstable();
+            radix.sort(lim, keys, 0, (sb + tb) as usize)?;
         }
         runs.clear();
-        lim.reserve_exact(runs, pairs.len())?;
+        lim.reserve_exact(runs, keys.len())?;
         let mut k = 0;
         while k < keys.len() {
-            let t = (keys[k] >> 32) as u32;
-            let end = k + keys[k..].iter().take_while(|&&e| (e >> 32) as u32 == t).count();
+            let t = (keys[k] >> sb) as u32;
+            let end = k + keys[k..].iter().take_while(|&&e| (e >> sb) as u32 == t).count();
             let c = self.of(t);
-            let h = keys[k..end].iter().fold((end - k) as u64, |h, &e| mix64(h ^ u64::from(e as u32)));
+            let h = keys[k..end].iter().fold((end - k) as u64, |h, &e| mix64(h ^ (e & low)));
             runs.push(((u64::from(c) << 32) | (h >> 32), k as u32, end as u32));
             k = end;
         }
         runs.sort_unstable();
         let keys = &keys[..];
-        let siblings = |r: (u64, u32, u32)| keys[r.1 as usize..r.2 as usize].iter().map(|&e| e as u32);
-        let node = |r: (u64, u32, u32)| (keys[r.1 as usize] >> 32) as u32;
+        let siblings = |r: (u64, u32, u32)| keys[r.1 as usize..r.2 as usize].iter().map(|&e| e & low);
+        let node = |r: (u64, u32, u32)| (keys[r.1 as usize] >> sb) as u32;
         let mut a = 0;
         while a < runs.len() {
             // The runs of class `c`, `runs[a..b]`.
