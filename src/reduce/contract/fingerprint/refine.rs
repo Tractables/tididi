@@ -46,7 +46,8 @@ pub(super) fn refine_context_groups(
     width: usize,
 ) -> Result<bool, OperationError> {
     let ContractScratch {
-        twin_class, twin_named, twin_alone, class_size, class_pos, refine_keys, refine_runs, flat_groups, group_starts, ..
+        twin_class, twin_named, twin_alone, class_size, class_pos, refine_keys, refine_runs, refine_wide, flat_groups,
+        group_starts, ..
     } = scratch;
     flat_groups.clear();
     group_starts.clear();
@@ -62,10 +63,19 @@ pub(super) fn refine_context_groups(
     class_size.clear();
     lim.reserve_exact(class_size, width + 1)?;
     class_size.push(width as u32);
-    let mut part = Partition { class: &mut twin_class[..width], moved, alone, size: class_size };
+    let twinable = if width >= 2 { width } else { 0 };
+    let mut part = Partition { class: &mut twin_class[..width], moved, alone, size: class_size, twinable };
+    // A stored level's wide parent nodes are refined after the narrow ones,
+    // narrowest first: by then most nodes have left the partition, and a
+    // wide node sorts only the pairs of the nodes still in it. The
+    // refinement stops once no node can have a twin.
     let stored = level.stored();
+    refine_wide.clear();
     let (mut buf, mut cursor) = (Vec::new(), None);
     for i in 0..level.node_count() {
+        if part.twinable == 0 {
+            break;
+        }
         let pairs = match stored {
             Some(stored) => stored.of_idx(i),
             None => level.described_read_next(&mut cursor, i, &mut buf),
@@ -75,13 +85,28 @@ pub(super) fn refine_context_groups(
             1 => part.leave(split_pair(&pairs[0], side).0),
             2 => part.split_two(pairs, side),
             n if n <= SMALL_PAIRS => part.split_small(pairs, side),
+            n if stored.is_some() => lim.try_push(refine_wide, ((n.min(u32::MAX as usize) as u64) << 32) | i as u64)?,
             _ => part.split_wide(lim, pairs, side, refine_keys, refine_runs)?,
         }
     }
-    let Partition { class, moved, alone, size } = part;
-    if !size.iter().any(|&members| members >= 2) {
+    if let Some(stored) = stored {
+        refine_wide.sort_unstable();
+        for &w in refine_wide.iter() {
+            if part.twinable == 0 {
+                break;
+            }
+            part.split_wide(lim, stored.of_idx(w as u32 as usize), side, refine_keys, refine_runs)?;
+        }
+    }
+    debug_assert_eq!(
+        part.twinable,
+        part.size.iter().filter(|&&members| members >= 2).map(|&members| members as usize).sum::<usize>(),
+        "the count of nodes that can have a twin"
+    );
+    if part.twinable == 0 {
         return Ok(false);
     }
+    let Partition { class, moved, alone, size, .. } = part;
     // The classes of two or more, in the order of their lowest members,
     // each listed ascending.
     lim.try_resize(class_pos, size.len(), 0u32)?;
@@ -121,6 +146,9 @@ struct Partition<'a> {
     moved: &'a mut [u64],
     alone: &'a mut [u64],
     size: &'a mut Vec<u32>,
+    /// The nodes in classes of two or more: those that can still have a
+    /// twin.
+    twinable: usize,
 }
 
 impl Partition<'_> {
@@ -137,11 +165,24 @@ impl Partition<'_> {
         }
     }
 
-    /// Take node `t` out of its class `c`: it has no twin.
+    /// Whether a node of class `c` can still have a twin.
+    #[inline]
+    fn can_twin(&self, c: u32) -> bool {
+        c != ALONE && self.size[c as usize] >= 2
+    }
+
+    /// Take node `t` out of its class `c`: it has no twin, nor has the last
+    /// node left in `c`.
     #[inline]
     fn alone(&mut self, t: u32, c: u32) {
         let (w, b) = ((t / 64) as usize, 1u64 << (t % 64));
-        self.size[c as usize] -= 1;
+        let members = self.size[c as usize];
+        self.twinable -= match members {
+            1 => 0,
+            2 => 2,
+            _ => 1,
+        };
+        self.size[c as usize] = members - 1;
         self.moved[w] |= b;
         self.alone[w] |= b;
     }
@@ -167,6 +208,9 @@ impl Partition<'_> {
     #[inline]
     fn fresh(&mut self, c: u32, members: u32) -> u32 {
         self.size[c as usize] -= members;
+        if self.size[c as usize] == 1 {
+            self.twinable -= 1;
+        }
         let id = self.size.len() as u32;
         // Within the reserve made for every class there can be.
         self.size.push(members);
@@ -306,10 +350,15 @@ impl Partition<'_> {
     ) -> Result<(), OperationError> {
         keys.clear();
         lim.reserve_exact(keys, pairs.len())?;
-        keys.extend(pairs.iter().map(|pair| {
+        for pair in pairs {
             let (t, s) = split_pair(pair, side);
-            pack(t, s)
-        }));
+            if self.can_twin(self.of(t)) {
+                keys.push(pack(t, s));
+            }
+        }
+        if keys.is_empty() {
+            return Ok(());
+        }
         if !keys.is_sorted() {
             keys.sort_unstable();
         }
@@ -320,10 +369,8 @@ impl Partition<'_> {
             let t = (keys[k] >> 32) as u32;
             let end = k + keys[k..].iter().take_while(|&&e| (e >> 32) as u32 == t).count();
             let c = self.of(t);
-            if c != ALONE {
-                let h = keys[k..end].iter().fold((end - k) as u64, |h, &e| mix64(h ^ u64::from(e as u32)));
-                runs.push(((u64::from(c) << 32) | (h >> 32), k as u32, end as u32));
-            }
+            let h = keys[k..end].iter().fold((end - k) as u64, |h, &e| mix64(h ^ u64::from(e as u32)));
+            runs.push(((u64::from(c) << 32) | (h >> 32), k as u32, end as u32));
             k = end;
         }
         runs.sort_unstable();

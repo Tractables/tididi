@@ -264,6 +264,9 @@ pub(crate) struct ContractScratch {
     /// One wide parent node's runs of `refine_keys`, each its node's class
     /// and sibling hash, and the run's bounds.
     pub(super) refine_runs: Vec<(u64, u32, u32)>,
+    /// The parent nodes too wide to group on the stack, each its pair count
+    /// above its index, refined after the narrower ones.
+    pub(super) refine_wide: Vec<u64>,
     /// Node indices of twin group members, stored contiguously.
     pub(super) flat_groups: Vec<u32>,
     /// Start offsets into `flat_groups` for each twin group; a node belongs to
@@ -371,6 +374,7 @@ impl Buffers for ContractScratch {
         visit(&mut self.class_pos);
         visit(&mut self.refine_keys);
         visit(&mut self.refine_runs);
+        visit(&mut self.refine_wide);
         visit(&mut self.flat_groups);
         visit(&mut self.group_starts);
         visit(&mut self.is_candidate);

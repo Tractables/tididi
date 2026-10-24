@@ -3,7 +3,7 @@
 use crate::diagram::ChildSide;
 use crate::vtree::VtreeIdx;
 
-use crate::diagram::{ChildPair, NodeIdx, NodeKind, StoreRoom, Tdd, TddLevel};
+use crate::diagram::{ChildPair, NodeIdx, StoreRoom, Tdd, TddLevel};
 use crate::limits::Limits;
 
 use super::super::scratch::MergeRemap;
