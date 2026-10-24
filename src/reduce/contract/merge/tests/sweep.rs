@@ -17,25 +17,30 @@ fn live_pairs(level: &TddLevel) -> usize {
     (0..level.nodes().len()).map(|i| level.arena_pairs_at(i)).sum()
 }
 
-/// One contraction round over the nodes from `first` on: merge each adjacent
-/// pair (survivor first), then drop the absorbed ones — the same two steps
-/// `contract_twins` runs, so each union lands at the arena tail with both
-/// source ranges left dead behind it.
+/// One round of tail merges over the nodes from `first` on: merge each
+/// adjacent pair (survivor first) by appending their union at the arena tail,
+/// then drop the absorbed ones, so each union leaves both source ranges dead
+/// behind it, as passes that shrink or move pair lists in place do.
 fn merge_adjacent_round(level: &mut TddLevel, first: usize) {
     let n = level.nodes().len();
-    // Stand-in for `contract_twins`' hoisted grand reserve: the concat path
-    // asserts the capacity is already there.
-    let extra: usize = (first..n).map(|i| level.pair_count_at(i)).sum();
-    level.pairs.stored_mut().reserve(extra);
-    let mut merge_target: Vec<u32> = (0..n as u32).collect();
+    let mut dead = 0;
     let mut keep = first;
     while keep + 1 < n {
-        let total = level.pair_count_at(keep) + level.pair_count_at(keep + 1);
-        concat_twin_pairs(level, keep, &[keep as u32, keep as u32 + 1], total, /*allow_dups=*/ false, /*diagram_marginal=*/ false);
-        merge_target[keep + 1] = keep as u32;
+        let union: Vec<ChildPair> = [keep, keep + 1].iter().flat_map(|&i| level.pairs_vec(i).to_vec()).collect();
+        dead += level.arena_pairs_at(keep) + level.arena_pairs_at(keep + 1);
+        let start = level.pairs.len();
+        level.pairs.stored_mut().extend_from_slice(&union);
+        let node = level.encode_multi(start, union.len());
+        level.nodes.stored_mut()[keep] = node;
         keep += 2;
     }
-    compact_explicit_level(level, &merge_target);
+    let mut i = 0;
+    level.nodes.stored_mut().retain(|_| {
+        let absorbed = i > first && (i - first) % 2 == 1;
+        i += 1;
+        !absorbed
+    });
+    level.note_dead_pairs(dead);
 }
 
 /// Two merge rounds mint more dead arena than live, so the sweep fires; it
@@ -277,4 +282,61 @@ fn twins_of_a_level_of_cubes() -> Vec<Tdd> {
     crate::test_helpers::assert_canonical(&tdd);
     assert_eq!(tdd.model_count().unwrap(), before);
     vec![merged, tdd]
+}
+
+/// The rebuild unions each group into its survivor (inline, packed and
+/// ranged members alike), drops the absorbed members and a content-equal
+/// redirected one, keeps every other node's pairs, and leaves the arena
+/// holding exactly the live pairs in node order.
+#[test]
+fn the_rebuild_unions_groups_and_leaves_no_dead_arena() {
+    let p = |l: u32, r: u32| ChildPair::new(NodeIdx(l), NodeIdx(r));
+    let mut level = TddLevel::new();
+    // Node 0 ranged (staged by hand), 1 inline, 2 and 3 packed, 4 inline,
+    // 5 packed, 6 inline; garbage between the ranges.
+    level.pairs = vec![
+        p(9, 9), p(1, 0), p(1, 1), p(9, 9), p(3, 0), p(3, 1), p(3, 2),
+        p(2, 0), p(2, 1), p(9, 9), p(5, 0), p(5, 1),
+    ]
+    .into();
+    level.ranges = vec![PairRange { start: 1, len: 2 }].into();
+    level.nodes = vec![
+        EncodedNode::multi_ranged(0),
+        EncodedNode::inline(p(4, 0)),
+        EncodedNode::multi_pair(7, 2),
+        EncodedNode::multi_pair(4, 3),
+        EncodedNode::inline(p(6, 0)),
+        EncodedNode::multi_pair(10, 2),
+        EncodedNode::inline(p(7, 0)),
+    ]
+    .into();
+    level.note_dead_pairs(3);
+    let before: Vec<Vec<ChildPair>> = content(&level);
+    // Groups {0, 3, 6} concat, {1, 4} concat, {2, 5} a content-equal
+    // redirect of 5 onto 2.
+    let mut bufs = MergeBuffers::default();
+    bufs.sel = vec![0, 3, 6, 1, 4, 2, 5];
+    bufs.group_plans = vec![
+        GroupPlan { action: GroupAction::Concat, start: 0, end: 3 },
+        GroupPlan { action: GroupAction::Concat, start: 3, end: 5 },
+        GroupPlan { action: GroupAction::DupRedirect, start: 5, end: 7 },
+    ];
+    let remap = MergeRemap {
+        merge_target: vec![0, 1, 2, 0, 1, 2, 0],
+        duplicate_redirect: vec![false, false, false, false, false, true, false],
+        final_remap: vec![NodeIdx(0); 7],
+    };
+    let lim = Limits::new();
+    let arenas = reserve_rebuilt_level(&lim, &level, &remap, &bufs).unwrap();
+    rebuild_level(&mut level, arenas, &remap, &bufs, true);
+
+    let cat = |nodes: &[usize]| -> Vec<ChildPair> { nodes.iter().flat_map(|&i| before[i].clone()).collect() };
+    assert_eq!(content(&level), vec![cat(&[0, 3, 6]), cat(&[1, 4]), cat(&[2])]);
+    assert_eq!(level.pairs.len(), live_pairs(&level), "no dead arena is left");
+    assert_eq!(level.pairs.len(), 10);
+    assert_eq!(level.pairs.capacity(), 10, "the arena is reserved at its exact size");
+    assert_eq!(level.dead_pairs, 0);
+    assert_eq!(level.ranges.len(), 0, "every rebuilt range fits the packed encoding");
+    let starts: Vec<usize> = (0..3).map(|i| level.pair_range_at(i).start).collect();
+    assert_eq!(starts, vec![0, 6, 8], "the arena is in node order");
 }

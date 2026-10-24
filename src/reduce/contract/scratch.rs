@@ -102,7 +102,7 @@ impl PFusionScratch {
 pub(super) struct MergeBuffers {
     /// Kept-node indices whose t1 refs need fork-down resolution. u32-wide,
     /// matching `flat_groups` / `merge_target` — node indices in both cases, and
-    /// `compact_and_fork_down` consumes them as `&[u32]`.
+    /// `fork_down` consumes them as `&[u32]`.
     pub(super) resolve_keeps: Vec<u32>,
     /// Overlap-filtered group members eligible for concat merge. u32-wide for
     /// the same reason as `resolve_keeps` — they are node indices.

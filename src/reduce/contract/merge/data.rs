@@ -1,20 +1,221 @@
-//! Unioning twin pair lists into the survivor and compacting the level after.
+//! Unioning twin pair lists into the survivor and compacting the level, in
+//! one rebuild of the level's arenas.
 
 use crate::Engine;
 use crate::vtree::VtreeIdx;
 
-use crate::limits::OperationError;
-use crate::diagram::{EncodedNode, NodeKind, Tdd, TddLevel};
+use crate::limits::{Limits, OperationError};
+use crate::diagram::{ChildPair, EncodedNode, NodeKind, PairRange, RangeTable, Tdd, TddLevel};
 
-use super::super::scratch::{DuplicateScratch, MergeRemap};
+use super::super::scratch::{DuplicateScratch, MergeBuffers, MergeRemap};
+use super::plan::{GroupAction, GroupPlan};
 
-/// Compact the t1 level after twin contraction, sweep its arena, then run
-/// fork-down duplicate resolution on the survivors merged via the concat-all
-/// path. Fork-down runs after compaction so survivor indices are final; it
-/// folds a run of k equal pairs into one pair with its marginal side scaled by
-/// k only where t1 has a marginal child, and otherwise leaves the run (see the
+/// The arenas the merged level is rebuilt into, had before the merge
+/// changes anything ([`reserve_rebuilt_level`]).
+pub(super) struct RebuiltArenas {
+    pairs: Vec<ChildPair>,
+    ranges: RangeTable,
+}
+
+/// The first arena offset or length the packed node encoding cannot hold;
+/// see [`TddLevel::encode_multi`].
+const PACKED_LIMIT: usize = 1 << 31;
+
+/// Reserve the arenas of the level `t1` will be after the committed merge:
+/// exactly its pairs, every survivor's own and each concat group's members'
+/// at its survivor, and a range entry for each node whose range does not fit
+/// the packed encoding. Room past the old arena's capacity is charged, as
+/// growth of that arena would be; the old arena is freed when the rebuild
+/// swaps the new one in.
+///
+/// `remap.merge_target` and `remap.duplicate_redirect` mark the absorbed
+/// members, and `bufs.group_plans` are sorted by survivor
+/// ([`plan_groups`](super::plan::plan_groups)).
+///
+/// # Errors
+///
+/// `Err(OperationError::OverBudget)` when a reservation is refused; nothing
+/// has changed at that point.
+pub(super) fn reserve_rebuilt_level(
+    lim: &Limits,
+    level: &TddLevel,
+    remap: &MergeRemap,
+    bufs: &MergeBuffers,
+) -> Result<RebuiltArenas, OperationError> {
+    // One pass in node order over the node words: a survivor keeps its own
+    // range, an absorbed concat member's range moves to its survivor, and an
+    // inline node takes an arena slot only when a concat group unions it.
+    let mut plans = concat_plans(bufs);
+    let mut total = 0usize;
+    for i in 0..level.nodes().len() {
+        let absorbed = remap.merge_target[i] != i as u32;
+        let unioned = if absorbed {
+            if remap.duplicate_redirect[i] {
+                continue;
+            }
+            true
+        } else {
+            plans.next_if(|p| bufs.sel[p.start as usize] == i as u32).is_some()
+        };
+        let node = level.node(i);
+        total += match level.arena_range(node.kind()) {
+            Some(range) => range.len(),
+            None => usize::from(unioned),
+        };
+    }
+    let ranged = if total < PACKED_LIMIT { 0 } else { ranged_nodes(level, remap, bufs) };
+    let mut pairs = Vec::new();
+    lim.reserve_counted_exact(&mut pairs, total)?;
+    let grown = total.saturating_sub(level.pairs.capacity()) as u64;
+    lim.charge_bytes(grown.saturating_mul(std::mem::size_of::<ChildPair>() as u64))?;
+    let mut ranges = RangeTable::default();
+    if ranged > 0 {
+        ranges.reserve_exact(lim, ranged)?;
+    }
+    Ok(RebuiltArenas { pairs, ranges })
+}
+
+/// The concat plans, in survivor order.
+fn concat_plans(bufs: &MergeBuffers) -> std::iter::Peekable<impl Iterator<Item = &GroupPlan>> {
+    bufs.group_plans.iter().filter(|p| p.action == GroupAction::Concat).peekable()
+}
+
+/// How many nodes of the rebuilt level need a range entry: those whose start
+/// or length reaches [`PACKED_LIMIT`]. Read only for an arena of 2^31 pairs
+/// or more, where it lays the level out as [`rebuild_level`] will.
+#[cold]
+fn ranged_nodes(level: &TddLevel, remap: &MergeRemap, bufs: &MergeBuffers) -> usize {
+    let mut plans = concat_plans(bufs);
+    let (mut start, mut ranged) = (0usize, 0usize);
+    for i in 0..level.nodes().len() {
+        if remap.merge_target[i] != i as u32 {
+            continue;
+        }
+        let len = match plans.next_if(|p| bufs.sel[p.start as usize] == i as u32) {
+            Some(p) => bufs.sel[p.start as usize..p.end as usize].iter().map(|&m| level.pair_count_at(m as usize)).sum(),
+            None => match level.arena_range(level.node(i).kind()) {
+                Some(range) => range.len(),
+                None => continue,
+            },
+        };
+        if len == 1 {
+            continue;
+        }
+        if start >= PACKED_LIMIT || len >= PACKED_LIMIT {
+            ranged += 1;
+        }
+        start += len;
+    }
+    ranged
+}
+
+/// Rebuild the merged level `level` into `arenas` in one pass in node order:
+/// drop the absorbed members, union each concat group's members' pairs into
+/// its survivor, copy every other survivor's pairs, and compact the nodes in
+/// place. The level is left with no dead arena, its pairs in node order.
+///
+/// Members of a group ascend from its survivor, so the in-place node
+/// compaction, which writes at or below the node it reads, has not yet
+/// overwritten any member when its survivor is rebuilt.
+///
+/// Pair lists are unordered sets and the twin search compares contexts,
+/// never pair order, so concatenation is the union with no sort. A repeated
+/// `(L, R)` entry across the members is a legitimate multiset entry at a
+/// marginal-child level and is kept; where `check_disjoint` says no pair may
+/// repeat (no marginal level in the diagram and no fork-down after), debug
+/// builds check that the supports are disjoint (determinism, invariant 1).
+pub(super) fn rebuild_level(
+    level: &mut TddLevel,
+    arenas: RebuiltArenas,
+    remap: &MergeRemap,
+    bufs: &MergeBuffers,
+    check_disjoint: bool,
+) {
+    let RebuiltArenas { pairs: mut fresh, ranges: mut fresh_ranges } = arenas;
+    let reserved = fresh.capacity();
+    let mut plans = concat_plans(bufs);
+    let TddLevel { nodes, pairs, ranges, .. } = &mut *level;
+    let old = pairs.stored().expect("a merged level is stored");
+    let old_ranges: &RangeTable = ranges;
+    let source = |node: EncodedNode| -> std::ops::Range<usize> {
+        match node.kind() {
+            NodeKind::Multi { start, len } => start as usize..(start + len) as usize,
+            NodeKind::MultiRanged(idx) => {
+                let e = &old_ranges[idx as usize];
+                e.start as usize..(e.start + e.len) as usize
+            }
+            NodeKind::Inline(_) => unreachable!("an inline node owns no range"),
+        }
+    };
+    let mut encode = |fresh: &mut Vec<ChildPair>, start: usize| -> EncodedNode {
+        let len = fresh.len() - start;
+        if len == 1 {
+            return EncodedNode::inline(fresh.pop().expect("the one pair"));
+        }
+        if start < PACKED_LIMIT && len < PACKED_LIMIT {
+            return EncodedNode::multi_pair(start as u32, len as u32);
+        }
+        let idx = fresh_ranges.len();
+        debug_assert!(idx < fresh_ranges.capacity(), "ranged entries reserved");
+        fresh_ranges.push(PairRange { start: start as u64, len: len as u64 });
+        EncodedNode::multi_ranged(idx as u32)
+    };
+    let nodes = nodes.stored_mut();
+    let mut write = 0usize;
+    for read in 0..nodes.len() {
+        if remap.merge_target[read] != read as u32 {
+            continue;
+        }
+        let node = nodes[read];
+        let start = fresh.len();
+        let rebuilt = match plans.next_if(|p| bufs.sel[p.start as usize] == read as u32) {
+            Some(p) => {
+                let members = &bufs.sel[p.start as usize..p.end as usize];
+                for &m in members {
+                    debug_assert!(m as usize >= read, "a group's survivor is its lowest member");
+                    let member = nodes[m as usize];
+                    match member.kind() {
+                        NodeKind::Inline(pair) => fresh.push(pair),
+                        _ => fresh.extend_from_slice(&old[source(member)]),
+                    }
+                }
+                if cfg!(debug_assertions) && check_disjoint {
+                    let mut chk = fresh[start..].to_vec();
+                    chk.sort_unstable();
+                    assert!(
+                        chk.windows(2).all(|w| w[0] != w[1]),
+                        "twin contraction: duplicate pair across twin supports — invariant 1 violation"
+                    );
+                }
+                encode(&mut fresh, start)
+            }
+            None => match node.kind() {
+                NodeKind::Inline(_) => node,
+                _ => {
+                    fresh.extend_from_slice(&old[source(node)]);
+                    encode(&mut fresh, start)
+                }
+            },
+        };
+        nodes[write] = rebuilt;
+        write += 1;
+    }
+    debug_assert!(plans.next().is_none(), "every concat group met its survivor");
+    debug_assert_eq!(fresh.capacity(), reserved, "the rebuild fits its reserved arena");
+    nodes.truncate(write);
+    *pairs.stored_mut() = fresh;
+    *ranges = fresh_ranges;
+    level.dead_pairs = 0;
+    level.shrink_arrays();
+}
+
+/// Point the output at its survivor if it is at `t1`, then run fork-down
+/// duplicate resolution on the survivors merged via the concat-all path.
+/// Fork-down runs after the rebuild so survivor indices are final; it folds
+/// a run of k equal pairs into one pair with its marginal side scaled by k
+/// only where t1 has a marginal child, and otherwise leaves the run (see the
 /// module doc of `duplicate_pair`).
-pub(super) fn compact_and_fork_down(
+pub(super) fn fork_down(
     eng: &Engine,
     tdd: &mut Tdd,
     t1: VtreeIdx,
@@ -22,27 +223,9 @@ pub(super) fn compact_and_fork_down(
     remap: &MergeRemap,
     duplicate: &mut DuplicateScratch,
 ) -> Result<(), OperationError> {
-    // Step 3: Compact the level in-place (keep only alive nodes). t1 is never
-    // marginal here (see the guard note in `contract_twins`), so only the
-    // explicit-level compaction is reachable.
-    compact_explicit_level(&mut tdd.levels[t1.idx()], &remap.merge_target);
-
-    // Sweep t1's merge garbage now: every union was appended at the arena tail
-    // and every absorbed node has just been dropped, so up to half the arena is
-    // unreferenced, and fork-down below grows the arenas again. Legal here: the
-    // caller obligation on `compact_pairs_if_stale` is to hold no pair-arena
-    // offset across the call, and everything live at this point
-    // (`merge_target`, `final_remap`, `resolve_keeps`, `tdd.output.local`) is a
-    // node index. What fork-down leaves behind is charged to `dead_pairs` and
-    // waits for the next sweep.
-    tdd.levels[t1.idx()].compact_pairs_if_stale();
-
-    // Update output if it points to t1
     if tdd.output.vtree == t1 {
         tdd.output.local = remap.final_remap[tdd.output.local.idx()];
     }
-
-    // Fork-down resolution, after compaction so survivor indices are final.
     // One scratch for the whole loop, cleared per node inside the callee.
     for &old_keep in resolve_keeps {
         let new_idx = remap.final_remap[old_keep as usize].idx();
@@ -50,147 +233,3 @@ pub(super) fn compact_and_fork_down(
     }
     Ok(())
 }
-
-/// Merge a group of twin nodes' data into the first node (the "kept" node):
-/// concatenate the members' pair lists at the arena tail and point the kept
-/// node at the result. Pair lists are unordered sets and `find_twin_groups`
-/// canonicalizes each signature slice before comparing, so concatenation is
-/// the union with no sort. A repeated `(L, R)` entry across or within the
-/// inputs is a legitimate multiset entry at a marginal-child level and is
-/// preserved; at a fully non-marginal level determinism (invariant 1) makes
-/// the supports disjoint, which `concat_twin_pairs` checks in debug builds.
-///
-/// Only called on internal nodes: the sweep never contracts a leaf level.
-pub(super) fn merge_twin_data(
-    tdd: &mut Tdd,
-    t1: VtreeIdx,
-    group: &[u32],
-    allow_dups: bool,
-) {
-    let keep = group[0] as usize;
-    // Read only for the debug check in `concat_twin_pairs`; `cfg!` is a
-    // constant, so the level scan is compiled out of release builds.
-    let diagram_marginal = cfg!(debug_assertions) && tdd.has_marginal_level();
-    let level = &mut tdd.levels[t1.idx()];
-    let total: usize = group.iter().map(|&idx| level.pair_count_at(idx as usize)).sum();
-    concat_twin_pairs(level, keep, group, total, allow_dups, diagram_marginal);
-}
-
-/// Concatenate the pair lists of `group`'s nodes at the arena tail and point
-/// `keep` at the result. `total` must be the exact summed pair count.
-///
-/// Sources are ranges of the arena itself (or inline node data), so
-/// `extend_from_within` copies arena to arena with no temp buffer. Infallible:
-/// `reserve_transactional` charged the whole merge loop's growth before any
-/// mutation, so the pushes below cannot reallocate.
-///
-/// Every source range is left behind as dead arena and counted into
-/// `TddLevel::dead_pairs`: here for the survivor, in `compact_explicit_level`
-/// for the absorbed members.
-///
-/// `allow_dups` and `diagram_marginal` only decide whether the debug check
-/// for duplicate pairs applies; release builds ignore them.
-pub(super) fn concat_twin_pairs(
-    level: &mut TddLevel,
-    keep: usize,
-    group: &[u32],
-    total: usize,
-    allow_dups: bool,
-    diagram_marginal: bool,
-) {
-    let new_start = level.pairs.len();
-    debug_assert!(
-        level.pairs.capacity() - level.pairs.len() >= total,
-        "concat_twin_pairs: hoisted grand reserve under-sized pairs capacity"
-    );
-    for &idx in group {
-        let d = level.node(idx as usize);
-        if let NodeKind::Inline(pair) = d.kind() {
-            level.pairs.stored_mut().push(pair);
-        } else {
-            // `pair_range_at` handles both normal and extended multi encodings;
-            // the range is owned, so the immutable borrow ends before the extend.
-            let r = level.pair_range_at(idx as usize);
-            level.pairs.stored_mut().extend_from_within(r);
-        }
-    }
-    debug_assert_eq!(level.pairs.len() - new_start, total);
-    // In a purely Boolean diagram determinism (invariant 1) makes twin
-    // supports pairwise disjoint, so the concatenation has no duplicates; a
-    // debug-only full check. A duplicate is legal, and the check skipped,
-    // where the level carries marginal markers, where any level of the
-    // diagram is marginal (every count consumer folds `Σ_pairs c(l)·c(r)`,
-    // and the content-twin merge can leave a plain-level node holding the
-    // same pair twice), and where `allow_dups` says the caller resolves the
-    // duplicates right after compaction (`duplicate_pair`).
-    if cfg!(debug_assertions) && !allow_dups && !diagram_marginal && !level.any_value_ref_side() {
-        let mut chk = level.pairs.stored_mut()[new_start..].to_vec();
-        chk.sort_unstable();
-        assert!(
-            chk.windows(2).all(|w| w[0] != w[1]),
-            "twin contraction (concat merge): duplicate pair across twin supports — invariant 1 violation"
-        );
-    }
-    // The survivor is about to point at the tail copy, abandoning its own source
-    // range; the absorbed members' ranges are accounted when compaction drops
-    // their nodes (`compact_explicit_level`).
-    let abandoned = level.arena_pairs_at(keep);
-    finalize_merged_node(level, keep, new_start, total);
-    level.note_dead_pairs(abandoned);
-}
-
-/// Finalize node at `level.node(keep)` from a merged pair sequence already
-/// written to `level.pairs[new_start..new_start + new_len]`.
-///
-/// A single pair is popped off the arena again and stored inline; a longer
-/// list goes through `encode_multi`, which picks packed or extended by
-/// whether `new_start` and `new_len` fit the packed bit budget.
-#[inline]
-fn finalize_merged_node(
-    level: &mut TddLevel,
-    keep: usize,
-    new_start: usize,
-    new_len: usize,
-) {
-    if new_len == 1 {
-        let pair = level.pairs.stored_mut().pop().expect("the merged pair");
-        debug_assert_eq!(level.pairs.len(), new_start);
-        level.nodes.stored_mut()[keep] = EncodedNode::inline(pair);
-    } else {
-        level.nodes.stored_mut()[keep] = level.encode_multi(new_start, new_len);
-    }
-}
-
-/// Compact a non-marginal (explicit) level in-place after twin contraction.
-///
-/// Walks `level.nodes`, keeping only entries whose `merge_target[read] == read`
-/// (i.e. canonical survivors; absorbed twins are skipped). Survivors are shifted
-/// left in-place via `swap` and the vec is truncated.
-///
-/// Also the accounting point for absorbed twins' pair ranges: dropping the node
-/// is what makes its range unreferenced (whether the merge copied the content to
-/// the survivor's tail range, or a duplicate redirect left the pair list untouched).
-pub(super) fn compact_explicit_level(level: &mut TddLevel, merge_target: &[u32]) {
-    let n = level.nodes().len();
-    let mut write = 0usize;
-    // Accumulated and noted once after the walk: the counter's only reader
-    // (`compact_pairs_if_stale`) runs later, so per-drop adds bought nothing.
-    let mut dead_acc = 0usize;
-    // In-place compaction: the read index advances independently of the write cursor.
-    #[expect(clippy::needless_range_loop)]
-    for read in 0..n {
-        if merge_target[read] == read as u32 {
-            if write < read {
-                level.nodes.stored_mut().swap(write, read);
-            }
-            write += 1;
-        } else {
-            // `swap` only ever writes to positions ≤ the current `read`, so
-            // `nodes[read]` is still this slot's original node here.
-            dead_acc += level.arena_pairs_at(read);
-        }
-    }
-    level.nodes.stored_mut().truncate(write);
-    level.note_dead_pairs(dead_acc);
-}
-

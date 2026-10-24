@@ -1,4 +1,4 @@
 use super::*;
-use super::data::{compact_explicit_level, concat_twin_pairs};
+use super::data::{rebuild_level, reserve_rebuilt_level};
 
 mod sweep;

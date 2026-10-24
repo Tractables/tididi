@@ -47,8 +47,7 @@ pub(super) fn build_final_remap(remap: &mut MergeRemap, width: usize) {
 /// `merge_target` / `final_remap` index directly.
 ///
 /// Infallible: every allocation it could need was reserved before the pass
-/// mutated anything (`reserve_transactional`, and `room`, an implicit
-/// parent's, through `lim`).
+/// mutated anything (`room`, an implicit parent's, through `lim`).
 pub(super) fn rewrite_parent(
     lim: &Limits,
     tdd: &mut Tdd,

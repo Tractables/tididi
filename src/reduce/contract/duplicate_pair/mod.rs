@@ -70,7 +70,7 @@ pub(super) fn compute_has_marginal_below_into(
 /// case the duplicates stay as legal multiset terms.
 ///
 /// `scratch` is caller-owned and reused across the survivors of one fork-down
-/// pass (`merge::compact_and_fork_down`); every buffer is cleared here on
+/// pass (`merge::data::fork_down`); every buffer is cleared here on
 /// entry, so it carries capacity across nodes and nothing else, and a `?` bail
 /// need not clean it up.
 pub(super) fn resolve_duplicate_pairs_in_node(

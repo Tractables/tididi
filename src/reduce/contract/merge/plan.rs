@@ -1,6 +1,5 @@
-//! Deciding what each twin group does, and reserving its arena growth up front.
+//! Deciding what each twin group does.
 
-use crate::Engine;
 use crate::vtree::VtreeIdx;
 
 use crate::limits::{Limits, OperationError};
@@ -8,15 +7,14 @@ use crate::diagram::Tdd;
 
 use super::super::scratch::MergeBuffers;
 
-/// What the commit pass does with one twin group, decided by `plan_groups`.
+/// What the merge does with one twin group, decided by `plan_groups`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::reduce::contract) enum GroupAction {
-    /// Concatenate the selected members' pair lists into the survivor. The only
-    /// action that grows t1's arena, hence the only one the grand reserve charges.
+    /// Concatenate the selected members' pair lists into the survivor.
     Concat,
     /// Redirect content-equal members onto the survivor without touching its
     /// pair list — the parent rewrite keeps their pairs and pair fusion sums the
-    /// multiplicity. Appends nothing.
+    /// multiplicity. The members' pairs are dropped.
     DupRedirect,
 }
 
@@ -65,7 +63,7 @@ impl MergePolicy {
 
     /// Whether a child side of the plain level `t1` has marginalization
     /// below it. Overlapping twins there concat-merge unconditionally and
-    /// `compact_and_fork_down` folds the resulting duplicate pairs where it
+    /// `fork_down` folds the resulting duplicate pairs where it
     /// can; see the module doc of `duplicate_pair`.
     pub(super) fn scalable(tdd: &Tdd, t1: VtreeIdx, has_marginal_below: &[bool]) -> bool {
         let (t1_l, t1_r) = tdd.vtree.children(t1);
@@ -75,12 +73,12 @@ impl MergePolicy {
 }
 
 /// Pass A: decide every group's action before any of them commits, so the
-/// reserve can ask for exactly the pair mass that will be appended (the
-/// overlap filter drops members; a duplicate-redirect group appends nothing).
-/// Deciding first is equivalent to deciding on commit: a node belongs to at
-/// most one twin group, and committing a group only re-points its own members
-/// and appends at the arena tail. `sel` holds each acting group's members
-/// contiguously, survivor first.
+/// rebuilt level's arena can be reserved at its exact size (the overlap
+/// filter drops members; a duplicate-redirect group drops its members'
+/// pairs). Deciding first is equivalent to deciding on commit: a node belongs
+/// to at most one twin group. `sel` holds each acting group's members
+/// contiguously and ascending, survivor first, and the plans are left sorted
+/// by survivor, the order the rebuild meets them in.
 ///
 /// The planner buffers are reserved up front, sized by the widest group and
 /// its pair mass, so a refused reservation returns before any group is
@@ -100,7 +98,7 @@ pub(super) fn plan_groups(
     let plain_level = policy.plain_level;
     // Without a marginal level no pair can repeat, and every group takes
     // the concat-all plan below; the filter's set of pairs was most of a
-    // Boolean diagram's contraction. `concat_twin_pairs` checks the
+    // Boolean diagram's contraction. `rebuild_level` checks the
     // disjointness in debug builds.
     let t1_scalable = policy.t1_scalable || policy.disjoint_supports;
     let parent_marginal = policy.parent_marginal;
@@ -229,48 +227,9 @@ pub(super) fn plan_groups(
         };
         group_plans.push(GroupPlan { action, start: sel_start as u32, end: sel.len() as u32 });
     }
-    Ok(())
-}
-
-/// Reserve the commit pass's whole arena growth up front, so a refused
-/// reservation bails before any mutation and the commit pass can use plain,
-/// infallible push/extend.
-///
-/// Sized from the decided actions: only a `Concat` appends, and only the
-/// members it selected; `needed_ext` is one `PairRange` per concat, the
-/// most `finalize_merged_node` pushes per group.
-///
-/// # Errors
-///
-/// `Err(OperationError::OverBudget)` when the reservation is refused; nothing has
-/// been mutated at that point.
-pub(super) fn reserve_transactional(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    t1: VtreeIdx,
-    bufs: &MergeBuffers,
-) -> Result<(), OperationError> {
-    let lim = eng.limits();
-    let (sel, group_plans) = (&bufs.sel, &bufs.group_plans);
-    let mut needed_pairs = 0usize;
-    let mut needed_ext = 0usize;
-    {
-        let level = &tdd.levels[t1.idx()];
-        for p in group_plans.iter() {
-            if p.action != GroupAction::Concat {
-                continue;
-            }
-            for &idx in &sel[p.start as usize..p.end as usize] {
-                needed_pairs += level.pair_count_at(idx as usize);
-            }
-            needed_ext += 1;
-        }
-    }
-    if needed_ext > 0 {
-        // Immutable sizing borrow above ends here; take the mutable arena borrow.
-        let level = &mut tdd.levels[t1.idx()];
-        lim.reserve_exact(level.pairs.stored_mut(), needed_pairs)?;
-        level.ranges.reserve_exact(lim, needed_ext)?;
+    // The searches list groups by lowest member already; the sort is a check.
+    if !group_plans.is_sorted_by_key(|p| sel[p.start as usize]) {
+        group_plans.sort_unstable_by_key(|p| sel[p.start as usize]);
     }
     Ok(())
 }

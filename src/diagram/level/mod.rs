@@ -2,7 +2,7 @@
 
 mod arena;
 mod ranges;
-use ranges::RangeTable;
+pub(crate) use ranges::RangeTable;
 mod count_overflow;
 mod implicit;
 mod marginal;
@@ -64,10 +64,8 @@ pub struct TddLevel {
     pub(crate) value_ref_sides: u8,
     /// Slots in `pairs` that no live node references any more.
     ///
-    /// Twin contraction mints these: a merged union is appended at the arena
-    /// tail (`concat_twin_pairs`), abandoning every source range, and the parent
-    /// rewrite / duplicate resolution shrink pair lists in place, abandoning
-    /// their tails. Pruning and restriction do the same when they drop pairs.
+    /// Twin contraction's parent rewrite and duplicate resolution mint these:
+    /// they shrink pair lists in place, abandoning their tails. Pruning and restriction do the same when they drop pairs.
     /// `compact_pairs_if_stale` reclaims them and resets this to 0.
     ///
     /// Approximate: it only triggers the sweep, which derives liveness from
