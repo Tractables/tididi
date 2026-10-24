@@ -50,13 +50,17 @@ const SAMPLE_SHARE: usize = 8;
 /// of its sampled candidates is live ([`words_pay`]).
 const MASKED_LIVE_SHARE: u128 = 10;
 
+/// The vectors' cost of a level with masks an f pair, in a quarter of a
+/// candidate a unit, besides its vector words read ([`words_pay`]).
+const MASKED_PAIR_COST: u128 = 32;
+
 /// The row loop's cost of a level without masks, in about a cycle a unit:
 /// a cell, a candidate and a live candidate; and the vectors': a child
 /// cell read or a vector word built, an f pair's vector word read, a live
-/// cell, a live candidate and a cell ([`words_pay`]). Fitted to levels run
-/// both ways.
+/// cell, a live candidate, a cell and an f pair ([`words_pay`]). Fitted to
+/// levels run both ways.
 const WALK_COST: [u128; 3] = [18, 2, 9];
-const WORDS_COST: [u128; 5] = [5, 10, 31, 6, 2];
+const WORDS_COST: [u128; 6] = [5, 10, 31, 6, 2, 30];
 
 /// Scratch of the levels whose cells are read by g-pair vectors
 /// ([`run_level_rows_words`]), kept with the conjunction's workspace.
@@ -168,7 +172,8 @@ impl WordScratch {
 /// of g pairs. A level with masks is read by vectors where g's nodes are
 /// not all one pair (the masks cull most of the f pairs of a column of
 /// one), at most one in [`MASKED_LIVE_SHARE`] of its candidates is live,
-/// and building and ANDing its vectors costs under a quarter of them; a
+/// and building and ANDing its vectors, with [`MASKED_PAIR_COST`] an f
+/// pair, costs under a quarter of them; a
 /// level without, where the vectors cost less than the row loop by
 /// [`WORDS_COST`] and [`WALK_COST`], the sampled rows that would walk
 /// their cells ([`LIVE_SHARE`]) priced as the row loop.
@@ -270,7 +275,7 @@ fn pays<L: ChildLookup, R: ChildLookup>(
     let (candidates, cells) = (candidates as u128, rows.f_width as u128 * rows.ctx.right_width as u128);
     let live = s.live as u128 * candidates / s.candidates as u128;
     if rows.ctx.masked {
-        return live * MASKED_LIVE_SHARE < candidates && (build + 2 * reads + fp as u128) * 4 < candidates;
+        return live * MASKED_LIVE_SHARE < candidates && (build + 2 * reads + MASKED_PAIR_COST * fp as u128) * 4 < candidates;
     }
     let live_cells = s.live_cells as u128 * cells / s.cells.max(1) as u128;
     let walked = s.walked;
@@ -281,7 +286,7 @@ fn pays<L: ChildLookup, R: ChildLookup>(
         [cells, candidates, live].iter().zip(WALK_COST).map(|(x, c)| x * c).sum::<u128>()
     };
     let walk = walk_cost(cells, candidates, live);
-    let rest = [build, reads, live_cells - w_live_cells.min(live_cells), live - w_live.min(live), cells - w_cells.min(cells)];
+    let rest = [build, reads, live_cells - w_live_cells.min(live_cells), live - w_live.min(live), cells - w_cells.min(cells), fp as u128];
     let vectors = rest.iter().zip(WORDS_COST).map(|(x, c)| x * c).sum::<u128>() + walk_cost(w_cells, w_candidates, w_live);
     vectors < walk
 }
