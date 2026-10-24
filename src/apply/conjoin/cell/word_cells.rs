@@ -1,6 +1,7 @@
 //! The cells of a level read by g-pair vectors.
 
 use super::*;
+use super::rows::ListSink;
 use crate::limits::Limits;
 
 /// A child row whose vector is not built yet ([`WordScratch::slots`]).
@@ -190,21 +191,22 @@ pub(crate) fn words_pay(
     }
 }
 
-/// [`words_pay`] for a streaming target's level, read through
-/// `MarginalLookup` where `marginal_children` says so and off two grids
-/// otherwise ([`run_level_rows_stream_words`]).
+/// [`words_pay`] for a level read through `MarginalLookup` where
+/// `marginal` says so and off two grids otherwise: a streaming target's
+/// ([`run_level_rows_stream_words`]) or a sparse-marginal level's
+/// ([`run_level_rows_marginal_sparse_words`]).
 ///
 /// [`run_level_rows_stream_words`]: super::run_level_rows_stream_words
-pub(crate) fn words_pay_stream(
+pub(crate) fn words_pay_marginal(
     eng: &Engine,
     rows: RowLoop<'_>,
     w: &mut WordScratch,
-    marginal_children: bool,
+    marginal: bool,
     f_rows: Sides<usize>,
     node_idx: &[u32],
 ) -> bool {
     let sides = rows.ctx.sides;
-    if marginal_children {
+    if marginal {
         let (left, right) = (MarginalLookup::new(&sides.left), MarginalLookup::new(&sides.right));
         pays(eng, rows, w, &left, &right, f_rows, node_idx)
     } else {
@@ -446,26 +448,46 @@ pub(crate) fn run_level_rows_words(
     match lookups {
         PlainLookups::Grid => {
             super::super::note_word_cells(super::super::WordNote::Grids);
-            rows_by_words(eng, rows, scratch, words, f_rows, &grid(&sides.left), &grid(&sides.right), EmitSink { level })
+            rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, &grid(&sides.left), &grid(&sides.right), EmitSink { level })
         }
         PlainLookups::CompleteLeft { charged } => {
             super::super::note_word_cells(super::super::WordNote::Complete);
-            rows_by_words(eng, rows, scratch, words, f_rows, &complete(&sides.left), &grid(&sides.right), ReservedEmitSink { level, charged })
+            rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, &complete(&sides.left), &grid(&sides.right), ReservedEmitSink { level, charged })
         }
         PlainLookups::CompleteRight { charged } => {
             super::super::note_word_cells(super::super::WordNote::Complete);
-            rows_by_words(eng, rows, scratch, words, f_rows, &grid(&sides.left), &complete(&sides.right), ReservedEmitSink { level, charged })
+            rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, &grid(&sides.left), &complete(&sides.right), ReservedEmitSink { level, charged })
         }
         PlainLookups::Complete { .. } => unreachable!("a level of two complete sides kills no candidate"),
     }
 }
 
+/// [`run_level_rows_marginal_sparse`] on a level whose cells are read by
+/// g-pair vectors ([`words_pay_marginal`]): the same nodes and product
+/// list, in the same order, and the same work.
+pub(crate) fn run_level_rows_marginal_sparse_words(
+    eng: &Engine,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
+    words: &mut WordScratch,
+    f_rows: Sides<usize>,
+    level: &mut TddLevel,
+    product_list: &mut Vec<ProductEntry>,
+) -> Result<(), OperationError> {
+    super::super::note_word_cells(super::super::WordNote::SparseMarginal);
+    let (left, right) = (MarginalLookup::new(&rows.ctx.sides.left), MarginalLookup::new(&rows.ctx.sides.right));
+    let sink = ListSink { emit: EmitSink { level }, product_list, base: rows.ctx.output_grid_base, row: 0 };
+    rows_by_words::<false, _, _, _>(eng, rows, scratch, words, f_rows, &left, &right, sink)
+}
+
 /// [`run_level_rows_words`] on one pair of lookups. A row of the row loop
 /// over a level without masks enters every cell, charges each a unit a
 /// candidate and charges a unit a column; a row read by vectors charges
-/// the same in one poll.
+/// the same in one poll. With `SLAB` the rows are a dense slab, row `i`
+/// at grid row `i`; without, every row is built in grid row 0 and the
+/// sink is told each row before its cells ([`PairSink::row`]).
 #[expect(clippy::too_many_arguments)]
-pub(super) fn rows_by_words<L: ChildLookup, R: ChildLookup, S: PairSink>(
+pub(super) fn rows_by_words<const SLAB: bool, L: ChildLookup, R: ChildLookup, S: PairSink>(
     eng: &Engine,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
@@ -475,7 +497,7 @@ pub(super) fn rows_by_words<L: ChildLookup, R: ChildLookup, S: PairSink>(
     right: &R,
     sink: S,
 ) -> Result<(), OperationError> {
-    let mut a = ByWords::new(eng, rows, &mut *scratch.g_pairs, words, f_rows, (kills(left), kills(right)), sink)?;
+    let mut a: ByWords<'_, S, SLAB> = ByWords::new(eng, rows, &mut *scratch.g_pairs, words, f_rows, (kills(left), kills(right)), sink)?;
     if rows.ctx.masked {
         run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut a)?;
         a.finish();
@@ -489,7 +511,7 @@ pub(super) fn rows_by_words<L: ChildLookup, R: ChildLookup, S: PairSink>(
     let gp = a.w.g_flat.len() as u64;
     // The row loop's resets: a fill of a small grid, a row at a time on a
     // large one.
-    let slab_fill = f_width.saturating_mul(width) <= DEAD_SLAB_FILL_MAX_CELLS;
+    let slab_fill = SLAB && f_width.saturating_mul(width) <= DEAD_SLAB_FILL_MAX_CELLS;
     if slab_fill {
         let end = ctx.output_grid_base + f_width * width;
         if !extend_slab(slab, ctx.output_grid_base, end) {
@@ -499,7 +521,7 @@ pub(super) fn rows_by_words<L: ChildLookup, R: ChildLookup, S: PairSink>(
     let (lv, rv) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
     let described = described_rows(lim, f_level, f_width, lv, rv, f_scratch);
     for i in 0..f_width {
-        let row_base = ctx.output_grid_base + i * width;
+        let row_base = ctx.output_grid_base + if SLAB { i * width } else { 0 };
         let fresh = extend_slab(slab, row_base, row_base + width);
         if !slab_fill && !fresh {
             mark_dead(&mut slab[row_base..row_base + width]);
@@ -551,7 +573,7 @@ pub(super) fn rows_by_words<L: ChildLookup, R: ChildLookup, S: PairSink>(
 }
 
 /// The vectors and the sink of [`rows_by_words`].
-struct ByWords<'w, S> {
+struct ByWords<'w, S, const SLAB: bool> {
     sink: S,
     w: &'w mut WordScratch,
     lim: &'w Limits,
@@ -677,7 +699,7 @@ fn live_words_between(
     }
 }
 
-impl<'w, S: PairSink> ByWords<'w, S> {
+impl<'w, S: PairSink, const SLAB: bool> ByWords<'w, S, SLAB> {
     /// Read g's pairs in column order, sort them by child on each side
     /// that kills, and clear the vectors.
     fn new(
@@ -793,6 +815,7 @@ impl<'w, S: PairSink> ByWords<'w, S> {
         right: &R,
     ) -> Result<RowMode, OperationError> {
         self.finish();
+        self.sink.row(i);
         self.row = i;
         self.mode = RowMode::Walk;
         if !self.on {
@@ -1249,12 +1272,12 @@ impl<'w, S: PairSink> ByWords<'w, S> {
     }
 }
 
-impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for ByWords<'_, S> {
-    const DENSE_SLAB: bool = true;
+impl<L: ChildLookup, R: ChildLookup, S: PairSink, const SLAB: bool> CellAction<L, R> for ByWords<'_, S, SLAB> {
+    const DENSE_SLAB: bool = SLAB;
 
     #[inline(always)]
     fn grid_row(&self, i: usize) -> usize {
-        i
+        if SLAB { i } else { 0 }
     }
 
     /// A cell the masks leave: on a row read by vectors, after the charge

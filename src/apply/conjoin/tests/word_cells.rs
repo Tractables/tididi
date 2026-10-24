@@ -103,7 +103,7 @@ fn the_levels_read_by_vectors_build_what_the_row_loop_builds() {
         }
     }
     let after = word_cells_levels();
-    let [grids, complete, grouped, rows, cells, sorted, _, _]: [u64; 8] = std::array::from_fn(|k| after[k] - before[k]);
+    let [grids, complete, grouped, rows, cells, sorted, _, _, _]: [u64; 9] = std::array::from_fn(|k| after[k] - before[k]);
     let bits = rows - cells - sorted;
     eprintln!("levels read by vectors: {grids} of two grids, {complete} with a complete side, {grouped} grouped cells, {rows} rows ({cells} walking their live cells, {bits} off cell bits, {sorted} off sorted candidates), over {cases} cases");
     assert!(grids > 0, "expected levels of two grids read by vectors, got none over {cases} cases");
@@ -115,24 +115,32 @@ fn the_levels_read_by_vectors_build_what_the_row_loop_builds() {
     assert!(sorted > 0, "expected rows written off sorted candidates, got none over {cases} cases");
 }
 
-/// Conjoin `f` and `g` on a fresh engine, every level on a dense route,
-/// summing out `targets`, and the work it took.
-fn marginalize(f: &Tdd, g: &Tdd, targets: &[VtreeIdx]) -> (Tdd, u64) {
+/// Conjoin `f` and `g` on a fresh engine, summing out `targets`, on
+/// `route`, and the work it took.
+fn marginalize(f: &Tdd, g: &Tdd, targets: &[VtreeIdx], route: SparseRoute) -> (Tdd, u64) {
     let eng = Engine::new();
-    let _dense = eng.limits().scope(LimitConfig::none().with_sparse_route(SparseRoute { sparsity: 64, min_grid: usize::MAX }));
+    let _route = eng.limits().scope(LimitConfig::none().with_sparse_route(route));
     let mark = eng.limits().mark();
     let out = eng.and_marginalizing(f.clone(), g.clone(), targets).unwrap();
     (out, eng.limits().work_since(mark))
 }
 
 /// [`check`] for a conjunction that sums out `targets`: the same levels,
-/// counts and value, and the same work.
+/// counts and value, and the same work. Once with every level on a dense
+/// route, and once with every level whose one marginal child is not
+/// carried through on the sparse-marginal route.
 fn check_summed(f: &Tdd, g: &Tdd, targets: &[VtreeIdx], what: &str) {
-    let (oracle, work) = word_cells_off(|| marginalize(f, g, targets));
+    for route in [SparseRoute { sparsity: 64, min_grid: usize::MAX }, SparseRoute { sparsity: u32::MAX, min_grid: 0 }] {
+        check_summed_on(f, g, targets, route, &format!("{what}, {route:?}"));
+    }
+}
+
+fn check_summed_on(f: &Tdd, g: &Tdd, targets: &[VtreeIdx], route: SparseRoute, what: &str) {
+    let (oracle, work) = word_cells_off(|| marginalize(f, g, targets, route));
     let arms = [
-        ("every level", word_cells_on(|| marginalize(f, g, targets))),
-        ("every level, rows sorted,", word_cells_on(|| word_rows_sorted(|| marginalize(f, g, targets)))),
-        ("the levels that pay", marginalize(f, g, targets)),
+        ("every level", word_cells_on(|| marginalize(f, g, targets, route))),
+        ("every level, rows sorted,", word_cells_on(|| word_rows_sorted(|| marginalize(f, g, targets, route)))),
+        ("the levels that pay", marginalize(f, g, targets, route)),
     ];
     for (name, (out, out_work)) in arms {
         assert_eq!(format!("{:?}", out.levels), format!("{:?}", oracle.levels), "{what}: {name} read by vectors built other levels");
@@ -149,7 +157,7 @@ fn check_summed(f: &Tdd, g: &Tdd, targets: &[VtreeIdx], what: &str) {
 /// and 14 variables on every vtree shape, unweighted and weighted, summing
 /// out every internal level, the root, one level below it, or a random
 /// set of levels: the streamed levels read by vectors fold what the row
-/// loop folds.
+/// loop folds, and the sparse-marginal levels build what it builds.
 #[test]
 fn the_streamed_levels_read_by_vectors_fold_what_the_row_loop_folds() {
     use crate::diagram::{Arithmetic, LiteralWeights, RationalWeights, WeightStore};
@@ -204,9 +212,10 @@ fn the_streamed_levels_read_by_vectors_fold_what_the_row_loop_folds() {
         }
     }
     let after = word_cells_levels();
-    let [_, _, grouped, rows, cells, sorted, streamed, marginal] = std::array::from_fn(|k| after[k] - before[k]);
+    let [_, _, grouped, rows, cells, sorted, streamed, marginal, sparse] = std::array::from_fn(|k| after[k] - before[k]);
     let bits = rows - cells - sorted;
-    eprintln!("streamed levels read by vectors: {streamed} ({marginal} through marginal lookups), {grouped} grouped cells, {rows} rows ({cells} walking their live cells, {bits} off cell bits, {sorted} off sorted candidates), over {cases} cases");
+    eprintln!("streamed levels read by vectors: {streamed} ({marginal} through marginal lookups), sparse-marginal levels {sparse}, {grouped} grouped cells, {rows} rows ({cells} walking their live cells, {bits} off cell bits, {sorted} off sorted candidates), over {cases} cases");
+    assert!(sparse > 0, "expected sparse-marginal levels read by vectors, got none over {cases} cases");
     assert!(streamed > marginal, "expected streamed levels read by vectors off two grids, got {} over {cases} cases", streamed - marginal);
     assert!(marginal > 0, "expected streamed levels read by vectors through marginal lookups, got none over {cases} cases");
     assert!(rows > 0, "expected rows of streamed levels read by vectors, got none over {cases} cases");

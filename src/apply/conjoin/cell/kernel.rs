@@ -114,6 +114,11 @@ pub(crate) trait PairSink {
         grid_pos: usize,
         start: usize,
     ) -> Result<(), OperationError>;
+
+    /// The f row the cells that follow are of, for a sink that records
+    /// where each cell it finishes sits.
+    #[inline(always)]
+    fn row(&mut self, _i: usize) {}
 }
 
 /// Build the output level: push pairs, emit product nodes, write `node_idx`.

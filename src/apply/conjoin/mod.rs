@@ -25,7 +25,7 @@ use cell::{
     RightColumns, CellCtx, ChildPlan, ColumnSlice,
     run_level_rows_complete, run_level_rows_marginal, run_level_rows_marginal_sparse, run_level_rows_plain,
     run_level_rows_pairs, run_level_rows_single, run_level_rows_stream_count, run_level_rows_stream_words, run_level_rows_words, words_pay,
-    words_pay_stream,
+    run_level_rows_marginal_sparse_words, words_pay_marginal,
     PlainLookups, RowLoop, RowScratch, WordScratch,
 };
 
@@ -957,6 +957,8 @@ enum WordNote {
     /// A streaming target's level, and one read through marginal lookups.
     Stream,
     StreamMarginal,
+    /// A sparse-marginal level.
+    SparseMarginal,
 }
 
 // A test counts the times a level's pairs arena grew.

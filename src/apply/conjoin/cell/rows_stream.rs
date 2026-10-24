@@ -63,7 +63,7 @@ fn stream_level<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
 }
 
 /// [`run_level_rows_stream_count`] on a level whose cells are read by g-pair
-/// vectors ([`super::word_cells::words_pay_stream`]): the same column, each
+/// vectors ([`super::word_cells::words_pay_marginal`]): the same column, each
 /// cell's pairs folded in the order the row loop folds them, and the same
 /// work. A side carried through kills nothing.
 #[expect(clippy::too_many_arguments)]
@@ -108,12 +108,12 @@ fn stream_words<L: ChildLookup, R: ChildLookup>(
         StreamLevelState::Weighted(counts) => {
             let mut st = attach_children::<WeightFold>(env, rows.children, counts);
             let sink = FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } };
-            super::word_cells::rows_by_words(eng, rows, scratch, words, f_rows, left, right, sink)
+            super::word_cells::rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, left, right, sink)
         }
         StreamLevelState::Int(counts) => {
             let mut st = attach_children::<IntFold>(env, rows.children, counts);
             let sink = FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } };
-            super::word_cells::rows_by_words(eng, rows, scratch, words, f_rows, left, right, sink)
+            super::word_cells::rows_by_words::<true, _, _, _>(eng, rows, scratch, words, f_rows, left, right, sink)
         }
     }
 }

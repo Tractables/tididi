@@ -234,9 +234,9 @@ thread_local! {
     /// order, their rows read by vectors, those of these that walk their
     /// live cells alone, and those that write them off the sorted list of
     /// their live candidates; and the streaming targets' levels among the
-    /// levels, and those read through marginal lookups
-    /// ([`word_cells_levels`]).
-    static WORD_CELLS_LEVELS: std::cell::Cell<[u64; 8]> = const { std::cell::Cell::new([0; 8]) };
+    /// levels, and those read through marginal lookups; and the
+    /// sparse-marginal levels ([`word_cells_levels`]).
+    static WORD_CELLS_LEVELS: std::cell::Cell<[u64; 9]> = const { std::cell::Cell::new([0; 9]) };
 }
 
 /// [`WORD_CELLS`], or, where it is unset, `TIDIDI_TEST_WORD_CELLS` (`1`
@@ -307,8 +307,9 @@ pub(super) fn word_rows_sorted<R>(f: impl FnOnce() -> R) -> R {
 /// order, their rows read by vectors, those of these that walk their live
 /// cells alone, and those that write them off the sorted list of their
 /// live candidates; and the streaming targets' levels among the levels,
-/// and those read through marginal lookups.
-pub(super) fn word_cells_levels() -> [u64; 8] {
+/// and those read through marginal lookups; and the sparse-marginal
+/// levels.
+pub(super) fn word_cells_levels() -> [u64; 9] {
     WORD_CELLS_LEVELS.with(std::cell::Cell::get)
 }
 

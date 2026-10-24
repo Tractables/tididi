@@ -898,6 +898,9 @@ struct SparseMargScratch<'a> {
     f_pairs: &'a mut Vec<ChildPair>,
     g_pairs: &'a mut Vec<ChildPair>,
     products: &'a mut super::super::products::Products,
+    /// The vectors of a level whose cells are read by them
+    /// (`run_level_rows_marginal_sparse_words`), and f's child widths.
+    words: Option<(&'a mut WordScratch, Sides<usize>)>,
 }
 
 /// Build a [`Route::SparseMarg`] level and close it out.
@@ -911,6 +914,7 @@ struct SparseMargScratch<'a> {
 ///
 /// This route returns before `finalize_level`, so it does that tail's
 /// inline-emit marking itself. Exactly one side is the marginal pass-through.
+/// A level whose cells pay to be read by g-pair vectors is read by them.
 ///
 /// # Errors
 ///
@@ -926,16 +930,14 @@ fn finish_sparse_marginal_level(
 ) -> Result<(), OperationError> {
     let LevelShape { t, g: gw, .. } = shape;
     let SparseMargScratch {
-        f_pairs, g_pairs, products,
+        f_pairs, g_pairs, products, words,
     } = scratch;
     let (node_idx, product_list) = products.row_buffers(t.idx());
-    run_level_rows_marginal_sparse(
-        eng,
-        rows,
-        RowScratch { f_pairs, g_pairs, node_idx },
-        level,
-        product_list,
-    )?;
+    let scratch = RowScratch { f_pairs, g_pairs, node_idx };
+    match words {
+        Some((words, f_rows)) => run_level_rows_marginal_sparse_words(eng, rows, scratch, words, f_rows, level, product_list)?,
+        None => run_level_rows_marginal_sparse(eng, rows, scratch, level, product_list)?,
+    }
     products.arena.free(output_grid_base, gw.here);
     products.finish_sparse(level, t.idx());
     // The rows were built in order, so the product list numbers the live
@@ -1222,18 +1224,25 @@ pub(super) fn build_level_dense(
         }
 
         if use_sparse_marginal {
+            let rows = RowLoop {
+                f_level: f.level(t), g_level: g.level(t),
+                children: Sides { left: left_level, right: right_level },
+                ctx: &cell_ctx, f_width: fw.here,
+            };
+            // Read by g-pair vectors where they pay.
+            let f_rows = Sides { left: fw.left, right: fw.right };
+            let words = !(passthrough.left && passthrough.right)
+                && super::super::word_cells_forced().unwrap_or_else(|| {
+                    words_pay_marginal(eng, rows, &mut *run.words, true, f_rows, run.products.arena.slab())
+                });
             return finish_sparse_marginal_level(
-                eng, shape,
-                RowLoop {
-                    f_level: f.level(t), g_level: g.level(t),
-                    children: Sides { left: left_level, right: right_level },
-                    ctx: &cell_ctx, f_width: fw.here,
-                },
+                eng, shape, rows,
                 output_grid_base, level,
                 SparseMargScratch {
                     f_pairs: run.f_pairs_scratch,
                     g_pairs: run.g_pairs_scratch,
                     products: run.products,
+                    words: words.then_some((&mut *run.words, f_rows)),
                 },
                 passthrough,
             );
@@ -1261,7 +1270,7 @@ pub(super) fn build_level_dense(
                 };
                 let slab = run.products.arena.slab();
                 match route {
-                    Route::Stream { marginal_children } => words_pay_stream(eng, rows, &mut *run.words, marginal_children, f_rows, slab),
+                    Route::Stream { marginal_children } => words_pay_marginal(eng, rows, &mut *run.words, marginal_children, f_rows, slab),
                     _ => words_pay(eng, rows, &mut *run.words, lookups, f_rows, slab),
                 }
             });
