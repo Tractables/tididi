@@ -360,6 +360,14 @@ pub(crate) fn contract_all_twins(
         }
     }
 
+    // What the list holds now is what the merges above pushed: each the
+    // parent it rewrote, whose children its joint fixpoint left without
+    // twins, and the level it merged, which the heap took as a parent after
+    // its last change. Both are at their fixpoint. Left on the list, every
+    // merge of a contraction run alone, between operations, would have its
+    // two levels searched again by the next reduction, for nothing. The
+    // other passes' entries stay.
+    tdd.dirty.clear(Pass::Contract);
     Ok(())
 }
 

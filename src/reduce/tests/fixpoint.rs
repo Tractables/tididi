@@ -51,3 +51,40 @@ fn an_edit_after_minimize_is_reduced_by_the_next_minimize() {
     assert!(h.dirty.is_empty());
     assert_canonical(&h);
 }
+
+/// A contraction's merges push the levels they change onto every worklist,
+/// but the sweep takes each to its fixpoint: none is left on the
+/// contraction's own list, and contracting every level again merges nothing.
+#[test]
+fn a_contraction_leaves_none_of_its_merges_on_its_own_worklist() {
+    use crate::reduce::contract::contract_all_twins;
+    use crate::reduce::ReductionPlan;
+    use crate::test_helpers::{rand_cnf, CnfShape, Lcg};
+    let eng = Engine::new();
+    let mut rng = Lcg::new(17);
+    let mut merged = 0;
+    for round in 0..24 {
+        let num_vars = 6 + (round % 5) as u32;
+        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 12, width: 3 });
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            let mut f = eng.clause(&vtree, clauses[0].iter().copied()).unwrap();
+            for clause in &clauses[1..] {
+                let g = eng.clause(&vtree, clause.iter().copied()).unwrap();
+                f = eng.and(f, g).unwrap();
+                let before = f.levels.node_count();
+                eng.reduce(&mut f, ReductionPlan::Contract).unwrap();
+                merged += before - f.levels.node_count();
+                assert!(f.dirty.levels(Pass::Contract).is_empty(), "{shape}: the contraction left itself work");
+                let settled = f.levels.node_count();
+                f.seed_contract_worklist(vtree.internal_bottomup().map(|(t, _, _)| t.0));
+                contract_all_twins(&eng, &mut f).unwrap();
+                assert_eq!(f.levels.node_count(), settled, "{shape}: a level the contraction left had twins");
+            }
+            let expected = compile_clauses(&vtree, &clauses);
+            f.minimize().unwrap();
+            assert_canonical(&f);
+            assert!(eng.equivalent(&f, &expected).unwrap(), "{shape}: the contracted diagram changed its function");
+        }
+    }
+    assert!(merged > 0, "no conjunction left a twin to merge");
+}
