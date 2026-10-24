@@ -548,6 +548,30 @@ impl Dirty {
         self.fused.get(level as usize / 64).is_some_and(|word| word >> (level % 64) & 1 == 1)
     }
 
+    /// The fusion records, taken: for an assembly to hand back to the
+    /// levels it carries as they were ([`restore_fused`](Self::restore_fused)).
+    pub(crate) fn take_fused(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.fused)
+    }
+
+    /// Add the records `fused` taken from the diagram this one was assembled
+    /// from ([`take_fused`](Self::take_fused)) but at `rebuilt`: every other
+    /// level is that diagram's as it left it.
+    pub(crate) fn restore_fused(&mut self, mut fused: Vec<u64>, rebuilt: &[VtreeIdx]) {
+        for t in rebuilt {
+            if let Some(word) = fused.get_mut(t.idx() / 64) {
+                *word &= !(1 << (t.0 % 64));
+            }
+        }
+        if self.fused.len() > fused.len() {
+            std::mem::swap(&mut self.fused, &mut fused);
+        }
+        for (word, own) in fused.iter_mut().zip(&self.fused) {
+            *word |= own;
+        }
+        self.fused = fused;
+    }
+
     /// Record that a pair fusion at `level` ran to the end, leaving no node
     /// there two pairs to fuse. Recorded only where the room for its bit is
     /// granted: what is not recorded is fused again, never wrongly skipped.

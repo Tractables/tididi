@@ -322,10 +322,21 @@ fn rebuild_along_spine(eng: &Engine, f: &mut Tdd, clause: &[(Literal, VtreeIdx)]
     // whatever the accumulator still owed is carried over, which keeps this
     // exact for a caller that does not minimize between clauses. The spine
     // is also all the walk changed, and so all the seat closes.
+    // The pair fusion records (`Dirty::is_fused`) off the spine are the
+    // accumulator's too.
     let vtree = Arc::clone(vtree);
-    let carried = f.take_worklists();
-    diagram::Assembly::from_levels(eng, vtree, levels, f_weights)
-        .finish_with(TddNodeId { vtree: out_vtree, local: out_local }, carried, &spine_internal, Some(&spine_internal[..]))
+    let mut carried = f.take_worklists();
+    let fused = carried.take_fused();
+    let mut out = diagram::Assembly::from_levels(eng, vtree, levels, f_weights)
+        .finish_with(TddNodeId { vtree: out_vtree, local: out_local }, carried, &spine_internal, Some(&spine_internal[..]))?;
+    out.dirty.restore_fused(fused, &spine_internal);
+    #[cfg(debug_assertions)]
+    {
+        let recorded: Vec<VtreeIdx> =
+            (0..out.vtree.num_nodes() as u32).map(VtreeIdx).filter(|t| out.dirty.is_fused(t.0)).collect();
+        crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(&out, Some(&recorded), "and_clause");
+    }
+    Ok(out)
 }
 
 /// Conjoin `clause` into `f` under `eng`'s limits. The implementation behind

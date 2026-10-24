@@ -155,15 +155,16 @@ fn a_merge_at_a_recorded_parent_is_fused_at_its_survivors() {
 
 /// Random formulas on every vtree shape with a level marginalized and the
 /// result minimized, each conjoined with a clause over two variables outside
-/// that level, and with the same clause summing out a second level beside
-/// the first: a level the conjunction builds beside the marginal child of a
-/// level the formula recorded is recorded too (the conjunction's debug check
-/// reads it), and minimizing the result gives the diagram minimizing it with
-/// every record forgotten gives.
+/// that level, as a diagram and as a clause, and with the same clause
+/// summing out a second level beside the first: a level the conjunction
+/// builds beside the marginal child of a level the formula recorded is
+/// recorded too, as is each level the clause conjunction leaves as it was
+/// (their debug checks read them), and minimizing the result gives the
+/// diagram minimizing it with every record forgotten gives.
 #[test]
 fn a_conjunction_records_the_levels_it_builds_beside_a_recorded_carrier() {
     let mut rng = Lcg::new(37);
-    let mut recorded = 0;
+    let (mut recorded, mut kept_by_clause) = (0, 0);
     for num_vars in 5..9u32 {
         for (shape, vtree) in vtree_shapes(num_vars) {
             let eng = Engine::new();
@@ -191,7 +192,7 @@ fn a_conjunction_records_the_levels_it_builds_beside_a_recorded_carrier() {
             let b = outside.iter().copied().find(|&x| x != a).unwrap();
             let mut sign = |x: i32| if rng.below(2) == 0 { x } else { -x };
             let clause = vec![sign(a), sign(b)];
-            let g = compile_clauses_on(&eng, &vtree, &[clause]);
+            let g = compile_clauses_on(&eng, &vtree, std::slice::from_ref(&clause));
             let label = format!("{shape} over {num_vars} variables");
 
             let mut kept = eng.and(f.clone(), g.clone()).unwrap();
@@ -201,6 +202,14 @@ fn a_conjunction_records_the_levels_it_builds_beside_a_recorded_carrier() {
             eng.minimize(&mut kept).unwrap();
             eng.minimize(&mut forced).unwrap();
             assert_same_shape(&kept, &forced, &label);
+
+            let mut kept = eng.and_clause(f.clone(), &clause).unwrap();
+            kept_by_clause += (0..vtree.num_nodes() as u32).filter(|&t| kept.dirty.is_fused(t)).count();
+            let mut forced = kept.clone();
+            forced.dirty.forget_all_fused();
+            eng.minimize(&mut kept).unwrap();
+            eng.minimize(&mut forced).unwrap();
+            assert_same_shape(&kept, &forced, &format!("{label}, as a clause"));
 
             // A second target whose subtree neither holds nor lies in the first's.
             let beside: Vec<VtreeIdx> = inner
@@ -221,4 +230,5 @@ fn a_conjunction_records_the_levels_it_builds_beside_a_recorded_carrier() {
         }
     }
     assert!(recorded > 0, "no conjunction recorded a level it built");
+    assert!(kept_by_clause > 0, "no clause conjunction kept a record");
 }
