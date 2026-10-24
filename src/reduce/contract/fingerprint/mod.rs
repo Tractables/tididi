@@ -434,10 +434,26 @@ fn twin_table_size(max_occupancy: usize) -> usize {
         .max(4)
 }
 
+/// The fewest nodes a level has for [`mark_candidates`] to partition its
+/// fingerprints: from here the probe table, 21 to 43 bytes a node, outgrows
+/// a core's cache, and a probe misses it on nearly every node.
+const PARTITION_MIN_WIDTH: usize = 1 << 16;
+
+/// About how many fingerprints one partition holds: its records, 16 bytes
+/// each, and its probe table, 8 to 16 bytes a fingerprint, stay in a core's
+/// second-level cache.
+const PARTITION_SIZE: usize = 1 << 14;
+
 /// Mark twin candidates among `scratch.fingerprints[..width]`: every node whose
 /// fingerprint is shared with ≥1 other node is flagged in
 /// `scratch.is_candidate`. Returns whether any node was flagged; `false` means
 /// all fingerprints are distinct, hence no twins.
+///
+/// A level of at least [`PARTITION_MIN_WIDTH`] nodes has its fingerprints
+/// split by their high bits into partitions of about [`PARTITION_SIZE`]
+/// first, a counting pass and a scattering pass, each read in sequence;
+/// equal fingerprints share a partition, and each partition is probed in a
+/// table of its own that stays in the cache.
 #[inline]
 fn mark_candidates(
     eng: &Engine,
@@ -445,6 +461,9 @@ fn mark_candidates(
     width: usize,
 ) -> Result<bool, OperationError> {
     let lim = eng.limits();
+    if width >= PARTITION_MIN_WIDTH {
+        return mark_partitioned_candidates(lim, scratch, width);
+    }
     let ContractScratch { fingerprints, twin_hash_table, is_candidate, .. } = scratch;
     lim.try_resize(is_candidate, width, false)?;
     is_candidate[..width].fill(false);
@@ -459,6 +478,83 @@ fn mark_candidates(
         }
         true
     })?;
+    Ok(found)
+}
+
+/// [`mark_candidates`] on a wide level: its fingerprints counted and then
+/// placed by their high bits, so that each partition is probed alone.
+fn mark_partitioned_candidates(
+    lim: &crate::limits::Limits,
+    scratch: &mut ContractScratch,
+    width: usize,
+) -> Result<bool, OperationError> {
+    let ContractScratch { fingerprints, is_candidate, part_records, part_starts, part_table, .. } = scratch;
+    lim.try_resize(is_candidate, width, false)?;
+    is_candidate[..width].fill(false);
+    let fingerprints = &fingerprints[..width];
+    let bits = (width / PARTITION_SIZE).next_power_of_two().trailing_zeros();
+    let shift = u64::BITS - bits;
+    let parts = 1usize << bits;
+    // Each partition's size at the entry after its own, then their sums:
+    // the start of each, and the end of the last.
+    lim.try_resize(part_starts, parts + 1, 0)?;
+    let starts = &mut part_starts[..parts + 1];
+    starts.fill(0);
+    for &fp in fingerprints {
+        starts[(fp >> shift) as usize + 1] += 1;
+    }
+    let (mut widest, mut sum) = (0, 0);
+    for start in starts.iter_mut() {
+        widest = widest.max(*start);
+        sum += *start;
+        *start = sum;
+    }
+    // Placed in node order, with each start as the partition's cursor: the
+    // cursors end at the next partition's start, so each start is the one
+    // before it when the pass is done.
+    lim.try_resize(part_records, width, (0, 0))?;
+    for (node, &fp) in fingerprints.iter().enumerate() {
+        let p = (fp >> shift) as usize;
+        let at = starts[p] as usize;
+        part_records[at] = (fp, node as u32);
+        starts[p] += 1;
+    }
+    // The partitions in turn, each probed linearly from its low bits in a
+    // table of at least twice its size: a probe ends at an empty slot or at
+    // the first earlier node with its fingerprint, which both are marked.
+    let size = (2 * widest as usize).next_power_of_two();
+    lim.try_resize(part_table, size, u32::MAX)?;
+    let mut found = false;
+    let mut begin = 0usize;
+    for &end in &starts[..parts] {
+        let end = end as usize;
+        let n = end - begin;
+        if n >= 2 {
+            let mask = (2 * n).next_power_of_two() - 1;
+            let table = &mut part_table[..=mask];
+            table.fill(u32::MAX);
+            for at in begin..end {
+                let (fp, node) = part_records[at];
+                let mut slot = fp as usize & mask;
+                loop {
+                    let held = table[slot];
+                    if held == u32::MAX {
+                        table[slot] = at as u32;
+                        break;
+                    }
+                    let (held_fp, held_node) = part_records[held as usize];
+                    if held_fp == fp {
+                        is_candidate[node as usize] = true;
+                        is_candidate[held_node as usize] = true;
+                        found = true;
+                        break;
+                    }
+                    slot = (slot + 1) & mask;
+                }
+            }
+        }
+        begin = end;
+    }
     Ok(found)
 }
 

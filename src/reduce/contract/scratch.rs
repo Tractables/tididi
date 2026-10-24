@@ -230,6 +230,13 @@ pub(crate) struct ContractScratch {
     pub(super) twin_hash_table: Vec<TwinSlot>,
     /// Per-node fingerprint, combining all context hashes (a cheap twin pre-screen).
     pub(super) fingerprints: Vec<u64>,
+    /// A wide level's fingerprints with their nodes by partition (their high
+    /// bits), the start of each partition (one more entry than there are
+    /// partitions), and one partition's probe table of positions in
+    /// `part_records` (`fingerprint::mark_candidates`).
+    pub(super) part_records: Vec<(u64, u32)>,
+    pub(super) part_starts: Vec<u32>,
+    pub(super) part_table: Vec<u32>,
     /// The per-parent-node sibling table of `TwinEntries::no_twin`: each
     /// cell a stamp in the high half and a sibling in the low one. Its
     /// length is a power of two, at least twice the most siblings one node
@@ -377,6 +384,9 @@ impl Buffers for ContractScratch {
         visit(&mut self.cursors);
         visit(&mut self.twin_hash_table);
         visit(&mut self.fingerprints);
+        visit(&mut self.part_records);
+        visit(&mut self.part_starts);
+        visit(&mut self.part_table);
         visit(&mut self.twin_local);
         visit(&mut self.twin_named);
         visit(&mut self.twin_class);
