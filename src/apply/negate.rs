@@ -11,6 +11,7 @@ use crate::Engine;
 use crate::limits::OperationError;
 use crate::execution::pool::{Drain, Pool, Pools};
 use crate::apply::falsity::empty_node;
+use crate::reduce::prune::Completion;
 use std::sync::Arc;
 
 /// The buffers negation reuses between calls.
@@ -60,7 +61,7 @@ impl Engine {
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
         let canonical = f.levels.is_canonical(f.output);
-        let (mut result, old) = complement_on(self, f)?;
+        let (mut result, done) = complement_on(self, f)?;
         // `expand_full` left every level below the root covering its
         // children's whole basis, and the old output and its complement cover
         // the root's, so every node is named from the level above and the only
@@ -69,7 +70,7 @@ impl Engine {
         // The complement of a canonical operand has no twins to contract.
         let full = matches!(plan, crate::reduce::ReductionPlan::Full(_));
         if canonical && (full || matches!(plan, crate::reduce::ReductionPlan::Prune)) {
-            self.certify_complement(&mut result, full, old)?;
+            self.certify_complement(&mut result, full, done.as_ref())?;
         } else {
             self.reduce_scoped(&mut result, plan, crate::reduce::prune::PruneScope::BelowRoot)?;
         }
@@ -83,20 +84,23 @@ pub(crate) fn negate_on(eng: &Engine, tdd: Tdd) -> Result<Tdd, OperationError> {
     complement_on(eng, tdd).map(|(result, _)| result)
 }
 
-/// [`negate_on`], with the old output's slot at the root where the
-/// complement was built beside it.
-fn complement_on(eng: &Engine, mut tdd: Tdd) -> Result<(Tdd, Option<NodeIdx>), OperationError> {
+/// [`negate_on`], with what the completion added where the complement was
+/// built beside the old output.
+pub(crate) fn complement_on(eng: &Engine, mut tdd: Tdd) -> Result<(Tdd, Option<Completion>), OperationError> {
     tdd.require_structure()?;
     eng.limits().check_stop()?;
     let weights = tdd.weights.take();
-    let (mut result, old) = if tdd.is_zero() {
+    let (mut result, done) = if tdd.is_zero() {
         (crate::build::constant_on(eng, &tdd.vtree, true)?, None)
     } else {
-        expand_full(eng, &mut tdd)?;
-        complement_full_at_root(eng, tdd)?
+        let mut filled = Vec::new();
+        eng.limits().try_resize(&mut filled, tdd.vtree.num_nodes(), false)?;
+        expand_full(eng, &mut tdd, &mut filled)?;
+        let (result, old) = complement_full_at_root(eng, tdd)?;
+        (result, old.map(|old| Completion { old, filled }))
     };
     result.weights = weights;
-    Ok((result, old))
+    Ok((result, done))
 }
 
 /// Complement at the root a diagram full below it: collect the root-level
@@ -176,13 +180,14 @@ fn complement_full_at_root(eng: &Engine, full_tdd: Tdd) -> Result<(Tdd, Option<N
 /// level's nodes cover, in a bitmap held in engine scratch, and the fill node
 /// is read off the zero bits. The walk also records, per leaf child, whether
 /// the level refers to it as `One` or as `Pos`/`Neg`, and the fill is emitted
-/// in that same form.
-pub(crate) fn expand_full(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
+/// in that same form. `filled[t]` is set for each level `t` it adds a node
+/// to, as the level's last.
+pub(crate) fn expand_full(eng: &Engine, tdd: &mut Tdd, filled: &mut [bool]) -> Result<(), OperationError> {
     let scratch = &eng.scratch.negate;
     let mut bits = scratch.cover.checkout_preserving(eng);
     let mut cells = scratch.cells.checkout_preserving(eng);
 
-    expand_full_with(eng, tdd, &mut bits, &mut cells)
+    expand_full_with(eng, tdd, &mut bits, &mut cells, filled)
 }
 
 /// [`expand_full`] with the scratch checked out.
@@ -191,6 +196,7 @@ fn expand_full_with(
     tdd: &mut Tdd,
     bits: &mut Vec<u64>,
     cells: &mut Vec<ChildPair>,
+    filled: &mut [bool],
 ) -> Result<(), OperationError> {
     let vtree = tdd.vtree.clone();
     let root = vtree.root();
@@ -232,6 +238,7 @@ fn expand_full_with(
             cover.missing_into(eng, form, cells)?;
             if !cells.is_empty() {
                 level.push_node(eng.limits(), cells)?;
+                filled[t.idx()] = true;
             }
         }
         eng.limits().check_stop()?;

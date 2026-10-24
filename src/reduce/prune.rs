@@ -250,11 +250,15 @@ pub(crate) struct PruneScratch {
     settle_parents: Vec<VtreeIdx>,
     /// The marks a [`settle_loose`] read sets, one byte per slot.
     settle_marks: Vec<u8>,
-    /// [`prune_complement`]'s node each visited level loses, by visit.
-    dropped: Vec<u32>,
-    /// [`prune_complement`]'s count of the pairs the dropped node of a level
-    /// gives each node of a child, zero between reads.
-    row: Vec<u32>,
+    /// [`prune_complement`]'s levels that lose a node, top-down: the level,
+    /// the slot of the node it loses, and the entry of its parent level.
+    chain: Vec<[u32; 3]>,
+    /// [`prune_complement`]'s slot, by entry of `chain`, of the node of a
+    /// level that names its children's new true classes.
+    holder: Vec<u32>,
+    /// [`prune_complement`]'s stamped count of the pairs the dying node of a
+    /// level gives each node of its children ([`true_children`]).
+    row: Vec<u64>,
 }
 
 impl Buffers for PruneScratch {
@@ -267,7 +271,8 @@ impl Buffers for PruneScratch {
         visit(&mut self.settle_flags);
         visit(&mut self.settle_parents);
         visit(&mut self.settle_marks);
-        visit(&mut self.dropped);
+        visit(&mut self.chain);
+        visit(&mut self.holder);
         visit(&mut self.row);
     }
 }
@@ -282,7 +287,8 @@ impl PooledScratch for PruneScratch {
         self.settle_flags.clear();
         self.settle_parents.clear();
         self.settle_marks.clear();
-        self.dropped.clear();
+        self.chain.clear();
+        self.holder.clear();
         self.row.clear();
     }
 }
@@ -1574,9 +1580,19 @@ fn compact_visited(
 
 // ── The complement of a canonical diagram ────────────────────────────────────
 
+/// What a negation of a canonical diagram leaves for the prune after it:
+/// the old output's slot at the root, and per level whether the completion
+/// added a node there, as the level's last slot, for its false class.
+pub(crate) struct Completion {
+    /// The old output's slot at the root.
+    pub(crate) old: NodeIdx,
+    /// Per level, whether the completion added a node.
+    pub(crate) filled: Vec<bool>,
+}
+
 /// Prune the negation of a canonical diagram: `tdd` is its completion with
-/// the complement at the root, as the negation leaves it, and `old` the old
-/// output's slot at the root.
+/// the complement at the root, as the negation leaves it, and `done` what
+/// the completion added.
 ///
 /// Complement maps the residual classes of a level one to one, except that
 /// the class whose residual was true dies, its residual now false: all the
@@ -1588,103 +1604,195 @@ fn compact_visited(
 /// of `t`. A level has it only under a parent that has one, so the levels
 /// read are a subtree of the vtree from the root down, and on each only the
 /// dying node's pairs, where [`prune_below_root`] reads every pair of every
-/// level that loses a node. The compaction is the same.
+/// level that loses a node.
+///
+/// Each dying node is dropped by moving its level's last node into its
+/// slot, and only the references to the moved node change. The last node
+/// of a level the completion added a node to is that node, the level's new
+/// true class, and the only node that names it is its parent's: the
+/// complement at the root, or the node the completion added to the parent
+/// level. On a level the completion added nothing to, the last node is an
+/// old class, which any node of the parent may name, and every node of the
+/// parent is read. A level held as a description is stored first.
 ///
 /// # Errors
 ///
 /// As [`prune_unreachable`]: a refused reservation leaves `tdd` untouched.
-pub(crate) fn prune_complement(eng: &Engine, tdd: &mut Tdd, old: NodeIdx) -> Result<(), OperationError> {
+pub(crate) fn prune_complement(eng: &Engine, tdd: &mut Tdd, done: &Completion) -> Result<(), OperationError> {
     debug_assert!(below_root_walk_applies(tdd) && !tdd.has_marginal_level());
-    debug_assert_ne!(old, tdd.output.local);
+    debug_assert_ne!(done.old, tdd.output.local);
     let lim = eng.limits();
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
-    let PruneScratch { marks, remap, identity, visits, dropped, row, .. } = &mut *scratch;
+    let PruneScratch { chain, holder, row, .. } = &mut *scratch;
     let vtree = std::sync::Arc::clone(&tdd.vtree);
     let root = tdd.output.vtree;
-    visits.clear();
-    dropped.clear();
-    let (mut used, mut slots, mut remap_need) = (0usize, 0usize, 0usize);
-
-    let root_width = tdd.levels[root.idx()].slot_count();
-    let base = alloc_block(eng, marks, &mut used, &mut slots, root_width)?;
-    mark(marks, base, tdd.output.local.idx());
-    lim.try_push(visits, Visit::new(root, base))?;
-    lim.try_push(dropped, old.0)?;
-
+    debug_assert_eq!(tdd.levels[root.idx()].slot_count(), 2, "the root holds the old output and its complement");
+    chain.clear();
+    lim.try_push(chain, [root.0, done.old.0, 0])?;
+    let mut slots = tdd.levels[root.idx()].slot_count();
+    row.clear();
     let mut i = 0;
-    while i < visits.len() {
-        let (t, r) = (visits[i].level, dropped[i] as usize);
-        let (left, right) = vtree.children(t);
-        let (lw, rw) = (tdd.reference_slot_count(left), tdd.reference_slot_count(right));
-        identity_upto(eng, identity, lw.max(rw))?;
-        let mut sides = [Child::KEPT; 2];
-        for (k, c) in [left, right].into_iter().enumerate() {
-            if !tdd.is_structural_internal(c) {
-                continue;
-            }
-            let Some(u) = true_child(lim, tdd, t, r, k == 0, row)? else { continue };
-            let width = tdd.levels[c.idx()].slot_count();
-            let base = alloc_block(eng, marks, &mut used, &mut slots, width)?;
-            mark_all(&mut marks[base..base + words(width)], width);
-            marks[base + (u >> 6)] &= !(1u64 << (u & 63));
-            sides[k] = Child::at(base, width, true);
-            lim.try_push(visits, Visit::new(c, base))?;
-            lim.try_push(dropped, u as u32)?;
+    while i < chain.len() {
+        let [t, r, _] = chain[i];
+        let (left, right) = vtree.children(VtreeIdx(t));
+        let sides = [tdd.is_structural_internal(left), tdd.is_structural_internal(right)];
+        let found = true_children(lim, tdd, VtreeIdx(t), r as usize, sides, row, i as u32 + 1)?;
+        for (c, u) in [left, right].into_iter().zip(found) {
+            let Some(u) = u else { continue };
+            slots += tdd.levels[c.idx()].slot_count();
+            lim.try_push(chain, [c.0, u as u32, i as u32])?;
         }
-        let [lc, rc] = sides;
-        visits[i].left = lc;
-        visits[i].right = rc;
-        remap_need = remap_need.max(lc.span + rc.span);
         i += 1;
     }
-
-    compact_visited(eng, tdd, marks, remap, identity, visits, remap_need)?;
-    tdd.output.local = NodeIdx(rank(&marks[visits[0].base..], tdd.output.local.idx()));
-    // The blocks cover what the walk below the root would have charged.
+    // Every room a described level is stored in is had before any level
+    // changes.
+    let mut rooms = Vec::new();
+    for &[t, _, _] in chain.iter() {
+        let level = &tdd.levels[t as usize];
+        if level.pairs.implicit().is_some() {
+            lim.try_push(&mut rooms, (t, level.store_room(lim)?))?;
+        }
+    }
+    lim.try_resize(holder, chain.len(), NO_HOLDER)?;
+    // The chain stands for what the walk below the root would have charged.
     lim.charge_work(2 * slots as u64);
+    for (t, room) in rooms {
+        tdd.levels.mark_changed(VtreeIdx(t));
+        tdd.levels[t as usize].store_moved(room, |_| true, |l| l, |r| r);
+    }
+    retire_in_place(tdd, chain, &done.filled, holder);
     Ok(())
 }
 
-/// The node of the structural internal child of `t` on the left side when
-/// `on_left`, else the right, that node `r` of `t` pairs with every node of
-/// the other child's completed basis: every slot of an internal sibling, or
-/// both literals of a leaf, which a `One` pair covers at once. `row` is
-/// zero on entry for every slot of the child, and is left so.
-fn true_child(
+/// No node of the level names its children's new true classes.
+const NO_HOLDER: u32 = u32::MAX;
+
+/// Drop the dying node of each level of `chain`, stored, by moving the
+/// level's last node into its slot, and point the references to the moved
+/// node at it: in the node of the parent that names the level's new true
+/// class, `holder`, where the moved node is that class (`filled`), else in
+/// every node of the parent.
+fn retire_in_place(tdd: &mut Tdd, chain: &[[u32; 3]], filled: &[bool], holder: &mut [u32]) {
+    let [root, old, _] = chain[0];
+    debug_assert_eq!(tdd.output.local.idx() + 1, tdd.levels[root as usize].slot_count());
+    let out = retire(tdd, VtreeIdx(root), old as usize);
+    tdd.output.local = NodeIdx(out as u32);
+    holder[0] = out as u32;
+    for (i, &[c, k, up]) in chain.iter().enumerate().skip(1) {
+        let (c, t) = (VtreeIdx(c), VtreeIdx(chain[up as usize][0]));
+        let last = tdd.levels[c.idx()].slot_count() - 1;
+        let on_left = tdd.vtree.children(t).0 == c;
+        let k = retire(tdd, c, k as usize);
+        let filled = filled[c.idx()];
+        holder[i] = if filled { k as u32 } else { NO_HOLDER };
+        if k == last {
+            continue;
+        }
+        tdd.levels.mark_changed(t);
+        let level = &mut tdd.levels[t.idx()];
+        match holder[up as usize] {
+            h if filled && h != NO_HOLDER => retarget(level, h as usize, on_left, last as u32, k as u32),
+            _ => (0..level.slot_count()).for_each(|n| retarget(level, n, on_left, last as u32, k as u32)),
+        }
+    }
+}
+
+/// Drop node `k` of the stored level `t`, moving its last node into the
+/// slot; returns the slot.
+fn retire(tdd: &mut Tdd, t: VtreeIdx, k: usize) -> usize {
+    tdd.levels.mark_changed(t);
+    let level = &mut tdd.levels[t.idx()];
+    debug_assert!(level.pairs.implicit().is_none() && level.nodes.stored().len() == level.slot_count());
+    let dead = level.arena_pairs_at(k);
+    level.nodes.stored_mut().swap_remove(k);
+    level.note_dead_pairs(dead);
+    level.compact_pairs_if_stale();
+    tdd.invalidate(t);
+    k
+}
+
+/// Point the references of node `n` of `level` on its left side when
+/// `on_left`, else its right, at child slot `to` where they name `from`.
+/// The child is structural, so a side is the slot it names.
+fn retarget(level: &mut TddLevel, n: usize, on_left: bool, from: u32, to: u32) {
+    match level.node(n).kind() {
+        NodeKind::Inline(_) => {
+            let node = &mut level.nodes.stored_mut()[n];
+            let side = if on_left { &mut node.a } else { &mut node.b };
+            if *side == from {
+                *side = to;
+            }
+        }
+        kind if kind.pairs_in_arena() => {
+            for pair in level.pairs_mut(n) {
+                let side = if on_left { &mut pair.left } else { &mut pair.right };
+                if side.0 == from {
+                    *side = EncodedChildRef::from_raw(to);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The nodes of the children of `t`, left and right, each where `sides`
+/// asks for it (a structural internal child), that node `r` of `t` pairs
+/// with every node of the other child's completed basis: every slot of an
+/// internal sibling, or both literals of a leaf, which a `One` pair covers
+/// at once. A child has at most one, so the read of `r`'s pairs stops once
+/// it has found each one asked for.
+///
+/// `row` holds a count per slot, the left child's slots then the right's,
+/// each stamped with the read that wrote it: a count stamped other than
+/// `stamp` is zero.
+fn true_children(
     lim: &Limits,
     tdd: &Tdd,
     t: VtreeIdx,
     r: usize,
-    on_left: bool,
-    row: &mut Vec<u32>,
-) -> Result<Option<usize>, OperationError> {
+    sides: [bool; 2],
+    row: &mut Vec<u64>,
+    stamp: u32,
+) -> Result<[Option<usize>; 2], OperationError> {
     let (left, right) = tdd.vtree.children(t);
-    let (c, s) = if on_left { (left, right) } else { (right, left) };
-    let leaf = tdd.vtree.node(s).is_leaf();
-    let full = if leaf { 2 } else { tdd.levels[s.idx()].slot_count() as u32 };
-    let level = &tdd.levels[t.idx()];
-    let side = |pair: ChildPair| if on_left { (pair.left.0, pair.right.0) } else { (pair.right.0, pair.left.0) };
-    let weight = |sib: u32| if leaf && sib == crate::diagram::ONE_LEAF_IDX.0 { 2 } else { 1 };
-    // A row is full only if the node has that many pairs' worth at all.
-    let total: u32 = level.pairs_iter_of_idx(r).map(|p| weight(side(p).1)).sum();
-    if total < full {
-        return Ok(None);
+    let leaf = [tdd.vtree.node(left).is_leaf(), tdd.vtree.node(right).is_leaf()];
+    let width = |c: VtreeIdx| tdd.levels[c.idx()].slot_count();
+    // Side `k`'s sibling is the other child, `1 - k`.
+    let full = [
+        if leaf[1] { 2 } else { width(right) as u32 },
+        if leaf[0] { 2 } else { width(left) as u32 },
+    ];
+    let offset = if sides[0] { width(left) } else { 0 };
+    let need = offset + if sides[1] { width(right) } else { 0 };
+    if row.len() < need {
+        lim.try_resize(row, need, 0)?;
     }
-    let width = tdd.levels[c.idx()].slot_count();
-    if row.len() < width {
-        lim.try_resize(row, width, 0)?;
-    }
-    for pair in level.pairs_iter_of_idx(r) {
-        let (u, sib) = side(pair);
-        row[u as usize] += weight(sib);
-    }
-    let mut found = None;
-    for pair in level.pairs_iter_of_idx(r) {
-        let u = side(pair).0 as usize;
-        if row[u] == full {
-            found = Some(u);
+    let tag = u64::from(stamp) << 32;
+    let one = crate::diagram::ONE_LEAF_IDX.0;
+    let mut count = |slot: usize, w: u32| -> u32 {
+        let e = &mut row[slot];
+        let n = if *e >> 32 == u64::from(stamp) { *e as u32 + w } else { w };
+        *e = tag | u64::from(n);
+        n
+    };
+    let (mut found, mut open) = ([None, None], sides);
+    for pair in tdd.levels[t.idx()].pairs_iter_of_idx(r) {
+        let (l, rr) = (pair.left.0, pair.right.0);
+        if open[0] {
+            let w = if leaf[1] && rr == one { 2 } else { 1 };
+            if count(l as usize, w) == full[0] {
+                (found[0], open[0]) = (Some(l as usize), false);
+            }
         }
-        row[u] = 0;
+        if open[1] {
+            let w = if leaf[0] && l == one { 2 } else { 1 };
+            if count(offset + rr as usize, w) == full[1] {
+                (found[1], open[1]) = (Some(rr as usize), false);
+            }
+        }
+        if open == [false; 2] {
+            break;
+        }
     }
     Ok(found)
 }

@@ -54,7 +54,7 @@ fn the_fill_joins_a_level_in_the_form_that_level_already_uses() {
     // `One`; the levels above name theirs as `Pos`.
     let f = Tdd::cube(&vtree, [1]).unwrap();
     let mut full = f.clone();
-    expand_full(eng, &mut full).unwrap();
+    expand_full_unmarked(eng, &mut full).unwrap();
     assert_no_mixed_leaf_side(&full, "expand_full");
     assert_no_mixed_leaf_side(&eng.negate(f).unwrap(), "negate");
 }
@@ -73,7 +73,7 @@ fn no_negation_mixes_the_two_leaf_forms_on_random_formulas() {
                     continue;
                 }
                 let mut full = f.clone();
-                expand_full(eng, &mut full).unwrap();
+                expand_full_unmarked(eng, &mut full).unwrap();
                 assert_no_mixed_leaf_side(&full, "expand_full");
                 // Before `reduce`, so the complement at the root is checked in
                 // the form it was emitted in rather than after contraction.
@@ -110,7 +110,7 @@ fn a_fill_on_a_one_form_level_is_emitted_as_one() {
                     );
                 }
                 let mut full = tdd.clone();
-                expand_full(eng, &mut full).unwrap();
+                expand_full_unmarked(eng, &mut full).unwrap();
                 for (t, _l, _r) in Arc::clone(full.vtree()).internal_bottomup() {
                     let ti = t.idx();
                     if full.levels[ti].slot_count() == before[ti] {

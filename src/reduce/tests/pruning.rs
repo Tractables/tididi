@@ -416,16 +416,16 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
 /// The complement of a canonical diagram, completed and complemented at
 /// the root, loses the old output and, below it, only the nodes whose
 /// residual was true: the prune that drops just those leaves the diagram the
-/// walk below the root leaves, node for node, on corpora where nodes below
-/// the root die.
+/// walk below the root leaves, up to the order of the nodes of a level, on
+/// corpora where nodes below the root die; and it is minimal.
 #[test]
 fn the_complement_prune_drops_what_the_walk_below_the_root_drops() {
     use crate::test_helpers::{CnfShape, Lcg, compile_clauses_on, rand_cnf, vtree_shapes};
 
     let eng = &crate::Engine::new();
     let mut rng = Lcg::new(0x3c6e_f372);
-    let (mut cases, mut deep) = (0usize, 0usize);
-    for shape in [CnfShape { clauses: 6, width: 3 }, CnfShape { clauses: 24, width: 5 }] {
+    let (mut cases, mut filled, mut bare) = (0usize, 0usize, 0usize);
+    for shape in [CnfShape { clauses: 6, width: 3 }, CnfShape { clauses: 24, width: 5 }, CnfShape { clauses: 10, width: 2 }] {
         for (name, vtree) in vtree_shapes(16) {
             for case in 0..30 {
                 let mut f = compile_clauses_on(eng, &vtree, &rand_cnf(&mut rng, 16, shape));
@@ -434,32 +434,73 @@ fn the_complement_prune_drops_what_the_walk_below_the_root_drops() {
                     continue;
                 }
                 let what = format!("{name}, case {case}");
-                let old = f.output.local;
-                let complement = crate::apply::negate::negate_on(eng, f).unwrap();
-                if !below_root_walk_applies(&complement) || complement.output.local == old {
+                let (complement, done) = crate::apply::negate::complement_on(eng, f).unwrap();
+                let Some(done) = done else { continue };
+                if !below_root_walk_applies(&complement) {
                     continue;
                 }
                 let widths: Vec<usize> = complement.levels.iter().map(|l| l.slot_count()).collect();
                 let mut walked = complement.clone();
                 prune_unreachable(eng, &mut walked, PruneScope::BelowRoot).unwrap();
-                let mut read = complement;
-                prune_complement(eng, &mut read, old).unwrap();
-                assert_eq!(layout(&read), layout(&walked), "{what}: the two prunes left different diagrams");
-                let reached = reached_by_level(&read);
-                for &t in read.vtree.bottomup_slice() {
-                    if read.is_structural_internal(t) {
-                        assert_eq!(read.levels[t.idx()].slot_count(), reached[t.idx()].len(), "{what}: level {} keeps an unreached node", t.0);
+                let mut moved = complement;
+                prune_complement(eng, &mut moved, &done).unwrap();
+                assert_eq!(sorted_layout(&moved), sorted_layout(&walked), "{what}: the two prunes left different diagrams");
+                let reached = reached_by_level(&moved);
+                for &t in moved.vtree.bottomup_slice() {
+                    if moved.is_structural_internal(t) {
+                        assert_eq!(moved.levels[t.idx()].slot_count(), reached[t.idx()].len(), "{what}: level {} keeps an unreached node", t.0);
                     }
                 }
-                deep += read.vtree.bottomup_slice().iter().filter(|&&t| {
-                    t != read.vtree.root() && read.is_structural_internal(t) && read.levels[t.idx()].slot_count() < widths[t.idx()]
-                }).count();
+                let mut minimized = walked.clone();
+                eng.minimize(&mut minimized).unwrap();
+                assert_eq!(sorted_layout(&moved), sorted_layout(&minimized), "{what}: the complement is not minimal");
+                for &t in moved.vtree.bottomup_slice() {
+                    if t != moved.vtree.root() && moved.is_structural_internal(t) && moved.levels[t.idx()].slot_count() < widths[t.idx()] {
+                        if done.filled[t.idx()] { filled += 1 } else { bare += 1 }
+                    }
+                }
                 cases += 1;
             }
         }
     }
-    assert!(cases > 150, "expected a corpus, got {cases} cases");
-    assert!(deep > 100, "expected levels below the root that lose a node, got {deep}");
+    assert!(cases > 200, "expected a corpus, got {cases} cases");
+    assert!(filled > 100, "expected levels below the root that lose a node beside an added one, got {filled}");
+    assert!(bare > 20, "expected levels below the root that lose a node and gained none, got {bare}");
+}
+
+/// [`layout`] with each level's nodes in a canonical order, renumbered from
+/// the leaves up: two diagrams that differ only in the order of the nodes
+/// of their levels agree.
+fn sorted_layout(tdd: &crate::Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
+    let vtree = &tdd.vtree;
+    let mut order: Vec<Vec<u32>> = vec![Vec::new(); vtree.num_nodes()];
+    let mut out = vec![Vec::new(); vtree.num_nodes()];
+    for &t in vtree.bottomup_slice() {
+        if !tdd.is_structural_internal(t) {
+            continue;
+        }
+        let (left, right) = vtree.children(t);
+        let at = |c: crate::vtree::VtreeIdx, x: u32| order[c.idx()].get(x as usize).copied().unwrap_or(x);
+        let level = &tdd.levels[t.idx()];
+        let mut nodes: Vec<(Vec<(u32, u32)>, usize)> = (0..level.slot_count())
+            .map(|i| {
+                let mut pairs: Vec<(u32, u32)> = level.pairs_vec(i).iter().map(|p| (at(left, p.left.0), at(right, p.right.0))).collect();
+                pairs.sort_unstable();
+                (pairs, i)
+            })
+            .collect();
+        nodes.sort();
+        let mut new = vec![0u32; nodes.len()];
+        for (rank, (_, i)) in nodes.iter().enumerate() {
+            new[*i] = rank as u32;
+        }
+        order[t.idx()] = new;
+        out[t.idx()] = nodes.into_iter().map(|(pairs, _)| pairs).collect();
+    }
+    let o = tdd.output;
+    let local = order[o.vtree.idx()].get(o.local.idx()).copied().unwrap_or(o.local.0);
+    out.push(vec![vec![(o.vtree.0, local)]]);
+    out
 }
 
 /// The rank select gives the marked slot of every rank, read in rising

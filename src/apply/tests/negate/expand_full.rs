@@ -12,7 +12,7 @@ fn expand_full_constant_one() {
     let eng = &crate::Engine::new();
     let vtree = Arc::new(Vtree::balanced(4));
     let mut tdd = constant_one(eng, &vtree);
-    expand_full(&crate::Engine::new(), &mut tdd).unwrap();
+    expand_full_unmarked(&crate::Engine::new(), &mut tdd).unwrap();
 }
 
 #[test]
@@ -20,7 +20,7 @@ fn expand_full_single_clause() {
     let vtree = Arc::new(Vtree::balanced(4));
     let mut tdd = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (2, false)]));
     let count_before = tdd.model_count().unwrap();
-    expand_full(&crate::Engine::new(), &mut tdd).unwrap();
+    expand_full_unmarked(&crate::Engine::new(), &mut tdd).unwrap();
     assert_eq!(count_before, tdd.model_count().unwrap());
 }
 
@@ -30,7 +30,7 @@ fn expand_full_preserves_determinism() {
     let mut tdd = clause_to_tdd(&vtree, &crate::test_helpers::clause(&[(1, true), (3, false)]));
     tdd.minimize().unwrap();
     let widths_before: Vec<usize> = tdd.levels.iter().map(|l| l.slot_count()).collect();
-    expand_full(&crate::Engine::new(), &mut tdd).unwrap();
+    expand_full_unmarked(&crate::Engine::new(), &mut tdd).unwrap();
 
     let counts = crate::test_helpers::node_counts(&tdd);
     let mut subtree_vars = vec![0u32; vtree.num_nodes()];
@@ -115,7 +115,7 @@ fn expand_full_fills_every_level_below_the_root_on_random_formulas() {
                     continue;
                 }
                 let before = tdd.model_count().unwrap();
-                expand_full(eng, &mut tdd).unwrap();
+                expand_full_unmarked(eng, &mut tdd).unwrap();
                 assert_eq!(before, tdd.model_count().unwrap(), "expand_full changed the count");
                 assert_eq!(first_not_full(&tdd), None, "a level is not full: {clauses:?}");
             }
