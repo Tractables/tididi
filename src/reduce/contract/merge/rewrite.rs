@@ -52,7 +52,10 @@ pub(super) fn rewrite_parent(
     if parent_level.pairs.implicit().is_some() {
         debug_assert!(room.is_some(), "an implicit parent's room is reserved");
         parent_level
-            .rewrite_described_in(lim, room, false, |_, _, _, pair| canonical_pair(pair, t1_side, remap))
+            .rewrite_described_in(lim, room, false, |_, _, _, pair| {
+                let (pair, kept) = canonical_pair(pair, t1_side, remap);
+                kept.then_some(pair)
+            })
             .expect("an implicit parent is rewritten in its room");
         // Built stored at its description's places, in node order: its
         // arena is left as the stored route below leaves it.
@@ -128,10 +131,9 @@ fn keep_canonical_pairs(
     let pairs = level.pairs_mut(node_idx);
     let mut write = 0;
     for read in 0..pairs.len() {
-        if let Some(pair) = canonical_pair(pairs[read], t1_side, remap) {
-            pairs[write] = pair;
-            write += 1;
-        }
+        let (pair, kept) = canonical_pair(pairs[read], t1_side, remap);
+        pairs[write] = pair;
+        write += usize::from(kept);
     }
     write
 }
@@ -150,24 +152,23 @@ fn move_canonical_pairs(
     let pairs = level.pairs.stored_mut();
     let mut write = to;
     for read in range {
-        if let Some(pair) = canonical_pair(pairs[read], t1_side, remap) {
-            pairs[write] = pair;
-            write += 1;
-        }
+        let (pair, kept) = canonical_pair(pairs[read], t1_side, remap);
+        pairs[write] = pair;
+        write += usize::from(kept);
     }
     write - to
 }
 
-/// A parent pair after the merge: remapped onto its T1-side ref's survivor
-/// when that ref survives the merge or was redirected as a content-equal
-/// duplicate, else `None`: the pair duplicates one naming the survivor.
+/// A parent pair after the merge, remapped onto its T1-side ref's survivor,
+/// and whether it is kept: where that ref survives the merge or was
+/// redirected as a content-equal duplicate. A pair not kept duplicates one
+/// naming the survivor. The callers write every pair at their write cursor
+/// and advance it by the flag, with no branch on it: which pairs are kept
+/// follows no pattern a branch predictor learns.
 #[inline]
-fn canonical_pair(mut pair: ChildPair, t1_side: ChildSide, remap: &MergeRemap) -> Option<ChildPair> {
+fn canonical_pair(mut pair: ChildPair, t1_side: ChildSide, remap: &MergeRemap) -> (ChildPair, bool) {
     let f = if t1_side == ChildSide::Left { &mut pair.left } else { &mut pair.right };
     let to = remap.final_remap[f.0 as usize].0;
-    if to & DROPPED != 0 {
-        return None;
-    }
-    *f = NodeIdx(to).into();
-    Some(pair)
+    *f = NodeIdx(to & !DROPPED).into();
+    (pair, to & DROPPED == 0)
 }
