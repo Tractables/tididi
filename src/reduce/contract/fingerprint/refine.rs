@@ -315,9 +315,16 @@ impl Partition<'_> {
             }
             return;
         }
-        let id = if self.classes[c0 as usize].size > 2 { self.fresh(c0, 2) } else { c0 };
-        self.put(t0, id);
-        self.put(t1, id);
+        // A class of these two alone stays as it is, unless it is the first,
+        // whose nodes are moved to read as named.
+        if self.classes[c0 as usize].size > 2 {
+            let id = self.fresh(c0, 2);
+            self.put(t0, id);
+            self.put(t1, id);
+        } else if c0 == 0 {
+            self.put(t0, 0);
+            self.put(t1, 0);
+        }
     }
 
     /// At the end of the refinement: the nodes no pair names, all of them
@@ -613,10 +620,11 @@ impl Partition<'_> {
     /// rest ([`Self::split_sibling`]). After the last sibling two nodes share
     /// a class exactly when they shared one before and the parent node pairs
     /// them with the same siblings, as a split by sibling sets leaves them,
-    /// with no sort, hash or compare. Unless the pairs come `by_sibling`,
-    /// their nodes are first bucketed by sibling in `bucket`, two passes over
-    /// the pairs that read only siblings, at most `top`. `column` is zero
-    /// between calls, as [`Self::split_by_degree`] reads it.
+    /// with no sort, hash or compare. The nodes are first bucketed by
+    /// sibling in `bucket`: where the pairs come `by_sibling`, each run's
+    /// nodes as it is read; else in two passes over the pairs that read only
+    /// siblings, at most `top`. `column` is zero between calls, as
+    /// [`Self::split_by_degree`] reads it.
     fn split_by_siblings(
         &mut self,
         lim: &Limits,
@@ -631,21 +639,30 @@ impl Partition<'_> {
         lim.try_resize(seen, pairs.len(), 0u32)?;
         met.clear();
         lim.reserve_exact(met, pairs.len())?;
+        lim.try_resize(bucket, pairs.len(), 0u32)?;
         if by_sibling {
+            // Each sibling's nodes copied out of its run of pairs once, for
+            // the two passes of the split to read.
             let mut k = 0;
             while k < pairs.len() {
                 let s = split_pair(&pairs[k], side).1;
-                let end = k + pairs[k..].iter().take_while(|pair| split_pair(pair, side).1 == s).count();
-                let nodes = pairs[k..end].iter().map(move |pair| split_pair(pair, side).0);
-                self.split_sibling(nodes, met, seen);
-                k = end;
+                let mut n = 0;
+                while let Some(pair) = pairs.get(k) {
+                    let (t, next) = split_pair(pair, side);
+                    if next != s {
+                        break;
+                    }
+                    bucket[n] = t;
+                    n += 1;
+                    k += 1;
+                }
+                self.split_sibling(bucket[..n].iter().copied(), met, seen);
             }
             return Ok(());
         }
         lim.try_resize(column, top as usize + 1, 0u32)?;
         touched.clear();
         lim.reserve_exact(touched, pairs.len())?;
-        lim.try_resize(bucket, pairs.len(), 0u32)?;
         for pair in pairs {
             let e = &mut column[split_pair(pair, side).1 as usize];
             if *e == 0 {
@@ -682,6 +699,9 @@ impl Partition<'_> {
     /// nodes each. Each class's `hits` is zero on entry and on return;
     /// `seen` keeps each node's class as the count read it, [`ALONE`] for a
     /// node that cannot have a twin, so the second pass reads no class.
+    /// Where every class met is named whole and none is the first, as when
+    /// a node's second context confirms the class its first one made, no
+    /// node changes class and the second pass is left out.
     #[inline]
     fn split_sibling(&mut self, nodes: impl Iterator<Item = u32> + Clone, met: &mut Vec<u32>, seen: &mut [u32]) {
         met.clear();
@@ -702,6 +722,10 @@ impl Partition<'_> {
             k.hits += 1;
             *seen = c;
         }
+        // Whether some node changes class: where every class met is named
+        // whole, and none is the first, the second pass would change
+        // nothing.
+        let mut moves = false;
         for &c in met.iter() {
             let k = self.classes[c as usize];
             let dest = if k.hits == k.size {
@@ -712,17 +736,20 @@ impl Partition<'_> {
                 self.fresh(c, k.hits)
             };
             self.classes[c as usize].dest = dest;
+            moves |= dest != c || c == 0;
         }
-        for (t, &c) in nodes.zip(seen.iter()) {
-            if c == ALONE {
-                continue;
-            }
-            match self.classes[c as usize].dest {
-                ALONE => self.alone(t, c),
-                // A node of the first class it names is moved there anyway,
-                // so that it reads as named.
-                d if d != c || c == 0 => self.put(t, d),
-                _ => {}
+        if moves {
+            for (t, &c) in nodes.zip(seen.iter()) {
+                if c == ALONE {
+                    continue;
+                }
+                match self.classes[c as usize].dest {
+                    ALONE => self.alone(t, c),
+                    // A node of the first class it names is moved there
+                    // anyway, so that it reads as named.
+                    d if d != c || c == 0 => self.put(t, d),
+                    _ => {}
+                }
             }
         }
         for &c in met.iter() {
