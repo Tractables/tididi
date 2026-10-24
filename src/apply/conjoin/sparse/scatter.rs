@@ -44,12 +44,15 @@ pub(super) enum Collect<'a, 'c> {
     Sum(&'a mut ChildSum),
 }
 
-/// The level the emit writes: its nodes, its product list, and whether its
-/// pair lists may repeat a pair (see [`emit_parent`]).
+/// The level the emit writes: its nodes, its product list, whether its
+/// pair lists may repeat a pair (see [`emit_parent`]), and the pairs from
+/// which an f node walked in order collects its candidates for
+/// [`emit_parent`] ([`SparseThresholds::collected_pairs`]).
 pub(super) struct Emit<'a> {
     pub(super) level: &'a mut TddLevel,
     pub(super) out: &'a mut Vec<ProductEntry>,
     pub(super) duplicates_legal: bool,
+    pub(super) collected_pairs: usize,
 }
 
 /// Where the leaf arm reads the inner side's product from when the inner
@@ -269,8 +272,18 @@ fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
     match collect {
         // Each candidate's pair goes straight to the level's pair arena and
         // its g parent beside it; `emit_walked` makes the node's products of
-        // them.
-        Collect::Nodes(Emit { level, out, duplicates_legal }) => try_for_each_walked(f_level, nodes, |p1, pairs| {
+        // them. A node of many pairs collects its candidates for
+        // `emit_parent` instead, which would otherwise read them back off
+        // the arena.
+        Collect::Nodes(Emit { level, out, duplicates_legal, collected_pairs }) => try_for_each_walked(f_level, nodes, |p1, pairs| {
+            if pairs.len() >= collected_pairs {
+                node_candidates.clear();
+                walk.node::<SWAPPED>(pairs, &mut ticker, |entry| lim.try_push(node_candidates, entry))?;
+                if node_candidates.is_empty() {
+                    return Ok(());
+                }
+                return emit_parent(eng, emit, level, out, p1, node_candidates, duplicates_legal);
+            }
             let base = level.pairs.stored_len();
             node_owners.clear();
             walk.node::<SWAPPED>(pairs, &mut ticker, |entry| {

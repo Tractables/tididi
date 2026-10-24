@@ -1,8 +1,10 @@
 //! The sparse route's walks against the grid: random operands over random
 //! subsets of the variables, so that leaves hold One as well as literals, on
-//! every vtree shape, conjoined with every level forced onto the sparse route,
-//! its walks asking the cache ahead or not, and with none. All give the same
-//! levels, the same minimized diagram and the same count.
+//! every vtree shape, conjoined with every level forced onto the sparse route
+//! (its walks asking the cache ahead or not, and its walks of f's nodes
+//! handing every node's candidates to the emit as a list or only those of
+//! large nodes) and with none. All give the same levels, the same minimized
+//! diagram and the same count.
 
 use std::sync::Arc;
 
@@ -15,6 +17,10 @@ use crate::Engine;
 
 /// Every level of every conjunction takes the sparse route.
 const ALWAYS: SparseThresholds = SparseThresholds { min_grid: 1, sparsity_factor: 1, ..SparseThresholds::PRODUCTION };
+
+/// [`ALWAYS`], with every f node a walk of f's nodes visits handing its
+/// candidates to the emit as a list.
+const ALWAYS_COLLECTED: SparseThresholds = SparseThresholds { collected_pairs: 1, ..ALWAYS };
 
 /// No level takes it.
 const NEVER: SparseThresholds = SparseThresholds { min_grid: usize::MAX, ..SparseThresholds::PRODUCTION };
@@ -49,7 +55,7 @@ fn operand(vtree: &Arc<Vtree>, n: u32, rng: &mut Lcg) -> Tdd {
     t
 }
 
-/// Conjoin both ways round under both thresholds, the sparse walks asking
+/// Conjoin both ways round under every threshold, the sparse walks asking
 /// the cache ahead or not, and require the same diagram, level by level and
 /// minimized, and the same count.
 fn same_as_grid(eng: &Engine, what: &str, f: &Tdd, g: &Tdd) {
@@ -57,15 +63,16 @@ fn same_as_grid(eng: &Engine, what: &str, f: &Tdd, g: &Tdd) {
         let dense = and_under(eng, NEVER, a, b);
         let mut minimized = dense.clone();
         eng.minimize(&mut minimized).unwrap();
-        for gate in [Some(false), Some(true)] {
+        for (gate, always) in [(Some(false), ALWAYS), (Some(true), ALWAYS), (Some(false), ALWAYS_COLLECTED)] {
             let _pinned = ForcedPrefetch::install(gate);
-            let sparse = and_under(eng, ALWAYS, a, b);
-            assert_eq!(normalized_levels(&sparse), normalized_levels(&dense), "{what}, gate {gate:?}: levels");
+            let how = format!("gate {gate:?}, collected from {} pairs", always.collected_pairs);
+            let sparse = and_under(eng, always, a, b);
+            assert_eq!(normalized_levels(&sparse), normalized_levels(&dense), "{what}, {how}: levels");
             let mut sparse = sparse;
             eng.minimize(&mut sparse).unwrap();
             assert_canonical(&sparse);
-            assert_eq!(normalized_levels(&sparse), normalized_levels(&minimized), "{what}, gate {gate:?}: minimized");
-            assert_eq!(count_under(eng, ALWAYS, a, b), count_under(eng, NEVER, a, b), "{what}, gate {gate:?}: count");
+            assert_eq!(normalized_levels(&sparse), normalized_levels(&minimized), "{what}, {how}: minimized");
+            assert_eq!(count_under(eng, always, a, b), count_under(eng, NEVER, a, b), "{what}, {how}: count");
         }
     }
 }

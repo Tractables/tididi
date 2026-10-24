@@ -163,7 +163,7 @@ fn emit_held(
     flat: bool,
     thresholds: SparseThresholds,
 ) -> Result<(), OperationError> {
-    let Emit { level, out, duplicates_legal } = emit;
+    let Emit { level, out, duplicates_legal, .. } = emit;
     let boundaries = if flat {
         plan_chunks(ws.par_sorted.offsets.windows(2).map(|w| (w[1] - w[0]) as usize), parents, thresholds.chunk_bytes)
     } else {
@@ -373,7 +373,7 @@ pub(crate) fn apply_sparse_level(
         }
     }
 
-    let emit = Emit { level: &mut levels[t_idx], out: pl_output, duplicates_legal };
+    let emit = Emit { level: &mut levels[t_idx], out: pl_output, duplicates_legal, collected_pairs: thresholds.collected_pairs };
     scatter_level(eng, ws, f, g, shape, pl, thresholds, Collect::Nodes(emit), passthrough, complete)?;
 
     #[cfg(debug_assertions)]

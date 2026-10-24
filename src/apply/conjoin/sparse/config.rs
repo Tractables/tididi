@@ -23,6 +23,11 @@ pub(crate) struct SparseThresholds {
     /// flat list sorted afterwards, instead of one bucket per parent; see
     /// [`flat_candidates_win`].
     pub(crate) flat_parents: usize,
+    /// Pairs at or above which an f node walked in order hands its
+    /// candidates to [`emit_parent`] as one list, rather than writing them
+    /// to the level's pair arena first: such a node has many candidates of
+    /// several g parents, which the emit would copy back off the arena.
+    pub(crate) collected_pairs: usize,
 }
 
 impl SparseThresholds {
@@ -32,6 +37,7 @@ impl SparseThresholds {
         sparsity_factor: SparseRoute::DEFAULT.sparsity as u128,
         chunk_bytes: 256 * 1024 * 1024,
         flat_parents: 1 << 15,
+        collected_pairs: 64,
     };
 }
 
