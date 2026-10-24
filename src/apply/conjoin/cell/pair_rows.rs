@@ -3,6 +3,10 @@
 use super::*;
 use super::super::liveness::{ROW_COLUMNS_MAX_WIDTH, ROW_LIVE};
 
+/// The f pairs a row's per-pair words are kept for, read again at each
+/// live cell; a longer row reads its pairs' words again.
+const FEW_PAIRS: usize = 16;
+
 /// The row loop of a masked level whose g level has at most
 /// [`ROW_COLUMNS_MAX_WIDTH`] pairs in all (`liveness::pairs_fit`), read by
 /// pairs.
@@ -38,11 +42,9 @@ pub(crate) fn run_level_rows_pairs(
     let grid = |p: &ChildPlan<'_>| DenseLookup { base: p.base, stride: p.stride };
     match lookups {
         PlainLookups::Grid => {
-            super::super::note_pair_rows(false);
             pair_rows(eng, rows, scratch, &grid(&sides.left), &grid(&sides.right), &mut EmitSink { level })
         }
         PlainLookups::CompleteLeft { charged } => {
-            super::super::note_pair_rows(true);
             pair_rows(
                 eng, rows, scratch,
                 &complete(&sides.left), &grid(&sides.right),
@@ -50,7 +52,6 @@ pub(crate) fn run_level_rows_pairs(
             )
         }
         PlainLookups::CompleteRight { charged } => {
-            super::super::note_pair_rows(true);
             pair_rows(
                 eng, rows, scratch,
                 &grid(&sides.left), &complete(&sides.right),
@@ -97,6 +98,10 @@ where
         col_of[start..g_flat.len()].fill(j as u8);
     }
     let g_flat = &g_flat[..];
+    // Where every column holds one pair, pair `q` is column `q`'s, and a
+    // word of pairs is a word of their columns.
+    let one_pair = g_flat.len() == right_width && cols[..right_width].iter().all(|c| c.count_ones() == 1);
+    super::super::note_pair_rows(!left.kills() || !right.kills(), one_pair);
     let all = ROW_LIVE | low(g_flat.len());
     let (left_words, right_words) = (ctx.sides.left.row_cols, ctx.sides.right.row_cols);
     debug_assert!(!left.kills() || ctx.sides.left.reach.iter().zip(g_flat).all(|(&r, q)| r == 1u128 << q.left.0));
@@ -105,6 +110,9 @@ where
     let word_right = |p: &ChildPair| if right.kills() { right_words[p.right.raw() as usize] } else { all };
     // The columns with a pair among the bits of `s`.
     let reached = |s: u64| {
+        if one_pair {
+            return s & !ROW_LIVE;
+        }
         let (mut s, mut out) = (s & !ROW_LIVE, 0u64);
         while s != 0 {
             let j = col_of[s.trailing_zeros() as usize] as usize;
@@ -143,11 +151,17 @@ where
             continue;
         }
         // Each side's fold, and the g pairs some candidate of the row
-        // survives against.
-        let (l, r, live) = f_pairs.iter().fold((0, 0, 0), |(l, r, live), p| {
+        // survives against; each f pair's, on a row of a few.
+        let mut ands = [0u64; FEW_PAIRS];
+        let few = f_pairs.len() <= FEW_PAIRS;
+        let (mut l, mut r, mut live) = (0, 0, 0);
+        for (k, p) in f_pairs.iter().enumerate() {
             let (wl, wr) = (word_left(p), word_right(p));
-            (l | wl, r | wr, live | (wl & wr))
-        });
+            (l, r, live) = (l | wl, r | wr, live | (wl & wr));
+            if few {
+                ands[k] = wl & wr;
+            }
+        }
         if l & r & ROW_LIVE == 0 {
             continue;
         }
@@ -173,9 +187,14 @@ where
                 continue;
             }
             let start = sink.begin();
-            for p in f_pairs {
-                let mut m = word_left(p) & word_right(p) & col;
+            for (k, p) in f_pairs.iter().enumerate() {
+                let mut m = if few { ands[k] } else { word_left(p) & word_right(p) } & col;
                 if m == 0 {
+                    continue;
+                }
+                if one_pair {
+                    let q = &g_flat[j];
+                    sink.pair(eng, left.get(node_idx, p.left.0, q.left.0), right.get(node_idx, p.right.0, q.right.0))?;
                     continue;
                 }
                 let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));

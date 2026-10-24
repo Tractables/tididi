@@ -913,7 +913,7 @@ fn pair_rows_forced_off() -> bool {
 
 #[cfg(not(test))]
 #[inline(always)]
-fn note_pair_rows(_complete: bool) {}
+fn note_pair_rows(_complete: bool, _one_pair: bool) {}
 
 // A test reads the cells of every level that can be read by g-pair vectors
 // by them, or of none, as their oracle, and counts those levels.

@@ -15,30 +15,31 @@ fn conjoin(f: &Tdd, g: &Tdd) -> Tdd {
 }
 
 /// Conjoined with levels read by pairs and without: the same levels, each
-/// node's pairs in the same order. Returns the levels read by pairs, and
-/// those of them with a complete side.
-fn check(f: &Tdd, g: &Tdd, what: &str) -> (u64, u64) {
+/// node's pairs in the same order. Returns the levels read by pairs, those
+/// of them with a complete side, and those of one pair a column.
+fn check(f: &Tdd, g: &Tdd, what: &str) -> [u64; 3] {
     let oracle = pair_rows_off(|| conjoin(f, g));
-    let (all, whole) = pair_rows_levels();
+    let before = pair_rows_levels();
     let out = conjoin(f, g);
     let eng = Engine::new();
     assert!(eng.equivalent(&out, &oracle).unwrap(), "{what}: the levels read by pairs built another function");
     assert!(is_self_conjunction(&out, &oracle), "{what}: the levels read by pairs built other levels");
-    let (all_after, whole_after) = pair_rows_levels();
-    (all_after - all, whole_after - whole)
+    let after = pair_rows_levels();
+    std::array::from_fn(|k| after[k] - before[k])
 }
 
 /// Random formulas over 18 variables on every vtree shape, alone and
 /// against formulas of a few clauses, sparse random functions over 14
 /// variables on a linear vtree, dense ones over 10 variables on every
-/// shape, and random functions over 14 variables that leave alternate
-/// variables under a vtree node to each operand: the levels read by pairs
-/// build what the row loop builds.
+/// shape, alone and against functions of a few models, and random
+/// functions over 14 variables that leave alternate variables under a
+/// vtree node to each operand: the levels read by pairs build what the row
+/// loop builds.
 #[test]
 fn the_levels_read_by_pairs_build_what_the_row_loop_builds() {
     let mut rng = Lcg::new(0x5a1d_93e7);
-    let (mut levels, mut cases) = ((0u64, 0u64), 0usize);
-    let mut add = |(a, b): (u64, u64)| { levels.0 += a; levels.1 += b; };
+    let (mut levels, mut cases) = ([0u64; 3], 0usize);
+    let mut add = |n: [u64; 3]| (0..3).for_each(|k| levels[k] += n[k]);
     for shape in [CnfShape { clauses: 30, width: 3 }, CnfShape { clauses: 60, width: 4 }] {
         for (name, vtree) in vtree_shapes(18) {
             for case in 0..4 {
@@ -87,6 +88,15 @@ fn the_levels_read_by_pairs_build_what_the_row_loop_builds() {
             add(check(&f, &g, &format!("{name}, dense random functions, 1 in {one_in}")));
             cases += 1;
         }
+        // Against a function of a few models, whose nodes are mostly the
+        // models' cubes, a pair each: levels of one pair a column.
+        for models in [2, 3] {
+            let f = Tdd::from_models(&vtree, &vars, &(0..1u64 << 10).filter(|_| rng.coin()).collect::<Vec<_>>()).unwrap();
+            let g = Tdd::from_models(&vtree, &vars, &(0..models).map(|_| rng.below(1 << 10)).collect::<Vec<_>>()).unwrap();
+            add(check(&f, &g, &format!("{name}, a dense random function against {models} models")));
+            add(check(&g, &f, &format!("{name}, {models} models against a dense random function")));
+            cases += 2;
+        }
     }
     // Operands each ignoring alternate variables under one vtree node:
     // there every product is live, and its parent level has a complete
@@ -116,10 +126,11 @@ fn the_levels_read_by_pairs_build_what_the_row_loop_builds() {
             }
         }
     }
-    let (all, whole) = levels;
-    eprintln!("levels read by pairs {all} ({whole} with a complete side), over {cases} cases");
+    let [all, whole, one] = levels;
+    eprintln!("levels read by pairs {all} ({whole} with a complete side, {one} of one pair a column), over {cases} cases");
     assert!(all > 0, "expected levels read by pairs, got none over {cases} cases");
     assert!(whole > 0, "expected levels read by pairs with a complete side, got none over {cases} cases");
+    assert!(one > 0, "expected levels read by pairs of one pair a column, got none over {cases} cases");
 }
 
 /// The subsets of `free`.

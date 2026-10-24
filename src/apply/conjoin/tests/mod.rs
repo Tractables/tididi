@@ -189,19 +189,20 @@ thread_local! {
     /// Whether no level on this thread is read by pairs
     /// ([`pair_rows_off`]).
     static PAIR_ROWS_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// The levels on this thread read by pairs, and those of them with a
-    /// complete side ([`pair_rows_levels`]).
-    static PAIR_ROWS: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
+    /// The levels on this thread read by pairs, those of them with a
+    /// complete side, and those of one pair a column
+    /// ([`pair_rows_levels`]).
+    static PAIR_ROWS: std::cell::Cell<[u64; 3]> = const { std::cell::Cell::new([0; 3]) };
 }
 
 pub(super) fn pair_rows_forced_off() -> bool {
     PAIR_ROWS_OFF.with(std::cell::Cell::get)
 }
 
-pub(super) fn note_pair_rows(complete: bool) {
+pub(super) fn note_pair_rows(complete: bool, one_pair: bool) {
     PAIR_ROWS.with(|n| {
-        let (all, whole) = n.get();
-        n.set((all + 1, whole + u64::from(complete)));
+        let [all, whole, one] = n.get();
+        n.set([all + 1, whole + u64::from(complete), one + u64::from(one_pair)]);
     });
 }
 
@@ -218,9 +219,9 @@ pub(super) fn pair_rows_off<R>(f: impl FnOnce() -> R) -> R {
     f()
 }
 
-/// The levels on this thread so far read by pairs, and those of them with
-/// a complete side.
-pub(super) fn pair_rows_levels() -> (u64, u64) {
+/// The levels on this thread so far read by pairs, those of them with a
+/// complete side, and those of one pair a column.
+pub(super) fn pair_rows_levels() -> [u64; 3] {
     PAIR_ROWS.with(std::cell::Cell::get)
 }
 
