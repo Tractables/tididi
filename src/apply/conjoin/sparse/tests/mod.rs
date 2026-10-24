@@ -294,6 +294,7 @@ mod held_bits;
 mod root_gate;
 mod inner_index;
 mod passthrough;
+mod projection;
 mod regression;
 mod reset_ws;
 mod scatter_direction_pool;

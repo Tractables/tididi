@@ -114,22 +114,24 @@ pub(super) fn pairs_grown() -> u64 {
 }
 
 thread_local! {
-    /// The route each level built on this thread took, in build order, while
-    /// [`routes_taken`] lists them.
-    static ROUTES: std::cell::RefCell<Option<Vec<(VtreeIdx, Route)>>> = const { std::cell::RefCell::new(None) };
+    /// The route each level built on this thread took, in build order, and
+    /// the arena growths counted as its build began, while [`levels_built`]
+    /// lists them.
+    static ROUTES: std::cell::RefCell<Option<Vec<(VtreeIdx, Route, u64)>>> = const { std::cell::RefCell::new(None) };
 }
 
 pub(super) fn note_route(t: VtreeIdx, route: Route) {
     ROUTES.with(|r| {
         if let Some(routes) = r.borrow_mut().as_mut() {
-            routes.push((t, route));
+            routes.push((t, route, pairs_grown()));
         }
     });
 }
 
-/// Run `f` and list the route each level it built took, in build order.
-pub(super) fn routes_taken<R>(f: impl FnOnce() -> R) -> (R, Vec<(VtreeIdx, Route)>) {
-    struct Reset(Option<Vec<(VtreeIdx, Route)>>);
+/// Run `f` and list each level it built, in build order, with its route and
+/// the times its pairs arena outgrew its capacity.
+pub(super) fn levels_built<R>(f: impl FnOnce() -> R) -> (R, Vec<(VtreeIdx, Route, u64)>) {
+    struct Reset(Option<Vec<(VtreeIdx, Route, u64)>>);
     impl Drop for Reset {
         fn drop(&mut self) {
             ROUTES.with(|r| *r.borrow_mut() = self.0.take());
@@ -137,9 +139,21 @@ pub(super) fn routes_taken<R>(f: impl FnOnce() -> R) -> (R, Vec<(VtreeIdx, Route
     }
     let reset = Reset(ROUTES.with(|r| r.replace(Some(Vec::new()))));
     let out = f();
-    let routes = ROUTES.with(|r| r.borrow_mut().take()).unwrap_or_default();
+    let mut levels = ROUTES.with(|r| r.borrow_mut().take()).unwrap_or_default();
     drop(reset);
-    (out, routes)
+    // A level is noted as its build starts: its growths are those counted
+    // before the next level's note, or before `f` returned.
+    let mut next = pairs_grown();
+    for (_, _, at) in levels.iter_mut().rev() {
+        (*at, next) = (next - *at, *at);
+    }
+    (out, levels)
+}
+
+/// Run `f` and list the route each level it built took, in build order.
+pub(super) fn routes_taken<R>(f: impl FnOnce() -> R) -> (R, Vec<(VtreeIdx, Route)>) {
+    let (out, levels) = levels_built(f);
+    (out, levels.into_iter().map(|(t, route, _)| (t, route)).collect())
 }
 
 thread_local! {

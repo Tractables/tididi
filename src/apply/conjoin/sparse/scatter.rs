@@ -241,6 +241,81 @@ fn try_for_each_walked<E>(
     Ok(())
 }
 
+/// The growth of a level's pair arena as f's nodes are walked: once the
+/// walk has passed one in [`PROJECT_AFTER`] of the pairs it walks, an
+/// arena too full for the next node's share of candidates is grown to the
+/// level's projected candidates, the candidates so far scaled by the pairs
+/// left, and an eighth more, at most eight times its capacity at once,
+/// where doubling would copy it once per doubling.
+struct Projection {
+    /// The arena's length when the walk began.
+    start: usize,
+    /// The f pairs walked so far.
+    done: usize,
+    /// The f pairs the walk visits, counted at the first projection.
+    total: Option<usize>,
+}
+
+/// The share of its f pairs a walk passes before it projects its level's
+/// candidates: one in this many.
+const PROJECT_AFTER: usize = 64;
+
+impl Projection {
+    fn new(level: &mut TddLevel) -> Self {
+        Projection { start: level.pairs.stored_len(), done: 0, total: None }
+    }
+
+    /// Before the walk of a node of `pairs` pairs: grow the arena to the
+    /// projection when the node's expected candidates, twice the level's
+    /// rate so far, would not fit. A growth the memory left could not take
+    /// three times over is left to the ordinary doubling.
+    #[inline(always)]
+    fn before_node(&mut self, eng: &Engine, level: &mut TddLevel, f_level: &TddLevel, walked: Walked<'_>, pairs: usize) {
+        let done = self.done;
+        self.done += pairs;
+        let v = level.pairs.stored_mut();
+        let (len, spare) = (v.len(), v.capacity() - v.len());
+        let made = len.saturating_sub(self.start);
+        if done == 0 || (spare as u128) * (done as u128) >= 2 * (made as u128) * (pairs as u128) {
+            return;
+        }
+        self.grow(eng, level, f_level, walked, done, made, pairs);
+    }
+
+    #[cold]
+    #[inline(never)]
+    #[expect(clippy::too_many_arguments)]
+    fn grow(&mut self, eng: &Engine, level: &mut TddLevel, f_level: &TddLevel, walked: Walked<'_>, done: usize, made: usize, pairs: usize) {
+        let total = *self.total.get_or_insert_with(|| {
+            let mut total = 0usize;
+            let _ = try_for_each_walked::<()>(f_level, walked, |_, pairs| {
+                total += pairs.len();
+                Ok(())
+            });
+            total
+        });
+        if done.saturating_mul(PROJECT_AFTER) < total {
+            return;
+        }
+        let lim = eng.limits();
+        if lim.bounded_growth() {
+            return;
+        }
+        let projected = (made as u128 * total as u128 / done as u128) as usize;
+        let node = (2 * made as u128 * pairs as u128 / done as u128) as usize;
+        let v = level.pairs.stored_mut();
+        let want = projected.saturating_add(projected / 8).saturating_sub(made).max(node).min(v.capacity().saturating_mul(8));
+        let bytes = (want as u64).saturating_mul(3).saturating_mul(std::mem::size_of::<ChildPair>() as u64);
+        if want <= v.capacity() - v.len() || bytes >= lim.headroom() {
+            return;
+        }
+        let before = v.capacity();
+        if lim.reserve_exact(v, want).is_ok() {
+            lim.charge_output_pairs(v.capacity().saturating_sub(before));
+        }
+    }
+}
+
 /// Walk f's nodes in order, each node's candidates found by `walk`, into
 /// `collect`: into the level's nodes, each node emitted as its walk ends
 /// ([`emit_walked`]), or, on a level with one product, its pair arena, a
@@ -268,23 +343,27 @@ fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
         // them. A node of many pairs collects its candidates for
         // `emit_parent` instead, which would otherwise read them back off
         // the arena.
-        Collect::Nodes(Emit { level, out, duplicates_legal, thresholds }) => try_for_each_walked(f_level, nodes, |p1, pairs| {
-            if pairs.len() >= thresholds.collected_pairs {
-                node_candidates.clear();
-                walk.node::<SWAPPED>(pairs, &mut ticker, |entry| lim.try_push(node_candidates, entry))?;
-                if node_candidates.is_empty() {
-                    return Ok(());
+        Collect::Nodes(Emit { level, out, duplicates_legal, thresholds }) => {
+            let mut projection = Projection::new(level);
+            try_for_each_walked(f_level, nodes, |p1, pairs| {
+                projection.before_node(eng, level, f_level, nodes, pairs.len());
+                if pairs.len() >= thresholds.collected_pairs {
+                    node_candidates.clear();
+                    walk.node::<SWAPPED>(pairs, &mut ticker, |entry| lim.try_push(node_candidates, entry))?;
+                    if node_candidates.is_empty() {
+                        return Ok(());
+                    }
+                    return emit_parent(eng, emit, level, out, p1, node_candidates, duplicates_legal);
                 }
-                return emit_parent(eng, emit, level, out, p1, node_candidates, duplicates_legal);
-            }
-            let base = level.pairs.stored_len();
-            node_owners.clear();
-            walk.node::<SWAPPED>(pairs, &mut ticker, |entry| {
-                try_push_pair_into(eng, level, candidate_pair(&entry))?;
-                lim.try_push(node_owners, entry.g_parent)
-            })?;
-            emit_walked(eng, emit, level, out, p1, base, node_owners, node_candidates, duplicates_legal)
-        }),
+                let base = level.pairs.stored_len();
+                node_owners.clear();
+                walk.node::<SWAPPED>(pairs, &mut ticker, |entry| {
+                    try_push_pair_into(eng, level, candidate_pair(&entry))?;
+                    lim.try_push(node_owners, entry.g_parent)
+                })?;
+                emit_walked(eng, emit, level, out, p1, base, node_owners, node_candidates, duplicates_legal)
+            })
+        }
         Collect::Direct(level) => try_for_each_walked(f_level, nodes, |_, pairs| {
             walk.node::<SWAPPED>(pairs, &mut ticker, |entry| try_push_pair_into(eng, level, candidate_pair(&entry)))
         }),
