@@ -299,15 +299,21 @@ pub(crate) fn prepare_levels(
     // The group table indexes the triples with `u32` offsets;
     // `collect_triples` gives up once the count reaches `max_pairs`.
     let max_pairs = max_pairs.min(u32::MAX as usize);
-    let fitted = Layout::fitted(field_bounds(old_v, old_w, dir, crossed));
+    let (bounds, triples) = field_bounds(old_v, old_w, dir, crossed);
+    // `collect_triples` gives up once it has pushed `max_pairs` triples.
+    if triples >= max_pairs.max(1) {
+        prepared.clear();
+        return Ok(None);
+    }
+    let fitted = Layout::fitted(bounds);
     let Prepared { narrow, wide, layout, groups, nodes } = prepared;
     let table = &mut scratch.bucket.table;
     let counted = if fitted.bits() <= 64 {
         *layout = fitted;
-        prepare_with(lim, old_v, old_w, dir, crossed, marginal, layout, narrow, groups, table, max_pairs)
+        prepare_with(lim, old_v, old_w, dir, crossed, marginal, layout, narrow, triples, groups, table, max_pairs)
     } else {
         *layout = Layout::WIDE;
-        prepare_with(lim, old_v, old_w, dir, crossed, marginal, layout, wide, groups, table, max_pairs)
+        prepare_with(lim, old_v, old_w, dir, crossed, marginal, layout, wide, triples, groups, table, max_pairs)
     };
     match counted {
         Ok(Some((inner_nodes, pairs))) => {
@@ -321,8 +327,8 @@ pub(crate) fn prepare_levels(
     }
 }
 
-/// [`prepare_levels`] with the triples packed as `W` under `layout`: the
-/// inner level's nodes and the pairs of the two new levels.
+/// [`prepare_levels`] with the `count` triples packed as `W` under
+/// `layout`: the inner level's nodes and the pairs of the two new levels.
 #[allow(clippy::too_many_arguments)]
 fn prepare_with<W: Word>(
     lim: &Limits,
@@ -333,10 +339,13 @@ fn prepare_with<W: Word>(
     marginal_ctx: bool,
     layout: &Layout,
     triples: &mut Vec<W>,
+    count: usize,
     groups: &mut Vec<PairGroup>,
     table: &mut Vec<u32>,
     max_pairs: usize,
 ) -> Result<Option<(usize, usize)>, OperationError> {
+    triples.clear();
+    lim.reserve_exact(triples, count)?;
     if !group_triples(lim, old_v, old_w, dir, crossed, marginal_ctx, layout, triples, groups, max_pairs)? {
         return Ok(None);
     }
@@ -789,17 +798,20 @@ fn group_triples<W: Word>(
 }
 
 /// Bounds on the four fields of a rotation's triples, bit for bit: every
-/// value a field takes has no bit its bound lacks. The fields are read from
-/// the two old levels' pairs, which are fewer than the triples they expand
-/// into.
-fn field_bounds(old_v_level: &TddLevel, old_w_level: &TddLevel, dir: RotationKind, crossed: bool) -> [u32; 4] {
+/// value a field takes has no bit its bound lacks; and the number of the
+/// triples. The fields are read from the two old levels' pairs, which are
+/// fewer than the triples they expand into.
+fn field_bounds(old_v_level: &TddLevel, old_w_level: &TddLevel, dir: RotationKind, crossed: bool) -> ([u32; 4], usize) {
     let mut v_axis = 0u32;
+    let mut triples = 0usize;
     for i in 0..old_v_level.nodes().len() {
         for vp in old_v_level.pairs_iter_of_idx(i) {
-            v_axis |= match dir {
-                RotationKind::Left => vp.left.0,
-                RotationKind::Right => vp.right.0,
+            let (axis, w_local) = match dir {
+                RotationKind::Left => (vp.left.0, vp.right),
+                RotationKind::Right => (vp.right.0, vp.left),
             };
+            v_axis |= axis;
+            triples += old_w_level.pair_count_at(ChildDecoder::structural().node(w_local).idx());
         }
     }
     let (mut stored_left, mut stored_right) = (0u32, 0u32);
@@ -813,10 +825,11 @@ fn field_bounds(old_v_level: &TddLevel, old_w_level: &TddLevel, dir: RotationKin
     // stored right one.
     let (w_left, w_right) = if crossed { (stored_right, stored_left) } else { (stored_left, stored_right) };
     let src = old_v_level.nodes().len().saturating_sub(1) as u32;
-    match dir {
+    let bounds = match dir {
         RotationKind::Left => [v_axis, w_left, w_right, src],
         RotationKind::Right => [w_right, v_axis, w_left, src],
-    }
+    };
+    (bounds, triples)
 }
 
 /// Phase 1: expand every old v-pair against the w-level into packed triples.
