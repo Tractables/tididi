@@ -253,6 +253,9 @@ pub(crate) struct ContractScratch {
     pub(super) shared_local: Vec<u64>,
     /// The stamp of the node `shared_local` files now, from 1, below 2^31.
     pub(super) shared_generation: u32,
+    /// The parent nodes in which `TwinEntries::scatter_shared` added a
+    /// context to a fingerprint, ascending.
+    pub(super) shared_parents: Vec<u32>,
     /// Node indices of twin group members, stored contiguously.
     pub(super) flat_groups: Vec<u32>,
     /// Start offsets into `flat_groups` for each twin group; a node belongs to
@@ -361,6 +364,7 @@ impl Buffers for ContractScratch {
         visit(&mut self.twin_local);
         visit(&mut self.twin_named);
         visit(&mut self.shared_local);
+        visit(&mut self.shared_parents);
         visit(&mut self.flat_groups);
         visit(&mut self.group_starts);
         visit(&mut self.is_candidate);

@@ -108,6 +108,14 @@ pub(super) trait TwinEntries {
     fn scatter_shared(&self, _lim: &Limits, _scratch: &mut ContractScratch, _width: usize) -> Result<Option<usize>, OperationError> {
         Ok(None)
     }
+
+    /// Call `f(node, entry)` once per entry of the parent nodes `parents`,
+    /// where entries are keyed by parent node and every entry outside them
+    /// is of a node no grouping reads. Reads every entry where that is not
+    /// known.
+    fn for_each_of_parents(&self, _parents: &[u32], f: impl FnMut(u32, u64)) {
+        self.for_each(f);
+    }
 }
 
 /// Two 32-bit values packed into one entry, `hi` in the high half.
@@ -145,6 +153,21 @@ pub(super) fn screens(parent_level: &TddLevel) -> bool {
 /// filed, never to the node's whole pair count up front.
 const TWIN_TABLE_START_CELLS: usize = 1 << 12;
 
+/// The fewest nodes a child level needs before its search marks the nodes
+/// that hold a private context ([`TwinEntries::scatter_shared`]): on a
+/// narrower level the fingerprints and their table stay in cache, and the
+/// marking costs more than the probes it saves.
+const PRIVATE_MIN_WIDTH: usize = 1 << 12;
+
+/// The most pairs a parent node holds where the private context scatter
+/// finds its repeated siblings by comparing every two of them.
+const COMPARE_MAX_PAIRS: usize = 8;
+
+/// The pairs the private context scatter files in its sibling table before
+/// it weighs the table: one that finds fewer than half of the pairs it filed
+/// private is not used for the rest of the level.
+const TABLE_TRIAL_PAIRS: u64 = 1 << 12;
+
 impl TwinEntries for ContextEntries<'_> {
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
         for_each_target_sibling(self.parent_level, self.t1_side, |pi, target, sibling| {
@@ -159,13 +182,26 @@ impl TwinEntries for ContextEntries<'_> {
     /// A node holds a private context where a parent node pairs it with a
     /// sibling it pairs with no other node, and then has no twin (math
     /// §2.8): a twin would hold that context too. Each parent node is read
-    /// in cache: its siblings are filed in a table that notes which repeat,
-    /// and each pair then either marks its node private or adds its context
-    /// to the node's fingerprint. A node all of whose contexts are shared is
-    /// fingerprinted whole; the fingerprint of a private node is not read.
-    /// Nodes no pair names are not private: two of them are twins.
+    /// in cache, and each pair either marks its node private or adds its
+    /// context to the node's fingerprint; a node all of whose contexts are
+    /// shared is fingerprinted whole, and the fingerprint of a private node
+    /// is not read. Nodes no pair names are not private: two of them are
+    /// twins. The parent nodes that add a context are listed in
+    /// `scratch.shared_parents`: every entry of a node that is not private
+    /// lies in one of them.
+    ///
+    /// A parent node of at most [`COMPARE_MAX_PAIRS`] pairs finds its
+    /// repeated siblings by comparing every two. A wider one files its
+    /// siblings in a stamped table that notes repeats, for as long as the
+    /// table finds most of the pairs it files private; past that the wider
+    /// nodes add every context. A level narrower than [`PRIVATE_MIN_WIDTH`]
+    /// is not marked: its fingerprints and probes stay in cache.
     fn scatter_shared(&self, lim: &Limits, scratch: &mut ContractScratch, width: usize) -> Result<Option<usize>, OperationError> {
-        let ContractScratch { shared_local, shared_generation, twin_named, fingerprints, candidates, .. } = scratch;
+        if width < PRIVATE_MIN_WIDTH {
+            return Ok(None);
+        }
+        let ContractScratch { shared_local, shared_generation, twin_named, fingerprints, candidates, shared_parents, .. } =
+            scratch;
         let words = width.div_ceil(64);
         lim.try_resize(twin_named, words, 0u64)?;
         let private = &mut twin_named[..words];
@@ -173,53 +209,91 @@ impl TwinEntries for ContextEntries<'_> {
         lim.try_resize(fingerprints, width, 0u64)?;
         let fp = &mut fingerprints[..width];
         fp.fill(0);
-        let mut mark = |t: u32| private[(t / 64) as usize] |= 1 << (t % 64);
         let (level, side) = (self.parent_level, self.t1_side);
+        let nodes = level.node_count();
+        shared_parents.clear();
+        lim.reserve_exact(shared_parents, nodes)?;
+        let mut mark = |t: u32| private[(t / 64) as usize] |= 1 << (t % 64);
+        let mut add = |t: u32, pi: u32, s: u32| {
+            let f = &mut fp[t as usize];
+            *f = f.wrapping_add(mix64(pack(pi, s)));
+        };
         let stored = level.stored();
         let (mut buf, mut cursor) = (Vec::new(), None);
-        for i in 0..level.node_count() {
+        // Pairs the table filed, and how many of them it found private.
+        let (mut filed, mut filed_private) = (0u64, 0u64);
+        let mut table = true;
+        for i in 0..nodes {
             let pairs = match stored {
                 Some(stored) => stored.of_idx(i),
                 None => level.described_read_next(&mut cursor, i, &mut buf),
             };
             let pi = i as u32;
-            match pairs.len() {
-                0 => {}
-                1 => mark(split_pair(&pairs[0], side).0),
-                2 => {
-                    let ((t0, s0), (t1, s1)) = (split_pair(&pairs[0], side), split_pair(&pairs[1], side));
-                    if s0 == s1 {
-                        let h = mix64(pack(pi, s0));
-                        fp[t0 as usize] = fp[t0 as usize].wrapping_add(h);
-                        fp[t1 as usize] = fp[t1 as usize].wrapping_add(h);
-                    } else {
-                        mark(t0);
-                        mark(t1);
+            let n = pairs.len();
+            if n <= 1 {
+                if let Some(pair) = pairs.first() {
+                    mark(split_pair(pair, side).0);
+                }
+                continue;
+            }
+            if n <= COMPARE_MAX_PAIRS {
+                let mut sib = [0u32; COMPARE_MAX_PAIRS];
+                for (k, pair) in pairs.iter().enumerate() {
+                    sib[k] = split_pair(pair, side).1;
+                }
+                // Bit k: pair k's sibling is another pair's too.
+                let mut dup = 0u32;
+                for k in 1..n {
+                    for j in 0..k {
+                        dup |= u32::from(sib[j] == sib[k]).wrapping_neg() & ((1 << j) | (1 << k));
                     }
                 }
-                n => {
-                    let cells = (2 * n).next_power_of_two();
-                    let stamp = next_shared_stamp(lim, shared_local, shared_generation, cells)?;
-                    let table = &mut shared_local[..cells];
-                    let mut repeats = false;
-                    for pair in pairs {
-                        repeats |= file_counted(table, stamp, split_pair(pair, side).1);
+                for (k, pair) in pairs.iter().enumerate() {
+                    let t = split_pair(pair, side).0;
+                    if dup >> k & 1 != 0 {
+                        add(t, pi, sib[k]);
+                    } else {
+                        mark(t);
                     }
-                    if !repeats {
-                        // Every context here is private.
-                        pairs.iter().for_each(|pair| mark(split_pair(pair, side).0));
-                        continue;
-                    }
-                    for pair in pairs {
-                        let (t, s) = split_pair(pair, side);
-                        if repeated(table, stamp, s) {
-                            fp[t as usize] = fp[t as usize].wrapping_add(mix64(pack(pi, s)));
-                        } else {
-                            mark(t);
-                        }
-                    }
+                }
+                if dup != 0 {
+                    shared_parents.push(pi);
+                }
+                continue;
+            }
+            if !table {
+                for pair in pairs {
+                    let (t, s) = split_pair(pair, side);
+                    add(t, pi, s);
+                }
+                shared_parents.push(pi);
+                continue;
+            }
+            let cells = (2 * n).next_power_of_two();
+            let stamp = next_shared_stamp(lim, shared_local, shared_generation, cells)?;
+            let cell_table = &mut shared_local[..cells];
+            let mut repeats = false;
+            for pair in pairs {
+                repeats |= file_counted(cell_table, stamp, split_pair(pair, side).1);
+            }
+            filed += n as u64;
+            if !repeats {
+                // Every context here is private.
+                pairs.iter().for_each(|pair| mark(split_pair(pair, side).0));
+                filed_private += n as u64;
+                continue;
+            }
+            for pair in pairs {
+                let (t, s) = split_pair(pair, side);
+                if repeated(cell_table, stamp, s) {
+                    add(t, pi, s);
+                } else {
+                    mark(t);
+                    filed_private += 1;
                 }
             }
+            shared_parents.push(pi);
+            table = filed < TABLE_TRIAL_PAIRS || 2 * filed_private >= filed;
         }
         let shared = width - private.iter().map(|w| w.count_ones() as usize).sum::<usize>();
         candidates.clear();
@@ -227,7 +301,7 @@ impl TwinEntries for ContextEntries<'_> {
             lim.reserve_exact(candidates, shared)?;
             for (w, &word) in private.iter().enumerate() {
                 let mut open = !word;
-                if w + 1 == words && width % 64 != 0 {
+                if w + 1 == words && !width.is_multiple_of(64) {
                     open &= (1u64 << (width % 64)) - 1;
                 }
                 while open != 0 {
@@ -237,6 +311,24 @@ impl TwinEntries for ContextEntries<'_> {
             }
         }
         Ok(Some(shared))
+    }
+
+    /// Every entry of the parent nodes `parents`, ascending, in the order
+    /// [`for_each`](TwinEntries::for_each) reads them.
+    fn for_each_of_parents(&self, parents: &[u32], mut f: impl FnMut(u32, u64)) {
+        let (level, side) = (self.parent_level, self.t1_side);
+        let stored = level.stored();
+        let (mut buf, mut cursor) = (Vec::new(), None);
+        for &pi in parents {
+            let pairs = match stored {
+                Some(stored) => stored.of_idx(pi as usize),
+                None => level.described_read_next(&mut cursor, pi as usize, &mut buf),
+            };
+            for pair in pairs {
+                let (t, s) = split_pair(pair, side);
+                f(t, pack(pi, s));
+            }
+        }
     }
 
     /// Two nodes share a context only where a parent node pairs both with
@@ -492,7 +584,7 @@ pub(super) fn group_twins_by_entries(
         let found = if shared < 2 || !mark_shared_candidates(eng, scratch, width)? {
             Some(false)
         } else {
-            groups::verify_fingerprint_groups(eng, entries, width, scratch)?
+            groups::verify_fingerprint_groups(eng, entries, width, true, scratch)?
         };
         let Some(found) = found else {
             // A fingerprint group that is no twin group: start over exactly.
@@ -611,7 +703,7 @@ fn exact_twin_groups(
     if !mark_candidates(eng, scratch, width)? {
         return Ok(false);
     }
-    if verify && let Some(found) = groups::verify_fingerprint_groups(eng, entries, width, scratch)? {
+    if verify && let Some(found) = groups::verify_fingerprint_groups(eng, entries, width, false, scratch)? {
         return Ok(found);
     }
     build_twin_groups_after_collision(eng, entries, width, scratch)

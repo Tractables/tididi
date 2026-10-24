@@ -32,7 +32,7 @@ fn verify(entries: &Listed, width: usize, nominated: &[&[u32]]) -> Option<Vec<Ve
             scratch.is_candidate[n as usize] = true;
         }
     }
-    let found = groups::verify_fingerprint_groups(&eng, entries, width, &mut scratch).expect("verify")?;
+    let found = groups::verify_fingerprint_groups(&eng, entries, width, false, &mut scratch).expect("verify")?;
     let mut got = Vec::new();
     for (g, &start) in scratch.group_starts.iter().enumerate() {
         let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);

@@ -313,3 +313,79 @@ fn nodes_with_a_private_context_are_left_out() {
     assert_eq!((&scratch.group_starts[..], &scratch.flat_groups[..]), (&[0][..], &[0, 1][..]));
     assert!(!find_twin_groups(&eng, &tdd, v_right, root, ChildSide::Right, &mut scratch).expect("find_twin_groups"));
 }
+
+/// Levels wide enough for the search to mark private contexts, with planted
+/// twin classes: narrow parent nodes compare their siblings, wide ones file
+/// them in the table until it finds too few private and the rest add every
+/// context. The search finds the groups a listing of every node's contexts
+/// gives, on either side.
+#[test]
+fn wide_levels_mark_private_contexts_and_find_every_twin() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
+    let (v_left, v_right) = vtree.children(root);
+    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
+    let mut rng = Lcg::new(31);
+    let mut scratch = ContractScratch::default();
+    let mut seen_groups = 0;
+    for round in 0..12u32 {
+        let width = PRIVATE_MIN_WIDTH as u32 + rng.below(2000) as u32;
+        let siblings = if round % 3 == 0 { 8 } else { 1 + rng.below(4000) as u32 };
+        // Twin classes of one to four nodes, in a shuffled order.
+        let mut order: Vec<u32> = (0..width).collect();
+        for i in (1..order.len()).rev() {
+            order.swap(i, rng.below(i as u64 + 1) as usize);
+        }
+        let mut classes: Vec<&[u32]> = Vec::new();
+        let mut rest = &order[..];
+        while !rest.is_empty() {
+            let k = (1 + rng.below(4) as usize).min(rest.len());
+            classes.push(&rest[..k]);
+            rest = &rest[k..];
+        }
+        for side in [ChildSide::Left, ChildSide::Right] {
+            let (target, other) = if side == ChildSide::Left { (v_left, v_right) } else { (v_right, v_left) };
+            let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+            for (v, w) in [(target, width), (other, siblings)] {
+                for _ in 0..w {
+                    levels[v.idx()].push_internal_node(&[filler]);
+                }
+            }
+            let mut used: HashSet<(usize, u32)> = HashSet::new();
+            let mut pairs: Vec<ChildPair> = Vec::new();
+            for p in 0..width as usize / 2 {
+                pairs.clear();
+                // Every fiftieth parent node is wide and draws from a few
+                // siblings, so the table files many shared pairs.
+                let (k, range) = if p % 50 == 0 { (20 + rng.below(100), siblings.min(6)) } else { (1 + rng.below(4), siblings) };
+                for _ in 0..k {
+                    let c = rng.below(classes.len() as u64) as usize;
+                    let s = rng.below(u64::from(range)) as u32;
+                    if used.insert((c, s)) {
+                        for &t in classes[c] {
+                            let (l, r) = if side == ChildSide::Left { (t, s) } else { (s, t) };
+                            pairs.push(ChildPair::new(NodeIdx(l), NodeIdx(r)));
+                        }
+                    }
+                }
+                if !pairs.is_empty() {
+                    levels[root.idx()].push_internal_node(&pairs[..]);
+                }
+            }
+            let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
+            let want = listed_groups(&tdd.levels[root.idx()], &tdd.levels[target.idx()], side);
+            let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch).expect("find_twin_groups");
+            let mut got: Vec<Vec<u32>> = Vec::new();
+            for (g, &start) in scratch.group_starts.iter().enumerate() {
+                let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
+                got.push(scratch.flat_groups[start as usize..end].to_vec());
+            }
+            assert_eq!(found, !want.is_empty(), "round {round}, {side:?}");
+            assert_eq!(got, want, "round {round}, {side:?}");
+            assert!(!scratch.shared_parents.is_empty(), "round {round}, {side:?}: the private scatter ran");
+            seen_groups += want.len();
+        }
+    }
+    assert!(seen_groups > 1000, "the fixtures hold twins: {seen_groups}");
+}

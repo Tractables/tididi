@@ -397,16 +397,22 @@ pub(super) fn group_single_entries(
 /// the keys of one parent node at a time sorted, in place of the signatures
 /// `build_twin_groups_after_collision` materializes.
 ///
+/// Where `shared_parents`, only the parent nodes the private context scatter
+/// listed in `scratch.shared_parents` are read: every candidate's entries lie
+/// in them.
+///
 /// The groups come out as that function writes them: in the order of their
 /// lowest members, each member list ascending.
 pub(super) fn verify_fingerprint_groups(
     eng: &Engine,
     entries: &impl TwinEntries,
     width: usize,
+    shared_parents: bool,
     scratch: &mut ContractScratch,
 ) -> Result<Option<bool>, OperationError> {
     let lim = eng.limits();
-    let ContractScratch { reps, is_candidate, counts, owner_keys, flat_groups, group_starts, .. } = &mut *scratch;
+    let ContractScratch { reps, is_candidate, counts, owner_keys, flat_groups, group_starts, shared_parents: parents, .. } =
+        &mut *scratch;
     let (reps, is_candidate) = (&reps[..width], &is_candidate[..width]);
     // Each group's size, at its representative.
     lim.try_resize(counts, width + 1, 0u32)?;
@@ -425,7 +431,7 @@ pub(super) fn verify_fingerprint_groups(
     let mut owner = u64::MAX;
     let mut verified = true;
     let mut grow = Ok(());
-    entries.for_each(|node, entry| {
+    let visit = |node: u32, entry: u64| {
         let n = node as usize;
         if !verified || grow.is_err() || !is_candidate[n] {
             return;
@@ -436,7 +442,12 @@ pub(super) fn verify_fingerprint_groups(
             owner = entry >> 32;
         }
         grow = lim.try_push(owner_keys, ((reps[n] as u64) << 32) | (entry & u64::from(u32::MAX)));
-    });
+    };
+    if shared_parents {
+        entries.for_each_of_parents(parents, visit);
+    } else {
+        entries.for_each(visit);
+    }
     grow?;
     if !(verified && counts_match(owner_keys, sizes)) {
         return Ok(None);
