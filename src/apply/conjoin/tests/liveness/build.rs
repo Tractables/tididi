@@ -1,4 +1,4 @@
-use super::{build_live_cols_bitmask, build_reach_masks, bucket_shift, PrefilterSideMasks};
+use super::{build_live_cols_bitmask, build_reach_columns, build_reach_masks, bucket_shift, PrefilterSideMasks, REACH_COLUMNS_MIN_WIDTH};
 use crate::apply::conjoin::NO_PRODUCT;
 use crate::test_helpers::{with_stored_copy, x_decision_diagram};
 use crate::vtree::rng::Lcg;
@@ -52,6 +52,35 @@ fn the_reach_masks_are_the_nodes_children() {
             for tdd in [&implicit, &stored] {
                 build_reach_masks(&eng, &tdd.levels[v.idx()], nodes, &mut reach, side, shift).unwrap();
                 assert_eq!(reach, want, "right {right}, shift {shift}");
+            }
+        }
+    }
+}
+
+/// The reach columns hold bit `j` of mask bit `b` exactly where g node
+/// `j`'s reach mask has bit `b`, over widths on either side of a word and
+/// of the fewest g nodes that build them.
+#[test]
+fn the_reach_columns_are_the_reach_masks_by_bit() {
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x3c51_9e07);
+    let mut columns = Vec::new();
+    for width in [1, 31, 32, 63, 64, 65, 200] {
+        let reach: Vec<u128> = (0..width)
+            .map(|_| (0..3).fold(0u128, |m, _| m | 1u128 << rng.below(100)))
+            .collect();
+        build_reach_columns(&eng, &reach, &mut columns).unwrap();
+        if width < REACH_COLUMNS_MIN_WIDTH {
+            assert!(columns.is_empty(), "width {width}");
+            continue;
+        }
+        let words = width.div_ceil(64);
+        let bits = columns.len() / words;
+        assert_eq!(bits, 128 - reach.iter().fold(0u128, |a, &r| a | r).leading_zeros() as usize, "width {width}");
+        for b in 0..128 {
+            for (j, &r) in reach.iter().enumerate() {
+                let set = b < bits && columns[b * words + j / 64] >> (j % 64) & 1 == 1;
+                assert_eq!(set, r >> b & 1 == 1, "width {width}, bit {b}, node {j}");
             }
         }
     }

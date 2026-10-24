@@ -58,6 +58,8 @@ pub(crate) struct PrefilterSideMasks {
     pub(super) live_cols: Vec<u128>,
     /// Per-g-node reach bitmasks for g's references to this child.
     pub(super) reach: Vec<u128>,
+    /// The reach masks by bit ([`build_reach_columns`]).
+    pub(super) reach_cols: Vec<u64>,
     /// The child grid's cells as bits, which [`build_live_cols_bitmask`]
     /// cuts the rows' masks out of ([`alive_bits`]).
     bits: Vec<u64>,
@@ -67,6 +69,7 @@ impl PrefilterSideMasks {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn crate::execution::pool::Scratch)) {
         visit(&mut self.live_cols);
         visit(&mut self.reach);
+        visit(&mut self.reach_cols);
         visit(&mut self.bits);
     }
 }
@@ -226,6 +229,39 @@ pub(super) fn build_reach_masks(
         reach.push(pairs.iter().fold(0u128, |m, p| m | 1u128 << (pair_side(p) >> shift)));
         Ok(())
     }).unwrap_or_else(|never| match never {});
+    Ok(())
+}
+
+/// The fewest g nodes a masked level has for its sides to build their
+/// [reach columns](build_reach_columns): under it a row's 64-column scan
+/// of the reach masks costs less than a word a mask bit.
+pub(super) const REACH_COLUMNS_MIN_WIDTH: usize = 32;
+
+/// The reach masks by bit: bit `j` of word `b * words + j / 64` of
+/// `columns` is set iff `reach[j]` has bit `b`, for `words` the g nodes'
+/// words, `reach.len().div_ceil(64)`, and `b` up to the highest bit any
+/// reach mask sets. The cells of a row whose reach meets the row's alive
+/// mask are then the OR of the words of the mask's bits, a word a bit for
+/// 64 g nodes, where a scan of `reach` tests every g node. Empty under
+/// [`REACH_COLUMNS_MIN_WIDTH`] g nodes.
+pub(super) fn build_reach_columns(eng: &Engine, reach: &[u128], columns: &mut Vec<u64>) -> Result<(), OperationError> {
+    columns.clear();
+    let width = reach.len();
+    if width < REACH_COLUMNS_MIN_WIDTH {
+        return Ok(());
+    }
+    let words = width.div_ceil(64);
+    let bits = 128 - reach.iter().fold(0u128, |any, &r| any | r).leading_zeros() as usize;
+    eng.limits().reserve_exact(columns, bits * words)?;
+    columns.resize(bits * words, 0);
+    for (j, &r) in reach.iter().enumerate() {
+        let mut r = r;
+        while r != 0 {
+            let b = r.trailing_zeros() as usize;
+            r &= r - 1;
+            columns[b * words + (j >> 6)] |= 1 << (j & 63);
+        }
+    }
     Ok(())
 }
 

@@ -35,6 +35,9 @@ pub(super) struct ChildPlan<'a> {
     pub(crate) live_cols: &'a [u128],
     /// Per-j reach bitmasks for g's references to this child.
     pub(crate) reach: &'a [u128],
+    /// The reach masks by bit (`liveness::build_reach_columns`); empty
+    /// where the level built none.
+    pub(crate) reach_cols: &'a [u64],
 }
 
 /// Per-level loop-invariant context passed to all cell/row processing functions.

@@ -13,6 +13,7 @@ mod one_sided;
 mod owed;
 mod relabel;
 mod probe;
+mod reach_columns;
 mod restoring;
 mod self_conjunction;
 
@@ -162,6 +163,43 @@ thread_local! {
     /// The levels on this thread that built the masks with one multi-pair
     /// operand ([`one_sided_masked_levels`]).
     static ONE_SIDED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+thread_local! {
+    /// Whether no level on this thread builds reach columns
+    /// ([`reach_columns_off`]).
+    static REACH_COLUMNS_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The rows on this thread whose live cells were read off the reach
+    /// columns ([`reach_columns_rows`]).
+    static REACH_COLUMNS_ROWS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn reach_columns_forced_off() -> bool {
+    REACH_COLUMNS_OFF.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_reach_columns_row() {
+    REACH_COLUMNS_ROWS.with(|n| n.set(n.get() + 1));
+}
+
+/// Run `f` with no level building reach columns, every masked row testing
+/// its columns' reach masks one by one: the oracle the reach columns are
+/// checked against.
+pub(super) fn reach_columns_off<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            REACH_COLUMNS_OFF.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(REACH_COLUMNS_OFF.with(|c| c.replace(true)));
+    f()
+}
+
+/// The rows on this thread so far whose live cells were read off the
+/// reach columns.
+pub(super) fn reach_columns_rows() -> u64 {
+    REACH_COLUMNS_ROWS.with(std::cell::Cell::get)
 }
 
 pub(super) fn one_sided_masks_forced_off() -> bool {

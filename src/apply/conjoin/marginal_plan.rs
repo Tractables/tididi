@@ -6,7 +6,7 @@
 use crate::diagram::{ChildDecoder, ChildSide, Sides, Tdd, TddLevel};
 use super::OperationError;
 use crate::Engine;
-use super::liveness::{bucket_shift, build_live_cols_bitmask, build_reach_masks, one_sided_masks_pay, PrefilterSideMasks};
+use super::liveness::{bucket_shift, build_live_cols_bitmask, build_reach_columns, build_reach_masks, one_sided_masks_pay, PrefilterSideMasks};
 use super::setup::{ApplyRun, LevelShape, Operands};
 use super::route::LevelMarg;
 
@@ -296,5 +296,10 @@ pub(super) fn build_side_masks<const RIGHT: bool>(
     build_live_cols_bitmask(eng, f_child_width, g_child_width, base, node_idx, out, shift)?;
     let view = plan.view;
     build_reach_masks(eng, right_level, right_width, &mut out.reach,
-        |p| view.coord(if RIGHT { p.right } else { p.left }) as usize, shift)
+        |p| view.coord(if RIGHT { p.right } else { p.left }) as usize, shift)?;
+    if super::reach_columns_forced_off() {
+        out.reach_cols.clear();
+        return Ok(());
+    }
+    build_reach_columns(eng, &out.reach, &mut out.reach_cols)
 }

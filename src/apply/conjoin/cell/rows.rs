@@ -134,6 +134,22 @@ fn reaching(mask: u128, reach: &[u128]) -> u64 {
     reach.iter().rev().fold(0, |live, &r| live << 1 | u64::from(mask & r != 0))
 }
 
+/// Word `w` of the g nodes whose reach meets `mask`, read off the reach
+/// columns `columns` of `words` words a bit (`liveness::build_reach_columns`):
+/// the OR of that word of each of the mask's bits that some reach mask has.
+#[inline(always)]
+fn reach_word(mask: u128, columns: &[u64], words: usize, w: usize) -> u64 {
+    let bits = columns.len() / words;
+    let mut m = if bits >= 128 { mask } else { mask & ((1u128 << bits) - 1) };
+    let mut live = 0;
+    while m != 0 {
+        let b = m.trailing_zeros() as usize;
+        m &= m - 1;
+        live |= columns[b * words + w];
+    }
+    live
+}
+
 /// Reset `cells` to `NO_PRODUCT`.
 ///
 /// Most product grids have a few cells, and a `fill` of a length the compiler
@@ -242,6 +258,14 @@ where
     // and `DENSE` is the regime where the masks are not folded.
     let cull_left = !DENSE && ctx.masked && !left.passthrough() && left.kills();
     let cull_right = !DENSE && ctx.masked && !right.passthrough() && right.kills();
+    // Whether a row may read its live columns off the reach columns: every
+    // culling side built them.
+    let (left_cols, right_cols) = (ctx.sides.left.reach_cols, ctx.sides.right.reach_cols);
+    let by_columns = (cull_left || cull_right)
+        && (!cull_left || !left_cols.is_empty())
+        && (!cull_right || !right_cols.is_empty());
+    let words = right_width.div_ceil(64);
+    let culls = usize::from(cull_left) + usize::from(cull_right);
 
     // One slab fill instead of `left_width` row fills. On a dense-slab action the
     // per-row resets below tile `output_grid_base .. output_grid_base + left_width*right_width` exactly once each
@@ -339,6 +363,33 @@ where
             // loop reloaded the context's reach slices at every column, the
             // cell's stores being able to change them as far as the compiler
             // knew, and branched on every test.
+            //
+            // A row whose masks have few bits reads its live columns off the
+            // reach columns instead, a word a mask bit for 64 columns, where
+            // the scan tests every column: about two thirds the instructions
+            // a word as a column's test takes.
+            let bits = if cull_left { left_alive_mask.count_ones() } else { 0 }
+                + if cull_right { right_alive_mask.count_ones() } else { 0 };
+            if by_columns && 2 * bits as usize * words < 3 * culls * right_width {
+                super::super::note_reach_columns_row();
+                for w in 0..words {
+                    let n = (right_width - w * 64).min(64);
+                    let mut live = u64::MAX >> (64 - n);
+                    if cull_left {
+                        live &= reach_word(left_alive_mask, left_cols, words, w);
+                    }
+                    if cull_right && live != 0 {
+                        live &= reach_word(right_alive_mask, right_cols, words, w);
+                    }
+                    while live != 0 {
+                        let j = w * 64 + live.trailing_zeros() as usize;
+                        live &= live - 1;
+                        cell(j)?;
+                    }
+                }
+                poll.poll(right_width as u64)?;
+                continue;
+            }
             let mut j0 = 0;
             while j0 < right_width {
                 let n = (right_width - j0).min(64);
