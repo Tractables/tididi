@@ -53,6 +53,33 @@ fn a_level_one_operand_does_not_branch_at_is_not_owed_the_contraction() {
     assert_same_shape(&out, &compile_clauses(&vtree, &all), "linear");
 }
 
+/// Clauses conjoined one at a time, the result contracted after each but
+/// not pruned, as a caller does between conjunctions: each conjunction's
+/// operand keeps the nodes no pair names and owes the contraction nothing.
+/// Debug builds check every level a conjunction leaves off the worklist,
+/// and the minimized result is the canonical diagram.
+#[test]
+fn contracted_unpruned_operands_owe_the_contraction_their_twins() {
+    use crate::reduce::ReductionPlan;
+    use crate::test_helpers::{CnfShape, Lcg, rand_cnf};
+    let eng = Engine::new();
+    for seed in 0..40u64 {
+        let num_vars = 6 + (seed % 5) as u32;
+        let mut rng = Lcg::new(seed ^ 0x5eed_c0de);
+        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 16, width: 3 });
+        for (label, vtree) in vtree_shapes(num_vars) {
+            let mut f = eng.cube(&vtree, std::iter::empty::<i32>()).unwrap();
+            for c in &clauses {
+                f = eng.and(f, eng.clause(&vtree, c.iter().copied()).unwrap()).unwrap();
+                eng.reduce(&mut f, ReductionPlan::Contract).unwrap();
+            }
+            eng.minimize(&mut f).unwrap();
+            assert_canonical(&f);
+            assert_same_shape(&f, &compile_clauses(&vtree, &clauses), &format!("seed {seed}, {label}"));
+        }
+    }
+}
+
 /// The clauses split in two, each half compiled on `vtree`; with `settled`
 /// both halves are minimized, else each is a bare conjunction that still
 /// owes its contraction.
