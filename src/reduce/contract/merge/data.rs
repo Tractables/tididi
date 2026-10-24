@@ -9,6 +9,7 @@ use crate::diagram::{ChildPair, EncodedNode, NodeKind, PairRange, RangeTable, Td
 
 use super::super::scratch::{DuplicateScratch, MergeBuffers, MergeRemap};
 use super::plan::{GroupAction, GroupPlan};
+use super::rewrite::survivor;
 
 /// The arenas the merged level is rebuilt into, had before the merge
 /// changes anything ([`reserve_rebuilt_level`]).
@@ -224,7 +225,7 @@ pub(super) fn fork_down(
     duplicate: &mut DuplicateScratch,
 ) -> Result<(), OperationError> {
     if tdd.output.vtree == t1 {
-        tdd.output.local = remap.final_remap[tdd.output.local.idx()];
+        tdd.output.local = survivor(&remap.final_remap, tdd.output.local.idx());
     }
     // One scratch for the whole loop, cleared per node inside the callee.
     for &old_keep in resolve_keeps {

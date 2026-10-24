@@ -122,11 +122,12 @@ fn a_shrunk_extended_parent_node_inlines_its_survivor() {
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
 
     // T1 twins {0, 1} merged into 0: the parent's second pair is dropped.
-    let remap = MergeRemap {
+    let mut remap = MergeRemap {
         merge_target: vec![0, 0],
         duplicate_redirect: vec![false, false],
-        final_remap: vec![NodeIdx(0), NodeIdx(0)],
+        final_remap: vec![NodeIdx(0); 2],
     };
+    build_final_remap(&mut remap, 2);
 
     rewrite_parent(&Limits::new(), &mut tdd, root, ChildSide::Left, &remap, None);
 
@@ -164,11 +165,12 @@ fn rewritten_parent(len: usize, place: &[(Option<usize>, Vec<ChildPair>)]) -> Td
     parent.nodes = nodes.into();
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
-    let remap = MergeRemap {
+    let mut remap = MergeRemap {
         merge_target: vec![0, 0, 2, 3, 3],
         duplicate_redirect: vec![false; 5],
-        final_remap: [0, 0, 1, 2, 2].map(NodeIdx).to_vec(),
+        final_remap: vec![NodeIdx(0); 5],
     };
+    build_final_remap(&mut remap, 5);
     rewrite_parent(&Limits::new(), &mut tdd, root, ChildSide::Left, &remap, None);
     tdd.levels[root.idx()].clone()
 }

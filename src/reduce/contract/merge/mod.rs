@@ -17,6 +17,7 @@ use data::{fork_down, rebuild_level, reserve_rebuilt_level};
 use plan::{plan_groups, MergePolicy};
 pub(in crate::reduce::contract) use plan::{GroupAction, GroupPlan};
 use rewrite::{build_final_remap, rewrite_parent};
+pub(in crate::reduce::contract) use rewrite::survivor;
 
 /// Merge all twin groups at level t1, then compact.
 ///

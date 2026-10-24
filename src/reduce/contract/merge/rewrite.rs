@@ -8,7 +8,21 @@ use crate::limits::Limits;
 
 use super::super::scratch::MergeRemap;
 
-/// Build the composed remap `old_index → final_compact_index`.
+/// Set in a merged-away node's `final_remap` entry, above its survivor's
+/// index, where the parent rewrite drops the pairs naming it: every member
+/// but a content-equal one redirected onto its survivor. The parent rewrite
+/// reads one entry per pair; readers that want the survivor mask it off
+/// ([`survivor`]).
+pub(in crate::reduce::contract) const DROPPED: u32 = 1 << 31;
+
+/// The new index of the survivor of node `old` after the merge.
+#[inline]
+pub(in crate::reduce::contract) fn survivor(final_remap: &[NodeIdx], old: usize) -> NodeIdx {
+    NodeIdx(final_remap[old].0 & !DROPPED)
+}
+
+/// Build the composed remap `old_index → final_compact_index`, with
+/// [`DROPPED`] set on the members whose parent pairs are dropped.
 ///
 /// Pass a assigns dense indices 0,1,2,... to surviving (canonical) nodes; pass b
 /// lets merged-away nodes inherit their kept node's dense index. The second pass
@@ -18,7 +32,7 @@ use super::super::scratch::MergeRemap;
 /// Example with 5 nodes, twins {0,2} merged into 0, {3,4} into 3:
 ///   merge_target = [0, 1, 0, 3, 3]
 ///   after (a): `final_remap[0]=0, final_remap[1]=1, final_remap[3]=2`
-///   after (b): `final_remap[2]=0, final_remap[4]=2`
+///   after (b): `final_remap[2]=0|DROPPED, final_remap[4]=2|DROPPED`
 pub(super) fn build_final_remap(remap: &mut MergeRemap, width: usize) {
     debug_assert!(remap.final_remap.len() >= width, "final_remap sized before Pass B");
     let mut next = 0u32;
@@ -31,7 +45,8 @@ pub(super) fn build_final_remap(remap: &mut MergeRemap, width: usize) {
     for i in 0..width {
         let target = remap.merge_target[i] as usize;
         if target != i {
-            remap.final_remap[i] = remap.final_remap[target];
+            let dropped = if remap.duplicate_redirect[i] { 0 } else { DROPPED };
+            remap.final_remap[i] = NodeIdx(remap.final_remap[target].0 | dropped);
         }
     }
 }
@@ -114,7 +129,7 @@ fn remap_inline_node(
 ) {
     let node = &mut level.nodes.stored_mut()[node_idx];
     let tv_old = if t1_side == ChildSide::Left { node.a } else { node.b };
-    let tv_new = final_remap[tv_old as usize].0;
+    let tv_new = survivor(final_remap, tv_old as usize).0;
     if t1_side == ChildSide::Left {
         node.a = tv_new;
     } else {
@@ -172,12 +187,13 @@ fn move_canonical_pairs(
 /// A parent pair after the merge: remapped onto its T1-side ref's survivor
 /// when that ref survives the merge or was redirected as a content-equal
 /// duplicate, else `None`: the pair duplicates one naming the survivor.
+#[inline]
 fn canonical_pair(mut pair: ChildPair, t1_side: ChildSide, remap: &MergeRemap) -> Option<ChildPair> {
     let f = if t1_side == ChildSide::Left { &mut pair.left } else { &mut pair.right };
-    let field_val = NodeIdx(f.0);
-    if remap.merge_target[field_val.idx()] != field_val.0 && !remap.duplicate_redirect[field_val.idx()] {
+    let to = remap.final_remap[f.0 as usize].0;
+    if to & DROPPED != 0 {
         return None;
     }
-    *f = remap.final_remap[field_val.idx()].into();
+    *f = NodeIdx(to).into();
     Some(pair)
 }

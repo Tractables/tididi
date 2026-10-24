@@ -27,7 +27,7 @@ use crate::limits::OperationError;
 
 use super::scratch::ContractScratch;
 use super::fingerprint::{find_listed_twin_groups, find_twin_groups, named_by, pair_mass, screens};
-use super::merge::contract_twins;
+use super::merge::{contract_twins, survivor};
 
 /// Which nodes of a child level a twin search reads.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -187,12 +187,12 @@ fn note_survivors(t1: VtreeIdx, scratch: &mut ContractScratch) {
     let ContractScratch { remap, merge, listing, .. } = scratch;
     let list = listing.listed_mut(t1.idx());
     for node in list.iter_mut() {
-        *node = remap.final_remap[*node as usize].0;
+        *node = survivor(&remap.final_remap, *node as usize).0;
     }
     debug_assert!(list.capacity() - list.len() >= merge.group_plans.len(), "the survivors' room was had before the merge");
     for plan in &merge.group_plans {
         let keep = merge.sel[plan.start as usize];
-        list.push(remap.final_remap[keep as usize].0);
+        list.push(survivor(&remap.final_remap, keep as usize).0);
     }
     list.sort_unstable();
     list.dedup();
