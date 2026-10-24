@@ -28,7 +28,10 @@
 //! right and `U` all of them, at least `|A| + |B| − |U|` are live on both.
 //! A side every product of which is live (a complete child, or a side the
 //! level carries) kills no combination, and the count is then the other
-//! side's `|A|`.
+//! side's `|A|`. Each side's live combinations are also a ceiling on the
+//! pairs: a release build, which reads the count only to refuse a level,
+//! stops at the first side whose ceiling fits the memory left, before the
+//! table.
 //!
 //! The conjunction prices a level only where memory is bounded and the
 //! level's combinations could outgrow what is left; a level whose output
@@ -160,6 +163,16 @@ pub(super) fn refuse_over(lim: &Limits, t: VtreeIdx, needed: u64, headroom: u64)
         true => Err(lim.refuse_level(t, needed, headroom)),
         false => Ok(()),
     }
+}
+
+/// The pairs a level due a price may hold beside `claimed` bytes before
+/// `headroom` refuses it, in a release build, where only the refusal reads
+/// the count; `None` in a debug build, which counts every level it can to
+/// check the count against the level built.
+fn ceiling_room(due: bool, headroom: Option<u64>, claimed: u64) -> Option<u128> {
+    headroom
+        .filter(|_| due && !cfg!(debug_assertions))
+        .map(|h| u128::from(h.saturating_sub(claimed) / BYTES_PER_PAIR))
 }
 
 /// The bytes a level's output holds at least, at `pairs` pairs.
@@ -303,8 +316,11 @@ fn side_sums(side: &Side<'_>, hf: &[u32], hg: &[u32]) -> Option<SideSums> {
 /// The output pairs of the level `f` and `g` hold at `f_level` and
 /// `g_level`, over children whose live products `left` and `right` give,
 /// exactly where the walks fit their inputs and half the memory left, and as
-/// a floor otherwise; `None` where a side's products are not readable. Scratch
-/// is charged to `lim` when it is given.
+/// a floor otherwise; `None` where a side's products are not readable, and
+/// where one side's live combinations, a ceiling on the pairs, are at most
+/// `room`: the pairs the level may hold before it is refused, given where
+/// only a refusal reads the count. Scratch is charged to `lim` when it is
+/// given.
 ///
 /// # Errors
 ///
@@ -315,6 +331,7 @@ fn level_pairs(
     g_level: &TddLevel,
     left: Side<'_>,
     right: Side<'_>,
+    room: Option<u128>,
 ) -> Result<Option<Pairs>, OperationError> {
     let exact = |count| Ok(Some(Pairs { count, exact: true }));
     let count_pairs = |l: &TddLevel| l.pair_counts().map(|c| c as u128).sum::<u128>();
@@ -332,17 +349,29 @@ fn level_pairs(
         (_, Live::All) => return one_side(&left, Child::Left)?.map_or(Ok(None), exact),
         _ => {}
     }
-    let (Some(hf_l), Some(hg_l), Some(hf_r), Some(hg_r)) = (
+    // Each side's live combinations are a ceiling on the pairs: where one
+    // fits `room`, no count could refuse the level.
+    let fits = |live: u128| room.is_some_and(|r| live <= r);
+    let (Some(hf_l), Some(hg_l)) = (
         histogram(lim, f_level, Child::Left, left.f_width)?,
         histogram(lim, g_level, Child::Left, left.g_width)?,
+    ) else {
+        return Ok(None);
+    };
+    let Some(a) = side_sums(&left, &hf_l, &hg_l) else { return Ok(None) };
+    if fits(a.live) {
+        return Ok(None);
+    }
+    let (Some(hf_r), Some(hg_r)) = (
         histogram(lim, f_level, Child::Right, right.f_width)?,
         histogram(lim, g_level, Child::Right, right.g_width)?,
     ) else {
         return Ok(None);
     };
-    let (Some(a), Some(b)) = (side_sums(&left, &hf_l, &hg_l), side_sums(&right, &hf_r, &hg_r)) else {
+    let Some(b) = side_sums(&right, &hf_r, &hg_r) else { return Ok(None) };
+    if fits(b.live) {
         return Ok(None);
-    };
+    }
     // Grouped by f's right child and g's left one, `X` walks the left
     // side's products through f's pairs and `Y` the right side's through
     // g's; the mirror groups by f's left child and g's right one.
@@ -362,6 +391,10 @@ fn level_pairs(
         false => cross(lim, f_level, g_level, (&left, &hf_l), (&right, &hg_r), Child::Left)?,
         true => cross(lim, f_level, g_level, (&right, &hf_r), (&left, &hg_l), Child::Right)?,
     };
+    debug_assert!(
+        count <= a.live.min(b.live) && count >= (a.live + b.live).saturating_sub(all),
+        "count {count} outside floor and ceiling of {} and {} of {all}", a.live, b.live,
+    );
     exact(count)
 }
 
@@ -443,7 +476,9 @@ pub(super) fn price_dense_level(
     let structural = matches!(route, Route::PlainDense | Route::Dense);
     let pairs = match structural && (due || cfg!(debug_assertions)) {
         true => match (side_of(run, left, fw.left, gw.left, filtered), side_of(run, right, fw.right, gw.right, filtered)) {
-            (Some(l), Some(r)) => counted(level_pairs(due.then_some(lim), f_level, g_level, l, r))?,
+            (Some(l), Some(r)) => {
+                counted(level_pairs(due.then_some(lim), f_level, g_level, l, r, ceiling_room(due, room, grid)))?
+            }
             _ => None,
         },
         false => None,
@@ -489,7 +524,7 @@ pub(super) fn price_sparse_level(
         false => side_of(run, child, f_width, g_width, filtered),
     };
     let pairs = match (side(left, ChildSide::Left, fw.left, gw.left), side(right, ChildSide::Right, fw.right, gw.right)) {
-        (Some(l), Some(r)) => counted(level_pairs(due.then_some(lim), f_level, g_level, l, r))?,
+        (Some(l), Some(r)) => counted(level_pairs(due.then_some(lim), f_level, g_level, l, r, ceiling_room(due, room, 0)))?,
         _ => None,
     };
     if let (true, Some(h), Some(p)) = (due, room, pairs) {
