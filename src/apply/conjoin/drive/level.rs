@@ -1249,7 +1249,7 @@ pub(super) fn build_level_dense(
                     left: !matches!(lookups, PlainLookups::CompleteLeft { .. }),
                     right: !matches!(lookups, PlainLookups::CompleteRight { .. }),
                 };
-                words_pay(f.level(t), g.level(t), f_rows, kills)
+                words_pay(f.level(t), g.level(t), f_rows, Sides { left: gw.left, right: gw.right }, kills)
             });
         run_row_loop(
             eng, route, lookups, single_pair, pairs,

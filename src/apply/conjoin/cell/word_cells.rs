@@ -36,6 +36,14 @@ pub(crate) struct WordScratch {
     /// g pair `q`'s child on that side holds a product.
     slots: Sides<Vec<u32>>,
     vectors: Sides<Vec<u64>>,
+    /// On each side that kills, g's pairs by their child there: the
+    /// children some pair names, ascending, where each one's pairs start
+    /// in `by_child`, and the pairs, by child and then in column order.
+    /// A count a child while they are sorted.
+    named: Sides<Vec<u32>>,
+    named_start: Sides<Vec<u32>>,
+    by_child: Sides<Vec<u32>>,
+    child_counts: Vec<u32>,
     /// The current row's pairs' slots on each side.
     row_slots: Vec<(u32, u32)>,
     /// The current row's live candidates, `k << 32 | q` for its `k`th f pair
@@ -65,6 +73,13 @@ impl WordScratch {
         visit(&mut self.slots.right);
         visit(&mut self.vectors.left);
         visit(&mut self.vectors.right);
+        visit(&mut self.named.left);
+        visit(&mut self.named.right);
+        visit(&mut self.named_start.left);
+        visit(&mut self.named_start.right);
+        visit(&mut self.by_child.left);
+        visit(&mut self.by_child.right);
+        visit(&mut self.child_counts);
         visit(&mut self.row_slots);
         visit(&mut self.entries);
         visit(&mut self.sorted);
@@ -80,9 +95,10 @@ impl WordScratch {
 /// Whether a level's cells are read by g-pair vectors: `f` and `g` hold
 /// candidates enough, each f pair against each g pair, that building the
 /// vectors of the child rows the f pairs name on each side that kills,
-/// `f_rows` rows a side at most, and ANDing a pair's two, costs under a
-/// quarter of them.
-pub(crate) fn words_pay(f: &TddLevel, g: &TddLevel, f_rows: Sides<usize>, kills: Sides<bool>) -> bool {
+/// `f_rows` rows a side at most, each reading the children g's pairs name
+/// there, `g_rows` at most, and ANDing a pair's two, costs under a quarter
+/// of them.
+pub(crate) fn words_pay(f: &TddLevel, g: &TddLevel, f_rows: Sides<usize>, g_rows: Sides<usize>, kills: Sides<bool>) -> bool {
     let bound = |l: &TddLevel| l.pairs.len() + l.node_count();
     if bound(f).saturating_mul(bound(g)) < WORDS_MIN_CANDIDATES {
         return false;
@@ -94,11 +110,14 @@ pub(crate) fn words_pay(f: &TddLevel, g: &TddLevel, f_rows: Sides<usize>, kills:
     }
     let words = gp.div_ceil(64);
     let rows = |n: usize, k: bool| if k { n.min(fp) } else { 0 };
-    let rows = rows(f_rows.left, kills.left) + rows(f_rows.right, kills.right);
-    if rows.saturating_mul(words) > WORDS_MAX_VECTOR_WORDS {
+    let (rows_l, rows_r) = (rows(f_rows.left, kills.left), rows(f_rows.right, kills.right));
+    if (rows_l + rows_r).saturating_mul(words) > WORDS_MAX_VECTOR_WORDS {
         return false;
     }
-    let build = rows.saturating_mul(gp) + f_rows.left + f_rows.right;
+    let side = |rows: usize, named: usize, k: bool| {
+        if k { rows.saturating_mul(named.min(gp) + words).saturating_add(gp + named) } else { 0 }
+    };
+    let build = side(rows_l, g_rows.left, kills.left) + side(rows_r, g_rows.right, kills.right) + f_rows.left + f_rows.right;
     let reads = fp.saturating_mul(words).saturating_mul(2) + fp;
     build.saturating_add(reads).saturating_mul(4) < candidates
 }
@@ -164,7 +183,7 @@ fn rows_by_words<L: ChildLookup, R: ChildLookup, S: PairSink>(
     right: &R,
     sink: S,
 ) -> Result<(), OperationError> {
-    let mut a = ByWords::new(eng, rows, &mut *scratch.g_pairs, words, f_rows, sink)?;
+    let mut a = ByWords::new(eng, rows, &mut *scratch.g_pairs, words, f_rows, (left.kills(), right.kills()), sink)?;
     if rows.ctx.masked {
         run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut a)?;
         a.finish();
@@ -254,13 +273,15 @@ fn anded(w: &WordScratch, words: usize, kills: (bool, bool), slots: (u32, u32), 
 }
 
 impl<'w, S: PairSink> ByWords<'w, S> {
-    /// Read g's pairs in column order and clear the vectors.
+    /// Read g's pairs in column order, sort them by child on each side
+    /// that kills, and clear the vectors.
     fn new(
         eng: &'w Engine,
         rows: RowLoop<'_>,
         decode: &mut Vec<ChildPair>,
         w: &'w mut WordScratch,
         f_rows: Sides<usize>,
+        kills: (bool, bool),
         sink: S,
     ) -> Result<Self, OperationError> {
         let lim = eng.limits();
@@ -283,6 +304,13 @@ impl<'w, S: PairSink> ByWords<'w, S> {
             slots.clear();
             lim.reserve_exact(slots, n)?;
             slots.resize(n, UNBUILT);
+        }
+        let strides = (ctx.sides.left.stride as usize, ctx.sides.right.stride as usize);
+        if kills.0 {
+            by_child(lim, &w.g_flat, strides.0, |q| q.left.0, &mut w.child_counts, &mut w.named.left, &mut w.named_start.left, &mut w.by_child.left)?;
+        }
+        if kills.1 {
+            by_child(lim, &w.g_flat, strides.1, |q| q.right.0, &mut w.child_counts, &mut w.named.right, &mut w.named_start.right, &mut w.by_child.right)?;
         }
         w.vectors.left.clear();
         w.vectors.right.clear();
@@ -356,36 +384,42 @@ impl<'w, S: PairSink> ByWords<'w, S> {
     }
 
     /// The slot of child row `r`'s vector on one side, built on first use:
-    /// bit `q` where the child cell at `r` and `field` of g pair `q` holds a
-    /// product.
+    /// bit `q` where the child cell at `r` and g pair `q`'s child on that
+    /// side holds a product. The build reads the row's cell at each child
+    /// some g pair names (`named`, ascending) and sets the bits of the
+    /// pairs naming a live one (`by_child` from `named_start`).
     #[inline(always)]
     #[expect(clippy::too_many_arguments)]
     fn slot<K: ChildLookup>(
         lim: &Limits,
         slots: &mut [u32],
         vectors: &mut Vec<u64>,
-        g_flat: &[ChildPair],
+        named: &[u32],
+        named_start: &[u32],
+        by_child: &[u32],
         words: usize,
         lookup: &K,
         node_idx: &[u32],
         r: u32,
-        field: impl Fn(&ChildPair) -> u32,
     ) -> Result<u32, OperationError> {
         let s = slots[r as usize];
         if s != UNBUILT {
             return Ok(s);
         }
-        let s = (vectors.len() / words) as u32;
-        slots[r as usize] = s;
+        let base = vectors.len();
+        slots[r as usize] = (base / words) as u32;
         lim.reserve(vectors, words)?;
+        vectors.resize(base + words, 0);
+        let v = &mut vectors[base..];
         let row = lookup.row(r);
-        for chunk in g_flat.chunks(64) {
-            let word = chunk.iter().enumerate().fold(0u64, |word, (b, q)| {
-                word | u64::from(lookup.get_in_row(node_idx, row, field(q)) != NO_PRODUCT) << b
-            });
-            vectors.push(word);
+        for (k, &c) in named.iter().enumerate() {
+            if lookup.get_in_row(node_idx, row, c) != NO_PRODUCT {
+                for &q in &by_child[named_start[k] as usize..named_start[k + 1] as usize] {
+                    v[q as usize / 64] |= 1 << (q % 64);
+                }
+            }
         }
-        Ok(s)
+        Ok(slots[r as usize])
     }
 
     /// The live candidates of a row of pairs `f_pairs`, whose vectors this
@@ -405,12 +439,12 @@ impl<'w, S: PairSink> ByWords<'w, S> {
         let mut live = 0u64;
         for p in f_pairs {
             let ls = if kills.0 {
-                Self::slot(lim, &mut w.slots.left, &mut w.vectors.left, &w.g_flat, words, left, node_idx, p.left.0, |q| q.left.0)?
+                Self::slot(lim, &mut w.slots.left, &mut w.vectors.left, &w.named.left, &w.named_start.left, &w.by_child.left, words, left, node_idx, p.left.0)?
             } else {
                 0
             };
             let rs = if kills.1 {
-                Self::slot(lim, &mut w.slots.right, &mut w.vectors.right, &w.g_flat, words, right, node_idx, p.right.0, |q| q.right.0)?
+                Self::slot(lim, &mut w.slots.right, &mut w.vectors.right, &w.named.right, &w.named_start.right, &w.by_child.right, words, right, node_idx, p.right.0)?
             } else {
                 0
             };
@@ -604,6 +638,66 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for ByWords<'
         }
         self.emit(eng, a.i, a.j, a.row_base + a.j, a.f_pairs, a.ctx, a.node_idx, a.left, a.right, from, to)
     }
+}
+
+/// g's pairs `g_flat` by their child on one side, `field`, below
+/// `width`: the children named, ascending, into `named`; where each one's
+/// pairs start, and one past the last, into `named_start`; the pairs, by
+/// child and then in order, into `by_child`. A counting sort, `counts` a
+/// child, where the children are not many more than the pairs; a
+/// comparison sort otherwise.
+#[expect(clippy::too_many_arguments)]
+fn by_child(
+    lim: &Limits,
+    g_flat: &[ChildPair],
+    width: usize,
+    field: impl Fn(&ChildPair) -> u32,
+    counts: &mut Vec<u32>,
+    named: &mut Vec<u32>,
+    named_start: &mut Vec<u32>,
+    by_child: &mut Vec<u32>,
+) -> Result<(), OperationError> {
+    named.clear();
+    named_start.clear();
+    by_child.clear();
+    lim.reserve_exact(by_child, g_flat.len())?;
+    if width <= 4 * g_flat.len() + 4096 {
+        counts.clear();
+        lim.reserve_exact(counts, width)?;
+        counts.resize(width, 0);
+        for q in g_flat {
+            counts[field(q) as usize] += 1;
+        }
+        let mut at = 0u32;
+        for (c, n) in counts.iter_mut().enumerate() {
+            if *n > 0 {
+                lim.try_push(named, c as u32)?;
+                lim.try_push(named_start, at)?;
+                let k = *n;
+                *n = at;
+                at += k;
+            }
+        }
+        lim.try_push(named_start, at)?;
+        by_child.resize(g_flat.len(), 0);
+        for (q, p) in g_flat.iter().enumerate() {
+            let n = &mut counts[field(p) as usize];
+            by_child[*n as usize] = q as u32;
+            *n += 1;
+        }
+    } else {
+        by_child.extend(0..g_flat.len() as u32);
+        by_child.sort_by_key(|&q| field(&g_flat[q as usize]));
+        for (k, &q) in by_child.iter().enumerate() {
+            let c = field(&g_flat[q as usize]);
+            if named.last() != Some(&c) {
+                lim.try_push(named, c)?;
+                lim.try_push(named_start, k as u32)?;
+            }
+        }
+        lim.try_push(named_start, g_flat.len() as u32)?;
+    }
+    Ok(())
 }
 
 /// The live candidates `cell` of a grouped cell, `k << 32 | q` in order
