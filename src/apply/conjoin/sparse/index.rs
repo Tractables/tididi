@@ -151,6 +151,9 @@ pub(super) struct Routes {
     pub(super) segments: Vec<Segment>,
     pub(super) slots: Vec<RouteSlot>,
     pub(super) entries: Vec<(u32, u32)>,
+    /// A bit per f node holding a pair under an outer with a route
+    /// ([`Routes::mark_parents`]).
+    pub(super) walked: Vec<u64>,
 }
 
 /// One outer key's table in [`Routes`]: its first slot, and log2 of its
@@ -230,6 +233,28 @@ impl Routes {
         self.segments[outer] = Segment { base: base as u32, bits };
         Ok(())
     }
+
+    /// Set `walked`'s bit, over `parents` f nodes, for each parent of an f
+    /// pair under an outer with a route, `f_by_outer` keyed by the outers.
+    pub(super) fn mark_parents(
+        &mut self,
+        lim: &Limits,
+        parents: usize,
+        f_by_outer: GroupedView<'_, RevEntry>,
+    ) -> Result<(), OperationError> {
+        let words = parents.div_ceil(64);
+        self.walked.clear();
+        lim.try_resize(&mut self.walked, words, 0u64)?;
+        for (outer, segment) in self.segments.iter().enumerate() {
+            if segment.bits == 0 {
+                continue;
+            }
+            for r in f_by_outer.bucket(outer) {
+                self.walked[r.parent as usize >> 6] |= 1 << (r.parent & 63);
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Buffers for Routes {
@@ -237,6 +262,7 @@ impl Buffers for Routes {
         visit(&mut self.segments);
         visit(&mut self.slots);
         visit(&mut self.entries);
+        visit(&mut self.walked);
     }
 }
 
