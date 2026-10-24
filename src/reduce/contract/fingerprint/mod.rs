@@ -55,18 +55,6 @@ fn split_pair(pair: &ChildPair, t1_side: ChildSide) -> (u32, u32) {
     if t1_side == ChildSide::Left { (pair.left.0, pair.right.0) } else { (pair.right.0, pair.left.0) }
 }
 
-/// Whether node `t`'s bit is set in `bits`.
-#[inline]
-fn bit(bits: &[u64], t: u32) -> bool {
-    bits[(t / 64) as usize] >> (t % 64) & 1 != 0
-}
-
-/// Set node `t`'s bit in `bits`.
-#[inline]
-fn set_bit(bits: &mut [u64], t: u32) {
-    bits[(t / 64) as usize] |= 1 << (t % 64);
-}
-
 /// The splitmix64 finalizer (Steele et al., 2014) — the shared bit-diffusion
 /// step behind every fingerprint in the contract module.
 ///
@@ -85,6 +73,7 @@ pub(super) fn mix64(mut x: u64) -> u64 {
 
 mod groups;
 mod listed;
+mod refine;
 
 pub(super) use listed::{find_listed_twin_groups, named_by, pair_mass};
 
@@ -103,30 +92,6 @@ pub(super) trait TwinEntries {
     fn no_twin(&self, _lim: &Limits, _scratch: &mut ContractScratch, _width: usize) -> Result<bool, OperationError> {
         Ok(false)
     }
-
-    /// Whether the entries are `(parent node, sibling)` contexts packed
-    /// parent-high, each parent node's entries read together, and no node
-    /// has one entry twice: then a fingerprint group is verified owner by
-    /// owner ([`groups::verify_fingerprint_groups`]).
-    fn owner_keyed(&self) -> bool {
-        false
-    }
-
-    /// Mark the nodes that have no twin, class or pool the others by their
-    /// first owner and fingerprint them, where the entries support it
-    /// ([`ContextEntries`] says how): return how many nodes are not marked,
-    /// or `None` where they do not.
-    fn scatter_owner_classes(&self, _lim: &Limits, _scratch: &mut ContractScratch, _width: usize) -> Result<Option<usize>, OperationError> {
-        Ok(None)
-    }
-
-    /// Call `f(node, entry)` once per entry of the parent nodes `parents`,
-    /// where entries are keyed by parent node and every entry outside them
-    /// is of a node no grouping reads. Reads every entry where that is not
-    /// known.
-    fn for_each_of_parents(&self, _parents: &[u32], f: impl FnMut(u32, u64)) {
-        self.for_each(f);
-    }
 }
 
 /// Two 32-bit values packed into one entry, `hi` in the high half.
@@ -142,8 +107,6 @@ struct ContextEntries<'a> {
     t1_side: ChildSide,
     /// Whether [`no_twin`](TwinEntries::no_twin) tests the level at all.
     early_stop: bool,
-    /// The diagram has no marginal level, so no parent node holds a pair twice.
-    distinct: bool,
 }
 
 /// A parent level with fewer entries than this, nodes and arena pairs
@@ -164,190 +127,11 @@ pub(super) fn screens(parent_level: &TddLevel) -> bool {
 /// filed, never to the node's whole pair count up front.
 const TWIN_TABLE_START_CELLS: usize = 1 << 12;
 
-/// The fewest nodes a child level needs before its search classes them by
-/// their first owners ([`TwinEntries::scatter_owner_classes`]): on a
-/// narrower level the fingerprints and their table stay in cache.
-const PRIVATE_MIN_WIDTH: usize = 1 << 8;
-
-/// The most pairs a parent node holds where the owner class scatter groups
-/// its nodes by sorting its pairs; a wider one files its siblings in a
-/// table, and the nodes it names first are pooled.
-const COMPARE_MAX_PAIRS: usize = 8;
-
-/// The pairs the owner class scatter files in its sibling table before it
-/// weighs the table: one that finds fewer than half of the pairs it filed
-/// private is not used for the rest of the level.
-const TRIAL_PAIRS: u64 = 1 << 10;
-
 impl TwinEntries for ContextEntries<'_> {
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
         for_each_target_sibling(self.parent_level, self.t1_side, |pi, target, sibling| {
             f(target, pack(pi, sibling));
         });
-    }
-
-    fn owner_keyed(&self) -> bool {
-        self.distinct
-    }
-
-    /// Twins have one first owner, the lowest parent node naming them, and
-    /// one sibling set there; at any parent node naming a node, its twins
-    /// hold its sibling set too (math §2.8 for a single sibling). One pass
-    /// over the parent level, in cache per parent node, sorts the nodes into
-    /// three kinds:
-    ///
-    /// - private: a parent node names it and no other node with its sibling
-    ///   set there, or it is the only node first named there with that set.
-    ///   It has no twin.
-    /// - classed: first named at a parent node of at most
-    ///   [`COMPARE_MAX_PAIRS`] pairs, together with other nodes of the same
-    ///   sibling set there. Its owner class, listed in `scratch.owner_classes`
-    ///   as its size and then its members, holds all its twins, and its
-    ///   fingerprint sums only the contexts of later parent nodes.
-    /// - pooled: first named at a wider parent node, or never named. Its
-    ///   fingerprint sums all its contexts.
-    ///
-    /// A wider parent node files its siblings in a stamped table that notes
-    /// repeats, for as long as the table finds most of the pairs it files
-    /// private, and marks the nodes it pairs with a sibling no other pair
-    /// there has; past that it adds every context. The parent nodes that add
-    /// a context are listed in `scratch.shared_parents`: every context of a
-    /// node that is not private lies in one of them, or in its first owner,
-    /// if it is classed. Returns how many nodes are not private.
-    fn scatter_owner_classes(&self, lim: &Limits, scratch: &mut ContractScratch, width: usize) -> Result<Option<usize>, OperationError> {
-        let ContractScratch {
-            shared_local, shared_generation, twin_named, twin_seen, fingerprints, owner_classes, shared_parents, ..
-        } = scratch;
-        let words = width.div_ceil(64);
-        lim.try_resize(twin_named, words, 0u64)?;
-        lim.try_resize(twin_seen, words, 0u64)?;
-        let private = &mut twin_named[..words];
-        private.fill(0);
-        let seen = &mut twin_seen[..words];
-        seen.fill(0);
-        lim.try_resize(fingerprints, width, 0u64)?;
-        let fp = &mut fingerprints[..width];
-        fp.fill(0);
-        let (level, side) = (self.parent_level, self.t1_side);
-        let nodes = level.node_count();
-        shared_parents.clear();
-        lim.reserve_exact(shared_parents, nodes)?;
-        // A class of k members takes k + 1 words, and has at least two.
-        owner_classes.clear();
-        lim.reserve_exact(owner_classes, width + width / 2)?;
-        let stored = level.stored();
-        let (mut buf, mut cursor) = (Vec::new(), None);
-        // Pairs the table filed, and how many of them it found private.
-        let (mut filed, mut filed_private) = (0u64, 0u64);
-        let mut table = true;
-        for i in 0..nodes {
-            let pairs = match stored {
-                Some(stored) => stored.of_idx(i),
-                None => level.described_read_next(&mut cursor, i, &mut buf),
-            };
-            let pi = i as u32;
-            let n = pairs.len();
-            if n <= 1 {
-                if let Some(pair) = pairs.first() {
-                    set_bit(private, split_pair(pair, side).0);
-                }
-                continue;
-            }
-            if n == 2 {
-                let ((t0, s0), (t1, s1)) = (split_pair(&pairs[0], side), split_pair(&pairs[1], side));
-                if t0 == t1 || s0 != s1 {
-                    // One node with two siblings, or two with one each.
-                    set_bit(private, t0);
-                    set_bit(private, t1);
-                    continue;
-                }
-                let (new0, new1) = (!bit(seen, t0), !bit(seen, t1));
-                if new0 && new1 {
-                    owner_classes.extend([2, t0, t1]);
-                } else {
-                    let mut added = false;
-                    for (t, new) in [(t0, new0), (t1, new1)] {
-                        if new {
-                            set_bit(private, t);
-                        } else if !bit(private, t) {
-                            let f = &mut fp[t as usize];
-                            *f = f.wrapping_add(mix64(pack(pi, s0)));
-                            added = true;
-                        }
-                    }
-                    if added {
-                        shared_parents.push(pi);
-                    }
-                }
-                set_bit(seen, t0);
-                set_bit(seen, t1);
-                continue;
-            }
-            if n <= COMPARE_MAX_PAIRS {
-                if owner_node(pi, pairs, side, private, seen, fp, owner_classes) {
-                    shared_parents.push(pi);
-                }
-                continue;
-            }
-            let mut added = false;
-            if table {
-                let cells = (2 * n).next_power_of_two();
-                let stamp = next_shared_stamp(lim, shared_local, shared_generation, cells)?;
-                let cell_table = &mut shared_local[..cells];
-                let mut repeats = false;
-                for pair in pairs {
-                    repeats |= file_counted(cell_table, stamp, split_pair(pair, side).1);
-                }
-                filed += n as u64;
-                for pair in pairs {
-                    let (t, s) = split_pair(pair, side);
-                    if repeats && repeated(cell_table, stamp, s) {
-                        if !bit(private, t) {
-                            let f = &mut fp[t as usize];
-                            *f = f.wrapping_add(mix64(pack(pi, s)));
-                            added = true;
-                        }
-                    } else {
-                        set_bit(private, t);
-                        filed_private += 1;
-                    }
-                    set_bit(seen, t);
-                }
-                table = filed < TRIAL_PAIRS || 2 * filed_private >= filed;
-            } else {
-                for pair in pairs {
-                    let (t, s) = split_pair(pair, side);
-                    if !bit(private, t) {
-                        let f = &mut fp[t as usize];
-                        *f = f.wrapping_add(mix64(pack(pi, s)));
-                        added = true;
-                    }
-                    set_bit(seen, t);
-                }
-            }
-            if added {
-                shared_parents.push(pi);
-            }
-        }
-        Ok(Some(width - private.iter().map(|w| w.count_ones() as usize).sum::<usize>()))
-    }
-
-    /// Every entry of the parent nodes `parents`, ascending, in the order
-    /// [`for_each`](TwinEntries::for_each) reads them.
-    fn for_each_of_parents(&self, parents: &[u32], mut f: impl FnMut(u32, u64)) {
-        let (level, side) = (self.parent_level, self.t1_side);
-        let stored = level.stored();
-        let (mut buf, mut cursor) = (Vec::new(), None);
-        for &pi in parents {
-            let pairs = match stored {
-                Some(stored) => stored.of_idx(pi as usize),
-                None => level.described_read_next(&mut cursor, pi as usize, &mut buf),
-            };
-            for pair in pairs {
-                let (t, s) = split_pair(pair, side);
-                f(t, pack(pi, s));
-            }
-        }
     }
 
     /// Two nodes share a context only where a parent node pairs both with
@@ -427,93 +211,6 @@ impl TwinEntries for ContextEntries<'_> {
     }
 }
 
-/// One parent node `pi` of three to [`COMPARE_MAX_PAIRS`] pairs, for
-/// [`ContextEntries::scatter_owner_classes`]: its nodes grouped by their
-/// sibling sets there. A node alone in its group, or the only one of it
-/// first named here, is marked private; the others first named here are
-/// listed as an owner class; the rest add their contexts to their
-/// fingerprints. Returns whether any did.
-#[inline]
-fn owner_node(
-    pi: u32,
-    pairs: &[ChildPair],
-    side: ChildSide,
-    private: &mut [u64],
-    seen: &mut [u64],
-    fp: &mut [u64],
-    owner_classes: &mut Vec<u32>,
-) -> bool {
-    let n = pairs.len();
-    let mut key = [0u64; COMPARE_MAX_PAIRS];
-    for (k, pair) in pairs.iter().enumerate() {
-        let (t, s) = split_pair(pair, side);
-        key[k] = pack(t, s);
-    }
-    // Insertion sort: each node's pairs together, siblings ascending.
-    for k in 1..n {
-        let x = key[k];
-        let mut j = k;
-        while j > 0 && key[j - 1] > x {
-            key[j] = key[j - 1];
-            j -= 1;
-        }
-        key[j] = x;
-    }
-    let key = &key[..n];
-    // Run r holds one node's pairs, `key[starts[r]..starts[r + 1]]`.
-    let mut starts = [0u8; COMPARE_MAX_PAIRS + 1];
-    let mut runs = 0;
-    for k in 0..n {
-        if k == 0 || key[k] >> 32 != key[k - 1] >> 32 {
-            starts[runs] = k as u8;
-            runs += 1;
-        }
-    }
-    starts[runs] = n as u8;
-    let run = |r: usize| &key[starts[r] as usize..starts[r + 1] as usize];
-    let node = |r: usize| (key[starts[r] as usize] >> 32) as u32;
-    let same = |a: &[u64], b: &[u64]| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| *x as u32 == *y as u32);
-    // Per run, the first run with its siblings, its group; per group, its
-    // runs and those of nodes first named here.
-    let mut group = [0u8; COMPARE_MAX_PAIRS];
-    let mut size = [0u8; COMPARE_MAX_PAIRS];
-    let mut fresh = [0u8; COMPARE_MAX_PAIRS];
-    let mut new = [false; COMPARE_MAX_PAIRS];
-    for r in 0..runs {
-        new[r] = !bit(seen, node(r));
-        let g = (0..r).find(|&q| group[q] as usize == q && same(run(q), run(r))).unwrap_or(r);
-        group[r] = g as u8;
-        size[g] += 1;
-        fresh[g] += u8::from(new[r]);
-    }
-    let mut listed = [false; COMPARE_MAX_PAIRS];
-    let mut added = false;
-    for r in 0..runs {
-        let (t, g) = (node(r), group[r] as usize);
-        if size[g] == 1 || (new[r] && fresh[g] == 1) {
-            set_bit(private, t);
-        } else if new[r] {
-            if !listed[g] {
-                listed[g] = true;
-                owner_classes.push(u32::from(fresh[g]));
-                for q in r..runs {
-                    if group[q] as usize == g && new[q] {
-                        owner_classes.push(node(q));
-                    }
-                }
-            }
-        } else if !bit(private, t) {
-            let f = &mut fp[t as usize];
-            for &e in run(r) {
-                *f = f.wrapping_add(mix64(pack(pi, e as u32)));
-            }
-            added = true;
-        }
-        set_bit(seen, t);
-    }
-    added
-}
-
 /// The next stamp of the sibling table, with `twin_local` at least `cells`
 /// long. A fresh stamp per node, or per doubling, instead of clearing its
 /// cells. On u32 wrap the stamps are zeroed and it restarts at 1: 0 is the
@@ -559,62 +256,6 @@ fn file_sibling(local: &mut [u64], stamp: u64, s: u32) -> bool {
     }
 }
 
-/// The next stamp of the counted sibling table, with `local` at least
-/// `cells` long: the generation in the high 31 bits of a cell, below them
-/// the repeat bit, below that the sibling. On wrap past 31 bits the cells
-/// are zeroed and it restarts at 1; 0 stamps no cell.
-#[inline]
-fn next_shared_stamp(
-    lim: &Limits,
-    local: &mut Vec<u64>,
-    generation: &mut u32,
-    cells: usize,
-) -> Result<u64, OperationError> {
-    *generation += 1;
-    if *generation >= 1 << 31 {
-        local.fill(0);
-        *generation = 1;
-    }
-    if local.len() < cells {
-        lim.try_resize(local, cells, 0u64)?;
-    }
-    Ok((*generation as u64) << 33)
-}
-
-/// The repeat bit of a counted sibling cell.
-const REPEATED: u64 = 1 << 32;
-
-/// The first cell of `local`, a power of two longer than the siblings filed
-/// under `stamp`, where sibling `s` is filed or would be.
-#[inline]
-fn counted_cell(local: &[u64], stamp: u64, s: u32) -> usize {
-    let (mask, shift) = (local.len() - 1, 32 - local.len().trailing_zeros());
-    let mut h = (s.wrapping_mul(0x9E37_79B1) >> shift) as usize;
-    loop {
-        let cell = local[h];
-        if cell >> 33 != stamp >> 33 || cell as u32 == s {
-            return h;
-        }
-        h = (h + 1) & mask;
-    }
-}
-
-/// File sibling `s` under `stamp`, noting a repeat if it was filed already;
-/// return whether it was.
-#[inline]
-fn file_counted(local: &mut [u64], stamp: u64, s: u32) -> bool {
-    let h = counted_cell(local, stamp, s);
-    let filed = local[h] >> 33 == stamp >> 33;
-    local[h] = if filed { local[h] | REPEATED } else { stamp | s as u64 };
-    filed
-}
-
-/// Whether sibling `s`, filed under `stamp`, was filed more than once.
-#[inline]
-fn repeated(local: &[u64], stamp: u64, s: u32) -> bool {
-    local[counted_cell(local, stamp, s)] & REPEATED != 0
-}
-
 /// Content twins: a node's entries are its own pairs, packed left-high.
 pub(super) struct ContentEntries<'a>(pub(super) &'a TddLevel);
 
@@ -625,8 +266,11 @@ impl TwinEntries for ContentEntries<'_> {
 }
 
 /// Find nodes with identical parent-context multisets at the explicit child
-/// level `t1` of `parent`. Marginal children are handled by pair fusion
-/// instead. See [`group_twins_by_entries`] for what is left in `scratch`.
+/// level `t1` of `parent`, by refining a partition of the level parent node
+/// by parent node ([`refine::refine_context_groups`]). Marginal children are
+/// handled by pair fusion instead. See [`group_twins_by_entries`] for what
+/// is left in `scratch`. Debug builds check the groups against the
+/// fingerprint search over the same contexts.
 pub(super) fn find_twin_groups(
     eng: &Engine,
     tdd: &Tdd,
@@ -638,14 +282,27 @@ pub(super) fn find_twin_groups(
     let level = &tdd.levels[t1.idx()];
     debug_assert!(!level.is_marginal(), "a marginal child is left to pair fusion");
     let parent_level = &tdd.levels[parent.idx()];
-    let distinct = !*scratch.diagram_marginal.get_or_insert_with(|| tdd.has_marginal_level());
-    let entries = ContextEntries {
-        parent_level,
-        t1_side,
-        early_stop: screens(parent_level),
-        distinct,
-    };
-    group_twins_by_entries(eng, &entries, level.slot_count(), scratch)
+    let width = level.slot_count();
+    debug_assert!(
+        width <= u32::MAX as usize,
+        "level width {width} exceeds the u32 node-index range",
+    );
+    let found = refine::refine_context_groups(parent_level, t1_side, eng.limits(), scratch, width)?;
+    if cfg!(debug_assertions) {
+        let refined = (scratch.group_starts.clone(), scratch.flat_groups.clone());
+        let entries = ContextEntries {
+            parent_level,
+            t1_side,
+            early_stop: screens(parent_level),
+        };
+        let fingerprinted = group_twins_by_entries(eng, &entries, width, scratch)?;
+        assert_eq!(
+            (found, &refined.0, &refined.1),
+            (fingerprinted, &scratch.group_starts, &scratch.flat_groups),
+            "the refined twin groups differ from the fingerprinted ones",
+        );
+    }
+    Ok(found)
 }
 
 /// Group the `width` nodes of `level` by the multiset of their `entries`.
@@ -678,169 +335,14 @@ pub(super) fn group_twins_by_entries(
         "level width {width} exceeds the u32 node-index range",
     );
 
+    if entries.no_twin(lim, scratch, width)? {
+        return Ok(false);
+    }
     // A wide level whose nodes hold one entry each groups by sorting them.
     if width >= groups::SINGLE_ENTRY_MIN_WIDTH
         && let Some(found) = groups::group_single_entries(eng, entries, width, scratch)?
     {
         return Ok(found);
-    }
-    let verify = entries.owner_keyed();
-    // A level narrower than `PRIVATE_MIN_WIDTH` is not classed: its
-    // fingerprints and their table stay in cache.
-    if verify && width >= PRIVATE_MIN_WIDTH && let Some(open) = entries.scatter_owner_classes(lim, scratch, width)? {
-        let found = if open < 2 || !nominate_owner_groups(eng, scratch, width)? {
-            Some(false)
-        } else {
-            groups::verify_fingerprint_groups(eng, entries, width, true, scratch)?
-        };
-        let Some(found) = found else {
-            // A fingerprint group that is no twin group: start over exactly.
-            return exact_twin_groups(eng, entries, width, false, scratch);
-        };
-        if cfg!(debug_assertions) {
-            check_exact(eng, entries, width, found, scratch)?;
-        }
-        return Ok(found);
-    }
-    let found = exact_twin_groups(eng, entries, width, verify, scratch)?;
-    if cfg!(debug_assertions) && verify {
-        check_exact(eng, entries, width, found, scratch)?;
-    }
-    Ok(found)
-}
-
-/// Assert that the twin groups in `scratch`, found by private contexts or
-/// verified fingerprints, are the ones exact signatures give.
-fn check_exact(
-    eng: &Engine,
-    entries: &impl TwinEntries,
-    width: usize,
-    found: bool,
-    scratch: &mut ContractScratch,
-) -> Result<(), OperationError> {
-    let verified = (scratch.group_starts.clone(), scratch.flat_groups.clone());
-    let exact = exact_twin_groups(eng, entries, width, false, scratch)?;
-    assert_eq!(
-        (exact, &scratch.group_starts, &scratch.flat_groups),
-        (found, &verified.0, &verified.1),
-        "the twin groups differ from the ones exact signatures give",
-    );
-    Ok(())
-}
-
-/// Nominate twin groups among the nodes
-/// [`TwinEntries::scatter_owner_classes`] did not mark private: within each
-/// owner class, the members of equal fingerprint; among the pooled nodes,
-/// those whose fingerprints the probe finds equal. Each nominated node is
-/// flagged in `scratch.is_candidate` with its group's lowest member in
-/// `scratch.reps`, as [`mark_candidates`] leaves them. Returns whether any
-/// group was nominated.
-fn nominate_owner_groups(
-    eng: &Engine,
-    scratch: &mut ContractScratch,
-    width: usize,
-) -> Result<bool, OperationError> {
-    let lim = eng.limits();
-    let ContractScratch { fingerprints, twin_hash_table, is_candidate, reps, candidates, twin_named, owner_classes, .. } =
-        scratch;
-    lim.try_resize(is_candidate, width, false)?;
-    lim.try_resize(reps, width, 0u32)?;
-    is_candidate[..width].fill(false);
-    let words = width.div_ceil(64);
-    let private = &mut twin_named[..words];
-    let mut found = false;
-    // Each class's open members, sorted by fingerprint, and each run of two
-    // or more a group led by its lowest member. Then the class is marked,
-    // so that the pool leaves it out.
-    let mut i = 0;
-    while i < owner_classes.len() {
-        let k = owner_classes[i] as usize;
-        let class = &mut owner_classes[i + 1..i + 1 + k];
-        let mut open = 0;
-        for j in 0..k {
-            let m = class[j];
-            if !bit(private, m) {
-                class[open] = m;
-                open += 1;
-            }
-        }
-        let class = &mut class[..open];
-        if open >= 2 {
-            let fp = &fingerprints[..width];
-            class.sort_unstable_by_key(|&m| (fp[m as usize], m));
-            let mut a = 0;
-            while a < open {
-                let f = fp[class[a] as usize];
-                let b = a + class[a..].iter().take_while(|&&m| fp[m as usize] == f).count();
-                if b - a >= 2 {
-                    found = true;
-                    for &m in &class[a..b] {
-                        is_candidate[m as usize] = true;
-                        reps[m as usize] = class[a];
-                    }
-                }
-                a = b;
-            }
-        }
-        for &m in class.iter() {
-            set_bit(private, m);
-        }
-        i += 1 + k;
-    }
-    let pooled = width - private.iter().map(|w| w.count_ones() as usize).sum::<usize>();
-    if pooled < 2 {
-        return Ok(found);
-    }
-    candidates.clear();
-    lim.reserve_exact(candidates, pooled)?;
-    for (w, &word) in private.iter().enumerate() {
-        let mut open = !word;
-        if w + 1 == words && !width.is_multiple_of(64) {
-            open &= (1u64 << (width % 64)) - 1;
-        }
-        while open != 0 {
-            candidates.push(w as u32 * 64 + open.trailing_zeros());
-            open &= open - 1;
-        }
-    }
-    // A pooled node's index is at least its rank, so each fingerprint is
-    // read before the move writes over it.
-    for (rank, &node) in candidates.iter().enumerate() {
-        fingerprints[rank] = fingerprints[node as usize];
-    }
-    probe_fingerprints(lim, twin_hash_table, &fingerprints[..candidates.len()], None, |k, occupant| {
-        let node = candidates[k] as usize;
-        if let Some(occ) = occupant {
-            let occ = candidates[occ] as usize;
-            is_candidate[node] = true;
-            is_candidate[occ] = true;
-            reps[node] = occ as u32;
-            found = true;
-        } else {
-            reps[node] = node as u32;
-        }
-        true
-    })?;
-    Ok(found)
-}
-
-/// The twin search over every node: the screen, additive fingerprints over
-/// every entry, and, for the nodes whose fingerprints collide, an owner by
-/// owner verification of the fingerprint groups where `verify` asks for it
-/// ([`groups::verify_fingerprint_groups`]), else or where it refuses, full
-/// signatures.
-fn exact_twin_groups(
-    eng: &Engine,
-    entries: &impl TwinEntries,
-    width: usize,
-    verify: bool,
-    scratch: &mut ContractScratch,
-) -> Result<bool, OperationError> {
-    let lim = eng.limits();
-    scratch.flat_groups.clear();
-    scratch.group_starts.clear();
-    if entries.no_twin(lim, scratch, width)? {
-        return Ok(false);
     }
 
     // ── Pre-test: fingerprint-only scatter ────────────────────────────────────
@@ -869,9 +371,7 @@ fn exact_twin_groups(
     if !mark_candidates(eng, scratch, width)? {
         return Ok(false);
     }
-    if verify && let Some(found) = groups::verify_fingerprint_groups(eng, entries, width, false, scratch)? {
-        return Ok(found);
-    }
+
     build_twin_groups_after_collision(eng, entries, width, scratch)
 }
 
@@ -905,23 +405,17 @@ fn mark_candidates(
     width: usize,
 ) -> Result<bool, OperationError> {
     let lim = eng.limits();
-    let ContractScratch { fingerprints, twin_hash_table, is_candidate, reps, .. } = scratch;
+    let ContractScratch { fingerprints, twin_hash_table, is_candidate, .. } = scratch;
     lim.try_resize(is_candidate, width, false)?;
-    lim.try_resize(reps, width, 0u32)?;
     is_candidate[..width].fill(false);
     let mut found = false;
-    // The table keeps the first node of each fingerprint, the lowest, and a
-    // later node with it stops at that occupant: each node's representative.
     probe_fingerprints(lim, twin_hash_table, &fingerprints[..width], None, |i, occupant| {
         if let Some(occ) = occupant {
             // Idempotent stores: re-flagging an already-flagged node is a
             // redundant write, not a miscount, so the probe needs no guards.
             is_candidate[i] = true;
             is_candidate[occ] = true;
-            reps[i] = occ as u32;
             found = true;
-        } else {
-            reps[i] = i as u32;
         }
         true
     })?;

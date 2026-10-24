@@ -79,16 +79,14 @@ fn signature_arena_holds_candidate_rows_only() {
         TddNodeId { vtree: root, local: NodeIdx(0) },
     );
 
-    // The signature path itself: a search may verify fingerprint groups
-    // owner by owner instead, and then builds no signature at all.
     let mut scratch = ContractScratch::default();
     let entries = ContextEntries {
         parent_level: &tdd.levels[root.idx()],
         t1_side: ChildSide::Left,
         early_stop: false,
-        distinct: true,
     };
-    let found = exact_twin_groups(&eng, &entries, child_width, false, &mut scratch).expect("exact_twin_groups");
+    let found = group_twins_by_entries(&eng, &entries, tdd.levels[v_left.idx()].slot_count(), &mut scratch)
+        .expect("group_twins_by_entries");
 
     assert!(found, "the {} same-context pairs are twin groups", N_TWIN_GROUPS);
     assert_eq!(scratch.group_starts, vec![0, 2, 4]);

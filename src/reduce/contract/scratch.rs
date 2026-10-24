@@ -243,25 +243,22 @@ pub(crate) struct ContractScratch {
     /// and it restarts at 1 (0 is the stamp of a cell never written, so it
     /// must never equal a live one).
     pub(super) twin_generation: u32,
-    /// One bit per node: set if some pair names it, or, in the owner class
-    /// scatter, if the node has no twin.
+    /// One bit per node: set if some pair names it.
     pub(super) twin_named: Vec<u64>,
-    /// One bit per node, for the owner class scatter: set once a parent
-    /// node has named it.
-    pub(super) twin_seen: Vec<u64>,
-    /// The owner classes of the owner class scatter, each its size and then
-    /// its members.
-    pub(super) owner_classes: Vec<u32>,
-    /// The per-parent-node sibling table of `TwinEntries::scatter_owner_classes`:
-    /// each cell a stamp in the high 31 bits, a repeat bit, and a sibling in
-    /// the low 32. Its length is a power of two, at least twice the most
-    /// pairs one node has filed so far.
-    pub(super) shared_local: Vec<u64>,
-    /// The stamp of the node `shared_local` files now, from 1, below 2^31.
-    pub(super) shared_generation: u32,
-    /// The parent nodes in which `TwinEntries::scatter_owner_classes` added
-    /// a context to a fingerprint, ascending.
-    pub(super) shared_parents: Vec<u32>,
+    /// Per node of the child level, its class in the partition
+    /// `fingerprint::refine` refines, or `u32::MAX` once it has no twin.
+    pub(super) twin_class: Vec<u32>,
+    /// Per class of that partition, its members.
+    pub(super) class_size: Vec<u32>,
+    /// Per class of that partition, where its group's next member goes in
+    /// `flat_groups`.
+    pub(super) class_pos: Vec<u32>,
+    /// One wide parent node's pairs, each `(node, sibling)`, sorted, for
+    /// the partition refinement.
+    pub(super) refine_keys: Vec<u64>,
+    /// One wide parent node's runs of `refine_keys`, each its node's class
+    /// and sibling hash, and the run's bounds.
+    pub(super) refine_runs: Vec<(u64, u32, u32)>,
     /// Node indices of twin group members, stored contiguously.
     pub(super) flat_groups: Vec<u32>,
     /// Start offsets into `flat_groups` for each twin group; a node belongs to
@@ -275,12 +272,6 @@ pub(crate) struct ContractScratch {
     /// The candidates' node indices in ascending order, which the grouping
     /// pass hashes and groups alone.
     pub(super) candidates: Vec<u32>,
-    /// Per node, the lowest node with its fingerprint, which
-    /// `mark_candidates` writes: a candidate's group representative.
-    pub(super) reps: Vec<u32>,
-    /// One parent node's candidate entries, each `(representative,
-    /// sibling)`, for `groups::verify_fingerprint_groups`.
-    pub(super) owner_keys: Vec<u64>,
     /// Per-node "signature slice needs sorting" flag, set during the Pass-2
     /// entry scatter when a written entry compares below its slice predecessor.
     /// Slices arrive from the scatter in parent-index-major order and are
@@ -369,16 +360,15 @@ impl Buffers for ContractScratch {
         visit(&mut self.fingerprints);
         visit(&mut self.twin_local);
         visit(&mut self.twin_named);
-        visit(&mut self.twin_seen);
-        visit(&mut self.owner_classes);
-        visit(&mut self.shared_local);
-        visit(&mut self.shared_parents);
+        visit(&mut self.twin_class);
+        visit(&mut self.class_size);
+        visit(&mut self.class_pos);
+        visit(&mut self.refine_keys);
+        visit(&mut self.refine_runs);
         visit(&mut self.flat_groups);
         visit(&mut self.group_starts);
         visit(&mut self.is_candidate);
         visit(&mut self.candidates);
-        visit(&mut self.reps);
-        visit(&mut self.owner_keys);
         visit(&mut self.slice_unsorted);
         visit(&mut self.listed_entries);
         visit(&mut self.listed_bits);
