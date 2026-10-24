@@ -229,9 +229,10 @@ thread_local! {
     /// vectors does, or none ([`word_cells_on`], [`word_cells_off`]).
     static WORD_CELLS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
     /// The levels on this thread read by g-pair vectors, those of two grids
-    /// and those with a complete side, and their cells walked in the
-    /// grouped order ([`word_cells_levels`]).
-    static WORD_CELLS_LEVELS: std::cell::Cell<[u64; 3]> = const { std::cell::Cell::new([0; 3]) };
+    /// and those with a complete side, their cells walked in the grouped
+    /// order, and those levels that entered only their live cells
+    /// ([`word_cells_levels`]).
+    static WORD_CELLS_LEVELS: std::cell::Cell<[u64; 4]> = const { std::cell::Cell::new([0; 4]) };
 }
 
 /// [`WORD_CELLS`], or, where it is unset, `TIDIDI_TEST_WORD_CELLS` (`1`
@@ -274,9 +275,9 @@ pub(super) fn word_cells_off<R>(f: impl FnOnce() -> R) -> R {
 }
 
 /// The levels on this thread so far read by g-pair vectors, those of two
-/// grids and those with a complete side, and their cells walked in the
-/// grouped order.
-pub(super) fn word_cells_levels() -> [u64; 3] {
+/// grids and those with a complete side, their cells walked in the grouped
+/// order, and those levels that entered only their live cells.
+pub(super) fn word_cells_levels() -> [u64; 4] {
     WORD_CELLS_LEVELS.with(std::cell::Cell::get)
 }
 

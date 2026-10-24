@@ -88,10 +88,10 @@ pub(crate) fn words_pay(f: &TddLevel, g: &TddLevel, f_rows: Sides<usize>, kills:
 }
 
 /// The row loop of a plain level whose cells are read by g-pair vectors
-/// ([`words_pay`]): [`run_level_rows`] on the level's lookups, entering
-/// the cells it enters, charging what it charges and writing each cell's
-/// pairs in the order its walk writes them, but reading the child grids
-/// only for live candidates.
+/// ([`words_pay`]): it builds what [`run_level_rows`] builds on the level's
+/// lookups, charging what it charges and writing each cell's pairs in the
+/// order its walk writes them, but reads the child grids only for live
+/// candidates.
 ///
 /// Each child row an f pair names on a side whose lookup kills gets a
 /// vector over g's pairs, a bit a pair in column order, set where the
@@ -99,8 +99,12 @@ pub(crate) fn words_pay(f: &TddLevel, g: &TddLevel, f_rows: Sides<usize>, kills:
 /// product. An f pair and a g pair are a live candidate iff both vectors of
 /// the f pair have the g pair's bit (a complete side's vector is every
 /// bit), so a row ANDs its pairs' vectors, sorts the live candidates by
-/// column, and its cells read their own off the sorted list. A cell the
-/// masks enter whose candidates are all dead is charged and left dead.
+/// column, and its cells read their own off the sorted list.
+///
+/// A level without masks enters only its live cells
+/// ([`run_live_cells`]); on a masked level, the row loop enters the cells
+/// the masks leave, and one whose candidates are all dead is charged and
+/// left dead.
 pub(crate) fn run_level_rows_words(
     eng: &Engine,
     rows: RowLoop<'_>,
@@ -116,24 +120,93 @@ pub(crate) fn run_level_rows_words(
     match lookups {
         PlainLookups::Grid => {
             super::super::note_word_cells(super::super::WordNote::Grids);
-            let mut action = EmitByWords::new(eng, rows, &mut *scratch.g_pairs, words, f_rows, EmitSink { level })?;
-            run_level_rows::<false, _, _, _>(eng, rows, scratch, &grid(&sides.left), &grid(&sides.right), &mut action)?;
-            action.finish();
+            rows_by_words(eng, rows, scratch, words, f_rows, &grid(&sides.left), &grid(&sides.right), EmitSink { level })
         }
         PlainLookups::CompleteLeft { charged } => {
             super::super::note_word_cells(super::super::WordNote::Complete);
-            let mut action = EmitByWords::new(eng, rows, &mut *scratch.g_pairs, words, f_rows, ReservedEmitSink { level, charged })?;
-            run_level_rows::<false, _, _, _>(eng, rows, scratch, &complete(&sides.left), &grid(&sides.right), &mut action)?;
-            action.finish();
+            rows_by_words(eng, rows, scratch, words, f_rows, &complete(&sides.left), &grid(&sides.right), ReservedEmitSink { level, charged })
         }
         PlainLookups::CompleteRight { charged } => {
             super::super::note_word_cells(super::super::WordNote::Complete);
-            let mut action = EmitByWords::new(eng, rows, &mut *scratch.g_pairs, words, f_rows, ReservedEmitSink { level, charged })?;
-            run_level_rows::<false, _, _, _>(eng, rows, scratch, &grid(&sides.left), &complete(&sides.right), &mut action)?;
-            action.finish();
+            rows_by_words(eng, rows, scratch, words, f_rows, &grid(&sides.left), &complete(&sides.right), ReservedEmitSink { level, charged })
         }
         PlainLookups::Complete { .. } => unreachable!("a level of two complete sides kills no candidate"),
     }
+}
+
+/// [`run_level_rows_words`] on one pair of lookups.
+#[expect(clippy::too_many_arguments)]
+fn rows_by_words<L: ChildLookup, R: ChildLookup, S: PairSink>(
+    eng: &Engine,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
+    words: &mut WordScratch,
+    f_rows: Sides<usize>,
+    left: &L,
+    right: &R,
+    sink: S,
+) -> Result<(), OperationError> {
+    let mut action = EmitByWords::new(eng, rows, &mut *scratch.g_pairs, words, f_rows, sink)?;
+    if rows.ctx.masked {
+        run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action)?;
+    } else {
+        run_live_cells(eng, rows, scratch, left, right, &mut action)?;
+    }
+    action.finish();
+    Ok(())
+}
+
+/// The row loop of a level without masks read by g-pair vectors, which
+/// enters only the cells that hold a live candidate. A row of the row loop
+/// over such a level enters every cell, charges each a unit a candidate
+/// and charges a unit a column; this charges the same, a row at a time.
+fn run_live_cells<L: ChildLookup, R: ChildLookup, S: PairSink>(
+    eng: &Engine,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
+    left: &L,
+    right: &R,
+    action: &mut EmitByWords<'_, S>,
+) -> Result<(), OperationError> {
+    super::super::note_word_cells(super::super::WordNote::LiveCells);
+    let RowLoop { f_level, ctx, f_width, .. } = rows;
+    let RowScratch { f_pairs: f_scratch, node_idx: slab, .. } = scratch;
+    let lim = eng.limits();
+    let mut poll = lim.gate_with(super::super::budget::DENSE_CELL_POLL_STRIDE);
+    let width = ctx.right_width;
+    let candidates_a_pair = action.w.g_flat.len() as u64;
+    // The row loop's resets: a fill of a small grid, a row at a time on a
+    // large one.
+    let slab_fill = f_width.saturating_mul(width) <= DEAD_SLAB_FILL_MAX_CELLS;
+    if slab_fill {
+        let end = ctx.output_grid_base + f_width * width;
+        if !extend_slab(slab, ctx.output_grid_base, end) {
+            mark_dead(&mut slab[ctx.output_grid_base..end]);
+        }
+    }
+    let (lv, rv) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
+    let described = described_rows(lim, f_level, f_width, lv, rv, f_scratch);
+    for i in 0..f_width {
+        let row_base = ctx.output_grid_base + i * width;
+        let fresh = extend_slab(slab, row_base, row_base + width);
+        if !slab_fill && !fresh {
+            mark_dead(&mut slab[row_base..row_base + width]);
+        }
+        let f_pairs = match described {
+            Some(k) => &f_scratch[i * k..(i + 1) * k],
+            None => f_level.pairs_view_decoded(i, f_scratch, lv, rv),
+        };
+        if f_pairs.is_empty() {
+            continue;
+        }
+        action.read_row(i, f_pairs, slab, left, right)?;
+        while let Some(j) = action.next_column() {
+            let (from, to) = action.take_column(j);
+            action.emit(eng, i, j, row_base + j, f_pairs, ctx, slab, left, right, from, to)?;
+        }
+        poll.poll(f_pairs.len() as u64 * candidates_a_pair + width as u64)?;
+    }
+    poll.flush()?;
     Ok(())
 }
 
@@ -308,49 +381,59 @@ impl<'w, S: PairSink> EmitByWords<'w, S> {
         self.cursor = 0;
         Ok(())
     }
-}
 
-impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for EmitByWords<'_, S> {
-    const DENSE_SLAB: bool = true;
-
+    /// The column of the current row's next live candidate.
     #[inline(always)]
-    fn grid_row(&self, i: usize) -> usize {
-        i
+    fn next_column(&self) -> Option<usize> {
+        let e = *self.w.sorted.get(self.cursor)?;
+        Some(self.w.col_of[(e & 0xffff_ffff) as usize] as usize)
     }
 
+    /// The current row's live candidates in column `j`, which no column
+    /// before it has left: `w.sorted[from..to]`.
     #[inline(always)]
-    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
-        let (start, end) = (self.w.col_start[a.j] as usize, self.w.col_start[a.j + 1] as usize);
-        let grid_pos = a.row_base + a.j;
-        // A dead column's cell, as `process_cell` leaves it.
-        if start == end {
-            a.node_idx[grid_pos] = NO_PRODUCT;
-            return Ok(());
-        }
-        let (n1, n2) = (a.f_pairs.len(), end - start);
-        // The cell walk's charge: a unit a candidate.
-        a.gate.poll((n1 * n2) as u64)?;
-        if a.i != self.row {
-            self.read_row(a.i, a.f_pairs, a.node_idx, a.left, a.right)?;
-        }
-        let w = &mut *self.w;
+    fn take_column(&mut self, j: usize) -> (usize, usize) {
+        let w = &*self.w;
         let from = self.cursor;
-        let q_of = |e: u64| (e & 0xffff_ffff) as usize;
-        while self.cursor < w.sorted.len() && w.col_of[q_of(w.sorted[self.cursor])] as usize == a.j {
-            self.cursor += 1;
+        let mut to = from;
+        while to < w.sorted.len() && w.col_of[(w.sorted[to] & 0xffff_ffff) as usize] as usize == j {
+            to += 1;
         }
         debug_assert!(
-            self.cursor == w.sorted.len() || w.col_of[q_of(w.sorted[self.cursor])] as usize > a.j,
+            to == w.sorted.len() || w.col_of[(w.sorted[to] & 0xffff_ffff) as usize] as usize > j,
             "a live candidate in a cell the row loop did not enter"
         );
-        if from == self.cursor {
-            return Ok(());
-        }
-        let node_idx = &mut *a.node_idx;
+        self.cursor = to;
+        (from, to)
+    }
+
+    /// Write the cell at `grid_pos`, row `i` and column `j`, of the live
+    /// candidates `w.sorted[from..to]`, at least one, in the order the
+    /// cell's walk writes them.
+    #[inline(always)]
+    #[expect(clippy::too_many_arguments)]
+    fn emit<L: ChildLookup, R: ChildLookup>(
+        &mut self,
+        eng: &Engine,
+        i: usize,
+        j: usize,
+        grid_pos: usize,
+        f_pairs: &[ChildPair],
+        ctx: &CellCtx<'_>,
+        node_idx: &mut [u32],
+        left: &L,
+        right: &R,
+        from: usize,
+        to: usize,
+    ) -> Result<(), OperationError> {
+        let w = &mut *self.w;
+        let start = w.col_start[j] as usize;
+        let (n1, n2) = (f_pairs.len(), w.col_start[j + 1] as usize - start);
+        let q_of = |e: u64| (e & 0xffff_ffff) as usize;
         let product = |e: u64, node_idx: &[u32]| {
-            let (p, q) = (&a.f_pairs[(e >> 32) as usize], &w.g_flat[q_of(e)]);
-            let lc = a.left.get(node_idx, p.left.0, q.left.0);
-            let rc = a.right.get(node_idx, p.right.0, q.right.0);
+            let (p, q) = (&f_pairs[(e >> 32) as usize], &w.g_flat[q_of(e)]);
+            let lc = left.get(node_idx, p.left.0, q.left.0);
+            let rc = right.get(node_idx, p.right.0, q.right.0);
             debug_assert!(lc != NO_PRODUCT && rc != NO_PRODUCT, "a candidate read live is live");
             (lc, rc)
         };
@@ -359,10 +442,10 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for EmitByWor
             return self.sink.single(eng, node_idx, grid_pos, lc, rc);
         }
         let begin = self.sink.begin();
-        let runs = if n1 >= GROUPED_MIN_PAIRS { a.ctx.right_cols.and_then(|cols| cols.runs(a.j)) } else { None };
+        let runs = if n1 >= GROUPED_MIN_PAIRS && n2 > 1 { ctx.right_cols.and_then(|cols| cols.runs(j)) } else { None };
         match runs {
             None => {
-                for &e in &w.sorted[from..self.cursor] {
+                for &e in &w.sorted[from..to] {
                     let (lc, rc) = product(e, node_idx);
                     self.sink.pair(eng, lc, rc)?;
                 }
@@ -371,21 +454,21 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for EmitByWor
                 // The grouped walk's order: by f pair run of equal `.left`,
                 // then g pair run of equal `.left`, then f pair, then g pair.
                 super::super::note_word_cells(super::super::WordNote::Grouped);
-                if self.runs_row != a.i {
-                    self.runs_row = a.i;
+                if self.runs_row != i {
+                    self.runs_row = i;
                     w.runs_of.clear();
                     self.lim.reserve_exact(&mut w.runs_of, n1)?;
                     let mut first = 0;
-                    for (k, p) in a.f_pairs.iter().enumerate() {
-                        if p.left != a.f_pairs[first].left {
+                    for (k, p) in f_pairs.iter().enumerate() {
+                        if p.left != f_pairs[first].left {
                             first = k;
                         }
                         w.runs_of.push(first as u32);
                     }
                 }
                 w.grouped.clear();
-                self.lim.reserve(&mut w.grouped, self.cursor - from)?;
-                for &e in &w.sorted[from..self.cursor] {
+                self.lim.reserve(&mut w.grouped, to - from)?;
+                for &e in &w.sorted[from..to] {
                     let local = (q_of(e) - start) as u32;
                     let run = runs.partition_point(|&end| end <= local) as u64;
                     w.grouped.push((u64::from(w.runs_of[(e >> 32) as usize]) << 32 | run, e));
@@ -398,5 +481,34 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for EmitByWor
             }
         }
         self.sink.end(eng, node_idx, grid_pos, begin)
+    }
+}
+
+impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for EmitByWords<'_, S> {
+    const DENSE_SLAB: bool = true;
+
+    #[inline(always)]
+    fn grid_row(&self, i: usize) -> usize {
+        i
+    }
+
+    #[inline(always)]
+    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
+        let n2 = (self.w.col_start[a.j + 1] - self.w.col_start[a.j]) as usize;
+        // A dead column's cell, as `process_cell` leaves it.
+        if n2 == 0 {
+            a.node_idx[a.row_base + a.j] = NO_PRODUCT;
+            return Ok(());
+        }
+        // The cell walk's charge: a unit a candidate.
+        a.gate.poll((a.f_pairs.len() * n2) as u64)?;
+        if a.i != self.row {
+            self.read_row(a.i, a.f_pairs, a.node_idx, a.left, a.right)?;
+        }
+        let (from, to) = self.take_column(a.j);
+        if from == to {
+            return Ok(());
+        }
+        self.emit(eng, a.i, a.j, a.row_base + a.j, a.f_pairs, a.ctx, a.node_idx, a.left, a.right, from, to)
     }
 }
