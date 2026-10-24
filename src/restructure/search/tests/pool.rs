@@ -17,6 +17,13 @@ thread_local! {
     static REPLAY_REFUSALS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
     /// The refusals the pool search charged without probing.
     static REPLAYED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The members a scored probe scored.
+    static SCORED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Count a member a scored probe scores.
+pub(super) fn note_score() {
+    SCORED.with(|n| n.set(n.get() + 1));
 }
 
 /// Whether the pool search replays the cached refusal it holds, counting
@@ -275,40 +282,65 @@ fn a_probe_charges_its_rebuilds_to_the_work_clock() {
 }
 
 /// A move its scores refuse charges the probe and, for each member, what
-/// the score reads: the pairs of its two levels and the rebuild's fixed
-/// units, or a member of a pair a level its pairs and one.
+/// a score reads: the pairs of its two levels and the rebuild's fixed
+/// units, or a member of a pair a level its pairs and one. It charges so
+/// also where a score's cap refused the move before every member was
+/// scored, as on seeded pools of four functions on every vtree shape of
+/// six to eight variables some probes do.
 #[test]
 fn a_refused_score_charges_the_pairs_it_reads() {
+    use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
     let eng = crate::Engine::new();
-    let original = pool();
-    let mut refused = 0;
-    for mv in moves(original[0].vtree()) {
-        let mut members = original.clone();
-        let mut tree = Vtree::clone(members[0].vtree());
-        let Some(pending) = super::move_in_place(&mut tree, mv) else { continue };
-        let info = pending.info();
-        pending.revert(&mut tree);
-        let read: u64 = members
-            .iter()
-            .map(|m| {
-                let (outer, inner) = (m.levels[info.v_idx.idx()].live_pairs(), m.levels[info.w_idx.idx()].live_pairs());
-                let old = (outer + inner) as u64;
-                if outer <= 1 && inner == outer { old + 1 } else { old + super::REBUILD_UNITS }
-            })
-            .sum();
-        let start = eng.limits().work_units();
-        let mut scratch = crate::restructure::scratch::RestructureScratch::default();
-        let kept = with_members(&mut members, |refs| super::probe_in_place(&eng, refs, &mut tree, mv, usize::MAX, &mut scratch, super::Twin::Alone)).unwrap();
-        if kept {
-            continue;
-        }
-        refused += 1;
-        assert_eq!(eng.limits().work_units() - start, super::PROBE_UNITS + read, "{mv:?}");
-        for (m, o) in members.iter().zip(&original) {
-            assert!(crate::test_helpers::same_storage(m, o), "{mv:?}");
+    let mut rng = Lcg::new(0xca9);
+    let mut pools = vec![pool()];
+    for n in 6..9 {
+        for (_, vtree) in vtree_shapes(n) {
+            pools.push(
+                (0..4)
+                    .map(|_| {
+                        let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: n as usize, width: 3 }));
+                        f.minimize().expect("an unarmed engine refuses nothing");
+                        f
+                    })
+                    .collect(),
+            );
         }
     }
-    assert!(refused > 0);
+    let (mut refused, mut capped) = (0, 0);
+    for original in &pools {
+        for mv in moves(original[0].vtree()) {
+            let mut members = original.clone();
+            let mut tree = Vtree::clone(members[0].vtree());
+            let Some(pending) = super::move_in_place(&mut tree, mv) else { continue };
+            let info = pending.info();
+            pending.revert(&mut tree);
+            let (mut read, mut scorable) = (0u64, 0usize);
+            for m in &members {
+                let (outer, inner) = (m.levels[info.v_idx.idx()].live_pairs(), m.levels[info.w_idx.idx()].live_pairs());
+                let old = (outer + inner) as u64;
+                if outer <= 1 && inner == outer {
+                    read += old + 1;
+                } else {
+                    read += old + super::REBUILD_UNITS;
+                    scorable += 1;
+                }
+            }
+            let start = eng.limits().work_units();
+            let scored = SCORED.with(std::cell::Cell::get);
+            let mut scratch = crate::restructure::scratch::RestructureScratch::default();
+            let kept = with_members(&mut members, |refs| super::probe_in_place(&eng, refs, &mut tree, mv, usize::MAX, &mut scratch, super::Twin::Alone)).unwrap();
+            if kept {
+                continue;
+            }
+            refused += 1;
+            capped += usize::from(SCORED.with(std::cell::Cell::get) - scored < scorable);
+            assert_eq!(eng.limits().work_units() - start, super::PROBE_UNITS + read, "{mv:?}");
+            for (m, o) in members.iter().zip(original) {
+                assert!(crate::test_helpers::same_storage(m, o), "{mv:?}");
+            }
+        }
+    }
+    assert!(refused > 0 && capped > 0, "{refused} refused, {capped} capped");
 }
 
 #[test]

@@ -185,12 +185,12 @@ impl Engine {
     /// The members keep their functions and end up sharing one vtree
     /// allocation, a new one if any move was kept. Stops are polled once per
     /// pivot and within each probe; an error keeps the moves kept so far and
-    /// returns without the closing reduction. A probe scores the move on
-    /// each member, charging the pairs of the member's two levels that the
-    /// score reads; a move the scores keep then charges what
-    /// [`rotate_pool_if`](Self::rotate_pool_if) does, less the copy of the
-    /// tree, and the nodes whose place in the bottom-up order it changes:
-    /// the descent moves one copy in place.
+    /// returns without the closing reduction. A probe scores the move
+    /// member by member and stops once the scores refuse it, and charges
+    /// every member the pairs of its two levels all the same; a move the
+    /// scores keep then charges what [`rotate_pool_if`](Self::rotate_pool_if)
+    /// does, less the copy of the tree, and the nodes whose place in the
+    /// bottom-up order it changes: the descent moves one copy in place.
     ///
     /// # Errors
     ///
@@ -598,9 +598,14 @@ fn probe(
 ///
 /// Each member is scored ([`score_levels`]), which is never above the pairs
 /// its rebuild holds and almost always equal to them. A score reads the
-/// member's two levels and builds nothing, so it charges their pairs and
-/// [`REBUILD_UNITS`]. A move whose scores do not lower the total is refused,
-/// the members only read. Otherwise every member is rebuilt in turn, charged
+/// member's two levels and builds nothing, so the probe charges each
+/// member their pairs and [`REBUILD_UNITS`]. The members are scored in
+/// turn, each under a cap: the old total less the scores before it and the
+/// least the members after it can hold, a pair for each node of their outer
+/// level. A score that reaches its cap refuses the move, and the members
+/// after it are not read, though charged: the charge depends on the levels
+/// alone. A move whose scores do not lower the total is refused, the
+/// members only read. Otherwise every member is rebuilt in turn, charged
 /// what preparing it costs, and the move kept if their pairs lower the total
 /// after all; if not, or if a rebuild passes `bound` or fails, every member
 /// is put back. So the scores decide, and no member's rebuild waits for the
@@ -625,50 +630,85 @@ fn probe_scored(
     let defer = bound > 2;
     let mut gate = lim.gate();
     gate.poll(extra)?;
+    let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
     let mut before = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut before, members.len())?;
-    let mut after = Transient::new(lim, Vec::new());
-    lim.reserve_exact(&mut after, members.len())?;
-    // Whether each member was scored, for the check that a score is at most
-    // the pairs.
+    // Whether each member is scored: one with at most one pair on each
+    // level is not, its pairs unchanged.
     let mut scored = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut scored, members.len())?;
-    for (i, m) in members.iter().enumerate() {
-        let (outer, inner) = (m.levels[info.v_idx.idx()].live_pairs(), m.levels[info.w_idx.idx()].live_pairs());
+    // The least pairs each member can end with: a member scored keeps a
+    // pair for each node of its outer level ([`score_levels`]), one not
+    // scored its pairs.
+    let mut floors = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut floors, members.len())?;
+    for m in members.iter() {
+        let ((outer, owners), inner) = (pairs_and_owners(&m.levels[v]), m.levels[w].live_pairs());
         let old = outer + inner;
         before.push(old);
-        if defer && outer <= 1 && inner == outer {
+        let scores = !(defer && outer <= 1 && inner == outer);
+        scored.push(scores);
+        floors.push(if scores { owners } else { old });
+    }
+    let total = before.iter().sum::<usize>();
+    let mut after = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut after, members.len())?;
+    // The floors of the members still to score, and the pairs of those
+    // scored, of the move and of its crossing where it is scored too.
+    let mut rest = floors.iter().sum::<usize>();
+    let (mut sum, mut sum_crossed) = (0usize, Some(0usize));
+    let cap = |sum: usize, rest: usize| total.saturating_sub(sum + rest);
+    for (i, m) in members.iter().enumerate() {
+        rest -= floors[i];
+        let old = before[i];
+        if !scored[i] {
             if let Twin::Fill(slots) = &mut twin {
                 slots.push(None);
             }
             gate.poll(old as u64 + 1)?;
             after.push(old);
-            scored.push(false);
+            sum += old;
+            sum_crossed = sum_crossed.map(|s| s + old);
             continue;
         }
+        #[cfg(test)]
+        tests::note_score();
         let (kind, score) = (mv.rotation.kind, &mut scratch.score);
         let new = match &mut twin {
-            Twin::Alone => score_levels(lim, m, &info, kind, mv.crossed, score, bound)?,
+            Twin::Alone => score_levels(lim, m, &info, kind, mv.crossed, score, bound, cap(sum, rest))?,
             Twin::Fill(slots) => {
-                let [plain, crossed] = score_levels_crossed_too(lim, m, &info, kind, score, bound)?;
+                // A crossing refused by an earlier member's score is capped
+                // at nothing.
+                let crossed_cap = sum_crossed.map_or(0, |s| cap(s, rest));
+                let [plain, crossed] = score_levels_crossed_too(lim, m, &info, kind, score, bound, [cap(sum, rest), crossed_cap])?;
                 slots.push(Some(crossed));
+                sum_crossed = sum_crossed.zip(crossed).map(|(s, n)| s + n);
                 plain
             }
             Twin::Given(slots) => match slots.get(i) {
                 Some(&Some(given)) => given,
-                _ => score_levels(lim, m, &info, kind, mv.crossed, score, bound)?,
+                _ => score_levels(lim, m, &info, kind, mv.crossed, score, bound, cap(sum, rest))?,
             },
         };
         let Some(new) = new else {
+            // Refused, by the cap or the bound: this member and the ones
+            // after it charged as if scored.
+            for (j, &old) in before.iter().enumerate().skip(i) {
+                gate.poll(old as u64 + if scored[j] { REBUILD_UNITS } else { 1 })?;
+            }
+            #[cfg(debug_assertions)]
+            debug_check_refusal(lim, members, &info, mv, bound, total, scratch)?;
+            gate.flush()?;
+            lim.check_stop()?;
             return Ok(false);
         };
         gate.poll(old as u64 + REBUILD_UNITS)?;
         after.push(new);
-        scored.push(true);
+        sum += new;
     }
     // A score is at most the pairs: a total no lower than before is a move
     // the search refuses.
-    if after.iter().sum::<usize>() >= before.iter().sum::<usize>() {
+    if sum >= total {
         #[cfg(debug_assertions)]
         debug_check_scores(lim, members, &info, mv, bound, &after, scratch)?;
         gate.flush()?;
@@ -700,6 +740,17 @@ fn probe_scored(
         Ok(kept && after.iter().sum::<usize>() < before.iter().sum::<usize>())
     });
     settle(lim, members, &info, &mut saved, outcome)
+}
+
+/// A level's live pairs and the nodes that hold them.
+fn pairs_and_owners(level: &TddLevel) -> (usize, usize) {
+    match level.implicit() {
+        Some(d) => (d.pairs(), if d.pairs_per_node() == 0 { 0 } else { d.nodes() }),
+        None => {
+            let (pairs, live, _) = level.pair_census();
+            (pairs as usize, live as usize)
+        }
+    }
 }
 
 /// What a scored probe ([`probe_scored`]) knows of the crossing of its move:
@@ -787,6 +838,37 @@ fn debug_check_scores(
             debug_assert!(new >= score, "a score is at most the pairs: {score} > {new}");
         }
     }
+    Ok(())
+}
+
+/// The check, in debug builds, that a move whose scores were refused short
+/// of the last member is one whose rebuilt members would hold at least
+/// `total` pairs.
+#[cfg(debug_assertions)]
+fn debug_check_refusal(
+    lim: &Limits,
+    members: &[&mut Tdd],
+    info: &RotationInfo,
+    mv: PoolMove,
+    bound: usize,
+    total: usize,
+    scratch: &mut RestructureScratch,
+) -> Result<(), OperationError> {
+    let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
+    let mut pairs = 0usize;
+    for m in members {
+        let (outer, inner) = (m.levels[v].live_pairs(), m.levels[w].live_pairs());
+        if outer <= 1 && inner == outer {
+            pairs += outer + inner;
+            continue;
+        }
+        let mut prepared = Prepared::default();
+        let new = prepare_levels(lim, m, info, mv.rotation.kind, mv.crossed, false, scratch, &mut prepared, bound)?;
+        lim.discard(prepared);
+        let Some(new) = new else { return Ok(()) };
+        pairs += new;
+    }
+    debug_assert!(pairs >= total, "a capped score refused a move to {pairs} pairs from {total}");
     Ok(())
 }
 

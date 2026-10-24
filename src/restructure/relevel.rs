@@ -473,10 +473,12 @@ fn mix(x: u64) -> u64 {
 
 /// The pairs the two levels of a rotation in `dir` would hold, scored
 /// without building them, or `None` where [`prepare_levels`] would give up
-/// at `max_pairs`. The diagram is only read. The score is never above the
-/// count [`prepare_levels`] gives, and equals it unless two different
-/// contexts collide on a 64-bit hash, so a score at least the old count
-/// proves the rotation cannot lower it. The diagram must be Boolean.
+/// at `max_pairs` or where the pairs reach `cap`, which the score may then
+/// find before it has read the rows to the end. The diagram is only read.
+/// The score is never above the count [`prepare_levels`] gives, and equals
+/// it unless two different contexts collide on a 64-bit hash, so a score at
+/// least the old count proves the rotation cannot lower it. The diagram
+/// must be Boolean.
 ///
 /// Write `x` for the old outer pair's child that moves into the new inner
 /// pair, `y` for the old inner pair's child that joins it and `z` for the
@@ -498,6 +500,7 @@ fn mix(x: u64) -> u64 {
 /// # Errors
 ///
 /// [`OperationError::OverBudget`] when a table the score needs is refused.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn score_levels(
     lim: &Limits,
     tdd: &Tdd,
@@ -506,15 +509,16 @@ pub(crate) fn score_levels(
     crossed: bool,
     scratch: &mut ScoreScratch,
     max_pairs: usize,
+    cap: usize,
 ) -> Result<Option<usize>, OperationError> {
     let mut score = [None];
-    score_crossings(lim, tdd, info, dir, &[crossed], scratch, max_pairs, &mut score)?;
+    score_crossings(lim, tdd, info, dir, &[crossed], &[cap], scratch, max_pairs, &mut score)?;
     Ok(score[0])
 }
 
 /// [`score_levels`] of the move in `dir` and of its crossing, in that
-/// order. They read the same two levels, and the old outer pairs are filed
-/// once for both.
+/// order, each under its own cap. They read the same two levels, and the
+/// old outer pairs are filed once for both.
 ///
 /// # Errors
 ///
@@ -526,14 +530,15 @@ pub(crate) fn score_levels_crossed_too(
     dir: RotationKind,
     scratch: &mut ScoreScratch,
     max_pairs: usize,
+    caps: [usize; 2],
 ) -> Result<[Option<usize>; 2], OperationError> {
     let mut scores = [None; 2];
-    score_crossings(lim, tdd, info, dir, &[false, true], scratch, max_pairs, &mut scores)?;
+    score_crossings(lim, tdd, info, dir, &[false, true], &caps, scratch, max_pairs, &mut scores)?;
     Ok(scores)
 }
 
 /// [`score_levels`] of the move in `dir` crossed as each of `crossings`
-/// says, into `scores`.
+/// says, under the cap beside it, into `scores`.
 #[allow(clippy::too_many_arguments)]
 fn score_crossings(
     lim: &Limits,
@@ -541,6 +546,7 @@ fn score_crossings(
     info: &RotationInfo,
     dir: RotationKind,
     crossings: &[bool],
+    caps: &[usize],
     s: &mut ScoreScratch,
     max_pairs: usize,
     scores: &mut [Option<usize>],
@@ -554,10 +560,14 @@ fn score_crossings(
         (x.0 as usize, ChildDecoder::structural().node(j).idx())
     };
     let scored = (|| {
-        if !file_outer_pairs_by_x(lim, old_v, old_w, split_v, s, max_pairs)? {
+        let Some(floor) = file_outer_pairs_by_x(lim, old_v, old_w, split_v, s, max_pairs)? else {
             return Ok(());
-        }
-        for (score, &crossed) in scores.iter_mut().zip(crossings) {
+        };
+        for ((score, &crossed), &cap) in scores.iter_mut().zip(crossings).zip(caps) {
+            if floor.pairs() >= cap {
+                *score = None;
+                continue;
+            }
             // An old inner pair's `y` and `z`, the stored sides exchanged
             // where the move is crossed.
             let split_w = |wp: ChildPair| {
@@ -565,7 +575,7 @@ fn score_crossings(
                 if left { (wl.0 as usize, wr.0) } else { (wr.0 as usize, wl.0) }
             };
             group_blocks(lim, old_w, split_w, s)?;
-            *score = score_rows(lim, s, max_pairs)?;
+            *score = score_rows(lim, s, max_pairs, cap, floor)?;
         }
         Ok(())
     })();
@@ -578,9 +588,25 @@ fn score_crossings(
     scored
 }
 
+/// What a score knows of its pairs before it reads a row: every `x` an old
+/// outer pair has gives at least one new inner pair, and every owner at
+/// least one new outer pair, its cells lying in at least one distinct set.
+#[derive(Clone, Copy)]
+struct Floor {
+    rows: usize,
+    owners: usize,
+}
+
+impl Floor {
+    fn pairs(self) -> usize {
+        self.rows + self.owners
+    }
+}
+
 /// The old outer pairs `(owner, inner node)` filed into `s.by_x` by their
-/// `x`, `x`'s ending at `s.x_ends[x]`; `false`, the score's `None`, where a
-/// rebuild would give up at `max_pairs` triples.
+/// `x`, `x`'s ending at `s.x_ends[x]`, and the score's [`Floor`]; `None`,
+/// the score's `None`, where a rebuild would give up at `max_pairs`
+/// triples.
 fn file_outer_pairs_by_x(
     lim: &Limits,
     old_v: &TddLevel,
@@ -588,10 +614,12 @@ fn file_outer_pairs_by_x(
     split_v: impl Fn(ChildPair) -> (usize, usize),
     s: &mut ScoreScratch,
     max_pairs: usize,
-) -> Result<bool, OperationError> {
+) -> Result<Option<Floor>, OperationError> {
     let n_v = old_v.nodes().len();
     s.x_ends.clear();
+    let mut floor = Floor { rows: 0, owners: 0 };
     for p in 0..n_v {
+        let mut owns = false;
         for vp in old_v.pairs_iter_of_idx(p) {
             let (x, _) = split_v(vp);
             if x + 2 > s.x_ends.len() {
@@ -599,9 +627,12 @@ fn file_outer_pairs_by_x(
                 lim.try_resize(&mut s.x_ends, len, 0)?;
             }
             s.x_ends[x + 1] += 1;
+            owns = true;
         }
+        floor.owners += usize::from(owns);
     }
     for x in 1..s.x_ends.len() {
+        floor.rows += usize::from(s.x_ends[x] != 0);
         s.x_ends[x] += s.x_ends[x - 1];
     }
     let v_pairs = s.x_ends.last().map_or(0, |&n| n as usize);
@@ -619,7 +650,7 @@ fn file_outer_pairs_by_x(
             }
         }
         if triples >= bail {
-            return Ok(false);
+            return Ok(None);
         }
     }
     s.by_x.clear();
@@ -632,7 +663,7 @@ fn file_outer_pairs_by_x(
             *at += 1;
         }
     }
-    Ok(true)
+    Ok(Some(floor))
 }
 
 /// The blocks of each old inner node into `s.blocks`, grouped by `y`, node
@@ -665,14 +696,16 @@ fn group_blocks(lim: &Limits, old_w: &TddLevel, split_w: impl Fn(ChildPair) -> (
 
 /// The score from the filed outer pairs and the blocks: each `x`'s new inner
 /// pairs a row over `y`, summing the blocks its outer pairs reach, and the
-/// distinct contexts among them.
-fn score_rows(lim: &Limits, s: &mut ScoreScratch, max_pairs: usize) -> Result<Option<usize>, OperationError> {
+/// distinct contexts among them. `None` as soon as the pairs found and the
+/// `floor` of what is still to come reach `cap`.
+fn score_rows(lim: &Limits, s: &mut ScoreScratch, max_pairs: usize, cap: usize, floor: Floor) -> Result<Option<usize>, OperationError> {
     const OWNER: u64 = 0x2545_F491_4F6C_DD1D;
     const SIZE: u64 = 0x1405_7B7E_F767_814F;
     s.keys.clear();
     s.touched.clear();
     lim.reserve(&mut s.touched, s.marks.len())?;
     let ScoreScratch { block_ends, blocks, marks, touched, stamp, x_ends, by_x, keys, .. } = s;
+    let mut rows_left = floor.rows;
     let mut begin = 0usize;
     for &end in x_ends.iter() {
         let end = end as usize;
@@ -701,12 +734,18 @@ fn score_rows(lim: &Limits, s: &mut ScoreScratch, max_pairs: usize) -> Result<Op
         }
         touched.clear();
         begin = end;
+        rows_left -= 1;
+        if keys.len() + rows_left + floor.owners >= cap {
+            return Ok(None);
+        }
     }
     // The distinct contexts: the new inner nodes, and their cells the new
     // outer pairs. A key of zero marks an empty slot; a context hashing to
     // zero takes key one, which can only merge it with another, lowering
     // the score.
     let inner_pairs = s.keys.len();
+    // What the outer pairs may reach before the pairs reach `cap`.
+    let stop = cap - inner_pairs;
     let slots = (2 * inner_pairs).next_power_of_two().max(16);
     let (mask, shift) = (slots - 1, 64 - slots.trailing_zeros());
     s.table.clear();
@@ -721,6 +760,9 @@ fn score_rows(lim: &Limits, s: &mut ScoreScratch, max_pairs: usize) -> Result<Op
                 s.table[at] = key;
                 nodes += 1;
                 outer_pairs += cells as usize;
+                if outer_pairs >= stop {
+                    return Ok(None);
+                }
                 break;
             }
             if slot == key {
