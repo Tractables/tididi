@@ -268,6 +268,11 @@ pub(crate) struct ContractScratch {
     /// One wide parent node's runs of `refine_keys`, each its node's class
     /// and sibling hash, and the run's bounds.
     pub(super) refine_runs: Vec<(u64, u32, u32)>,
+    /// Per run of `refine_runs`, the next run of its group and, for the
+    /// first run of a group, the group's size (0 for the others).
+    pub(super) refine_links: Vec<(u32, u32)>,
+    /// The table the runs of `refine_runs` find their group's first run in.
+    pub(super) refine_table: Vec<u32>,
     /// The parent nodes too wide to group on the stack, each its pair count
     /// above its index, refined after the narrower ones.
     pub(super) refine_wide: Vec<u64>,
@@ -380,6 +385,8 @@ impl Buffers for ContractScratch {
         visit(&mut self.class_pos);
         visit(&mut self.refine_keys);
         visit(&mut self.refine_runs);
+        visit(&mut self.refine_links);
+        visit(&mut self.refine_table);
         visit(&mut self.refine_wide);
         self.refine_radix.buffers(visit);
         visit(&mut self.flat_groups);

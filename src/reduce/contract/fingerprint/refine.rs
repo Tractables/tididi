@@ -11,6 +11,19 @@ use super::{mix64, pack, split_pair};
 /// The class of a node known to have no twin.
 const ALONE: u32 = u32::MAX;
 
+/// An empty cell of the table a wide parent node's runs are grouped in,
+/// and the end of a group's chain of runs.
+const NO_RUN: u32 = u32::MAX;
+
+/// The scratch a wide parent node is split in ([`Partition::split_wide`]).
+struct Wide<'a> {
+    keys: &'a mut Vec<u64>,
+    runs: &'a mut Vec<(u64, u32, u32)>,
+    links: &'a mut Vec<(u32, u32)>,
+    table: &'a mut Vec<u32>,
+    radix: &'a mut Radix,
+}
+
 /// The most pairs a parent node holds where its nodes are grouped on the
 /// stack, by comparing every two; a wider one sorts them in scratch.
 const SMALL_PAIRS: usize = 8;
@@ -29,9 +42,9 @@ const SMALL_PAIRS: usize = 8;
 /// §2.8 is the case of a sibling no other node has there) and leaves the
 /// partition, so that later parent nodes skip it. A class whose members a
 /// parent node all names, in one group, stays whole; else each of its
-/// groups there becomes a class of its own, one of them keeping the class
-/// where no member went unnamed. The nodes no pair names stay in the first
-/// class, twins of one another.
+/// groups of two or more there becomes a class of its own, one of which
+/// may keep the class's id where every member is named there. The nodes no
+/// pair names stay in the first class, twins of one another.
 ///
 /// The work is one read of the class of each node a parent node names, and
 /// one write for each node that changes class, with each parent node's pairs
@@ -47,9 +60,16 @@ pub(super) fn refine_context_groups(
     width: usize,
 ) -> Result<bool, OperationError> {
     let ContractScratch {
-        twin_class, twin_named, twin_alone, class_size, class_pos, refine_keys, refine_runs, refine_wide, refine_radix,
-        flat_groups, group_starts, ..
+        twin_class, twin_named, twin_alone, class_size, class_pos, refine_keys, refine_runs, refine_links, refine_table,
+        refine_wide, refine_radix, flat_groups, group_starts, ..
     } = scratch;
+    let mut wide = Wide {
+        keys: refine_keys,
+        runs: refine_runs,
+        links: refine_links,
+        table: refine_table,
+        radix: refine_radix,
+    };
     flat_groups.clear();
     group_starts.clear();
     let words = width.div_ceil(64);
@@ -87,7 +107,7 @@ pub(super) fn refine_context_groups(
             2 => part.split_two(pairs, side),
             n if n <= SMALL_PAIRS => part.split_small(pairs, side),
             n if stored.is_some() => lim.try_push(refine_wide, ((n.min(u32::MAX as usize) as u64) << 32) | i as u64)?,
-            _ => part.split_wide(lim, pairs, side, refine_keys, refine_runs, refine_radix)?,
+            _ => part.split_wide(lim, pairs, side, &mut wide)?,
         }
     }
     if let Some(stored) = stored {
@@ -96,7 +116,7 @@ pub(super) fn refine_context_groups(
             if part.twinable == 0 {
                 break;
             }
-            part.split_wide(lim, stored.of_idx(w as u32 as usize), side, refine_keys, refine_runs, refine_radix)?;
+            part.split_wide(lim, stored.of_idx(w as u32 as usize), side, &mut wide)?;
         }
     }
     debug_assert_eq!(
@@ -343,19 +363,19 @@ impl Partition<'_> {
     }
 
     /// A parent node of more than [`SMALL_PAIRS`] pairs: its pairs sorted
-    /// in `keys`, each node's run keyed in `runs` by its class and a hash of
-    /// its siblings, and the runs sorted, so that a class's runs lie
-    /// together and each group's runs among those of its key; a run's group
-    /// is gathered from its key's runs by comparing their siblings.
+    /// in `keys`, so that each node's siblings are a run in ascending order;
+    /// each run keyed by its node's class and a hash of its siblings, and
+    /// grouped with the runs of its key in a table, by comparing their
+    /// siblings. A group of one run leaves the partition; a group that is
+    /// its whole class keeps it; any other group is a class of its own.
     fn split_wide(
         &mut self,
         lim: &Limits,
         pairs: &[ChildPair],
         side: ChildSide,
-        keys: &mut Vec<u64>,
-        runs: &mut Vec<(u64, u32, u32)>,
-        radix: &mut Radix,
+        wide: &mut Wide<'_>,
     ) -> Result<(), OperationError> {
+        let Wide { keys, runs, links, table, radix } = wide;
         keys.clear();
         lim.reserve_exact(keys, pairs.len())?;
         // Each pair a key of its sibling's bits and its node's above them,
@@ -391,43 +411,52 @@ impl Partition<'_> {
             runs.push(((u64::from(c) << 32) | (h >> 32), k as u32, end as u32));
             k = end;
         }
-        runs.sort_unstable();
         let keys = &keys[..];
         let siblings = |r: (u64, u32, u32)| keys[r.1 as usize..r.2 as usize].iter().map(|&e| e & low);
         let node = |r: (u64, u32, u32)| (keys[r.1 as usize] >> sb) as u32;
-        let mut a = 0;
-        while a < runs.len() {
-            // The runs of class `c`, `runs[a..b]`.
-            let c = (runs[a].0 >> 32) as u32;
-            let b = a + runs[a..].iter().take_while(|r| (r.0 >> 32) as u32 == c).count();
-            let mut keep = (b - a) as u32 == self.size[c as usize];
-            let mut g = a;
-            while g < b {
-                // The group of `runs[g]`, gathered to `runs[g..m]` from the
-                // runs of its key.
-                let lead = runs[g];
-                let e = g + runs[g..b].iter().take_while(|r| r.0 == lead.0).count();
-                let mut m = g + 1;
-                for q in g + 1..e {
-                    let r = runs[q];
-                    if r.2 - r.1 == lead.2 - lead.1 && siblings(r).eq(siblings(lead)) {
-                        runs.swap(m, q);
-                        m += 1;
-                    }
+        // Each run joins the group of the first run of its key whose
+        // siblings it repeats, chained after that run, which counts them.
+        let cells = (2 * runs.len()).next_power_of_two();
+        table.clear();
+        lim.try_resize(table, cells, NO_RUN)?;
+        links.clear();
+        lim.reserve_exact(links, runs.len())?;
+        let shift = u64::BITS - cells.trailing_zeros();
+        for (r, &run) in runs.iter().enumerate() {
+            links.push((NO_RUN, 1));
+            let mut cell = (run.0.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> shift) as usize;
+            loop {
+                let lead = table[cell];
+                if lead == NO_RUN {
+                    table[cell] = r as u32;
+                    break;
                 }
-                if m - g == 1 {
-                    self.alone(node(lead), c);
-                } else if keep {
-                    keep = false;
-                } else {
-                    let id = self.fresh(c, (m - g) as u32);
-                    for &r in &runs[g..m] {
-                        self.put(node(r), id);
-                    }
+                let first = runs[lead as usize];
+                if first.0 == run.0 && first.2 - first.1 == run.2 - run.1 && siblings(first).eq(siblings(run)) {
+                    links[r] = (links[lead as usize].0, 0);
+                    links[lead as usize].0 = r as u32;
+                    links[lead as usize].1 += 1;
+                    break;
                 }
-                g = m;
+                cell = (cell + 1) & (cells - 1);
             }
-            a = b;
+        }
+        for (r, &run) in runs.iter().enumerate() {
+            let (mut next, members) = links[r];
+            if members == 0 {
+                continue;
+            }
+            let c = (run.0 >> 32) as u32;
+            if members == 1 {
+                self.alone(node(run), c);
+            } else if members < self.size[c as usize] {
+                let id = self.fresh(c, members);
+                self.put(node(run), id);
+                while next != NO_RUN {
+                    self.put(node(runs[next as usize]), id);
+                    next = links[next as usize].0;
+                }
+            }
         }
         Ok(())
     }
