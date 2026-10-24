@@ -137,6 +137,18 @@ pub(super) fn contract_twins(
     Ok(merged_members)
 }
 
+/// After [`contract_twins`] merged something, whether every member of every
+/// group in `scratch` merged into its survivor by concatenation. Where one
+/// did not, the level can still have twins: the overlap filter held it
+/// back, to merge in a later round, or it was redirected onto its survivor
+/// as a content-equal duplicate, which multiplies the survivor's contexts.
+pub(in crate::reduce::contract) fn merged_whole(scratch: &ContractScratch) -> bool {
+    let plans = &scratch.merge.group_plans;
+    plans.len() == scratch.group_starts.len()
+        && scratch.merge.sel.len() == scratch.flat_groups.len()
+        && plans.iter().all(|p| p.action == GroupAction::Concat)
+}
+
 /// Mark each planned group's absorbed members, and list the concat
 /// survivors fork-down resolves. A member's `final_remap` entry holds its
 /// survivor's old index, with [`DROPPED`] set unless the member is a

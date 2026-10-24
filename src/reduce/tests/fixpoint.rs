@@ -88,3 +88,39 @@ fn a_contraction_leaves_none_of_its_merges_on_its_own_worklist() {
     }
     assert!(merged > 0, "no conjunction left a twin to merge");
 }
+
+/// In a diagram with a marginal level, the joint fixpoint searches a child
+/// again only where it merged part of a group: contracting every level
+/// again merges nothing, and the count is the conjunction's.
+#[test]
+fn a_marginal_contraction_leaves_no_merge_for_a_second() {
+    use crate::reduce::contract::contract_all_twins;
+    use crate::reduce::ReductionPlan;
+    use crate::test_helpers::{rand_cnf, CnfShape, Lcg};
+    let eng = Engine::new();
+    let mut rng = Lcg::new(29);
+    let (mut merged, mut marginal) = (0, 0);
+    for round in 0..24 {
+        let num_vars = 6 + (round % 5) as u32;
+        let clauses = rand_cnf(&mut rng, num_vars, CnfShape { clauses: 14, width: 3 });
+        for (shape, vtree) in vtree_shapes(num_vars) {
+            let half = clauses.len().div_ceil(2);
+            let f = compile_clauses(&vtree, &clauses[..half]);
+            let g = compile_clauses(&vtree, &clauses[half..]);
+            let expected = eng.and(f.clone(), g.clone()).unwrap().model_count().unwrap();
+            let targets: Vec<_> = vtree.bottomup().filter(|_| rng.below(4) == 0).collect();
+            let mut h = eng.and_marginalizing(f, g, &targets).unwrap();
+            marginal += usize::from(h.has_marginal_level());
+            let before = h.levels.node_count();
+            eng.reduce(&mut h, ReductionPlan::Contract).unwrap();
+            merged += before - h.levels.node_count();
+            let settled = h.levels.node_count();
+            h.seed_contract_worklist(vtree.internal_bottomup().map(|(t, _, _)| t.0));
+            contract_all_twins(&eng, &mut h).unwrap();
+            assert_eq!(h.levels.node_count(), settled, "{shape}: a level the contraction left had twins to merge");
+            assert_eq!(h.model_count().unwrap(), expected, "{shape}: the contraction changed the count");
+        }
+    }
+    assert!(marginal > 0, "no conjunction left a marginal level");
+    assert!(merged > 0, "no marginalizing conjunction left a twin to merge");
+}

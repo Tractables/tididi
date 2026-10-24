@@ -27,7 +27,7 @@ use crate::limits::OperationError;
 
 use super::scratch::ContractScratch;
 use super::fingerprint::{find_listed_twin_groups, find_twin_groups, named_by, pair_mass};
-use super::merge::{contract_twins, survivor};
+use super::merge::{contract_twins, merged_whole, survivor};
 
 /// Which nodes of a child level a twin search reads.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -54,10 +54,29 @@ use super::tests::note_listed_search;
 #[inline(always)]
 fn note_listed_search() {}
 
+/// What [`contract_child`] did to a child level.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Contracted {
+    /// Nothing merged.
+    Nothing,
+    /// Every member of every twin group found merged into its survivor.
+    Whole,
+    /// Something merged, and some member of a group found did not merge
+    /// with the rest ([`merged_whole`]): the level can still have twins.
+    Part,
+}
+
+impl Contracted {
+    fn fired(self) -> bool {
+        self != Contracted::Nothing
+    }
+}
+
 /// Contract one child level `t1` (with parent `parent`) if it has twins,
-/// searching the nodes `reach` names. Returns `Ok(true)` iff a productive
-/// contraction fired, and then adds its survivors to the list
-/// `scratch.listing` keeps of `t1` where the sweep lists.
+/// searching the nodes `reach` names. Says whether a productive contraction
+/// fired, and whether it merged every group whole; where one fired, adds
+/// its survivors to the list `scratch.listing` keeps of `t1` where the
+/// sweep lists.
 #[inline]
 fn contract_child(
     eng: &Engine,
@@ -66,22 +85,22 @@ fn contract_child(
     t1: VtreeIdx,
     reach: Reach,
     scratch: &mut ContractScratch,
-) -> Result<bool, OperationError> {
+) -> Result<Contracted, OperationError> {
     if tdd.vtree.node(t1).is_leaf() {
-        return Ok(false);
+        return Ok(Contracted::Nothing);
     }
     // Marginal-side twins (slots sharing a parent context) are pair-fusion
     // redexes, and fusion merges them by summing through the seeded slot map,
     // which keeps slot-count uniqueness (invariant 10). Summing counts here
     // would not, so a marginal child is left to fusion.
     if tdd.levels[t1.idx()].is_marginal() {
-        return Ok(false);
+        return Ok(Contracted::Nothing);
     }
     if tdd.levels[t1.idx()].slot_count() <= 1 {
-        return Ok(false);
+        return Ok(Contracted::Nothing);
     }
     if !tdd.levels[parent.idx()].has_multi_pair() {
-        return Ok(false);
+        return Ok(Contracted::Nothing);
     }
     let (parent_left, _parent_right) = tdd.vtree.children(parent);
     let t1_side = if parent_left == t1 { ChildSide::Left } else { ChildSide::Right };
@@ -100,7 +119,7 @@ fn contract_child(
     if let Some(d) = tdd.levels[parent.idx()].implicit()
         && d.twin_free(t1_side, tdd.levels[t1.idx()].slot_count())
     {
-        return Ok(false);
+        return Ok(Contracted::Nothing);
     }
 
     let found = match reach {
@@ -125,7 +144,7 @@ fn contract_child(
         }
     };
     if !found {
-        return Ok(false);
+        return Ok(Contracted::Nothing);
     }
 
     // Where the sweep lists, the list of `t1` it keeps has its room for the
@@ -141,12 +160,12 @@ fn contract_child(
     if merged == 0 {
         // Every found group was overlap-filtered: the level is unchanged, and
         // reporting progress would spin the sibling-pair loop.
-        return Ok(false);
+        return Ok(Contracted::Nothing);
     }
     if lists {
         note_survivors(t1, scratch);
     }
-    Ok(true)
+    Ok(if merged_whole(scratch) { Contracted::Whole } else { Contracted::Part })
 }
 
 /// A listed search must find every group a search of the whole level does:
@@ -470,14 +489,18 @@ fn list_changed_children(
 /// they were before. Debug builds search both children whole afterwards and
 /// assert that neither has a twin.
 ///
-/// With a marginal level a group the overlap filter held back is looked at
-/// again, and both children are searched whole per iteration until neither
-/// fires. The first round is the one above either way, and whether the
-/// diagram has a marginal level is read only once it fired, so that a
-/// parent whose children have no twin costs no scan of the diagram's
-/// levels. When `is_marginal_boundary`, pair fusion runs at the parent each
-/// iteration too: fusion rewrites the parent's pair lists, which can create
-/// twins at either child, and contraction can mint fusion redexes.
+/// With a marginal level the same holds of a child whose groups all merged
+/// whole: the merge moves a context multiset as it moves a set, since a
+/// sibling node is paired with every member of a group equally often. A
+/// child some member of whose groups did not merge with the rest, held back
+/// by the overlap filter or redirected onto its survivor, is searched whole
+/// again, round after round, until it merges whole or not at all; its
+/// sibling is not searched again. Where `is_marginal_boundary` the rounds
+/// start at once: both children are searched in the first, pair fusion
+/// runs at the parent after each, and both are searched again after a round
+/// in which it fused. Fusion rewrites the parent's pair lists, which can
+/// create twins at either child, and the fusion after a merge takes the
+/// redexes the merge mints.
 ///
 /// Termination: each productive contraction lowers the explicit node count,
 /// and each productive fusion keeps it and lowers the total pair count (k ≥ 2
@@ -496,20 +519,23 @@ fn joint_contract_fixpoint(
 ) -> Result<(bool, bool), OperationError> {
     let mut left_fired = false;
     let mut right_fired = false;
+    // The children the next round searches again.
+    let (mut scan_left, mut scan_right) = (true, true);
     if !is_marginal_boundary {
         // The first round: each child searched once, at the nodes `reach`
         // names. Without a marginal level it is the whole fixpoint; with one
-        // (`reach` is then `Whole`), a round that fires nothing is the
-        // fixpoint too, so whether the diagram has one is read only once a
-        // child fired, once per checkout.
+        // (`reach` is then `Whole`), so is a round whose merges were all
+        // whole.
         eng.limits().check_stop()?;
         let left_once = contract_child(eng, tdd, parent, left, reach, scratch);
         let right_once = left_once.and_then(|_| contract_child(eng, tdd, parent, right, reach, scratch));
         for list in &mut scratch.reach {
             list.clear();
         }
-        (left_fired, right_fired) = (left_once?, right_once?);
-        if !(left_fired || right_fired) || !diagram_marginal(tdd, scratch) {
+        let (left_once, right_once) = (left_once?, right_once?);
+        (left_fired, right_fired) = (left_once.fired(), right_once.fired());
+        (scan_left, scan_right) = (left_once == Contracted::Part, right_once == Contracted::Part);
+        if !(scan_left || scan_right) {
             #[cfg(debug_assertions)]
             if !diagram_marginal(tdd, scratch) {
                 for child in [left, right] {
@@ -518,25 +544,29 @@ fn joint_contract_fixpoint(
             }
             return Ok((left_fired, right_fired));
         }
+        debug_assert!(diagram_marginal(tdd, scratch), "without a marginal level every group merges whole");
         debug_assert_eq!(reach, Reach::Whole, "a diagram with a marginal level is searched whole");
     }
-    // A child fired in a diagram with a marginal level, or the parent borders
-    // one: rounds of whole searches until neither child fires.
-    let (mut scan_left, mut scan_right) = (true, true);
+    // A child that merged part of a group in a diagram with a marginal
+    // level, or both children of a parent that borders one: rounds of whole
+    // searches until none is owed.
     loop {
         // As in `Reduction::content_twins`: termination is argued, not
         // bounded, so the round boundary is where cancellation cuts in, with
         // the last round's searches charged first.
         eng.limits().poll_host_work(std::mem::take(&mut scratch.searched))?;
-        let mut changed = false;
-        if std::mem::take(&mut scan_left) && contract_child(eng, tdd, parent, left, Reach::Whole, scratch)? {
-            changed = true;
-            left_fired = true;
+        let mut again = [false; 2];
+        if std::mem::take(&mut scan_left) {
+            let done = contract_child(eng, tdd, parent, left, Reach::Whole, scratch)?;
+            left_fired |= done.fired();
+            again[0] = done == Contracted::Part;
         }
-        if std::mem::take(&mut scan_right) && contract_child(eng, tdd, parent, right, Reach::Whole, scratch)? {
-            changed = true;
-            right_fired = true;
+        if std::mem::take(&mut scan_right) {
+            let done = contract_child(eng, tdd, parent, right, Reach::Whole, scratch)?;
+            right_fired |= done.fired();
+            again[1] = done == Contracted::Part;
         }
+        let mut fused = false;
         if is_marginal_boundary {
             // The inner form, so fusion reuses this run's already-taken
             // `scratch` instead of re-borrowing the pool.
@@ -544,14 +574,12 @@ fn joint_contract_fixpoint(
                 eng,
                 tdd, Some(&[parent]), scratch,
             )?;
-            if stats.fusion_groups > 0 {
-                changed = true;
-            }
+            fused = stats.fusion_groups > 0;
         }
-        if !changed {
+        (scan_left, scan_right) = (again[0] || fused, again[1] || fused);
+        if !(scan_left || scan_right) {
             break;
         }
-        (scan_left, scan_right) = (true, true);
     }
     Ok((left_fired, right_fired))
 }
