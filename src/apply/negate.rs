@@ -60,7 +60,7 @@ impl Engine {
     ) -> Result<Tdd, OperationError> {
         let _op = self.limits().enter()?;
         let canonical = f.levels.is_canonical(f.output);
-        let mut result = negate_on(self, f)?;
+        let (mut result, old) = complement_on(self, f)?;
         // `expand_full` left every level below the root covering its
         // children's whole basis, and the old output and its complement cover
         // the root's, so every node is named from the level above and the only
@@ -69,7 +69,7 @@ impl Engine {
         // The complement of a canonical operand has no twins to contract.
         let full = matches!(plan, crate::reduce::ReductionPlan::Full(_));
         if canonical && (full || matches!(plan, crate::reduce::ReductionPlan::Prune)) {
-            self.certify_complement(&mut result, full)?;
+            self.certify_complement(&mut result, full, old)?;
         } else {
             self.reduce_scoped(&mut result, plan, crate::reduce::prune::PruneScope::BelowRoot)?;
         }
@@ -79,23 +79,30 @@ impl Engine {
 
 /// Make `tdd` full and complement it at the root, consuming the operand;
 /// [`Engine::negate`] also minimizes the result.
-pub(crate) fn negate_on(eng: &Engine, mut tdd: Tdd) -> Result<Tdd, OperationError> {
+pub(crate) fn negate_on(eng: &Engine, tdd: Tdd) -> Result<Tdd, OperationError> {
+    complement_on(eng, tdd).map(|(result, _)| result)
+}
+
+/// [`negate_on`], with the old output's slot at the root where the
+/// complement was built beside it.
+fn complement_on(eng: &Engine, mut tdd: Tdd) -> Result<(Tdd, Option<NodeIdx>), OperationError> {
     tdd.require_structure()?;
     eng.limits().check_stop()?;
     let weights = tdd.weights.take();
-    let mut result = if tdd.is_zero() {
-        crate::build::constant_on(eng, &tdd.vtree, true)?
+    let (mut result, old) = if tdd.is_zero() {
+        (crate::build::constant_on(eng, &tdd.vtree, true)?, None)
     } else {
         expand_full(eng, &mut tdd)?;
         complement_full_at_root(eng, tdd)?
     };
     result.weights = weights;
-    Ok(result)
+    Ok((result, old))
 }
 
 /// Complement at the root a diagram full below it: collect the root-level
-/// pairs not in the output node and drop the dead ones.
-fn complement_full_at_root(eng: &Engine, full_tdd: Tdd) -> Result<Tdd, OperationError> {
+/// pairs not in the output node and drop the dead ones. With the old
+/// output's slot when the complement is a node beside it.
+fn complement_full_at_root(eng: &Engine, full_tdd: Tdd) -> Result<(Tdd, Option<NodeIdx>), OperationError> {
     let vtree = Arc::clone(&full_tdd.vtree);
     let root = vtree.root();
     let root_idx = root.idx();
@@ -109,9 +116,9 @@ fn complement_full_at_root(eng: &Engine, full_tdd: Tdd) -> Result<Tdd, Operation
         // {Pos,Neg,One} unless the output is One (complement = Zero, returned as the zero
         // constant diagram).
         let Some(neg_local) = complement_leaf_root(out_local) else {
-            return crate::build::constant_on(eng, &vtree, false);
+            return Ok((crate::build::constant_on(eng, &vtree, false)?, None));
         };
-        assembly.finish(TddNodeId { vtree: root, local: neg_local })
+        Ok((assembly.finish(TddNodeId { vtree: root, local: neg_local })?, None))
     } else {
         // Child widths the complement's basis spans:
         // - Leaf children: 2 (the disjoint set {Pos, Neg})
@@ -149,12 +156,12 @@ fn complement_full_at_root(eng: &Engine, full_tdd: Tdd) -> Result<Tdd, Operation
         });
 
         if neg_pairs.is_empty() {
-            return crate::build::constant_on(eng, &vtree, false);
+            return Ok((crate::build::constant_on(eng, &vtree, false)?, None));
         }
 
         let neg_idx = levels[root_idx].push_node(eng.limits(), &neg_pairs)?;
 
-        assembly.finish(TddNodeId { vtree: root, local: neg_idx })
+        Ok((assembly.finish(TddNodeId { vtree: root, local: neg_idx })?, Some(out_local)))
     }
 }
 

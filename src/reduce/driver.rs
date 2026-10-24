@@ -4,7 +4,7 @@ use crate::{Engine, Tdd, OperationError};
 use crate::diagram::{Pass, WeightStore};
 use crate::vtree::{Vtree, VtreeIdx};
 use super::{ReductionPlan, ContentTwinPolicy, ContentTwinSchedule};
-use super::prune::{PruneScope, prune_unreachable};
+use super::prune::{PruneScope, below_root_walk_applies, prune_complement, prune_unreachable};
 use super::contract::{contract_all_twins, contract_leaf::contract_leaf_twins};
 use super::contract::content_twin::merge_content_equal_nodes;
 use super::contract::pair_fusion::fuse_pairs_at_parents;
@@ -107,12 +107,19 @@ impl<'a> Reduction<'a> {
     /// one to one: two nodes with equal residuals after it had equal
     /// residuals before, which a canonical operand rules out, inner and leaf
     /// twins alike. The one class per level whose residual was true dies at
-    /// the root and is all the prune removes. `shrink` trims the level
-    /// arrays as a full reduction does.
-    pub(super) fn certify_complement(&mut self, shrink: bool) -> Result<(), OperationError> {
+    /// the root and is all the prune removes: with `old`, the old output's
+    /// slot at the root, the prune reads only those nodes
+    /// ([`prune_complement`]). `shrink` trims the level arrays as a full
+    /// reduction does.
+    pub(super) fn certify_complement(&mut self, shrink: bool, old: Option<crate::diagram::NodeIdx>) -> Result<(), OperationError> {
         let _op = self.eng.limits().enter()?;
         let closed = self.tdd.levels.is_closed();
-        prune_unreachable(self.eng, self.tdd, PruneScope::BelowRoot)?;
+        match old {
+            Some(old) if below_root_walk_applies(self.tdd) && !self.tdd.has_marginal_level() && old != self.tdd.output.local => {
+                prune_complement(self.eng, self.tdd, old)?;
+            }
+            _ => prune_unreachable(self.eng, self.tdd, PruneScope::BelowRoot)?,
+        }
         #[cfg(debug_assertions)]
         super::prune::debug_assert_all_reached(self.tdd);
         if shrink {

@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use crate::reduce::prune::{PruneScope, Select, below_root_walk_applies, keep_marked, new_indices, prune_unreachable, settle_loose, UNREACHED};
+use crate::reduce::prune::{PruneScope, Select, below_root_walk_applies, keep_marked, new_indices, prune_complement, prune_unreachable, settle_loose, UNREACHED};
 
 use crate::test_helpers::compile_clauses;
 use crate::vtree::Vtree;
@@ -21,8 +21,10 @@ fn the_prune_scratch_reservation_goes_through_the_engine() {
 
     // Refused: the diagram is left exactly as it was.
     let eng = &crate::Engine::new();
+    // Not knowing its loose levels, the prune walks the whole diagram.
     let mut tdd = compile_clauses(&vtree, &clauses);
     tdd.minimize().unwrap();
+    tdd.dirty.set_loose(None);
     let (size_before, mc_before) = (tdd.pair_count(), tdd.model_count().unwrap());
     eng.limits().refuse_nth_reserve(0);
     let refused = prune_unreachable(eng, &mut tdd, PruneScope::Whole);
@@ -35,6 +37,7 @@ fn the_prune_scratch_reservation_goes_through_the_engine() {
     let eng = &crate::Engine::new();
     let mut tdd = compile_clauses(&vtree, &clauses);
     tdd.minimize().unwrap();
+    tdd.dirty.set_loose(None);
     eng.limits().reset_meters();
     prune_unreachable(eng, &mut tdd, PruneScope::Whole).expect("a tiny scratch reservation cannot fail");
     assert!(
@@ -410,6 +413,55 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     assert!(settled_away > 400, "expected listed levels the prune settles away, got {settled_away}");
 }
 
+/// The complement of a canonical diagram, completed and complemented at
+/// the root, loses the old output and, below it, only the nodes whose
+/// residual was true: the prune that drops just those leaves the diagram the
+/// walk below the root leaves, node for node, on corpora where nodes below
+/// the root die.
+#[test]
+fn the_complement_prune_drops_what_the_walk_below_the_root_drops() {
+    use crate::test_helpers::{CnfShape, Lcg, compile_clauses_on, rand_cnf, vtree_shapes};
+
+    let eng = &crate::Engine::new();
+    let mut rng = Lcg::new(0x3c6e_f372);
+    let (mut cases, mut deep) = (0usize, 0usize);
+    for shape in [CnfShape { clauses: 6, width: 3 }, CnfShape { clauses: 24, width: 5 }] {
+        for (name, vtree) in vtree_shapes(16) {
+            for case in 0..30 {
+                let mut f = compile_clauses_on(eng, &vtree, &rand_cnf(&mut rng, 16, shape));
+                eng.minimize(&mut f).unwrap();
+                if f.is_zero() || !f.levels.is_canonical(f.output) || !below_root_walk_applies(&f) {
+                    continue;
+                }
+                let what = format!("{name}, case {case}");
+                let old = f.output.local;
+                let complement = crate::apply::negate::negate_on(eng, f).unwrap();
+                if !below_root_walk_applies(&complement) || complement.output.local == old {
+                    continue;
+                }
+                let widths: Vec<usize> = complement.levels.iter().map(|l| l.slot_count()).collect();
+                let mut walked = complement.clone();
+                prune_unreachable(eng, &mut walked, PruneScope::BelowRoot).unwrap();
+                let mut read = complement;
+                prune_complement(eng, &mut read, old).unwrap();
+                assert_eq!(layout(&read), layout(&walked), "{what}: the two prunes left different diagrams");
+                let reached = reached_by_level(&read);
+                for &t in read.vtree.bottomup_slice() {
+                    if read.is_structural_internal(t) {
+                        assert_eq!(read.levels[t.idx()].slot_count(), reached[t.idx()].len(), "{what}: level {} keeps an unreached node", t.0);
+                    }
+                }
+                deep += read.vtree.bottomup_slice().iter().filter(|&&t| {
+                    t != read.vtree.root() && read.is_structural_internal(t) && read.levels[t.idx()].slot_count() < widths[t.idx()]
+                }).count();
+                cases += 1;
+            }
+        }
+    }
+    assert!(cases > 150, "expected a corpus, got {cases} cases");
+    assert!(deep > 100, "expected levels below the root that lose a node, got {deep}");
+}
+
 /// The rank select gives the marked slot of every rank, read in rising
 /// order, again, and out of order, over blocks of no marks, every mark and
 /// random marks, and nothing past the last mark.
@@ -515,6 +567,8 @@ fn two_decisions(eng: &crate::Engine, implicit: bool, named: bool) -> (crate::di
         root.push_internal_node(&[ChildPair::new(POS_LEAF_IDX, NodeIdx(0))]);
     }
     tdd.output = TddNodeId { vtree: r, local: NodeIdx(0) };
+    // Levels edited in place: which hold an unnamed node is not known.
+    tdd.dirty.set_loose(None);
     (tdd, v, w)
 }
 
