@@ -15,6 +15,8 @@ pub(crate) mod content_twin; // content-twin merge over every explicit level
 pub(crate) mod pair_fusion; // same-structural-side pair fusion
 
 pub(crate) use sweep::contract_all_twins;
+#[cfg(debug_assertions)]
+pub(crate) use sweep::debug_assert_no_twins_under;
 
 #[cfg(test)]
 pub(crate) mod tests;

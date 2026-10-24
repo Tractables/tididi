@@ -514,12 +514,20 @@ pub(crate) fn apply_and_core(
         // left it.
         let mut built: Vec<VtreeIdx> = Vec::with_capacity(cone.built.len());
         built.extend(cone.built.iter().copied().filter(|t| carrier[t.idx()] == 0));
-        let owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, built.len());
-        assembly.finish_with_or_return(output, owed, &built, Some(&built[..])).map(|mut out| {
+        // The contraction is owed the built levels under which the
+        // conjunction can have given two nodes equal contexts
+        // ([`adds_no_twins`]); the leaf contraction every built level.
+        let (owed_twins, twin_free): (Vec<VtreeIdx>, Vec<VtreeIdx>) =
+            built.iter().partition(|&&t| !adds_no_twins(&vtree, &run.f_identity[..], &run.g_identity[..], t));
+        let mut owed = crate::diagram::Dirty::stacked(&g.dirty, &f.dirty, built.len());
+        owed.requeue(crate::diagram::Pass::LeafContract, twin_free.iter().map(|t| t.0));
+        assembly.finish_with_or_return(output, owed, &owed_twins, Some(&built[..])).map(|mut out| {
             if let Some(loose) = loose {
                 out.dirty.set_loose(Some(loose));
                 out.dirty.dedup_above(num_nodes);
             }
+            #[cfg(debug_assertions)]
+            crate::reduce::contract::debug_assert_no_twins_under(eng, &out, &twin_free);
             out
         })
     } else {
@@ -557,4 +565,23 @@ pub(crate) fn apply_and_core(
         }
         None => Ok(Conjoined::Built(out)),
     }
+}
+
+/// Whether a plain conjunction gave no two nodes of an inner child of the
+/// level `t` it built equal contexts, where its operands' nodes there had
+/// none. Where one operand is constant true over a child, every pair of
+/// the other operand's nodes meets it there in a live product, so a node of
+/// the product on the other side, the product of an `f` node and a `g` node,
+/// has for its contexts every pair of a context of its `f` node with a
+/// context of its `g` node, each of the product node of their parents and
+/// the product of their siblings. Two product nodes with equal contexts are
+/// then products of operand nodes with equal contexts, which an operand
+/// that does not owe the contraction the level has only for one node. A
+/// leaf child has no inner twins.
+fn adds_no_twins(vtree: &crate::vtree::Vtree, f_identity: &[bool], g_identity: &[bool], t: VtreeIdx) -> bool {
+    let (left, right) = vtree.children(t);
+    let side = |child: VtreeIdx, sibling: VtreeIdx| {
+        vtree.node(child).is_leaf() || f_identity[sibling.idx()] || g_identity[sibling.idx()]
+    };
+    side(left, right) && side(right, left)
 }

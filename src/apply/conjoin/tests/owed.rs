@@ -7,6 +7,9 @@ use crate::diagram::Pass;
 use crate::test_helpers::{assert_canonical, assert_same_shape, compile_clauses, test_cases, vtree_shapes};
 use crate::{Engine, Tdd, Vtree};
 
+/// Each operand is constant true over the other's child, so the root the
+/// conjunction builds gives neither child a twin: the contraction is owed
+/// nothing, the leaf contraction the root.
 #[test]
 fn operands_under_the_two_children_owe_only_the_root() {
     let eng = Engine::new();
@@ -14,12 +17,40 @@ fn operands_under_the_two_children_owe_only_the_root() {
     let f = compile_clauses(&vtree, &[vec![1, 2], vec![-3, 4]]);
     let g = compile_clauses(&vtree, &[vec![5, -6], vec![7, 8]]);
     let mut out = eng.and(f, g).unwrap();
-    for pass in [Pass::Contract, Pass::LeafContract] {
-        let mut owed = out.dirty.take(pass);
-        owed.sort_unstable();
-        owed.dedup();
-        assert_eq!(owed, vec![vtree.root().0], "{pass:?}");
-    }
+    assert!(out.dirty.take(Pass::Contract).is_empty());
+    let mut owed = out.dirty.take(Pass::LeafContract);
+    owed.sort_unstable();
+    owed.dedup();
+    assert_eq!(owed, vec![vtree.root().0]);
+}
+
+/// On a linear vtree, a level whose leaf variable one operand does not read
+/// is built where the other operand's variables lie above and below it, but
+/// the conjunction gives its inner child no twin there: the contraction is
+/// owed fewer levels than the leaf contraction, and minimizing from them
+/// reaches the canonical diagram.
+#[test]
+fn a_level_one_operand_does_not_branch_at_is_not_owed_the_contraction() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::linear(8));
+    let clauses = [vec![1, -3, 5], vec![-2, 4, 6], vec![3, -7, 8], vec![-1, 6, -8]];
+    let f = compile_clauses(&vtree, &clauses);
+    let g = compile_clauses(&vtree, &[vec![2, 7], vec![-2, -7]]);
+    let mut out = eng.and(f, g).unwrap();
+    let distinct = |mut v: Vec<u32>| {
+        v.sort_unstable();
+        v.dedup();
+        v
+    };
+    let contract = distinct(out.dirty.levels(Pass::Contract).to_vec());
+    let leaf = distinct(out.dirty.levels(Pass::LeafContract).to_vec());
+    assert!(contract.len() < leaf.len(), "{contract:?} {leaf:?}");
+    assert!(contract.iter().all(|t| leaf.contains(t)));
+    eng.minimize(&mut out).unwrap();
+    assert_canonical(&out);
+    let mut all = clauses.to_vec();
+    all.extend([vec![2, 7], vec![-2, -7]]);
+    assert_same_shape(&out, &compile_clauses(&vtree, &all), "linear");
 }
 
 /// The clauses split in two, each half compiled on `vtree`; with `settled`

@@ -371,6 +371,25 @@ pub(crate) fn contract_all_twins(
     Ok(())
 }
 
+/// No child of a level in `parents` that the contraction worklist does not
+/// owe has a twin: contracting from those levels alone merges nothing.
+/// Debug builds check an operation that leaves such levels off the list.
+#[cfg(debug_assertions)]
+pub(crate) fn debug_assert_no_twins_under(eng: &Engine, tdd: &Tdd, parents: &[VtreeIdx]) {
+    let mut copy = tdd.clone();
+    let owed = copy.dirty.take(Pass::Contract);
+    let check: Vec<u32> = parents.iter().map(|t| t.0).filter(|t| !owed.contains(t)).collect();
+    if check.is_empty() {
+        return;
+    }
+    copy.dirty.restore(Pass::Contract, check.clone());
+    let before = copy.levels.node_count();
+    // A refusal under the caller's limits leaves nothing checked.
+    if contract_all_twins(eng, &mut copy).is_ok() {
+        assert_eq!(copy.levels.node_count(), before, "a child of a level in {check:?} has a twin no worklist owes");
+    }
+}
+
 /// Whether the diagram has a marginal level, read once per scratch checkout.
 fn diagram_marginal(tdd: &Tdd, scratch: &mut ContractScratch) -> bool {
     *scratch.diagram_marginal.get_or_insert_with(|| tdd.has_marginal_level())
