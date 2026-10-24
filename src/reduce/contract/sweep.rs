@@ -27,7 +27,7 @@ use crate::limits::OperationError;
 
 use super::scratch::ContractScratch;
 use super::fingerprint::{find_listed_twin_groups, find_twin_groups, named_by, pair_mass};
-use super::merge::{contract_twins, merged_whole, survivor};
+use super::merge::{contract_twins, merged_redirects, merged_whole, survivor};
 
 /// Which nodes of a child level a twin search reads.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -175,10 +175,12 @@ fn contract_child(
         note_survivors(t1, scratch);
     }
     if !lists {
-        // The merge rewrote the parent's pairs, which can make a group at
-        // any parent node that named a member.
         scratch.listing.set_fused_but(t1.idx(), fused_but);
-        scratch.listing.set_fused_but(parent.idx(), false);
+        // A group that redirects keeps its members' pairs in the parent,
+        // which can make a fusion group at any parent node that named one.
+        if merged_redirects(scratch) {
+            scratch.listing.set_fused_but(parent.idx(), false);
+        }
     }
     Ok(if merged_whole(scratch) { Contracted::Whole } else { Contracted::Part })
 }

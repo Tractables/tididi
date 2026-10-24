@@ -116,8 +116,14 @@ pub(super) fn contract_twins(
     };
     // The parent's pair lists are remapped and deduplicated below; t1's nodes
     // were merged, so its pair lists and the identity of its nodes changed.
-    tdd.invalidate(parent);
-    tdd.invalidate_with_parent(t1);
+    // The parent's fusion record stands unless a group redirects
+    // ([`redirects`]).
+    tdd.invalidate(t1);
+    if redirects(&bufs.group_plans) {
+        tdd.invalidate(parent);
+    } else {
+        tdd.invalidate_shrunk(parent);
+    }
     tdd.levels.mark_changed(parent);
 
     rewrite_parent(lim, tdd, parent, t1_side, remap, parent_room);
@@ -135,6 +141,23 @@ pub(super) fn contract_twins(
     rebuild_level(&mut tdd.levels[t1.idx()], arenas, remap, bufs, check_disjoint);
     fork_down(eng, tdd, t1, &bufs.resolve_keeps, remap, duplicate)?;
     Ok(merged_members)
+}
+
+/// Whether a planned group redirects content-equal members onto its
+/// survivor. The parent rewrite keeps the members' pairs, which then repeat
+/// the survivor's, so a parent node can hold a pair fusion group it did not
+/// hold before. Every other merge drops each pair that names a member, and
+/// the pair naming the survivor with the same sibling in its place is
+/// already there, twins having equal contexts: a parent node gains no
+/// repeated reference, and the parent's fusion record stands.
+fn redirects(plans: &[GroupPlan]) -> bool {
+    plans.iter().any(|p| p.action == GroupAction::DupRedirect)
+}
+
+/// After [`contract_twins`] merged something, whether a group redirected
+/// content-equal members onto its survivor ([`redirects`]).
+pub(in crate::reduce::contract) fn merged_redirects(scratch: &ContractScratch) -> bool {
+    redirects(&scratch.merge.group_plans)
 }
 
 /// After [`contract_twins`] merged something, whether every member of every

@@ -658,21 +658,14 @@ impl Tdd {
     /// dedups through `needs_check`, and leaf contraction re-checks anyway.
     #[inline]
     pub(crate) fn invalidate(&mut self, level: VtreeIdx) {
-        self.invalidate_with(level, false, None).expect("an untracked push cannot be refused");
+        self.invalidate_with(level, None).expect("an untracked push cannot be refused");
     }
 
-    /// [`invalidate`](Self::invalidate), and additionally that nodes of
-    /// `level` were merged or dropped — so its parent's references into it
-    /// changed identity, and the parent may now hold twins of its own.
-    #[inline]
-    pub(crate) fn invalidate_with_parent(&mut self, level: VtreeIdx) {
-        self.invalidate_with(level, true, None).expect("an untracked push cannot be refused");
-    }
-
-    /// [`invalidate`](Self::invalidate) for a level that only lost nodes,
-    /// its references into its children renamed one to one, as a prune
-    /// leaves it: its children's contexts changed, but no node gained a
-    /// pair or a repeated reference, so its fusion record
+    /// [`invalidate`](Self::invalidate) for a level whose nodes gained no
+    /// pair and no repeated reference: it lost nodes or pairs, and a node's
+    /// references into a child are renamed one to one, as a prune leaves it,
+    /// or a twin merge at a child that drops each pair naming a merged
+    /// member. Its children's contexts changed, but its fusion record
     /// ([`Dirty::is_fused`]) stands.
     #[inline]
     pub(crate) fn invalidate_shrunk(&mut self, level: VtreeIdx) {
@@ -686,7 +679,7 @@ impl Tdd {
     /// [`invalidate`](Self::invalidate) under the engine's limits; the caller
     /// discards the diagram if a worklist push fails.
     pub(crate) fn try_invalidate(&mut self, eng: &crate::Engine, level: VtreeIdx) -> Result<(), crate::OperationError> {
-        self.invalidate_with(level, false, Some(eng))
+        self.invalidate_with(level, Some(eng))
     }
 
     /// Map a change to its reduction obligations, charged to `eng` when there
@@ -696,15 +689,8 @@ impl Tdd {
     /// has levels, so a run of edits with no reduction in between keeps them
     /// bounded.
     #[inline]
-    fn invalidate_with(
-        &mut self, level: VtreeIdx, nodes_moved: bool, eng: Option<&crate::Engine>,
-    ) -> Result<(), crate::OperationError> {
+    fn invalidate_with(&mut self, level: VtreeIdx, eng: Option<&crate::Engine>) -> Result<(), crate::OperationError> {
         self.dirty.push_all(level.0, eng)?;
-        if nodes_moved
-            && let Some(parent) = self.vtree.node(level).parent()
-        {
-            self.dirty.push_all(parent.0, eng)?;
-        }
         self.dirty.dedup_above(self.vtree.num_nodes());
         Ok(())
     }
