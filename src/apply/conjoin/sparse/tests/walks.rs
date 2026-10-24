@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use super::{prefetches_run, ForcedPrefetch, ForcedThresholds, SparseThresholds};
+use super::{ForcedPrefetch, ForcedThresholds, SparseThresholds};
 use crate::apply::conjoin::{conjoin_checked, VtreeMask};
 use crate::diagram::Tdd;
 use crate::test_helpers::{assert_canonical, normalized_levels, rand_conj_over, vtree_shapes, Lcg};
@@ -74,7 +74,6 @@ fn same_as_grid(eng: &Engine, what: &str, f: &Tdd, g: &Tdd) {
 fn sparse_walks_build_the_grids_levels() {
     let mut rng = Lcg::new(0x1eaf_1abe);
     let eng = Engine::new();
-    let before = prefetches_run();
     for n in [6, 9] {
         for (shape, vtree) in vtree_shapes(n) {
             for round in 0..10 {
@@ -84,6 +83,4 @@ fn sparse_walks_build_the_grids_levels() {
             }
         }
     }
-    let after = prefetches_run();
-    assert!(after[5] > before[5], "no leaf walk read its f nodes ahead");
 }
