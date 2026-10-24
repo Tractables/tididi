@@ -96,7 +96,7 @@ pub(crate) fn complement_on(eng: &Engine, mut tdd: Tdd) -> Result<(Tdd, Option<C
         let mut filled = Vec::new();
         eng.limits().try_resize(&mut filled, tdd.vtree.num_nodes(), false)?;
         expand_full(eng, &mut tdd, &mut filled)?;
-        let (result, old) = complement_full_at_root(eng, tdd)?;
+        let (result, old) = complement_full_at_root(eng, tdd, &filled)?;
         (result, old.map(|old| Completion { old, filled }))
     };
     result.weights = weights;
@@ -106,7 +106,11 @@ pub(crate) fn complement_on(eng: &Engine, mut tdd: Tdd) -> Result<(Tdd, Option<C
 /// Complement at the root a diagram full below it: collect the root-level
 /// pairs not in the output node and drop the dead ones. With the old
 /// output's slot when the complement is a node beside it.
-fn complement_full_at_root(eng: &Engine, full_tdd: Tdd) -> Result<(Tdd, Option<NodeIdx>), OperationError> {
+fn complement_full_at_root(
+    eng: &Engine,
+    full_tdd: Tdd,
+    filled: &[bool],
+) -> Result<(Tdd, Option<NodeIdx>), OperationError> {
     let vtree = Arc::clone(&full_tdd.vtree);
     let root = vtree.root();
     let root_idx = root.idx();
@@ -134,20 +138,36 @@ fn complement_full_at_root(eng: &Engine, full_tdd: Tdd) -> Result<(Tdd, Option<N
         let scratch = &eng.scratch.negate;
         let mut bits = scratch.cover.checkout_preserving(eng);
         let mut neg_pairs = scratch.cells.checkout_preserving(eng);
-        let mut cover = Cover::reset(
-            eng,
-            &mut bits,
-            ChildBasis::of(&vtree, levels, left),
-            ChildBasis::of(&vtree, levels, right),
-            LeafForm { left_one: left_is_leaf, right_one: right_is_leaf },
-        )?;
-        for pair in levels[root_idx].pairs_iter_of_idx(out_local.idx()) {
-            cover.mark_pair(pair);
-        }
+        let lefts = ChildBasis::of(&vtree, levels, left);
+        let rights = ChildBasis::of(&vtree, levels, right);
+        let leaf = LeafForm { left_one: left_is_leaf, right_one: right_is_leaf };
+        let fill = [filled[left.idx()].then(|| lefts.end - 1), filled[right.idx()].then(|| rights.end - 1)];
         // The other root nodes are dropped with the old output, so the
         // complement takes the leaf form the output uses.
+        let mut form = LeafForm::LITERAL;
+        let covered = areas(levels[root_idx].pairs_iter_of_idx(out_local.idx()), leaf, &mut form);
         neg_pairs.clear();
-        cover.missing_into(eng, cover.one_seen, &mut neg_pairs)?;
+        if covered == old_cells(lefts, rights, fill) {
+            // The output covers every cell of the children's old nodes: its
+            // complement is the lines of their added nodes.
+            fill_lines_into(eng, lefts, rights, fill, form, &mut neg_pairs)?;
+            #[cfg(debug_assertions)]
+            {
+                let mut cover = Cover::reset(eng, &mut bits, lefts, rights, leaf)?;
+                for pair in levels[root_idx].pairs_iter_of_idx(out_local.idx()) {
+                    cover.mark_pair(pair);
+                }
+                let mut by_cover = Vec::new();
+                cover.missing_into(eng, form, &mut by_cover)?;
+                debug_assert_eq!(*neg_pairs, by_cover, "negate: the lines of the added nodes are not the root cells the output misses");
+            }
+        } else {
+            let mut cover = Cover::reset(eng, &mut bits, lefts, rights, leaf)?;
+            for pair in levels[root_idx].pairs_iter_of_idx(out_local.idx()) {
+                cover.mark_pair(pair);
+            }
+            cover.missing_into(eng, form, &mut neg_pairs)?;
+        }
 
         // Drop the pairs whose child computes the Zero function (an internal
         // node with no pairs), which a fill node of `expand_full` can be.
@@ -209,7 +229,26 @@ fn expand_full_with(
             left_one: vtree.node(left).is_leaf(),
             right_one: vtree.node(right).is_leaf(),
         };
+        // A child the completion added a node to has it last.
+        let fill = [filled[left.idx()].then(|| lefts.end - 1), filled[right.idx()].then(|| rights.end - 1)];
         let level = &mut tdd.levels[t.idx()];
+
+        // Where the pairs cover every cell of the children's old nodes, the
+        // missing cells are the lines of the children's added nodes, read
+        // off without a cover.
+        let (covered, form) = covered_cells(eng, level, leaf)?;
+        if covered == old_cells(lefts, rights, fill) {
+            if fill != [None, None] {
+                cells.clear();
+                fill_lines_into(eng, lefts, rights, fill, form, cells)?;
+                #[cfg(debug_assertions)]
+                debug_assert_eq!(*cells, missing_by_cover(eng, bits, level, lefts, rights, leaf)?, "negate: the lines of the added nodes are not the cells no pair covers");
+                level.push_node(eng.limits(), cells)?;
+                filled[t.idx()] = true;
+            }
+            eng.limits().check_stop()?;
+            continue;
+        }
 
         let mut cover = Cover::reset(eng, bits, lefts, rights, leaf)?;
         let mut poll = eng.limits().gate();
@@ -242,6 +281,110 @@ fn expand_full_with(
             }
         }
         eng.limits().check_stop()?;
+    }
+    Ok(())
+}
+
+/// The cells of `lefts x rights` the pairs of `level` cover, with the leaf
+/// form the level uses, read in one pass in order. The pairs of a level
+/// cover disjoint cells, determinism's rule, so the count is the sum of
+/// their areas: one cell a pair, two where a side is a leaf named `One`.
+fn covered_cells(eng: &Engine, level: &TddLevel, leaf: LeafForm) -> Result<(u64, LeafForm), OperationError> {
+    let mut form = LeafForm::LITERAL;
+    let mut covered = 0u64;
+    let mut poll = eng.limits().gate();
+    let stored = level.stored();
+    let (mut buf, mut cursor) = (Vec::new(), None);
+    for i in 0..level.node_count() {
+        let pairs = match stored {
+            Some(stored) => stored.of_idx(i),
+            None => level.described_read_next(&mut cursor, i, &mut buf),
+        };
+        covered += areas(pairs.iter().copied(), leaf, &mut form);
+        poll.poll(pairs.len() as u64)?;
+    }
+    poll.flush()?;
+    Ok((covered, form))
+}
+
+/// The cells `pairs` cover, one a pair and two for each side that is a
+/// leaf named `One`, with the sides so named added to `form`.
+#[inline(always)]
+fn areas(pairs: impl Iterator<Item = ChildPair>, leaf: LeafForm, form: &mut LeafForm) -> u64 {
+    let one = ONE_LEAF_IDX.0;
+    let mut covered = 0u64;
+    for pair in pairs {
+        let l_one = leaf.left_one && pair.left.0 == one;
+        let r_one = leaf.right_one && pair.right.0 == one;
+        form.left_one |= l_one;
+        form.right_one |= r_one;
+        covered += 1u64 << (u32::from(l_one) + u32::from(r_one));
+    }
+    covered
+}
+
+/// The cells of `lefts x rights` whose sides are both old nodes: not the
+/// node `fill` names on either side.
+fn old_cells(lefts: ChildBasis, rights: ChildBasis, fill: [Option<u32>; 2]) -> u64 {
+    let old = |b: ChildBasis, f: Option<u32>| (b.len() - usize::from(f.is_some())) as u64;
+    old(lefts, fill[0]) * old(rights, fill[1])
+}
+
+/// The cells of `lefts x rights` no pair of `level` covers, by a cover, as
+/// [`expand_full`] reads them where some cell of two old nodes is missing.
+#[cfg(debug_assertions)]
+fn missing_by_cover(
+    eng: &Engine,
+    bits: &mut Vec<u64>,
+    level: &TddLevel,
+    lefts: ChildBasis,
+    rights: ChildBasis,
+    leaf: LeafForm,
+) -> Result<Vec<ChildPair>, OperationError> {
+    let mut cover = Cover::reset(eng, bits, lefts, rights, leaf)?;
+    for i in 0..level.node_count() {
+        for pair in level.pairs_iter_of_idx(i) {
+            cover.mark_pair(pair);
+        }
+    }
+    let mut out = Vec::new();
+    cover.missing_into(eng, cover.one_seen, &mut out)?;
+    Ok(out)
+}
+
+/// Append to `out` the cells of `lefts x rights` that name a child's added
+/// node, `fill_l` on the left and `fill_r` on the right, in ascending
+/// `(l, r)` order and in the leaf form `form`, as
+/// [`Cover::missing_into`] writes them: the missing cells of a level whose
+/// pairs cover every other cell.
+fn fill_lines_into(
+    eng: &Engine,
+    lefts: ChildBasis,
+    rights: ChildBasis,
+    fill: [Option<u32>; 2],
+    form: LeafForm,
+    out: &mut Vec<ChildPair>,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let missing = |l: u32, r: u32| Some(l) == fill[0] || Some(r) == fill[1];
+    let mut emit = |l: u32, r: u32| -> Result<(), OperationError> {
+        let couple_l = form.left_one && missing(other_polarity(l), r);
+        let couple_r = form.right_one && missing(l, other_polarity(r));
+        if (couple_l && l == NEG_LEAF_IDX.0) || (couple_r && r == NEG_LEAF_IDX.0) {
+            return Ok(());
+        }
+        let l = if couple_l { ONE_LEAF_IDX.0 } else { l };
+        let r = if couple_r { ONE_LEAF_IDX.0 } else { r };
+        lim.try_push(out, ChildPair::new(EncodedChildRef::from_raw(l), EncodedChildRef::from_raw(r)))
+    };
+    for l in lefts.start..lefts.end {
+        if Some(l) == fill[0] {
+            for r in rights.start..rights.end {
+                emit(l, r)?;
+            }
+        } else if let Some(r) = fill[1] {
+            emit(l, r)?;
+        }
     }
     Ok(())
 }
