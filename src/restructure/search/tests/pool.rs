@@ -11,6 +11,24 @@ use crate::Tdd;
 
 const VARS: u32 = 6;
 
+thread_local! {
+    /// Whether the pool search charges a cached refusal rather than probing
+    /// the move again; a test turns it off to compare.
+    static REPLAY_REFUSALS: std::cell::Cell<bool> = const { std::cell::Cell::new(true) };
+    /// The refusals the pool search charged without probing.
+    static REPLAYED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether the pool search replays the cached refusal it holds, counting
+/// each one it does.
+pub(super) fn replays_refusal() -> bool {
+    let on = REPLAY_REFUSALS.with(std::cell::Cell::get);
+    if on {
+        REPLAYED.with(|n| n.set(n.get() + 1));
+    }
+    on
+}
+
 /// Five functions of six variables on one balanced vtree, a constant and a
 /// literal among them.
 fn pool() -> Vec<Tdd> {
@@ -485,7 +503,7 @@ fn every_refused_reservation_in_a_pool_search_keeps_every_function() {
     assert!(refused > 0);
 }
 
-/// The descent without the refused pivots skipped: every pivot of every
+/// The descent without the refused moves skipped: every move of every
 /// sweep probed, in the search's order. Returns the moves kept and probed.
 fn full_descent(eng: &crate::Engine, members: &mut [Tdd], config: &PoolSearchConfig) -> (usize, usize) {
     for m in members.iter_mut() {
@@ -520,7 +538,7 @@ fn full_descent(eng: &crate::Engine, members: &mut [Tdd], config: &PoolSearchCon
 }
 
 #[test]
-fn skipping_refused_pivots_keeps_the_moves_of_the_full_descent() {
+fn skipping_refused_moves_keeps_the_moves_of_the_full_descent() {
     let eng = crate::Engine::new();
     for crossed in [false, true] {
         let config = PoolSearchConfig { max_sweeps: 6, crossed, ..PoolSearchConfig::default() };
@@ -536,4 +554,84 @@ fn skipping_refused_pivots_keeps_the_moves_of_the_full_descent() {
             assert_eq!(s.pair_count(), f.pair_count(), "crossed {crossed}");
         }
     }
+}
+
+/// Seeded pools of four functions on every vtree shape of six to nine
+/// variables: the descent that skips the moves it refused since their levels
+/// last changed keeps the moves of the descent that probes every one.
+#[test]
+fn skipping_refused_moves_keeps_the_moves_of_the_full_descent_on_seeded_pools() {
+    use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
+    let eng = crate::Engine::new();
+    let mut rng = Lcg::new(0x9e11);
+    let config = PoolSearchConfig { max_sweeps: usize::MAX, ..PoolSearchConfig::default() };
+    let (mut kept, mut skipped) = (0, 0);
+    for n in 6..10 {
+        for (shape, vtree) in vtree_shapes(n) {
+            let members: Vec<Tdd> = (0..4)
+                .map(|_| {
+                    let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: n as usize, width: 3 }));
+                    f.minimize().expect("an unarmed engine refuses nothing");
+                    f
+                })
+                .collect();
+            let mut searched = members.clone();
+            let stats = with_members(&mut searched, |refs| eng.pool_search(refs, &config)).unwrap();
+            let mut full = members;
+            let (accepts, probes) = full_descent(&eng, &mut full, &config);
+            assert_eq!(stats.accepts, accepts, "{n} variables, {shape}");
+            assert_eq!(searched[0].vtree().to_text(), full[0].vtree().to_text(), "{n} variables, {shape}");
+            for (s, f) in searched.iter().zip(&full) {
+                assert_eq!(s.pair_count(), f.pair_count(), "{n} variables, {shape}");
+            }
+            kept += accepts;
+            skipped += probes - stats.probes;
+        }
+    }
+    assert!(kept > 0 && skipped > 0, "{kept} kept, {skipped} skipped");
+}
+
+/// Seeded pools of four functions on every vtree shape of six to nine
+/// variables, under budgets that stop the search part way: the descent that
+/// charges a cached refusal instead of probing the move again keeps,
+/// probes and charges exactly what the descent that probes it does.
+#[test]
+fn a_replayed_refusal_decides_and_charges_as_probing_again() {
+    use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, Lcg};
+    let eng = crate::Engine::new();
+    let mut rng = Lcg::new(0x51ee);
+    let mut replayed = 0;
+    for n in 6..10 {
+        for (shape, vtree) in vtree_shapes(n) {
+            let members: Vec<Tdd> = (0..4)
+                .map(|_| {
+                    let mut f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, n, CnfShape { clauses: n as usize, width: 3 }));
+                    f.minimize().expect("an unarmed engine refuses nothing");
+                    f
+                })
+                .collect();
+            for budget in [u64::MAX, 4000, 1500, 600] {
+                let config = PoolSearchConfig { max_sweeps: usize::MAX, max_work_units: budget, ..PoolSearchConfig::default() };
+                let run = |replay: bool| {
+                    REPLAY_REFUSALS.with(|r| r.set(replay));
+                    let mut searched = members.clone();
+                    let before = REPLAYED.with(std::cell::Cell::get);
+                    let stats = with_members(&mut searched, |refs| eng.pool_search(refs, &config)).unwrap();
+                    let n = REPLAYED.with(std::cell::Cell::get) - before;
+                    REPLAY_REFUSALS.with(|r| r.set(true));
+                    (stats, searched, n)
+                };
+                let (replaying, with, n) = run(true);
+                let (probing, without, _) = run(false);
+                let label = format!("{n} variables, {shape}, budget {budget}");
+                assert_eq!(replaying, probing, "{label}");
+                assert_eq!(with[0].vtree().to_text(), without[0].vtree().to_text(), "{label}");
+                for (a, b) in with.iter().zip(&without) {
+                    assert_eq!(a.pair_count(), b.pair_count(), "{label}");
+                }
+                replayed += n;
+            }
+        }
+    }
+    assert!(replayed > 0);
 }

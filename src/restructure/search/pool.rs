@@ -254,13 +254,19 @@ fn descend(
     let crossings: &[bool] = if config.crossed { &[false, true] } else { &[false] };
     let spent = || eng.limits().work_units() - start >= config.max_work_units;
     // The pivots whose every move was probed and refused since the last kept
-    // move that could change their outcome. A probe at a pivot reads the
-    // levels of the pivot and its two children, and the children of those
-    // children; a kept move rewrites the levels of its pivot and the node it
-    // promoted, and the children of both. So it can change what is probed at
-    // those two nodes and at the pivot's parent, and nowhere else: a pivot
-    // refused before is refused again, and is not probed.
+    // move that could change their outcome: a kept move clears its pivot,
+    // the pivot's two children and its parent. A refused pivot is passed
+    // over.
     let mut refused = vec![false; tree.num_nodes()];
+    // The charge of each move's last refusal, kept while the two levels the
+    // move reads are unchanged. A move reads its pivot's level and its
+    // promoted child's; a kept move rewrites its own pivot's and promoted
+    // child's. So it changes every move at those two nodes and, at the
+    // pivot's parent, the moves that promote the pivot, and no other. A
+    // move refused before is refused again at the same charge, so it is
+    // charged and not probed: the descent decides and charges what it would
+    // probing every move.
+    let mut refusals: Vec<[Option<u64>; 4]> = vec![[None; 4]; tree.num_nodes()];
     // Asked once: a kept move rebuilds every member's two levels and so
     // forgets what each member knows of its levels, and asking at every
     // probe read every level of every member again, most of a search over
@@ -292,27 +298,48 @@ fn descend(
                     if spent() {
                         return Ok(());
                     }
-                    let mv = PoolMove { rotation: RotationMove { pivot: v, kind }, crossed };
+                    let slot = move_slot(kind, crossed);
                     stats.probes += 1;
+                    if let Some(units) = refusals[v.idx()][slot]
+                        && replay_refusals()
+                    {
+                        eng.limits().charge_work(units);
+                        continue;
+                    }
+                    let mv = PoolMove { rotation: RotationMove { pivot: v, kind }, crossed };
                     // A plain move whose crossing is to be probed scores the
                     // crossing too; refused, it leaves the levels as they
                     // were, and the crossing reads its scores.
                     let twin = if crossed {
                         if twin_scored { Twin::Given(&crossed_scores) } else { Twin::Alone }
-                    } else if config.crossed {
+                    } else if config.crossed && refusals[v.idx()][move_slot(kind, true)].is_none() {
                         crossed_scores.clear();
                         twin_scored = true;
                         Twin::Fill(&mut crossed_scores)
                     } else {
                         Twin::Alone
                     };
-                    if !marginal && probe_in_place(eng, members, tree, mv, config.max_inner_pairs, scratch, twin)? {
-                        debug_assert_eq!(members.iter().any(|m| m.has_marginal_level()), marginal);
-                        stats.accepts += 1;
-                        kept += 1;
-                        moved = true;
-                        break 'pivot;
+                    let before = eng.limits().work_units();
+                    if marginal || !probe_in_place(eng, members, tree, mv, config.max_inner_pairs, scratch, twin)? {
+                        refusals[v.idx()][slot] = Some(eng.limits().work_units() - before);
+                        continue;
                     }
+                    debug_assert_eq!(members.iter().any(|m| m.has_marginal_level()), marginal);
+                    stats.accepts += 1;
+                    kept += 1;
+                    moved = true;
+                    let promoted = match kind {
+                        RotationKind::Left => right,
+                        RotationKind::Right => left,
+                    };
+                    refusals[v.idx()] = [None; 4];
+                    refusals[promoted.idx()] = [None; 4];
+                    if let Some(parent) = parent {
+                        let at_parent = if tree.children(parent).1 == v { RotationKind::Left } else { RotationKind::Right };
+                        refusals[parent.idx()][move_slot(at_parent, false)] = None;
+                        refusals[parent.idx()][move_slot(at_parent, true)] = None;
+                    }
+                    break 'pivot;
                 }
             }
             if moved {
@@ -328,6 +355,19 @@ fn descend(
         }
     }
     Ok(())
+}
+
+/// Whether [`descend`] charges a cached refusal rather than probing again.
+#[inline]
+fn replay_refusals() -> bool {
+    #[cfg(test)]
+    if !tests::replays_refusal() { return false; }
+    true
+}
+
+/// The slot of a move among its pivot's four in [`descend`]'s refusals.
+fn move_slot(kind: RotationKind, crossed: bool) -> usize {
+    2 * usize::from(kind == RotationKind::Right) + usize::from(crossed)
 }
 
 /// One probe of the descent: `mv` made on `tree` in place and kept when it
