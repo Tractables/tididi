@@ -383,7 +383,7 @@ impl<'a> RotationTrial<'a> {
         // charged the levels that replaced them, so the operation's in-flight
         // total ends up carrying the difference rather than both.
         self.preimages.clear();
-        self.changed.clear();
+        let changed = std::mem::take(&mut self.changed);
         for pending in self.pending.drain(..) {
             pending.commit(Arc::make_mut(&mut self.tdd.vtree));
         }
@@ -391,9 +391,10 @@ impl<'a> RotationTrial<'a> {
         // restores them wholesale on reject, and the accept path puts them back
         // underneath what the rotation itself recorded. Clearing here instead
         // dropped both, which left a later `minimize` skipping levels it still
-        // owed work on.
+        // owed work on. The pair fusion records stand where no move rebuilt
+        // or pushed a level.
         let carried = self.old_dirty.take().expect("a trial takes the worklists when it is created");
-        self.tdd.dirty.merge_under(carried);
+        self.tdd.dirty.merge_under_kept(carried, &changed);
     }
 }
 

@@ -795,7 +795,7 @@ fn settle<'a>(
         for (i, s) in saved.drain(..) {
             let m = &mut members[i];
             m.close_changed_levels(&[info.v_idx, info.w_idx]);
-            m.dirty.merge_under(s.dirty);
+            m.dirty.merge_under_kept(s.dirty, &[info.v_idx, info.w_idx]);
         }
         return Ok(true);
     }

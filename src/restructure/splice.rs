@@ -54,8 +54,24 @@ impl Tdd {
         self.levels[t.idx()].clear();
         self.levels[t.idx()].push_internal_node(&[ChildPair::new(left_ptr, right_ptr)]);
 
-        // The moved levels keep what `other`'s reductions still owe them.
+        // The moved levels keep what `other`'s reductions still owe them, and
+        // its pair fusion records; every other level but `t` keeps this
+        // diagram's.
+        let mut fused = self.dirty.take_fused();
+        let theirs = other.dirty.take_fused();
+        let bit = |words: &[u64], i: usize| words.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1);
+        for idx in self.vtree.subtree(right_child).chain([t]) {
+            let i = idx.idx();
+            let set = idx != t && bit(&theirs, i);
+            if set && fused.len() <= i / 64 {
+                fused.resize(i / 64 + 1, 0);
+            }
+            if let Some(word) = fused.get_mut(i / 64) {
+                *word = *word & !(1 << (i % 64)) | u64::from(set) << (i % 64);
+            }
+        }
         self.dirty.merge_under(other.take_worklists());
+        self.dirty.restore_fused(fused, &[]);
         return_levels(eng, std::mem::take(&mut other.levels).into_vec());
 
         if let Some(rw) = other.detach_weights() {

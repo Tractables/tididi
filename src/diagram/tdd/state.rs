@@ -463,6 +463,23 @@ impl Dirty {
         *self = carried;
     }
 
+    /// [`merge_under`](Self::merge_under) for `carried` taken from this
+    /// diagram before an edit that rebuilt `rebuilt` and pushed every other
+    /// level whose pairs it changed: `carried`'s fusion records stand at the
+    /// levels the edit neither rebuilt nor pushed, beside the edit's own.
+    pub(crate) fn merge_under_kept(&mut self, mut carried: Dirty, rebuilt: &[VtreeIdx]) {
+        let mut fused = carried.take_fused();
+        for t in self.lists.iter().flatten().copied().chain(rebuilt.iter().map(|t| t.0)) {
+            if let Some(word) = fused.get_mut(t as usize / 64) {
+                *word &= !(1 << (t % 64));
+            }
+        }
+        let own = std::mem::take(&mut self.fused);
+        self.merge_under(carried);
+        self.restore_fused(fused, &[]);
+        self.restore_fused(own, &[]);
+    }
+
     /// `under`'s lists with `over`'s after them, each allocated once, with
     /// the [`room`] an assembly that rebuilt `rebuilt` levels and the
     /// reduction after it take: the lists a copy of `over` holds once a copy
