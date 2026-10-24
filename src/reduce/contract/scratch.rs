@@ -454,7 +454,11 @@ impl ClassInfo {
 /// the parent was on the worklist when the sweep began, so that its children
 /// are searched whole, and the nodes a contraction at the level has changed
 /// in the sweep (its survivors), in the level's current numbering,
-/// ascending.
+/// ascending. In a diagram with a marginal level the lists are kept only
+/// of a level whose pairs were recorded fused (`Dirty::is_fused`) before
+/// its first contraction of the sweep, and no merge at a child of which
+/// has rewritten its pairs since: there only the listed nodes can hold a
+/// group pair fusion fuses (`fused_but`).
 ///
 /// Each entry is stamped with the sweep that wrote it and read as unset
 /// under any other, so a sweep starts in time independent of the vtree's
@@ -474,6 +478,9 @@ pub(super) struct Listing {
     /// for their capacity.
     lists: Vec<Vec<u32>>,
     used: usize,
+    /// Per vtree node: the sweep in which it was last known fused but for
+    /// the nodes its list holds.
+    fused_but: Vec<u32>,
 }
 
 impl Listing {
@@ -488,10 +495,12 @@ impl Listing {
     ) -> Result<(), crate::limits::OperationError> {
         lim.try_resize(&mut self.whole, num_nodes, 0)?;
         lim.try_resize(&mut self.at, num_nodes, (0, 0))?;
+        lim.try_resize(&mut self.fused_but, num_nodes, 0)?;
         self.sweep = self.sweep.wrapping_add(1);
         if self.sweep == 0 {
             self.whole.fill(0);
             self.at.fill((0, 0));
+            self.fused_but.fill(0);
             self.sweep = 1;
         }
         let used = self.used.min(self.lists.len());
@@ -511,6 +520,22 @@ impl Listing {
     #[inline]
     pub(super) fn whole(&self, p: usize) -> bool {
         self.whole.get(p) == Some(&self.sweep)
+    }
+
+    /// Whether level `t`, in a diagram with a marginal level, holds a group
+    /// pair fusion fuses only at the nodes its list holds.
+    #[inline]
+    pub(super) fn fused_but(&self, t: usize) -> bool {
+        self.fused_but.get(t) == Some(&self.sweep)
+    }
+
+    /// Say whether level `t` holds a group pair fusion fuses only at the
+    /// nodes its list holds.
+    #[inline]
+    pub(super) fn set_fused_but(&mut self, t: usize, fused_but: bool) {
+        if let Some(stamp) = self.fused_but.get_mut(t) {
+            *stamp = if fused_but { self.sweep } else { 0 };
+        }
     }
 
     /// Whether a contraction at level `t` has changed it in the current
@@ -586,13 +611,14 @@ impl Listing {
     }
 }
 
-/// Released like any other buffer: a released `at` or `whole` regrows
-/// unstamped, and a released `lists` past `used` is clamped at the next
-/// start.
+/// Released like any other buffer: a released `at`, `whole` or `fused_but`
+/// regrows unstamped, and a released `lists` past `used` is clamped at the
+/// next start.
 impl Buffers for Listing {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
         visit(&mut self.whole);
         visit(&mut self.at);
+        visit(&mut self.fused_but);
         visit(&mut Nested(&mut self.lists));
     }
 }

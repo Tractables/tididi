@@ -2,7 +2,7 @@
 //! next fusion there is skipped until an edit pushes the level.
 
 use super::*;
-use crate::diagram::{ChildPair, NodeIdx, TddLevel, TddNodeId};
+use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, LeafLabel, NodeIdx, TddLevel, TddNodeId, ValueRef};
 use crate::limits::{LimitConfig, StopCallback, StopDecision};
 use crate::test_helpers::{assert_same_shape, compile_clauses_on, rand_cnf, toy, vtree_shapes, CnfShape};
 use crate::vtree::rng::Lcg;
@@ -73,8 +73,8 @@ fn a_parent_with_both_children_marginal_is_not_recorded() {
 
 /// Random formulas on every vtree shape, a level marginalized at a time
 /// and minimized after each: the diagrams are the same whether the fusions
-/// a record skips run or not, and some minimization starts at a recorded
-/// boundary parent.
+/// a record skips or lists run whole or not, and some minimization starts
+/// at a recorded boundary parent.
 #[test]
 fn a_skipped_fusion_is_one_that_finds_no_group() {
     let mut rng = Lcg::new(29);
@@ -104,4 +104,51 @@ fn a_skipped_fusion_is_one_that_finds_no_group() {
         }
     }
     assert!(recorded > 0, "no minimization started at a recorded parent");
+}
+
+/// Two nodes of a boundary parent recorded fused, neither holding a group,
+/// are twins under the root. Their merge unions their pairs into a node that
+/// holds two groups, and the fusion after it reads that node only.
+#[test]
+fn a_merge_at_a_recorded_parent_is_fused_at_its_survivors() {
+    // The root over variable 1 and the boundary parent, which is over
+    // variable 2 and the marginal variable 3.
+    let vtree = Arc::new(Vtree::from_text("vtree 5\nL 0 1\nL 1 2\nL 2 3\nI 3 1 2\nI 4 0 3\n").unwrap());
+    let root = vtree.root();
+    let (_, boundary) = vtree.children(root);
+    let (_, marginal) = vtree.children(boundary);
+    let label = |l: LeafLabel| NodeIdx(l as u32);
+    let slot = |s: u32| NodeIdx(ValueRef::slot_raw(s));
+    let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+    const BIG: u128 = 1 << 40;
+    levels[marginal.idx()].become_marginal(vec![BIG, BIG + 1, BIG + 2, BIG + 3], None);
+    let (pos, neg) = (label(LeafLabel::Pos), label(LeafLabel::Neg));
+    let a = levels[boundary.idx()].push_internal_node(&[ChildPair::new(pos, slot(0)), ChildPair::new(neg, slot(2))]);
+    let b = levels[boundary.idx()].push_internal_node(&[ChildPair::new(pos, slot(1)), ChildPair::new(neg, slot(3))]);
+    let one = label(LeafLabel::One);
+    levels[root.idx()].push_internal_node(&[ChildPair::new(one, a), ChildPair::new(one, b)]);
+    let mut tdd = Tdd::from_levels_unchecked(vtree, levels, TddNodeId { vtree: root, local: NodeIdx(0) });
+    let eng = Engine::new();
+    assert_eq!(fuse_pairs(&eng, &mut tdd).expect("no limits armed").fusion_groups, 0);
+    assert!(tdd.dirty.is_fused(boundary.0), "a fusion that found nothing records its parent");
+
+    let listed_before = crate::reduce::contract::tests::listed_fusions();
+    tdd.seed_contract_worklist([root.0]);
+    crate::reduce::contract::sweep::contract_all_twins(&eng, &mut tdd).expect("no limits armed");
+    assert!(crate::reduce::contract::tests::listed_fusions() > listed_before, "the fusion read the whole parent");
+    let level = &tdd.levels[boundary.idx()];
+    assert_eq!(level.nodes().len(), 1, "the twins merged");
+    let counts = tdd.levels[marginal.idx()].marginal_counts().unwrap();
+    let mut fused: Vec<(u32, u128)> = level
+        .pairs_vec(0)
+        .iter()
+        .map(|p| match ChildDecoder::marginal().value(EncodedChildRef::from_raw(p.right.0)) {
+            ValueRef::Slot(s) => (p.left.0, counts[s as usize]),
+            ValueRef::Inline(c) => (p.left.0, c as u128),
+        })
+        .collect();
+    fused.sort_unstable();
+    let mut want = vec![(pos.0, 2 * BIG + 1), (neg.0, 2 * BIG + 5)];
+    want.sort_unstable();
+    assert_eq!(fused, want, "each label's two pairs fused into one");
 }

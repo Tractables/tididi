@@ -87,7 +87,7 @@ fn fuse_with(tdd: &mut Tdd, bitmap_min_plans: usize) -> [usize; 3] {
     let root = tdd.vtree.root();
     let (_, right) = tdd.vtree.children(root);
     let mut scratch = eng.scratch.reduce.contract.checkout(&eng);
-    let mut plans = collect_fusion_plans::<IntFold>(&eng, tdd, root, right, ChildSide::Right, &mut scratch.pair_fusion)
+    let mut plans = collect_fusion_plans::<IntFold>(&eng, tdd, root, right, ChildSide::Right, None, &mut scratch.pair_fusion)
         .expect("no limits armed");
     let any_inline = allocate_fusion_slots::<IntFold>(&eng, tdd, right, &mut plans).expect("no limits armed");
     rebuild_parent_level_with(&eng, tdd, root, ChildSide::Right, any_inline, &plans, bitmap_min_plans)
@@ -158,7 +158,7 @@ fn fuse_with_two(tdd: &mut Tdd, bitmap_min_plans: usize) {
     let root = tdd.vtree.root();
     let (_, right) = tdd.vtree.children(root);
     let mut scratch = eng.scratch.reduce.contract.checkout(&eng);
-    let mut plans = collect_fusion_plans::<IntFold>(&eng, tdd, root, right, ChildSide::Right, &mut scratch.pair_fusion)
+    let mut plans = collect_fusion_plans::<IntFold>(&eng, tdd, root, right, ChildSide::Right, None, &mut scratch.pair_fusion)
         .expect("no limits armed");
     let any_inline = allocate_fusion_slots::<IntFold>(&eng, tdd, right, &mut plans).expect("no limits armed");
     rebuild_parent_level_with(&eng, tdd, root, ChildSide::Right, any_inline, &plans, bitmap_min_plans)

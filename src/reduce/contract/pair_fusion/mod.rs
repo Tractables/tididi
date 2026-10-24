@@ -40,7 +40,7 @@ pub(crate) fn fuse_pairs_at_parents(
     // Borrow the pooled scratch; the contract fixpoint calls `fuse_pairs_inner`
     // directly with the scratch it already holds.
     let mut scratch = eng.scratch.reduce.contract.checkout(eng);
-    fuse_pairs_inner(eng, tdd, Some(parent_vtree_idxs), &mut scratch)?;
+    fuse_pairs_inner(eng, tdd, Some(parent_vtree_idxs), None, &mut scratch)?;
     Ok(())
 }
 
@@ -77,6 +77,10 @@ struct PlanEntry<V> {
 /// skips a recorded parent: the record lasts until an edit pushes the level
 /// (`Dirty::is_fused`).
 ///
+/// With `listed`, the parent nodes listed, ascending, are the only ones read:
+/// the caller knows no other node of the one parent `parent_filter` names
+/// holds a group.
+///
 /// # Errors
 ///
 /// `Err(OperationError::OverBudget)` when an allocation is refused. The node whose
@@ -89,8 +93,10 @@ pub(super) fn fuse_pairs_inner(
     eng: &Engine,
     tdd: &mut Tdd,
     parent_filter: Option<&[VtreeIdx]>,
+    listed: Option<&[u32]>,
     scratch: &mut ContractScratch,
 ) -> Result<PairFusionStats, OperationError> {
+    debug_assert!(listed.is_none() || parent_filter.is_some_and(|p| p.len() == 1), "a list is of one parent's nodes");
     // Weighted marginalization keeps its values in the `WeightStore` and
     // `marginal_counts` is `None`: the exact domain runs the weighted arm, the
     // `Log` domain is skipped (signed-log addition is order-dependent).
@@ -123,9 +129,9 @@ pub(super) fn fuse_pairs_inner(
             continue;
         }
         if weighted {
-            fuse_boundary::<WeightFold>(eng, tdd, v, parent, side, scratch, &mut stats)?;
+            fuse_boundary::<WeightFold>(eng, tdd, v, parent, side, listed, scratch, &mut stats)?;
         } else {
-            fuse_boundary::<IntFold>(eng, tdd, v, parent, side, scratch, &mut stats)?;
+            fuse_boundary::<IntFold>(eng, tdd, v, parent, side, listed, scratch, &mut stats)?;
         }
     }
     // A weighted group the pinned column cannot hold stays unfused, so only
@@ -151,20 +157,22 @@ pub(crate) fn record_fused(eng: &Engine, tdd: &mut Tdd, parent: VtreeIdx) {
 }
 
 /// The three phases at one boundary: marginal level `v` under `parent`, on
-/// `side` of its pairs.
+/// `side` of its pairs, reading the parent nodes `listed` where given.
+#[expect(clippy::too_many_arguments)]
 fn fuse_boundary<D: SlotValues>(
     eng: &Engine,
     tdd: &mut Tdd,
     v: VtreeIdx,
     parent: VtreeIdx,
     side: ChildSide,
+    listed: Option<&[u32]>,
     scratch: &mut ContractScratch,
     stats: &mut PairFusionStats,
 ) -> Result<(), OperationError> {
-    // Phase 1: full-scan parent's nodes; collect per-(node, x_idx) groups
-    // with > 1 distinct marginal-side index. Compute the fused value for each.
+    // Phase 1: scan parent's nodes; collect per-(node, x_idx) groups with
+    // > 1 distinct marginal-side index. Compute the fused value for each.
     let mut plans: Vec<PlanEntry<D::Value>> =
-        collect_fusion_plans::<D>(eng, tdd, parent, v, side, &mut scratch.pair_fusion)?;
+        collect_fusion_plans::<D>(eng, tdd, parent, v, side, listed, &mut scratch.pair_fusion)?;
     if plans.is_empty() {
         return Ok(());
     }

@@ -13,7 +13,8 @@ use crate::value::slots::SlotValues;
 use super::super::scratch::{GroupCell, PFusionScratch};
 use super::PlanEntry;
 
-/// Phase 1: full-scan the parent level's nodes; collect per-(node, `x_idx`) groups
+/// Phase 1: scan the parent level's nodes, or the ascending `listed` ones
+/// where only they can hold a group; collect per-(node, `x_idx`) groups
 /// with > 1 distinct marginal-side index. Compute `c_new` for each.
 ///
 /// The output plan list is in ascending `node_idx` order (Phase 3 cursor-walk
@@ -27,6 +28,29 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
     parent: VtreeIdx,
     v: VtreeIdx,
     side: ChildSide,
+    listed: Option<&[u32]>,
+    scratch: &mut PFusionScratch,
+) -> Result<Vec<PlanEntry<D::Value>>, OperationError> {
+    match listed {
+        Some(nodes) => {
+            debug_assert!(nodes.is_sorted(), "listed fusion nodes ascend");
+            collect_over::<D>(eng, tdd, parent, v, side, nodes.iter().map(|&n| n as usize), scratch)
+        }
+        None => {
+            let all = 0..tdd.levels[parent.idx()].nodes().len();
+            collect_over::<D>(eng, tdd, parent, v, side, all, scratch)
+        }
+    }
+}
+
+/// [`collect_fusion_plans`] over the parent nodes `nodes`, ascending.
+fn collect_over<D: SlotValues>(
+    eng: &Engine,
+    tdd: &Tdd,
+    parent: VtreeIdx,
+    v: VtreeIdx,
+    side: ChildSide,
+    nodes: impl Iterator<Item = usize>,
     scratch: &mut PFusionScratch,
 ) -> Result<Vec<PlanEntry<D::Value>>, OperationError> {
     let plevel = &tdd.levels[parent.idx()];
@@ -48,7 +72,7 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
     // pair count.
     // An implicit level's node's pairs are generated into `buf`.
     let mut buf = Vec::new();
-    for n in 0..plevel.nodes().len() {
+    for n in nodes {
         let pairs = plevel.pair_count_at(n);
         read += 1 + pairs as u64;
         if read >= stride {

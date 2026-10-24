@@ -46,13 +46,18 @@ enum Reach {
 /// weighed against the whole searches (`list_changed_children`).
 const LISTED_WHOLE_MIN_WIDTH: usize = 1 << 16;
 
-// A test counts the listed searches, to check the sweep takes them.
+// A test counts the listed searches and fusions, to check the sweep takes
+// them.
 #[cfg(test)]
-use super::tests::note_listed_search;
+use super::tests::{note_listed_fusion, note_listed_search};
 
 #[cfg(not(test))]
 #[inline(always)]
 fn note_listed_search() {}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_listed_fusion() {}
 
 /// What [`contract_child`] did to a child level.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -137,9 +142,10 @@ fn contract_child(
         // Under a parent level a merge of this sweep changed, most nodes
         // have a twin (they are cascades); under any other, almost none
         // has, and the search first tests whether any two nodes share a
-        // context.
+        // context. A diagram with a marginal level keeps lists for fusion
+        // only, and screens every search.
         Reach::Whole => {
-            let screen = !scratch.listing.changed(parent.idx());
+            let screen = diagram_marginal(tdd, scratch) || !scratch.listing.changed(parent.idx());
             find_twin_groups(eng, tdd, t1, parent, t1_side, scratch, screen)?
         }
     };
@@ -151,9 +157,12 @@ fn contract_child(
     // survivors before the merge changes anything, so a refused reservation
     // leaves the diagram as it was. Whether the diagram has a marginal level
     // is read at the first merge, once per checkout, as the merge plan reads
-    // it.
+    // it. With one, `t1` is listed where its pairs held no fusion group but
+    // at the nodes listed so far: the merge unions pairs at its survivors
+    // only, so a group can form there and nowhere else.
     let lists = !diagram_marginal(tdd, scratch);
-    if lists {
+    let fused_but = !lists && (tdd.dirty.is_fused(t1.0) || scratch.listing.fused_but(t1.idx()));
+    if lists || fused_but {
         reserve_survivors(eng, t1, scratch)?;
     }
     let merged = contract_twins(eng, tdd, t1, parent, t1_side, scratch)?;
@@ -162,8 +171,14 @@ fn contract_child(
         // reporting progress would spin the sibling-pair loop.
         return Ok(Contracted::Nothing);
     }
-    if lists {
+    if lists || fused_but {
         note_survivors(t1, scratch);
+    }
+    if !lists {
+        // The merge rewrote the parent's pairs, which can make a group at
+        // any parent node that named a member.
+        scratch.listing.set_fused_but(t1.idx(), fused_but);
+        scratch.listing.set_fused_but(parent.idx(), false);
     }
     Ok(if merged_whole(scratch) { Contracted::Whole } else { Contracted::Part })
 }
@@ -568,13 +583,7 @@ fn joint_contract_fixpoint(
         }
         let mut fused = false;
         if is_marginal_boundary {
-            // The inner form, so fusion reuses this run's already-taken
-            // `scratch` instead of re-borrowing the pool.
-            let stats = crate::reduce::contract::pair_fusion::fuse_pairs_inner(
-                eng,
-                tdd, Some(&[parent]), scratch,
-            )?;
-            fused = stats.fusion_groups > 0;
+            fused = fuse_at(eng, tdd, parent, scratch)?;
         }
         (scan_left, scan_right) = (again[0] || fused, again[1] || fused);
         if !(scan_left || scan_right) {
@@ -582,6 +591,28 @@ fn joint_contract_fixpoint(
         }
     }
     Ok((left_fired, right_fired))
+}
+
+/// Pair fusion at boundary parent `parent`, reading only the nodes its
+/// list holds where the sweep knows no other node holds a group
+/// (`Listing::fused_but`). Says whether it fused a group.
+fn fuse_at(eng: &Engine, tdd: &mut Tdd, parent: VtreeIdx, scratch: &mut ContractScratch) -> Result<bool, OperationError> {
+    // The inner form, so fusion reuses this run's already-taken `scratch`
+    // instead of re-borrowing the pool.
+    use crate::reduce::contract::pair_fusion::fuse_pairs_inner;
+    if !scratch.listing.fused_but(parent.idx()) {
+        return Ok(fuse_pairs_inner(eng, tdd, Some(&[parent]), None, scratch)?.fusion_groups > 0);
+    }
+    note_listed_fusion();
+    let listed = scratch.listing.take(parent.idx());
+    let stats = fuse_pairs_inner(eng, tdd, Some(&[parent]), Some(&listed), scratch);
+    scratch.listing.put(parent.idx(), listed);
+    // Run to the end, the fusion recorded the parent fused whole.
+    scratch.listing.set_fused_but(parent.idx(), false);
+    let stats = stats?;
+    #[cfg(debug_assertions)]
+    crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(tdd, Some(&[parent]), "a listed fusion");
+    Ok(stats.fusion_groups > 0)
 }
 
 /// A child the joint fixpoint of a diagram without a marginal level is done
