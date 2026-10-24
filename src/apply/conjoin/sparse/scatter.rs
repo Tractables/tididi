@@ -510,6 +510,31 @@ struct Lookup {
 const LOOK_GROUP: usize = 16;
 
 impl RoutedWalk<'_> {
+    /// The candidates of one f pair, of inner child `inner1`, under the
+    /// outer of `segment`.
+    #[inline(always)]
+    fn pair<const SWAPPED: bool>(
+        &self,
+        segment: Segment,
+        inner1: u32,
+        ticker: &mut crate::limits::PollGate,
+        push: &mut impl FnMut(ParEntry) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError> {
+        for e in self.inner.bucket(inner1 as usize) {
+            let under = self.routes.find(segment, e.g_idx.0);
+            if under.is_empty() {
+                continue;
+            }
+            let inner_prod = e.prod_idx.0;
+            for &(g_parent, attached) in under {
+                let (left_prod, right_prod) = orient::<SWAPPED>(inner_prod, attached);
+                push(ParEntry { g_parent, left_prod, right_prod })?;
+            }
+            ticker.poll(under.len() as u64)?;
+        }
+        Ok(())
+    }
+
     /// The pipelined walk of one node's pairs ([`RoutedWalk`]).
     #[inline(always)]
     fn node_pipelined<const SWAPPED: bool>(
@@ -589,36 +614,25 @@ impl NodeWalk for RoutedWalk<'_> {
             if segment.bits == 0 {
                 continue;
             }
-            for e in self.inner.bucket(inner1 as usize) {
-                let under = self.routes.find(segment, e.g_idx.0);
-                if under.is_empty() {
-                    continue;
-                }
-                let inner_prod = e.prod_idx.0;
-                for &(g_parent, attached) in under {
-                    let (left_prod, right_prod) = orient::<SWAPPED>(inner_prod, attached);
-                    push(ParEntry { g_parent, left_prod, right_prod })?;
-                }
-                ticker.poll(under.len() as u64)?;
-            }
+            self.pair::<SWAPPED>(segment, inner1, ticker, &mut push)?;
         }
         Ok(())
     }
 }
 
 /// The general arm into the level's nodes, by f node: every outer key's
-/// `filtered` index is built as [`scatter_general_arm`] builds it and kept
-/// in [`Routes`], and f's nodes are then walked in order ([`RoutedWalk`]),
-/// each emitted into `emit` as its walk ends. No candidate is held past its
-/// node, except a big node's.
+/// `filtered` index, with the entries [`scatter_general_arm`] would bucket,
+/// is built into [`Routes`], and f's nodes are then walked in order
+/// ([`RoutedWalk`]), each emitted into `emit` as its walk ends. No
+/// candidate is held past its node, except a big node's.
 ///
 /// A node of [`SparseThresholds::by_outer_pairs`] pairs or more is walked
-/// by outer key instead, as each outer's `filtered` is built and before it
-/// is cleared: its pairs under the outer read the index while it is in
-/// cache, where the walk in pair order would read a different outer's
-/// routes at almost every pair. Its candidates are held in a row of its
-/// own until the walk of f's nodes reaches it and emits them. An outer
-/// holding no pair of a smaller node gets no route.
+/// by outer key instead, as each outer's route is built: its pairs under
+/// the outer read the route while it is in cache, where the walk in pair
+/// order would read a different outer's routes at almost every pair. Its
+/// candidates are held in a row of its own until the walk of f's nodes
+/// reaches it and emits them. An outer holding no pair of a smaller node
+/// keeps no route.
 #[inline(never)]
 pub(super) fn scatter_routed<const SWAPPED: bool>(
     eng: &Engine,
@@ -651,7 +665,7 @@ pub(super) fn scatter_routed<const SWAPPED: bool>(
     let SparseWorkspace { routes, inner_offsets, node_candidates, node_owners, emit: scratch, by_outer_row, by_outer, .. } = ws;
     let walk = RoutedWalk {
         inner: GroupedView { offsets: inner_offsets, entries: pl_inner },
-        routes: RoutesView { segments: &routes.segments, slots: &routes.slots, entries: &routes.entries },
+        routes: routes.view(),
         pipelined: std::mem::size_of_val(&routes.slots[..]) + std::mem::size_of_val(&routes.entries[..])
             >= emit.thresholds.pipelined_bytes,
     };
@@ -690,9 +704,9 @@ fn rows_by_outer(
     Ok(rows)
 }
 
-/// Build every outer key's `filtered` index and keep it in the level's
-/// routes, walking the f pairs under the outer of each node `row_of` gives
-/// a row into that row of `rows` while the index is in cache. Whether the
+/// Build every outer key's route, walking the f pairs under the outer of
+/// each node `row_of` gives a row into that row of `rows` while the route
+/// is in cache. Whether the
 /// walk of f's nodes visits only the nodes holding a pair under an outer
 /// with a route ([`MARKED_SHARE`]), and if so their bits, a big node with
 /// candidates among them.
@@ -703,7 +717,7 @@ fn route_level<const SWAPPED: bool>(
     rows: &mut Rows<ParEntry>,
     nodes: usize,
 ) -> Result<bool, OperationError> {
-    s.routes.reset(lim, s.outer_k)?;
+    s.routes.reset(lim, s.outer_k, s.inner_g)?;
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
     // The f pairs of nodes walked in order under an outer with a route:
     // the pairs the general arm would walk for them.
@@ -712,10 +726,15 @@ fn route_level<const SWAPPED: bool>(
         if s.outer.bucket(outer).is_empty() || s.f_pairs_under(outer) == 0 {
             continue;
         }
-        s.build_for_outer(lim, outer)?;
+        let mark = s.routes.mark();
+        s.route_outer(lim, outer)?;
+        let segment = s.routes.segments[outer];
+        if segment.bits == 0 {
+            continue;
+        }
         let mut in_order = s.f_pairs_under(outer);
-        if let Some(row_of) = row_of.filter(|_| !s.filtered.touched.is_empty()) {
-            let (inner, filtered) = (s.inner, s.filtered.index());
+        if let Some(row_of) = row_of {
+            let walk = RoutedWalk { inner: s.inner, routes: s.routes.view(), pipelined: false };
             in_order = 0;
             for &RevEntry { parent, other: inner1 } in s.f_by_outer.bucket(outer) {
                 let row = row_of[parent as usize];
@@ -724,16 +743,14 @@ fn route_level<const SWAPPED: bool>(
                     continue;
                 }
                 let row = &mut rows[row as usize];
-                emit_candidates::<SWAPPED>(inner, filtered, inner1, &mut ticker, |entry| lim.try_push(row, entry))?;
+                walk.pair::<SWAPPED>(segment, inner1, &mut ticker, &mut |entry| lim.try_push(row, entry))?;
             }
         }
-        if in_order > 0 {
-            if !s.filtered.touched.is_empty() {
-                routed_pairs += in_order;
-            }
-            s.routes.seal(lim, outer, s.filtered.touched, s.filtered.buckets, s.inner_g)?;
+        if in_order == 0 {
+            // Only big nodes read this outer, and they have.
+            s.routes.drop_from(outer, mark);
         }
-        s.filtered.clear_touched();
+        routed_pairs += in_order;
     }
     // Where those are few of f's pairs, only the nodes holding one are
     // walked, as the general arm walks only them, and the big nodes with a
@@ -917,6 +934,18 @@ struct ScatterSides<'w> {
     outer_k: usize,
     /// How many inner-g children `filtered` is keyed by.
     inner_g: usize,
+}
+
+/// Which g index [`ScatterSides::build_plan`] builds one outer key's index
+/// from.
+#[derive(Clone, Copy)]
+enum BuildFrom {
+    /// The outer's g keys, for every inner-g child.
+    Keys,
+    /// The outer's g keys, for the wanted inner-g children only.
+    WantedKeys,
+    /// The wanted inner-g children.
+    Inner,
 }
 
 /// How many bytes a level's inner products (or its parents' buckets) span
@@ -1179,15 +1208,8 @@ impl ScatterSides<'_> {
         lim: &crate::limits::Limits,
         outer: usize,
     ) -> Result<(), OperationError> {
-        let ScatterSides {
-            outer: outer_products, outer_keys, outer_attached, wanted_keys,
-            g_by_inner, filtered, ..
-        } = self;
-        outer_keys.begin();
-        for e in outer_products.bucket(outer) {
-            outer_keys.mark(e.g_idx.0);
-            outer_attached[e.g_idx.idx()] = e.prod_idx.0;
-        }
+        self.mark_outer_keys(outer);
+        let ScatterSides { outer_keys, outer_attached, wanted_keys, g_by_inner, filtered, .. } = self;
         for &inner_c2 in wanted_keys.iter() {
             for &RevEntry { parent: p2, other: right_key } in g_by_inner.bucket(inner_c2 as usize) {
                 if !outer_keys.is_set(right_key) {
@@ -1199,24 +1221,127 @@ impl ScatterSides<'_> {
         Ok(())
     }
 
-    /// Fill `filtered` for one outer key, from whichever g index is the
-    /// cheaper to walk, and only for the children the emit will read when
-    /// finding those costs less than it saves.
+    /// Fill `filtered` for one outer key, by [`ScatterSides::build_plan`].
     fn build_for_outer(&mut self, lim: &crate::limits::Limits, outer: usize) -> Result<(), OperationError> {
+        match self.build_plan(outer) {
+            BuildFrom::Keys => self.build_filtered_for_outer::<false>(lim, outer),
+            BuildFrom::WantedKeys => self.build_filtered_for_outer::<true>(lim, outer),
+            BuildFrom::Inner => self.build_filtered_by_inner(lim, outer),
+        }
+    }
+
+    /// How one outer key's index is built: from whichever g index is the
+    /// cheaper to walk, and only for the children the emit will read when
+    /// finding those costs less than it saves. Marks the wanted children
+    /// where it plans to read them.
+    fn build_plan(&mut self, outer: usize) -> BuildFrom {
         let by_key = self.build_cost_by_key(outer);
         if by_key <= self.f_pairs_under(outer) {
             // The walk by the outer's g keys costs no more than the emit's
             // own walk of the f pairs under it, and the marking costs at
             // least that walk: neither it nor the filter it feeds can pay
             // for itself here.
-            self.build_filtered_for_outer::<false>(lim, outer)
-        } else {
-            self.mark_wanted_for_outer(outer);
-            if self.build_cost_by_inner() < by_key {
-                self.build_filtered_by_inner(lim, outer)
-            } else {
-                self.build_filtered_for_outer::<true>(lim, outer)
+            return BuildFrom::Keys;
+        }
+        self.mark_wanted_for_outer(outer);
+        if self.build_cost_by_inner() < by_key { BuildFrom::Inner } else { BuildFrom::WantedKeys }
+    }
+
+    /// Give one outer key its table in `routes`, by
+    /// [`ScatterSides::build_plan`]: the entries [`ScatterSides::build_for_outer`]
+    /// would bucket, written into `routes` as runs, without the buckets.
+    fn route_outer(&mut self, lim: &crate::limits::Limits, outer: usize) -> Result<(), OperationError> {
+        match self.build_plan(outer) {
+            BuildFrom::Keys => self.route_by_key::<false>(lim, outer)?,
+            BuildFrom::WantedKeys => self.route_by_key::<true>(lim, outer)?,
+            BuildFrom::Inner => self.route_by_inner(lim, outer)?,
+        }
+        self.routes.place(lim, outer, self.inner_g)
+    }
+
+    /// [`ScatterSides::build_filtered_for_outer`] into `routes`: the entries
+    /// come by the outer's g keys, so a first walk counts each inner-g
+    /// child's and a second writes each into its run.
+    fn route_by_key<const FILTER: bool>(&mut self, lim: &crate::limits::Limits, outer: usize) -> Result<(), OperationError> {
+        let ScatterSides { outer: outer_products, g_by_outer, wanted, routes, .. } = self;
+        let Routes { entries, pending, cursor, .. } = &mut **routes;
+        pending.clear();
+        let mut total = 0usize;
+        for e in outer_products.bucket(outer) {
+            for &RevEntry { other: key, .. } in g_by_outer.bucket(e.g_idx.idx()) {
+                if FILTER && !wanted.is_set(key) {
+                    continue;
+                }
+                let count = &mut cursor[key as usize];
+                if *count == 0 {
+                    pending.push(RouteSlot { key, start: 0, len: 0 });
+                }
+                *count += 1;
+                total += 1;
             }
+        }
+        let mut at = entries.len();
+        if at + total > u32::MAX as usize {
+            return Err(OperationError::IndexOverflow);
+        }
+        for slot in pending.iter_mut() {
+            slot.start = at as u32;
+            slot.len = cursor[slot.key as usize];
+            cursor[slot.key as usize] = at as u32;
+            at += slot.len as usize;
+        }
+        reserve_room(lim, entries, total)?;
+        entries.resize(at, (0, 0));
+        for e in outer_products.bucket(outer) {
+            let attached = e.prod_idx.0;
+            for &RevEntry { parent: p2, other: key } in g_by_outer.bucket(e.g_idx.idx()) {
+                if FILTER && !wanted.is_set(key) {
+                    continue;
+                }
+                let next = &mut cursor[key as usize];
+                entries[*next as usize] = (p2, attached);
+                *next += 1;
+            }
+        }
+        for slot in pending.iter() {
+            cursor[slot.key as usize] = 0;
+        }
+        Ok(())
+    }
+
+    /// [`ScatterSides::build_filtered_by_inner`] into `routes`: the entries
+    /// come by wanted inner-g child, each child's as one run.
+    fn route_by_inner(&mut self, lim: &crate::limits::Limits, outer: usize) -> Result<(), OperationError> {
+        let most = self.build_cost_by_inner();
+        self.mark_outer_keys(outer);
+        let ScatterSides { outer_keys, outer_attached, wanted_keys, g_by_inner, routes, .. } = self;
+        let Routes { entries, pending, .. } = &mut **routes;
+        pending.clear();
+        if entries.len() + most > u32::MAX as usize {
+            return Err(OperationError::IndexOverflow);
+        }
+        reserve_room(lim, entries, most)?;
+        for &key in wanted_keys.iter() {
+            let start = entries.len();
+            for &RevEntry { parent: p2, other: right_key } in g_by_inner.bucket(key as usize) {
+                if outer_keys.is_set(right_key) {
+                    entries.push((p2, outer_attached[right_key as usize]));
+                }
+            }
+            if entries.len() > start {
+                pending.push(RouteSlot { key, start: start as u32, len: (entries.len() - start) as u32 });
+            }
+        }
+        Ok(())
+    }
+
+    /// Mark the outer's live g keys, each with its product, for the walks by
+    /// inner-g child.
+    fn mark_outer_keys(&mut self, outer: usize) {
+        self.outer_keys.begin();
+        for e in self.outer.bucket(outer) {
+            self.outer_keys.mark(e.g_idx.0);
+            self.outer_attached[e.g_idx.idx()] = e.prod_idx.0;
         }
     }
 

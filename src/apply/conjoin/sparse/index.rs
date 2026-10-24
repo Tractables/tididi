@@ -133,7 +133,8 @@ impl Buffers for EmitScratch {
 /// nodes that reads them by outer key and inner-g child at random.
 ///
 /// Key `k` of outer `o` (an inner-g child) holds the `(g_parent, attached)`
-/// entries `filtered` held for it under `o`, as one run of `entries`. Each
+/// entries `filtered` would hold for it under `o`, as one run of `entries`,
+/// written there as the outer's index is built. Each
 /// outer's keys are a table of their own, its `segment`: an open-addressed
 /// `slots[base..base + 2^bits]`, probed linearly from the key's hash and at
 /// most half full, or, where the outer holds at least one key in
@@ -148,6 +149,13 @@ pub(super) struct Routes {
     /// A bit per f node holding a pair under an outer with a route
     /// ([`Routes::mark_parents`]).
     pub(super) walked: Vec<u64>,
+    /// The keys of the outer being built, each with its run, until
+    /// [`Routes::place`] gives them a table.
+    pub(super) pending: Vec<RouteSlot>,
+    /// Per inner-g child, while an outer is built from entries that do not
+    /// come grouped by key: its count, then its write cursor in `entries`.
+    /// Zero between outers.
+    pub(super) cursor: Vec<u32>,
 }
 
 /// One outer key's table in [`Routes`]: its first slot, and log2 of its
@@ -198,57 +206,65 @@ pub(super) fn route_slot(key: u32, bits: u32) -> usize {
 }
 
 impl Routes {
-    /// Empty, for a level of `outers` outer keys, each with no key yet.
-    pub(super) fn reset(&mut self, lim: &Limits, outers: usize) -> Result<(), OperationError> {
+    /// Empty, for a level of `outers` outer keys, each with no key yet, and
+    /// `width` inner-g children.
+    pub(super) fn reset(&mut self, lim: &Limits, outers: usize, width: usize) -> Result<(), OperationError> {
         self.segments.clear();
         lim.try_resize(&mut self.segments, outers, Segment::default())?;
         self.slots.clear();
         self.entries.clear();
-        Ok(())
+        self.pending.clear();
+        self.cursor.clear();
+        lim.try_resize(&mut self.cursor, width, 0)
     }
 
-    /// Give outer `outer` a table of the keys `touched` names, each with its
-    /// run `buckets[key]`, the keys being `width` inner-g children.
-    pub(super) fn seal(
-        &mut self,
-        lim: &Limits,
-        outer: usize,
-        touched: &[u32],
-        buckets: &[Vec<(u32, u32)>],
-        width: usize,
-    ) -> Result<(), OperationError> {
-        if touched.is_empty() {
+    /// Give outer `outer` a table of the `pending` keys, the keys being
+    /// `width` inner-g children.
+    pub(super) fn place(&mut self, lim: &Limits, outer: usize, width: usize) -> Result<(), OperationError> {
+        let keys = self.pending.len();
+        if keys == 0 {
             return Ok(());
         }
-        let dense = width <= DENSE_SPAN * touched.len();
-        let bits = if dense { Segment::DENSE } else { (2 * touched.len()).next_power_of_two().trailing_zeros() };
+        let dense = width <= DENSE_SPAN * keys;
+        let bits = if dense { Segment::DENSE } else { (2 * keys).next_power_of_two().trailing_zeros() };
         let base = self.slots.len();
         let size = if dense { width } else { 1usize << bits };
         if base + size > u32::MAX as usize {
             return Err(OperationError::IndexOverflow);
         }
-        // Grown by doubling: the level's tables are sealed one outer at a
+        // Grown by doubling: the level's tables are placed one outer at a
         // time, and an exact reserve would move them at nearly every one.
         reserve_room(lim, &mut self.slots, size)?;
         self.slots.resize(base + size, RouteSlot::EMPTY);
         let table = &mut self.slots[base..];
-        for &key in touched {
-            let run = &buckets[key as usize];
-            let start = self.entries.len();
-            if start + run.len() > u32::MAX as usize {
-                return Err(OperationError::IndexOverflow);
-            }
-            reserve_room(lim, &mut self.entries, run.len())?;
-            self.entries.extend_from_slice(run);
-            let mut at = if dense { key as usize } else { route_slot(key, bits) };
+        for &slot in &self.pending {
+            let mut at = if dense { slot.key as usize } else { route_slot(slot.key, bits) };
             while table[at].key != u32::MAX {
                 debug_assert!(!dense, "a key indexes its own slot");
                 at = (at + 1) & (size - 1);
             }
-            table[at] = RouteSlot { key, start: start as u32, len: run.len() as u32 };
+            table[at] = slot;
         }
         self.segments[outer] = Segment { base: base as u32, bits };
         Ok(())
+    }
+
+    /// The tables and runs, for reading.
+    pub(super) fn view(&self) -> RoutesView<'_> {
+        RoutesView { segments: &self.segments, slots: &self.slots, entries: &self.entries }
+    }
+
+    /// Where the next outer's table and runs start, for
+    /// [`Routes::drop_from`].
+    pub(super) fn mark(&self) -> (usize, usize) {
+        (self.slots.len(), self.entries.len())
+    }
+
+    /// Take back outer `outer`'s table and runs, placed since `mark`.
+    pub(super) fn drop_from(&mut self, outer: usize, mark: (usize, usize)) {
+        self.slots.truncate(mark.0);
+        self.entries.truncate(mark.1);
+        self.segments[outer] = Segment::default();
     }
 
     /// Set `walked`'s bit, over `parents` f nodes, for each parent of an f
@@ -280,6 +296,8 @@ impl Buffers for Routes {
         visit(&mut self.slots);
         visit(&mut self.entries);
         visit(&mut self.walked);
+        visit(&mut self.pending);
+        visit(&mut self.cursor);
     }
 }
 
@@ -308,7 +326,7 @@ impl<'a> RoutesView<'a> {
     pub(super) fn slot(self, segment: Segment, key: u32) -> Option<RouteSlot> {
         if segment.bits == Segment::DENSE {
             // Keys are the level's inner-g children, below the width the
-            // table was sealed with.
+            // table was placed with.
             let slot = self.slots[segment.first_slot(key)];
             return (slot.key == key).then_some(slot);
         }
