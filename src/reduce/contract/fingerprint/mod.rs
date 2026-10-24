@@ -157,16 +157,17 @@ const TWIN_TABLE_START_CELLS: usize = 1 << 12;
 /// that hold a private context ([`TwinEntries::scatter_shared`]): on a
 /// narrower level the fingerprints and their table stay in cache, and the
 /// marking costs more than the probes it saves.
-const PRIVATE_MIN_WIDTH: usize = 1 << 12;
+const PRIVATE_MIN_WIDTH: usize = 1 << 8;
 
 /// The most pairs a parent node holds where the private context scatter
 /// finds its repeated siblings by comparing every two of them.
 const COMPARE_MAX_PAIRS: usize = 8;
 
-/// The pairs the private context scatter files in its sibling table before
-/// it weighs the table: one that finds fewer than half of the pairs it filed
-/// private is not used for the rest of the level.
-const TABLE_TRIAL_PAIRS: u64 = 1 << 12;
+/// The pairs of multi-pair parent nodes the private context scatter tests
+/// before it weighs the test: where fewer than half of them were private,
+/// the rest of the level adds every context, and wider parent nodes stop
+/// using the sibling table on the same terms.
+const TRIAL_PAIRS: u64 = 1 << 10;
 
 impl TwinEntries for ContextEntries<'_> {
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
@@ -194,7 +195,9 @@ impl TwinEntries for ContextEntries<'_> {
     /// repeated siblings by comparing every two. A wider one files its
     /// siblings in a stamped table that notes repeats, for as long as the
     /// table finds most of the pairs it files private; past that the wider
-    /// nodes add every context.
+    /// nodes add every context. Where the multi-pair nodes together find
+    /// fewer than half of their pairs private, the rest of the level adds
+    /// every context.
     fn scatter_shared(&self, lim: &Limits, scratch: &mut ContractScratch, width: usize) -> Result<Option<usize>, OperationError> {
         let ContractScratch { shared_local, shared_generation, twin_named, fingerprints, candidates, shared_parents, .. } =
             scratch;
@@ -216,9 +219,11 @@ impl TwinEntries for ContextEntries<'_> {
         };
         let stored = level.stored();
         let (mut buf, mut cursor) = (Vec::new(), None);
-        // Pairs the table filed, and how many of them it found private.
+        // Pairs of multi-pair nodes tested, and how many were private; the
+        // same for the table alone.
+        let (mut tested, mut tested_private) = (0u64, 0u64);
         let (mut filed, mut filed_private) = (0u64, 0u64);
-        let mut table = true;
+        let (mut marking, mut table) = (true, true);
         for i in 0..nodes {
             let pairs = match stored {
                 Some(stored) => stored.of_idx(i),
@@ -230,6 +235,14 @@ impl TwinEntries for ContextEntries<'_> {
                 if let Some(pair) = pairs.first() {
                     mark(split_pair(pair, side).0);
                 }
+                continue;
+            }
+            if !marking {
+                for pair in pairs {
+                    let (t, s) = split_pair(pair, side);
+                    add(t, pi, s);
+                }
+                shared_parents.push(pi);
                 continue;
             }
             if n <= COMPARE_MAX_PAIRS {
@@ -255,6 +268,9 @@ impl TwinEntries for ContextEntries<'_> {
                 if dup != 0 {
                     shared_parents.push(pi);
                 }
+                tested += n as u64;
+                tested_private += (n as u32 - dup.count_ones()) as u64;
+                marking = tested < TRIAL_PAIRS || 2 * tested_private >= tested;
                 continue;
             }
             if !table {
@@ -272,24 +288,28 @@ impl TwinEntries for ContextEntries<'_> {
             for pair in pairs {
                 repeats |= file_counted(cell_table, stamp, split_pair(pair, side).1);
             }
+            let before = filed_private;
             filed += n as u64;
             if !repeats {
                 // Every context here is private.
                 pairs.iter().for_each(|pair| mark(split_pair(pair, side).0));
                 filed_private += n as u64;
-                continue;
-            }
-            for pair in pairs {
-                let (t, s) = split_pair(pair, side);
-                if repeated(cell_table, stamp, s) {
-                    add(t, pi, s);
-                } else {
-                    mark(t);
-                    filed_private += 1;
+            } else {
+                for pair in pairs {
+                    let (t, s) = split_pair(pair, side);
+                    if repeated(cell_table, stamp, s) {
+                        add(t, pi, s);
+                    } else {
+                        mark(t);
+                        filed_private += 1;
+                    }
                 }
+                shared_parents.push(pi);
             }
-            shared_parents.push(pi);
-            table = filed < TABLE_TRIAL_PAIRS || 2 * filed_private >= filed;
+            tested += n as u64;
+            tested_private += filed_private - before;
+            table = filed < TRIAL_PAIRS || 2 * filed_private >= filed;
+            marking = tested < TRIAL_PAIRS || 2 * tested_private >= tested;
         }
         let shared = width - private.iter().map(|w| w.count_ones() as usize).sum::<usize>();
         candidates.clear();

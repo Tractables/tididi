@@ -330,7 +330,7 @@ fn wide_levels_mark_private_contexts_and_find_every_twin() {
     let mut scratch = ContractScratch::default();
     let mut seen_groups = 0;
     for round in 0..12u32 {
-        let width = PRIVATE_MIN_WIDTH as u32 + rng.below(2000) as u32;
+        let width = (PRIVATE_MIN_WIDTH as u32).max(1 << 12) + rng.below(2000) as u32;
         let siblings = if round % 3 == 0 { 8 } else { 1 + rng.below(4000) as u32 };
         // Twin classes of one to four nodes, in a shuffled order.
         let mut order: Vec<u32> = (0..width).collect();
