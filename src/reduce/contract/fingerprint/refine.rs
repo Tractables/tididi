@@ -527,10 +527,11 @@ impl Partition<'_> {
     /// node repeats a pair, one whose pairs do not come in node order is
     /// split sibling by sibling ([`Self::split_by_siblings`]), and one whose
     /// pairs do is first split by degree ([`Self::split_by_degree`]), which
-    /// settles it where its nodes' sibling sets are nested. Else its pairs
-    /// are sorted in `keys`, so that each node's siblings are a run in
-    /// ascending order; each run keyed by its node's class and a hash of its
-    /// siblings, and grouped with the runs of its key in a table, by
+    /// settles it where its nodes' sibling sets are nested. Else the pairs
+    /// of its nodes not alone are sorted in `keys`, so that each node's
+    /// siblings are a run in ascending order; each run of a node that can
+    /// have a twin keyed by its node's class and a hash of its siblings,
+    /// and grouped with the runs of its key in a table, by
     /// comparing their siblings. A group of one run leaves the partition; a
     /// group that is its whole class keeps it; any other group is a class
     /// of its own.
@@ -559,18 +560,23 @@ impl Partition<'_> {
             }
         }
         let Wide { keys, runs, links, table, radix, .. } = wide;
+        // Each pair of a node not alone a key of its sibling's bits and its
+        // node's above them, so that the sort places only the bits there
+        // are. Most pairs of a wide node name a node already alone, which
+        // its alone bit tells in cache: every pair's key is written, and
+        // kept only where the bit is clear, with no branch and no read of
+        // the node's class.
         keys.clear();
-        lim.reserve_exact(keys, pairs.len())?;
-        // Each pair a key of its sibling's bits and its node's above them,
-        // so that the sort places only the bits there are.
-        let mut top = 0u32;
+        lim.try_resize(keys, pairs.len(), 0u64)?;
+        let (mut kept, mut top) = (0usize, 0u32);
         for pair in pairs {
             let (t, s) = split_pair(pair, side);
-            if self.can_twin(self.of(t)) {
-                keys.push(pack(t, s));
-                top |= s;
-            }
+            let live = !(self.bits[(t / 64) as usize][1] >> (t % 64)) & 1;
+            keys[kept] = pack(t, s);
+            kept += live as usize;
+            top |= s & 0u32.wrapping_sub(live as u32);
         }
+        keys.truncate(kept);
         if keys.is_empty() {
             return Ok(());
         }
@@ -590,8 +596,14 @@ impl Partition<'_> {
             let t = (keys[k] >> sb) as u32;
             let end = k + keys[k..].iter().take_while(|&&e| (e >> sb) as u32 == t).count();
             let c = self.of(t);
-            let h = keys[k..end].iter().fold((end - k) as u64, |h, &e| mix64(h ^ (e & low)));
-            runs.push(((u64::from(c) << 32) | (h >> 32), k as u32, end as u32));
+            if self.can_twin(c) {
+                let h = keys[k..end].iter().fold((end - k) as u64, |h, &e| mix64(h ^ (e & low)));
+                runs.push(((u64::from(c) << 32) | (h >> 32), k as u32, end as u32));
+            } else if c != ALONE {
+                // The last node of its class: alone from here, so that the
+                // later parent nodes drop its pairs by the bit.
+                self.alone(t, c);
+            }
             k = end;
         }
         let keys = &keys[..];
