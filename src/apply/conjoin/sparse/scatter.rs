@@ -130,9 +130,9 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
                     |parts| OwnerWalk::<false>::of(parts, f_outer, g_outer))?;
             }
             if !SWAPPED {
-                clear_owner_table::<true>(g_level, &mut ws.owners, &mut ws.owners_clean);
+                clear_owner_table::<true>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
             } else {
-                clear_owner_table::<false>(g_level, &mut ws.owners, &mut ws.owners_clean);
+                clear_owner_table::<false>(g_level, g_outer, &mut ws.owners, &mut ws.owners_clean);
             }
             return Ok(());
         }

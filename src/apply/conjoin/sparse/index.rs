@@ -477,12 +477,30 @@ pub(super) fn build_owner_table<const BY_RIGHT: bool>(
     Ok((!repeated).then_some(ones))
 }
 
-/// Empty the slots [`build_owner_table`] filled from `level`.
-pub(super) fn clear_owner_table<const BY_RIGHT: bool>(level: &TddLevel, owners: &mut [u32], clean: &mut bool) {
-    level.for_each_node_pair(|_, pair| {
-        let (key, label) = if BY_RIGHT { (pair.right.0, pair.left.0) } else { (pair.left.0, pair.right.0) };
-        owners[OWNER_SLOTS * key as usize + OWNER_SLOT[label as usize]] = NO_PRODUCT;
-    });
+/// Slots per node of a level below which [`clear_owner_table`] empties the
+/// table by writing it whole rather than slot by slot: a line of slots
+/// written in order costs about what one write at random does.
+const FILL_SLOTS_PER_NODE: usize = 16;
+
+/// Empty the slots [`build_owner_table`] filled from `level` over
+/// `key_width` keyed children: the table's first `OWNER_SLOTS * key_width`
+/// slots written in order where they are few against the level's nodes,
+/// otherwise each slot a pair filled.
+pub(super) fn clear_owner_table<const BY_RIGHT: bool>(
+    level: &TddLevel,
+    key_width: usize,
+    owners: &mut [u32],
+    clean: &mut bool,
+) {
+    let slots = OWNER_SLOTS * key_width;
+    if slots <= FILL_SLOTS_PER_NODE * level.node_count() {
+        owners[..slots].fill(NO_PRODUCT);
+    } else {
+        level.for_each_node_pair(|_, pair| {
+            let (key, label) = if BY_RIGHT { (pair.right.0, pair.left.0) } else { (pair.left.0, pair.right.0) };
+            owners[OWNER_SLOTS * key as usize + OWNER_SLOT[label as usize]] = NO_PRODUCT;
+        });
+    }
     *clean = true;
 }
 
