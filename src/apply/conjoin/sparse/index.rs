@@ -676,26 +676,31 @@ pub(super) fn gather_owned_products(
 ) -> Result<usize, OperationError> {
     lim.try_resize(offsets, width + 1, 0u32)?;
     lim.try_resize(owned, list.len(), OwnedProduct { prod: 0, slots: [NO_PRODUCT; OWNER_SLOTS] })?;
-    let (mut kept, mut pos) = (0usize, 0usize);
-    for (i, bound) in offsets.iter_mut().enumerate().take(width) {
-        *bound = kept as u32;
-        while pos < list.len() && list[pos].f_idx.idx() == i {
-            let e = list[pos];
-            let at = OWNER_SLOTS * e.g_idx.idx();
-            let slots = [owners[at], owners[at + 1], owners[at + 2]];
-            // Written whether kept or not, so that no branch waits on the
-            // slots' read: the next product overwrites one not kept.
-            owned[kept] = OwnedProduct { prod: e.prod_idx.0, slots };
-            kept += usize::from(slots != [NO_PRODUCT; OWNER_SLOTS]);
-            pos += 1;
-        }
+    let (owners, _) = owners.as_chunks::<OWNER_SLOTS>();
+    let bounds = &mut offsets[..=width];
+    bounds.fill(0);
+    // Each product writes its f index's end, so the last of the index
+    // leaves it; no branch waits on where one f index's products stop,
+    // nor on the slots' read.
+    let (mut kept, mut last_f, mut descents) = (0usize, 0usize, 0usize);
+    for e in list {
+        let f = e.f_idx.idx();
+        let slots = owners[e.g_idx.idx()];
+        // Written whether kept or not: the next product overwrites one not
+        // kept.
+        owned[kept] = OwnedProduct { prod: e.prod_idx.0, slots };
+        kept += usize::from(slots != [NO_PRODUCT; OWNER_SLOTS]);
+        bounds[f + 1] = kept as u32;
+        descents += usize::from(f < last_f);
+        last_f = f;
     }
-    offsets[width] = kept as u32;
-    cheap_assert!(
-        pos == list.len(),
-        "a product list is not in ascending f order ({} of {} entries bucketed over width {width})",
-        pos, list.len()
-    );
+    cheap_assert!(descents == 0, "a product list is not in ascending f order ({descents} descents in {} entries)", list.len());
+    // An f index without products ends where the one before it does.
+    let mut end = 0;
+    for bound in &mut bounds[1..] {
+        end = end.max(*bound);
+        *bound = end;
+    }
     Ok(kept)
 }
 
