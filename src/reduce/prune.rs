@@ -1098,7 +1098,7 @@ fn moved(view: ChildDecoder, remap: Option<&[u32]>) -> impl Fn(i64) -> i64 + '_ 
 fn seed_dirty_levels(tdd: &mut Tdd, level_dirty: &[bool]) {
     for (t_idx, dirty) in level_dirty.iter().enumerate() {
         if *dirty {
-            tdd.invalidate(VtreeIdx(t_idx as u32));
+            tdd.invalidate_shrunk(VtreeIdx(t_idx as u32));
         }
     }
 }
@@ -1420,7 +1420,7 @@ fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[bool]>) -> Res
                 tdd.dirty.reserve_all(k + 1);
                 room = true;
             }
-            tdd.invalidate(v.level);
+            tdd.invalidate_shrunk(v.level);
         }
     }
 

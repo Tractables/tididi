@@ -559,6 +559,13 @@ impl Dirty {
         self.fused[word] |= 1 << (level % 64);
     }
 
+    /// Set `level`'s fusion record again, after a push that dropped it, for
+    /// an edit that keeps it: the bit's word is there already.
+    #[inline]
+    fn keep_fused(&mut self, level: u32) {
+        self.fused[level as usize / 64] |= 1 << (level % 64);
+    }
+
     /// Drop `level`'s fusion record, for an edit of its pair lists that pushes
     /// no level, as a rotation's inner level.
     #[inline]
@@ -660,6 +667,20 @@ impl Tdd {
     #[inline]
     pub(crate) fn invalidate_with_parent(&mut self, level: VtreeIdx) {
         self.invalidate_with(level, true, None).expect("an untracked push cannot be refused");
+    }
+
+    /// [`invalidate`](Self::invalidate) for a level that only lost nodes,
+    /// its references into its children renamed one to one, as a prune
+    /// leaves it: its children's contexts changed, but no node gained a
+    /// pair or a repeated reference, so its fusion record
+    /// ([`Dirty::is_fused`]) stands.
+    #[inline]
+    pub(crate) fn invalidate_shrunk(&mut self, level: VtreeIdx) {
+        let fused = self.dirty.is_fused(level.0);
+        self.invalidate(level);
+        if fused {
+            self.dirty.keep_fused(level.0);
+        }
     }
 
     /// [`invalidate`](Self::invalidate) under the engine's limits; the caller

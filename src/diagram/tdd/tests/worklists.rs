@@ -105,3 +105,17 @@ fn a_push_drops_its_levels_fusion_record_and_a_merge_move_or_seed_drops_them_all
     let seeded = copy.seeded(&vtree, std::iter::empty(), Some(&eng)).unwrap();
     assert!(!seeded.is_fused(70));
 }
+
+#[test]
+fn a_shrink_pushes_its_level_and_keeps_its_fusion_record() {
+    let eng = crate::Engine::new();
+    let vtree = std::sync::Arc::new(crate::Vtree::balanced(4));
+    let mut tdd = eng.cube(&vtree, std::iter::empty::<i32>()).unwrap();
+    let root = vtree.root();
+    tdd.dirty.set_fused(&eng, root.0);
+    tdd.invalidate_shrunk(root);
+    assert!(tdd.dirty.is_fused(root.0));
+    assert!(tdd.contract_worklist().contains(&root.0));
+    tdd.invalidate(root);
+    assert!(!tdd.dirty.is_fused(root.0));
+}
