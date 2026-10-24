@@ -206,9 +206,11 @@ pub(super) fn refine_context_groups(
     let twinable = if first >= 2 { first } else { 0 };
     let mut part = Partition { class: &mut twin_class[..width], bits, classes, twinable };
     // A stored level's wide parent nodes are refined after the narrow ones,
-    // narrowest first: by then most nodes have left the partition, and a
-    // wide node sorts only the pairs of the nodes still in it. The
-    // refinement stops once no node can have a twin.
+    // narrowest first by the power of two of their widths, and in arena
+    // order within one, so that their pairs are read forward: by then most
+    // nodes have left the partition, and a wide node sorts only the pairs
+    // of the nodes still in it. The refinement stops once no node can have
+    // a twin.
     let stored = level.stored();
     refine_wide.clear();
     let (mut buf, mut cursor) = (Vec::new(), None);
@@ -225,7 +227,7 @@ pub(super) fn refine_context_groups(
             1 => part.leave(split_pair(&pairs[0], side).0),
             2 => part.split_two(pairs, side),
             n if n <= SMALL_PAIRS => part.split_small(pairs, side),
-            n if stored.is_some() => lim.try_push(refine_wide, ((n.min(u32::MAX as usize) as u64) << 32) | i as u64)?,
+            n if stored.is_some() => lim.try_push(refine_wide, (u64::from(usize::BITS - n.leading_zeros()) << 32) | i as u64)?,
             _ => part.split_wide(lim, pairs, side, &mut wide)?,
         }
     }
