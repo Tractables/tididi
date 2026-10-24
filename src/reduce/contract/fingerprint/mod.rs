@@ -453,7 +453,10 @@ const PARTITION_SIZE: usize = 1 << 14;
 /// split by their high bits into partitions of about [`PARTITION_SIZE`]
 /// first, a counting pass and a scattering pass, each read in sequence;
 /// equal fingerprints share a partition, and each partition is probed in a
-/// table of its own that stays in the cache.
+/// table of its own that stays in the cache. There a fingerprint is kept
+/// beside its node in one word, short of its low bits, so two nodes whose
+/// fingerprints differ only there are flagged too; the groups compare
+/// candidates in full.
 #[inline]
 fn mark_candidates(
     eng: &Engine,
@@ -511,19 +514,26 @@ fn mark_partitioned_candidates(
     }
     // Placed in node order, with each start as the partition's cursor: the
     // cursors end at the next partition's start, so each start is the one
-    // before it when the pass is done.
-    lim.try_resize(part_records, width, (0, 0))?;
+    // before it when the pass is done. A record is one word: the
+    // fingerprint without its partition bits, its low bits replaced by the
+    // node. Two nodes whose fingerprints differ only in those low bits are
+    // marked too, which the groups' full comparison then separates.
+    let node_bits = u64::BITS - (width as u64).leading_zeros();
+    let node_mask = (1u64 << node_bits) - 1;
+    lim.try_resize(part_records, width, 0)?;
     for (node, &fp) in fingerprints.iter().enumerate() {
         let p = (fp >> shift) as usize;
         let at = starts[p] as usize;
-        part_records[at] = (fp, node as u32);
+        part_records[at] = (fp << bits) & !node_mask | node as u64;
         starts[p] += 1;
     }
-    // The partitions in turn, each probed linearly from its low bits in a
-    // table of at least twice its size: a probe ends at an empty slot or at
-    // the first earlier node with its fingerprint, which both are marked.
+    // The partitions in turn, each probed linearly in a table of at least
+    // twice its size that holds the records themselves: a probe ends at an
+    // empty slot or at the first earlier record with its key, whose node
+    // and the probing one are both marked. A node is below `node_mask`, so
+    // no record is the empty slot's all-ones word.
     let size = (2 * widest as usize).next_power_of_two();
-    lim.try_resize(part_table, size, u32::MAX)?;
+    lim.try_resize(part_table, size, u64::MAX)?;
     let mut found = false;
     let mut begin = 0usize;
     for &end in &starts[..parts] {
@@ -532,20 +542,19 @@ fn mark_partitioned_candidates(
         if n >= 2 {
             let mask = (2 * n).next_power_of_two() - 1;
             let table = &mut part_table[..=mask];
-            table.fill(u32::MAX);
-            for at in begin..end {
-                let (fp, node) = part_records[at];
-                let mut slot = fp as usize & mask;
+            table.fill(u64::MAX);
+            for &record in &part_records[begin..end] {
+                let key = record >> node_bits;
+                let mut slot = key as usize & mask;
                 loop {
                     let held = table[slot];
-                    if held == u32::MAX {
-                        table[slot] = at as u32;
+                    if held == u64::MAX {
+                        table[slot] = record;
                         break;
                     }
-                    let (held_fp, held_node) = part_records[held as usize];
-                    if held_fp == fp {
-                        is_candidate[node as usize] = true;
-                        is_candidate[held_node as usize] = true;
+                    if held >> node_bits == key {
+                        is_candidate[(record & node_mask) as usize] = true;
+                        is_candidate[(held & node_mask) as usize] = true;
                         found = true;
                         break;
                     }
