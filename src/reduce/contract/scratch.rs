@@ -1,9 +1,6 @@
 use crate::execution::pool::{Buffers, Nested, PooledScratch, Scratch};
 use crate::limits::Limits;
 
-use smallvec::SmallVec;
-
-
 use super::merge::GroupPlan;
 
 // Arena growth here goes through `limits`' `try_push` / `try_resize`, the one
@@ -35,7 +32,8 @@ pub(super) struct GroupCell {
     /// The explicit-side ref the group is keyed on. Valid only when stamped
     /// with the current generation; otherwise stale and ignored.
     pub(super) key: u32,
-    /// The group slot (index into `touched`/`groups`). Same validity as `key`.
+    /// The group slot (index into `touched`/`group_ends`). Same validity as
+    /// `key`.
     pub(super) slot: u32,
 }
 
@@ -44,9 +42,9 @@ pub(super) struct GroupCell {
 /// The key is the raw explicit-side ref (a node or slot index, or an inline
 /// count on a both-marginal parent), hashed into an open-addressing table
 /// sized by the node's pair count. Per node the generation is bumped instead
-/// of clearing the cells, zeroing only on u32 wrap. `groups` entries are
-/// reused across nodes via `clear()`; `touched` records the first-occurrence x
-/// order, slot `i` ↔ `touched[i]`.
+/// of clearing the cells, zeroing only on u32 wrap. `touched` records the
+/// first-occurrence x order, slot `i` ↔ `touched[i]`; the groups themselves
+/// are counted per slot, then laid out in one flat buffer.
 #[derive(Default)]
 pub(super) struct PFusionScratch {
     /// The grouping table. Its length is a power of two, at least twice the
@@ -56,12 +54,16 @@ pub(super) struct PFusionScratch {
     pub(super) cells: Vec<GroupCell>,
     /// This node's x's in first-occurrence order. Cleared per node.
     pub(super) touched: Vec<u32>,
-    /// Per-group occurrence multiset of marginal-side refs (no dedup). Index i holds
-    /// the group for `touched[i]`. Reused across nodes via `clear()`; a fresh
-    /// `SmallVec` is pushed only when a node needs more distinct x-groups than
-    /// any prior node since the set was last parked, which keeps only the
-    /// last node's.
-    pub(super) groups: Vec<SmallVec<[u32; 4]>>,
+    /// Per slot, first the number of this node's pairs at `touched[i]`, then
+    /// the end of that group in `grouped` (`u32::MAX` for a group of one,
+    /// which cannot fuse). Cleared per node.
+    pub(super) group_ends: Vec<u32>,
+    /// Each pair's slot, in the node's pair order. Cleared per node.
+    pub(super) pair_slots: Vec<u32>,
+    /// The marginal-side refs of the groups of two or more pairs, group after
+    /// group in slot order, each in pair order: the occurrence multiset, no
+    /// dedup.
+    pub(super) grouped: Vec<u32>,
     /// One run's marginal-side refs, for a node whose groups are runs
     /// (`pair_fusion::plan::group_by_runs`). Cleared per run.
     pub(super) run: Vec<u32>,
@@ -79,21 +81,12 @@ impl Buffers for PFusionScratch {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
         visit(&mut self.cells);
         visit(&mut self.touched);
-        visit(&mut Nested(&mut self.groups));
+        visit(&mut self.group_ends);
+        visit(&mut self.pair_slots);
+        visit(&mut self.grouped);
         visit(&mut self.run);
         visit(&mut self.keyed);
         visit(&mut self.keyed_other);
-    }
-}
-
-impl PFusionScratch {
-    /// Drop the groups past the last node's, handing their charge back to
-    /// `lim`.
-    fn shed(&mut self, lim: &Limits) {
-        let kept = self.touched.len().min(self.groups.len());
-        for group in self.groups.drain(kept..) {
-            lim.discard(group);
-        }
     }
 }
 
@@ -603,13 +596,12 @@ impl PooledScratch for ContractScratch {
     }
 
     /// Shed the inner lists the last call left unused before the walk that
-    /// prices the set: that walk reads every inner list of `listing.lists`
-    /// and `pair_fusion.groups`, so lists kept from one wide sweep would
-    /// make every later return, however small its call, as slow as that
-    /// sweep. Shed, a return costs what its call filed.
+    /// prices the set: that walk reads every inner list of `listing.lists`,
+    /// so lists kept from one wide sweep would make every later return,
+    /// however small its call, as slow as that sweep. Shed, a return costs
+    /// what its call filed.
     fn retain(&mut self, lim: &Limits) -> usize {
         self.listing.shed(lim);
-        self.pair_fusion.shed(lim);
         self.release_oversized(lim)
     }
 }

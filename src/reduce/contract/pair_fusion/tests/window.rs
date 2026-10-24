@@ -203,9 +203,9 @@ fn both_marginal(pairs: &[(u32, u32)], slots: u32) -> Tdd {
     Tdd::from_levels_unchecked(vtree, levels, TddNodeId { vtree: root, local: NodeIdx(0) })
 }
 
-/// A wide node out of order is sorted into runs, and its plans are the
-/// table's: the same groups with the same sums, in first-occurrence order,
-/// on either side and over explicit refs of any width.
+/// A node out of order is sorted into runs, and its plans are the table's:
+/// the same groups with the same sums, in first-occurrence order, on either
+/// side and over explicit refs of any width.
 #[test]
 fn a_wide_node_is_grouped_alike_by_sorting_and_by_the_table() {
     use super::super::plan::{SORT_MIN, group_by_scatter, group_by_sorting};
@@ -223,7 +223,18 @@ fn a_wide_node_is_grouped_alike_by_sorting_and_by_the_table() {
     let slots = 1 << 12;
     // (pairs, distinct explicit refs, where they start): few and many
     // groups, and refs past 2^30 as an inline-tagged side carries.
-    for (width, refs, base) in [(SORT_MIN, 40u32, 0u32), (3 * SORT_MIN + 5, 20_000, 7), (SORT_MIN + 1, 900, 1 << 30)] {
+    // Narrow nodes too: the table groups those in the end, and the sort
+    // groups any width alike.
+    for (width, refs, base) in [
+        (SORT_MIN, 40u32, 0u32),
+        (3 * SORT_MIN + 5, 20_000, 7),
+        (SORT_MIN + 1, 900, 1 << 30),
+        (2, 1, 0),
+        (3, 2, 5),
+        (37, 30, 0),
+        (300, 290, 1 << 30),
+        (1000, 64, 3),
+    ] {
         let pairs: Vec<(u32, u32)> = (0..width).map(|_| (base + next(refs), next(slots))).collect();
         for side in [ChildSide::Right, ChildSide::Left] {
             let flipped: Vec<(u32, u32)> = match side {
@@ -237,14 +248,15 @@ fn a_wide_node_is_grouped_alike_by_sorting_and_by_the_table() {
             let level = &tdd.levels[root.idx()];
             let mut sc = PFusionScratch::default();
             let mut by_table = Vec::new();
-            group_by_scatter::<IntFold>(&eng, &tdd, level, v, side, 0, &mut by_table, &mut sc).expect("no limits armed");
+            let node = level.pairs_vec(0);
+            group_by_scatter::<IntFold>(eng.limits(), &tdd, v, side, 0, &node, &mut by_table, &mut sc).expect("no limits armed");
             let mut by_sort = Vec::new();
-            group_by_sorting::<IntFold>(eng.limits(), &tdd, v, side, 0, &level.pairs_vec(0), &mut by_sort, &mut sc)
+            group_by_sorting::<IntFold>(eng.limits(), &tdd, v, side, 0, &node, &mut by_sort, &mut sc)
                 .expect("no limits armed");
             let view = |plans: &[PlanEntry<crate::value::Count>]| -> Vec<(usize, u32, crate::value::Count)> {
                 plans.iter().map(|p| (p.node_idx, p.x_idx, p.value.clone())).collect()
             };
-            assert!(by_table.len() > 1, "the node has groups to fuse");
+            assert!(!by_table.is_empty(), "the node has groups to fuse");
             assert_eq!(view(&by_sort), view(&by_table), "width {width}, side {side:?}");
         }
     }

@@ -1,8 +1,6 @@
 //! The listing a contraction sweep keeps of the parents to search whole
 //! and of the nodes each level changed.
 
-use smallvec::SmallVec;
-
 use super::super::scratch::{ContractScratch, Listing};
 use crate::execution::pool::{Buffers, PooledScratch};
 use crate::limits::Limits;
@@ -53,10 +51,9 @@ fn a_listing_sweep_reads_only_its_own_entries() {
     assert_eq!(listing.take(14), [1]);
 }
 
-/// A parked set keeps the lists of its last sweep and the groups of its
-/// last node alone: the walk that prices it on every return reads each
-/// inner list it keeps, so those of one wide sweep would make every later
-/// return as slow as that sweep.
+/// A parked set keeps the lists of its last sweep alone: the walk that
+/// prices it on every return reads each inner list it keeps, so those of
+/// one wide sweep would make every later return as slow as that sweep.
 #[test]
 fn a_parked_contract_scratch_keeps_only_what_its_last_call_filed() {
     let lim = Limits::new();
@@ -65,13 +62,6 @@ fn a_parked_contract_scratch_keeps_only_what_its_last_call_filed() {
     for t in 0..64 {
         lim.try_push(sc.listing.list_mut(&lim, t).unwrap(), 1).unwrap();
     }
-    for g in 0..8 {
-        lim.try_push(&mut sc.pair_fusion.groups, SmallVec::new()).unwrap();
-        // Five refs spill the group out of its inline four.
-        sc.pair_fusion.groups[g].extend([0, 1, 2, 3, 4]);
-    }
-    sc.pair_fusion.touched.extend([7, 9]);
-    let spilled = sc.pair_fusion.groups[0].capacity() * 4;
     let wide = sc.retained_bytes();
 
     // A narrow sweep files two levels, reusing the first two lists.
@@ -81,8 +71,7 @@ fn a_parked_contract_scratch_keeps_only_what_its_last_call_filed() {
     }
     let kept = sc.retain(&lim);
     assert_eq!(kept, sc.retained_bytes());
-    assert_eq!(kept, wide - 62 * 16 - 6 * spilled, "the 62 lists and 6 groups past the last call's are shed");
-    assert_eq!(sc.pair_fusion.groups.len(), 2);
+    assert_eq!(kept, wide - 62 * 16, "the 62 lists past the last call's are shed");
     assert_eq!(sc.listing.take(1), [1]);
     assert!(sc.listing.take(2).is_empty());
     // The next sweep files past the kept lists afresh.

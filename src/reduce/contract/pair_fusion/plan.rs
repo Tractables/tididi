@@ -1,11 +1,10 @@
 //! Group pairs into fusion plans and assign their resulting value references.
 
 use crate::Engine;
-use smallvec::SmallVec;
 use rustc_hash::FxHashMap;
 
 use crate::limits::{Limits, OperationError, Transient};
-use crate::diagram::{ChildPair, Tdd, TddLevel, ValueRef};
+use crate::diagram::{ChildPair, Tdd, ValueRef};
 use crate::vtree::VtreeIdx;
 
 use crate::diagram::ChildSide;
@@ -70,7 +69,7 @@ pub(super) fn collect_fusion_plans<D: SlotValues>(
         } else if node.len() >= SORT_MIN {
             group_by_sorting::<D>(lim, tdd, v, side, n, node, &mut out, scratch)?;
         } else {
-            group_by_scatter::<D>(eng, tdd, plevel, v, side, n, &mut out, scratch)?;
+            group_by_scatter::<D>(lim, tdd, v, side, n, node, &mut out, scratch)?;
         }
     }
     Ok(out)
@@ -228,7 +227,9 @@ pub(super) fn group_by_runs<D: SlotValues>(
 
 /// Group one parent node's pairs by their explicit-side ref through the
 /// generation-stamped table in `sc`, and emit a plan for every group holding
-/// more than one marginal-side ref.
+/// more than one marginal-side ref. A first pass counts each group and notes
+/// each pair's; a node that repeats no ref stops there. A second lays the
+/// groups of two or more out one after another in `sc.grouped`.
 ///
 /// A plan's value sums the group's whole occurrence multiset of marginal-side
 /// refs (no dedup): with value-keyed slot sharing a node's pair list may
@@ -238,16 +239,15 @@ pub(super) fn group_by_runs<D: SlotValues>(
 /// the fusion invariant, in whichever domain `D` is.
 #[expect(clippy::too_many_arguments)]
 pub(super) fn group_by_scatter<D: SlotValues>(
-    eng: &Engine,
+    lim: &Limits,
     tdd: &Tdd,
-    plevel: &TddLevel,
     v: VtreeIdx,
     side: ChildSide,
     n: usize,
+    node: &[ChildPair],
     out: &mut Vec<PlanEntry<D::Value>>,
     sc: &mut PFusionScratch,
 ) -> Result<(), OperationError> {
-    let lim = eng.limits();
     // Bump the generation instead of clearing the cells (O(1) per-node
     // reset). On u32 wrap, zero the stamps and restart at 1 (0 is the
     // "never stamped" sentinel and must never equal a live `gen`).
@@ -262,11 +262,15 @@ pub(super) fn group_by_scatter<D: SlotValues>(
     };
     let generation = sc.generation;
     sc.touched.clear();
+    sc.group_ends.clear();
+    sc.pair_slots.clear();
+    let pairs = node.len();
+    lim.reserve(&mut sc.pair_slots, pairs)?;
     // At least two cells per pair, so the table is never more than half full
     // and a probe always ends at an unstamped cell. Grown on demand and
     // fallibly — an OOM here becomes OverBudget, not a process abort. New
     // cells are stamped 0 ≠ generation (which is ≥ 1) and read as empty.
-    let want = (2 * plevel.pair_count_at(n)).next_power_of_two();
+    let want = (2 * pairs).next_power_of_two();
     if sc.cells.len() < want {
         lim.try_resize(&mut sc.cells, want, GroupCell::default())?;
     }
@@ -276,11 +280,10 @@ pub(super) fn group_by_scatter<D: SlotValues>(
     // nearly every pair. Cells past the window keep older stamps unread.
     let mask = want - 1;
     let hash_shift = 32 - want.trailing_zeros();
-    for p in plevel.pairs_iter_of_idx(n) {
-        let (x_idx, marginal_idx) = match side {
-            ChildSide::Right => (p.left.0, p.right.0),
-            ChildSide::Left => (p.right.0, p.left.0),
-        };
+    // First pass: each pair's slot, and each slot's pair count.
+    let mut repeated = false;
+    for &p in node {
+        let x_idx = explicit_ref(p, side);
         // Fibonacci hashing into the table, then linear probing.
         let mut h = (x_idx.wrapping_mul(0x9E37_79B1) >> hash_shift) as usize;
         let slot = loop {
@@ -290,49 +293,59 @@ pub(super) fn group_by_scatter<D: SlotValues>(
                 let slot = sc.touched.len();
                 sc.cells[h] = GroupCell { stamp: generation, key: x_idx, slot: slot as u32 };
                 lim.try_push(&mut sc.touched, x_idx)?;
-                // Reuse a retired group slot (keeps its grown capacity) or
-                // allocate one only when this node needs more distinct
-                // x-groups than any prior node.
-                if slot < sc.groups.len() {
-                    sc.groups[slot].clear();
-                } else {
-                    lim.try_push(&mut sc.groups, SmallVec::new())?;
-                }
+                lim.try_push(&mut sc.group_ends, 1)?;
                 break slot;
             }
             if cell.key == x_idx {
-                break cell.slot as usize;
+                let slot = cell.slot as usize;
+                sc.group_ends[slot] += 1;
+                repeated = true;
+                break slot;
             }
             h = (h + 1) & mask;
         };
-        // Fallible push for SmallVec: while the current buffer, inline
-        // or heap, has spare capacity, push cannot fail. At capacity —
-        // both the inline-to-heap spill and every subsequent heap regrow — use
-        // `try_reserve` so allocation failure becomes OverBudget rather
-        // than a process abort, and charge the grown capacity to the byte
-        // meter as `Limits::reserve` would. Guarding on `capacity()` keeps
-        // every growth fallible for the rare large x-group.
-        let g = &mut sc.groups[slot];
-        if g.len() == g.capacity() {
-            let before = g.capacity();
-            g.try_reserve(1).map_err(|_| OperationError::OverBudget)?;
-            let grown = g.capacity().saturating_sub(before) * std::mem::size_of::<u32>();
-            lim.charge_bytes(grown as u64)?;
-        }
-        g.push(marginal_idx);
+        sc.pair_slots.push(slot as u32);
     }
-    // Emit in first-occurrence (touched) order. slot i ↔ touched[i].
-    for i in 0..sc.touched.len() {
-        if sc.groups[i].len() <= 1 {
+    // Most nodes name each explicit ref once: nothing to fuse.
+    if !repeated {
+        return Ok(());
+    }
+    // Lay the groups of two or more out in slot order: a slot's entry
+    // becomes its group's write cursor, and after the second pass its end.
+    let mut total = 0u32;
+    for entry in sc.group_ends.iter_mut() {
+        let count = *entry;
+        *entry = if count > 1 {
+            total += count;
+            total - count
+        } else {
+            u32::MAX
+        };
+    }
+    lim.try_resize(&mut sc.grouped, total as usize, 0)?;
+    for (&p, &slot) in node.iter().zip(&sc.pair_slots) {
+        let at = &mut sc.group_ends[slot as usize];
+        if *at != u32::MAX {
+            sc.grouped[*at as usize] = marginal_ref(p, side);
+            *at += 1;
+        }
+    }
+    // Emit in first-occurrence (touched) order. slot i ↔ touched[i]; each
+    // group starts where the one before it in slot order ended.
+    let mut begin = 0usize;
+    for (&x_idx, &end) in sc.touched.iter().zip(&sc.group_ends) {
+        if end == u32::MAX {
             // A single pair at this x cannot fuse.
             continue;
         }
+        let end = end as usize;
         lim.try_push(out, PlanEntry {
             node_idx: n,
-            x_idx: sc.touched[i],
-            value: D::sum_refs(tdd, v, &sc.groups[i]),
+            x_idx,
+            value: D::sum_refs(tdd, v, &sc.grouped[begin..end]),
             new_ref: u32::MAX,
         })?;
+        begin = end;
     }
     Ok(())
 }
