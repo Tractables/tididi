@@ -1758,25 +1758,6 @@ fn emit_walked(
     emit_parent(eng, emit, level, pl_output, p1, candidates, duplicates_legal)
 }
 
-/// [`Limits::reserve`](crate::limits::Limits::reserve) behind its own test
-/// for room, inline: a node's emission then pays one comparison for each
-/// buffer that has room, and the reserve's charging and growth only when
-/// one has none.
-#[inline(always)]
-fn reserve_room<T>(lim: &crate::limits::Limits, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
-    if additional <= v.capacity() - v.len() {
-        return Ok(());
-    }
-    reserve_cold(lim, v, additional)
-}
-
-/// The arm of [`reserve_room`] that grows.
-#[cold]
-#[inline(never)]
-fn reserve_cold<T>(lim: &crate::limits::Limits, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
-    lim.reserve(v, additional)
-}
-
 /// The most candidates of more than one g parent that [`emit_few`] groups
 /// by comparing their g parents, rather than through [`emit_parent`]'s map.
 const FEW_CANDIDATES: usize = 8;

@@ -207,7 +207,7 @@ impl Routes {
         }
         // Grown by doubling: the level's tables are sealed one outer at a
         // time, and an exact reserve would move them at nearly every one.
-        lim.reserve(&mut self.slots, size)?;
+        reserve_room(lim, &mut self.slots, size)?;
         self.slots.resize(base + size, RouteSlot::EMPTY);
         let table = &mut self.slots[base..];
         for &key in touched {
@@ -216,7 +216,7 @@ impl Routes {
             if start + run.len() > u32::MAX as usize {
                 return Err(OperationError::IndexOverflow);
             }
-            lim.reserve(&mut self.entries, run.len())?;
+            reserve_room(lim, &mut self.entries, run.len())?;
             self.entries.extend_from_slice(run);
             let mut at = route_slot(key, bits);
             while table[at].key != u32::MAX {
@@ -844,6 +844,25 @@ impl Buffers for SparseWorkspace {
 
 impl PooledScratch for SparseWorkspace {
     fn prepare(&mut self) {}
+}
+
+/// [`Limits::reserve`](crate::limits::Limits::reserve) behind its own test
+/// for room, inline: a buffer filled a node or a key at a time pays one
+/// comparison where it has room, and the reserve's charging and growth
+/// only where it has none.
+#[inline(always)]
+pub(super) fn reserve_room<T>(lim: &crate::limits::Limits, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
+    if additional <= v.capacity() - v.len() {
+        return Ok(());
+    }
+    reserve_cold(lim, v, additional)
+}
+
+/// The arm of [`reserve_room`] that grows.
+#[cold]
+#[inline(never)]
+fn reserve_cold<T>(lim: &crate::limits::Limits, v: &mut Vec<T>, additional: usize) -> Result<(), OperationError> {
+    lim.reserve(v, additional)
 }
 
 #[cfg(test)]
