@@ -81,6 +81,11 @@ pub(crate) struct SparseWorkspace {
     // `NO_ROW` for the others, and the rows of their candidates.
     pub(super) by_outer_row: Vec<u32>,
     pub(super) by_outer: Rows<ParEntry>,
+    // The outer keys whose route build marks the keys it reads, a bit each,
+    // and the pairs `f_by_outer` keeps under each outer key on such a
+    // level (`build_kept_index`).
+    pub(super) f_marked: Vec<u64>,
+    pub(super) f_kept: Vec<u32>,
 
     // ── Candidates, and their dedup into products ──
     // The candidates of one f node, for the walks that find a node's
@@ -267,25 +272,27 @@ impl Routes {
         self.segments[outer] = Segment::default();
     }
 
-    /// Set `walked`'s bit, over `parents` f nodes, for each parent of an f
-    /// pair under an outer with a route, `f_by_outer` keyed by the outers.
-    pub(super) fn mark_parents(
+    /// Set `walked`'s bit for each of the first `parents` nodes of `f_level`
+    /// holding a pair under an outer with a route, the outer child the right
+    /// one, or the left one where `SWAPPED`.
+    pub(super) fn mark_parents<const SWAPPED: bool>(
         &mut self,
         lim: &Limits,
+        f_level: &TddLevel,
         parents: usize,
-        f_by_outer: GroupedView<'_, RevEntry>,
     ) -> Result<(), OperationError> {
         let words = parents.div_ceil(64);
         self.walked.clear();
         lim.try_resize(&mut self.walked, words, 0u64)?;
-        for (outer, segment) in self.segments.iter().enumerate() {
-            if segment.bits == 0 {
-                continue;
-            }
-            for r in f_by_outer.bucket(outer) {
-                self.walked[r.parent as usize >> 6] |= 1 << (r.parent & 63);
-            }
-        }
+        let Routes { segments, walked, .. } = self;
+        f_level.try_for_each_node::<std::convert::Infallible>(0..parents, |p1, pairs| {
+            let routed = pairs.iter().any(|pair| {
+                let outer = if !SWAPPED { pair.right.0 } else { pair.left.0 };
+                segments[outer as usize].bits != 0
+            });
+            walked[p1 >> 6] |= u64::from(routed) << (p1 & 63);
+            Ok(())
+        }).unwrap_or_else(|never| match never {});
         Ok(())
     }
 }
@@ -881,6 +888,8 @@ impl Buffers for SparseWorkspace {
         self.routes.buffers(visit);
         visit(&mut self.by_outer_row);
         visit(&mut self.by_outer);
+        visit(&mut self.f_marked);
+        visit(&mut self.f_kept);
         visit(&mut self.node_candidates);
         visit(&mut self.node_owners);
         visit(&mut self.est_counts);

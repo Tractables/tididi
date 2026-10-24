@@ -632,7 +632,8 @@ impl NodeWalk for RoutedWalk<'_> {
 /// order would read a different outer's routes at almost every pair. Its
 /// candidates are held in a row of its own until the walk of f's nodes
 /// reaches it and emits them. An outer holding no pair of a smaller node
-/// keeps no route.
+/// keeps no route. f's index by outer key holds only the pairs read through
+/// it ([`build_kept_index`]).
 #[inline(never)]
 pub(super) fn scatter_routed<const SWAPPED: bool>(
     eng: &Engine,
@@ -643,20 +644,22 @@ pub(super) fn scatter_routed<const SWAPPED: bool>(
     pl: Sides<&[ProductEntry]>,
     emit: Emit<'_>,
 ) -> Result<(), OperationError> {
-    build_scatter_indexes::<SWAPPED>(eng, ws, f_level, g_level, shape)?;
+    build_g_index::<SWAPPED>(eng, ws, g_level, shape)?;
     build_inner_index::<SWAPPED>(eng, ws, g_level, shape)?;
     let lim = eng.limits();
     let (pl_inner, pl_outer) = if !SWAPPED { (pl.left, pl.right) } else { (pl.right, pl.left) };
-    let f_pairs = ws.f_by_outer.offsets[if !SWAPPED { shape.f.right } else { shape.f.left }] as usize;
+    let f_pairs = f_under::<SWAPPED>(&ws.est_counts, shape).iter().map(|&n| n as usize).sum();
     // The big nodes' rows are taken out of the workspace while `sides`
     // borrows it.
     let mut row_of = std::mem::take(&mut ws.by_outer_row);
     let mut rows = std::mem::take(&mut ws.by_outer);
     let built = rows_by_outer(lim, f_level, shape.f.here, f_pairs, emit.thresholds.by_outer_pairs, &mut row_of)
         .and_then(|big| {
+            let row_of = (big > 0).then_some(&row_of[..]);
+            build_kept_index::<SWAPPED>(eng, ws, f_level, shape, pl_outer, row_of)?;
             rows.reset(lim, big)?;
-            let mut s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer)?;
-            let marked = route_level::<SWAPPED>(lim, &mut s, (big > 0).then_some(&row_of[..]), &mut rows, shape.f.here)?;
+            let mut s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer, true)?;
+            let marked = route_level::<SWAPPED>(lim, &mut s, f_level, row_of, &mut rows, shape.f.here, f_pairs)?;
             Ok((big, marked))
         });
     ws.by_outer_row = row_of;
@@ -713,9 +716,11 @@ fn rows_by_outer(
 fn route_level<const SWAPPED: bool>(
     lim: &crate::limits::Limits,
     s: &mut ScatterSides<'_>,
+    f_level: &TddLevel,
     row_of: Option<&[u32]>,
     rows: &mut Rows<ParEntry>,
     nodes: usize,
+    f_pairs: usize,
 ) -> Result<bool, OperationError> {
     s.routes.reset(lim, s.outer_k, s.inner_g)?;
     let mut ticker = lim.gate_with(super::super::budget::APPLY_POLL_STRIDE);
@@ -735,13 +740,12 @@ fn route_level<const SWAPPED: bool>(
         let mut in_order = s.f_pairs_under(outer);
         if let Some(row_of) = row_of {
             let walk = RoutedWalk { inner: s.inner, routes: s.routes.view(), pipelined: false };
-            in_order = 0;
             for &RevEntry { parent, other: inner1 } in s.f_by_outer.bucket(outer) {
                 let row = row_of[parent as usize];
                 if row == NO_ROW {
-                    in_order += 1;
                     continue;
                 }
+                in_order -= 1;
                 let row = &mut rows[row as usize];
                 walk.pair::<SWAPPED>(segment, inner1, &mut ticker, &mut |entry| lim.try_push(row, entry))?;
             }
@@ -755,9 +759,9 @@ fn route_level<const SWAPPED: bool>(
     // Where those are few of f's pairs, only the nodes holding one are
     // walked, as the general arm walks only them, and the big nodes with a
     // candidate.
-    let marked = routed_pairs < s.f_by_outer.offsets[s.outer_k] as usize / MARKED_SHARE;
+    let marked = routed_pairs < f_pairs / MARKED_SHARE;
     if marked {
-        s.routes.mark_parents(lim, nodes, s.f_by_outer)?;
+        s.routes.mark_parents::<SWAPPED>(lim, f_level, nodes)?;
         if let Some(row_of) = row_of {
             for (p1, &row) in row_of.iter().enumerate() {
                 if row != NO_ROW && !rows[row as usize].is_empty() {
@@ -834,18 +838,155 @@ fn build_scatter_indexes<const SWAPPED: bool>(
     g_level: &TddLevel,
     shape: LevelShape,
 ) -> Result<(), OperationError> {
-    let SparseWorkspace { est_counts, f_by_outer, g_by_outer, .. } = ws;
+    let SparseWorkspace { est_counts, f_by_outer, .. } = ws;
     let counts = EstCounts::of(est_counts, shape);
     // Keyed by the outer dimension: the right sibling normally, the left child
     // when swapped.
     if !SWAPPED {
         build_reverse_index::<true>(eng, f_level, shape.f.right, Some(counts.f_right), f_by_outer)?;
-        build_reverse_index::<true>(eng, g_level, shape.g.right, Some(counts.g_right), g_by_outer)?;
     } else {
         build_reverse_index::<false>(eng, f_level, shape.f.left, Some(counts.f_left), f_by_outer)?;
-        build_reverse_index::<false>(eng, g_level, shape.g.left, Some(counts.g_left), g_by_outer)?;
     }
-    Ok(())
+    build_g_index::<SWAPPED>(eng, ws, g_level, shape)
+}
+
+/// Build g's reverse index keyed by the general arm's filtering axis, the
+/// second index of [`build_scatter_indexes`].
+#[inline(never)]
+fn build_g_index<const SWAPPED: bool>(
+    eng: &Engine,
+    ws: &mut SparseWorkspace,
+    g_level: &TddLevel,
+    shape: LevelShape,
+) -> Result<(), OperationError> {
+    let SparseWorkspace { est_counts, g_by_outer, .. } = ws;
+    let counts = EstCounts::of(est_counts, shape);
+    if !SWAPPED {
+        build_reverse_index::<true>(eng, g_level, shape.g.right, Some(counts.g_right), g_by_outer)
+    } else {
+        build_reverse_index::<false>(eng, g_level, shape.g.left, Some(counts.g_left), g_by_outer)
+    }
+}
+
+/// f's pairs under each outer key, from the direction estimate's counts:
+/// the bucket sizes of f's full index by outer key.
+fn f_under<const SWAPPED: bool>(est_counts: &[u32], shape: LevelShape) -> &[u32] {
+    let counts = EstCounts::of(est_counts, shape);
+    if !SWAPPED { counts.f_right } else { counts.f_left }
+}
+
+/// Build f's index by outer key for [`scatter_routed`], over only the pairs
+/// [`route_level`] reads through it: every pair under an outer key whose
+/// route build marks the keys its emit reads ([`ScatterSides::build_plan`]),
+/// which walks them, and every pair of a node `row_of` gives a row, which is
+/// walked by outer key. Under any other outer key the index holds only the
+/// big nodes' pairs: the walk of f's nodes reads f in node order, and the
+/// estimate's counts give every outer's pairs ([`ScatterSides::f_pairs_under`]).
+#[inline(never)]
+fn build_kept_index<const SWAPPED: bool>(
+    eng: &Engine,
+    ws: &mut SparseWorkspace,
+    f_level: &TddLevel,
+    shape: LevelShape,
+    pl_outer: &[ProductEntry],
+    row_of: Option<&[u32]>,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let SparseWorkspace { est_counts, g_by_outer, outer_offsets, f_marked, f_kept, f_by_outer, .. } = ws;
+    let under = f_under::<SWAPPED>(est_counts, shape);
+    let width = under.len();
+    bucket_offsets(lim, pl_outer, width, outer_offsets)?;
+    let outer = GroupedView { offsets: outer_offsets, entries: pl_outer };
+    let g_by_outer = g_by_outer.view();
+    f_marked.clear();
+    lim.try_resize(f_marked, width.div_ceil(64), 0u64)?;
+    f_kept.clear();
+    lim.try_resize(f_kept, width, 0u32)?;
+    let mut any = false;
+    for (o, &n) in under.iter().enumerate() {
+        let live = outer.bucket(o);
+        if n > 0 && !live.is_empty() && cost_by_key(live, g_by_outer) > n as usize {
+            f_marked[o >> 6] |= 1 << (o & 63);
+            f_kept[o] = n;
+            any = true;
+        }
+    }
+    let marked = any.then_some(&f_marked[..]);
+    if let Some(row_of) = row_of {
+        let is_marked = |o: usize| marked.is_some_and(|m| m[o >> 6] >> (o & 63) & 1 != 0);
+        for_each_big_pair(f_level, row_of, |_, pair| {
+            let (_, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
+            if !is_marked(outer1 as usize) {
+                f_kept[outer1 as usize] += 1;
+            }
+        });
+    }
+    counting_sort(
+        lim, width, KeptPairs::<SWAPPED> { level: f_level, row_of, marked },
+        |(parent, pair): (u32, ChildPair)| {
+            let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
+            (outer1 as usize, RevEntry { parent, other: inner1 })
+        },
+        Some(&f_kept[..]), RevEntry { parent: 0, other: 0 }, f_by_outer,
+    )
+}
+
+/// Call `f(p1, pair)` with every pair of every node `p1` that `row_of`
+/// gives a row, in node order.
+#[inline(always)]
+fn for_each_big_pair(f_level: &TddLevel, row_of: &[u32], mut f: impl FnMut(usize, ChildPair)) {
+    for (p1, &row) in row_of.iter().enumerate() {
+        if row == NO_ROW {
+            continue;
+        }
+        f_level.try_for_each_node::<std::convert::Infallible>(p1..p1 + 1, |_, pairs| {
+            for &pair in pairs {
+                f(p1, pair);
+            }
+            Ok(())
+        }).unwrap_or_else(|never| match never {});
+    }
+}
+
+/// The pairs [`build_kept_index`] keeps, in node order: every pair of a
+/// node `row_of` gives a row, and every pair under an outer key with its
+/// bit set in `marked`. With no outer key marked, only the big nodes are
+/// read.
+struct KeptPairs<'a, const SWAPPED: bool> {
+    level: &'a TddLevel,
+    row_of: Option<&'a [u32]>,
+    marked: Option<&'a [u64]>,
+}
+
+impl<const SWAPPED: bool> SortItems for KeptPairs<'_, SWAPPED> {
+    type Item = (u32, ChildPair);
+    #[inline(always)]
+    fn each(&self, mut f: impl FnMut((u32, ChildPair))) {
+        let Some(marked) = self.marked else {
+            if let Some(row_of) = self.row_of {
+                for_each_big_pair(self.level, row_of, |p1, pair| f((p1 as u32, pair)));
+            }
+            return;
+        };
+        let row_of = self.row_of;
+        self.level.try_for_each_node::<std::convert::Infallible>(0..self.level.node_count(), |p1, pairs| {
+            let big = row_of.is_some_and(|r| r[p1] != NO_ROW);
+            for &pair in pairs {
+                let (_, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
+                if big || marked[outer1 as usize >> 6] >> (outer1 & 63) & 1 != 0 {
+                    f((p1 as u32, pair));
+                }
+            }
+            Ok(())
+        }).unwrap_or_else(|never| match never {});
+    }
+}
+
+/// The g index entries an outer key's route build by its live products'
+/// g keys walks: the products' `g_by_outer` buckets.
+#[inline]
+fn cost_by_key(live: &[ProductEntry], g_by_outer: GroupedView<'_, RevEntry>) -> usize {
+    live.iter().map(|e| g_by_outer.len(e.g_idx.idx())).sum()
 }
 
 /// Build g's reverse index keyed by the join's inner-g child — the key
@@ -906,8 +1047,14 @@ pub(super) fn bucket_offsets(
 /// iterates, `inner` the one it joins against, and `filtered` the per-outer
 /// index rebuilt from the g reverse index.
 struct ScatterSides<'w> {
-    /// f's reverse index, keyed by the outer dimension.
+    /// f's reverse index, keyed by the outer dimension; on a routed level
+    /// only the pairs read through it ([`build_kept_index`]).
     f_by_outer: GroupedView<'w, RevEntry>,
+    /// f's pairs under each outer key, all of them.
+    f_under: &'w [u32],
+    /// Where f's index is kept, a bit for each outer key whose build marks
+    /// the keys it reads ([`ScatterSides::build_plan`]).
+    f_marked: Option<&'w [u64]>,
     /// g's reverse index, keyed by the filtering axis.
     g_by_outer: GroupedView<'w, RevEntry>,
     /// Live products of the outer child, by their f index (see
@@ -1077,7 +1224,9 @@ impl EpochFlags<'_> {
 
 /// Take this direction's view of the workspace, with every bucket array this
 /// arm writes cleared to `shape`'s dimensions and both product lists
-/// bucketed by f index.
+/// bucketed by f index. Where f's index is `kept` ([`build_kept_index`]),
+/// the outer products are bucketed already and the outers that mark their
+/// keys are known.
 #[inline(never)]
 fn sides<'w, const SWAPPED: bool>(
     eng: &Engine,
@@ -1085,6 +1234,7 @@ fn sides<'w, const SWAPPED: bool>(
     shape: LevelShape,
     pl_inner: &'w [ProductEntry],
     pl_outer: &'w [ProductEntry],
+    kept: bool,
 ) -> Result<ScatterSides<'w>, OperationError> {
     let LevelShape { f, g, .. } = shape;
     let (inner_k, outer_k, filtered_dim, outer_g_dim) = if !SWAPPED {
@@ -1093,15 +1243,17 @@ fn sides<'w, const SWAPPED: bool>(
         (f.right, f.left, g.right, g.left)
     };
     let SparseWorkspace {
-        f_by_outer, g_by_outer, g_by_inner,
+        f_by_outer, g_by_outer, g_by_inner, est_counts,
         inner_offsets, outer_offsets,
         filtered, filtered_touched, filtered_held,
         wanted, wanted_epoch, wanted_keys, inner_seen, inner_seen_epoch,
-        outer_keys, outer_keys_epoch, outer_attached, routes,
+        outer_keys, outer_keys_epoch, outer_attached, routes, f_marked,
         ..
     } = ws;
     bucket_offsets(eng.limits(), pl_inner, inner_k, inner_offsets)?;
-    bucket_offsets(eng.limits(), pl_outer, outer_k, outer_offsets)?;
+    if !kept {
+        bucket_offsets(eng.limits(), pl_outer, outer_k, outer_offsets)?;
+    }
     filtered.reset(eng.limits(), filtered_dim)?;
     filtered_touched.clear();
     // A round that bailed can leave bits set; the level starts with none.
@@ -1115,6 +1267,8 @@ fn sides<'w, const SWAPPED: bool>(
     eng.limits().try_resize(outer_attached, outer_g_dim, 0u32)?;
     Ok(ScatterSides {
         f_by_outer: f_by_outer.view(),
+        f_under: f_under::<SWAPPED>(est_counts, shape),
+        f_marked: kept.then_some(&f_marked[..]),
         g_by_outer: g_by_outer.view(),
         g_by_inner: g_by_inner.view(),
         outer: GroupedView { offsets: outer_offsets, entries: pl_outer },
@@ -1160,7 +1314,7 @@ impl ScatterSides<'_> {
     /// The f pairs under one outer key: what the emit walks for it, and so
     /// the least the outer costs whatever else is done for it.
     fn f_pairs_under(&self, outer: usize) -> usize {
-        self.f_by_outer.len(outer)
+        self.f_under[outer] as usize
     }
 
     /// Mark the inner-g children this outer's emit will read: for each
@@ -1235,6 +1389,13 @@ impl ScatterSides<'_> {
     /// finding those costs less than it saves. Marks the wanted children
     /// where it plans to read them.
     fn build_plan(&mut self, outer: usize) -> BuildFrom {
+        // A kept index decided the test below for every outer as it was
+        // built.
+        if let Some(marked) = self.f_marked
+            && marked[outer >> 6] >> (outer & 63) & 1 == 0
+        {
+            return BuildFrom::Keys;
+        }
         let by_key = self.build_cost_by_key(outer);
         if by_key <= self.f_pairs_under(outer) {
             // The walk by the outer's g keys costs no more than the emit's
@@ -1348,11 +1509,7 @@ impl ScatterSides<'_> {
     /// The g index entries building this outer's `filtered` by the outer's
     /// g keys walks.
     fn build_cost_by_key(&self, outer: usize) -> usize {
-        self.outer
-            .bucket(outer)
-            .iter()
-            .map(|e| self.g_by_outer.len(e.g_idx.idx()))
-            .sum()
+        cost_by_key(self.outer.bucket(outer), self.g_by_outer)
     }
 
     /// The g index entries building this outer's `filtered` by the wanted
@@ -1511,7 +1668,7 @@ fn scatter_general_arm<const SWAPPED: bool, const FAR: bool>(
     }
     let lim = eng.limits();
     let (pl_inner, pl_outer) = if !SWAPPED { (pl.left, pl.right) } else { (pl.right, pl.left) };
-    let mut s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer)?;
+    let mut s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer, false)?;
 
     // Amortized cancellation/deadline poll. The sparse join has no other
     // mid-level break, so a wide level could otherwise wait out an expired
@@ -1590,7 +1747,7 @@ fn count_general_arm<const SWAPPED: bool, const FILTER: bool>(
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let (pl_inner, pl_outer) = if !SWAPPED { (pl.left, pl.right) } else { (pl.right, pl.left) };
-    let s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer)?;
+    let s = sides::<SWAPPED>(eng, ws, shape, pl_inner, pl_outer, false)?;
     let ScatterSides {
         f_by_outer, g_by_outer, g_by_inner, outer: outer_products, inner,
         wanted, outer_keys, outer_k, ..
