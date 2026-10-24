@@ -108,7 +108,7 @@ pub(super) trait CellAction<L: ChildLookup, R: ChildLookup> {
 
 /// Fill small product grids once before traversal; reset larger grids row by
 /// row to keep the current row cache-local. Both paths write the same values.
-const DEAD_SLAB_FILL_MAX_CELLS: usize = 1 << 16;
+pub(super) const DEAD_SLAB_FILL_MAX_CELLS: usize = 1 << 16;
 
 /// Extend `slab` to `end` cells, `NO_PRODUCT`-filled, and say whether all
 /// of `start..end` was new: the cells of a grid claimed past the slab's end
@@ -116,7 +116,7 @@ const DEAD_SLAB_FILL_MAX_CELLS: usize = 1 << 16;
 /// the claim reserved. A range the slab already reached into holds whatever
 /// an earlier grid left there.
 #[inline(always)]
-fn extend_slab(slab: &mut Vec<u32>, start: usize, end: usize) -> bool {
+pub(super) fn extend_slab(slab: &mut Vec<u32>, start: usize, end: usize) -> bool {
     let len = slab.len();
     if len >= end {
         return false;
@@ -195,7 +195,7 @@ fn mark_dead_out_of_line(cells: &mut [u32]) {
 /// are slices of its arena, and where the budget refuses the buffer's
 /// growth: each row is then generated as it is read.
 #[inline(never)]
-fn described_rows(
+pub(super) fn described_rows(
     lim: &crate::limits::Limits,
     level: &TddLevel,
     width: usize,

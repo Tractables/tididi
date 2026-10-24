@@ -6,7 +6,7 @@
 use crate::diagram::{ChildDecoder, ChildSide, Sides, Tdd, TddLevel};
 use super::OperationError;
 use crate::Engine;
-use super::liveness::{bucket_shift, build_live_cols_bitmask, build_reach_columns, build_reach_masks, build_row_columns, one_sided_masks_pay, PrefilterSideMasks, ROW_COLUMNS_MAX_WIDTH};
+use super::liveness::{bucket_shift, build_live_cols_bitmask, build_pair_reach, build_reach_columns, build_reach_masks, build_row_columns, one_sided_masks_pay, PrefilterSideMasks, ROW_COLUMNS_MAX_WIDTH};
 use super::setup::{ApplyRun, LevelShape, Operands};
 use super::route::LevelMarg;
 
@@ -290,26 +290,33 @@ pub(super) struct ChildGrid {
 /// by arithmetic and killing nothing, builds no masks at all: every row
 /// reads it whole. One whose child has no columns keeps them, for the
 /// row loop's fold to skip every row as before.
+///
+/// On a level read by `pairs` ([`super::liveness::pairs_fit`]) the reach
+/// masks are a pair's and the row columns are over g's pairs; a complete
+/// side builds none.
+#[expect(clippy::too_many_arguments)]
 pub(super) fn build_side_masks<const RIGHT: bool>(
     eng: &Engine,
     right_level: &TddLevel,
     right_width: usize,
     child: ChildGrid,
     complete: bool,
+    pairs: bool,
     node_idx: &[u32],
     out: &mut PrefilterSideMasks,
 ) -> Result<(), OperationError> {
     let ChildGrid { plan, f_width: f_child_width, g_width: g_child_width, base } = child;
     out.reach_cols.clear();
     out.row_cols.clear();
-    out.rows = !(right_width > ROW_COLUMNS_MAX_WIDTH
+    out.rows = !(pairs
+        || right_width > ROW_COLUMNS_MAX_WIDTH
         || (complete && g_child_width == 0)
         || super::reach_columns_forced_off()
         || super::row_columns_forced_off());
     if plan.is_passthrough() {
         return Ok(());
     }
-    if out.rows && complete {
+    if (out.rows || pairs) && complete {
         out.live_cols.clear();
         out.reach.clear();
         return Ok(());
@@ -317,8 +324,13 @@ pub(super) fn build_side_masks<const RIGHT: bool>(
     let shift = bucket_shift(g_child_width);
     build_live_cols_bitmask(eng, f_child_width, g_child_width, base, node_idx, out, shift)?;
     let view = plan.view;
-    build_reach_masks(eng, right_level, right_width, &mut out.reach,
-        |p| view.coord(if RIGHT { p.right } else { p.left }) as usize, shift)?;
+    let side = |p: &crate::diagram::ChildPair| view.coord(if RIGHT { p.right } else { p.left }) as usize;
+    if pairs {
+        debug_assert_eq!(shift, 0, "a level read by pairs has bit-exact masks");
+        build_pair_reach(eng, right_level, right_width, &mut out.reach, side)?;
+        return build_row_columns(eng, &out.live_cols, &out.reach, &mut out.row_cols);
+    }
+    build_reach_masks(eng, right_level, right_width, &mut out.reach, side, shift)?;
     if out.rows {
         return build_row_columns(eng, &out.live_cols, &out.reach, &mut out.row_cols);
     }

@@ -275,8 +275,52 @@ pub(super) fn build_reach_columns(eng: &Engine, reach: &[u128], columns: &mut Ve
 
 /// The most g nodes a masked level has for its sides to build their
 /// [row columns](build_row_columns): a bit a g node, and the top bit of
-/// the word for a row with a live cell.
+/// the word for a row with a live cell. Also the most pairs a level read
+/// by pairs ([`pairs_fit`]) has.
 pub(super) const ROW_COLUMNS_MAX_WIDTH: usize = 63;
+
+/// Whether a masked level is read by pairs: each child row's word over g's
+/// pairs, [`build_row_columns`] of the [pair reach](build_pair_reach), in
+/// place of its word over g's nodes. That takes g's first `right_width`
+/// nodes holding at most [`ROW_COLUMNS_MAX_WIDTH`] pairs in all, child
+/// grids whose masks are bit-exact, which the words reproduce, and a
+/// `complete` side's child having columns, which the loop reads whole.
+pub(super) fn pairs_fit(level: &TddLevel, right_width: usize, child_g_widths: Sides<usize>, complete: Sides<bool>) -> bool {
+    if right_width > ROW_COLUMNS_MAX_WIDTH
+        || bucket_shift(child_g_widths.left) != 0
+        || bucket_shift(child_g_widths.right) != 0
+        || (complete.left && child_g_widths.left == 0)
+        || (complete.right && child_g_widths.right == 0)
+    {
+        return false;
+    }
+    let mut n = 0;
+    level.try_for_each_node(0..right_width, |_, pairs| {
+        n += pairs.len();
+        if n > ROW_COLUMNS_MAX_WIDTH { Err(()) } else { Ok(()) }
+    }).is_ok()
+}
+
+/// Each pair of g's first `k_level` nodes, in node order, as the mask bit
+/// of its child on one side: the reach masks of a level read by pairs, a
+/// mask a pair where [`build_reach_masks`] ORs a node's. Bit-exact: the
+/// level [fits](pairs_fit).
+pub(super) fn build_pair_reach(
+    eng: &Engine,
+    level: &TddLevel,
+    k_level: usize,
+    reach: &mut Vec<u128>,
+    pair_side: impl Fn(&ChildPair) -> usize,
+) -> Result<(), OperationError> {
+    reach.clear();
+    eng.limits().reserve_exact(reach, ROW_COLUMNS_MAX_WIDTH)?;
+    level.try_for_each_node::<std::convert::Infallible>(0..k_level, |_, pairs| {
+        debug_assert!(reach.len() + pairs.len() <= ROW_COLUMNS_MAX_WIDTH, "a level read by pairs fits");
+        reach.extend(pairs.iter().map(|p| 1u128 << pair_side(p)));
+        Ok(())
+    }).unwrap_or_else(|never| match never {});
+    Ok(())
+}
 
 /// The flag bit of a [row columns](build_row_columns) word: the row has a
 /// live cell.

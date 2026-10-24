@@ -24,7 +24,7 @@ mod cell;
 use cell::{
     RightColumns, CellCtx, ChildPlan, ColumnSlice,
     run_level_rows_complete, run_level_rows_marginal, run_level_rows_marginal_sparse, run_level_rows_plain,
-    run_level_rows_single, run_level_rows_stream_count, PlainLookups, RowLoop, RowScratch,
+    run_level_rows_pairs, run_level_rows_single, run_level_rows_stream_count, PlainLookups, RowLoop, RowScratch,
 };
 
 mod sparse;
@@ -898,6 +898,21 @@ fn note_single_rows() {}
 #[cfg(not(test))]
 #[inline(always)]
 fn note_row_columns_row(_whole: bool) {}
+
+// A test runs every masked level on the row loop of any level, as the
+// oracle for the levels read by pairs, and counts those levels.
+#[cfg(test)]
+use tests::{note_pair_rows, pair_rows_forced_off};
+
+#[cfg(not(test))]
+#[inline(always)]
+fn pair_rows_forced_off() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_pair_rows(_complete: bool) {}
 
 // A test counts the times a level's pairs arena grew.
 #[cfg(test)]

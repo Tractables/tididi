@@ -11,6 +11,7 @@ mod marginal_orphan;
 mod marginal_subsumed;
 mod one_sided;
 mod owed;
+mod pair_rows;
 mod relabel;
 mod probe;
 mod reach_columns;
@@ -181,6 +182,45 @@ thread_local! {
     static ROW_COLUMNS_ROWS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// Those of them that read a side whole ([`row_columns_rows`]).
     static ROW_COLUMNS_WHOLE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+thread_local! {
+    /// Whether no level on this thread is read by pairs
+    /// ([`pair_rows_off`]).
+    static PAIR_ROWS_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The levels on this thread read by pairs, and those of them with a
+    /// complete side ([`pair_rows_levels`]).
+    static PAIR_ROWS: std::cell::Cell<(u64, u64)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+pub(super) fn pair_rows_forced_off() -> bool {
+    PAIR_ROWS_OFF.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_pair_rows(complete: bool) {
+    PAIR_ROWS.with(|n| {
+        let (all, whole) = n.get();
+        n.set((all + 1, whole + u64::from(complete)));
+    });
+}
+
+/// Run `f` with every masked level on the row loop of any level: the
+/// oracle the levels read by pairs are checked against.
+pub(super) fn pair_rows_off<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            PAIR_ROWS_OFF.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(PAIR_ROWS_OFF.with(|c| c.replace(true)));
+    f()
+}
+
+/// The levels on this thread so far read by pairs, and those of them with
+/// a complete side.
+pub(super) fn pair_rows_levels() -> (u64, u64) {
+    PAIR_ROWS.with(std::cell::Cell::get)
 }
 
 thread_local! {

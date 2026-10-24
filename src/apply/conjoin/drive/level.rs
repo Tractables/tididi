@@ -767,6 +767,7 @@ fn run_row_loop(
     route: Route,
     lookups: PlainLookups,
     single_pair: bool,
+    pairs: bool,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
     level: &mut TddLevel,
@@ -774,6 +775,10 @@ fn run_row_loop(
     stream_state: &mut Option<StreamLevelState>,
 ) -> Result<(), OperationError> {
     let cell_ctx = rows.ctx;
+    if pairs {
+        debug_assert!(route == Route::Dense, "only a masked level is read by pairs");
+        return run_level_rows_pairs(eng, rows, scratch, level, lookups);
+    }
     if lookups != PlainLookups::Grid {
         debug_assert!(matches!(route, Route::PlainDense | Route::Dense), "only the plain routes read a side by arithmetic");
         return run_level_rows_complete(eng, rows, scratch, level, lookups);
@@ -851,6 +856,7 @@ fn run_row_loop(
 /// # Errors
 ///
 /// Propagates a refused reservation for the mask buffers.
+#[expect(clippy::too_many_arguments)]
 fn build_level_prefilter_masks(
     eng: &Engine,
     run: &mut ApplyRun,
@@ -859,19 +865,20 @@ fn build_level_prefilter_masks(
     plan: &MarginalPlan,
     bases: Sides<GridBase>,
     lookups: PlainLookups,
+    pairs: bool,
 ) -> Result<(), OperationError> {
     let LevelShape { t, f: fw, g: gw, .. } = shape;
     let right_level = g.level(t);
     build_side_masks::<false>(
         eng, right_level, gw.here,
         ChildGrid { plan: plan.sides.left, f_width: fw.left, g_width: gw.left, base: bases.left.idx() },
-        matches!(lookups, PlainLookups::CompleteLeft { .. }),
+        matches!(lookups, PlainLookups::CompleteLeft { .. }), pairs,
         run.products.arena.slab(), &mut run.prefilter_masks.left,
     )?;
     build_side_masks::<true>(
         eng, right_level, gw.here,
         ChildGrid { plan: plan.sides.right, f_width: fw.right, g_width: gw.right, base: bases.right.idx() },
-        matches!(lookups, PlainLookups::CompleteRight { .. }),
+        matches!(lookups, PlainLookups::CompleteRight { .. }), pairs,
         run.products.arena.slab(), &mut run.prefilter_masks.right,
     )
 }
@@ -1112,11 +1119,24 @@ pub(super) fn build_level_dense(
         } else {
             one_sided_masks && route == Route::Dense && lookups == PlainLookups::Grid
         };
+    // A masked level of the dense route whose g level has few pairs in
+    // all is read by pairs (`run_level_rows_pairs`).
+    let pairs = masked
+        && route == Route::Dense
+        && !super::super::pair_rows_forced_off()
+        && liveness::pairs_fit(
+            g.level(t), gw.here,
+            Sides { left: gw.left, right: gw.right },
+            Sides {
+                left: matches!(lookups, PlainLookups::CompleteLeft { .. }),
+                right: matches!(lookups, PlainLookups::CompleteRight { .. }),
+            },
+        );
     if masked {
         if !both_multi_pair {
             super::super::note_one_sided_masks();
         }
-        build_level_prefilter_masks(eng, run, g, shape, &plan, bases, lookups)?;
+        build_level_prefilter_masks(eng, run, g, shape, &plan, bases, lookups, pairs)?;
     }
 
     let mut stream_state: Option<StreamLevelState> =
@@ -1211,7 +1231,7 @@ pub(super) fn build_level_dense(
         }
 
         run_row_loop(
-            eng, route, lookups, single_pair,
+            eng, route, lookups, single_pair, pairs,
             RowLoop {
                 f_level: f.level(t), g_level: g.level(t),
                 children: Sides { left: left_level, right: right_level },

@@ -8,11 +8,14 @@ use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, 
 use crate::limits::{LimitConfig, SparseRoute};
 use crate::vtree::{VarId, Vtree};
 
-/// Conjoin `f` and `g` on a fresh engine, every level on a dense route.
+/// Conjoin `f` and `g` on a fresh engine, every level on a dense route and
+/// none read by pairs.
 fn conjoin(f: &Tdd, g: &Tdd) -> Tdd {
-    let eng = Engine::new();
-    let _dense = eng.limits().scope(LimitConfig::none().with_sparse_route(SparseRoute { sparsity: 64, min_grid: usize::MAX }));
-    eng.and(f.clone(), g.clone()).unwrap()
+    pair_rows_off(|| {
+        let eng = Engine::new();
+        let _dense = eng.limits().scope(LimitConfig::none().with_sparse_route(SparseRoute { sparsity: 64, min_grid: usize::MAX }));
+        eng.and(f.clone(), g.clone()).unwrap()
+    })
 }
 
 /// Conjoined with reach and row columns, with reach columns alone, and
@@ -77,6 +80,31 @@ fn the_reach_columns_enter_the_cells_the_scan_enters() {
             let (f, g) = (operand(), operand());
             add(check(&f, &g, &format!("{name}, dense random functions, 1 in {one_in}")));
             cases += 1;
+        }
+    }
+    // Operands each ignoring alternate variables under one vtree node,
+    // whose parent level has a complete side beside one that kills.
+    let n = 14u32;
+    let vars: Vec<VarId> = (1..=n).map(VarId).collect();
+    for (name, vtree) in vtree_shapes(n) {
+        let root = vtree.root();
+        for u in vtree.subtree(root).collect::<Vec<_>>() {
+            if u == root || vtree.node(u).is_leaf() || vtree.node(u).parent() == Some(root) {
+                continue;
+            }
+            let leaves: Vec<u64> = vtree.subtree(u).filter(|&v| vtree.node(v).is_leaf())
+                .map(|v| 1u64 << (vtree.leaf_var(v).0 - 1)).collect();
+            let free_f: u64 = leaves.iter().step_by(2).sum();
+            let free_g: u64 = leaves.iter().skip(1).step_by(2).sum();
+            let mut operand = |one_in: u64, free: u64| {
+                let models: Vec<u64> = (0..1u64 << n).filter(|m| m & free == 0).filter(|_| rng.below(one_in) == 0)
+                    .flat_map(|m| super::pair_rows::subsets(free).map(move |s| m | s)).collect();
+                Tdd::from_models(&vtree, &vars, &models).unwrap()
+            };
+            let (f, g) = (operand(2, free_f), operand(8, free_g));
+            add(check(&f, &g, &format!("{name}, supports split under {u:?}")));
+            add(check(&g, &f, &format!("{name}, supports split under {u:?}, swapped")));
+            cases += 2;
         }
     }
     let (reach, row, whole) = rows;

@@ -78,6 +78,8 @@ mod kernel;
 pub(super) use kernel::*;
 mod rows;
 pub(super) use rows::*;
+mod pair_rows;
+pub(super) use pair_rows::run_level_rows_pairs;
 
 #[cfg(test)]
 mod tests;
