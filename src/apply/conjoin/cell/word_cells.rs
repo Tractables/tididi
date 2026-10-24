@@ -41,6 +41,9 @@ pub(crate) struct WordScratch {
     /// g pair `q`'s child on that side holds a product.
     slots: Sides<Vec<u32>>,
     vectors: Sides<Vec<u64>>,
+    /// Each vector's summary, a slot's words one after another: bit `b` of
+    /// summary word `s` set where the vector's word `64 s + b` is not zero.
+    summaries: Sides<Vec<u64>>,
     /// On each side that kills, g's pairs by their child there: the
     /// children some pair names, ascending, where each one's pairs start
     /// in `by_child`, and the pairs, by child and then in column order.
@@ -53,6 +56,7 @@ pub(crate) struct WordScratch {
     /// live candidates; its live cells' columns, ascending, and as bits.
     row_slots: Vec<(u32, u32)>,
     union: Vec<u64>,
+    union_sum: Vec<u64>,
     live_cols: Vec<u32>,
     col_live: Vec<u64>,
     /// The current row's live candidates, `k << 32 | q` for its `k`th f pair
@@ -82,6 +86,9 @@ impl WordScratch {
         visit(&mut self.slots.right);
         visit(&mut self.vectors.left);
         visit(&mut self.vectors.right);
+        visit(&mut self.summaries.left);
+        visit(&mut self.summaries.right);
+        visit(&mut self.union_sum);
         visit(&mut self.named.left);
         visit(&mut self.named.right);
         visit(&mut self.named_start.left);
@@ -270,8 +277,9 @@ struct ByWords<'w, S> {
     sink: S,
     w: &'w mut WordScratch,
     lim: &'w Limits,
-    /// Words a vector.
+    /// Words a vector, and words a vector's summary.
     words: usize,
+    sum_words: usize,
     /// The candidates of the rows counted so far, and the live ones;
     /// whether the level still counts its rows.
     seen: u64,
@@ -306,6 +314,36 @@ fn anded(w: &WordScratch, words: usize, kills: (bool, bool), slots: (u32, u32), 
         (true, false) => at(&w.vectors.left, slots.0),
         (false, true) => at(&w.vectors.right, slots.1),
         (false, false) => unreachable!("a level of two complete sides kills no candidate"),
+    }
+}
+
+/// The words of the live candidates of an f pair whose vectors are in
+/// `slots` that are not zero, each with its index, in order: those its
+/// vectors' summaries leave.
+#[inline(always)]
+fn live_words(
+    w: &WordScratch,
+    (words, sum_words): (usize, usize),
+    kills: (bool, bool),
+    slots: (u32, u32),
+    mut each: impl FnMut(usize, u64),
+) {
+    let at = |v: &[u64], s: u32, k: usize| v[s as usize * sum_words + k];
+    for k in 0..sum_words {
+        let mut sum = match kills {
+            (true, true) => at(&w.summaries.left, slots.0, k) & at(&w.summaries.right, slots.1, k),
+            (true, false) => at(&w.summaries.left, slots.0, k),
+            (false, true) => at(&w.summaries.right, slots.1, k),
+            (false, false) => unreachable!("a level of two complete sides kills no candidate"),
+        };
+        while sum != 0 {
+            let word = k * 64 + sum.trailing_zeros() as usize;
+            sum &= sum - 1;
+            let m = anded(w, words, kills, slots, word);
+            if m != 0 {
+                each(word, m);
+            }
+        }
     }
 }
 
@@ -351,6 +389,8 @@ impl<'w, S: PairSink> ByWords<'w, S> {
         }
         w.vectors.left.clear();
         w.vectors.right.clear();
+        w.summaries.left.clear();
+        w.summaries.right.clear();
         w.counts.clear();
         lim.reserve_exact(&mut w.counts, width)?;
         w.counts.resize(width, 0);
@@ -383,10 +423,14 @@ impl<'w, S: PairSink> ByWords<'w, S> {
             w.run_counts.resize(most, 0);
         }
         let words = w.g_flat.len().div_ceil(64);
+        let sum_words = words.div_ceil(64);
         w.union.clear();
         lim.reserve_exact(&mut w.union, words)?;
         w.union.resize(words, 0);
-        Ok(ByWords { sink, w, lim, words, seen: 0, live: 0, on: true, row: usize::MAX, mode: RowMode::Walk, cursor: 0, runs_row: usize::MAX })
+        w.union_sum.clear();
+        lim.reserve_exact(&mut w.union_sum, sum_words)?;
+        w.union_sum.resize(sum_words, 0);
+        Ok(ByWords { sink, w, lim, words, sum_words, seen: 0, live: 0, on: true, row: usize::MAX, mode: RowMode::Walk, cursor: 0, runs_row: usize::MAX })
     }
 
     /// Every live candidate of the last row read by vectors was in a cell
@@ -449,24 +493,33 @@ impl<'w, S: PairSink> ByWords<'w, S> {
         let w = &mut *self.w;
         w.live_cols.clear();
         let mut candidates = 0u64;
-        let mut word = 0;
-        while word < w.union.len() {
-            let m = w.union[word];
-            if m == 0 {
-                word += 1;
-                continue;
-            }
-            let q = word * 64 + m.trailing_zeros() as usize;
-            let j = w.col_of[q] as usize;
-            // `count_row` reserved a column a live cell.
-            w.live_cols.push(j as u32);
-            w.col_live[j / 64] |= 1 << (j % 64);
-            let end = w.col_start[j + 1] as usize;
-            candidates += (end - w.col_start[j] as usize) as u64;
-            // On past the column's pairs.
-            word = end / 64;
-            if word < w.union.len() {
-                w.union[word] &= !((1u64 << (end % 64)) - 1);
+        // The first g pair of a column not yet taken.
+        let mut next = 0usize;
+        for k in 0..w.union_sum.len() {
+            let mut sum = w.union_sum[k];
+            while sum != 0 {
+                let word = k * 64 + sum.trailing_zeros() as usize;
+                sum &= sum - 1;
+                if (word + 1) * 64 <= next {
+                    continue;
+                }
+                let mut m = w.union[word];
+                if word * 64 < next {
+                    m &= !((1u64 << (next - word * 64)) - 1);
+                }
+                while m != 0 {
+                    let q = word * 64 + m.trailing_zeros() as usize;
+                    let j = w.col_of[q] as usize;
+                    // `new` reserved a column a live cell.
+                    w.live_cols.push(j as u32);
+                    w.col_live[j / 64] |= 1 << (j % 64);
+                    next = w.col_start[j + 1] as usize;
+                    candidates += (next - w.col_start[j] as usize) as u64;
+                    if next >= (word + 1) * 64 {
+                        break;
+                    }
+                    m &= !((1u64 << (next - word * 64)) - 1);
+                }
             }
         }
         candidates * n1 as u64
@@ -474,15 +527,17 @@ impl<'w, S: PairSink> ByWords<'w, S> {
 
     /// The slot of child row `r`'s vector on one side, built on first use:
     /// bit `q` where the child cell at `r` and g pair `q`'s child on that
-    /// side holds a product. The build reads the row's cell at each child
-    /// some g pair names (`named`, ascending) and sets the bits of the
-    /// pairs naming a live one (`by_child` from `named_start`).
+    /// side holds a product, and its summary. The build reads the row's
+    /// cell at each child some g pair names (`named`, ascending) and sets
+    /// the bits of the pairs naming a live one (`by_child` from
+    /// `named_start`).
     #[inline(always)]
     #[expect(clippy::too_many_arguments)]
     fn slot<K: ChildLookup>(
         lim: &Limits,
         slots: &mut [u32],
         vectors: &mut Vec<u64>,
+        summaries: &mut Vec<u64>,
         named: &[u32],
         named_start: &[u32],
         by_child: &[u32],
@@ -508,6 +563,12 @@ impl<'w, S: PairSink> ByWords<'w, S> {
                 }
             }
         }
+        let sum_base = summaries.len();
+        lim.reserve(summaries, words.div_ceil(64))?;
+        summaries.resize(sum_base + words.div_ceil(64), 0);
+        for (word, &x) in v.iter().enumerate() {
+            summaries[sum_base + word / 64] |= u64::from(x != 0) << (word % 64);
+        }
         Ok(slots[r as usize])
     }
 
@@ -521,29 +582,37 @@ impl<'w, S: PairSink> ByWords<'w, S> {
         left: &L,
         right: &R,
     ) -> Result<u64, OperationError> {
-        let (lim, words, kills) = (self.lim, self.words, (left.kills(), right.kills()));
+        let (lim, words, kills) = (self.lim, (self.words, self.sum_words), (left.kills(), right.kills()));
         let w = &mut *self.w;
         w.row_slots.clear();
         lim.reserve(&mut w.row_slots, f_pairs.len())?;
-        w.union.fill(0);
+        for k in 0..w.union_sum.len() {
+            let mut sum = std::mem::take(&mut w.union_sum[k]);
+            while sum != 0 {
+                w.union[k * 64 + sum.trailing_zeros() as usize] = 0;
+                sum &= sum - 1;
+            }
+        }
         let mut live = 0u64;
         for p in f_pairs {
             let ls = if kills.0 {
-                Self::slot(lim, &mut w.slots.left, &mut w.vectors.left, &w.named.left, &w.named_start.left, &w.by_child.left, words, left, node_idx, p.left.0)?
+                Self::slot(lim, &mut w.slots.left, &mut w.vectors.left, &mut w.summaries.left, &w.named.left, &w.named_start.left, &w.by_child.left, words.0, left, node_idx, p.left.0)?
             } else {
                 0
             };
             let rs = if kills.1 {
-                Self::slot(lim, &mut w.slots.right, &mut w.vectors.right, &w.named.right, &w.named_start.right, &w.by_child.right, words, right, node_idx, p.right.0)?
+                Self::slot(lim, &mut w.slots.right, &mut w.vectors.right, &mut w.summaries.right, &w.named.right, &w.named_start.right, &w.by_child.right, words.0, right, node_idx, p.right.0)?
             } else {
                 0
             };
             w.row_slots.push((ls, rs));
-            for word in 0..words {
-                let m = anded(w, words, kills, (ls, rs), word);
+            let (mut union, mut union_sum) = (std::mem::take(&mut w.union), std::mem::take(&mut w.union_sum));
+            live_words(w, words, kills, (ls, rs), |word, m| {
                 live += u64::from(m.count_ones());
-                w.union[word] |= m;
-            }
+                union[word] |= m;
+                union_sum[word / 64] |= 1 << (word % 64);
+            });
+            (w.union, w.union_sum) = (union, union_sum);
         }
         Ok(live)
     }
@@ -553,22 +622,31 @@ impl<'w, S: PairSink> ByWords<'w, S> {
     /// column.
     #[inline(always)]
     fn read_row(&mut self, n1: usize, left_kills: bool, right_kills: bool) -> Result<(), OperationError> {
-        let (lim, words, kills) = (self.lim, self.words, (left_kills, right_kills));
+        let (lim, words, kills) = (self.lim, (self.words, self.sum_words), (left_kills, right_kills));
         let w = &mut *self.w;
         debug_assert_eq!(w.row_slots.len(), n1, "a row is read after it is counted");
-        w.entries.clear();
+        let mut entries = std::mem::take(&mut w.entries);
+        entries.clear();
+        let mut grown = Ok(());
         for k in 0..n1 {
             let slots = w.row_slots[k];
             let key = (k as u64) << 32;
-            for word in 0..words {
-                let mut m = anded(w, words, kills, slots, word);
-                while m != 0 {
+            live_words(w, words, kills, slots, |word, mut m| {
+                while m != 0 && grown.is_ok() {
                     let q = (word * 64) as u64 + u64::from(m.trailing_zeros());
                     m &= m - 1;
-                    lim.try_push(&mut w.entries, key | q)?;
+                    if entries.len() == entries.capacity() {
+                        grown = lim.reserve(&mut entries, 1);
+                        if grown.is_err() {
+                            break;
+                        }
+                    }
+                    entries.push(key | q);
                 }
-            }
+            });
         }
+        w.entries = entries;
+        grown?;
         // In order of f pair, then g pair: by column already on a row of
         // one f pair. Otherwise a counting sort, stable, by column.
         w.sorted.clear();
