@@ -6,6 +6,7 @@ pub(crate) use support::fuse_pairs;
 mod weighted;
 mod window;
 mod bitmap;
+mod record;
 
 /// The widths at which pair fusion changes how it works on one node: the
 /// fewest pairs whose grouping sorts rather than hashes them, and the fewest

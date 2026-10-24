@@ -700,11 +700,12 @@ impl crate::Engine {
             // `sparse::ChildSum::write_root`).
             Conjoined::Summed(mut out) => {
                 note_summed();
-                #[cfg(debug_assertions)]
                 if let Some(parent) = targets.first().and_then(|&c| vtree.node(c).parent()) {
+                    #[cfg(debug_assertions)]
                     crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(
                         &out, Some(&[parent]), "and_marginalizing",
                     );
+                    crate::reduce::contract::pair_fusion::record_fused(self, &mut out, parent);
                 }
                 crate::reduce::slot_prune::prune_value_slots(self, &mut out);
                 return Ok(out);

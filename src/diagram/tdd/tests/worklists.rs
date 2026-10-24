@@ -8,6 +8,12 @@ impl Dirty {
     pub(crate) fn levels(&self, pass: Pass) -> &[u32] {
         &self.lists[pass as usize]
     }
+
+    /// Drop every fusion record, for a test that runs each pair fusion a
+    /// record would skip.
+    pub(crate) fn forget_all_fused(&mut self) {
+        self.fused.clear();
+    }
 }
 
 impl Tdd {
@@ -69,4 +75,33 @@ fn reserving_for_invalidations_makes_room_in_every_list() {
         assert!(list.capacity() - list.len() >= 5);
     }
     assert_eq!(dirty.levels(Pass::LeafContract), [4]);
+}
+
+#[test]
+fn a_push_drops_its_levels_fusion_record_and_a_merge_move_or_seed_drops_them_all() {
+    let eng = crate::Engine::new();
+    let mut dirty = Dirty::default();
+    for level in [3, 70] {
+        dirty.set_fused(&eng, level);
+    }
+    assert!(dirty.is_fused(3) && dirty.is_fused(70));
+    assert!(!dirty.is_fused(4) && !dirty.is_fused(1000), "a level never fused has no record");
+    dirty.push_all(3, None).unwrap();
+    assert!(!dirty.is_fused(3) && dirty.is_fused(70), "a push drops its own level's record only");
+    dirty.forget_fused(70);
+    assert!(!dirty.is_fused(70));
+    dirty.set_fused(&eng, 70);
+
+    let copy = dirty.clone_on(&eng).unwrap();
+    assert!(copy.is_fused(70), "a copy of the diagram keeps the record");
+    let mut merged = copy.clone();
+    merged.merge_under(Dirty::default());
+    assert!(!merged.is_fused(70));
+    let mut moved = copy.clone();
+    let identity: Vec<crate::vtree::VtreeIdx> = (0..80).map(crate::vtree::VtreeIdx).collect();
+    moved.remap(&identity);
+    assert!(!moved.is_fused(70));
+    let vtree = crate::Vtree::balanced(4);
+    let seeded = copy.seeded(&vtree, std::iter::empty(), Some(&eng)).unwrap();
+    assert!(!seeded.is_fused(70));
 }

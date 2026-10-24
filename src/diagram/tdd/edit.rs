@@ -64,6 +64,7 @@ impl Tdd {
         // Rotation can create twins in the inner level. Contraction visits it
         // through the outer level, whose pair lists now describe those nodes.
         self.invalidate(outer.0);
+        self.dirty.forget_fused(inner.0.0);
         let old_inner = std::mem::replace(&mut self.levels[inner.0.idx()], inner.1);
         let old_outer = std::mem::replace(&mut self.levels[outer.0.idx()], outer.1);
         self.levels.mark_changed(inner.0);

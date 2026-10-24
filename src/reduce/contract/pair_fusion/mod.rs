@@ -72,6 +72,11 @@ struct PlanEntry<V> {
 /// `Log` domain is skipped); at a weight-marginal leaf a group folds only onto
 /// a value the pinned column already holds, and is otherwise left alone.
 ///
+/// An unweighted sweep that runs to the end records each parent it fused
+/// with one marginal child in the diagram's worklists, and a later sweep
+/// skips a recorded parent: the record lasts until an edit pushes the level
+/// (`Dirty::is_fused`).
+///
 /// # Errors
 ///
 /// `Err(OperationError::OverBudget)` when an allocation is refused. The node whose
@@ -102,6 +107,16 @@ pub(super) fn fuse_pairs_inner(
     // forbids un-marginalizing one, so the snapshot cannot go stale.
     for bi in 0..scratch.boundaries.len() {
         let (v, parent, side) = scratch.boundaries[bi];
+        // A fusion that ran to the end at `parent` left no group there, and
+        // an edit that could make one, merging the nodes a pair names or
+        // adding pairs, pushes the level and so drops the record.
+        if tdd.dirty.is_fused(parent.0) {
+            #[cfg(debug_assertions)]
+            crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(
+                tdd, Some(&[parent]), "a parent recorded fused",
+            );
+            continue;
+        }
         // Weighted reads and mints go through this level's `WeightStore` vec, so
         // a marginal level with no store yet is not fusable.
         if weighted && !tdd.weights.as_ref().is_some_and(|ws| ws.is_set(v.idx())) {
@@ -113,7 +128,26 @@ pub(super) fn fuse_pairs_inner(
             fuse_boundary::<IntFold>(eng, tdd, v, parent, side, scratch, &mut stats)?;
         }
     }
+    // A weighted group the pinned column cannot hold stays unfused, so only
+    // an unweighted fusion is recorded.
+    if !weighted {
+        for bi in 0..scratch.boundaries.len() {
+            record_fused(eng, tdd, scratch.boundaries[bi].1);
+        }
+    }
     Ok(stats)
+}
+
+/// Record that `parent`'s pairs hold no group pair fusion would fuse, as a
+/// fusion run to the end or a conjunction that sums a child out as it
+/// builds the parent leaves them (`Dirty::is_fused`). Not under a parent
+/// with both children marginal, where a fusion on one side can mint a
+/// group on the other.
+pub(crate) fn record_fused(eng: &Engine, tdd: &mut Tdd, parent: VtreeIdx) {
+    let (left, right) = tdd.vtree.children(parent);
+    if !(tdd.levels[left.idx()].is_marginal() && tdd.levels[right.idx()].is_marginal()) {
+        tdd.dirty.set_fused(eng, parent.0);
+    }
 }
 
 /// The three phases at one boundary: marginal level `v` under `parent`, on

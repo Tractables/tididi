@@ -353,6 +353,10 @@ pub(crate) struct Dirty {
     /// what every diagram starts as and what any edit makes it. A prune
     /// leaves none, and it walks only as much as these levels need.
     loose: Option<Vec<u32>>,
+    /// A bit for each level at which a pair fusion ran to the end and that
+    /// no push has named since: no node there holds two pairs that pair
+    /// fusion would fuse. Unknown, as every diagram starts, is no bit set.
+    fused: Vec<u64>,
 }
 
 impl Dirty {
@@ -371,6 +375,7 @@ impl Dirty {
         eng: Option<&crate::Engine>,
     ) -> Result<(), crate::OperationError> {
         self.loose = None;
+        self.forget_fused(level);
         for pass in Pass::ALL {
             match eng {
                 Some(eng) => eng.limits().try_push(self.list(pass), level)?,
@@ -452,6 +457,9 @@ impl Dirty {
             }
             _ => None,
         };
+        // The levels below and above were edited apart; neither side's
+        // fusions are known to hold of the levels the two leave together.
+        carried.fused.clear();
         *self = carried;
     }
 
@@ -487,12 +495,15 @@ impl Dirty {
             to.extend_from_slice(from);
             out.loose = Some(to);
         }
+        eng.limits().reserve_exact(&mut out.fused, self.fused.len())?;
+        out.fused.extend_from_slice(&self.fused);
         Ok(out)
     }
 
     /// Rename every entry through `map`, old level index to new, for levels
     /// moved to other indices of another vtree.
     pub(crate) fn remap(&mut self, map: &[VtreeIdx]) {
+        self.fused.clear();
         for list in self.lists.iter_mut().chain(self.loose.as_mut()) {
             for entry in list.iter_mut() {
                 *entry = map[*entry as usize].0;
@@ -530,6 +541,33 @@ impl Dirty {
         self.loose = levels;
     }
 
+    /// Whether a pair fusion at `level` ran to the end and no push has named
+    /// `level` since.
+    #[inline]
+    pub(crate) fn is_fused(&self, level: u32) -> bool {
+        self.fused.get(level as usize / 64).is_some_and(|word| word >> (level % 64) & 1 == 1)
+    }
+
+    /// Record that a pair fusion at `level` ran to the end, leaving no node
+    /// there two pairs to fuse. Recorded only where the room for its bit is
+    /// granted: what is not recorded is fused again, never wrongly skipped.
+    pub(crate) fn set_fused(&mut self, eng: &crate::Engine, level: u32) {
+        let word = level as usize / 64;
+        if word >= self.fused.len() && eng.limits().try_resize(&mut self.fused, word + 1, 0).is_err() {
+            return;
+        }
+        self.fused[word] |= 1 << (level % 64);
+    }
+
+    /// Drop `level`'s fusion record, for an edit of its pair lists that pushes
+    /// no level, as a rotation's inner level.
+    #[inline]
+    pub(crate) fn forget_fused(&mut self, level: u32) {
+        if let Some(word) = self.fused.get_mut(level as usize / 64) {
+            *word &= !(1 << (level % 64));
+        }
+    }
+
     /// The worklists an assembled diagram starts with: these lists, carried
     /// over from the diagram it was rebuilt from, plus the levels the
     /// assembly `rebuilt` for the contraction passes, deduplicated once they
@@ -547,6 +585,7 @@ impl Dirty {
         // Which levels an assembly left loose is its own to say; see
         // `set_loose`.
         self.loose = None;
+        self.fused.clear();
         self.seed_rebuilt(rebuilt, eng)?;
         self.dedup_above(vtree.num_nodes());
         Ok(self)
