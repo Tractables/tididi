@@ -20,7 +20,7 @@ use std::sync::Arc;
 use crate::Engine;
 use crate::diagram::{Dirty, Tdd, TddLevel, TddNodeId};
 use crate::limits::{Charged, Limits, OperationError, Transient};
-use crate::restructure::relevel::{Prepared, finish_levels, prepare_levels, rebuild_levels};
+use crate::restructure::relevel::{Prepared, finish_levels, prepare_levels, rebuild_levels, score_levels};
 use crate::restructure::scratch::RestructureScratch;
 use crate::vtree::rotate::{PendingTopo, RotationInfo, rotate_pointers};
 use crate::vtree::{RotationKind, Vtree, VtreeIdx, VtreeNode};
@@ -168,7 +168,7 @@ impl Engine {
         let info = pending.commit(&mut tree);
         let mut scratch = self.scratch.restructure.checkout(self);
         let copy = PROBE_UNITS.saturating_add(tree.num_nodes() as u64);
-        let kept = probe(self, members, info, mv, bound, copy, &mut scratch, accept)?;
+        let kept = probe(self, members, info, mv, bound, copy, &mut scratch, false, accept)?;
         if kept {
             install(members, tree);
         }
@@ -325,7 +325,7 @@ fn probe_in_place(
 ) -> Result<bool, OperationError> {
     let Some(pending) = move_in_place(tree, mv) else { return Ok(false) };
     let info = pending.info();
-    match probe(eng, members, info, mv, bound, PROBE_UNITS, scratch, |p| p.live_pairs_delta() < 0) {
+    match probe(eng, members, info, mv, bound, PROBE_UNITS, scratch, true, |p| p.live_pairs_delta() < 0) {
         Ok(true) => {
             // The bottom-up order's repair moves the promoted node past the
             // subtree it now needs below it, and every node between.
@@ -455,6 +455,13 @@ impl Charged for PreparedMembers {
 /// rebuilds it. The charge of a member is the pairs of its two old and two
 /// new levels and [`REBUILD_UNITS`], taken when it is prepared, or for a
 /// member not prepared, by its rebuild once the move is kept.
+///
+/// Where `accept` keeps exactly the moves that lower the members' total
+/// (`shrinks`), each member is scored first ([`score_levels`]), which is
+/// never above the pairs its preparation gives and almost always equal to
+/// them, and charged as if prepared. A move whose scores do not lower the
+/// total is refused unprepared; the others are prepared as above, and
+/// charged what their pairs exceed their scores.
 #[allow(clippy::too_many_arguments)]
 fn probe(
     eng: &Engine,
@@ -464,6 +471,7 @@ fn probe(
     bound: usize,
     extra: u64,
     scratch: &mut RestructureScratch,
+    shrinks: bool,
     accept: impl FnOnce(&PoolProbe<'_>) -> bool,
 ) -> Result<bool, OperationError> {
     let lim = eng.limits();
@@ -492,12 +500,37 @@ fn probe(
             continue;
         }
         prepared.0.push(Some(Prepared::default()));
-        let slot = prepared.0.last_mut().and_then(Option::as_mut).expect("pushed above");
-        let Some(new) = prepare_levels(lim, m, &info, mv.rotation.kind, mv.crossed, false, scratch, slot, bound)? else {
+        let new = if shrinks {
+            score_levels(lim, m, &info, mv.rotation.kind, mv.crossed, &mut scratch.score, bound)?
+        } else {
+            let slot = prepared.0.last_mut().and_then(Option::as_mut).expect("pushed above");
+            prepare_levels(lim, m, &info, mv.rotation.kind, mv.crossed, false, scratch, slot, bound)?
+        };
+        let Some(new) = new else {
             return Ok(false);
         };
         gate.poll((old + new) as u64 + REBUILD_UNITS)?;
         after.push(new);
+    }
+    if shrinks {
+        // A score is at most the pairs: a total no lower than before is a
+        // move `accept` refuses.
+        if after.iter().sum::<usize>() >= before.iter().sum::<usize>() {
+            #[cfg(debug_assertions)]
+            debug_check_scores(lim, members, &info, mv, bound, &after, scratch)?;
+            gate.flush()?;
+            lim.check_stop()?;
+            return Ok(false);
+        }
+        for (i, m) in members.iter().enumerate() {
+            let Some(slot) = prepared.0[i].as_mut() else { continue };
+            let Some(new) = prepare_levels(lim, m, &info, mv.rotation.kind, mv.crossed, false, scratch, slot, bound)? else {
+                return Ok(false);
+            };
+            debug_assert!(new >= after[i], "a score is at most the pairs: {} > {new}", after[i]);
+            gate.poll(new.saturating_sub(after[i]) as u64)?;
+            after[i] = new;
+        }
     }
     // The gate's residue charged and the stop tested before `accept`
     // decides.
@@ -557,6 +590,33 @@ fn probe(
         }
     }
     outcome
+}
+
+/// A debug build's check of a move its scores refused: every member's
+/// preparation gives at least its score.
+#[cfg(debug_assertions)]
+fn debug_check_scores(
+    lim: &Limits,
+    members: &[&mut Tdd],
+    info: &RotationInfo,
+    mv: PoolMove,
+    bound: usize,
+    scores: &[usize],
+    scratch: &mut RestructureScratch,
+) -> Result<(), OperationError> {
+    let (v, w) = (info.v_idx.idx(), info.w_idx.idx());
+    for (m, &score) in members.iter().zip(scores) {
+        if m.levels[v].live_pairs() <= 1 && m.levels[w].live_pairs() == m.levels[v].live_pairs() {
+            continue;
+        }
+        let mut prepared = Prepared::default();
+        let new = prepare_levels(lim, m, info, mv.rotation.kind, mv.crossed, false, scratch, &mut prepared, bound)?;
+        lim.discard(prepared);
+        if let Some(new) = new {
+            debug_assert!(new >= score, "a score is at most the pairs: {score} > {new}");
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

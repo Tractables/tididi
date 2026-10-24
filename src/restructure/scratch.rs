@@ -5,7 +5,7 @@ use crate::execution::pool::{Buffers, PooledScratch, Scratch};
 
 
 use crate::diagram::ChildPair;
-use super::relevel::Prepared;
+use super::relevel::{Prepared, ScoreScratch};
 
 /// Reusable scratch for `rebuild_rotated_levels`. Threaded by
 /// the rotation-search loops so the per-probe allocator churn is paid once per
@@ -31,6 +31,8 @@ pub(crate) struct RestructureScratch {
     pub(super) prepared: Prepared,
     // A right rotation's cells in order of their axis.
     pub(super) by_axis: Vec<u64>,
+    // The tables of a rotation's score (`score_levels`).
+    pub(super) score: ScoreScratch,
 }
 
 /// The clustering build of the inner level: the table of the first group of
@@ -49,6 +51,7 @@ impl Buffers for RestructureScratch {
         visit(&mut self.outer_pairs);
         visit(&mut self.axis_ends);
         self.prepared.buffers(visit);
+        self.score.buffers(visit);
         visit(&mut self.by_axis);
         visit(&mut self.bucket.table);
         visit(&mut self.bucket.ends);
@@ -59,6 +62,7 @@ impl Buffers for RestructureScratch {
 impl PooledScratch for RestructureScratch {
     fn prepare(&mut self) {
         self.prepared.clear();
+        self.score.clear();
         self.by_axis.clear();
         self.bucket.table.clear();
         self.bucket.ends.clear();

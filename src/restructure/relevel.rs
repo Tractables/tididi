@@ -361,6 +361,305 @@ fn prepare_with<W: Word>(
     Ok(Some((nodes, inner_pairs + outer_pairs)))
 }
 
+/// The tables of [`score_levels`], kept warm across probes.
+#[derive(Default)]
+pub(crate) struct ScoreScratch {
+    // The old inner level's blocks: one per node `j` and child `y` on the
+    // side that stays in the new inner pair, with the summed hash and the
+    // number of its cells `z`. Node `j`'s blocks end at `block_ends[j]`.
+    block_ends: Vec<u32>,
+    block_y: Vec<u32>,
+    block_hash: Vec<u64>,
+    block_cells: Vec<u32>,
+    // Per `y`: the stamp of the node or the row that last touched it, and
+    // the slot of its block in that node.
+    mark: Vec<(u32, u32)>,
+    // Per `y`: the hash and size of the context of the row under way.
+    acc: Vec<(u64, u32)>,
+    touched: Vec<u32>,
+    // The last stamp handed out; `mark` holds none above it.
+    stamp: u32,
+    // The old outer pairs `(owner, inner node)` filed by their child `x`,
+    // `x`'s ending at `x_ends[x + 1]`.
+    x_ends: Vec<u32>,
+    by_x: Vec<(u32, u32)>,
+    // One key per new inner pair: its context's hash and size.
+    keys: Vec<(u64, u32)>,
+    table: Vec<u64>,
+}
+
+impl ScoreScratch {
+    /// Every buffer, for the scratch pool's accounting.
+    pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
+        visit(&mut self.block_ends);
+        visit(&mut self.block_y);
+        visit(&mut self.block_hash);
+        visit(&mut self.block_cells);
+        visit(&mut self.mark);
+        visit(&mut self.acc);
+        visit(&mut self.touched);
+        visit(&mut self.x_ends);
+        visit(&mut self.by_x);
+        visit(&mut self.keys);
+        visit(&mut self.table);
+    }
+
+    /// Empty, the capacity kept. `mark` is emptied too, so the stamps start
+    /// over.
+    pub(super) fn clear(&mut self) {
+        self.block_ends.clear();
+        self.block_y.clear();
+        self.block_hash.clear();
+        self.block_cells.clear();
+        self.mark.clear();
+        self.acc.clear();
+        self.touched.clear();
+        self.stamp = 0;
+        self.x_ends.clear();
+        self.by_x.clear();
+        self.keys.clear();
+        self.table.clear();
+    }
+
+    /// A stamp no entry of `mark` holds yet.
+    #[inline]
+    fn next_stamp(&mut self) -> u32 {
+        if self.stamp == u32::MAX {
+            self.mark.iter_mut().for_each(|m| m.0 = 0);
+            self.stamp = 0;
+        }
+        self.stamp += 1;
+        self.stamp
+    }
+
+    /// `mark` and `acc` long enough to index `y`.
+    #[inline]
+    fn cover(&mut self, lim: &Limits, y: usize) -> Result<(), OperationError> {
+        if y >= self.mark.len() {
+            let len = (y + 1).max(2 * self.mark.len());
+            lim.try_resize(&mut self.mark, len, (0, 0))?;
+            lim.try_resize(&mut self.acc, len, (0, 0))?;
+        }
+        Ok(())
+    }
+}
+
+/// A 64-bit mix of `x` (the `splitmix64` finalizer).
+#[inline(always)]
+fn mix(x: u64) -> u64 {
+    let mut z = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// The pairs the two levels of a rotation in `dir` would hold, scored
+/// without building them, or `None` where [`prepare_levels`] would give up
+/// at `max_pairs`. The diagram is only read. The score is never above the
+/// count [`prepare_levels`] gives, and equals it unless two different
+/// contexts collide on a 64-bit hash, so a score at least the old count
+/// proves the rotation cannot lower it. The diagram must be Boolean.
+///
+/// Write `x` for the old outer pair's child that moves into the new inner
+/// pair, `y` for the old inner pair's child that joins it and `z` for the
+/// one that rises to the outer level. The new inner pair `(x, y)` gets the
+/// set of the cells `(p, z)` reached through an old outer pair `(x, j)` of
+/// node `p` and an old inner pair `(y, z)` of node `j`; the new inner level
+/// holds one pair per such `(x, y)`, one node per distinct set, and the new
+/// outer level one pair per cell of each distinct set. A Boolean diagram
+/// reaches no cell twice for one `(x, y)`: an old inner pair has one owner,
+/// and so does an old outer pair. So the sum of a hash over a set's cells
+/// identifies it without sorting them, and with the cell hash the product
+/// `ξ(p)·η(z)`, each old inner node's cells beside one `y` sum to one block
+/// hash first, read once for every outer pair that uses the node.
+///
+/// The work is a pass over each old level, one step per block an old outer
+/// pair reaches, and a hash table of the new inner pairs: no triple is
+/// expanded or sorted.
+///
+/// # Errors
+///
+/// [`OperationError::OverBudget`] when a table the score needs is refused.
+pub(crate) fn score_levels(
+    lim: &Limits,
+    tdd: &Tdd,
+    info: &RotationInfo,
+    dir: RotationKind,
+    crossed: bool,
+    scratch: &mut ScoreScratch,
+    max_pairs: usize,
+) -> Result<Option<usize>, OperationError> {
+    let (old_v, old_w) = (&tdd.levels[info.v_idx.idx()], &tdd.levels[info.w_idx.idx()]);
+    let max_pairs = max_pairs.min(u32::MAX as usize);
+    let left = dir == RotationKind::Left;
+    // An old outer pair's `x` and inner node; an old inner pair's `y` and
+    // `z`, the stored sides exchanged where the move is crossed.
+    let split_v = |vp: ChildPair| {
+        let (x, j) = if left { (vp.left, vp.right) } else { (vp.right, vp.left) };
+        (x.0 as usize, ChildDecoder::structural().node(j).idx())
+    };
+    let split_w = |wp: ChildPair| {
+        let (wl, wr) = if crossed { (wp.right, wp.left) } else { (wp.left, wp.right) };
+        if left { (wl.0 as usize, wr.0) } else { (wr.0 as usize, wl.0) }
+    };
+    let scored = score_with(lim, old_v, old_w, split_v, split_w, scratch, max_pairs);
+    release_or_clear(lim, &mut scratch.block_ends);
+    release_or_clear(lim, &mut scratch.block_y);
+    release_or_clear(lim, &mut scratch.block_hash);
+    release_or_clear(lim, &mut scratch.block_cells);
+    release_or_clear(lim, &mut scratch.by_x);
+    release_or_clear(lim, &mut scratch.x_ends);
+    release_or_clear(lim, &mut scratch.keys);
+    release_or_clear(lim, &mut scratch.table);
+    scored
+}
+
+/// [`score_levels`] with the geometry of the move in `split_v` and
+/// `split_w`.
+fn score_with(
+    lim: &Limits,
+    old_v: &TddLevel,
+    old_w: &TddLevel,
+    split_v: impl Fn(ChildPair) -> (usize, usize),
+    split_w: impl Fn(ChildPair) -> (usize, u32),
+    s: &mut ScoreScratch,
+    max_pairs: usize,
+) -> Result<Option<usize>, OperationError> {
+    const OWNER: u64 = 0x2545_F491_4F6C_DD1D;
+    const CELL: u64 = 0x5851_F42D_4C95_7F2D;
+    const SIZE: u64 = 0x1405_7B7E_F767_814F;
+    // The blocks of each old inner node, grouped by `y`.
+    let n_w = old_w.nodes().len();
+    let w_pairs = old_w.live_pairs();
+    s.block_ends.clear();
+    s.block_y.clear();
+    s.block_hash.clear();
+    s.block_cells.clear();
+    lim.reserve_exact(&mut s.block_ends, n_w)?;
+    lim.reserve(&mut s.block_y, w_pairs)?;
+    lim.reserve(&mut s.block_hash, w_pairs)?;
+    lim.reserve(&mut s.block_cells, w_pairs)?;
+    for j in 0..n_w {
+        let stamp = s.next_stamp();
+        for wp in old_w.pairs_iter_of_idx(j) {
+            let (y, z) = split_w(wp);
+            s.cover(lim, y)?;
+            let m = &mut s.mark[y];
+            if m.0 != stamp {
+                *m = (stamp, s.block_y.len() as u32);
+                s.block_y.push(y as u32);
+                s.block_hash.push(0);
+                s.block_cells.push(0);
+            }
+            let b = m.1 as usize;
+            s.block_hash[b] = s.block_hash[b].wrapping_add(mix(u64::from(z) ^ CELL));
+            s.block_cells[b] += 1;
+        }
+        s.block_ends.push(s.block_y.len() as u32);
+    }
+    // The old outer pairs filed by `x`, and the triples a rebuild would
+    // expand, which its first bail counts.
+    let n_v = old_v.nodes().len();
+    let v_pairs = old_v.live_pairs();
+    s.x_ends.clear();
+    let mut triples = 0usize;
+    for p in 0..n_v {
+        for vp in old_v.pairs_iter_of_idx(p) {
+            let (x, j) = split_v(vp);
+            if x + 2 > s.x_ends.len() {
+                let len = (x + 2).max(2 * s.x_ends.len());
+                lim.try_resize(&mut s.x_ends, len, 0)?;
+            }
+            s.x_ends[x + 1] += 1;
+            triples += old_w.pair_count_at(j);
+        }
+    }
+    // `collect_triples` gives up once it has pushed `max_pairs` triples.
+    if triples >= max_pairs.max(1) {
+        return Ok(None);
+    }
+    for x in 1..s.x_ends.len() {
+        s.x_ends[x] += s.x_ends[x - 1];
+    }
+    s.by_x.clear();
+    lim.try_resize(&mut s.by_x, v_pairs, (0, 0))?;
+    for p in 0..n_v {
+        for vp in old_v.pairs_iter_of_idx(p) {
+            let (x, j) = split_v(vp);
+            let at = &mut s.x_ends[x];
+            s.by_x[*at as usize] = (p as u32, j as u32);
+            *at += 1;
+        }
+    }
+    // Each `x`'s new inner pairs: a row over `y`, summing the blocks its
+    // outer pairs reach. `x_ends[x]` is now `x`'s end.
+    s.keys.clear();
+    s.touched.clear();
+    lim.reserve(&mut s.touched, s.mark.len())?;
+    let mut begin = 0usize;
+    for x in 0..s.x_ends.len() {
+        let end = s.x_ends[x] as usize;
+        if begin == end {
+            continue;
+        }
+        let stamp = s.next_stamp();
+        for e in begin..end {
+            let (p, j) = s.by_x[e];
+            let owner = mix(u64::from(p) ^ OWNER);
+            let blocks = if j == 0 { 0 } else { s.block_ends[j as usize - 1] as usize }..s.block_ends[j as usize] as usize;
+            for b in blocks {
+                let y = s.block_y[b] as usize;
+                let m = &mut s.mark[y];
+                if m.0 != stamp {
+                    m.0 = stamp;
+                    s.acc[y] = (0, 0);
+                    s.touched.push(y as u32);
+                }
+                let acc = &mut s.acc[y];
+                acc.0 = acc.0.wrapping_add(owner.wrapping_mul(s.block_hash[b]));
+                acc.1 += s.block_cells[b];
+            }
+        }
+        lim.reserve(&mut s.keys, s.touched.len())?;
+        for &y in &s.touched {
+            s.keys.push(s.acc[y as usize]);
+        }
+        s.touched.clear();
+        begin = end;
+    }
+    // The distinct contexts: the new inner nodes, and their cells the new
+    // outer pairs. A key of zero marks an empty slot; a context hashing to
+    // zero takes key one, which can only merge it with another, lowering
+    // the score.
+    let inner_pairs = s.keys.len();
+    let slots = (2 * inner_pairs).next_power_of_two().max(16);
+    let (mask, shift) = (slots - 1, 64 - slots.trailing_zeros());
+    s.table.clear();
+    lim.try_resize(&mut s.table, slots, 0)?;
+    let (mut nodes, mut outer_pairs) = (0usize, 0usize);
+    for &(hash, cells) in &s.keys {
+        let key = (hash ^ mix(u64::from(cells) ^ SIZE)).max(1);
+        let mut at = (key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> shift) as usize;
+        loop {
+            let slot = s.table[at];
+            if slot == 0 {
+                s.table[at] = key;
+                nodes += 1;
+                outer_pairs += cells as usize;
+                break;
+            }
+            if slot == key {
+                break;
+            }
+            at = (at + 1) & mask;
+        }
+    }
+    if nodes + inner_pairs >= max_pairs {
+        return Ok(None);
+    }
+    Ok(Some(inner_pairs + outer_pairs))
+}
+
 /// Write the two levels of the rotation `prepared` was prepared for
 /// ([`prepare_levels`]) into `tdd`, which must not have changed since, and
 /// return the levels they replace, outer then inner. `prepared` is left
