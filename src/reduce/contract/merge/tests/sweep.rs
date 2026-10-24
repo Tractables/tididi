@@ -122,12 +122,7 @@ fn a_shrunk_extended_parent_node_inlines_its_survivor() {
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
 
     // T1 twins {0, 1} merged into 0: the parent's second pair is dropped.
-    let mut remap = MergeRemap {
-        merge_target: vec![0, 0],
-        duplicate_redirect: vec![false, false],
-        final_remap: vec![NodeIdx(0); 2],
-    };
-    build_final_remap(&mut remap, 2);
+    let remap = remap_of(&[0, 0], &[]);
 
     rewrite_parent(&Limits::new(), &mut tdd, root, ChildSide::Left, &remap, None);
 
@@ -165,12 +160,7 @@ fn rewritten_parent(len: usize, place: &[(Option<usize>, Vec<ChildPair>)]) -> Td
     parent.nodes = nodes.into();
     let output = TddNodeId { vtree: root, local: NodeIdx(0) };
     let mut tdd = Tdd::from_levels_unchecked(vtree, levels, output);
-    let mut remap = MergeRemap {
-        merge_target: vec![0, 0, 2, 3, 3],
-        duplicate_redirect: vec![false; 5],
-        final_remap: vec![NodeIdx(0); 5],
-    };
-    build_final_remap(&mut remap, 5);
+    let remap = remap_of(&[0, 0, 2, 3, 3], &[]);
     rewrite_parent(&Limits::new(), &mut tdd, root, ChildSide::Left, &remap, None);
     tdd.levels[root.idx()].clone()
 }
@@ -224,13 +214,11 @@ fn refused_merge_reuses_buffers_without_replaying_stale_plans() {
     let mut scratch = eng.scratch.reduce.contract.checkout(&eng);
     scratch.flat_groups = vec![0, 1];
     scratch.group_starts = vec![0];
-    scratch.remap.merge_target = vec![0, 1];
     scratch.remap.final_remap = vec![NodeIdx(0); 2];
-    scratch.remap.duplicate_redirect = vec![false; 2];
     scratch.merge.sel.reserve(8);
     let allocation = scratch.merge.sel.as_ptr();
 
-    // Reserves before the arena's: the redirect flags, then the planner's
+    // Reserves before the arena's: the absorbed bits, then the planner's
     // three buffers (`sel`, `group_plans` and `resolve_keeps`; a diagram
     // without a marginal level has no overlap filter to reserve for). The
     // fifth is the survivor's pairs.
@@ -375,7 +363,7 @@ fn the_rebuild_unions_groups_and_leaves_no_dead_arena() {
     let before: Vec<Vec<ChildPair>> = content(&level);
     // Groups {0, 3, 6} concat, {1, 4} concat, {2, 5} a content-equal
     // redirect of 5 onto 2.
-    let bufs = MergeBuffers {
+    let mut bufs = MergeBuffers {
         sel: vec![0, 3, 6, 1, 4, 2, 5],
         group_plans: vec![
             GroupPlan { action: GroupAction::Concat, start: 0, end: 3 },
@@ -384,13 +372,16 @@ fn the_rebuild_unions_groups_and_leaves_no_dead_arena() {
         ],
         ..Default::default()
     };
-    let remap = MergeRemap {
-        merge_target: vec![0, 1, 2, 0, 1, 2, 0],
-        duplicate_redirect: vec![false, false, false, false, false, true, false],
-        final_remap: vec![NodeIdx(0); 7],
-    };
+    let mut remap = MergeRemap { final_remap: vec![NodeIdx(0); 7], absorbed: vec![0], ..Default::default() };
+    let policy = MergePolicy { plain_level: true, parent_marginal: true, t1_scalable: false, disjoint_supports: false };
+    assert_eq!(mark_group_members(&policy, &mut remap, &mut bufs), 4);
     let lim = Limits::new();
-    let arenas = reserve_rebuilt_level(&lim, &level, &remap, &bufs).unwrap();
+    let arenas = remap_and_reserve(&lim, &level, &mut remap, &bufs).unwrap();
+    assert_eq!(
+        remap.final_remap,
+        remap_of(&[0, 1, 2, 0, 1, 2, 0], &[5]).final_remap,
+        "the survivors numbered in node order, each member at its survivor",
+    );
     rebuild_level(&mut level, arenas, &remap, &bufs, true);
 
     let cat = |nodes: &[usize]| -> Vec<ChildPair> { nodes.iter().flat_map(|&i| before[i].clone()).collect() };

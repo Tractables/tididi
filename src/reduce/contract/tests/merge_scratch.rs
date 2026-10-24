@@ -27,7 +27,7 @@ use super::sweep::contract_all_twins;
 /// with sib_slot0 at parent node P).
 ///
 /// `filtered = [A, C]` (disjoint pair sets), `duplicate_members = [B]`. Concat A+C;
-/// B's `merge_target` stays B (identity) → B is canonical after compaction and
+/// B is not absorbed → B is canonical after compaction and
 /// remains at t1. After concat A has `{(pos,one),(one,pos)}`, B has
 /// `{(pos,one)}` — no longer content-equal → B stays unmerged.
 ///
@@ -95,7 +95,7 @@ fn mixed_group_concats_disjoint_members_and_keeps_dup_member() {
     let mut tdd = build_fixture();
     contract_all_twins(&eng, &mut tdd).expect("contract_all_twins");
 
-    // filtered=[A,C] → concat; B's merge_target stays B (canonical). A and B
+    // filtered=[A,C] → concat; B is not absorbed (canonical). A and B
     // are still twins after the first pass (both context={parent_node_0, slot0}), but
     // B overlaps A_merged (B's pair is a subset of A_merged's pairs) and is not
     // content-equal to it → B is in neither filtered nor duplicate_members → B never
@@ -145,8 +145,8 @@ fn merge_buffers_clear_retains_allocations() {
 
 // ── Budget: the contract-merge scratch buffers are charged ─────────────────
 
-/// `contract_twins` grows three level-width scratch buffers (`merge_target`,
-/// `duplicate_redirect`, `final_remap`). They must go through the budget-charged
+/// `contract_twins` grows two level-width scratch buffers (`final_remap` and
+/// the `absorbed` bits). They must go through the budget-charged
 /// `try_resize`, so a contraction that runs out of apply budget returns
 /// `Err(OverBudget)` instead of allocating past the envelope — and it must do
 /// so before any level is mutated.
@@ -154,8 +154,8 @@ fn merge_buffers_clear_retains_allocations() {
 /// Shape: a warm-up contraction over a level of the same width whose nodes are
 /// not twins sizes every width-keyed scratch (the fingerprint tables), and the
 /// group-keyed ones are grown directly, so the twin run below charges nothing
-/// for those; it then finds its three merge buffers still empty, and a budget
-/// smaller than the first of them (`merge_target`, `4 × width` bytes) must trip.
+/// for those; it then finds its merge buffers still empty, and a budget
+/// smaller than the first of them (`final_remap`, `4 × width` bytes) must trip.
 fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
     let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
     let (v_left, v_right) = vtree.children(root);
@@ -171,7 +171,7 @@ fn wide_twin_fixture(vtree: &Arc<Vtree>, width: usize, twins: bool) -> Tdd {
 
     let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
     // Arenas pre-reserved so the twin run's grand reserve and parent re-encode
-    // charge nothing: only the three scratch buffers are left to be charged.
+    // charge nothing: only the merge scratch buffers are left to be charged.
     levels[v_left.idx()].pairs.stored_mut().reserve(8 * width);
     levels[v_left.idx()].ranges.reserve(width);
     levels[root.idx()].pairs.stored_mut().reserve(8 * width);
@@ -217,7 +217,7 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
     assert_eq!(warm.levels[v_left.idx()].slot_count(), width, "warm-up must not merge");
     // The group-keyed fingerprint buffers are sized by what the twin run finds,
     // which the twin-free warm-up cannot pre-size: grow them here, untracked and
-    // generously, leaving the three merge buffers as the only cold scratch.
+    // generously, leaving the merge buffers as the only cold scratch.
     {
         let mut s = eng.scratch.reduce.contract.checkout(&eng);
         let big = 64 * width;
@@ -227,11 +227,11 @@ fn contract_merge_scratch_buffers_are_budget_charged() {
         s.counts.resize_with(big, Default::default);
         s.cursors.resize_with(big, Default::default);
         s.slice_unsorted.resize_with(big, Default::default);
-        assert!(s.remap.merge_target.is_empty() && s.remap.duplicate_redirect.is_empty() && s.remap.final_remap.is_empty());
+        assert!(s.remap.final_remap.is_empty() && s.remap.absorbed.is_empty());
         drop(s);
     }
 
-    // Twin run under a budget smaller than `merge_target` alone.
+    // Twin run under a budget smaller than `final_remap` alone.
     let mut tdd = wide_twin_fixture(&vtree, width, true);
     lim.reset_meters();
     let budget = (4 * width - 1) as u64;

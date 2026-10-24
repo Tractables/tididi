@@ -327,7 +327,7 @@ pub(super) fn group_twins_by_entries(
     }
     // Node indices at this level are written u32-wide below (`cursors`,
     // `flat_groups`). That is the same invariant the merge side already relies
-    // on (`merge_target[i] = i as u32`, `final_remap: Vec<NodeIdx>`): every
+    // on (`final_remap: Vec<NodeIdx>`): every
     // ref into a level is a `NodeIdx(u32)`, so a level wider than 2^32
     // slots could not be referenced at all.
     debug_assert!(

@@ -5,14 +5,14 @@ use crate::Engine;
 use crate::vtree::VtreeIdx;
 
 use crate::limits::{Limits, OperationError};
-use crate::diagram::{ChildPair, EncodedNode, NodeKind, PairRange, RangeTable, Tdd, TddLevel};
+use crate::diagram::{ChildPair, EncodedNode, NodeIdx, NodeKind, PairRange, RangeTable, Tdd, TddLevel};
 
 use super::super::scratch::{DuplicateScratch, MergeBuffers, MergeRemap};
 use super::plan::{GroupAction, GroupPlan};
-use super::rewrite::survivor;
+use super::rewrite::{survivor, DROPPED};
 
 /// The arenas the merged level is rebuilt into, had before the merge
-/// changes anything ([`reserve_rebuilt_level`]).
+/// changes anything ([`remap_and_reserve`]).
 pub(super) struct RebuiltArenas {
     pairs: Vec<ChildPair>,
     ranges: RangeTable,
@@ -22,40 +22,56 @@ pub(super) struct RebuiltArenas {
 /// see [`TddLevel::encode_multi`].
 const PACKED_LIMIT: usize = 1 << 31;
 
-/// Reserve the arenas of the level `t1` will be after the committed merge:
-/// exactly its pairs, every survivor's own and each concat group's members'
-/// at its survivor, and a range entry for each node whose range does not fit
-/// the packed encoding. Room past the old arena's capacity is charged, as
-/// growth of that arena would be; the old arena is freed when the rebuild
-/// swaps the new one in.
+/// Whether node `i` is merged away into a survivor.
+#[inline]
+fn absorbed(bits: &[u64], i: usize) -> bool {
+    (bits[i / 64] >> (i % 64)) & 1 != 0
+}
+
+/// In one pass in node order: number the survivors in `remap.final_remap`
+/// and point each absorbed member's entry at its survivor's new number,
+/// keeping its [`DROPPED`] bit; and reserve the arenas of the level `t1`
+/// will be after the committed merge: exactly its pairs, every survivor's
+/// own and each concat group's members' at its survivor, and a range entry
+/// for each node whose range does not fit the packed encoding. Room past
+/// the old arena's capacity is charged, as growth of that arena would be;
+/// the old arena is freed when the rebuild swaps the new one in.
 ///
-/// `remap.merge_target` and `remap.duplicate_redirect` mark the absorbed
-/// members, and `bufs.group_plans` are sorted by survivor
-/// ([`plan_groups`](super::plan::plan_groups)).
+/// `remap` is as [`mark_group_members`](super::mark_group_members) leaves
+/// it, and `bufs.group_plans` are sorted by survivor
+/// ([`plan_groups`](super::plan::plan_groups)). A member follows its
+/// survivor, the lowest of its group, so the survivor is numbered first.
 ///
 /// # Errors
 ///
-/// `Err(OperationError::OverBudget)` when a reservation is refused; nothing
-/// has changed at that point.
-pub(super) fn reserve_rebuilt_level(
+/// `Err(OperationError::OverBudget)` when a reservation is refused; only
+/// the scratch has changed at that point.
+pub(super) fn remap_and_reserve(
     lim: &Limits,
     level: &TddLevel,
-    remap: &MergeRemap,
+    remap: &mut MergeRemap,
     bufs: &MergeBuffers,
 ) -> Result<RebuiltArenas, OperationError> {
-    // One pass in node order over the node words: a survivor keeps its own
-    // range, an absorbed concat member's range moves to its survivor, and an
-    // inline node takes an arena slot only when a concat group unions it.
+    // A survivor keeps its own range, an absorbed concat member's range
+    // moves to its survivor, and an inline node takes an arena slot only
+    // when a concat group unions it.
+    let MergeRemap { final_remap, absorbed: bits, .. } = remap;
     let mut plans = concat_plans(bufs);
-    let mut total = 0usize;
+    let (mut total, mut next) = (0usize, 0u32);
     for i in 0..level.nodes().len() {
-        let absorbed = remap.merge_target[i] != i as u32;
-        let unioned = if absorbed {
-            if remap.duplicate_redirect[i] {
+        let unioned = if absorbed(bits, i) {
+            let to = final_remap[i].0;
+            let keep = (to & !DROPPED) as usize;
+            debug_assert!(keep < i, "a group's survivor is its lowest member");
+            final_remap[i] = NodeIdx(final_remap[keep].0 | (to & DROPPED));
+            if to & DROPPED == 0 {
+                // A content-equal redirect: its pairs are dropped.
                 continue;
             }
             true
         } else {
+            final_remap[i] = NodeIdx(next);
+            next += 1;
             plans.next_if(|p| bufs.sel[p.start as usize] == i as u32).is_some()
         };
         let node = level.node(i);
@@ -64,7 +80,7 @@ pub(super) fn reserve_rebuilt_level(
             None => usize::from(unioned),
         };
     }
-    let ranged = if total < PACKED_LIMIT { 0 } else { ranged_nodes(level, remap, bufs) };
+    let ranged = if total < PACKED_LIMIT { 0 } else { ranged_nodes(level, bits, bufs) };
     let mut pairs = Vec::new();
     lim.reserve_counted_exact(&mut pairs, total)?;
     let grown = total.saturating_sub(level.pairs.capacity()) as u64;
@@ -85,11 +101,11 @@ fn concat_plans(bufs: &MergeBuffers) -> std::iter::Peekable<impl Iterator<Item =
 /// or length reaches [`PACKED_LIMIT`]. Read only for an arena of 2^31 pairs
 /// or more, where it lays the level out as [`rebuild_level`] will.
 #[cold]
-fn ranged_nodes(level: &TddLevel, remap: &MergeRemap, bufs: &MergeBuffers) -> usize {
+fn ranged_nodes(level: &TddLevel, bits: &[u64], bufs: &MergeBuffers) -> usize {
     let mut plans = concat_plans(bufs);
     let (mut start, mut ranged) = (0usize, 0usize);
     for i in 0..level.nodes().len() {
-        if remap.merge_target[i] != i as u32 {
+        if absorbed(bits, i) {
             continue;
         }
         let len = match plans.next_if(|p| bufs.sel[p.start as usize] == i as u32) {
@@ -164,7 +180,7 @@ pub(super) fn rebuild_level(
     let nodes = nodes.stored_mut();
     let mut write = 0usize;
     for read in 0..nodes.len() {
-        if remap.merge_target[read] != read as u32 {
+        if absorbed(&remap.absorbed, read) {
             continue;
         }
         let node = nodes[read];

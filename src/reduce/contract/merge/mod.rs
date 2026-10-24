@@ -13,11 +13,11 @@ mod data;
 mod plan;
 mod rewrite;
 
-use data::{fork_down, rebuild_level, reserve_rebuilt_level};
+use data::{fork_down, rebuild_level, remap_and_reserve};
 use plan::{plan_groups, MergePolicy};
 pub(in crate::reduce::contract) use plan::{GroupAction, GroupPlan};
-use rewrite::{build_final_remap, rewrite_parent};
-pub(in crate::reduce::contract) use rewrite::survivor;
+use rewrite::rewrite_parent;
+pub(in crate::reduce::contract) use rewrite::{survivor, DROPPED};
 
 /// Merge all twin groups at level t1, then compact.
 ///
@@ -30,13 +30,13 @@ pub(in crate::reduce::contract) use rewrite::survivor;
 ///
 /// ## Steps
 ///
-/// 1. **Plan**: decide each group's action and point its absorbed members at
-///    the first ("kept") node; reserve the rebuilt level's arena.
+/// 1. **Plan**: decide each group's action and mark its absorbed members;
+///    in one pass over the level, number the survivors, point each member at
+///    its survivor's new index and size the rebuilt level's arena.
 ///
 /// 2. **Rewrite the parent**: drop the pairs that reference merged-away twins
-///    and remap the rest through the composed (twin → kept → compact) map,
-///    then sweep the parent's arena once its garbage dominates
-///    (`TddLevel::compact_pairs_if_stale`).
+///    and remap the rest through that map, then sweep the parent's arena
+///    once its garbage dominates (`TddLevel::compact_pairs_if_stale`).
 ///
 /// 3. **Rebuild**: one pass over the level in node order unions each group's
 ///    pairs into its kept node, drops the merged-away nodes and leaves the
@@ -59,25 +59,20 @@ pub(super) fn contract_twins(
 
     // Step 1: plan each group's merge into its first ("kept") node.
     //
-    // `merge_target[i]` maps each node to the kept node it merges into.
-    // Canonical nodes (merge_target[i] == i) survive; others are absorbed.
-    //
-    // The three level-width buffers (`merge_target`, `duplicate_redirect`,
-    // `final_remap`) are grown fallibly and before any mutation, so a grow
-    // that trips the budget surfaces before the diagram changes.
-    // `final_remap` is only filled in Step 2, but it is sized here for that
-    // reason.
+    // `remap.absorbed` marks the members merged away; every other node
+    // survives. `final_remap` takes each node to its survivor's new index.
+    // Both are grown fallibly and before any mutation, so a grow that trips
+    // the budget surfaces before the diagram changes.
     let ContractScratch {
         remap, merge: bufs, duplicate, group_starts, flat_groups, has_marginal_below, has_marginal_below_valid,
         diagram_marginal, ..
     } = scratch;
-    lim.try_resize(&mut remap.merge_target, width, 0u32)?;
     lim.try_resize(&mut remap.final_remap, width, NodeIdx(0))?;
-    for i in 0..width { remap.merge_target[i] = i as u32; }
+    let words = width.div_ceil(64);
+    lim.try_resize(&mut remap.absorbed, words, 0u64)?;
+    remap.absorbed[..words].fill(0);
     let diagram_marginal = *diagram_marginal.get_or_insert_with(|| tdd.has_marginal_level());
     let mut policy = MergePolicy::decide(tdd, t1, parent, diagram_marginal);
-    remap.duplicate_redirect.clear();
-    lim.try_resize(&mut remap.duplicate_redirect, width, false)?;
     bufs.clear();
 
     // A plain level of a diagram with a marginal level reads the marginal
@@ -114,7 +109,7 @@ pub(super) fn contract_twins(
     // Everything the merge allocates is had before it changes anything: the
     // rebuilt level's arenas, and the room an implicit parent is rewritten
     // into where a pair changes.
-    let arenas = reserve_rebuilt_level(lim, &tdd.levels[t1.idx()], remap, bufs)?;
+    let arenas = remap_and_reserve(lim, &tdd.levels[t1.idx()], remap, bufs)?;
     let parent_room = match tdd.levels[parent.idx()].pairs.implicit() {
         Some(_) => Some(tdd.levels[parent.idx()].store_room(lim)?),
         None => None,
@@ -125,7 +120,6 @@ pub(super) fn contract_twins(
     tdd.invalidate_with_parent(t1);
     tdd.levels.mark_changed(parent);
 
-    build_final_remap(remap, width);
     rewrite_parent(lim, tdd, parent, t1_side, remap, parent_room);
     // Reclaim the parent's shrunk pair lists; legal only now that the rewrite
     // is done and no pair-arena offset is held across the call (the caller
@@ -143,10 +137,12 @@ pub(super) fn contract_twins(
     Ok(merged_members)
 }
 
-/// Point each planned group's absorbed members at its survivor, and list
-/// the concat survivors fork-down resolves. Returns the number of members
-/// merged away — 0 means the level is unchanged. Touches only the scratch:
-/// the rebuild unions the pairs.
+/// Mark each planned group's absorbed members, and list the concat
+/// survivors fork-down resolves. A member's `final_remap` entry holds its
+/// survivor's old index, with [`DROPPED`] set unless the member is a
+/// content-equal redirect, until [`remap_and_reserve`] numbers the
+/// survivors. Returns the number of members merged away — 0 means the level
+/// is unchanged. Touches only the scratch: the rebuild unions the pairs.
 fn mark_group_members(policy: &MergePolicy, remap: &mut MergeRemap, bufs: &mut MergeBuffers) -> usize {
     // 0 ⇒ every group was overlap-filtered and the level is unchanged; reporting
     // progress then would spin the caller's fixpoint loop.
@@ -155,20 +151,18 @@ fn mark_group_members(policy: &MergePolicy, remap: &mut MergeRemap, bufs: &mut M
     for p in &*group_plans {
         let members = &sel[p.start as usize..p.end as usize];
         let keep = members[0];
+        // A content-equal redirect keeps the members' parent pairs, remapped
+        // onto the survivor; every other member's are dropped.
+        let dropped = if p.action == GroupAction::DupRedirect { 0 } else { DROPPED };
         for &idx in &members[1..] {
-            remap.merge_target[idx as usize] = keep;
+            remap.absorbed[(idx / 64) as usize] |= 1 << (idx % 64);
+            remap.final_remap[idx as usize] = NodeIdx(keep | dropped);
         }
         merged_members += members.len() - 1;
-        match p.action {
-            // Concat-all path: the survivor may hold duplicate pairs, which
-            // fork-down resolves after the rebuild.
-            GroupAction::Concat if policy.t1_scalable => resolve_keeps.push(keep),
-            GroupAction::Concat => {}
-            GroupAction::DupRedirect => {
-                for &idx in &members[1..] {
-                    remap.duplicate_redirect[idx as usize] = true;
-                }
-            }
+        // Concat-all path: the survivor may hold duplicate pairs, which
+        // fork-down resolves after the rebuild.
+        if p.action == GroupAction::Concat && policy.t1_scalable {
+            resolve_keeps.push(keep);
         }
     }
     merged_members

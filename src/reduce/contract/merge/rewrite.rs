@@ -9,46 +9,17 @@ use crate::limits::Limits;
 use super::super::scratch::MergeRemap;
 
 /// Set in a merged-away node's `final_remap` entry, above its survivor's
-/// index, where the parent rewrite drops the pairs naming it: every member
-/// but a content-equal one redirected onto its survivor. The parent rewrite
-/// reads one entry per pair; readers that want the survivor mask it off
-/// ([`survivor`]).
+/// new index, where the parent rewrite drops the pairs naming it: every
+/// member but a content-equal one redirected onto its survivor. The parent
+/// rewrite reads one entry per pair; readers that want the survivor mask it
+/// off ([`survivor`]). A stored side never has bit 31 set, so no node index
+/// reaches it.
 pub(in crate::reduce::contract) const DROPPED: u32 = 1 << 31;
 
 /// The new index of the survivor of node `old` after the merge.
 #[inline]
 pub(in crate::reduce::contract) fn survivor(final_remap: &[NodeIdx], old: usize) -> NodeIdx {
     NodeIdx(final_remap[old].0 & !DROPPED)
-}
-
-/// Build the composed remap `old_index → final_compact_index`, with
-/// [`DROPPED`] set on the members whose parent pairs are dropped.
-///
-/// Pass a assigns dense indices 0,1,2,... to surviving (canonical) nodes; pass b
-/// lets merged-away nodes inherit their kept node's dense index. The second pass
-/// is separate so pass a has settled every canonical node's new index before any
-/// non-canonical node reads it.
-///
-/// Example with 5 nodes, twins {0,2} merged into 0, {3,4} into 3:
-///   merge_target = [0, 1, 0, 3, 3]
-///   after (a): `final_remap[0]=0, final_remap[1]=1, final_remap[3]=2`
-///   after (b): `final_remap[2]=0|DROPPED, final_remap[4]=2|DROPPED`
-pub(super) fn build_final_remap(remap: &mut MergeRemap, width: usize) {
-    debug_assert!(remap.final_remap.len() >= width, "final_remap sized before Pass B");
-    let mut next = 0u32;
-    for i in 0..width {
-        if remap.merge_target[i] == i as u32 {
-            remap.final_remap[i] = NodeIdx(next);
-            next += 1;
-        }
-    }
-    for i in 0..width {
-        let target = remap.merge_target[i] as usize;
-        if target != i {
-            let dropped = if remap.duplicate_redirect[i] { 0 } else { DROPPED };
-            remap.final_remap[i] = NodeIdx(remap.final_remap[target].0 | dropped);
-        }
-    }
 }
 
 /// Filter out parent pairs referencing non-canonical twins and apply the
@@ -59,7 +30,7 @@ pub(super) fn build_final_remap(remap: &mut MergeRemap, width: usize) {
 /// the non-canonical pairs is an O(n) filter keyed on which twin a pair
 /// references, whatever order the pairs are in. t1 is never marginal here (see
 /// `contract_twins`), so the t1-side refs are plain node indices that
-/// `merge_target` / `final_remap` index directly.
+/// `final_remap` indexes directly.
 ///
 /// Infallible: every allocation it could need was reserved before the pass
 /// mutated anything (`room`, an implicit parent's, through `lim`).

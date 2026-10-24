@@ -101,7 +101,7 @@ impl PFusionScratch {
 #[derive(Default)]
 pub(super) struct MergeBuffers {
     /// Kept-node indices whose t1 refs need fork-down resolution. u32-wide,
-    /// matching `flat_groups` / `merge_target` — node indices in both cases, and
+    /// matching `flat_groups` — node indices in both cases, and
     /// `fork_down` consumes them as `&[u32]`.
     pub(super) resolve_keeps: Vec<u32>,
     /// Overlap-filtered group members eligible for concat merge. u32-wide for
@@ -185,27 +185,31 @@ impl DuplicateScratch {
     }
 }
 
-/// Node redirects and compacted indices produced by twin contraction.
+/// Node indices produced by twin contraction.
 #[derive(Default)]
 pub(super) struct MergeRemap {
-    /// Maps old node index → canonical (kept) node index within a twin group.
-    pub(super) merge_target: Vec<u32>,
-    /// Maps old node index → new compacted index after twin removal.
+    /// Maps old node index → the new index of its survivor (its own, for a
+    /// survivor), with [`DROPPED`](super::merge::DROPPED) set on the members
+    /// whose parent pairs the rewrite drops.
     pub(super) final_remap: Vec<crate::diagram::NodeIdx>,
-    /// Per-node flag: this merged-away node is a content-equal (identical pair
-    /// list) twin redirected onto its survivor. The parent rewrite keeps its
-    /// referencing pairs (remapped onto the survivor) rather than dropping them
-    /// — the resulting duplicate (survivor, marginal) parent pairs carry the twin's
-    /// multiplicity and are folded by pair fusion into a summed count. Only set at
-    /// plain t1 levels under a marginal-flagged parent.
-    pub(super) duplicate_redirect: Vec<bool>,
+    /// One bit per node, set on the members merged away into a survivor.
+    /// A member without [`DROPPED`](super::merge::DROPPED) is a content-equal
+    /// (identical pair list) twin redirected onto its survivor: the parent
+    /// rewrite keeps its referencing pairs, remapped onto the survivor, and
+    /// the resulting duplicate (survivor, marginal) parent pairs carry the
+    /// twin's multiplicity for pair fusion to sum. Only at plain t1 levels
+    /// under a marginal-flagged parent.
+    pub(super) absorbed: Vec<u64>,
+    /// The content-twin pass's map of each node to the lowest node of its
+    /// group ([`content_twin`](super::content_twin)).
+    pub(super) content_target: Vec<u32>,
 }
 
 impl Buffers for MergeRemap {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
-        visit(&mut self.merge_target);
         visit(&mut self.final_remap);
-        visit(&mut self.duplicate_redirect);
+        visit(&mut self.absorbed);
+        visit(&mut self.content_target);
     }
 }
 

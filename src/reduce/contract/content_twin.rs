@@ -129,13 +129,13 @@ pub(crate) fn merge_content_equal_nodes(
             continue;
         }
         dups_merged += remap_groups_onto_first(lim, &mut scratch, width)?;
-        redirect_parent_refs(tdd, level_v, &scratch.remap.merge_target[..width], &mut live);
+        redirect_parent_refs(tdd, level_v, &scratch.remap.content_target[..width], &mut live);
     }
 
     Ok(dups_merged)
 }
 
-/// Fill `scratch.remap.merge_target[..width]` with each node's canonical
+/// Fill `scratch.remap.content_target[..width]` with each node's canonical
 /// index: itself, or the lowest index of its group. Returns how many nodes
 /// map onto another.
 fn remap_groups_onto_first(
@@ -144,7 +144,7 @@ fn remap_groups_onto_first(
     width: usize,
 ) -> Result<usize, OperationError> {
     let ContractScratch { remap, group_starts, flat_groups, .. } = scratch;
-    let target = &mut remap.merge_target;
+    let target = &mut remap.content_target;
     lim.try_resize(target, width, 0u32)?;
     for (i, slot) in target.iter_mut().enumerate().take(width) {
         *slot = i as u32;
