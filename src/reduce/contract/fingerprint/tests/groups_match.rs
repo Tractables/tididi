@@ -27,6 +27,20 @@ fn listed_groups(parent: &TddLevel, child: &TddLevel, side: ChildSide) -> Vec<Ve
     groups
 }
 
+/// Put a parent node's pairs, sorted by node, in one of three orders by
+/// `order`: as they are, by sibling, or shuffled.
+fn reorder(pairs: &mut [(u32, u32)], order: usize, rng: &mut Lcg) {
+    match order % 3 {
+        0 => {}
+        1 => pairs.sort_unstable_by_key(|&(t, s)| (s, t)),
+        _ => {
+            for i in (1..pairs.len()).rev() {
+                pairs.swap(i, rng.below(i as u64 + 1) as usize);
+            }
+        }
+    }
+}
+
 /// The twin search finds the groups a listing of every node's contexts
 /// gives, on either side. Parent nodes that draw from few siblings repeat
 /// contexts, and twins occur; parent nodes that draw from many seldom
@@ -344,8 +358,10 @@ fn wide_levels_with_planted_twins_find_every_twin() {
 /// Nodes first named together with one sibling set and told apart only by
 /// later parent nodes, some of them wide: a parent node names one member of
 /// a planted twin class alone, or every member but one, as well as whole
-/// classes, and some parent nodes hold a pair twice. The search finds the
-/// groups a listing of every node's context multiset gives, on either side.
+/// classes, and some parent nodes hold a pair twice. The wide parent nodes
+/// list their pairs in node order, in sibling order or shuffled. The search
+/// finds the groups a listing of every node's context multiset gives, on
+/// either side.
 #[test]
 fn classes_are_split_by_later_contexts() {
     let eng = Engine::new();
@@ -354,6 +370,7 @@ fn classes_are_split_by_later_contexts() {
     let (v_left, v_right) = vtree.children(root);
     let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
     let mut rng = Lcg::new(47);
+    let mut shuffle = Lcg::new(48);
     let mut scratch = ContractScratch::default();
     let mut seen_groups = 0;
     for round in 0..40u32 {
@@ -405,6 +422,7 @@ fn classes_are_split_by_later_contexts() {
                 if round % 4 != 3 {
                     pairs.dedup();
                 }
+                reorder(&mut pairs, p / 15, &mut shuffle);
                 if !pairs.is_empty() {
                     let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| pair(t, s)).collect();
                     levels[root.idx()].push_internal_node(&node[..]);
@@ -435,7 +453,8 @@ fn classes_are_split_by_later_contexts() {
 /// classes some parent nodes split; nodes of different classes share
 /// degrees, and some wide parent nodes name every member but one of a
 /// class. The search finds the groups a listing of every node's contexts
-/// gives, on either side.
+/// gives, on either side. Their pairs come in node order, where the
+/// degree split reads them, in sibling order or shuffled.
 #[test]
 fn nested_wide_nodes_are_split_by_degree() {
     let eng = Engine::new();
@@ -444,6 +463,7 @@ fn nested_wide_nodes_are_split_by_degree() {
     let (v_left, v_right) = vtree.children(root);
     let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
     let mut rng = Lcg::new(59);
+    let mut shuffle = Lcg::new(60);
     let mut scratch = ContractScratch::default();
     let mut seen_groups = 0;
     for round in 0..40u32 {
@@ -502,6 +522,7 @@ fn nested_wide_nodes_are_split_by_degree() {
                 }
                 pairs.sort_unstable();
                 pairs.dedup();
+                reorder(&mut pairs, p / 3, &mut shuffle);
                 if !pairs.is_empty() {
                     let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| pair(t, s)).collect();
                     levels[root.idx()].push_internal_node(&node[..]);

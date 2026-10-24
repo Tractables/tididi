@@ -22,12 +22,16 @@ struct Wide<'a> {
     links: &'a mut Vec<(u32, u32)>,
     table: &'a mut Vec<u32>,
     radix: &'a mut Radix,
-    degree: &'a mut Vec<u32>,
     column: &'a mut Vec<u32>,
     reach: &'a mut Vec<u32>,
     touched: &'a mut Vec<u32>,
+    bucket: &'a mut Vec<u32>,
+    hits: &'a mut Vec<u32>,
+    dest: &'a mut Vec<u32>,
+    met: &'a mut Vec<u32>,
     /// No parent node repeats a pair: the counts of
-    /// [`Partition::split_by_degree`] are of sets.
+    /// [`Partition::split_by_degree`] and [`Partition::split_by_siblings`]
+    /// are of sets.
     simple: bool,
 }
 
@@ -59,8 +63,10 @@ const SMALL_PAIRS: usize = 8;
 /// one write for each node that changes class, with each parent node's pairs
 /// sorted in cache; a node in the first class, or without a twin, is read
 /// off two bits. With `simple`, no parent node repeats a pair, and a wide
-/// parent node whose nodes' sibling sets are nested is split by degree,
-/// without a sort ([`Partition::split_by_degree`]). No fingerprint is formed
+/// parent node is split without a sort: sibling by sibling
+/// ([`Partition::split_by_siblings`]), or by degree where its pairs come in
+/// node order and its nodes' sibling sets are nested
+/// ([`Partition::split_by_degree`]). No fingerprint is formed
 /// and nothing is verified after: the classes are exact. A pair repeated
 /// within a parent node counts twice, so the classes are those of context
 /// multisets.
@@ -74,8 +80,8 @@ pub(super) fn refine_context_groups(
 ) -> Result<bool, OperationError> {
     let ContractScratch {
         twin_class, twin_named, twin_alone, class_size, class_pos, refine_keys, refine_runs, refine_links, refine_table,
-        refine_wide, refine_radix, refine_degree, refine_column, refine_reach, refine_touched, flat_groups,
-        group_starts, ..
+        refine_wide, refine_radix, refine_column, refine_reach, refine_touched, refine_bucket, refine_hits,
+        refine_dest, refine_met, flat_groups, group_starts, ..
     } = scratch;
     let mut wide = Wide {
         keys: refine_keys,
@@ -83,10 +89,13 @@ pub(super) fn refine_context_groups(
         links: refine_links,
         table: refine_table,
         radix: refine_radix,
-        degree: refine_degree,
         column: refine_column,
         reach: refine_reach,
         touched: refine_touched,
+        bucket: refine_bucket,
+        hits: refine_hits,
+        dest: refine_dest,
+        met: refine_met,
         simple,
     };
     flat_groups.clear();
@@ -415,14 +424,16 @@ impl Partition<'_> {
     }
 
     /// A parent node of more than [`SMALL_PAIRS`] pairs. Where no parent
-    /// node repeats a pair it is first split by degree
-    /// ([`Self::split_by_degree`]), which settles it where its nodes'
-    /// sibling sets are nested. Else its pairs are sorted in `keys`, so that
-    /// each node's siblings are a run in ascending order; each run keyed by
-    /// its node's class and a hash of its siblings, and grouped with the
-    /// runs of its key in a table, by comparing their siblings. A group of
-    /// one run leaves the partition; a group that is its whole class keeps
-    /// it; any other group is a class of its own.
+    /// node repeats a pair, one whose pairs do not come in node order is
+    /// split sibling by sibling ([`Self::split_by_siblings`]), and one whose
+    /// pairs do is first split by degree ([`Self::split_by_degree`]), which
+    /// settles it where its nodes' sibling sets are nested. Else its pairs
+    /// are sorted in `keys`, so that each node's siblings are a run in
+    /// ascending order; each run keyed by its node's class and a hash of its
+    /// siblings, and grouped with the runs of its key in a table, by
+    /// comparing their siblings. A group of one run leaves the partition; a
+    /// group that is its whole class keeps it; any other group is a class
+    /// of its own.
     fn split_wide(
         &mut self,
         lim: &Limits,
@@ -430,8 +441,22 @@ impl Partition<'_> {
         side: ChildSide,
         wide: &mut Wide<'_>,
     ) -> Result<(), OperationError> {
-        if wide.simple && self.split_by_degree(lim, pairs, side, wide)? {
-            return Ok(());
+        if wide.simple {
+            let (mut by_node, mut by_sibling) = (true, true);
+            let (mut last, mut top) = (split_pair(&pairs[0], side), 0u32);
+            for pair in pairs {
+                let (t, s) = split_pair(pair, side);
+                by_node &= t >= last.0;
+                by_sibling &= s >= last.1;
+                last = (t, s);
+                top |= s;
+            }
+            if !by_node {
+                return self.split_by_siblings(lim, pairs, side, by_sibling, top, wide);
+            }
+            if self.split_by_degree(lim, pairs, side, top, wide)? {
+                return Ok(());
+            }
         }
         let Wide { keys, runs, links, table, radix, .. } = wide;
         keys.clear();
@@ -490,32 +515,23 @@ impl Partition<'_> {
     /// partition, and the caller splits the rest by their siblings. Says
     /// whether the parent node is split.
     ///
-    /// Counted only over the nodes that can have a twin, whose sibling sets
-    /// are those Γ reads. Where the pairs come in node order a node's
-    /// degree is the length of its run; else it is counted in `degree`. The
-    /// first sum is read off the degrees' histogram (the nodes of degree at
-    /// least v, for each v, taken two at a time), the second added as each
-    /// sibling's count rises. `degree`, `column` and `reach` are zero
-    /// between calls: every count written is cleared before the call
-    /// returns, and nothing fallible runs while one is held.
+    /// The pairs come in node order, so a node's degree is the length of
+    /// its run. Counted only over the nodes that can have a twin, whose
+    /// sibling sets are those Γ reads. The first sum is read off the
+    /// degrees' histogram (the nodes of degree at least v, for each v, taken
+    /// two at a time), the second added as each sibling's count rises, its
+    /// siblings at most `top`. `column` and `reach` are zero between calls:
+    /// every count written is cleared before the call returns, and nothing
+    /// fallible runs while one is held.
     fn split_by_degree(
         &mut self,
         lim: &Limits,
         pairs: &[ChildPair],
         side: ChildSide,
+        top: u32,
         wide: &mut Wide<'_>,
     ) -> Result<bool, OperationError> {
-        let Wide { runs, links, table, degree, column, reach, touched, .. } = wide;
-        let (mut sorted, mut last, mut top) = (true, 0u32, 0u32);
-        for pair in pairs {
-            let (t, s) = split_pair(pair, side);
-            sorted &= t >= last;
-            last = t;
-            top |= s;
-        }
-        if !sorted {
-            lim.try_resize(degree, self.class.len(), 0u32)?;
-        }
+        let Wide { runs, links, table, column, reach, touched, .. } = wide;
         lim.try_resize(column, top as usize + 1, 0u32)?;
         lim.try_resize(reach, pairs.len() + 1, 0u32)?;
         runs.clear();
@@ -531,43 +547,21 @@ impl Partition<'_> {
             shared += u64::from(*e);
             *e += 1;
         };
-        if sorted {
-            let mut k = 0;
-            while k < pairs.len() {
-                let t = split_pair(&pairs[k], side).0;
-                let end = k + pairs[k..].iter().take_while(|pair| split_pair(pair, side).0 == t).count();
-                let c = self.of(t);
-                if self.can_twin(c) {
-                    let d = end - k;
-                    runs.push(((u64::from(c) << 32) | d as u64, t, 0));
-                    reach[d] += 1;
-                    most = most.max(d);
-                    for pair in &pairs[k..end] {
-                        count(split_pair(pair, side).1);
-                    }
-                }
-                k = end;
-            }
-        } else {
-            for pair in pairs {
-                let (t, s) = split_pair(pair, side);
-                let c = self.of(t);
-                if !self.can_twin(c) {
-                    continue;
-                }
-                let d = &mut degree[t as usize];
-                if *d == 0 {
-                    runs.push((u64::from(c) << 32, t, 0));
-                }
-                *d += 1;
-                count(s);
-            }
-            for run in runs.iter_mut() {
-                let d = std::mem::take(&mut degree[run.1 as usize]) as usize;
-                run.0 |= d as u64;
+        let mut k = 0;
+        while k < pairs.len() {
+            let t = split_pair(&pairs[k], side).0;
+            let end = k + pairs[k..].iter().take_while(|pair| split_pair(pair, side).0 == t).count();
+            let c = self.of(t);
+            if self.can_twin(c) {
+                let d = end - k;
+                runs.push(((u64::from(c) << 32) | d as u64, t, 0));
                 reach[d] += 1;
                 most = most.max(d);
+                for pair in &pairs[k..end] {
+                    count(split_pair(pair, side).1);
+                }
             }
+            k = end;
         }
         for &s in touched.iter() {
             column[s as usize] = 0;
@@ -592,6 +586,132 @@ impl Partition<'_> {
             }
         }
         Ok(false)
+    }
+
+    /// A wide parent node split sibling by sibling, where no parent node
+    /// repeats a pair: the nodes each sibling is paired with split every
+    /// class they meet into its members paired with that sibling and the
+    /// rest ([`Self::split_sibling`]). After the last sibling two nodes share
+    /// a class exactly when they shared one before and the parent node pairs
+    /// them with the same siblings, as a split by sibling sets leaves them,
+    /// with no sort, hash or compare. Unless the pairs come `by_sibling`,
+    /// the nodes that can have a twin are first bucketed by sibling in
+    /// `bucket`, two passes over the pairs, their siblings at most `top`.
+    /// `column` is zero between calls, as [`Self::split_by_degree`] reads it.
+    fn split_by_siblings(
+        &mut self,
+        lim: &Limits,
+        pairs: &[ChildPair],
+        side: ChildSide,
+        by_sibling: bool,
+        top: u32,
+        wide: &mut Wide<'_>,
+    ) -> Result<(), OperationError> {
+        let Wide { column, touched, bucket, hits, dest, met, .. } = wide;
+        // Every class there can be, as `refine_context_groups` reserves.
+        lim.try_resize(hits, self.class.len() + 1, 0u32)?;
+        lim.try_resize(dest, self.class.len() + 1, 0u32)?;
+        met.clear();
+        lim.reserve_exact(met, pairs.len())?;
+        if by_sibling {
+            let mut k = 0;
+            while k < pairs.len() {
+                let s = split_pair(&pairs[k], side).1;
+                let end = k + pairs[k..].iter().take_while(|pair| split_pair(pair, side).1 == s).count();
+                self.split_sibling(pairs[k..end].iter().map(move |pair| split_pair(pair, side).0), hits, dest, met);
+                k = end;
+            }
+            return Ok(());
+        }
+        lim.try_resize(column, top as usize + 1, 0u32)?;
+        touched.clear();
+        lim.reserve_exact(touched, pairs.len())?;
+        lim.try_resize(bucket, pairs.len(), 0u32)?;
+        for pair in pairs {
+            let (t, s) = split_pair(pair, side);
+            if self.can_twin(self.of(t)) {
+                let e = &mut column[s as usize];
+                if *e == 0 {
+                    touched.push(s);
+                }
+                *e += 1;
+            }
+        }
+        // Each sibling's count becomes where its bucket starts, and where it
+        // ends once filled.
+        let mut at = 0u32;
+        for &s in touched.iter() {
+            let e = &mut column[s as usize];
+            (*e, at) = (at, at + *e);
+        }
+        for pair in pairs {
+            let (t, s) = split_pair(pair, side);
+            if self.can_twin(self.of(t)) {
+                let e = &mut column[s as usize];
+                bucket[*e as usize] = t;
+                *e += 1;
+            }
+        }
+        let mut from = 0;
+        for &s in touched.iter() {
+            let to = std::mem::take(&mut column[s as usize]) as usize;
+            self.split_sibling(bucket[from..to].iter().copied(), hits, dest, met);
+            from = to;
+        }
+        Ok(())
+    }
+
+    /// Split every class by the `nodes` one sibling is paired with: a class
+    /// they all are is left whole; one member of a larger class leaves the
+    /// partition alone; two or more members of a larger class become a class
+    /// of their own, so the classes made still nest and hold two or more
+    /// nodes each. `hits` is zero on entry and on return.
+    #[inline]
+    fn split_sibling(
+        &mut self,
+        nodes: impl Iterator<Item = u32> + Clone,
+        hits: &mut [u32],
+        dest: &mut [u32],
+        met: &mut Vec<u32>,
+    ) {
+        met.clear();
+        for t in nodes.clone() {
+            let c = self.of(t);
+            if self.can_twin(c) {
+                let h = &mut hits[c as usize];
+                if *h == 0 {
+                    // Within the reserve of one class a pair.
+                    met.push(c);
+                }
+                *h += 1;
+            }
+        }
+        for &c in met.iter() {
+            let h = hits[c as usize];
+            dest[c as usize] = if h == self.size[c as usize] {
+                c
+            } else if h == 1 {
+                ALONE
+            } else {
+                self.fresh(c, h)
+            };
+        }
+        for t in nodes {
+            let c = self.of(t);
+            if c == ALONE || hits[c as usize] == 0 {
+                continue;
+            }
+            match dest[c as usize] {
+                ALONE => self.alone(t, c),
+                // A node of the first class it names is moved there anyway,
+                // so that it reads as named.
+                d if d != c || c == 0 => self.put(t, d),
+                _ => {}
+            }
+        }
+        for &c in met.iter() {
+            hits[c as usize] = 0;
+        }
     }
 
     /// Split the classes by the groups [`group_runs`] left in `links`, of

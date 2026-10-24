@@ -278,16 +278,24 @@ pub(crate) struct ContractScratch {
     pub(super) refine_wide: Vec<u64>,
     /// The radix sort's buffers for `refine_keys`.
     pub(super) refine_radix: crate::sort::Radix,
-    /// Per node of the child level, its siblings in the wide parent node
-    /// being split by degree; zero between parent nodes.
-    pub(super) refine_degree: Vec<u32>,
-    /// Per sibling node, the nodes it is paired with there; zero between
-    /// parent nodes.
+    /// Per sibling node, the nodes it is paired with in the wide parent node
+    /// being split, or where its bucket of them ends; zero between parent
+    /// nodes.
     pub(super) refine_column: Vec<u32>,
+    /// One wide parent node's nodes, bucketed by the sibling each pair names.
+    pub(super) refine_bucket: Vec<u32>,
+    /// Per class of the partition, its members one sibling meets; zero
+    /// between siblings.
+    pub(super) refine_hits: Vec<u32>,
+    /// Per class one sibling meets, the class those members move to.
+    pub(super) refine_dest: Vec<u32>,
+    /// The classes one sibling meets.
+    pub(super) refine_met: Vec<u32>,
     /// Per degree, the nodes of that degree there; zero between parent
     /// nodes.
     pub(super) refine_reach: Vec<u32>,
-    /// The siblings counted in `refine_column`, to clear.
+    /// The siblings counted in `refine_column`, in the order their buckets
+    /// are laid out, to clear.
     pub(super) refine_touched: Vec<u32>,
     /// Node indices of twin group members, stored contiguously.
     pub(super) flat_groups: Vec<u32>,
@@ -380,7 +388,7 @@ pub(crate) struct ContractScratch {
 // filled or resized over the range it is read on, so a dropped one costs the
 // next call a reallocation; `pair_fusion.cells` and `twin_local` regrow
 // zeroed, which their generation stamps (always at least 1) read as never
-// stamped, and the refinement's degree counts regrow zeroed as they are kept.
+// stamped, and the refinement's counts regrow zeroed as they are kept.
 impl Buffers for ContractScratch {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
         visit(&mut self.counts);
@@ -400,8 +408,11 @@ impl Buffers for ContractScratch {
         visit(&mut self.refine_table);
         visit(&mut self.refine_wide);
         self.refine_radix.buffers(visit);
-        visit(&mut self.refine_degree);
         visit(&mut self.refine_column);
+        visit(&mut self.refine_bucket);
+        visit(&mut self.refine_hits);
+        visit(&mut self.refine_dest);
+        visit(&mut self.refine_met);
         visit(&mut self.refine_reach);
         visit(&mut self.refine_touched);
         visit(&mut self.flat_groups);
