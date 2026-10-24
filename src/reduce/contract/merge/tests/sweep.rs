@@ -394,3 +394,43 @@ fn the_rebuild_unions_groups_and_leaves_no_dead_arena() {
     let starts: Vec<usize> = (0..3).map(|i| level.pair_range_at(i).start).collect();
     assert_eq!(starts, vec![0, 6, 8], "the arena is in node order");
 }
+
+/// The survivors outside every group keep their pairs, copied a run of
+/// adjacent ranges at a time: each node lands at its offset in its run, a
+/// group's union between two runs, and a range that does not continue the
+/// run (node 3's, after the absorbed node 5's) starts a new one.
+#[test]
+fn the_rebuild_copies_untouched_ranges_in_runs() {
+    let p = |l: u32, r: u32| ChildPair::new(NodeIdx(l), NodeIdx(r));
+    let mut level = TddLevel::new();
+    level.pairs = (0..14).map(|i| p(i, 100 + i)).collect::<Vec<_>>().into();
+    level.nodes = vec![
+        EncodedNode::multi_pair(0, 2),
+        EncodedNode::multi_pair(2, 3),
+        EncodedNode::inline(p(50, 50)),
+        EncodedNode::multi_pair(8, 2),
+        EncodedNode::multi_pair(10, 2),
+        EncodedNode::multi_pair(5, 3),
+        EncodedNode::multi_pair(12, 2),
+    ]
+    .into();
+    let before: Vec<Vec<ChildPair>> = content(&level);
+    let mut bufs = MergeBuffers {
+        sel: vec![1, 5],
+        group_plans: vec![GroupPlan { action: GroupAction::Concat, start: 0, end: 2 }],
+        ..Default::default()
+    };
+    let mut remap = MergeRemap { final_remap: vec![NodeIdx(0); 7], absorbed: vec![0], ..Default::default() };
+    let policy = MergePolicy { plain_level: true, parent_marginal: false, t1_scalable: false, disjoint_supports: true };
+    assert_eq!(mark_group_members(&policy, &mut remap, &mut bufs), 1);
+    let lim = Limits::new();
+    let arenas = remap_and_reserve(&lim, &level, &mut remap, &bufs).unwrap();
+    rebuild_level(&mut level, arenas, &remap, &bufs, true);
+
+    let union: Vec<ChildPair> = [1, 5].iter().flat_map(|&i| before[i].clone()).collect();
+    let expected = vec![before[0].clone(), union, before[2].clone(), before[3].clone(), before[4].clone(), before[6].clone()];
+    assert_eq!(content(&level), expected);
+    assert_eq!(level.pairs.len(), 14);
+    let starts: Vec<usize> = [0, 1, 3, 4, 5].iter().map(|&i| level.pair_range_at(i).start).collect();
+    assert_eq!(starts, vec![0, 2, 8, 10, 12], "the arena is in node order");
+}

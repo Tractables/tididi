@@ -164,11 +164,8 @@ pub(super) fn rebuild_level(
             NodeKind::Inline(_) => unreachable!("an inline node owns no range"),
         }
     };
-    let mut encode = |fresh: &mut Vec<ChildPair>, start: usize| -> EncodedNode {
-        let len = fresh.len() - start;
-        if len == 1 {
-            return EncodedNode::inline(fresh.pop().expect("the one pair"));
-        }
+    // A node of `len` pairs at `start` in the rebuilt arena.
+    let mut place = |start: usize, len: usize| -> EncodedNode {
         if start < PACKED_LIMIT && len < PACKED_LIMIT {
             return EncodedNode::multi_pair(start as u32, len as u32);
         }
@@ -179,14 +176,21 @@ pub(super) fn rebuild_level(
     };
     let nodes = nodes.stored_mut();
     let mut write = 0usize;
+    // A survivor outside every group keeps its pairs as they are. The
+    // ranges of such survivors that follow one another in the old arena
+    // are one run, copied whole when the next range does not continue it,
+    // each node placed at its offset in the run.
+    let mut run = 0..0usize;
     for read in 0..nodes.len() {
         if absorbed(&remap.absorbed, read) {
             continue;
         }
         let node = nodes[read];
-        let start = fresh.len();
         let rebuilt = match plans.next_if(|p| bufs.sel[p.start as usize] == read as u32) {
             Some(p) => {
+                fresh.extend_from_slice(&old[run.clone()]);
+                run = run.end..run.end;
+                let start = fresh.len();
                 let members = &bufs.sel[p.start as usize..p.end as usize];
                 for &m in members {
                     debug_assert!(m as usize >= read, "a group's survivor is its lowest member");
@@ -204,19 +208,29 @@ pub(super) fn rebuild_level(
                         "twin contraction: duplicate pair across twin supports — invariant 1 violation"
                     );
                 }
-                encode(&mut fresh, start)
+                match fresh.len() - start {
+                    1 => EncodedNode::inline(fresh.pop().expect("the one pair")),
+                    len => place(start, len),
+                }
             }
             None => match node.kind() {
                 NodeKind::Inline(_) => node,
                 _ => {
-                    fresh.extend_from_slice(&old[source(node)]);
-                    encode(&mut fresh, start)
+                    let src = source(node);
+                    if src.start != run.end {
+                        fresh.extend_from_slice(&old[run.clone()]);
+                        run = src.start..src.start;
+                    }
+                    let start = fresh.len() + (src.start - run.start);
+                    run.end = src.end;
+                    place(start, src.len())
                 }
             },
         };
         nodes[write] = rebuilt;
         write += 1;
     }
+    fresh.extend_from_slice(&old[run]);
     debug_assert!(plans.next().is_none(), "every concat group met its survivor");
     debug_assert_eq!(fresh.capacity(), reserved, "the rebuild fits its reserved arena");
     nodes.truncate(write);
