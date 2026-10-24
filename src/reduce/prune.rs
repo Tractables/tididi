@@ -253,8 +253,10 @@ pub(crate) struct PruneScratch {
     /// [`settle_loose`]'s flags per level and the parents it reads.
     settle_flags: Vec<[bool; 2]>,
     settle_parents: Vec<VtreeIdx>,
-    /// The marks a [`settle_loose`] read sets, one byte per slot.
-    settle_marks: Vec<u8>,
+    /// Marks a byte per slot: those a [`settle_loose`] read sets, and those
+    /// a walk sets in a level's children before it packs them into bits
+    /// ([`mark_sides`]).
+    bytes: Vec<u8>,
     /// [`prune_complement`]'s levels that lose a node, top-down: the level,
     /// the slot of the node it loses, and the entry of its parent level.
     chain: Vec<[u32; 3]>,
@@ -274,7 +276,7 @@ impl Buffers for PruneScratch {
         visit(&mut self.from_output);
         visit(&mut self.settle_flags);
         visit(&mut self.settle_parents);
-        visit(&mut self.settle_marks);
+        visit(&mut self.bytes);
         visit(&mut self.chain);
         visit(&mut self.row);
     }
@@ -291,7 +293,7 @@ impl PooledScratch for PruneScratch {
         self.from_output.clear();
         self.settle_flags.clear();
         self.settle_parents.clear();
-        self.settle_marks.clear();
+        self.bytes.clear();
         self.chain.clear();
         self.row.clear();
     }
@@ -523,7 +525,7 @@ pub(crate) fn debug_assert_all_reached(tdd: &Tdd) {
         level_base[i + 1] = level_base[i] + words(tdd.reference_slot_count(VtreeIdx(i as u32)));
     }
     let mut marks = vec![0u64; level_base[num_nodes]];
-    classic_mark(&Limits::new(), tdd, &level_base, &mut marks).expect("unbounded limits refuse no offsets");
+    classic_mark(&Limits::new(), tdd, &level_base, &mut marks, &mut Vec::new()).expect("unbounded limits refuse no offsets");
     for t in tdd.vtree.internal_bottomup().map(|(t, _, _)| t) {
         if !tdd.is_structural_internal(t) {
             continue;
@@ -587,7 +589,7 @@ pub(crate) fn settle_loose(eng: &Engine, tdd: &Tdd, listed: &[u32]) -> Result<Ve
     // The prune's scratch, which a prune checks out after this returns: a
     // read clears the block of marks it takes.
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
-    let PruneScratch { settle_marks: marks, settle_flags: flags, settle_parents: parents, .. } = &mut *scratch;
+    let PruneScratch { bytes: marks, settle_flags: flags, settle_parents: parents, .. } = &mut *scratch;
     flags.clear();
     lim.try_resize(flags, vtree.num_nodes(), [false; 2])?;
     for &t in listed {
@@ -726,7 +728,7 @@ fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
     let num_nodes = tdd.vtree.num_nodes();
 
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
-    let PruneScratch { level_base, marks, remap, identity, .. } = &mut *scratch;
+    let PruneScratch { level_base, marks, remap, identity, bytes, .. } = &mut *scratch;
 
     // Flat offset table, in words: level t's marks are
     // marks[level_base[t]..level_base[t+1]]. Only a structural internal
@@ -759,7 +761,7 @@ fn prune_whole(eng: &Engine, tdd: &mut Tdd) -> Result<(), OperationError> {
         marks.resize(total, 0);
     }
     // ── Pass 1 (top-down): mark reachable nodes ──────────────────────────
-    classic_mark(eng.limits(), tdd, level_base, &mut marks[..total])?;
+    classic_mark(eng.limits(), tdd, level_base, &mut marks[..total], bytes)?;
 
     // `level_dirty[t]` records whether level `t` lost a node; charged for
     // this prune and handed back with it.
@@ -1252,7 +1254,7 @@ fn seed_dirty_levels(tdd: &mut Tdd, level_dirty: &[bool]) {
 ///
 /// Returns `Err(OperationError::OverBudget)` if the offsets an implicit
 /// level's nodes are read in are refused ([`mark_described`]).
-fn classic_mark(lim: &Limits, tdd: &Tdd, level_base: &[usize], marks: &mut [u64]) -> Result<(), OperationError> {
+fn classic_mark(lim: &Limits, tdd: &Tdd, level_base: &[usize], marks: &mut [u64], bytes: &mut Vec<u8>) -> Result<(), OperationError> {
     let vtree = &tdd.vtree;
     // An output on a leaf or marginal level has no structural level under it.
     if !tdd.is_structural_internal(tdd.output.vtree) {
@@ -1269,7 +1271,7 @@ fn classic_mark(lim: &Limits, tdd: &Tdd, level_base: &[usize], marks: &mut [u64]
             continue;
         }
         let (left, right) = vtree.children(t);
-        mark_children_of_level(lim, tdd, t, level_base[t.idx()], block(left), block(right), marks)?;
+        mark_children_of_level(lim, tdd, t, level_base[t.idx()], block(left), block(right), marks, bytes)?;
     }
     Ok(())
 }
@@ -1283,8 +1285,12 @@ fn classic_mark(lim: &Limits, tdd: &Tdd, level_base: &[usize], marks: &mut [u64]
 /// side names no child slot, so the decoder answers `None` for it and only real
 /// slots are marked. A structural side is its own slot.
 ///
+/// `bytes` is the scratch a side marked a byte a slot takes ([`mark_sides`]).
+///
 /// Returns `Err(OperationError::OverBudget)` if the offsets an implicit
-/// level's nodes are read in are refused ([`mark_described`]).
+/// level's nodes are read in are refused ([`mark_described`]), or the
+/// bytes.
+#[expect(clippy::too_many_arguments)]
 fn mark_children_of_level(
     lim: &Limits,
     tdd: &Tdd,
@@ -1293,11 +1299,12 @@ fn mark_children_of_level(
     left: Option<usize>,
     right: Option<usize>,
     marks: &mut [u64],
+    bytes: &mut Vec<u8>,
 ) -> Result<(), OperationError> {
     match (left, right) {
-        (Some(l), Some(r)) => mark_sides::<true, true>(lim, tdd, t, base, l, r, marks),
-        (Some(l), None) => mark_sides::<true, false>(lim, tdd, t, base, l, 0, marks),
-        (None, Some(r)) => mark_sides::<false, true>(lim, tdd, t, base, 0, r, marks),
+        (Some(l), Some(r)) => mark_sides::<true, true>(lim, tdd, t, base, l, r, marks, bytes),
+        (Some(l), None) => mark_sides::<true, false>(lim, tdd, t, base, l, 0, marks, bytes),
+        (None, Some(r)) => mark_sides::<false, true>(lim, tdd, t, base, 0, r, marks, bytes),
         (None, None) => Ok(()),
     }
 }
@@ -1305,6 +1312,16 @@ fn mark_children_of_level(
 /// [`mark_children_of_level`] marking the left child's slots at block
 /// `left_base` when `LEFT`, and the right child's at `right_base` when
 /// `RIGHT`.
+///
+/// A stored level whose marked nodes are many beside a side's slots marks
+/// that side a byte a slot in `bytes`, packed into the side's bits after
+/// the read ([`pack_bytes`]). A byte mark is a store that reads nothing,
+/// where a bit is OR-ed into a shared word, which a run of marks into one
+/// word holds in a register and a mark into another word writes back: on
+/// scattered children every mark decides that branch and writes its word.
+/// The bytes cost a clear and a pack a slot, which pay where the marks a
+/// slot are about one or more ([`STAGE_SLOTS_PER_NODE`]).
+#[expect(clippy::too_many_arguments)]
 fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     lim: &Limits,
     tdd: &Tdd,
@@ -1313,6 +1330,7 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     left_base: usize,
     right_base: usize,
     marks: &mut [u64],
+    bytes: &mut Vec<u8>,
 ) -> Result<(), OperationError> {
     let (left, right) = tdd.vtree.children(t);
     let left_view = tdd.levels[left.idx()].child_decoder();
@@ -1327,6 +1345,29 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
         // its pairs.
         return mark_described::<LEFT, RIGHT>(lim, d, level.slot_count(), base, left_base, right_base, marks);
     }
+    let width = level.slot_count();
+    if described.is_none() {
+        // The sides staged as bytes: their slots, rounded up to whole words.
+        let marked: usize = marks[base..base + words(width)].iter().map(|w| w.count_ones() as usize).sum();
+        let staged = |on: bool, c: VtreeIdx| {
+            let slots = tdd.reference_slot_count(c);
+            (on && slots <= marked.saturating_mul(STAGE_SLOTS_PER_NODE)).then_some(words(slots) * 64)
+        };
+        let (ls, rs) = (staged(LEFT, left), staged(RIGHT, right));
+        note_sides_marked(
+            u64::from(ls.is_some()) + u64::from(rs.is_some()),
+            u64::from(LEFT && ls.is_none()) + u64::from(RIGHT && rs.is_none()),
+        );
+        if ls.is_some() || rs.is_some() {
+            let (ln, rn) = (ls.unwrap_or(0), rs.unwrap_or(0));
+            return match (ls, rs) {
+                (Some(_), Some(_)) => mark_staged::<LEFT, RIGHT, true, true>(lim, tdd, t, base, [left_base, right_base], [ln, rn], marks, bytes),
+                (Some(_), None) => mark_staged::<LEFT, RIGHT, true, false>(lim, tdd, t, base, [left_base, right_base], [ln, rn], marks, bytes),
+                (None, Some(_)) => mark_staged::<LEFT, RIGHT, false, true>(lim, tdd, t, base, [left_base, right_base], [ln, rn], marks, bytes),
+                (None, None) => unreachable!(),
+            };
+        }
+    }
     let (mut left_marks, mut right_marks) = (Marker::new(left_base), Marker::new(right_base));
     let mut mark = |marks: &mut [u64], pair: ChildPair| {
         if LEFT && let Some(s) = left_view.child(pair.left).index() {
@@ -1338,7 +1379,6 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     };
     // A stored level's marked nodes are read as slices of its arena, in a
     // loop apart from an implicit level's generated pairs.
-    let width = level.slot_count();
     match (described, level.stored()) {
         (Some(d), _) => {
             let mut cursor = d.cursor();
@@ -1354,6 +1394,99 @@ fn mark_sides<const LEFT: bool, const RIGHT: bool>(
     left_marks.finish(marks);
     right_marks.finish(marks);
     Ok(())
+}
+
+/// The most slots a side of a stored level has, a marked node of the level,
+/// for [`mark_sides`] to mark it as bytes.
+const STAGE_SLOTS_PER_NODE: usize = 2;
+
+// A test counts the sides of stored levels marked as bytes and as bits.
+#[cfg(test)]
+thread_local! {
+    pub(super) static SIDES_MARKED: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
+}
+
+#[inline(always)]
+fn note_sides_marked(bytes: u64, bits: u64) {
+    #[cfg(test)]
+    SIDES_MARKED.with(|c| {
+        let [a, b] = c.get();
+        c.set([a + bytes, b + bits]);
+    });
+    let _ = (bytes, bits);
+}
+
+/// [`mark_sides`] on a stored level: each side of `LEFT` and `RIGHT` that
+/// `LB` and `RB` stage marked as bytes, `n` of them a side, its slots
+/// rounded up to whole words, and packed into its block of `marks` at
+/// `child_base`; a side not staged marked as bits.
+#[expect(clippy::too_many_arguments)]
+#[inline(always)]
+fn mark_staged<const LEFT: bool, const RIGHT: bool, const LB: bool, const RB: bool>(
+    lim: &Limits,
+    tdd: &Tdd,
+    t: VtreeIdx,
+    base: usize,
+    child_base: [usize; 2],
+    n: [usize; 2],
+    marks: &mut [u64],
+    bytes: &mut Vec<u8>,
+) -> Result<(), OperationError> {
+    let (left, right) = tdd.vtree.children(t);
+    let left_view = tdd.levels[left.idx()].child_decoder();
+    let right_view = tdd.levels[right.idx()].child_decoder();
+    let level = &tdd.levels[t.idx()];
+    let stored = level.stored().expect("a staged level is stored");
+    let width = level.slot_count();
+    let used = n[0] + n[1];
+    if bytes.len() < used {
+        lim.try_resize(bytes, used, 0)?;
+    }
+    bytes[..used].fill(0);
+    let (lb, rb) = bytes[..used].split_at_mut(n[0]);
+    let (mut left_marks, mut right_marks) = (Marker::new(child_base[0]), Marker::new(child_base[1]));
+    for_each_marked_beside(width, base, marks, |marks, i| {
+        for &pair in stored.of_idx(i) {
+            if LEFT && let Some(s) = left_view.child(pair.left).index() {
+                if LB {
+                    lb[s] = 1;
+                } else {
+                    left_marks.mark(marks, child_base[0], s);
+                }
+            }
+            if RIGHT && let Some(s) = right_view.child(pair.right).index() {
+                if RB {
+                    rb[s] = 1;
+                } else {
+                    right_marks.mark(marks, child_base[1], s);
+                }
+            }
+        }
+    });
+    left_marks.finish(marks);
+    right_marks.finish(marks);
+    if LB {
+        pack_bytes(lb, &mut marks[child_base[0]..child_base[0] + n[0] / 64]);
+    }
+    if RB {
+        pack_bytes(rb, &mut marks[child_base[1]..child_base[1] + n[1] / 64]);
+    }
+    Ok(())
+}
+
+/// OR the byte marks of `bytes`, each 0 or 1, into `block`, bit `i` of word
+/// `w` from byte `64 w + i`.
+fn pack_bytes(bytes: &[u8], block: &mut [u64]) {
+    for (word, chunk) in block.iter_mut().zip(bytes.chunks_exact(64)) {
+        let mut bits = 0u64;
+        for (k, eight) in chunk.chunks_exact(8).enumerate() {
+            let x = u64::from_le_bytes(eight.try_into().expect("eight bytes"));
+            // Byte `j` of `x` lands on bit `56 + j` of the product, and no
+            // two of its terms meet, so nothing carries into the top byte.
+            bits |= (x.wrapping_mul(0x0102_0408_1020_4080) >> 56) << (8 * k);
+        }
+        *word |= bits;
+    }
 }
 
 /// [`for_each_marked`] on the block of `width` slots at word `base` of
@@ -1495,7 +1628,7 @@ pub(crate) enum Start<'a> {
 /// not it lost one.
 pub(crate) fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[u8]>, start: Start<'_>) -> Result<(), OperationError> {
     let mut scratch = eng.scratch.reduce.prune.checkout_preserving(eng);
-    let PruneScratch { marks, remap, identity, visits, entered, from_output, .. } = &mut *scratch;
+    let PruneScratch { marks, remap, identity, visits, entered, from_output, bytes, .. } = &mut *scratch;
     let vtree = std::sync::Arc::clone(&tdd.vtree);
     let root = tdd.output.vtree;
     visits.clear();
@@ -1559,7 +1692,7 @@ pub(crate) fn prune_below_root(eng: &Engine, tdd: &mut Tdd, forced: Option<&[u8]
         };
         let (lb, rb) = (block(left, lw)?, block(right, rw)?);
 
-        mark_children_of_level(eng.limits(), tdd, t, visits[i].base, lb, rb, marks)?;
+        mark_children_of_level(eng.limits(), tdd, t, visits[i].base, lb, rb, marks, bytes)?;
 
         let (lc, rc) = (settle_child(marks, lb, lw), settle_child(marks, rb, rw));
         visits[i].left = lc;

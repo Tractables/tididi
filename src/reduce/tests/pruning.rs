@@ -106,6 +106,7 @@ fn layout(tdd: &crate::Tdd) -> Vec<Vec<Vec<(u32, u32)>>> {
 /// their marks take several words. The walk down from the root through the
 /// levels the conjunction built and the walk over the whole diagram leave the
 /// same diagram, and it holds exactly the nodes an independent walk reaches.
+/// The walks mark stored levels' children both a byte and a bit a slot.
 #[test]
 fn the_walk_from_the_root_and_the_whole_walk_keep_exactly_the_reached_nodes() {
     use crate::test_helpers::{CnfShape, Lcg, compile_clauses_on, rand_cnf, vtree_shapes};
@@ -113,6 +114,7 @@ fn the_walk_from_the_root_and_the_whole_walk_keep_exactly_the_reached_nodes() {
     let eng = &crate::Engine::new();
     let mut rng = Lcg::new(0x7b31_c4e9);
     let (mut cases, mut seeded, mut wide_losses) = (0usize, 0usize, 0usize);
+    let sides_before = crate::reduce::prune::SIDES_MARKED.with(std::cell::Cell::get);
     for shape in [CnfShape { clauses: 16, width: 6 }, CnfShape { clauses: 32, width: 8 }] {
         for (_name, vtree) in vtree_shapes(20) {
             for _ in 0..6 {
@@ -162,6 +164,9 @@ fn the_walk_from_the_root_and_the_whole_walk_keep_exactly_the_reached_nodes() {
     assert!(cases > 40, "expected a corpus, got {cases} cases");
     assert!(seeded > 40, "expected the walk from the root on most cases, got {seeded}");
     assert!(wide_losses > 30, "expected losses on levels of several words, got {wide_losses}");
+    let sides = crate::reduce::prune::SIDES_MARKED.with(std::cell::Cell::get);
+    let (bytes, bits) = (sides[0] - sides_before[0], sides[1] - sides_before[1]);
+    assert!(bytes > 100 && bits > 100, "expected sides marked both ways, got {bytes} as bytes and {bits} as bits");
 }
 
 /// The internal levels below the root of `tdd` that hold a node no pair of
