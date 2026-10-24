@@ -71,6 +71,17 @@ pub(super) fn mix64(mut x: u64) -> u64 {
     x ^ (x >> 31)
 }
 
+/// The hash of one entry that a node's fingerprint sums: the two halves of
+/// the 128-bit product of the entry, offset by a constant, with an odd
+/// constant, added together by exclusive-or. One multiplication an entry,
+/// where [`mix64`] takes two in a chain; the fingerprints only nominate
+/// candidates, which the groups compare in full.
+#[inline(always)]
+fn entry_hash(entry: u64) -> u64 {
+    let product = u128::from(entry ^ 0x243F_6A88_85A3_08D3) * 0x9E37_79B9_7F4A_7C15;
+    (product as u64) ^ ((product >> 64) as u64)
+}
+
 mod groups;
 mod listed;
 mod refine;
@@ -387,7 +398,7 @@ pub(super) fn group_twins_by_entries(
     scratch.fingerprints[..width].fill(0);
     entries.for_each(|node, entry| {
         let fp = &mut scratch.fingerprints[node as usize];
-        *fp = fp.wrapping_add(mix64(entry));
+        *fp = fp.wrapping_add(entry_hash(entry));
     });
 
     // ── Fingerprint collision check + candidate marking ───────────────────────
