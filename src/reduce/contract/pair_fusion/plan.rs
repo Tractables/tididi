@@ -13,48 +13,30 @@ use crate::value::slots::SlotValues;
 use super::super::scratch::{GroupCell, PFusionScratch};
 use super::PlanEntry;
 
-/// Phase 1: scan the parent level's nodes, or the ascending `listed` ones
-/// where only they can hold a group; collect per-(node, `x_idx`) groups
-/// with > 1 distinct marginal-side index. Compute `c_new` for each.
+/// Phase 1: scan the parent nodes `nodes` yields, ascending, and collect
+/// per-(node, `x_idx`) groups with > 1 distinct marginal-side index into
+/// `out`, computing `c_new` for each. The scan stops after the first node
+/// at which `out` holds `chunk_plans` plans or more, so a node's plans are
+/// never split between two calls; returns whether `nodes` ran out.
 ///
-/// The output plan list is in ascending `node_idx` order (Phase 3 cursor-walk
-/// relies on this). Empty return means no boundary at this level is fusable.
+/// `out` is in ascending `node_idx` order (Phase 3's cursor walk relies on
+/// this).
 ///
 /// The value domain `D` sums each group; the grouping walk is shared by both
 /// instantiations, and the domain can never vary per node or per pair.
+#[expect(clippy::too_many_arguments)]
 pub(super) fn collect_fusion_plans<D: SlotValues>(
     eng: &Engine,
     tdd: &Tdd,
     parent: VtreeIdx,
     v: VtreeIdx,
     side: ChildSide,
-    listed: Option<&[u32]>,
+    nodes: &mut impl Iterator<Item = usize>,
+    chunk_plans: usize,
+    out: &mut Vec<PlanEntry<D::Value>>,
     scratch: &mut PFusionScratch,
-) -> Result<Vec<PlanEntry<D::Value>>, OperationError> {
-    match listed {
-        Some(nodes) => {
-            debug_assert!(nodes.is_sorted(), "listed fusion nodes ascend");
-            collect_over::<D>(eng, tdd, parent, v, side, nodes.iter().map(|&n| n as usize), scratch)
-        }
-        None => {
-            let all = 0..tdd.levels[parent.idx()].nodes().len();
-            collect_over::<D>(eng, tdd, parent, v, side, all, scratch)
-        }
-    }
-}
-
-/// [`collect_fusion_plans`] over the parent nodes `nodes`, ascending.
-fn collect_over<D: SlotValues>(
-    eng: &Engine,
-    tdd: &Tdd,
-    parent: VtreeIdx,
-    v: VtreeIdx,
-    side: ChildSide,
-    nodes: impl Iterator<Item = usize>,
-    scratch: &mut PFusionScratch,
-) -> Result<Vec<PlanEntry<D::Value>>, OperationError> {
+) -> Result<bool, OperationError> {
     let plevel = &tdd.levels[parent.idx()];
-    let mut out: Vec<PlanEntry<D::Value>> = Vec::new();
     // A level can hold billions of pairs, so the sweep tests for a stop once
     // per stride of the nodes and pairs it reads, not once per sweep. This
     // phase only reads, so a stop leaves the diagram as it was.
@@ -72,7 +54,7 @@ fn collect_over<D: SlotValues>(
     // pair count.
     // An implicit level's node's pairs are generated into `buf`.
     let mut buf = Vec::new();
-    for n in nodes {
+    for n in &mut *nodes {
         let pairs = plevel.pair_count_at(n);
         read += 1 + pairs as u64;
         if read >= stride {
@@ -89,14 +71,17 @@ fn collect_over<D: SlotValues>(
         // run. A wide node that does not is sorted into runs: its table
         // would be too wide for the cache, and a probe per pair would miss.
         if node.windows(2).all(|w| explicit_ref(w[0], side) <= explicit_ref(w[1], side)) {
-            group_by_runs::<D>(lim, tdd, v, side, n, node, &mut out, &mut scratch.run)?;
+            group_by_runs::<D>(lim, tdd, v, side, n, node, out, &mut scratch.run)?;
         } else if node.len() >= SORT_MIN {
-            group_by_sorting::<D>(lim, tdd, v, side, n, node, &mut out, scratch)?;
+            group_by_sorting::<D>(lim, tdd, v, side, n, node, out, scratch)?;
         } else {
-            group_by_scatter::<D>(lim, tdd, v, side, n, node, &mut out, scratch)?;
+            group_by_scatter::<D>(lim, tdd, v, side, n, node, out, scratch)?;
+        }
+        if out.len() >= chunk_plans {
+            return Ok(false);
         }
     }
-    Ok(out)
+    Ok(true)
 }
 
 /// The explicit-side ref of `pair`: the side opposite the marginal `side`.
@@ -388,45 +373,67 @@ pub(super) fn group_by_scatter<D: SlotValues>(
     Ok(())
 }
 
-/// Phase 2: encode each plan's fused value as a marginal-side ref; fill
-/// `plan.new_ref`.
+/// Phase 2 over one boundary: encode each plan's fused value as a
+/// marginal-side ref and fill `plan.new_ref`, a chunk of plans at a time.
 ///
-/// Returns `true` if at least one plan emitted an inline ref (the parent
-/// level's marginal-side inline marker must then be raised in Phase 3).
-///
-/// Slot identity is value-keyed: a plan whose value matches another plan in
-/// the sweep — or, where the domain seeds the map, an existing slot — shares
-/// that slot rather than minting one. Sound because pair lists are multisets:
-/// each shared-slot pair occurrence carries one plan's contribution.
+/// Slot identity is value-keyed: a plan whose value matches another plan of
+/// the boundary, in its chunk or an earlier one, or, where the domain seeds
+/// the map, an existing slot, shares that slot rather than minting one.
+/// Sound because pair lists are multisets: each shared-slot pair occurrence
+/// carries one plan's contribution. The map is seeded when the first plan
+/// needs a slot; until then nothing was pushed, so the store it reads is the
+/// one the boundary started with.
 ///
 /// Never a pinned leaf: the caller resolves that boundary by lookup instead.
-pub(super) fn allocate_fusion_slots<D: SlotValues>(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    v: VtreeIdx,
-    plans: &mut [PlanEntry<D::Value>],
-) -> Result<bool, OperationError> {
-    let lim = eng.limits();
-    let mut any_inline = false;
-    // Charged for the sweep and handed back on every exit: one entry per
-    // plan beyond whatever the domain seeded.
-    let mut by_value: Transient<'_, FxHashMap<D::Key, u32>> = Transient::new(lim, FxHashMap::default());
-    D::seed(lim, tdd, v, &mut by_value)?;
-    lim.reserve_map(&mut by_value, plans.len())?;
-    for plan in plans.iter_mut() {
-        if let Some(raw) = D::inline_ref(&plan.value) {
-            plan.new_ref = raw;
-            any_inline = true;
-            continue;
-        }
-        let key = D::key(&plan.value);
-        if let Some(&existing) = by_value.get(&key) {
-            plan.new_ref = ValueRef::slot_raw(existing);
-            continue;
-        }
-        let s = D::push_slot(eng, tdd, v, plan.value.clone())?;
-        by_value.insert(key, s);
-        plan.new_ref = ValueRef::slot_raw(s);
+pub(super) struct FusionSlots<'a, D: SlotValues> {
+    /// Charged as it grows and handed back when the boundary is done.
+    by_value: Transient<'a, FxHashMap<D::Key, u32>>,
+    seeded: bool,
+}
+
+impl<'a, D: SlotValues> FusionSlots<'a, D> {
+    pub(super) fn new(lim: &'a Limits) -> Self {
+        FusionSlots { by_value: Transient::new(lim, FxHashMap::default()), seeded: false }
     }
-    Ok(any_inline)
+
+    /// Fill `new_ref` for each of `plans`. Returns `true` if at least one
+    /// plan emitted an inline ref (the parent level's marginal-side inline
+    /// marker must then be raised in Phase 3).
+    pub(super) fn allocate(
+        &mut self,
+        eng: &Engine,
+        tdd: &mut Tdd,
+        v: VtreeIdx,
+        plans: &mut [PlanEntry<D::Value>],
+    ) -> Result<bool, OperationError> {
+        let lim = eng.limits();
+        let mut any_inline = false;
+        let mut reserved = false;
+        let count = plans.len();
+        for plan in plans.iter_mut() {
+            if let Some(raw) = D::inline_ref(&plan.value) {
+                plan.new_ref = raw;
+                any_inline = true;
+                continue;
+            }
+            // One entry per plan of the chunk beyond whatever is there.
+            if !reserved {
+                if !self.seeded {
+                    D::seed(lim, tdd, v, &mut self.by_value)?;
+                    self.seeded = true;
+                }
+                lim.reserve_map(&mut self.by_value, count)?;
+                reserved = true;
+            }
+            let key = D::key(&plan.value);
+            if let Some(&existing) = self.by_value.get(&key) {
+                plan.new_ref = ValueRef::slot_raw(existing);
+                continue;
+            }
+            let s = D::push_slot(eng, tdd, v, plan.value.clone())?;
+            self.by_value.insert(key, s);
+            plan.new_ref = ValueRef::slot_raw(s);
+        }
+        Ok(any_inline)
+    }
 }

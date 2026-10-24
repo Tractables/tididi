@@ -3,11 +3,11 @@
 //! leaves, pair for pair and in the same order.
 
 use super::*;
-use super::super::plan::{allocate_fusion_slots, collect_fusion_plans, SORT_MIN};
-use super::super::rewrite::{rebuild_parent_level_with, BITMAP_BITS_PER_PLAN, BITMAP_MIN_PLANS};
+use super::super::plan::{collect_fusion_plans, FusionSlots, SORT_MIN};
+use super::super::rewrite::{ParentRewrite, BITMAP_BITS_PER_PLAN, BITMAP_MIN_PLANS};
 use crate::diagram::{ChildDecoder, ChildPair, EncodedChildRef, ValueRef};
 use crate::test_helpers::toy;
-use crate::value::IntFold;
+use crate::value::{Count, IntFold};
 use std::collections::BTreeMap;
 
 /// A seeded xorshift draw below `m`.
@@ -84,14 +84,8 @@ fn layout(tdd: &Tdd) -> (Vec<Vec<ChildPair>>, Vec<u128>) {
 /// bitmap taken from `bitmap_min_plans` plans on; returns the plans per node.
 fn fuse_with(tdd: &mut Tdd, bitmap_min_plans: usize) -> [usize; 3] {
     let eng = Engine::new();
-    let root = tdd.vtree.root();
-    let (_, right) = tdd.vtree.children(root);
     let mut scratch = eng.scratch.reduce.contract.checkout(&eng);
-    let mut plans = collect_fusion_plans::<IntFold>(&eng, tdd, root, right, ChildSide::Right, None, &mut scratch.pair_fusion)
-        .expect("no limits armed");
-    let any_inline = allocate_fusion_slots::<IntFold>(&eng, tdd, right, &mut plans).expect("no limits armed");
-    rebuild_parent_level_with(&eng, tdd, root, ChildSide::Right, any_inline, &plans, bitmap_min_plans)
-        .expect("no limits armed");
+    let plans = fuse_whole(&eng, tdd, bitmap_min_plans, &mut scratch);
     let mut per_node = [0usize; 3];
     for plan in &plans {
         per_node[plan.node_idx] += 1;
@@ -152,15 +146,27 @@ fn a_second_wide_node_sees_no_bit_of_the_first() {
     assert_eq!(sums(&by_bits), before);
 }
 
+/// The root level's plans, collected in one chunk, allocated and applied.
+fn fuse_whole(eng: &Engine, tdd: &mut Tdd, bitmap_min_plans: usize, scratch: &mut ContractScratch) -> Vec<PlanEntry<Count>> {
+    let root = tdd.vtree.root();
+    let (_, right) = tdd.vtree.children(root);
+    let mut plans = Vec::new();
+    let mut nodes = 0..tdd.levels[root.idx()].nodes().len();
+    let done = collect_fusion_plans::<IntFold>(
+        eng, tdd, root, right, ChildSide::Right, &mut nodes, usize::MAX, &mut plans, &mut scratch.pair_fusion,
+    )
+    .expect("no limits armed");
+    assert!(done, "one chunk holds the level");
+    let any_inline = FusionSlots::<IntFold>::new(eng.limits()).allocate(eng, tdd, right, &mut plans).expect("no limits armed");
+    let mut rewrite = ParentRewrite::new(eng.limits(), bitmap_min_plans);
+    rewrite.apply(eng, tdd, root, ChildSide::Right, any_inline, &plans).expect("no limits armed");
+    rewrite.finish(tdd, root);
+    plans
+}
+
 /// [`fuse_with`] for a root of two nodes.
 fn fuse_with_two(tdd: &mut Tdd, bitmap_min_plans: usize) {
     let eng = Engine::new();
-    let root = tdd.vtree.root();
-    let (_, right) = tdd.vtree.children(root);
     let mut scratch = eng.scratch.reduce.contract.checkout(&eng);
-    let mut plans = collect_fusion_plans::<IntFold>(&eng, tdd, root, right, ChildSide::Right, None, &mut scratch.pair_fusion)
-        .expect("no limits armed");
-    let any_inline = allocate_fusion_slots::<IntFold>(&eng, tdd, right, &mut plans).expect("no limits armed");
-    rebuild_parent_level_with(&eng, tdd, root, ChildSide::Right, any_inline, &plans, bitmap_min_plans)
-        .expect("no limits armed");
+    fuse_whole(&eng, tdd, bitmap_min_plans, &mut scratch);
 }

@@ -5,7 +5,7 @@ mod rewrite;
 
 
 use crate::Engine;
-use crate::limits::OperationError;
+use crate::limits::{OperationError, Transient};
 use crate::diagram::{EncodedChildRef, ChildDecoder, Tdd, ValueRef};
 use crate::vtree::VtreeIdx;
 
@@ -15,8 +15,8 @@ use crate::value::{IntFold, WeightFold};
 
 use super::scratch::ContractScratch;
 
-use plan::{collect_fusion_plans, allocate_fusion_slots};
-use rewrite::rebuild_parent_level;
+use plan::{collect_fusion_plans, FusionSlots};
+use rewrite::{ParentRewrite, BITMAP_MIN_PLANS};
 
 /// Stats returned by the pair-fusion sweeps.
 #[derive(Debug, Clone, Default)]
@@ -156,6 +156,32 @@ pub(crate) fn record_fused(eng: &Engine, tdd: &mut Tdd, parent: VtreeIdx) {
     }
 }
 
+/// The plans Phase 1 collects before Phases 2 and 3 apply them. A level can
+/// hold tens of millions of plans; a chunk keeps the plan buffer this size,
+/// and its nodes are rewritten while the pairs Phase 1 read are still in
+/// cache.
+const CHUNK_PLANS: usize = 1 << 12;
+
+// A test pins the chunk size on its thread and counts the boundaries
+// applied in more than one chunk.
+#[cfg(test)]
+use tests::{note_chunked_boundary, pinned_chunk_plans};
+
+#[cfg(not(test))]
+#[inline(always)]
+fn pinned_chunk_plans() -> Option<usize> {
+    None
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_chunked_boundary() {}
+
+/// The plans a chunk collects: [`CHUNK_PLANS`], or what a test pinned.
+fn chunk_plans() -> usize {
+    pinned_chunk_plans().unwrap_or(CHUNK_PLANS)
+}
+
 /// The three phases at one boundary: marginal level `v` under `parent`, on
 /// `side` of its pairs, reading the parent nodes `listed` where given.
 #[expect(clippy::too_many_arguments)]
@@ -169,53 +195,101 @@ fn fuse_boundary<D: SlotValues>(
     scratch: &mut ContractScratch,
     stats: &mut PairFusionStats,
 ) -> Result<(), OperationError> {
-    // Phase 1: scan parent's nodes; collect per-(node, x_idx) groups with
-    // > 1 distinct marginal-side index. Compute the fused value for each.
-    let mut plans: Vec<PlanEntry<D::Value>> =
-        collect_fusion_plans::<D>(eng, tdd, parent, v, side, listed, &mut scratch.pair_fusion)?;
-    if plans.is_empty() {
-        return Ok(());
-    }
+    let mut rewrite = ParentRewrite::new(eng.limits(), BITMAP_MIN_PLANS);
+    let fused = match listed {
+        Some(nodes) => {
+            debug_assert!(nodes.is_sorted(), "listed fusion nodes ascend");
+            let nodes = nodes.iter().map(|&n| n as usize);
+            fuse_chunks::<D>(eng, tdd, v, parent, side, nodes, &mut rewrite, scratch, stats)
+        }
+        None => {
+            let all = 0..tdd.levels[parent.idx()].nodes().len();
+            fuse_chunks::<D>(eng, tdd, v, parent, side, all, &mut rewrite, scratch, stats)
+        }
+    };
+    // Every chunk rewritten before a stop is a valid level, so the sweep
+    // runs on every exit.
+    rewrite.finish(tdd, parent);
+    fused
+}
 
-    // Phase 2: encode each plan's value as a marginal-side ref, an inline count
-    // or a value-keyed slot (`allocate_fusion_slots`). `any_inline` makes
-    // Phase 3 raise the parent's marginal-side inline marker, without which
-    // readers decode the bit-30-tagged ref as a grid coordinate.
-    //
-    // A weight-marginal leaf's column is pinned
-    // (`test_helpers::check::marginal::check_leaf_columns_pinned`), so nothing
-    // is minted there: a plan resolves by lookup in the column and is dropped
-    // when the column lacks its value. A dropped plan leaves its group's pairs
-    // untouched, since Phase 3 rewrites only the x-indices a surviving plan
-    // names: one un-fused redex, never a wrong value. `retain_mut` keeps the
-    // ascending-`node_idx` order Phase 3 needs.
-    let any_inline = if D::LEAF_PINNED && tdd.vtree.node(v).is_leaf() {
-        plans.retain_mut(|plan| match D::leaf_ref(tdd, v, &plan.value) {
-            Some(raw) => {
-                plan.new_ref = raw;
-                true
+/// [`fuse_boundary`] over the parent nodes `nodes`, ascending, a chunk of
+/// [`CHUNK_PLANS`] plans at a time: Phase 1 collects a chunk, Phase 2 encodes
+/// its values, Phase 3 rewrites its nodes, and the next chunk follows. Phase 3
+/// moves no node's pairs but the chunk's own, and Phase 2 only appends slots,
+/// so the next chunk reads the pairs and values a scan of the whole level
+/// would; slots are minted in the same order, so the level and store are the
+/// ones one chunk would leave.
+#[expect(clippy::too_many_arguments)]
+fn fuse_chunks<D: SlotValues>(
+    eng: &Engine,
+    tdd: &mut Tdd,
+    v: VtreeIdx,
+    parent: VtreeIdx,
+    side: ChildSide,
+    mut nodes: impl Iterator<Item = usize>,
+    rewrite: &mut ParentRewrite<'_>,
+    scratch: &mut ContractScratch,
+    stats: &mut PairFusionStats,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let chunk = chunk_plans();
+    let mut plans: Transient<'_, Vec<PlanEntry<D::Value>>> = Transient::new(lim, Vec::new());
+    let mut slots = FusionSlots::<D>::new(lim);
+    let mut applied = 0;
+    loop {
+        // Phase 1: scan the chunk's nodes; collect per-(node, x_idx) groups
+        // with > 1 distinct marginal-side index. Compute the fused value for
+        // each.
+        plans.clear();
+        let done =
+            collect_fusion_plans::<D>(eng, tdd, parent, v, side, &mut nodes, chunk, &mut plans, &mut scratch.pair_fusion)?;
+        if !plans.is_empty() {
+            // Phase 2: encode each plan's value as a marginal-side ref, an
+            // inline count or a value-keyed slot (`FusionSlots`). `any_inline`
+            // makes Phase 3 raise the parent's marginal-side inline marker,
+            // without which readers decode the bit-30-tagged ref as a grid
+            // coordinate.
+            //
+            // A weight-marginal leaf's column is pinned
+            // (`test_helpers::check::marginal::check_leaf_columns_pinned`), so
+            // nothing is minted there: a plan resolves by lookup in the column
+            // and is dropped when the column lacks its value. A dropped plan
+            // leaves its group's pairs untouched, since Phase 3 rewrites only
+            // the x-indices a surviving plan names: one un-fused redex, never a
+            // wrong value. `retain_mut` keeps the ascending-`node_idx` order
+            // Phase 3 needs.
+            let any_inline = if D::LEAF_PINNED && tdd.vtree.node(v).is_leaf() {
+                plans.retain_mut(|plan| match D::leaf_ref(tdd, v, &plan.value) {
+                    Some(raw) => {
+                        plan.new_ref = raw;
+                        true
+                    }
+                    None => false,
+                });
+                plans.iter().any(|plan| {
+                    matches!(ChildDecoder::marginal().value(EncodedChildRef::from_raw(plan.new_ref)), ValueRef::Inline(_))
+                })
+            } else {
+                slots.allocate(eng, tdd, v, &mut plans)?
+            };
+            // Counted after Phase 2, which may drop leaf plans: `fusion_groups`
+            // counts applied rewrites only, and the contract fixpoint loops
+            // while it is nonzero.
+            stats.fusion_groups += plans.len();
+            // Phase 3: rewrite the parent pair lists of the chunk's nodes.
+            if !plans.is_empty() {
+                rewrite.apply(eng, tdd, parent, side, any_inline, &plans)?;
+                applied += 1;
+                if applied == 2 {
+                    note_chunked_boundary();
+                }
             }
-            None => false,
-        });
-        if plans.is_empty() {
+        }
+        if done {
             return Ok(());
         }
-        plans.iter().any(|plan| {
-            matches!(ChildDecoder::marginal().value(EncodedChildRef::from_raw(plan.new_ref)), ValueRef::Inline(_))
-        })
-    } else {
-        allocate_fusion_slots::<D>(eng, tdd, v, &mut plans)?
-    };
-
-    // Counted after Phase 2, which may drop leaf plans: `fusion_groups` counts
-    // applied rewrites only, and the contract fixpoint loops while it is nonzero.
-    stats.fusion_groups += plans.len();
-
-    // Phase 3: rewrite parent pair lists for affected nodes. `plans` is
-    // emitted grouped by ascending `node_idx` in Phase 1 (and the leaf-lookup
-    // filter above preserves that order), which is the cursor-walk
-    // precondition. See `rebuild_parent_level`.
-    rebuild_parent_level(eng, tdd, parent, side, any_inline, &plans)
+    }
 }
 
 #[cfg(test)]

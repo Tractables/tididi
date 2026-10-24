@@ -2,7 +2,7 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::limits::{OperationError, Transient};
+use crate::limits::{Limits, OperationError, Transient};
 use crate::diagram::{EncodedChildRef, ChildPair, Tdd, TddLevel};
 use crate::Engine;
 use crate::vtree::VtreeIdx;
@@ -24,9 +24,11 @@ pub(super) const BITMAP_MIN_PLANS: usize = 1 << 12;
 /// stands in for.
 pub(super) const BITMAP_BITS_PER_PLAN: usize = 64;
 
-/// Phase 3: rewrite the parent's pair lists in place, node by node. `plans`
-/// must hold each node's entries contiguously (Phase 1 emits them in ascending
-/// `node_idx`); only the nodes named in it are touched.
+/// Phase 3 over one boundary: rewrite the parent's pair lists in place, node
+/// by node, a chunk of plans at a time, then sweep the level's arena once
+/// ([`finish`](Self::finish)). Each chunk's `plans` must hold each node's
+/// entries contiguously (Phase 1 emits them in ascending `node_idx`); only the
+/// nodes named in it are touched.
 ///
 /// # Soundness
 ///
@@ -36,86 +38,117 @@ pub(super) const BITMAP_BITS_PER_PLAN: usize = 64;
 /// arena range. Per node a write cursor trails the read cursor over that range,
 /// then the `k` fused pairs are appended at the cursor, still inside the old
 /// range since `kept + k ≤ old_len − k`. The abandoned tail is charged to
-/// `dead_pairs` and reclaimed by the level's arena sweep at the end.
-pub(super) fn rebuild_parent_level<V>(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    parent: VtreeIdx,
-    side: ChildSide,
-    any_inline: bool,
-    plans: &[PlanEntry<V>],
-) -> Result<(), OperationError> {
-    rebuild_parent_level_with(eng, tdd, parent, side, any_inline, plans, BITMAP_MIN_PLANS)
+/// `dead_pairs` and reclaimed by the level's arena sweep at the end. No other
+/// node's range moves before then, so the nodes a later chunk names still
+/// hold the pairs Phase 1 read.
+pub(super) struct ParentRewrite<'a> {
+    /// Maps each fused `x_idx` of the node being rewritten to its new
+    /// marginal-side ref. A plan removes every pair at its `x_idx` (its group
+    /// is the whole marginal multiset there), so "this pair is fused away" is
+    /// exactly `fused_x.contains_key`. A node can carry thousands of plans, so
+    /// membership stays a hash lookup. Charged as it grows and handed back
+    /// when the boundary is done.
+    fused_x: Transient<'a, FxHashMap<u32, u32>>,
+    /// The membership bitmap of a node with many plans (see
+    /// `fuse_node_pairs`), all zero between nodes, charged as it grows and
+    /// handed back at the end.
+    bits: Transient<'a, Vec<u64>>,
+    bitmap_min_plans: usize,
+    /// Whether a chunk was applied, so the level is stored and marked changed.
+    opened: bool,
+    /// Nodes and pairs rewritten since the last stop test.
+    read: u64,
 }
 
-/// [`rebuild_parent_level`] with the fewest plans at which a node tests
-/// membership on a bitmap given, so a test can run one level both ways.
-pub(super) fn rebuild_parent_level_with<V>(
-    eng: &Engine,
-    tdd: &mut Tdd,
-    parent: VtreeIdx,
-    side: ChildSide,
-    any_inline: bool,
-    plans: &[PlanEntry<V>],
-    bitmap_min_plans: usize,
-) -> Result<(), OperationError> {
-    // The fusion changes node lengths in place: an implicit level, one whose
-    // child became marginal, is built stored where its pairs lie first.
-    tdd.levels[parent.idx()].store_if_implicit(eng.limits())?;
-    tdd.levels.mark_changed(parent);
-    let level = &mut tdd.levels[parent.idx()];
-    // Fusion-inline may mint a fresh inline marginal-side ref (bit-30 tagged) this
-    // sweep; the marker for that side must be raised or the end-of-apply tagger
-    // and the apply reader misread the ref as a grid coordinate. Rewriting in place
-    // preserves every other flag, including the marker for a side that was
-    // already inlined, by construction.
-    if any_inline {
-        level.set_has_value_refs(side, true);
+impl<'a> ParentRewrite<'a> {
+    /// A rewrite whose nodes with at least `bitmap_min_plans` plans test
+    /// membership on a bitmap ([`BITMAP_MIN_PLANS`] in the sweep).
+    pub(super) fn new(lim: &'a Limits, bitmap_min_plans: usize) -> Self {
+        ParentRewrite {
+            fused_x: Transient::new(lim, FxHashMap::default()),
+            bits: Transient::new(lim, Vec::new()),
+            bitmap_min_plans,
+            opened: false,
+            read: 0,
+        }
     }
 
-    // `fused_x` maps each fused x_idx to its new marginal-side ref. A plan
-    // removes every pair at its x_idx (its group is the whole marginal multiset
-    // there), so "this pair is fused away" is exactly `fused_x.contains_key`. A
-    // node can carry thousands of plans, so membership stays a hash lookup.
-    // Charged as it grows and handed back when the sweep ends.
-    let mut fused_x: Transient<'_, FxHashMap<u32, u32>> = Transient::new(eng.limits(), FxHashMap::default());
-    // The membership bitmap of a node with many plans (see `fuse_node_pairs`),
-    // all zero between nodes, charged as it grows and handed back at the end.
-    let mut bits: Transient<'_, Vec<u64>> = Transient::new(eng.limits(), Vec::new());
-    // Arena slots the shrink abandons, noted in one charge below: the counter's
-    // only reader is the sweep at the end, so per-node saturating adds buy nothing.
-    let mut dead_acc = 0usize;
-    // A stop is tested between nodes, once per stride of the pairs rewritten.
-    // Each node is rewritten whole, and a node left unfused is only a redex
-    // left for later, so a stop leaves a valid level behind it.
-    let lim = eng.limits();
-    let stride = lim.reduce_poll_stride();
-    let mut read = 0u64;
-    let mut stopped = Ok(());
-
-    let mut cursor = 0usize;
-    while cursor < plans.len() {
-        let n = plans[cursor].node_idx;
-        read += 1 + level.pair_count_at(n) as u64;
-        if read >= stride {
-            read = 0;
-            stopped = lim.check_stop();
-            if stopped.is_err() {
-                break;
+    /// Rewrite the nodes `plans` names. A stop is tested between nodes, once
+    /// per stride of the pairs rewritten. Each node is rewritten whole, and a
+    /// node left unfused is only a redex left for later, so a stop leaves a
+    /// valid level behind it.
+    pub(super) fn apply<V>(
+        &mut self,
+        eng: &Engine,
+        tdd: &mut Tdd,
+        parent: VtreeIdx,
+        side: ChildSide,
+        any_inline: bool,
+        plans: &[PlanEntry<V>],
+    ) -> Result<(), OperationError> {
+        if !self.opened {
+            // The fusion changes node lengths in place: an implicit level, one
+            // whose child became marginal, is built stored where its pairs lie
+            // first.
+            tdd.levels[parent.idx()].store_if_implicit(eng.limits())?;
+            tdd.levels.mark_changed(parent);
+            self.opened = true;
+        }
+        let level = &mut tdd.levels[parent.idx()];
+        // Fusion-inline may mint a fresh inline marginal-side ref (bit-30
+        // tagged); the marker for that side must be raised or the end-of-apply
+        // tagger and the apply reader misread the ref as a grid coordinate.
+        // Rewriting in place preserves every other flag, including the marker
+        // for a side that was already inlined, by construction.
+        if any_inline {
+            level.set_has_value_refs(side, true);
+        }
+        // Arena slots the shrink abandons, noted in one charge below: the
+        // counter's only reader is the sweep at the end, so per-node
+        // saturating adds buy nothing.
+        let mut dead_acc = 0usize;
+        let lim = eng.limits();
+        let stride = lim.reduce_poll_stride();
+        let mut stopped = Ok(());
+        let mut cursor = 0usize;
+        while cursor < plans.len() {
+            let n = plans[cursor].node_idx;
+            self.read += 1 + level.pair_count_at(n) as u64;
+            if self.read >= stride {
+                self.read = 0;
+                stopped = lim.check_stop();
+                if stopped.is_err() {
+                    break;
+                }
             }
+            let plan_start = cursor;
+            while cursor < plans.len() && plans[cursor].node_idx == n {
+                cursor += 1;
+            }
+            let this_plans = &plans[plan_start..cursor];
+            dead_acc += fuse_node_pairs(
+                eng,
+                level,
+                n,
+                side,
+                this_plans,
+                &mut self.fused_x,
+                &mut self.bits,
+                self.bitmap_min_plans,
+            )?;
         }
-        let plan_start = cursor;
-        while cursor < plans.len() && plans[cursor].node_idx == n {
-            cursor += 1;
-        }
-        let this_plans = &plans[plan_start..cursor];
-        dead_acc += fuse_node_pairs(eng, level, n, side, this_plans, &mut fused_x, &mut bits, bitmap_min_plans)?;
+        level.note_dead_pairs(dead_acc);
+        stopped
     }
-    level.note_dead_pairs(dead_acc);
-    // Legal only now: the rewrite is done, so no pair-arena offset is held
-    // across the call (the caller obligation on `compact_pairs_if_stale`).
-    level.compact_pairs_if_stale();
-    stopped
+
+    /// Sweep the parent level's arena if the rewrites left it stale. Legal
+    /// only now: no pair-arena offset is held across the call (the caller
+    /// obligation on `compact_pairs_if_stale`).
+    pub(super) fn finish(self, tdd: &mut Tdd, parent: VtreeIdx) {
+        if self.opened {
+            tdd.levels[parent.idx()].compact_pairs_if_stale();
+        }
+    }
 }
 
 /// Rewrite one node's pair list in place: drop every pair whose x-side carries a
@@ -150,7 +183,7 @@ fn fuse_node_pairs<V>(
     // the node word.
     debug_assert!(
         level.node(n).kind().pairs_in_arena(),
-        "rebuild_parent_level: node {n} carries a plan but owns no arena range",
+        "pair fusion: node {n} carries a plan but owns no arena range",
     );
     let range = level.pair_range_at(n);
     let (start, old_len) = (range.start, range.len());
