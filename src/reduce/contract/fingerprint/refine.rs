@@ -44,7 +44,9 @@ const SMALL_PAIRS: usize = 8;
 /// parent node all names, in one group, stays whole; else each of its
 /// groups of two or more there becomes a class of its own, one of which
 /// may keep the class's id where every member is named there. The nodes no
-/// pair names stay in the first class, twins of one another.
+/// pair names stay in the first class, and leave it at the end: a node of
+/// no context is a node nothing reaches, whose merge the prune makes moot,
+/// and it has no twin.
 ///
 /// The work is one read of the class of each node a parent node names, and
 /// one write for each node that changes class, with each parent node's pairs
@@ -119,6 +121,7 @@ pub(super) fn refine_context_groups(
             part.split_wide(lim, stored.of_idx(w as u32 as usize), side, &mut wide)?;
         }
     }
+    part.drop_unnamed(width);
     debug_assert_eq!(
         part.twinable,
         part.size.iter().filter(|&&members| members >= 2).map(|&members| members as usize).sum::<usize>(),
@@ -167,7 +170,9 @@ pub(super) fn refine_context_groups(
 /// until its bit in `moved` is set; then it has no twin if its bit in
 /// `alone` is set, and is in class `class[t]` if not. The bits stay in
 /// cache where the classes would not, so a node that leaves the first class
-/// alone, as most do on a level without twins, costs two bits.
+/// alone, as most do on a level without twins, costs two bits. A node a
+/// parent node names has its bit set even where it stays in the first
+/// class, so the nodes whose bit is clear are the nodes no pair names.
 struct Partition<'a> {
     class: &'a mut [u32],
     moved: &'a mut [u64],
@@ -266,11 +271,34 @@ impl Partition<'_> {
             }
             return;
         }
-        if self.size[c0 as usize] > 2 {
-            let id = self.fresh(c0, 2);
-            self.put(t0, id);
-            self.put(t1, id);
+        let id = if self.size[c0 as usize] > 2 { self.fresh(c0, 2) } else { c0 };
+        self.put(t0, id);
+        self.put(t1, id);
+    }
+
+    /// At the end of the refinement: the nodes no pair names, all of them
+    /// in the first class, leave the partition, which they would otherwise
+    /// end as one group.
+    fn drop_unnamed(&mut self, width: usize) {
+        let words = width.div_ceil(64);
+        let mut unnamed = 0;
+        for w in 0..words {
+            let mut clear = !self.moved[w];
+            if (w + 1) * 64 > width {
+                clear &= (1u64 << (width % 64)) - 1;
+            }
+            unnamed += clear.count_ones() as usize;
         }
+        if unnamed < 2 {
+            return;
+        }
+        debug_assert_eq!(self.size[0] as usize, unnamed, "the first class is the nodes no pair names");
+        for w in 0..words {
+            self.alone[w] |= !self.moved[w];
+            self.moved[w] = u64::MAX;
+        }
+        self.size[0] = 0;
+        self.twinable -= unnamed;
     }
 
     /// A parent node of three to [`SMALL_PAIRS`] pairs, grouped on the
@@ -351,6 +379,13 @@ impl Partition<'_> {
                 self.alone(node[g], of[g]);
             } else if keep[f] {
                 keep[f] = false;
+                if of[g] == 0 {
+                    for r in g..runs {
+                        if lead[r] as usize == g {
+                            self.put(node[r], 0);
+                        }
+                    }
+                }
             } else {
                 let id = self.fresh(of[g], u32::from(members[g]));
                 for r in g..runs {
@@ -449,8 +484,8 @@ impl Partition<'_> {
             let c = (run.0 >> 32) as u32;
             if members == 1 {
                 self.alone(node(run), c);
-            } else if members < self.size[c as usize] {
-                let id = self.fresh(c, members);
+            } else if members < self.size[c as usize] || c == 0 {
+                let id = if members < self.size[c as usize] { self.fresh(c, members) } else { c };
                 self.put(node(run), id);
                 while next != NO_RUN {
                     self.put(node(runs[next as usize]), id);

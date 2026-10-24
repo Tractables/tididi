@@ -269,8 +269,9 @@ impl TwinEntries for ContentEntries<'_> {
 /// level `t1` of `parent`, by refining a partition of the level parent node
 /// by parent node ([`refine::refine_context_groups`]). Marginal children are
 /// handled by pair fusion instead. See [`group_twins_by_entries`] for what
-/// is left in `scratch`. Debug builds check the groups against the
-/// fingerprint search over the same contexts.
+/// is left in `scratch`. The nodes no pair names are in no group. Debug
+/// builds check the groups against the fingerprint search over the same
+/// contexts, which groups those nodes together, less that group.
 pub(super) fn find_twin_groups(
     eng: &Engine,
     tdd: &Tdd,
@@ -295,7 +296,8 @@ pub(super) fn find_twin_groups(
             t1_side,
             early_stop: screens(parent_level),
         };
-        let fingerprinted = group_twins_by_entries(eng, &entries, width, scratch)?;
+        let fingerprinted = group_twins_by_entries(eng, &entries, width, scratch)?
+            && drop_unnamed_group(parent_level, t1_side, width, scratch);
         assert_eq!(
             (found, &refined.0, &refined.1),
             (fingerprinted, &scratch.group_starts, &scratch.flat_groups),
@@ -303,6 +305,29 @@ pub(super) fn find_twin_groups(
         );
     }
     Ok(found)
+}
+
+/// Drop from the groups in `scratch` the one of the nodes no pair of
+/// `parent_level` names on `side`, in place; whether a group is left.
+fn drop_unnamed_group(parent_level: &TddLevel, side: ChildSide, width: usize, scratch: &mut ContractScratch) -> bool {
+    let mut named = vec![false; width];
+    for_each_target_sibling(parent_level, side, |_, target, _| named[target as usize] = true);
+    let ContractScratch { flat_groups, group_starts, .. } = scratch;
+    let n = group_starts.len();
+    let (mut kept, mut at) = (0, 0);
+    for k in 0..n {
+        let start = group_starts[k] as usize;
+        let end = if k + 1 < n { group_starts[k + 1] as usize } else { flat_groups.len() };
+        if named[flat_groups[start] as usize] {
+            group_starts[kept] = at as u32;
+            flat_groups.copy_within(start..end, at);
+            kept += 1;
+            at += end - start;
+        }
+    }
+    group_starts.truncate(kept);
+    flat_groups.truncate(at);
+    kept > 0
 }
 
 /// Group the `width` nodes of `level` by the multiset of their `entries`.
