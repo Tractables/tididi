@@ -653,20 +653,27 @@ fn probe_scored(
     let total = before.iter().sum::<usize>();
     let mut after = Transient::new(lim, Vec::new());
     lim.reserve_exact(&mut after, members.len())?;
+    after.extend_from_slice(&before);
+    // The largest members first: a move they refuse is refused with less
+    // of the pool read.
+    let mut order = Transient::new(lim, Vec::new());
+    lim.reserve_exact(&mut order, members.len())?;
+    order.extend(0..members.len());
+    order.sort_by_key(|&i| std::cmp::Reverse(before[i]));
+    if let Twin::Fill(slots) = &mut twin {
+        slots.resize(members.len(), None);
+    }
     // The floors of the members still to score, and the pairs of those
     // scored, of the move and of its crossing where it is scored too.
     let mut rest = floors.iter().sum::<usize>();
     let (mut sum, mut sum_crossed) = (0usize, Some(0usize));
     let cap = |sum: usize, rest: usize| total.saturating_sub(sum + rest);
-    for (i, m) in members.iter().enumerate() {
+    for (at, &i) in order.iter().enumerate() {
+        let m = &members[i];
         rest -= floors[i];
         let old = before[i];
         if !scored[i] {
-            if let Twin::Fill(slots) = &mut twin {
-                slots.push(None);
-            }
             gate.poll(old as u64 + 1)?;
-            after.push(old);
             sum += old;
             sum_crossed = sum_crossed.map(|s| s + old);
             continue;
@@ -681,7 +688,7 @@ fn probe_scored(
                 // at nothing.
                 let crossed_cap = sum_crossed.map_or(0, |s| cap(s, rest));
                 let [plain, crossed] = score_levels_crossed_too(lim, m, &info, kind, score, bound, [cap(sum, rest), crossed_cap])?;
-                slots.push(Some(crossed));
+                slots[i] = Some(crossed);
                 sum_crossed = sum_crossed.zip(crossed).map(|(s, n)| s + n);
                 plain
             }
@@ -693,8 +700,8 @@ fn probe_scored(
         let Some(new) = new else {
             // Refused, by the cap or the bound: this member and the ones
             // after it charged as if scored.
-            for (j, &old) in before.iter().enumerate().skip(i) {
-                gate.poll(old as u64 + if scored[j] { REBUILD_UNITS } else { 1 })?;
+            for &j in &order[at..] {
+                gate.poll(before[j] as u64 + if scored[j] { REBUILD_UNITS } else { 1 })?;
             }
             #[cfg(debug_assertions)]
             debug_check_refusal(lim, members, &info, mv, bound, total, scratch)?;
@@ -703,7 +710,7 @@ fn probe_scored(
             return Ok(false);
         };
         gate.poll(old as u64 + REBUILD_UNITS)?;
-        after.push(new);
+        after[i] = new;
         sum += new;
     }
     // A score is at most the pairs: a total no lower than before is a move
@@ -760,8 +767,8 @@ enum Twin<'s> {
     /// Nothing: the move scored alone.
     Alone,
     /// The move is plain and its crossing is still to be probed: each
-    /// member's score of the crossing taken with the move's, filed in member
-    /// order, `None` for a member not scored.
+    /// member's score of the crossing taken with the move's, filed at the
+    /// member's index, `None` for a member not scored or not reached.
     Fill(&'s mut Vec<Option<Option<usize>>>),
     /// The move is the crossing of a plain move refused just before, on the
     /// same levels, which filed these scores.
