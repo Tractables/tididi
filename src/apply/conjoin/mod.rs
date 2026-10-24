@@ -916,14 +916,21 @@ fn pair_rows_forced_off() -> bool {
 fn note_pair_rows(_complete: bool, _one_pair: bool) {}
 
 // A test reads the cells of every level that can be read by g-pair vectors
-// by them, or of none, as their oracle, and counts those levels.
+// by them, or of none, as their oracle, writes every such row's live cells
+// off the sorted list of its live candidates, and counts those levels.
 #[cfg(test)]
-use tests::{note_word_cells, word_cells_forced};
+use tests::{note_word_cells, word_cells_forced, word_rows_sorted_forced};
 
 #[cfg(not(test))]
 #[inline(always)]
 fn word_cells_forced() -> Option<bool> {
     None
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn word_rows_sorted_forced() -> bool {
+    false
 }
 
 #[cfg(not(test))]
@@ -943,6 +950,9 @@ enum WordNote {
     Row,
     /// A row read by vectors that walks its live cells alone.
     Cells,
+    /// A row read by vectors that writes its live cells off the sorted
+    /// list of its live candidates.
+    Sorted,
 }
 
 // A test counts the times a level's pairs arena grew.

@@ -231,9 +231,10 @@ thread_local! {
     static WORD_CELLS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
     /// The levels on this thread read by g-pair vectors, those of two grids
     /// and those with a complete side, their cells walked in the grouped
-    /// order, their rows read by vectors, and those of these that walk
-    /// their live cells alone ([`word_cells_levels`]).
-    static WORD_CELLS_LEVELS: std::cell::Cell<[u64; 5]> = const { std::cell::Cell::new([0; 5]) };
+    /// order, their rows read by vectors, those of these that walk their
+    /// live cells alone, and those that write them off the sorted list of
+    /// their live candidates ([`word_cells_levels`]).
+    static WORD_CELLS_LEVELS: std::cell::Cell<[u64; 6]> = const { std::cell::Cell::new([0; 6]) };
 }
 
 /// [`WORD_CELLS`], or, where it is unset, `TIDIDI_TEST_WORD_CELLS` (`1`
@@ -275,11 +276,36 @@ pub(super) fn word_cells_off<R>(f: impl FnOnce() -> R) -> R {
     word_cells_set(false, f)
 }
 
+thread_local! {
+    /// Whether every row on this thread read by g-pair vectors that does
+    /// not walk its live cells writes them off the sorted list of its live
+    /// candidates ([`word_rows_sorted`]).
+    static WORD_ROWS_SORTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub(super) fn word_rows_sorted_forced() -> bool {
+    WORD_ROWS_SORTED.with(std::cell::Cell::get)
+}
+
+/// Run `f` with every row read by g-pair vectors that does not walk its
+/// live cells writing them off the sorted list of its live candidates.
+pub(super) fn word_rows_sorted<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            WORD_ROWS_SORTED.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(WORD_ROWS_SORTED.with(|c| c.replace(true)));
+    f()
+}
+
 /// The levels on this thread so far read by g-pair vectors, those of two
 /// grids and those with a complete side, their cells walked in the grouped
-/// order, their rows read by vectors, and those of these that walk their
-/// live cells alone.
-pub(super) fn word_cells_levels() -> [u64; 5] {
+/// order, their rows read by vectors, those of these that walk their live
+/// cells alone, and those that write them off the sorted list of their
+/// live candidates.
+pub(super) fn word_cells_levels() -> [u64; 6] {
     WORD_CELLS_LEVELS.with(std::cell::Cell::get)
 }
 

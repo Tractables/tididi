@@ -20,12 +20,19 @@ fn conjoin(f: &Tdd, g: &Tdd) -> (Tdd, u64) {
 }
 
 /// Conjoined with every level that can read its cells by vectors reading
-/// them, with the levels that pay reading them, and with none: the same
-/// levels, each node's pairs in the same order, and the same work.
+/// them (once with every row that does not walk its live cells writing
+/// them off its sorted live candidates), with the levels that pay reading
+/// them, and with none: the same levels, each node's pairs in the same
+/// order, and the same work.
 fn check(f: &Tdd, g: &Tdd, what: &str) {
     let (oracle, work) = word_cells_off(|| conjoin(f, g));
     let eng = Engine::new();
-    for (name, (out, out_work)) in [("every level", word_cells_on(|| conjoin(f, g))), ("the levels that pay", conjoin(f, g))] {
+    let arms = [
+        ("every level", word_cells_on(|| conjoin(f, g))),
+        ("every level, rows sorted,", word_cells_on(|| word_rows_sorted(|| conjoin(f, g)))),
+        ("the levels that pay", conjoin(f, g)),
+    ];
+    for (name, (out, out_work)) in arms {
         assert!(eng.equivalent(&out, &oracle).unwrap(), "{what}: {name} read by vectors built another function");
         assert!(is_self_conjunction(&out, &oracle), "{what}: {name} read by vectors built other levels");
         assert_eq!(out_work, work, "{what}: {name} read by vectors took other work");
@@ -33,10 +40,11 @@ fn check(f: &Tdd, g: &Tdd, what: &str) {
 }
 
 /// Random formulas over 18 variables on every vtree shape, dense random
-/// functions over 10 and 14 variables, whose levels hold many pairs, and
-/// random functions over 12 variables that leave alternate variables under
-/// a vtree node to each operand, whose parent level has a complete side:
-/// the levels read by vectors build what the row loop builds.
+/// functions over 10 and 14 variables, whose levels hold many pairs, sparse
+/// ones over 16 and 18 variables, and random functions over 12 variables
+/// that leave alternate variables under a vtree node to each operand, whose
+/// parent level has a complete side: the levels read by vectors build what
+/// the row loop builds.
 #[test]
 fn the_levels_read_by_vectors_build_what_the_row_loop_builds() {
     let mut rng = Lcg::new(0x77d0_c311);
@@ -53,10 +61,12 @@ fn the_levels_read_by_vectors_build_what_the_row_loop_builds() {
             }
         }
     }
-    for n in [10u32, 14] {
+    // Sparse functions over 16 and 18 variables: nodes of more than two
+    // words of pairs whose live cells hold a live candidate or two.
+    for (n, one_ins) in [(10u32, &[2, 3, 8][..]), (14, &[2, 3, 8]), (16, &[64, 256, 1024]), (18, &[256, 1024])] {
         let vars: Vec<VarId> = (1..=n).map(VarId).collect();
         for (name, vtree) in vtree_shapes(n) {
-            for one_in in [2, 3, 8] {
+            for &one_in in one_ins {
                 let mut operand = || {
                     let models: Vec<u64> = (0..1u64 << n).filter(|_| rng.below(one_in) == 0).collect();
                     Tdd::from_models(&vtree, &vars, &models).unwrap()
@@ -93,11 +103,14 @@ fn the_levels_read_by_vectors_build_what_the_row_loop_builds() {
         }
     }
     let after = word_cells_levels();
-    let [grids, complete, grouped, rows, cells] = std::array::from_fn(|k| after[k] - before[k]);
-    eprintln!("levels read by vectors: {grids} of two grids, {complete} with a complete side, {grouped} grouped cells, {rows} rows ({cells} walking their live cells), over {cases} cases");
+    let [grids, complete, grouped, rows, cells, sorted] = std::array::from_fn(|k| after[k] - before[k]);
+    let bits = rows - cells - sorted;
+    eprintln!("levels read by vectors: {grids} of two grids, {complete} with a complete side, {grouped} grouped cells, {rows} rows ({cells} walking their live cells, {bits} off cell bits, {sorted} off sorted candidates), over {cases} cases");
     assert!(grids > 0, "expected levels of two grids read by vectors, got none over {cases} cases");
     assert!(complete > 0, "expected levels with a complete side read by vectors, got none over {cases} cases");
     assert!(grouped > 0, "expected grouped cells read by vectors, got none over {cases} cases");
     assert!(rows > 0, "expected rows read by vectors, got none over {cases} cases");
     assert!(cells > 0, "expected rows walking their live cells alone, got none over {cases} cases");
+    assert!(bits > 0, "expected rows written off cell bits, got none over {cases} cases");
+    assert!(sorted > 0, "expected rows written off sorted candidates, got none over {cases} cases");
 }

@@ -17,10 +17,17 @@ const WORDS_MAX_VECTOR_WORDS: usize = 1 << 22;
 /// candidates is live; any other row walks its cells.
 const LIVE_SHARE: u64 = 4;
 
-/// A row counted by vectors writes its live candidates off the sorted
-/// list where at most one of this many candidates of its live cells is
-/// live; otherwise it walks its live cells alone.
+/// A row counted by vectors writes its live cells off its live candidates
+/// where at most one of this many candidates of its live cells is live;
+/// otherwise it walks its live cells alone.
 const CELL_SHARE: u64 = 8;
+
+/// A row writes its live cells off f-pair bits, a word per 64 f pairs a
+/// live cell, where they take at most this many words a live candidate
+/// and at most [`CELL_BITS_MAX_WORDS`] in all; otherwise off its live
+/// candidates sorted by column.
+const BITS_SHARE: u64 = 2;
+const CELL_BITS_MAX_WORDS: usize = 1 << 22;
 
 /// The candidates a level's rows count before the level stops reading
 /// rows by vectors, if more than one of [`LIVE_SHARE`] of them was live.
@@ -83,8 +90,15 @@ pub(crate) struct WordScratch {
     union_sum: Vec<u64>,
     live_cols: Vec<u32>,
     col_live: Vec<u64>,
-    /// The current row's live candidates, `k << 32 | q` for its `k`th f pair
-    /// and g pair `q`, in that order, and sorted by column.
+    /// Each live cell's slot among the current row's (its index in
+    /// `live_cols`), read at the row's live columns alone; a slot's words
+    /// one after another, bit `k` set where the row's `k`th f pair has a
+    /// live candidate in the cell.
+    col_slot: Vec<u32>,
+    cell_bits: Vec<u64>,
+    /// A cell's live candidates, `k << 32 | q` for the row's `k`th f pair
+    /// and g pair `q`, in that order, on a row read off its bits; the row's,
+    /// and sorted by column, on a row read off its sorted candidates.
     entries: Vec<u64>,
     sorted: Vec<u64>,
     /// A count a column while a row's candidates are sorted, and zero
@@ -128,6 +142,8 @@ impl WordScratch {
         visit(&mut self.union);
         visit(&mut self.live_cols);
         visit(&mut self.col_live);
+        visit(&mut self.col_slot);
+        visit(&mut self.cell_bits);
         visit(&mut self.entries);
         visit(&mut self.sorted);
         visit(&mut self.counts);
@@ -330,9 +346,14 @@ fn sample_cells<L: ChildLookup, R: ChildLookup>(
 /// bit). A row counts its live candidates off its pairs' vectors, and
 /// walks its cells as the row loop does where many of them are live
 /// ([`LIVE_SHARE`]). Otherwise it walks its live cells alone where many of
-/// their candidates are live ([`CELL_SHARE`]), and elsewhere sorts its live
-/// candidates by column and writes its live cells off the sorted list. A
-/// level whose rows hold mostly live candidates walks the rest of them
+/// their candidates are live ([`CELL_SHARE`]). Elsewhere it marks, for
+/// each live cell, the f pairs with a live candidate there, a bit an f
+/// pair, and writes each live cell off its bits: f pair by f pair, each
+/// one's live g pairs in the cell read off its vectors again (a column of
+/// one pair needs no reading). A row whose bits would take many words
+/// against its live candidates ([`BITS_SHARE`]) sorts them by column
+/// instead and writes its live cells off the sorted list. A level whose
+/// rows hold mostly live candidates walks the rest of them
 /// ([`PROBATION`]).
 pub(crate) fn run_level_rows_words(
     eng: &Engine,
@@ -416,10 +437,17 @@ fn rows_by_words<L: ChildLookup, R: ChildLookup, S: PairSink>(
         }
         let candidates = f_pairs.len() as u64 * gp;
         match a.take_row(i, f_pairs, slab, left, right)? {
-            RowMode::Words => {
+            RowMode::Bits => {
+                for k in 0..a.w.live_cols.len() {
+                    let j = a.w.live_cols[k] as usize;
+                    a.emit_bits(eng, i, j, row_base + j, f_pairs, ctx, slab, left, right)?;
+                }
+                poll.poll(candidates + width as u64)?;
+            }
+            RowMode::Sorted => {
                 while let Some(j) = a.next_column() {
                     let (from, to) = a.take_column(j);
-                    a.emit(eng, i, j, row_base + j, f_pairs, ctx, slab, left, right, from, to)?;
+                    a.emit_sorted(eng, i, j, row_base + j, f_pairs, ctx, slab, left, right, from, to)?;
                 }
                 poll.poll(candidates + width as u64)?;
             }
@@ -462,20 +490,25 @@ struct ByWords<'w, S> {
     /// The current row, and how it is read.
     row: usize,
     mode: RowMode,
-    /// The next of the current row's live candidates a cell takes; the row
-    /// `w.runs_of` was read for.
+    /// Words a live cell's f-pair bits on the current row; the live cells
+    /// written so far on a row read off its bits; the next of the current
+    /// row's sorted candidates a cell takes; the row `w.runs_of` was read
+    /// for.
+    cell_words: usize,
+    written: usize,
     cursor: usize,
     runs_row: usize,
 }
 
 /// How a row of a level read by vectors is read: by its cells' walks; by
-/// the walks of its live cells alone, the others left dead; or off its
-/// live candidates sorted by column.
+/// the walks of its live cells alone, the others left dead; off its live
+/// cells' f-pair bits; or off its live candidates sorted by column.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RowMode {
     Walk,
     Cells,
-    Words,
+    Bits,
+    Sorted,
 }
 
 /// Word `word` of the live candidates of an f pair whose vectors are in
@@ -514,6 +547,53 @@ fn live_words(
             let word = k * 64 + sum.trailing_zeros() as usize;
             sum &= sum - 1;
             let m = anded(w, words, kills, slots, word);
+            if m != 0 {
+                each(word, m);
+            }
+        }
+    }
+}
+
+/// [`live_words`] within g pairs `start..end`, at least one: the words
+/// of the live candidates there of an f pair whose vectors are in `slots`,
+/// each cut to the range, that are not zero, with their indices, in
+/// order. A range of a few words reads them; a longer one reads the
+/// words the summaries leave.
+#[inline(always)]
+fn live_words_between(
+    w: &WordScratch,
+    (words, sum_words): (usize, usize),
+    kills: (bool, bool),
+    slots: (u32, u32),
+    (start, end): (usize, usize),
+    mut each: impl FnMut(usize, u64),
+) {
+    let (w0, w1) = (start / 64, (end - 1) / 64);
+    // Bits `lo..hi` of a word, `lo < hi <= 64`.
+    let span = |lo: usize, hi: usize| (u64::MAX >> (64 - (hi - lo))) << lo;
+    let cut = |word: usize| span(if word == w0 { start % 64 } else { 0 }, if word == w1 { end - word * 64 } else { 64 });
+    if w1 - w0 < 4 {
+        for word in w0..=w1 {
+            let m = anded(w, words, kills, slots, word) & cut(word);
+            if m != 0 {
+                each(word, m);
+            }
+        }
+        return;
+    }
+    let at = |v: &[u64], s: u32, k: usize| v[s as usize * sum_words + k];
+    for k in w0 / 64..=w1 / 64 {
+        let mut sum = match kills {
+            (true, true) => at(&w.summaries.left, slots.0, k) & at(&w.summaries.right, slots.1, k),
+            (true, false) => at(&w.summaries.left, slots.0, k),
+            (false, true) => at(&w.summaries.right, slots.1, k),
+            (false, false) => unreachable!("a level of two complete sides kills no candidate"),
+        };
+        sum &= span(if k == w0 / 64 { w0 % 64 } else { 0 }, if k == w1 / 64 { w1 % 64 + 1 } else { 64 });
+        while sum != 0 {
+            let word = k * 64 + sum.trailing_zeros() as usize;
+            sum &= sum - 1;
+            let m = anded(w, words, kills, slots, word) & cut(word);
             if m != 0 {
                 each(word, m);
             }
@@ -565,6 +645,9 @@ impl<'w, S: PairSink> ByWords<'w, S> {
         w.vectors.right.clear();
         w.summaries.left.clear();
         w.summaries.right.clear();
+        w.col_slot.clear();
+        lim.reserve_exact(&mut w.col_slot, width)?;
+        w.col_slot.resize(width, 0);
         w.counts.clear();
         lim.reserve_exact(&mut w.counts, width)?;
         w.counts.resize(width, 0);
@@ -604,14 +687,15 @@ impl<'w, S: PairSink> ByWords<'w, S> {
         w.union_sum.clear();
         lim.reserve_exact(&mut w.union_sum, sum_words)?;
         w.union_sum.resize(sum_words, 0);
-        Ok(ByWords { sink, w, lim, words, sum_words, seen: 0, live: 0, on: true, row: usize::MAX, mode: RowMode::Walk, cursor: 0, runs_row: usize::MAX })
+        Ok(ByWords { sink, w, lim, words, sum_words, seen: 0, live: 0, on: true, row: usize::MAX, mode: RowMode::Walk, cell_words: 0, written: 0, cursor: 0, runs_row: usize::MAX })
     }
 
-    /// Every live candidate of the last row read by vectors was in a cell
-    /// the loop entered.
+    /// Every live cell of the last row read by vectors was in a cell the
+    /// loop entered; clear the row's live columns.
     fn finish(&mut self) {
-        debug_assert!(self.mode != RowMode::Words || self.cursor == self.w.sorted.len(), "a live candidate in a cell the row loop did not enter");
-        if self.mode == RowMode::Cells {
+        debug_assert!(self.mode != RowMode::Bits || self.written == self.w.live_cols.len(), "a live cell the row loop did not enter");
+        debug_assert!(self.mode != RowMode::Sorted || self.cursor == self.w.sorted.len(), "a live candidate in a cell the row loop did not enter");
+        if self.mode != RowMode::Walk {
             for &j in &self.w.live_cols {
                 self.w.col_live[j as usize / 64] = 0;
             }
@@ -621,7 +705,8 @@ impl<'w, S: PairSink> ByWords<'w, S> {
     /// Count row `i`, of pairs `f_pairs`, and choose how to read it: by
     /// its cells' walks where many of its candidates are live; otherwise
     /// by the walks of its live cells where many of their candidates are
-    /// live, and off its live candidates where few are.
+    /// live, and where few are off its live cells' f-pair bits, or off its
+    /// sorted live candidates where the bits would take many words more.
     #[inline(always)]
     fn take_row<L: ChildLookup, R: ChildLookup>(
         &mut self,
@@ -654,9 +739,17 @@ impl<'w, S: PairSink> ByWords<'w, S> {
             self.mode = RowMode::Cells;
             return Ok(RowMode::Cells);
         }
-        self.read_row(f_pairs.len(), left.kills(), right.kills())?;
-        self.mode = RowMode::Words;
-        Ok(RowMode::Words)
+        let bits = self.w.live_cols.len().saturating_mul(f_pairs.len().div_ceil(64));
+        let bits_pay = bits <= CELL_BITS_MAX_WORDS && bits as u64 <= live * BITS_SHARE;
+        self.mode = if bits_pay && !super::super::word_rows_sorted_forced() {
+            self.cell_bits(f_pairs.len(), left.kills(), right.kills())?;
+            RowMode::Bits
+        } else {
+            super::super::note_word_cells(super::super::WordNote::Sorted);
+            self.read_row(f_pairs.len(), left.kills(), right.kills())?;
+            RowMode::Sorted
+        };
+        Ok(self.mode)
     }
 
     /// The columns of the live cells of the row of `n1` pairs that
@@ -883,12 +976,121 @@ impl<'w, S: PairSink> ByWords<'w, S> {
         (from, to)
     }
 
-    /// Write the cell at `grid_pos`, row `i` and column `j`, of the live
-    /// candidates `w.sorted[from..to]`, at least one, in the order the
-    /// cell's walk writes them.
+    /// The f-pair bits of the live cells of the row of `n1` pairs that
+    /// [`count_row`](Self::count_row) counted last, into `w.cell_bits`: an
+    /// f pair's bit is set in each live cell where one of its live words
+    /// has a bit of the cell's column.
+    #[inline(always)]
+    fn cell_bits(&mut self, n1: usize, left_kills: bool, right_kills: bool) -> Result<(), OperationError> {
+        let (words, kills) = ((self.words, self.sum_words), (left_kills, right_kills));
+        let w = &mut *self.w;
+        debug_assert_eq!(w.row_slots.len(), n1, "a row is read after it is counted");
+        let cell_words = n1.div_ceil(64);
+        for (s, &j) in w.live_cols.iter().enumerate() {
+            w.col_slot[j as usize] = s as u32;
+        }
+        let mut bits = std::mem::take(&mut w.cell_bits);
+        bits.clear();
+        let n = w.live_cols.len() * cell_words;
+        let grown = self.lim.reserve_exact(&mut bits, n);
+        if grown.is_ok() {
+            bits.resize(n, 0);
+            for k in 0..n1 {
+                let (at, bit) = (k / 64, 1u64 << (k % 64));
+                live_words(w, words, kills, w.row_slots[k], |word, mut m| {
+                    while m != 0 {
+                        let j = w.col_of[word * 64 + m.trailing_zeros() as usize] as usize;
+                        bits[w.col_slot[j] as usize * cell_words + at] |= bit;
+                        // Past the column's other pairs in the word.
+                        let end = w.col_start[j + 1] as usize - word * 64;
+                        if end >= 64 {
+                            break;
+                        }
+                        m &= !((1u64 << end) - 1);
+                    }
+                });
+            }
+        }
+        w.cell_bits = bits;
+        grown?;
+        self.cell_words = cell_words;
+        self.written = 0;
+        Ok(())
+    }
+
+    /// Write the live cell at `grid_pos`, row `i` and column `j`, off its
+    /// f-pair bits: f pair by f pair, each one's live g pairs in the cell
+    /// in order, read off its vectors where the column has more than one
+    /// pair ([`write_cell`](Self::write_cell)).
     #[inline(always)]
     #[expect(clippy::too_many_arguments)]
-    fn emit<L: ChildLookup, R: ChildLookup>(
+    fn emit_bits<L: ChildLookup, R: ChildLookup>(
+        &mut self,
+        eng: &Engine,
+        i: usize,
+        j: usize,
+        grid_pos: usize,
+        f_pairs: &[ChildPair],
+        ctx: &CellCtx<'_>,
+        node_idx: &mut [u32],
+        left: &L,
+        right: &R,
+    ) -> Result<(), OperationError> {
+        self.written += 1;
+        let (lim, words, kills) = (self.lim, (self.words, self.sum_words), (left.kills(), right.kills()));
+        let w = &mut *self.w;
+        let (start, end) = (w.col_start[j] as usize, w.col_start[j + 1] as usize);
+        let s = w.col_slot[j] as usize;
+        let bits = &w.cell_bits[s * self.cell_words..(s + 1) * self.cell_words];
+        let mut entries = std::mem::take(&mut w.entries);
+        entries.clear();
+        let mut grown = Ok(());
+        if end - start == 1 {
+            // The column's one g pair against each f pair whose bit is set.
+            grown = lim.reserve(&mut entries, bits.iter().map(|b| b.count_ones() as usize).sum());
+            if grown.is_ok() {
+                for (at, &b) in bits.iter().enumerate() {
+                    let mut b = b;
+                    while b != 0 {
+                        entries.push(((at * 64) as u64 + u64::from(b.trailing_zeros())) << 32 | start as u64);
+                        b &= b - 1;
+                    }
+                }
+            }
+        } else {
+            for (at, &b) in bits.iter().enumerate() {
+                let mut b = b;
+                while b != 0 && grown.is_ok() {
+                    let k = at * 64 + b.trailing_zeros() as usize;
+                    b &= b - 1;
+                    let key = (k as u64) << 32;
+                    live_words_between(w, words, kills, w.row_slots[k], (start, end), |word, mut m| {
+                        let n = m.count_ones() as usize;
+                        if entries.capacity() - entries.len() < n {
+                            grown = lim.reserve(&mut entries, n);
+                            if grown.is_err() {
+                                return;
+                            }
+                        }
+                        while m != 0 {
+                            entries.push(key | (word * 64) as u64 | u64::from(m.trailing_zeros()));
+                            m &= m - 1;
+                        }
+                    });
+                }
+            }
+        }
+        w.entries = entries;
+        grown?;
+        self.write_cell(eng, i, j, grid_pos, f_pairs, ctx, node_idx, left, right, None)
+    }
+
+    /// Write the cell at `grid_pos`, row `i` and column `j`, of the sorted
+    /// live candidates `w.sorted[from..to]`, at least one
+    /// ([`write_cell`](Self::write_cell)).
+    #[inline(always)]
+    #[expect(clippy::too_many_arguments)]
+    fn emit_sorted<L: ChildLookup, R: ChildLookup>(
         &mut self,
         eng: &Engine,
         i: usize,
@@ -902,9 +1104,33 @@ impl<'w, S: PairSink> ByWords<'w, S> {
         from: usize,
         to: usize,
     ) -> Result<(), OperationError> {
+        self.write_cell(eng, i, j, grid_pos, f_pairs, ctx, node_idx, left, right, Some((from, to)))
+    }
+
+    /// Write the cell at `grid_pos`, row `i` and column `j`, of its live
+    /// candidates, `w.sorted[from..to]` where `sorted` names them and
+    /// `w.entries` otherwise, in the order the cell's walk writes them.
+    #[inline(always)]
+    #[expect(clippy::too_many_arguments)]
+    fn write_cell<L: ChildLookup, R: ChildLookup>(
+        &mut self,
+        eng: &Engine,
+        i: usize,
+        j: usize,
+        grid_pos: usize,
+        f_pairs: &[ChildPair],
+        ctx: &CellCtx<'_>,
+        node_idx: &mut [u32],
+        left: &L,
+        right: &R,
+        sorted: Option<(usize, usize)>,
+    ) -> Result<(), OperationError> {
         let w = &mut *self.w;
-        let start = w.col_start[j] as usize;
-        let (n1, n2) = (f_pairs.len(), w.col_start[j + 1] as usize - start);
+        let (n1, n2) = (f_pairs.len(), (w.col_start[j + 1] - w.col_start[j]) as usize);
+        let cell = match sorted {
+            Some((from, to)) => &w.sorted[from..to],
+            None => &w.entries[..],
+        };
         let q_of = |e: u64| (e & 0xffff_ffff) as usize;
         let product = |e: u64, node_idx: &[u32]| {
             let (p, q) = (&f_pairs[(e >> 32) as usize], &w.g_flat[q_of(e)]);
@@ -914,7 +1140,7 @@ impl<'w, S: PairSink> ByWords<'w, S> {
             (lc, rc)
         };
         if n1 == 1 && n2 == 1 {
-            let (lc, rc) = product(w.sorted[from], node_idx);
+            let (lc, rc) = product(cell[0], node_idx);
             return self.sink.single(eng, node_idx, grid_pos, lc, rc);
         }
         let begin = self.sink.begin();
@@ -922,7 +1148,7 @@ impl<'w, S: PairSink> ByWords<'w, S> {
         match runs {
             None => {
                 let node_idx = &*node_idx;
-                push_kept(eng, &mut self.sink, &w.sorted[from..to], false, |&e| product(e, node_idx))?;
+                push_kept(eng, &mut self.sink, cell, false, |&e| product(e, node_idx))?;
             }
             Some(runs) => {
                 super::super::note_word_cells(super::super::WordNote::Grouped);
@@ -938,7 +1164,7 @@ impl<'w, S: PairSink> ByWords<'w, S> {
                         w.runs_of.push(first as u32);
                     }
                 }
-                order_grouped(self.lim, &w.sorted[from..to], &w.runs_of, &w.run_of, &mut w.run_counts[..runs.len()], &mut w.grouped)?;
+                order_grouped(self.lim, cell, &w.runs_of, &w.run_of, &mut w.run_counts[..runs.len()], &mut w.grouped)?;
                 let node_idx = &*node_idx;
                 push_kept(eng, &mut self.sink, &w.grouped, false, |&e| product(e, node_idx))?;
             }
@@ -955,9 +1181,10 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for ByWords<'
         i
     }
 
-    /// A cell the masks leave: on a row read by vectors, its live
-    /// candidates off the sorted list, after the charge of the cell's walk,
-    /// a unit a candidate; on any other row, the cell's walk.
+    /// A cell the masks leave: on a row read by vectors, after the charge
+    /// of the cell's walk, a unit a candidate, the cell off its f-pair bits
+    /// or its sorted live candidates where it is live; on any other row,
+    /// the cell's walk.
     #[inline(always)]
     fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
         if a.i != self.row {
@@ -966,7 +1193,7 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for ByWords<'
         let walk = match self.mode {
             RowMode::Walk => true,
             RowMode::Cells => self.w.col_live[a.j / 64] >> (a.j % 64) & 1 != 0,
-            RowMode::Words => false,
+            RowMode::Bits | RowMode::Sorted => false,
         };
         if walk {
             return process_cell(
@@ -981,15 +1208,20 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for ByWords<'
             return Ok(());
         }
         a.gate.poll((a.f_pairs.len() * n2) as u64)?;
-        // A dead cell of a row walking its live cells alone.
-        if self.mode == RowMode::Cells {
-            return Ok(());
+        match self.mode {
+            RowMode::Bits if self.w.col_live[a.j / 64] >> (a.j % 64) & 1 != 0 => {
+                self.emit_bits(eng, a.i, a.j, a.row_base + a.j, a.f_pairs, a.ctx, a.node_idx, a.left, a.right)
+            }
+            RowMode::Sorted => {
+                let (from, to) = self.take_column(a.j);
+                if from == to {
+                    return Ok(());
+                }
+                self.emit_sorted(eng, a.i, a.j, a.row_base + a.j, a.f_pairs, a.ctx, a.node_idx, a.left, a.right, from, to)
+            }
+            // A dead cell.
+            _ => Ok(()),
         }
-        let (from, to) = self.take_column(a.j);
-        if from == to {
-            return Ok(());
-        }
-        self.emit(eng, a.i, a.j, a.row_base + a.j, a.f_pairs, a.ctx, a.node_idx, a.left, a.right, from, to)
     }
 }
 
