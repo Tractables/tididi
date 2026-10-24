@@ -29,6 +29,7 @@ struct Wide<'a> {
     hits: &'a mut Vec<u32>,
     dest: &'a mut Vec<u32>,
     met: &'a mut Vec<u32>,
+    seen: &'a mut Vec<u32>,
     /// No parent node repeats a pair: the counts of
     /// [`Partition::split_by_degree`] and [`Partition::split_by_siblings`]
     /// are of sets.
@@ -81,7 +82,7 @@ pub(super) fn refine_context_groups(
     let ContractScratch {
         twin_class, twin_named, twin_alone, class_size, class_pos, refine_keys, refine_runs, refine_links, refine_table,
         refine_wide, refine_radix, refine_column, refine_reach, refine_touched, refine_bucket, refine_hits,
-        refine_dest, refine_met, flat_groups, group_starts, ..
+        refine_dest, refine_met, refine_seen, flat_groups, group_starts, ..
     } = scratch;
     let mut wide = Wide {
         keys: refine_keys,
@@ -96,6 +97,7 @@ pub(super) fn refine_context_groups(
         hits: refine_hits,
         dest: refine_dest,
         met: refine_met,
+        seen: refine_seen,
         simple,
     };
     flat_groups.clear();
@@ -595,9 +597,9 @@ impl Partition<'_> {
     /// a class exactly when they shared one before and the parent node pairs
     /// them with the same siblings, as a split by sibling sets leaves them,
     /// with no sort, hash or compare. Unless the pairs come `by_sibling`,
-    /// the nodes that can have a twin are first bucketed by sibling in
-    /// `bucket`, two passes over the pairs, their siblings at most `top`.
-    /// `column` is zero between calls, as [`Self::split_by_degree`] reads it.
+    /// their nodes are first bucketed by sibling in `bucket`, two passes over
+    /// the pairs that read only siblings, at most `top`. `column` is zero
+    /// between calls, as [`Self::split_by_degree`] reads it.
     fn split_by_siblings(
         &mut self,
         lim: &Limits,
@@ -607,10 +609,11 @@ impl Partition<'_> {
         top: u32,
         wide: &mut Wide<'_>,
     ) -> Result<(), OperationError> {
-        let Wide { column, touched, bucket, hits, dest, met, .. } = wide;
+        let Wide { column, touched, bucket, hits, dest, met, seen, .. } = wide;
         // Every class there can be, as `refine_context_groups` reserves.
         lim.try_resize(hits, self.class.len() + 1, 0u32)?;
         lim.try_resize(dest, self.class.len() + 1, 0u32)?;
+        lim.try_resize(seen, pairs.len(), 0u32)?;
         met.clear();
         lim.reserve_exact(met, pairs.len())?;
         if by_sibling {
@@ -618,7 +621,8 @@ impl Partition<'_> {
             while k < pairs.len() {
                 let s = split_pair(&pairs[k], side).1;
                 let end = k + pairs[k..].iter().take_while(|pair| split_pair(pair, side).1 == s).count();
-                self.split_sibling(pairs[k..end].iter().map(move |pair| split_pair(pair, side).0), hits, dest, met);
+                let nodes = pairs[k..end].iter().map(move |pair| split_pair(pair, side).0);
+                self.split_sibling(nodes, hits, dest, met, seen);
                 k = end;
             }
             return Ok(());
@@ -628,14 +632,11 @@ impl Partition<'_> {
         lim.reserve_exact(touched, pairs.len())?;
         lim.try_resize(bucket, pairs.len(), 0u32)?;
         for pair in pairs {
-            let (t, s) = split_pair(pair, side);
-            if self.can_twin(self.of(t)) {
-                let e = &mut column[s as usize];
-                if *e == 0 {
-                    touched.push(s);
-                }
-                *e += 1;
+            let e = &mut column[split_pair(pair, side).1 as usize];
+            if *e == 0 {
+                touched.push(split_pair(pair, side).1);
             }
+            *e += 1;
         }
         // Each sibling's count becomes where its bucket starts, and where it
         // ends once filled.
@@ -646,16 +647,14 @@ impl Partition<'_> {
         }
         for pair in pairs {
             let (t, s) = split_pair(pair, side);
-            if self.can_twin(self.of(t)) {
-                let e = &mut column[s as usize];
-                bucket[*e as usize] = t;
-                *e += 1;
-            }
+            let e = &mut column[s as usize];
+            bucket[*e as usize] = t;
+            *e += 1;
         }
         let mut from = 0;
         for &s in touched.iter() {
             let to = std::mem::take(&mut column[s as usize]) as usize;
-            self.split_sibling(bucket[from..to].iter().copied(), hits, dest, met);
+            self.split_sibling(bucket[from..to].iter().copied(), hits, dest, met, seen);
             from = to;
         }
         Ok(())
@@ -665,7 +664,9 @@ impl Partition<'_> {
     /// they all are is left whole; one member of a larger class leaves the
     /// partition alone; two or more members of a larger class become a class
     /// of their own, so the classes made still nest and hold two or more
-    /// nodes each. `hits` is zero on entry and on return.
+    /// nodes each. `hits` is zero on entry and on return; `seen` keeps
+    /// each node's class as the count read it, [`ALONE`] for a node that
+    /// cannot have a twin, so the second pass reads no class.
     #[inline]
     fn split_sibling(
         &mut self,
@@ -673,18 +674,22 @@ impl Partition<'_> {
         hits: &mut [u32],
         dest: &mut [u32],
         met: &mut Vec<u32>,
+        seen: &mut [u32],
     ) {
         met.clear();
-        for t in nodes.clone() {
+        for (t, seen) in nodes.clone().zip(seen.iter_mut()) {
             let c = self.of(t);
-            if self.can_twin(c) {
+            *seen = if self.can_twin(c) {
                 let h = &mut hits[c as usize];
                 if *h == 0 {
                     // Within the reserve of one class a pair.
                     met.push(c);
                 }
                 *h += 1;
-            }
+                c
+            } else {
+                ALONE
+            };
         }
         for &c in met.iter() {
             let h = hits[c as usize];
@@ -696,9 +701,8 @@ impl Partition<'_> {
                 self.fresh(c, h)
             };
         }
-        for t in nodes {
-            let c = self.of(t);
-            if c == ALONE || hits[c as usize] == 0 {
+        for (t, &c) in nodes.zip(seen.iter()) {
+            if c == ALONE {
                 continue;
             }
             match dest[c as usize] {
