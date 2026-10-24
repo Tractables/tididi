@@ -1622,6 +1622,9 @@ fn emit_walked(
         );
         return Ok(());
     }
+    if owners.len() <= FEW_CANDIDATES {
+        return emit_few(eng, level, pl_output, p1, base, owners, duplicates_legal);
+    }
     if owners.len() >= u32::MAX as usize {
         return Err(OperationError::IndexOverflow);
     }
@@ -1635,6 +1638,80 @@ fn emit_walked(
     }));
     arena.truncate(base);
     emit_parent(eng, emit, level, pl_output, p1, candidates, duplicates_legal)
+}
+
+/// The most candidates [`emit_walked`] groups by g parent with
+/// [`emit_few`] rather than through [`emit_parent`]'s map.
+const FEW_CANDIDATES: usize = 8;
+
+/// [`emit_walked`] for two to [`FEW_CANDIDATES`] candidates of more than one
+/// g parent: they are grouped by comparing their g parents with each other,
+/// without [`emit_parent`]'s map or candidate copy, into the same products,
+/// nodes and pair ranges. The pairs never take more of the arena than the
+/// walk gave them, so its capacity, and the output-pair meter, stay put.
+#[inline(always)]
+fn emit_few(
+    eng: &Engine,
+    level: &mut TddLevel,
+    pl_output: &mut Vec<ProductEntry>,
+    p1: usize,
+    base: usize,
+    owners: &[u32],
+    duplicates_legal: bool,
+) -> Result<(), OperationError> {
+    let lim = eng.limits();
+    let n = owners.len();
+    debug_assert!((2..=FEW_CANDIDATES).contains(&n), "a few candidates");
+    // Each candidate's product, numbered in the order its g parent first
+    // appears, and each product's g parent and pair count.
+    let mut product_of = [0u8; FEW_CANDIDATES];
+    let mut parents = [0u32; FEW_CANDIDATES];
+    let mut counts = [0u8; FEW_CANDIDATES];
+    let mut products = 0;
+    for (i, &g_parent) in owners.iter().enumerate() {
+        let k = parents[..products].iter().position(|&p| p == g_parent).unwrap_or(products);
+        if k == products {
+            parents[k] = g_parent;
+            products += 1;
+        }
+        product_of[i] = k as u8;
+        counts[k] += 1;
+    }
+    let first = pl_output.len();
+    lim.reserve(pl_output, products)?;
+    pl_output.extend(parents[..products].iter().enumerate().map(|(k, &g_parent)| ProductEntry {
+        f_idx: FNodeIdx(p1 as u32),
+        g_idx: GNodeIdx(g_parent),
+        prod_idx: ProductNodeIdx((first + k) as u32),
+    }));
+    let mut pairs = [ChildPair::new(EncodedChildRef::from_raw(0), EncodedChildRef::from_raw(0)); FEW_CANDIDATES];
+    let arena = level.pairs.stored_mut();
+    pairs[..n].copy_from_slice(&arena[base..base + n]);
+    arena.truncate(base);
+    lim.reserve(level.nodes.stored_mut(), products)?;
+    let first_node = level.nodes().len();
+    // Each product's node in product order, its pairs in candidate order: a
+    // pair alone inline, more as the next range of the arena.
+    for (k, &count) in counts[..products].iter().enumerate() {
+        let mut mine = (0..n).filter(|&i| usize::from(product_of[i]) == k).map(|i| pairs[i]);
+        if count == 1 {
+            let pair = mine.next().expect("the product holds a candidate");
+            emit_single_pair(eng, level, pair)?;
+        } else {
+            let start = level.pairs.stored_len();
+            level.pairs.stored_mut().extend(mine);
+            level.try_push_multi_by_range(start, usize::from(count)).map_err(|_| OperationError::OverBudget)?;
+        }
+    }
+    // As in `emit_parent`.
+    debug_assert!(
+        duplicates_legal || (first_node..level.nodes().len()).all(|i| {
+            let mut seen = std::collections::HashSet::new();
+            level.pairs_iter_of_idx(i).all(|p| seen.insert(p))
+        }),
+        "sparse apply: duplicate pair emitted — canonicity violated"
+    );
+    Ok(())
 }
 
 /// Push one node holding every pair of `pairs`, at least two, written
