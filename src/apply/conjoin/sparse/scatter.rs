@@ -109,6 +109,34 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
     } else {
         (shape.f.left, shape.g.left, pl.left)
     };
+    let lim = eng.limits();
+    // Under a vtree leaf, g's pairs by outer child and label make a table of
+    // their owners, one slot per label, where no pair repeats
+    // ([`build_owner_table`]): an f pair reads the slots of the labels its
+    // own meets, under each product.
+    if inner.is_none() {
+        let built = if !SWAPPED {
+            build_owner_table::<true>(lim, g_level, g_outer, &mut ws.owners, &mut ws.owners_clean)?
+        } else {
+            build_owner_table::<false>(lim, g_level, g_outer, &mut ws.owners, &mut ws.owners_clean)?
+        };
+        if let Some(ones) = built {
+            bucket_offsets(lim, pl_outer, f_outer, &mut ws.outer_offsets)?;
+            if ones {
+                leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
+                    |parts| OwnerWalk::<true> { owners: parts.owners, outer: parts.outer })?;
+            } else {
+                leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
+                    |parts| OwnerWalk::<false> { owners: parts.owners, outer: parts.outer })?;
+            }
+            if !SWAPPED {
+                clear_owner_table::<true>(g_level, &mut ws.owners, &mut ws.owners_clean);
+            } else {
+                clear_owner_table::<false>(g_level, &mut ws.owners, &mut ws.owners_clean);
+            }
+            return Ok(());
+        }
+    }
     // g's reverse index by the outer child: normally the right child,
     // entries `(p2, a2)`; swapped the left one, entries `(p2, s2)`. Under a
     // vtree leaf the entries of one outer child are grouped by their leaf
@@ -120,10 +148,10 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
         (true, false) => build_labelled_index::<true>(eng, g_level, g_outer, &mut ws.g_by_outer)?,
         (true, true) => build_labelled_index::<false>(eng, g_level, g_outer, &mut ws.g_by_outer)?,
     }
-    bucket_offsets(eng.limits(), pl_outer, f_outer, &mut ws.outer_offsets)?;
+    bucket_offsets(lim, pl_outer, f_outer, &mut ws.outer_offsets)?;
     match inner {
         None => leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
-            |g_by_outer, outer| LabelWalk { g_by_outer, outer }),
+            |parts| LabelWalk { g_by_outer: parts.g_by_outer, outer: parts.outer }),
         Some(Inner::Carried(Carrier::F)) => leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
             plain_walk(|f_field: u32, _: u32| f_field)),
         Some(Inner::Carried(Carrier::G)) => leaf_walk::<SWAPPED, _>(eng, ws, f_level, shape, pl_outer, collect,
@@ -134,10 +162,16 @@ pub(super) fn scatter_leaf_arm<const SWAPPED: bool>(
 }
 
 /// A [`LeafWalk`] with `inner_product`, for [`leaf_walk`] to make.
-fn plain_walk<'a, P: Fn(u32, u32) -> u32>(
-    inner_product: P,
-) -> impl FnOnce(GroupedView<'a, RevEntry>, GroupedView<'a, ProductEntry>) -> LeafWalk<'a, P> {
-    move |g_by_outer, outer| LeafWalk { g_by_outer, outer, inner_product }
+fn plain_walk<'a, P: Fn(u32, u32) -> u32>(inner_product: P) -> impl FnOnce(WalkParts<'a>) -> LeafWalk<'a, P> {
+    move |parts| LeafWalk { g_by_outer: parts.g_by_outer, outer: parts.outer, inner_product }
+}
+
+/// What a leaf walk may read: g's reverse index, g's owner table and the
+/// outer child's live products by f index.
+struct WalkParts<'a> {
+    g_by_outer: GroupedView<'a, RevEntry>,
+    owners: &'a [u32],
+    outer: GroupedView<'a, ProductEntry>,
 }
 
 /// [`scatter_leaf_arm`]'s walk of f's nodes, each node's pairs read by the
@@ -151,11 +185,15 @@ fn leaf_walk<'w, const SWAPPED: bool, W: NodeWalk>(
     shape: LevelShape,
     pl_outer: &'w [ProductEntry],
     collect: Collect<'_, '_>,
-    walk: impl FnOnce(GroupedView<'w, RevEntry>, GroupedView<'w, ProductEntry>) -> W,
+    walk: impl FnOnce(WalkParts<'w>) -> W,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
-    let SparseWorkspace { g_by_outer, outer_offsets, node_candidates, emit, .. } = ws;
-    let walk = walk(g_by_outer.view(), GroupedView { offsets: outer_offsets, entries: pl_outer });
+    let SparseWorkspace { g_by_outer, owners, outer_offsets, node_candidates, emit, .. } = ws;
+    let walk = walk(WalkParts {
+        g_by_outer: g_by_outer.view(),
+        owners,
+        outer: GroupedView { offsets: outer_offsets, entries: pl_outer },
+    });
     // Amortized cancellation/deadline poll; the sparse join has no other
     // mid-level break, and the bail lands where `try_push`'s recovery
     // already covers it.
@@ -245,6 +283,60 @@ impl NodeWalk for LabelWalk<'_> {
                 }
                 // Charged as the walk of every label under the product was.
                 ticker.poll(u64::from(offsets[at + LABEL_RUNS] - offsets[at]))?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// [`LeafWalk`] where the inner child is a vtree leaf and no g pair repeats:
+/// g's pairs as a table of their owners ([`build_owner_table`]), slot
+/// `OWNER_SLOTS * d + s` naming the g node that holds outer child `d` with
+/// the label of slot `s`, Pos, One, Neg. An f pair reads, under each
+/// product, the slots of the labels its own label meets. `ONES` says some g
+/// pair has the label One; without it that slot is never read.
+struct OwnerWalk<'a, const ONES: bool> {
+    owners: &'a [u32],
+    outer: GroupedView<'a, ProductEntry>,
+}
+
+impl<const ONES: bool> NodeWalk for OwnerWalk<'_, ONES> {
+    #[inline(always)]
+    fn node<const SWAPPED: bool>(
+        &self,
+        pairs: &[ChildPair],
+        ticker: &mut crate::limits::PollGate,
+        mut push: impl FnMut(ParEntry) -> Result<(), OperationError>,
+    ) -> Result<(), OperationError> {
+        const POS: u32 = crate::diagram::POS_LEAF_IDX.0;
+        const NEG: u32 = crate::diagram::NEG_LEAF_IDX.0;
+        for pair in pairs {
+            let (inner1, outer1) = orient::<SWAPPED>(pair.left.0, pair.right.0);
+            for e in self.outer.bucket(outer1 as usize) {
+                let at = OWNER_SLOTS * e.g_idx.idx();
+                let &[pos, one, neg] = <&[u32; OWNER_SLOTS]>::try_from(&self.owners[at..at + OWNER_SLOTS])
+                    .expect("a slot run is OWNER_SLOTS long");
+                let mut meet = |g_parent: u32, label: u32| {
+                    if g_parent == NO_PRODUCT {
+                        return Ok(());
+                    }
+                    let (left_prod, right_prod) = orient::<SWAPPED>(label, e.prod_idx.0);
+                    push(ParEntry { g_parent, left_prod, right_prod })
+                };
+                // The order of the runs a reverse index by label would
+                // hold, Pos, One, Neg; a literal meets One and its own.
+                if inner1 != NEG {
+                    meet(pos, POS)?;
+                }
+                if ONES {
+                    meet(one, inner1)?;
+                }
+                if inner1 != POS {
+                    meet(neg, NEG)?;
+                }
+                // Charged as the walk of every g pair under the product was.
+                let held = u64::from(pos != NO_PRODUCT) + u64::from(neg != NO_PRODUCT);
+                ticker.poll(if ONES { held + u64::from(one != NO_PRODUCT) } else { held })?;
             }
         }
         Ok(())

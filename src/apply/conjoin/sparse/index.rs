@@ -30,6 +30,12 @@ pub(crate) struct SparseWorkspace {
     // ── Scatter: reverse indices (child → parent) ──
     pub(super) f_by_outer: Grouped<RevEntry>,
     pub(super) g_by_outer: Grouped<RevEntry>,
+    // ── The leaf arm under a vtree leaf: g's pairs as a table of owners ──
+    // Slot `OWNER_SLOTS * d + s`: the g node holding outer child `d` with the
+    // label of slot `s` (`build_owner_table`). All `NO_PRODUCT` whenever
+    // `owners_clean`.
+    pub(super) owners: Vec<u32>,
+    pub(super) owners_clean: bool,
 
     // ── The two children's product lists read by f index ──
     // A product list is emitted in ascending `f_idx` order by every
@@ -429,6 +435,57 @@ pub(super) fn build_labelled_index<const BY_RIGHT: bool>(
     )
 }
 
+/// The slots [`build_owner_table`] gives each keyed child, one per leaf
+/// label: Pos, One, Neg.
+pub(super) const OWNER_SLOTS: usize = 3;
+
+/// The slot of each leaf label, One, Pos, Neg in label order, in a keyed
+/// child's run of [`OWNER_SLOTS`].
+const OWNER_SLOT: [usize; 3] = [1, 0, 2];
+
+/// Fill `owners` with the owners of a level's pairs whose other child is a
+/// vtree leaf: slot `OWNER_SLOTS * k + s` names the node holding the pair of
+/// keyed child `k` and the label of slot `s`, `NO_PRODUCT` where no node
+/// does. A deterministic level holds each such pair once; where a pair
+/// repeats, in two nodes or twice in one as a marginal diagram's pair lists
+/// may, the table cannot hold it and `None` is returned. Otherwise
+/// `Some(ones)`, with `ones` whether some pair has the label One.
+///
+/// `owners` is all `NO_PRODUCT` whenever `clean`: a table left behind by a
+/// level that did not clear it ([`clear_owner_table`]) is filled first.
+pub(super) fn build_owner_table<const BY_RIGHT: bool>(
+    lim: &Limits,
+    level: &TddLevel,
+    key_width: usize,
+    owners: &mut Vec<u32>,
+    clean: &mut bool,
+) -> Result<Option<bool>, OperationError> {
+    if !*clean {
+        owners.fill(NO_PRODUCT);
+        *clean = true;
+    }
+    lim.try_resize(owners, OWNER_SLOTS * key_width, NO_PRODUCT)?;
+    *clean = false;
+    let (mut repeated, mut ones) = (false, false);
+    level.for_each_node_pair(|parent, pair| {
+        let (key, label) = if BY_RIGHT { (pair.right.0, pair.left.0) } else { (pair.left.0, pair.right.0) };
+        let slot = &mut owners[OWNER_SLOTS * key as usize + OWNER_SLOT[label as usize]];
+        repeated |= *slot != NO_PRODUCT;
+        *slot = parent as u32;
+        ones |= label == crate::diagram::ONE_LEAF_IDX.0;
+    });
+    Ok((!repeated).then_some(ones))
+}
+
+/// Empty the slots [`build_owner_table`] filled from `level`.
+pub(super) fn clear_owner_table<const BY_RIGHT: bool>(level: &TddLevel, owners: &mut [u32], clean: &mut bool) {
+    level.for_each_node_pair(|_, pair| {
+        let (key, label) = if BY_RIGHT { (pair.right.0, pair.left.0) } else { (pair.left.0, pair.right.0) };
+        owners[OWNER_SLOTS * key as usize + OWNER_SLOT[label as usize]] = NO_PRODUCT;
+    });
+    *clean = true;
+}
+
 /// After a counting-sort fill pass leaves each `offsets[i]` pointing one-past
 /// the end of bucket `i`, shift the slice right by one so every `offsets[i]`
 /// is restored to the start of its bucket (and `offsets[0] = 0`).
@@ -516,6 +573,7 @@ impl Buffers for SparseWorkspace {
     fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
         self.f_by_outer.buffers(visit);
         self.g_by_outer.buffers(visit);
+        visit(&mut self.owners);
         visit(&mut self.inner_offsets);
         visit(&mut self.outer_offsets);
         visit(&mut self.filtered);
