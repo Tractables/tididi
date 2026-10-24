@@ -1473,7 +1473,8 @@ fn candidate_pair(entry: &ParEntry) -> ChildPair {
 /// which `WsGuard` repairs. A parent whose candidates all name one g
 /// parent has one product and skips the map, as a parent with one
 /// candidate does: each node of an operand that holds one node per value
-/// of a shared block, at that block's levels.
+/// of a shared block, at that block's levels. A parent with a few
+/// candidates of several g parents skips it as well ([`emit_few`]).
 ///
 /// A parent whose candidates all name one g parent, or all distinct ones,
 /// has its pairs in node order already, and they are copied into `level` as
@@ -1513,6 +1514,16 @@ pub(super) fn emit_parent(
     // Candidates of one g parent are the pairs of one product.
     let g_parent = candidates[0].g_parent;
     let one_product = candidates.iter().all(|entry| entry.g_parent == g_parent);
+    if !one_product && candidates.len() <= FEW_CANDIDATES {
+        let n = candidates.len();
+        let mut owners = [0u32; FEW_CANDIDATES];
+        let mut pairs = [ChildPair::new(EncodedChildRef::from_raw(0), EncodedChildRef::from_raw(0)); FEW_CANDIDATES];
+        for (i, entry) in candidates.iter().enumerate() {
+            owners[i] = entry.g_parent;
+            pairs[i] = candidate_pair(entry);
+        }
+        return emit_few(eng, level, pl_output, p1, &owners[..n], &pairs[..n], duplicates_legal);
+    }
     if one_product {
         lim.try_push(pl_output, ProductEntry {
             f_idx: FNodeIdx(p1 as u32),
@@ -1623,7 +1634,14 @@ fn emit_walked(
         return Ok(());
     }
     if owners.len() <= FEW_CANDIDATES {
-        return emit_few(eng, level, pl_output, p1, base, owners, duplicates_legal);
+        // The pairs leave the arena, so the products' ranges take no more of
+        // it than the walk gave them.
+        let mut pairs = [ChildPair::new(EncodedChildRef::from_raw(0), EncodedChildRef::from_raw(0)); FEW_CANDIDATES];
+        let arena = level.pairs.stored_mut();
+        let n = owners.len();
+        pairs[..n].copy_from_slice(&arena[base..base + n]);
+        arena.truncate(base);
+        return emit_few(eng, level, pl_output, p1, owners, &pairs[..n], duplicates_legal);
     }
     if owners.len() >= u32::MAX as usize {
         return Err(OperationError::IndexOverflow);
@@ -1640,30 +1658,31 @@ fn emit_walked(
     emit_parent(eng, emit, level, pl_output, p1, candidates, duplicates_legal)
 }
 
-/// The most candidates [`emit_walked`] groups by g parent with
-/// [`emit_few`] rather than through [`emit_parent`]'s map.
+/// The most candidates of more than one g parent that [`emit_few`] groups
+/// by comparing their g parents, rather than through [`emit_parent`]'s map.
 const FEW_CANDIDATES: usize = 8;
 
-/// [`emit_walked`] for two to [`FEW_CANDIDATES`] candidates of more than one
-/// g parent: they are grouped by comparing their g parents with each other,
-/// without [`emit_parent`]'s map or candidate copy, into the same products,
-/// nodes and pair ranges. The pairs never take more of the arena than the
-/// walk gave them, so its capacity, and the output-pair meter, stay put.
+/// Make f parent `p1`'s products of two to [`FEW_CANDIDATES`] candidates of
+/// more than one g parent, candidate `i` the pair `pairs[i]` of g parent
+/// `owners[i]`: the products, nodes and pair ranges [`emit_parent`] makes
+/// through its map, found by comparing the g parents with each other.
+/// Products are numbered in the order their g parent first appears, a
+/// product of one pair is its node inline, and those of more take the next
+/// ranges of the arena in product order, each in candidate order.
 #[inline(always)]
 fn emit_few(
     eng: &Engine,
     level: &mut TddLevel,
     pl_output: &mut Vec<ProductEntry>,
     p1: usize,
-    base: usize,
     owners: &[u32],
+    pairs: &[ChildPair],
     duplicates_legal: bool,
 ) -> Result<(), OperationError> {
     let lim = eng.limits();
     let n = owners.len();
-    debug_assert!((2..=FEW_CANDIDATES).contains(&n), "a few candidates");
-    // Each candidate's product, numbered in the order its g parent first
-    // appears, and each product's g parent and pair count.
+    debug_assert!((2..=FEW_CANDIDATES).contains(&n) && pairs.len() == n, "a few candidates");
+    // Each candidate's product and each product's g parent and pair count.
     let mut product_of = [0u8; FEW_CANDIDATES];
     let mut parents = [0u32; FEW_CANDIDATES];
     let mut counts = [0u8; FEW_CANDIDATES];
@@ -1684,26 +1703,25 @@ fn emit_few(
         g_idx: GNodeIdx(g_parent),
         prod_idx: ProductNodeIdx((first + k) as u32),
     }));
-    let mut pairs = [ChildPair::new(EncodedChildRef::from_raw(0), EncodedChildRef::from_raw(0)); FEW_CANDIDATES];
-    let arena = level.pairs.stored_mut();
-    pairs[..n].copy_from_slice(&arena[base..base + n]);
-    arena.truncate(base);
+    // As in `emit_parent`: one reserve for the level's pairs, and the
+    // output-pair meter charged once for whatever the arena grew by.
+    let pre_pairs_cap = level.pairs.stored_mut().capacity();
     lim.reserve(level.nodes.stored_mut(), products)?;
+    let ranged: usize = counts[..products].iter().filter(|&&c| c > 1).map(|&c| usize::from(c)).sum();
+    reserve_pairs_for_emit(eng, level, ranged)?;
     let first_node = level.nodes().len();
-    // Each product's node in product order, its pairs in candidate order: a
-    // pair alone inline, more as the next range of the arena.
-    for (k, &count) in counts[..products].iter().enumerate() {
+    let built = counts[..products].iter().enumerate().try_for_each(|(k, &count)| {
         let mut mine = (0..n).filter(|&i| usize::from(product_of[i]) == k).map(|i| pairs[i]);
         if count == 1 {
-            let pair = mine.next().expect("the product holds a candidate");
-            emit_single_pair(eng, level, pair)?;
+            emit_single_pair(eng, level, mine.next().expect("the product holds a candidate"))
         } else {
             let start = level.pairs.stored_len();
             level.pairs.stored_mut().extend(mine);
-            level.try_push_multi_by_range(start, usize::from(count)).map_err(|_| OperationError::OverBudget)?;
+            level.try_push_multi_by_range(start, usize::from(count)).map_err(|_| OperationError::OverBudget)
         }
-    }
-    // As in `emit_parent`.
+    });
+    lim.charge_output_pairs(level.pairs.stored_mut().capacity().saturating_sub(pre_pairs_cap));
+    built?;
     debug_assert!(
         duplicates_legal || (first_node..level.nodes().len()).all(|i| {
             let mut seen = std::collections::HashSet::new();
