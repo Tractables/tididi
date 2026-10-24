@@ -179,6 +179,8 @@ thread_local! {
     /// The rows on this thread whose live cells were read off the row
     /// columns ([`row_columns_rows`]).
     static ROW_COLUMNS_ROWS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Those of them that read a side whole ([`row_columns_rows`]).
+    static ROW_COLUMNS_WHOLE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 thread_local! {
@@ -219,8 +221,9 @@ pub(super) fn row_columns_forced_off() -> bool {
     ROW_COLUMNS_OFF.with(std::cell::Cell::get)
 }
 
-pub(super) fn note_row_columns_row() {
+pub(super) fn note_row_columns_row(whole: bool) {
     ROW_COLUMNS_ROWS.with(|n| n.set(n.get() + 1));
+    ROW_COLUMNS_WHOLE.with(|n| n.set(n.get() + u64::from(whole)));
 }
 
 /// Run `f` with no level building row columns: a masked level of few g
@@ -237,9 +240,9 @@ pub(super) fn row_columns_off<R>(f: impl FnOnce() -> R) -> R {
 }
 
 /// The rows on this thread so far whose live cells were read off the row
-/// columns.
-pub(super) fn row_columns_rows() -> u64 {
-    ROW_COLUMNS_ROWS.with(std::cell::Cell::get)
+/// columns, and those of them that read a side whole.
+pub(super) fn row_columns_rows() -> (u64, u64) {
+    (ROW_COLUMNS_ROWS.with(std::cell::Cell::get), ROW_COLUMNS_WHOLE.with(std::cell::Cell::get))
 }
 
 pub(super) fn reach_columns_forced_off() -> bool {

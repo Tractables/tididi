@@ -284,18 +284,34 @@ pub(super) struct ChildGrid {
 /// picked at compile time. A pass-through side is skipped entirely: the
 /// marginal child has no product grid, and its field is a model count, not a
 /// row/column index, so the builders below would index out of bounds.
+///
+/// On a level of at most [`ROW_COLUMNS_MAX_WIDTH`] g nodes the row loop
+/// reads the sides through their row columns, and a `complete` side, read
+/// by arithmetic and killing nothing, builds no masks at all: every row
+/// reads it whole. One whose child has no columns keeps them, for the
+/// row loop's fold to skip every row as before.
 pub(super) fn build_side_masks<const RIGHT: bool>(
     eng: &Engine,
     right_level: &TddLevel,
     right_width: usize,
     child: ChildGrid,
+    complete: bool,
     node_idx: &[u32],
     out: &mut PrefilterSideMasks,
 ) -> Result<(), OperationError> {
     let ChildGrid { plan, f_width: f_child_width, g_width: g_child_width, base } = child;
     out.reach_cols.clear();
     out.row_cols.clear();
+    out.rows = !(right_width > ROW_COLUMNS_MAX_WIDTH
+        || (complete && g_child_width == 0)
+        || super::reach_columns_forced_off()
+        || super::row_columns_forced_off());
     if plan.is_passthrough() {
+        return Ok(());
+    }
+    if out.rows && complete {
+        out.live_cols.clear();
+        out.reach.clear();
         return Ok(());
     }
     let shift = bucket_shift(g_child_width);
@@ -303,11 +319,11 @@ pub(super) fn build_side_masks<const RIGHT: bool>(
     let view = plan.view;
     build_reach_masks(eng, right_level, right_width, &mut out.reach,
         |p| view.coord(if RIGHT { p.right } else { p.left }) as usize, shift)?;
+    if out.rows {
+        return build_row_columns(eng, &out.live_cols, &out.reach, &mut out.row_cols);
+    }
     if super::reach_columns_forced_off() {
         return Ok(());
-    }
-    if right_width <= ROW_COLUMNS_MAX_WIDTH && !super::row_columns_forced_off() {
-        return build_row_columns(eng, &out.live_cols, &out.reach, &mut out.row_cols);
     }
     build_reach_columns(eng, &out.reach, &mut out.reach_cols)
 }

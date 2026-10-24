@@ -41,6 +41,9 @@ pub(super) struct ChildPlan<'a> {
     /// Each child row's g nodes (`liveness::build_row_columns`); empty
     /// where the level built none.
     pub(crate) row_cols: &'a [u64],
+    /// Whether the row loop reads this side through `row_cols`, or whole
+    /// where its lookups kill nothing (`PrefilterSideMasks::rows`).
+    pub(crate) rows: bool,
 }
 
 /// Per-level loop-invariant context passed to all cell/row processing functions.

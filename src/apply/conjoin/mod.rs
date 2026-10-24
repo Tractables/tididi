@@ -897,7 +897,7 @@ fn note_single_rows() {}
 
 #[cfg(not(test))]
 #[inline(always)]
-fn note_row_columns_row() {}
+fn note_row_columns_row(_whole: bool) {}
 
 // A test counts the times a level's pairs arena grew.
 #[cfg(test)]

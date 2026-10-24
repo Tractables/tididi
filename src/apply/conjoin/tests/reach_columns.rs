@@ -17,28 +17,31 @@ fn conjoin(f: &Tdd, g: &Tdd) -> Tdd {
 
 /// Conjoined with reach and row columns, with reach columns alone, and
 /// with neither: the same levels, each node's pairs in the same order.
-/// Returns the rows read off the reach columns and off the row columns.
-fn check(f: &Tdd, g: &Tdd, what: &str) -> (u64, u64) {
+/// Returns the rows read off the reach columns, off the row columns, and
+/// off the row columns of one side with the other read whole.
+fn check(f: &Tdd, g: &Tdd, what: &str) -> (u64, u64, u64) {
     let oracle = reach_columns_off(|| conjoin(f, g));
     let eng = Engine::new();
-    let (reach_before, rows_before) = (reach_columns_rows(), row_columns_rows());
+    let (reach_before, (rows_before, whole_before)) = (reach_columns_rows(), row_columns_rows());
     for (arm, out) in [("row columns", conjoin(f, g)), ("reach columns", row_columns_off(|| conjoin(f, g)))] {
         assert!(eng.equivalent(&out, &oracle).unwrap(), "{what}: the {arm} built another function");
         assert!(is_self_conjunction(&out, &oracle), "{what}: the {arm} built other levels");
     }
-    (reach_columns_rows() - reach_before, row_columns_rows() - rows_before)
+    let (rows, whole) = row_columns_rows();
+    (reach_columns_rows() - reach_before, rows - rows_before, whole - whole_before)
 }
 
-/// Random formulas over 18 variables on every vtree shape, and random
+/// Random formulas over 18 variables on every vtree shape, random
 /// functions over 14 variables on a linear vtree, whose middle levels have
 /// a few hundred nodes of two pairs, sparse ones of 1 model in 16 or 64
-/// conjoining to false on most cells: rows read off the reach columns or
-/// the row columns enter the cells the scan enters.
+/// conjoining to false on most cells, and dense random functions over 10
+/// variables on every shape: rows read off the reach columns or the row
+/// columns enter the cells the scan enters.
 #[test]
 fn the_reach_columns_enter_the_cells_the_scan_enters() {
     let mut rng = Lcg::new(0x7e4c_0a19);
-    let (mut rows, mut cases) = ((0u64, 0u64), 0usize);
-    let mut add = |(a, b): (u64, u64)| { rows.0 += a; rows.1 += b; };
+    let (mut rows, mut cases) = ((0u64, 0u64, 0u64), 0usize);
+    let mut add = |(a, b, c): (u64, u64, u64)| { rows.0 += a; rows.1 += b; rows.2 += c; };
     for shape in [CnfShape { clauses: 30, width: 3 }, CnfShape { clauses: 60, width: 4 }] {
         for (name, vtree) in vtree_shapes(18) {
             for case in 0..4 {
@@ -62,8 +65,23 @@ fn the_reach_columns_enter_the_cells_the_scan_enters() {
         add(check(&f, &g, &format!("random functions, case {case}")));
         cases += 1;
     }
-    let (reach, row) = rows;
-    eprintln!("rows read off the reach columns {reach}, off the row columns {row}, over {cases} cases");
+    // Dense random functions over 10 variables: child levels whose every
+    // product is live, read whole beside a culling side.
+    let vars: Vec<VarId> = (1..=10).map(VarId).collect();
+    for (name, vtree) in vtree_shapes(10) {
+        for one_in in [2, 3] {
+            let mut operand = || {
+                let models: Vec<u64> = (0..1u64 << 10).filter(|_| rng.below(one_in) == 0).collect();
+                Tdd::from_models(&vtree, &vars, &models).unwrap()
+            };
+            let (f, g) = (operand(), operand());
+            add(check(&f, &g, &format!("{name}, dense random functions, 1 in {one_in}")));
+            cases += 1;
+        }
+    }
+    let (reach, row, whole) = rows;
+    eprintln!("rows read off the reach columns {reach}, off the row columns {row} ({whole} a side whole), over {cases} cases");
     assert!(reach > 0, "expected rows read off the reach columns, got none over {cases} cases");
     assert!(row > 0, "expected rows read off the row columns, got none over {cases} cases");
+    assert!(whole > 0, "expected rows read off one side's row columns, got none over {cases} cases");
 }

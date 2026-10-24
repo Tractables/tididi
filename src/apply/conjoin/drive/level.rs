@@ -858,17 +858,20 @@ fn build_level_prefilter_masks(
     shape: LevelShape,
     plan: &MarginalPlan,
     bases: Sides<GridBase>,
+    lookups: PlainLookups,
 ) -> Result<(), OperationError> {
     let LevelShape { t, f: fw, g: gw, .. } = shape;
     let right_level = g.level(t);
     build_side_masks::<false>(
         eng, right_level, gw.here,
         ChildGrid { plan: plan.sides.left, f_width: fw.left, g_width: gw.left, base: bases.left.idx() },
+        matches!(lookups, PlainLookups::CompleteLeft { .. }),
         run.products.arena.slab(), &mut run.prefilter_masks.left,
     )?;
     build_side_masks::<true>(
         eng, right_level, gw.here,
         ChildGrid { plan: plan.sides.right, f_width: fw.right, g_width: gw.right, base: bases.right.idx() },
+        matches!(lookups, PlainLookups::CompleteRight { .. }),
         run.products.arena.slab(), &mut run.prefilter_masks.right,
     )
 }
@@ -953,6 +956,7 @@ fn build_cell_ctx<'a>(
         reach: masks.map_or(&[], |m| &m.reach),
         reach_cols: masks.map_or(&[], |m| &m.reach_cols),
         row_cols: masks.map_or(&[], |m| &m.row_cols),
+        rows: masks.is_some_and(|m| m.rows),
     };
     CellCtx {
         output_grid_base,
@@ -1112,7 +1116,7 @@ pub(super) fn build_level_dense(
         if !both_multi_pair {
             super::super::note_one_sided_masks();
         }
-        build_level_prefilter_masks(eng, run, g, shape, &plan, bases)?;
+        build_level_prefilter_masks(eng, run, g, shape, &plan, bases, lookups)?;
     }
 
     let mut stream_state: Option<StreamLevelState> =

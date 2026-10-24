@@ -63,6 +63,10 @@ pub(crate) struct PrefilterSideMasks {
     /// Each child row's g nodes, its live columns read through the reach
     /// masks ([`build_row_columns`]).
     pub(super) row_cols: Vec<u64>,
+    /// Whether the row loop reads this side through the row columns: its
+    /// `row_cols` where its lookups can kill, nothing on a complete or
+    /// carried side, which every row reads whole.
+    pub(super) rows: bool,
     /// The child grid's cells as bits, which [`build_live_cols_bitmask`]
     /// cuts the rows' masks out of ([`alive_bits`]).
     bits: Vec<u64>,
@@ -310,7 +314,7 @@ pub(super) fn build_row_columns(
     }
     let any = reach.iter().fold(0u128, |any, &r| any | r);
     eng.limits().reserve_exact(row_cols, live_cols.len())?;
-    row_cols.extend(live_cols.iter().map(|&live| {
+    let word_of = |live: u128| {
         let flag = if live != 0 { ROW_LIVE } else { 0 };
         let mut m = live & any;
         if m.count_ones() as usize <= width {
@@ -323,6 +327,15 @@ pub(super) fn build_row_columns(
         } else {
             reach.iter().rev().fold(0u64, |word, &r| word << 1 | u64::from(live & r != 0)) | flag
         }
+    };
+    // Consecutive child rows often have the same live columns, all of them
+    // on a near-complete child: the last row's word is kept for the next.
+    let mut last = (0u128, word_of(0));
+    row_cols.extend(live_cols.iter().map(|&live| {
+        if live != last.0 {
+            last = (live, word_of(live));
+        }
+        last.1
     }));
     Ok(())
 }
