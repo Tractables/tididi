@@ -528,7 +528,7 @@ impl RoutedWalk<'_> {
             }
             for e in self.inner.bucket(inner1 as usize) {
                 let key = e.g_idx.0;
-                prefetch_at(self.routes.slots, segment.base as usize + route_slot(key, segment.bits));
+                prefetch_at(self.routes.slots, segment.first_slot(key));
                 group[n] = Lookup { segment, key, prod: e.prod_idx.0 };
                 n += 1;
                 if n == LOOK_GROUP {
@@ -731,7 +731,7 @@ fn route_level<const SWAPPED: bool>(
             if !s.filtered.touched.is_empty() {
                 routed_pairs += in_order;
             }
-            s.routes.seal(lim, outer, s.filtered.touched, s.filtered.buckets)?;
+            s.routes.seal(lim, outer, s.filtered.touched, s.filtered.buckets, s.inner_g)?;
         }
         s.filtered.clear_touched();
     }
@@ -915,6 +915,8 @@ struct ScatterSides<'w> {
     routes: &'w mut Routes,
     /// How many outer keys the emit loop walks.
     outer_k: usize,
+    /// How many inner-g children `filtered` is keyed by.
+    inner_g: usize,
 }
 
 /// How many bytes a level's inner products (or its parents' buckets) span
@@ -1096,6 +1098,7 @@ fn sides<'w, const SWAPPED: bool>(
         outer_attached,
         routes,
         outer_k,
+        inner_g: filtered_dim,
     })
 }
 

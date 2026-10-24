@@ -134,9 +134,12 @@ impl Buffers for EmitScratch {
 ///
 /// Key `k` of outer `o` (an inner-g child) holds the `(g_parent, attached)`
 /// entries `filtered` held for it under `o`, as one run of `entries`. Each
-/// outer's keys are an open-addressed table of their own, its `segment`:
-/// `slots[base..base + 2^bits]`, probed linearly from the key's hash, a
-/// table at most half full. An outer with no key has `bits` 0 and no slot.
+/// outer's keys are a table of their own, its `segment`: an open-addressed
+/// `slots[base..base + 2^bits]`, probed linearly from the key's hash and at
+/// most half full, or, where the outer holds at least one key in
+/// [`DENSE_SPAN`] of the inner-g children, `slots[base..base + width]`
+/// indexed by the key itself ([`Segment::DENSE`]), so a key is found or
+/// missed in one read. An outer with no key has `bits` 0 and no slot.
 #[derive(Default)]
 pub(super) struct Routes {
     pub(super) segments: Vec<Segment>,
@@ -148,12 +151,29 @@ pub(super) struct Routes {
 }
 
 /// One outer key's table in [`Routes`]: its first slot, and log2 of its
-/// slot count, 0 for an outer with no key.
+/// slot count, 0 for an outer with no key, [`Segment::DENSE`] for a table
+/// indexed by key.
 #[derive(Clone, Copy, Default)]
 pub(super) struct Segment {
     pub(super) base: u32,
     pub(super) bits: u32,
 }
+
+impl Segment {
+    /// `bits` of a table with a slot for every inner-g child, at the key.
+    pub(super) const DENSE: u32 = 32;
+
+    /// The slot of `slots` a lookup of `key` reads first.
+    #[inline(always)]
+    pub(super) fn first_slot(self, key: u32) -> usize {
+        self.base as usize + if self.bits == Self::DENSE { key as usize } else { route_slot(key, self.bits) }
+    }
+}
+
+/// An outer's keys take a table indexed by key where they are at least one
+/// in this many of the inner-g children: at most twice the slots of the
+/// open-addressed table, which holds two to four a key.
+pub(super) const DENSE_SPAN: usize = 4;
 
 /// One slot of a [`Routes`] table: an inner-g child and its run of
 /// entries, or [`RouteSlot::EMPTY`].
@@ -188,20 +208,22 @@ impl Routes {
     }
 
     /// Give outer `outer` a table of the keys `touched` names, each with its
-    /// run `buckets[key]`.
+    /// run `buckets[key]`, the keys being `width` inner-g children.
     pub(super) fn seal(
         &mut self,
         lim: &Limits,
         outer: usize,
         touched: &[u32],
         buckets: &[Vec<(u32, u32)>],
+        width: usize,
     ) -> Result<(), OperationError> {
         if touched.is_empty() {
             return Ok(());
         }
-        let bits = (2 * touched.len()).next_power_of_two().trailing_zeros();
+        let dense = width <= DENSE_SPAN * touched.len();
+        let bits = if dense { Segment::DENSE } else { (2 * touched.len()).next_power_of_two().trailing_zeros() };
         let base = self.slots.len();
-        let size = 1usize << bits;
+        let size = if dense { width } else { 1usize << bits };
         if base + size > u32::MAX as usize {
             return Err(OperationError::IndexOverflow);
         }
@@ -218,8 +240,9 @@ impl Routes {
             }
             reserve_room(lim, &mut self.entries, run.len())?;
             self.entries.extend_from_slice(run);
-            let mut at = route_slot(key, bits);
+            let mut at = if dense { key as usize } else { route_slot(key, bits) };
             while table[at].key != u32::MAX {
+                debug_assert!(!dense, "a key indexes its own slot");
                 at = (at + 1) & (size - 1);
             }
             table[at] = RouteSlot { key, start: start as u32, len: run.len() as u32 };
@@ -283,6 +306,12 @@ impl<'a> RoutesView<'a> {
     /// has one.
     #[inline(always)]
     pub(super) fn slot(self, segment: Segment, key: u32) -> Option<RouteSlot> {
+        if segment.bits == Segment::DENSE {
+            // Keys are the level's inner-g children, below the width the
+            // table was sealed with.
+            let slot = self.slots[segment.first_slot(key)];
+            return (slot.key == key).then_some(slot);
+        }
         let size = 1usize << segment.bits;
         let table = &self.slots[segment.base as usize..segment.base as usize + size];
         let mut at = route_slot(key, segment.bits);
