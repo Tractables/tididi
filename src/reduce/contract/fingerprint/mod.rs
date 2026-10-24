@@ -86,11 +86,15 @@ mod tests;
 /// three scatters of [`group_twins_by_entries`] walk it, and read the same
 /// `(node, entry)` sequence each time.
 pub(super) trait TwinEntries {
+    /// Whether two nodes with no entry are twins.
+    const EMPTY_TWINS: bool = true;
+
     /// Call `f(node, entry)` once per entry of every node.
     fn for_each(&self, f: impl FnMut(u32, u64));
 
     /// Whether none of the `width` nodes can have a twin: no two nodes share
-    /// an entry, and at most one has none. `false` when that is not known.
+    /// an entry, and at most one has none where two nodes with none are
+    /// twins ([`Self::EMPTY_TWINS`]). `false` when that is not known.
     fn no_twin(&self, _lim: &Limits, _scratch: &mut ContractScratch, _width: usize) -> Result<bool, OperationError> {
         Ok(false)
     }
@@ -130,6 +134,10 @@ pub(super) fn screens(parent_level: &TddLevel) -> bool {
 const TWIN_TABLE_START_CELLS: usize = 1 << 12;
 
 impl TwinEntries for ContextEntries<'_> {
+    /// A node no pair names has no context: nothing reaches it, the prune
+    /// removes it, and it is no node's twin.
+    const EMPTY_TWINS: bool = false;
+
     fn for_each(&self, mut f: impl FnMut(u32, u64)) {
         for_each_target_sibling(self.parent_level, self.t1_side, |pi, target, sibling| {
             f(target, pack(pi, sibling));
@@ -140,8 +148,7 @@ impl TwinEntries for ContextEntries<'_> {
     /// one sibling. Each parent node is tested alone, in cache, and the test
     /// stops at the first sibling a node repeats, where twins are likely; a
     /// level whose parent nodes never repeat one, common on grids, then needs
-    /// no fingerprint. The nodes no pair names are counted on the way: two
-    /// of them would be twins.
+    /// no fingerprint.
     ///
     /// A node of three pairs or more files its siblings in a
     /// generation-stamped table, the first cells of `twin_local`, a power of
@@ -153,16 +160,11 @@ impl TwinEntries for ContextEntries<'_> {
     /// [`TWIN_TABLE_START_CELLS`] long and doubles when half full, under a
     /// fresh stamp the siblings read so far are filed again with, so its size
     /// follows the pairs read, not the node's width.
-    fn no_twin(&self, lim: &Limits, scratch: &mut ContractScratch, width: usize) -> Result<bool, OperationError> {
+    fn no_twin(&self, lim: &Limits, scratch: &mut ContractScratch, _width: usize) -> Result<bool, OperationError> {
         if !self.early_stop {
             return Ok(false);
         }
-        let ContractScratch { twin_local, twin_generation, twin_named, .. } = scratch;
-        let words = width.div_ceil(64);
-        lim.try_resize(twin_named, words, 0u64)?;
-        let named = &mut twin_named[..words];
-        named.fill(0);
-        let mut name = |t: u32| named[(t / 64) as usize] |= 1 << (t % 64);
+        let ContractScratch { twin_local, twin_generation, .. } = scratch;
         let (level, side) = (self.parent_level, self.t1_side);
         // A stored level's nodes are read as slices of its arena, an
         // implicit level's generated into a buffer a node at a time, in one
@@ -177,19 +179,18 @@ impl TwinEntries for ContextEntries<'_> {
             if pairs.len() < 3 {
                 let mut last: Option<u32> = None;
                 for pair in pairs {
-                    let (t, s) = split_pair(pair, side);
+                    let s = split_pair(pair, side).1;
                     if last == Some(s) {
                         return Ok(false);
                     }
                     last = Some(s);
-                    name(t);
                 }
                 continue;
             }
             let mut cells = (2 * pairs.len()).next_power_of_two().min(TWIN_TABLE_START_CELLS);
             let mut stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
             for (read, pair) in pairs.iter().enumerate() {
-                let (t, s) = split_pair(pair, side);
+                let s = split_pair(pair, side).1;
                 if 2 * (read + 1) > cells {
                     // Half full: double under a fresh stamp and file the
                     // siblings read so far again. They are distinct, or the
@@ -205,11 +206,9 @@ impl TwinEntries for ContextEntries<'_> {
                 if file_sibling(&mut twin_local[..cells], stamp, s) {
                     return Ok(false);
                 }
-                name(t);
             }
         }
-        let unnamed = width - named.iter().map(|w| w.count_ones() as usize).sum::<usize>();
-        Ok(unnamed <= 1)
+        Ok(true)
     }
 }
 
@@ -268,17 +267,25 @@ impl TwinEntries for ContentEntries<'_> {
 }
 
 /// Find nodes with identical parent-context multisets at the explicit child
-/// level `t1` of `parent`, by refining a partition of the level parent node
-/// by parent node ([`refine::refine_context_groups`]). Marginal children are
-/// handled by pair fusion instead. See [`group_twins_by_entries`] for what
-/// is left in `scratch`. The nodes no pair names are in no group. Debug
-/// builds check the groups against the fingerprint search over the same
-/// contexts, which groups those nodes together, less that group.
+/// level `t1` of `parent`. Marginal children are handled by pair fusion
+/// instead. See [`group_twins_by_entries`] for what is left in `scratch`.
+/// The nodes no pair names are in no group.
 ///
-/// With `screen`, the parent level is first tested for a parent node that
-/// pairs two nodes with one sibling ([`refine::shares_a_context`]), without
-/// which no node has a twin: worth it where few nodes are expected to have
-/// one, as under a parent level no merge has changed.
+/// Without a marginal level no parent node repeats a pair, and the level is
+/// searched by refining a partition of it parent node by parent node
+/// ([`refine::refine_context_groups`]); debug builds check the groups
+/// against the fingerprint search over the same contexts. With `screen`,
+/// the parent level is first tested for a parent node that pairs two nodes
+/// with one sibling ([`refine::shares_a_context`]), without which no node
+/// has a twin: worth it where few nodes are expected to have one, as under
+/// a parent level no merge has changed.
+///
+/// With a marginal level the contexts are multisets, which the
+/// refinement's sibling and degree splits do not count, and the level is
+/// searched by fingerprints ([`group_twins_by_entries`]): there few parent
+/// nodes tell two nodes apart, and the refinement, which stops once every
+/// node is alone, reads nearly every pair, at more than the fingerprints'
+/// cost per pair.
 pub(super) fn find_twin_groups(
     eng: &Engine,
     tdd: &Tdd,
@@ -296,13 +303,20 @@ pub(super) fn find_twin_groups(
         width <= u32::MAX as usize,
         "level width {width} exceeds the u32 node-index range",
     );
-    // Pair lists are sets unless a level of the diagram is marginal. Read
-    // from the scratch: a merge's change to any level forgets the diagram's
-    // own answer, which takes a pass over every level to give again.
-    let simple = !super::sweep::diagram_marginal(tdd, scratch);
+    let entries = ContextEntries {
+        parent_level,
+        t1_side,
+        early_stop: screens(parent_level),
+    };
+    // Read from the scratch: a merge's change to any level forgets the
+    // diagram's own answer, which takes a pass over every level to give
+    // again.
+    if super::sweep::diagram_marginal(tdd, scratch) {
+        return group_twins_by_entries(eng, &entries, width, scratch);
+    }
     let lim = eng.limits();
     let found = if !screen || refine::shares_a_context(parent_level, t1_side, lim, scratch)? {
-        refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, simple, Start::Whole)?
+        refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole)?
     } else {
         scratch.flat_groups.clear();
         scratch.group_starts.clear();
@@ -310,13 +324,7 @@ pub(super) fn find_twin_groups(
     };
     if cfg!(debug_assertions) {
         let refined = (scratch.group_starts.clone(), scratch.flat_groups.clone());
-        let entries = ContextEntries {
-            parent_level,
-            t1_side,
-            early_stop: screens(parent_level),
-        };
-        let fingerprinted = group_twins_by_entries(eng, &entries, width, scratch)?
-            && drop_unnamed_group(parent_level, t1_side, width, scratch);
+        let fingerprinted = group_twins_by_entries(eng, &entries, width, scratch)?;
         assert_eq!(
             (found, &refined.0, &refined.1),
             (fingerprinted, &scratch.group_starts, &scratch.flat_groups),
@@ -324,29 +332,6 @@ pub(super) fn find_twin_groups(
         );
     }
     Ok(found)
-}
-
-/// Drop from the groups in `scratch` the one of the nodes no pair of
-/// `parent_level` names on `side`, in place; whether a group is left.
-fn drop_unnamed_group(parent_level: &TddLevel, side: ChildSide, width: usize, scratch: &mut ContractScratch) -> bool {
-    let mut named = vec![false; width];
-    for_each_target_sibling(parent_level, side, |_, target, _| named[target as usize] = true);
-    let ContractScratch { flat_groups, group_starts, .. } = scratch;
-    let n = group_starts.len();
-    let (mut kept, mut at) = (0, 0);
-    for k in 0..n {
-        let start = group_starts[k] as usize;
-        let end = if k + 1 < n { group_starts[k + 1] as usize } else { flat_groups.len() };
-        if named[flat_groups[start] as usize] {
-            group_starts[kept] = at as u32;
-            flat_groups.copy_within(start..end, at);
-            kept += 1;
-            at += end - start;
-        }
-    }
-    group_starts.truncate(kept);
-    flat_groups.truncate(at);
-    kept > 0
 }
 
 /// Group the `width` nodes of `level` by the multiset of their `entries`.

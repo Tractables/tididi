@@ -13,9 +13,9 @@ use super::{probe_fingerprints, TwinEntries};
 /// equality. Writes groups into `scratch.flat_groups` / `scratch.group_starts`
 /// (which the caller must have cleared) and returns whether any ≥2-member
 /// group exists.
-pub(super) fn build_twin_groups_after_collision(
+pub(super) fn build_twin_groups_after_collision<E: TwinEntries>(
     eng: &Engine,
-    entries: &impl TwinEntries,
+    entries: &E,
     child_width: usize,
     scratch: &mut ContractScratch,
 ) -> Result<bool, OperationError> {
@@ -29,9 +29,9 @@ pub(super) fn build_twin_groups_after_collision(
 
     // ── Group nodes by signature ──────────────────────────────────────────────
     if child_width == 2 {
-        return group_width_two(eng.limits(), scratch);
+        return group_width_two(eng.limits(), scratch, E::EMPTY_TWINS);
     }
-    group_by_hashed_signature(eng, child_width, scratch)
+    group_by_hashed_signature(eng, child_width, scratch, E::EMPTY_TWINS)
 }
 
 /// Scatter each twin-candidate node's context signature into the flat entry
@@ -153,7 +153,8 @@ fn canonicalize_signature_slices(child_width: usize, scratch: &mut ContractScrat
 }
 
 /// Width-2 fast path: the two signatures are compared directly, no hashing.
-fn group_width_two(lim: &Limits, scratch: &mut ContractScratch) -> Result<bool, OperationError> {
+/// Two empty ones are a group only with `empty_twins`.
+fn group_width_two(lim: &Limits, scratch: &mut ContractScratch, empty_twins: bool) -> Result<bool, OperationError> {
     let sig_offsets = &scratch.counts;
     // Reaching here means `mark_candidates` found a fingerprint collision, and
     // at width 2 the only collision possible marks both nodes — so both
@@ -162,7 +163,7 @@ fn group_width_two(lim: &Limits, scratch: &mut ContractScratch) -> Result<bool, 
     debug_assert!(scratch.is_candidate[0] && scratch.is_candidate[1]);
     let sig0 = &scratch.entries[sig_offsets[0] as usize..sig_offsets[1] as usize];
     let sig1 = &scratch.entries[sig_offsets[1] as usize..sig_offsets[2] as usize];
-    let found = sig0 == sig1;
+    let found = sig0 == sig1 && (empty_twins || !sig0.is_empty());
     if found {
         lim.try_push(&mut scratch.group_starts, 0)?;
         lim.try_resize(&mut scratch.flat_groups, 2, 0)?;
@@ -178,11 +179,13 @@ fn group_width_two(lim: &Limits, scratch: &mut ContractScratch) -> Result<bool, 
 /// A node that is no candidate has a fingerprint no other node shares, so it
 /// is a group of its own and never a member: only the candidates are hashed
 /// and grouped, in ascending index order, which gives the groups and their
-/// order that grouping every node would.
+/// order that grouping every node would. The nodes of empty signature are a
+/// group only with `empty_twins`.
 fn group_by_hashed_signature(
     eng: &Engine,
     child_width: usize,
     scratch: &mut ContractScratch,
+    empty_twins: bool,
 ) -> Result<bool, OperationError> {
     let lim = eng.limits();
     // The candidates in ascending order, and their fingerprints moved to the
@@ -222,7 +225,8 @@ fn group_by_hashed_signature(
     // Pass 2: build contiguous groups via counting sort. O(n).
     // Repurpose fingerprints[] as per-rep member count (additive fingerprints
     // are no longer needed after hash table construction).
-    let ContractScratch { fingerprints, cursors, candidates, flat_groups, group_starts, .. } = &mut *scratch;
+    let ContractScratch { fingerprints, cursors, candidates, counts, flat_groups, group_starts, .. } = &mut *scratch;
+    let empty = |k: usize| counts[candidates[k] as usize] == counts[candidates[k] as usize + 1];
     fingerprints[..n].fill(0);
     for &rep in &cursors[..n] {
         fingerprints[rep as usize] += 1;
@@ -233,7 +237,7 @@ fn group_by_hashed_signature(
     // exact by the level-width invariant asserted in `find_twin_groups`.
     let mut pos = 0usize;
     for k in 0..n {
-        if cursors[k] as usize == k && fingerprints[k] >= 2 {
+        if cursors[k] as usize == k && fingerprints[k] >= 2 && (empty_twins || !empty(k)) {
             lim.try_push(group_starts, pos as u32)?;
             let cnt = fingerprints[k] as usize;
             fingerprints[k] = pos as u64;

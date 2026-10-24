@@ -110,7 +110,7 @@ pub(in crate::reduce::contract) fn find_listed_twin_groups(
         scratch.group_starts.clear();
         return Ok(false);
     }
-    let simple = !super::super::sweep::diagram_marginal(tdd, scratch);
+    debug_assert!(!super::super::sweep::diagram_marginal(tdd, scratch), "the sweep lists only without a marginal level");
     let width = tdd.levels[t1.idx()].slot_count();
-    refine_context_groups(&tdd.levels[parent.idx()], t1_side, eng.limits(), scratch, width, simple, Start::Listed(listed))
+    refine_context_groups(&tdd.levels[parent.idx()], t1_side, eng.limits(), scratch, width, Start::Listed(listed))
 }

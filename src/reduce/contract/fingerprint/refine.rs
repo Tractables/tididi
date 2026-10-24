@@ -28,10 +28,6 @@ struct Wide<'a> {
     bucket: &'a mut Vec<u32>,
     met: &'a mut Vec<u32>,
     seen: &'a mut Vec<u32>,
-    /// No parent node repeats a pair: the counts of
-    /// [`Partition::split_by_degree`] and [`Partition::split_by_siblings`]
-    /// are of sets.
-    simple: bool,
 }
 
 /// The most pairs a parent node holds where its nodes are grouped on the
@@ -136,14 +132,13 @@ fn shares_a_sibling(keys: &[u64]) -> bool {
 /// The work is one read of the class of each node a parent node names, and
 /// one write for each node that changes class, with each parent node's pairs
 /// sorted in cache; a node in the first class, or without a twin, is read
-/// off two bits. With `simple`, no parent node repeats a pair, and a wide
-/// parent node is split without a sort: sibling by sibling
-/// ([`Partition::split_by_siblings`]), or by degree where its pairs come in
-/// node order and its nodes' sibling sets are nested
-/// ([`Partition::split_by_degree`]). No fingerprint is formed
-/// and nothing is verified after: the classes are exact. A pair repeated
-/// within a parent node counts twice, so the classes are those of context
-/// multisets.
+/// off two bits. A wide parent node is split without a sort: sibling by
+/// sibling ([`Partition::split_by_siblings`]), or by degree where its pairs
+/// come in node order and its nodes' sibling sets are nested
+/// ([`Partition::split_by_degree`]). Both count sets: no parent node may
+/// repeat a pair, as none does in a diagram without a marginal level. No
+/// fingerprint is formed and nothing is verified after: the classes are
+/// exact.
 ///
 /// Where `start` lists nodes that hold every node with a twin, every other
 /// node is out of the partition from the start, as a node found to have no
@@ -154,7 +149,6 @@ pub(super) fn refine_context_groups(
     lim: &Limits,
     scratch: &mut ContractScratch,
     width: usize,
-    simple: bool,
     start: Start<'_>,
 ) -> Result<bool, OperationError> {
     let ContractScratch {
@@ -174,7 +168,6 @@ pub(super) fn refine_context_groups(
         bucket: refine_bucket,
         met: refine_met,
         seen: refine_seen,
-        simple,
     };
     flat_groups.clear();
     group_starts.clear();
@@ -525,11 +518,11 @@ impl Partition<'_> {
         }
     }
 
-    /// A parent node of more than [`SMALL_PAIRS`] pairs. Where no parent
-    /// node repeats a pair, one whose pairs do not come in node order is
-    /// split sibling by sibling ([`Self::split_by_siblings`]), and one whose
-    /// pairs do is first split by degree ([`Self::split_by_degree`]), which
-    /// settles it where its nodes' sibling sets are nested. Else the pairs
+    /// A parent node of more than [`SMALL_PAIRS`] pairs. One whose pairs do
+    /// not come in node order is split sibling by sibling
+    /// ([`Self::split_by_siblings`]), and one whose pairs do is first split
+    /// by degree ([`Self::split_by_degree`]), which settles it where its
+    /// nodes' sibling sets are nested. Else the pairs
     /// of its nodes not alone are sorted in `keys`, so that each node's
     /// siblings are a run in ascending order; each run of a node that can
     /// have a twin keyed by its node's class and a hash of its siblings,
@@ -544,22 +537,20 @@ impl Partition<'_> {
         side: ChildSide,
         wide: &mut Wide<'_>,
     ) -> Result<(), OperationError> {
-        if wide.simple {
-            let (mut by_node, mut by_sibling) = (true, true);
-            let (mut last, mut top) = (split_pair(&pairs[0], side), 0u32);
-            for pair in pairs {
-                let (t, s) = split_pair(pair, side);
-                by_node &= t >= last.0;
-                by_sibling &= s >= last.1;
-                last = (t, s);
-                top |= s;
-            }
-            if !by_node {
-                return self.split_by_siblings(lim, pairs, side, by_sibling, top, wide);
-            }
-            if self.split_by_degree(lim, pairs, side, top, wide)? {
-                return Ok(());
-            }
+        let (mut by_node, mut by_sibling) = (true, true);
+        let (mut last, mut top) = (split_pair(&pairs[0], side), 0u32);
+        for pair in pairs {
+            let (t, s) = split_pair(pair, side);
+            by_node &= t >= last.0;
+            by_sibling &= s >= last.1;
+            last = (t, s);
+            top |= s;
+        }
+        if !by_node {
+            return self.split_by_siblings(lim, pairs, side, by_sibling, top, wide);
+        }
+        if self.split_by_degree(lim, pairs, side, top, wide)? {
+            return Ok(());
         }
         let Wide { keys, runs, links, table, radix, .. } = wide;
         // Each pair of a node not alone a key of its sibling's bits and its
