@@ -200,7 +200,10 @@ impl Routes {
         if base + size > u32::MAX as usize {
             return Err(OperationError::IndexOverflow);
         }
-        lim.try_resize(&mut self.slots, base + size, RouteSlot::EMPTY)?;
+        // Grown by doubling: the level's tables are sealed one outer at a
+        // time, and an exact reserve would move them at nearly every one.
+        lim.reserve(&mut self.slots, size)?;
+        self.slots.resize(base + size, RouteSlot::EMPTY);
         let table = &mut self.slots[base..];
         for &key in touched {
             let run = &buckets[key as usize];
