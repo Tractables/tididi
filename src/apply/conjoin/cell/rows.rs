@@ -1,6 +1,7 @@
 //! The row loop every build route shares, and the four routes themselves.
 
 use super::*;
+use super::super::liveness::ROW_LIVE;
 
 // ============================= Row-loop driver =============================
 //
@@ -266,6 +267,11 @@ where
         && (!cull_right || !right_cols.is_empty());
     let words = right_width.div_ceil(64);
     let culls = usize::from(cull_left) + usize::from(cull_right);
+    // Whether a row reads its live columns off the row columns: both sides
+    // cull and built them.
+    let (left_rows, right_rows) = (ctx.sides.left.row_cols, ctx.sides.right.row_cols);
+    let by_rows = cull_left && cull_right && !left_rows.is_empty() && !right_rows.is_empty();
+    debug_assert!(!by_rows || right_width <= super::super::liveness::ROW_COLUMNS_MAX_WIDTH);
 
     // One slab fill instead of `left_width` row fills. On a dense-slab action the
     // per-row resets below tile `output_grid_base .. output_grid_base + left_width*right_width` exactly once each
@@ -318,18 +324,6 @@ where
             continue;
         }
 
-        let (left_alive_mask, right_alive_mask) = if DENSE {
-            (0u128, u128::MAX)
-        } else {
-            match row_alive_masks(ctx, f_pairs) {
-                Some(masks) => masks,
-                // Row skip: if f[i]'s pairs all reference dead child rows,
-                // no cell in this row can produce output.
-                None => continue,
-            }
-        };
-
-
         let mut cell = |j: usize| {
             action.cell(
                 eng,
@@ -347,6 +341,38 @@ where
                     gate: &mut poll,
                 },
             )
+        };
+        if by_rows {
+            // The row's pairs' row columns folded on each side: their AND
+            // is the g nodes the reach scan below would find, and a side
+            // without a live child row skips the row, as the alive masks'
+            // fold would. An OR a pair a side, in place of the masks' fold
+            // and a test a g node.
+            let (l, r) = f_pairs.iter().fold((0u64, 0u64), |(l, r), p| {
+                (l | left_rows[p.left.raw() as usize], r | right_rows[p.right.raw() as usize])
+            });
+            if l & r & ROW_LIVE == 0 {
+                continue;
+            }
+            super::super::note_row_columns_row();
+            let mut live = l & r & !ROW_LIVE;
+            while live != 0 {
+                let j = live.trailing_zeros() as usize;
+                live &= live - 1;
+                cell(j)?;
+            }
+            poll.poll(right_width as u64)?;
+            continue;
+        }
+        let (left_alive_mask, right_alive_mask) = if DENSE {
+            (0u128, u128::MAX)
+        } else {
+            match row_alive_masks(ctx, f_pairs) {
+                Some(masks) => masks,
+                // Row skip: if f[i]'s pairs all reference dead child rows,
+                // no cell in this row can produce output.
+                None => continue,
+            }
         };
         if cull_left || cull_right {
             // The cell's own dead-cell test, taken before the cell is entered.

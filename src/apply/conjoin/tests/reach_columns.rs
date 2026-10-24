@@ -1,5 +1,6 @@
-//! Masked rows that read their live columns off the reach columns, checked
-//! against the scan of the reach masks they replace: the same diagram.
+//! Masked rows that read their live columns off the reach columns or the
+//! row columns, checked against the scan of the reach masks they replace:
+//! the same diagram.
 
 use super::*;
 use crate::Engine;
@@ -14,35 +15,37 @@ fn conjoin(f: &Tdd, g: &Tdd) -> Tdd {
     eng.and(f.clone(), g.clone()).unwrap()
 }
 
-/// Conjoined with reach columns and without: the same levels, each node's
-/// pairs in the same order. Returns the rows read off the reach columns.
-fn check(f: &Tdd, g: &Tdd, what: &str) -> u64 {
+/// Conjoined with reach and row columns, with reach columns alone, and
+/// with neither: the same levels, each node's pairs in the same order.
+/// Returns the rows read off the reach columns and off the row columns.
+fn check(f: &Tdd, g: &Tdd, what: &str) -> (u64, u64) {
     let oracle = reach_columns_off(|| conjoin(f, g));
-    let before = reach_columns_rows();
-    let out = conjoin(f, g);
-    let rows = reach_columns_rows() - before;
     let eng = Engine::new();
-    assert!(eng.equivalent(&out, &oracle).unwrap(), "{what}: the reach columns built another function");
-    assert!(is_self_conjunction(&out, &oracle), "{what}: the reach columns built other levels");
-    rows
+    let (reach_before, rows_before) = (reach_columns_rows(), row_columns_rows());
+    for (arm, out) in [("row columns", conjoin(f, g)), ("reach columns", row_columns_off(|| conjoin(f, g)))] {
+        assert!(eng.equivalent(&out, &oracle).unwrap(), "{what}: the {arm} built another function");
+        assert!(is_self_conjunction(&out, &oracle), "{what}: the {arm} built other levels");
+    }
+    (reach_columns_rows() - reach_before, row_columns_rows() - rows_before)
 }
 
 /// Random formulas over 18 variables on every vtree shape, and random
 /// functions over 14 variables on a linear vtree, whose middle levels have
 /// a few hundred nodes of two pairs, sparse ones of 1 model in 16 or 64
-/// conjoining to false on most cells: rows read off the reach columns
-/// enter the cells the scan enters.
+/// conjoining to false on most cells: rows read off the reach columns or
+/// the row columns enter the cells the scan enters.
 #[test]
 fn the_reach_columns_enter_the_cells_the_scan_enters() {
     let mut rng = Lcg::new(0x7e4c_0a19);
-    let (mut rows, mut cases) = (0u64, 0usize);
+    let (mut rows, mut cases) = ((0u64, 0u64), 0usize);
+    let mut add = |(a, b): (u64, u64)| { rows.0 += a; rows.1 += b; };
     for shape in [CnfShape { clauses: 30, width: 3 }, CnfShape { clauses: 60, width: 4 }] {
         for (name, vtree) in vtree_shapes(18) {
             for case in 0..4 {
                 let eng = Engine::new();
                 let f = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, 18, shape));
                 let g = compile_clauses_on(&eng, &vtree, &rand_cnf(&mut rng, 18, shape));
-                rows += check(&f, &g, &format!("{name}, {shape:?}, case {case}"));
+                add(check(&f, &g, &format!("{name}, {shape:?}, case {case}")));
                 cases += 1;
             }
         }
@@ -56,9 +59,11 @@ fn the_reach_columns_enter_the_cells_the_scan_enters() {
             Tdd::from_models(&vtree, &vars, &models).unwrap()
         };
         let (f, g) = (operand(), operand());
-        rows += check(&f, &g, &format!("random functions, case {case}"));
+        add(check(&f, &g, &format!("random functions, case {case}")));
         cases += 1;
     }
-    eprintln!("rows read off the reach columns {rows} over {cases} cases");
-    assert!(rows > 0, "expected rows read off the reach columns, got none over {cases} cases");
+    let (reach, row) = rows;
+    eprintln!("rows read off the reach columns {reach}, off the row columns {row}, over {cases} cases");
+    assert!(reach > 0, "expected rows read off the reach columns, got none over {cases} cases");
+    assert!(row > 0, "expected rows read off the row columns, got none over {cases} cases");
 }

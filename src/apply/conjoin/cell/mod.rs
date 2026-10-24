@@ -38,6 +38,9 @@ pub(super) struct ChildPlan<'a> {
     /// The reach masks by bit (`liveness::build_reach_columns`); empty
     /// where the level built none.
     pub(crate) reach_cols: &'a [u64],
+    /// Each child row's g nodes (`liveness::build_row_columns`); empty
+    /// where the level built none.
+    pub(crate) row_cols: &'a [u64],
 }
 
 /// Per-level loop-invariant context passed to all cell/row processing functions.

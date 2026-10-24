@@ -60,6 +60,9 @@ pub(crate) struct PrefilterSideMasks {
     pub(super) reach: Vec<u128>,
     /// The reach masks by bit ([`build_reach_columns`]).
     pub(super) reach_cols: Vec<u64>,
+    /// Each child row's g nodes, its live columns read through the reach
+    /// masks ([`build_row_columns`]).
+    pub(super) row_cols: Vec<u64>,
     /// The child grid's cells as bits, which [`build_live_cols_bitmask`]
     /// cuts the rows' masks out of ([`alive_bits`]).
     bits: Vec<u64>,
@@ -70,6 +73,7 @@ impl PrefilterSideMasks {
         visit(&mut self.live_cols);
         visit(&mut self.reach);
         visit(&mut self.reach_cols);
+        visit(&mut self.row_cols);
         visit(&mut self.bits);
     }
 }
@@ -262,6 +266,64 @@ pub(super) fn build_reach_columns(eng: &Engine, reach: &[u128], columns: &mut Ve
             columns[b * words + (j >> 6)] |= 1 << (j & 63);
         }
     }
+    Ok(())
+}
+
+/// The most g nodes a masked level has for its sides to build their
+/// [row columns](build_row_columns): a bit a g node, and the top bit of
+/// the word for a row with a live cell.
+pub(super) const ROW_COLUMNS_MAX_WIDTH: usize = 63;
+
+/// The flag bit of a [row columns](build_row_columns) word: the row has a
+/// live cell.
+pub(super) const ROW_LIVE: u64 = 1 << 63;
+
+/// Each child row's g nodes: bit `j` of `row_cols[a]` is set iff
+/// `live_cols[a] & reach[j] != 0`, for `j` below `reach.len()`, and
+/// [`ROW_LIVE`] iff `live_cols[a] != 0`. A row of the level folds its
+/// pairs' words, an OR a pair a side, where the reach scan tests every g
+/// node against the row's folded masks: the two sides' folds ANDed are
+/// the g nodes that scan finds, and a side's fold without `ROW_LIVE` is
+/// the row it skips. Empty above [`ROW_COLUMNS_MAX_WIDTH`] g nodes.
+///
+/// A row's word is the OR of the g nodes of each of its live bits, or its
+/// test against each g node's reach, whichever is fewer steps.
+pub(super) fn build_row_columns(
+    eng: &Engine,
+    live_cols: &[u128],
+    reach: &[u128],
+    row_cols: &mut Vec<u64>,
+) -> Result<(), OperationError> {
+    row_cols.clear();
+    let width = reach.len();
+    if width > ROW_COLUMNS_MAX_WIDTH {
+        return Ok(());
+    }
+    // The g nodes whose reach has each bit, and the bits some reach has.
+    let mut by_bit = [0u64; 128];
+    for (j, &r) in reach.iter().enumerate() {
+        let mut r = r;
+        while r != 0 {
+            by_bit[r.trailing_zeros() as usize] |= 1 << j;
+            r &= r - 1;
+        }
+    }
+    let any = reach.iter().fold(0u128, |any, &r| any | r);
+    eng.limits().reserve_exact(row_cols, live_cols.len())?;
+    row_cols.extend(live_cols.iter().map(|&live| {
+        let flag = if live != 0 { ROW_LIVE } else { 0 };
+        let mut m = live & any;
+        if m.count_ones() as usize <= width {
+            let mut word = 0;
+            while m != 0 {
+                word |= by_bit[m.trailing_zeros() as usize];
+                m &= m - 1;
+            }
+            word | flag
+        } else {
+            reach.iter().rev().fold(0u64, |word, &r| word << 1 | u64::from(live & r != 0)) | flag
+        }
+    }));
     Ok(())
 }
 

@@ -166,12 +166,45 @@ thread_local! {
 }
 
 thread_local! {
-    /// Whether no level on this thread builds reach columns
+    /// Whether no level on this thread builds reach or row columns
     /// ([`reach_columns_off`]).
     static REACH_COLUMNS_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// The rows on this thread whose live cells were read off the reach
     /// columns ([`reach_columns_rows`]).
     static REACH_COLUMNS_ROWS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// Whether no level on this thread builds row columns
+    /// ([`row_columns_off`]).
+    static ROW_COLUMNS_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The rows on this thread whose live cells were read off the row
+    /// columns ([`row_columns_rows`]).
+    static ROW_COLUMNS_ROWS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn row_columns_forced_off() -> bool {
+    ROW_COLUMNS_OFF.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_row_columns_row() {
+    ROW_COLUMNS_ROWS.with(|n| n.set(n.get() + 1));
+}
+
+/// Run `f` with no level building row columns: a masked level of few g
+/// nodes reads its rows' live columns off the reach masks.
+pub(super) fn row_columns_off<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            ROW_COLUMNS_OFF.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(ROW_COLUMNS_OFF.with(|c| c.replace(true)));
+    f()
+}
+
+/// The rows on this thread so far whose live cells were read off the row
+/// columns.
+pub(super) fn row_columns_rows() -> u64 {
+    ROW_COLUMNS_ROWS.with(std::cell::Cell::get)
 }
 
 pub(super) fn reach_columns_forced_off() -> bool {
@@ -182,9 +215,9 @@ pub(super) fn note_reach_columns_row() {
     REACH_COLUMNS_ROWS.with(|n| n.set(n.get() + 1));
 }
 
-/// Run `f` with no level building reach columns, every masked row testing
-/// its columns' reach masks one by one: the oracle the reach columns are
-/// checked against.
+/// Run `f` with no level building reach or row columns, every masked row
+/// testing its columns' reach masks one by one: the oracle the reach and
+/// row columns are checked against.
 pub(super) fn reach_columns_off<R>(f: impl FnOnce() -> R) -> R {
     struct Reset(bool);
     impl Drop for Reset {

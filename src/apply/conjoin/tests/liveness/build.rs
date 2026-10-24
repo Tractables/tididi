@@ -1,4 +1,4 @@
-use super::{build_live_cols_bitmask, build_reach_columns, build_reach_masks, bucket_shift, PrefilterSideMasks, REACH_COLUMNS_MIN_WIDTH};
+use super::{build_live_cols_bitmask, build_reach_columns, build_reach_masks, build_row_columns, bucket_shift, PrefilterSideMasks, REACH_COLUMNS_MIN_WIDTH, ROW_COLUMNS_MAX_WIDTH, ROW_LIVE};
 use crate::apply::conjoin::NO_PRODUCT;
 use crate::test_helpers::{with_stored_copy, x_decision_diagram};
 use crate::vtree::rng::Lcg;
@@ -82,6 +82,38 @@ fn the_reach_columns_are_the_reach_masks_by_bit() {
                 let set = b < bits && columns[b * words + j / 64] >> (j % 64) & 1 == 1;
                 assert_eq!(set, r >> b & 1 == 1, "width {width}, bit {b}, node {j}");
             }
+        }
+    }
+}
+
+/// Each child row's word holds the g nodes whose reach meets its live
+/// columns, and the flag where it has any: over widths up to the most the
+/// words take and one past, and rows from no live bit to more live bits
+/// than g nodes, so both ways of building a word are taken.
+#[test]
+fn the_row_columns_are_the_reach_masks_read_through_each_row() {
+    let eng = Engine::new();
+    let mut rng = Lcg::new(0x5a0d_c3e1);
+    let mut row_cols = Vec::new();
+    for width in [1, 2, 7, 31, 62, 63, 64] {
+        let reach: Vec<u128> = (0..width)
+            .map(|_| (0..1 + rng.below(3)).fold(0u128, |m, _| m | 1u128 << rng.below(100)))
+            .collect();
+        let live_cols: Vec<u128> = (0..200)
+            .map(|_| (0..rng.below(120)).fold(0u128, |m, _| m | 1u128 << rng.below(128)))
+            .collect();
+        build_row_columns(&eng, &live_cols, &reach, &mut row_cols).unwrap();
+        if width > ROW_COLUMNS_MAX_WIDTH {
+            assert!(row_cols.is_empty(), "width {width}");
+            continue;
+        }
+        assert_eq!(row_cols.len(), live_cols.len(), "width {width}");
+        for (a, (&word, &live)) in row_cols.iter().zip(&live_cols).enumerate() {
+            assert_eq!(word & ROW_LIVE != 0, live != 0, "width {width}, row {a}");
+            for (j, &r) in reach.iter().enumerate() {
+                assert_eq!(word >> j & 1 == 1, live & r != 0, "width {width}, row {a}, node {j}");
+            }
+            assert_eq!(word & !ROW_LIVE, word & ((1u64 << width) - 1) & !ROW_LIVE, "width {width}, row {a}: no bit past the g nodes");
         }
     }
 }

@@ -858,10 +858,10 @@ fn one_sided_masks_forced_off() -> bool {
 #[inline(always)]
 fn note_one_sided_masks() {}
 
-// A test builds no reach columns, as the oracle for the rows that read
-// them, and counts those rows.
+// A test builds no reach or row columns, as the oracle for the rows that
+// read them, or no row columns, and counts those rows.
 #[cfg(test)]
-use tests::{note_reach_columns_row, reach_columns_forced_off};
+use tests::{note_reach_columns_row, note_row_columns_row, reach_columns_forced_off, row_columns_forced_off};
 
 #[cfg(not(test))]
 #[inline(always)]
@@ -871,7 +871,17 @@ fn reach_columns_forced_off() -> bool {
 
 #[cfg(not(test))]
 #[inline(always)]
+fn row_columns_forced_off() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
 fn note_reach_columns_row() {}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_row_columns_row() {}
 
 // A test counts the times a level's pairs arena grew.
 #[cfg(test)]

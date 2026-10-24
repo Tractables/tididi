@@ -947,6 +947,7 @@ fn build_cell_ctx<'a>(
         live_cols: masks.map_or(&[], |m| &m.live_cols),
         reach: masks.map_or(&[], |m| &m.reach),
         reach_cols: masks.map_or(&[], |m| &m.reach_cols),
+        row_cols: masks.map_or(&[], |m| &m.row_cols),
     };
     CellCtx {
         output_grid_base,
