@@ -1782,19 +1782,29 @@ fn emit_few(
     let lim = eng.limits();
     let n = owners.len();
     debug_assert!((2..=FEW_CANDIDATES).contains(&n) && pairs.len() == n, "a few candidates");
-    // Each candidate's product and each product's g parent and pair count.
-    let mut product_of = [0u8; FEW_CANDIDATES];
+    // Each candidate's product and each product's g parent and pair count,
+    // and the pairs of the products of more than one, which take a range of
+    // the arena. That sum is kept as the counts are: summed from them after
+    // the loop, it read several counts in one load while their last writes
+    // were still in flight, and such a load waits for the writes to retire.
+    let mut product_of = [0u32; FEW_CANDIDATES];
     let mut parents = [0u32; FEW_CANDIDATES];
-    let mut counts = [0u8; FEW_CANDIDATES];
-    let mut products = 0;
+    let mut counts = [0u32; FEW_CANDIDATES];
+    let (mut products, mut ranged) = (0, 0);
     for (i, &g_parent) in owners.iter().enumerate() {
         let k = parents[..products].iter().position(|&p| p == g_parent).unwrap_or(products);
         if k == products {
             parents[k] = g_parent;
             products += 1;
         }
-        product_of[i] = k as u8;
-        counts[k] += 1;
+        product_of[i] = k as u32;
+        let count = counts[k] + 1;
+        counts[k] = count;
+        ranged += match count {
+            1 => 0,
+            2 => 2,
+            _ => 1,
+        };
     }
     let first = pl_output.len();
     lim.reserve(pl_output, products)?;
@@ -1807,17 +1817,16 @@ fn emit_few(
     // output-pair meter charged once for whatever the arena grew by.
     let pre_pairs_cap = level.pairs.stored_mut().capacity();
     lim.reserve(level.nodes.stored_mut(), products)?;
-    let ranged: usize = counts[..products].iter().filter(|&&c| c > 1).map(|&c| usize::from(c)).sum();
     reserve_pairs_for_emit(eng, level, ranged)?;
     let first_node = level.nodes().len();
     let built = counts[..products].iter().enumerate().try_for_each(|(k, &count)| {
-        let mut mine = (0..n).filter(|&i| usize::from(product_of[i]) == k).map(|i| pairs[i]);
+        let mut mine = (0..n).filter(|&i| product_of[i] as usize == k).map(|i| pairs[i]);
         if count == 1 {
             emit_single_pair(eng, level, mine.next().expect("the product holds a candidate"))
         } else {
             let start = level.pairs.stored_len();
             level.pairs.stored_mut().extend(mine);
-            level.try_push_multi_by_range(start, usize::from(count)).map_err(|_| OperationError::OverBudget)
+            level.try_push_multi_by_range(start, count as usize).map_err(|_| OperationError::OverBudget)
         }
     });
     lim.charge_output_pairs(level.pairs.stored_mut().capacity().saturating_sub(pre_pairs_cap));
