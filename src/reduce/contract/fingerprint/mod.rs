@@ -156,71 +156,96 @@ impl TwinEntries for ContextEntries<'_> {
     }
 
     /// Two nodes share a context only where a parent node pairs both with
-    /// one sibling. Each parent node is tested alone, in cache, and the test
-    /// stops at the first sibling a node repeats, where twins are likely; a
-    /// level whose parent nodes never repeat one, common on grids, then needs
-    /// no fingerprint.
-    ///
-    /// A node of three pairs or more files its siblings in a
-    /// generation-stamped table, the first cells of `twin_local`, a power of
-    /// two at least twice the siblings filed, so a probe always ends at a
-    /// cell this node has not stamped. A cell holds its stamp in the high half
-    /// and the sibling in the low one, and finding the sibling already filed
-    /// is the repeat: a wide node whose siblings repeat stops at the first
-    /// one, after reading a few of its pairs. The table starts at most
-    /// [`TWIN_TABLE_START_CELLS`] long and doubles when half full, under a
-    /// fresh stamp the siblings read so far are filed again with, so its size
-    /// follows the pairs read, not the node's width.
+    /// one sibling ([`repeats_a_sibling`]); a level whose parent nodes never
+    /// repeat one, common on grids, then needs no fingerprint.
     fn no_twin(&self, lim: &Limits, scratch: &mut ContractScratch, _width: usize) -> Result<bool, OperationError> {
         if !self.early_stop {
             return Ok(false);
         }
-        let ContractScratch { twin_local, twin_generation, .. } = scratch;
-        let (level, side) = (self.parent_level, self.t1_side);
-        // A stored level's nodes are read as slices of its arena, an
-        // implicit level's generated into a buffer a node at a time, in one
-        // loop.
-        let stored = level.stored();
-        let (mut buf, mut cursor) = (Vec::new(), None);
-        for i in 0..level.node_count() {
-            let pairs = match stored {
-                Some(stored) => stored.of_idx(i),
-                None => level.described_read_next(&mut cursor, i, &mut buf),
-            };
-            if pairs.len() < 3 {
-                let mut last: Option<u32> = None;
-                for pair in pairs {
-                    let s = split_pair(pair, side).1;
-                    if last == Some(s) {
-                        return Ok(false);
-                    }
-                    last = Some(s);
+        Ok(!repeats_a_sibling(self.parent_level, self.t1_side, lim, scratch)?)
+    }
+}
+
+/// Whether some node of `level` pairs two nodes of the child level on
+/// `side` with one sibling. Two nodes share a context only there (math
+/// §2.8), so without one no node has a twin.
+///
+/// Each parent node is tested alone, in cache, and the test stops at the
+/// first such sibling. A node of up to [`refine::SMALL_PAIRS`] pairs sorts
+/// them on the stack by sibling and compares neighbours. A wider one files
+/// its siblings in a generation-stamped table, the first cells of
+/// `twin_local`, a power of two at least twice the siblings filed, so a
+/// probe always ends at a cell this node has not stamped; a cell holds its
+/// stamp in the high half and the sibling in the low one, and finding the
+/// sibling already filed is the repeat, so a wide node whose siblings
+/// repeat stops at the first one, after reading a few of its pairs. The
+/// table starts at most [`TWIN_TABLE_START_CELLS`] long and doubles when
+/// half full, under a fresh stamp the siblings read so far are filed again
+/// with, so its size follows the pairs read, not the node's width. A wide
+/// node that repeats a pair, which only a marginal level allows, counts as
+/// one that pairs two nodes with its sibling.
+pub(super) fn repeats_a_sibling(
+    level: &TddLevel,
+    side: ChildSide,
+    lim: &Limits,
+    scratch: &mut ContractScratch,
+) -> Result<bool, OperationError> {
+    let ContractScratch { twin_local, twin_generation, .. } = scratch;
+    // A stored level's nodes are read as slices of its arena, an implicit
+    // level's generated into a buffer a node at a time, in one loop.
+    let stored = level.stored();
+    let (mut buf, mut cursor) = (Vec::new(), None);
+    for i in 0..level.node_count() {
+        let pairs = match stored {
+            Some(stored) => stored.of_idx(i),
+            None => level.described_read_next(&mut cursor, i, &mut buf),
+        };
+        match pairs.len() {
+            0 | 1 => continue,
+            2 => {
+                let ((t0, s0), (t1, s1)) = (split_pair(&pairs[0], side), split_pair(&pairs[1], side));
+                if s0 == s1 && t0 != t1 {
+                    return Ok(true);
                 }
                 continue;
             }
-            let mut cells = (2 * pairs.len()).next_power_of_two().min(TWIN_TABLE_START_CELLS);
-            let mut stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
-            for (read, pair) in pairs.iter().enumerate() {
-                let s = split_pair(pair, side).1;
-                if 2 * (read + 1) > cells {
-                    // Half full: double under a fresh stamp and file the
-                    // siblings read so far again. They are distinct, or the
-                    // test would have stopped.
-                    cells *= 2;
-                    stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
-                    for pair in &pairs[..read] {
-                        file_sibling(&mut twin_local[..cells], stamp, split_pair(pair, side).1);
-                    }
+            n if n <= refine::SMALL_PAIRS => {
+                let mut key = [0u64; refine::SMALL_PAIRS];
+                for (k, pair) in pairs.iter().enumerate() {
+                    let (t, s) = split_pair(pair, side);
+                    key[k] = pack(s, t);
                 }
-                // The node's window of the table: a narrow node after a wide
-                // one stays in cache. Cells past it keep older stamps unread.
-                if file_sibling(&mut twin_local[..cells], stamp, s) {
-                    return Ok(false);
+                let key = &mut key[..n];
+                key.sort_unstable();
+                if key.windows(2).any(|w| w[0] >> 32 == w[1] >> 32 && w[0] != w[1]) {
+                    return Ok(true);
+                }
+                continue;
+            }
+            _ => {}
+        }
+        let mut cells = (2 * pairs.len()).next_power_of_two().min(TWIN_TABLE_START_CELLS);
+        let mut stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
+        for (read, pair) in pairs.iter().enumerate() {
+            let s = split_pair(pair, side).1;
+            if 2 * (read + 1) > cells {
+                // Half full: double under a fresh stamp and file the
+                // siblings read so far again. They are distinct, or the
+                // test would have stopped.
+                cells *= 2;
+                stamp = next_twin_stamp(lim, twin_local, twin_generation, cells)?;
+                for pair in &pairs[..read] {
+                    file_sibling(&mut twin_local[..cells], stamp, split_pair(pair, side).1);
                 }
             }
+            // The node's window of the table: a narrow node after a wide
+            // one stays in cache. Cells past it keep older stamps unread.
+            if file_sibling(&mut twin_local[..cells], stamp, s) {
+                return Ok(true);
+            }
         }
-        Ok(true)
     }
+    Ok(false)
 }
 
 /// The next stamp of the sibling table, with `twin_local` at least `cells`
@@ -288,9 +313,9 @@ impl TwinEntries for ContentEntries<'_> {
 /// ([`refine::refine_context_groups`]); debug builds check the groups
 /// against the fingerprint search over the same contexts. With `screen`,
 /// the parent level is first tested for a parent node that pairs two nodes
-/// with one sibling ([`refine::shares_a_context`]), without which no node
-/// has a twin: worth it where few nodes are expected to have one, as under
-/// a parent level no merge has changed.
+/// with one sibling ([`repeats_a_sibling`]), without which no node has a
+/// twin: worth it where few nodes are expected to have one, as under a
+/// parent level no merge has changed.
 ///
 /// With a marginal level the contexts are multisets, which the
 /// refinement's sibling and degree splits do not count, and the level is
@@ -328,7 +353,7 @@ pub(super) fn find_twin_groups(
         return group_twins_by_entries(eng, &entries, width, scratch);
     }
     let lim = eng.limits();
-    let found = if !screen || refine::shares_a_context(parent_level, t1_side, lim, scratch)? {
+    let found = if !screen || repeats_a_sibling(parent_level, t1_side, lim, scratch)? {
         refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, Start::Whole)?
     } else {
         scratch.flat_groups.clear();

@@ -32,7 +32,7 @@ struct Wide<'a> {
 
 /// The most pairs a parent node holds where its nodes are grouped on the
 /// stack, by comparing every two; a wider one sorts them in scratch.
-const SMALL_PAIRS: usize = 8;
+pub(super) const SMALL_PAIRS: usize = 8;
 
 /// The nodes a refinement starts with in its first class
 /// ([`refine_context_groups`]).
@@ -42,71 +42,6 @@ pub(super) enum Start<'a> {
     /// These nodes, ascending, which hold every node with a twin
     /// ([`super::listed`]).
     Listed(&'a [u32]),
-}
-
-/// Whether some node of `level` pairs two nodes of the child level on
-/// `side` with one sibling. Two nodes share a context only there (math
-/// §2.8), so without one no node has a twin.
-///
-/// The test reads each parent node's pairs until the first such sibling
-/// and no node's class: a parent node of two pairs compares their siblings,
-/// a wider one sorts its pairs by sibling unless they come so. A repeated
-/// pair names one node and is no such sibling.
-pub(super) fn shares_a_context(
-    level: &TddLevel,
-    side: ChildSide,
-    lim: &Limits,
-    scratch: &mut ContractScratch,
-) -> Result<bool, OperationError> {
-    let refine_keys = &mut scratch.refine_keys;
-    let stored = level.stored();
-    let (mut buf, mut cursor) = (Vec::new(), None);
-    for i in 0..level.node_count() {
-        let pairs = match stored {
-            Some(stored) => stored.of_idx(i),
-            None => level.described_read_next(&mut cursor, i, &mut buf),
-        };
-        let shared = match pairs.len() {
-            0 | 1 => false,
-            2 => {
-                let ((t0, s0), (t1, s1)) = (split_pair(&pairs[0], side), split_pair(&pairs[1], side));
-                s0 == s1 && t0 != t1
-            }
-            n if n <= SMALL_PAIRS => {
-                let mut key = [0u64; SMALL_PAIRS];
-                for (k, pair) in pairs.iter().enumerate() {
-                    let (t, s) = split_pair(pair, side);
-                    key[k] = pack(s, t);
-                }
-                let key = &mut key[..n];
-                key.sort_unstable();
-                shares_a_sibling(key)
-            }
-            n => {
-                refine_keys.clear();
-                lim.reserve_exact(refine_keys, n)?;
-                refine_keys.extend(pairs.iter().map(|pair| {
-                    let (t, s) = split_pair(pair, side);
-                    pack(s, t)
-                }));
-                if !refine_keys.is_sorted() {
-                    refine_keys.sort_unstable();
-                }
-                shares_a_sibling(refine_keys)
-            }
-        };
-        if shared {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// Whether `keys`, sorted `(sibling, node)` pairs, pair one sibling with two
-/// nodes.
-#[inline]
-fn shares_a_sibling(keys: &[u64]) -> bool {
-    keys.windows(2).any(|w| w[0] >> 32 == w[1] >> 32 && w[0] != w[1])
 }
 
 /// The twin groups of the `width` nodes the pairs of `level` name on side

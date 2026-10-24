@@ -123,14 +123,16 @@ fn a_wrapped_stamp_reads_no_older_cell() {
     let (v_left, v_right) = vtree.children(root);
     let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
     let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+    // Wider than the nodes the test sorts, so that it files them.
+    let width = refine::SMALL_PAIRS as u32 + 4;
     for v in [v_left, v_right] {
-        for _ in 0..4 {
+        for _ in 0..width {
             levels[v.idx()].push_internal_node(&[filler]);
         }
     }
     // One parent node pairing left node i with right node i: no sibling
     // repeats, and every node is named.
-    let pairs: Vec<ChildPair> = (0..4).map(|i| ChildPair::new(NodeIdx(i), NodeIdx(i))).collect();
+    let pairs: Vec<ChildPair> = (0..width).map(|i| ChildPair::new(NodeIdx(i), NodeIdx(i))).collect();
     levels[root.idx()].push_internal_node(&pairs);
     let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
     let entries = ContextEntries {
@@ -140,12 +142,13 @@ fn a_wrapped_stamp_reads_no_older_cell() {
     };
     // Every cell of the node's window stamped 1 and filing one of its
     // siblings: read under the wrapped stamp, each would be a repeat.
+    let cells = (2 * width as usize).next_power_of_two().min(TWIN_TABLE_START_CELLS) as u64;
     let mut scratch = ContractScratch {
-        twin_local: (0..8u64).map(|i| (1 << 32) | (i % 4)).collect(),
+        twin_local: (0..cells).map(|i| (1 << 32) | (i % u64::from(width))).collect(),
         twin_generation: u32::MAX,
         ..ContractScratch::default()
     };
-    assert!(entries.no_twin(eng.limits(), &mut scratch, 4).expect("no_twin"));
+    assert!(entries.no_twin(eng.limits(), &mut scratch, width as usize).expect("no_twin"));
     assert_eq!(scratch.twin_generation, 1);
 }
 

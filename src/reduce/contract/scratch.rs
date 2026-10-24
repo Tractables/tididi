@@ -239,7 +239,7 @@ pub(crate) struct ContractScratch {
     pub(super) part_records: Vec<u64>,
     pub(super) part_starts: Vec<u32>,
     pub(super) part_table: Vec<u64>,
-    /// The per-parent-node sibling table of `TwinEntries::no_twin`: each
+    /// The per-parent-node sibling table of `fingerprint::repeats_a_sibling`: each
     /// cell a stamp in the high half and a sibling in the low one. Its
     /// length is a power of two, at least twice the most siblings one node
     /// has filed so far.
