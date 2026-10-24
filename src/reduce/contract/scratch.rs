@@ -344,8 +344,9 @@ pub(crate) struct ContractScratch {
     /// only such a merge reads it.
     pub(super) has_marginal_below_valid: bool,
     /// Whether the diagram this checkout is working on has a marginal level,
-    /// read once per checkout by `merge::contract_twins`: without one, twin
-    /// supports are disjoint and the plan concatenates every member.
+    /// read once per checkout: without one, pair lists are sets, the twin
+    /// search splits a wide parent node without a sort, and the merge plan
+    /// concatenates every member, their supports being disjoint.
     pub(super) diagram_marginal: Option<bool>,
     /// The nodes the twin searches read since the sweep last charged them to
     /// the work clock: `contract_child` adds, `contract_all_twins` charges.

@@ -1,5 +1,6 @@
 use super::*;
 use crate::Engine;
+use crate::execution::pool::PooledScratch;
 use crate::diagram::{ChildPair, LeafLabel, NodeIdx, Tdd, TddLevel, TddNodeId};
 use crate::vtree::rng::Lcg;
 use crate::vtree::Vtree;
@@ -341,6 +342,9 @@ fn wide_levels_with_planted_twins_find_every_twin() {
             }
             let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
             let want = listed_groups(&tdd.levels[root.idx()], &tdd.levels[target.idx()], side);
+            // A new diagram: the scratch is checked out afresh, as a
+            // contraction checks it out.
+            scratch.prepare();
             let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch).expect("find_twin_groups");
             let mut got: Vec<Vec<u32>> = Vec::new();
             for (g, &start) in scratch.group_starts.iter().enumerate() {
@@ -433,6 +437,9 @@ fn classes_are_split_by_later_contexts() {
             }
             let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
             let want = listed_groups(&tdd.levels[root.idx()], &tdd.levels[target.idx()], side);
+            // A new diagram: the scratch is checked out afresh, as a
+            // contraction checks it out.
+            scratch.prepare();
             let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch).expect("find_twin_groups");
             let mut got: Vec<Vec<u32>> = Vec::new();
             for (g, &start) in scratch.group_starts.iter().enumerate() {
@@ -530,6 +537,9 @@ fn nested_wide_nodes_are_split_by_degree() {
             }
             let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
             let want = listed_groups(&tdd.levels[root.idx()], &tdd.levels[target.idx()], side);
+            // A new diagram: the scratch is checked out afresh, as a
+            // contraction checks it out.
+            scratch.prepare();
             let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch).expect("find_twin_groups");
             let mut got: Vec<Vec<u32>> = Vec::new();
             for (g, &start) in scratch.group_starts.iter().enumerate() {

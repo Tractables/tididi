@@ -391,7 +391,7 @@ pub(crate) fn debug_assert_no_twins_under(eng: &Engine, tdd: &Tdd, parents: &[Vt
 }
 
 /// Whether the diagram has a marginal level, read once per scratch checkout.
-fn diagram_marginal(tdd: &Tdd, scratch: &mut ContractScratch) -> bool {
+pub(super) fn diagram_marginal(tdd: &Tdd, scratch: &mut ContractScratch) -> bool {
     *scratch.diagram_marginal.get_or_insert_with(|| tdd.has_marginal_level())
 }
 
