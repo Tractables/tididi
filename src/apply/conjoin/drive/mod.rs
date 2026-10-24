@@ -470,6 +470,11 @@ pub(crate) fn apply_and_core(
     }
     let summed = sweep.summed.take();
     let kept = Operands { f: sweep.kept.f.take(), g: sweep.kept.g.take() };
+    let fused = if sweep.filter.is_none() && sweep.ws.is_none() {
+        fused_built_levels(&vtree, &run, f, g, sweep.targets, sweep.quantified)
+    } else {
+        Vec::new()
+    };
 
     crate::marginal::canonicalize_weighted_leaf_refs(&canon_leaves, &vtree, run.levels, ws.as_ref());
 
@@ -553,6 +558,19 @@ pub(crate) fn apply_and_core(
     } else {
         carry_kept_counts(eng, &mut out, &carried, &relabel_moved, &kept);
     }
+    // Recorded where the level's marginal child is still its only one.
+    for &t in &fused {
+        let (left, right) = vtree.children(t);
+        let marginal = |c: VtreeIdx| out.levels[c.idx()].is_marginal();
+        if !marginal(t) && marginal(left) != marginal(right) {
+            out.dirty.set_fused(eng, t.0);
+        }
+    }
+    #[cfg(debug_assertions)]
+    {
+        let recorded: Vec<VtreeIdx> = fused.iter().copied().filter(|t| out.dirty.is_fused(t.0)).collect();
+        crate::test_helpers::check::marginal::debug_assert_pair_fusion_saturated(&out, Some(&recorded), "conjunction");
+    }
     match summed {
         // The marks the marginalization pass leaves, which installs each
         // level on the finished diagram and marks its parent then.
@@ -565,6 +583,63 @@ pub(crate) fn apply_and_core(
         }
         None => Ok(Conjoined::Built(out)),
     }
+}
+
+/// The levels the sweep built that hold no node with two pairs sharing a
+/// ref into their structural child, since their carrier's level holds none
+/// (`Dirty::is_fused`): a pair fusion there would find nothing.
+///
+/// Such a level's one marginal child is a pass-through side: the carrier
+/// operand was marginal there, and the other operand is the identity over
+/// it, so a node of the other holds one pair per structural ref. A node of
+/// the level is the product of a carrier node, no two of whose pairs share
+/// a structural ref, and a node of the other operand; its pairs are the
+/// live products of their pairs, on the structural side the product nodes
+/// of their refs. On an internal structural child, whose products are one
+/// node per pair of operand nodes, distinct pairs of pairs meet in distinct
+/// nodes. Not on a leaf child, where two label products can be one label;
+/// nor on a child quantified, summed or marginal in an operand.
+fn fused_built_levels(
+    vtree: &crate::vtree::Vtree,
+    run: &ApplyRun,
+    f: &Tdd,
+    g: &Tdd,
+    targets: VtreeMask<'_>,
+    quantified: VtreeMask<'_>,
+) -> Vec<VtreeIdx> {
+    use super::marginal_plan::Carrier;
+    if !run.entry_marginality.any() {
+        return Vec::new();
+    }
+    let marginal = |x: VtreeIdx| run.levels[x.idx()].is_marginal();
+    let entry = &run.entry_marginality;
+    run.cone
+        .built
+        .iter()
+        .copied()
+        .filter(|&t| {
+            if marginal(t) || quantified.contains(t.idx()) {
+                return false;
+            }
+            let (left, right) = vtree.children(t);
+            let (m, c) = match (marginal(left), marginal(right)) {
+                (true, false) => (left, right),
+                (false, true) => (right, left),
+                _ => return false,
+            };
+            let (carrier, identity) = match entry.only(m.idx()) {
+                Some(Carrier::F) => (f, &run.g_identity[..]),
+                Some(Carrier::G) => (g, &run.f_identity[..]),
+                None => return false,
+            };
+            identity[m.idx()]
+                && carrier.dirty.is_fused(t.0)
+                && !vtree.node(c).is_leaf()
+                && !quantified.contains(c.idx())
+                && !targets.contains(c.idx())
+                && !entry.either(c.idx())
+        })
+        .collect()
 }
 
 /// Whether a plain conjunction gave no two nodes of an inner child of the
