@@ -83,6 +83,9 @@ pub(super) fn rewrite_parent(
         parent_level
             .rewrite_described_in(lim, room, false, |_, _, _, pair| canonical_pair(pair, t1_side, remap))
             .expect("an implicit parent is rewritten in its room");
+        // Built stored at its description's places, in node order: its
+        // arena is left as the stored route below leaves it.
+        parent_level.compact_in_node_order();
         return;
     }
     // Where the arena holds the ranges in node order, each node's kept pairs

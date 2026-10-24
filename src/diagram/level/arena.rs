@@ -201,9 +201,40 @@ impl TddLevel {
         true
     }
 
+    /// Move every node's pairs down to the start of the arena, in node order,
+    /// where [`ranges_in_node_order`](Self::ranges_in_node_order) holds: the
+    /// arena is left with the live pairs only, as a rewrite that moves them
+    /// as it goes leaves it. Returns whether it moved them; a level out of
+    /// node order, or implicit, is left as it is.
+    pub(crate) fn compact_in_node_order(&mut self) -> bool {
+        if self.pairs.stored().is_none() || !self.ranges_in_node_order() {
+            return false;
+        }
+        let mut cursor = 0usize;
+        for i in 0..self.nodes().len() {
+            let Some(range) = self.arena_range(self.node(i).kind()) else {
+                continue;
+            };
+            if range.is_empty() {
+                continue;
+            }
+            if range.start != cursor {
+                let len = range.len();
+                self.pairs.stored_mut().copy_within(range, cursor);
+                self.set_multi_start(i, cursor);
+                cursor += len;
+            } else {
+                cursor = range.end;
+            }
+        }
+        self.pairs.stored_mut().truncate(cursor);
+        self.dead_pairs = 0;
+        true
+    }
+
     /// Rewrite a multi-pair node's arena start, handling both encodings.
-    /// Companion of [`set_pair_len`](Self::set_pair_len); only the pairs-arena
-    /// sweep needs it, and only ever to *lower* a start.
+    /// Companion of [`set_pair_len`](Self::set_pair_len); the passes that move
+    /// pairs down the arena need it, and only ever to *lower* a start.
     ///
     /// A normal-multi node keeps its packed form: the new start is ≤ the old one,
     /// which already fit 31 bits, so the encoding cannot overflow. A ranged
