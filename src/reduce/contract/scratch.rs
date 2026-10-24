@@ -243,8 +243,16 @@ pub(crate) struct ContractScratch {
     /// and it restarts at 1 (0 is the stamp of a cell never written, so it
     /// must never equal a live one).
     pub(super) twin_generation: u32,
-    /// One bit per node: set if some pair names it.
+    /// One bit per node: set if some pair names it, or, in the private
+    /// context scatter, if the node holds a private context.
     pub(super) twin_named: Vec<u64>,
+    /// The per-parent-node sibling table of `TwinEntries::scatter_shared`:
+    /// each cell a stamp in the high 31 bits, a repeat bit, and a sibling in
+    /// the low 32. Its length is a power of two, at least twice the most
+    /// pairs one node has filed so far.
+    pub(super) shared_local: Vec<u64>,
+    /// The stamp of the node `shared_local` files now, from 1, below 2^31.
+    pub(super) shared_generation: u32,
     /// Node indices of twin group members, stored contiguously.
     pub(super) flat_groups: Vec<u32>,
     /// Start offsets into `flat_groups` for each twin group; a node belongs to
@@ -258,6 +266,12 @@ pub(crate) struct ContractScratch {
     /// The candidates' node indices in ascending order, which the grouping
     /// pass hashes and groups alone.
     pub(super) candidates: Vec<u32>,
+    /// Per node, the lowest node with its fingerprint, which
+    /// `mark_candidates` writes: a candidate's group representative.
+    pub(super) reps: Vec<u32>,
+    /// One parent node's candidate entries, each `(representative,
+    /// sibling)`, for `groups::verify_fingerprint_groups`.
+    pub(super) owner_keys: Vec<u64>,
     /// Per-node "signature slice needs sorting" flag, set during the Pass-2
     /// entry scatter when a written entry compares below its slice predecessor.
     /// Slices arrive from the scatter in parent-index-major order and are
@@ -346,10 +360,13 @@ impl Buffers for ContractScratch {
         visit(&mut self.fingerprints);
         visit(&mut self.twin_local);
         visit(&mut self.twin_named);
+        visit(&mut self.shared_local);
         visit(&mut self.flat_groups);
         visit(&mut self.group_starts);
         visit(&mut self.is_candidate);
         visit(&mut self.candidates);
+        visit(&mut self.reps);
+        visit(&mut self.owner_keys);
         visit(&mut self.slice_unsorted);
         visit(&mut self.listed_entries);
         visit(&mut self.listed_bits);

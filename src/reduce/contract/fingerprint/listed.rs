@@ -34,6 +34,12 @@ impl TwinEntries for ListedEntries<'_> {
             f(node, entry);
         }
     }
+
+    /// The entries are contexts read in parent order, and the sweep lists
+    /// only in a diagram without a marginal level.
+    fn owner_keyed(&self) -> bool {
+        true
+    }
 }
 
 /// A set of a level's nodes, one bit each, cleared over `width` nodes.

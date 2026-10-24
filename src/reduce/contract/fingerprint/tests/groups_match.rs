@@ -74,6 +74,7 @@ fn the_twin_groups_are_the_nodes_with_equal_contexts() {
                 parent_level: &tdd.levels[root.idx()],
                 t1_side: side,
                 early_stop: true,
+                distinct: true,
             };
             let width = tdd.levels[child.idx()].slot_count();
             if entries.no_twin(eng.limits(), &mut scratch, width).expect("no_twin") {
@@ -121,6 +122,7 @@ fn a_wrapped_stamp_reads_no_older_cell() {
         parent_level: &tdd.levels[root.idx()],
         t1_side: ChildSide::Left,
         early_stop: true,
+        distinct: true,
     };
     // Every cell of the node's window stamped 1 and filing one of its
     // siblings: read under the wrapped stamp, each would be a repeat.
@@ -164,6 +166,7 @@ fn a_doubled_table_keeps_the_siblings_filed_before() {
             parent_level: &tdd.levels[root.idx()],
             t1_side: ChildSide::Left,
             early_stop: true,
+            distinct: true,
         };
         let mut scratch = ContractScratch::default();
         let passed = entries.no_twin(eng.limits(), &mut scratch, width as usize).expect("no_twin");
@@ -232,6 +235,7 @@ fn single_entry_levels_are_grouped_by_sorting() {
                 parent_level: &tdd.levels[root.idx()],
                 t1_side: side,
                 early_stop: true,
+                distinct: true,
             };
             scratch.flat_groups.clear();
             scratch.group_starts.clear();
@@ -265,4 +269,47 @@ fn single_entry_levels_are_grouped_by_sorting() {
     }
     assert!(grouped > 50 && with_groups > 20 && declined > 20,
         "grouped {grouped}, with groups {with_groups}, declined {declined}");
+}
+
+/// The private-context scatter leaves out exactly the nodes a parent node
+/// pairs with a sibling it pairs with no other node, keeps the nodes no pair
+/// names, and the search over the rest finds the twins.
+#[test]
+fn nodes_with_a_private_context_are_left_out() {
+    let eng = Engine::new();
+    let vtree = Arc::new(Vtree::balanced(4));
+    let root = VtreeIdx((vtree.num_nodes() - 1) as u32);
+    let (v_left, v_right) = vtree.children(root);
+    let filler = ChildPair::new(NodeIdx(LeafLabel::Pos as u32), NodeIdx(LeafLabel::One as u32));
+    let mut levels: Vec<TddLevel> = (0..vtree.num_nodes()).map(|_| TddLevel::new()).collect();
+    for (v, w) in [(v_left, 5), (v_right, 3)] {
+        for _ in 0..w {
+            levels[v.idx()].push_internal_node(&[filler]);
+        }
+    }
+    let pair = |l: u32, r: u32| ChildPair::new(NodeIdx(l), NodeIdx(r));
+    // Left nodes 0 and 1 share both their contexts, left node 2 holds
+    // (0, 1) alone and left node 3 holds (2, 1) alone, and no pair names
+    // left node 4. Every right node holds a private context.
+    levels[root.idx()].push_internal_node(&[pair(0, 0), pair(1, 0), pair(2, 1)]);
+    levels[root.idx()].push_internal_node(&[pair(0, 2), pair(1, 2)]);
+    levels[root.idx()].push_internal_node(&[pair(3, 1)]);
+    let tdd = Tdd::from_levels_unchecked(vtree.clone(), levels, TddNodeId { vtree: root, local: NodeIdx(0) });
+    let mut scratch = ContractScratch::default();
+    for (side, width, want) in [(ChildSide::Left, 5, vec![0, 1, 4]), (ChildSide::Right, 3, vec![])] {
+        let entries = ContextEntries {
+            parent_level: &tdd.levels[root.idx()],
+            t1_side: side,
+            early_stop: true,
+            distinct: true,
+        };
+        let shared = entries.scatter_shared(eng.limits(), &mut scratch, width).expect("scatter_shared");
+        assert_eq!(shared, Some(want.len()), "{side:?}");
+        if want.len() >= 2 {
+            assert_eq!(scratch.candidates, want, "{side:?}");
+        }
+    }
+    assert!(find_twin_groups(&eng, &tdd, v_left, root, ChildSide::Left, &mut scratch).expect("find_twin_groups"));
+    assert_eq!((&scratch.group_starts[..], &scratch.flat_groups[..]), (&[0][..], &[0, 1][..]));
+    assert!(!find_twin_groups(&eng, &tdd, v_right, root, ChildSide::Right, &mut scratch).expect("find_twin_groups"));
 }
