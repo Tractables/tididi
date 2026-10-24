@@ -82,6 +82,19 @@ fn entry_hash(entry: u64) -> u64 {
     (product as u64) ^ ((product >> 64) as u64)
 }
 
+/// A fingerprint multiplied by an odd constant, whose high bits place it in
+/// the twin tables. The high half of [`entry_hash`]'s product grows nearly
+/// linearly with an entry's parent node, so a sum of entries keeps that
+/// structure in its low bits: nodes whose `k` contexts sit at parents a
+/// fixed stride apart get fingerprints with equal low bits, and a table
+/// indexed by them probes long runs of occupied slots. Every high bit of
+/// the product depends on every bit of the fingerprint. The map is a
+/// bijection, so equal fingerprints keep equal keys.
+#[inline(always)]
+fn spread(fp: u64) -> u64 {
+    fp.wrapping_mul(0x9E37_79B9_7F4A_7C15)
+}
+
 mod groups;
 mod listed;
 mod refine;
@@ -484,12 +497,12 @@ const PARTITION_SIZE: usize = 1 << 14;
 /// all fingerprints are distinct, hence no twins.
 ///
 /// A level of at least [`PARTITION_MIN_WIDTH`] nodes has its fingerprints
-/// split by their high bits into partitions of about [`PARTITION_SIZE`]
-/// first, a counting pass and a scattering pass, each read in sequence;
-/// equal fingerprints share a partition, and each partition is probed in a
-/// table of its own that stays in the cache. There a fingerprint is kept
-/// beside its node in one word, short of its low bits, so two nodes whose
-/// fingerprints differ only there are flagged too; the groups compare
+/// split by the high bits of their [`spread`] keys into partitions of about
+/// [`PARTITION_SIZE`] first, a counting pass and a scattering pass, each
+/// read in sequence; equal fingerprints share a partition, and each
+/// partition is probed in a table of its own that stays in the cache. There
+/// a key is kept beside its node in one word, short of its low bits, so two
+/// nodes whose keys differ only there are flagged too; the groups compare
 /// candidates in full.
 #[inline]
 fn mark_candidates(
@@ -538,7 +551,7 @@ fn mark_partitioned_candidates(
     let starts = &mut part_starts[..parts + 1];
     starts.fill(0);
     for &fp in fingerprints {
-        starts[(fp >> shift) as usize + 1] += 1;
+        starts[(spread(fp) >> shift) as usize + 1] += 1;
     }
     let (mut widest, mut sum) = (0, 0);
     for start in starts.iter_mut() {
@@ -548,17 +561,19 @@ fn mark_partitioned_candidates(
     }
     // Placed in node order, with each start as the partition's cursor: the
     // cursors end at the next partition's start, so each start is the one
-    // before it when the pass is done. A record is one word: the
-    // fingerprint without its partition bits, its low bits replaced by the
-    // node. Two nodes whose fingerprints differ only in those low bits are
-    // marked too, which the groups' full comparison then separates.
+    // before it when the pass is done. A record is one word: the key
+    // without its partition bits, its low bits replaced by the node, and
+    // its high bits the slot it probes from. Two nodes whose keys differ
+    // only in those low bits are marked too, which the groups' full
+    // comparison then separates.
     let node_bits = u64::BITS - (width as u64).leading_zeros();
     let node_mask = (1u64 << node_bits) - 1;
     lim.try_resize(part_records, width, 0)?;
     for (node, &fp) in fingerprints.iter().enumerate() {
-        let p = (fp >> shift) as usize;
+        let key = spread(fp);
+        let p = (key >> shift) as usize;
         let at = starts[p] as usize;
-        part_records[at] = (fp << bits) & !node_mask | node as u64;
+        part_records[at] = (key << bits) & !node_mask | node as u64;
         starts[p] += 1;
     }
     // The partitions in turn, each probed linearly in a table of at least
@@ -575,11 +590,12 @@ fn mark_partitioned_candidates(
         let n = end - begin;
         if n >= 2 {
             let mask = (2 * n).next_power_of_two() - 1;
+            let slot_shift = u64::BITS - (mask + 1).trailing_zeros();
             let table = &mut part_table[..=mask];
             table.fill(u64::MAX);
             for &record in &part_records[begin..end] {
                 let key = record >> node_bits;
-                let mut slot = key as usize & mask;
+                let mut slot = (record >> slot_shift) as usize;
                 loop {
                     let held = table[slot];
                     if held == u64::MAX {
@@ -606,7 +622,7 @@ const PF_DIST: usize = 8;
 
 /// Insert eligible `fingerprints` one by one into the open-addressing twin table `ht`,
 /// sized and cleared here for that occupancy, probing linearly from each
-/// fingerprint's home slot. For fingerprint `i` the probe calls
+/// fingerprint's home slot, the high bits of its [`spread`] key. For fingerprint `i` the probe calls
 /// `visit(i, Some(j))` at every occupant `j` with the same fingerprint, in
 /// probe order, and stops at the first call that returns `true`; at an empty
 /// slot it inserts `i` and calls `visit(i, None)`, whose result is ignored.
@@ -633,6 +649,8 @@ fn probe_fingerprints(
     let occupancy = candidates.map_or(width, |c| c.iter().filter(|&&marked| marked).count());
     let table_size = twin_table_size(occupancy);
     let mask = table_size - 1;
+    let shift = u64::BITS - table_size.trailing_zeros();
+    let home = |fp: u64| (spread(fp) >> shift) as usize;
     lim.try_resize(ht, table_size, EMPTY_SLOT)?;
     ht[..table_size].fill(EMPTY_SLOT);
     for i in 0..width {
@@ -648,10 +666,10 @@ fn probe_fingerprints(
         // is a field read and the prefetch is a hint, so nothing here is a
         // real load.
         if i + PF_DIST < width && candidates.is_none_or(|c| c[i + PF_DIST]) {
-            prefetch_slot(ht.as_ptr(), (fingerprints[i + PF_DIST] as usize) & mask);
+            prefetch_slot(ht.as_ptr(), home(fingerprints[i + PF_DIST]));
         }
         let fp = fingerprints[i];
-        let mut slot = (fp as usize) & mask;
+        let mut slot = home(fp);
         loop {
             let s = ht[slot];
             if s.idx == u64::MAX {
