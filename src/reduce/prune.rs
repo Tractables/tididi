@@ -624,11 +624,10 @@ pub(crate) fn settle_loose(eng: &Engine, tdd: &Tdd, listed: &[u32]) -> Result<Ve
 }
 
 /// Which of the children of level `p` that `sides` asks for, left and right,
-/// hold a node no pair of `p` names, reading `p`'s pairs in one pass until
-/// they have named every node of each, one unit of work through `gate` a
-/// pair. A level with no node holds none, and a level that cannot be read
-/// counts as holding one: one that is not structural internal, and each
-/// child of a `p` that is not.
+/// hold a node no pair of `p` names, reading `p`'s pairs in one pass, one
+/// unit of work through `gate` a pair read. A level with no node holds none,
+/// and a level that cannot be read counts as holding one: one that is not
+/// structural internal, and each child of a `p` that is not.
 fn unnamed_children(
     lim: &Limits,
     tdd: &Tdd,
@@ -642,8 +641,8 @@ fn unnamed_children(
     }
     let (left, right) = tdd.vtree.children(p);
     let children = [left, right];
-    // Each side's block of marks, the left one's first: its width, nothing
-    // for a side not read.
+    // Each side's block of marks, the left one's first: a byte a slot and
+    // one past them ([`mark_named`]), nothing for a side not read.
     let (mut width, mut unread) = ([0usize; 2], [false; 2]);
     for k in 0..2 {
         if !sides[k] {
@@ -653,7 +652,8 @@ fn unnamed_children(
             unread[k] = true;
             continue;
         }
-        width[k] = tdd.levels[children[k].idx()].slot_count();
+        let slots = tdd.levels[children[k].idx()].slot_count();
+        width[k] = if slots > 0 { slots + 1 } else { 0 };
     }
     let used = width[0] + width[1];
     if marks.len() < used {
@@ -672,19 +672,28 @@ fn unnamed_children(
 }
 
 /// Mark in `blocks`, a byte a node, the nodes of `level`'s children that its
-/// pairs name, on the left side with `LEFT` and on the right with `RIGHT`;
-/// node by node, each node's pairs read as a slice, up to the first node
-/// past which every side read has each of its nodes named. Whether each side
-/// has every node named; a side not read has. Both children are structural
-/// internal, so a side is the index of the node it names. One unit of work
-/// through `gate` a pair.
+/// pairs name, on the left side with `LEFT` and on the right with `RIGHT`.
+/// Whether each side has every node named; a side not read has. Both
+/// children are structural internal, so a side is the index of the node it
+/// names. Each block read holds a byte past the child's nodes, which takes
+/// the marks of no pair. One unit of work through `gate` a pair read.
+///
+/// A stored level is read whole, with no branch a node
+/// ([`StoredPairs::for_each_pair_whole`]): the nodes' own pairs and then its
+/// arena, each node that names the arena marking the bytes past the nodes.
+/// One whose arena holds pairs no node names, and an implicit one, is read
+/// node by node, up to the first node past which every side read has each
+/// of its nodes named.
 ///
 /// A mark stores a constant and reads nothing, so no mark waits on another:
 /// pairs that name the same node, or nodes a word apart, do not wait on each
 /// other's stores as a bit set in a shared word, or a count of the nodes
-/// named so far, would. Each side keeps the first of its nodes not seen
-/// marked, which only moves forward: the test before a node reads that
-/// node's byte, and the cursors cross each byte once over the read.
+/// named so far, would. Read node by node, each side keeps the first of its
+/// nodes not seen marked, which only moves forward: the test before a node
+/// reads that node's byte, and the cursors cross each byte once over the
+/// read.
+///
+/// [`StoredPairs::for_each_pair_whole`]: crate::diagram::StoredPairs::for_each_pair_whole
 #[inline(always)]
 fn mark_named<const LEFT: bool, const RIGHT: bool>(
     level: &TddLevel,
@@ -692,6 +701,7 @@ fn mark_named<const LEFT: bool, const RIGHT: bool>(
     gate: &mut PollGate<'_>,
 ) -> Result<[bool; 2], OperationError> {
     let [left, right] = blocks;
+    let past = [left.len().saturating_sub(1), right.len().saturating_sub(1)];
     // Whether every node of `block` is marked, moving `next` past those that are.
     fn all_named(block: &[u8], next: &mut usize) -> bool {
         while *next < block.len() && block[*next] != 0 {
@@ -699,6 +709,24 @@ fn mark_named<const LEFT: bool, const RIGHT: bool>(
         }
         *next == block.len()
     }
+    if let Some(stored) = level.stored() {
+        gate.poll(stored.nodes().len() as u64)?;
+        gate.poll(stored.arena().len() as u64)?;
+        let none = ChildPair::new(EncodedChildRef::from_raw(past[0] as u32), EncodedChildRef::from_raw(past[1] as u32));
+        let whole = stored.for_each_pair_whole(none, |pair| {
+            if LEFT {
+                left[pair.left.0 as usize] = 1;
+            }
+            if RIGHT {
+                right[pair.right.0 as usize] = 1;
+            }
+        });
+        note_settle_read(whole);
+        if whole {
+            return Ok([!LEFT || !left[..past[0]].contains(&0), !RIGHT || !right[..past[1]].contains(&0)]);
+        }
+    }
+    let (left, right) = (&mut left[..past[0]], &mut right[..past[1]]);
     let mut next = [0usize; 2];
     // `Err(None)` stops the read once every node read for is named.
     let read = level.try_for_each_node(0..level.nodes().len(), |_, pairs| {
@@ -1404,6 +1432,23 @@ const STAGE_SLOTS_PER_NODE: usize = 2;
 #[cfg(test)]
 thread_local! {
     pub(super) static SIDES_MARKED: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
+}
+
+// A test counts the stored levels a settle read whole and node by node.
+#[cfg(test)]
+thread_local! {
+    pub(super) static SETTLE_READS: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0; 2]) };
+}
+
+#[inline(always)]
+fn note_settle_read(whole: bool) {
+    #[cfg(test)]
+    SETTLE_READS.with(|c| {
+        let mut n = c.get();
+        n[usize::from(!whole)] += 1;
+        c.set(n);
+    });
+    let _ = whole;
 }
 
 #[inline(always)]

@@ -199,6 +199,12 @@ impl<'a> StoredPairs<'a> {
         true
     }
 
+    /// The pairs a level's nodes hold in its arena, and any a node gave up.
+    #[inline]
+    pub(crate) fn arena(self) -> &'a [ChildPair] {
+        self.arena
+    }
+
     /// The level's nodes, in index order: a level that stores its pairs
     /// stores its nodes, and a reader of its pairs as slices reads them
     /// here.

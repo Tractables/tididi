@@ -376,6 +376,7 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     let mut rng = Lcg::new(0x9e1f_2d47);
     let (mut cases, mut loose, mut cleared, mut settled_away) = (0usize, 0usize, 0usize, 0usize);
     let (mut seeded, mut nested) = (0usize, 0usize);
+    let reads_before = crate::reduce::prune::SETTLE_READS.with(std::cell::Cell::get);
     let mut check = |conj: crate::Tdd, operands: [&[u32]; 2], what: &str| {
         if conj.is_zero() {
             return;
@@ -389,6 +390,15 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
         }
         let settled = settle_loose(eng, &conj, &listed).unwrap();
         assert_eq!(entered(&conj, &settled), entered(&conj, &unnamed), "{what}: the levels the prune enters");
+        // A pair no node names, left in each stored level's arena, names
+        // nothing: the read falls back to the nodes and settles the same.
+        let mut junk = conj.clone();
+        for t in 0..junk.vtree.num_nodes() {
+            if junk.levels[t].stored().is_some_and(|s| !s.nodes().is_empty()) {
+                junk.levels[t].pairs.stored_mut().push(crate::diagram::ChildPair::new(crate::diagram::EncodedChildRef::from_raw(0), crate::diagram::EncodedChildRef::from_raw(0)));
+            }
+        }
+        assert_eq!(settle_loose(eng, &junk, &listed).unwrap(), settled, "{what}: a pair no node names settled a level");
         loose += unnamed.len();
         settled_away += listed.len() - settled.len();
         cleared += operands.concat().iter().filter(|&&t| {
@@ -456,6 +466,9 @@ fn a_conjunction_lists_as_loose_the_levels_holding_an_unnamed_node() {
     assert!(settled_away > 400, "expected listed levels the prune settles away, got {settled_away}");
     assert!(seeded > 150, "expected prunes that start at the seeds, got {seeded}");
     assert!(nested > 100, "expected seeded prunes with a forced level that is not clean, got {nested}");
+    let reads = crate::reduce::prune::SETTLE_READS.with(std::cell::Cell::get);
+    let [whole, by_node] = [reads[0] - reads_before[0], reads[1] - reads_before[1]];
+    assert!(whole > 400 && by_node > 400, "expected levels read whole and node by node, got {whole} and {by_node}");
 }
 
 /// The complement of a canonical diagram, completed and complemented at
