@@ -299,11 +299,16 @@ impl ApplyRun<'_, '_> {
         }
     }
 
-    pub(super) fn reclaim_child_grids(&mut self, left: usize, right: usize) {
-        self.products.reclaim_children([
-            (left, self.f_widths[left] * self.g_widths[left]),
-            (right, self.f_widths[right] * self.g_widths[right]),
-        ]);
+    /// Release a built level's children's grids for a later level to reuse,
+    /// except the output's: an operand's root can sit below levels the
+    /// operand still holds pairs at, which the sweep builds as well, and the
+    /// output is read off the root's grid once the sweep ends.
+    pub(super) fn reclaim_child_grids(&mut self, left: usize, right: usize, output: VtreeIdx) {
+        for child in [left, right] {
+            if child != output.idx() {
+                self.products.reclaim_child(child, self.f_widths[child] * self.g_widths[child]);
+            }
+        }
     }
 
     pub(super) fn ensure_product_list_for_child(&mut self, eng: &Engine, child: usize, f_width: usize, g_width: usize) -> Result<(), OperationError> {

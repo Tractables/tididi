@@ -17,7 +17,7 @@ use crate::build::constant_one;
 use crate::reduce::{ReductionPlan};
 
 use crate::test_helpers::{brute_force_count, literals, normalized_levels, test_cases};
-use crate::diagram::Tdd;
+use crate::diagram::{NodeIdx, Tdd, TddNodeId};
 use crate::test_helpers::check::check_all_fast;
 use crate::test_helpers::check_minimize_soundness;
 use crate::vtree::Vtree;
@@ -293,5 +293,37 @@ fn mixed_sparse_dense_min_grid_sweep() {
             normalized_levels(&reference),
             "min_grid={min_grid} differs structurally from min_grid=1"
         );
+    }
+}
+
+/// Each node of one level made the output of a copy of its diagram, which
+/// keeps the levels above it: the conjunction of two such copies builds
+/// those levels as well. A level of more than one cell opens the grid
+/// arena that frees a level's children's grids once it is built, and the
+/// output is read off the roots' grid after the last of them.
+#[test]
+fn a_root_below_built_levels_is_read_off_its_grid() {
+    let clauses: Vec<Vec<i32>> =
+        vec![vec![1, 2, 3], vec![-1, 4, 5], vec![2, -3, 6], vec![-4, -5, 1], vec![3, -6, -2], vec![-1, -2, 4]];
+    let vtree = Arc::new(Vtree::balanced(6));
+    let never = Sparse::never();
+    let f = never.compile(&vtree, &clauses);
+    let below = vtree.children(vtree.root()).0;
+    let n = f.levels[below.idx()].node_count() as u32;
+    assert!(n >= 2, "the root's left child holds several nodes");
+    let at = |i: u32| {
+        Tdd::from_levels_unchecked(Arc::clone(&vtree), f.levels.clone().into_vec(), TddNodeId { vtree: below, local: NodeIdx(i) })
+    };
+    // Every level dense, in the arena that frees grids.
+    let freeing = Sparse {
+        eng: Engine::new(),
+        thresholds: SparseThresholds { min_grid: 1, sparsity_factor: 1 << 40, ..SparseThresholds::PRODUCTION },
+    };
+    for i in 0..n {
+        for j in 0..n {
+            let got = freeing.and(at(i), at(j), None).model_count().unwrap();
+            let expected = if i == j { at(i).model_count().unwrap() } else { BigUint::from(0u32) };
+            assert_eq!(got, expected, "nodes {i} and {j}, of one level, are disjoint");
+        }
     }
 }

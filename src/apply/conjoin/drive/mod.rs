@@ -192,7 +192,7 @@ fn build_level(
         // identity fast paths are skipped: what they would build is the
         // structure this route exists not to build.
         super::quantify::build_level_quantified(eng, run, f, g, shape)?;
-        run.reclaim_child_grids(left_idx, right_idx);
+        run.reclaim_child_grids(left_idx, right_idx, f.output.vtree);
         return Ok(());
     }
 
@@ -247,7 +247,7 @@ fn build_level(
     }
     // Release this level's children's grid regions for a later level to
     // reuse, before the next iteration's own reserve fires.
-    run.reclaim_child_grids(left_idx, right_idx);
+    run.reclaim_child_grids(left_idx, right_idx, f.output.vtree);
     Ok(())
 }
 

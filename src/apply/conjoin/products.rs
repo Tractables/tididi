@@ -411,8 +411,8 @@ impl Products {
             });
     }
 
-    pub(super) fn reclaim_children(&mut self, children: [(usize, usize); 2]) {
-        for (level, cells) in children { self.arena.free_child(level, cells); }
+    pub(super) fn reclaim_child(&mut self, level: usize, cells: usize) {
+        self.arena.free_child(level, cells);
     }
 
     /// Build level `ci`'s product list if it is not built yet: from the
