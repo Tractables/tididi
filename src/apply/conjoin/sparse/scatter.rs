@@ -282,15 +282,15 @@ fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
         // `emit_parent` instead, which would otherwise read them back off
         // the arena.
         Collect::Nodes(Emit { level, out, duplicates_legal, thresholds }) => try_for_each_walked(f_level, nodes, |p1, pairs| {
-            if let Some(ByOuter { row_of, rows }) = by_outer {
-                let row = row_of[p1];
-                if row != NO_ROW {
-                    let candidates = &rows[row as usize];
-                    if candidates.is_empty() {
-                        return Ok(());
-                    }
-                    return emit_parent(eng, emit, level, out, p1, candidates, duplicates_legal);
+            if W::ROWS
+                && let Some(ByOuter { row_of, rows }) = by_outer
+                && row_of[p1] != NO_ROW
+            {
+                let candidates = &rows[row_of[p1] as usize];
+                if candidates.is_empty() {
+                    return Ok(());
                 }
+                return emit_parent(eng, emit, level, out, p1, candidates, duplicates_legal);
             }
             if pairs.len() >= thresholds.collected_pairs {
                 node_candidates.clear();
@@ -325,6 +325,11 @@ fn walk_nodes<const SWAPPED: bool, W: NodeWalk>(
 
 /// How [`leaf_walk`] finds the candidates of one f node.
 trait NodeWalk {
+    /// Whether the walk of f's nodes may find a node's candidates in a row
+    /// ([`ByOuter`]): only the routed walk's big nodes have one, and the
+    /// leaf walks then carry no check for it.
+    const ROWS: bool = false;
+
     /// Hand every candidate of the f node holding `pairs` to `push`, in the
     /// order of its pairs, the products they meet and the g pairs under each.
     fn node<const SWAPPED: bool>(
@@ -566,6 +571,8 @@ impl RoutedWalk<'_> {
 }
 
 impl NodeWalk for RoutedWalk<'_> {
+    const ROWS: bool = true;
+
     #[inline(always)]
     fn node<const SWAPPED: bool>(
         &self,
