@@ -368,16 +368,11 @@ pub(crate) struct ScoreScratch {
     // side that stays in the new inner pair, with the summed hash and the
     // number of its cells `z`. Node `j`'s blocks end at `block_ends[j]`.
     block_ends: Vec<u32>,
-    block_y: Vec<u32>,
-    block_hash: Vec<u64>,
-    block_cells: Vec<u32>,
-    // Per `y`: the stamp of the node or the row that last touched it, and
-    // the slot of its block in that node.
-    mark: Vec<(u32, u32)>,
-    // Per `y`: the hash and size of the context of the row under way.
-    acc: Vec<(u64, u32)>,
+    blocks: Vec<Block>,
+    // Per `y`, what the node or the row that last touched it knows of it.
+    marks: Vec<Mark>,
     touched: Vec<u32>,
-    // The last stamp handed out; `mark` holds none above it.
+    // The last stamp handed out; `marks` holds none above it.
     stamp: u32,
     // The old outer pairs `(owner, inner node)` filed by their child `x`,
     // `x`'s ending at `x_ends[x + 1]`.
@@ -388,15 +383,33 @@ pub(crate) struct ScoreScratch {
     table: Vec<u64>,
 }
 
+/// One block of [`score_levels`]: an old inner node's cells beside one `y`,
+/// their number and their summed hash.
+#[derive(Clone, Copy, Default)]
+struct Block {
+    y: u32,
+    cells: u32,
+    hash: u64,
+}
+
+/// A `y`'s entry in [`score_levels`]' tables, under the stamp of the node or
+/// the row that last touched it. In a node, `n` is the slot of the node's
+/// block beside `y`; in a row, `n` and `hash` are the size and the hash of
+/// the context of the new inner pair `(x, y)` so far. One entry holds both,
+/// so a step of a row reads one line.
+#[derive(Clone, Copy, Default)]
+struct Mark {
+    stamp: u32,
+    n: u32,
+    hash: u64,
+}
+
 impl ScoreScratch {
     /// Every buffer, for the scratch pool's accounting.
     pub(super) fn buffers(&mut self, visit: &mut dyn FnMut(&mut dyn Scratch)) {
         visit(&mut self.block_ends);
-        visit(&mut self.block_y);
-        visit(&mut self.block_hash);
-        visit(&mut self.block_cells);
-        visit(&mut self.mark);
-        visit(&mut self.acc);
+        visit(&mut self.blocks);
+        visit(&mut self.marks);
         visit(&mut self.touched);
         visit(&mut self.x_ends);
         visit(&mut self.by_x);
@@ -404,15 +417,12 @@ impl ScoreScratch {
         visit(&mut self.table);
     }
 
-    /// Empty, the capacity kept. `mark` is emptied too, so the stamps start
+    /// Empty, the capacity kept. `marks` is emptied too, so the stamps start
     /// over.
     pub(super) fn clear(&mut self) {
         self.block_ends.clear();
-        self.block_y.clear();
-        self.block_hash.clear();
-        self.block_cells.clear();
-        self.mark.clear();
-        self.acc.clear();
+        self.blocks.clear();
+        self.marks.clear();
         self.touched.clear();
         self.stamp = 0;
         self.x_ends.clear();
@@ -421,27 +431,26 @@ impl ScoreScratch {
         self.table.clear();
     }
 
-    /// A stamp no entry of `mark` holds yet.
-    #[inline]
-    fn next_stamp(&mut self) -> u32 {
-        if self.stamp == u32::MAX {
-            self.mark.iter_mut().for_each(|m| m.0 = 0);
-            self.stamp = 0;
-        }
-        self.stamp += 1;
-        self.stamp
-    }
-
-    /// `mark` and `acc` long enough to index `y`.
+    /// `marks` long enough to index `y`.
     #[inline]
     fn cover(&mut self, lim: &Limits, y: usize) -> Result<(), OperationError> {
-        if y >= self.mark.len() {
-            let len = (y + 1).max(2 * self.mark.len());
-            lim.try_resize(&mut self.mark, len, (0, 0))?;
-            lim.try_resize(&mut self.acc, len, (0, 0))?;
+        if y >= self.marks.len() {
+            let len = (y + 1).max(2 * self.marks.len());
+            lim.try_resize(&mut self.marks, len, Mark::default())?;
         }
         Ok(())
     }
+}
+
+/// A stamp no entry of `marks` holds yet, `stamp` the last one handed out.
+#[inline]
+fn next_stamp(stamp: &mut u32, marks: &mut [Mark]) -> u32 {
+    if *stamp == u32::MAX {
+        marks.iter_mut().for_each(|m| m.stamp = 0);
+        *stamp = 0;
+    }
+    *stamp += 1;
+    *stamp
 }
 
 /// A 64-bit mix of `x` (the `splitmix64` finalizer).
@@ -504,9 +513,7 @@ pub(crate) fn score_levels(
     };
     let scored = score_with(lim, old_v, old_w, split_v, split_w, scratch, max_pairs);
     release_or_clear(lim, &mut scratch.block_ends);
-    release_or_clear(lim, &mut scratch.block_y);
-    release_or_clear(lim, &mut scratch.block_hash);
-    release_or_clear(lim, &mut scratch.block_cells);
+    release_or_clear(lim, &mut scratch.blocks);
     release_or_clear(lim, &mut scratch.by_x);
     release_or_clear(lim, &mut scratch.x_ends);
     release_or_clear(lim, &mut scratch.keys);
@@ -528,59 +535,66 @@ fn score_with(
     const OWNER: u64 = 0x2545_F491_4F6C_DD1D;
     const CELL: u64 = 0x5851_F42D_4C95_7F2D;
     const SIZE: u64 = 0x1405_7B7E_F767_814F;
-    // The blocks of each old inner node, grouped by `y`.
+    // The blocks of each old inner node, grouped by `y`, and the most pairs
+    // one node holds.
     let n_w = old_w.nodes().len();
-    let w_pairs = old_w.live_pairs();
     s.block_ends.clear();
-    s.block_y.clear();
-    s.block_hash.clear();
-    s.block_cells.clear();
+    s.blocks.clear();
     lim.reserve_exact(&mut s.block_ends, n_w)?;
-    lim.reserve(&mut s.block_y, w_pairs)?;
-    lim.reserve(&mut s.block_hash, w_pairs)?;
-    lim.reserve(&mut s.block_cells, w_pairs)?;
+    lim.reserve(&mut s.blocks, old_w.live_pairs())?;
+    let mut widest = 0usize;
     for j in 0..n_w {
-        let stamp = s.next_stamp();
+        let stamp = next_stamp(&mut s.stamp, &mut s.marks);
+        let mut pairs = 0usize;
         for wp in old_w.pairs_iter_of_idx(j) {
             let (y, z) = split_w(wp);
             s.cover(lim, y)?;
-            let m = &mut s.mark[y];
-            if m.0 != stamp {
-                *m = (stamp, s.block_y.len() as u32);
-                s.block_y.push(y as u32);
-                s.block_hash.push(0);
-                s.block_cells.push(0);
+            let m = &mut s.marks[y];
+            if m.stamp != stamp {
+                *m = Mark { stamp, n: s.blocks.len() as u32, hash: 0 };
+                lim.try_push(&mut s.blocks, Block { y: y as u32, cells: 0, hash: 0 })?;
             }
-            let b = m.1 as usize;
-            s.block_hash[b] = s.block_hash[b].wrapping_add(mix(u64::from(z) ^ CELL));
-            s.block_cells[b] += 1;
+            let b = &mut s.blocks[m.n as usize];
+            b.hash = b.hash.wrapping_add(mix(u64::from(z) ^ CELL));
+            b.cells += 1;
+            pairs += 1;
         }
-        s.block_ends.push(s.block_y.len() as u32);
+        widest = widest.max(pairs);
+        s.block_ends.push(s.blocks.len() as u32);
     }
-    // The old outer pairs filed by `x`, and the triples a rebuild would
-    // expand, which its first bail counts.
+    // The old outer pairs counted by `x`.
     let n_v = old_v.nodes().len();
-    let v_pairs = old_v.live_pairs();
     s.x_ends.clear();
-    let mut triples = 0usize;
     for p in 0..n_v {
         for vp in old_v.pairs_iter_of_idx(p) {
-            let (x, j) = split_v(vp);
+            let (x, _) = split_v(vp);
             if x + 2 > s.x_ends.len() {
                 let len = (x + 2).max(2 * s.x_ends.len());
                 lim.try_resize(&mut s.x_ends, len, 0)?;
             }
             s.x_ends[x + 1] += 1;
-            triples += old_w.pair_count_at(j);
         }
-    }
-    // `collect_triples` gives up once it has pushed `max_pairs` triples.
-    if triples >= max_pairs.max(1) {
-        return Ok(None);
     }
     for x in 1..s.x_ends.len() {
         s.x_ends[x] += s.x_ends[x - 1];
     }
+    let v_pairs = s.x_ends.last().map_or(0, |&n| n as usize);
+    // `collect_triples` gives up once it has pushed `max_pairs` triples, one
+    // per cell of an old inner node an old outer pair reaches: at most
+    // `widest` for each, and counted only where that could reach the bound.
+    let bail = max_pairs.max(1);
+    if v_pairs.saturating_mul(widest) >= bail {
+        let mut triples = 0usize;
+        for p in 0..n_v {
+            for vp in old_v.pairs_iter_of_idx(p) {
+                triples += old_w.pair_count_at(split_v(vp).1);
+            }
+        }
+        if triples >= bail {
+            return Ok(None);
+        }
+    }
+    // The old outer pairs filed by `x`; `x_ends[x]` is then `x`'s end.
     s.by_x.clear();
     lim.try_resize(&mut s.by_x, v_pairs, (0, 0))?;
     for p in 0..n_v {
@@ -592,39 +606,38 @@ fn score_with(
         }
     }
     // Each `x`'s new inner pairs: a row over `y`, summing the blocks its
-    // outer pairs reach. `x_ends[x]` is now `x`'s end.
+    // outer pairs reach.
     s.keys.clear();
     s.touched.clear();
-    lim.reserve(&mut s.touched, s.mark.len())?;
+    lim.reserve(&mut s.touched, s.marks.len())?;
+    let ScoreScratch { block_ends, blocks, marks, touched, stamp, x_ends, by_x, keys, .. } = s;
     let mut begin = 0usize;
-    for x in 0..s.x_ends.len() {
-        let end = s.x_ends[x] as usize;
+    for &end in x_ends.iter() {
+        let end = end as usize;
         if begin == end {
             continue;
         }
-        let stamp = s.next_stamp();
-        for e in begin..end {
-            let (p, j) = s.by_x[e];
+        let stamp = next_stamp(stamp, marks);
+        for &(p, j) in &by_x[begin..end] {
             let owner = mix(u64::from(p) ^ OWNER);
-            let blocks = if j == 0 { 0 } else { s.block_ends[j as usize - 1] as usize }..s.block_ends[j as usize] as usize;
-            for b in blocks {
-                let y = s.block_y[b] as usize;
-                let m = &mut s.mark[y];
-                if m.0 != stamp {
-                    m.0 = stamp;
-                    s.acc[y] = (0, 0);
-                    s.touched.push(y as u32);
+            let j = j as usize;
+            let first = if j == 0 { 0 } else { block_ends[j - 1] as usize };
+            for b in &blocks[first..block_ends[j] as usize] {
+                let m = &mut marks[b.y as usize];
+                if m.stamp != stamp {
+                    *m = Mark { stamp, n: 0, hash: 0 };
+                    touched.push(b.y);
                 }
-                let acc = &mut s.acc[y];
-                acc.0 = acc.0.wrapping_add(owner.wrapping_mul(s.block_hash[b]));
-                acc.1 += s.block_cells[b];
+                m.hash = m.hash.wrapping_add(owner.wrapping_mul(b.hash));
+                m.n += b.cells;
             }
         }
-        lim.reserve(&mut s.keys, s.touched.len())?;
-        for &y in &s.touched {
-            s.keys.push(s.acc[y as usize]);
+        lim.reserve(keys, touched.len())?;
+        for &y in touched.iter() {
+            let m = &marks[y as usize];
+            keys.push((m.hash, m.n));
         }
-        s.touched.clear();
+        touched.clear();
         begin = end;
     }
     // The distinct contexts: the new inner nodes, and their cells the new
