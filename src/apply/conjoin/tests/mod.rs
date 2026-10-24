@@ -16,6 +16,7 @@ mod probe;
 mod reach_columns;
 mod restoring;
 mod self_conjunction;
+mod single_rows;
 
 mod target_completion;
 mod workspace;
@@ -178,6 +179,40 @@ thread_local! {
     /// The rows on this thread whose live cells were read off the row
     /// columns ([`row_columns_rows`]).
     static ROW_COLUMNS_ROWS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+thread_local! {
+    /// Whether no level on this thread takes the loop of one-pair cells
+    /// ([`single_rows_off`]).
+    static SINGLE_ROWS_OFF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The levels on this thread that loop built ([`single_rows_levels`]).
+    static SINGLE_ROWS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn single_rows_forced_off() -> bool {
+    SINGLE_ROWS_OFF.with(std::cell::Cell::get)
+}
+
+pub(super) fn note_single_rows() {
+    SINGLE_ROWS.with(|n| n.set(n.get() + 1));
+}
+
+/// Run `f` with every level of one-pair nodes on the row loop of any
+/// level: the oracle the loop of one-pair cells is checked against.
+pub(super) fn single_rows_off<R>(f: impl FnOnce() -> R) -> R {
+    struct Reset(bool);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            SINGLE_ROWS_OFF.with(|c| c.set(self.0));
+        }
+    }
+    let _reset = Reset(SINGLE_ROWS_OFF.with(|c| c.replace(true)));
+    f()
+}
+
+/// The levels on this thread so far that the loop of one-pair cells built.
+pub(super) fn single_rows_levels() -> u64 {
+    SINGLE_ROWS.with(std::cell::Cell::get)
 }
 
 pub(super) fn row_columns_forced_off() -> bool {

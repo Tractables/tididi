@@ -766,6 +766,7 @@ fn run_row_loop(
     eng: &Engine,
     route: Route,
     lookups: PlainLookups,
+    single_pair: bool,
     rows: RowLoop<'_>,
     scratch: RowScratch<'_>,
     level: &mut TddLevel,
@@ -823,7 +824,11 @@ fn run_row_loop(
         // inline tagger that would corrupt them.
         Route::MarginalChild => run_level_rows_marginal(eng, rows, scratch, level)?,
         // The four level-invariant guards all hold, so the simplified emit
-        // runs: no streaming, no dead-pair masks, no pass-through side.
+        // runs: no streaming, no dead-pair masks, no pass-through side. Where
+        // every cell is one pair against one, its loop reads g's pairs once.
+        Route::PlainDense if single_pair && !super::super::single_rows_forced_off() => {
+            run_level_rows_single(eng, rows, scratch, level)?
+        }
         Route::PlainDense => plain_rows!(true),
         // Dead-pair masks only: the positional lookups carry nothing through.
         Route::Dense => {
@@ -1073,7 +1078,7 @@ pub(super) fn build_level_dense(
     let LevelBuild { shape, route, plan } = level;
     let LevelShape { t, left, right, f: fw, g: gw } = shape;
     let (ti, li, ri) = (t.idx(), left.idx(), right.idx());
-    let MarginalPlan { sides, both_multi_pair, one_sided_masks } = plan;
+    let MarginalPlan { sides, both_multi_pair, one_sided_masks, single_pair } = plan;
     let passthrough = Sides { left: sides.left.is_passthrough(), right: sides.right.is_passthrough() };
     let use_sparse_marginal = route == Route::SparseMarg;
     // Materialize any sparse child grid and bump-allocate this level's own.
@@ -1202,7 +1207,7 @@ pub(super) fn build_level_dense(
         }
 
         run_row_loop(
-            eng, route, lookups,
+            eng, route, lookups, single_pair,
             RowLoop {
                 f_level: f.level(t), g_level: g.level(t),
                 children: Sides { left: left_level, right: right_level },

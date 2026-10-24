@@ -24,7 +24,7 @@ mod cell;
 use cell::{
     RightColumns, CellCtx, ChildPlan, ColumnSlice,
     run_level_rows_complete, run_level_rows_marginal, run_level_rows_marginal_sparse, run_level_rows_plain,
-    run_level_rows_stream_count, PlainLookups, RowLoop, RowScratch,
+    run_level_rows_single, run_level_rows_stream_count, PlainLookups, RowLoop, RowScratch,
 };
 
 mod sparse;
@@ -878,6 +878,22 @@ fn row_columns_forced_off() -> bool {
 #[cfg(not(test))]
 #[inline(always)]
 fn note_reach_columns_row() {}
+
+// A test runs every level of one pair a node through the row loop of any
+// level, as the oracle for the loop of one-pair cells, and counts the
+// levels that loop built.
+#[cfg(test)]
+use tests::{note_single_rows, single_rows_forced_off};
+
+#[cfg(not(test))]
+#[inline(always)]
+fn single_rows_forced_off() -> bool {
+    false
+}
+
+#[cfg(not(test))]
+#[inline(always)]
+fn note_single_rows() {}
 
 #[cfg(not(test))]
 #[inline(always)]

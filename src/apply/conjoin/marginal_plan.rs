@@ -112,6 +112,9 @@ pub(super) struct MarginalPlan {
     /// the pre-filter applies there too, on the row loop that reads both
     /// sides from their grids.
     pub(crate) one_sided_masks: bool,
+    /// True when neither operand has a multi-pair node at this level: every
+    /// cell of its grid is one pair against one.
+    pub(crate) single_pair: bool,
 }
 
 /// Whether one child side is a pass-through carrier, and which operand carries it.
@@ -244,6 +247,7 @@ pub(super) fn plan_marginal_level(
     let f_multi = f.level(t).has_multi_pair();
     let g_multi = (f_multi || one_sided_fits) && g.level(t).has_multi_pair();
     let both_multi_pair = f_multi && g_multi;
+    let single_pair = !f_multi && !if one_sided_fits { g_multi } else { g.level(t).has_multi_pair() };
     let one_sided_masks = one_sided_fits && f_multi != g_multi && !super::one_sided_masks_forced_off();
     // A pass-through side has no product grid to filter against, so it is
     // treated as alive throughout. The liveness masks, which read the child
@@ -251,7 +255,7 @@ pub(super) fn plan_marginal_level(
     // where `both_multi_pair` holds and the grid has `MASK_MIN_CELLS` cells,
     // and where `one_sided_masks` holds on the grid row loop.
 
-    MarginalPlan { sides, both_multi_pair, one_sided_masks }
+    MarginalPlan { sides, both_multi_pair, one_sided_masks, single_pair }
 }
 
 /// One child side's materialized product grid, as the liveness masks read it.

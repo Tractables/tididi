@@ -2,6 +2,7 @@
 
 use super::*;
 use super::super::liveness::ROW_LIVE;
+use crate::diagram::EncodedChildRef;
 
 // ============================= Row-loop driver =============================
 //
@@ -678,6 +679,88 @@ pub(crate) fn run_level_rows_plain<const DENSE: bool>(
         &right,
         &mut action,
     )
+}
+
+/// The row loop of `Route::PlainDense` on a level where neither operand has
+/// a multi-pair node, so that every cell is one pair against one:
+/// [`run_level_rows_plain`] with the cell's column read and arm dispatch
+/// taken out of it. g's pairs are read into one array before the rows; a
+/// cell is then two grid reads and an emit. Same nodes
+/// in the same order, and the work clock is charged per row what that
+/// loop's cells and row charge it: a unit a cell of a live column, and the
+/// row's width.
+pub(crate) fn run_level_rows_single(
+    eng: &Engine,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
+    level: &mut TddLevel,
+) -> Result<(), OperationError> {
+    let RowLoop { f_level, g_level, ctx, f_width, .. } = rows;
+    let RowScratch { f_pairs: f_scratch, g_pairs: g_cols, node_idx: slab } = scratch;
+    let lim = eng.limits();
+    super::super::note_single_rows();
+    let right_width = ctx.right_width;
+    // Column `j`'s pair, a dead column's `NO_PRODUCT` on both sides; the f
+    // rows' buffer decodes a column the table does not hold.
+    g_cols.clear();
+    lim.reserve_exact(g_cols, right_width)?;
+    let dead = ChildPair::new(EncodedChildRef::from_raw(NO_PRODUCT), EncodedChildRef::from_raw(NO_PRODUCT));
+    for j in 0..right_width {
+        let pairs = column_pairs(ctx, g_level, j, f_scratch);
+        debug_assert!(pairs.len() <= 1, "a g node of one pair at most");
+        g_cols.push(pairs.first().copied().unwrap_or(dead));
+    }
+    let g_cols = &g_cols[..];
+    let live_cols = g_cols.iter().filter(|q| q.left.0 != NO_PRODUCT).count() as u64;
+    let left = DenseLookup { base: ctx.sides.left.base, stride: ctx.sides.left.stride };
+    let right = DenseLookup { base: ctx.sides.right.base, stride: ctx.sides.right.stride };
+    let mut sink = EmitSink { level };
+    let mut poll = lim.gate_with(super::super::budget::DENSE_CELL_POLL_STRIDE);
+
+    // The resets of `run_level_rows`: one fill of a small grid, a row at a
+    // time on a larger one.
+    let slab_fill = f_width.saturating_mul(right_width) <= DEAD_SLAB_FILL_MAX_CELLS;
+    if slab_fill {
+        let end = ctx.output_grid_base + f_width * right_width;
+        if !extend_slab(slab, ctx.output_grid_base, end) {
+            mark_dead(&mut slab[ctx.output_grid_base..end]);
+        }
+    }
+    let (left_view, right_view) = (ctx.sides.left.plan.view, ctx.sides.right.plan.view);
+    let f_described = described_rows(lim, f_level, f_width, left_view, right_view, f_scratch);
+    for i in 0..f_width {
+        let row_base = ctx.output_grid_base + i * right_width;
+        let fresh = extend_slab(slab, row_base, row_base + right_width);
+        let node_idx = &mut slab[..];
+        if !slab_fill && !fresh {
+            mark_dead(&mut node_idx[row_base..row_base + right_width]);
+        }
+        let f_pairs = match f_described {
+            Some(k) => &f_scratch[i * k..(i + 1) * k],
+            None => f_level.pairs_view_decoded(i, f_scratch, left_view, right_view),
+        };
+        // A dead f node's row stays dead.
+        let Some(p) = f_pairs.first() else { continue };
+        debug_assert!(f_pairs.len() == 1, "an f node of one pair at most");
+        let (lrow, rrow) = (left.row(p.left.0), right.row(p.right.0));
+        for (j, q) in g_cols.iter().enumerate() {
+            if q.left.0 == NO_PRODUCT {
+                continue;
+            }
+            let lc = left.get_in_row(node_idx, lrow, q.left.0);
+            if lc == NO_PRODUCT {
+                continue;
+            }
+            let rc = right.get_in_row(node_idx, rrow, q.right.0);
+            if rc == NO_PRODUCT {
+                continue;
+            }
+            sink.single(eng, node_idx, row_base + j, lc, rc)?;
+        }
+        poll.poll(live_cols + right_width as u64)?;
+    }
+    poll.flush()?;
+    Ok(())
 }
 
 /// Which plain-route child sides are [complete](super::super::products::Products::is_complete)
