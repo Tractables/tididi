@@ -107,33 +107,39 @@ pub(super) fn refine_context_groups(
     if part.twinable == 0 {
         return Ok(false);
     }
-    let Partition { class, moved, alone, size, .. } = part;
+    let Partition { class, moved, alone, size, twinable } = part;
     // The classes of two or more, in the order of their lowest members,
-    // each listed ascending.
+    // each listed ascending: one pass over the nodes not alone, a word of
+    // bits at a time, so the nodes without a twin are skipped 64 at once.
     lim.try_resize(class_pos, size.len(), 0u32)?;
     let pos = &mut class_pos[..size.len()];
     pos.fill(u32::MAX);
-    let of = |t: usize| {
-        let (w, b) = (t / 64, 1u64 << (t % 64));
-        if moved[w] & b == 0 { 0 } else if alone[w] & b != 0 { ALONE } else { class[t] }
-    };
-    let mut members = 0u32;
-    for t in 0..width {
-        let c = of(t);
-        if c != ALONE && size[c as usize] >= 2 && pos[c as usize] == u32::MAX {
-            pos[c as usize] = members;
-            lim.try_push(group_starts, members)?;
-            members += size[c as usize];
+    lim.try_resize(flat_groups, twinable, 0u32)?;
+    lim.reserve_exact(group_starts, twinable / 2)?;
+    let mut next = 0u32;
+    for (w, (&moved, &alone)) in moved.iter().zip(alone.iter()).enumerate() {
+        let mut live = !alone;
+        if (w + 1) * 64 > width {
+            live &= (1u64 << (width % 64)) - 1;
+        }
+        while live != 0 {
+            let b = live.trailing_zeros() as usize;
+            live &= live - 1;
+            let t = w * 64 + b;
+            let c = if (moved >> b) & 1 == 0 { 0 } else { class[t] as usize };
+            if size[c] < 2 {
+                continue;
+            }
+            if pos[c] == u32::MAX {
+                pos[c] = next;
+                group_starts.push(next);
+                next += size[c];
+            }
+            flat_groups[pos[c] as usize] = t as u32;
+            pos[c] += 1;
         }
     }
-    lim.try_resize(flat_groups, members as usize, 0u32)?;
-    for t in 0..width {
-        let c = of(t);
-        if c != ALONE && size[c as usize] >= 2 {
-            flat_groups[pos[c as usize] as usize] = t as u32;
-            pos[c as usize] += 1;
-        }
-    }
+    debug_assert_eq!(next as usize, twinable, "every node that can have a twin is listed");
     Ok(true)
 }
 
