@@ -24,7 +24,8 @@ mod cell;
 use cell::{
     RightColumns, CellCtx, ChildPlan, ColumnSlice,
     run_level_rows_complete, run_level_rows_marginal, run_level_rows_marginal_sparse, run_level_rows_plain,
-    run_level_rows_pairs, run_level_rows_single, run_level_rows_stream_count, run_level_rows_words, words_pay,
+    run_level_rows_pairs, run_level_rows_single, run_level_rows_stream_count, run_level_rows_stream_words, run_level_rows_words, words_pay,
+    words_pay_stream,
     PlainLookups, RowLoop, RowScratch, WordScratch,
 };
 
@@ -953,6 +954,9 @@ enum WordNote {
     /// A row read by vectors that writes its live cells off the sorted
     /// list of its live candidates.
     Sorted,
+    /// A streaming target's level, and one read through marginal lookups.
+    Stream,
+    StreamMarginal,
 }
 
 // A test counts the times a level's pairs arena grew.

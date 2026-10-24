@@ -457,9 +457,10 @@ where
 
 /// Materializing action: each surviving cell becomes a product node in the
 /// dense `left_width × right_width` output slab, written through the sink
-/// `S`. Both dense routes are this action.
-struct Emit<S> {
-    sink: S,
+/// `S`. Both dense routes are this action, and the streaming route's with
+/// a sink that folds each cell into the level's value column.
+pub(super) struct Emit<S> {
+    pub(super) sink: S,
 }
 
 impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for Emit<S> {
@@ -529,9 +530,10 @@ impl<L: ChildLookup, R: ChildLookup, S: PairSink> CellAction<L, R> for EmitBesid
 /// child. Iterates rows `0..left_width` in forward order, running the emit
 /// kernel for each cell.
 ///
-/// Never streams: streaming marginal-child levels take the collapse-at-source
-/// walker ([`run_level_rows_stream_count`]) unconditionally — there is no
-/// materialize-then-convert fallback for them.
+/// Never streams: streaming marginal-child levels fold their cells as they
+/// find them ([`run_level_rows_stream_count`],
+/// [`run_level_rows_stream_words`]) — there is no materialize-then-convert
+/// fallback for them.
 pub(crate) fn run_level_rows_marginal(
     eng: &Engine,
     rows: RowLoop<'_>,
@@ -656,9 +658,9 @@ pub(crate) fn run_level_rows_marginal_sparse(
 /// false` and no pass-through side, so the inner loop carries no branch on
 /// them; `DENSE = false` keeps the masked row-skip checks.
 ///
-/// Never streams: streaming levels take the collapse-at-source walker
-/// ([`run_level_rows_stream_count`]) unconditionally — there is no post-cell
-/// snapshot conversion.
+/// Never streams: streaming levels fold their cells as they find them
+/// ([`run_level_rows_stream_count`], [`run_level_rows_stream_words`]) —
+/// there is no post-cell snapshot conversion.
 #[inline(always)]
 pub(crate) fn run_level_rows_plain<const DENSE: bool>(
     eng: &Engine,

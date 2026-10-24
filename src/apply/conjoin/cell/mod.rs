@@ -10,7 +10,7 @@ use crate::value::{IntFold, WeightFold};
 use crate::Engine;
 
 mod rows_stream;
-pub(crate) use rows_stream::run_level_rows_stream_count;
+pub(crate) use rows_stream::{run_level_rows_stream_count, run_level_rows_stream_words};
 use super::{OperationError, NO_PRODUCT, doubled_pairs_capacity, finish_node, try_push_pair_into};
 use super::streaming_marginal::{attach_children, StreamEnv, StreamLevelState, StreamState};
 use crate::value::ValueDomain;
@@ -81,7 +81,7 @@ pub(super) use rows::*;
 mod pair_rows;
 pub(super) use pair_rows::run_level_rows_pairs;
 mod word_cells;
-pub(super) use word_cells::{run_level_rows_words, words_pay, WordScratch};
+pub(super) use word_cells::{run_level_rows_words, words_pay, words_pay_stream, WordScratch};
 
 #[cfg(test)]
 mod tests;

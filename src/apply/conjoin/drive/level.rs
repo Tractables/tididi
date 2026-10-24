@@ -781,7 +781,11 @@ fn run_row_loop(
         return run_level_rows_pairs(eng, rows, scratch, level, lookups);
     }
     if let Some((words, f_rows)) = words {
-        debug_assert!(matches!(route, Route::PlainDense | Route::Dense), "only the plain routes read cells by g-pair vectors");
+        if let Route::Stream { marginal_children } = route {
+            let state = stream_state.as_mut().expect("Route::Stream implies an open stream column");
+            return run_level_rows_stream_words(eng, rows, scratch, words, f_rows, marginal_children, state, env);
+        }
+        debug_assert!(matches!(route, Route::PlainDense | Route::Dense), "only the plain and streaming routes read cells by g-pair vectors");
         return run_level_rows_words(eng, rows, scratch, words, level, lookups, f_rows);
     }
     if lookups != PlainLookups::Grid {
@@ -1235,14 +1239,19 @@ pub(super) fn build_level_dense(
             );
         }
 
-        // A level of the plain routes whose candidates outnumber what the
-        // vectors of its child rows cost reads its cells by g-pair vectors
-        // (`run_level_rows_words`).
+        // A level of the plain or streaming routes whose candidates
+        // outnumber what the vectors of its child rows cost reads its cells
+        // by g-pair vectors (`run_level_rows_words`,
+        // `run_level_rows_stream_words`); a streaming level needs a side
+        // that is not carried through.
         let f_rows = Sides { left: fw.left, right: fw.right };
         let words = !pairs
-            && matches!(route, Route::PlainDense | Route::Dense)
-            && !(route == Route::PlainDense && single_pair)
-            && stream_state.is_none()
+            && match route {
+                Route::PlainDense => !single_pair && stream_state.is_none(),
+                Route::Dense => stream_state.is_none(),
+                Route::Stream { .. } => !(passthrough.left && passthrough.right),
+                _ => false,
+            }
             && !matches!(lookups, PlainLookups::Complete { .. })
             && super::super::word_cells_forced().unwrap_or_else(|| {
                 let rows = RowLoop {
@@ -1250,7 +1259,11 @@ pub(super) fn build_level_dense(
                     children: Sides { left: left_level, right: right_level },
                     ctx: &cell_ctx, f_width: fw.here,
                 };
-                words_pay(eng, rows, &mut *run.words, lookups, f_rows, run.products.arena.slab())
+                let slab = run.products.arena.slab();
+                match route {
+                    Route::Stream { marginal_children } => words_pay_stream(eng, rows, &mut *run.words, marginal_children, f_rows, slab),
+                    _ => words_pay(eng, rows, &mut *run.words, lookups, f_rows, slab),
+                }
             });
         run_row_loop(
             eng, route, lookups, single_pair, pairs,

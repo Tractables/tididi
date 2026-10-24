@@ -1,7 +1,8 @@
 //! The streaming collapse route: a level whose per-cell result is a count or a
 //! weight rather than a set of emitted pairs.
 
-use super::rows::{CellAction, CellArgs, run_level_rows};
+use super::rows::{Emit, run_level_rows};
+use super::word_cells::WordScratch;
 use super::*;
 
 impl<F: ValueDomain> StreamState<'_, F> {
@@ -57,55 +58,106 @@ fn stream_level<F: ValueDomain, L: ChildLookup, R: ChildLookup>(
 ) -> Result<(), OperationError> {
     let mut st = attach_children::<F>(env, rows.children, counts);
     let mut cell_pairs = eng.scratch.apply.cell_pairs.checkout(eng);
-    let mut action = StreamCollapse { fold: &mut st, cell_pairs: &mut cell_pairs };
+    let mut action = Emit { sink: FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } } };
     run_level_rows::<false, _, _, _>(eng, rows, scratch, left, right, &mut action)
 }
 
-/// Collapse-at-source action: enumerate each alive cell's surviving `(lc, rc)`
-/// refs into a reused scratch `Vec<ChildPair>` and feed them straight to the
-/// fold, never touching `level`.
-struct StreamCollapse<'a, 'data, F: ValueDomain> {
-    fold: &'a mut StreamState<'data, F>,
-    /// Reused across all cells — bounds the transient peak to one cell's pairs.
-    cell_pairs: &'a mut Vec<ChildPair>,
+/// [`run_level_rows_stream_count`] on a level whose cells are read by g-pair
+/// vectors ([`super::word_cells::words_pay_stream`]): the same column, each
+/// cell's pairs folded in the order the row loop folds them, and the same
+/// work. A side carried through kills nothing.
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn run_level_rows_stream_words(
+    eng: &Engine,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
+    words: &mut WordScratch,
+    f_rows: Sides<usize>,
+    marginal_children: bool,
+    stream_state: &mut StreamLevelState,
+    env: StreamEnv<'_>,
+) -> Result<(), OperationError> {
+    super::super::note_word_cells(super::super::WordNote::Stream);
+    let sides = &rows.ctx.sides;
+    if marginal_children {
+        super::super::note_word_cells(super::super::WordNote::StreamMarginal);
+        let (left, right) = (MarginalLookup::new(&sides.left), MarginalLookup::new(&sides.right));
+        stream_words(eng, rows, scratch, words, f_rows, &left, &right, stream_state, env)
+    } else {
+        let left = DenseLookup { base: sides.left.base, stride: sides.left.stride };
+        let right = DenseLookup { base: sides.right.base, stride: sides.right.stride };
+        stream_words(eng, rows, scratch, words, f_rows, &left, &right, stream_state, env)
+    }
 }
 
-impl<L: ChildLookup, R: ChildLookup, F: ValueDomain> CellAction<L, R> for StreamCollapse<'_, '_, F> {
-    const DENSE_SLAB: bool = true;
+/// [`run_level_rows_stream_words`] on one pair of lookups.
+#[expect(clippy::too_many_arguments)]
+fn stream_words<L: ChildLookup, R: ChildLookup>(
+    eng: &Engine,
+    rows: RowLoop<'_>,
+    scratch: RowScratch<'_>,
+    words: &mut WordScratch,
+    f_rows: Sides<usize>,
+    left: &L,
+    right: &R,
+    stream_state: &mut StreamLevelState,
+    env: StreamEnv<'_>,
+) -> Result<(), OperationError> {
+    let mut cell_pairs = eng.scratch.apply.cell_pairs.checkout(eng);
+    match stream_state {
+        StreamLevelState::Weighted(counts) => {
+            let mut st = attach_children::<WeightFold>(env, rows.children, counts);
+            let sink = FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } };
+            super::word_cells::rows_by_words(eng, rows, scratch, words, f_rows, left, right, sink)
+        }
+        StreamLevelState::Int(counts) => {
+            let mut st = attach_children::<IntFold>(env, rows.children, counts);
+            let sink = FoldSink { fold: &mut st, cell: CollectSink { out: &mut cell_pairs } };
+            super::word_cells::rows_by_words(eng, rows, scratch, words, f_rows, left, right, sink)
+        }
+    }
+}
 
-    /// Dense slab: one grid row per f row (the collapsed scalars live in the
-    /// streaming column; `node_idx` still carries this level's cell→slot map).
+/// Collapse at the source: each live cell's pairs gathered into a reused
+/// scratch `Vec<ChildPair>` ([`CollectSink`]) and folded into the column as
+/// the cell ends, never touching the output level.
+struct FoldSink<'a, 'data, F: ValueDomain> {
+    fold: &'a mut StreamState<'data, F>,
+    /// Reused across all cells: bounds the transient peak to one cell's pairs.
+    cell: CollectSink<'a>,
+}
+
+impl<F: ValueDomain> PairSink for FoldSink<'_, '_, F> {
     #[inline(always)]
-    fn grid_row(&self, i: usize) -> usize {
-        i
+    fn single(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, lc: u32, rc: u32) -> Result<(), OperationError> {
+        self.cell.out.clear();
+        self.cell.single(eng, node_idx, grid_pos, lc, rc)?;
+        self.fold.fold_cell(eng, self.cell.out, node_idx, grid_pos)
     }
 
     #[inline(always)]
-    fn cell(&mut self, eng: &Engine, a: CellArgs<'_, '_, L, R>) -> Result<(), OperationError> {
-        self.cell_pairs.clear();
-        process_cell::<_, _, _>(
-            eng,
-            a.j,
-            a.row_base,
-            a.f_pairs,
-            a.ctx,
-            a.right_level_t,
-            a.g_pairs_scratch,
-            a.node_idx,
-            a.left,
-            a.right,
-            &mut CollectSink {
-                out: self.cell_pairs,
-            },
-            a.gate,
-        )?;
-        // An empty cell stays `NO_PRODUCT` (no slot) — mirrors the emit walk, where
-        // `emit_product_node` produces no node for zero pairs. Same `row_base + j`
-        // the kernel used, not a second derivation of it.
-        if !self.cell_pairs.is_empty() {
-            self.fold
-                .fold_cell(eng, self.cell_pairs, a.node_idx, a.row_base + a.j)?;
+    fn begin(&mut self) -> usize {
+        self.cell.out.clear();
+        self.cell.begin()
+    }
+
+    #[inline(always)]
+    fn pair(&mut self, eng: &Engine, lc: u32, rc: u32) -> Result<(), OperationError> {
+        self.cell.pair(eng, lc, rc)
+    }
+
+    #[inline(always)]
+    fn buf(&mut self) -> &mut Vec<ChildPair> {
+        self.cell.buf()
+    }
+
+    /// An empty cell stays `NO_PRODUCT` (no slot), as the emit walk
+    /// produces no node for zero pairs.
+    #[inline(always)]
+    fn end(&mut self, eng: &Engine, node_idx: &mut [u32], grid_pos: usize, _start: usize) -> Result<(), OperationError> {
+        if self.cell.out.is_empty() {
+            return Ok(());
         }
-        Ok(())
+        self.fold.fold_cell(eng, self.cell.out, node_idx, grid_pos)
     }
 }
