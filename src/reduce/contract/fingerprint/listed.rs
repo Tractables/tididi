@@ -24,7 +24,7 @@ use crate::limits::{Limits, OperationError};
 use crate::vtree::VtreeIdx;
 
 use super::super::scratch::ContractScratch;
-use super::refine::refine_context_groups;
+use super::refine::{refine_context_groups, Start};
 use super::split_pair;
 
 /// A set of a level's nodes, one bit each, cleared over `width` nodes.
@@ -112,5 +112,5 @@ pub(in crate::reduce::contract) fn find_listed_twin_groups(
     }
     let simple = !super::super::sweep::diagram_marginal(tdd, scratch);
     let width = tdd.levels[t1.idx()].slot_count();
-    refine_context_groups(&tdd.levels[parent.idx()], t1_side, eng.limits(), scratch, width, simple, Some(listed))
+    refine_context_groups(&tdd.levels[parent.idx()], t1_side, eng.limits(), scratch, width, simple, Start::Listed(listed))
 }

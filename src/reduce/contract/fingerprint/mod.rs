@@ -75,6 +75,8 @@ mod groups;
 mod listed;
 mod refine;
 
+use refine::Start;
+
 pub(super) use listed::{find_listed_twin_groups, named_by, pair_mass};
 
 #[cfg(test)]
@@ -272,6 +274,11 @@ impl TwinEntries for ContentEntries<'_> {
 /// is left in `scratch`. The nodes no pair names are in no group. Debug
 /// builds check the groups against the fingerprint search over the same
 /// contexts, which groups those nodes together, less that group.
+///
+/// With `screen`, the parent level is first tested for a parent node that
+/// pairs two nodes with one sibling ([`refine::shares_a_context`]), without
+/// which no node has a twin: worth it where few nodes are expected to have
+/// one, as under a parent level no merge has changed.
 pub(super) fn find_twin_groups(
     eng: &Engine,
     tdd: &Tdd,
@@ -279,6 +286,7 @@ pub(super) fn find_twin_groups(
     parent: VtreeIdx,
     t1_side: ChildSide,
     scratch: &mut ContractScratch,
+    screen: bool,
 ) -> Result<bool, OperationError> {
     let level = &tdd.levels[t1.idx()];
     debug_assert!(!level.is_marginal(), "a marginal child is left to pair fusion");
@@ -292,7 +300,14 @@ pub(super) fn find_twin_groups(
     // from the scratch: a merge's change to any level forgets the diagram's
     // own answer, which takes a pass over every level to give again.
     let simple = !super::sweep::diagram_marginal(tdd, scratch);
-    let found = refine::refine_context_groups(parent_level, t1_side, eng.limits(), scratch, width, simple, None)?;
+    let lim = eng.limits();
+    let found = if !screen || refine::shares_a_context(parent_level, t1_side, lim, scratch)? {
+        refine::refine_context_groups(parent_level, t1_side, lim, scratch, width, simple, Start::Whole)?
+    } else {
+        scratch.flat_groups.clear();
+        scratch.group_starts.clear();
+        false
+    };
     if cfg!(debug_assertions) {
         let refined = (scratch.group_starts.clone(), scratch.flat_groups.clone());
         let entries = ContextEntries {

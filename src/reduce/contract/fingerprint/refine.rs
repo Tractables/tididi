@@ -38,6 +38,81 @@ struct Wide<'a> {
 /// stack, by comparing every two; a wider one sorts them in scratch.
 const SMALL_PAIRS: usize = 8;
 
+/// The nodes a refinement starts with in its first class
+/// ([`refine_context_groups`]).
+pub(super) enum Start<'a> {
+    /// Every node of the child level.
+    Whole,
+    /// These nodes, ascending, which hold every node with a twin
+    /// ([`super::listed`]).
+    Listed(&'a [u32]),
+}
+
+/// Whether some node of `level` pairs two nodes of the child level on
+/// `side` with one sibling. Two nodes share a context only there (math
+/// §2.8), so without one no node has a twin.
+///
+/// The test reads each parent node's pairs until the first such sibling
+/// and no node's class: a parent node of two pairs compares their siblings,
+/// a wider one sorts its pairs by sibling unless they come so. A repeated
+/// pair names one node and is no such sibling.
+pub(super) fn shares_a_context(
+    level: &TddLevel,
+    side: ChildSide,
+    lim: &Limits,
+    scratch: &mut ContractScratch,
+) -> Result<bool, OperationError> {
+    let refine_keys = &mut scratch.refine_keys;
+    let stored = level.stored();
+    let (mut buf, mut cursor) = (Vec::new(), None);
+    for i in 0..level.node_count() {
+        let pairs = match stored {
+            Some(stored) => stored.of_idx(i),
+            None => level.described_read_next(&mut cursor, i, &mut buf),
+        };
+        let shared = match pairs.len() {
+            0 | 1 => false,
+            2 => {
+                let ((t0, s0), (t1, s1)) = (split_pair(&pairs[0], side), split_pair(&pairs[1], side));
+                s0 == s1 && t0 != t1
+            }
+            n if n <= SMALL_PAIRS => {
+                let mut key = [0u64; SMALL_PAIRS];
+                for (k, pair) in pairs.iter().enumerate() {
+                    let (t, s) = split_pair(pair, side);
+                    key[k] = pack(s, t);
+                }
+                let key = &mut key[..n];
+                key.sort_unstable();
+                shares_a_sibling(key)
+            }
+            n => {
+                refine_keys.clear();
+                lim.reserve_exact(refine_keys, n)?;
+                refine_keys.extend(pairs.iter().map(|pair| {
+                    let (t, s) = split_pair(pair, side);
+                    pack(s, t)
+                }));
+                if !refine_keys.is_sorted() {
+                    refine_keys.sort_unstable();
+                }
+                shares_a_sibling(refine_keys)
+            }
+        };
+        if shared {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether `keys`, sorted `(sibling, node)` pairs, pair one sibling with two
+/// nodes.
+#[inline]
+fn shares_a_sibling(keys: &[u64]) -> bool {
+    keys.windows(2).any(|w| w[0] >> 32 == w[1] >> 32 && w[0] != w[1])
+}
+
 /// The twin groups of the `width` nodes the pairs of `level` name on side
 /// `side`, written to `scratch.flat_groups` and `scratch.group_starts` as
 /// [`super::group_twins_by_entries`] writes them; returns whether there is
@@ -70,10 +145,9 @@ const SMALL_PAIRS: usize = 8;
 /// within a parent node counts twice, so the classes are those of context
 /// multisets.
 ///
-/// With `listed`, nodes ascending that hold every node with a twin
-/// ([`super::listed`]), every other node is out of the partition from the
-/// start, as a node found to have no twin is, and the groups are those
-/// among the listed nodes.
+/// Where `start` lists nodes that hold every node with a twin, every other
+/// node is out of the partition from the start, as a node found to have no
+/// twin is, and the groups are those among the listed nodes.
 pub(super) fn refine_context_groups(
     level: &TddLevel,
     side: ChildSide,
@@ -81,7 +155,7 @@ pub(super) fn refine_context_groups(
     scratch: &mut ContractScratch,
     width: usize,
     simple: bool,
-    listed: Option<&[u32]>,
+    start: Start<'_>,
 ) -> Result<bool, OperationError> {
     let ContractScratch {
         twin_class, twin_bits, classes, refine_keys, refine_runs, refine_links, refine_table,
@@ -109,12 +183,12 @@ pub(super) fn refine_context_groups(
     lim.try_resize(twin_bits, words, [0u64; 2])?;
     let bits = &mut twin_bits[..words];
     // The first class: every node, or the listed ones.
-    let first = match listed {
-        None => {
+    let first = match start {
+        Start::Whole => {
             bits.fill([0; 2]);
             width
         }
-        Some(listed) => {
+        Start::Listed(listed) => {
             bits.fill([u64::MAX; 2]);
             for &t in listed {
                 let word = &mut bits[(t / 64) as usize];

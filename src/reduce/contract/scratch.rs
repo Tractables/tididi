@@ -508,6 +508,13 @@ impl Listing {
         self.whole.get(p) == Some(&self.sweep)
     }
 
+    /// Whether a contraction at level `t` has changed it in the current
+    /// sweep, where the sweep lists.
+    #[inline]
+    pub(super) fn changed(&self, t: usize) -> bool {
+        self.slot(t).is_some()
+    }
+
     /// The index in `lists` of level `t`'s list, if the current sweep gave
     /// it one.
     #[inline]

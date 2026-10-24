@@ -115,7 +115,14 @@ fn contract_child(
             }
             found
         }
-        Reach::Whole => find_twin_groups(eng, tdd, t1, parent, t1_side, scratch)?,
+        // Under a parent level a merge of this sweep changed, most nodes
+        // have a twin (they are cascades); under any other, almost none
+        // has, and the search first tests whether any two nodes share a
+        // context.
+        Reach::Whole => {
+            let screen = !scratch.listing.changed(parent.idx());
+            find_twin_groups(eng, tdd, t1, parent, t1_side, scratch, screen)?
+        }
     };
     if !found {
         return Ok(false);
@@ -155,7 +162,7 @@ fn check_listed_search(
     scratch: &mut ContractScratch,
 ) -> Result<(), OperationError> {
     let listed = (found, scratch.group_starts.clone(), scratch.flat_groups.clone());
-    let whole = find_twin_groups(eng, tdd, t1, parent, t1_side, scratch)?;
+    let whole = find_twin_groups(eng, tdd, t1, parent, t1_side, scratch, false)?;
     assert_eq!(
         (whole, &scratch.group_starts, &scratch.flat_groups),
         (listed.0, &listed.1, &listed.2),
@@ -568,7 +575,7 @@ fn debug_assert_no_twins(
         return Ok(());
     }
     let side = if tdd.vtree.children(parent).0 == child { ChildSide::Left } else { ChildSide::Right };
-    let found = find_twin_groups(eng, tdd, child, parent, side, scratch)?;
+    let found = find_twin_groups(eng, tdd, child, parent, side, scratch, false)?;
     assert!(!found, "level {} keeps twins under {} after its joint fixpoint", child.0, parent.0);
     Ok(())
 }

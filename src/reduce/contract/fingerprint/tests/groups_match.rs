@@ -96,7 +96,7 @@ fn the_twin_groups_are_the_nodes_with_equal_contexts() {
                 assert!(want.is_empty(), "round {round}, {side:?}: a level with twins passed the early stop");
                 stopped_early += 1;
             }
-            let found = find_twin_groups(&eng, &tdd, child, root, side, &mut scratch).expect("find_twin_groups");
+            let found = find_twin_groups(&eng, &tdd, child, root, side, &mut scratch, round % 2 == 1).expect("find_twin_groups");
             let mut got: Vec<Vec<u32>> = Vec::new();
             if found {
                 for (g, &start) in scratch.group_starts.iter().enumerate() {
@@ -252,7 +252,7 @@ fn single_entry_levels_are_grouped_by_sorting() {
             scratch.flat_groups.clear();
             scratch.group_starts.clear();
             let found = if wide {
-                Some(find_twin_groups(&eng, &tdd, child, root, side, &mut scratch).expect("find_twin_groups"))
+                Some(find_twin_groups(&eng, &tdd, child, root, side, &mut scratch, round % 2 == 1).expect("find_twin_groups"))
             } else {
                 groups::group_single_entries(&eng, &entries, width, &mut scratch).expect("group_single_entries")
             };
@@ -345,7 +345,7 @@ fn wide_levels_with_planted_twins_find_every_twin() {
             // A new diagram: the scratch is checked out afresh, as a
             // contraction checks it out.
             scratch.prepare();
-            let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch).expect("find_twin_groups");
+            let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch, round % 2 == 1).expect("find_twin_groups");
             let mut got: Vec<Vec<u32>> = Vec::new();
             for (g, &start) in scratch.group_starts.iter().enumerate() {
                 let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
@@ -440,7 +440,7 @@ fn classes_are_split_by_later_contexts() {
             // A new diagram: the scratch is checked out afresh, as a
             // contraction checks it out.
             scratch.prepare();
-            let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch).expect("find_twin_groups");
+            let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch, round % 2 == 1).expect("find_twin_groups");
             let mut got: Vec<Vec<u32>> = Vec::new();
             for (g, &start) in scratch.group_starts.iter().enumerate() {
                 let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
@@ -540,7 +540,7 @@ fn nested_wide_nodes_are_split_by_degree() {
             // A new diagram: the scratch is checked out afresh, as a
             // contraction checks it out.
             scratch.prepare();
-            let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch).expect("find_twin_groups");
+            let found = find_twin_groups(&eng, &tdd, target, root, side, &mut scratch, round % 2 == 1).expect("find_twin_groups");
             let mut got: Vec<Vec<u32>> = Vec::new();
             for (g, &start) in scratch.group_starts.iter().enumerate() {
                 let end = scratch.group_starts.get(g + 1).map_or(scratch.flat_groups.len(), |&e| e as usize);
