@@ -1,5 +1,5 @@
 //! Masked levels read by pairs, checked against the row loop of any level
-//! on the same masks: the same diagram.
+//! on the same masks: the same diagram and the same work.
 
 use super::*;
 use crate::Engine;
@@ -7,23 +7,28 @@ use crate::test_helpers::{compile_clauses_on, rand_cnf, vtree_shapes, CnfShape, 
 use crate::limits::{LimitConfig, SparseRoute};
 use crate::vtree::{VarId, Vtree};
 
-/// Conjoin `f` and `g` on a fresh engine, every level on a dense route.
-fn conjoin(f: &Tdd, g: &Tdd) -> Tdd {
+/// Conjoin `f` and `g` on a fresh engine, every level on a dense route,
+/// and the work it took.
+fn conjoin(f: &Tdd, g: &Tdd) -> (Tdd, u64) {
     let eng = Engine::new();
     let _dense = eng.limits().scope(LimitConfig::none().with_sparse_route(SparseRoute { sparsity: 64, min_grid: usize::MAX }));
-    eng.and(f.clone(), g.clone()).unwrap()
+    let mark = eng.limits().mark();
+    let out = eng.and(f.clone(), g.clone()).unwrap();
+    (out, eng.limits().work_since(mark))
 }
 
 /// Conjoined with levels read by pairs and without: the same levels, each
-/// node's pairs in the same order. Returns the levels read by pairs, those
-/// of them with a complete side, and those of one pair a column.
+/// node's pairs in the same order, and the same work. Returns the levels
+/// read by pairs, those of them with a complete side, and those of one
+/// pair a column.
 fn check(f: &Tdd, g: &Tdd, what: &str) -> [u64; 3] {
-    let oracle = pair_rows_off(|| conjoin(f, g));
+    let (oracle, work) = pair_rows_off(|| conjoin(f, g));
     let before = pair_rows_levels();
-    let out = conjoin(f, g);
+    let (out, out_work) = conjoin(f, g);
     let eng = Engine::new();
     assert!(eng.equivalent(&out, &oracle).unwrap(), "{what}: the levels read by pairs built another function");
     assert!(is_self_conjunction(&out, &oracle), "{what}: the levels read by pairs built other levels");
+    assert_eq!(out_work, work, "{what}: the levels read by pairs took other work");
     let after = pair_rows_levels();
     std::array::from_fn(|k| after[k] - before[k])
 }

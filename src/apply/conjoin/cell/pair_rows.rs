@@ -3,8 +3,8 @@
 use super::*;
 use super::super::liveness::{ROW_COLUMNS_MAX_WIDTH, ROW_LIVE};
 
-/// The f pairs a row's per-pair words are kept for, read again at each
-/// live cell; a longer row reads its pairs' words again.
+/// The f pairs a row's ANDs are kept for on the stack; a longer row keeps
+/// them in a buffer of the level's.
 const FEW_PAIRS: usize = 16;
 
 /// The row loop of a masked level whose g level has at most
@@ -26,10 +26,11 @@ const FEW_PAIRS: usize = 16;
 /// level's masks: a row is skipped where a side's fold has no live child
 /// row, the cells entered are the columns with a pair in each side's fold,
 /// the work clock is charged a unit a candidate of an entered cell and the
-/// row's width a row, and a cell's surviving candidates are written in the
-/// order of its walk, f pair by f pair and each against the column's pairs
-/// in order (no column of so few pairs is grouped), one pair alone as the
-/// one-pair cell writes it.
+/// row's width a row, in one poll a row, and a cell's surviving candidates
+/// are written in the order of its walk, f pair by f pair and each against
+/// the column's pairs in order (no column of so few pairs is grouped), one
+/// pair alone as the one-pair cell writes it. A row visits its live cells
+/// alone, the columns of the g pairs its ANDs have, all of them entered.
 pub(crate) fn run_level_rows_pairs(
     eng: &Engine,
     rows: RowLoop<'_>,
@@ -121,7 +122,22 @@ where
         }
         out
     };
+    // The g pairs of the columns of `s`.
+    let pairs_of = |s: u64| {
+        if one_pair {
+            return s;
+        }
+        let (mut s, mut out) = (s, 0u64);
+        while s != 0 {
+            let j = s.trailing_zeros() as usize;
+            s &= s - 1;
+            out |= cols[j];
+        }
+        out
+    };
     let mut poll = lim.gate_with(super::super::budget::DENSE_CELL_POLL_STRIDE);
+    // The ANDs of a row of more than `FEW_PAIRS` pairs.
+    let mut many: Vec<u64> = Vec::new();
 
     // The resets of `run_level_rows`: one fill of a small grid, a row at a
     // time on a larger one.
@@ -150,34 +166,41 @@ where
         if f_pairs.is_empty() {
             continue;
         }
-        // Each side's fold, and the g pairs some candidate of the row
-        // survives against; each f pair's, on a row of a few.
+        // Each side's fold, the g pairs some candidate of the row survives
+        // against, and each f pair's AND.
         let mut ands = [0u64; FEW_PAIRS];
         let few = f_pairs.len() <= FEW_PAIRS;
+        if !few {
+            many.clear();
+            lim.reserve(&mut many, f_pairs.len())?;
+        }
         let (mut l, mut r, mut live) = (0, 0, 0);
         for (k, p) in f_pairs.iter().enumerate() {
             let (wl, wr) = (word_left(p), word_right(p));
-            (l, r, live) = (l | wl, r | wr, live | (wl & wr));
+            let and = wl & wr;
+            (l, r, live) = (l | wl, r | wr, live | and);
             if few {
-                ands[k] = wl & wr;
+                ands[k] = and;
+            } else {
+                many.push(and);
             }
         }
         if l & r & ROW_LIVE == 0 {
             continue;
         }
-        // The cells the masks enter.
+        // The cells the masks enter, charged with the row's width; the
+        // live ones among them.
         let entered = reached(l) & reached(r);
-        let live = live & !ROW_LIVE;
         let n1 = f_pairs.len() as u64;
-        let mut cells = entered;
+        poll.poll(n1 * u64::from(pairs_of(entered).count_ones()) + right_width as u64)?;
+        let live = live & !ROW_LIVE;
+        let ands = if few { &ands[..f_pairs.len()] } else { &many[..] };
+        let mut cells = reached(live);
+        debug_assert_eq!(cells & !entered, 0, "a live cell the masks do not enter");
         while cells != 0 {
             let j = cells.trailing_zeros() as usize;
             cells &= cells - 1;
             let col = cols[j];
-            poll.poll(n1 * u64::from(col.count_ones()))?;
-            if live & col == 0 {
-                continue;
-            }
             let grid_pos = row_base + j;
             if n1 == 1 && col.count_ones() == 1 {
                 let (p, q) = (&f_pairs[0], &g_flat[col.trailing_zeros() as usize]);
@@ -187,8 +210,8 @@ where
                 continue;
             }
             let start = sink.begin();
-            for (k, p) in f_pairs.iter().enumerate() {
-                let mut m = if few { ands[k] } else { word_left(p) & word_right(p) } & col;
+            for (p, &and) in f_pairs.iter().zip(ands) {
+                let mut m = and & col;
                 if m == 0 {
                     continue;
                 }
@@ -208,7 +231,6 @@ where
             }
             sink.end(eng, node_idx, grid_pos, start)?;
         }
-        poll.poll(right_width as u64)?;
     }
     poll.flush()?;
     Ok(())
