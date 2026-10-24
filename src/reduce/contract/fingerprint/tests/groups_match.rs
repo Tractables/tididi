@@ -343,8 +343,8 @@ fn wide_levels_with_planted_twins_find_every_twin() {
 /// Nodes first named together with one sibling set and told apart only by
 /// later parent nodes, some of them wide: a parent node names one member of
 /// a planted twin class alone, or every member but one, as well as whole
-/// classes. The search finds the groups a listing of every node's contexts
-/// gives, on either side.
+/// classes, and some parent nodes hold a pair twice. The search finds the
+/// groups a listing of every node's context multiset gives, on either side.
 #[test]
 fn classes_are_split_by_later_contexts() {
     let eng = Engine::new();
@@ -398,7 +398,11 @@ fn classes_are_split_by_later_contexts() {
                     }
                 }
                 pairs.sort_unstable();
-                pairs.dedup();
+                // Every fourth round keeps a pair drawn twice, as a parent
+                // node of a diagram with a marginal level may hold it.
+                if round % 4 != 3 {
+                    pairs.dedup();
+                }
                 if !pairs.is_empty() {
                     let node: Vec<ChildPair> = pairs.iter().map(|&(t, s)| pair(t, s)).collect();
                     levels[root.idx()].push_internal_node(&node[..]);

@@ -34,7 +34,8 @@ const SMALL_PAIRS: usize = 8;
 ///
 /// The work is one read of the class of each node a parent node names, and
 /// one write for each node that changes class, with each parent node's pairs
-/// sorted in cache. No fingerprint is formed and nothing is verified after:
+/// sorted in cache; a node in the first class, or without a twin, is read
+/// off two bits. No fingerprint is formed and nothing is verified after:
 /// the classes are exact. A pair repeated within a parent node counts twice,
 /// so the classes are those of context multisets.
 pub(super) fn refine_context_groups(
@@ -44,19 +45,24 @@ pub(super) fn refine_context_groups(
     scratch: &mut ContractScratch,
     width: usize,
 ) -> Result<bool, OperationError> {
-    let ContractScratch { twin_class, class_size, class_pos, refine_keys, refine_runs, flat_groups, group_starts, .. } =
-        scratch;
+    let ContractScratch {
+        twin_class, twin_named, twin_alone, class_size, class_pos, refine_keys, refine_runs, flat_groups, group_starts, ..
+    } = scratch;
     flat_groups.clear();
     group_starts.clear();
+    let words = width.div_ceil(64);
     lim.try_resize(twin_class, width, 0u32)?;
-    let class = &mut twin_class[..width];
-    class.fill(0);
+    lim.try_resize(twin_named, words, 0u64)?;
+    lim.try_resize(twin_alone, words, 0u64)?;
+    let (moved, alone) = (&mut twin_named[..words], &mut twin_alone[..words]);
+    moved.fill(0);
+    alone.fill(0);
     // The classes made are nested sets of two or more nodes each, so there
     // are fewer than `width` besides the first.
     class_size.clear();
     lim.reserve_exact(class_size, width + 1)?;
     class_size.push(width as u32);
-    let mut part = Partition { class, size: class_size };
+    let mut part = Partition { class: &mut twin_class[..width], moved, alone, size: class_size };
     let stored = level.stored();
     let (mut buf, mut cursor) = (Vec::new(), None);
     for i in 0..level.node_count() {
@@ -66,13 +72,13 @@ pub(super) fn refine_context_groups(
         };
         match pairs.len() {
             0 => {}
-            1 => part.alone(split_pair(&pairs[0], side).0),
+            1 => part.leave(split_pair(&pairs[0], side).0),
             2 => part.split_two(pairs, side),
             n if n <= SMALL_PAIRS => part.split_small(pairs, side),
             _ => part.split_wide(lim, pairs, side, refine_keys, refine_runs)?,
         }
     }
-    let Partition { class, size } = part;
+    let Partition { class, moved, alone, size } = part;
     if !size.iter().any(|&members| members >= 2) {
         return Ok(false);
     }
@@ -81,8 +87,13 @@ pub(super) fn refine_context_groups(
     lim.try_resize(class_pos, size.len(), 0u32)?;
     let pos = &mut class_pos[..size.len()];
     pos.fill(u32::MAX);
+    let of = |t: usize| {
+        let (w, b) = (t / 64, 1u64 << (t % 64));
+        if moved[w] & b == 0 { 0 } else if alone[w] & b != 0 { ALONE } else { class[t] }
+    };
     let mut members = 0u32;
-    for &c in class.iter() {
+    for t in 0..width {
+        let c = of(t);
         if c != ALONE && size[c as usize] >= 2 && pos[c as usize] == u32::MAX {
             pos[c as usize] = members;
             lim.try_push(group_starts, members)?;
@@ -90,7 +101,8 @@ pub(super) fn refine_context_groups(
         }
     }
     lim.try_resize(flat_groups, members as usize, 0u32)?;
-    for (t, &c) in class.iter().enumerate() {
+    for t in 0..width {
+        let c = of(t);
         if c != ALONE && size[c as usize] >= 2 {
             flat_groups[pos[c as usize] as usize] = t as u32;
             pos[c as usize] += 1;
@@ -99,26 +111,59 @@ pub(super) fn refine_context_groups(
     Ok(true)
 }
 
-/// The partition of the child level's nodes: each node's class, or
-/// [`ALONE`], and each class's members.
+/// The partition of the child level's nodes. A node is in the first class
+/// until its bit in `moved` is set; then it has no twin if its bit in
+/// `alone` is set, and is in class `class[t]` if not. The bits stay in
+/// cache where the classes would not, so a node that leaves the first class
+/// alone, as most do on a level without twins, costs two bits.
 struct Partition<'a> {
     class: &'a mut [u32],
+    moved: &'a mut [u64],
+    alone: &'a mut [u64],
     size: &'a mut Vec<u32>,
 }
 
 impl Partition<'_> {
-    /// Take node `t` out of its class: it has no twin.
+    /// Node `t`'s class, or [`ALONE`].
     #[inline]
-    fn alone(&mut self, t: u32) {
-        let c = self.class[t as usize];
-        if c != ALONE {
-            self.size[c as usize] -= 1;
-            self.class[t as usize] = ALONE;
+    fn of(&self, t: u32) -> u32 {
+        let (w, b) = ((t / 64) as usize, 1u64 << (t % 64));
+        if self.moved[w] & b == 0 {
+            0
+        } else if self.alone[w] & b != 0 {
+            ALONE
+        } else {
+            self.class[t as usize]
         }
     }
 
-    /// A new class for `members` nodes taken out of class `c`, whose class
-    /// the caller sets.
+    /// Take node `t` out of its class `c`: it has no twin.
+    #[inline]
+    fn alone(&mut self, t: u32, c: u32) {
+        let (w, b) = ((t / 64) as usize, 1u64 << (t % 64));
+        self.size[c as usize] -= 1;
+        self.moved[w] |= b;
+        self.alone[w] |= b;
+    }
+
+    /// Take node `t` out of its class, if it has one.
+    #[inline]
+    fn leave(&mut self, t: u32) {
+        let c = self.of(t);
+        if c != ALONE {
+            self.alone(t, c);
+        }
+    }
+
+    /// Put node `t` in class `id`.
+    #[inline]
+    fn put(&mut self, t: u32, id: u32) {
+        self.class[t as usize] = id;
+        self.moved[(t / 64) as usize] |= 1 << (t % 64);
+    }
+
+    /// A new class for `members` nodes taken out of class `c`, which the
+    /// caller puts there.
     #[inline]
     fn fresh(&mut self, c: u32, members: u32) -> u32 {
         self.size[c as usize] -= members;
@@ -133,16 +178,27 @@ impl Partition<'_> {
     #[inline]
     fn split_two(&mut self, pairs: &[ChildPair], side: ChildSide) {
         let ((t0, s0), (t1, s1)) = (split_pair(&pairs[0], side), split_pair(&pairs[1], side));
-        let c = self.class[t0 as usize];
-        if t0 == t1 || s0 != s1 || c == ALONE || c != self.class[t1 as usize] {
-            self.alone(t0);
-            self.alone(t1);
+        let c0 = self.of(t0);
+        if t0 == t1 {
+            if c0 != ALONE {
+                self.alone(t0, c0);
+            }
             return;
         }
-        if self.size[c as usize] > 2 {
-            let id = self.fresh(c, 2);
-            self.class[t0 as usize] = id;
-            self.class[t1 as usize] = id;
+        let c1 = self.of(t1);
+        if s0 != s1 || c0 != c1 || c0 == ALONE {
+            if c0 != ALONE {
+                self.alone(t0, c0);
+            }
+            if c1 != ALONE {
+                self.alone(t1, c1);
+            }
+            return;
+        }
+        if self.size[c0 as usize] > 2 {
+            let id = self.fresh(c0, 2);
+            self.put(t0, id);
+            self.put(t1, id);
         }
     }
 
@@ -179,7 +235,7 @@ impl Partition<'_> {
             while end < n && (key[end] >> 32) as u32 == t {
                 end += 1;
             }
-            let c = self.class[t as usize];
+            let c = self.of(t);
             if c != ALONE {
                 (from[runs], to[runs], node[runs], of[runs]) = (k as u8, end as u8, t, c);
                 runs += 1;
@@ -221,14 +277,14 @@ impl Partition<'_> {
             }
             let f = first[g] as usize;
             if members[g] == 1 {
-                self.alone(node[g]);
+                self.alone(node[g], of[g]);
             } else if keep[f] {
                 keep[f] = false;
             } else {
                 let id = self.fresh(of[g], u32::from(members[g]));
                 for r in g..runs {
                     if lead[r] as usize == g {
-                        self.class[node[r] as usize] = id;
+                        self.put(node[r], id);
                     }
                 }
             }
@@ -263,7 +319,7 @@ impl Partition<'_> {
         while k < keys.len() {
             let t = (keys[k] >> 32) as u32;
             let end = k + keys[k..].iter().take_while(|&&e| (e >> 32) as u32 == t).count();
-            let c = self.class[t as usize];
+            let c = self.of(t);
             if c != ALONE {
                 let h = keys[k..end].iter().fold((end - k) as u64, |h, &e| mix64(h ^ u64::from(e as u32)));
                 runs.push(((u64::from(c) << 32) | (h >> 32), k as u32, end as u32));
@@ -295,13 +351,13 @@ impl Partition<'_> {
                     }
                 }
                 if m - g == 1 {
-                    self.alone(node(lead));
+                    self.alone(node(lead), c);
                 } else if keep {
                     keep = false;
                 } else {
                     let id = self.fresh(c, (m - g) as u32);
                     for &r in &runs[g..m] {
-                        self.class[node(r) as usize] = id;
+                        self.put(node(r), id);
                     }
                 }
                 g = m;
