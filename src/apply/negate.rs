@@ -220,6 +220,8 @@ fn expand_full_with(
 ) -> Result<(), OperationError> {
     let vtree = tdd.vtree.clone();
     let root = vtree.root();
+    // Read before the first change to a level, which drops both.
+    let (canonical, closed) = (tdd.levels.is_canonical(tdd.output), tdd.levels.is_closed());
     for (t, left, right) in vtree.internal_bottomup().filter(|&(t, _, _)| t != root) {
         // Read bottom-up: a child's basis includes the fill node its own visit
         // added.
@@ -233,28 +235,49 @@ fn expand_full_with(
         let fill = [filled[left.idx()].then(|| lefts.end - 1), filled[right.idx()].then(|| rights.end - 1)];
         let level = &mut tdd.levels[t.idx()];
 
-        // Where the pairs cover every cell of the children's old nodes, the
-        // missing cells are the lines of the children's added nodes, read
-        // off without a cover.
-        let (covered, form) = covered_cells(eng, level, leaf)?;
-        if covered == old_cells(lefts, rights, fill) {
-            if fill != [None, None] {
-                cells.clear();
-                fill_lines_into(eng, lefts, rights, fill, form, cells)?;
-                #[cfg(debug_assertions)]
-                debug_assert_eq!(*cells, missing_by_cover(eng, bits, level, lefts, rights, leaf)?, "negate: the lines of the added nodes are not the cells no pair covers");
-                level.push_node(eng.limits(), cells)?;
-                filled[t.idx()] = true;
+        // On a canonical diagram every stored node is reachable and
+        // deterministic, so the pairs of a level cover disjoint cells, and
+        // their count says whether they cover every cell, the level being
+        // full already, or every cell of the children's old nodes, the
+        // missing cells then being the lines of the children's added nodes,
+        // read off without a cover. An operand with unreachable nodes may
+        // hold two that cover one cell, which only the cover sees.
+        if canonical {
+            let (covered, form) = covered_cells(level, leaf, closed);
+            #[cfg(debug_assertions)]
+            {
+                let (by_pairs, form_by_pairs) = covered_cells_by_pairs(level, leaf);
+                debug_assert_eq!(covered, by_pairs, "negate: the covered cells are not the pairs' areas");
+                debug_assert!(
+                    (form.left_one, form.right_one) == (form_by_pairs.left_one, form_by_pairs.right_one),
+                    "negate: the level's first pair does not name its leaves in the level's form",
+                );
             }
-            eng.limits().check_stop()?;
-            continue;
+            if covered == (lefts.len() * rights.len()) as u64 {
+                #[cfg(debug_assertions)]
+                debug_assert!(missing_by_cover(eng, bits, level, lefts, rights, leaf)?.is_empty(), "negate: a level whose pairs fill its basis misses a cell");
+                eng.limits().check_stop()?;
+                continue;
+            }
+            if covered == old_cells(lefts, rights, fill) {
+                if fill != [None, None] {
+                    cells.clear();
+                    fill_lines_into(eng, lefts, rights, fill, form, cells)?;
+                    #[cfg(debug_assertions)]
+                    debug_assert_eq!(*cells, missing_by_cover(eng, bits, level, lefts, rights, leaf)?, "negate: the lines of the added nodes are not the cells no pair covers");
+                    level.push_node(eng.limits(), cells)?;
+                    filled[t.idx()] = true;
+                }
+                eng.limits().check_stop()?;
+                continue;
+            }
         }
 
+        // Mark the cells the pairs cover and read the fill off the rest. A
+        // stored level's nodes are read as slices of its arena, an implicit
+        // level's generated into a buffer a node at a time, in one loop.
         let mut cover = Cover::reset(eng, bits, lefts, rights, leaf)?;
         let mut poll = eng.limits().gate();
-        // A stored level's nodes are read as slices of its arena, an
-        // implicit level's generated into a buffer a node at a time, in one
-        // loop.
         let stored = level.stored();
         let (mut buf, mut cursor) = (Vec::new(), None);
         for i in 0..level.node_count() {
@@ -270,15 +293,12 @@ fn expand_full_with(
         poll.flush()?;
         // The walk has seen every reference, so this is the level's form.
         let form = cover.one_seen;
-
-        // Covered every basis cell => already full; nothing to add.
-        if !cover.is_full() {
-            cells.clear();
-            cover.missing_into(eng, form, cells)?;
-            if !cells.is_empty() {
-                level.push_node(eng.limits(), cells)?;
-                filled[t.idx()] = true;
-            }
+        cells.clear();
+        cover.missing_into(eng, form, cells)?;
+        debug_assert!(!canonical || !cells.is_empty(), "negate: a level short of its cells has none missing");
+        if !cells.is_empty() {
+            level.push_node(eng.limits(), cells)?;
+            filled[t.idx()] = true;
         }
         eng.limits().check_stop()?;
     }
@@ -286,25 +306,31 @@ fn expand_full_with(
 }
 
 /// The cells of `lefts x rights` the pairs of `level` cover, with the leaf
-/// form the level uses, read in one pass in order. The pairs of a level
-/// cover disjoint cells, determinism's rule, so the count is the sum of
-/// their areas: one cell a pair, two where a side is a leaf named `One`.
-fn covered_cells(eng: &Engine, level: &TddLevel, leaf: LeafForm) -> Result<(u64, LeafForm), OperationError> {
+/// form the level uses, without reading the pairs. The pairs of a level
+/// cover disjoint cells, determinism's rule, one cell a pair and two for
+/// each side that is a leaf named `One`; and a level names a leaf child as
+/// `One` everywhere or nowhere ([`LeafForm`]). So the count is the level's
+/// pairs, doubled for each side its first pair names `One`. The pairs are
+/// counted off the level's nodes, or read off the count a level of a
+/// `closed` diagram keeps.
+fn covered_cells(level: &TddLevel, leaf: LeafForm, closed: bool) -> (u64, LeafForm) {
+    let pairs = if closed { level.live_pairs_closed() } else { level.live_pairs() } as u64;
     let mut form = LeafForm::LITERAL;
-    let mut covered = 0u64;
-    let mut poll = eng.limits().gate();
-    let stored = level.stored();
-    let (mut buf, mut cursor) = (Vec::new(), None);
-    for i in 0..level.node_count() {
-        let pairs = match stored {
-            Some(stored) => stored.of_idx(i),
-            None => level.described_read_next(&mut cursor, i, &mut buf),
-        };
-        covered += areas(pairs.iter().copied(), leaf, &mut form);
-        poll.poll(pairs.len() as u64)?;
+    if (leaf.left_one || leaf.right_one)
+        && let Some(pair) = (0..level.node_count()).find_map(|i| level.pairs_iter_of_idx(i).next())
+    {
+        areas(std::iter::once(pair), leaf, &mut form);
     }
-    poll.flush()?;
-    Ok((covered, form))
+    (pairs << (u32::from(form.left_one) + u32::from(form.right_one)), form)
+}
+
+/// [`covered_cells`] off every pair's area, for a debug build to check it
+/// against.
+#[cfg(debug_assertions)]
+fn covered_cells_by_pairs(level: &TddLevel, leaf: LeafForm) -> (u64, LeafForm) {
+    let mut form = LeafForm::LITERAL;
+    let covered = (0..level.node_count()).map(|i| areas(level.pairs_iter_of_idx(i), leaf, &mut form)).sum();
+    (covered, form)
 }
 
 /// The cells `pairs` cover, one a pair and two for each side that is a
@@ -472,9 +498,9 @@ impl ChildBasis {
 /// Determinism keeps the two apart — the labels a level uses at one leaf are a
 /// subset of `{Pos, Neg}` or of `{One}`, never both
 /// (`test_helpers::check::check_determinism`) — so this is a property of the
-/// level, read off the first reference the cover walk sees. A fill node and the
-/// complement at the root are emitted in the same form, which is what keeps the
-/// level's labels on one side of that line.
+/// level, read off its first pair ([`covered_cells`]) or the cover's walk. A
+/// fill node and the complement at the root are emitted in the same form,
+/// which is what keeps the level's labels on one side of that line.
 #[derive(Copy, Clone, Default)]
 struct LeafForm {
     /// The left child is a leaf the level refers to as `One`.
@@ -494,8 +520,7 @@ impl LeafForm {
 ///
 /// The basis is what a fill node or a complement enumerates, and it is
 /// quadratic in the child widths, so the cover is kept at a bit per cell
-/// rather than an entry per cell. It also answers "already full" without a
-/// second pass: `covered` counts distinct cells as they are marked.
+/// rather than an entry per cell.
 struct Cover<'a> {
     bits: &'a mut Vec<u64>,
     lefts: ChildBasis,
@@ -509,8 +534,6 @@ struct Cover<'a> {
     stride: usize,
     /// `lefts.len() * rights.len()`, the cell count.
     len: usize,
-    /// Distinct cells marked so far.
-    covered: usize,
 }
 
 impl<'a> Cover<'a> {
@@ -534,7 +557,6 @@ impl<'a> Cover<'a> {
             one_seen: LeafForm::LITERAL,
             stride: rights.len(),
             len,
-            covered: 0,
         })
     }
 
@@ -570,18 +592,7 @@ impl<'a> Cover<'a> {
             return;
         }
         let cell = (l - self.lefts.start) as usize * self.stride + (r - self.rights.start) as usize;
-        let word = &mut self.bits[cell >> 6];
-        let bit = 1u64 << (cell & 63);
-        if *word & bit == 0 {
-            *word |= bit;
-            self.covered += 1;
-        }
-    }
-
-    /// Whether every basis cell is covered, so the level is already full.
-    #[inline]
-    fn is_full(&self) -> bool {
-        self.covered == self.len
+        self.bits[cell >> 6] |= 1u64 << (cell & 63);
     }
 
     /// Whether cell `(l, r)` is unmarked. Out-of-basis indices are not cells
