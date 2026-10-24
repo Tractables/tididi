@@ -76,13 +76,8 @@ pub(crate) struct SparseWorkspace {
 
     // ── The general arm's walk of f's nodes: every outer's `filtered` kept ──
     pub(super) routes: Routes,
-    // The f nodes a general-arm level walks by outer key
-    // (`SparseThresholds::by_outer_pairs`): each one's row of `by_outer`,
-    // `NO_ROW` for the others, and the rows of their candidates.
-    pub(super) by_outer_row: Vec<u32>,
-    pub(super) by_outer: Rows<ParEntry>,
     // The outer keys whose route build marks the keys it reads, a bit each,
-    // and the pairs `f_by_outer` keeps under each outer key on such a
+    // and the pairs `f_by_outer` keeps under each outer key on a routed
     // level (`build_kept_index`).
     pub(super) f_marked: Vec<u64>,
     pub(super) f_kept: Vec<u32>,
@@ -257,19 +252,6 @@ impl Routes {
     /// The tables and runs, for reading.
     pub(super) fn view(&self) -> RoutesView<'_> {
         RoutesView { segments: &self.segments, slots: &self.slots, entries: &self.entries }
-    }
-
-    /// Where the next outer's table and runs start, for
-    /// [`Routes::drop_from`].
-    pub(super) fn mark(&self) -> (usize, usize) {
-        (self.slots.len(), self.entries.len())
-    }
-
-    /// Take back outer `outer`'s table and runs, placed since `mark`.
-    pub(super) fn drop_from(&mut self, outer: usize, mark: (usize, usize)) {
-        self.slots.truncate(mark.0);
-        self.entries.truncate(mark.1);
-        self.segments[outer] = Segment::default();
     }
 
     /// Set `walked`'s bit for each of the first `parents` nodes of `f_level`
@@ -886,8 +868,6 @@ impl Buffers for SparseWorkspace {
         visit(&mut self.outer_keys);
         visit(&mut self.outer_attached);
         self.routes.buffers(visit);
-        visit(&mut self.by_outer_row);
-        visit(&mut self.by_outer);
         visit(&mut self.f_marked);
         visit(&mut self.f_kept);
         visit(&mut self.node_candidates);

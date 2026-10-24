@@ -16,12 +16,6 @@ pub(crate) struct SparseThresholds {
     /// to the level's pair arena first: such a node has many candidates of
     /// several g parents, which the emit would copy back off the arena.
     pub(crate) collected_pairs: usize,
-    /// Pairs at or above which an f node of a general-arm level is walked
-    /// by outer child while the level's routes are built, each outer's
-    /// filtered index read while it is in cache, and its candidates held
-    /// until the walk of f's nodes reaches it: walked in pair order, such a
-    /// node reads a different outer's routes at almost every pair.
-    pub(crate) by_outer_pairs: usize,
     /// Bytes of route tables at or above which the routed walk asks the
     /// cache for a group of lookups' slots before it probes any, and for
     /// the hits' runs before it reads any.
@@ -34,7 +28,6 @@ impl SparseThresholds {
         min_grid: SparseRoute::DEFAULT.min_grid,
         sparsity_factor: SparseRoute::DEFAULT.sparsity as u128,
         collected_pairs: 64,
-        by_outer_pairs: 4096,
         pipelined_bytes: 16 << 20,
     };
 }

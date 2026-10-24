@@ -198,10 +198,7 @@ impl std::ops::DerefMut for WsGuard<'_> {
 /// Each f parent is emitted as soon as its walk ends, so the level holds
 /// one parent's candidates at a time: a parent of fewer than
 /// `thresholds.collected_pairs` pairs writes them to the level's pair arena
-/// as it finds them, a larger one into a candidate list for the emit. On a
-/// general-arm level, the parents of `thresholds.by_outer_pairs` pairs or
-/// more are the exception: they are walked by outer key while the routes
-/// are built, and their candidates are held until the walk reaches them.
+/// as it finds them, a larger one into a candidate list for the emit.
 ///
 /// A level where f and g have one node each has no emit step: its one
 /// product's pairs are the candidates, and the join writes them into the
