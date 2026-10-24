@@ -71,6 +71,11 @@ const SMALL_PAIRS: usize = 8;
 /// and nothing is verified after: the classes are exact. A pair repeated
 /// within a parent node counts twice, so the classes are those of context
 /// multisets.
+///
+/// With `listed`, nodes ascending that hold every node with a twin
+/// ([`super::listed`]), every other node is out of the partition from the
+/// start, as a node found to have no twin is, and the groups are those
+/// among the listed nodes.
 pub(super) fn refine_context_groups(
     level: &TddLevel,
     side: ChildSide,
@@ -78,6 +83,7 @@ pub(super) fn refine_context_groups(
     scratch: &mut ContractScratch,
     width: usize,
     simple: bool,
+    listed: Option<&[u32]>,
 ) -> Result<bool, OperationError> {
     let ContractScratch {
         twin_class, twin_bits, class_size, class_pos, refine_keys, refine_runs, refine_links, refine_table,
@@ -106,13 +112,28 @@ pub(super) fn refine_context_groups(
     lim.try_resize(twin_class, width, 0u32)?;
     lim.try_resize(twin_bits, words, [0u64; 2])?;
     let bits = &mut twin_bits[..words];
-    bits.fill([0; 2]);
+    // The first class: every node, or the listed ones.
+    let first = match listed {
+        None => {
+            bits.fill([0; 2]);
+            width
+        }
+        Some(listed) => {
+            bits.fill([u64::MAX; 2]);
+            for &t in listed {
+                let word = &mut bits[(t / 64) as usize];
+                word[0] &= !(1 << (t % 64));
+                word[1] &= !(1 << (t % 64));
+            }
+            listed.len()
+        }
+    };
     // The classes made are nested sets of two or more nodes each, so there
     // are fewer than `width` besides the first.
     class_size.clear();
     lim.reserve_exact(class_size, width + 1)?;
-    class_size.push(width as u32);
-    let twinable = if width >= 2 { width } else { 0 };
+    class_size.push(first as u32);
+    let twinable = if first >= 2 { first } else { 0 };
     let mut part = Partition { class: &mut twin_class[..width], bits, size: class_size, twinable };
     // A stored level's wide parent nodes are refined after the narrow ones,
     // narrowest first: by then most nodes have left the partition, and a

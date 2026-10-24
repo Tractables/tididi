@@ -319,13 +319,6 @@ pub(crate) struct ContractScratch {
     /// the flagged minority.
     pub(super) slice_unsorted: Vec<bool>,
 
-    /// The listed nodes' entries of `fingerprint::find_listed_twin_groups`,
-    /// each under the node's rank in the list.
-    pub(super) listed_entries: Vec<(u32, u64)>,
-    /// One bit per node of a level, for a listed search.
-    pub(super) listed_bits: Vec<u64>,
-    /// Per word of `listed_bits`, the listed nodes before it.
-    pub(super) listed_ranks: Vec<u32>,
     /// One bit per node of the level a list is gathered for
     /// (`fingerprint::named_by`).
     pub(super) reach_bits: Vec<u64>,
@@ -424,9 +417,6 @@ impl Buffers for ContractScratch {
         visit(&mut self.is_candidate);
         visit(&mut self.candidates);
         visit(&mut self.slice_unsorted);
-        visit(&mut self.listed_entries);
-        visit(&mut self.listed_bits);
-        visit(&mut self.listed_ranks);
         visit(&mut self.reach_bits);
         self.remap.buffers(visit);
         visit(&mut self.has_marginal_below);

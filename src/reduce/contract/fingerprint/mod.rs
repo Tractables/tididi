@@ -292,7 +292,7 @@ pub(super) fn find_twin_groups(
     // from the scratch: a merge's change to any level forgets the diagram's
     // own answer, which takes a pass over every level to give again.
     let simple = !super::sweep::diagram_marginal(tdd, scratch);
-    let found = refine::refine_context_groups(parent_level, t1_side, eng.limits(), scratch, width, simple)?;
+    let found = refine::refine_context_groups(parent_level, t1_side, eng.limits(), scratch, width, simple, None)?;
     if cfg!(debug_assertions) {
         let refined = (scratch.group_starts.clone(), scratch.flat_groups.clone());
         let entries = ContextEntries {

@@ -26,7 +26,7 @@ use crate::vtree::VtreeIdx;
 use crate::limits::OperationError;
 
 use super::scratch::ContractScratch;
-use super::fingerprint::{find_listed_twin_groups, find_twin_groups, named_by, pair_mass, screens};
+use super::fingerprint::{find_listed_twin_groups, find_twin_groups, named_by, pair_mass};
 use super::merge::{contract_twins, survivor};
 
 /// Which nodes of a child level a twin search reads.
@@ -39,13 +39,11 @@ enum Reach {
     Listed,
 }
 
-/// A listed search reads every entry of the parent level once and then
-/// fingerprints all of the listed nodes' entries, without the screens a
-/// search of the whole level runs first under a parent of more than a few
-/// entries (`fingerprint::screens`): there, a list of more than half of the
-/// level is searched whole. Where a parent has at least this many nodes,
-/// listing its children is itself weighed against the whole searches
-/// (`list_changed_children`).
+/// A listed search reads every pair of the parent level, as a search of the
+/// whole level does, with the unlisted nodes out of the partition from the
+/// start; listing the children first reads the changed parent nodes' pairs.
+/// Where a parent has at least this many nodes, listing its children is
+/// weighed against the whole searches (`list_changed_children`).
 const LISTED_WHOLE_MIN_WIDTH: usize = 1 << 16;
 
 // A test counts the listed searches, to check the sweep takes them.
@@ -106,10 +104,10 @@ fn contract_child(
     }
 
     let found = match reach {
-        Reach::Listed if !screens(&tdd.levels[parent.idx()]) || 2 * scratch.reach[side].len() <= width => {
+        Reach::Listed => {
             note_listed_search();
             let listed = std::mem::take(&mut scratch.reach[side]);
-            let found = find_listed_twin_groups(eng, tdd, parent, t1_side, &listed, scratch);
+            let found = find_listed_twin_groups(eng, tdd, t1, parent, t1_side, &listed, scratch);
             scratch.reach[side] = listed;
             let found = found?;
             if cfg!(debug_assertions) {
@@ -117,7 +115,7 @@ fn contract_child(
             }
             found
         }
-        _ => find_twin_groups(eng, tdd, t1, parent, t1_side, scratch)?,
+        Reach::Whole => find_twin_groups(eng, tdd, t1, parent, t1_side, scratch)?,
     };
     if !found {
         return Ok(false);
@@ -415,7 +413,7 @@ fn start_listing(
 /// Listing a parent's children reads its changed nodes' pairs, and each
 /// listed search reads every pair of the parent once more: where the changed
 /// nodes of a parent of at least [`LISTED_WHOLE_MIN_WIDTH`] nodes hold more
-/// than this share of its pairs, the whole searches' screens are no dearer.
+/// than this share of its pairs, the whole searches are no dearer.
 const LISTED_MAX_PAIR_SHARE: usize = 4;
 
 /// For a parent the sweep reached through contractions above it: list, per
